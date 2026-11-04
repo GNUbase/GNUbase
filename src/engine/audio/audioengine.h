@@ -305,6 +305,7 @@ namespace gnubase::engine
 		const settings::Store& m_settings;
 		AutoMonitoring m_autoMonitoring = AutoMonitoring::TapeMachine; // the graph's
 		ListenGains m_listenGains;                                     // the graph's
+		bool m_mutePreSends = false;                                   // the graph's audio.mutePreSends
 		float m_dim = 1.0f; // audio thread: the main mix's gain at the end of the last block
 
 		Engine* m_engine = nullptr;
@@ -372,6 +373,14 @@ namespace gnubase::engine
 		MidiChase m_chase;                                                 // what they chase
 		std::map<ObjectId, Instrument> m_instruments;                      // per instrument channel
 		std::map<ObjectId, std::shared_ptr<ChannelState>> m_channelStates; // per channel
+		// The channels that mixdown.export renders from a point inside their strip while it renders, and where their
+		// audio goes; attachStrips taps their strips.
+		struct RenderTap
+		{
+			RenderPoint point = RenderPoint::Strip;
+			std::shared_ptr<PreFaderTap> tap;
+		};
+		std::map<ObjectId, RenderTap> m_renderTaps;
 		std::vector<PendingRelease> m_releases;
 		uint64_t m_instrumentSerial = 0; // the last InstrumentChannel::serial given, counting up from 1
 

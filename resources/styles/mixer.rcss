@@ -176,6 +176,12 @@
 	margin: 0 1dp;
 }
 
+.mixer-edit
+{
+	flex-shrink: 0;
+	margin-bottom: 4dp;
+}
+
 .mixer-fader fader
 {
 	flex: 1 1 0;
@@ -201,4 +207,40 @@
 	display: block;
 	margin-bottom: 2dp;
 	text-align: left;
+}
+
+/* The channel settings window (docs/features/channel-settings.md): one channel, its sections side by side, its name
+   in the toolbar. */
+.settings-name
+{
+	min-width: 120dp;
+	padding: 0 8dp;
+	white-space: nowrap;
+}
+
+.channel-settings .mixer-channel
+{
+	flex: 1 1 auto;
+	flex-direction: row;
+	flex-wrap: wrap;
+	align-items: flex-start;
+	width: auto;
+}
+
+.channel-settings .mixer-channel-name
+{
+	display: none;
+}
+
+.channel-settings .mixer-section, .channel-settings .mixer-picture, .channel-settings .mixer-notes
+{
+	width: 180dp;
+	margin-right: 8dp;
+}
+
+.channel-settings .mixer-fader
+{
+	flex: 0 0 auto;
+	width: 76dp;
+	height: 240dp;
 }

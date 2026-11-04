@@ -38,6 +38,7 @@
 #include <iosfwd>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace Rml
@@ -121,6 +122,17 @@ namespace gnubase::app
 		ui::Mixer* mixer(int number);
 		ui::WindowId mixerWindow(int number) const { return m_mixers.at(static_cast<size_t>(number - 1)).window; }
 		ui::Mixer* lowerZoneMixer() { return m_lowerMixer.lock().get(); }
+		// The channel settings window (#112, docs/features/channel-settings.md, resources/ui/channel-settings.rml):
+		// Edit Channel Settings opens it for a track's channel, or shows that channel in it while it is open, and
+		// selects the track; while it follows, it shows the first selected track's channel. The UI command
+		// window.channelSettings opens it for the first selected track. Throws std::runtime_error if the document
+		// can't be loaded. channelSettings is its mixer while it is open, or null.
+		ui::Mixer* openChannelSettings(uint64_t track);
+		ui::Mixer* channelSettings()
+		{
+			return m_shell.find(m_channelSettings.window) != nullptr ? m_channelSettings.mixer.get() : nullptr;
+		}
+		ui::WindowId channelSettingsWindow() const { return m_channelSettings.window; }
 		// The MIDI editors (#126, docs/features/midi-editors.md): the editor window (resources/ui/editor.rml), which
 		// opens and closes as the engine's editor view window does (editor.open, editor.close), and the project
 		// window's Editor panel in the lower zone, which shows as the view lower opens. Null while they don't show.
@@ -189,24 +201,32 @@ namespace gnubase::app
 			ui::Window& window, std::string title, std::vector<ui::FileFilter> filters, bool many, bool clipsOnly);
 		// Media > Find Missing Files: the OS's folder dialog, then media.locate looks for the missing files there.
 		void chooseMissingFolder(ui::Window& window);
-		// The lower zone's mixer panel, the mixer windows' Visibility tabs and their UI commands.
+		// The lower zone's mixer panel, the mixer windows' Visibility tabs and their UI commands, and Edit Channel
+		// Settings.
 		void addMixers();
+		// What the mixers ask of the app: pictures, Edit Channel Settings, Add Effect Track to Send, and the channel
+		// settings window going to another track, which the track list then selects.
+		ui::MixerActions mixerActions();
 		// The editors' panels and UI commands, and the windows and zones that follow the engine's editor views.
 		void addEditors();
 		// Shows or closes the editor window or the lower zone's editor as the engine's view says.
 		void followEditor(const engine::Json& view);
-		// The selected MIDI parts open in the editors that follow the project window's selection (p. 1153).
+		// The selected MIDI parts, or else audio parts, open in the editors that follow the project window's
+		// selection (p. 1153).
 		void followSelection();
-		// The MIDI parts selected in the project window's event display.
+		// What of a kind in project.get (midiParts, audioParts, audioEvents) is selected in the project window's event
+		// display.
+		std::vector<uint64_t> selected(const char* kind) const;
+		// The parts an editor opens: the selected MIDI parts, or else the selected audio parts.
 		std::vector<uint64_t> selectedParts() const;
 		// Shows or closes the sample editor window as the engine's sampleEditor view says.
 		void followSampleEditor(const engine::Json& view);
-		// The audio events selected in the project window's event display.
-		std::vector<uint64_t> selectedAudioEvents() const;
 		// The OS's file dialog for a track's picture in the mixer, then track.set.
 		void choosePicture(uint64_t track);
 		// Opens resources/ui/<name> in the window, modal. Throws std::runtime_error if it can't be loaded.
-		Rml::ElementDocument& openDialog(ui::Window& window, const char* name) const;
+		// attributes go on the document before it shows, for its Lua.
+		Rml::ElementDocument& openDialog(ui::Window& window, const char* name,
+			const std::vector<std::pair<std::string, std::string>>& attributes = {}) const;
 		// The Auto Fades dialog (resources/ui/auto-fades.rml) for the project, or for a track (not 0).
 		void openAutoFades(ui::Window& window, uint64_t track) const;
 		// openDialog for a dialog whose Lua keeps its state in a global table, so that there is only one: while open
@@ -271,6 +291,8 @@ namespace gnubase::app
 			std::unique_ptr<ui::Mixer> mixer;
 		};
 		std::array<MixerWindow, 4> m_mixers;
+		MixerWindow m_channelSettings;         // the channel settings window
+		uint64_t m_settingsTrack = 0;          // the track it last went to or followed
 		std::weak_ptr<ui::Mixer> m_lowerMixer; // the docking system owns it while it is there
 		struct EditorWindow
 		{

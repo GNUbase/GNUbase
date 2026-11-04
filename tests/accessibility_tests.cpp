@@ -113,6 +113,9 @@ TEST_CASE("the add track dialog works with the keyboard alone", "[ui]")
 	CHECK(value(app, "#track-output") == output);
 	CHECK(shown(app, "#add-track-dialog"));
 
+	// A check box is in the order too.
+	CHECK(idOf(key(app, "Tab")) == "track-project-folder");
+
 	// A text field takes typed text; a value field edits as text with Enter and steps with the arrows.
 	CHECK(idOf(key(app, "Tab")) == "track-name");
 	app.ui().text(std::nullopt, "Bus");

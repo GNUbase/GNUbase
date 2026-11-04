@@ -1,0 +1,82 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* The audio part editor (ui/audioparteditor.h, docs/features/audio-part-editor.md): its toolbar and info line, the
+   parts by track, and the part display: the lanes, the audio events on them and their waveforms over them. Code places
+   the parts and the events in percent of the display's width, and the lanes and events at their lane. Events get
+   .selected, .muted and .inactive (outside the part editing mode), the tools .checked; the themes color them. */
+.audio-part-editor
+{
+	flex: 1 1 0;
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+}
+
+.audio-part-editor-toolbar
+{
+	flex-shrink: 0;
+	flex-wrap: wrap;
+	height: auto;
+	min-height: 32dp;
+}
+
+.ape-info
+{
+	flex-shrink: 0;
+	height: 26dp;
+	padding: 0 6dp;
+}
+
+.audio-part-editor .editor-parts
+{
+	flex-shrink: 0;
+}
+
+.audio-part-editor .editor-part
+{
+	position: absolute;
+	top: 1dp;
+	bottom: 1dp;
+	padding: 1dp 4dp;
+	box-sizing: border-box;
+	white-space: nowrap;
+	overflow: hidden;
+}
+
+.ape-body
+{
+	flex: 1 1 0;
+	overflow-y: auto;
+	min-height: 0;
+}
+
+.ape-display
+{
+	position: relative;
+	width: 100%;
+}
+
+.ape-lane, .ape-event
+{
+	position: absolute;
+	box-sizing: border-box;
+}
+
+.ape-waveforms
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	bottom: 0;
+	pointer-events: none;
+}
+
+.ape-waveforms waveform
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	box-sizing: border-box;
+	padding: 2dp 0;
+	pointer-events: none;
+}

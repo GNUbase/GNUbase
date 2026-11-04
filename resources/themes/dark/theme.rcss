@@ -577,6 +577,10 @@
 	{
 		color: #b7bbc0;
 	}
+	.track-list listitem.frozen
+	{
+		color: #b7bbc0;
+	}
 	.track-list .drop-line
 	{
 		background-color: #5ea7b3;
@@ -589,6 +593,10 @@
 	{
 		border-top-width: 1dp;
 		border-top-color: #484c50;
+	}
+	.track-list .automation-row.selected
+	{
+		decorator: svg-ninepatch(list-item-selected.svg, 6 6 6 6);
 	}
 	.event-display .automation-lane
 	{
@@ -706,6 +714,64 @@
 	.key-editor-step-cursor
 	{
 		background-color: #5ea7b3;
+	}
+	.controller-lane-area
+	{
+		background-color: #1e2022;
+		border-bottom-width: 1px;
+		border-bottom-color: #484c50;
+	}
+	.controller-bar, .controller-step
+	{
+		background-color: #49767e;
+	}
+	.controller-bar.selected, .controller-step.selected
+	{
+		background-color: #7896bd;
+	}
+	.controller-bar.inactive, .controller-step.inactive
+	{
+		background-color: #4c4e51;
+	}
+	.ape-display
+	{
+		background-color: #1e2022;
+	}
+	.ape-lane
+	{
+		border-bottom-width: 1px;
+		border-bottom-color: #333639;
+	}
+	.ape-event
+	{
+		background-color: #395157;
+		border-width: 1px;
+		border-color: #5ea7b3;
+	}
+	.ape-event.selected
+	{
+		background-color: #506176;
+		border-color: #f3f4f5;
+	}
+	.ape-event.muted, .ape-event.inactive
+	{
+		background-color: #4c4e51;
+		border-color: #b7bbc0;
+	}
+	.audio-part-editor .editor-part
+	{
+		color: #b7bbc0;
+		border-width: 1dp;
+		border-color: #484c50;
+		background-color: #242628;
+	}
+	.audio-part-editor .editor-part.editable
+	{
+		color: #f3f4f5;
+	}
+	.audio-part-editor .editor-part.active
+	{
+		color: #5ea7b3;
 	}
 	.se-overview, .se-display
 	{

@@ -525,6 +525,7 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".track-list listitem", {"border-bottom-width": f"{widths['hairline']}dp",
                                   "border-bottom-color": c["border"]}),
         (".track-list listitem.disabled", {"color": c["textMuted"]}),
+        (".track-list listitem.frozen", {"color": c["textMuted"]}),
         (".track-list .drop-line", {"background-color": c["accent"]}),
         # Automation tracks (docs/features/automation-tracks.md): their rows and lanes below their track's, the
         # curve with its points, grayed out while it doesn't read, the static value line and the automation event
@@ -532,6 +533,7 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".track-list .automation-rows", {"background-color": mix(c["surface"], c["background"], .5)}),
         (".track-list .automation-row", {"border-top-width": f"{widths['hairline']}dp",
                                          "border-top-color": c["border"]}),
+        (".track-list .automation-row.selected", {"decorator": skin("list-item-selected")}),
         (".event-display .automation-lane", {"background-color": c["surface"] + "80",
                                              "border-top-width": f"{widths['hairline']}dp",
                                              "border-top-color": c["border"]}),
@@ -575,6 +577,31 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
                                 "border-color": c["textMuted"]}),
         (".key-note.drawing", {"background-color": c["accent"] + "66"}),
         (".key-editor-step-cursor", {"background-color": c["accent"]}),
+        # The controller lanes (docs/features/controller-lanes.md): the lanes' areas like the note display, a line
+        # between lanes, the bars and steps in the notes' colors, selected ones in the second accent, those outside
+        # the part editing mode dimmed
+        (".controller-lane-area", {"background-color": c["surface"], "border-bottom-width": f"{widths['hairline']}px",
+                                   "border-bottom-color": c["border"]}),
+        (".controller-bar, .controller-step", {"background-color": mix(c["surfaceRaised"], c["accent"], .6)}),
+        (".controller-bar.selected, .controller-step.selected", {"background-color": c["accent2"]}),
+        (".controller-bar.inactive, .controller-step.inactive",
+         {"background-color": mix(c["surface"], c["textMuted"], .3)}),
+        # The audio part editor (docs/features/audio-part-editor.md): lines between the lanes, the events, selected
+        # ones in the second accent, muted ones and those outside the part editing mode dimmed
+        (".ape-display", {"background-color": c["surface"]}),
+        (".ape-lane", {"border-bottom-width": f"{widths['hairline']}px",
+                       "border-bottom-color": mix(c["surface"], c["border"], .5)}),
+        (".ape-event", {"background-color": mix(c["surfaceRaised"], c["accent"], .3),
+                        "border-width": f"{widths['hairline']}px", "border-color": c["accent"]}),
+        (".ape-event.selected", {"background-color": mix(c["surfaceRaised"], c["accent2"], .5),
+                                 "border-color": c["text"]}),
+        (".ape-event.muted, .ape-event.inactive", {"background-color": mix(c["surface"], c["textMuted"], .3),
+                                                   "border-color": c["textMuted"]}),
+        (".audio-part-editor .editor-part", {"color": c["textMuted"], "border-width": f"{widths['hairline']}dp",
+                                             "border-color": c["border"],
+                                             "background-color": mix(c["surface"], c["surfaceRaised"], .5)}),
+        (".audio-part-editor .editor-part.editable", {"color": c["text"]}),
+        (".audio-part-editor .editor-part.active", {"color": c["accent"]}),
         # The sample editor (docs/features/sample-editor.md): the overview with the event, the selection and what
         # the display shows, the display's audio outside the event shaded, the selection range, the region selected in
         # the list, the snap point, and the selected region's row

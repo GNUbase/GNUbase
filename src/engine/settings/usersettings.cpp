@@ -2,8 +2,11 @@
 #include "engine/settings/usersettings.h"
 
 #include "engine/engine.h"
+#include "engine/midi/controllerlanes.h"
 
+#include <string>
 #include <utility>
+#include <vector>
 
 namespace gnubase::engine::settings
 {
@@ -112,6 +115,10 @@ namespace gnubase::engine::settings
 					"The user's own bus presets, per direction (input, output) by name: each a list of busses with "
 					"their name, format, ports and child busses (bus.savePreset).",
 					Json{{"type", "object"}}, Json{{"input", Json::object()}, {"output", Json::object()}}},
+				{"audio.defaultSendLevel",
+					"The level of the sends that track.add sends to a new effect channel, and the one Ctrl-click "
+					"gives a send in the mixer, in dB from -144 to 12 (reference manual p. 1623).",
+					Json{{"type", "number"}, {"minimum", -144}, {"maximum", 12}}, 0.0},
 				{"audio.device", "The audio device's id, or empty for the backend's default device.",
 					Json{{"type", "string"}}, ""},
 				{"audio.listenDim",
@@ -121,6 +128,10 @@ namespace gnubase::engine::settings
 				{"audio.listenLevel",
 					"The level at which listening channels play on the monitoring bus, in dB from -144 to 12.",
 					Json{{"type", "number"}, {"minimum", -144}, {"maximum", 12}}, 0.0},
+				{"audio.mutePreSends",
+					"Mute Pre-Send when Mute: a channel's mute button also mutes its pre-fader sends (reference "
+					"manual p. 1623); off, they play on while it is muted.",
+					Json{{"type", "boolean"}}, false},
 				{"audio.portSettings",
 					"How the audio devices' ports are shown (audio.setPort), by backend/device id/in or out/system "
 					"name, also for devices that aren't connected: the name shown (showAs) and whether it is "
@@ -162,6 +173,13 @@ namespace gnubase::engine::settings
 					Json{{"type", "string"},
 						{"enum", {"default", "previous", "previousPlusOne", "lastApplied", "random"}}},
 					"default"},
+				{"editing.defaultTimeBase",
+					"The time base of new tracks when track.add gives none (Default Track Time Type, reference manual "
+					"pp. 230, 1595): musical (bars and beats, so their events follow tempo changes), linear (time, so "
+					"they stay), or followTimeFormat: musical while the project's primary time format (project.set "
+					"timeFormat) is barsBeats, linear with any other. Folder, ruler, tempo and signature tracks, "
+					"which hold no events of their own, are musical.",
+					Json{{"type", "string"}, {"enum", {"musical", "linear", "followTimeFormat"}}}, "musical"},
 				{"editing.tempoType",
 					"The type of new tempo events (reference manual p. 1448): ramp changes the tempo gradually from "
 					"the event before, step jumps, auto takes the type of the event before (tempo.add, tempo.tap).",
@@ -354,6 +372,31 @@ namespace gnubase::engine::settings
 							{{"audio", 120}, {"instrument", 120}, {"midi", 120}, {"group", 120}, {"effect", 120},
 								{"folder", 120}, {"marker", 120}, {"ruler", 120}, {"tempo", 120},
 								{"signature", 120}}}}},
+				{"ui.controllerLanePresets",
+					"The controller lane presets of the MIDI editors (#128, reference manual p. 1166): each a name and "
+					"the lanes it shows, as editor.set takes them.",
+					Json{{"type", "array"},
+						{"items",
+							{{"type", "object"},
+								{"properties",
+									{{"name", {{"type", "string"}}},
+										{"lanes",
+											{{"type", "array"},
+												{"items",
+													{{"type", "object"}, {"additionalProperties", false},
+														{"required", Json::array({"type"})},
+														{"properties",
+															{{"type",
+																 {{"type", "string"},
+																	 {"enum",
+																		 std::vector<std::string>(
+																			 midi::g_laneTypes.begin(),
+																			 midi::g_laneTypes.end())}}},
+																{"number",
+																	{{"type", "integer"}, {"minimum", 0},
+																		{"maximum", 127}}}}}}}}}}},
+								{"required", Json::array({"name", "lanes"})}}}},
+					Json::array()},
 				{"ui.zoomPresets",
 					"The horizontal zoom presets of the event display, for every project: each a name and the "
 					"seconds the view shows.",

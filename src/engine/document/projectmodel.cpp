@@ -4,6 +4,7 @@
 #include "engine/audiofile/audiofile.h"
 #include "engine/audiofile/resampler.h"
 #include "engine/dawproject/dawproject.h"
+#include "engine/document/channelsettings.h"
 #include "engine/document/editors.h"
 #include "engine/document/hitpoints.h"
 #include "engine/document/linkgroups.h"
@@ -15,6 +16,7 @@
 #include "engine/graph/graph.h"
 #include "engine/jobs/jobs.h"
 #include "engine/media/backup.h"
+#include "engine/midi/controllerlanes.h"
 #include "engine/midi/functioncommands.h"
 #include "engine/midi/quantizecommands.h"
 #include "engine/processors/builtin.h"
@@ -251,16 +253,6 @@ namespace gnubase::engine
 			return ids;
 		}
 
-		// Group tracks and folders with their group channel on sum other channels.
-		bool isGroupChannel(const Project& project, ObjectId channelId)
-		{
-			const auto channel = project.channels.find(channelId);
-			if (channel == project.channels.end())
-				return false;
-			const TrackType type = project.trackById.at(channel->second.track).type;
-			return type == TrackType::Group || type == TrackType::Folder;
-		}
-
 		// Whether routing a channel to output would lead back to it, through outputs or sends.
 		bool loops(const Project& project, ObjectId channel, ObjectId output)
 		{
@@ -414,7 +406,7 @@ namespace gnubase::engine
 				require(bus->direction == BusDirection::Output, "bus " + idText(output) + " is an input bus");
 				return;
 			}
-			require(isGroupChannel(project, output), "output must be an output bus or a group channel");
+			require(isSendDestination(project, output), "output must be an output bus, a group or an effect channel");
 			require(!loops(project, channel.id, output),
 				"routing channel " + idText(channel.id) + " to " + idText(output) + " would make a loop");
 		}
@@ -964,13 +956,101 @@ namespace gnubase::engine
 			}
 		}
 
+		// A new track's time base without one given: the user setting editing.defaultTimeBase (reference manual
+		// p. 230) for tracks that hold events, parts, markers or automation.
+		time::TimeBase defaultTimeBase(const Project& project, TrackType type, CommandContext& context)
+		{
+			if (type == TrackType::Folder || type == TrackType::Ruler || type == TrackType::Tempo ||
+				type == TrackType::Signature)
+				return time::TimeBase::Musical;
+			const std::string setting =
+				context.call("settings.get", {{"key", "editing.defaultTimeBase"}}).at("value").get<std::string>();
+			const bool linear =
+				setting == "followTimeFormat" ? project.setup.timeFormat != "barsBeats" : setting == "linear";
+			return linear ? time::TimeBase::Linear : time::TimeBase::Musical;
+		}
+
 		// Commands.
+
+		Json addTrack(Project& project, CommandContext& context);
+
+		// The project's Group or FX folder (reference manual pp. 150-152): the first folder named so at the top level,
+		// added at its end if there is none.
+		// ponytail: found by name, so a renamed folder gets a new one; a flag on the track if that matters.
+		ObjectId projectFolder(Project& project, const std::string& name, CommandContext& context)
+		{
+			for (const ObjectId id : project.tracks)
+				if (const Track& track = project.trackById.at(id);
+					track.type == TrackType::Folder && track.name == name)
+					return id;
+			const Json parameters = {{"type", "folder"}, {"name", name}};
+			CommandContext inner(parameters, &context);
+			return addTrack(project, inner).at("track").at("id").get<ObjectId>();
+		}
+
+		// Group Track to Selected Tracks and Effect Track to Selected Tracks (reference manual pp. 546, 554): the
+		// tracks play into a new group channel, or send to a new effect channel with the given send, or else their
+		// first send without a destination, at the user setting audio.defaultSendLevel.
+		void routeTo(Project& project, const Channel& added, const Json& parameters, CommandContext& context)
+		{
+			const TrackType type = project.trackById.at(added.track).type;
+			int64_t number = 0;
+			if (parameters.contains("send"))
+			{
+				require(type == TrackType::Effect, "only effect tracks take a send");
+				number = parameters.at("send").get<int64_t>();
+				requireRange(number, 1, static_cast<int64_t>(g_maxSends), "send");
+			}
+			const double level =
+				std::clamp(context.call("settings.get", {{"key", "audio.defaultSendLevel"}}).at("value").get<double>(),
+					g_minChannelVolume, project.maxVolume);
+			std::set<ObjectId> seen;
+			for (const Json& item : parameters.at("tracks"))
+			{
+				const auto id = item.get<ObjectId>();
+				require(seen.insert(id).second, "tracks lists track " + idText(id) + " twice");
+				const Track& track = find(project.trackById, id, "track");
+				const auto source = project.channels.find(track.channel);
+				require(source != project.channels.end() && source->second.format != ChannelFormat::None,
+					"track " + idText(id) + " has no audio channel");
+				Channel& channel = source->second;
+				if (type == TrackType::Group)
+				{
+					checkOutput(project, channel, added.id);
+					channel.output = added.id;
+				}
+				else
+				{
+					// A pointer, not an iterator: std::array's iterator is a pointer only in some libraries.
+					Send* send = number > 0 ? &channel.sends.at(static_cast<std::size_t>(number - 1)) : nullptr;
+					for (Send& candidate : channel.sends)
+					{
+						if (send == nullptr && candidate.destination == 0)
+						{
+							send = &candidate;
+						}
+					}
+					require(send != nullptr, "track " + idText(id) + " has no free send");
+					require(!routingLoops(project, channel.id, added.id),
+						"sending channel " + idText(channel.id) + " to " + idText(added.id) + " would make a loop");
+					*send = {added.id, true, level, false};
+				}
+				context.emit("channel.changed", {{"channel", toJson(channel)}});
+			}
+		}
 
 		Json addTrack(Project& project, CommandContext& context)
 		{
 			const Json& parameters = context.parameters();
 			const TrackType type = trackType(parameters.at("type").get<std::string>());
-			const ObjectId parent = folderParent(project, parameters);
+			ObjectId parent = folderParent(project, parameters);
+			if (parameters.value("projectFolder", false))
+			{
+				require(type == TrackType::Group || type == TrackType::Effect,
+					"only group and effect tracks go into the project's Group and FX folders");
+				require(parent == 0, "a track in the project's folder has no other parent");
+				parent = projectFolder(project, type == TrackType::Group ? "Group" : "FX", context);
+			}
 			const size_t index = insertIndex(parameters, siblings(project, parent));
 			const bool groupChannel = parameters.value("groupChannel", false);
 			require(!groupChannel || type == TrackType::Folder, "only folder tracks have an optional group channel");
@@ -1016,7 +1096,9 @@ namespace gnubase::engine
 			track.name = parameters.value("name", defaultTrackName(project, type));
 			track.color =
 				parameters.contains("color") ? color(parameters, {}) : autoTrackColor(project, parent, index, context);
-			track.timeBase = timeBaseFromName(parameters.value("timeBase", "musical"));
+			track.timeBase = parameters.contains("timeBase")
+				? timeBaseFromName(parameters.at("timeBase").get<std::string>())
+				: defaultTimeBase(project, type, context);
 			track.parent = parent;
 			if (type == TrackType::Ruler)
 				track.timeFormat = parameters.value("timeFormat", g_rulerTimeFormats[0]);
@@ -1058,10 +1140,16 @@ namespace gnubase::engine
 			context.emit("track.added", result);
 			if (type == TrackType::Marker) // a new marker track is the active one
 				activateMarkerTrack(project, track.id, context);
+			if (parameters.contains("tracks") && channel && (type == TrackType::Group || type == TrackType::Effect))
+			{
+				routeTo(project, *channel, parameters, context);
+				return result;
+			}
+			require(!parameters.contains("send"), "only effect tracks take a send");
 			// Move Selected Tracks to New Folder (p. 223).
 			if (parameters.contains("tracks"))
 			{
-				require(type == TrackType::Folder, "only folders take tracks");
+				require(type == TrackType::Folder, "only folders, group and effect tracks take tracks");
 				for (const Json& moved : parameters.at("tracks"))
 				{
 					const auto id = moved.get<ObjectId>();
@@ -1416,6 +1504,12 @@ namespace gnubase::engine
 				return group.pan;
 			if (key == "monitor" || key == "recordEnable")
 				return group.record;
+			if (key == "eq")
+				return group.eq;
+			if (key == "strip")
+				return group.dynamics;
+			if (key == "sends")
+				return group.sends;
 			return group.mute; // mute, solo, soloDefeat and listen
 		}
 
@@ -1424,7 +1518,7 @@ namespace gnubase::engine
 		// fader and key is one of its buttons, and from each of them on in the same way.
 		std::vector<ObjectId> linkedTo(const Project& project, ObjectId channel, const std::string& key, bool linked)
 		{
-			const bool button = key != "volume" && key != "pan";
+			const bool button = key != "volume" && key != "pan" && key != "eq" && key != "strip" && key != "sends";
 			std::vector<ObjectId> result;
 			std::set<ObjectId> seen{channel};
 			std::vector<ObjectId> pending{channel};
@@ -1448,8 +1542,8 @@ namespace gnubase::engine
 		}
 
 		// Passes channel.set's fader, pan and buttons on to the channels linked to the channel: the fader and the pan
-		// by as much as they moved, stopping at their ends, the buttons as they are now. Returns the channels the solo
-		// went on to.
+		// by as much as they moved, stopping at their ends, the buttons as they are now; and its eq, strip and sends
+		// as they were given, to each channel that can take them. Returns the channels the solo went on to.
 		std::set<ObjectId> passOn(
 			Project& project, const Channel& before, ObjectId id, const Json& parameters, CommandContext& context)
 		{
@@ -1478,6 +1572,28 @@ namespace gnubase::engine
 					if (to.format != ChannelFormat::None)
 						to.pan = std::clamp(to.pan + (channel.pan - before.pan), -1.0, 1.0);
 				}
+			for (const char* key : {"eq", "strip", "sends"})
+			{
+				if (!parameters.contains(key))
+					continue;
+				for (const ObjectId other : linkedTo(project, id, key, linked))
+				{
+					Channel& to = follower(other);
+					Channel trial = to;
+					try
+					{
+						if (std::string(key) == "sends")
+							setSends(project, trial, parameters.at(key));
+						else
+							trial.sections = sectionsFromJson(Json{{key, parameters.at(key)}}, trial.sections);
+					}
+					catch (const std::exception&)
+					{
+						continue; // a MIDI channel, or a send to itself: it keeps its own
+					}
+					to = trial;
+				}
+			}
 			const std::pair<const char*, bool Channel::*> buttons[] = {{"mute", &Channel::mute},
 				{"solo", &Channel::solo}, {"soloDefeat", &Channel::soloDefeat}, {"listen", &Channel::listen},
 				{"monitor", &Channel::monitor}, {"recordEnable", &Channel::recordEnable}};
@@ -2411,6 +2527,10 @@ namespace gnubase::engine
 				if (item.contains("releaseVelocity"))
 					note.releaseVelocity =
 						static_cast<uint16_t>(std::lround(unitValue(item, "releaseVelocity", name) * g_maxVelocity));
+				if (item.contains("probability"))
+					note.probability = unitValue(item, "probability", name);
+				note.velocityVariance = item.value("velocityVariance", 0.0);
+				require(std::abs(note.velocityVariance) <= 1.0, name + ".velocityVariance must be -1 to 1");
 				notes.push_back(note);
 			}
 			Json added = Json::array();
@@ -2577,7 +2697,7 @@ namespace gnubase::engine
 			project.tempo = tempoMap;
 			project.signatures = signatureMap;
 			if (project.tempo != tempoBefore || project.tempoTrackActive != tempoModeBefore)
-				tempoChanged(project, context);
+				tempoChanged(project, tempoBefore, context);
 			project.name = parameters.value("name", project.name);
 			if (parameters.contains("panLaw"))
 				project.panLaw = panLawFromName(parameters.at("panLaw").get<std::string>()).value_or(project.panLaw);
@@ -2679,6 +2799,7 @@ namespace gnubase::engine
 			{"tempo.set", "Change tempo events"},
 			{"tempo.remove", "Remove tempo events"},
 			{"tempo.tap", "Tap tempo"},
+			{"tempo.import", "Import tempo track"},
 			{"signature.add", "Add time signature event"},
 			{"signature.set", "Change time signature events"},
 			{"signature.remove", "Remove time signature events"},
@@ -3352,11 +3473,19 @@ namespace gnubase::engine
 			{"track.add", 1,
 				"Adds a track and its channel. Tracks go into a folder with parent, at index among its tracks "
 				"(default: last). Audio channels default to stereo; format or channels set another format, as in "
-				"bus.add. Folders get a channel only with groupChannel. New channels play through the main output, "
+				"bus.add. timeBase is musical (positions in ticks, which follow tempo changes) or linear (in "
+				"samples, which keep their time); without it the user setting editing.defaultTimeBase decides. "
+				"Folders get a channel only with groupChannel. New channels play through the main output, "
 				"or through the group channel of the nearest folder around them that has one, and audio tracks record "
 				"from the first input bus; input, output and instrument set them as channel.set does. tracks moves "
 				"those tracks, each listed once, into a new folder, in that order, as track.move does (Move Selected "
-				"Tracks to New Folder). With the user setting editing.applyFolderColor, a track added to a folder "
+				"Tracks to New Folder); for a group track, their channels play into its channel (Group Track to "
+				"Selected Tracks), and for an effect track, they send to its channel with send (1 to 8), or else "
+				"their first send without a destination, switched on, after the fader and at the user setting "
+				"audio.defaultSendLevel (Effect Track to Selected Tracks, Add Effect Track to Send). projectFolder "
+				"puts a group or effect track into the project's Group or FX folder, the first folder of that name "
+				"at the top level, added at the end if there is none. With the user setting editing.applyFolderColor, "
+				"a track added to a folder "
 				"without a color takes the folder's. Marker tracks have no channel and stay at the top level; a "
 				"project has at most 10, and a new one becomes the active marker track. Ruler tracks have no channel "
 				"either; timeFormat is the time format their ruler shows (default barsBeats). The tempo track shows "
@@ -3366,11 +3495,12 @@ namespace gnubase::engine
 
 				"A VCA track's channel is a VCA fader (reference manual p. 153): no audio, input or output, a fader "
 				"that controls a link group (linkGroup.add).",
-				objectSchema({{"type", trackTypes}, {"name", stringSchema}, {"color", color}, {"parent", idSchema},
-								 {"index", integerSchema}, {"format", formats}, {"channels", integerSchema},
-								 {"timeBase", timeBases}, {"groupChannel", booleanSchema}, {"input", idSchema},
-								 {"output", idSchema}, {"instrument", stringSchema}, {"timeFormat", timeFormats},
-								 {"tracks", arraySchema(idSchema)}},
+				objectSchema(
+					{{"type", trackTypes}, {"name", stringSchema}, {"color", color}, {"parent", idSchema},
+						{"index", integerSchema}, {"format", formats}, {"channels", integerSchema},
+						{"timeBase", timeBases}, {"groupChannel", booleanSchema}, {"input", idSchema},
+						{"output", idSchema}, {"instrument", stringSchema}, {"timeFormat", timeFormats},
+						{"tracks", arraySchema(idSchema)}, {"send", integerSchema}, {"projectFolder", booleanSchema}},
 					{"type"}),
 				{{"type", "object"},
 					{"properties", {{"track", {{"type", "object"}}}, {"channel", {{"type", {"object", "null"}}}}}},
@@ -3380,7 +3510,9 @@ namespace gnubase::engine
 		add(engine,
 			{"track.set", 1,
 				"Changes a track's name, color (#rrggbb, or null for the default), time base or, for ruler tracks, "
-				"time format. A new time base keeps its events, parts and markers at the same time. enabled false "
+				"time format. A new time base keeps its events, parts, markers and automation at the same time; on "
+				"a linear track they keep their time when the tempo changes too, the notes in its MIDI parts with "
+				"them. enabled false "
 				"disables an audio, instrument or MIDI track: it keeps its events and channel settings but plays "
 				"nothing and is silent. groupChannel turns a folder's group channel on or off: a new one is stereo "
 				"and plays through the next group channel up, or the main output; the audio of the tracks inside "
@@ -3656,12 +3788,15 @@ namespace gnubase::engine
 
 		const Json note =
 			objectSchema({{"position", integerSchema}, {"length", integerSchema}, {"pitch", integerSchema},
-							 {"velocity", numberSchema}, {"releaseVelocity", numberSchema}, {"channel", integerSchema}},
+							 {"velocity", numberSchema}, {"releaseVelocity", numberSchema}, {"channel", integerSchema},
+							 {"probability", numberSchema}, {"velocityVariance", numberSchema}},
 				{"position", "length", "pitch", "velocity"});
 		add(engine,
 			{"note.add", 1,
 				"Adds notes to a MIDI part: position from the part's start and length in ticks, pitch 0-127, velocity "
-				"0-1, release (note-off) velocity 0-1 (default 0.5), MIDI channel 0-15 (default 0).",
+				"0-1, release (note-off) velocity 0-1 (default 0.5), MIDI channel 0-15 (default 0), play probability "
+				"0-1, the chance that the note plays (default 1), and velocity variance -1 to 1, the share by which "
+				"playback raises (positive) or lowers (negative) its velocity at most (default 0).",
 				objectSchema({{"part", idSchema}, {"notes", arraySchema(note)}}, {"part", "notes"}),
 				{{"type", "object"}, {"properties", {{"notes", {{"type", "array"}}}}}, {"required", {"notes"}}}, false},
 			addNotes);
@@ -3707,9 +3842,11 @@ namespace gnubase::engine
 		registerSlotCommands(engine);
 		midi::registerQuantizeCommands(*this, engine);
 		midi::registerFunctionCommands(*this, engine);
+		midi::registerControllerLaneCommands(*this, engine);
 		registerMidiFileCommands(engine);
 		registerAudioFileCommands(engine, jobs);
 		registerRecordingCommands(engine);
+		registerRenderCommands(engine);
 		registerPoolCommands(engine);
 		registerFadeCommands(engine);
 		registerVolumeCurveCommands(*this, engine);
@@ -3717,6 +3854,7 @@ namespace gnubase::engine
 		registerSnapCommands(*this, engine);
 		registerMixerCommands(*this, engine);
 		registerLinkGroupCommands(*this, engine);
+		registerChannelSettingsCommands(*this, engine);
 		registerEditorCommands(*this, engine);
 		registerSampleEditorCommands(*this, engine);
 		registerHitpointCommands(*this, engine);

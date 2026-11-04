@@ -43,6 +43,7 @@ engine commands, so whichever client changes the project or the view, the mixer 
       .mixer-sends[section=sends]       Sends (audio channels), hidden by default (routing.md)
       .mixer-notes[section=notes]       Notepad, hidden by default: textarea.mixer-notes-field
       .mixer-fader[section=fader]       Fader: the panner (.mixer-pan), M, S and L (button[control], solo-mute-listen.md), the fader and .mixer-volume
+        button.mixer-edit               Edit Channel Settings on a track's channel (channel-settings.md)
 ```
 
 - **Channels** (p. 438): the input busses first, then the channels of the tracks from top to bottom (audio,

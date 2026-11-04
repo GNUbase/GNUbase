@@ -3,6 +3,7 @@
 
 #include "engine/audio/automation.h"
 #include "engine/audio/fades.h"
+#include "engine/midi/controllerlanes.h"
 
 #include <algorithm>
 #include <array>
@@ -38,11 +39,11 @@ namespace gnubase::engine
 			channel.midiParts.push_back({toSamples(project, start), toSamples(project, end)});
 			for (const auto& [id, note] : part.notes)
 			{
-				if (note.position >= end - start)
+				if (note.position >= end - start || !midi::notePlays(note, part.id))
 					continue;
 				const time::Ticks noteEnd = std::min(start + note.position + note.length, end);
 				channel.notes.push_back({toSamples(project, start + note.position), toSamples(project, noteEnd),
-					note.pitch, note.velocity, note.channel});
+					note.pitch, midi::playedVelocity(note, part.id), note.channel});
 			}
 			for (const auto& [id, controller] : part.controllers)
 				if (controller.position < end - start)
@@ -79,6 +80,46 @@ namespace gnubase::engine
 				event.fadeOut.length = std::max<time::Samples>(0, event.fadeOut.length - cut);
 			}
 			return event.length > 0;
+		}
+
+		// What still plays on a frozen track: the fader, pan and mute; its freeze file has the rest.
+		bool afterFreeze(AutomationTargetType type)
+		{
+			switch (type)
+			{
+			case AutomationTargetType::Volume:
+			case AutomationTargetType::Pan:
+			case AutomationTargetType::PanLeft:
+			case AutomationTargetType::PanRight:
+			case AutomationTargetType::Mute:
+				return true;
+			default:
+				return false;
+			}
+		}
+
+		// A frozen track's channel plays its freeze file from the project's start, as an audio track's event, without
+		// the pre section and plugin slots that it was rendered through (RenderPoint::Inserts). The media file and the
+		// event take the ids of the channel and the track, which nothing else has.
+		void freeze(const Track& track, const Freeze& frozen, RenderSnapshot& snapshot, RenderChannel& channel)
+		{
+			channel.type = TrackType::Audio;
+			channel.instrument.clear();
+			channel.instrumentParameters.clear();
+			channel.midiThru = false;
+			channel.autoFades = AutoFades();
+			channel.sections.gain = 0.0;
+			channel.sections.phase = false;
+			channel.sections.lowCut.on = false;
+			channel.sections.highCut.on = false;
+			if (!track.enabled)
+				return;
+			RenderAudioEvent event;
+			event.id = track.id;
+			event.media = static_cast<int>(snapshot.media.size());
+			event.length = frozen.length;
+			channel.audioEvents.push_back(std::move(event));
+			snapshot.media.push_back({channel.id, frozen.path, frozen.sampleRate, frozen.channels, frozen.length});
 		}
 
 		// Mute, solo and disabled tracks: with a channel soloed, only soloed channels, those they play into and those
@@ -135,6 +176,7 @@ namespace gnubase::engine
 				const bool muted = project.channels.at(channel.id).mute && automated.count(channel.track) == 0;
 				const bool quiet = !heard[i] || !project.trackById.at(channel.track).enabled;
 				channel.silent = quiet || muted;
+				channel.muted = muted;
 				for (RenderSend& send : channel.sends)
 					if (quiet && send.preFader)
 						send.gain = 0.0f;
@@ -330,7 +372,9 @@ namespace gnubase::engine
 			for (const ObjectId id : channel.slots)
 			{
 				const Slot& slot = project.slots.at(id);
-				render.slots.push_back({slot.id, slot.plugin, slot.bypass, slot.active, slot.parameters, slot.state});
+				if (!track.frozen)
+					render.slots.push_back(
+						{slot.id, slot.plugin, slot.bypass, slot.active, slot.parameters, slot.state});
 			}
 			render.volume = volumeGain(channel.volume);
 			render.pan = channel.pan;
@@ -349,6 +393,8 @@ namespace gnubase::engine
 			render.autoFades = track.autoFades.value_or(project.autoFades);
 			if (const auto input = busIndex.find(channel.input); input != busIndex.end())
 				render.input = input->second;
+			if (track.frozen)
+				freeze(track, *track.frozen, *snapshot, render);
 			snapshot->channels.push_back(std::move(render));
 		}
 
@@ -383,7 +429,12 @@ namespace gnubase::engine
 		}
 		markSilent(project, feeds, *snapshot);
 
-		const auto plays = [&project](ObjectId track) { return project.trackById.at(track).enabled; };
+		// A frozen track's events and parts don't play: its freeze file does.
+		const auto plays = [&project](ObjectId track)
+		{
+			const Track& found = project.trackById.at(track);
+			return found.enabled && !found.frozen;
+		};
 		for (const auto& [id, event] : project.audioEvents)
 		{
 			if (!plays(event.track))
@@ -413,7 +464,8 @@ namespace gnubase::engine
 			const auto channel = trackChannel.find(lane.track);
 			const Track& track = project.trackById.at(lane.track);
 			const bool vca = track.type == TrackType::Vca && lane.target.type == AutomationTargetType::Volume;
-			if (!lane.read || lane.points.empty() || (channel == trackChannel.end() && !vca))
+			if (!lane.read || lane.points.empty() || (channel == trackChannel.end() && !vca) ||
+				(track.frozen && !afterFreeze(lane.target.type)))
 				continue;
 			std::vector<const AutomationPoint*> sorted;
 			sorted.reserve(lane.points.size());

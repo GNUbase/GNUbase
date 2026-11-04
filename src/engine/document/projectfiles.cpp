@@ -159,7 +159,8 @@ namespace gnubase::engine
 		m_project = std::move(project);
 		m_file = autoSave ? std::string() : file;
 		m_history.clear();
-		m_clipboard.reset(); // it holds the old project's track and clip ids
+		m_clipboard.reset();           // it holds the old project's track and clip ids
+		m_automationClipboard.reset(); // so does this one
 		context.emit("project.reset");
 		announceHistory(context);
 		publish();

@@ -2,7 +2,9 @@
 // The tempo track (#155, reference manual pp. 162, 1446-1458): tempo.add, tempo.set and tempo.remove edit the tempo
 // track's tempo events, in either tempo mode, and tempo.tap applies a tapped tempo. project.set switches between fixed
 // tempo and tempo track mode (tempoTrackActive). Each command is one undo step and changes nothing if it fails
-// (ProjectModel::add).
+// (ProjectModel::add). tempo.export and tempo.import write and read the tempo track with the time signature events
+// as a file of their own (#160, reference manual p. 1462).
+#include "engine/dawproject/dawproject.h"
 #include "engine/document/document.h"
 #include "engine/document/projectmodel.h"
 #include "engine/document/serialize.h"
@@ -11,8 +13,11 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <map>
 #include <optional>
+#include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace gnubase::engine
@@ -70,8 +75,9 @@ namespace gnubase::engine
 				require(points[i].position != points[i - 1].position,
 					"two tempo events at " + std::to_string(points[i].position));
 			points.front().ramp = false; // nothing to ramp from
+			const time::TempoMap before = project.tempo;
 			project.tempoTrack() = time::TempoMap(points);
-			tempoChanged(project, context);
+			tempoChanged(project, before, context);
 		}
 
 		// Whether a new tempo event ramps: the user setting editing.tempoType, with auto the type of the event before
@@ -204,10 +210,50 @@ namespace gnubase::engine
 			// The project tempo: the first tempo event in tempo track mode, the fixed tempo otherwise.
 			std::vector<time::TempoPoint> points = project.tempo.points();
 			points.front().bpm = bpm;
+			const time::TempoMap before = project.tempo;
 			project.tempo = time::TempoMap(points);
-			tempoChanged(project, context);
+			tempoChanged(project, before, context);
 			result["applied"] = "project";
 			return result;
+		}
+
+		Json exportTempo(Project& project, CommandContext& context)
+		{
+			const TempoTrackFile file{project.tempoTrack(), project.signatures};
+			try
+			{
+				saveTempoTrack(file, context.parameters().at("path").get<std::string>());
+			}
+			catch (const DawProjectError& error)
+			{
+				throw CommandError(error.what());
+			}
+			return {{"tempoEvents", file.tempo.points().size()}, {"signatureEvents", file.signatures.changes().size()}};
+		}
+
+		Json importTempo(Project& project, CommandContext& context)
+		{
+			TempoTrackFile file;
+			try
+			{
+				file = loadTempoTrack(context.parameters().at("path").get<std::string>());
+			}
+			catch (const DawProjectError& error)
+			{
+				throw CommandError(error.what());
+			}
+			// The file's tempo changes play: the tempo track becomes active, as for a MIDI file's (midiFile.import).
+			const time::TempoMap before = project.tempo;
+			if (file.tempo.points().size() > 1 && !project.tempoTrackActive)
+			{
+				project.otherTempo = project.tempo;
+				project.tempoTrackActive = true;
+			}
+			project.tempoTrack() = std::move(file.tempo);
+			project.signatures = std::move(file.signatures);
+			context.emit("signature.changed", {{"signatures", signaturesJson(project)}});
+			tempoChanged(project, before, context);
+			return {{"tempo", tempoJson(project)}, {"signatures", signaturesJson(project)}};
 		}
 	}
 
@@ -217,8 +263,57 @@ namespace gnubase::engine
 			{"tempoTrack", toJson(project.tempoTrack())}, {"fixedTempo", project.fixedTempo()}};
 	}
 
-	void tempoChanged(Project& project, CommandContext& context)
+	void tempoChanged(Project& project, const time::TempoMap& before, CommandContext& context)
 	{
+		// A linear part stays where it is in samples, and its notes and controllers, in ticks from its start, stay at
+		// their time with it (reference manual p. 1446).
+		std::set<ObjectId> changed;
+		if (project.tempo != before)
+			for (auto& [id, part] : project.midiParts)
+			{
+				if (part.position.base != time::TimeBase::Linear)
+					continue;
+				const time::Ticks startBefore = before.toTicks(part.position.value, project.sampleRate);
+				const time::Ticks start = project.tempo.toTicks(part.position.value, project.sampleRate);
+				const auto retime = [&](time::Ticks position)
+				{ return project.tempo.toTicks(before.toSeconds(startBefore + position)) - start; };
+				const auto retimeNote = [&retime](time::Ticks& position, time::Ticks& length)
+				{
+					const time::Ticks end = retime(position + length);
+					position = retime(position);
+					length = std::max<time::Ticks>(length > 0 ? 1 : 0, end - position);
+				};
+				for (auto& [noteId, note] : part.notes)
+				{
+					retimeNote(note.position, note.length);
+					if (note.origin)
+					{
+						retimeNote(note.origin->original.position, note.origin->original.length);
+						retimeNote(note.origin->quantized.position, note.origin->quantized.length);
+					}
+				}
+				for (auto& [controllerId, controller] : part.controllers)
+					controller.position = retime(controller.position);
+				changed.insert(id);
+			}
+		// Shared copies that now hold different notes, such as copies before and after a tempo event, or a linear and
+		// a musical copy, can't share them: each copy that differs from its group's first becomes a real copy, as
+		// event.toRealCopy makes it. A first copy left alone is no longer shared (syncSharedParts).
+		std::map<ObjectId, const MidiPart*> firsts;
+		for (auto& [id, part] : project.midiParts)
+		{
+			if (part.shared == 0)
+				continue;
+			const MidiPart* first = firsts.emplace(part.shared, &part).first->second;
+			if (first->notes != part.notes || first->controllers != part.controllers)
+			{
+				part.shared = 0;
+				renumber(project, part);
+				changed.insert(id);
+			}
+		}
+		for (const ObjectId id : changed)
+			context.emit("midiPart.changed", {{"part", toJson(project.midiParts.at(id))}});
 		// A cycle marker in ticks can get shorter than a sample at a faster tempo.
 		for (auto& [id, marker] : project.markers)
 			if (keepMinimumLength(project, marker))
@@ -291,5 +386,28 @@ namespace gnubase::engine
 					{"required", {"bpm", "applied", "position"}}},
 				false},
 			tapTempo);
+		const Json pathSchema = objectSchema({{"path", {{"type", "string"}}}}, {"path"});
+		add(engine,
+			{"tempo.export", 1,
+				"Exports the tempo track's events, which fixed tempo mode keeps too, and the time signature events "
+				"into an XML file at path (File > Export > Tempo Track), which tempo.import reads. Returns the number "
+				"of tempo and time signature events.",
+				pathSchema,
+				{{"type", "object"}, {"properties", {{"tempoEvents", ticksSchema}, {"signatureEvents", ticksSchema}}},
+					{"required", {"tempoEvents", "signatureEvents"}}},
+				true},
+			exportTempo);
+		add(engine,
+			{"tempo.import", 1,
+				"Imports a file that tempo.export wrote (File > Import > Tempo Track): its tempo events replace the "
+				"tempo track's and its time signature events the project's. A file with tempo changes makes the "
+				"tempo track active; the fixed tempo stays. One undo step. Returns the tempo as tempo.changed reports "
+				"it and the time signature events as signature.changed does.",
+				pathSchema,
+				{{"type", "object"},
+					{"properties", {{"tempo", {{"type", "object"}}}, {"signatures", {{"type", "array"}}}}},
+					{"required", {"tempo", "signatures"}}},
+				false},
+			importTempo);
 	}
 }

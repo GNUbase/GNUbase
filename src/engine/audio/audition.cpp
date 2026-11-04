@@ -96,6 +96,11 @@ namespace gnubase::engine
 		// The track between both positions, then read through at the speed it takes from one to the other.
 		const time::Samples low = std::min(from, position);
 		const time::Samples length = std::max(from, position) - low + 1;
+		if (mediaPaths != m_readerPaths)
+		{
+			m_readers.clear(); // a media file changed, as a freeze file does on undo
+			m_readerPaths = mediaPaths;
+		}
 		const std::vector<float> material = read(*source.playlist, mediaPaths, sampleRate, low, length, channels);
 		const auto width = static_cast<size_t>(channels);
 		auto audio = std::make_shared<std::vector<float>>(frames * width);

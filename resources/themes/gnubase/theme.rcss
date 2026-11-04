@@ -577,6 +577,10 @@
 	{
 		color: #aeb7d0;
 	}
+	.track-list listitem.frozen
+	{
+		color: #aeb7d0;
+	}
 	.track-list .drop-line
 	{
 		background-color: #10dff2;
@@ -589,6 +593,10 @@
 	{
 		border-top-width: 1dp;
 		border-top-color: #303754;
+	}
+	.track-list .automation-row.selected
+	{
+		decorator: svg-ninepatch(list-item-selected.svg, 6 6 6 6);
 	}
 	.event-display .automation-lane
 	{
@@ -706,6 +714,64 @@
 	.key-editor-step-cursor
 	{
 		background-color: #10dff2;
+	}
+	.controller-lane-area
+	{
+		background-color: #101426;
+		border-bottom-width: 1px;
+		border-bottom-color: #303754;
+	}
+	.controller-bar, .controller-step
+	{
+		background-color: #1391a5;
+	}
+	.controller-bar.selected, .controller-step.selected
+	{
+		background-color: #e12ad8;
+	}
+	.controller-bar.inactive, .controller-step.inactive
+	{
+		background-color: #3f4559;
+	}
+	.ape-display
+	{
+		background-color: #101426;
+	}
+	.ape-lane
+	{
+		border-bottom-width: 1px;
+		border-bottom-color: #20263d;
+	}
+	.ape-event
+	{
+		background-color: #15566c;
+		border-width: 1px;
+		border-color: #10dff2;
+	}
+	.ape-event.selected
+	{
+		background-color: #7c2385;
+		border-color: #f1f4ff;
+	}
+	.ape-event.muted, .ape-event.inactive
+	{
+		background-color: #3f4559;
+		border-color: #aeb7d0;
+	}
+	.audio-part-editor .editor-part
+	{
+		color: #aeb7d0;
+		border-width: 1dp;
+		border-color: #303754;
+		background-color: #14182c;
+	}
+	.audio-part-editor .editor-part.editable
+	{
+		color: #f1f4ff;
+	}
+	.audio-part-editor .editor-part.active
+	{
+		color: #10dff2;
 	}
 	.se-overview, .se-display
 	{

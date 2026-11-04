@@ -38,9 +38,13 @@ namespace gnubase::engine
 	// the tempo track is active, the tempo track's events and the fixed tempo.
 	Json tempoJson(const Project& project);
 
-	// After the tempo or the tempo mode changed (tempo.cpp): lengthens cycle markers that got shorter than a sample and
-	// announces tempo.changed.
-	void tempoChanged(Project& project, CommandContext& context);
+	// The project's time signature events as project.get and the signature.changed event report them (signature.cpp).
+	Json signaturesJson(const Project& project);
+
+	// After the tempo or the tempo mode changed from before (tempo.cpp): keeps the notes and controllers of MIDI parts
+	// on linear tracks at their time, lengthens cycle markers that got shorter than a sample and announces
+	// tempo.changed.
+	void tempoChanged(Project& project, const time::TempoMap& before, CommandContext& context);
 
 	// After a command, and after each command of a transaction (eventedits.cpp): the first shared copy of a MIDI part
 	// whose notes or controllers changed since before gives them to its other copies, and a copy without others is no
@@ -65,6 +69,25 @@ namespace gnubase::engine
 		std::vector<AudioPart> audioParts;
 		std::vector<MidiPart> midiParts;
 		std::vector<AutomationLane> automation; // the points in the range, with the curve's values at its edges
+	};
+
+	// What automation.copy keeps for automation.paste (eventedits.cpp, reference manual pp. 878-879): the automation
+	// of lanes in a range as range.copy keeps it, with what finds a lane's parameter on other tracks. Not part of the
+	// project or of undo.
+	struct AutomationClipboard
+	{
+		// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
+		struct Lane
+		{
+			AutomationLane lane;
+			size_t slot = 0;       // a plugin's lane: the slot's place in its channel
+			std::string processor; // a plugin's lane: the plugin; an instrument's: the instrument
+		};
+
+		time::Samples start = 0; // the range's start, in project samples and in ticks
+		time::Ticks startTicks = 0;
+		std::vector<ObjectId> tracks; // the tracks of the copied lanes, from top to bottom
+		std::vector<Lane> lanes;      // in the order of their tracks
 	};
 
 	// The project document, its commands, its undo history and its render snapshots. The commands run on the engine's
@@ -126,6 +149,7 @@ namespace gnubase::engine
 		void registerAudioFileCommands(Engine& engine, Jobs& jobs); // audiofilecommands.cpp: audioFile.import
 		Json importAudioFiles(Project& project, CommandContext& context, Jobs& jobs);
 		void registerRecordingCommands(Engine& engine); // recording.cpp: recording.add
+		void registerRenderCommands(Engine& engine);    // renderinplace.cpp: track.freeze, track.renderInPlace
 		Json addRecording(Project& project, CommandContext& context);
 		void registerPoolCommands(Engine& engine); // pool.cpp: pool.*, poolFolder.*, clip.set, media management (#93)
 		void registerFadeCommands(Engine& engine); // fadeedits.cpp: fades, crossfades and auto fades
@@ -178,6 +202,8 @@ namespace gnubase::engine
 		bool m_automationFollowsEvents = false;    // a setting, not part of the project
 		std::optional<RangeClipboard> m_clipboard; // range.copy and range.cut
 		std::function<std::string(ObjectId)> m_slotStatus;
+		// what automation.copy copied, for automation.paste
+		std::optional<AutomationClipboard> m_automationClipboard;
 		rt::SnapshotPublisher<RenderSnapshot> m_snapshots;
 	};
 }

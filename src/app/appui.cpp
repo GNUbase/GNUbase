@@ -23,6 +23,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -192,7 +193,7 @@ namespace gnubase::app
 		}
 
 		// The track list's commands (ui::TrackList::actions, docs/features/track-list.md) and their keys.
-		constexpr std::array<ProjectCommand, 21> g_trackCommands{{
+		constexpr std::array<ProjectCommand, 29> g_trackCommands{{
 			{"track.selectPrevious",
 				"Selects the track above the selected one, and its first event while an event is selected.", "Up"},
 			{"track.selectNext",
@@ -203,6 +204,10 @@ namespace gnubase::app
 			{"track.duplicateSelected", "Duplicates the selected tracks with their contents.", nullptr},
 			{"track.disableSelected", "Disables the selected audio, instrument and MIDI tracks.", nullptr},
 			{"track.enableSelected", "Enables the selected tracks again.", nullptr},
+			// Render in place and freeze (docs/features/render-in-place.md).
+			{"track.freezeSelected",
+				"Freezes the selected audio and instrument tracks, or unfreezes them if every one is frozen.", nullptr},
+			{"track.renderSelected", "Renders the selected audio and instrument tracks in place.", nullptr},
 			{"track.toggleFolding", "Folds or unfolds the selected folders.", nullptr},
 			{"track.foldAll", "Folds every folder.", nullptr},
 			{"track.unfoldAll", "Unfolds every folder.", nullptr},
@@ -219,6 +224,20 @@ namespace gnubase::app
 				"Shows the automation tracks of the selected tracks, or hides them if every one shows them.", nullptr},
 			{"track.showUsedAutomation", "Shows the automation tracks with automation on every track.", nullptr},
 			{"track.hideAllAutomation", "Hides every automation track.", nullptr},
+			// Copying automation to other tracks (docs/features/copy-automation.md).
+			{"track.copyAutomationAll", "Copies the automation of every track between the locators.", nullptr},
+			{"track.copyAutomationSelected", "Copies the automation of the selected tracks between the locators.",
+				nullptr},
+			{"track.copyAutomationSelectedParameters",
+				"Copies the automation of the selected automation tracks between the locators.", nullptr},
+			{"track.pasteAutomationAll",
+				"Pastes the copied automation onto the tracks it was copied from, between the locators.", nullptr},
+			{"track.pasteAutomationSelected",
+				"Pastes the copied automation onto the selected tracks, between the locators.", nullptr},
+			{"track.pasteAutomationSelectedParameters",
+				"Pastes the copied automation onto the selected automation tracks of the same parameters, between the "
+				"locators.",
+				nullptr},
 			// Lanes (docs/features/comping.md).
 			{"track.toggleLanesSelected",
 				"Shows the lanes of the selected tracks, or hides them if every one shows them.", nullptr},
@@ -261,6 +280,18 @@ namespace gnubase::app
 				for (MixerWindow& shown : m_mixers)
 					if (shown.mixer && m_shell.find(shown.window) == nullptr)
 						shown.mixer.reset(); // the user closed its window
+				if (m_channelSettings.mixer && m_shell.find(m_channelSettings.window) == nullptr)
+					m_channelSettings.mixer.reset();
+				// The channel settings window follows the track selection (reference manual p. 499).
+				if (ui::Mixer* settings = channelSettings(); settings != nullptr && settings->follows() && m_trackList)
+				{
+					const std::vector<uint64_t> tracks = m_trackList->selection();
+					if (!tracks.empty() && tracks.front() != m_settingsTrack)
+					{
+						m_settingsTrack = tracks.front();
+						settings->showTrack(m_settingsTrack);
+					}
+				}
 				if (m_keyboard && m_shell.find(m_keyboardWindow) == nullptr)
 					m_keyboard.reset(); // so too: its notes end
 				// The project window selects events or markers: an event selected deselects the markers.
@@ -329,7 +360,8 @@ namespace gnubase::app
 			if (added.id == "inspector")
 				added.create = [this](Rml::Element& element)
 				{
-					auto inspector = std::make_shared<ui::Inspector>(m_binding, element);
+					auto inspector = std::make_shared<ui::Inspector>(m_binding, element,
+						[this](uint64_t track) { m_shell.post([this, track] { openChannelSettings(track); }); });
 					m_inspector = inspector;
 					return std::shared_ptr<void>(inspector);
 				};
@@ -458,6 +490,36 @@ namespace gnubase::app
 						m_binding.send("mixdown.quickExport", {{"path", file.u8string()}});
 					});
 			}});
+		// File > Export and File > Import > Tempo Track (docs/features/tempo-track.md): the tempo track's file, chosen
+		// in the OS's file dialog.
+		for (const bool exporting : {true, false})
+		{
+			m_keys.add({exporting ? "file.exportTempo" : "file.importTempo",
+				exporting ? "Exports the tempo track and the time signature events into an XML file."
+						  : "Replaces the tempo track and the time signature events with those of an exported file.",
+				[this, exporting](ui::Window& window, Rml::Element* /*zone*/)
+				{
+					ui::FileDialog dialog;
+					dialog.kind = exporting ? ui::FileDialogKind::Save : ui::FileDialogKind::Open;
+					dialog.title = exporting ? "Export Tempo Track" : "Import Tempo Track";
+					dialog.filters = {{"Tempo track files", "xml"}, {"All files", "*"}};
+					if (exporting)
+						dialog.location = "Tempo Track.xml";
+					dialog.parent = window.id();
+					m_shell.showFileDialog(dialog,
+						[this, exporting](const ui::FileDialogResult& chosen)
+						{
+							if (!chosen.error.empty())
+								logging::warning("The file dialog failed: {}", chosen.error);
+							if (chosen.files.empty())
+								return;
+							std::filesystem::path file = chosen.files.front();
+							if (exporting && file.extension().empty())
+								file += ".xml";
+							m_binding.send(exporting ? "tempo.export" : "tempo.import", {{"path", file.u8string()}});
+						});
+				}});
+		}
 		// Auto fades (docs/features/fades.md): the project's, or the first selected track's.
 		m_keys.add({"project.autoFades", "Opens the auto fades dialog for the whole project.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { openAutoFades(window, 0); }});
@@ -471,6 +533,24 @@ namespace gnubase::app
 			[this](ui::Window&, Rml::Element*) { return m_trackList != nullptr && !m_trackList->selection().empty(); });
 		m_keys.add({"project.addTrack", "Opens the add track dialog.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { openDialog(window, "add-track.rml"); }});
+		// Group Track to Selected Tracks and Effect Track to Selected Tracks (reference manual pp. 546, 554): the add
+		// track dialog's page for the new track, which the selected tracks play or send into.
+		for (const auto& [id, type, description] :
+			{std::tuple{"track.addGroupToSelected", "group",
+				 "Opens the add track dialog for a group track that the selected tracks play into."},
+				std::tuple{"track.addEffectToSelected", "effect",
+					"Opens the add track dialog for an effect track that the selected tracks send to."}})
+		{
+			m_keys.add({id, description, [this, type = std::string(type)](ui::Window& window, Rml::Element* /*zone*/)
+				{
+					std::string tracks;
+					for (const uint64_t track : m_trackList ? m_trackList->selection() : std::vector<uint64_t>())
+						tracks += (tracks.empty() ? "" : ",") + std::to_string(track);
+					openDialog(window, "add-track.rml", {{"type", type}, {"tracks", tracks}});
+				}});
+			m_keys.enableWhen(id, [this](ui::Window&, Rml::Element*)
+				{ return m_trackList != nullptr && !m_trackList->selection().empty(); });
+		}
 		// Project > Project Colors Setup (docs/features/colors.md).
 		m_keys.add({"project.colorsSetup", "Opens the project colors setup dialog, which edits the project's colors.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { openDialog(window, "project-colors.rml"); }});
@@ -909,7 +989,7 @@ namespace gnubase::app
 		m_docking.add({"mixer", "Mixer", "project", "lower", [this](Rml::Element& element)
 			{
 				auto mixer = std::make_shared<ui::Mixer>(
-					m_binding, m_docking, element, "lower", false, [this](uint64_t track) { choosePicture(track); });
+					m_binding, m_docking, element, "lower", ui::MixerKind::LowerZone, mixerActions());
 				m_lowerMixer = mixer;
 				return mixer;
 			}});
@@ -940,6 +1020,82 @@ namespace gnubase::app
 				[this, number](ui::Window&, Rml::Element*) { m_shell.post([this, number] { toggleMixer(number); }); }});
 		}
 		m_keys.bind({"F3", "window.mixer"});
+		// Edit Channel Settings (reference manual p. 500).
+		m_keys.add({"window.channelSettings",
+			"Opens the channel settings window for the first selected track's channel (Edit Channel Settings).",
+			[this](ui::Window&, Rml::Element*)
+			{
+				if (m_trackList && !m_trackList->selection().empty())
+					m_shell.post([this, track = m_trackList->selection().front()] { openChannelSettings(track); });
+			}});
+		m_keys.enableWhen("window.channelSettings",
+			[this](ui::Window&, Rml::Element*) { return m_trackList != nullptr && !m_trackList->selection().empty(); });
+	}
+
+	ui::MixerActions AppUi::mixerActions()
+	{
+		ui::MixerActions actions;
+		actions.choosePicture = [this](uint64_t track) { choosePicture(track); };
+		// Later in the step: the click may be in the channel settings window, which opening it would rebuild.
+		actions.editChannel = [this](uint64_t track) { m_shell.post([this, track] { openChannelSettings(track); }); };
+		// Add Effect Track to Send (p. 554): the add track dialog's effect page, in the mixer's window, later in the
+		// step, outside the drop-down list's event.
+		actions.addEffectTrack = [this](Rml::Element& from, uint64_t track, int send)
+		{
+			for (const ui::Window* window : m_shell.windows())
+				if (&window->context() == from.GetContext())
+					m_shell.post(
+						[this, id = window->id(), track, send]
+						{
+							if (ui::Window* found = m_shell.find(id))
+								openDialog(*found, "add-track.rml",
+									{{"type", "effect"}, {"tracks", std::to_string(track)},
+										{"send", std::to_string(send)}});
+						});
+		};
+		actions.wentTo = [this](uint64_t track)
+		{
+			m_settingsTrack = track;
+			if (m_trackList)
+				m_trackList->select({track});
+		};
+		return actions;
+	}
+
+	ui::Mixer* AppUi::openChannelSettings(uint64_t track)
+	{
+		if (channelSettings() == nullptr)
+		{
+			m_channelSettings.mixer.reset();
+			ui::WindowSpec spec;
+			spec.title = "Channel Settings";
+			spec.size = {1000, 560};
+			spec.hidden = m_hidden;
+			const ui::Window& window = m_shell.open(spec);
+			m_channelSettings.window = window.id();
+			const std::filesystem::path file = m_resources / "ui" / "channel-settings.rml";
+			Rml::ElementDocument* document = window.context().LoadDocument(file.generic_u8string());
+			Rml::Element* root = document != nullptr ? document->GetElementById("mixer") : nullptr;
+			if (root == nullptr)
+			{
+				m_shell.close(m_channelSettings.window);
+				m_channelSettings.window = 0;
+				throw std::runtime_error("cannot load the channel settings window from " + file.u8string());
+			}
+			document->Show();
+			m_channelSettings.mixer = std::make_unique<ui::Mixer>(
+				m_binding, m_docking, *root, std::string(), ui::MixerKind::ChannelSettings, mixerActions());
+			m_docking.attach("channelSettings", *document);
+		}
+		else if (!m_hidden)
+		{
+			m_shell.raise(m_channelSettings.window);
+		}
+		m_settingsTrack = track;
+		m_channelSettings.mixer->showTrack(track);
+		if (m_trackList)
+			m_trackList->select({track});
+		return m_channelSettings.mixer.get();
 	}
 
 	void AppUi::addEditors()
@@ -972,17 +1128,19 @@ namespace gnubase::app
 		};
 		m_editorSubscriptions.push_back(m_binding.on("project.reset", [request](const engine::Event&) { request(); }));
 		request();
-		// Open/Close Editor (Mod+E and Return, p. 1189) opens the selected MIDI parts in the editor window, or closes
-		// it without any; the other one does the same in the lower zone. Without MIDI parts, the editor window's
-		// command opens the first selected audio event in the sample editor (p. 613), or closes that too.
+		// Open/Close Editor (Mod+E and Return, p. 1189) opens the selected MIDI parts in the editor window, or else the
+		// selected audio parts in the audio part editor (p. 692), or closes it without any; the other one does the
+		// same in the lower zone. Without parts, the editor window's command opens the first selected audio event in
+		// the sample editor (p. 613), or closes that too.
 		for (const bool lower : {false, true})
 		{
 			const std::string editor = lower ? "lower" : "window";
 			m_keys.add({lower ? "window.lowerZoneEditor" : "editor.openClose",
-				lower ? "Opens the selected MIDI parts in the editor in the project window's lower zone, or closes it."
-					  : "Opens the selected MIDI parts in the editor window, or else the first selected audio event in "
-						"the "
-						"sample editor, or closes them.",
+				lower
+					? "Opens the selected MIDI parts or audio parts in the editor in the project window's lower zone, "
+					  "or closes it."
+					: "Opens the selected MIDI parts or audio parts in the editor window, or else the first selected "
+					  "audio event in the sample editor, or closes them.",
 				[this, editor](ui::Window&, Rml::Element*)
 				{
 					const std::vector<uint64_t> parts = selectedParts();
@@ -993,7 +1151,7 @@ namespace gnubase::app
 						if (editor == "lower")
 							m_docking.open("editor");
 					}
-					else if (const std::vector<uint64_t> events = selectedAudioEvents();
+					else if (const std::vector<uint64_t> events = selected("audioEvents");
 						!events.empty() && editor == "window")
 					{
 						m_binding.send("sampleEditor.open", {{"event", events.front()}});
@@ -1013,41 +1171,40 @@ namespace gnubase::app
 		m_keys.add({"editor.openList", "Opens the selected MIDI parts in the list editor window.",
 			[this](ui::Window&, Rml::Element*)
 			{
-				const std::vector<uint64_t> parts = selectedParts();
+				const std::vector<uint64_t> parts = selected("midiParts");
 				if (!parts.empty())
 					m_binding.send("editor.open", {{"editor", "window"}, {"parts", parts}, {"content", "list"}});
+			}});
+		// Open Audio Part Editor (Audio menu, reference manual p. 692): the selected audio parts in the editor window.
+		m_keys.add({"audio.openPartEditor", "Opens the selected audio parts in the audio part editor window.",
+			[this](ui::Window&, Rml::Element*)
+			{
+				const std::vector<uint64_t> parts = selected("audioParts");
+				if (!parts.empty())
+					m_binding.send("editor.open", {{"editor", "window"}, {"parts", parts}});
 			}});
 		m_keys.bind({"Mod+G", "editor.openList", engine::Json::object(), "project"});
 	}
 
-	std::vector<uint64_t> AppUi::selectedParts() const
+	std::vector<uint64_t> AppUi::selected(const char* kind) const
 	{
-		std::vector<uint64_t> parts;
+		std::vector<uint64_t> found;
 		if (!m_eventDisplay || !m_eventDisplay->project().is_object())
-			return parts;
-		const std::vector<uint64_t>& selected = m_eventDisplay->selection();
-		for (const engine::Json& part : m_eventDisplay->project().value("midiParts", engine::Json::array()))
+			return found;
+		const std::vector<uint64_t>& selection = m_eventDisplay->selection();
+		for (const engine::Json& item : m_eventDisplay->project().value(kind, engine::Json::array()))
 		{
-			const auto id = part.at("id").get<uint64_t>();
-			if (std::find(selected.begin(), selected.end(), id) != selected.end())
-				parts.push_back(id);
+			const auto id = item.at("id").get<uint64_t>();
+			if (std::find(selection.begin(), selection.end(), id) != selection.end())
+				found.push_back(id);
 		}
-		return parts;
+		return found;
 	}
 
-	std::vector<uint64_t> AppUi::selectedAudioEvents() const
+	std::vector<uint64_t> AppUi::selectedParts() const
 	{
-		std::vector<uint64_t> events;
-		if (!m_eventDisplay || !m_eventDisplay->project().is_object())
-			return events;
-		const std::vector<uint64_t>& selected = m_eventDisplay->selection();
-		for (const engine::Json& event : m_eventDisplay->project().value("audioEvents", engine::Json::array()))
-		{
-			const auto id = event.at("id").get<uint64_t>();
-			if (std::find(selected.begin(), selected.end(), id) != selected.end())
-				events.push_back(id);
-		}
-		return events;
+		const std::vector<uint64_t> parts = selected("midiParts");
+		return parts.empty() ? selected("audioParts") : parts;
 	}
 
 	void AppUi::followSampleEditor(const engine::Json& view)
@@ -1155,7 +1312,8 @@ namespace gnubase::app
 		}
 		if (!m_eventDisplay || m_eventDisplay->selection() == m_followed)
 			return;
-		// Editor Content Follows Event Selection (p. 1153): the MIDI parts selected in the project window.
+		// Editor Content Follows Event Selection (p. 1153): the MIDI parts, or else the audio parts, selected in the
+		// project window.
 		m_followed = m_eventDisplay->selection();
 		const std::vector<uint64_t> parts = selectedParts();
 		if (parts.empty())
@@ -1192,8 +1350,8 @@ namespace gnubase::app
 			throw std::runtime_error("cannot load the mixer window from " + file.u8string());
 		}
 		document->Show();
-		shown.mixer = std::make_unique<ui::Mixer>(m_binding, m_docking, *root, "window" + std::to_string(number), true,
-			[this](uint64_t track) { choosePicture(track); });
+		shown.mixer = std::make_unique<ui::Mixer>(
+			m_binding, m_docking, *root, "window" + std::to_string(number), ui::MixerKind::Window, mixerActions());
 		m_docking.attach("mixer" + std::to_string(number), *document);
 		return shown.mixer.get();
 	}
@@ -1275,12 +1433,15 @@ namespace gnubase::app
 		document->Show(Rml::ModalFlag::Modal);
 	}
 
-	Rml::ElementDocument& AppUi::openDialog(ui::Window& window, const char* name) const
+	Rml::ElementDocument& AppUi::openDialog(
+		ui::Window& window, const char* name, const std::vector<std::pair<std::string, std::string>>& attributes) const
 	{
 		const std::filesystem::path file = m_resources / "ui" / name;
 		Rml::ElementDocument* document = window.context().LoadDocument(file.generic_u8string());
 		if (document == nullptr)
 			throw std::runtime_error("cannot load the dialog " + file.u8string());
+		for (const auto& [attribute, value] : attributes)
+			document->SetAttribute(attribute, value);
 		document->Show(Rml::ModalFlag::Modal);
 		return *document;
 	}

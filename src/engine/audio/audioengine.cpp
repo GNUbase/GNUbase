@@ -374,7 +374,7 @@ namespace gnubase::engine
 			m_engine->broadcast("audio.changed", status());
 		if (m_device &&
 			(m_snapshots.latest().revision != m_revision || autoMonitoring() != m_autoMonitoring ||
-				listenGains() != m_listenGains))
+				listenGains() != m_listenGains || m_settings.get(settings::g_audioMutePreSends) != m_mutePreSends))
 			rebuild();
 		updateRecorder();
 	}
@@ -446,6 +446,7 @@ namespace gnubase::engine
 		const RenderSnapshot& snapshot = m_snapshots.latest();
 		m_autoMonitoring = autoMonitoring();
 		m_listenGains = listenGains();
+		m_mutePreSends = m_settings.get(settings::g_audioMutePreSends);
 		const audio::DeviceFormat& format = m_device->format();
 		graph::GraphDesc desc = graph::describe(snapshot);
 		m_sourceNodes.clear();
@@ -687,10 +688,12 @@ namespace gnubase::engine
 			graph::NodeDesc& node = desc.nodes[firstChannel + i];
 			const auto source = static_cast<size_t>(sourceNode(channel.id));
 			std::shared_ptr<ChannelStrip> fader;
+			std::shared_ptr<ChannelStrip> sourceStrip; // the strip that runs the source
 			if (source == firstChannel + i)
 			{
 				fader = std::make_shared<ChannelStrip>(
 					state, node.processor, panning, monitoring, channel.silent, StripPart::Whole, channel.sections);
+				sourceStrip = fader;
 			}
 			else
 			{
@@ -708,12 +711,16 @@ namespace gnubase::engine
 							std::make_shared<SlotStrip>(state, slot.processor, static_cast<uint8_t>(index));
 				}
 				graph::NodeDesc& sourceDesc = desc.nodes[source];
-				sourceDesc.processor = std::make_shared<ChannelStrip>(state, sourceDesc.processor, panning, monitoring,
+				sourceStrip = std::make_shared<ChannelStrip>(state, sourceDesc.processor, panning, monitoring,
 					channel.silent, StripPart::Source, channel.sections, std::move(plugins), std::move(slotIds));
+				sourceDesc.processor = sourceStrip;
 				fader = std::make_shared<ChannelStrip>(
 					state, nullptr, panning, std::nullopt, channel.silent, StripPart::Fader, channel.sections);
 			}
 			node.processor = fader;
+			if (const auto tap = m_renderTaps.find(channel.id); tap != m_renderTaps.end())
+				(tap->second.point == RenderPoint::Source ? sourceStrip : fader)
+					->tapRender(tap->second.tap, tap->second.point);
 
 			// The send nodes come in the order of the channels and their sends (graph::describe).
 			std::shared_ptr<PreFaderTap> tap;
@@ -726,8 +733,10 @@ namespace gnubase::engine
 				}
 				while (desc.nodes[sendNode].kind != graph::NodeKind::Send)
 					++sendNode;
+				// Mute Pre-Send when Mute (reference manual p. 1623): the mute button mutes pre-fader sends too.
+				const float gain = send.preFader && channel.muted && m_mutePreSends ? 0.0f : send.gain;
 				desc.nodes[sendNode++].processor =
-					std::make_shared<SendStrip>(state, send.number, send.gain, send.preFader ? tap : nullptr);
+					std::make_shared<SendStrip>(state, send.number, gain, send.preFader ? tap : nullptr);
 			}
 		}
 		m_channelStates = std::move(states);
