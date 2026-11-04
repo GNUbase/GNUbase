@@ -612,6 +612,8 @@ namespace gnubase::engine
 		m_sampleRate = sampleRate;
 		if (m_tap)
 			m_tap->prepare(maxFrames);
+		if (m_render)
+			m_render->prepare(maxFrames);
 	}
 
 	void PreFaderTap::prepare(uint32_t maxFrames)
@@ -670,6 +672,7 @@ namespace gnubase::engine
 		else
 			for (const graph::ProcessEvent& event : m_sourceEvents)
 				context.eventsOut.add(event);
+		render(RenderPoint::Source, context);
 		m_state->sections.processPre(m_sections, context.audio, context.channels, context.frames);
 
 		if (m_part == StripPart::Source)
@@ -682,11 +685,20 @@ namespace gnubase::engine
 		fade(context, m_faderEvents);
 	}
 
+	void ChannelStrip::render(RenderPoint point, const graph::ProcessContext& context) noexcept
+	{
+		if (m_render && m_renderPoint == point)
+			for (int c = 0; c < std::min(context.channels, m_render->channels()); ++c)
+				std::memcpy(m_render->channel(c), context.audio[c], context.frames * sizeof(float));
+	}
+
 	void ChannelStrip::fade(const graph::ProcessContext& context, const graph::EventBuffer& events) noexcept
 	{
 		if (context.channels == 0)
 			return;
+		render(RenderPoint::Inserts, context);
 		m_state->sections.processPost(m_sections, context.audio, context.channels, context.frames);
+		render(RenderPoint::Strip, context);
 		if (m_tap)
 			for (int c = 0; c < std::min(context.channels, m_tap->channels()); ++c)
 				std::memcpy(m_tap->channel(c), context.audio[c], context.frames * sizeof(float));

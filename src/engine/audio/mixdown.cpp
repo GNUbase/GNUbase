@@ -65,6 +65,7 @@ namespace gnubase::engine
 			std::unique_ptr<AudioFileWriter> writer; // of the part file
 			std::vector<float> block;                // interleaved
 			std::vector<float> converted;
+			std::shared_ptr<PreFaderTap> tap; // where its audio comes from when rendered from inside its strip
 			float peak = 0.0f;
 			int64_t frames = 0;   // in the part file
 			int64_t audible = 0;  // frames up to the last audible one
@@ -228,10 +229,12 @@ namespace gnubase::engine
 
 	void AudioEngine::registerMixdownCommands(Engine& engine)
 	{
-		// Renders [start, end) and tail frames more of the targets, which have objects and paths, into their files.
-		// The transport, its settings and the device are as before afterwards.
+		// Renders [start, end) and tail frames more of the targets, which have objects and paths, into their files:
+		// what they output, or with point, what their channel's strip has there (render in place and freeze). The
+		// transport, its settings and the device are as before afterwards.
 		const auto exportRange = [this](CommandContext& context, std::vector<Target>& targets, time::Samples start,
-									 time::Samples end, time::Samples tail, const FileFormat& format)
+									 time::Samples end, time::Samples tail, const FileFormat& format,
+									 std::optional<RenderPoint> point)
 		{
 			require(m_device != nullptr && m_programs, "there is no audio device; set one with audio.setDevice");
 			require(!m_transport.recording() && !m_transport.countingIn(), "stop recording first");
@@ -241,11 +244,23 @@ namespace gnubase::engine
 				"the device runs at " + std::to_string(std::lround(m_device->format().sampleRate)) +
 					" Hz, not at the project's sample rate of " + std::to_string(std::lround(projectRate)) +
 					" Hz; set the device to the project's sample rate");
-			const graph::CompiledGraph& graph = m_programs->latest().graph;
 			for (Target& target : targets)
 			{
-				target.node = graph.find(target.object);
-				target.channels = target.node >= 0 ? graph.outputChannels(target.node) : 0;
+				if (point)
+				{
+					const std::vector<RenderChannel>& channels = m_snapshots.latest().channels;
+					const auto channel = std::find_if(channels.begin(), channels.end(),
+						[&target](const RenderChannel& candidate) { return candidate.id == target.object; });
+					require(channel != channels.end(), target.name + " is a bus: only channels render from a point");
+					target.channels = channelCount(channel->format);
+					target.tap = std::make_shared<PreFaderTap>(target.channels);
+				}
+				else
+				{
+					const graph::CompiledGraph& graph = m_programs->latest().graph;
+					target.node = graph.find(target.object);
+					target.channels = target.node >= 0 ? graph.outputChannels(target.node) : 0;
+				}
 				require(target.channels > 0, target.name + " has no audio");
 			}
 			Cleanup cleanup{targets};
@@ -297,8 +312,20 @@ namespace gnubase::engine
 					if (m_slots)
 						m_slots->setProcessMode(on ? plugin::ProcessMode::Offline : plugin::ProcessMode::Realtime);
 				};
+				// The strips of channels rendered from a point leave their audio in the targets' taps.
+				const auto tap = [this, &targets, point](bool on)
+				{
+					if (!point)
+						return;
+					m_renderTaps.clear();
+					for (const Target& target : targets)
+						if (on)
+							m_renderTaps[target.object] = {*point, target.tap};
+					rebuild();
+				};
 				const auto restore = [&]
 				{
+					tap(false);
 					offline(false);
 					sent(m_transport.stop());
 					sent(m_transport.set(settings));
@@ -312,22 +339,27 @@ namespace gnubase::engine
 				try
 				{
 					offline(true);
+					tap(true);
 					sent(m_transport.set(plain));
 					if (playing)
 						sent(m_transport.stop());
 					cue(start, false, m_device->format().blockSize, true);
 					sent(m_transport.locate(start));
 					play();
+					const graph::CompiledGraph& graph = m_programs->latest().graph;
 					render(static_cast<uint64_t>(end - start + tail),
 						[&](uint32_t frames)
 						{
 							for (Target& target : targets)
 							{
-								float* const* audio = graph.audio(target.node);
 								const auto channels = static_cast<size_t>(target.channels);
-								for (uint32_t i = 0; i < frames; ++i)
-									for (size_t c = 0; c < channels; ++c)
-										target.block[(i * channels) + c] = audio[c][i];
+								for (size_t c = 0; c < channels; ++c)
+								{
+									const float* audio = target.tap ? target.tap->channel(static_cast<int>(c))
+																	: graph.audio(target.node)[c];
+									for (uint32_t i = 0; i < frames; ++i)
+										target.block[(i * channels) + c] = audio[i];
+								}
 								target.resampler->process(target.block.data(), frames, target.converted);
 								write(target);
 							}
@@ -379,7 +411,12 @@ namespace gnubase::engine
 				"float32 or float64; AIFF takes the integer ones, FLAC int16 and int24. sampleRate: the file's, "
 				"converted from the project's (the default). dither: TPDF dither for int16 and int24. normalize: the "
 				"file's peak in dBFS (-60 to 0). conflicts: unique (the default) adds a number to a name that is "
-				"taken, overwrite replaces the file. The transport and its settings are as before afterwards; a device "
+				"taken, overwrite replaces the file. point renders channels from inside their strip instead of after "
+				"the fader and panner (output, the default), in the channel's format, as render in place and freeze "
+				"do: source is what plays on the channel, before its pre section and plugin slots; inserts is after "
+				"the slots, before the strip's other sections; strip is after those, before the fader. tail renders "
+				"up to that many seconds (0 to 60) after end, ending after the last sample a 24-bit file doesn't hold "
+				"as silence. The transport and its settings are as before afterwards; a device "
 				"that runs stops meanwhile, and plugins render in offline mode. Refused while the device runs at "
 				"another sample rate than the project. Returns the files written, each with its channel, name, "
 				"absolute path and frames.",
@@ -390,7 +427,9 @@ namespace gnubase::engine
 					"format": {"type": "string", "enum": ["wav", "aiff", "flac"]},
 					"sampleFormat": {"type": "string", "enum": ["int16", "int24", "int32", "float32", "float64"]},
 					"sampleRate": {"type": "number"}, "dither": {"type": "boolean"}, "normalize": {"type": "number"},
-					"conflicts": {"type": "string", "enum": ["unique", "overwrite"]}}})"),
+					"conflicts": {"type": "string", "enum": ["unique", "overwrite"]},
+											"point": {"type": "string", "enum": ["output", "strip", "inserts", "source"]},
+											"tail": {"type": "number", "minimum": 0, "maximum": 60}}})"),
 				filesSchema, false},
 			[this, exportRange](CommandContext& context)
 			{
@@ -426,10 +465,20 @@ namespace gnubase::engine
 						extensionOf(format.format), format.overwrite, taken);
 					taken.insert(targets[i].path);
 				}
+				std::optional<RenderPoint> point;
+				const std::string from = parameters.value("point", std::string("output"));
+				if (from == "source")
+					point = RenderPoint::Source;
+				else if (from == "inserts")
+					point = RenderPoint::Inserts;
+				else if (from == "strip")
+					point = RenderPoint::Strip;
+				const auto tail =
+					static_cast<time::Samples>(std::llround(parameters.value("tail", 0.0) * snapshot.sampleRate));
 				std::error_code error;
 				fs::create_directories(folder, error);
 				require(!error, "can't create the folder " + folder.u8string() + ": " + error.message());
-				return exportRange(context, targets, start, end, 0, format);
+				return exportRange(context, targets, start, end, tail, format, point);
 			});
 		engine.registerCommand(
 			{"mixdown.quickExport", 1,
@@ -470,7 +519,8 @@ namespace gnubase::engine
 				if (targets[0].path.has_parent_path())
 					fs::create_directories(targets[0].path.parent_path(), error);
 				const Json result = exportRange(context, targets, *first, end,
-					static_cast<time::Samples>(std::llround(g_maxTailSeconds * snapshot.sampleRate)), format);
+					static_cast<time::Samples>(std::llround(g_maxTailSeconds * snapshot.sampleRate)), format,
+					std::nullopt);
 				const Json& file = result.at("files").at(0);
 				return Json{{"path", file.at("path")}, {"frames", file.at("frames")}};
 			});
