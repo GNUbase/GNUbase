@@ -288,6 +288,10 @@ TEST_CASE("tempo detection makes the tempo track follow a drum loop", "[integrat
 			const Json first = detected.at("tempo").at("tempoTrack").at(0);
 			CHECK(std::abs(first.at("bpm").get<double>() - (bpm * factor)) < 0.5 * factor);
 		}
+		// Detecting again replaces what the detections before made.
+		const Json again = run(client, "tempo.detect", {{"event", event}});
+		for (const Json& point : again.at("tempo").at("tempoTrack"))
+			CHECK(std::abs(point.at("bpm").get<double>() - bpm) < 0.5);
 	}
 	SECTION("offbeat correction puts the hi-hats on the beats")
 	{
