@@ -24,7 +24,10 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
   digits aren't versions. Only `.dawproject`, in any case, is taken for the extension: a file `Song v2.1` that
   `project.save` saved as named gets `Song v2.1-01.dawproject`. Files in the folder count as versions whatever case
   their name and extension are written in (`song-03.DAWPROJECT`), since the file systems of Windows and macOS don't tell
-  them apart and the next version would otherwise overwrite one.
+  them apart and the next version would otherwise overwrite one. That comparison folds ASCII letters only, while those
+  file systems fold other letters too (`übung-05` is `Übung-05` there) and macOS also takes the ways Unicode can write
+  an accented letter for one name. Such versions don't count for the next number, but they aren't overwritten either:
+  Save New Version goes on to the next number while the file system says that number's file exists.
 - **Revert.** `project.revert` opens the project's file again, which discards every change since it was saved.
 - **Recent projects.** Every file saved (not auto saved) or opened becomes the first of the recent projects, at most 10,
   kept in `recent-projects.json` in the settings folder ([settings.md](settings.md)), so they are the user's, not the
@@ -78,7 +81,7 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
 | New Project | `file.new` | Mod+N | opens the start screen |
 | Open... | `file.open` | Mod+O | an open dialog for a DAWproject file, then `project.load` |
 | Save | `file.save` | Mod+S | `project.save`, or Save As for a project without a file |
-| Save As... | `file.saveAs` | Mod+Shift+S | a save dialog, then `project.save` with the path (`.dawproject` added unless the name ends with it, in any case: `Song v1.2` is saved as `Song v1.2.dawproject`, `Mix.DAWPROJECT` as it is) |
+| Save As... | `file.saveAs` | Mod+Shift+S | a save dialog, then `project.save` with the path (`.dawproject` added unless the name ends with it, in any case: `Song v1.2` is saved as `Song v1.2.dawproject`, `Mix.DAWPROJECT` as it is, and a name ending in a dot, as the dialogs of Linux return it as typed, without that dot: `Song.` as `Song.dawproject`) |
 | Back up Project... | `file.backup` | | a folder dialog, then `project.backup` into it |
 | Save as Template... | `file.saveTemplate` | | the Save as Template dialog (`save-template.rml`) for the name, then `project.saveTemplate` |
 | Save New Version | `file.saveNewVersion` | Mod+Alt+S | `project.saveNewVersion`, or Save As for a project without a file |
@@ -122,13 +125,14 @@ New Project and Open Last Project on Startup.
 ## Checks
 
 `tests/projectfiles_tests.cpp` covers the engine commands with an engine whose settings folder is temporary: save and
-`modified`, save new version numbering (also next to versions in other case and of a file saved under a name with a
-dot), revert, auto save rotation, opening auto saves (also of untitled projects and of projects whose file is gone, and
-under paths in other case or with `.`) and where their media and next auto saves go, the engine's own auto saves once
-the interval passed and failing ones with their events and log entries, also when the reason or only the file changes
-(`Engine::advanceClock` moves the clock forward and returns once its tick ran, so no test waits), recent projects across
-restarts, and templates; and in the app's UI (`test::UiApp`, [ui-tests.md](ui-tests.md)) Save, Save As (also of a name
-with a dot and of one with the extension in upper case) and Save New Version after each through file dialogs, Open and
+`modified`, save new version numbering (also next to versions in other case, also where only the file system folds it,
+as for `übung-01` next to `Übung`, and of a file saved under a name with a dot), revert, auto save rotation, opening
+auto saves (also of untitled projects and of projects whose file is gone, and under paths in other case or with `.`) and
+where their media and next auto saves go, the engine's own auto saves once the interval passed and failing ones with
+their events and log entries, also when the reason or only the file changes (`Engine::advanceClock` moves the clock
+forward and returns once its tick ran, so no test waits), recent projects across restarts, and templates; and in the
+app's UI (`test::UiApp`, [ui-tests.md](ui-tests.md)) Save, Save As (also of a name with a dot, of one ending in a dot
+and of one with the extension in upper case) and Save New Version after each through file dialogs, Open and
 Revert with the unsaved changes dialog, Save asking for a file after Open of an auto save, quitting through the main
 window's close button and the OS's quit request with and without unsaved changes, the start screen's buttons and double
 clicks, Save as Template and Back up Project, and the error dialog for a failed save and backup, and for failed auto
