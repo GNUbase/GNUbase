@@ -128,7 +128,7 @@ TEST_CASE("the steps of one control go one at a time, the newest of a gesture re
 	const auto set = [&channel](const char* key, double value)
 	{ return Json::array({Json{{"command", "channel.set"}, {"parameters", {{"channel", channel}, {key, value}}}}}); };
 	const auto position = [&client] { return client.call("history.get").value.at("position").get<int64_t>(); };
-	const auto read = [&client, &channel](const char* key)
+	const auto read = [&client](const char* key)
 	{ return client.call("project.get").value.at("channels").at(0).at(key).get<double>(); };
 	REQUIRE(client.call("project.get").value.at("channels").at(0).at("id") == channel);
 	const int64_t before = position();
