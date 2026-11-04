@@ -471,14 +471,31 @@ namespace gnubase::ui
 		return seconds;
 	}
 
+	namespace
+	{
+		// Where a length in bars from a start goes: the start's place in its bar, that many bars later, so that
+		// lengths count the bars the ruler shows across signature changes.
+		time::Ticks barsLater(const time::SignatureMap& signatures, time::Ticks start, int64_t bars)
+		{
+			const int64_t bar = signatures.toBarsBeats(start).bar;
+			return signatures.barStart(bar + bars) + (start - signatures.barStart(bar));
+		}
+	}
+
 	std::string formatLength(TimeFormat format, double from, double to, const TimeContext& context)
 	{
 		if (format != TimeFormat::BarsBeats)
 			return formatClock(format, to - from, context);
-		// ponytail: counts in the first signature's bars, wrong across signature changes; measure from the start's
-		// bar when signature tracks (#156) make that common.
-		const time::BarsBeats length =
-			context.signatures.toBarsBeats(context.tempo.toTicks(to) - context.tempo.toTicks(from));
+		// Whole bars from the start, then the rest in the beats of the signature there.
+		const time::SignatureMap& signatures = context.signatures;
+		const time::Ticks start = context.tempo.toTicks(from);
+		const time::Ticks end = context.tempo.toTicks(to);
+		int64_t bars = std::max<int64_t>(0, signatures.toBarsBeats(end).bar - signatures.toBarsBeats(start).bar);
+		while (bars > 0 && barsLater(signatures, start, bars) > end)
+			--bars;
+		const time::Ticks at = barsLater(signatures, start, bars);
+		time::BarsBeats length = time::SignatureMap(signatures.signatureAt(at)).toBarsBeats(end - at);
+		length.bar += bars;
 		return std::to_string(length.bar) + "." + std::to_string(length.beat) + "." + std::to_string(length.sixteenth) +
 			"." + std::to_string(length.tick);
 	}
@@ -491,7 +508,10 @@ namespace gnubase::ui
 		const std::optional<time::BarsBeats> length = barsBeats(text);
 		if (!length)
 			return std::nullopt;
-		const time::Ticks ticks = context.tempo.toTicks(from) + context.signatures.toTicks(*length);
+		const time::Ticks at = barsLater(context.signatures, context.tempo.toTicks(from), length->bar);
+		const time::Ticks ticks = at +
+			time::SignatureMap(context.signatures.signatureAt(at))
+				.toTicks({0, length->beat, length->sixteenth, length->tick});
 		return context.tempo.toSeconds(ticks) - from;
 	}
 

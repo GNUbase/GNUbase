@@ -36,6 +36,7 @@ namespace gnubase::engine
 			{TrackType::Marker, "marker"},
 			{TrackType::Ruler, "ruler"},
 			{TrackType::Tempo, "tempo"},
+			{TrackType::Signature, "signature"},
 			{TrackType::Vca, "vca"},
 		};
 

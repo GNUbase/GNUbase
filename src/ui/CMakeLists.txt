@@ -85,6 +85,8 @@ add_library(gnubase-ui STATIC
 	sdlwindowsystem.h
 	shell.cpp
 	shell.h
+	signaturetrack.cpp
+	signaturetrack.h
 	statusline.cpp
 	statusline.h
 	tempotrack.cpp

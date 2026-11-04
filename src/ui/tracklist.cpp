@@ -48,7 +48,7 @@ namespace gnubase::ui
 			if (type == "tempo" || control == "tempoTrack")
 				return type == "tempo" && control == "tempoTrack";
 			if (!hasChannel)
-				return control == "timeBase" && type != "folder" && type != "ruler";
+				return control == "timeBase" && type != "folder" && type != "ruler" && type != "signature";
 			if (control == "record" || control == "monitor")
 				return type == "audio" || type == "instrument" || type == "midi";
 			if (control == "timeBase")
@@ -152,11 +152,12 @@ namespace gnubase::ui
 				[this, selected]
 				{
 					Json commands = Json::array();
-					// The project has one tempo track.
+					// The project has one tempo track and one signature track.
 					selected(
 						[this, &commands](uint64_t track)
 						{
-							if (m_tracks[m_index.at(track)].type != "tempo")
+							if (const std::string& type = m_tracks[m_index.at(track)].type;
+								type != "tempo" && type != "signature")
 								commands.push_back(
 									{{"command", "track.duplicate"}, {"parameters", {{"track", track}}}});
 						});
@@ -225,11 +226,12 @@ namespace gnubase::ui
 			m_actions[on ? "track.moveSelectedToNewFolderWithGroupChannel" : "track.moveSelectedToNewFolder"] =
 				[this, on]
 			{
-				// A new folder where the first of them was, with them inside; marker tracks and the tempo track stay at
-				// the top level.
+				// A new folder where the first of them was, with them inside; marker tracks, the tempo track and the
+				// signature track stay at the top level.
 				Json tracks = Json::array();
 				for (const uint64_t track : topSelection())
-					if (const std::string& type = m_tracks[m_index.at(track)].type; type != "marker" && type != "tempo")
+					if (const std::string& type = m_tracks[m_index.at(track)].type;
+						type != "marker" && type != "tempo" && type != "signature")
 						tracks.push_back(track);
 				if (tracks.empty())
 					return;
@@ -959,7 +961,7 @@ namespace gnubase::ui
 			for (const Row& row : m_tracks)
 				if (!row.holds && parents.count(row.id) == 0 && (row.channel == 0 || outputs.count(row.channel) == 0) &&
 					row.type != "group" && row.type != "effect" && row.type != "ruler" && row.type != "tempo" &&
-					row.type != "vca")
+					row.type != "signature" && row.type != "vca")
 					gone.insert(row.id);
 		} while (gone.size() != before);
 		return gone;
@@ -1197,7 +1199,7 @@ namespace gnubase::ui
 			if (inside || track == before)
 				continue;
 			const Row& row = m_tracks[m_index.at(track)];
-			if ((row.type == "marker" || row.type == "tempo") && parent != 0)
+			if ((row.type == "marker" || row.type == "tempo" || row.type == "signature") && parent != 0)
 				continue;
 			std::vector<uint64_t>& from = children[row.parent];
 			from.erase(std::find(from.begin(), from.end(), track));
