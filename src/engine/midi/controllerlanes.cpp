@@ -184,7 +184,10 @@ namespace gnubase::engine::midi
 		Json lineOnControllers(Project& project, MidiPart& part, const Json& lane, const Shape& shape,
 			time::Ticks density, CommandContext& context)
 		{
-			const ControllerType type = *controllerTypeFromName(lane.at("type").get<std::string>());
+			const std::optional<ControllerType> laneType = controllerTypeFromName(lane.at("type").get<std::string>());
+			if (!laneType.has_value())
+				throw CommandError("lane.type must be a controller lane type");
+			const ControllerType type = *laneType;
 			const auto number = static_cast<uint8_t>(lane.value("number", 0));
 			const auto channel = static_cast<uint8_t>(lane.value("channel", 0));
 			const bool numbered = type == ControllerType::Control || type == ControllerType::PolyPressure;
