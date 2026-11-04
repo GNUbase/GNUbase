@@ -96,14 +96,18 @@ namespace gnubase::engine
 		double value = 0.0; // in the target's unit; volume as a linear gain
 		AutomationShape shape = AutomationShape::Linear;
 		double curve = 0.0;
+		// A gap from here to the next point (virgin territory, or after a terminator): the lane's static value, which
+		// channelAutomation() gives it; a mute lane's has the mute button's value already.
+		bool gap = false;
 
 		bool operator==(const RenderAutomationPoint& other) const
 		{
-			return position == other.position && value == other.value && shape == other.shape && curve == other.curve;
+			return position == other.position && value == other.value && shape == other.shape && curve == other.curve &&
+				gap == other.gap;
 		}
 	};
 
-	// A lane that plays: read-enabled and with points.
+	// A lane that plays: read-enabled and with points, and with gap points where it has gaps.
 	struct RenderAutomationLane
 	{
 		AutomationTarget target;

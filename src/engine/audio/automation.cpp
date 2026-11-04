@@ -343,14 +343,25 @@ namespace gnubase::engine
 		{
 			const auto match = std::find_if(
 				lanes.begin(), lanes.end(), [&lane](const PlayedLane& played) { return played.target == lane.target; });
+			PlayedLane* played = nullptr;
 			if (match != lanes.end())
-				match->points = lane.points;
+				played = &*match;
 			else if (midi &&
 				(lane.target.type == AutomationTargetType::Controller ||
 					lane.target.type == AutomationTargetType::PitchBend ||
 					lane.target.type == AutomationTargetType::ChannelPressure))
-				lanes.push_back({lane.target, Kind::Midi, 0, 0.0, 0.0, 1.0, lane.points});
+				// The static values of automationLane.targets: no bend, or 0.
+				played = &lanes.emplace_back(PlayedLane{lane.target, Kind::Midi, 0,
+					lane.target.type == AutomationTargetType::PitchBend ? 0.5 : 0.0, 0.0, 1.0, {}});
 			// Anything else, e.g. a parameter of an instrument the channel no longer plays, waits.
+			if (played == nullptr)
+				continue;
+			played->points = lane.points;
+			// Gaps play the static value; a mute lane's have the mute button's (see RenderAutomationPoint::gap).
+			if (lane.target.type != AutomationTargetType::Mute)
+				for (RenderAutomationPoint& point : played->points)
+					if (point.gap)
+						point.value = played->staticValue;
 		}
 		return automation;
 	}

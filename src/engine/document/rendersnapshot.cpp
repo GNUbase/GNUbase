@@ -257,15 +257,32 @@ namespace gnubase::engine
 			const auto channel = trackChannel.find(lane.track);
 			if (!lane.read || lane.points.empty() || channel == trackChannel.end())
 				continue;
-			RenderAutomationLane render;
-			render.target = lane.target;
+			std::vector<const AutomationPoint*> sorted;
+			sorted.reserve(lane.points.size());
 			for (const auto& [pointId, point] : lane.points)
-				render.points.push_back({toSamples(project, point.position),
-					lane.target.type == AutomationTargetType::Volume ? volumeGain(point.value) : point.value,
-					point.shape, point.curve});
-			std::stable_sort(render.points.begin(), render.points.end(),
-				[](const RenderAutomationPoint& a, const RenderAutomationPoint& b) { return a.position < b.position; });
-			snapshot->channels[static_cast<size_t>(channel->second)].automation.push_back(std::move(render));
+				sorted.push_back(&point);
+			std::stable_sort(sorted.begin(), sorted.end(), [](const AutomationPoint* a, const AutomationPoint* b)
+				{ return a->position.value < b->position.value; });
+			RenderChannel& render = snapshot->channels[static_cast<size_t>(channel->second)];
+			// Gaps (reference manual p. 881) are steps to the static value; a mute lane's is the mute button.
+			const double gapValue =
+				lane.target.type == AutomationTargetType::Mute && project.channels.at(render.id).mute ? 1.0 : 0.0;
+			const auto gapAt = [gapValue](time::Samples position)
+			{ return RenderAutomationPoint{position, gapValue, AutomationShape::Step, 0.0, true}; };
+			RenderAutomationLane played;
+			played.target = lane.target;
+			for (const AutomationPoint* point : sorted)
+			{
+				const time::Samples position = toSamples(project, point->position);
+				if (project.virginTerritory && played.points.empty())
+					played.points.push_back(gapAt(position));
+				played.points.push_back({position,
+					lane.target.type == AutomationTargetType::Volume ? volumeGain(point->value) : point->value,
+					point->shape, point->curve});
+				if (point->terminator || (project.virginTerritory && point == sorted.back()))
+					played.points.push_back(gapAt(position));
+			}
+			render.automation.push_back(std::move(played));
 		}
 
 		for (RenderChannel& channel : snapshot->channels)
