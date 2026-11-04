@@ -96,6 +96,13 @@ namespace gnubase::engine
 	// {id, name, channels, volume, pan, mute, record, vca}; linkGroupFromJson leaves what the JSON doesn't have.
 	Json toJson(const LinkGroup& group);
 	LinkGroup linkGroupFromJson(const Json& json, const LinkGroup& fallback = {});
+	// {id, name, sounds: [{pitch, name, snap, mute, iNote, oNote, channel (null: Any), output}], order}. The sound's
+	// pitch is its index. drumSoundFromJson leaves what the JSON doesn't have and throws std::invalid_argument, naming
+	// the field, for a value a sound can't have; drumMapFromJson does too, also for an order that isn't each pitch
+	// once.
+	Json toJson(const DrumMap& map);
+	DrumSound drumSoundFromJson(const Json& json, DrumSound sound);
+	DrumMap drumMapFromJson(const Json& json, DrumMap map);
 	// [{"position": ticks, "bpm": ..., "ramp": ...}], and back; tempoFromJson throws std::invalid_argument for points a
 	// tempo map can't have.
 	Json toJson(const time::TempoMap& tempo);

@@ -4,6 +4,7 @@
 #include "engine/audio/automation.h"
 #include "engine/audio/fades.h"
 #include "engine/midi/controllerlanes.h"
+#include "engine/midi/drummaps.h"
 
 #include <algorithm>
 #include <array>
@@ -37,13 +38,20 @@ namespace gnubase::engine
 			const time::Ticks end = time::toTicks(endPosition, project.tempo, project.sampleRate);
 			const auto index = static_cast<int32_t>(channel.midiParts.size());
 			channel.midiParts.push_back({toSamples(project, start), toSamples(project, end)});
+			// The track's drum map plays each note's sound: its O-note, on its channel unless that is Any, and not
+			// at all if it is muted (#129).
+			const DrumMap* map = midi::drumMapOf(project, part.track);
 			for (const auto& [id, note] : part.notes)
 			{
 				if (note.position >= end - start || !midi::notePlays(note, part.id))
 					continue;
+				const DrumSound* sound = map != nullptr ? &map->sounds.at(note.pitch) : nullptr;
+				if (sound != nullptr && sound->mute)
+					continue;
 				const time::Ticks noteEnd = std::min(start + note.position + note.length, end);
 				channel.notes.push_back({toSamples(project, start + note.position), toSamples(project, noteEnd),
-					note.pitch, midi::playedVelocity(note, part.id), note.channel});
+					sound != nullptr ? sound->oNote : note.pitch, midi::playedVelocity(note, part.id),
+					sound != nullptr && sound->channel >= 0 ? static_cast<uint8_t>(sound->channel) : note.channel});
 			}
 			for (const auto& [id, controller] : part.controllers)
 				if (controller.position < end - start)

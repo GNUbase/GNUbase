@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/document/serialize.h"
 
+#include "engine/midi/drummaps.h"
 #include "engine/processors/builtin.h"
 
 #include <algorithm>
@@ -521,7 +522,7 @@ namespace gnubase::engine
 		Json json = {{"id", track.id}, {"type", trackTypeName(track.type)}, {"name", track.name},
 			{"color", colorJson(track.color)}, {"timeBase", timeBaseName(track.timeBase)}, {"parent", track.parent},
 			{"channel", track.channel}, {"autoFades", track.autoFades ? toJson(*track.autoFades) : Json(nullptr)},
-			{"enabled", track.enabled}, {"picture", track.picture}, {"frozen", nullptr}};
+			{"enabled", track.enabled}, {"picture", track.picture}, {"frozen", nullptr}, {"drumMap", track.drumMap}};
 		if (track.frozen)
 			json["frozen"] = {{"path", track.frozen->path}, {"sampleRate", track.frozen->sampleRate},
 				{"channels", track.frozen->channels}, {"length", track.frozen->length}};
@@ -729,6 +730,92 @@ namespace gnubase::engine
 		return group;
 	}
 
+	Json toJson(const DrumMap& map)
+	{
+		Json sounds = Json::array();
+		for (size_t pitch = 0; pitch < map.sounds.size(); ++pitch)
+		{
+			const DrumSound& sound = map.sounds[pitch];
+			sounds.push_back({{"pitch", pitch}, {"name", sound.name}, {"snap", midi::toString(sound.snap)},
+				{"mute", sound.mute}, {"iNote", sound.iNote}, {"oNote", sound.oNote},
+				{"channel", sound.channel < 0 ? Json(nullptr) : Json(sound.channel)}, {"output", sound.output}});
+		}
+		return {{"id", map.id}, {"name", map.name}, {"sounds", sounds}, {"order", map.order}};
+	}
+
+	DrumSound drumSoundFromJson(const Json& json, DrumSound sound)
+	{
+		const auto check = [](bool condition, const std::string& message)
+		{
+			if (!condition)
+				throw std::invalid_argument(message);
+		};
+		sound.name = json.value("name", sound.name);
+		if (json.contains("snap"))
+		{
+			const std::optional<midi::NoteValue> snap = midi::noteValueFromString(json.at("snap").get<std::string>());
+			check(snap.has_value(), "snap must be a note value such as 1/16, 1/8T or 1/4.");
+			sound.snap = snap.value_or(sound.snap);
+		}
+		sound.mute = json.value("mute", sound.mute);
+		for (const auto& [key, note] :
+			{std::pair<const char*, uint8_t*>{"iNote", &sound.iNote}, {"oNote", &sound.oNote}})
+			if (json.contains(key))
+			{
+				const auto value = json.at(key).get<int64_t>();
+				check(value >= 0 && value <= 127, std::string(key) + " must be 0 to 127");
+				*note = static_cast<uint8_t>(value);
+			}
+		if (json.contains("channel"))
+		{
+			const Json& channel = json.at("channel");
+			sound.channel = channel.is_null() ? -1 : channel.get<int>();
+			check(sound.channel >= -1 && sound.channel <= 15, "channel must be 0 to 15, or null for Any");
+		}
+		sound.output = json.value("output", sound.output);
+		return sound;
+	}
+
+	DrumMap drumMapFromJson(const Json& json, DrumMap map)
+	{
+		map.id = json.value("id", map.id);
+		map.name = json.value("name", map.name);
+		const Json sounds = json.value("sounds", Json::array());
+		for (size_t i = 0; i < sounds.size(); ++i)
+		{
+			const auto pitch = sounds[i].at("pitch").get<int64_t>();
+			if (pitch < 0 || pitch >= g_drumSounds)
+				throw std::invalid_argument("sounds[" + std::to_string(i) + "].pitch must be 0 to 127");
+			try
+			{
+				map.sounds.at(static_cast<size_t>(pitch)) =
+					drumSoundFromJson(sounds[i], map.sounds.at(static_cast<size_t>(pitch)));
+			}
+			catch (const std::invalid_argument& error)
+			{
+				throw std::invalid_argument("sounds[" + std::to_string(i) + "]." + error.what());
+			}
+		}
+		if (json.contains("order"))
+		{
+			const auto order = json.at("order").get<std::vector<int>>();
+			std::array<bool, g_drumSounds> seen{};
+			bool valid = order.size() == g_drumSounds;
+			for (size_t i = 0; valid && i < order.size(); ++i)
+			{
+				valid = order[i] >= 0 && order[i] < g_drumSounds && !seen.at(static_cast<size_t>(order[i]));
+				if (valid)
+				{
+					seen.at(static_cast<size_t>(order[i])) = true;
+					map.order.at(i) = static_cast<uint8_t>(order[i]);
+				}
+			}
+			if (!valid)
+				throw std::invalid_argument("order must have each pitch 0 to 127 once");
+		}
+		return map;
+	}
+
 	Json toJson(const AutomationTarget& target)
 	{
 		Json json = {{"type", automationTargetTypeName(target.type)}};
@@ -863,10 +950,10 @@ namespace gnubase::engine
 			{"poolFolders", toJsonArray(project.poolFolders)}, {"audioEvents", toJsonArray(project.audioEvents)},
 			{"audioParts", toJsonArray(project.audioParts)}, {"midiParts", toJsonArray(project.midiParts)},
 			{"markers", toJsonArray(project.markers)}, {"automation", toJsonArray(project.automation)},
-			{"linkGroups", toJsonArray(project.linkGroups)}, {"virginTerritory", project.virginTerritory},
-			{"quantize", midi::toJson(project.quantize)}, {"autoQuantize", project.autoQuantize},
-			{"activeMarkerTrack", project.activeMarkerTrack}, {"snap", toJson(project.snap)},
-			{"mixers", mixersJson(project.mixers)}};
+			{"linkGroups", toJsonArray(project.linkGroups)}, {"drumMaps", toJsonArray(project.drumMaps)},
+			{"virginTerritory", project.virginTerritory}, {"quantize", midi::toJson(project.quantize)},
+			{"autoQuantize", project.autoQuantize}, {"activeMarkerTrack", project.activeMarkerTrack},
+			{"snap", toJson(project.snap)}, {"mixers", mixersJson(project.mixers)}};
 		json.update(toJson(project.setup));
 		return json;
 	}
@@ -1360,6 +1447,7 @@ namespace gnubase::engine
 			// Files from before disabled tracks have every track enabled; only some types can be disabled.
 			track.enabled = !canDisable(track.type) || item.value("enabled", true);
 			track.picture = item.value("picture", std::string());                    // files from before #106 have none
+			track.drumMap = item.value("drumMap", ObjectId{0});                      // and before #129 none
 			if (const Json frozen = item.value("frozen", Json()); !frozen.is_null()) // and before #116 none
 			{
 				track.frozen = Freeze{frozen.at("path").get<std::string>(), frozen.at("sampleRate").get<double>(),
@@ -1674,6 +1762,15 @@ namespace gnubase::engine
 			group.volume = group.volume && group.vca == 0;
 			project.linkGroups[group.id] = std::move(group);
 		}
+		for (const Json& item : json.value("drumMaps", Json::array()))
+		{
+			const DrumMap map = drumMapFromJson(item, midi::emptyDrumMap());
+			project.drumMaps[map.id] = map;
+		}
+		for (auto& [id, track] : project.trackById)
+			if (project.drumMaps.count(track.drumMap) == 0 ||
+				(track.type != TrackType::Midi && track.type != TrackType::Instrument))
+				track.drumMap = 0;
 		project.virginTerritory = json.value("virginTerritory", false); // files from before #124 have none
 		// Files from before quantizing have neither.
 		if (json.contains("quantize"))
@@ -1722,6 +1819,8 @@ namespace gnubase::engine
 			see(id);
 		for (const auto& [id, group] : project.linkGroups)
 			see(id);
+		for (const auto& [id, map] : project.drumMaps)
+			see(id);
 		for (const auto& [id, lane] : project.automation)
 		{
 			see(id);
@@ -1729,6 +1828,12 @@ namespace gnubase::engine
 				see(pointId);
 		}
 		project.nextId = std::max(json.value("nextId", ObjectId{0}), highest + 1);
+		if (!json.contains("drumMaps")) // files from before #129 get the GM Map, as new projects do
+		{
+			DrumMap gm = midi::gmDrumMap();
+			gm.id = project.newId();
+			project.drumMaps[gm.id] = std::move(gm);
+		}
 		placeOldMarkers(project);
 		return project;
 	}
