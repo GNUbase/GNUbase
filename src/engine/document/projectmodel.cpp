@@ -5,6 +5,7 @@
 #include "engine/audiofile/resampler.h"
 #include "engine/dawproject/dawproject.h"
 #include "engine/document/editors.h"
+#include "engine/document/hitpoints.h"
 #include "engine/document/mixerviews.h"
 #include "engine/document/sampleeditor.h"
 #include "engine/document/serialize.h"
@@ -2725,6 +2726,13 @@ namespace gnubase::engine
 			});
 	}
 
+	Json ProjectModel::runEdit(
+		const std::string& command, Project& project, const Json& parameters, CommandContext& context)
+	{
+		CommandContext inner(parameters, &context);
+		return m_edits.at(command).handler(project, inner);
+	}
+
 	void ProjectModel::addControl(
 		Engine& engine, CommandInfo info, std::function<Json(CommandContext& context)> handler)
 	{
@@ -3562,6 +3570,7 @@ namespace gnubase::engine
 		registerMixerCommands(*this, engine);
 		registerEditorCommands(*this, engine);
 		registerSampleEditorCommands(*this, engine);
+		registerHitpointCommands(*this, engine);
 		registerHistoryCommands(engine);
 		registerMediaFolderCommands(engine, jobs);
 		registerProjectFileCommands(engine);

@@ -580,8 +580,23 @@ namespace gnubase::engine
 		Json regions = Json::array();
 		for (const ClipRegion& region : clip.regions)
 			regions.push_back(toJson(region));
+		// Whether each hitpoint counts is for clients; loading works it out again.
+		Json hitpoints = Json::array();
+		const std::vector<bool> active = activeHitpoints(clip);
+		for (size_t i = 0; i < clip.hitpoints.size(); ++i)
+		{
+			const Hitpoint& hitpoint = clip.hitpoints[i];
+			hitpoints.push_back(
+				{{"position", hitpoint.position}, {"peak", hitpoint.peak}, {"intensity", hitpoint.intensity},
+					{"locked", hitpoint.locked}, {"disabled", hitpoint.disabled}, {"active", active[i]}});
+		}
+		const HitpointFilter& filter = clip.hitpointFilter;
 		return {{"id", clip.id}, {"name", clip.name}, {"media", clip.media}, {"fadeIn", toJson(clip.fadeIn)},
-			{"fadeOut", toJson(clip.fadeOut)}, {"folder", clip.folder}, {"regions", std::move(regions)}};
+			{"fadeOut", toJson(clip.fadeOut)}, {"folder", clip.folder}, {"regions", std::move(regions)},
+			{"hitpoints", std::move(hitpoints)},
+			{"hitpointFilter",
+				{{"threshold", filter.threshold}, {"intensity", filter.intensity},
+					{"minimumLength", filter.minimumLength}}}};
 	}
 
 	Json toJson(const PoolFolder& folder)
@@ -1436,9 +1451,30 @@ namespace gnubase::engine
 				if (read.start >= 0 && read.start < read.end)
 					regions.push_back(std::move(read));
 			}
+			// Files from before hitpoints (#143) have none; hitpoints before the clip's start, values out of range
+			// and a second hitpoint at a position are left out.
+			std::vector<Hitpoint> hitpoints;
+			for (const Json& hitpoint : item.value("hitpoints", Json::array()))
+			{
+				const Hitpoint read{hitpoint.at("position").get<time::Samples>(), hitpoint.value("peak", 0.0),
+					std::clamp(hitpoint.value("intensity", 0.0), 0.0, 1.0), hitpoint.value("locked", false),
+					hitpoint.value("disabled", false)};
+				if (read.position >= 0 && std::isfinite(read.peak))
+					hitpoints.push_back(read);
+			}
+			std::sort(hitpoints.begin(), hitpoints.end(),
+				[](const Hitpoint& a, const Hitpoint& b) { return a.position < b.position; });
+			hitpoints.erase(std::unique(hitpoints.begin(), hitpoints.end(),
+								[](const Hitpoint& a, const Hitpoint& b) { return a.position == b.position; }),
+				hitpoints.end());
+			const Json filter = item.value("hitpointFilter", Json::object());
+			const HitpointFilter hitpointFilter{
+				std::clamp(filter.value("threshold", g_minHitpointThreshold), g_minHitpointThreshold, 0.0),
+				std::clamp(filter.value("intensity", 0.0), 0.0, 1.0),
+				std::max<time::Samples>(0, filter.value("minimumLength", time::Samples{0}))};
 			project.clips[id] = {id, item.at("name").get<std::string>(), item.at("media").get<ObjectId>(),
 				fadeFromJson(item.value("fadeIn", Json::object())), fadeFromJson(item.value("fadeOut", Json::object())),
-				item.value("folder", ObjectId{0}), std::move(regions)};
+				item.value("folder", ObjectId{0}), std::move(regions), std::move(hitpoints), hitpointFilter};
 		}
 		// Files from before the pool's folders have none. Folders inside folders that aren't there go to the top, and
 		// of each loop of folders inside each other the first one; clips in folders that aren't there go to the
