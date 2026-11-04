@@ -3,7 +3,8 @@
 // the editor window show, the part active for editing, the part editing mode, Keep Editor Contents and the global
 // tracks shown above the notes; and the key editor's (#127, pp. 1189-1220): the selected notes and step and MIDI input,
 // which editor.input applies; and whether an editor shows the key editor or the list editor (#130, pp. 1243-1258),
-// whose selection also has controller events. The commands keep the views on the command thread, outside the project,
+// whose selection also has controller events; and the audio part editor's (#146, pp. 692-702), whose parts are audio
+// parts and whose selection is audio events. The commands keep the views on the command thread, outside the project,
 // so they are no undo steps and don't make the project modified; editor.input's notes are.
 #include "engine/document/editors.h"
 
@@ -30,8 +31,9 @@ namespace gnubase::engine
 		constexpr std::array<const char*, 2> g_editors = {"lower", "window"};
 		// The part editing modes (p. 1143): what selecting and editing reach.
 		constexpr std::array<const char*, 3> g_editingModes = {"allParts", "activePart", "activeTrack"};
-		// What an editor shows its parts in: the key editor (#127) or the list editor (#130).
-		constexpr std::array<const char*, 2> g_contents = {"key", "list"};
+		// What an editor shows its parts in: MIDI parts the key editor (#127) or the list editor (#130), audio parts
+		// the audio part editor (#146).
+		constexpr std::array<const char*, 3> g_contents = {"key", "list", "audioPart"};
 
 		struct EditorView
 		{
@@ -57,6 +59,8 @@ namespace gnubase::engine
 			std::string content = "key";
 			// The list editor (#130): the selected controller events, each a part and a controller event of it.
 			std::vector<std::pair<ObjectId, ObjectId>> controllerSelection;
+			// The audio part editor (#146): the selected audio events of its parts.
+			std::vector<ObjectId> eventSelection;
 		};
 
 		using Views = std::map<std::string, EditorView>;
@@ -74,6 +78,25 @@ namespace gnubase::engine
 				(found->second.type == TrackType::Marker || found->second.type == TrackType::Ruler);
 		}
 
+		bool isPart(const Project& project, ObjectId id)
+		{
+			return project.midiParts.count(id) != 0 || project.audioParts.count(id) != 0;
+		}
+
+		// A MIDI part's or an audio part's track and position.
+		std::pair<ObjectId, time::Position> placeOf(const Project& project, ObjectId part)
+		{
+			if (const auto audio = project.audioParts.find(part); audio != project.audioParts.end())
+				return {audio->second.track, audio->second.position};
+			const MidiPart& midi = project.midiParts.at(part);
+			return {midi.track, midi.position};
+		}
+
+		bool showsAudio(const EditorView& view)
+		{
+			return view.content == "audioPart";
+		}
+
 		// The parts that still exist, once each, in the track list's order and on each track by position.
 		std::vector<ObjectId> ordered(const Project& project, std::vector<ObjectId> parts)
 		{
@@ -81,13 +104,13 @@ namespace gnubase::engine
 			const std::vector<ObjectId> order = project.trackOrder();
 			for (size_t i = 0; i < order.size(); ++i)
 				index[order[i]] = i;
-			parts.erase(std::remove_if(parts.begin(), parts.end(),
-							[&project](ObjectId id) { return project.midiParts.count(id) == 0; }),
+			parts.erase(
+				std::remove_if(parts.begin(), parts.end(), [&project](ObjectId id) { return !isPart(project, id); }),
 				parts.end());
 			const auto key = [&](ObjectId id)
 			{
-				const MidiPart& part = project.midiParts.at(id);
-				return std::make_tuple(index[part.track], part.position.value, id);
+				const auto [track, position] = placeOf(project, id);
+				return std::make_tuple(index[track], position.value, id);
 			};
 			std::sort(parts.begin(), parts.end(), [&](ObjectId a, ObjectId b) { return key(a) < key(b); });
 			parts.erase(std::unique(parts.begin(), parts.end()), parts.end());
@@ -96,7 +119,7 @@ namespace gnubase::engine
 
 		ObjectId trackOf(const Project& project, ObjectId part)
 		{
-			return part == 0 ? 0 : project.midiParts.at(part).track;
+			return part == 0 ? 0 : placeOf(project, part).first;
 		}
 
 		// The parts that selecting and editing reach in the editing mode (p. 1197).
@@ -126,11 +149,25 @@ namespace gnubase::engine
 				selection.end());
 		}
 
+		// The audio part an audio event is in, if the view can edit it; 0 for none.
+		ObjectId editablePartOf(const Project& project, const std::vector<ObjectId>& editable, ObjectId event)
+		{
+			const auto found = project.audioEvents.find(event);
+			return found != project.audioEvents.end() &&
+					std::find(editable.begin(), editable.end(), found->second.part) != editable.end()
+				? found->second.part
+				: 0;
+		}
+
 		void dropUneditable(const Project& project, EditorView& view)
 		{
 			const std::vector<ObjectId> editable = editableParts(project, view);
 			dropUneditable(project, editable, view.selection, &MidiPart::notes);
 			dropUneditable(project, editable, view.controllerSelection, &MidiPart::controllers);
+			view.eventSelection.erase(
+				std::remove_if(view.eventSelection.begin(), view.eventSelection.end(),
+					[&](ObjectId event) { return editablePartOf(project, editable, event) == 0; }),
+				view.eventSelection.end());
 		}
 
 		// The editor's view now: closed and empty once another project is open, without what is gone since.
@@ -169,25 +206,35 @@ namespace gnubase::engine
 				{"recordVelocity", view.recordVelocity}, {"recordReleaseVelocity", view.recordReleaseVelocity},
 				{"keepNotes", view.keepNotes}, {"insertVelocity", view.insertVelocity},
 				{"lengthQuantize", view.lengthQuantize}, {"content", view.content},
-				{"controllerSelection", controllerSelection}};
+				{"controllerSelection", controllerSelection}, {"eventSelection", view.eventSelection}};
 		}
 
-		// The MIDI parts of a track, or of every track in a folder.
-		void collectParts(const Project& project, ObjectId track, std::vector<ObjectId>& parts)
+		// The MIDI parts, or the audio parts, of a track, or of every track in a folder.
+		void collectParts(const Project& project, ObjectId track, bool audio, std::vector<ObjectId>& parts)
 		{
-			for (const auto& [id, part] : project.midiParts)
-				if (part.track == track)
-					parts.push_back(id);
+			if (audio)
+			{
+				for (const auto& [id, part] : project.audioParts)
+					if (part.track == track)
+						parts.push_back(id);
+			}
+			else
+			{
+				for (const auto& [id, part] : project.midiParts)
+					if (part.track == track)
+						parts.push_back(id);
+			}
 			for (const ObjectId child : project.trackById.at(track).children)
-				collectParts(project, child, parts);
+				collectParts(project, child, audio, parts);
 		}
 
-		std::vector<ObjectId> partsOf(const Project& project, ObjectId track)
+		std::vector<ObjectId> partsOf(const Project& project, ObjectId track, bool audio)
 		{
 			require(project.trackById.count(track) != 0, "no track " + std::to_string(track));
 			std::vector<ObjectId> parts;
-			collectParts(project, track, parts);
-			require(!parts.empty(), "track " + std::to_string(track) + " has no MIDI parts");
+			collectParts(project, track, audio, parts);
+			require(
+				!parts.empty(), "track " + std::to_string(track) + " has no " + (audio ? "audio" : "MIDI") + " parts");
 			return ordered(project, parts);
 		}
 
@@ -205,8 +252,19 @@ namespace gnubase::engine
 		std::vector<ObjectId> checkedParts(const Project& project, const std::vector<ObjectId>& parts)
 		{
 			for (const ObjectId id : parts)
-				require(project.midiParts.count(id) != 0, "no MIDI part " + std::to_string(id));
+				require(isPart(project, id), "no MIDI part or audio part " + std::to_string(id));
+			const auto audio = [&project](ObjectId id) { return project.audioParts.count(id) != 0; };
+			require(std::all_of(parts.begin(), parts.end(), audio) || std::none_of(parts.begin(), parts.end(), audio),
+				"parts must be all MIDI parts or all audio parts");
 			return ordered(project, parts);
+		}
+
+		// Audio parts show in the audio part editor, MIDI parts in the key editor or the list editor.
+		void requireContent(const Project& project, const EditorView& view)
+		{
+			require(view.parts.empty() || (project.audioParts.count(view.parts.front()) != 0) == showsAudio(view),
+				"audio parts show in the audio part editor (content audioPart), MIDI parts in the key editor or the "
+				"list editor");
 		}
 
 		time::Ticks partStart(const Project& project, const MidiPart& part)
@@ -300,10 +358,10 @@ namespace gnubase::engine
 				{{"type", "object"}, {"additionalProperties", false}, {"required", {"part", "controller"}},
 					{"properties", {{"part", idSchema}, {"controller", idSchema}}}}}};
 		const Json keyEditorSchema = {{"content", contentSchema}, {"controllerSelection", controllerSelectionSchema},
-			{"selection", selectionSchema}, {"stepInput", boolean}, {"midiInput", boolean}, {"stepPosition", idSchema},
-			{"moveInsert", boolean}, {"recordPitch", boolean}, {"recordVelocity", boolean},
-			{"recordReleaseVelocity", boolean}, {"keepNotes", boolean}, {"insertVelocity", {{"type", "number"}}},
-			{"lengthQuantize", {{"type", "string"}}}};
+			{"eventSelection", idsSchema}, {"selection", selectionSchema}, {"stepInput", boolean},
+			{"midiInput", boolean}, {"stepPosition", idSchema}, {"moveInsert", boolean}, {"recordPitch", boolean},
+			{"recordVelocity", boolean}, {"recordReleaseVelocity", boolean}, {"keepNotes", boolean},
+			{"insertVelocity", {{"type", "number"}}}, {"lengthQuantize", {{"type", "string"}}}};
 		Json viewSchema = {{"type", "object"},
 			{"properties",
 				{{"editor", editorSchema}, {"open", {{"type", "boolean"}}}, {"parts", idsSchema},
@@ -313,11 +371,12 @@ namespace gnubase::engine
 				{"editor", "open", "parts", "activePart", "activeTrack", "editable", "editingMode", "keepContents",
 					"globalTracks", "selection", "stepInput", "midiInput", "stepPosition", "moveInsert", "recordPitch",
 					"recordVelocity", "recordReleaseVelocity", "keepNotes", "insertVelocity", "lengthQuantize",
-					"content", "controllerSelection"}}};
+					"content", "controllerSelection", "eventSelection"}}};
 		viewSchema["properties"].update(keyEditorSchema);
 		const std::string viewText =
 			"editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: "
-			"open; parts, the MIDI parts it shows, in the track list's order and by position; activePart, the part "
+			"open; parts, the MIDI parts or audio parts it shows, in the track list's order and by position; "
+			"activePart, the part "
 			"active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing "
 			"reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; "
 			"keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the "
@@ -328,8 +387,11 @@ namespace gnubase::engine
 			"the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, "
 			"a note value such as 1/16, 1/8T or 1/4., or link for the quantize grid's (quantize.set). content: what "
 			"shows the parts, key (the key editor) or list (the list editor, pp. 1243-1258); controllerSelection, the "
-			"list editor's selected controller events, each {part, controller}, of the editable parts. View state: no "
-			"undo steps, not saved, and a new or loaded project closes the editors.";
+			"list editor's selected controller events, each {part, controller}, of the editable parts. Audio parts "
+			"show "
+			"in the audio part editor (content audioPart, pp. 692-702), whose eventSelection is the selected audio "
+			"events of the editable parts. View state: no undo steps, not saved, and a new or loaded project closes "
+			"the editors.";
 		const auto editorOnly = [&](Json properties = Json::object())
 		{
 			properties["editor"] = editorSchema;
@@ -347,8 +409,7 @@ namespace gnubase::engine
 			return result;
 		};
 
-		engine.registerCommand(
-			{"editor.get", 1, "What a MIDI editor shows. " + viewText, editorOnly(), viewSchema, true},
+		engine.registerCommand({"editor.get", 1, "What an editor shows. " + viewText, editorOnly(), viewSchema, true},
 			[views, &model](CommandContext& context)
 			{
 				const std::string editor = context.parameters().at("editor").get<std::string>();
@@ -360,10 +421,11 @@ namespace gnubase::engine
 		openSchema["required"] = {"editor", "parts"};
 		engine.registerCommand(
 			{"editor.open", 1,
-				"Opens a MIDI editor with MIDI parts, such as the ones selected in the project window, or shows "
-				"those parts in it if it is open. activePart becomes the part active for editing, by default the "
-				"first. content shows them in the key editor or the list editor; an open editor keeps its content "
-				"unless it is given, a closed one opens with the key editor. Emits editor.changed. " +
+				"Opens an editor with MIDI parts or audio parts, such as the ones selected in the project window, or "
+				"shows those parts in it if it is open. activePart becomes the part active for editing, by default "
+				"the first. content shows MIDI parts in the key editor or the list editor; an open editor keeps its "
+				"content unless it is given, a closed one opens with the key editor. Audio parts open in the audio "
+				"part editor (audioPart). Emits editor.changed. " +
 					viewText,
 				openSchema, viewSchema, false},
 			[views, &model, store](CommandContext& context)
@@ -371,25 +433,34 @@ namespace gnubase::engine
 				const Json& parameters = context.parameters();
 				const std::string editor = parameters.at("editor").get<std::string>();
 				EditorView view = current(*views, model, editor);
-				view.parts = checkedParts(model.project(), ids(parameters, "parts"));
-				require(!view.parts.empty(), "parts must name at least one MIDI part");
+				const Project& project = model.project();
+				view.parts = checkedParts(project, ids(parameters, "parts"));
+				require(!view.parts.empty(), "parts must name at least one part");
 				view.activePart = parameters.value("activePart", view.parts.front());
 				require(contains(view.parts, view.activePart),
 					"the active part " + std::to_string(view.activePart) + " isn't one of the parts");
 				view.open = true;
-				view.content = parameters.value("content", view.content);
+				if (parameters.contains("content"))
+					view.content = parameters.at("content").get<std::string>();
+				else if (project.audioParts.count(view.parts.front()) != 0)
+					view.content = "audioPart";
+				else if (showsAudio(view))
+					view.content = "key";
+				requireContent(project, view);
 				return store(editor, view, context);
 			});
 
 		engine.registerCommand(
 			{"editor.set", 1,
-				"Changes what an open MIDI editor shows (reference manual pp. 1142-1156); what isn't given stays. "
+				"Changes what an open editor shows (reference manual pp. 1142-1156); what isn't given stays. "
 				"parts replaces its parts. Then the Visibility tab's changes: exclusive hides every track first, "
-				"showTracks shows every MIDI part of these tracks (all tracks in a folder) and activates the last, "
+				"showTracks shows every MIDI part of these tracks (all tracks in a folder), in the audio part editor "
+				"every audio part, and activates the last, "
 				"hideTracks hides theirs; at least one part stays. activeTrack activates the track's first part shown, "
 				"activePart a part shown. editingMode, keepContents and globalTracks (marker and ruler tracks, the "
 				"editor window only) also apply to a closed editor. selection replaces the selected notes, of the "
-				"editable parts, and controllerSelection the selected controller events. content and the key editor's "
+				"editable parts, controllerSelection the selected controller events and eventSelection the selected "
+				"audio events of the editable audio parts. content and the key editor's "
 				"settings apply to any editor; turning stepInput on puts the step input cursor at the active part's "
 				"start unless stepPosition is given. Emits editor.changed. " +
 					viewText,
@@ -400,7 +471,8 @@ namespace gnubase::engine
 					{"stepPosition", idSchema}, {"moveInsert", boolean}, {"recordPitch", boolean},
 					{"recordVelocity", boolean}, {"recordReleaseVelocity", boolean}, {"keepNotes", boolean},
 					{"insertVelocity", {{"type", "number"}}}, {"lengthQuantize", {{"type", "string"}}},
-					{"content", contentSchema}, {"controllerSelection", controllerSelectionSchema}}),
+					{"content", contentSchema}, {"controllerSelection", controllerSelectionSchema},
+					{"eventSelection", idsSchema}}),
 				viewSchema, false},
 			[views, &model, store](CommandContext& context)
 			{
@@ -416,14 +488,15 @@ namespace gnubase::engine
 					view.parts = checkedParts(project, ids(parameters, "parts"));
 				if (parameters.value("exclusive", false))
 					view.parts.clear();
+				const bool audio = showsAudio(view);
 				for (const ObjectId track : ids(parameters, "showTracks"))
 				{
-					const std::vector<ObjectId> shown = partsOf(project, track);
+					const std::vector<ObjectId> shown = partsOf(project, track, audio);
 					view.parts.insert(view.parts.end(), shown.begin(), shown.end());
 					view.activePart = shown.front(); // showing a track activates it (p. 1151)
 				}
 				for (const ObjectId track : ids(parameters, "hideTracks"))
-					for (const ObjectId part : partsOf(project, track))
+					for (const ObjectId part : partsOf(project, track, audio))
 						view.parts.erase(std::remove(view.parts.begin(), view.parts.end(), part), view.parts.end());
 				view.parts = ordered(project, view.parts);
 				require(!changesParts || !view.parts.empty(), "at least one track must stay shown");
@@ -480,8 +553,22 @@ namespace gnubase::engine
 				};
 				select("selection", "note", &MidiPart::notes, view.selection);
 				select("controllerSelection", "controller", &MidiPart::controllers, view.controllerSelection);
+				if (parameters.contains("eventSelection"))
+				{
+					const std::vector<ObjectId> editable = editableParts(project, view);
+					view.eventSelection.clear();
+					for (const ObjectId event : ids(parameters, "eventSelection"))
+					{
+						require(editablePartOf(project, editable, event) != 0,
+							"audio event " + std::to_string(event) + " isn't in an editable part of the " + editor +
+								" editor");
+						if (!contains(view.eventSelection, event))
+							view.eventSelection.push_back(event);
+					}
+				}
 				if (parameters.contains("content"))
 					view.content = parameters.at("content").get<std::string>();
+				requireContent(project, view);
 				const bool stepTurnsOn = parameters.value("stepInput", view.stepInput) && !view.stepInput;
 				for (const auto& [name, flag] : {std::pair<const char*, bool*>{"stepInput", &view.stepInput},
 						 {"midiInput", &view.midiInput}, {"moveInsert", &view.moveInsert},
@@ -489,7 +576,7 @@ namespace gnubase::engine
 						 {"recordReleaseVelocity", &view.recordReleaseVelocity}, {"keepNotes", &view.keepNotes}})
 					if (parameters.contains(name))
 						*flag = parameters.at(name).get<bool>();
-				if (stepTurnsOn && view.activePart != 0)
+				if (stepTurnsOn && project.midiParts.count(view.activePart) != 0)
 					view.stepPosition = partStart(project, project.midiParts.at(view.activePart));
 				if (parameters.contains("stepPosition"))
 				{
@@ -513,7 +600,7 @@ namespace gnubase::engine
 
 		engine.registerCommand(
 			{"editor.close", 1,
-				"Closes a MIDI editor: it shows no parts, and Keep Editor Contents goes off (p. 1153). Emits "
+				"Closes an editor: it shows no parts, and Keep Editor Contents goes off (p. 1153). Emits "
 				"editor.changed. " +
 					viewText,
 				editorOnly(), viewSchema, false},
@@ -527,6 +614,7 @@ namespace gnubase::engine
 				view.keepContents = false;
 				view.selection.clear();
 				view.controllerSelection.clear();
+				view.eventSelection.clear();
 				view.content = "key";
 				return store(editor, view, context);
 			});
@@ -564,6 +652,7 @@ namespace gnubase::engine
 				const std::string editor = parameters.at("editor").get<std::string>();
 				EditorView view = current(*views, model, editor);
 				require(view.open, "the " + editor + " editor isn't open");
+				require(!showsAudio(view), "the audio part editor takes no notes");
 				require(view.stepInput || view.midiInput, "step input and MIDI input are off");
 				const std::vector<Played> played = playedNotes(parameters.at("notes"), view);
 				Json added = Json::array();

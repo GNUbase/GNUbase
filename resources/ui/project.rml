@@ -292,9 +292,12 @@
 		<menuitem command="project.autoFades">Auto Fades Settings...</menuitem>
 		<menuitem command="window.projectSetup">Project Setup...</menuitem>
 	</menu>
-	<!-- Audio parts (reference manual p. 250, docs/features/audio-parts.md), fades and crossfades (reference manual
+	<!-- Audio parts (reference manual p. 250, docs/features/audio-parts.md) and their editor (pp. 692-702,
+	     docs/features/audio-part-editor.md), fades and crossfades (reference manual
 	     pp. 381-397, docs/features/fades.md) -->
 	<menu id="audio-menu">
+		<menuitem command="audio.openPartEditor">Open Audio Part Editor</menuitem>
+		<menuseparator/>
 		<menuitem command="audio.eventsToPart">Events to Part</menuitem>
 		<menuitem command="audio.dissolvePart">Dissolve Part</menuitem>
 		<menuseparator/>

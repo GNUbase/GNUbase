@@ -1256,7 +1256,7 @@ Returns:
 
 #### `gnubase.editor.close`
 
-Closes a MIDI editor: it shows no parts, and Keep Editor Contents goes off (p. 1153). Emits editor.changed. editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: open; parts, the MIDI parts it shows, in the track list's order and by position; activePart, the part active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the marker and ruler tracks the editor window shows above its events. The key editor's (pp. 1189-1220): selection, the selected notes, each {part, note}, of the editable parts; stepInput and midiInput, what editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, recordPitch, recordVelocity, recordReleaseVelocity and keepNotes, how they go in; insertVelocity (0-1), the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, a note value such as 1/16, 1/8T or 1/4., or link for the quantize grid's (quantize.set). content: what shows the parts, key (the key editor) or list (the list editor, pp. 1243-1258); controllerSelection, the list editor's selected controller events, each {part, controller}, of the editable parts. View state: no undo steps, not saved, and a new or loaded project closes the editors.
+Closes an editor: it shows no parts, and Keep Editor Contents goes off (p. 1153). Emits editor.changed. editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: open; parts, the MIDI parts or audio parts it shows, in the track list's order and by position; activePart, the part active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the marker and ruler tracks the editor window shows above its events. The key editor's (pp. 1189-1220): selection, the selected notes, each {part, note}, of the editable parts; stepInput and midiInput, what editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, recordPitch, recordVelocity, recordReleaseVelocity and keepNotes, how they go in; insertVelocity (0-1), the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, a note value such as 1/16, 1/8T or 1/4., or link for the quantize grid's (quantize.set). content: what shows the parts, key (the key editor) or list (the list editor, pp. 1243-1258); controllerSelection, the list editor's selected controller events, each {part, controller}, of the editable parts. Audio parts show in the audio part editor (content audioPart, pp. 692-702), whose eventSelection is the selected audio events of the editable parts. View state: no undo steps, not saved, and a new or loaded project closes the editors.
 
 Parameters:
 
@@ -1266,11 +1266,12 @@ Returns:
 
 - `activePart`: integer, required
 - `activeTrack`: integer, required
-- `content`: one of "key" | "list", required
+- `content`: one of "key" | "list" | "audioPart", required
 - `controllerSelection`: array of object, required
 - `editable`: array of integer, required
 - `editingMode`: one of "allParts" | "activePart" | "activeTrack", required
 - `editor`: one of "lower" | "window", required
+- `eventSelection`: array of integer, required
 - `globalTracks`: array of integer, required
 - `insertVelocity`: number, required
 - `keepContents`: boolean, required
@@ -1289,7 +1290,7 @@ Returns:
 
 #### `gnubase.editor.get`
 
-What a MIDI editor shows. editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: open; parts, the MIDI parts it shows, in the track list's order and by position; activePart, the part active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the marker and ruler tracks the editor window shows above its events. The key editor's (pp. 1189-1220): selection, the selected notes, each {part, note}, of the editable parts; stepInput and midiInput, what editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, recordPitch, recordVelocity, recordReleaseVelocity and keepNotes, how they go in; insertVelocity (0-1), the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, a note value such as 1/16, 1/8T or 1/4., or link for the quantize grid's (quantize.set). content: what shows the parts, key (the key editor) or list (the list editor, pp. 1243-1258); controllerSelection, the list editor's selected controller events, each {part, controller}, of the editable parts. View state: no undo steps, not saved, and a new or loaded project closes the editors.
+What an editor shows. editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: open; parts, the MIDI parts or audio parts it shows, in the track list's order and by position; activePart, the part active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the marker and ruler tracks the editor window shows above its events. The key editor's (pp. 1189-1220): selection, the selected notes, each {part, note}, of the editable parts; stepInput and midiInput, what editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, recordPitch, recordVelocity, recordReleaseVelocity and keepNotes, how they go in; insertVelocity (0-1), the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, a note value such as 1/16, 1/8T or 1/4., or link for the quantize grid's (quantize.set). content: what shows the parts, key (the key editor) or list (the list editor, pp. 1243-1258); controllerSelection, the list editor's selected controller events, each {part, controller}, of the editable parts. Audio parts show in the audio part editor (content audioPart, pp. 692-702), whose eventSelection is the selected audio events of the editable parts. View state: no undo steps, not saved, and a new or loaded project closes the editors.
 
 Only reads; changes nothing.
 
@@ -1301,11 +1302,12 @@ Returns:
 
 - `activePart`: integer, required
 - `activeTrack`: integer, required
-- `content`: one of "key" | "list", required
+- `content`: one of "key" | "list" | "audioPart", required
 - `controllerSelection`: array of object, required
 - `editable`: array of integer, required
 - `editingMode`: one of "allParts" | "activePart" | "activeTrack", required
 - `editor`: one of "lower" | "window", required
+- `eventSelection`: array of integer, required
 - `globalTracks`: array of integer, required
 - `insertVelocity`: number, required
 - `keepContents`: boolean, required
@@ -1338,12 +1340,12 @@ Returns:
 
 #### `gnubase.editor.open`
 
-Opens a MIDI editor with MIDI parts, such as the ones selected in the project window, or shows those parts in it if it is open. activePart becomes the part active for editing, by default the first. content shows them in the key editor or the list editor; an open editor keeps its content unless it is given, a closed one opens with the key editor. Emits editor.changed. editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: open; parts, the MIDI parts it shows, in the track list's order and by position; activePart, the part active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the marker and ruler tracks the editor window shows above its events. The key editor's (pp. 1189-1220): selection, the selected notes, each {part, note}, of the editable parts; stepInput and midiInput, what editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, recordPitch, recordVelocity, recordReleaseVelocity and keepNotes, how they go in; insertVelocity (0-1), the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, a note value such as 1/16, 1/8T or 1/4., or link for the quantize grid's (quantize.set). content: what shows the parts, key (the key editor) or list (the list editor, pp. 1243-1258); controllerSelection, the list editor's selected controller events, each {part, controller}, of the editable parts. View state: no undo steps, not saved, and a new or loaded project closes the editors.
+Opens an editor with MIDI parts or audio parts, such as the ones selected in the project window, or shows those parts in it if it is open. activePart becomes the part active for editing, by default the first. content shows MIDI parts in the key editor or the list editor; an open editor keeps its content unless it is given, a closed one opens with the key editor. Audio parts open in the audio part editor (audioPart). Emits editor.changed. editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: open; parts, the MIDI parts or audio parts it shows, in the track list's order and by position; activePart, the part active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the marker and ruler tracks the editor window shows above its events. The key editor's (pp. 1189-1220): selection, the selected notes, each {part, note}, of the editable parts; stepInput and midiInput, what editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, recordPitch, recordVelocity, recordReleaseVelocity and keepNotes, how they go in; insertVelocity (0-1), the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, a note value such as 1/16, 1/8T or 1/4., or link for the quantize grid's (quantize.set). content: what shows the parts, key (the key editor) or list (the list editor, pp. 1243-1258); controllerSelection, the list editor's selected controller events, each {part, controller}, of the editable parts. Audio parts show in the audio part editor (content audioPart, pp. 692-702), whose eventSelection is the selected audio events of the editable parts. View state: no undo steps, not saved, and a new or loaded project closes the editors.
 
 Parameters:
 
 - `activePart`: integer
-- `content`: one of "key" | "list"
+- `content`: one of "key" | "list" | "audioPart"
 - `editor`: one of "lower" | "window", required
 - `parts`: array of integer, required
 
@@ -1351,11 +1353,12 @@ Returns:
 
 - `activePart`: integer, required
 - `activeTrack`: integer, required
-- `content`: one of "key" | "list", required
+- `content`: one of "key" | "list" | "audioPart", required
 - `controllerSelection`: array of object, required
 - `editable`: array of integer, required
 - `editingMode`: one of "allParts" | "activePart" | "activeTrack", required
 - `editor`: one of "lower" | "window", required
+- `eventSelection`: array of integer, required
 - `globalTracks`: array of integer, required
 - `insertVelocity`: number, required
 - `keepContents`: boolean, required
@@ -1374,16 +1377,17 @@ Returns:
 
 #### `gnubase.editor.set`
 
-Changes what an open MIDI editor shows (reference manual pp. 1142-1156); what isn't given stays. parts replaces its parts. Then the Visibility tab's changes: exclusive hides every track first, showTracks shows every MIDI part of these tracks (all tracks in a folder) and activates the last, hideTracks hides theirs; at least one part stays. activeTrack activates the track's first part shown, activePart a part shown. editingMode, keepContents and globalTracks (marker and ruler tracks, the editor window only) also apply to a closed editor. selection replaces the selected notes, of the editable parts, and controllerSelection the selected controller events. content and the key editor's settings apply to any editor; turning stepInput on puts the step input cursor at the active part's start unless stepPosition is given. Emits editor.changed. editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: open; parts, the MIDI parts it shows, in the track list's order and by position; activePart, the part active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the marker and ruler tracks the editor window shows above its events. The key editor's (pp. 1189-1220): selection, the selected notes, each {part, note}, of the editable parts; stepInput and midiInput, what editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, recordPitch, recordVelocity, recordReleaseVelocity and keepNotes, how they go in; insertVelocity (0-1), the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, a note value such as 1/16, 1/8T or 1/4., or link for the quantize grid's (quantize.set). content: what shows the parts, key (the key editor) or list (the list editor, pp. 1243-1258); controllerSelection, the list editor's selected controller events, each {part, controller}, of the editable parts. View state: no undo steps, not saved, and a new or loaded project closes the editors.
+Changes what an open editor shows (reference manual pp. 1142-1156); what isn't given stays. parts replaces its parts. Then the Visibility tab's changes: exclusive hides every track first, showTracks shows every MIDI part of these tracks (all tracks in a folder), in the audio part editor every audio part, and activates the last, hideTracks hides theirs; at least one part stays. activeTrack activates the track's first part shown, activePart a part shown. editingMode, keepContents and globalTracks (marker and ruler tracks, the editor window only) also apply to a closed editor. selection replaces the selected notes, of the editable parts, controllerSelection the selected controller events and eventSelection the selected audio events of the editable audio parts. content and the key editor's settings apply to any editor; turning stepInput on puts the step input cursor at the active part's start unless stepPosition is given. Emits editor.changed. editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: open; parts, the MIDI parts or audio parts it shows, in the track list's order and by position; activePart, the part active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the marker and ruler tracks the editor window shows above its events. The key editor's (pp. 1189-1220): selection, the selected notes, each {part, note}, of the editable parts; stepInput and midiInput, what editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, recordPitch, recordVelocity, recordReleaseVelocity and keepNotes, how they go in; insertVelocity (0-1), the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, a note value such as 1/16, 1/8T or 1/4., or link for the quantize grid's (quantize.set). content: what shows the parts, key (the key editor) or list (the list editor, pp. 1243-1258); controllerSelection, the list editor's selected controller events, each {part, controller}, of the editable parts. Audio parts show in the audio part editor (content audioPart, pp. 692-702), whose eventSelection is the selected audio events of the editable parts. View state: no undo steps, not saved, and a new or loaded project closes the editors.
 
 Parameters:
 
 - `activePart`: integer
 - `activeTrack`: integer
-- `content`: one of "key" | "list"
+- `content`: one of "key" | "list" | "audioPart"
 - `controllerSelection`: array of object
 - `editingMode`: one of "allParts" | "activePart" | "activeTrack"
 - `editor`: one of "lower" | "window", required
+- `eventSelection`: array of integer
 - `exclusive`: boolean
 - `globalTracks`: array of integer
 - `hideTracks`: array of integer
@@ -1406,11 +1410,12 @@ Returns:
 
 - `activePart`: integer, required
 - `activeTrack`: integer, required
-- `content`: one of "key" | "list", required
+- `content`: one of "key" | "list" | "audioPart", required
 - `controllerSelection`: array of object, required
 - `editable`: array of integer, required
 - `editingMode`: one of "allParts" | "activePart" | "activeTrack", required
 - `editor`: one of "lower" | "window", required
+- `eventSelection`: array of integer, required
 - `globalTracks`: array of integer, required
 - `insertVelocity`: number, required
 - `keepContents`: boolean, required

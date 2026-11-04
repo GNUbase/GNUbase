@@ -195,14 +195,16 @@ namespace gnubase::app
 		void addEditors();
 		// Shows or closes the editor window or the lower zone's editor as the engine's view says.
 		void followEditor(const engine::Json& view);
-		// The selected MIDI parts open in the editors that follow the project window's selection (p. 1153).
+		// The selected MIDI parts, or else audio parts, open in the editors that follow the project window's
+		// selection (p. 1153).
 		void followSelection();
-		// The MIDI parts selected in the project window's event display.
+		// What of a kind in project.get (midiParts, audioParts, audioEvents) is selected in the project window's event
+		// display.
+		std::vector<uint64_t> selected(const char* kind) const;
+		// The parts an editor opens: the selected MIDI parts, or else the selected audio parts.
 		std::vector<uint64_t> selectedParts() const;
 		// Shows or closes the sample editor window as the engine's sampleEditor view says.
 		void followSampleEditor(const engine::Json& view);
-		// The audio events selected in the project window's event display.
-		std::vector<uint64_t> selectedAudioEvents() const;
 		// The OS's file dialog for a track's picture in the mixer, then track.set.
 		void choosePicture(uint64_t track);
 		// Opens resources/ui/<name> in the window, modal. Throws std::runtime_error if it can't be loaded.
