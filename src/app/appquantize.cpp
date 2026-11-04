@@ -119,7 +119,7 @@ namespace gnubase::app
 				if (QuantizeTarget target = ofEditor(editor, true); !target.parts.empty())
 					return target;
 		QuantizeTarget target;
-		for (const uint64_t part : selectedParts())
+		for (const uint64_t part : selected("midiParts"))
 			target.parts.emplace_back(part, std::vector<uint64_t>());
 		return target;
 	}

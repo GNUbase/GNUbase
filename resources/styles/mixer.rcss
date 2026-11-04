@@ -57,6 +57,27 @@
 	cursor: move;
 }
 
+/* The display line: the number and the name of the channel's link group, shown while the strip is .linked. */
+.mixer-link
+{
+	display: none;
+}
+
+.mixer-channel.linked .mixer-link
+{
+	display: block;
+	flex-shrink: 0;
+	height: 16dp;
+	overflow: hidden;
+	white-space: nowrap;
+	text-align: center;
+}
+
+.mixer-vca-group
+{
+	margin-bottom: 4dp;
+}
+
 .mixer-picture
 {
 	flex-shrink: 0;

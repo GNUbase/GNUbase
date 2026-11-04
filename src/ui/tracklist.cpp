@@ -261,7 +261,38 @@ namespace gnubase::ui
 					m_display.showAutomation(track, show);
 		};
 		m_actions["track.showUsedAutomation"] = [this] { m_display.showUsedAutomation(); };
+		// Lanes (#99, reference manual p. 226): Show Lanes.
+		m_actions["track.toggleLanesSelected"] = [this]
+		{
+			std::vector<uint64_t> tracks;
+			for (const uint64_t track : selection())
+				if (const std::string& type = m_tracks[m_index.at(track)].type;
+					type == "audio" || type == "instrument" || type == "midi")
+					tracks.push_back(track);
+			const bool show = std::any_of(
+				tracks.begin(), tracks.end(), [this](uint64_t track) { return !m_display.lanesShown(track); });
+			for (const uint64_t track : tracks)
+				m_display.showLanes(track, show);
+		};
 		m_actions["track.hideAllAutomation"] = [this] { m_display.hideAllAutomation(); };
+		// Copying automation to other tracks (#125, reference manual pp. 878-879), between the locators, which the
+		// engine takes.
+		for (const char* which : {"copy", "paste"})
+		{
+			const std::string prefix = std::string("track.") + which;
+			m_actions[prefix + "AutomationAll"] = [this, which]
+			{ m_binding.send(std::string("automation.") + which, Json::object()); };
+			m_actions[prefix + "AutomationSelected"] = [this, which]
+			{
+				if (const std::vector<uint64_t> tracks = selection(); !tracks.empty())
+					m_binding.send(std::string("automation.") + which, {{"tracks", tracks}});
+			};
+			m_actions[prefix + "AutomationSelectedParameters"] = [this, which]
+			{
+				if (const std::vector<uint64_t> lanes = selectedLanes(); !lanes.empty())
+					m_binding.send(std::string("automation.") + which, {{"lanes", lanes}});
+			};
+		}
 		m_parameterMenu = m_document->GetElementById("automation-parameter-menu");
 		if (m_parameterMenu != nullptr)
 			for (const Rml::EventId id : {Rml::EventId::Click, Rml::EventId::Change})
@@ -593,21 +624,31 @@ namespace gnubase::ui
 			return;
 		const std::vector<uint64_t>& lanes = m_display.laneTracks();
 		const std::vector<double>& tops = m_display.laneTops();
-		const std::vector<uint64_t>& automation = m_display.laneAutomation();
 		for (size_t lane = 0; lane < lanes.size() && lane + 1 < tops.size(); ++lane)
 		{
-			Rml::Element* element = automation[lane] == 0 ? rowElement(lanes[lane]) : nullptr;
+			Rml::Element* element = ownLane(lane) ? rowElement(lanes[lane]) : nullptr;
 			if (element == nullptr)
 				continue;
-			// The row reaches down over its automation tracks' lanes (#121).
-			size_t end = lane + 1;
-			while (end < lanes.size() && automation[end] != 0)
-				++end;
+			// The row reaches down over its lanes (#99) and automation tracks' lanes (#121).
+			const size_t end = rowEnd(lane);
 			element->SetProperty(Rml::PropertyId::Height, dp(tops[end] - tops[lane]));
 			showAutomationRows(*element, lane, end);
 		}
 		m_view->SetProperty(Rml::PropertyId::Top, dp(-m_display.view().top));
 		m_rows->SetScrollTop(0.0F); // the list view's keys scroll it into view; the display scrolls it
+	}
+
+	bool TrackList::ownLane(size_t lane) const
+	{
+		return m_display.laneAutomation()[lane] == 0 && m_display.laneTakes()[lane] < 0;
+	}
+
+	size_t TrackList::rowEnd(size_t lane) const
+	{
+		size_t end = lane + 1;
+		while (end < m_display.laneTracks().size() && !ownLane(end))
+			++end;
+		return end;
 	}
 
 	const Json* TrackList::laneOf(uint64_t lane) const
@@ -641,12 +682,16 @@ namespace gnubase::ui
 		const std::vector<uint64_t>& automation = m_display.laneAutomation();
 		const uint64_t track = m_display.laneTracks()[lane];
 		const double own = tops[lane + 1] - tops[lane];
+		// The automation tracks come after the track's lanes (#99).
+		size_t first = lane + 1;
+		while (first < end && automation[first] == 0)
+			++first;
 		setClass(*toggle, "checked", m_display.automationShown(track));
 		toggle->SetProperty(Rml::PropertyId::Top, dp(own - g_toggleSize));
-		rows->SetProperty(Rml::PropertyId::Top, dp(own));
+		rows->SetProperty(Rml::PropertyId::Top, dp(tops[first] - tops[lane]));
 		// A row per automation track: its parameter, which opens the parameter selector, Read and Append.
 		std::string rml;
-		for (size_t i = lane + 1; i < end; ++i)
+		for (size_t i = first; i < end; ++i)
 		{
 			const Json* json = laneOf(automation[i]);
 			const Json* target = json == nullptr ? nullptr : targetOf(*json);
@@ -667,8 +712,9 @@ namespace gnubase::ui
 		for (int i = 0; i < rows->GetNumChildren(); ++i)
 		{
 			Rml::Element* element = rows->GetChild(i);
-			const size_t at = lane + 1 + static_cast<size_t>(i);
+			const size_t at = first + static_cast<size_t>(i);
 			element->SetProperty(Rml::PropertyId::Height, dp(tops[at + 1] - tops[at]));
+			setClass(*element, "selected", m_selectedLanes.count(automation[at]) != 0);
 			const Json* json = laneOf(automation[at]);
 			if (Rml::Element* read = element->QuerySelector(".automation-read"); read != nullptr && json != nullptr)
 				setClass(*read, "checked", json->at("read").get<bool>());
@@ -778,13 +824,7 @@ namespace gnubase::ui
 		}
 		Rml::Element* target = event.GetTargetElement();
 		// The automation tracks' rows and Show/Hide Automation (#121).
-		const auto automationLane = [this](Rml::Element* element)
-		{
-			for (; element != nullptr && element != m_view; element = element->GetParentNode())
-				if (element->IsClassSet("automation-row"))
-					return static_cast<uint64_t>(element->GetAttribute<double>("lane", 0.0));
-			return uint64_t{0};
-		};
+		const auto automationLane = [this](Rml::Element* element) { return laneAt(element); };
 		const auto closest = [this](Rml::Element* element, const char* name)
 		{
 			for (; element != nullptr && element != m_view; element = element->GetParentNode())
@@ -961,7 +1001,7 @@ namespace gnubase::ui
 			for (const Row& row : m_tracks)
 				if (!row.holds && parents.count(row.id) == 0 && (row.channel == 0 || outputs.count(row.channel) == 0) &&
 					row.type != "group" && row.type != "effect" && row.type != "ruler" && row.type != "tempo" &&
-					row.type != "signature")
+					row.type != "signature" && row.type != "vca")
 					gone.insert(row.id);
 		} while (gone.size() != before);
 		return gone;
@@ -988,7 +1028,7 @@ namespace gnubase::ui
 		// The tracks shown, without their automation tracks' lanes.
 		std::vector<uint64_t> lanes;
 		for (size_t lane = 0; lane < m_display.laneTracks().size(); ++lane)
-			if (m_display.laneAutomation()[lane] == 0)
+			if (ownLane(lane))
 				lanes.push_back(m_display.laneTracks()[lane]);
 		if (lanes.empty())
 			return;
@@ -1057,12 +1097,62 @@ namespace gnubase::ui
 		m_view->Focus(); // the keys go on selecting tracks
 	}
 
+	uint64_t TrackList::laneAt(Rml::Element* element) const
+	{
+		for (; element != nullptr && element != m_view; element = element->GetParentNode())
+			if (element->IsClassSet("automation-row"))
+				return static_cast<uint64_t>(element->GetAttribute<double>("lane", 0.0));
+		return 0;
+	}
+
+	std::vector<uint64_t> TrackList::selectedLanes() const
+	{
+		std::vector<uint64_t> lanes;
+		for (const uint64_t lane : m_selectedLanes)
+			if (laneOf(lane) != nullptr)
+				lanes.push_back(lane);
+		return lanes;
+	}
+
+	void TrackList::selectLane(Rml::Event& event, uint64_t lane)
+	{
+		const int button = event.GetParameter<int>("button", 0);
+		for (const Rml::Element* part = event.GetTargetElement(); lane != 0 && part != nullptr;
+			part = part->GetParentNode())
+			if (part->GetTagName() == "button")
+				return; // the automation track's buttons
+		if (lane == 0)
+		{
+			if (button == 0)
+				m_selectedLanes.clear();
+		}
+		else if (button == 0 && (held(event, "ctrl_key") || held(event, "meta_key") || held(event, "shift_key")))
+		{
+			if (m_selectedLanes.erase(lane) == 0)
+				m_selectedLanes.insert(lane);
+		}
+		else if (button == 0 || (button == 1 && m_selectedLanes.count(lane) == 0))
+		{
+			m_selectedLanes = {lane}; // a right click on one that isn't selected selects it, for the context menu
+		}
+		showLaneSelection();
+	}
+
+	void TrackList::showLaneSelection()
+	{
+		Rml::ElementList rows;
+		m_view->QuerySelectorAll(rows, ".automation-row");
+		for (Rml::Element* row : rows)
+			setClass(*row, "selected", m_selectedLanes.count(laneAt(row)) != 0);
+	}
+
 	void TrackList::mouseDown(Rml::Event& event)
 	{
 		Rml::Element* target = event.GetTargetElement();
 		const Row* row = rowOf(target);
 		if (row == nullptr)
 			return;
+		selectLane(event, laneAt(target));
 		// A right click on a track that isn't selected selects it, for the context menu.
 		const std::vector<uint64_t> tracks = selection();
 		const bool selected = std::find(tracks.begin(), tracks.end(), row->id) != tracks.end();
@@ -1159,15 +1249,12 @@ namespace gnubase::ui
 	{
 		const std::vector<uint64_t>& lanes = m_display.laneTracks();
 		const std::vector<double>& tops = m_display.laneTops();
-		const std::vector<uint64_t>& automation = m_display.laneAutomation();
 		const double at = ((y - m_rows->GetAbsoluteTop()) / dpRatio()) + m_display.view().top;
 		for (size_t lane = 0; lane < lanes.size(); ++lane)
 		{
-			// A track's row with its automation tracks' lanes (#121).
-			size_t end = lane + 1;
-			while (end < lanes.size() && automation[end] != 0)
-				++end;
-			if (automation[lane] != 0 || at >= tops[end])
+			// A track's row with its lanes and automation tracks' lanes (#99, #121).
+			const size_t end = rowEnd(lane);
+			if (!ownLane(lane) || at >= tops[end])
 				continue;
 			const Row& row = m_tracks[m_index.at(lanes[lane])];
 			const double into = (at - tops[lane]) / (tops[end] - tops[lane]);

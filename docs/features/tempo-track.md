@@ -22,8 +22,9 @@ The tempo track, its tempo events and ramps, the project tempo modes and tap tem
   that emits `tempo.changed` with the tempo the project plays, the mode, the tempo track's events and the fixed tempo
   (the same keys as `project.get`).
 - **Musical and linear time** (the acceptance of #155). Events, parts, markers and automation on musical tracks are in
-  ticks, so a tempo change moves them in time; linear ones are in samples and stay. Audio events keep their length in
-  samples. Cycle markers that a faster tempo makes shorter than a sample get longer (`tempoChanged`).
+  ticks, so a tempo change moves them in time; linear ones are in samples and stay, with the notes in linear MIDI parts
+  ([time-base.md](time-base.md)). Audio events keep their length in samples. Cycle markers that a faster tempo makes
+  shorter than a sample get longer (`tempoChanged`).
 - **Tap tempo** (pp. 1455-1458): `tempo.tap` takes the tapped tempo and applies it by the Tap Tempo Mode, the user
   setting `transport.tapTempoMode` unless `mode` is given: `selection` adds a tempo event at `selection` (the start of
   the selected events or range, which only the client knows), `playbackStart` at the last playback start position

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/document/rendersnapshot.h"
 
+#include "engine/audio/automation.h"
 #include "engine/audio/fades.h"
 
 #include <algorithm>
@@ -134,9 +135,146 @@ namespace gnubase::engine
 				const bool muted = project.channels.at(channel.id).mute && automated.count(channel.track) == 0;
 				const bool quiet = !heard[i] || !project.trackById.at(channel.track).enabled;
 				channel.silent = quiet || muted;
+				channel.muted = muted;
 				for (RenderSend& send : channel.sends)
 					if (quiet && send.preFader)
 						send.gain = 0.0f;
+			}
+		}
+	}
+
+	namespace
+	{
+		using Points = std::vector<RenderAutomationPoint>;
+
+		// How far apart the points are where two volume curves that move at once are multiplied: 256 frames, about
+		// 5 ms at 48 kHz.
+		// ponytail: a long ramp of a VCA fader over a channel's long ramp makes a point every 256 frames (ten minutes:
+		// about 110 000); a player that multiplies the curves on the audio thread would make none.
+		constexpr int64_t g_productInterval = 4 * static_cast<int64_t>(g_automationInterval);
+
+		// The value a curve arrives at a position with, before its points there (a jump) take over.
+		double approached(const Points& points, int64_t at)
+		{
+			const auto first = std::lower_bound(points.begin(), points.end(), at,
+				[](const RenderAutomationPoint& point, int64_t position) { return point.position < position; });
+			if (first == points.end() || first->position != at)
+				return automationValue(points, at);
+			if (first == points.begin() || std::prev(first)->shape != AutomationShape::Step)
+				return first->value;
+			return std::prev(first)->value;
+		}
+
+		// The product of volume curves (linear gains) and a factor, as one curve: where only one of them moves, its
+		// segment scaled (a curve segment only if it moves over the whole stretch); where several move at once,
+		// straight pieces between their products every g_productInterval frames.
+		Points multiplied(const std::vector<const Points*>& curves, double factor)
+		{
+			std::vector<int64_t> positions;
+			for (const Points* curve : curves)
+				for (const RenderAutomationPoint& point : *curve)
+					positions.push_back(point.position);
+			std::sort(positions.begin(), positions.end());
+			positions.erase(std::unique(positions.begin(), positions.end()), positions.end());
+			const auto product = [&curves, factor](int64_t at, bool before)
+			{
+				double value = factor;
+				for (const Points* curve : curves)
+					value *= before ? approached(*curve, at) : automationValue(*curve, at);
+				return value;
+			};
+			Points result;
+			for (size_t i = 0; i < positions.size(); ++i)
+			{
+				const int64_t at = positions[i];
+				const double left = product(at, true);
+				const double right = product(at, false);
+				result.push_back({at, left, AutomationShape::Step, 0.0});
+				if (right != left)
+					result.push_back({at, right, AutomationShape::Step, 0.0});
+				if (i + 1 == positions.size())
+					break;
+				const int64_t next = positions[i + 1];
+				int moving = 0;
+				const RenderAutomationPoint* from = nullptr;
+				const RenderAutomationPoint* to = nullptr;
+				for (const Points* curve : curves)
+				{
+					const auto after = std::upper_bound(curve->begin(), curve->end(), at,
+						[](int64_t position, const RenderAutomationPoint& point) { return position < point.position; });
+					if (after == curve->begin() || after == curve->end())
+						continue;
+					const RenderAutomationPoint& start = *std::prev(after);
+					if (start.shape == AutomationShape::Step || start.value == after->value)
+						continue;
+					++moving;
+					from = &start;
+					to = &*after;
+				}
+				if (moving == 0)
+					continue;
+				RenderAutomationPoint& segment = result.back();
+				if (moving == 1 &&
+					(from->shape == AutomationShape::Linear || (from->position == at && to->position == next)))
+				{
+					segment.shape = from->shape;
+					segment.curve = from->curve;
+					continue;
+				}
+				segment.shape = AutomationShape::Linear;
+				for (int64_t piece = at + g_productInterval; piece < next; piece += g_productInterval)
+					result.push_back({piece, product(piece, false), AutomationShape::Linear, 0.0});
+			}
+			return result;
+		}
+
+		// VCA faders (docs/features/link-groups.md): each channel's volume, static and automated, times the volume of
+		// every VCA fader that controls it. vcaCurves: the VCA faders' volume automation that plays, by channel.
+		void applyVcaFaders(
+			const Project& project, const std::map<ObjectId, Points>& vcaCurves, RenderSnapshot& snapshot)
+		{
+			for (RenderChannel& channel : snapshot.channels)
+			{
+				const std::vector<ObjectId> chain = vcaChain(project, channel.id);
+				if (chain.empty() || channel.format == ChannelFormat::None)
+					continue;
+				double factor = 1.0;
+				std::vector<const Points*> curves;
+				for (const ObjectId vca : chain)
+				{
+					const auto curve = vcaCurves.find(vca);
+					if (curve != vcaCurves.end())
+						curves.push_back(&curve->second);
+					else
+						factor *= volumeGain(project.channels.at(vca).volume);
+				}
+				const auto own = std::find_if(channel.automation.begin(), channel.automation.end(),
+					[](const RenderAutomationLane& lane) { return lane.target.type == AutomationTargetType::Volume; });
+				if (curves.empty())
+				{
+					channel.volume *= factor;
+					if (own != channel.automation.end())
+						for (RenderAutomationPoint& point : own->points)
+							point.value *= factor;
+					continue;
+				}
+				if (own != channel.automation.end())
+				{
+					// The product has no gaps: the channel's own gaps play its static volume.
+					for (RenderAutomationPoint& point : own->points)
+						if (point.gap)
+						{
+							point.value = channel.volume;
+							point.gap = false;
+						}
+					curves.push_back(&own->points);
+					own->points = multiplied(curves, factor);
+					continue;
+				}
+				RenderAutomationLane lane;
+				lane.target.type = AutomationTargetType::Volume;
+				lane.points = multiplied(curves, factor * channel.volume);
+				channel.automation.push_back(std::move(lane));
 			}
 		}
 	}
@@ -178,7 +316,7 @@ namespace gnubase::engine
 		for (const ObjectId trackId : project.trackOrder())
 		{
 			const Track& track = project.trackById.at(trackId);
-			if (track.channel == 0)
+			if (track.channel == 0 || track.type == TrackType::Vca) // a VCA fader has no audio
 				continue;
 			const Channel& channel = project.channels.at(track.channel);
 			channelIndex[channel.id] = static_cast<int>(snapshot->channels.size());
@@ -255,7 +393,8 @@ namespace gnubase::engine
 			RenderAudioEvent render{id, toSamples(project, event.position), mediaIndex.at(clip.media), event.offset,
 				event.length, static_cast<float>(std::pow(10.0, event.volume / 20.0)), event.mute, event.fadeIn,
 				event.fadeOut, clip.fadeIn, clip.fadeOut,
-				crossfadeApplies(project, event) ? event.crossfade : Crossfade(), gainPoints(event.volumeCurve)};
+				crossfadeApplies(project, event) ? event.crossfade : Crossfade(), gainPoints(event.volumeCurve),
+				frontOf(event)};
 			if (const auto part = project.audioParts.find(event.part); part != project.audioParts.end() &&
 				!inPart(project, part->second, project.sampleRate / project.media.at(clip.media).sampleRate, render))
 				continue;
@@ -269,10 +408,13 @@ namespace gnubase::engine
 				compilePart(project, part, channel);
 		}
 
+		std::map<ObjectId, Points> vcaCurves; // by the VCA fader's channel
 		for (const auto& [id, lane] : project.automation)
 		{
 			const auto channel = trackChannel.find(lane.track);
-			if (!lane.read || lane.points.empty() || channel == trackChannel.end())
+			const Track& track = project.trackById.at(lane.track);
+			const bool vca = track.type == TrackType::Vca && lane.target.type == AutomationTargetType::Volume;
+			if (!lane.read || lane.points.empty() || (channel == trackChannel.end() && !vca))
 				continue;
 			std::vector<const AutomationPoint*> sorted;
 			sorted.reserve(lane.points.size());
@@ -280,12 +422,14 @@ namespace gnubase::engine
 				sorted.push_back(&point);
 			std::stable_sort(sorted.begin(), sorted.end(), [](const AutomationPoint* a, const AutomationPoint* b)
 				{ return a->position.value < b->position.value; });
-			RenderChannel& render = snapshot->channels[static_cast<size_t>(channel->second)];
-			// Gaps (reference manual p. 881) are steps to the static value; a mute lane's is the mute button.
-			const double gapValue =
-				lane.target.type == AutomationTargetType::Mute && project.channels.at(render.id).mute ? 1.0 : 0.0;
-			const auto gapAt = [gapValue](time::Samples position)
-			{ return RenderAutomationPoint{position, gapValue, AutomationShape::Step, 0.0, true}; };
+			// Gaps (reference manual p. 881) are steps to the static value; a mute lane's is the mute button. A VCA
+			// fader's curve is multiplied into other channels' curves here, so its gaps get its static volume now.
+			const Channel& owner = project.channels.at(track.channel);
+			double gapValue = lane.target.type == AutomationTargetType::Mute && owner.mute ? 1.0 : 0.0;
+			if (vca)
+				gapValue = volumeGain(owner.volume);
+			const auto gapAt = [gapValue, vca](time::Samples position)
+			{ return RenderAutomationPoint{position, gapValue, AutomationShape::Step, 0.0, !vca}; };
 			RenderAutomationLane played;
 			played.target = lane.target;
 			for (const AutomationPoint* point : sorted)
@@ -299,8 +443,12 @@ namespace gnubase::engine
 				if (point->terminator || (project.virginTerritory && point == sorted.back()))
 					played.points.push_back(gapAt(position));
 			}
-			render.automation.push_back(std::move(played));
+			if (vca)
+				vcaCurves[track.channel] = std::move(played.points);
+			else
+				snapshot->channels[static_cast<size_t>(channel->second)].automation.push_back(std::move(played));
 		}
+		applyVcaFaders(project, vcaCurves, *snapshot);
 
 		for (RenderChannel& channel : snapshot->channels)
 		{

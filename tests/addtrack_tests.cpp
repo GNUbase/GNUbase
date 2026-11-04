@@ -10,6 +10,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <optional>
 #include <string>
@@ -195,4 +196,54 @@ TEST_CASE("the add track dialog shows what the engine refuses and stays open", "
 	CHECK(app.call("project.get").at("tracks").size() == 10);
 	app.ui().key(std::nullopt, "Escape");
 	REQUIRE(app.waitUntil([&app] { return !open(app); }));
+}
+
+TEST_CASE("Group and Effect Track to Selected Tracks route the selected tracks into the new track", "[ui]")
+{
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	const Json first = app.call("track.add", {{"type", "audio"}});
+	const Json second = app.call("track.add", {{"type", "audio"}});
+	app.call("track.add", {{"type", "audio"}});
+	// Selected once the track list shows them.
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			app.appUi().trackList()->select(
+				{first.at("track").at("id").get<uint64_t>(), second.at("track").at("id").get<uint64_t>()});
+			return app.appUi().trackList()->selection().size() == 2;
+		}));
+	const auto channel = [&app](const Json& added)
+	{
+		const Json channels = app.call("project.get").at("channels");
+		const auto found = std::find_if(channels.begin(), channels.end(),
+			[&added](const Json& item) { return item.at("id") == added.at("channel").at("id"); });
+		REQUIRE(found != channels.end());
+		return *found;
+	};
+
+	// Effect Track to Selected Tracks opens the effect page; into the project's FX folder.
+	app.keys().run("track.addEffectToSelected", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return open(app); }));
+	CHECK(elements(app, "#track-types").at(0).at("attributes").at("value") == "effect");
+	click(app, "#track-project-folder");
+	click(app, "#add-track-confirm");
+	REQUIRE(app.waitUntil([&app] { return !open(app); }));
+	Json project = app.call("project.get");
+	const Json& effect = project.at("tracks").back();
+	CHECK(effect.at("type") == "effect");
+	CHECK(channel(first).at("sends")[0].at("destination") == effect.at("channel"));
+	CHECK(channel(second).at("sends")[0].at("on") == true);
+	for (const Json& track : project.at("tracks"))
+		if (track.at("id") == effect.at("parent"))
+			CHECK(track.at("name") == "FX");
+
+	// Group Track to Selected Tracks: they play into the new group.
+	app.keys().run("track.addGroupToSelected", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return open(app); }));
+	click(app, "#add-track-confirm");
+	REQUIRE(app.waitUntil([&app] { return !open(app); }));
+	project = app.call("project.get");
+	CHECK(channel(first).at("output") == project.at("tracks").back().at("channel"));
+	CHECK(channel(second).at("output") == project.at("tracks").back().at("channel"));
 }
