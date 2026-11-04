@@ -54,6 +54,8 @@ namespace gnubase::engine
 			return "midi";
 		case TrackType::Effect:
 			return "effect";
+		case TrackType::Vca:
+			return "vca";
 		case TrackType::Folder:
 		case TrackType::Group:
 		case TrackType::Marker:
@@ -78,7 +80,7 @@ namespace gnubase::engine
 		const std::string viewText =
 			"mixer: lower (the mixer in the project window's lower zone) or window1 to window4 (the mixer windows). "
 			"hidden: the channels and busses (by id) it doesn't show. hiddenTypes: the channel types its filter hides: "
-			"input, audio, instrument, midi, group (also folders' group channels), effect and output.";
+			"input, audio, instrument, midi, group (also folders' group channels), effect, vca and output.";
 
 		engine.registerCommand({"mixer.get", 1, "What a mixer hides. " + viewText,
 								   {{"type", "object"}, {"properties", {{"mixer", mixerSchema}}},

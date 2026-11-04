@@ -36,6 +36,7 @@ namespace gnubase::engine
 			{TrackType::Marker, "marker"},
 			{TrackType::Ruler, "ruler"},
 			{TrackType::Tempo, "tempo"},
+			{TrackType::Vca, "vca"},
 		};
 
 		constexpr struct
@@ -673,6 +674,26 @@ namespace gnubase::engine
 			{"color", colorJson(marker.color)}};
 	}
 
+	Json toJson(const LinkGroup& group)
+	{
+		return {{"id", group.id}, {"name", group.name}, {"channels", group.channels}, {"volume", group.volume},
+			{"pan", group.pan}, {"mute", group.mute}, {"record", group.record}, {"vca", group.vca}};
+	}
+
+	LinkGroup linkGroupFromJson(const Json& json, const LinkGroup& fallback)
+	{
+		LinkGroup group = fallback;
+		group.id = json.value("id", group.id);
+		group.name = json.value("name", group.name);
+		group.channels = json.value("channels", group.channels);
+		group.volume = json.value("volume", group.volume);
+		group.pan = json.value("pan", group.pan);
+		group.mute = json.value("mute", group.mute);
+		group.record = json.value("record", group.record);
+		group.vca = json.value("vca", group.vca);
+		return group;
+	}
+
 	Json toJson(const AutomationTarget& target)
 	{
 		Json json = {{"type", automationTargetTypeName(target.type)}};
@@ -805,9 +826,9 @@ namespace gnubase::engine
 			{"poolFolders", toJsonArray(project.poolFolders)}, {"audioEvents", toJsonArray(project.audioEvents)},
 			{"audioParts", toJsonArray(project.audioParts)}, {"midiParts", toJsonArray(project.midiParts)},
 			{"markers", toJsonArray(project.markers)}, {"automation", toJsonArray(project.automation)},
-			{"quantize", midi::toJson(project.quantize)}, {"autoQuantize", project.autoQuantize},
-			{"activeMarkerTrack", project.activeMarkerTrack}, {"snap", toJson(project.snap)},
-			{"mixers", mixersJson(project.mixers)}};
+			{"linkGroups", toJsonArray(project.linkGroups)}, {"quantize", midi::toJson(project.quantize)},
+			{"autoQuantize", project.autoQuantize}, {"activeMarkerTrack", project.activeMarkerTrack},
+			{"snap", toJson(project.snap)}, {"mixers", mixersJson(project.mixers)}};
 		json.update(toJson(project.setup));
 		return json;
 	}
@@ -1554,6 +1575,24 @@ namespace gnubase::engine
 			const ObjectId id = lane.id;
 			project.automation[id] = std::move(lane);
 		}
+		// Files from before link groups (#110) have none. A channel stays in its first group; channels that are gone
+		// and controllers that aren't VCA faders, or control another group already, are left out.
+		for (const Json& item : json.value("linkGroups", Json::array()))
+		{
+			LinkGroup group = linkGroupFromJson(item);
+			std::vector<ObjectId> channels;
+			for (const ObjectId channel : group.channels)
+				if (project.channels.count(channel) != 0 && linkGroupOf(project, channel) == nullptr &&
+					std::find(channels.begin(), channels.end(), channel) == channels.end())
+					channels.push_back(channel);
+			group.channels = std::move(channels);
+			const auto vca = project.channels.find(group.vca);
+			if (vca == project.channels.end() || project.trackById.at(vca->second.track).type != TrackType::Vca ||
+				controlledBy(project, group.vca) != nullptr)
+				group.vca = 0;
+			group.volume = group.volume && group.vca == 0;
+			project.linkGroups[group.id] = std::move(group);
+		}
 		// Files from before quantizing have neither.
 		if (json.contains("quantize"))
 			project.quantize = midi::quantizeSettingsFromJson(json.at("quantize"));
@@ -1595,6 +1634,8 @@ namespace gnubase::engine
 				see(controllerId);
 		}
 		for (const auto& [id, marker] : project.markers)
+			see(id);
+		for (const auto& [id, group] : project.linkGroups)
 			see(id);
 		for (const auto& [id, lane] : project.automation)
 		{
