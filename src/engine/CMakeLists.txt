@@ -111,6 +111,7 @@ add_library(gnubase-engine STATIC
 	dawproject/dawproject.cpp dawproject/dawproject.h
 	document/audiofilecommands.cpp
 	document/channelformat.cpp document/channelformat.h
+	document/channelsettings.cpp document/channelsettings.h
 	document/document.cpp document/document.h
 	document/editors.cpp document/editors.h
 	document/eventedits.cpp
@@ -128,6 +129,7 @@ add_library(gnubase-engine STATIC
 	document/slotcommands.cpp
 	document/projectmodel.cpp document/projectmodel.h
 	document/recording.cpp
+	document/renderinplace.cpp
 	document/rendersnapshot.cpp document/rendersnapshot.h
 	document/sampleeditor.cpp document/sampleeditor.h
 	document/serialize.cpp document/serialize.h
@@ -150,6 +152,7 @@ add_library(gnubase-engine STATIC
 	jobs/jobs.cpp jobs/jobs.h
 	media/backup.cpp media/backup.h
 	midi/chords.cpp midi/chords.h
+	midi/controllerlanes.cpp midi/controllerlanes.h
 	midi/functioncommands.cpp midi/functioncommands.h
 	midi/functions.cpp midi/functions.h
 	midi/midivalues.cpp midi/midivalues.h

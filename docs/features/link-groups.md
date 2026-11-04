@@ -17,9 +17,10 @@ fader itself is in [mixer.md](mixer.md), mute, solo and listen in [solo-mute-lis
   removing a track takes its channel out of its group, and a VCA track that goes leaves its group without one.
 - **What a group links** (p. 458): `volume` (on by default) moves the other channels' faders by as much as one moved,
   stopping at their ends; `pan` likewise; `mute` passes mute, solo, solo defeat and listen on as they are, `record`
-  record enable and monitor. `channel.set` does it in the same undo step, announcing each channel; with `linked`
-  false it changes only the channel, as the mixer's Sus does (p. 460). Exclusive solo leaves the channels the solo
-  went to soloed.
+  record enable and monitor; `eq`, `dynamics` (the strip) and `sends` (on by default) the changes of those sections
+  ([channel-settings.md](channel-settings.md)). `channel.set` does it in the same undo step, announcing each channel;
+  with `linked` false it changes only the channel, as the mixer's Sus does (p. 460). Exclusive solo leaves the
+  channels the solo went to soloed.
 - **VCA faders** (pp. 515–519). A group with a VCA fader doesn't link the volume: giving it one turns `volume` off,
   taking it away turns it back on (p. 517), and `volume` with a VCA fader is refused. The VCA fader's buttons go on
   to the group's channels, those that have them (a MIDI channel has no listen). Its volume adds to the channels' in
@@ -51,8 +52,8 @@ fader itself is in [mixer.md](mixer.md), mute, solo and listen in [solo-mute-lis
 ## Not yet
 
 The Link Group Settings dialog and the mixer toolbar's Link, Edit Link Group Settings, Q-Link, Sus and Abs buttons,
-which need channels selected in the mixer; linking EQ, dynamics, sends, inserts, automation read and write, routing
-and selection (p. 458); absolute instead of relative changes; Add VCA Track to Selected Tracks and the project's VCA
+which need channels selected in the mixer; linking inserts, automation read and write, routing and selection
+(p. 458); absolute instead of relative changes; Add VCA Track to Selected Tracks and the project's VCA
 folder (pp. 154, 517); the VCA fader's meter of its channels' levels (p. 516); Combine Automation of VCA and Linked
 Channels, and the channels' automation tracks showing the combined curve (pp. 516, 519); VCA mute automation; and
 the display line's pop-up menu (p. 459).
