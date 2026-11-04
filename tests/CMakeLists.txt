@@ -37,10 +37,13 @@ add_executable(gnubase-tests
 	bus_tests.cpp
 	canvas_tests.cpp
 	channelformat_tests.cpp
+	channelsettings_tests.cpp
 	channelstrip_tests.cpp
 	clock_tests.cpp
 	color_tests.cpp
 	comping_tests.cpp
+	controllerlanes_tests.cpp
+	controllerlanes_ui_tests.cpp
 	coverage_tests.cpp
 	dawproject_tests.cpp
 	debugreports.cpp

@@ -229,6 +229,9 @@
 			for id in (document:GetAttribute("tracks") or ""):gmatch("%d+") do
 				dialog.tracks[#dialog.tracks + 1] = math.tointeger(tonumber(id))
 			end
+			-- Add Effect Track to Send: the send of the track that goes to the new effect track.
+			local send = tonumber(document:GetAttribute("send") or "")
+			dialog.send = send and math.tointeger(send)
 			local type = dialog.forType or "audio"
 			document:GetElementById("track-types"):SetAttribute("value", type)
 			dialog.show(document, type)
@@ -292,6 +295,7 @@
 			end
 			if type == dialog.forType and #dialog.tracks > 0 then
 				result.tracks = dialog.tracks
+				result.send = dialog.send
 			end
 			return result
 		end

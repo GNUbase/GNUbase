@@ -77,6 +77,9 @@ namespace gnubase::engine
 			group.pan = parameters.value("pan", group.pan);
 			group.mute = parameters.value("mute", group.mute);
 			group.record = parameters.value("record", group.record);
+			group.eq = parameters.value("eq", group.eq);
+			group.dynamics = parameters.value("dynamics", group.dynamics);
+			group.sends = parameters.value("sends", group.sends);
 			if (group.vca != vcaBefore)
 				group.volume = group.vca == 0;
 			group.volume = parameters.value("volume", group.volume);
@@ -154,14 +157,16 @@ namespace gnubase::engine
 		const Json flagSchema = {{"type", "boolean"}};
 		const Json properties = {{"name", {{"type", "string"}}}, {"channels", {{"type", "array"}, {"items", idSchema}}},
 			{"volume", flagSchema}, {"pan", flagSchema}, {"mute", flagSchema}, {"record", flagSchema},
-			{"vca", idSchema}};
+			{"eq", flagSchema}, {"dynamics", flagSchema}, {"sends", flagSchema}, {"vca", idSchema}};
 		const Json groupResult = {
 			{"type", "object"}, {"properties", {{"group", {{"type", "object"}}}}}, {"required", {"group"}}};
 		const std::string settings =
 			"channels: the linked channels; a channel is in one link group at most, so they leave the groups they "
 			"were in. What a change to one of them passes on to the others (channel.set, unless linked is false): "
 			"volume (the fader, by as much as it moved), pan (likewise), mute (the mute, solo and listen buttons), "
-			"record (record enable and monitor). vca: the channel of a VCA track that controls the group, or 0; it "
+			"record (record enable and monitor), eq (the equalizer's changes), dynamics (the strip's: gate, compressor "
+			"and limiter), sends (the sends' changes, on by default; a channel that can't take one, such as a send to "
+			"itself, keeps its own). vca: the channel of a VCA track that controls the group, or 0; it "
 			"leaves the group it controlled. The VCA fader's volume adds to each channel's, its automation to theirs, "
 			"and its buttons pass on to them; VCA faders can be in groups that other VCA faders control, but never "
 			"control themselves. A group with a VCA fader doesn't link the volume: giving it one turns volume off, "
@@ -180,7 +185,7 @@ namespace gnubase::engine
 		model.addEdit(engine,
 			{"linkGroup.add", 1,
 				"Links channels in a new link group (reference manual pp. 457-459), named Link Group N unless name is "
-				"given; by default it links the volume, or with a VCA fader nothing. " +
+				"given; by default it links the volume and the sends, or with a VCA fader the sends. " +
 					settings + " Emits linkGroup.added.",
 				schema(true), groupResult, false},
 			"Link channels", addGroup);

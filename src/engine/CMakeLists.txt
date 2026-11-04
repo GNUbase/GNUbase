@@ -111,6 +111,7 @@ add_library(gnubase-engine STATIC
 	dawproject/dawproject.cpp dawproject/dawproject.h
 	document/audiofilecommands.cpp
 	document/channelformat.cpp document/channelformat.h
+	document/channelsettings.cpp document/channelsettings.h
 	document/document.cpp document/document.h
 	document/editors.cpp document/editors.h
 	document/eventedits.cpp
@@ -155,6 +156,7 @@ add_library(gnubase-engine STATIC
 	metronome/metronomecommands.cpp metronome/metronomecommands.h
 	metronome/metronomesettings.cpp metronome/metronomesettings.h
 	midi/chords.cpp midi/chords.h
+	midi/controllerlanes.cpp midi/controllerlanes.h
 	midi/functioncommands.cpp midi/functioncommands.h
 	midi/functions.cpp midi/functions.h
 	midi/midivalues.cpp midi/midivalues.h
