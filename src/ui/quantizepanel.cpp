@@ -75,7 +75,7 @@ namespace gnubase::ui
 			return element.GetAttribute<Rml::String>(name, "");
 		}
 
-		Rml::Element* withAttribute(Rml::Element* element, const char* name)
+		const Rml::Element* withAttribute(const Rml::Element* element, const char* name)
 		{
 			for (; element != nullptr; element = element->GetParentNode())
 				if (element->HasAttribute(name))
@@ -287,7 +287,7 @@ namespace gnubase::ui
 
 	void QuantizePanel::ProcessEvent(Rml::Event& event)
 	{
-		Rml::Element* target = event.GetTargetElement();
+		const Rml::Element* target = event.GetTargetElement();
 		if (target == nullptr || !m_settings.is_object() || m_settings.empty())
 			return;
 		if (event == Rml::EventId::Change)
@@ -305,24 +305,30 @@ namespace gnubase::ui
 		}
 		if (target->HasAttribute("disabled"))
 			return;
-		if (Rml::Element* item = withAttribute(target, m_presetAttribute.c_str()))
+		if (const Rml::Element* item = withAttribute(target, m_presetAttribute.c_str()))
+		{
 			set({{"preset", attribute(*item, m_presetAttribute.c_str())}});
-		else if (Rml::Element* grid = withAttribute(target, "grid"))
+		}
+		else if (const Rml::Element* grid = withAttribute(target, "grid"))
+		{
 			set({{"settings", {{"grid", attribute(*grid, "grid")}}}});
-		else if (Rml::Element* tuplet = withAttribute(target, "tuplet"))
+		}
+		else if (const Rml::Element* tuplet = withAttribute(target, "tuplet"))
+		{
 			set({{"settings", {{"tuplet", std::stoi(attribute(*tuplet, "tuplet"))}}}});
-		else if (Rml::Element* pre = withAttribute(target, "pre-quantize"))
+		}
+		else if (const Rml::Element* pre = withAttribute(target, "pre-quantize"))
 		{
 			const std::string value = attribute(*pre, "pre-quantize");
 			set({{"settings", {{"preQuantize", value == "off" ? Json(nullptr) : Json(value)}}}});
 		}
-		else if (Rml::Element* move = withAttribute(target, "max-move"))
+		else if (const Rml::Element* move = withAttribute(target, "max-move"))
 		{
 			const std::string value = attribute(*move, "max-move");
 			const auto note = engine::midi::noteValueFromString(value);
 			set({{"settings", {{"maxMove", note ? note->ticks() : 0}}}});
 		}
-		else if (Rml::Element* button = withAttribute(target, "action"))
+		else if (const Rml::Element* button = withAttribute(target, "action"))
 		{
 			const std::string action = attribute(*button, "action");
 			if (action == "apply")
@@ -382,7 +388,7 @@ namespace gnubase::ui
 
 	Rml::Element* QuantizePanel::find(const std::string& id) const
 	{
-		Rml::Element* root = m_root.get();
+		const Rml::Element* root = m_root.get();
 		return root != nullptr ? root->GetOwnerDocument()->GetElementById(id) : nullptr;
 	}
 
