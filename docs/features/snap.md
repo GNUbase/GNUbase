@@ -65,8 +65,8 @@ display and in `snap.position` alike.
   tracks' events attract too), the active one's or not: a marker's position, and a cycle marker's end too. Both
   `snap.position` and the event display take them from the project, the display from the same `project.get` answer
   as its events, converted to samples as the engine does, so a script or MCP client snapping a position gets what a
-  drag does. Which marker track is active only matters to the marker commands and the zoom presets menu's cycle
-  markers.
+  drag does. Which marker track is active doesn't matter to snapping, nor whether the event display draws marker lines
+  for it (`ui.markerLines`).
 - **Snap points** (p. 105) are points in an audio event's clip (`AudioEvent::snapPoint`, clip frames), so they stay with
   the audio when the event is resized or split; a snap point outside the event counts as none. `event.setSnapPoint`
   sets them at a position, by default the project cursor (Snap Point to Cursor). Moving an audio event snaps its snap
