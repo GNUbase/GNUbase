@@ -305,6 +305,7 @@ namespace gnubase::engine
 		const settings::Store& m_settings;
 		AutoMonitoring m_autoMonitoring = AutoMonitoring::TapeMachine; // the graph's
 		ListenGains m_listenGains;                                     // the graph's
+		bool m_mutePreSends = false;                                   // the graph's audio.mutePreSends
 		float m_dim = 1.0f; // audio thread: the main mix's gain at the end of the last block
 
 		Engine* m_engine = nullptr;

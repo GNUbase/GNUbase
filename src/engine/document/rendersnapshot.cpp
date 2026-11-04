@@ -175,6 +175,7 @@ namespace gnubase::engine
 				const bool muted = project.channels.at(channel.id).mute && automated.count(channel.track) == 0;
 				const bool quiet = !heard[i] || !project.trackById.at(channel.track).enabled;
 				channel.silent = quiet || muted;
+				channel.muted = muted;
 				for (RenderSend& send : channel.sends)
 					if (quiet && send.preFader)
 						send.gain = 0.0f;

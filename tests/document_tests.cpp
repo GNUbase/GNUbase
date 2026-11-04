@@ -180,7 +180,7 @@ TEST_CASE("track.add routes the new channel as channel.set would: input, output 
 	CHECK_THAT(reject(client, "track.add", {{"type", "midi"}, {"input", mic}}), ContainsSubstring("input"));
 	CHECK_THAT(reject(client, "track.add", {{"type", "audio"}, {"output", mic}}), ContainsSubstring("input bus"));
 	CHECK_THAT(reject(client, "track.add", {{"type", "audio"}, {"output", audio.at("id")}}),
-		ContainsSubstring("group channel"));
+		ContainsSubstring("a group or an effect channel"));
 	CHECK_THAT(reject(client, "track.add", {{"type", "midi"}, {"output", group.at("id")}}),
 		ContainsSubstring("instrument channel"));
 	CHECK_THAT(

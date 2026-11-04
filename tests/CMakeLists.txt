@@ -29,6 +29,8 @@ add_executable(gnubase-tests
 	audiofile_tests.cpp
 	audioimport_tests.cpp
 	audiopart_tests.cpp
+	audioparteditor_tests.cpp
+	audioparteditor_ui_tests.cpp
 	automation_tests.cpp
 	automationtracks_tests.cpp
 	backup_tests.cpp
@@ -59,6 +61,8 @@ add_executable(gnubase-tests
 	graph_tests.cpp
 	history_tests.cpp
 	historypanel_tests.cpp
+	hitpoints_tests.cpp
+	hitpoints_ui_tests.cpp
 	inspector_tests.cpp
 	ipc_process_tests.cpp
 	ipc_tests.cpp

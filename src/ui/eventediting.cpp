@@ -995,11 +995,17 @@ namespace gnubase::ui
 		}
 		if (const Shown* shown = eventAt(x, y); shown != nullptr)
 		{
-			// Outside a crossfade, an audio event opens in the sample editor (reference manual p. 613).
+			// Outside a crossfade, an audio event opens in the sample editor (reference manual p. 613), an audio part
+			// in the audio part editor (p. 692).
 			if (!openCrossfadeAt(*shown, m_view.start + (x * m_view.scale)))
+			{
 				for (const Json& audio : m_project.value("audioEvents", Json::array()))
 					if (audio.at("id") == shown->id)
 						m_binding.send("sampleEditor.open", {{"event", shown->id}});
+				for (const Json& part : m_project.value("audioParts", Json::array()))
+					if (part.at("id") == shown->id)
+						m_binding.send("editor.open", {{"editor", "window"}, {"parts", {shown->id}}});
+			}
 			return;
 		}
 		if (y + m_view.top < 0.0)

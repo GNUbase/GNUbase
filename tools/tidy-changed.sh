@@ -4,13 +4,39 @@
 # the changed and new .cpp files under src/ and tests/, and the .cpp file next to each changed header. It reports only
 # findings on the lines the branch changed, since the rest passed CI already (and Windows' headers bring a few findings
 # that CI's don't). It needs a compile database, not a build: it configures one in build/tidy, again when a changed
-# file isn't in it yet. CI checks more (every line of every file that includes a changed header) on Linux, where
-# libstdc++ and the non-Windows #ifdef branches can bring findings that Windows doesn't see, so CI has the last word.
+# file isn't in it yet. CI checks more (every line of every file that includes a changed header), so CI has the last
+# word.
 # Usage: tools/tidy-changed.sh [base]    base: where the branch starts from (default origin/main)
-# Windows (Git Bash) uses Visual Studio 2026's Ninja, compiler and clang-tidy; Linux a clang-tidy 22 on the PATH
-# (CONTRIBUTING.md). Not macOS yet: its universal build gives every file two -arch flags, which clang-tidy refuses.
-# CLANG_TIDY overrides the clang-tidy to use. Exit status: 0 no findings, 1 findings, 2 error.
+# Linux uses a clang-tidy 22 on the PATH (CONTRIBUTING.md). CI's clang-tidy runs on Linux, where libstdc++ and the
+# non-Windows #ifdef branches bring findings that Windows doesn't see (bugprone-unchecked-optional-access never fires
+# with Microsoft's std::optional), so on Windows (Git Bash) the check runs in WSL when it has clang-tidy 22 (pipx, as
+# for tools/ci-local.sh): on the commit at HEAD, in a clone in ~/gnubase-tidy/<checkout folder name>. Without it,
+# Windows uses Visual Studio 2026's Ninja, compiler and clang-tidy. Not macOS yet: its universal build gives every file
+# two -arch flags, which clang-tidy refuses.
+# CLANG_TIDY overrides the clang-tidy to use, which on Windows also keeps the check out of WSL; GNUBASE_WSL names the
+# WSL distribution (default Ubuntu). Exit status: 0 no findings, 1 findings, 2 error.
 set -u
+
+# Started by Windows inside WSL (below) with the repository, the commit at HEAD, where the branch starts and the
+# checkout folder's name: moves the clone to that commit and checks it there. It fetches from the repository, not the
+# checkout: a worktree's .git file holds a Windows path, which git in WSL can't follow.
+if [ "${1:-}" = --wsl ]; then
+	repository=$2 commit=$3 start=$4 mirror=$HOME/gnubase-tidy/$5
+	export PATH="$HOME/.local/bin:$PATH" GIT_LFS_SKIP_SMUDGE=1 # pipx; clang-tidy needs no test audio
+	mkdir -p "$HOME/gnubase-tidy" || exit 2
+	if ! { { [ -d "$mirror/.git" ] || git clone -q --no-checkout "$repository" "$mirror"; } && cd "$mirror" &&
+		git fetch -q --no-tags "$repository" "$commit" && git checkout -q --force --detach FETCH_HEAD &&
+		git submodule sync -q && git submodule update -q --init --recursive &&
+		git submodule update -q --init --checkout ext/vst3sdk &&
+		git -C ext/vst3sdk submodule update -q --init base cmake pluginterfaces public.sdk; } > "$mirror.log" 2>&1; then
+		echo "Preparing the clone in WSL failed, see ~/gnubase-tidy/$5.log"
+		exit 2
+	fi
+	echo "clang-tidy runs in WSL on HEAD $(git rev-parse --short HEAD), in ~/gnubase-tidy/$5, as CI's runs on Linux."
+	bash tools/tidy-changed.sh "$start" 2>&1 | sed "s|$mirror/||g"
+	exit "${PIPESTATUS[0]}"
+fi
+
 root=$(git rev-parse --show-toplevel) || exit 2
 cd "$root" || exit 2
 start=$(git merge-base "${1:-origin/main}" HEAD) || exit 2
@@ -20,6 +46,17 @@ options="-DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_CONFIGURATION_TYPES=Debug"
 
 case "$(uname -s)" in
 MINGW* | MSYS* | CYGWIN*)
+	distro=${GNUBASE_WSL:-Ubuntu}
+	if [ -z "${CLANG_TIDY:-}" ] && MSYS_NO_PATHCONV=1 wsl.exe -d "$distro" -e bash -c \
+		'PATH=$HOME/.local/bin:$PATH clang-tidy --version' 2>/dev/null | tr -d '\0' | grep -q 'version 22\.'; then
+		[ -z "$(git status --porcelain -- src tests)" ] ||
+			echo "Note: uncommitted changes are not checked, only HEAD $(git rev-parse --short HEAD)."
+		wslPath() { cygpath -m "$1" | sed -E 's|^([A-Za-z]):|/mnt/\L\1|'; }
+		MSYS_NO_PATHCONV=1 wsl.exe -d "$distro" -e bash "$(wslPath "$root")/tools/tidy-changed.sh" --wsl \
+			"$(wslPath "$(git rev-parse --path-format=absolute --git-common-dir)")" "$(git rev-parse HEAD)" "$start" \
+			"$(basename "$root")"
+		exit
+	fi
 	vs=$("$(cygpath -u "$PROGRAMFILES") (x86)/Microsoft Visual Studio/Installer/vswhere.exe" -latest \
 		-property installationPath | tr -d '\r')
 	tidy=${CLANG_TIDY:-$vs/VC/Tools/Llvm/x64/bin/clang-tidy.exe}

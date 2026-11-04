@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/sampleeditor.h"
 
+#include "engine/time/tempomap.h"
 #include "ui/canvas.h"
 
 #include <RmlUi/Core/Context.h>
@@ -42,10 +43,20 @@ namespace gnubase::ui
 			{"event", "Select Event"},
 		}};
 
+		// The Hitpoints section's Create section (p. 638), as event.fromHitpoints names them.
+		constexpr std::array<std::pair<const char*, const char*>, 6> g_creates = {{
+			{"slices", "Slices"},
+			{"groove", "Groove"},
+			{"markers", "Markers"},
+			{"regions", "Regions"},
+			{"events", "Events"},
+			{"midiNotes", "MIDI Notes"},
+		}};
+
 		// What the editor listens to in its root element, and in its document: drags that leave the root, and the
 		// window's size.
-		constexpr std::array<Rml::EventId, 3> g_rootEvents = {
-			Rml::EventId::Mousedown, Rml::EventId::Click, Rml::EventId::Dblclick};
+		constexpr std::array<Rml::EventId, 4> g_rootEvents = {
+			Rml::EventId::Mousedown, Rml::EventId::Click, Rml::EventId::Dblclick, Rml::EventId::Change};
 		constexpr std::array<Rml::EventId, 3> g_documentEvents = {
 			Rml::EventId::Mousemove, Rml::EventId::Mouseup, Rml::EventId::Resize};
 
@@ -53,6 +64,7 @@ namespace gnubase::ui
 		constexpr int64_t g_maxColumnValues = 262144;
 		constexpr double g_zoomStep = 2.0;
 		constexpr double g_minScale = 1.0 / 16.0; // frames per dp: zoomed in to 16 dp per frame
+		constexpr double g_dragThreshold = 2.0;   // dp a hitpoint moves before a press drags it
 
 		std::string attribute(const Rml::Element& element, const char* name)
 		{
@@ -79,6 +91,19 @@ namespace gnubase::ui
 		{
 			if (element != nullptr && element->IsClassSet(name) != set)
 				element->SetClass(name, set);
+		}
+
+		// A widget's value from the engine, unless the user is dragging it.
+		void setValue(Rml::Element* element, double value)
+		{
+			if (element != nullptr && !element->IsPseudoClassSet("active") &&
+				std::abs(element->GetAttribute<double>("value", 0.0) - value) > 1e-6)
+				element->SetAttribute("value", value);
+		}
+
+		bool modifier(const Rml::Event& event, const char* key)
+		{
+			return event.GetParameter<int>(key, 0) != 0;
 		}
 
 		void setInner(Rml::Element* element, const std::string& rml)
@@ -127,6 +152,32 @@ namespace gnubase::ui
 		std::string selects;
 		for (const auto& [select, title] : g_selects)
 			selects += std::string(R"(<button class="se-select" select=")") + select + R"(">)" + title + "</button>";
+		std::string creates;
+		for (const auto& [create, title] : g_creates)
+			creates += std::string(R"(<button class="se-create" create=")") + create + R"(">)" + title + "</button>";
+		const auto filter = [](const char* id, const char* label, const char* range)
+		{
+			return std::string(R"(<div class="se-filter"><span class="se-filter-label">)") + label +
+				R"(</span><slider id=")" + id + R"(" )" + range + "/></div>";
+		};
+		// The Hitpoints section (pp. 637-647), with the options of Convert Hitpoints to MIDI Notes (pp. 646-647).
+		const std::string hitpoints = R"(<div class="section-header">Hitpoints</div>)"
+									  R"(<button id="se-edit-hitpoints">Edit Hitpoints</button>)" +
+			filter("se-threshold", "Threshold", R"(min="-60" max="0" default="-60" step="0.5")") +
+			filter("se-intensity", "Intensity", R"(min="0" max="1" default="0" step="0.01")") +
+			filter("se-minimum-length", "Minimum Length", R"(min="0" max="1000" default="0" step="1")") +
+			R"(<button id="se-remove-hitpoints">Remove All</button><div class="section-header">Create</div>)" +
+			creates +
+			R"(<div class="se-midi-options off"><div class="section-header">Convert Hitpoints to MIDI Notes</div>)"
+			R"(<button class="se-velocity-mode checked" velocity-mode="dynamic">Dynamic Velocity</button>)"
+			R"(<button class="se-velocity-mode" velocity-mode="fixed">Fixed Velocity</button>)"
+			R"(<div class="se-filter"><span class="se-filter-label">Velocity</span><valuefield id="se-midi-velocity" )"
+			R"(min="1" max="127" default="100" value="100" step="1" decimals="0"/></div>)"
+			R"(<div class="se-filter"><span class="se-filter-label">Pitch</span><valuefield id="se-midi-pitch" )"
+			R"(min="0" max="127" default="36" value="36" step="1" decimals="0"/></div>)"
+			R"(<div class="se-filter"><span class="se-filter-label">Length</span><valuefield id="se-midi-length" )"
+			R"(min="1" max="64" default="1" value="1" step="1" decimals="0" unit="/16"/></div>)"
+			R"(<button id="se-midi-ok">OK</button><button id="se-midi-cancel">Cancel</button></div>)";
 		root.SetInnerRML(R"(<div class="sample-editor empty"><div class="toolbar sample-editor-toolbar">)" + tools +
 			R"(<button id="se-zero-crossing">Snap to Zero Crossing</button><div class="spacer"/>)" + layout +
 			R"(</div><div class="info-line se-info">)" + info +
@@ -137,10 +188,11 @@ namespace gnubase::ui
 			R"(<button id="se-set-locators">Set Locators to Selection Range</button>)"
 			R"(<button id="se-locate">Locate Selection</button>)"
 			R"(<div class="section-header">Process</div>)"
-			R"(<button id="se-range-region">Event or Range as Region</button></div>)"
-			R"(<div class="se-main"><div class="se-display"><waveform class="se-wave"/>)"
+			R"(<button id="se-range-region">Event or Range as Region</button>)" +
+			hitpoints +
+			R"(</div><div class="se-main"><div class="se-display"><waveform class="se-wave"/>)"
 			R"(<div class="se-outside se-before"/><div class="se-outside se-after"/><div class="se-region-shown"/>)"
-			R"(<div class="se-selection"/><div class="se-snap-point"/></div>)"
+			R"(<div class="se-selection"/><div class="se-hitpoints"/><div class="se-snap-point"/></div>)"
 			R"(<div class="se-regions"><div class="toolbar se-regions-toolbar">)"
 			R"(<button id="se-add-region">Add Region</button><button id="se-remove-region">Remove Region</button>)"
 			R"(<button id="se-select-region">Select Region</button></div><div class="se-region-list"/></div>)"
@@ -325,6 +377,24 @@ namespace gnubase::ui
 		return nullptr;
 	}
 
+	const Json* SampleEditor::clip() const
+	{
+		if (!m_project.contains("clips"))
+			return nullptr;
+		for (const Json& each : m_project.at("clips")) // in the project, not a copy
+			if (each.at("id") == m_view.value("clip", Json(0)))
+				return &each;
+		return nullptr;
+	}
+
+	double SampleEditor::sampleRate() const
+	{
+		for (const Json& media : m_project.value("media", Json::array()))
+			if (media.at("id") == m_media)
+				return media.at("sampleRate").get<double>();
+		return 48000.0;
+	}
+
 	void SampleEditor::fit(double from, double to)
 	{
 		const double width = displayWidth();
@@ -361,6 +431,17 @@ namespace gnubase::ui
 		if (m_project.contains("snap"))
 			zeroCrossing = m_project.at("snap").value("zeroCrossing", false);
 		setClass(root->QuerySelector("#se-zero-crossing"), "checked", zeroCrossing);
+		// The Hitpoints section: Edit Hitpoints and the clip's filters, the minimum length in milliseconds.
+		setClass(root->QuerySelector("#se-edit-hitpoints"), "checked", m_editHitpoints);
+		setClass(editor, "edit-hitpoints", m_editHitpoints);
+		if (const Json* item = hasEvent() ? clip() : nullptr; item != nullptr && item->contains("hitpointFilter"))
+		{
+			const Json& filter = item->at("hitpointFilter");
+			setValue(root->QuerySelector("#se-threshold"), filter.at("threshold").get<double>());
+			setValue(root->QuerySelector("#se-intensity"), filter.at("intensity").get<double>());
+			setValue(root->QuerySelector("#se-minimum-length"),
+				std::round(filter.at("minimumLength").get<double>() * 1000.0 / sampleRate()));
+		}
 
 		// The info line (p. 614): the clip's format and length, the selection range and the zoom, in sample frames.
 		const auto field = [root](const char* name, const std::string& text)
@@ -381,6 +462,7 @@ namespace gnubase::ui
 		if (!hasEvent() || !(m_scale > 0.0))
 		{
 			renderRegions();
+			renderHitpoints();
 			return;
 		}
 
@@ -441,6 +523,42 @@ namespace gnubase::ui
 			place(root->QuerySelector(".se-region-shown"), shown->at("start").get<double>(),
 				shown->at("end").get<double>());
 		renderRegions();
+		renderHitpoints();
+	}
+
+	// The hitpoints that count, and the disabled ones (pp. 636-640): a line each, with its handle at the top,
+	// .locked and .disabled. The elements are rebuilt only when they change.
+	void SampleEditor::renderHitpoints()
+	{
+		Rml::Element* shown = m_root ? m_root->QuerySelector(".se-hitpoints") : nullptr;
+		if (shown == nullptr)
+			return;
+		const Json* item = hasEvent() && m_scale > 0.0 ? clip() : nullptr;
+		std::string rml;
+		if (item != nullptr)
+			for (const Json& hitpoint : item->value("hitpoints", Json::array()))
+			{
+				const bool locked = hitpoint.at("locked").get<bool>();
+				const bool disabled = hitpoint.at("disabled").get<bool>();
+				if (hitpoint.at("active").get<bool>() || disabled)
+					rml += std::string(R"(<div class="se-hitpoint)") + (locked ? " locked" : "") +
+						(disabled ? " disabled" : "") + R"(" hitpoint=")" +
+						std::to_string(hitpoint.at("position").get<int64_t>()) +
+						R"("><div class="se-hitpoint-line"/><div class="se-hitpoint-handle"/></div>)";
+			}
+		if (rml != m_hitpointRows)
+		{
+			shown->SetInnerRML(rml);
+			m_hitpointRows = rml;
+		}
+		for (int i = 0; i < shown->GetNumChildren(); ++i)
+		{
+			Rml::Element* hitpoint = shown->GetChild(i);
+			const auto position = std::stoll(attribute(*hitpoint, "hitpoint"));
+			const double frame =
+				m_drag == Drag::Hitpoint && position == m_hitpoint ? m_dragged : static_cast<double>(position);
+			hitpoint->SetProperty(Rml::PropertyId::Left, dp((frame - m_start) / m_scale));
+		}
 	}
 
 	// The regions list (p. 624): a row per region of the clip with its name, start and end, the selected one
@@ -569,6 +687,9 @@ namespace gnubase::ui
 		case Rml::EventId::Mouseup:
 			release(event);
 			break;
+		case Rml::EventId::Change:
+			changed(event, *target);
+			break;
 		default:
 			break;
 		}
@@ -606,6 +727,8 @@ namespace gnubase::ui
 			return;
 		}
 		if (!hasEvent())
+			return;
+		if (clickHitpoints(target, id))
 			return;
 		const auto [start, end] = rangeOrEvent();
 		if (const Rml::Element* button = withAttribute(&target, "select", root))
@@ -655,6 +778,129 @@ namespace gnubase::ui
 		}
 	}
 
+	// The Hitpoints section's buttons (pp. 637-647). Edit Hitpoints detects the hitpoints of a clip that has none.
+	bool SampleEditor::clickHitpoints(Rml::Element& target, const std::string& id)
+	{
+		Rml::Element* root = m_root.get();
+		Rml::Element* options = root->QuerySelector(".se-midi-options");
+		if (id == "se-edit-hitpoints")
+		{
+			m_editHitpoints = !m_editHitpoints;
+			const Json* item = clip();
+			if (m_editHitpoints && item != nullptr && item->value("hitpoints", Json::array()).empty())
+				m_binding.send("clip.detectHitpoints", {{"clip", m_view.at("clip")}});
+			render();
+			return true;
+		}
+		if (id == "se-remove-hitpoints")
+		{
+			m_binding.send("clip.removeHitpoints", {{"clip", m_view.at("clip")}});
+			return true;
+		}
+		if (const Rml::Element* button = withAttribute(&target, "create", root))
+		{
+			// MIDI Notes asks for its options first (Convert Hitpoints to MIDI Notes, pp. 646-647).
+			const std::string create = attribute(*button, "create");
+			if (create == "midiNotes")
+				setClass(options, "off", false);
+			else
+				m_binding.send("event.fromHitpoints", {{"event", m_event}, {"create", create}});
+			return true;
+		}
+		if (const Rml::Element* button = withAttribute(&target, "velocity-mode", root))
+		{
+			Rml::ElementList modes;
+			root->QuerySelectorAll(modes, ".se-velocity-mode");
+			for (Rml::Element* mode : modes)
+				setClass(mode, "checked", mode == button);
+			return true;
+		}
+		if (id != "se-midi-ok" && id != "se-midi-cancel")
+			return false;
+		setClass(options, "off", true);
+		if (id == "se-midi-ok")
+		{
+			const auto number = [root](const char* selector)
+			{
+				const Rml::Element* field = root->QuerySelector(selector);
+				return field != nullptr ? field->GetAttribute<double>("value", 0.0) : 0.0;
+			};
+			const Rml::Element* mode = root->QuerySelector(".se-velocity-mode.checked");
+			m_binding.send("event.fromHitpoints",
+				{{"event", m_event}, {"create", "midiNotes"},
+					{"velocityMode", mode != nullptr ? attribute(*mode, "velocity-mode") : "dynamic"},
+					{"velocity", number("#se-midi-velocity") / 127.0}, {"pitch", std::lround(number("#se-midi-pitch"))},
+					{"length", std::llround(number("#se-midi-length")) * (time::g_ticksPerQuarter / 4)}});
+		}
+		return true;
+	}
+
+	// A filter's slider moved: one undo step for each drag (clip.setHitpointFilter), the minimum length from
+	// milliseconds.
+	void SampleEditor::changed(Rml::Event& event, Rml::Element& target)
+	{
+		const std::string id = attribute(target, "id");
+		if (!hasEvent() || (id != "se-threshold" && id != "se-intensity" && id != "se-minimum-length"))
+			return;
+		const double value = event.GetParameter<float>("value", 0.0F);
+		Json parameters = {{"clip", m_view.at("clip")}};
+		if (id == "se-threshold")
+			parameters["threshold"] = value;
+		else if (id == "se-intensity")
+			parameters["intensity"] = value;
+		else
+			parameters["minimumLength"] = std::llround(value * sampleRate() / 1000.0);
+		m_binding.sendStep(event.GetParameter<int>("gesture", 0), "hitpoint filter " + id, "Filter hitpoints",
+			Json::array({{{"command", "clip.setHitpointFilter"}, {"parameters", parameters}}}));
+	}
+
+	// Edit Hitpoints' gestures in the display (pp. 636, 639-640): a click on a hitpoint's handle locks or unlocks
+	// it; on its line, with Shift it disables or enables it, with Ctrl and Alt it resets it, and a drag moves it; Alt
+	// and a click elsewhere inserts one, and a click between two plays that slice while the mouse is pressed.
+	void SampleEditor::pressHitpoint(Rml::Event& event, Rml::Element& target, double frame)
+	{
+		const Rml::Element* root = m_root.get();
+		const Json clipId = m_view.at("clip");
+		if (const Rml::Element* hitpoint = withClass(&target, "se-hitpoint", root))
+		{
+			const auto position = std::stoll(attribute(*hitpoint, "hitpoint"));
+			const Json at = {{"clip", clipId}, {"position", position}};
+			Json parameters = at;
+			if (withClass(&target, "se-hitpoint-handle", root) != nullptr)
+				parameters["locked"] = !hitpoint->IsClassSet("locked");
+			else if (modifier(event, "shift_key"))
+				parameters["disabled"] = !hitpoint->IsClassSet("disabled");
+			else if ((modifier(event, "ctrl_key") || modifier(event, "meta_key")) && modifier(event, "alt_key"))
+				parameters.update({{"locked", false}, {"disabled", false}});
+			if (parameters != at)
+			{
+				m_binding.send("clip.setHitpoint", parameters);
+				return;
+			}
+			m_drag = Drag::Hitpoint;
+			m_hitpoint = position;
+			m_dragged = static_cast<double>(position);
+			return;
+		}
+		if (modifier(event, "alt_key"))
+		{
+			m_binding.send("clip.addHitpoint", {{"clip", clipId}, {"position", std::llround(frame)}});
+			return;
+		}
+		// Play back Slice: from the hitpoint before, or the event's start.
+		auto from = static_cast<double>(m_offset);
+		if (const Json* item = clip())
+			for (const Json& hitpoint : item->value("hitpoints", Json::array()))
+			{
+				const auto position = hitpoint.at("position").get<double>();
+				if (hitpoint.at("active").get<bool>() && position <= frame && position > from)
+					from = position;
+			}
+		m_drag = Drag::Play;
+		m_binding.send(
+			"audition.start", {{"track", m_view.at("track")}, {"position", std::max<int64_t>(0, projectSample(from))}});
+	}
+
 	void SampleEditor::press(Rml::Event& event, Rml::Element& target)
 	{
 		if (!hasEvent() || event.GetParameter<int>("button", 0) != 0)
@@ -676,6 +922,11 @@ namespace gnubase::ui
 		if (withClass(&target, "se-snap-point", root) != nullptr)
 		{
 			m_drag = Drag::SnapPoint;
+			return;
+		}
+		if (m_editHitpoints)
+		{
+			pressHitpoint(event, target, frame);
 			return;
 		}
 		switch (m_tool)
@@ -733,7 +984,7 @@ namespace gnubase::ui
 		}
 		else
 		{
-			render(); // the range or the snap point dragged
+			render(); // the range, the snap point or a hitpoint dragged
 		}
 	}
 
@@ -750,6 +1001,17 @@ namespace gnubase::ui
 		if (drag == Drag::Overview)
 			return;
 		m_dragged = frameAt(event);
+		if (drag == Drag::Hitpoint)
+		{
+			// A press without a drag leaves it where it is; moved, it is locked (p. 640).
+			const double moved = std::abs(m_dragged - static_cast<double>(m_hitpoint)) / m_scale;
+			const auto to = std::clamp<int64_t>(std::llround(m_dragged), 0, m_length - 1);
+			if (moved >= g_dragThreshold && to != m_hitpoint)
+				m_binding.send(
+					"clip.setHitpoint", {{"clip", m_view.at("clip")}, {"position", m_hitpoint}, {"moveTo", to}});
+			render();
+			return;
+		}
 		if (drag == Drag::SnapPoint)
 		{
 			// Within the event: a snap point outside it counts as none.
