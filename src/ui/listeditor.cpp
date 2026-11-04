@@ -589,9 +589,13 @@ namespace gnubase::ui
 
 	double ListEditor::ticksAt(const Rml::Event& event, Rml::Element& lane) const
 	{
-		const Rml::Vector2f origin = lane.GetAbsoluteOffset(Rml::BoxArea::Border);
-		const float width = std::max(lane.GetBox().GetSize(Rml::BoxArea::Border).x, 1.0F);
-		const float x = (event.GetParameter("mouse_x", 0.0F) - origin.x) / width;
+		return ticksAt(event, lane.GetAbsoluteOffset(Rml::BoxArea::Border).x,
+			std::max(lane.GetBox().GetSize(Rml::BoxArea::Border).x, 1.0F));
+	}
+
+	double ListEditor::ticksAt(const Rml::Event& event, float left, float width) const
+	{
+		const float x = (event.GetParameter("mouse_x", 0.0F) - left) / width;
 		return static_cast<double>(m_from) + (x * static_cast<double>(m_to - m_from));
 	}
 
@@ -895,13 +899,17 @@ namespace gnubase::ui
 			select(std::move(rows));
 			return;
 		}
-		if (!selected(*row))
-			select({row->key()});
+		// Decides the move before selecting: select() renders, and a Focus filter can then rebuild the rows, which
+		// destroys target and lane.
 		if (lane != nullptr && closest(target, "list-event", root) != nullptr)
 		{
 			m_gesture = Gesture::Move;
-			m_pressedAt = ticksAt(event, *lane);
+			m_laneLeft = lane->GetAbsoluteOffset(Rml::BoxArea::Border).x;
+			m_laneWidth = std::max(lane->GetBox().GetSize(Rml::BoxArea::Border).x, 1.0F);
+			m_pressedAt = ticksAt(event, m_laneLeft, m_laneWidth);
 		}
+		if (!selected(*row))
+			select({row->key()});
 	}
 
 	void ListEditor::drag(Rml::Event& event)
@@ -955,11 +963,9 @@ namespace gnubase::ui
 		else if (gesture == Gesture::Move && m_pressed)
 		{
 			// Moves the selected events by as far as the pressed one went, snapped (p. 1255).
-			Rml::Element* lane = closest(event.GetTargetElement(), "list-event-lane", root);
-			if (lane == nullptr)
-				return;
 			const int64_t delta =
-				snap(static_cast<double>(m_pressed->start) + ticksAt(event, *lane) - m_pressedAt) - m_pressed->start;
+				snap(static_cast<double>(m_pressed->start) + ticksAt(event, m_laneLeft, m_laneWidth) - m_pressedAt) -
+				m_pressed->start;
 			if (delta == 0)
 				return;
 			std::map<std::pair<uint64_t, std::string>, Json> changes;

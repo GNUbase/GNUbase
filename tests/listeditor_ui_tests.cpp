@@ -347,3 +347,25 @@ TEST_CASE("the list editor draws, erases and moves events and edits values in th
 	REQUIRE(f.app.waitUntil(
 		[&] { return std::abs(f.event("controllers", f.events[0]).at("value").get<double>() - 0.25) < 0.02; }));
 }
+
+TEST_CASE("dragging an unselected event with a Focus filter on selects it, filters the list and moves it", "[ui]")
+{
+	Fixture f;
+	// With nothing selected, Focus on Event Types still shows every event; the press selects the note, the focus then
+	// hides the other types and rebuilds the rows while the drag goes on (p. 1250, p. 1255).
+	f.click(of("#list-focus"));
+	f.click(of("#list-focus-menu menuitem[focus=type]"));
+	REQUIRE(f.types().size() == 8);
+	const std::string low = row("note", f.low);
+	const double width = f.box(low + " .list-event-lane").at("width").get<double>();
+	const Json box = f.box(low + " .list-event");
+	const int y = static_cast<int>(std::lround(box.at("y").get<double>() + (box.at("height").get<double>() / 2)));
+	const int x = static_cast<int>(std::lround(box.at("x").get<double>() + 10));
+	f.app.ui().drag(
+		f.window, {"", 0, ui::Point{x, y}}, {"", 0, ui::Point{x + static_cast<int>(std::lround(width / 2)), y}});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.event("notes", f.low).at("position") == 2 * g_quarter; }));
+	CHECK(f.types() == std::vector<std::string>{"note", "note"});
+	CHECK(f.has(low, "selected"));
+	CHECK(f.event("notes", f.high).at("position") == g_quarter);
+}

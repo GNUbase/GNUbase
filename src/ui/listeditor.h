@@ -98,6 +98,7 @@ namespace gnubase::ui
 		bool selected(const Row& row) const;
 		std::vector<const Row*> selectedRows() const;
 		double ticksAt(const Rml::Event& event, Rml::Element& lane) const;
+		double ticksAt(const Rml::Event& event, float left, float width) const;
 		int64_t snap(double ticks) const;
 		int64_t grid() const;
 		int64_t lengthQuantize() const;
@@ -130,6 +131,10 @@ namespace gnubase::ui
 		Gesture m_gesture = Gesture::None;
 		std::optional<Row> m_pressed;
 		double m_pressedAt = 0.0;
+		// The pressed event lane's left edge and width: a move ends wherever the mouse is, and a Focus filter can
+		// rebuild the rows while it goes on.
+		float m_laneLeft = 0.0F;
+		float m_laneWidth = 1.0F;
 		std::map<std::pair<uint64_t, uint64_t>, double> m_values; // what a drag in the value display set
 		std::vector<Rml::ObserverPtr<Rml::Element>> m_menus;
 	};
