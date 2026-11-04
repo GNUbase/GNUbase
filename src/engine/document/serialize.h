@@ -10,7 +10,8 @@
 #include <vector>
 
 // The project document as JSON: what project.get returns and the events carry, and what the DAWproject extension
-// entry stores. projectFromJson(toJson(project)) gives back the same project.
+// entry stores. projectFromJson(toJson(project)) gives back the same project, except for the newer build's grid types
+// in its snap settings (SnapSettings::newerGrids), which only saving writes (saveDawProject).
 namespace gnubase::engine
 {
 	// Note velocities and controller values are 0 to 1 in JSON, whatever the internal resolution.
@@ -39,6 +40,9 @@ namespace gnubase::engine
 	Json toJson(const Fade& fade);
 	Json toJson(const Crossfade& crossfade); // null without one
 	Json toJson(const AutoFades& settings);
+	// An audio event's volume curve: [{position, volume, curve}], and back, unchecked.
+	Json toJson(const std::vector<VolumePoint>& curve);
+	std::vector<VolumePoint> volumeCurveFromJson(const Json& json);
 	// The inverses. Missing properties keep the value of fallback; unknown names throw std::invalid_argument.
 	Fade fadeFromJson(const Json& json, const Fade& fallback = {});
 	AutoFades autoFadesFromJson(const Json& json, const AutoFades& fallback = {});
@@ -59,11 +63,16 @@ namespace gnubase::engine
 	Json toJson(const Bus& bus);
 	Json toJson(const Track& track);
 	Json toJson(const Channel& channel);
+	// A channel's strip sections as its pre, eq and strip objects, and back: sectionsFromJson changes what the JSON
+	// has and throws std::invalid_argument for values out of range.
+	Json toJson(const ChannelSections& sections);
+	ChannelSections sectionsFromJson(const Json& json, const ChannelSections& fallback = {});
 	Json toJson(const Slot& slot); // its state as base64
 	Json toJson(const MediaFile& media);
 	Json toJson(const Clip& clip);
 	Json toJson(const PoolFolder& folder);
 	Json toJson(const AudioEvent& event);
+	Json toJson(const AudioPart& part);
 	Json toJson(const Note& note);
 	Json toJson(const Controller& controller);
 	// A controller's type and the values the type uses, without checking them; the others are zero. Its id and
@@ -83,6 +92,10 @@ namespace gnubase::engine
 	Json toJson(const AutomationPoint& point);
 	Json toJson(const AutomationLane& lane); // with its points, sorted by position
 	Json toJson(const MixerView& view);      // {"hidden": [ids], "hiddenTypes": [types]}
+	// [{"position": ticks, "bpm": ..., "ramp": ...}], and back; tempoFromJson throws std::invalid_argument for points a
+	// tempo map can't have.
+	Json toJson(const time::TempoMap& tempo);
+	time::TempoMap tempoFromJson(const Json& points);
 
 	// The whole project, with the tracks from top to bottom. The id counter is left out: undo doesn't restore it,
 	// so that ids stay unique.

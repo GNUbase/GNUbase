@@ -250,13 +250,13 @@ TEST_CASE("the parameters of a slot's plugin are a channel's parameters", "[unit
 	CHECK(run(client, "parameter.get", {{"channel", audio.channel}, {"target", target}}).at("parameter").at("value") ==
 		0.0);
 
-	// A slot of another channel, an unknown parameter, and automation, which comes with #70.
+	// A slot of another channel and an unknown parameter; the target automates (automation_tests.cpp).
 	const TestTrack other = addTrack(client, "audio");
 	CHECK_THAT(
 		reject(client, "parameter.get", {{"channel", other.channel}, {"target", target}}), ContainsSubstring("slot"));
 	CHECK_THAT(reject(client, "parameter.get", {{"channel", audio.channel}, {"target", pluginTarget(gain, 77)}}),
 		ContainsSubstring("77"));
-	CHECK(!client.call("automationLane.add", {{"track", audio.track}, {"target", target}}).ok());
+	CHECK(client.call("automationLane.add", {{"track", audio.track}, {"target", target}}).ok());
 }
 
 TEST_CASE("removing or duplicating a track removes or copies its slots", "[unit]")

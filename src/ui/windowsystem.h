@@ -96,6 +96,26 @@ namespace gnubase::ui
 		WindowId parent = 0;             // the window the dialog belongs to, if the OS supports that
 	};
 
+	// A mouse pointer's picture at a display scale: 8-bit RGBA, not premultiplied, top row first, with the point it
+	// points with in its pixels.
+	struct CursorImage
+	{
+		float scale = 1.0F;
+		int width = 0;
+		int height = 0;
+		std::vector<uint8_t> pixels; // width * height * 4 bytes
+		Point hotspot;
+	};
+
+	// A mouse pointer as the style sheets name it with RmlUi's cursor property (ui/cursors.h): the OS's arrow for no
+	// name, one of the OS's own by its CSS name (text, pointer, move, crosshair, not-allowed, wait, progress,
+	// ew-resize, ns-resize, nwse-resize, nesw-resize), or GNUbase's own with its pictures.
+	struct Cursor
+	{
+		std::string name;
+		std::vector<CursorImage> images; // by scale, the first at 1; empty for the OS's pointers
+	};
+
 	class WindowSystem
 	{
 	public:
@@ -133,6 +153,9 @@ namespace gnubase::ui
 		// The system clipboard, as text.
 		virtual std::string clipboardText() const = 0;
 		virtual void setClipboardText(const std::string& text) = 0;
+
+		// The mouse pointer over GNUbase's windows. A name the OS doesn't have shows its arrow.
+		virtual void setCursor(const Cursor& cursor) = 0;
 
 		// Shows the OS's file dialog without waiting for it. What the user chooses, or why the dialog failed, comes
 		// later as a FileDialogClosed event with the given id.

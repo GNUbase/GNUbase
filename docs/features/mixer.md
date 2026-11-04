@@ -1,7 +1,7 @@
 # Mixer
 
-The channels' faders and panners (#269); the mixer windows are in [mixer-window.md](mixer-window.md), the channel strip
-UI comes with #107.
+The channels' faders and panners (#269); the mixer windows are in [mixer-window.md](mixer-window.md), the channel
+strip's sections before the fader in [channel-strip.md](channel-strip.md).
 
 - **Fader.** Every audio channel has a volume in dB, from -144 (silence, -∞ dB) to the project's maximum volume, default 0 dB. `channel.set` stops values beyond the ends there instead of refusing them. The maximum is a project setting, `maxVolume` in `project.set`: +6 dB (the default) or +12 dB; lowering it brings faders above it down, in the same undo step. MIDI channels have no audio, so no fader or panner: they send MIDI volume and pan instead (below).
 - **Panner by routing.** Which panner a channel gets depends on its format and its destination's (`pannerFor` in `src/engine/document/channelformat.h`), worked out when the project compiles:
@@ -16,5 +16,5 @@ UI comes with #107.
   The pan law also sets where the format conversion puts mono on destinations without C.
 - **Parameters and smoothing.** Volume, pan, panLeft and panRight are the fader's parameters (`ChannelFader` in `src/engine/audio/automation.h`), automatable like volume and pan ([automation.md](automation.md)). When `channel.set` gives one of them a new value, the fader glides there in a straight line over 5 ms (`g_faderSmoothing`) instead of jumping, while playing and while stopped; a new lane, a locate or a cycle jump still takes the value at once. The panner mode, bypass and pan law are fixed for a graph, which a change rebuilds.
 - **MIDI volume and pan.** A MIDI channel has `midiVolume` and `midiPan`, 0 to 127 (64 is the center pan), or none (`null`, the default), which leaves the instrument's own. The channel sends them to its instrument as MIDI volume (CC 7) and pan (CC 10) on MIDI channel 1, as static lanes of its automation (`channelAutomation` in `src/engine/audio/automation.h`): whenever they change, and again when playback starts, locates or jumps, so the instrument has them wherever playback begins. Automation of controller 7 or 10 on MIDI channel 1 overrides them while it plays. MIDI tracks have no output channel setting yet, hence channel 1.
-- **Mute and solo** silence channels as the track list's buttons do ([track-list.md](track-list.md)).
+- **Mute, solo and listen** silence channels as the track list's buttons do ([track-list.md](track-list.md)), with exclusive solo, solo defeat and listen ([solo-mute-listen.md](solo-mute-listen.md)).
 - **DAWproject** stores the volume as a linear gain in `Volume` (its `max` the project's maximum volume) and `pan` normalized in `Pan` (0.5 is the center). The panner mode, its positions, pan bypass, MIDI volume and pan, the pan law and the maximum volume go into GNUbase's extra entry; a project read from `project.xml` alone gets the defaults, with volumes above +6 dB brought down to it.

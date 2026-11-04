@@ -7,8 +7,9 @@ gestures and edit commands in `src/ui/eventediting.cpp` ([event-display.md](even
 
 ## Engine commands
 
-The `event.*` commands take audio events and MIDI parts alike, by id (`events`), as the reference treats both as
-events. Each is one undo step and changes nothing if it fails.
+The `event.*` commands take audio events, audio parts and MIDI parts alike, by id (`events`), as the reference treats
+them all as events; [audio-parts.md](audio-parts.md) has what they do to audio parts. Each is one undo step and changes
+nothing if it fails.
 
 | Command | What it does | Reference |
 |---|---|---|
@@ -37,9 +38,9 @@ events. Each is one undo step and changes nothing if it fails.
 - **Splitting** an audio event gives the piece before the split its fade in, the piece after it its fade out; an event
   that crossfaded from it now crossfades from the piece it overlaps. A MIDI part's notes stay in the part they start in,
   sticking out of it, or with `splitNotes` (the reference's Split MIDI Events preference) are cut in two.
-- **Gluing** audio events works where one continues the other in the same clip, as after a split, and makes one event;
-  the reference makes an audio part of other events, which waits for audio parts. MIDI parts become one part from the
-  first start to the last end, with every note and controller.
+- **Gluing** audio events where one continues the other in the same clip, as after a split, makes one event; other
+  audio events and audio parts become one audio part ([audio-parts.md](audio-parts.md)). MIDI parts become one part
+  from the first start to the last end, with every note and controller.
 - **Muting.** Muted audio events and MIDI parts don't play (the render snapshot leaves muted parts out). In DAWproject a
   muted part, like a muted event, is a disabled clip.
 - **Locks.** A locked event can't be moved, resized, split, glued or removed through the `event.*` commands; it can
@@ -55,10 +56,11 @@ same ids. After every command (`ProjectModel::addEdit`, and after each command o
 part of a group whose notes or controllers changed gives them to the others (`syncSharedParts`), so any command that
 edits notes, `note.set` as much as a MIDI function or quantizing, edits all copies, as one undo step. A transaction
 that edits two copies of a group keeps both edits, and a later command in it sees what an earlier one did to another
-copy. A part whose contents change for its own
-sake, by a resize that moves its notes, a split or a glue, first leaves its group with new note ids; so does
-`event.toRealCopy`. A group's last part is no longer shared. The position, length, name, mute and lock stay each
-part's own. Shared copies are saved in `gnubase.json`; `project.xml` gets them as ordinary clips.
+copy. For that, a transaction copies only the shared parts before each of its commands (`sharedPartsOf`), not every
+note of every part: a part that becomes shared in a command gives no edit to its new group anyway. A part whose
+contents change for its own sake, by a resize that moves its notes, a split or a glue, first leaves its group with new
+note ids; so does `event.toRealCopy`. A group's last part is no longer shared. The position, length, name, mute and
+lock stay each part's own. Shared copies are saved in `gnubase.json`; `project.xml` gets them as ordinary clips.
 
 ## The event display
 
@@ -81,6 +83,8 @@ modifiers, which change the keys below):
 | Drag within 6 dp of an event's left or right edge | Resizes the selection: normal sizing, or sizing moves contents (`setSizingMovesContents`) | p. 265 |
 | Alt and a click | Splits the event there | p. 268 |
 | Double click on an empty MIDI or instrument lane | Adds a one-bar part at the bar, or one between the locators when the click is between them | p. 251 |
+| Double click on an empty audio lane between the locators | Adds an audio part from one locator to the other | p. 250 |
+| Alt and a drag or click on an empty lane | Draws a part, as the draw tool does ([tools.md](tools.md)) | p. 250 |
 | Double click below the tracks | Adds a MIDI track ([add-track.md](add-track.md)) | p. 198 |
 
 The edit commands are in `actions()`, for the key command system to bind (#57): `edit.delete`, `edit.mute`,
@@ -126,8 +130,9 @@ that the arrow keys select into view.
 
 - `tests/eventedit_tests.cpp`: every command on audio events and MIDI parts, in samples and ticks, undo, locks and
   the errors; real and shared copies, edits reaching every shared copy and undone together, real copies and the last
-  copy; resizing both edges in both modes and its limits; splitting at the cursor and the locators, with and without
-  splitting notes; gluing; filling the locators; `event.get`.
+  copy; transactions in which parts become or stop being shared, edit parts that aren't shared, and undo and redo as
+  one step; only shared parts copied for the comparison; resizing both edges in both modes and its limits; splitting
+  at the cursor and the locators, with and without splitting notes; gluing; filling the locators; `event.get`.
 - `tests/eventediting_tests.cpp` (fake window system, real engine): selecting with clicks and Ctrl, moving and copying
   with drags, shared copies with Alt and Shift, onto another track; drags restricted with Ctrl, across and down, moving
   and copying, and Ctrl and a click still deselecting; the drag delay (a drag released at once is a click, one held

@@ -39,6 +39,8 @@ namespace gnubase::engine::graph
 			return "builtin";
 		case NodeKind::PluginSlot:
 			return "pluginSlot";
+		case NodeKind::ListenBus:
+			return "listenBus";
 		}
 		return "unknown";
 	}
@@ -114,6 +116,20 @@ namespace gnubase::engine::graph
 					.push_back({node, entry[static_cast<size_t>(channel.output.index)]});
 				break;
 			}
+		}
+
+		const auto mainMix = std::find_if(
+			snapshot.busses.begin(), snapshot.busses.end(), [](const RenderBus& bus) { return bus.mainMix; });
+		const auto listens = [](const RenderChannel& channel)
+		{ return channel.listen && channel.format != ChannelFormat::None; };
+		if (mainMix != snapshot.busses.end() &&
+			std::any_of(snapshot.channels.begin(), snapshot.channels.end(), listens))
+		{
+			const int listen = static_cast<int>(graph.nodes.size());
+			graph.nodes.push_back({NodeKind::ListenBus, 0, mainMix->format, nullptr});
+			for (size_t i = 0; i < snapshot.channels.size(); ++i)
+				if (listens(snapshot.channels[i]))
+					graph.audio.push_back({firstChannel + static_cast<int>(i), listen});
 		}
 		return graph;
 	}

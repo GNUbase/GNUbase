@@ -4,6 +4,7 @@
 #include "engine/processors/builtin.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -34,6 +35,7 @@ namespace gnubase::engine
 			{TrackType::Effect, "effect"},
 			{TrackType::Marker, "marker"},
 			{TrackType::Ruler, "ruler"},
+			{TrackType::Tempo, "tempo"},
 		};
 
 		constexpr struct
@@ -72,6 +74,7 @@ namespace gnubase::engine
 			{AutomationTargetType::PanRight, "panRight"},
 			{AutomationTargetType::Instrument, "instrument"},
 			{AutomationTargetType::Plugin, "plugin"},
+			{AutomationTargetType::Mute, "mute"},
 			{AutomationTargetType::Controller, "controller"},
 			{AutomationTargetType::PitchBend, "pitchBend"},
 			{AutomationTargetType::ChannelPressure, "channelPressure"},
@@ -394,6 +397,23 @@ namespace gnubase::engine
 			{"crossfadeShape", fadeShapeName(settings.crossfadeShape)}};
 	}
 
+	Json toJson(const std::vector<VolumePoint>& curve)
+	{
+		Json json = Json::array();
+		for (const VolumePoint& point : curve)
+			json.push_back({{"position", point.position}, {"volume", point.volume}, {"curve", point.curve}});
+		return json;
+	}
+
+	std::vector<VolumePoint> volumeCurveFromJson(const Json& json)
+	{
+		std::vector<VolumePoint> curve;
+		for (const Json& point : json)
+			curve.push_back(
+				{point.at("position").get<time::Samples>(), point.value("volume", 0.0), point.value("curve", 0.0)});
+		return curve;
+	}
+
 	Fade fadeFromJson(const Json& json, const Fade& fallback)
 	{
 		Fade fade = fallback;
@@ -510,7 +530,7 @@ namespace gnubase::engine
 		Json parameters = Json::array();
 		for (const auto& [parameter, value] : channel.instrumentParameters)
 			parameters.push_back({{"parameter", parameter}, {"value", value}});
-		return {{"id", channel.id}, {"track", channel.track}, {"format", formatName(channel.format)},
+		Json json = {{"id", channel.id}, {"track", channel.track}, {"format", formatName(channel.format)},
 			{"channels", channelCount(channel.format)}, {"input", channel.input}, {"output", channel.output},
 			{"instrument", channel.instrument}, {"instrumentParameters", std::move(parameters)},
 			{"volume", channel.volume}, {"pan", channel.pan},
@@ -518,8 +538,11 @@ namespace gnubase::engine
 			{"panRight", channel.panRight}, {"panBypass", channel.panBypass},
 			{"midiVolume", channel.midiVolume ? Json(*channel.midiVolume) : Json(nullptr)},
 			{"midiPan", channel.midiPan ? Json(*channel.midiPan) : Json(nullptr)}, {"monitor", channel.monitor},
-			{"recordEnable", channel.recordEnable}, {"mute", channel.mute}, {"solo", channel.solo},
+			{"recordEnable", channel.recordEnable}, {"midiInput", channel.midiInput}, {"mute", channel.mute},
+			{"solo", channel.solo}, {"soloDefeat", channel.soloDefeat}, {"listen", channel.listen},
 			{"slots", channel.slots}, {"notes", channel.notes}};
+		json.update(toJson(channel.sections));
+		return json;
 	}
 
 	Json toJson(const Slot& slot)
@@ -557,7 +580,13 @@ namespace gnubase::engine
 			{"offset", event.offset}, {"length", event.length}, {"volume", event.volume}, {"mute", event.mute},
 			{"lock", event.lock}, {"fadeIn", toJson(event.fadeIn)}, {"fadeOut", toJson(event.fadeOut)},
 			{"crossfade", toJson(event.crossfade)}, {"snapPoint", event.snapPoint ? Json(*event.snapPoint) : Json()},
-			{"color", colorJson(event.color)}};
+			{"color", colorJson(event.color)}, {"part", event.part}, {"volumeCurve", toJson(event.volumeCurve)}};
+	}
+
+	Json toJson(const AudioPart& part)
+	{
+		return {{"id", part.id}, {"track", part.track}, {"name", part.name}, {"position", part.position.value},
+			{"length", part.length}, {"mute", part.mute}, {"lock", part.lock}, {"color", colorJson(part.color)}};
 	}
 
 	Json toJson(const Note& note)
@@ -645,6 +674,7 @@ namespace gnubase::engine
 		case AutomationTargetType::Pan:
 		case AutomationTargetType::PanLeft:
 		case AutomationTargetType::PanRight:
+		case AutomationTargetType::Mute:
 			break;
 		case AutomationTargetType::Instrument:
 			json["parameter"] = target.parameter;
@@ -728,6 +758,23 @@ namespace gnubase::engine
 		}
 	}
 
+	Json toJson(const time::TempoMap& tempo)
+	{
+		Json points = Json::array();
+		for (const time::TempoPoint& point : tempo.points())
+			points.push_back({{"position", point.position}, {"bpm", point.bpm}, {"ramp", point.ramp}});
+		return points;
+	}
+
+	time::TempoMap tempoFromJson(const Json& points)
+	{
+		std::vector<time::TempoPoint> tempo;
+		for (const Json& point : points)
+			tempo.push_back(
+				{point.at("position").get<time::Ticks>(), point.at("bpm").get<double>(), point.at("ramp").get<bool>()});
+		return time::TempoMap(tempo);
+	}
+
 	Json toJson(const Project& project)
 	{
 		Json busses = Json::array();
@@ -736,24 +783,23 @@ namespace gnubase::engine
 		Json tracks = Json::array();
 		for (const ObjectId id : project.trackOrder())
 			tracks.push_back(toJson(project.trackById.at(id)));
-		Json tempo = Json::array();
-		for (const time::TempoPoint& point : project.tempo.points())
-			tempo.push_back({{"position", point.position}, {"bpm", point.bpm}, {"ramp", point.ramp}});
 		Json signatures = Json::array();
 		for (const time::SignatureChange& change : project.signatures.changes())
 			signatures.push_back({{"bar", change.bar}, {"numerator", change.signature.numerator},
 				{"denominator", change.signature.denominator}});
-		Json json = {{"name", project.name}, {"sampleRate", project.sampleRate}, {"tempo", tempo},
-			{"signatures", signatures}, {"autoFades", toJson(project.autoFades)},
+		Json json = {{"name", project.name}, {"sampleRate", project.sampleRate}, {"tempo", toJson(project.tempo)},
+			{"tempoTrackActive", project.tempoTrackActive}, {"tempoTrack", toJson(project.tempoTrack())},
+			{"fixedTempo", project.fixedTempo()}, {"signatures", signatures}, {"autoFades", toJson(project.autoFades)},
 			{"panLaw", panLawName(project.panLaw)}, {"maxVolume", project.maxVolume},
 			{"colors", toJson(project.colors)}, {"busses", busses}, {"tracks", tracks},
 			{"channels", toJsonArray(project.channels)}, {"slots", toJsonArray(project.slots)},
 			{"media", toJsonArray(project.media)}, {"clips", toJsonArray(project.clips)},
 			{"poolFolders", toJsonArray(project.poolFolders)}, {"audioEvents", toJsonArray(project.audioEvents)},
-			{"midiParts", toJsonArray(project.midiParts)}, {"markers", toJsonArray(project.markers)},
-			{"automation", toJsonArray(project.automation)}, {"quantize", midi::toJson(project.quantize)},
-			{"autoQuantize", project.autoQuantize}, {"activeMarkerTrack", project.activeMarkerTrack},
-			{"snap", toJson(project.snap)}, {"mixers", mixersJson(project.mixers)}};
+			{"audioParts", toJsonArray(project.audioParts)}, {"midiParts", toJsonArray(project.midiParts)},
+			{"markers", toJsonArray(project.markers)}, {"automation", toJsonArray(project.automation)},
+			{"quantize", midi::toJson(project.quantize)}, {"autoQuantize", project.autoQuantize},
+			{"activeMarkerTrack", project.activeMarkerTrack}, {"snap", toJson(project.snap)},
+			{"mixers", mixersJson(project.mixers)}};
 		json.update(toJson(project.setup));
 		return json;
 	}
@@ -965,6 +1011,7 @@ namespace gnubase::engine
 				static_cast<uint32_t>(checkedInteger(target, "parameter", UINT32_MAX, name + " target"));
 			lane.target.number = static_cast<uint8_t>(checkedInteger(target, "number", 127, name + " target"));
 			lane.target.channel = static_cast<uint8_t>(checkedInteger(target, "channel", 15, name + " target"));
+			lane.target.slot = target.value("slot", ObjectId{0});
 			const bool midi = track.type == TrackType::Midi || track.type == TrackType::Instrument;
 			bool fits = midi;
 			double minimum = 0.0;
@@ -979,9 +1026,19 @@ namespace gnubase::engine
 				minimum = lane.target.type == AutomationTargetType::Volume ? g_minChannelVolume : -1.0;
 				maximum = lane.target.type == AutomationTargetType::Volume ? project.maxVolume : 1.0;
 				break;
-			case AutomationTargetType::Plugin:
-				fits = false; // plugin parameters are automated with #70
+			case AutomationTargetType::Mute:
+				fits = project.channels.at(track.channel).format != ChannelFormat::None;
+				maximum = 1.0;
 				break;
+			case AutomationTargetType::Plugin:
+			{
+				// A slot of the track's channel; the plugin's range applies when it plays, like an instrument's.
+				const auto slot = project.slots.find(lane.target.slot);
+				fits = slot != project.slots.end() && slot->second.channel == track.channel;
+				minimum = std::numeric_limits<double>::lowest();
+				maximum = std::numeric_limits<double>::max();
+				break;
+			}
 			case AutomationTargetType::Instrument:
 				// The instrument's range applies when it plays; the instrument may have changed since.
 				fits = track.type == TrackType::Instrument;
@@ -1017,16 +1074,174 @@ namespace gnubase::engine
 		}
 	}
 
+	namespace
+	{
+		const std::array<const char*, 5> g_eqBandTypes = {"bell", "lowShelf", "highShelf", "lowCut", "highCut"};
+
+		Json toJson(const CutFilter& filter)
+		{
+			return {{"on", filter.on}, {"frequency", filter.frequency}, {"slope", filter.slope}};
+		}
+
+		// The object at key, or an empty one.
+		Json section(const Json& json, const char* key, const std::string& name)
+		{
+			if (!json.contains(key))
+				return Json::object();
+			if (!json.at(key).is_object())
+				throw std::invalid_argument(name + " must be an object");
+			return json.at(key);
+		}
+
+		void read(const Json& json, const char* key, bool& value, const std::string& name)
+		{
+			if (!json.contains(key))
+				return;
+			if (!json.at(key).is_boolean())
+				throw std::invalid_argument(name + "." + key + " must be true or false");
+			value = json.at(key).get<bool>();
+		}
+
+		void read(
+			const Json& json, const char* key, double& value, double minimum, double maximum, const std::string& name)
+		{
+			if (!json.contains(key))
+				return;
+			if (!json.at(key).is_number())
+				throw std::invalid_argument(name + "." + key + " must be a number");
+			value = checkedNumber(json.at(key), minimum, maximum, name + "." + key);
+		}
+
+		void read(const Json& json, const char* key, CutFilter& filter, double minimum, const std::string& name)
+		{
+			const std::string what = name + "." + key;
+			const Json given = section(json, key, what);
+			read(given, "on", filter.on, what);
+			read(given, "frequency", filter.frequency, minimum, 20000.0, what);
+			if (given.contains("slope"))
+			{
+				const Json& slope = given.at("slope");
+				const std::array<int64_t, 5> slopes = {6, 12, 24, 36, 48};
+				if (!slope.is_number_integer() ||
+					std::find(slopes.begin(), slopes.end(), slope.get<int64_t>()) == slopes.end())
+					throw std::invalid_argument(what + ".slope must be 6, 12, 24, 36 or 48");
+				filter.slope = slope.get<int>();
+			}
+		}
+
+		void read(const Json& json, int number, EqBand& band)
+		{
+			const std::string name = "eq band " + std::to_string(number);
+			read(json, "on", band.on, name);
+			read(json, "frequency", band.frequency, 20.0, 20000.0, name);
+			read(json, "gain", band.gain, -24.0, 24.0, name);
+			read(json, "q", band.q, 0.1, 12.0, name);
+			if (!json.contains("type"))
+				return;
+			// Bands 2 and 3 are always bells; band 1 can be a low shelf or cut, band 4 a high one.
+			const Json& type = json.at("type");
+			const auto position = static_cast<size_t>(std::find(g_eqBandTypes.begin(), g_eqBandTypes.end(),
+														  type.is_string() ? type.get<std::string>() : std::string()) -
+				g_eqBandTypes.begin());
+			const auto index = static_cast<EqBandType>(position);
+			const bool fits = position < g_eqBandTypes.size() &&
+				(index == EqBandType::Bell ||
+					(number == 1 && (index == EqBandType::LowShelf || index == EqBandType::LowCut)) ||
+					(number == 4 && (index == EqBandType::HighShelf || index == EqBandType::HighCut)));
+			if (!fits)
+				throw std::invalid_argument(name + " can't be of type " + type.dump());
+			band.type = index;
+		}
+	}
+
+	Json toJson(const ChannelSections& sections)
+	{
+		Json bands = Json::array();
+		for (size_t i = 0; i < sections.eq.size(); ++i)
+		{
+			const EqBand& band = sections.eq[i];
+			bands.push_back({{"band", i + 1}, {"on", band.on}, {"type", g_eqBandTypes[static_cast<size_t>(band.type)]},
+				{"frequency", band.frequency}, {"gain", band.gain}, {"q", band.q}});
+		}
+		const StripGate& gate = sections.gate;
+		const StripCompressor& compressor = sections.compressor;
+		const StripLimiter& limiter = sections.limiter;
+		return {{"pre",
+					{{"gain", sections.gain}, {"phase", sections.phase}, {"lowCut", toJson(sections.lowCut)},
+						{"highCut", toJson(sections.highCut)}}},
+			{"eq", {{"bypass", sections.eqBypass}, {"bands", std::move(bands)}}},
+			{"strip",
+				{{"gate",
+					 {{"on", gate.on}, {"threshold", gate.threshold}, {"range", gate.range}, {"attack", gate.attack},
+						 {"release", gate.release}}},
+					{"compressor",
+						{{"on", compressor.on}, {"threshold", compressor.threshold}, {"ratio", compressor.ratio},
+							{"attack", compressor.attack}, {"release", compressor.release},
+							{"makeup", compressor.makeup}}},
+					{"limiter",
+						{{"on", limiter.on}, {"threshold", limiter.threshold}, {"release", limiter.release}}}}}};
+	}
+
+	ChannelSections sectionsFromJson(const Json& json, const ChannelSections& fallback)
+	{
+		ChannelSections sections = fallback;
+		const Json pre = section(json, "pre", "pre");
+		read(pre, "gain", sections.gain, -24.0, 24.0, "pre");
+		read(pre, "phase", sections.phase, "pre");
+		read(pre, "lowCut", sections.lowCut, 20.0, "pre");
+		read(pre, "highCut", sections.highCut, 50.0, "pre");
+
+		const Json eq = section(json, "eq", "eq");
+		read(eq, "bypass", sections.eqBypass, "eq");
+		if (eq.contains("bands"))
+		{
+			if (!eq.at("bands").is_array())
+				throw std::invalid_argument("eq.bands must be an array");
+			for (const Json& band : eq.at("bands"))
+			{
+				const Json number = band.is_object() ? band.value("band", Json()) : Json();
+				if (!number.is_number_integer() || number.get<int64_t>() < 1 || number.get<int64_t>() > 4)
+					throw std::invalid_argument("each of eq.bands must have a band from 1 to 4");
+				read(band, number.get<int>(), sections.eq[number.get<size_t>() - 1]);
+			}
+		}
+
+		const Json strip = section(json, "strip", "strip");
+		const Json gate = section(strip, "gate", "strip.gate");
+		StripGate& g = sections.gate;
+		read(gate, "on", g.on, "strip.gate");
+		read(gate, "threshold", g.threshold, -80.0, 0.0, "strip.gate");
+		read(gate, "range", g.range, -80.0, 0.0, "strip.gate");
+		read(gate, "attack", g.attack, 0.01, 100.0, "strip.gate");
+		read(gate, "release", g.release, 1.0, 4000.0, "strip.gate");
+		const Json compressor = section(strip, "compressor", "strip.compressor");
+		StripCompressor& c = sections.compressor;
+		read(compressor, "on", c.on, "strip.compressor");
+		read(compressor, "threshold", c.threshold, -60.0, 0.0, "strip.compressor");
+		read(compressor, "ratio", c.ratio, 1.0, 20.0, "strip.compressor");
+		read(compressor, "attack", c.attack, 0.1, 100.0, "strip.compressor");
+		read(compressor, "release", c.release, 10.0, 2000.0, "strip.compressor");
+		read(compressor, "makeup", c.makeup, 0.0, 24.0, "strip.compressor");
+		const Json limiter = section(strip, "limiter", "strip.limiter");
+		StripLimiter& l = sections.limiter;
+		read(limiter, "on", l.on, "strip.limiter");
+		read(limiter, "threshold", l.threshold, -30.0, 0.0, "strip.limiter");
+		read(limiter, "release", l.release, 1.0, 1000.0, "strip.limiter");
+		return sections;
+	}
+
 	Project projectFromJson(const Json& json)
 	{
 		Project project;
 		project.name = json.at("name").get<std::string>();
 		project.sampleRate = json.at("sampleRate").get<double>();
-		std::vector<time::TempoPoint> tempo;
-		for (const Json& point : json.at("tempo"))
-			tempo.push_back(
-				{point.at("position").get<time::Ticks>(), point.at("bpm").get<double>(), point.at("ramp").get<bool>()});
-		project.tempo = time::TempoMap(tempo);
+		project.tempo = tempoFromJson(json.at("tempo"));
+		// Files from before tempo modes (#155) follow their tempo changes, if they have any.
+		project.tempoTrackActive = json.value("tempoTrackActive", project.tempo.points().size() > 1);
+		if (project.tempoTrackActive)
+			project.otherTempo = time::TempoMap(json.value("fixedTempo", project.tempo.points().front().bpm));
+		else
+			project.otherTempo = json.contains("tempoTrack") ? tempoFromJson(json.at("tempoTrack")) : project.tempo;
 		std::vector<time::SignatureChange> signatures;
 		for (const Json& change : json.at("signatures"))
 			signatures.push_back({change.at("bar").get<int64_t>(),
@@ -1118,14 +1333,21 @@ namespace gnubase::engine
 			// Files from before instrument parameters have none.
 			channel.instrumentParameters = instrumentParametersFromJson(
 				item.value("instrumentParameters", Json::array()), channel.instrument, name);
-			// Only audio tracks have the buttons; files from before them have them off.
-			const bool audio = track != project.trackById.end() && track->second.type == TrackType::Audio;
-			channel.monitor = audio && item.value("monitor", false);
-			channel.recordEnable = audio && item.value("recordEnable", false);
+			// Audio, MIDI and instrument tracks have the buttons; files from before them have them off. MIDI input
+			// other than none is all MIDI inputs, also in files from before it.
+			const TrackType type = track != project.trackById.end() ? track->second.type : TrackType::Folder;
+			const bool midi = type == TrackType::Midi || type == TrackType::Instrument;
+			const bool buttons = type == TrackType::Audio || midi;
+			channel.monitor = buttons && item.value("monitor", false);
+			channel.recordEnable = buttons && item.value("recordEnable", false);
+			channel.midiInput = midi && item.value("midiInput", std::string()) == "none" ? "none" : "all";
 			channel.mute = item.value("mute", false); // files from before mute and solo have neither
 			channel.solo = item.value("solo", false);
+			channel.soloDefeat = item.value("soloDefeat", false); // files from before #109 have neither
+			channel.listen = channel.format != ChannelFormat::None && item.value("listen", false);
 			channel.slots = item.value("slots", std::vector<ObjectId>()); // files from before #282 have none
 			channel.notes = item.value("notes", std::string());           // files from before #89 have none
+			channel.sections = sectionsFromJson(item);                    // files from before #107 have them off
 			project.channels[id] = std::move(channel);
 		}
 		// Every slot is in the list of its channel, which has audio, once, and no channel lists more than it may.
@@ -1214,8 +1436,28 @@ namespace gnubase::engine
 			if (const Json snapPoint = item.value("snapPoint", Json()); !snapPoint.is_null()) // files from before #87
 				event.snapPoint = snapPoint.get<time::Samples>();
 			event.color = eventColorFrom(item);
+			event.volumeCurve = volumeCurveFromJson(item.value("volumeCurve", Json::array())); // files from before #139
+			event.part = item.value("part", ObjectId{0}); // files from before #471 have no audio parts
 			project.audioEvents[event.id] = event;
 		}
+		for (const Json& item : json.value("audioParts", Json::array()))
+		{
+			AudioPart part;
+			part.id = item.at("id").get<ObjectId>();
+			part.track = item.at("track").get<ObjectId>();
+			part.name = item.at("name").get<std::string>();
+			part.position = {base(part.track), item.at("position").get<int64_t>()};
+			part.length = item.at("length").get<int64_t>();
+			part.mute = item.value("mute", false);
+			part.lock = item.value("lock", false);
+			part.color = eventColorFrom(item);
+			project.audioParts[part.id] = part;
+		}
+		// An event in a part that isn't there, or on another track, is an event of its own.
+		for (auto& [id, event] : project.audioEvents)
+			if (const auto part = project.audioParts.find(event.part);
+				part == project.audioParts.end() || part->second.track != event.track)
+				event.part = 0;
 		for (const Json& item : json.at("midiParts"))
 		{
 			MidiPart part;
@@ -1310,6 +1552,9 @@ namespace gnubase::engine
 			see(id);
 		for (const auto& [id, event] : project.audioEvents)
 			see(id);
+		for (const auto& [id, part] : project.audioParts)
+			see(id);
+
 		for (const auto& [id, part] : project.midiParts)
 		{
 			see(id);

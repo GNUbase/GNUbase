@@ -34,10 +34,23 @@ namespace gnubase::engine
 	void followAutomation(Project& project, ObjectId track, const time::Position& from, const time::Position& end,
 		const time::Position& to, CommandContext& context);
 
+	// The project's tempo as project.get and the tempo.changed event report it (tempo.cpp): the tempo it plays, whether
+	// the tempo track is active, the tempo track's events and the fixed tempo.
+	Json tempoJson(const Project& project);
+
+	// After the tempo or the tempo mode changed (tempo.cpp): lengthens cycle markers that got shorter than a sample and
+	// announces tempo.changed.
+	void tempoChanged(Project& project, CommandContext& context);
+
 	// After a command, and after each command of a transaction (eventedits.cpp): the first shared copy of a MIDI part
 	// whose notes or controllers changed since before gives them to its other copies, and a copy without others is no
 	// longer shared.
 	void syncSharedParts(const std::map<ObjectId, MidiPart>& before, Project& project, CommandContext& context);
+
+	// What syncSharedParts needs of the parts before a command (eventedits.cpp): copies of the shared ones only. It
+	// compares a part with its earlier self only if that was in the same group, so a part that isn't shared yet needn't
+	// be copied: one that becomes shared in the command gives no edit to its new group either way.
+	std::map<ObjectId, MidiPart> sharedPartsOf(const std::map<ObjectId, MidiPart>& parts);
 
 	// What range.copy and range.cut keep for range.paste (eventedits.cpp): the events, parts and automation of a
 	// selection range, cut at its edges, where they were. Not part of the project or of undo.
@@ -47,8 +60,9 @@ namespace gnubase::engine
 		time::Samples end = 0;
 		time::Ticks startTicks = 0;
 		time::Ticks endTicks = 0;
-		std::vector<ObjectId> tracks; // the tracks it was copied from, from top to bottom
-		std::vector<AudioEvent> audioEvents;
+		std::vector<ObjectId> tracks;        // the tracks it was copied from, from top to bottom
+		std::vector<AudioEvent> audioEvents; // with those of the audio parts
+		std::vector<AudioPart> audioParts;
 		std::vector<MidiPart> midiParts;
 		std::vector<AutomationLane> automation; // the points in the range, with the curve's values at its edges
 	};
@@ -102,6 +116,7 @@ namespace gnubase::engine
 		void registerMediaFolderCommands(Engine& engine, Jobs& jobs); // project.backup, media.prepareArchive and more
 		void registerMidiEditCommands(Engine& engine);                // midiedits.cpp: note.set and controller.set
 		void registerMarkerCommands(Engine& engine);                  // markers.cpp: marker.*
+		void registerTempoCommands(Engine& engine);                   // tempo.cpp: tempo.*
 		void registerMidiFileCommands(Engine& engine); // midifilecommands.cpp: midiFile.export and midiFile.import
 		Json importMidiFile(Project& project, CommandContext& context);
 		void registerAudioFileCommands(Engine& engine, Jobs& jobs); // audiofilecommands.cpp: audioFile.import
@@ -128,7 +143,8 @@ namespace gnubase::engine
 		// The project of the template with this name. Throws CommandError if there is none or the name isn't a file
 		// name.
 		Project loadTemplate(const std::string& name) const;
-		void record(std::string action, const Project& before, CommandContext& context);
+		// Records what changed since before as a step; one with a merge key joins the last step if that has the key.
+		void record(std::string action, const Project& before, CommandContext& context, std::string merge = {});
 		Json undoOrRedo(CommandContext& context, Direction direction);
 		Json transaction(Project& project, CommandContext& context);
 		void announceHistory(CommandContext& context) const;
@@ -150,7 +166,9 @@ namespace gnubase::engine
 		uint64_t m_openedRevision = 0;    // when it was loaded or made: openedRevision
 		const Clock* m_clock = nullptr;   // the engine's, which auto saves go by
 		Clock::TimePoint m_lastSave;      // or auto save, or failed auto save
-		bool m_autoSaveFailed = false;    // the last auto save since the project was saved or opened failed
+		// Why the last auto save failed, without its file, if it did since one succeeded or the project was saved or
+		// opened: a due auto save that fails for the same reason again is quiet.
+		std::optional<std::string> m_autoSaveFailure;
 		std::filesystem::path m_settingsDirectory; // the user settings' folder, empty without one
 		std::shared_ptr<settings::Store> m_recent; // the recent projects
 		bool m_automationFollowsEvents = false;    // a setting, not part of the project

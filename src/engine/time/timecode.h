@@ -28,6 +28,9 @@ namespace gnubase::time
 	inline constexpr FrameRate g_fps60PullDown{60, true, false}; // 59.94
 	inline constexpr FrameRate g_fps60{60, false, false};
 
+	// The frame rate of the user frames time format (fps (User)), until it is a setting of its own.
+	inline constexpr int g_userFramesPerSecond = 30;
+
 	inline bool operator==(FrameRate a, FrameRate b)
 	{
 		return std::tie(a.framesPerSecond, a.pullDown, a.dropFrame) ==

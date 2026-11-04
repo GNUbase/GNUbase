@@ -6,9 +6,11 @@
 
 #include "ui/automation.h"
 #include "ui/datamodel.h"
+#include "ui/rmlui.h"
 #include "ui/widgets.h"
 
 #include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/EventListener.h>
@@ -389,7 +391,7 @@ TEST_CASE("text displays show their value, and a double click edits it as text",
 	};
 	CHECK(count() == 1);
 
-	// Nor do Enter or leaving the field while the text is still what the field started with.
+	// Nor do Enter or leaving the field when nothing was typed.
 	app.ui().click(std::nullopt, at("#position"), ui::MouseButton::Left, 2, {});
 	app.ui().key(std::nullopt, "Enter");
 	CHECK_FALSE(has(element(app, "#position"), "classes", "editing"));
@@ -397,6 +399,67 @@ TEST_CASE("text displays show their value, and a double click edits it as text",
 	click(app, "#left");
 	CHECK_FALSE(has(element(app, "#position"), "classes", "editing"));
 	CHECK(count() == 1);
+
+	// Typing the text it started with sends it: the display may show a rounded value, or one that has moved on since.
+	type("5.1.1.0", "Enter");
+	CHECK(count() == 2);
+	CHECK(page.events->changes.back().second.Get<Rml::String>() == "5.1.1.0");
+
+	// A starting text that the text field cleans up, such as one with a tab, isn't typing either.
+	page.document->GetElementById("position")->SetAttribute("value", "a\tb");
+	app.shell().step(std::chrono::milliseconds(0));
+	app.ui().click(std::nullopt, at("#position"), ui::MouseButton::Left, 2, {});
+	app.ui().key(std::nullopt, "Enter");
+	CHECK_FALSE(has(element(app, "#position"), "classes", "editing"));
+	CHECK(count() == 2);
+}
+
+TEST_CASE("value fields change when a number is typed, also the one they show, and not without typing", "[ui]")
+{
+	test::UiApp app;
+	ValuesPage page(app);
+	const auto text = [&app] { return element(app, "#gain .valuefield-text").at("text").get<std::string>(); };
+	const auto changes = [&page]
+	{
+		size_t found = 0;
+		for (const auto& change : page.events->changes)
+			found += change.first == "gain" ? 1 : 0;
+		return found;
+	};
+
+	// A value with more decimals than the field shows stays as it is after Enter or leaving the field untouched.
+	page.gain = 1.234F;
+	page.model.changed("gain");
+	REQUIRE(app.waitUntil([&text] { return text() == "1.2 dB"; }));
+	app.ui().click(std::nullopt, at("#gain"), ui::MouseButton::Left, 2, {});
+	CHECK(element(app, "#gain input").at("value") == "1.2");
+	app.ui().key(std::nullopt, "Enter");
+	CHECK_FALSE(has(element(app, "#gain"), "classes", "editing"));
+	app.ui().click(std::nullopt, at("#gain"), ui::MouseButton::Left, 2, {});
+	app.ui().click(std::nullopt, {"", 0, ui::Point{300, 400}}, ui::MouseButton::Left, 1, {});
+	CHECK_FALSE(has(element(app, "#gain"), "classes", "editing"));
+	CHECK(changes() == 0);
+	CHECK(page.gain == 1.234F);
+
+	// Typing the number it shows takes that number.
+	app.ui().click(std::nullopt, at("#gain"), ui::MouseButton::Left, 2, {});
+	app.ui().key(std::nullopt, "Ctrl+A");
+	app.ui().text(std::nullopt, "1.2");
+	app.ui().key(std::nullopt, "Enter");
+	CHECK(changes() == 1);
+	CHECK(page.gain == Catch::Approx(1.2F));
+
+	// Typing and then Escape keeps the value, and the next edit starts untouched again.
+	page.gain = 1.234F;
+	page.model.changed("gain");
+	REQUIRE(app.waitUntil([&page] { return page.value("#gain") == 1.234F; }));
+	app.ui().click(std::nullopt, at("#gain"), ui::MouseButton::Left, 2, {});
+	app.ui().text(std::nullopt, "7");
+	app.ui().key(std::nullopt, "Escape");
+	app.ui().click(std::nullopt, at("#gain"), ui::MouseButton::Left, 2, {});
+	app.ui().key(std::nullopt, "Enter");
+	CHECK(changes() == 1);
+	CHECK(page.gain == 1.234F);
 }
 
 TEST_CASE("meters show the level and the peak in dB", "[ui]")
@@ -528,6 +591,53 @@ TEST_CASE("context menus open at the mouse on a right click, inside the window, 
 	app.ui().click(std::nullopt, at("#plain"), ui::MouseButton::Right, 1, {});
 	click(app, "#track");
 	CHECK_FALSE(visible(app, "#track-menu"));
+}
+
+TEST_CASE("a right click with a modifier key opens the element's modifier context menu if it has one", "[ui]")
+{
+	test::UiApp app;
+	app.show("popups.rml");
+	app.ui().click(std::nullopt, at("#modified"), ui::MouseButton::Right, 1, {});
+	REQUIRE(visible(app, "#track-menu"));
+	CHECK(!visible(app, "#edit"));
+	app.ui().key(std::nullopt, "Escape");
+	for (const char* modifier : {"ctrl", "shift", "alt", "meta"})
+	{
+		INFO(modifier);
+		app.ui().click(std::nullopt, at("#modified"), ui::MouseButton::Right, 1, {modifier});
+		CHECK(visible(app, "#edit"));
+		CHECK(!visible(app, "#track-menu"));
+		app.ui().key(std::nullopt, "Escape");
+	}
+	// Without one, a right click with a modifier opens the context menu.
+	app.ui().click(std::nullopt, at("#track"), ui::MouseButton::Right, 1, {"ctrl"});
+	CHECK(visible(app, "#track-menu"));
+	CHECK(!visible(app, "#edit"));
+}
+
+TEST_CASE("notifications show their text for a moment, again when it is set again", "[ui]")
+{
+	test::UiApp app;
+	Rml::ElementDocument& document = app.show("popups.rml");
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	clock->freeze(true);
+	const auto after = [&app, clock](double seconds)
+	{
+		clock->advance(seconds);
+		app.main().context().Update();
+		return visible(app, "#message");
+	};
+	Rml::Element* message = document.GetElementById("message");
+	CHECK(!visible(app, "#message"));
+	message->SetAttribute("text", "Draw");
+	CHECK(after(0.0));
+	CHECK(element(app, "#message").at("text") == "Draw");
+	CHECK(after(0.4));
+	message->SetAttribute("text", "Draw"); // its duration, half a second, starts again
+	CHECK(after(0.4));
+	CHECK(!after(0.2));
+	clock->freeze(false);
 }
 
 namespace
@@ -1042,6 +1152,11 @@ TEST_CASE("list views select rows with clicks and keys, and data-value binds the
 	CHECK(page.selection == "4");
 	app.ui().key(std::nullopt, "Up");
 	CHECK(page.selection == "3");
+	// Page Up and Page Down move by the rows the view shows, here all of them.
+	app.ui().key(std::nullopt, "PageUp");
+	CHECK(page.selection == "1");
+	app.ui().key(std::nullopt, "PageDown");
+	CHECK(page.selection == "4");
 
 	// The data model selects rows, e.g. after an engine event.
 	page.selection = "1,3";
@@ -1097,6 +1212,77 @@ TEST_CASE("table views select their body's rows", "[ui]")
 	click(app, "#header");
 	CHECK_FALSE(selected(app, "#header"));
 	CHECK(selected(app, "#row-verse"));
+}
+
+TEST_CASE("table views with several tables go through their rows in the document's order", "[ui]")
+{
+	test::UiApp app;
+	const ViewsPage page(app);
+	// The first table is deeper than the second: the rows' order isn't the order of their depths.
+	page.document->GetElementById("table")->SetInnerRML(
+		R"(<div><table><tbody><tr id="first" value="first"><td>First</td></tr>)"
+		R"(<tr id="second" value="second"><td>Second</td></tr></tbody></table></div>)"
+		R"(<table><tbody><tr id="third" value="third"><td>Third</td></tr></tbody></table>)");
+
+	click(app, "#first");
+	app.ui().key(std::nullopt, "Down");
+	CHECK(selected(app, "#second"));
+	app.ui().key(std::nullopt, "Down");
+	CHECK(selected(app, "#third"));
+	app.ui().key(std::nullopt, "Home");
+	CHECK(selected(app, "#first"));
+	app.ui().key(std::nullopt, "End");
+	CHECK(selected(app, "#third"));
+	CHECK(element(app, "#table").at("attributes").at("value") == "third");
+}
+
+TEST_CASE("list views with dragscroll scroll while a drag in them is held past their edge", "[ui]")
+{
+	test::UiApp app;
+	const ViewsPage page(app);
+	Rml::Element* view = page.document->GetElementById("table");
+	REQUIRE(view != nullptr);
+	std::string rml = R"(<div id="handle" style="drag: drag; height: 10dp;"/><table><tbody>)";
+	for (int i = 0; i < 40; ++i)
+		rml += R"(<tr value=")" + std::to_string(i) + R"("><td>Row</td></tr>)";
+	view->SetInnerRML(rml + "</tbody></table>");
+	view->SetAttribute("dragscroll", "dragscroll");
+	const Json handle = element(app, "#handle").at("box");
+	const Json box = element(app, "#table").at("box");
+	const int x = handle.at("x").get<int>() + 5;
+	const int y = handle.at("y").get<int>() + 5;
+	const int top = box.at("y").get<int>();
+	const int bottom = top + box.at("height").get<int>();
+	Rml::Context& context = app.main().context();
+	const auto end = [view] { return view->GetScrollHeight() - view->GetClientHeight(); };
+	REQUIRE(end() > 0.0F);
+
+	// The mouse held still below the view scrolls it down to its end, above it back up.
+	context.ProcessMouseMove(x, y, 0);
+	context.ProcessMouseButtonDown(0, 0);
+	context.ProcessMouseMove(x, y + 2, 0);
+	context.ProcessMouseMove(x, bottom + 60, 0);
+	CHECK(app.waitUntil([&] { return view->GetScrollTop() >= end(); }));
+	context.ProcessMouseMove(x, top - 60, 0);
+	CHECK(app.waitUntil([view] { return view->GetScrollTop() <= 0.0F; }));
+	context.ProcessMouseMove(x, bottom + 60, 0);
+	context.ProcessMouseButtonUp(0, 0);
+	app.waitUntil([] { return false; }, std::chrono::milliseconds(200));
+	const float released = view->GetScrollTop();
+	CHECK(released < end()); // the drag ended before it got there
+	app.waitUntil([] { return false; }, std::chrono::milliseconds(200));
+	CHECK(view->GetScrollTop() == released);
+
+	// Without dragscroll, the view stays where it is.
+	view->RemoveAttribute("dragscroll");
+	view->SetScrollTop(0.0F);
+	context.ProcessMouseMove(x, y, 0);
+	context.ProcessMouseButtonDown(0, 0);
+	context.ProcessMouseMove(x, y + 2, 0);
+	context.ProcessMouseMove(x, bottom + 60, 0);
+	app.waitUntil([] { return false; }, std::chrono::milliseconds(300));
+	CHECK(view->GetScrollTop() == 0.0F);
+	context.ProcessMouseButtonUp(0, 0);
 }
 
 TEST_CASE("table views keep the selection of rows rebuilt twice between two updates", "[ui]")

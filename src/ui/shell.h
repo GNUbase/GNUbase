@@ -105,6 +105,11 @@ namespace gnubase::ui
 		// e.g. to dock the panel it shows again (ui/docking.h). The handler may close the window itself.
 		void onCloseRequest(std::function<void(Window&)> handler) { m_closeRequest = std::move(handler); }
 
+		// Runs handler, with the main window, instead of quitting when the user closes the main window or asks to quit
+		// through the OS (Cmd+Q in the macOS app menu, SIGTERM), e.g. to ask about unsaved changes first
+		// (ui/projectfiles.h). The handler calls quit() once GNUbase may quit. Without a handler they quit at once.
+		void onQuitRequest(std::function<void(Window& main)> handler) { m_quitRequest = std::move(handler); }
+
 		// The user's UI scale (the user setting ui.scale, #53), on top of each monitor's scale.
 		void setUiScale(float scale);
 		float uiScale() const { return m_uiScale; }
@@ -189,6 +194,8 @@ namespace gnubase::ui
 		};
 
 		void handle(const WindowEvent& event);
+		// The main window's close button or the OS's quit request: asks onQuitRequest's handler, or quits.
+		void requestQuit();
 		void refresh(Window& window);
 		void draw(Window& window);
 		// When the window needs updating next, also for updates its context requested since it was drawn, e.g. by an
@@ -218,5 +225,6 @@ namespace gnubase::ui
 		std::function<void(Window&, const KeyPress&)> m_unusedKey;
 		std::function<void(Window&, const KeyPress&)> m_keyReleased;
 		std::function<void(Window&)> m_closeRequest;
+		std::function<void(Window&)> m_quitRequest;
 	};
 }

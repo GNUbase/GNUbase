@@ -4,8 +4,10 @@
 #include "engine/audiofile/audiofile.h"
 #include "engine/audiofile/resampler.h"
 #include "engine/dawproject/dawproject.h"
+#include "engine/document/editors.h"
 #include "engine/document/mixerviews.h"
 #include "engine/document/serialize.h"
+#include "engine/document/volumecurves.h"
 #include "engine/dsp/timestretch.h"
 #include "engine/graph/graph.h"
 #include "engine/jobs/jobs.h"
@@ -56,6 +58,7 @@ namespace gnubase::engine
 			{TrackType::Effect, "effect", "FX"},
 			{TrackType::Marker, "marker", "Marker"},
 			{TrackType::Ruler, "ruler", "Ruler"},
+			{TrackType::Tempo, "tempo", "Tempo"},
 		};
 
 		const TrackTypeName& trackTypeEntry(TrackType type)
@@ -372,6 +375,7 @@ namespace gnubase::engine
 		{
 			Track& track = find(project.trackById, id, "track");
 			require(track.type != TrackType::Marker || parent == 0, "marker tracks can't be inside a folder");
+			require(track.type != TrackType::Tempo || parent == 0, "the tempo track can't be inside a folder");
 			const std::vector<ObjectId> moved = subtree(project, id);
 			require(std::find(moved.begin(), moved.end(), parent) == moved.end(),
 				"can't move a folder into itself or a folder inside it");
@@ -440,6 +444,15 @@ namespace gnubase::engine
 					event.position = time::rebase(event.position, base, project.tempo, project.sampleRate);
 					context.emit("audioEvent.changed", {{"event", toJson(event)}});
 				}
+			for (auto& [id, part] : project.audioParts)
+				if (part.track == track.id)
+				{
+					const time::Position end = time::rebase({part.position.base, part.position.value + part.length},
+						base, project.tempo, project.sampleRate);
+					part.position = time::rebase(part.position, base, project.tempo, project.sampleRate);
+					part.length = end.value - part.position.value;
+					context.emit("audioPart.changed", {{"part", toJson(part)}});
+				}
 			for (auto& [id, part] : project.midiParts)
 				if (part.track == track.id)
 				{
@@ -483,6 +496,13 @@ namespace gnubase::engine
 					part.length = rescale(part.length, factor);
 					context.emit("midiPart.changed", {{"part", toJson(part)}});
 				}
+			for (auto& [id, part] : project.audioParts)
+				if (part.position.base == time::TimeBase::Linear)
+				{
+					part.position.value = rescale(part.position.value, factor);
+					part.length = rescale(part.length, factor);
+					context.emit("audioPart.changed", {{"part", toJson(part)}});
+				}
 			for (auto& [id, lane] : project.automation)
 			{
 				bool changed = false;
@@ -522,6 +542,8 @@ namespace gnubase::engine
 			const auto count = countTracks(project, type);
 			if (type == TrackType::Marker && count == 0)
 				return "Markers";
+			if (type == TrackType::Tempo)
+				return "Tempo";
 			const std::string number = std::to_string(type == TrackType::Marker ? count : count + 1);
 			return trackTypeEntry(type).defaultName + std::string(number.size() < 2 ? " 0" : " ") + number;
 		}
@@ -543,8 +565,8 @@ namespace gnubase::engine
 				automationTargetTypeFromName(json.at("type").get<std::string>());
 			if (!parsed.has_value())
 				throw CommandError(
-					"target.type must be volume, pan, panLeft, panRight, instrument, controller, pitchBend or "
-					"channelPressure");
+					"target.type must be volume, pan, panLeft, panRight, mute, instrument, plugin, controller, "
+					"pitchBend or channelPressure");
 			const AutomationTargetType type = *parsed;
 			AutomationTarget target;
 			target.type = type;
@@ -574,6 +596,11 @@ namespace gnubase::engine
 				only({});
 				require(channel.format != ChannelFormat::None, "a MIDI track has no volume or pan");
 				break;
+			case AutomationTargetType::Mute:
+				only({});
+				// ponytail: a MIDI track's mute would have to silence its notes as they play.
+				require(channel.format != ChannelFormat::None, "a MIDI track's mute isn't automated yet");
+				break;
 			case AutomationTargetType::Instrument:
 			{
 				only({"parameter"});
@@ -589,7 +616,24 @@ namespace gnubase::engine
 				break;
 			}
 			case AutomationTargetType::Plugin:
-				throw CommandError("plugin parameters can't be automated yet (#70)");
+			{
+				only({"slot", "parameter"});
+				require(json.contains("slot") && json.at("slot").is_number_unsigned(),
+					"target.slot must be a slot id (see plugin.list)");
+				target.slot = json.at("slot").get<ObjectId>();
+				require(std::find(channel.slots.begin(), channel.slots.end(), target.slot) != channel.slots.end(),
+					"track " + idText(track.id) + " has no plugin slot " + idText(target.slot));
+				const Slot& slot = project.slots.at(target.slot);
+				const processors::BuiltinInfo* info = processors::findBuiltinPlugin(slot.plugin);
+				// ponytail: other plugins' parameters are known once they report them (#283).
+				require(info != nullptr, "only built-in plugins' parameters can be automated yet, not " + slot.plugin);
+				require(json.contains("parameter"), "target.parameter is required");
+				require(isParameterId(json.at("parameter")) &&
+						processors::findParameter(*info, json.at("parameter").get<uint32_t>()) != nullptr,
+					slot.plugin + " has no parameter " + json.at("parameter").dump());
+				target.parameter = json.at("parameter").get<uint32_t>();
+				break;
+			}
 			case AutomationTargetType::Controller:
 				only({"number", "channel"});
 				require(midi, "MIDI controllers are automated on MIDI and instrument tracks");
@@ -608,6 +652,30 @@ namespace gnubase::engine
 			return target;
 		}
 
+		// The parameter of an instrument or a plugin that a lane automates, or none for the other targets and for
+		// parameters that are gone.
+		const processors::ParameterInfo* automatedParameter(const Project& project, const AutomationLane& lane)
+		{
+			const processors::BuiltinInfo* info = nullptr;
+			if (lane.target.type == AutomationTargetType::Instrument)
+				info =
+					processors::findBuiltin(project.channels.at(project.trackById.at(lane.track).channel).instrument);
+			if (lane.target.type == AutomationTargetType::Plugin)
+			{
+				const auto slot = project.slots.find(lane.target.slot);
+				if (slot != project.slots.end())
+					info = processors::findBuiltinPlugin(slot->second.plugin);
+			}
+			return info != nullptr ? processors::findParameter(*info, lane.target.parameter) : nullptr;
+		}
+
+		// Whether a lane has a step curve: mute and stepped parameters.
+		bool stepCurve(const Project& project, const AutomationLane& lane)
+		{
+			const processors::ParameterInfo* parameter = automatedParameter(project, lane);
+			return lane.target.type == AutomationTargetType::Mute || (parameter != nullptr && parameter->stepped);
+		}
+
 		// The values a lane's points can have, in its target's unit.
 		std::pair<double, double> automationRange(const Project& project, const AutomationLane& lane)
 		{
@@ -619,17 +687,16 @@ namespace gnubase::engine
 			case AutomationTargetType::PanLeft:
 			case AutomationTargetType::PanRight:
 				return {-1.0, 1.0};
+			case AutomationTargetType::Mute:
+				return {0.0, 1.0};
 			case AutomationTargetType::Instrument:
-			{
-				const Channel& channel = project.channels.at(project.trackById.at(lane.track).channel);
-				const processors::BuiltinInfo* info = processors::findBuiltin(channel.instrument);
-				if (const processors::ParameterInfo* parameter =
-						info != nullptr ? processors::findParameter(*info, lane.target.parameter) : nullptr)
+			case AutomationTargetType::Plugin:
+				if (const processors::ParameterInfo* parameter = automatedParameter(project, lane))
 					return {parameter->minimum, parameter->maximum};
-				throw CommandError("the instrument of automation lane " + idText(lane.id) + " has no parameter " +
+				throw CommandError(std::string("the ") +
+					(lane.target.type == AutomationTargetType::Plugin ? "plugin" : "instrument") +
+					" of automation lane " + idText(lane.id) + " has no parameter " +
 					std::to_string(lane.target.parameter) + " any more");
-			}
-			case AutomationTargetType::Plugin: // not automated yet (#70)
 			case AutomationTargetType::Controller:
 			case AutomationTargetType::PitchBend:
 			case AutomationTargetType::ChannelPressure:
@@ -646,8 +713,10 @@ namespace gnubase::engine
 		}
 
 		// Changes a point by what a command gives for it, checked. Positions are in the time base of the lane's track.
+		// On a step curve, points are steps with whole values (reference manual p. 870: step curves for on/off
+		// parameters, such as mute).
 		void changePoint(AutomationPoint& point, const Json& item, const std::string& name, const Track& track,
-			const std::pair<double, double>& range)
+			const std::pair<double, double>& range, bool stepped)
 		{
 			if (item.contains("position"))
 				point.position = position(track, item.at("position"), name + ".position");
@@ -669,6 +738,11 @@ namespace gnubase::engine
 			{
 				point.curve = item.at("curve").get<double>();
 				require(point.curve >= -1.0 && point.curve <= 1.0, name + ".curve must be from -1 to 1");
+			}
+			if (stepped)
+			{
+				point.shape = AutomationShape::Step;
+				point.value = std::round(point.value);
 			}
 			if (point.shape != AutomationShape::Curve)
 				point.curve = 0.0;
@@ -739,13 +813,14 @@ namespace gnubase::engine
 			AutomationLane& lane = find(project.automation, parameters.at("lane").get<ObjectId>(), "automation lane");
 			const Json& items = parameters.at("points");
 			const std::pair<double, double> range = automationRange(project, lane);
+			const bool stepped = stepCurve(project, lane);
 			const Track& track = project.trackById.at(lane.track);
 			std::vector<AutomationPoint> points;
 			for (size_t i = 0; i < items.size(); ++i)
 			{
 				AutomationPoint point;
 				point.position.base = track.timeBase;
-				changePoint(point, items[i], "points[" + std::to_string(i) + "]", track, range);
+				changePoint(point, items[i], "points[" + std::to_string(i) + "]", track, range, stepped);
 				points.push_back(point);
 			}
 			for (AutomationPoint& point : points)
@@ -764,6 +839,7 @@ namespace gnubase::engine
 			AutomationLane& lane = find(project.automation, parameters.at("lane").get<ObjectId>(), "automation lane");
 			const Json& items = parameters.at("points");
 			const std::pair<double, double> range = automationRange(project, lane);
+			const bool stepped = stepCurve(project, lane);
 			const Track& track = project.trackById.at(lane.track);
 			std::vector<AutomationPoint> points;
 			for (size_t i = 0; i < items.size(); ++i)
@@ -773,7 +849,7 @@ namespace gnubase::engine
 				require(found != lane.points.end(),
 					"no automation point " + idText(id) + " in automation lane " + idText(lane.id));
 				AutomationPoint point = found->second;
-				changePoint(point, items[i], "points[" + std::to_string(i) + "]", track, range);
+				changePoint(point, items[i], "points[" + std::to_string(i) + "]", track, range, stepped);
 				points.push_back(point);
 			}
 			for (const AutomationPoint& point : points)
@@ -895,8 +971,14 @@ namespace gnubase::engine
 				require(countTracks(project, TrackType::Marker) < g_maxMarkerTracks,
 					"a project has at most " + std::to_string(g_maxMarkerTracks) + " marker tracks");
 			}
-			const bool hasChannel =
-				(type != TrackType::Folder && type != TrackType::Marker && type != TrackType::Ruler) || groupChannel;
+			if (type == TrackType::Tempo)
+			{
+				require(parent == 0, "the tempo track can't be inside a folder");
+				require(countTracks(project, TrackType::Tempo) == 0, "a project has one tempo track at most");
+			}
+			const bool hasChannel = (type != TrackType::Folder && type != TrackType::Marker &&
+										type != TrackType::Ruler && type != TrackType::Tempo) ||
+				groupChannel;
 			const bool hasAudio = hasChannel && type != TrackType::Midi;
 			require(hasAudio || (!parameters.contains("channels") && !parameters.contains("format")),
 				"this track has no audio channels");
@@ -1069,6 +1151,7 @@ namespace gnubase::engine
 			copy.id = project.newId();
 			copy.parent = parent;
 			copy.children.clear();
+			std::map<ObjectId, ObjectId> slots; // each copied slot's copy
 			if (copy.channel != 0)
 			{
 				Channel channel = project.channels.at(copy.channel);
@@ -1079,6 +1162,7 @@ namespace gnubase::engine
 					Slot slot = project.slots.at(slotId);
 					slot.id = project.newId();
 					slot.channel = channel.id;
+					slots[slotId] = slot.id;
 					slotId = slot.id;
 					project.slots[slot.id] = std::move(slot);
 				}
@@ -1089,6 +1173,20 @@ namespace gnubase::engine
 			added.emplace_back("track.added", Json{{"track", nullptr}, {"channel", nullptr}});
 			const size_t trackEvent = added.size() - 1;
 
+			// Audio parts hold the copies of their events.
+			std::map<ObjectId, ObjectId> audioParts;
+			std::vector<AudioPart> copiedParts;
+			for (const auto& [partId, part] : project.audioParts)
+				if (part.track == id)
+					copiedParts.push_back(part);
+			for (AudioPart& part : copiedParts)
+			{
+				audioParts[part.id] = project.newId();
+				part.id = audioParts.at(part.id);
+				part.track = copy.id;
+				project.audioParts[part.id] = part;
+				added.emplace_back("audioPart.added", Json{{"part", toJson(part)}});
+			}
 			// Crossfades join the copies of the events they joined.
 			std::map<ObjectId, ObjectId> events;
 			std::vector<AudioEvent> audio;
@@ -1104,6 +1202,8 @@ namespace gnubase::engine
 				event.track = copy.id;
 				const auto from = events.find(event.crossfade.from);
 				event.crossfade.from = from == events.end() ? 0 : from->second;
+				const auto part = audioParts.find(event.part);
+				event.part = part == audioParts.end() ? 0 : part->second;
 				project.audioEvents[event.id] = event;
 				added.emplace_back("audioEvent.added", Json{{"event", toJson(event)}});
 			}
@@ -1139,6 +1239,8 @@ namespace gnubase::engine
 			{
 				lane.id = project.newId();
 				lane.track = copy.id;
+				if (lane.target.type == AutomationTargetType::Plugin)
+					lane.target.slot = slots.at(lane.target.slot);
 				std::map<ObjectId, AutomationPoint> points;
 				for (const auto& [pointId, point] : lane.points)
 				{
@@ -1166,6 +1268,7 @@ namespace gnubase::engine
 			const Track& track = find(project.trackById, id, "track");
 			require(track.type != TrackType::Marker || countTracks(project, TrackType::Marker) < g_maxMarkerTracks,
 				"a project has at most " + std::to_string(g_maxMarkerTracks) + " marker tracks");
+			require(track.type != TrackType::Tempo, "a project has one tempo track at most");
 			const ObjectId parent = track.parent;
 			std::map<ObjectId, ObjectId> channels;
 			std::vector<std::pair<std::string, Json>> added;
@@ -1211,6 +1314,8 @@ namespace gnubase::engine
 					channels.push_back(gone.channel);
 				for (auto event = project.audioEvents.begin(); event != project.audioEvents.end();)
 					event = event->second.track == removed ? project.audioEvents.erase(event) : std::next(event);
+				for (auto part = project.audioParts.begin(); part != project.audioParts.end();)
+					part = part->second.track == removed ? project.audioParts.erase(part) : std::next(part);
 				for (auto part = project.midiParts.begin(); part != project.midiParts.end();)
 					part = part->second.track == removed ? project.midiParts.erase(part) : std::next(part);
 				for (auto marker = project.markers.begin(); marker != project.markers.end();)
@@ -1286,16 +1391,70 @@ namespace gnubase::engine
 			{
 				if (!parameters.contains(key))
 					continue;
-				require(type == TrackType::Audio, std::string("only audio tracks have ") + key);
+				require(type == TrackType::Audio || type == TrackType::Midi || type == TrackType::Instrument,
+					std::string("only audio, MIDI and instrument tracks have ") + key);
 				*value = parameters.at(key).get<bool>();
+			}
+			if (parameters.contains("midiInput"))
+			{
+				require(type == TrackType::Midi || type == TrackType::Instrument,
+					"only MIDI and instrument tracks have midiInput");
+				changed.midiInput = parameters.at("midiInput").get<std::string>();
 			}
 			changed.mute = parameters.value("mute", changed.mute);
 			changed.solo = parameters.value("solo", changed.solo);
+			changed.soloDefeat = parameters.value("soloDefeat", changed.soloDefeat);
+			if (parameters.contains("listen"))
+				require(changed.format != ChannelFormat::None, "a MIDI channel has no listen");
+			changed.listen = parameters.value("listen", changed.listen) && changed.format != ChannelFormat::None;
 			changed.notes = parameters.value("notes", changed.notes);
+			if (parameters.contains("pre") || parameters.contains("eq") || parameters.contains("strip"))
+			{
+				require(changed.format != ChannelFormat::None, "a MIDI channel has no pre, eq or strip section");
+				try
+				{
+					changed.sections = sectionsFromJson(parameters, changed.sections);
+				}
+				catch (const std::invalid_argument& error)
+				{
+					throw CommandError(error.what());
+				}
+			}
 			channel = changed;
+			// Exclusive solo (reference manual p. 466): every other channel's solo goes off.
+			if (parameters.value("exclusive", false))
+				for (auto& [id, other] : project.channels)
+					if (id != channel.id && other.solo)
+					{
+						other.solo = false;
+						context.emit("channel.changed", {{"channel", toJson(other)}});
+					}
 			Json result = {{"channel", toJson(channel)}};
 			context.emit("channel.changed", result);
 			return result;
+		}
+
+		// Deactivate All Mute, Solo or Listen States (reference manual pp. 58, 466). Solo takes solo defeat along.
+		Json deactivateAll(Project& project, CommandContext& context)
+		{
+			const std::string state = context.parameters().at("state").get<std::string>();
+			require(state == "mute" || state == "solo" || state == "listen", "state must be mute, solo or listen");
+			Json channels = Json::array();
+			for (auto& [id, channel] : project.channels)
+			{
+				const Channel before = channel;
+				if (state == "mute")
+					channel.mute = false;
+				else if (state == "listen")
+					channel.listen = false;
+				else
+					channel.solo = channel.soloDefeat = false;
+				if (channel == before)
+					continue;
+				context.emit("channel.changed", {{"channel", toJson(channel)}});
+				channels.push_back(id);
+			}
+			return {{"channels", std::move(channels)}};
 		}
 
 		BusDirection busDirection(const Json& name)
@@ -1989,6 +2148,24 @@ namespace gnubase::engine
 			return result;
 		}
 
+		Json addAudioPart(Project& project, CommandContext& context)
+		{
+			const Json& parameters = context.parameters();
+			AudioPart part;
+			part.track = parameters.at("track").get<ObjectId>();
+			const Track& track = find(project.trackById, part.track, "track");
+			require(track.type == TrackType::Audio, "audio parts can only be on an audio track");
+			part.position = position(track, parameters.at("position"), "position");
+			part.length = parameters.at("length").get<int64_t>();
+			require(part.length > 0, "length must be positive");
+			part.name = parameters.value("name", track.name);
+			part.id = project.newId();
+			project.audioParts[part.id] = part;
+			Json result = {{"part", toJson(part)}};
+			context.emit("audioPart.added", result);
+			return result;
+		}
+
 		Json setMidiPart(Project& project, CommandContext& context, bool follow)
 		{
 			const Json& parameters = context.parameters();
@@ -2182,7 +2359,17 @@ namespace gnubase::engine
 			{
 				throw CommandError(problem.what());
 			}
-			// The first tempo and signature, which the transport bar shows; tempo and signature tracks edit the rest.
+			// Fixed tempo or tempo track mode (reference manual p. 1446): the tempo of the other mode waits in
+			// otherTempo.
+			const time::TempoMap tempoBefore = project.tempo;
+			const bool tempoModeBefore = project.tempoTrackActive;
+			if (parameters.value("tempoTrackActive", project.tempoTrackActive) != project.tempoTrackActive)
+			{
+				std::swap(project.tempo, project.otherTempo);
+				project.tempoTrackActive = !project.tempoTrackActive;
+			}
+			// The first tempo and signature, which the transport bar shows: the fixed tempo, or the tempo track's
+			// first event; tempo.* and signature tracks edit the rest.
 			std::vector<time::TempoPoint> tempo = project.tempo.points();
 			tempo.front().bpm = parameters.value("tempo", tempo.front().bpm);
 			require(tempo.front().bpm >= time::g_minBpm && tempo.front().bpm <= time::g_maxBpm,
@@ -2200,14 +2387,10 @@ namespace gnubase::engine
 			}
 			const time::TempoMap tempoMap(tempo);
 			const time::SignatureMap signatureMap(signatures);
-			const bool retimed = tempoMap != project.tempo || signatureMap != project.signatures;
 			project.tempo = tempoMap;
 			project.signatures = signatureMap;
-			if (retimed)
-				// A cycle marker in ticks can get shorter than a sample at a faster tempo.
-				for (auto& [id, marker] : project.markers)
-					if (keepMinimumLength(project, marker))
-						context.emit("marker.changed", {{"marker", toJson(marker)}});
+			if (project.tempo != tempoBefore || project.tempoTrackActive != tempoModeBefore)
+				tempoChanged(project, context);
 			project.name = parameters.value("name", project.name);
 			if (parameters.contains("panLaw"))
 				project.panLaw = panLawFromName(parameters.at("panLaw").get<std::string>()).value_or(project.panLaw);
@@ -2265,6 +2448,7 @@ namespace gnubase::engine
 			{"track.remove", "Remove track"},
 			{"track.duplicate", "Duplicate track"},
 			{"channel.set", "Change channel"},
+			{"channel.deactivateAll", "Deactivate all states"},
 			{"parameter.set", "Change parameter"},
 			{"plugin.insert", "Insert plugin"},
 			{"plugin.remove", "Remove plugin"},
@@ -2285,12 +2469,14 @@ namespace gnubase::engine
 			{"crossfade.set", "Crossfade"},
 			{"crossfade.remove", "Remove crossfades"},
 			{"autoFades.set", "Change auto fades"},
+			{"audioPart.add", "Add audio part"},
 			{"midiPart.add", "Add MIDI part"},
 			{"midiPart.set", "Change MIDI part"},
 			{"midiPart.remove", "Remove MIDI part"},
 			{"note.add", "Add notes"},
 			{"note.remove", "Remove notes"},
 			{"note.set", "Change notes"},
+			{"note.voicing", "Change chord"},
 			{"controller.add", "Add controllers"},
 			{"controller.remove", "Remove controllers"},
 			{"controller.set", "Change controllers"},
@@ -2299,6 +2485,10 @@ namespace gnubase::engine
 			{"marker.set", "Change marker"},
 			{"marker.remove", "Remove markers"},
 			{"marker.renumber", "Renumber markers"},
+			{"tempo.add", "Add tempo event"},
+			{"tempo.set", "Change tempo events"},
+			{"tempo.remove", "Remove tempo events"},
+			{"tempo.tap", "Tap tempo"},
 			{"marker.activateTrack", "Activate marker track"},
 			{"automationLane.add", "Add automation lane"},
 			{"automationLane.set", "Change automation lane"},
@@ -2388,6 +2578,7 @@ namespace gnubase::engine
 			announceObjects(change.media, direction, "media", "media", context);
 			announceObjects(change.poolFolders, direction, "poolFolder", "folder", context);
 			announceObjects(change.clips, direction, "clip", "clip", context);
+			announceObjects(change.audioParts, direction, "audioPart", "part", context);
 			announceObjects(change.audioEvents, direction, "audioEvent", "event", context);
 			announceObjects(change.markers, direction, "marker", "marker", context);
 			// Slots as plugin.insert, plugin.remove and the other plugin.* commands announce them. Those of a channel
@@ -2470,8 +2661,11 @@ namespace gnubase::engine
 					m_project = std::move(before);
 					throw;
 				}
-				record(action.empty() ? context.parameters().at("description").get<std::string>() : action, before,
-					context);
+				if (action.empty()) // a transaction
+					record(context.parameters().at("description").get<std::string>(), before, context,
+						context.parameters().value("merge", std::string()));
+				else
+					record(action, before, context);
 				publish();
 				return result;
 			});
@@ -2483,12 +2677,26 @@ namespace gnubase::engine
 		engine.registerCommand(std::move(info), std::move(handler));
 	}
 
-	void ProjectModel::record(std::string action, const Project& before, CommandContext& context)
+	void ProjectModel::record(std::string action, const Project& before, CommandContext& context, std::string merge)
 	{
+		const std::vector<HistoryStep>& steps = m_history.steps();
+		if (!merge.empty() && !steps.empty() && m_history.position() == steps.size() && steps.back().merge == merge)
+		{
+			// The step joins the last one: what changed since before that one.
+			Project start = before;
+			apply(start, steps.back().change, Direction::Undo);
+			ProjectChange change = difference(start, m_project);
+			if (change.empty())
+				m_history.removeLast();
+			else
+				m_history.step(steps.size() - 1).change = std::move(change);
+			announceHistory(context);
+			return;
+		}
 		ProjectChange change = difference(before, m_project);
 		if (change.empty())
 			return;
-		m_history.record({std::move(action), now(), {}, std::move(change)});
+		m_history.record({std::move(action), now(), {}, std::move(change), std::move(merge)});
 		announceHistory(context);
 	}
 
@@ -2561,8 +2769,9 @@ namespace gnubase::engine
 			try
 			{
 				// Each command's edit reaches the other shared copies before the next command runs, so that edits of
-				// several copies of a group all stay and a command sees what an earlier one did to another copy.
-				const std::map<ObjectId, MidiPart> parts = project.midiParts;
+				// several copies of a group all stay and a command sees what an earlier one did to another copy. Only
+				// shared parts are compared, so only they are copied, not every note of every part (#426).
+				const std::map<ObjectId, MidiPart> parts = sharedPartsOf(project.midiParts);
 				results.push_back(edit->second.handler(project, inner));
 				syncSharedParts(parts, project, inner);
 			}
@@ -2633,8 +2842,12 @@ namespace gnubase::engine
 		add(engine,
 			{"history.transaction", 1,
 				"Runs document commands in order as one undo step named description. If one fails, none of them "
-				"changes the project. Returns each command's result.",
-				objectSchema({{"description", {{"type", "string"}}}, {"commands", arraySchema(command)}},
+				"changes the project. Returns each command's result. With a merge key, a transaction joins the last "
+				"step instead when that step is a transaction with the same key and nothing was undone since: a "
+				"gesture such as a fader drag, sent as a transaction per step with a key of its own, is one undo step "
+				"(none if it ends where it started).",
+				objectSchema({{"description", {{"type", "string"}}}, {"commands", arraySchema(command)},
+								 {"merge", {{"type", "string"}}}},
 					{"description", "commands"}),
 				{{"type", "object"}, {"properties", {{"results", {{"type", "array"}}}}}, {"required", {"results"}}},
 				false},
@@ -2650,7 +2863,7 @@ namespace gnubase::engine
 		const Json booleanSchema = {{"type", "boolean"}};
 		const Json noResult = Json::object();
 		const Json trackTypes =
-			enumSchema({"audio", "instrument", "midi", "folder", "group", "effect", "marker", "ruler"});
+			enumSchema({"audio", "instrument", "midi", "folder", "group", "effect", "marker", "ruler", "tempo"});
 		const Json timeBases = enumSchema({"musical", "linear"});
 		const Json timeFormats =
 			enumSchema(std::vector<std::string>(g_rulerTimeFormats.begin(), g_rulerTimeFormats.end()));
@@ -2665,8 +2878,9 @@ namespace gnubase::engine
 			{"graph.get", 1,
 				"The project's audio processing graph: its nodes (busses, then channels in track order, then for each "
 				"channel with plugin slots a channelSource node with what plays on the channel and a pluginSlot node "
-				"per slot, which pass the audio on to the channel's node) with the nodes they receive audio and events "
-				"from, and the order they are processed in. object is the bus, channel or slot id.",
+				"per slot, which pass the audio on to the channel's node, and while channels listen a listenBus node "
+				"that receives them) with the nodes they receive audio and events from, and the order they are "
+				"processed in. object is the bus, channel or slot id.",
 				objectSchema({}), {{"type", "object"}}, true},
 			[this](Project&, CommandContext&) { return graphToJson(graph::describe(m_snapshots.latest())); });
 		addControl(engine,
@@ -2771,8 +2985,12 @@ namespace gnubase::engine
 				"wherever it is panned); the side panned toward is always at 0 dB. maxVolume is the top of the "
 				"faders, 6 (the default) or 12 dB; faders above a lower maximum come down to it. tempo (1 to 999 BPM) "
 				"and signature {numerator 1 to 99, denominator 1, 2, 4, 8 or 16} are the project's first tempo and "
-				"time signature, as the transport bar sets them; later changes stay, and musical positions keep their "
-				"ticks. colors is the project's color set, which track and event colors are picked from: at least "
+				"time signature, as the transport bar sets them: the fixed tempo, or in tempo track mode the tempo "
+				"track's first event; later changes stay, and musical positions keep their ticks. tempoTrackActive "
+				"switches between fixed tempo mode (false, a new project's) and tempo track mode, in which the "
+				"project plays the tempo track's events (tempo.add); each mode keeps its tempo while the other is in "
+				"use (emits tempo.changed). colors is the project's color set, which track and event colors are picked "
+				"from: at least "
 				"one {name, color (#rrggbb)}, in order. recordFileType (wav, the default, broadcastWav, aiff or "
 				"flac) and recordBitDepth (int16, int24, the default, int32, float32 or float64) are what recording "
 				"writes: AIFF only integers, FLAC 16 or 24 bit, 64 bit float only Wave. frameRate is the timecode's "
@@ -2783,6 +3001,7 @@ namespace gnubase::engine
 				"emits snap.changed).",
 				objectSchema({{"name", stringSchema}, {"sampleRate", numberSchema},
 					{"panLaw", enumSchema(panLawNames())}, {"maxVolume", numberSchema}, {"tempo", numberSchema},
+					{"tempoTrackActive", booleanSchema},
 					{"colors",
 						{{"type", "array"},
 							{"items",
@@ -2939,7 +3158,9 @@ namespace gnubase::engine
 				"Tracks to New Folder). With the user setting editing.applyFolderColor, a track added to a folder "
 				"without a color takes the folder's. Marker tracks have no channel and stay at the top level; a "
 				"project has at most 10, and a new one becomes the active marker track. Ruler tracks have no channel "
-				"either; timeFormat is the time format their ruler shows (default barsBeats).",
+				"either; timeFormat is the time format their ruler shows (default barsBeats). The tempo track shows "
+				"and "
+				"edits the project's tempo (tempo.*): a project has one at most, without a channel, at the top level.",
 				objectSchema({{"type", trackTypes}, {"name", stringSchema}, {"color", color}, {"parent", idSchema},
 								 {"index", integerSchema}, {"format", formats}, {"channels", integerSchema},
 								 {"timeBase", timeBases}, {"groupChannel", booleanSchema}, {"input", idSchema},
@@ -3019,21 +3240,53 @@ namespace gnubase::engine
 				"are an audio track's buttons: monitor hears the input bus, recordEnable arms the track for recording "
 				"and, by the user setting audio.autoMonitoring, monitors too: manual never, whileRecordEnabled always, "
 				"whileRecording while the transport records, tapeMachine while it stands or records (the default). "
-				"Monitoring glides in and out over one audio block. mute silences a channel; while any channel is "
+				"Monitoring glides in and out over one audio block. MIDI and instrument tracks have them too: "
+				"recordEnable arms the track for MIDI recording, and while either is on, the track plays what comes "
+				"from its MIDI input, midiInput: all (all MIDI inputs, the default) or none. mute silences a channel; "
+				"while any channel is "
 				"soloed (solo), only the soloed ones, the channels they play through (groups, instruments) and the "
-				"channels that play into them are heard. Muting and soloing glide over one audio block. notes is the "
-				"channel's notepad, the user's text about it.",
-				objectSchema({{"channel", idSchema}, {"format", formats}, {"channels", integerSchema},
-								 {"input", idSchema}, {"output", idSchema}, {"instrument", stringSchema},
-								 {"panner", enumSchema({"balance", "combined"})}, {"panLeft", numberSchema},
-								 {"panRight", numberSchema}, {"panBypass", booleanSchema},
-								 {"midiVolume", {{"type", {"integer", "null"}}}},
-								 {"midiPan", {{"type", {"integer", "null"}}}}, {"volume", numberSchema},
-								 {"pan", numberSchema}, {"monitor", booleanSchema}, {"recordEnable", booleanSchema},
-								 {"mute", booleanSchema}, {"solo", booleanSchema}, {"notes", stringSchema}},
+				"channels that play into them are heard; exclusive (with solo) turns every other channel's solo off; "
+				"soloDefeat keeps a channel and the channels it plays through heard while others are soloed. listen "
+				"(not MIDI channels) also plays the channel after its fader on the monitoring bus, the main mix, which "
+				"is turned down to the user setting audio.listenDim while any channel listens; the listening channels "
+				"play there at audio.listenLevel, and their signal flow stays as it is. Muting, soloing and the dim "
+				"glide over one audio block. notes is the "
+				"channel's notepad, the user's text about it. The channel strip's sections (audio channels only; "
+				"each object changes only what it has, as project.get shows them) run before the fader: pre "
+				"{gain (dB, -24 to 24), phase (inverts the polarity), lowCut and highCut {on, frequency (Hz, 20 or "
+				"for the high cut 50 to 20000), slope (6, 12, 24, 36 or 48 dB per octave)}} before the plugin slots; "
+				"after them strip {gate {on, threshold (dB, -80 to 0), range (dB, -80 to 0), attack (ms, 0.01 to "
+				"100), release (ms, 1 to 4000)}, compressor {on, threshold (dB, -60 to 0), ratio (1 to 20), attack "
+				"(ms, 0.1 to 100), release (ms, 10 to 2000), makeup (dB, 0 to 24)}}, then eq {bypass, bands: "
+				"[{band (1 to 4), on, type (bell; band 1 also lowShelf or lowCut, band 4 highShelf or highCut, cuts "
+				"at 12 dB per octave), frequency (Hz, 20 to 20000), gain (dB, -24 to 24), q (0.1 to 12)}]}, then "
+				"the strip's limiter {on, threshold (dB, -30 to 0: no sample leaves above it, 1 ms of latency), "
+				"release (ms, 1 to 1000)}. Everything starts off; changes glide.",
+				objectSchema(
+					{{"channel", idSchema}, {"format", formats}, {"channels", integerSchema}, {"input", idSchema},
+						{"output", idSchema}, {"instrument", stringSchema},
+						{"panner", enumSchema({"balance", "combined"})}, {"panLeft", numberSchema},
+						{"panRight", numberSchema}, {"panBypass", booleanSchema},
+						{"midiVolume", {{"type", {"integer", "null"}}}}, {"midiPan", {{"type", {"integer", "null"}}}},
+						{"volume", numberSchema}, {"pan", numberSchema}, {"monitor", booleanSchema},
+						{"recordEnable", booleanSchema}, {"midiInput", enumSchema({"all", "none"})},
+						{"mute", booleanSchema}, {"solo", booleanSchema}, {"exclusive", booleanSchema},
+						{"soloDefeat", booleanSchema}, {"listen", booleanSchema}, {"notes", stringSchema},
+						{"pre", {{"type", "object"}}}, {"eq", {{"type", "object"}}}, {"strip", {{"type", "object"}}}},
 					{"channel"}),
 				resultSchema({"channel"}), false},
 			setChannel);
+
+		add(engine,
+			{"channel.deactivateAll", 1,
+				"Turns a state off on every channel, as the mixer toolbar's Deactivate All Mute, Solo and Listen "
+				"States buttons do: mute, solo (with solo defeat) or listen. One undo step. Returns the channels "
+				"that changed.",
+				objectSchema({{"state", enumSchema({"mute", "solo", "listen"})}}, {"state"}),
+				Json{{"type", "object"}, {"properties", {{"channels", {{"type", "array"}, {"items", idSchema}}}}},
+					{"required", {"channels"}}},
+				false},
+			deactivateAll);
 
 		add(engine,
 			{"media.add", 1,
@@ -3146,7 +3399,19 @@ namespace gnubase::engine
 			removeAudioEvent);
 
 		add(engine,
+			{"audioPart.add", 1,
+				"Adds an empty audio part to an audio track (reference manual p. 250): a container of audio events, "
+				"which play only within it and move, copy, split and glue with it through the event commands. "
+				"position and length are in the track's time base; name defaults to the track's. event.toPart puts "
+				"events into a part, event.dissolvePart takes them out again.",
+				objectSchema({{"track", idSchema}, {"position", integerSchema}, {"length", integerSchema},
+								 {"name", stringSchema}},
+					{"track", "position", "length"}),
+				resultSchema({"part"}), false},
+			addAudioPart);
+		add(engine,
 			{"midiPart.add", 1,
+
 				"Adds a MIDI part to a MIDI or instrument track. position and length are in the track's time base.",
 				objectSchema({{"track", idSchema}, {"position", integerSchema}, {"length", integerSchema},
 								 {"name", stringSchema}},
@@ -3212,6 +3477,7 @@ namespace gnubase::engine
 
 		registerMidiEditCommands(engine);
 		registerMarkerCommands(engine);
+		registerTempoCommands(engine);
 		registerAutomationCommands(engine);
 		registerParameterCommands(engine);
 		registerSlotCommands(engine);
@@ -3222,9 +3488,11 @@ namespace gnubase::engine
 		registerRecordingCommands(engine);
 		registerPoolCommands(engine);
 		registerFadeCommands(engine);
+		registerVolumeCurveCommands(*this, engine);
 		registerEventEditCommands(engine);
 		registerSnapCommands(*this, engine);
 		registerMixerCommands(*this, engine);
+		registerEditorCommands(*this, engine);
 		registerHistoryCommands(engine);
 		registerMediaFolderCommands(engine, jobs);
 		registerProjectFileCommands(engine);
@@ -3236,11 +3504,12 @@ namespace gnubase::engine
 		const Json numberSchema = {{"type", "number"}};
 		const Json booleanSchema = {{"type", "boolean"}};
 		const Json noResult = Json::object();
-		const Json target = objectSchema({{"type",
-											  enumSchema({"volume", "pan", "panLeft", "panRight", "instrument",
-												  "controller", "pitchBend", "channelPressure"})},
-											 {"parameter", idSchema}, {"number", idSchema}, {"channel", idSchema}},
-			{"type"});
+		const Json target =
+			objectSchema({{"type",
+							  enumSchema({"volume", "pan", "panLeft", "panRight", "mute", "instrument", "plugin",
+								  "controller", "pitchBend", "channelPressure"})},
+							 {"parameter", idSchema}, {"slot", idSchema}, {"number", idSchema}, {"channel", idSchema}},
+				{"type"});
 		const Json shape = enumSchema({"step", "linear", "curve"});
 		const Json pointsResult = {
 			{"type", "object"}, {"properties", {{"points", {{"type", "array"}}}}}, {"required", {"points"}}};
@@ -3248,13 +3517,15 @@ namespace gnubase::engine
 		add(engine,
 			{"automationLane.add", 1,
 				"Adds an automation lane to a track: the curve of one parameter. target.type says which: volume (the "
-				"channel's fader, in dB), pan, panLeft and panRight (-1 to 1, see channel.set) on tracks with audio "
-				"channels; instrument, a parameter of "
-				"an instrument track's built-in instrument (target.parameter, an id from processor.list, in its "
-				"range); controller (target.number 0-127), pitchBend (0.5 is no bend) and channelPressure, all 0 to "
-				"1, on MIDI and instrument tracks, with target.channel 0-15 (default 0). A track has one lane per "
-				"target. read (default true): the curve plays; without it, or without points, the parameter keeps its "
-				"static value.",
+				"channel's fader, in dB), pan, panLeft and panRight (-1 to 1, see channel.set) and mute (0 off, 1 on; "
+				"a lane that plays overrides the mute button) on tracks with audio channels; instrument, a parameter "
+				"of an instrument track's built-in instrument (target.parameter, an id from processor.list, in its "
+				"range); plugin, a parameter of the built-in plugin in one of the track's slots (target.slot and "
+				"target.parameter, as parameter.list gives them, in its range; the lane goes when the plugin is "
+				"removed or moves to another channel); controller (target.number 0-127), pitchBend (0.5 is no bend) "
+				"and channelPressure, all 0 to 1, on MIDI and instrument tracks, with target.channel 0-15 (default 0). "
+				"A track has one lane per target. read (default true): the curve plays; without it, or without points, "
+				"the parameter keeps its static value.",
 				objectSchema({{"track", idSchema}, {"target", target}, {"read", booleanSchema}}, {"track", "target"}),
 				resultSchema({"lane"}), false},
 			addAutomationLane);
@@ -3283,6 +3554,8 @@ namespace gnubase::engine
 				"automation follows tempo changes; samples on linear ones, so it keeps its time), value in the "
 				"target's unit, shape of the curve to the next point (step, linear or curve; "
 				"default linear) and for curves the bend, curve, from -1 to 1 (above 0 the value moves fast at first). "
+				"Mute and stepped parameters (parameter.list) have step curves: their points are steps with whole "
+				"values. "
 				"Before the first point the curve has its value, after the last point the last one's; points at one "
 				"position make a jump. A ramp of volume moves the gain in a straight line.",
 				objectSchema({{"lane", idSchema}, {"points", arraySchema(point)}}, {"lane", "points"}), pointsResult,

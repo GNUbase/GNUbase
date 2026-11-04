@@ -45,6 +45,13 @@ button
 	nav: auto;
 }
 
+/* Toolbar and transport buttons are for the mouse: a click focuses them, but Tab skips them and Space and Enter go to
+   the key commands, so Space still starts and stops playback (#456, docs/features/widgets.md). */
+.toolbar button, .transport button
+{
+	tab-index: none;
+}
+
 /* A disabled button lets clicks pass and takes no focus (ui/widgets.h). */
 button:disabled
 {
@@ -139,6 +146,17 @@ select selectbox option
 {
 	width: auto;
 	padding: 3dp 12dp;
+}
+
+/* Form controls take the focus with Tab and Shift+Tab, disabled ones don't (docs/features/accessibility.md). */
+input.text, input.password, textarea, input.checkbox, input.radio, input.range, select
+{
+	tab-index: auto;
+}
+
+input:disabled, textarea:disabled, select:disabled
+{
+	tab-index: none;
 }
 
 /* Sliders and progress bars */
@@ -625,6 +643,61 @@ meter .meter-peak
 	pointer-events: none;
 }
 
+/* The fades of audio events and their handles (#138), over the waveforms. */
+.event-display .event-area fade-lines
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	bottom: 0;
+	pointer-events: none;
+}
+
+/* Automation tracks' lanes (#121): code puts each at its lane, with its curve and static value line across it, and
+   the automation event editor around the selected points. */
+.event-display .automation-lanes
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	bottom: 0;
+	pointer-events: none;
+}
+
+.event-display .automation-lane
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	box-sizing: border-box;
+	pointer-events: none;
+}
+
+.event-display .automation-lane curve
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	bottom: 0;
+	pointer-events: none;
+}
+
+.event-display .automation-editor
+{
+	position: absolute;
+	display: none;
+	box-sizing: border-box;
+	pointer-events: none;
+}
+
+.event-display .automation-editor.shown
+{
+	display: block;
+}
+
 .event-display .waveforms waveform
 {
 	position: absolute;
@@ -745,6 +818,41 @@ meter .meter-peak
 	white-space: nowrap;
 }
 
+/* The tempo track (docs/features/tempo-track.md): the tempo curve over the tempo track's lane, or filling the tempo
+   track editor's curve area, with a point per tempo event. Code places the curve on its lane and the points where their
+   events are. */
+.tempo-curve
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	height: 100%;
+}
+
+.tempo-curve.hidden
+{
+	display: none;
+}
+
+.tempo-curve .tempo-line, .tempo-curve .tempo-points
+{
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 100%;
+	height: 100%;
+}
+
+.tempo-curve .tempo-point
+{
+	position: absolute;
+	width: 7dp;
+	height: 7dp;
+	margin-left: -3.5dp;
+	margin-top: -3.5dp;
+}
+
 /* The tools (docs/features/tools.md): the selection range, at least a line wide, and the rectangle a tool drags. Code
    sets where they are and the state class .shown. */
 .event-display .range-selection, .event-display .tool-rectangle
@@ -764,6 +872,72 @@ meter .meter-peak
 .event-display.cross-hair .event-area:hover .cross-hair-horizontal
 {
 	display: block;
+}
+
+/* The mouse pointer over the event lanes (docs/features/tools.md): code names it in the event area's attribute
+   pointer, by the tool and where the mouse is; the object selection tool has the OS's arrow. The pointers are
+   resources/cursors. */
+.event-display .event-area[pointer=rangeSelection]
+{
+	cursor: tool-range;
+}
+
+.event-display .event-area[pointer=draw]
+{
+	cursor: tool-draw;
+}
+
+.event-display .event-area[pointer=erase]
+{
+	cursor: tool-erase;
+}
+
+.event-display .event-area[pointer=split]
+{
+	cursor: tool-split;
+}
+
+.event-display .event-area[pointer=glue]
+{
+	cursor: tool-glue;
+}
+
+.event-display .event-area[pointer=mute]
+{
+	cursor: tool-mute;
+}
+
+.event-display .event-area[pointer=zoom]
+{
+	cursor: tool-zoom;
+}
+
+.event-display .event-area[pointer=line]
+{
+	cursor: tool-line;
+}
+
+.event-display .event-area[pointer=play]
+{
+	cursor: tool-play;
+}
+
+.event-display .event-area[pointer=resize]
+{
+	cursor: resize;
+}
+
+/* The name of a tool chosen with a key command, for a moment, at the top of the event lanes; the document gives it
+   the tooltip's look. */
+.event-display .tool-notification
+{
+	position: absolute;
+	z-index: 10;
+	top: 64dp;
+	left: 50%;
+	width: 200dp;
+	margin-left: -100dp;
+	text-align: center;
 }
 
 /* The track list (docs/features/track-list.md): the global track controls over a row per track, level with the
@@ -901,6 +1075,77 @@ meter .meter-peak
 	display: block;
 }
 
+/* Automation tracks (docs/features/automation-tracks.md): Show/Hide Automation in a track's lower left corner and
+   the automation tracks' rows below the track's own. Code sets where the corner and the rows are, and each row's
+   height, from the event display's lanes. */
+.track-list .automation-toggle
+{
+	position: absolute;
+	left: 6dp;
+	width: 16dp;
+	height: 16dp;
+	padding: 0;
+	text-align: center;
+}
+
+.track-list .automation-toggle svg.icon, .track-list .automation-row svg.icon
+{
+	width: 12dp;
+	height: 12dp;
+}
+
+.track-list .automation-rows
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: 0;
+}
+
+.track-list .automation-row
+{
+	display: flex;
+	flex-direction: row;
+	align-items: flex-start;
+	padding: 3dp 4dp 0 24dp;
+	box-sizing: border-box;
+	overflow: hidden;
+}
+
+.track-list .automation-parameter
+{
+	flex: 0 1 auto;
+	width: 120dp;
+	height: 18dp;
+	padding: 0 4dp;
+	overflow: hidden;
+	white-space: nowrap;
+	text-align: left;
+}
+
+.track-list .automation-row .automation-read, .track-list .automation-row .automation-append
+{
+	flex: 0 0 auto;
+	width: 22dp;
+	height: 18dp;
+	margin-left: 2dp;
+	padding: 0;
+	text-align: center;
+}
+
+/* The parameter selector's search field, and the parameters it leaves out. */
+menu input.automation-search
+{
+	display: block;
+	width: 200dp;
+	margin: 2dp 4dp;
+}
+
+menu menuitem.hidden
+{
+	display: none;
+}
+
 /* Menus (ui/widgets.h): hidden until they open, over the document. A menu inside an item is its submenu, shown
    beside the item while the mouse is over it. */
 menu
@@ -971,6 +1216,27 @@ menubar button
 	padding: 3dp 8dp;
 }
 
+/* The toolbox (docs/features/tools.md): the toolbar's tools as a row of icons at the mouse. */
+menu.toolbox
+{
+	min-width: 0;
+	padding: 4dp;
+	white-space: nowrap;
+}
+
+menu.toolbox menuitem
+{
+	display: inline-block;
+	padding: 4dp;
+}
+
+menu.toolbox svg.icon
+{
+	display: block;
+	width: 20dp;
+	height: 20dp;
+}
+
 menuitem .menu-keys
 {
 	float: right;
@@ -999,6 +1265,24 @@ tooltip
 }
 
 tooltip.shown
+{
+	display: block;
+}
+
+/* A notification shows only while it has a message, also with a class such as .tooltip for its look; it lets the
+   mouse through. */
+notification
+{
+	padding: 4dp 8dp;
+	pointer-events: none;
+}
+
+notification:not(.shown)
+{
+	display: none;
+}
+
+notification.shown
 {
 	display: block;
 }
@@ -1291,6 +1575,13 @@ splitter.column .splitter-grip-horizontal
 	padding: 4dp;
 }
 
+/* The notepad and the name keep their arrow keys, also at the first and last line: they move the focus to no other
+   control, and no key command runs for them (ui::KeyCommands::press). */
+.inspector textarea.notepad, .inspector-name input
+{
+	nav: none;
+}
+
 .inspector-header textdisplay
 {
 	display: block;
@@ -1397,10 +1688,20 @@ listview.history
 	box-sizing: border-box;
 }
 
+/* The separator's line is in a grip that is dragged, as tall as a splitter: it reaches over the rows on both sides,
+   and is positioned so that it is in front of them. A press on it leaves the focus to the list. */
+.history .history-grip
+{
+	position: relative;
+	padding: 3dp 0;
+	margin: -3dp 0;
+	drag: drag;
+	focus: none;
+}
+
 .history .history-separator
 {
-	height: 4dp;
-	drag: drag;
+	height: 2dp;
 }
 
 /* The pool (ui/poolpanel.h): a toolbar, the message line, the info line, the column headers and a tree of folders and

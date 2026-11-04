@@ -71,12 +71,16 @@ namespace gnubase::test
 		Rml::TextInputHandler* textInputHandler(ui::WindowId window) override;
 		std::string clipboardText() const override { return m_clipboard; }
 		void setClipboardText(const std::string& text) override { m_clipboard = text; }
+		void setCursor(const ui::Cursor& cursor) override { m_cursor = cursor; }
 		void showFileDialog(uint64_t id, const ui::FileDialog& dialog) override { m_dialogs[id] = dialog; }
 		std::optional<ui::WindowEvent> nextEvent(std::optional<std::chrono::milliseconds> timeout) override;
 		void wake() override;
 
 		// How often another thread woke the window system.
 		int wakes() const { return m_wakes; }
+
+		// The mouse pointer shown now.
+		const ui::Cursor& cursor() const { return m_cursor; }
 
 	private:
 		// Remembers which of the window's text fields has the focus.
@@ -109,6 +113,7 @@ namespace gnubase::test
 		std::deque<ui::WindowEvent> m_events;
 		ui::WindowId m_nextId = 1;
 		std::string m_clipboard;
+		ui::Cursor m_cursor;
 		std::map<uint64_t, ui::FileDialog> m_dialogs;
 		std::atomic<int> m_wakes{0};
 		std::atomic<int> m_pendingWakes{0};

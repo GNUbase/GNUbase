@@ -2,6 +2,7 @@
 #include "ui/canvas.h"
 
 #include "engine/audio/automation.h"
+#include "engine/audio/fades.h"
 #include "ui/rmlui.h"
 
 #include <RmlUi/Core/ComputedValues.h>
@@ -97,6 +98,7 @@ namespace gnubase::ui
 		rmlui.registerElement<EventLanes>("event-lanes");
 		rmlui.registerElement<Waveform>("waveform");
 		rmlui.registerElement<Curve>("curve");
+		rmlui.registerElement<FadeLines>("fade-lines");
 		rmlui.registerElement<Ruler>("ruler");
 	}
 
@@ -330,9 +332,11 @@ namespace gnubase::ui
 		meshes.push_back({std::move(mesh), {}});
 	}
 
-	void Curve::setPoints(std::vector<CurvePoint> points)
+	void Curve::setPoints(std::vector<CurvePoint> points, bool handles, bool dashed)
 	{
 		m_points = std::move(points);
+		m_handles = handles;
+		m_dashed = dashed;
 		changed();
 	}
 
@@ -409,7 +413,161 @@ namespace gnubase::ui
 				cut(a, b, low);
 			if (b.x > high)
 				cut(b, a, high);
-			line(mesh, a, b, colour, width);
+			if (!m_dashed)
+			{
+				line(mesh, a, b, colour, width);
+				continue;
+			}
+			// Dashes of 4 dp with gaps as long, counted from timeline position 0 so that they stay put when scrolling.
+			const double dash = std::round(4.0 * frame.dpRatio);
+			const double length = std::hypot(b.x - a.x, b.y - a.y);
+			const auto at = [&](double along)
+			{
+				return Rml::Vector2<double>{a.x + ((b.x - a.x) * along / length), a.y + ((b.y - a.y) * along / length)};
+			};
+			for (double along = 0.0; along < length && dash > 0.0;)
+			{
+				const double phase =
+					std::fmod(std::fmod(a.x + frame.left + along, 2.0 * dash) + (2.0 * dash), 2.0 * dash);
+				if (phase < dash)
+				{
+					const double end = std::min(length, along + (dash - phase));
+					line(mesh, at(along), at(end), colour, width);
+					along = end;
+				}
+				else
+				{
+					along += (2.0 * dash) - phase;
+				}
+			}
+		}
+		if (m_handles)
+		{
+			const Colour body = fill();
+			for (const CurvePoint& handle : m_points)
+			{
+				const double size = std::round((handle.selected ? 7.0 : 5.0) * frame.dpRatio);
+				const double px = x(handle.position);
+				if (px < -size || px > right + size)
+					continue;
+				const double py = y(handle.value);
+				quad(mesh, static_cast<float>(px - (size / 2.0)), static_cast<float>(py - (size / 2.0)),
+					static_cast<float>(px + (size / 2.0)), static_cast<float>(py + (size / 2.0)),
+					handle.selected ? colour : body);
+			}
+		}
+		meshes.push_back({std::move(mesh), {}});
+	}
+
+	void FadeLines::setLanes(std::vector<Lane> lanes)
+	{
+		m_lanes = std::move(lanes);
+		changed();
+	}
+
+	void FadeLines::build(const Frame& frame, Rml::TexturedMeshList& meshes)
+	{
+		const Colour colour = stroke();
+		const float width = strokeWidth();
+		const Colour handle = fill();
+		const double from = frame.from();
+		const double to = frame.to();
+		const double right = frame.right - frame.left;
+		const double handleSize = std::round(6.0 * frame.dpRatio);
+		Rml::Mesh mesh;
+		double top = 0.0; // dp
+		for (const Lane& lane : m_lanes)
+		{
+			const double y0 = std::round(top * frame.dpRatio);
+			top += lane.height;
+			const double y1 = std::round(top * frame.dpRatio);
+			if (y1 <= frame.top || y0 >= frame.bottom || y1 - y0 < 2.0)
+				continue;
+			const auto y = [&](double gain) { return frame.y(y1 - (gain * (y1 - y0 - width)) - (width / 2.0)); };
+			if (colour.alpha != 0 && width > 0.0F)
+				for (const FadeLine& fade : lane.fades)
+				{
+					if (!(fade.length > 0.0) || fade.start + fade.length <= from || fade.start >= to)
+						continue;
+					// A piece every 2 pixels, cut to the frame.
+					const double x0 = std::round(fade.start / frame.unitsPerPixel) - frame.left;
+					const double x1 = std::round((fade.start + fade.length) / frame.unitsPerPixel) - frame.left;
+					const double begin = std::max(x0, -2.0);
+					const double end = std::min(x1, right + 2.0);
+					const auto gain = [&](double x)
+					{
+						const double at = x1 > x0 ? (x - x0) / (x1 - x0) : 1.0;
+						return engine::fadeGain(fade.shape, fade.in ? at : 1.0 - at);
+					};
+					Rml::Vector2<double> last{begin, y(gain(begin))};
+					const auto pieces = static_cast<int64_t>(std::ceil((end - begin) / 2.0));
+					for (int64_t i = 1; i <= pieces; ++i)
+					{
+						const double x = std::min(begin + (2.0 * static_cast<double>(i)), end);
+						const Rml::Vector2<double> next{x, y(gain(x))};
+						line(mesh, last, next, colour, width);
+						last = next;
+					}
+				}
+			if (colour.alpha != 0 && width > 0.0F)
+				for (const VolumeLine& volume : lane.volumes)
+				{
+					if (!(volume.rate > 0.0) || volume.end <= from || volume.start >= to)
+						continue;
+					const double x0 = std::round(volume.start / frame.unitsPerPixel) - frame.left;
+					const double x1 = std::round(volume.end / frame.unitsPerPixel) - frame.left;
+					const double begin = std::max(x0, -2.0);
+					const double end = std::min(x1, right + 2.0);
+					const auto gain = [&](double x)
+					{
+						const double seconds = (x + frame.left) * frame.unitsPerPixel;
+						const double clipFrame =
+							static_cast<double>(volume.offset) + ((seconds - volume.start) * volume.rate);
+						return std::clamp(
+							volume.gain * engine::curveGain(volume.points, clipFrame) / g_volumeLineTop, 0.0, 1.0);
+					};
+					// A piece every 2 pixels, and one to each point, so that jumps stay upright.
+					std::vector<double> xs;
+					for (int64_t i = 0; begin + (2.0 * static_cast<double>(i)) < end; ++i)
+						xs.push_back(begin + (2.0 * static_cast<double>(i)));
+					for (const engine::GainPoint& point : volume.points)
+					{
+						const double x =
+							std::round(
+								(volume.start + (static_cast<double>(point.position - volume.offset) / volume.rate)) /
+								frame.unitsPerPixel) -
+							frame.left;
+						if (x > begin && x < end)
+							xs.insert(xs.end(), {x - 0.01, x});
+					}
+					xs.push_back(end);
+					std::sort(xs.begin(), xs.end());
+					for (size_t i = 1; i < xs.size(); ++i)
+						line(mesh, {xs[i - 1], y(gain(xs[i - 1]))}, {xs[i], y(gain(xs[i]))}, colour, width);
+					if (handle.alpha == 0 || !volume.handles)
+						continue;
+					for (const engine::GainPoint& point : volume.points)
+					{
+						const double seconds =
+							volume.start + (static_cast<double>(point.position - volume.offset) / volume.rate);
+						if (seconds < volume.start || seconds > volume.end)
+							continue;
+						const double x = std::round(seconds / frame.unitsPerPixel) - frame.left;
+						const double at = y(std::clamp(volume.gain * point.gain / g_volumeLineTop, 0.0, 1.0));
+						quad(mesh, static_cast<float>(x - (handleSize / 2.0)),
+							static_cast<float>(at - (handleSize / 2.0)), static_cast<float>(x + (handleSize / 2.0)),
+							static_cast<float>(at + (handleSize / 2.0)), handle);
+					}
+				}
+			if (handle.alpha != 0)
+				for (const double at : lane.handles)
+					if (at >= from - (handleSize * frame.unitsPerPixel) &&
+						at <= to + (handleSize * frame.unitsPerPixel))
+					{
+						const double x = std::round(at / frame.unitsPerPixel) - frame.left;
+						quad(mesh, static_cast<float>(x - (handleSize / 2.0)), frame.y(y0),
+							static_cast<float>(x + (handleSize / 2.0)), frame.y(y0 + handleSize), handle);
+					}
 		}
 		meshes.push_back({std::move(mesh), {}});
 	}

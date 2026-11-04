@@ -49,17 +49,47 @@ namespace gnubase::ui
 	void EventDisplay::importFiles(const std::vector<std::string>& files, std::optional<uint64_t> track,
 		std::optional<int64_t> sample, bool clipsOnly)
 	{
+		Import import;
+		import.track = track;
+		import.sample = std::max<int64_t>(sample.value_or(m_cursorSample), 0);
+		import.clipsOnly = clipsOnly;
+		startImport(files, std::move(import));
+	}
+
+	void EventDisplay::importToSelection(const std::vector<std::string>& files, const std::vector<uint64_t>& selection)
+	{
+		Import import;
+		import.sample = std::max<int64_t>(m_cursorSample, 0);
+		// The first selected track (reference manual p. 746), if it is an audio track, also inside a folded folder;
+		// otherwise new tracks, as without a selected track.
+		if (!selection.empty() && m_project.is_object())
+		{
+			for (const Json& track : m_project.at("tracks"))
+			{
+				if (track.at("id") == selection.front() && track.at("type") == "audio")
+				{
+					import.track = selection.front();
+					import.selected = true;
+				}
+			}
+		}
+		startImport(files, std::move(import));
+	}
+
+	void EventDisplay::startImport(const std::vector<std::string>& files, Import import)
+	{
 		std::vector<std::string> audio;
 		for (const std::string& file : files)
 		{
-			if (isMidiFile(file) && !clipsOnly)
+			if (isMidiFile(file) && !import.clipsOnly)
 				m_binding.send("midiFile.import", {{"path", file}});
 			else
 				audio.push_back(file);
 		}
 		if (audio.empty() || !alive() || m_dialog)
 			return;
-		m_import = {std::move(audio), track, std::max<int64_t>(sample.value_or(m_cursorSample), 0), clipsOnly};
+		import.files = std::move(audio);
+		m_import = std::move(import);
 		// The copy, convert and splitChannels options write into the project folder, which a project has once it is
 		// saved.
 		m_binding.send("project.location", Json::object(),
@@ -105,7 +135,7 @@ namespace gnubase::ui
 		setOption(m_dialog->GetElementById("import-convert"), saved && m_importConvert, !saved);
 		setOption(m_dialog->GetElementById("import-split"), saved && m_importSplit, !saved);
 		setOption(m_dialog->GetElementById("import-one-track"), m_importOneTrack,
-			m_import.files.size() < 2 || m_import.track.has_value() || m_import.clipsOnly);
+			m_import.files.size() < 2 || (m_import.track && !m_import.selected) || m_import.clipsOnly);
 	}
 
 	void EventDisplay::importAudio(Rml::Element& dialog)
@@ -126,11 +156,18 @@ namespace gnubase::ui
 		Json parameters = {{"files", m_import.files}, {"position", m_import.sample}, {"copy", copy},
 			{"convert", convert}, {"splitChannels", split}};
 		if (m_import.clipsOnly)
+		{
 			parameters["clipsOnly"] = true;
-		else if (!split && m_import.track)
-			parameters["track"] = *m_import.track;
-		else if (!split && oneTrack)
-			parameters["oneTrack"] = true;
+		}
+		else
+		{
+			// Files dropped on a track all go on it; the selected track takes the first file, or all of them with
+			// Import Files on One Track. Files that are split go on new tracks either way.
+			if (m_import.track)
+				parameters["track"] = *m_import.track;
+			if (oneTrack || (m_import.track && !m_import.selected))
+				parameters["oneTrack"] = true;
+		}
 		m_binding.send("audioFile.import", parameters);
 	}
 }

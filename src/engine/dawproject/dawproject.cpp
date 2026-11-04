@@ -69,12 +69,13 @@ namespace gnubase::engine
 			return false;
 		}
 
-		// Automation lanes DAWproject can describe: the fader and MIDI controllers. Instrument parameters stay in
-		// GNUbase's entry until plugin slots are written as devices (#72).
+		// Automation lanes DAWproject can describe: the fader and MIDI controllers. Instrument and plugin parameters
+		// and mute stay in GNUbase's entry until plugin slots are written as devices (#72).
 		bool exportable(const AutomationTarget& target)
 		{
 			return target.type != AutomationTargetType::Instrument && target.type != AutomationTargetType::Plugin &&
-				target.type != AutomationTargetType::PanLeft && target.type != AutomationTargetType::PanRight;
+				target.type != AutomationTargetType::PanLeft && target.type != AutomationTargetType::PanRight &&
+				target.type != AutomationTargetType::Mute;
 		}
 
 		// The built-in effect a slot's plugin id names, or nullptr.
@@ -447,8 +448,9 @@ namespace gnubase::engine
 
 			void writeTrack(pugi::xml_node parent, const Track& track)
 			{
-				// Markers go into the arrangement; ruler tracks only into GNUbase's entry.
-				if (track.type == TrackType::Marker || track.type == TrackType::Ruler)
+				// Markers go into the arrangement, the tempo into the transport and the tempo automation; ruler and
+				// tempo tracks only into GNUbase's entry.
+				if (track.type == TrackType::Marker || track.type == TrackType::Ruler || track.type == TrackType::Tempo)
 					return;
 				pugi::xml_node node = parent.append_child("Track");
 				node.append_attribute("id") = xmlId("t", track.id).c_str();
@@ -567,8 +569,11 @@ namespace gnubase::engine
 					pugi::xml_node clips = trackLanes.append_child("Clips");
 					clips.append_attribute("id") = xmlId("cl", track.id).c_str();
 					for (const auto& [id, event] : m_project.audioEvents)
-						if (event.track == track.id)
+						if (event.track == track.id && event.part == 0)
 							writeAudioClip(clips, track, event);
+					for (const auto& [id, part] : m_project.audioParts)
+						if (part.track == track.id)
+							writeAudioPart(clips, track, part);
 					for (const auto& [id, part] : m_project.midiParts)
 						if (part.track == track.id)
 							writeMidiClip(clips, track, part);
@@ -614,6 +619,7 @@ namespace gnubase::engine
 				case AutomationTargetType::Plugin:
 				case AutomationTargetType::PanLeft:
 				case AutomationTargetType::PanRight:
+				case AutomationTargetType::Mute:
 					break;
 				}
 				const auto value = [&target](double v)
@@ -657,7 +663,30 @@ namespace gnubase::engine
 				}
 			}
 
-			void writeAudioClip(pugi::xml_node clips, const Track& track, const AudioEvent& event)
+			// An audio part as a clip whose content is its events' clips, which count from its start in the lane's unit
+			// and play only within it.
+			void writeAudioPart(pugi::xml_node clips, const Track& track, const AudioPart& part)
+			{
+				pugi::xml_node element = clips.append_child("Clip");
+				element.append_attribute("time") = laneTime(track, part.position.value);
+				element.append_attribute("duration") = laneTime(track, part.length);
+				element.append_attribute("playStart") = 0.0;
+				element.append_attribute("contentTimeUnit") =
+					track.timeBase == time::TimeBase::Musical ? "beats" : "seconds";
+				if (part.mute)
+					element.append_attribute("enable") = false;
+				element.append_attribute("name") = part.name.c_str();
+				if (!part.color.empty())
+					element.append_attribute("color") = part.color.c_str();
+				pugi::xml_node content = element.append_child("Clips");
+				content.append_attribute("id") = xmlId("pc", part.id).c_str();
+				for (const auto& [id, event] : m_project.audioEvents)
+					if (event.part == part.id)
+						writeAudioClip(content, track, event, laneTime(track, part.position.value));
+			}
+
+			// An audio event's clip; origin is where the clips it is among start on the lane.
+			void writeAudioClip(pugi::xml_node clips, const Track& track, const AudioEvent& event, double origin = 0.0)
 			{
 				const Clip& clip = m_project.clips.at(event.clip);
 				const MediaFile& media = m_project.media.at(clip.media);
@@ -669,7 +698,7 @@ namespace gnubase::engine
 					duration = toBeats(m_project.tempo.toTicks(start + seconds) - event.position.value);
 				}
 				pugi::xml_node element = clips.append_child("Clip");
-				element.append_attribute("time") = laneTime(track, event.position.value);
+				element.append_attribute("time") = laneTime(track, event.position.value) - origin;
 				element.append_attribute("duration") = duration;
 				element.append_attribute("playStart") = static_cast<double>(event.offset) / media.sampleRate;
 				element.append_attribute("contentTimeUnit") = "seconds";
@@ -980,6 +1009,7 @@ namespace gnubase::engine
 				bool seconds = false; // the time unit is seconds rather than beats
 				double origin = 0.0;  // where the content's time 0 is on the lane
 				bool enabled = true;  // false inside a disabled (muted) clip
+				ObjectId part = 0;    // the audio part that the clip's audio goes into, or 0
 				double fadeIn = 0.0;  // seconds, of the innermost clip with fades
 				double fadeOut = 0.0;
 				std::string color; // of the innermost clip with a color, or empty
@@ -1036,6 +1066,10 @@ namespace gnubase::engine
 				try
 				{
 					m_project.tempo = time::TempoMap(tempo);
+					// Tempo changes play from the tempo track; fixed tempo mode keeps the first tempo.
+					m_project.tempoTrackActive = tempo.size() > 1;
+					m_project.otherTempo =
+						m_project.tempoTrackActive ? time::TempoMap(tempo.front().bpm) : m_project.tempo;
 					m_project.signatures = time::SignatureMap(changes);
 				}
 				catch (const std::invalid_argument& error)
@@ -1301,6 +1335,7 @@ namespace gnubase::engine
 						break;
 					case AutomationTargetType::Instrument:
 					case AutomationTargetType::Plugin:
+					case AutomationTargetType::Mute:
 					case AutomationTargetType::Controller:
 					case AutomationTargetType::PitchBend:
 					case AutomationTargetType::ChannelPressure:
@@ -1333,6 +1368,24 @@ namespace gnubase::engine
 				if (!clip.attribute("fadeInTime").empty() || !clip.attribute("fadeOutTime").empty())
 					readFades(clip, context, start, duration, content);
 				const TrackType type = m_project.trackById.at(context.track).type;
+				// On an audio track, a clip of clips is an audio part (#471), which mutes rather than its events.
+				if (type == TrackType::Audio && context.part == 0 && !clip.child("Clips").empty())
+				{
+					AudioPart part;
+					part.id = m_project.newId();
+					part.track = context.track;
+					part.name = clip.attribute("name").as_string("");
+					if (part.name.empty())
+						part.name = m_project.trackById.at(context.track).name;
+					const time::Ticks position = toTicks(start, context.seconds);
+					part.position = {time::TimeBase::Musical, position};
+					part.length = std::max<time::Ticks>(1, toTicks(start + duration, context.seconds) - position);
+					part.mute = !clip.attribute("enable").as_bool(true);
+					part.color = content.color;
+					m_project.audioParts[part.id] = part;
+					content.part = part.id;
+					content.enabled = context.enabled;
+				}
 				MidiPart* part = nullptr;
 				const auto partFor = [&]() -> MidiPart&
 				{
@@ -1531,6 +1584,8 @@ namespace gnubase::engine
 				event.clip = clipId;
 				event.mute = mute;
 				event.color = content.color;
+				event.part = content.part;
+
 				event.position = {time::TimeBase::Musical, toTicks(start, lane.seconds)};
 				event.offset = std::clamp<time::Samples>(
 					std::llround(offset * media.sampleRate), 0, std::max<time::Samples>(0, media.length - 1));
@@ -1607,6 +1662,7 @@ namespace gnubase::engine
 		const std::string xml = exporter.projectXml();
 		Json document = toJson(project);
 		document["nextId"] = project.nextId;
+		document["snap"] = toJson(project.snap, true); // with a newer build's grid types
 		Json media = Json::object();
 		for (const auto& [id, mediaPath] : exporter.mediaPaths())
 			media[std::to_string(id)] = mediaPath;

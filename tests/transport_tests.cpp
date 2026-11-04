@@ -384,6 +384,25 @@ TEST_CASE("punch out ends recording at the right locator and playback goes on", 
 	CHECK(transport.position() == 4500);
 }
 
+TEST_CASE("lock record ignores the automatic punch out at the right locator", "[unit]")
+{
+	const uint32_t blockSize = GENERATE(32u, 100u, 257u);
+	Transport transport;
+	TransportSettings settings;
+	settings.left = 1000;
+	settings.right = 3000;
+	settings.punchOut = true;
+	settings.stopAfterPunchOut = true;
+	settings.lockRecord = true;
+	REQUIRE(transport.set(settings));
+	REQUIRE(transport.locate(500));
+	REQUIRE(transport.record(true));
+	CHECK(recordedPositions(transport, 4000, blockSize) == range(500, 4500));
+	CHECK(!transport.sync()); // still playing and recording
+	CHECK(transport.recording());
+	CHECK(transport.advance(blockSize).recording);
+}
+
 TEST_CASE("cycle recording with punch in and out records every lap, nothing before the left locator", "[unit]")
 {
 	const uint32_t blockSize = GENERATE(32u, 100u, 257u);
@@ -705,10 +724,11 @@ TEST_CASE("transport commands play, stop, locate and set the locators", "[integr
 
 	Json state = run(client, "transport.get");
 	CHECK(state ==
-		Json{{"playing", false}, {"recording", false}, {"position", 0}, {"left", 0}, {"right", 0}, {"cycle", false},
-			{"startMode", "cursor"}, {"returnToStart", false}, {"punchIn", false}, {"punchOut", false},
-			{"preRoll", false}, {"preRollAmount", 0}, {"postRoll", false}, {"postRollAmount", 0}, {"metronome", false},
-			{"audioRecordMode", "keepHistory"}});
+		Json{{"playing", false}, {"recording", false}, {"position", 0}, {"start", 0}, {"left", 0}, {"right", 0},
+			{"cycle", false}, {"startMode", "cursor"}, {"returnToStart", false}, {"punchIn", false},
+			{"punchOut", false}, {"preRoll", false}, {"preRollAmount", 0}, {"postRoll", false}, {"postRollAmount", 0},
+			{"metronome", false}, {"audioRecordMode", "keepHistory"}, {"midiRecordMode", "newParts"},
+			{"lockRecord", false}});
 
 	state = run(client, "transport.set", {{"left", 48000}, {"right", 96000}, {"cycle", true}});
 	CHECK(state.at("left") == 48000);
@@ -732,7 +752,10 @@ TEST_CASE("transport commands play, stop, locate and set the locators", "[integr
 	CHECK(state.at("right") == 1000);
 
 	CHECK(run(client, "transport.play").at("playing") == true);
+	// Where playback started stays after it stops, until it starts again (tempo.tap).
+	CHECK(run(client, "transport.get").at("start") == 1000);
 	CHECK(run(client, "transport.toggle").at("playing") == false);
+	CHECK(run(client, "transport.get").at("start") == 1000);
 	CHECK(run(client, "transport.toggle").at("playing") == true);
 	CHECK(run(client, "transport.stop").at("playing") == false);
 
@@ -751,6 +774,15 @@ TEST_CASE("transport commands play, stop, locate and set the locators", "[integr
 	CHECK_THAT(reject(client, "transport.locate", {{"position", g_maxPosition + 1}}), ContainsSubstring("position"));
 	CHECK(run(client, "transport.locate", {{"by", 1e300}}).at("position") == g_maxPosition); // not past the end
 	CHECK(run(client, "transport.locate", {{"position", g_maxPosition}}).at("position") == g_maxPosition);
+	// by from the maximum, and huge amounts both ways, as MCP and Lua may send them (#457).
+	CHECK(run(client, "transport.locate", {{"by", 1.0}}).at("position") == g_maxPosition);
+	CHECK(run(client, "transport.locate", {{"by", 1e15}}).at("position") == g_maxPosition);
+	CHECK(run(client, "transport.locate", {{"by", -1.0}}).at("position") == g_maxPosition - 48000);
+	CHECK(run(client, "transport.locate", {{"by", -1e15}}).at("position") == 0);
+	CHECK(run(client, "transport.locate", {{"by", -1e300}}).at("position") == 0);           // from the start: stays
+	CHECK(run(client, "transport.locate", {{"by", 1e15}}).at("position") == g_maxPosition); // from the start
+	CHECK(run(client, "transport.locate", {{"by", -1e300}}).at("position") == 0);           // from the end
+	CHECK_THAT(reject(client, "transport.locate", {{"by", "far"}}), ContainsSubstring("by"));
 	run(client, "transport.locate", {{"position", 0}});
 	CHECK_THAT(reject(client, "transport.set", {{"left", "somewhere"}}), ContainsSubstring("left"));
 	CHECK_THAT(reject(client, "transport.set", {{"startMode", "selection"}}), ContainsSubstring("startMode"));
@@ -782,6 +814,38 @@ TEST_CASE("record starts playback and recording, punches in and out, and stop en
 	state = run(client, "transport.toggle");
 	CHECK(state.at("playing") == false);
 	CHECK(state.at("recording") == false);
+}
+
+TEST_CASE("lock record keeps a recording from stopping or punching out unless the stop is confirmed", "[integration]")
+{
+	Engine engine;
+	Client client(engine);
+	CHECK(run(client, "transport.set", {{"lockRecord", true}}).at("lockRecord") == true);
+
+	// Playback that doesn't record stops as usual.
+	run(client, "transport.play");
+	CHECK(run(client, "transport.toggle").at("playing") == false);
+
+	run(client, "transport.record");
+	CHECK_THAT(reject(client, "transport.stop"), ContainsSubstring("locked"));
+	CHECK_THAT(reject(client, "transport.toggle"), ContainsSubstring("locked"));
+	CHECK_THAT(reject(client, "transport.toggle", {{"setting", "record"}}), ContainsSubstring("locked"));
+	CHECK_THAT(reject(client, "transport.record", {{"record", false}}), ContainsSubstring("locked"));
+	Json state = run(client, "transport.get");
+	CHECK(state.at("playing") == true);
+	CHECK(state.at("recording") == true);
+	CHECK(run(client, "transport.toggle", {{"setting", "cycle"}}).at("recording") == true); // other switches work
+
+	// A confirmed stop ends it; the lock stays for the next recording.
+	state = run(client, "transport.stop", {{"confirmed", true}});
+	CHECK(state.at("playing") == false);
+	CHECK(state.at("recording") == false);
+	CHECK(state.at("lockRecord") == true);
+
+	// Unlocked, a recording stops as usual.
+	run(client, "transport.record");
+	run(client, "transport.set", {{"lockRecord", false}});
+	CHECK(run(client, "transport.stop").at("playing") == false);
 }
 
 TEST_CASE("transport commands set the pre-roll and post-roll", "[integration]")

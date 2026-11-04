@@ -27,6 +27,7 @@ changed. The app shows it in the main zone of the project window (`resources/ui/
       event-lanes.muted-events  muted events again, over them (parts-and-events.md)
       event-lanes.selected-events  selected events again, over those
       .waveforms                a waveform per audio event near the view (peaks.md)
+      fade-lines.fades          fade and volume lines, the selected audio events' handles (fades.md, volume-curves.md)
       .cross-hair-vertical, .cross-hair-horizontal
     .project-cursor             across the ruler and the lanes
 ```

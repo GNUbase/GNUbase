@@ -4,12 +4,14 @@
 #include "engine/engine.h"
 #include "ui/enginebinding.h"
 #include "ui/eventdisplay.h"
+#include "ui/markers.h"
 #include "ui/timeformat.h"
 
 #include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/ObserverPtr.h>
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -29,7 +31,10 @@ namespace gnubase::ui
 	// (<valuefield field="volume">) and mute and lock (toggle buttons), from event.get. The element has the class empty
 	// without a selection and multiple with more than one selected. Edits go to every selected event or part as one
 	// undo step (history.transaction): relative to each one's value, or with Ctrl (Cmd) held when Enter takes the
-	// value, the same value for all. Use it on the UI thread; the display and the binding must outlive it.
+	// value, the same value for all. With followMarkers it shows the markers selected on the marker tracks too, when
+	// their selection changed last (class markers): the first one's description, position and, for a cycle marker,
+	// end and length, which marker.set edits the same way. Use it on the UI thread; the display and the binding must
+	// outlive it.
 	class InfoLine final : private Rml::EventListener
 	{
 	public:
@@ -42,23 +47,35 @@ namespace gnubase::ui
 
 		// Follows the display's selection and project; call it once per step.
 		void update();
+		// The ids of the markers selected on the marker tracks, which update asks for.
+		void followMarkers(std::function<std::vector<uint64_t>()> selection) { m_markerSource = std::move(selection); }
 
 	private:
 		void ProcessEvent(Rml::Event& event) override;
 		void show();
-		void edit(const std::string& field, const std::string& text, float number);
+		// Edits the selected events; gesture is the value field's (ValueControl), 0 for others.
+		void edit(const std::string& field, const std::string& text, float number, int gesture = 0);
+		void showMarkers();
+		void editMarkers(const std::string& field, const std::string& text);
+		bool shows() const { return m_showsMarkers ? !m_markers.empty() : !m_events.empty(); }
 		// The selected event's volume in dB, from the display's project.
 		double volumeOf(uint64_t event) const;
 
 		EventDisplay& m_display;
 		EngineBinding& m_binding;
 		Rml::ObserverPtr<Rml::Element> m_root;
-		std::vector<uint64_t> m_selection;                                 // shown, or asked for
-		uint64_t m_loads = 0;                                              // the display's project shown
-		TimeFormat m_format = TimeFormat::BarsBeats;                       // the display's ruler's
-		engine::Json m_events = engine::Json::array();                     // event.get's, the first one first
-		bool m_absolute = false;                                           // while edit applies an absolute take
+		std::vector<uint64_t> m_selection;             // shown, or asked for
+		uint64_t m_loads = 0;                          // the display's project shown
+		TimeFormat m_format = TimeFormat::BarsBeats;   // the display's ruler's
+		engine::Json m_events = engine::Json::array(); // event.get's, the first one first
+		bool m_absolute = false;                       // while edit applies an absolute take
+		bool m_dropping = false; // while another project ends the edits in progress, which then aren't taken
 		std::optional<std::pair<std::string, std::string>> m_absoluteTake; // field and text taken with Ctrl+Enter
+		Subscription m_reset;                                              // project.reset
+		std::function<std::vector<uint64_t>()> m_markerSource;
+		std::vector<uint64_t> m_markerSelection; // shown
+		bool m_showsMarkers = false;             // the markers' selection changed last
+		std::vector<MarkerItem> m_markers;       // the selected ones in timeline order, the first one first
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
 	};
 }

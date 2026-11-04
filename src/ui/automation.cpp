@@ -236,7 +236,8 @@ namespace gnubase::ui
 				{"height", open->pixelSize().height}, {"dpRatio", open->dpRatio()},
 				{"documents", std::move(documents)}});
 		}
-		return {{"windows", std::move(list)}};
+		const auto* system = dynamic_cast<SystemInterface*>(Rml::GetSystemInterface());
+		return {{"windows", std::move(list)}, {"cursor", system != nullptr ? system->cursor() : std::string()}};
 	}
 
 	Json Automation::dom(std::optional<WindowId> window, const std::string& selector, int depth)

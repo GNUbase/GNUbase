@@ -170,6 +170,15 @@ namespace gnubase::engine
 			if (!condition)
 				throw CommandError(message);
 		}
+
+		void forgetNewerGrid(SnapSettings& settings, const std::string& format)
+		{
+			auto& newer = settings.newerGrids;
+			newer.erase(
+				std::remove_if(newer.begin(), newer.end(),
+					[&format](const std::pair<std::string, std::string>& entry) { return entry.first == format; }),
+				newer.end());
+		}
 	}
 
 	bool hasGrid(GridFormat format, GridType grid)
@@ -178,11 +187,29 @@ namespace gnubase::engine
 		return of == format || (of == GridFormat::Timecode && format == GridFormat::UserFrames);
 	}
 
+	std::vector<GridType> gridTypes(GridFormat format)
+	{
+		std::vector<GridType> result;
+		for (size_t i = 0; i < std::size(g_gridFormats); ++i)
+			if (hasGrid(format, static_cast<GridType>(i)))
+				result.push_back(static_cast<GridType>(i));
+		return result;
+	}
+
 	void SnapSettings::setGrid(GridType grid)
 	{
 		if (!hasGrid(format, grid))
 			format = g_gridFormats[static_cast<size_t>(grid)];
-		grids.at(static_cast<size_t>(format)) = grid;
+		setGrid(format, grid);
+	}
+
+	void SnapSettings::setGrid(GridFormat of, GridType grid)
+	{
+		// Another grid type chosen here replaces a newer build's; the same one again (snap.set with what snap.get
+		// returned) keeps it.
+		if (grids.at(static_cast<size_t>(of)) != grid)
+			forgetNewerGrid(*this, g_gridFormatNames[static_cast<size_t>(of)]);
+		grids.at(static_cast<size_t>(of)) = grid;
 	}
 
 	const char* snapTypeName(SnapType type)
@@ -215,20 +242,31 @@ namespace gnubase::engine
 		return fromName<GridFormat>(g_gridFormatNames, name);
 	}
 
-	Json toJson(const SnapSettings& settings)
+	Json toJson(const SnapSettings& settings, bool saving)
 	{
 		Json grids = Json::object();
 		for (size_t i = 0; i < g_gridFormatCount; ++i)
 			grids[g_gridFormatNames[i]] = gridTypeName(settings.grids.at(i));
+		if (saving)
+			for (const auto& [format, grid] : settings.newerGrids)
+				grids[format] = grid;
 		return {{"on", settings.on}, {"type", snapTypeName(settings.type)}, {"format", gridFormatName(settings.format)},
 			{"grid", gridTypeName(settings.grid())}, {"grids", grids}, {"zeroCrossing", settings.zeroCrossing}};
 	}
 
 	namespace
 	{
+		// A name, from a file that may have anything there.
+		std::string nameFrom(const Json& name)
+		{
+			if (!name.is_string())
+				throw std::invalid_argument("not a name: " + name.dump());
+			return name.get<std::string>();
+		}
+
 		GridType gridFrom(const Json& name)
 		{
-			const std::optional<GridType> grid = gridTypeFromName(name.get<std::string>());
+			const std::optional<GridType> grid = gridTypeFromName(nameFrom(name));
 			if (!grid)
 				throw std::invalid_argument("unknown grid type " + name.dump());
 			return *grid;
@@ -250,59 +288,91 @@ namespace gnubase::engine
 			if (!loading)
 				throw error;
 		};
-		settings.on = json.value("on", settings.on);
-		settings.zeroCrossing = json.value("zeroCrossing", settings.zeroCrossing);
+		if (!json.is_object())
+		{
+			refuse(std::invalid_argument("snap settings aren't an object: " + json.dump()));
+			return settings;
+		}
+		for (const auto& [name, value] : {std::pair<const char*, bool*>{"on", &settings.on},
+				 std::pair<const char*, bool*>{"zeroCrossing", &settings.zeroCrossing}})
+			if (const auto found = json.find(name); found != json.end())
+			{
+				if (found->is_boolean())
+					*value = found->get<bool>();
+				else
+					refuse(std::invalid_argument(std::string(name) + " isn't true or false: " + found->dump()));
+			}
 		if (json.contains("type"))
-		{
-			if (const std::optional<SnapType> type = snapTypeFromName(json.at("type").get<std::string>()))
-				settings.type = *type;
-			else
-				refuse(std::invalid_argument("unknown snap type " + json.at("type").dump()));
-		}
-		if (json.contains("grids"))
-			for (const auto& [name, grid] : json.at("grids").items())
-				try
-				{
-					const std::optional<GridFormat> format = gridFormatFromName(name);
-					if (!format)
-						throw std::invalid_argument("unknown time format " + name);
-					const GridType type = gridFrom(grid);
-					requireGrid(*format, type);
-					settings.grids.at(static_cast<size_t>(*format)) = type;
-				}
-				catch (const std::invalid_argument& error)
-				{
-					refuse(error);
-				}
-		bool hasFormat = false;
-		if (json.contains("format"))
-		{
-			if (const std::optional<GridFormat> format = gridFormatFromName(json.at("format").get<std::string>()))
-			{
-				settings.format = *format;
-				hasFormat = true;
-			}
-			else
-			{
-				refuse(std::invalid_argument("unknown time format " + json.at("format").dump()));
-			}
-		}
-		if (json.contains("grid"))
 			try
 			{
-				const GridType grid = gridFrom(json.at("grid"));
-				if (json.contains("format"))
-				{
-					if (!hasFormat) // an unknown format's grid type
-						return settings;
-					requireGrid(settings.format, grid);
-				}
-				settings.setGrid(grid);
+				const std::optional<SnapType> type = snapTypeFromName(nameFrom(json.at("type")));
+				if (!type)
+					throw std::invalid_argument("unknown snap type " + json.at("type").dump());
+				settings.type = *type;
 			}
 			catch (const std::invalid_argument& error)
 			{
 				refuse(error);
 			}
+		Json grids = json.value("grids", Json::object());
+		if (!grids.is_object())
+		{
+			refuse(std::invalid_argument("grids isn't an object: " + grids.dump()));
+			grids = Json::object();
+		}
+		std::vector<std::string> taken; // the grids entries applied or kept
+		for (const auto& [name, grid] : grids.items())
+			try
+			{
+				const std::optional<GridFormat> format = gridFormatFromName(name);
+				// Loading, a newer build's entry, with a format or grid type this build doesn't know, is kept for it.
+				if (loading && grid.is_string() && (!format || !gridTypeFromName(grid.get<std::string>())))
+				{
+					forgetNewerGrid(settings, name);
+					settings.newerGrids.emplace_back(name, grid.get<std::string>());
+					taken.push_back(name);
+					continue;
+				}
+				if (!format)
+					throw std::invalid_argument("unknown time format " + name);
+				const GridType type = gridFrom(grid);
+				requireGrid(*format, type);
+				settings.setGrid(*format, type);
+				taken.push_back(name);
+			}
+			catch (const std::invalid_argument& error)
+			{
+				refuse(error);
+			}
+		std::optional<GridFormat> format;
+		if (json.contains("format"))
+			try
+			{
+				format = gridFormatFromName(nameFrom(json.at("format")));
+				if (!format)
+					throw std::invalid_argument("unknown time format " + json.at("format").dump());
+				settings.format = *format;
+			}
+			catch (const std::invalid_argument& error)
+			{
+				refuse(error);
+			}
+		if (!json.contains("grid") || (json.contains("format") && !format)) // or an unknown format's grid type
+			return settings;
+		// Loading, grids has the format's grid type; grid is for builds from before #413, which read only that.
+		if (loading && format && std::find(taken.begin(), taken.end(), gridFormatName(*format)) != taken.end())
+			return settings;
+		try
+		{
+			const GridType grid = gridFrom(json.at("grid"));
+			if (format)
+				requireGrid(*format, grid);
+			settings.setGrid(grid);
+		}
+		catch (const std::invalid_argument& error)
+		{
+			refuse(error);
+		}
 		return settings;
 	}
 
@@ -366,13 +436,15 @@ namespace gnubase::engine
 		return {time::TimeBase::Linear, nearestSample(settings.grid(), grid, target.position - offset) + offset};
 	}
 
-	SnapGrid snapGrid(const Project& project)
+	SnapGrid snapGrid(const Project& project, GridFormat format)
 	{
 		SnapGrid grid;
 		grid.tempo = project.tempo;
 		grid.signatures = project.signatures;
 		grid.sampleRate = project.sampleRate;
 		grid.quantize = project.quantize;
+		grid.frameRate = format == GridFormat::UserFrames ? time::FrameRate{time::g_userFramesPerSecond, false, false}
+														  : project.setup.frameRate;
 		return grid;
 	}
 
@@ -482,7 +554,8 @@ namespace gnubase::engine
 				"for gridRelative; events are the events being edited, whose edges and snap points don't attract; "
 				"range is how near (project samples, default a tenth of a second) events, markers and the cursor "
 				"attract; zoomStep is adaptToZoom's note value in ticks (default: bars); framesPerSecond the frame "
-				"grids' rate (default 25). Returns position in project samples, and ticks, which are exact when "
+				"grids' rate (default: the project's frameRate, see project.set, and for userFrames 30, as in the "
+				"project window). Returns position in project samples, and ticks, which are exact when "
 				"musical, that is when a bar, beat, quantize or zoom grid line put it there.",
 				{{"type", "object"},
 					{"properties",
@@ -501,11 +574,14 @@ namespace gnubase::engine
 				const Json& parameters = context.parameters();
 				const SnapSettings settings =
 					snapSettingsFrom(parameters.value("settings", Json::object()), project.snap);
-				SnapGrid grid = snapGrid(project);
+				SnapGrid grid = snapGrid(project, settings.format);
 				grid.zoomStep = parameters.value("zoomStep", time::Ticks{0});
-				const int fps = parameters.value("framesPerSecond", 25);
-				require(fps >= 1 && fps <= 1000, "framesPerSecond must be 1 to 1000");
-				grid.frameRate = {fps, false, false};
+				if (parameters.contains("framesPerSecond"))
+				{
+					const int fps = parameters.at("framesPerSecond").get<int>();
+					require(fps >= 1 && fps <= 1000, "framesPerSecond must be 1 to 1000");
+					grid.frameRate = {fps, false, false};
+				}
 				SnapTarget target;
 				target.position = parameters.at("position").get<time::Samples>();
 				if (parameters.contains("from"))
@@ -516,7 +592,7 @@ namespace gnubase::engine
 				const std::set<ObjectId> edited(ids.begin(), ids.end());
 				for (const auto& [id, event] : project.audioEvents)
 				{
-					if (edited.count(id) != 0)
+					if (edited.count(id) != 0 || edited.count(event.part) != 0) // an edited part's events move with it
 						continue;
 					const EventSpan span = eventSpan(project, event);
 					target.magnets.push_back(span.start);
@@ -526,14 +602,18 @@ namespace gnubase::engine
 						target.magnets.push_back(span.start +
 							std::llround(static_cast<double>(*event.snapPoint - event.offset) * span.ratio));
 				}
+				const auto partEdges = [&](ObjectId id, const time::Position& position, int64_t length)
+				{
+					if (edited.count(id) != 0)
+						return;
+					target.magnets.push_back(time::toSamples(position, project.tempo, project.sampleRate));
+					target.magnets.push_back(
+						time::toSamples({position.base, position.value + length}, project.tempo, project.sampleRate));
+				};
 				for (const auto& [id, part] : project.midiParts)
-					if (edited.count(id) == 0)
-					{
-						target.magnets.push_back(time::toSamples(part.position, project.tempo, project.sampleRate));
-						target.magnets.push_back(
-							time::toSamples({part.position.base, part.position.value + part.length}, project.tempo,
-								project.sampleRate));
-					}
+					partEdges(id, part.position, part.length);
+				for (const auto& [id, part] : project.audioParts)
+					partEdges(id, part.position, part.length);
 				for (const auto& [id, marker] : project.markers)
 				{
 					target.magnets.push_back(time::toSamples(marker.position, project.tempo, project.sampleRate));

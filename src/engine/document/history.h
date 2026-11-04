@@ -44,13 +44,15 @@ namespace gnubase::engine
 		std::vector<ObjectChange<AutomationPoint>> points;
 	};
 
-	// The parts of a project that are not objects with ids, or keep their order: name, sample rate, tempo, time
-	// signatures, auto fades, the color set, busses, the top-level tracks and the active marker track.
+	// The parts of a project that are not objects with ids, or keep their order: name, sample rate, tempo and tempo
+	// mode, time signatures, auto fades, the color set, busses, the top-level tracks and the active marker track.
 	struct ProjectSettings
 	{
 		std::string name;
 		double sampleRate = 48000.0;
 		time::TempoMap tempo{120.0};
+		bool tempoTrackActive = false;
+		time::TempoMap otherTempo{120.0};
 		time::SignatureMap signatures;
 		AutoFades autoFades;
 		PanLaw panLaw = PanLaw::Minus3;
@@ -75,6 +77,7 @@ namespace gnubase::engine
 		std::vector<ObjectChange<Clip>> clips;
 		std::vector<ObjectChange<PoolFolder>> poolFolders;
 		std::vector<ObjectChange<AudioEvent>> audioEvents;
+		std::vector<ObjectChange<AudioPart>> audioParts;
 		std::vector<MidiPartChange> midiParts;
 		std::vector<ObjectChange<Marker>> markers;
 		std::vector<AutomationLaneChange> automation;
@@ -98,6 +101,7 @@ namespace gnubase::engine
 		std::string time;    // when, ISO 8601 in UTC
 		std::string details; // notes the user can add
 		ProjectChange change;
+		std::string merge; // a transaction's merge key: later transactions with the same key join this step
 	};
 
 	// The steps before position() are done; the ones after it were undone and can be redone.
@@ -114,6 +118,9 @@ namespace gnubase::engine
 		const HistoryStep& redo();
 
 		void clear();
+
+		// Removes the last step. Requires that it is done: position() == steps().size() > 0.
+		void removeLast();
 
 		// 0 means no limit. Drops the oldest steps beyond a new limit.
 		void setMaxSteps(size_t maxSteps);

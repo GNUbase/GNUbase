@@ -27,6 +27,13 @@ namespace gnubase::ui
 		// The modifiers that make a key another one; lock keys don't.
 		constexpr int g_modifiers = KM_CTRL | KM_ALT | KM_SHIFT | KM_META;
 
+		bool isTextField(const Rml::Element& element)
+		{
+			const auto type = element.GetAttribute<Rml::String>("type", "text");
+			return element.GetTagName() == "textarea" ||
+				(element.GetTagName() == "input" && (type == "text" || type == "password" || type == "search"));
+		}
+
 		struct NamedKey
 		{
 			const char* name;
@@ -212,18 +219,29 @@ namespace gnubase::ui
 		m_uiCommands.emplace(std::move(id), std::move(command));
 	}
 
+	void KeyCommands::check(const std::string& command, const Json& parameters) const
+	{
+		if (!parameters.is_object())
+			throw std::invalid_argument(command + ": the parameters must be a JSON object, not " + parameters.dump());
+		if (const auto schema = m_engineCommands.find(command); schema != m_engineCommands.end())
+		{
+			if (const std::string error = engine::validate(parameters, schema->second); !error.empty())
+				throw std::invalid_argument(command + ": " + error);
+		}
+		else if (m_uiCommands.count(command) == 0)
+		{
+			throw std::invalid_argument("there is no command " + command);
+		}
+		else if (!parameters.empty())
+		{
+			throw std::invalid_argument(command + " takes no parameters, but got " + parameters.dump());
+		}
+	}
+
 	void KeyCommands::bind(const KeyBinding& binding)
 	{
 		Bound bound{binding.zone, parseKeys(binding.keys, m_platform), binding.command, binding.parameters};
-		if (const auto command = m_engineCommands.find(binding.command); command != m_engineCommands.end())
-		{
-			if (const std::string error = engine::validate(binding.parameters, command->second); !error.empty())
-				throw std::invalid_argument(binding.command + ": " + error);
-		}
-		else if (m_uiCommands.count(binding.command) == 0)
-		{
-			throw std::invalid_argument("there is no command " + binding.command);
-		}
+		check(binding.command, binding.parameters);
 		const auto same = std::find_if(m_bindings.begin(), m_bindings.end(),
 			[&bound](const Bound& other) { return other.zone == bound.zone && other.keys == bound.keys; });
 		if (same != m_bindings.end())
@@ -246,6 +264,9 @@ namespace gnubase::ui
 		const KeyPress pressed{keys.key, keys.modifiers & g_modifiers};
 		Rml::Element* focus = window.context().GetFocusElement();
 		if (focus != nullptr && focus->GetOwnerDocument() != nullptr && focus->GetOwnerDocument()->IsModal())
+			return false;
+		if (focus != nullptr && pressed.modifiers == 0 && isTextField(*focus) &&
+			(pressed.key == KI_UP || pressed.key == KI_DOWN || pressed.key == KI_LEFT || pressed.key == KI_RIGHT))
 			return false;
 
 		// A copy of the binding, since a UI command may bind keys.

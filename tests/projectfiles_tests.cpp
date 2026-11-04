@@ -2,14 +2,15 @@
 // Project handling (#77, docs/features/project-files.md): save, save as, save new version, revert, auto save, recent
 // projects and templates through the engine API, which MCP and Lua use as they are, and the File menu and the start
 // screen in the app's UI.
-#include "engine/document/projectmodel.h"
 #include "engine/engine.h"
 #include "platform/log.h"
 #include "testutils/testutils.h"
 #include "ui/automation.h"
 #include "uiapp.h"
 
+#include <SDL3/SDL.h>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <chrono>
@@ -18,6 +19,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -94,6 +96,15 @@ namespace
 		return entries;
 	}
 
+	// Puts a folder, with a file in it, in the place of the temporary file that saving writes before it renames it to
+	// file: saving fails, and can't remove the folder afterwards, so it fails again for the same reason.
+	void blockSaving(const fs::path& file)
+	{
+		const fs::path folder = fs::u8path(file.u8string() + ".saving");
+		fs::create_directories(folder);
+		std::ofstream(folder / "blocked") << "not a temporary file";
+	}
+
 	// Collects project.autoSaved and project.autoSaveFailed, which the engine's own auto saves announce.
 	class AutoSaveEvents
 	{
@@ -119,8 +130,10 @@ namespace
 			return m_names;
 		}
 
-		Json last()
+		// The last event's data, once the commands queued before ran.
+		Json last(Client& client)
 		{
+			run(client, "engine.commandLog");
 			const std::scoped_lock lock(m_mutex);
 			return m_last;
 		}
@@ -186,6 +199,23 @@ TEST_CASE("save new version saves under the next free number and goes on with it
 	fs::copy_file(file, dir.path() / "My Project-12345678901.dawproject");
 	CHECK(run(client, "project.saveNewVersion").at("file") ==
 		utf8(fs::absolute(dir.path() / "My Project-07.dawproject")));
+
+	// Versions whose name or extension is written in another case count too: the file systems of Windows and macOS
+	// don't tell them apart, so the next version would overwrite them there.
+	fs::copy_file(file, dir.path() / "My Project-08.DAWPROJECT");
+	CHECK(run(client, "project.saveNewVersion").at("file") ==
+		utf8(fs::absolute(dir.path() / "My Project-09.dawproject")));
+	fs::copy_file(file, dir.path() / "MY PROJECT-10.dawproject");
+	CHECK(run(client, "project.saveNewVersion").at("file") ==
+		utf8(fs::absolute(dir.path() / "My Project-11.dawproject")));
+
+	// Only .dawproject, in any case, is the extension that a version replaces: a file saved through the API under a
+	// name with a dot is numbered from its whole name.
+	run(client, "project.save", {{"path", utf8(dir.path() / "Song v2.1")}});
+	CHECK(
+		run(client, "project.saveNewVersion").at("file") == utf8(fs::absolute(dir.path() / "Song v2.1-01.dawproject")));
+	run(client, "project.save", {{"path", utf8(dir.path() / "Mix-03.DAWPROJECT")}});
+	CHECK(run(client, "project.saveNewVersion").at("file") == utf8(fs::absolute(dir.path() / "Mix-04.dawproject")));
 
 	// Each version has the project as it was.
 	run(client, "project.load", {{"path", utf8(file)}});
@@ -262,6 +292,73 @@ TEST_CASE(
 	CHECK(run(client, "project.autoSave", {{"due", true}}).at("file").is_null());
 }
 
+TEST_CASE("a project opened from an auto save goes on untitled, outside Auto Saves, until it is saved as a file",
+	"[integration]")
+{
+	const test::TempDir dir;
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	const fs::path file = dir.path() / "Song" / "Song.dawproject";
+	fs::create_directories(file.parent_path());
+	run(client, "project.save", {{"path", utf8(file)}});
+	run(client, "track.add", {{"type", "audio"}});
+	const fs::path autoSave = dir.path() / "Song" / "Auto Saves" / "Song-01.bak";
+	REQUIRE(run(client, "project.autoSave").at("file") == utf8(autoSave));
+
+	// Also when the path names the auto save another way: with "." in it, or with other case, as the file systems of
+	// Windows and macOS allow.
+	const fs::path otherCase = dir.path() / "Other" / "auto saves" / "Other-01.BAK";
+	fs::create_directories(otherCase.parent_path());
+	fs::copy_file(autoSave, otherCase);
+	for (const fs::path& path : {autoSave, dir.path() / "Song" / "Auto Saves" / "." / "Song-01.bak", otherCase})
+	{
+		INFO(utf8(path));
+		run(client, "project.load", {{"path", utf8(path)}});
+		CHECK(trackCount(client) == 1);
+		const Json location = run(client, "project.location");
+		CHECK(location.at("file").is_null());
+		CHECK(location.at("mediaFolder").is_null()); // so media aren't copied to Auto Saves/Audio
+		CHECK(modified(client));
+		CHECK_THAT(reject(client, "project.save"), ContainsSubstring("no file"));
+		CHECK_THAT(reject(client, "project.revert"), ContainsSubstring("no file"));
+		CHECK(recent(client) == std::vector<std::string>{utf8(fs::absolute(file))});
+	}
+
+	// Its next auto saves go where those of untitled projects go, not to Auto Saves/Auto Saves.
+	run(client, "track.add", {{"type", "audio"}});
+	CHECK(
+		run(client, "project.autoSave").at("file") == utf8(dir.path() / "settings" / "Auto Saves" / "Untitled-01.bak"));
+	CHECK(!fs::exists(autoSave.parent_path() / "Auto Saves"));
+
+	// Saving it as the project file makes that its file again, with its folders.
+	run(client, "project.save", {{"path", utf8(file)}});
+	CHECK(run(client, "project.location").at("folder") == utf8(fs::absolute(file.parent_path())));
+	CHECK(recent(client) == std::vector<std::string>{utf8(fs::absolute(file))});
+	run(client, "track.add", {{"type", "audio"}});
+	CHECK(run(client, "project.autoSave").at("file") == utf8(dir.path() / "Song" / "Auto Saves" / "Song-02.bak"));
+
+	// The auto save of a project that never had a file, and one whose project file is gone, open untitled too.
+	run(client, "project.new");
+	run(client, "track.add", {{"type", "midi"}});
+	const fs::path untitled = dir.path() / "settings" / "Auto Saves" / "Untitled-02.bak";
+	REQUIRE(run(client, "project.autoSave").at("file") == utf8(untitled));
+	fs::remove(file);
+	for (const fs::path& path : {untitled, autoSave})
+	{
+		INFO(utf8(path));
+		run(client, "project.load", {{"path", utf8(path)}});
+		CHECK(run(client, "project.location").at("file").is_null());
+		CHECK(modified(client));
+	}
+	CHECK(recent(client) == std::vector<std::string>{utf8(fs::absolute(file))});
+
+	// A .bak elsewhere isn't an auto save: it opens as the project's file.
+	const fs::path copy = dir.path() / "Song-01.bak";
+	fs::copy_file(autoSave, copy);
+	run(client, "project.load", {{"path", utf8(copy)}});
+	CHECK(run(client, "project.location").at("file") == utf8(fs::absolute(copy)));
+}
+
 TEST_CASE("the engine auto saves a changed project on its own once the interval passed", "[integration]")
 {
 	const test::TempDir dir;
@@ -274,10 +371,10 @@ TEST_CASE("the engine auto saves a changed project on its own once the interval 
 	run(client, "track.add", {{"type", "audio"}});
 
 	// The engine checks every 30 seconds; the interval is 15 minutes since the project was saved.
-	engine.clock().advance(std::chrono::minutes(14));
+	engine.advanceClock(std::chrono::minutes(14));
 	CHECK(events.names(client).empty());
 	CHECK(autoSaveLog(client).empty()); // checks that save nothing stay out of the log
-	engine.clock().advance(std::chrono::minutes(1) + std::chrono::seconds(1));
+	engine.advanceClock(std::chrono::minutes(1) + std::chrono::seconds(1));
 	CHECK(events.names(client) == std::vector<std::string>{"project.autoSaved"});
 	CHECK(fs::is_regular_file(autoSave));
 	const Json log = autoSaveLog(client);
@@ -288,14 +385,14 @@ TEST_CASE("the engine auto saves a changed project on its own once the interval 
 	CHECK(modified(client)); // an auto save isn't a save
 
 	// Nothing changed since: the next interval saves nothing.
-	engine.clock().advance(g_pastInterval);
+	engine.advanceClock(g_pastInterval);
 	CHECK(events.names(client).size() == 1);
 	CHECK(autoSaveLog(client).size() == 1);
 
 	// Off, nothing is saved however long it waits.
 	run(client, "settings.set", {{"key", "project.autoSave"}, {"value", false}});
 	run(client, "track.add", {{"type", "audio"}});
-	engine.clock().advance(std::chrono::minutes(60));
+	engine.advanceClock(std::chrono::minutes(60));
 	CHECK(events.names(client).size() == 1);
 }
 
@@ -314,24 +411,26 @@ TEST_CASE("a failing auto save waits for the next interval, is logged once and a
 
 	// A file in the place of the Auto Saves folder: the folder can't be made.
 	std::ofstream(autoSaves) << "not a folder";
-	engine.clock().advance(g_pastInterval);
+	engine.advanceClock(g_pastInterval);
 	CHECK(events.names(client) == std::vector<std::string>{"project.autoSaveFailed"});
-	CHECK(events.last().at("file") == utf8(autoSaves / "Song-01.bak"));
-	CHECK(!events.last().at("error").get<std::string>().empty());
+	CHECK(events.last(client).at("file") == utf8(autoSaves / "Song-01.bak"));
+	CHECK(!events.last(client).at("error").get<std::string>().empty());
+	CHECK(events.last(client).at("repeated") == false);
 	Json log = autoSaveLog(client);
 	REQUIRE(log.size() == 1);
 	CHECK(log[0].contains("error"));
 	CHECK(loggedFailures(logFile) == 1);
 
 	// Not tried again every 30 seconds but after the interval, and only the first failure is in the log.
-	engine.clock().advance(std::chrono::minutes(14));
+	engine.advanceClock(std::chrono::minutes(14));
 	CHECK(events.names(client).size() == 1);
-	engine.clock().advance(std::chrono::minutes(1) + std::chrono::seconds(1));
+	engine.advanceClock(std::chrono::minutes(1) + std::chrono::seconds(1));
 	CHECK(events.names(client) == std::vector<std::string>{"project.autoSaveFailed", "project.autoSaveFailed"});
+	CHECK(events.last(client).at("repeated") == true);
 	CHECK(autoSaveLog(client).size() == 1);
 	for (size_t interval = 1; interval <= 10; ++interval)
 	{
-		engine.clock().advance(g_pastInterval);
+		engine.advanceClock(g_pastInterval);
 		CHECK(events.names(client).size() == 2 + interval); // after the auto save ran, before the clock goes on
 	}
 	CHECK(autoSaveLog(client).size() == 1);
@@ -344,36 +443,95 @@ TEST_CASE("a failing auto save waits for the next interval, is logged once and a
 
 	// Once one succeeds, the next failure is logged again.
 	fs::remove(autoSaves);
-	engine.clock().advance(g_pastInterval);
+	engine.advanceClock(g_pastInterval);
 	CHECK(events.names(client).back() == "project.autoSaved");
 	CHECK(fs::is_regular_file(autoSaves / "Song-01.bak"));
 	CHECK(autoSaveLog(client).size() == 3);
 	fs::remove_all(autoSaves);
 	std::ofstream(autoSaves) << "not a folder";
 	run(client, "track.add", {{"type", "audio"}});
-	engine.clock().advance(g_pastInterval);
+	engine.advanceClock(g_pastInterval);
 	CHECK(events.names(client).back() == "project.autoSaveFailed");
+	CHECK(events.last(client).at("repeated") == false);
 	log = autoSaveLog(client);
 	REQUIRE(log.size() == 4);
 	CHECK(log[3].contains("error"));
 	CHECK(loggedFailures(logFile) == 2);
 
 	// So is the next failure after saving or opening the project.
-	engine.clock().advance(g_pastInterval);
+	engine.advanceClock(g_pastInterval);
 	CHECK(autoSaveLog(client).size() == 4);
 	run(client, "project.save");
 	run(client, "track.add", {{"type", "audio"}});
-	engine.clock().advance(g_pastInterval);
+	engine.advanceClock(g_pastInterval);
 	CHECK(autoSaveLog(client).size() == 5);
-	engine.clock().advance(g_pastInterval);
+	CHECK(events.last(client).at("repeated") == false);
+	engine.advanceClock(g_pastInterval);
 	CHECK(autoSaveLog(client).size() == 5);
 	run(client, "project.load", {{"path", utf8(file)}});
 	run(client, "track.add", {{"type", "audio"}});
-	engine.clock().advance(g_pastInterval);
+	engine.advanceClock(g_pastInterval);
 	CHECK(autoSaveLog(client).size() == 6);
+	CHECK(events.last(client).at("repeated") == false);
 	CHECK(loggedFailures(logFile) == 4);
 	CHECK(events.names(client).size() == 19);
 }
+
+TEST_CASE("a failing auto save is logged again when its reason changes, not when only its file does", "[integration]")
+{
+	const test::TempDir dir;
+	const fs::path logFile = dir.path() / "gnubase.log";
+	const gnubase::logging::Session session(logFile);
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	AutoSaveEvents events(engine);
+	const fs::path file = dir.path() / "Song.dawproject";
+	const fs::path autoSaves = dir.path() / "Auto Saves";
+	run(client, "project.save", {{"path", utf8(file)}});
+	run(client, "track.add", {{"type", "audio"}});
+
+	// Auto Saves can't be made, twice.
+	std::ofstream(autoSaves) << "not a folder";
+	engine.advanceClock(g_pastInterval);
+	CHECK(events.last(client).at("repeated") == false); // once the auto save ran, before the clock goes on
+	engine.advanceClock(g_pastInterval);
+	CHECK(events.names(client).size() == 2);
+	CHECK(events.last(client).at("repeated") == true);
+	CHECK(loggedFailures(logFile) == 1);
+
+	// Then it can be made, but the auto save can't be written, as a folder is in the place of its temporary file:
+	// another reason, which is logged and announced as new.
+	fs::remove(autoSaves);
+	blockSaving(autoSaves / "Song-01.bak");
+	blockSaving(autoSaves / "Song-02.bak");
+	engine.advanceClock(g_pastInterval);
+	CHECK(events.names(client).size() == 3);
+	CHECK(events.last(client).at("file") == utf8(autoSaves / "Song-01.bak"));
+	CHECK(events.last(client).at("repeated") == false);
+	CHECK(loggedFailures(logFile) == 2);
+	CHECK(autoSaveLog(client).size() == 2);
+
+	// The same reason for the next file in turn is no news: the error names the file, the reason doesn't.
+	std::ofstream(autoSaves / "Song-01.bak") << "an earlier auto save";
+	engine.advanceClock(g_pastInterval);
+	CHECK(events.names(client).size() == 4);
+	CHECK(events.last(client).at("file") == utf8(autoSaves / "Song-02.bak"));
+	CHECK_THAT(events.last(client).at("error").get<std::string>(), ContainsSubstring("Song-02.bak"));
+	CHECK(events.last(client).at("repeated") == true);
+	CHECK(loggedFailures(logFile) == 2);
+	CHECK(autoSaveLog(client).size() == 2);
+
+	// Back to the first reason: logged again, as it isn't the last one logged.
+	fs::remove_all(autoSaves);
+	std::ofstream(autoSaves) << "not a folder";
+	engine.advanceClock(g_pastInterval);
+	CHECK(events.last(client).at("repeated") == false);
+	CHECK(loggedFailures(logFile) == 3);
+	CHECK(autoSaveLog(client).size() == 3);
+}
+
+// Only the engine starts and stops its clock; others read the time from it, and tests move it with advanceClock.
+static_assert(std::is_same_v<decltype(std::declval<Engine&>().clock()), const gnubase::engine::Clock&>);
 
 TEST_CASE("saved and opened projects are recent projects, newest first, until forgotten", "[integration]")
 {
@@ -570,6 +728,18 @@ TEST_CASE("File > Save As, Save and Save New Version save the project through fi
 	answer(app, {dir.path() / "Song v1.2"});
 	const std::string dotted = utf8(fs::absolute(dir.path() / "Song v1.2.dawproject"));
 	REQUIRE(app.waitUntil([&app, &dotted] { return location(app) == dotted; }));
+	fileMenu(app, "file.saveNewVersion"); // numbered from the whole name
+	const std::string dottedVersion = utf8(fs::absolute(dir.path() / "Song v1.2-01.dawproject"));
+	REQUIRE(app.waitUntil([&app, &dottedVersion] { return location(app) == dottedVersion; }));
+
+	// The extension in another case is the extension.
+	fileMenu(app, "file.saveAs");
+	answer(app, {dir.path() / "Mix.DAWPROJECT"});
+	const std::string upper = utf8(fs::absolute(dir.path() / "Mix.DAWPROJECT"));
+	REQUIRE(app.waitUntil([&app, &upper] { return location(app) == upper; }));
+	fileMenu(app, "file.saveNewVersion");
+	const std::string upperVersion = utf8(fs::absolute(dir.path() / "Mix-01.dawproject"));
+	REQUIRE(app.waitUntil([&app, &upperVersion] { return location(app) == upperVersion; }));
 }
 
 TEST_CASE("a save or backup that fails shows its error", "[ui]")
@@ -595,6 +765,83 @@ TEST_CASE("a save or backup that fails shows its error", "[ui]")
 	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
 	click(app, "#project-error-dialog button[result=ok]");
 	REQUIRE(app.waitUntil([&app] { return !shown(app, "#project-error-dialog"); }));
+}
+
+namespace
+{
+	// Adds a track and waits until the track list shows it, and a step more: by then the UI handled the engine's
+	// events from before, and ran what it posted for them.
+	void handleEarlierEvents(test::UiApp& app)
+	{
+		const size_t tracks = elements(app, "#track-list .track-name").size();
+		app.call("track.add", {{"type", "audio"}});
+		REQUIRE(
+			app.waitUntil([&app, tracks] { return elements(app, "#track-list .track-name").size() == tracks + 1; }));
+		app.shell().step(std::chrono::milliseconds(0));
+		app.shell().step(std::chrono::milliseconds(0));
+	}
+
+	void closeError(test::UiApp& app)
+	{
+		click(app, "#project-error-dialog button[result=ok]");
+		REQUIRE(app.waitUntil([&app] { return !shown(app, "#project-error-dialog"); }));
+	}
+}
+
+TEST_CASE("an auto save that fails shows its error once, and again when it fails for another reason", "[ui]")
+{
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	const test::TempDir dir;
+	const fs::path autoSaves = dir.path() / "Auto Saves";
+	app.call("project.save", {{"path", utf8(dir.path() / "Song.dawproject")}});
+	app.call("track.add", {{"type", "audio"}});
+	std::ofstream(autoSaves) << "not a folder";
+
+	// The engine's own auto save, once the interval passed.
+	app.engine().advanceClock(g_pastInterval);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
+	CHECK_THAT(
+		elements(app, "#project-error-message").at(0).at("text").get<std::string>(), ContainsSubstring("auto saved"));
+	closeError(app);
+
+	// Not at every interval while it fails for the same reason.
+	app.engine().advanceClock(g_pastInterval);
+	handleEarlierEvents(app);
+	CHECK(!shown(app, "#project-error-dialog"));
+
+	// Another reason: Auto Saves can be made, but a folder is in the place of the auto save's temporary file.
+	fs::remove(autoSaves);
+	blockSaving(autoSaves / "Song-01.bak");
+	app.engine().advanceClock(g_pastInterval);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
+	closeError(app);
+	app.engine().advanceClock(g_pastInterval);
+	handleEarlierEvents(app);
+	CHECK(!shown(app, "#project-error-dialog"));
+
+	// While another dialog is open the error can't show; it shows at the next failure instead.
+	app.appUi().openStartScreen();
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#start-screen"); }));
+	fs::remove_all(autoSaves);
+	std::ofstream(autoSaves) << "not a folder";
+	app.engine().advanceClock(g_pastInterval);
+	handleEarlierEvents(app);
+	CHECK(!shown(app, "#project-error-dialog"));
+	click(app, "#start-screen button[result=cancel]");
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#start-screen"); }));
+	app.engine().advanceClock(g_pastInterval);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
+
+	// A dialog that the user asks for meanwhile takes the error's place, and the error shows again at the next failure.
+	app.keys().run("file.revert", Json::object(), app.main(), nullptr); // with unsaved changes
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#discard-changes-dialog"); }));
+	CHECK(!shown(app, "#project-error-dialog"));
+	click(app, "#discard-changes-dialog button[result=cancel]");
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#discard-changes-dialog"); }));
+	app.engine().advanceClock(g_pastInterval);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
+	closeError(app);
 }
 
 TEST_CASE("File > Open and Revert ask before unsaved changes are discarded", "[ui]")
@@ -630,6 +877,63 @@ TEST_CASE("File > Open and Revert ask before unsaved changes are discarded", "[u
 
 	app.call("project.new");
 	REQUIRE(app.waitUntil([&app] { return disabled(app, "menuitem[command=\"file.revert\"]"); })); // no file
+
+	// An auto save opens untitled: there is nothing to revert to, and Save asks where instead of overwriting it.
+	app.call("project.load", {{"path", utf8(file)}});
+	REQUIRE(app.waitUntil([&app] { return !disabled(app, "menuitem[command=\"file.revert\"]"); }));
+	app.call("track.add", {{"type", "audio"}});
+	const fs::path autoSave = fs::u8path(app.call("project.autoSave").at("file").get<std::string>());
+	const fs::file_time_type autoSaved = fs::last_write_time(autoSave);
+	fileMenu(app, "file.open");
+	answer(app, {autoSave});
+	click(app, "#discard-changes");
+	REQUIRE(app.waitUntil([&app] { return disabled(app, "menuitem[command=\"file.revert\"]"); }));
+	CHECK(location(app).is_null());
+	fileMenu(app, "file.save");
+	CHECK(answer(app, {}).kind == gnubase::ui::FileDialogKind::Save);
+	CHECK(location(app).is_null());
+	CHECK(fs::last_write_time(autoSave) == autoSaved);
+}
+
+TEST_CASE("closing the main window or quitting through the OS asks before unsaved changes are discarded", "[ui]")
+{
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	// The main window's close button or Alt+F4, or SDL's quit request, as from the macOS app menu's Quit.
+	SDL_Event request{};
+	request.type = GENERATE(as<Uint32>(), SDL_EVENT_WINDOW_CLOSE_REQUESTED, SDL_EVENT_QUIT);
+	request.window.windowID = app.main().id();
+
+	SECTION("without unsaved changes it quits at once")
+	{
+		REQUIRE(SDL_PushEvent(&request));
+		REQUIRE(app.waitUntil([&app] { return !app.shell().running(); }));
+	}
+	SECTION("with unsaved changes Cancel keeps GNUbase running, and Discard quits")
+	{
+		app.call("track.add", {{"type", "audio"}});
+		REQUIRE(SDL_PushEvent(&request));
+		REQUIRE(app.waitUntil([&app] { return shown(app, "#discard-changes-dialog"); }));
+		click(app, "#discard-changes-dialog button[result=cancel]");
+		REQUIRE(app.waitUntil([&app] { return !shown(app, "#discard-changes-dialog"); }));
+		app.shell().step(std::chrono::milliseconds(0));
+		REQUIRE(app.shell().running());
+		CHECK(app.call("project.get").at("tracks").size() == 1); // kept
+		CHECK(app.call("project.revision").at("modified").get<bool>());
+
+		REQUIRE(SDL_PushEvent(&request));
+		click(app, "#discard-changes");
+		REQUIRE(app.waitUntil([&app] { return !app.shell().running(); }));
+	}
+	SECTION("a dialog that is open closes for the question")
+	{
+		app.call("track.add", {{"type", "audio"}});
+		fileMenu(app, "file.new");
+		REQUIRE(app.waitUntil([&app] { return shown(app, "#start-screen"); }));
+		REQUIRE(SDL_PushEvent(&request));
+		click(app, "#discard-changes");
+		REQUIRE(app.waitUntil([&app] { return !app.shell().running(); }));
+	}
 }
 
 TEST_CASE("the start screen creates projects, from templates too, and opens recent ones", "[ui]")

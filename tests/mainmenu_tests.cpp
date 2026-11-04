@@ -1,22 +1,34 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The main menu bar (#392, ui/mainmenu.h): the project window's menus run engine and UI commands as keys do, show
 // their keys and are disabled while their command can't run. The tests click through them with ui::Automation, as
-// MCP's ui_click does.
+// MCP's ui_click does. Items with a command that doesn't exist or parameters it doesn't take are refused (#446).
+#include "engine/engine.h"
+#include "testutils/fakeui.h"
 #include "ui/automation.h"
 #include "ui/canvas.h"
+#include "ui/enginebinding.h"
 #include "ui/keycommands.h"
+#include "ui/mainmenu.h"
 #include "uiapp.h"
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <memory>
 #include <optional>
+#include <regex>
+#include <stdexcept>
 #include <string>
 
 using namespace gnubase;
+using Catch::Matchers::ContainsSubstring;
 using engine::Json;
 
 namespace
@@ -131,6 +143,18 @@ TEST_CASE("Transport > Audio Record Mode sets the transport's audio record mode"
 	REQUIRE(app.waitUntil([&app] { return app.call("transport.get").at("audioRecordMode") == "replace"; }));
 }
 
+TEST_CASE("Transport > MIDI Record Mode sets the transport's MIDI record mode", "[ui]")
+{
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	app.shell().step(std::chrono::milliseconds(0));
+	click(app, "#menu-bar button[menu=transport-menu]");
+	app.ui().move(std::nullopt, {"#midi-record-mode-submenu", 0, std::nullopt});
+	app.shell().step(std::chrono::milliseconds(0));
+	click(app, "#midi-record-mode-merge");
+	REQUIRE(app.waitUntil([&app] { return app.call("transport.get").at("midiRecordMode") == "merge"; }));
+}
+
 TEST_CASE("main menu items are disabled while their command can't run", "[ui]")
 {
 	test::UiApp app({900, 640});
@@ -222,4 +246,108 @@ TEST_CASE("the menu bar shows and hides like the project window's strips, and Fi
 	click(app, "#menu-bar button[menu=file-menu]");
 	click(app, "menuitem[command=\"file.quit\"]");
 	REQUIRE(app.waitUntil([&app] { return !app.shell().running(); }));
+}
+
+TEST_CASE("the main menu refuses items with a command it doesn't know or parameters the command doesn't take (#446)",
+	"[unit]")
+{
+	engine::Engine engine;
+	test::FakeUi fake({{1, "Monitor", {0, 0, 1920, 1080}, {0, 0, 1920, 1080}, 1.0F}});
+	ui::Window& window = fake.shell.open(ui::WindowSpec{});
+	ui::EngineBinding binding(engine);
+	ui::KeyCommands keys(engine, binding);
+	keys.add({"view.zoomIn", "Zooms in.", {}});
+	const auto load = [&window](const std::string& items)
+	{ return window.context().LoadDocumentFromMemory("<rml><body><menu>" + items + "</menu></body></rml>"); };
+	const std::string good =
+		R"(<menuitem command="transport.play">Start</menuitem>)"
+		R"(<menuitem command="transport.locate" parameters='{"target": "leftLocator"}'>L</menuitem>)"
+		R"(<menuitem command="view.zoomIn">Zoom In</menuitem>)";
+
+	Rml::ElementDocument* document = load(good);
+	REQUIRE(document != nullptr);
+	CHECK_NOTHROW(std::make_unique<ui::MainMenu>(keys, window, *document));
+	document->Close();
+
+	struct Bad
+	{
+		const char* item;
+		const char* named; // in the message
+	};
+	const Bad bad[] = {
+		{R"(<menuitem command="transport.ply">Start</menuitem>)", "transport.ply"},
+		{R"(<menuitem command="">Nothing</menuitem>)", "no command"},
+		{R"(<menuitem command="transport.locate" parameters='{"target": 5}'>L</menuitem>)", "target"},
+		{R"(<menuitem command="transport.locate" parameters='{"traget": "leftLocator"}'>L</menuitem>)", "traget"},
+		{R"(<menuitem command="view.zoomIn" parameters='{"factor": 2}'>Zoom In</menuitem>)", "view.zoomIn"},
+		{R"(<menuitem command="transport.play" parameters='{"target"'>Start</menuitem>)", "JSON object"},
+		{R"(<menuitem command="transport.play" parameters='[]'>Start</menuitem>)", "JSON object"},
+	};
+	for (const Bad& item : bad)
+	{
+		INFO(item.item);
+		document = load(good + item.item);
+		REQUIRE(document != nullptr);
+		CHECK_THROWS_AS(std::make_unique<ui::MainMenu>(keys, window, *document), std::invalid_argument);
+		CHECK_THROWS_WITH(std::make_unique<ui::MainMenu>(keys, window, *document), ContainsSubstring(item.named));
+		// The document is as it was: no item got its keys.
+		CHECK(document->QuerySelector(".menu-keys") == nullptr);
+		document->Close();
+	}
+}
+
+TEST_CASE(
+	"the command items of every shipped document name commands that exist, with parameters they take (#446)", "[ui]")
+{
+	test::UiApp app({900, 640});
+	// The documents whose menus and buttons run commands attach without throwing: the project window's menu bar and
+	// transport bar, the transport panel and the time display window.
+	app.appUi().showProject();
+	app.appUi().toggleTransportPanel();
+	CHECK(app.appUi().transportPanel() != nullptr);
+	app.appUi().toggleTimeDisplay();
+	CHECK(app.appUi().timeDisplay() != nullptr);
+
+	// And so does every item in the documents and fragments in resources/ui, whatever attaches them.
+	const ui::KeyCommands& keys = app.keys();
+	int items = 0;
+	int calls = 0;
+	const std::regex uiCommand(R"(ui\.command\s*\{\s*command\s*=\s*['"]([^'"]*)['"]\s*\})");
+	for (const auto& entry : std::filesystem::directory_iterator(std::filesystem::path(GNUBASE_RESOURCES_DIR) / "ui"))
+	{
+		if (entry.path().extension() != ".rml")
+			continue;
+		INFO(entry.path().filename().u8string());
+		std::ifstream file(entry.path(), std::ios::binary);
+		const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+		const bool fragment = text.find("<rml") == std::string::npos; // such as transport.rml
+		Rml::ElementDocument* document = app.main().context().LoadDocumentFromMemory(
+			fragment ? std::string("<rml><body/></rml>") : text, entry.path().generic_u8string());
+		REQUIRE(document != nullptr);
+		if (fragment)
+			document->SetInnerRML(text);
+		Rml::ElementList found;
+		document->QuerySelectorAll(found, "[command]");
+		for (const Rml::Element* element : found)
+		{
+			const auto command = element->GetAttribute<Rml::String>("command", "");
+			const auto parameters = element->GetAttribute<Rml::String>("parameters", "{}");
+			INFO(command << " " << parameters);
+			CHECK_NOTHROW(keys.check(command, Json::parse(parameters, nullptr, false)));
+			++items;
+		}
+		document->Close();
+
+		// Buttons that run a key command from Lua: gnubase.ui.command{command = 'project.addTrack'}.
+		for (auto call = std::sregex_iterator(text.begin(), text.end(), uiCommand); call != std::sregex_iterator();
+			++call)
+		{
+			const std::string command = (*call)[1].str();
+			INFO(command);
+			CHECK_NOTHROW(keys.check(command, Json::object()));
+			++calls;
+		}
+	}
+	CHECK(items > 100);
+	CHECK(calls >= 3);
 }

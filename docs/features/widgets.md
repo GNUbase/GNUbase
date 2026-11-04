@@ -20,7 +20,10 @@ so every document in the app and in UI tests has them.
 
 - `<button>` is clicked with the mouse, or with Space or Enter while it has the focus. With the `disabled` attribute it
   gets `:disabled`, takes no focus, and clicks pass through it. `button.primary`, `button.icon-only` and the small
-  track buttons `button.toggle` (`.mute`, `.solo`, `.record`, `.monitor`) are looks from the theme.
+  track buttons `button.toggle` (`.mute`, `.solo`, `.record`, `.monitor`) are looks from the theme. Buttons in a
+  `.toolbar` (the project window's, the mixer's, the pool's) and in the transport controls (`.transport`) are for the
+  mouse, as in the reference (reference manual pp. 295-311): a click focuses them, but Tab skips them and Space and
+  Enter go on to the key commands, so Space still starts and stops playback after a click on Cycle or Snap (#456).
 - `<button type="toggle">` is a toggle button: a click turns it on or off. Its state is the `checked` attribute, as
   for check boxes, shown by the state class `.checked`; it sends `change` with the new state as a bool, so
   `data-checked="muted"` binds it.
@@ -38,6 +41,10 @@ Widgets with a number share their behaviour (reference manual p. 1598, "Editing 
 - **Wheel and keys.** One wheel line or arrow key (Up and Right for more) changes it by a step. Over a widget the wheel
   turns it rather than scrolling what's around it. The widgets take the focus when clicked, and with Tab.
 - **Reset.** Ctrl-click (Cmd-click on macOS) sets the default.
+- **Gestures.** `change` also sends `gesture`, an integer: the changes of one drag, of wheel turns until the mouse
+  leaves the widget, of an arrow key until it is released, and a typed value each have one, and the next gesture of any
+  widget has a higher one. Documents make a gesture one undo step with it (`EngineBinding::sendStep`,
+  [edit-history.md](edit-history.md)).
 - `disabled` gives `:disabled` and ignores the user.
 
 The widgets:
@@ -45,18 +52,22 @@ The widgets:
 - `<knob>`: the theme's `.knob` with its `.knob-pointer` turned from -135 to 135 degrees.
 - `<fader>`: vertical, the `.fader` track with its `.fader-cap`.
 - `<slider>`: horizontal, `.slider-track` filled up to the `.slider-thumb` (`.slider-fill`).
-- `<valuefield>`: the value as text, with `decimals` (2) and a `unit`, drawn like a display. A double click edits it
-  as text (state class `.editing`): Enter, or leaving the field, takes the number typed, clamped to the range; Escape,
-  or text that isn't a number, keeps the value. With `autofocus`, it is edited, all of it selected, whenever it gets
-  a visible focus: when its document shows it focused, or Tab moves to it, but not on a click. Keys typed before the
-  next update go into it too. In a dialog it is then the main field, which works like a text field: Enter takes the
-  number typed and clicks OK, Escape cancels. While the user types, the field's text field sends RmlUi's own
-  `change` events with the text; the field's `change`, with the field as its target, has the number.
+- `<valuefield>`: the value as text, with `decimals` (2) and a `unit`, drawn like a display. A double click, or Enter
+  while it has the focus, edits it as text (state class `.editing`): Enter, or leaving the field, takes the number
+  typed, clamped to the range; Escape, text that isn't a number, or nothing typed keeps the value, so that a value with
+  more decimals than the field shows isn't rounded to them. Typing the number shown takes it. With `autofocus`, it is
+  edited, all of it selected, whenever it gets a visible focus: when its document shows it focused, or Tab moves to it,
+  but not on a click. Keys typed before the next update go into it too. In a dialog it is then the main field, which
+  works like a text field: Enter takes the number typed and clicks OK, Escape cancels. While the user types, the field's
+  text field sends RmlUi's own `change` events with the text; the field's `change`, with the field as its target, has
+  the number.
 
 `<textdisplay>` shows text, its `value` attribute, such as a position in a time format; documents give it the look of
 a display with the class `.display`. A double click edits it as text (`.editing`): Enter, or leaving the field, sends
 `change` with the text typed as `value`, a string, and the document reads it and sets the value it takes; Escape
-keeps the value, and so does a field whose text is still the one it started with. The transport controls use it for positions ([transport-bar.md](transport-bar.md)).
+keeps the value, and so does a field nothing was typed into. Any typing counts, also typing the text the field
+started with: a display may show a rounded value, or one that has moved on since, such as the position during
+playback. The transport controls use it for positions ([transport-bar.md](transport-bar.md)).
 
 Code places the parts from the value (the pointer's rotation, the cap's and the thumb's position, the fill's width),
 which is geometry from data; the shared style sheet lays out the rest. Value fields parse and print numbers in the C
@@ -75,8 +86,11 @@ attributes, through a data model or directly.
 
 - `<menu>` holds `<menuitem>`s and `<menuseparator>`s and stays hidden until it opens, with the state class `.open`:
   under a button whose `menu` attribute names it by id (a second click on the button closes it), or at the mouse on
-  a right click on an element whose `contextmenu` attribute names it. It opens inside the window, moved left or up
-  where it would stick out. Put menus straight into the body, so that no container clips them.
+  a right click on an element whose `contextmenu` attribute names it: the nearest one with the attribute, so an empty
+  `contextmenu` keeps the menu of an element around it from opening on a control. With a modifier key held (Ctrl,
+  Alt, Shift or Cmd), the menu that its `modifiercontextmenu` attribute names opens instead, if it has one, as the
+  event display's toolbox does ([tools.md](tools.md)). It opens inside the window, moved left or up where it would
+  stick out. Put menus straight into the body, so that no container clips them.
 - A click on an item is a click on that item, for the document to handle, and closes the menu. Escape and a click
   outside close it too. A `disabled` item gets `:disabled` and ignores clicks; `type="toggle"` makes an item checkable,
   as for buttons.
@@ -106,13 +120,23 @@ inside it without a title of its own, the document's `<tooltip>` shows the text 
 window, with the state class `.shown`. It goes when the mouse moves to an element without a title or leaves the window,
 and on a click, a key or the wheel. Every document gets its tooltip element when it loads; it lets the mouse through.
 
+## Notifications
+
+`<notification>` shows a message for a moment, such as the tool that a key command chose ([tools.md](tools.md)):
+setting its attribute `text`, also to the text it has, shows the text with the state class `.shown` for `duration`
+seconds (its attribute, 1.5 by default), then hides it. It lets the mouse through; the document places it, and a
+class such as `.tooltip` gives it the theme's look.
+
 ## Dialogs
 
 `<dialog>` is a dialog in a document of its own, which the app loads and shows, usually modal
 (`ElementDocument::Show(Rml::ModalFlag::Modal)`). It opens in the middle of the window, and dragging its
-`.dialog-titlebar` moves it. Escape closes it with the result `cancel`; Enter clicks its `button.primary`, also from
-a text field and a value field with `autofocus`, but not from a multi-line text field or another value field; a click
-on an element with a `result` attribute closes it with that result. Closing sends the event `close` (`ui::g_dialogCloseEvent`) with the parameter
+`.dialog-titlebar` moves it. Escape closes it with the result `cancel`, or first an open drop-down list; Enter clicks
+its `button.primary`, also from a text field and a value field with `autofocus`, but not from a multi-line text field
+or another value field being edited, and not when the focused control takes Enter itself: a button clicks itself, a
+drop-down list opens and closes, another value field starts editing. A click on an element with a `result` attribute
+closes it with that result. Tab and Shift+Tab move the focus between its controls, around the ends
+([accessibility.md](accessibility.md)). Closing sends the event `close` (`ui::g_dialogCloseEvent`) with the parameter
 `result`, then closes the document.
 
 How it works: an RmlUi plugin (`RmlUi::registerPlugin`) gives every document a tooltip and listens to it in the capture
@@ -126,15 +150,21 @@ The theme draws them; the widget library adds nothing.
 
 ## List, tree and table views
 
-`<listview>` is a list, tree or table of rows that the user selects: its `<listitem>`s, or the rows (`<tr>`) of a
-`<table>` in it, except those of the `<thead>`. Each row has a `value` attribute (without commas).
+`<listview>` is a list, tree or table of rows that the user selects: its `<listitem>`s, or the rows (`<tr>`) of the
+`<table>`s in it, except those of their `<thead>`s. A list view can hold several tables, also at different depths, such
+as the edit history's done and undone steps with a separator between them ([edit-history.md](edit-history.md)): its
+rows are in the document's order. Each row has a `value` attribute (without commas).
 
 - **Selection.** A click selects a row. With the `multiple` attribute, Ctrl-click (Cmd-click on macOS) adds or removes
   a row and Shift-click selects the rows from the last one clicked. Up and Down move the selection, Shift extends it,
-  Home and End go to the first and last row. Selected rows have the state class `.selected`. The view's `value`
+  Page Up and Page Down move it by one row less than the view shows, Home and End go to the first and last row. Selected rows have the state class `.selected`. The view's `value`
   attribute is the selected rows' values separated by commas, and `change` sends it, so `data-value` binds the
   selection both ways, also when `data-for` makes the rows. Clicks and keys in a form control in a row, such as a text
   field, are the control's and don't change the selection.
+- **Scrolling while dragging.** With the `dragscroll` attribute, a drag of an element in the view (`drag: drag`)
+  scrolls the view while the mouse is above or below it, by ten times as far as the mouse is past the edge each second,
+  also while the mouse is held still. The drag's end, the button going up or the view losing the focus stop it. The
+  edit history's separator uses it.
 - **Trees.** Rows with a `level` attribute (0 at the top) make a tree: the rows that follow a row with a higher level
   are its children, shown while it has the `expanded` attribute. The view gives tree rows a `.tree-indent`, sized from
   the level (16 dp a level), and a `.tree-toggle`, which the theme draws as an arrow; parents get the state classes
@@ -172,20 +202,23 @@ picker next to their OK and Cancel buttons. Not yet: the reference's context men
 buttons that turn on and off, look different when on, and follow a data model. Knobs, faders, sliders and value
 fields are dragged (also with Shift), turned with the wheel, stepped with the arrow keys and reset with Ctrl-click,
 their parts placed where the value says; data-value binds them both ways; the wheel turns them instead of scrolling
-the page; value fields take typed numbers and leave bad ones. Text displays send the text typed with Enter and nothing
-with Escape or when nothing was typed. Meters show their level and peak at the right heights.
+the page; value fields take typed numbers, also the number they show, and leave bad ones and values with more
+decimals than they show when nothing was typed. Text displays send the text typed with Enter, also the text they
+started with, and nothing with Escape or when nothing was typed. Meters show their level and peak at the right heights.
 Menus open under their button and at the mouse, inside the window, show submenus on hover, close on an item, a click
 elsewhere and Escape, skip disabled items, and work with the keys; items with a submenu show an arrow, and Right and
 Left go into and out of the submenu, but not into one with nothing to focus. In a menu bar the mouse and Right and
 Left move between the open menus, also from a submenu, skipping a disabled title, and Alt alone opens the first menu,
 closing a context menu, and closes it, leaving the focus out of the closed menu (not on macOS, nor with another key,
 a click, a mouse button going up or the wheel, nor when SDL releases Alt as the window loses the keyboard or
-presses it as the window gets it, nor behind a modal dialog).
-Tooltips show after a rest and go with the mouse.
+presses it as the window gets it, nor behind a modal dialog). A right click with each modifier key opens the
+`modifiercontextmenu`, and the `contextmenu` where an element has no other.
+Tooltips show after a rest and go with the mouse. Notifications show for their duration, again when set again.
 Dialogs open in the middle, move by their title bar, and close with Enter, Escape and their buttons, with the result;
 a value field with autofocus is edited as its dialog opens, even by keys typed before the next update, and Enter
 there clicks OK, while another value field keeps Enter.
-Tabs show their panels. List views select with clicks, Ctrl, Shift and the keys, and follow their data; trees expand
-and collapse by click and keys, with indents by level; tables select body rows only; splitters move the boundary in a
-row and in a column, never below nothing. The color picker picks from its field, its hue strip and its numbers,
+Tabs show their panels. List views select with clicks, Ctrl, Shift and the keys, and follow their data; trees expand and
+collapse by click and keys, with indents by level; tables select body rows only, and the keys go through several tables
+in the document's order; a drag held past a view's edge scrolls it with `dragscroll` only; splitters move the boundary
+in a row and in a column, never below nothing. The color picker picks from its field, its hue strip and its numbers,
 draws the old and the new color, and follows its data.

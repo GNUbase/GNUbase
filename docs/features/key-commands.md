@@ -10,8 +10,10 @@ it up in `app::AppUi`.
   go through the UI's engine client (`EngineBinding::send`), so a key can do nothing that MCP and Lua can't, and
   `engine.commandLog` shows what a key did as sent by `ui`. A failed command is logged.
 - **Key map.** A binding (`ui::KeyBinding`) has keys, a command, the command's parameters and a focus zone (none for
-  everywhere). `bind` checks the keys, that the command exists and an engine command's parameters against its schema;
-  keys bound again in the same zone replace what they did there. A command may have several keys, as in the reference
+  everywhere). `bind` checks the keys, and the command and its parameters with `check` (#446), which menu items and
+  transport controls use too: the command must exist, an engine command's parameters must fit its schema, and a UI
+  command, which takes no parameters, gets an empty object; it throws `std::invalid_argument` naming the command.
+  Keys bound again in the same zone replace what they did there. A command may have several keys, as in the reference
   ("Assign Additional Key"). `keysFor(command, parameters)` returns the keys bound to a command as the platform writes
   them, in the order they were bound, for menus (#54) and tooltips; `run` runs a command as a key would, for a menu
   item. `enableWhen(command, enabled)` says when a command can run and `canRun` asks, so that the main menu disables
@@ -28,10 +30,13 @@ it up in `app::AppUi`.
   does, modifiers in the order Ctrl, Alt, Shift, Cmd: `Ctrl+Shift+Z` on Windows and Linux, `Shift+Cmd+Z` on macOS
   (`Opt` for Alt). The default key map is written with `Mod`, so it is the same on every platform.
 - **Elements first.** RmlUi gets every key first, at the focused element, from where it bubbles up. An element that
-  uses a key stops its propagation: a text field keeps the keys typed into it, a focused button is clicked by Space
-  and Enter, a focused knob, fader or slider turns with the arrow keys, menus and dialogs keep their keys, Tab moves
-  the focus: between the zones of a docking window ([docking.md](docking.md)), and between controls in text fields
-  and dialogs. A key command runs only for a key that no element
+  uses a key stops its propagation: a text field keeps the keys typed into it, and also the arrow keys without
+  modifiers that it can't use at its first or last line or character, which RmlUi lets through to move the focus
+  (`nav`): where they move it nowhere, `KeyCommands::press` runs no command for them. A focused button is clicked by Space
+  and Enter (not a toolbar or transport button, [widgets.md](widgets.md)), a focused knob, fader or slider turns with
+  the arrow keys, menus and dialogs keep their keys, Tab moves the focus: between the zones of a docking window
+  ([docking.md](docking.md)), and between controls in text fields and dialogs. A key command runs only for a key that
+  no element
   used: where `Rml::Context::ProcessKeyDown` says so, `SdlWindowSystem` passes the key on with its input event, and
   the shell hands it to its handler (`Shell::onUnusedKey`, `KeyCommands::press`). `ui::Automation::key`, and so MCP's
   `ui_key` and the UI tests, does the same. Widgets that act on keys must stop them, or the key commands run too.
@@ -69,6 +74,7 @@ The reference's defaults for the commands GNUbase has so far (`ui::defaultKeyMap
 | Shift+Num1 to Shift+Num9 | `marker.setLocators` with the number | Recall Cycle Marker 1 to 9 |
 | Insert | `marker.add` | Insert Marker |
 | Mod+M | `window.markers` (the app's) | Open Markers |
+| Mod+T | `window.tempoTrack` (the app's) | Open Tempo Track Editor ([tempo-track.md](tempo-track.md)) |
 | Mod+Z | `history.undo` | Undo |
 | Mod+Shift+Z | `history.redo` | Redo |
 
@@ -113,11 +119,15 @@ rest of the reference's tables.
 
 `tests/keycommands_tests.cpp`: keys read and written per platform (`Mod` as Cmd on macOS, Ctrl elsewhere; every key
 name reads back as written); the default key map passes the engine's schemas on every platform and binds no keys twice
-in a zone; UI commands, replacing bindings and refusing unknown commands, bad parameters and unknown keys. In the app's
+in a zone; UI commands, replacing bindings and refusing unknown commands, bad parameters and unknown keys; `check`
+refusing a typo in a command, parameters an engine command doesn't take or of the wrong type, and parameters for a UI
+command. In the app's
 UI (`test::UiApp`, [ui-tests.md](ui-tests.md)), keys pressed through `ui::Automation` start, stop and locate the
 transport and undo through the UI's client; the same keys run different commands in a project zone, an editor zone
 inside a lower zone, an element of the lower zone and outside any zone; lock keys don't count; a key from SDL's own
-event queue runs its command; and text fields, a focused button, a focused knob and a modal dialog keep their keys.
+event queue runs its command; and text fields, also their arrow keys at the ends, a focused button, a focused knob and
+a modal dialog keep their keys, while Space after a click on a toolbar or transport button starts and stops playback
+(`tests/transportbar_tests.cpp`).
 
 Not yet: the key commands editor, presets and macros, which will keep the key map in the user settings, so that MCP
 and Lua reach it too; exporting the assignments; keys in tooltips; the On-Screen Keyboard, which takes most keys while

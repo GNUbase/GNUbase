@@ -1,0 +1,12 @@
+{
+  "resize": {"hotspot": [12, 12]},
+  "tool-draw": {"hotspot": [4, 20]},
+  "tool-erase": {"hotspot": [5, 18]},
+  "tool-glue": {"hotspot": [12, 12]},
+  "tool-line": {"hotspot": [3, 18]},
+  "tool-mute": {"hotspot": [12, 12]},
+  "tool-play": {"hotspot": [8, 12]},
+  "tool-range": {"hotspot": [12, 12]},
+  "tool-split": {"hotspot": [12, 11]},
+  "tool-zoom": {"hotspot": [10, 10]}
+}

@@ -9,6 +9,7 @@
 #include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/Input.h>
 #include <RmlUi/Core/Plugin.h>
@@ -32,6 +33,8 @@ namespace gnubase::ui
 		constexpr double g_tooltipDelay = 0.6;
 		// How far below the mouse a tooltip shows, in dp.
 		constexpr float g_tooltipOffset = 20.0F;
+		// How long a notification shows, in seconds, unless it says.
+		constexpr double g_notificationDuration = 1.5;
 
 		// The element or its nearest ancestor with the attribute, or null.
 		Rml::Element* closestWith(Rml::Element* element, const char* attribute)
@@ -376,11 +379,49 @@ namespace gnubase::ui
 			double m_due = 0.0;
 		};
 
+		// <notification>: a message that shows for a moment. Setting its attribute text, also to the text it has,
+		// shows the text with the state class .shown for duration seconds (its attribute, 1.5 by default).
+		class Notification final : public Rml::Element
+		{
+		public:
+			using Rml::Element::Element;
+
+		protected:
+			void OnAttributeChange(const Rml::ElementAttributes& changed) override
+			{
+				Rml::Element::OnAttributeChange(changed);
+				const auto text = changed.find("text");
+				if (text == changed.end() || text->second.Get<Rml::String>().empty())
+					return;
+				SetInnerRML(Rml::StringUtilities::EncodeRml(text->second.Get<Rml::String>()));
+				const auto duration = GetAttribute<double>("duration", g_notificationDuration);
+				m_due = now() + duration;
+				SetClass("shown", true);
+				if (Rml::Context* context = GetContext())
+					context->RequestNextUpdate(duration);
+			}
+
+			void OnUpdate() override
+			{
+				Rml::Element::OnUpdate();
+				if (!IsClassSet("shown"))
+					return;
+				if (const double wait = m_due - now(); wait > 0.0)
+					GetContext()->RequestNextUpdate(wait);
+				else
+					SetClass("shown", false);
+			}
+
+		private:
+			double m_due = 0.0; // when it hides, on RmlUi's clock
+		};
+
 		// <dialog>: a dialog in a document of its own, which the app shows, usually modal. It opens in the middle of
 		// the window, and dragging its .dialog-titlebar moves it. Escape closes it with the result "cancel", Enter
 		// clicks its button.primary (also from a text field, and from a value field with autofocus, after it takes the
-		// number typed), and a click on an element with a result attribute closes it with that result. Closing sends a
-		// close event with the parameter "result", then closes the document.
+		// number typed) unless the focused control takes Enter, and a click on an element with a result attribute
+		// closes it with that result. Closing sends a close event with the parameter "result", then closes the
+		// document.
 		class Dialog final : public Rml::Element
 		{
 		public:
@@ -414,11 +455,13 @@ namespace gnubase::ui
 			// A key pressed anywhere in the dialog's document, before text fields keep Enter to themselves.
 			void key(Rml::Event& event)
 			{
-				// A multi-line text field takes Enter, and a value field both keys, unless it has autofocus: then it is
-				// the dialog's main field, which works like a text field.
-				const Rml::Element* field = closestTag(event.GetTargetElement(), "valuefield", this);
-				if (closestTag(event.GetTargetElement(), "textarea", this) != nullptr ||
-					(field != nullptr && !field->HasAttribute("autofocus")))
+				// A multi-line text field takes Enter, and a value field being edited both keys, unless it has
+				// autofocus: then it is the dialog's main field, which works like a text field.
+				Rml::Element* target = event.GetTargetElement();
+				const Rml::Element* field = closestTag(target, "valuefield", this);
+				const bool mainField = field != nullptr && field->HasAttribute("autofocus");
+				if (closestTag(target, "textarea", this) != nullptr ||
+					(field != nullptr && !mainField && field->IsClassSet("editing")))
 					return;
 				const auto key = event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN);
 				if (key == Rml::Input::KI_ESCAPE)
@@ -428,13 +471,18 @@ namespace gnubase::ui
 				}
 				else if (key == Rml::Input::KI_RETURN || key == Rml::Input::KI_NUMPADENTER)
 				{
+					// A focused button clicks itself, a drop-down list opens or closes, a value field other than the
+					// main one starts editing.
+					if ((field != nullptr && !mainField) || closestTag(target, "button", this) != nullptr ||
+						closestTag(target, "select", this) != nullptr)
+						return;
 					Rml::Element* primary = QuerySelector("button.primary");
 					if (primary == nullptr || primary->HasAttribute("disabled"))
 						return;
 					event.StopPropagation();
 					// Leaving the value field being edited takes the number typed, before OK reads it.
 					if (field != nullptr && field->IsClassSet("editing"))
-						event.GetTargetElement()->Blur();
+						target->Blur();
 					primary->Click();
 				}
 			}
@@ -553,10 +601,17 @@ namespace gnubase::ui
 					for (Menu* menu : openMenus(*document))
 						if (!contains(*menu, target) && (button == nullptr || menuOf(*button) != menu))
 							menu->close();
+					// A right click opens the context menu; with a modifier key, the one in modifiercontextmenu if
+					// there is one.
 					if (event.GetParameter("button", 0) == 1)
 						if (const Rml::Element* owner = closestWith(target, "contextmenu"))
-							if (Menu* menu = byId(*document, owner->GetAttribute<Rml::String>("contextmenu", "")))
+						{
+							const char* attribute = owner->HasAttribute("modifiercontextmenu") && modified(event)
+								? "modifiercontextmenu"
+								: "contextmenu";
+							if (Menu* menu = byId(*document, owner->GetAttribute<Rml::String>(attribute, "")))
 								menu->open(mouse);
+						}
 					break;
 				}
 				case Rml::EventId::Click:
@@ -583,6 +638,14 @@ namespace gnubase::ui
 							event.StopPropagation(); // Escape closed the menu, not the dialog around it
 							break;
 						}
+					if (event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN) == Rml::Input::KI_ESCAPE)
+						if (auto* select = rmlui_dynamic_cast<Rml::ElementFormControlSelect*>(target);
+							select != nullptr && select->IsSelectBoxVisible())
+						{
+							select->CancelSelectBox(); // and the list keeps the option it had
+							event.StopPropagation();
+							break;
+						}
 					if (Dialog* dialog = dialogOf(*document))
 						dialog->key(event);
 					break;
@@ -599,6 +662,11 @@ namespace gnubase::ui
 			static bool isAlt(int key)
 			{
 				return g_altOpensMenuBar && (key == Rml::Input::KI_LMENU || key == Rml::Input::KI_RMENU);
+			}
+
+			static bool modified(const Rml::Event& event)
+			{
+				return otherModifiers(event) || event.GetParameter<int>("alt_key", 0) != 0;
 			}
 
 			static bool otherModifiers(const Rml::Event& event)
@@ -710,6 +778,7 @@ namespace gnubase::ui
 		Rml::RegisterEventType(g_dialogCloseEvent, false, true, Rml::DefaultActionPhase::None);
 		rmlui.registerElement<Menu>("menu");
 		rmlui.registerElement<Tooltip>("tooltip");
+		rmlui.registerElement<Notification>("notification");
 		rmlui.registerElement<Dialog>("dialog");
 		rmlui.registerPlugin(std::make_unique<Popups>());
 	}

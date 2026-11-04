@@ -58,6 +58,7 @@ namespace gnubase::engine
 		case TrackType::Group:
 		case TrackType::Marker:
 		case TrackType::Ruler:
+		case TrackType::Tempo:
 			break;
 		}
 		return "group";

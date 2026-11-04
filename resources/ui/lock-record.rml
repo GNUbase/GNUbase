@@ -1,0 +1,41 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Asks before a locked recording stops (Lock Record, docs/features/recording.md): app::AppUi opens it when the engine
+     refused to stop or punch out a recording because it is locked. Stop stops it with transport.stop confirmed;
+     Cancel goes on recording. -->
+<rml>
+<head>
+	<title>Lock Record</title>
+	<style>
+		dialog
+		{
+			width: 360dp;
+		}
+
+		.row
+		{
+			display: flex;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.buttons
+		{
+			justify-content: flex-end;
+		}
+
+		.buttons button
+		{
+			margin-left: 6dp;
+		}
+	</style>
+</head>
+<body>
+	<dialog id="lock-record-dialog">
+		<div class="dialog-titlebar">Lock Record</div>
+		<div class="row">Recording is locked. Stop it anyway?</div>
+		<div class="row buttons">
+			<button result="cancel">Cancel</button>
+			<button id="lock-record-stop" class="primary" onclick="gnubase.transport.stop{confirmed = true}; document:Close()">Stop</button>
+		</div>
+	</dialog>
+</body>
+</rml>

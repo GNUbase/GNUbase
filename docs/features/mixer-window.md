@@ -2,9 +2,9 @@
 
 The mixer windows and the mixer in the project window's lower zone (#106, reference manual pp. 434–462, 496–498):
 the channels of the project side by side, with a toolbar, channel visibility and the channel type filter, the
-channels' order, pictures and notes, and in the windows the left zone. The channel strip's sections, such as routing,
-inserts, EQ, sends and the full fader with its panner and meters, come with #107; the faders' and panners' engine side
-is in [mixer.md](mixer.md).
+channels' order, pictures and notes, and in the windows the left zone. The channel strip's pre, equalizer and strip
+sections and the panner are in [channel-strip.md](channel-strip.md); the faders' and panners' engine side is in
+[mixer.md](mixer.md).
 
 ## In the engine
 
@@ -39,8 +39,9 @@ engine commands, so whichever client changes the project or the view, the mixer 
     .mixer-channel[sections=channel][channel=<id>][type=<type>]   a strip per channel it shows
       .mixer-channel-name
       .mixer-picture[section=picture]   Pictures, hidden by default
+      .mixer-pre, .mixer-eq, .mixer-strip   Pre, Equalizer and Strip (audio channels), hidden by default (channel-strip.md)
       .mixer-notes[section=notes]       Notepad, hidden by default: textarea.mixer-notes-field
-      .mixer-fader[section=fader]       Fader: M and S (button[control]), the fader and .mixer-volume
+      .mixer-fader[section=fader]       Fader: the panner (.mixer-pan), M, S and L (button[control], solo-mute-listen.md), the fader and .mixer-volume
 ```
 
 - **Channels** (p. 438): the input busses first, then the channels of the tracks from top to bottom (audio,
@@ -56,7 +57,7 @@ engine commands, so whichever client changes the project or the view, the mixer 
   (`Mixer::showVisibility`) has a toggle button per channel (`button.mixer-visibility-item[visibility=<id>]`), checked
   while the mixer shows it. Each sends `mixer.set` for its own mixer.
 - **Set up Window Layout** (p. 439): the setup pane ([docking.md](docking.md)) shows and hides the left zone (in a
-  window) and the strips' sections Pictures, Notepad and Fader, and reorders them; the layout is the user setting
+  window) and the strips' sections Pictures, Pre, Equalizer, Strip, Notepad and Fader, and reorders them; the layout is the user setting
   `ui.layout`, per window (`mixer1` to `mixer4`, and `project` for the lower zone's).
 - **Order** (p. 496). A channel's name dragged onto another channel takes its place: its track moves into that
   track's folder with `track.move`, after it when it came from the left, before it otherwise, so the track list
@@ -82,10 +83,9 @@ engine commands, so whichever client changes the project or the view, the mixer 
 
 Channel selection and the agents and Move Selected Channels commands that work on it, dragging several channels at
 once and the green drop line; the Zones tab (locking channels to the left and right), the History and Snapshots tabs and
-the right zone; the channel overview, the meter bridge, Channel Latency and the channel strip's
-sections (#107); Find Track/Channel, channel visibility configurations, Undo Visibility Change, syncing the visibility
-with the project window's track visibility, linking channels and mixers, the zoom palette and the transport and state
-buttons of the toolbar; the track pictures browser and pictures in the track list; faders of busses; and the
+the right zone; the channel overview, the meter bridge, Channel Latency, the routing, inserts and sends sections (#108, #113) and the
+channel meters; Find Track/Channel, channel visibility configurations, Undo Visibility Change, syncing the visibility
+with the project window's track visibility, linking channels and mixers, the zoom palette and the transport buttons of the toolbar (the state buttons: solo-mute-listen.md); the track pictures browser and pictures in the track list; faders of busses; and the
 windows' places, which workspaces will keep (#163).
 
 ## Checks

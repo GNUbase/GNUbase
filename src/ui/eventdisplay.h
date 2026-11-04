@@ -72,6 +72,8 @@ namespace gnubase::ui
 	// The tool's name, as the display's attribute tool and the toolbar's buttons name it: objectSelection, split, ...
 	const char* toolName(Tool tool);
 	std::optional<Tool> toolFromName(const std::string& name);
+	// The tool's name as the toolbar's tooltips show it: Object Selection, Split, ...
+	const char* toolTitle(Tool tool);
 
 	// The line tool's modes (reference manual p. 873), for automation tracks (#121).
 	enum class LineMode : uint8_t
@@ -194,6 +196,9 @@ namespace gnubase::ui
 		// the locators when the click is between them; one below the tracks adds a MIDI track.
 		const std::vector<uint64_t>& selection() const { return m_selection; }
 		void select(std::vector<uint64_t> events);
+		// Where the selection starts, in ticks: the selection range's start, else the first selected event's; none
+		// without either (Tap Tempo's tempo event, reference manual p. 1458).
+		std::optional<int64_t> selectionStart() const;
 		// Selects the first event on the track's lane, by start; with none there or the track not shown, the
 		// selection stays (Up and Down while an event is selected, reference manual p. 218, ui/tracklist.h).
 		void selectFirstOn(uint64_t track);
@@ -216,7 +221,13 @@ namespace gnubase::ui
 		// setting ui.toolModifiers. The document's toolbar may have a button per tool, button[tool=<name>], whose
 		// attribute tool-menu names a menu of its modes that a second click opens (#object-selection-menu with the
 		// sizing modes, #line-menu with the line modes, #play-menu with the play modes), and a toggle button
-		// #combine-selection-tools.
+		// #combine-selection-tools. Menu items with a tool attribute choose it too: the toolbox #toolbox and the
+		// context menu #event-display-menu, which a right click in the event lanes opens, the toolbox with the user
+		// setting ui.toolboxOnRightClick and the context menu with a modifier key, or the other way round while it is
+		// off. A tool chosen with its command (actions()) shows its name in the notification #tool-notification,
+		// unless the user setting ui.toolSwitchNotification is off. Over the lanes, the attribute pointer of the
+		// event area names the mouse pointer for the style sheets: the tool's name, the range selection tool's in a
+		// lane's upper half with the selection tools combined, or resize at an event's edge that a drag resizes.
 		void setTool(Tool tool);
 		Tool tool() const { return m_tool; }
 		void setCombineSelectionTools(bool on);
@@ -237,6 +248,11 @@ namespace gnubase::ui
 		// (#93), without tracks or events.
 		void importFiles(const std::vector<std::string>& files, std::optional<uint64_t> track = std::nullopt,
 			std::optional<int64_t> sample = std::nullopt, bool clipsOnly = false);
+		// File > Import (#480, reference manual p. 360): at the project cursor, onto the first of the selected tracks
+		// (the track list's, top to bottom) if it is an audio track: the first file, or all of them one after another
+		// with Import Files on One Track, and the others onto new tracks. Without one, onto new tracks; with Split
+		// Channels, every channel of a file with several onto a new track of its own.
+		void importToSelection(const std::vector<std::string>& files, const std::vector<uint64_t>& selection);
 
 		// The commands that key commands bind to, by id: zoom.in, zoom.out, zoom.inVertically, zoom.outVertically,
 		// zoom.full, zoom.undo, zoom.redo and view.autoScroll (on or off); locate.nudgeCursorLeft and
@@ -247,7 +263,13 @@ namespace gnubase::ui
 		// edit.moveStartToCursor, edit.moveEndToCursor, edit.selectAll, edit.selectNone, edit.invertSelection,
 		// edit.selectInLoop, edit.selectFromStartToCursor, edit.selectFromCursorToEnd, edit.selectUnderCursor, and
 		// Left and Right's edit.selectPrevious and edit.selectNext; and edit.locatorsToSelection sets the locators
-		// around the selected events. With the range selection tool,
+		// around the selected events. The Fades menu (#138, docs/features/fades.md): audio.fadeInToRange,
+		// audio.fadeOutFromRange and audio.adjustFadesToRange on the selection range, audio.crossfade (crossfades the
+		// selected audio events, or opens the crossfade editor for a crossfade they have), audio.removeFadeIn,
+		// audio.removeFadeOut, audio.removeFades and audio.fadeEditor (the fade dialog) on the selected audio events.
+		// audio.removeVolumeCurve (#139, docs/features/volume-curves.md) resets the volume curves in the selection
+		// range, else removes the selected audio events'.
+		// With the range selection tool,
 		// edit.delete deletes the range; edit.cut, edit.copy, edit.cutTime, edit.deleteTime, edit.insertSilence,
 		// edit.splitRange and edit.cropRange edit it, edit.paste and edit.pasteTime paste at its start (without a
 		// range at the project cursor) and edit.globalCopy copies the locator range on every track.
@@ -255,6 +277,33 @@ namespace gnubase::ui
 		// tools: tool.objectSelection, tool.rangeSelection, tool.draw, tool.erase, tool.split, tool.glue, tool.mute,
 		// tool.zoom, tool.line, tool.play, tool.next, tool.previous and tool.combineSelectionTools (on or off).
 		const std::map<std::string, std::function<void()>>& actions() const { return m_actions; }
+
+		// Automation tracks (#121, automationtracks.cpp, docs/features/automation-tracks.md): lanes of their own below
+		// their track's lane, each showing one of the track's automation lanes (automationLane.*) as a curve with its
+		// points, or the static value line while it has no points or doesn't read. Which ones show is view state, like
+		// folding. laneAutomation() has the automation lane of each display lane, 0 for a track's own lane; a track's
+		// automation lanes have its id in laneTracks() too. Showing a track's automation shows its used lanes (with
+		// points), or else its first lane, adding one for its first parameter (automationLane.targets) if it has none.
+		const std::vector<uint64_t>& laneAutomation() const { return m_laneAutomation; }
+		bool automationShown(uint64_t track) const { return m_openAutomation.count(track) != 0; }
+		void showAutomation(uint64_t track, bool shown);
+		void showUsedAutomation(); // every track's lanes with points
+		void hideAllAutomation();
+		// Shows one more automation track below the track's last one: the next parameter in automationLane.targets'
+		// order that none shows, with its lane, which is added if the track has none for it.
+		void appendAutomation(uint64_t track);
+		// Shows the plugin's lanes on its track and hides the track's others (the lane automates the plugin).
+		void showOnlyPlugin(uint64_t lane);
+		// The parameter selector: the automation track that shows the lane shows the target's lane instead, which is
+		// added if the track has none; an unused lane it showed is removed in the same undo step.
+		void setAutomationTarget(uint64_t lane, const engine::Json& target);
+		void removeUnusedAutomation(uint64_t track); // the track's lanes without points
+		// automationLane.targets for a track whose automation shows, or null until it is in.
+		const engine::Json* automationTargets(uint64_t track) const;
+		// The selected automation points, by lane, also in the root's attribute automation-selection ("lane:point"
+		// pairs). Selecting events deselects them, and the other way round.
+		const std::map<uint64_t, std::set<uint64_t>>& selectedPoints() const { return m_selectedPoints; }
+		void selectPoints(std::map<uint64_t, std::set<uint64_t>> points);
 
 		// Runs listener after every change of the view, for what others draw on the timeline, such as marker lines
 		// (ui/markers.h).
@@ -278,6 +327,43 @@ namespace gnubase::ui
 			DrawPart,      // a new MIDI part
 			Play,          // auditions or scrubs until the mouse is released
 			Click,         // splits, glues or erases where it is released, unless it moved
+			FadeIn,        // the fade in handle of the pressed audio event
+			FadeOut,       // its fade out handle
+			Volume,        // its event volume handle
+			VolumePoint,   // a point of its volume curve, with the draw tool
+			Automation,    // on an automation track (automationtracks.cpp)
+		};
+
+		// An automation lane of the project as the display shows it: points in seconds, values from 0 (bottom) to 1.
+		struct AutomationView
+		{
+			uint64_t id = 0;
+			uint64_t track = 0;
+			bool read = true;
+			bool linear = false;            // its track's time base
+			engine::Json target;            // as automationLane.add takes it
+			engine::Json info;              // its entry of automationLane.targets, null until it is in
+			std::vector<uint64_t> ids;      // the points', by position
+			std::vector<CurvePoint> points; // in seconds and display values
+		};
+		// What a press on an automation track does while dragging.
+		enum class AutomationGesture : uint8_t
+		{
+			Add,    // a click adds a point there; a drag selects the points in a rectangle
+			Move,   // moves the selected points
+			Draw,   // the draw tool's freehand curve
+			Line,   // the line tool
+			Erase,  // removes the point under the mouse
+			Editor, // a smart control of the automation event editor
+			None,
+		};
+		enum class EditorControl : uint8_t
+		{
+			MoveVertically,
+			ScaleVertically,
+			TiltLeft,
+			TiltRight,
+			Stretch,
 		};
 
 		// An audio event or a MIDI part as the display shows it.
@@ -340,7 +426,7 @@ namespace gnubase::ui
 		void showPresets();
 		void showAutoScroll();
 		void showSnap();
-		void setSnap(const engine::Json& settings); // sends snap.set
+		void setSnap(const engine::Json& settings); // sends snap.set; one with a format counts in m_formatsSent
 
 		// Importing files (fileimport.cpp).
 		struct Import
@@ -349,7 +435,9 @@ namespace gnubase::ui
 			std::optional<uint64_t> track;
 			int64_t sample = 0;
 			bool clipsOnly = false;
+			bool selected = false; // track is the selected one, which takes the first file, not all of them
 		};
+		void startImport(const std::vector<std::string>& files, Import import);
 		void dropFiles(Rml::Event& event);
 		void openImportOptions(bool saved);
 		void importAudio(Rml::Element& dialog);
@@ -359,6 +447,8 @@ namespace gnubase::ui
 		const Shown* eventAt(double x, double y) const; // dp in the event lanes
 		size_t laneAt(double y) const; // dp from the top of the first lane; 0 above it, the lane count below the last
 		void areaDown(Rml::Event& event, double x, double y);
+		// A right click that opens the context menu selects the event there, unless it's selected already.
+		void areaRightDown(Rml::Event& event, double x, double y);
 		void areaMove(double dx, double dy, bool constrained); // constrained: restricts() says so
 		// Whether the keys are exactly the tool modifier of Copy or Shared Copy.
 		bool copyKeys(const std::string& keys) const;
@@ -388,14 +478,77 @@ namespace gnubase::ui
 		std::pair<engine::Json, double> moveShift(double dx) const; // a drag of the selection, dx dp across
 		// Left and Right (reference manual p. 253): the event before (-1) or after (1) the selected ones on the lane.
 		void selectNeighbour(int direction);
-		// Adds a MIDI part on the lane from start to end, ticks, and selects it.
+		// Adds a part on the lane from start to end, ticks, and selects it: an audio part on an audio track, a MIDI
+		// part on a MIDI or instrument track.
 		void addPart(size_t lane, time::Ticks start, time::Ticks end);
+		// Whether the lane's track takes empty parts: audio, MIDI and instrument tracks.
+		bool takesParts(size_t lane) const;
 		// The lane at y dp down the event lanes, if there is one there.
 		std::optional<size_t> visibleLaneAt(double y) const;
+		// The edge of the event at x dp across the lanes that a press there resizes: -1 its start, 1 its end, 0 none.
+		int edgeAt(const Shown& shown, double x) const;
+
+		// Fades and crossfades (eventfades.cpp): an audio event's fades and crossfade as project.get has them, its
+		// media file's sample rate, its offset and length in clip frames, and its volume and volume curve.
+		struct AudioFades
+		{
+			double rate = 0.0;
+			int64_t length = 0;
+			engine::Fade in;
+			engine::Fade out;
+			engine::Crossfade crossfade;
+			int64_t offset = 0;
+			double volume = 0.0; // dB
+			std::vector<engine::VolumePoint> curve;
+		};
+		void addFadeActions();
+		void readFades(const engine::Json& event, double rate);
+		// The fade handle of the event at x and y dp in the event lanes: -1 its fade in's, 1 its fade out's, 0 none.
+		int fadeHandleAt(const Shown& shown, double x, double y) const;
+		// Starts dragging a fade handle when x and y dp in the event lanes are at one of the pressed event's.
+		bool fadeDown(const Shown& shown, double x, double y);
+		void fadeUp();
+		// The fade length in seconds that a drag of a handle gives an event's fade in or fade out.
+		double draggedFade(uint64_t event, bool in) const;
+		void showFades(); // the fade lines and the selected audio events' handles
+		// A double click on an event at seconds: in a crossfade's zone, opens the crossfade editor.
+		void openCrossfadeAt(const Shown& shown, double seconds);
+		// The selected audio events, by id.
+		std::vector<uint64_t> selectedAudio() const;
+		// Opens a dialog of the display's document folder whose Lua reads the attributes when it shows.
+		void openFadeDialog(const char* file, const std::vector<std::pair<std::string, std::string>>& attributes);
+
+		// Event volume and volume curves (eventvolume.cpp). The volume lines go from silence at the bottom of a lane
+		// to g_volumeLineTop at its top; volumeFraction is how far up the event's lane y dp in the event lanes is.
+		void addVolumeActions();
+		double volumeFraction(const Shown& shown, double y) const;
+		// The event volume handle at the top middle of the pressed audio event: dragging it gives every selected
+		// audio event the volume in dB that draggedVolume says.
+		bool volumeDown(const Shown& shown, double x, double y);
+		void volumeUp();
+		double draggedVolume(uint64_t event) const;
+		// The draw tool on an audio event: drags the curve point at x and y dp, or a new one there.
+		bool curveDown(const Shown& shown, double x, double y);
+		void curveUp();
+		std::vector<engine::VolumePoint> draggedCurve(uint64_t event) const;
+		std::optional<size_t> curvePointAt(const Shown& shown, double x, double y) const;
+		bool eraseCurvePoint(const Shown& shown, double x, double y);     // the erase tool, on a point
+		void showVolume(FadeLines::Lane& lane, const Shown& shown) const; // its line and volume handle
 
 		// The tools (eventtools.cpp).
 		void addToolActions();
 		void showTools();
+		// The tool a press y dp down the event lanes uses: the range selection tool in a lane's upper half when the
+		// selection tools are combined, else the tool.
+		Tool toolAt(double y) const;
+		// The mouse pointer over the lanes at x and y dp, as the event area's attribute pointer names it; showPointer
+		// shows the one where the mouse was last, unless a drag goes on.
+		std::string pointerAt(double x, double y) const;
+		void showPointer();
+		// The menus that a right click in the lanes opens, without and with a modifier key.
+		void showContextMenus();
+		// The notification for a tool chosen with a key command.
+		void notify(const std::string& text);
 		// Whether the pressed modifiers are the ones the user setting ui.toolModifiers gives the action.
 		bool modifiers(const char* action) const;
 		// What a press at x and y dp in the event lanes does with the tool, unless the object selection tool takes it.
@@ -409,6 +562,61 @@ namespace gnubase::ui
 		// The rectangle that a tool drags, dp in the event lanes; hidden when not shown.
 		void showRectangle(bool shown, double left = 0.0, double top = 0.0, double right = 0.0, double bottom = 0.0);
 		void setToolModifiers(const engine::Json& value);
+
+		// Automation tracks (automationtracks.cpp).
+		void addAutomationActions();
+		void readAutomation(const engine::Json& project); // m_automation, and asks for the targets it needs
+		// Asks for the track's automationLane.targets again; then runs when they are in.
+		void requestTargets(uint64_t track, std::function<void()> then = {});
+		// Adds a lane for the target to the track and shows it below the track's others, with the commands before it
+		// in the same undo step.
+		void addLane(uint64_t track, const engine::Json& target, engine::Json before = engine::Json::array(),
+			std::optional<size_t> at = std::nullopt);
+		void reload();              // the lanes again, from the project as it was last read
+		void showAutomationLanes(); // the curves, after the lanes changed
+		void placeAutomation();     // where they are, after the view changed
+		// The automation lane of a display lane, or null for a track's own lane.
+		const AutomationView* automationAt(size_t lane) const;
+		double automationValue(size_t lane, double y) const; // y dp in the event lanes, as a display value
+		double automationY(size_t lane, double value) const; // and back
+		// The point of the lane within reach of x and y dp in the event lanes, as an index into its points.
+		std::optional<size_t> pointAt(const AutomationView& lane, size_t index, double x, double y) const;
+		bool automationDown(double x, double y);
+		void automationMove(double x, double y);
+		void automationUp(double x, double y);
+		// The automation event editor's box around the selected points, dp in the event lanes (left, top, right,
+		// bottom), and its display lane: when two or more points of one lane with a ramp curve are selected.
+		struct EditorBox
+		{
+			size_t lane = 0;
+			double left = 0.0;
+			double top = 0.0;
+			double right = 0.0;
+			double bottom = 0.0;
+		};
+		std::optional<EditorBox> editorBox() const;
+		// The smart control of the automation event editor at x and y dp, if it shows there.
+		std::optional<EditorControl> editorControlAt(double x, double y) const;
+		// The selected points of the pressed lane as a drag to x and y dp moves them or the editor changes them, by id.
+		std::vector<std::pair<uint64_t, CurvePoint>> transformed(double x, double y) const;
+		// Shows these points on the display lane's curve while dragging.
+		void preview(size_t lane, std::vector<CurvePoint> points);
+		// The lane's points with those from start to end, seconds, replaced by these.
+		static std::vector<CurvePoint> replaced(
+			const AutomationView& lane, double start, double end, const std::vector<CurvePoint>& points);
+		// What the line tool draws from its press to x and y dp, in seconds and display values.
+		std::vector<CurvePoint> linePoints(double x, double y) const;
+		// A track's lane, in the time base of its track: ticks or samples.
+		int64_t pointPosition(const AutomationView& lane, double seconds) const;
+		// A display value in the target's unit.
+		static double targetValue(const engine::Json& info, double value);
+		static double displayValue(const engine::Json& info, double value);
+		// Sends the commands as one undo step; read turns on reading the lane first, as tools do on a click.
+		void automationEdit(const std::string& description, const AutomationView& lane, engine::Json commands);
+		// Replaces the lane's points from start to end, seconds, with these (seconds and display values).
+		void replacePoints(const AutomationView& lane, double start, double end, const std::vector<CurvePoint>& points);
+		void showPointSelection();
+		std::vector<uint64_t> openLanes(uint64_t track) const; // the lanes a track shows, that still exist
 
 		engine::Engine& m_engine;
 		EngineBinding& m_binding;
@@ -439,9 +647,11 @@ namespace gnubase::ui
 		std::vector<bool> m_laneLinear;       // and whether its time base is linear
 		std::vector<Shown> m_events;
 		std::vector<uint64_t> m_selection;
-		EventLanes* m_mutedLanes = nullptr;    // muted events over the others
-		EventLanes* m_selectedLanes = nullptr; // selected events over those
-		EventLanes* m_folderLanes = nullptr;   // folders' data blocks, under the events
+		EventLanes* m_mutedLanes = nullptr;     // muted events over the others
+		EventLanes* m_selectedLanes = nullptr;  // selected events over those
+		EventLanes* m_folderLanes = nullptr;    // folders' data blocks, under the events
+		FadeLines* m_fadeLines = nullptr;       // over the waveforms
+		std::map<uint64_t, AudioFades> m_fades; // by audio event
 		std::vector<EventLanes::Lane> m_folderData;
 		std::string m_folderMode = "always"; // ui.folderData
 		int64_t m_left = 0;                  // the locators, in samples
@@ -449,10 +659,12 @@ namespace gnubase::ui
 		bool m_sizingMovesContents = false;
 		uint64_t m_dragEvent = 0; // pressed on
 		bool m_dragMoved = false;
-		bool m_dragStarted = false; // moving events, after the drag delay
-		bool m_dragToggles = false; // a click with Ctrl or Shift takes the pressed event out of the selection
-		double m_pressTime = 0.0;   // RmlUi's clock, in seconds
-		double m_dragDx = 0.0;      // dp, while moving, snapped
+		double m_dragDy = 0.0;             // dp, dragging the event volume or a curve point
+		std::optional<size_t> m_dragPoint; // the curve point dragged, none for a new one
+		bool m_dragStarted = false;        // moving events, after the drag delay
+		bool m_dragToggles = false;        // a Ctrl/Shift click takes the pressed event or point out of the selection
+		double m_pressTime = 0.0;          // RmlUi's clock, in seconds
+		double m_dragDx = 0.0;             // dp, while moving, snapped
 		int m_dragLanes = 0;
 		double m_dragLaneY = 0.0; // where a drag of events started, in dp from the top of the first lane
 		double m_end = 0.0;       // of the last event
@@ -508,10 +720,18 @@ namespace gnubase::ui
 		Rml::Element* m_objectMenu = nullptr;
 		Rml::Element* m_lineMenu = nullptr;
 		Rml::Element* m_playMenu = nullptr;
+		Rml::Element* m_toolbox = nullptr;
+		Rml::Element* m_contextMenu = nullptr;
+		Rml::Element* m_notification = nullptr;
+		bool m_toolboxOnRightClick = false; // ui.toolboxOnRightClick
+		bool m_toolboxKnown = false;        // changed since it was asked for
+		bool m_notifies = true;             // ui.toolSwitchNotification
+		bool m_notifiesKnown = false;
+		std::optional<std::pair<double, double>> m_mouse; // over the lanes, in dp, when the mouse was there last
 		std::vector<CycleMarker> m_cycleMarkers;
 		std::vector<int64_t> m_markers; // every marker's position and end, in samples, for snapping
 		engine::SnapSettings m_snap;
-		int m_formatsSent = 0; // snap.set {format} from the ruler that the engine hasn't answered yet
+		int m_formatsSent = 0; // snap.set {format} from the ruler or the grid type menu that isn't answered yet
 		engine::midi::QuantizeSettings m_quantize;
 		Rml::Element* m_snapButton = nullptr;
 		Rml::Element* m_snapTypeButton = nullptr;
@@ -526,6 +746,20 @@ namespace gnubase::ui
 		bool m_importConvert = true;
 		bool m_importSplit = false;
 		bool m_importOneTrack = false;
+
+		std::map<uint64_t, std::vector<uint64_t>> m_openAutomation; // the lanes each track shows, in order
+		std::map<uint64_t, AutomationView> m_automation;            // every lane of the project
+		std::map<uint64_t, engine::Json> m_targets;                 // automationLane.targets, by track
+		std::set<uint64_t> m_targetsAsked;                          // tracks whose targets are on their way
+		std::vector<uint64_t> m_laneAutomation;                     // each display lane's automation lane, or 0
+		std::map<uint64_t, std::set<uint64_t>> m_selectedPoints;
+		Rml::Element* m_automationArea = nullptr; // the curves, a .automation-lane each
+		Rml::Element* m_editor = nullptr;         // .automation-editor around the selected points
+		AutomationGesture m_gesture = AutomationGesture::None;
+		size_t m_gestureLane = 0; // the display lane pressed
+		EditorControl m_control = EditorControl::MoveVertically;
+		std::vector<CurvePoint> m_drawn;                     // the draw tool's path, seconds and display values
+		std::map<uint64_t, std::set<uint64_t>> m_pointsBase; // the selection a rectangle with Ctrl or Shift adds to
 
 		std::map<std::string, std::function<void()>> m_actions;
 		std::vector<std::function<void()>> m_viewListeners;

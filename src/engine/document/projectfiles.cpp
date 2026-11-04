@@ -9,6 +9,7 @@
 #include "platform/log.h"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -53,6 +54,15 @@ namespace gnubase::engine
 			return format;
 		}
 
+		// Folded to lower case, as the file systems of Windows and macOS don't tell names apart by case.
+		std::string folded(const fs::path& name)
+		{
+			std::string text = name.u8string();
+			std::transform(text.begin(), text.end(), text.begin(),
+				[](char c) { return static_cast<char>(std::tolower(static_cast<unsigned char>(c))); });
+			return text;
+		}
+
 		// A number with at least two digits, as versions and auto saves are numbered: 01, 02, ... 100.
 		std::string numbered(const std::string& name, int number)
 		{
@@ -61,11 +71,13 @@ namespace gnubase::engine
 		}
 
 		// The next version of a project file: the same name with the next number after the highest one of that name in
-		// its folder and its own, "Song-01.dawproject" for "Song.dawproject".
+		// its folder and its own, "Song-01.dawproject" for "Song.dawproject" and "Song v2.1-01.dawproject" for a file
+		// "Song v2.1" that project.save saved as named. Versions count whatever case their name and extension are in,
+		// so that the next one doesn't overwrite one of them where case doesn't tell files apart.
 		fs::path nextVersion(const fs::path& file)
 		{
 			static const std::regex version(R"((.*)-(\d{1,9}))"); // longer numbers aren't versions
-			std::string name = file.stem().u8string();
+			std::string name = (folded(file.extension()) == g_extension ? file.stem() : file.filename()).u8string();
 			int highest = 0;
 			std::smatch match;
 			if (std::regex_match(name, match, version))
@@ -73,12 +85,13 @@ namespace gnubase::engine
 				highest = std::stoi(match[2].str());
 				name = match[1].str();
 			}
+			const std::string key = folded(fs::u8path(name));
 			std::error_code error;
 			for (const fs::directory_entry& entry : fs::directory_iterator(file.parent_path(), error))
 			{
 				const std::string other = entry.path().stem().u8string();
-				if (entry.path().extension() == g_extension && std::regex_match(other, match, version) &&
-					match[1].str() == name)
+				if (folded(entry.path().extension()) == g_extension && std::regex_match(other, match, version) &&
+					folded(fs::u8path(match[1].str())) == key)
 					highest = std::max(highest, std::stoi(match[2].str()));
 			}
 			return file.parent_path() / fs::u8path(numbered(name, highest + 1) + g_extension);
@@ -106,6 +119,25 @@ namespace gnubase::engine
 			return oldest;
 		}
 
+		// Whether a file is an auto save: a .bak in a folder Auto Saves, however the path writes them.
+		bool isAutoSave(const fs::path& file)
+		{
+			const fs::path path = file.lexically_normal();
+			return folded(path.extension()) == ".bak" &&
+				folded(path.parent_path().filename()) == folded(fs::u8path(g_autoSaves));
+		}
+
+		// Why an auto save to file failed, whichever file it went to: the error without the file, which the errors of
+		// saving name, also as part of the temporary file next to it, and which changes as auto saves take turns.
+		std::string failureReason(std::string error, const fs::path& file)
+		{
+			const std::string name = file.u8string();
+			const std::string placeholder = "<auto save>";
+			for (size_t at = error.find(name); at != std::string::npos; at = error.find(name, at + placeholder.size()))
+				error.replace(at, name.size(), placeholder);
+			return error;
+		}
+
 		Json userSetting(CommandContext& context, const char* key)
 		{
 			return context.call("settings.get", {{"key", key}}).at("value");
@@ -116,8 +148,7 @@ namespace gnubase::engine
 	{
 		// An auto save opens untitled and unsaved, so that saving it neither overwrites the auto save nor makes Auto
 		// Saves the project folder.
-		const fs::path path = fs::u8path(file);
-		const bool autoSave = path.extension() == ".bak" && path.parent_path().filename() == g_autoSaves;
+		const bool autoSave = isAutoSave(fs::u8path(file));
 		m_project = std::move(project);
 		m_file = autoSave ? std::string() : file;
 		m_history.clear();
@@ -129,7 +160,7 @@ namespace gnubase::engine
 		m_autoSavedRevision = m_revision;
 		m_openedRevision = m_revision;
 		m_lastSave = m_clock->now();
-		m_autoSaveFailed = false;
+		m_autoSaveFailure.reset();
 		if (!m_file.empty())
 			remember(m_file);
 	}
@@ -140,7 +171,7 @@ namespace gnubase::engine
 		m_savedRevision = m_revision;
 		m_autoSavedRevision = m_revision;
 		m_lastSave = m_clock->now();
-		m_autoSaveFailed = false; // it may have moved to another folder
+		m_autoSaveFailure.reset(); // it may have moved to another folder
 		remember(file);
 		context.emit("project.saved", {{"file", m_file}});
 	}
@@ -245,9 +276,10 @@ namespace gnubase::engine
 				"engine asks every 30 seconds, only if the user setting project.autoSave is on and "
 				"project.autoSaveInterval minutes have passed since the project was saved, opened or auto saved, or "
 				"an auto save failed. Returns the file, or null if nothing was saved; emits project.autoSaved with "
-				"the file. If it fails, emits project.autoSaveFailed with the file and the error although the "
-				"command fails. A due auto save that fails again, before one succeeded or the project was saved or "
-				"opened, stays out of engine.commandLog and the error log.",
+				"the file. If it fails, emits project.autoSaveFailed with the file, the error and repeated, although "
+				"the command fails: repeated is true if the last auto save failed for the same reason, whatever its "
+				"file, and none succeeded and the project wasn't saved or opened since. A due auto save whose failure "
+				"is repeated stays out of engine.commandLog and the error log, so that only new reasons are logged.",
 				objectSchema({{"due", booleanSchema}}),
 				objectSchema({{"file", {{"type", {"string", "null"}}}}}, {"file"}), false},
 			[this, &engine](CommandContext& context)
@@ -284,15 +316,19 @@ namespace gnubase::engine
 				catch (const std::exception& error)
 				{
 					// Announced although the command fails, so that the user learns that auto save doesn't work. One
-					// that keeps failing is logged only the first time, as the engine's error log and
-					// engine.commandLog keep only so much.
-					engine.broadcast("project.autoSaveFailed", {{"file", file.u8string()}, {"error", error.what()}});
-					if (due && m_autoSaveFailed)
+					// that keeps failing for the same reason is logged only the first time, as the engine's error log
+					// and engine.commandLog keep only so much, but a new reason is logged, such as a full disk after
+					// Auto Saves couldn't be made.
+					std::string reason = failureReason(error.what(), file);
+					const bool repeated = m_autoSaveFailure == reason;
+					engine.broadcast("project.autoSaveFailed",
+						{{"file", file.u8string()}, {"error", error.what()}, {"repeated", repeated}});
+					if (due && repeated)
 						context.failQuietly();
-					m_autoSaveFailed = true;
+					m_autoSaveFailure = std::move(reason);
 					throw CommandError(error.what());
 				}
-				m_autoSaveFailed = false;
+				m_autoSaveFailure.reset();
 				m_autoSavedRevision = m_revision;
 				context.emit("project.autoSaved", {{"file", file.u8string()}});
 				return Json{{"file", file.u8string()}};

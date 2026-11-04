@@ -13,9 +13,7 @@
 
 namespace gnubase::engine
 {
-	// The largest project position, in samples: about 11 years at 768 kHz, far from where adding a block, a cycle or
-	// a post-roll could overflow.
-	inline constexpr time::Samples g_maxPosition = time::Samples{1} << 48;
+	using time::g_maxPosition; // the largest project position (engine/time/tempomap.h)
 
 	// Where playback starts.
 	enum class StartMode : uint8_t
@@ -25,7 +23,7 @@ namespace gnubase::engine
 	};
 
 	// What a recording does to the events of its track that it overlaps (reference manual p. 345), as recording.add
-	// takes it. MIDI recording (#97) adds its own modes next to it.
+	// takes it. MIDI recording has its own modes, MidiRecordMode.
 	enum class AudioRecordMode : uint8_t
 	{
 		KeepHistory,         // they stay
@@ -35,6 +33,17 @@ namespace gnubase::engine
 
 	// The modes' names, by AudioRecordMode.
 	inline constexpr std::array<const char*, 3> g_audioRecordModes = {"keepHistory", "cycleHistoryReplace", "replace"};
+
+	// What a MIDI recording does to the MIDI parts of its track that it overlaps (reference manual p. 352).
+	enum class MidiRecordMode : uint8_t
+	{
+		NewParts, // they stay; the recording is a part of its own
+		Merge,    // the recorded events go into the first part they overlap
+		Replace,  // ... and replace the events of the parts they overlap in the recorded range
+	};
+
+	// The modes' names, by MidiRecordMode.
+	inline constexpr std::array<const char*, 3> g_midiRecordModes = {"newParts", "merge", "replace"};
 
 	struct TransportSettings
 	{
@@ -54,6 +63,10 @@ namespace gnubase::engine
 		// The transport bar's switch for the metronome click, whose behaviour comes with #101.
 		bool metronome = false;
 		AudioRecordMode audioRecordMode = AudioRecordMode::KeepHistory;
+		MidiRecordMode midiRecordMode = MidiRecordMode::NewParts;
+		// Lock Record (reference manual p. 356): the commands refuse to stop or punch out a recording unless the stop
+		// is confirmed, and recording ignores the automatic punch out.
+		bool lockRecord = false;
 	};
 
 	// The project cursor, play and stop, recording, and cycle playback. The command thread sends requests; the audio
@@ -89,6 +102,8 @@ namespace gnubase::engine
 		bool recording() const { return m_requestedRecording; }
 		// Command thread: where play starts playback.
 		time::Samples startPosition() const;
+		// Command thread: where the last playback started, without the pre-roll (0 before any).
+		time::Samples playbackStart() const { return m_playbackStart; }
 		// Where recording from stop starts, for playback that starts at start before the pre-roll and at from with
 		// it: at start, or the left locator with punch in if that comes later. In a cycle that would jump back before
 		// reaching that, at from, or with punch in at from or the left locator, whichever comes later; in one that
@@ -148,6 +163,7 @@ namespace gnubase::engine
 		bool m_requestedRecording = false;
 		uint64_t m_locates = 0;      // how many locates were sent
 		uint64_t m_sentRequests = 0; // how many requests were sent
+		time::Samples m_playbackStart = 0;
 
 		// Audio thread.
 		TransportSettings m_settings;

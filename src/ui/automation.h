@@ -56,7 +56,8 @@ namespace gnubase::ui
 		explicit Automation(Shell& shell) : m_shell(shell) {}
 
 		// {"windows": [...]}: each window's id, whether it's the main window, its pixel size, its dp ratio and its
-		// documents (title, source, visible, modal).
+		// documents (title, source, visible, modal); and "cursor", the mouse pointer the style sheets name for the
+		// element under the mouse (ui/cursors.h), empty for the OS's arrow.
 		engine::Json windows();
 
 		// {"elements": [...]}: the window's documents, or the elements the CSS selector matches in them, as trees of

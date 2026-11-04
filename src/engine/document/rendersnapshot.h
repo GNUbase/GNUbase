@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "engine/audio/fades.h"
 #include "engine/document/document.h"
 
 #include <cstdint>
@@ -59,7 +60,8 @@ namespace gnubase::engine
 		Fade fadeOut;
 		Fade clipFadeIn; // at the media file's start and end
 		Fade clipFadeOut;
-		Crossfade crossfade; // only one that applies (crossfadeApplies)
+		Crossfade crossfade;                // only one that applies (crossfadeApplies)
+		std::vector<GainPoint> volumeCurve; // in the media file's sample frames
 	};
 
 	struct RenderNote
@@ -140,18 +142,23 @@ namespace gnubase::engine
 		bool panBypass = false;
 		std::optional<int> midiVolume; // MIDI channels: CC 7 and CC 10 to send, 0 to 127
 		std::optional<int> midiPan;
-		bool monitor = false; // audio tracks: the monitor and record enable buttons
+		bool monitor = false; // the monitor and record enable buttons
 		bool recordEnable = false;
+		// MIDI and instrument tracks: they play what comes from all MIDI inputs (MIDI thru), since they monitor or
+		// are record-enabled and their MIDI input is all MIDI inputs.
+		bool midiThru = false;
 		// Muted, silenced by another channel's solo, or on a disabled track: outputs silence. A silent MIDI channel
 		// has no notes or controllers, and a disabled track no events or parts.
 		bool silent = false;
-		AutoFades autoFades;                          // audio tracks: their own settings or the project's
+		bool listen = false; // also plays on the monitoring bus, after its fader (graph::NodeKind::ListenBus)
+		AutoFades autoFades; // audio tracks: their own settings or the project's
 		std::vector<RenderAudioEvent> audioEvents;    // sorted by start
 		std::vector<RenderNote> notes;                // sorted by start, then pitch
 		std::vector<RenderController> controllers;    // sorted by position
 		std::vector<RenderPart> midiParts;            // sorted by start
 		std::vector<RenderAutomationLane> automation; // in the order of the lanes' ids
 		std::vector<RenderSlot> slots;                // from top to bottom
+		ChannelSections sections;                     // the strip's sections before the fader
 	};
 
 	// A channel volume in dB as a linear gain; the fader's bottom, g_minChannelVolume, is silence.

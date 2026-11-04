@@ -92,8 +92,14 @@ namespace gnubase::ui
 		// Adds a command of the UI's own. Throws std::invalid_argument if a command has its id.
 		void add(UiCommand command);
 
+		// Checks that a key, a menu item or a button can run the command with these parameters: throws
+		// std::invalid_argument, naming the command, for a command it doesn't know, parameters that the engine's
+		// command doesn't take (its parameter schema), or parameters other than an empty object for a UI command,
+		// which takes none.
+		void check(const std::string& command, const engine::Json& parameters) const;
+
 		// Binds the keys to a command in a zone, replacing what they did there. Throws std::invalid_argument for keys
-		// it can't read, a command it doesn't know, or parameters that the engine's command doesn't take.
+		// it can't read, or a command and parameters that check refuses.
 		void bind(const KeyBinding& binding);
 
 		// The keys bound to the command with these parameters, in every zone, as the platform writes them, e.g. for a
@@ -104,8 +110,9 @@ namespace gnubase::ui
 		// Runs the command that the keys, pressed in the window, are bound to. The focus zones are the elements with a
 		// focuszone attribute around the focused element: the innermost zone's binding counts first, then the outer
 		// zones', then the one for everywhere. A UI command gets the zone of its binding, or for one bound everywhere
-		// the innermost zone. Lock keys don't count, and nothing runs while a modal document has the focus. Returns
-		// whether a command ran.
+		// the innermost zone. Lock keys don't count, and nothing runs while a modal document has the focus. A focused
+		// text field keeps the arrow keys without modifiers, also those it can't use at its first or last line or
+		// character, which the text field lets through. Returns whether a command ran.
 		bool press(Window& window, const KeyPress& keys);
 		// The key went up: ends the commands that its presses run while it is held (UiCommand::release), whatever
 		// the modifiers are now. KI_UNKNOWN ends every one, as when the window lost the keyboard focus.

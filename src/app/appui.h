@@ -13,6 +13,7 @@
 #include "ui/keycommands.h"
 #include "ui/mainmenu.h"
 #include "ui/markers.h"
+#include "ui/midieditor.h"
 #include "ui/mixer.h"
 #include "ui/poolpanel.h"
 #include "ui/projectfiles.h"
@@ -20,6 +21,7 @@
 #include "ui/sdlwindowsystem.h"
 #include "ui/shell.h"
 #include "ui/statusline.h"
+#include "ui/tempotrack.h"
 #include "ui/themes.h"
 #include "ui/tracklist.h"
 #include "ui/transport.h"
@@ -78,6 +80,21 @@ namespace gnubase::app
 		// The markers window while it is open, or null.
 		ui::MarkersWindow* markers() { return m_shell.find(m_markersWindow) != nullptr ? m_markers.get() : nullptr; }
 		ui::WindowId markersWindow() const { return m_markersWindow; }
+		// The markers in the project window's event display, null before showProject.
+		ui::MarkerLines* markerLines() { return m_markerLines.get(); }
+
+		// Opens the tempo track editor in a window of its own (resources/ui/tempo-editor.rml), hidden like the main
+		// window, or closes it if it is open: the UI command window.tempoTrack, Mod+T (reference manual p. 1447).
+		// Returns it, or null when it closed it. Throws std::runtime_error if the document can't be loaded.
+		ui::TempoEditor* toggleTempoEditor();
+		ui::TempoEditor* tempoEditor()
+		{
+			return m_shell.find(m_tempoWindow) != nullptr ? m_tempoEditor.get() : nullptr;
+		}
+		ui::WindowId tempoWindow() const { return m_tempoWindow; }
+		// The tempo curve on the tempo track's lane in the project window, null before showProject.
+		ui::TempoLane* tempoLane() { return m_tempoLane.get(); }
+
 		// The mixers (#106, docs/features/mixer-window.md): mixer window number 1 to 4 opens in a window of its own
 		// (resources/ui/mixer.rml), hidden like the main window, or closes if it is open: the UI commands window.mixer
 		// (F3), window.mixer2, window.mixer3 and window.mixer4. Returns it, or null when it closed it. Throws
@@ -87,6 +104,15 @@ namespace gnubase::app
 		ui::Mixer* mixer(int number);
 		ui::WindowId mixerWindow(int number) const { return m_mixers.at(static_cast<size_t>(number - 1)).window; }
 		ui::Mixer* lowerZoneMixer() { return m_lowerMixer.lock().get(); }
+		// The MIDI editors (#126, docs/features/midi-editors.md): the editor window (resources/ui/editor.rml), which
+		// opens and closes as the engine's editor view window does (editor.open, editor.close), and the project
+		// window's Editor panel in the lower zone, which shows as the view lower opens. Null while they don't show.
+		ui::MidiEditor* editorWindow()
+		{
+			return m_shell.find(m_editor.window) != nullptr ? m_editor.editor.get() : nullptr;
+		}
+		ui::WindowId editorWindowId() const { return m_editor.window; }
+		ui::MidiEditor* lowerZoneEditor() { return m_lowerEditor.lock().get(); }
 
 		// Opens the studio setup dialog (resources/ui/studio-setup.rml, #79) in the window, modal: the UI command
 		// window.studioSetup, which the main menu's Studio menu runs. While it is open, this brings it to the front
@@ -141,10 +167,20 @@ namespace gnubase::app
 		void chooseMissingFolder(ui::Window& window);
 		// The lower zone's mixer panel, the mixer windows' Visibility tabs and their UI commands.
 		void addMixers();
+		// The editors' panels and UI commands, and the windows and zones that follow the engine's editor views.
+		void addEditors();
+		// Shows or closes the editor window or the lower zone's editor as the engine's view says.
+		void followEditor(const engine::Json& view);
+		// The selected MIDI parts open in the editors that follow the project window's selection (p. 1153).
+		void followSelection();
+		// The MIDI parts selected in the project window's event display.
+		std::vector<uint64_t> selectedParts() const;
 		// The OS's file dialog for a track's picture in the mixer, then track.set.
 		void choosePicture(uint64_t track);
 		// Opens resources/ui/<name> in the window, modal. Throws std::runtime_error if it can't be loaded.
 		Rml::ElementDocument& openDialog(ui::Window& window, const char* name) const;
+		// The Auto Fades dialog (resources/ui/auto-fades.rml) for the project, or for a track (not 0).
+		void openAutoFades(ui::Window& window, uint64_t track) const;
 		// openDialog for a dialog whose Lua keeps its state in a global table, so that there is only one: while open
 		// is open, brings it to the front instead.
 		Rml::ElementDocument& openOnce(
@@ -171,7 +207,11 @@ namespace gnubase::app
 		ui::WindowId m_markersWindow = 0;
 		std::unique_ptr<ui::EventDisplay> m_eventDisplay; // goes before the binding
 		std::unique_ptr<ui::MarkerLines> m_markerLines;   // and before the display
-		ui::Winding m_winding{m_binding};                 // Rewind and Forward held, which the transport controls end
+		std::unique_ptr<ui::TempoLane> m_tempoLane;       // as well
+		std::unique_ptr<ui::TempoEditor> m_tempoEditor;
+		ui::WindowId m_tempoWindow = 0;
+		std::vector<uint64_t> m_eventSelection; // the display's, as the last step saw it
+		ui::Winding m_winding{m_binding};       // Rewind and Forward held, which the transport controls end
 		std::unique_ptr<ui::TransportControls> m_transportBar;
 		TransportWindow m_transportPanel;
 		TransportWindow m_timeDisplay;
@@ -183,13 +223,15 @@ namespace gnubase::app
 		bool m_canUndo = false;
 		bool m_canRedo = false;
 		ui::Subscription m_history;
-		ui::ProjectFiles m_files;                      // the File menu's project commands
-		std::unique_ptr<ui::MainMenu> m_menu;          // the project window's
-		Rml::ObserverPtr<Rml::Element> m_studioSetup;  // the open studio setup dialog's document
-		Rml::ObserverPtr<Rml::Element> m_projectSetup; // the open project setup dialog's document
-		std::weak_ptr<ui::PoolPanel> m_pool;           // the docking system owns it while it is there
-		std::weak_ptr<ui::Inspector> m_inspector;      // so too
-		std::vector<ui::Subscription> m_poolResults;   // what the pool commands did, for the pool
+		ui::ProjectFiles m_files;                          // the File menu's project commands
+		std::unique_ptr<ui::MainMenu> m_menu;              // the project window's
+		Rml::ObserverPtr<Rml::Element> m_studioSetup;      // the open studio setup dialog's document
+		Rml::ObserverPtr<Rml::Element> m_projectSetup;     // the open project setup dialog's document
+		std::weak_ptr<ui::PoolPanel> m_pool;               // the docking system owns it while it is there
+		std::weak_ptr<ui::Inspector> m_inspector;          // so too
+		std::vector<ui::Subscription> m_poolResults;       // what the pool commands did, for the pool
+		std::vector<ui::Subscription> m_lockRecord;        // stops refused while recording is locked
+		Rml::ObserverPtr<Rml::Element> m_lockRecordDialog; // the open lock record dialog's document
 		// A mixer window: open while the shell has it; the app lets go of the mixer once the user closed the window.
 		struct MixerWindow
 		{
@@ -198,5 +240,15 @@ namespace gnubase::app
 		};
 		std::array<MixerWindow, 4> m_mixers;
 		std::weak_ptr<ui::Mixer> m_lowerMixer; // the docking system owns it while it is there
+		struct EditorWindow
+		{
+			ui::WindowId window = 0;
+			std::unique_ptr<ui::MidiEditor> editor;
+		};
+		EditorWindow m_editor;
+		std::weak_ptr<ui::MidiEditor> m_lowerEditor;         // the docking system owns it while it is there
+		engine::Json m_editorViews = engine::Json::object(); // the engine's, by editor
+		std::vector<uint64_t> m_followed;                    // the selection the editors last followed
+		std::vector<ui::Subscription> m_editorSubscriptions;
 	};
 }

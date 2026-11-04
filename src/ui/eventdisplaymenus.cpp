@@ -75,20 +75,21 @@ namespace gnubase::ui
 		{
 			Tool tool;
 			const char* name;
+			const char* title;
 			bool crossHair; // whether the tool uses the cross-hair cursor (reference manual p. 110)
 		};
 
 		constexpr std::array<ToolInfo, 10> g_tools{{
-			{Tool::ObjectSelection, "objectSelection", true},
-			{Tool::RangeSelection, "rangeSelection", true},
-			{Tool::Draw, "draw", true},
-			{Tool::Erase, "erase", false},
-			{Tool::Split, "split", true},
-			{Tool::Glue, "glue", false},
-			{Tool::Mute, "mute", false},
-			{Tool::Zoom, "zoom", false},
-			{Tool::Line, "line", true},
-			{Tool::Play, "play", false},
+			{Tool::ObjectSelection, "objectSelection", "Object Selection", true},
+			{Tool::RangeSelection, "rangeSelection", "Range Selection", true},
+			{Tool::Draw, "draw", "Draw", true},
+			{Tool::Erase, "erase", "Erase", false},
+			{Tool::Split, "split", "Split", true},
+			{Tool::Glue, "glue", "Glue", false},
+			{Tool::Mute, "mute", "Mute", false},
+			{Tool::Zoom, "zoom", "Zoom", false},
+			{Tool::Line, "line", "Line", true},
+			{Tool::Play, "play", "Play", false},
 		}};
 
 		constexpr std::array<const char*, 5> g_lineModes = {"line", "parabola", "sine", "triangle", "square"};
@@ -98,6 +99,11 @@ namespace gnubase::ui
 	const char* toolName(Tool tool)
 	{
 		return g_tools.at(static_cast<size_t>(tool)).name;
+	}
+
+	const char* toolTitle(Tool tool)
+	{
+		return g_tools.at(static_cast<size_t>(tool)).title;
 	}
 
 	std::optional<Tool> toolFromName(const std::string& name)
@@ -121,14 +127,18 @@ namespace gnubase::ui
 		m_gridTypeMenu = m_document->GetElementById("grid-type-menu");
 		m_zeroCrossingButton = m_document->GetElementById("snap-zero-crossing");
 		Rml::ElementList buttons;
-		m_document->QuerySelectorAll(buttons, "button[tool]");
+		m_document->QuerySelectorAll(buttons, "button[tool], menuitem[tool]");
 		m_toolButtons.assign(buttons.begin(), buttons.end());
 		m_combineButton = m_document->GetElementById("combine-selection-tools");
 		m_objectMenu = m_document->GetElementById("object-selection-menu");
 		m_lineMenu = m_document->GetElementById("line-menu");
 		m_playMenu = m_document->GetElementById("play-menu");
+		m_toolbox = m_document->GetElementById("toolbox");
+		m_contextMenu = m_document->GetElementById("event-display-menu");
+		m_notification = m_document->GetElementById("tool-notification");
 		if (m_formatMenu != nullptr)
 			m_ruler->SetAttribute("contextmenu", m_formatMenu->GetId()); // a right click in the ruler opens it
+		showContextMenus();
 	}
 
 	// The cycle markers of the active marker track, for the zoom presets menu; its markers, for snapping.
@@ -160,7 +170,8 @@ namespace gnubase::ui
 
 	void EventDisplay::click(Rml::Element* target)
 	{
-		// A tool button chooses its tool; once it has, a second click opens its menu (showTools).
+		// A tool button chooses its tool; once it has, a second click opens its menu (showTools). So do the tools in
+		// the toolbox and the context menu.
 		if (const Rml::Element* button = closest(target, "button"); button != nullptr && button->HasAttribute("tool"))
 		{
 			if (const std::optional<Tool> tool = toolFromName(button->GetAttribute<Rml::String>("tool", "")))
@@ -170,6 +181,12 @@ namespace gnubase::ui
 		const Rml::Element* item = closest(target, "menuitem");
 		if (item == nullptr || item->HasAttribute("disabled"))
 			return;
+		if (item->HasAttribute("tool"))
+		{
+			if (const std::optional<Tool> tool = toolFromName(item->GetAttribute<Rml::String>("tool", "")))
+				setTool(*tool);
+			return;
+		}
 		const Rml::Element* menu = item->GetParentNode();
 		const std::string& id = item->GetId();
 		if (menu == m_formatMenu)
@@ -198,7 +215,8 @@ namespace gnubase::ui
 		}
 		else if (menu == m_gridTypeMenu)
 		{
-			setSnap({{"grid", item->GetAttribute<Rml::String>("grid-type", "")}});
+			// In the format the menu shows, which may not be the engine's yet.
+			setSnap({{"grid", item->GetAttribute<Rml::String>("grid-type", "")}, {"format", timeFormatName(m_format)}});
 		}
 		else if (menu == m_objectMenu)
 		{
@@ -344,50 +362,73 @@ namespace gnubase::ui
 
 	namespace
 	{
-		struct GridItem
-		{
-			engine::GridType grid;
-			const char* text;
-		};
-
-		// The grid types of each time format (reference manual pp. 107-108).
-		std::vector<GridItem> gridItems(TimeFormat format)
+		// What the grid type menu and its button call a grid type (reference manual pp. 107-108).
+		const char* gridText(engine::GridType grid)
 		{
 			using engine::GridType;
-			switch (format)
+			switch (grid)
 			{
-			case TimeFormat::BarsBeats:
-				return {{GridType::Bar, "Bar"}, {GridType::Beat, "Beat"}, {GridType::Quantize, "Use Quantize"},
-					{GridType::AdaptToZoom, "Adapt to Zoom"}};
-			case TimeFormat::Seconds:
-				return {{GridType::Ms1, "1ms"}, {GridType::Ms10, "10ms"}, {GridType::Ms100, "100ms"},
-					{GridType::Ms1000, "1000ms"}};
-			case TimeFormat::Samples:
-				return {{GridType::Samples1, "1 Sample"}, {GridType::Samples10, "10 Samples"},
-					{GridType::Samples100, "100 Samples"}, {GridType::Samples44100, "44100 Samples"}};
-			default:
-				return {{GridType::Subframe, "Subframe"}, {GridType::QuarterFrame, "1/4 Frame"},
-					{GridType::HalfFrame, "1/2 Frame"}, {GridType::Frame, "1 Frame"}, {GridType::TwoFrames, "2 Frames"},
-					{GridType::Second, "1 Second"}};
+			case GridType::Bar:
+				return "Bar";
+			case GridType::Beat:
+				return "Beat";
+			case GridType::Quantize:
+				return "Use Quantize";
+			case GridType::AdaptToZoom:
+				return "Adapt to Zoom";
+			case GridType::Ms1:
+				return "1ms";
+			case GridType::Ms10:
+				return "10ms";
+			case GridType::Ms100:
+				return "100ms";
+			case GridType::Ms1000:
+				return "1000ms";
+			case GridType::Subframe:
+				return "Subframe";
+			case GridType::QuarterFrame:
+				return "1/4 Frame";
+			case GridType::HalfFrame:
+				return "1/2 Frame";
+			case GridType::Frame:
+				return "1 Frame";
+			case GridType::TwoFrames:
+				return "2 Frames";
+			case GridType::Second:
+				return "1 Second";
+			case GridType::Samples1:
+				return "1 Sample";
+			case GridType::Samples10:
+				return "10 Samples";
+			case GridType::Samples100:
+				return "100 Samples";
+			case GridType::Samples44100:
+				return "44100 Samples";
 			}
+			return engine::gridTypeName(grid);
 		}
 
-		std::string gridText(engine::GridType grid)
+		// The grid types of the ruler's time format, from the engine's table.
+		std::vector<engine::GridType> gridTypes(TimeFormat format)
 		{
-			for (const TimeFormat format :
-				{TimeFormat::BarsBeats, TimeFormat::Seconds, TimeFormat::Samples, TimeFormat::Timecode})
-				for (const GridItem& item : gridItems(format))
-					if (item.grid == grid)
-						return item.text;
-			return engine::gridTypeName(grid);
+			const std::optional<engine::GridFormat> grid = engine::gridFormatFromName(timeFormatName(format));
+			return grid ? engine::gridTypes(*grid) : std::vector<engine::GridType>();
 		}
 	}
 
+	// A format sent along counts until the engine answers: settings it sent before keep the display's (takeSnap).
 	void EventDisplay::setSnap(const Json& settings)
 	{
+		const bool format = settings.contains("format");
+		if (format)
+			++m_formatsSent;
 		m_binding.send("snap.set", settings,
-			[](const engine::Result& result)
+			[this, format, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
+				if (alive.expired())
+					return;
+				if (format)
+					--m_formatsSent;
 				if (!result.ok())
 					logging::warning("The event display can't change the snap settings: {}", result.error);
 			});
@@ -418,11 +459,11 @@ namespace gnubase::ui
 			return;
 		while (m_gridTypeMenu->GetNumChildren() > 0)
 			m_gridTypeMenu->RemoveChild(m_gridTypeMenu->GetChild(0));
-		for (const GridItem& grid : gridItems(m_format))
+		for (const engine::GridType grid : gridTypes(m_format))
 		{
 			Rml::ElementPtr item =
-				menuElement(*m_gridTypeMenu, "menuitem", "grid-type", engine::gridTypeName(grid.grid), grid.text);
-			check(*item, grid.grid == m_snap.grid());
+				menuElement(*m_gridTypeMenu, "menuitem", "grid-type", engine::gridTypeName(grid), gridText(grid));
+			check(*item, grid == m_snap.grid());
 			m_gridTypeMenu->AppendChild(std::move(item));
 		}
 	}
