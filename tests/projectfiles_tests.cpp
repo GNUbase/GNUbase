@@ -830,6 +830,13 @@ namespace
 		click(app, "#project-error-dialog button[result=ok]");
 		REQUIRE(app.waitUntil([&app] { return !shown(app, "#project-error-dialog"); }));
 	}
+
+	// The message of the error dialog that is open.
+	std::string errorMessage(test::UiApp& app)
+	{
+		const Json message = elements(app, "#project-error-message");
+		return message.size() == 1 ? message[0].at("text").get<std::string>() : std::string();
+	}
 }
 
 TEST_CASE("an auto save that fails shows its error once, and again when it fails for another reason", "[ui]")
@@ -864,6 +871,18 @@ TEST_CASE("an auto save that fails shows its error once, and again when it fails
 	handleEarlierEvents(app);
 	CHECK(!shown(app, "#project-error-dialog"));
 
+	// Again after the project was saved, although the next auto save fails for the same reason.
+	fileMenu(app, "file.save");
+	REQUIRE(app.waitUntil([&app] { return !app.call("project.revision").at("modified").get<bool>(); }));
+	app.call("track.add", {{"type", "audio"}}); // so that the next auto save is due
+	app.engine().advanceClock(g_pastInterval);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
+	CHECK_THAT(errorMessage(app), ContainsSubstring("auto saved"));
+	closeError(app);
+	app.engine().advanceClock(g_pastInterval);
+	handleEarlierEvents(app);
+	CHECK(!shown(app, "#project-error-dialog"));
+
 	// While another dialog is open the error can't show; it shows at the next failure instead.
 	app.appUi().openStartScreen();
 	REQUIRE(app.waitUntil([&app] { return shown(app, "#start-screen"); }));
@@ -885,6 +904,74 @@ TEST_CASE("an auto save that fails shows its error once, and again when it fails
 	REQUIRE(app.waitUntil([&app] { return !shown(app, "#discard-changes-dialog"); }));
 	app.engine().advanceClock(g_pastInterval);
 	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
+	closeError(app);
+}
+
+TEST_CASE("a failed auto save's error makes way for the error of a newer one and of a failed save", "[ui]")
+{
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	const test::TempDir dir;
+	const fs::path autoSaves = dir.path() / "Auto Saves";
+	const fs::path notFolder = dir.path() / "file";
+	std::ofstream(notFolder) << "not a folder";
+	app.call("project.save", {{"path", utf8(dir.path() / "Song.dawproject")}});
+	app.call("track.add", {{"type", "audio"}});
+	std::ofstream(autoSaves) << "not a folder";
+	app.engine().advanceClock(g_pastInterval);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
+	const std::string first = errorMessage(app);
+
+	// An auto save that fails for another reason while the error is open: the old error closes for the new one, which
+	// says its own reason.
+	fs::remove(autoSaves);
+	blockSaving(autoSaves / "Song-01.bak");
+	app.engine().advanceClock(g_pastInterval);
+	REQUIRE(app.waitUntil([&app, &first] { return errorMessage(app) != first && !errorMessage(app).empty(); }));
+	CHECK_THAT(errorMessage(app), ContainsSubstring("auto saved"));
+	CHECK(elements(app, "#project-error-dialog").size() == 1);
+	CHECK(shown(app, "#project-error-dialog"));
+
+	// A save that fails meanwhile: its error takes the auto save's error's place.
+	app.keys().run("file.saveAs", Json::object(), app.main(), nullptr);
+	answer(app, {notFolder / "Song.dawproject"});
+	REQUIRE(app.waitUntil([&app]
+		{ return shown(app, "#project-error-dialog") && errorMessage(app).find("auto saved") == std::string::npos; }));
+	CHECK(elements(app, "#project-error-dialog").size() == 1);
+	closeError(app);
+
+	// The auto save's error shows again at the next failure, although that is for the same reason.
+	app.engine().advanceClock(g_pastInterval);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
+	CHECK_THAT(errorMessage(app), ContainsSubstring("auto saved"));
+	closeError(app);
+}
+
+TEST_CASE("a failed auto save's error doesn't open over another modal dialog, and shows at the next failure", "[ui]")
+{
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	const test::TempDir dir;
+	const fs::path autoSaves = dir.path() / "Auto Saves";
+	app.call("project.save", {{"path", utf8(dir.path() / "Song.dawproject")}});
+	app.call("track.add", {{"type", "audio"}});
+	std::ofstream(autoSaves) << "not a folder";
+
+	REQUIRE(app.waitUntil([&app] { return elements(app, "#track-list .track-name").size() == 1; }));
+
+	// The auto fades dialog is a modal dialog of the main window that isn't a project dialog.
+	app.keys().run("project.autoFades", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#auto-fades"); }));
+	app.engine().advanceClock(g_pastInterval);
+	handleEarlierEvents(app);
+	CHECK(elements(app, "#project-error-dialog").empty());
+	CHECK(shown(app, "#auto-fades"));
+
+	click(app, "#auto-fades-cancel");
+	REQUIRE(app.waitUntil([&app] { return elements(app, "#auto-fades").empty(); }));
+	app.engine().advanceClock(g_pastInterval);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
+	CHECK_THAT(errorMessage(app), ContainsSubstring("auto saved"));
 	closeError(app);
 }
 

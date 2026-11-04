@@ -71,6 +71,18 @@ namespace gnubase::ui
 					return true;
 			return false;
 		}
+
+		// Whether a modal document other than own is open in the context, such as the fade editor.
+		bool otherModalOpen(Rml::Context& context, const Rml::Element* own)
+		{
+			for (int i = 0; i < context.GetNumDocuments(); ++i)
+			{
+				const Rml::ElementDocument* document = context.GetDocument(i);
+				if (document != own && document->IsModal())
+					return true;
+			}
+			return false;
+		}
 	}
 
 	ProjectFiles::ProjectFiles(KeyCommands& keys, EngineBinding& binding, Shell& shell, std::filesystem::path folder)
@@ -323,6 +335,11 @@ namespace gnubase::ui
 			[this, window, error, autoSave]
 			{
 				Window* showing = m_shell.find(window);
+				// A failed auto save's error doesn't open over another modal dialog, such as the fade editor, which the
+				// user works in: it shows at the next failure instead, as it does while the start screen is open. The
+				// project dialog that is open (m_dialog) is left to openDialog, where an auto save's error makes way.
+				if (autoSave && showing != nullptr && otherModalOpen(showing->context(), m_dialog.get()))
+					return;
 				Rml::ElementDocument* dialog = showing != nullptr
 					? openDialog(*showing, "project-error.rml",
 						  [this, autoSave](Rml::ElementDocument&, const std::string& result)
