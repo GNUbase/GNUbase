@@ -320,6 +320,9 @@
 	</menu>
 	<menu id="track-list-menu">
 		<menuitem command="project.addTrack">Add Track...</menuitem>
+		<!-- Routing (reference manual pp. 546, 554, docs/features/routing.md) -->
+		<menuitem command="track.addGroupToSelected">Group Track to Selected Tracks...</menuitem>
+		<menuitem command="track.addEffectToSelected">Effect Track to Selected Tracks...</menuitem>
 		<menuitem command="track.duplicateSelected">Duplicate Tracks</menuitem>
 		<menuitem command="track.removeSelected">Remove Selected Tracks</menuitem>
 		<menuitem command="track.removeEmpty">Remove Empty Tracks</menuitem>
