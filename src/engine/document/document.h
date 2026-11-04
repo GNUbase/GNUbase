@@ -59,6 +59,7 @@ namespace gnubase::engine
 		Effect, // receives sends; holds no events
 		Marker, // holds markers; has no channel and stays at the top level
 		Ruler,  // shows a ruler in a time format of its own; has no channel
+		Tempo,  // shows and edits the project's tempo track; has no channel, stays at the top level, at most one
 	};
 
 	// The time formats of ruler tracks, as the event display's ruler names them.
@@ -73,6 +74,108 @@ namespace gnubase::engine
 		Balance,  // turns down the side panned away from
 		Combined, // pans the left and the right channel each on its own, linked or apart
 	};
+
+	// The channel strip's sections before the fader (#107, docs/features/channel-strip.md): the pre section's gain,
+	// phase and cut filters, the four-band equalizer and the strip's dynamics. All of them start off, so a new
+	// channel passes its audio unchanged.
+	struct CutFilter
+	{
+		bool on = false;
+		double frequency = 20.0; // Hz: a low cut from 20 to 20000, a high cut from 50 to 20000
+		int slope = 12;          // dB per octave: 6, 12, 24, 36 or 48
+	};
+
+	enum class EqBandType : uint8_t
+	{
+		Bell,
+		LowShelf,  // band 1
+		HighShelf, // band 4
+		LowCut,    // band 1, 12 dB per octave
+		HighCut,   // band 4, 12 dB per octave
+	};
+
+	struct EqBand
+	{
+		bool on = false;
+		EqBandType type = EqBandType::Bell;
+		double frequency = 1000.0; // Hz, 20 to 20000
+		double gain = 0.0;         // dB, -24 to 24
+		double q = 1.0;            // 0.1 to 12
+	};
+
+	struct StripGate
+	{
+		bool on = false;
+		double threshold = -40.0; // dB, -80 to 0
+		double range = -80.0;     // dB, -80 to 0: the gain while closed
+		double attack = 0.1;      // ms, 0.01 to 100
+		double release = 100.0;   // ms, 1 to 4000
+	};
+
+	struct StripCompressor
+	{
+		bool on = false;
+		double threshold = -20.0; // dB, -60 to 0
+		double ratio = 4.0;       // 1 to 20
+		double attack = 10.0;     // ms, 0.1 to 100
+		double release = 100.0;   // ms, 10 to 2000
+		double makeup = 0.0;      // dB, 0 to 24
+	};
+
+	struct StripLimiter
+	{
+		bool on = false;
+		double threshold = 0.0; // dB, -30 to 0: no sample leaves above it
+		double release = 50.0;  // ms, 1 to 1000
+	};
+
+	struct ChannelSections
+	{
+		double gain = 0.0;  // the pre gain, dB, -24 to 24
+		bool phase = false; // inverts the polarity
+		CutFilter lowCut{false, 20.0, 12};
+		CutFilter highCut{false, 20000.0, 12};
+		bool eqBypass = false;
+		std::array<EqBand, 4> eq = {
+			{{false, EqBandType::LowShelf, 100.0, 0.0, 0.71}, {false, EqBandType::Bell, 500.0, 0.0, 1.0},
+				{false, EqBandType::Bell, 2000.0, 0.0, 1.0}, {false, EqBandType::HighShelf, 8000.0, 0.0, 0.71}}};
+		StripGate gate;
+		StripCompressor compressor;
+		StripLimiter limiter;
+	};
+
+	inline bool operator==(const CutFilter& a, const CutFilter& b)
+	{
+		return std::tie(a.on, a.frequency, a.slope) == std::tie(b.on, b.frequency, b.slope);
+	}
+
+	inline bool operator==(const EqBand& a, const EqBand& b)
+	{
+		return std::tie(a.on, a.type, a.frequency, a.gain, a.q) == std::tie(b.on, b.type, b.frequency, b.gain, b.q);
+	}
+
+	inline bool operator==(const StripGate& a, const StripGate& b)
+	{
+		return std::tie(a.on, a.threshold, a.range, a.attack, a.release) ==
+			std::tie(b.on, b.threshold, b.range, b.attack, b.release);
+	}
+
+	inline bool operator==(const StripCompressor& a, const StripCompressor& b)
+	{
+		return std::tie(a.on, a.threshold, a.ratio, a.attack, a.release, a.makeup) ==
+			std::tie(b.on, b.threshold, b.ratio, b.attack, b.release, b.makeup);
+	}
+
+	inline bool operator==(const StripLimiter& a, const StripLimiter& b)
+	{
+		return std::tie(a.on, a.threshold, a.release) == std::tie(b.on, b.threshold, b.release);
+	}
+
+	inline bool operator==(const ChannelSections& a, const ChannelSections& b)
+	{
+		return std::tie(a.gain, a.phase, a.lowCut, a.highCut, a.eqBypass, a.eq, a.gate, a.compressor, a.limiter) ==
+			std::tie(b.gain, b.phase, b.lowCut, b.highCut, b.eqBypass, b.eq, b.gate, b.compressor, b.limiter);
+	}
 
 	// The mixer channel of a track. MIDI tracks have a MIDI channel: no audio channels, and their output is an
 	// instrument track's channel.
@@ -101,19 +204,30 @@ namespace gnubase::engine
 		// the members above with default values.
 		// NOLINTNEXTLINE(readability-redundant-member-init): see above
 		std::map<uint32_t, double> instrumentParameters = {};
-		// Audio tracks: the monitor and record enable buttons (docs/features/latency-and-monitoring.md).
+		// Audio, MIDI and instrument tracks: the monitor and record enable buttons
+		// (docs/features/latency-and-monitoring.md, docs/features/midi-recording.md).
 		bool monitor = false;
 		bool recordEnable = false;
-		// The mute and solo buttons (docs/features/track-list.md): a muted channel is silent; while any channel is
-		// soloed, only soloed ones, where they play through and what plays into them are heard.
+		// MIDI and instrument tracks: where their MIDI input comes from, "all" (all MIDI inputs) or "none".
+		std::string midiInput = "all";
+		// The mute and solo buttons (docs/features/solo-mute-listen.md): a muted channel is silent, unless mute
+		// automation plays (docs/features/automation.md); while any channel is soloed, only soloed ones, where they
+		// play through and what plays into them are heard, and channels with solo defeat, with where they play through.
+		// A listening channel also plays on the monitoring bus.
 		bool mute = false;
 		bool solo = false;
+		bool soloDefeat = false;
+		bool listen = false;
 		// Audio channels: the plugin slots, from top to bottom; the audio passes through them before the fader.
 		// NOLINTNEXTLINE(readability-redundant-member-init): see instrumentParameters
 		std::vector<ObjectId> slots = {};
 		// The notepad (reference manual p. 168): the user's notes on the channel, in the inspector and the mixer.
 		// NOLINTNEXTLINE(readability-redundant-member-init): see instrumentParameters
 		std::string notes = {};
+		// Audio channels: the strip's sections before the fader. Pre runs before the plugin slots, the equalizer and
+		// the dynamics after them.
+		// NOLINTNEXTLINE(readability-redundant-member-init): see instrumentParameters
+		ChannelSections sections = {};
 	};
 
 	// A channel has at most this many plugin slots (reference manual p. 544).
@@ -232,6 +346,17 @@ namespace gnubase::engine
 		ObjectId parent = 0; // 0: in the pool's Audio folder
 	};
 
+	// A point of an audio event's volume curve (#139): where in the clip it is (its sample frames, so the curve moves
+	// with the event and stays with the audio when the event is resized or split), the volume there in dB
+	// (g_minEventVolume to g_maxEventVolume), and how the curve bends on its way to the next point (-1 to 1, as
+	// AutomationShape::Curve bends).
+	struct VolumePoint
+	{
+		time::Samples position = 0;
+		double volume = 0.0;
+		double curve = 0.0;
+	};
+
 	// Plays a section of a clip on an audio track.
 	struct AudioEvent
 	{
@@ -251,6 +376,26 @@ namespace gnubase::engine
 		// event: its start.
 		std::optional<time::Samples> snapPoint;
 		std::string color; // "#rrggbb", or empty to follow the track's color
+		// Its volume curve by position, on top of volume: level with the first point before it and with the last one
+		// after it; without points, 0 dB. Points at the same position make a jump.
+		std::vector<VolumePoint> volumeCurve;
+		// The audio part it is in, on the same track, or 0 for none. It keeps its position on the track: it plays
+		// only where the part is, and moves, splits and goes with the part.
+		ObjectId part = 0;
+	};
+
+	// A container of audio events on an audio track (#471, reference manual p. 250). Its events are the audio events
+	// whose part it is; they play only within it.
+	struct AudioPart
+	{
+		ObjectId id = 0;
+		ObjectId track = 0;
+		std::string name;
+		time::Position position; // in the track's time base
+		int64_t length = 0;      // in the unit of the position's time base: ticks or samples
+		bool mute = false;       // its events don't play
+		bool lock = false;       // event.* commands don't move, resize, split, glue or remove it
+		std::string color;       // "#rrggbb", or empty to follow the track's color
 	};
 
 	inline constexpr double g_minEventVolume = -144.0;
@@ -385,6 +530,7 @@ namespace gnubase::engine
 		Pan,             // the channel's pan, -1 to 1
 		PanLeft,         // the combined panner's position of the left channel, -1 to 1
 		PanRight,        // and of the right channel
+		Mute,            // the channel's mute button: 0 off, 1 on; a step curve
 		Instrument,      // a parameter of the channel's built-in instrument, in its range
 		Plugin,          // a parameter of the plugin in one of the channel's slots, in its range: slot and parameter
 		Controller,      // a MIDI control change: number and channel; 0 to 1
@@ -479,7 +625,13 @@ namespace gnubase::engine
 	{
 		std::string name = "Untitled";
 		double sampleRate = 48000.0;
+		// The tempo the project plays: the tempo track's tempo events while it is active (tempo track mode), the fixed
+		// tempo otherwise (#155, reference manual p. 1446).
 		time::TempoMap tempo{120.0};
+		bool tempoTrackActive = false;
+		// The tempo of the mode not in use: the tempo track's events in fixed tempo mode, the fixed tempo (one point)
+		// in tempo track mode. Switching modes swaps it with tempo; tempoTrack() and fixedTempo() read either.
+		time::TempoMap otherTempo{120.0};
 		time::SignatureMap signatures;
 		AutoFades autoFades; // for audio tracks without settings of their own
 		PanLaw panLaw = PanLaw::Minus3;
@@ -497,6 +649,7 @@ namespace gnubase::engine
 		std::map<ObjectId, Clip> clips;
 		std::map<ObjectId, PoolFolder> poolFolders;
 		std::map<ObjectId, AudioEvent> audioEvents;
+		std::map<ObjectId, AudioPart> audioParts;
 		std::map<ObjectId, MidiPart> midiParts;
 		std::map<ObjectId, Marker> markers;
 		ObjectId activeMarkerTrack = 0; // the marker track that marker commands use by default, or 0
@@ -518,6 +671,12 @@ namespace gnubase::engine
 
 		// Every track id from top to bottom, folders before the tracks they contain.
 		std::vector<ObjectId> trackOrder() const;
+
+		// The tempo track's tempo events, in either tempo mode.
+		const time::TempoMap& tempoTrack() const { return tempoTrackActive ? tempo : otherTempo; }
+		time::TempoMap& tempoTrack() { return tempoTrackActive ? tempo : otherTempo; }
+		// The tempo of fixed tempo mode, in either tempo mode.
+		double fixedTempo() const { return (tempoTrackActive ? otherTempo : tempo).points().front().bpm; }
 	};
 
 	// An empty project with a stereo input and a stereo output bus.
@@ -564,10 +723,10 @@ namespace gnubase::engine
 	{
 		return std::tie(a.id, a.track, a.format, a.input, a.output, a.instrument, a.volume, a.pan, a.panner, a.panLeft,
 				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.instrumentParameters, a.monitor, a.recordEnable,
-				   a.mute, a.solo, a.slots, a.notes) ==
+				   a.midiInput, a.mute, a.solo, a.soloDefeat, a.listen, a.slots, a.notes, a.sections) ==
 			std::tie(b.id, b.track, b.format, b.input, b.output, b.instrument, b.volume, b.pan, b.panner, b.panLeft,
 				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.instrumentParameters, b.monitor, b.recordEnable,
-				b.mute, b.solo, b.slots, b.notes);
+				b.midiInput, b.mute, b.solo, b.soloDefeat, b.listen, b.slots, b.notes, b.sections);
 	}
 
 	inline bool operator==(const Slot& a, const Slot& b)
@@ -614,12 +773,23 @@ namespace gnubase::engine
 		return std::tie(a.id, a.name, a.parent) == std::tie(b.id, b.name, b.parent);
 	}
 
+	inline bool operator==(const VolumePoint& a, const VolumePoint& b)
+	{
+		return std::tie(a.position, a.volume, a.curve) == std::tie(b.position, b.volume, b.curve);
+	}
+
 	inline bool operator==(const AudioEvent& a, const AudioEvent& b)
 	{
 		return std::tie(a.id, a.track, a.position, a.clip, a.offset, a.length, a.volume, a.mute, a.lock, a.fadeIn,
-				   a.fadeOut, a.crossfade, a.snapPoint, a.color) ==
+				   a.fadeOut, a.crossfade, a.snapPoint, a.color, a.part, a.volumeCurve) ==
 			std::tie(b.id, b.track, b.position, b.clip, b.offset, b.length, b.volume, b.mute, b.lock, b.fadeIn,
-				b.fadeOut, b.crossfade, b.snapPoint, b.color);
+				b.fadeOut, b.crossfade, b.snapPoint, b.color, b.part, b.volumeCurve);
+	}
+
+	inline bool operator==(const AudioPart& a, const AudioPart& b)
+	{
+		return std::tie(a.id, a.track, a.name, a.position, a.length, a.mute, a.lock, a.color) ==
+			std::tie(b.id, b.track, b.name, b.position, b.length, b.mute, b.lock, b.color);
 	}
 
 	inline bool operator==(const NoteTiming& a, const NoteTiming& b)

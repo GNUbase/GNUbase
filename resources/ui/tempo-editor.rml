@@ -1,0 +1,132 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The tempo track editor (docs/features/tempo-track.md, reference manual pp. 1447-1449, 1455), in a window of its
+     own. ui::TempoEditor drives the toolbar, the info line and the tempo curve in #tempo-curve-area, over the whole
+     project, with a bars and beats ruler above it and the tempo scale left of it. -->
+<rml>
+<head>
+	<title>Tempo Track</title>
+	<style>
+		body
+		{
+			position: absolute;
+			left: 0;
+			top: 0;
+			right: 0;
+			bottom: 0;
+		}
+
+		#toolbar
+		{
+			position: absolute;
+			left: 0;
+			top: 0;
+			right: 0;
+			height: 32dp;
+			box-sizing: border-box;
+			padding: 4dp;
+			display: flex;
+		}
+
+		#toolbar button, #toolbar select, #toolbar input
+		{
+			margin-right: 4dp;
+		}
+
+		#tempo-type
+		{
+			width: 100dp;
+		}
+
+		#current-tempo, #tempo-value
+		{
+			width: 72dp;
+		}
+
+		#tempo-info
+		{
+			position: absolute;
+			left: 0;
+			top: 32dp;
+			right: 0;
+			height: 28dp;
+			box-sizing: border-box;
+			padding: 2dp 4dp;
+			display: flex;
+		}
+
+		#tempo-info.hidden
+		{
+			visibility: hidden;
+		}
+
+		#tempo-info span, #tempo-info input, #tempo-info select
+		{
+			margin-right: 8dp;
+		}
+
+		#tempo-ramp
+		{
+			width: 80dp;
+		}
+
+		#tempo-scale
+		{
+			position: absolute;
+			left: 0;
+			top: 84dp;
+			width: 40dp;
+			bottom: 0;
+		}
+
+		.tempo-scale-label
+		{
+			position: absolute;
+			right: 4dp;
+		}
+
+		#tempo-ruler
+		{
+			position: absolute;
+			left: 40dp;
+			top: 60dp;
+			right: 0;
+			height: 24dp;
+		}
+
+		#tempo-curve-area
+		{
+			position: absolute;
+			left: 40dp;
+			top: 84dp;
+			right: 0;
+			bottom: 0;
+		}
+	</style>
+</head>
+<body class="tempo-editor">
+	<div id="toolbar" class="toolbar">
+		<button id="tempo-track-active" class="toggle" title="Activate Tempo Track">Tempo Track</button>
+		<button id="tempo-tool-select" class="icon-only" tempo-tool="select" title="Object Selection"><svg class="icon" src="../icons/tool-pointer.svg"/></button>
+		<button id="tempo-tool-draw" class="icon-only" tempo-tool="draw" title="Draw"><svg class="icon" src="../icons/tool-draw.svg"/></button>
+		<button id="tempo-tool-erase" class="icon-only" tempo-tool="erase" title="Erase"><svg class="icon" src="../icons/tool-erase.svg"/></button>
+		<select id="tempo-type" title="Type of New Tempo Points">
+			<option value="ramp">Ramp</option>
+			<option value="step">Step</option>
+			<option value="auto">Automatic</option>
+		</select>
+		<input type="text" id="current-tempo" title="Current Tempo"/>
+	</div>
+	<div id="tempo-info" class="info-line hidden">
+		<span>Position</span><span id="tempo-position"/>
+		<span>Value</span><input type="text" id="tempo-value" title="Tempo"/>
+		<span>Type</span>
+		<select id="tempo-ramp" title="Tempo Curve Type">
+			<option value="jump">Jump</option>
+			<option value="ramp">Ramp</option>
+		</select>
+	</div>
+	<ruler id="tempo-ruler" class="timeline-ruler"/>
+	<div id="tempo-scale"/>
+	<div id="tempo-curve-area"/>
+</body>
+</rml>

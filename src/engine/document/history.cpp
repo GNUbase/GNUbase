@@ -14,17 +14,17 @@ namespace gnubase::engine
 	{
 		bool operator==(const ProjectSettings& a, const ProjectSettings& b)
 		{
-			return std::tie(a.name, a.sampleRate, a.tempo, a.signatures, a.autoFades, a.panLaw, a.maxVolume, a.colors,
-					   a.setup, a.busses, a.tracks, a.activeMarkerTrack) ==
-				std::tie(b.name, b.sampleRate, b.tempo, b.signatures, b.autoFades, b.panLaw, b.maxVolume, b.colors,
-					b.setup, b.busses, b.tracks, b.activeMarkerTrack);
+			return std::tie(a.name, a.sampleRate, a.tempo, a.tempoTrackActive, a.otherTempo, a.signatures, a.autoFades,
+					   a.panLaw, a.maxVolume, a.colors, a.setup, a.busses, a.tracks, a.activeMarkerTrack) ==
+				std::tie(b.name, b.sampleRate, b.tempo, b.tempoTrackActive, b.otherTempo, b.signatures, b.autoFades,
+					b.panLaw, b.maxVolume, b.colors, b.setup, b.busses, b.tracks, b.activeMarkerTrack);
 		}
 
 		ProjectSettings settings(const Project& project)
 		{
-			return {project.name, project.sampleRate, project.tempo, project.signatures, project.autoFades,
-				project.panLaw, project.maxVolume, project.colors, project.setup, project.busses, project.tracks,
-				project.activeMarkerTrack};
+			return {project.name, project.sampleRate, project.tempo, project.tempoTrackActive, project.otherTempo,
+				project.signatures, project.autoFades, project.panLaw, project.maxVolume, project.colors, project.setup,
+				project.busses, project.tracks, project.activeMarkerTrack};
 		}
 
 		// Walks two maps in id order and calls visit(id, before, after) with nullptr for a missing object.
@@ -120,8 +120,8 @@ namespace gnubase::engine
 	bool ProjectChange::empty() const
 	{
 		return !settingsBefore && tracks.empty() && channels.empty() && slots.empty() && media.empty() &&
-			clips.empty() && poolFolders.empty() && audioEvents.empty() && midiParts.empty() && markers.empty() &&
-			automation.empty();
+			clips.empty() && poolFolders.empty() && audioEvents.empty() && audioParts.empty() && midiParts.empty() &&
+			markers.empty() && automation.empty();
 	}
 
 	ProjectChange difference(const Project& before, const Project& after)
@@ -141,6 +141,7 @@ namespace gnubase::engine
 		change.clips = differences(before.clips, after.clips);
 		change.poolFolders = differences(before.poolFolders, after.poolFolders);
 		change.audioEvents = differences(before.audioEvents, after.audioEvents);
+		change.audioParts = differences(before.audioParts, after.audioParts);
 		change.markers = differences(before.markers, after.markers);
 
 		const MidiPart empty;
@@ -178,6 +179,8 @@ namespace gnubase::engine
 			project.name = target.name;
 			project.sampleRate = target.sampleRate;
 			project.tempo = target.tempo;
+			project.tempoTrackActive = target.tempoTrackActive;
+			project.otherTempo = target.otherTempo;
 			project.signatures = target.signatures;
 			project.autoFades = target.autoFades;
 			project.panLaw = target.panLaw;
@@ -195,6 +198,7 @@ namespace gnubase::engine
 		applyObjects(project.clips, change.clips, direction);
 		applyObjects(project.poolFolders, change.poolFolders, direction);
 		applyObjects(project.audioEvents, change.audioEvents, direction);
+		applyObjects(project.audioParts, change.audioParts, direction);
 		applyObjects(project.markers, change.markers, direction);
 		for (const MidiPartChange& partChange : change.midiParts)
 		{
@@ -253,6 +257,14 @@ namespace gnubase::engine
 	{
 		GNUBASE_ASSERT(m_position < m_steps.size());
 		return m_steps[m_position++];
+	}
+
+	void History::removeLast()
+	{
+		GNUBASE_ASSERT(!m_steps.empty());
+		GNUBASE_ASSERT(m_position == m_steps.size());
+		m_steps.pop_back();
+		m_position = m_steps.size();
 	}
 
 	void History::clear()

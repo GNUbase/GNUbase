@@ -21,17 +21,21 @@ set(settingsEnvironment "GNUBASE_SETTINGS_DIR=${CMAKE_CURRENT_BINARY_DIR}/output
 
 # One file per line, sorted, so that pull requests adding tests rarely touch the same lines.
 add_executable(gnubase-tests
+	accessibility_tests.cpp
 	addtrack_tests.cpp
 	analysis_tests.cpp
 	app_tests.cpp
 	audio_tests.cpp
 	audiofile_tests.cpp
 	audioimport_tests.cpp
+	audiopart_tests.cpp
 	automation_tests.cpp
+	automationtracks_tests.cpp
 	backup_tests.cpp
 	bus_tests.cpp
 	canvas_tests.cpp
 	channelformat_tests.cpp
+	channelstrip_tests.cpp
 	clock_tests.cpp
 	color_tests.cpp
 	coverage_tests.cpp
@@ -40,6 +44,7 @@ add_executable(gnubase-tests
 	device_tests.cpp
 	docking_tests.cpp
 	document_tests.cpp
+	editors_tests.cpp
 	effects_tests.cpp
 	engine_tests.cpp
 	enginebinding_tests.cpp
@@ -47,6 +52,7 @@ add_executable(gnubase-tests
 	eventedit_tests.cpp
 	eventediting_tests.cpp
 	fade_tests.cpp
+	fades_ui_tests.cpp
 	fileimport_tests.cpp
 	fonts_tests.cpp
 	graph_tests.cpp
@@ -56,7 +62,10 @@ add_executable(gnubase-tests
 	ipc_process_tests.cpp
 	ipc_tests.cpp
 	keycommands_tests.cpp
+	keyeditor_tests.cpp
+	keyeditor_ui_tests.cpp
 	latency_tests.cpp
+	lockrecord_tests.cpp
 	log_tests.cpp
 	mainmenu_tests.cpp
 	marker_tests.cpp
@@ -68,8 +77,10 @@ add_executable(gnubase-tests
 	midi_tests.cpp
 	mididevice_tests.cpp
 	midiedit_tests.cpp
+	midieditor_tests.cpp
 	midifile_tests.cpp
 	midifunctions_tests.cpp
+	midirecording_tests.cpp
 	miditap_tests.cpp
 	mixer_tests.cpp
 	mixerviews_tests.cpp
@@ -102,6 +113,8 @@ add_executable(gnubase-tests
 	studiosetup_tests.cpp
 	stylerules_tests.cpp
 	svg_tests.cpp
+	tempo_tests.cpp
+	tempotrack_ui_tests.cpp
 	testing_tests.cpp
 	testutils_tests.cpp
 	theme_tests.cpp
@@ -117,6 +130,7 @@ add_executable(gnubase-tests
 	uisettings_tests.cpp
 	uithemes_tests.cpp
 	uitools_tests.cpp
+	volumecurve_tests.cpp
 	widgets_tests.cpp
 	window_tests.cpp)
 target_link_libraries(gnubase-tests PRIVATE
@@ -124,6 +138,7 @@ target_link_libraries(gnubase-tests PRIVATE
 	cpp-httplib
 	gnubase-app
 	gnubase-app-ui
+	gnubase-decoders
 	gnubase-engine
 	gnubase-ipc
 	gnubase-mcp

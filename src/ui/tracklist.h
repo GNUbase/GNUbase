@@ -69,7 +69,15 @@ namespace gnubase::ui
 		// track.enableSelected, track.toggleFolding (the selected folders), track.foldAll, track.unfoldAll and
 		// track.flipFolding; and for folder tracks track.enableSelectedGroupChannels,
 		// track.disableSelectedGroupChannels, track.moveSelectedToNewFolder and
-		// track.moveSelectedToNewFolderWithGroupChannel.
+		// track.moveSelectedToNewFolderWithGroupChannel; and for automation tracks (#121)
+		// track.toggleAutomationSelected (shows the selected tracks' automation, or hides it if every one shows it),
+		// track.showUsedAutomation and track.hideAllAutomation.
+		//
+		// A track with a channel has Show/Hide Automation (.automation-toggle, .checked while shown) in its lower
+		// left corner, and below its own row a .automation-row[lane] per automation track the event display shows:
+		// its parameter (.automation-parameter), which opens the parameter selector #automation-parameter-menu of the
+		// document with a search field, Remove Parameter, Remove Unused Parameters, Show Only Automation Tracks of a
+		// plugin and the track's parameters; Read (.automation-read) and Append Automation Track (.automation-append).
 		const std::map<std::string, std::function<void()>>& actions() const { return m_actions; }
 
 	private:
@@ -109,7 +117,8 @@ namespace gnubase::ui
 		Rml::Element* rowElement(uint64_t track) const;
 		const engine::Json* channelOf(const Row& row) const;
 		std::vector<std::string> controlsOf(const Row& row) const;
-		void control(const Row& row, const std::string& name);
+		// A click on a track control; solo takes Ctrl (exclusive) and Alt (solo defeat), see soloClick.
+		void control(const Row& row, const std::string& name, bool exclusive = false, bool defeat = false);
 		void step(int direction);
 		void reveal(uint64_t track); // scrolls the display so that the track's lane shows
 		void finishRename(bool keep);
@@ -120,6 +129,13 @@ namespace gnubase::ui
 		// Where a drag at y (window pixels) drops: the folder to go into and the track to go before (0: the end).
 		std::pair<uint64_t, uint64_t> dropAt(float y) const;
 		void move(uint64_t parent, uint64_t before);
+
+		// Automation tracks (#121): the rows below a track's own, at its automation lanes' heights.
+		void showAutomationRows(Rml::Element& row, size_t lane, size_t end); // display lanes lane+1 to end
+		const engine::Json* laneOf(uint64_t lane) const;                     // as project.get has it
+		const engine::Json* targetOf(const engine::Json& lane) const;        // its automationLane.targets entry
+		void openParameters(uint64_t lane); // fills the parameter selector for the automation track
+		void parameterEvent(Rml::Event& event);
 
 		// The selected tracks without those inside other selected folders.
 		std::vector<uint64_t> topSelection() const;
@@ -135,7 +151,9 @@ namespace gnubase::ui
 		Rml::Element* m_rows = nullptr; // clips the list view
 		Rml::Element* m_view = nullptr; // the <listview>
 		Rml::Element* m_dropLine = nullptr;
-		std::vector<Row> m_tracks; // every track in the project's order
+		Rml::Element* m_parameterMenu = nullptr; // the document's #automation-parameter-menu
+		uint64_t m_parameterLane = 0;            // the automation lane it was opened for
+		std::vector<Row> m_tracks;               // every track in the project's order
 		std::map<uint64_t, size_t> m_index;
 		std::set<uint64_t> m_folded;
 		engine::Json m_controls = engine::Json::object(); // ui.trackControls

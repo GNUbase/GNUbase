@@ -55,6 +55,16 @@ namespace gnubase::ui
 		m_waiting.emplace(id, Waiting{std::move(name), std::move(done)});
 	}
 
+	void EngineBinding::sendStep(int gesture, const std::string& what, std::string description, engine::Json commands,
+		std::function<void(const engine::Result&)> done)
+	{
+		send("history.transaction",
+			{{"description", std::move(description)},
+				{"merge", gesture != 0 ? what + " " + std::to_string(gesture) : std::string()},
+				{"commands", std::move(commands)}},
+			std::move(done));
+	}
+
 	size_t EngineBinding::waiting(const std::string& command) const
 	{
 		return static_cast<size_t>(std::count_if(m_waiting.begin(), m_waiting.end(),

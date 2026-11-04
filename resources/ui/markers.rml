@@ -1,7 +1,8 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- The markers window (docs/features/markers.md, reference manual pp. 426-431), in a window of its own. ui::MarkersWindow
-     fills the marker track list #marker-track and the rows of #marker-rows, one per marker of the active marker
-     track, and drives the buttons and the functions menu with these ids. -->
+     fills the marker track list #marker-track, the header #marker-head and the rows of #marker-rows, one per marker
+     of the active marker track, and drives the buttons, the toggles and the menus with these ids. The widths here are
+     the columns' usual ones; the user's, dragged in the header, are the setting ui.markerColumns. -->
 <rml>
 <head>
 	<title>Markers</title>
@@ -52,6 +53,11 @@
 			width: 100%;
 		}
 
+		#marker-auto-scroll
+		{
+			margin-left: auto;
+		}
+
 		td.locate
 		{
 			width: 20dp;
@@ -97,11 +103,13 @@
 		<button id="add-cycle-marker" title="Add Cycle Marker">Add Cycle Marker</button>
 		<button id="remove-marker" title="Remove Marker">Remove</button>
 		<button id="marker-functions" menu="marker-functions-menu" title="Functions">Functions</button>
+		<button id="marker-auto-scroll" type="toggle" title="Auto-Scroll with Project Cursor">Auto-Scroll</button>
+		<button id="marker-settings" menu="marker-settings-menu" title="Marker Settings">Settings</button>
 	</div>
 	<listview id="marker-list" multiple="multiple">
 		<table>
 			<thead>
-				<tr><td class="locate"/><td class="number">ID</td><td class="type">Type</td><td class="position">Position</td><td class="end">End</td><td class="length">Length</td><td class="description">Description</td></tr>
+				<tr id="marker-head"/>
 			</thead>
 			<tbody id="marker-rows"/>
 		</table>
@@ -111,6 +119,11 @@
 		<menuitem id="move-to-cursor">Move Markers to Cursor</menuitem>
 		<menuitem id="reassign-position-ids">Reassign Position Marker IDs</menuitem>
 		<menuitem id="reassign-cycle-ids">Reassign Cycle Marker IDs</menuitem>
+	</menu>
+	<menu id="marker-settings-menu">
+		<menuitem id="show-marker-ids" type="toggle">Show Marker IDs on Marker Track</menuitem>
+		<menuitem id="cycle-follows" type="toggle">Cycle Follows When Locating to Markers</menuitem>
+		<menuitem id="sync-selection" type="toggle">Sync Selection</menuitem>
 	</menu>
 </body>
 </rml>

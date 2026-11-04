@@ -89,6 +89,19 @@ namespace gnubase::ui
 		return std::llround(seconds * m_time.sampleRate);
 	}
 
+	std::optional<int64_t> EventDisplay::selectionStart() const
+	{
+		if (m_range)
+			return m_time.tempo.toTicks(m_range->start, m_time.sampleRate);
+		std::optional<double> start;
+		for (const Shown& shown : m_events)
+			if (std::binary_search(m_selection.begin(), m_selection.end(), shown.id))
+				start = std::min(start.value_or(shown.start), shown.start);
+		if (!start)
+			return std::nullopt;
+		return m_time.tempo.toTicks(*start);
+	}
+
 	engine::SnapGrid EventDisplay::snapGrid() const
 	{
 		engine::SnapGrid grid;
@@ -149,6 +162,8 @@ namespace gnubase::ui
 		std::sort(events.begin(), events.end());
 		events.erase(std::unique(events.begin(), events.end()), events.end());
 		m_selection = std::move(events);
+		if (!m_selection.empty())
+			m_selectedPoints.clear(); // events or automation points (#121); setLanes shows it
 		setLanes();
 		showSelection();
 	}
@@ -327,6 +342,26 @@ namespace gnubase::ui
 				}},
 			{"edit.fillLoop", onSelection("event.fillLoop", Json::object())},
 			{"edit.toRealCopy", onSelection("event.toRealCopy", Json::object())},
+			// Audio parts (reference manual p. 250): the selected audio events into a part, the selected audio parts
+			// back into events.
+			{"audio.eventsToPart",
+				[this]
+				{
+					if (const std::vector<uint64_t> events = selectedAudio(); !events.empty())
+						edit("event.toPart", {{"events", events}}, true);
+				}},
+			{"audio.dissolvePart",
+				[this]
+				{
+					std::vector<uint64_t> parts;
+					for (const Shown& shown : m_events)
+						if (m_laneTypes[shown.lane] == "audio" && m_fades.count(shown.id) == 0 &&
+							std::binary_search(m_selection.begin(), m_selection.end(), shown.id))
+							parts.push_back(shown.id);
+					if (!parts.empty())
+						edit("event.dissolvePart", {{"events", parts}}, true);
+				}},
+
 			{"locate.nudgeCursorLeft", nudgeCursor(-1)},
 			{"locate.nudgeCursorRight", nudgeCursor(1)},
 			{"edit.nudgeLeft", nudge(nullptr, -1)},
@@ -471,6 +506,28 @@ namespace gnubase::ui
 		return lane;
 	}
 
+	int EventDisplay::edgeAt(const Shown& shown, double x) const
+	{
+		const double left = (shown.start - m_view.start) / m_view.scale;
+		const double right = (shown.end - m_view.start) / m_view.scale;
+		if (right - left <= 3.0 * g_edge) // too narrow to have edges
+			return 0;
+		if (x - left <= g_edge)
+			return -1;
+		return right - x <= g_edge ? 1 : 0;
+	}
+
+	void EventDisplay::areaRightDown(Rml::Event& event, double x, double y)
+	{
+		const bool modified =
+			held(event, "ctrl_key") || held(event, "meta_key") || held(event, "shift_key") || held(event, "alt_key");
+		if (modified != m_toolboxOnRightClick) // the toolbox, which chooses a tool and leaves the selection
+			return;
+		const Shown* shown = eventAt(x, y);
+		if (shown != nullptr && !std::binary_search(m_selection.begin(), m_selection.end(), shown->id))
+			select({shown->id});
+	}
+
 	void EventDisplay::areaDown(Rml::Event& event, double x, double y)
 	{
 		m_dragMoved = false;
@@ -483,10 +540,21 @@ namespace gnubase::ui
 		m_pressX = x;
 		m_pressY = y;
 		m_pressed = modifiersOf(event);
+		if (automationDown(x, y))
+			return;
 		if (toolDown(x, y))
 			return;
 		const bool add = held(event, "ctrl_key") || held(event, "meta_key") || held(event, "shift_key");
 		const Shown* shown = eventAt(x, y);
+		// The tool modifier Split Event (Alt) and a drag on an empty spot draws a part (reference manual p. 250).
+		if (shown == nullptr && modifiers("select.splitEvent"))
+		{
+			if (const std::optional<size_t> lane = visibleLaneAt(y); lane && takesParts(*lane))
+			{
+				m_drag = Drag::DrawPart;
+				return;
+			}
+		}
 		if (shown == nullptr)
 		{
 			// A rectangle selects what it touches (with Ctrl or Shift, adds it); a click selects nothing.
@@ -497,17 +565,18 @@ namespace gnubase::ui
 		}
 		m_dragEvent = shown->id;
 		const bool selected = std::binary_search(m_selection.begin(), m_selection.end(), shown->id);
-		const double left = (shown->start - m_view.start) / m_view.scale;
-		const double right = (shown->end - m_view.start) / m_view.scale;
-		const bool wide = right - left > 3.0 * g_edge;
-		const bool atStart = wide && x - left <= g_edge;
-		const bool atEnd = wide && !atStart && right - x <= g_edge;
+		const int edge = edgeAt(*shown, x);
+		const bool atStart = edge < 0;
+		const bool atEnd = edge > 0;
 		// The tool modifiers for a press on an event (Set Cursor Position, Split Event, Copy, Shared Copy, and Disable
 		// Snapping at an edge) act on it rather than adding it to the selection, whatever keys they are set to; so
 		// does a copy's with Ctrl, a restricted copy.
 		const bool toolModifier = modifiers("select.setCursorPosition") || modifiers("select.splitEvent") ||
 			copyKeys(m_pressed) || copyKeys(withoutCtrl(m_pressed)) ||
 			((atStart || atEnd) && modifiers("sizeObjects.disableSnapping"));
+		// A fade handle (reference manual p. 383), or the event volume handle (p. 401).
+		if (!add && !toolModifier && (fadeDown(*shown, x, y) || volumeDown(*shown, x, y)))
+			return;
 		if (add && !toolModifier)
 		{
 			// Ctrl or Shift and a click adds an event to the selection or, released without moving, takes it out; a
@@ -540,6 +609,18 @@ namespace gnubase::ui
 		if (!m_dragMoved && std::abs(dx) < g_dragThreshold && std::abs(dy) < g_dragThreshold)
 			return;
 		m_dragMoved = true;
+		if (m_drag == Drag::Automation)
+		{
+			automationMove(m_pressX + dx, m_pressY + dy);
+			return;
+		}
+		if (m_drag == Drag::FadeIn || m_drag == Drag::FadeOut || m_drag == Drag::Volume)
+		{
+			m_dragDx = dx;
+			m_dragDy = dy;
+			showFades();
+			return;
+		}
 		if (m_drag != Drag::Events && m_drag != Drag::ResizeStart && m_drag != Drag::ResizeEnd)
 			toolMove(m_pressX + dx, m_pressY + dy);
 		if (m_drag != Drag::Events)
@@ -603,12 +684,32 @@ namespace gnubase::ui
 		if (!alive())
 			return;
 		m_pressed = modifiersOf(event); // what is held now decides, e.g. whether a drag copies
+		if (drag == Drag::Automation)
+		{
+			automationUp(dpFrom(*m_lanes, event.GetParameter<float>("mouse_x", 0.0F)),
+				(event.GetParameter<float>("mouse_y", 0.0F) - m_lanes->GetAbsoluteTop()) / dpRatio());
+			m_dragMoved = false;
+			m_drag = Drag::None;
+			return;
+		}
 		if (drag == Drag::Rectangle || drag == Drag::Range || drag == Drag::DrawPart || drag == Drag::Play ||
-			drag == Drag::Click)
+			drag == Drag::Click || drag == Drag::VolumePoint)
 		{
 			toolUp(dpFrom(*m_lanes, event.GetParameter<float>("mouse_x", 0.0F)),
 				(event.GetParameter<float>("mouse_y", 0.0F) - m_lanes->GetAbsoluteTop()) / dpRatio());
 			m_dragMoved = false;
+			m_drag = Drag::None;
+			return;
+		}
+		if (drag == Drag::FadeIn || drag == Drag::FadeOut || drag == Drag::Volume)
+		{
+			if (m_dragMoved)
+			{
+				if (drag == Drag::Volume)
+					volumeUp();
+				else
+					fadeUp();
+			}
 			m_drag = Drag::None;
 			return;
 		}
@@ -786,7 +887,12 @@ namespace gnubase::ui
 				m_drag = Drag::None; // the second press's release does nothing more
 			return;
 		}
-		if (y + m_view.top < 0.0 || eventAt(x, y) != nullptr)
+		if (const Shown* shown = eventAt(x, y); shown != nullptr)
+		{
+			openCrossfadeAt(*shown, m_view.start + (x * m_view.scale));
+			return;
+		}
+		if (y + m_view.top < 0.0)
 			return;
 		const std::optional<size_t> found = visibleLaneAt(y);
 		// Below the tracks, a new MIDI track (reference manual p. 198, the track list's empty area, #80).
@@ -796,9 +902,10 @@ namespace gnubase::ui
 			return;
 		}
 		const size_t lane = *found;
-		if (m_laneTypes[lane] != "midi" && m_laneTypes[lane] != "instrument")
+		if (!takesParts(lane))
 			return;
-		// A one-bar part where the click is (reference manual p. 251), or one between the locators.
+		// A one-bar part where the click is (reference manual p. 251), or one between the locators; on audio tracks
+		// only that (p. 250).
 		const double seconds = m_view.start + (x * m_view.scale);
 		const int64_t sample = samples(seconds);
 		time::Ticks start = 0;
@@ -807,6 +914,10 @@ namespace gnubase::ui
 		{
 			start = m_time.tempo.toTicks(m_left, m_time.sampleRate);
 			end = m_time.tempo.toTicks(m_right, m_time.sampleRate);
+		}
+		else if (m_laneTypes[lane] == "audio")
+		{
+			return;
 		}
 		else
 		{
@@ -818,6 +929,12 @@ namespace gnubase::ui
 		addPart(lane, start, end);
 	}
 
+	bool EventDisplay::takesParts(size_t lane) const
+	{
+		const std::string& type = m_laneTypes[lane];
+		return type == "audio" || type == "midi" || type == "instrument";
+	}
+
 	void EventDisplay::addPart(size_t lane, time::Ticks start, time::Ticks end)
 	{
 		int64_t position = start;
@@ -827,7 +944,8 @@ namespace gnubase::ui
 			position = m_time.tempo.toSamples(start, m_time.sampleRate);
 			length = m_time.tempo.toSamples(end, m_time.sampleRate) - position;
 		}
-		m_binding.send("midiPart.add", {{"track", m_laneTracks[lane]}, {"position", position}, {"length", length}},
+		m_binding.send(m_laneTypes[lane] == "audio" ? "audioPart.add" : "midiPart.add",
+			{{"track", m_laneTracks[lane]}, {"position", position}, {"length", length}},
 			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
 				if (!alive.expired() && result.ok())

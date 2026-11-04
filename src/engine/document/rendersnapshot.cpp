@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/document/rendersnapshot.h"
 
+#include "engine/audio/fades.h"
+
 #include <algorithm>
 #include <cmath>
 #include <map>
 #include <numeric>
+#include <set>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -45,16 +48,54 @@ namespace gnubase::engine
 						controller.number, controller.value, controller.channel, controller.data, index});
 		}
 
+		// An audio part's event plays only within the part (#471): cut at its edges, where its fades are cut short. A
+		// muted part's events, and those it hides, don't play. Returns whether the event plays.
+		// ponytail: a fade cut by the part restarts from its beginning over what is left of it; a part that cuts its
+		// events this way doesn't keep their crossfades.
+		bool inPart(const Project& project, const AudioPart& part, double ratio, RenderAudioEvent& event)
+		{
+			if (part.mute)
+				return false;
+			const time::Samples start = toSamples(project, part.position);
+			const time::Samples end =
+				toSamples(project, time::Position{part.position.base, part.position.value + part.length});
+			const auto frames = [ratio](time::Samples samples)
+			{ return static_cast<time::Samples>(std::llround(static_cast<double>(samples) / ratio)); };
+			if (const time::Samples cut = frames(start - event.start); cut > 0)
+			{
+				event.start = start;
+				event.offset += cut;
+				event.length -= cut;
+				event.fadeIn.length = std::max<time::Samples>(0, event.fadeIn.length - cut);
+				event.crossfade = Crossfade();
+			}
+			const time::Samples eventEnd =
+				event.start + static_cast<time::Samples>(std::llround(static_cast<double>(event.length) * ratio));
+			if (const time::Samples cut = frames(eventEnd - end); cut > 0)
+			{
+				event.length -= cut;
+				event.fadeOut.length = std::max<time::Samples>(0, event.fadeOut.length - cut);
+			}
+			return event.length > 0;
+		}
+
 		// Mute, solo and disabled tracks: with a channel soloed, only soloed channels, those they play into and those
-		// that play into them are heard (feeds: the channels each channel plays into, by index).
+		// that play into them are heard, and channels with solo defeat with those they play into (feeds: the channels
+		// each channel plays into, by index).
 		void markSilent(const Project& project, const std::vector<std::vector<size_t>>& feeds, RenderSnapshot& snapshot)
 		{
 			const size_t count = snapshot.channels.size();
 			std::vector<bool> heard(count, true);
 			std::vector<size_t> soloed;
+			std::vector<size_t> defeated;
 			for (size_t i = 0; i < count; ++i)
-				if (project.channels.at(snapshot.channels[i].id).solo)
+			{
+				const Channel& channel = project.channels.at(snapshot.channels[i].id);
+				if (channel.solo)
 					soloed.push_back(i);
+				else if (channel.soloDefeat)
+					defeated.push_back(i);
+			}
 			if (!soloed.empty())
 			{
 				std::vector<std::vector<size_t>> fedBy(count);
@@ -62,10 +103,9 @@ namespace gnubase::engine
 					for (const size_t to : feeds[i])
 						fedBy[to].push_back(i);
 				heard.assign(count, false);
-				for (const auto* links : {&feeds, &std::as_const(fedBy)})
+				const auto reach = [&heard](const std::vector<std::vector<size_t>>& links, std::vector<size_t> pending)
 				{
-					std::vector<bool> reached(count, false);
-					std::vector<size_t> pending = soloed;
+					std::vector<bool> reached(links.size(), false);
 					while (!pending.empty())
 					{
 						const size_t i = pending.back();
@@ -74,15 +114,23 @@ namespace gnubase::engine
 							continue;
 						reached[i] = true;
 						heard[i] = true;
-						pending.insert(pending.end(), (*links)[i].begin(), (*links)[i].end());
+						pending.insert(pending.end(), links[i].begin(), links[i].end());
 					}
-				}
+				};
+				reach(feeds, soloed);
+				reach(fedBy, soloed);
+				reach(feeds, defeated);
 			}
+			// Mute automation that plays overrides the mute button (ChannelFader::Mute).
+			std::set<ObjectId> automated;
+			for (const auto& [id, lane] : project.automation)
+				if (lane.target.type == AutomationTargetType::Mute && lane.read && !lane.points.empty())
+					automated.insert(lane.track);
 			for (size_t i = 0; i < count; ++i)
 			{
 				RenderChannel& channel = snapshot.channels[i];
-				channel.silent =
-					!heard[i] || project.channels.at(channel.id).mute || !project.trackById.at(channel.track).enabled;
+				const bool muted = project.channels.at(channel.id).mute && automated.count(channel.track) == 0;
+				channel.silent = !heard[i] || muted || !project.trackById.at(channel.track).enabled;
 			}
 		}
 	}
@@ -147,10 +195,14 @@ namespace gnubase::engine
 			render.panLeft = channel.panLeft;
 			render.panRight = channel.panRight;
 			render.panBypass = channel.panBypass;
+			render.sections = channel.sections;
 			render.midiVolume = channel.midiVolume;
 			render.midiPan = channel.midiPan;
 			render.monitor = channel.monitor;
 			render.recordEnable = channel.recordEnable;
+			render.listen = channel.listen;
+			render.midiThru = (track.type == TrackType::Midi || track.type == TrackType::Instrument) &&
+				channel.midiInput == "all" && (channel.monitor || channel.recordEnable);
 			render.autoFades = track.autoFades.value_or(project.autoFades);
 			if (const auto input = busIndex.find(channel.input); input != busIndex.end())
 				render.input = input->second;
@@ -183,10 +235,14 @@ namespace gnubase::engine
 			if (!plays(event.track))
 				continue;
 			const Clip& clip = project.clips.at(event.clip);
-			snapshot->channels[trackChannel.at(event.track)].audioEvents.push_back(
-				{id, toSamples(project, event.position), mediaIndex.at(clip.media), event.offset, event.length,
-					static_cast<float>(std::pow(10.0, event.volume / 20.0)), event.mute, event.fadeIn, event.fadeOut,
-					clip.fadeIn, clip.fadeOut, crossfadeApplies(project, event) ? event.crossfade : Crossfade()});
+			RenderAudioEvent render{id, toSamples(project, event.position), mediaIndex.at(clip.media), event.offset,
+				event.length, static_cast<float>(std::pow(10.0, event.volume / 20.0)), event.mute, event.fadeIn,
+				event.fadeOut, clip.fadeIn, clip.fadeOut,
+				crossfadeApplies(project, event) ? event.crossfade : Crossfade(), gainPoints(event.volumeCurve)};
+			if (const auto part = project.audioParts.find(event.part); part != project.audioParts.end() &&
+				!inPart(project, part->second, project.sampleRate / project.media.at(clip.media).sampleRate, render))
+				continue;
+			snapshot->channels[trackChannel.at(event.track)].audioEvents.push_back(std::move(render));
 		}
 		for (const auto& [id, part] : project.midiParts)
 		{

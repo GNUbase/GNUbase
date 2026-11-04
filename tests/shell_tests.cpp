@@ -299,6 +299,34 @@ TEST_CASE("a quit request closes every window", "[unit]")
 	CHECK(ui.windows.windowCount() == 0);
 }
 
+TEST_CASE("a quit request handler decides when closing the main window or a quit request ends the shell", "[unit]")
+{
+	std::vector<ui::WindowId> asked; // before the shell, which would outlive them otherwise
+	bool agree = false;
+	Ui ui({primary()});
+	const ui::WindowId main = ui.shell.open(at({100, 100, 800, 600})).id();
+	ui.shell.open(at({200, 200, 400, 300}));
+	ui.shell.onQuitRequest(
+		[&](ui::Window& window)
+		{
+			asked.push_back(window.id());
+			if (agree)
+				ui.shell.quit();
+		});
+
+	ui.windows.push({ui::WindowEventKind::CloseRequested, main});
+	ui.windows.push({ui::WindowEventKind::Quit, 0});
+	ui.shell.step(milliseconds(0));
+	CHECK(asked == std::vector<ui::WindowId>{main, main}); // both with the main window
+	REQUIRE(ui.shell.running());
+	CHECK(ui.windows.windowCount() == 2);
+
+	agree = true;
+	ui.windows.push({ui::WindowEventKind::CloseRequested, main});
+	CHECK(ui.shell.run() == 0);
+	CHECK(ui.windows.windowCount() == 0);
+}
+
 TEST_CASE("windows are drawn only when something changed", "[unit]")
 {
 	Ui ui({primary()});

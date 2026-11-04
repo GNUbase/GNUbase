@@ -9,7 +9,8 @@ In the engine: mute and solo, disabled tracks and `track.duplicate`.
 
 ## In the engine
 
-- **Mute and solo** are the channel's switches `mute` and `solo` (`channel.set`, every channel type). A muted channel
+- **Mute and solo** are the channel's switches `mute` and `solo` (`channel.set`, every channel type; solo defeat,
+  exclusive solo and listen are in [solo-mute-listen.md](solo-mute-listen.md)). A muted channel
   is silent. While any channel is soloed, only the soloed channels are heard, with the channels they play through
   (their groups and folders' group channels, a MIDI track's instrument) and the channels that play into them (the
   tracks of a soloed group, the MIDI tracks of a soloed instrument track); a muted channel stays silent, soloed or
@@ -71,8 +72,10 @@ sends engine commands, so whatever another client changes shows at once.
   `mute` (M) and `solo` (S), which tracks with a channel always show, `record` and `monitor` (audio tracks), `read`
   (every automation lane of the track reads, or with a click none does; disabled without lanes) and `timeBase`
   (musical or linear, `.checked` when linear). A click sends `channel.set`, `automationLane.set` in one transaction,
-  or `track.set`. Folders without a group channel, marker and ruler tracks show none. The defaults: mute, solo,
-  record, monitor and read on audio tracks; mute, solo and read on the others with a channel.
+  or `track.set`. Folders without a group channel, marker and ruler tracks show none. The tempo track's only control
+  is `tempoTrack`, Activate Tempo Track (`project.set` `tempoTrackActive`, [tempo-track.md](tempo-track.md)). The
+  defaults: mute, solo, record, monitor and read on audio tracks; mute, solo and read on the others with a channel;
+  tempoTrack on the tempo track.
 - **Selection** (p. 218) is the list view's: a click selects a track, Ctrl-click adds or removes one, Shift-click
   selects a range; Up and Down step through the shown tracks, in the list and wherever the project window has the
   focus (`track.selectPrevious`, `track.selectNext`), and scroll the selected track into view. While an event is
@@ -104,6 +107,9 @@ sends engine commands, so whatever another client changes shows at once.
   window's focus zone, enabled while the list exists and, for those of selected tracks, while tracks are selected,
   so the menus disable them otherwise.
 
+- **Automation tracks** (#121) have rows below their track's own, which reaches down over them; Show/Hide
+  Automation is in the lower left corner of each track with a channel ([automation-tracks.md](automation-tracks.md)).
+
 ## Track controls settings
 
 `resources/ui/track-controls.rml` (pp. 189–191), opened by `#track-controls-settings`, the context menu or the UI
@@ -116,7 +122,7 @@ Width (`#track-name-width`, global), held at the setting's limits. OK saves ever
 ## Not yet
 
 Lanes and comping (#99), write automation (#122),
-recording from instrument and MIDI tracks (#97), dividing the track list, track visibility agents and the track type
+dividing the track list, track visibility agents and the track type
 filter, track presets, track pictures, the lock control, edit channel settings, volume and pan in the track list,
 the settings dialog's groups, controls area preview, presets, Reset All and the MIDI tracks' Output Group and
 Channel Width (p. 191), the track height presets menu, snap track heights, Shift-click to

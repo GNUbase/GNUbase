@@ -74,6 +74,19 @@ namespace gnubase::engine::settings
 				properties[action] = keys;
 			return {{"type", "object"}, {"properties", properties}, {"additionalProperties", false}};
 		}
+
+		Json markerColumnsSchema()
+		{
+			const Json column = {
+				{"type", "string"}, {"enum", {"number", "type", "position", "end", "length", "description"}}};
+			return {{"type", "object"},
+				{"properties",
+					{{"order", {{"type", "array"}, {"items", column}}},
+						{"widths",
+							{{"type", "object"},
+								{"additionalProperties", {{"type", "number"}, {"minimum", 16}, {"maximum", 2000}}}}},
+						{"sort", column}, {"descending", {{"type", "boolean"}}}}}};
+		}
 	}
 
 	const Format& userFormat()
@@ -101,6 +114,13 @@ namespace gnubase::engine::settings
 					Json{{"type", "object"}}, Json{{"input", Json::object()}, {"output", Json::object()}}},
 				{"audio.device", "The audio device's id, or empty for the backend's default device.",
 					Json{{"type", "string"}}, ""},
+				{"audio.listenDim",
+					"How far the main mix is turned down on the monitoring bus while channels listen (channel.set "
+					"listen), in dB from -144 (silence: only the listening channels are heard) to 0.",
+					Json{{"type", "number"}, {"minimum", -144}, {"maximum", 0}}, -144.0},
+				{"audio.listenLevel",
+					"The level at which listening channels play on the monitoring bus, in dB from -144 to 12.",
+					Json{{"type", "number"}, {"minimum", -144}, {"maximum", 12}}, 0.0},
 				{"audio.portSettings",
 					"How the audio devices' ports are shown (audio.setPort), by backend/device id/in or out/system "
 					"name, also for devices that aren't connected: the name shown (showAs) and whether it is "
@@ -142,6 +162,10 @@ namespace gnubase::engine::settings
 					Json{{"type", "string"},
 						{"enum", {"default", "previous", "previousPlusOne", "lastApplied", "random"}}},
 					"default"},
+				{"editing.tempoType",
+					"The type of new tempo events (reference manual p. 1448): ramp changes the tempo gradually from "
+					"the event before, step jumps, auto takes the type of the event before (tempo.add, tempo.tap).",
+					Json{{"type", "string"}, {"enum", {"ramp", "step", "auto"}}}, "auto"},
 				{"meter.resetOnStart",
 					"Reset on Start: the loudness meter, and the main mix's peak and RMS maxima, start over when "
 					"playback starts (see meter.get).",
@@ -178,6 +202,36 @@ namespace gnubase::engine::settings
 									{{"showAs", {{"type", "string"}}}, {"visible", {{"type", "boolean"}}},
 										{"inAllInputs", {{"type", "boolean"}}}}}}}},
 					Json::object()},
+				{"midi.recordCatchRange",
+					"MIDI record catch range in ms, 0 to 1000: MIDI input that comes this long before a recording "
+					"starts is recorded at its start, so that the very start isn't lost.",
+					Json{{"type", "number"}, {"minimum", 0}, {"maximum", 1000}}, 0.0},
+				{"midi.recordFilter",
+					"What MIDI recording leaves out (it still plays): types, of notes, controllers, pitchBend, "
+					"channelPressure, polyPressure and programs; channels, MIDI channels 1 to 16; controllers, "
+					"controller numbers 0 to 127.",
+					Json{{"type", "object"},
+						{"properties",
+							{{"types",
+								 {{"type", "array"},
+									 {"items",
+										 {{"type", "string"},
+											 {"enum",
+												 {"notes", "controllers", "pitchBend", "channelPressure",
+													 "polyPressure", "programs"}}}}}},
+								{"channels",
+									{{"type", "array"},
+										{"items", {{"type", "integer"}, {"minimum", 1}, {"maximum", 16}}}}},
+								{"controllers",
+									{{"type", "array"},
+										{"items", {{"type", "integer"}, {"minimum", 0}, {"maximum", 127}}}}}}}},
+					Json::object()},
+				{"midi.retrospectiveEvents",
+					"How many MIDI events each MIDI or instrument track's retrospective buffer keeps of what came "
+					"from its MIDI input while it didn't record (midi.insertRetrospective); 0 keeps none.",
+					Json{{"type", "integer"}, {"minimum", 0}, {"maximum", 100000}}, 10000},
+				{"midi.snapPartsToBars", "Recorded MIDI parts start and end at whole bars.", Json{{"type", "boolean"}},
+					true},
 				{"project.autoSave",
 					"Saves a copy of a project with unsaved changes every project.autoSaveInterval minutes into the "
 					"folder Auto Saves of its project folder (see project.autoSave).",
@@ -186,6 +240,16 @@ namespace gnubase::engine::settings
 					Json{{"type", "integer"}, {"minimum", 1}, {"maximum", 100}}, 5},
 				{"project.autoSaveInterval", "Minutes between auto saves.",
 					Json{{"type", "integer"}, {"minimum", 1}, {"maximum", 120}}, 15},
+				{"transport.cycleFollowsMarkers",
+					"Locating to a marker sets the left and right locators to it (marker.locate, marker.locateNext, "
+					"marker.locatePrevious): a cycle marker's range, or from a position marker to the next marker.",
+					Json{{"type", "boolean"}}, false},
+				{"transport.tapTempoMode",
+					"Where a tapped tempo goes (Tap Tempo Mode, reference manual p. 1458; see tempo.tap): auto, "
+					"selection, playbackStart, cursor, project or display.",
+					Json{{"type", "string"},
+						{"enum", {"auto", "selection", "playbackStart", "cursor", "project", "display"}}},
+					"auto"},
 				{"ui.folderData",
 					"When folder tracks show the events and parts of the tracks inside them as data blocks in the "
 					"event display: always, never, or hideWhenExpanded (only while the folder is folded).",
@@ -203,6 +267,21 @@ namespace gnubase::engine::settings
 					"Which markers the event display shows as lines across every track: the active marker track's "
 					"(active), every marker track's (all), or none (off).",
 					Json{{"type", "string"}, {"enum", Json::array({"active", "all", "off"})}}, "active"},
+				{"ui.markerColumns",
+					"The markers window's columns: order, the columns after the locate column in order (number, "
+					"type, position, end, length, description); widths, each one's width in dp; sort, the column the "
+					"list is sorted by, and descending. What it leaves out has its default.",
+					markerColumnsSchema(), Json::object()},
+				{"ui.markerIds", "Whether marker events on the marker tracks show their marker ids.",
+					Json{{"type", "boolean"}}, true},
+				{"ui.markersAutoScroll",
+					"Whether the markers window scrolls to keep the marker at the project cursor (its locate arrow) "
+					"in view.",
+					Json{{"type", "boolean"}}, true},
+				{"ui.markersSyncSelection",
+					"Whether the markers window and the project window select the same markers. It pauses while "
+					"recording.",
+					Json{{"type", "boolean"}}, true},
 				{"ui.scale", "The UI scale, applied on top of each monitor's own scale.",
 					Json{{"type", "number"}, {"minimum", 0.5}, {"maximum", 4}}, 1.0},
 				{"ui.theme", "The theme's folder name in resources/themes.", Json{{"type", "string"}}, "gnubase"},
@@ -231,20 +310,33 @@ namespace gnubase::engine::settings
 					"(alt), sizeObjects.disableSnapping (ctrl) and split.splitRepeated (alt). What it leaves out has "
 					"its default.",
 					toolModifiersSchema(), Json::object()},
+				{"ui.toolSwitchNotification",
+					"Whether choosing a project window tool with a key command shows the tool's name for a moment in "
+					"the event display (docs/features/tools.md).",
+					Json{{"type", "boolean"}}, true},
+				{"ui.toolboxOnRightClick",
+					"Whether a right click in the event display opens the toolbox, the toolbar's tools at the mouse, "
+					"and a right click with a modifier key the context menu; when off, the other way round "
+					"(docs/features/tools.md).",
+					Json{{"type", "boolean"}}, false},
 				{"ui.trackControls",
 					"The controls the track list shows, by track type (audio, instrument, midi, group, effect, "
-					"folder, marker, ruler), in order: mute, solo, record, monitor (audio tracks), read (automation) "
-					"and timeBase. Mute and solo always show on tracks with a channel; a type left out shows none.",
+					"folder, marker, ruler, tempo), in order: mute, solo, record, monitor (audio, instrument and MIDI "
+					"tracks), read (automation), timeBase and tempoTrack (the tempo track's Activate Tempo Track). "
+					"Mute and solo always show on tracks with a channel; a type left out shows none.",
 					Json{{"type", "object"},
 						{"additionalProperties",
 							{{"type", "array"},
 								{"items",
 									{{"type", "string"},
-										{"enum", {"mute", "solo", "record", "monitor", "read", "timeBase"}}}}}}},
+										{"enum",
+											{"mute", "solo", "record", "monitor", "read", "timeBase",
+												"tempoTrack"}}}}}}},
 					Json{{"audio", {"mute", "solo", "record", "monitor", "read"}},
-						{"instrument", {"mute", "solo", "read"}}, {"midi", {"mute", "solo", "read"}},
-						{"group", {"mute", "solo", "read"}}, {"effect", {"mute", "solo", "read"}},
-						{"folder", {"mute", "solo", "read"}}, {"marker", Json::array()}, {"ruler", Json::array()}}},
+						{"instrument", {"mute", "solo", "record", "monitor", "read"}},
+						{"midi", {"mute", "solo", "record", "monitor", "read"}}, {"group", {"mute", "solo", "read"}},
+						{"effect", {"mute", "solo", "read"}}, {"folder", {"mute", "solo", "read"}},
+						{"marker", Json::array()}, {"ruler", Json::array()}, {"tempo", {"tempoTrack"}}}},
 				{"ui.trackWidths",
 					"The widths in the track list's rows, in dp: name, the track name's for every track type (20 to "
 					"400), and controls, by track type, the width of its controls area (0 to 800), whose controls go "
@@ -259,7 +351,7 @@ namespace gnubase::engine::settings
 					Json{{"name", 120},
 						{"controls",
 							{{"audio", 120}, {"instrument", 120}, {"midi", 120}, {"group", 120}, {"effect", 120},
-								{"folder", 120}, {"marker", 120}, {"ruler", 120}}}}},
+								{"folder", 120}, {"marker", 120}, {"ruler", 120}, {"tempo", 120}}}}},
 				{"ui.zoomPresets",
 					"The horizontal zoom presets of the event display, for every project: each a name and the "
 					"seconds the view shows.",

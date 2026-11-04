@@ -24,6 +24,7 @@ namespace gnubase::ui
 	MainMenu::MainMenu(KeyCommands& keys, Window& window, Rml::ElementDocument& document)
 		: m_keys(keys), m_window(window), m_document(document.GetObserverPtr())
 	{
+		// Every item is checked before any changes, so that a menu refused leaves the document as it was.
 		Rml::ElementList found;
 		document.QuerySelectorAll(found, "menuitem[command]");
 		for (Rml::Element* element : found)
@@ -37,11 +38,16 @@ namespace gnubase::ui
 				message.append(command).append(" aren't a JSON object: ").append(text);
 				throw std::invalid_argument(message);
 			}
+			m_keys.check(command, parameters);
+			m_items.push_back({element->GetObserverPtr(), {}, std::move(command), std::move(parameters)});
+		}
+		for (Item& item : m_items)
+		{
 			// First, so that it floats right of the item's text.
+			Rml::Element* element = item.element.get();
 			Rml::Element* shown = element->InsertBefore(document.CreateElement("span"), element->GetFirstChild());
 			shown->SetClass("menu-keys", true);
-			m_items.push_back(
-				{element->GetObserverPtr(), shown->GetObserverPtr(), std::move(command), std::move(parameters)});
+			item.keys = shown->GetObserverPtr();
 		}
 		document.AddEventListener(Rml::EventId::Click, this);
 		update();

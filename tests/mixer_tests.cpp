@@ -12,6 +12,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <functional>
 #include <memory>
@@ -349,6 +350,37 @@ TEST_CASE("muted channels and channels silenced by another's solo are silent, gl
 			if (i < 320)
 				return static_cast<double>(i - 255) / 64.0;
 			return 1.0;
+		});
+}
+
+TEST_CASE("listening channels play on the main mix after their fader, the rest of the mix turned down to the listen "
+		  "dim, gliding over a block",
+	"[integration]")
+{
+	Mixer mixer;
+	const ObjectId other = run(mixer.client, "track.add", {{"type", "audio"}}).at("channel").at("id").get<ObjectId>();
+	run(mixer.client, "channel.set", {{"channel", other}, {"volume", -20.0}, {"listen", true}});
+	const double listened = gain(-20.0);
+	const double mix = 1.0 + listened; // both tracks
+	// The dim is silence by default: the mix glides out over the first block of 64 frames.
+	run(mixer.client, "audio.render", {{"frames", 128}});
+	// Another dim and listen level glide in the next block.
+	run(mixer.client, "settings.set", {{"key", "audio.listenDim"}, {"value", -6.0}});
+	run(mixer.client, "settings.set", {{"key", "audio.listenLevel"}, {"value", 6.0}});
+	run(mixer.client, "audio.render", {{"frames", 128}});
+	// Once no channel listens, the mix glides back.
+	CHECK(run(mixer.client, "channel.deactivateAll", {{"state", "listen"}}).at("channels") == Json::array({other}));
+	run(mixer.client, "audio.render", {{"frames", 128}});
+	const double dim = gain(-6.0);
+	checkGain(mixer.output(0, 384),
+		[&](size_t i)
+		{
+			const double x = static_cast<double>((i % 128) + 1) / 64.0; // through a block's glide
+			if (i < 128)
+				return (mix * std::max(0.0, 1.0 - x)) + listened;
+			if (i < 256)
+				return (mix * dim * std::min(1.0, x)) + (listened * gain(6.0));
+			return mix * (dim + ((1.0 - dim) * std::min(1.0, x)));
 		});
 }
 

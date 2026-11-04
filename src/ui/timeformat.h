@@ -40,7 +40,7 @@ namespace gnubase::ui
 		time::FrameRate frameRate = time::g_fps25;
 		double startTime = 0.0; // what seconds, timecode and user frames show at the project start
 		int barOffset = 0;      // added to the bars shown
-		int userFramesPerSecond = 30;
+		int userFramesPerSecond = time::g_userFramesPerSecond;
 	};
 
 	// The tempo, signatures, sample rate, frame rate, start time and bar offset of a project as project.get returns

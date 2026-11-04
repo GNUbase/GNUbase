@@ -30,6 +30,9 @@ namespace gnubase::ui
 	using RunCommand = std::function<void(const std::string& command, const engine::Json& parameters)>;
 	// Ends a command that runs while its button is held, as its key going up would (KeyCommands::release).
 	using ReleaseCommand = std::function<void(const std::string& command)>;
+	// Checks that a control can run the command with its parameters: throws std::invalid_argument if it can't
+	// (KeyCommands::check).
+	using CheckCommand = std::function<void(const std::string& command, const engine::Json& parameters)>;
 
 	// Drives the transport controls in an element and follows the transport, the project's tempo and signature and the
 	// time formats through the engine binding. The element's markup says what each control is:
@@ -50,17 +53,28 @@ namespace gnubase::ui
 	//   field="tempo"                a <valuefield> with the first tempo in BPM; a drag or a run of wheel turns on it
 	//                                sets the tempo once, at its end, one undo step
 	//   field="signature"            a <textdisplay> with the first time signature, "4/4"
+	//   field="tempoTrack"           a button that switches between fixed tempo and tempo track mode (Activate Tempo
+	//                                Track), checked in tempo track mode
+	//   field="tap"                  Tap Tempo: clicks on it in time set the tempo (tempo.tap, by the user setting
+	//                                transport.tapTempoMode) once they stop for two seconds; meanwhile the tempo
+	//                                fields show the tapped tempo
 	//   menuitem slot="primary" format="seconds"
 	//                                anywhere in the document: picks the slot's time format, checked while it has it
 	//   option="beatCountOnly"       anywhere in the document: checked while ui.timeDisplay has it
 	//
 	// The time formats are the user setting ui.timeFormats, so every transport control shows the same. Use it on the UI
 	// thread; the engine and the binding must outlive it. If the element goes, it shows nothing more.
+	// The tempo that taps at these times (seconds, in order) beat: the average of the times between them, 1 to 999
+	// BPM. None for fewer than two taps.
+	std::optional<double> tappedTempo(const std::vector<double>& taps);
+
 	class TransportControls final : private Rml::EventListener
 	{
 	public:
+		// Throws std::invalid_argument for a control in the element whose parameters aren't a JSON object, or whose
+		// command and parameters check refuses (#446).
 		TransportControls(engine::Engine& engine, EngineBinding& binding, Rml::Element& root, RunCommand run,
-			ReleaseCommand release = {});
+			ReleaseCommand release = {}, const CheckCommand& check = {});
 		~TransportControls() override;
 		TransportControls(const TransportControls&) = delete;
 		TransportControls& operator=(const TransportControls&) = delete;
@@ -83,6 +97,8 @@ namespace gnubase::ui
 		void resize(int steps);
 		int size() const { return m_size; }
 		void onSize(std::function<void(int size)> sized) { m_sized = std::move(sized); }
+		// Where the project window's selection starts, in ticks, which Tap Tempo hands tempo.tap as its selection.
+		void followSelection(std::function<std::optional<int64_t>()> start) { m_selectionStart = std::move(start); }
 
 	private:
 		void ProcessEvent(Rml::Event& event) override;
@@ -98,6 +114,8 @@ namespace gnubase::ui
 		void wheel(Rml::Element& element, float delta);
 		void wheelTempo();
 		void endTempoGesture();
+		void tap();
+		void endTap();
 		void release();
 		void show();     // everything
 		void showTime(); // the displays with times, e.g. once a frame while playing
@@ -134,6 +152,10 @@ namespace gnubase::ui
 		std::optional<float> m_sent;  // what the gesture's end set, until the project's tempo is read again
 		std::chrono::steady_clock::time_point m_wheeled;
 		std::optional<Subscription> m_wheelPause;
+		bool m_tempoTrackActive = false;
+		std::vector<double> m_taps; // when Tap was clicked, by RmlUi's clock, in seconds
+		std::optional<Subscription> m_tapPause;
+		std::function<std::optional<int64_t>()> m_selectionStart;
 
 		std::vector<Subscription> m_subscriptions;
 		std::optional<Subscription> m_playback; // while playing

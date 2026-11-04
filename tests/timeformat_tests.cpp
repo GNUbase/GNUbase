@@ -217,6 +217,13 @@ TEST_CASE("positions typed in every time format read back as the engine converts
 	CHECK(!ui::parseTime(ui::TimeFormat::Seconds, "1:2:3:4", context).has_value());
 	CHECK(!ui::parseTime(ui::TimeFormat::Timecode, "00:00:01:25", context).has_value()); // 25 fps: frames 0 to 24
 	CHECK(!ui::parseTime(ui::TimeFormat::Samples, "12.5", context).has_value());
+
+	// More hours than a timecode holds aren't cut to fewer (#457): 2^32 + 1 hours aren't one hour.
+	CHECK(ui::parseTime(ui::TimeFormat::Timecode, "2147483647:00:00:00", context) ==
+		Catch::Approx(2147483647.0 * 3600.0));
+	CHECK(!ui::parseTime(ui::TimeFormat::Timecode, "2147483648:00:00:00", context).has_value());
+	CHECK(!ui::parseTime(ui::TimeFormat::Timecode, "4294967297:00:00:00", context).has_value());
+	CHECK(!ui::parseTime(ui::TimeFormat::UserFrames, "4294967297:00:00:00", context).has_value());
 }
 
 TEST_CASE("the ruler's marks count from the project setup's start time and bar offset", "[unit]")

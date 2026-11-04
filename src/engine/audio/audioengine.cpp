@@ -73,17 +73,19 @@ namespace gnubase::engine
 		{
 			return Json::parse(R"({"type": "object",
 			"properties": {"playing": {"type": "boolean"}, "recording": {"type": "boolean"},
-				"position": {"type": "integer"},
+				"position": {"type": "integer"}, "start": {"type": "integer"},
 				"left": {"type": "integer"}, "right": {"type": "integer"}, "cycle": {"type": "boolean"},
 				"startMode": {"type": "string", "enum": ["cursor", "cycleStart"]},
 				"returnToStart": {"type": "boolean"}, "punchIn": {"type": "boolean"},
 				"punchOut": {"type": "boolean"}, "preRoll": {"type": "boolean"}, "preRollAmount": {"type": "integer"},
 				"postRoll": {"type": "boolean"}, "postRollAmount": {"type": "integer"},
 				"metronome": {"type": "boolean"},
-				"audioRecordMode": {"type": "string", "enum": ["keepHistory", "cycleHistoryReplace", "replace"]}},
-			"required": ["playing", "recording", "position", "left", "right", "cycle", "startMode",
+				"audioRecordMode": {"type": "string", "enum": ["keepHistory", "cycleHistoryReplace", "replace"]},
+				"midiRecordMode": {"type": "string", "enum": ["newParts", "merge", "replace"]},
+				"lockRecord": {"type": "boolean"}},
+			"required": ["playing", "recording", "position", "start", "left", "right", "cycle", "startMode",
 				"returnToStart", "punchIn", "punchOut", "preRoll", "preRollAmount", "postRoll", "postRollAmount",
-				"metronome", "audioRecordMode"]})");
+				"metronome", "audioRecordMode", "midiRecordMode", "lockRecord"]})");
 		}
 
 		Json noParameters()
@@ -342,7 +344,9 @@ namespace gnubase::engine
 		}
 		if (announce && m_engine != nullptr)
 			m_engine->broadcast("audio.changed", status());
-		if (m_device && (m_snapshots.latest().revision != m_revision || autoMonitoring() != m_autoMonitoring))
+		if (m_device &&
+			(m_snapshots.latest().revision != m_revision || autoMonitoring() != m_autoMonitoring ||
+				listenGains() != m_listenGains))
 			rebuild();
 		updateRecorder();
 	}
@@ -354,9 +358,18 @@ namespace gnubase::engine
 		RecordSetup setup;
 		if (m_describeRecording)
 			setup = m_describeRecording();
+		const double deviceRate = m_device->format().sampleRate;
 		setup.mode = m_transport.settings().audioRecordMode;
-		setup.preRecordFrames = std::llround(
-			std::clamp(m_settings.get(settings::g_audioPreRecordSeconds), 0.0, 60.0) * m_device->format().sampleRate);
+		setup.preRecordFrames =
+			std::llround(std::clamp(m_settings.get(settings::g_audioPreRecordSeconds), 0.0, 60.0) * deviceRate);
+		setup.midiMode = m_transport.settings().midiRecordMode;
+		setup.midiFilter = MidiRecordFilter::fromJson(m_settings.value("midi.recordFilter"));
+		setup.snapToBars = m_settings.get(settings::g_midiSnapPartsToBars);
+		setup.catchFrames = std::llround(
+			std::clamp(m_settings.get(settings::g_midiRecordCatchRange), 0.0, 1000.0) * deviceRate / 1000.0);
+		setup.retrospective =
+			static_cast<size_t>(std::max<int64_t>(m_settings.get(settings::g_midiRetrospectiveEvents), 0));
+		setup.pauseFrames = std::llround(30.0 * deviceRate); // reference manual p. 354
 		// Each channel of a track's file records the channel of its input bus with the same number; a bus with fewer
 		// channels gives the others its last one, so a mono input fills a stereo track.
 		const RenderSnapshot& snapshot = m_snapshots.latest();
@@ -393,10 +406,17 @@ namespace gnubase::engine
 		return AutoMonitoring::TapeMachine;
 	}
 
+	AudioEngine::ListenGains AudioEngine::listenGains() const
+	{
+		return {static_cast<float>(volumeGain(m_settings.get(settings::g_audioListenDim))),
+			static_cast<float>(volumeGain(m_settings.get(settings::g_audioListenLevel)))};
+	}
+
 	void AudioEngine::rebuild()
 	{
 		const RenderSnapshot& snapshot = m_snapshots.latest();
 		m_autoMonitoring = autoMonitoring();
+		m_listenGains = listenGains();
 		const audio::DeviceFormat& format = m_device->format();
 		graph::GraphDesc desc = graph::describe(snapshot);
 		m_sourceNodes.clear();
@@ -431,8 +451,8 @@ namespace gnubase::engine
 		m_playback.setTracks(std::move(tracks), std::move(paths), snapshot.sampleRate);
 		const uint64_t generation = ++m_generation;
 		attachMidi(snapshot, desc, generation);
-		attachStrips(snapshot, desc);
 		attachSlots(snapshot, desc);
+		attachStrips(snapshot, desc);
 		std::vector<std::vector<int>> ports = devicePorts(snapshot.busses, m_inputPorts, m_outputPorts);
 		if (m_directMonitoring)
 			monitorDirectly(snapshot, desc, ports);
@@ -452,15 +472,27 @@ namespace gnubase::engine
 				if (id == channel || instrument.sources.count(channel) != 0)
 					destination = instrument.channel->serial();
 			program->destinations.push_back(destination);
+			const auto found = std::find_if(snapshot.channels.begin(), snapshot.channels.end(),
+				[channel = channel](const RenderChannel& candidate) { return candidate.id == channel; });
+			program->thru.push_back(static_cast<uint8_t>(found != snapshot.channels.end() && found->midiThru));
 		}
 		// Bus nodes come first, in bus order (graph::describe); child busses reach the device through their parent.
 		for (size_t b = 0; b < snapshot.busses.size(); ++b)
 			if (snapshot.busses[b].mainMix)
 				program->mainPorts = ports[b];
 		for (size_t b = 0; b < snapshot.busses.size(); ++b)
-			if (snapshot.busses[b].parent < 0)
-				(snapshot.busses[b].direction == BusDirection::Input ? program->inputs : program->outputs)
-					.push_back({static_cast<int>(b), std::move(ports[b])});
+		{
+			if (snapshot.busses[b].parent >= 0)
+				continue;
+			if (snapshot.busses[b].mainMix)
+				program->mainOutput = static_cast<int>(program->outputs.size());
+			(snapshot.busses[b].direction == BusDirection::Input ? program->inputs : program->outputs)
+				.push_back({static_cast<int>(b), std::move(ports[b])});
+		}
+		for (size_t n = 0; n < desc.nodes.size(); ++n)
+			if (desc.nodes[n].kind == graph::NodeKind::ListenBus)
+				program->listenNode = static_cast<int>(n);
+		program->listen = m_listenGains;
 		m_revision = snapshot.revision;
 		if (m_programs)
 			m_programs->publish(std::move(program));
@@ -595,6 +627,10 @@ namespace gnubase::engine
 	{
 		std::map<ObjectId, std::shared_ptr<ChannelState>> states;
 		const size_t firstChannel = snapshot.busses.size();
+		std::map<ObjectId, size_t> slotNodes;
+		for (size_t n = 0; n < desc.nodes.size(); ++n)
+			if (desc.nodes[n].kind == graph::NodeKind::PluginSlot)
+				slotNodes[desc.nodes[n].object] = n;
 		for (size_t i = 0; i < snapshot.channels.size(); ++i)
 		{
 			const RenderChannel& channel = snapshot.channels[i];
@@ -622,17 +658,27 @@ namespace gnubase::engine
 			const auto source = static_cast<size_t>(sourceNode(channel.id));
 			if (source == firstChannel + i)
 			{
-				node.processor =
-					std::make_shared<ChannelStrip>(state, node.processor, panning, monitoring, channel.silent);
+				node.processor = std::make_shared<ChannelStrip>(
+					state, node.processor, panning, monitoring, channel.silent, StripPart::Whole, channel.sections);
 				continue;
 			}
-			// Plugin slots between them: the source node plays the source and the automation, the channel's node
-			// fades.
+			// Plugin slots between them: the source node plays the source and the automation, the slot nodes give
+			// their plugins their automation, the channel's node fades.
+			std::vector<const void*> plugins;
+			std::vector<ObjectId> slotIds;
+			for (size_t index = 0; index < channel.slots.size(); ++index)
+			{
+				graph::NodeDesc& slot = desc.nodes[slotNodes.at(channel.slots[index].id)];
+				plugins.push_back(slot.processor.get());
+				slotIds.push_back(channel.slots[index].id);
+				if (slot.processor)
+					slot.processor = std::make_shared<SlotStrip>(state, slot.processor, static_cast<uint8_t>(index));
+			}
 			graph::NodeDesc& sourceDesc = desc.nodes[source];
-			sourceDesc.processor = std::make_shared<ChannelStrip>(
-				state, sourceDesc.processor, panning, monitoring, channel.silent, StripPart::Source);
-			node.processor =
-				std::make_shared<ChannelStrip>(state, nullptr, panning, std::nullopt, channel.silent, StripPart::Fader);
+			sourceDesc.processor = std::make_shared<ChannelStrip>(state, sourceDesc.processor, panning, monitoring,
+				channel.silent, StripPart::Source, channel.sections, std::move(plugins), std::move(slotIds));
+			node.processor = std::make_shared<ChannelStrip>(
+				state, nullptr, panning, std::nullopt, channel.silent, StripPart::Fader, channel.sections);
 		}
 		m_channelStates = std::move(states);
 	}
@@ -767,27 +813,14 @@ namespace gnubase::engine
 		graph::TransportBlock transport = m_transport.advance(block.frames);
 		m_played.add(block.position, block.frames, transport);
 		captureInput(block);
-		m_recorder.process(block, m_played, m_recordOffset.load(std::memory_order_relaxed));
-		transport.tempo = program.tempo.bpmAt(program.tempo.toTicks(transport.position, program.sampleRate));
 		m_tap.deliver(block.position, block.frames, program.sequencers);
+		MidiTap::thru(m_midiInput, program.sequencers, program.thru);
+		m_recorder.process(block, m_played, m_recordOffset.load(std::memory_order_relaxed), program.sequencers);
+		transport.tempo = program.tempo.bpmAt(program.tempo.toTicks(transport.position, program.sampleRate));
 		program.graph.process(block.frames, transport, m_workers.get());
 		m_tap.capture(block.position, program.instruments);
 		m_playback.endBlock();
-		// Outputs start silent; busses that share a port add up there, in bus order.
-		for (const BusLink& link : program.outputs)
-		{
-			float* const* bus = program.graph.audio(link.node);
-			for (size_t c = 0; c < link.ports.size(); ++c)
-			{
-				const int port = link.ports[c];
-				if (port < 0 || port >= format.outputChannels)
-					continue;
-				float* out = block.outputs[port];
-				const float* in = bus[c];
-				for (uint32_t i = 0; i < block.frames; ++i)
-					out[i] += in[i];
-			}
-		}
+		output(block, program);
 		m_audition.process(block.outputs, format.outputChannels, program.mainPorts, block.frames);
 		meterMainMix(block, program.mainPorts, transport.playing);
 
@@ -799,6 +832,53 @@ namespace gnubase::engine
 		m_meter.cycle(busy.count(), block.frames / format.sampleRate, threads.data(), count);
 		publishPerformance(m_meter.data());
 		m_programs->release();
+	}
+
+	void AudioEngine::output(const audio::DeviceBlock& block, const Program& program) noexcept
+	{
+		// Outputs start silent; busses that share a port add up there, in bus order. While channels listen, the main
+		// mix glides to the listen dim over the block, and back once none does.
+		const int outputChannels = m_device->format().outputChannels;
+		const float dimFrom = m_dim;
+		const float dimTo = program.listenNode >= 0 ? program.listen.dim : 1.0f;
+		m_dim = dimTo;
+		for (size_t l = 0; l < program.outputs.size(); ++l)
+		{
+			const BusLink& link = program.outputs[l];
+			const bool dims = static_cast<int>(l) == program.mainOutput && (dimFrom != 1.0f || dimTo != 1.0f);
+			float* const* bus = program.graph.audio(link.node);
+			for (size_t c = 0; c < link.ports.size(); ++c)
+			{
+				const int port = link.ports[c];
+				if (port < 0 || port >= outputChannels)
+					continue;
+				float* out = block.outputs[port];
+				const float* in = bus[c];
+				if (!dims)
+				{
+					for (uint32_t i = 0; i < block.frames; ++i)
+						out[i] += in[i];
+					continue;
+				}
+				const float step = (dimTo - dimFrom) / static_cast<float>(block.frames);
+				for (uint32_t i = 0; i < block.frames; ++i)
+					out[i] += in[i] * (dimFrom + (step * static_cast<float>(i + 1)));
+			}
+		}
+		if (program.listenNode < 0)
+			return;
+		// ponytail: the listening channels come in and go at once; a glide needs the listen bus in every graph.
+		float* const* listen = program.graph.audio(program.listenNode);
+		for (size_t c = 0; c < program.mainPorts.size(); ++c)
+		{
+			const int port = program.mainPorts[c];
+			if (port < 0 || port >= outputChannels)
+				continue;
+			float* out = block.outputs[port];
+			const float* in = listen[c];
+			for (uint32_t i = 0; i < block.frames; ++i)
+				out[i] += in[i] * program.listen.level;
+		}
 	}
 
 	void AudioEngine::meterMainMix(
@@ -2047,13 +2127,15 @@ namespace gnubase::engine
 	{
 		const TransportSettings& settings = m_transport.settings();
 		return {{"playing", m_transport.playing()}, {"recording", m_transport.recording()},
-			{"position", m_transport.position()}, {"left", settings.left}, {"right", settings.right},
-			{"cycle", settings.cycle},
+			{"position", m_transport.position()}, {"start", m_transport.playbackStart()}, {"left", settings.left},
+			{"right", settings.right}, {"cycle", settings.cycle},
 			{"startMode", settings.startMode == StartMode::CycleStart ? "cycleStart" : "cursor"},
 			{"returnToStart", settings.returnToStart}, {"punchIn", settings.punchIn}, {"punchOut", settings.punchOut},
 			{"preRoll", settings.preRoll}, {"preRollAmount", settings.preRollAmount}, {"postRoll", settings.postRoll},
 			{"postRollAmount", settings.postRollAmount}, {"metronome", settings.metronome},
-			{"audioRecordMode", g_audioRecordModes.at(static_cast<size_t>(settings.audioRecordMode))}};
+			{"audioRecordMode", g_audioRecordModes.at(static_cast<size_t>(settings.audioRecordMode))},
+			{"midiRecordMode", g_midiRecordModes.at(static_cast<size_t>(settings.midiRecordMode))},
+			{"lockRecord", settings.lockRecord}};
 	}
 
 	void AudioEngine::portSettingsChanged(CommandContext& context, bool audioPorts, bool midiPorts)
@@ -2180,6 +2262,7 @@ namespace gnubase::engine
 					std::string(name) + " must be 0 to " + std::to_string(g_maxRollAmount) + " samples");
 			}
 		settings.metronome = parameters.value("metronome", settings.metronome);
+		settings.lockRecord = parameters.value("lockRecord", settings.lockRecord);
 		if (const auto mode = parameters.find("startMode"); mode != parameters.end())
 		{
 			const auto name = mode->get<std::string>();
@@ -2194,6 +2277,14 @@ namespace gnubase::engine
 			require(index < g_audioRecordModes.size(),
 				"audioRecordMode must be keepHistory, cycleHistoryReplace or replace");
 			settings.audioRecordMode = static_cast<AudioRecordMode>(index);
+		}
+		if (const auto mode = parameters.find("midiRecordMode"); mode != parameters.end())
+		{
+			const auto name = mode->get<std::string>();
+			const auto index = static_cast<size_t>(
+				std::find(g_midiRecordModes.begin(), g_midiRecordModes.end(), name) - g_midiRecordModes.begin());
+			require(index < g_midiRecordModes.size(), "midiRecordMode must be newParts, merge or replace");
+			settings.midiRecordMode = static_cast<MidiRecordMode>(index);
 		}
 		sent(m_transport.set(settings));
 	}
@@ -2224,29 +2315,51 @@ namespace gnubase::engine
 			"Starts playback from the project cursor, or from the left locator if startMode is cycleStart, less the "
 			"pre-roll if preRoll is on (not before the project start). Does nothing while playing.",
 			nullptr, [this](const Json&) { play(); });
+		// Lock Record: a recording doesn't stop or punch out by these commands, only by a confirmed stop.
+		const auto unlocked = [this]
+		{
+			require(!m_transport.settings().lockRecord || !m_transport.recording(),
+				"recording is locked: stop it with transport.stop confirmed, or unlock it with transport.set "
+				"lockRecord false first");
+		};
 		command("transport.stop",
 			"Stops playback and recording. With returnToStart the cursor goes back to where playback started or was "
-			"last located to.",
-			nullptr, [this](const Json&) { sent(m_transport.stop()); });
+			"last located to. While lockRecord is on (see transport.set), a recording stops only with confirmed: the "
+			"user confirmed it.",
+			R"({"type": "object", "additionalProperties": false, "properties": {"confirmed": {"type": "boolean"}}})",
+			[this, unlocked](const Json& parameters)
+			{
+				if (!parameters.value("confirmed", false))
+					unlocked();
+				sent(m_transport.stop());
+			});
 		command("transport.record",
 			"Starts recording (record true, the default): playback starts as with transport.play if it stood, and "
 			"recording where playback would start without the pre-roll; or recording punches in where it plays. With "
 			"punchIn before the left locator, recording starts at the left locator instead. record false punches out "
-			"and playback goes on. Record-enabled tracks may monitor their input meanwhile, by the user setting "
-			"audio.autoMonitoring (see channel.set).",
+			"and playback goes on, refused while lockRecord is on. Record-enabled tracks may monitor their input "
+			"meanwhile, by the user setting audio.autoMonitoring (see channel.set).",
 			R"({"type": "object", "additionalProperties": false, "properties": {"record": {"type": "boolean"}}})",
-			[this](const Json& parameters) { record(parameters.value("record", true)); });
+			[this, unlocked](const Json& parameters)
+			{
+				const bool on = parameters.value("record", true);
+				if (!on)
+					unlocked();
+				record(on);
+			});
 		command("transport.toggle",
 			"Stops playback if it plays, otherwise starts it. With setting, switches that on or off instead: cycle, "
 			"punchIn, punchOut, preRoll, postRoll, metronome (see transport.set), or record (on as transport.record, "
-			"off punches out).",
+			"off punches out). While lockRecord is on, it neither stops nor punches out a recording.",
 			R"({"type": "object", "additionalProperties": false, "properties": {"setting": {"type": "string",
 				"enum": ["cycle", "punchIn", "punchOut", "preRoll", "postRoll", "metronome", "record"]}}})",
-			[this](const Json& parameters)
+			[this, unlocked](const Json& parameters)
 			{
 				const std::string setting = parameters.value("setting", "");
 				if (setting == "record")
 				{
+					if (m_transport.recording())
+						unlocked();
 					record(!m_transport.recording());
 					return;
 				}
@@ -2269,9 +2382,14 @@ namespace gnubase::engine
 					return;
 				}
 				if (m_transport.playing())
+				{
+					unlocked();
 					sent(m_transport.stop());
+				}
 				else
+				{
 					play();
+				}
 			});
 		command("transport.locate",
 			"Moves the project cursor to a position in samples, by seconds from where it is (back if negative, not "
@@ -2294,7 +2412,12 @@ namespace gnubase::engine
 			"punches in or out and playback that stops on their own announce transport.changed. metronome is the "
 			"transport bar's switch; the click comes with the metronome. audioRecordMode: what a recording does to the "
 			"events it overlaps on its track (see "
-			"recording.add): keepHistory (the default), cycleHistoryReplace or replace.",
+			"recording.add): keepHistory (the default), cycleHistoryReplace or replace. midiRecordMode: what a MIDI "
+			"recording does to the MIDI parts it overlaps (see recording.add): newParts (the default), merge or "
+			"replace. lockRecord: Lock Record, which "
+			"keeps a recording from stopping or punching out by accident: transport.stop stops it only with "
+			"confirmed, transport.record and transport.toggle don't end it, and recording ignores the punch out at "
+			"the right locator; it stays on until it is set off.",
 			R"({"type": "object", "additionalProperties": false, "properties": {
 				"left": {"type": ["integer", "string"], "maximum": 281474976710656},
 				"right": {"type": ["integer", "string"], "maximum": 281474976710656},
@@ -2302,7 +2425,8 @@ namespace gnubase::engine
 				"punchIn": {"type": "boolean"}, "punchOut": {"type": "boolean"}, "preRoll": {"type": "boolean"},
 				"preRollAmount": {"type": "integer"}, "postRoll": {"type": "boolean"},
 				"postRollAmount": {"type": "integer"}, "metronome": {"type": "boolean"},
-				"audioRecordMode": {"type": "string"}}})",
+				"audioRecordMode": {"type": "string"}, "midiRecordMode": {"type": "string"},
+				"lockRecord": {"type": "boolean"}}})",
 			[this](const Json& parameters) { setTransport(parameters); });
 		command("transport.exchangeLocators", "Swaps the left and right locators.", nullptr,
 			[this](const Json&)
@@ -2331,7 +2455,8 @@ namespace gnubase::engine
 			});
 		engine.registerCommand(
 			{"transport.get", 1,
-				"Whether playback and recording run, the project cursor in samples, the locators and the modes. "
+				"Whether playback and recording run, the project cursor in samples, where the last playback started "
+				"(start, in samples, without the pre-roll), the locators and the modes. "
 				"After a locate the cursor is where it goes, even before the audio thread has applied it.",
 				noParameters(), transportSchema(), true},
 			[this](CommandContext&) { return transportStatus(); });

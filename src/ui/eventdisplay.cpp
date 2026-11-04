@@ -86,6 +86,9 @@ namespace gnubase::ui
 		m_mutedLanes = &addCanvas<EventLanes>(*m_area, "event-lanes", "muted-events");
 		m_selectedLanes = &addCanvas<EventLanes>(*m_area, "event-lanes", "selected-events");
 		m_waveforms = std::make_unique<EventWaveforms>(binding, add(*m_area, "div", "waveforms"));
+		m_fadeLines = &addCanvas<FadeLines>(*m_area, "fade-lines", "fades");
+		m_automationArea = &add(*m_area, "div", "automation-lanes");
+		m_editor = &add(*m_area, "div", "automation-editor");
 		m_rangeElement = &add(*m_area, "div", "range-selection");
 		m_rectangle = &add(*m_area, "div", "tool-rectangle");
 		m_crossVertical = &add(*m_area, "div", "cross-hair-vertical");
@@ -105,7 +108,10 @@ namespace gnubase::ui
 			{"zoom.undo", [this] { undoZoom(); }}, {"zoom.redo", [this] { redoZoom(); }},
 			{"view.autoScroll", [this] { setAutoScroll(!m_autoScroll); }}};
 		addEditActions();
+		addFadeActions();
+		addVolumeActions();
 		addToolActions();
+		addAutomationActions();
 		setToolModifiers(Json::object());
 
 		// Every change to the project is an undo step or a new project; the display shows the project as it is then.
@@ -143,6 +149,17 @@ namespace gnubase::ui
 					setToolModifiers(*modifiers);
 					m_modifiersKnown = true;
 				}
+				if (const auto toolbox = values.find("ui.toolboxOnRightClick"); toolbox != values.end())
+				{
+					m_toolboxOnRightClick = toolbox->get<bool>();
+					m_toolboxKnown = true;
+					showContextMenus();
+				}
+				if (const auto notifies = values.find("ui.toolSwitchNotification"); notifies != values.end())
+				{
+					m_notifies = notifies->get<bool>();
+					m_notifiesKnown = true;
+				}
 			}));
 		const std::weak_ptr<bool> alive = m_alive;
 		requestProject();
@@ -172,6 +189,20 @@ namespace gnubase::ui
 			{
 				if (!alive.expired() && result.ok() && !m_modifiersKnown) // newer changes win
 					setToolModifiers(result.value.at("value"));
+			});
+		m_binding.send("settings.get", {{"key", "ui.toolboxOnRightClick"}},
+			[this, alive](const engine::Result& result)
+			{
+				if (alive.expired() || !result.ok() || m_toolboxKnown)
+					return;
+				m_toolboxOnRightClick = result.value.at("value").get<bool>();
+				showContextMenus();
+			});
+		m_binding.send("settings.get", {{"key", "ui.toolSwitchNotification"}},
+			[this, alive](const engine::Result& result)
+			{
+				if (!alive.expired() && result.ok() && !m_notifiesKnown)
+					m_notifies = result.value.at("value").get<bool>();
 			});
 		requestMarkers();
 		showAutoScroll();
@@ -278,7 +309,10 @@ namespace gnubase::ui
 		m_laneTracks.clear();
 		m_laneTypes.clear();
 		m_laneLinear.clear();
+		m_laneAutomation.clear();
 		m_events.clear();
+		m_fades.clear();
+		readAutomation(project);
 		for (const Json& track : project.at("tracks"))
 		{
 			const auto id = track.at("id").get<uint64_t>();
@@ -290,11 +324,21 @@ namespace gnubase::ui
 				folded.insert(parents[id]);
 				continue;
 			}
-			lanes[id] = lanes.size();
+			lanes[id] = m_tracks.size();
 			m_tracks.push_back({static_cast<float>(trackHeight(id)), {}});
 			m_laneTracks.push_back(id);
 			m_laneTypes.push_back(track.at("type").get<std::string>());
 			m_laneLinear.push_back(linear[id]);
+			m_laneAutomation.push_back(0);
+			// Its automation tracks below it (#121).
+			for (const uint64_t lane : openLanes(id))
+			{
+				m_tracks.push_back({static_cast<float>(g_trackHeight), {}});
+				m_laneTracks.push_back(id);
+				m_laneTypes.emplace_back("automation");
+				m_laneLinear.push_back(linear[id]);
+				m_laneAutomation.push_back(lane);
+			}
 		}
 		const auto seconds = [this](int64_t position, bool isLinear)
 		{ return isLinear ? static_cast<double>(position) / m_time.sampleRate : m_time.tempo.toSeconds(position); };
@@ -325,6 +369,17 @@ namespace gnubase::ui
 				{event.at("id").get<uint64_t>(), lanes[track], start, end, event.value("mute", false), std::nullopt});
 			m_end = std::max(m_end, end);
 		};
+		// Audio parts (#471) show as parts; their events only as the waveforms within them.
+		std::map<uint64_t, std::pair<double, double>> audioParts;
+		for (const Json& part : project.at("audioParts"))
+		{
+			const auto track = part.at("track").get<uint64_t>();
+			const auto position = part.at("position").get<int64_t>();
+			const double start = seconds(position, linear[track]);
+			const double end = seconds(position + part.at("length").get<int64_t>(), linear[track]);
+			audioParts[part.at("id").get<uint64_t>()] = {start, end};
+			addEvent(part, start, end);
+		}
 		std::vector<EventWaveforms::Event> waves;
 		for (const Json& event : project.at("audioEvents"))
 		{
@@ -333,7 +388,18 @@ namespace gnubase::ui
 			const double rate = file == media.end() ? 0.0 : file->second->at("sampleRate").get<double>();
 			const double start = seconds(event.at("position").get<int64_t>(), linear[track]);
 			const double length = rate > 0.0 ? event.at("length").get<double>() / rate : 0.0;
+			if (const auto part = audioParts.find(event.value("part", uint64_t{0})); part != audioParts.end())
+			{
+				const double from = std::max(start, part->second.first);
+				const double to = std::min(start + length, part->second.second);
+				if (file != media.end() && rate > 0.0 && lanes.count(track) != 0 && to > from)
+					waves.push_back({event.at("id").get<uint64_t>(), lanes[track], {from, to - from}, file->first, rate,
+						file->second->at("channels").get<int>(),
+						event.at("offset").get<int64_t>() + static_cast<int64_t>(std::llround((from - start) * rate))});
+				continue;
+			}
 			addEvent(event, start, start + length);
+
 			// The snap point counts while it is inside the event.
 			const Json& snapPoint = event.at("snapPoint");
 			const double into = snapPoint.is_null() || rate <= 0.0
@@ -341,6 +407,8 @@ namespace gnubase::ui
 				: (snapPoint.get<double>() - event.at("offset").get<double>()) / rate;
 			if (!m_events.empty() && m_events.back().id == event.at("id") && into >= 0.0 && into < length)
 				m_events.back().snapPoint = start + into;
+			if (rate > 0.0)
+				readFades(event, rate);
 			if (file != media.end() && rate > 0.0 && lanes.count(track) != 0)
 				waves.push_back({event.at("id").get<uint64_t>(), lanes[track], {start, length}, file->first, rate,
 					file->second->at("channels").get<int>(), event.at("offset").get<int64_t>()});
@@ -385,7 +453,8 @@ namespace gnubase::ui
 		std::vector<EventLanes::Lane> muted;
 		for (size_t i = 0; i < lanes.size(); ++i)
 		{
-			lanes[i].height = static_cast<float>(trackHeight(m_laneTracks[i]) * m_view.trackZoom);
+			const double height = m_laneAutomation[i] != 0 ? g_trackHeight : trackHeight(m_laneTracks[i]);
+			lanes[i].height = static_cast<float>(height * m_view.trackZoom);
 			m_laneTops.push_back(m_laneTops.back() + lanes[i].height);
 			muted.push_back({lanes[i].height, {}});
 			all.insert(all.end(), lanes[i].events.begin(), lanes[i].events.end());
@@ -416,6 +485,9 @@ namespace gnubase::ui
 		std::sort(all.begin(), all.end(), [](const TimeSpan& a, const TimeSpan& b) { return a.start < b.start; });
 		std::vector<EventLanes::Lane> overview{{10000.0F, std::move(all)}};
 		m_overviewEvents->setLanes(std::move(overview));
+		showFades();
+		showAutomationLanes();
+		showPointer();
 	}
 
 	void EventDisplay::followTransport(const Json& status)
@@ -570,6 +642,7 @@ namespace gnubase::ui
 		view.top = std::clamp(view.top, 0.0, std::max(0.0, m_laneTops.back() - height()));
 		m_view = view;
 		apply();
+		showPointer(); // what's under a mouse that stays where it was
 	}
 
 	void EventDisplay::apply()
@@ -577,16 +650,19 @@ namespace gnubase::ui
 		if (!alive())
 			return;
 		for (Rml::Element* canvas : {static_cast<Rml::Element*>(m_ruler), static_cast<Rml::Element*>(m_lanes),
-				 static_cast<Rml::Element*>(m_mutedLanes), static_cast<Rml::Element*>(m_selectedLanes)})
+				 static_cast<Rml::Element*>(m_mutedLanes), static_cast<Rml::Element*>(m_selectedLanes),
+				 static_cast<Rml::Element*>(m_fadeLines)})
 		{
 			canvas->SetAttribute("start", m_view.start);
 			canvas->SetAttribute("scale", m_view.scale);
 		}
-		for (Rml::Element* canvas : {m_lanes, m_mutedLanes, m_selectedLanes})
+		for (Rml::Element* canvas : {static_cast<Rml::Element*>(m_lanes), static_cast<Rml::Element*>(m_mutedLanes),
+				 static_cast<Rml::Element*>(m_selectedLanes), static_cast<Rml::Element*>(m_fadeLines)})
 			canvas->SetAttribute("scroll-top", m_view.top);
 		m_waveforms->show({m_view.start, m_view.scale, m_view.top, m_laneTops, width(), height(), dpRatio()});
 		setCursor(m_cursorSample);
 		showRange();
+		placeAutomation();
 
 		// The overview line shows the whole project, and the view as a rectangle.
 		const double across = m_overview->GetClientWidth() / dpRatio();
@@ -672,16 +748,7 @@ namespace gnubase::ui
 			grid && *grid != m_snap.format)
 		{
 			m_snap.format = *grid;
-			++m_formatsSent;
-			m_binding.send("snap.set", {{"format", name}},
-				[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
-				{
-					if (alive.expired())
-						return;
-					--m_formatsSent;
-					if (!result.ok())
-						logging::warning("The event display can't change the snap settings: {}", result.error);
-				});
+			setSnap({{"format", name}});
 		}
 		showRuler();
 	}
@@ -788,6 +855,9 @@ namespace gnubase::ui
 		case Rml::EventId::Mousedown:
 			if (target != nullptr && event.GetParameter<int>("button", 0) == 0)
 				mouseDown(event, *target);
+			else if (event.GetParameter<int>("button", 0) == 1 && inside(target, m_area))
+				areaRightDown(event, dpFrom(*m_lanes, event.GetParameter<float>("mouse_x", 0.0F)),
+					(event.GetParameter<float>("mouse_y", 0.0F) - m_lanes->GetAbsoluteTop()) / dpRatio());
 			break;
 		case Rml::EventId::Mousemove:
 			if (event.GetCurrentElement() == m_document)
@@ -801,11 +871,16 @@ namespace gnubase::ui
 				const double y = (event.GetParameter<float>("mouse_y", 0.0F) - m_area->GetAbsoluteTop()) / dpRatio();
 				m_crossVertical->SetProperty(Rml::PropertyId::Left, dp(x));
 				m_crossHorizontal->SetProperty(Rml::PropertyId::Top, dp(y));
+				// The mouse pointer for what a press there does.
+				m_mouse = std::make_pair(dpFrom(*m_lanes, event.GetParameter<float>("mouse_x", 0.0F)),
+					(event.GetParameter<float>("mouse_y", 0.0F) - m_lanes->GetAbsoluteTop()) / dpRatio());
+				showPointer();
 			}
 			break;
 		case Rml::EventId::Mouseup:
 			areaUp(event);
 			m_drag = Drag::None;
+			showPointer();
 			break;
 		case Rml::EventId::Dblclick:
 			doubleClick(event);
@@ -942,6 +1017,11 @@ namespace gnubase::ui
 		case Drag::DrawPart:
 		case Drag::Play:
 		case Drag::Click:
+		case Drag::FadeIn:
+		case Drag::FadeOut:
+		case Drag::Automation:
+		case Drag::Volume:
+		case Drag::VolumePoint:
 			areaMove(dx, dy, restricts(event));
 			return;
 		case Drag::None:

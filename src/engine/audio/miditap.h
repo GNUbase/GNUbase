@@ -54,6 +54,11 @@ namespace gnubase::engine
 		// channels that are gone are dropped. A sequencer whose input is full gets the rest in the next block.
 		void deliver(uint64_t position, uint32_t frames, const Sequencers& sequencers) noexcept;
 
+		// Audio thread, after deliver: the block's channel messages from all MIDI inputs go to the input of each
+		// sequencer that thru marks (MIDI thru, docs/features/midi-recording.md), after what was injected.
+		static void thru(
+			const audio::MidiBuffer& input, const Sequencers& sequencers, const std::vector<uint8_t>& thru) noexcept;
+
 		// Audio thread, after the graph processed the block at position: keeps what each instrument got.
 		void capture(uint64_t position, const Instruments& instruments) noexcept;
 

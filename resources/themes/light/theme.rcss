@@ -137,6 +137,10 @@
 	{
 		decorator: svg-ninepatch(list-item-selected.svg, 6 6 6 6);
 	}
+	listview thead td.sorted
+	{
+		color: #0969da;
+	}
 	tabset tabs
 	{
 		decorator: svg-ninepatch(tabbar.svg, 6 6 6 6);
@@ -196,14 +200,6 @@
 	{
 		decorator: svg-ninepatch(button-primary-pressed.svg, 6 6 6 6);
 	}
-	button:focus-visible
-	{
-		decorator: svg-ninepatch(button-normal.svg, 6 6 6 6), svg-ninepatch(focus-ring.svg, 6 6 6 6);
-	}
-	button.primary:focus-visible
-	{
-		decorator: svg-ninepatch(button-primary-normal.svg, 6 6 6 6), svg-ninepatch(focus-ring.svg, 6 6 6 6);
-	}
 	button svg.icon
 	{
 		image-color: #17202d;
@@ -247,6 +243,16 @@
 	{
 		decorator: svg-ninepatch(toggle-monitor.svg, 6 6 6 6);
 		color: #17202d;
+	}
+	button.toggle.listen.checked
+	{
+		decorator: svg-ninepatch(toggle-monitor.svg, 6 6 6 6);
+		color: #17202d;
+	}
+	button.toggle.solo.defeated
+	{
+		decorator: svg-ninepatch(toggle-hover.svg, 6 6 6 6);
+		color: #0969da;
 	}
 	input.text, input.password, textarea
 	{
@@ -385,6 +391,10 @@
 	{
 		decorator: svg(dropdown-arrow.svg);
 	}
+	knob:focus-visible, fader:focus-visible, slider:focus-visible, input.range:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6);
+	}
 	colorpicker .color-field
 	{
 		decorator: linear-gradient(to bottom, #00000000, #000000), linear-gradient(to right, #ffffff, #ffffff00);
@@ -456,6 +466,12 @@
 		color: #5094e4;
 		stroke-color: #17202d;
 	}
+	.event-display fade-lines
+	{
+		color: #17202d;
+		stroke-color: #17202d;
+		stroke-width: 1dp;
+	}
 	.event-display event-lanes.folder-data
 	{
 		color: #b5d2f4;
@@ -493,6 +509,37 @@
 	{
 		color: #17202d;
 	}
+	.event-display .marker-label.selected
+	{
+		color: #eef1f5;
+		background-color: #6554c0;
+	}
+	.tempo-curve .tempo-line
+	{
+		stroke-color: #0969da;
+		stroke-width: 2dp;
+	}
+	.tempo-curve.inactive .tempo-line
+	{
+		stroke-color: #566273;
+	}
+	.tempo-curve .tempo-point
+	{
+		background-color: #0969da;
+	}
+	.tempo-curve.inactive .tempo-point
+	{
+		background-color: #566273;
+	}
+	.tempo-curve .tempo-point.selected
+	{
+		background-color: #17202d;
+	}
+	.tempo-editor .tempo-scale-label
+	{
+		color: #566273;
+		font-size: 11dp;
+	}
 	.event-display .range-selection
 	{
 		border-width: 1dp;
@@ -522,10 +569,126 @@
 	{
 		background-color: #0969da;
 	}
+	.track-list .automation-rows
+	{
+		background-color: #f6f8fa;
+	}
+	.track-list .automation-row
+	{
+		border-top-width: 1dp;
+		border-top-color: #b9c1cc;
+	}
+	.event-display .automation-lane
+	{
+		background-color: #ffffff80;
+		border-top-width: 1dp;
+		border-top-color: #b9c1cc;
+	}
+	.event-display .automation-curve
+	{
+		color: #17202d;
+		stroke-color: #6554c0;
+	}
+	.event-display .automation-lane.off .automation-curve
+	{
+		color: #566273;
+		stroke-color: #566273;
+	}
+	.event-display .static-value
+	{
+		stroke-color: #17202d;
+		stroke-width: 1dp;
+	}
+	.event-display .automation-editor
+	{
+		border-width: 1dp;
+		border-color: #6554c0;
+		background-color: #6554c01a;
+	}
 	.mixer-channel
 	{
 		border-right-width: 1dp;
 		border-right-color: #b9c1cc;
+	}
+	.midi-editor .editor-part
+	{
+		color: #566273;
+		border-width: 1dp;
+		border-color: #b9c1cc;
+		background-color: #fbfcfe;
+	}
+	.midi-editor .editor-part.editable
+	{
+		color: #17202d;
+	}
+	.midi-editor .editor-part.active, .editor-visibility-track.active
+	{
+		color: #0969da;
+	}
+	.editor-visibility-check
+	{
+		decorator: svg(checkbox-off.svg);
+	}
+	.editor-visibility-check.checked
+	{
+		decorator: svg(checkbox-on.svg);
+	}
+	.editor-visibility-check.partial
+	{
+		decorator: svg(checkbox-mixed.svg);
+	}
+	.key-editor-key
+	{
+		background-color: #444b56;
+		color: #eef1f5;
+		border-bottom-width: 1px;
+		border-bottom-color: #566273;
+	}
+	.key-editor-key.black
+	{
+		background-color: #eef1f5;
+		color: #17202d;
+	}
+	.key-editor-key.selected
+	{
+		background-color: #0969da;
+	}
+	.key-editor-grid
+	{
+		background-color: #ffffff;
+	}
+	.key-editor-row
+	{
+		border-bottom-width: 1px;
+		border-bottom-color: #dce0e6;
+	}
+	.key-editor-row.black
+	{
+		background-color: #f6f8fa;
+	}
+	.key-note
+	{
+		background-color: #68a3e8;
+		border-width: 1px;
+		border-color: #0969da;
+	}
+	.key-note.selected
+	{
+		background-color: #6554c0;
+		border-color: #17202d;
+	}
+	.key-note.inactive
+	{
+		background-color: #ccd0d5;
+		border-color: #566273;
+	}
+	.key-note.drawing
+	{
+		background-color: #0969da66;
+	}
+	.key-editor-step-cursor
+	{
+		background-color: #0969da;
 	}
 	.docking [zone]
 	{
@@ -622,5 +785,81 @@
 	{
 		font-size: 128dp;
 		line-height: 256dp;
+	}
+	valuefield:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(display.svg, 6 6 6 6);
+	}
+	listview:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(list.svg, 6 6 6 6);
+	}
+	button:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(button-normal.svg, 6 6 6 6);
+	}
+	button.checked:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(button-checked.svg, 6 6 6 6);
+	}
+	button.suspended:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(button-normal.svg, 6 6 6 6);
+	}
+	button.primary:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(button-primary-normal.svg, 6 6 6 6);
+	}
+	button.toggle:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(toggle-off.svg, 6 6 6 6);
+	}
+	button.toggle.mute.checked:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(toggle-mute.svg, 6 6 6 6);
+	}
+	button.toggle.solo.checked:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(toggle-solo.svg, 6 6 6 6);
+	}
+	button.toggle.record.checked:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(toggle-record.svg, 6 6 6 6);
+	}
+	button.toggle.monitor.checked:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(toggle-monitor.svg, 6 6 6 6);
+	}
+	button.toggle.listen.checked:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(toggle-monitor.svg, 6 6 6 6);
+	}
+	button.toggle.solo.defeated:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(toggle-hover.svg, 6 6 6 6);
+	}
+	input.checkbox:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg(checkbox-off.svg);
+	}
+	input.checkbox:checked:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg(checkbox-on.svg);
+	}
+	input.checkbox.mixed:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg(checkbox-mixed.svg);
+	}
+	input.radio:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg(radio-off.svg);
+	}
+	input.radio:checked:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg(radio-on.svg);
+	}
+	menubar button:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6);
 	}
 }

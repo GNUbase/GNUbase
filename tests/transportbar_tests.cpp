@@ -1,28 +1,37 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // UI tests of the transport controls (#90, ui/transport.h): every control of the project window's transport bar, the
 // transport panel and the time display window, driven through ui::Automation as MCP's UI tools drive them
-// (tests/uiapp.h), and the transport's key commands.
+// (tests/uiapp.h), and the transport's key commands. Controls with a command that doesn't exist or parameters it
+// doesn't take are refused (#446).
 #include "uiapp.h"
 
+#include "engine/engine.h"
 #include "engine/time/tempomap.h"
+#include "testutils/fakeui.h"
 #include "ui/automation.h"
 #include "ui/canvas.h"
+#include "ui/enginebinding.h"
 #include "ui/eventdisplay.h"
+#include "ui/keycommands.h"
 #include "ui/transport.h"
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <SDL3/SDL.h>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 
 using namespace gnubase;
+using Catch::Matchers::ContainsSubstring;
 using engine::Json;
 
 namespace
@@ -151,6 +160,36 @@ TEST_CASE("the transport bar's buttons run the transport and show its state", "[
 	CHECK(transport(app).at("playing") == false);
 }
 
+TEST_CASE("Space starts and stops playback after a click on a toolbar or transport button (#456)", "[ui]")
+{
+	test::UiApp app({1024, 700});
+	showBar(app);
+	app.ui().key(std::nullopt, "F2");
+	ui::Window* panel = app.appUi().transportPanel();
+	REQUIRE(panel != nullptr);
+
+	// A click beside the button's icon focuses the button itself, but Space runs its key command rather than clicking
+	// the button again.
+	const auto spaceToggles = [&app](const std::string& button, std::optional<ui::WindowId> window)
+	{
+		INFO(button);
+		const bool on = !checked(app, button, window);
+		const Json box = element(app, button, window).at("box");
+		const ui::Point edge{box.at("x").get<int>() + 2, box.at("y").get<int>() + (box.at("height").get<int>() / 2)};
+		app.ui().click(window, {"", 0, edge}, ui::MouseButton::Left, 1, {});
+		REQUIRE(app.waitUntil([&app, &button, window, on] { return checked(app, button, window) == on; }));
+		const Json focus = app.ui().key(window, "Space").at("focus");
+		CHECK(focus.value("id", std::string()) == button.substr(1));
+		REQUIRE(waitFor(app, [](const Json& state) { return state.at("playing") == true; }));
+		app.ui().key(window, "Space");
+		REQUIRE(waitFor(app, [](const Json& state) { return state.at("playing") == false; }));
+		CHECK(checked(app, button, window) == on);
+	};
+	spaceToggles("#cycle", std::nullopt);
+	spaceToggles("#metronome", panel->id());
+	spaceToggles("#snap", std::nullopt);
+}
+
 TEST_CASE("a narrow window cuts off the transport bar's last sections instead of drawing them over each other", "[ui]")
 {
 	test::UiApp app({1024, 700});
@@ -266,7 +305,9 @@ TEST_CASE("the time displays show the cursor in their formats and take positions
 	app.shell().step(std::chrono::milliseconds(0));
 	CHECK(transport(app).at("position") == 72001);
 	CHECK(transport(app).at("left") == 0);
-	app.call("transport.locate", {{"position", 72000}});
+
+	// Typing the position it shows moves the cursor onto it.
+	type(app, "#primary-time", "1.4.1.0");
 	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 72000; }));
 
 	// The format menus, saved in ui.timeFormats.
@@ -665,6 +706,67 @@ TEST_CASE("the mouse wheel changes a display's value", "[ui]")
 	REQUIRE(waitFor(app, [](const Json& state) { return state.at("right") == 96000; }));
 }
 
+TEST_CASE("positions typed or wheeled past the largest project position stop there (#457)", "[ui]")
+{
+	test::UiApp app({1024, 700});
+	showBar(app);
+	app.call("settings.set",
+		{{"key", "ui.timeFormats"},
+			{"value", {{"primary", "seconds"}, {"secondary", "samples"}, {"timeDisplay", "barsBeats"}}}});
+	app.call("transport.locate", {{"position", 48000}});
+	REQUIRE(app.waitUntil([&app] { return shows(app, "#secondary-time") == "48000"; }));
+	const std::string maximum = std::to_string(time::g_maxPosition);
+
+	// Fifteen digits of seconds are more samples than 64 bits hold: the cursor goes to the largest position.
+	type(app, "#primary-time", "999999999999999");
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == time::g_maxPosition; }));
+	REQUIRE(app.waitUntil([&app, &maximum] { return shows(app, "#secondary-time") == maximum; }));
+
+	// Past the largest position in samples, which the engine would refuse.
+	app.call("transport.locate", {{"position", 48000}});
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 48000; }));
+	type(app, "#secondary-time", "999999999999999");
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == time::g_maxPosition; }));
+	REQUIRE(app.waitUntil([&app, &maximum] { return shows(app, "#secondary-time") == maximum; }));
+
+	// The wheel stops there too, and the next turn goes back from there.
+	app.ui().wheel(std::nullopt, at("#primary-time"), 0, -1);
+	settle(app);
+	CHECK(position(app) == time::g_maxPosition);
+	app.ui().wheel(std::nullopt, at("#primary-time"), 0, 1);
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == time::g_maxPosition - 48000; }));
+
+	// Turns far larger than a wheel's, as injected input may send, are a billion steps: a billion seconds here.
+	app.ui().wheel(std::nullopt, at("#primary-time"), 0, -1e13F);
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == time::g_maxPosition; }));
+	REQUIRE(app.waitUntil([&app, &maximum] { return shows(app, "#secondary-time") == maximum; }));
+	app.ui().wheel(std::nullopt, at("#primary-time"), 0, 1e13F);
+	REQUIRE(waitFor(app,
+		[](const Json& state) { return state.at("position") == time::g_maxPosition - (int64_t{48000} * 1000000000); }));
+
+	// The locators and the range's length.
+	type(app, "#left-locator", "999999999999999");
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("left") == time::g_maxPosition; }));
+	app.call("transport.set", {{"left", 48000}, {"right", 96000}});
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("left") == 48000; }));
+	type(app, "#right-locator", "999999999999999");
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("right") == time::g_maxPosition; }));
+	app.call("transport.set", {{"right", 96000}});
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("right") == 96000; }));
+	type(app, "#locator-range", "999999999999999");
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("right") == time::g_maxPosition; }));
+
+	// A billion beats in bars and beats: 500 million seconds at 120 BPM.
+	app.call("settings.set",
+		{{"key", "ui.timeFormats"},
+			{"value", {{"primary", "barsBeats"}, {"secondary", "samples"}, {"timeDisplay", "barsBeats"}}}});
+	app.call("transport.locate", {{"position", 0}});
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 0; }));
+	REQUIRE(app.waitUntil([&app] { return shows(app, "#primary-time") == "1.1.1.0"; }));
+	app.ui().wheel(std::nullopt, at("#primary-time"), 0, -1e13F);
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == int64_t{24000} * 1000000000; }));
+}
+
 TEST_CASE("a drag or wheel gesture on the tempo field is one undo step", "[ui]")
 {
 	test::UiApp app({1024, 700});
@@ -696,6 +798,56 @@ TEST_CASE("a drag or wheel gesture on the tempo field is one undo step", "[ui]")
 	REQUIRE(app.waitUntil([&app, dragged] { return tempo(app) == dragged; }));
 	app.call("history.undo");
 	REQUIRE(app.waitUntil([&app] { return element(app, "#tempo").at("attributes").at("value") == "120"; }));
+}
+
+TEST_CASE("the tempo field changes the tempo only when a number is typed, also the one it shows", "[ui]")
+{
+	test::UiApp app({1024, 700});
+	showBar(app);
+	// A tempo with more decimals than the field shows, e.g. from a MIDI file.
+	app.call("project.set", {{"tempo", 130.0001}});
+	REQUIRE(app.waitUntil([&app] { return element(app, "#tempo").at("attributes").at("value") == "130.0001"; }));
+	const size_t before = undoSteps(app);
+
+	// Enter or leaving the field without typing keeps the tempo and adds no undo step.
+	app.ui().click(std::nullopt, at("#tempo"), ui::MouseButton::Left, 2, {});
+	CHECK(element(app, "#tempo input").at("value") == "130.000");
+	app.ui().key(std::nullopt, "Enter");
+	app.ui().click(std::nullopt, at("#tempo"), ui::MouseButton::Left, 2, {});
+	click(app, "#signature");
+	CHECK(!hasClass(app, "#tempo", "editing"));
+	settle(app);
+	CHECK(tempo(app) == 130.0001);
+	CHECK(undoSteps(app) == before);
+
+	// Typing the number it shows sets that tempo.
+	type(app, "#tempo", "130.000");
+	REQUIRE(app.waitUntil([&app] { return tempo(app) == 130.0; }));
+	settle(app);
+	CHECK(undoSteps(app) == before + 1);
+}
+
+TEST_CASE("typing the position the primary time display showed during playback jumps back to it", "[ui]")
+{
+	test::UiApp app({1024, 700});
+	showBar(app);
+	app.call("audio.setDevice", {{"blockSize", 256}}); // the dummy device
+	app.call("audio.start");
+	app.call("transport.play");
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") > 0; }));
+
+	app.ui().click(std::nullopt, at("#primary-time"), ui::MouseButton::Left, 2, {});
+	const std::string shown = element(app, "#primary-time input").at("value").get<std::string>();
+	const int64_t from = position(app);
+	REQUIRE(waitFor(app, [from](const Json& state) { return state.at("position") > from + 24000; })); // a beat on
+	app.ui().key(std::nullopt, "Ctrl+A");
+	app.ui().text(std::nullopt, shown);
+	const int64_t typed = position(app);
+	app.ui().key(std::nullopt, "Enter");
+	REQUIRE(waitFor(app, [typed](const Json& state) { return state.at("position") < typed; }));
+	CHECK(transport(app).at("playing") == true);
+	app.call("transport.stop");
+	app.call("audio.stop");
 }
 
 TEST_CASE("the time display window shows beat counts only and changes its size", "[ui]")
@@ -788,4 +940,65 @@ TEST_CASE("setup panes show and hide the transport bar's and the transport panel
 	app.ui().key(std::nullopt, "F2");
 	REQUIRE(app.appUi().transportPanel() != nullptr);
 	CHECK(!visible(app, "[section=click]", app.appUi().transportPanel()->id()));
+}
+
+TEST_CASE("the transport controls refuse buttons and menu items with a command that doesn't exist or parameters it "
+		  "doesn't take (#446)",
+	"[unit]")
+{
+	engine::Engine engine;
+	test::FakeUi fake({{1, "Monitor", {0, 0, 1920, 1080}, {0, 0, 1920, 1080}, 1.0F}});
+	ui::Window& window = fake.shell.open(ui::WindowSpec{});
+	ui::EngineBinding binding(engine);
+	ui::KeyCommands keys(engine, binding);
+	keys.add({"timeDisplay.increaseSize", "Makes the time display bigger.", {}});
+	keys.add({"wind.forward", "Winds forward while held.", {}, [] {}});
+	const auto run = [](const std::string& /*command*/, const Json& /*parameters*/) {};
+	const auto check = [&keys](const std::string& command, const Json& parameters) { keys.check(command, parameters); };
+	const auto load = [&window](const std::string& controls)
+	{ return window.context().LoadDocumentFromMemory("<rml><body>" + controls + "</body></rml>"); };
+	const std::string good =
+		R"(<button command="transport.toggle" parameters='{"setting": "cycle"}'>Cycle</button>)"
+		R"(<button command="wind.forward" hold="">Forward</button>)"
+		R"(<menu><menuitem command="timeDisplay.increaseSize">Increase Window Size</menuitem></menu>)";
+
+	Rml::ElementDocument* document = load(good);
+	REQUIRE(document != nullptr);
+	CHECK_NOTHROW(std::make_unique<ui::TransportControls>(engine, binding, *document, run, nullptr, check));
+	document->Close();
+
+	struct Bad
+	{
+		const char* control;
+		const char* named; // in the message
+	};
+	const Bad bad[] = {
+		{R"(<button command="transport.toggel">Cycle</button>)", "transport.toggel"},
+		{R"(<button command="transport.toggle" parameters='{"setting": 1}'>Cycle</button>)", "setting"},
+		{R"(<button command="wind.backward" hold="">Rewind</button>)", "wind.backward"},
+		{R"(<button command="wind.forward" hold="" parameters='{"fast": true}'>Forward</button>)", "wind.forward"},
+		{R"(<menu><menuitem command="timeDisplay.increaseSize" parameters='{"steps": 2}'>Bigger</menuitem></menu>)",
+			"timeDisplay.increaseSize"},
+		{R"(<button command="transport.play" parameters='{"setting"'>Start</button>)", "JSON object"},
+	};
+	for (const Bad& control : bad)
+	{
+		INFO(control.control);
+		document = load(good + control.control);
+		REQUIRE(document != nullptr);
+		CHECK_THROWS_AS(std::make_unique<ui::TransportControls>(engine, binding, *document, run, nullptr, check),
+			std::invalid_argument);
+		CHECK_THROWS_WITH(std::make_unique<ui::TransportControls>(engine, binding, *document, run, nullptr, check),
+			ContainsSubstring(control.named));
+		document->Close();
+	}
+	// Without a check, only parameters that aren't a JSON object.
+	document = load(good + R"(<button command="transport.toggel">Cycle</button>)");
+	REQUIRE(document != nullptr);
+	CHECK_NOTHROW(std::make_unique<ui::TransportControls>(engine, binding, *document, run));
+	document->Close();
+	document = load(good + R"(<button command="transport.play" parameters='[]'>Start</button>)");
+	REQUIRE(document != nullptr);
+	CHECK_THROWS_AS(std::make_unique<ui::TransportControls>(engine, binding, *document, run), std::invalid_argument);
+	document->Close();
 }

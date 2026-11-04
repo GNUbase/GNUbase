@@ -3,12 +3,14 @@
 // dummy device, driven with ui::Automation as MCP's UI tools drive it, with screenshots compared with golden images.
 #include "uiapp.h"
 
+#include "engine/document/snap.h"
 #include "engine/time/tempomap.h"
 #include "scripting/runtime.h"
 #include "ui/automation.h"
 #include "ui/canvas.h"
 #include "ui/eventdisplay.h"
 #include "ui/themes.h"
+#include "ui/timeformat.h"
 #include "ui/tracklist.h"
 
 #include <RmlUi/Core/Context.h>
@@ -435,6 +437,51 @@ TEST_CASE("the snap buttons, the snap and grid type menus and J change the proje
 	app.ui().key(std::nullopt, "Escape");
 }
 
+// #565: the grid type menu has the engine's grid types of the ruler's format, and a pick sends that format with it.
+TEST_CASE("the grid type menu has the format's grid types and picks them in the format shown", "[ui]")
+{
+	ProjectWindow window;
+	test::UiApp& app = window.app;
+	ui::EventDisplay& display = window.display;
+	const auto snap = [&app] { return app.call("snap.get"); };
+
+	for (size_t i = 0; i < engine::g_gridFormatCount; ++i)
+	{
+		const auto format = static_cast<engine::GridFormat>(i);
+		const ui::TimeFormat ruler =
+			ui::timeFormatFromName(engine::gridFormatName(format)).value_or(ui::TimeFormat::BarsBeats);
+		CHECK(ui::timeFormatName(ruler) == engine::gridFormatName(format));
+		display.setRulerFormat(ruler);
+		app.shell().step(std::chrono::milliseconds(0));
+		std::vector<std::string> items;
+		const Json menu = app.ui().dom(std::nullopt, "#grid-type-menu > menuitem", 0);
+		for (const Json& item : menu.at("elements"))
+			items.push_back(item.at("attributes").at("grid-type").get<std::string>());
+		std::vector<std::string> expected;
+		for (const engine::GridType grid : engine::gridTypes(format))
+			expected.emplace_back(engine::gridTypeName(grid));
+		INFO(engine::gridFormatName(format));
+		CHECK(items == expected);
+	}
+
+	// The ruler shows fps (User) when the engine switches to timecode from elsewhere: a grid type picked from the
+	// menu that is still shown is the user frames', and the ruler stays there.
+	REQUIRE(app.waitUntil([&snap] { return snap().at("format") == "userFrames"; }));
+	click(app, selector("#grid-type"));
+	REQUIRE(visible(app, "#grid-type-menu"));
+	app.call("snap.set", {{"format", "timecode"}});
+	click(app, menuItem(app, "#grid-type-menu", "1/2 Frame"));
+	for (int i = 0; i < 20; ++i)
+	{
+		app.shell().step(std::chrono::milliseconds(5));
+		CHECK(display.rulerFormat() == ui::TimeFormat::UserFrames);
+	}
+	REQUIRE(app.waitUntil([&snap] { return snap().at("grids").at("userFrames") == "halfFrame"; }));
+	CHECK(snap().at("format") == "userFrames");
+	CHECK(snap().at("grids").at("timecode") == "frame");
+	CHECK(display.rulerFormat() == ui::TimeFormat::UserFrames);
+}
+
 TEST_CASE("the toolbar's tool buttons and the keys choose the tools, a second click opens a tool's modes", "[ui]")
 {
 	ProjectWindow window;
@@ -489,6 +536,193 @@ TEST_CASE("the toolbar's tool buttons and the keys choose the tools, a second cl
 	CHECK(hasClass(app, "#play-menu > menuitem[play-mode=scrub]", "checked"));
 	CHECK(!hasClass(app, "#play-menu > menuitem[play-mode=play]", "checked"));
 	app.ui().key(std::nullopt, "Escape");
+}
+
+TEST_CASE(
+	"a right click in the event display opens the toolbox or the context menu, by the setting and modifiers", "[ui]")
+{
+	ProjectWindow window;
+	test::UiApp& app = window.app;
+	const ui::EventDisplay& display = window.display;
+	const Json lanes = element(app, "event-lanes.events").at("box");
+	const ui::Point at{lanes.at("x").get<int>() + 100, lanes.at("y").get<int>() + 20};
+	const auto rightClick = [&app, &at](const std::vector<std::string>& modifiers)
+	{
+		app.ui().click(std::nullopt, {"", 0, at}, ui::MouseButton::Right, 1, modifiers);
+		app.shell().step(std::chrono::milliseconds(0));
+	};
+
+	// Off, as by default: the context menu, and with any modifier key the toolbox (reference manual p. 65).
+	rightClick({});
+	REQUIRE(visible(app, "#event-display-menu"));
+	CHECK(!visible(app, "#toolbox"));
+	CHECK(element(app, "#event-display-menu").at("box").at("x") == at.x);
+	app.ui().key(std::nullopt, "Escape");
+	rightClick({"shift"});
+	CHECK(visible(app, "#toolbox"));
+	CHECK(!visible(app, "#event-display-menu"));
+	app.ui().key(std::nullopt, "Escape");
+
+	// On (p. 1602): the toolbox at the mouse, with the tool chosen checked; a click on a tool chooses it and closes
+	// it. With a modifier key, the context menu, whose Tools submenu chooses tools too.
+	app.call("settings.set", {{"key", "ui.toolboxOnRightClick"}, {"value", true}});
+	REQUIRE(
+		app.waitUntil([&app] { return element(app, ".event-area").at("attributes").at("contextmenu") == "toolbox"; }));
+	rightClick({});
+	REQUIRE(visible(app, "#toolbox"));
+	CHECK(!visible(app, "#event-display-menu"));
+	CHECK(element(app, "#toolbox").at("box").at("x") == at.x);
+	CHECK(hasClass(app, "#toolbox > menuitem[tool=objectSelection]", "checked"));
+	click(app, selector("#toolbox > menuitem[tool=draw]"));
+	CHECK(display.tool() == ui::Tool::Draw);
+	CHECK(!visible(app, "#toolbox"));
+	CHECK(hasClass(app, "button[tool=draw]", "checked"));
+	for (const char* modifier : {"ctrl", "alt", "shift"})
+	{
+		INFO(modifier);
+		rightClick({modifier});
+		CHECK(visible(app, "#event-display-menu"));
+		CHECK(!visible(app, "#toolbox"));
+		app.ui().key(std::nullopt, "Escape");
+	}
+	rightClick({"ctrl"});
+	app.ui().move(std::nullopt, selector("#tools-submenu"));
+	click(app, menuItem(app, "#tools-submenu > menu", "Split"));
+	CHECK(display.tool() == ui::Tool::Split);
+	CHECK(!visible(app, "#event-display-menu"));
+	// Its edit commands act on the selection, as the Edit menu's do.
+	CHECK(count(app, "#event-display-menu > menuitem[command=edit.delete]") == 1);
+
+	// The setting survives in the settings, for the next start; off again, the context menu.
+	CHECK(app.call("settings.get", {{"key", "ui.toolboxOnRightClick"}}).at("value") == true);
+	app.call("settings.set", {{"key", "ui.toolboxOnRightClick"}, {"value", false}});
+	REQUIRE(app.waitUntil(
+		[&app] { return element(app, ".event-area").at("attributes").at("contextmenu") == "event-display-menu"; }));
+}
+
+TEST_CASE("a right click on an event selects it for the context menu, unless it's selected already", "[ui]")
+{
+	ProjectWindow window;
+	test::UiApp& app = window.app;
+	const ui::EventDisplay& display = window.display;
+	const Json track = app.call("track.add", {{"type", "midi"}}).at("track");
+	for (const int quarter : {2, 6}) // from 1 to 2 and from 3 to 4 seconds at 120 BPM, 100 to 200 and 300 to 400 dp
+		app.call("midiPart.add",
+			{{"track", track.at("id")}, {"position", quarter * time::g_ticksPerQuarter},
+				{"length", 2 * time::g_ticksPerQuarter}});
+	const auto parts = [&app]
+	{
+		auto* lanes =
+			dynamic_cast<ui::EventLanes*>(app.main().context().GetDocument(0)->QuerySelector("event-lanes.events"));
+		return lanes == nullptr || lanes->lanes().empty() ? size_t{0} : lanes->lanes()[0].events.size();
+	};
+	REQUIRE(app.waitUntil([&parts] { return parts() == 2; }));
+	const Json lanes = element(app, "event-lanes.events").at("box");
+	const auto at = [&lanes](int x) { return ui::Point{lanes.at("x").get<int>() + x, lanes.at("y").get<int>() + 20}; };
+	const auto press = [&app](ui::Point point, ui::MouseButton button, const std::vector<std::string>& modifiers)
+	{
+		app.ui().click(std::nullopt, {"", 0, point}, button, 1, modifiers);
+		app.shell().step(std::chrono::milliseconds(0));
+	};
+	press(at(150), ui::MouseButton::Left, {});
+	REQUIRE(display.selection().size() == 1);
+	const uint64_t first = display.selection()[0];
+
+	// Another event: the context menu acts on it, not on the one selected before.
+	press(at(350), ui::MouseButton::Right, {});
+	REQUIRE(visible(app, "#event-display-menu"));
+	REQUIRE(display.selection().size() == 1);
+	const uint64_t second = display.selection()[0];
+	CHECK(second != first);
+	click(app, selector("#event-display-menu > menuitem[command=edit.delete]"));
+	REQUIRE(app.waitUntil([&parts] { return parts() == 1; }));
+	CHECK(app.call("event.get", {{"events", Json::array({first})}}).at("events").size() == 1);
+
+	// A selected event keeps the selection, the others in it too; so does a right click on nothing, and one that
+	// opens the toolbox.
+	app.call("midiPart.add",
+		{{"track", track.at("id")}, {"position", 6 * time::g_ticksPerQuarter},
+			{"length", 2 * time::g_ticksPerQuarter}});
+	REQUIRE(app.waitUntil([&parts] { return parts() == 2; }));
+	press(at(150), ui::MouseButton::Left, {});
+	press(at(350), ui::MouseButton::Left, {"ctrl"});
+	REQUIRE(display.selection().size() == 2);
+	const std::vector<uint64_t> both = display.selection();
+	press(at(150), ui::MouseButton::Right, {});
+	CHECK(display.selection() == both);
+	app.ui().key(std::nullopt, "Escape");
+	press(at(500), ui::MouseButton::Right, {});
+	CHECK(display.selection() == both);
+	app.ui().key(std::nullopt, "Escape");
+	press(at(500), ui::MouseButton::Left, {}); // selects nothing
+	press(at(150), ui::MouseButton::Left, {});
+	press(at(350), ui::MouseButton::Right, {"shift"});
+	CHECK(visible(app, "#toolbox"));
+	CHECK(display.selection() == std::vector<uint64_t>{first});
+}
+
+TEST_CASE("a tool chosen with a key command shows its name for a moment, unless the setting is off", "[ui]")
+{
+	ProjectWindow window;
+	test::UiApp& app = window.app;
+	CHECK(!visible(app, "#tool-notification"));
+	// 8 chooses the draw tool: its name shows over the event display (reference manual p. 1602), then goes.
+	app.ui().key(std::nullopt, "8");
+	REQUIRE(visible(app, "#tool-notification"));
+	CHECK(element(app, "#tool-notification").at("text") == "Draw");
+	REQUIRE(app.waitUntil([&app] { return !visible(app, "#tool-notification"); }));
+	app.ui().key(std::nullopt, "Alt+Shift+1");
+	CHECK(element(app, "#tool-notification").at("text") == "Combine Selection Tools On");
+	REQUIRE(app.waitUntil([&app] { return !visible(app, "#tool-notification"); }));
+
+	// A tool button shows none: the notification is for keys.
+	click(app, selector("button[tool=split]"));
+	CHECK(!visible(app, "#tool-notification"));
+	// Nor a key with the setting off.
+	app.call("settings.set", {{"key", "ui.toolSwitchNotification"}, {"value", false}});
+	app.shell().step(std::chrono::milliseconds(0));
+	app.ui().key(std::nullopt, "3");
+	CHECK(window.display.tool() == ui::Tool::Split);
+	CHECK(!visible(app, "#tool-notification"));
+}
+
+TEST_CASE("the mouse pointer over the event display shows the tool, and the resize pointer at an event's edge", "[ui]")
+{
+	ProjectWindow window;
+	test::UiApp& app = window.app;
+	const Json track = app.call("track.add", {{"type", "midi"}}).at("track");
+	app.call("midiPart.add", // from 1 to 3 seconds at 120 BPM
+		{{"track", track.at("id")}, {"position", 2 * time::g_ticksPerQuarter},
+			{"length", 4 * time::g_ticksPerQuarter}});
+	REQUIRE(app.waitUntil(
+		[&app]
+		{
+			auto* lanes =
+				dynamic_cast<ui::EventLanes*>(app.main().context().GetDocument(0)->QuerySelector("event-lanes.events"));
+			return lanes != nullptr && !lanes->lanes().empty() && !lanes->lanes()[0].events.empty();
+		}));
+	const Json lanes = element(app, "event-lanes.events").at("box");
+	const auto cursorAt = [&app, &lanes](int x, int y)
+	{
+		app.ui().move(std::nullopt, {"", 0, ui::Point{lanes.at("x").get<int>() + x, lanes.at("y").get<int>() + y}});
+		app.shell().step(std::chrono::milliseconds(0));
+		return app.ui().windows().at("cursor").get<std::string>();
+	};
+
+	// As MCP's ui_windows reports it: the OS's arrow for the object selection tool, the resize pointer at the
+	// part's edge, the tool's own pointer for the others.
+	CHECK(cursorAt(500, 20).empty());
+	CHECK(cursorAt(101, 20) == "resize");
+	app.ui().key(std::nullopt, "8");
+	CHECK(cursorAt(500, 20) == "tool-draw");
+	app.ui().key(std::nullopt, "3");
+	CHECK(cursorAt(200, 20) == "tool-split");
+	app.ui().key(std::nullopt, "2");
+	CHECK(cursorAt(200, 20) == "tool-range");
+	// Not over the toolbar.
+	app.ui().move(std::nullopt, selector("button[tool=draw]"));
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(app.ui().windows().at("cursor").get<std::string>().empty());
 }
 
 TEST_CASE("the scrub tool scrubs an audio track and moves the project cursor in the project window", "[ui]")

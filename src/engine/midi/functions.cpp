@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/midi/functions.h"
 
+#include "engine/midi/chords.h"
 #include "engine/midi/midivalues.h"
 
 #include <algorithm>
@@ -322,14 +323,6 @@ namespace gnubase::engine::midi
 				[](const auto& entry) { return entry.second.type == TrackType::Midi; });
 			const std::string number = std::to_string(count + 1);
 			return std::string("MIDI") + (number.size() < 2 ? " 0" : " ") + number;
-		}
-
-		// "C3" for middle C (60), "F#1" for 42.
-		std::string pitchName(int pitch)
-		{
-			static constexpr std::array<const char*, 12> names{
-				"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
-			return std::string(names[static_cast<size_t>(pitch % 12)]) + std::to_string((pitch / 12) - 2);
 		}
 
 		bool isNoteTrack(const Track& track)

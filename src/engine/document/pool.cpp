@@ -537,6 +537,8 @@ namespace gnubase::engine
 						event.crossfade.length = std::min((*rescale)(event.crossfade.length), event.length);
 						if (event.snapPoint)
 							event.snapPoint = (*rescale)(*event.snapPoint);
+						for (VolumePoint& point : event.volumeCurve)
+							point.position = std::min((*rescale)(point.position), rescale->length);
 					}
 					if (fromRescale != nullptr)
 						event.crossfade.outLength = (*fromRescale)(event.crossfade.outLength);

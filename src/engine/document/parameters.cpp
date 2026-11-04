@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Parameters (#30): parameter.list, parameter.get and parameter.set read and change the static value of every
-// automatable parameter of a channel: the fader's volume, pan, panLeft and panRight, and the parameters of an
+// automatable parameter of a channel: the fader's volume, pan, panLeft and panRight, mute, and the parameters of an
 // instrument track's built-in instrument (plugins: M05). They name parameters by the targets automation lanes take,
 // and give values with their display text. parameter.set is one undo step and changes nothing if it fails
 // (ProjectModel::add); playback takes the values from the render snapshot like those of channel.set.
@@ -66,6 +66,8 @@ namespace gnubase::engine
 				parameters.push_back({{AutomationTargetType::Pan, 0, 0, 0, 0}, pan("Pan", 0.0)});
 				parameters.push_back({{AutomationTargetType::PanLeft, 0, 0, 0, 0}, pan("Pan left", -1.0)});
 				parameters.push_back({{AutomationTargetType::PanRight, 0, 0, 0, 0}, pan("Pan right", 1.0)});
+				parameters.push_back(
+					{{AutomationTargetType::Mute, 0, 0, 0, 0}, {0, "Mute", 0.0, 1.0, 0.0, {}, true, {"Off", "On"}}});
 			}
 			if (const processors::BuiltinInfo* instrument = processors::findBuiltin(channel.instrument))
 				for (const processors::ParameterInfo& parameter : instrument->parameters)
@@ -90,8 +92,9 @@ namespace gnubase::engine
 			if (!type.has_value() ||
 				(*type != AutomationTargetType::Volume && *type != AutomationTargetType::Pan &&
 					*type != AutomationTargetType::PanLeft && *type != AutomationTargetType::PanRight &&
-					*type != AutomationTargetType::Instrument && *type != AutomationTargetType::Plugin))
-				throw CommandError("target.type must be volume, pan, panLeft, panRight, instrument or plugin");
+					*type != AutomationTargetType::Mute && *type != AutomationTargetType::Instrument &&
+					*type != AutomationTargetType::Plugin))
+				throw CommandError("target.type must be volume, pan, panLeft, panRight, mute, instrument or plugin");
 			const bool plugin = *type == AutomationTargetType::Plugin;
 			const bool parameter = *type == AutomationTargetType::Instrument || plugin;
 			for (const auto& item : json.items())
@@ -153,6 +156,8 @@ namespace gnubase::engine
 				return channel.panLeft;
 			case AutomationTargetType::PanRight:
 				return channel.panRight;
+			case AutomationTargetType::Mute:
+				return channel.mute ? 1.0 : 0.0;
 			default:
 			{
 				const auto set = channel.instrumentParameters.find(parameter.target.parameter);
@@ -182,6 +187,9 @@ namespace gnubase::engine
 			case AutomationTargetType::PanRight:
 				channel.panRight = value;
 				break;
+			case AutomationTargetType::Mute:
+				channel.mute = value != 0.0;
+				break;
 			default:
 				channel.instrumentParameters[parameter.target.parameter] = value;
 				break;
@@ -205,6 +213,56 @@ namespace gnubase::engine
 			for (const ChannelParameter& parameter : channelParameters(project, channel))
 				parameters.push_back(describe(project, channel, parameter));
 			return {{"parameters", std::move(parameters)}};
+		}
+
+		// What a track's automation tracks can show (reference manual p. 880): its channel's parameters, and on MIDI
+		// and instrument tracks pitch bend, channel pressure and the controllers, each with the lane the track has for
+		// it.
+		Json listAutomationTargets(Project& project, CommandContext& context)
+		{
+			const auto id = context.parameters().at("track").get<ObjectId>();
+			const auto track = project.trackById.find(id);
+			require(track != project.trackById.end(), "no track " + idText(id));
+			Json targets = Json::array();
+			if (track->second.channel == 0)
+				return {{"targets", std::move(targets)}};
+			const auto add = [&](const AutomationTarget& target, Json description, const std::string& group)
+			{
+				ObjectId lane = 0;
+				for (const auto& [laneId, other] : project.automation)
+					if (other.track == id && other.target == target)
+						lane = laneId;
+				description["group"] = group;
+				description["lane"] = lane;
+				targets.push_back(std::move(description));
+			};
+			const Channel& channel = project.channels.at(track->second.channel);
+			for (const ChannelParameter& parameter : channelParameters(project, channel))
+			{
+				std::string group = "Channel";
+				if (parameter.target.type == AutomationTargetType::Instrument)
+					group = processors::findBuiltin(channel.instrument)->name;
+				else if (parameter.target.type == AutomationTargetType::Plugin)
+					group = processors::findBuiltinPlugin(project.slots.at(parameter.target.slot).plugin)->name;
+				add(parameter.target, describe(project, channel, parameter), group);
+			}
+			if (track->second.type != TrackType::Midi && track->second.type != TrackType::Instrument)
+				return {{"targets", std::move(targets)}};
+			const auto midi = [&](AutomationTargetType type, uint8_t number, const std::string& name, double value)
+			{
+				const AutomationTarget target{type, 0, number, 0, 0};
+				add(target,
+					{{"target", toJson(target)}, {"name", name}, {"minimum", 0.0}, {"maximum", 1.0}, {"default", value},
+						{"unit", ""}, {"stepped", false}, {"options", Json::array()}, {"value", value},
+						{"text", processors::valueToText({}, value)}},
+					"MIDI");
+			};
+			midi(AutomationTargetType::PitchBend, 0, "Pitch Bend", 0.5);
+			midi(AutomationTargetType::ChannelPressure, 0, "Channel Pressure", 0.0);
+			for (int number = 0; number < 128; ++number)
+				midi(AutomationTargetType::Controller, static_cast<uint8_t>(number),
+					"Controller " + std::to_string(number), 0.0);
+			return {{"targets", std::move(targets)}};
 		}
 
 		Json getParameter(Project& project, CommandContext& context)
@@ -251,19 +309,22 @@ namespace gnubase::engine
 	void ProjectModel::registerParameterCommands(Engine& engine)
 	{
 		const Json idSchema = {{"type", "integer"}};
-		const Json targetSchema = objectSchema(
-			{{"type", {{"type", "string"}, {"enum", {"volume", "pan", "panLeft", "panRight", "instrument", "plugin"}}}},
-				{"parameter", {{"type", "integer"}, {"minimum", 0}, {"maximum", UINT32_MAX}}},
-				{"slot", {{"type", "integer"}, {"minimum", 0}}}},
-			{"type"});
+		const Json targetSchema =
+			objectSchema({{"type",
+							  {{"type", "string"},
+								  {"enum", {"volume", "pan", "panLeft", "panRight", "mute", "instrument", "plugin"}}}},
+							 {"parameter", {{"type", "integer"}, {"minimum", 0}, {"maximum", UINT32_MAX}}},
+							 {"slot", {{"type", "integer"}, {"minimum", 0}}}},
+				{"type"});
 		const Json parameterResult = {
 			{"type", "object"}, {"properties", {{"parameter", {{"type", "object"}}}}}, {"required", {"parameter"}}};
 
 		add(engine,
 			{"parameter.list", 1,
 				"The automatable parameters of a channel: on channels with audio the fader's volume (in dB, up to the "
-				"project's maxVolume), pan, panLeft and panRight (-1 to 1, see channel.set), and on instrument "
-				"tracks the parameters of their built-in instrument (see processor.list), then those of the built-in "
+				"project's maxVolume), pan, panLeft and panRight (-1 to 1, see channel.set) and mute (0 off, 1 on, the "
+				"channel's mute button), and on instrument tracks the parameters of their built-in instrument (see "
+				"processor.list), then those of the built-in "
 				"plugins in its slots, top to bottom, with targets of type plugin that name the slot. Each "
 				"has its target, as automationLane.add takes it, its name, minimum, maximum, default, unit, whether "
 				"it is stepped (whole numbers only), options (the names of a stepped parameter's values from the "
@@ -292,5 +353,16 @@ namespace gnubase::engine
 					{"channel", "target"}),
 				parameterResult, false},
 			[this](Project& project, CommandContext& context) { return setParameter(project, context, *this); });
+		add(engine,
+			{"automationLane.targets", 1,
+				"What a track's automation lanes can automate, in the order automation tracks offer them: its "
+				"channel's parameters as parameter.list returns them, then on MIDI and instrument tracks pitch bend, "
+				"channel pressure and controllers 0 to 127 (MIDI channel 0, from 0 to 1, pitch bend's default 0.5). "
+				"Each also has group (Channel, the instrument's or plugin's name, or MIDI) and lane, the id of the "
+				"track's automation lane for it, or 0. Tracks without a channel have none.",
+				objectSchema({{"track", idSchema}}, {"track"}),
+				{{"type", "object"}, {"properties", {{"targets", {{"type", "array"}}}}}, {"required", {"targets"}}},
+				true},
+			listAutomationTargets);
 	}
 }

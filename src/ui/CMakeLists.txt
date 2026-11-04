@@ -15,11 +15,14 @@ target_link_libraries(gnubase-ui-thirdparty PUBLIC RmlUi::RmlUi SDL3::SDL3)
 add_library(gnubase-ui STATIC
 	automation.cpp
 	automation.h
+	automationtracks.cpp
 	canvas.cpp
 	canvas.h
 	colormenu.cpp
 	colormenu.h
 	colorwidgets.cpp
+	cursors.cpp
+	cursors.h
 	datamodel.cpp
 	datamodel.h
 	displays.cpp
@@ -32,7 +35,9 @@ add_library(gnubase-ui STATIC
 	eventdisplay.h
 	eventdisplaymenus.cpp
 	eventediting.cpp
+	eventfades.cpp
 	eventtools.cpp
+	eventvolume.cpp
 	eventwaveforms.cpp
 	eventwaveforms.h
 	fileimport.cpp
@@ -49,6 +54,8 @@ add_library(gnubase-ui STATIC
 	inspector.h
 	keycommands.cpp
 	keycommands.h
+	keyeditor.cpp
+	keyeditor.h
 	livereload.cpp
 	livereload.h
 	mainmenu.cpp
@@ -56,6 +63,8 @@ add_library(gnubase-ui STATIC
 	markers.cpp
 	markers.h
 	markerswindow.cpp
+	midieditor.cpp
+	midieditor.h
 	mixer.cpp
 	mixer.h
 	poolpanel.cpp
@@ -74,6 +83,8 @@ add_library(gnubase-ui STATIC
 	shell.h
 	statusline.cpp
 	statusline.h
+	tempotrack.cpp
+	tempotrack.h
 	themes.cpp
 	themes.h
 	timeformat.cpp
@@ -94,5 +105,5 @@ add_library(gnubase-ui STATIC
 	windowsystem.h)
 target_link_libraries(gnubase-ui
 	PUBLIC gnubase-engine RmlUi::RmlUi
-	PRIVATE Freetype::Freetype gnubase-ui-thirdparty SDL3::SDL3)
+	PRIVATE Freetype::Freetype gnubase-ui-thirdparty lunasvg::lunasvg SDL3::SDL3)
 gnubase_target_defaults(gnubase-ui)
