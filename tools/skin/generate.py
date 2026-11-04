@@ -568,6 +568,15 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
                                 "border-color": c["textMuted"]}),
         (".key-note.drawing", {"background-color": c["accent"] + "66"}),
         (".key-editor-step-cursor", {"background-color": c["accent"]}),
+        # The controller lanes (docs/features/controller-lanes.md): the lanes' areas like the note display, a line
+        # between lanes, the bars and steps in the notes' colors, selected ones in the second accent, those outside
+        # the part editing mode dimmed
+        (".controller-lane-area", {"background-color": c["surface"], "border-bottom-width": f"{widths['hairline']}px",
+                                   "border-bottom-color": c["border"]}),
+        (".controller-bar, .controller-step", {"background-color": mix(c["surfaceRaised"], c["accent"], .6)}),
+        (".controller-bar.selected, .controller-step.selected", {"background-color": c["accent2"]}),
+        (".controller-bar.inactive, .controller-step.inactive",
+         {"background-color": mix(c["surface"], c["textMuted"], .3)}),
         # Docking windows (docs/features/docking.md): zones, the frame of the zone with the keyboard focus, and strips
         (".docking [zone]", {"background-color": mix(c["background"], c["surface"], .5)}),
         (".docking .zone-frame", {"border-width": f"{widths['focus']}dp", "border-color": c["accent"]}),

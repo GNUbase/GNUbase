@@ -690,6 +690,24 @@
 	{
 		background-color: #10dff2;
 	}
+	.controller-lane-area
+	{
+		background-color: #101426;
+		border-bottom-width: 1px;
+		border-bottom-color: #303754;
+	}
+	.controller-bar, .controller-step
+	{
+		background-color: #1391a5;
+	}
+	.controller-bar.selected, .controller-step.selected
+	{
+		background-color: #e12ad8;
+	}
+	.controller-bar.inactive, .controller-step.inactive
+	{
+		background-color: #3f4559;
+	}
 	.docking [zone]
 	{
 		background-color: #0c101f;

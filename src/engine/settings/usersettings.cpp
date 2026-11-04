@@ -352,6 +352,15 @@ namespace gnubase::engine::settings
 						{"controls",
 							{{"audio", 120}, {"instrument", 120}, {"midi", 120}, {"group", 120}, {"effect", 120},
 								{"folder", 120}, {"marker", 120}, {"ruler", 120}, {"tempo", 120}}}}},
+				{"ui.controllerLanePresets",
+					"The controller lane presets of the MIDI editors (#128, reference manual p. 1166): each a name and "
+					"the lanes it shows, as editor.set takes them.",
+					Json{{"type", "array"},
+						{"items",
+							{{"type", "object"},
+								{"properties", {{"name", {{"type", "string"}}}, {"lanes", {{"type", "array"}}}}},
+								{"required", Json::array({"name", "lanes"})}}}},
+					Json::array()},
 				{"ui.zoomPresets",
 					"The horizontal zoom presets of the event display, for every project: each a name and the "
 					"seconds the view shows.",
