@@ -965,11 +965,11 @@ namespace gnubase::ui
 	{
 		if (m_resizeLanded)
 		{
-			// The first project after the resize shows it: the preview has done its part.
+			// The first project after the last release's resize shows it: its preview has done its part.
 			m_resizeLanded = false;
-			m_resizePreview = Json();
+			m_releasedPreview = Json();
 		}
-		else if (!m_resizeWanted.is_null())
+		if (!m_resizeWanted.is_null())
 		{
 			// Changed during the drag (an undo, another client's edit): the preview is asked again.
 			m_resizeAsked = Json();
@@ -991,7 +991,6 @@ namespace gnubase::ui
 		m_resizeWanted = Json();
 		m_resizeAsked = Json();
 		m_resizePreview = Json();
-		m_resizeLanded = false;
 	}
 
 	void EventDisplay::resizeUp(Json parameters)
@@ -999,21 +998,23 @@ namespace gnubase::ui
 		// The preview stays until a project answer after the resize shows it, which then looks the same. If the
 		// resize fails, or the preview shown isn't the release's, the project is asked for: a resize that changes
 		// nothing announces nothing.
+		// A drag that starts meanwhile has its own preview over this one, and the engine resizes from where this
+		// release leaves the events.
 		const bool previewed = !m_resizeAsking && parameters == m_resizeAsked && !m_resizePreview.is_null();
-		const Json preview = m_resizePreview;
+		if (!m_resizePreview.is_null())
+			m_releasedPreview = m_resizePreview;
 		endResize();
-		m_resizePreview = preview;
+		m_resizeLanded = false;
 		m_binding.send("event.resize", std::move(parameters),
-			[this, previewed, gesture = m_resizeGesture, alive = std::weak_ptr<bool>(m_alive)](
+			[this, previewed, release = ++m_resizeReleases, alive = std::weak_ptr<bool>(m_alive)](
 				const engine::Result& result)
 			{
 				if (alive.expired())
 					return;
 				if (!result.ok())
 					logging::warning("An edit of events failed: {}", result.error);
-				if (gesture != m_resizeGesture) // another drag of edges started meanwhile
-					return;
-				m_resizeLanded = true;
+				if (release == m_resizeReleases) // the last one: its preview goes with the next project
+					m_resizeLanded = true;
 				if (!result.ok() || !previewed)
 					requestProject();
 			});

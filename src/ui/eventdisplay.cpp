@@ -301,21 +301,27 @@ namespace gnubase::ui
 	{
 		if (!m_project.is_object())
 			return;
-		if (m_resizePreview.is_null())
+		if (m_resizePreview.is_null() && m_releasedPreview.is_null())
 		{
 			loadProject(m_project);
 			return;
 		}
-		// While an edge is dragged, the events as event.previewResize says the release leaves them (#732).
+		// While an edge is dragged, and after the release until the project shows the resize, the events as
+		// event.previewResize says the release leaves them (#732).
 		Json project = m_project;
-		for (const char* kind : {"audioEvents", "audioParts", "midiParts"})
+		for (const Json* preview : {&m_releasedPreview, &m_resizePreview})
 		{
-			std::map<uint64_t, const Json*> previewed;
-			for (const Json& item : m_resizePreview.at(kind))
-				previewed[item.at("id").get<uint64_t>()] = &item;
-			for (Json& item : project.at(kind))
-				if (const auto found = previewed.find(item.at("id").get<uint64_t>()); found != previewed.end())
-					item = *found->second;
+			if (preview->is_null())
+				continue;
+			for (const char* kind : {"audioEvents", "audioParts", "midiParts"})
+			{
+				std::map<uint64_t, const Json*> previewed;
+				for (const Json& item : preview->at(kind))
+					previewed[item.at("id").get<uint64_t>()] = &item;
+				for (Json& item : project.at(kind))
+					if (const auto found = previewed.find(item.at("id").get<uint64_t>()); found != previewed.end())
+						item = *found->second;
+			}
 		}
 		loadProject(project);
 	}
@@ -1068,8 +1074,8 @@ namespace gnubase::ui
 
 	void EventDisplay::mouseDown(Rml::Event& event, Rml::Element& target)
 	{
-		// A drag of edges whose release the display didn't see, or whose resize isn't shown yet (#732).
-		if (!m_resizeWanted.is_null() || !m_resizePreview.is_null())
+		// A drag of edges whose release the display didn't see (#732).
+		if (!m_resizeWanted.is_null())
 		{
 			endResize();
 			showProject();

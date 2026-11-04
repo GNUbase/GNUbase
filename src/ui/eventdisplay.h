@@ -688,15 +688,17 @@ namespace gnubase::ui
 		int64_t m_left = 0;                  // the locators, in samples
 		int64_t m_right = 0;
 		bool m_sizingMovesContents = false;
-		double m_resizeFrom = 0.0;    // the pressed event's edge when a drag of edges started, in seconds
-		engine::Json m_resizeWanted;  // event.previewResize's parameters for where the edge is now, null for none
-		engine::Json m_resizeAsked;   // those of the last one sent
-		bool m_resizeAsking = false;  // its answer is on its way
-		engine::Json m_resizePreview; // the answer shown, null for none
-		double m_resizeDx = 0.0;      // dp the edge was dragged
-		bool m_resizeLanded = false;  // the release's event.resize is done; the next project shows it
-		uint64_t m_resizeGesture = 0; // counts drags of edges, so that late answers are dropped
-		uint64_t m_dragEvent = 0;     // pressed on
+		double m_resizeFrom = 0.0;      // the pressed event's edge when a drag of edges started, in seconds
+		engine::Json m_resizeWanted;    // event.previewResize's parameters for where the edge is now, null for none
+		engine::Json m_resizeAsked;     // those of the last one sent
+		bool m_resizeAsking = false;    // its answer is on its way
+		engine::Json m_resizePreview;   // the answer shown, null for none
+		double m_resizeDx = 0.0;        // dp the edge was dragged
+		engine::Json m_releasedPreview; // the last release's, until the project shows its resize
+		uint64_t m_resizeReleases = 0;  // counts releases, so that only the last one's answer counts
+		bool m_resizeLanded = false;    // the last release's event.resize is done; the next project shows it
+		uint64_t m_resizeGesture = 0;   // counts drags of edges, so that late answers are dropped
+		uint64_t m_dragEvent = 0;       // pressed on
 		bool m_dragMoved = false;
 		double m_dragDy = 0.0;             // dp, dragging the event volume or a curve point
 		std::optional<size_t> m_dragPoint; // the curve point dragged, none for a new one

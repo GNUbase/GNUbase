@@ -155,9 +155,10 @@ that the arrow keys select into view.
   lock, nudging, duplicating, moving to the cursor, splitting at the cursor and the locators, gluing, filling the
   locators with the last copy cut, converting a shared copy to a real one), the select submenu, muted events shown
   greyed out and locked ones kept; a drag of an audio event's end and start showing, at every step, the box, waveform,
-  fade and volume line the release leaves, in both sizing modes, snapped and with Disable Snapping pressed and
-  released mid-drag, while another client moves the event, and of a MIDI part's end; a locked event staying as it
-  is; Escape cancelling it.
+  fades and volume line the release leaves: both edges in both sizing modes, snapped and with Disable Snapping
+  pressed and released mid-drag, while another client moves the event; an audio event and a MIDI part selected
+  together, and a second drag pressed before the display has the first one's project; a locked event staying as
+  it is; Escape cancelling it.
 - `tests/uiapp_tests.cpp` presses the default keys in the app's project window: select all, duplicate, mute, nudge
   and Backspace; Left and Right selecting parts, Up and Down stepping the tracks and selecting their first parts, also across a track
   without parts, and only the track with no part selected; and Mod+K,

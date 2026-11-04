@@ -253,7 +253,8 @@ TEST_CASE("a drag at an edge resizes, Alt and a click splits, a double click add
 namespace
 {
 	// Whether the display draws the audio event (lane 0) from start to end seconds, playing its clip from offset: its
-	// box among the events and the selected events, its waveform, its fade out up to its end and its volume line.
+	// box among the events and the selected events, its waveform, its fade in from its start, its fade out up to its
+	// end and its volume line.
 	bool drawsAudioEvent(Fixture& f, double start, double end, int64_t offset)
 	{
 		const auto near = [](double a, double b) { return std::abs(a - b) < 1e-6; };
@@ -271,9 +272,11 @@ namespace
 			fadeLines->lanes().empty())
 			return false;
 		const ui::FadeLines::Lane& lane = fadeLines->lanes()[0];
+		const bool fadesIn = std::any_of(lane.fades.begin(), lane.fades.end(),
+			[&near, start](const ui::FadeLine& fade) { return fade.in && near(fade.start, start); });
 		const bool fadesOut = std::any_of(lane.fades.begin(), lane.fades.end(),
 			[&near, end](const ui::FadeLine& fade) { return !fade.in && near(fade.start + fade.length, end); });
-		return near(wave->span().start, start) && near(wave->span().end(), end) && fadesOut &&
+		return near(wave->span().start, start) && near(wave->span().end(), end) && fadesIn && fadesOut &&
 			lane.volumes.size() == 1 && near(lane.volumes[0].start, start) && near(lane.volumes[0].end, end) &&
 			lane.volumes[0].offset == offset;
 	}
@@ -300,8 +303,9 @@ TEST_CASE("a drag of an event's edge shows the size the release gives it at ever
 		move(x, y);
 		context.ProcessMouseButtonDown(0, 0);
 	};
-	// The audio event (2 to 2.5 seconds) with a fade out and a volume, so that its fade and volume line show.
-	f.call("audioEvent.setFades", {{"event", f.event}, {"fadeOut", {{"length", 4800}}}});
+	// The audio event (2 to 2.5 seconds) with fades and a volume, so that its fades and volume line show.
+	f.call(
+		"audioEvent.setFades", {{"event", f.event}, {"fadeIn", {{"length", 2400}}}, {"fadeOut", {{"length", 4800}}}});
 	f.call("audioEvent.set", {{"event", f.event}, {"volume", -6.0}});
 	f.display.select({f.event});
 	REQUIRE(f.waitUntil([&f] { return drawsAudioEvent(f, 2.0, 2.5, 0); }));
@@ -379,6 +383,33 @@ TEST_CASE("a drag of an event's edge shows the size the release gives it at ever
 	CHECK(f.audioEvents()[0].at("offset") == 0);
 	CHECK(steps() == resized + 1);
 	REQUIRE(settled());
+	// Its end (2.8 seconds) with the contents: earlier, the clip moves with it; later, it stops where the clip's start
+	// reaches the event's.
+	struct Step
+	{
+		double x = 0.0;
+		double end = 0.0;
+		int64_t offset = 0;
+	};
+	press(278, 35);
+	for (const Step& step :
+		{Step{258.0, 2.6, 9600}, Step{298.0, 2.8, 0}, Step{238.0, 2.4, 19200}, Step{258.0, 2.6, 9600}})
+	{
+		move(step.x, 35);
+		f.step();
+		INFO("end at " << step.x);
+		REQUIRE(f.waitUntil([&f, &step] { return drawsAudioEvent(f, 1.5, step.end, step.offset); }));
+	}
+	context.ProcessMouseButtonUp(0, 0);
+	f.step();
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("length") == 52800; })); // 1.5 to 2.6 seconds
+	CHECK(f.audioEvents()[0].at("position") == 72000);
+	CHECK(f.audioEvents()[0].at("offset") == 9600);
+	REQUIRE(settled());
+	CHECK(drawsAudioEvent(f, 1.5, 2.6, 9600));
+	f.call("history.undo");
+	REQUIRE(settled());
+	REQUIRE(drawsAudioEvent(f, 1.5, 2.8, 0));
 	f.display.setSizingMovesContents(false);
 
 	// Snapped to beats, the end (1.5 to 2.8 seconds) at 3.03 seconds goes to 3; Ctrl (Disable Snapping) pressed and
@@ -420,18 +451,43 @@ TEST_CASE("a drag of an event's edge shows the size the release gives it at ever
 	CHECK(f.audioEvents()[0].at("length") == 72000);
 	CHECK(drawsAudioEvent(f, 2.0, 3.5, 0));
 
-	// A MIDI part's end (1 to 3 seconds) half a second later, on its musical track.
-	f.display.select({f.part});
-	const auto partEnd = [&f] { return f.lanes("selected-events")[1].events.at(0).end(); };
+	// Two events selected, the audio event (2 to 3.5 seconds) and the MIDI part (1 to 3 seconds) on its musical track:
+	// a drag of the part's end moves both ends as far, at every step.
+	f.call("event.set", {{"events", {f.event}}, {"lock", false}});
+	REQUIRE(settled());
+	f.display.select({f.event, f.part});
+	const auto partEnd = [&f](const char* kind) { return f.lanes(kind)[1].events.at(0).end(); };
+	const auto bothEnds = [&f, &partEnd](double end, double audioEnd)
+	{
+		return std::abs(partEnd("selected-events") - end) < 1e-6 && std::abs(partEnd("events") - end) < 1e-6 &&
+			drawsAudioEvent(f, 2.0, audioEnd, 0);
+	};
 	press(298, 60);
-	move(348, 60);
+	for (const double x : {318.0, 368.0, 348.0})
+	{
+		move(x, 60);
+		f.step();
+		INFO("part's end at " << x);
+		const double shift = (x - 298.0) / 100.0;
+		REQUIRE(f.waitUntil([&bothEnds, shift] { return bothEnds(3.0 + shift, 3.5 + shift); }));
+	}
+	context.ProcessMouseButtonUp(0, 0);
+	// Pressed again at once, before the display has the project with the resize: the drag starts from the ends the
+	// release left, and the release's answer doesn't take the new drag's preview away.
+	press(348, 60);
+	move(368, 60);
 	f.step();
-	REQUIRE(f.waitUntil([&partEnd] { return std::abs(partEnd() - 3.5) < 1e-6; }));
-	CHECK(std::abs(f.lanes("events")[1].events.at(0).end() - 3.5) < 1e-6);
+	REQUIRE(f.waitUntil([&bothEnds] { return bothEnds(3.7, 4.2); }));
+	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("length") == 5 * g_quarter; })); // the first release's
+	CHECK(f.audioEvents()[0].at("length") == 96000);
+	REQUIRE(settled());
+	CHECK(bothEnds(3.7, 4.2));
 	context.ProcessMouseButtonUp(0, 0);
 	f.step();
-	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("length") == 5 * g_quarter; }));
-	CHECK(std::abs(partEnd() - 3.5) < 1e-6);
+	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("length") == (27 * g_quarter) / 5; })); // 1 to 3.7 seconds
+	CHECK(f.audioEvents()[0].at("length") == 105600);                                         // 2 to 4.2 seconds
+	REQUIRE(settled());
+	CHECK(bothEnds(3.7, 4.2));
 }
 
 TEST_CASE("the object selection tool's modifiers act on events whatever keys they are set to", "[unit]")
