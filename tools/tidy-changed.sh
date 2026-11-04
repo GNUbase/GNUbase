@@ -52,7 +52,7 @@ MINGW* | MSYS* | CYGWIN*)
 		[ -z "$(git status --porcelain -- src tests)" ] ||
 			echo "Note: uncommitted changes are not checked, only HEAD $(git rev-parse --short HEAD)."
 		wslPath() { cygpath -m "$1" | sed -E 's|^([A-Za-z]):|/mnt/\L\1|'; }
-		MSYS_NO_PATHCONV=1 wsl.exe -d "$distro" -e bash "$(wslPath "$(realpath "$0")")" --wsl \
+		MSYS_NO_PATHCONV=1 wsl.exe -d "$distro" -e bash "$(wslPath "$root")/tools/tidy-changed.sh" --wsl \
 			"$(wslPath "$(git rev-parse --path-format=absolute --git-common-dir)")" "$(git rev-parse HEAD)" "$start" \
 			"$(basename "$root")"
 		exit
