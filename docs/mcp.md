@@ -1901,6 +1901,27 @@ Result:
 
 - `events`: array of integer, required
 
+#### `event_previewResize`
+
+Engine command `event.previewResize`. Read-only.
+
+Tells what event.resize with the same parameters would make of the events, without changing them: the audio events, audio parts (with their audio events) and MIDI parts as project.get lists them. The event display shows it while an edge is dragged. Fails where event.resize would.
+
+Arguments:
+
+- `delta`: integer
+- `edge`: one of "start" | "end", required
+- `events`: array of integer, required
+- `mode`: one of "normal" | "moveContents"
+- `ticks`: integer
+- `zeroCrossing`: boolean
+
+Result:
+
+- `audioEvents`: array of object, required
+- `audioParts`: array of object, required
+- `midiParts`: array of object, required
+
 #### `event_remove`
 
 Engine command `event.remove`.

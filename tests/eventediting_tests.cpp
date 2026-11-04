@@ -249,6 +249,137 @@ TEST_CASE("a drag at an edge resizes, Alt and a click splits, a double click add
 	CHECK(f.parts().size() == 4);
 }
 
+namespace
+{
+	// Whether the display draws the audio event (lane 0) from start to end seconds, playing its clip from offset: its
+	// box among the events and the selected events, its waveform, its fade out up to its end and its volume line.
+	bool drawsAudioEvent(Fixture& f, double start, double end, int64_t offset)
+	{
+		const auto near = [](double a, double b) { return std::abs(a - b) < 1e-6; };
+		const auto boxed = [&f, &near, start, end](const char* kind)
+		{
+			const std::vector<ui::EventLanes::Lane>& lanes = f.lanes(kind);
+			return !lanes.empty() && lanes[0].events.size() == 1 && near(lanes[0].events[0].start, start) &&
+				near(lanes[0].events[0].end(), end);
+		};
+		Rml::ElementList waves;
+		f.document.QuerySelectorAll(waves, ".waveforms waveform");
+		const auto* wave = waves.size() == 1 ? dynamic_cast<ui::Waveform*>(waves[0]) : nullptr;
+		const auto* fadeLines = dynamic_cast<ui::FadeLines*>(f.document.QuerySelector("fade-lines"));
+		if (!boxed("events") || !boxed("selected-events") || wave == nullptr || fadeLines == nullptr ||
+			fadeLines->lanes().empty())
+			return false;
+		const ui::FadeLines::Lane& lane = fadeLines->lanes()[0];
+		const bool fadesOut = std::any_of(lane.fades.begin(), lane.fades.end(),
+			[&near, end](const ui::FadeLine& fade) { return !fade.in && near(fade.start + fade.length, end); });
+		return near(wave->span().start, start) && near(wave->span().end(), end) && fadesOut &&
+			lane.volumes.size() == 1 && near(lane.volumes[0].start, start) && near(lane.volumes[0].end, end) &&
+			lane.volumes[0].offset == offset;
+	}
+}
+
+TEST_CASE("a drag of an event's edge shows the size the release gives it at every step, Escape cancels it", "[unit]")
+{
+	Fixture f;
+	Rml::Context& context = f.window.context();
+	Rml::Element* lanes = f.document.QuerySelector("event-lanes.events");
+	REQUIRE(lanes != nullptr);
+	const auto move = [&context, lanes](double x, double y)
+	{
+		context.ProcessMouseMove(
+			static_cast<int>(lanes->GetAbsoluteLeft() + x), static_cast<int>(lanes->GetAbsoluteTop() + y), 0);
+	};
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	clock->freeze(true); // RmlUi's time stands still but for advance()
+	const auto press = [&context, &move, clock](double x, double y)
+	{
+		clock->advance(1.0); // no double click with the press before
+		move(x, y);
+		context.ProcessMouseButtonDown(0, 0);
+	};
+	// The audio event (2 to 2.5 seconds) with a fade out and a volume, so that its fade and volume line show.
+	f.call("audioEvent.setFades", {{"event", f.event}, {"fadeOut", {{"length", 4800}}}});
+	f.call("audioEvent.set", {{"event", f.event}, {"volume", -6.0}});
+	f.display.select({f.event});
+	REQUIRE(f.waitUntil([&f] { return drawsAudioEvent(f, 2.0, 2.5, 0); }));
+
+	// Its end, low in the lane where no fade handle is, in steps without letting go: each one shows the new end at
+	// once, its fade out and volume line with it.
+	press(248, 35);
+	for (const double x : {268.0, 300.0, 210.0, 278.0})
+	{
+		move(x, 35);
+		f.step();
+		INFO("end at " << x);
+		REQUIRE(f.waitUntil([&f, x] { return drawsAudioEvent(f, 2.0, (x + 2.0) / 100.0, 0); }));
+	}
+	CHECK(f.audioEvents()[0].at("length") == 24000); // nothing changed yet
+	context.ProcessMouseButtonUp(0, 0);
+	f.step();
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("length") == 38400; })); // to 2.8 seconds
+	CHECK(f.audioEvents()[0].at("position") == 96000);
+	CHECK(drawsAudioEvent(f, 2.0, 2.8, 0));
+	const auto steps = [&f] { return f.call("history.get").at("steps").size(); };
+	const size_t resized = steps();
+
+	// Its start: later reveals less of the clip, earlier stops at the clip's start, where the event starts already,
+	// as the release would.
+	press(202, 35);
+	move(222, 35);
+	f.step();
+	REQUIRE(f.waitUntil([&f] { return drawsAudioEvent(f, 2.2, 2.8, 9600); }));
+	move(150, 35);
+	f.step();
+	REQUIRE(f.waitUntil([&f] { return drawsAudioEvent(f, 2.0, 2.8, 0); }));
+	move(212, 35);
+	f.step();
+	REQUIRE(f.waitUntil([&f] { return drawsAudioEvent(f, 2.1, 2.8, 4800); }));
+	// Escape cancels the drag: the event shows its size again, and the release changes nothing.
+	f.automation.key(std::nullopt, "Escape");
+	f.step();
+	CHECK(drawsAudioEvent(f, 2.0, 2.8, 0));
+	move(230, 35);
+	f.step();
+	CHECK(drawsAudioEvent(f, 2.0, 2.8, 0));
+	context.ProcessMouseButtonUp(0, 0);
+	f.step();
+	f.step();
+	CHECK(steps() == resized);
+	CHECK(f.audioEvents()[0].at("position") == 96000);
+	CHECK(f.audioEvents()[0].at("offset") == 0);
+
+	// Sizing moves contents: the clip moves with the start, earlier as well.
+	f.display.setSizingMovesContents(true);
+	press(202, 35);
+	move(232, 35);
+	f.step();
+	REQUIRE(f.waitUntil([&f] { return drawsAudioEvent(f, 2.3, 2.8, 0); }));
+	move(152, 35);
+	f.step();
+	REQUIRE(f.waitUntil([&f] { return drawsAudioEvent(f, 1.5, 2.8, 0); }));
+	context.ProcessMouseButtonUp(0, 0);
+	f.step();
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("position") == 72000; }));
+	CHECK(f.audioEvents()[0].at("length") == 62400);
+	CHECK(f.audioEvents()[0].at("offset") == 0);
+	CHECK(steps() == resized + 1);
+
+	// A MIDI part's end (1 to 3 seconds) half a second later, on its musical track.
+	f.display.select({f.part});
+	const auto partEnd = [&f] { return f.lanes("selected-events")[1].events.at(0).end(); };
+	press(298, 60);
+	move(348, 60);
+	f.step();
+	REQUIRE(f.waitUntil([&partEnd] { return std::abs(partEnd() - 3.5) < 1e-6; }));
+	CHECK(std::abs(f.lanes("events")[1].events.at(0).end() - 3.5) < 1e-6);
+	context.ProcessMouseButtonUp(0, 0);
+	f.step();
+	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("length") == 5 * g_quarter; }));
+	CHECK(std::abs(partEnd() - 3.5) < 1e-6);
+	clock->freeze(false);
+}
+
 TEST_CASE("the object selection tool's modifiers act on events whatever keys they are set to", "[unit]")
 {
 	Fixture f;

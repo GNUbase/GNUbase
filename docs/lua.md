@@ -1614,6 +1614,27 @@ Returns:
 
 - `events`: array of integer, required
 
+#### `gnubase.event.previewResize`
+
+Tells what event.resize with the same parameters would make of the events, without changing them: the audio events, audio parts (with their audio events) and MIDI parts as project.get lists them. The event display shows it while an edge is dragged. Fails where event.resize would.
+
+Only reads; changes nothing.
+
+Parameters:
+
+- `delta`: integer
+- `edge`: one of "start" | "end", required
+- `events`: array of integer, required
+- `mode`: one of "normal" | "moveContents"
+- `ticks`: integer
+- `zeroCrossing`: boolean
+
+Returns:
+
+- `audioEvents`: array of object, required
+- `audioParts`: array of object, required
+- `midiParts`: array of object, required
+
 #### `gnubase.event.remove`
 
 Removes audio events and MIDI parts. Locked ones can't be removed.
