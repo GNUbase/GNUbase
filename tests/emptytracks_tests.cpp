@@ -120,7 +120,9 @@ TEST_CASE("track.removeEmpty removes the tracks that hold nothing, in one undo s
 	run(client, "history.undo");
 	CHECK(trackIds(client) == before);
 	run(client, "history.redo");
-	CHECK(trackIds(client).size() == 11);
+	CHECK(trackIds(client) ==
+		std::vector<ObjectId>{
+			event, audioPart, midiPart, markers, automated, group, effect, ruler, tempo, signature, vca});
 
 	// Without empty tracks it changes nothing and records no undo step.
 	CHECK(removeEmpty(client).empty());
@@ -158,6 +160,45 @@ TEST_CASE("track.removeEmpty keeps tracks that others play or send into, until t
 	CHECK(trackIds(client) == std::vector<ObjectId>{played, player, outputFolder, outside, sendFolder, sender, group});
 	CHECK(outputOf(client, player) == channelOf(client, played));
 	CHECK(outputOf(client, outside) == channelOf(client, outputFolder));
+	const Json sends = withId(run(client, "project.get").at("channels"), channelOf(client, sender)).at("sends");
+	CHECK(sends.at(1).at("destination") == channelOf(client, sendFolder));
+}
+
+TEST_CASE("track.removeEmpty leaves a marker track with markers active and a link group its other channels", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId first = addTrack(client, {{"type", "marker"}}); // empty and made active, goes
+	addTrack(client, {{"type", "marker"}});                        // empty, goes
+	const ObjectId markers = addTrack(client, {{"type", "marker"}});
+	run(client, "marker.add", {{"track", markers}, {"position", 0}});
+	run(client, "marker.activateTrack", {{"track", first}});
+	REQUIRE(run(client, "project.get").at("activeMarkerTrack") == first);
+	// An empty track in a link group that a VCA fader controls leaves the group; the others and the VCA stay.
+	const ObjectId vca = addTrack(client, {{"type", "vca"}});
+	const std::vector<ObjectId> linked{addTrack(client, {{"type", "audio"}}), addTrack(client, {{"type", "audio"}}),
+		addTrack(client, {{"type", "audio"}})};
+	run(client, "audioPart.add", {{"track", linked[0]}, {"position", 0}, {"length", 1000}});
+	run(client, "audioPart.add", {{"track", linked[1]}, {"position", 0}, {"length", 1000}});
+	const std::vector<ObjectId> channels{
+		channelOf(client, linked[0]), channelOf(client, linked[1]), channelOf(client, linked[2])};
+	const ObjectId group = run(client, "linkGroup.add", {{"channels", channels}, {"vca", channelOf(client, vca)}})
+							   .at("group")
+							   .at("id")
+							   .get<ObjectId>();
+
+	CHECK(removeEmpty(client).size() == 3);
+	Json project = run(client, "project.get");
+	CHECK(project.at("activeMarkerTrack") == markers);
+	Json linkGroup = withId(project.at("linkGroups"), group);
+	CHECK(linkGroup.at("channels") == Json{channels[0], channels[1]});
+	CHECK(linkGroup.at("vca") == channelOf(client, vca));
+
+	run(client, "history.undo");
+	project = run(client, "project.get");
+	CHECK(project.at("activeMarkerTrack") == first);
+	linkGroup = withId(project.at("linkGroups"), group);
+	CHECK(linkGroup.at("channels") == Json(channels));
 }
 
 TEST_CASE("track.removeEmpty removes nested group channels at once, and one undo restores their routing", "[unit]")
