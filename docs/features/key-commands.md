@@ -111,7 +111,8 @@ The other edit commands ([parts-and-events.md](parts-and-events.md)) have no def
 transport controls' commands (F2, the enter commands, Exchange Time Formats, P for Locators to Selection) are in
 [transport-bar.md](transport-bar.md).
 
-The UI command `file.quit` (Quit, in the main menu's File menu) has Mod+Q, everywhere. Commands that come with their
+The UI command `file.quit` (Quit, in the main menu's File menu) has Mod+Q, everywhere, and `window.onScreenKeyboard`
+(Show/Hide On-Screen Keyboard, [onscreen-keyboard.md](onscreen-keyboard.md)) Alt+K. Commands that come with their
 tickets bring their keys, such as the mixer's F3 and Alt+F3 ([mixer-window.md](mixer-window.md)), cycle, record and the
 rest of the reference's tables.
 
@@ -130,5 +131,5 @@ a modal dialog keep their keys, while Space after a click on a toolbar or transp
 (`tests/transportbar_tests.cpp`).
 
 Not yet: the key commands editor, presets and macros, which will keep the key map in the user settings, so that MCP
-and Lua reach it too; exporting the assignments; keys in tooltips; the On-Screen Keyboard, which takes most keys while
-it shows; a frame around the focused zone.
+and Lua reach it too; exporting the assignments; keys in tooltips; a frame around the focused zone. While the on-screen
+keyboard shows, it takes most keys ([onscreen-keyboard.md](onscreen-keyboard.md)).

@@ -5,6 +5,7 @@
 #include "engine/document/projectmodel.h"
 #include "engine/engine.h"
 #include "engine/time/tempomap.h"
+#include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
@@ -523,6 +524,39 @@ TEST_CASE("event.set mutes and locks, event.remove deletes unlocked events", "[u
 	CHECK(f.count("midiParts") == 0);
 	f.call("history.undo");
 	CHECK(f.count("midiParts") == 1);
+}
+
+TEST_CASE("event.set puts events on lanes, which splits, undo and the project file keep", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	Fixture f;
+	const int64_t event = f.audioEvent(f.track("audio", "linear"));
+	const int64_t part = f.part(f.track("midi"));
+	CHECK(f.midi(part).at("lane") == 0);
+
+	f.call("event.set", {{"events", {event, part}}, {"lane", 2}});
+	CHECK(f.audio(event).at("lane") == 2);
+	CHECK(f.midi(part).at("lane") == 2);
+	CHECK(f.call("event.get", {{"events", {part}}}).at("events").at(0).at("lane") == 2);
+	f.call("history.undo");
+	CHECK(f.midi(part).at("lane") == 0);
+	CHECK(f.audio(event).at("lane") == 0);
+	f.call("history.redo");
+	CHECK(f.midi(part).at("lane") == 2);
+
+	f.call("event.split", {{"events", {part}}, {"positions", {3 * g_second}}});
+	REQUIRE(f.count("midiParts") == 2);
+	const Json project = f.call("project.get");
+	for (const Json& item : project.at("midiParts"))
+		CHECK(item.at("lane") == 2);
+	CHECK_THAT(f.fails("event.set", {{"events", {event}}, {"lane", -1}}), ContainsSubstring("lane"));
+
+	const std::string file = (dir.path() / "lanes.dawproject").u8string();
+	f.call("project.save", {{"path", file}, {"embedMedia", false}});
+	f.call("project.new");
+	f.call("project.load", {{"path", file}});
+	CHECK(f.audio(event).at("lane") == 2);
+	CHECK(f.midi(part).at("lane") == 2);
 }
 
 TEST_CASE("event.fillLoop fills the locators with copies, cutting the last one", "[unit]")

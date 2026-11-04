@@ -151,7 +151,7 @@ namespace gnubase::engine
 					{"velocity", sounding.velocity / g_maxVelocity},
 					{"releaseVelocity",
 						(event.type == EventType::NoteOff ? event.velocity : g_defaultReleaseVelocity) / g_maxVelocity},
-					{"channel", channel}});
+					{"channel", channel}, {"take", m_take}});
 			sounding.position = event.type == EventType::NoteOn ? position : -1;
 			sounding.velocity = event.velocity;
 			return;
@@ -185,6 +185,7 @@ namespace gnubase::engine
 		Json json = toJson(controller);
 		json.erase("id");
 		json["position"] = position;
+		json["take"] = m_take;
 		m_controllers.push_back(std::move(json));
 	}
 
@@ -601,6 +602,7 @@ namespace gnubase::engine
 				tracks.push_back(std::move(track));
 			m_pendingMidi = Json::array();
 			data["midiMode"] = g_midiRecordModes.at(static_cast<size_t>(m_pendingMidiSetup.midiMode));
+			data["cycleMode"] = g_midiCycleRecordModes.at(static_cast<size_t>(m_pendingMidiSetup.midiCycleMode));
 			data["snapToBars"] = m_pendingMidiSetup.snapToBars;
 		}
 		data["tracks"] = std::move(tracks);
@@ -636,7 +638,14 @@ namespace gnubase::engine
 			// Playback jumped, at the end of a cycle lap or a locate: the notes that sound end with the take before.
 			for (auto& [channel, builder] : m_midiBuilders)
 				builder.endNotes(take.position + take.length);
-			m_midiTakes.push_back({chunk.position, frame, 0});
+			// A take that got no frames is left out of recording.add, and nothing was recorded in it: the next one
+			// takes its place, so the takes' indices stay those recording.add gets.
+			if (take.length == 0)
+				m_midiTakes.back() = {chunk.position, frame, 0};
+			else
+				m_midiTakes.push_back({chunk.position, frame, 0});
+			for (auto& [channel, builder] : m_midiBuilders)
+				builder.setTake(m_midiTakes.size() - 1);
 		}
 		Take& take = m_midiTakes.back();
 		take.length = std::max(take.length, frame + chunk.frames - take.offset);
@@ -707,6 +716,7 @@ namespace gnubase::engine
 			m_notify("recording.finished",
 				{{"project", m_midiCurrent.project},
 					{"midiMode", g_midiRecordModes.at(static_cast<size_t>(m_midiCurrent.midiMode))},
+					{"cycleMode", g_midiCycleRecordModes.at(static_cast<size_t>(m_midiCurrent.midiCycleMode))},
 					{"snapToBars", m_midiCurrent.snapToBars}, {"tracks", std::move(tracks)}});
 	}
 

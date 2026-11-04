@@ -357,6 +357,12 @@
 				<menuitem command="transport.set" parameters='{"midiRecordMode": "newParts"}'>New Parts</menuitem>
 				<menuitem id="midi-record-mode-merge" command="transport.set" parameters='{"midiRecordMode": "merge"}'>Merge</menuitem>
 				<menuitem command="transport.set" parameters='{"midiRecordMode": "replace"}'>Replace</menuitem>
+				<menuseparator/>
+				<menuitem command="transport.set" parameters='{"midiCycleRecordMode": "mix"}'>Mix</menuitem>
+				<menuitem command="transport.set" parameters='{"midiCycleRecordMode": "overwrite"}'>Overwrite</menuitem>
+				<menuitem command="transport.set" parameters='{"midiCycleRecordMode": "keepLast"}'>Keep Last</menuitem>
+				<menuitem id="midi-cycle-record-mode-stacked" command="transport.set" parameters='{"midiCycleRecordMode": "stacked"}'>Stacked</menuitem>
+				<menuitem command="transport.set" parameters='{"midiCycleRecordMode": "mixStacked"}'>Mix-Stacked (No Mute)</menuitem>
 			</menu>
 		</menuitem>
 		<menuseparator/>
@@ -385,6 +391,7 @@
 		<menuitem command="window.mixer3">Mixer 3</menuitem>
 		<menuitem command="window.mixer4">Mixer 4</menuitem>
 		<menuseparator/>
+		<menuitem command="window.onScreenKeyboard">On-Screen Keyboard</menuitem>
 		<menuitem command="window.studioSetup">Studio Setup...</menuitem>
 	</menu>
 

@@ -752,6 +752,22 @@
 	{
 		background-color: #10dff2;
 	}
+	.onscreen-keyboard .white-key
+	{
+		background-color: #f1f4ff;
+		color: #090b18;
+		border-color: #303754;
+	}
+	.onscreen-keyboard .black-key
+	{
+		background-color: #090b18;
+		color: #aeb7d0;
+		border-color: #303754;
+	}
+	.onscreen-keyboard .white-key.pressed, .onscreen-keyboard .black-key.pressed
+	{
+		background-color: #10dff2;
+	}
 	menubar
 	{
 		background-color: #101426;

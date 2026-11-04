@@ -65,6 +65,7 @@ the edits of several parts go in one `history.transaction`.
     .key-editor-grid                  128 .key-editor-row (.black); .key-editor-notes with a .key-note[part][note]
                                       per note (.selected, .inactive outside the part editing mode, .drawing);
                                       .key-editor-step-cursor (.off while step input is off)
+#key-editor-toolbox                   menu.toolbox with a menuitem[key-tool] per tool, [checked] for the current one
 .editor-chord-editing                 the inspector's Chord Editing section: .editor-chord-type (the chord's name),
                                       button.editor-chord[chord] and button.editor-voicing[voicing]
 ```
@@ -87,6 +88,11 @@ in percent of the grid. Positions snap to the project's quantize grid; Ctrl (Cmd
   one's changes; the channel is set for all.
 - **Chord Editing** (pp. 1215-1218) is in the editor window's inspector, under Global Tracks: the chord the selected
   notes make ("No Chord" for none), and buttons that send `note.voicing` for each part's selected notes.
+- **Toolbox** (p. 65). A right click in the note display opens `#key-editor-toolbox`, the toolbar's tools at the
+  mouse, by the user setting `ui.toolboxOnRightClick` as in the event display ([tools.md](tools.md)): with it on, a
+  right click without a modifier key; off, a right click with one. A click on a tool chooses it. The other right click
+  opens nothing yet, as the key editor has no context menu: the grid's `contextmenu` or `modifiercontextmenu` is
+  empty. A right click doesn't change the selection.
 - **Clicking a part** in the row of parts activates it, as `MidiEditor` handles clicks on `[part]` (p. 1152); a click
   on a note activates its part too.
 
@@ -100,7 +106,7 @@ Editor, Record in Editor, Acoustic Feedback, Auto Select Controllers, pitch visi
 Indicate Transpositions, event colors, the status line and Set up Window Layout; horizontal zoom and scrolling;
 listening to a key's pitch with a click; drum map and articulation names; Add to Chord Track, Match with Chord Track,
 Create Chord Events and the chord insert tools; controller lanes (#128), quantizing from the toolbar (#132) and the
-Length section's functions (#133).
+Length section's functions (#133); the key editor's context menu.
 
 ## Checks
 
@@ -114,4 +120,5 @@ Length section's functions (#133).
   keys lit for selected notes; the object selection tool selecting, deselecting, moving, resizing, inserting and
   deleting; the draw tool with Quantize Link and an eighth from the Length Quantize menu; the erase, trim (and with
   Alt), split and glue tools; the transpose palette and typing a pitch on the info line; step input with its cursor,
-  a click moving it, and MIDI input selecting the next note; the Chord Editing section naming and changing a chord.
+  a click moving it, and MIDI input selecting the next note; the Chord Editing section naming and changing a chord;
+  the toolbox with the setting on and off, with and without a modifier key, choosing tools.

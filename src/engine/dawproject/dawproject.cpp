@@ -495,11 +495,42 @@ namespace gnubase::engine
 						volume.append_attribute("min") = 0.0;
 						volume.append_attribute("max") = volumeToGain(m_project.maxVolume);
 						volume.append_attribute("value") = volumeToGain(channel.volume);
+						writeSends(element, channel);
 						writeDevices(element, channel);
 					}
 				}
 				for (const ObjectId child : track.children)
 					writeTrack(node, m_project.trackById.at(child));
+			}
+
+			// The sends with a destination, with their level as a linear gain. Their numbers are in GNUbase's entry.
+			void writeSends(pugi::xml_node channelNode, const Channel& channel) const
+			{
+				pugi::xml_node sends;
+				for (size_t s = 0; s < channel.sends.size(); ++s)
+				{
+					const Send& send = channel.sends[s];
+					if (send.destination == 0)
+						continue;
+					if (!sends)
+						sends = channelNode.append_child("Sends");
+					const std::string id = xmlId("cs", channel.id) + "_" + std::to_string(s + 1);
+					pugi::xml_node node = sends.append_child("Send");
+					node.append_attribute("id") = id.c_str();
+					node.append_attribute("destination") = xmlId("c", send.destination).c_str();
+					node.append_attribute("type") = send.preFader ? "pre" : "post";
+					pugi::xml_node volume = node.append_child("Volume");
+					volume.append_attribute("id") = (id + "v").c_str();
+					volume.append_attribute("name") = "Send Level";
+					volume.append_attribute("unit") = "linear";
+					volume.append_attribute("min") = 0.0;
+					volume.append_attribute("max") = volumeToGain(m_project.maxVolume);
+					volume.append_attribute("value") = volumeToGain(send.level);
+					pugi::xml_node enable = node.append_child("Enable");
+					enable.append_attribute("id") = (id + "e").c_str();
+					enable.append_attribute("name") = "Send On";
+					enable.append_attribute("value") = send.on;
+				}
 			}
 
 			// The built-in plugins of a channel's slots as devices, with the values set on their parameters. Plugins
@@ -1172,6 +1203,8 @@ namespace gnubase::engine
 					m_channels[channelNode.attribute("id").as_string()] = channel.id;
 					if (const pugi::xml_attribute destination = channelNode.attribute("destination"))
 						m_destinations.emplace_back(channel.id, destination.as_string());
+					if (type != TrackType::Midi)
+						readSends(channelNode.child("Sends"), m_project.channels.at(channel.id));
 				}
 				(parent == 0 ? m_project.tracks : m_project.trackById.at(parent).children).push_back(track.id);
 				m_project.trackById[track.id] = track;
@@ -1215,9 +1248,36 @@ namespace gnubase::engine
 				}
 			}
 
+			// The first eight sends, whose destinations are found once every channel is there.
+			void readSends(pugi::xml_node sends, Channel& channel)
+			{
+				size_t index = 0;
+				for (const pugi::xml_node node : sends.children("Send"))
+				{
+					if (index == g_maxSends)
+						break;
+					Send& send = channel.sends[index];
+					send.preFader = std::string(node.attribute("type").as_string("post")) == "pre";
+					send.on = node.child("Enable").attribute("value").as_bool(true);
+					const pugi::xml_node volume = node.child("Volume");
+					const double value = finiteNumber(volume.attribute("value"), 1.0);
+					send.level = std::string(volume.attribute("unit").as_string("linear")) == "decibel"
+						? std::clamp(value, g_minChannelVolume, m_project.maxVolume)
+						: gainToVolume(value, m_project.maxVolume);
+					m_sendDestinations.push_back({channel.id, index++, node.attribute("destination").as_string()});
+				}
+			}
+
 			// Outputs to busses and group channels; other destinations stay on the main output.
 			void resolveDestinations()
 			{
+				// Sends to group and effect channels that don't close a loop; others lose their destination.
+				for (const auto& [channelId, index, destination] : m_sendDestinations)
+				{
+					const auto target = m_channels.find(destination);
+					if (target != m_channels.end() && isSendDestination(m_project, target->second))
+						m_project.channels.at(channelId).sends[index].destination = target->second;
+				}
 				for (const auto& [channelId, destination] : m_destinations)
 				{
 					const auto target = m_channels.find(destination);
@@ -1244,6 +1304,13 @@ namespace gnubase::engine
 							break;
 						}
 				}
+				for (auto& [id, channel] : m_project.channels)
+					for (Send& send : channel.sends)
+					{
+						const ObjectId destination = std::exchange(send.destination, 0);
+						if (destination != 0 && !routingLoops(m_project, id, destination))
+							send.destination = destination;
+					}
 			}
 
 			void readLanes(const pugi::xml_node& lanes, Context context)
@@ -1650,6 +1717,13 @@ namespace gnubase::engine
 			std::map<std::string, ObjectId> m_tracks;   // project.xml track id -> track
 			std::map<std::string, ObjectId> m_channels; // project.xml channel id -> channel or bus
 			std::vector<std::pair<ObjectId, std::string>> m_destinations;
+			struct SendDestination
+			{
+				ObjectId channel = 0;
+				size_t index = 0;
+				std::string destination;
+			};
+			std::vector<SendDestination> m_sendDestinations;
 			std::map<std::string, ObjectId> m_clips; // media path in project.xml -> clip
 			// project.xml parameter id -> the track whose channel has it, and which one it is
 			std::map<std::string, std::pair<ObjectId, AutomationTargetType>> m_parameters;

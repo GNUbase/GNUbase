@@ -7,6 +7,7 @@
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
@@ -379,6 +380,36 @@ TEST_CASE("cycle recording makes a take per lap, all in one file", "[integration
 	CHECK(slice(file, 2200, 800) == recorded(client, 0, 1200, 800));
 }
 
+TEST_CASE("a four-lap cycle recording makes four takes on lanes of their own, the last one playing", "[integration]")
+{
+	const std::string mode = GENERATE("keepHistory", "cycleHistoryReplace");
+	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
+	Client& client = setup.client;
+	run(client, "transport.set", {{"left", 500}, {"right", 2000}, {"cycle", true}, {"audioRecordMode", mode}});
+	run(client, "transport.locate", {{"position", 500}});
+	run(client, "transport.record");
+	run(client, "audio.render", {{"frames", 5800}}); // three laps of 1500 frames and 1300 of a fourth
+	const Json added = setup.stop();
+	REQUIRE(added.is_object());
+	CHECK(added.at("events").size() == 4);
+
+	std::vector<Json> events = eventsOn(client, setup.track);
+	REQUIRE(events.size() == 4);
+	std::sort(events.begin(), events.end(), [](const Json& a, const Json& b) { return a.at("lane") < b.at("lane"); });
+	for (size_t lap = 0; lap < 4; ++lap)
+	{
+		INFO("lap " << lap);
+		CHECK(events[lap].at("lane") == lap);
+		CHECK(events[lap].at("position") == 500);
+		CHECK(events[lap].at("offset") == 1500 * static_cast<int64_t>(lap));
+		CHECK(events[lap].at("length") == (lap < 3 ? 1500 : 1300));
+	}
+	// The last take was added last, so it plays where the takes overlap.
+	CHECK(events[3].at("id") == added.at("events").at(3));
+	const Json info = run(client, "event.get", {{"events", Json::array({events[2].at("id")})}});
+	CHECK(info.at("events").at(0).at("lane") == 2);
+}
+
 TEST_CASE("audio pre-record keeps the input from before recording started in the file", "[integration]")
 {
 	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
@@ -565,6 +596,35 @@ TEST_CASE("recording.add applies the audio record modes to the events a take ove
 	{
 		add("replace", two);
 		CHECK(spans() == Spans{{0, 400}, {400, 100}, {500, 200}, {700, 300}});
+	}
+	SECTION("the takes of a cycle recording go onto lanes after those of the events where they lie")
+	{
+		// [position, lane] of the track's events, by position and lane.
+		const auto lanes = [&]
+		{
+			std::vector<std::pair<int64_t, int64_t>> result;
+			for (const Json& event : eventsOn(client, track))
+				result.emplace_back(event.at("position").get<int64_t>(), event.at("lane").get<int64_t>());
+			std::sort(result.begin(), result.end());
+			return result;
+		};
+		using Lanes = std::vector<std::pair<int64_t, int64_t>>;
+		const std::string mode = GENERATE("keepHistory", "cycleHistoryReplace", "replace");
+		add(mode, two);
+		if (mode == "keepHistory")
+			CHECK(lanes() == Lanes{{0, 0}, {400, 1}, {500, 2}});
+		else if (mode == "cycleHistoryReplace") // what they overlapped is gone
+			CHECK(lanes() == Lanes{{0, 0}, {400, 0}, {500, 1}, {700, 0}});
+		else // only the last take stays where they overlap: no lanes
+			CHECK(lanes() == Lanes{{0, 0}, {400, 0}, {500, 0}, {700, 0}});
+		run(client, "history.undo");
+		CHECK(lanes() == Lanes{{0, 0}});
+	}
+	SECTION("a recording of one take stays on the first lane")
+	{
+		add("keepHistory", one);
+		for (const Json& event : eventsOn(client, track))
+			CHECK(event.at("lane") == 0);
 	}
 	SECTION("a locked event stays")
 	{

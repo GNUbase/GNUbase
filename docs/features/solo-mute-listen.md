@@ -15,8 +15,8 @@ modes, solo defeat, the Deactivate All buttons and listen.
   channel that plays into it, nested groups and effect channels routed to it included. A soloed effect channel keeps
   the group it plays through, not that group's other sources. Channels with **solo defeat** stay heard while others
   are soloed, with the channels they play through; alone, solo defeat changes nothing. A muted channel stays silent
-  either way. The others are `silent` in the render snapshot and glide out over one block. Sends (#108) will be
-  links of the same graph: a soloed track then keeps the effect channels it sends to.
+  either way. The others are `silent` in the render snapshot and glide out over one block. Sends are links of the
+  same graph: a soloed track keeps the effect channels it sends to ([routing.md](routing.md)).
 - **Exclusive solo** (p. 466): `channel.set` with `solo` and `exclusive: true` turns every other channel's solo
   off in the same undo step, announcing each with `channel.changed`.
 - **Deactivate All Mute, Solo or Listen States** (p. 447): `channel.deactivateAll` with `state` `mute`, `solo` or
@@ -47,7 +47,7 @@ The control room (#191), and with it PFL, listen on input and output channels, a
 panel rather than in user settings; listened channels gliding in and out (they come in at once; the dim glides);
 the project window toolbar's state buttons (p. 58); click and hold for solo defeat; the inspector's solo modifiers
 and its Listen indicator; linking mute, solo and listen in link groups (p. 458); the preferences Group Channels:
-Mute Sources as well and Mute Pre-Send when Mute (p. 1622, needs sends, #108); solo on directly monitored inputs
+Mute Sources as well and Mute Pre-Send when Mute (p. 1622); solo on directly monitored inputs
 with dimming.
 
 ## Checks
