@@ -192,7 +192,7 @@ namespace gnubase::app
 		}
 
 		// The track list's commands (ui::TrackList::actions, docs/features/track-list.md) and their keys.
-		constexpr std::array<ProjectCommand, 21> g_trackCommands{{
+		constexpr std::array<ProjectCommand, 27> g_trackCommands{{
 			{"track.selectPrevious",
 				"Selects the track above the selected one, and its first event while an event is selected.", "Up"},
 			{"track.selectNext",
@@ -219,6 +219,20 @@ namespace gnubase::app
 				"Shows the automation tracks of the selected tracks, or hides them if every one shows them.", nullptr},
 			{"track.showUsedAutomation", "Shows the automation tracks with automation on every track.", nullptr},
 			{"track.hideAllAutomation", "Hides every automation track.", nullptr},
+			// Copying automation to other tracks (docs/features/copy-automation.md).
+			{"track.copyAutomationAll", "Copies the automation of every track between the locators.", nullptr},
+			{"track.copyAutomationSelected", "Copies the automation of the selected tracks between the locators.",
+				nullptr},
+			{"track.copyAutomationSelectedParameters",
+				"Copies the automation of the selected automation tracks between the locators.", nullptr},
+			{"track.pasteAutomationAll",
+				"Pastes the copied automation onto the tracks it was copied from, between the locators.", nullptr},
+			{"track.pasteAutomationSelected",
+				"Pastes the copied automation onto the selected tracks, between the locators.", nullptr},
+			{"track.pasteAutomationSelectedParameters",
+				"Pastes the copied automation onto the selected automation tracks of the same parameters, between the "
+				"locators.",
+				nullptr},
 			// Lanes (docs/features/comping.md).
 			{"track.toggleLanesSelected",
 				"Shows the lanes of the selected tracks, or hides them if every one shows them.", nullptr},
