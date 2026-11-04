@@ -393,6 +393,18 @@ TEST_CASE(
 	CHECK(send().at("on") == true);
 	app.ui().wheel(window, {control(guitar.channel, "sends.2.level"), 0, std::nullopt}, 0.0F, 5.0F);
 	REQUIRE(app.waitUntil([&] { return send().at("level") < 0.0; }));
+	// Ctrl-click gives it the default send level (reference manual p. 552).
+	app.call("settings.set", {{"key", "audio.defaultSendLevel"}, {"value", -12.0}});
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			return element(app, window, control(guitar.channel, "sends.2.level"))
+					   .at("attributes")
+					   .value("default", "") == "-12";
+		}));
+	app.ui().click(
+		window, {control(guitar.channel, "sends.2.level"), 0, std::nullopt}, ui::MouseButton::Left, 1, {"ctrl"});
+	REQUIRE(app.waitUntil([&] { return send().at("level") == -12.0; }));
 
 	// What another client changes shows.
 	app.call(
