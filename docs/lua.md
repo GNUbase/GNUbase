@@ -996,6 +996,14 @@ Returns:
 
 ### channel
 
+#### `gnubase.channel.copySettings`
+
+Copies a channel's settings for channel.pasteSettings (Copy Channel Settings, reference manual pp. 461, 503): the pre section, the equalizer, the strip, the sends and the inserts (the plugin slots with their plugins' settings); not the fader, the pan, the buttons, the routing or the notes. MIDI and VCA channels have none. Changes nothing in the project.
+
+Parameters:
+
+- `channel`: integer, required
+
 #### `gnubase.channel.deactivateAll`
 
 Turns a state off on every channel, as the mixer toolbar's Deactivate All Mute, Solo and Listen States buttons do: mute, solo (with solo defeat) or listen. One undo step. Returns the channels that changed.
@@ -1003,6 +1011,18 @@ Turns a state off on every channel, as the mixer toolbar's Deactivate All Mute, 
 Parameters:
 
 - `state`: one of "mute" | "solo" | "listen", required
+
+Returns:
+
+- `channels`: array of integer, required
+
+#### `gnubase.channel.pasteSettings`
+
+Pastes what channel.copySettings copied onto channels, in one undo step (Paste Channel Settings): the pre section, the equalizer, the strip, the sends and the inserts (the plugin slots with their plugins' settings). Their inserts are replaced by copies of the copied ones, the automation of the plugins they had goes with them. A send keeps its destination only if the channel may send there, so not to itself and never in a loop. Emits channel.changed, plugin.removed and plugin.added. Returns the channels.
+
+Parameters:
+
+- `channels`: array of integer, required
 
 Returns:
 
@@ -1901,15 +1921,18 @@ Returns:
 
 #### `gnubase.linkGroup.add`
 
-Links channels in a new link group (reference manual pp. 457-459), named Link Group N unless name is given; by default it links the volume, or with a VCA fader nothing. channels: the linked channels; a channel is in one link group at most, so they leave the groups they were in. What a change to one of them passes on to the others (channel.set, unless linked is false): volume (the fader, by as much as it moved), pan (likewise), mute (the mute, solo and listen buttons), record (record enable and monitor). vca: the channel of a VCA track that controls the group, or 0; it leaves the group it controlled. The VCA fader's volume adds to each channel's, its automation to theirs, and its buttons pass on to them; VCA faders can be in groups that other VCA faders control, but never control themselves. A group with a VCA fader doesn't link the volume: giving it one turns volume off, taking it away turns it on, unless volume is given. Emits linkGroup.added.
+Links channels in a new link group (reference manual pp. 457-459), named Link Group N unless name is given; by default it links the volume and the sends, or with a VCA fader the sends. channels: the linked channels; a channel is in one link group at most, so they leave the groups they were in. What a change to one of them passes on to the others (channel.set, unless linked is false): volume (the fader, by as much as it moved), pan (likewise), mute (the mute, solo and listen buttons), record (record enable and monitor), eq (the equalizer's changes), dynamics (the strip's: gate, compressor and limiter), sends (the sends' changes, on by default; a channel that can't take one, such as a send to itself, keeps its own). vca: the channel of a VCA track that controls the group, or 0; it leaves the group it controlled. The VCA fader's volume adds to each channel's, its automation to theirs, and its buttons pass on to them; VCA faders can be in groups that other VCA faders control, but never control themselves. A group with a VCA fader doesn't link the volume: giving it one turns volume off, taking it away turns it on, unless volume is given. Emits linkGroup.added.
 
 Parameters:
 
 - `channels`: array of integer, required
+- `dynamics`: boolean
+- `eq`: boolean
 - `mute`: boolean
 - `name`: string
 - `pan`: boolean
 - `record`: boolean
+- `sends`: boolean
 - `vca`: integer
 - `volume`: boolean
 
@@ -1927,16 +1950,19 @@ Parameters:
 
 #### `gnubase.linkGroup.set`
 
-Changes a link group: what isn't given stays. channels: the linked channels; a channel is in one link group at most, so they leave the groups they were in. What a change to one of them passes on to the others (channel.set, unless linked is false): volume (the fader, by as much as it moved), pan (likewise), mute (the mute, solo and listen buttons), record (record enable and monitor). vca: the channel of a VCA track that controls the group, or 0; it leaves the group it controlled. The VCA fader's volume adds to each channel's, its automation to theirs, and its buttons pass on to them; VCA faders can be in groups that other VCA faders control, but never control themselves. A group with a VCA fader doesn't link the volume: giving it one turns volume off, taking it away turns it on, unless volume is given. Emits linkGroup.changed.
+Changes a link group: what isn't given stays. channels: the linked channels; a channel is in one link group at most, so they leave the groups they were in. What a change to one of them passes on to the others (channel.set, unless linked is false): volume (the fader, by as much as it moved), pan (likewise), mute (the mute, solo and listen buttons), record (record enable and monitor), eq (the equalizer's changes), dynamics (the strip's: gate, compressor and limiter), sends (the sends' changes, on by default; a channel that can't take one, such as a send to itself, keeps its own). vca: the channel of a VCA track that controls the group, or 0; it leaves the group it controlled. The VCA fader's volume adds to each channel's, its automation to theirs, and its buttons pass on to them; VCA faders can be in groups that other VCA faders control, but never control themselves. A group with a VCA fader doesn't link the volume: giving it one turns volume off, taking it away turns it on, unless volume is given. Emits linkGroup.changed.
 
 Parameters:
 
 - `channels`: array of integer
+- `dynamics`: boolean
+- `eq`: boolean
 - `group`: integer, required
 - `mute`: boolean
 - `name`: string
 - `pan`: boolean
 - `record`: boolean
+- `sends`: boolean
 - `vca`: integer
 - `volume`: boolean
 
@@ -3898,6 +3924,34 @@ Parameters:
 Returns:
 
 - `position`: integer
+- `tempo`: object, required
+
+#### `gnubase.tempo.export`
+
+Exports the tempo track's events, which fixed tempo mode keeps too, and the time signature events into an XML file at path (File > Export > Tempo Track), which tempo.import reads. Returns the number of tempo and time signature events.
+
+Only reads; changes nothing.
+
+Parameters:
+
+- `path`: string, required
+
+Returns:
+
+- `signatureEvents`: integer, required
+- `tempoEvents`: integer, required
+
+#### `gnubase.tempo.import`
+
+Imports a file that tempo.export wrote (File > Import > Tempo Track): its tempo events replace the tempo track's and its time signature events the project's. A file with tempo changes makes the tempo track active; the fixed tempo stays. One undo step. Returns the tempo as tempo.changed reports it and the time signature events as signature.changed does.
+
+Parameters:
+
+- `path`: string, required
+
+Returns:
+
+- `signatures`: array, required
 - `tempo`: object, required
 
 #### `gnubase.tempo.remove`
