@@ -423,6 +423,8 @@ namespace gnubase::engine
 					return "notes";
 				case TrackType::Folder:
 					return "tracks";
+				case TrackType::Vca:
+					return "automation";
 				default:
 					return "audio";
 				}
@@ -432,6 +434,8 @@ namespace gnubase::engine
 			{
 				if (type == TrackType::Group || type == TrackType::Folder)
 					return "submix";
+				if (type == TrackType::Vca)
+					return "vca";
 				return type == TrackType::Effect ? "effect" : "regular";
 			}
 
@@ -479,6 +483,8 @@ namespace gnubase::engine
 					mute.append_attribute("id") = xmlId("cm", channel.id).c_str();
 					mute.append_attribute("name") = "Mute";
 					mute.append_attribute("value") = channel.mute;
+					if (track.type == TrackType::Vca)
+						writeVolume(element, channel);
 					if (channel.format != ChannelFormat::None && track.type != TrackType::Midi)
 					{
 						pugi::xml_node pan = element.append_child("Pan");
@@ -488,19 +494,25 @@ namespace gnubase::engine
 						pan.append_attribute("min") = 0.0;
 						pan.append_attribute("max") = 1.0;
 						pan.append_attribute("value") = panToNormalized(channel.pan);
-						pugi::xml_node volume = element.append_child("Volume");
-						volume.append_attribute("id") = xmlId("cv", channel.id).c_str();
-						volume.append_attribute("name") = "Volume";
-						volume.append_attribute("unit") = "linear";
-						volume.append_attribute("min") = 0.0;
-						volume.append_attribute("max") = volumeToGain(m_project.maxVolume);
-						volume.append_attribute("value") = volumeToGain(channel.volume);
+						writeVolume(element, channel);
 						writeSends(element, channel);
 						writeDevices(element, channel);
 					}
 				}
 				for (const ObjectId child : track.children)
 					writeTrack(node, m_project.trackById.at(child));
+			}
+
+			// The fader, as a linear gain.
+			void writeVolume(pugi::xml_node channelNode, const Channel& channel) const
+			{
+				pugi::xml_node volume = channelNode.append_child("Volume");
+				volume.append_attribute("id") = xmlId("cv", channel.id).c_str();
+				volume.append_attribute("name") = "Volume";
+				volume.append_attribute("unit") = "linear";
+				volume.append_attribute("min") = 0.0;
+				volume.append_attribute("max") = volumeToGain(m_project.maxVolume);
+				volume.append_attribute("value") = volumeToGain(channel.volume);
 			}
 
 			// The sends with a destination, with their level as a linear gain. Their numbers are in GNUbase's entry.
@@ -1147,6 +1159,8 @@ namespace gnubase::engine
 					type = TrackType::Folder;
 				else if (role == "effect")
 					type = TrackType::Effect;
+				else if (role == "vca")
+					type = TrackType::Vca;
 				else if (role == "submix")
 					type = TrackType::Group;
 				else if (content.find("notes") != std::string::npos)
@@ -1165,8 +1179,9 @@ namespace gnubase::engine
 					Channel channel;
 					channel.id = m_project.newId();
 					channel.track = track.id;
-					channel.format = type == TrackType::Midi ? ChannelFormat::None : importedFormat(audioChannels);
-					if (type != TrackType::Midi)
+					const bool audio = type != TrackType::Midi && type != TrackType::Vca;
+					channel.format = audio ? importedFormat(audioChannels) : ChannelFormat::None;
+					if (audio)
 						channel.output = mainOutput().id;
 					if (type == TrackType::Audio)
 						for (const Bus& bus : m_project.busses)
@@ -1196,7 +1211,7 @@ namespace gnubase::engine
 					channel.mute = channelNode.child("Mute").attribute("value").as_bool(false);
 					channel.solo = channelNode.attribute("solo").as_bool(false);
 					channel.notes = channelNode.attribute("comment").as_string();
-					if (type != TrackType::Midi)
+					if (audio)
 						readDevices(channelNode.child("Devices"), channel);
 					track.channel = channel.id;
 					m_project.channels[channel.id] = channel;
