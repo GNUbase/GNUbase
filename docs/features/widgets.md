@@ -88,8 +88,8 @@ attributes, through a data model or directly.
   under a button whose `menu` attribute names it by id (a second click on the button closes it), or at the mouse on
   a right click on an element whose `contextmenu` attribute names it: the nearest one with the attribute, so an empty
   `contextmenu` keeps the menu of an element around it from opening on a control. With a modifier key held (Ctrl,
-  Alt, Shift or Cmd), the menu that its `modifiercontextmenu` attribute names opens instead, if it has one, as the
-  event display's toolbox does ([tools.md](tools.md)). It opens inside the window, moved left or up where it would
+  Alt, Shift or Cmd), the menu that its `modifiercontextmenu` attribute names opens instead, if it has the attribute,
+  as the event display's and the key editor's toolboxes do ([tools.md](tools.md)); an empty one opens none. It opens inside the window, moved left or up where it would
   stick out. Put menus straight into the body, so that no container clips them.
 - A click on an item is a click on that item, for the document to handle, and closes the menu. Escape and a click
   outside close it too. A `disabled` item gets `:disabled` and ignores clicks; `type="toggle"` makes an item checkable,
