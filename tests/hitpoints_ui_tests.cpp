@@ -210,7 +210,8 @@ TEST_CASE("Edit Hitpoints' gestures lock, disable, reset, insert and move hitpoi
 	REQUIRE(f.app.waitUntil([&] { return std::abs(position(3) - (third + 3000)) < f.editor().scale() * 2; }));
 	CHECK(f.hitpoints().at(3).at("locked") == true);
 
-	// A click between two hitpoints plays that slice while the mouse is pressed.
+	// A click between two hitpoints plays that slice from its start to its end (p. 639): the engine's audition stops
+	// at the end (tests/playback_tests.cpp), so releasing the mouse doesn't stop it.
 	ui::EngineBinding binding(f.app.engine());
 	std::vector<std::string> modes;
 	const ui::Subscription subscription = binding.on("audition.changed",
@@ -220,8 +221,11 @@ TEST_CASE("Edit Hitpoints' gestures lock, disable, reset, insert and move hitpoi
 		[&]
 		{
 			binding.update();
-			return modes == std::vector<std::string>{"play", "off"};
+			return !modes.empty();
 		}));
+	f.app.call("project.get"); // after whatever the click and the release sent
+	binding.update();
+	CHECK(modes == std::vector<std::string>{"play"});
 }
 
 TEST_CASE("the Hitpoints section's Create section makes MIDI notes and slices", "[ui]")

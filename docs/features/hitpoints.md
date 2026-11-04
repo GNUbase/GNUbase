@@ -5,13 +5,22 @@ Where sounds start in a clip (#143, reference manual pp. 636-647): detecting the
 
 ## Detection
 
-`analysis::OnsetDetector` (`src/engine/analysis/onsets.h`) reads the clip's file in blocks on the command thread.
-Each channel's peak level is followed by two envelopes, one of the samples and one of their differences (the high
+`clip.detectHitpoints` runs as a job (`job.progress`, `job.cancel`, [architecture](../architecture.md), "Jobs"),
+since a long recording takes seconds: `analysis::OnsetDetector` (`src/engine/analysis/onsets.h`) reads the clip's
+file in blocks on the job's thread, and the job then sets the hitpoints with `clip.setHitpoints`, one undo step. A
+clip removed meanwhile fails the job. Each channel's peak level is followed by two envelopes, one of the samples and one of their differences (the high
 frequencies, so that a hi-hat stands out over a kick drum's decay), which jump up with the signal and fall with a
 50 ms time constant. Where either rises by 6 dB or more within 5 ms, from at least -60 dBFS, a sound starts: at the
 first frame there more than 1 dB above where the envelope was. The next one can start 20 ms later. Each onset has its
 peak, the loudest sample in the 20 ms from there, and its rise; the intensity is the rise relative to the clip's
 sharpest.
+
+A hitpoint inserted or moved by hand is measured the same way where it goes (`OnsetDetector::measure`), from half a
+second of the file before it, by when anything earlier has decayed below -60 dBFS, so that it gets the peak and
+rise the detection would have given it there. Its intensity is relative to the sharpest the detection found: the
+rise at the clip's other hitpoint of the highest intensity, measured again, divided by that intensity. So a hit the
+detection missed and the user added gets a MIDI note's velocity as loud as it is, and the filters treat it as a
+detected one once it is unlocked.
 
 ## In the engine
 
@@ -24,10 +33,11 @@ DAWproject has no place for. Each command is one undo step and emits `clip.chang
 
 | Command | What it does | Reference |
 |---|---|---|
-| `clip.detectHitpoints` | Detects the clip's hitpoints, in place of those it had | p. 637 |
+| `clip.detectHitpoints` | Detects the clip's hitpoints, in place of those it has then, as a job | p. 637 |
+| `clip.setHitpoints` | Sets a clip's hitpoints as given: what the detection found, or hitpoints from elsewhere | |
 | `clip.setHitpointFilter` | Threshold, Intensity and Minimum Length | p. 638 |
-| `clip.addHitpoint` | Inserts one, locked | p. 640 |
-| `clip.setHitpoint` | Moves (and so locks) one, locks, disables or resets it | p. 640 |
+| `clip.addHitpoint` | Inserts one, locked, measured where it is | p. 640 |
+| `clip.setHitpoint` | Moves (and so locks and measures) one, locks, disables or resets it | p. 640 |
 | `clip.removeHitpoints` | Remove All | p. 638 |
 | `event.fromHitpoints` | The Create section, with `create`: | pp. 638-647 |
 
@@ -74,25 +84,30 @@ display's gestures edit hitpoints instead of the tool's (pp. 636, 639-640):
 | Ctrl (Cmd on macOS), Alt and a click on its line | Enable/Unlock Hitpoints: resets it |
 | A drag of its line | Move Hitpoint, which locks it |
 | Alt and a click elsewhere | Insert Hitpoint |
-| A click between two | Play back Slice: auditions from the hitpoint before while the mouse is pressed |
+| A click between two | Play back Slice: auditions the slice from the hitpoint that counts before to the one after (`audition.start` with `end`) |
 
 `resources/styles/sampleeditor.rcss` lays them out; the themes color them (`tools/skin/generate.py`).
 
 ## Not yet
 
-Automatic detection when audio is imported or recorded (the Editing - Audio preference) and the hitpoints of the
-selected event in the project window; the Beats filter and warp markers, which need the clip's musical definition and
+Automatic detection when audio is imported or recorded (the Editing - Audio preference, which can start the same job)
+and the hitpoints of the selected event in the project window; the Beats filter and warp markers, which need the clip's musical definition and
 warping (#144); Tab to the next slice; Alt+N and Alt+B to locate to hitpoints; Divide Audio Events at Hitpoints for
 folder tracks; the MIDI notes' destinations First Selected Track in the UI (the engine takes `track`), which replaces
-the parts of earlier conversions, and Project Clipboard; Close Gaps and Delete Overlaps for slices.
+the parts of earlier conversions, and Project Clipboard; Close Gaps and Delete Overlaps for slices. The detection is
+checked on synthesized loops only; recorded drum loops with hand-annotated onsets (room sound, bleed, flams) are yet
+to come.
 
 ## Checks
 
 - `tests/hitpoints_tests.cpp`: detection accuracy on two synthesized drum loops whose hits are known (straight eighths
   with a ghost note and an open hi-hat at 48 kHz; swung sixteenths with soft attacks under a noise floor, in stereo
-  at 44.1 kHz): every hit found within 5 ms and nothing else, and none in silence or steady tones; detecting,
-  filtering, locking, disabling, resetting, inserting and moving hitpoints with their errors, undo and the project
-  file; slices, events, regions, markers, the groove and MIDI notes.
+  at 44.1 kHz): every hit found within 5 ms and nothing else, and none in silence or steady tones; measuring at each
+  onset gives what the detection found; detecting as a job, cancelled, with the clip removed meanwhile and without
+  its file; filtering, locking, disabling, resetting, inserting and moving hitpoints with their errors, undo and the
+  project file, inserted and moved ones measured where they go; `clip.setHitpoints` and its errors; slices, events,
+  regions, markers, the groove and MIDI notes.
+- `tests/playback_tests.cpp`: auditioning up to an end, as Play back Slice does.
 - `tests/hitpoints_ui_tests.cpp` drives the sample editor with `ui::Automation`: Edit Hitpoints showing the detected
   hitpoints at their frames, the threshold slider's drag as one undo step, Remove All; the handle, Shift, Ctrl and
-  Alt, Alt and the drag, playing a slice; MIDI Notes with its options and Slices.
+  Alt, Alt and the drag, playing a slice without stopping on release; MIDI Notes with its options and Slices.

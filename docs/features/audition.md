@@ -7,7 +7,9 @@ in the project window ([tools.md](tools.md)), and the commands behind them, whic
 ## Commands
 
 - `audition.start` with `track` and `position` (samples) plays the audio track's events from there until
-  `audition.stop`, as the play tool does while the mouse is pressed.
+  `audition.stop`, as the play tool does while the mouse is pressed. With `end` (samples, after `position`) it plays
+  up to there and then nothing, as the sample editor's Play back Slice does ([hitpoints.md](hitpoints.md)); its mode
+  stays `play` until `audition.stop` or another audition.
 - `audition.scrub` with `track` and `position` plays the track from where its last scrub got to, to `position`,
   forwards or backwards, in `seconds` (default: the time since that scrub, from 0.01 to 0.1 seconds). So speed and
   pitch follow how fast new positions come, as the scrub tool sends them while the mouse drags. The first scrub of a
@@ -41,7 +43,7 @@ Each returns and announces `audition.changed`: the auditioned `track` (0 for non
 ## Checks
 
 - `tests/playback_tests.cpp`: auditioning on the dummy device plays exactly the track's samples from the position,
-  for two block sizes, with its channel turned down and muted and another track silent, then nothing once stopped,
+  and up to an end, for two block sizes, with its channel turned down and muted and another track silent, then nothing once stopped,
   and the transport unchanged; the errors without a device, for a MIDI track and a negative position; scrubbing back
   at normal speed and forwards at twice the speed, sample by sample, and the cursor following.
 - `tests/eventediting_tests.cpp` and `tests/uiapp_tests.cpp`: the play tool on an audio lane, on a MIDI lane, and

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Hitpoints and slices (#143, docs/features/hitpoints.md): transient detection on drum loops whose hits are known,
-// the hitpoints of clips with their filters and edits, and what is made of them. tests/sampleeditor_ui_tests.cpp drives
+// the hitpoints of clips with their filters and edits, and what is made of them. tests/hitpoints_ui_tests.cpp drives
 // the sample editor's Hitpoints section in the app.
 #include "engine/analysis/onsets.h"
 #include "engine/engine.h"
@@ -10,6 +10,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -232,6 +233,31 @@ namespace
 						.get<int64_t>();
 		}
 
+		// Waits until a job is done and returns it as job.get has it.
+		Json waitForJob(const Json& started)
+		{
+			const auto job = started.at("job").at("id").get<uint64_t>();
+			const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+			while (std::chrono::steady_clock::now() < deadline)
+			{
+				client.wait(std::chrono::milliseconds(20));
+				if (Json state = call("job.get", {{"job", job}}).at("job"); state.at("state") != "running")
+					return state;
+			}
+			FAIL_CHECK("the job didn't finish");
+			return Json::object();
+		}
+
+		// Detects the clip's hitpoints and returns the job's result: clip.setHitpoints' with them.
+		Json detect(int64_t id = 0)
+		{
+			const Json finished = waitForJob(call("clip.detectHitpoints", {{"clip", id != 0 ? id : clip}}));
+			INFO(finished.dump());
+			REQUIRE(finished.at("state") == "done");
+			CHECK(finished.at("progress") == 1.0);
+			return finished.at("result");
+		}
+
 		Json clipJson()
 		{
 			const Json clips = call("project.get").at("clips");
@@ -290,11 +316,11 @@ TEST_CASE("clips have hitpoints, detected, filtered and edited as undo steps and
 {
 	Fixture f;
 	CHECK(f.clipJson().at("hitpoints").empty());
-	Json result = f.call("clip.detectHitpoints", {{"clip", f.clip}});
+	Json result = f.detect();
 	CHECK(result.at("clip") == f.clip);
 	const Json detected = result.at("hitpoints");
 	REQUIRE(detected.size() == f.hits.size());
-	CHECK(f.call("history.get").at("steps").back().at("action") == "Detect hitpoints");
+	CHECK(f.call("history.get").at("steps").back().at("action") == "Set hitpoints");
 	double sharpest = 0.0;
 	for (const Json& hitpoint : detected)
 	{
@@ -367,7 +393,7 @@ TEST_CASE("clips have hitpoints, detected, filtered and edited as undo steps and
 	// Remove All, and detecting them again.
 	f.clip = loaded.at("id").get<int64_t>();
 	CHECK(f.call("clip.removeHitpoints", {{"clip", f.clip}}).at("hitpoints").empty());
-	CHECK(f.call("clip.detectHitpoints", {{"clip", f.clip}}).at("hitpoints") == detected);
+	CHECK(f.detect().at("hitpoints") == detected);
 }
 
 TEST_CASE("slices, events, regions, markers, a groove and MIDI notes are made of hitpoints", "[unit]")
@@ -375,7 +401,7 @@ TEST_CASE("slices, events, regions, markers, a groove and MIDI notes are made of
 	Fixture f;
 	CHECK_THAT(f.fails("event.fromHitpoints", {{"event", f.event}, {"create", "events"}}),
 		ContainsSubstring("detect them first"));
-	const Json detected = f.call("clip.detectHitpoints", {{"clip", f.clip}}).at("hitpoints");
+	const Json detected = f.detect().at("hitpoints");
 	const size_t count = detected.size();
 	std::vector<int64_t> frames;
 	for (const Json& hitpoint : detected)
@@ -478,5 +504,177 @@ TEST_CASE("slices, events, regions, markers, a groove and MIDI notes are made of
 		CHECK(fixed.at("track") == made.at("track"));
 		CHECK_THAT(f.fails("event.fromHitpoints", {{"event", f.event}, {"create", "midiNotes"}, {"track", f.track}}),
 			ContainsSubstring("isn't a MIDI or instrument track"));
+	}
+}
+
+TEST_CASE("a sound is measured where it starts as the detection measures the onsets it finds", "[unit]")
+{
+	for (const Loop& loop : {rockLoop(), swingLoop()})
+	{
+		const test::Audio& audio = loop.audio;
+		const auto width = static_cast<size_t>(audio.channels);
+		const int64_t lead = engine::analysis::OnsetDetector::lead(audio.sampleRate);
+		for (const engine::analysis::Onset& onset : detect(audio))
+		{
+			const auto from = static_cast<size_t>(std::max<int64_t>(0, onset.frame - lead));
+			const engine::analysis::Onset measured = engine::analysis::OnsetDetector::measure(audio.sampleRate,
+				audio.channels, audio.samples.data() + (from * width), audio.frames() - from,
+				static_cast<size_t>(onset.frame) - from);
+			INFO("the onset at frame " << onset.frame);
+			CHECK(measured.frame == onset.frame - static_cast<int64_t>(from));
+			CHECK(std::abs(measured.rise - onset.rise) < 1e-9);
+			CHECK(measured.peak >= onset.peak - 1e-9); // over the whole 20 ms, which the detection starts later
+			CHECK(measured.peak < onset.peak + 0.5);
+		}
+	}
+	// Nothing to measure: no rise, and silence far below -60 dBFS.
+	const std::vector<float> silence(1000, 0.0F);
+	const engine::analysis::Onset quiet = engine::analysis::OnsetDetector::measure(48000, 1, silence.data(), 1000, 500);
+	CHECK(quiet.rise == 0.0);
+	CHECK(quiet.peak < -100.0);
+	CHECK(engine::analysis::OnsetDetector::measure(48000, 1, silence.data(), 1000, 1000).rise == 0.0);
+}
+
+TEST_CASE("hitpoints inserted or moved by hand get the peak and intensity of the sound where they are", "[unit]")
+{
+	Fixture f;
+	const Json detected = f.detect().at("hitpoints");
+	REQUIRE(detected.size() == f.hits.size());
+	const Json& ghost = detected.at(g_ghost);
+	const auto at = ghost.at("position").get<int64_t>();
+	const auto ghostPeak = ghost.at("peak").get<double>();
+	const auto ghostIntensity = ghost.at("intensity").get<double>();
+	const auto find = [&f](int64_t position)
+	{
+		const Json hitpoints = f.clipJson().at("hitpoints");
+		const auto found = std::find_if(hitpoints.begin(), hitpoints.end(),
+			[position](const Json& hitpoint) { return hitpoint.at("position") == position; });
+		REQUIRE(found != hitpoints.end());
+		return *found;
+	};
+
+	// Moved into the decay 50 ms later, it is quieter and its level doesn't rise there.
+	f.call("clip.setHitpoint", {{"clip", f.clip}, {"position", at}, {"moveTo", at + 2400}});
+	const Json moved = find(at + 2400);
+	CHECK(moved.at("peak").get<double>() < ghostPeak - 3.0);
+	CHECK(moved.at("intensity") == 0.0);
+	CHECK(moved.at("locked") == true);
+
+	// Inserted where the ghost note starts, it has what the detection found there: so a threshold below its peak
+	// keeps it once it is unlocked, and the MIDI note it makes is as soft as the detected one's.
+	f.call("clip.addHitpoint", {{"clip", f.clip}, {"position", at}});
+	const Json inserted = find(at);
+	CHECK(std::abs(inserted.at("peak").get<double>() - ghostPeak) < 0.5);
+	CHECK(std::abs(inserted.at("intensity").get<double>() - ghostIntensity) < 1e-6);
+	f.call("clip.setHitpoint", {{"clip", f.clip}, {"position", at}, {"locked", false}});
+	f.call("clip.setHitpoint", {{"clip", f.clip}, {"position", at + 2400}, {"disabled", true}});
+	f.call("clip.setHitpointFilter", {{"clip", f.clip}, {"threshold", ghostPeak - 6.0}});
+	CHECK(f.active().size() == f.hits.size());
+	const Json made = f.call("event.fromHitpoints", {{"event", f.event}, {"create", "midiNotes"}});
+	Json notes;
+	const Json project = f.call("project.get");
+	for (const Json& part : project.at("midiParts"))
+		if (part.at("id") == made.at("part"))
+			notes = part.at("notes");
+	REQUIRE(notes.size() == f.hits.size());
+	const auto velocity = notes.at(g_ghost).at("velocity").get<double>();
+	CHECK(velocity > 2.0 / 127.0);
+	CHECK(velocity < 0.3);
+
+	// Moving the sharpest one measures it against the next sharpest: back where it was, it is the sharpest again.
+	size_t sharpest = 0;
+	for (size_t i = 0; i < detected.size(); ++i)
+		if (detected.at(i).at("intensity") == 1.0)
+			sharpest = i;
+	const auto top = detected.at(sharpest).at("position").get<int64_t>();
+	f.call("clip.setHitpoint", {{"clip", f.clip}, {"position", top}, {"moveTo", top + 1}});
+	f.call("clip.setHitpoint", {{"clip", f.clip}, {"position", top + 1}, {"moveTo", top}});
+	CHECK(find(top).at("intensity") == 1.0);
+	CHECK(std::abs(find(top).at("peak").get<double>() - detected.at(sharpest).at("peak").get<double>()) < 0.5);
+}
+
+TEST_CASE("clip.setHitpoints sets a clip's hitpoints as given and checks them", "[unit]")
+{
+	Fixture f;
+	const Json given = {{{"position", 3000}, {"peak", -12.0}, {"intensity", 0.5}, {"locked", true}},
+		{{"position", 1000}, {"peak", -6.0}, {"intensity", 1.0}, {"disabled", true}, {"active", true}}};
+	const Json result = f.call("clip.setHitpoints", {{"clip", f.clip}, {"hitpoints", given}});
+	REQUIRE(result.at("hitpoints").size() == 2);
+	// By position, active as the filters have it.
+	CHECK(result.at("hitpoints").at(0) ==
+		Json{{"position", 1000}, {"peak", -6.0}, {"intensity", 1.0}, {"locked", false}, {"disabled", true},
+			{"active", false}});
+	CHECK(result.at("hitpoints").at(1).at("locked") == true);
+	CHECK(f.call("history.get").at("steps").back().at("action") == "Set hitpoints");
+	// They can be given back as they come.
+	CHECK(f.call("clip.setHitpoints", {{"clip", f.clip}, {"hitpoints", result.at("hitpoints")}}) == result);
+
+	const auto set = [&f](const Json& hitpoint)
+	{ return f.fails("clip.setHitpoints", {{"clip", f.clip}, {"hitpoints", Json::array({hitpoint})}}); };
+	CHECK_THAT(set({{"position", -1}, {"peak", 0.0}, {"intensity", 0.0}}), ContainsSubstring("within the clip"));
+	CHECK_THAT(set({{"position", 192000}, {"peak", 0.0}, {"intensity", 0.0}}), ContainsSubstring("within the clip"));
+	CHECK_THAT(set({{"position", 0}, {"peak", 0.0}, {"intensity", 1.5}}), ContainsSubstring("0 to 1"));
+	CHECK_THAT(set({{"position", 0}, {"peak", 0.0}}), ContainsSubstring("intensity"));
+	const Json twice = {
+		{{"position", 5}, {"peak", 0.0}, {"intensity", 0.0}}, {{"position", 5}, {"peak", -1.0}, {"intensity", 0.0}}};
+	CHECK_THAT(f.fails("clip.setHitpoints", {{"clip", f.clip}, {"hitpoints", twice}}),
+		ContainsSubstring("two hitpoints at 5"));
+	CHECK_THAT(
+		f.fails("clip.setHitpoints", {{"clip", 999}, {"hitpoints", Json::array()}}), ContainsSubstring("no clip 999"));
+	CHECK(f.clipJson().at("hitpoints") == result.at("hitpoints")); // nothing changed
+}
+
+TEST_CASE("detecting hitpoints runs as a job, which can be cancelled and fails without the clip or its file", "[unit]")
+{
+	Fixture f;
+	// A minute of the loop, so that the job still runs when it is cancelled or the clip removed.
+	const Loop loop = rockLoop();
+	test::Audio minute;
+	minute.sampleRate = loop.audio.sampleRate;
+	minute.channels = loop.audio.channels;
+	for (int i = 0; i < 15; ++i)
+		minute.samples.insert(minute.samples.end(), loop.audio.samples.begin(), loop.audio.samples.end());
+	const std::string file = (f.dir.path() / "minute.wav").u8string();
+	test::writeWav(file, minute);
+	const Json media = f.call("media.add",
+							{{"path", file}, {"sampleRate", 48000}, {"channels", 1},
+								{"length", static_cast<int64_t>(minute.frames())}})
+						   .at("media");
+	const auto clip = f.call("clip.add", {{"media", media.at("id")}}).at("clip").at("id").get<int64_t>();
+	const size_t steps = f.call("history.get").at("steps").size();
+
+	SECTION("cancelled, it leaves the hitpoints as they were")
+	{
+		const Json started = f.call("clip.detectHitpoints", {{"clip", clip}});
+		CHECK(started.at("job").at("kind") == "clip.detectHitpoints");
+		f.call("job.cancel", {{"job", started.at("job").at("id")}});
+		CHECK(f.waitForJob(started).at("state") == "cancelled");
+		CHECK(f.call("history.get").at("steps").size() == steps);
+	}
+	SECTION("a clip removed meanwhile fails the job")
+	{
+		const Json started = f.call("clip.detectHitpoints", {{"clip", clip}});
+		f.call("clip.remove", {{"clip", clip}});
+		const Json finished = f.waitForJob(started);
+		CHECK(finished.at("state") == "failed");
+		CHECK_THAT(finished.at("error").get<std::string>(), ContainsSubstring("no clip " + std::to_string(clip)));
+	}
+	SECTION("a file it can't read fails the job, and inserting or moving hitpoints")
+	{
+		const Json missing = f.call("media.add",
+								  {{"path", (f.dir.path() / "missing.wav").u8string()}, {"sampleRate", 48000},
+									  {"channels", 1}, {"length", 48000}})
+								 .at("media");
+		const auto gone = f.call("clip.add", {{"media", missing.at("id")}}).at("clip").at("id").get<int64_t>();
+		const Json one = {{{"position", 100}, {"peak", -6.0}, {"intensity", 1.0}}};
+		f.call("clip.setHitpoints", {{"clip", gone}, {"hitpoints", one}});
+		const Json before = f.call("project.get").at("clips");
+		const Json finished = f.waitForJob(f.call("clip.detectHitpoints", {{"clip", gone}}));
+		CHECK(finished.at("state") == "failed");
+		CHECK_THAT(finished.at("error").get<std::string>(), ContainsSubstring("can't read"));
+		CHECK_THAT(f.fails("clip.addHitpoint", {{"clip", gone}, {"position", 50}}), ContainsSubstring("can't read"));
+		CHECK_THAT(f.fails("clip.setHitpoint", {{"clip", gone}, {"position", 100}, {"moveTo", 50}}),
+			ContainsSubstring("can't read"));
+		CHECK(f.call("project.get").at("clips") == before);
 	}
 }
