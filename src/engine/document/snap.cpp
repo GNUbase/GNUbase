@@ -448,17 +448,14 @@ namespace gnubase::engine
 		return grid;
 	}
 
-	time::Samples zeroCrossing(const Project& project, const AudioEvent& event, time::Samples at, bool inside)
+	time::Samples zeroCrossingFrame(
+		const MediaFile& media, time::Samples frame, time::Samples first, time::Samples last)
 	{
-		const MediaFile& media = project.media.at(project.clips.at(event.clip).media);
-		const EventSpan span = eventSpan(project, event);
-		const int64_t frame = event.offset + std::llround(static_cast<double>(at - span.start) / span.ratio);
 		const int64_t window = std::llround(g_zeroCrossingWindow * media.sampleRate);
-		const int64_t first = std::max<int64_t>(inside ? event.offset + 1 : 0, frame - window);
-		const int64_t last =
-			std::min<int64_t>(inside ? event.offset + event.length - 1 : media.length - 1, frame + window);
+		first = std::max<int64_t>(first, frame - window);
+		last = std::min<int64_t>(last, frame + window);
 		if (last <= first)
-			return at;
+			return frame;
 		std::vector<float> mix(static_cast<size_t>(last - first + 1));
 		try
 		{
@@ -475,7 +472,7 @@ namespace gnubase::engine
 		catch (const AudioFileError& error)
 		{
 			logging::warning("Snap to zero crossing can't read {}: {}", media.path, error.what());
-			return at;
+			return frame;
 		}
 		// The frame of each sign change nearer to zero; the one nearest to frame wins.
 		std::optional<int64_t> best;
@@ -487,9 +484,19 @@ namespace gnubase::engine
 			if (!best || std::abs(found - frame) < std::abs(*best - frame))
 				best = found;
 		}
-		if (!best)
+		return best.value_or(frame);
+	}
+
+	time::Samples zeroCrossing(const Project& project, const AudioEvent& event, time::Samples at, bool inside)
+	{
+		const MediaFile& media = project.media.at(project.clips.at(event.clip).media);
+		const EventSpan span = eventSpan(project, event);
+		const int64_t frame = event.offset + std::llround(static_cast<double>(at - span.start) / span.ratio);
+		const int64_t found = zeroCrossingFrame(
+			media, frame, inside ? event.offset + 1 : 0, inside ? event.offset + event.length - 1 : media.length - 1);
+		if (found == frame)
 			return at;
-		return span.start + std::llround(static_cast<double>(*best - event.offset) * span.ratio);
+		return span.start + std::llround(static_cast<double>(found - event.offset) * span.ratio);
 	}
 
 	void registerSnapCommands(ProjectModel& model, Engine& engine)
