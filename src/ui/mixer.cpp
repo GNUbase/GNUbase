@@ -27,13 +27,14 @@ namespace gnubase::ui
 	namespace
 	{
 		// The channel type filter's types (reference manual p. 454), as mixer.set names them, and their labels.
-		constexpr std::array<std::pair<const char*, const char*>, 7> g_types = {{
+		constexpr std::array<std::pair<const char*, const char*>, 8> g_types = {{
 			{"input", "Input Channels"},
 			{"audio", "Audio Channels"},
 			{"instrument", "Instrument Channels"},
 			{"midi", "MIDI Channels"},
 			{"group", "Group Channels"},
 			{"effect", "Effect Channels"},
+			{"vca", "VCA Channels"},
 			{"output", "Output Channels"},
 		}};
 
@@ -254,6 +255,23 @@ namespace gnubase::ui
 					(channel.type == "group" || channel.type == "effect"))
 					options.emplace_back(std::to_string(channel.id), channel.name);
 			return options;
+		}
+
+		// The link group a channel is in and its number, from 1 in the order of the groups; 0 for none.
+		std::pair<const Json*, size_t> linkGroup(const Json& project, uint64_t channel, const char* key)
+		{
+			if (!project.contains("linkGroups"))
+				return {nullptr, 0};
+			size_t number = 0;
+			for (const Json& group : project.at("linkGroups"))
+			{
+				++number;
+				const Json& value = group.at(key);
+				if (value.is_array() ? std::find(value.begin(), value.end(), Json(channel)) != value.end()
+									 : value == channel)
+					return {&group, number};
+			}
+			return {nullptr, 0};
 		}
 
 		// The toolbar's Deactivate All buttons (reference manual p. 447), by the state they turn off.
@@ -523,7 +541,8 @@ namespace gnubase::ui
 		for (const MixerChannel* channel : strips)
 		{
 			const bool audio = channel->channel != nullptr && channel->channel->at("format") != "none";
-			std::string rml = R"(<div class="mixer-channel-name"/>)"
+			const bool vca = channel->type == "vca"; // a fader and buttons (reference manual p. 515)
+			std::string rml = R"(<div class="mixer-channel-name"/><div class="mixer-link"/>)"
 							  R"(<div class="mixer-picture" section="picture" label="Pictures" default="hidden"/>)";
 			rml += sectionsRml(audio);
 			rml += R"(<div class="mixer-notes" section="notes" label="Notepad" default="hidden">)";
@@ -532,14 +551,17 @@ namespace gnubase::ui
 			rml += R"(</div><div class="mixer-fader" section="fader" label="Fader">)";
 			if (audio) // the panner (reference manual p. 465)
 				rml += R"(<knob class="mixer-pan" param="pan" title="Pan" min="-1" max="1" default="0" step="0.01"/>)";
+			if (vca) // instead of the panner, the link group it controls
+				rml += R"(<select class="mixer-vca-group" title="VCA Channel Controls Link Group"/>)";
 			if (channel->channel != nullptr)
 				rml +=
 					R"(<div class="mixer-buttons"><button class="toggle mute" control="mute" title="Mute">M</button>)"
 					R"(<button class="toggle solo" control="solo" title="Solo">S</button>)" +
-					std::string(
-						audio ? R"(<button class="toggle listen" control="listen" title="Listen">L</button>)" : "") +
+					std::string(audio || vca
+							? R"(<button class="toggle listen" control="listen" title="Listen">L</button>)"
+							: "") +
 					"</div>";
-			if (audio) // from -60 dB, linear until the channel strip's dB law (#107)
+			if (audio || vca) // from -60 dB, linear until the channel strip's dB law (#107)
 				rml += R"(<fader min="-60" max="6" default="0" step="0.1"/><span class="mixer-volume"/>)";
 			rml += "</div>";
 			Rml::Element* strip = container.AppendChild(document->CreateElement("div"));
@@ -573,6 +595,26 @@ namespace gnubase::ui
 		if (channel.channel == nullptr)
 			return;
 		const Json& json = *channel.channel;
+		// The display line (reference manual p. 458): the number and the name of the channel's link group.
+		if (Rml::Element* link = strip.QuerySelector(".mixer-link"))
+		{
+			const auto [group, number] = linkGroup(m_project, channel.id, "channels");
+			setText(*link, group != nullptr ? std::to_string(number) + " " + group->at("name").get<std::string>() : "");
+			strip.SetClass("linked", group != nullptr);
+		}
+		if (Rml::Element* select = strip.QuerySelector(".mixer-vca-group"))
+		{
+			widgets::Options groups{{"0", "None"}};
+			size_t number = 0;
+			for (const Json& group : m_project.value("linkGroups", Json::array()))
+				groups.emplace_back(std::to_string(group.at("id").get<uint64_t>()),
+					std::to_string(++number) + " " + group.at("name").get<std::string>());
+			const Json* controlled = linkGroup(m_project, channel.id, "vca").first;
+			m_updating = true; // filling a drop-down list sends a change
+			widgets::fill(*select, groups,
+				controlled != nullptr ? std::to_string(controlled->at("id").get<uint64_t>()) : std::string("0"));
+			m_updating = false;
+		}
 		if (auto* notes = dynamic_cast<Rml::ElementFormControl*>(strip.QuerySelector(".mixer-notes-field")))
 		{
 			Rml::Context* context = strip.GetContext();
@@ -726,6 +768,20 @@ namespace gnubase::ui
 			else if (target->HasAttribute("visibility"))
 			{
 				setHidden(idAttribute(*target, "visibility"), !event.GetParameter("value", true));
+			}
+			else if (target->IsClassSet("mixer-vca-group") && !m_updating)
+			{
+				// Assigns the VCA fader to a link group, or with None takes it from its group (reference manual p.
+				// 515).
+				if (const MixerChannel* channel = channelOf(target))
+				{
+					const uint64_t group = std::stoull(event.GetParameter<Rml::String>("value", "0"));
+					const Json* controlled = linkGroup(m_project, channel->id, "vca").first;
+					if (group != 0)
+						m_binding.send("linkGroup.set", {{"group", group}, {"vca", channel->id}});
+					else if (controlled != nullptr)
+						m_binding.send("linkGroup.set", {{"group", controlled->at("id")}, {"vca", 0}});
+				}
 			}
 			else if (target->GetTagName() == "fader")
 			{

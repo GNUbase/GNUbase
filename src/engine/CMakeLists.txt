@@ -93,6 +93,7 @@ add_library(gnubase-engine STATIC
 	audio/meters.cpp audio/meters.h
 	audio/midiports.cpp audio/midiports.h
 	audio/miditap.cpp audio/miditap.h
+	audio/mixdown.cpp
 	audio/performance.cpp audio/performance.h
 	audio/playback.cpp audio/playback.h
 	audio/recorder.cpp audio/recorder.h
@@ -114,6 +115,7 @@ add_library(gnubase-engine STATIC
 	document/eventedits.cpp
 	document/fadeedits.cpp
 	document/history.cpp document/history.h
+	document/linkgroups.cpp document/linkgroups.h
 	document/markers.cpp
 	document/midiedits.cpp
 	document/midifilecommands.cpp
@@ -125,7 +127,9 @@ add_library(gnubase-engine STATIC
 	document/projectmodel.cpp document/projectmodel.h
 	document/recording.cpp
 	document/rendersnapshot.cpp document/rendersnapshot.h
+	document/sampleeditor.cpp document/sampleeditor.h
 	document/serialize.cpp document/serialize.h
+	document/signature.cpp
 	document/snap.cpp document/snap.h
 	document/tempo.cpp
 	document/volumecurves.cpp document/volumecurves.h

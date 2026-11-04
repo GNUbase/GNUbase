@@ -3,6 +3,7 @@
 
 #include "engine/time/tempomap.h"
 #include "platform/log.h"
+#include "ui/signaturetrack.h"
 #include "ui/widgetutils.h"
 
 #include <RmlUi/Core/Context.h>
@@ -80,20 +81,6 @@ namespace gnubase::ui
 			{
 				element.SetInnerRML(Rml::StringUtilities::EncodeRml(text));
 			}
-		}
-
-		// "3/4"; nothing for text that isn't a signature.
-		std::optional<std::pair<int, int>> parseSignature(const std::string& text)
-		{
-			const size_t slash = text.find('/');
-			if (slash == std::string::npos)
-				return std::nullopt;
-			const std::optional<float> numerator = widgets::parse(text.substr(0, slash));
-			const std::optional<float> denominator = widgets::parse(text.substr(slash + 1));
-			if (!numerator || !denominator || *numerator != std::floor(*numerator) ||
-				*denominator != std::floor(*denominator))
-				return std::nullopt;
-			return std::make_pair(static_cast<int>(*numerator), static_cast<int>(*denominator));
 		}
 
 		// Throws std::invalid_argument for a control whose parameters aren't a JSON object, or whose command and

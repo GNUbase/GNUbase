@@ -127,6 +127,9 @@ namespace gnubase::engine::graph
 		// The index of the node for a bus or channel, or -1. A channel's node is the one with its fader.
 		int find(ObjectId object) const;
 
+		// How many audio channels the node sends on: the first of its audio buffers.
+		int outputChannels(int node) const { return m_nodes[static_cast<size_t>(node)].outputChannels; }
+
 		// Samples of delay on the longest path from the graph's sources to the node's output.
 		uint32_t pathLatency(int node) const { return m_nodes[static_cast<size_t>(node)].pathLatency; }
 

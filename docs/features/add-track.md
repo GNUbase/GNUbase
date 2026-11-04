@@ -55,12 +55,14 @@ with its input and output, and the same double click in the track list come with
   `timeFormat`, in `project.get` too; `track.set` changes it. DAWproject has no ruler tracks: only GNUbase's entry
   keeps them, and a project read from `project.xml` has none.
 - **The tempo track** (`type` `tempo`, p. 162) has a page without settings: a project has one at most
-  ([tempo-track.md](tempo-track.md)).
+  ([tempo-track.md](tempo-track.md)). So has **the signature track** (`type` `signature`, p. 163,
+  [signature-track.md](signature-track.md)).
+- **VCA tracks** (`type` `vca`, p. 154) have the name and the count ([link-groups.md](link-groups.md)).
 
 ## Not yet
 
 The track color (the default color until the color picker joins the dialog), the reference's other track types
-(sampler, drum, VCA, and the tempo, signature, arranger, transpose, chord and video tracks with their tickets), an
+(sampler, drum, and the arranger, transpose, chord and video tracks with their tickets), an
 instrument or effect plugin chosen on the page (M05), MIDI inputs and MIDI 2.0 output groups, the event type
 (pattern events), the project's Group, FX and VCA folders, a ruler track's time offset and the ruler track's own
 display and controls (#447), and track presets.

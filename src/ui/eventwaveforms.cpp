@@ -7,8 +7,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <map>
 #include <tuple>
-#include <unordered_map>
 #include <utility>
 
 namespace gnubase::ui
@@ -51,15 +52,17 @@ namespace gnubase::ui
 
 	void EventWaveforms::setEvents(const std::vector<Event>& events)
 	{
-		std::unordered_map<uint64_t, Wave*> old; // by event id
+		std::map<std::pair<uint64_t, size_t>, Wave*> old; // by event id and ordinal
+		std::map<uint64_t, size_t> count;
 		for (Wave& wave : m_waves)
-			old[wave.event.id] = &wave;
+			old[{wave.event.id, count[wave.event.id]++}] = &wave;
+		count.clear();
 		std::vector<Wave> waves;
 		waves.reserve(events.size());
 		for (const Event& event : events)
 		{
 			Wave wave{event, nullptr, {}, false, false};
-			if (const auto found = old.find(event.id); found != old.end())
+			if (const auto found = old.find({event.id, count[event.id]++}); found != old.end())
 			{
 				// The element shows what it has until the new columns are in, and a question in flight stays the
 				// only one.
@@ -152,17 +155,33 @@ namespace gnubase::ui
 		wave.stale = false;
 		m_binding.send("media.peaks",
 			{{"media", event.media}, {"start", start}, {"frames", frames}, {"pixels", pixels}},
-			[this, alive = std::weak_ptr<bool>(m_alive), event, question](const engine::Result& result)
+			[this, alive = std::weak_ptr<bool>(m_alive), event, nth = ordinal(wave), question](
+				const engine::Result& result)
 			{
 				if (!alive.expired())
-					answered(event, question, result);
+					answered(event, nth, question, result);
 			});
 	}
 
-	void EventWaveforms::answered(const Event& event, const Question& question, const engine::Result& result)
+	size_t EventWaveforms::ordinal(const Wave& wave) const
 	{
-		const auto wave =
-			std::find_if(m_waves.begin(), m_waves.end(), [&](const Wave& other) { return other.event.id == event.id; });
+		size_t nth = 0;
+		for (const Wave& other : m_waves)
+		{
+			if (&other == &wave)
+				break;
+			nth += other.event.id == wave.event.id ? 1 : 0;
+		}
+		return nth;
+	}
+
+	void EventWaveforms::answered(
+		const Event& event, size_t ordinal, const Question& question, const engine::Result& result)
+	{
+		auto wave = m_waves.begin();
+		for (size_t seen = 0; wave != m_waves.end(); ++wave)
+			if (wave->event.id == event.id && seen++ == ordinal)
+				break;
 		if (wave == m_waves.end())
 			return;
 		wave->pending = false;

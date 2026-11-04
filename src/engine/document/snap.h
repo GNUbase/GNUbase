@@ -23,6 +23,7 @@ namespace gnubase::engine
 	class Engine;
 	class ProjectModel;
 	struct AudioEvent;
+	struct MediaFile;
 	struct Project;
 
 	// What positions snap to (reference manual pp. 105-106).
@@ -163,6 +164,12 @@ namespace gnubase::engine
 	// clip (with inside, strictly inside the event, for splitting it), or at if there is none or the file can't be
 	// read. Reads the file: not on audio threads.
 	time::Samples zeroCrossing(const Project& project, const AudioEvent& event, time::Samples at, bool inside = false);
+
+	// The same in a media file's frames: the frame nearest to frame, within 50 ms and first to last, where the sum of
+	// its channels changes sign (of the two frames there, the one nearer to zero), or frame if there is none or the
+	// file can't be read. Reads the file: not on audio threads.
+	time::Samples zeroCrossingFrame(
+		const MediaFile& media, time::Samples frame, time::Samples first, time::Samples last);
 
 	// snap.get, snap.set and snap.position.
 	void registerSnapCommands(ProjectModel& model, Engine& engine);

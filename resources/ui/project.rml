@@ -98,6 +98,7 @@
 		<button id="combine-selection-tools" type="toggle" class="icon-only" title="Combine Selection Tools"><svg class="icon" src="../icons/tool-pointer.svg"/></button>
 		<button tool="objectSelection" tool-menu="object-selection-menu" class="icon-only" title="Object Selection"><svg class="icon" src="../icons/tool-pointer.svg"/></button>
 		<button tool="rangeSelection" class="icon-only" title="Range Selection"><svg class="icon" src="../icons/tool-range.svg"/></button>
+		<button tool="comp" class="icon-only" title="Comp"><svg class="icon" src="../icons/tool-comp.svg"/></button>
 		<button tool="draw" class="icon-only" title="Draw"><svg class="icon" src="../icons/tool-draw.svg"/></button>
 		<button tool="erase" class="icon-only" title="Erase"><svg class="icon" src="../icons/tool-erase.svg"/></button>
 		<button tool="split" class="icon-only" title="Split"><svg class="icon" src="../icons/tool-split.svg"/></button>
@@ -175,6 +176,12 @@
 				<menuitem command="file.importMidi">MIDI File...</menuitem>
 			</menu>
 		</menuitem>
+		<menuitem id="export-submenu">Export
+			<menu>
+				<menuitem command="file.exportMixdown">Audio Mixdown...</menuitem>
+				<menuitem command="file.quickExport">Quick Audio Export...</menuitem>
+			</menu>
+		</menuitem>
 		<menuseparator/>
 		<menuitem command="file.quit">Quit</menuitem>
 	</menu>
@@ -249,6 +256,7 @@
 		<!-- The MIDI editors (docs/features/midi-editors.md) -->
 		<menuitem command="editor.openClose">Open/Close Editor</menuitem>
 		<menuitem command="window.lowerZoneEditor">Open Editor in Lower Zone</menuitem>
+		<menuitem command="editor.openList">Open List Editor</menuitem>
 	</menu>
 	<!-- Track handling (reference manual pp. 213-225) -->
 	<menu id="color-menu"/>
@@ -318,6 +326,7 @@
 		<menuseparator/>
 		<!-- Automation tracks (reference manual p. 880) -->
 		<menuitem command="track.toggleAutomationSelected">Show/Hide Automation</menuitem>
+		<menuitem command="track.toggleLanesSelected">Show Lanes</menuitem>
 		<menuitem command="track.showUsedAutomation">Show All Used Automation</menuitem>
 		<menuitem command="track.hideAllAutomation">Hide All Automation</menuitem>
 		<menuseparator/>
@@ -460,6 +469,7 @@
 	<menu id="toolbox" class="toolbox">
 		<menuitem tool="objectSelection" title="Object Selection"><svg class="icon" src="../icons/tool-pointer.svg"/></menuitem>
 		<menuitem tool="rangeSelection" title="Range Selection"><svg class="icon" src="../icons/tool-range.svg"/></menuitem>
+		<menuitem tool="comp" title="Comp"><svg class="icon" src="../icons/tool-comp.svg"/></menuitem>
 		<menuitem tool="draw" title="Draw"><svg class="icon" src="../icons/tool-draw.svg"/></menuitem>
 		<menuitem tool="erase" title="Erase"><svg class="icon" src="../icons/tool-erase.svg"/></menuitem>
 		<menuitem tool="split" title="Split"><svg class="icon" src="../icons/tool-split.svg"/></menuitem>
@@ -474,6 +484,7 @@
 			<menu>
 				<menuitem tool="objectSelection">Object Selection</menuitem>
 				<menuitem tool="rangeSelection">Range Selection</menuitem>
+				<menuitem tool="comp">Comp</menuitem>
 				<menuitem tool="draw">Draw</menuitem>
 				<menuitem tool="erase">Erase</menuitem>
 				<menuitem tool="split">Split</menuitem>

@@ -48,7 +48,7 @@ namespace gnubase::ui
 			if (type == "tempo" || control == "tempoTrack")
 				return type == "tempo" && control == "tempoTrack";
 			if (!hasChannel)
-				return control == "timeBase" && type != "folder" && type != "ruler";
+				return control == "timeBase" && type != "folder" && type != "ruler" && type != "signature";
 			if (control == "record" || control == "monitor")
 				return type == "audio" || type == "instrument" || type == "midi";
 			if (control == "timeBase")
@@ -152,11 +152,12 @@ namespace gnubase::ui
 				[this, selected]
 				{
 					Json commands = Json::array();
-					// The project has one tempo track.
+					// The project has one tempo track and one signature track.
 					selected(
 						[this, &commands](uint64_t track)
 						{
-							if (m_tracks[m_index.at(track)].type != "tempo")
+							if (const std::string& type = m_tracks[m_index.at(track)].type;
+								type != "tempo" && type != "signature")
 								commands.push_back(
 									{{"command", "track.duplicate"}, {"parameters", {{"track", track}}}});
 						});
@@ -225,11 +226,12 @@ namespace gnubase::ui
 			m_actions[on ? "track.moveSelectedToNewFolderWithGroupChannel" : "track.moveSelectedToNewFolder"] =
 				[this, on]
 			{
-				// A new folder where the first of them was, with them inside; marker tracks and the tempo track stay at
-				// the top level.
+				// A new folder where the first of them was, with them inside; marker tracks, the tempo track and the
+				// signature track stay at the top level.
 				Json tracks = Json::array();
 				for (const uint64_t track : topSelection())
-					if (const std::string& type = m_tracks[m_index.at(track)].type; type != "marker" && type != "tempo")
+					if (const std::string& type = m_tracks[m_index.at(track)].type;
+						type != "marker" && type != "tempo" && type != "signature")
 						tracks.push_back(track);
 				if (tracks.empty())
 					return;
@@ -259,6 +261,19 @@ namespace gnubase::ui
 					m_display.showAutomation(track, show);
 		};
 		m_actions["track.showUsedAutomation"] = [this] { m_display.showUsedAutomation(); };
+		// Lanes (#99, reference manual p. 226): Show Lanes.
+		m_actions["track.toggleLanesSelected"] = [this]
+		{
+			std::vector<uint64_t> tracks;
+			for (const uint64_t track : selection())
+				if (const std::string& type = m_tracks[m_index.at(track)].type;
+					type == "audio" || type == "instrument" || type == "midi")
+					tracks.push_back(track);
+			const bool show = std::any_of(
+				tracks.begin(), tracks.end(), [this](uint64_t track) { return !m_display.lanesShown(track); });
+			for (const uint64_t track : tracks)
+				m_display.showLanes(track, show);
+		};
 		m_actions["track.hideAllAutomation"] = [this] { m_display.hideAllAutomation(); };
 		m_parameterMenu = m_document->GetElementById("automation-parameter-menu");
 		if (m_parameterMenu != nullptr)
@@ -591,21 +606,31 @@ namespace gnubase::ui
 			return;
 		const std::vector<uint64_t>& lanes = m_display.laneTracks();
 		const std::vector<double>& tops = m_display.laneTops();
-		const std::vector<uint64_t>& automation = m_display.laneAutomation();
 		for (size_t lane = 0; lane < lanes.size() && lane + 1 < tops.size(); ++lane)
 		{
-			Rml::Element* element = automation[lane] == 0 ? rowElement(lanes[lane]) : nullptr;
+			Rml::Element* element = ownLane(lane) ? rowElement(lanes[lane]) : nullptr;
 			if (element == nullptr)
 				continue;
-			// The row reaches down over its automation tracks' lanes (#121).
-			size_t end = lane + 1;
-			while (end < lanes.size() && automation[end] != 0)
-				++end;
+			// The row reaches down over its lanes (#99) and automation tracks' lanes (#121).
+			const size_t end = rowEnd(lane);
 			element->SetProperty(Rml::PropertyId::Height, dp(tops[end] - tops[lane]));
 			showAutomationRows(*element, lane, end);
 		}
 		m_view->SetProperty(Rml::PropertyId::Top, dp(-m_display.view().top));
 		m_rows->SetScrollTop(0.0F); // the list view's keys scroll it into view; the display scrolls it
+	}
+
+	bool TrackList::ownLane(size_t lane) const
+	{
+		return m_display.laneAutomation()[lane] == 0 && m_display.laneTakes()[lane] < 0;
+	}
+
+	size_t TrackList::rowEnd(size_t lane) const
+	{
+		size_t end = lane + 1;
+		while (end < m_display.laneTracks().size() && !ownLane(end))
+			++end;
+		return end;
 	}
 
 	const Json* TrackList::laneOf(uint64_t lane) const
@@ -639,12 +664,16 @@ namespace gnubase::ui
 		const std::vector<uint64_t>& automation = m_display.laneAutomation();
 		const uint64_t track = m_display.laneTracks()[lane];
 		const double own = tops[lane + 1] - tops[lane];
+		// The automation tracks come after the track's lanes (#99).
+		size_t first = lane + 1;
+		while (first < end && automation[first] == 0)
+			++first;
 		setClass(*toggle, "checked", m_display.automationShown(track));
 		toggle->SetProperty(Rml::PropertyId::Top, dp(own - g_toggleSize));
-		rows->SetProperty(Rml::PropertyId::Top, dp(own));
+		rows->SetProperty(Rml::PropertyId::Top, dp(tops[first] - tops[lane]));
 		// A row per automation track: its parameter, which opens the parameter selector, Read and Append.
 		std::string rml;
-		for (size_t i = lane + 1; i < end; ++i)
+		for (size_t i = first; i < end; ++i)
 		{
 			const Json* json = laneOf(automation[i]);
 			const Json* target = json == nullptr ? nullptr : targetOf(*json);
@@ -665,7 +694,7 @@ namespace gnubase::ui
 		for (int i = 0; i < rows->GetNumChildren(); ++i)
 		{
 			Rml::Element* element = rows->GetChild(i);
-			const size_t at = lane + 1 + static_cast<size_t>(i);
+			const size_t at = first + static_cast<size_t>(i);
 			element->SetProperty(Rml::PropertyId::Height, dp(tops[at + 1] - tops[at]));
 			const Json* json = laneOf(automation[at]);
 			if (Rml::Element* read = element->QuerySelector(".automation-read"); read != nullptr && json != nullptr)
@@ -958,7 +987,8 @@ namespace gnubase::ui
 				}
 			for (const Row& row : m_tracks)
 				if (!row.holds && parents.count(row.id) == 0 && (row.channel == 0 || outputs.count(row.channel) == 0) &&
-					row.type != "group" && row.type != "effect" && row.type != "ruler" && row.type != "tempo")
+					row.type != "group" && row.type != "effect" && row.type != "ruler" && row.type != "tempo" &&
+					row.type != "signature" && row.type != "vca")
 					gone.insert(row.id);
 		} while (gone.size() != before);
 		return gone;
@@ -985,7 +1015,7 @@ namespace gnubase::ui
 		// The tracks shown, without their automation tracks' lanes.
 		std::vector<uint64_t> lanes;
 		for (size_t lane = 0; lane < m_display.laneTracks().size(); ++lane)
-			if (m_display.laneAutomation()[lane] == 0)
+			if (ownLane(lane))
 				lanes.push_back(m_display.laneTracks()[lane]);
 		if (lanes.empty())
 			return;
@@ -1156,15 +1186,12 @@ namespace gnubase::ui
 	{
 		const std::vector<uint64_t>& lanes = m_display.laneTracks();
 		const std::vector<double>& tops = m_display.laneTops();
-		const std::vector<uint64_t>& automation = m_display.laneAutomation();
 		const double at = ((y - m_rows->GetAbsoluteTop()) / dpRatio()) + m_display.view().top;
 		for (size_t lane = 0; lane < lanes.size(); ++lane)
 		{
-			// A track's row with its automation tracks' lanes (#121).
-			size_t end = lane + 1;
-			while (end < lanes.size() && automation[end] != 0)
-				++end;
-			if (automation[lane] != 0 || at >= tops[end])
+			// A track's row with its lanes and automation tracks' lanes (#99, #121).
+			const size_t end = rowEnd(lane);
+			if (!ownLane(lane) || at >= tops[end])
 				continue;
 			const Row& row = m_tracks[m_index.at(lanes[lane])];
 			const double into = (at - tops[lane]) / (tops[end] - tops[lane]);
@@ -1196,7 +1223,7 @@ namespace gnubase::ui
 			if (inside || track == before)
 				continue;
 			const Row& row = m_tracks[m_index.at(track)];
-			if ((row.type == "marker" || row.type == "tempo") && parent != 0)
+			if ((row.type == "marker" || row.type == "tempo" || row.type == "signature") && parent != 0)
 				continue;
 			std::vector<uint64_t>& from = children[row.parent];
 			from.erase(std::find(from.begin(), from.end(), track));

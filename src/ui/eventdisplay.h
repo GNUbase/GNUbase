@@ -60,6 +60,7 @@ namespace gnubase::ui
 	{
 		ObjectSelection,
 		RangeSelection,
+		Comp, // takes on lanes (#99)
 		Draw,
 		Erase,
 		Split,
@@ -292,6 +293,14 @@ namespace gnubase::ui
 		// automation lanes have its id in laneTracks() too. Showing a track's automation shows its used lanes (with
 		// points), or else its first lane, adding one for its first parameter (automationLane.targets) if it has none.
 		const std::vector<uint64_t>& laneAutomation() const { return m_laneAutomation; }
+		// Lanes (#99, docs/features/comping.md): a track whose lanes show has a display lane per lane of its events
+		// and parts below its own, before its automation tracks, each as high as the track. The track's own lane shows
+		// them all, audio events where none in front of them covers them. laneTakes() has the lane of its track each
+		// display lane shows, -1 for a track's own lane and automation tracks; the lanes have the track's id in
+		// laneTracks(). Which tracks show their lanes is view state, like folding.
+		const std::vector<int>& laneTakes() const { return m_laneTakes; }
+		bool lanesShown(uint64_t track) const { return m_lanesShown.count(track) != 0; }
+		void showLanes(uint64_t track, bool shown);
 		bool automationShown(uint64_t track) const { return m_openAutomation.count(track) != 0; }
 		void showAutomation(uint64_t track, bool shown);
 		void showUsedAutomation(); // every track's lanes with points
@@ -332,6 +341,7 @@ namespace gnubase::ui
 			Rectangle,     // a rectangle that selects, mutes or zooms
 			Range,         // a selection range
 			DrawPart,      // a new MIDI part
+			Comp,          // brings what it is released on to the front, or comps the range dragged on a lane
 			Play,          // auditions or scrubs until the mouse is released
 			Click,         // splits, glues or erases where it is released, unless it moved
 			FadeIn,        // the fade in handle of the pressed audio event
@@ -519,7 +529,7 @@ namespace gnubase::ui
 		double draggedFade(uint64_t event, bool in) const;
 		void showFades(); // the fade lines and the selected audio events' handles
 		// A double click on an event at seconds: in a crossfade's zone, opens the crossfade editor.
-		void openCrossfadeAt(const Shown& shown, double seconds);
+		bool openCrossfadeAt(const Shown& shown, double seconds); // whether there is one
 		// The selected audio events, by id.
 		std::vector<uint64_t> selectedAudio() const;
 		// Opens a dialog of the display's document folder whose Lua reads the attributes when it shows.
@@ -765,6 +775,8 @@ namespace gnubase::ui
 		std::map<uint64_t, engine::Json> m_targets;                 // automationLane.targets, by track
 		std::set<uint64_t> m_targetsAsked;                          // tracks whose targets are on their way
 		std::vector<uint64_t> m_laneAutomation;                     // each display lane's automation lane, or 0
+		std::vector<int> m_laneTakes;                               // each display lane's track lane, or -1
+		std::set<uint64_t> m_lanesShown;                            // the tracks whose lanes show
 		std::map<uint64_t, std::set<uint64_t>> m_selectedPoints;
 		Rml::Element* m_automationArea = nullptr; // the curves, a .automation-lane each
 		Rml::Element* m_editor = nullptr;         // .automation-editor around the selected points

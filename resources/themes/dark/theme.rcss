@@ -540,6 +540,18 @@
 		color: #b7bbc0;
 		font-size: 11dp;
 	}
+	.signature-row .signature-event
+	{
+		color: #f3f4f5;
+		font-size: 11dp;
+		border-left-width: 1dp;
+		border-left-color: #7896bd;
+	}
+	.signature-row .signature-event.selected
+	{
+		color: #151617;
+		background-color: #7896bd;
+	}
 	.event-display .range-selection
 	{
 		border-width: 1dp;
@@ -689,6 +701,83 @@
 	.key-editor-step-cursor
 	{
 		background-color: #5ea7b3;
+	}
+	.se-overview, .se-display
+	{
+		background-color: #1e2022;
+	}
+	.se-overview-event
+	{
+		background-color: #f3f4f51a;
+	}
+	.se-overview-selection, .se-selection
+	{
+		background-color: #f3f4f533;
+	}
+	.se-overview-view
+	{
+		border-width: 1dp;
+		border-color: #5ea7b3;
+	}
+	.se-overview-snap, .se-snap-point
+	{
+		background-color: #7896bd;
+	}
+	.se-outside
+	{
+		background-color: #15161799;
+	}
+	.se-region-shown
+	{
+		border-width: 1dp;
+		border-color: #7896bd;
+		background-color: #7896bd1a;
+	}
+	.se-region.selected
+	{
+		background-color: #38565c;
+	}
+	.list-editor-header
+	{
+		color: #b7bbc0;
+		border-bottom-width: 1px;
+		border-bottom-color: #484c50;
+	}
+	.list-editor-rows .list-row
+	{
+		border-bottom-width: 1px;
+		border-bottom-color: #333639;
+	}
+	.list-editor-body
+	{
+		background-color: #1e2022;
+	}
+	.list-row.selected
+	{
+		background-color: #2e4246;
+	}
+	.list-row.inactive
+	{
+		color: #b7bbc0;
+	}
+	.list-event
+	{
+		background-color: #49767e;
+		border-width: 1px;
+		border-color: #5ea7b3;
+	}
+	.list-row.selected .list-event
+	{
+		background-color: #7896bd;
+		border-color: #f3f4f5;
+	}
+	.list-value
+	{
+		background-color: #5ea7b3;
+	}
+	.list-row.selected .list-value
+	{
+		background-color: #7896bd;
 	}
 	.docking [zone]
 	{

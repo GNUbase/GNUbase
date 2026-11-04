@@ -187,7 +187,8 @@ namespace gnubase::ui
 			return;
 		m_showing = true;
 		const std::string type = track->at("type").get<std::string>();
-		const bool audio = channel != nullptr && type != "midi"; // a MIDI channel has no audio
+		const bool vca = channel != nullptr && type == "vca";            // a VCA fader: a fader and buttons
+		const bool audio = channel != nullptr && type != "midi" && !vca; // a MIDI channel has no audio
 		const auto element = [&root](const std::string& selector) { return root.QuerySelector(selector); };
 		const auto available = [&element](const std::string& selector, bool yes)
 		{
@@ -198,12 +199,13 @@ namespace gnubase::ui
 		if (Rml::Element* name = element("textdisplay.inspector-name"))
 			name->SetAttribute("value", track->at("name").get<std::string>());
 		for (const char* section : {"basics", "routing", "notepad"})
-			available("[section=" + std::string(section) + "]", channel != nullptr);
+			available("[section=" + std::string(section) + "]",
+				channel != nullptr && (!vca || std::string(section) != "routing"));
 		available("[section=inserts]", audio);
-		const bool records = type == "audio" || type == "instrument" || type == "midi";
+		const bool records = type == "audio" || type == "instrument" || type == "midi" || vca;
 		available("button[control=record]", records);
 		available("button[control=monitor]", records);
-		available("[row=volume]", audio);
+		available("[row=volume]", audio || vca);
 		available("[row=pan]", audio);
 		available("[row=input]", type == "audio");
 		if (channel != nullptr)
@@ -217,20 +219,17 @@ namespace gnubase::ui
 					else
 						button->RemoveAttribute("checked");
 				}
-			if (audio)
+			// Not while the project is older than the fields' own steps (#716).
+			const auto sending = [this, channel](const char* name)
+			{ return m_binding.ahead(stepKey(channel->at("id"), name), m_read); };
+			if (Rml::Element* volume = element("valuefield[control=volume]"); volume != nullptr && (audio || vca))
 			{
-				// Not while the project is older than the fields' own steps (#716).
-				const auto sending = [this, channel](const char* name)
-				{ return m_binding.ahead(stepKey(channel->at("id"), name), m_read); };
-				if (Rml::Element* volume = element("valuefield[control=volume]"))
-				{
-					volume->SetAttribute("max", widgets::format(m_project->value("maxVolume", 6.0F)));
-					if (!sending("volume"))
-						volume->SetAttribute("value", widgets::format(channel->at("volume").get<float>()));
-				}
-				if (Rml::Element* pan = element("valuefield[control=pan]"); pan != nullptr && !sending("pan"))
-					pan->SetAttribute("value", widgets::format(channel->at("pan").get<float>() * 100.0F));
+				volume->SetAttribute("max", widgets::format(m_project->value("maxVolume", 6.0F)));
+				if (!sending("volume"))
+					volume->SetAttribute("value", widgets::format(channel->at("volume").get<float>()));
 			}
+			if (Rml::Element* pan = element("valuefield[control=pan]"); pan != nullptr && audio && !sending("pan"))
+				pan->SetAttribute("value", widgets::format(channel->at("pan").get<float>() * 100.0F));
 			const auto id = channel->at("id").get<uint64_t>();
 			if (Rml::Element* output = element("select[control=output]"))
 				widgets::fill(

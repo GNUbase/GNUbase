@@ -72,7 +72,7 @@ sends engine commands, so whatever another client changes shows at once.
   `mute` (M) and `solo` (S), which tracks with a channel always show, `record` and `monitor` (audio tracks), `read`
   (every automation lane of the track reads, or with a click none does; disabled without lanes) and `timeBase`
   (musical or linear, `.checked` when linear). A click sends `channel.set`, `automationLane.set` in one transaction,
-  or `track.set`. Folders without a group channel, marker and ruler tracks show none. The tempo track's only control
+  or `track.set`. Folders without a group channel, marker, ruler and signature tracks show none. The tempo track's only control
   is `tempoTrack`, Activate Tempo Track (`project.set` `tempoTrackActive`, [tempo-track.md](tempo-track.md)). The
   defaults: mute, solo, record, monitor and read on audio tracks; mute, solo and read on the others with a channel;
   tempoTrack on the tempo track.
@@ -121,7 +121,7 @@ Width (`#track-name-width`, global), held at the setting's limits. OK saves ever
 
 ## Not yet
 
-Lanes and comping (#99), write automation (#122),
+The Show Lanes control and the lanes' headers ([comping.md](comping.md)), write automation (#122),
 dividing the track list, track visibility agents and the track type
 filter, track presets, track pictures, the lock control, edit channel settings, volume and pan in the track list,
 the settings dialog's groups, controls area preview, presets, Reset All and the MIDI tracks' Output Group and

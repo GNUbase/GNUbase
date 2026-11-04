@@ -38,6 +38,7 @@ add_executable(gnubase-tests
 	channelstrip_tests.cpp
 	clock_tests.cpp
 	color_tests.cpp
+	comping_tests.cpp
 	coverage_tests.cpp
 	dawproject_tests.cpp
 	debugreports.cpp
@@ -65,6 +66,9 @@ add_executable(gnubase-tests
 	keyeditor_tests.cpp
 	keyeditor_ui_tests.cpp
 	latency_tests.cpp
+	linkgroups_tests.cpp
+	listeditor_tests.cpp
+	listeditor_ui_tests.cpp
 	lockrecord_tests.cpp
 	log_tests.cpp
 	mainmenu_tests.cpp
@@ -82,6 +86,8 @@ add_executable(gnubase-tests
 	midifunctions_tests.cpp
 	midirecording_tests.cpp
 	miditap_tests.cpp
+	mixdown_tests.cpp
+	mixdown_ui_tests.cpp
 	mixer_tests.cpp
 	mixerviews_tests.cpp
 	mixerwindow_tests.cpp
@@ -105,10 +111,14 @@ add_executable(gnubase-tests
 	rmlui_tests.cpp
 	routing_tests.cpp
 	rt_tests.cpp
+	sampleeditor_tests.cpp
+	sampleeditor_ui_tests.cpp
 	scripting_tests.cpp
 	sequencing_tests.cpp
 	settings_tests.cpp
 	shell_tests.cpp
+	signature_tests.cpp
+	signaturetrack_ui_tests.cpp
 	snap_tests.cpp
 	statusline_tests.cpp
 	streaming_tests.cpp
