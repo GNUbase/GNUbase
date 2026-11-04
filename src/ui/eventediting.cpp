@@ -584,11 +584,6 @@ namespace gnubase::ui
 
 	void EventDisplay::areaDown(Rml::Event& event, double x, double y)
 	{
-		if (!m_resizeAsked.is_null()) // a drag of edges whose release the display didn't see
-		{
-			endResize();
-			showProject();
-		}
 		m_dragMoved = false;
 		m_dragStarted = false;
 		m_dragToggles = false;
@@ -738,6 +733,7 @@ namespace gnubase::ui
 		{
 			// The selection shows the size the release gives it, with the keys held now (#732).
 			m_pressed = modifiersOf(event);
+			m_resizeDx = dx;
 			previewResize(resizeParameters(dx, m_drag));
 			return;
 		}
@@ -876,6 +872,14 @@ namespace gnubase::ui
 		const double dy = (event.GetParameter<float>("mouse_y", 0.0F) - m_dragY) / dpRatio();
 		if (drag != Drag::Events)
 		{
+			// Not if the pressed event went meanwhile: the selection's edges move as far as its edge.
+			if (std::none_of(
+					m_events.begin(), m_events.end(), [this](const Shown& shown) { return shown.id == m_dragEvent; }))
+			{
+				endResize();
+				showProject();
+				return;
+			}
 			resizeUp(resizeParameters(dx, drag));
 			return;
 		}
@@ -957,27 +961,61 @@ namespace gnubase::ui
 			});
 	}
 
+	void EventDisplay::resizeProjectChanged()
+	{
+		if (m_resizeLanded)
+		{
+			// The first project after the resize shows it: the preview has done its part.
+			m_resizeLanded = false;
+			m_resizePreview = Json();
+		}
+		else if (!m_resizeWanted.is_null())
+		{
+			// Changed during the drag (an undo, another client's edit): the preview is asked again.
+			m_resizeAsked = Json();
+			askResizePreview();
+		}
+	}
+
+	void EventDisplay::resizeKeysChanged()
+	{
+		if ((m_drag != Drag::ResizeStart && m_drag != Drag::ResizeEnd) || !m_dragMoved || m_held == m_pressed)
+			return;
+		m_pressed = m_held; // e.g. Disable Snapping, without the mouse moving
+		previewResize(resizeParameters(m_resizeDx, m_drag));
+	}
+
 	void EventDisplay::endResize()
 	{
 		++m_resizeGesture;
 		m_resizeWanted = Json();
 		m_resizeAsked = Json();
 		m_resizePreview = Json();
+		m_resizeLanded = false;
 	}
 
 	void EventDisplay::resizeUp(Json parameters)
 	{
-		// The preview stays until the project shows the resize, which then looks the same; if it fails or changes
-		// nothing, the project as it is.
+		// The preview stays until a project answer after the resize shows it, which then looks the same. If the
+		// resize fails, or the preview shown isn't the release's, the project is asked for: a resize that changes
+		// nothing announces nothing.
+		const bool previewed = !m_resizeAsking && parameters == m_resizeAsked && !m_resizePreview.is_null();
+		const Json preview = m_resizePreview;
 		endResize();
+		m_resizePreview = preview;
 		m_binding.send("event.resize", std::move(parameters),
-			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			[this, previewed, gesture = m_resizeGesture, alive = std::weak_ptr<bool>(m_alive)](
+				const engine::Result& result)
 			{
 				if (alive.expired())
 					return;
 				if (!result.ok())
 					logging::warning("An edit of events failed: {}", result.error);
-				requestProject();
+				if (gesture != m_resizeGesture) // another drag of edges started meanwhile
+					return;
+				m_resizeLanded = true;
+				if (!result.ok() || !previewed)
+					requestProject();
 			});
 	}
 

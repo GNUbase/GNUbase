@@ -778,6 +778,7 @@ namespace gnubase::engine
 			Project copy = project;
 			CommandContext inner(context.parameters());
 			resizeEvents(copy, inner);
+			syncSharedParts(project.midiParts, copy, inner); // as ProjectModel does after the edit
 			Json result = {{"audioEvents", Json::array()}, {"audioParts", Json::array()}, {"midiParts", Json::array()}};
 			for (const Item& item : itemsFrom(copy, context.parameters(), true))
 			{

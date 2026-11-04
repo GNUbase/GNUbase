@@ -486,6 +486,8 @@ namespace gnubase::ui
 		void endResize(); // drops the preview and the answers still on their way
 		void resizeUp(engine::Json parameters);
 		bool cancelResize();
+		void resizeProjectChanged(); // a project.get answer came in
+		void resizeKeysChanged();    // the modifier keys held changed
 		// Sends the move or copy of the selection: the shift's parameters (event.move's delta or ticks), lanes down.
 		void moveSelection(engine::Json shift, int lanes, bool copy, bool shared);
 		void doubleClick(Rml::Event& event);
@@ -691,6 +693,8 @@ namespace gnubase::ui
 		engine::Json m_resizeAsked;   // those of the last one sent
 		bool m_resizeAsking = false;  // its answer is on its way
 		engine::Json m_resizePreview; // the answer shown, null for none
+		double m_resizeDx = 0.0;      // dp the edge was dragged
+		bool m_resizeLanded = false;  // the release's event.resize is done; the next project shows it
 		uint64_t m_resizeGesture = 0; // counts drags of edges, so that late answers are dropped
 		uint64_t m_dragEvent = 0;     // pressed on
 		bool m_dragMoved = false;

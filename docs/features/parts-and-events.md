@@ -122,8 +122,10 @@ at the cursor, Mod and the arrows nudge, and so on.
   one is asked when the answer is in), and the display draws the project with the answer's events in place of the
   selected ones: their boxes, waveforms (the part of the clip the new size plays), fades and volume lines, exactly
   as the release leaves them, at the clip's limits and the snap included. The release sends one `event.resize`, one
-  undo step; the preview stays until the project shows the resize. Escape cancels the drag: the events show their
-  size again and the release sends nothing. The project window doesn't draw notes in parts or an info tip during
+  undo step; the preview stays until the project shows the resize. The preview is asked again when the modifier keys
+  change (Disable Snapping) or the project changes during the drag, e.g. by another client. A release after the
+  pressed event went sends nothing. Escape cancels the drag: the events show their size again and the release sends
+  nothing. The project window doesn't draw notes in parts or an info tip during
   drags yet, so a part's preview is its box.
 - **The arrow keys** (pp. 218, 253): Left and Right (`edit.selectPrevious`, `edit.selectNext`) select the event
   before the first selected one or after the last on its track; at the first or last event, or with no event
@@ -153,7 +155,9 @@ that the arrow keys select into view.
   lock, nudging, duplicating, moving to the cursor, splitting at the cursor and the locators, gluing, filling the
   locators with the last copy cut, converting a shared copy to a real one), the select submenu, muted events shown
   greyed out and locked ones kept; a drag of an audio event's end and start showing, at every step, the box, waveform,
-  fade and volume line the release leaves, in both sizing modes, and of a MIDI part's end; Escape cancelling it.
+  fade and volume line the release leaves, in both sizing modes, snapped and with Disable Snapping pressed and
+  released mid-drag, while another client moves the event, and of a MIDI part's end; a locked event staying as it
+  is; Escape cancelling it.
 - `tests/uiapp_tests.cpp` presses the default keys in the app's project window: select all, duplicate, mute, nudge
   and Backspace; Left and Right selecting parts, Up and Down stepping the tracks and selecting their first parts, also across a track
   without parts, and only the track with no part selected; and Mod+K,

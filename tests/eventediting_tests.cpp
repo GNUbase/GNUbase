@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -292,6 +293,7 @@ TEST_CASE("a drag of an event's edge shows the size the release gives it at ever
 	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
 	REQUIRE(clock != nullptr);
 	clock->freeze(true); // RmlUi's time stands still but for advance()
+	const std::shared_ptr<void> thaw(nullptr, [clock](void*) { clock->freeze(false); });
 	const auto press = [&context, &move, clock](double x, double y)
 	{
 		clock->advance(1.0); // no double click with the press before
@@ -303,6 +305,17 @@ TEST_CASE("a drag of an event's edge shows the size the release gives it at ever
 	f.call("audioEvent.set", {{"event", f.event}, {"volume", -6.0}});
 	f.display.select({f.event});
 	REQUIRE(f.waitUntil([&f] { return drawsAudioEvent(f, 2.0, 2.5, 0); }));
+	// After a release: the display has the project as the engine has it, and no preview is on its way.
+	const auto settled = [&f]
+	{
+		return f.waitUntil(
+			[&f]
+			{
+				return f.binding.waiting("event.previewResize") == 0 && f.binding.waiting("project.get") == 0 &&
+					f.display.project().at("audioEvents") == f.audioEvents() &&
+					f.display.project().at("midiParts") == f.parts();
+			});
+	};
 
 	// Its end, low in the lane where no fade handle is, in steps without letting go: each one shows the new end at
 	// once, its fade out and volume line with it.
@@ -319,6 +332,8 @@ TEST_CASE("a drag of an event's edge shows the size the release gives it at ever
 	f.step();
 	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("length") == 38400; })); // to 2.8 seconds
 	CHECK(f.audioEvents()[0].at("position") == 96000);
+	CHECK(drawsAudioEvent(f, 2.0, 2.8, 0));
+	REQUIRE(settled());
 	CHECK(drawsAudioEvent(f, 2.0, 2.8, 0));
 	const auto steps = [&f] { return f.call("history.get").at("steps").size(); };
 	const size_t resized = steps();
@@ -340,11 +355,10 @@ TEST_CASE("a drag of an event's edge shows the size the release gives it at ever
 	f.step();
 	CHECK(drawsAudioEvent(f, 2.0, 2.8, 0));
 	move(230, 35);
-	f.step();
+	REQUIRE(settled());
 	CHECK(drawsAudioEvent(f, 2.0, 2.8, 0));
 	context.ProcessMouseButtonUp(0, 0);
-	f.step();
-	f.step();
+	REQUIRE(settled());
 	CHECK(steps() == resized);
 	CHECK(f.audioEvents()[0].at("position") == 96000);
 	CHECK(f.audioEvents()[0].at("offset") == 0);
@@ -364,6 +378,47 @@ TEST_CASE("a drag of an event's edge shows the size the release gives it at ever
 	CHECK(f.audioEvents()[0].at("length") == 62400);
 	CHECK(f.audioEvents()[0].at("offset") == 0);
 	CHECK(steps() == resized + 1);
+	REQUIRE(settled());
+	f.display.setSizingMovesContents(false);
+
+	// Snapped to beats, the end (1.5 to 2.8 seconds) at 3.03 seconds goes to 3; Ctrl (Disable Snapping) pressed and
+	// released without moving the mouse unsnaps and snaps it again.
+	f.call("snap.set", {{"on", true}, {"grid", "beat"}});
+	REQUIRE(f.waitUntil([&f] { return f.display.snap().on; }));
+	press(278, 35);
+	move(301, 35);
+	f.step();
+	REQUIRE(f.waitUntil([&f] { return drawsAudioEvent(f, 1.5, 3.0, 0); }));
+	context.ProcessKeyDown(Rml::Input::KI_LCONTROL, Rml::Input::KM_CTRL);
+	f.step();
+	REQUIRE(f.waitUntil([&f] { return drawsAudioEvent(f, 1.5, 3.03, 0); }));
+	// The event changes meanwhile (another client moves it half a second later): the preview follows, the edge as
+	// far from where it was as the drag went.
+	f.call("event.move", {{"events", {f.event}}, {"delta", 24000}});
+	REQUIRE(f.waitUntil([&f] { return drawsAudioEvent(f, 2.0, 3.53, 0); }));
+	context.ProcessKeyUp(Rml::Input::KI_LCONTROL, 0);
+	f.step();
+	REQUIRE(f.waitUntil([&f] { return drawsAudioEvent(f, 2.0, 3.5, 0); }));
+	context.ProcessMouseButtonUp(0, 0);
+	f.step();
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("length") == 72000; })); // 2 to 3.5 seconds
+	CHECK(f.audioEvents()[0].at("position") == 96000);
+	REQUIRE(settled());
+	CHECK(drawsAudioEvent(f, 2.0, 3.5, 0));
+	f.call("snap.set", {{"on", false}});
+	REQUIRE(f.waitUntil([&f] { return !f.display.snap().on; }));
+
+	// A locked event: the preview fails as the release does, and the event stays as it is.
+	f.call("event.set", {{"events", {f.event}}, {"lock", true}});
+	REQUIRE(settled());
+	press(348, 35);
+	move(368, 35);
+	REQUIRE(settled());
+	CHECK(drawsAudioEvent(f, 2.0, 3.5, 0));
+	context.ProcessMouseButtonUp(0, 0);
+	REQUIRE(settled());
+	CHECK(f.audioEvents()[0].at("length") == 72000);
+	CHECK(drawsAudioEvent(f, 2.0, 3.5, 0));
 
 	// A MIDI part's end (1 to 3 seconds) half a second later, on its musical track.
 	f.display.select({f.part});
@@ -377,7 +432,6 @@ TEST_CASE("a drag of an event's edge shows the size the release gives it at ever
 	f.step();
 	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("length") == 5 * g_quarter; }));
 	CHECK(std::abs(partEnd() - 3.5) < 1e-6);
-	clock->freeze(false);
 }
 
 TEST_CASE("the object selection tool's modifiers act on events whatever keys they are set to", "[unit]")

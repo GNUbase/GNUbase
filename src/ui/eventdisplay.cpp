@@ -289,6 +289,7 @@ namespace gnubase::ui
 					// Settings, not undo steps: only a fresh answer has them, not m_project shown again later.
 					takeSnap(m_project.at("snap"));
 					m_quantize = engine::midi::quantizeSettingsFromJson(m_project.at("quantize"));
+					resizeProjectChanged();
 					showProject();
 				}
 				if (std::exchange(m_stale, false))
@@ -1026,9 +1027,11 @@ namespace gnubase::ui
 				break;
 			}
 			heldKeys(event); // a modifier key may change what a press does
+			resizeKeysChanged();
 			break;
 		case Rml::EventId::Keyup:
-			heldKeys(event); // a modifier key may change what a press does
+			heldKeys(event);
+			resizeKeysChanged();
 			break;
 		case Rml::EventId::Mouseup:
 			areaUp(event);
@@ -1065,6 +1068,12 @@ namespace gnubase::ui
 
 	void EventDisplay::mouseDown(Rml::Event& event, Rml::Element& target)
 	{
+		// A drag of edges whose release the display didn't see, or whose resize isn't shown yet (#732).
+		if (!m_resizeWanted.is_null() || !m_resizePreview.is_null())
+		{
+			endResize();
+			showProject();
+		}
 		const auto x = event.GetParameter<float>("mouse_x", 0.0F);
 		const auto y = event.GetParameter<float>("mouse_y", 0.0F);
 		m_dragX = x;
