@@ -393,7 +393,7 @@ TEST_CASE("new tracks get the time base of the user setting editing.defaultTimeB
 	CHECK(timeBase("audio") == "musical");
 
 	run(client, "settings.set", {{"key", "editing.defaultTimeBase"}, {"value", "linear"}});
-	for (const char* type : {"audio", "instrument", "midi", "group", "effect", "marker"})
+	for (const char* type : {"audio", "instrument", "midi", "group", "effect", "vca", "marker"})
 	{
 		INFO(type);
 		CHECK(timeBase(type) == "linear");

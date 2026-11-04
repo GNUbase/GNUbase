@@ -31,8 +31,8 @@ tempo track's ([tempo-track.md](tempo-track.md)).
 ## UI
 
 - **Switch Time Base** (p. 229) in the inspector's Basics section (`button[control=timeBase]`) and the track list's
-  `timeBase` control ([track-list.md](track-list.md)) on audio, instrument and MIDI tracks, and in the inspector on group
-  and effect tracks too (pp. 179–180): `.checked` when the track is
+  `timeBase` control ([track-list.md](track-list.md)) on audio, instrument and MIDI tracks, and in the inspector on group,
+  effect and VCA fader tracks too (pp. 179–181): `.checked` when the track is
   linear; a click sends `track.set` `timeBase`.
 
 ## Not yet

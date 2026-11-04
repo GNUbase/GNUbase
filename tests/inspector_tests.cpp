@@ -499,7 +499,8 @@ TEST_CASE("the inspector shows the selected track, and its controls change the t
 	const uint64_t group = window.addTrack({{"type", "group"}, {"name", "Drums"}});
 	const uint64_t audio = window.addTrack({{"type", "audio"}, {"name", "Vox"}});
 	const uint64_t marker = window.addTrack({{"type", "marker"}});
-	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("tracks").size() == 3; }));
+	const uint64_t vca = window.addTrack({{"type", "vca"}, {"name", "Strings"}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("tracks").size() == 4; }));
 	window.list.select({audio});
 	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Vox"));
 	CHECK_FALSE(hasClass(window.app, ".inspector", "empty"));
@@ -592,6 +593,12 @@ TEST_CASE("the inspector shows the selected track, and its controls change the t
 	CHECK_FALSE(hasClass(window.app, timeBase, "unavailable"));
 	window.click(timeBase);
 	REQUIRE(window.app.waitUntil([&] { return window.find("tracks", group).at("timeBase") == "linear"; }));
+	// A VCA fader track switches its time base too (p. 181).
+	window.list.select({vca});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Strings"));
+	CHECK_FALSE(hasClass(window.app, timeBase, "unavailable"));
+	window.click(timeBase);
+	REQUIRE(window.app.waitUntil([&] { return window.find("tracks", vca).at("timeBase") == "linear"; }));
 	window.list.select({marker});
 	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, ".inspector [section=basics]", "unavailable"); }));
 	CHECK(hasClass(window.app, ".inspector [section=notepad]", "unavailable"));
