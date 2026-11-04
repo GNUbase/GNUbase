@@ -471,7 +471,7 @@ namespace gnubase::engine
 
 	std::string fileNameProblem(const std::string& name)
 	{
-		const std::string problem = pathNameProblem(name);
+		std::string problem = pathNameProblem(name);
 		if (!problem.empty())
 			return problem;
 		if (isDeviceName(name))
