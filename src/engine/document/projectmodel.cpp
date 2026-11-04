@@ -1019,10 +1019,16 @@ namespace gnubase::engine
 				}
 				else
 				{
-					const auto send = number > 0 ? channel.sends.begin() + (number - 1)
-												 : std::find_if(channel.sends.begin(), channel.sends.end(),
-													   [](const Send& item) { return item.destination == 0; });
-					require(send != channel.sends.end(), "track " + idText(id) + " has no free send");
+					// A pointer, not an iterator: std::array's iterator is a pointer only in some libraries.
+					Send* send = number > 0 ? &channel.sends.at(static_cast<std::size_t>(number - 1)) : nullptr;
+					for (Send& candidate : channel.sends)
+					{
+						if (send == nullptr && candidate.destination == 0)
+						{
+							send = &candidate;
+						}
+					}
+					require(send != nullptr, "track " + idText(id) + " has no free send");
 					require(!routingLoops(project, channel.id, added.id),
 						"sending channel " + idText(channel.id) + " to " + idText(added.id) + " would make a loop");
 					*send = {added.id, true, level, false};
@@ -1132,7 +1138,7 @@ namespace gnubase::engine
 			context.emit("track.added", result);
 			if (type == TrackType::Marker) // a new marker track is the active one
 				activateMarkerTrack(project, track.id, context);
-			if (parameters.contains("tracks") && (type == TrackType::Group || type == TrackType::Effect))
+			if (parameters.contains("tracks") && channel && (type == TrackType::Group || type == TrackType::Effect))
 			{
 				routeTo(project, *channel, parameters, context);
 				return result;
