@@ -583,12 +583,15 @@ TEST_CASE("the inspector shows the selected track, and its controls change the t
 	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, ".inspector [section=notepad]", "hidden"); }));
 	CHECK(window.call("settings.get", {{"key", "ui.layout"}}).dump().find("notepad") != std::string::npos);
 
-	// Another track: the group has no input or record buttons; a marker track has no channel to show.
+	// Another track: the group has no input or record buttons, but switches its time base (pp. 179-180); a marker
+	// track has no channel to show.
 	window.list.select({group});
 	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Drums"));
 	CHECK(hasClass(window.app, ".inspector [row=input]", "unavailable"));
 	CHECK(hasClass(window.app, ".inspector button[control=record]", "unavailable"));
-	CHECK(hasClass(window.app, ".inspector button[control=timeBase]", "unavailable"));
+	CHECK_FALSE(hasClass(window.app, timeBase, "unavailable"));
+	window.click(timeBase);
+	REQUIRE(window.app.waitUntil([&] { return window.find("tracks", group).at("timeBase") == "linear"; }));
 	window.list.select({marker});
 	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, ".inspector [section=basics]", "unavailable"); }));
 	CHECK(hasClass(window.app, ".inspector [section=notepad]", "unavailable"));

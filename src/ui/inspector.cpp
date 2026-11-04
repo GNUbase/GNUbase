@@ -198,8 +198,8 @@ namespace gnubase::ui
 		const bool records = type == "audio" || type == "instrument" || type == "midi";
 		available("button[control=record]", records);
 		available("button[control=monitor]", records);
-		// Switch Time Base (reference manual p. 229), checked when linear.
-		available("button[control=timeBase]", records);
+		// Switch Time Base (reference manual pp. 179-180, 229), checked when linear.
+		available("button[control=timeBase]", records || type == "group" || type == "effect");
 		if (Rml::Element* button = element("button[control=timeBase]"))
 		{
 			if (track->at("timeBase") == "linear")

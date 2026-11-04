@@ -66,8 +66,8 @@ one it has the class `empty` and says "No Track Selected".
   tracks without a channel (marker and ruler tracks, folders without a group channel), record, monitor and input on
   tracks other than audio tracks, inserts, volume and pan on MIDI tracks, which have no audio.
 - **Basics** (pp. 170–182): the channel's switches, fader and panner, sent with `channel.set` (`mute`, `solo`,
-  `recordEnable`, `monitor`, `volume`, `pan`), and Switch Time Base (p. 229) on audio, instrument and MIDI tracks,
-  checked when linear (`track.set` `timeBase`, [time-base.md](time-base.md)). The volume goes up to the project's
+  `recordEnable`, `monitor`, `volume`, `pan`), and Switch Time Base (pp. 179–180, 229) on audio, instrument, MIDI,
+  group and effect tracks, checked when linear (`track.set` `timeBase`, [time-base.md](time-base.md)). The volume goes up to the project's
   `maxVolume` (`project.set`). A drag, wheel turns or a held arrow key on the volume or the pan are one undo step
   ([edit-history.md](edit-history.md), gestures), sent step by step so that they are heard.
 - **Refused changes.** When the engine refuses a change, such as an output that would make a routing loop, the

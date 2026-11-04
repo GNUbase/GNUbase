@@ -11,7 +11,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -222,7 +224,8 @@ namespace gnubase::engine
 	void tempoChanged(Project& project, const time::TempoMap& before, CommandContext& context)
 	{
 		// A linear part stays where it is in samples, and its notes and controllers, in ticks from its start, stay at
-		// their time with it (reference manual p. 1446). The parts' shared copies follow (syncSharedParts).
+		// their time with it (reference manual p. 1446).
+		std::set<ObjectId> changed;
 		if (project.tempo != before)
 			for (auto& [id, part] : project.midiParts)
 			{
@@ -249,8 +252,26 @@ namespace gnubase::engine
 				}
 				for (auto& [controllerId, controller] : part.controllers)
 					controller.position = retime(controller.position);
-				context.emit("midiPart.changed", {{"part", toJson(part)}});
+				changed.insert(id);
 			}
+		// Shared copies that now hold different notes, such as copies before and after a tempo event, or a linear and
+		// a musical copy, can't share them: each copy that differs from its group's first becomes a real copy, as
+		// event.toRealCopy makes it. A first copy left alone is no longer shared (syncSharedParts).
+		std::map<ObjectId, const MidiPart*> firsts;
+		for (auto& [id, part] : project.midiParts)
+		{
+			if (part.shared == 0)
+				continue;
+			const MidiPart* first = firsts.emplace(part.shared, &part).first->second;
+			if (first->notes != part.notes || first->controllers != part.controllers)
+			{
+				part.shared = 0;
+				renumber(project, part);
+				changed.insert(id);
+			}
+		}
+		for (const ObjectId id : changed)
+			context.emit("midiPart.changed", {{"part", toJson(project.midiParts.at(id))}});
 		// A cycle marker in ticks can get shorter than a sample at a faster tempo.
 		for (auto& [id, marker] : project.markers)
 			if (keepMinimumLength(project, marker))
