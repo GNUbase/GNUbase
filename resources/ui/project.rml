@@ -175,6 +175,12 @@
 				<menuitem command="file.importMidi">MIDI File...</menuitem>
 			</menu>
 		</menuitem>
+		<menuitem id="export-submenu">Export
+			<menu>
+				<menuitem command="file.exportMixdown">Audio Mixdown...</menuitem>
+				<menuitem command="file.quickExport">Quick Audio Export...</menuitem>
+			</menu>
+		</menuitem>
 		<menuseparator/>
 		<menuitem command="file.quit">Quit</menuitem>
 	</menu>
@@ -249,6 +255,7 @@
 		<!-- The MIDI editors (docs/features/midi-editors.md) -->
 		<menuitem command="editor.openClose">Open/Close Editor</menuitem>
 		<menuitem command="window.lowerZoneEditor">Open Editor in Lower Zone</menuitem>
+		<menuitem command="editor.openList">Open List Editor</menuitem>
 	</menu>
 	<!-- Track handling (reference manual pp. 213-225) -->
 	<menu id="color-menu"/>

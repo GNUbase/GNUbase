@@ -292,6 +292,18 @@ TEST_CASE("lengths read as bars and beats from their start, or as times in the o
 	CHECK(!ui::parseLength(ui::TimeFormat::BarsBeats, "x", 2.0, context).has_value());
 }
 
+TEST_CASE("lengths in bars count the bars from their start across signature changes", "[unit]")
+{
+	// 4/4 for two bars, then 3/4: at 120 BPM bars start at 0, 2 and 4 seconds, then every 1.5 seconds.
+	ui::TimeContext context;
+	context.signatures = gnubase::time::SignatureMap({{0, {4, 4}}, {2, {3, 4}}});
+	// From the third beat of bar 2 to the third beat of bar 4: two bars, one of them 3/4.
+	CHECK(ui::formatLength(ui::TimeFormat::BarsBeats, 3.0, 6.5, context) == "2.0.0.0");
+	CHECK(ui::formatLength(ui::TimeFormat::BarsBeats, 3.0, 7.0, context) == "2.1.0.0");
+	CHECK(ui::parseLength(ui::TimeFormat::BarsBeats, "2", 3.0, context) == Catch::Approx(3.5));
+	CHECK(ui::parseLength(ui::TimeFormat::BarsBeats, "2.1", 3.0, context) == Catch::Approx(4.0));
+}
+
 TEST_CASE("the time context comes from the project as project.get returns it", "[unit]")
 {
 	const engine::Json project = {{"sampleRate", 44100.0},

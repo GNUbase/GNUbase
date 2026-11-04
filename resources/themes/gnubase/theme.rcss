@@ -540,6 +540,18 @@
 		color: #aeb7d0;
 		font-size: 11dp;
 	}
+	.signature-row .signature-event
+	{
+		color: #f1f4ff;
+		font-size: 11dp;
+		border-left-width: 1dp;
+		border-left-color: #e12ad8;
+	}
+	.signature-row .signature-event.selected
+	{
+		color: #090b18;
+		background-color: #e12ad8;
+	}
 	.event-display .range-selection
 	{
 		border-width: 1dp;
@@ -689,6 +701,48 @@
 	.key-editor-step-cursor
 	{
 		background-color: #10dff2;
+	}
+	.list-editor-header
+	{
+		color: #aeb7d0;
+		border-bottom-width: 1px;
+		border-bottom-color: #303754;
+	}
+	.list-editor-rows .list-row
+	{
+		border-bottom-width: 1px;
+		border-bottom-color: #20263d;
+	}
+	.list-editor-body
+	{
+		background-color: #101426;
+	}
+	.list-row.selected
+	{
+		background-color: #104759;
+	}
+	.list-row.inactive
+	{
+		color: #aeb7d0;
+	}
+	.list-event
+	{
+		background-color: #1391a5;
+		border-width: 1px;
+		border-color: #10dff2;
+	}
+	.list-row.selected .list-event
+	{
+		background-color: #e12ad8;
+		border-color: #f1f4ff;
+	}
+	.list-value
+	{
+		background-color: #10dff2;
+	}
+	.list-row.selected .list-value
+	{
+		background-color: #e12ad8;
 	}
 	.docking [zone]
 	{

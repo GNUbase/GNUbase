@@ -6,6 +6,7 @@
 #include "engine/plugins/slotinstances.h"
 #include "engine/processors/builtin.h"
 #include "engine/settings/usersettings.h"
+#include "platform/hosttime.h"
 #include "platform/log.h"
 #include "platform/rt/realtime.h"
 
@@ -33,6 +34,7 @@ namespace gnubase::engine
 		constexpr time::Samples g_maxRollAmount = time::Samples{3600} * 768000;
 		constexpr auto g_startWait = std::chrono::seconds(2);    // for the streams before playback starts or locates
 		constexpr auto g_offlineWait = std::chrono::seconds(30); // for the streams before an offline block
+		constexpr size_t g_offlineMidi = 1024;                   // MIDI messages per block another device renders
 		constexpr int64_t g_maxCaptureRead = int64_t{1} << 20;   // frames one audio.capture returns at most
 		constexpr int64_t g_maxThreads = 64;
 		constexpr int64_t g_maxLatency = 65536; // frames: the dummy device's latencies and the record shift
@@ -304,20 +306,44 @@ namespace gnubase::engine
 			m_cueThread.join();
 	}
 
-	void AudioEngine::render(audio::DummyDevice& device, uint64_t frames)
+	void AudioEngine::render(uint64_t frames, const std::function<void(uint32_t)>& rendered)
 	{
 		// Block by block, each after its streams are positioned and buffered: the same output every time. Between
 		// blocks nothing reads the streams, so the cue is as for a stopped transport: exactly at the cursor.
-		const uint32_t blockSize = device.format().blockSize;
+		const audio::DeviceFormat& format = m_device->format();
+		// Another device's blocks: silent inputs and outputs of its format, at the positions it would play next.
+		const auto channels =
+			m_dummy != nullptr ? size_t{0} : static_cast<size_t>(format.inputChannels + format.outputChannels);
+		std::vector<float> samples(channels * format.blockSize);
+		std::vector<float*> buffers(channels);
+		for (size_t c = 0; c < channels; ++c)
+			buffers[c] = samples.data() + (c * format.blockSize);
+		const audio::MidiBuffer midiIn;
+		audio::MidiBuffer midiOut(g_offlineMidi);
+		uint64_t position = m_device->position();
 		for (uint64_t done = 0; done < frames;)
 		{
-			const auto block = static_cast<uint32_t>(std::min<uint64_t>(blockSize, frames - done));
+			const auto block = static_cast<uint32_t>(std::min<uint64_t>(format.blockSize, frames - done));
 			cue(m_transport.position(), false, block, false);
 			m_audition.cue(block, false);
 			m_playback.waitUntilBuffered(g_offlineWait);
 			m_audition.waitUntilBuffered(g_offlineWait);
-			device.render(*this, block);
+			if (m_dummy != nullptr)
+			{
+				m_dummy->render(*this, block);
+			}
+			else
+			{
+				std::fill(samples.begin(), samples.end(), 0.0f);
+				midiOut.clear();
+				const rt::ScopedRealtimeContext realtime;
+				process({buffers.data(), buffers.data() + format.inputChannels, block, position, hostTime(), midiIn,
+					midiOut});
+				position += block;
+			}
 			done += block;
+			if (rendered)
+				rendered(block);
 		}
 	}
 
@@ -2089,9 +2115,9 @@ namespace gnubase::engine
 			{
 				const auto frames = context.parameters().at("frames").get<int64_t>();
 				require(frames >= 0, "frames must not be negative");
-				audio::DummyDevice& device = requireDummy();
+				const audio::DummyDevice& device = requireDummy();
 				require(!device.running(), "the audio device is running");
-				render(device, static_cast<uint64_t>(frames));
+				render(static_cast<uint64_t>(frames));
 				if (syncTransport()) // punched in or out, or stopped after a punch out
 					context.emit("transport.changed", transportStatus());
 				Json result = status();
@@ -2205,6 +2231,7 @@ namespace gnubase::engine
 						samples.begin() + static_cast<std::ptrdiff_t>(end))}};
 			});
 		registerAnalysisCommands(engine);
+		registerMixdownCommands(engine);
 		registerMeterCommands(engine);
 		registerTransportCommands(engine);
 		m_midi.registerCommands(engine);

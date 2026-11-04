@@ -150,6 +150,14 @@ namespace gnubase::engine
 				points.begin());
 		}
 
+		// Whether a position lies in a gap of a lane that keeps its gap points, a MIDI lane without a static value of
+		// the channel (see channelAutomation()), which sends nothing there. points aren't empty.
+		bool inGap(const Points& points, int64_t position)
+		{
+			const size_t next = after(points, position);
+			return points[next == 0 ? 0 : next - 1].gap;
+		}
+
 		uint32_t midiValue(double value)
 		{
 			return static_cast<uint32_t>(std::llround(std::clamp(value, 0.0, 1.0) * 4294967295.0));
@@ -222,7 +230,7 @@ namespace gnubase::engine
 					emit(lane, segment.offset, lane.staticValue, smoothing, out);
 				return;
 			}
-			if (jump)
+			if (jump && !inGap(points, begin))
 				emit(lane, segment.offset, automationValue(points, begin), 0, out);
 
 			// The fader glides along ramps; instruments, plugins and MIDI get the value at each g_automationInterval
@@ -240,11 +248,17 @@ namespace gnubase::engine
 												[](const RenderAutomationPoint& point, int64_t position)
 												{ return point.position < position; }) -
 							points.begin());
+					// The value from here on, or a terminator's that a gap follows; nothing where a gap starts.
+					size_t last = next;
+					while (last > first && points[last - 1].gap)
+						--last;
 					const bool fromRamp = first > 0 && points[first - 1].shape != AutomationShape::Step;
+					// Nothing was sent in a gap, also in virgin territory before the first point, whose gap point is
+					// points[0].
+					const bool fromGap = points[first == 0 ? 0 : first - 1].gap;
 					const double approached = first == 0 || fromRamp ? points[first].value : points[first - 1].value;
-					const double value = points[next - 1].value;
-					if (value != approached || (fromRamp && !glides))
-						emit(lane, offset(at), value, 0, out);
+					if (last > first && (points[last - 1].value != approached || (fromRamp && !glides) || fromGap))
+						emit(lane, offset(at), points[last - 1].value, 0, out);
 				}
 				if (at >= end || next == points.size())
 					break; // after the last point the value stays
@@ -344,14 +358,30 @@ namespace gnubase::engine
 		{
 			const auto match = std::find_if(
 				lanes.begin(), lanes.end(), [&lane](const PlayedLane& played) { return played.target == lane.target; });
-			if (match != lanes.end())
-				match->points = lane.points;
+			const bool hasStatic = match != lanes.end(); // a lane added below has none
+			PlayedLane* played = nullptr;
+			if (hasStatic)
+				played = &*match;
 			else if (midi &&
 				(lane.target.type == AutomationTargetType::Controller ||
 					lane.target.type == AutomationTargetType::PitchBend ||
 					lane.target.type == AutomationTargetType::ChannelPressure))
-				lanes.push_back({lane.target, Kind::Midi, 0, 0.0, 0.0, 1.0, lane.points});
+				played = &lanes.emplace_back(PlayedLane{lane.target, Kind::Midi, 0, 0.0, 0.0, 1.0, {}});
 			// Anything else, e.g. a parameter of an instrument the channel no longer plays, waits.
+			if (played == nullptr)
+				continue;
+			played->points = lane.points;
+			// Gaps play the static value, as ordinary steps; a mute lane's have the mute button's (see
+			// RenderAutomationPoint::gap). MIDI lanes without a static value of the channel keep their gap points and
+			// send nothing in their gaps, like a lane that doesn't read.
+			if (hasStatic)
+				for (RenderAutomationPoint& point : played->points)
+					if (point.gap)
+					{
+						if (lane.target.type != AutomationTargetType::Mute)
+							point.value = played->staticValue;
+						point.gap = false;
+					}
 		}
 		return automation;
 	}
@@ -421,10 +451,13 @@ namespace gnubase::engine
 		{
 			if (changed || m_next >= 0 || transport.position != m_stoppedAt)
 				for (const PlayedLane& lane : automation.lanes)
-					if (const std::optional<Outputs> out = outputs(lane))
+				{
+					const std::optional<Outputs> out = outputs(lane);
+					if (out && (lane.points.empty() || !inGap(lane.points, transport.position)))
 						emit(lane, 0,
 							lane.points.empty() ? lane.staticValue : automationValue(lane.points, transport.position),
 							glide(lane), *out);
+				}
 			m_stoppedAt = transport.position;
 			m_next = -1;
 			return;

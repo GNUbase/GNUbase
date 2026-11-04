@@ -509,6 +509,11 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".tempo-curve.inactive .tempo-point", {"background-color": c["textMuted"]}),
         (".tempo-curve .tempo-point.selected", {"background-color": c["text"]}),
         (".tempo-editor .tempo-scale-label", {"color": c["textMuted"], "font-size": f"{sizes['small']}dp"}),
+        # The signature track (docs/features/signature-track.md): a time signature event at the start of its bar
+        (".signature-row .signature-event", {"color": c["text"], "font-size": f"{sizes['small']}dp",
+                                             "border-left-width": f"{widths['hairline']}dp",
+                                             "border-left-color": c["accent2"]}),
+        (".signature-row .signature-event.selected", {"color": c["background"], "background-color": c["accent2"]}),
         # The tools (docs/features/tools.md): the selection range and the rectangle a tool drags
         (".event-display .range-selection", {"border-width": f"{widths['hairline']}dp", "border-color": c["text"],
                                              "background-color": c["text"] + "33"}),
@@ -568,6 +573,20 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
                                 "border-color": c["textMuted"]}),
         (".key-note.drawing", {"background-color": c["accent"] + "66"}),
         (".key-editor-step-cursor", {"background-color": c["accent"]}),
+        # The list editor (docs/features/list-editor.md): lines between the rows, the selected rows lit, those
+        # outside the part editing mode dimmed, the events in the event display and the bars of the value display
+        (".list-editor-header", {"color": c["textMuted"], "border-bottom-width": f"{widths['hairline']}px",
+                                 "border-bottom-color": c["border"]}),
+        (".list-editor-rows .list-row", {"border-bottom-width": f"{widths['hairline']}px",
+                                         "border-bottom-color": mix(c["surface"], c["border"], .5)}),
+        (".list-editor-body", {"background-color": c["surface"]}),
+        (".list-row.selected", {"background-color": mix(c["surface"], c["accent"], .25)}),
+        (".list-row.inactive", {"color": c["textMuted"]}),
+        (".list-event", {"background-color": mix(c["surfaceRaised"], c["accent"], .6),
+                         "border-width": f"{widths['hairline']}px", "border-color": c["accent"]}),
+        (".list-row.selected .list-event", {"background-color": c["accent2"], "border-color": c["text"]}),
+        (".list-value", {"background-color": c["accent"]}),
+        (".list-row.selected .list-value", {"background-color": c["accent2"]}),
         # Docking windows (docs/features/docking.md): zones, the frame of the zone with the keyboard focus, and strips
         (".docking [zone]", {"background-color": mix(c["background"], c["surface"], .5)}),
         (".docking .zone-frame", {"border-width": f"{widths['focus']}dp", "border-color": c["accent"]}),

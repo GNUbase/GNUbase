@@ -127,6 +127,7 @@ namespace
 		std::atomic<size_t> changes{0};
 		std::array<gnubase::plugin::TransportSegment, 4> transport{}; // of the last block
 		uint32_t transportCount = 0;
+		gnubase::plugin::ProcessMode mode = gnubase::plugin::ProcessMode::Prefetch; // of the last block
 
 		const gnubase::plugin::Descriptor& descriptor() const override { return m_descriptor; }
 		bool init() override { return m_initializes; }
@@ -137,6 +138,7 @@ namespace
 		void reset() noexcept override {}
 		gnubase::plugin::ProcessStatus process(const gnubase::plugin::Process& process) noexcept override
 		{
+			mode = process.mode;
 			transportCount = std::min(process.transportCount, static_cast<uint32_t>(transport.size()));
 			std::copy_n(process.transport, transportCount, transport.begin());
 			for (const gnubase::plugin::Event& event : process.eventsIn)
@@ -564,6 +566,41 @@ TEST_CASE("a slot whose plugin can't be made is unavailable, and one whose plugi
 	CHECK(slots.status(1) == "unavailable");
 	CHECK(slots.processor(3) != nullptr);
 	CHECK(slots.status(4).empty());
+}
+
+TEST_CASE("the slots' plugins get offline blocks while the engine renders offline, e.g. an export", "[unit]")
+{
+	plugins::HostManager jobs;
+	CountingPlugin* made = nullptr;
+	plugins::SlotInstances slots(
+		jobs, [] {}, [](uint64_t /*generation*/) { return true; },
+		[&made](const std::string& /*plugin*/, uint32_t /*channels*/,
+			gnubase::plugin::Host& /*host*/) -> std::unique_ptr<gnubase::plugin::Plugin>
+		{
+			auto plugin = std::make_unique<CountingPlugin>(1, true);
+			made = plugin.get();
+			return plugin;
+		});
+	RenderSlot slot;
+	slot.id = 1;
+	slot.plugin = "test:counting";
+	const std::vector<plugins::SlotInstances::Wanted> wanted{{&slot, 2}};
+	slots.update(wanted, 48000.0, 128);
+	jobs.run([] {}).get();
+	slots.update(wanted, 48000.0, 128); // in the graph now
+	const std::shared_ptr<plugins::PluginSlot> processor = slots.processor(1);
+	REQUIRE(processor != nullptr);
+	REQUIRE(made != nullptr);
+	std::vector<float> left(128);
+	std::vector<float> right(128);
+	processBlock(*processor, left, right);
+	CHECK(made->mode == gnubase::plugin::ProcessMode::Realtime);
+	slots.setProcessMode(gnubase::plugin::ProcessMode::Offline);
+	processBlock(*processor, left, right);
+	CHECK(made->mode == gnubase::plugin::ProcessMode::Offline);
+	slots.setProcessMode(gnubase::plugin::ProcessMode::Realtime);
+	processBlock(*processor, left, right);
+	CHECK(made->mode == gnubase::plugin::ProcessMode::Realtime);
 }
 
 TEST_CASE("the engine closes while plugins in slots are made and changed", "[integration]")

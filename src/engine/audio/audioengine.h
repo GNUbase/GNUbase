@@ -23,6 +23,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -247,6 +248,7 @@ namespace gnubase::engine
 		void registerTransportCommands(Engine& engine);
 		void registerAnalysisCommands(Engine& engine); // analysiscommands.cpp
 		void registerMeterCommands(Engine& engine);    // metercommands.cpp
+		void registerMixdownCommands(Engine& engine);  // mixdown.cpp
 		void registerMidiTapCommands(Engine& engine);  // miditap.cpp
 		void registerAuditionCommands(Engine& engine); // audition.cpp
 		void setTransport(const Json& parameters);
@@ -257,7 +259,10 @@ namespace gnubase::engine
 		void record(bool on);
 		Json transportStatus() const;
 		time::Samples projectEnd() const;
-		void render(audio::DummyDevice& device, uint64_t frames);
+		// Command thread, while the device stands: processes frames frames offline, as fast as possible, calling
+		// rendered after each block with its frames. The dummy device renders them; any other device's blocks are
+		// processed here, with silent inputs.
+		void render(uint64_t frames, const std::function<void(uint32_t)>& rendered = {});
 		void cue(time::Samples position, bool playing, time::Samples window, bool wait);
 		void startCueing();
 		void stopCueing();

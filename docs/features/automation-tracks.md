@@ -81,8 +81,9 @@ Write automation (#122), automation track heights of their own, the automation p
 Level, Reveal Parameter on Write), bézier handles and quick vertical scaling of one segment (pp. 874, 877), the
 editor's compress, relative and absolute centre scaling, Range Selection on automation tracks with its added points,
 copying automation to other tracks (pp. 878–879), Alt with the object selection tool to draw, Shift to set the line
-tool's period, the most recent parameters at the top of the selector, Open Plugin Editor, Virgin Territory, and
-automation of the channel strip's sections (#658).
+tool's period, the most recent parameters at the top of the selector, Open Plugin Editor, the gaps of virgin
+territory and terminators ([virgin-territory.md](virgin-territory.md)), and automation of the channel strip's sections
+(#658).
 
 ## Checks
 

@@ -1598,3 +1598,34 @@ TEST_CASE("MIDI input reaches the monitor at its frame position once the device 
 	CHECK(run(client, "midi.monitor", {{"start", true}}) == Json{{"received", Json::array()}, {"dropped", 0}});
 	CHECK(run(client, "midi.monitor").at("received").empty());
 }
+
+TEST_CASE("a mixdown renders offline on any device, which runs again afterwards", "[integration]")
+{
+	// Another backend's device doesn't render offline itself (audio.render): the engine processes its blocks.
+	Engine engine(fakeBackends(std::make_shared<FakeDriver>()));
+	Client client(engine);
+	run(client, "audio.setDevice", {{"backend", "fake"}});
+	run(client, "audio.start");
+	const gnubase::test::TempDir dir;
+	gnubase::test::Audio audio;
+	audio.channels = 2;
+	for (int frame = 0; frame < 2000; ++frame)
+		for (int c = 0; c < 2; ++c)
+			audio.samples.push_back(static_cast<float>(frame + 1) / 4096.0f);
+	gnubase::test::writeWav(dir.path() / "ramp.wav", audio);
+	const Json media = run(client, "media.add", {{"path", (dir.path() / "ramp.wav").u8string()}});
+	const Json clip = run(client, "clip.add", {{"media", media.at("media").at("id")}}).at("clip").at("id");
+	const Json track = run(client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}, {"channels", 2}});
+	run(client, "audioEvent.add",
+		{{"track", track.at("track").at("id")}, {"clip", clip}, {"position", 0}, {"offset", 0}, {"length", 2000}});
+
+	const Json files = run(client, "mixdown.export",
+		{{"folder", dir.path().u8string()}, {"name", "mix"}, {"start", 500}, {"end", 1500},
+			{"sampleFormat", "float32"}})
+						   .at("files");
+	const gnubase::test::Audio exported = gnubase::test::readWav(files.at(0).at("path").get<std::string>());
+	REQUIRE(exported.samples.size() == 2000);
+	CHECK(exported.samples.front() == 501.0f / 4096.0f);
+	CHECK(exported.samples.back() == 1500.0f / 4096.0f);
+	CHECK(run(client, "audio.get").at("running") == true);
+}

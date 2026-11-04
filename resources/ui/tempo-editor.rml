@@ -1,7 +1,8 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- The tempo track editor (docs/features/tempo-track.md, reference manual pp. 1447-1449, 1455), in a window of its
      own. ui::TempoEditor drives the toolbar, the info line and the tempo curve in #tempo-curve-area, over the whole
-     project, with a bars and beats ruler above it and the tempo scale left of it. -->
+     project, with a bars and beats ruler above it, the time signature display between them and the tempo scale left of
+     it. -->
 <rml>
 <head>
 	<title>Tempo Track</title>
@@ -37,12 +38,12 @@
 			width: 100dp;
 		}
 
-		#current-tempo, #tempo-value
+		#current-tempo, #tempo-value, #signature-value
 		{
 			width: 72dp;
 		}
 
-		#tempo-info
+		#tempo-info, #signature-info
 		{
 			position: absolute;
 			left: 0;
@@ -54,12 +55,12 @@
 			display: flex;
 		}
 
-		#tempo-info.hidden
+		#tempo-info.hidden, #signature-info.hidden
 		{
 			visibility: hidden;
 		}
 
-		#tempo-info span, #tempo-info input, #tempo-info select
+		#tempo-info span, #tempo-info input, #tempo-info select, #signature-info span, #signature-info input
 		{
 			margin-right: 8dp;
 		}
@@ -73,7 +74,7 @@
 		{
 			position: absolute;
 			left: 0;
-			top: 84dp;
+			top: 104dp;
 			width: 40dp;
 			bottom: 0;
 		}
@@ -93,11 +94,20 @@
 			height: 24dp;
 		}
 
-		#tempo-curve-area
+		#signature-area
 		{
 			position: absolute;
 			left: 40dp;
 			top: 84dp;
+			right: 0;
+			height: 20dp;
+		}
+
+		#tempo-curve-area
+		{
+			position: absolute;
+			left: 40dp;
+			top: 104dp;
 			right: 0;
 			bottom: 0;
 		}
@@ -125,7 +135,12 @@
 			<option value="ramp">Ramp</option>
 		</select>
 	</div>
+	<div id="signature-info" class="info-line hidden">
+		<span>Bar</span><span id="signature-position"/>
+		<span>Signature</span><input type="text" id="signature-value" title="Time Signature"/>
+	</div>
 	<ruler id="tempo-ruler" class="timeline-ruler"/>
+	<div id="signature-area"/>
 	<div id="tempo-scale"/>
 	<div id="tempo-curve-area"/>
 </body>
