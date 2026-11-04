@@ -874,7 +874,7 @@ namespace gnubase::ui
 		if (Rml::Element* listened = m_document.get())
 			listened->RemoveEventListener(Rml::EventId::Mouseup, this);
 		m_document.reset();
-		if (Rml::Element* root = m_root.get(); document && root != nullptr)
+		if (const Rml::Element* root = m_root.get(); document && root != nullptr)
 			if (Rml::ElementDocument* owner = root->GetOwnerDocument())
 			{
 				owner->AddEventListener(Rml::EventId::Mouseup, this);
