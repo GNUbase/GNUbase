@@ -224,6 +224,16 @@ namespace gnubase::engine
 		std::vector<float> m_samples;
 	};
 
+	// Where mixdown.export's point takes a channel's audio from inside its strip (docs/features/render-in-place.md):
+	// what its source plays, before the pre section and the plugin slots; after the slots, before the strip's other
+	// sections; or after those, before the fader.
+	enum class RenderPoint : uint8_t
+	{
+		Source,
+		Inserts,
+		Strip,
+	};
+
 	// Which part of a channel a strip runs: all of it, or, on a channel with plugin slots, what comes before them in
 	// its source node or the fader after them in its channel node (graph::describe).
 	enum class StripPart : uint8_t
@@ -275,6 +285,13 @@ namespace gnubase::engine
 
 		// Command thread, before the graph compiles: where the strip leaves its audio before the fader in every block.
 		void tapPreFader(std::shared_ptr<PreFaderTap> tap) { m_tap = std::move(tap); }
+		// Command thread, before the graph compiles: where the strip leaves its audio at point in every block, for an
+		// offline render. Source is for the strip that runs the source, the others for the one with the fader.
+		void tapRender(std::shared_ptr<PreFaderTap> tap, RenderPoint point)
+		{
+			m_render = std::move(tap);
+			m_renderPoint = point;
+		}
 
 		// Scales the block's first channels from gain to target, frame by frame, and keeps target as the gain; a gain
 		// below 0 (before the first block) starts at the target.
@@ -284,6 +301,8 @@ namespace gnubase::engine
 		void prepare(double sampleRate, uint32_t maxFrames) override;
 
 	private:
+		// Audio thread: the block's audio into m_render if it renders from point.
+		void render(RenderPoint point, const graph::ProcessContext& context) noexcept;
 		// The fader and its panner with the block's fader events, then muting.
 		void fade(const graph::ProcessContext& context, const graph::EventBuffer& events) noexcept;
 
@@ -301,7 +320,9 @@ namespace gnubase::engine
 		graph::EventBuffer m_sourceEvents;
 		graph::EventBuffer m_faderEvents;
 		graph::EventBuffer m_faderOut;
-		std::shared_ptr<PreFaderTap> m_tap; // or none, without pre-fader sends
+		std::shared_ptr<PreFaderTap> m_tap;    // or none, without pre-fader sends
+		std::shared_ptr<PreFaderTap> m_render; // or none, while nothing renders from the channel
+		RenderPoint m_renderPoint = RenderPoint::Strip;
 	};
 
 	// The processor of a send node (graph::NodeKind::Send): a post-fader send's input is its channel's output, a

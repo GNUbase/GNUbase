@@ -193,7 +193,7 @@ namespace gnubase::app
 		}
 
 		// The track list's commands (ui::TrackList::actions, docs/features/track-list.md) and their keys.
-		constexpr std::array<ProjectCommand, 27> g_trackCommands{{
+		constexpr std::array<ProjectCommand, 29> g_trackCommands{{
 			{"track.selectPrevious",
 				"Selects the track above the selected one, and its first event while an event is selected.", "Up"},
 			{"track.selectNext",
@@ -204,6 +204,10 @@ namespace gnubase::app
 			{"track.duplicateSelected", "Duplicates the selected tracks with their contents.", nullptr},
 			{"track.disableSelected", "Disables the selected audio, instrument and MIDI tracks.", nullptr},
 			{"track.enableSelected", "Enables the selected tracks again.", nullptr},
+			// Render in place and freeze (docs/features/render-in-place.md).
+			{"track.freezeSelected",
+				"Freezes the selected audio and instrument tracks, or unfreezes them if every one is frozen.", nullptr},
+			{"track.renderSelected", "Renders the selected audio and instrument tracks in place.", nullptr},
 			{"track.toggleFolding", "Folds or unfolds the selected folders.", nullptr},
 			{"track.foldAll", "Folds every folder.", nullptr},
 			{"track.unfoldAll", "Unfolds every folder.", nullptr},

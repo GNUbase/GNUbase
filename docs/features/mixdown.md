@@ -23,6 +23,9 @@ Mixdown dialog and Quick Audio Export. The offline rendering it builds on is `au
   would play next. Meanwhile the slots' plugins process in `ProcessMode::Offline`
   (`SlotInstances::setProcessMode`), so a plugin host process waits for their blocks with the offline deadline
   instead of turning a late block into silence; they are back in real-time mode afterwards.
+- **Render points.** `point` renders channels from inside their strip (before the slots, after them, or before the
+  fader) instead of after the fader and panner, and `tail` adds up to 60 s that end where the audio does, for render
+  in place and freeze ([render-in-place.md](render-in-place.md)).
 - **The device's sample rate.** The processing graph runs at the device's rate and audio events play at the
   project's, so both export commands refuse while the device runs at another rate than the project.
 - **Files.** `folder` is created if needed. One channel's file is `name` with the format's extension (`.wav`,
