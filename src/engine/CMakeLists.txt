@@ -90,10 +90,10 @@ add_library(gnubase-engine STATIC
 	audio/automation.cpp audio/automation.h
 	audio/fades.cpp audio/fades.h
 	audio/metercommands.cpp
-	audio/mixdown.cpp
 	audio/meters.cpp audio/meters.h
 	audio/midiports.cpp audio/midiports.h
 	audio/miditap.cpp audio/miditap.h
+	audio/mixdown.cpp
 	audio/performance.cpp audio/performance.h
 	audio/playback.cpp audio/playback.h
 	audio/recorder.cpp audio/recorder.h

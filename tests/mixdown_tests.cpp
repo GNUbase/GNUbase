@@ -345,6 +345,13 @@ TEST_CASE("a mixdown refuses what it can't export and leaves no files", "[integr
 		ContainsSubstring("FLAC"));
 	CHECK_THAT(refuse({{"start", 0}, {"end", 1000}, {"format", "aiff"}, {"sampleFormat", "float64"}}),
 		ContainsSubstring("AIFF"));
+
+	// The graph would run at the device's rate and the events at the project's.
+	run(project.client, "audio.setDevice",
+		{{"sampleRate", 44100}, {"blockSize", 64}, {"inputChannels", 0}, {"captureSeconds", 1}});
+	CHECK_THAT(refuse({{"start", 0}, {"end", 1000}}), ContainsSubstring("44100 Hz"));
+	CHECK_THAT(reject(project.client, "mixdown.quickExport", {{"path", (project.folder.path() / "q.wav").u8string()}}),
+		ContainsSubstring("sample rate"));
 	CHECK(fs::directory_iterator(project.folder.path()) == fs::directory_iterator());
 }
 

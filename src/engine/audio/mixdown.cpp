@@ -9,6 +9,7 @@
 #include "engine/document/rendersnapshot.h"
 #include "engine/dsp/dither.h"
 #include "engine/engine.h"
+#include "engine/plugins/slotinstances.h"
 
 #include <algorithm>
 #include <array>
@@ -235,6 +236,11 @@ namespace gnubase::engine
 			require(m_device != nullptr && m_programs, "there is no audio device; set one with audio.setDevice");
 			require(!m_transport.recording(), "stop recording first");
 			const double projectRate = m_snapshots.latest().sampleRate;
+			// The graph and its processors run at the device's rate, the events at the project's.
+			require(m_device->format().sampleRate == projectRate,
+				"the device runs at " + std::to_string(std::lround(m_device->format().sampleRate)) +
+					" Hz, not at the project's sample rate of " + std::to_string(std::lround(projectRate)) +
+					" Hz; set the device to the project's sample rate");
 			const graph::CompiledGraph& graph = m_programs->latest().graph;
 			for (Target& target : targets)
 			{
@@ -285,8 +291,15 @@ namespace gnubase::engine
 				plain.cycle = plain.preRoll = plain.postRoll = plain.punchIn = plain.punchOut = false;
 				plain.returnToStart = plain.metronome = false;
 				plain.startMode = StartMode::Cursor;
+				// Plugins render offline, so a host process waits for their blocks as long as they take.
+				const auto offline = [this](bool on)
+				{
+					if (m_slots)
+						m_slots->setProcessMode(on ? plugin::ProcessMode::Offline : plugin::ProcessMode::Realtime);
+				};
 				const auto restore = [&]
 				{
+					offline(false);
 					sent(m_transport.stop());
 					sent(m_transport.set(settings));
 					cue(cursor, false, m_device->format().blockSize, true);
@@ -298,6 +311,7 @@ namespace gnubase::engine
 				};
 				try
 				{
+					offline(true);
 					sent(m_transport.set(plain));
 					if (playing)
 						sent(m_transport.stop());
@@ -366,7 +380,8 @@ namespace gnubase::engine
 				"converted from the project's (the default). dither: TPDF dither for int16 and int24. normalize: the "
 				"file's peak in dBFS (-60 to 0). conflicts: unique (the default) adds a number to a name that is "
 				"taken, overwrite replaces the file. The transport and its settings are as before afterwards; a device "
-				"that runs stops meanwhile. Returns the files written, each with its channel, name, absolute path and "
+				"that runs stops meanwhile, and plugins render in offline mode. Refused while the device runs at "
+				"another sample rate than the project. Returns the files written, each with its channel, name, absolute path and "
 				"frames.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["folder", "name"],
 					"properties": {"folder": {"type": "string"}, "name": {"type": "string", "minLength": 1},
@@ -421,7 +436,8 @@ namespace gnubase::engine
 				"Quick audio export (reference manual pp. 1478-1479): writes the main mix of the whole project, from "
 				"the start of the first event to the end of the last, with the tail of the effects after it (up to 30 "
 				"s, to the last sample a 24-bit file doesn't hold as silence), to the WAV file at path with 24-bit "
-				"samples at the project's sample rate, as mixdown.export does. An existing file is replaced. Returns "
+				"samples at the project's sample rate, as mixdown.export does, and is refused when it is. An existing file "
+				"is replaced. Returns "
 				"its absolute path and frames.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["path"],
 					"properties": {"path": {"type": "string", "minLength": 1}}})"),

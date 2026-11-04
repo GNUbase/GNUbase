@@ -20,7 +20,11 @@ Mixdown dialog and Quick Audio Export. The offline rendering it builds on is `au
   its settings and the cursor are as before afterwards. A device that runs stops while the export renders and starts
   again afterwards. The dummy device renders the blocks itself (and captures them, as with `audio.render`); for any
   other device, `AudioEngine::render` calls the audio callback itself with silent inputs, at the positions the device
-  would play next.
+  would play next. Meanwhile the slots' plugins process in `ProcessMode::Offline`
+  (`SlotInstances::setProcessMode`), so a plugin host process waits for their blocks with the offline deadline
+  instead of turning a late block into silence; they are back in real-time mode afterwards.
+- **The device's sample rate.** The processing graph runs at the device's rate and audio events play at the
+  project's, so both export commands refuse while the device runs at another rate than the project.
 - **Files.** `folder` is created if needed. One channel's file is `name` with the format's extension (`.wav`,
   `.aif`, `.flac`); several are `name - <channel name>`, the track's or bus's name, with characters that file systems
   refuse replaced by `_`. `conflicts` `unique` (the default) takes `name (2)`, `name (3)` and so on while a name is
