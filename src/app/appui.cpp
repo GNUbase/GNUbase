@@ -346,6 +346,7 @@ namespace gnubase::app
 		// The edit history (reference manual pp. 110-111), a dialog there, which Edit > History opens.
 		m_docking.add({"history", "History", "project", "right",
 			[this](Rml::Element& element) { return std::make_shared<ui::HistoryPanel>(m_binding, element); }});
+		addQuantize();
 		// The pool (reference manual pp. 739-760, docs/features/pool.md), a window of its own there. Its file dialogs
 		// belong to the window it shows in, and it reads the pool only while it shows.
 		m_docking.add({"pool", "Pool", "project", "lower", [this](Rml::Element& element)
@@ -757,7 +758,12 @@ namespace gnubase::app
 		m_colorMenu.reset();
 		m_trackList.reset();
 		m_infoLine.reset();
+		m_toolbarQuantize.reset();
 		m_eventDisplay = std::make_unique<ui::EventDisplay>(m_engine, m_binding, *root);
+		if (Rml::Element* quantize = document->GetElementById("toolbar-quantize"))
+			m_toolbarQuantize = std::make_unique<ui::QuantizePanel>(m_binding, *quantize,
+				ui::QuantizePanel::Layout::Toolbar,
+				[this](const std::string& command) { m_keys.run(command, engine::Json::object(), m_main, nullptr); });
 		m_statusLine = std::make_unique<ui::StatusLine>(m_binding, *document);
 		if (Rml::Element* info = document->GetElementById("info-line"))
 			m_infoLine = std::make_unique<ui::InfoLine>(*m_eventDisplay, m_binding, *info);

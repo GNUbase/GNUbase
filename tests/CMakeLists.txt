@@ -105,6 +105,7 @@ add_executable(gnubase-tests
 	projectfiles_tests.cpp
 	projectsetup_tests.cpp
 	quantize_tests.cpp
+	quantize_ui_tests.cpp
 	recording_tests.cpp
 	rmlui_tests.cpp
 	routing_tests.cpp

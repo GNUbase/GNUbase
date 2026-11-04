@@ -73,6 +73,8 @@ add_library(gnubase-ui STATIC
 	onscreenkeyboard.h
 	poolpanel.cpp
 	poolpanel.h
+	quantizepanel.cpp
+	quantizepanel.h
 	popupwidgets.cpp
 	projectfiles.cpp
 	projectfiles.h

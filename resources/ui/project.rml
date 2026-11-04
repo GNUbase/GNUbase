@@ -113,6 +113,9 @@
 		<button id="snap-type" menu="snap-type-menu" title="Snap Type">Grid</button>
 		<button id="grid-type" menu="grid-type-menu" title="Grid Type">Bar</button>
 		<button id="snap-zero-crossing" type="toggle" class="icon-only" title="Snap to Zero Crossing"><svg class="icon" src="../icons/general-zero-crossing.svg"/></button>
+		<!-- Apply Quantize, the quantize presets, Soft Quantize and Open Quantize Panel (reference manual p. 368), which
+		     ui::QuantizePanel fills (docs/features/quantize.md) -->
+		<div id="toolbar-quantize" class="toolbar-quantize"/>
 		<button id="select-color" class="icon-only" menu="color-menu" title="Select Color for Selected Tracks or Events"><svg class="icon" src="../icons/general-color.svg"/></button>
 		<div class="spacer"/>
 		<button id="show-channel-zone" type="toggle" toggle="channel" class="icon-only" title="Show/Hide Channel"><svg class="icon" src="../icons/layout-channel-zone.svg"/></button>
@@ -251,6 +254,20 @@
 		<menuitem command="edit.unmute">Unmute</menuitem>
 		<menuitem command="edit.lock">Lock</menuitem>
 		<menuitem command="edit.unlock">Unlock</menuitem>
+		<menuseparator/>
+		<!-- Quantizing (reference manual pp. 367-368, docs/features/quantize.md) -->
+		<menuitem command="edit.quantize">Quantize</menuitem>
+		<menuitem command="edit.resetQuantize">Reset Quantize</menuitem>
+		<menuitem command="window.quantizePanel">Quantize Panel</menuitem>
+		<menuitem id="advanced-quantize-submenu">Advanced Quantize
+			<menu>
+				<menuitem command="edit.quantizeLengths">Quantize MIDI Event Lengths</menuitem>
+				<menuitem command="edit.quantizeEnds">Quantize MIDI Event Ends</menuitem>
+				<menuitem command="edit.freezeQuantize">Freeze MIDI Quantize</menuitem>
+				<menuseparator/>
+				<menuitem command="edit.createGrooveQuantize">Create Groove Quantize Preset</menuitem>
+			</menu>
+		</menuitem>
 		<menuseparator/>
 		<!-- The MIDI editors (docs/features/midi-editors.md) -->
 		<menuitem command="editor.openClose">Open/Close Editor</menuitem>

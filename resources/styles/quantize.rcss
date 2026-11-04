@@ -1,0 +1,105 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* The quantize panel and the toolbar's quantize section (ui/quantizepanel.h, docs/features/quantize.md): rows of
+   controls, the grid's or the groove's settings (the other one gets .hidden) and the grid display, where code places
+   the grid positions' lines and the catch range around them in percent of a bar. The themes color the display. The
+   toolbar's section shows in windows at least 1000 dp wide, where the toolbar has room for it. */
+.quantize-panel
+{
+	display: block;
+	padding: 6dp 8dp;
+}
+
+.quantize-row
+{
+	display: flex;
+	align-items: center;
+	height: 30dp;
+}
+
+.quantize-row button, .quantize-row valuefield, .quantize-row input.text
+{
+	margin-right: 4dp;
+	white-space: nowrap;
+}
+
+#quantize-presets, .quantize-preset-name
+{
+	flex: 1 1 0;
+	min-width: 0;
+}
+
+.quantize-spacer
+{
+	flex: 1;
+}
+
+.quantize-settings
+{
+	display: block;
+	margin-top: 4dp;
+}
+
+.quantize-panel .hidden
+{
+	display: none;
+}
+
+.quantize-field
+{
+	display: flex;
+	align-items: center;
+	height: 28dp;
+}
+
+.quantize-label
+{
+	width: 112dp;
+}
+
+.quantize-field button, .quantize-field valuefield
+{
+	width: 112dp;
+}
+
+.quantize-display
+{
+	position: relative;
+	height: 48dp;
+	margin: 6dp 0;
+	overflow: hidden;
+}
+
+.quantize-line
+{
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	width: 1px;
+}
+
+.quantize-catch
+{
+	position: absolute;
+	top: 0;
+	bottom: 0;
+}
+
+.toolbar-quantize
+{
+	display: none;
+	align-items: center;
+	margin-left: 6dp;
+}
+
+@media (min-width: 1000dp)
+{
+	.toolbar-quantize
+	{
+		display: flex;
+	}
+}
+
+.toolbar-quantize button
+{
+	margin-right: 2dp;
+}
