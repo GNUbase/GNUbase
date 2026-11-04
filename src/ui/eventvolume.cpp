@@ -134,20 +134,21 @@ namespace gnubase::ui
 		// A new point goes where the press was and follows the mouse. The pressed point moves from where it is by the
 		// drag's movement (reference manual p. 400: a click only selects it): inside the event.
 		double fromX = m_pressX;
-		double fromY = m_pressY;
+		double fraction = volumeFraction(*shown, m_pressY + m_dragDy);
 		if (m_dragPoint)
 		{
 			const engine::VolumePoint& point = curve[*m_dragPoint];
 			const double height = m_laneTops[shown->lane + 1] - m_laneTops[shown->lane];
 			const double at = shown->start + (static_cast<double>(point.position - fades.offset) / fades.rate);
 			fromX = (at - m_view.start) / m_view.scale;
-			fromY = m_laneTops[shown->lane + 1] - m_view.top -
-				(std::clamp(gain(fades.volume) * gain(point.volume) / g_volumeLineTop, 0.0, 1.0) * height);
+			// From the point's own volume, which can be above the line's top where the point is drawn at the top
+			// (#683): there a drag down lowers it by the drag's distance, and a drag up takes it no higher.
+			const double from = gain(fades.volume) * gain(point.volume) / g_volumeLineTop;
+			fraction = std::clamp(from - (height > 0.0 ? m_dragDy / height : 0.0), 0.0, std::max(from, 1.0));
 		}
 		const double seconds = m_view.start + ((fromX + m_dragDx) * m_view.scale);
 		const int64_t frame =
 			fades.offset + std::clamp<int64_t>(std::llround((seconds - shown->start) * fades.rate), 0, fades.length);
-		const double fraction = volumeFraction(*shown, fromY + m_dragDy);
 		const double volume = engine::volumeDb(fraction * g_volumeLineTop / gain(fades.volume));
 		if (m_dragPoint)
 		{

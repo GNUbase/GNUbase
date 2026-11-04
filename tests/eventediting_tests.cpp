@@ -1667,6 +1667,56 @@ TEST_CASE("the draw tool's click near a curve point leaves it, a drag moves it b
 	CHECK(f.audioEvents()[0].at("volumeCurve")[0].at("volume") == 0.0);
 }
 
+TEST_CASE("the draw tool moves a curve point drawn clipped at the lane's top from its own volume", "[unit]")
+{
+	Fixture f;
+	// Waits until the display shows the event at +3 dB with one point at volume dB, 0.2 seconds in.
+	const auto shows = [&f](double volume)
+	{
+		return f.waitUntil(
+			[&f, volume]
+			{
+				const std::vector<ui::FadeLines::Lane>& lanes = fadeLines(f).lanes();
+				if (lanes.empty() || lanes[0].volumes.size() != 1)
+					return false;
+				const ui::VolumeLine& line = lanes[0].volumes[0];
+				return std::abs(line.gain - std::pow(10.0, 3.0 / 20.0)) < 1e-9 && line.points.size() == 1 &&
+					line.points[0].position == 9600 &&
+					std::abs(line.points[0].gain - std::pow(10.0, volume / 20.0)) < 1e-6;
+			});
+	};
+	const auto pointVolume = [&f] { return f.audioEvents()[0].at("volumeCurve")[0].at("volume").get<double>(); };
+	// Event volume +3 dB and a point at +6 dB: +9 dB, above the line's top (+6 dB), so the point is drawn at the top
+	// of the lane, though the line would reach it 1.41 times the lane's height up.
+	f.call("audioEvent.set", {{"event", f.event}, {"volume", 3.0}});
+	f.call("audioEvent.setVolumeCurve", {{"event", f.event}, {"points", {{{"position", 9600}, {"volume", 6.0}}}}});
+	REQUIRE(shows(6.0));
+	f.display.setTool(ui::Tool::Draw);
+	// 4 dp down a 40 dp lane takes a tenth of the lane off its real height: +8.36 dB in all, the point +5.36 dB, not
+	// a tenth below the top (+2.1 dB).
+	f.drag(220, 1, 220, 5);
+	REQUIRE(f.waitUntil([&] { return pointVolume() != 6.0; }));
+	CHECK(std::abs(pointVolume() - 5.36) < 0.05);
+	CHECK(f.audioEvents()[0].at("volumeCurve")[0].at("position") == 9600);
+	// The display has the change before the undo, so the next drag starts from the point as the undo leaves it.
+	REQUIRE(shows(pointVolume()));
+	f.call("history.undo");
+	REQUIRE(shows(6.0));
+	// 20 dp down: half the lane off 1.41, +5.2 dB in all, the point +2.2 dB.
+	f.drag(220, 1, 220, 21);
+	REQUIRE(f.waitUntil([&] { return pointVolume() != 6.0; }));
+	CHECK(std::abs(pointVolume() - 2.2) < 0.05);
+
+	// A point drawn below the top still goes no higher than the top: a press 5 dp below one at -3 dB (0 dB in all,
+	// half way up) dragged 25 dp up to the top takes it to +6 dB in all, the point to +3 dB.
+	f.call("audioEvent.setVolumeCurve", {{"event", f.event}, {"points", {{{"position", 9600}, {"volume", -3.0}}}}});
+	REQUIRE(shows(-3.0));
+	f.drag(220, 25, 220, 0);
+	REQUIRE(f.waitUntil([&] { return pointVolume() != -3.0; }));
+	CHECK(std::abs(pointVolume() - 3.0) < 0.05);
+	CHECK(f.audioEvents()[0].at("volumeCurve").size() == 1);
+}
+
 TEST_CASE("Remove Volume Curve removes the selected events' curves, or resets them in the selection range", "[unit]")
 {
 	Fixture f;
