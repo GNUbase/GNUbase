@@ -356,8 +356,7 @@ TEST_CASE("a drag of an event's edge shows the size the release gives it at ever
 	REQUIRE(f.waitUntil([&f] { return drawsAudioEvent(f, 2.1, 2.8, 4800); }));
 	// Escape cancels the drag: the event shows its size again, and the release changes nothing.
 	f.automation.key(std::nullopt, "Escape");
-	f.step();
-	CHECK(drawsAudioEvent(f, 2.0, 2.8, 0));
+	REQUIRE(f.waitUntil([&f] { return drawsAudioEvent(f, 2.0, 2.8, 0); }));
 	move(230, 35);
 	REQUIRE(settled());
 	CHECK(drawsAudioEvent(f, 2.0, 2.8, 0));
@@ -475,6 +474,7 @@ TEST_CASE("a drag of an event's edge shows the size the release gives it at ever
 	// Pressed again at once, before the display has the project with the resize: the drag starts from the ends the
 	// release left, and the release's answer doesn't take the new drag's preview away.
 	press(348, 60);
+	CHECK(std::abs(partEnd("events") - 3.5) < 1e-6);
 	move(368, 60);
 	f.step();
 	REQUIRE(f.waitUntil([&bothEnds] { return bothEnds(3.7, 4.2); }));
