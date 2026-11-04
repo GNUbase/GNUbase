@@ -309,15 +309,17 @@ namespace gnubase::ui
 					if (!child->IsVisible() || child->HasAttribute("disabled"))
 						continue;
 					if (child->GetTagName() == "menuitem")
-						stops.push_back(child);
-					else if (controls && child->GetTagName() != "menu")
 					{
-						const Rml::ComputedValues& style = child->GetComputedValues();
-						if (style.tab_index() == Rml::Style::TabIndex::Auto && style.focus() != Rml::Style::Focus::None)
-							stops.push_back(child);
-						else
-							addStops(*child, controls, stops);
+						stops.push_back(child);
+						continue;
 					}
+					if (!controls || child->GetTagName() == "menu")
+						continue;
+					const Rml::ComputedValues& style = child->GetComputedValues();
+					if (style.tab_index() == Rml::Style::TabIndex::Auto && style.focus() != Rml::Style::Focus::None)
+						stops.push_back(child);
+					else
+						addStops(*child, controls, stops);
 				}
 			}
 
