@@ -5,6 +5,7 @@
 #include "ui/rmlui.h"
 #include "ui/widgetutils.h"
 
+#include <RmlUi/Core/ComputedValues.h>
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
@@ -101,9 +102,8 @@ namespace gnubase::ui
 		// shows a .menu-arrow part. A click on an item without a submenu closes the menu, as do Escape and a click
 		// outside it. Up and Down move the focus between the shown items, and Tab and Shift+Tab also to its other
 		// controls, such as a search field, round the ends without leaving the menu; Enter clicks the focused item,
-		// Right opens the focused item's submenu and Left closes a
-		// submenu; in a menu of a <menubar>'s title, Right and Left otherwise open the next and previous title's menu.
-		// An open menu has the state class .open.
+		// Right opens the focused item's submenu and Left closes a submenu; in a menu of a <menubar>'s title, Right and
+		// Left otherwise open the next and previous title's menu. An open menu has the state class .open.
 		class Menu final : public Rml::Element
 		{
 		public:
