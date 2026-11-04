@@ -688,13 +688,17 @@ namespace gnubase::engine
 		bool pan = false;                    // relative changes of the pan
 		bool mute = false;                   // the mute, solo and listen buttons
 		bool record = false;                 // the record enable and monitor buttons
+		bool eq = false;                     // the equalizer's changes (channel.set eq)
+		bool dynamics = false;               // the strip's changes: gate, compressor, limiter (channel.set strip)
+		bool sends = true;                   // the sends' changes (channel.set sends)
 		ObjectId vca = 0;                    // the channel of the VCA track that controls the group, or 0
 	};
 
 	inline bool operator==(const LinkGroup& a, const LinkGroup& b)
 	{
-		return std::tie(a.id, a.name, a.channels, a.volume, a.pan, a.mute, a.record, a.vca) ==
-			std::tie(b.id, b.name, b.channels, b.volume, b.pan, b.mute, b.record, b.vca);
+		return std::tie(
+				   a.id, a.name, a.channels, a.volume, a.pan, a.mute, a.record, a.eq, a.dynamics, a.sends, a.vca) ==
+			std::tie(b.id, b.name, b.channels, b.volume, b.pan, b.mute, b.record, b.eq, b.dynamics, b.sends, b.vca);
 	}
 
 	// A color of the project's color set (reference manual pp. 115-118), which colors are picked from.
