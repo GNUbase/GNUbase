@@ -1256,6 +1256,24 @@ Result:
 
 - `clip`: object, required
 
+#### `clip_addRegion`
+
+Engine command `clip.addRegion`.
+
+Adds a region to a clip (Add Region, Event or Range as Region, reference manual pp. 620, 624-625): a named section of its audio, from start to end in the clip's sample frames, start before end; name defaults to Region and its number. A clip's regions are in its regions, by start. Emits clip.changed. Returns the clip's id and the region.
+
+Arguments:
+
+- `clip`: integer, required
+- `end`: integer, required
+- `name`: string
+- `start`: integer, required
+
+Result:
+
+- `clip`: integer, required
+- `region`: object, required
+
 #### `clip_remove`
 
 Engine command `clip.remove`.
@@ -1263,6 +1281,21 @@ Engine command `clip.remove`.
 Removes a clip that no audio event uses.
 
 Arguments:
+
+- `clip`: integer, required
+
+#### `clip_removeRegion`
+
+Engine command `clip.removeRegion`.
+
+Removes a region from a clip (Remove Region, reference manual p. 626). Emits clip.changed.
+
+Arguments:
+
+- `clip`: integer, required
+- `region`: integer, required
+
+Result:
 
 - `clip`: integer, required
 
@@ -1297,6 +1330,25 @@ Arguments:
 Result:
 
 - `clip`: object, required
+
+#### `clip_setRegion`
+
+Engine command `clip.setRegion`.
+
+Renames a clip's region or moves its start or end (clip frames; reference manual p. 625); what isn't given stays. Emits clip.changed. Returns the clip's id and the region.
+
+Arguments:
+
+- `clip`: integer, required
+- `end`: integer
+- `name`: string
+- `region`: integer, required
+- `start`: integer
+
+Result:
+
+- `clip`: integer, required
+- `region`: object, required
 
 ### controller
 
@@ -3806,6 +3858,103 @@ Result:
 - `folder`: string, required
 - `seconds`: number or null, required
 
+### sampleEditor
+
+#### `sampleEditor_close`
+
+Engine command `sampleEditor.close`.
+
+Closes the sample editor. Emits sampleEditor.changed. The view: open; event, the audio event it shows, with its clip, track and media file (0 while it shows none, or its event is gone: an undo brings it back); length, the clip's length in sample frames; offset and eventLength, the section of the clip the event plays (clip frames); clipStart, the project sample where the clip's frame 0 would play, and ratio, project samples per clip frame, so frame f plays at clipStart + f * ratio; selectionStart and selectionEnd, the selection range in clip frames, none while they are the same. View state: no undo steps, not saved, and a new or loaded project closes it.
+
+Result:
+
+- `clip`: integer, required
+- `clipStart`: integer, required
+- `event`: integer, required
+- `eventLength`: integer, required
+- `length`: integer, required
+- `media`: integer, required
+- `offset`: integer, required
+- `open`: boolean, required
+- `ratio`: number, required
+- `selectionEnd`: integer, required
+- `selectionStart`: integer, required
+- `track`: integer, required
+
+#### `sampleEditor_get`
+
+Engine command `sampleEditor.get`. Read-only.
+
+What the sample editor shows. The view: open; event, the audio event it shows, with its clip, track and media file (0 while it shows none, or its event is gone: an undo brings it back); length, the clip's length in sample frames; offset and eventLength, the section of the clip the event plays (clip frames); clipStart, the project sample where the clip's frame 0 would play, and ratio, project samples per clip frame, so frame f plays at clipStart + f * ratio; selectionStart and selectionEnd, the selection range in clip frames, none while they are the same. View state: no undo steps, not saved, and a new or loaded project closes it.
+
+Result:
+
+- `clip`: integer, required
+- `clipStart`: integer, required
+- `event`: integer, required
+- `eventLength`: integer, required
+- `length`: integer, required
+- `media`: integer, required
+- `offset`: integer, required
+- `open`: boolean, required
+- `ratio`: number, required
+- `selectionEnd`: integer, required
+- `selectionStart`: integer, required
+- `track`: integer, required
+
+#### `sampleEditor_open`
+
+Engine command `sampleEditor.open`.
+
+Opens the sample editor (reference manual p. 613) with an audio event, such as the one double-clicked or selected in the project window, or shows that event in it if it is open; the selection range goes. Emits sampleEditor.changed. The view: open; event, the audio event it shows, with its clip, track and media file (0 while it shows none, or its event is gone: an undo brings it back); length, the clip's length in sample frames; offset and eventLength, the section of the clip the event plays (clip frames); clipStart, the project sample where the clip's frame 0 would play, and ratio, project samples per clip frame, so frame f plays at clipStart + f * ratio; selectionStart and selectionEnd, the selection range in clip frames, none while they are the same. View state: no undo steps, not saved, and a new or loaded project closes it.
+
+Arguments:
+
+- `event`: integer, required
+
+Result:
+
+- `clip`: integer, required
+- `clipStart`: integer, required
+- `event`: integer, required
+- `eventLength`: integer, required
+- `length`: integer, required
+- `media`: integer, required
+- `offset`: integer, required
+- `open`: boolean, required
+- `ratio`: number, required
+- `selectionEnd`: integer, required
+- `selectionStart`: integer, required
+- `track`: integer, required
+
+#### `sampleEditor_set`
+
+Engine command `sampleEditor.set`.
+
+Changes the open sample editor's selection range (reference manual pp. 618, 635). select: all (the whole clip), none, event (the section the event plays) or loop (between the locators, within the clip; none if they are outside it). Or selectionStart and selectionEnd, in clip frames, from 0 to the clip's length; one of them alone keeps the other. With zeroCrossing (Snap to Zero Crossing), both ends move to the nearest frame within 50 ms where the audio crosses zero. Emits sampleEditor.changed. The view: open; event, the audio event it shows, with its clip, track and media file (0 while it shows none, or its event is gone: an undo brings it back); length, the clip's length in sample frames; offset and eventLength, the section of the clip the event plays (clip frames); clipStart, the project sample where the clip's frame 0 would play, and ratio, project samples per clip frame, so frame f plays at clipStart + f * ratio; selectionStart and selectionEnd, the selection range in clip frames, none while they are the same. View state: no undo steps, not saved, and a new or loaded project closes it.
+
+Arguments:
+
+- `select`: one of "all" | "none" | "event" | "loop"
+- `selectionEnd`: integer
+- `selectionStart`: integer
+- `zeroCrossing`: boolean
+
+Result:
+
+- `clip`: integer, required
+- `clipStart`: integer, required
+- `event`: integer, required
+- `eventLength`: integer, required
+- `length`: integer, required
+- `media`: integer, required
+- `offset`: integer, required
+- `open`: boolean, required
+- `ratio`: number, required
+- `selectionEnd`: integer, required
+- `selectionStart`: integer, required
+- `track`: integer, required
+
 ### script
 
 #### `script_run`
@@ -4617,6 +4766,7 @@ Queries without required arguments can also be read as resources:
 - `gnubase://quantize.get`: The project's quantize settings and whether auto quantize is on (see quantize.set for the settings).
 - `gnubase://quantize.presets`: The quantize presets: the factory presets (straight grids "1/1" to "1/128", triplets such as "1/8 Triplet" and dotted grids such as "1/4 Dotted") and the user's, each with its settings. The user's presets are kept in the settings folder, so they come back when GNUbase starts again: file is where (null if they are kept in memory only), readOnly whether changes are saved (not while the file belongs to a newer GNUbase), and problems what was wrong with it, such as presets that this GNUbase can't read and skips; they stay in the file.
 - `gnubase://recording.remainingTime`: The remaining record time (reference manual p. 356): how many seconds the record-enabled audio tracks can record before the disk with the record folder is full, at the project's sample rate and record bit depth; null while no track would record. With the space available there in bytes, the channels that would record and the record folder: the project's media folder Audio, or for an unsaved project a folder of the user's.
+- `gnubase://sampleEditor.get`: What the sample editor shows. The view: open; event, the audio event it shows, with its clip, track and media file (0 while it shows none, or its event is gone: an undo brings it back); length, the clip's length in sample frames; offset and eventLength, the section of the clip the event plays (clip frames); clipStart, the project sample where the clip's frame 0 would play, and ratio, project samples per clip frame, so frame f plays at clipStart + f * ratio; selectionStart and selectionEnd, the selection range in clip frames, none while they are the same. View state: no undo steps, not saved, and a new or loaded project closes it.
 - `gnubase://settings.list`: Every user setting with its key, description, JSON schema, default and value; the settings file, null when settings are kept in memory only; its version; and what happened when it was loaded: the status (inMemory, missing, loaded, migrated, reset or newer), the version the file had, the problems found, where the original file was kept, and whether the file is read-only for this session, so that changes apply but aren't saved (a newer GNUbase's file, or one that couldn't be backed up or locked).
 - `gnubase://snap.get`: The project's snap settings. on: whether snap is on. type: grid (the nearest grid line), gridRelative (moves in grid steps, keeping the distance to the grid), events (the starts and ends of other events, audio events' snap points and markers, when near), shuffle (events trade places with their neighbours, see event.shuffle), cursor (the project cursor, when near), or the combinations gridCursor, eventsCursor and eventsGridCursor. format: the time format the grid follows, the project window's ruler: barsBeats, seconds, timecode, samples or userFrames. grid: the grid type in use, the format's: for barsBeats bar, beat, quantize (the project's quantize grid) or adaptToZoom (a note value that the view chooses); for seconds 1ms, 10ms, 100ms, 1000ms; for timecode and userFrames subframe, quarterFrame, halfFrame, frame, twoFrames, second; for samples 1sample, 10samples, 100samples, 44100samples. A grid type without a format switches to its format (the frames to timecode unless userFrames is in use). grids: the grid type each format keeps, by default bar, 100ms, frame, 100samples and frame. zeroCrossing: splitting and resizing audio events in the project window cut where the audio crosses zero.
 - `gnubase://transport.get`: Whether playback and recording run, the project cursor in samples, where the last playback started (start, in samples, without the pre-roll), the locators and the modes. After a locate the cursor is where it goes, even before the audio thread has applied it.

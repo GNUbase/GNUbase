@@ -325,6 +325,16 @@ namespace gnubase::engine
 		FadeShape crossfadeShape = FadeShape::Linear; // the fade in, as in Crossfade
 	};
 
+	// A named section of a clip that marks something in its audio (#140, reference manual pp. 624-626): its start and
+	// end in the clip's sample frames, start before end.
+	struct ClipRegion
+	{
+		ObjectId id = 0;
+		std::string name;
+		time::Samples start = 0;
+		time::Samples end = 0;
+	};
+
 	// What audio events play: for now, a whole media file. Its fades apply to every event that plays it, at the
 	// file's start and end.
 	struct Clip
@@ -334,7 +344,8 @@ namespace gnubase::engine
 		ObjectId media = 0;
 		Fade fadeIn;
 		Fade fadeOut;
-		ObjectId folder = 0; // the pool folder it is in; 0: the pool's Audio folder itself
+		ObjectId folder = 0;             // the pool folder it is in; 0: the pool's Audio folder itself
+		std::vector<ClipRegion> regions; // by start, then id
 	};
 
 	// A folder of the pool that clips are organized in (#93, reference manual p. 757). It only organizes the pool:
@@ -762,10 +773,15 @@ namespace gnubase::engine
 				b.crossfadeShape);
 	}
 
+	inline bool operator==(const ClipRegion& a, const ClipRegion& b)
+	{
+		return std::tie(a.id, a.name, a.start, a.end) == std::tie(b.id, b.name, b.start, b.end);
+	}
+
 	inline bool operator==(const Clip& a, const Clip& b)
 	{
-		return std::tie(a.id, a.name, a.media, a.fadeIn, a.fadeOut, a.folder) ==
-			std::tie(b.id, b.name, b.media, b.fadeIn, b.fadeOut, b.folder);
+		return std::tie(a.id, a.name, a.media, a.fadeIn, a.fadeOut, a.folder, a.regions) ==
+			std::tie(b.id, b.name, b.media, b.fadeIn, b.fadeOut, b.folder, b.regions);
 	}
 
 	inline bool operator==(const PoolFolder& a, const PoolFolder& b)
