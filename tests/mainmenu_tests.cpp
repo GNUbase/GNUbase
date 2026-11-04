@@ -401,6 +401,7 @@ TEST_CASE("a transport window whose controls are refused closes again (#669)", "
 		text.replace(at, std::strlen(each.from), each.to);
 		std::ofstream(file, std::ios::binary) << text;
 
+		// The project window isn't shown: the broken transport.rml would refuse its transport bar too.
 		test::UiApp app({900, 640}, resources);
 		app::AppUi& appUi = app.appUi();
 		const auto toggleBroken = [&appUi, &each]

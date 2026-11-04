@@ -520,7 +520,7 @@ namespace gnubase::app
 			{
 				const auto command = parameters.find("command");
 				if (!parameters.is_object() || command == parameters.end() || !command->is_string())
-					throw std::invalid_argument("ui.command needs a command, the name of a key command");
+					throw std::invalid_argument("ui.command needs a table with a command, the name of a key command");
 				for (const auto& item : parameters.items())
 					if (item.key() != "command" && item.key() != "parameters")
 						throw std::invalid_argument("ui.command takes a command and its parameters, not " + item.key());
