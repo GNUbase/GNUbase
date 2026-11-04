@@ -107,7 +107,7 @@ mute yet), and the Line tool in the note display (it draws on the controller lan
 tool's drag across several notes and the draw tool's modifiers for velocity, pitch and position; key commands for the
 transpose palette and deleting; the nudge buttons, Solo Editor, Record in Editor, Acoustic Feedback, pitch visibility,
 the Scale Assistant, Indicate Transpositions, event colors, the status line and Set up Window Layout; horizontal zoom
-and scrolling; listening to a key's pitch with a click; drum map and articulation names; Add to Chord Track, Match with
+and scrolling; listening to a key's pitch with a click; drum map names in the key editor and articulation names; Add to Chord Track, Match with
 Chord Track, Create Chord Events and the chord insert tools; quantizing from the toolbar (#132) and the Length section's
 functions (#133); the key editor's context menu.
 

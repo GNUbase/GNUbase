@@ -89,7 +89,8 @@ Ctrl+Alt (pp. 1179-1180); the context menu's Cut, Copy, Paste and Paste at Origi
 the divider between the note display and the lanes (p. 1158); renaming presets in an Organize Presets dialog; a
 channel per lane; a velocity variance and play probability chosen anew on each cycle pass; MIDI file export,
 Merge MIDI in Loop and Freeze MIDI Modifiers applying them; the line tool's modifier keys and its use in the note
-display; the selection rectangle on lanes; the info line for controller events; the drum and in-place editors' lanes.
+display; the selection rectangle on lanes; the info line for controller events; the in-place editor's lanes. The drum editor ([drum-editor.md](drum-editor.md))
+has the key editor's lanes.
 
 ## Checks
 
