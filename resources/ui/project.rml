@@ -327,6 +327,13 @@
 		<menuitem command="track.toggleAutomationSelected">Show/Hide Automation</menuitem>
 		<menuitem command="track.showUsedAutomation">Show All Used Automation</menuitem>
 		<menuitem command="track.hideAllAutomation">Hide All Automation</menuitem>
+		<!-- Copying automation to other tracks (reference manual pp. 878-879) -->
+		<menuitem command="track.copyAutomationAll">Copy Automation of All Tracks (Locator Range)</menuitem>
+		<menuitem command="track.copyAutomationSelected">Copy Automation of Selected Tracks (Locator Range)</menuitem>
+		<menuitem command="track.copyAutomationSelectedParameters">Copy Automation of Selected Parameters (Locator Range)</menuitem>
+		<menuitem command="track.pasteAutomationAll">Paste Automation of All Tracks (Locator Range)</menuitem>
+		<menuitem command="track.pasteAutomationSelected">Paste Automation of Selected Tracks (Locator Range)</menuitem>
+		<menuitem command="track.pasteAutomationSelectedParameters">Paste Automation of Selected Parameters (Locator Range)</menuitem>
 		<menuseparator/>
 		<!-- Folder tracks (reference manual pp. 222-224) -->
 		<menuitem command="track.enableSelectedGroupChannels">Enable Group Channel</menuitem>
