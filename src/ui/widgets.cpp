@@ -5,8 +5,10 @@
 #include "ui/widgetutils.h"
 
 #include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/Factory.h>
+#include <RmlUi/Core/StringUtilities.h>
 
 #include <cmath>
 #include <iomanip>
@@ -90,6 +92,28 @@ namespace gnubase::ui
 			Rml::ElementPtr part = Rml::Factory::InstanceElement(&parent, "*", "div", Rml::XMLAttributes());
 			part->SetClass(className, true);
 			return parent.AppendChild(std::move(part));
+		}
+
+		void fill(Rml::Element& element, const Options& options, const std::string& value)
+		{
+			auto* select = rmlui_dynamic_cast<Rml::ElementFormControlSelect*>(&element);
+			if (select == nullptr)
+				return;
+			bool same = select->GetNumOptions() == static_cast<int>(options.size());
+			for (int i = 0; same && i < select->GetNumOptions(); ++i)
+			{
+				const Rml::Element* option = select->GetOption(i);
+				same = option->GetAttribute<Rml::String>("value", "") == options[static_cast<size_t>(i)].first &&
+					option->GetInnerRML() == Rml::StringUtilities::EncodeRml(options[static_cast<size_t>(i)].second);
+			}
+			if (!same)
+			{
+				select->RemoveAll();
+				for (const auto& [optionValue, text] : options)
+					select->Add(Rml::StringUtilities::EncodeRml(text), optionValue);
+			}
+			if (select->GetValue() != value)
+				select->SetValue(value);
 		}
 	}
 

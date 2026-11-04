@@ -106,7 +106,8 @@ namespace gnubase::ui
 		std::map<uint64_t, Rml::Element*> m_stripOf; // by channel id, while m_strips lives
 		bool m_loading = false;
 		bool m_stale = false;
-		uint64_t m_dragged = 0; // the channel whose name a mouse button went down on
+		uint64_t m_dragged = 0;  // the channel whose name a mouse button went down on
+		bool m_updating = false; // while the strips show the project's values
 
 		std::vector<Subscription> m_subscriptions;
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers that come after it went

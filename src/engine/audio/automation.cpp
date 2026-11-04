@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstring>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -576,6 +577,28 @@ namespace gnubase::engine
 		m_state->sections.prepare(sampleRate, maxFrames);
 		m_smoothing = static_cast<uint32_t>(std::llround(sampleRate * g_faderSmoothing));
 		m_sampleRate = sampleRate;
+		if (m_tap)
+			m_tap->prepare(maxFrames);
+	}
+
+	void PreFaderTap::prepare(uint32_t maxFrames)
+	{
+		m_maxFrames = maxFrames;
+		m_samples.assign(static_cast<size_t>(m_channels) * maxFrames, 0.0f);
+	}
+
+	SendStrip::SendStrip(std::shared_ptr<ChannelState> state, int number, float gain, std::shared_ptr<PreFaderTap> tap)
+		: m_state(std::move(state)), m_number(static_cast<size_t>(number)), m_gain(gain), m_tap(std::move(tap))
+	{
+	}
+
+	void SendStrip::process(const graph::ProcessContext& context) noexcept
+	{
+		if (m_tap)
+			for (int c = 0; c < std::min(context.channels, m_tap->channels()); ++c)
+				std::memcpy(context.audio[c], m_tap->channel(c), context.frames * sizeof(float));
+		if (context.frames > 0)
+			ChannelStrip::glide(context, context.channels, m_state->sendGains[m_number], m_gain);
 	}
 
 	uint32_t ChannelStrip::latency() const
@@ -631,6 +654,9 @@ namespace gnubase::engine
 		if (context.channels == 0)
 			return;
 		m_state->sections.processPost(m_sections, context.audio, context.channels, context.frames);
+		if (m_tap)
+			for (int c = 0; c < std::min(context.channels, m_tap->channels()); ++c)
+				std::memcpy(m_tap->channel(c), context.audio[c], context.frames * sizeof(float));
 		m_faderOut.clear();
 		m_state->fader->process(
 			{context.audio, context.channels, context.frames, events, m_faderOut, context.transport}, m_panning);

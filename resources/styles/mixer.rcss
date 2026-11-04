@@ -120,6 +120,14 @@
 	margin: 1dp;
 }
 
+/* A send's destination takes what its row leaves. */
+.mixer-sends select
+{
+	flex: 1;
+	min-width: 0;
+	height: 18dp;
+}
+
 .mixer-pan
 {
 	flex-shrink: 0;
