@@ -93,6 +93,7 @@ add_library(gnubase-engine STATIC
 	audio/meters.cpp audio/meters.h
 	audio/midiports.cpp audio/midiports.h
 	audio/miditap.cpp audio/miditap.h
+	audio/mixdown.cpp
 	audio/performance.cpp audio/performance.h
 	audio/playback.cpp audio/playback.h
 	audio/recorder.cpp audio/recorder.h

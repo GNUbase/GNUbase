@@ -428,6 +428,32 @@ namespace gnubase::app
 			}});
 		for (const char* command : {"file.importAudio", "file.importMidi", "pool.import"})
 			m_keys.enableWhen(command, [this](ui::Window&, Rml::Element*) { return m_eventDisplay != nullptr; });
+		// File > Export (docs/features/mixdown.md): the Export Audio Mixdown dialog, and Quick Audio Export into a WAV
+		// file chosen in the OS's file dialog.
+		m_keys.add({"file.exportMixdown", "Opens the Export Audio Mixdown dialog.",
+			[this](ui::Window& window, Rml::Element* /*zone*/) { openDialog(window, "export-mixdown.rml"); }});
+		m_keys.add({"file.quickExport", "Exports the main mix of the whole project into a WAV file.",
+			[this](ui::Window& window, Rml::Element* /*zone*/)
+			{
+				ui::FileDialog dialog;
+				dialog.kind = ui::FileDialogKind::Save;
+				dialog.title = "Quick Audio Export";
+				dialog.filters = {{"Wave files", "wav"}};
+				dialog.location = "Mixdown.wav";
+				dialog.parent = window.id();
+				m_shell.showFileDialog(dialog,
+					[this](const ui::FileDialogResult& chosen)
+					{
+						if (!chosen.error.empty())
+							logging::warning("The file dialog failed: {}", chosen.error);
+						if (chosen.files.empty())
+							return;
+						std::filesystem::path file = chosen.files.front();
+						if (file.extension().empty())
+							file += ".wav";
+						m_binding.send("mixdown.quickExport", {{"path", file.u8string()}});
+					});
+			}});
 		// Auto fades (docs/features/fades.md): the project's, or the first selected track's.
 		m_keys.add({"project.autoFades", "Opens the auto fades dialog for the whole project.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { openAutoFades(window, 0); }});
