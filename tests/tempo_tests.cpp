@@ -237,8 +237,8 @@ TEST_CASE("notes and controllers in parts on linear tracks keep their time when 
 	CHECK(near(times(linear), before));
 }
 
-TEST_CASE("shared copies of a linear part become real copies when a tempo change retimes their notes differently",
-	"[unit]")
+TEST_CASE(
+	"shared copies of a linear part become real copies when a tempo change retimes their notes differently", "[unit]")
 {
 	Engine engine;
 	Client client(engine);
@@ -246,21 +246,22 @@ TEST_CASE("shared copies of a linear part become real copies when a tempo change
 	const ObjectId linear = addTrack(client, {{"type", "midi"}, {"timeBase", "linear"}});
 	const ObjectId musical = addTrack(client, {{"type", "midi"}});
 	// A part at the project start with a note from its first to its second quarter.
-	const ObjectId part = run(client, "midiPart.add",
-		{{"track", linear}, {"position", 0}, {"length", 4 * g_quarterSamples}})
-							  .at("part")
-							  .at("id")
-							  .get<ObjectId>();
+	const ObjectId part =
+		run(client, "midiPart.add", {{"track", linear}, {"position", 0}, {"length", 4 * g_quarterSamples}})
+			.at("part")
+			.at("id")
+			.get<ObjectId>();
 	run(client, "note.add",
 		{{"part", part},
-			{"notes", {{{"position", g_ticksPerQuarter}, {"length", g_ticksPerQuarter}, {"pitch", 60}, {"velocity", 1.0}}}}});
+			{"notes",
+				{{{"position", g_ticksPerQuarter}, {"length", g_ticksPerQuarter}, {"pitch", 60}, {"velocity", 1.0}}}}});
 	const auto copy = [&client, part](Json parameters)
 	{
 		parameters["events"] = {part};
 		parameters["shared"] = true;
 		return run(client, "event.copy", parameters).at("events").at(0).get<ObjectId>();
 	};
-	const ObjectId later = copy({{"delta", 8 * g_quarterSamples}}); // after the tempo event below
+	const ObjectId later = copy({{"delta", 8 * g_quarterSamples}});  // after the tempo event below
 	const ObjectId other = copy({{"ticks", 0}, {"track", musical}}); // a musical copy
 	const auto midiPart = [&client](ObjectId id)
 	{

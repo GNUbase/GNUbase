@@ -62,6 +62,7 @@ namespace gnubase::engine
 		Fade clipFadeOut;
 		Crossfade crossfade;                // only one that applies (crossfadeApplies)
 		std::vector<GainPoint> volumeCurve; // in the media file's sample frames
+		ObjectId front = 0;                 // frontOf: where events overlap, the highest plays
 	};
 
 	struct RenderNote

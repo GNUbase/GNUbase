@@ -455,3 +455,47 @@ TEST_CASE(
 	CHECK(channelJson(app, guitar.channel).at("listen") == false);
 	CHECK(channelJson(app, keys.channel).at("mute") == false);
 }
+
+TEST_CASE("a VCA strip has a fader and buttons and picks the link group it controls; strips show their group", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	const Added guitar = addTrack(app, "audio", "Guitar");
+	const Added bass = addTrack(app, "audio", "Bass");
+	const Added vca = addTrack(app, "vca", "Band");
+	const uint64_t group = app.call("linkGroup.add", {{"channels", {guitar.channel, bass.channel}}, {"name", "Rhythm"}})
+							   .at("group")
+							   .at("id")
+							   .get<uint64_t>();
+	const Window window = openMixer(app, 1);
+	REQUIRE(app.waitUntil([&] { return strips(app, window).size() == 5; }));
+	CHECK(element(app, window, strip(vca.channel)).at("attributes").at("type") == "vca");
+
+	// The display line shows the number and the name of the link group (reference manual p. 458).
+	REQUIRE(app.waitUntil(
+		[&] { return element(app, window, strip(guitar.channel) + " .mixer-link").at("text") == "1 Rhythm"; }));
+	CHECK(element(app, window, strip(vca.channel) + " .mixer-link").value("text", std::string()).empty());
+
+	// A VCA fader has a fader, M, S and L, and no panner (p. 515).
+	CHECK(elements(app, window, strip(vca.channel) + " fader").size() == 1);
+	CHECK(elements(app, window, strip(vca.channel) + " .mixer-pan").empty());
+	CHECK(elements(app, window, strip(vca.channel) + " button[control=listen]").size() == 1);
+
+	// VCA Channel Controls Link Group: None, then the groups.
+	const std::string select = strip(vca.channel) + " .mixer-vca-group";
+	CHECK(element(app, window, select).at("attributes").at("value") == "0");
+	click(app, window, select);
+	app.ui().key(window, "Down");
+	click(app, window, select);
+	REQUIRE(app.waitUntil([&] { return app.call("project.get").at("linkGroups").at(0).at("vca") == vca.channel; }));
+
+	// Its mute goes on to the group's channels.
+	click(app, window, strip(vca.channel) + " button[control=mute]");
+	REQUIRE(app.waitUntil(
+		[&] { return has(element(app, window, strip(bass.channel) + " button[control=mute]"), "checked"); }));
+	CHECK(channelJson(app, guitar.channel).at("mute") == true);
+
+	// What another client changes shows.
+	app.call("linkGroup.set", {{"group", group}, {"vca", 0}});
+	REQUIRE(app.waitUntil([&] { return element(app, window, select).at("attributes").at("value") == "0"; }));
+}

@@ -182,7 +182,8 @@ namespace gnubase::ui
 			return;
 		m_showing = true;
 		const std::string type = track->at("type").get<std::string>();
-		const bool audio = channel != nullptr && type != "midi"; // a MIDI channel has no audio
+		const bool vca = channel != nullptr && type == "vca";            // a VCA fader: a fader and buttons
+		const bool audio = channel != nullptr && type != "midi" && !vca; // a MIDI channel has no audio
 		const auto element = [&root](const std::string& selector) { return root.QuerySelector(selector); };
 		const auto available = [&element](const std::string& selector, bool yes)
 		{
@@ -193,13 +194,14 @@ namespace gnubase::ui
 		if (Rml::Element* name = element("textdisplay.inspector-name"))
 			name->SetAttribute("value", track->at("name").get<std::string>());
 		for (const char* section : {"basics", "routing", "notepad"})
-			available("[section=" + std::string(section) + "]", channel != nullptr);
+			available("[section=" + std::string(section) + "]",
+				channel != nullptr && (!vca || std::string(section) != "routing"));
 		available("[section=inserts]", audio);
-		const bool records = type == "audio" || type == "instrument" || type == "midi";
+		const bool records = type == "audio" || type == "instrument" || type == "midi" || vca;
 		available("button[control=record]", records);
 		available("button[control=monitor]", records);
 		// Switch Time Base (reference manual pp. 179-180, 229), checked when linear.
-		available("button[control=timeBase]", records || type == "group" || type == "effect");
+		available("button[control=timeBase]", (records && !vca) || type == "group" || type == "effect");
 		if (Rml::Element* button = element("button[control=timeBase]"))
 		{
 			if (track->at("timeBase") == "linear")
@@ -207,7 +209,7 @@ namespace gnubase::ui
 			else
 				button->RemoveAttribute("checked");
 		}
-		available("[row=volume]", audio);
+		available("[row=volume]", audio || vca);
 		available("[row=pan]", audio);
 		available("[row=input]", type == "audio");
 		if (channel != nullptr)
@@ -221,16 +223,13 @@ namespace gnubase::ui
 					else
 						button->RemoveAttribute("checked");
 				}
-			if (audio)
+			if (Rml::Element* volume = element("valuefield[control=volume]"); volume != nullptr && (audio || vca))
 			{
-				if (Rml::Element* volume = element("valuefield[control=volume]"))
-				{
-					volume->SetAttribute("max", widgets::format(m_project->value("maxVolume", 6.0F)));
-					volume->SetAttribute("value", widgets::format(channel->at("volume").get<float>()));
-				}
-				if (Rml::Element* pan = element("valuefield[control=pan]"))
-					pan->SetAttribute("value", widgets::format(channel->at("pan").get<float>() * 100.0F));
+				volume->SetAttribute("max", widgets::format(m_project->value("maxVolume", 6.0F)));
+				volume->SetAttribute("value", widgets::format(channel->at("volume").get<float>()));
 			}
+			if (Rml::Element* pan = element("valuefield[control=pan]"); pan != nullptr && audio)
+				pan->SetAttribute("value", widgets::format(channel->at("pan").get<float>() * 100.0F));
 			const auto id = channel->at("id").get<uint64_t>();
 			if (Rml::Element* output = element("select[control=output]"))
 				widgets::fill(

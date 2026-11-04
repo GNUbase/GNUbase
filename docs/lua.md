@@ -548,7 +548,7 @@ Builds the processing graph again with the plugins of the slots as they are now.
 
 #### `gnubase.audioEvent.add`
 
-Adds an audio event that plays a section of a clip on an audio track. position is in the track's time base (ticks or samples); offset and length are in the clip's sample frames, length defaulting to the rest of the clip. volume is in dB, from -144 to 6 (default 0); a muted event doesn't play. A track plays one event at a time: where events overlap, the one added last plays, unless they crossfade.
+Adds an audio event that plays a section of a clip on an audio track. position is in the track's time base (ticks or samples); offset and length are in the clip's sample frames, length defaulting to the rest of the clip. volume is in dB, from -144 to 6 (default 0); a muted event doesn't play. A track plays one event at a time: where events overlap, the one added last plays, unless they crossfade; event.toFront brings another one to the front.
 
 Parameters:
 
@@ -980,7 +980,7 @@ Returns:
 
 #### `gnubase.channel.set`
 
-Changes a channel's format (or channels, as in bus.add), input (an input bus) or output (an output bus or a group channel; for MIDI tracks an instrument channel). 0 disconnects. Audio converts between formats where a channel feeds a destination of another one: speakers both formats have connect, the others are mixed down (5.1 to stereo: C and LFE into L and R at -3 dB, Ls into L and Rs into R at -6 dB; 7.1 to 5.1: Sl and Sr into the front and surround sides at -3 dB) or up (mono to C, or to L and R at the pan law's center). instrument is the built-in instrument an instrument track plays (see processor.list), or empty for none. volume is the fader in dB, from -144 (silence) to the project's maxVolume (default 0); values beyond them stop there. The panner depends on the routing: a mono channel on a stereo destination has its position pan, -1 (left) to 1 (right), placed with the project's pan law; a stereo channel on a stereo or mono destination has the balance panner (panner balance, the default: pan turns down the other side) or the combined panner (panner combined: panLeft and panRight place its left and right channel, by default -1 and 1). panBypass plays mono channels at the center and stereo ones hard left and right. Destinations wider than stereo have no panner yet. Automation of volume, pan, panLeft and panRight overrides them while it plays; changes glide over 5 ms. MIDI channels have no audio: midiVolume and midiPan (0 to 127, 64 is the center pan, null for none, the default) are sent to the instrument as MIDI volume (CC 7) and pan (CC 10) on MIDI channel 1, whenever they change and when playback starts or jumps; automation of those controllers overrides them. monitor and recordEnable are an audio track's buttons: monitor hears the input bus, recordEnable arms the track for recording and, by the user setting audio.autoMonitoring, monitors too: manual never, whileRecordEnabled always, whileRecording while the transport records, tapeMachine while it stands or records (the default). Monitoring glides in and out over one audio block. MIDI and instrument tracks have them too: recordEnable arms the track for MIDI recording, and while either is on, the track plays what comes from its MIDI input, midiInput: all (all MIDI inputs, the default) or none. mute silences a channel; while any channel is soloed (solo), only the soloed ones, the channels they play through (groups, instruments) and the channels that play into them are heard; exclusive (with solo) turns every other channel's solo off; soloDefeat keeps a channel and the channels it plays through heard while others are soloed. listen (not MIDI channels) also plays the channel after its fader on the monitoring bus, the main mix, which is turned down to the user setting audio.listenDim while any channel listens; the listening channels play there at audio.listenLevel, and their signal flow stays as it is. Muting, soloing and the dim glide over one audio block. notes is the channel's notepad, the user's text about it. The channel strip's sections (audio channels only; each object changes only what it has, as project.get shows them) run before the fader: pre {gain (dB, -24 to 24), phase (inverts the polarity), lowCut and highCut {on, frequency (Hz, 20 or for the high cut 50 to 20000), slope (6, 12, 24, 36 or 48 dB per octave)}} before the plugin slots; after them strip {gate {on, threshold (dB, -80 to 0), range (dB, -80 to 0), attack (ms, 0.01 to 100), release (ms, 1 to 4000)}, compressor {on, threshold (dB, -60 to 0), ratio (1 to 20), attack (ms, 0.1 to 100), release (ms, 10 to 2000), makeup (dB, 0 to 24)}}, then eq {bypass, bands: [{band (1 to 4), on, type (bell; band 1 also lowShelf or lowCut, band 4 highShelf or highCut, cuts at 12 dB per octave), frequency (Hz, 20 to 20000), gain (dB, -24 to 24), q (0.1 to 12)}]}, then the strip's limiter {on, threshold (dB, -30 to 0: no sample leaves above it, 1 ms of latency), release (ms, 1 to 1000)}. Everything starts off; changes glide. sends (audio channels only) changes the channel's eight sends, each by its send number (1 to 8) and only in what it has: destination (a group or effect channel, 0 for none), on, level (dB, from -144 to the project's maxVolume, stopping there, default 0) and preFader (before the fader and the mute button, after the strip's sections; default after the fader). A send starts off and without a destination. Neither an output nor a send may lead back to the channel through other outputs and sends, on or off, so routing never makes a loop; removing a destination's track clears the destination. A send's level and on glide over one audio block.
+Changes a channel's format (or channels, as in bus.add), input (an input bus) or output (an output bus or a group channel; for MIDI tracks an instrument channel). 0 disconnects. Audio converts between formats where a channel feeds a destination of another one: speakers both formats have connect, the others are mixed down (5.1 to stereo: C and LFE into L and R at -3 dB, Ls into L and Rs into R at -6 dB; 7.1 to 5.1: Sl and Sr into the front and surround sides at -3 dB) or up (mono to C, or to L and R at the pan law's center). instrument is the built-in instrument an instrument track plays (see processor.list), or empty for none. volume is the fader in dB, from -144 (silence) to the project's maxVolume (default 0); values beyond them stop there. The panner depends on the routing: a mono channel on a stereo destination has its position pan, -1 (left) to 1 (right), placed with the project's pan law; a stereo channel on a stereo or mono destination has the balance panner (panner balance, the default: pan turns down the other side) or the combined panner (panner combined: panLeft and panRight place its left and right channel, by default -1 and 1). panBypass plays mono channels at the center and stereo ones hard left and right. Destinations wider than stereo have no panner yet. Automation of volume, pan, panLeft and panRight overrides them while it plays; changes glide over 5 ms. MIDI channels have no audio: midiVolume and midiPan (0 to 127, 64 is the center pan, null for none, the default) are sent to the instrument as MIDI volume (CC 7) and pan (CC 10) on MIDI channel 1, whenever they change and when playback starts or jumps; automation of those controllers overrides them. monitor and recordEnable are an audio track's buttons: monitor hears the input bus, recordEnable arms the track for recording and, by the user setting audio.autoMonitoring, monitors too: manual never, whileRecordEnabled always, whileRecording while the transport records, tapeMachine while it stands or records (the default). Monitoring glides in and out over one audio block. MIDI and instrument tracks have them too: recordEnable arms the track for MIDI recording, and while either is on, the track plays what comes from its MIDI input, midiInput: all (all MIDI inputs, the default) or none. mute silences a channel; while any channel is soloed (solo), only the soloed ones, the channels they play through (groups, instruments) and the channels that play into them are heard; exclusive (with solo) turns every other channel's solo off; soloDefeat keeps a channel and the channels it plays through heard while others are soloed. listen (not MIDI channels) also plays the channel after its fader on the monitoring bus, the main mix, which is turned down to the user setting audio.listenDim while any channel listens; the listening channels play there at audio.listenLevel, and their signal flow stays as it is. Muting, soloing and the dim glide over one audio block. notes is the channel's notepad, the user's text about it. The channel strip's sections (audio channels only; each object changes only what it has, as project.get shows them) run before the fader: pre {gain (dB, -24 to 24), phase (inverts the polarity), lowCut and highCut {on, frequency (Hz, 20 or for the high cut 50 to 20000), slope (6, 12, 24, 36 or 48 dB per octave)}} before the plugin slots; after them strip {gate {on, threshold (dB, -80 to 0), range (dB, -80 to 0), attack (ms, 0.01 to 100), release (ms, 1 to 4000)}, compressor {on, threshold (dB, -60 to 0), ratio (1 to 20), attack (ms, 0.1 to 100), release (ms, 10 to 2000), makeup (dB, 0 to 24)}}, then eq {bypass, bands: [{band (1 to 4), on, type (bell; band 1 also lowShelf or lowCut, band 4 highShelf or highCut, cuts at 12 dB per octave), frequency (Hz, 20 to 20000), gain (dB, -24 to 24), q (0.1 to 12)}]}, then the strip's limiter {on, threshold (dB, -30 to 0: no sample leaves above it, 1 ms of latency), release (ms, 1 to 1000)}. Everything starts off; changes glide. sends (audio channels only) changes the channel's eight sends, each by its send number (1 to 8) and only in what it has: destination (a group or effect channel, 0 for none), on, level (dB, from -144 to the project's maxVolume, stopping there, default 0) and preFader (before the fader and the mute button, after the strip's sections; default after the fader). A send starts off and without a destination. Neither an output nor a send may lead back to the channel through other outputs and sends, on or off, so routing never makes a loop; removing a destination's track clears the destination. A send's level and on glide over one audio block. A VCA track's channel has volume, mute, solo, soloDefeat, listen, monitor and recordEnable only. On a channel in a link group (linkGroup.add) the changes the group links go on to its other channels, the fader and the pan by as much as they moved, unless linked is false; a VCA fader's buttons go on to the channels of the group it controls, all in the same undo step.
 
 Parameters:
 
@@ -991,6 +991,7 @@ Parameters:
 - `format`: one of "mono" | "stereo" | "LRC" | "LRS" | "LRC+LFE" | "LRS+LFE" | "LRCS" | "LRCS+LFE" | "quadro" | "quadro+LFE" | "5.0" | "5.1" | "6.0 cine" | "6.0 music" | "7.0" | "7.1"
 - `input`: integer
 - `instrument`: string
+- `linked`: boolean
 - `listen`: boolean
 - `midiInput`: one of "all" | "none"
 - `midiPan`: integer or null
@@ -1387,6 +1388,21 @@ Returns:
 
 ### event
 
+#### `gnubase.event.comp`
+
+Comps a track's takes (the comp tool's drag on a lane): splits every unlocked audio event and part and MIDI part on track at start and end (project samples), then brings what lies on lane between them to the front, as event.toFront does. Returns the events brought to the front.
+
+Parameters:
+
+- `end`: integer, required
+- `lane`: integer, required
+- `start`: integer, required
+- `track`: integer, required
+
+Returns:
+
+- `events`: array of integer, required
+
 #### `gnubase.event.copy`
 
 Copies audio events and MIDI parts, moved by delta project samples or by ticks and onto track as event.move moves them. Copies of audio events play the same clip; shared copies of MIDI parts share their notes and controllers with the original, so that editing one edits all. Returns the copies.
@@ -1605,6 +1621,18 @@ Returns:
 
 - `events`: array of integer, required
 
+#### `gnubase.event.toFront`
+
+Brings takes to the front (To Front, the comp tool's click): audio events, and the audio events of audio parts, play where they overlap other events on their track, as if added last (their front in project.get); MIDI parts are unmuted, and the MIDI parts on their track's other lanes that they overlap are muted. Returns the events.
+
+Parameters:
+
+- `events`: array of integer, required
+
+Returns:
+
+- `events`: array of integer, required
+
 #### `gnubase.event.toPart`
 
 Events to Part (Audio menu): puts audio events (events, by id) into a new audio part on their track, from the first start to the last end; events on several tracks make a part on each. Events already in a part, and locked ones, are refused. Returns the parts in events.
@@ -1737,6 +1765,53 @@ Only reads; changes nothing.
 Returns:
 
 - `jobs`: array of object, required
+
+### linkGroup
+
+#### `gnubase.linkGroup.add`
+
+Links channels in a new link group (reference manual pp. 457-459), named Link Group N unless name is given; by default it links the volume, or with a VCA fader nothing. channels: the linked channels; a channel is in one link group at most, so they leave the groups they were in. What a change to one of them passes on to the others (channel.set, unless linked is false): volume (the fader, by as much as it moved), pan (likewise), mute (the mute, solo and listen buttons), record (record enable and monitor). vca: the channel of a VCA track that controls the group, or 0; it leaves the group it controlled. The VCA fader's volume adds to each channel's, its automation to theirs, and its buttons pass on to them; VCA faders can be in groups that other VCA faders control, but never control themselves. A group with a VCA fader doesn't link the volume: giving it one turns volume off, taking it away turns it on, unless volume is given. Emits linkGroup.added.
+
+Parameters:
+
+- `channels`: array of integer, required
+- `mute`: boolean
+- `name`: string
+- `pan`: boolean
+- `record`: boolean
+- `vca`: integer
+- `volume`: boolean
+
+Returns:
+
+- `group`: object, required
+
+#### `gnubase.linkGroup.remove`
+
+Unlinks a link group's channels (p. 459). A VCA fader that controlled it stays. Emits linkGroup.removed.
+
+Parameters:
+
+- `group`: integer, required
+
+#### `gnubase.linkGroup.set`
+
+Changes a link group: what isn't given stays. channels: the linked channels; a channel is in one link group at most, so they leave the groups they were in. What a change to one of them passes on to the others (channel.set, unless linked is false): volume (the fader, by as much as it moved), pan (likewise), mute (the mute, solo and listen buttons), record (record enable and monitor). vca: the channel of a VCA track that controls the group, or 0; it leaves the group it controlled. The VCA fader's volume adds to each channel's, its automation to theirs, and its buttons pass on to them; VCA faders can be in groups that other VCA faders control, but never control themselves. A group with a VCA fader doesn't link the volume: giving it one turns volume off, taking it away turns it on, unless volume is given. Emits linkGroup.changed.
+
+Parameters:
+
+- `channels`: array of integer
+- `group`: integer, required
+- `mute`: boolean
+- `name`: string
+- `pan`: boolean
+- `record`: boolean
+- `vca`: integer
+- `volume`: boolean
+
+Returns:
+
+- `group`: object, required
 
 ### marker
 
@@ -2557,7 +2632,7 @@ Returns:
 
 #### `gnubase.mixer.get`
 
-What a mixer hides. mixer: lower (the mixer in the project window's lower zone) or window1 to window4 (the mixer windows). hidden: the channels and busses (by id) it doesn't show. hiddenTypes: the channel types its filter hides: input, audio, instrument, midi, group (also folders' group channels), effect and output.
+What a mixer hides. mixer: lower (the mixer in the project window's lower zone) or window1 to window4 (the mixer windows). hidden: the channels and busses (by id) it doesn't show. hiddenTypes: the channel types its filter hides: input, audio, instrument, midi, group (also folders' group channels), effect, vca and output.
 
 Only reads; changes nothing.
 
@@ -2568,23 +2643,23 @@ Parameters:
 Returns:
 
 - `hidden`: array of integer, required
-- `hiddenTypes`: array of one of "input" | "audio" | "instrument" | "midi" | "group" | "effect" | "output", required
+- `hiddenTypes`: array of one of "input" | "audio" | "instrument" | "midi" | "group" | "effect" | "vca" | "output", required
 - `mixer`: one of "lower" | "window1" | "window2" | "window3" | "window4", required
 
 #### `gnubase.mixer.set`
 
-Changes what a mixer hides; what isn't given stays. mixer: lower (the mixer in the project window's lower zone) or window1 to window4 (the mixer windows). hidden: the channels and busses (by id) it doesn't show. hiddenTypes: the channel types its filter hides: input, audio, instrument, midi, group (also folders' group channels), effect and output. Each mixer has its own; they are settings, not undo steps, saved with the project. Emits mixer.changed with the mixer's view.
+Changes what a mixer hides; what isn't given stays. mixer: lower (the mixer in the project window's lower zone) or window1 to window4 (the mixer windows). hidden: the channels and busses (by id) it doesn't show. hiddenTypes: the channel types its filter hides: input, audio, instrument, midi, group (also folders' group channels), effect, vca and output. Each mixer has its own; they are settings, not undo steps, saved with the project. Emits mixer.changed with the mixer's view.
 
 Parameters:
 
 - `hidden`: array of integer
-- `hiddenTypes`: array of one of "input" | "audio" | "instrument" | "midi" | "group" | "effect" | "output"
+- `hiddenTypes`: array of one of "input" | "audio" | "instrument" | "midi" | "group" | "effect" | "vca" | "output"
 - `mixer`: one of "lower" | "window1" | "window2" | "window3" | "window4", required
 
 Returns:
 
 - `hidden`: array of integer, required
-- `hiddenTypes`: array of one of "input" | "audio" | "instrument" | "midi" | "group" | "effect" | "output", required
+- `hiddenTypes`: array of one of "input" | "audio" | "instrument" | "midi" | "group" | "effect" | "vca" | "output", required
 - `mixer`: one of "lower" | "window1" | "window2" | "window3" | "window4", required
 
 ### note
@@ -3738,7 +3813,7 @@ Returns:
 
 #### `gnubase.track.add`
 
-Adds a track and its channel. Tracks go into a folder with parent, at index among its tracks (default: last). Audio channels default to stereo; format or channels set another format, as in bus.add. timeBase is musical (positions in ticks, which follow tempo changes) or linear (in samples, which keep their time); without it the user setting editing.defaultTimeBase decides. Folders get a channel only with groupChannel. New channels play through the main output, or through the group channel of the nearest folder around them that has one, and audio tracks record from the first input bus; input, output and instrument set them as channel.set does. tracks moves those tracks, each listed once, into a new folder, in that order, as track.move does (Move Selected Tracks to New Folder). With the user setting editing.applyFolderColor, a track added to a folder without a color takes the folder's. Marker tracks have no channel and stay at the top level; a project has at most 10, and a new one becomes the active marker track. Ruler tracks have no channel either; timeFormat is the time format their ruler shows (default barsBeats). The tempo track shows and edits the project's tempo (tempo.*), the signature track its time signatures (signature.*): a project has one of each at most, without a channel, at the top level.
+Adds a track and its channel. Tracks go into a folder with parent, at index among its tracks (default: last). Audio channels default to stereo; format or channels set another format, as in bus.add. timeBase is musical (positions in ticks, which follow tempo changes) or linear (in samples, which keep their time); without it the user setting editing.defaultTimeBase decides. Folders get a channel only with groupChannel. New channels play through the main output, or through the group channel of the nearest folder around them that has one, and audio tracks record from the first input bus; input, output and instrument set them as channel.set does. tracks moves those tracks, each listed once, into a new folder, in that order, as track.move does (Move Selected Tracks to New Folder). With the user setting editing.applyFolderColor, a track added to a folder without a color takes the folder's. Marker tracks have no channel and stay at the top level; a project has at most 10, and a new one becomes the active marker track. Ruler tracks have no channel either; timeFormat is the time format their ruler shows (default barsBeats). The tempo track shows and edits the project's tempo (tempo.*), the signature track its time signatures (signature.*): a project has one of each at most, without a channel, at the top level. A VCA track's channel is a VCA fader (reference manual p. 153): no audio, input or output, a fader that controls a link group (linkGroup.add).
 
 Parameters:
 
@@ -3755,7 +3830,7 @@ Parameters:
 - `timeBase`: one of "musical" | "linear"
 - `timeFormat`: one of "barsBeats" | "seconds" | "timecode" | "samples" | "userFrames"
 - `tracks`: array of integer
-- `type`: one of "audio" | "instrument" | "midi" | "folder" | "group" | "effect" | "marker" | "ruler" | "tempo" | "signature", required
+- `type`: one of "audio" | "instrument" | "midi" | "folder" | "group" | "effect" | "marker" | "ruler" | "tempo" | "signature" | "vca", required
 
 Returns:
 

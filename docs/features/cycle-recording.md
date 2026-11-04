@@ -11,7 +11,7 @@ make each lap a take of its own: a run of consecutive project positions.
   lane 0). A cycle recording puts its takes on lanes of their own, one per take, from the lane after the highest one
   that the track's events and parts where the takes lie are on (from 0 where there are none). Lanes don't change what
   plays: an audio track plays the event added last where events overlap, so the last lap plays; MIDI tracks play
-  every part that isn't muted. Showing lanes, bringing takes to the front and comping are #99.
+  every part that isn't muted. Showing lanes, bringing takes to the front and comping are in [comping.md](comping.md).
 - **Audio** (p. 345). Every lap of an audio cycle recording is a take of the one file, and `recording.add` adds an
   audio event per take (a four-lap cycle recording makes four events). With the audio record modes that keep the
   takes, Keep History and Cycle History + Replace, the takes go onto lanes; Replace keeps only what the last lap
@@ -43,6 +43,6 @@ make each lap a take of its own: a run of consecutive project positions.
 ## Not yet
 
 Regions per lap on the recorded clip (the reference divides a cycle recording's audio event into regions, one per
-take, p. 225), which needs regions in the pool; showing lanes, choosing takes and comping (#99); lanes in the
+take, p. 225), which needs regions in the pool; lanes in the
 DAWproject file's own description (GNUbase's entry keeps them); the MIDI record modes for stacked recordings;
 inserting a retrospective recording as a cycle recording (p. 355).
