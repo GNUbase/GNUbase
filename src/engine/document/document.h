@@ -506,6 +506,8 @@ namespace gnubase::engine
 		uint8_t channel = 0;                                 // 0-15
 		uint16_t releaseVelocity = g_defaultReleaseVelocity; // 0-65535, the note-off velocity
 		std::optional<QuantizeOrigin> origin;                // set while the note is quantized
+		double probability = 1.0;                            // 0-1, the chance that it plays (#128)
+		double velocityVariance = 0.0; // -1 to 1, how far playback varies the velocity, up or down (#128)
 	};
 
 	// The MIDI events besides notes, all held as controller events.
@@ -974,8 +976,10 @@ namespace gnubase::engine
 
 	inline bool operator==(const Note& a, const Note& b)
 	{
-		return std::tie(a.id, a.position, a.length, a.pitch, a.velocity, a.channel, a.releaseVelocity, a.origin) ==
-			std::tie(b.id, b.position, b.length, b.pitch, b.velocity, b.channel, b.releaseVelocity, b.origin);
+		return std::tie(a.id, a.position, a.length, a.pitch, a.velocity, a.channel, a.releaseVelocity, a.origin,
+				   a.probability, a.velocityVariance) ==
+			std::tie(b.id, b.position, b.length, b.pitch, b.velocity, b.channel, b.releaseVelocity, b.origin,
+				b.probability, b.velocityVariance);
 	}
 
 	inline bool operator==(const Controller& a, const Controller& b)

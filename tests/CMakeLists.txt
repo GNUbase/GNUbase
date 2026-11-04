@@ -42,6 +42,8 @@ add_executable(gnubase-tests
 	clock_tests.cpp
 	color_tests.cpp
 	comping_tests.cpp
+	controllerlanes_tests.cpp
+	controllerlanes_ui_tests.cpp
 	coverage_tests.cpp
 	dawproject_tests.cpp
 	debugreports.cpp

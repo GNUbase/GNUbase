@@ -506,6 +506,36 @@ namespace gnubase::app
 						m_binding.send("mixdown.quickExport", {{"path", file.u8string()}});
 					});
 			}});
+		// File > Export and File > Import > Tempo Track (docs/features/tempo-track.md): the tempo track's file, chosen
+		// in the OS's file dialog.
+		for (const bool exporting : {true, false})
+		{
+			m_keys.add({exporting ? "file.exportTempo" : "file.importTempo",
+				exporting ? "Exports the tempo track and the time signature events into an XML file."
+						  : "Replaces the tempo track and the time signature events with those of an exported file.",
+				[this, exporting](ui::Window& window, Rml::Element* /*zone*/)
+				{
+					ui::FileDialog dialog;
+					dialog.kind = exporting ? ui::FileDialogKind::Save : ui::FileDialogKind::Open;
+					dialog.title = exporting ? "Export Tempo Track" : "Import Tempo Track";
+					dialog.filters = {{"Tempo track files", "xml"}, {"All files", "*"}};
+					if (exporting)
+						dialog.location = "Tempo Track.xml";
+					dialog.parent = window.id();
+					m_shell.showFileDialog(dialog,
+						[this, exporting](const ui::FileDialogResult& chosen)
+						{
+							if (!chosen.error.empty())
+								logging::warning("The file dialog failed: {}", chosen.error);
+							if (chosen.files.empty())
+								return;
+							std::filesystem::path file = chosen.files.front();
+							if (exporting && file.extension().empty())
+								file += ".xml";
+							m_binding.send(exporting ? "tempo.export" : "tempo.import", {{"path", file.u8string()}});
+						});
+				}});
+		}
 		// Auto fades (docs/features/fades.md): the project's, or the first selected track's.
 		m_keys.add({"project.autoFades", "Opens the auto fades dialog for the whole project.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { openAutoFades(window, 0); }});
