@@ -128,10 +128,10 @@ Not yet: grid lines and snap point lines in the event display, the editors' own 
   start still splits it, and one just outside an event leaves it alone.
 - `tests/eventediting_tests.cpp` (fake window system, real engine): with snap on, a drag, a resize and an Alt click land
   on bars, shuffle swaps two parts, events, a position marker and the cursor attract, a position marker and a cycle
-  marker's end on a marker track that isn't active attract a drag where `snap.position` puts it, a snap point set at the
-  cursor snaps to a bar, grid relative moves a beat, nudges move a beat and a bar, and with snap off a drag doesn't
-  snap; with the ruler in seconds a drag snaps to 100 ms, back in bars and beats to a bar, and the ruler follows the
-  format of `snap.set`; a new ruler format kept at every step while a `snap.changed` or a `project.get` answer from
+  marker's end on a linear marker track that isn't active attract a drag where `snap.position` puts it, a snap point set
+  at the cursor snaps to a bar, grid relative moves a beat, nudges move a beat and a bar, and with snap off a drag
+  doesn't snap; with the ruler in seconds a drag snaps to 100 ms, back in bars and beats to a bar, and the ruler follows
+  the format of `snap.set`; a new ruler format kept at every step while a `snap.changed` or a `project.get` answer from
   before it comes in, and after several switches in a row.
 - `tests/uiapp_tests.cpp`: the toolbar's snap and zero crossing buttons and J, the snap type menu checked and shown on
   its button, the grid type menu with the grid types of each ruler format, and back in a format the grid type chosen

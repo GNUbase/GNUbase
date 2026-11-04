@@ -517,11 +517,13 @@ TEST_CASE("with snap to events, a position marker attracts a dragged event", "[u
 TEST_CASE("with snap to events, the markers of a marker track that isn't active attract as in snap.position", "[unit]")
 {
 	Fixture f;
-	// On the first marker track a position marker at 6 seconds and a cycle marker from 7 to 8.5; the second marker
-	// track, without markers, is the active one.
-	const Json first = f.call("track.add", {{"type", "marker"}}).at("track").at("id");
-	f.call("marker.add", {{"track", first}, {"position", 12 * g_quarter}});
-	f.call("marker.add", {{"track", first}, {"type", "cycle"}, {"position", 14 * g_quarter}, {"end", 17 * g_quarter}});
+	// On the first marker track, a linear one with positions in samples, a position marker at 6 seconds and a cycle
+	// marker from 7 to 8.5; the second marker track, musical and without markers, is the active one. (The test above
+	// has a musical marker track's marker.)
+	const Json first = f.call("track.add", {{"type", "marker"}, {"timeBase", "linear"}}).at("track").at("id");
+	f.call("marker.add", {{"track", first}, {"position", 288000}});
+	f.call("marker.add", {{"track", first}, {"type", "cycle"}, {"position", 336000}, {"end", 408000}});
+	REQUIRE(f.call("marker.list", {{"track", first}}).at("markers").at(0).at("positionSamples") == 288000);
 	const Json second = f.call("track.add", {{"type", "marker"}}).at("track").at("id");
 	f.call("marker.activateTrack", {{"track", second}});
 	CHECK(f.call("marker.list").at("markers").empty());
