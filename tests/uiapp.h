@@ -13,6 +13,7 @@
 #include <RmlUi/Core/ElementDocument.h>
 
 #include <chrono>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <string>
@@ -47,6 +48,9 @@ namespace gnubase::test
 		explicit UiApp(ui::Size size = {640, 480},
 			std::vector<std::unique_ptr<midi::Backend>> midiBackends = midi::makeBackends(),
 			std::vector<std::unique_ptr<audio::Backend>> audioBackends = audio::makeBackends());
+		// The same with the fonts, themes and documents of another resources folder than GNUbase's, such as a copy
+		// with a document changed.
+		UiApp(ui::Size size, std::filesystem::path resources);
 
 		engine::Engine& engine() { return *m_engine; }
 		app::AppUi& appUi() { return *m_ui; }
@@ -88,6 +92,7 @@ namespace gnubase::test
 
 		TempDir m_settings;
 		ui::Size m_size;
+		std::filesystem::path m_resources{GNUBASE_RESOURCES_DIR};
 		std::unique_ptr<engine::Engine> m_engine;
 		std::unique_ptr<app::AppUi> m_ui;
 		std::unique_ptr<ui::Automation> m_automation;

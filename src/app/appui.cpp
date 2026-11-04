@@ -512,12 +512,21 @@ namespace gnubase::app
 		m_keys.add({"project.colorsSetup", "Opens the project colors setup dialog, which edits the project's colors.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { openDialog(window, "project-colors.rml"); }});
 		// For documents' buttons and menu items: gnubase.ui.command{command = "project.addTrack"} runs a key command
-		// in the main window, as its keys would.
+		// in the main window, as its keys would. A command that doesn't exist or parameters it doesn't take are a Lua
+		// error at the call (KeyCommands::check), in users' scripts too, instead of an engine error later or parameters
+		// a UI command drops (#669).
 		m_lua.addFunction("ui.command",
 			[this](const engine::Json& parameters)
 			{
-				m_keys.run(parameters.at("command").get<std::string>(),
-					parameters.value("parameters", engine::Json::object()), m_main, nullptr);
+				const auto command = parameters.find("command");
+				if (!parameters.is_object() || command == parameters.end() || !command->is_string())
+					throw std::invalid_argument("ui.command needs a command, the name of a key command");
+				for (const auto& item : parameters.items())
+					if (item.key() != "command" && item.key() != "parameters")
+						throw std::invalid_argument("ui.command takes a command and its parameters, not " + item.key());
+				const engine::Json commandParameters = parameters.value("parameters", engine::Json::object());
+				m_keys.check(command->get<std::string>(), commandParameters);
+				m_keys.run(command->get<std::string>(), commandParameters, m_main, nullptr);
 				return engine::Json::object();
 			});
 		for (const ProjectCommand& command : g_projectCommands)

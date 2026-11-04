@@ -24,7 +24,10 @@ Lua reaches the engine only through the engine API, like every other client.
   MCP behave the same ([ui-automation.md](ui-automation.md), [mcp.md](../mcp.md#ui-tools)). The app adds
   `gnubase.ui.command`, which runs a key command in the main window as its keys would, by `command` and optional
   `parameters` ([key-commands.md](key-commands.md)), for documents' buttons such as the project window's Add Track
-  (`gnubase.ui.command{command = "project.addTrack"}`), and `gnubase.ui.formatTimecode` and
+  (`gnubase.ui.command{command = "project.addTrack"}`). It checks the command first, as `KeyCommands::check` does for
+  keys, menu items and buttons (#669): a command that doesn't exist, parameters an engine command doesn't take or has
+  of the wrong type, parameters for a UI command, and anything but `command` and `parameters` in its table raise a Lua
+  error at the call, in users' scripts too, and nothing runs. The app also adds `gnubase.ui.formatTimecode` and
   `gnubase.ui.parseTimecode`, which the project setup dialog converts timecodes with
   ([project-setup.md](project-setup.md)). On the UI thread the functions run at once;
   `gnubase.ui.wait` steps the shell between its checks. A step can't run inside a step (`Shell::step` throws), so
@@ -35,4 +38,6 @@ Lua reaches the engine only through the engine API, like every other client.
   runs in the app's UI runtime: it loads documents with `rmlui`, drives them with `gnubase.ui`, checks the engine with
   `gnubase` and reports with `gnubase.test`, like the other Lua tests. Without an SDL_GPU device it is skipped, like
   the other UI tests. `tests/lua/ui/dialog.lua` opens a dialog by clicking, types a new name into a field bound to a
-  data model, and checks that the dialog's Lua renamed the track in the engine.
+  data model, and checks that the dialog's Lua renamed the track in the engine. `tests/lua/ui/command.lua` runs a UI
+  command and an engine command with its parameters through `gnubase.ui.command`, and checks that it refuses the
+  calls above without running anything.
