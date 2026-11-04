@@ -434,6 +434,55 @@ TEST_CASE("a count-in clicks its bars, then playback starts at the exact sample 
 	}
 }
 
+TEST_CASE("a count-in follows the tempo where recording starts, or the bars' own tempo", "[integration]")
+{
+	// 240 BPM (a beat is 4000 frames), 300 BPM from bar 2 (a beat is 3200 frames); bar 2 starts at 28000, bar 3 at
+	// 28000 + 4 * 3200 = 40800.
+	const test::TempDir dir;
+	Session session(256);
+	Client& client = session.client;
+	importTempo(client, dir, {{0, 240.0}, {3360, 300.0}}, {{0, 4, 4}, {1920, 3, 4}, {3360, 4, 4}});
+	const auto countIn = [&client](const Json& settings, int64_t frames)
+	{
+		run(client, "metronome.set", settings);
+		run(client, "transport.record");
+		run(client, "audio.render", {{"frames", frames}});
+		const std::vector<int64_t> clicks = framesOf(onsets(capture(client, 0, frames)));
+		const auto position = run(client, "transport.get").at("position").get<int64_t>();
+		return std::make_pair(clicks, position);
+	};
+
+	SECTION("where recording starts, though the pre-roll starts in the other tempo")
+	{
+		run(client, "transport.locate", {{"position", 28000}});
+		run(client, "transport.set", {{"preRoll", true}, {"preRollAmount", 4000}}); // from 24000, at 240 BPM
+		const auto [clicks, position] = countIn({{"countIn", {{"enabled", true}}}}, 13000);
+		CHECK(clicks == std::vector<int64_t>{0, 3200, 6400, 9600}); // a bar of 4/4 at 300 BPM
+		CHECK(position == 24000 + 200);                             // after 12800 frames
+	}
+	SECTION("a custom signature at the tempo where recording starts")
+	{
+		run(client, "transport.locate", {{"position", 28000}});
+		run(client, "transport.set", {{"preRoll", true}, {"preRollAmount", 4000}});
+		const auto [clicks, position] = countIn({{"countIn",
+													{{"enabled", true}, {"bars", 2}, {"signature", "custom"},
+														{"customSignature", {{"numerator", 3}, {"denominator", 8}}}}}},
+			10000);
+		// Eighths at 300 BPM are 1600 frames, two bars of 3/8 9600.
+		CHECK(clicks == std::vector<int64_t>{0, 1600, 3200, 4800, 6400, 8000});
+		CHECK(position == 24000 + 400);
+	}
+	SECTION("the bars before as the project has them, each in its own tempo")
+	{
+		run(client, "transport.locate", {{"position", 40800}}); // bar 3
+		const auto [clicks, position] =
+			countIn({{"countIn", {{"enabled", true}, {"bars", 2}, {"signature", "project"}}}}, 25000);
+		// Bar 1 in 3/4 at 240 BPM from 16000, bar 2 in 4/4 at 300 BPM from 28000: 24800 frames.
+		CHECK(clicks == std::vector<int64_t>{0, 4000, 8000, 12000, 15200, 18400, 21600});
+		CHECK(position == 40800 + 200);
+	}
+}
+
 TEST_CASE("the transport reports a count-in, and record off, a locate or Lock Record handle it", "[integration]")
 {
 	const test::TempDir dir;
@@ -588,6 +637,40 @@ TEST_CASE("reset silences the clicks that ring", "[unit]")
 	metronome.reset();
 	metronome.process(context);
 	CHECK(!rings());
+}
+
+TEST_CASE("the MIDI click's note-ons have its channel and the velocity of their accent", "[unit]")
+{
+	metronome::MetronomeSettings settings;
+	settings.audio = false;
+	settings.midi = true;
+	settings.channel = 10;
+	settings.notes[0] = {76, 1.0};
+	settings.notes[1] = {77, 0.5};
+	metronome::SoundLibrary sounds;
+	metronome::Metronome metronome;
+	metronome.setConfig(metronome::compile(
+		settings, gnubase::time::TempoMap(120.0), gnubase::time::SignatureMap{}, g_rate, g_rate, sounds));
+	// A bar of 4/4 at 120 BPM: a beat is 8000 frames.
+	std::vector<float> audio(32000);
+	float* const channels[] = {audio.data()};
+	const graph::EventBuffer in;
+	graph::EventBuffer out(16);
+	const graph::TransportSegment segment{0, 32000, 0, false};
+	graph::TransportBlock transport;
+	transport.playing = true;
+	transport.click = true;
+	transport.segments = &segment;
+	transport.segmentCount = 1;
+	metronome.process({channels, 1, 32000, in, out, transport});
+
+	std::vector<std::vector<int>> noteOns; // offset, channel, key, velocity
+	for (const graph::ProcessEvent& event : out)
+		if (event.type == graph::ProcessEvent::Type::NoteOn)
+			noteOns.push_back({static_cast<int>(event.offset), event.channel, event.key, event.velocity});
+	CHECK(noteOns ==
+		std::vector<std::vector<int>>{
+			{0, 9, 76, 65535}, {8000, 9, 77, 32768}, {16000, 9, 77, 32768}, {24000, 9, 77, 32768}});
 }
 
 TEST_CASE("the MIDI click plays its notes on the destination instrument", "[integration]")
