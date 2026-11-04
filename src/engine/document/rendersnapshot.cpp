@@ -100,9 +100,8 @@ namespace gnubase::engine
 		// A frozen track's channel plays its freeze file from the project's start, as an audio track's event, without
 		// the pre section and plugin slots that it was rendered through (RenderPoint::Inserts). The media file and the
 		// event take the ids of the channel and the track, which nothing else has.
-		void freeze(const Track& track, RenderSnapshot& snapshot, RenderChannel& channel)
+		void freeze(const Track& track, const Freeze& frozen, RenderSnapshot& snapshot, RenderChannel& channel)
 		{
-			const Freeze& frozen = *track.frozen;
 			channel.type = TrackType::Audio;
 			channel.instrument.clear();
 			channel.instrumentParameters.clear();
@@ -393,7 +392,7 @@ namespace gnubase::engine
 			if (const auto input = busIndex.find(channel.input); input != busIndex.end())
 				render.input = input->second;
 			if (track.frozen)
-				freeze(track, *snapshot, render);
+				freeze(track, *track.frozen, *snapshot, render);
 			snapshot->channels.push_back(std::move(render));
 		}
 
