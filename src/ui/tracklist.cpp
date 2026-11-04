@@ -988,7 +988,7 @@ namespace gnubase::ui
 			for (const Row& row : m_tracks)
 				if (!row.holds && parents.count(row.id) == 0 && (row.channel == 0 || outputs.count(row.channel) == 0) &&
 					row.type != "group" && row.type != "effect" && row.type != "ruler" && row.type != "tempo" &&
-					row.type != "signature")
+					row.type != "signature" && row.type != "vca")
 					gone.insert(row.id);
 		} while (gone.size() != before);
 		return gone;

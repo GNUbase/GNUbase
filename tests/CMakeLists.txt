@@ -66,6 +66,7 @@ add_executable(gnubase-tests
 	keyeditor_tests.cpp
 	keyeditor_ui_tests.cpp
 	latency_tests.cpp
+	linkgroups_tests.cpp
 	listeditor_tests.cpp
 	listeditor_ui_tests.cpp
 	lockrecord_tests.cpp
