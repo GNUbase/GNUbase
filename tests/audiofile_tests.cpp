@@ -19,6 +19,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -345,6 +346,32 @@ TEST_CASE("the decoders leave the files that the readers hand them open", "[inte
 		drmp3_uninit(&decoder);
 		CHECK(stillOpen(file.get()));
 	}
+}
+
+namespace
+{
+	// Found by ordinary lookup, while argument-dependent lookup also finds dr_libs' file functions in the global
+	// namespace, if its header declares them. A declared one is a better match than these, which take anything.
+	struct NotDeclared
+	{
+	};
+	// NOLINTBEGIN(readability-identifier-naming): the names of the dr_libs functions these stand in for
+	NotDeclared drwav_init_file(...);
+	NotDeclared drflac_open_file(...);
+	NotDeclared drmp3_init_file(...);
+	// NOLINTEND(readability-identifier-naming)
+}
+
+TEST_CASE("every file sees dr_libs without its file functions", "[unit]")
+{
+	// The decoders library compiles dr_libs without its stdio functions (see the previous test), and its configuration
+	// is part of the library's interface: the readers and these tests see the same headers, so calling one of the
+	// file functions fails to compile at the line that makes it, not only when linking.
+	STATIC_REQUIRE(std::is_same_v<decltype(drwav_init_file(static_cast<drwav*>(nullptr), "", nullptr)), NotDeclared>);
+	STATIC_REQUIRE(
+		std::is_same_v<decltype(drflac_open_file("", static_cast<const drflac_allocation_callbacks*>(nullptr))),
+			NotDeclared>);
+	STATIC_REQUIRE(std::is_same_v<decltype(drmp3_init_file(static_cast<drmp3*>(nullptr), "", nullptr)), NotDeclared>);
 }
 
 TEST_CASE("paths with non-ASCII characters work", "[integration]")
