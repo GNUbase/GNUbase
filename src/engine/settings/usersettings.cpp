@@ -2,8 +2,11 @@
 #include "engine/settings/usersettings.h"
 
 #include "engine/engine.h"
+#include "engine/midi/controllerlanes.h"
 
+#include <string>
 #include <utility>
+#include <vector>
 
 namespace gnubase::engine::settings
 {
@@ -369,6 +372,31 @@ namespace gnubase::engine::settings
 							{{"audio", 120}, {"instrument", 120}, {"midi", 120}, {"group", 120}, {"effect", 120},
 								{"folder", 120}, {"marker", 120}, {"ruler", 120}, {"tempo", 120},
 								{"signature", 120}}}}},
+				{"ui.controllerLanePresets",
+					"The controller lane presets of the MIDI editors (#128, reference manual p. 1166): each a name and "
+					"the lanes it shows, as editor.set takes them.",
+					Json{{"type", "array"},
+						{"items",
+							{{"type", "object"},
+								{"properties",
+									{{"name", {{"type", "string"}}},
+										{"lanes",
+											{{"type", "array"},
+												{"items",
+													{{"type", "object"}, {"additionalProperties", false},
+														{"required", Json::array({"type"})},
+														{"properties",
+															{{"type",
+																 {{"type", "string"},
+																	 {"enum",
+																		 std::vector<std::string>(
+																			 midi::g_laneTypes.begin(),
+																			 midi::g_laneTypes.end())}}},
+																{"number",
+																	{{"type", "integer"}, {"minimum", 0},
+																		{"maximum", 127}}}}}}}}}}},
+								{"required", Json::array({"name", "lanes"})}}}},
+					Json::array()},
 				{"ui.zoomPresets",
 					"The horizontal zoom presets of the event display, for every project: each a name and the "
 					"seconds the view shows.",
