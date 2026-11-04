@@ -8,11 +8,13 @@
 #include "ui/datamodel.h"
 #include "ui/rmlui.h"
 #include "ui/widgets.h"
+#include "ui/widgetutils.h"
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/Input.h>
 #include <SDL3/SDL.h>
@@ -22,6 +24,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <map>
 #include <memory>
@@ -292,6 +295,22 @@ TEST_CASE(
 	// Without a drag, it shows at once.
 	pan.SetAttribute("value", "5");
 	CHECK(page.value("#pan") == 5.0F);
+
+	// A value that the document sets in answer to a change, such as the change rounded, shows at once.
+	ui::widgets::Listener rounding(
+		[](Rml::Event& event)
+		{
+			const float tens = std::round(event.GetParameter("value", 0.0F) / 10.0F);
+			event.GetTargetElement()->SetAttribute("value", ui::widgets::format(tens * 10.0F));
+		});
+	pan.AddEventListener(Rml::EventId::Change, &rounding);
+	context.ProcessMouseMove(x, y, 0);
+	context.ProcessMouseButtonDown(0, 0);
+	context.ProcessMouseMove(x, y - 13, 0);
+	CHECK(page.value("#pan") == 20.0F);
+	context.ProcessMouseButtonUp(0, 0);
+	CHECK(page.value("#pan") == 20.0F);
+	pan.RemoveEventListener(Rml::EventId::Change, &rounding);
 }
 
 TEST_CASE("fader caps follow the mouse, data-value binds faders, and the wheel turns them instead of scrolling", "[ui]")

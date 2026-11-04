@@ -284,6 +284,7 @@ namespace gnubase::ui
 				{
 					m_project = result.value;
 					++m_loads;
+					m_read = m_binding.handed();
 					// Settings, not undo steps: only a fresh answer has them, not m_project shown again later.
 					takeSnap(m_project.at("snap"));
 					m_quantize = engine::midi::quantizeSettingsFromJson(m_project.at("quantize"));

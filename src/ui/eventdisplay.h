@@ -154,9 +154,11 @@ namespace gnubase::ui
 		void setTrackHeight(uint64_t track, double height);
 		void setTrackHeights(double height); // every track's
 		void setHiddenTracks(std::set<uint64_t> tracks);
-		// The project as project.get last returned it, or null before the first answer; loads() counts the answers.
+		// The project as project.get last returned it, or null before the first answer; loads() counts the answers,
+		// and read() is when the binding handed the last one on (EngineBinding::handed).
 		const engine::Json& project() const { return m_project; }
 		uint64_t loads() const { return m_loads; }
+		uint64_t read() const { return m_read; }
 		// Folder tracks' data blocks (reference manual p. 226, docs/features/folder-tracks.md): per lane, the events
 		// and parts of the tracks inside a folder's lane, by the user setting ui.folderData (always, never, or
 		// hideWhenExpanded: while the folder is folded); empty for the other lanes.
@@ -650,6 +652,7 @@ namespace gnubase::ui
 		std::set<uint64_t> m_hidden;
 		engine::Json m_project;
 		uint64_t m_loads = 0;
+		uint64_t m_read = 0;
 		std::function<void()> m_layoutListener;
 		std::vector<std::string> m_laneTypes; // and its type
 		std::vector<bool> m_laneLinear;       // and whether its time base is linear

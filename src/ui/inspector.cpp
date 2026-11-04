@@ -145,9 +145,10 @@ namespace gnubase::ui
 		m_root->RemoveEventListener(Rml::EventId::Keydown, this, true);
 	}
 
-	void Inspector::update(uint64_t track, const Json& project, uint64_t loads)
+	void Inspector::update(uint64_t track, const Json& project, uint64_t loads, uint64_t read)
 	{
 		m_project = &project;
+		m_read = read;
 		if (track == m_track && loads == m_loads && !m_stale)
 			return;
 		m_stale = false;
@@ -218,9 +219,9 @@ namespace gnubase::ui
 				}
 			if (audio)
 			{
-				// Not while the fields' own steps are on their way: the engine's values are older then (#716).
+				// Not while the project is older than the fields' own steps (#716).
 				const auto sending = [this, channel](const char* name)
-				{ return m_binding.sending(stepKey(channel->at("id"), name)); };
+				{ return m_binding.ahead(stepKey(channel->at("id"), name), m_read); };
 				if (Rml::Element* volume = element("valuefield[control=volume]"))
 				{
 					volume->SetAttribute("max", widgets::format(m_project->value("maxVolume", 6.0F)));

@@ -222,9 +222,9 @@ namespace gnubase::ui
 			setFlag(*name, "disabled", audio); // an audio event's name is its clip's
 		if (Rml::Element* volume = root.QuerySelector("[info-field=volume]"))
 			setClass(*volume, "hidden", !audio);
-		// Not while the field's own steps are on their way: the engine's volume is older then (#716).
+		// Not while the project is older than the field's own steps (#716).
 		if (Rml::Element* volume = root.QuerySelector("valuefield[field=volume]");
-			volume != nullptr && audio && !m_binding.sending(stepKey("volume")))
+			volume != nullptr && audio && !m_binding.ahead(stepKey("volume"), m_display.read()))
 			setValue(*volume, widgets::format(static_cast<float>(volumeOf(first.at("id").get<uint64_t>()))));
 		for (const char* field : {"mute", "lock"})
 			if (Rml::Element* button = root.QuerySelector("button[field=" + std::string(field) + "]"))
@@ -457,6 +457,11 @@ namespace gnubase::ui
 		std::string label = field;
 		label.front() = static_cast<char>(std::toupper(static_cast<unsigned char>(label.front())));
 		// A drag, wheel turns or a held arrow key on the volume: one undo step.
-		m_binding.sendStep(gesture, stepKey(field), "Change " + label, std::move(commands));
+		m_binding.sendStep(gesture, stepKey(field), "Change " + label, std::move(commands),
+			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (!alive.expired() && !result.ok())
+					m_loads = 0; // refused: the next update shows the events as they are again
+			});
 	}
 }

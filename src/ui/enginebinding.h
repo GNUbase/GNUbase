@@ -9,6 +9,7 @@
 #include <functional>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 
@@ -49,7 +50,8 @@ namespace gnubase::ui
 		// binding.
 		explicit EngineBinding(engine::Engine& engine, std::function<void()> woken = {});
 
-		// Sends a command. done runs in update() with its result; without done, a failure is logged.
+		// Sends a command. done runs in update() with its result; without done, a failure is logged. A command that
+		// isn't a query sends the steps that wait (sendStep) first, so that it comes after them, as the user did them.
 		void send(std::string command, engine::Json parameters = engine::Json::object(),
 			std::function<void(const engine::Result&)> done = {});
 
@@ -67,7 +69,16 @@ namespace gnubase::ui
 		// Whether steps of what (sendStep) are in flight or waiting. Until they aren't, the engine's values for what
 		// are older than the control that sent them, so a view leaves the control as it is (#716); the engine's
 		// events for the last step, and its value then, come after.
-		bool sending(const std::string& what) const { return m_steps.count(what) != 0; }
+		bool sending(const std::string& what) const;
+
+		// How many results and events update() has handed on, counting the one being handed on: a view that shows
+		// what an answer said later, rather than in its handler, keeps this with it to ask ahead().
+		uint64_t handed() const { return m_handed; }
+
+		// Whether the control that sends the steps of what is ahead of the engine's answer that update() handed on as
+		// handed() returned read: a step of it is on its way, or the last one that the engine took was answered after
+		// that answer. A refused step changes nothing, so it doesn't count.
+		bool ahead(const std::string& what, uint64_t read) const;
 
 		// How many commands of that name were sent and their results not handed on yet, e.g. for tests of how many
 		// queries a view keeps open.
@@ -126,19 +137,22 @@ namespace gnubase::ui
 			std::function<void(const engine::Result&)> done;
 		};
 
-		// The steps of one thing: whether one is in flight and its done, and those that wait for it.
+		// The steps of one thing: the dones of those in flight, in order, those that wait, and when the engine last
+		// took one.
 		struct Steps
 		{
-			bool inFlight = false;
-			std::function<void(const engine::Result&)> done;
+			std::deque<std::function<void(const engine::Result&)>> inFlight;
 			std::deque<Step> waiting;
+			uint64_t taken = 0; // m_handed when its result was handed on
 		};
 
 		Subscription follow(std::function<void()> read);
 		void end(uint64_t id) noexcept;
 		void answer(const engine::Result& result);
 		void dispatch(const engine::Event& event);
-		void sendNextStep(const std::string& what); // or forgets what if no step waits
+		void transmit(std::string command, engine::Json parameters, std::function<void(const engine::Result&)> done);
+		void sendNextStep(const std::string& what);
+		void answerStep(const std::string& what, const engine::Result& result);
 
 		std::atomic<bool> m_woken{false}; // woken was called and update() hasn't run since
 		engine::Client m_client;
@@ -146,7 +160,9 @@ namespace gnubase::ui
 		std::map<uint64_t, Handler> m_handlers;
 		std::map<uint64_t, Waiting> m_resultHandlers; // onResult's, by subscription
 		std::map<uint64_t, std::function<void()>> m_watches;
-		std::map<std::string, Steps> m_steps; // sendStep's, while one is in flight
+		std::map<std::string, Steps> m_steps; // sendStep's, by what they change; entries are never erased
+		std::set<std::string> m_queries;      // the engine's commands that only read
+		uint64_t m_handed = 0;
 		uint64_t m_nextId = 1;
 	};
 }

@@ -179,6 +179,29 @@ TEST_CASE("the steps of one control go one at a time, the newest of a gesture re
 	REQUIRE(refused.has_value());
 	CHECK(!refused.value_or(engine::Result{}).ok());
 	CHECK(read("volume") == -50.0);
+
+	// An answer handed on before the last step that the engine took is older than the control; one after isn't.
+	CHECK(binding.ahead("volume", 0));
+	CHECK(!binding.ahead("volume", binding.handed()));
+	CHECK(!binding.ahead("pan", binding.handed()));
+
+	// A command that isn't a query goes after the steps that wait: an undo right after a drag undoes all of it.
+	const int64_t dragged = position();
+	for (int step = 1; step <= 5; ++step)
+		binding.sendStep(12, "volume", "Change Volume", set("volume", -60.0 + step));
+	CHECK(binding.waiting("history.transaction") == 1);
+	binding.send("history.undo");
+	CHECK(binding.waiting("history.transaction") == 2);
+	updateUntil(binding, [&binding] { return !binding.sending("volume") && binding.waiting("history.undo") == 0; });
+	CHECK(read("volume") == -50.0);
+	CHECK(position() == dragged);
+	// A query doesn't wait for them.
+	binding.sendStep(13, "volume", "Change Volume", set("volume", -1.0));
+	binding.sendStep(13, "volume", "Change Volume", set("volume", -2.0));
+	binding.send("project.get");
+	CHECK(binding.waiting("history.transaction") == 1);
+	updateUntil(binding, [&binding] { return !binding.sending("volume"); });
+	CHECK(read("volume") == -2.0);
 }
 
 TEST_CASE("the UI follows the events of every client while it subscribes", "[unit]")

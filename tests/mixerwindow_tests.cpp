@@ -3,8 +3,10 @@
 // ui::Automation as MCP's UI tools drive them. tests/mixerviews_tests.cpp checks what the engine keeps.
 #include "ui/automation.h"
 #include "ui/renderer.h"
+#include "ui/shell.h"
 #include "uiapp.h"
 
+#include <RmlUi/Core/Context.h>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
@@ -508,6 +510,40 @@ TEST_CASE("mixer controls changed while the engine answers late follow the mouse
 		CHECK(historyPosition(app) == position + 1);
 	}
 
+	SECTION("the fader moved faster than the engine answers")
+	{
+		const auto sent = [&]
+		{
+			const Json commands = app.call("engine.commandLog").at("commands");
+			return std::count_if(commands.begin(), commands.end(),
+				[](const Json& command) { return command.at("command") == "history.transaction"; });
+		};
+		const auto before = sent();
+		const int64_t position = historyPosition(app);
+		Rml::Context& context = app.shell().find(window.value_or(0))->context();
+		const Json box = element(app, window, fader).at("box");
+		const int x = box.at("x").get<int>() + (box.at("width").get<int>() / 2);
+		const int y = box.at("y").get<int>() + (box.at("height").get<int>() / 2);
+		context.ProcessMouseMove(x, y, 0);
+		context.ProcessMouseButtonDown(0, 0);
+		int moved = 0;
+		// Three moves for each answer: the newest waits, replacing the one before.
+		const double dragged = test::lateSteps(app, window, fader, 10, 1,
+			[&]
+			{
+				for (int move = 0; move < 3; ++move)
+				{
+					moved += 2;
+					context.ProcessMouseMove(x, y + moved, 0);
+				}
+			});
+		context.ProcessMouseButtonUp(0, 0);
+		REQUIRE(app.waitUntil([&] { return channel().at("volume") == Catch::Approx(dragged).margin(0.001); }));
+		CHECK(valueOf(app, window, fader) == Catch::Approx(dragged).margin(0.001));
+		CHECK(sent() - before <= 11); // not one for each of the 30 moves
+		CHECK(historyPosition(app) == position + 1);
+	}
+
 	SECTION("the panner's wheel turns")
 	{
 		const std::string pan = strip(guitar.channel) + " [param=pan]";
@@ -562,6 +598,9 @@ TEST_CASE("a mixer control shows what another client sets at once, and during a 
 	app.call("channel.set", {{"channel", guitar.channel}, {"volume", -20.0}, {"pan", 0.5}});
 	REQUIRE(app.waitUntil([&] { return valueOf(app, window, pan) == 0.5; })); // the mixer has the project
 	CHECK(valueOf(app, window, fader) == Catch::Approx(dragged).margin(0.001));
+	const std::string text =
+		element(app, window, strip(guitar.channel) + " .mixer-volume").at("text").get<std::string>();
+	CHECK(std::stod(text) == Catch::Approx(dragged).margin(0.051)); // the dB text with it
 	drag.release(false);
 	REQUIRE(app.waitUntil([&] { return valueOf(app, window, fader) == -20.0; }));
 	CHECK(channelJson(app, guitar.channel).at("volume") == -20.0);

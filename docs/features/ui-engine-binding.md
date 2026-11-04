@@ -20,13 +20,18 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   the gesture's other steps into one undo step. The steps of one `what` (`channel 5 volume`, the same name in the
   mixer and the inspector) go one at a time: while one is in flight the next waits, and a newer step of the same
   gesture replaces the one waiting, so a fast drag sends its newest value whenever the engine has answered instead of
-  piling up commands. Steps of other gestures and steps without one (gesture 0) are never replaced. `sending(what)` is
-  true while a step of `what` is in flight or waiting. Views read the project again after each undo step, and an
-  answer that the engine gave before it had the newest step is older than the control: a view doesn't set a control
-  while `sending` its `what`, and the project read after the last step's `history.changed` arrives after that step's
-  result, so it shows the engine's value then. A refused step reads the project again. Values that other clients
-  change (MCP, Lua, automation) show at once while no step of the control is under way; during a drag the widget
-  itself keeps the drag's value until it ends.
+  piling up commands. Steps of other gestures and steps without one (gesture 0) are never replaced. A command sent
+  with `send` that isn't a query sends the waiting steps first, so that an undo right after a drag undoes all of it.
+- **Controls ahead of the engine.** Views read the project again after each undo step, and an answer that the engine
+  gave before it had a control's newest step is older than the control. `sending(what)` is true while a step of
+  `what` is in flight or waiting; a view that shows an answer in its handler, such as the mixer, doesn't set the
+  control then. `handed()` counts the results and events that `update` handed on; a view that shows an answer later,
+  such as the inspector, which shows the event display's project in a step task, keeps the count with the answer and
+  asks `ahead(what, read)`, also true when the last step the engine took was answered after it. The project read
+  after the last step's `history.changed` comes after that step's result, so the view shows the engine's value then.
+  A refused step changes nothing, so the project read before it shows again. Values that other clients change (MCP,
+  Lua, automation) show at once while no step of the control is under way; during a drag the widget itself keeps the
+  drag's value until it ends.
 - **Events.** `on(name, handler)` calls `handler` with every event of that name, from whichever client caused it: a
   change made through MCP, Lua or another window reaches the UI the same way as the UI's own. The returned
   `Subscription` ends the handler when it goes, so a view that closes stops listening; subscriptions must not outlive

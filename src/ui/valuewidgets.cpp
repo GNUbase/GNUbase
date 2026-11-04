@@ -174,7 +174,12 @@ namespace gnubase::ui
 				Rml::Dictionary parameters;
 				parameters["value"] = to;
 				parameters["gesture"] = m_gesture;
+				// A value that the document sets in answer, such as the change rounded, is the drag's.
+				const Rml::ObserverPtr<Rml::Element> alive = GetObserverPtr();
+				m_changing = true;
 				DispatchEvent(Rml::EventId::Change, parameters);
+				if (alive)
+					m_changing = false;
 			}
 
 			// The next change starts another gesture.
@@ -207,6 +212,8 @@ namespace gnubase::ui
 					m_changing = false;
 					return; // shown
 				}
+				if (changed.count("value") != 0 && m_dragging)
+					m_dragged = GetAttribute<Rml::String>("value", "");
 				show();
 			}
 

@@ -36,9 +36,10 @@ namespace gnubase::ui
 		Inspector(Inspector&&) = delete;
 		Inspector& operator=(Inspector&&) = delete;
 
-		// Shows a track (0: none) of the project as project.get returned it, the loads-th answer; call it once per
-		// step, it does nothing while neither changed. The project must stay until the next call.
-		void update(uint64_t track, const engine::Json& project, uint64_t loads);
+		// Shows a track (0: none) of the project as project.get returned it, the loads-th answer, which the binding
+		// handed on as EngineBinding::handed() returned read; call it once per step, it does nothing while neither
+		// changed. The project must stay until the next call.
+		void update(uint64_t track, const engine::Json& project, uint64_t loads, uint64_t read);
 
 	private:
 		void ProcessEvent(Rml::Event& event) override;
@@ -56,6 +57,7 @@ namespace gnubase::ui
 		Rml::ObserverPtr<Rml::Element> m_root;
 		uint64_t m_track = 0;
 		uint64_t m_loads = 0;
+		uint64_t m_read = 0;
 		const engine::Json* m_project = nullptr; // update's
 		engine::Json m_channel;                  // the track's, null without one
 		bool m_showing = false;                  // while show sets the controls, whose changes aren't the user's
