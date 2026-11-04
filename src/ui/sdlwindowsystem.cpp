@@ -8,6 +8,7 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <map>
 #include <optional>
@@ -53,17 +54,20 @@ namespace gnubase::ui
 			}
 		}
 
+		// The OS's pointers for the CSS names in g_systemCursors, in the same order.
+		constexpr std::array<SDL_SystemCursor, g_systemCursors.size()> g_sdlCursors = {SDL_SYSTEM_CURSOR_CROSSHAIR,
+			SDL_SYSTEM_CURSOR_EW_RESIZE, SDL_SYSTEM_CURSOR_MOVE, SDL_SYSTEM_CURSOR_NESW_RESIZE,
+			SDL_SYSTEM_CURSOR_NOT_ALLOWED, SDL_SYSTEM_CURSOR_NS_RESIZE, SDL_SYSTEM_CURSOR_NWSE_RESIZE,
+			SDL_SYSTEM_CURSOR_POINTER, SDL_SYSTEM_CURSOR_PROGRESS, SDL_SYSTEM_CURSOR_TEXT, SDL_SYSTEM_CURSOR_WAIT};
+		static_assert(g_sdlCursors.back() != SDL_SYSTEM_CURSOR_DEFAULT, "a pointer for every name in g_systemCursors");
+
 		// The OS's pointer for a CSS cursor name.
 		std::optional<SDL_SystemCursor> systemCursor(const std::string& name)
 		{
-			static const std::map<std::string, SDL_SystemCursor> cursors = {{"crosshair", SDL_SYSTEM_CURSOR_CROSSHAIR},
-				{"ew-resize", SDL_SYSTEM_CURSOR_EW_RESIZE}, {"move", SDL_SYSTEM_CURSOR_MOVE},
-				{"nesw-resize", SDL_SYSTEM_CURSOR_NESW_RESIZE}, {"not-allowed", SDL_SYSTEM_CURSOR_NOT_ALLOWED},
-				{"ns-resize", SDL_SYSTEM_CURSOR_NS_RESIZE}, {"nwse-resize", SDL_SYSTEM_CURSOR_NWSE_RESIZE},
-				{"pointer", SDL_SYSTEM_CURSOR_POINTER}, {"progress", SDL_SYSTEM_CURSOR_PROGRESS},
-				{"text", SDL_SYSTEM_CURSOR_TEXT}, {"wait", SDL_SYSTEM_CURSOR_WAIT}};
-			const auto found = cursors.find(name);
-			return found != cursors.end() ? std::optional<SDL_SystemCursor>(found->second) : std::nullopt;
+			for (size_t index = 0; index < g_systemCursors.size(); ++index)
+				if (name == g_systemCursors.at(index))
+					return g_sdlCursors.at(index);
+			return std::nullopt;
 		}
 
 		// An SDL surface over the picture's pixels, which SDL only reads.

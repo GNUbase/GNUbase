@@ -580,6 +580,8 @@ TEST_CASE(
 	CHECK(display.tool() == ui::Tool::Draw);
 	CHECK(!visible(app, "#toolbox"));
 	CHECK(hasClass(app, "button[tool=draw]", "checked"));
+	// The mouse rests over the lanes where the toolbox was: the pointer is the tool's at once.
+	CHECK(app.waitUntil([&app] { return app.ui().windows().at("cursor") == "tool-draw"; }));
 	for (const char* modifier : {"ctrl", "alt", "shift"})
 	{
 		INFO(modifier);

@@ -736,7 +736,8 @@ namespace gnubase::ui
 		bool m_notifies = true;             // ui.toolSwitchNotification
 		bool m_notifiesKnown = false;
 		std::optional<std::pair<double, double>> m_mouse; // over the lanes, in dp, while the mouse is there
-		std::string m_held; // the modifier keys held, as modifiersOf joins them, for the pointer
+		std::string m_held;           // the modifier keys held, as modifiersOf joins them, for the pointer
+		std::set<int> m_modifierKeys; // the modifier keys seen going down and not up (Rml::Input::KeyIdentifier)
 		std::vector<CycleMarker> m_cycleMarkers;
 		std::vector<int64_t> m_markers; // every marker's position and end, in samples, for snapping
 		engine::SnapSettings m_snap;

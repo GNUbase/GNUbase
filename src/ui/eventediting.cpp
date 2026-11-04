@@ -13,6 +13,7 @@
 #include <RmlUi/Core/SystemInterface.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -59,6 +60,29 @@ namespace gnubase::ui
 			add(alt, "alt");
 			add(shift, "shift");
 			return keys;
+		}
+
+		// The modifier a key is for joinedKeys: 1 Ctrl (also Cmd, Meta and Win), 2 Alt, 3 Shift, 0 for other keys.
+		size_t modifierRole(int key)
+		{
+			switch (key)
+			{
+			case Rml::Input::KI_LCONTROL:
+			case Rml::Input::KI_RCONTROL:
+			case Rml::Input::KI_LMETA:
+			case Rml::Input::KI_RMETA:
+			case Rml::Input::KI_LWIN:
+			case Rml::Input::KI_RWIN:
+				return 1;
+			case Rml::Input::KI_LMENU:
+			case Rml::Input::KI_RMENU:
+				return 2;
+			case Rml::Input::KI_LSHIFT:
+			case Rml::Input::KI_RSHIFT:
+				return 3;
+			default:
+				return 0;
+			}
 		}
 
 		// The modifiers held.
@@ -550,7 +574,11 @@ namespace gnubase::ui
 		if (toolAt(y) == Tool::RangeSelection)
 			return;
 		const Shown* shown = eventAt(x, y);
-		if (shown != nullptr && !std::binary_search(m_selection.begin(), m_selection.end(), shown->id))
+		if (shown == nullptr)
+			return;
+		// As a press there does, it ends a range (with the tools combined), which the menu would act on instead.
+		setRange(std::nullopt);
+		if (!std::binary_search(m_selection.begin(), m_selection.end(), shown->id))
 			select({shown->id});
 	}
 
@@ -632,9 +660,11 @@ namespace gnubase::ui
 
 	std::string EventDisplay::pointerAt(double x, double y, const std::string& keys) const
 	{
-		const Tool tool = toolAt(y);
 		const std::optional<size_t> lane = visibleLaneAt(y);
-		if (tool != Tool::ObjectSelection || (lane && automationAt(*lane) != nullptr)) // automation takes any tool's
+		if (lane && automationAt(*lane) != nullptr) // a press edits points with the tool chosen, combined or not
+			return toolName(m_tool);
+		const Tool tool = toolAt(y);
+		if (tool != Tool::ObjectSelection)
 			return toolName(tool);
 		// What a press with the object selection tool and the keys does (areaDown, areaUp).
 		const bool split = modifiers("select.splitEvent", keys);
@@ -655,35 +685,25 @@ namespace gnubase::ui
 
 	void EventDisplay::heldKeys(Rml::Event& event)
 	{
-		bool ctrl = held(event, "ctrl_key") || held(event, "meta_key");
-		bool alt = held(event, "alt_key");
-		bool shift = held(event, "shift_key");
-		// A modifier key going down or up itself, whether or not the key event's modifiers have it yet.
-		const auto key = static_cast<Rml::Input::KeyIdentifier>(event.GetParameter<int>("key_identifier", 0));
-		const bool down = event.GetId() == Rml::EventId::Keydown;
-		if (event.GetId() == Rml::EventId::Keydown || event.GetId() == Rml::EventId::Keyup)
-			switch (key)
-			{
-			case Rml::Input::KI_LCONTROL:
-			case Rml::Input::KI_RCONTROL:
-			case Rml::Input::KI_LMETA:
-			case Rml::Input::KI_RMETA:
-			case Rml::Input::KI_LWIN:
-			case Rml::Input::KI_RWIN:
-				ctrl = down;
-				break;
-			case Rml::Input::KI_LMENU:
-			case Rml::Input::KI_RMENU:
-				alt = down;
-				break;
-			case Rml::Input::KI_LSHIFT:
-			case Rml::Input::KI_RSHIFT:
-				shift = down;
-				break;
-			default:
-				break;
-			}
-		std::string keys = joinedKeys(ctrl, alt, shift);
+		std::array<bool, 4> roles = {false, held(event, "ctrl_key") || held(event, "meta_key"), held(event, "alt_key"),
+			held(event, "shift_key")};
+		// A modifier key going down or up itself, whether or not the key event's modifiers say so yet. One going up
+		// leaves its modifier held while another key of it is down: the other Shift key, or Cmd for Ctrl.
+		const bool keyEvent = event.GetId() == Rml::EventId::Keydown || event.GetId() == Rml::EventId::Keyup;
+		const int key = keyEvent ? event.GetParameter<int>("key_identifier", 0) : 0;
+		if (const size_t role = modifierRole(key); role != 0)
+		{
+			if (event.GetId() == Rml::EventId::Keydown)
+				m_modifierKeys.insert(key);
+			else
+				m_modifierKeys.erase(key);
+			roles.at(role) = std::any_of(m_modifierKeys.begin(), m_modifierKeys.end(),
+				[role](int other) { return modifierRole(other) == role; });
+		}
+		// A key that went up where the display didn't see it, e.g. in another window: the modifiers say it's not held.
+		for (auto pressed = m_modifierKeys.begin(); pressed != m_modifierKeys.end();)
+			pressed = roles.at(modifierRole(*pressed)) ? std::next(pressed) : m_modifierKeys.erase(pressed);
+		std::string keys = joinedKeys(roles[1], roles[2], roles[3]);
 		if (keys == m_held)
 			return;
 		m_held = std::move(keys);

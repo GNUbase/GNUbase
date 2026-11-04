@@ -38,8 +38,8 @@ namespace gnubase::ui
 		constexpr double g_overviewEdge = 4.0;      // dp either side of the overview rectangle's edges
 
 		// What the display listens to in its root element and in its document.
-		constexpr std::array<Rml::EventId, 5> g_rootEvents = {Rml::EventId::Mousedown, Rml::EventId::Mousemove,
-			Rml::EventId::Mouseout, Rml::EventId::Mousescroll, Rml::EventId::Dblclick};
+		constexpr std::array<Rml::EventId, 6> g_rootEvents = {Rml::EventId::Mousedown, Rml::EventId::Mousemove,
+			Rml::EventId::Mouseover, Rml::EventId::Mouseout, Rml::EventId::Mousescroll, Rml::EventId::Dblclick};
 		constexpr std::array<Rml::EventId, 7> g_documentEvents = {Rml::EventId::Mousemove, Rml::EventId::Mouseup,
 			Rml::EventId::Resize, Rml::EventId::Click, Rml::EventId::Change, Rml::EventId::Keydown,
 			Rml::EventId::Keyup};
@@ -861,11 +861,12 @@ namespace gnubase::ui
 					(event.GetParameter<float>("mouse_y", 0.0F) - m_lanes->GetAbsoluteTop()) / dpRatio());
 			break;
 		case Rml::EventId::Mousemove:
-			if (event.GetCurrentElement() == m_document)
+		case Rml::EventId::Mouseover: // back over the lanes, e.g. when a menu over them closes, without a move
+			if (event.GetId() == Rml::EventId::Mousemove && event.GetCurrentElement() == m_document)
 			{
 				mouseMove(event);
 			}
-			else if (inside(target, m_area))
+			else if (event.GetId() == Rml::EventId::Mousemove ? inside(target, m_area) : target == m_area)
 			{
 				// The cross-hair cursor; the style sheets show it while the mouse is over the event lanes.
 				const double x = dpFrom(*m_area, event.GetParameter<float>("mouse_x", 0.0F));

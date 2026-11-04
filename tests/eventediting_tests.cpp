@@ -744,21 +744,50 @@ TEST_CASE("the mouse pointer shows what a press with the modifier keys held does
 	f.step();
 	CHECK(pointer() == "objectSelection");
 	CHECK(shown().empty());
-
-	// The tool modifiers are the user's: with Split Event on Ctrl and Alt, Alt alone splits nothing.
-	f.call("settings.set", {{"key", "ui.toolModifiers"}, {"value", {{"select.splitEvent", "ctrl+alt"}}}});
+	// Both Alt keys down, one up: the other still holds Alt, which the window system's modifiers say too.
+	context.ProcessKeyDown(Rml::Input::KI_LMENU, Rml::Input::KM_ALT);
+	context.ProcessKeyDown(Rml::Input::KI_RMENU, Rml::Input::KM_ALT);
+	context.ProcessKeyUp(Rml::Input::KI_LMENU, Rml::Input::KM_ALT);
+	f.step();
+	CHECK(pointer() == "split");
+	context.ProcessKeyUp(Rml::Input::KI_RMENU, 0);
+	f.step();
+	CHECK(pointer() == "objectSelection");
+	// So does Cmd, which is Ctrl for the tool modifiers on macOS, when Ctrl goes up; a move without them ends both.
+	f.call("settings.set", {{"key", "ui.toolModifiers"}, {"value", {{"select.splitEvent", "ctrl"}}}});
 	int x = 200;
 	REQUIRE(f.waitUntil(
 		[&]
 		{
-			moveTo(++x, 60, Rml::Input::KM_CTRL | Rml::Input::KM_ALT);
+			x = x == 200 ? 201 : 200; // moves, without walking to the event's edge
+			moveTo(x, 60, Rml::Input::KM_CTRL);
 			return pointer() == "split";
 		}));
-	moveTo(++x, 60, Rml::Input::KM_ALT);
+	moveTo(x == 200 ? 201 : 200, 60);
+	CHECK(pointer() == "objectSelection");
+	context.ProcessKeyDown(Rml::Input::KI_LMETA, Rml::Input::KM_META);
+	context.ProcessKeyDown(Rml::Input::KI_LCONTROL, Rml::Input::KM_META | Rml::Input::KM_CTRL);
+	context.ProcessKeyUp(Rml::Input::KI_LCONTROL, Rml::Input::KM_META);
+	f.step();
+	CHECK(pointer() == "split");
+	moveTo(x, 60);
+	CHECK(pointer() == "objectSelection");
+	context.ProcessKeyUp(Rml::Input::KI_LMETA, 0);
+
+	// The tool modifiers are the user's: with Split Event on Ctrl and Alt, Alt alone splits nothing.
+	f.call("settings.set", {{"key", "ui.toolModifiers"}, {"value", {{"select.splitEvent", "ctrl+alt"}}}});
+	REQUIRE(f.waitUntil(
+		[&]
+		{
+			x = x == 200 ? 201 : 200;
+			moveTo(x, 60, Rml::Input::KM_CTRL | Rml::Input::KM_ALT);
+			return pointer() == "split";
+		}));
+	moveTo(x == 200 ? 201 : 200, 60, Rml::Input::KM_ALT);
 	CHECK(pointer() == "objectSelection");
 	// Other tools keep theirs.
 	f.display.setTool(ui::Tool::Draw);
-	moveTo(++x, 60, Rml::Input::KM_CTRL | Rml::Input::KM_ALT);
+	moveTo(x, 60, Rml::Input::KM_CTRL | Rml::Input::KM_ALT);
 	CHECK(pointer() == "draw");
 }
 
@@ -839,6 +868,13 @@ TEST_CASE("a right click selects the event under the mouse only where a press se
 	CHECK(f.display.selection().empty());
 	rightClick(200, 75);
 	CHECK(f.display.selection() == std::vector<uint64_t>{f.part});
+	// There, as a press would, it ends a range, which the context menu would act on instead of the event.
+	f.display.select({});
+	f.drag(150, 45, 250, 45);
+	REQUIRE(f.display.range().has_value());
+	rightClick(200, 75);
+	CHECK(f.display.selection() == std::vector<uint64_t>{f.part});
+	CHECK(!f.display.range().has_value());
 }
 
 TEST_CASE("the object selection tool selects with a rectangle and sets the cursor with Alt and Shift", "[unit]")
