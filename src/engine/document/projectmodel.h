@@ -149,6 +149,7 @@ namespace gnubase::engine
 		void registerAudioFileCommands(Engine& engine, Jobs& jobs); // audiofilecommands.cpp: audioFile.import
 		Json importAudioFiles(Project& project, CommandContext& context, Jobs& jobs);
 		void registerRecordingCommands(Engine& engine); // recording.cpp: recording.add
+		void registerRenderCommands(Engine& engine);    // renderinplace.cpp: track.freeze, track.renderInPlace
 		Json addRecording(Project& project, CommandContext& context);
 		void registerPoolCommands(Engine& engine); // pool.cpp: pool.*, poolFolder.*, clip.set, media management (#93)
 		void registerFadeCommands(Engine& engine); // fadeedits.cpp: fades, crossfades and auto fades

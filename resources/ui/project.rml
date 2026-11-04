@@ -250,6 +250,18 @@
 			</menu>
 		</menuitem>
 		<menuseparator/>
+		<!-- Render in place and freeze (reference manual pp. 219-220, 1471-1477, docs/features/render-in-place.md) -->
+		<menuitem id="render-in-place-submenu">Render in Place
+			<menu>
+				<menuitem command="track.renderSelected">Render (with Current Settings)</menuitem>
+			</menu>
+		</menuitem>
+		<menuitem id="freeze-submenu">Freeze/Unfreeze
+			<menu>
+				<menuitem command="track.freezeSelected">Selected Tracks (with Current Settings)</menuitem>
+			</menu>
+		</menuitem>
+		<menuseparator/>
 		<menuitem command="edit.mute">Mute</menuitem>
 		<menuitem command="edit.unmute">Unmute</menuitem>
 		<menuitem command="edit.lock">Lock</menuitem>
@@ -331,6 +343,7 @@
 		<menuseparator/>
 		<menuitem command="track.disableSelected">Disable Selected Tracks</menuitem>
 		<menuitem command="track.enableSelected">Enable Selected Tracks</menuitem>
+		<menuitem command="track.freezeSelected">Freeze/Unfreeze Selected Tracks</menuitem>
 		<menuseparator/>
 		<!-- Automation tracks (reference manual p. 880) -->
 		<menuitem command="track.toggleAutomationSelected">Show/Hide Automation</menuitem>
