@@ -917,6 +917,18 @@
 	{
 		background-color: #0969da;
 	}
+	.quantize-display
+	{
+		background-color: #ffffff;
+	}
+	.quantize-line
+	{
+		background-color: #0969da;
+	}
+	.quantize-catch
+	{
+		background-color: #0969da33;
+	}
 	.onscreen-keyboard .white-key
 	{
 		background-color: #17202d;

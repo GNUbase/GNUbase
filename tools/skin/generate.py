@@ -653,6 +653,11 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         # The edit history (docs/features/edit-history.md): undone steps dimmed, and the separator after the done ones
         (".history tr.undone, .history tr.undone input.text", {"color": c["textMuted"]}),
         (".history .history-separator", {"background-color": c["accent"]}),
+        # The quantize panel's grid display (docs/features/quantize.md): the grid positions and the catch range around
+        # them
+        (".quantize-display", {"background-color": c["surface"]}),
+        (".quantize-line", {"background-color": c["accent"]}),
+        (".quantize-catch", {"background-color": c["accent"] + "33"}),
         # The on-screen keyboard (docs/features/onscreen-keyboard.md): white and black keys, lit while they sound
         (".onscreen-keyboard .white-key", {"background-color": c["text"], "color": c["background"],
                                            "border-color": c["border"]}),
