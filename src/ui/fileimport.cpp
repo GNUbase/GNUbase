@@ -199,7 +199,8 @@ namespace gnubase::ui
 
 	bool EventDisplay::oneTrackApplies(const Import& import)
 	{
-		return import.files.size() > 1 && !(import.track && !import.selected) && !import.clipsOnly;
+		const bool droppedOnTrack = import.track && !import.selected;
+		return import.files.size() > 1 && !droppedOnTrack && !import.clipsOnly;
 	}
 
 	EventDisplay::ImportOptions EventDisplay::importSettings(const Json& list)
