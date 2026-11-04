@@ -15,6 +15,18 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   of every command of that name the UI sent, after the sender's `done`, for as long as its `Subscription` exists:
   the pool shows that way what its commands did, whether its toolbar or the Media menu sent them
   ([pool.md](pool.md)).
+- **Gestures** (#716). `sendStep(gesture, what, description, commands, done)` sends a step of a value widget's
+  gesture, a drag, wheel turns or a held arrow key ([widgets.md](widgets.md)), as a `history.transaction` merged with
+  the gesture's other steps into one undo step. The steps of one `what` (`channel 5 volume`, the same name in the
+  mixer and the inspector) go one at a time: while one is in flight the next waits, and a newer step of the same
+  gesture replaces the one waiting, so a fast drag sends its newest value whenever the engine has answered instead of
+  piling up commands. Steps of other gestures and steps without one (gesture 0) are never replaced. `sending(what)` is
+  true while a step of `what` is in flight or waiting. Views read the project again after each undo step, and an
+  answer that the engine gave before it had the newest step is older than the control: a view doesn't set a control
+  while `sending` its `what`, and the project read after the last step's `history.changed` arrives after that step's
+  result, so it shows the engine's value then. A refused step reads the project again. Values that other clients
+  change (MCP, Lua, automation) show at once while no step of the control is under way; during a drag the widget
+  itself keeps the drag's value until it ends.
 - **Events.** `on(name, handler)` calls `handler` with every event of that name, from whichever client caused it: a
   change made through MCP, Lua or another window reaches the UI the same way as the UI's own. The returned
   `Subscription` ends the handler when it goes, so a view that closes stops listening; subscriptions must not outlive
@@ -39,7 +51,11 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
 - **Checks.** `tests/enginebinding_tests.cpp`: results and events reach the UI thread only in `update`, after the
   binding woke it, once for any number of messages; subscriptions end with their objects, also from inside a handler;
   results reach `onResult` handlers for the UI's own commands only; watched values arrive once an update, only when
-  they changed. The last test changes the transport through MCP and
+  they changed; a gesture's steps go one at a time, the newest replacing those that wait, as one undo step, without
+  holding up another control's, and steps without a gesture or of another gesture are kept, also after a refused one.
+  `tests/mixerwindow_tests.cpp` and `tests/inspector_tests.cpp` drag faders, knobs and value fields and turn the wheel
+  while the engine answers late (`test::LateDrag`, `test::lateSteps` in `tests/uiapp.h`): the control never goes back
+  toward an earlier step, and the engine and the control agree at the end. The last test changes the transport through MCP and
   checks a document shows it, then clicks the document's button and finds the command in `engine.commandLog`, sent by
   `ui`.
   `tests/engine_tests.cpp` checks the command log and the clients' wake-up, `tests/shell_tests.cpp` the step tasks

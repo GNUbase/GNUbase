@@ -141,6 +141,13 @@ namespace gnubase::ui
 			return *value;
 		}
 
+		// What a strip control's gesture changes, as EngineBinding::sendStep names it, e.g. "channel 5 volume", as the
+		// inspector does too.
+		std::string stepKey(uint64_t channel, const std::string& param)
+		{
+			return "channel " + std::to_string(channel) + " " + param;
+		}
+
 		// The parameters of channel.set that give a strip control the value.
 		Json paramChange(const std::string& param, Json value)
 		{
@@ -428,6 +435,15 @@ namespace gnubase::ui
 			});
 	}
 
+	std::function<void(const engine::Result&)> Mixer::whenRefused()
+	{
+		return [this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+		{
+			if (!alive.expired() && !result.ok())
+				requestProject();
+		};
+	}
+
 	void Mixer::requestView()
 	{
 		m_binding.send("mixer.get", {{"mixer", m_view}},
@@ -566,7 +582,10 @@ namespace gnubase::ui
 		m_updating = true; // filling a drop-down list sends a change
 		for (Rml::Element* control : controls)
 		{
-			const Json value = paramValue(json, attribute(*control, "param"));
+			const std::string param = attribute(*control, "param");
+			if (m_binding.sending(stepKey(channel.id, param)))
+				continue; // the control is ahead of the engine
+			const Json value = paramValue(json, param);
 			if (control->GetTagName() == "select")
 			{
 				if (value.is_number())
@@ -591,6 +610,8 @@ namespace gnubase::ui
 			const std::string max = widgets::format(m_project.value("maxVolume", 6.0F));
 			if (attribute(*fader, "max") != max)
 				fader->SetAttribute("max", max);
+			if (m_binding.sending(stepKey(channel.id, "volume")))
+				return; // the fader is ahead of the engine
 			const std::string value = widgets::format(static_cast<float>(volume));
 			if (attribute(*fader, "value") != value)
 				fader->SetAttribute("value", value);
@@ -702,11 +723,17 @@ namespace gnubase::ui
 			else if (target->GetTagName() == "fader")
 			{
 				if (const MixerChannel* channel = channelOf(target)) // a drag is one undo step
-					m_binding.sendStep(event.GetParameter("gesture", 0),
-						"channel " + std::to_string(channel->id) + " volume", "Change Volume",
+				{
+					const float volume = event.GetParameter("value", 0.0F);
+					if (const auto strip = m_stripOf.find(channel->id); strip != m_stripOf.end())
+						if (Rml::Element* text = strip->second->QuerySelector(".mixer-volume"))
+							setText(*text, decibels(volume)); // with the fader, ahead of the engine
+					m_binding.sendStep(event.GetParameter("gesture", 0), stepKey(channel->id, "volume"),
+						"Change Volume",
 						Json::array({Json{{"command", "channel.set"},
-							{"parameters",
-								{{"channel", channel->id}, {"volume", event.GetParameter("value", 0.0F)}}}}}));
+							{"parameters", {{"channel", channel->id}, {"volume", volume}}}}}),
+						whenRefused());
+				}
 			}
 			else if (target->HasAttribute("param") && !m_updating)
 			{
@@ -716,13 +743,24 @@ namespace gnubase::ui
 						event.GetParameters().count("value") != 0 ? &event.GetParameters().at("value") : nullptr;
 					if (given == nullptr)
 						break;
-					Json value =
-						given->GetType() == Rml::Variant::BOOL ? Json(given->Get<bool>()) : Json(given->Get<double>());
-					if (target->GetTagName() == "select") // a send's destination, a channel id
-						value = std::stoull(given->Get<Rml::String>("0"));
-					Json parameters = paramChange(attribute(*target, "param"), std::move(value));
+					const std::string param = attribute(*target, "param");
+					if (given->GetType() == Rml::Variant::BOOL || target->GetTagName() == "select")
+					{
+						// A toggle, or a send's destination, a channel id.
+						Json parameters = paramChange(param,
+							given->GetType() == Rml::Variant::BOOL ? Json(given->Get<bool>())
+																   : Json(std::stoull(given->Get<Rml::String>("0"))));
+						parameters["channel"] = channel->id;
+						m_binding.send("channel.set", std::move(parameters));
+						break;
+					}
+					// A knob's or a value field's drag, wheel turns or held arrow key: one undo step.
+					Json parameters = paramChange(param, given->Get<double>());
 					parameters["channel"] = channel->id;
-					m_binding.send("channel.set", std::move(parameters));
+					m_binding.sendStep(event.GetParameter("gesture", 0), stepKey(channel->id, param),
+						"Change " + attribute(*target, "title"),
+						Json::array({Json{{"command", "channel.set"}, {"parameters", std::move(parameters)}}}),
+						whenRefused());
 				}
 			}
 			break;

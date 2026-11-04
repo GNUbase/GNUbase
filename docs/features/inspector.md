@@ -67,7 +67,8 @@ one it has the class `empty` and says "No Track Selected".
 - **Basics** (pp. 170–182): the channel's switches, fader and panner, sent with `channel.set` (`mute`, `solo`,
   `recordEnable`, `monitor`, `volume`, `pan`). The volume goes up to the project's `maxVolume` (`project.set`). A drag,
   wheel turns or a held arrow key on the volume or the pan are one undo step ([edit-history.md](edit-history.md),
-  gestures), sent step by step so that they are heard.
+  gestures), sent step by step so that they are heard, one at a time; while they are on their way the fields keep
+  their own values rather than the engine's older ones (#716, [ui-engine-binding.md](ui-engine-binding.md)).
 - **Refused changes.** When the engine refuses a change, such as an output that would make a routing loop, the
   inspector shows the channel as it is again.
 - **Routing** (p. 168): the input bus of an audio track, and where the channel plays: an output bus or a group

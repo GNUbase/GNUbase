@@ -17,6 +17,7 @@
 #include <array>
 #include <optional>
 #include <string>
+#include <utility>
 
 namespace gnubase::ui
 {
@@ -50,7 +51,9 @@ namespace gnubase::ui
 		// value attribute and sends a change event with the value as a float and the gesture it belongs to as an
 		// integer: the changes of one drag, of wheel turns until the mouse leaves, of an arrow key until it is released
 		// and a typed value have the same gesture, and the next gesture has a higher one, so that a document can make
-		// each gesture one undo step (history.transaction's merge).
+		// each gesture one undo step (history.transaction's merge). During a drag it shows the drag's value: a value
+		// set meanwhile, such as the engine's answer to an earlier step, shows when the drag ends, unless the drag
+		// changed the value after it came (#716).
 		class ValueControl : public Rml::Element
 		{
 		public:
@@ -83,7 +86,7 @@ namespace gnubase::ui
 					(kind == Rml::EventId::Mouseout && event.GetTargetElement() == this && !m_dragging))
 				{
 					if (kind == Rml::EventId::Dragend)
-						m_dragging = false;
+						endDrag();
 					endGesture();
 					return;
 				}
@@ -108,6 +111,7 @@ namespace gnubase::ui
 				case Rml::EventId::Dragstart:
 					m_last = position(event);
 					m_dragging = true;
+					m_dragged = format(value());
 					break;
 				case Rml::EventId::Drag:
 				{
@@ -157,7 +161,11 @@ namespace gnubase::ui
 				to = std::clamp(to, std::min(minimum(), maximum()), std::max(minimum(), maximum()));
 				if (to == value() && HasAttribute("value"))
 					return;
-				SetAttribute("value", format(to));
+				m_dragged = format(to);
+				m_held.reset(); // what the mouse does now comes after it
+				m_changing = true;
+				SetAttribute("value", m_dragged);
+				m_changing = false;
 				if (!m_gesturing)
 				{
 					m_gesture = ++g_lastGesture;
@@ -189,10 +197,28 @@ namespace gnubase::ui
 				Rml::Element::OnAttributeChange(changed);
 				if (changed.count("disabled") != 0)
 					SetPseudoClass("disabled", HasAttribute("disabled"));
+				if (changed.count("value") != 0 && m_dragging && !m_changing)
+				{
+					// A value set during a drag, such as the engine's, which may be older than the drag's: the control
+					// keeps the drag's until the drag ends (#716).
+					m_held = GetAttribute<Rml::String>("value", "");
+					m_changing = true;
+					SetAttribute("value", m_dragged);
+					m_changing = false;
+					return; // shown
+				}
 				show();
 			}
 
 		private:
+			// The drag ends with the value set during it, unless the drag changed the value after that.
+			void endDrag()
+			{
+				m_dragging = false;
+				if (std::optional<std::string> held = std::exchange(m_held, std::nullopt))
+					SetAttribute("value", *held);
+			}
+
 			float position(const Rml::Event& event) const
 			{
 				return horizontal() ? event.GetParameter("mouse_x", 0.0F) : -event.GetParameter("mouse_y", 0.0F);
@@ -203,10 +229,13 @@ namespace gnubase::ui
 				return event.GetParameter("shift_key", false) ? g_fine : 1.0F;
 			}
 
-			float m_last = 0.0F;      // where the mouse was in the drag
-			bool m_dragging = false;  // from dragstart to dragend
-			int m_gesture = 0;        // the gesture of the last change
-			bool m_gesturing = false; // the next change belongs to it
+			float m_last = 0.0F;               // where the mouse was in the drag
+			bool m_dragging = false;           // from dragstart to dragend
+			std::string m_dragged;             // the value the drag gave it
+			std::optional<std::string> m_held; // a value set during the drag, after its last change
+			bool m_changing = false;           // it sets its value itself
+			int m_gesture = 0;                 // the gesture of the last change
+			bool m_gesturing = false;          // the next change belongs to it
 
 		protected:
 			widgets::Listener m_listener{[this](Rml::Event& event) { listen(event); }};

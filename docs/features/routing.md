@@ -49,7 +49,8 @@ in [busses.md](busses.md) and [folder-tracks.md](folder-tracks.md), the fader in
 
 The mixer's strips have a Sends section (`.mixer-sends`, docking set `channel`, hidden by default and shown with Set
 up Window Layout), with a row per send: its on switch, its destination (a drop-down list of No Destination and the
-other group and effect channels), Pre for a pre-fader send and a knob for its level. They send `channel.set` and show
+other group and effect channels), Pre for a pre-fader send and a knob for its level, whose drag is one undo step
+(#716). They send `channel.set` and show
 the engine's values after every undo step, as the strip's other sections do ([channel-strip.md](channel-strip.md)).
 
 ## Not yet

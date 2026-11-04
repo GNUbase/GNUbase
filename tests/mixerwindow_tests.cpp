@@ -5,10 +5,12 @@
 #include "ui/renderer.h"
 #include "uiapp.h"
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -454,4 +456,114 @@ TEST_CASE(
 	REQUIRE(app.waitUntil([&] { return !has(toolbar("listen"), "checked") && !has(toolbar("mute"), "checked"); }));
 	CHECK(channelJson(app, guitar.channel).at("listen") == false);
 	CHECK(channelJson(app, keys.channel).at("mute") == false);
+}
+
+namespace
+{
+	double valueOf(test::UiApp& app, Window window, const std::string& selector)
+	{
+		return test::controlValue(app, window, selector);
+	}
+
+	int64_t historyPosition(test::UiApp& app)
+	{
+		return app.call("history.get").at("position").get<int64_t>();
+	}
+
+	// Shows the strips' sends section.
+	void showSends(test::UiApp& app, Window window, uint64_t channel)
+	{
+		click(app, window, "#mixer-layout");
+		click(app, window, "#mixer-layout-pane [setup-section=sends]");
+		REQUIRE(
+			app.waitUntil([&] { return !has(element(app, window, strip(channel) + " [section=sends]"), "hidden"); }));
+		app.ui().key(window, "Escape");
+	}
+}
+
+TEST_CASE("mixer controls changed while the engine answers late follow the mouse, as one undo step", "[ui]")
+{
+	test::UiApp app({1024, 600});
+	app.appUi().showProject();
+	const Added guitar = addTrack(app, "audio", "Guitar");
+	addTrack(app, "effect", "Reverb");
+	const Window window = openMixer(app, 1);
+	const std::string fader = strip(guitar.channel) + " fader";
+	REQUIRE(app.waitUntil([&] { return elements(app, window, fader).size() == 1; }));
+	const auto channel = [&] { return channelJson(app, guitar.channel); };
+
+	SECTION("the fader")
+	{
+		const int64_t position = historyPosition(app);
+		test::LateDrag drag(app, window, fader);
+		const double dragged = drag.move(30, 1);
+		CHECK(dragged < -5.0);
+		drag.release();
+		// Then the control and the engine agree, on where the mouse left it, in one undo step.
+		REQUIRE(app.waitUntil([&] { return channel().at("volume") == Catch::Approx(dragged).margin(0.001); }));
+		CHECK(valueOf(app, window, fader) == Catch::Approx(dragged).margin(0.001));
+		const std::string text =
+			element(app, window, strip(guitar.channel) + " .mixer-volume").at("text").get<std::string>();
+		CHECK(std::stod(text) == Catch::Approx(dragged).margin(0.051));
+		CHECK(historyPosition(app) == position + 1);
+	}
+
+	SECTION("the panner's wheel turns")
+	{
+		const std::string pan = strip(guitar.channel) + " [param=pan]";
+		const int64_t position = historyPosition(app);
+		const double turned = test::lateSteps(
+			app, window, pan, 10, 1, [&] { app.ui().wheel(window, {pan, 0, std::nullopt}, 0.0F, 1.0F); });
+		CHECK(turned == Catch::Approx(-0.1).margin(1e-5));
+		REQUIRE(app.waitUntil([&] { return channel().at("pan") == Catch::Approx(turned).margin(1e-5); }));
+		CHECK(historyPosition(app) == position + 1);
+	}
+
+	SECTION("a send's level")
+	{
+		showSends(app, window, guitar.channel);
+		const std::string knob = strip(guitar.channel) + " [param=\"sends.1.level\"]";
+		const int64_t position = historyPosition(app);
+		test::LateDrag drag(app, window, knob);
+		const double dragged = drag.move(30, 1);
+		CHECK(dragged < -5.0);
+		drag.release();
+		REQUIRE(app.waitUntil(
+			[&] { return channel().at("sends")[0].at("level") == Catch::Approx(dragged).margin(0.001); }));
+		CHECK(valueOf(app, window, knob) == Catch::Approx(dragged).margin(0.001));
+		CHECK(historyPosition(app) == position + 1);
+	}
+}
+
+TEST_CASE("a mixer control shows what another client sets at once, and during a drag once the drag ends", "[ui]")
+{
+	test::UiApp app({1024, 600});
+	app.appUi().showProject();
+	const Added guitar = addTrack(app, "audio", "Guitar");
+	addTrack(app, "effect", "Reverb");
+	const Window window = openMixer(app, 1);
+	const std::string fader = strip(guitar.channel) + " fader";
+	const std::string pan = strip(guitar.channel) + " [param=pan]";
+	REQUIRE(app.waitUntil([&] { return elements(app, window, fader).size() == 1; }));
+	showSends(app, window, guitar.channel);
+	const std::string knob = strip(guitar.channel) + " [param=\"sends.1.level\"]";
+
+	// Without a gesture, a value set through MCP shows at once.
+	app.call(
+		"channel.set", {{"channel", guitar.channel}, {"volume", -12.0}, {"sends", {{{"send", 1}, {"level", -9}}}}});
+	REQUIRE(app.waitUntil([&] { return valueOf(app, window, fader) == -12.0; }));
+	CHECK(valueOf(app, window, knob) == -9.0);
+	CHECK(element(app, window, strip(guitar.channel) + " .mixer-volume").at("text") == "-12.0");
+
+	// During a drag the fader stays where the mouse put it; it shows the engine's value when the drag ends.
+	test::LateDrag drag(app, window, fader);
+	const double dragged = drag.move(5, -1);
+	CHECK(dragged > -12.0);
+	app.call("channel.set", {{"channel", guitar.channel}, {"volume", -20.0}, {"pan", 0.5}});
+	REQUIRE(app.waitUntil([&] { return valueOf(app, window, pan) == 0.5; })); // the mixer has the project
+	CHECK(valueOf(app, window, fader) == Catch::Approx(dragged).margin(0.001));
+	drag.release(false);
+	REQUIRE(app.waitUntil([&] { return valueOf(app, window, fader) == -20.0; }));
+	CHECK(channelJson(app, guitar.channel).at("volume") == -20.0);
+	CHECK(element(app, window, strip(guitar.channel) + " .mixer-volume").at("text") == "-20.0");
 }

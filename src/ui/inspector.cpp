@@ -107,6 +107,12 @@ namespace gnubase::ui
 			return options;
 		}
 
+		// What a field's gesture changes, as EngineBinding::sendStep names it, e.g. "channel 5 volume", as the mixer
+		// does too.
+		std::string stepKey(const Json& channel, const std::string& name)
+		{
+			return "channel " + channel.dump() + " " + name;
+		}
 	}
 
 	Inspector::Inspector(EngineBinding& binding, Rml::Element& root)
@@ -212,12 +218,16 @@ namespace gnubase::ui
 				}
 			if (audio)
 			{
+				// Not while the fields' own steps are on their way: the engine's values are older then (#716).
+				const auto sending = [this, channel](const char* name)
+				{ return m_binding.sending(stepKey(channel->at("id"), name)); };
 				if (Rml::Element* volume = element("valuefield[control=volume]"))
 				{
 					volume->SetAttribute("max", widgets::format(m_project->value("maxVolume", 6.0F)));
-					volume->SetAttribute("value", widgets::format(channel->at("volume").get<float>()));
+					if (!sending("volume"))
+						volume->SetAttribute("value", widgets::format(channel->at("volume").get<float>()));
 				}
-				if (Rml::Element* pan = element("valuefield[control=pan]"))
+				if (Rml::Element* pan = element("valuefield[control=pan]"); pan != nullptr && !sending("pan"))
 					pan->SetAttribute("value", widgets::format(channel->at("pan").get<float>() * 100.0F));
 			}
 			const auto id = channel->at("id").get<uint64_t>();
@@ -301,7 +311,7 @@ namespace gnubase::ui
 			const Json channel = m_channel.at("id");
 			const Json step = {{"command", "channel.set"},
 				{"parameters", {{"channel", channel}, {name, name == "volume" ? number : number / 100.0}}}};
-			m_binding.sendStep(event.GetParameter<int>("gesture", 0), "channel " + channel.dump() + " " + name,
+			m_binding.sendStep(event.GetParameter<int>("gesture", 0), stepKey(channel, name),
 				name == "volume" ? "Change Volume" : "Change Pan", Json::array({step}), whenRefused());
 			return;
 		}

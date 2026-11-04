@@ -58,11 +58,50 @@ namespace gnubase::ui
 	void EngineBinding::sendStep(int gesture, const std::string& what, std::string description, engine::Json commands,
 		std::function<void(const engine::Result&)> done)
 	{
+		Step step{gesture != 0 ? what + " " + std::to_string(gesture) : std::string(), std::move(description),
+			std::move(commands), std::move(done)};
+		Steps& steps = m_steps[what];
+		if (!step.merge.empty() && !steps.waiting.empty() && steps.waiting.back().merge == step.merge)
+			steps.waiting.back() = std::move(step); // the newer value of the same gesture
+		else
+			steps.waiting.push_back(std::move(step));
+		if (!steps.inFlight)
+			sendNextStep(what);
+	}
+
+	void EngineBinding::sendNextStep(const std::string& what)
+	{
+		const auto found = m_steps.find(what);
+		if (found == m_steps.end())
+			return;
+		if (found->second.waiting.empty())
+		{
+			m_steps.erase(found);
+			return;
+		}
+		Step step = std::move(found->second.waiting.front());
+		found->second.waiting.pop_front();
+		found->second.inFlight = true;
+		found->second.done = std::move(step.done);
 		send("history.transaction",
-			{{"description", std::move(description)},
-				{"merge", gesture != 0 ? what + " " + std::to_string(gesture) : std::string()},
-				{"commands", std::move(commands)}},
-			std::move(done));
+			{{"description", std::move(step.description)}, {"merge", std::move(step.merge)},
+				{"commands", std::move(step.commands)}},
+			[this, what](const engine::Result& result)
+			{
+				std::function<void(const engine::Result&)> done;
+				if (const auto steps = m_steps.find(what); steps != m_steps.end())
+				{
+					steps->second.inFlight = false;
+					done = std::move(steps->second.done);
+				}
+				if (done)
+					done(result);
+				else if (!result.ok())
+					logging::warning("history.transaction from the UI failed: {}", result.error);
+				// done may have sent the next step itself.
+				if (const auto steps = m_steps.find(what); steps != m_steps.end() && !steps->second.inFlight)
+					sendNextStep(what);
+			});
 	}
 
 	size_t EngineBinding::waiting(const std::string& command) const

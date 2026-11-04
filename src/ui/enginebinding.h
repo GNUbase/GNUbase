@@ -5,6 +5,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <map>
 #include <optional>
@@ -56,8 +57,17 @@ namespace gnubase::ui
 		// "gesture" parameter of its change event, ui/widgets.h): a history.transaction named description whose merge
 		// key is what the gesture changes (e.g. "channel 5 volume") and the gesture, so that a drag, wheel turns or a
 		// held arrow key are one undo step. With gesture 0 the commands are a step of their own.
+		// The steps of one thing go one at a time (#716): while one is in flight the next waits, and a newer step of
+		// the same gesture replaces the one waiting, so that a fast drag sends its newest value whenever the engine
+		// has answered instead of piling up commands. done runs for every step sent; a step replaced before it was
+		// sent is dropped with its done.
 		void sendStep(int gesture, const std::string& what, std::string description, engine::Json commands,
 			std::function<void(const engine::Result&)> done = {});
+
+		// Whether steps of what (sendStep) are in flight or waiting. Until they aren't, the engine's values for what
+		// are older than the control that sent them, so a view leaves the control as it is (#716); the engine's
+		// events for the last step, and its value then, come after.
+		bool sending(const std::string& what) const { return m_steps.count(what) != 0; }
 
 		// How many commands of that name were sent and their results not handed on yet, e.g. for tests of how many
 		// queries a view keeps open.
@@ -107,10 +117,28 @@ namespace gnubase::ui
 			std::function<void(const engine::Result&)> done;
 		};
 
+		// A step of sendStep, until it is sent.
+		struct Step
+		{
+			std::string merge;
+			std::string description;
+			engine::Json commands;
+			std::function<void(const engine::Result&)> done;
+		};
+
+		// The steps of one thing: whether one is in flight and its done, and those that wait for it.
+		struct Steps
+		{
+			bool inFlight = false;
+			std::function<void(const engine::Result&)> done;
+			std::deque<Step> waiting;
+		};
+
 		Subscription follow(std::function<void()> read);
 		void end(uint64_t id) noexcept;
 		void answer(const engine::Result& result);
 		void dispatch(const engine::Event& event);
+		void sendNextStep(const std::string& what); // or forgets what if no step waits
 
 		std::atomic<bool> m_woken{false}; // woken was called and update() hasn't run since
 		engine::Client m_client;
@@ -118,6 +146,7 @@ namespace gnubase::ui
 		std::map<uint64_t, Handler> m_handlers;
 		std::map<uint64_t, Waiting> m_resultHandlers; // onResult's, by subscription
 		std::map<uint64_t, std::function<void()>> m_watches;
+		std::map<std::string, Steps> m_steps; // sendStep's, while one is in flight
 		uint64_t m_nextId = 1;
 	};
 }

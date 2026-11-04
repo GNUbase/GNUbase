@@ -72,6 +72,12 @@ namespace gnubase::ui
 			else if (!set && element.HasAttribute(name))
 				element.RemoveAttribute(name);
 		}
+
+		// What a field's gesture changes, as EngineBinding::sendStep names it.
+		std::string stepKey(const std::string& field)
+		{
+			return "info line " + field;
+		}
 	}
 
 	InfoLine::InfoLine(EventDisplay& display, EngineBinding& binding, Rml::Element& root)
@@ -216,7 +222,9 @@ namespace gnubase::ui
 			setFlag(*name, "disabled", audio); // an audio event's name is its clip's
 		if (Rml::Element* volume = root.QuerySelector("[info-field=volume]"))
 			setClass(*volume, "hidden", !audio);
-		if (Rml::Element* volume = root.QuerySelector("valuefield[field=volume]"); volume != nullptr && audio)
+		// Not while the field's own steps are on their way: the engine's volume is older then (#716).
+		if (Rml::Element* volume = root.QuerySelector("valuefield[field=volume]");
+			volume != nullptr && audio && !m_binding.sending(stepKey("volume")))
 			setValue(*volume, widgets::format(static_cast<float>(volumeOf(first.at("id").get<uint64_t>()))));
 		for (const char* field : {"mute", "lock"})
 			if (Rml::Element* button = root.QuerySelector("button[field=" + std::string(field) + "]"))
@@ -449,6 +457,6 @@ namespace gnubase::ui
 		std::string label = field;
 		label.front() = static_cast<char>(std::toupper(static_cast<unsigned char>(label.front())));
 		// A drag, wheel turns or a held arrow key on the volume: one undo step.
-		m_binding.sendStep(gesture, "info line " + field, "Change " + label, std::move(commands));
+		m_binding.sendStep(gesture, stepKey(field), "Change " + label, std::move(commands));
 	}
 }

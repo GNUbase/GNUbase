@@ -76,6 +76,8 @@ namespace gnubase::ui
 	private:
 		void ProcessEvent(Rml::Event& event) override;
 		void requestProject();
+		// For the steps of a gesture: a refused one reads the project, so the control shows the engine's value again.
+		std::function<void(const engine::Result&)> whenRefused();
 		void requestView();
 		void show();
 		void buildStrips(const std::vector<const MixerChannel*>& strips);
