@@ -2,6 +2,7 @@
 #include "engine/document/rendersnapshot.h"
 
 #include "engine/audio/fades.h"
+#include "engine/midi/controllerlanes.h"
 
 #include <algorithm>
 #include <cmath>
@@ -36,11 +37,11 @@ namespace gnubase::engine
 			channel.midiParts.push_back({toSamples(project, start), toSamples(project, end)});
 			for (const auto& [id, note] : part.notes)
 			{
-				if (note.position >= end - start)
+				if (note.position >= end - start || !midi::notePlays(note, part.id))
 					continue;
 				const time::Ticks noteEnd = std::min(start + note.position + note.length, end);
 				channel.notes.push_back({toSamples(project, start + note.position), toSamples(project, noteEnd),
-					note.pitch, note.velocity, note.channel});
+					note.pitch, midi::playedVelocity(note, part.id), note.channel});
 			}
 			for (const auto& [id, controller] : part.controllers)
 				if (controller.position < end - start)

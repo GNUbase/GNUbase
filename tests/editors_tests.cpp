@@ -80,7 +80,8 @@ TEST_CASE("a MIDI editor opens with several parts on several tracks, in the trac
 	// The key editor's settings (tests/keyeditor_tests.cpp) aside.
 	Json shown = f.view("window");
 	for (const char* key : {"selection", "stepInput", "midiInput", "stepPosition", "moveInsert", "recordPitch",
-			 "recordVelocity", "recordReleaseVelocity", "keepNotes", "insertVelocity", "lengthQuantize"})
+			 "recordVelocity", "recordReleaseVelocity", "keepNotes", "insertVelocity", "lengthQuantize", "lanes",
+			 "showLanes", "autoSelectControllers", "controllerSelection"})
 		shown.erase(key);
 	CHECK(shown == closed);
 

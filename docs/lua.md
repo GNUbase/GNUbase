@@ -1078,6 +1078,28 @@ Returns:
 
 - `controllers`: array, required
 
+#### `gnubase.controller.line`
+
+Draws on a controller lane of a MIDI part as the line tool does (reference manual p. 1186). lane: type, one of velocity, offVelocity, probability and velocityVariance (properties of the notes) or controller, pitchBend, channelPressure, polyPressure and program (controller events), number (the controller, or the pitch of poly pressure) and channel 0-15, both default 0. from and to: positions from the part's start in ticks and values, 0-1 (velocityVariance -1 to 1; a program change's 0-1 is program 0-127). mode: line draws a straight line from the start to the end value; parabola a curve that starts slowly, with reverse fast; sine, triangle and square go from the start value to the end value and back once every period ticks (default the quantize grid's). On a note lane the notes starting in the range, or those of them named in notes, take the value at their position. On a controller lane the lane's events in the range go, and new ones come every density ticks (default the quantize grid's) and at the end. Returns the notes changed, the controller events added and the ids of those removed.
+
+Parameters:
+
+- `density`: integer
+- `from`: object, required
+- `lane`: object, required
+- `mode`: one of "line" | "parabola" | "sine" | "triangle" | "square", required
+- `notes`: array of integer
+- `part`: integer, required
+- `period`: integer
+- `reverse`: boolean
+- `to`: object, required
+
+Returns:
+
+- `controllers`: array, required
+- `notes`: array, required
+- `removed`: array of integer, required
+
 #### `gnubase.controller.remove`
 
 Removes controller events from a MIDI part.
@@ -1132,7 +1154,7 @@ Returns:
 
 #### `gnubase.editor.close`
 
-Closes a MIDI editor: it shows no parts, and Keep Editor Contents goes off (p. 1153). Emits editor.changed. editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: open; parts, the MIDI parts it shows, in the track list's order and by position; activePart, the part active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the marker and ruler tracks the editor window shows above its events. The key editor's (pp. 1189-1220): selection, the selected notes, each {part, note}, of the editable parts; stepInput and midiInput, what editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, recordPitch, recordVelocity, recordReleaseVelocity and keepNotes, how they go in; insertVelocity (0-1), the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, a note value such as 1/16, 1/8T or 1/4., or link for the quantize grid's (quantize.set). View state: no undo steps, not saved, and a new or loaded project closes the editors.
+Closes a MIDI editor: it shows no parts, and Keep Editor Contents goes off (p. 1153). Emits editor.changed. editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: open; parts, the MIDI parts it shows, in the track list's order and by position; activePart, the part active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the marker and ruler tracks the editor window shows above its events. The key editor's (pp. 1189-1220): selection, the selected notes, each {part, note}, of the editable parts; stepInput and midiInput, what editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, recordPitch, recordVelocity, recordReleaseVelocity and keepNotes, how they go in; insertVelocity (0-1), the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, a note value such as 1/16, 1/8T or 1/4., or link for the quantize grid's (quantize.set). The controller lanes' (pp. 1157-1188): lanes, from the top, each {type, number}: velocity, offVelocity, probability or velocityVariance (the notes' play probability and velocity variance), or the controller events of a type: controller (number is the controller), pitchBend, channelPressure, polyPressure (number is the pitch) or program; showLanes, whether the controller display shows them; autoSelectControllers, whether selecting notes selects the controller events from their start to their end; controllerSelection, the selected controller events, each {part, controller}, of the editable parts. View state: no undo steps, not saved, and a new or loaded project closes the editors.
 
 Parameters:
 
@@ -1142,6 +1164,8 @@ Returns:
 
 - `activePart`: integer, required
 - `activeTrack`: integer, required
+- `autoSelectControllers`: boolean, required
+- `controllerSelection`: array of object, required
 - `editable`: array of integer, required
 - `editingMode`: one of "allParts" | "activePart" | "activeTrack", required
 - `editor`: one of "lower" | "window", required
@@ -1149,6 +1173,7 @@ Returns:
 - `insertVelocity`: number, required
 - `keepContents`: boolean, required
 - `keepNotes`: boolean, required
+- `lanes`: array of object, required
 - `lengthQuantize`: string, required
 - `midiInput`: boolean, required
 - `moveInsert`: boolean, required
@@ -1158,12 +1183,13 @@ Returns:
 - `recordReleaseVelocity`: boolean, required
 - `recordVelocity`: boolean, required
 - `selection`: array of object, required
+- `showLanes`: boolean, required
 - `stepInput`: boolean, required
 - `stepPosition`: integer, required
 
 #### `gnubase.editor.get`
 
-What a MIDI editor shows. editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: open; parts, the MIDI parts it shows, in the track list's order and by position; activePart, the part active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the marker and ruler tracks the editor window shows above its events. The key editor's (pp. 1189-1220): selection, the selected notes, each {part, note}, of the editable parts; stepInput and midiInput, what editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, recordPitch, recordVelocity, recordReleaseVelocity and keepNotes, how they go in; insertVelocity (0-1), the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, a note value such as 1/16, 1/8T or 1/4., or link for the quantize grid's (quantize.set). View state: no undo steps, not saved, and a new or loaded project closes the editors.
+What a MIDI editor shows. editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: open; parts, the MIDI parts it shows, in the track list's order and by position; activePart, the part active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the marker and ruler tracks the editor window shows above its events. The key editor's (pp. 1189-1220): selection, the selected notes, each {part, note}, of the editable parts; stepInput and midiInput, what editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, recordPitch, recordVelocity, recordReleaseVelocity and keepNotes, how they go in; insertVelocity (0-1), the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, a note value such as 1/16, 1/8T or 1/4., or link for the quantize grid's (quantize.set). The controller lanes' (pp. 1157-1188): lanes, from the top, each {type, number}: velocity, offVelocity, probability or velocityVariance (the notes' play probability and velocity variance), or the controller events of a type: controller (number is the controller), pitchBend, channelPressure, polyPressure (number is the pitch) or program; showLanes, whether the controller display shows them; autoSelectControllers, whether selecting notes selects the controller events from their start to their end; controllerSelection, the selected controller events, each {part, controller}, of the editable parts. View state: no undo steps, not saved, and a new or loaded project closes the editors.
 
 Only reads; changes nothing.
 
@@ -1175,6 +1201,8 @@ Returns:
 
 - `activePart`: integer, required
 - `activeTrack`: integer, required
+- `autoSelectControllers`: boolean, required
+- `controllerSelection`: array of object, required
 - `editable`: array of integer, required
 - `editingMode`: one of "allParts" | "activePart" | "activeTrack", required
 - `editor`: one of "lower" | "window", required
@@ -1182,6 +1210,7 @@ Returns:
 - `insertVelocity`: number, required
 - `keepContents`: boolean, required
 - `keepNotes`: boolean, required
+- `lanes`: array of object, required
 - `lengthQuantize`: string, required
 - `midiInput`: boolean, required
 - `moveInsert`: boolean, required
@@ -1191,6 +1220,7 @@ Returns:
 - `recordReleaseVelocity`: boolean, required
 - `recordVelocity`: boolean, required
 - `selection`: array of object, required
+- `showLanes`: boolean, required
 - `stepInput`: boolean, required
 - `stepPosition`: integer, required
 
@@ -1210,7 +1240,7 @@ Returns:
 
 #### `gnubase.editor.open`
 
-Opens a MIDI editor with MIDI parts, such as the ones selected in the project window, or shows those parts in it if it is open. activePart becomes the part active for editing, by default the first. Emits editor.changed. editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: open; parts, the MIDI parts it shows, in the track list's order and by position; activePart, the part active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the marker and ruler tracks the editor window shows above its events. The key editor's (pp. 1189-1220): selection, the selected notes, each {part, note}, of the editable parts; stepInput and midiInput, what editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, recordPitch, recordVelocity, recordReleaseVelocity and keepNotes, how they go in; insertVelocity (0-1), the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, a note value such as 1/16, 1/8T or 1/4., or link for the quantize grid's (quantize.set). View state: no undo steps, not saved, and a new or loaded project closes the editors.
+Opens a MIDI editor with MIDI parts, such as the ones selected in the project window, or shows those parts in it if it is open. activePart becomes the part active for editing, by default the first. Emits editor.changed. editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: open; parts, the MIDI parts it shows, in the track list's order and by position; activePart, the part active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the marker and ruler tracks the editor window shows above its events. The key editor's (pp. 1189-1220): selection, the selected notes, each {part, note}, of the editable parts; stepInput and midiInput, what editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, recordPitch, recordVelocity, recordReleaseVelocity and keepNotes, how they go in; insertVelocity (0-1), the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, a note value such as 1/16, 1/8T or 1/4., or link for the quantize grid's (quantize.set). The controller lanes' (pp. 1157-1188): lanes, from the top, each {type, number}: velocity, offVelocity, probability or velocityVariance (the notes' play probability and velocity variance), or the controller events of a type: controller (number is the controller), pitchBend, channelPressure, polyPressure (number is the pitch) or program; showLanes, whether the controller display shows them; autoSelectControllers, whether selecting notes selects the controller events from their start to their end; controllerSelection, the selected controller events, each {part, controller}, of the editable parts. View state: no undo steps, not saved, and a new or loaded project closes the editors.
 
 Parameters:
 
@@ -1222,6 +1252,8 @@ Returns:
 
 - `activePart`: integer, required
 - `activeTrack`: integer, required
+- `autoSelectControllers`: boolean, required
+- `controllerSelection`: array of object, required
 - `editable`: array of integer, required
 - `editingMode`: one of "allParts" | "activePart" | "activeTrack", required
 - `editor`: one of "lower" | "window", required
@@ -1229,6 +1261,7 @@ Returns:
 - `insertVelocity`: number, required
 - `keepContents`: boolean, required
 - `keepNotes`: boolean, required
+- `lanes`: array of object, required
 - `lengthQuantize`: string, required
 - `midiInput`: boolean, required
 - `moveInsert`: boolean, required
@@ -1238,17 +1271,20 @@ Returns:
 - `recordReleaseVelocity`: boolean, required
 - `recordVelocity`: boolean, required
 - `selection`: array of object, required
+- `showLanes`: boolean, required
 - `stepInput`: boolean, required
 - `stepPosition`: integer, required
 
 #### `gnubase.editor.set`
 
-Changes what an open MIDI editor shows (reference manual pp. 1142-1156); what isn't given stays. parts replaces its parts. Then the Visibility tab's changes: exclusive hides every track first, showTracks shows every MIDI part of these tracks (all tracks in a folder) and activates the last, hideTracks hides theirs; at least one part stays. activeTrack activates the track's first part shown, activePart a part shown. editingMode, keepContents and globalTracks (marker and ruler tracks, the editor window only) also apply to a closed editor. selection replaces the selected notes, of the editable parts. The key editor's settings apply to any editor; turning stepInput on puts the step input cursor at the active part's start unless stepPosition is given. Emits editor.changed. editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: open; parts, the MIDI parts it shows, in the track list's order and by position; activePart, the part active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the marker and ruler tracks the editor window shows above its events. The key editor's (pp. 1189-1220): selection, the selected notes, each {part, note}, of the editable parts; stepInput and midiInput, what editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, recordPitch, recordVelocity, recordReleaseVelocity and keepNotes, how they go in; insertVelocity (0-1), the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, a note value such as 1/16, 1/8T or 1/4., or link for the quantize grid's (quantize.set). View state: no undo steps, not saved, and a new or loaded project closes the editors.
+Changes what an open MIDI editor shows (reference manual pp. 1142-1156); what isn't given stays. parts replaces its parts. Then the Visibility tab's changes: exclusive hides every track first, showTracks shows every MIDI part of these tracks (all tracks in a folder) and activates the last, hideTracks hides theirs; at least one part stays. activeTrack activates the track's first part shown, activePart a part shown. editingMode, keepContents and globalTracks (marker and ruler tracks, the editor window only) also apply to a closed editor. selection replaces the selected notes, of the editable parts. The key editor's settings apply to any editor; turning stepInput on puts the step input cursor at the active part's start unless stepPosition is given. lanes replaces the controller lanes; controllerSelection the selected controller events. With autoSelectControllers on, a new selection of notes, or turning it on, selects the controller events in the notes' ranges unless controllerSelection is given. Emits editor.changed. editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: open; parts, the MIDI parts it shows, in the track list's order and by position; activePart, the part active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the marker and ruler tracks the editor window shows above its events. The key editor's (pp. 1189-1220): selection, the selected notes, each {part, note}, of the editable parts; stepInput and midiInput, what editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, recordPitch, recordVelocity, recordReleaseVelocity and keepNotes, how they go in; insertVelocity (0-1), the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, a note value such as 1/16, 1/8T or 1/4., or link for the quantize grid's (quantize.set). The controller lanes' (pp. 1157-1188): lanes, from the top, each {type, number}: velocity, offVelocity, probability or velocityVariance (the notes' play probability and velocity variance), or the controller events of a type: controller (number is the controller), pitchBend, channelPressure, polyPressure (number is the pitch) or program; showLanes, whether the controller display shows them; autoSelectControllers, whether selecting notes selects the controller events from their start to their end; controllerSelection, the selected controller events, each {part, controller}, of the editable parts. View state: no undo steps, not saved, and a new or loaded project closes the editors.
 
 Parameters:
 
 - `activePart`: integer
 - `activeTrack`: integer
+- `autoSelectControllers`: boolean
+- `controllerSelection`: array of object
 - `editingMode`: one of "allParts" | "activePart" | "activeTrack"
 - `editor`: one of "lower" | "window", required
 - `exclusive`: boolean
@@ -1257,6 +1293,7 @@ Parameters:
 - `insertVelocity`: number
 - `keepContents`: boolean
 - `keepNotes`: boolean
+- `lanes`: array of object
 - `lengthQuantize`: string
 - `midiInput`: boolean
 - `moveInsert`: boolean
@@ -1265,6 +1302,7 @@ Parameters:
 - `recordReleaseVelocity`: boolean
 - `recordVelocity`: boolean
 - `selection`: array of object
+- `showLanes`: boolean
 - `showTracks`: array of integer
 - `stepInput`: boolean
 - `stepPosition`: integer
@@ -1273,6 +1311,8 @@ Returns:
 
 - `activePart`: integer, required
 - `activeTrack`: integer, required
+- `autoSelectControllers`: boolean, required
+- `controllerSelection`: array of object, required
 - `editable`: array of integer, required
 - `editingMode`: one of "allParts" | "activePart" | "activeTrack", required
 - `editor`: one of "lower" | "window", required
@@ -1280,6 +1320,7 @@ Returns:
 - `insertVelocity`: number, required
 - `keepContents`: boolean, required
 - `keepNotes`: boolean, required
+- `lanes`: array of object, required
 - `lengthQuantize`: string, required
 - `midiInput`: boolean, required
 - `moveInsert`: boolean, required
@@ -1289,6 +1330,7 @@ Returns:
 - `recordReleaseVelocity`: boolean, required
 - `recordVelocity`: boolean, required
 - `selection`: array of object, required
+- `showLanes`: boolean, required
 - `stepInput`: boolean, required
 - `stepPosition`: integer, required
 
@@ -2471,7 +2513,7 @@ Returns:
 
 #### `gnubase.note.add`
 
-Adds notes to a MIDI part: position from the part's start and length in ticks, pitch 0-127, velocity 0-1, release (note-off) velocity 0-1 (default 0.5), MIDI channel 0-15 (default 0).
+Adds notes to a MIDI part: position from the part's start and length in ticks, pitch 0-127, velocity 0-1, release (note-off) velocity 0-1 (default 0.5), MIDI channel 0-15 (default 0), play probability 0-1, the chance that the note plays (default 1), and velocity variance -1 to 1, the share by which playback raises (positive) or lowers (negative) its velocity at most (default 0).
 
 Parameters:
 
@@ -2481,6 +2523,21 @@ Parameters:
 Returns:
 
 - `notes`: array, required
+
+#### `gnubase.note.apply`
+
+Makes a MIDI part's notes play as they would (reference manual pp. 1171, 1173): what probability removes the notes that playback leaves out by their play probability and gives the others a probability of 1; velocityVariance gives notes the velocity playback varies them to and a variance of 0. Playback's choices are fixed for each note, so this keeps what plays. notes: the notes, by default all of the part's. Returns the notes changed and the ids of those removed.
+
+Parameters:
+
+- `notes`: array of integer
+- `part`: integer, required
+- `what`: one of "probability" | "velocityVariance", required
+
+Returns:
+
+- `notes`: array, required
+- `removed`: array of integer, required
 
 #### `gnubase.note.chord`
 
@@ -2508,7 +2565,7 @@ Parameters:
 
 #### `gnubase.note.set`
 
-Changes notes of a MIDI part: each change names a note by id and gives what changes, position and length in ticks, pitch 0-127, velocity 0-1, release velocity 0-1 or MIDI channel 0-15. Returns the changed notes.
+Changes notes of a MIDI part: each change names a note by id and gives what changes, position and length in ticks, pitch 0-127, velocity 0-1, release velocity 0-1, MIDI channel 0-15, play probability 0-1 or velocity variance -1 to 1 (see note.add). Returns the changed notes.
 
 Parameters:
 

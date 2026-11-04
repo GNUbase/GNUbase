@@ -597,6 +597,10 @@ namespace gnubase::engine
 		if (note.origin)
 			json["origin"] = {
 				{"original", timingJson(note.origin->original)}, {"quantized", timingJson(note.origin->quantized)}};
+		if (note.probability != 1.0) // the defaults are left out
+			json["probability"] = note.probability;
+		if (note.velocityVariance != 0.0)
+			json["velocityVariance"] = note.velocityVariance;
 		return json;
 	}
 
@@ -1485,6 +1489,8 @@ namespace gnubase::engine
 				if (n.contains("origin"))
 					note.origin = QuantizeOrigin{
 						timingFrom(n.at("origin").at("original")), timingFrom(n.at("origin").at("quantized"))};
+				note.probability = std::clamp(n.value("probability", 1.0), 0.0, 1.0);
+				note.velocityVariance = std::clamp(n.value("velocityVariance", 0.0), -1.0, 1.0);
 				part.notes[note.id] = note;
 			}
 			for (const Json& c : item.at("controllers"))
