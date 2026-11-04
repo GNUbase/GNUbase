@@ -381,8 +381,8 @@ namespace gnubase::engine
 				"file's peak in dBFS (-60 to 0). conflicts: unique (the default) adds a number to a name that is "
 				"taken, overwrite replaces the file. The transport and its settings are as before afterwards; a device "
 				"that runs stops meanwhile, and plugins render in offline mode. Refused while the device runs at "
-				"another sample rate than the project. Returns the files written, each with its channel, name, absolute path and "
-				"frames.",
+				"another sample rate than the project. Returns the files written, each with its channel, name, "
+				"absolute path and frames.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["folder", "name"],
 					"properties": {"folder": {"type": "string"}, "name": {"type": "string", "minLength": 1},
 					"channels": {"type": "array", "items": {"type": "integer"}},
@@ -436,9 +436,8 @@ namespace gnubase::engine
 				"Quick audio export (reference manual pp. 1478-1479): writes the main mix of the whole project, from "
 				"the start of the first event to the end of the last, with the tail of the effects after it (up to 30 "
 				"s, to the last sample a 24-bit file doesn't hold as silence), to the WAV file at path with 24-bit "
-				"samples at the project's sample rate, as mixdown.export does, and is refused when it is. An existing file "
-				"is replaced. Returns "
-				"its absolute path and frames.",
+				"samples at the project's sample rate, as mixdown.export does, and is refused when it is. An existing "
+				"file is replaced. Returns its absolute path and frames.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["path"],
 					"properties": {"path": {"type": "string", "minLength": 1}}})"),
 				Json::parse(R"({"type": "object", "required": ["path", "frames"], "properties": {
