@@ -115,6 +115,7 @@ add_library(gnubase-engine STATIC
 	document/eventedits.cpp
 	document/fadeedits.cpp
 	document/history.cpp document/history.h
+	document/linkgroups.cpp document/linkgroups.h
 	document/markers.cpp
 	document/midiedits.cpp
 	document/midifilecommands.cpp
@@ -126,6 +127,7 @@ add_library(gnubase-engine STATIC
 	document/projectmodel.cpp document/projectmodel.h
 	document/recording.cpp
 	document/rendersnapshot.cpp document/rendersnapshot.h
+	document/sampleeditor.cpp document/sampleeditor.h
 	document/serialize.cpp document/serialize.h
 	document/signature.cpp
 	document/snap.cpp document/snap.h

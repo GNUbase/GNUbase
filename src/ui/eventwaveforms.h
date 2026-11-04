@@ -79,7 +79,10 @@ namespace gnubase::ui
 		void update(Wave& wave);
 		bool covers(const Wave& wave, const Question& question) const; // what the view shows of the event
 		void ask(Wave& wave, double from, double to);
-		void answered(const Event& event, const Question& question, const engine::Result& result);
+		// An event can have more than one wave, e.g. on its track's lane and on its own lane (#99): a wave is its
+		// event's and the how-manieth of that event's it is.
+		size_t ordinal(const Wave& wave) const;
+		void answered(const Event& event, size_t ordinal, const Question& question, const engine::Result& result);
 
 		EngineBinding& m_binding;
 		Rml::ObserverPtr<Rml::Element> m_container;

@@ -62,7 +62,7 @@ namespace gnubase::app
 			const char* keys;
 		};
 
-		constexpr std::array<ProjectCommand, 76> g_projectCommands{{
+		constexpr std::array<ProjectCommand, 77> g_projectCommands{{
 			{"zoom.in", "Zooms the project window in.", "H"},
 			{"zoom.out", "Zooms the project window out.", "G"},
 			{"zoom.inVertically", "Makes the project window's tracks taller.", "Shift+H"},
@@ -153,6 +153,7 @@ namespace gnubase::app
 			{"tool.draw", "Chooses the draw tool in the project window.", "8"},
 			{"tool.play", "Chooses the play tool in the project window.", "9"},
 			{"tool.line", "Chooses the line tool in the project window.", nullptr},
+			{"tool.comp", "Chooses the comp tool in the project window.", nullptr},
 			{"tool.previous", "Chooses the project window's previous tool.", "F9"},
 			{"tool.next", "Chooses the project window's next tool.", "F10"},
 			{"tool.combineSelectionTools", "Switches combining the selection tools on or off.", "Alt+Shift+1"},
@@ -191,7 +192,7 @@ namespace gnubase::app
 		}
 
 		// The track list's commands (ui::TrackList::actions, docs/features/track-list.md) and their keys.
-		constexpr std::array<ProjectCommand, 20> g_trackCommands{{
+		constexpr std::array<ProjectCommand, 21> g_trackCommands{{
 			{"track.selectPrevious",
 				"Selects the track above the selected one, and its first event while an event is selected.", "Up"},
 			{"track.selectNext",
@@ -218,6 +219,9 @@ namespace gnubase::app
 				"Shows the automation tracks of the selected tracks, or hides them if every one shows them.", nullptr},
 			{"track.showUsedAutomation", "Shows the automation tracks with automation on every track.", nullptr},
 			{"track.hideAllAutomation", "Hides every automation track.", nullptr},
+			// Lanes (docs/features/comping.md).
+			{"track.toggleLanesSelected",
+				"Shows the lanes of the selected tracks, or hides them if every one shows them.", nullptr},
 		}};
 	}
 
@@ -947,6 +951,8 @@ namespace gnubase::app
 			{ return std::make_shared<ui::MidiEditor>(m_binding, element, "window", ui::EditorPart::GlobalTracks); }});
 		m_editorSubscriptions.push_back(
 			m_binding.on("editor.changed", [this](const engine::Event& event) { followEditor(event.data); }));
+		m_editorSubscriptions.push_back(m_binding.on(
+			"sampleEditor.changed", [this](const engine::Event& event) { followSampleEditor(event.data); }));
 		// A new project closes the editors.
 		const auto request = [this]
 		{
@@ -957,17 +963,26 @@ namespace gnubase::app
 						if (result.ok())
 							followEditor(result.value);
 					});
+			m_binding.send("sampleEditor.get", engine::Json::object(),
+				[this](const engine::Result& result)
+				{
+					if (result.ok())
+						followSampleEditor(result.value);
+				});
 		};
 		m_editorSubscriptions.push_back(m_binding.on("project.reset", [request](const engine::Event&) { request(); }));
 		request();
 		// Open/Close Editor (Mod+E and Return, p. 1189) opens the selected MIDI parts in the editor window, or closes
-		// it without any; the other one does the same in the lower zone.
+		// it without any; the other one does the same in the lower zone. Without MIDI parts, the editor window's
+		// command opens the first selected audio event in the sample editor (p. 613), or closes that too.
 		for (const bool lower : {false, true})
 		{
 			const std::string editor = lower ? "lower" : "window";
 			m_keys.add({lower ? "window.lowerZoneEditor" : "editor.openClose",
 				lower ? "Opens the selected MIDI parts in the editor in the project window's lower zone, or closes it."
-					  : "Opens the selected MIDI parts in the editor window, or closes it.",
+					  : "Opens the selected MIDI parts in the editor window, or else the first selected audio event in "
+						"the "
+						"sample editor, or closes them.",
 				[this, editor](ui::Window&, Rml::Element*)
 				{
 					const std::vector<uint64_t> parts = selectedParts();
@@ -978,9 +993,16 @@ namespace gnubase::app
 						if (editor == "lower")
 							m_docking.open("editor");
 					}
+					else if (const std::vector<uint64_t> events = selectedAudioEvents();
+						!events.empty() && editor == "window")
+					{
+						m_binding.send("sampleEditor.open", {{"event", events.front()}});
+					}
 					else
 					{
 						m_binding.send("editor.close", {{"editor", editor}});
+						if (editor == "window")
+							m_binding.send("sampleEditor.close");
 					}
 				}});
 		}
@@ -1011,6 +1033,54 @@ namespace gnubase::app
 				parts.push_back(id);
 		}
 		return parts;
+	}
+
+	std::vector<uint64_t> AppUi::selectedAudioEvents() const
+	{
+		std::vector<uint64_t> events;
+		if (!m_eventDisplay || !m_eventDisplay->project().is_object())
+			return events;
+		const std::vector<uint64_t>& selected = m_eventDisplay->selection();
+		for (const engine::Json& event : m_eventDisplay->project().value("audioEvents", engine::Json::array()))
+		{
+			const auto id = event.at("id").get<uint64_t>();
+			if (std::find(selected.begin(), selected.end(), id) != selected.end())
+				events.push_back(id);
+		}
+		return events;
+	}
+
+	void AppUi::followSampleEditor(const engine::Json& view)
+	{
+		const bool open = view.at("open").get<bool>();
+		const bool shown = m_sampleEditor.window != 0 && m_shell.find(m_sampleEditor.window) != nullptr;
+		if (open == shown)
+			return;
+		m_sampleEditor.editor.reset();
+		if (shown)
+		{
+			m_shell.close(m_sampleEditor.window);
+			m_sampleEditor.window = 0;
+			return;
+		}
+		ui::WindowSpec spec;
+		spec.title = "Sample Editor";
+		spec.size = {1000, 600};
+		spec.hidden = m_hidden;
+		const ui::Window& window = m_shell.open(spec);
+		m_sampleEditor.window = window.id();
+		const std::filesystem::path file = m_resources / "ui" / "sample-editor.rml";
+		Rml::ElementDocument* document = window.context().LoadDocument(file.generic_u8string());
+		Rml::Element* root = document != nullptr ? document->GetElementById("sample-editor") : nullptr;
+		if (root == nullptr)
+		{
+			m_shell.close(m_sampleEditor.window);
+			m_sampleEditor.window = 0;
+			logging::error("Cannot load the sample editor window from {}", file.u8string());
+			return;
+		}
+		document->Show();
+		m_sampleEditor.editor = std::make_unique<ui::SampleEditor>(m_binding, *root);
 	}
 
 	void AppUi::followEditor(const engine::Json& view)
@@ -1069,6 +1139,12 @@ namespace gnubase::app
 			m_editor.editor.reset();
 			m_editor.window = 0;
 			m_binding.send("editor.close", {{"editor", "window"}});
+		}
+		if (m_sampleEditor.window != 0 && m_shell.find(m_sampleEditor.window) == nullptr)
+		{
+			m_sampleEditor.editor.reset();
+			m_sampleEditor.window = 0;
+			m_binding.send("sampleEditor.close");
 		}
 		const auto open = [this](const char* editor)
 		{ return m_editorViews.value(editor, engine::Json::object()).value("open", false); };

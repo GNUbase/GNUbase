@@ -37,6 +37,7 @@ namespace gnubase::engine
 			{TrackType::Ruler, "ruler"},
 			{TrackType::Tempo, "tempo"},
 			{TrackType::Signature, "signature"},
+			{TrackType::Vca, "vca"},
 		};
 
 		constexpr struct
@@ -570,10 +571,18 @@ namespace gnubase::engine
 			{"length", media.length}};
 	}
 
+	Json toJson(const ClipRegion& region)
+	{
+		return {{"id", region.id}, {"name", region.name}, {"start", region.start}, {"end", region.end}};
+	}
+
 	Json toJson(const Clip& clip)
 	{
+		Json regions = Json::array();
+		for (const ClipRegion& region : clip.regions)
+			regions.push_back(toJson(region));
 		return {{"id", clip.id}, {"name", clip.name}, {"media", clip.media}, {"fadeIn", toJson(clip.fadeIn)},
-			{"fadeOut", toJson(clip.fadeOut)}, {"folder", clip.folder}};
+			{"fadeOut", toJson(clip.fadeOut)}, {"folder", clip.folder}, {"regions", std::move(regions)}};
 	}
 
 	Json toJson(const PoolFolder& folder)
@@ -588,7 +597,7 @@ namespace gnubase::engine
 			{"lock", event.lock}, {"fadeIn", toJson(event.fadeIn)}, {"fadeOut", toJson(event.fadeOut)},
 			{"crossfade", toJson(event.crossfade)}, {"snapPoint", event.snapPoint ? Json(*event.snapPoint) : Json()},
 			{"color", colorJson(event.color)}, {"part", event.part}, {"lane", event.lane},
-			{"volumeCurve", toJson(event.volumeCurve)}};
+			{"volumeCurve", toJson(event.volumeCurve)}, {"front", event.front}};
 	}
 
 	Json toJson(const AudioPart& part)
@@ -672,6 +681,26 @@ namespace gnubase::engine
 			{"number", marker.number}, {"position", marker.position.value},
 			{"end", marker.type == MarkerType::Cycle ? Json(marker.end.value) : Json(nullptr)}, {"name", marker.name},
 			{"color", colorJson(marker.color)}};
+	}
+
+	Json toJson(const LinkGroup& group)
+	{
+		return {{"id", group.id}, {"name", group.name}, {"channels", group.channels}, {"volume", group.volume},
+			{"pan", group.pan}, {"mute", group.mute}, {"record", group.record}, {"vca", group.vca}};
+	}
+
+	LinkGroup linkGroupFromJson(const Json& json, const LinkGroup& fallback)
+	{
+		LinkGroup group = fallback;
+		group.id = json.value("id", group.id);
+		group.name = json.value("name", group.name);
+		group.channels = json.value("channels", group.channels);
+		group.volume = json.value("volume", group.volume);
+		group.pan = json.value("pan", group.pan);
+		group.mute = json.value("mute", group.mute);
+		group.record = json.value("record", group.record);
+		group.vca = json.value("vca", group.vca);
+		return group;
 	}
 
 	Json toJson(const AutomationTarget& target)
@@ -808,9 +837,10 @@ namespace gnubase::engine
 			{"poolFolders", toJsonArray(project.poolFolders)}, {"audioEvents", toJsonArray(project.audioEvents)},
 			{"audioParts", toJsonArray(project.audioParts)}, {"midiParts", toJsonArray(project.midiParts)},
 			{"markers", toJsonArray(project.markers)}, {"automation", toJsonArray(project.automation)},
-			{"virginTerritory", project.virginTerritory}, {"quantize", midi::toJson(project.quantize)},
-			{"autoQuantize", project.autoQuantize}, {"activeMarkerTrack", project.activeMarkerTrack},
-			{"snap", toJson(project.snap)}, {"mixers", mixersJson(project.mixers)}};
+			{"linkGroups", toJsonArray(project.linkGroups)}, {"virginTerritory", project.virginTerritory},
+			{"quantize", midi::toJson(project.quantize)}, {"autoQuantize", project.autoQuantize},
+			{"activeMarkerTrack", project.activeMarkerTrack}, {"snap", toJson(project.snap)},
+			{"mixers", mixersJson(project.mixers)}};
 		json.update(toJson(project.setup));
 		return json;
 	}
@@ -1345,18 +1375,19 @@ namespace gnubase::engine
 			// Files from before instrument parameters have none.
 			channel.instrumentParameters = instrumentParametersFromJson(
 				item.value("instrumentParameters", Json::array()), channel.instrument, name);
-			// Audio, MIDI and instrument tracks have the buttons; files from before them have them off. MIDI input
-			// other than none is all MIDI inputs, also in files from before it.
+			// Audio, MIDI and instrument tracks and VCA faders have the buttons; files from before them have them off.
+			// MIDI input other than none is all MIDI inputs, also in files from before it.
 			const TrackType type = track != project.trackById.end() ? track->second.type : TrackType::Folder;
 			const bool midi = type == TrackType::Midi || type == TrackType::Instrument;
-			const bool buttons = type == TrackType::Audio || midi;
+			const bool buttons = type == TrackType::Audio || midi || type == TrackType::Vca;
 			channel.monitor = buttons && item.value("monitor", false);
 			channel.recordEnable = buttons && item.value("recordEnable", false);
 			channel.midiInput = midi && item.value("midiInput", std::string()) == "none" ? "none" : "all";
 			channel.mute = item.value("mute", false); // files from before mute and solo have neither
 			channel.solo = item.value("solo", false);
 			channel.soloDefeat = item.value("soloDefeat", false); // files from before #109 have neither
-			channel.listen = channel.format != ChannelFormat::None && item.value("listen", false);
+			channel.listen =
+				(channel.format != ChannelFormat::None || type == TrackType::Vca) && item.value("listen", false);
 			channel.slots = item.value("slots", std::vector<ObjectId>()); // files from before #282 have none
 			channel.notes = item.value("notes", std::string());           // files from before #89 have none
 			channel.sections = sectionsFromJson(item);                    // files from before #107 have them off
@@ -1419,9 +1450,18 @@ namespace gnubase::engine
 		for (const Json& item : json.at("clips"))
 		{
 			const auto id = item.at("id").get<ObjectId>();
+			// Files from before regions (#140) have none; regions that aren't sections of the clip are left out.
+			std::vector<ClipRegion> regions;
+			for (const Json& region : item.value("regions", Json::array()))
+			{
+				ClipRegion read{region.at("id").get<ObjectId>(), region.value("name", std::string()),
+					region.at("start").get<time::Samples>(), region.at("end").get<time::Samples>()};
+				if (read.start >= 0 && read.start < read.end)
+					regions.push_back(std::move(read));
+			}
 			project.clips[id] = {id, item.at("name").get<std::string>(), item.at("media").get<ObjectId>(),
 				fadeFromJson(item.value("fadeIn", Json::object())), fadeFromJson(item.value("fadeOut", Json::object())),
-				item.value("folder", ObjectId{0})};
+				item.value("folder", ObjectId{0}), std::move(regions)};
 		}
 		// Files from before the pool's folders have none. Folders inside folders that aren't there go to the top, and
 		// of each loop of folders inside each other the first one; clips in folders that aren't there go to the
@@ -1471,6 +1511,7 @@ namespace gnubase::engine
 			event.volumeCurve = volumeCurveFromJson(item.value("volumeCurve", Json::array())); // files from before #139
 			event.part = item.value("part", ObjectId{0});    // files from before #471 have no audio parts
 			event.lane = std::max(0, item.value("lane", 0)); // files from before #98 have no lanes
+			event.front = item.value("front", ObjectId{0});  // nor from before #99 a stack order
 			project.audioEvents[event.id] = event;
 		}
 		for (const Json& item : json.value("audioParts", Json::array()))
@@ -1558,6 +1599,24 @@ namespace gnubase::engine
 			const ObjectId id = lane.id;
 			project.automation[id] = std::move(lane);
 		}
+		// Files from before link groups (#110) have none. A channel stays in its first group; channels that are gone
+		// and controllers that aren't VCA faders, or control another group already, are left out.
+		for (const Json& item : json.value("linkGroups", Json::array()))
+		{
+			LinkGroup group = linkGroupFromJson(item);
+			std::vector<ObjectId> channels;
+			for (const ObjectId channel : group.channels)
+				if (project.channels.count(channel) != 0 && linkGroupOf(project, channel) == nullptr &&
+					std::find(channels.begin(), channels.end(), channel) == channels.end())
+					channels.push_back(channel);
+			group.channels = std::move(channels);
+			const auto vca = project.channels.find(group.vca);
+			if (vca == project.channels.end() || project.trackById.at(vca->second.track).type != TrackType::Vca ||
+				controlledBy(project, group.vca) != nullptr)
+				group.vca = 0;
+			group.volume = group.volume && group.vca == 0;
+			project.linkGroups[group.id] = std::move(group);
+		}
 		project.virginTerritory = json.value("virginTerritory", false); // files from before #124 have none
 		// Files from before quantizing have neither.
 		if (json.contains("quantize"))
@@ -1587,7 +1646,10 @@ namespace gnubase::engine
 		for (const auto& [id, folder] : project.poolFolders)
 			see(id);
 		for (const auto& [id, event] : project.audioEvents)
+		{
 			see(id);
+			see(event.front);
+		}
 		for (const auto& [id, part] : project.audioParts)
 			see(id);
 
@@ -1600,6 +1662,8 @@ namespace gnubase::engine
 				see(controllerId);
 		}
 		for (const auto& [id, marker] : project.markers)
+			see(id);
+		for (const auto& [id, group] : project.linkGroups)
 			see(id);
 		for (const auto& [id, lane] : project.automation)
 		{

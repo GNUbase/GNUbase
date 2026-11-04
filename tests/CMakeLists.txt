@@ -38,6 +38,7 @@ add_executable(gnubase-tests
 	channelstrip_tests.cpp
 	clock_tests.cpp
 	color_tests.cpp
+	comping_tests.cpp
 	coverage_tests.cpp
 	dawproject_tests.cpp
 	debugreports.cpp
@@ -65,6 +66,7 @@ add_executable(gnubase-tests
 	keyeditor_tests.cpp
 	keyeditor_ui_tests.cpp
 	latency_tests.cpp
+	linkgroups_tests.cpp
 	listeditor_tests.cpp
 	listeditor_ui_tests.cpp
 	lockrecord_tests.cpp
@@ -109,6 +111,8 @@ add_executable(gnubase-tests
 	rmlui_tests.cpp
 	routing_tests.cpp
 	rt_tests.cpp
+	sampleeditor_tests.cpp
+	sampleeditor_ui_tests.cpp
 	scripting_tests.cpp
 	sequencing_tests.cpp
 	settings_tests.cpp

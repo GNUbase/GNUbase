@@ -14,6 +14,7 @@
 #include <array>
 #include <cmath>
 #include <map>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -311,9 +312,19 @@ namespace gnubase::ui
 		m_laneTypes.clear();
 		m_laneLinear.clear();
 		m_laneAutomation.clear();
+		m_laneTakes.clear();
 		m_events.clear();
 		m_fades.clear();
 		readAutomation(project);
+		// Each track's highest lane (#99), and the display lane of each lane of a track whose lanes show.
+		std::map<uint64_t, int> topLanes;
+		for (const char* kind : {"audioEvents", "audioParts", "midiParts"})
+			for (const Json& item : project.at(kind))
+			{
+				int& top = topLanes[item.at("track").get<uint64_t>()];
+				top = std::max(top, item.value("lane", 0));
+			}
+		std::map<std::pair<uint64_t, int>, size_t> takeLanes;
 		for (const Json& track : project.at("tracks"))
 		{
 			const auto id = track.at("id").get<uint64_t>();
@@ -331,7 +342,20 @@ namespace gnubase::ui
 			m_laneTypes.push_back(track.at("type").get<std::string>());
 			m_laneLinear.push_back(linear[id]);
 			m_laneAutomation.push_back(0);
-			// Its automation tracks below it (#121).
+			m_laneTakes.push_back(-1);
+			// Its lanes (#99), then its automation tracks below it (#121).
+			const std::string type = track.at("type").get<std::string>();
+			if (lanesShown(id) && (type == "audio" || type == "instrument" || type == "midi"))
+				for (int take = 0; take <= topLanes[id]; ++take)
+				{
+					takeLanes[{id, take}] = m_tracks.size();
+					m_tracks.push_back({static_cast<float>(trackHeight(id)), {}});
+					m_laneTracks.push_back(id);
+					m_laneTypes.push_back(type);
+					m_laneLinear.push_back(linear[id]);
+					m_laneAutomation.push_back(0);
+					m_laneTakes.push_back(take);
+				}
 			for (const uint64_t lane : openLanes(id))
 			{
 				m_tracks.push_back({static_cast<float>(g_trackHeight), {}});
@@ -339,6 +363,7 @@ namespace gnubase::ui
 				m_laneTypes.emplace_back("automation");
 				m_laneLinear.push_back(linear[id]);
 				m_laneAutomation.push_back(lane);
+				m_laneTakes.push_back(-1);
 			}
 		}
 		const auto seconds = [this](int64_t position, bool isLinear)
@@ -351,7 +376,15 @@ namespace gnubase::ui
 			clipMedia[clip.at("id").get<uint64_t>()] = clip.at("media").get<uint64_t>();
 		m_folderData.assign(m_tracks.size(), {});
 		m_end = 0.0;
-		const auto addEvent = [&](const Json& event, double start, double end)
+		// The display lane of an event's own lane, if its track's lanes show.
+		const auto takeLane = [&takeLanes](const Json& event)
+		{
+			const auto found = takeLanes.find({event.at("track").get<uint64_t>(), event.value("lane", 0)});
+			return found == takeLanes.end() ? std::optional<size_t>() : found->second;
+		};
+		// With onTrackLane false, the track's lane gets no span for it: audio events show there where they are in
+		// front.
+		const auto addEvent = [&](const Json& event, double start, double end, bool onTrackLane = true)
 		{
 			const auto track = event.at("track").get<uint64_t>();
 			// Its own color, or else its track's (reference manual p. 114).
@@ -365,9 +398,16 @@ namespace gnubase::ui
 					m_folderData[lane->second].events.push_back(span);
 			if (lanes.count(track) == 0)
 				return;
-			m_tracks[lanes[track]].events.push_back(span);
+			if (onTrackLane)
+				m_tracks[lanes[track]].events.push_back(span);
 			m_events.push_back(
 				{event.at("id").get<uint64_t>(), lanes[track], start, end, event.value("mute", false), std::nullopt});
+			if (const std::optional<size_t> taken = takeLane(event))
+			{
+				m_tracks[*taken].events.push_back(span);
+				m_events.push_back(
+					{event.at("id").get<uint64_t>(), *taken, start, end, event.value("mute", false), std::nullopt});
+			}
 			m_end = std::max(m_end, end);
 		};
 		// Audio parts (#471) show as parts; their events only as the waveforms within them.
@@ -382,8 +422,27 @@ namespace gnubase::ui
 			addEvent(part, start, end);
 		}
 		std::vector<EventWaveforms::Event> waves;
+		// Audio events in the order they are stacked, the one in front last, so that a click finds it (#99).
+		std::vector<const Json*> stacked;
 		for (const Json& event : project.at("audioEvents"))
+			stacked.push_back(&event);
+		const auto front = [](const Json* event)
 		{
+			const auto own = event->value("front", uint64_t{0});
+			return own != 0 ? own : event->at("id").get<uint64_t>();
+		};
+		std::stable_sort(
+			stacked.begin(), stacked.end(), [&front](const Json* a, const Json* b) { return front(a) < front(b); });
+		// What a track's lane shows of its audio events: where none in front of them covers them.
+		struct Piece
+		{
+			TimeSpan span;
+			EventWaveforms::Event wave; // with media 0 for none
+		};
+		std::map<size_t, std::vector<Piece>> pieces; // by lane
+		for (const Json* stackedEvent : stacked)
+		{
+			const Json& event = *stackedEvent;
 			const auto track = event.at("track").get<uint64_t>();
 			const auto file = media.find(clipMedia[event.at("clip").get<uint64_t>()]);
 			const double rate = file == media.end() ? 0.0 : file->second->at("sampleRate").get<double>();
@@ -399,21 +458,61 @@ namespace gnubase::ui
 						event.at("offset").get<int64_t>() + static_cast<int64_t>(std::llround((from - start) * rate))});
 				continue;
 			}
-			addEvent(event, start, start + length);
+			addEvent(event, start, start + length, false);
+			if (lanes.count(track) != 0)
+			{
+				const Json& own = event.at("color");
+				Piece piece{{start, length, own.is_string() ? spanColor(own.get<std::string>()) : colors[track]}, {}};
+				if (file != media.end() && rate > 0.0)
+					piece.wave = {event.at("id").get<uint64_t>(), lanes[track], {start, length}, file->first, rate,
+						file->second->at("channels").get<int>(), event.at("offset").get<int64_t>()};
+				std::vector<Piece> covered;
+				for (const Piece& other : pieces[lanes[track]])
+				{
+					// What lies before it and after it stays.
+					if (other.span.start < start)
+					{
+						Piece before = other;
+						before.span.length = std::min(other.span.end(), start) - other.span.start;
+						covered.push_back(before);
+					}
+					if (other.span.end() > start + length)
+					{
+						Piece after = other;
+						after.span.start = std::max(other.span.start, start + length);
+						after.span.length = other.span.end() - after.span.start;
+						covered.push_back(after);
+					}
+				}
+				covered.push_back(piece);
+				pieces[lanes[track]] = std::move(covered);
+			}
 
 			// The snap point counts while it is inside the event.
 			const Json& snapPoint = event.at("snapPoint");
 			const double into = snapPoint.is_null() || rate <= 0.0
 				? -1.0
 				: (snapPoint.get<double>() - event.at("offset").get<double>()) / rate;
-			if (!m_events.empty() && m_events.back().id == event.at("id") && into >= 0.0 && into < length)
-				m_events.back().snapPoint = start + into;
+			for (auto shown = m_events.rbegin(); shown != m_events.rend() && shown->id == event.at("id"); ++shown)
+				if (into >= 0.0 && into < length)
+					shown->snapPoint = start + into;
 			if (rate > 0.0)
 				readFades(event, rate);
-			if (file != media.end() && rate > 0.0 && lanes.count(track) != 0)
-				waves.push_back({event.at("id").get<uint64_t>(), lanes[track], {start, length}, file->first, rate,
+			if (const std::optional<size_t> taken = takeLane(event); taken && file != media.end() && rate > 0.0)
+				waves.push_back({event.at("id").get<uint64_t>(), *taken, {start, length}, file->first, rate,
 					file->second->at("channels").get<int>(), event.at("offset").get<int64_t>()});
 		}
+		for (const auto& [lane, shown] : pieces)
+			for (const Piece& piece : shown)
+			{
+				m_tracks[lane].events.push_back(piece.span);
+				if (piece.wave.media == 0)
+					continue;
+				EventWaveforms::Event wave = piece.wave;
+				wave.offset += std::llround((piece.span.start - wave.time.start) * wave.sampleRate);
+				wave.time = {piece.span.start, piece.span.length};
+				waves.push_back(wave);
+			}
 		m_waveforms->setEvents(waves);
 		for (const Json& part : project.at("midiParts"))
 		{
@@ -706,6 +805,18 @@ namespace gnubase::ui
 		if (tracks == m_hidden)
 			return;
 		m_hidden = std::move(tracks);
+		if (m_project.is_object())
+			loadProject(m_project);
+	}
+
+	void EventDisplay::showLanes(uint64_t track, bool shown)
+	{
+		if (shown == lanesShown(track))
+			return;
+		if (shown)
+			m_lanesShown.insert(track);
+		else
+			m_lanesShown.erase(track);
 		if (m_project.is_object())
 			loadProject(m_project);
 	}
@@ -1027,6 +1138,7 @@ namespace gnubase::ui
 		case Drag::Rectangle:
 		case Drag::Range:
 		case Drag::DrawPart:
+		case Drag::Comp:
 		case Drag::Play:
 		case Drag::Click:
 		case Drag::FadeIn:

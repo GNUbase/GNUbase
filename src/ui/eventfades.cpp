@@ -202,7 +202,7 @@ namespace gnubase::ui
 		m_fadeLines->setLanes(std::move(lanes));
 	}
 
-	void EventDisplay::openCrossfadeAt(const Shown& shown, double seconds)
+	bool EventDisplay::openCrossfadeAt(const Shown& shown, double seconds)
 	{
 		// The crossfades into and out of the event, where the two events overlap (reference manual p. 389).
 		for (const auto& [to, fades] : m_fades)
@@ -216,9 +216,10 @@ namespace gnubase::ui
 			if (from != m_events.end() && into != m_events.end() && seconds >= into->start && seconds < from->end)
 			{
 				openFadeDialog("crossfade.rml", {{"from", std::to_string(from->id)}, {"to", std::to_string(to)}});
-				return;
+				return true;
 			}
 		}
+		return false;
 	}
 
 	void EventDisplay::openFadeDialog(
