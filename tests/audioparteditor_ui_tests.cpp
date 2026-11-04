@@ -252,6 +252,20 @@ TEST_CASE("the object selection tool selects events and moves them in time and a
 	CHECK(f.app.call("sampleEditor.get").at("event") == f.second);
 }
 
+TEST_CASE("a click with the object selection tool selects an event off the grid without moving it", "[ui]")
+{
+	Fixture f;
+	const int64_t offGrid = (g_second * 3) / 10; // 0.3 seconds, between sixteenths
+	f.app.call("event.move", {{"events", {f.first}}, {"delta", offGrid}});
+	f.open();
+	f.click(f.at(0.4, 0));
+	REQUIRE(f.app.waitUntil([&] { return f.selection() == std::vector<uint64_t>{f.first}; }));
+	// Commands from the click's release come before this one.
+	f.click(f.at(1.25, 0), 1, {"shift"});
+	REQUIRE(f.app.waitUntil([&] { return f.selection().size() == 2; }));
+	CHECK(f.event(f.first).at("position") == offGrid);
+}
+
 TEST_CASE("the split, glue, mute and erase tools edit the events in the part", "[ui]")
 {
 	Fixture f;

@@ -97,6 +97,8 @@ namespace gnubase::ui
 		std::pair<double, int> at(const Rml::Event& event) const;
 		// To the project's quantize grid.
 		double snap(double seconds) const;
+		// Whether the mouse has moved past the drag threshold since the press: until then a press is a click.
+		bool dragged(const Rml::Event& event);
 		int64_t samples(double seconds) const;
 		const Event* eventOf(Rml::Element* element) const;
 		bool selected(const Event& event) const;
@@ -123,6 +125,8 @@ namespace gnubase::ui
 
 		Gesture m_gesture = Gesture::None;
 		std::pair<double, int> m_pressedAt;
+		Rml::Vector2f m_pressedMouse; // px
+		bool m_dragged = false;
 		std::optional<Event> m_pressed;            // the event pressed, as it was
 		uint64_t m_auditioned = 0;                 // the track the play or scrub tool auditions
 		Rml::ObserverPtr<Rml::Element> m_document; // whose resize fits the waveforms to the display again

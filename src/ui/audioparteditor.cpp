@@ -25,6 +25,7 @@ namespace gnubase::ui
 	namespace
 	{
 		constexpr double g_laneHeight = 48.0; // dp, each lane of the part display
+		constexpr double g_dragThreshold = 3.0; // dp the mouse moves before a press becomes a drag
 
 		constexpr std::array<std::pair<AudioPartTool, const char*>, 7> g_tools = {{
 			{AudioPartTool::ObjectSelection, "objectSelection"},
@@ -458,6 +459,14 @@ namespace gnubase::ui
 			std::llround(std::round(static_cast<double>(time.tempo.toTicks(seconds)) / step) * step));
 	}
 
+	bool AudioPartEditor::dragged(const Rml::Event& event)
+	{
+		const double dx = (event.GetParameter("mouse_x", 0.0F) - m_pressedMouse.x) / dpRatio();
+		const double dy = (event.GetParameter("mouse_y", 0.0F) - m_pressedMouse.y) / dpRatio();
+		m_dragged = m_dragged || std::abs(dx) >= g_dragThreshold || std::abs(dy) >= g_dragThreshold;
+		return m_dragged;
+	}
+
 	int64_t AudioPartEditor::samples(double seconds) const
 	{
 		return std::llround(seconds * projectTime(m_project).sampleRate);
@@ -575,6 +584,8 @@ namespace gnubase::ui
 		const bool shift = event.GetParameter("shift_key", 0) != 0;
 		const bool ctrl = event.GetParameter("ctrl_key", 0) != 0 || event.GetParameter("meta_key", 0) != 0;
 		m_pressedAt = at(event);
+		m_pressedMouse = {event.GetParameter("mouse_x", 0.0F), event.GetParameter("mouse_y", 0.0F)};
+		m_dragged = false;
 		m_gesture = Gesture::None;
 		const Event* pressed = eventOf(target);
 		if (pressed != nullptr && !pressed->editable)
@@ -685,8 +696,8 @@ namespace gnubase::ui
 					"audition.scrub", {{"track", m_auditioned}, {"position", std::max<int64_t>(0, samples(seconds))}});
 			return;
 		}
-		if (!m_pressed)
-			return;
+		if (!dragged(event) || !m_pressed)
+			return; // a click only selects
 		const double dt =
 			m_gesture == Gesture::Move ? snap(m_pressed->start + seconds - m_pressedAt.first) - m_pressed->start : 0.0;
 		const int dl = lane - m_pressedAt.second;
@@ -712,12 +723,14 @@ namespace gnubase::ui
 			m_binding.send("audition.stop");
 			return;
 		}
+		const bool isDrag = dragged(event); // a click only selects, even on an event off the grid
 		if (!m_pressed)
 			return;
 		const auto [seconds, lane] = at(event);
-		const double dt =
-			gesture == Gesture::Move ? snap(m_pressed->start + seconds - m_pressedAt.first) - m_pressed->start : 0.0;
-		const int dl = lane - m_pressedAt.second;
+		const double dt = gesture == Gesture::Move && isDrag
+			? snap(m_pressed->start + seconds - m_pressedAt.first) - m_pressed->start
+			: 0.0;
+		const int dl = isDrag ? lane - m_pressedAt.second : 0;
 		if (gesture == Gesture::MoveVertical && dl == 0)
 		{
 			// A click with Ctrl adds the event to the selection or takes it out.
