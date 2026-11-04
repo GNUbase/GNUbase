@@ -3,8 +3,8 @@
 The MIDI editors' common framework (#126, reference manual pp. 1132-1156): the editor in the project window's lower
 zone and the editor window, which parts they show, the part active for editing, the part editing mode, the Visibility
 tab, the global tracks and Keep Editor Contents. The key editor ([key-editor.md](key-editor.md), #127) and the list
-editor ([list-editor.md](list-editor.md), #130) are the editors' contents; the drum editor will build on the framework
-too.
+editor ([list-editor.md](list-editor.md), #130) are the editors' contents for MIDI parts, the audio part editor
+([audio-part-editor.md](audio-part-editor.md), #146) for audio parts; the drum editor will build on the framework too.
 
 ## In the engine
 
@@ -14,8 +14,8 @@ modified and aren't saved, and a new or loaded project closes the editors.
 
 | Command | What it does | Reference |
 |---|---|---|
-| `editor.get` | The view: `open`, `parts`, `activePart`, `activeTrack`, `editingMode`, `editable`, `keepContents`, `globalTracks`, `content` (`key` or `list`, [list-editor.md](list-editor.md)), the key editor's selection and step and MIDI input ([key-editor.md](key-editor.md)) and `controllerSelection`, the selected controller events of the list editor and the controller lanes ([controller-lanes.md](controller-lanes.md)) | |
-| `editor.open` | Opens the editor with MIDI parts, such as those selected in the project window; `activePart`, by default the first | p. 1189 |
+| `editor.get` | The view: `open`, `parts`, `activePart`, `activeTrack`, `editingMode`, `editable`, `keepContents`, `globalTracks`, `content` (`key` or `list`, [list-editor.md](list-editor.md), or `audioPart`), the key editor's selection and step and MIDI input ([key-editor.md](key-editor.md)), `controllerSelection`, the selected controller events of the list editor and the controller lanes ([controller-lanes.md](controller-lanes.md)), and the audio part editor's `eventSelection` ([audio-part-editor.md](audio-part-editor.md)) | |
+| `editor.open` | Opens the editor with MIDI parts or audio parts, such as those selected in the project window; `activePart`, by default the first | pp. 692, 1189 |
 | `editor.set` | Changes an open editor's parts and active part or track, and any editor's editing mode, Keep Editor Contents and global tracks | pp. 1142-1156 |
 | `editor.close` | Closes it: no parts, Keep Editor Contents off | p. 1153 |
 
@@ -67,12 +67,13 @@ sends `editor.*` commands.
   project window's Editor panel in the lower zone, and the project window's Visibility tab is the lower zone editor's.
   Closing the editor window, or hiding the lower zone while the Editor panel is docked there, closes the view, so Keep
   Editor Contents goes off (p. 1153); another tab of the lower zone in front of it doesn't. A new project closes both.
-- **Following the selection** (p. 1153): when the project window's selection changes, its MIDI parts open in every
-  open editor that doesn't keep its contents.
+- **Following the selection** (p. 1153): when the project window's selection changes, its MIDI parts, or else its
+  audio parts, open in every open editor that doesn't keep its contents.
 - **Commands**: `editor.openClose` (Mod+E and Return in the project window, Edit > Open/Close Editor, p. 1189) opens
-  the selected MIDI parts in the editor window, or closes it when none is selected; with audio events but no MIDI parts
-  selected it opens the first in the sample editor ([sample-editor.md](sample-editor.md)), and without either it closes
-  that too. `window.lowerZoneEditor` (Edit > Open Editor in Lower Zone) does the same for MIDI parts in the lower zone.
+  the selected MIDI parts in the editor window, or else the selected audio parts in the audio part editor, or closes
+  it when none is selected; with audio events but no parts selected it opens the first in the sample editor
+  ([sample-editor.md](sample-editor.md)), and without either it closes that too. `window.lowerZoneEditor` (Edit > Open
+  Editor in Lower Zone) does the same for parts in the lower zone.
   `editor.openList` (Mod+G, Edit > Open List Editor, p. 1243) opens them in the editor window's list editor.
 
 `resources/styles/midieditor.rcss` lays the editors out; the themes color the states (`tools/skin/generate.py`), the
@@ -90,7 +91,7 @@ setup with the project.
 ## Checks
 
 - `tests/editors_tests.cpp`: an editor opened with parts of two tracks in the track list's order, each editor with its
-  own view, parts refused that aren't MIDI parts, no undo step and no change of the project, closing that lets go of
+  own view, parts refused that aren't parts, no undo step and no change of the project, closing that lets go of
   the parts and Keep Editor Contents; the active part and track and the editable parts in each editing mode; removed
   parts leaving and coming back with undo; showing, hiding and exclusively showing tracks and folders, the last track
   kept and tracks without parts refused; global tracks in the track list's order, refused for the lower zone and for

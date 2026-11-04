@@ -2,6 +2,7 @@
 #pragma once
 
 #include "engine/engine.h"
+#include "ui/audioparteditor.h"
 #include "ui/enginebinding.h"
 #include "ui/keyeditor.h"
 #include "ui/listeditor.h"
@@ -21,7 +22,8 @@ namespace Rml
 	class Element;
 }
 
-// The MIDI editors' common framework (#126): the lower zone's editor and the editor window.
+// The editors' common framework (#126): the lower zone's editor and the editor window, for MIDI parts and audio
+// parts.
 // docs/features/midi-editors.md describes it.
 namespace gnubase::ui
 {
@@ -37,7 +39,8 @@ namespace gnubase::ui
 	// and the project, whichever client changes them. view is the editor's name in editor.* (lower or window). The
 	// editor's toolbar has Keep Editor Contents, the Part Editing Mode menu, the Activate Part for Editing menu and
 	// Open in Separate Window or Open in Lower Zone; under it the global tracks (window only) and the key editor
-	// (ui/keyeditor.h) or the list editor (ui/listeditor.h), as the view's content says, whose parts a click
+	// (ui/keyeditor.h), the list editor (ui/listeditor.h) or for audio parts the audio part editor
+	// (ui/audioparteditor.h), as the view's content says, whose parts a click
 	// activates. The inspector's Chord Editing section (pp. 1215-1218) shows the
 	// chord of the selected notes and changes it with note.voicing. Every change goes to the engine as editor.*
 	// commands. moved, if given, runs once Open in Separate Window or Open in Lower Zone has sent the parts to the
@@ -59,14 +62,19 @@ namespace gnubase::ui
 		KeyEditor* keyEditor() { return m_keys.get(); }
 		// The list editor, of an EditorPart::Editor while it shows the list editor.
 		ListEditor* listEditor() { return m_list.get(); }
+		// The audio part editor, of an EditorPart::Editor while it shows audio parts.
+		AudioPartEditor* audioPartEditor() { return m_audio.get(); }
 
 	private:
 		void ProcessEvent(Rml::Event& event) override;
 		void requestProject();
 		void requestView();
 		void show();
-		// Puts the key editor or the list editor into the editor, as the view's content says.
+		// Puts the key editor, the list editor or the audio part editor into the editor, as the view's content says.
 		void showContent();
+		bool showsAudio() const;
+		// The project's parts of the kind the editor shows: audio parts or MIDI parts.
+		engine::Json projectParts() const;
 		std::string visibilityRml() const;
 		std::string chordName() const;
 		void voice(const std::string& key, const std::string& value);
@@ -90,6 +98,7 @@ namespace gnubase::ui
 		bool m_stale = false;
 		std::unique_ptr<KeyEditor> m_keys;
 		std::unique_ptr<ListEditor> m_list;
+		std::unique_ptr<AudioPartEditor> m_audio;
 		std::vector<Subscription> m_subscriptions;
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers that come after it went
 	};

@@ -61,6 +61,7 @@ namespace gnubase::engine
 		Ruler,     // shows a ruler in a time format of its own; has no channel
 		Tempo,     // shows and edits the project's tempo track; has no channel, stays at the top level, at most one
 		Signature, // shows and edits the project's time signatures; has no channel, stays at the top level, at most one
+		Vca,       // a VCA fader (docs/features/link-groups.md): a channel without audio that controls a link group
 	};
 
 	// The time formats of ruler tracks, as the event display's ruler names them.
@@ -357,6 +358,31 @@ namespace gnubase::engine
 		time::Samples end = 0;
 	};
 
+	// A position in a clip where a sound starts (#143, reference manual pp. 636-641): its clip frame, the peak level
+	// of the sound there in dBFS and its intensity, how sharply its level rises (0 to 1, 1 for the sharpest of the
+	// clip's detected ones), as clip.detectHitpoints finds them; whether it is locked, so that the filters keep it,
+	// as hitpoints inserted or moved by hand are; and whether it is disabled, so that it counts for nothing.
+	struct Hitpoint
+	{
+		time::Samples position = 0;
+		double peak = 0.0;
+		double intensity = 0.0;
+		bool locked = false;
+		bool disabled = false;
+	};
+
+	inline constexpr double g_minHitpointThreshold = -60.0; // dBFS
+
+	// The Hitpoints section's filters (p. 638): the hitpoints that count are those that aren't disabled and are
+	// locked, or have a peak of threshold dBFS or more and an intensity of intensity (0 to 1) or more, and start
+	// minimumLength clip frames or more after the one before that counts.
+	struct HitpointFilter
+	{
+		double threshold = g_minHitpointThreshold; // g_minHitpointThreshold to 0
+		double intensity = 0.0;
+		time::Samples minimumLength = 0;
+	};
+
 	// What audio events play: for now, a whole media file. Its fades apply to every event that plays it, at the
 	// file's start and end.
 	struct Clip
@@ -368,7 +394,12 @@ namespace gnubase::engine
 		Fade fadeOut;
 		ObjectId folder = 0;             // the pool folder it is in; 0: the pool's Audio folder itself
 		std::vector<ClipRegion> regions; // by start, then id
+		std::vector<Hitpoint> hitpoints; // by position, one at most at each
+		HitpointFilter hitpointFilter;
 	};
+
+	// Which of a clip's hitpoints count, as its filters leave them (hitpoints.cpp): one for each of them.
+	std::vector<bool> activeHitpoints(const Clip& clip);
 
 	// A folder of the pool that clips are organized in (#93, reference manual p. 757). It only organizes the pool:
 	// the files stay where they are.
@@ -627,6 +658,28 @@ namespace gnubase::engine
 		std::map<ObjectId, AutomationPoint> points;
 	};
 
+	// Linked channels (reference manual pp. 457-461, docs/features/link-groups.md): a change to one of them goes to the
+	// others, for the settings the group links. A channel is in one link group at most. A VCA fader that controls the
+	// group (pp. 515-519) adds its volume to theirs and passes its mute, solo, listen, monitor and record buttons on.
+	struct LinkGroup
+	{
+		ObjectId id = 0;
+		std::string name;
+		// NOLINTNEXTLINE(readability-redundant-member-init): see Channel::instrumentParameters
+		std::vector<ObjectId> channels = {}; // in the order they were linked
+		bool volume = true;                  // relative changes of the fader; never with a VCA fader
+		bool pan = false;                    // relative changes of the pan
+		bool mute = false;                   // the mute, solo and listen buttons
+		bool record = false;                 // the record enable and monitor buttons
+		ObjectId vca = 0;                    // the channel of the VCA track that controls the group, or 0
+	};
+
+	inline bool operator==(const LinkGroup& a, const LinkGroup& b)
+	{
+		return std::tie(a.id, a.name, a.channels, a.volume, a.pan, a.mute, a.record, a.vca) ==
+			std::tie(b.id, b.name, b.channels, b.volume, b.pan, b.mute, b.record, b.vca);
+	}
+
 	// A color of the project's color set (reference manual pp. 115-118), which colors are picked from.
 	struct ProjectColor
 	{
@@ -641,9 +694,9 @@ namespace gnubase::engine
 	bool isColor(const std::string& text);
 
 	// The channel types a mixer's filter shows or hides (reference manual p. 454): input and output busses, and the
-	// channels of audio, instrument, MIDI, group and effect tracks; folders' group channels are group channels.
-	inline constexpr std::array<const char*, 7> g_mixerChannelTypes = {
-		"input", "audio", "instrument", "midi", "group", "effect", "output"};
+	// channels of audio, instrument, MIDI, group, effect and VCA tracks; folders' group channels are group channels.
+	inline constexpr std::array<const char*, 8> g_mixerChannelTypes = {
+		"input", "audio", "instrument", "midi", "group", "effect", "vca", "output"};
 
 	// What a mixer hides (#106, docs/features/mixer-window.md): channels and busses by id, and channel types.
 	struct MixerView
@@ -704,6 +757,7 @@ namespace gnubase::engine
 		std::map<ObjectId, Marker> markers;
 		ObjectId activeMarkerTrack = 0; // the marker track that marker commands use by default, or 0
 		std::map<ObjectId, AutomationLane> automation;
+		std::map<ObjectId, LinkGroup> linkGroups;
 		// Virgin territory instead of initial values (reference manual p. 881): automation lanes have gaps before their
 		// first and after their last point too, where their parameters have their static values. A setting saved with
 		// the project, not part of undo.
@@ -741,6 +795,17 @@ namespace gnubase::engine
 
 	// Makes the first top-level output bus the main mix if no bus is.
 	void keepMainMix(Project& project);
+
+	// The link group a channel is in, or none.
+	const LinkGroup* linkGroupOf(const Project& project, ObjectId channel);
+
+	// The link group a VCA fader's channel controls, or none.
+	const LinkGroup* controlledBy(const Project& project, ObjectId vca);
+
+	// The VCA faders that control a channel, nearest first: the one of its link group, the one of that VCA fader's
+	// group, and so on (nested VCA faders, reference manual p. 518). Stops before a VCA fader it has met, so a loop
+	// ends it.
+	std::vector<ObjectId> vcaChain(const Project& project, ObjectId channel);
 
 	// Gives a part's notes and controllers new ids.
 	void renumber(Project& project, MidiPart& part);
@@ -829,10 +894,23 @@ namespace gnubase::engine
 		return std::tie(a.id, a.name, a.start, a.end) == std::tie(b.id, b.name, b.start, b.end);
 	}
 
+	inline bool operator==(const Hitpoint& a, const Hitpoint& b)
+	{
+		return std::tie(a.position, a.peak, a.intensity, a.locked, a.disabled) ==
+			std::tie(b.position, b.peak, b.intensity, b.locked, b.disabled);
+	}
+
+	inline bool operator==(const HitpointFilter& a, const HitpointFilter& b)
+	{
+		return std::tie(a.threshold, a.intensity, a.minimumLength) ==
+			std::tie(b.threshold, b.intensity, b.minimumLength);
+	}
+
 	inline bool operator==(const Clip& a, const Clip& b)
 	{
-		return std::tie(a.id, a.name, a.media, a.fadeIn, a.fadeOut, a.folder, a.regions) ==
-			std::tie(b.id, b.name, b.media, b.fadeIn, b.fadeOut, b.folder, b.regions);
+		return std::tie(
+				   a.id, a.name, a.media, a.fadeIn, a.fadeOut, a.folder, a.regions, a.hitpoints, a.hitpointFilter) ==
+			std::tie(b.id, b.name, b.media, b.fadeIn, b.fadeOut, b.folder, b.regions, b.hitpoints, b.hitpointFilter);
 	}
 
 	inline bool operator==(const PoolFolder& a, const PoolFolder& b)

@@ -274,7 +274,7 @@ TEST_CASE("the object selection tool's modifiers act on events whatever keys the
 	CHECK(f.parts()[3].at("track") == midi.at("id"));
 }
 
-TEST_CASE("a double click on an audio event opens it in the sample editor", "[unit]")
+TEST_CASE("a double click on an audio event opens it in the sample editor, on an audio part in its editor", "[unit]")
 {
 	Fixture f;
 	// On the MIDI part it doesn't (the MIDI editors open with Open/Close Editor).
@@ -284,6 +284,14 @@ TEST_CASE("a double click on an audio event opens it in the sample editor", "[un
 	f.click(220, 20, {}, 2);
 	REQUIRE(f.waitUntil([&f] { return f.call("sampleEditor.get").at("open") == true; }));
 	CHECK(f.call("sampleEditor.get").at("event") == f.event);
+
+	// An audio part opens in the audio part editor (p. 692).
+	const Json part = f.call("event.toPart", {{"events", {f.event}}}).at("events").at(0);
+	REQUIRE(f.waitUntil([&f] { return f.display.project().at("audioParts").size() == 1; }));
+	f.click(240, 20, {}, 2); // away from the last double click, so the clicks don't count with it
+	REQUIRE(f.waitUntil([&f] { return f.call("editor.get", {{"editor", "window"}}).at("open") == true; }));
+	CHECK(f.call("editor.get", {{"editor", "window"}}).at("parts") == Json::array({part}));
+	CHECK(f.call("editor.get", {{"editor", "window"}}).at("content") == "audioPart");
 }
 
 TEST_CASE("a double click below the tracks adds a MIDI track", "[unit]")

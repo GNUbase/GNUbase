@@ -44,7 +44,8 @@ disabled clip. Read from another application, such a clip of clips on an audio t
 ## The event display
 
 Parts show like MIDI parts, with their events' waveforms inside, cut at the part's edges; the events themselves can't
-be selected there; editing them inside the part waits for the audio part editor. Empty parts come from:
+be selected there; the audio part editor edits them inside the part ([audio-part-editor.md](audio-part-editor.md)),
+which a double click on a part opens. Empty parts come from:
 
 - the draw tool on an audio track ([tools.md](tools.md)), a drag or a click for the bar there;
 - the object selection tool with the tool modifier Split Event (Alt) and a drag or click on an empty spot of an audio,

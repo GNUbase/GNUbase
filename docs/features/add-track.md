@@ -21,13 +21,13 @@ studio setup dialog ([studio-setup.md](studio-setup.md)).
 | Audio | Audio Inputs, Configuration, Output Routing, Name, Count | `input`, `format`, `output`, `name` |
 | Instrument | Instrument (the built-in instruments of `processor.list`), Output Routing, Name, Count | `instrument`, `output`, `name` |
 | MIDI | Output Routing (the instrument tracks' channels), Name, Count | `output`, `name` |
-| Group, Effect | Configuration, Output Routing, Name, Count | `format`, `output`, `name` |
+| Group, Effect | Configuration, Output Routing, Add to Project 'Group' / 'FX' Folder, Name, Count | `format`, `output`, `projectFolder`, `name` |
 | Folder | Group Channel, Configuration and Output Routing (for the group channel only), Name, Count | `groupChannel`, `format`, `output`, `name` |
 | Marker | Name, Count | `name` |
 | Ruler | Time Format, Count | `timeFormat` |
 
-- **Choices** come from the engine whenever a page shows: the input busses (and No Bus), the output busses and the
-  group channels of group tracks and folders (and No Bus), the instrument channels for MIDI tracks (and Not
+- **Choices** come from the engine whenever a page shows: the input busses (and No Bus), the output busses, the
+  group channels of group tracks and folders and the effect channels (and No Bus), the instrument channels for MIDI tracks (and Not
   Connected), the formats and time formats of `track.add`'s schema (`engine.commands`) and the instruments of
   `processor.list`. Each starts at the engine's default: the first input bus, the main output, stereo, no instrument,
   bars and beats. An empty name takes the engine's default name ("Audio 01", "Audio 02" and so on).
@@ -37,6 +37,11 @@ studio setup dialog ([studio-setup.md](studio-setup.md)).
   is checked: then it shows the page again, with the new group and instrument channels among the outputs, for adding
   more of another type. A track the engine refuses, such as an eleventh marker track, adds nothing, and the dialog
   stays open with the engine's message. Cancel and Escape close it.
+
+- **For selected tracks.** Group Track to Selected Tracks and Effect Track to Selected Tracks in the track list's
+  context menu open the dialog on the group or effect page with the document attributes `type` and `tracks` (the
+  selected tracks' ids); Add Track then passes them as `track.add` `tracks`, so they play or send into the new track
+  ([routing.md](routing.md)).
 
 ## Double click
 
@@ -57,13 +62,14 @@ with its input and output, and the same double click in the track list come with
 - **The tempo track** (`type` `tempo`, p. 162) has a page without settings: a project has one at most
   ([tempo-track.md](tempo-track.md)). So has **the signature track** (`type` `signature`, p. 163,
   [signature-track.md](signature-track.md)).
+- **VCA tracks** (`type` `vca`, p. 154) have the name and the count ([link-groups.md](link-groups.md)).
 
 ## Not yet
 
 The track color (the default color until the color picker joins the dialog), the reference's other track types
-(sampler, drum, VCA, and the arranger, transpose, chord and video tracks with their tickets), an
+(sampler, drum, and the arranger, transpose, chord and video tracks with their tickets), an
 instrument or effect plugin chosen on the page (M05), MIDI inputs and MIDI 2.0 output groups, the event type
-(pattern events), the project's Group, FX and VCA folders, a ruler track's time offset and the ruler track's own
+(pattern events), the project's VCA folder, a ruler track's time offset and the ruler track's own
 display and controls (#447), and track presets.
 
 ## Checks

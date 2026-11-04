@@ -73,6 +73,34 @@ namespace gnubase::engine
 		return project;
 	}
 
+	const LinkGroup* linkGroupOf(const Project& project, ObjectId channel)
+	{
+		for (const auto& [id, group] : project.linkGroups)
+			if (std::find(group.channels.begin(), group.channels.end(), channel) != group.channels.end())
+				return &group;
+		return nullptr;
+	}
+
+	const LinkGroup* controlledBy(const Project& project, ObjectId vca)
+	{
+		if (vca == 0)
+			return nullptr;
+		for (const auto& [id, group] : project.linkGroups)
+			if (group.vca == vca)
+				return &group;
+		return nullptr;
+	}
+
+	std::vector<ObjectId> vcaChain(const Project& project, ObjectId channel)
+	{
+		std::vector<ObjectId> chain;
+		for (const LinkGroup* group = linkGroupOf(project, channel); group != nullptr && group->vca != 0 &&
+			group->vca != channel && std::find(chain.begin(), chain.end(), group->vca) == chain.end();
+			group = linkGroupOf(project, group->vca))
+			chain.push_back(group->vca);
+		return chain;
+	}
+
 	ObjectId mainMix(const Project& project)
 	{
 		const auto bus = std::find_if(
