@@ -20,6 +20,9 @@ namespace gnubase::ui
 
 	namespace
 	{
+		// The result of a dialog that closed to make way for another one.
+		constexpr const char* g_replaced = "replaced";
+
 		const std::vector<FileFilter>& projectFilters()
 		{
 			static const std::vector<FileFilter> filters{{"DAWproject", "dawproject"}, {"All files", "*"}};
@@ -75,7 +78,9 @@ namespace gnubase::ui
 				  const Json& job = event.data.at("job");
 				  if (m_backupWindow && job.at("kind") == "project.backup" && job.at("state") == "failed")
 					  showError(*m_backupWindow, job.at("error").get<std::string>());
-			  }))
+			  })),
+		  m_autoSaveFailed(
+			  binding.on("project.autoSaveFailed", [this](const engine::Event& event) { autoSaveFailed(event.data); }))
 	{
 		readLocation();
 
@@ -226,6 +231,10 @@ namespace gnubase::ui
 
 	Rml::ElementDocument* ProjectFiles::openDialog(Window& window, const char* file, Closed closed)
 	{
+		// A failed auto save's error came on its own, not from what the user does: it makes way for the dialog of
+		// something the user does, such as a failed save or the unsaved changes question, and shows again later.
+		if (m_dialog && m_autoSaveErrorOpen)
+			closeDialog(g_replaced);
 		if (m_dialog)
 			return nullptr; // one at a time
 		const std::filesystem::path path = m_folder / file;
@@ -267,6 +276,7 @@ namespace gnubase::ui
 		dialog->RemoveEventListener(Rml::EventId::Dblclick, this);
 		dialog->RemoveEventListener(g_dialogCloseEvent, this);
 		m_dialog.reset();
+		m_autoSaveErrorOpen = false;
 		// Before the document closes, so that the callback can read its fields; m_dialog is free for another dialog.
 		const Closed closed = std::move(m_closed);
 		closed(*dialog, result);
@@ -295,18 +305,59 @@ namespace gnubase::ui
 	void ProjectFiles::showError(WindowId window, const std::string& error)
 	{
 		logging::warning("Project handling: {}", error);
+		openError(window, error, false);
+	}
+
+	void ProjectFiles::openError(WindowId window, const std::string& error, bool autoSave)
+	{
 		// The dialog that asked may still be closing.
 		m_shell.post(
-			[this, window, error]
+			// NOLINTNEXTLINE(bugprone-exception-escape): only MSVC's std::string; out of memory only
+			[this, window, error, autoSave]
 			{
-				Window* shown = m_shell.find(window);
-				Rml::ElementDocument* dialog = shown != nullptr
-					? openDialog(*shown, "project-error.rml", [](Rml::ElementDocument&, const std::string&) {})
+				Window* showing = m_shell.find(window);
+				Rml::ElementDocument* dialog = showing != nullptr
+					? openDialog(*showing, "project-error.rml",
+						  [this, autoSave](Rml::ElementDocument&, const std::string& result)
+						  {
+							  // Shown again at the next failure if another dialog took its place.
+							  if (autoSave && result == g_replaced)
+								  m_autoSaveFailureShown = false;
+						  })
 					: nullptr;
-				if (Rml::Element* message =
-						dialog != nullptr ? dialog->GetElementById("project-error-message") : nullptr)
+				if (dialog == nullptr)
+					return; // an auto save's error shows at the next failure instead
+				if (Rml::Element* message = dialog->GetElementById("project-error-message"))
 					message->SetInnerRML(Rml::StringUtilities::EncodeRml(error));
+				if (autoSave)
+				{
+					m_autoSaveFailureShown = true;
+					m_autoSaveErrorOpen = true;
+				}
 			});
+	}
+
+	void ProjectFiles::closeDialog(const std::string& result)
+	{
+		// As its buttons close it, so that it closes once (ui::closeDialog).
+		if (auto* dialog = dynamic_cast<Rml::ElementDocument*>(m_dialog.get()))
+			ui::closeDialog(*dialog, result);
+	}
+
+	void ProjectFiles::autoSaveFailed(const Json& failure)
+	{
+		// The engine logged the failure already, if it was new.
+		if (!failure.value("repeated", false))
+			m_autoSaveFailureShown = false;
+		if (m_autoSaveFailureShown)
+			return;
+		for (const Window* window : m_shell.windows())
+			if (window->main())
+			{
+				openError(
+					window->id(), "The project can't be auto saved: " + failure.at("error").get<std::string>(), true);
+				return;
+			}
 	}
 
 	void ProjectFiles::unlessUnsaved(
@@ -349,8 +400,7 @@ namespace gnubase::ui
 		if (m_quitting || (m_quitQuestion.get() != nullptr && m_quitQuestion.get() == m_dialog.get()))
 			return;
 		// A dialog that is open, such as the start screen, would keep the question from opening: quitting cancels it.
-		if (auto* dialog = dynamic_cast<Rml::ElementDocument*>(m_dialog.get()))
-			ui::closeDialog(*dialog, "cancel");
+		closeDialog("cancel");
 		m_quitting = true;
 		// Quitting closes every window, so it waits until the event that asked for it is done with them.
 		unlessUnsaved(

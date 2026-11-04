@@ -48,8 +48,7 @@ the maximizer and standard limiter, moving modules in the signal flow, side-chai
 gain reduction and gate state LEDs, the EQ curve display and note names for frequencies, EQ and strip presets,
 choosing the cut filters' slopes and the EQ band types in the mixer, the combined panner's two controls, pre-fader
 and post-fader insert slots, the sections of input and output channels, automation of the sections' parameters,
-the sections in the inspector and the channel settings window (#112), routing and sends (#108), and solo, mute and
-listen (#109). Mapping the equalizer onto DAWproject's `Equalizer` device comes with DAWproject devices.
+the sections in the inspector and the channel settings window (#112) and routing and sends (#108). Mapping the equalizer onto DAWproject's `Equalizer` device comes with DAWproject devices.
 
 ## Checks
 

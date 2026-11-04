@@ -54,6 +54,8 @@ with its input and output, and the same double click in the track list come with
   ([event-display.md](event-display.md)). They have no channel, may go into folders, and only ruler tracks have a
   `timeFormat`, in `project.get` too; `track.set` changes it. DAWproject has no ruler tracks: only GNUbase's entry
   keeps them, and a project read from `project.xml` has none.
+- **The tempo track** (`type` `tempo`, p. 162) has a page without settings: a project has one at most
+  ([tempo-track.md](tempo-track.md)).
 
 ## Not yet
 

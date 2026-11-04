@@ -2,7 +2,6 @@
 // Project handling (#77, docs/features/project-files.md): save, save as, save new version, revert, auto save, recent
 // projects and templates through the engine API, which MCP and Lua use as they are, and the File menu and the start
 // screen in the app's UI.
-#include "engine/document/projectmodel.h"
 #include "engine/engine.h"
 #include "platform/log.h"
 #include "testutils/testutils.h"
@@ -24,6 +23,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -100,6 +100,15 @@ namespace
 		return entries;
 	}
 
+	// Puts a folder, with a file in it, in the place of the temporary file that saving writes before it renames it to
+	// file: saving fails, and can't remove the folder afterwards, so it fails again for the same reason.
+	void blockSaving(const fs::path& file)
+	{
+		const fs::path folder = fs::u8path(file.u8string() + ".saving");
+		fs::create_directories(folder);
+		std::ofstream(folder / "blocked") << "not a temporary file";
+	}
+
 	// Collects project.autoSaved and project.autoSaveFailed, which the engine's own auto saves announce.
 	class AutoSaveEvents
 	{
@@ -125,8 +134,10 @@ namespace
 			return m_names;
 		}
 
-		Json last()
+		// The last event's data, once the commands queued before ran.
+		Json last(Client& client)
 		{
+			run(client, "engine.commandLog");
 			const std::scoped_lock lock(m_mutex);
 			return m_last;
 		}
@@ -364,10 +375,10 @@ TEST_CASE("the engine auto saves a changed project on its own once the interval 
 	run(client, "track.add", {{"type", "audio"}});
 
 	// The engine checks every 30 seconds; the interval is 15 minutes since the project was saved.
-	engine.clock().advance(std::chrono::minutes(14));
+	engine.advanceClock(std::chrono::minutes(14));
 	CHECK(events.names(client).empty());
 	CHECK(autoSaveLog(client).empty()); // checks that save nothing stay out of the log
-	engine.clock().advance(std::chrono::minutes(1) + std::chrono::seconds(1));
+	engine.advanceClock(std::chrono::minutes(1) + std::chrono::seconds(1));
 	CHECK(events.names(client) == std::vector<std::string>{"project.autoSaved"});
 	CHECK(fs::is_regular_file(autoSave));
 	const Json log = autoSaveLog(client);
@@ -378,14 +389,14 @@ TEST_CASE("the engine auto saves a changed project on its own once the interval 
 	CHECK(modified(client)); // an auto save isn't a save
 
 	// Nothing changed since: the next interval saves nothing.
-	engine.clock().advance(g_pastInterval);
+	engine.advanceClock(g_pastInterval);
 	CHECK(events.names(client).size() == 1);
 	CHECK(autoSaveLog(client).size() == 1);
 
 	// Off, nothing is saved however long it waits.
 	run(client, "settings.set", {{"key", "project.autoSave"}, {"value", false}});
 	run(client, "track.add", {{"type", "audio"}});
-	engine.clock().advance(std::chrono::minutes(60));
+	engine.advanceClock(std::chrono::minutes(60));
 	CHECK(events.names(client).size() == 1);
 }
 
@@ -404,24 +415,26 @@ TEST_CASE("a failing auto save waits for the next interval, is logged once and a
 
 	// A file in the place of the Auto Saves folder: the folder can't be made.
 	std::ofstream(autoSaves) << "not a folder";
-	engine.clock().advance(g_pastInterval);
+	engine.advanceClock(g_pastInterval);
 	CHECK(events.names(client) == std::vector<std::string>{"project.autoSaveFailed"});
-	CHECK(events.last().at("file") == utf8(autoSaves / "Song-01.bak"));
-	CHECK(!events.last().at("error").get<std::string>().empty());
+	CHECK(events.last(client).at("file") == utf8(autoSaves / "Song-01.bak"));
+	CHECK(!events.last(client).at("error").get<std::string>().empty());
+	CHECK(events.last(client).at("repeated") == false);
 	Json log = autoSaveLog(client);
 	REQUIRE(log.size() == 1);
 	CHECK(log[0].contains("error"));
 	CHECK(loggedFailures(logFile) == 1);
 
 	// Not tried again every 30 seconds but after the interval, and only the first failure is in the log.
-	engine.clock().advance(std::chrono::minutes(14));
+	engine.advanceClock(std::chrono::minutes(14));
 	CHECK(events.names(client).size() == 1);
-	engine.clock().advance(std::chrono::minutes(1) + std::chrono::seconds(1));
+	engine.advanceClock(std::chrono::minutes(1) + std::chrono::seconds(1));
 	CHECK(events.names(client) == std::vector<std::string>{"project.autoSaveFailed", "project.autoSaveFailed"});
+	CHECK(events.last(client).at("repeated") == true);
 	CHECK(autoSaveLog(client).size() == 1);
 	for (size_t interval = 1; interval <= 10; ++interval)
 	{
-		engine.clock().advance(g_pastInterval);
+		engine.advanceClock(g_pastInterval);
 		CHECK(events.names(client).size() == 2 + interval); // after the auto save ran, before the clock goes on
 	}
 	CHECK(autoSaveLog(client).size() == 1);
@@ -434,36 +447,95 @@ TEST_CASE("a failing auto save waits for the next interval, is logged once and a
 
 	// Once one succeeds, the next failure is logged again.
 	fs::remove(autoSaves);
-	engine.clock().advance(g_pastInterval);
+	engine.advanceClock(g_pastInterval);
 	CHECK(events.names(client).back() == "project.autoSaved");
 	CHECK(fs::is_regular_file(autoSaves / "Song-01.bak"));
 	CHECK(autoSaveLog(client).size() == 3);
 	fs::remove_all(autoSaves);
 	std::ofstream(autoSaves) << "not a folder";
 	run(client, "track.add", {{"type", "audio"}});
-	engine.clock().advance(g_pastInterval);
+	engine.advanceClock(g_pastInterval);
 	CHECK(events.names(client).back() == "project.autoSaveFailed");
+	CHECK(events.last(client).at("repeated") == false);
 	log = autoSaveLog(client);
 	REQUIRE(log.size() == 4);
 	CHECK(log[3].contains("error"));
 	CHECK(loggedFailures(logFile) == 2);
 
 	// So is the next failure after saving or opening the project.
-	engine.clock().advance(g_pastInterval);
+	engine.advanceClock(g_pastInterval);
 	CHECK(autoSaveLog(client).size() == 4);
 	run(client, "project.save");
 	run(client, "track.add", {{"type", "audio"}});
-	engine.clock().advance(g_pastInterval);
+	engine.advanceClock(g_pastInterval);
 	CHECK(autoSaveLog(client).size() == 5);
-	engine.clock().advance(g_pastInterval);
+	CHECK(events.last(client).at("repeated") == false);
+	engine.advanceClock(g_pastInterval);
 	CHECK(autoSaveLog(client).size() == 5);
 	run(client, "project.load", {{"path", utf8(file)}});
 	run(client, "track.add", {{"type", "audio"}});
-	engine.clock().advance(g_pastInterval);
+	engine.advanceClock(g_pastInterval);
 	CHECK(autoSaveLog(client).size() == 6);
+	CHECK(events.last(client).at("repeated") == false);
 	CHECK(loggedFailures(logFile) == 4);
 	CHECK(events.names(client).size() == 19);
 }
+
+TEST_CASE("a failing auto save is logged again when its reason changes, not when only its file does", "[integration]")
+{
+	const test::TempDir dir;
+	const fs::path logFile = dir.path() / "gnubase.log";
+	const gnubase::logging::Session session(logFile);
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	AutoSaveEvents events(engine);
+	const fs::path file = dir.path() / "Song.dawproject";
+	const fs::path autoSaves = dir.path() / "Auto Saves";
+	run(client, "project.save", {{"path", utf8(file)}});
+	run(client, "track.add", {{"type", "audio"}});
+
+	// Auto Saves can't be made, twice.
+	std::ofstream(autoSaves) << "not a folder";
+	engine.advanceClock(g_pastInterval);
+	CHECK(events.last(client).at("repeated") == false); // once the auto save ran, before the clock goes on
+	engine.advanceClock(g_pastInterval);
+	CHECK(events.names(client).size() == 2);
+	CHECK(events.last(client).at("repeated") == true);
+	CHECK(loggedFailures(logFile) == 1);
+
+	// Then it can be made, but the auto save can't be written, as a folder is in the place of its temporary file:
+	// another reason, which is logged and announced as new.
+	fs::remove(autoSaves);
+	blockSaving(autoSaves / "Song-01.bak");
+	blockSaving(autoSaves / "Song-02.bak");
+	engine.advanceClock(g_pastInterval);
+	CHECK(events.names(client).size() == 3);
+	CHECK(events.last(client).at("file") == utf8(autoSaves / "Song-01.bak"));
+	CHECK(events.last(client).at("repeated") == false);
+	CHECK(loggedFailures(logFile) == 2);
+	CHECK(autoSaveLog(client).size() == 2);
+
+	// The same reason for the next file in turn is no news: the error names the file, the reason doesn't.
+	std::ofstream(autoSaves / "Song-01.bak") << "an earlier auto save";
+	engine.advanceClock(g_pastInterval);
+	CHECK(events.names(client).size() == 4);
+	CHECK(events.last(client).at("file") == utf8(autoSaves / "Song-02.bak"));
+	CHECK_THAT(events.last(client).at("error").get<std::string>(), ContainsSubstring("Song-02.bak"));
+	CHECK(events.last(client).at("repeated") == true);
+	CHECK(loggedFailures(logFile) == 2);
+	CHECK(autoSaveLog(client).size() == 2);
+
+	// Back to the first reason: logged again, as it isn't the last one logged.
+	fs::remove_all(autoSaves);
+	std::ofstream(autoSaves) << "not a folder";
+	engine.advanceClock(g_pastInterval);
+	CHECK(events.last(client).at("repeated") == false);
+	CHECK(loggedFailures(logFile) == 3);
+	CHECK(autoSaveLog(client).size() == 3);
+}
+
+// Only the engine starts and stops its clock; others read the time from it, and tests move it with advanceClock.
+static_assert(std::is_same_v<decltype(std::declval<Engine&>().clock()), const gnubase::engine::Clock&>);
 
 TEST_CASE("saved and opened projects are recent projects, newest first, until forgotten", "[integration]")
 {
@@ -722,6 +794,83 @@ TEST_CASE("a save or backup that fails shows its error", "[ui]")
 	REQUIRE(app.waitUntil([&app] { return !shown(app, "#project-error-dialog"); }));
 }
 
+namespace
+{
+	// Adds a track and waits until the track list shows it, and a step more: by then the UI handled the engine's
+	// events from before, and ran what it posted for them.
+	void handleEarlierEvents(test::UiApp& app)
+	{
+		const size_t tracks = elements(app, "#track-list .track-name").size();
+		app.call("track.add", {{"type", "audio"}});
+		REQUIRE(
+			app.waitUntil([&app, tracks] { return elements(app, "#track-list .track-name").size() == tracks + 1; }));
+		app.shell().step(std::chrono::milliseconds(0));
+		app.shell().step(std::chrono::milliseconds(0));
+	}
+
+	void closeError(test::UiApp& app)
+	{
+		click(app, "#project-error-dialog button[result=ok]");
+		REQUIRE(app.waitUntil([&app] { return !shown(app, "#project-error-dialog"); }));
+	}
+}
+
+TEST_CASE("an auto save that fails shows its error once, and again when it fails for another reason", "[ui]")
+{
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	const test::TempDir dir;
+	const fs::path autoSaves = dir.path() / "Auto Saves";
+	app.call("project.save", {{"path", utf8(dir.path() / "Song.dawproject")}});
+	app.call("track.add", {{"type", "audio"}});
+	std::ofstream(autoSaves) << "not a folder";
+
+	// The engine's own auto save, once the interval passed.
+	app.engine().advanceClock(g_pastInterval);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
+	CHECK_THAT(
+		elements(app, "#project-error-message").at(0).at("text").get<std::string>(), ContainsSubstring("auto saved"));
+	closeError(app);
+
+	// Not at every interval while it fails for the same reason.
+	app.engine().advanceClock(g_pastInterval);
+	handleEarlierEvents(app);
+	CHECK(!shown(app, "#project-error-dialog"));
+
+	// Another reason: Auto Saves can be made, but a folder is in the place of the auto save's temporary file.
+	fs::remove(autoSaves);
+	blockSaving(autoSaves / "Song-01.bak");
+	app.engine().advanceClock(g_pastInterval);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
+	closeError(app);
+	app.engine().advanceClock(g_pastInterval);
+	handleEarlierEvents(app);
+	CHECK(!shown(app, "#project-error-dialog"));
+
+	// While another dialog is open the error can't show; it shows at the next failure instead.
+	app.appUi().openStartScreen();
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#start-screen"); }));
+	fs::remove_all(autoSaves);
+	std::ofstream(autoSaves) << "not a folder";
+	app.engine().advanceClock(g_pastInterval);
+	handleEarlierEvents(app);
+	CHECK(!shown(app, "#project-error-dialog"));
+	click(app, "#start-screen button[result=cancel]");
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#start-screen"); }));
+	app.engine().advanceClock(g_pastInterval);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
+
+	// A dialog that the user asks for meanwhile takes the error's place, and the error shows again at the next failure.
+	app.keys().run("file.revert", Json::object(), app.main(), nullptr); // with unsaved changes
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#discard-changes-dialog"); }));
+	CHECK(!shown(app, "#project-error-dialog"));
+	click(app, "#discard-changes-dialog button[result=cancel]");
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#discard-changes-dialog"); }));
+	app.engine().advanceClock(g_pastInterval);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
+	closeError(app);
+}
+
 TEST_CASE("File > Open and Revert ask before unsaved changes are discarded", "[ui]")
 {
 	test::UiApp app({900, 640});
@@ -875,6 +1024,52 @@ TEST_CASE("a quit question that goes with its window doesn't keep the next quit 
 	REQUIRE(app.waitUntil([&app, panel] { return app.shell().find(panel) == nullptr; }));
 	REQUIRE(app.shell().running());
 
+	closeLastWindow(app);
+	click(app, "#discard-changes");
+	REQUIRE(app.waitUntil([&app] { return !app.shell().running(); }));
+}
+
+TEST_CASE("a failed auto save's error makes way for the quit question, and waits while the question is open", "[ui]")
+{
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	const test::TempDir dir;
+	const fs::path autoSaves = dir.path() / "Auto Saves";
+	app.call("project.save", {{"path", utf8(dir.path() / "Song.dawproject")}});
+	app.call("track.add", {{"type", "audio"}});
+	std::ofstream(autoSaves) << "not a folder";
+	app.engine().advanceClock(g_pastInterval);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
+
+	// A quit request closes the error for its question.
+	closeLastWindow(app);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#discard-changes-dialog"); }));
+	CHECK(elements(app, "#project-error-dialog").empty());
+	Rml::Element* first = question(app);
+	const Rml::ObserverPtr<Rml::Element> asked =
+		first != nullptr ? first->GetObserverPtr() : Rml::ObserverPtr<Rml::Element>();
+	REQUIRE(asked.get() != nullptr);
+
+	// An auto save that fails for another reason while the question is open leaves it open, and so does another quit
+	// request.
+	fs::remove(autoSaves);
+	blockSaving(autoSaves / "Song-01.bak");
+	app.engine().advanceClock(g_pastInterval);
+	handleEarlierEvents(app);
+	closeLastWindow(app);
+	app.call("project.revision");
+	for (int i = 0; i < 5; ++i)
+		app.shell().step(std::chrono::milliseconds(0));
+	CHECK(elements(app, "#project-error-dialog").empty());
+	CHECK(elements(app, "#discard-changes-dialog").size() == 1);
+	CHECK(asked.get() == question(app));
+
+	// Cancel keeps GNUbase running; the error shows at the next failure, and the next quit request asks again.
+	click(app, "#discard-changes-dialog button[result=cancel]");
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#discard-changes-dialog"); }));
+	REQUIRE(app.shell().running());
+	app.engine().advanceClock(g_pastInterval);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
 	closeLastWindow(app);
 	click(app, "#discard-changes");
 	REQUIRE(app.waitUntil([&app] { return !app.shell().running(); }));

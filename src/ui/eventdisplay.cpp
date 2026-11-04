@@ -87,6 +87,8 @@ namespace gnubase::ui
 		m_selectedLanes = &addCanvas<EventLanes>(*m_area, "event-lanes", "selected-events");
 		m_waveforms = std::make_unique<EventWaveforms>(binding, add(*m_area, "div", "waveforms"));
 		m_fadeLines = &addCanvas<FadeLines>(*m_area, "fade-lines", "fades");
+		m_automationArea = &add(*m_area, "div", "automation-lanes");
+		m_editor = &add(*m_area, "div", "automation-editor");
 		m_rangeElement = &add(*m_area, "div", "range-selection");
 		m_rectangle = &add(*m_area, "div", "tool-rectangle");
 		m_crossVertical = &add(*m_area, "div", "cross-hair-vertical");
@@ -107,7 +109,9 @@ namespace gnubase::ui
 			{"view.autoScroll", [this] { setAutoScroll(!m_autoScroll); }}};
 		addEditActions();
 		addFadeActions();
+		addVolumeActions();
 		addToolActions();
+		addAutomationActions();
 		setToolModifiers(Json::object());
 
 		// Every change to the project is an undo step or a new project; the display shows the project as it is then.
@@ -305,8 +309,10 @@ namespace gnubase::ui
 		m_laneTracks.clear();
 		m_laneTypes.clear();
 		m_laneLinear.clear();
+		m_laneAutomation.clear();
 		m_events.clear();
 		m_fades.clear();
+		readAutomation(project);
 		for (const Json& track : project.at("tracks"))
 		{
 			const auto id = track.at("id").get<uint64_t>();
@@ -318,11 +324,21 @@ namespace gnubase::ui
 				folded.insert(parents[id]);
 				continue;
 			}
-			lanes[id] = lanes.size();
+			lanes[id] = m_tracks.size();
 			m_tracks.push_back({static_cast<float>(trackHeight(id)), {}});
 			m_laneTracks.push_back(id);
 			m_laneTypes.push_back(track.at("type").get<std::string>());
 			m_laneLinear.push_back(linear[id]);
+			m_laneAutomation.push_back(0);
+			// Its automation tracks below it (#121).
+			for (const uint64_t lane : openLanes(id))
+			{
+				m_tracks.push_back({static_cast<float>(g_trackHeight), {}});
+				m_laneTracks.push_back(id);
+				m_laneTypes.emplace_back("automation");
+				m_laneLinear.push_back(linear[id]);
+				m_laneAutomation.push_back(lane);
+			}
 		}
 		const auto seconds = [this](int64_t position, bool isLinear)
 		{ return isLinear ? static_cast<double>(position) / m_time.sampleRate : m_time.tempo.toSeconds(position); };
@@ -437,7 +453,8 @@ namespace gnubase::ui
 		std::vector<EventLanes::Lane> muted;
 		for (size_t i = 0; i < lanes.size(); ++i)
 		{
-			lanes[i].height = static_cast<float>(trackHeight(m_laneTracks[i]) * m_view.trackZoom);
+			const double height = m_laneAutomation[i] != 0 ? g_trackHeight : trackHeight(m_laneTracks[i]);
+			lanes[i].height = static_cast<float>(height * m_view.trackZoom);
 			m_laneTops.push_back(m_laneTops.back() + lanes[i].height);
 			muted.push_back({lanes[i].height, {}});
 			all.insert(all.end(), lanes[i].events.begin(), lanes[i].events.end());
@@ -469,6 +486,7 @@ namespace gnubase::ui
 		std::vector<EventLanes::Lane> overview{{10000.0F, std::move(all)}};
 		m_overviewEvents->setLanes(std::move(overview));
 		showFades();
+		showAutomationLanes();
 		showPointer();
 	}
 
@@ -644,6 +662,7 @@ namespace gnubase::ui
 		m_waveforms->show({m_view.start, m_view.scale, m_view.top, m_laneTops, width(), height(), dpRatio()});
 		setCursor(m_cursorSample);
 		showRange();
+		placeAutomation();
 
 		// The overview line shows the whole project, and the view as a rectangle.
 		const double across = m_overview->GetClientWidth() / dpRatio();
@@ -1000,6 +1019,9 @@ namespace gnubase::ui
 		case Drag::Click:
 		case Drag::FadeIn:
 		case Drag::FadeOut:
+		case Drag::Automation:
+		case Drag::Volume:
+		case Drag::VolumePoint:
 			areaMove(dx, dy, restricts(event));
 			return;
 		case Drag::None:

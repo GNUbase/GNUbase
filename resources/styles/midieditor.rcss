@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* The MIDI editors (ui/midieditor.h, docs/features/midi-editors.md): the toolbar over the editor window's global
-   tracks and the parts, a row each, the Visibility tab's tracks with their check, and the inspector's Global Tracks
-   section. The parts get .active and .editable, the Visibility tab's tracks .active and their checks .checked or
-   .partial, Keep Editor Contents and the global track toggles .checked; the themes color them. */
+   tracks and the key editor (keyeditor.rcss), the Visibility tab's tracks with their check, and the inspector's Global
+   Tracks section. The parts get .active and .editable, the Visibility tab's tracks .active and their checks .checked
+   or .partial, Keep Editor Contents and the global track toggles .checked; the themes color them. */
 .midi-editor
 {
 	position: absolute;
@@ -34,7 +34,7 @@
 	flex-shrink: 0;
 }
 
-.editor-global-track, .editor-part
+.editor-global-track
 {
 	display: block;
 	height: 20dp;
@@ -42,17 +42,6 @@
 	box-sizing: border-box;
 	white-space: nowrap;
 	overflow: hidden;
-}
-
-.editor-parts
-{
-	flex: 1 1 0;
-	overflow-y: auto;
-}
-
-.editor-part-track
-{
-	margin-right: 8dp;
 }
 
 .editor-visibility, .editor-global-track-list

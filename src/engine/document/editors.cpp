@@ -1,19 +1,25 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The MIDI editors' common framework (#126, reference manual pp. 1132-1156): which parts the lower zone's editor and
 // the editor window show, the part active for editing, the part editing mode, Keep Editor Contents and the global
-// tracks shown above the notes. The commands keep it on the command thread, outside the project, so they are no undo
-// steps and don't make the project modified.
+// tracks shown above the notes; and the key editor's (#127, pp. 1189-1220): the selected notes and step and MIDI input,
+// which editor.input applies. The commands keep the views on the command thread, outside the project, so they are no
+// undo steps and don't make the project modified; editor.input's notes are.
 #include "engine/document/editors.h"
 
 #include "engine/document/projectmodel.h"
+#include "engine/document/serialize.h"
 #include "engine/engine.h"
+#include "engine/midi/quantizesettings.h"
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 namespace gnubase::engine
@@ -33,6 +39,18 @@ namespace gnubase::engine
 			std::string editingMode = "allParts";
 			bool keepContents = false;
 			std::vector<ObjectId> globalTracks;
+			// The key editor (#127): the selected notes, each a part and a note of it, and step and MIDI input.
+			std::vector<std::pair<ObjectId, ObjectId>> selection;
+			bool stepInput = false;
+			bool midiInput = false;
+			time::Ticks stepPosition = 0; // the step input cursor, project ticks
+			bool moveInsert = false;
+			bool recordPitch = true;
+			bool recordVelocity = true;
+			bool recordReleaseVelocity = false;
+			bool keepNotes = false;
+			double insertVelocity = 100.0 / 127.0;
+			std::string lengthQuantize = "link"; // a note value, or link: the quantize grid's
 		};
 
 		using Views = std::map<std::string, EditorView>;
@@ -70,6 +88,38 @@ namespace gnubase::engine
 			return parts;
 		}
 
+		ObjectId trackOf(const Project& project, ObjectId part)
+		{
+			return part == 0 ? 0 : project.midiParts.at(part).track;
+		}
+
+		// The parts that selecting and editing reach in the editing mode (p. 1197).
+		std::vector<ObjectId> editableParts(const Project& project, const EditorView& view)
+		{
+			const ObjectId activeTrack = trackOf(project, view.activePart);
+			std::vector<ObjectId> editable;
+			for (const ObjectId part : view.parts)
+				if (view.editingMode == "allParts" || (view.editingMode == "activePart" && part == view.activePart) ||
+					(view.editingMode == "activeTrack" && trackOf(project, part) == activeTrack))
+					editable.push_back(part);
+			return editable;
+		}
+
+		// Leaves only the selected notes that still exist in the editable parts.
+		void dropUneditable(const Project& project, EditorView& view)
+		{
+			const std::vector<ObjectId> editable = editableParts(project, view);
+			view.selection.erase(
+				std::remove_if(view.selection.begin(), view.selection.end(),
+					[&](const std::pair<ObjectId, ObjectId>& selected)
+					{
+						const auto part = project.midiParts.find(selected.first);
+						return std::find(editable.begin(), editable.end(), selected.first) == editable.end() ||
+							part == project.midiParts.end() || part->second.notes.count(selected.second) == 0;
+					}),
+				view.selection.end());
+		}
+
 		// The editor's view now: closed and empty once another project is open, without what is gone since.
 		EditorView current(const Views& views, const ProjectModel& model, const std::string& editor)
 		{
@@ -84,25 +134,25 @@ namespace gnubase::engine
 			view.globalTracks.erase(std::remove_if(view.globalTracks.begin(), view.globalTracks.end(),
 										[&project](ObjectId id) { return !isGlobal(project, id); }),
 				view.globalTracks.end());
+			dropUneditable(project, view);
 			return view;
-		}
-
-		ObjectId trackOf(const Project& project, ObjectId part)
-		{
-			return part == 0 ? 0 : project.midiParts.at(part).track;
 		}
 
 		Json viewJson(const Project& project, const std::string& editor, const EditorView& view)
 		{
 			const ObjectId activeTrack = trackOf(project, view.activePart);
-			std::vector<ObjectId> editable;
-			for (const ObjectId part : view.parts)
-				if (view.editingMode == "allParts" || (view.editingMode == "activePart" && part == view.activePart) ||
-					(view.editingMode == "activeTrack" && trackOf(project, part) == activeTrack))
-					editable.push_back(part);
+			const std::vector<ObjectId> editable = editableParts(project, view);
+			Json selection = Json::array();
+			for (const auto& [part, note] : view.selection)
+				selection.push_back({{"part", part}, {"note", note}});
 			return {{"editor", editor}, {"open", view.open}, {"parts", view.parts}, {"activePart", view.activePart},
 				{"activeTrack", activeTrack}, {"editable", editable}, {"editingMode", view.editingMode},
-				{"keepContents", view.keepContents}, {"globalTracks", view.globalTracks}};
+				{"keepContents", view.keepContents}, {"globalTracks", view.globalTracks}, {"selection", selection},
+				{"stepInput", view.stepInput}, {"midiInput", view.midiInput}, {"stepPosition", view.stepPosition},
+				{"moveInsert", view.moveInsert}, {"recordPitch", view.recordPitch},
+				{"recordVelocity", view.recordVelocity}, {"recordReleaseVelocity", view.recordReleaseVelocity},
+				{"keepNotes", view.keepNotes}, {"insertVelocity", view.insertVelocity},
+				{"lengthQuantize", view.lengthQuantize}};
 		}
 
 		// The MIDI parts of a track, or of every track in a folder.
@@ -130,9 +180,9 @@ namespace gnubase::engine
 											 : std::vector<ObjectId>();
 		}
 
-		bool contains(const std::vector<ObjectId>& ids, ObjectId id)
+		template <typename T> bool contains(const std::vector<T>& items, const T& item)
 		{
-			return std::find(ids.begin(), ids.end(), id) != ids.end();
+			return std::find(items.begin(), items.end(), item) != items.end();
 		}
 
 		std::vector<ObjectId> checkedParts(const Project& project, const std::vector<ObjectId>& parts)
@@ -140,6 +190,75 @@ namespace gnubase::engine
 			for (const ObjectId id : parts)
 				require(project.midiParts.count(id) != 0, "no MIDI part " + std::to_string(id));
 			return ordered(project, parts);
+		}
+
+		time::Ticks partStart(const Project& project, const MidiPart& part)
+		{
+			return time::toTicks(part.position, project.tempo, project.sampleRate);
+		}
+
+		time::Ticks partEnd(const Project& project, const MidiPart& part)
+		{
+			return time::toTicks(time::Position{part.position.base, part.position.value + part.length}, project.tempo,
+				project.sampleRate);
+		}
+
+		// The length of new notes: the length quantize's, or with link the quantize grid's (p. 1219).
+		time::Ticks noteLength(const Project& project, const EditorView& view)
+		{
+			if (view.lengthQuantize == "link")
+				return project.quantize.grid.ticks();
+			return midi::noteValueFromString(view.lengthQuantize).value_or(project.quantize.grid).ticks();
+		}
+
+		uint16_t velocityValue(double value)
+		{
+			return static_cast<uint16_t>(std::lround(value * g_maxVelocity));
+		}
+
+		// A note played into editor.input.
+		struct Played
+		{
+			uint8_t pitch = 60;
+			double velocity = 0.0;
+			double releaseVelocity = 0.5;
+		};
+
+		std::vector<Played> playedNotes(const Json& items, const EditorView& view)
+		{
+			std::vector<Played> played;
+			for (size_t i = 0; i < items.size(); ++i)
+			{
+				const Json& item = items[i];
+				const std::string name = "notes[" + std::to_string(i) + "]";
+				const auto pitch = item.at("pitch").get<int64_t>();
+				require(pitch >= 0 && pitch <= 127, name + ".pitch must be 0 to 127");
+				const Played note{static_cast<uint8_t>(pitch), item.value("velocity", view.insertVelocity),
+					item.value("releaseVelocity", 0.5)};
+				require(note.velocity >= 0.0 && note.velocity <= 1.0 && note.releaseVelocity >= 0.0 &&
+						note.releaseVelocity <= 1.0,
+					name + ": velocities must be 0 to 1");
+				played.push_back(note);
+			}
+			require(!played.empty(), "notes must have at least one note");
+			std::sort(played.begin(), played.end(), [](const Played& a, const Played& b) { return a.pitch < b.pitch; });
+			return played;
+		}
+
+		// A new note of a part from a played one, with the velocities the view records.
+		Note newNote(Project& project, const EditorView& view, const Played& played, time::Ticks position,
+			time::Ticks length, uint8_t channel)
+		{
+			Note note;
+			note.id = project.newId();
+			note.position = position;
+			note.length = length;
+			note.pitch = played.pitch;
+			note.channel = channel;
+			note.velocity = velocityValue(view.recordVelocity ? played.velocity : view.insertVelocity);
+			if (view.recordReleaseVelocity)
+				note.releaseVelocity = velocityValue(played.releaseVelocity);
+			return note;
 		}
 	}
 
@@ -152,22 +271,38 @@ namespace gnubase::engine
 			{"type", "string"}, {"enum", std::vector<std::string>(g_editingModes.begin(), g_editingModes.end())}};
 		const Json idsSchema = {{"type", "array"}, {"items", {{"type", "integer"}}}};
 		const Json idSchema = {{"type", "integer"}};
-		const Json viewSchema = {{"type", "object"},
+		const Json boolean = {{"type", "boolean"}};
+		const Json selectionSchema = {{"type", "array"},
+			{"items",
+				{{"type", "object"}, {"additionalProperties", false}, {"required", {"part", "note"}},
+					{"properties", {{"part", idSchema}, {"note", idSchema}}}}}};
+		const Json keyEditorSchema = {{"selection", selectionSchema}, {"stepInput", boolean}, {"midiInput", boolean},
+			{"stepPosition", idSchema}, {"moveInsert", boolean}, {"recordPitch", boolean}, {"recordVelocity", boolean},
+			{"recordReleaseVelocity", boolean}, {"keepNotes", boolean}, {"insertVelocity", {{"type", "number"}}},
+			{"lengthQuantize", {{"type", "string"}}}};
+		Json viewSchema = {{"type", "object"},
 			{"properties",
 				{{"editor", editorSchema}, {"open", {{"type", "boolean"}}}, {"parts", idsSchema},
 					{"activePart", idSchema}, {"activeTrack", idSchema}, {"editable", idsSchema},
 					{"editingMode", modeSchema}, {"keepContents", {{"type", "boolean"}}}, {"globalTracks", idsSchema}}},
 			{"required",
 				{"editor", "open", "parts", "activePart", "activeTrack", "editable", "editingMode", "keepContents",
-					"globalTracks"}}};
+					"globalTracks", "selection", "stepInput", "midiInput", "stepPosition", "moveInsert", "recordPitch",
+					"recordVelocity", "recordReleaseVelocity", "keepNotes", "insertVelocity", "lengthQuantize"}}};
+		viewSchema["properties"].update(keyEditorSchema);
 		const std::string viewText =
 			"editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: "
 			"open; parts, the MIDI parts it shows, in the track list's order and by position; activePart, the part "
 			"active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing "
 			"reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; "
 			"keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the "
-			"marker and ruler tracks the editor window shows above its events. View state: no undo steps, not saved, "
-			"and a new or loaded project closes the editors.";
+			"marker and ruler tracks the editor window shows above its events. The key editor's (pp. 1189-1220): "
+			"selection, the selected notes, each {part, note}, of the editable parts; stepInput and midiInput, what "
+			"editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, "
+			"recordPitch, recordVelocity, recordReleaseVelocity and keepNotes, how they go in; insertVelocity (0-1), "
+			"the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, "
+			"a note value such as 1/16, 1/8T or 1/4., or link for the quantize grid's (quantize.set). View state: no "
+			"undo steps, not saved, and a new or loaded project closes the editors.";
 		const auto editorOnly = [&](Json properties = Json::object())
 		{
 			properties["editor"] = editorSchema;
@@ -179,7 +314,8 @@ namespace gnubase::engine
 			EditorView& stored = (*views)[editor];
 			stored = view;
 			stored.project = model.openedRevision();
-			Json result = viewJson(model.project(), editor, view);
+			dropUneditable(model.project(), stored);
+			Json result = viewJson(model.project(), editor, stored);
 			context.emit("editor.changed", result);
 			return result;
 		};
@@ -223,11 +359,17 @@ namespace gnubase::engine
 				"showTracks shows every MIDI part of these tracks (all tracks in a folder) and activates the last, "
 				"hideTracks hides theirs; at least one part stays. activeTrack activates the track's first part shown, "
 				"activePart a part shown. editingMode, keepContents and globalTracks (marker and ruler tracks, the "
-				"editor window only) also apply to a closed editor. Emits editor.changed. " +
+				"editor window only) also apply to a closed editor. selection replaces the selected notes, of the "
+				"editable parts. The key editor's settings apply to any editor; turning stepInput on puts the step "
+				"input cursor at the active part's start unless stepPosition is given. Emits editor.changed. " +
 					viewText,
 				editorOnly({{"parts", idsSchema}, {"exclusive", {{"type", "boolean"}}}, {"showTracks", idsSchema},
 					{"hideTracks", idsSchema}, {"activeTrack", idSchema}, {"activePart", idSchema},
-					{"editingMode", modeSchema}, {"keepContents", {{"type", "boolean"}}}, {"globalTracks", idsSchema}}),
+					{"editingMode", modeSchema}, {"keepContents", {{"type", "boolean"}}}, {"globalTracks", idsSchema},
+					{"selection", selectionSchema}, {"stepInput", boolean}, {"midiInput", boolean},
+					{"stepPosition", idSchema}, {"moveInsert", boolean}, {"recordPitch", boolean},
+					{"recordVelocity", boolean}, {"recordReleaseVelocity", boolean}, {"keepNotes", boolean},
+					{"insertVelocity", {{"type", "number"}}}, {"lengthQuantize", {{"type", "string"}}}}),
 				viewSchema, false},
 			[views, &model, store](CommandContext& context)
 			{
@@ -285,6 +427,48 @@ namespace gnubase::engine
 						if (contains(given, track))
 							view.globalTracks.push_back(track);
 				}
+				if (parameters.contains("selection"))
+				{
+					const std::vector<ObjectId> editable = editableParts(project, view);
+					view.selection.clear();
+					for (const Json& item : parameters.at("selection"))
+					{
+						const auto part = item.at("part").get<ObjectId>();
+						const auto note = item.at("note").get<ObjectId>();
+						require(contains(editable, part),
+							"part " + std::to_string(part) + " isn't editable in the " + editor + " editor");
+						require(project.midiParts.at(part).notes.count(note) != 0,
+							"part " + std::to_string(part) + " has no note " + std::to_string(note));
+						if (!contains(view.selection, std::make_pair(part, note)))
+							view.selection.emplace_back(part, note);
+					}
+				}
+				const bool stepTurnsOn = parameters.value("stepInput", view.stepInput) && !view.stepInput;
+				for (const auto& [name, flag] : {std::pair<const char*, bool*>{"stepInput", &view.stepInput},
+						 {"midiInput", &view.midiInput}, {"moveInsert", &view.moveInsert},
+						 {"recordPitch", &view.recordPitch}, {"recordVelocity", &view.recordVelocity},
+						 {"recordReleaseVelocity", &view.recordReleaseVelocity}, {"keepNotes", &view.keepNotes}})
+					if (parameters.contains(name))
+						*flag = parameters.at(name).get<bool>();
+				if (stepTurnsOn && view.activePart != 0)
+					view.stepPosition = partStart(project, project.midiParts.at(view.activePart));
+				if (parameters.contains("stepPosition"))
+				{
+					view.stepPosition = parameters.at("stepPosition").get<time::Ticks>();
+					require(view.stepPosition >= 0, "stepPosition must not be negative");
+				}
+				if (parameters.contains("insertVelocity"))
+				{
+					view.insertVelocity = parameters.at("insertVelocity").get<double>();
+					require(view.insertVelocity >= 0.0 && view.insertVelocity <= 1.0, "insertVelocity must be 0 to 1");
+				}
+				if (parameters.contains("lengthQuantize"))
+				{
+					const std::string length = parameters.at("lengthQuantize").get<std::string>();
+					require(length == "link" || midi::noteValueFromString(length).has_value(),
+						"lengthQuantize must be a note value such as 1/16, 1/8T or 1/4., or link");
+					view.lengthQuantize = length;
+				}
 				return store(editor, view, context);
 			});
 
@@ -302,7 +486,145 @@ namespace gnubase::engine
 				view.parts.clear();
 				view.activePart = 0;
 				view.keepContents = false;
+				view.selection.clear();
 				return store(editor, view, context);
+			});
+
+		Json inputSchema = editorOnly({{"notes",
+			{{"type", "array"}, {"minItems", 1},
+				{"items",
+					{{"type", "object"}, {"additionalProperties", false}, {"required", {"pitch"}},
+						{"properties",
+							{{"pitch", idSchema}, {"velocity", {{"type", "number"}}},
+								{"releaseVelocity", {{"type", "number"}}}}}}}}}});
+		inputSchema["required"] = {"editor", "notes"};
+		model.addEdit(engine,
+			{"editor.input", 1,
+				"Notes played into a key editor, such as a chord from a MIDI keyboard (reference manual pp. "
+				"1219-1220): "
+				"each a pitch 0-127, velocity 0-1 (default the editor's insertVelocity) and releaseVelocity 0-1 "
+				"(default 0.5). With stepInput, they go into the active part at the step input cursor as notes of the "
+				"length quantize's length, and the cursor moves on by a step of the quantize grid; moveInsert first "
+				"moves the part's notes from the cursor on by a step, and without keepNotes the notes that start "
+				"within the step go. With midiInput (and stepInput off), the first selected note takes the lowest "
+				"note's pitch, velocity and release velocity, as far as recordPitch, recordVelocity and "
+				"recordReleaseVelocity say, and the other notes of a chord are added with its position and length; "
+				"with keepNotes, all of them are added and the selected note stays. Then the next note of its part "
+				"is selected. Velocities that aren't recorded are insertVelocity's and the default release velocity. "
+				"One undo step. Returns the part and its notes added or changed.",
+				inputSchema,
+				{{"type", "object"}, {"required", {"part", "notes"}},
+					{"properties", {{"part", idSchema}, {"notes", {{"type", "array"}}}}}},
+				false},
+			"Step input",
+			[views, &model, store](Project& project, CommandContext& context)
+			{
+				const Json& parameters = context.parameters();
+				const std::string editor = parameters.at("editor").get<std::string>();
+				EditorView view = current(*views, model, editor);
+				require(view.open, "the " + editor + " editor isn't open");
+				require(view.stepInput || view.midiInput, "step input and MIDI input are off");
+				const std::vector<Played> played = playedNotes(parameters.at("notes"), view);
+				Json added = Json::array();
+				Json changed = Json::array();
+				ObjectId partId = 0;
+				if (view.stepInput)
+				{
+					partId = view.activePart;
+					require(partId != 0, "the editor has no active part");
+					MidiPart& part = project.midiParts.at(partId);
+					const time::Ticks start = partStart(project, part);
+					const time::Ticks at = view.stepPosition - start;
+					require(at >= 0 && view.stepPosition < partEnd(project, part),
+						"the step input cursor isn't within the active part");
+					const time::Ticks step = project.quantize.grid.ticks();
+					const time::Ticks length = noteLength(project, view);
+					uint8_t channel = 0;
+					std::vector<ObjectId> removed;
+					for (auto& [id, note] : part.notes)
+					{
+						if (view.moveInsert && note.position >= at)
+						{
+							note.position += step;
+							changed.push_back(toJson(note));
+						}
+						else if (!view.keepNotes && note.position >= at && note.position < at + step)
+						{
+							removed.push_back(id);
+						}
+						channel = note.channel;
+					}
+					for (const ObjectId id : removed)
+						part.notes.erase(id);
+					if (!removed.empty())
+						context.emit("note.removed", {{"part", partId}, {"notes", removed}});
+					view.selection.clear();
+					for (const Played& each : played)
+					{
+						const Note note = newNote(project, view, each, at, length, channel);
+						part.notes[note.id] = note;
+						added.push_back(toJson(note));
+						view.selection.emplace_back(partId, note.id);
+					}
+					view.stepPosition += step;
+				}
+				else
+				{
+					require(!view.selection.empty(), "MIDI input needs a selected note");
+					// The first selected note, by position, then pitch.
+					auto first = view.selection.front();
+					const auto key = [&](const std::pair<ObjectId, ObjectId>& selected)
+					{
+						const Note& note = project.midiParts.at(selected.first).notes.at(selected.second);
+						return std::make_tuple(partStart(project, project.midiParts.at(selected.first)) + note.position,
+							note.pitch, selected.second);
+					};
+					for (const auto& selected : view.selection)
+						if (key(selected) < key(first))
+							first = selected;
+					partId = first.first;
+					MidiPart& part = project.midiParts.at(partId);
+					Note& target = part.notes.at(first.second);
+					const time::Ticks at = target.position;
+					const uint8_t pitch = target.pitch;
+					std::vector<Played> extra = played;
+					if (!view.keepNotes)
+					{
+						const Played& lowest = played.front();
+						if (view.recordPitch)
+							target.pitch = lowest.pitch;
+						if (view.recordVelocity)
+							target.velocity = velocityValue(lowest.velocity);
+						if (view.recordReleaseVelocity)
+							target.releaseVelocity = velocityValue(lowest.releaseVelocity);
+						changed.push_back(toJson(target));
+						extra.erase(extra.begin());
+					}
+					const Note shape = target;
+					// The next note of the part, before the new ones come.
+					std::optional<std::tuple<time::Ticks, uint8_t, ObjectId>> next;
+					for (const auto& [id, note] : part.notes)
+						if (id != shape.id &&
+							std::make_tuple(note.position, note.pitch, id) > std::make_tuple(at, pitch, shape.id) &&
+							(!next || std::make_tuple(note.position, note.pitch, id) < *next))
+							next = std::make_tuple(note.position, note.pitch, id);
+					for (const Played& each : extra)
+					{
+						const Note note = newNote(project, view, each, shape.position, shape.length, shape.channel);
+						part.notes[note.id] = note;
+						added.push_back(toJson(note));
+					}
+					if (next)
+						view.selection = {{partId, std::get<2>(*next)}};
+				}
+				if (!changed.empty())
+					context.emit("note.changed", {{"part", partId}, {"notes", changed}});
+				if (!added.empty())
+					context.emit("note.added", {{"part", partId}, {"notes", added}});
+				store(editor, view, context);
+				Json notes = changed;
+				notes.insert(notes.end(), added.begin(), added.end());
+				return Json{{"part", partId}, {"notes", notes}};
 			});
 	}
 }

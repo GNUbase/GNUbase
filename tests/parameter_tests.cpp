@@ -345,3 +345,54 @@ TEST_CASE("parameter values convert to display text and back", "[unit]")
 	CHECK(processors::valueToText(pan, -0.001) == "0.00");
 	CHECK(processors::valueToText(pan, -0.005) == "-0.01");
 }
+
+TEST_CASE("automationLane.targets lists what a track's automation tracks can show, with the lanes it has", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const TestTrack audio = addTrack(client, "audio");
+	const Json gain =
+		run(client, "plugin.insert", {{"channel", audio.channel}, {"plugin", "builtin:gainPan"}}).at("slot").at("id");
+	const Json lane =
+		run(client, "automationLane.add", {{"track", audio.track}, {"target", {{"type", "pan"}}}}).at("lane").at("id");
+	const Json targets = run(client, "automationLane.targets", {{"track", audio.track}}).at("targets");
+	// The channel's parameters as parameter.list has them, plugins' included; each with the lane it has, or 0.
+	const Json parameters = run(client, "parameter.list", {{"channel", audio.channel}}).at("parameters");
+	REQUIRE(targets.size() == parameters.size());
+	for (size_t i = 0; i < targets.size(); ++i)
+	{
+		CHECK(targets[i].at("target") == parameters[i].at("target"));
+		CHECK(targets[i].at("name") == parameters[i].at("name"));
+		CHECK(targets[i].at("value") == parameters[i].at("value"));
+		CHECK(targets[i].at("minimum") == parameters[i].at("minimum"));
+	}
+	CHECK(targets[0].at("group") == "Channel");
+	CHECK(targets[0].at("lane") == 0);
+	CHECK(targets[1].at("lane") == lane);
+	CHECK(targets.back().at("target").at("slot") == gain);
+	CHECK(targets.back().at("group") == processors::findBuiltinPlugin("builtin:gainPan")->name);
+
+	// MIDI and instrument tracks also have pitch bend, channel pressure and the 128 controllers, from 0 to 1.
+	const TestTrack midi = addTrack(client, "midi");
+	const Json midiTargets = run(client, "automationLane.targets", {{"track", midi.track}}).at("targets");
+	REQUIRE(midiTargets.size() == 130);
+	CHECK(midiTargets[0].at("target").at("type") == "pitchBend");
+	CHECK(midiTargets[0].at("value") == 0.5);
+	CHECK(midiTargets[1].at("target").at("type") == "channelPressure");
+	CHECK(midiTargets[9].at("target").at("type") == "controller");
+	CHECK(midiTargets[9].at("target").at("number") == 7);
+	CHECK(midiTargets[9].at("name") == "Controller 7");
+	CHECK(midiTargets[9].at("group") == "MIDI");
+	CHECK(midiTargets[9].at("maximum") == 1.0);
+	CHECK(midiTargets[9].at("stepped") == false);
+	// The targets are the ones automationLane.add takes.
+	run(client, "automationLane.add", {{"track", midi.track}, {"target", midiTargets[9].at("target")}});
+	CHECK(run(client, "automationLane.targets", {{"track", midi.track}}).at("targets")[9].at("lane") != 0);
+	const TestTrack synth = addSynth(client);
+	CHECK(run(client, "automationLane.targets", {{"track", synth.track}}).at("targets").size() == 8 + 130);
+
+	// Tracks without a channel have none.
+	const Json marker = run(client, "track.add", {{"type", "marker"}}).at("track").at("id");
+	CHECK(run(client, "automationLane.targets", {{"track", marker}}).at("targets").empty());
+	CHECK_THAT(reject(client, "automationLane.targets", {{"track", 9999}}), ContainsSubstring("9999"));
+}

@@ -257,6 +257,14 @@
 		<menuseparator/>
 		<menuitem command="project.colorsSetup">Project Colors Setup...</menuitem>
 		<menuseparator/>
+		<!-- The tempo track (reference manual pp. 1447, 1451, docs/features/tempo-track.md) -->
+		<menuitem id="tempo-track-submenu">Tempo Track
+			<menu>
+				<menuitem command="window.tempoTrack">Open Tempo Track Editor</menuitem>
+				<menuitem command="tempo.toggleTrack">Activate Tempo Track</menuitem>
+			</menu>
+		</menuitem>
+		<menuseparator/>
 		<menuitem command="track.removeSelected">Remove Selected Tracks</menuitem>
 		<menuitem command="track.removeEmpty">Remove Empty Tracks</menuitem>
 		<menuitem command="track.duplicateSelected">Duplicate Tracks</menuitem>
@@ -296,6 +304,8 @@
 				<menuitem command="audio.fadeEditor">Open Fade Editor(s)</menuitem>
 			</menu>
 		</menuitem>
+		<!-- Volume curves (reference manual p. 401, docs/features/volume-curves.md) -->
+		<menuitem command="audio.removeVolumeCurve">Remove Volume Curve</menuitem>
 	</menu>
 	<menu id="track-list-menu">
 		<menuitem command="project.addTrack">Add Track...</menuitem>
@@ -305,6 +315,11 @@
 		<menuseparator/>
 		<menuitem command="track.disableSelected">Disable Selected Tracks</menuitem>
 		<menuitem command="track.enableSelected">Enable Selected Tracks</menuitem>
+		<menuseparator/>
+		<!-- Automation tracks (reference manual p. 880) -->
+		<menuitem command="track.toggleAutomationSelected">Show/Hide Automation</menuitem>
+		<menuitem command="track.showUsedAutomation">Show All Used Automation</menuitem>
+		<menuitem command="track.hideAllAutomation">Hide All Automation</menuitem>
 		<menuseparator/>
 		<!-- Folder tracks (reference manual pp. 222-224) -->
 		<menuitem command="track.enableSelectedGroupChannels">Enable Group Channel</menuitem>
@@ -320,6 +335,8 @@
 		<menuitem command="track.autoFades">Auto Fades Settings...</menuitem>
 		<menuitem command="track.controlsSettings">Track Controls Settings...</menuitem>
 	</menu>
+	<!-- The parameter selector of an automation track, which ui::TrackList fills (reference manual p. 880) -->
+	<menu id="automation-parameter-menu"/>
 	<menu id="transport-menu">
 		<menuitem command="transport.play">Start</menuitem>
 		<menuitem command="transport.stop">Stop</menuitem>

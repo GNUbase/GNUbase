@@ -13,6 +13,11 @@ namespace gnubase::time
 	// Linear positions and lengths, in sample frames.
 	using Samples = int64_t;
 
+	// The largest project position, in samples: about 11 years at 768 kHz, far from where adding a block, a cycle or
+	// a post-roll could overflow. The transport and its commands keep positions within it, and so do clients that
+	// convert times to positions (#457).
+	inline constexpr Samples g_maxPosition = Samples{1} << 48;
+
 	// 2^14 * 3 * 5 * 7: binary note values, triplets, quintuplets, septuplets and every common
 	// display resolution divide a quarter note into whole ticks.
 	inline constexpr Ticks g_ticksPerQuarter = 1720320;
