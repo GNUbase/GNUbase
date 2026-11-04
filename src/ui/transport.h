@@ -50,16 +50,24 @@ namespace gnubase::ui
 	//                                user frames) or a second. Those in the slot timeDisplay follow ui.timeDisplay:
 	//                                only the beat in its bar with beatCountOnly, and the state class size-0 to
 	//                                size-4 of its size
-	//   field="tempo"                a <valuefield> with the first tempo in BPM; a drag or a run of wheel turns on it
-	//                                sets the tempo once, at its end, one undo step
+	//   field="tempo"                a <valuefield> with Current Tempo in BPM (ui::currentTempo): the fixed tempo,
+	//                                or in tempo track mode the tempo at the project cursor, also while playing,
+	//                                which it changes on the tempo event at or before the cursor (reference manual p.
+	//                                1446); a drag or a run of wheel turns on it sets the tempo once, at its end, one
+	//                                undo step
 	//   field="signature"            a <textdisplay> with the first time signature, "4/4"
 	//   field="tempoTrack"           a button that switches between fixed tempo and tempo track mode (Activate Tempo
 	//                                Track), checked in tempo track mode
 	//   field="tap"                  Tap Tempo: clicks on it in time set the tempo (tempo.tap, by the user setting
 	//                                transport.tapTempoMode) once they stop for two seconds; meanwhile the tempo
-	//                                fields show the tapped tempo
+	//                                fields show the tapped tempo, it has the state class .tapping, and each tap shows
+	//                                where the tempo goes (tapTempoMessage) in the document's
+	//                                notification.tap-tempo-message elements (p. 1455)
 	//   menuitem slot="primary" format="seconds"
 	//                                anywhere in the document: picks the slot's time format, checked while it has it
+	//   menuitem tap-mode="cursor"   anywhere in the document: picks the Tap Tempo Mode (transport.tapTempoMode, p.
+	//                                1458), checked while the setting has it; transport.rml puts them in Tap Tempo's
+	//                                context menu
 	//   option="beatCountOnly"       anywhere in the document: checked while ui.timeDisplay has it
 	//
 	// The time formats are the user setting ui.timeFormats, so every transport control shows the same. Use it on the UI
@@ -67,6 +75,11 @@ namespace gnubase::ui
 	// The tempo that taps at these times (seconds, in order) beat: the average of the times between them, 1 to 999
 	// BPM. None for fewer than two taps.
 	std::optional<double> tappedTempo(const std::vector<double>& taps);
+
+	// The message that taps on Tap Tempo show (reference manual p. 1455): where the tempo they beat goes by the Tap
+	// Tempo Mode (transport.tapTempoMode), in the tempo mode, with or without a selection, playing or stopped, as
+	// tempo.tap applies it.
+	std::string tapTempoMessage(const std::string& mode, bool tempoTrackActive, bool selection, bool playing);
 
 	class TransportControls final : private Rml::EventListener
 	{
@@ -116,9 +129,11 @@ namespace gnubase::ui
 		void endTempoGesture();
 		void tap();
 		void endTap();
+		void followTapMode(const engine::Json& mode);
 		void release();
-		void show();     // everything
-		void showTime(); // the displays with times, e.g. once a frame while playing
+		void show();      // everything
+		void showTime();  // the displays with times, e.g. once a frame while playing
+		void showTempo(); // the tempo fields, also once a frame while playing
 		int64_t samples(double seconds) const;
 
 		engine::Engine& m_engine;
@@ -153,7 +168,8 @@ namespace gnubase::ui
 		std::chrono::steady_clock::time_point m_wheeled;
 		std::optional<Subscription> m_wheelPause;
 		bool m_tempoTrackActive = false;
-		std::vector<double> m_taps; // when Tap was clicked, by RmlUi's clock, in seconds
+		std::vector<double> m_taps;     // when Tap was clicked, by RmlUi's clock, in seconds
+		std::string m_tapMode = "auto"; // transport.tapTempoMode
 		std::optional<Subscription> m_tapPause;
 		std::function<std::optional<int64_t>()> m_selectionStart;
 

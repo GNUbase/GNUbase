@@ -2,12 +2,14 @@
 #include "ui/tracklist.h"
 
 #include "ui/mixer.h"
+#include "ui/tempotrack.h"
 #include "ui/widgets.h"
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Elements/ElementFormControlInput.h>
+#include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/Input.h>
 #include <RmlUi/Core/Property.h>
@@ -44,9 +46,11 @@ namespace gnubase::ui
 		// The controls a track type can have.
 		bool applies(const std::string& control, const std::string& type, bool hasChannel)
 		{
-			// The tempo track's only control is Activate Tempo Track (reference manual p. 162).
-			if (type == "tempo" || control == "tempoTrack")
-				return type == "tempo" && control == "tempoTrack";
+			// The tempo track's controls are Activate Tempo Track, Current Tempo and Type of New Tempo Points
+			// (reference manual p. 162).
+			const bool tempoControl = control == "tempoTrack" || control == "currentTempo" || control == "tempoType";
+			if (type == "tempo" || tempoControl)
+				return type == "tempo" && tempoControl;
 			if (!hasChannel)
 				return control == "timeBase" && type != "folder" && type != "ruler" && type != "signature";
 			if (control == "record" || control == "monitor")
@@ -56,9 +60,15 @@ namespace gnubase::ui
 			return true;
 		}
 
-		// How a control looks in its button.
+		// How a control looks in its button, or its field.
 		std::string buttonRml(const std::string& control)
 		{
+			if (control == "currentTempo")
+				return R"(<input type="text" class="current-tempo" control="currentTempo" title="Current Tempo"/>)";
+			if (control == "tempoType")
+				return R"(<select class="tempo-type" control="tempoType" title="Type of New Tempo Points">)"
+					   R"(<option value="ramp">Ramp</option><option value="step">Step</option>)"
+					   R"(<option value="auto">Auto</option></select>)";
 			static const std::map<std::string, std::pair<const char*, const char*>> looks = {{"mute", {"Mute", "M"}},
 				{"solo", {"Solo", "S"}},
 				{"record", {"Record Enable", R"(<svg class="icon" src="../icons/track-record-arm.svg"/>)"}},
@@ -334,7 +344,22 @@ namespace gnubase::ui
 					loadControls(*controls);
 				if (const auto widths = values.find("ui.trackWidths"); widths != values.end())
 					loadWidths(*widths);
+				if (const auto type = values.find("editing.tempoType"); type != values.end() && type->is_string())
+				{
+					m_tempoType = type->get<std::string>();
+					showTempo();
+				}
 			}));
+		// Current Tempo follows the project cursor.
+		m_subscriptions.push_back(m_binding.on("transport.changed", [this](const engine::Event&) { showTempo(); }));
+		m_binding.send("settings.get", {{"key", "editing.tempoType"}},
+			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (alive.expired() || !result.ok() || !result.value.at("value").is_string())
+					return;
+				m_tempoType = result.value.at("value").get<std::string>();
+				showTempo();
+			});
 		m_binding.send("settings.get", {{"key", "ui.trackControls"}},
 			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
@@ -597,6 +622,8 @@ namespace gnubase::ui
 			{
 				Rml::Element* button = controls->GetChild(c);
 				const auto name = button->GetAttribute<Rml::String>("control", "");
+				if (name == "currentTempo" || name == "tempoType")
+					continue; // fields, which showTempo fills
 				bool on = false;
 				if (name == "record")
 					on = channel != nullptr && channel->at("recordEnable").get<bool>();
@@ -622,8 +649,34 @@ namespace gnubase::ui
 				}
 			}
 		}
+		showTempo();
 		if (Rml::Context* context = m_view->GetContext())
 			context->RequestNextUpdate(0);
+	}
+
+	void TrackList::showTempo()
+	{
+		const Json& project = m_display.project();
+		if (!alive() || !project.is_object())
+			return;
+		const TimeContext context = projectTime(project);
+		const auto cursor = static_cast<int64_t>(std::llround(m_display.cursor() * context.sampleRate));
+		const std::string tempo = tempoText(currentTempo(context, cursor));
+		Rml::ElementList fields;
+		m_view->QuerySelectorAll(fields, "[control=currentTempo], [control=tempoType]");
+		for (Rml::Element* field : fields)
+		{
+			auto* control = dynamic_cast<Rml::ElementFormControl*>(field);
+			const bool typed = field->IsPseudoClassSet("focus"); // what is being typed stays
+			const std::string value =
+				field->GetAttribute<Rml::String>("control", "") == "tempoType" ? m_tempoType : tempo;
+			if (control != nullptr && !typed && control->GetValue() != value)
+			{
+				m_showingTempo = true;
+				control->SetValue(value);
+				m_showingTempo = false;
+			}
+		}
 	}
 
 	void TrackList::hide()
@@ -938,8 +991,14 @@ namespace gnubase::ui
 				finishRename(true);
 			break;
 		case Rml::EventId::Change:
-			// Enter in the name being typed; the selection, which the keys may have moved out of view.
-			if (m_renaming != 0 && target != nullptr && target->GetTagName() == "input" &&
+			// The tempo track's fields; Enter in the name being typed; the selection, which the keys may have moved
+			// out of view.
+			if (target != nullptr && target->HasAttribute("control"))
+			{
+				if (!m_showingTempo)
+					tempoChanged(*target, event);
+			}
+			else if (m_renaming != 0 && target != nullptr && target->GetTagName() == "input" &&
 				event.GetParameter<bool>("linebreak", false))
 				finishRename(true);
 			else if (target == m_view)
@@ -957,8 +1016,40 @@ namespace gnubase::ui
 		}
 	}
 
+	void TrackList::tempoChanged(const Rml::Element& field, const Rml::Event& event)
+	{
+		const auto name = field.GetAttribute<Rml::String>("control", "");
+		const auto value = event.GetParameter<Rml::String>("value", "");
+		if (name == "tempoType" && value != m_tempoType && !value.empty())
+		{
+			m_tempoType = value;
+			m_binding.send("settings.set", {{"key", "editing.tempoType"}, {"value", value}});
+			return;
+		}
+		// Current Tempo: a tempo typed, on Enter.
+		const Json& project = m_display.project();
+		if (name != "currentTempo" || !event.GetParameter<bool>("linebreak", false) || !project.is_object())
+			return;
+		char* end = nullptr;
+		const double bpm = std::strtod(value.c_str(), &end);
+		const TimeContext context = projectTime(project);
+		const auto cursor = static_cast<int64_t>(std::llround(m_display.cursor() * context.sampleRate));
+		if (end != value.c_str() && bpm >= time::g_minBpm && bpm <= time::g_maxBpm)
+		{
+			const auto [command, parameters] =
+				currentTempoCommand(context, project.value("tempoTrackActive", false), cursor, bpm);
+			m_binding.send(command, parameters);
+		}
+		else
+		{
+			showTempo(); // what isn't a tempo goes
+		}
+	}
+
 	void TrackList::control(const Row& row, const std::string& name, bool exclusive, bool defeat)
 	{
+		if (name == "currentTempo" || name == "tempoType")
+			return; // fields, which change
 		const Json& project = m_display.project();
 		if (name == "read")
 		{

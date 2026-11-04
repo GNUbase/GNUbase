@@ -90,9 +90,11 @@
 			group = {"mute", "solo", "read"},
 			effect = {"mute", "solo", "read"},
 			folder = {"mute", "solo", "read"},
+			tempo = {"tempoTrack", "currentTempo", "tempoType"},
 		}
 		local names = {mute = "Mute", solo = "Solo", record = "Record Enable", monitor = "Monitor",
-			read = "Read Automation", timeBase = "Switch Time Base"}
+			read = "Read Automation", timeBase = "Switch Time Base", tempoTrack = "Activate Tempo Track",
+			currentTempo = "Current Tempo", tempoType = "Type of New Tempo Points"}
 		local always = {mute = true, solo = true} -- reference manual p. 190
 
 		local settings = {} -- the setting as the dialog edits it, by type
@@ -133,11 +135,11 @@
 			return table.concat(rml)
 		end
 
-		-- The type's visible controls, with mute and solo, which always show.
+		-- The type's visible controls, with mute and solo, which always show where the type has them.
 		local function visible(type)
 			local shown = copy(settings[type])
 			for _, control in ipairs({"solo", "mute"}) do
-				if not contains(shown, control) then
+				if contains(available[type], control) and not contains(shown, control) then
 					table.insert(shown, 1, control)
 				end
 			end
@@ -285,6 +287,7 @@
 				<listitem value="group">Group</listitem>
 				<listitem value="effect">Effect</listitem>
 				<listitem value="folder">Folder</listitem>
+				<listitem value="tempo">Tempo</listitem>
 			</listview>
 			<div class="controls-list">
 				<div>Hidden Controls</div>

@@ -4,6 +4,7 @@
 #include "engine/time/tempomap.h"
 #include "platform/log.h"
 #include "ui/signaturetrack.h"
+#include "ui/tempotrack.h"
 #include "ui/widgetutils.h"
 
 #include <RmlUi/Core/Context.h>
@@ -27,6 +28,7 @@ namespace gnubase::ui
 
 		constexpr const char* g_formatsKey = "ui.timeFormats";
 		constexpr const char* g_timeDisplayKey = "ui.timeDisplay";
+		constexpr const char* g_tapModeKey = "transport.tapTempoMode";
 		constexpr std::array<Rml::EventId, 7> g_events{Rml::EventId::Click, Rml::EventId::Change,
 			Rml::EventId::Mousedown, Rml::EventId::Mouseup, Rml::EventId::Mouseout, Rml::EventId::Dragstart,
 			Rml::EventId::Dragend};
@@ -132,6 +134,8 @@ namespace gnubase::ui
 					followFormats(*formats);
 				if (const auto options = values.find(g_timeDisplayKey); options != values.end())
 					followTimeDisplay(*options);
+				if (const auto mode = values.find(g_tapModeKey); mode != values.end())
+					followTapMode(*mode);
 			}));
 		const std::weak_ptr<bool> alive = m_alive;
 		requestProject();
@@ -153,6 +157,12 @@ namespace gnubase::ui
 				if (!alive.expired() && result.ok())
 					followTimeDisplay(result.value.at("value"));
 			});
+		m_binding.send("settings.get", {{"key", g_tapModeKey}},
+			[this, alive](const engine::Result& result)
+			{
+				if (!alive.expired() && result.ok())
+					followTapMode(result.value.at("value"));
+			});
 		show();
 	}
 
@@ -162,6 +172,22 @@ namespace gnubase::ui
 			return std::nullopt;
 		const double beat = (taps.back() - taps.front()) / static_cast<double>(taps.size() - 1);
 		return std::clamp(60.0 / beat, time::g_minBpm, time::g_maxBpm);
+	}
+
+	std::string tapTempoMessage(const std::string& mode, bool tempoTrackActive, bool selection, bool playing)
+	{
+		std::string where = "inserts a tempo event at the cursor position";
+		if (mode == "display")
+			where = "displays the tempo only";
+		else if (mode == "project" || (mode == "auto" && !tempoTrackActive))
+			where = tempoTrackActive ? "changes the first tempo event" : "sets the project tempo";
+		else if (mode == "selection" && !selection)
+			where = "inserts no tempo event without a selection";
+		else if (mode == "selection" || (mode == "auto" && selection))
+			where = "inserts a tempo event at the selection start";
+		else if (mode == "playbackStart" || (mode == "auto" && playing))
+			where = "inserts a tempo event at the last playback start position";
+		return "Tap Tempo: " + where;
 	}
 
 	TransportControls::~TransportControls()
@@ -311,6 +337,7 @@ namespace gnubase::ui
 				{
 					m_position = sample;
 					showTime();
+					showTempo();
 				});
 		else if (!status.at("playing").get<bool>())
 			m_playback.reset();
@@ -404,6 +431,13 @@ namespace gnubase::ui
 					setFormat(attribute(*item, "slot"), *format);
 				return;
 			}
+			if (const Rml::Element* item = withAttribute(target, "tap-mode"); item != nullptr)
+			{
+				m_tapMode = attribute(*item, "tap-mode"); // until the setting says so
+				m_binding.send("settings.set", {{"key", g_tapModeKey}, {"value", m_tapMode}});
+				show();
+				return;
+			}
 			if (const Rml::Element* field = withAttribute(target, "field");
 				field != nullptr && inside(field, root) && !field->HasAttribute("disabled"))
 			{
@@ -444,9 +478,14 @@ namespace gnubase::ui
 		{
 			const std::optional<float> tempo = widgets::parse(text);
 			if (tempo && m_gesture != Gesture::None)
+			{
 				m_tempo = tempo; // set at the gesture's end
+			}
 			else if (tempo)
-				m_binding.send("project.set", {{"tempo", *tempo}});
+			{
+				const auto [command, parameters] = currentTempoCommand(m_time, m_tempoTrackActive, m_position, *tempo);
+				m_binding.send(command, parameters);
+			}
 			return;
 		}
 		if (field == "signature")
@@ -552,7 +591,8 @@ namespace gnubase::ui
 		{
 			// Until the project's tempo is read again, the field keeps what it set rather than the tempo before.
 			m_sent = tempo;
-			m_binding.send("project.set", {{"tempo", *tempo}});
+			const auto [command, parameters] = currentTempoCommand(m_time, m_tempoTrackActive, m_position, *tempo);
+			m_binding.send(command, parameters);
 			requestProject();
 		}
 		show();
@@ -572,6 +612,24 @@ namespace gnubase::ui
 					if (paused)
 						endTap();
 				});
+		// Where the tempo goes, shown again with every tap.
+		const bool selection = m_selectionStart && m_selectionStart().has_value();
+		const std::string message =
+			tapTempoMessage(m_tapMode, m_tempoTrackActive, selection, m_status.value("playing", false));
+		if (Rml::Element* document = m_document.get())
+		{
+			Rml::ElementList messages;
+			document->QuerySelectorAll(messages, "notification.tap-tempo-message");
+			for (Rml::Element* element : messages)
+				element->SetAttribute("text", message);
+		}
+		show();
+	}
+
+	void TransportControls::followTapMode(const Json& mode)
+	{
+		if (mode.is_string())
+			m_tapMode = mode.get<std::string>();
 		show();
 	}
 
@@ -607,14 +665,7 @@ namespace gnubase::ui
 			const auto value = m_status.find(attribute(*element, "state"));
 			setChecked(*element, value != m_status.end() && value->is_boolean() && value->get<bool>());
 		}
-		const std::optional<double> tapped = tappedTempo(m_taps); // while tapping, the tapped tempo
-		const std::string tempo =
-			widgets::format(tapped ? static_cast<float>(*tapped)
-								   : m_sent.value_or(static_cast<float>(m_time.tempo.points().front().bpm)));
-		for (Rml::Element* element : all("[field=tempo]"))
-			if (m_gesture == Gesture::None && // during one, the field shows where the gesture took it
-				attribute(*element, "value") != tempo)
-				element->SetAttribute("value", tempo);
+		showTempo();
 		for (Rml::Element* element : all("[field=tempoTrack]"))
 			setChecked(*element, m_tempoTrackActive);
 		for (Rml::Element* element : all("[field=tap]"))
@@ -632,11 +683,27 @@ namespace gnubase::ui
 			document->QuerySelectorAll(items, "[option=beatCountOnly]");
 			for (Rml::Element* item : items)
 				setChecked(*item, m_beatCountOnly);
+			items.clear();
+			document->QuerySelectorAll(items, "menuitem[tap-mode]");
+			for (Rml::Element* item : items)
+				setChecked(*item, attribute(*item, "tap-mode") == m_tapMode);
 		}
 		for (Rml::Element* element : all("[format=timeDisplay]"))
 			for (int size = 0; size <= g_largestSize; ++size)
 				element->SetClass("size-" + std::to_string(size), size == m_size);
 		showTime();
+	}
+
+	void TransportControls::showTempo()
+	{
+		if (!alive() || m_gesture != Gesture::None) // during one, the fields show where the gesture took it
+			return;
+		const std::optional<double> tapped = tappedTempo(m_taps); // while tapping, the tapped tempo
+		const double tempo = tapped ? *tapped : m_sent.value_or(static_cast<float>(currentTempo(m_time, m_position)));
+		const std::string text = widgets::format(static_cast<float>(tempo));
+		for (Rml::Element* element : all("[field=tempo]"))
+			if (attribute(*element, "value") != text)
+				element->SetAttribute("value", text);
 	}
 
 	void TransportControls::showTime()

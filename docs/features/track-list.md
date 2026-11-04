@@ -72,10 +72,12 @@ sends engine commands, so whatever another client changes shows at once.
   `mute` (M) and `solo` (S), which tracks with a channel always show, `record` and `monitor` (audio tracks), `read`
   (every automation lane of the track reads, or with a click none does; disabled without lanes) and `timeBase`
   (musical or linear, `.checked` when linear). A click sends `channel.set`, `automationLane.set` in one transaction,
-  or `track.set`. Folders without a group channel, marker, ruler and signature tracks show none. The tempo track's only control
-  is `tempoTrack`, Activate Tempo Track (`project.set` `tempoTrackActive`, [tempo-track.md](tempo-track.md)). The
-  defaults: mute, solo, record, monitor and read on audio tracks; mute, solo and read on the others with a channel;
-  tempoTrack on the tempo track.
+  or `track.set`. Folders without a group channel, marker, ruler and signature tracks show none. The tempo track's
+  controls are `tempoTrack`, Activate Tempo Track (`project.set` `tempoTrackActive`), `currentTempo`, Current Tempo, a
+  text field with the tempo at the project cursor that takes a tempo typed with Enter, and `tempoType`, Type of New
+  Tempo Points, a drop-down list for `editing.tempoType` ([tempo-track.md](tempo-track.md)). The defaults: mute, solo,
+  record, monitor and read on audio tracks; mute, solo and read on the others with a channel; all three on the tempo
+  track.
 - **Selection** (p. 218) is the list view's: a click selects a track, Ctrl-click adds or removes one, Shift-click
   selects a range; Up and Down step through the shown tracks, in the list and wherever the project window has the
   focus (`track.selectPrevious`, `track.selectNext`), and scroll the selected track into view. While an event is
@@ -118,7 +120,8 @@ sends engine commands, so whatever another client changes shows at once.
 ## Track controls settings
 
 `resources/ui/track-controls.rml` (pp. 189–191), opened by `#track-controls-settings`, the context menu or the UI
-command `track.controlsSettings`: the track types on the left, the hidden and the visible controls of the selected
+command `track.controlsSettings`: the track types with controls on the left (audio, instrument, MIDI, group, effect,
+folder and tempo), the hidden and the visible controls of the selected
 type, Add, Remove (not for mute and solo), Move Up, Move Down and Reset (the type's controls and controls area width,
 from `settings.list`), and below them Controls Area Width (`#controls-area-width`, the selected type's) and Track Name
 Width (`#track-name-width`, global), held at the setting's limits. OK saves every type with `settings.set`

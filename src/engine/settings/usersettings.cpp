@@ -337,22 +337,23 @@ namespace gnubase::engine::settings
 				{"ui.trackControls",
 					"The controls the track list shows, by track type (audio, instrument, midi, group, effect, "
 					"folder, marker, ruler, tempo), in order: mute, solo, record, monitor (audio, instrument and MIDI "
-					"tracks), read (automation), timeBase and tempoTrack (the tempo track's Activate Tempo Track). "
-					"Mute and solo always show on tracks with a channel; a type left out shows none.",
+					"tracks), read (automation), timeBase, and on the tempo track tempoTrack (Activate Tempo Track), "
+					"currentTempo (Current Tempo) and tempoType (Type of New Tempo Points). Mute and solo always show "
+					"on tracks with a channel; a type left out shows none.",
 					Json{{"type", "object"},
 						{"additionalProperties",
 							{{"type", "array"},
 								{"items",
 									{{"type", "string"},
 										{"enum",
-											{"mute", "solo", "record", "monitor", "read", "timeBase",
-												"tempoTrack"}}}}}}},
+											{"mute", "solo", "record", "monitor", "read", "timeBase", "tempoTrack",
+												"currentTempo", "tempoType"}}}}}}},
 					Json{{"audio", {"mute", "solo", "record", "monitor", "read"}},
 						{"instrument", {"mute", "solo", "record", "monitor", "read"}},
 						{"midi", {"mute", "solo", "record", "monitor", "read"}}, {"group", {"mute", "solo", "read"}},
 						{"effect", {"mute", "solo", "read"}}, {"folder", {"mute", "solo", "read"}},
-						{"marker", Json::array()}, {"ruler", Json::array()}, {"tempo", {"tempoTrack"}},
-						{"signature", Json::array()}}},
+						{"marker", Json::array()}, {"ruler", Json::array()},
+						{"tempo", {"tempoTrack", "currentTempo", "tempoType"}}, {"signature", Json::array()}}},
 				{"ui.trackWidths",
 					"The widths in the track list's rows, in dp: name, the track name's for every track type (20 to "
 					"400), and controls, by track type, the width of its controls area (0 to 800), whose controls go "

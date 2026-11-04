@@ -339,6 +339,43 @@ namespace gnubase::app
 								"project.set", {{"tempoTrackActive", !result.value.value("tempoTrackActive", false)}});
 					});
 			}});
+		// Insert Tempo Event at Cursor (reference manual pp. 1452-1453): a key command without a key, whose dialog
+		// starts at the tempo at the cursor and adds the tempo typed there (tempo.add).
+		m_keys.add({"tempo.insertAtCursor", "Asks for a tempo and adds a tempo event with it at the project cursor.",
+			[this](ui::Window& window, Rml::Element* /*zone*/)
+			{
+				m_binding.send("project.get", engine::Json::object(),
+					[this, id = window.id()](const engine::Result& project)
+					{
+						if (!project.ok())
+							return;
+						m_binding.send("transport.get", engine::Json::object(),
+							[this, id, context = ui::projectTime(project.value)](const engine::Result& transport)
+							{
+								ui::Window* found = m_shell.find(id);
+								if (found == nullptr || !transport.ok())
+									return;
+								const auto cursor = transport.value.at("position").get<int64_t>();
+								openDialog(*found, "insert-tempo.rml",
+									{{"bpm", ui::tempoText(ui::currentTempo(context, cursor))}});
+							});
+					});
+			}});
+		// Select All Events in the tempo track's context menu (p. 1450): every tempo event on its lane.
+		m_keys.add({"tempo.selectAll", "Selects every tempo event on the tempo track.",
+			[this](ui::Window& /*window*/, Rml::Element* /*zone*/)
+			{
+				if (m_tempoLane)
+					m_tempoLane->curve().selectAll();
+			}});
+		m_keys.enableWhen("tempo.selectAll",
+			[this](ui::Window& /*window*/, Rml::Element* /*zone*/)
+			{
+				if (!m_trackList || !m_tempoLane || m_tempoLane->curve().tempo().track == 0)
+					return false;
+				const std::vector<uint64_t> tracks = m_trackList->selection();
+				return std::find(tracks.begin(), tracks.end(), m_tempoLane->curve().tempo().track) != tracks.end();
+			});
 
 		// The project window's panels (reference manual pp. 54, 73, 75-98), which their tickets fill: the inspector
 		// (docs/features/inspector.md) shows the selected track, the Channel zone's will show its channel strip (#107).

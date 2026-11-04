@@ -48,13 +48,6 @@ namespace gnubase::ui
 			return std::clamp(std::round(bpm * 1000.0) / 1000.0, time::g_minBpm, time::g_maxBpm);
 		}
 
-		std::string bpmText(double bpm)
-		{
-			std::ostringstream text;
-			text << std::fixed << std::setprecision(3) << bpm;
-			return text.str();
-		}
-
 		time::TempoMap tempoFrom(const Json& points, const time::TempoMap& fallback)
 		{
 			std::vector<time::TempoPoint> tempo;
@@ -120,6 +113,33 @@ namespace gnubase::ui
 		return {lower, std::max(lower + 40.0, (std::ceil(fastest / 10.0) * 10.0) + 20.0)};
 	}
 
+	double currentTempo(const TimeContext& context, int64_t cursor)
+	{
+		const double seconds = static_cast<double>(std::max<int64_t>(cursor, 0)) / context.sampleRate;
+		return context.tempo.bpmAt(context.tempo.toTicks(seconds));
+	}
+
+	std::pair<std::string, Json> currentTempoCommand(
+		const TimeContext& context, bool tempoTrackActive, int64_t cursor, double bpm)
+	{
+		if (!tempoTrackActive)
+			return {"project.set", {{"tempo", rounded(bpm)}}};
+		const double seconds = static_cast<double>(std::max<int64_t>(cursor, 0)) / context.sampleRate;
+		const time::Ticks at = context.tempo.toTicks(seconds);
+		time::Ticks position = 0;
+		for (const time::TempoPoint& point : context.tempo.points())
+			if (point.position <= at)
+				position = point.position;
+		return {"tempo.set", {{"events", {{{"position", position}, {"bpm", rounded(bpm)}}}}}};
+	}
+
+	std::string tempoText(double bpm)
+	{
+		std::ostringstream text;
+		text << std::fixed << std::setprecision(3) << bpm;
+		return text.str();
+	}
+
 	// The curve.
 
 	TempoCurve::TempoCurve(EngineBinding& binding, Rml::Element& parent) : m_binding(binding)
@@ -127,9 +147,11 @@ namespace gnubase::ui
 		Rml::Element& element = add(parent, "div", "tempo-curve");
 		m_element = element.GetObserverPtr();
 		m_line = dynamic_cast<Curve*>(&add(element, "curve", "tempo-line"));
-		if (m_line == nullptr)
+		m_fixed = dynamic_cast<Curve*>(&add(element, "curve", "tempo-line fixed-tempo"));
+		if (m_line == nullptr || m_fixed == nullptr)
 			throw std::logic_error("<curve> isn't registered (ui::registerCanvas)");
 		m_points = &add(element, "div", "tempo-points");
+		m_rectangle = &add(element, "div", "tool-rectangle");
 		element.AddEventListener(Rml::EventId::Mousedown, this);
 		show();
 	}
@@ -141,6 +163,7 @@ namespace gnubase::ui
 		m_element->RemoveEventListener(Rml::EventId::Mousedown, this);
 		if (Rml::ElementDocument* document = m_element->GetOwnerDocument())
 		{
+			document->RemoveEventListener(Rml::EventId::Mousemove, this);
 			document->RemoveEventListener(Rml::EventId::Mouseup, this);
 		}
 	}
@@ -180,6 +203,14 @@ namespace gnubase::ui
 		setSelection(std::move(positions));
 		if (m_onSelect)
 			m_onSelect();
+	}
+
+	void TempoCurve::selectAll()
+	{
+		std::vector<int64_t> positions;
+		for (const time::TempoPoint& point : m_tempo.tempoTrack.points())
+			positions.push_back(point.position);
+		select(std::move(positions));
 	}
 
 	void TempoCurve::removeSelected()
@@ -232,6 +263,11 @@ namespace gnubase::ui
 			}
 		}
 		m_line->setPoints(std::move(curve));
+		// The fixed tempo, a horizontal line, in fixed tempo mode.
+		std::vector<CurvePoint> fixed;
+		if (!m_tempo.active)
+			fixed.push_back({0.0, value(m_tempo.fixed), engine::AutomationShape::Step, 0.0});
+		m_fixed->setPoints(std::move(fixed));
 
 		std::string rml;
 		for (const time::TempoPoint& point : points)
@@ -257,8 +293,11 @@ namespace gnubase::ui
 	{
 		if (!alive())
 			return;
-		m_line->SetAttribute("start", m_start);
-		m_line->SetAttribute("scale", m_scale);
+		for (Curve* line : {m_line, m_fixed})
+		{
+			line->SetAttribute("start", m_start);
+			line->SetAttribute("scale", m_scale);
+		}
 		const auto [lower, upper] = visibleTempo(m_tempo);
 		const std::vector<time::TempoPoint>& points = m_tempo.tempoTrack.points();
 		for (int i = 0; i < m_points->GetNumChildren() && static_cast<size_t>(i) < points.size(); ++i)
@@ -292,6 +331,11 @@ namespace gnubase::ui
 	{
 		if (!alive())
 			return;
+		if (event == Rml::EventId::Mousemove)
+		{
+			move(event);
+			return;
+		}
 		if (event == Rml::EventId::Mouseup)
 		{
 			release(event);
@@ -306,6 +350,7 @@ namespace gnubase::ui
 
 	void TempoCurve::press(Rml::Event& event)
 	{
+		endDrag(); // a press that never saw its mouse button go up
 		const Rml::Vector2f mouse = {
 			event.GetParameter<float>("mouse_x", 0.0F), event.GetParameter<float>("mouse_y", 0.0F)};
 		const TempoTool tool = m_tool ? m_tool() : TempoTool::Select;
@@ -316,28 +361,90 @@ namespace gnubase::ui
 				m_binding.send("tempo.remove", {{"positions", {*on}}});
 			return;
 		}
-		if (on && tool == TempoTool::Select)
+		if (tool == TempoTool::Draw)
 		{
-			std::vector<int64_t> selection = m_selection;
-			const bool toggle =
-				event.GetParameter<int>("ctrl_key", 0) != 0 || event.GetParameter<int>("meta_key", 0) != 0;
-			const auto at = std::find(selection.begin(), selection.end(), *on);
-			if (toggle && at != selection.end())
-				selection.erase(at);
-			else if (toggle)
-				selection.push_back(*on);
-			else if (at == selection.end())
-				selection = {*on};
-			select(std::move(selection));
-			if (!m_selection.empty())
-			{
-				m_drag = Drag{mouse, visibleTempo(m_tempo)};
-				if (Rml::ElementDocument* document = m_element->GetOwnerDocument())
-					document->AddEventListener(Rml::EventId::Mouseup, this);
-			}
+			addAt(mouse);
 			return;
 		}
-		// A click elsewhere adds a tempo event there, with the tempo where the mouse is.
+		// The select tool, as on automation tracks: Ctrl or Shift adds to the selection.
+		const bool adds = event.GetParameter<int>("ctrl_key", 0) != 0 || event.GetParameter<int>("meta_key", 0) != 0 ||
+			event.GetParameter<int>("shift_key", 0) != 0;
+		Drag drag{mouse, visibleTempo(m_tempo)};
+		if (on)
+		{
+			// A press selects the event, and a drag moves the selected ones.
+			std::vector<int64_t> selection = m_selection;
+			const bool selected = std::find(selection.begin(), selection.end(), *on) != selection.end();
+			if (adds && selected)
+				drag.toggled = *on;
+			else if (adds)
+				selection.push_back(*on);
+			else if (!selected)
+				selection = {*on};
+			select(std::move(selection));
+			drag.onEvent = true;
+		}
+		else if (adds)
+		{
+			drag.base = m_selection;
+		}
+		m_drag = std::move(drag);
+		if (Rml::ElementDocument* document = m_element->GetOwnerDocument())
+		{
+			document->AddEventListener(Rml::EventId::Mousemove, this);
+			document->AddEventListener(Rml::EventId::Mouseup, this);
+		}
+	}
+
+	void TempoCurve::move(Rml::Event& event)
+	{
+		if (!m_drag)
+			return;
+		const Rml::Vector2f mouse = {
+			event.GetParameter<float>("mouse_x", 0.0F), event.GetParameter<float>("mouse_y", 0.0F)};
+		const Rml::Vector2f from = m_drag->from;
+		if (std::abs(mouse.x - from.x) / ratio() >= g_dragStart || std::abs(mouse.y - from.y) / ratio() >= g_dragStart)
+			m_drag->moved = true;
+		if (m_drag->onEvent || !m_drag->moved)
+			return;
+		// A rectangle selects the events in it.
+		const Rml::Vector2f low = {std::min(from.x, mouse.x), std::min(from.y, mouse.y)};
+		const Rml::Vector2f high = {std::max(from.x, mouse.x), std::max(from.y, mouse.y)};
+		const Rml::Vector2f offset = m_element->GetAbsoluteOffset(Rml::BoxArea::Content);
+		m_rectangle->SetClass("shown", true);
+		m_rectangle->SetProperty(Rml::PropertyId::Left, dp((low.x - offset.x) / ratio()));
+		m_rectangle->SetProperty(Rml::PropertyId::Top, dp((low.y - offset.y) / ratio()));
+		m_rectangle->SetProperty(Rml::PropertyId::Width, dp((high.x - low.x) / ratio()));
+		m_rectangle->SetProperty(Rml::PropertyId::Height, dp((high.y - low.y) / ratio()));
+		std::vector<int64_t> selection = m_drag->base;
+		for (int i = 0; i < m_points->GetNumChildren(); ++i)
+		{
+			Rml::Element* handle = m_points->GetChild(i);
+			const Rml::Vector2f centre = handle->GetAbsoluteOffset(Rml::BoxArea::Border) +
+				(handle->GetBox().GetSize(Rml::BoxArea::Border) / 2.0F);
+			const auto position = handle->GetAttribute<int64_t>("position", 0);
+			if (centre.x >= low.x && centre.x <= high.x && centre.y >= low.y && centre.y <= high.y &&
+				std::find(selection.begin(), selection.end(), position) == selection.end())
+				selection.push_back(position);
+		}
+		std::sort(selection.begin(), selection.end());
+		select(std::move(selection));
+	}
+
+	void TempoCurve::endDrag()
+	{
+		if (Rml::ElementDocument* document = m_element->GetOwnerDocument())
+		{
+			document->RemoveEventListener(Rml::EventId::Mousemove, this);
+			document->RemoveEventListener(Rml::EventId::Mouseup, this);
+		}
+		m_rectangle->SetClass("shown", false);
+		m_drag.reset();
+	}
+
+	void TempoCurve::addAt(Rml::Vector2f mouse)
+	{
+		// The tempo where the mouse is.
 		const Rml::Vector2f offset = m_element->GetAbsoluteOffset(Rml::BoxArea::Content);
 		const double x = (mouse.x - offset.x) / ratio();
 		const double y = (mouse.y - offset.y) / ratio();
@@ -350,17 +457,33 @@ namespace gnubase::ui
 
 	void TempoCurve::release(Rml::Event& event)
 	{
-		if (Rml::ElementDocument* document = m_element->GetOwnerDocument())
-			document->RemoveEventListener(Rml::EventId::Mouseup, this);
-		const std::optional<Drag> drag = std::exchange(m_drag, std::nullopt);
+		const std::optional<Drag> drag = m_drag;
+		endDrag();
 		if (!drag)
 			return;
 		const Rml::Vector2f mouse = {
 			event.GetParameter<float>("mouse_x", 0.0F), event.GetParameter<float>("mouse_y", 0.0F)};
 		const double dx = (mouse.x - drag->from.x) / ratio();
 		const double dy = (mouse.y - drag->from.y) / ratio();
-		if (std::abs(dx) < g_dragStart && std::abs(dy) < g_dragStart)
+		const bool dragged = drag->moved || std::abs(dx) >= g_dragStart || std::abs(dy) >= g_dragStart;
+		if (!drag->onEvent)
+		{
+			// A click without a rectangle adds a tempo event there.
+			if (!dragged)
+				addAt(drag->from);
 			return;
+		}
+		if (!dragged)
+		{
+			// A selected event clicked with Ctrl or Shift goes out of the selection.
+			if (drag->toggled)
+			{
+				std::vector<int64_t> selection = m_selection;
+				selection.erase(std::remove(selection.begin(), selection.end(), *drag->toggled), selection.end());
+				select(std::move(selection));
+			}
+			return;
+		}
 		// Horizontally by time, vertically by tempo; the first event stays at the project start.
 		const double tempoDelta = -dy * (drag->range.second - drag->range.first) / std::max(height(), 1.0);
 		Json events = Json::array();
@@ -591,8 +714,7 @@ namespace gnubase::ui
 			button->SetClass("checked", attribute(*button, "tempo-tool") == toolName(m_tool));
 		set("tempo-type", m_type);
 		// The fixed tempo, or the tempo at the cursor.
-		const double cursor = static_cast<double>(m_cursor) / tempo.time.sampleRate;
-		set("current-tempo", bpmText(tempo.active ? tempo.tempo.bpmAt(tempo.tempo.toTicks(cursor)) : tempo.fixed));
+		set("current-tempo", tempoText(currentTempo(tempo.time, m_cursor)));
 		// The info line: the first selected event.
 		const std::vector<int64_t>& selection = m_curve->selection();
 		const std::vector<time::TempoPoint>& points = tempo.tempoTrack.points();
@@ -609,7 +731,7 @@ namespace gnubase::ui
 				if (position->GetInnerRML() != text)
 					position->SetInnerRML(text);
 			}
-			set("tempo-value", bpmText(first->bpm));
+			set("tempo-value", tempoText(first->bpm));
 			set("tempo-ramp", first->ramp ? "ramp" : "jump");
 		}
 		// Or the first selected time signature event: its bar as the ruler counts them, and its signature.
@@ -739,20 +861,11 @@ namespace gnubase::ui
 		const bool entered = event.GetParameter<bool>("linebreak", false); // text fields change on Enter
 		if (id == "current-tempo" && number && entered)
 		{
-			if (!tempo.active)
+			if (rounded(bpm) != rounded(currentTempo(tempo.time, m_cursor)))
 			{
-				if (rounded(bpm) != tempo.fixed)
-					m_binding.send("project.set", {{"tempo", rounded(bpm)}});
-				return;
+				const auto [command, parameters] = currentTempoCommand(tempo.time, tempo.active, m_cursor, bpm);
+				m_binding.send(command, parameters);
 			}
-			// The tempo event at or before the cursor.
-			const double cursor = static_cast<double>(m_cursor) / tempo.time.sampleRate;
-			const time::Ticks at = tempo.tempo.toTicks(cursor);
-			int64_t position = 0;
-			for (const time::TempoPoint& point : tempo.tempoTrack.points())
-				if (point.position <= at)
-					position = point.position;
-			m_binding.send("tempo.set", {{"events", {{{"position", position}, {"bpm", rounded(bpm)}}}}});
 			return;
 		}
 		if (id == "signature-value" && entered && m_signatures)

@@ -11,8 +11,8 @@ The tempo track, its tempo events and ramps, the project tempo modes and tap tem
   which every conversion, the render snapshot and the transport use; `Project::otherTempo` keeps the tempo of the mode
   not in use: the tempo track's events in fixed tempo mode, the fixed tempo (one point) in tempo track mode. Switching
   swaps them, so each mode keeps its tempo while the other is in use. `Project::tempoTrack()` and `fixedTempo()` read
-  either. `project.set` `tempo` (the transport's tempo field) sets the first point of the tempo the project plays: the
-  fixed tempo, or the tempo track's first event.
+  either. `project.set` `tempo` sets the first point of the tempo the project plays: the fixed tempo, or the tempo
+  track's first event.
 - **Tempo events** are the tempo track's points (`time::TempoPoint`): a position in ticks, a tempo of 1 to 999 BPM and
   whether the tempo ramps to it from the event before (linearly per beat) or jumps there. The first is at the project
   start and stays. `tempo.add` adds one at a position (ticks or `"cursor"`, Insert Tempo Event at Cursor) or changes
@@ -43,10 +43,26 @@ The tempo track, its tempo events and ramps, the project tempo modes and tap tem
 - **The tempo track's lane** (`ui::TempoLane`, `src/ui/tempotrack.h`): a `ui::TempoCurve` over the tempo track's lane
   in the event display, following the project and the view: the tempo track's events as a `<curve class="tempo-line">`
   on the timeline of the tempo the project plays (ramps as straight pieces, jumps as steps) and a `.tempo-point` per
-  event, `.inactive` in fixed tempo mode. With the display's object selection tool a click on an event selects it (Ctrl
-  adds or removes it) and a drag moves the selected ones in time and tempo (`tempo.set`); a click elsewhere adds an event
-  with the tempo where the mouse is (`tempo.add`). The draw tool adds events, the erase tool removes them but the first.
-  The curve shows the tempos from 20 BPM below the slowest event to 20 above the fastest, in tens.
+  event, `.inactive` in fixed tempo mode. In fixed tempo mode `<curve class="tempo-line fixed-tempo">` draws the fixed
+  tempo as a horizontal line over the grayed-out events (pp. 1447, 1456). With the display's object selection tool a
+  click on an event selects it, Ctrl or Shift adds it and a click on a selected one with them takes it out, as on
+  automation tracks, and a drag moves the selected ones in time and tempo (`tempo.set`); a drag elsewhere selects the
+  events in a rectangle (`.tool-rectangle`, with Ctrl or Shift added to the selection), and a click there adds an event
+  with the tempo where the mouse is (`tempo.add`) (p. 1450). The draw tool adds events, the erase tool removes them but
+  the first. The curve shows the tempos from 20 BPM below the slowest event to 20 above the fastest, in tens.
+- **Current Tempo** (pp. 162, 1446, 1449): the transport bar's tempo field, the tempo track's control and the tempo
+  track editor's field show the same tempo, `ui::currentTempo`: the fixed tempo, or in tempo track mode the tempo the
+  project plays at the project cursor. A tempo typed (`ui::currentTempoCommand`) sets the fixed tempo
+  (`project.set` `tempo`), or changes the tempo event at or before the cursor (`tempo.set`), the first one in a project
+  without tempo changes.
+- **The tempo track's controls** (p. 162), in the track list (the user setting `ui.trackControls`, all three by
+  default): Activate Tempo Track (`tempoTrack`), Current Tempo (`currentTempo`, a text field that takes a tempo with
+  Enter) and Type of New Tempo Points (`tempoType`, a drop-down list for `editing.tempoType`).
+- **Select All Events** (p. 1450): the UI command `tempo.selectAll`, in the track list's context menu, selects every
+  tempo event on the lane while the tempo track is selected.
+- **Insert Tempo Event at Cursor** (pp. 1452-1453): the UI command `tempo.insertAtCursor`, without a key until the user
+  binds one, opens `resources/ui/insert-tempo.rml` with the tempo at the cursor; OK adds a tempo event with the tempo
+  typed at the cursor (`tempo.add` `position: "cursor"`).
 - **Activate Tempo Track** (p. 162): the tempo track's control `tempoTrack` in the track list (the user setting
   `ui.trackControls`, its only one) and the transport bar's `#tempo-track` button switch the mode, checked in tempo track
   mode; also the UI command `tempo.toggleTrack` in Project > Tempo Track.
@@ -54,7 +70,11 @@ The tempo track, its tempo events and ramps, the project tempo modes and tap tem
   are a run; meanwhile the tempo field shows the tempo they beat (`ui::tappedTempo`: the average time between them),
   and two seconds after the last one it goes to `tempo.tap`, by the user setting `transport.tapTempoMode`, with the
   start of the project window's selection range or selected events and parts as `selection`
-  (`EventDisplay::selectionStart`). The times are RmlUi's clock, which tests stop and move on.
+  (`EventDisplay::selectionStart`). The times are RmlUi's clock, which tests stop and move on. While tapping the button
+  is `.tapping` and each tap shows where the tempo goes (`ui::tapTempoMessage`, p. 1455) in `#tap-tempo-message`, a
+  notification over the event display (over the transport panel's right end in the panel). A right click on
+  it opens the Tap Tempo Mode pop-up menu (p. 1458), `menuitem[tap-mode]`, which sets
+  `transport.tapTempoMode` and is checked by it.
 - The track list's Remove Empty Tracks, Duplicate Tracks, Move Selected Tracks to New Folder and drags into folders
   leave the tempo track out: the project has one, at the top level.
 - **The tempo track editor** (`ui::TempoEditor`, `resources/ui/tempo-editor.rml`, pp. 1447-1449, 1455): Mod+T (the
@@ -75,7 +95,8 @@ several events in one drag with the draw tool, snapping new and moved events to 
 auto-scroll, visible tempo limits of the user's own, Lock, tempo recording (p. 1453) and the Process Tempo and Process
 Bars dialogs (pp. 1463-1464), tempo detection (#157) and time warp. The selected events on the tempo track's lane are
 removed with the erase tool, not with Backspace, which deletes the selected events and parts. The key command for Tap
-Tempo (Shift and Space) is not bound.
+Tempo (Shift and Space) is not bound. Current Tempo on the tempo track and in the tempo track editor follows the cursor
+when it is moved, not yet during playback, as the transport bar's does.
 
 ## Tests
 
@@ -85,4 +106,8 @@ at the cursor, `editing.tempoType`, every tap tempo mode and saving and loading.
 playback start in `transport.get`. `tests/tempotrack_ui_tests.cpp`: the visible tempos, the tapped tempo, the curve on
 the tempo track's lane with clicks that add, drag and erase events, the tempo track editor with Mod+T, its toolbar, info
 line and tools, Activate Tempo Track in the track list and the transport bar, and Tap Tempo, also at a selected part.
-`tests/tracklist_tests.cpp`: the track list's commands leaving the tempo track out.
+`tests/tracklist_tests.cpp`: the track list's commands leaving the tempo track out. `tests/tempocontrols_ui_tests.cpp`
+(#680): Current Tempo and the command that changes it, the Tap Tempo message for every mode, the fixed tempo line,
+selecting events with Shift, Ctrl and a rectangle, the transport bar's tempo at the cursor, the Tap Tempo Mode menu with
+the message and `.tapping` while tapping, the tempo track's Current Tempo and Type of New Tempo Points, Insert Tempo
+Event at Cursor and Select All Events.

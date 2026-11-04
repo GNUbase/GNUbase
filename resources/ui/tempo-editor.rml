@@ -2,7 +2,7 @@
 <!-- The tempo track editor (docs/features/tempo-track.md, reference manual pp. 1447-1449, 1455), in a window of its
      own. ui::TempoEditor drives the toolbar, the info line and the tempo curve in #tempo-curve-area, over the whole
      project, with a bars and beats ruler above it, the time signature display between them and the tempo scale left of
-     it. -->
+     it; its .tool-rectangle shows while a drag selects tempo events. -->
 <rml>
 <head>
 	<title>Tempo Track</title>
@@ -110,6 +110,19 @@
 			top: 104dp;
 			right: 0;
 			bottom: 0;
+		}
+
+		.tool-rectangle
+		{
+			display: none;
+			position: absolute;
+			box-sizing: border-box;
+			pointer-events: none;
+		}
+
+		.tool-rectangle.shown
+		{
+			display: block;
 		}
 	</style>
 </head>
