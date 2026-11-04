@@ -1,0 +1,35 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The channel settings window (docs/features/channel-settings.md, reference manual pp. 499-512): a docking window
+     (docs/features/docking.md) whose main zone ui::Mixer fills with one channel and all its sections (#mixer).
+     app::AppUi opens it with Edit Channel Settings. -->
+<rml>
+<head>
+	<title>Channel Settings</title>
+	<style>
+		body
+		{
+			position: absolute;
+			left: 0;
+			top: 0;
+			right: 0;
+			bottom: 0;
+		}
+
+		#mixer
+		{
+			position: absolute;
+			left: 0;
+			top: 0;
+			right: 0;
+			bottom: 0;
+		}
+	</style>
+</head>
+<body class="docking">
+	<div class="zones">
+		<div id="main-zone" zone="main" focuszone="mixer">
+			<div id="mixer"/>
+		</div>
+	</div>
+</body>
+</rml>
