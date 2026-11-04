@@ -532,6 +532,7 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".track-list .automation-rows", {"background-color": mix(c["surface"], c["background"], .5)}),
         (".track-list .automation-row", {"border-top-width": f"{widths['hairline']}dp",
                                          "border-top-color": c["border"]}),
+        (".track-list .automation-row.selected", {"decorator": skin("list-item-selected")}),
         (".event-display .automation-lane", {"background-color": c["surface"] + "80",
                                              "border-top-width": f"{widths['hairline']}dp",
                                              "border-top-color": c["border"]}),
