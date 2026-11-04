@@ -741,6 +741,18 @@
 	{
 		background-color: #38565c;
 	}
+	.se-hitpoint-line, .se-hitpoint-handle
+	{
+		background-color: #5ea7b3;
+	}
+	.se-hitpoint.locked .se-hitpoint-handle
+	{
+		background-color: #7896bd;
+	}
+	.se-hitpoint.disabled .se-hitpoint-line, .se-hitpoint.disabled .se-hitpoint-handle
+	{
+		background-color: #b7bbc066;
+	}
 	.list-editor-header
 	{
 		color: #b7bbc0;
