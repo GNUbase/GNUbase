@@ -723,6 +723,21 @@ Returns:
 
 ### automation
 
+#### `gnubase.automation.copy`
+
+Copies the automation between start and end (project samples, default the locators) for automation.paste: of every track (Copy Automation of All Tracks), of tracks (ids, Copy Automation of Selected Tracks) or of lanes (ids, Copy Automation of Selected Parameters), each lane with points with the curve's values at the range's edges. It has a clipboard of its own, apart from range.copy's. Changes nothing in the project. Returns how many lanes it copied.
+
+Parameters:
+
+- `end`: integer
+- `lanes`: array of integer
+- `start`: integer
+- `tracks`: array of integer
+
+Returns:
+
+- `lanes`: integer, required
+
 #### `gnubase.automation.get`
 
 The automation settings. followsEvents (default false): when an audio event or MIDI part moves, the automation of its track in its range moves with it and replaces the points where it lands. virginTerritory (default false; reference manual p. 881): automation lanes have no curve before their first and after their last point, where their parameters have their static values, as between a terminator point and the next one; without it they have initial values, the first point's before it and the last point's after it.
@@ -733,6 +748,21 @@ Returns:
 
 - `followsEvents`: boolean, required
 - `virginTerritory`: boolean, required
+
+#### `gnubase.automation.paste`
+
+Pastes what automation.copy copied between start and end (project samples, default the locators), where it replaces the automation: without tracks and lanes each lane onto its own track (Paste Automation of All Tracks); onto tracks (ids), the copied tracks from the top one onto each, or one copied track onto all of them; or onto lanes (ids), each getting the copied lane of its parameter. A track takes the parameters it has, adding their lanes: a plugin's needs the same plugin in the slot at the same place, an instrument's the same instrument; the others are left out. A shorter range cuts the copy at the curve's value there, in a longer one its last value holds up to the end. Returns the lanes it pasted into.
+
+Parameters:
+
+- `end`: integer
+- `lanes`: array of integer
+- `start`: integer
+- `tracks`: array of integer
+
+Returns:
+
+- `lanes`: array of integer, required
 
 #### `gnubase.automation.set`
 

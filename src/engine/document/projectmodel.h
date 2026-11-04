@@ -67,6 +67,24 @@ namespace gnubase::engine
 		std::vector<AutomationLane> automation; // the points in the range, with the curve's values at its edges
 	};
 
+	// What automation.copy keeps for automation.paste (eventedits.cpp, reference manual pp. 878-879): the automation
+	// of lanes in a range as range.copy keeps it, with what finds a lane's parameter on other tracks. Not part of the
+	// project or of undo.
+	struct AutomationClipboard
+	{
+		struct Lane
+		{
+			AutomationLane lane;
+			size_t slot = 0;       // a plugin's lane: the slot's place in its channel
+			std::string processor; // a plugin's lane: the plugin; an instrument's: the instrument
+		};
+
+		time::Samples start = 0; // the range's start, in project samples and in ticks
+		time::Ticks startTicks = 0;
+		std::vector<ObjectId> tracks; // the tracks of the copied lanes, from top to bottom
+		std::vector<Lane> lanes;      // in the order of their tracks
+	};
+
 	// The project document, its commands, its undo history and its render snapshots. The commands run on the engine's
 	// command thread, the only thread that touches the document; every command that changes it records an undo step
 	// and publishes a new render snapshot for the audio thread.
@@ -175,6 +193,8 @@ namespace gnubase::engine
 		bool m_automationFollowsEvents = false;    // a setting, not part of the project
 		std::optional<RangeClipboard> m_clipboard; // range.copy and range.cut
 		std::function<std::string(ObjectId)> m_slotStatus;
+		// what automation.copy copied, for automation.paste
+		std::optional<AutomationClipboard> m_automationClipboard;
 		rt::SnapshotPublisher<RenderSnapshot> m_snapshots;
 	};
 }
