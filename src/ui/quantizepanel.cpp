@@ -307,7 +307,8 @@ namespace gnubase::ui
 			return;
 		if (const Rml::Element* item = withAttribute(target, m_presetAttribute.c_str()))
 		{
-			set({{"preset", attribute(*item, m_presetAttribute.c_str())}});
+			m_chosen = attribute(*item, m_presetAttribute.c_str());
+			set({{"preset", m_chosen}});
 		}
 		else if (const Rml::Element* grid = withAttribute(target, "grid"))
 		{
@@ -364,6 +365,9 @@ namespace gnubase::ui
 			m_binding.send("quantize.savePreset", {{"name", name}});
 		else if (isUserPreset(currentPreset()))
 			m_binding.send("quantize.renamePreset", {{"name", currentPreset()}, {"newName", name}});
+		else
+			return;
+		m_chosen = name;
 	}
 
 	std::string QuantizePanel::presetName() const
@@ -374,10 +378,22 @@ namespace gnubase::ui
 
 	std::string QuantizePanel::currentPreset() const
 	{
+		// Presets can have equal settings, a user preset saved from a factory preset's for one: the one last chosen,
+		// saved or renamed here while the settings are still its own, else a user preset, else a factory one.
+		std::string factory;
+		std::string user;
 		for (const Json& preset : m_presets)
-			if (preset.at("settings") == m_settings)
-				return preset.at("name").get<std::string>();
-		return {};
+		{
+			if (preset.at("settings") != m_settings)
+				continue;
+			const auto name = preset.at("name").get<std::string>();
+			if (name == m_chosen)
+				return name;
+			std::string& first = preset.at("factory").get<bool>() ? factory : user;
+			if (first.empty())
+				first = name;
+		}
+		return !user.empty() ? user : factory;
 	}
 
 	bool QuantizePanel::isUserPreset(const std::string& name) const

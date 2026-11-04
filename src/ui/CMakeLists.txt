@@ -75,13 +75,13 @@ add_library(gnubase-ui STATIC
 	onscreenkeyboard.h
 	poolpanel.cpp
 	poolpanel.h
-	quantizepanel.cpp
-	quantizepanel.h
 	popupwidgets.cpp
 	projectfiles.cpp
 	projectfiles.h
 	pseudolocale.cpp
 	pseudolocale.h
+	quantizepanel.cpp
+	quantizepanel.h
 	renderer.h
 	rmlui.cpp
 	rmlui.h

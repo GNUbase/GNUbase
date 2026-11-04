@@ -58,7 +58,7 @@ namespace gnubase::ui
 		void show();
 		void showGrid();
 		std::string presetsMenu() const;
-		// The preset whose settings the project's are, or "".
+		// The preset whose settings the project's are, or "": with several, m_chosen, else a user preset.
 		std::string currentPreset() const;
 		bool isUserPreset(const std::string& name) const;
 		void set(engine::Json parameters);
@@ -75,6 +75,7 @@ namespace gnubase::ui
 		std::function<void(const std::string&)> m_run;
 		engine::Json m_settings = engine::Json::object();
 		engine::Json m_presets = engine::Json::array();
+		std::string m_chosen; // the preset last chosen, saved or renamed in this panel
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers that come after it went
 		std::vector<Subscription> m_subscriptions;
 	};

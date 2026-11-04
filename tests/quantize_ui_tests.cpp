@@ -343,6 +343,30 @@ TEST_CASE("the quantize panel shows and changes the project's quantize settings"
 	f.click("#quantize-remove-preset");
 	CHECK(f.app.waitUntil([&] { return !f.hasPreset("Yours"); }));
 	CHECK(f.app.waitUntil([&] { return f.text("#quantize-presets") == "No Preset"; }));
+
+	// A user preset with a factory preset's settings: the one chosen or saved shows, and can be renamed and removed.
+	f.click("#quantize-presets");
+	f.click("menuitem[preset=\"1/16\"]");
+	CHECK(f.app.waitUntil([&] { return f.text("#quantize-presets") == "1/16"; }));
+	f.write("#quantize-preset-name", "Sixteenths");
+	f.click("#quantize-save-preset");
+	CHECK(f.app.waitUntil([&] { return f.hasPreset("Sixteenths"); }));
+	CHECK(f.app.waitUntil([&] { return f.text("#quantize-presets") == "Sixteenths"; }));
+	CHECK(!f.hasAttribute("#quantize-rename-preset", "disabled"));
+	f.click("#quantize-presets");
+	f.click("menuitem[preset=\"1/16\"]");
+	CHECK(f.app.waitUntil([&] { return f.text("#quantize-presets") == "1/16"; }));
+	CHECK(f.hasAttribute("#quantize-remove-preset", "disabled"));
+	f.click("#quantize-presets");
+	f.click("menuitem[preset=\"Sixteenths\"]");
+	CHECK(f.app.waitUntil([&] { return f.text("#quantize-presets") == "Sixteenths"; }));
+	f.write("#quantize-preset-name", "Semiquavers");
+	f.click("#quantize-rename-preset");
+	CHECK(f.app.waitUntil([&] { return f.hasPreset("Semiquavers") && !f.hasPreset("Sixteenths"); }));
+	CHECK(f.app.waitUntil([&] { return f.text("#quantize-presets") == "Semiquavers"; }));
+	f.click("#quantize-remove-preset");
+	CHECK(f.app.waitUntil([&] { return !f.hasPreset("Semiquavers"); }));
+	CHECK(f.app.waitUntil([&] { return f.text("#quantize-presets") == "1/16"; }));
 }
 
 TEST_CASE("the quantize panel's Apply, Reset and Auto Apply quantize the selected MIDI parts", "[ui]")
