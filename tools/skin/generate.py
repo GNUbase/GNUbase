@@ -601,6 +601,11 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".se-region-shown", {"border-width": f"{widths['hairline']}dp", "border-color": c["accent2"],
                               "background-color": c["accent2"] + "1a"}),
         (".se-region.selected", {"background-color": mix(c["surface"], c["accent"], .4)}),
+        # Its hitpoints (docs/features/hitpoints.md): lines with a handle, locked ones' handles lit, disabled ones dim
+        (".se-hitpoint-line, .se-hitpoint-handle", {"background-color": c["accent"]}),
+        (".se-hitpoint.locked .se-hitpoint-handle", {"background-color": c["accent2"]}),
+        (".se-hitpoint.disabled .se-hitpoint-line, .se-hitpoint.disabled .se-hitpoint-handle",
+         {"background-color": c["textMuted"] + "66"}),
         # The list editor (docs/features/list-editor.md): lines between the rows, the selected rows lit, those
         # outside the part editing mode dimmed, the events in the event display and the bars of the value display
         (".list-editor-header", {"color": c["textMuted"], "border-bottom-width": f"{widths['hairline']}px",

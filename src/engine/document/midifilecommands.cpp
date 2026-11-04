@@ -163,10 +163,11 @@ namespace gnubase::engine
 				project.otherTempo = project.tempo;
 				project.tempoTrackActive = true;
 			}
+			const time::TempoMap before = project.tempo;
 			project.tempo = imported.tempo;
 			project.signatures = imported.signatures;
 			context.emit("project.changed", {{"name", project.name}, {"sampleRate", project.sampleRate}});
-			tempoChanged(project, context);
+			tempoChanged(project, before, context);
 		}
 		if (parameters.value("markers", true) && !imported.markers.empty())
 		{
@@ -184,7 +185,8 @@ namespace gnubase::engine
 		Json parts = Json::array();
 		for (const midifile::ImportedTrack& track : imported.tracks)
 		{
-			Json trackParameters = {{"type", newTrackType(parameters)}};
+			// The file's parts and notes are in ticks.
+			Json trackParameters = {{"type", newTrackType(parameters)}, {"timeBase", "musical"}};
 			if (!track.name.empty())
 				trackParameters["name"] = track.name;
 			const auto trackId = run("track.add", trackParameters).at("track").at("id").get<ObjectId>();

@@ -84,6 +84,7 @@ endif()
 
 add_library(gnubase-engine STATIC
 	analysis/analysis.cpp analysis/analysis.h
+	analysis/onsets.cpp analysis/onsets.h
 	audio/analysiscommands.cpp
 	audio/audioengine.cpp audio/audioengine.h
 	audio/audition.cpp audio/audition.h
@@ -115,6 +116,8 @@ add_library(gnubase-engine STATIC
 	document/eventedits.cpp
 	document/fadeedits.cpp
 	document/history.cpp document/history.h
+	document/hitpoints.cpp document/hitpoints.h
+	document/linkgroups.cpp document/linkgroups.h
 	document/markers.cpp
 	document/midiedits.cpp
 	document/midifilecommands.cpp
