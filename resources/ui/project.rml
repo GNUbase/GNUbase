@@ -385,6 +385,7 @@
 		<menuitem command="window.mixer3">Mixer 3</menuitem>
 		<menuitem command="window.mixer4">Mixer 4</menuitem>
 		<menuseparator/>
+		<menuitem command="window.onScreenKeyboard">On-Screen Keyboard</menuitem>
 		<menuitem command="window.studioSetup">Studio Setup...</menuitem>
 	</menu>
 

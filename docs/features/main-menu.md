@@ -39,7 +39,7 @@ project window.
 | Transport | Start, Stop, Start/Stop, Record, Lock Record, Unlock Record ([recording.md](recording.md)); Audio Record Mode (Keep History, Cycle History + Replace, Replace, [recording.md](recording.md)); Go to Project Start; Locators (Go to Left/Right Locator Position, Set Left/Right Locator to Project Cursor Position, Exchange Left & Right Locator Positions); Set Project Cursor Position (Locate Next/Previous Marker) |
 | Project | Add Track...; Remove Selected Tracks, Remove Empty Tracks, Duplicate Tracks; Track Folding; Auto Fades Settings... (`project.autoFades`, [fades.md](fades.md)); Project Setup... (`window.projectSetup`, [project-setup.md](project-setup.md)) |
 | Audio | Fades (Fade In to Range Start, Fade Out from Range End, Adjust Fades to Range, Crossfade (X), Remove Fade In, Remove Fade Out, Remove Fades, Open Fade Editor(s), [fades.md](fades.md)) |
-| Studio | Mixer, Mixer in Project Window, Mixer 2, 3 and 4 (`window.mixer`, `window.lowerZoneMixer`, `window.mixer2` to `window.mixer4`, [mixer-window.md](mixer-window.md)), Studio Setup... (`window.studioSetup`, [studio-setup.md](studio-setup.md)) |
+| Studio | Mixer, Mixer in Project Window, Mixer 2, 3 and 4 (`window.mixer`, `window.lowerZoneMixer`, `window.mixer2` to `window.mixer4`, [mixer-window.md](mixer-window.md)), On-Screen Keyboard (`window.onScreenKeyboard`, Alt+K, [onscreen-keyboard.md](onscreen-keyboard.md)), Studio Setup... (`window.studioSetup`, [studio-setup.md](studio-setup.md)) |
 
 The other menus of the reference (MIDI, Workspaces, Window, Help) and their items come with the
 features they run. Quitting waits for the shell's next step, since it closes every window.

@@ -2204,6 +2204,14 @@ Returns:
 
 - `parts`: array of integer, required
 
+#### `gnubase.midi.keyboard`
+
+Plays MIDI 1.0 channel messages from the on-screen keyboard, one of all MIDI inputs: they arrive now, as a MIDI input port's do, and the audio device places them in its next block. The MIDI and instrument tracks set to all MIDI inputs play them while they monitor or are record-enabled (MIDI thru), and the record-enabled ones record them. bytes: a status byte from 0x80 to 0xEF and its data bytes. The UI's on-screen keyboard window plays its notes through this. If the input waiting for the audio device has no room left, the call fails and says how many of its messages were played.
+
+Parameters:
+
+- `messages`: array of object, required
+
 #### `gnubase.midi.legato`
 
 Extends notes to the start of the next note on their MIDI channel, plus overlap in ticks (negative: a gap; default 0). With betweenSelected, to the next of the given notes. The last notes keep their length. Works on the MIDI parts in parts; notes limits it to these notes of the parts. Returns the parts it changed.

@@ -67,6 +67,8 @@ add_library(gnubase-ui STATIC
 	midieditor.h
 	mixer.cpp
 	mixer.h
+	onscreenkeyboard.cpp
+	onscreenkeyboard.h
 	poolpanel.cpp
 	poolpanel.h
 	popupwidgets.cpp

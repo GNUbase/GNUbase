@@ -2672,6 +2672,16 @@ Result:
 
 - `parts`: array of integer, required
 
+#### `midi_keyboard`
+
+Engine command `midi.keyboard`.
+
+Plays MIDI 1.0 channel messages from the on-screen keyboard, one of all MIDI inputs: they arrive now, as a MIDI input port's do, and the audio device places them in its next block. The MIDI and instrument tracks set to all MIDI inputs play them while they monitor or are record-enabled (MIDI thru), and the record-enabled ones record them. bytes: a status byte from 0x80 to 0xEF and its data bytes. The UI's on-screen keyboard window plays its notes through this. If the input waiting for the audio device has no room left, the call fails and says how many of its messages were played.
+
+Arguments:
+
+- `messages`: array of object, required
+
 #### `midi_legato`
 
 Engine command `midi.legato`.
