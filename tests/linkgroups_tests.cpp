@@ -341,10 +341,9 @@ TEST_CASE("VCA fader automation combines with the channels' own automation", "[i
 			mixer.render(4000),
 			[](int64_t at)
 			{
-				const double vcaGain = at < 2500 ? ramp(at, 500, 0.0, 2500, -12.0)
-					: at < 3000                  ? gain(-12.0)
-												 : gain(3.0);
-				return gain(-6.0) * vcaGain;
+				if (at >= 3000)
+					return gain(-6.0) * gain(3.0);
+				return gain(-6.0) * (at < 2500 ? ramp(at, 500, 0.0, 2500, -12.0) : gain(-12.0));
 			},
 			1e-6);
 	}
