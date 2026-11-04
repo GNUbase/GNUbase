@@ -587,7 +587,7 @@ namespace gnubase::engine
 			{"lock", event.lock}, {"fadeIn", toJson(event.fadeIn)}, {"fadeOut", toJson(event.fadeOut)},
 			{"crossfade", toJson(event.crossfade)}, {"snapPoint", event.snapPoint ? Json(*event.snapPoint) : Json()},
 			{"color", colorJson(event.color)}, {"part", event.part}, {"lane", event.lane},
-			{"volumeCurve", toJson(event.volumeCurve)}};
+			{"volumeCurve", toJson(event.volumeCurve)}, {"front", event.front}};
 	}
 
 	Json toJson(const AudioPart& part)
@@ -1467,6 +1467,7 @@ namespace gnubase::engine
 			event.volumeCurve = volumeCurveFromJson(item.value("volumeCurve", Json::array())); // files from before #139
 			event.part = item.value("part", ObjectId{0});    // files from before #471 have no audio parts
 			event.lane = std::max(0, item.value("lane", 0)); // files from before #98 have no lanes
+			event.front = item.value("front", ObjectId{0});  // nor from before #99 a stack order
 			project.audioEvents[event.id] = event;
 		}
 		for (const Json& item : json.value("audioParts", Json::array()))
@@ -1582,7 +1583,10 @@ namespace gnubase::engine
 		for (const auto& [id, folder] : project.poolFolders)
 			see(id);
 		for (const auto& [id, event] : project.audioEvents)
+		{
 			see(id);
+			see(event.front);
+		}
 		for (const auto& [id, part] : project.audioParts)
 			see(id);
 

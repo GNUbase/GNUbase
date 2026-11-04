@@ -255,7 +255,8 @@ namespace gnubase::engine
 			RenderAudioEvent render{id, toSamples(project, event.position), mediaIndex.at(clip.media), event.offset,
 				event.length, static_cast<float>(std::pow(10.0, event.volume / 20.0)), event.mute, event.fadeIn,
 				event.fadeOut, clip.fadeIn, clip.fadeOut,
-				crossfadeApplies(project, event) ? event.crossfade : Crossfade(), gainPoints(event.volumeCurve)};
+				crossfadeApplies(project, event) ? event.crossfade : Crossfade(), gainPoints(event.volumeCurve),
+				frontOf(event)};
 			if (const auto part = project.audioParts.find(event.part); part != project.audioParts.end() &&
 				!inPart(project, part->second, project.sampleRate / project.media.at(clip.media).sampleRate, render))
 				continue;
