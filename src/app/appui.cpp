@@ -351,12 +351,12 @@ namespace gnubase::app
 			}});
 		m_docking.addKeyCommands(m_keys);
 		// What the pool's commands did, sent from its toolbar, the Media menu or Find Missing Files, shows in the
-		// pool, which opens for it.
+		// pool, which opens for it: its window comes to the front if it is in one of its own.
 		for (const char* command : {"pool.removeUnused", "media.locate", "media.removeMissing", "media.conform"})
 			m_poolResults.push_back(m_binding.onResult(command,
 				[this, command](const engine::Result& result)
 				{
-					if (!m_docking.showing("pool"))
+					if (!m_docking.showing("pool") || m_docking.windowOf("pool") != nullptr)
 						m_docking.open("pool");
 					if (const std::shared_ptr<ui::PoolPanel> pool = m_pool.lock())
 						pool->report(command, result);

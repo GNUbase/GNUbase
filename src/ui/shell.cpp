@@ -151,6 +151,12 @@ namespace gnubase::ui
 		refresh(*window);
 	}
 
+	void Shell::raise(WindowId id)
+	{
+		if (find(id) != nullptr)
+			m_windows.raise(id);
+	}
+
 	void Shell::setUiScale(float scale)
 	{
 		m_uiScale = scale;

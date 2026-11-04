@@ -37,6 +37,15 @@ namespace gnubase::test
 		// Queues an event, e.g. CloseRequested or Quit.
 		void push(const ui::WindowEvent& event);
 
+		// Minimizes a window as the user would; the focus goes to the frontmost window that isn't minimized.
+		void minimize(ui::WindowId window);
+		bool minimized(ui::WindowId window) const { return m_windows.at(window).minimized; }
+
+		// The window in front of all others, minimized or not, and the one with the keyboard focus; 0 for none. A
+		// window opens in front of the others with the focus, unless it is hidden: then it is neither.
+		ui::WindowId front() const { return m_stack.empty() ? 0 : m_stack.back(); }
+		ui::WindowId focused() const { return m_focused; }
+
 		// Whether one of the window's text fields has the focus, so the OS's text input would be on.
 		bool textInputActive(ui::WindowId window) const;
 
@@ -55,6 +64,7 @@ namespace gnubase::test
 		void destroyWindow(ui::WindowId window) override;
 		ui::Rect bounds(ui::WindowId window) const override { return m_windows.at(window).bounds; }
 		void setBounds(ui::WindowId window, const ui::Rect& bounds) override;
+		void raise(ui::WindowId window) override;
 		ui::Size pixelSize(ui::WindowId window) const override;
 		float scale(ui::WindowId window) const override { return m_windows.at(window).scale; }
 		void setInputTarget(ui::WindowId window, Rml::Context* context) override;
@@ -88,6 +98,7 @@ namespace gnubase::test
 			ui::WindowSpec spec;
 			ui::Rect bounds;
 			float scale = 1.0F; // of the monitor it was last on
+			bool minimized = false;
 			Rml::Context* input = nullptr;
 			std::unique_ptr<TextInput> textInput = std::make_unique<TextInput>();
 		};
@@ -97,6 +108,8 @@ namespace gnubase::test
 
 		std::vector<ui::Display> m_displays;
 		std::map<ui::WindowId, FakeWindow> m_windows;
+		std::vector<ui::WindowId> m_stack; // from back to front
+		ui::WindowId m_focused = 0;
 		std::deque<ui::WindowEvent> m_events;
 		ui::WindowId m_nextId = 1;
 		std::string m_clipboard;
