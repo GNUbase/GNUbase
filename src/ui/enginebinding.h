@@ -57,6 +57,11 @@ namespace gnubase::ui
 		void send(std::string command, engine::Json parameters = engine::Json::object(),
 			std::function<void(const engine::Result&)> done = {});
 
+		// Sends a command, like send, for a view that asks again and again, e.g. once a second: done's run doesn't
+		// make every window draw, so done asks for a draw itself when it changed what an element shows
+		// (Rml::Context::RequestNextUpdate(0)), and an idle UI stays idle. onResult's handlers still draw every window.
+		void sendQuietly(std::string command, engine::Json parameters, std::function<void(const engine::Result&)> done);
+
 		// Sends document commands ({"command", "parameters"} each) as a step of a value widget's gesture (the
 		// "gesture" parameter of its change event, ui/widgets.h): a history.transaction named description whose merge
 		// key is what the gesture changes (e.g. "channel 5 volume") and the gesture, so that a drag, wheel turns or a
@@ -77,8 +82,9 @@ namespace gnubase::ui
 
 		// Calls apply in update() with what read returns, the first time and whenever it changed since: for values
 		// that change faster than the UI draws, such as the playback position and meters, which the UI reads once a
-		// frame instead of getting an event for every change. shows is the element that shows the value, or null:
-		// after apply, the window it is in draws in that step, and no other window does for it.
+		// frame instead of getting an event for every change. shows is the element that shows the value: after apply,
+		// the window it is in draws in that step, and no other window does for it. With null nothing draws for it, so
+		// apply must ask for a draw itself if it changes an element (Rml::Context::RequestNextUpdate(0)).
 		template <typename T> [[nodiscard]] Subscription watch(
 			Rml::Element* shows, std::function<T()> read, std::function<void(const T&)> apply)
 		{
@@ -113,6 +119,7 @@ namespace gnubase::ui
 		{
 			std::string command;
 			std::function<void(const engine::Result&)> done;
+			bool quiet; // done draws what it changed itself (sendQuietly)
 		};
 
 		Subscription follow(std::function<void()> read);

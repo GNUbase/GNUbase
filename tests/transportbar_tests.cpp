@@ -1093,14 +1093,57 @@ TEST_CASE(
 	{
 		const uint64_t mainFrames = app.main().frames();
 		const uint64_t timeFrames = timeWindow->frames();
+		const double before = display.cursor();
+		const std::string barBefore = value(bar);
+		const std::string timeBefore = value(time);
 		app.shell().step(std::chrono::milliseconds(20));
-		if (display.cursor() == 2.0 && value(bar) == "2.1.1.0" && value(time) != stopped)
+		if (display.cursor() != before || value(bar) != barBefore)
 		{
-			shown = true;
 			CHECK(app.main().frames() == mainFrames + 1);
-			CHECK(timeWindow->frames() == timeFrames + 1);
 			CHECK(std::abs(cursor.GetOffsetLeft() - cursorPixels(app, display)) < 1.0);
 		}
+		if (value(time) != timeBefore)
+			CHECK(timeWindow->frames() == timeFrames + 1);
+		shown = display.cursor() == 2.0 && value(bar) == "2.1.1.0" && value(time) != stopped;
 	}
 	CHECK(shown);
+}
+
+TEST_CASE("windows whose documents nothing changed in don't draw, also during playback", "[ui]")
+{
+	test::UiApp app({1024, 600});
+	showBar(app);
+	app.keys().run("window.mixer", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return app.appUi().mixer(1) != nullptr; }));
+	const ui::Window* mixer = app.shell().find(app.appUi().mixerWindow(1));
+	REQUIRE(mixer != nullptr);
+	app.call("audio.setDevice", {{"blockSize", 256}}); // the dummy device
+	app.call("audio.start");
+
+	// Longer than the status line takes to ask the engine for the record time again (once a second): its answer
+	// draws only what it changed.
+	const auto idle = [&app, mixer](bool playing)
+	{
+		const uint64_t mainFrames = app.main().frames();
+		const uint64_t mixerFrames = mixer->frames();
+		const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(2500);
+		while (std::chrono::steady_clock::now() < until)
+			app.shell().step(std::chrono::milliseconds(20));
+		CHECK(mixer->frames() == mixerFrames);
+		if (playing)
+			CHECK(app.main().frames() > mainFrames + 10); // the project cursor and the time displays move
+	};
+	const auto settle = [&app]
+	{
+		for (int i = 0; i < 10; ++i)
+			app.shell().step(std::chrono::milliseconds(20));
+	};
+	settle(); // what the audio's events changed
+	idle(false);
+	app.call("transport.play");
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("playing") == true; }));
+	settle(); // what the transport's events changed
+	idle(true);
+	app.call("transport.stop");
+	app.call("audio.stop");
 }

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The UI-engine binding (#50): the UI sends commands and follows events through an engine client, on the UI thread,
-// and reads values that change faster than it draws, such as the playback position, once a frame. The last test
-// drives a document through MCP and the document's clicks into the engine's command log.
+// and reads values that change faster than it draws, such as the playback position, once a frame. One test drives a
+// document through MCP and the document's clicks into the engine's command log; the last ones check which windows draw
+// what arrived (#715).
 #include "engine/engine.h"
 #include "mcp/server.h"
 #include "testutils/fakeui.h"
@@ -381,5 +382,28 @@ TEST_CASE("events, results and posted work draw every window in the step they re
 		fake.shell.step(milliseconds(1));
 	CHECK(binding.waiting("transport.set") == 0);
 	CHECK(window.frames() == frames);
+	CHECK(other.frames() == otherFrames);
+
+	// A quiet query's done draws only what it asks for: nothing when nothing changed, else the window it changed.
+	const auto query = [&](bool change)
+	{
+		binding.sendQuietly("transport.get", Json::object(),
+			[change, state](const engine::Result&)
+			{
+				if (!change)
+					return;
+				state->SetInnerRML("queried");
+				state->GetContext()->RequestNextUpdate(0);
+			});
+		while (binding.waiting("transport.get") > 0 && std::chrono::steady_clock::now() < deadline)
+			fake.shell.step(milliseconds(1));
+		REQUIRE(binding.waiting("transport.get") == 0);
+	};
+	query(false);
+	CHECK(window.frames() == frames);
+	CHECK(other.frames() == otherFrames);
+	query(true);
+	CHECK(state->GetInnerRML() == "queried");
+	CHECK(window.frames() == frames + 1);
 	CHECK(other.frames() == otherFrames);
 }

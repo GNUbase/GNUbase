@@ -473,6 +473,7 @@ namespace gnubase::ui
 		const std::function<void(const FileDialogResult&)> done = std::move(it->second.done);
 		m_dialogs.erase(it);
 		done(FileDialogResult{std::move(files), {}});
+		requestRender(); // as for the OS's answer
 		return true;
 	}
 

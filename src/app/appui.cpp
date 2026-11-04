@@ -249,8 +249,11 @@ namespace gnubase::app
 		m_shell.eachStep(
 			[this]
 			{
-				if (const std::optional<std::string> error = m_lua.dispatchEvents())
+				bool scripted = false;
+				if (const std::optional<std::string> error = m_lua.dispatchEvents(&scripted))
 					logging::warning("A Lua event handler of the UI failed: {}", *error);
+				if (scripted)
+					m_shell.requestRender(); // what documents' gnubase.on handlers changed, wherever it shows
 				const bool follows = m_binding.update();
 				if (m_menu)
 					m_menu->update();

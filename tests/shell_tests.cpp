@@ -552,6 +552,17 @@ TEST_CASE("file dialogs answer on the UI thread with what the user chose", "[uni
 	CHECK(results[2].first == "folder");
 	CHECK(results[2].second.error == "no file dialog on this system");
 	CHECK_FALSE(results[2].second.cancelled());
+
+	// An answer through automation (the MCP UI tools) shows in the next step too.
+	ui.shell.showFileDialog(folder, record("automated"));
+	REQUIRE(ui.shell.fileDialogs().size() == 1);
+	const uint64_t automatedId = ui.shell.fileDialogs().begin()->first;
+	ui.shell.step(milliseconds(0));
+	const uint64_t before = window.frames();
+	REQUIRE(ui.shell.answerFileDialog(automatedId, {"/projects"}));
+	REQUIRE(results.size() == 4);
+	ui.shell.step(milliseconds(0));
+	CHECK(window.frames() == before + 1);
 }
 
 TEST_CASE("work posted from any thread runs on the UI thread in the shell's next step, which it wakes", "[unit]")

@@ -56,7 +56,15 @@ namespace gnubase::ui
 	{
 		std::string name = command;
 		const engine::RequestId id = m_client.send(std::move(command), std::move(parameters));
-		m_waiting.emplace(id, Waiting{std::move(name), std::move(done)});
+		m_waiting.emplace(id, Waiting{std::move(name), std::move(done), false});
+	}
+
+	void EngineBinding::sendQuietly(
+		std::string command, engine::Json parameters, std::function<void(const engine::Result&)> done)
+	{
+		std::string name = command;
+		const engine::RequestId id = m_client.send(std::move(command), std::move(parameters));
+		m_waiting.emplace(id, Waiting{std::move(name), std::move(done), true});
 	}
 
 	void EngineBinding::sendStep(int gesture, const std::string& what, std::string description, engine::Json commands,
@@ -85,7 +93,7 @@ namespace gnubase::ui
 	Subscription EngineBinding::onResult(std::string command, std::function<void(const engine::Result&)> handler)
 	{
 		const uint64_t id = m_nextId++;
-		m_resultHandlers.emplace(id, Waiting{std::move(command), std::move(handler)});
+		m_resultHandlers.emplace(id, Waiting{std::move(command), std::move(handler), false});
 		return {*this, id};
 	}
 
@@ -150,7 +158,7 @@ namespace gnubase::ui
 		for (const auto& [id, handler] : m_resultHandlers)
 			if (handler.command == waiting.command)
 				ids.push_back(id);
-		const bool handled = waiting.done || !ids.empty();
+		const bool handled = (waiting.done && !waiting.quiet) || !ids.empty();
 		for (const uint64_t id : ids)
 		{
 			auto handler = m_resultHandlers.find(id);
