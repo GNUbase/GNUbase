@@ -32,4 +32,17 @@ namespace gnubase::engine
 	// GNUbase wrote it, the project is restored from gnubase.json; otherwise, as when another application wrote the
 	// file or changed it, it is built from project.xml. Throws DawProjectError.
 	Project loadDawProject(const std::string& path, const std::string& mediaFolder);
+
+	// A tempo track file (#160, reference manual p. 1462): the tempo track's events and the time signature events, in
+	// an XML file of their own. It describes them as project.xml does, a Transport and an Arrangement with the tempo
+	// and time signature automation, under a TempoTrack element.
+	struct TempoTrackFile
+	{
+		time::TempoMap tempo{120.0};
+		time::SignatureMap signatures;
+	};
+
+	// Throws DawProjectError.
+	void saveTempoTrack(const TempoTrackFile& file, const std::string& path);
+	TempoTrackFile loadTempoTrack(const std::string& path);
 }
