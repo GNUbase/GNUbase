@@ -54,9 +54,9 @@ namespace
 		return elements(app, "#import-options-dialog").size() == 1;
 	}
 
-	std::string writeAudio(const std::filesystem::path& path, size_t frames, int channels = 1)
+	std::string writeAudio(const std::filesystem::path& path, size_t frames, int channels = 1, int sampleRate = 48000)
 	{
-		test::writeWav(path, {std::vector<float>(frames * static_cast<size_t>(channels), 0.25f), channels, 48000});
+		test::writeWav(path, {std::vector<float>(frames * static_cast<size_t>(channels), 0.25f), channels, sampleRate});
 		return path.u8string();
 	}
 
@@ -378,6 +378,41 @@ TEST_CASE("Use Settings imports audio files without the Import Options dialog, w
 		[&app, &folder]
 		{ return app.call("project.get").at("media")[4].at("path") == (folder / "Audio" / "snare.wav").u8string(); }));
 
+	// Copy and Convert off: a 44.1 kHz file from outside the project stays where it is, and no copy job starts.
+	set("editing.importAudioSplitChannels", false);
+	set("editing.importAudioCopy", false);
+	set("editing.importAudioConvert", false);
+	const std::string slow = writeAudio(dir.path() / "slow.wav", 4410, 1, 44100);
+	const size_t jobs = app.call("job.list").at("jobs").size();
+	display.importFiles({slow});
+	REQUIRE(app.waitUntil([&events] { return events().size() == 6; }));
+	Json media = app.call("project.get").at("media")[5];
+	CHECK(media.at("path") == slow);
+	CHECK(media.at("sampleRate") == 44100.0);
+	CHECK(app.call("job.list").at("jobs").size() == jobs);
+
+	// Convert on, Copy still off: converted into the project's Audio folder at its sample rate.
+	set("editing.importAudioConvert", true);
+	display.importFiles({slow});
+	REQUIRE(app.waitUntil([&events] { return events().size() == 7; }));
+	media = app.call("project.get").at("media")[6];
+	CHECK(media.at("path") == (folder / "Audio" / "slow.wav").u8string());
+	CHECK(media.at("sampleRate") == 48000.0);
+	CHECK(app.call("job.list").at("jobs").size() == jobs);
+
+	// The pool's Import Medium (clips only) and the selected track use the settings too.
+	display.importFiles({kick}, std::nullopt, std::nullopt, true);
+	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("clips").size() == 8; }));
+	CHECK(!dialogShown(app));
+	CHECK(events().size() == 7);
+	const uint64_t selected = project.at("tracks")[0].at("id").get<uint64_t>();
+	display.importToSelection({kick, snare}, {selected});
+	REQUIRE(app.waitUntil([&events] { return events().size() == 9; }));
+	CHECK(!dialogShown(app));
+	const Json all = events();
+	CHECK(all[7].at("track") == selected); // one after another on it, as editing.importAudioOneTrack says
+	CHECK(all[8].at("track") == selected);
+
 	// Back to the dialog.
 	set("editing.onImportAudio", "openOptionsDialog");
 	display.importFiles({kick});
@@ -432,6 +467,51 @@ TEST_CASE("Do not ask again in the Import Options dialog switches to Use Setting
 	app.call("settings.reset", {{"key", "editing.onImportAudio"}});
 	display->importFiles({kick});
 	REQUIRE(app.waitUntil([&app] { return dialogShown(app); }));
+}
+
+TEST_CASE("The Import Options dialog shows and keeps Copy, Convert and Split Channels in the settings", "[ui]")
+{
+	const test::TempDir dir;
+	const std::string slow = writeAudio(dir.path() / "slow.wav", 4410, 2, 44100);
+	test::UiApp app({900, 640});
+	ui::EventDisplay& display = app.appUi().showProject();
+	const std::filesystem::path folder = dir.path() / "project";
+	std::filesystem::create_directories(folder);
+	app.call("project.save", {{"path", (folder / "Song.dawproject").u8string()}, {"embedMedia", false}});
+	const auto set = [&app](const char* key, const Json& value)
+	{ app.call("settings.set", {{"key", key}, {"value", value}}); };
+	const auto setting = [&app](const char* key) { return app.call("settings.get", {{"key", key}}).at("value"); };
+	const auto events = [&app] { return app.call("project.get").at("audioEvents"); };
+	set("editing.importAudioCopy", false);
+	set("editing.importAudioConvert", false);
+	set("editing.importAudioSplitChannels", true);
+
+	// The dialog opens with the stored options; the user turns each one around and checks Do not ask again.
+	display.importFiles({slow});
+	REQUIRE(app.waitUntil([&app] { return dialogShown(app); }));
+	CHECK(!checked(app, "#import-copy"));
+	CHECK(!checked(app, "#import-convert"));
+	CHECK(checked(app, "#import-split"));
+	click(app, "#import-copy");
+	click(app, "#import-convert");
+	click(app, "#import-split");
+	click(app, "#import-do-not-ask");
+	click(app, "#import-options-dialog button.primary");
+	REQUIRE(app.waitUntil([&events] { return events().size() == 1; }));
+	CHECK(setting("editing.importAudioCopy") == true);
+	CHECK(setting("editing.importAudioConvert") == true);
+	CHECK(setting("editing.importAudioSplitChannels") == false);
+	CHECK(setting("editing.onImportAudio") == "useSettings");
+
+	// The next import runs without the dialog with them: converted, not split.
+	display.importFiles({slow});
+	REQUIRE(app.waitUntil([&events] { return events().size() == 2; }));
+	CHECK(!dialogShown(app));
+	const Json project = app.call("project.get");
+	REQUIRE(project.at("media").size() == 2);
+	CHECK(project.at("media")[1].at("channels") == 2);
+	CHECK(project.at("media")[1].at("sampleRate") == 48000.0);
+	CHECK(project.at("media")[1].at("path") == (folder / "Audio" / "slow-2.wav").u8string());
 }
 
 TEST_CASE("The Import Options dialog's Name Format names the files Split Channels writes", "[ui]")
