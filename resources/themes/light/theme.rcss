@@ -660,6 +660,7 @@
 	{
 		background-color: #eef1f5;
 		color: #17202d;
+		border-bottom-color: #eef1f5;
 	}
 	.key-editor-key.selected
 	{
