@@ -66,9 +66,12 @@ namespace gnubase::ui
 						end = std::max(end, add.end);
 					}
 			}
-			return {start, end,
-				std::vector<uint64_t>(laneTracks.begin() + static_cast<std::ptrdiff_t>(first),
-					laneTracks.begin() + static_cast<std::ptrdiff_t>(last) + 1)};
+			// A track's automation tracks' lanes have its id too (#121): each track once.
+			std::vector<uint64_t> tracks;
+			for (size_t i = first; i <= last && i < laneTracks.size(); ++i)
+				if (tracks.empty() || tracks.back() != laneTracks[i])
+					tracks.push_back(laneTracks[i]);
+			return {start, end, std::move(tracks)};
 		}
 	}
 

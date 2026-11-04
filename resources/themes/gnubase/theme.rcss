@@ -569,6 +569,42 @@
 	{
 		background-color: #10dff2;
 	}
+	.track-list .automation-rows
+	{
+		background-color: #0c101f;
+	}
+	.track-list .automation-row
+	{
+		border-top-width: 1dp;
+		border-top-color: #303754;
+	}
+	.event-display .automation-lane
+	{
+		background-color: #10142680;
+		border-top-width: 1dp;
+		border-top-color: #303754;
+	}
+	.event-display .automation-curve
+	{
+		color: #f1f4ff;
+		stroke-color: #e12ad8;
+	}
+	.event-display .automation-lane.off .automation-curve
+	{
+		color: #aeb7d0;
+		stroke-color: #aeb7d0;
+	}
+	.event-display .static-value
+	{
+		stroke-color: #f1f4ff;
+		stroke-width: 1dp;
+	}
+	.event-display .automation-editor
+	{
+		border-width: 1dp;
+		border-color: #e12ad8;
+		background-color: #e12ad81a;
+	}
 	.mixer-channel
 	{
 		border-right-width: 1dp;

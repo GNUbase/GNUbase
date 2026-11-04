@@ -654,6 +654,50 @@ meter .meter-peak
 	pointer-events: none;
 }
 
+/* Automation tracks' lanes (#121): code puts each at its lane, with its curve and static value line across it, and
+   the automation event editor around the selected points. */
+.event-display .automation-lanes
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	bottom: 0;
+	pointer-events: none;
+}
+
+.event-display .automation-lane
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	box-sizing: border-box;
+	pointer-events: none;
+}
+
+.event-display .automation-lane curve
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	bottom: 0;
+	pointer-events: none;
+}
+
+.event-display .automation-editor
+{
+	position: absolute;
+	display: none;
+	box-sizing: border-box;
+	pointer-events: none;
+}
+
+.event-display .automation-editor.shown
+{
+	display: block;
+}
+
 .event-display .waveforms waveform
 {
 	position: absolute;
@@ -1029,6 +1073,77 @@ meter .meter-peak
 .track-list .drop-line.shown
 {
 	display: block;
+}
+
+/* Automation tracks (docs/features/automation-tracks.md): Show/Hide Automation in a track's lower left corner and
+   the automation tracks' rows below the track's own. Code sets where the corner and the rows are, and each row's
+   height, from the event display's lanes. */
+.track-list .automation-toggle
+{
+	position: absolute;
+	left: 6dp;
+	width: 16dp;
+	height: 16dp;
+	padding: 0;
+	text-align: center;
+}
+
+.track-list .automation-toggle svg.icon, .track-list .automation-row svg.icon
+{
+	width: 12dp;
+	height: 12dp;
+}
+
+.track-list .automation-rows
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: 0;
+}
+
+.track-list .automation-row
+{
+	display: flex;
+	flex-direction: row;
+	align-items: flex-start;
+	padding: 3dp 4dp 0 24dp;
+	box-sizing: border-box;
+	overflow: hidden;
+}
+
+.track-list .automation-parameter
+{
+	flex: 0 1 auto;
+	width: 120dp;
+	height: 18dp;
+	padding: 0 4dp;
+	overflow: hidden;
+	white-space: nowrap;
+	text-align: left;
+}
+
+.track-list .automation-row .automation-read, .track-list .automation-row .automation-append
+{
+	flex: 0 0 auto;
+	width: 22dp;
+	height: 18dp;
+	margin-left: 2dp;
+	padding: 0;
+	text-align: center;
+}
+
+/* The parameter selector's search field, and the parameters it leaves out. */
+menu input.automation-search
+{
+	display: block;
+	width: 200dp;
+	margin: 2dp 4dp;
+}
+
+menu menuitem.hidden
+{
+	display: none;
 }
 
 /* Menus (ui/widgets.h): hidden until they open, over the document. A menu inside an item is its submenu, shown

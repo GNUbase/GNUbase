@@ -28,8 +28,9 @@ project or undo.
 
 - **Modes.** The object selection tool sizes normally or with sizing moves contents (`setSizingMovesContents`);
   sizing applies time stretch waits for time stretching (M11). The line tool has the modes line, parabola, sine,
-  triangle and square (`setLineMode`, the root's attribute `line-mode`); it draws on automation tracks, which the event
-  display shows with #121, and does nothing on parts and events until then. The play tool has the modes play and
+  triangle and square (`setLineMode`, the root's attribute `line-mode`); it draws on automation tracks
+  ([automation-tracks.md](automation-tracks.md)), as do the object selection, draw and erase tools there, and does
+  nothing on parts and events. The play tool has the modes play and
   scrub (`setPlayMode`, the root's attribute `play-mode`).
 - **Draw** makes MIDI parts on MIDI and instrument tracks and audio parts on audio tracks
   ([audio-parts.md](audio-parts.md)). A drag's ends snap.

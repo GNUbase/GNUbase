@@ -191,7 +191,7 @@ namespace gnubase::app
 		}
 
 		// The track list's commands (ui::TrackList::actions, docs/features/track-list.md) and their keys.
-		constexpr std::array<ProjectCommand, 17> g_trackCommands{{
+		constexpr std::array<ProjectCommand, 20> g_trackCommands{{
 			{"track.selectPrevious",
 				"Selects the track above the selected one, and its first event while an event is selected.", "Up"},
 			{"track.selectNext",
@@ -213,6 +213,11 @@ namespace gnubase::app
 			{"track.moveSelectedToNewFolder", "Moves the selected tracks into a new folder.", nullptr},
 			{"track.moveSelectedToNewFolderWithGroupChannel",
 				"Moves the selected tracks into a new folder with a group channel, which they play through.", nullptr},
+			// Automation tracks (docs/features/automation-tracks.md).
+			{"track.toggleAutomationSelected",
+				"Shows the automation tracks of the selected tracks, or hides them if every one shows them.", nullptr},
+			{"track.showUsedAutomation", "Shows the automation tracks with automation on every track.", nullptr},
+			{"track.hideAllAutomation", "Hides every automation track.", nullptr},
 		}};
 	}
 
