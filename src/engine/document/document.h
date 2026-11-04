@@ -553,6 +553,22 @@ namespace gnubase::engine
 		std::map<ObjectId, Controller> controllers;
 	};
 
+	// A frozen track's rendered audio (#116, reference manual pp. 219-220): a file of the project's media folder's
+	// Freeze folder that plays from the project's start instead of the track's events, instrument and plugin slots.
+	struct Freeze
+	{
+		std::string path;
+		double sampleRate = 48000.0;
+		int channels = 2;
+		time::Samples length = 0; // in the file's sample frames
+	};
+
+	inline bool operator==(const Freeze& a, const Freeze& b)
+	{
+		return std::tie(a.path, a.sampleRate, a.channels, a.length) ==
+			std::tie(b.path, b.sampleRate, b.channels, b.length);
+	}
+
 	struct Track
 	{
 		ObjectId id = 0;
@@ -574,6 +590,9 @@ namespace gnubase::engine
 		// base (ticks or samples); while it is off, the ruler follows the project setup's start time and bar offset.
 		int64_t timeOffset = 0;
 		bool timeOffsetOn = false;
+		// Audio and instrument tracks: what plays while the track is frozen, or none. Initialized like picture.
+		// NOLINTNEXTLINE(readability-redundant-member-init): see above
+		std::optional<Freeze> frozen = {};
 	};
 
 	// Whether tracks of a type can be disabled (reference manual p. 219): audio, instrument and MIDI tracks.
@@ -673,13 +692,17 @@ namespace gnubase::engine
 		bool pan = false;                    // relative changes of the pan
 		bool mute = false;                   // the mute, solo and listen buttons
 		bool record = false;                 // the record enable and monitor buttons
+		bool eq = false;                     // the equalizer's changes (channel.set eq)
+		bool dynamics = false;               // the strip's changes: gate, compressor, limiter (channel.set strip)
+		bool sends = true;                   // the sends' changes (channel.set sends)
 		ObjectId vca = 0;                    // the channel of the VCA track that controls the group, or 0
 	};
 
 	inline bool operator==(const LinkGroup& a, const LinkGroup& b)
 	{
-		return std::tie(a.id, a.name, a.channels, a.volume, a.pan, a.mute, a.record, a.vca) ==
-			std::tie(b.id, b.name, b.channels, b.volume, b.pan, b.mute, b.record, b.vca);
+		return std::tie(
+				   a.id, a.name, a.channels, a.volume, a.pan, a.mute, a.record, a.eq, a.dynamics, a.sends, a.vca) ==
+			std::tie(b.id, b.name, b.channels, b.volume, b.pan, b.mute, b.record, b.eq, b.dynamics, b.sends, b.vca);
 	}
 
 	// A color of the project's color set (reference manual pp. 115-118), which colors are picked from.
@@ -1000,9 +1023,9 @@ namespace gnubase::engine
 	inline bool operator==(const Track& a, const Track& b)
 	{
 		return std::tie(a.id, a.type, a.name, a.color, a.timeBase, a.parent, a.channel, a.children, a.autoFades,
-				   a.timeFormat, a.enabled, a.picture, a.timeOffset, a.timeOffsetOn) ==
+				   a.timeFormat, a.enabled, a.picture, a.timeOffset, a.timeOffsetOn, a.frozen) ==
 			std::tie(b.id, b.type, b.name, b.color, b.timeBase, b.parent, b.channel, b.children, b.autoFades,
-				b.timeFormat, b.enabled, b.picture, b.timeOffset, b.timeOffsetOn);
+				b.timeFormat, b.enabled, b.picture, b.timeOffset, b.timeOffsetOn, b.frozen);
 	}
 	// Where an audio event plays, in the project's samples (fadeedits.cpp).
 	struct EventSpan

@@ -70,8 +70,9 @@ namespace gnubase::ui
 		// track.rename (the first selected track),
 		// track.removeSelected, track.removeEmpty, track.duplicateSelected, track.disableSelected,
 		// track.enableSelected, track.toggleFolding (the selected folders), track.foldAll, track.unfoldAll and
-		// track.flipFolding; and for folder tracks track.enableSelectedGroupChannels,
-		// track.disableSelectedGroupChannels, track.moveSelectedToNewFolder and
+		// track.flipFolding; track.freezeSelected (freezes the selected audio and instrument tracks, or unfreezes them
+		// if every one is frozen) and track.renderSelected (renders them in place); and for folder tracks
+		// track.enableSelectedGroupChannels, track.disableSelectedGroupChannels, track.moveSelectedToNewFolder and
 		// track.moveSelectedToNewFolderWithGroupChannel; and for automation tracks (#121)
 		// track.toggleAutomationSelected (shows the selected tracks' automation, or hides it if every one shows it),
 		// track.showUsedAutomation and track.hideAllAutomation; and for copying automation to other tracks between

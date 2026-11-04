@@ -38,8 +38,9 @@ namespace gnubase::ui
 			{"output", "Output Channels"},
 		}};
 
-		constexpr double g_silence = -144.0; // engine::g_minChannelVolume
-		constexpr int g_sends = 8;           // engine::g_maxSends
+		constexpr double g_silence = -144.0;       // engine::g_minChannelVolume
+		constexpr int g_sends = 8;                 // engine::g_maxSends
+		constexpr const char* g_addEffect = "add"; // a send destination list's Add Effect Track to Send
 
 		std::string encode(const std::string& text)
 		{
@@ -162,8 +163,8 @@ namespace gnubase::ui
 
 		// The pre section, the equalizer and the strip's dynamics (reference manual pp. 473-489), and the sends
 		// (pp. 552-557). Every strip has the sections, so that the docking system learns them from the first one; only
-		// audio channels have controls.
-		std::string sectionsRml(bool audio)
+		// audio channels have controls. The mixers hide them by default, the channel settings window shows them.
+		std::string sectionsRml(bool audio, bool shown)
 		{
 			const auto number = [](double value) { return widgets::format(static_cast<float>(value)); };
 			const auto knob = [&number](
@@ -185,10 +186,11 @@ namespace gnubase::ui
 			};
 			const auto row = [](const std::string& controls)
 			{ return R"(<div class="mixer-row">)" + controls + "</div>"; };
-			const auto section = [audio](const char* id, const char* label, const std::string& controls)
+			const auto section = [audio, shown](const char* id, const char* label, const std::string& controls)
 			{
 				return std::string(R"(<div class="mixer-section mixer-)") + id + R"(" section=")" + id +
-					R"(" label=")" + label + R"(" default="hidden">)" + (audio ? controls : "") + "</div>";
+					R"(" label=")" + label + (shown ? R"(">)" : R"(" default="hidden">)") + (audio ? controls : "") +
+					"</div>";
 			};
 
 			std::string eq = toggle("eq.bypass", "Equalizers Bypass", "Bypass");
@@ -231,14 +233,17 @@ namespace gnubase::ui
 				section("sends", "Sends", sends);
 		}
 
-		// Where a channel's sends can go: no destination, or the group and effect channels other than its own.
-		widgets::Options sendDestinations(const std::vector<MixerChannel>& channels, uint64_t own)
+		// Where a channel's sends can go: no destination, or the group and effect channels other than its own; and with
+		// add, Add Effect Track to Send (reference manual p. 554).
+		widgets::Options sendDestinations(const std::vector<MixerChannel>& channels, uint64_t own, bool add)
 		{
 			widgets::Options options{{"0", "No Destination"}};
 			for (const MixerChannel& channel : channels)
 				if (channel.id != own && channel.channel != nullptr &&
 					(channel.type == "group" || channel.type == "effect"))
 					options.emplace_back(std::to_string(channel.id), channel.name);
+			if (add)
+				options.emplace_back(g_addEffect, "Add Effect Track to Send");
 			return options;
 		}
 
@@ -310,28 +315,39 @@ namespace gnubase::ui
 		return result;
 	}
 
-	Mixer::Mixer(EngineBinding& binding, Docking& docking, Rml::Element& root, std::string view, bool window,
-		std::function<void(uint64_t track)> choosePicture)
-		: m_binding(binding), m_docking(docking), m_root(root.GetObserverPtr()), m_view(std::move(view)),
-		  m_window(window), m_choosePicture(std::move(choosePicture))
+	Mixer::Mixer(EngineBinding& binding, Docking& docking, Rml::Element& root, std::string view, MixerKind kind,
+		MixerActions actions)
+		: m_binding(binding), m_docking(docking), m_root(root.GetObserverPtr()), m_view(std::move(view)), m_kind(kind),
+		  m_actions(std::move(actions))
 	{
 		Rml::ElementDocument* document = root.GetOwnerDocument();
-		// The toolbar (reference manual pp. 444-449): what the mixer shows. The menus go into the body, so that no
-		// zone clips them.
-		std::string rml = R"(<div class="mixer"><div class="toolbar mixer-toolbar">)"
-						  R"(<button id="mixer-filter" menu="mixer-filter-menu" title="Set Channel Type Filter">)"
-						  R"(Channel Types</button>)"
-						  R"(<button id="mixer-agents" menu="mixer-agents-menu" title="Set Channel Visibility Agents">)"
-						  R"(Visibility</button>)";
-		for (const auto& [state, label] : g_states)
-		{
-			std::string title = state;
-			title[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(title[0])));
-			rml += std::string(R"(<button class="toggle )") + state + R"(" deactivate=")" + state +
-				R"(" title="Deactivate All )" + title + R"( States">)" + label + "</button>";
-		}
+		const bool settings = m_kind == MixerKind::ChannelSettings;
+		// The toolbar (reference manual pp. 444-449): what the mixer shows; in the channel settings window, which
+		// channel it shows (pp. 501-503). The menus go into the body, so that no zone clips them.
+		std::string rml = settings
+			? R"(<div class="mixer channel-settings"><div class="toolbar mixer-toolbar">)"
+			  R"(<button id="settings-previous" title="Go to Previous Mixer Channel">&lt;</button>)"
+			  R"(<button id="settings-next" title="Go to Next Mixer Channel">&gt;</button>)"
+			  R"(<div class="settings-name" title="Channel Name"/>)"
+			  R"(<button id="settings-output" title="Go to Output"/>)"
+			: R"(<div class="mixer"><div class="toolbar mixer-toolbar">)"
+			  R"(<button id="mixer-filter" menu="mixer-filter-menu" title="Set Channel Type Filter">)"
+			  R"(Channel Types</button>)"
+			  R"(<button id="mixer-agents" menu="mixer-agents-menu" )"
+			  R"(title="Set Channel Visibility Agents">Visibility</button>)";
+		if (!settings)
+			for (const auto& [state, label] : g_states)
+			{
+				std::string title = state;
+				title[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(title[0])));
+				rml += std::string(R"(<button class="toggle )") + state + R"(" deactivate=")" + state +
+					R"(" title="Deactivate All )" + title + R"( States">)" + label + "</button>";
+			}
 		rml += R"(<div class="spacer"/>)";
-		if (m_window)
+		if (settings)
+			rml += R"(<button id="settings-functions" menu="settings-functions-menu" class="icon-only" )"
+				   R"(title="Functions Menu"><svg class="icon" src="../icons/general-menu.svg"/></button>)";
+		if (m_kind == MixerKind::Window)
 			rml += R"(<button id="mixer-left-zone" type="toggle" toggle="left" class="icon-only" )"
 				   R"(title="Show/Hide Left Zone"><svg class="icon" src="../icons/layout-left-zone.svg"/></button>)";
 		rml += R"(<button id="mixer-layout" menu="mixer-layout-pane" class="icon-only" title="Set up Window Layout">)"
@@ -339,19 +355,28 @@ namespace gnubase::ui
 			   R"(<div class="mixer-channels"/></div>)";
 		root.SetInnerRML(rml);
 		m_strips = root.QuerySelector(".mixer-channels")->GetObserverPtr();
-		m_filter = root.QuerySelector("#mixer-filter")->GetObserverPtr();
+		if (Rml::Element* filter = root.QuerySelector("#mixer-filter"))
+			m_filter = filter->GetObserverPtr();
 
 		std::string filter;
 		for (const auto& [type, label] : g_types)
 			filter += std::string(R"(<menuitem type="toggle" channel-type=")") + type + R"(" checked="">)" + label +
 				"</menuitem>";
-		std::string layout = m_window ? R"(<button type="toggle" toggle="left">Left Zone</button>)" : "";
+		std::string layout =
+			m_kind == MixerKind::Window ? R"(<button type="toggle" toggle="left">Left Zone</button>)" : "";
 		layout += R"(<div setup="channel"/>)";
-		const std::array<std::pair<std::string, std::string>, 3> menus = {{
+		// The channel settings window has the Functions menu (pp. 461, 503) instead of the filter and the agents.
+		std::vector<std::pair<std::string, std::string>> menus = {
 			{R"(<menu id="mixer-filter-menu">)", filter},
 			{R"(<menu id="mixer-agents-menu">)", R"(<menuitem agent="showAll">Show All Channels</menuitem>)"},
-			{R"(<menu id="mixer-layout-pane" class="setup-pane">)", layout},
-		}};
+		};
+		if (settings)
+			menus = {{R"(<menu id="settings-functions-menu">)",
+				R"(<menuitem function="copy">Copy Channel Settings</menuitem>)"
+				R"(<menuitem function="paste">Paste Channel Settings</menuitem>)"
+				R"(<menuitem type="toggle" function="follow" checked="">)"
+				R"(Follow Edit Buttons or Selection Changes</menuitem>)"}};
+		menus.emplace_back(R"(<menu id="mixer-layout-pane" class="setup-pane">)", layout);
 		for (const auto& [open, items] : menus)
 		{
 			const Rml::ElementPtr holder = document->CreateElement("div");
@@ -405,7 +430,8 @@ namespace gnubase::ui
 				if (!alive.expired() && result.ok())
 					sendLevel(result.value.at("value"));
 			});
-		requestView();
+		if (!settings)
+			requestView();
 		requestProject();
 	}
 
@@ -487,8 +513,10 @@ namespace gnubase::ui
 			return;
 		std::vector<const MixerChannel*> shown;
 		std::vector<uint64_t> ids;
+		const bool settings = m_kind == MixerKind::ChannelSettings;
 		for (const MixerChannel& channel : m_channels)
-			if (m_hidden.count(channel.id) == 0 && m_hiddenTypes.count(channel.type) == 0)
+			if (settings ? channel.track == m_track && m_track != 0
+						 : m_hidden.count(channel.id) == 0 && m_hiddenTypes.count(channel.type) == 0)
 			{
 				shown.push_back(&channel);
 				ids.push_back(channel.id);
@@ -500,6 +528,8 @@ namespace gnubase::ui
 		}
 		for (const MixerChannel* channel : shown)
 			updateStrip(*m_stripOf.at(channel->id), *channel);
+		if (settings)
+			showSettingsToolbar();
 
 		if (Rml::Element* filter = m_filter.get())
 			filter->SetClass("checked", !m_hiddenTypes.empty()); // the button shows that a type is hidden
@@ -539,7 +569,7 @@ namespace gnubase::ui
 			const bool vca = channel->type == "vca"; // a fader and buttons (reference manual p. 515)
 			std::string rml = R"(<div class="mixer-channel-name"/><div class="mixer-link"/>)"
 							  R"(<div class="mixer-picture" section="picture" label="Pictures" default="hidden"/>)";
-			rml += sectionsRml(audio);
+			rml += sectionsRml(audio, m_kind == MixerKind::ChannelSettings);
 			rml += R"(<div class="mixer-notes" section="notes" label="Notepad" default="hidden">)";
 			if (channel->channel != nullptr)
 				rml += R"(<textarea class="mixer-notes-field" rows="4"/>)";
@@ -556,6 +586,9 @@ namespace gnubase::ui
 							? R"(<button class="toggle listen" control="listen" title="Listen">L</button>)"
 							: "") +
 					"</div>";
+			// Edit Channel Settings (reference manual p. 500).
+			if (channel->channel != nullptr && m_kind != MixerKind::ChannelSettings && m_actions.editChannel)
+				rml += R"(<button class="mixer-edit" edit="" title="Edit Channel Settings">e</button>)";
 			if (audio || vca) // from -60 dB, linear until the channel strip's dB law (#107)
 				rml += R"(<fader min="-60" max="6" default="0" step="0.1"/><span class="mixer-volume"/>)";
 			rml += "</div>";
@@ -631,8 +664,9 @@ namespace gnubase::ui
 			if (control->GetTagName() == "select")
 			{
 				if (value.is_number())
-					widgets::fill(
-						*control, sendDestinations(m_channels, channel.id), std::to_string(value.get<uint64_t>()));
+					widgets::fill(*control,
+						sendDestinations(m_channels, channel.id, channel.track != 0 && m_actions.addEffectTrack),
+						std::to_string(value.get<uint64_t>()));
 			}
 			else if (value.is_boolean())
 			{
@@ -662,6 +696,69 @@ namespace gnubase::ui
 			if (Rml::Element* text = strip.QuerySelector(".mixer-volume"))
 				setText(*text, decibels(volume));
 		}
+	}
+
+	void Mixer::showTrack(uint64_t track)
+	{
+		m_track = track;
+		show();
+	}
+
+	// Previous, next and Go to Output: the tracks they go to, in their goto attribute, and the names.
+	void Mixer::showSettingsToolbar()
+	{
+		Rml::Element* root = m_root.get();
+		if (root == nullptr)
+			return;
+		std::vector<const MixerChannel*> tracks;
+		for (const MixerChannel& channel : m_channels)
+			if (channel.track != 0)
+				tracks.push_back(&channel);
+		const auto at = std::find_if(
+			tracks.begin(), tracks.end(), [this](const MixerChannel* channel) { return channel->track == m_track; });
+		const MixerChannel* shown = at != tracks.end() ? *at : nullptr;
+		const auto point = [](Rml::Element* button, const MixerChannel* to)
+		{
+			if (button == nullptr)
+				return;
+			if (to != nullptr)
+			{
+				button->SetAttribute("goto", std::to_string(to->track));
+				button->RemoveAttribute("disabled");
+			}
+			else
+			{
+				button->RemoveAttribute("goto");
+				button->SetAttribute("disabled", "");
+			}
+		};
+		point(
+			root->QuerySelector("#settings-previous"), shown != nullptr && at != tracks.begin() ? *(at - 1) : nullptr);
+		point(root->QuerySelector("#settings-next"),
+			shown != nullptr && std::next(at) != tracks.end() ? *std::next(at) : nullptr);
+		if (Rml::Element* name = root->QuerySelector(".settings-name"))
+			setText(*name, shown != nullptr ? shown->name : std::string());
+		// Go to Output: the bus or the channel it plays into, which it goes to if that is a track's.
+		const MixerChannel* output = nullptr;
+		if (shown != nullptr && shown->channel != nullptr)
+		{
+			const Json destination = shown->channel->value("output", Json(0));
+			for (const MixerChannel& channel : m_channels)
+				if (destination == channel.id)
+					output = &channel;
+		}
+		if (Rml::Element* button = root->QuerySelector("#settings-output"))
+		{
+			setText(*button, output != nullptr ? output->name : std::string());
+			point(button, output != nullptr && output->track != 0 ? output : nullptr);
+		}
+	}
+
+	void Mixer::goTo(uint64_t track)
+	{
+		showTrack(track);
+		if (m_follows && m_actions.wentTo) // without Follow, the selection is the project window's own
+			m_actions.wentTo(track);
 	}
 
 	void Mixer::showVisibilityList()
@@ -764,6 +861,10 @@ namespace gnubase::ui
 			{
 				setHidden(idAttribute(*target, "visibility"), !event.GetParameter("value", true));
 			}
+			else if (attribute(*target, "function") == "follow")
+			{
+				m_follows = event.GetParameter("value", true);
+			}
 			else if (target->IsClassSet("mixer-vca-group") && !m_updating)
 			{
 				// Assigns the VCA fader to a link group, or with None takes it from its group (reference manual p.
@@ -798,7 +899,19 @@ namespace gnubase::ui
 					Json value =
 						given->GetType() == Rml::Variant::BOOL ? Json(given->Get<bool>()) : Json(given->Get<double>());
 					if (target->GetTagName() == "select") // a send's destination, a channel id
+					{
+						const std::string param = attribute(*target, "param");
+						if (given->Get<Rml::String>() == g_addEffect)
+						{
+							// Add Effect Track to Send; the list shows the send's destination again once the project
+							// comes back.
+							if (m_actions.addEffectTrack)
+								m_actions.addEffectTrack(*target, channel->track, std::stoi(paramPath(param).at(1)));
+							requestProject();
+							break;
+						}
 						value = std::stoull(given->Get<Rml::String>("0"));
+					}
 					Json parameters = paramChange(attribute(*target, "param"), std::move(value));
 					parameters["channel"] = channel->id;
 					m_binding.send("channel.set", std::move(parameters));
@@ -807,10 +920,34 @@ namespace gnubase::ui
 			break;
 		case Rml::EventId::Click:
 			if (attribute(*target, "agent") == "showAll")
+			{
 				sendView({{"hidden", Json::array()}});
+			}
+			else if (attribute(*target, "function") == "copy")
+			{
+				if (const MixerChannel* channel = channelOf(m_stripOf.empty() ? nullptr : m_stripOf.begin()->second))
+					m_binding.send("channel.copySettings", {{"channel", channel->id}});
+			}
+			else if (attribute(*target, "function") == "paste")
+			{
+				if (const MixerChannel* channel = channelOf(m_stripOf.empty() ? nullptr : m_stripOf.begin()->second))
+					m_binding.send("channel.pasteSettings", {{"channels", {channel->id}}});
+			}
+			else if (target->HasAttribute("goto"))
+			{
+				goTo(idAttribute(*target, "goto"));
+			}
+			else if (target->HasAttribute("edit"))
+			{
+				if (const MixerChannel* channel = channelOf(target); channel != nullptr && m_actions.editChannel)
+					m_actions.editChannel(channel->track);
+			}
 			else if (target->HasAttribute("deactivate"))
+			{
 				m_binding.send("channel.deactivateAll", {{"state", attribute(*target, "deactivate")}});
+			}
 			else if (target->HasAttribute("control"))
+			{
 				if (const MixerChannel* channel = channelOf(target); channel != nullptr && channel->channel != nullptr)
 				{
 					// Solo: Ctrl-click (Cmd on macOS) solos exclusively, Alt-click switches solo defeat (p. 466).
@@ -822,11 +959,13 @@ namespace gnubase::ui
 					parameters["channel"] = channel->id;
 					m_binding.send("channel.set", std::move(parameters));
 				}
+			}
 			break;
 		case Rml::EventId::Dblclick:
 			if (closest(target, "mixer-picture", m_root.get()) != nullptr)
 				if (const MixerChannel* channel = channelOf(target); channel != nullptr && channel->track != 0)
-					m_choosePicture(channel->track);
+					if (m_actions.choosePicture)
+						m_actions.choosePicture(channel->track);
 			break;
 		case Rml::EventId::Mousedown:
 		{
