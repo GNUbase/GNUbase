@@ -29,10 +29,17 @@ namespace gnubase::ui
 			return filters;
 		}
 
-		// Whether a chosen file has the DAWproject extension, in any case: "Song.DAWPROJECT" does, "Song v1.2" doesn't.
-		bool hasProjectExtension(const std::filesystem::path& file)
+		// A file chosen to save a project as, with the DAWproject extension unless it has it already, in any case:
+		// "Song.DAWPROJECT" stays as it is, "Song v1.2" becomes "Song v1.2.dawproject", and "Song.", as the dialogs of
+		// Linux return the name as typed, "Song.dawproject" rather than "Song..dawproject".
+		std::filesystem::path withProjectExtension(const std::filesystem::path& file)
 		{
-			return Rml::StringUtilities::ToLower(file.extension().u8string()) == ".dawproject";
+			if (Rml::StringUtilities::ToLower(file.extension().u8string()) == ".dawproject")
+				return file;
+			std::string name = file.filename().u8string();
+			if (name.size() > 1 && name.back() == '.' && name != "..")
+				name.pop_back();
+			return file.parent_path() / std::filesystem::u8path(name + ".dawproject");
 		}
 
 		// The rows of a start screen list: value is the row's index in the list, text what it shows.
@@ -446,10 +453,7 @@ namespace gnubase::ui
 			{
 				if (chosen.files.empty())
 					return;
-				std::filesystem::path file = chosen.files.front();
-				if (!hasProjectExtension(file))
-					file += ".dawproject";
-				m_binding.send("project.save", {{"path", file.u8string()}}, done);
+				m_binding.send("project.save", {{"path", withProjectExtension(chosen.files.front()).u8string()}}, done);
 			});
 	}
 }
