@@ -376,7 +376,7 @@ namespace gnubase::ui
 			std::vector<int64_t> selection = m_selection;
 			const bool selected = std::find(selection.begin(), selection.end(), *on) != selection.end();
 			if (adds && selected)
-				drag.toggled = *on;
+				drag.toggled = on;
 			else if (adds)
 				selection.push_back(*on);
 			else if (!selected)
