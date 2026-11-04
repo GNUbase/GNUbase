@@ -103,6 +103,13 @@ namespace gnubase::ui
 		// Types the UTF-8 text into the element with the focus. Returns the focus, as key does.
 		engine::Json text(std::optional<WindowId> window, const std::string& text);
 
+		// Asks to close the window as its close button does (Shell::requestClose): the main window asks to quit, a
+		// panel's own window docks its panel again. With quit, asks GNUbase to quit as the OS does
+		// (Shell::requestQuit), which names no window. The request is posted and runs in the shell's next step, as the
+		// window system's do, so that it doesn't close a window under the event handler that asked. Returns an empty
+		// object.
+		engine::Json close(std::optional<WindowId> window, bool quit);
+
 	private:
 		// The window, or the main window.
 		Window& resolve(std::optional<WindowId> window);

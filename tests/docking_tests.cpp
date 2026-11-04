@@ -2,12 +2,16 @@
 // UI tests of the docking system (#56, #372, ui/docking.h): the project window's zones, splitters, tab groups and
 // strips, panels in windows of their own and a test window's sections in a setup pane, driven through ui::Automation as
 // MCP's UI tools drive them (tests/uiapp.h), through key commands and through the user setting ui.layout, and the
-// layout after a restart.
+// layout after a restart. Which window is in front, minimized or has the focus, on the fake window system.
 #include "uiapp.h"
 
+#include "engine/engine.h"
+#include "testutils/fakeui.h"
 #include "ui/automation.h"
 #include "ui/docking.h"
+#include "ui/enginebinding.h"
 #include "ui/keycommands.h"
+#include "ui/shell.h"
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
@@ -17,6 +21,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
@@ -174,6 +179,58 @@ namespace
 		event.window.windowID = window;
 		REQUIRE(SDL_PushEvent(&event));
 	}
+
+	// The docking system on the fake window system, which knows which window is in front, minimized or has the focus,
+	// with a main window as the project window and a test panel in its lower zone.
+	struct FakeDocking
+	{
+		FakeDocking() { docking.add({"test", "Test", "project", "lower", {}}); }
+
+		engine::Engine engine;
+		test::FakeUi ui{{{1, "Monitor", {0, 0, 1920, 1080}, {0, 0, 1920, 1080}, 1.0F}}};
+		ui::WindowId main = ui.shell.open({}).id();
+		ui::EngineBinding binding{engine, [this] { ui.shell.wake(); }};
+		ui::Docking docking{
+			engine, binding, ui.shell, std::filesystem::path(GNUBASE_RESOURCES_DIR) / "ui" / "panel-window.rml"};
+	};
+}
+
+TEST_CASE("opening a panel in a window of its own brings that window to the front with the focus", "[unit]")
+{
+	FakeDocking fixture;
+	test::FakeWindowSystem& windows = fixture.ui.windows;
+	fixture.docking.setFloating("test", true);
+	const ui::Window* window = fixture.docking.windowOf("test");
+	REQUIRE(window != nullptr);
+	const ui::WindowId panel = window->id();
+	CHECK(windows.front() == panel);
+
+	SECTION("behind the project window")
+	{
+		windows.raise(fixture.main); // the user clicks the project window
+		CHECK(windows.front() == fixture.main);
+		CHECK(windows.focused() == fixture.main);
+	}
+	SECTION("minimized")
+	{
+		windows.minimize(panel);
+		CHECK(windows.minimized(panel));
+		CHECK(windows.focused() == fixture.main);
+	}
+	SECTION("minimized behind the project window")
+	{
+		windows.minimize(panel);
+		windows.raise(fixture.main);
+		CHECK(windows.minimized(panel));
+	}
+	const Json layout = fixture.docking.layout();
+	fixture.docking.open("test");
+	CHECK(!windows.minimized(panel));
+	CHECK(windows.front() == panel);
+	CHECK(windows.focused() == panel);
+	// It stays in its window, and the layout stays as it was: the zone it docks in doesn't show.
+	CHECK(fixture.docking.windowOf("test") == window);
+	CHECK(fixture.docking.layout() == layout);
 }
 
 TEST_CASE("the project window's zones and strips show and hide with buttons, keys, menus and ui.layout", "[ui]")
