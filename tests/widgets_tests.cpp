@@ -1502,7 +1502,9 @@ TEST_CASE("list views select a row that code replaced on its own, with as many r
 	row->SetId("new-vocals");
 	row->SetAttribute("value", "4");
 	row->SetInnerRML("Vocals");
-	REQUIRE(tracks.ReplaceChild(std::move(row), &byId(page, "vocals")) != nullptr); // the old row is destroyed
+	// Outside REQUIRE, whose do-while makes the analyzer see the move as repeated. The old row is destroyed.
+	const bool replaced = tracks.ReplaceChild(std::move(row), &byId(page, "vocals")) != nullptr;
+	REQUIRE(replaced);
 	CHECK(app.waitUntil([&app] { return selected(app, "#new-vocals"); }));
 	CHECK(selected(app, "#bass"));
 	CHECK(tracksValue(page) == "2,4");
