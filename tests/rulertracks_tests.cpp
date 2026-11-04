@@ -220,7 +220,7 @@ TEST_CASE("ruler tracks show their rulers in each time format and have their con
 	test::UiApp::checkGolden("ruler-tracks", app.screenshot("ruler-tracks", {900, 560}));
 
 	const uint64_t first = tracks.at(0).at("id").get<uint64_t>();
-	const auto track = [&app, first] { return app.call("project.get").at("tracks").at(0); };
+	const auto track = [&app] { return app.call("project.get").at("tracks").at(0); };
 	REQUIRE(track().at("id") == first);
 
 	// Time Offset On/Off.
