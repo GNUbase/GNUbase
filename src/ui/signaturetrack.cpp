@@ -211,7 +211,9 @@ namespace gnubase::ui
 		const Rml::Element* target = event.GetTargetElement();
 		const bool inField = target != nullptr && target == m_field;
 		if (event == Rml::EventId::Mouseup)
+		{
 			release(event);
+		}
 		else if (event == Rml::EventId::Mousedown && event.GetParameter<int>("button", 0) == 0)
 		{
 			if (!inField)

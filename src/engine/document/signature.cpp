@@ -91,7 +91,9 @@ namespace gnubase::engine
 				bar = project.signatures.toBarsBeats(project.tempo.toTicks(cursor, project.sampleRate)).bar;
 			}
 			else
+			{
 				bar = checkedBar(at);
+			}
 			const time::TimeSignature signature = {
 				checkedNumerator(parameters.at("numerator")), checkedDenominator(parameters.at("denominator"))};
 			std::vector<time::SignatureChange> changes = project.signatures.changes();
