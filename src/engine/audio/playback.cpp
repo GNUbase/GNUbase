@@ -533,17 +533,28 @@ namespace gnubase::engine
 	void Playback::setTracks(std::vector<Track> tracks, std::map<ObjectId, std::string> mediaPaths, double sampleRate)
 	{
 		const std::scoped_lock lock(m_mutex);
+		// Streams convert to one sample rate, so a new rate opens new ones. So does media whose file changed, as a
+		// frozen channel's freeze file does when undo brings back an earlier freeze.
+		const auto kept = std::stable_partition(m_voices.begin(), m_voices.end(),
+			[this, &mediaPaths, sampleRate](const std::shared_ptr<Voice>& voice)
+			{
+				const auto before = m_mediaPaths.find(voice->media);
+				const auto after = mediaPaths.find(voice->media);
+				return sampleRate == m_sampleRate && before != m_mediaPaths.end() && after != mediaPaths.end() &&
+					before->second == after->second;
+			});
+		if (kept != m_voices.end())
+		{
+			for (auto voice = kept; voice != m_voices.end(); ++voice)
+				retire(*voice);
+			m_voices.erase(kept, m_voices.end());
+			auto table = std::make_unique<VoiceTable>();
+			table->voices = m_voices;
+			m_tables.publish(std::move(table));
+		}
 		m_tracks = std::move(tracks);
 		m_mediaPaths = std::move(mediaPaths);
 		m_unreadable.clear();
-		if (sampleRate != m_sampleRate)
-		{
-			// Streams convert to one sample rate; open new ones for the new rate.
-			for (const auto& voice : m_voices)
-				retire(voice);
-			m_voices.clear();
-			m_tables.publish(std::make_unique<const VoiceTable>());
-		}
 		m_sampleRate = sampleRate;
 	}
 

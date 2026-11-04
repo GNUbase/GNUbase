@@ -521,7 +521,10 @@ namespace gnubase::engine
 		Json json = {{"id", track.id}, {"type", trackTypeName(track.type)}, {"name", track.name},
 			{"color", colorJson(track.color)}, {"timeBase", timeBaseName(track.timeBase)}, {"parent", track.parent},
 			{"channel", track.channel}, {"autoFades", track.autoFades ? toJson(*track.autoFades) : Json(nullptr)},
-			{"enabled", track.enabled}, {"picture", track.picture}};
+			{"enabled", track.enabled}, {"picture", track.picture}, {"frozen", nullptr}};
+		if (track.frozen)
+			json["frozen"] = {{"path", track.frozen->path}, {"sampleRate", track.frozen->sampleRate},
+				{"channels", track.frozen->channels}, {"length", track.frozen->length}};
 		if (track.type == TrackType::Ruler)
 			json["timeFormat"] = track.timeFormat;
 		return json;
@@ -630,6 +633,10 @@ namespace gnubase::engine
 		if (note.origin)
 			json["origin"] = {
 				{"original", timingJson(note.origin->original)}, {"quantized", timingJson(note.origin->quantized)}};
+		if (note.probability != 1.0) // the defaults are left out
+			json["probability"] = note.probability;
+		if (note.velocityVariance != 0.0)
+			json["velocityVariance"] = note.velocityVariance;
 		return json;
 	}
 
@@ -702,7 +709,8 @@ namespace gnubase::engine
 	Json toJson(const LinkGroup& group)
 	{
 		return {{"id", group.id}, {"name", group.name}, {"channels", group.channels}, {"volume", group.volume},
-			{"pan", group.pan}, {"mute", group.mute}, {"record", group.record}, {"vca", group.vca}};
+			{"pan", group.pan}, {"mute", group.mute}, {"record", group.record}, {"eq", group.eq},
+			{"dynamics", group.dynamics}, {"sends", group.sends}, {"vca", group.vca}};
 	}
 
 	LinkGroup linkGroupFromJson(const Json& json, const LinkGroup& fallback)
@@ -715,6 +723,9 @@ namespace gnubase::engine
 		group.pan = json.value("pan", group.pan);
 		group.mute = json.value("mute", group.mute);
 		group.record = json.value("record", group.record);
+		group.eq = json.value("eq", group.eq);
+		group.dynamics = json.value("dynamics", group.dynamics);
+		group.sends = json.value("sends", group.sends);
 		group.vca = json.value("vca", group.vca);
 		return group;
 	}
@@ -1458,7 +1469,15 @@ namespace gnubase::engine
 			track.channel = item.at("channel").get<ObjectId>();
 			// Files from before disabled tracks have every track enabled; only some types can be disabled.
 			track.enabled = !canDisable(track.type) || item.value("enabled", true);
-			track.picture = item.value("picture", std::string()); // files from before #106 have none
+			track.picture = item.value("picture", std::string());                    // files from before #106 have none
+			if (const Json frozen = item.value("frozen", Json()); !frozen.is_null()) // and before #116 none
+			{
+				track.frozen = Freeze{frozen.at("path").get<std::string>(), frozen.at("sampleRate").get<double>(),
+					frozen.at("channels").get<int>(), frozen.at("length").get<time::Samples>()};
+				if ((track.type != TrackType::Audio && track.type != TrackType::Instrument) ||
+					!(track.frozen->sampleRate > 0.0) || track.frozen->channels < 1 || track.frozen->length < 0)
+					throw std::invalid_argument("track " + std::to_string(track.id) + " can't be frozen like that");
+			}
 			if (const Json autoFades = item.value("autoFades", Json()); !autoFades.is_null())
 				track.autoFades = autoFadesFromJson(autoFades);
 			if (track.type == TrackType::Ruler)
@@ -1715,6 +1734,8 @@ namespace gnubase::engine
 				if (n.contains("origin"))
 					note.origin = QuantizeOrigin{
 						timingFrom(n.at("origin").at("original")), timingFrom(n.at("origin").at("quantized"))};
+				note.probability = std::clamp(n.value("probability", 1.0), 0.0, 1.0);
+				note.velocityVariance = std::clamp(n.value("velocityVariance", 0.0), -1.0, 1.0);
 				part.notes[note.id] = note;
 			}
 			for (const Json& c : item.at("controllers"))

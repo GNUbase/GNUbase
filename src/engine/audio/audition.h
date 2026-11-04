@@ -84,6 +84,7 @@ namespace gnubase::engine
 		time::Samples m_head = 0; // where the next scrub starts
 		std::chrono::steady_clock::time_point m_lastScrub;
 		std::map<ObjectId, std::unique_ptr<AudioFileReader>> m_readers; // while scrubbing; null where opening failed
+		std::map<ObjectId, std::string> m_readerPaths;                  // the media files m_readers were opened from
 		uint64_t m_serial = 0;
 		std::mutex m_mutex; // guards what cue reads: whether it plays, the serial and start of its state
 		bool m_cuePlaying = false;

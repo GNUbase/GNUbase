@@ -19,6 +19,11 @@ namespace Rml
 	class Element;
 }
 
+namespace gnubase::ui
+{
+	class ControllerLanes;
+}
+
 // The key editor (#127, reference manual pp. 1189-1220): docs/features/key-editor.md describes it.
 namespace gnubase::ui
 {
@@ -31,15 +36,17 @@ namespace gnubase::ui
 		Trim,
 		Split,
 		Glue,
+		Line, // on the controller lanes, in its mode (#128)
 	};
 
 	// Fills an element of a MidiEditor with the key editor: its toolbar (tools, the transpose palette, step and MIDI
 	// input, length quantize), the info line of the first selected note, the parts it shows by track (a click
-	// activates one, as MidiEditor handles it) and the note display, a piano keyboard beside a grid of 128 pitches
-	// with the notes as boxes and the step input cursor. The notes' time axis fits the parts' range into the width.
-	// A right click in the note display opens the toolbox #key-editor-toolbox, the toolbar's tools at the mouse, as
-	// in the event display (reference manual p. 65): with the user setting ui.toolboxOnRightClick, else with a
-	// modifier key; the key editor has no context menu yet. show() gives it the project and the engine's editor view
+	// activates one, as MidiEditor handles it), the note display, a piano keyboard beside a grid of 128 pitches
+	// with the notes as boxes and the step input cursor, and below it the controller lanes (ControllerLanes). The
+	// notes' time axis fits the parts' range into the width. A right click in the note display opens the toolbox
+	// #key-editor-toolbox, the toolbar's tools at the mouse, as in the event display (reference manual p. 65): with
+	// the user setting ui.toolboxOnRightClick, else with a modifier key; the key editor has no context menu yet.
+	// show() gives it the project and the engine's editor view
 	// whenever they change; the selection is the view's (editor.set selection), and every edit goes to the engine as
 	// note.* commands, those of several parts in one history.transaction. Use it on the UI thread; the binding must
 	// outlive it.
@@ -149,10 +156,13 @@ namespace gnubase::ui
 		std::pair<double, int> m_pressedAt;
 		std::optional<Note> m_pressed; // the note pressed, as it was
 		bool m_snapOff = false;
-		Rml::ObserverPtr<Rml::Element> m_drawn;              // the note a draw drags out
-		std::vector<Rml::ObserverPtr<Rml::Element>> m_menus; // the length quantize menu, then the toolbox
-		bool m_toolboxOnRightClick = false;                  // ui.toolboxOnRightClick
-		bool m_toolboxKnown = false;                         // changed since it was asked for
+		Rml::ObserverPtr<Rml::Element> m_drawn; // the note a draw drags out
+		// the length quantize menu, the line tool's menu, then the toolbox
+		std::vector<Rml::ObserverPtr<Rml::Element>> m_menus;
+		std::string m_lineMode = "line"; // the line tool's (#128)
+		std::unique_ptr<ControllerLanes> m_lanes;
+		bool m_toolboxOnRightClick = false; // ui.toolboxOnRightClick
+		bool m_toolboxKnown = false;        // changed since it was asked for
 		std::vector<Subscription> m_subscriptions;
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers that come after it's gone
 	};
