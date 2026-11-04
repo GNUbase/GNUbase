@@ -18,6 +18,7 @@
 #include "ui/poolpanel.h"
 #include "ui/projectfiles.h"
 #include "ui/rmlui.h"
+#include "ui/sampleeditor.h"
 #include "ui/sdlwindowsystem.h"
 #include "ui/shell.h"
 #include "ui/statusline.h"
@@ -113,6 +114,13 @@ namespace gnubase::app
 		}
 		ui::WindowId editorWindowId() const { return m_editor.window; }
 		ui::MidiEditor* lowerZoneEditor() { return m_lowerEditor.lock().get(); }
+		// The sample editor window (#140, docs/features/sample-editor.md, resources/ui/sample-editor.rml), which opens
+		// and closes as the engine's sampleEditor view does. Null while it doesn't show.
+		ui::SampleEditor* sampleEditorWindow()
+		{
+			return m_shell.find(m_sampleEditor.window) != nullptr ? m_sampleEditor.editor.get() : nullptr;
+		}
+		ui::WindowId sampleEditorWindowId() const { return m_sampleEditor.window; }
 
 		// Opens the studio setup dialog (resources/ui/studio-setup.rml, #79) in the window, modal: the UI command
 		// window.studioSetup, which the main menu's Studio menu runs. While it is open, this brings it to the front
@@ -175,6 +183,10 @@ namespace gnubase::app
 		void followSelection();
 		// The MIDI parts selected in the project window's event display.
 		std::vector<uint64_t> selectedParts() const;
+		// Shows or closes the sample editor window as the engine's sampleEditor view says.
+		void followSampleEditor(const engine::Json& view);
+		// The audio events selected in the project window's event display.
+		std::vector<uint64_t> selectedAudioEvents() const;
 		// The OS's file dialog for a track's picture in the mixer, then track.set.
 		void choosePicture(uint64_t track);
 		// Opens resources/ui/<name> in the window, modal. Throws std::runtime_error if it can't be loaded.
@@ -246,6 +258,12 @@ namespace gnubase::app
 			std::unique_ptr<ui::MidiEditor> editor;
 		};
 		EditorWindow m_editor;
+		struct SampleEditorWindow
+		{
+			ui::WindowId window = 0;
+			std::unique_ptr<ui::SampleEditor> editor;
+		};
+		SampleEditorWindow m_sampleEditor;
 		std::weak_ptr<ui::MidiEditor> m_lowerEditor;         // the docking system owns it while it is there
 		engine::Json m_editorViews = engine::Json::object(); // the engine's, by editor
 		std::vector<uint64_t> m_followed;                    // the selection the editors last followed

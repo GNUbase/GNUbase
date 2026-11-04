@@ -1,0 +1,124 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#pragma once
+
+#include "engine/engine.h"
+#include "ui/enginebinding.h"
+
+#include <RmlUi/Core/EventListener.h>
+#include <RmlUi/Core/ObserverPtr.h>
+
+#include <array>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+namespace Rml
+{
+	class Element;
+}
+
+// The sample editor (#140, reference manual pp. 613-635): docs/features/sample-editor.md describes it.
+namespace gnubase::ui
+{
+	// The sample editor's tools (pp. 629-630, 634-635), in the toolbar's order.
+	enum class SampleTool : uint8_t
+	{
+		Range,
+		Zoom,
+		Play,
+		Scrub,
+	};
+
+	// Fills an element with the sample editor of the engine's sampleEditor view: the toolbar with the tools, Snap to
+	// Zero Crossing and the window layout's switches, the info line, the overview of the whole clip, the inspector's
+	// Range and Process sections, the waveform display with the event's edges, the selection range and the snap
+	// point, and the regions list. Its time axis is the clip's sample frames; the display shows m_start on from the
+	// left at m_scale frames per dp, and first fits the whole clip. Every change goes to the engine (sampleEditor.set,
+	// clip.*Region, event.setSnapPoint, audition.*, transport.*). Use it on the UI thread; the binding must outlive it.
+	class SampleEditor final : private Rml::EventListener
+	{
+	public:
+		SampleEditor(EngineBinding& binding, Rml::Element& root);
+		~SampleEditor() override;
+		SampleEditor(const SampleEditor&) = delete;
+		SampleEditor& operator=(const SampleEditor&) = delete;
+		SampleEditor(SampleEditor&&) = delete;
+		SampleEditor& operator=(SampleEditor&&) = delete;
+
+		SampleTool tool() const { return m_tool; }
+		void setTool(SampleTool tool);
+
+		// The display's view: the clip frame at its left edge and frames per dp.
+		double start() const { return m_start; }
+		double scale() const { return m_scale; }
+
+	private:
+		enum class Drag : uint8_t
+		{
+			None,
+			Range,
+			SnapPoint,
+			Play,
+			Scrub,
+			Overview,
+		};
+
+		void ProcessEvent(Rml::Event& event) override;
+		void click(Rml::Element& target);
+		void press(Rml::Event& event, Rml::Element& target);
+		void move(Rml::Event& event);
+		void release(Rml::Event& event);
+
+		void requestProject();
+		void requestView();
+		void show();
+		void render();
+		void renderRegions();
+		void ask(bool overview);
+		void zoom(double factor, double around);
+		void fit(double from, double to);
+
+		float dpRatio() const;
+		double displayWidth() const; // dp
+		double frameAt(const Rml::Event& event) const;
+		int64_t projectSample(double frame) const;
+		bool hasEvent() const { return m_length > 0; }
+		std::pair<int64_t, int64_t> rangeOrEvent() const; // the selection range, or the event's section
+		const engine::Json* region(uint64_t id) const;
+
+		EngineBinding& m_binding;
+		Rml::ObserverPtr<Rml::Element> m_root;
+		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers after it went
+		engine::Json m_project = engine::Json::object();
+		engine::Json m_view = engine::Json::object();
+		bool m_loading = false;
+		bool m_stale = false;
+		SampleTool m_tool = SampleTool::Range;
+
+		// What the view shows, from m_view and the project.
+		uint64_t m_event = 0;
+		uint64_t m_media = 0;
+		int64_t m_length = 0; // the clip's frames
+		int64_t m_offset = 0;
+		int64_t m_eventLength = 0;
+		int64_t m_clipStart = 0; // project samples
+		double m_ratio = 1.0;
+		int64_t m_selectionStart = 0;
+		int64_t m_selectionEnd = 0;
+		double m_snapPoint = 0.0; // clip frames, where the event snaps
+
+		double m_start = 0.0;
+		double m_scale = 0.0;                          // 0 until it has fitted the clip
+		uint64_t m_fitted = 0;                         // the event it fitted
+		uint64_t m_region = 0;                         // the region selected in the list
+		std::array<bool, 2> m_asking = {false, false}; // media.peaks in flight: the display's, the overview's
+		std::array<bool, 2> m_again = {false, false};  // asked again meanwhile
+
+		Drag m_drag = Drag::None;
+		double m_pressed = 0.0; // clip frames
+		double m_dragged = 0.0;
+		std::vector<Subscription> m_subscriptions;
+	};
+}

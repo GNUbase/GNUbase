@@ -690,6 +690,41 @@
 	{
 		background-color: #ffff00;
 	}
+	.se-overview, .se-display
+	{
+		background-color: #000000;
+	}
+	.se-overview-event
+	{
+		background-color: #ffffff1a;
+	}
+	.se-overview-selection, .se-selection
+	{
+		background-color: #ffffff33;
+	}
+	.se-overview-view
+	{
+		border-width: 1dp;
+		border-color: #ffff00;
+	}
+	.se-overview-snap, .se-snap-point
+	{
+		background-color: #00ffff;
+	}
+	.se-outside
+	{
+		background-color: #00000099;
+	}
+	.se-region-shown
+	{
+		border-width: 1dp;
+		border-color: #00ffff;
+		background-color: #00ffff1a;
+	}
+	.se-region.selected
+	{
+		background-color: #666600;
+	}
 	.docking [zone]
 	{
 		background-color: #000000;

@@ -103,6 +103,8 @@ add_executable(gnubase-tests
 	recording_tests.cpp
 	rmlui_tests.cpp
 	rt_tests.cpp
+	sampleeditor_tests.cpp
+	sampleeditor_ui_tests.cpp
 	scripting_tests.cpp
 	sequencing_tests.cpp
 	settings_tests.cpp

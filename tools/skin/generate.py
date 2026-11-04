@@ -568,6 +568,18 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
                                 "border-color": c["textMuted"]}),
         (".key-note.drawing", {"background-color": c["accent"] + "66"}),
         (".key-editor-step-cursor", {"background-color": c["accent"]}),
+        # The sample editor (docs/features/sample-editor.md): the overview with the event, the selection and what
+        # the display shows, the display's audio outside the event shaded, the selection range, the region selected in
+        # the list, the snap point, and the selected region's row
+        (".se-overview, .se-display", {"background-color": c["surface"]}),
+        (".se-overview-event", {"background-color": c["text"] + "1a"}),
+        (".se-overview-selection, .se-selection", {"background-color": c["text"] + "33"}),
+        (".se-overview-view", {"border-width": f"{widths['hairline']}dp", "border-color": c["accent"]}),
+        (".se-overview-snap, .se-snap-point", {"background-color": c["accent2"]}),
+        (".se-outside", {"background-color": c["background"] + "99"}),
+        (".se-region-shown", {"border-width": f"{widths['hairline']}dp", "border-color": c["accent2"],
+                              "background-color": c["accent2"] + "1a"}),
+        (".se-region.selected", {"background-color": mix(c["surface"], c["accent"], .4)}),
         # Docking windows (docs/features/docking.md): zones, the frame of the zone with the keyboard focus, and strips
         (".docking [zone]", {"background-color": mix(c["background"], c["surface"], .5)}),
         (".docking .zone-frame", {"border-width": f"{widths['focus']}dp", "border-color": c["accent"]}),

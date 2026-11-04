@@ -77,6 +77,8 @@ add_library(gnubase-ui STATIC
 	renderer.h
 	rmlui.cpp
 	rmlui.h
+	sampleeditor.cpp
+	sampleeditor.h
 	sdlwindowsystem.cpp
 	sdlwindowsystem.h
 	shell.cpp
