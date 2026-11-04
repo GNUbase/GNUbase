@@ -111,6 +111,7 @@ add_library(gnubase-engine STATIC
 	dawproject/dawproject.cpp dawproject/dawproject.h
 	document/audiofilecommands.cpp
 	document/channelformat.cpp document/channelformat.h
+	document/channelsettings.cpp document/channelsettings.h
 	document/document.cpp document/document.h
 	document/editors.cpp document/editors.h
 	document/eventedits.cpp

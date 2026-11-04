@@ -701,7 +701,8 @@ namespace gnubase::engine
 	Json toJson(const LinkGroup& group)
 	{
 		return {{"id", group.id}, {"name", group.name}, {"channels", group.channels}, {"volume", group.volume},
-			{"pan", group.pan}, {"mute", group.mute}, {"record", group.record}, {"vca", group.vca}};
+			{"pan", group.pan}, {"mute", group.mute}, {"record", group.record}, {"eq", group.eq},
+			{"dynamics", group.dynamics}, {"sends", group.sends}, {"vca", group.vca}};
 	}
 
 	LinkGroup linkGroupFromJson(const Json& json, const LinkGroup& fallback)
@@ -714,6 +715,9 @@ namespace gnubase::engine
 		group.pan = json.value("pan", group.pan);
 		group.mute = json.value("mute", group.mute);
 		group.record = json.value("record", group.record);
+		group.eq = json.value("eq", group.eq);
+		group.dynamics = json.value("dynamics", group.dynamics);
+		group.sends = json.value("sends", group.sends);
 		group.vca = json.value("vca", group.vca);
 		return group;
 	}
