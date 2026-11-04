@@ -83,6 +83,8 @@ add_library(gnubase-ui STATIC
 	renderer.h
 	rmlui.cpp
 	rmlui.h
+	rulertracks.cpp
+	rulertracks.h
 	sampleeditor.cpp
 	sampleeditor.h
 	sdlwindowsystem.cpp

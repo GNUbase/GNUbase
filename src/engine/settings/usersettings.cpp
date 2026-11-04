@@ -337,7 +337,10 @@ namespace gnubase::engine::settings
 				{"ui.trackControls",
 					"The controls the track list shows, by track type (audio, instrument, midi, group, effect, "
 					"folder, marker, ruler, tempo), in order: mute, solo, record, monitor (audio, instrument and MIDI "
-					"tracks), read (automation), timeBase and tempoTrack (the tempo track's Activate Tempo Track). "
+					"tracks), read (automation), timeBase, tempoTrack (the tempo track's Activate Tempo Track), and "
+					"for "
+					"ruler tracks timeFormat, timeOffsetOn, timeOffset and setTimeOffset (Set Time Offset to Project "
+					"Cursor Position). "
 					"Mute and solo always show on tracks with a channel; a type left out shows none.",
 					Json{{"type", "object"},
 						{"additionalProperties",
@@ -345,18 +348,19 @@ namespace gnubase::engine::settings
 								{"items",
 									{{"type", "string"},
 										{"enum",
-											{"mute", "solo", "record", "monitor", "read", "timeBase",
-												"tempoTrack"}}}}}}},
+											{"mute", "solo", "record", "monitor", "read", "timeBase", "tempoTrack",
+												"timeFormat", "timeOffsetOn", "timeOffset", "setTimeOffset"}}}}}}},
 					Json{{"audio", {"mute", "solo", "record", "monitor", "read"}},
 						{"instrument", {"mute", "solo", "record", "monitor", "read"}},
 						{"midi", {"mute", "solo", "record", "monitor", "read"}}, {"group", {"mute", "solo", "read"}},
 						{"effect", {"mute", "solo", "read"}}, {"folder", {"mute", "solo", "read"}},
-						{"marker", Json::array()}, {"ruler", Json::array()}, {"tempo", {"tempoTrack"}},
-						{"signature", Json::array()}}},
+						{"marker", Json::array()},
+						{"ruler", {"timeFormat", "timeOffsetOn", "timeOffset", "setTimeOffset"}},
+						{"tempo", {"tempoTrack"}}, {"signature", Json::array()}}},
 				{"ui.trackWidths",
 					"The widths in the track list's rows, in dp: name, the track name's for every track type (20 to "
 					"400), and controls, by track type, the width of its controls area (0 to 800), whose controls go "
-					"onto more lines when they don't fit. A width left out is 120.",
+					"onto more lines when they don't fit. A width left out is 120; ruler tracks' default is 140.",
 					Json{{"type", "object"},
 						{"properties",
 							{{"name", {{"type", "number"}, {"minimum", 20}, {"maximum", 400}}},
@@ -367,7 +371,7 @@ namespace gnubase::engine::settings
 					Json{{"name", 120},
 						{"controls",
 							{{"audio", 120}, {"instrument", 120}, {"midi", 120}, {"group", 120}, {"effect", 120},
-								{"folder", 120}, {"marker", 120}, {"ruler", 120}, {"tempo", 120},
+								{"folder", 120}, {"marker", 120}, {"ruler", 140}, {"tempo", 120},
 								{"signature", 120}}}}},
 				{"ui.zoomPresets",
 					"The horizontal zoom presets of the event display, for every project: each a name and the "

@@ -97,9 +97,11 @@ namespace gnubase::ui
 				marks[i].position = (marks[i].position / perSecond) - offset;
 		}
 
-		// What seconds, timecode and user frames show at the project start.
+		// What seconds, timecode, user frames and samples show at the project start.
 		double startOffset(TimeFormat format, const TimeContext& context)
 		{
+			if (format == TimeFormat::Samples)
+				return context.sampleStart;
 			const bool clock =
 				format == TimeFormat::Seconds || format == TimeFormat::Timecode || format == TimeFormat::UserFrames;
 			return clock ? context.startTime : 0.0;
@@ -581,13 +583,13 @@ namespace gnubase::ui
 			break;
 		}
 		case TimeFormat::Samples:
-			scale.marks = [rate = context.sampleRate](
+			scale.marks = [rate = context.sampleRate, start = context.sampleStart](
 							  double from, double to, double minimum, std::vector<RulerMark>& marks)
 			{
 				const auto [step, parts] = decimalStep(std::max(minimum * rate, 1.0));
 				linearMarks(
 					from, to, minimum, rate, {{step, parts}},
-					[](double sample, double /*step*/) { return std::to_string(std::llround(sample)); }, marks);
+					[](double sample, double /*step*/) { return std::to_string(std::llround(sample)); }, marks, start);
 			};
 			break;
 		}

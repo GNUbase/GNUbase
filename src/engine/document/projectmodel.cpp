@@ -3492,7 +3492,8 @@ namespace gnubase::engine
 				"project has at most 10, and a new one becomes the active marker track. Ruler tracks have no channel "
 				"either; timeFormat is the time format their ruler shows (default barsBeats), and with timeOffsetOn "
 				"(default false) it counts from timeOffset, a position in the track's time base or \"cursor\" (default "
-				"0, the project start), instead of the project setup's start time and bar offset. The tempo track shows "
+				"0, the project start), instead of the project setup's start time and bar offset. The tempo track "
+				"shows "
 				"and "
 				"edits the project's tempo (tempo.*), the signature track its time signatures (signature.*): a "
 				"project has one of each at most, without a channel, at the top level. "
@@ -3517,7 +3518,8 @@ namespace gnubase::engine
 				"Changes a track's name, color (#rrggbb, or null for the default), time base or, for ruler tracks, "
 				"time format and time offset: timeOffset is a position in the track's time base, after a new "
 				"timeBase in the same command in the new one, or \"cursor\" (Set Time Offset to Project Cursor "
-				"Position), and timeOffsetOn switches it on or off (see track.add). A new time base keeps its events, parts, markers and automation at the same time; on "
+				"Position), and timeOffsetOn switches it on or off (see track.add). A new time base keeps its events, "
+				"parts, markers and automation at the same time; on "
 				"a linear track they keep their time when the tempo changes too, the notes in its MIDI parts with "
 				"them. enabled false "
 				"disables an audio, instrument or MIDI track: it keeps its events and channel settings but plays "
@@ -3528,10 +3530,10 @@ namespace gnubase::engine
 				"disconnected keep their routing. With the user setting editing.applyFolderColor, a folder's new "
 				"color goes to the tracks inside it. picture is an image file (PNG, JPEG or SVG) that the mixer shows "
 				"on the track's channel, or empty for none.",
-				objectSchema({{"track", idSchema}, {"name", stringSchema}, {"color", color}, {"timeBase", timeBases},
-								 {"timeFormat", timeFormats}, {"timeOffset", positionSchema},
-								 {"timeOffsetOn", booleanSchema}, {"enabled", booleanSchema},
-								 {"groupChannel", booleanSchema}, {"picture", stringSchema}},
+				objectSchema(
+					{{"track", idSchema}, {"name", stringSchema}, {"color", color}, {"timeBase", timeBases},
+						{"timeFormat", timeFormats}, {"timeOffset", positionSchema}, {"timeOffsetOn", booleanSchema},
+						{"enabled", booleanSchema}, {"groupChannel", booleanSchema}, {"picture", stringSchema}},
 					{"track"}),
 				resultSchema({"track"}), false},
 			setTrack);

@@ -19,6 +19,7 @@
 #include "ui/poolpanel.h"
 #include "ui/projectfiles.h"
 #include "ui/rmlui.h"
+#include "ui/rulertracks.h"
 #include "ui/sampleeditor.h"
 #include "ui/sdlwindowsystem.h"
 #include "ui/shell.h"
@@ -245,6 +246,7 @@ namespace gnubase::app
 		std::unique_ptr<ui::MarkerLines> m_markerLines;     // and before the display
 		std::unique_ptr<ui::TempoLane> m_tempoLane;         // as well
 		std::unique_ptr<ui::SignatureLane> m_signatureLane; // as well
+		std::unique_ptr<ui::RulerLanes> m_rulerLanes;       // as well
 		std::unique_ptr<ui::TempoEditor> m_tempoEditor;
 		ui::WindowId m_tempoWindow = 0;
 		std::vector<uint64_t> m_eventSelection; // the display's, as the last step saw it

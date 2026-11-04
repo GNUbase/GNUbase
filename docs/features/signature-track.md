@@ -44,7 +44,7 @@ signature map itself, which converts between ticks and bars and beats, is the ti
 
 Click patterns and the click itself (the metronome, #101, whose golden test covers signature changes), the signature
 track's Lock and options, its Inspector list (p. 183), the Insert Time Signature Event key command and dialog, the bars
-in the signature track's background, ruler tracks (#447) and signature events in the middle of a bar.
+in the signature track's background and signature events in the middle of a bar.
 
 ## Tests
 
