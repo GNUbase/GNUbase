@@ -281,7 +281,7 @@ TEST_CASE("a watched value draws the window that shows it when it changes, and n
 {
 	engine::Engine engine;
 	test::FakeUi fake({{1, "Monitor", {0, 0, 1920, 1080}, {0, 0, 1920, 1080}, 1.0F}});
-	ui::Window& shows = fake.shell.open(bounds(100, 100, 800, 600));
+	const ui::Window& shows = fake.shell.open(bounds(100, 100, 800, 600));
 	const ui::Window& other = fake.shell.open(bounds(1000, 100, 400, 300));
 	ui::EngineBinding binding(engine, [&fake] { fake.shell.wake(); }, [&fake] { fake.shell.requestRender(); });
 	fake.shell.eachStep([&binding] { return binding.update(); });
