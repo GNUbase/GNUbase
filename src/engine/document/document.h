@@ -553,6 +553,22 @@ namespace gnubase::engine
 		std::map<ObjectId, Controller> controllers;
 	};
 
+	// A frozen track's rendered audio (#116, reference manual pp. 219-220): a file of the project's media folder's
+	// Freeze folder that plays from the project's start instead of the track's events, instrument and plugin slots.
+	struct Freeze
+	{
+		std::string path;
+		double sampleRate = 48000.0;
+		int channels = 2;
+		time::Samples length = 0; // in the file's sample frames
+	};
+
+	inline bool operator==(const Freeze& a, const Freeze& b)
+	{
+		return std::tie(a.path, a.sampleRate, a.channels, a.length) ==
+			std::tie(b.path, b.sampleRate, b.channels, b.length);
+	}
+
 	struct Track
 	{
 		ObjectId id = 0;
@@ -570,6 +586,9 @@ namespace gnubase::engine
 		// leave it out, as for Channel::instrumentParameters.
 		// NOLINTNEXTLINE(readability-redundant-member-init): see above
 		std::string picture = {};
+		// Audio and instrument tracks: what plays while the track is frozen, or none. Initialized like picture.
+		// NOLINTNEXTLINE(readability-redundant-member-init): see above
+		std::optional<Freeze> frozen = {};
 	};
 
 	// Whether tracks of a type can be disabled (reference manual p. 219): audio, instrument and MIDI tracks.
@@ -996,9 +1015,9 @@ namespace gnubase::engine
 	inline bool operator==(const Track& a, const Track& b)
 	{
 		return std::tie(a.id, a.type, a.name, a.color, a.timeBase, a.parent, a.channel, a.children, a.autoFades,
-				   a.timeFormat, a.enabled, a.picture) ==
+				   a.timeFormat, a.enabled, a.picture, a.frozen) ==
 			std::tie(b.id, b.type, b.name, b.color, b.timeBase, b.parent, b.channel, b.children, b.autoFades,
-				b.timeFormat, b.enabled, b.picture);
+				b.timeFormat, b.enabled, b.picture, b.frozen);
 	}
 	// Where an audio event plays, in the project's samples (fadeedits.cpp).
 	struct EventSpan

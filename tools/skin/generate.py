@@ -525,6 +525,7 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".track-list listitem", {"border-bottom-width": f"{widths['hairline']}dp",
                                   "border-bottom-color": c["border"]}),
         (".track-list listitem.disabled", {"color": c["textMuted"]}),
+        (".track-list listitem.frozen", {"color": c["textMuted"]}),
         (".track-list .drop-line", {"background-color": c["accent"]}),
         # Automation tracks (docs/features/automation-tracks.md): their rows and lanes below their track's, the
         # curve with its points, grayed out while it doesn't read, the static value line and the automation event

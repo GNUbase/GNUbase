@@ -3807,6 +3807,7 @@ namespace gnubase::engine
 		registerMidiFileCommands(engine);
 		registerAudioFileCommands(engine, jobs);
 		registerRecordingCommands(engine);
+		registerRenderCommands(engine);
 		registerPoolCommands(engine);
 		registerFadeCommands(engine);
 		registerVolumeCurveCommands(*this, engine);
