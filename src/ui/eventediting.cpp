@@ -313,7 +313,7 @@ namespace gnubase::ui
 		};
 		// A range command for the selection range, if there is one (reference manual pp. 287-294), with a length
 		// unless it splits.
-		const auto rangeEdit = [this](const char* command, const Json& parameters, bool needsLength)
+		const auto onRange = [this](const char* command, const Json& parameters, bool needsLength = true)
 		{
 			return [this, command, parameters, needsLength]
 			{
@@ -327,12 +327,12 @@ namespace gnubase::ui
 			};
 		};
 		// An action that only edits the selection range: menus and keys disable it while there is none (canRun).
-		const auto onRange =
-			[this, rangeEdit](const char* action, const char* command, const Json& parameters, bool needsLength = true)
+		const auto rangeAction =
+			[this, onRange](const char* action, const char* command, const Json& parameters, bool needsLength = true)
 		{
 			m_rangeActions[action] = needsLength;
 			return std::make_pair(
-				std::string(action), std::function<void()>(rangeEdit(command, parameters, needsLength)));
+				std::string(action), std::function<void()>(onRange(command, parameters, needsLength)));
 		};
 		// Paste goes to the range's start and first track, or to the project cursor on the tracks it was copied from,
 		// where it selects what it pasted.
@@ -348,7 +348,7 @@ namespace gnubase::ui
 		};
 		const std::map<std::string, std::function<void()>> actions = {
 			{"edit.delete",
-				[this, range = rangeEdit("range.delete", Json::object(), true),
+				[this, range = onRange("range.delete", Json::object()),
 					events = onSelection("event.remove", Json::object())]
 				{
 					if (m_range)
@@ -356,15 +356,15 @@ namespace gnubase::ui
 					else
 						events();
 				}},
-			onRange("edit.cut", "range.cut", Json::object()),
-			onRange("edit.copy", "range.copy", Json::object()),
+			rangeAction("edit.cut", "range.cut", Json::object()),
+			rangeAction("edit.copy", "range.copy", Json::object()),
 			{"edit.paste", paste(false)},
-			onRange("edit.cutTime", "range.cut", {{"time", true}}),
-			onRange("edit.deleteTime", "range.delete", {{"time", true}}),
+			rangeAction("edit.cutTime", "range.cut", {{"time", true}}),
+			rangeAction("edit.deleteTime", "range.delete", {{"time", true}}),
 			{"edit.pasteTime", paste(true)},
-			onRange("edit.insertSilence", "range.insertSilence", Json::object()),
-			onRange("edit.splitRange", "range.split", Json::object(), false),
-			onRange("edit.cropRange", "range.crop", Json::object()),
+			rangeAction("edit.insertSilence", "range.insertSilence", Json::object()),
+			rangeAction("edit.splitRange", "range.split", Json::object(), false),
+			rangeAction("edit.cropRange", "range.crop", Json::object()),
 			{"edit.globalCopy", [this] { edit("range.copy", Json::object()); }},
 			{"edit.mute", onSelection("event.set", {{"mute", true}})},
 			{"edit.unmute", onSelection("event.set", {{"mute", false}})},
