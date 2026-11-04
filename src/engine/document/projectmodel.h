@@ -72,6 +72,7 @@ namespace gnubase::engine
 	// project or of undo.
 	struct AutomationClipboard
 	{
+		// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
 		struct Lane
 		{
 			AutomationLane lane;

@@ -264,21 +264,20 @@ namespace gnubase::ui
 		m_actions["track.hideAllAutomation"] = [this] { m_display.hideAllAutomation(); };
 		// Copying automation to other tracks (#125, reference manual pp. 878-879), between the locators, which the
 		// engine takes.
-		for (const char* name : {"copy", "paste"})
+		for (const char* which : {"copy", "paste"})
 		{
-			const std::string which = name;
-			const std::string command = "automation." + which;
-			m_actions["track." + which + "AutomationAll"] = [this, command]
-			{ m_binding.send(command, Json::object()); };
-			m_actions["track." + which + "AutomationSelected"] = [this, command]
+			const std::string prefix = std::string("track.") + which;
+			m_actions[prefix + "AutomationAll"] = [this, which]
+			{ m_binding.send(std::string("automation.") + which, Json::object()); };
+			m_actions[prefix + "AutomationSelected"] = [this, which]
 			{
 				if (const std::vector<uint64_t> tracks = selection(); !tracks.empty())
-					m_binding.send(command, {{"tracks", tracks}});
+					m_binding.send(std::string("automation.") + which, {{"tracks", tracks}});
 			};
-			m_actions["track." + which + "AutomationSelectedParameters"] = [this, command]
+			m_actions[prefix + "AutomationSelectedParameters"] = [this, which]
 			{
 				if (const std::vector<uint64_t> lanes = selectedLanes(); !lanes.empty())
-					m_binding.send(command, {{"lanes", lanes}});
+					m_binding.send(std::string("automation.") + which, {{"lanes", lanes}});
 			};
 		}
 		m_parameterMenu = m_document->GetElementById("automation-parameter-menu");
