@@ -3898,6 +3898,34 @@ Returns:
 - `position`: integer
 - `tempo`: object, required
 
+#### `gnubase.tempo.export`
+
+Exports the tempo track's events, which fixed tempo mode keeps too, and the time signature events into an XML file at path (File > Export > Tempo Track), which tempo.import reads. Returns the number of tempo and time signature events.
+
+Only reads; changes nothing.
+
+Parameters:
+
+- `path`: string, required
+
+Returns:
+
+- `signatureEvents`: integer, required
+- `tempoEvents`: integer, required
+
+#### `gnubase.tempo.import`
+
+Imports a file that tempo.export wrote (File > Import > Tempo Track): its tempo events replace the tempo track's and its time signature events the project's. A file with tempo changes makes the tempo track active; the fixed tempo stays. One undo step. Returns the tempo as tempo.changed reports it and the time signature events as signature.changed does.
+
+Parameters:
+
+- `path`: string, required
+
+Returns:
+
+- `signatures`: array, required
+- `tempo`: object, required
+
 #### `gnubase.tempo.remove`
 
 Removes tempo events from the tempo track, by their positions in ticks. The first one stays.

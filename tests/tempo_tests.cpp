@@ -10,6 +10,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <utility>
 #include <variant>
@@ -537,4 +539,97 @@ TEST_CASE("the tempo modes and the tempo track's events are saved with the proje
 	for (const char* key : {"tempo", "tempoTrackActive", "tempoTrack", "fixedTempo"})
 		CHECK(after.at(key) == before.at(key));
 	CHECK(after.at("tracks").at(0).at("type") == "tempo");
+}
+
+TEST_CASE("the tempo track is exported and imported as an XML file with the time signature events", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	const std::string file = (dir.path() / "tempo.xml").u8string();
+	Engine engine;
+	Client client(engine);
+	// The tempo track's events, which fixed tempo mode keeps too, and the time signature events.
+	run(client, "project.set", {{"tempo", 110.0}});
+	run(client, "tempo.set", {{"events", {{{"position", 0}, {"bpm", 93.457}}}}});
+	run(client, "tempo.add", point(4, 90.0, true));
+	run(client, "tempo.add", point(8, 140.5, false));
+	run(client, "signature.add", {{"bar", 2}, {"numerator", 3}, {"denominator", 4}});
+	run(client, "signature.add", {{"bar", 5}, {"numerator", 7}, {"denominator", 8}});
+	const Json exported = run(client, "tempo.export", {{"path", file}});
+	CHECK(exported.at("tempoEvents") == 3);
+	CHECK(exported.at("signatureEvents") == 3);
+	const Json before = run(client, "project.get");
+	CHECK(!before.at("tempoTrackActive").get<bool>());
+
+	// Importing replaces the tempo track and the time signature events, and the tempo changes play.
+	run(client, "project.new");
+	run(client, "project.set", {{"tempo", 100.0}});
+	run(client, "signature.add", {{"bar", 3}, {"numerator", 5}, {"denominator", 4}});
+	const Json empty = run(client, "project.get");
+	eventNames(client);
+	const Json imported = run(client, "tempo.import", {{"path", file}});
+	CHECK(imported.at("tempo").at("tempoTrack") == before.at("tempoTrack"));
+	const std::vector<std::string> names = eventNames(client);
+	CHECK(std::count(names.begin(), names.end(), "tempo.changed") == 1);
+	CHECK(std::count(names.begin(), names.end(), "signature.changed") == 1);
+	Json after = run(client, "project.get");
+	CHECK(after.at("tempoTrack") == before.at("tempoTrack"));
+	CHECK(after.at("signatures") == before.at("signatures"));
+	CHECK(after.at("tempoTrackActive").get<bool>());
+	CHECK(after.at("tempo") == before.at("tempoTrack"));
+	CHECK(after.at("fixedTempo") == 100.0);
+
+	// One undo step.
+	run(client, "history.undo");
+	after = run(client, "project.get");
+	for (const char* key : {"tempo", "tempoTrackActive", "tempoTrack", "fixedTempo", "signatures"})
+		CHECK(after.at(key) == empty.at(key));
+	run(client, "history.redo");
+
+	// Exported again, the imported tempo track gives the same file.
+	const std::string again = (dir.path() / "again.xml").u8string();
+	run(client, "tempo.export", {{"path", again}});
+	CHECK(gnubase::test::readText(dir.path() / "again.xml") == gnubase::test::readText(dir.path() / "tempo.xml"));
+}
+
+TEST_CASE("a tempo track file with a single tempo leaves fixed tempo mode as it is", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	const std::string file = (dir.path() / "tempo.xml").u8string();
+	Engine engine;
+	Client client(engine);
+	run(client, "tempo.set", {{"events", {{{"position", 0}, {"bpm", 87.0}}}}});
+	run(client, "tempo.export", {{"path", file}});
+	run(client, "project.new");
+	run(client, "project.set", {{"tempo", 100.0}});
+	run(client, "tempo.import", {{"path", file}});
+	const Json after = run(client, "project.get");
+	CHECK(!after.at("tempoTrackActive").get<bool>());
+	CHECK(after.at("fixedTempo") == 100.0);
+	CHECK(after.at("tempoTrack")[0].at("bpm") == 87.0);
+}
+
+TEST_CASE("importing a file that isn't a tempo track file changes nothing", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	run(client, "tempo.add", point(4, 90.0));
+	const Json before = run(client, "project.get");
+	CHECK_THAT(reject(client, "tempo.import", {{"path", (dir.path() / "missing.xml").u8string()}}),
+		ContainsSubstring("missing.xml"));
+	const std::string project = (dir.path() / "project.xml").u8string();
+	std::ofstream(std::filesystem::u8path(project)) << R"(<?xml version="1.0"?><Project version="1.0"/>)";
+	CHECK_THAT(reject(client, "tempo.import", {{"path", project}}), ContainsSubstring("no tempo track"));
+	const std::string broken = (dir.path() / "broken.xml").u8string();
+	std::ofstream(std::filesystem::u8path(broken)) << "<TempoTrack><Transport>";
+	CHECK_THAT(reject(client, "tempo.import", {{"path", broken}}), ContainsSubstring("broken.xml"));
+	const std::string invalid = (dir.path() / "invalid.xml").u8string();
+	std::ofstream(std::filesystem::u8path(invalid))
+		<< R"(<TempoTrack version="1.0"><Transport><Tempo unit="bpm" value="2000"/></Transport></TempoTrack>)";
+	CHECK_THAT(reject(client, "tempo.import", {{"path", invalid}}), ContainsSubstring("invalid"));
+	const Json after = run(client, "project.get");
+	CHECK(after.at("tempoTrack") == before.at("tempoTrack"));
+	CHECK(after.at("signatures") == before.at("signatures"));
+	CHECK_THAT(reject(client, "tempo.export", {{"path", (dir.path() / "no" / "such" / "folder.xml").u8string()}}),
+		ContainsSubstring("folder.xml"));
 }
