@@ -586,13 +586,15 @@ namespace gnubase::engine
 			{"offset", event.offset}, {"length", event.length}, {"volume", event.volume}, {"mute", event.mute},
 			{"lock", event.lock}, {"fadeIn", toJson(event.fadeIn)}, {"fadeOut", toJson(event.fadeOut)},
 			{"crossfade", toJson(event.crossfade)}, {"snapPoint", event.snapPoint ? Json(*event.snapPoint) : Json()},
-			{"color", colorJson(event.color)}, {"part", event.part}, {"volumeCurve", toJson(event.volumeCurve)}};
+			{"color", colorJson(event.color)}, {"part", event.part}, {"lane", event.lane},
+			{"volumeCurve", toJson(event.volumeCurve)}};
 	}
 
 	Json toJson(const AudioPart& part)
 	{
 		return {{"id", part.id}, {"track", part.track}, {"name", part.name}, {"position", part.position.value},
-			{"length", part.length}, {"mute", part.mute}, {"lock", part.lock}, {"color", colorJson(part.color)}};
+			{"length", part.length}, {"mute", part.mute}, {"lock", part.lock}, {"color", colorJson(part.color)},
+			{"lane", part.lane}};
 	}
 
 	Json toJson(const Note& note)
@@ -659,7 +661,7 @@ namespace gnubase::engine
 	{
 		return {{"id", part.id}, {"track", part.track}, {"name", part.name}, {"position", part.position.value},
 			{"length", part.length}, {"mute", part.mute}, {"lock", part.lock}, {"shared", part.shared},
-			{"color", colorJson(part.color)}, {"notes", toJsonArray(part.notes)},
+			{"color", colorJson(part.color)}, {"lane", part.lane}, {"notes", toJsonArray(part.notes)},
 			{"controllers", toJsonArray(part.controllers)}};
 	}
 
@@ -1463,7 +1465,8 @@ namespace gnubase::engine
 				event.snapPoint = snapPoint.get<time::Samples>();
 			event.color = eventColorFrom(item);
 			event.volumeCurve = volumeCurveFromJson(item.value("volumeCurve", Json::array())); // files from before #139
-			event.part = item.value("part", ObjectId{0}); // files from before #471 have no audio parts
+			event.part = item.value("part", ObjectId{0});    // files from before #471 have no audio parts
+			event.lane = std::max(0, item.value("lane", 0)); // files from before #98 have no lanes
 			project.audioEvents[event.id] = event;
 		}
 		for (const Json& item : json.value("audioParts", Json::array()))
@@ -1477,6 +1480,7 @@ namespace gnubase::engine
 			part.mute = item.value("mute", false);
 			part.lock = item.value("lock", false);
 			part.color = eventColorFrom(item);
+			part.lane = std::max(0, item.value("lane", 0));
 			project.audioParts[part.id] = part;
 		}
 		// An event in a part that isn't there, or on another track, is an event of its own.
@@ -1496,6 +1500,7 @@ namespace gnubase::engine
 			part.lock = item.value("lock", false);
 			part.shared = item.value("shared", ObjectId{0});
 			part.color = eventColorFrom(item);
+			part.lane = std::max(0, item.value("lane", 0));
 			for (const Json& n : item.at("notes"))
 			{
 				Note note;
