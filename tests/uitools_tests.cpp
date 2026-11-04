@@ -209,7 +209,7 @@ TEST_CASE("the UI tools are listed, those that only read marked read-only", "[un
 	for (const char* name : {"ui_windows", "ui_dom", "ui_screenshot", "ui_wait"})
 		CHECK(readOnly.value(name, false));
 	for (const char* name :
-		{"ui_move", "ui_click", "ui_drag", "ui_drop", "ui_wheel", "ui_key", "ui_text", "ui_file_dialog"})
+		{"ui_move", "ui_click", "ui_drag", "ui_drop", "ui_wheel", "ui_key", "ui_text", "ui_close", "ui_file_dialog"})
 		CHECK(readOnly.value(name, true) == false);
 }
 
@@ -435,6 +435,47 @@ TEST_CASE("a UI tool fails at once when the UI quits before running it", "[unit]
 	const Json result = Json::parse(answer.get().value_or("{}")).at("result");
 	CHECK(result.at("isError") == true);
 	CHECK_THAT(result.at("content")[0].at("text").get<std::string>(), ContainsSubstring("closed"));
+}
+
+TEST_CASE("ui_close asks to close a window, or to quit, as the OS does, in the UI's next step", "[unit]")
+{
+	std::vector<ui::WindowId> closing;  // before the fixture, whose shell holds the handlers
+	std::vector<ui::WindowId> quitting; // that record into them
+	Fixture fixture;
+	ui::Shell& shell = fixture.ui.shell;
+	const ui::WindowId main = fixture.window->id();
+	const ui::WindowId other = fixture.open({800, 100, 400, 300}, "boxes.rml")->id();
+	shell.onCloseRequest([&closing](ui::Window& window) { closing.push_back(window.id()); });
+	shell.onQuitRequest([&quitting](ui::Window& window) { quitting.push_back(window.id()); });
+	const auto stepUntil = [&shell](const auto& done)
+	{
+		for (int i = 0; i < 100 && !done(); ++i)
+			shell.step(milliseconds(1));
+		return done();
+	};
+
+	// A window other than the main window: its handler runs, and it closes.
+	fixture.call("ui_close", {{"window", other}});
+	CHECK(stepUntil([&shell, other] { return shell.find(other) == nullptr; }));
+	CHECK(closing == std::vector<ui::WindowId>{other});
+
+	// The main window, as the default, and quit ask the quit request handler, which decides.
+	fixture.call("ui_close");
+	CHECK(stepUntil([&quitting] { return quitting.size() == 1; }));
+	fixture.call("ui_close", {{"quit", true}});
+	CHECK(stepUntil([&quitting] { return quitting.size() == 2; }));
+	CHECK(quitting == std::vector<ui::WindowId>{main, main});
+	CHECK(closing.size() == 1);
+	CHECK(shell.running());
+
+	CHECK_THAT(fixture.fail("ui_close", {{"window", 99}}), ContainsSubstring("no window 99"));
+	CHECK_THAT(fixture.fail("ui_close", {{"window", main}, {"quit", true}}), ContainsSubstring("leave window out"));
+	CHECK_THAT(fixture.fail("ui_close", {{"quit", "yes"}}), ContainsSubstring("quit"));
+
+	// Without a handler, quit quits.
+	shell.onQuitRequest({});
+	fixture.call("ui_close", {{"quit", true}});
+	CHECK(stepUntil([&shell] { return !shell.running(); }));
 }
 
 TEST_CASE("ui_file_dialog lists the file dialogs that wait and answers them as the user would", "[unit]")

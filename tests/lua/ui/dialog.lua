@@ -19,7 +19,8 @@ local function show(name)
 end
 
 test.case("gnubase.ui has a function for every MCP UI tool", function()
-	for _, name in ipairs{"windows", "dom", "screenshot", "wait", "move", "click", "drag", "wheel", "key", "text"} do
+	for _, name in ipairs{"windows", "dom", "screenshot", "wait", "move", "click", "drag", "wheel", "key", "text",
+		"close"} do
 		test.equal(type(ui[name]), "function", name)
 	end
 	local windows = ui.windows().windows
@@ -42,6 +43,19 @@ test.case("a dialog renames a track: simulated input, the dialog's Lua and the e
 	ui.click{selector = "#ok"}
 	ui.wait{selector = "#name", visible = false}
 	test.equal(gnubase.project.get().tracks[1].name, "Bass")
+end)
+
+test.case("closing the main window or quitting as the OS does asks about unsaved changes; Cancel keeps GNUbase", function()
+	gnubase.track.add{type = "audio"}
+	for _, request in ipairs{{quit = false}, {quit = true}} do
+		ui.close(request) -- runs in the UI's next step, which ui.wait steps
+		ui.wait{selector = "#discard-changes-dialog"}
+		ui.click{selector = "#discard-changes-dialog button[result=cancel]"}
+		ui.wait{selector = "#discard-changes-dialog", visible = false}
+	end
+	test.equal(#ui.windows().windows, 1)
+	test.equal(#gnubase.project.get().tracks, 1)
+	test.raises(function() ui.close{window = 99} end, "no window 99")
 end)
 
 test.case("the functions check their parameters and fail like the MCP tools", function()

@@ -137,7 +137,8 @@ or another value field being edited, and not when the focused control takes Ente
 drop-down list opens and closes, another value field starts editing. A click on an element with a `result` attribute
 closes it with that result. Tab and Shift+Tab move the focus between its controls, around the ends
 ([accessibility.md](accessibility.md)). Closing sends the event `close` (`ui::g_dialogCloseEvent`) with the parameter
-`result`, then closes the document.
+`result`, then closes the document, once: a dialog that is closing doesn't close again. The app closes a dialog the
+same way with `ui::closeDialog`, e.g. to cancel the open project dialog when the user quits.
 
 How it works: an RmlUi plugin (`RmlUi::registerPlugin`) gives every document a tooltip and listens to it in the capture
 phase, before its elements: for `contextmenu` and `menu` attributes, titles, clicks outside open menus, Escape, the
@@ -214,8 +215,8 @@ a click, a mouse button going up or the wheel, nor when SDL releases Alt as the 
 presses it as the window gets it, nor behind a modal dialog). A right click with each modifier key opens the
 `modifiercontextmenu`, and the `contextmenu` where an element has no other.
 Tooltips show after a rest and go with the mouse. Notifications show for their duration, again when set again.
-Dialogs open in the middle, move by their title bar, and close with Enter, Escape and their buttons, with the result;
-a value field with autofocus is edited as its dialog opens, even by keys typed before the next update, and Enter
+Dialogs open in the middle, move by their title bar, and close with Enter, Escape and their buttons, with the result,
+and with `ui::closeDialog`, once, also when closed again from its own close event; a value field with autofocus is edited as its dialog opens, even by keys typed before the next update, and Enter
 there clicks OK, while another value field keeps Enter.
 Tabs show their panels. List views select with clicks, Ctrl, Shift and the keys, and follow their data; trees expand and
 collapse by click and keys, with indents by level; tables select body rows only, and the keys go through several tables

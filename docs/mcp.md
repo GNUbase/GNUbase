@@ -168,6 +168,7 @@ GNUbase started with its UI and `--mcp-http` also has tools to look at the UI an
 - `ui_screenshot` returns a PNG of the window, or with a `selector` of one element.
 - `ui_click`, `ui_move`, `ui_drag` and `ui_wheel` use the mouse on an element, by `selector` (and `index` among its matches), or on a point `x`, `y`. `ui_key` presses keys such as `Enter` or `Ctrl+S`; `ui_text` types text into the focused field. `ui_drop` drops files on an element or a point, as if dragged there from the OS's file manager, e.g. audio files on the event display to import them. Each answers with the element it reached, so the agent sees what it hit.
 - `ui_wait` waits until an element is visible, or has a text, or until none is, e.g. for a dialog that a click opens.
+- `ui_close` asks to close a `window` as its title bar's close button does, or with `quit: true` asks GNUbase to quit as the OS does; quitting asks about unsaved changes first, so `ui_wait` for `#discard-changes-dialog` afterwards.
 
 Boxes and points are in the window's pixels, as in its screenshots; on a monitor with a scale of 200 %, 1 dp is 2 pixels. An agent opening a dialog and reading it back:
 
@@ -737,7 +738,7 @@ Result:
 
 Engine command `audio.simulateDeviceLoss`.
 
-Only the dummy device: simulates its hardware being unplugged (connected false) and its driver asking for a reset, after which the device is lost (see audio.reset), or plugged in again (connected true), after which the engine opens it again on its own. While it is unplugged, audio.setDevice can't open it either. The dummy device as a fallback (audio.fallbackDevice) can't be unplugged.
+Only the dummy device: simulates its hardware being unplugged (connected false) and its driver asking for a reset, after which the device is lost (see audio.reset), or plugged in again (connected true), after which the engine opens it again on its own. While it is unplugged, audio.setDevice can't open it either. The dummy device as a fallback (audio.fallbackDevice) can't be unplugged: while it plays for another backend's lost device, connected false fails.
 
 Arguments:
 
@@ -4407,6 +4408,15 @@ Arguments:
 Result:
 
 - `element`: object or null, required
+
+#### `ui_close`
+
+Asks to close a window as its title bar's close button does: a panel's own window docks the panel again, and the main window asks to quit, which asks about unsaved changes first. With quit, asks GNUbase to quit as the OS does, e.g. the macOS app menu's Quit or a signal, without a window. The request runs in the UI's next step, as the OS's do: use ui_wait for what it opens, such as the unsaved changes question.
+
+Arguments:
+
+- `quit`: boolean. True to ask GNUbase to quit, without window; false if left out.
+- `window`: integer. The window's id from ui_windows; the main window if left out.
 
 #### `ui_dom`
 

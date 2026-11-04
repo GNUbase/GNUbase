@@ -141,13 +141,10 @@ namespace gnubase::ui
 			{"track.removeEmpty",
 				[this]
 				{
-					// Audio, instrument, MIDI and marker tracks without events, parts, markers or automation, and
-					// folders without tracks, unless other tracks play into them; groups and effects are where other
-					// tracks play through, ruler tracks never hold anything and the tempo track holds the tempo.
-					Json commands = Json::array();
+					const std::set<uint64_t> gone = emptyTracks();
+					Json commands = Json::array(); // a folder takes the tracks inside it along
 					for (const Row& row : m_tracks)
-						if (row.empty && row.type != "group" && row.type != "effect" && row.type != "ruler" &&
-							row.type != "tempo")
+						if (gone.count(row.id) != 0 && gone.count(row.parent) == 0)
 							commands.push_back({{"command", "track.remove"}, {"parameters", {{"track", row.id}}}});
 					transaction("Remove Empty Tracks", std::move(commands));
 				}},
@@ -407,24 +404,17 @@ namespace gnubase::ui
 			row.parent = track.at("parent").get<uint64_t>();
 			row.channel = track.at("channel").get<uint64_t>();
 			if (const auto parent = index.find(row.parent); parent != index.end())
-			{
 				row.level = tracks[parent->second].level + 1;
-				tracks[parent->second].empty = false;
-			}
 			index[row.id] = tracks.size();
 			tracks.push_back(row);
 		}
 		for (const char* kind : {"audioEvents", "audioParts", "midiParts", "markers", "automation"})
 			for (const Json& item : project.at(kind))
 				if (const auto track = index.find(item.at("track").get<uint64_t>()); track != index.end())
-					tracks[track->second].empty = false;
-		// Tracks that others play into, e.g. an instrument track that MIDI tracks play, aren't empty either.
-		std::set<uint64_t> outputs;
+					tracks[track->second].holds = true;
 		for (const Json& channel : project.at("channels"))
-			outputs.insert(channel.at("output").get<uint64_t>());
-		for (Row& row : tracks)
-			if (row.channel != 0 && outputs.count(row.channel) != 0)
-				row.empty = false;
+			if (const auto track = index.find(channel.at("track").get<uint64_t>()); track != index.end())
+				tracks[track->second].output = channel.at("output").get<uint64_t>();
 		// Folded folders that went stay folded if they come back, e.g. by undo; that's harmless.
 		const bool same = tracks.size() == m_tracks.size() &&
 			std::equal(tracks.begin(), tracks.end(), m_tracks.begin(), [](const Row& a, const Row& b)
@@ -944,6 +934,34 @@ namespace gnubase::ui
 		if (commands.empty())
 			return;
 		m_binding.send("history.transaction", {{"description", description}, {"commands", std::move(commands)}});
+	}
+
+	std::set<uint64_t> TrackList::emptyTracks() const
+	{
+		// Audio, instrument, MIDI and marker tracks without events, parts, markers or automation, and folders without
+		// tracks, unless other tracks play into them; groups and effects are where other tracks play through, ruler
+		// tracks never hold anything and the tempo track holds the tempo. What goes can leave others empty, such as a
+		// folder that held only empty tracks or an instrument track that only empty MIDI tracks played, so it looks
+		// again until nothing more goes.
+		std::set<uint64_t> gone;
+		size_t before = 0;
+		do
+		{
+			before = gone.size();
+			std::set<uint64_t> parents; // folders with tracks inside
+			std::set<uint64_t> outputs; // channels other tracks play into
+			for (const Row& row : m_tracks)
+				if (gone.count(row.id) == 0)
+				{
+					parents.insert(row.parent);
+					outputs.insert(row.output);
+				}
+			for (const Row& row : m_tracks)
+				if (!row.holds && parents.count(row.id) == 0 && (row.channel == 0 || outputs.count(row.channel) == 0) &&
+					row.type != "group" && row.type != "effect" && row.type != "ruler" && row.type != "tempo")
+					gone.insert(row.id);
+		} while (gone.size() != before);
+		return gone;
 	}
 
 	std::vector<uint64_t> TrackList::topSelection() const

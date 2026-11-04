@@ -333,6 +333,17 @@ namespace gnubase::ui
 		SDL_SetWindowSize(sdl, bounds.width, bounds.height);
 	}
 
+	void SdlWindowSystem::raise(WindowId window)
+	{
+		SDL_Window* sdl = sdlWindow(window);
+		if (sdl == nullptr)
+			return;
+		// Only a minimized one: restoring a maximized window would make it smaller.
+		if ((SDL_GetWindowFlags(sdl) & SDL_WINDOW_MINIMIZED) != 0 && !SDL_RestoreWindow(sdl))
+			logging::warning("SDL cannot restore a window: {}", SDL_GetError());
+		SDL_RaiseWindow(sdl);
+	}
+
 	Size SdlWindowSystem::pixelSize(WindowId window) const
 	{
 		Size result;

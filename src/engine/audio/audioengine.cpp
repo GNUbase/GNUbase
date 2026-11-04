@@ -1904,7 +1904,8 @@ namespace gnubase::engine
 				"Only the dummy device: simulates its hardware being unplugged (connected false) and its driver "
 				"asking for a reset, after which the device is lost (see audio.reset), or plugged in again (connected "
 				"true), after which the engine opens it again on its own. While it is unplugged, audio.setDevice "
-				"can't open it either. The dummy device as a fallback (audio.fallbackDevice) can't be unplugged.",
+				"can't open it either. The dummy device as a fallback (audio.fallbackDevice) can't be unplugged: while "
+				"it plays for another backend's lost device, connected false fails.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["connected"],
 					"properties": {"connected": {"type": "boolean"}}})"),
 				statusSchema(), false},
@@ -1917,9 +1918,14 @@ namespace gnubase::engine
 				}
 				require(m_dummy != nullptr || (m_lost && m_lost->backend == "dummy"),
 					"only the dummy device simulates device loss");
+				// Unplugged now, it would stay unplugged once the lost device returned, and audio.setDevice couldn't
+				// open it.
+				if (m_lost && m_lost->backend != "dummy")
+					throw CommandError("the dummy device plays as the fallback for the lost device " + m_lost->name +
+						" and can't be unplugged");
 				m_dummyUnplugged = true;
 				if (m_dummy != nullptr && !m_lost)
-					m_dummy->requestReset(); // as a driver does whose device went away; a fallback can't be unplugged
+					m_dummy->requestReset(); // as a driver does whose device went away
 				return status();
 			});
 		engine.registerCommand(

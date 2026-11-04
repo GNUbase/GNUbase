@@ -119,7 +119,8 @@ namespace gnubase::ui
 		// docking window's document; anything else is left alone. A docked panel's content needn't: it is arranged when
 		// the panel shows.
 		void arrangeSections(Rml::Element& element);
-		// Shows the panel as its zone's active tab, with the zone shown, unless it is in a window of its own.
+		// Shows the panel as its zone's active tab, with the zone shown; a panel in a window of its own stays there,
+		// and its window comes to the front with the keyboard focus, restored if it is minimized.
 		void open(const std::string& id);
 
 		// The window a panel shows in on its own, or null while it is docked.

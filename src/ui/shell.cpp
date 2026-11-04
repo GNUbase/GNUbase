@@ -151,6 +151,12 @@ namespace gnubase::ui
 		refresh(*window);
 	}
 
+	void Shell::raise(WindowId id)
+	{
+		if (find(id) != nullptr)
+			m_windows.raise(id);
+	}
+
 	void Shell::setUiScale(float scale)
 	{
 		m_uiScale = scale;
@@ -205,6 +211,21 @@ namespace gnubase::ui
 			m_quitRequest(*main->second);
 		else
 			quit();
+	}
+
+	void Shell::requestClose(WindowId id)
+	{
+		Window* window = find(id);
+		if (window == nullptr)
+			return;
+		if (window->m_main)
+		{
+			requestQuit();
+			return;
+		}
+		if (m_closeRequest)
+			m_closeRequest(*window); // may close it
+		close(id);
 	}
 
 	void Shell::refresh(Window& window)
@@ -281,16 +302,7 @@ namespace gnubase::ui
 		switch (event.kind)
 		{
 		case WindowEventKind::CloseRequested:
-			if (window->m_main)
-			{
-				requestQuit();
-			}
-			else
-			{
-				if (m_closeRequest)
-					m_closeRequest(*window); // may close it
-				close(event.window);
-			}
+			requestClose(event.window);
 			break;
 		case WindowEventKind::Moved:
 		case WindowEventKind::Resized:
