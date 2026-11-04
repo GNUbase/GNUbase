@@ -481,7 +481,7 @@ namespace gnubase::ui
 		}
 		const double width = wave->GetClientWidth() / dpRatio();
 		double from = 0.0;
-		double to = static_cast<double>(m_length);
+		auto to = static_cast<double>(m_length);
 		if (!overview)
 		{
 			from = std::max(0.0, std::floor(m_start));
@@ -529,7 +529,9 @@ namespace gnubase::ui
 		{
 		case Rml::EventId::Resize:
 			if (hasEvent() && m_fitted != m_event)
+			{
 				show();
+			}
 			else
 			{
 				render();
@@ -542,7 +544,7 @@ namespace gnubase::ui
 			break;
 		case Rml::EventId::Dblclick:
 			// A double click on a region selects it, as Select Region does.
-			if (Rml::Element* row = withAttribute(target, "region", m_root.get()))
+			if (const Rml::Element* row = withAttribute(target, "region", m_root.get()))
 			{
 				m_region = std::stoull(attribute(*row, "region"));
 				click(*m_root->QuerySelector("#se-select-region"));
@@ -565,7 +567,7 @@ namespace gnubase::ui
 	void SampleEditor::click(Rml::Element& target)
 	{
 		Rml::Element* root = m_root.get();
-		if (Rml::Element* button = withAttribute(&target, "se-tool", root))
+		if (const Rml::Element* button = withAttribute(&target, "se-tool", root))
 		{
 			for (const auto& [tool, name] : g_tools)
 				if (attribute(*button, "se-tool") == name)
@@ -579,7 +581,7 @@ namespace gnubase::ui
 			setClass(root->QuerySelector(".sample-editor"), ("no-" + attribute(*button, "layout")).c_str(), !shown);
 			return;
 		}
-		if (Rml::Element* row = withAttribute(&target, "region", root))
+		if (const Rml::Element* row = withAttribute(&target, "region", root))
 		{
 			m_region = std::stoull(attribute(*row, "region"));
 			render();
@@ -596,16 +598,26 @@ namespace gnubase::ui
 		if (!hasEvent())
 			return;
 		const auto [start, end] = rangeOrEvent();
-		if (Rml::Element* button = withAttribute(&target, "select", root))
+		if (const Rml::Element* button = withAttribute(&target, "select", root))
+		{
 			m_binding.send("sampleEditor.set", {{"select", attribute(*button, "select")}});
-		else if (id == "se-set-locators")
+			return;
+		}
+		if (id == "se-set-locators")
+		{
 			m_binding.send("transport.set",
 				{{"left", projectSample(static_cast<double>(start))},
 					{"right", projectSample(static_cast<double>(end))}});
-		else if (id == "se-locate")
+			return;
+		}
+		if (id == "se-locate")
+		{
 			m_binding.send(
 				"transport.locate", {{"position", std::max<int64_t>(0, projectSample(static_cast<double>(start)))}});
-		else if (id == "se-add-region" || id == "se-range-region")
+			return;
+		}
+		if (id == "se-add-region" || id == "se-range-region")
+		{
 			m_binding.send("clip.addRegion", {{"clip", m_view.at("clip")}, {"start", start}, {"end", end}},
 				[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 				{
@@ -615,23 +627,29 @@ namespace gnubase::ui
 						render();
 					}
 				});
-		else if (id == "se-remove-region" && region(m_region) != nullptr)
+			return;
+		}
+		const Json* selected = region(m_region);
+		if (selected == nullptr)
+			return;
+		if (id == "se-remove-region")
+		{
 			m_binding.send("clip.removeRegion", {{"clip", m_view.at("clip")}, {"region", m_region}});
+		}
 		else if (id == "se-select-region")
-			if (const Json* shown = region(m_region))
-			{
-				// Selects the region and zooms to it (p. 624).
-				m_binding.send(
-					"sampleEditor.set", {{"selectionStart", shown->at("start")}, {"selectionEnd", shown->at("end")}});
-				fit(shown->at("start").get<double>(), shown->at("end").get<double>());
-			}
+		{
+			// Selects the region and zooms to it (p. 624).
+			m_binding.send(
+				"sampleEditor.set", {{"selectionStart", selected->at("start")}, {"selectionEnd", selected->at("end")}});
+			fit(selected->at("start").get<double>(), selected->at("end").get<double>());
+		}
 	}
 
 	void SampleEditor::press(Rml::Event& event, Rml::Element& target)
 	{
 		if (!hasEvent() || event.GetParameter<int>("button", 0) != 0)
 			return;
-		Rml::Element* root = m_root.get();
+		const Rml::Element* root = m_root.get();
 		if (withClass(&target, "se-overview", root) != nullptr)
 		{
 			// A click in the overview shows that part of the clip (p. 615), and a drag moves it.
@@ -699,10 +717,14 @@ namespace gnubase::ui
 		}
 		m_dragged = frameAt(event);
 		if (m_drag == Drag::Scrub)
+		{
 			m_binding.send("audition.scrub",
 				{{"track", m_view.at("track")}, {"position", std::max<int64_t>(0, projectSample(m_dragged))}});
-		else if (m_drag == Drag::Range || m_drag == Drag::SnapPoint)
-			render();
+		}
+		else
+		{
+			render(); // the range or the snap point dragged
+		}
 	}
 
 	void SampleEditor::release(Rml::Event& event)

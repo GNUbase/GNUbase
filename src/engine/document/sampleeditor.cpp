@@ -210,11 +210,17 @@ namespace gnubase::engine
 				time::Samples end = parameters.value("selectionEnd", view.selectionEnd);
 				const std::string select = parameters.value("select", std::string());
 				if (select == "all")
+				{
 					std::tie(start, end) = std::make_pair(time::Samples{0}, length);
+				}
 				else if (select == "none")
+				{
 					start = end = 0;
+				}
 				else if (select == "event")
+				{
 					std::tie(start, end) = std::make_pair(event->offset, event->offset + event->length);
+				}
 				else if (select == "loop")
 				{
 					const Json transport = context.call("transport.get", Json::object());

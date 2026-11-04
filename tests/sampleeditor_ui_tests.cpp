@@ -130,7 +130,7 @@ namespace
 			REQUIRE(has(".se-tool[se-tool=" + name + "]", "checked"));
 		}
 
-		bool near(double a, double b, double tolerance = 1.5) { return std::abs(a - b) <= tolerance; }
+		static bool near(double a, double b, double tolerance = 1.5) { return std::abs(a - b) <= tolerance; }
 
 		test::UiApp app{{1200, 800}};
 		ui::EventDisplay& display;
@@ -285,7 +285,8 @@ TEST_CASE("the snap point, the zoom, play and scrub tools, the overview and the 
 	f.tool("zoom");
 	f.click(f.at(4000));
 	CHECK(std::abs(f.editor().scale() - (full / 2)) < 1e-9);
-	CHECK(f.near(f.x(4000), f.at(4000).point->x, 2.0)); // the frame clicked stays under the mouse
+	const ui::Point clicked = f.at(4000).point.value_or(ui::Point{});
+	CHECK(f.near(f.x(4000), clicked.x, 2.0)); // the frame clicked stays under the mouse
 	f.click(f.at(4000), {"alt"});
 	CHECK(std::abs(f.editor().scale() - full) < 1e-9);
 	// Zoomed in, a click in the overview shows that part of the clip (p. 615).
@@ -324,9 +325,9 @@ TEST_CASE("the snap point, the zoom, play and scrub tools, the overview and the 
 		const std::string button = std::string(".se-layout[layout=") + part + "]";
 		f.click(of(button));
 		CHECK(f.has(".sample-editor", std::string("no-") + part));
-		CHECK_FALSE(f.has(button, "checked"));
+		CHECK(!f.has(button, "checked"));
 		f.click(of(button));
-		CHECK_FALSE(f.has(".sample-editor", std::string("no-") + part));
+		CHECK(!f.has(".sample-editor", std::string("no-") + part));
 	}
 }
 
