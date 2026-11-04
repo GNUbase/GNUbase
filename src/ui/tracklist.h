@@ -89,7 +89,8 @@ namespace gnubase::ui
 			uint64_t parent = 0;
 			int level = 0;
 			uint64_t channel = 0;
-			bool empty = true; // no events, parts, markers, automation or tracks inside
+			uint64_t output = 0; // where its channel plays into, 0 for none
+			bool holds = false;  // events, parts, markers or automation
 		};
 
 		enum class Drag : uint8_t
@@ -138,6 +139,8 @@ namespace gnubase::ui
 
 		// The selected tracks without those inside other selected folders.
 		std::vector<uint64_t> topSelection() const;
+		// The tracks Remove Empty Tracks removes, with those that are only empty once the others went.
+		std::set<uint64_t> emptyTracks() const;
 		// Runs the commands as one undo step.
 		void transaction(const std::string& description, engine::Json commands);
 
