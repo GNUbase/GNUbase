@@ -319,7 +319,8 @@ namespace gnubase::ui
 		m_status = status;
 		m_position = status.at("position").get<int64_t>();
 		if (status.at("playing").get<bool>() && !m_playback)
-			m_playback = m_binding.watch<int64_t>([this] { return m_engine.playbackPosition(); },
+			m_playback = m_binding.watch<int64_t>(
+				m_root.get(), [this] { return m_engine.playbackPosition(); },
 				[this](const int64_t& sample)
 				{
 					m_position = sample;
@@ -548,13 +549,13 @@ namespace gnubase::ui
 		m_gesture = Gesture::Wheel;
 		m_wheeled = std::chrono::steady_clock::now();
 		if (!m_wheelPause)
-			m_wheelPause =
-				m_binding.watch<bool>([this] { return std::chrono::steady_clock::now() - m_wheeled >= g_wheelPause; },
-					[this](const bool& paused)
-					{
-						if (paused)
-							endTempoGesture();
-					});
+			m_wheelPause = m_binding.watch<bool>(
+				m_root.get(), [this] { return std::chrono::steady_clock::now() - m_wheeled >= g_wheelPause; },
+				[this](const bool& paused)
+				{
+					if (paused)
+						endTempoGesture();
+				});
 	}
 
 	void TransportControls::endTempoGesture()
@@ -578,8 +579,9 @@ namespace gnubase::ui
 			m_taps.clear();
 		m_taps.push_back(now);
 		if (!m_tapPause)
-			m_tapPause = m_binding.watch<bool>([this]
-				{ return Rml::GetSystemInterface()->GetElapsedTime() - m_taps.back() >= g_tapPause; },
+			m_tapPause = m_binding.watch<bool>(
+				m_root.get(),
+				[this] { return Rml::GetSystemInterface()->GetElapsedTime() - m_taps.back() >= g_tapPause; },
 				[this](const bool& paused)
 				{
 					if (paused)

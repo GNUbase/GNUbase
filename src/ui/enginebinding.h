@@ -3,6 +3,8 @@
 
 #include "engine/engine.h"
 
+#include <RmlUi/Core/Element.h>
+
 #include <atomic>
 #include <cstdint>
 #include <functional>
@@ -45,8 +47,11 @@ namespace gnubase::ui
 	public:
 		// woken is called on the engine's thread when results or events start to wait for update(), once until
 		// update() runs, e.g. Shell::wake. It must be quick, must not block and must not call the engine or the
-		// binding.
-		explicit EngineBinding(engine::Engine& engine, std::function<void()> woken = {});
+		// binding. handled is called in update(), once, when results or events reached handlers there (a command's
+		// done, onResult's or on's handlers): they may have changed what any window shows, so the app draws every
+		// window then (Shell::requestRender).
+		explicit EngineBinding(
+			engine::Engine& engine, std::function<void()> woken = {}, std::function<void()> handled = {});
 
 		// Sends a command. done runs in update() with its result; without done, a failure is logged.
 		void send(std::string command, engine::Json parameters = engine::Json::object(),
@@ -72,18 +77,21 @@ namespace gnubase::ui
 
 		// Calls apply in update() with what read returns, the first time and whenever it changed since: for values
 		// that change faster than the UI draws, such as the playback position and meters, which the UI reads once a
-		// frame instead of getting an event for every change.
-		template <typename T>
-		[[nodiscard]] Subscription watch(std::function<T()> read, std::function<void(const T&)> apply)
+		// frame instead of getting an event for every change. shows is the element that shows the value, or null:
+		// after apply, the window it is in draws in that step, and no other window does for it.
+		template <typename T> [[nodiscard]] Subscription watch(
+			Rml::Element* shows, std::function<T()> read, std::function<void(const T&)> apply)
 		{
 			return follow(
-				[read = std::move(read), apply = std::move(apply), last = std::optional<T>()]() mutable
+				[shows = shows != nullptr ? shows->GetObserverPtr() : Rml::ObserverPtr<Rml::Element>(),
+					read = std::move(read), apply = std::move(apply), last = std::optional<T>()]() mutable
 				{
 					T value = read();
 					if (last && *last == value)
 						return;
 					last = value;
 					apply(value);
+					redraw(shows.get());
 				});
 		}
 
@@ -109,11 +117,15 @@ namespace gnubase::ui
 
 		Subscription follow(std::function<void()> read);
 		void end(uint64_t id) noexcept;
-		void answer(const engine::Result& result);
-		void dispatch(const engine::Event& event);
+		// Each returns whether handlers took the message.
+		bool answer(const engine::Result& result);
+		bool dispatch(const engine::Event& event);
+		// Draws the element's window in the shell's step (Rml::Context::RequestNextUpdate).
+		static void redraw(Rml::Element* shows);
 
 		std::atomic<bool> m_woken{false}; // woken was called and update() hasn't run since
 		engine::Client m_client;
+		std::function<void()> m_handled;
 		std::map<engine::RequestId, Waiting> m_waiting; // commands sent, until their results arrive
 		std::map<uint64_t, Handler> m_handlers;
 		std::map<uint64_t, Waiting> m_resultHandlers; // onResult's, by subscription

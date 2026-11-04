@@ -274,6 +274,7 @@ namespace gnubase::ui
 			if (!event.error.empty())
 				logging::warning("File dialog failed: {}", event.error);
 			done(FileDialogResult{event.files, event.error});
+			requestRender(); // what done changed, wherever it shows
 			return;
 		}
 		case WindowEventKind::DisplaysChanged:
@@ -369,6 +370,8 @@ namespace gnubase::ui
 		}
 		for (const std::function<void()>& task : posted)
 			task();
+		if (!posted.empty())
+			requestRender(); // posted work comes from outside input, and may change any window
 
 		Clock::time_point now = Clock::now();
 		for (size_t i = 0; i < m_tasks.size() && m_running; ++i) // a task may add tasks
@@ -408,6 +411,12 @@ namespace gnubase::ui
 	void Shell::every(std::chrono::milliseconds interval, std::function<void()> task)
 	{
 		m_tasks.push_back({interval, std::move(task), Clock::now() + interval});
+	}
+
+	void Shell::requestRender()
+	{
+		for (auto& [id, window] : m_open)
+			window->m_renderRequested = true;
 	}
 
 	void Shell::eachStep(std::function<bool()> task)

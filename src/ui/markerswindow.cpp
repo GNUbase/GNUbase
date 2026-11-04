@@ -178,7 +178,8 @@ namespace gnubase::ui
 				if (!event.data.at("playing").get<bool>())
 					m_position.reset();
 				else if (!m_position)
-					m_position = m_binding.watch<int64_t>([this] { return m_engine.playbackPosition(); },
+					m_position = m_binding.watch<int64_t>(
+						m_document.get(), [this] { return m_engine.playbackPosition(); },
 						[this](const int64_t& sample) { setCursor(sample); });
 			}));
 		m_subscriptions.push_back(m_binding.on("settings.changed",

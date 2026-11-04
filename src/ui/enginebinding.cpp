@@ -3,7 +3,10 @@
 
 #include "platform/log.h"
 
+#include <RmlUi/Core/Context.h>
+
 #include <algorithm>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -37,13 +40,14 @@ namespace gnubase::ui
 		m_binding = nullptr;
 	}
 
-	EngineBinding::EngineBinding(engine::Engine& engine, std::function<void()> woken)
+	EngineBinding::EngineBinding(engine::Engine& engine, std::function<void()> woken, std::function<void()> handled)
 		: m_client(engine, "ui",
 			  [this, woken = std::move(woken)]
 			  {
 				  if (woken && !m_woken.exchange(true))
 					  woken();
-			  })
+			  }),
+		  m_handled(std::move(handled))
 	{
 	}
 
@@ -102,13 +106,16 @@ namespace gnubase::ui
 	bool EngineBinding::update()
 	{
 		m_woken = false; // before taking the messages, so one that arrives meanwhile wakes the UI again
+		bool handled = false;
 		while (std::optional<engine::Message> message = m_client.poll())
 		{
 			if (const auto* result = std::get_if<engine::Result>(&*message))
-				answer(*result);
+				handled = answer(*result) || handled;
 			else
-				dispatch(std::get<engine::Event>(*message));
+				handled = dispatch(std::get<engine::Event>(*message)) || handled;
 		}
+		if (handled && m_handled)
+			m_handled();
 		// Each function is taken out while it runs, since it may end its own subscription or others.
 		std::vector<uint64_t> ids;
 		ids.reserve(m_watches.size());
@@ -127,11 +134,11 @@ namespace gnubase::ui
 		return !m_watches.empty();
 	}
 
-	void EngineBinding::answer(const engine::Result& result)
+	bool EngineBinding::answer(const engine::Result& result)
 	{
 		const auto found = m_waiting.find(result.request);
 		if (found == m_waiting.end())
-			return;
+			return false;
 		const Waiting waiting = std::move(found->second);
 		m_waiting.erase(found);
 		if (waiting.done)
@@ -143,6 +150,7 @@ namespace gnubase::ui
 		for (const auto& [id, handler] : m_resultHandlers)
 			if (handler.command == waiting.command)
 				ids.push_back(id);
+		const bool handled = waiting.done || !ids.empty();
 		for (const uint64_t id : ids)
 		{
 			auto handler = m_resultHandlers.find(id);
@@ -153,9 +161,10 @@ namespace gnubase::ui
 			if (handler = m_resultHandlers.find(id); handler != m_resultHandlers.end())
 				handler->second.done = std::move(call);
 		}
+		return handled;
 	}
 
-	void EngineBinding::dispatch(const engine::Event& event)
+	bool EngineBinding::dispatch(const engine::Event& event)
 	{
 		std::vector<uint64_t> ids;
 		for (const auto& [id, handler] : m_handlers)
@@ -171,5 +180,14 @@ namespace gnubase::ui
 			if (found = m_handlers.find(id); found != m_handlers.end())
 				found->second.call = std::move(call);
 		}
+		return !ids.empty();
+	}
+
+	void EngineBinding::redraw(Rml::Element* shows)
+	{
+		if (shows == nullptr)
+			return;
+		if (Rml::Context* context = shows->GetContext())
+			context->RequestNextUpdate(0);
 	}
 }
