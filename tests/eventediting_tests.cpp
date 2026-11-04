@@ -503,16 +503,55 @@ TEST_CASE("with snap on, moving, resizing, splitting and nudging follow the grid
 TEST_CASE("with snap to events, a position marker attracts a dragged event", "[unit]")
 {
 	Fixture f;
-	// A position marker at 6 seconds has no end; the display lists the markers again after every change.
+	// A position marker at 6 seconds has no end; the display reads the markers with the project after every change.
 	f.call("marker.add", {{"position", 12 * g_quarter}});
-	f.step();
-	f.call("marker.list"); // the display has asked for the markers
-	f.step();
 	f.call("snap.set", {{"on", true}, {"type", "events"}});
 	REQUIRE(f.waitUntil([&f] { return f.display.snap().on && f.display.snap().type == engine::SnapType::Events; }));
+	REQUIRE(f.waitUntil([&f] { return f.display.project().at("markers").size() == 1; }));
 	// The audio event dragged from 2 to 5.95 seconds starts on the marker (8 dp attract).
 	f.drag(225, 20, 620, 20);
 	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("position") == 288000; }));
+}
+
+// #415: every marker track's markers attract, the active one's or not, in the display as in snap.position.
+TEST_CASE("with snap to events, the markers of a marker track that isn't active attract as in snap.position", "[unit]")
+{
+	Fixture f;
+	// On the first marker track a position marker at 6 seconds and a cycle marker from 7 to 8.5; the second marker
+	// track, without markers, is the active one.
+	const Json first = f.call("track.add", {{"type", "marker"}}).at("track").at("id");
+	f.call("marker.add", {{"track", first}, {"position", 12 * g_quarter}});
+	f.call("marker.add", {{"track", first}, {"type", "cycle"}, {"position", 14 * g_quarter}, {"end", 17 * g_quarter}});
+	const Json second = f.call("track.add", {{"type", "marker"}}).at("track").at("id");
+	f.call("marker.activateTrack", {{"track", second}});
+	CHECK(f.call("marker.list").at("markers").empty());
+	f.call("snap.set", {{"on", true}, {"type", "events"}});
+	REQUIRE(f.waitUntil(
+		[&f, &second]
+		{
+			return f.display.snap().type == engine::SnapType::Events &&
+				f.display.project().at("activeMarkerTrack") == second;
+		}));
+
+	// 8 dp attract: 0.08 seconds. The audio event's start dragged from 2 to 5.95 seconds goes where snap.position
+	// puts 5.95 seconds: on the position marker.
+	const int64_t range = 3840;
+	const Json onMarker = f.call("snap.position", {{"position", 285600}, {"range", range}, {"events", {f.event}}});
+	CHECK(onMarker.at("position") == 288000);
+	f.drag(225, 20, 620, 20);
+	REQUIRE(f.waitUntil([&f, &onMarker] { return f.audioEvents()[0].at("position") == onMarker.at("position"); }));
+
+	// Dragged on from 6 to 8.45 seconds, it starts at the cycle marker's end, as snap.position has it.
+	const Json onEnd = f.call("snap.position", {{"position", 405600}, {"range", range}, {"events", {f.event}}});
+	CHECK(onEnd.at("position") == 408000);
+	REQUIRE(f.waitUntil(
+		[&f]
+		{
+			const std::vector<ui::TimeSpan>& events = f.lanes("events")[0].events;
+			return events.size() == 1 && std::abs(events[0].start - 6.0) < 1e-9;
+		}));
+	f.drag(625, 20, 870, 20);
+	REQUIRE(f.waitUntil([&f, &onEnd] { return f.audioEvents()[0].at("position") == onEnd.at("position"); }));
 }
 
 // Reference manual pp. 107-109: the grid types depend on the ruler's time format.

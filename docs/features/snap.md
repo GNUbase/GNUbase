@@ -61,6 +61,12 @@ display and in `snap.position` alike.
   exactly on it across tempo changes; the others in samples. `snap.position` runs it on the project, with every other
   event's edges and snap points and every marker as magnets; the event display runs it on what it shows while the
   mouse drags, so the preview and the result agree.
+- **Markers attract from every marker track** (#415, p. 106: markers are events on the marker tracks, and other
+  tracks' events attract too), the active one's or not: a marker's position, and a cycle marker's end too. Both
+  `snap.position` and the event display take them from the project, the display from the same `project.get` answer
+  as its events, converted to samples as the engine does, so a script or MCP client snapping a position gets what a
+  drag does. Which marker track is active only matters to the marker commands and the zoom presets menu's cycle
+  markers.
 - **Snap points** (p. 105) are points in an audio event's clip (`AudioEvent::snapPoint`, clip frames), so they stay with
   the audio when the event is resized or split; a snap point outside the event counts as none. `event.setSnapPoint`
   sets them at a position, by default the project cursor (Snap Point to Cursor). Moving an audio event snaps its snap
@@ -106,23 +112,25 @@ Not yet: grid lines and snap point lines in the event display, the editors' own 
 
 ## Checks
 
-- `tests/snap_tests.cpp`: bar and beat lines across tempo and signature changes, the quantize grid with triplets
-  across a tempo change, adapt to zoom, every linear grid and the user's frame rate, grid steps; every snap type and
-  their combinations, magnets and the cursor only within range, grid relative in bars across a tempo change, in beats
-  and on a linear grid; `snap.get` and `snap.set` saved with the project and not undone; `snap.position` with event
-  edges, markers, snap points, the cursor, the zoom's note value, the frame rate and grid relative; a grid type per
-  time format, switching formats, grid types of another format refused or choosing their format, and settings from
-  before #413; each format's grid types (`gridTypes`) exactly those `hasGrid` accepts; a newer build's grids
-  entries kept, written back when saved and replaced by another grid type chosen here, not by `snap.set` with what
-  `snap.get` returned, and a `grid` read when the format's entry is unusable; damaged entries left out; the frame
-  grids at the project's frame rate, with pull-down, and user frames at 30 fps; a new project time format switching
-  the snap format, also on undo and redo, and a format set after it staying; snap points set and refused; shuffling
-  forwards, backwards, to the end and to the front, its errors and a locked neighbour; splitting and resizing at zero crossings of a real file, not when sizing moves the contents or the file is missing; a split
-  near an event's start still splits it, and one just outside an event leaves it alone.
+- `tests/snap_tests.cpp`: bar and beat lines across tempo and signature changes, the quantize grid with triplets across
+  a tempo change, adapt to zoom, every linear grid and the user's frame rate, grid steps; every snap type and their
+  combinations, magnets and the cursor only within range, grid relative in bars across a tempo change, in beats and on a
+  linear grid; `snap.get` and `snap.set` saved with the project and not undone; `snap.position` with event edges,
+  markers (also of a marker track that isn't active), snap points, the cursor, the zoom's note value, the frame rate and
+  grid relative; a grid type per time format, switching formats, grid types of another format refused or choosing their
+  format, and settings from before #413; each format's grid types (`gridTypes`) exactly those `hasGrid` accepts; a newer
+  build's grids entries kept, written back when saved and replaced by another grid type chosen here, not by `snap.set`
+  with what `snap.get` returned, and a `grid` read when the format's entry is unusable; damaged entries left out; the
+  frame grids at the project's frame rate, with pull-down, and user frames at 30 fps; a new project time format
+  switching the snap format, also on undo and redo, and a format set after it staying; snap points set and refused;
+  shuffling forwards, backwards, to the end and to the front, its errors and a locked neighbour; splitting and resizing
+  at zero crossings of a real file, not when sizing moves the contents or the file is missing; a split near an event's
+  start still splits it, and one just outside an event leaves it alone.
 - `tests/eventediting_tests.cpp` (fake window system, real engine): with snap on, a drag, a resize and an Alt click land
-  on bars, shuffle swaps two parts, events, a position marker and the cursor attract, a snap point set at the cursor
-  snaps to a bar, grid relative moves a beat, nudges move a beat and a bar, and with snap off a drag doesn't snap;
-  with the ruler in seconds a drag snaps to 100 ms, back in bars and beats to a bar, and the ruler follows the
+  on bars, shuffle swaps two parts, events, a position marker and the cursor attract, a position marker and a cycle
+  marker's end on a marker track that isn't active attract a drag where `snap.position` puts it, a snap point set at the
+  cursor snaps to a bar, grid relative moves a beat, nudges move a beat and a bar, and with snap off a drag doesn't
+  snap; with the ruler in seconds a drag snaps to 100 ms, back in bars and beats to a bar, and the ruler follows the
   format of `snap.set`; a new ruler format kept at every step while a `snap.changed` or a `project.get` answer from
   before it comes in, and after several switches in a row.
 - `tests/uiapp_tests.cpp`: the toolbar's snap and zero crossing buttons and J, the snap type menu checked and shown on

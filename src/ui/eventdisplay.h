@@ -431,6 +431,7 @@ namespace gnubase::ui
 		};
 		void findControls();
 		void requestMarkers();
+		void readMarkerMagnets(const engine::Json& project); // m_markers, from a project.get answer
 		void click(Rml::Element* target);
 		void dialogEvent(Rml::Event& event);
 		void openDialog(const char* file);
@@ -749,7 +750,7 @@ namespace gnubase::ui
 		std::string m_held;           // the modifier keys held, as modifiersOf joins them, for the pointer
 		std::set<int> m_modifierKeys; // the modifier keys seen going down and not up (Rml::Input::KeyIdentifier)
 		std::vector<CycleMarker> m_cycleMarkers;
-		std::vector<int64_t> m_markers; // every marker's position and end, in samples, for snapping
+		std::vector<int64_t> m_markers; // every marker track's markers' positions and ends, in samples, for snapping
 		engine::SnapSettings m_snap;
 		int m_formatsSent = 0; // snap.set {format} from the ruler or the grid type menu that isn't answered yet
 		engine::midi::QuantizeSettings m_quantize;

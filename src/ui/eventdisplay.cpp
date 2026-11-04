@@ -299,6 +299,7 @@ namespace gnubase::ui
 	{
 		if (!readTimeContext(project, m_time))
 			logging::warning("The event display can't read the project's tempo or signatures");
+		readMarkerMagnets(project);
 		showSnap();
 
 		// A lane per track that isn't hidden, in the project's order.
