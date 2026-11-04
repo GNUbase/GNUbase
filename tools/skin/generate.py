@@ -568,6 +568,20 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
                                 "border-color": c["textMuted"]}),
         (".key-note.drawing", {"background-color": c["accent"] + "66"}),
         (".key-editor-step-cursor", {"background-color": c["accent"]}),
+        # The list editor (docs/features/list-editor.md): lines between the rows, the selected rows lit, those
+        # outside the part editing mode dimmed, the events in the event display and the bars of the value display
+        (".list-editor-header", {"color": c["textMuted"], "border-bottom-width": f"{widths['hairline']}px",
+                                 "border-bottom-color": c["border"]}),
+        (".list-editor-rows .list-row", {"border-bottom-width": f"{widths['hairline']}px",
+                                         "border-bottom-color": mix(c["surface"], c["border"], .5)}),
+        (".list-editor-body", {"background-color": c["surface"]}),
+        (".list-row.selected", {"background-color": mix(c["surface"], c["accent"], .25)}),
+        (".list-row.inactive", {"color": c["textMuted"]}),
+        (".list-event", {"background-color": mix(c["surfaceRaised"], c["accent"], .6),
+                         "border-width": f"{widths['hairline']}px", "border-color": c["accent"]}),
+        (".list-row.selected .list-event", {"background-color": c["accent2"], "border-color": c["text"]}),
+        (".list-value", {"background-color": c["accent"]}),
+        (".list-row.selected .list-value", {"background-color": c["accent2"]}),
         # Docking windows (docs/features/docking.md): zones, the frame of the zone with the keyboard focus, and strips
         (".docking [zone]", {"background-color": mix(c["background"], c["surface"], .5)}),
         (".docking .zone-frame", {"border-width": f"{widths['focus']}dp", "border-color": c["accent"]}),

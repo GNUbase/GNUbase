@@ -690,6 +690,48 @@
 	{
 		background-color: #5ea7b3;
 	}
+	.list-editor-header
+	{
+		color: #b7bbc0;
+		border-bottom-width: 1px;
+		border-bottom-color: #484c50;
+	}
+	.list-editor-rows .list-row
+	{
+		border-bottom-width: 1px;
+		border-bottom-color: #333639;
+	}
+	.list-editor-body
+	{
+		background-color: #1e2022;
+	}
+	.list-row.selected
+	{
+		background-color: #2e4246;
+	}
+	.list-row.inactive
+	{
+		color: #b7bbc0;
+	}
+	.list-event
+	{
+		background-color: #49767e;
+		border-width: 1px;
+		border-color: #5ea7b3;
+	}
+	.list-row.selected .list-event
+	{
+		background-color: #7896bd;
+		border-color: #f3f4f5;
+	}
+	.list-value
+	{
+		background-color: #5ea7b3;
+	}
+	.list-row.selected .list-value
+	{
+		background-color: #7896bd;
+	}
 	.docking [zone]
 	{
 		background-color: #1a1b1c;

@@ -917,6 +917,16 @@ namespace gnubase::app
 		}
 		m_keys.bind({"Mod+E", "editor.openClose", engine::Json::object(), "project"});
 		m_keys.bind({"Return", "editor.openClose", engine::Json::object(), "project"});
+		// Open List Editor (Mod+G, reference manual p. 1243): the selected MIDI parts in the editor window's list
+		// editor.
+		m_keys.add({"editor.openList", "Opens the selected MIDI parts in the list editor window.",
+			[this](ui::Window&, Rml::Element*)
+			{
+				const std::vector<uint64_t> parts = selectedParts();
+				if (!parts.empty())
+					m_binding.send("editor.open", {{"editor", "window"}, {"parts", parts}, {"content", "list"}});
+			}});
+		m_keys.bind({"Mod+G", "editor.openList", engine::Json::object(), "project"});
 	}
 
 	std::vector<uint64_t> AppUi::selectedParts() const
