@@ -352,6 +352,23 @@ TEST_CASE("controller lane presets save the lanes shown and bring them back", "[
 	CHECK(f.lanes()[2] == Json{{"type", "controller"}, {"number", 11}});
 }
 
+TEST_CASE("controller lanes that are gone before the presets' answer comes leave the answer alone", "[ui]")
+{
+	Fixture f;
+	f.app.call("settings.set",
+		{{"key", "ui.controllerLanePresets"},
+			{"value", Json::parse(R"([{"name": "Expressive", "lanes": [{"type": "pitchBend"}]}])")}});
+	// All in one step: the list editor, the key editor with new lanes, which ask for the presets, and the list editor
+	// again, which takes the lanes away before the answer is handed on.
+	for (const char* content : {"list", "key", "list"})
+		f.app.call("editor.set", {{"editor", "window"}, {"content", content}});
+	REQUIRE(f.app.waitUntil(
+		[&] { return !f.elements(".list-editor").empty() && f.elements(".controller-lane-area").empty(); }));
+	f.app.waitUntil([] { return false; }, std::chrono::milliseconds(300)); // time for the answers to be handed on
+	f.app.call("editor.set", {{"editor", "window"}, {"content", "key"}});
+	CHECK(f.app.waitUntil([&] { return f.elements(".controller-lane-area").size() == 1; }));
+}
+
 TEST_CASE("controller events drawn on a lane play back", "[ui]")
 {
 	Fixture f;

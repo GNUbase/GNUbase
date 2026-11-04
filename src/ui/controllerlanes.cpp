@@ -204,13 +204,12 @@ namespace gnubase::ui
 				}
 			}));
 		m_binding.send("settings.get", {{"key", "ui.controllerLanePresets"}},
-			[this](const engine::Result& result)
+			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
-				if (result.ok() && !m_presetsKnown) // newer changes win
-				{
-					m_presets = result.value.at("value");
-					render();
-				}
+				if (alive.expired() || !result.ok() || m_presetsKnown) // gone, or newer changes win
+					return;
+				m_presets = result.value.at("value");
+				render();
 			});
 	}
 

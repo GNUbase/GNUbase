@@ -8,6 +8,7 @@
 #include <RmlUi/Core/ObserverPtr.h>
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -130,6 +131,7 @@ namespace gnubase::ui
 		std::vector<Rml::ObserverPtr<Rml::Element>> m_menus; // lane, create and setup menus
 		std::optional<size_t> m_menuLane;                    // the lane whose menu opened
 		Rml::ObserverPtr<Rml::Element> m_dialog;
+		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers that come after it's gone
 
 		Gesture m_gesture = Gesture::None;
 		size_t m_lane = 0;

@@ -2,8 +2,11 @@
 #include "engine/settings/usersettings.h"
 
 #include "engine/engine.h"
+#include "engine/midi/controllerlanes.h"
 
+#include <string>
 #include <utility>
+#include <vector>
 
 namespace gnubase::engine::settings
 {
@@ -360,7 +363,23 @@ namespace gnubase::engine::settings
 					Json{{"type", "array"},
 						{"items",
 							{{"type", "object"},
-								{"properties", {{"name", {{"type", "string"}}}, {"lanes", {{"type", "array"}}}}},
+								{"properties",
+									{{"name", {{"type", "string"}}},
+										{"lanes",
+											{{"type", "array"},
+												{"items",
+													{{"type", "object"}, {"additionalProperties", false},
+														{"required", Json::array({"type"})},
+														{"properties",
+															{{"type",
+																 {{"type", "string"},
+																	 {"enum",
+																		 std::vector<std::string>(
+																			 midi::g_laneTypes.begin(),
+																			 midi::g_laneTypes.end())}}},
+																{"number",
+																	{{"type", "integer"}, {"minimum", 0},
+																		{"maximum", 127}}}}}}}}}}},
 								{"required", Json::array({"name", "lanes"})}}}},
 					Json::array()},
 				{"ui.zoomPresets",
