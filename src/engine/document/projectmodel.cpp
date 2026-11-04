@@ -983,11 +983,11 @@ namespace gnubase::engine
 			if (type == TrackType::Signature)
 			{
 				require(parent == 0, "the signature track can't be inside a folder");
-				require(
-					countTracks(project, TrackType::Signature) == 0, "a project has one signature track at most");
+				require(countTracks(project, TrackType::Signature) == 0, "a project has one signature track at most");
 			}
-			const bool hasChannel = (type != TrackType::Folder && type != TrackType::Marker &&
-										type != TrackType::Ruler && type != TrackType::Tempo && type != TrackType::Signature) ||
+			const bool hasChannel =
+				(type != TrackType::Folder && type != TrackType::Marker && type != TrackType::Ruler &&
+					type != TrackType::Tempo && type != TrackType::Signature) ||
 				groupChannel;
 			const bool hasAudio = hasChannel && type != TrackType::Midi;
 			require(hasAudio || (!parameters.contains("channels") && !parameters.contains("format")),
@@ -2876,8 +2876,8 @@ namespace gnubase::engine
 		const Json stringSchema = {{"type", "string"}};
 		const Json booleanSchema = {{"type", "boolean"}};
 		const Json noResult = Json::object();
-		const Json trackTypes =
-			enumSchema({"audio", "instrument", "midi", "folder", "group", "effect", "marker", "ruler", "tempo", "signature"});
+		const Json trackTypes = enumSchema(
+			{"audio", "instrument", "midi", "folder", "group", "effect", "marker", "ruler", "tempo", "signature"});
 		const Json timeBases = enumSchema({"musical", "linear"});
 		const Json timeFormats =
 			enumSchema(std::vector<std::string>(g_rulerTimeFormats.begin(), g_rulerTimeFormats.end()));

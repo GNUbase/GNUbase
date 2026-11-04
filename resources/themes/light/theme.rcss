@@ -540,6 +540,18 @@
 		color: #566273;
 		font-size: 11dp;
 	}
+	.signature-row .signature-event
+	{
+		color: #17202d;
+		font-size: 11dp;
+		border-left-width: 1dp;
+		border-left-color: #6554c0;
+	}
+	.signature-row .signature-event.selected
+	{
+		color: #eef1f5;
+		background-color: #6554c0;
+	}
 	.event-display .range-selection
 	{
 		border-width: 1dp;

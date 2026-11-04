@@ -54,12 +54,12 @@ namespace gnubase::engine
 		Audio,
 		Instrument,
 		Midi,
-		Folder, // contains other tracks; has a channel only if its group channel is on
-		Group,  // sums the channels routed to it; holds no events
-		Effect, // receives sends; holds no events
-		Marker, // holds markers; has no channel and stays at the top level
-		Ruler,  // shows a ruler in a time format of its own; has no channel
-		Tempo,  // shows and edits the project's tempo track; has no channel, stays at the top level, at most one
+		Folder,    // contains other tracks; has a channel only if its group channel is on
+		Group,     // sums the channels routed to it; holds no events
+		Effect,    // receives sends; holds no events
+		Marker,    // holds markers; has no channel and stays at the top level
+		Ruler,     // shows a ruler in a time format of its own; has no channel
+		Tempo,     // shows and edits the project's tempo track; has no channel, stays at the top level, at most one
 		Signature, // shows and edits the project's time signatures; has no channel, stays at the top level, at most one
 	};
 

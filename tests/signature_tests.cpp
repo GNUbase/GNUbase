@@ -63,8 +63,8 @@ namespace
 		std::vector<gnubase::time::SignatureChange> changes;
 		const Json project = run(client, "project.get");
 		for (const Json& item : project.at("signatures"))
-			changes.push_back({item.at("bar").get<int64_t>(),
-				{item.at("numerator").get<int>(), item.at("denominator").get<int>()}});
+			changes.push_back(
+				{item.at("bar").get<int64_t>(), {item.at("numerator").get<int>(), item.at("denominator").get<int>()}});
 		return gnubase::time::SignatureMap(changes);
 	}
 }
@@ -88,8 +88,7 @@ TEST_CASE("a project has one signature track at most, without a channel, at the 
 	run(client, "signature.add", change(4, 3, 4));
 	run(client, "track.remove", {{"track", signature}});
 	CHECK(run(client, "project.get").at("signatures").size() == 2);
-	CHECK_THAT(
-		reject(client, "track.add", {{"type", "signature"}, {"parent", folder}}), ContainsSubstring("folder"));
+	CHECK_THAT(reject(client, "track.add", {{"type", "signature"}, {"parent", folder}}), ContainsSubstring("folder"));
 }
 
 TEST_CASE("time signature events change the bars from theirs on, and the first one stays", "[unit]")
