@@ -117,6 +117,10 @@ namespace gnubase::engine::settings
 					"The user's own bus presets, per direction (input, output) by name: each a list of busses with "
 					"their name, format, ports and child busses (bus.savePreset).",
 					Json{{"type", "object"}}, Json{{"input", Json::object()}, {"output", Json::object()}}},
+				{"audio.defaultSendLevel",
+					"The level of the sends that track.add sends to a new effect channel, and the one Ctrl-click "
+					"gives a send in the mixer, in dB from -144 to 12 (reference manual p. 1623).",
+					Json{{"type", "number"}, {"minimum", -144}, {"maximum", 12}}, 0.0},
 				{"audio.device",
 					"The id of the audio device that the windowed app opens when it starts (see audio.backend), or "
 					"empty "
@@ -130,6 +134,10 @@ namespace gnubase::engine::settings
 				{"audio.listenLevel",
 					"The level at which listening channels play on the monitoring bus, in dB from -144 to 12.",
 					Json{{"type", "number"}, {"minimum", -144}, {"maximum", 12}}, 0.0},
+				{"audio.mutePreSends",
+					"Mute Pre-Send when Mute: a channel's mute button also mutes its pre-fader sends (reference "
+					"manual p. 1623); off, they play on while it is muted.",
+					Json{{"type", "boolean"}}, false},
 				{"audio.portSettings",
 					"How the audio devices' ports are shown (audio.setPort), by backend/device id/in or out/system "
 					"name, also for devices that aren't connected: the name shown (showAs) and whether it is "

@@ -1,0 +1,777 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#include "ui/audioparteditor.h"
+
+#include "engine/midi/quantizesettings.h"
+#include "ui/timeformat.h"
+#include "ui/widgetutils.h"
+
+#include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Event.h>
+#include <RmlUi/Core/StringUtilities.h>
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <map>
+#include <tuple>
+#include <utility>
+
+namespace gnubase::ui
+{
+	using engine::Json;
+
+	namespace
+	{
+		constexpr double g_laneHeight = 48.0;   // dp, each lane of the part display
+		constexpr double g_dragThreshold = 3.0; // dp the mouse moves before a press becomes a drag
+
+		constexpr std::array<std::pair<AudioPartTool, const char*>, 7> g_tools = {{
+			{AudioPartTool::ObjectSelection, "objectSelection"},
+			{AudioPartTool::Erase, "erase"},
+			{AudioPartTool::Split, "split"},
+			{AudioPartTool::Glue, "glue"},
+			{AudioPartTool::Mute, "mute"},
+			{AudioPartTool::Play, "play"},
+			{AudioPartTool::Scrub, "scrub"},
+		}};
+		constexpr std::array<const char*, 7> g_toolTitles = {
+			"Object Selection", "Erase", "Split", "Glue", "Mute", "Play", "Scrub"};
+		constexpr std::array<const char*, 7> g_toolLabels = {
+			"Select", "Erase", "Split", "Glue", "Mute", "Play", "Scrub"};
+
+		constexpr std::array<Rml::EventId, 5> g_events = {Rml::EventId::Mousedown, Rml::EventId::Mousemove,
+			Rml::EventId::Mouseup, Rml::EventId::Click, Rml::EventId::Dblclick};
+
+		std::string attribute(const Rml::Element& element, const char* name)
+		{
+			return element.GetAttribute<Rml::String>(name, "");
+		}
+
+		uint64_t idAttribute(const Rml::Element& element, const char* name)
+		{
+			const std::string value = attribute(element, name);
+			return value.empty() ? 0 : std::stoull(value);
+		}
+
+		Rml::Element* withAttribute(Rml::Element* element, const char* name, const Rml::Element* stop)
+		{
+			for (; element != nullptr && element != stop; element = element->GetParentNode())
+				if (element->HasAttribute(name))
+					return element;
+			return nullptr;
+		}
+
+		bool inside(const Rml::Element* element, const Rml::Element* area)
+		{
+			for (; element != nullptr; element = element->GetParentNode())
+				if (element == area)
+					return true;
+			return false;
+		}
+
+		void setClass(Rml::Element* element, const char* name, bool set)
+		{
+			if (element != nullptr && element->IsClassSet(name) != set)
+				element->SetClass(name, set);
+		}
+
+		void setInner(Rml::Element* element, const std::string& rml)
+		{
+			if (element != nullptr && element->GetInnerRML() != rml)
+				element->SetInnerRML(rml);
+		}
+
+		Rml::Property percent(double value)
+		{
+			return {static_cast<float>(value), Rml::Unit::PERCENT};
+		}
+
+		Rml::Property dp(double value)
+		{
+			return {static_cast<float>(value), Rml::Unit::DP};
+		}
+
+	}
+
+	const char* audioPartToolName(AudioPartTool tool)
+	{
+		for (const auto& [each, name] : g_tools)
+			if (each == tool)
+				return name;
+		return "objectSelection";
+	}
+
+	std::optional<AudioPartTool> audioPartToolFromName(const std::string& name)
+	{
+		for (const auto& [tool, each] : g_tools)
+			if (name == each)
+				return tool;
+		return std::nullopt;
+	}
+
+	AudioPartEditor::AudioPartEditor(EngineBinding& binding, Rml::Element& root, std::string view)
+		: m_binding(binding), m_root(root.GetObserverPtr()), m_name(std::move(view))
+	{
+		std::string tools;
+		for (size_t i = 0; i < g_tools.size(); ++i)
+			tools += std::string(R"(<button class="ape-tool" ape-tool=")") + g_tools[i].second + R"(" title=")" +
+				g_toolTitles[i] + R"(">)" + g_toolLabels[i] + "</button>";
+		std::string info;
+		for (const auto& [field, label] : std::vector<std::pair<const char*, const char*>>{
+				 {"start", "Start"}, {"end", "End"}, {"length", "Length"}, {"volume", "Volume"}})
+			info += std::string(R"(<div class="info-field" info-field=")") + field + R"("><span class="info-label">)" +
+				label + R"(</span><textdisplay class="display" field=")" + field + R"("/></div>)";
+		root.SetInnerRML(R"(<div class="toolbar audio-part-editor-toolbar">)" + tools +
+			R"(</div><div class="info-line ape-info empty"><span class="info-empty">No Object Selected</span>)" + info +
+			R"(</div><div class="editor-parts"/><div class="ape-body"><div class="ape-display"><div class="ape-lanes"/>)"
+			R"(<div class="ape-events"/><div class="ape-waveforms"/></div></div>)");
+		if (Rml::Element* waves = root.QuerySelector(".ape-waveforms"))
+			m_waveforms = std::make_unique<EventWaveforms>(m_binding, *waves);
+		for (const Rml::EventId event : g_events)
+			root.AddEventListener(event, this);
+		root.AddEventListener(Rml::EventId::Change, this);
+		// A window that changes its size changes the display's width, which the waveforms' scale follows.
+		if (Rml::ElementDocument* document = root.GetOwnerDocument())
+		{
+			document->AddEventListener(Rml::EventId::Resize, this);
+			m_document = document->GetObserverPtr();
+		}
+		setTool(AudioPartTool::ObjectSelection);
+	}
+
+	AudioPartEditor::~AudioPartEditor()
+	{
+		if (Rml::Element* root = m_root.get())
+		{
+			for (const Rml::EventId event : g_events)
+				root->RemoveEventListener(event, this);
+			root->RemoveEventListener(Rml::EventId::Change, this);
+		}
+		if (Rml::Element* document = m_document.get())
+			document->RemoveEventListener(Rml::EventId::Resize, this);
+		if (m_gesture == Gesture::Audition)
+		{
+			try
+			{
+				m_binding.send("audition.stop"); // what the play or scrub tool auditions ends with the editor
+			}
+			catch (const std::exception&) // NOLINT(bugprone-empty-catch): nothing to do about it while it goes
+			{
+			}
+		}
+	}
+
+	void AudioPartEditor::setTool(AudioPartTool tool)
+	{
+		m_tool = tool;
+		Rml::Element* root = m_root.get();
+		if (root == nullptr)
+			return;
+		Rml::ElementList buttons;
+		root->QuerySelectorAll(buttons, ".ape-tool");
+		for (Rml::Element* button : buttons)
+			setClass(button, "checked", attribute(*button, "ape-tool") == audioPartToolName(tool));
+		root->SetAttribute("tool", audioPartToolName(tool));
+	}
+
+	void AudioPartEditor::show(const Json& project, const Json& view)
+	{
+		m_project = project;
+		m_view = view;
+		m_events.clear();
+		m_waves.clear();
+		m_selection.clear();
+		if (!m_project.contains("tracks") || !m_view.contains("parts"))
+			return;
+		const TimeContext time = projectTime(m_project);
+		std::map<uint64_t, bool> linear;
+		for (const Json& track : m_project.at("tracks"))
+			linear[track.at("id").get<uint64_t>()] = track.value("timeBase", std::string("musical")) == "linear";
+		const auto seconds = [&](int64_t position, uint64_t track)
+		{ return linear[track] ? static_cast<double>(position) / time.sampleRate : time.tempo.toSeconds(position); };
+		std::map<uint64_t, const Json*> media;
+		for (const Json& file : m_project.at("media"))
+			media[file.at("id").get<uint64_t>()] = &file;
+		std::map<uint64_t, uint64_t> clipMedia;
+		for (const Json& clip : m_project.at("clips"))
+			clipMedia[clip.at("id").get<uint64_t>()] = clip.at("media").get<uint64_t>();
+		// The shown parts, in the view's order: their time and whether the editing mode reaches them.
+		std::map<uint64_t, std::tuple<double, double, bool>> parts;
+		const Json& editable = m_view.at("editable");
+		m_from = 0.0;
+		m_to = 1.0;
+		bool first = true;
+		for (const Json& part : m_project.value("audioParts", Json::array()))
+		{
+			const Json& shown = m_view.at("parts");
+			if (std::find(shown.begin(), shown.end(), part.at("id")) == shown.end())
+				continue;
+			const auto track = part.at("track").get<uint64_t>();
+			const auto position = part.at("position").get<int64_t>();
+			const double start = seconds(position, track);
+			const double end = seconds(position + part.at("length").get<int64_t>(), track);
+			parts[part.at("id").get<uint64_t>()] = {
+				start, end, std::find(editable.begin(), editable.end(), part.at("id")) != editable.end()};
+			m_from = first ? start : std::min(m_from, start);
+			m_to = first ? end : std::max(m_to, end);
+			first = false;
+		}
+		m_to = std::max(m_to, m_from + 0.001);
+		for (const Json& audio : m_project.value("audioEvents", Json::array()))
+		{
+			const auto part = parts.find(audio.value("part", uint64_t{0}));
+			if (part == parts.end())
+				continue;
+			const auto track = audio.at("track").get<uint64_t>();
+			const auto file = media.find(clipMedia[audio.at("clip").get<uint64_t>()]);
+			const double rate = file == media.end() ? 0.0 : file->second->at("sampleRate").get<double>();
+			const double start = seconds(audio.at("position").get<int64_t>(), track);
+			const double length = rate > 0.0 ? audio.at("length").get<double>() / rate : 0.0;
+			const auto [partStart, partEnd, reached] = part->second;
+			const double from = std::max(start, partStart);
+			const double to = std::min(start + length, partEnd);
+			if (!(to > from))
+				continue; // the part hides it entirely
+			const Event event{audio.at("id").get<uint64_t>(), part->first, track, start, start + length, from, to,
+				std::max(audio.value("lane", 0), 0), audio.value("volume", 0.0), audio.value("mute", false), reached};
+			m_events.push_back(event);
+			m_waves.push_back({event.id, static_cast<size_t>(event.lane), {from, to - from}, file->first, rate,
+				file->second->at("channels").get<int>(),
+				audio.at("offset").get<int64_t>() + static_cast<int64_t>(std::llround((from - start) * rate))});
+		}
+		for (const Json& id : m_view.value("eventSelection", Json::array()))
+			m_selection.push_back(id.get<uint64_t>());
+		if (m_waveforms)
+			m_waveforms->setEvents(m_waves);
+		// The display needs its width for the waveforms' scale: lay it out once if it hasn't been yet.
+		Rml::Element* display = m_root ? m_root->QuerySelector(".ape-display") : nullptr;
+		if (display != nullptr && !(display->GetClientWidth() > 0.0F))
+		{
+			render();
+			m_root->GetOwnerDocument()->UpdateDocument();
+		}
+		render();
+	}
+
+	float AudioPartEditor::dpRatio() const
+	{
+		const Rml::Context* context = m_root ? m_root->GetContext() : nullptr;
+		return context == nullptr ? 1.0F : context->GetDensityIndependentPixelRatio();
+	}
+
+	// The lanes the events are on, and one more to move events onto.
+	int AudioPartEditor::lanes() const
+	{
+		int count = 1;
+		for (const Event& event : m_events)
+			count = std::max(count, event.lane + 1);
+		return count + 1;
+	}
+
+	void AudioPartEditor::place(Rml::Element& element, double start, double end, int lane) const
+	{
+		const double range = m_to - m_from;
+		element.SetProperty(Rml::PropertyId::Left, percent((start - m_from) / range * 100.0));
+		element.SetProperty(Rml::PropertyId::Width, percent((end - start) / range * 100.0));
+		element.SetProperty(Rml::PropertyId::Top, dp(lane * g_laneHeight));
+		element.SetProperty(Rml::PropertyId::Height, dp(g_laneHeight));
+	}
+
+	// The parts by track, a row per track in the editor's order: each part at its time, .active and .editable as
+	// MidiEditor's view says.
+	std::string AudioPartEditor::partsRml() const
+	{
+		std::string rml;
+		std::vector<uint64_t> tracks;
+		for (const Json& id : m_view.at("parts"))
+			for (const Json& part : m_project.value("audioParts", Json::array()))
+				if (part.at("id") == id &&
+					std::find(tracks.begin(), tracks.end(), part.at("track").get<uint64_t>()) == tracks.end())
+					tracks.push_back(part.at("track").get<uint64_t>());
+		const Json& editable = m_view.at("editable");
+		for (const uint64_t track : tracks)
+		{
+			rml += R"(<div class="editor-part-row" track=")" + std::to_string(track) + R"(">)";
+			for (const Json& id : m_view.at("parts"))
+				for (const Json& part : m_project.value("audioParts", Json::array()))
+					if (part.at("id") == id && part.at("track") == track)
+						rml += R"(<div class="editor-part)" +
+							std::string(id == m_view.at("activePart") ? " active" : "") +
+							(std::find(editable.begin(), editable.end(), id) != editable.end() ? " editable" : "") +
+							R"(" part=")" + id.dump() + R"(">)" +
+							Rml::StringUtilities::EncodeRml(part.at("name").get<std::string>()) + "</div>";
+			rml += "</div>";
+		}
+		return rml;
+	}
+
+	void AudioPartEditor::render()
+	{
+		Rml::Element* root = m_root.get();
+		if (root == nullptr || !m_view.contains("parts"))
+			return;
+		setInner(root->QuerySelector(".editor-parts"), partsRml());
+		Rml::ElementList shown;
+		root->QuerySelectorAll(shown, ".editor-part");
+		const TimeContext time = projectTime(m_project);
+		for (Rml::Element* element : shown)
+			for (const Json& part : m_project.value("audioParts", Json::array()))
+				if (part.at("id") == idAttribute(*element, "part"))
+				{
+					std::string base = "musical";
+					for (const Json& track : m_project.at("tracks"))
+						if (track.at("id") == part.at("track"))
+							base = track.value("timeBase", base);
+					const auto seconds = [&](int64_t position)
+					{
+						return base == "linear" ? static_cast<double>(position) / time.sampleRate
+												: time.tempo.toSeconds(position);
+					};
+					const auto position = part.at("position").get<int64_t>();
+					const double range = m_to - m_from;
+					element->SetProperty(Rml::PropertyId::Left, percent((seconds(position) - m_from) / range * 100.0));
+					element->SetProperty(Rml::PropertyId::Width,
+						percent((seconds(position + part.at("length").get<int64_t>()) - seconds(position)) / range *
+							100.0));
+				}
+
+		const int count = lanes();
+		std::string lanesRml;
+		for (int lane = 0; lane < count; ++lane)
+			lanesRml += R"(<div class="ape-lane" lane=")" + std::to_string(lane) + R"("/>)";
+		Rml::Element* laneList = root->QuerySelector(".ape-lanes");
+		setInner(laneList, lanesRml);
+		if (laneList != nullptr)
+			for (int lane = 0; lane < laneList->GetNumChildren(); ++lane)
+				place(*laneList->GetChild(lane), m_from, m_to, lane);
+		Rml::Element* display = root->QuerySelector(".ape-display");
+		if (display != nullptr)
+			display->SetProperty(Rml::PropertyId::Height, dp(count * g_laneHeight));
+
+		// The selection only changes classes, so that a press that selects keeps the element under the mouse.
+		std::string rml;
+		for (const Event& event : m_events)
+			rml += R"(<div class="ape-event)" + std::string(event.editable ? "" : " inactive") + R"(" part=")" +
+				std::to_string(event.part) + R"(" event=")" + std::to_string(event.id) + R"("/>)";
+		Rml::Element* events = root->QuerySelector(".ape-events");
+		if (events != nullptr && rml != m_eventsRml)
+		{
+			events->SetInnerRML(rml);
+			m_eventsRml = rml;
+		}
+		if (events != nullptr)
+			for (int i = 0; i < events->GetNumChildren(); ++i)
+				if (const Event* found = eventOf(events->GetChild(i)))
+				{
+					place(*events->GetChild(i), found->shownStart, found->shownEnd, found->lane);
+					setClass(events->GetChild(i), "selected", selected(*found));
+					setClass(events->GetChild(i), "muted", found->mute);
+				}
+		if (m_waveforms && display != nullptr)
+		{
+			const double width = display->GetClientWidth() / dpRatio();
+			std::vector<double> tops;
+			for (int lane = 0; lane <= count; ++lane)
+				tops.push_back(lane * g_laneHeight);
+			if (width > 0.0)
+				m_waveforms->show({m_from, (m_to - m_from) / width, 0.0, tops, width, count * g_laneHeight, dpRatio()});
+		}
+		renderInfo();
+		if (Rml::Context* context = root->GetContext())
+			context->RequestNextUpdate(0);
+	}
+
+	// The info line (p. 698): the first selected event's start, end and length in bars and beats and its volume in dB;
+	// .multiple with several events selected.
+	void AudioPartEditor::renderInfo()
+	{
+		Rml::Element* line = m_root.get()->QuerySelector(".ape-info");
+		if (line == nullptr)
+			return;
+		const std::vector<const Event*> events = selectedEvents();
+		setClass(line, "empty", events.empty());
+		setClass(line, "multiple", events.size() > 1);
+		if (events.empty())
+			return;
+		const Event& first = *events.front();
+		const TimeContext time = projectTime(m_project);
+		const std::map<std::string, std::string> texts = {
+			{"start", formatTime(TimeFormat::BarsBeats, first.start, time)},
+			{"end", formatTime(TimeFormat::BarsBeats, first.end, time)},
+			{"length", formatLength(TimeFormat::BarsBeats, first.start, first.end, time)},
+			{"volume", widgets::format(static_cast<float>(first.volume), 2)}};
+		for (const auto& [field, text] : texts)
+			if (Rml::Element* display = line->QuerySelector("textdisplay[field=" + field + "]");
+				display != nullptr && attribute(*display, "value") != text)
+				display->SetAttribute("value", text);
+	}
+
+	const AudioPartEditor::Event* AudioPartEditor::eventOf(Rml::Element* element) const
+	{
+		const Rml::Element* found = withAttribute(element, "event", m_root.get());
+		if (found == nullptr)
+			return nullptr;
+		const uint64_t id = idAttribute(*found, "event");
+		for (const Event& each : m_events)
+			if (each.id == id)
+				return &each;
+		return nullptr;
+	}
+
+	bool AudioPartEditor::selected(const Event& event) const
+	{
+		return std::find(m_selection.begin(), m_selection.end(), event.id) != m_selection.end();
+	}
+
+	std::vector<const AudioPartEditor::Event*> AudioPartEditor::selectedEvents() const
+	{
+		std::vector<const Event*> events;
+		for (const Event& each : m_events)
+			if (selected(each))
+				events.push_back(&each);
+		std::stable_sort(events.begin(), events.end(),
+			[](const Event* a, const Event* b) { return std::tie(a->start, a->lane) < std::tie(b->start, b->lane); });
+		return events;
+	}
+
+	std::pair<double, int> AudioPartEditor::at(const Rml::Event& event) const
+	{
+		Rml::Element* display = m_root.get()->QuerySelector(".ape-display");
+		if (display == nullptr)
+			return {0.0, 0};
+		const Rml::Vector2f origin = display->GetAbsoluteOffset(Rml::BoxArea::Border);
+		const float width = std::max(display->GetBox().GetSize(Rml::BoxArea::Border).x, 1.0F);
+		const double x = (event.GetParameter("mouse_x", 0.0F) - origin.x) / width;
+		const double y = (event.GetParameter("mouse_y", 0.0F) - origin.y) / dpRatio();
+		return {m_from + (x * (m_to - m_from)), std::max(0, static_cast<int>(std::floor(y / g_laneHeight)))};
+	}
+
+	// The project's quantize grid (quantize.set), from the project start.
+	double AudioPartEditor::snap(double seconds) const
+	{
+		const TimeContext time = projectTime(m_project);
+		const std::string grid = m_project.value("quantize", Json::object()).value("grid", std::string("1/16"));
+		const auto step =
+			static_cast<double>(engine::midi::noteValueFromString(grid).value_or(engine::midi::NoteValue{}).ticks());
+		return time.tempo.toSeconds(
+			std::llround(std::round(static_cast<double>(time.tempo.toTicks(seconds)) / step) * step));
+	}
+
+	bool AudioPartEditor::dragged(const Rml::Event& event)
+	{
+		const double dx = (event.GetParameter("mouse_x", 0.0F) - m_pressedMouse.x) / dpRatio();
+		const double dy = (event.GetParameter("mouse_y", 0.0F) - m_pressedMouse.y) / dpRatio();
+		m_dragged = m_dragged || std::abs(dx) >= g_dragThreshold || std::abs(dy) >= g_dragThreshold;
+		return m_dragged;
+	}
+
+	int64_t AudioPartEditor::samples(double seconds) const
+	{
+		return std::llround(seconds * projectTime(m_project).sampleRate);
+	}
+
+	void AudioPartEditor::select(std::vector<uint64_t> events)
+	{
+		m_selection = std::move(events);
+		render(); // at once; editor.changed confirms it
+		m_binding.send("editor.set", {{"editor", m_name}, {"eventSelection", m_selection}});
+	}
+
+	void AudioPartEditor::edit(const std::string& description, Json commands)
+	{
+		if (commands.empty())
+			return;
+		if (commands.size() == 1)
+			m_binding.send(commands[0].at("command").get<std::string>(), commands[0].at("parameters"));
+		else
+			m_binding.send("history.transaction", {{"description", description}, {"commands", std::move(commands)}});
+	}
+
+	// Edits on the info line go to every selected event, by as much as the first one's value changes.
+	void AudioPartEditor::editInfo(const std::string& field, const std::string& text)
+	{
+		const std::vector<const Event*> events = selectedEvents();
+		if (events.empty())
+			return;
+		const Event& first = *events.front();
+		const TimeContext time = projectTime(m_project);
+		Json ids = Json::array();
+		for (const Event* each : events)
+			ids.push_back(each->id);
+		if (field == "volume")
+		{
+			const std::optional<float> parsed = widgets::parse(text);
+			if (!parsed)
+				return;
+			const double typed = *parsed;
+			Json commands = Json::array();
+			for (const Event* each : events)
+				commands.push_back({{"command", "audioEvent.set"},
+					{"parameters",
+						{{"event", each->id},
+							{"volume", std::clamp(each->volume + typed - first.volume, -144.0, 6.0)}}}});
+			edit("Change volume", std::move(commands));
+			return;
+		}
+		std::optional<double> seconds;
+		if (field == "length")
+		{
+			if (const std::optional<double> length = parseLength(TimeFormat::BarsBeats, text, first.start, time))
+				seconds = first.start + *length;
+		}
+		else
+		{
+			seconds = parseTime(TimeFormat::BarsBeats, text, time);
+		}
+		if (!seconds)
+			return;
+		if (field == "start")
+			edit("Move",
+				Json::array({{{"command", "event.move"},
+					{"parameters", {{"events", ids}, {"delta", samples(*seconds) - samples(first.start)}}}}}));
+		else
+			edit("Resize",
+				Json::array({{{"command", "event.resize"},
+					{"parameters",
+						{{"events", ids}, {"edge", "end"}, {"delta", samples(*seconds) - samples(first.end)}}}}}));
+	}
+
+	void AudioPartEditor::ProcessEvent(Rml::Event& event)
+	{
+		const Rml::Element* target = event.GetTargetElement();
+		if (target == nullptr || m_view.empty())
+			return;
+		switch (event.GetId())
+		{
+		case Rml::EventId::Mousedown:
+			if (event.GetParameter("button", 0) == 0)
+				press(event);
+			break;
+		case Rml::EventId::Mousemove:
+			drag(event);
+			break;
+		case Rml::EventId::Mouseup:
+			release(event);
+			break;
+		case Rml::EventId::Dblclick:
+			doubleClick(event);
+			break;
+		case Rml::EventId::Click:
+			if (target->HasAttribute("ape-tool"))
+				if (const std::optional<AudioPartTool> tool = audioPartToolFromName(attribute(*target, "ape-tool")))
+					setTool(*tool);
+			break;
+		case Rml::EventId::Change:
+			if (target->HasAttribute("field"))
+				editInfo(attribute(*target, "field"), event.GetParameter<Rml::String>("value", ""));
+			break;
+		case Rml::EventId::Resize:
+			render();
+			break;
+		default:
+			break;
+		}
+	}
+
+	void AudioPartEditor::press(Rml::Event& event)
+	{
+		Rml::Element* root = m_root.get();
+		Rml::Element* target = event.GetTargetElement();
+		if (!inside(target, root->QuerySelector(".ape-display")))
+			return;
+		const bool shift = event.GetParameter("shift_key", 0) != 0;
+		const bool ctrl = event.GetParameter("ctrl_key", 0) != 0 || event.GetParameter("meta_key", 0) != 0;
+		m_pressedAt = at(event);
+		m_pressedMouse = {event.GetParameter("mouse_x", 0.0F), event.GetParameter("mouse_y", 0.0F)};
+		m_dragged = false;
+		m_gesture = Gesture::None;
+		const Event* pressed = eventOf(target);
+		if (pressed != nullptr && !pressed->editable)
+			pressed = nullptr;
+		m_pressed.reset();
+		if (pressed != nullptr)
+			m_pressed = *pressed;
+		const double seconds = m_pressedAt.first;
+		switch (m_tool)
+		{
+		case AudioPartTool::ObjectSelection:
+			if (pressed == nullptr)
+			{
+				if (!shift && !ctrl)
+					select({}); // a click in the empty display deselects
+				return;
+			}
+			if (shift)
+			{
+				std::vector<uint64_t> events = m_selection;
+				const auto found = std::find(events.begin(), events.end(), pressed->id);
+				if (found != events.end())
+					events.erase(found);
+				else
+					events.push_back(pressed->id);
+				select(std::move(events));
+				return;
+			}
+			// With Ctrl, a drag moves across lanes only (p. 699) and a click toggles the selection.
+			m_gesture = ctrl ? Gesture::MoveVertical : Gesture::Move;
+			if (!ctrl && !selected(*pressed))
+				select({pressed->id});
+			return;
+		case AudioPartTool::Erase:
+			if (pressed != nullptr)
+				edit(
+					"Erase", Json::array({{{"command", "event.remove"}, {"parameters", {{"events", {pressed->id}}}}}}));
+			return;
+		case AudioPartTool::Split:
+		{
+			// At the snapped position; on a selected event, every selected event there.
+			if (pressed == nullptr)
+				return;
+			Json ids = Json::array({pressed->id});
+			if (selected(*pressed))
+			{
+				ids = Json::array();
+				for (const Event* each : selectedEvents())
+					ids.push_back(each->id);
+			}
+			const double cut = snap(seconds);
+			if (cut > pressed->start && cut < pressed->end)
+				edit("Split",
+					Json::array({{{"command", "event.split"},
+						{"parameters", {{"events", ids}, {"positions", {samples(cut)}}}}}}));
+			return;
+		}
+		case AudioPartTool::Glue:
+		{
+			// Glues the event to the next one on its lane in its part.
+			if (pressed == nullptr)
+				return;
+			const Event* next = nullptr;
+			for (const Event& each : m_events)
+				if (each.part == pressed->part && each.lane == pressed->lane && each.start > pressed->start &&
+					(next == nullptr || each.start < next->start))
+					next = &each;
+			if (next != nullptr)
+				edit("Glue",
+					Json::array({{{"command", "event.glue"}, {"parameters", {{"events", {pressed->id, next->id}}}}}}));
+			return;
+		}
+		case AudioPartTool::Mute:
+			if (pressed != nullptr)
+				edit("Mute",
+					Json::array({{{"command", "event.set"},
+						{"parameters", {{"events", {pressed->id}}, {"mute", !pressed->mute}}}}}));
+			return;
+		case AudioPartTool::Play:
+		case AudioPartTool::Scrub:
+		{
+			// Auditions the track of the event or part pressed from the mouse until the release (pp. 700-701).
+			uint64_t track = pressed != nullptr ? pressed->track : 0;
+			if (track == 0)
+				for (const Json& part : m_project.value("audioParts", Json::array()))
+					if (part.at("id") == m_view.at("activePart"))
+						track = part.at("track").get<uint64_t>();
+			if (track == 0)
+				return;
+			m_auditioned = track;
+			m_gesture = Gesture::Audition;
+			m_binding.send(m_tool == AudioPartTool::Play ? "audition.start" : "audition.scrub",
+				{{"track", track}, {"position", std::max<int64_t>(0, samples(seconds))}});
+			return;
+		}
+		}
+	}
+
+	void AudioPartEditor::drag(Rml::Event& event)
+	{
+		if (m_gesture == Gesture::None)
+			return;
+		const auto [seconds, lane] = at(event);
+		if (m_gesture == Gesture::Audition)
+		{
+			if (m_tool == AudioPartTool::Scrub)
+				m_binding.send(
+					"audition.scrub", {{"track", m_auditioned}, {"position", std::max<int64_t>(0, samples(seconds))}});
+			return;
+		}
+		if (!dragged(event) || !m_pressed)
+			return; // a click only selects
+		const double dt =
+			m_gesture == Gesture::Move ? snap(m_pressed->start + seconds - m_pressedAt.first) - m_pressed->start : 0.0;
+		const int dl = lane - m_pressedAt.second;
+		const Rml::Element* events = m_root.get()->QuerySelector(".ape-events");
+		if (events == nullptr)
+			return;
+		for (int i = 0; i < events->GetNumChildren(); ++i)
+		{
+			Rml::Element* element = events->GetChild(i);
+			const Event* shown = eventOf(element);
+			if (shown != nullptr && (selected(*shown) || shown->id == m_pressed->id))
+				place(*element, shown->shownStart + dt, shown->shownEnd + dt, std::max(shown->lane + dl, 0));
+		}
+	}
+
+	void AudioPartEditor::release(Rml::Event& event)
+	{
+		const Gesture gesture = std::exchange(m_gesture, Gesture::None);
+		if (gesture == Gesture::None)
+			return;
+		if (gesture == Gesture::Audition)
+		{
+			m_binding.send("audition.stop");
+			return;
+		}
+		const bool isDrag = dragged(event); // a click only selects, even on an event off the grid
+		if (!m_pressed)
+			return;
+		const auto [seconds, lane] = at(event);
+		const double dt = gesture == Gesture::Move && isDrag
+			? snap(m_pressed->start + seconds - m_pressedAt.first) - m_pressed->start
+			: 0.0;
+		const int dl = isDrag ? lane - m_pressedAt.second : 0;
+		if (gesture == Gesture::MoveVertical && dl == 0)
+		{
+			// A click with Ctrl adds the event to the selection or takes it out.
+			std::vector<uint64_t> events = m_selection;
+			const auto found = std::find(events.begin(), events.end(), m_pressed->id);
+			if (found != events.end())
+				events.erase(found);
+			else
+				events.push_back(m_pressed->id);
+			select(std::move(events));
+			return;
+		}
+		// The selected events, or with Ctrl the pressed one if it isn't selected: each with its lane.
+		std::vector<std::pair<uint64_t, int>> moved;
+		for (const Event* each : selectedEvents())
+			moved.emplace_back(each->id, each->lane);
+		if (gesture == Gesture::MoveVertical && !selected(*m_pressed))
+			moved = {{m_pressed->id, m_pressed->lane}};
+		Json ids = Json::array();
+		std::map<int, Json> lanes; // the events by the lane they go to
+		for (const auto& [id, from] : moved)
+		{
+			ids.push_back(id);
+			if (dl != 0)
+				lanes[std::max(from + dl, 0)].push_back(id);
+		}
+		Json commands = Json::array();
+		if (samples(dt) != 0)
+			commands.push_back({{"command", "event.move"}, {"parameters", {{"events", ids}, {"delta", samples(dt)}}}});
+		for (auto& [to, events] : lanes)
+			commands.push_back({{"command", "event.set"}, {"parameters", {{"events", events}, {"lane", to}}}});
+		edit("Move", std::move(commands));
+	}
+
+	// With the object selection tool, a double click on an event opens it in the sample editor.
+	void AudioPartEditor::doubleClick(Rml::Event& event)
+	{
+		if (m_tool != AudioPartTool::ObjectSelection)
+			return;
+		m_gesture = Gesture::None;
+		if (const Event* pressed = eventOf(event.GetTargetElement()); pressed != nullptr)
+			m_binding.send("sampleEditor.open", {{"event", pressed->id}});
+	}
+}
