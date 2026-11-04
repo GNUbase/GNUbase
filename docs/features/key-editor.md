@@ -49,12 +49,14 @@ zone's. It shows the project and the editor view as `MidiEditor` hands them on a
 the edits of several parts go in one `history.transaction`.
 
 ```
-.key-editor[tool=objectSelection|draw|erase|trim|split|glue]
+.key-editor[tool=objectSelection|draw|line|erase|trim|split|glue]
   .toolbar.key-editor-toolbar
-    button.key-tool[key-tool]         the tools; .checked for the current one
+    button.key-tool[key-tool]         the tools; .checked for the current one; the chosen line tool opens
+                                      #key-line-menu with its modes (controller-lanes.md)
     button.key-transpose[semitones]   Move Up, Move Down, Move Up More, Move Down More (+1, -1, +12, -12)
     button.key-input[setting]         Step Input, MIDI Input, Move Insert Mode, Record Pitch, Record Note On and
-                                      Note Off Velocity, Keep Existing Notes; .checked while on
+                                      Note Off Velocity, Keep Existing Notes, Auto Select Controllers; .checked
+                                      while on
     #key-length-quantize              Length Quantize, menu #key-length-menu (Quantize Link, 1/1 to 1/64, triplets)
     valuefield#key-insert-velocity    Insert Velocity, 1-127
   .info-line.key-editor-info          the first selected note: textdisplay[field=start|end|length|pitch|velocity|
@@ -65,6 +67,7 @@ the edits of several parts go in one `history.transaction`.
     .key-editor-grid                  128 .key-editor-row (.black); .key-editor-notes with a .key-note[part][note]
                                       per note (.selected, .inactive outside the part editing mode, .drawing);
                                       .key-editor-step-cursor (.off while step input is off)
+  .controller-lanes                   the controller lanes (controller-lanes.md)
 #key-editor-toolbox                   menu.toolbox with a menuitem[key-tool] per tool, [checked] for the current one
 .editor-chord-editing                 the inspector's Chord Editing section: .editor-chord-type (the chord's name),
                                       button.editor-chord[chord] and button.editor-voicing[voicing]
@@ -99,14 +102,14 @@ in percent of the grid. Positions snap to the project's quantize grid; Ctrl (Cmd
 ## Not yet
 
 Live MIDI keyboard input into `editor.input` (it waits for the MIDI recording input path, #97); Left and Right moving
-the step input cursor and lengthening a held chord; the Mute, Range Selection, Zoom, Time Warp and Line tools (notes
-have no mute yet); the selection rectangle, the trim tool's drag across several notes and the draw tool's modifiers
-for velocity, pitch and position; key commands for the transpose palette and deleting; the nudge buttons, Solo
-Editor, Record in Editor, Acoustic Feedback, Auto Select Controllers, pitch visibility, the Scale Assistant,
-Indicate Transpositions, event colors, the status line and Set up Window Layout; horizontal zoom and scrolling;
-listening to a key's pitch with a click; drum map and articulation names; Add to Chord Track, Match with Chord Track,
-Create Chord Events and the chord insert tools; controller lanes (#128), quantizing from the toolbar (#132) and the
-Length section's functions (#133); the key editor's context menu.
+the step input cursor and lengthening a held chord; the Mute, Range Selection, Zoom and Time Warp tools (notes have no
+mute yet), and the Line tool in the note display (it draws on the controller lanes); the selection rectangle, the trim
+tool's drag across several notes and the draw tool's modifiers for velocity, pitch and position; key commands for the
+transpose palette and deleting; the nudge buttons, Solo Editor, Record in Editor, Acoustic Feedback, pitch visibility,
+the Scale Assistant, Indicate Transpositions, event colors, the status line and Set up Window Layout; horizontal zoom
+and scrolling; listening to a key's pitch with a click; drum map and articulation names; Add to Chord Track, Match with
+Chord Track, Create Chord Events and the chord insert tools; quantizing from the toolbar (#132) and the Length section's
+functions (#133); the key editor's context menu.
 
 ## Checks
 
