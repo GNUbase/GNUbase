@@ -161,7 +161,7 @@ TEST_CASE("linked channels pass on the settings their group links, unless linked
 	const ObjectId group = groupOf(added);
 	CHECK(added.at("group") ==
 		Json({{"id", group}, {"name", "Link Group 1"}, {"channels", {a, b, c}}, {"volume", true}, {"pan", true},
-			{"mute", false}, {"record", false}, {"vca", 0}}));
+			{"mute", false}, {"record", false}, {"eq", false}, {"dynamics", false}, {"sends", true}, {"vca", 0}}));
 	CHECK(groups(client).size() == 1);
 
 	// The fader and the pan move by as much as the channel's, and stop at their ends.

@@ -56,15 +56,6 @@ namespace gnubase::engine
 			return found;
 		}
 
-		Json signaturesJson(const Project& project)
-		{
-			Json signatures = Json::array();
-			for (const time::SignatureChange& change : project.signatures.changes())
-				signatures.push_back({{"bar", change.bar}, {"numerator", change.signature.numerator},
-					{"denominator", change.signature.denominator}});
-			return signatures;
-		}
-
 		// The signature map as the given changes, which must make one.
 		Json setSignatures(Project& project, std::vector<time::SignatureChange> changes, CommandContext& context)
 		{
@@ -147,6 +138,15 @@ namespace gnubase::engine
 			}
 			return setSignatures(project, std::move(changes), context);
 		}
+	}
+
+	Json signaturesJson(const Project& project)
+	{
+		Json signatures = Json::array();
+		for (const time::SignatureChange& change : project.signatures.changes())
+			signatures.push_back({{"bar", change.bar}, {"numerator", change.signature.numerator},
+				{"denominator", change.signature.denominator}});
+		return signatures;
 	}
 
 	void ProjectModel::registerSignatureCommands(Engine& engine)
