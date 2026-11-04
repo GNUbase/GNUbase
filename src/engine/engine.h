@@ -198,6 +198,9 @@ namespace gnubase::engine
 		// The plugin host processes and the plugins that run in them.
 		plugins::HostManager& pluginHosts();
 
+		// The background jobs (jobs/jobs.h), for commands that start one, such as media.locate.
+		Jobs& jobs();
+
 		// The folder of the user settings; empty when they are kept in memory only. Features whose user settings
 		// have files of their own, such as the quantize presets, keep them there.
 		const std::filesystem::path& settingsDirectory() const { return m_settingsDirectory; }
