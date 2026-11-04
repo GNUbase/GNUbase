@@ -260,6 +260,24 @@ TEST_CASE("regions are added from the selection, listed, selected and removed", 
 	REQUIRE(f.app.waitUntil([&] { return f.elements(".se-region").size() == 2; }));
 }
 
+TEST_CASE("double-clicking a region that isn't selected selects its section and zooms to it", "[ui]")
+{
+	Fixture f;
+	f.open();
+	f.app.call("clip.addRegion", {{"clip", f.clip}, {"start", 200}, {"end", 800}});
+	f.app.call("clip.addRegion", {{"clip", f.clip}, {"start", 1000}, {"end", 5000}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".se-region").size() == 2; }));
+	const std::string other = ".se-region[region=\"" + f.regions()[1].at("id").dump() + "\"]";
+	REQUIRE_FALSE(f.has(other, "selected"));
+	// The first click selects the row; the second one lands on the same row, so the double click selects it.
+	f.app.ui().click(f.window, of(other), ui::MouseButton::Left, 2, {});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("selectionStart") == 1000; }));
+	CHECK(f.view().at("selectionEnd") == 5000);
+	CHECK(f.has(other, "selected"));
+	CHECK(f.app.waitUntil([&] { return std::abs(f.editor().start() - 1000) < 1; }));
+}
+
 TEST_CASE("the snap point, the zoom, play and scrub tools, the overview and the window layout", "[ui]")
 {
 	Fixture f;

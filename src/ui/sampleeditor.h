@@ -113,6 +113,7 @@ namespace gnubase::ui
 		double m_scale = 0.0;                          // 0 until it has fitted the clip
 		uint64_t m_fitted = 0;                         // the event it fitted
 		uint64_t m_region = 0;                         // the region selected in the list
+		std::string m_regionRows;                      // the regions list's rows, as last built
 		std::array<bool, 2> m_asking = {false, false}; // media.peaks in flight: the display's, the overview's
 		std::array<bool, 2> m_again = {false, false};  // asked again meanwhile
 

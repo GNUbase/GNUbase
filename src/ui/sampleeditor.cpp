@@ -444,7 +444,8 @@ namespace gnubase::ui
 	}
 
 	// The regions list (p. 624): a row per region of the clip with its name, start and end, the selected one
-	// .selected.
+	// .selected. The rows are rebuilt only when the regions change, so that a double click's second press lands on
+	// the row its first one selected: RmlUi sends dblclick only then.
 	void SampleEditor::renderRegions()
 	{
 		Rml::Element* list = m_root ? m_root->QuerySelector(".se-region-list") : nullptr;
@@ -456,14 +457,23 @@ namespace gnubase::ui
 				for (const Json& each : clip.value("regions", Json::array()))
 				{
 					const auto id = each.at("id").get<uint64_t>();
-					rml += R"(<div class="se-region)" + std::string(id == m_region ? " selected" : "") +
-						R"(" region=")" + std::to_string(id) + R"("><span class="se-region-name">)" +
+					rml += R"(<div class="se-region" region=")" + std::to_string(id) +
+						R"("><span class="se-region-name">)" +
 						Rml::StringUtilities::EncodeRml(each.at("name").get<std::string>()) +
 						R"(</span><span class="se-region-start">)" + std::to_string(each.at("start").get<int64_t>()) +
 						R"(</span><span class="se-region-end">)" + std::to_string(each.at("end").get<int64_t>()) +
 						"</span></div>";
 				}
-		setInner(list, rml);
+		if (rml != m_regionRows)
+		{
+			list->SetInnerRML(rml);
+			m_regionRows = rml;
+		}
+		for (int i = 0; i < list->GetNumChildren(); ++i)
+		{
+			Rml::Element* row = list->GetChild(i);
+			setClass(row, "selected", attribute(*row, "region") == std::to_string(m_region));
+		}
 	}
 
 	// Asks media.peaks for the display's columns, or the overview's of the whole clip; one question of each in
