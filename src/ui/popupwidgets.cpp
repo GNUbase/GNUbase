@@ -99,9 +99,10 @@ namespace gnubase::ui
 		// whose contextmenu attribute names the menu by id, or under a button whose menu attribute names it. A menu
 		// inside an item is its submenu, shown while the mouse is over the item or once Right opened it; its item
 		// shows a .menu-arrow part. A click on an item without a submenu closes the menu, as do Escape and a click
-		// outside it. Up and Down move the focus between the items, Enter clicks the focused one, Right opens the
-		// focused item's submenu and Left closes a submenu; in a menu of a <menubar>'s title, Right and Left otherwise
-		// open the next and previous title's menu. An open menu has the state class .open.
+		// outside it. Up and Down, and Tab and Shift+Tab, move the focus between the items, round the ends without
+		// leaving the menu; Enter clicks the focused one, Right opens the focused item's submenu and Left closes a
+		// submenu; in a menu of a <menubar>'s title, Right and Left otherwise open the next and previous title's menu.
+		// An open menu has the state class .open.
 		class Menu final : public Rml::Element
 		{
 		public:
@@ -172,6 +173,8 @@ namespace gnubase::ui
 					const auto key = event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN);
 					if (key == Rml::Input::KI_DOWN || key == Rml::Input::KI_UP)
 						moveFocus(key == Rml::Input::KI_DOWN ? 1 : -1);
+					else if (key == Rml::Input::KI_TAB) // instead of the document's, which leaves the menu (#524)
+						moveFocus(event.GetParameter("shift_key", false) ? -1 : 1);
 					else if (key == Rml::Input::KI_RIGHT)
 						right();
 					else if (key == Rml::Input::KI_LEFT)

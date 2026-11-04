@@ -556,12 +556,30 @@ TEST_CASE("Tab and Shift+Tab move the keyboard focus through the zones", "[ui]")
 	app.ui().key(std::nullopt, "Ctrl+Tab");
 	CHECK(!context.GetFocusElement()->HasAttribute("zone"));
 
-	// An open menu keeps its keys.
+	// An open menu keeps its keys: Tab and Shift+Tab step through its items and round its ends, without the focus
+	// leaving it for a zone or a menu bar button (#524).
 	app.ui().click(std::nullopt, at("button[menu=edit-menu]"), ui::MouseButton::Left, 1, {});
 	REQUIRE(has(element(app, "#edit-menu"), "open"));
-	app.ui().key(std::nullopt, "Tab");
-	CHECK(has(element(app, "#edit-menu"), "open"));
-	CHECK(!context.GetFocusElement()->HasAttribute("zone"));
+	Rml::Element* menu = document->GetElementById("edit-menu");
+	REQUIRE(menu != nullptr);
+	std::vector<Rml::Element*> items;
+	for (int i = 0; i < menu->GetNumChildren(); ++i)
+		if (menu->GetChild(i)->GetTagName() == "menuitem" && !menu->GetChild(i)->HasAttribute("disabled"))
+			items.push_back(menu->GetChild(i));
+	REQUIRE(items.size() > 1);
+	for (const char* key : {"Tab", "Shift+Tab"})
+	{
+		const bool forwards = std::string(key) == "Tab";
+		for (size_t step = 0; step <= items.size(); ++step)
+		{
+			app.ui().key(std::nullopt, key);
+			// From the menu itself, the first or last item, then the others in turn, and round to the first or last.
+			const size_t index = step % items.size();
+			CHECK(context.GetFocusElement() == items[forwards ? index : items.size() - 1 - index]);
+		}
+		CHECK(has(element(app, "#edit-menu"), "open"));
+		menu->Focus();
+	}
 	app.ui().key(std::nullopt, "Escape");
 }
 

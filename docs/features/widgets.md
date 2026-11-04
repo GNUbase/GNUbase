@@ -98,11 +98,13 @@ attributes, through a data model or directly.
   `menuitem:hover > menu`); a click on that item keeps the menu open. The menu gives such an item a `.menu-arrow`
   part when it opens, first in the item so that it floats right; the themes draw it with their dropdown arrow, turned
   to point right.
-- Keys: Down and Up move the focus between the items that aren't disabled, Enter clicks the focused one. Right opens
-  the focused item's submenu (with the state class `.open`) and focuses its first item, unless all its items are
-  disabled; Left closes the submenu and goes back to its item. A submenu that keys opened closes when the mouse goes
-  to another item of its menu, and with its menu. Escape closes every open menu. A menu that closes with the focus
-  in it gives the focus to its item, if it is a submenu, or else to its document.
+- Keys: Down and Up move the focus between the items that aren't disabled, round the ends, and so do Tab and Shift+Tab
+  (with Ctrl, Alt or Cmd too), so that the focus doesn't leave an open menu for another control while the menu stays
+  open (#524). Enter clicks the focused one. Right opens the focused item's submenu (with the state class `.open`) and
+  focuses its first item, unless all its items are disabled; Left closes the submenu and goes back to its item. A
+  submenu that keys opened closes when the mouse goes to another item of its menu, and with its menu. Escape closes
+  every open menu. A menu that closes with the focus in it gives the focus to its item, if it is a submenu, or else to
+  its document.
 - `<menubar>` holds the titles of menus: elements with a `menu` attribute, usually buttons. While one title's menu is
   open, the mouse over another title opens that one's menu instead; in a title's menu (and its submenus) Right and
   Left open the next and previous title's menu where they don't go into or out of a submenu, with its first item
@@ -213,7 +215,9 @@ decimals than they show when nothing was typed. Text displays send the text type
 started with, and nothing with Escape or when nothing was typed. Meters show their level and peak at the right heights.
 Menus open under their button and at the mouse, inside the window, show submenus on hover, close on an item, a click
 elsewhere and Escape, skip disabled items, and work with the keys; items with a submenu show an arrow, and Right and
-Left go into and out of the submenu, but not into one with nothing to focus. In a menu bar the mouse and Right and
+Left go into and out of the submenu, but not into one with nothing to focus; Tab, Shift+Tab and Ctrl+Tab step through
+a menu's and a submenu's items and round their ends without leaving the open menu, also in the project window's menu
+bar (`tests/docking_tests.cpp`). In a menu bar the mouse and Right and
 Left move between the open menus, also from a submenu, skipping a disabled title, and Alt alone opens the first menu,
 closing a context menu, and closes it, leaving the focus out of the closed menu (not on macOS, nor with another key,
 a click, a mouse button going up or the wheel, nor when SDL releases Alt as the window loses the keyboard or
