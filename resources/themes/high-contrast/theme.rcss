@@ -590,6 +590,10 @@
 		border-top-width: 1dp;
 		border-top-color: #ffffff;
 	}
+	.track-list .automation-row.selected
+	{
+		decorator: svg-ninepatch(list-item-selected.svg, 6 6 6 6);
+	}
 	.event-display .automation-lane
 	{
 		background-color: #00000080;

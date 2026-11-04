@@ -23,6 +23,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -192,7 +193,7 @@ namespace gnubase::app
 		}
 
 		// The track list's commands (ui::TrackList::actions, docs/features/track-list.md) and their keys.
-		constexpr std::array<ProjectCommand, 21> g_trackCommands{{
+		constexpr std::array<ProjectCommand, 27> g_trackCommands{{
 			{"track.selectPrevious",
 				"Selects the track above the selected one, and its first event while an event is selected.", "Up"},
 			{"track.selectNext",
@@ -219,6 +220,20 @@ namespace gnubase::app
 				"Shows the automation tracks of the selected tracks, or hides them if every one shows them.", nullptr},
 			{"track.showUsedAutomation", "Shows the automation tracks with automation on every track.", nullptr},
 			{"track.hideAllAutomation", "Hides every automation track.", nullptr},
+			// Copying automation to other tracks (docs/features/copy-automation.md).
+			{"track.copyAutomationAll", "Copies the automation of every track between the locators.", nullptr},
+			{"track.copyAutomationSelected", "Copies the automation of the selected tracks between the locators.",
+				nullptr},
+			{"track.copyAutomationSelectedParameters",
+				"Copies the automation of the selected automation tracks between the locators.", nullptr},
+			{"track.pasteAutomationAll",
+				"Pastes the copied automation onto the tracks it was copied from, between the locators.", nullptr},
+			{"track.pasteAutomationSelected",
+				"Pastes the copied automation onto the selected tracks, between the locators.", nullptr},
+			{"track.pasteAutomationSelectedParameters",
+				"Pastes the copied automation onto the selected automation tracks of the same parameters, between the "
+				"locators.",
+				nullptr},
 			// Lanes (docs/features/comping.md).
 			{"track.toggleLanesSelected",
 				"Shows the lanes of the selected tracks, or hides them if every one shows them.", nullptr},
@@ -471,6 +486,24 @@ namespace gnubase::app
 			[this](ui::Window&, Rml::Element*) { return m_trackList != nullptr && !m_trackList->selection().empty(); });
 		m_keys.add({"project.addTrack", "Opens the add track dialog.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { openDialog(window, "add-track.rml"); }});
+		// Group Track to Selected Tracks and Effect Track to Selected Tracks (reference manual pp. 546, 554): the add
+		// track dialog's page for the new track, which the selected tracks play or send into.
+		for (const auto& [id, type, description] :
+			{std::tuple{"track.addGroupToSelected", "group",
+				 "Opens the add track dialog for a group track that the selected tracks play into."},
+				std::tuple{"track.addEffectToSelected", "effect",
+					"Opens the add track dialog for an effect track that the selected tracks send to."}})
+		{
+			m_keys.add({id, description, [this, type = std::string(type)](ui::Window& window, Rml::Element* /*zone*/)
+				{
+					std::string tracks;
+					for (const uint64_t track : m_trackList ? m_trackList->selection() : std::vector<uint64_t>())
+						tracks += (tracks.empty() ? "" : ",") + std::to_string(track);
+					openDialog(window, "add-track.rml", {{"type", type}, {"tracks", tracks}});
+				}});
+			m_keys.enableWhen(id, [this](ui::Window&, Rml::Element*)
+				{ return m_trackList != nullptr && !m_trackList->selection().empty(); });
+		}
 		// Project > Project Colors Setup (docs/features/colors.md).
 		m_keys.add({"project.colorsSetup", "Opens the project colors setup dialog, which edits the project's colors.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { openDialog(window, "project-colors.rml"); }});
@@ -1277,12 +1310,15 @@ namespace gnubase::app
 		document->Show(Rml::ModalFlag::Modal);
 	}
 
-	Rml::ElementDocument& AppUi::openDialog(ui::Window& window, const char* name) const
+	Rml::ElementDocument& AppUi::openDialog(
+		ui::Window& window, const char* name, const std::vector<std::pair<std::string, std::string>>& attributes) const
 	{
 		const std::filesystem::path file = m_resources / "ui" / name;
 		Rml::ElementDocument* document = window.context().LoadDocument(file.generic_u8string());
 		if (document == nullptr)
 			throw std::runtime_error("cannot load the dialog " + file.u8string());
+		for (const auto& [attribute, value] : attributes)
+			document->SetAttribute(attribute, value);
 		document->Show(Rml::ModalFlag::Modal);
 		return *document;
 	}

@@ -386,6 +386,25 @@ namespace gnubase::ui
 				m_hiddenTypes = event.data.at("hiddenTypes").get<std::set<std::string>>();
 				show();
 			}));
+		// Ctrl-click gives a send the default send level (reference manual p. 552).
+		const auto sendLevel = [this](const Json& value)
+		{
+			m_defaultSendLevel = value.get<double>();
+			show();
+		};
+		m_subscriptions.push_back(m_binding.on("settings.changed",
+			[sendLevel](const engine::Event& event)
+			{
+				if (const auto level = event.data.at("values").find("audio.defaultSendLevel");
+					level != event.data.at("values").end())
+					sendLevel(*level);
+			}));
+		m_binding.send("settings.get", {{"key", "audio.defaultSendLevel"}},
+			[sendLevel, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (!alive.expired() && result.ok())
+					sendLevel(result.value.at("value"));
+			});
 		requestView();
 		requestProject();
 	}
@@ -625,6 +644,10 @@ namespace gnubase::ui
 				if (attribute(*control, "value") != text)
 					control->SetAttribute("value", text);
 			}
+			const std::string param = attribute(*control, "param");
+			const std::string level = widgets::format(static_cast<float>(m_defaultSendLevel));
+			if (param.rfind("sends.", 0) == 0 && endsWith(param, ".level") && attribute(*control, "default") != level)
+				control->SetAttribute("default", level);
 		}
 		m_updating = false;
 		if (Rml::Element* fader = strip.QuerySelector("fader"))
