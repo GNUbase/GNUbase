@@ -231,6 +231,28 @@ TEST_CASE("event.comp takes a piece of a clip at another sample rate that a spli
 	CHECK(piece.at("front").get<int64_t>() > back);
 }
 
+TEST_CASE("event.comp leaves a locked take that crosses the range's edges where it is", "[unit]")
+{
+	Fixture f;
+	const int64_t track = f.track("audio");
+	const Json media =
+		f.call("media.add", {{"path", "take.wav"}, {"sampleRate", 48000}, {"channels", 1}, {"length", 48000}})
+			.at("media");
+	const auto clip = f.call("clip.add", {{"media", media.at("id")}}).at("clip").at("id").get<int64_t>();
+	const int64_t locked = f.take(track, clip, 0, 1000, 0);
+	f.call("event.set", {{"events", {locked}}, {"lock", true}});
+	f.take(track, clip, 0, 1000, 1);
+
+	// The locked take isn't split, so it isn't within 400 to 700 and doesn't come to the front whole.
+	CHECK_THAT(f.fails("event.comp", {{"track", track}, {"lane", 0}, {"start", 400}, {"end", 700}}),
+		ContainsSubstring("nothing"));
+	CHECK(f.object("audioEvents", locked).at("front") == 0);
+	// Wholly within the range it is taken.
+	const Json comped = f.call("event.comp", {{"track", track}, {"lane", 0}, {"start", 0}, {"end", 1000}});
+	REQUIRE(comped.at("events").size() == 1);
+	CHECK(comped.at("events").at(0) == locked);
+}
+
 TEST_CASE("MIDI takes come to the front unmuted, muting the takes on other lanes they overlap", "[unit]")
 {
 	Fixture f;

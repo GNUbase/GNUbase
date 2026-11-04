@@ -1739,9 +1739,12 @@ namespace gnubase::engine
 			require(start >= 0 && end > start, "the range is empty");
 			for (const time::Samples at : {start, end})
 				splitTracks(project, {track}, at, false, false, context);
+			// The splits leave locked takes whole: those are taken only when they lie wholly in the range.
 			std::vector<Item> taken;
 			for (const Item& item : within(project, {track}, start, end, true))
-				if (item.lane() == lane)
+				if (item.lane() == lane &&
+					(!item.locked() ||
+						(samples(project, item.position()) >= start && samples(project, endOf(project, item)) <= end)))
 					taken.push_back(item);
 			require(!taken.empty(), "lane " + std::to_string(lane) + " has nothing from start to end");
 			for (const Item& item : taken)
