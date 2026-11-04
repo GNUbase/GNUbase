@@ -255,6 +255,8 @@ namespace gnubase::engine
 				for (const ObjectId id : tracks)
 				{
 					const Track& track = renderable(project, id);
+					// A freeze file is already through the pre section and the slots that dry copies onto the new track.
+					require(mode != "dry" || !track.frozen, track.name + " is frozen: unfreeze it to render it dry");
 					Span span = spanOf(snapshot, track.channel);
 					if (parameters.contains("start"))
 						span = {parameters.at("start").get<time::Samples>(), parameters.at("end").get<time::Samples>()};

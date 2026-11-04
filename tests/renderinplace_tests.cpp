@@ -273,6 +273,30 @@ TEST_CASE("a frozen track null-tests against the live render", "[integration]")
 	CHECK(nullTest(project.mainMix(), live) < 1e-20f);
 }
 
+TEST_CASE("undo brings back the freeze file that was frozen then", "[integration]")
+{
+	Session project;
+	const Session::Track audio = project.addTrack("Ramp");
+	const ObjectId slot = project.insertGain(audio.channel, -6.0);
+	run(project.client, "audio.render", {{"frames", 4096}});
+	const Json first = run(project.client, "track.freeze", {{"tracks", {audio.track}}, {"tail", 0}});
+	const std::vector<float> frozen = project.mainMix();
+
+	run(project.client, "track.unfreeze", {{"tracks", {audio.track}}});
+	run(project.client, "parameter.set",
+		{{"channel", audio.channel}, {"target", {{"type", "plugin"}, {"slot", slot}, {"parameter", 0}}},
+			{"value", 0.0}});
+	run(project.client, "audio.render", {{"frames", 4096}});
+	const Json second = run(project.client, "track.freeze", {{"tracks", {audio.track}}, {"tail", 0}});
+	REQUIRE(second.at("tracks").at(0).at("frozen").at("path") != first.at("tracks").at(0).at("frozen").at("path"));
+	CHECK(nullTest(project.mainMix(), frozen) > 0.1f);
+
+	for (int step = 0; step < 3; ++step) // the freeze, the gain and the unfreeze
+		run(project.client, "history.undo");
+	REQUIRE(project.track(audio.track).at("frozen") == first.at("tracks").at(0).at("frozen"));
+	CHECK(nullTest(project.mainMix(), frozen) < 1e-20f);
+}
+
 TEST_CASE("a frozen track stays frozen in the project file", "[integration]")
 {
 	Session project;
@@ -395,5 +419,8 @@ TEST_CASE("render in place refuses what it can't render", "[integration]")
 	CHECK_THAT(reject(project.client, "track.renderInPlace", {{"tracks", {audio.track}}, {"start", 10}, {"end", 10}}),
 		ContainsSubstring("empty"));
 	CHECK_THAT(reject(project.client, "track.renderInPlace", {{"tracks", {empty}}}), ContainsSubstring("nothing"));
+	run(project.client, "track.freeze", {{"tracks", {audio.track}}, {"tail", 0}});
+	CHECK_THAT(reject(project.client, "track.renderInPlace", {{"tracks", {audio.track}}, {"processing", "dry"}}),
+		ContainsSubstring("frozen"));
 	CHECK(run(project.client, "project.get").at("tracks").size() == 2);
 }
