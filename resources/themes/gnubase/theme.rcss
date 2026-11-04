@@ -702,6 +702,41 @@
 	{
 		background-color: #10dff2;
 	}
+	.se-overview, .se-display
+	{
+		background-color: #101426;
+	}
+	.se-overview-event
+	{
+		background-color: #f1f4ff1a;
+	}
+	.se-overview-selection, .se-selection
+	{
+		background-color: #f1f4ff33;
+	}
+	.se-overview-view
+	{
+		border-width: 1dp;
+		border-color: #10dff2;
+	}
+	.se-overview-snap, .se-snap-point
+	{
+		background-color: #e12ad8;
+	}
+	.se-outside
+	{
+		background-color: #090b1899;
+	}
+	.se-region-shown
+	{
+		border-width: 1dp;
+		border-color: #e12ad8;
+		background-color: #e12ad81a;
+	}
+	.se-region.selected
+	{
+		background-color: #106578;
+	}
 	.list-editor-header
 	{
 		color: #aeb7d0;

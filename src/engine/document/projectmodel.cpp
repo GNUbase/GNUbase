@@ -6,6 +6,7 @@
 #include "engine/dawproject/dawproject.h"
 #include "engine/document/editors.h"
 #include "engine/document/mixerviews.h"
+#include "engine/document/sampleeditor.h"
 #include "engine/document/serialize.h"
 #include "engine/document/volumecurves.h"
 #include "engine/dsp/timestretch.h"
@@ -3560,6 +3561,7 @@ namespace gnubase::engine
 		registerSnapCommands(*this, engine);
 		registerMixerCommands(*this, engine);
 		registerEditorCommands(*this, engine);
+		registerSampleEditorCommands(*this, engine);
 		registerHistoryCommands(engine);
 		registerMediaFolderCommands(engine, jobs);
 		registerProjectFileCommands(engine);

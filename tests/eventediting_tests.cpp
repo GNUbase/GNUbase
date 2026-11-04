@@ -274,6 +274,18 @@ TEST_CASE("the object selection tool's modifiers act on events whatever keys the
 	CHECK(f.parts()[3].at("track") == midi.at("id"));
 }
 
+TEST_CASE("a double click on an audio event opens it in the sample editor", "[unit]")
+{
+	Fixture f;
+	// On the MIDI part it doesn't (the MIDI editors open with Open/Close Editor).
+	f.click(150, 60, {}, 2);
+	f.step();
+	CHECK(f.call("sampleEditor.get").at("open") == false);
+	f.click(220, 20, {}, 2);
+	REQUIRE(f.waitUntil([&f] { return f.call("sampleEditor.get").at("open") == true; }));
+	CHECK(f.call("sampleEditor.get").at("event") == f.event);
+}
+
 TEST_CASE("a double click below the tracks adds a MIDI track", "[unit]")
 {
 	Fixture f;
