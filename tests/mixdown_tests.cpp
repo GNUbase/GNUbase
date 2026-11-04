@@ -345,7 +345,7 @@ TEST_CASE("a mixdown refuses what it can't export and leaves no files", "[integr
 		ContainsSubstring("FLAC"));
 	CHECK_THAT(refuse({{"start", 0}, {"end", 1000}, {"format", "aiff"}, {"sampleFormat", "float64"}}),
 		ContainsSubstring("AIFF"));
-	CHECK(fs::is_empty(project.folder.path()));
+	CHECK(fs::directory_iterator(project.folder.path()) == fs::directory_iterator());
 }
 
 TEST_CASE("a quick export writes the main mix of every event", "[integration]")
