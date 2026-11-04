@@ -979,7 +979,8 @@ namespace gnubase::engine
 		Json parameters = context.parameters();
 		const bool remember = parameters.value("remember", false);
 		const bool fallBack = parameters.value("fallBackToDummy", false);
-		const bool start = parameters.value("start", m_device ? m_device->running() : m_lost && m_lost->restart);
+		const bool running = m_device ? m_device->running() : m_lost && m_lost->restart;
+		const bool start = parameters.value("start", running || m_startAfterFailure);
 		// What the command does with the device, not what audio.reset opens it again with.
 		for (const char* key : {"remember", "fallBackToDummy", "start"})
 			parameters.erase(key);
@@ -993,7 +994,16 @@ namespace gnubase::engine
 		}
 		const std::string backend = parameters.value("backend", std::string("dummy"));
 		const std::string device = parameters.value("device", std::string());
-		m_failed = nullptr;
+		const uint64_t closed = m_closed;
+		// A failure leaves no device, or one that doesn't run: the next device runs if this one was to, so that a
+		// driver that failed in Studio Setup doesn't stop playback for good. And failed only describes the dummy
+		// device that plays instead while it does.
+		const auto failing = [this, start, closed]
+		{
+			m_startAfterFailure = start && !(m_device && m_device->running());
+			if (m_closed != closed)
+				m_failed = nullptr;
+		};
 		try
 		{
 			setDevice(parameters);
@@ -1003,26 +1013,39 @@ namespace gnubase::engine
 		catch (const std::exception& error)
 		{
 			if (!fallBack || backend == "dummy")
+			{
+				failing();
 				throw;
+			}
 			const std::exception_ptr failure = std::current_exception();
 			logging::warning("Cannot use the audio device ({} {}), playing on the dummy device instead: {}", backend,
 				device, error.what());
 			Json failed = {{"backend", backend}, {"device", device}, {"reason", error.what()}};
 			closeDevice(); // one that opened but didn't start
+			// The dummy device without capture memory, at the sample rate and block size asked for.
+			Json dummy = {{"backend", "dummy"}, {"captureSeconds", 0}};
+			if (parameters.contains("sampleRate"))
+				dummy["sampleRate"] = parameters.at("sampleRate");
+			if (parameters.value("blockSize", int64_t{0}) > 0)
+				dummy["blockSize"] = parameters.at("blockSize");
 			try
 			{
-				setDevice({{"backend", "dummy"}, {"captureSeconds", 0}});
+				setDevice(dummy);
 				if (start)
 					startDevice();
 			}
 			catch (const std::exception& fallbackError)
 			{
 				logging::warning("Cannot play on the dummy device either: {}", fallbackError.what());
+				failing();
 				std::rethrow_exception(failure);
 			}
 			m_failed = std::move(failed);
+			m_startAfterFailure = false;
 			return;
 		}
+		m_failed = nullptr;
+		m_startAfterFailure = false;
 		if (remember)
 			m_engine->setSettings(context, {{"audio.backend", chosen}, {"audio.device", device}});
 	}
@@ -1756,11 +1779,13 @@ namespace gnubase::engine
 				"when the project's sample rate changes, the device follows it where it can. blockSize: by default "
 				"the driver's preferred size. clockSource: a name from the device's clockSources. The device starts "
 				"at position 0, running if start says so, by default if the device it replaces ran (or, lost, was to "
-				"start again). Another backend's device is closed before the new one opens, since drivers often "
-				"allow only one; if opening fails, there is no device, and if starting fails, the device stays open "
-				"and stopped. With fallBackToDummy, a device that can't be opened or started is replaced by the dummy "
-				"device without capture memory, started if start says so, and failed in audio.get says what failed "
-				"and why, until the next audio.setDevice; the windowed app opens its device like that. remember: "
+				"start again), or if the last audio.setDevice failed to run one it was to start. Another backend's "
+				"device is closed before the new one opens, since drivers often allow only one; if opening fails, "
+				"there is no device, and if starting fails, the device stays open and stopped. With fallBackToDummy, "
+				"a device that can't be opened or started is replaced by the dummy device without capture memory, at "
+				"the sampleRate and blockSize asked for, started if start says so, and failed in audio.get says what "
+				"failed and why, until another device replaces that dummy device; the windowed app opens its device "
+				"like that. remember: "
 				"once the device runs as asked (not the fallback), saves backend and device as given as the user "
 				"settings audio.backend and audio.device, which the windowed app opens when it starts, and sends "
 				"settings.changed.\n"
@@ -2081,6 +2106,7 @@ namespace gnubase::engine
 				noParameters(), statusSchema(), false},
 			[this](CommandContext& context)
 			{
+				m_startAfterFailure = false;
 				if (m_lost && !m_device)
 				{
 					if (!m_lost->restart)
@@ -2106,6 +2132,7 @@ namespace gnubase::engine
 				noParameters(), statusSchema(), false},
 			[this](CommandContext& context)
 			{
+				m_startAfterFailure = false;
 				if (m_device && m_device->running())
 				{
 					stopDevice();

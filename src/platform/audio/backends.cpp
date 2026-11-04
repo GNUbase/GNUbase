@@ -37,7 +37,7 @@ namespace gnubase::audio
 
 	std::string defaultBackend()
 	{
-#if defined(_WIN32)
+#ifdef _WIN32
 		return "wasapi";
 #elif defined(__APPLE__)
 		return "coreaudio";

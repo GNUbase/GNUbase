@@ -446,11 +446,14 @@ TEST_CASE("the windowed app starts on the dummy device if the device chosen last
 		call(client, "settings.set", {{"key", "audio.backend"}, {"value", "coreaudio-elsewhere"}});
 	}
 	engine.reset();
-	engine = start(Options{}, errors);
+	Options blocks; // the dummy device takes the command line's block size too
+	blocks.blockSize = 128;
+	engine = start(blocks, errors);
 	{
 		gnubase::engine::Client client(*engine);
 		const Json status = call(client, "audio.get");
 		CHECK(status.at("device").at("backend") == "dummy");
+		CHECK(status.at("device").at("blockSize") == 128);
 		CHECK(status.at("failed").at("backend") == "coreaudio-elsewhere");
 	}
 

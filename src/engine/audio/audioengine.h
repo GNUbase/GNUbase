@@ -312,6 +312,9 @@ namespace gnubase::engine
 		// The device the last audio.setDevice couldn't open or start, so the dummy device plays instead
 		// (fallBackToDummy): its backend, id and the reason. Null if it opened.
 		Json m_failed = nullptr;
+		// The last audio.setDevice failed and left no running device although it was to run one: the next one
+		// starts unless told otherwise. audio.start and audio.stop decide anew.
+		bool m_startAfterFailure = false;
 		std::unique_ptr<audio::Device> m_device;
 		audio::DummyDevice* m_dummy = nullptr; // m_device, if it is the dummy device
 		std::vector<std::string> m_inputPorts; // the device's port names, each one once

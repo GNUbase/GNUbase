@@ -1074,6 +1074,22 @@ TEST_CASE(
 	CHECK(status.at("device").at("backend") == "fake");
 	CHECK(status.at("running") == false);
 	driver->failStart = false;
+	// The next device still runs, as the failed one was to.
+	CHECK(run(client, "audio.setDevice").at("running") == true);
+
+	// Likewise after a device that doesn't open and leaves none, as when a driver picked in Studio Setup fails.
+	driver->connected = false;
+	reject(client, "audio.setDevice", {{"backend", "fake"}});
+	CHECK(run(client, "audio.get").at("device").is_null());
+	driver->connected = true;
+	CHECK(run(client, "audio.setDevice", {{"backend", "fake"}}).at("running") == true);
+
+	// audio.stop decides anew: after a failure while stopped, the next device stays stopped.
+	run(client, "audio.stop");
+	driver->connected = false;
+	reject(client, "audio.setDevice", {{"backend", "fake"}});
+	driver->connected = true;
+	CHECK(run(client, "audio.setDevice", {{"backend", "fake"}}).at("running") == false);
 
 	// A lost device that was to start again counts as running.
 	run(client, "audio.setDevice", {{"start", true}});
@@ -1112,7 +1128,18 @@ TEST_CASE("audio.setDevice falls back to the dummy device if asked to, and audio
 	CHECK(status.at("device").at("backend") == "dummy");
 	CHECK(status.at("running") == true); // the fallback ran
 	CHECK_THAT(status.at("failed").at("reason").get<std::string>(), ContainsSubstring("no audio backend"));
-	CHECK(status.at("failed").at("device") == "");
+	CHECK(status.at("failed").at("device").get<std::string>().empty());
+
+	// A command that fails before it closes the dummy device leaves it playing, with what failed.
+	reject(client, "audio.setDevice", {{"backend", "fake"}, {"recordShift", 1000000}});
+	CHECK(run(client, "audio.get").at("failed") == status.at("failed"));
+
+	// The dummy device takes the sample rate and block size asked for.
+	status = run(client, "audio.setDevice",
+		{{"backend", "fake"}, {"sampleRate", 44100}, {"blockSize", 128}, {"fallBackToDummy", true}});
+	CHECK(status.at("device").at("backend") == "dummy");
+	CHECK(status.at("device").at("sampleRate") == 44100.0);
+	CHECK(status.at("device").at("blockSize") == 128);
 	driver->connected = true;
 	driver->failStart = true;
 	status = run(client, "audio.setDevice", {{"backend", "fake"}, {"fallBackToDummy", true}});
@@ -1155,7 +1182,7 @@ TEST_CASE("an empty backend is the platform's default backend, or the preferred 
 	Engine platform(std::move(backends));
 	Client platformClient(platform);
 	CHECK(run(platformClient, "audio.setDevice", {{"backend", ""}}).at("device").at("backend") == defaultBackend());
-#if defined(_WIN32)
+#ifdef _WIN32
 	const std::string platformDefault = "wasapi";
 #elif defined(__APPLE__)
 	const std::string platformDefault = "coreaudio";
@@ -1174,7 +1201,7 @@ TEST_CASE("audio.setDevice with remember saves the device for the next start as 
 		Engine engine(fakeBackends(std::make_shared<FakeDriver>()), dir.path());
 		Client client(engine);
 		run(client, "audio.setDevice", {{"backend", "fake"}}); // without remember, nothing is saved
-		CHECK(run(client, "settings.get", {{"key", "audio.backend"}}).at("value") == "");
+		CHECK(run(client, "settings.get", {{"key", "audio.backend"}}).at("value").get<std::string>().empty());
 		while (client.wait(std::chrono::milliseconds(0)))
 			;
 
@@ -1193,7 +1220,7 @@ TEST_CASE("audio.setDevice with remember saves the device for the next start as 
 		reject(client, "audio.setDevice", {{"backend", "fake"}, {"device", "fake-2"}, {"remember", true}});
 		run(client, "audio.setDevice",
 			{{"backend", "fake"}, {"device", "fake-2"}, {"remember", true}, {"fallBackToDummy", true}});
-		CHECK(run(client, "settings.get", {{"key", "audio.device"}}).at("value") == "");
+		CHECK(run(client, "settings.get", {{"key", "audio.device"}}).at("value").get<std::string>().empty());
 		CHECK(run(client, "settings.get", {{"key", "audio.backend"}}).at("value") == "fake");
 
 		// remember, start and fallBackToDummy belong to the command, not to the device's settings that audio.reset
@@ -1205,7 +1232,7 @@ TEST_CASE("audio.setDevice with remember saves the device for the next start as 
 	Engine engine(fakeBackends(std::make_shared<FakeDriver>()), dir.path());
 	Client client(engine);
 	CHECK(run(client, "settings.get", {{"key", "audio.backend"}}).at("value") == "fake");
-	CHECK(run(client, "settings.get", {{"key", "audio.device"}}).at("value") == "");
+	CHECK(run(client, "settings.get", {{"key", "audio.device"}}).at("value").get<std::string>().empty());
 }
 
 TEST_CASE("the device follows the project's sample rate where it can and reports a mismatch where it can't", "[unit]")
