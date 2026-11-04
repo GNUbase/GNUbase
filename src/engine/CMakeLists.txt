@@ -115,6 +115,7 @@ add_library(gnubase-engine STATIC
 	document/eventedits.cpp
 	document/fadeedits.cpp
 	document/history.cpp document/history.h
+	document/linkgroups.cpp document/linkgroups.h
 	document/markers.cpp
 	document/midiedits.cpp
 	document/midifilecommands.cpp

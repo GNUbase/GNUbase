@@ -62,10 +62,11 @@ namespace gnubase::engine
 	// Entries sorted by start that never overlap.
 	using PlaylistLayer = std::vector<PlaylistEntry>;
 
-	// What an audio track plays. The first layer is the front: where events overlap, the one added last (the highest
-	// id) is in front and plays. Muted events don't play and hide nothing. The layers after it hold what plays along
-	// with the front where events crossfade: the event that fades out under the one that fades in, or the one that
-	// fades in under the end of the one in front, and events joined to those by crossfades of their own.
+	// What an audio track plays. The first layer is the front: where events overlap, the one with the highest front
+	// (frontOf: the one added last, or brought to the front last) plays. Muted events don't play and hide nothing. The
+	// layers after it hold what plays along with the front where events crossfade: the event that fades out under the
+	// one that fades in, or the one that fades in under the end of the one in front, and events joined to those by
+	// crossfades of their own.
 	struct Playlist
 	{
 		std::vector<PlaylistLayer> layers;

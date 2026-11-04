@@ -798,8 +798,8 @@ namespace gnubase::ui
 			m_drag = Drag::None;
 			return;
 		}
-		if (drag == Drag::Rectangle || drag == Drag::Range || drag == Drag::DrawPart || drag == Drag::Play ||
-			drag == Drag::Click || drag == Drag::VolumePoint)
+		if (drag == Drag::Rectangle || drag == Drag::Range || drag == Drag::DrawPart || drag == Drag::Comp ||
+			drag == Drag::Play || drag == Drag::Click || drag == Drag::VolumePoint)
 		{
 			toolUp(dpFrom(*m_lanes, event.GetParameter<float>("mouse_x", 0.0F)),
 				(event.GetParameter<float>("mouse_y", 0.0F) - m_lanes->GetAbsoluteTop()) / dpRatio());

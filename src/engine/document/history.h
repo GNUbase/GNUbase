@@ -81,6 +81,7 @@ namespace gnubase::engine
 		std::vector<MidiPartChange> midiParts;
 		std::vector<ObjectChange<Marker>> markers;
 		std::vector<AutomationLaneChange> automation;
+		std::vector<ObjectChange<LinkGroup>> linkGroups;
 
 		bool empty() const;
 	};
