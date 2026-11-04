@@ -23,6 +23,8 @@ add_library(gnubase-ui STATIC
 	colormenu.cpp
 	colormenu.h
 	colorwidgets.cpp
+	controllerlanes.cpp
+	controllerlanes.h
 	cursors.cpp
 	cursors.h
 	datamodel.cpp

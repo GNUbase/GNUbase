@@ -2,7 +2,9 @@
 // The tempo track (#155, reference manual pp. 162, 1446-1458): tempo.add, tempo.set and tempo.remove edit the tempo
 // track's tempo events, in either tempo mode, and tempo.tap applies a tapped tempo. project.set switches between fixed
 // tempo and tempo track mode (tempoTrackActive). Each command is one undo step and changes nothing if it fails
-// (ProjectModel::add).
+// (ProjectModel::add). tempo.export and tempo.import write and read the tempo track with the time signature events
+// as a file of their own (#160, reference manual p. 1462).
+#include "engine/dawproject/dawproject.h"
 #include "engine/document/document.h"
 #include "engine/document/projectmodel.h"
 #include "engine/document/serialize.h"
@@ -15,6 +17,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace gnubase::engine
@@ -213,6 +216,45 @@ namespace gnubase::engine
 			result["applied"] = "project";
 			return result;
 		}
+
+		Json exportTempo(Project& project, CommandContext& context)
+		{
+			const TempoTrackFile file{project.tempoTrack(), project.signatures};
+			try
+			{
+				saveTempoTrack(file, context.parameters().at("path").get<std::string>());
+			}
+			catch (const DawProjectError& error)
+			{
+				throw CommandError(error.what());
+			}
+			return {{"tempoEvents", file.tempo.points().size()}, {"signatureEvents", file.signatures.changes().size()}};
+		}
+
+		Json importTempo(Project& project, CommandContext& context)
+		{
+			TempoTrackFile file;
+			try
+			{
+				file = loadTempoTrack(context.parameters().at("path").get<std::string>());
+			}
+			catch (const DawProjectError& error)
+			{
+				throw CommandError(error.what());
+			}
+			// The file's tempo changes play: the tempo track becomes active, as for a MIDI file's (midiFile.import).
+			const time::TempoMap before = project.tempo;
+			if (file.tempo.points().size() > 1 && !project.tempoTrackActive)
+			{
+				project.otherTempo = project.tempo;
+				project.tempoTrackActive = true;
+			}
+			project.tempoTrack() = std::move(file.tempo);
+			project.signatures = std::move(file.signatures);
+			context.emit("signature.changed", {{"signatures", signaturesJson(project)}});
+			tempoChanged(project, before, context);
+			return {{"tempo", tempoJson(project)}, {"signatures", signaturesJson(project)}};
+		}
 	}
 
 	Json tempoJson(const Project& project)
@@ -344,5 +386,28 @@ namespace gnubase::engine
 					{"required", {"bpm", "applied", "position"}}},
 				false},
 			tapTempo);
+		const Json pathSchema = objectSchema({{"path", {{"type", "string"}}}}, {"path"});
+		add(engine,
+			{"tempo.export", 1,
+				"Exports the tempo track's events, which fixed tempo mode keeps too, and the time signature events "
+				"into an XML file at path (File > Export > Tempo Track), which tempo.import reads. Returns the number "
+				"of tempo and time signature events.",
+				pathSchema,
+				{{"type", "object"}, {"properties", {{"tempoEvents", ticksSchema}, {"signatureEvents", ticksSchema}}},
+					{"required", {"tempoEvents", "signatureEvents"}}},
+				true},
+			exportTempo);
+		add(engine,
+			{"tempo.import", 1,
+				"Imports a file that tempo.export wrote (File > Import > Tempo Track): its tempo events replace the "
+				"tempo track's and its time signature events the project's. A file with tempo changes makes the "
+				"tempo track active; the fixed tempo stays. One undo step. Returns the tempo as tempo.changed reports "
+				"it and the time signature events as signature.changed does.",
+				pathSchema,
+				{{"type", "object"},
+					{"properties", {{"tempo", {{"type", "object"}}}, {"signatures", {{"type", "array"}}}}},
+					{"required", {"tempo", "signatures"}}},
+				false},
+			importTempo);
 	}
 }

@@ -413,3 +413,40 @@ TEST_CASE("Tap Tempo in tempo track mode adds a tempo event at the start of the 
 	CHECK(tempo[1].at("position") == 4 * g_quarter);
 	CHECK(tempo[1].at("bpm") == 100.0);
 }
+
+TEST_CASE("File > Export and File > Import > Tempo Track write and read the tempo track file chosen", "[ui]")
+{
+	test::UiApp app{{1000, 700}};
+	const test::TempDir dir;
+	app.appUi().showProject();
+	for (const char* command : {"file.exportTempo", "file.importTempo"})
+	{
+		CHECK(app.ui()
+				  .dom(std::nullopt, std::string("#file-menu menuitem[command=\"") + command + "\"]", 0)
+				  .at("elements")
+				  .size() == 1);
+		CHECK(app.keys().canRun(command, app.main(), nullptr));
+	}
+	app.call("tempo.add", {{"position", 4 * g_quarter}, {"bpm", 90.0}, {"ramp", false}});
+	app.call("signature.add", {{"bar", 1}, {"numerator", 3}, {"denominator", 4}});
+	const Json before = app.call("project.get");
+
+	// The file chosen gets the extension .xml if it has none.
+	app.keys().run("file.exportTempo", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return app.shell().fileDialogs().size() == 1; }));
+	CHECK(app.shell().fileDialogs().begin()->second.kind == ui::FileDialogKind::Save);
+	CHECK(app.shell().answerFileDialog(app.shell().fileDialogs().begin()->first, {dir.path() / "song"}));
+	app.shell().step(milliseconds(0));
+	app.call("project.revision"); // after the export, which the command thread runs first
+	REQUIRE(std::filesystem::exists(dir.path() / "song.xml"));
+
+	app.call("project.new");
+	app.keys().run("file.importTempo", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return app.shell().fileDialogs().size() == 1; }));
+	CHECK(app.shell().fileDialogs().begin()->second.kind == ui::FileDialogKind::Open);
+	CHECK(app.shell().answerFileDialog(app.shell().fileDialogs().begin()->first, {dir.path() / "song.xml"}));
+	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("tempoTrack").size() == 2; }));
+	const Json after = app.call("project.get");
+	CHECK(after.at("tempoTrack") == before.at("tempoTrack"));
+	CHECK(after.at("signatures") == before.at("signatures"));
+}
