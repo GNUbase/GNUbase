@@ -36,7 +36,9 @@
 	<textdisplay id="secondary-time" class="display" time="position" format="secondary" title="Secondary Time Display"/>
 </div>
 <div class="transport-section" section="tempoSignature" label="Tempo &amp; Time Signature" title="Tempo &amp; Time Signature">
+	<button id="tempo-track" class="icon-only" field="tempoTrack" title="Activate Tempo Track"><svg class="icon" src="../icons/transport-tempo-track.svg"/></button>
 	<valuefield id="tempo" field="tempo" min="1" max="999" step="1" decimals="3" title="Tempo"/>
+	<button id="tap-tempo" class="icon-only" field="tap" title="Tap Tempo"><svg class="icon" src="../icons/transport-tap-tempo.svg"/></button>
 	<textdisplay id="signature" class="display" field="signature" title="Time Signature"/>
 </div>
 <div class="transport-section" section="click" label="Click" title="Click">

@@ -215,6 +215,56 @@ namespace gnubase::engine
 			return {{"parameters", std::move(parameters)}};
 		}
 
+		// What a track's automation tracks can show (reference manual p. 880): its channel's parameters, and on MIDI
+		// and instrument tracks pitch bend, channel pressure and the controllers, each with the lane the track has for
+		// it.
+		Json listAutomationTargets(Project& project, CommandContext& context)
+		{
+			const auto id = context.parameters().at("track").get<ObjectId>();
+			const auto track = project.trackById.find(id);
+			require(track != project.trackById.end(), "no track " + idText(id));
+			Json targets = Json::array();
+			if (track->second.channel == 0)
+				return {{"targets", std::move(targets)}};
+			const auto add = [&](const AutomationTarget& target, Json description, const std::string& group)
+			{
+				ObjectId lane = 0;
+				for (const auto& [laneId, other] : project.automation)
+					if (other.track == id && other.target == target)
+						lane = laneId;
+				description["group"] = group;
+				description["lane"] = lane;
+				targets.push_back(std::move(description));
+			};
+			const Channel& channel = project.channels.at(track->second.channel);
+			for (const ChannelParameter& parameter : channelParameters(project, channel))
+			{
+				std::string group = "Channel";
+				if (parameter.target.type == AutomationTargetType::Instrument)
+					group = processors::findBuiltin(channel.instrument)->name;
+				else if (parameter.target.type == AutomationTargetType::Plugin)
+					group = processors::findBuiltinPlugin(project.slots.at(parameter.target.slot).plugin)->name;
+				add(parameter.target, describe(project, channel, parameter), group);
+			}
+			if (track->second.type != TrackType::Midi && track->second.type != TrackType::Instrument)
+				return {{"targets", std::move(targets)}};
+			const auto midi = [&](AutomationTargetType type, uint8_t number, const std::string& name, double value)
+			{
+				const AutomationTarget target{type, 0, number, 0, 0};
+				add(target,
+					{{"target", toJson(target)}, {"name", name}, {"minimum", 0.0}, {"maximum", 1.0}, {"default", value},
+						{"unit", ""}, {"stepped", false}, {"options", Json::array()}, {"value", value},
+						{"text", processors::valueToText({}, value)}},
+					"MIDI");
+			};
+			midi(AutomationTargetType::PitchBend, 0, "Pitch Bend", 0.5);
+			midi(AutomationTargetType::ChannelPressure, 0, "Channel Pressure", 0.0);
+			for (int number = 0; number < 128; ++number)
+				midi(AutomationTargetType::Controller, static_cast<uint8_t>(number),
+					"Controller " + std::to_string(number), 0.0);
+			return {{"targets", std::move(targets)}};
+		}
+
 		Json getParameter(Project& project, CommandContext& context)
 		{
 			const Json& parameters = context.parameters();
@@ -303,5 +353,16 @@ namespace gnubase::engine
 					{"channel", "target"}),
 				parameterResult, false},
 			[this](Project& project, CommandContext& context) { return setParameter(project, context, *this); });
+		add(engine,
+			{"automationLane.targets", 1,
+				"What a track's automation lanes can automate, in the order automation tracks offer them: its "
+				"channel's parameters as parameter.list returns them, then on MIDI and instrument tracks pitch bend, "
+				"channel pressure and controllers 0 to 127 (MIDI channel 0, from 0 to 1, pitch bend's default 0.5). "
+				"Each also has group (Channel, the instrument's or plugin's name, or MIDI) and lane, the id of the "
+				"track's automation lane for it, or 0. Tracks without a channel have none.",
+				objectSchema({{"track", idSchema}}, {"track"}),
+				{{"type", "object"}, {"properties", {{"targets", {{"type", "array"}}}}}, {"required", {"targets"}}},
+				true},
+			listAutomationTargets);
 	}
 }

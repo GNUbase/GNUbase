@@ -41,7 +41,7 @@ engine commands, so whichever client changes the project or the view, the mixer 
       .mixer-picture[section=picture]   Pictures, hidden by default
       .mixer-pre, .mixer-eq, .mixer-strip   Pre, Equalizer and Strip (audio channels), hidden by default (channel-strip.md)
       .mixer-notes[section=notes]       Notepad, hidden by default: textarea.mixer-notes-field
-      .mixer-fader[section=fader]       Fader: the panner (.mixer-pan), M and S (button[control]), the fader and .mixer-volume
+      .mixer-fader[section=fader]       Fader: the panner (.mixer-pan), M, S and L (button[control], solo-mute-listen.md), the fader and .mixer-volume
 ```
 
 - **Channels** (p. 438): the input busses first, then the channels of the tracks from top to bottom (audio,
@@ -85,8 +85,7 @@ Channel selection and the agents and Move Selected Channels commands that work o
 once and the green drop line; the Zones tab (locking channels to the left and right), the History and Snapshots tabs and
 the right zone; the channel overview, the meter bridge, Channel Latency, the routing, inserts and sends sections (#108, #113) and the
 channel meters; Find Track/Channel, channel visibility configurations, Undo Visibility Change, syncing the visibility
-with the project window's track visibility, linking channels and mixers, the zoom palette and the transport and state
-buttons of the toolbar; the track pictures browser and pictures in the track list; faders of busses; and the
+with the project window's track visibility, linking channels and mixers, the zoom palette and the transport buttons of the toolbar (the state buttons: solo-mute-listen.md); the track pictures browser and pictures in the track list; faders of busses; and the
 windows' places, which workspaces will keep (#163).
 
 ## Checks

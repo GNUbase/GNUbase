@@ -33,9 +33,9 @@ the pool and conforming files to the project's sample rate. The engine commands 
   (`audioEvent.remove`, so crossfades from them go too), as one undo step.
 - **`media.conform`** writes each media file at another sample rate than the project's into the media folder as a
   32-bit float WAV file at the project's rate (as `media.convert` does) and points the media file at it, the
-  reference's Convert Files with New + Replace in Pool. Clip fades, and the offsets, lengths, fades, crossfades and
-  snap points of the events that play it, are in the file's sample frames, so they are scaled to the new rate and
-  events play the same section. A crossfade's `length` is in the frames of the event it goes into and its
+  reference's Convert Files with New + Replace in Pool. Clip fades, and the offsets, lengths, fades, crossfades,
+  snap points and volume curves of the events that play it, are in the file's sample frames, so they are scaled to
+  the new rate and events play the same section. A crossfade's `length` is in the frames of the event it goes into and its
   `outLength` in those of the event it comes from, so each scales with its own file. A media file given twice in
   `media` is conformed once; one given that is missing is refused. The originals stay on disk; it needs a saved
   project and is one undo step. Converting runs as a job (see below); `media.relinkResampled` then points the media

@@ -1263,8 +1263,10 @@ TEST_CASE("fade handles at the top corners of audio events drag the selected eve
 	CHECK(line.in);
 	CHECK(line.start == 2.0);
 	CHECK(std::abs(line.length - 0.1) < 1e-9);
-	// The selected event shows its handles, where its fade in ends and its fade out starts.
-	CHECK(fadeLines(f).lanes()[0].handles.size() == 2);
+	// The selected event shows its handles, where its fade in ends and its fade out starts, and its event volume
+	// handle in the middle (#139).
+	REQUIRE(fadeLines(f).lanes()[0].handles.size() == 3);
+	CHECK(fadeLines(f).lanes()[0].handles[2] == 2.25);
 
 	// The fade out handle at the top right corner, 20 dp left: a fifth of a second.
 	f.drag(249, 3, 229, 3);
@@ -1368,4 +1370,121 @@ TEST_CASE("the Fades menu's commands fade to the range, crossfade and remove fad
 	f.run("audio.removeFades");
 	REQUIRE(f.waitUntil([&f] { return fadeLength(f.audioEvents()[0], "fadeIn") == 0; }));
 	CHECK(fadeLength(f.audioEvents()[0], "fadeOut") == 0);
+}
+
+namespace
+{
+	double eventVolume(const Json& event)
+	{
+		return event.at("volume").get<double>();
+	}
+}
+
+TEST_CASE("the event volume handle at the top middle of an audio event drags the selected events' volume", "[unit]")
+{
+	Fixture f;
+	// 10 dp down a 40 dp lane, from 0 dB half way up (+6 dB at the top): -6 dB.
+	f.drag(225, 3, 225, 13);
+	REQUIRE(f.waitUntil([&f] { return std::abs(eventVolume(f.audioEvents()[0]) + 6.0) < 0.1; }));
+	CHECK(f.display.selection() == std::vector<uint64_t>{f.event});
+	// The event shows its volume as a line, and the selected one its fade handles and its volume handle.
+	REQUIRE(f.waitUntil([&f] { return !fadeLines(f).lanes().empty() && fadeLines(f).lanes()[0].volumes.size() == 1; }));
+	CHECK(fadeLines(f).lanes()[0].handles.size() == 3);
+	CHECK(std::abs(fadeLines(f).lanes()[0].volumes[0].gain - 0.5) < 0.01);
+	f.call("history.undo");
+	REQUIRE(f.waitUntil([&f] { return eventVolume(f.audioEvents()[0]) == 0.0; }));
+	// Lower down, a drag still moves the event.
+	f.drag(225, 30, 325, 30);
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("position") == 144000; }));
+}
+
+TEST_CASE("the draw tool adds and drags volume curve points, the erase tool removes them", "[unit]")
+{
+	Fixture f;
+	f.display.setTool(ui::Tool::Draw);
+	// A click on the event adds a point there: 0.15 seconds in, a quarter up the lane (-6 dB).
+	f.click(215, 30);
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("volumeCurve").size() == 1; }));
+	Json point = f.audioEvents()[0].at("volumeCurve")[0];
+	CHECK(point.at("position") == 7200);
+	CHECK(std::abs(point.at("volume").get<double>() + 6.0) < 0.1);
+	REQUIRE(f.waitUntil([&f] { return !fadeLines(f).lanes().empty() && fadeLines(f).lanes()[0].volumes.size() == 1; }));
+	CHECK(fadeLines(f).lanes()[0].volumes[0].points.size() == 1);
+	// What the display shows: the point at a clip frame.
+	const auto shows = [&f](size_t points, int64_t first)
+	{
+		return f.waitUntil(
+			[&f, points, first]
+			{
+				const std::vector<ui::VolumeLine>& lines = fadeLines(f).lanes()[0].volumes;
+				return lines.size() == 1 && lines[0].points.size() == points && lines[0].points[0].position == first;
+			});
+	};
+
+	// Dragging it moves it: 0.3 seconds in, three quarters up (+3.5 dB).
+	f.drag(215, 30, 230, 10);
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("volumeCurve")[0].at("position") == 14400; }));
+	point = f.audioEvents()[0].at("volumeCurve")[0];
+	CHECK(std::abs(point.at("volume").get<double>() - 3.5) < 0.1);
+	CHECK(f.audioEvents()[0].at("volumeCurve").size() == 1);
+	REQUIRE(shows(1, 14400));
+	f.click(240, 20);
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("volumeCurve").size() == 2; }));
+	REQUIRE(shows(2, 14400));
+
+	// The erase tool on a point removes the point, not the event.
+	f.display.setTool(ui::Tool::Erase);
+	f.click(230, 10);
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("volumeCurve").size() == 1; }));
+	CHECK(f.audioEvents()[0].at("volumeCurve")[0].at("position") == 19200);
+}
+
+TEST_CASE("the draw tool's click near a curve point leaves it, a drag moves it by the drag's distance", "[unit]")
+{
+	Fixture f;
+	// A point at 0 dB (half way up the lane), 0.2 seconds into the event.
+	f.call("audioEvent.setVolumeCurve", {{"event", f.event}, {"points", {{{"position", 9600}, {"volume", 0.0}}}}});
+	REQUIRE(f.waitUntil(
+		[&f]
+		{
+			return !fadeLines(f).lanes().empty() && fadeLines(f).lanes()[0].volumes.size() == 1 &&
+				fadeLines(f).lanes()[0].volumes[0].points.size() == 1;
+		}));
+	f.display.setTool(ui::Tool::Draw);
+	// A click 5 dp below the point only presses it.
+	f.click(220, 25);
+	// A drag that starts 2 dp right of and 4 dp below the point moves it 10 dp right and up: 0.1 seconds later and
+	// a quarter of the lane higher (+3.5 dB), not to where the mouse is.
+	f.drag(222, 24, 232, 14);
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("volumeCurve")[0].at("position") == 14400; }));
+	const Json point = f.audioEvents()[0].at("volumeCurve")[0];
+	CHECK(std::abs(point.at("volume").get<double>() - 3.5) < 0.1);
+	CHECK(f.audioEvents()[0].at("volumeCurve").size() == 1);
+	// One undo goes back to the point as it was: the click made no undo step.
+	f.call("history.undo");
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("volumeCurve")[0].at("position") == 9600; }));
+	CHECK(f.audioEvents()[0].at("volumeCurve")[0].at("volume") == 0.0);
+}
+
+TEST_CASE("Remove Volume Curve removes the selected events' curves, or resets them in the selection range", "[unit]")
+{
+	Fixture f;
+	CHECK(f.display.actions().count("audio.removeVolumeCurve") == 1);
+	const auto track = f.audioEvents()[0].at("track").get<uint64_t>();
+	const auto setCurve = [&f]
+	{ f.call("audioEvent.setVolumeCurve", {{"event", f.event}, {"points", {{{"position", 0}, {"volume", -12.0}}}}}); };
+	setCurve();
+	f.display.select({f.event});
+	f.run("audio.removeVolumeCurve");
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("volumeCurve").empty(); }));
+
+	// In the range from 2.1 to 2.3 seconds the original level, -12 dB outside it.
+	setCurve();
+	f.display.setTool(ui::Tool::RangeSelection);
+	f.display.setRange(ui::RangeSelection{100800, 110400, {track}});
+	f.run("audio.removeVolumeCurve");
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("volumeCurve").size() == 5; }));
+	const Json curve = f.audioEvents()[0].at("volumeCurve");
+	CHECK(curve[2] == Json{{"position", 4800}, {"volume", 0.0}, {"curve", 0.0}});
+	CHECK(curve[3] == Json{{"position", 14400}, {"volume", 0.0}, {"curve", 0.0}});
 }

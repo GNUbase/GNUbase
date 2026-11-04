@@ -244,6 +244,16 @@
 		decorator: svg-ninepatch(toggle-monitor.svg, 6 6 6 6);
 		color: #ffffff;
 	}
+	button.toggle.listen.checked
+	{
+		decorator: svg-ninepatch(toggle-monitor.svg, 6 6 6 6);
+		color: #ffffff;
+	}
+	button.toggle.solo.defeated
+	{
+		decorator: svg-ninepatch(toggle-hover.svg, 6 6 6 6);
+		color: #ffff00;
+	}
 	input.text, input.password, textarea
 	{
 		decorator: svg-ninepatch(field-normal.svg, 6 6 6 6);
@@ -504,6 +514,32 @@
 		color: #000000;
 		background-color: #00ffff;
 	}
+	.tempo-curve .tempo-line
+	{
+		stroke-color: #ffff00;
+		stroke-width: 3dp;
+	}
+	.tempo-curve.inactive .tempo-line
+	{
+		stroke-color: #c8c8c8;
+	}
+	.tempo-curve .tempo-point
+	{
+		background-color: #ffff00;
+	}
+	.tempo-curve.inactive .tempo-point
+	{
+		background-color: #c8c8c8;
+	}
+	.tempo-curve .tempo-point.selected
+	{
+		background-color: #ffffff;
+	}
+	.tempo-editor .tempo-scale-label
+	{
+		color: #c8c8c8;
+		font-size: 11dp;
+	}
 	.event-display .range-selection
 	{
 		border-width: 1dp;
@@ -533,6 +569,42 @@
 	{
 		background-color: #ffff00;
 	}
+	.track-list .automation-rows
+	{
+		background-color: #000000;
+	}
+	.track-list .automation-row
+	{
+		border-top-width: 1dp;
+		border-top-color: #ffffff;
+	}
+	.event-display .automation-lane
+	{
+		background-color: #00000080;
+		border-top-width: 1dp;
+		border-top-color: #ffffff;
+	}
+	.event-display .automation-curve
+	{
+		color: #ffffff;
+		stroke-color: #00ffff;
+	}
+	.event-display .automation-lane.off .automation-curve
+	{
+		color: #c8c8c8;
+		stroke-color: #c8c8c8;
+	}
+	.event-display .static-value
+	{
+		stroke-color: #ffffff;
+		stroke-width: 1dp;
+	}
+	.event-display .automation-editor
+	{
+		border-width: 1dp;
+		border-color: #00ffff;
+		background-color: #00ffff1a;
+	}
 	.mixer-channel
 	{
 		border-right-width: 1dp;
@@ -541,8 +613,9 @@
 	.midi-editor .editor-part
 	{
 		color: #c8c8c8;
-		border-bottom-width: 1dp;
-		border-bottom-color: #ffffff;
+		border-width: 1dp;
+		border-color: #ffffff;
+		background-color: #060606;
 	}
 	.midi-editor .editor-part.editable
 	{
@@ -563,6 +636,59 @@
 	.editor-visibility-check.partial
 	{
 		decorator: svg(checkbox-mixed.svg);
+	}
+	.key-editor-key
+	{
+		background-color: #cfcfcf;
+		color: #000000;
+		border-bottom-width: 1px;
+		border-bottom-color: #c8c8c8;
+	}
+	.key-editor-key.black
+	{
+		background-color: #000000;
+		color: #ffffff;
+	}
+	.key-editor-key.selected
+	{
+		background-color: #ffff00;
+	}
+	.key-editor-grid
+	{
+		background-color: #000000;
+	}
+	.key-editor-row
+	{
+		border-bottom-width: 1px;
+		border-bottom-color: #808080;
+	}
+	.key-editor-row.black
+	{
+		background-color: #000000;
+	}
+	.key-note
+	{
+		background-color: #9e9e05;
+		border-width: 1px;
+		border-color: #ffff00;
+	}
+	.key-note.selected
+	{
+		background-color: #00ffff;
+		border-color: #ffffff;
+	}
+	.key-note.inactive
+	{
+		background-color: #3c3c3c;
+		border-color: #c8c8c8;
+	}
+	.key-note.drawing
+	{
+		background-color: #ffff0066;
+	}
+	.key-editor-step-cursor
+	{
+		background-color: #ffff00;
 	}
 	.docking [zone]
 	{
@@ -703,6 +829,14 @@
 	button.toggle.monitor.checked:focus-visible
 	{
 		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(toggle-monitor.svg, 6 6 6 6);
+	}
+	button.toggle.listen.checked:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(toggle-monitor.svg, 6 6 6 6);
+	}
+	button.toggle.solo.defeated:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(toggle-hover.svg, 6 6 6 6);
 	}
 	input.checkbox:focus-visible
 	{

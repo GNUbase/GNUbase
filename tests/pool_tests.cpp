@@ -949,6 +949,8 @@ TEST_CASE("media.relinkResampled points media files at files at another rate and
 		{{"track", track}, {"clip", slow}, {"position", 0}, {"offset", 4410}, {"length", 22050}})
 						   .at("event")
 						   .at("id");
+	run(song.client, "audioEvent.setVolumeCurve",
+		{{"event", event}, {"points", {{{"position", 8820}, {"volume", -6.0}}}}});
 	const auto relink = [&song](Json file)
 	{ return song.client.call("media.relinkResampled", {{"files", Json::array({std::move(file)})}}); };
 	const std::string fast = utf8(song.library / "fast.wav");
@@ -992,6 +994,7 @@ TEST_CASE("media.relinkResampled points media files at files at another rate and
 	CHECK(changed.at("length") == 48000);
 	CHECK(song.event(event).at("offset") == 4800);
 	CHECK(song.event(event).at("length") == 24000);
+	CHECK(song.event(event).at("volumeCurve").at(0).at("position") == 9600);
 	CHECK(run(song.client, "history.get").at("steps").back().at("action") == "Conform files");
 	run(song.client, "history.undo");
 	CHECK(song.event(event).at("offset") == 4410);

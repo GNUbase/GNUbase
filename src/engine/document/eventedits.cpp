@@ -5,6 +5,7 @@
 // reference manual pp. 285-294): the range.* commands and the range clipboard.
 // docs/features/parts-and-events.md and docs/features/range-editing.md describe them.
 #include "engine/audio/automation.h"
+#include "engine/audio/fades.h"
 #include "engine/document/document.h"
 #include "engine/document/projectmodel.h"
 #include "engine/document/rendersnapshot.h"
@@ -909,11 +910,36 @@ namespace gnubase::engine
 				return glueIntoPart(project, items, context); // reference manual p. 269
 			if (first.audio != nullptr)
 			{
+				// The glued event plays at the loudest event's volume, and its volume curve is each event's own where
+				// it plays, lowered by its volume's difference to the loudest: no difference is above 0 dB, so none
+				// is cut at the curve's +6 dB.
+				const bool curves = std::any_of(items.begin(), items.end(), [&first](const Item& item)
+					{ return !item.audio->volumeCurve.empty() || item.audio->volume != first.audio->volume; });
+				double loudest = g_minEventVolume;
+				for (const Item& item : items)
+					loudest = std::max(loudest, item.audio->volume);
+				std::vector<VolumePoint> curve;
+				for (const Item& item : items)
+				{
+					const AudioEvent& each = *item.audio;
+					std::vector<VolumePoint> own = cutVolumeCurve(
+						each.volumeCurve.empty() ? std::vector<VolumePoint>{{0, 0.0, 0.0}} : each.volumeCurve,
+						each.offset, each.offset + each.length);
+					for (VolumePoint& point : own)
+						point.volume =
+							std::clamp(point.volume + each.volume - loudest, g_minEventVolume, g_maxEventVolume);
+					curve.insert(curve.end(), own.begin(), own.end());
+				}
 				// Events that continue each other in a clip become one event.
 				for (size_t i = 1; i < items.size(); ++i)
 				{
 					first.audio->length += items[i].audio->length;
 					first.audio->fadeOut = items[i].audio->fadeOut;
+				}
+				if (curves)
+				{
+					first.audio->volume = loudest;
+					first.audio->volumeCurve = std::move(curve);
 				}
 			}
 			else

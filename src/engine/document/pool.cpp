@@ -130,7 +130,8 @@ namespace gnubase::engine
 		}
 
 		// After media files were pointed at files at another sample rate: moves the clip fades, and the offsets,
-		// lengths, fades, crossfades and snap points of the events that play them, with the new sample frames.
+		// lengths, fades, crossfades, snap points and volume curves of the events that play them, with the new sample
+		// frames.
 		void rescaleUses(Project& project, CommandContext& context, const std::map<ObjectId, Rescale>& rescales)
 		{
 			const auto rescaleOf = [&project, &rescales](ObjectId clip) -> const Rescale*
@@ -165,6 +166,8 @@ namespace gnubase::engine
 					event.crossfade.length = std::min((*rescale)(event.crossfade.length), event.length);
 					if (event.snapPoint)
 						event.snapPoint = (*rescale)(*event.snapPoint);
+					for (VolumePoint& point : event.volumeCurve)
+						point.position = std::min((*rescale)(point.position), rescale->length);
 				}
 				if (fromRescale != nullptr)
 					event.crossfade.outLength = (*fromRescale)(event.crossfade.outLength);
@@ -748,8 +751,9 @@ namespace gnubase::engine
 			"Conforms media files to the project's sample rate (Convert Files with New + Replace in Pool, "
 			"reference manual pp. 759-760): writes each one at another sample rate into the media folder as a "
 			"32-bit float WAV file at the project's sample rate and points the media file at it with "
-			"media.relinkResampled, as one undo step. The clip fades, offsets, lengths, fades, crossfades and "
-			"snap points of what plays it move with the new sample frames, so events play the same section. The "
+			"media.relinkResampled, as one undo step. The clip fades, offsets, lengths, fades, crossfades, snap "
+			"points and volume curves of what plays it move with the new sample frames, so events play the same "
+			"section. The "
 			"original files stay on disk. media limits it to those media files, which must not be missing "
 			"(default: every one that isn't missing). The project must have been saved. It runs as a job: this "
 			"returns at once, job.progress events say which file it converts, and job.cancel stops it and "
@@ -819,8 +823,9 @@ namespace gnubase::engine
 			{"media.relinkResampled", 1,
 				"Points media files at files of theirs at another sample rate, such as the ones media.conform writes, "
 				"as one undo step: each media file takes its new file's sample rate and length, and the clip fades, "
-				"offsets, lengths, fades, crossfades and snap points of what plays it move with the new sample "
-				"frames, so events play the same section. Each new file must be an audio file with the media file's "
+				"offsets, lengths, fades, crossfades, snap points and volume curves of what plays it move with the new "
+				"sample frames, so events play the same section. Each new file must be an audio file with the media "
+				"file's "
 				"channel count and at least one sample frame, and each media file can be given once. An entry with "
 				"from applies only if the media file is still there and still points at from, one with "
 				"fromSampleRate only if the media file is still at that sample rate; otherwise it is skipped. With "

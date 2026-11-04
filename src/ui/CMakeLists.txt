@@ -15,6 +15,7 @@ target_link_libraries(gnubase-ui-thirdparty PUBLIC RmlUi::RmlUi SDL3::SDL3)
 add_library(gnubase-ui STATIC
 	automation.cpp
 	automation.h
+	automationtracks.cpp
 	canvas.cpp
 	canvas.h
 	colormenu.cpp
@@ -36,6 +37,7 @@ add_library(gnubase-ui STATIC
 	eventediting.cpp
 	eventfades.cpp
 	eventtools.cpp
+	eventvolume.cpp
 	eventwaveforms.cpp
 	eventwaveforms.h
 	fileimport.cpp
@@ -52,6 +54,8 @@ add_library(gnubase-ui STATIC
 	inspector.h
 	keycommands.cpp
 	keycommands.h
+	keyeditor.cpp
+	keyeditor.h
 	livereload.cpp
 	livereload.h
 	mainmenu.cpp
@@ -79,6 +83,8 @@ add_library(gnubase-ui STATIC
 	shell.h
 	statusline.cpp
 	statusline.h
+	tempotrack.cpp
+	tempotrack.h
 	themes.cpp
 	themes.h
 	timeformat.cpp

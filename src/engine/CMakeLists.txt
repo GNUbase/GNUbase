@@ -127,6 +127,8 @@ add_library(gnubase-engine STATIC
 	document/rendersnapshot.cpp document/rendersnapshot.h
 	document/serialize.cpp document/serialize.h
 	document/snap.cpp document/snap.h
+	document/tempo.cpp
+	document/volumecurves.cpp document/volumecurves.h
 	dsp/biquad.cpp dsp/biquad.h
 	dsp/delay.cpp dsp/delay.h
 	dsp/dither.cpp dsp/dither.h
@@ -141,6 +143,7 @@ add_library(gnubase-engine STATIC
 	graph/processor.h
 	jobs/jobs.cpp jobs/jobs.h
 	media/backup.cpp media/backup.h
+	midi/chords.cpp midi/chords.h
 	midi/functioncommands.cpp midi/functioncommands.h
 	midi/functions.cpp midi/functions.h
 	midi/midivalues.cpp midi/midivalues.h

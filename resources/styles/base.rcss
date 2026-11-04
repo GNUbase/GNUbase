@@ -654,6 +654,50 @@ meter .meter-peak
 	pointer-events: none;
 }
 
+/* Automation tracks' lanes (#121): code puts each at its lane, with its curve and static value line across it, and
+   the automation event editor around the selected points. */
+.event-display .automation-lanes
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	bottom: 0;
+	pointer-events: none;
+}
+
+.event-display .automation-lane
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	box-sizing: border-box;
+	pointer-events: none;
+}
+
+.event-display .automation-lane curve
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	bottom: 0;
+	pointer-events: none;
+}
+
+.event-display .automation-editor
+{
+	position: absolute;
+	display: none;
+	box-sizing: border-box;
+	pointer-events: none;
+}
+
+.event-display .automation-editor.shown
+{
+	display: block;
+}
+
 .event-display .waveforms waveform
 {
 	position: absolute;
@@ -772,6 +816,41 @@ meter .meter-peak
 	position: absolute;
 	padding-left: 3dp;
 	white-space: nowrap;
+}
+
+/* The tempo track (docs/features/tempo-track.md): the tempo curve over the tempo track's lane, or filling the tempo
+   track editor's curve area, with a point per tempo event. Code places the curve on its lane and the points where their
+   events are. */
+.tempo-curve
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	height: 100%;
+}
+
+.tempo-curve.hidden
+{
+	display: none;
+}
+
+.tempo-curve .tempo-line, .tempo-curve .tempo-points
+{
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 100%;
+	height: 100%;
+}
+
+.tempo-curve .tempo-point
+{
+	position: absolute;
+	width: 7dp;
+	height: 7dp;
+	margin-left: -3.5dp;
+	margin-top: -3.5dp;
 }
 
 /* The tools (docs/features/tools.md): the selection range, at least a line wide, and the rectangle a tool drags. Code
@@ -994,6 +1073,77 @@ meter .meter-peak
 .track-list .drop-line.shown
 {
 	display: block;
+}
+
+/* Automation tracks (docs/features/automation-tracks.md): Show/Hide Automation in a track's lower left corner and
+   the automation tracks' rows below the track's own. Code sets where the corner and the rows are, and each row's
+   height, from the event display's lanes. */
+.track-list .automation-toggle
+{
+	position: absolute;
+	left: 6dp;
+	width: 16dp;
+	height: 16dp;
+	padding: 0;
+	text-align: center;
+}
+
+.track-list .automation-toggle svg.icon, .track-list .automation-row svg.icon
+{
+	width: 12dp;
+	height: 12dp;
+}
+
+.track-list .automation-rows
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: 0;
+}
+
+.track-list .automation-row
+{
+	display: flex;
+	flex-direction: row;
+	align-items: flex-start;
+	padding: 3dp 4dp 0 24dp;
+	box-sizing: border-box;
+	overflow: hidden;
+}
+
+.track-list .automation-parameter
+{
+	flex: 0 1 auto;
+	width: 120dp;
+	height: 18dp;
+	padding: 0 4dp;
+	overflow: hidden;
+	white-space: nowrap;
+	text-align: left;
+}
+
+.track-list .automation-row .automation-read, .track-list .automation-row .automation-append
+{
+	flex: 0 0 auto;
+	width: 22dp;
+	height: 18dp;
+	margin-left: 2dp;
+	padding: 0;
+	text-align: center;
+}
+
+/* The parameter selector's search field, and the parameters it leaves out. */
+menu input.automation-search
+{
+	display: block;
+	width: 200dp;
+	margin: 2dp 4dp;
+}
+
+menu menuitem.hidden
+{
+	display: none;
 }
 
 /* Menus (ui/widgets.h): hidden until they open, over the document. A menu inside an item is its submenu, shown
@@ -1538,10 +1688,20 @@ listview.history
 	box-sizing: border-box;
 }
 
+/* The separator's line is in a grip that is dragged, as tall as a splitter: it reaches over the rows on both sides,
+   and is positioned so that it is in front of them. A press on it leaves the focus to the list. */
+.history .history-grip
+{
+	position: relative;
+	padding: 3dp 0;
+	margin: -3dp 0;
+	drag: drag;
+	focus: none;
+}
+
 .history .history-separator
 {
-	height: 4dp;
-	drag: drag;
+	height: 2dp;
 }
 
 /* The pool (ui/poolpanel.h): a toolbar, the message line, the info line, the column headers and a tree of folders and
