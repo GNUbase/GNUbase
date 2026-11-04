@@ -499,7 +499,8 @@ TEST_CASE("the inspector shows the selected track, and its controls change the t
 	const uint64_t group = window.addTrack({{"type", "group"}, {"name", "Drums"}});
 	const uint64_t audio = window.addTrack({{"type", "audio"}, {"name", "Vox"}});
 	const uint64_t marker = window.addTrack({{"type", "marker"}});
-	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("tracks").size() == 3; }));
+	const uint64_t vca = window.addTrack({{"type", "vca"}, {"name", "Strings"}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("tracks").size() == 4; }));
 	window.list.select({audio});
 	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Vox"));
 	CHECK_FALSE(hasClass(window.app, ".inspector", "empty"));
@@ -519,6 +520,14 @@ TEST_CASE("the inspector shows the selected track, and its controls change the t
 		window.call("channel.set", {{"channel", window.channel(audio).at("id")}, {key, false}});
 		REQUIRE(window.app.waitUntil([&] { return !hasClass(window.app, button, "checked"); }));
 	}
+	// Switch Time Base (p. 229): checked when the track is linear.
+	const std::string timeBase = ".inspector button[control=timeBase]";
+	CHECK_FALSE(hasClass(window.app, timeBase, "unavailable"));
+	window.click(timeBase);
+	REQUIRE(window.app.waitUntil([&] { return window.find("tracks", audio).at("timeBase") == "linear"; }));
+	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, timeBase, "checked"); }));
+	window.call("track.set", {{"track", audio}, {"timeBase", "musical"}});
+	REQUIRE(window.app.waitUntil([&] { return !hasClass(window.app, timeBase, "checked"); }));
 	window.type(".inspector valuefield[control=volume]", "-6");
 	REQUIRE(window.app.waitUntil([&] { return window.channel(audio).at("volume") == -6.0; }));
 	CHECK(window.shows(".inspector valuefield[control=volume]", "-6")); // whatever the C locale is
@@ -575,11 +584,21 @@ TEST_CASE("the inspector shows the selected track, and its controls change the t
 	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, ".inspector [section=notepad]", "hidden"); }));
 	CHECK(window.call("settings.get", {{"key", "ui.layout"}}).dump().find("notepad") != std::string::npos);
 
-	// Another track: the group has no input or record buttons; a marker track has no channel to show.
+	// Another track: the group has no input or record buttons, but switches its time base (pp. 179-180); a marker
+	// track has no channel to show.
 	window.list.select({group});
 	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Drums"));
 	CHECK(hasClass(window.app, ".inspector [row=input]", "unavailable"));
 	CHECK(hasClass(window.app, ".inspector button[control=record]", "unavailable"));
+	CHECK_FALSE(hasClass(window.app, timeBase, "unavailable"));
+	window.click(timeBase);
+	REQUIRE(window.app.waitUntil([&] { return window.find("tracks", group).at("timeBase") == "linear"; }));
+	// A VCA fader track switches its time base too (p. 181).
+	window.list.select({vca});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Strings"));
+	CHECK_FALSE(hasClass(window.app, timeBase, "unavailable"));
+	window.click(timeBase);
+	REQUIRE(window.app.waitUntil([&] { return window.find("tracks", vca).at("timeBase") == "linear"; }));
 	window.list.select({marker});
 	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, ".inspector [section=basics]", "unavailable"); }));
 	CHECK(hasClass(window.app, ".inspector [section=notepad]", "unavailable"));
