@@ -1241,3 +1241,191 @@ TEST_CASE("mute automation is a step curve that mutes from its sample and overri
 	INFO(wrong << " wrong samples, the first at frame " << first);
 	CHECK(wrong == 0);
 }
+
+TEST_CASE("virgin territory is a project setting, and terminators end curves, with undo", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId track = idOf(run(client, "track.add", {{"type", "audio"}}), "track");
+	const ObjectId lane =
+		idOf(run(client, "automationLane.add", {{"track", track}, {"target", {{"type", "volume"}}}}), "lane");
+	const Json points = run(client, "automationPoint.add",
+		{{"lane", lane},
+			{"points",
+				{{{"position", 0}, {"value", -6.0}, {"terminator", true}}, {{"position", 960}, {"value", 0.0}}}}})
+							.at("points");
+	CHECK(points[0].at("terminator") == true);
+	CHECK(!points[1].contains("terminator")); // only on terminators
+	const auto first = points[0].at("id").get<ObjectId>();
+	const auto terminatorOf = [&]()
+	{ return run(client, "automationLane.list").at("lanes")[0].at("points")[0].value("terminator", false); };
+	run(client, "automationPoint.set", {{"lane", lane}, {"points", {{{"id", first}, {"terminator", false}}}}});
+	CHECK(!terminatorOf());
+	run(client, "history.undo");
+	CHECK(terminatorOf());
+
+	CHECK(run(client, "automation.get") == Json{{"followsEvents", false}, {"virginTerritory", false}});
+	const size_t steps = run(client, "history.get").at("steps").size();
+	CHECK(run(client, "automation.set", {{"virginTerritory", true}}) ==
+		Json{{"followsEvents", false}, {"virginTerritory", true}});
+	CHECK(run(client, "history.get").at("steps").size() == steps); // a setting, not an undo step
+	run(client, "history.undo");                                   // the points' addition
+	CHECK(run(client, "automation.get").at("virginTerritory") == true);
+	run(client, "history.redo");
+
+	// Saved with the project, with the terminators; a new project starts with initial values.
+	const Project saved = projectFromJson(run(client, "project.get"));
+	CHECK(saved.virginTerritory);
+	CHECK(saved.automation.at(lane).points.at(first).terminator);
+	CHECK(toJson(saved).at("virginTerritory") == true);
+	run(client, "project.new");
+	CHECK(run(client, "automation.get").at("virginTerritory") == false);
+}
+
+TEST_CASE("in virgin territory and after terminators a lane plays its static value", "[unit]")
+{
+	using gnubase::time::TimeBase;
+	Project project = newProject();
+	const ObjectId track = project.newId();
+	const ObjectId channel = project.newId();
+	project.trackById[track] = {track, TrackType::Audio, "Audio", "", TimeBase::Linear, 0, channel, {}, {}, {}};
+	project.tracks.push_back(track);
+	project.channels[channel] = {channel, track, ChannelFormat::Stereo, 0, 0, {}, -20.0, 0.0};
+	project.channels[channel].mute = true;
+	const auto lane = [&](AutomationTargetType type, std::initializer_list<AutomationPoint> points)
+	{
+		AutomationLane added;
+		added.id = project.newId();
+		added.track = track;
+		added.target.type = type;
+		for (AutomationPoint point : points)
+		{
+			point.id = project.newId();
+			added.points[point.id] = point;
+		}
+		project.automation[added.id] = added;
+	};
+	const auto at = [](int64_t samples) { return gnubase::time::Position{TimeBase::Linear, samples}; };
+	lane(AutomationTargetType::Volume,
+		{{0, at(1000), -6.0, AutomationShape::Linear, 0.0}, {0, at(2000), -12.0, AutomationShape::Linear, 0.0, true},
+			{0, at(3000), 0.0, AutomationShape::Linear, 0.0}, {0, at(4000), -6.0, AutomationShape::Linear, 0.0}});
+	lane(AutomationTargetType::Mute,
+		{{0, at(1000), 0.0, AutomationShape::Step, 0.0}, {0, at(2000), 0.0, AutomationShape::Step, 0.0}});
+	const auto valueAt = [&](AutomationTargetType type, int64_t position)
+	{
+		const std::unique_ptr<ChannelAutomation> automation =
+			channelAutomation(compile(project, 1)->channels.at(0), 6.0);
+		for (const PlayedLane& played : automation->lanes)
+			if (played.target.type == type)
+				return automationValue(played.points, position);
+		FAIL("no lane");
+		return 0.0;
+	};
+	const auto near = [](double a, double b) { return std::abs(a - b) < 1e-12; };
+
+	SECTION("initial value")
+	{
+		// The curve covers the whole timeline, but for the gap after the terminator.
+		CHECK(near(valueAt(AutomationTargetType::Volume, 0), gain(-6.0)));
+		CHECK(near(valueAt(AutomationTargetType::Volume, 1500), (gain(-6.0) + gain(-12.0)) / 2.0));
+		CHECK(near(valueAt(AutomationTargetType::Volume, 2000), gain(-20.0)));
+		CHECK(near(valueAt(AutomationTargetType::Volume, 2999), gain(-20.0)));
+		CHECK(near(valueAt(AutomationTargetType::Volume, 3000), gain(0.0)));
+		CHECK(near(valueAt(AutomationTargetType::Volume, 9000), gain(-6.0)));
+		CHECK(valueAt(AutomationTargetType::Mute, 0) == 0.0);
+		CHECK(valueAt(AutomationTargetType::Mute, 9000) == 0.0);
+	}
+	SECTION("virgin territory")
+	{
+		project.virginTerritory = true;
+		// Before the first point and after the last one too; a mute lane's gaps have the mute button.
+		CHECK(near(valueAt(AutomationTargetType::Volume, 0), gain(-20.0)));
+		CHECK(near(valueAt(AutomationTargetType::Volume, 999), gain(-20.0)));
+		CHECK(near(valueAt(AutomationTargetType::Volume, 1000), gain(-6.0)));
+		CHECK(near(valueAt(AutomationTargetType::Volume, 2500), gain(-20.0)));
+		CHECK(near(valueAt(AutomationTargetType::Volume, 3500), (gain(0.0) + gain(-6.0)) / 2.0));
+		CHECK(near(valueAt(AutomationTargetType::Volume, 4000), gain(-20.0)));
+		CHECK(near(valueAt(AutomationTargetType::Volume, 9000), gain(-20.0)));
+		CHECK(valueAt(AutomationTargetType::Mute, 500) == 1.0);
+		CHECK(valueAt(AutomationTargetType::Mute, 1500) == 0.0);
+		CHECK(valueAt(AutomationTargetType::Mute, 2500) == 1.0);
+	}
+	SECTION("MIDI lanes' gaps")
+	{
+		// A controller lane without a static value of the channel sends nothing in its gaps, like a lane that doesn't
+		// read: here before 100, from the terminator at 300 up to 400 and after 500. After a gap its value is sent
+		// even where it is the gap point's.
+		using Type = graph::ProcessEvent::Type;
+		const auto gap = [](int64_t position)
+		{ return RenderAutomationPoint{position, 0.0, AutomationShape::Step, 0.0, true}; };
+		RenderChannel midi;
+		midi.type = TrackType::Midi;
+		midi.format = ChannelFormat::None;
+		midi.automation = {{{AutomationTargetType::Controller, 0, 11, 0, 0},
+			{gap(100), {100, 0.5, AutomationShape::Linear, 0.0}, {300, 1.0, AutomationShape::Step, 0.0}, gap(300),
+				{400, 0.0, AutomationShape::Step, 0.0}, {500, 0.0, AutomationShape::Step, 0.0}, gap(500)}}};
+		AutomationPlayer player;
+		player.setAutomation(channelAutomation(midi, 6.0));
+		std::vector<int64_t> sent;
+		for (const PlayedEvent& event : playInBlocks(player, 1000, 1000))
+		{
+			CHECK(event.type == Type::Controller);
+			sent.push_back(event.position);
+		}
+		CHECK(sent == std::vector<int64_t>{100, 164, 228, 292, 300, 400});
+
+		// A first point of 0 after virgin territory, e.g. the sustain pedal up, is sent too.
+		RenderChannel pedal = midi;
+		pedal.automation[0].points = {gap(100), {100, 0.0, AutomationShape::Step, 0.0}};
+		AutomationPlayer pedalPlayer;
+		pedalPlayer.setAutomation(channelAutomation(pedal, 6.0));
+		const std::vector<PlayedEvent> pedalEvents = playInBlocks(pedalPlayer, 1000, 1000);
+		REQUIRE(pedalEvents.size() == 1);
+		CHECK(pedalEvents[0].position == 100);
+		CHECK(pedalEvents[0].value == 0);
+
+		// Nor at a locate into a gap, or stopped in one.
+		graph::EventBuffer source(graph::g_maxEventsPerBlock);
+		graph::EventBuffer fader(graph::g_maxEventsPerBlock);
+		graph::EventBuffer plugins(graph::g_maxEventsPerBlock);
+		const graph::TransportSegment intoGap{0, 50, 320};
+		player.play({true, 320, &intoGap, 1}, {}, {}, source, fader, plugins);
+		CHECK(source.empty());
+		for (const int64_t position : {50, 350, 600})
+		{
+			player.play({false, position, nullptr, 0}, {}, {}, source, fader, plugins);
+			CHECK(source.empty());
+		}
+		player.play({false, 450, nullptr, 0}, {}, {}, source, fader, plugins);
+		REQUIRE(source.size() == 1);
+		CHECK(source[0].value == 0);
+	}
+}
+
+TEST_CASE("volume automation plays its static value in virgin territory and gaps", "[integration]")
+{
+	const int blockSize = GENERATE(64, 100);
+	const bool virgin = GENERATE(false, true);
+	INFO("block size " << blockSize << (virgin ? ", virgin territory" : ", initial value"));
+	Mixer mixer(blockSize);
+	run(mixer.client, "channel.set", {{"channel", mixer.channel}, {"volume", -20.0}});
+	run(mixer.client, "automation.set", {{"virginTerritory", virgin}});
+	const ObjectId lane = mixer.lane({{"type", "volume"}});
+	run(mixer.client, "automationPoint.add",
+		{{"lane", lane},
+			{"points",
+				{{{"position", ticks(1000)}, {"value", -6.0}},
+					{{"position", ticks(2000)}, {"value", -12.0}, {"terminator", true}},
+					{{"position", ticks(3000)}, {"value", 0.0}}, {{"position", ticks(4000)}, {"value", -6.0}}}}});
+	run(mixer.client, "transport.play");
+	run(mixer.client, "audio.render", {{"frames", 5000}});
+	// The static value, -20 dB, from the terminator to the next point, and in virgin territory before the first point
+	// and after the last one.
+	std::vector<TestPoint> expected = {{1000, -6.0}, {2000, -12.0}, {2000, -20.0, "step"}, {3000, 0.0}, {4000, -6.0}};
+	if (virgin)
+	{
+		expected.insert(expected.begin(), {1000, -20.0, "step"});
+		expected.push_back({4000, -20.0, "step"});
+	}
+	checkGains(mixer, expected, positions(0, 5000));
+}
