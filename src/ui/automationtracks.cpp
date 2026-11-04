@@ -312,7 +312,11 @@ namespace gnubase::ui
 		const std::vector<uint64_t> shown = openLanes(track);
 		for (const Json& target : *targets)
 		{
-			const auto lane = target.at("lane").get<uint64_t>();
+			auto lane = target.at("lane").get<uint64_t>();
+			// Targets read before a lane was added still say it has none: the project's lanes know better.
+			for (const auto& [id, known] : m_automation)
+				if (lane == 0 && known.track == track && known.target == target.at("target"))
+					lane = id;
 			if (lane != 0 && std::find(shown.begin(), shown.end(), lane) != shown.end())
 				continue;
 			if (lane != 0 && m_automation.count(lane) != 0)
