@@ -89,6 +89,10 @@ namespace gnubase::engine
 				note.channel = integer(item, "channel", note.channel, 0, 15, name);
 				note.velocity = scaled(item, "velocity", note.velocity, g_maxVelocity, name);
 				note.releaseVelocity = scaled(item, "releaseVelocity", note.releaseVelocity, g_maxVelocity, name);
+				note.probability = item.value("probability", note.probability);
+				require(note.probability >= 0.0 && note.probability <= 1.0, name + ".probability must be 0 to 1");
+				note.velocityVariance = item.value("velocityVariance", note.velocityVariance);
+				require(std::abs(note.velocityVariance) <= 1.0, name + ".velocityVariance must be -1 to 1");
 				notes.push_back(note);
 			}
 			// Changed only once every item is valid. ProjectModel::add would restore the project anyway.
@@ -251,11 +255,12 @@ namespace gnubase::engine
 		add(engine,
 			{"note.set", 1,
 				"Changes notes of a MIDI part: each change names a note by id and gives what changes, position and "
-				"length in ticks, pitch 0-127, velocity 0-1, release velocity 0-1 or MIDI channel 0-15. Returns the "
-				"changed notes.",
+				"length in ticks, pitch 0-127, velocity 0-1, release velocity 0-1, MIDI channel 0-15, play probability "
+				"0-1 or velocity variance -1 to 1 (see note.add). Returns the changed notes.",
 				changesSchema("notes",
 					{{"position", integer}, {"length", integer}, {"pitch", integer}, {"velocity", number},
-						{"releaseVelocity", number}, {"channel", integer}}),
+						{"releaseVelocity", number}, {"channel", integer}, {"probability", number},
+						{"velocityVariance", number}}),
 				resultSchema("notes"), false},
 			setNotes);
 		add(engine,
