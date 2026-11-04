@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The list editor in the app (#130, docs/features/list-editor.md), driven with ui::Automation as MCP's UI tools drive
 // it: Open List Editor, the event list with every event type, editing values of several events and SysEx, the filters
-// bar and the Focus menu, the draw and erase tools, moving events and the value display. tests/listeditor_tests.cpp
-// checks the engine's side.
+// bar and the Focus menu, the draw and erase tools, moving events and the value display, and gestures released outside
+// the editor. tests/listeditor_tests.cpp checks the engine's side.
 #include "engine/midi/midivalues.h"
 #include "engine/time/tempomap.h"
 #include "ui/automation.h"
@@ -368,4 +368,92 @@ TEST_CASE("dragging an unselected event with a Focus filter on selects it, filte
 	CHECK(f.types() == std::vector<std::string>{"note", "note"});
 	CHECK(f.has(low, "selected"));
 	CHECK(f.event("notes", f.high).at("position") == g_quarter);
+}
+
+TEST_CASE("a move, draw or value display drag released outside the list editor ends there", "[ui]")
+{
+	Fixture f;
+	// The editor window's toolbar, above the list editor, and the list editor's header: neither is the editor's body.
+	const auto middle = [&](const std::string& selector)
+	{
+		const Json shown = f.box(selector);
+		return static_cast<int>(std::lround(shown.at("y").get<double>() + (shown.at("height").get<double>() / 2)));
+	};
+	const int outside = middle(".midi-editor-toolbar");
+	const int header = middle(".list-editor-header");
+	const auto xAt = [&](const std::string& lane, double fraction)
+	{
+		const Json shown = f.box(lane);
+		return static_cast<int>(
+			std::lround(shown.at("x").get<double>() + (fraction * shown.at("width").get<double>())));
+	};
+	const auto point = [](int x, int y) { return ui::Target{"", 0, ui::Point{x, y}}; };
+	const auto steps = [&] { return f.app.call("history.get").at("steps").size(); };
+	const auto notes = [&] { return f.app.call("project.get").at("midiParts").at(0).at("notes").size(); };
+	// Selects a note with a click on its row and waits for the engine's view: whatever the list editor sent before
+	// has arrived then.
+	const auto settle = [&](uint64_t note)
+	{
+		f.click(of(row("note", note) + " .list-type"));
+		REQUIRE(f.app.waitUntil(
+			[&]
+			{
+				const Json selection = f.view().at("selection");
+				return selection.size() == 1 && selection.at(0).value("note", uint64_t{0}) == note;
+			}));
+	};
+
+	// A move released over the window's toolbar, where it was pressed: nothing moves, and a later click on the
+	// header doesn't move the events by the distance from the pressed point to it.
+	const std::string low = row("note", f.low);
+	const double width = f.box(low + " .list-event-lane").at("width").get<double>();
+	const Json box = f.box(low + " .list-event");
+	const int y = static_cast<int>(std::lround(box.at("y").get<double>() + (box.at("height").get<double>() / 2)));
+	const int x = static_cast<int>(std::lround(box.at("x").get<double>() + 10));
+	const int half = x + static_cast<int>(std::lround(width / 2));
+	const size_t before = steps();
+	f.app.ui().drag(f.window, point(x, y), point(x, outside));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	f.click(point(half, header));
+	settle(f.high);
+	CHECK(f.event("notes", f.low).at("position") == 0);
+	CHECK(steps() == before);
+	// Released outside further on, it moves the events there, in one undo step.
+	f.app.ui().drag(f.window, point(x, y), point(half, outside));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.event("notes", f.low).at("position") == 2 * g_quarter; }));
+	CHECK(f.event("notes", f.high).at("position") == g_quarter);
+	CHECK(steps() == before + 1);
+
+	// A drawn note released outside is drawn where it was pressed; a click on the toolbar then draws nothing.
+	f.tool("draw");
+	const int drawAt = xAt(".list-filler .list-event-lane", 0.26);
+	f.app.ui().drag(f.window, point(drawAt, middle(".list-filler .list-event-lane")), point(drawAt, outside));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return notes() == 3; }));
+	const Json project = f.app.call("project.get");
+	for (const Json& each : project.at("midiParts").at(0).at("notes"))
+		if (each.at("id") != f.low && each.at("id") != f.high)
+			CHECK(each.at("position") == g_quarter);
+	f.tool("objectSelection");
+	settle(f.high);
+	CHECK(notes() == 3);
+
+	// A drag in the value display released outside sets the values it crossed. Moving over the value display then
+	// changes no bar, and a click on the header sets nothing.
+	const std::string volume = row("controller", f.events[0]);
+	const std::string values = volume + " .list-value-lane";
+	const int valueAt = xAt(values, 0.5);
+	f.app.ui().drag(f.window, point(valueAt, middle(values)), point(valueAt, outside));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const auto value = [&] { return f.event("controllers", f.events[0]).at("value").get<double>(); };
+	REQUIRE(f.app.waitUntil([&] { return std::abs(value() - 0.5) < 0.02; }));
+	f.app.ui().move(f.window, point(xAt(values, 0.9), middle(values)));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(
+		std::abs((f.box(volume + " .list-value").at("width").get<double>() / f.box(values).at("width").get<double>()) -
+			0.5) < 0.05);
+	f.click(point(xAt(values, 0.9), header));
+	settle(f.low);
+	CHECK(std::abs(value() - 0.5) < 0.02);
 }

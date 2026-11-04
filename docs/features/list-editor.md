@@ -76,6 +76,9 @@ Start, end and length are in bars and beats; end and length only for notes. The 
   deletes the event, also on its row.
 - **Value display** (pp. 1252, 1255): a press and a drag set the value of every event they cross from the mouse's
   place in the bar, in one undo step.
+- **Gestures** (#722). A move, a draw or a value display drag ends where the mouse goes up, also outside the list
+  editor: the editor hears the mouseup in its whole document while the gesture goes on. One whose mouseup never comes,
+  such as one released outside the window, ends without its effect at the next press.
 - **Open List Editor** (`editor.openList`, Mod+G in the project window and Edit > Open List Editor, p. 1243) opens the
   selected MIDI parts in the editor window's list editor. Open in Lower Zone and Open in Separate Window keep the
   content.

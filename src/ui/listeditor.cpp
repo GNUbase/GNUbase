@@ -251,8 +251,9 @@ namespace gnubase::ui
 			menu->AddEventListener(Rml::EventId::Click, this);
 			m_menus.push_back(menu->GetObserverPtr());
 		}
-		for (const Rml::EventId event : {Rml::EventId::Mousedown, Rml::EventId::Mousemove, Rml::EventId::Mouseup,
-				 Rml::EventId::Click, Rml::EventId::Change})
+		// The mouseup that ends a gesture goes to the document (listen), so that it ends wherever the mouse goes up.
+		for (const Rml::EventId event :
+			{Rml::EventId::Mousedown, Rml::EventId::Mousemove, Rml::EventId::Click, Rml::EventId::Change})
 			root.AddEventListener(event, this);
 		// Before a text display takes Enter: Ctrl (Cmd) with it sets every selected event to the value (p. 1255).
 		root.AddEventListener(Rml::EventId::Keydown, this, true);
@@ -260,10 +261,11 @@ namespace gnubase::ui
 
 	ListEditor::~ListEditor()
 	{
+		listen(false);
 		if (Rml::Element* root = m_root.get())
 		{
-			for (const Rml::EventId event : {Rml::EventId::Mousedown, Rml::EventId::Mousemove, Rml::EventId::Mouseup,
-					 Rml::EventId::Click, Rml::EventId::Change})
+			for (const Rml::EventId event :
+				{Rml::EventId::Mousedown, Rml::EventId::Mousemove, Rml::EventId::Click, Rml::EventId::Change})
 				root->RemoveEventListener(event, this);
 			root->RemoveEventListener(Rml::EventId::Keydown, this, true);
 		}
@@ -829,7 +831,8 @@ namespace gnubase::ui
 			drag(event);
 			break;
 		case Rml::EventId::Mouseup:
-			release(event);
+			if (event.GetParameter("button", 0) == 0)
+				release(event);
 			break;
 		case Rml::EventId::Click:
 			click(*target, ctrl);
@@ -848,6 +851,39 @@ namespace gnubase::ui
 
 	void ListEditor::press(Rml::Event& event)
 	{
+		// A gesture whose mouseup never came, such as one released outside the window, ends here without its effect.
+		const bool stale = cancel();
+		begin(event);
+		if (m_gesture != Gesture::None)
+			listen(true);
+		if (stale)
+			render(); // the value display's bars show the events' values again
+	}
+
+	bool ListEditor::cancel()
+	{
+		listen(false);
+		m_gesture = Gesture::None;
+		const bool shown = !m_values.empty();
+		m_values.clear();
+		return shown;
+	}
+
+	void ListEditor::listen(bool document)
+	{
+		if (Rml::Element* listened = m_document.get())
+			listened->RemoveEventListener(Rml::EventId::Mouseup, this);
+		m_document.reset();
+		if (Rml::Element* root = m_root.get(); document && root != nullptr)
+			if (Rml::ElementDocument* owner = root->GetOwnerDocument())
+			{
+				owner->AddEventListener(Rml::EventId::Mouseup, this);
+				m_document = owner->GetObserverPtr();
+			}
+	}
+
+	void ListEditor::begin(Rml::Event& event)
+	{
 		const Rml::Element* root = m_root.get();
 		Rml::Element* target = event.GetTargetElement();
 		if (closest(target, "list-editor-body", root) == nullptr)
@@ -860,7 +896,6 @@ namespace gnubase::ui
 		m_pressed.reset();
 		if (row != nullptr)
 			m_pressed = *row;
-		m_gesture = Gesture::None;
 		Rml::Element* lane = closest(target, "list-event-lane", root);
 		if (m_tool == "draw")
 		{
@@ -929,6 +964,7 @@ namespace gnubase::ui
 
 	void ListEditor::release(Rml::Event& event)
 	{
+		listen(false);
 		const Gesture gesture = std::exchange(m_gesture, Gesture::None);
 		const Rml::Element* root = m_root.get();
 		if (gesture == Gesture::Draw)
