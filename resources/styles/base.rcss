@@ -856,6 +856,48 @@ meter .meter-peak
 	margin-top: -3.5dp;
 }
 
+/* The signature track (docs/features/signature-track.md): the time signature events over the signature track's lane,
+   or filling the tempo track editor's time signature display, and the field that edits one. Code places the row on
+   its lane, the events at their bars and the field over the event it edits. */
+.signature-row
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	height: 100%;
+}
+
+.signature-row.hidden, .signature-row .signature-field
+{
+	display: none;
+}
+
+.signature-row .signature-events
+{
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 100%;
+	height: 100%;
+}
+
+.signature-row .signature-event
+{
+	position: absolute;
+	top: 0;
+	padding: 2dp 3dp;
+	white-space: nowrap;
+}
+
+.signature-row .signature-field.shown
+{
+	display: block;
+	position: absolute;
+	top: 0;
+	width: 48dp;
+}
+
 /* The tools (docs/features/tools.md): the selection range, at least a line wide, and the rectangle a tool drags. Code
    sets where they are and the state class .shown. */
 .event-display .range-selection, .event-display .tool-rectangle

@@ -36,6 +36,7 @@ namespace gnubase::engine
 			{TrackType::Marker, "marker"},
 			{TrackType::Ruler, "ruler"},
 			{TrackType::Tempo, "tempo"},
+			{TrackType::Signature, "signature"},
 		};
 
 		constexpr struct
@@ -713,6 +714,8 @@ namespace gnubase::engine
 			{"shape", automationShapeName(point.shape)}};
 		if (point.shape == AutomationShape::Curve)
 			json["curve"] = point.curve;
+		if (point.terminator)
+			json["terminator"] = true;
 		return json;
 	}
 
@@ -809,9 +812,9 @@ namespace gnubase::engine
 			{"poolFolders", toJsonArray(project.poolFolders)}, {"audioEvents", toJsonArray(project.audioEvents)},
 			{"audioParts", toJsonArray(project.audioParts)}, {"midiParts", toJsonArray(project.midiParts)},
 			{"markers", toJsonArray(project.markers)}, {"automation", toJsonArray(project.automation)},
-			{"quantize", midi::toJson(project.quantize)}, {"autoQuantize", project.autoQuantize},
-			{"activeMarkerTrack", project.activeMarkerTrack}, {"snap", toJson(project.snap)},
-			{"mixers", mixersJson(project.mixers)}};
+			{"virginTerritory", project.virginTerritory}, {"quantize", midi::toJson(project.quantize)},
+			{"autoQuantize", project.autoQuantize}, {"activeMarkerTrack", project.activeMarkerTrack},
+			{"snap", toJson(project.snap)}, {"mixers", mixersJson(project.mixers)}};
 		json.update(toJson(project.setup));
 		return json;
 	}
@@ -1080,6 +1083,7 @@ namespace gnubase::engine
 				point.shape = *shape;
 				if (point.shape == AutomationShape::Curve)
 					point.curve = checkedNumber(p.value("curve", Json(0.0)), -1.0, 1.0, pointName + " curve");
+				point.terminator = p.value("terminator", false);
 				lane.points[point.id] = point;
 			}
 			return lane;
@@ -1560,6 +1564,7 @@ namespace gnubase::engine
 			const ObjectId id = lane.id;
 			project.automation[id] = std::move(lane);
 		}
+		project.virginTerritory = json.value("virginTerritory", false); // files from before #124 have none
 		// Files from before quantizing have neither.
 		if (json.contains("quantize"))
 			project.quantize = midi::quantizeSettingsFromJson(json.at("quantize"));
