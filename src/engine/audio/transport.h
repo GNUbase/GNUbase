@@ -109,7 +109,9 @@ namespace gnubase::engine
 		// While playing: punches in, or with punchIn before the left locator lets the punch in start recording there;
 		// off punches out. Stopped, on starts playback as play does and recording where play would start without the
 		// pre-roll, or at the left locator with punchIn if that comes later; off does nothing. With a count-in (#101),
-		// recording from stop counts in first, and playback starts at the exact sample where it ends.
+		// recording from stop counts in first, and playback starts at the exact sample where it ends. While it counts
+		// in, on with a count-in starts it again (after a locate or a new pre-roll), on without one changes nothing,
+		// and off ends it as stop does.
 		bool record(bool on, const graph::CountIn& countIn = {});
 		// Positions and locators are clamped to 0 to g_maxPosition.
 		bool locate(time::Samples position);         // also the new start position for returnToStart
@@ -118,7 +120,9 @@ namespace gnubase::engine
 		// Command thread: the settings as requested and whether playback was requested.
 		const TransportSettings& settings() const { return m_requested; }
 		bool playing() const { return m_requestedPlaying; }
+		// While counting in, playing is true, and recording is whether recording starts where playback starts.
 		bool recording() const { return m_requestedRecording; }
+		bool countingIn() const { return m_requestedCountingIn; }
 		// Command thread: where play starts playback.
 		time::Samples startPosition() const;
 		// Command thread: where the last playback started, without the pre-roll (0 before any).
@@ -141,6 +145,9 @@ namespace gnubase::engine
 		// Any thread but the audio thread (the cue thread reads it while a device runs): the cursor, where the last
 		// locate goes until the audio thread has applied it, then as of the last block.
 		time::Samples position() const;
+		// Any thread but the audio thread: while the audio thread counts in, where playback starts after it, the
+		// place to cue; -1 otherwise.
+		time::Samples countInStart() const { return m_countInStart.load(std::memory_order_acquire); }
 
 		// Audio thread, or the command thread while no audio thread runs: applies the waiting requests.
 		void update() noexcept;
@@ -182,6 +189,7 @@ namespace gnubase::engine
 		TransportSettings m_requested;
 		bool m_requestedPlaying = false;
 		bool m_requestedRecording = false;
+		bool m_requestedCountingIn = false;
 		uint64_t m_locates = 0;      // how many locates were sent
 		uint64_t m_sentRequests = 0; // how many requests were sent
 		time::Samples m_playbackStart = 0;
@@ -207,9 +215,10 @@ namespace gnubase::engine
 		// Written by the audio thread: m_locate and m_position after each block. Each pair is read whole, so the cursor
 		// never mixes one locate's count with another's target, or one block's position with another's locate.
 		rt::SeqLockPair<uint64_t, time::Samples> m_applied;
-		// Written by the audio thread: how many requests it applied, whether it plays (1) and records (2), and
-		// changes().
+		// Written by the audio thread: how many requests it applied, whether it plays (1), records (2) and counts in
+		// (4), changes(), and countInStart().
 		std::atomic<uint64_t> m_appliedRequests{0};
+		std::atomic<time::Samples> m_countInStart{-1};
 		std::atomic<uint8_t> m_state{0};
 		std::atomic<uint64_t> m_changes{0};
 	};

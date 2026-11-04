@@ -251,6 +251,11 @@ namespace gnubase::engine::metronome
 		m_noteEnd = now + config.noteLength;
 	}
 
+	void Metronome::reset() noexcept
+	{
+		m_voices.fill({});
+	}
+
 	void Metronome::process(const graph::ProcessContext& context) noexcept
 	{
 		const ClickConfig& config = m_config.acquire();

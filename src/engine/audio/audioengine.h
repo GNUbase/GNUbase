@@ -256,6 +256,10 @@ namespace gnubase::engine
 		bool syncTransport();     // Transport::sync, and the cue thread's copy; whether anything changed
 		void play();
 		void record(bool on);
+		// Cues where a recording from stop starts playback and returns its count-in (length 0 for none).
+		graph::CountIn cueCountIn();
+		// New transport settings; a count-in that runs starts again if they move where playback starts.
+		void setTransportSettings(const TransportSettings& settings);
 		// The count-in before a recording from stop, as the metronome's settings have it, or length 0 for none: it ends
 		// where playback starts (start, the pre-roll's start), in the signature and tempo where recording starts.
 		graph::CountIn countInFrom(time::Samples start, time::Samples recordStart) const;
@@ -278,7 +282,7 @@ namespace gnubase::engine
 		// Puts every channel's processor into a channel strip with the channel's fader and automation, and the
 		// plugins of its slots into slot strips that get their automation; after attachSlots.
 		void attachStrips(const RenderSnapshot& snapshot, graph::GraphDesc& desc);
-		// Adds the metronome's node, if it may click, with its audio and MIDI routing, and compiles what it plays
+		// Adds the metronome's node, always, with its audio and MIDI routing, and compiles what it plays
 		// when that changed.
 		void attachMetronome(const RenderSnapshot& snapshot, graph::GraphDesc& desc);
 		// Brings the slots' plugins in line with the snapshot and gives the slot nodes those that are ready.

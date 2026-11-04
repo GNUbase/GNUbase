@@ -4303,6 +4303,7 @@ Swaps the left and right locators.
 Result:
 
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
+- `countingIn`: boolean, required
 - `cycle`: boolean, required
 - `left`: integer, required
 - `lockRecord`: boolean, required
@@ -4327,11 +4328,12 @@ Result:
 
 Engine command `transport.get`. Read-only.
 
-Whether playback and recording run, the project cursor in samples, where the last playback started (start, in samples, without the pre-roll), the locators and the modes. After a locate the cursor is where it goes, even before the audio thread has applied it.
+Whether playback and recording run, the project cursor in samples, where the last playback started (start, in samples, without the pre-roll), the locators and the modes. After a locate the cursor is where it goes, even before the audio thread has applied it. countingIn: the metronome counts in before a recording from stop (see transport.record); meanwhile playing is true, and recording is whether recording starts where playback starts.
 
 Result:
 
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
+- `countingIn`: boolean, required
 - `cycle`: boolean, required
 - `left`: integer, required
 - `lockRecord`: boolean, required
@@ -4367,6 +4369,7 @@ Arguments:
 Result:
 
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
+- `countingIn`: boolean, required
 - `cycle`: boolean, required
 - `left`: integer, required
 - `lockRecord`: boolean, required
@@ -4396,6 +4399,7 @@ Starts playback from the project cursor, or from the left locator if startMode i
 Result:
 
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
+- `countingIn`: boolean, required
 - `cycle`: boolean, required
 - `left`: integer, required
 - `lockRecord`: boolean, required
@@ -4429,6 +4433,7 @@ Arguments:
 Result:
 
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
+- `countingIn`: boolean, required
 - `cycle`: boolean, required
 - `left`: integer, required
 - `lockRecord`: boolean, required
@@ -4477,6 +4482,7 @@ Arguments:
 Result:
 
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
+- `countingIn`: boolean, required
 - `cycle`: boolean, required
 - `left`: integer, required
 - `lockRecord`: boolean, required
@@ -4510,6 +4516,7 @@ Arguments:
 Result:
 
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
+- `countingIn`: boolean, required
 - `cycle`: boolean, required
 - `left`: integer, required
 - `lockRecord`: boolean, required
@@ -4543,6 +4550,7 @@ Arguments:
 Result:
 
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
+- `countingIn`: boolean, required
 - `cycle`: boolean, required
 - `left`: integer, required
 - `lockRecord`: boolean, required
@@ -4572,6 +4580,7 @@ Takes over what the audio thread changed on its own: recording that punched in o
 Result:
 
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
+- `countingIn`: boolean, required
 - `cycle`: boolean, required
 - `left`: integer, required
 - `lockRecord`: boolean, required
@@ -4824,6 +4833,6 @@ Queries without required arguments can also be read as resources:
 - `gnubase://recording.remainingTime`: The remaining record time (reference manual p. 356): how many seconds the record-enabled audio tracks can record before the disk with the record folder is full, at the project's sample rate and record bit depth; null while no track would record. With the space available there in bytes, the channels that would record and the record folder: the project's media folder Audio, or for an unsaved project a folder of the user's.
 - `gnubase://settings.list`: Every user setting with its key, description, JSON schema, default and value; the settings file, null when settings are kept in memory only; its version; and what happened when it was loaded: the status (inMemory, missing, loaded, migrated, reset or newer), the version the file had, the problems found, where the original file was kept, and whether the file is read-only for this session, so that changes apply but aren't saved (a newer GNUbase's file, or one that couldn't be backed up or locked).
 - `gnubase://snap.get`: The project's snap settings. on: whether snap is on. type: grid (the nearest grid line), gridRelative (moves in grid steps, keeping the distance to the grid), events (the starts and ends of other events, audio events' snap points and markers, when near), shuffle (events trade places with their neighbours, see event.shuffle), cursor (the project cursor, when near), or the combinations gridCursor, eventsCursor and eventsGridCursor. format: the time format the grid follows, the project window's ruler: barsBeats, seconds, timecode, samples or userFrames. grid: the grid type in use, the format's: for barsBeats bar, beat, quantize (the project's quantize grid) or adaptToZoom (a note value that the view chooses); for seconds 1ms, 10ms, 100ms, 1000ms; for timecode and userFrames subframe, quarterFrame, halfFrame, frame, twoFrames, second; for samples 1sample, 10samples, 100samples, 44100samples. A grid type without a format switches to its format (the frames to timecode unless userFrames is in use). grids: the grid type each format keeps, by default bar, 100ms, frame, 100samples and frame. zeroCrossing: splitting and resizing audio events in the project window cut where the audio crosses zero.
-- `gnubase://transport.get`: Whether playback and recording run, the project cursor in samples, where the last playback started (start, in samples, without the pre-roll), the locators and the modes. After a locate the cursor is where it goes, even before the audio thread has applied it.
+- `gnubase://transport.get`: Whether playback and recording run, the project cursor in samples, where the last playback started (start, in samples, without the pre-roll), the locators and the modes. After a locate the cursor is where it goes, even before the audio thread has applied it. countingIn: the metronome counts in before a recording from stop (see transport.record); meanwhile playing is true, and recording is whether recording starts where playback starts.
 
 <!-- End of the generated tool catalogue -->

@@ -75,7 +75,7 @@ namespace gnubase::engine
 		{
 			return Json::parse(R"({"type": "object",
 			"properties": {"playing": {"type": "boolean"}, "recording": {"type": "boolean"},
-				"position": {"type": "integer"}, "start": {"type": "integer"},
+				"countingIn": {"type": "boolean"}, "position": {"type": "integer"}, "start": {"type": "integer"},
 				"left": {"type": "integer"}, "right": {"type": "integer"}, "cycle": {"type": "boolean"},
 				"startMode": {"type": "string", "enum": ["cursor", "cycleStart"]},
 				"returnToStart": {"type": "boolean"}, "punchIn": {"type": "boolean"},
@@ -87,7 +87,7 @@ namespace gnubase::engine
 				"midiCycleRecordMode": {"type": "string",
 					"enum": ["mix", "overwrite", "keepLast", "stacked", "mixStacked"]},
 				"lockRecord": {"type": "boolean"}},
-			"required": ["playing", "recording", "position", "start", "left", "right", "cycle", "startMode",
+			"required": ["playing", "recording", "countingIn", "position", "start", "left", "right", "cycle", "startMode",
 				"returnToStart", "punchIn", "punchOut", "preRoll", "preRollAmount", "postRoll", "postRollAmount",
 				"metronome", "audioRecordMode", "midiRecordMode", "midiCycleRecordMode", "lockRecord"]})");
 		}
@@ -270,7 +270,10 @@ namespace gnubase::engine
 						cue.playing = m_cueState.playing;
 						cue.settings = m_cueState.settings;
 					}
-					cue.position = m_transport.position();
+					// While counting in, where playback will start, as for a stopped transport.
+					const time::Samples countInStart = m_transport.countInStart();
+					cue.position = countInStart >= 0 ? countInStart : m_transport.position();
+					cue.playing = cue.playing && countInStart < 0;
 					cue.window = static_cast<time::Samples>(g_cueSeconds * m_device->format().sampleRate);
 					m_playback.cue(cue);
 					m_audition.cue(cue.window, true);
@@ -320,7 +323,8 @@ namespace gnubase::engine
 		for (uint64_t done = 0; done < frames;)
 		{
 			const auto block = static_cast<uint32_t>(std::min<uint64_t>(format.blockSize, frames - done));
-			cue(m_transport.position(), false, block, false);
+			const time::Samples countInStart = m_transport.countInStart(); // playback starts there after it
+			cue(countInStart >= 0 ? countInStart : m_transport.position(), false, block, false);
 			m_audition.cue(block, false);
 			m_playback.waitUntilBuffered(g_offlineWait);
 			m_audition.waitUntilBuffered(g_offlineWait);
@@ -2260,28 +2264,39 @@ namespace gnubase::engine
 		return countIn;
 	}
 
+	graph::CountIn AudioEngine::cueCountIn()
+	{
+		const time::Samples from = m_transport.startPosition();
+		if (m_device)
+			cue(from, false, m_device->format().blockSize, true);
+		const TransportSettings& settings = m_transport.settings();
+		const time::Samples start =
+			settings.startMode == StartMode::CycleStart ? settings.left : m_transport.position();
+		return countInFrom(from, Transport::recordStart(settings, start, from));
+	}
+
 	void AudioEngine::record(bool on)
 	{
-		graph::CountIn countIn;
-		if (on && !m_transport.playing())
-		{
-			const time::Samples from = m_transport.startPosition();
-			if (m_device)
-				cue(from, false, m_device->format().blockSize, true);
-			const TransportSettings& settings = m_transport.settings();
-			const time::Samples start =
-				settings.startMode == StartMode::CycleStart ? settings.left : m_transport.position();
-			countIn = countInFrom(from, Transport::recordStart(settings, start, from));
-		}
-		sent(m_transport.record(on, countIn));
+		if (on && m_transport.countingIn())
+			return; // already on its way
+		sent(m_transport.record(on, on && !m_transport.playing() ? cueCountIn() : graph::CountIn{}));
+	}
+
+	void AudioEngine::setTransportSettings(const TransportSettings& settings)
+	{
+		const time::Samples before = m_transport.startPosition();
+		sent(m_transport.set(settings));
+		if (m_transport.countingIn() && m_transport.startPosition() != before)
+			sent(m_transport.record(true, cueCountIn()));
 	}
 
 	Json AudioEngine::transportStatus() const
 	{
 		const TransportSettings& settings = m_transport.settings();
 		return {{"playing", m_transport.playing()}, {"recording", m_transport.recording()},
-			{"position", m_transport.position()}, {"start", m_transport.playbackStart()}, {"left", settings.left},
-			{"right", settings.right}, {"cycle", settings.cycle},
+			{"countingIn", m_transport.countingIn()}, {"position", m_transport.position()},
+			{"start", m_transport.playbackStart()}, {"left", settings.left}, {"right", settings.right},
+			{"cycle", settings.cycle},
 			{"startMode", settings.startMode == StartMode::CycleStart ? "cycleStart" : "cursor"},
 			{"returnToStart", settings.returnToStart}, {"punchIn", settings.punchIn}, {"punchOut", settings.punchOut},
 			{"preRoll", settings.preRoll}, {"preRollAmount", settings.preRollAmount}, {"postRoll", settings.postRoll},
@@ -2379,6 +2394,8 @@ namespace gnubase::engine
 		if (m_device)
 			cue(position, false, m_device->format().blockSize, true); // exactly there, like a start
 		sent(m_transport.locate(position));
+		if (m_transport.countingIn()) // again, so that it ends on the bar line where playback now starts
+			sent(m_transport.record(true, cueCountIn()));
 	}
 
 	void AudioEngine::setTransport(const Json& parameters)
@@ -2450,7 +2467,7 @@ namespace gnubase::engine
 				"midiCycleRecordMode must be mix, overwrite, keepLast, stacked or mixStacked");
 			settings.midiCycleRecordMode = static_cast<MidiCycleRecordMode>(index);
 		}
-		sent(m_transport.set(settings));
+		setTransportSettings(settings);
 	}
 
 	void AudioEngine::registerTransportCommands(Engine& engine)
@@ -2482,7 +2499,8 @@ namespace gnubase::engine
 		// Lock Record: a recording doesn't stop or punch out by these commands, only by a confirmed stop.
 		const auto unlocked = [this]
 		{
-			require(!m_transport.settings().lockRecord || !m_transport.recording(),
+			// A count-in hasn't recorded anything yet.
+			require(!m_transport.settings().lockRecord || !m_transport.recording() || m_transport.countingIn(),
 				"recording is locked: stop it with transport.stop confirmed, or unlock it with transport.set "
 				"lockRecord false first");
 		};
@@ -2524,9 +2542,10 @@ namespace gnubase::engine
 				const std::string setting = parameters.value("setting", "");
 				if (setting == "record")
 				{
-					if (m_transport.recording())
+					const bool on = m_transport.recording() || m_transport.countingIn();
+					if (on)
 						unlocked();
-					record(!m_transport.recording());
+					record(!on);
 					return;
 				}
 				if (!setting.empty())
@@ -2544,7 +2563,7 @@ namespace gnubase::engine
 					else if (setting == "postRoll")
 						value = &settings.postRoll;
 					*value = !*value;
-					sent(m_transport.set(settings));
+					setTransportSettings(settings);
 					return;
 				}
 				if (m_transport.playing())
@@ -2626,7 +2645,9 @@ namespace gnubase::engine
 			{"transport.get", 1,
 				"Whether playback and recording run, the project cursor in samples, where the last playback started "
 				"(start, in samples, without the pre-roll), the locators and the modes. "
-				"After a locate the cursor is where it goes, even before the audio thread has applied it.",
+				"After a locate the cursor is where it goes, even before the audio thread has applied it. countingIn: "
+				"the metronome counts in before a recording from stop (see transport.record); meanwhile playing is "
+				"true, and recording is whether recording starts where playback starts.",
 				noParameters(), transportSchema(), true},
 			[this](CommandContext&) { return transportStatus(); });
 	}

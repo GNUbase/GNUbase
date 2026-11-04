@@ -434,6 +434,162 @@ TEST_CASE("a count-in clicks its bars, then playback starts at the exact sample 
 	}
 }
 
+TEST_CASE("the transport reports a count-in, and record off, a locate or Lock Record handle it", "[integration]")
+{
+	const test::TempDir dir;
+	Session session(256);
+	Client& client = session.client;
+	countInProject(session, dir); // a count-in bar at bar 2 is 16000 frames
+	run(client, "metronome.set", {{"countIn", {{"enabled", true}}}});
+	run(client, "transport.locate", {{"position", 28000}});
+	const auto state = [&client]
+	{
+		const Json transport = run(client, "transport.get");
+		return std::vector<bool>{transport.at("countingIn").get<bool>(), transport.at("playing").get<bool>(),
+			transport.at("recording").get<bool>()};
+	};
+	using State = std::vector<bool>; // counting in, playing, recording
+
+	SECTION("as playing, and recording if recording starts where playback starts")
+	{
+		CHECK(run(client, "transport.record").at("countingIn") == true);
+		CHECK(state() == State{true, true, true});
+		run(client, "audio.render", {{"frames", 8000}});
+		CHECK(state() == State{true, true, true});
+		run(client, "audio.render", {{"frames", 9000}});
+		CHECK(state() == State{false, true, true});
+		CHECK(run(client, "transport.get").at("position") == 28000 + 1000);
+	}
+	SECTION("and not as recording while a pre-roll follows, so recording doesn't switch on and off")
+	{
+		run(client, "transport.set", {{"preRoll", true}, {"preRollAmount", 4000}});
+		run(client, "transport.record");
+		CHECK(state() == State{true, true, false});
+		run(client, "audio.render", {{"frames", 17000}});
+		CHECK(state() == State{false, true, false});
+		run(client, "audio.render", {{"frames", 4000}});
+		CHECK(state() == State{false, true, true});
+	}
+	SECTION("record off ends it at once, and play starts playback")
+	{
+		run(client, "transport.record");
+		run(client, "audio.render", {{"frames", 5000}});
+		CHECK(run(client, "transport.record", {{"record", false}}).at("playing") == false);
+		CHECK(state() == State{false, false, false});
+		run(client, "audio.render", {{"frames", 1000}});
+		CHECK(state() == State{false, false, false});
+		run(client, "transport.play");
+		run(client, "audio.render", {{"frames", 1000}});
+		CHECK(state() == State{false, true, false});
+		CHECK(run(client, "transport.get").at("position") == 28000 + 1000);
+	}
+	SECTION("toggling record ends it, also before a pre-roll")
+	{
+		run(client, "transport.set", {{"preRoll", true}, {"preRollAmount", 4000}});
+		run(client, "transport.record");
+		run(client, "audio.render", {{"frames", 5000}});
+		run(client, "transport.toggle", {{"setting", "record"}});
+		run(client, "audio.render", {{"frames", 20000}});
+		CHECK(state() == State{false, false, false});
+		CHECK(framesOf(onsets(capture(client, 0, 25000))) == std::vector<int64_t>{0, 4000});
+	}
+	SECTION("Lock Record doesn't keep it from stopping: nothing is recorded yet")
+	{
+		run(client, "transport.set", {{"lockRecord", true}});
+		run(client, "transport.record");
+		run(client, "audio.render", {{"frames", 5000}});
+		run(client, "transport.stop");
+		CHECK(state() == State{false, false, false});
+	}
+	SECTION("a locate starts it again from the new position, so it ends on its bar line")
+	{
+		run(client, "transport.record");
+		run(client, "audio.render", {{"frames", 6000}});
+		run(client, "transport.locate", {{"position", 44000}}); // bar 3
+		CHECK(state() == State{true, true, true});
+		run(client, "audio.render", {{"frames", 17000}});
+		CHECK(framesOf(onsets(capture(client, 0, 23000))) == std::vector<int64_t>{0, 4000, 6000, 10000, 14000, 18000});
+		CHECK(run(client, "transport.get").at("position") == 44000 + 1000);
+	}
+	SECTION("a new pre-roll starts it again, so it ends where playback now starts")
+	{
+		run(client, "transport.record");
+		run(client, "audio.render", {{"frames", 6000}});
+		run(client, "transport.set", {{"preRoll", true}, {"preRollAmount", 4000}});
+		run(client, "audio.render", {{"frames", 17000}});
+		CHECK(framesOf(onsets(capture(client, 0, 23000))) == std::vector<int64_t>{0, 4000, 6000, 10000, 14000, 18000});
+		CHECK(run(client, "transport.get").at("position") == 24000 + 1000);
+	}
+}
+
+TEST_CASE("audio plays from the pre-roll's first sample after a count-in, and a mixdown waits for it", "[integration]")
+{
+	const test::TempDir dir;
+	Session session(256);
+	Client& client = session.client;
+	countInProject(session, dir);
+	// A ramp: every frame has its own value.
+	test::Audio audio;
+	audio.channels = 1;
+	audio.sampleRate = static_cast<int>(g_rate);
+	for (int64_t f = 0; f < 60000; ++f)
+		audio.samples.push_back(static_cast<float>(f + 1) / 65536.0f);
+	const std::filesystem::path file = dir.path() / "ramp.wav";
+	test::writeWav(file, audio);
+	const auto track = run(client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}, {"channels", 2}})
+						   .at("track")
+						   .at("id")
+						   .get<ObjectId>();
+	const auto media = run(client, "media.add", {{"path", file.u8string()}}).at("media").at("id").get<ObjectId>();
+	const auto clip = run(client, "clip.add", {{"media", media}}).at("clip").at("id").get<ObjectId>();
+	run(client, "audioEvent.add", {{"track", track}, {"clip", clip}, {"position", 0}, {"length", 60000}});
+	run(client, "metronome.set", {{"countIn", {{"enabled", true}}}});
+	run(client, "transport.set", {{"preRoll", true}, {"preRollAmount", 4000}});
+	run(client, "transport.locate", {{"position", 28000}});
+	run(client, "transport.record");
+	// A mixdown waits for the count-in, too, though recording only starts after the pre-roll.
+	CHECK_THAT(reject(client, "mixdown.quickExport", {{"path", (dir.path() / "mix.wav").u8string()}}),
+		Catch::Matchers::ContainsSubstring("stop recording first"));
+	run(client, "audio.render", {{"frames", 22000}});
+	const std::vector<float> out = capture(client, 0, 22000);
+	for (int64_t i = 16000; i < 22000; ++i) // the pre-roll from 24000, then recording from 28000
+	{
+		INFO("frame " << i);
+		REQUIRE(out[static_cast<size_t>(i)] == static_cast<float>(24000 - 16000 + i + 1) / 65536.0f);
+	}
+}
+
+TEST_CASE("reset silences the clicks that ring", "[unit]")
+{
+	metronome::SoundLibrary sounds;
+	metronome::Metronome metronome;
+	metronome.setConfig(metronome::compile(metronome::MetronomeSettings{}, gnubase::time::TempoMap(120.0),
+		gnubase::time::SignatureMap{}, g_rate, g_rate, sounds));
+	std::vector<float> audio(256);
+	float* const channels[] = {audio.data()};
+	const graph::EventBuffer in;
+	graph::EventBuffer out(16);
+	const graph::TransportSegment segment{0, 256, 0, false};
+	graph::TransportBlock transport;
+	transport.playing = true;
+	transport.click = true;
+	transport.segments = &segment;
+	transport.segmentCount = 1;
+	const graph::ProcessContext context{channels, 1, 256, in, out, transport};
+	const auto rings = [&audio]
+	{ return std::any_of(audio.begin(), audio.end(), [](float sample) { return sample != 0.0f; }); };
+
+	metronome.process(context); // a click at 0
+	CHECK(rings());
+	transport.playing = false;
+	transport.segmentCount = 0;
+	metronome.process(context);
+	CHECK(rings()); // it rings on after the transport stopped
+	metronome.reset();
+	metronome.process(context);
+	CHECK(!rings());
+}
+
 TEST_CASE("the MIDI click plays its notes on the destination instrument", "[integration]")
 {
 	const test::TempDir dir;

@@ -3741,6 +3741,7 @@ Swaps the left and right locators.
 Returns:
 
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
+- `countingIn`: boolean, required
 - `cycle`: boolean, required
 - `left`: integer, required
 - `lockRecord`: boolean, required
@@ -3763,13 +3764,14 @@ Returns:
 
 #### `gnubase.transport.get`
 
-Whether playback and recording run, the project cursor in samples, where the last playback started (start, in samples, without the pre-roll), the locators and the modes. After a locate the cursor is where it goes, even before the audio thread has applied it.
+Whether playback and recording run, the project cursor in samples, where the last playback started (start, in samples, without the pre-roll), the locators and the modes. After a locate the cursor is where it goes, even before the audio thread has applied it. countingIn: the metronome counts in before a recording from stop (see transport.record); meanwhile playing is true, and recording is whether recording starts where playback starts.
 
 Only reads; changes nothing.
 
 Returns:
 
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
+- `countingIn`: boolean, required
 - `cycle`: boolean, required
 - `left`: integer, required
 - `lockRecord`: boolean, required
@@ -3803,6 +3805,7 @@ Parameters:
 Returns:
 
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
+- `countingIn`: boolean, required
 - `cycle`: boolean, required
 - `left`: integer, required
 - `lockRecord`: boolean, required
@@ -3830,6 +3833,7 @@ Starts playback from the project cursor, or from the left locator if startMode i
 Returns:
 
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
+- `countingIn`: boolean, required
 - `cycle`: boolean, required
 - `left`: integer, required
 - `lockRecord`: boolean, required
@@ -3861,6 +3865,7 @@ Parameters:
 Returns:
 
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
+- `countingIn`: boolean, required
 - `cycle`: boolean, required
 - `left`: integer, required
 - `lockRecord`: boolean, required
@@ -3907,6 +3912,7 @@ Parameters:
 Returns:
 
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
+- `countingIn`: boolean, required
 - `cycle`: boolean, required
 - `left`: integer, required
 - `lockRecord`: boolean, required
@@ -3938,6 +3944,7 @@ Parameters:
 Returns:
 
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
+- `countingIn`: boolean, required
 - `cycle`: boolean, required
 - `left`: integer, required
 - `lockRecord`: boolean, required
@@ -3969,6 +3976,7 @@ Parameters:
 Returns:
 
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
+- `countingIn`: boolean, required
 - `cycle`: boolean, required
 - `left`: integer, required
 - `lockRecord`: boolean, required
@@ -3996,6 +4004,7 @@ Takes over what the audio thread changed on its own: recording that punched in o
 Returns:
 
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
+- `countingIn`: boolean, required
 - `cycle`: boolean, required
 - `left`: integer, required
 - `lockRecord`: boolean, required

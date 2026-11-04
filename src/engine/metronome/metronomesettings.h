@@ -54,9 +54,9 @@ namespace gnubase::engine::metronome
 	// The time signature and tempo a count-in follows.
 	enum class CountInSignature : uint8_t
 	{
-		Start,   // the signature and tempo at the position where playback starts, for every count-in bar
-		Project, // the bars before the start as the project has them, with their signatures and tempo
-		Custom,  // customSignature at the tempo at the start
+		Start,   // the signature and tempo where recording starts, for every count-in bar
+		Project, // the bars before where playback starts as the project has them, with their signatures and tempo
+		Custom,  // customSignature at the tempo where recording starts
 	};
 
 	// The clicks of a bar, evenly spread over it, each with an accent from 1 to 4 or 0 for none.
@@ -84,7 +84,7 @@ namespace gnubase::engine::metronome
 		int channel = 1;          // MIDI channel 1-16
 		std::array<MidiNote, g_accents> notes{{{76, 1.0}, {77, 0.75}, {77, 0.5}, {77, 0.25}}};
 
-		bool countIn = false; // starts that count in (transport.play with countIn) do
+		bool countIn = false; // transport.record from stop counts in
 		int countInBars = 1;
 		CountInSignature countInSignature = CountInSignature::Start;
 		time::TimeSignature customSignature;

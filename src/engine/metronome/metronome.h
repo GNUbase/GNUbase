@@ -101,6 +101,7 @@ namespace gnubase::engine::metronome
 		const ClickConfig& config() const { return m_config.latest(); }
 
 		void process(const graph::ProcessContext& context) noexcept override;
+		void reset() noexcept override; // silences the clicks that ring
 
 	private:
 		struct Voice

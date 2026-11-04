@@ -67,10 +67,12 @@ namespace gnubase::engine
 		const uint8_t state = m_state.load(std::memory_order_acquire);
 		const bool playing = (state & 1U) != 0;
 		const bool recording = (state & 2U) != 0;
-		if (playing == m_requestedPlaying && recording == m_requestedRecording)
+		const bool countingIn = (state & 4U) != 0;
+		if (playing == m_requestedPlaying && recording == m_requestedRecording && countingIn == m_requestedCountingIn)
 			return false;
 		m_requestedPlaying = playing;
 		m_requestedRecording = recording;
+		m_requestedCountingIn = countingIn;
 		return true;
 	}
 
@@ -100,6 +102,7 @@ namespace gnubase::engine
 			return false;
 		m_requestedPlaying = false;
 		m_requestedRecording = false;
+		m_requestedCountingIn = false;
 		return true;
 	}
 
@@ -111,13 +114,22 @@ namespace gnubase::engine
 		if (!send(request))
 			return false;
 		// What the audio thread will do, unless playback reaches a locator meanwhile; sync() corrects it.
+		if (!on && m_requestedCountingIn) // nothing played yet
+		{
+			m_requestedPlaying = false;
+			m_requestedRecording = false;
+			m_requestedCountingIn = false;
+			return true;
+		}
 		bool now = !m_requested.punchIn || position() >= m_requested.left; // while playing
-		if (!m_requestedPlaying)
+		const bool fromStop = !m_requestedPlaying || m_requestedCountingIn;
+		if (fromStop)
 		{
 			m_playbackStart = startWithoutPreRoll(m_requested, position());
 			const time::Samples from = startPosition();
 			now = from == recordStart(m_requested, startWithoutPreRoll(m_requested, position()), from);
 		}
+		m_requestedCountingIn = on && (m_requestedCountingIn || (fromStop && countIn.length > 0));
 		m_requestedRecording = on && now;
 		m_requestedPlaying = m_requestedPlaying || on;
 		return true;
@@ -218,7 +230,14 @@ namespace gnubase::engine
 			}
 			m_stopAt = -1; // recording again during the post-roll
 			if (m_countingIn)
+			{
+				if (request.countIn.length > 0) // from where playback now starts
+				{
+					m_countIn = request.countIn;
+					m_countedIn = 0;
+				}
 				return;
+			}
 			if (!m_playing && request.countIn.length > 0)
 			{
 				m_countingIn = true;
@@ -243,9 +262,19 @@ namespace gnubase::engine
 
 	void Transport::publish(bool changed) noexcept
 	{
-		// A count-in plays toward a recording: it counts as both.
-		const auto state =
-			static_cast<uint8_t>((m_playing || m_countingIn ? 1U : 0U) | (m_recording || m_countingIn ? 2U : 0U));
+		// A count-in plays toward a recording: it counts as playing, and as recording if recording starts where
+		// playback starts, so recording stays as it is when the count-in ends.
+		bool recording = m_recording;
+		time::Samples countInStart = -1;
+		if (m_countingIn)
+		{
+			const time::Samples start = startWithoutPreRoll(m_settings, m_position);
+			countInStart = withPreRoll(m_settings, start);
+			recording = recordStart(m_settings, start, countInStart) == countInStart;
+		}
+		m_countInStart.store(countInStart, std::memory_order_release);
+		const auto state = static_cast<uint8_t>(
+			(m_playing || m_countingIn ? 1U : 0U) | (recording ? 2U : 0U) | (m_countingIn ? 4U : 0U));
 		if (state == m_published && !changed)
 			return;
 		m_published = state;
