@@ -32,6 +32,8 @@ fader itself is in [mixer.md](mixer.md), mute, solo and listen in [solo-mute-lis
   automated, so their curves combine and play through the channel's fader as its own do, sample-accurately. Where
   only one of the curves moves, the product is that curve's segment scaled; where several move at once, straight
   pieces between their products every 256 frames (`g_productInterval`). The channels' own automation stays as it is.
+  Gaps in either curve (virgin territory and terminators, docs/features/virgin-territory.md) play that fader's
+  static volume.
 - **DAWproject**: a VCA track is a track with `contentType` `automation` and a channel with `role` `vca` and its
   `Volume`; link groups, which DAWproject doesn't have, go into GNUbase's extra entry. A file's link groups lose
   channels that are gone or already in a group, and VCA faders that aren't VCA tracks' channels or control another

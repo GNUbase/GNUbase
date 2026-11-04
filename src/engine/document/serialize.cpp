@@ -829,9 +829,9 @@ namespace gnubase::engine
 			{"audioParts", toJsonArray(project.audioParts)}, {"midiParts", toJsonArray(project.midiParts)},
 			{"markers", toJsonArray(project.markers)}, {"automation", toJsonArray(project.automation)},
 			{"linkGroups", toJsonArray(project.linkGroups)}, {"virginTerritory", project.virginTerritory},
-			{"quantize", midi::toJson(project.quantize)},
-			{"autoQuantize", project.autoQuantize}, {"activeMarkerTrack", project.activeMarkerTrack},
-			{"snap", toJson(project.snap)}, {"mixers", mixersJson(project.mixers)}};
+			{"quantize", midi::toJson(project.quantize)}, {"autoQuantize", project.autoQuantize},
+			{"activeMarkerTrack", project.activeMarkerTrack}, {"snap", toJson(project.snap)},
+			{"mixers", mixersJson(project.mixers)}};
 		json.update(toJson(project.setup));
 		return json;
 	}

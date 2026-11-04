@@ -259,6 +259,13 @@ namespace gnubase::engine
 				}
 				if (own != channel.automation.end())
 				{
+					// The product has no gaps: the channel's own gaps play its static volume.
+					for (RenderAutomationPoint& point : own->points)
+						if (point.gap)
+						{
+							point.value = channel.volume;
+							point.gap = false;
+						}
 					curves.push_back(&own->points);
 					own->points = multiplied(curves, factor);
 					continue;
@@ -413,11 +420,14 @@ namespace gnubase::engine
 				sorted.push_back(&point);
 			std::stable_sort(sorted.begin(), sorted.end(), [](const AutomationPoint* a, const AutomationPoint* b)
 				{ return a->position.value < b->position.value; });
-			// Gaps (reference manual p. 881) are steps to the static value; a mute lane's is the mute button.
+			// Gaps (reference manual p. 881) are steps to the static value; a mute lane's is the mute button. A VCA
+			// fader's curve is multiplied into other channels' curves here, so its gaps get its static volume now.
 			const Channel& owner = project.channels.at(track.channel);
-			const double gapValue = lane.target.type == AutomationTargetType::Mute && owner.mute ? 1.0 : 0.0;
-			const auto gapAt = [gapValue](time::Samples position)
-			{ return RenderAutomationPoint{position, gapValue, AutomationShape::Step, 0.0, true}; };
+			double gapValue = lane.target.type == AutomationTargetType::Mute && owner.mute ? 1.0 : 0.0;
+			if (vca)
+				gapValue = volumeGain(owner.volume);
+			const auto gapAt = [gapValue, vca](time::Samples position)
+			{ return RenderAutomationPoint{position, gapValue, AutomationShape::Step, 0.0, !vca}; };
 			RenderAutomationLane played;
 			played.target = lane.target;
 			for (const AutomationPoint* point : sorted)

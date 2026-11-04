@@ -361,4 +361,24 @@ TEST_CASE("VCA fader automation combines with the channels' own automation", "[i
 			mixer.render(4500),
 			[](int64_t at) { return ramp(at, 0, 0.0, 4000, -12.0) * ramp(at, 1000, 0.0, 3000, -20.0); }, 1e-3);
 	}
+	SECTION("virgin territory: the gaps of both play their static volumes")
+	{
+		Mixer mixer;
+		const ObjectId vca = add(mixer.client, "vca");
+		run(mixer.client, "linkGroup.add", {{"channels", {mixer.track}}, {"vca", vca}});
+		run(mixer.client, "automation.set", {{"virginTerritory", true}});
+		run(mixer.client, "channel.set", {{"channel", vca}, {"volume", -6.0}});
+		mixer.automate(vca, {{{"position", 1000}, {"value", 0.0}}, {{"position", 2000}, {"value", 0.0}}});
+		mixer.automate(mixer.track, {{{"position", 500}, {"value", -3.0}}, {{"position", 3500}, {"value", -3.0}}});
+		run(mixer.client, "transport.play");
+		checkGain(
+			mixer.render(4000),
+			[](int64_t at)
+			{
+				const double own = at < 500 || at >= 3500 ? 0.0 : -3.0;
+				const double fader = at < 1000 || at >= 2000 ? -6.0 : 0.0;
+				return gain(own + fader);
+			},
+			1e-6);
+	}
 }
