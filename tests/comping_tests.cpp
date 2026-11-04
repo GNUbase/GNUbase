@@ -211,6 +211,26 @@ TEST_CASE("a split, the project file and undo keep where audio events are in the
 	CHECK(f.take(track, clip, 0, 100, 2) > moved.get<int64_t>());
 }
 
+TEST_CASE("event.comp takes a piece of a clip at another sample rate that a split rounds past the range", "[unit]")
+{
+	Fixture f;
+	const int64_t track = f.track("audio");
+	const Json media =
+		f.call("media.add", {{"path", "take.wav"}, {"sampleRate", 44100}, {"channels", 1}, {"length", 44100}})
+			.at("media");
+	const auto clip = f.call("clip.add", {{"media", media.at("id")}}).at("clip").at("id").get<int64_t>();
+	const int64_t back = f.take(track, clip, 0, 1000, 0);
+	f.take(track, clip, 0, 1000, 1);
+
+	// In a 48 kHz project the piece from 100 to 180 is 74 clip frames long and ends a sample after 180.
+	const Json comped = f.call("event.comp", {{"track", track}, {"lane", 0}, {"start", 100}, {"end", 180}});
+	REQUIRE(comped.at("events").size() == 1);
+	const Json piece = f.object("audioEvents", comped.at("events").at(0));
+	CHECK(piece.at("lane") == 0);
+	CHECK(piece.at("position") == 100);
+	CHECK(piece.at("front").get<int64_t>() > back);
+}
+
 TEST_CASE("MIDI takes come to the front unmuted, muting the takes on other lanes they overlap", "[unit]")
 {
 	Fixture f;

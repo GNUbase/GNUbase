@@ -1740,9 +1740,8 @@ namespace gnubase::engine
 			for (const time::Samples at : {start, end})
 				splitTracks(project, {track}, at, false, false, context);
 			std::vector<Item> taken;
-			for (const Item& item : itemsOn(project, {track}, true))
-				if (item.lane() == lane && samples(project, item.position()) >= start &&
-					samples(project, endOf(project, item)) <= end)
+			for (const Item& item : within(project, {track}, start, end, true))
+				if (item.lane() == lane)
 					taken.push_back(item);
 			require(!taken.empty(), "lane " + std::to_string(lane) + " has nothing from start to end");
 			for (const Item& item : taken)
