@@ -429,6 +429,38 @@ namespace gnubase::engine
 			return std::llround(static_cast<double>(value) * factor);
 		}
 
+		// Only ruler tracks have a time format and a time offset.
+		void requireRuler(TrackType type, const Json& parameters)
+		{
+			const bool ruler = type == TrackType::Ruler;
+			require(ruler || !parameters.contains("timeFormat"), "only ruler tracks have a time format");
+			require(ruler || (!parameters.contains("timeOffset") && !parameters.contains("timeOffsetOn")),
+				"only ruler tracks have a time offset");
+		}
+
+		// A ruler track's timeOffset (in its time base, or "cursor": the project cursor's position) and timeOffsetOn.
+		void setTimeOffset(const Project& project, Track& track, const Json& parameters, CommandContext& context)
+		{
+			if (const auto offset = parameters.find("timeOffset"); offset != parameters.end())
+			{
+				if (offset->is_string())
+				{
+					require(offset->get<std::string>() == "cursor", "timeOffset must be a position or \"cursor\"");
+					const auto cursor = context.call("transport.get").at("position").get<time::Samples>();
+					track.timeOffset = track.timeBase == time::TimeBase::Linear
+						? cursor
+						: project.tempo.toTicks(cursor, project.sampleRate);
+				}
+				else
+				{
+					const auto value = offset->get<int64_t>();
+					require(value >= 0, "timeOffset must not be negative");
+					track.timeOffset = value;
+				}
+			}
+			track.timeOffsetOn = parameters.value("timeOffsetOn", track.timeOffsetOn);
+		}
+
 		void rebaseTrack(Project& project, Track& track, time::TimeBase base, CommandContext& context)
 		{
 			for (auto& [id, event] : project.audioEvents)
@@ -469,6 +501,8 @@ namespace gnubase::engine
 						point.position = time::rebase(point.position, base, project.tempo, project.sampleRate);
 					context.emit("automationLane.changed", {{"lane", toJson(lane)}});
 				}
+			track.timeOffset =
+				time::rebase({track.timeBase, track.timeOffset}, base, project.tempo, project.sampleRate).value;
 			track.timeBase = base;
 		}
 
@@ -1083,8 +1117,7 @@ namespace gnubase::engine
 					(!parameters.contains("input") && !parameters.contains("output") &&
 						!parameters.contains("instrument")),
 				"this track has no channel");
-			require(
-				type == TrackType::Ruler || !parameters.contains("timeFormat"), "only ruler tracks have a time format");
+			requireRuler(type, parameters);
 			const ChannelFormat format =
 				hasAudio ? channelFormat(parameters, ChannelFormat::Stereo) : ChannelFormat::None;
 
@@ -1099,7 +1132,10 @@ namespace gnubase::engine
 				: defaultTimeBase(project, type, context);
 			track.parent = parent;
 			if (type == TrackType::Ruler)
+			{
 				track.timeFormat = parameters.value("timeFormat", g_rulerTimeFormats[0]);
+				setTimeOffset(project, track, parameters, context);
+			}
 
 			// New tracks play through the main output, or through the group channel of the folder they are added to.
 			std::optional<Channel> channel;
@@ -1236,8 +1272,7 @@ namespace gnubase::engine
 			const Json& parameters = context.parameters();
 			Track& track = find(project.trackById, parameters.at("track").get<ObjectId>(), "track");
 			const std::string newColor = color(parameters, track.color);
-			require(track.type == TrackType::Ruler || !parameters.contains("timeFormat"),
-				"only ruler tracks have a time format");
+			requireRuler(track.type, parameters);
 			if (parameters.contains("name"))
 				track.name = parameters.at("name").get<std::string>();
 			track.color = newColor;
@@ -1255,6 +1290,7 @@ namespace gnubase::engine
 				if (base != track.timeBase)
 					rebaseTrack(project, track, base, context);
 			}
+			setTimeOffset(project, track, parameters, context); // in the new time base
 			if (parameters.contains("groupChannel"))
 				setGroupChannel(project, track, parameters.at("groupChannel").get<bool>(), context);
 			Json result = {{"track", toJson(track)}};
@@ -3148,6 +3184,7 @@ namespace gnubase::engine
 		const Json numberSchema = {{"type", "number"}};
 		const Json stringSchema = {{"type", "string"}};
 		const Json booleanSchema = {{"type", "boolean"}};
+		const Json positionSchema = {{"type", {"integer", "string"}}}; // ticks or samples, or "cursor"
 		const Json noResult = Json::object();
 		const Json trackTypes = enumSchema({"audio", "instrument", "midi", "folder", "group", "effect", "marker",
 			"ruler", "tempo", "signature", "vca"});
@@ -3453,7 +3490,9 @@ namespace gnubase::engine
 				"a track added to a folder "
 				"without a color takes the folder's. Marker tracks have no channel and stay at the top level; a "
 				"project has at most 10, and a new one becomes the active marker track. Ruler tracks have no channel "
-				"either; timeFormat is the time format their ruler shows (default barsBeats). The tempo track shows "
+				"either; timeFormat is the time format their ruler shows (default barsBeats), and with timeOffsetOn "
+				"(default false) it counts from timeOffset, a position in the track's time base or \"cursor\" (default "
+				"0, the project start), instead of the project setup's start time and bar offset. The tempo track shows "
 				"and "
 				"edits the project's tempo (tempo.*), the signature track its time signatures (signature.*): a "
 				"project has one of each at most, without a channel, at the top level. "
@@ -3465,6 +3504,7 @@ namespace gnubase::engine
 						{"index", integerSchema}, {"format", formats}, {"channels", integerSchema},
 						{"timeBase", timeBases}, {"groupChannel", booleanSchema}, {"input", idSchema},
 						{"output", idSchema}, {"instrument", stringSchema}, {"timeFormat", timeFormats},
+						{"timeOffset", positionSchema}, {"timeOffsetOn", booleanSchema},
 						{"tracks", arraySchema(idSchema)}, {"send", integerSchema}, {"projectFolder", booleanSchema}},
 					{"type"}),
 				{{"type", "object"},
@@ -3475,7 +3515,9 @@ namespace gnubase::engine
 		add(engine,
 			{"track.set", 1,
 				"Changes a track's name, color (#rrggbb, or null for the default), time base or, for ruler tracks, "
-				"time format. A new time base keeps its events, parts, markers and automation at the same time; on "
+				"time format and time offset: timeOffset is a position in the track's time base, after a new "
+				"timeBase in the same command in the new one, or \"cursor\" (Set Time Offset to Project Cursor "
+				"Position), and timeOffsetOn switches it on or off (see track.add). A new time base keeps its events, parts, markers and automation at the same time; on "
 				"a linear track they keep their time when the tempo changes too, the notes in its MIDI parts with "
 				"them. enabled false "
 				"disables an audio, instrument or MIDI track: it keeps its events and channel settings but plays "
@@ -3487,7 +3529,8 @@ namespace gnubase::engine
 				"color goes to the tracks inside it. picture is an image file (PNG, JPEG or SVG) that the mixer shows "
 				"on the track's channel, or empty for none.",
 				objectSchema({{"track", idSchema}, {"name", stringSchema}, {"color", color}, {"timeBase", timeBases},
-								 {"timeFormat", timeFormats}, {"enabled", booleanSchema},
+								 {"timeFormat", timeFormats}, {"timeOffset", positionSchema},
+								 {"timeOffsetOn", booleanSchema}, {"enabled", booleanSchema},
 								 {"groupChannel", booleanSchema}, {"picture", stringSchema}},
 					{"track"}),
 				resultSchema({"track"}), false},

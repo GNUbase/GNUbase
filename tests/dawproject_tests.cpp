@@ -165,7 +165,8 @@ namespace
 		run(client, "marker.add", {{"track", linear}, {"position", 44100}, {"name", "Take"}}); // 2 beats
 		run(client, "marker.activateTrack", {{"track", markers}});
 		// A ruler track, which only GNUbase's entry keeps.
-		run(client, "track.add", {{"type", "ruler"}, {"timeFormat", "timecode"}});
+		run(client, "track.add",
+			{{"type", "ruler"}, {"timeFormat", "timecode"}, {"timeOffset", 2 * g_ticksPerQuarter}, {"timeOffsetOn", true}});
 		// Channel volume and pan, and automation of each kind.
 		run(client, "channel.set", {{"channel", vocals.at("channel").at("id")}, {"volume", -4.5}});
 		run(client, "channel.set", {{"channel", piano.at("channel").at("id")}, {"volume", 3.0}, {"pan", -0.25}});
