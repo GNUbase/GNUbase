@@ -81,6 +81,27 @@ namespace gnubase::engine::midi
 				return nullptr;
 			}
 
+			// Whether the preset of that name has these settings.
+			bool has(const std::string& name, const QuantizeSettings& settings) const
+			{
+				const QuantizePreset* preset = find(name);
+				return preset != nullptr && midi::toJson(preset->settings) == midi::toJson(settings);
+			}
+
+			// The preset these settings are, for every client the same: preferred if it has them, else the first of
+			// the user's presets with them, else the factory preset; null for none.
+			Json shown(const QuantizeSettings& settings, const std::string& preferred) const
+			{
+				if (has(preferred, settings))
+					return preferred;
+				const Json json = midi::toJson(settings);
+				for (const auto* list : {&m_user, &factoryQuantizePresets()})
+					for (const QuantizePreset& preset : *list)
+						if (midi::toJson(preset.settings) == json)
+							return preset.name;
+				return nullptr;
+			}
+
 			// Adds a preset, or replaces the user's preset of the same name.
 			void save(const QuantizePreset& preset)
 			{
@@ -404,9 +425,27 @@ namespace gnubase::engine::midi
 			return length.get<time::Ticks>();
 		}
 
-		Json settingsResult(const Project& project)
+		Json settingsResult(const Project& project, const PresetLibrary& presets)
 		{
-			return {{"settings", toJson(project.quantize)}, {"autoQuantize", project.autoQuantize}};
+			return {{"settings", toJson(project.quantize)},
+				{"preset", presets.shown(project.quantize, project.quantizePreset)},
+				{"autoQuantize", project.autoQuantize}};
+		}
+
+		// After a preset command changed presets, which can change the preset shown without changing the settings:
+		// remembers the preset named remember if it has the project's settings, forgets the one remembered if it no
+		// longer has them, and announces quantize.changed if the preset shown changed from before's.
+		void presetsChanged(ProjectModel& model, const PresetLibrary& presets, const Json& before,
+			CommandContext& context, const std::string& remember = {})
+		{
+			const Project& project = model.project();
+			if (!remember.empty() && presets.has(remember, project.quantize))
+				model.setQuantizePreset(remember);
+			else if (!presets.has(project.quantizePreset, project.quantize))
+				model.setQuantizePreset({});
+			Json result = settingsResult(project, presets);
+			if (result != before)
+				context.emit("quantize.changed", std::move(result));
 		}
 	}
 
@@ -428,8 +467,10 @@ namespace gnubase::engine::midi
 		const Json presetResult = {
 			{"type", "object"}, {"properties", {{"preset", {{"type", "object"}}}}}, {"required", {"preset"}}};
 		const Json settingsResultSchema = {{"type", "object"},
-			{"properties", {{"settings", {{"type", "object"}}}, {"autoQuantize", {{"type", "boolean"}}}}},
-			{"required", {"settings", "autoQuantize"}}};
+			{"properties",
+				{{"settings", {{"type", "object"}}}, {"preset", {{"type", {"string", "null"}}}},
+					{"autoQuantize", {{"type", "boolean"}}}}},
+			{"required", {"settings", "preset", "autoQuantize"}}};
 
 		const Json targetProperties = {
 			{"part", idSchema}, {"notes", arraySchema(idSchema)}, {"parts", arraySchema(idSchema)}};
@@ -512,9 +553,12 @@ namespace gnubase::engine::midi
 
 		engine.registerCommand(
 			{"quantize.get", 1,
-				"The project's quantize settings and whether auto quantize is on (see quantize.set for the settings).",
+				"The project's quantize settings (see quantize.set), the preset they are and whether auto quantize is "
+				"on. Among presets with equal settings, preset is the one last chosen with quantize.set, saved or "
+				"renamed while the settings are its own, else the first of the user's, else the factory preset; null "
+				"if no preset has the settings. quantize.changed announces the same whenever it changes.",
 				objectSchema({}), settingsResultSchema, true},
-			[&model](CommandContext&) { return settingsResult(model.project()); });
+			[&model, presets](CommandContext&) { return settingsResult(model.project(), *presets); });
 		model.addEdit(engine,
 			{"quantize.set", 1,
 				"Changes the project's quantize settings: to preset's, if given, then changed by settings. Settings: "
@@ -529,7 +573,8 @@ namespace gnubase::engine::midi
 				"{length, points: [{position, velocity 0-1, length}]} quantizes to a groove instead of the grid, with "
 				"preQuantize (a note value), maxMove (ticks), velocityStrength, lengthStrength and origin (where it "
 				"starts repeating, in project ticks). autoQuantize is whether recording quantizes. Settings are not "
-				"undo steps; they are saved with the project.",
+				"undo steps; they are saved with the project, and so is the preset they are (see quantize.get). "
+				"Announces quantize.changed with the result.",
 				objectSchema(
 					{{"preset", stringSchema}, {"settings", settingsSchema}, {"autoQuantize", {{"type", "boolean"}}}}),
 				settingsResultSchema, false},
@@ -539,7 +584,12 @@ namespace gnubase::engine::midi
 				const Json& parameters = context.parameters();
 				project.quantize = settingsFor(project, *presets, parameters);
 				project.autoQuantize = parameters.value("autoQuantize", project.autoQuantize);
-				Json result = settingsResult(project);
+				// The preset chosen, as long as the settings are its own, shows among presets with equal settings.
+				if (parameters.contains("preset"))
+					project.quantizePreset = parameters.at("preset").get<std::string>();
+				if (!presets->has(project.quantizePreset, project.quantize))
+					project.quantizePreset.clear();
+				Json result = settingsResult(project, *presets);
 				context.emit("quantize.changed", result);
 				return result;
 			});
@@ -569,36 +619,46 @@ namespace gnubase::engine::midi
 			{"quantize.savePreset", 1,
 				"Saves the project's quantize settings, changed by settings, as a preset, replacing the user's preset "
 				"of that name. Factory presets can't be replaced. Presets belong to the user, not to the project: they "
-				"are saved in the settings folder.",
+				"are saved in the settings folder. A preset with the project's settings is the preset they are from "
+				"now on (see quantize.get); quantize.changed announces when that changes.",
 				objectSchema({{"name", stringSchema}, {"settings", settingsSchema}}, {"name"}), presetResult, false},
 			[presets, &model](CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
 				const QuantizePreset preset{parameters.at("name").get<std::string>(),
 					changedSettings(parameters.value("settings", Json::object()), model.project().quantize)};
+				const Json before = settingsResult(model.project(), *presets);
 				presets->save(preset);
 				presets->announce(context);
+				presetsChanged(model, *presets, before, context, preset.name);
 				return Json{{"preset", PresetLibrary::presetJson(preset, false)}};
 			});
 		engine.registerCommand(
-			{"quantize.renamePreset", 1, "Renames one of the user's quantize presets.",
+			{"quantize.renamePreset", 1,
+				"Renames one of the user's quantize presets. A preset with the project's settings is the preset they "
+				"are from now on (see quantize.get); quantize.changed announces when that changes.",
 				objectSchema({{"name", stringSchema}, {"newName", stringSchema}}, {"name", "newName"}), Json::object(),
 				false},
-			[presets](CommandContext& context)
+			[presets, &model](CommandContext& context)
 			{
-				presets->rename(context.parameters().at("name").get<std::string>(),
-					context.parameters().at("newName").get<std::string>());
+				const std::string newName = context.parameters().at("newName").get<std::string>();
+				const Json before = settingsResult(model.project(), *presets);
+				presets->rename(context.parameters().at("name").get<std::string>(), newName);
 				presets->announce(context);
+				presetsChanged(model, *presets, before, context, newName);
 				return Json::object();
 			});
 		engine.registerCommand({"quantize.removePreset", 1,
 								   "Removes one of the user's quantize presets, and the presets of that name "
-								   "that this GNUbase can't read (see quantize.presets).",
+								   "that this GNUbase can't read (see quantize.presets). quantize.changed announces "
+								   "when another preset is the one the project's settings are (see quantize.get).",
 								   objectSchema({{"name", stringSchema}}, {"name"}), Json::object(), false},
-			[presets](CommandContext& context)
+			[presets, &model](CommandContext& context)
 			{
+				const Json before = settingsResult(model.project(), *presets);
 				presets->remove(context.parameters().at("name").get<std::string>());
 				presets->announce(context);
+				presetsChanged(model, *presets, before, context);
 				return Json::object();
 			});
 		engine.registerCommand(
@@ -626,8 +686,10 @@ namespace gnubase::engine::midi
 				preset.settings.origin = span.start;
 				require(!preset.settings.groove->points.empty(),
 					"MIDI part " + std::to_string(id) + " has no notes to make a groove from");
+				const Json before = settingsResult(project, *presets);
 				presets->save(preset);
 				presets->announce(context);
+				presetsChanged(model, *presets, before, context, preset.name);
 				return Json{{"preset", PresetLibrary::presetJson(preset, false)}};
 			});
 	}

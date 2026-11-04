@@ -15,6 +15,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace gnubase::engine
@@ -114,6 +115,9 @@ namespace gnubase::engine
 
 		// The project, for commands defined in other files that read it. Only on the command thread.
 		const Project& project() const { return m_project; }
+		// Sets Project::quantizePreset, for the quantize preset commands, which change presets but not the project, so
+		// they aren't edits. Only on the command thread.
+		void setQuantizePreset(std::string name) { m_project.quantizePreset = std::move(name); }
 		// The project file it was last saved as or loaded from, absolute; empty for none. Only on the command thread.
 		const std::string& file() const { return m_file; }
 		// Identifies the open project: the revision at which it was loaded or started (project.revision's project).

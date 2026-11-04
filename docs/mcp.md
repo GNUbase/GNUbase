@@ -3966,11 +3966,12 @@ Result:
 
 Engine command `quantize.get`. Read-only.
 
-The project's quantize settings and whether auto quantize is on (see quantize.set for the settings).
+The project's quantize settings (see quantize.set), the preset they are and whether auto quantize is on. Among presets with equal settings, preset is the one last chosen with quantize.set, saved or renamed while the settings are its own, else the first of the user's, else the factory preset; null if no preset has the settings. quantize.changed announces the same whenever it changes.
 
 Result:
 
 - `autoQuantize`: boolean, required
+- `preset`: string or null, required
 - `settings`: object, required
 
 #### `quantize_lengths`
@@ -4009,7 +4010,7 @@ Result:
 
 Engine command `quantize.removePreset`.
 
-Removes one of the user's quantize presets, and the presets of that name that this GNUbase can't read (see quantize.presets).
+Removes one of the user's quantize presets, and the presets of that name that this GNUbase can't read (see quantize.presets). quantize.changed announces when another preset is the one the project's settings are (see quantize.get).
 
 Arguments:
 
@@ -4019,7 +4020,7 @@ Arguments:
 
 Engine command `quantize.renamePreset`.
 
-Renames one of the user's quantize presets.
+Renames one of the user's quantize presets. A preset with the project's settings is the preset they are from now on (see quantize.get); quantize.changed announces when that changes.
 
 Arguments:
 
@@ -4046,7 +4047,7 @@ Result:
 
 Engine command `quantize.savePreset`.
 
-Saves the project's quantize settings, changed by settings, as a preset, replacing the user's preset of that name. Factory presets can't be replaced. Presets belong to the user, not to the project: they are saved in the settings folder.
+Saves the project's quantize settings, changed by settings, as a preset, replacing the user's preset of that name. Factory presets can't be replaced. Presets belong to the user, not to the project: they are saved in the settings folder. A preset with the project's settings is the preset they are from now on (see quantize.get); quantize.changed announces when that changes.
 
 Arguments:
 
@@ -4061,7 +4062,7 @@ Result:
 
 Engine command `quantize.set`.
 
-Changes the project's quantize settings: to preset's, if given, then changed by settings. Settings: grid, a note value from "1/1" to "1/128", "T" for a triplet and "." for dotted; tuplet, 0 (off) or 3 to 15 notes in the time of the largest power of two below it; swing 0-1, moving every second grid position later, at 1 by a third of a step (straight grids without tuplets only); catchRange, ticks from a grid position within which notes are quantized (0: all); safeRange, ticks within which they stay; randomize, ticks by which quantized notes move at random, by seed; soft, starting from the current positions instead of the original ones; strength 0-1, the part of the way notes move. groove {length, points: [{position, velocity 0-1, length}]} quantizes to a groove instead of the grid, with preQuantize (a note value), maxMove (ticks), velocityStrength, lengthStrength and origin (where it starts repeating, in project ticks). autoQuantize is whether recording quantizes. Settings are not undo steps; they are saved with the project.
+Changes the project's quantize settings: to preset's, if given, then changed by settings. Settings: grid, a note value from "1/1" to "1/128", "T" for a triplet and "." for dotted; tuplet, 0 (off) or 3 to 15 notes in the time of the largest power of two below it; swing 0-1, moving every second grid position later, at 1 by a third of a step (straight grids without tuplets only); catchRange, ticks from a grid position within which notes are quantized (0: all); safeRange, ticks within which they stay; randomize, ticks by which quantized notes move at random, by seed; soft, starting from the current positions instead of the original ones; strength 0-1, the part of the way notes move. groove {length, points: [{position, velocity 0-1, length}]} quantizes to a groove instead of the grid, with preQuantize (a note value), maxMove (ticks), velocityStrength, lengthStrength and origin (where it starts repeating, in project ticks). autoQuantize is whether recording quantizes. Settings are not undo steps; they are saved with the project, and so is the preset they are (see quantize.get). Announces quantize.changed with the result.
 
 Arguments:
 
@@ -4072,6 +4073,7 @@ Arguments:
 Result:
 
 - `autoQuantize`: boolean, required
+- `preset`: string or null, required
 - `settings`: object, required
 
 ### range
@@ -5309,7 +5311,7 @@ Queries without required arguments can also be read as resources:
 - `gnubase://project.recent`: The recent projects: the project files saved (not auto saved) or opened last, the newest first, at most 10, kept in the user settings' folder. exists says whether the file is still there.
 - `gnubase://project.revision`: A number that grows with every change of the project: every edit, undo and redo, and loading or starting a project. project.load with revision loads only if it hasn't changed. modified says whether the project changed since it was last saved, loaded or started; undoing back to the saved state still counts as a change. project identifies the open project: the revision at which it was loaded or started, so it changes only when another project is opened.
 - `gnubase://project.templates`: The project templates, which project.new starts new projects from, sorted by name: each a name and its file in the folder Project Templates in the user settings' folder. None without that folder.
-- `gnubase://quantize.get`: The project's quantize settings and whether auto quantize is on (see quantize.set for the settings).
+- `gnubase://quantize.get`: The project's quantize settings (see quantize.set), the preset they are and whether auto quantize is on. Among presets with equal settings, preset is the one last chosen with quantize.set, saved or renamed while the settings are its own, else the first of the user's, else the factory preset; null if no preset has the settings. quantize.changed announces the same whenever it changes.
 - `gnubase://quantize.presets`: The quantize presets: the factory presets (straight grids "1/1" to "1/128", triplets such as "1/8 Triplet" and dotted grids such as "1/4 Dotted") and the user's, each with its settings. The user's presets are kept in the settings folder, so they come back when GNUbase starts again: file is where (null if they are kept in memory only), readOnly whether changes are saved (not while the file belongs to a newer GNUbase), and problems what was wrong with it, such as presets that this GNUbase can't read and skips; they stay in the file.
 - `gnubase://recording.remainingTime`: The remaining record time (reference manual p. 356): how many seconds the record-enabled audio tracks can record before the disk with the record folder is full, at the project's sample rate and record bit depth; null while no track would record. With the space available there in bytes, the channels that would record and the record folder: the project's media folder Audio, or for an unsaved project a folder of the user's.
 - `gnubase://sampleEditor.get`: What the sample editor shows. The view: open; event, the audio event it shows, with its clip, track and media file (0 while it shows none, or its event is gone: an undo brings it back); length, the clip's length in sample frames; offset and eventLength, the section of the clip the event plays (clip frames); clipStart, the project sample where the clip's frame 0 would play, and ratio, project samples per clip frame, so frame f plays at clipStart + f * ratio; selectionStart and selectionEnd, the selection range in clip frames, none while they are the same. View state: no undo steps, not saved, and a new or loaded project closes it.
