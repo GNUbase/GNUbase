@@ -111,10 +111,10 @@ namespace gnubase::ui
 		{
 			Rml::Vector2f from; // where the press was, in pixels
 			std::pair<double, double> range;
-			bool onEvent = false;           // moves the selected events; else drags a rectangle or adds an event
-			std::optional<int64_t> toggled; // a selected event pressed with Ctrl or Shift, out if it doesn't move
-			std::vector<int64_t> base;      // the selection that the rectangle adds to
-			bool moved = false;             // beyond g_dragStart
+			bool onEvent = false;             // moves the selected events; else drags a rectangle or adds an event
+			std::optional<int64_t> toggled{}; // a selected event pressed with Ctrl or Shift, out if it doesn't move
+			std::vector<int64_t> base{};      // the selection that the rectangle adds to
+			bool moved = false;               // beyond g_dragStart
 		};
 
 		void ProcessEvent(Rml::Event& event) override;
