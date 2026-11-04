@@ -482,3 +482,15 @@ TEST_CASE("a part's transpose and velocity add to the track's modifiers, also wh
 	CHECK_THAT(reject(track.client, "midiPart.set", {{"part", track.part}, {"velocity", -128}}),
 		ContainsSubstring("velocity"));
 }
+
+TEST_CASE("a random position doesn't pull a note the part hides beyond its end back into it", "[integration]")
+{
+	ModifiedTrack track;
+	track.add({{60, 100}, {62, 100}, {64, 100}, {65, 100}});
+	// Shortened to an eighth of a beat before the last note, which the part keeps but hides.
+	run(track.client, "midiPart.set", {{"part", track.part}, {"length", (3 * g_beatTicks) - (g_beatTicks / 8)}});
+	CHECK(pitches(track.notes()) == std::vector<int>{60, 62, 64});
+	track.modify(
+		{{"random", {{{"target", "position"}, {"minimum", -g_beatTicks / 4}, {"maximum", -g_beatTicks / 4}}}}});
+	CHECK(pitches(track.notes()) == std::vector<int>{60, 62, 64});
+}

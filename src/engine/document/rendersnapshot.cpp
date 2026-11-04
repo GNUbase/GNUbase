@@ -43,6 +43,9 @@ namespace gnubase::engine
 			modifiers.velocityShift += part.velocity;
 			for (const auto& [id, note] : part.notes)
 			{
+				// Notes the part hides beyond its end don't play, wherever a random position would move them.
+				if (note.position >= end - start)
+					continue;
 				const uint64_t seed = midi::noteSeed(partId, id);
 				uint8_t pitch = note.pitch;
 				uint16_t velocity = note.velocity;
@@ -51,7 +54,7 @@ namespace gnubase::engine
 				// A note moved before the project's start starts there.
 				const time::Ticks position =
 					std::max(note.position + midi::randomOffset(modifiers, midi::RandomTarget::Position, seed), -start);
-				if (position >= end - start)
+				if (position >= end - start) // moved out of the part
 					continue;
 				const time::Ticks length = note.length > 0 ? midi::modifyLength(modifiers, seed, note.length) : 0;
 				const time::Ticks noteEnd = std::min(start + position + length, end);
