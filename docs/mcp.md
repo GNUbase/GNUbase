@@ -1261,6 +1261,22 @@ Result:
 
 - `clip`: object, required
 
+#### `clip_addHitpoint`
+
+Engine command `clip.addHitpoint`.
+
+Inserts a hitpoint into a clip at position, a clip frame (Alt-click with Edit Hitpoints, reference manual p. 640). It is locked, so that it counts whatever the filters. A clip's hitpoints are in its hitpoints, by position: each with its position in the clip's sample frames, its peak (dBFS, the loudest sample in the 20 ms from there) and intensity (0-1, how sharply the level rises there, 1 for the sharpest the detection found), whether it is locked and disabled, and active, whether it counts: not disabled, and locked or let through by the clip's hitpointFilter (clip.setHitpointFilter). Emits clip.changed. Returns the clip's id and its hitpoints.
+
+Arguments:
+
+- `clip`: integer, required
+- `position`: integer, required
+
+Result:
+
+- `clip`: integer, required
+- `hitpoints`: array of object, required
+
 #### `clip_addRegion`
 
 Engine command `clip.addRegion`.
@@ -1279,6 +1295,21 @@ Result:
 - `clip`: integer, required
 - `region`: object, required
 
+#### `clip_detectHitpoints`
+
+Engine command `clip.detectHitpoints`.
+
+Finds where sounds start in a clip (calculating hitpoints, reference manual p. 637) and makes them its hitpoints, in place of those it had: where the level, or that of the high frequencies, rises by 6 dB or more within 5 ms from at least -60 dBFS, 20 ms apart at least. Edit Hitpoints restores the hitpoints found this way after Remove All. Reads the clip's file. A clip's hitpoints are in its hitpoints, by position: each with its position in the clip's sample frames, its peak (dBFS, the loudest sample in the 20 ms from there) and intensity (0-1, how sharply the level rises there, 1 for the sharpest the detection found), whether it is locked and disabled, and active, whether it counts: not disabled, and locked or let through by the clip's hitpointFilter (clip.setHitpointFilter). Emits clip.changed. Returns the clip's id and its hitpoints.
+
+Arguments:
+
+- `clip`: integer, required
+
+Result:
+
+- `clip`: integer, required
+- `hitpoints`: array of object, required
+
 #### `clip_remove`
 
 Engine command `clip.remove`.
@@ -1288,6 +1319,21 @@ Removes a clip that no audio event uses.
 Arguments:
 
 - `clip`: integer, required
+
+#### `clip_removeHitpoints`
+
+Engine command `clip.removeHitpoints`.
+
+Removes all of a clip's hitpoints, detected and inserted (Remove All, reference manual p. 638); clip.detectHitpoints finds them again. A clip's hitpoints are in its hitpoints, by position: each with its position in the clip's sample frames, its peak (dBFS, the loudest sample in the 20 ms from there) and intensity (0-1, how sharply the level rises there, 1 for the sharpest the detection found), whether it is locked and disabled, and active, whether it counts: not disabled, and locked or let through by the clip's hitpointFilter (clip.setHitpointFilter). Emits clip.changed. Returns the clip's id and its hitpoints.
+
+Arguments:
+
+- `clip`: integer, required
+
+Result:
+
+- `clip`: integer, required
+- `hitpoints`: array of object, required
 
 #### `clip_removeRegion`
 
@@ -1335,6 +1381,43 @@ Arguments:
 Result:
 
 - `clip`: object, required
+
+#### `clip_setHitpoint`
+
+Engine command `clip.setHitpoint`.
+
+Edits the hitpoint of a clip at position (reference manual p. 640): moveTo moves it to that clip frame, which locks it unless locked is given; locked locks or unlocks it (Lock Hitpoint), disabled disables or enables it (Disable Hitpoint); both false reset it (Enable/Unlock Hitpoints). What isn't given stays. A clip's hitpoints are in its hitpoints, by position: each with its position in the clip's sample frames, its peak (dBFS, the loudest sample in the 20 ms from there) and intensity (0-1, how sharply the level rises there, 1 for the sharpest the detection found), whether it is locked and disabled, and active, whether it counts: not disabled, and locked or let through by the clip's hitpointFilter (clip.setHitpointFilter). Emits clip.changed. Returns the clip's id and its hitpoints.
+
+Arguments:
+
+- `clip`: integer, required
+- `disabled`: boolean
+- `locked`: boolean
+- `moveTo`: integer
+- `position`: integer, required
+
+Result:
+
+- `clip`: integer, required
+- `hitpoints`: array of object, required
+
+#### `clip_setHitpointFilter`
+
+Engine command `clip.setHitpointFilter`.
+
+Changes which of a clip's hitpoints count (the Hitpoints section's filters, reference manual p. 638): threshold, the peak in dBFS they need (-60 to 0, -60 lets every one through); intensity, the intensity they need (0-1); minimumLength, the clip frames they must start after the one before that counts. Locked hitpoints always count, disabled ones never. What isn't given stays. A clip's hitpoints are in its hitpoints, by position: each with its position in the clip's sample frames, its peak (dBFS, the loudest sample in the 20 ms from there) and intensity (0-1, how sharply the level rises there, 1 for the sharpest the detection found), whether it is locked and disabled, and active, whether it counts: not disabled, and locked or let through by the clip's hitpointFilter (clip.setHitpointFilter). Emits clip.changed. Returns the clip's id and its hitpoints.
+
+Arguments:
+
+- `clip`: integer, required
+- `intensity`: number
+- `minimumLength`: integer
+- `threshold`: number
+
+Result:
+
+- `clip`: integer, required
+- `hitpoints`: array of object, required
 
 #### `clip_setRegion`
 
@@ -1742,6 +1825,31 @@ Arguments:
 Result:
 
 - `events`: array of integer, required
+
+#### `event_fromHitpoints`
+
+Engine command `event.fromHitpoints`.
+
+Makes something of the hitpoints of an audio event's clip that count and are inside the section it plays (the Hitpoints section's Create section, reference manual pp. 638-647). create: slices cuts every unlocked event that plays the clip at its hitpoints and puts the slices into an audio part in its place (slices of an event in a part stay in it), returning the parts, or those slices, in events; events cuts this event at them, returning it and the new events in events; regions makes a region of the clip from the event's start to the first hitpoint, from each to the next and from the last to the event's end, returning them in regions; markers adds a position marker at each to the active marker track (adding one without), returning them in markers; groove makes the project's quantize settings a groove of them, as long as the event and starting where it does (quantize.set), returning those settings in quantize; midiNotes adds a MIDI part as long as the event with a note at each, to track (a MIDI or instrument track, such as the first selected one) or to a new MIDI track named after the clip, returning track and part. The notes have pitch (default 36, C1) and length (ticks, default a sixteenth); velocityMode dynamic (the default) gives the loudest hitpoint velocity 1 and the others less as their peaks are quieter, fixed gives every note velocity (0-1, default 100/127).
+
+Arguments:
+
+- `create`: one of "slices" | "events" | "regions" | "markers" | "groove" | "midiNotes", required
+- `event`: integer, required
+- `length`: integer
+- `pitch`: integer
+- `track`: integer
+- `velocity`: number
+- `velocityMode`: one of "dynamic" | "fixed"
+
+Result:
+
+- `events`: array of integer
+- `markers`: array of integer
+- `part`: integer
+- `quantize`: object
+- `regions`: array of integer
+- `track`: integer
 
 #### `event_get`
 
