@@ -691,7 +691,10 @@ namespace gnubase::ui
 		std::map<std::pair<uint64_t, std::string>, Json> changes;
 		for (const Row* row : rows)
 		{
-			const int64_t value = m_ctrl ? *typedValue : *number(*row, field) + (*typedValue - *was);
+			const std::optional<int64_t> current = number(*row, field);
+			if (!current)
+				continue;
+			const int64_t value = m_ctrl ? *typedValue : *current + (*typedValue - *was);
 			Json change = {{"id", row->id}};
 			const std::string& type = row->type;
 			if (field == "start")
