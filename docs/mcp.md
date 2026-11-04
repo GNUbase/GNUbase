@@ -1204,7 +1204,7 @@ Result:
 
 Engine command `channel.set`.
 
-Changes a channel's format (or channels, as in bus.add), input (an input bus) or output (an output bus or a group channel; for MIDI tracks an instrument channel). 0 disconnects. Audio converts between formats where a channel feeds a destination of another one: speakers both formats have connect, the others are mixed down (5.1 to stereo: C and LFE into L and R at -3 dB, Ls into L and Rs into R at -6 dB; 7.1 to 5.1: Sl and Sr into the front and surround sides at -3 dB) or up (mono to C, or to L and R at the pan law's center). instrument is the built-in instrument an instrument track plays (see processor.list), or empty for none. volume is the fader in dB, from -144 (silence) to the project's maxVolume (default 0); values beyond them stop there. The panner depends on the routing: a mono channel on a stereo destination has its position pan, -1 (left) to 1 (right), placed with the project's pan law; a stereo channel on a stereo or mono destination has the balance panner (panner balance, the default: pan turns down the other side) or the combined panner (panner combined: panLeft and panRight place its left and right channel, by default -1 and 1). panBypass plays mono channels at the center and stereo ones hard left and right. Destinations wider than stereo have no panner yet. Automation of volume, pan, panLeft and panRight overrides them while it plays; changes glide over 5 ms. MIDI channels have no audio: midiVolume and midiPan (0 to 127, 64 is the center pan, null for none, the default) are sent to the instrument as MIDI volume (CC 7) and pan (CC 10) on MIDI channel 1, whenever they change and when playback starts or jumps; automation of those controllers overrides them. monitor and recordEnable are an audio track's buttons: monitor hears the input bus, recordEnable arms the track for recording and, by the user setting audio.autoMonitoring, monitors too: manual never, whileRecordEnabled always, whileRecording while the transport records, tapeMachine while it stands or records (the default). Monitoring glides in and out over one audio block. MIDI and instrument tracks have them too: recordEnable arms the track for MIDI recording, and while either is on, the track plays what comes from its MIDI input, midiInput: all (all MIDI inputs, the default) or none. mute silences a channel; while any channel is soloed (solo), only the soloed ones, the channels they play through (groups, instruments) and the channels that play into them are heard; exclusive (with solo) turns every other channel's solo off; soloDefeat keeps a channel and the channels it plays through heard while others are soloed. listen (not MIDI channels) also plays the channel after its fader on the monitoring bus, the main mix, which is turned down to the user setting audio.listenDim while any channel listens; the listening channels play there at audio.listenLevel, and their signal flow stays as it is. Muting, soloing and the dim glide over one audio block. notes is the channel's notepad, the user's text about it. The channel strip's sections (audio channels only; each object changes only what it has, as project.get shows them) run before the fader: pre {gain (dB, -24 to 24), phase (inverts the polarity), lowCut and highCut {on, frequency (Hz, 20 or for the high cut 50 to 20000), slope (6, 12, 24, 36 or 48 dB per octave)}} before the plugin slots; after them strip {gate {on, threshold (dB, -80 to 0), range (dB, -80 to 0), attack (ms, 0.01 to 100), release (ms, 1 to 4000)}, compressor {on, threshold (dB, -60 to 0), ratio (1 to 20), attack (ms, 0.1 to 100), release (ms, 10 to 2000), makeup (dB, 0 to 24)}}, then eq {bypass, bands: [{band (1 to 4), on, type (bell; band 1 also lowShelf or lowCut, band 4 highShelf or highCut, cuts at 12 dB per octave), frequency (Hz, 20 to 20000), gain (dB, -24 to 24), q (0.1 to 12)}]}, then the strip's limiter {on, threshold (dB, -30 to 0: no sample leaves above it, 1 ms of latency), release (ms, 1 to 1000)}. Everything starts off; changes glide.
+Changes a channel's format (or channels, as in bus.add), input (an input bus) or output (an output bus or a group channel; for MIDI tracks an instrument channel). 0 disconnects. Audio converts between formats where a channel feeds a destination of another one: speakers both formats have connect, the others are mixed down (5.1 to stereo: C and LFE into L and R at -3 dB, Ls into L and Rs into R at -6 dB; 7.1 to 5.1: Sl and Sr into the front and surround sides at -3 dB) or up (mono to C, or to L and R at the pan law's center). instrument is the built-in instrument an instrument track plays (see processor.list), or empty for none. volume is the fader in dB, from -144 (silence) to the project's maxVolume (default 0); values beyond them stop there. The panner depends on the routing: a mono channel on a stereo destination has its position pan, -1 (left) to 1 (right), placed with the project's pan law; a stereo channel on a stereo or mono destination has the balance panner (panner balance, the default: pan turns down the other side) or the combined panner (panner combined: panLeft and panRight place its left and right channel, by default -1 and 1). panBypass plays mono channels at the center and stereo ones hard left and right. Destinations wider than stereo have no panner yet. Automation of volume, pan, panLeft and panRight overrides them while it plays; changes glide over 5 ms. MIDI channels have no audio: midiVolume and midiPan (0 to 127, 64 is the center pan, null for none, the default) are sent to the instrument as MIDI volume (CC 7) and pan (CC 10) on MIDI channel 1, whenever they change and when playback starts or jumps; automation of those controllers overrides them. monitor and recordEnable are an audio track's buttons: monitor hears the input bus, recordEnable arms the track for recording and, by the user setting audio.autoMonitoring, monitors too: manual never, whileRecordEnabled always, whileRecording while the transport records, tapeMachine while it stands or records (the default). Monitoring glides in and out over one audio block. MIDI and instrument tracks have them too: recordEnable arms the track for MIDI recording, and while either is on, the track plays what comes from its MIDI input, midiInput: all (all MIDI inputs, the default) or none. mute silences a channel; while any channel is soloed (solo), only the soloed ones, the channels they play through (groups, instruments) and the channels that play into them are heard; exclusive (with solo) turns every other channel's solo off; soloDefeat keeps a channel and the channels it plays through heard while others are soloed. listen (not MIDI channels) also plays the channel after its fader on the monitoring bus, the main mix, which is turned down to the user setting audio.listenDim while any channel listens; the listening channels play there at audio.listenLevel, and their signal flow stays as it is. Muting, soloing and the dim glide over one audio block. notes is the channel's notepad, the user's text about it. The channel strip's sections (audio channels only; each object changes only what it has, as project.get shows them) run before the fader: pre {gain (dB, -24 to 24), phase (inverts the polarity), lowCut and highCut {on, frequency (Hz, 20 or for the high cut 50 to 20000), slope (6, 12, 24, 36 or 48 dB per octave)}} before the plugin slots; after them strip {gate {on, threshold (dB, -80 to 0), range (dB, -80 to 0), attack (ms, 0.01 to 100), release (ms, 1 to 4000)}, compressor {on, threshold (dB, -60 to 0), ratio (1 to 20), attack (ms, 0.1 to 100), release (ms, 10 to 2000), makeup (dB, 0 to 24)}}, then eq {bypass, bands: [{band (1 to 4), on, type (bell; band 1 also lowShelf or lowCut, band 4 highShelf or highCut, cuts at 12 dB per octave), frequency (Hz, 20 to 20000), gain (dB, -24 to 24), q (0.1 to 12)}]}, then the strip's limiter {on, threshold (dB, -30 to 0: no sample leaves above it, 1 ms of latency), release (ms, 1 to 1000)}. Everything starts off; changes glide. sends (audio channels only) changes the channel's eight sends, each by its send number (1 to 8) and only in what it has: destination (a group or effect channel, 0 for none), on, level (dB, from -144 to the project's maxVolume, stopping there, default 0) and preFader (before the fader and the mute button, after the strip's sections; default after the fader). A send starts off and without a destination. Neither an output nor a send may lead back to the channel through other outputs and sends, on or off, so routing never makes a loop; removing a destination's track clears the destination. A send's level and on glide over one audio block.
 
 Arguments:
 
@@ -1230,6 +1230,7 @@ Arguments:
 - `panner`: one of "balance" | "combined"
 - `pre`: object
 - `recordEnable`: boolean
+- `sends`: array of object
 - `solo`: boolean
 - `soloDefeat`: boolean
 - `strip`: object
@@ -1403,7 +1404,7 @@ Result:
 
 Engine command `editor.close`.
 
-Closes a MIDI editor: it shows no parts, and Keep Editor Contents goes off (p. 1153). Emits editor.changed. editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: open; parts, the MIDI parts it shows, in the track list's order and by position; activePart, the part active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the marker and ruler tracks the editor window shows above its events. The key editor's (pp. 1189-1220): selection, the selected notes, each {part, note}, of the editable parts; stepInput and midiInput, what editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, recordPitch, recordVelocity, recordReleaseVelocity and keepNotes, how they go in; insertVelocity (0-1), the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, a note value such as 1/16, 1/8T or 1/4., or link for the quantize grid's (quantize.set). The controller lanes' (pp. 1157-1188): lanes, from the top, each {type, number}: velocity, offVelocity, probability or velocityVariance (the notes' play probability and velocity variance), or the controller events of a type: controller (number is the controller), pitchBend, channelPressure, polyPressure (number is the pitch) or program; showLanes, whether the controller display shows them; autoSelectControllers, whether selecting notes selects the controller events from their start to their end; controllerSelection, the selected controller events, each {part, controller}, of the editable parts. View state: no undo steps, not saved, and a new or loaded project closes the editors.
+Closes a MIDI editor: it shows no parts, and Keep Editor Contents goes off (p. 1153). Emits editor.changed. editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: open; parts, the MIDI parts it shows, in the track list's order and by position; activePart, the part active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the marker and ruler tracks the editor window shows above its events. The key editor's (pp. 1189-1220): selection, the selected notes, each {part, note}, of the editable parts; stepInput and midiInput, what editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, recordPitch, recordVelocity, recordReleaseVelocity and keepNotes, how they go in; insertVelocity (0-1), the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, a note value such as 1/16, 1/8T or 1/4., or link for the quantize grid's (quantize.set). content: what shows the parts, key (the key editor) or list (the list editor, pp. 1243-1258); controllerSelection, the selected controller events, each {part, controller}, of the editable parts. The controller lanes' (pp. 1157-1188): lanes, from the top, each {type, number}: velocity, offVelocity, probability or velocityVariance (the notes' play probability and velocity variance), or the controller events of a type: controller (number is the controller), pitchBend, channelPressure, polyPressure (number is the pitch) or program; showLanes, whether the controller display shows them; autoSelectControllers, whether selecting notes selects the controller events from their start to their end. View state: no undo steps, not saved, and a new or loaded project closes the editors.
 
 Arguments:
 
@@ -1414,6 +1415,7 @@ Result:
 - `activePart`: integer, required
 - `activeTrack`: integer, required
 - `autoSelectControllers`: boolean, required
+- `content`: one of "key" | "list", required
 - `controllerSelection`: array of object, required
 - `editable`: array of integer, required
 - `editingMode`: one of "allParts" | "activePart" | "activeTrack", required
@@ -1440,7 +1442,7 @@ Result:
 
 Engine command `editor.get`. Read-only.
 
-What a MIDI editor shows. editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: open; parts, the MIDI parts it shows, in the track list's order and by position; activePart, the part active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the marker and ruler tracks the editor window shows above its events. The key editor's (pp. 1189-1220): selection, the selected notes, each {part, note}, of the editable parts; stepInput and midiInput, what editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, recordPitch, recordVelocity, recordReleaseVelocity and keepNotes, how they go in; insertVelocity (0-1), the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, a note value such as 1/16, 1/8T or 1/4., or link for the quantize grid's (quantize.set). The controller lanes' (pp. 1157-1188): lanes, from the top, each {type, number}: velocity, offVelocity, probability or velocityVariance (the notes' play probability and velocity variance), or the controller events of a type: controller (number is the controller), pitchBend, channelPressure, polyPressure (number is the pitch) or program; showLanes, whether the controller display shows them; autoSelectControllers, whether selecting notes selects the controller events from their start to their end; controllerSelection, the selected controller events, each {part, controller}, of the editable parts. View state: no undo steps, not saved, and a new or loaded project closes the editors.
+What a MIDI editor shows. editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: open; parts, the MIDI parts it shows, in the track list's order and by position; activePart, the part active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the marker and ruler tracks the editor window shows above its events. The key editor's (pp. 1189-1220): selection, the selected notes, each {part, note}, of the editable parts; stepInput and midiInput, what editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, recordPitch, recordVelocity, recordReleaseVelocity and keepNotes, how they go in; insertVelocity (0-1), the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, a note value such as 1/16, 1/8T or 1/4., or link for the quantize grid's (quantize.set). content: what shows the parts, key (the key editor) or list (the list editor, pp. 1243-1258); controllerSelection, the selected controller events, each {part, controller}, of the editable parts. The controller lanes' (pp. 1157-1188): lanes, from the top, each {type, number}: velocity, offVelocity, probability or velocityVariance (the notes' play probability and velocity variance), or the controller events of a type: controller (number is the controller), pitchBend, channelPressure, polyPressure (number is the pitch) or program; showLanes, whether the controller display shows them; autoSelectControllers, whether selecting notes selects the controller events from their start to their end. View state: no undo steps, not saved, and a new or loaded project closes the editors.
 
 Arguments:
 
@@ -1451,6 +1453,7 @@ Result:
 - `activePart`: integer, required
 - `activeTrack`: integer, required
 - `autoSelectControllers`: boolean, required
+- `content`: one of "key" | "list", required
 - `controllerSelection`: array of object, required
 - `editable`: array of integer, required
 - `editingMode`: one of "allParts" | "activePart" | "activeTrack", required
@@ -1493,11 +1496,12 @@ Result:
 
 Engine command `editor.open`.
 
-Opens a MIDI editor with MIDI parts, such as the ones selected in the project window, or shows those parts in it if it is open. activePart becomes the part active for editing, by default the first. Emits editor.changed. editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: open; parts, the MIDI parts it shows, in the track list's order and by position; activePart, the part active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the marker and ruler tracks the editor window shows above its events. The key editor's (pp. 1189-1220): selection, the selected notes, each {part, note}, of the editable parts; stepInput and midiInput, what editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, recordPitch, recordVelocity, recordReleaseVelocity and keepNotes, how they go in; insertVelocity (0-1), the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, a note value such as 1/16, 1/8T or 1/4., or link for the quantize grid's (quantize.set). The controller lanes' (pp. 1157-1188): lanes, from the top, each {type, number}: velocity, offVelocity, probability or velocityVariance (the notes' play probability and velocity variance), or the controller events of a type: controller (number is the controller), pitchBend, channelPressure, polyPressure (number is the pitch) or program; showLanes, whether the controller display shows them; autoSelectControllers, whether selecting notes selects the controller events from their start to their end; controllerSelection, the selected controller events, each {part, controller}, of the editable parts. View state: no undo steps, not saved, and a new or loaded project closes the editors.
+Opens a MIDI editor with MIDI parts, such as the ones selected in the project window, or shows those parts in it if it is open. activePart becomes the part active for editing, by default the first. content shows them in the key editor or the list editor; an open editor keeps its content unless it is given, a closed one opens with the key editor. Emits editor.changed. editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: open; parts, the MIDI parts it shows, in the track list's order and by position; activePart, the part active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the marker and ruler tracks the editor window shows above its events. The key editor's (pp. 1189-1220): selection, the selected notes, each {part, note}, of the editable parts; stepInput and midiInput, what editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, recordPitch, recordVelocity, recordReleaseVelocity and keepNotes, how they go in; insertVelocity (0-1), the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, a note value such as 1/16, 1/8T or 1/4., or link for the quantize grid's (quantize.set). content: what shows the parts, key (the key editor) or list (the list editor, pp. 1243-1258); controllerSelection, the selected controller events, each {part, controller}, of the editable parts. The controller lanes' (pp. 1157-1188): lanes, from the top, each {type, number}: velocity, offVelocity, probability or velocityVariance (the notes' play probability and velocity variance), or the controller events of a type: controller (number is the controller), pitchBend, channelPressure, polyPressure (number is the pitch) or program; showLanes, whether the controller display shows them; autoSelectControllers, whether selecting notes selects the controller events from their start to their end. View state: no undo steps, not saved, and a new or loaded project closes the editors.
 
 Arguments:
 
 - `activePart`: integer
+- `content`: one of "key" | "list"
 - `editor`: one of "lower" | "window", required
 - `parts`: array of integer, required
 
@@ -1506,6 +1510,7 @@ Result:
 - `activePart`: integer, required
 - `activeTrack`: integer, required
 - `autoSelectControllers`: boolean, required
+- `content`: one of "key" | "list", required
 - `controllerSelection`: array of object, required
 - `editable`: array of integer, required
 - `editingMode`: one of "allParts" | "activePart" | "activeTrack", required
@@ -1532,13 +1537,14 @@ Result:
 
 Engine command `editor.set`.
 
-Changes what an open MIDI editor shows (reference manual pp. 1142-1156); what isn't given stays. parts replaces its parts. Then the Visibility tab's changes: exclusive hides every track first, showTracks shows every MIDI part of these tracks (all tracks in a folder) and activates the last, hideTracks hides theirs; at least one part stays. activeTrack activates the track's first part shown, activePart a part shown. editingMode, keepContents and globalTracks (marker and ruler tracks, the editor window only) also apply to a closed editor. selection replaces the selected notes, of the editable parts. The key editor's settings apply to any editor; turning stepInput on puts the step input cursor at the active part's start unless stepPosition is given. lanes replaces the controller lanes; controllerSelection the selected controller events. With autoSelectControllers on, a new selection of notes, or turning it on, selects the controller events in the notes' ranges unless controllerSelection is given. Emits editor.changed. editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: open; parts, the MIDI parts it shows, in the track list's order and by position; activePart, the part active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the marker and ruler tracks the editor window shows above its events. The key editor's (pp. 1189-1220): selection, the selected notes, each {part, note}, of the editable parts; stepInput and midiInput, what editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, recordPitch, recordVelocity, recordReleaseVelocity and keepNotes, how they go in; insertVelocity (0-1), the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, a note value such as 1/16, 1/8T or 1/4., or link for the quantize grid's (quantize.set). The controller lanes' (pp. 1157-1188): lanes, from the top, each {type, number}: velocity, offVelocity, probability or velocityVariance (the notes' play probability and velocity variance), or the controller events of a type: controller (number is the controller), pitchBend, channelPressure, polyPressure (number is the pitch) or program; showLanes, whether the controller display shows them; autoSelectControllers, whether selecting notes selects the controller events from their start to their end; controllerSelection, the selected controller events, each {part, controller}, of the editable parts. View state: no undo steps, not saved, and a new or loaded project closes the editors.
+Changes what an open MIDI editor shows (reference manual pp. 1142-1156); what isn't given stays. parts replaces its parts. Then the Visibility tab's changes: exclusive hides every track first, showTracks shows every MIDI part of these tracks (all tracks in a folder) and activates the last, hideTracks hides theirs; at least one part stays. activeTrack activates the track's first part shown, activePart a part shown. editingMode, keepContents and globalTracks (marker and ruler tracks, the editor window only) also apply to a closed editor. selection replaces the selected notes, of the editable parts, and controllerSelection the selected controller events. content and the key editor's settings apply to any editor; turning stepInput on puts the step input cursor at the active part's start unless stepPosition is given. lanes replaces the controller lanes. With autoSelectControllers on, a new selection of notes, or turning it on, selects the controller events in the notes' ranges unless controllerSelection is given. Emits editor.changed. editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: open; parts, the MIDI parts it shows, in the track list's order and by position; activePart, the part active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the marker and ruler tracks the editor window shows above its events. The key editor's (pp. 1189-1220): selection, the selected notes, each {part, note}, of the editable parts; stepInput and midiInput, what editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, recordPitch, recordVelocity, recordReleaseVelocity and keepNotes, how they go in; insertVelocity (0-1), the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, a note value such as 1/16, 1/8T or 1/4., or link for the quantize grid's (quantize.set). content: what shows the parts, key (the key editor) or list (the list editor, pp. 1243-1258); controllerSelection, the selected controller events, each {part, controller}, of the editable parts. The controller lanes' (pp. 1157-1188): lanes, from the top, each {type, number}: velocity, offVelocity, probability or velocityVariance (the notes' play probability and velocity variance), or the controller events of a type: controller (number is the controller), pitchBend, channelPressure, polyPressure (number is the pitch) or program; showLanes, whether the controller display shows them; autoSelectControllers, whether selecting notes selects the controller events from their start to their end. View state: no undo steps, not saved, and a new or loaded project closes the editors.
 
 Arguments:
 
 - `activePart`: integer
 - `activeTrack`: integer
 - `autoSelectControllers`: boolean
+- `content`: one of "key" | "list"
 - `controllerSelection`: array of object
 - `editingMode`: one of "allParts" | "activePart" | "activeTrack"
 - `editor`: one of "lower" | "window", required
@@ -1567,6 +1573,7 @@ Result:
 - `activePart`: integer, required
 - `activeTrack`: integer, required
 - `autoSelectControllers`: boolean, required
+- `content`: one of "key" | "list", required
 - `controllerSelection`: array of object, required
 - `editable`: array of integer, required
 - `editingMode`: one of "allParts" | "activePart" | "activeTrack", required
@@ -1706,7 +1713,7 @@ Result:
 
 Engine command `event.get`. Read-only.
 
-Tells where audio events and parts are, as the info line shows them: for each its kind (audio, audioPart or midi), track, name (an audio event's clip's), start, end and length in project samples, start and end in ticks, mute, lock and its shared copies' group (0: none).
+Tells where audio events and parts are, as the info line shows them: for each its kind (audio, audioPart or midi), track, name (an audio event's clip's), start, end and length in project samples, start and end in ticks, mute, lock, lane and its shared copies' group (0: none).
 
 Arguments:
 
@@ -1810,12 +1817,13 @@ Result:
 
 Engine command `event.set`.
 
-Mutes or unmutes, locks or unlocks and colors audio events and MIDI parts. Muted ones don't play; locked ones can't be moved, resized, split, glued or removed by the event commands. color (#rrggbb) is a color of their own; null makes them follow their track's color again. Returns the events.
+Mutes or unmutes, locks or unlocks and colors audio events and MIDI parts. Muted ones don't play; locked ones can't be moved, resized, split, glued or removed by the event commands. color (#rrggbb) is a color of their own; null makes them follow their track's color again. lane puts them on that lane of their track, from 0, as cycle recordings put their takes (recording.add). Returns the events.
 
 Arguments:
 
 - `color`: string or null
 - `events`: array of integer, required
+- `lane`: integer
 - `lock`: boolean
 - `mute`: boolean
 
@@ -2247,7 +2255,7 @@ Result:
 
 Engine command `media.conform`.
 
-Conforms media files to the project's sample rate (Convert Files with New + Replace in Pool, reference manual pp. 759-760): writes each one at another sample rate into the media folder as a 32-bit float WAV file at the project's sample rate and points the media file at it, as one undo step. The clip fades, offsets, lengths, fades, crossfades and snap points of what plays it move with the new sample frames, so events play the same section. The original files stay on disk. media limits it to those media files (default: every one that isn't missing). The project must have been saved. Returns the media files conformed.
+Conforms media files to the project's sample rate (Convert Files with New + Replace in Pool, reference manual pp. 759-760): writes each one at another sample rate into the media folder as a 32-bit float WAV file at the project's sample rate and points the media file at it with media.relinkResampled, as one undo step. The clip fades, offsets, lengths, fades, crossfades, snap points and volume curves of what plays it move with the new sample frames, so events play the same section. The original files stay on disk. media limits it to those media files, which must not be missing (default: every one that isn't missing). The project must have been saved. It runs as a job: this returns at once, job.progress events say which file it converts, and job.cancel stops it and removes the files it wrote. Media files whose path or sample rate changed meanwhile, or that were removed, keep what they have, and their new files are removed. The job's result is {media, changed}: the media files conformed and the ones that changed meanwhile. In a history.transaction, which is one step on the command thread (the project setup dialog's), it converts there instead and returns {media}.
 
 Arguments:
 
@@ -2255,7 +2263,7 @@ Arguments:
 
 Result:
 
-- `media`: array of integer, required
+- `job`: object, required
 
 #### `media_convert`
 
@@ -2277,7 +2285,7 @@ Result:
 
 Engine command `media.locate`.
 
-Looks for missing media files in folder and the folders inside it (the Resolve Missing Files dialog's Browse Folder, reference manual pp. 750-752): a file with the same name, the same spelling first, else with ASCII letters in another case (other letters must match exactly), and the media file's sample rate, channel count and length. The files found are relinked as one undo step. media limits it to those media files (default: every missing one). Returns the media files relinked and the ones still missing.
+Looks for missing media files in folder and the folders inside it (the Resolve Missing Files dialog's Browse Folder, reference manual pp. 750-752): a file with the same name, the same spelling first, else with ASCII letters in another case (other letters must match exactly), and the media file's sample rate, channel count and length. media limits it to those media files (default: every missing one). It runs as a job, so it can't be part of a history.transaction: this returns at once, job.progress events say which folder it looks in and then which media file it checks, job.cancel stops it, and once it is done the files found are relinked as one undo step, which skips media files relinked or removed meanwhile. The job's result is {relinked, missing, changed}: the media files relinked, the ones it didn't find, and the ones it found but that changed meanwhile and keep what they have now.
 
 Arguments:
 
@@ -2286,8 +2294,7 @@ Arguments:
 
 Result:
 
-- `missing`: array of integer, required
-- `relinked`: array of integer, required
+- `job`: object, required
 
 #### `media_peakStatus`
 
@@ -2345,6 +2352,22 @@ Points media files at other files, such as copies, as one undo step. Each new fi
 Arguments:
 
 - `files`: array of object, required
+
+Result:
+
+- `relinked`: array of integer, required
+- `skipped`: array of integer, required
+
+#### `media_relinkResampled`
+
+Engine command `media.relinkResampled`.
+
+Points media files at files of theirs at another sample rate, such as the ones media.conform writes, as one undo step: each media file takes its new file's sample rate and length, and the clip fades, offsets, lengths, fades, crossfades, snap points and volume curves of what plays it move with the new sample frames, so events play the same section. Each new file must be an audio file with the media file's channel count and at least one sample frame, and each media file can be given once. An entry with from applies only if the media file is still there and still points at from, one with fromSampleRate only if the media file is still at that sample rate; otherwise it is skipped. With projectSampleRate, every entry is skipped unless the project is still at that sample rate. Returns the media files relinked and the ones skipped.
+
+Arguments:
+
+- `files`: array of object, required
+- `projectSampleRate`: number
 
 Result:
 
@@ -2714,6 +2737,16 @@ Arguments:
 Result:
 
 - `parts`: array of integer, required
+
+#### `midi_keyboard`
+
+Engine command `midi.keyboard`.
+
+Plays MIDI 1.0 channel messages from the on-screen keyboard, one of all MIDI inputs: they arrive now, as a MIDI input port's do, and the audio device places them in its next block. The MIDI and instrument tracks set to all MIDI inputs play them while they monitor or are record-enabled (MIDI thru), and the record-enabled ones record them. bytes: a status byte from 0x80 to 0xEF and its data bytes. The UI's on-screen keyboard window plays its notes through this. If the input waiting for the audio device has no room left, the call fails and says how many of its messages were played.
+
+Arguments:
+
+- `messages`: array of object, required
 
 #### `midi_legato`
 
@@ -3837,10 +3870,11 @@ Result:
 
 Engine command `recording.add`.
 
-Adds what a recording wrote, as the engine does when a recording ends. Per audio track its file (path) as a media file and clip, and an audio event per take. A take is a run of the file (offset and length in its frames) recorded at position (project samples), such as a cycle lap; a file may start with audio pre-record before its first take. mode, the audio record mode (transport.set), says what happens to the track's unlocked events where the takes overlap them: keepHistory (the default) keeps them, cycleHistoryReplace cuts them out and keeps every take, replace cuts out what each take overlaps, also of the takes before it. Per MIDI or instrument track the takes (position and length) and what was recorded, all in project samples: notes as note.add takes them and controllers as controller.add does, with positions and lengths in project samples. They go into a MIDI part from the first take's start to the last one's end, whole bars with snapToBars, by midiMode, the MIDI record mode: newParts (the default) adds a part of their own; merge adds them to the first unlocked part they overlap, which grows to hold them; replace does too, after it removed the notes that start and the controller events that lie in that range from the unlocked parts it overlaps. With the project's auto quantize (quantize.set) the recorded notes are quantized. One undo step. Announces recording.added with the result: the media files, clips and events added and the MIDI parts recorded into. project, as project.revision reports it, is the project the recording was made in: if another project is open by now, nothing is added and recording.failed is announced. A track that is gone is skipped and announced with recording.failed; the others are added.
+Adds what a recording wrote, as the engine does when a recording ends. Per audio track its file (path) as a media file and clip, and an audio event per take. A take is a run of the file (offset and length in its frames) recorded at position (project samples), such as a cycle lap; a file may start with audio pre-record before its first take. mode, the audio record mode (transport.set), says what happens to the track's unlocked events where the takes overlap them: keepHistory (the default) keeps them, cycleHistoryReplace cuts them out and keeps every take, replace cuts out what each take overlaps, also of the takes before it. With keepHistory and cycleHistoryReplace, the events of a recording of several takes go onto lanes of their own (event.set's lane), one per take from the lane after the highest one that the track's events where they lie are on; the last take plays where they overlap. Per MIDI or instrument track the takes (position and length) and what was recorded, all in project samples: notes as note.add takes them and controllers as controller.add does, with positions and lengths in project samples, and each with take, the index of the take it was recorded in (0 by default). They go into a MIDI part from the first take's start to the last one's end, whole bars with snapToBars, by midiMode, the MIDI record mode: newParts (the default) adds a part of their own; merge adds them to the first unlocked part they overlap, which grows to hold them; replace does too, after it removed the notes that start and the controller events that lie in that range from the unlocked parts it overlaps. cycleMode, the MIDI cycle record mode, says what becomes of the takes: mix (the default) puts them all into the part; overwrite first drops what earlier takes recorded from where a take's first note or controller event lies to that take's end; keepLast keeps only the last complete take that recorded anything (the last take is complete if it ends where an earlier one does), or the last that recorded anything if none is complete; stacked adds a new part per take that recorded anything, each on a lane of its own as for audio, and mutes all of them but the last; mixStacked does too without muting. A single take is added by midiMode alone, whatever the cycleMode. With the project's auto quantize (quantize.set) the recorded notes are quantized. One undo step. Announces recording.added with the result: the media files, clips and events added and the MIDI parts recorded into. project, as project.revision reports it, is the project the recording was made in: if another project is open by now, nothing is added and recording.failed is announced. A track that is gone is skipped and announced with recording.failed; the others are added.
 
 Arguments:
 
+- `cycleMode`: one of "mix" | "overwrite" | "keepLast" | "stacked" | "mixStacked"
 - `midiMode`: one of "newParts" | "merge" | "replace"
 - `mode`: one of "keepHistory" | "cycleHistoryReplace" | "replace"
 - `project`: integer
@@ -4174,6 +4208,7 @@ Result:
 - `left`: integer, required
 - `lockRecord`: boolean, required
 - `metronome`: boolean, required
+- `midiCycleRecordMode`: one of "mix" | "overwrite" | "keepLast" | "stacked" | "mixStacked", required
 - `midiRecordMode`: one of "newParts" | "merge" | "replace", required
 - `playing`: boolean, required
 - `position`: integer, required
@@ -4202,6 +4237,7 @@ Result:
 - `left`: integer, required
 - `lockRecord`: boolean, required
 - `metronome`: boolean, required
+- `midiCycleRecordMode`: one of "mix" | "overwrite" | "keepLast" | "stacked" | "mixStacked", required
 - `midiRecordMode`: one of "newParts" | "merge" | "replace", required
 - `playing`: boolean, required
 - `position`: integer, required
@@ -4236,6 +4272,7 @@ Result:
 - `left`: integer, required
 - `lockRecord`: boolean, required
 - `metronome`: boolean, required
+- `midiCycleRecordMode`: one of "mix" | "overwrite" | "keepLast" | "stacked" | "mixStacked", required
 - `midiRecordMode`: one of "newParts" | "merge" | "replace", required
 - `playing`: boolean, required
 - `position`: integer, required
@@ -4264,6 +4301,7 @@ Result:
 - `left`: integer, required
 - `lockRecord`: boolean, required
 - `metronome`: boolean, required
+- `midiCycleRecordMode`: one of "mix" | "overwrite" | "keepLast" | "stacked" | "mixStacked", required
 - `midiRecordMode`: one of "newParts" | "merge" | "replace", required
 - `playing`: boolean, required
 - `position`: integer, required
@@ -4296,6 +4334,7 @@ Result:
 - `left`: integer, required
 - `lockRecord`: boolean, required
 - `metronome`: boolean, required
+- `midiCycleRecordMode`: one of "mix" | "overwrite" | "keepLast" | "stacked" | "mixStacked", required
 - `midiRecordMode`: one of "newParts" | "merge" | "replace", required
 - `playing`: boolean, required
 - `position`: integer, required
@@ -4315,7 +4354,7 @@ Result:
 
 Engine command `transport.set`.
 
-Changes the given settings and keeps the rest. left and right: the locators, in samples, or "cursor" for the cursor position. cycle: cycle playback between the locators; with the right locator before the left one, playback skips the range instead. startMode: cursor or cycleStart (the left locator). returnToStart: on stop, return to where playback started. punchIn: playback that reaches the left locator starts recording there. punchOut: recording that reaches the right locator ends there and playback goes on, or stops with the user setting audio.stopAfterPunchOut, unless it cycles. preRoll and preRollAmount (samples, up to an hour at 768 kHz): playback starts that much before the cursor. postRoll and postRollAmount (the same): after an automatic punch out with audio.stopAfterPunchOut, playback goes on that much longer before it stops. Recording that punches in or out and playback that stops on their own announce transport.changed. metronome is the transport bar's switch; the click comes with the metronome. audioRecordMode: what a recording does to the events it overlaps on its track (see recording.add): keepHistory (the default), cycleHistoryReplace or replace. midiRecordMode: what a MIDI recording does to the MIDI parts it overlaps (see recording.add): newParts (the default), merge or replace. lockRecord: Lock Record, which keeps a recording from stopping or punching out by accident: transport.stop stops it only with confirmed, transport.record and transport.toggle don't end it, and recording ignores the punch out at the right locator; it stays on until it is set off.
+Changes the given settings and keeps the rest. left and right: the locators, in samples, or "cursor" for the cursor position. cycle: cycle playback between the locators; with the right locator before the left one, playback skips the range instead. startMode: cursor or cycleStart (the left locator). returnToStart: on stop, return to where playback started. punchIn: playback that reaches the left locator starts recording there. punchOut: recording that reaches the right locator ends there and playback goes on, or stops with the user setting audio.stopAfterPunchOut, unless it cycles. preRoll and preRollAmount (samples, up to an hour at 768 kHz): playback starts that much before the cursor. postRoll and postRollAmount (the same): after an automatic punch out with audio.stopAfterPunchOut, playback goes on that much longer before it stops. Recording that punches in or out and playback that stops on their own announce transport.changed. metronome is the transport bar's switch; the click comes with the metronome. audioRecordMode: what a recording does to the events it overlaps on its track (see recording.add): keepHistory (the default), cycleHistoryReplace or replace. midiRecordMode: what a MIDI recording does to the MIDI parts it overlaps (see recording.add): newParts (the default), merge or replace. midiCycleRecordMode: what a MIDI cycle recording makes of its laps (see recording.add): mix (the default), overwrite, keepLast, stacked or mixStacked. lockRecord: Lock Record, which keeps a recording from stopping or punching out by accident: transport.stop stops it only with confirmed, transport.record and transport.toggle don't end it, and recording ignores the punch out at the right locator; it stays on until it is set off.
 
 Arguments:
 
@@ -4324,6 +4363,7 @@ Arguments:
 - `left`: integer or string
 - `lockRecord`: boolean
 - `metronome`: boolean
+- `midiCycleRecordMode`: string
 - `midiRecordMode`: string
 - `postRoll`: boolean
 - `postRollAmount`: integer
@@ -4342,6 +4382,7 @@ Result:
 - `left`: integer, required
 - `lockRecord`: boolean, required
 - `metronome`: boolean, required
+- `midiCycleRecordMode`: one of "mix" | "overwrite" | "keepLast" | "stacked" | "mixStacked", required
 - `midiRecordMode`: one of "newParts" | "merge" | "replace", required
 - `playing`: boolean, required
 - `position`: integer, required
@@ -4374,6 +4415,7 @@ Result:
 - `left`: integer, required
 - `lockRecord`: boolean, required
 - `metronome`: boolean, required
+- `midiCycleRecordMode`: one of "mix" | "overwrite" | "keepLast" | "stacked" | "mixStacked", required
 - `midiRecordMode`: one of "newParts" | "merge" | "replace", required
 - `playing`: boolean, required
 - `position`: integer, required
@@ -4406,6 +4448,7 @@ Result:
 - `left`: integer, required
 - `lockRecord`: boolean, required
 - `metronome`: boolean, required
+- `midiCycleRecordMode`: one of "mix" | "overwrite" | "keepLast" | "stacked" | "mixStacked", required
 - `midiRecordMode`: one of "newParts" | "merge" | "replace", required
 - `playing`: boolean, required
 - `position`: integer, required
@@ -4434,6 +4477,7 @@ Result:
 - `left`: integer, required
 - `lockRecord`: boolean, required
 - `metronome`: boolean, required
+- `midiCycleRecordMode`: one of "mix" | "overwrite" | "keepLast" | "stacked" | "mixStacked", required
 - `midiRecordMode`: one of "newParts" | "merge" | "replace", required
 - `playing`: boolean, required
 - `position`: integer, required

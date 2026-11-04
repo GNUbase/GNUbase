@@ -331,6 +331,48 @@ TEST_CASE("the erase, trim, split and glue tools", "[ui]")
 	CHECK(f.note(ids[3]).is_null());
 }
 
+TEST_CASE("a right click in the note display opens the toolbox, by the setting and modifiers", "[ui]")
+{
+	Fixture f;
+	const std::vector<uint64_t> ids = f.add({{0, 60, g_quarter}});
+	const auto rightClick = [&f](const ui::Target& target, const std::vector<std::string>& modifiers)
+	{
+		f.app.ui().click(f.window, target, ui::MouseButton::Right, 1, modifiers);
+		f.app.shell().step(std::chrono::milliseconds(0));
+	};
+	const auto toolbox = [&f] { return f.elements("#key-editor-toolbox").at(0).at("visible").get<bool>(); };
+	const auto tool = [&f] { return f.app.appUi().editorWindow()->keyEditor()->tool(); };
+
+	// Off, as by default: with a modifier key the toolbox, the toolbar's tools at the mouse (reference manual p. 65),
+	// the tool chosen checked; without one nothing yet, as the key editor has no context menu.
+	rightClick(f.at(8, 70), {});
+	CHECK(!toolbox());
+	rightClick(f.at(8, 70), {"shift"});
+	REQUIRE(toolbox());
+	CHECK(f.elements("#key-editor-toolbox > menuitem").size() == 7);
+	CHECK(f.elements("#key-editor-toolbox > menuitem[checked]").at(0).at("attributes").at("key-tool") ==
+		"objectSelection");
+	// A tool in it chooses the tool, as the toolbar does, and closes it.
+	f.click(of("#key-editor-toolbox > menuitem[key-tool=draw]"));
+	CHECK(tool() == ui::KeyTool::Draw);
+	CHECK(f.has(".key-tool[key-tool=draw]", "checked"));
+	CHECK(!toolbox());
+
+	// On: a right click without a modifier opens it, also on a note, which it leaves unselected.
+	f.app.call("settings.set", {{"key", "ui.toolboxOnRightClick"}, {"value", true}});
+	REQUIRE(f.app.waitUntil(
+		[&f] { return !f.elements(".key-editor-grid").at(0).at("attributes").value("contextmenu", "").empty(); }));
+	rightClick(of(noteSelector(ids[0])), {});
+	REQUIRE(toolbox());
+	CHECK(f.selection().empty());
+	f.click(of("#key-editor-toolbox > menuitem[key-tool=erase]"));
+	CHECK(tool() == ui::KeyTool::Erase);
+	CHECK(f.partNotes().size() == 1);
+	rightClick(f.at(8, 70), {"ctrl"});
+	CHECK(!toolbox());
+	f.app.call("settings.set", {{"key", "ui.toolboxOnRightClick"}, {"value", false}});
+}
+
 TEST_CASE("the transpose palette and the info line edit the selected notes", "[ui]")
 {
 	Fixture f;

@@ -5,7 +5,6 @@
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
-#include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 #include <RmlUi/Core/Elements/ElementFormControlTextArea.h>
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/Input.h>
@@ -73,7 +72,7 @@ namespace gnubase::ui
 			return nullptr;
 		}
 
-		using Options = std::vector<std::pair<std::string, std::string>>; // value and text
+		using widgets::Options;
 
 		// Where the channel of a track of the type can play: output busses and group channels, or for MIDI tracks
 		// the instrument channels, as in the add track dialog; and where an audio track records from.
@@ -108,28 +107,6 @@ namespace gnubase::ui
 			return options;
 		}
 
-		// Fills a drop-down list with the options, unless it has them, and selects the value.
-		void fill(Rml::Element& element, const Options& options, const std::string& value)
-		{
-			auto* select = rmlui_dynamic_cast<Rml::ElementFormControlSelect*>(&element);
-			if (select == nullptr)
-				return;
-			bool same = select->GetNumOptions() == static_cast<int>(options.size());
-			for (int i = 0; same && i < select->GetNumOptions(); ++i)
-			{
-				const Rml::Element* option = select->GetOption(i);
-				same = option->GetAttribute<Rml::String>("value", "") == options[i].first &&
-					option->GetInnerRML() == Rml::StringUtilities::EncodeRml(options[i].second);
-			}
-			if (!same)
-			{
-				select->RemoveAll();
-				for (const auto& [optionValue, text] : options)
-					select->Add(Rml::StringUtilities::EncodeRml(text), optionValue);
-			}
-			if (select->GetValue() != value)
-				select->SetValue(value);
-		}
 	}
 
 	Inspector::Inspector(EngineBinding& binding, Rml::Element& root)
@@ -245,9 +222,10 @@ namespace gnubase::ui
 			}
 			const auto id = channel->at("id").get<uint64_t>();
 			if (Rml::Element* output = element("select[control=output]"))
-				fill(*output, outputs(*m_project, type, id), std::to_string(channel->at("output").get<uint64_t>()));
+				widgets::fill(
+					*output, outputs(*m_project, type, id), std::to_string(channel->at("output").get<uint64_t>()));
 			if (Rml::Element* input = element("select[control=input]"); input != nullptr && type == "audio")
-				fill(*input, inputs(*m_project), std::to_string(channel->at("input").get<uint64_t>()));
+				widgets::fill(*input, inputs(*m_project), std::to_string(channel->at("input").get<uint64_t>()));
 
 			// The inserts: an overview of the slots, bypassed and deactivated ones marked.
 			std::string slots;

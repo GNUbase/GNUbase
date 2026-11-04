@@ -195,6 +195,33 @@ namespace gnubase::engine
 		// slot nodes (SlotStrip), keyed by the slot's index in the program that plays.
 		graph::EventBuffer pluginEvents{graph::g_maxEventsPerBlock};
 		LevelMeter meter; // the channel's output after the fader, the panner and muting
+		// Audio thread: each send's gain after the last block (SendStrip), -1 before the first.
+		std::array<float, g_maxSends> sendGains = []
+		{
+			std::array<float, g_maxSends> gains{};
+			gains.fill(-1.0f);
+			return gains;
+		}();
+	};
+
+	// A channel's audio before its fader, after the strip's sections, for its pre-fader sends: the channel's strip
+	// writes it in every block, and the send nodes, which come after the channel's node, read it. Made for one graph.
+	class PreFaderTap
+	{
+	public:
+		explicit PreFaderTap(int channels) : m_channels(channels) {}
+
+		// Command thread: room for blocks of up to maxFrames.
+		void prepare(uint32_t maxFrames);
+
+		int channels() const { return m_channels; }
+		// Audio thread.
+		float* channel(int c) noexcept { return m_samples.data() + (static_cast<size_t>(c) * m_maxFrames); }
+
+	private:
+		int m_channels = 0;
+		uint32_t m_maxFrames = 0;
+		std::vector<float> m_samples;
 	};
 
 	// Which part of a channel a strip runs: all of it, or, on a channel with plugin slots, what comes before them in
@@ -246,13 +273,17 @@ namespace gnubase::engine
 		void process(const graph::ProcessContext& context) noexcept override;
 		uint32_t latency() const override;
 
+		// Command thread, before the graph compiles: where the strip leaves its audio before the fader in every block.
+		void tapPreFader(std::shared_ptr<PreFaderTap> tap) { m_tap = std::move(tap); }
+
+		// Scales the block's first channels from gain to target, frame by frame, and keeps target as the gain; a gain
+		// below 0 (before the first block) starts at the target.
+		static void glide(const graph::ProcessContext& context, int channels, float& gain, float target) noexcept;
+
 	protected:
 		void prepare(double sampleRate, uint32_t maxFrames) override;
 
 	private:
-		// Scales the block's first channels from gain to target, frame by frame, and keeps target as the gain; a gain
-		// below 0 (before the first block) starts at the target.
-		static void glide(const graph::ProcessContext& context, int channels, float& gain, float target) noexcept;
 		// The fader and its panner with the block's fader events, then muting.
 		void fade(const graph::ProcessContext& context, const graph::EventBuffer& events) noexcept;
 
@@ -270,6 +301,24 @@ namespace gnubase::engine
 		graph::EventBuffer m_sourceEvents;
 		graph::EventBuffer m_faderEvents;
 		graph::EventBuffer m_faderOut;
+		std::shared_ptr<PreFaderTap> m_tap; // or none, without pre-fader sends
+	};
+
+	// The processor of a send node (graph::NodeKind::Send): a post-fader send's input is its channel's output, a
+	// pre-fader send's the channel's PreFaderTap. It scales it by the send's gain, gliding over a block from the gain
+	// of the last block, which the channel's state keeps across graphs.
+	class SendStrip : public graph::Processor
+	{
+	public:
+		SendStrip(std::shared_ptr<ChannelState> state, int number, float gain, std::shared_ptr<PreFaderTap> tap);
+
+		void process(const graph::ProcessContext& context) noexcept override;
+
+	private:
+		std::shared_ptr<ChannelState> m_state;
+		size_t m_number = 0; // the send's index
+		float m_gain = 0.0f;
+		std::shared_ptr<PreFaderTap> m_tap;
 	};
 
 	// The processor of a plugin slot node on a channel (graph::NodeKind::PluginSlot): the slot's plugin, with the

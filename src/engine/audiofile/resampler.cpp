@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -94,8 +95,8 @@ namespace gnubase::engine
 		return std::llround(static_cast<double>(inputFrames) * toRate / fromRate);
 	}
 
-	AudioFileInfo convertSampleRate(
-		const std::string& input, const std::vector<std::string>& outputs, double sampleRate)
+	AudioFileInfo convertSampleRate(const std::string& input, const std::vector<std::string>& outputs,
+		double sampleRate, const std::function<void(double fraction)>& progress)
 	{
 		const auto reader = AudioFileReader::open(input);
 		const AudioFileInfo& source = reader->info();
@@ -140,10 +141,14 @@ namespace gnubase::engine
 			written.frames += static_cast<time::Samples>(frames);
 			out.clear();
 		};
+		time::Samples read = 0;
 		while (const size_t frames = reader->read(in.data(), piece))
 		{
 			resampler.process(in.data(), frames, out);
 			flush();
+			read += static_cast<time::Samples>(frames);
+			if (progress && source.frames > 0)
+				progress(std::min(1.0, static_cast<double>(read) / static_cast<double>(source.frames)));
 		}
 		resampler.finish(out);
 		flush();

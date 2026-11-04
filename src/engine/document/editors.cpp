@@ -2,8 +2,9 @@
 // The MIDI editors' common framework (#126, reference manual pp. 1132-1156): which parts the lower zone's editor and
 // the editor window show, the part active for editing, the part editing mode, Keep Editor Contents and the global
 // tracks shown above the notes; and the key editor's (#127, pp. 1189-1220): the selected notes and step and MIDI input,
-// which editor.input applies. The commands keep the views on the command thread, outside the project, so they are no
-// undo steps and don't make the project modified; editor.input's notes are.
+// which editor.input applies; and whether an editor shows the key editor or the list editor (#130, pp. 1243-1258),
+// whose selection also has controller events. The commands keep the views on the command thread, outside the project,
+// so they are no undo steps and don't make the project modified; editor.input's notes are.
 #include "engine/document/editors.h"
 
 #include "engine/document/projectmodel.h"
@@ -30,6 +31,8 @@ namespace gnubase::engine
 		constexpr std::array<const char*, 2> g_editors = {"lower", "window"};
 		// The part editing modes (p. 1143): what selecting and editing reach.
 		constexpr std::array<const char*, 3> g_editingModes = {"allParts", "activePart", "activeTrack"};
+		// What an editor shows its parts in: the key editor (#127) or the list editor (#130).
+		constexpr std::array<const char*, 2> g_contents = {"key", "list"};
 
 		struct EditorView
 		{
@@ -52,6 +55,7 @@ namespace gnubase::engine
 			bool keepNotes = false;
 			double insertVelocity = 100.0 / 127.0;
 			std::string lengthQuantize = "link"; // a note value, or link: the quantize grid's
+			std::string content = "key";
 			// The controller lanes (#128): each a type (midi::g_laneTypes) and a controller number or pitch.
 			std::vector<std::pair<std::string, int>> lanes = {{"velocity", 0}};
 			bool showLanes = true;
@@ -112,27 +116,25 @@ namespace gnubase::engine
 		}
 
 		// Leaves only the selected notes and controller events that still exist in the editable parts.
+		template <typename Event> void dropUneditable(const Project& project, const std::vector<ObjectId>& editable,
+			std::vector<std::pair<ObjectId, ObjectId>>& selection, std::map<ObjectId, Event> MidiPart::* events)
+		{
+			selection.erase(
+				std::remove_if(selection.begin(), selection.end(),
+					[&](const std::pair<ObjectId, ObjectId>& selected)
+					{
+						const auto part = project.midiParts.find(selected.first);
+						return std::find(editable.begin(), editable.end(), selected.first) == editable.end() ||
+							part == project.midiParts.end() || (part->second.*events).count(selected.second) == 0;
+					}),
+				selection.end());
+		}
+
 		void dropUneditable(const Project& project, EditorView& view)
 		{
 			const std::vector<ObjectId> editable = editableParts(project, view);
-			view.controllerSelection.erase(
-				std::remove_if(view.controllerSelection.begin(), view.controllerSelection.end(),
-					[&](const std::pair<ObjectId, ObjectId>& selected)
-					{
-						const auto part = project.midiParts.find(selected.first);
-						return std::find(editable.begin(), editable.end(), selected.first) == editable.end() ||
-							part == project.midiParts.end() || part->second.controllers.count(selected.second) == 0;
-					}),
-				view.controllerSelection.end());
-			view.selection.erase(
-				std::remove_if(view.selection.begin(), view.selection.end(),
-					[&](const std::pair<ObjectId, ObjectId>& selected)
-					{
-						const auto part = project.midiParts.find(selected.first);
-						return std::find(editable.begin(), editable.end(), selected.first) == editable.end() ||
-							part == project.midiParts.end() || part->second.notes.count(selected.second) == 0;
-					}),
-				view.selection.end());
+			dropUneditable(project, editable, view.selection, &MidiPart::notes);
+			dropUneditable(project, editable, view.controllerSelection, &MidiPart::controllers);
 		}
 
 		// The editor's view now: closed and empty once another project is open, without what is gone since.
@@ -163,9 +165,9 @@ namespace gnubase::engine
 			Json lanes = Json::array();
 			for (const auto& [type, number] : view.lanes)
 				lanes.push_back({{"type", type}, {"number", number}});
-			Json controllers = Json::array();
+			Json controllerSelection = Json::array();
 			for (const auto& [part, controller] : view.controllerSelection)
-				controllers.push_back({{"part", part}, {"controller", controller}});
+				controllerSelection.push_back({{"part", part}, {"controller", controller}});
 			return {{"editor", editor}, {"open", view.open}, {"parts", view.parts}, {"activePart", view.activePart},
 				{"activeTrack", activeTrack}, {"editable", editable}, {"editingMode", view.editingMode},
 				{"keepContents", view.keepContents}, {"globalTracks", view.globalTracks}, {"selection", selection},
@@ -173,8 +175,9 @@ namespace gnubase::engine
 				{"moveInsert", view.moveInsert}, {"recordPitch", view.recordPitch},
 				{"recordVelocity", view.recordVelocity}, {"recordReleaseVelocity", view.recordReleaseVelocity},
 				{"keepNotes", view.keepNotes}, {"insertVelocity", view.insertVelocity},
-				{"lengthQuantize", view.lengthQuantize}, {"lanes", lanes}, {"showLanes", view.showLanes},
-				{"autoSelectControllers", view.autoSelectControllers}, {"controllerSelection", controllers}};
+				{"lengthQuantize", view.lengthQuantize}, {"content", view.content}, {"lanes", lanes},
+				{"showLanes", view.showLanes}, {"autoSelectControllers", view.autoSelectControllers},
+				{"controllerSelection", controllerSelection}};
 		}
 
 		// The controller events in the ranges of the selected notes, from a note's start to its end (p. 1188).
@@ -323,15 +326,18 @@ namespace gnubase::engine
 								 {"enum",
 									 std::vector<std::string>(midi::g_laneTypes.begin(), midi::g_laneTypes.end())}}},
 							{"number", idSchema}}}}}};
+		const Json contentSchema = {
+			{"type", "string"}, {"enum", std::vector<std::string>(g_contents.begin(), g_contents.end())}};
 		const Json controllerSelectionSchema = {{"type", "array"},
 			{"items",
 				{{"type", "object"}, {"additionalProperties", false}, {"required", {"part", "controller"}},
 					{"properties", {{"part", idSchema}, {"controller", idSchema}}}}}};
-		const Json keyEditorSchema = {{"selection", selectionSchema}, {"stepInput", boolean}, {"midiInput", boolean},
-			{"stepPosition", idSchema}, {"moveInsert", boolean}, {"recordPitch", boolean}, {"recordVelocity", boolean},
+		const Json keyEditorSchema = {{"content", contentSchema}, {"controllerSelection", controllerSelectionSchema},
+			{"selection", selectionSchema}, {"stepInput", boolean}, {"midiInput", boolean}, {"stepPosition", idSchema},
+			{"moveInsert", boolean}, {"recordPitch", boolean}, {"recordVelocity", boolean},
 			{"recordReleaseVelocity", boolean}, {"keepNotes", boolean}, {"insertVelocity", {{"type", "number"}}},
 			{"lengthQuantize", {{"type", "string"}}}, {"lanes", lanesSchema}, {"showLanes", boolean},
-			{"autoSelectControllers", boolean}, {"controllerSelection", controllerSelectionSchema}};
+			{"autoSelectControllers", boolean}};
 		Json viewSchema = {{"type", "object"},
 			{"properties",
 				{{"editor", editorSchema}, {"open", {{"type", "boolean"}}}, {"parts", idsSchema},
@@ -340,8 +346,8 @@ namespace gnubase::engine
 			{"required",
 				{"editor", "open", "parts", "activePart", "activeTrack", "editable", "editingMode", "keepContents",
 					"globalTracks", "selection", "stepInput", "midiInput", "stepPosition", "moveInsert", "recordPitch",
-					"recordVelocity", "recordReleaseVelocity", "keepNotes", "insertVelocity", "lengthQuantize", "lanes",
-					"showLanes", "autoSelectControllers", "controllerSelection"}}};
+					"recordVelocity", "recordReleaseVelocity", "keepNotes", "insertVelocity", "lengthQuantize",
+					"content", "lanes", "showLanes", "autoSelectControllers", "controllerSelection"}}};
 		viewSchema["properties"].update(keyEditorSchema);
 		const std::string viewText =
 			"editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: "
@@ -354,14 +360,15 @@ namespace gnubase::engine
 			"editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, "
 			"recordPitch, recordVelocity, recordReleaseVelocity and keepNotes, how they go in; insertVelocity (0-1), "
 			"the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, "
-			"a note value such as 1/16, 1/8T or 1/4., or link for the quantize grid's (quantize.set). The controller "
-			"lanes' (pp. 1157-1188): lanes, from the top, each {type, number}: velocity, offVelocity, probability or "
+			"a note value such as 1/16, 1/8T or 1/4., or link for the quantize grid's (quantize.set). content: what "
+			"shows the parts, key (the key editor) or list (the list editor, pp. 1243-1258); controllerSelection, the "
+			"selected controller events, each {part, controller}, of the editable parts. The controller lanes' (pp. "
+			"1157-1188): lanes, from the top, each {type, number}: velocity, offVelocity, probability or "
 			"velocityVariance (the notes' play probability and velocity variance), or the controller events of a "
 			"type: controller (number is the controller), pitchBend, channelPressure, polyPressure (number is the "
 			"pitch) or program; showLanes, whether the controller display shows them; autoSelectControllers, "
-			"whether selecting notes selects the controller events from their start to their end; "
-			"controllerSelection, the selected controller events, each {part, controller}, of the editable parts. "
-			"View state: no undo steps, not saved, and a new or loaded project closes the editors.";
+			"whether selecting notes selects the controller events from their start to their end. View state: no "
+			"undo steps, not saved, and a new or loaded project closes the editors.";
 		const auto editorOnly = [&](Json properties = Json::object())
 		{
 			properties["editor"] = editorSchema;
@@ -387,14 +394,15 @@ namespace gnubase::engine
 				return viewJson(model.project(), editor, current(*views, model, editor));
 			});
 
-		Json openSchema = editorOnly(
-			{{"parts", {{"type", "array"}, {"items", idSchema}, {"minItems", 1}}}, {"activePart", idSchema}});
+		Json openSchema = editorOnly({{"parts", {{"type", "array"}, {"items", idSchema}, {"minItems", 1}}},
+			{"activePart", idSchema}, {"content", contentSchema}});
 		openSchema["required"] = {"editor", "parts"};
 		engine.registerCommand(
 			{"editor.open", 1,
 				"Opens a MIDI editor with MIDI parts, such as the ones selected in the project window, or shows "
 				"those parts in it if it is open. activePart becomes the part active for editing, by default the "
-				"first. Emits editor.changed. " +
+				"first. content shows them in the key editor or the list editor; an open editor keeps its content "
+				"unless it is given, a closed one opens with the key editor. Emits editor.changed. " +
 					viewText,
 				openSchema, viewSchema, false},
 			[views, &model, store](CommandContext& context)
@@ -408,6 +416,7 @@ namespace gnubase::engine
 				require(contains(view.parts, view.activePart),
 					"the active part " + std::to_string(view.activePart) + " isn't one of the parts");
 				view.open = true;
+				view.content = parameters.value("content", view.content);
 				return store(editor, view, context);
 			});
 
@@ -419,11 +428,11 @@ namespace gnubase::engine
 				"hideTracks hides theirs; at least one part stays. activeTrack activates the track's first part shown, "
 				"activePart a part shown. editingMode, keepContents and globalTracks (marker and ruler tracks, the "
 				"editor window only) also apply to a closed editor. selection replaces the selected notes, of the "
-				"editable parts. The key editor's settings apply to any editor; turning stepInput on puts the step "
-				"input cursor at the active part's start unless stepPosition is given. lanes replaces the controller "
-				"lanes; controllerSelection the selected controller events. With autoSelectControllers on, a new "
-				"selection of notes, or turning it on, selects the controller events in the notes' ranges unless "
-				"controllerSelection is given. Emits editor.changed. " +
+				"editable parts, and controllerSelection the selected controller events. content and the key editor's "
+				"settings apply to any editor; turning stepInput on puts the step input cursor at the active part's "
+				"start unless stepPosition is given. lanes replaces the controller lanes. With autoSelectControllers "
+				"on, a new selection of notes, or turning it on, selects the controller events in the notes' ranges "
+				"unless controllerSelection is given. Emits editor.changed. " +
 					viewText,
 				editorOnly({{"parts", idsSchema}, {"exclusive", {{"type", "boolean"}}}, {"showTracks", idsSchema},
 					{"hideTracks", idsSchema}, {"activeTrack", idSchema}, {"activePart", idSchema},
@@ -432,8 +441,8 @@ namespace gnubase::engine
 					{"stepPosition", idSchema}, {"moveInsert", boolean}, {"recordPitch", boolean},
 					{"recordVelocity", boolean}, {"recordReleaseVelocity", boolean}, {"keepNotes", boolean},
 					{"insertVelocity", {{"type", "number"}}}, {"lengthQuantize", {{"type", "string"}}},
-					{"lanes", lanesSchema}, {"showLanes", boolean}, {"autoSelectControllers", boolean},
-					{"controllerSelection", controllerSelectionSchema}}),
+					{"content", contentSchema}, {"lanes", lanesSchema}, {"showLanes", boolean},
+					{"autoSelectControllers", boolean}, {"controllerSelection", controllerSelectionSchema}}),
 				viewSchema, false},
 			[views, &model, store](CommandContext& context)
 			{
@@ -491,22 +500,30 @@ namespace gnubase::engine
 						if (contains(given, track))
 							view.globalTracks.push_back(track);
 				}
-				if (parameters.contains("selection"))
+				// The selected notes or controller events, each once, of the editable parts.
+				const auto select = [&](const char* name, const std::string& key, auto events,
+										std::vector<std::pair<ObjectId, ObjectId>>& selection)
 				{
+					if (!parameters.contains(name))
+						return;
 					const std::vector<ObjectId> editable = editableParts(project, view);
-					view.selection.clear();
-					for (const Json& item : parameters.at("selection"))
+					selection.clear();
+					for (const Json& item : parameters.at(name))
 					{
 						const auto part = item.at("part").get<ObjectId>();
-						const auto note = item.at("note").get<ObjectId>();
+						const auto event = item.at(key).get<ObjectId>();
 						require(contains(editable, part),
 							"part " + std::to_string(part) + " isn't editable in the " + editor + " editor");
-						require(project.midiParts.at(part).notes.count(note) != 0,
-							"part " + std::to_string(part) + " has no note " + std::to_string(note));
-						if (!contains(view.selection, std::make_pair(part, note)))
-							view.selection.emplace_back(part, note);
+						require((project.midiParts.at(part).*events).count(event) != 0,
+							"part " + std::to_string(part) + " has no " + key + " " + std::to_string(event));
+						if (!contains(selection, std::make_pair(part, event)))
+							selection.emplace_back(part, event);
 					}
-				}
+				};
+				select("selection", "note", &MidiPart::notes, view.selection);
+				select("controllerSelection", "controller", &MidiPart::controllers, view.controllerSelection);
+				if (parameters.contains("content"))
+					view.content = parameters.at("content").get<std::string>();
 				const bool stepTurnsOn = parameters.value("stepInput", view.stepInput) && !view.stepInput;
 				for (const auto& [name, flag] : {std::pair<const char*, bool*>{"stepInput", &view.stepInput},
 						 {"midiInput", &view.midiInput}, {"moveInsert", &view.moveInsert},
@@ -553,23 +570,8 @@ namespace gnubase::engine
 					!view.autoSelectControllers;
 				if (parameters.contains("autoSelectControllers"))
 					view.autoSelectControllers = parameters.at("autoSelectControllers").get<bool>();
-				if (parameters.contains("controllerSelection"))
-				{
-					const std::vector<ObjectId> editable = editableParts(project, view);
-					view.controllerSelection.clear();
-					for (const Json& item : parameters.at("controllerSelection"))
-					{
-						const auto part = item.at("part").get<ObjectId>();
-						const auto controller = item.at("controller").get<ObjectId>();
-						require(contains(editable, part),
-							"part " + std::to_string(part) + " isn't editable in the " + editor + " editor");
-						require(project.midiParts.at(part).controllers.count(controller) != 0,
-							"part " + std::to_string(part) + " has no controller " + std::to_string(controller));
-						if (!contains(view.controllerSelection, std::make_pair(part, controller)))
-							view.controllerSelection.emplace_back(part, controller);
-					}
-				}
-				else if (view.autoSelectControllers && (parameters.contains("selection") || autoSelectTurnsOn))
+				if (!parameters.contains("controllerSelection") && view.autoSelectControllers &&
+					(parameters.contains("selection") || autoSelectTurnsOn))
 				{
 					view.controllerSelection = controllersOfNotes(project, view);
 				}
@@ -592,6 +594,7 @@ namespace gnubase::engine
 				view.keepContents = false;
 				view.selection.clear();
 				view.controllerSelection.clear();
+				view.content = "key";
 				return store(editor, view, context);
 			});
 

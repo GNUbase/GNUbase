@@ -5,6 +5,7 @@
 #include "engine/midi/controllerlanes.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <map>
 #include <numeric>
@@ -82,7 +83,8 @@ namespace gnubase::engine
 
 		// Mute, solo and disabled tracks: with a channel soloed, only soloed channels, those they play into and those
 		// that play into them are heard, and channels with solo defeat with those they play into (feeds: the channels
-		// each channel plays into, by index).
+		// each channel plays or sends into, by index). Pre-fader sends don't follow the mute button, so only a channel
+		// that isn't heard or is on a disabled track silences them.
 		void markSilent(const Project& project, const std::vector<std::vector<size_t>>& feeds, RenderSnapshot& snapshot)
 		{
 			const size_t count = snapshot.channels.size();
@@ -131,7 +133,11 @@ namespace gnubase::engine
 			{
 				RenderChannel& channel = snapshot.channels[i];
 				const bool muted = project.channels.at(channel.id).mute && automated.count(channel.track) == 0;
-				channel.silent = !heard[i] || muted || !project.trackById.at(channel.track).enabled;
+				const bool quiet = !heard[i] || !project.trackById.at(channel.track).enabled;
+				channel.silent = quiet || muted;
+				for (RenderSend& send : channel.sends)
+					if (quiet && send.preFader)
+						send.gain = 0.0f;
 			}
 		}
 	}
@@ -226,6 +232,17 @@ namespace gnubase::engine
 				render.panner =
 					pannerFor(render.format, snapshot->channels[static_cast<size_t>(channel->second)].format);
 				feeds[static_cast<size_t>(channelIndex.at(render.id))].push_back(static_cast<size_t>(channel->second));
+			}
+			const std::array<Send, g_maxSends>& sends = project.channels.at(render.id).sends;
+			for (size_t s = 0; s < sends.size() && render.format != ChannelFormat::None; ++s)
+			{
+				const auto destination = channelIndex.find(sends[s].destination);
+				if (destination == channelIndex.end())
+					continue;
+				render.sends.push_back({static_cast<int>(s), destination->second,
+					sends[s].on ? static_cast<float>(volumeGain(sends[s].level)) : 0.0f, sends[s].preFader});
+				feeds[static_cast<size_t>(channelIndex.at(render.id))].push_back(
+					static_cast<size_t>(destination->second));
 			}
 		}
 		markSilent(project, feeds, *snapshot);

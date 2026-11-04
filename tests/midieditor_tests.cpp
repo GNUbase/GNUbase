@@ -199,6 +199,12 @@ TEST_CASE("the lower zone's editor follows the project window's selection unless
 {
 	test::UiApp app({1200, 700});
 	Fixture f(app);
+	// Whether the editor window shows the part, once it has its view.
+	const auto windowShows = [&app](uint64_t part)
+	{
+		return app.waitUntil([&app, part]
+			{ return ids(app, app.appUi().editorWindowId(), ".editor-part", "part") == std::vector<uint64_t>{part}; });
+	};
 	f.select({f.keys1, f.bass1});
 	app.keys().run("window.lowerZoneEditor", Json::object(), app.main(), nullptr);
 	REQUIRE(app.waitUntil([&] { return app.appUi().docking().showing("editor"); }));
@@ -233,7 +239,9 @@ TEST_CASE("the lower zone's editor follows the project window's selection unless
 	CHECK(parts(view(app, "window")) == std::vector<uint64_t>{f.keys2});
 	REQUIRE(app.waitUntil([&] { return view(app, "lower").at("open") == false; }));
 	CHECK(view(app, "lower").at("keepContents") == false);
-	// And back: Open in Lower Zone.
+	// And back: Open in Lower Zone, once the window shows the parts (before it has its view from the engine, it
+	// leaves clicks alone).
+	REQUIRE(windowShows(f.keys2));
 	click(app, app.appUi().editorWindowId(), "#editor-move");
 	REQUIRE(app.waitUntil([&] { return app.appUi().editorWindow() == nullptr; }));
 	REQUIRE(app.waitUntil([&] { return parts(view(app, "lower")) == std::vector<uint64_t>{f.keys2}; }));
@@ -259,6 +267,7 @@ TEST_CASE("the lower zone's editor follows the project window's selection unless
 	app.keys().run("editor.openClose", Json::object(), app.main(), nullptr);
 	REQUIRE(app.waitUntil([&] { return app.appUi().editorWindow() != nullptr; }));
 	CHECK_FALSE(app.appUi().docking().showing("editor"));
+	REQUIRE(windowShows(f.keys1));
 	click(app, app.appUi().editorWindowId(), "#editor-move");
 	REQUIRE(app.waitUntil([&] { return app.appUi().editorWindow() == nullptr; }));
 	REQUIRE(app.waitUntil([&] { return app.appUi().docking().showing("editor"); }));

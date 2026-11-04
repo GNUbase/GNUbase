@@ -9,9 +9,11 @@
 #include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/Event.h>
+#include <RmlUi/Core/Input.h>
 #include <RmlUi/Core/SystemInterface.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -44,9 +46,9 @@ namespace gnubase::ui
 			return event.GetParameter<int>(key, 0) != 0;
 		}
 
-		// The modifiers held, as the user setting ui.toolModifiers writes them: ctrl (Ctrl, Cmd on macOS), alt and
-		// shift, joined with +.
-		std::string modifiersOf(Rml::Event& event)
+		// Modifiers as the user setting ui.toolModifiers writes them: ctrl (Ctrl, Cmd on macOS), alt and shift,
+		// joined with +.
+		std::string joinedKeys(bool ctrl, bool alt, bool shift)
 		{
 			std::string keys;
 			const auto add = [&keys](bool on, const char* key)
@@ -54,10 +56,40 @@ namespace gnubase::ui
 				if (on)
 					keys += (keys.empty() ? "" : "+") + std::string(key);
 			};
-			add(held(event, "ctrl_key") || held(event, "meta_key"), "ctrl");
-			add(held(event, "alt_key"), "alt");
-			add(held(event, "shift_key"), "shift");
+			add(ctrl, "ctrl");
+			add(alt, "alt");
+			add(shift, "shift");
 			return keys;
+		}
+
+		// The modifier a key is for joinedKeys: 1 Ctrl (also Cmd, Meta and Win), 2 Alt, 3 Shift, 0 for other keys.
+		size_t modifierRole(int key)
+		{
+			switch (key)
+			{
+			case Rml::Input::KI_LCONTROL:
+			case Rml::Input::KI_RCONTROL:
+			case Rml::Input::KI_LMETA:
+			case Rml::Input::KI_RMETA:
+			case Rml::Input::KI_LWIN:
+			case Rml::Input::KI_RWIN:
+				return 1;
+			case Rml::Input::KI_LMENU:
+			case Rml::Input::KI_RMENU:
+				return 2;
+			case Rml::Input::KI_LSHIFT:
+			case Rml::Input::KI_RSHIFT:
+				return 3;
+			default:
+				return 0;
+			}
+		}
+
+		// The modifiers held.
+		std::string modifiersOf(Rml::Event& event)
+		{
+			return joinedKeys(
+				held(event, "ctrl_key") || held(event, "meta_key"), held(event, "alt_key"), held(event, "shift_key"));
 		}
 
 		// The modifiers without ctrl.
@@ -294,6 +326,14 @@ namespace gnubase::ui
 				edit(command, std::move(withRange));
 			};
 		};
+		// An action that only edits the selection range: menus and keys disable it while there is none (canRun).
+		const auto rangeAction =
+			[this, onRange](const char* action, const char* command, const Json& parameters, bool needsLength = true)
+		{
+			m_rangeActions[action] = needsLength;
+			return std::make_pair(
+				std::string(action), std::function<void()>(onRange(command, parameters, needsLength)));
+		};
 		// Paste goes to the range's start and first track, or to the project cursor on the tracks it was copied from,
 		// where it selects what it pasted.
 		const auto paste = [this](bool time)
@@ -316,15 +356,15 @@ namespace gnubase::ui
 					else
 						events();
 				}},
-			{"edit.cut", onRange("range.cut", Json::object())},
-			{"edit.copy", onRange("range.copy", Json::object())},
+			rangeAction("edit.cut", "range.cut", Json::object()),
+			rangeAction("edit.copy", "range.copy", Json::object()),
 			{"edit.paste", paste(false)},
-			{"edit.cutTime", onRange("range.cut", {{"time", true}})},
-			{"edit.deleteTime", onRange("range.delete", {{"time", true}})},
+			rangeAction("edit.cutTime", "range.cut", {{"time", true}}),
+			rangeAction("edit.deleteTime", "range.delete", {{"time", true}}),
 			{"edit.pasteTime", paste(true)},
-			{"edit.insertSilence", onRange("range.insertSilence", Json::object())},
-			{"edit.splitRange", onRange("range.split", Json::object(), false)},
-			{"edit.cropRange", onRange("range.crop", Json::object())},
+			rangeAction("edit.insertSilence", "range.insertSilence", Json::object()),
+			rangeAction("edit.splitRange", "range.split", Json::object(), false),
+			rangeAction("edit.cropRange", "range.crop", Json::object()),
 			{"edit.globalCopy", [this] { edit("range.copy", Json::object()); }},
 			{"edit.mute", onSelection("event.set", {{"mute", true}})},
 			{"edit.unmute", onSelection("event.set", {{"mute", false}})},
@@ -442,6 +482,12 @@ namespace gnubase::ui
 		m_actions.insert(actions.begin(), actions.end());
 	}
 
+	bool EventDisplay::canRun(const std::string& action) const
+	{
+		const auto found = m_rangeActions.find(action);
+		return found == m_rangeActions.end() || (m_range && (!found->second || m_range->end > m_range->start));
+	}
+
 	void EventDisplay::selectNeighbour(int direction)
 	{
 		// From the last selected event in time going right, the first going left.
@@ -523,8 +569,16 @@ namespace gnubase::ui
 			held(event, "ctrl_key") || held(event, "meta_key") || held(event, "shift_key") || held(event, "alt_key");
 		if (modified != m_toolboxOnRightClick) // the toolbox, which chooses a tool and leaves the selection
 			return;
+		// Where a press selects a range, the context menu acts on the range: an event selected too would show beside
+		// it.
+		if (toolAt(y) == Tool::RangeSelection)
+			return;
 		const Shown* shown = eventAt(x, y);
-		if (shown != nullptr && !std::binary_search(m_selection.begin(), m_selection.end(), shown->id))
+		if (shown == nullptr)
+			return;
+		// As a press there does, it ends a range (with the tools combined), which the menu would act on instead.
+		setRange(std::nullopt);
+		if (!std::binary_search(m_selection.begin(), m_selection.end(), shown->id))
 			select({shown->id});
 	}
 
@@ -602,6 +656,58 @@ namespace gnubase::ui
 			m_drag = Drag::ResizeEnd;
 		else
 			m_drag = Drag::Events;
+	}
+
+	std::string EventDisplay::pointerAt(double x, double y, const std::string& keys) const
+	{
+		const std::optional<size_t> lane = visibleLaneAt(y);
+		if (lane && automationAt(*lane) != nullptr) // a press edits points with the tool chosen, combined or not
+			return toolName(m_tool);
+		const Tool tool = toolAt(y);
+		if (tool != Tool::ObjectSelection)
+			return toolName(tool);
+		// What a press with the object selection tool and the keys does (areaDown, areaUp).
+		const bool split = modifiers("select.splitEvent", keys);
+		const Shown* shown = eventAt(x, y);
+		if (shown == nullptr) // with the tool modifier Split Event, draws a part (reference manual p. 250)
+			return split && lane && takesParts(*lane) ? toolName(Tool::Draw) : toolName(tool);
+		const int edge = edgeAt(*shown, x);
+		const bool add = keys.find("ctrl") != std::string::npos || keys.find("shift") != std::string::npos;
+		const bool toolModifier = modifiers("select.setCursorPosition", keys) || split || copyKeys(keys) ||
+			copyKeys(withoutCtrl(keys)) || (edge != 0 && modifiers("sizeObjects.disableSnapping", keys));
+		if (add && !toolModifier) // adds the event to the selection or takes it out
+			return toolName(tool);
+		if (edge != 0) // resizes it, unless the press drags a fade
+			return toolModifier || fadeHandleAt(*shown, x, y) == 0 ? "resize" : toolName(tool);
+		// A click with the tool modifier Split Event splits the event there (reference manual p. 268).
+		return split ? toolName(Tool::Split) : toolName(tool);
+	}
+
+	void EventDisplay::heldKeys(Rml::Event& event)
+	{
+		std::array<bool, 4> roles = {false, held(event, "ctrl_key") || held(event, "meta_key"), held(event, "alt_key"),
+			held(event, "shift_key")};
+		// A modifier key going down or up itself, whether or not the key event's modifiers say so yet. One going up
+		// leaves its modifier held while another key of it is down: the other Shift key, or Cmd for Ctrl.
+		const bool keyEvent = event.GetId() == Rml::EventId::Keydown || event.GetId() == Rml::EventId::Keyup;
+		const int key = keyEvent ? event.GetParameter<int>("key_identifier", 0) : 0;
+		if (const size_t role = modifierRole(key); role != 0)
+		{
+			if (event.GetId() == Rml::EventId::Keydown)
+				m_modifierKeys.insert(key);
+			else
+				m_modifierKeys.erase(key);
+			roles.at(role) = std::any_of(m_modifierKeys.begin(), m_modifierKeys.end(),
+				[role](int other) { return modifierRole(other) == role; });
+		}
+		// A key that went up where the display didn't see it, e.g. in another window: the modifiers say it's not held.
+		for (auto pressed = m_modifierKeys.begin(); pressed != m_modifierKeys.end();)
+			pressed = roles.at(modifierRole(*pressed)) ? std::next(pressed) : m_modifierKeys.erase(pressed);
+		std::string keys = joinedKeys(roles[1], roles[2], roles[3]);
+		if (keys == m_held)
+			return;
+		m_held = std::move(keys);
+		showPointer();
 	}
 
 	void EventDisplay::areaMove(double dx, double dy, bool constrained)

@@ -41,6 +41,8 @@ namespace gnubase::engine::graph
 			return "pluginSlot";
 		case NodeKind::ListenBus:
 			return "listenBus";
+		case NodeKind::Send:
+			return "send";
 		}
 		return "unknown";
 	}
@@ -115,6 +117,21 @@ namespace gnubase::engine::graph
 				(channel.type == TrackType::Midi ? graph.events : graph.audio)
 					.push_back({node, entry[static_cast<size_t>(channel.output.index)]});
 				break;
+			}
+		}
+
+		for (size_t i = 0; i < snapshot.channels.size(); ++i)
+		{
+			const RenderChannel& channel = snapshot.channels[i];
+			const int from = firstChannel + static_cast<int>(i);
+			const ChannelFormat output = pannerOutput(channel.panner);
+			for (const RenderSend& send : channel.sends)
+			{
+				const int node = static_cast<int>(graph.nodes.size());
+				graph.nodes.push_back({NodeKind::Send, channel.id,
+					send.preFader || output == ChannelFormat::None ? channel.format : output, nullptr});
+				(send.preFader ? graph.events : graph.audio).push_back({from, node});
+				graph.audio.push_back({node, entry[static_cast<size_t>(send.destination)]});
 			}
 		}
 

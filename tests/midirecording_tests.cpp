@@ -532,3 +532,170 @@ TEST_CASE("the MIDI record mode is a transport setting", "[unit]")
 	CHECK(run(client, "transport.get").at("midiRecordMode") == "merge");
 	CHECK_THAT(reject(client, "transport.set", {{"midiRecordMode", "mix"}}), ContainsSubstring("midiRecordMode"));
 }
+
+TEST_CASE("the MIDI cycle record mode is a transport setting", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	CHECK(run(client, "transport.get").at("midiCycleRecordMode") == "mix");
+	CHECK(run(client, "transport.set", {{"midiCycleRecordMode", "keepLast"}}).at("midiCycleRecordMode") == "keepLast");
+	CHECK_THAT(
+		reject(client, "transport.set", {{"midiCycleRecordMode", "merge"}}), ContainsSubstring("midiCycleRecordMode"));
+	CHECK(run(client, "transport.get").at("midiCycleRecordMode") == "keepLast");
+}
+
+TEST_CASE("a four-lap stacked cycle recording makes four parts on lanes of their own, all but the last muted",
+	"[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	const std::string mode = GENERATE("stacked", "mixStacked");
+	run(client, "settings.set", {{"key", "midi.snapPartsToBars"}, {"value", false}});
+	run(client, "transport.set", {{"left", 0}, {"right", 4 * g_beat}, {"cycle", true}, {"midiCycleRecordMode", mode}});
+	run(client, "transport.record");
+	std::vector<Json> messages;
+	for (int lap = 0; lap < 4; ++lap)
+	{
+		const int64_t start = static_cast<int64_t>(lap) * 4 * g_beat;
+		messages.push_back(message(start + g_beat, {0x90, 60 + lap, 100}));
+		messages.push_back(message(start + (2 * g_beat), {0x80, 60 + lap, 0}));
+	}
+	setup.inject(messages);
+	run(client, "audio.render", {{"frames", (15 * g_beat) + (g_beat / 2)}}); // stops in the fourth lap
+	const Json added = setup.stop();
+	REQUIRE(added.is_object());
+	CHECK(added.at("parts").size() == 4);
+
+	std::vector<Json> parts = setup.parts();
+	REQUIRE(parts.size() == 4);
+	std::sort(parts.begin(), parts.end(), [](const Json& a, const Json& b) { return a.at("lane") < b.at("lane"); });
+	for (int lap = 0; lap < 4; ++lap)
+	{
+		const Json& part = parts[static_cast<size_t>(lap)];
+		INFO("lap " << lap);
+		CHECK(part.at("lane") == lap);
+		CHECK(part.at("position") == 0);
+		CHECK(notesOf(part) == std::vector<std::vector<int64_t>>{{g_beatTicks, g_beatTicks, 60 + lap}});
+		CHECK(part.at("mute") == (mode == "stacked" && lap < 3));
+	}
+	CHECK(parts[3].at("length") == (3 * g_beatTicks) + (g_beatTicks / 2)); // where recording stopped
+	run(client, "history.undo");                                           // one undo step
+	CHECK(setup.parts().empty());
+}
+
+TEST_CASE("Keep Last keeps the last complete lap that recorded anything", "[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	run(client, "settings.set", {{"key", "midi.snapPartsToBars"}, {"value", false}});
+	run(client, "transport.set",
+		{{"left", 0}, {"right", 4 * g_beat}, {"cycle", true}, {"midiCycleRecordMode", "keepLast"}});
+	run(client, "transport.record");
+	// Laps 1 and 2 record a note, lap 3 nothing, and lap 4 one before recording stops in it.
+	setup.inject({message(g_beat, {0x90, 60, 100}), message(2 * g_beat, {0x80, 60, 0}),
+		message((4 + 1) * g_beat, {0x90, 62, 100}), message((4 + 2) * g_beat, {0x80, 62, 0}),
+		message((12 + 1) * g_beat, {0x90, 64, 100}), message((12 + 2) * g_beat, {0x80, 64, 0})});
+	run(client, "audio.render", {{"frames", (14 * g_beat) + (g_beat / 2)}});
+	REQUIRE(setup.stop().is_object());
+	const std::vector<Json> parts = setup.parts();
+	REQUIRE(parts.size() == 1);
+	CHECK(parts[0].at("position") == 0);
+	CHECK(parts[0].at("length") == 4 * g_beatTicks);
+	CHECK(notesOf(parts[0]) == std::vector<std::vector<int64_t>>{{g_beatTicks, g_beatTicks, 62}});
+}
+
+TEST_CASE("recording.add applies the MIDI cycle record modes to the takes", "[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	const auto taken = [](Json item, int take)
+	{
+		item["take"] = take;
+		return item;
+	};
+	const Json lap = {{"position", 0}, {"length", 4 * g_beat}};
+	const auto record = [&](const std::string& cycleMode, const Json& takes, const Json& notes)
+	{
+		return run(client, "recording.add",
+			{{"cycleMode", cycleMode}, {"tracks", {{{"track", setup.track}, {"takes", takes}, {"notes", notes}}}}});
+	};
+	using Notes = std::vector<std::vector<int64_t>>;
+
+	SECTION("overwrite replaces what earlier laps recorded from where a lap's input starts")
+	{
+		record("overwrite", {lap, lap, {{"position", 0}, {"length", g_beat}}},
+			{taken(note(0, g_beat / 2, 48), 0), taken(note(g_beat, g_beat / 2, 50), 0),
+				taken(note(3 * g_beat, g_beat / 2, 52), 0), taken(note(2 * g_beat, g_beat / 2, 60), 1),
+				taken(note(g_beat / 2, g_beat / 4, 62), 2)});
+		const std::vector<Json> parts = setup.parts();
+		REQUIRE(parts.size() == 1);
+		// Lap 2 overwrote lap 1 from beat 3 on; the third take, which stopped after a beat, from its note to there.
+		CHECK(notesOf(parts[0]) ==
+			Notes{{0, g_beatTicks / 2, 48}, {g_beatTicks / 2, g_beatTicks / 4, 62}, {g_beatTicks, g_beatTicks / 2, 50},
+				{2 * g_beatTicks, g_beatTicks / 2, 60}});
+	}
+	SECTION("keep last keeps the last lap with input, also when it is the last take and complete")
+	{
+		record("keepLast", {lap, lap, lap},
+			{taken(note(0, g_beat, 48), 0), taken(note(g_beat, g_beat, 50), 1),
+				taken(note(2 * g_beat, g_beat, 52), 2)});
+		const std::vector<Json> parts = setup.parts();
+		REQUIRE(parts.size() == 1);
+		CHECK(notesOf(parts[0]) == Notes{{2 * g_beatTicks, g_beatTicks, 52}});
+	}
+	SECTION("keep last keeps the only take with input even if it is incomplete")
+	{
+		record(
+			"keepLast", {lap, {{"position", 0}, {"length", 2 * g_beat}}}, Json::array({taken(note(0, g_beat, 50), 1)}));
+		const std::vector<Json> parts = setup.parts();
+		REQUIRE(parts.size() == 1);
+		CHECK(notesOf(parts[0]) == Notes{{0, g_beatTicks, 50}});
+		CHECK(parts[0].at("length") == 2 * g_beatTicks);
+	}
+	SECTION("stacked takes go onto lanes after those the parts they overlap are on")
+	{
+		const ObjectId existing =
+			run(client, "midiPart.add", {{"track", setup.track}, {"position", 0}, {"length", 4 * g_beatTicks}})
+				.at("part")
+				.at("id")
+				.get<ObjectId>();
+		run(client, "event.set", {{"events", {existing}}, {"lane", 1}});
+		const Json result =
+			record("stacked", {lap, lap, lap}, {taken(note(0, g_beat, 48), 0), taken(note(0, g_beat, 50), 2)});
+		REQUIRE(result.at("parts").size() == 2); // the lap without input makes no part
+		std::vector<int64_t> lanes;
+		for (const Json& part : setup.parts())
+			lanes.push_back(part.at("lane").get<int64_t>());
+		std::sort(lanes.begin(), lanes.end());
+		CHECK(lanes == std::vector<int64_t>{1, 2, 3});
+	}
+	SECTION("a single take isn't stacked: it goes by the MIDI record mode, on lane 0")
+	{
+		const std::string cycleMode = GENERATE("stacked", "mixStacked");
+		const ObjectId existing =
+			run(client, "midiPart.add", {{"track", setup.track}, {"position", 0}, {"length", 4 * g_beatTicks}})
+				.at("part")
+				.at("id")
+				.get<ObjectId>();
+		run(client, "recording.add",
+			{{"cycleMode", cycleMode}, {"midiMode", "merge"},
+				{"tracks",
+					{{{"track", setup.track}, {"takes", Json::array({lap})},
+						{"notes", Json::array({note(g_beat, g_beat, 48)})}}}}});
+		const std::vector<Json> parts = setup.parts();
+		REQUIRE(parts.size() == 1);
+		CHECK(parts[0].at("id") == existing);
+		CHECK(parts[0].at("lane") == 0);
+		CHECK(notesOf(parts[0]) == Notes{{g_beatTicks, g_beatTicks, 48}});
+	}
+	SECTION("a take that isn't there is refused")
+	{
+		CHECK_THAT(reject(client, "recording.add",
+					   {{"cycleMode", "stacked"},
+						   {"tracks",
+							   {{{"track", setup.track}, {"takes", Json::array({lap})},
+								   {"notes", Json::array({taken(note(0, 1, 48), 1)})}}}}}),
+			ContainsSubstring("names a take"));
+		CHECK(setup.parts().empty());
+	}
+}

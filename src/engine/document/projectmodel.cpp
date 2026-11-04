@@ -256,14 +256,10 @@ namespace gnubase::engine
 			return type == TrackType::Group || type == TrackType::Folder;
 		}
 
-		// Whether routing a channel to output would lead back to it.
+		// Whether routing a channel to output would lead back to it, through outputs or sends.
 		bool loops(const Project& project, ObjectId channel, ObjectId output)
 		{
-			for (ObjectId next = output; next != 0 && project.channels.count(next) != 0;
-				next = project.channels.at(next).output)
-				if (next == channel)
-					return true;
-			return false;
+			return routingLoops(project, channel, output);
 		}
 
 		// Where the audio of the tracks in a folder goes unless routed elsewhere (reference manual p. 222): the group
@@ -1056,7 +1052,7 @@ namespace gnubase::engine
 			return result;
 		}
 
-		// Disconnects every channel whose input or output is one of the given objects.
+		// Disconnects every channel whose input, output or send destination is one of the given objects.
 		void disconnect(Project& project, const std::vector<ObjectId>& gone, CommandContext& context)
 		{
 			const auto isGone = [&gone](ObjectId id) { return std::find(gone.begin(), gone.end(), id) != gone.end(); };
@@ -1064,11 +1060,18 @@ namespace gnubase::engine
 			{
 				const bool input = channel.input != 0 && isGone(channel.input);
 				const bool output = channel.output != 0 && isGone(channel.output);
+				bool send = false;
+				for (Send& item : channel.sends)
+					if (item.destination != 0 && isGone(item.destination))
+					{
+						item.destination = 0;
+						send = true;
+					}
 				if (input)
 					channel.input = 0;
 				if (output)
 					channel.output = 0;
-				if (input || output)
+				if (input || output || send)
 					context.emit("channel.changed", {{"channel", toJson(channel)}});
 			}
 		}
@@ -1274,12 +1277,15 @@ namespace gnubase::engine
 			std::map<ObjectId, ObjectId> channels;
 			std::vector<std::pair<std::string, Json>> added;
 			const ObjectId copy = copyTrack(project, id, parent, channels, added);
-			// Channels that played through a copied channel play through its copy.
+			// Channels that played or sent to a copied channel play or send to its copy.
 			for (const auto& [original, duplicate] : channels)
 			{
 				Channel& channel = project.channels.at(duplicate);
 				if (const auto output = channels.find(channel.output); output != channels.end())
 					channel.output = output->second;
+				for (Send& send : channel.sends)
+					if (const auto destination = channels.find(send.destination); destination != channels.end())
+						send.destination = destination->second;
 			}
 			std::vector<ObjectId>& list = siblings(project, parent);
 			list.insert(std::next(std::find(list.begin(), list.end(), id)), copy);
@@ -1339,6 +1345,32 @@ namespace gnubase::engine
 				activateMarkerTrack(project, top == project.tracks.end() ? 0 : *top, context);
 			}
 			return Json::object();
+		}
+
+		// channel.set's sends: each changes what it has of the send with its number.
+		void setSends(const Project& project, Channel& changed, const Json& sends)
+		{
+			require(changed.format != ChannelFormat::None, "a MIDI channel has no sends");
+			for (const Json& item : sends)
+			{
+				const auto number = item.at("send").get<int64_t>();
+				requireRange(number, 1, static_cast<int64_t>(g_maxSends), "send");
+				Send& send = changed.sends[static_cast<size_t>(number - 1)];
+				if (item.contains("destination"))
+				{
+					send.destination = item.at("destination").get<ObjectId>();
+					require(send.destination == 0 || isSendDestination(project, send.destination),
+						"a send's destination must be a group or effect channel");
+					require(send.destination == 0 || !routingLoops(project, changed.id, send.destination),
+						"sending channel " + idText(changed.id) + " to " + idText(send.destination) +
+							" would make a loop");
+				}
+				send.on = item.value("on", send.on);
+				// Like the fader, the level stops at its ends.
+				if (item.contains("level"))
+					send.level = std::clamp(item.at("level").get<double>(), g_minChannelVolume, project.maxVolume);
+				send.preFader = item.value("preFader", send.preFader);
+			}
 		}
 
 		Json setChannel(Project& project, CommandContext& context)
@@ -1421,6 +1453,8 @@ namespace gnubase::engine
 					throw CommandError(error.what());
 				}
 			}
+			if (parameters.contains("sends"))
+				setSends(project, changed, parameters.at("sends"));
 			channel = changed;
 			// Exclusive solo (reference manual p. 466): every other channel's solo goes off.
 			if (parameters.value("exclusive", false))
@@ -2410,13 +2444,16 @@ namespace gnubase::engine
 			const std::string timeFormat = project.setup.timeFormat;
 			project.setup = std::move(setup);
 			followTimeFormat(project, timeFormat, context);
-			// Faders above a lower maximum come down to it.
+			// Faders and send levels above a lower maximum come down to it.
 			for (auto& [id, channel] : project.channels)
-				if (channel.volume > maxVolume)
-				{
-					channel.volume = maxVolume;
+			{
+				const Channel before = channel;
+				channel.volume = std::min(channel.volume, maxVolume);
+				for (Send& send : channel.sends)
+					send.level = std::min(send.level, maxVolume);
+				if (!(channel == before))
 					context.emit("channel.changed", {{"channel", toJson(channel)}});
-				}
+			}
 			if (sampleRate != project.sampleRate)
 				changeSampleRate(project, sampleRate, context);
 			context.emit("project.changed", projectSettingsJson(project));
@@ -3266,7 +3303,14 @@ namespace gnubase::engine
 				"[{band (1 to 4), on, type (bell; band 1 also lowShelf or lowCut, band 4 highShelf or highCut, cuts "
 				"at 12 dB per octave), frequency (Hz, 20 to 20000), gain (dB, -24 to 24), q (0.1 to 12)}]}, then "
 				"the strip's limiter {on, threshold (dB, -30 to 0: no sample leaves above it, 1 ms of latency), "
-				"release (ms, 1 to 1000)}. Everything starts off; changes glide.",
+				"release (ms, 1 to 1000)}. Everything starts off; changes glide. sends (audio channels only) "
+				"changes the channel's eight sends, each by its send number (1 to 8) and only in what it has: "
+				"destination (a group or effect channel, 0 for none), on, level (dB, from -144 to the project's "
+				"maxVolume, stopping there, default 0) and preFader (before the fader and the mute button, after the "
+				"strip's sections; default after the fader). A send starts off and without a destination. Neither "
+				"an output nor a send may lead back to the channel through other outputs and sends, on or off, so "
+				"routing never makes a loop; removing a destination's track clears the destination. A send's level "
+				"and on glide over one audio block.",
 				objectSchema(
 					{{"channel", idSchema}, {"format", formats}, {"channels", integerSchema}, {"input", idSchema},
 						{"output", idSchema}, {"instrument", stringSchema},
@@ -3277,7 +3321,12 @@ namespace gnubase::engine
 						{"recordEnable", booleanSchema}, {"midiInput", enumSchema({"all", "none"})},
 						{"mute", booleanSchema}, {"solo", booleanSchema}, {"exclusive", booleanSchema},
 						{"soloDefeat", booleanSchema}, {"listen", booleanSchema}, {"notes", stringSchema},
-						{"pre", {{"type", "object"}}}, {"eq", {{"type", "object"}}}, {"strip", {{"type", "object"}}}},
+						{"pre", {{"type", "object"}}}, {"eq", {{"type", "object"}}}, {"strip", {{"type", "object"}}},
+						{"sends",
+							arraySchema(
+								objectSchema({{"send", integerSchema}, {"destination", idSchema}, {"on", booleanSchema},
+												 {"level", numberSchema}, {"preFader", booleanSchema}},
+									{"send"}))}},
 					{"channel"}),
 				resultSchema({"channel"}), false},
 			setChannel);

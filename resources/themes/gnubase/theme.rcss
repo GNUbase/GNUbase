@@ -708,6 +708,48 @@
 	{
 		background-color: #3f4559;
 	}
+	.list-editor-header
+	{
+		color: #aeb7d0;
+		border-bottom-width: 1px;
+		border-bottom-color: #303754;
+	}
+	.list-editor-rows .list-row
+	{
+		border-bottom-width: 1px;
+		border-bottom-color: #20263d;
+	}
+	.list-editor-body
+	{
+		background-color: #101426;
+	}
+	.list-row.selected
+	{
+		background-color: #104759;
+	}
+	.list-row.inactive
+	{
+		color: #aeb7d0;
+	}
+	.list-event
+	{
+		background-color: #1391a5;
+		border-width: 1px;
+		border-color: #10dff2;
+	}
+	.list-row.selected .list-event
+	{
+		background-color: #e12ad8;
+		border-color: #f1f4ff;
+	}
+	.list-value
+	{
+		background-color: #10dff2;
+	}
+	.list-row.selected .list-value
+	{
+		background-color: #e12ad8;
+	}
 	.docking [zone]
 	{
 		background-color: #0c101f;
@@ -755,6 +797,22 @@
 		color: #aeb7d0;
 	}
 	.history .history-separator
+	{
+		background-color: #10dff2;
+	}
+	.onscreen-keyboard .white-key
+	{
+		background-color: #f1f4ff;
+		color: #090b18;
+		border-color: #303754;
+	}
+	.onscreen-keyboard .black-key
+	{
+		background-color: #090b18;
+		color: #aeb7d0;
+		border-color: #303754;
+	}
+	.onscreen-keyboard .white-key.pressed, .onscreen-keyboard .black-key.pressed
 	{
 		background-color: #10dff2;
 	}

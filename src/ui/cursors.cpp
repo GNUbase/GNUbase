@@ -68,6 +68,10 @@ namespace gnubase::ui
 			else
 				cursor.name.clear(); // the OS's arrow
 		}
+		else if (std::find(g_systemCursors.begin(), g_systemCursors.end(), name) == g_systemCursors.end())
+		{
+			cursor.name.clear(); // no pointer the OS has, such as RmlUi's autoscroll pointers: its arrow
+		}
 		return m_loaded.emplace(name, std::move(cursor)).first->second;
 	}
 

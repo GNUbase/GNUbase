@@ -210,9 +210,14 @@ namespace gnubase::ui
 		std::string modes;
 		for (const auto& [mode, label] : g_lineModes)
 			modes += std::string(R"(<menuitem type="toggle" line-mode=")") + mode + R"(">)" + label + "</menuitem>";
-		holder->SetInnerRML(
-			R"(<menu id="key-length-menu">)" + items + R"(</menu><menu id="key-line-menu">)" + modes + "</menu>");
-		while (holder->GetFirstChild() != nullptr)
+		// The toolbox: the toolbar's tools, as its buttons show them.
+		std::string toolbox;
+		for (size_t i = 0; i < g_tools.size(); ++i)
+			toolbox += std::string(R"(<menuitem key-tool=")") + g_tools[i].second + R"(" title=")" + g_toolTitles[i] +
+				R"(">)" + g_toolLabels[i] + "</menuitem>";
+		holder->SetInnerRML(R"(<menu id="key-length-menu">)" + items + R"(</menu><menu id="key-line-menu">)" + modes +
+			R"(</menu><menu id="key-editor-toolbox" class="toolbox">)" + toolbox + "</menu>");
+		while (holder->HasChildNodes())
 		{
 			Rml::Element* menu = document->AppendChild(holder->RemoveChild(holder->GetFirstChild()));
 			menu->AddEventListener(Rml::EventId::Click, this);
@@ -222,6 +227,39 @@ namespace gnubase::ui
 				 Rml::EventId::Click, Rml::EventId::Dblclick, Rml::EventId::Change})
 			root.AddEventListener(event, this);
 		setTool(KeyTool::ObjectSelection);
+
+		m_subscriptions.push_back(m_binding.on("settings.changed",
+			[this](const engine::Event& event)
+			{
+				const Json& values = event.data.at("values");
+				if (const auto toolbox = values.find("ui.toolboxOnRightClick"); toolbox != values.end())
+				{
+					m_toolboxOnRightClick = toolbox->get<bool>();
+					m_toolboxKnown = true;
+					showToolbox();
+				}
+			}));
+		m_binding.send("settings.get", {{"key", "ui.toolboxOnRightClick"}},
+			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (alive.expired() || !result.ok() || m_toolboxKnown) // newer changes win
+					return;
+				m_toolboxOnRightClick = result.value.at("value").get<bool>();
+				showToolbox();
+			});
+		showToolbox();
+	}
+
+	void KeyEditor::showToolbox()
+	{
+		Rml::Element* root = m_root.get();
+		Rml::Element* grid = root != nullptr ? root->QuerySelector(".key-editor-grid") : nullptr;
+		if (grid == nullptr)
+			return;
+		// Where the context menu would be, an empty attribute: no menu, nor one of the elements around the grid
+		// (docs/features/widgets.md).
+		grid->SetAttribute("contextmenu", m_toolboxOnRightClick ? "key-editor-toolbox" : "");
+		grid->SetAttribute("modifiercontextmenu", m_toolboxOnRightClick ? "" : "key-editor-toolbox");
 	}
 
 	KeyEditor::~KeyEditor()
@@ -257,6 +295,17 @@ namespace gnubase::ui
 			else if (button->HasAttribute("menu"))
 				button->RemoveAttribute("menu");
 		}
+		// The toolbox's items, by the attribute that gives them the state class .checked.
+		for (const Rml::ObserverPtr<Rml::Element>& menu : m_menus)
+			if (const Rml::Element* element = menu.get())
+				for (int i = 0; i < element->GetNumChildren(); ++i)
+					if (Rml::Element* item = element->GetChild(i); item->HasAttribute("key-tool"))
+					{
+						if (attribute(*item, "key-tool") == keyToolName(tool))
+							item->SetAttribute("checked", "");
+						else
+							item->RemoveAttribute("checked");
+					}
 		root->SetAttribute("tool", keyToolName(tool));
 		if (const Rml::Element* menu = m_menus.size() > 1 ? m_menus[1].get() : nullptr)
 			for (int i = 0; i < menu->GetNumChildren(); ++i)

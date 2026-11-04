@@ -577,6 +577,20 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".controller-bar.selected, .controller-step.selected", {"background-color": c["accent2"]}),
         (".controller-bar.inactive, .controller-step.inactive",
          {"background-color": mix(c["surface"], c["textMuted"], .3)}),
+        # The list editor (docs/features/list-editor.md): lines between the rows, the selected rows lit, those
+        # outside the part editing mode dimmed, the events in the event display and the bars of the value display
+        (".list-editor-header", {"color": c["textMuted"], "border-bottom-width": f"{widths['hairline']}px",
+                                 "border-bottom-color": c["border"]}),
+        (".list-editor-rows .list-row", {"border-bottom-width": f"{widths['hairline']}px",
+                                         "border-bottom-color": mix(c["surface"], c["border"], .5)}),
+        (".list-editor-body", {"background-color": c["surface"]}),
+        (".list-row.selected", {"background-color": mix(c["surface"], c["accent"], .25)}),
+        (".list-row.inactive", {"color": c["textMuted"]}),
+        (".list-event", {"background-color": mix(c["surfaceRaised"], c["accent"], .6),
+                         "border-width": f"{widths['hairline']}px", "border-color": c["accent"]}),
+        (".list-row.selected .list-event", {"background-color": c["accent2"], "border-color": c["text"]}),
+        (".list-value", {"background-color": c["accent"]}),
+        (".list-row.selected .list-value", {"background-color": c["accent2"]}),
         # Docking windows (docs/features/docking.md): zones, the frame of the zone with the keyboard focus, and strips
         (".docking [zone]", {"background-color": mix(c["background"], c["surface"], .5)}),
         (".docking .zone-frame", {"border-width": f"{widths['focus']}dp", "border-color": c["accent"]}),
@@ -595,6 +609,13 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         # The edit history (docs/features/edit-history.md): undone steps dimmed, and the separator after the done ones
         (".history tr.undone, .history tr.undone input.text", {"color": c["textMuted"]}),
         (".history .history-separator", {"background-color": c["accent"]}),
+        # The on-screen keyboard (docs/features/onscreen-keyboard.md): white and black keys, lit while they sound
+        (".onscreen-keyboard .white-key", {"background-color": c["text"], "color": c["background"],
+                                           "border-color": c["border"]}),
+        (".onscreen-keyboard .black-key", {"background-color": c["background"], "color": c["textMuted"],
+                                           "border-color": c["border"]}),
+        (".onscreen-keyboard .white-key.pressed, .onscreen-keyboard .black-key.pressed",
+         {"background-color": c["accent"]}),
         # Menu bars (docs/features/main-menu.md): flat menu titles, lit under the mouse, the items' keys, and the arrows
         # of items with a submenu
         ("menubar", {"background-color": c["surface"]}),

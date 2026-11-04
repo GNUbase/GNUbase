@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cctype>
 #include <map>
+#include <set>
 #include <utility>
 
 namespace gnubase::engine
@@ -160,6 +161,35 @@ namespace gnubase::engine
 			if (folder == excluded || found == project.poolFolders.end())
 				return false;
 			folder = found->second.parent;
+		}
+		return false;
+	}
+
+	bool isSendDestination(const Project& project, ObjectId channel)
+	{
+		const auto found = project.channels.find(channel);
+		if (found == project.channels.end())
+			return false;
+		const TrackType type = project.trackById.at(found->second.track).type;
+		return type == TrackType::Group || type == TrackType::Effect || type == TrackType::Folder;
+	}
+
+	bool routingLoops(const Project& project, ObjectId channel, ObjectId to)
+	{
+		std::vector<ObjectId> pending{to};
+		std::set<ObjectId> seen;
+		while (!pending.empty())
+		{
+			const ObjectId next = pending.back();
+			pending.pop_back();
+			if (next == channel)
+				return true;
+			const auto found = project.channels.find(next);
+			if (found == project.channels.end() || !seen.insert(next).second)
+				continue;
+			pending.push_back(found->second.output);
+			for (const Send& send : found->second.sends)
+				pending.push_back(send.destination);
 		}
 		return false;
 	}
