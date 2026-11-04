@@ -171,8 +171,8 @@ namespace gnubase::engine
 			Type type = Type::Play;
 			time::Samples position = 0;
 			TransportSettings settings;
-			uint64_t locate = 0;    // Locate: which one, counted from 1
-			bool record = false;    // Record: punch in, or out
+			uint64_t locate = 0;      // Locate: which one, counted from 1
+			bool record = false;      // Record: punch in, or out
 			graph::CountIn countIn{}; // Record from stop
 		};
 
