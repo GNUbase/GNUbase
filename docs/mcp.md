@@ -4508,6 +4508,36 @@ Result:
 - `position`: integer
 - `tempo`: object, required
 
+#### `tempo_export`
+
+Engine command `tempo.export`. Read-only.
+
+Exports the tempo track's events, which fixed tempo mode keeps too, and the time signature events into an XML file at path (File > Export > Tempo Track), which tempo.import reads. Returns the number of tempo and time signature events.
+
+Arguments:
+
+- `path`: string, required
+
+Result:
+
+- `signatureEvents`: integer, required
+- `tempoEvents`: integer, required
+
+#### `tempo_import`
+
+Engine command `tempo.import`.
+
+Imports a file that tempo.export wrote (File > Import > Tempo Track): its tempo events replace the tempo track's and its time signature events the project's. A file with tempo changes makes the tempo track active; the fixed tempo stays. One undo step. Returns the tempo as tempo.changed reports it and the time signature events as signature.changed does.
+
+Arguments:
+
+- `path`: string, required
+
+Result:
+
+- `signatures`: array, required
+- `tempo`: object, required
+
 #### `tempo_remove`
 
 Engine command `tempo.remove`.

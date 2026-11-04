@@ -2794,6 +2794,7 @@ namespace gnubase::engine
 			{"tempo.set", "Change tempo events"},
 			{"tempo.remove", "Remove tempo events"},
 			{"tempo.tap", "Tap tempo"},
+			{"tempo.import", "Import tempo track"},
 			{"signature.add", "Add time signature event"},
 			{"signature.set", "Change time signature events"},
 			{"signature.remove", "Remove time signature events"},
