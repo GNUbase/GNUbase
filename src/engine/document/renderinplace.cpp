@@ -245,7 +245,11 @@ namespace gnubase::engine
 				const std::vector<ObjectId> tracks = trackList(parameters);
 				require(parameters.contains("start") == parameters.contains("end"), "give both start and end, or none");
 				const std::string mode = parameters.value("processing", std::string("channelSettings"));
-				const char* point = mode == "dry" ? "source" : mode == "channelSettings" ? "strip" : "output";
+				const char* point = "output";
+				if (mode == "dry")
+					point = "source";
+				else if (mode == "channelSettings")
+					point = "strip";
 				const RenderSnapshot& snapshot = m_snapshots.latest();
 				std::vector<Span> spans;
 				for (const ObjectId id : tracks)
