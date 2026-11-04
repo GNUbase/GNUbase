@@ -11,6 +11,7 @@
 #include "engine/document/projectmodel.h"
 #include "engine/document/serialize.h"
 #include "engine/engine.h"
+#include "engine/midi/controllerlanes.h"
 #include "engine/midi/quantizesettings.h"
 
 #include <algorithm>
@@ -57,8 +58,11 @@ namespace gnubase::engine
 			double insertVelocity = 100.0 / 127.0;
 			std::string lengthQuantize = "link"; // a note value, or link: the quantize grid's
 			std::string content = "key";
-			// The list editor (#130): the selected controller events, each a part and a controller event of it.
-			std::vector<std::pair<ObjectId, ObjectId>> controllerSelection;
+			// The controller lanes (#128): each a type (midi::g_laneTypes) and a controller number or pitch.
+			std::vector<std::pair<std::string, int>> lanes = {{"velocity", 0}};
+			bool showLanes = true;
+			bool autoSelectControllers = false;
+			std::vector<std::pair<ObjectId, ObjectId>> controllerSelection; // each a part and a controller event of it
 			// The audio part editor (#146): the selected audio events of its parts.
 			std::vector<ObjectId> eventSelection;
 		};
@@ -195,6 +199,9 @@ namespace gnubase::engine
 			Json selection = Json::array();
 			for (const auto& [part, note] : view.selection)
 				selection.push_back({{"part", part}, {"note", note}});
+			Json lanes = Json::array();
+			for (const auto& [type, number] : view.lanes)
+				lanes.push_back({{"type", type}, {"number", number}});
 			Json controllerSelection = Json::array();
 			for (const auto& [part, controller] : view.controllerSelection)
 				controllerSelection.push_back({{"part", part}, {"controller", controller}});
@@ -205,8 +212,25 @@ namespace gnubase::engine
 				{"moveInsert", view.moveInsert}, {"recordPitch", view.recordPitch},
 				{"recordVelocity", view.recordVelocity}, {"recordReleaseVelocity", view.recordReleaseVelocity},
 				{"keepNotes", view.keepNotes}, {"insertVelocity", view.insertVelocity},
-				{"lengthQuantize", view.lengthQuantize}, {"content", view.content},
+				{"lengthQuantize", view.lengthQuantize}, {"content", view.content}, {"lanes", lanes},
+				{"showLanes", view.showLanes}, {"autoSelectControllers", view.autoSelectControllers},
 				{"controllerSelection", controllerSelection}, {"eventSelection", view.eventSelection}};
+		}
+
+		// The controller events in the ranges of the selected notes, from a note's start to its end (p. 1188).
+		std::vector<std::pair<ObjectId, ObjectId>> controllersOfNotes(const Project& project, const EditorView& view)
+		{
+			std::vector<std::pair<ObjectId, ObjectId>> found;
+			for (const auto& [partId, noteId] : view.selection)
+			{
+				const MidiPart& part = project.midiParts.at(partId);
+				const Note& note = part.notes.at(noteId);
+				for (const auto& [id, controller] : part.controllers)
+					if (controller.position >= note.position && controller.position < note.position + note.length &&
+						std::find(found.begin(), found.end(), std::make_pair(partId, id)) == found.end())
+						found.emplace_back(partId, id);
+			}
+			return found;
 		}
 
 		// The MIDI parts, or the audio parts, of a track, or of every track in a folder.
@@ -351,6 +375,15 @@ namespace gnubase::engine
 			{"items",
 				{{"type", "object"}, {"additionalProperties", false}, {"required", {"part", "note"}},
 					{"properties", {{"part", idSchema}, {"note", idSchema}}}}}};
+		const Json lanesSchema = {{"type", "array"},
+			{"items",
+				{{"type", "object"}, {"additionalProperties", false}, {"required", {"type"}},
+					{"properties",
+						{{"type",
+							 {{"type", "string"},
+								 {"enum",
+									 std::vector<std::string>(midi::g_laneTypes.begin(), midi::g_laneTypes.end())}}},
+							{"number", idSchema}}}}}};
 		const Json contentSchema = {
 			{"type", "string"}, {"enum", std::vector<std::string>(g_contents.begin(), g_contents.end())}};
 		const Json controllerSelectionSchema = {{"type", "array"},
@@ -361,7 +394,8 @@ namespace gnubase::engine
 			{"eventSelection", idsSchema}, {"selection", selectionSchema}, {"stepInput", boolean},
 			{"midiInput", boolean}, {"stepPosition", idSchema}, {"moveInsert", boolean}, {"recordPitch", boolean},
 			{"recordVelocity", boolean}, {"recordReleaseVelocity", boolean}, {"keepNotes", boolean},
-			{"insertVelocity", {{"type", "number"}}}, {"lengthQuantize", {{"type", "string"}}}};
+			{"insertVelocity", {{"type", "number"}}}, {"lengthQuantize", {{"type", "string"}}}, {"lanes", lanesSchema},
+			{"showLanes", boolean}, {"autoSelectControllers", boolean}};
 		Json viewSchema = {{"type", "object"},
 			{"properties",
 				{{"editor", editorSchema}, {"open", {{"type", "boolean"}}}, {"parts", idsSchema},
@@ -371,7 +405,8 @@ namespace gnubase::engine
 				{"editor", "open", "parts", "activePart", "activeTrack", "editable", "editingMode", "keepContents",
 					"globalTracks", "selection", "stepInput", "midiInput", "stepPosition", "moveInsert", "recordPitch",
 					"recordVelocity", "recordReleaseVelocity", "keepNotes", "insertVelocity", "lengthQuantize",
-					"content", "controllerSelection", "eventSelection"}}};
+					"content", "lanes", "showLanes", "autoSelectControllers", "controllerSelection",
+					"eventSelection"}}};
 		viewSchema["properties"].update(keyEditorSchema);
 		const std::string viewText =
 			"editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: "
@@ -388,10 +423,14 @@ namespace gnubase::engine
 			"a note value such as 1/16, 1/8T or 1/4., or link for the quantize grid's (quantize.set). content: what "
 			"shows the parts, key (the key editor) or list (the list editor, pp. 1243-1258); controllerSelection, the "
 			"list editor's selected controller events, each {part, controller}, of the editable parts. Audio parts "
-			"show "
-			"in the audio part editor (content audioPart, pp. 692-702), whose eventSelection is the selected audio "
-			"events of the editable parts. View state: no undo steps, not saved, and a new or loaded project closes "
-			"the editors.";
+			"show in the audio part editor (content audioPart, pp. 692-702), whose eventSelection is the selected "
+			"audio events of the editable parts. The controller lanes' (pp. "
+			"1157-1188): lanes, from the top, each {type, number}: velocity, offVelocity, probability or "
+			"velocityVariance (the notes' play probability and velocity variance), or the controller events of a "
+			"type: controller (number is the controller), pitchBend, channelPressure, polyPressure (number is the "
+			"pitch) or program; showLanes, whether the controller display shows them; autoSelectControllers, "
+			"whether selecting notes selects the controller events from their start to their end. View state: no "
+			"undo steps, not saved, and a new or loaded project closes the editors.";
 		const auto editorOnly = [&](Json properties = Json::object())
 		{
 			properties["editor"] = editorSchema;
@@ -462,7 +501,9 @@ namespace gnubase::engine
 				"editable parts, controllerSelection the selected controller events and eventSelection the selected "
 				"audio events of the editable audio parts. content and the key editor's "
 				"settings apply to any editor; turning stepInput on puts the step input cursor at the active part's "
-				"start unless stepPosition is given. Emits editor.changed. " +
+				"start unless stepPosition is given. lanes replaces the controller lanes. With autoSelectControllers "
+				"on, a new selection of notes, or turning it on, selects the controller events in the notes' ranges "
+				"unless controllerSelection is given. Emits editor.changed. " +
 					viewText,
 				editorOnly({{"parts", idsSchema}, {"exclusive", {{"type", "boolean"}}}, {"showTracks", idsSchema},
 					{"hideTracks", idsSchema}, {"activeTrack", idSchema}, {"activePart", idSchema},
@@ -471,7 +512,8 @@ namespace gnubase::engine
 					{"stepPosition", idSchema}, {"moveInsert", boolean}, {"recordPitch", boolean},
 					{"recordVelocity", boolean}, {"recordReleaseVelocity", boolean}, {"keepNotes", boolean},
 					{"insertVelocity", {{"type", "number"}}}, {"lengthQuantize", {{"type", "string"}}},
-					{"content", contentSchema}, {"controllerSelection", controllerSelectionSchema},
+					{"content", contentSchema}, {"lanes", lanesSchema}, {"showLanes", boolean},
+					{"autoSelectControllers", boolean}, {"controllerSelection", controllerSelectionSchema},
 					{"eventSelection", idsSchema}}),
 				viewSchema, false},
 			[views, &model, store](CommandContext& context)
@@ -594,6 +636,31 @@ namespace gnubase::engine
 					require(length == "link" || midi::noteValueFromString(length).has_value(),
 						"lengthQuantize must be a note value such as 1/16, 1/8T or 1/4., or link");
 					view.lengthQuantize = length;
+				}
+				if (parameters.contains("lanes"))
+				{
+					view.lanes.clear();
+					const Json& lanes = parameters.at("lanes");
+					for (size_t i = 0; i < lanes.size(); ++i)
+					{
+						const std::string name = "lanes[" + std::to_string(i) + "]";
+						const std::string type = lanes[i].at("type").get<std::string>();
+						require(midi::isLaneType(type), name + ".type must be a lane type, not " += type);
+						const int number = lanes[i].value("number", 0);
+						require(number >= 0 && number <= 127, name + ".number must be 0 to 127");
+						view.lanes.emplace_back(type, number);
+					}
+				}
+				if (parameters.contains("showLanes"))
+					view.showLanes = parameters.at("showLanes").get<bool>();
+				const bool autoSelectTurnsOn = parameters.value("autoSelectControllers", view.autoSelectControllers) &&
+					!view.autoSelectControllers;
+				if (parameters.contains("autoSelectControllers"))
+					view.autoSelectControllers = parameters.at("autoSelectControllers").get<bool>();
+				if (!parameters.contains("controllerSelection") && view.autoSelectControllers &&
+					(parameters.contains("selection") || autoSelectTurnsOn))
+				{
+					view.controllerSelection = controllersOfNotes(project, view);
 				}
 				return store(editor, view, context);
 			});

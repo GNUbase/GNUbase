@@ -1,0 +1,72 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* The controller lanes (ui/controllerlanes.h, docs/features/controller-lanes.md) under the key editor's note display:
+   a lane per row, its menu button on the left as wide as the keyboard, its area on the note display's time axis with
+   the notes' values as bars and controller events as steps, which code places and sizes in percent of the area; then
+   the Create Controller Lane and Controller Lane Setup buttons. The list scrolls like the note display, so that both
+   have a scroll bar and their time axes line up. Bars and steps get .selected and .inactive (outside the part
+   editing mode), the root .lanes-hidden while Show/Hide Controller Lanes hides them; the themes color them. */
+.controller-lanes
+{
+	flex-shrink: 0;
+	display: flex;
+	flex-direction: column;
+}
+
+.controller-lane-list
+{
+	overflow-y: scroll;
+	max-height: 200dp;
+}
+
+.controller-lanes.lanes-hidden .controller-lane-list
+{
+	display: none;
+}
+
+.controller-lane
+{
+	display: flex;
+	flex-direction: row;
+	height: 64dp;
+}
+
+.controller-lane-header
+{
+	flex-shrink: 0;
+	width: 48dp;
+	overflow: hidden;
+}
+
+.controller-lane-type
+{
+	width: 48dp;
+	padding: 2dp;
+	font-size: 8dp;
+	white-space: normal;
+}
+
+.controller-lane-area
+{
+	position: relative;
+	flex: 1 1 0;
+}
+
+.controller-bar, .controller-step
+{
+	position: absolute;
+	bottom: 0;
+	box-sizing: border-box;
+}
+
+.controller-bar
+{
+	width: 3dp;
+}
+
+.controller-lanes-footer
+{
+	flex-shrink: 0;
+	display: flex;
+	flex-direction: row;
+	height: 22dp;
+}
