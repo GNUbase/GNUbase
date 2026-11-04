@@ -519,6 +519,14 @@ TEST_CASE("the inspector shows the selected track, and its controls change the t
 		window.call("channel.set", {{"channel", window.channel(audio).at("id")}, {key, false}});
 		REQUIRE(window.app.waitUntil([&] { return !hasClass(window.app, button, "checked"); }));
 	}
+	// Switch Time Base (p. 229): checked when the track is linear.
+	const std::string timeBase = ".inspector button[control=timeBase]";
+	CHECK_FALSE(hasClass(window.app, timeBase, "unavailable"));
+	window.click(timeBase);
+	REQUIRE(window.app.waitUntil([&] { return window.find("tracks", audio).at("timeBase") == "linear"; }));
+	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, timeBase, "checked"); }));
+	window.call("track.set", {{"track", audio}, {"timeBase", "musical"}});
+	REQUIRE(window.app.waitUntil([&] { return !hasClass(window.app, timeBase, "checked"); }));
 	window.type(".inspector valuefield[control=volume]", "-6");
 	REQUIRE(window.app.waitUntil([&] { return window.channel(audio).at("volume") == -6.0; }));
 	CHECK(window.shows(".inspector valuefield[control=volume]", "-6")); // whatever the C locale is
@@ -580,6 +588,7 @@ TEST_CASE("the inspector shows the selected track, and its controls change the t
 	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Drums"));
 	CHECK(hasClass(window.app, ".inspector [row=input]", "unavailable"));
 	CHECK(hasClass(window.app, ".inspector button[control=record]", "unavailable"));
+	CHECK(hasClass(window.app, ".inspector button[control=timeBase]", "unavailable"));
 	window.list.select({marker});
 	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, ".inspector [section=basics]", "unavailable"); }));
 	CHECK(hasClass(window.app, ".inspector [section=notepad]", "unavailable"));
