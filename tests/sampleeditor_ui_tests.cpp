@@ -16,7 +16,6 @@
 #include <chrono>
 #include <cmath>
 #include <filesystem>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -96,7 +95,7 @@ namespace
 			return Json::array();
 		}
 
-		float dpRatio() { return app.shell().find(*window)->context().GetDensityIndependentPixelRatio(); }
+		float dpRatio() { return app.shell().find(window)->context().GetDensityIndependentPixelRatio(); }
 
 		// The x of a clip frame in the waveform display, in the window's pixels.
 		double x(double frame)
@@ -136,7 +135,7 @@ namespace
 		ui::EventDisplay& display;
 		test::TempDir dir;
 		std::filesystem::path file = dir.path() / "sine.wav";
-		std::optional<ui::WindowId> window;
+		ui::WindowId window = 0;
 		uint64_t track = 0;
 		uint64_t clip = 0;
 		uint64_t event = 0;
@@ -163,7 +162,7 @@ TEST_CASE("the sample editor opens an audio event with its info line, overview a
 		overviewWidth * 1000 / g_frames));
 	CHECK(f.near(f.box(".se-overview-view").at("width").get<double>(), overviewWidth, 3)); // with its border
 	// Both waveforms get their columns from media.peaks: the sine's peaks reach about half of full scale.
-	Rml::ElementDocument* document = f.app.shell().find(*f.window)->context().GetDocument(0);
+	Rml::ElementDocument* document = f.app.shell().find(f.window)->context().GetDocument(0);
 	for (const char* selector : {".se-wave", ".se-overview-wave"})
 	{
 		auto* wave = dynamic_cast<ui::Waveform*>(document->QuerySelector(selector));
@@ -173,7 +172,7 @@ TEST_CASE("the sample editor opens an audio event with its info line, overview a
 		CHECK(std::abs(*std::max_element(high.begin(), high.end()) - 16384) < 200);
 	}
 	// Closing the window closes the view; the engine opens and closes the window too.
-	f.app.shell().close(*f.window);
+	f.app.shell().close(f.window);
 	REQUIRE(f.app.waitUntil([&] { return f.view().at("open") == false; }));
 	f.app.call("sampleEditor.open", {{"event", f.event}});
 	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().sampleEditorWindow() != nullptr; }));
