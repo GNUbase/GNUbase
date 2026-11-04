@@ -4609,6 +4609,16 @@ Arguments:
 
 - `track`: integer, required
 
+#### `track_removeEmpty`
+
+Engine command `track.removeEmpty`.
+
+Removes the empty tracks (Remove Empty Tracks, reference manual p. 213): audio, instrument, MIDI and marker tracks without events, parts, markers or automation, and folders without tracks, unless another track's channel plays or sends into theirs (an instrument track a MIDI track plays, a folder's group channel). Group, effect, VCA, ruler, tempo and signature tracks stay. What it removes can leave others empty, such as a folder that held only empty tracks, so it looks again until no empty track is left. One undo step; none if nothing is empty. Returns the tracks removed, from top to bottom, with those inside removed folders.
+
+Result:
+
+- `tracks`: array of integer, required
+
 #### `track_renderInPlace`
 
 Engine command `track.renderInPlace`.

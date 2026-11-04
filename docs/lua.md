@@ -4015,6 +4015,14 @@ Parameters:
 
 - `track`: integer, required
 
+#### `gnubase.track.removeEmpty`
+
+Removes the empty tracks (Remove Empty Tracks, reference manual p. 213): audio, instrument, MIDI and marker tracks without events, parts, markers or automation, and folders without tracks, unless another track's channel plays or sends into theirs (an instrument track a MIDI track plays, a folder's group channel). Group, effect, VCA, ruler, tempo and signature tracks stay. What it removes can leave others empty, such as a folder that held only empty tracks, so it looks again until no empty track is left. One undo step; none if nothing is empty. Returns the tracks removed, from top to bottom, with those inside removed folders.
+
+Returns:
+
+- `tracks`: array of integer, required
+
 #### `gnubase.track.renderInPlace`
 
 Renders audio and instrument tracks in place (reference manual pp. 1471-1477): what each plays from start to end, in project samples (a range selection; default: from the start of its first event or note to the end of its last), with up to tail seconds more (0 to 60, default 0) that end after the last sample a 24-bit file doesn't hold as silence, into a WAV file (sampleFormat as in mixdown.export, default float32) in the project's media folder (for a project without a file, the folder its recordings go to), named name or after the track, and puts it as one event at start on a new audio track below the track, named after it with (Rendered), which plays through the same output. processing: dry renders what plays on the channel, before its pre section and plugin slots, and the new track gets the channel's slots, strip, fader, pan and sends; channelSettings (the default) renders after the slots and the strip, before the fader, and the new track gets the fader, pan and sends; completeSignalPath renders after the fader and panner, in the output's format, and the new track gets no settings. sourceTracks: keep (the default), mute, disable or remove the tracks rendered. Renders as mixdown.export does, and is refused when it is. One undo step. Returns the new tracks, media files and events, in the order of tracks.

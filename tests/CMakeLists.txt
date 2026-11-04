@@ -49,6 +49,7 @@ add_executable(gnubase-tests
 	document_tests.cpp
 	editors_tests.cpp
 	effects_tests.cpp
+	emptytracks_tests.cpp
 	engine_tests.cpp
 	enginebinding_tests.cpp
 	eventdisplay_tests.cpp
