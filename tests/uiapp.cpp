@@ -53,8 +53,9 @@ namespace gnubase::test
 	}
 
 	UiApp::UiApp(ui::Size size, std::vector<std::unique_ptr<midi::Backend>> midiBackends,
-		std::vector<std::unique_ptr<audio::Backend>> audioBackends)
-		: m_size(size)
+		std::vector<std::unique_ptr<audio::Backend>> audioBackends, std::filesystem::path resources)
+		: m_size(size),
+		  m_resources(resources.empty() ? std::filesystem::path(GNUBASE_RESOURCES_DIR) : std::move(resources))
 	{
 		start(std::move(midiBackends), std::move(audioBackends));
 	}
@@ -83,8 +84,7 @@ namespace gnubase::test
 		main.hidden = true; // tests don't flash windows on the desktop
 		try
 		{
-			m_ui = std::make_unique<app::AppUi>(
-				*m_engine, std::filesystem::path(GNUBASE_RESOURCES_DIR), main, std::cout, 4);
+			m_ui = std::make_unique<app::AppUi>(*m_engine, m_resources, main, std::cout, 4);
 		}
 		catch (const ui::GpuUnavailable& error)
 		{
