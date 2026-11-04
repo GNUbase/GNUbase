@@ -5,6 +5,7 @@
 #include "uiapp.h"
 
 #include "engine/engine.h"
+#include "engine/time/tempomap.h"
 #include "ui/automation.h"
 #include "ui/eventdisplay.h"
 #include "ui/tracklist.h"
@@ -25,6 +26,8 @@ using engine::Json;
 
 namespace
 {
+	constexpr int64_t g_quarter = time::g_ticksPerQuarter;
+
 	Json elements(test::UiApp& app, const std::string& selector)
 	{
 		return app.ui().dom(std::nullopt, selector, 0).at("elements");
@@ -172,6 +175,13 @@ TEST_CASE("tracks are selected with clicks and the arrow keys, renamed with a do
 	tracks.click(row(a) + " .track-name");
 	tracks.click(row(c) + " .track-name", {"shift"});
 	CHECK(tracks.list.selection() == std::vector<uint64_t>{a, b, c});
+	// Shift-click on a selected track deselects it (reference manual p. 219); on one that isn't selected, it selects
+	// the range from the last one clicked.
+	tracks.click(row(b) + " .track-name", {"shift"});
+	CHECK(tracks.list.selection() == std::vector<uint64_t>{a, c});
+	CHECK(!hasClass(elements(tracks.app, row(b)).at(0), "selected"));
+	tracks.click(row(b) + " .track-name", {"shift"});
+	CHECK(tracks.list.selection() == std::vector<uint64_t>{a, b});
 
 	// The arrow keys step through the tracks, in the list and wherever the project window has the focus.
 	tracks.click(row(a) + " .track-name");
@@ -210,6 +220,169 @@ TEST_CASE("tracks are selected with clicks and the arrow keys, renamed with a do
 	REQUIRE(tracks.app.waitUntil([&] { return tracks.order() == std::vector<uint64_t>{b, c, a}; }));
 	tracks.app.call("history.undo");
 	CHECK(tracks.order() == std::vector<uint64_t>{a, b, c});
+}
+
+TEST_CASE(
+	"Up and Down step the tracks and select their first parts, also from the event display; Alt+F2 renames", "[ui]")
+{
+	Tracks tracks;
+	const uint64_t a = tracks.add({{"type", "midi"}, {"name", "A"}});
+	const uint64_t b = tracks.add({{"type", "midi"}, {"name", "B"}}); // empty
+	const uint64_t c = tracks.add({{"type", "midi"}, {"name", "C"}});
+	const auto part = [&tracks](uint64_t track, int64_t position)
+	{
+		return tracks.app.call("midiPart.add", {{"track", track}, {"position", position}, {"length", 4 * g_quarter}})
+			.at("part")
+			.at("id")
+			.get<uint64_t>();
+	};
+	const uint64_t first = part(a, 0);
+	const uint64_t later = part(c, 8 * g_quarter); // added first, but the first part on C is the earlier one
+	const uint64_t earlier = part(c, 0);
+	tracks.rows(3);
+	REQUIRE(tracks.app.waitUntil([&] { return tracks.display.project().at("midiParts").size() == 3; }));
+	using Ids = std::vector<uint64_t>;
+
+	// A click on A's part gives the event display the focus; the keys go to the project window's key commands.
+	tracks.click(row(a) + " .track-name");
+	const Json lanes = elements(tracks.app, "event-lanes.events").at(0).at("box");
+	const Json rowA = tracks.box(row(a));
+	tracks.app.ui().click(std::nullopt,
+		{"", 0, ui::Point{lanes.at("x").get<int>() + 10, rowA.at("y").get<int>() + (rowA.at("height").get<int>() / 2)}},
+		ui::MouseButton::Left, 1, {});
+	tracks.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(tracks.display.selection() == Ids{first});
+	const auto press = [&tracks](const char* keys)
+	{
+		tracks.app.ui().key(std::nullopt, keys);
+		tracks.app.shell().step(std::chrono::milliseconds(0));
+	};
+
+	// Down selects B and keeps the part selected, as B has none; then C and its first part, by position.
+	press("Down");
+	CHECK(tracks.list.selection() == Ids{b});
+	CHECK(tracks.display.selection() == Ids{first});
+	press("Down");
+	CHECK(tracks.list.selection() == Ids{c});
+	CHECK(tracks.display.selection() == Ids{earlier});
+	press("Up");
+	press("Up");
+	CHECK(tracks.list.selection() == Ids{a});
+	CHECK(tracks.display.selection() == Ids{first});
+
+	// In the track list, too.
+	tracks.click(row(b) + " .track-name");
+	CHECK(tracks.display.selection() == Ids{first});
+	press("Down");
+	CHECK(tracks.list.selection() == Ids{c});
+	CHECK(tracks.display.selection() == Ids{earlier});
+	// Shift extends the list's selection, and selects no parts.
+	press("Shift+Up");
+	CHECK(tracks.list.selection() == Ids{b, c});
+	CHECK(tracks.display.selection() == Ids{earlier});
+
+	// Without a selected part, they only select tracks.
+	tracks.display.select({});
+	press("Up");
+	CHECK(tracks.list.selection() == Ids{a});
+	CHECK(tracks.display.selection().empty());
+
+	// With the user setting ui.upDownSelectsTracksOnly they leave the parts alone (p. 218).
+	tracks.app.call("settings.set", {{"key", "ui.upDownSelectsTracksOnly"}, {"value", true}});
+	REQUIRE(tracks.app.waitUntil([&] { return tracks.list.upDownSelectsTracksOnly(); }));
+	tracks.display.select({later});
+	press("Down");
+	press("Down");
+	CHECK(tracks.list.selection() == Ids{c});
+	CHECK(tracks.display.selection() == Ids{later});
+	press("Up");
+	CHECK(tracks.list.selection() == Ids{b});
+	CHECK(tracks.display.selection() == Ids{later});
+	tracks.app.call("settings.set", {{"key", "ui.upDownSelectsTracksOnly"}, {"value", false}});
+	REQUIRE(tracks.app.waitUntil([&] { return !tracks.list.upDownSelectsTracksOnly(); }));
+
+	// Alt+F2 renames the selected track, also with the focus in the event display.
+	tracks.click(row(a) + " .track-name");
+	tracks.app.ui().click(std::nullopt,
+		{"", 0, ui::Point{lanes.at("x").get<int>() + 10, rowA.at("y").get<int>() + (rowA.at("height").get<int>() / 2)}},
+		ui::MouseButton::Left, 1, {});
+	tracks.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(tracks.display.selection() == Ids{first});
+	press("Alt+F2");
+	REQUIRE(hasClass(elements(tracks.app, row(a)).at(0), "renaming"));
+	tracks.app.ui().text(std::nullopt, "Lead");
+	press("Enter");
+	REQUIRE(tracks.app.waitUntil([&] { return tracks.track(a).at("name") == "Lead"; }));
+}
+
+TEST_CASE(
+	"Remove Selected Tracks warns before it removes tracks that aren't empty, unless the user turned it off", "[ui]")
+{
+	Tracks tracks;
+	const uint64_t empty = tracks.add({{"type", "audio"}, {"name", "Empty"}});
+	const uint64_t full = tracks.add({{"type", "midi"}, {"name", "Full"}});
+	const uint64_t folder = tracks.add({{"type", "folder"}, {"name", "Band"}});
+	const uint64_t inside = tracks.add({{"type", "midi"}, {"parent", folder}});
+	for (const uint64_t track : {full, inside})
+		tracks.app.call("midiPart.add", {{"track", track}, {"position", 0}, {"length", 1000}});
+	tracks.rows(4);
+	const auto warning = [&tracks] { return elements(tracks.app, "#remove-tracks-dialog"); };
+	const auto remove = [&tracks]
+	{
+		tracks.app.keys().run("track.removeSelected", Json::object(), tracks.app.main(), nullptr);
+		tracks.app.shell().step(std::chrono::milliseconds(0));
+	};
+	CHECK(tracks.list.warnsBeforeRemoving());
+
+	// Empty tracks go without a warning.
+	tracks.click(row(empty) + " .track-name");
+	remove();
+	tracks.rows(3);
+	CHECK(warning().empty());
+
+	// A track with a part: the warning, and Cancel keeps it.
+	tracks.click(row(full) + " .track-name");
+	remove();
+	REQUIRE(warning().size() == 1);
+	CHECK(warning().at(0).at("visible").get<bool>());
+	tracks.click("#remove-tracks-dialog button[result=\"cancel\"]");
+	REQUIRE(tracks.app.waitUntil([&] { return warning().empty(); }));
+	CHECK(tracks.order() == std::vector<uint64_t>{full, folder, inside});
+	// Remove removes it, in one undo step.
+	remove();
+	tracks.click("#remove-tracks");
+	tracks.rows(2);
+	CHECK(warning().empty());
+	tracks.app.call("history.undo");
+	tracks.rows(3);
+
+	// A folder warns for what the tracks inside it hold; "Don't warn again" turns the user setting off.
+	tracks.click(row(folder) + " .track-name");
+	remove();
+	REQUIRE(warning().size() == 1);
+	tracks.click("#remove-tracks-dont-warn");
+	tracks.click("#remove-tracks");
+	tracks.rows(1);
+	CHECK(tracks.app.call("settings.get", {{"key", "ui.removeTracksWarning"}}).at("value") == false);
+	REQUIRE(tracks.app.waitUntil([&] { return !tracks.list.warnsBeforeRemoving(); }));
+
+	// Then tracks that aren't empty go without one.
+	tracks.click(row(full) + " .track-name");
+	remove();
+	tracks.rows(0);
+	CHECK(warning().empty());
+	tracks.app.call("history.undo");
+	tracks.rows(1);
+
+	// Turned on again, by any client, it warns again.
+	tracks.app.call("settings.set", {{"key", "ui.removeTracksWarning"}, {"value", true}});
+	REQUIRE(tracks.app.waitUntil([&] { return tracks.list.warnsBeforeRemoving(); }));
+	tracks.click(row(full) + " .track-name");
+	remove();
+	CHECK(warning().size() == 1);
+	tracks.app.ui().key(std::nullopt, "Escape");
+	REQUIRE(tracks.app.waitUntil([&] { return warning().empty(); }));
+	CHECK(tracks.order() == std::vector<uint64_t>{full});
 }
 
 TEST_CASE(
@@ -307,6 +480,8 @@ TEST_CASE("folders fold in the list and the event display; the menus duplicate, 
 	tracks.click(row(full) + " .track-name");
 	tracks.click(row(order[3]) + " .track-name", {"ctrl"});
 	tracks.app.keys().run("track.removeSelected", Json::object(), tracks.app.main(), nullptr);
+	tracks.app.shell().step(std::chrono::milliseconds(0));
+	tracks.click("#remove-tracks"); // they aren't empty: the warning asks first
 	tracks.rows(0);
 	tracks.app.call("history.undo");
 	tracks.rows(2);

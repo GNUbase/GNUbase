@@ -79,7 +79,7 @@ modifiers, which change the keys below):
 | Alt and a drag; with Shift too | Copies the selection; shared copies of MIDI parts | pp. 270–271 |
 | Ctrl (Cmd) while dragging | Keeps a move or copy across or up and down, whichever the mouse went further | pp. 256, 271 |
 | Left, Right | Selects the event before or after the selected one on its track | p. 253 |
-| Up, Down | Selects the event on the nearest track above or below that has events; tracks while no event is selected | p. 253 |
+| Up, Down | Selects the track above or below, and its first event; an empty track keeps the selected events | pp. 218, 253 |
 | Drag within 6 dp of an event's left or right edge | Resizes the selection: normal sizing, or sizing moves contents (`setSizingMovesContents`) | p. 265 |
 | Alt and a click | Splits the event there | p. 268 |
 | Double click on an empty MIDI or instrument lane | Adds a one-bar part at the bar, or one between the locators when the click is between them | p. 251 |
@@ -121,7 +121,7 @@ at the cursor, Mod and the arrows nudge, and so on.
   selected, they do nothing. Up and Down always step the track selection (`track.selectPrevious`,
   `track.selectNext`, [track-list.md](track-list.md)); while an event is selected, they also select the first event
   on the newly selected track. On a track without events the selected events stay selected, so the next Up or Down
-  goes on selecting events.
+  goes on selecting events. With the user setting `ui.upDownSelectsTracksOnly` they only select tracks.
 
 Not yet: the info line (#89, which `event.get` feeds), a lock and a shared copy icon on events, and scrolling an event
 that the arrow keys select into view.

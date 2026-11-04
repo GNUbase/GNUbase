@@ -4,6 +4,8 @@
 #include "ui/mixer.h"
 #include "ui/widgets.h"
 
+#include "platform/log.h"
+
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
@@ -17,6 +19,8 @@
 #include <array>
 #include <cmath>
 #include <cstdlib>
+#include <filesystem>
+#include <iterator>
 #include <sstream>
 #include <tuple>
 #include <utility>
@@ -75,6 +79,15 @@ namespace gnubase::ui
 			return event.GetParameter<int>(key, 0) != 0;
 		}
 
+		// Whether the element is the ancestor or inside it.
+		bool inside(const Rml::Element* element, const Rml::Element* ancestor)
+		{
+			for (; element != nullptr; element = element->GetParentNode())
+				if (element == ancestor)
+					return true;
+			return false;
+		}
+
 		void setClass(Rml::Element& element, const char* name, bool set)
 		{
 			if (element.IsClassSet(name) != set)
@@ -104,7 +117,8 @@ namespace gnubase::ui
 		Rml::ElementPtr rows = root.GetOwnerDocument()->CreateElement("div");
 		rows->SetClass("track-rows", true);
 		m_rows = root.AppendChild(std::move(rows));
-		m_rows->SetInnerRML(R"(<listview class="tracks" multiple=""/><div class="drop-line"/>)");
+		// Shift-click on a selected track deselects it (reference manual p. 219).
+		m_rows->SetInnerRML(R"(<listview class="tracks" multiple="" shiftdeselects=""/><div class="drop-line"/>)");
 		m_view = m_rows->GetChild(0);
 		m_dropLine = m_rows->GetChild(1);
 		for (const Rml::EventId id : g_rootEvents)
@@ -130,14 +144,7 @@ namespace gnubase::ui
 					if (!tracks.empty())
 						rename(tracks.front());
 				}},
-			{"track.removeSelected",
-				[this, selected]
-				{
-					Json commands = Json::array();
-					selected([&commands](uint64_t track)
-						{ commands.push_back({{"command", "track.remove"}, {"parameters", {{"track", track}}}}); });
-					transaction("Remove Selected Tracks", std::move(commands));
-				}},
+			{"track.removeSelected", [this] { removeSelected(); }},
 			{"track.removeEmpty",
 				[this]
 				{
@@ -334,7 +341,21 @@ namespace gnubase::ui
 					loadControls(*controls);
 				if (const auto widths = values.find("ui.trackWidths"); widths != values.end())
 					loadWidths(*widths);
+				if (const auto warn = values.find("ui.removeTracksWarning"); warn != values.end() && warn->is_boolean())
+					m_warnBeforeRemoving = warn->get<bool>();
+				if (const auto only = values.find("ui.upDownSelectsTracksOnly");
+					only != values.end() && only->is_boolean())
+					m_upDownTracksOnly = only->get<bool>();
 			}));
+		for (const std::pair<const char*, bool*> setting :
+			{std::make_pair("ui.removeTracksWarning", &m_warnBeforeRemoving),
+				std::make_pair("ui.upDownSelectsTracksOnly", &m_upDownTracksOnly)})
+			m_binding.send("settings.get", {{"key", setting.first}},
+				[value = setting.second, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+				{
+					if (!alive.expired() && result.ok() && result.value.at("value").is_boolean())
+						*value = result.value.at("value").get<bool>();
+				});
 		m_binding.send("settings.get", {{"key", "ui.trackControls"}},
 			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
@@ -354,6 +375,12 @@ namespace gnubase::ui
 	TrackList::~TrackList()
 	{
 		m_display.onLayout({});
+		if (auto* dialog = dynamic_cast<Rml::ElementDocument*>(m_removeDialog.get()))
+		{
+			// Nothing removes the tracks any more: the dialog goes too.
+			dialog->RemoveEventListener(g_dialogCloseEvent, this);
+			closeDialog(*dialog, "cancel");
+		}
 		if (!alive())
 			return;
 		if (m_parameterMenu != nullptr)
@@ -844,6 +871,11 @@ namespace gnubase::ui
 
 	void TrackList::ProcessEvent(Rml::Event& event)
 	{
+		if (m_removeDialog && event.GetCurrentElement() == m_removeDialog.get())
+		{
+			closedRemoveDialog(event);
+			return;
+		}
 		if (!alive())
 			return;
 		if (m_parameterMenu != nullptr && event.GetCurrentElement() == m_parameterMenu)
@@ -923,16 +955,27 @@ namespace gnubase::ui
 			event.StopPropagation();
 			break;
 		case Rml::EventId::Keydown:
+		{
+			const auto key = event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN);
 			if (m_renaming != 0 && target != nullptr && target->GetTagName() == "input")
 			{
-				const auto key = event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN);
 				if (key == Rml::Input::KI_RETURN || key == Rml::Input::KI_NUMPADENTER || key == Rml::Input::KI_ESCAPE)
 				{
 					finishRename(key != Rml::Input::KI_ESCAPE);
 					event.StopPropagation();
 				}
 			}
+			else if ((key == Rml::Input::KI_UP || key == Rml::Input::KI_DOWN) && inside(target, m_view) &&
+				target->GetTagName() != "input" && !held(event, "shift_key") && !held(event, "ctrl_key") &&
+				!held(event, "alt_key") && !held(event, "meta_key"))
+			{
+				// Up and Down in the list step the tracks as their key commands do, selecting the first event on
+				// the track too; Shift extends the list view's selection.
+				step(key == Rml::Input::KI_UP ? -1 : 1);
+				event.StopPropagation();
+			}
 			break;
+		}
 		case Rml::EventId::Blur:
 			if (m_renaming != 0 && target != nullptr && target->GetTagName() == "input")
 				finishRename(true);
@@ -1007,6 +1050,76 @@ namespace gnubase::ui
 		m_binding.send("history.transaction", {{"description", description}, {"commands", std::move(commands)}});
 	}
 
+	void TrackList::removeSelected()
+	{
+		const std::vector<uint64_t> tracks = topSelection();
+		if (tracks.empty())
+			return;
+		// Whether they hold anything, or tracks inside them do (a folder takes the tracks inside it along).
+		const std::set<uint64_t> removed(tracks.begin(), tracks.end());
+		const auto goes = [this, &removed](const Row& row)
+		{
+			for (uint64_t track = row.id; track != 0; track = m_tracks[m_index.at(track)].parent)
+				if (removed.count(track) != 0)
+					return true;
+			return false;
+		};
+		const bool holds =
+			std::any_of(m_tracks.begin(), m_tracks.end(), [&goes](const Row& row) { return row.holds && goes(row); });
+		if (!holds || !m_warnBeforeRemoving)
+		{
+			removeTracks(tracks);
+			return;
+		}
+		if (m_removeDialog)
+			return; // asking already
+		// From the folder of the list's document, modal (reference manual p. 213).
+		const std::string path = std::filesystem::u8path(m_root->GetOwnerDocument()->GetSourceURL())
+									 .replace_filename("remove-tracks.rml")
+									 .generic_u8string();
+		Rml::ElementDocument* dialog = m_root->GetContext()->LoadDocument(path);
+		if (dialog == nullptr)
+		{
+			logging::warning("The track list can't open the dialog {}", path);
+			return;
+		}
+		m_removing = tracks;
+		m_removeDialog = dialog->GetObserverPtr();
+		dialog->AddEventListener(g_dialogCloseEvent, this);
+		dialog->Show(Rml::ModalFlag::Modal);
+	}
+
+	void TrackList::closedRemoveDialog(Rml::Event& event)
+	{
+		if (event.GetType() != g_dialogCloseEvent)
+			return;
+		Rml::Element* dialog = m_removeDialog.get();
+		dialog->RemoveEventListener(g_dialogCloseEvent, this);
+		m_removeDialog.reset();
+		const std::vector<uint64_t> tracks = std::exchange(m_removing, {});
+		if (event.GetParameter<Rml::String>("result", "") != "ok" || !alive())
+			return;
+		if (const Rml::Element* off = dialog->GetElementById("remove-tracks-dont-warn");
+			off != nullptr && off->HasAttribute("checked"))
+		{
+			m_warnBeforeRemoving = false;
+			m_binding.send("settings.set", {{"key", "ui.removeTracksWarning"}, {"value", false}});
+		}
+		// Those that are still there.
+		std::vector<uint64_t> still;
+		std::copy_if(tracks.begin(), tracks.end(), std::back_inserter(still),
+			[this](uint64_t track) { return m_index.count(track) != 0; });
+		removeTracks(still);
+	}
+
+	void TrackList::removeTracks(const std::vector<uint64_t>& tracks)
+	{
+		Json commands = Json::array();
+		for (const uint64_t track : tracks)
+			commands.push_back({{"command", "track.remove"}, {"parameters", {{"track", track}}}});
+		transaction("Remove Selected Tracks", std::move(commands));
+	}
+
 	std::set<uint64_t> TrackList::emptyTracks() const
 	{
 		// Audio, instrument, MIDI and marker tracks without events, parts, markers or automation, and folders without
@@ -1069,7 +1182,8 @@ namespace gnubase::ui
 		const uint64_t track = lanes[static_cast<size_t>(index)];
 		select({track});
 		reveal(track);
-		if (!m_display.selection().empty()) // the first event on it too (reference manual p. 218)
+		// The first event on it too, unless the user setting says Up and Down only select tracks (p. 218).
+		if (!m_upDownTracksOnly && !m_display.selection().empty())
 			m_display.selectFirstOn(track);
 	}
 

@@ -297,6 +297,10 @@ namespace gnubase::engine::settings
 					"Whether the markers window and the project window select the same markers. It pauses while "
 					"recording.",
 					Json{{"type", "boolean"}}, true},
+				{"ui.removeTracksWarning",
+					"Whether Remove Selected Tracks asks before it removes tracks that aren't empty: that hold events, "
+					"parts, markers or automation, or are folders with such tracks inside (reference manual p. 213).",
+					Json{{"type", "boolean"}}, true},
 				{"ui.scale", "The UI scale, applied on top of each monitor's own scale.",
 					Json{{"type", "number"}, {"minimum", 0.5}, {"maximum", 4}}, 1.0},
 				{"ui.theme", "The theme's folder name in resources/themes.", Json{{"type", "string"}}, "gnubase"},
@@ -369,6 +373,11 @@ namespace gnubase::engine::settings
 							{{"audio", 120}, {"instrument", 120}, {"midi", 120}, {"group", 120}, {"effect", 120},
 								{"folder", 120}, {"marker", 120}, {"ruler", 120}, {"tempo", 120},
 								{"signature", 120}}}}},
+				{"ui.upDownSelectsTracksOnly",
+					"Whether Up and Down (track.selectPrevious, track.selectNext) only select tracks; when off, while "
+					"an event or part is selected they also select the first one on the newly selected track "
+					"(reference manual p. 218).",
+					Json{{"type", "boolean"}}, false},
 				{"ui.zoomPresets",
 					"The horizontal zoom presets of the event display, for every project: each a name and the "
 					"seconds the view shows.",

@@ -76,11 +76,14 @@ sends engine commands, so whatever another client changes shows at once.
   is `tempoTrack`, Activate Tempo Track (`project.set` `tempoTrackActive`, [tempo-track.md](tempo-track.md)). The
   defaults: mute, solo, record, monitor and read on audio tracks; mute, solo and read on the others with a channel;
   tempoTrack on the tempo track.
-- **Selection** (p. 218) is the list view's: a click selects a track, Ctrl-click adds or removes one, Shift-click
-  selects a range; Up and Down step through the shown tracks, in the list and wherever the project window has the
-  focus (`track.selectPrevious`, `track.selectNext`), and scroll the selected track into view. While an event is
-  selected, they also select the first event on the new track ([parts-and-events.md](parts-and-events.md)). A right
-  click on a track that isn't selected selects it for the context menu. The selection is the UI's, not the
+- **Selection** (pp. 218–219) is the list view's: a click selects a track, Ctrl-click adds or removes one,
+  Shift-click selects a range, and Shift-click on a selected track deselects it (the list view's `shiftdeselects`,
+  [widgets.md](widgets.md)). Up and Down step through the shown tracks, in the list and wherever the project window
+  has the focus (`track.selectPrevious`, `track.selectNext`), and scroll the selected track into view; in the list,
+  Shift+Up and Shift+Down extend the selection. While an event or part is selected, they also select the first one on
+  the new track, by position ([parts-and-events.md](parts-and-events.md)), unless the user setting
+  `ui.upDownSelectsTracksOnly` (Use Up/Down Navigation Commands for Selecting Tracks Only, off by default) says they
+  only select tracks. A right click on a track that isn't selected selects it for the context menu. The selection is the UI's, not the
   project's (`TrackList::selection`), like the event display's.
 - **Renaming** (p. 214): a double click on a name, or `track.rename` (Alt+F2) for the first selected track, shows a
   text field with the name selected; Enter or leaving it sends `track.set` `name`, Escape keeps the name.
@@ -96,7 +99,12 @@ sends engine commands, so whatever another client changes shows at once.
   (`track.toggleFolding`, `track.foldAll`, `track.unfoldAll`, `track.flipFolding`). Folding is view state too.
 - **Track handling** (pp. 213, 219): Project > Remove Selected Tracks, Remove Empty Tracks, Duplicate Tracks, and in
   the context menu also Disable and Enable Selected Tracks (`track.removeSelected`, `track.removeEmpty`,
-  `track.duplicateSelected`, `track.disableSelected`, `track.enableSelected`), each one `history.transaction`. Empty
+  `track.duplicateSelected`, `track.disableSelected`, `track.enableSelected`), each one `history.transaction`.
+  Before Remove Selected Tracks removes tracks that aren't empty, which hold events, parts, markers or automation or
+  are folders with such tracks inside, it asks (`resources/ui/remove-tracks.rml`): Remove removes them, Cancel or
+  Escape keeps them, and Remove with "Don't show this warning again" checked also turns the user setting
+  `ui.removeTracksWarning` (Display Warning before Deleting Non-Empty Tracks, on by default) off, which any client
+  can turn on again with `settings.set`. Empty
   tracks are audio, instrument, MIDI and marker tracks without events, parts, markers or automation, and folders
   without tracks, unless other tracks' channels output to theirs; group and effect tracks are where others play
   through and stay, ruler tracks never hold anything. What it removes can leave other tracks empty, such as an
@@ -130,9 +138,9 @@ The Show Lanes control and the lanes' headers ([comping.md](comping.md)), write 
 dividing the track list, track visibility agents and the track type
 filter, track presets, track pictures, the lock control, edit channel settings, volume and pan in the track list,
 the settings dialog's groups, controls area preview, presets, Reset All and the MIDI tracks' Output Group and
-Channel Width (p. 191), the track height presets menu, snap track heights, Shift-click to
-deselect, the warning before removing tracks that aren't empty, and the ruler and marker tracks' own controls (#447,
-#91). Adding a track below the selected one is #448. Folders' group channels, data blocks and Move Selected Tracks to
+Channel Width (p. 191), the track height presets menu, snap track heights, the preferences dialog's
+page for `ui.removeTracksWarning` and `ui.upDownSelectsTracksOnly` (#162), and the ruler and marker tracks' own
+controls (#447, #91). Adding a track below the selected one is #448. Folders' group channels, data blocks and Move Selected Tracks to
 New Folder are in [folder-tracks.md](folder-tracks.md).
 
 ## Checks
@@ -145,7 +153,11 @@ New Folder are in [folder-tracks.md](folder-tracks.md).
   disabled tracks, also from `project.xml` alone.
 - `tests/tracklist_tests.cpp` drives the app's project window with `ui::Automation`: rows level with the lanes and
   each type's controls; every control's button and the engine's state both ways; selection with clicks, modifiers,
-  the arrow keys and the key commands; renaming with Enter and Escape; moving by a drag and undoing it; heights by a
+  Shift-click deselecting, the arrow keys and the key commands; Up, Down and Alt+F2 pressed with the focus in the
+  event display and in the list, selecting the first part on the new track or keeping the parts selected on an
+  empty one, Shift+Up in the list, and `ui.upDownSelectsTracksOnly`; the warning before removing tracks that aren't
+  empty, also folders for the tracks inside, with Cancel, Escape, Remove, one undo step, "Don't show this warning
+  again" and `ui.removeTracksWarning` from another client; renaming with Enter and Escape; moving by a drag and undoing it; heights by a
   drag, with Ctrl for all; the wheel; folding from the toggle and the commands, in the event display too; duplicating,
   disabling, enabling and removing from the context menu and the commands; the settings dialog's Add, Remove,
   Move Up and Reset, saved in the user setting and shown in the rows; the divider dragged both ways and to both
