@@ -64,6 +64,8 @@ The tempo track, its tempo events and ramps, the project tempo modes and tap tem
   selected event's position, tempo and type, which change it (`tempo.set`); then a bars and beats ruler, the tempo scale
   and the tempo curve of the whole project. Backspace and Delete remove the selected events.
 - Project > Add Track has a Tempo page.
+- The tempo track editor's time signature display, under its ruler, has the time signature events
+  ([signature-track.md](signature-track.md)).
 
 ## Not yet
 

@@ -54,12 +54,13 @@ namespace gnubase::engine
 		Audio,
 		Instrument,
 		Midi,
-		Folder, // contains other tracks; has a channel only if its group channel is on
-		Group,  // sums the channels routed to it; holds no events
-		Effect, // receives sends; holds no events
-		Marker, // holds markers; has no channel and stays at the top level
-		Ruler,  // shows a ruler in a time format of its own; has no channel
-		Tempo,  // shows and edits the project's tempo track; has no channel, stays at the top level, at most one
+		Folder,    // contains other tracks; has a channel only if its group channel is on
+		Group,     // sums the channels routed to it; holds no events
+		Effect,    // receives sends; holds no events
+		Marker,    // holds markers; has no channel and stays at the top level
+		Ruler,     // shows a ruler in a time format of its own; has no channel
+		Tempo,     // shows and edits the project's tempo track; has no channel, stays at the top level, at most one
+		Signature, // shows and edits the project's time signatures; has no channel, stays at the top level, at most one
 	};
 
 	// The time formats of ruler tracks, as the event display's ruler names them.
@@ -586,11 +587,15 @@ namespace gnubase::engine
 		double value = 0.0;      // in the target's unit
 		AutomationShape shape = AutomationShape::Linear;
 		double curve = 0.0; // Curve: -1 to 1; above 0 the value moves fast at first, below 0 slowly at first
+		// Ends its curve (reference manual p. 881): from here to the next point is a gap, where the parameter has its
+		// static value.
+		bool terminator = false;
 	};
 
 	// The automation of one parameter on a track. Points at the same position make a jump; before the first point the
-	// curve has its value, after the last point the last one's. read: the curve plays; without it, or without points,
-	// the parameter keeps its static value (write modes come with #122).
+	// curve has its value, after the last point the last one's, unless the project uses virgin territory
+	// (Project::virginTerritory). read: the curve plays; without it, or without points, the parameter keeps its static
+	// value (write modes come with #122).
 	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
 	struct AutomationLane
 	{
@@ -678,6 +683,10 @@ namespace gnubase::engine
 		std::map<ObjectId, Marker> markers;
 		ObjectId activeMarkerTrack = 0; // the marker track that marker commands use by default, or 0
 		std::map<ObjectId, AutomationLane> automation;
+		// Virgin territory instead of initial values (reference manual p. 881): automation lanes have gaps before their
+		// first and after their last point too, where their parameters have their static values. A setting saved with
+		// the project, not part of undo.
+		bool virginTerritory = false;
 
 		// The quantize settings that apply when none are given, and whether recording quantizes (#132). Settings,
 		// not part of undo.
@@ -872,8 +881,8 @@ namespace gnubase::engine
 
 	inline bool operator==(const AutomationPoint& a, const AutomationPoint& b)
 	{
-		return std::tie(a.id, a.position, a.value, a.shape, a.curve) ==
-			std::tie(b.id, b.position, b.value, b.shape, b.curve);
+		return std::tie(a.id, a.position, a.value, a.shape, a.curve, a.terminator) ==
+			std::tie(b.id, b.position, b.value, b.shape, b.curve, b.terminator);
 	}
 
 	// An automation lane's own properties, without its points.

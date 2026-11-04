@@ -509,6 +509,11 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".tempo-curve.inactive .tempo-point", {"background-color": c["textMuted"]}),
         (".tempo-curve .tempo-point.selected", {"background-color": c["text"]}),
         (".tempo-editor .tempo-scale-label", {"color": c["textMuted"], "font-size": f"{sizes['small']}dp"}),
+        # The signature track (docs/features/signature-track.md): a time signature event at the start of its bar
+        (".signature-row .signature-event", {"color": c["text"], "font-size": f"{sizes['small']}dp",
+                                             "border-left-width": f"{widths['hairline']}dp",
+                                             "border-left-color": c["accent2"]}),
+        (".signature-row .signature-event.selected", {"color": c["background"], "background-color": c["accent2"]}),
         # The tools (docs/features/tools.md): the selection range and the rectangle a tool drags
         (".event-display .range-selection", {"border-width": f"{widths['hairline']}dp", "border-color": c["text"],
                                              "background-color": c["text"] + "33"}),

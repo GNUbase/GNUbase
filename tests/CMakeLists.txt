@@ -113,6 +113,8 @@ add_executable(gnubase-tests
 	sequencing_tests.cpp
 	settings_tests.cpp
 	shell_tests.cpp
+	signature_tests.cpp
+	signaturetrack_ui_tests.cpp
 	snap_tests.cpp
 	statusline_tests.cpp
 	streaming_tests.cpp
