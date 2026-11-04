@@ -1962,6 +1962,10 @@ namespace gnubase::engine
 			case AutomationTargetType::Pan:
 			case AutomationTargetType::PanLeft:
 			case AutomationTargetType::PanRight:
+				// automationLane.add's rule: a VCA track has a volume lane, but no pan (#110)
+				has = channel.format != ChannelFormat::None ||
+					(track.type == TrackType::Vca && target.type == AutomationTargetType::Volume);
+				break;
 			case AutomationTargetType::Mute:
 				has = channel.format != ChannelFormat::None;
 				break;

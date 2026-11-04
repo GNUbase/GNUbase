@@ -1580,3 +1580,41 @@ TEST_CASE("automation.copy and automation.paste copy automation between tracks w
 	CHECK_THAT(reject(client, "automation.copy", {{"lanes", {12345}}}), ContainsSubstring("no automation lane 12345"));
 	CHECK_THAT(reject(client, "automation.paste", {{"tracks", {12345}}}), ContainsSubstring("no track 12345"));
 }
+
+TEST_CASE("automation.paste pastes VCA faders' volume, and a new project has nothing to paste", "[unit]")
+{
+	using Points = std::vector<std::pair<int64_t, double>>;
+	Engine engine;
+	Client client(engine);
+	const auto addVca = [&]
+	{
+		const ObjectId track = idOf(run(client, "track.add", {{"type", "vca"}}), "track");
+		run(client, "track.set", {{"track", track}, {"timeBase", "linear"}}); // points in samples
+		return track;
+	};
+	const ObjectId vca = addVca();
+	const ObjectId other = addVca();
+	const ObjectId lane =
+		idOf(run(client, "automationLane.add", {{"track", vca}, {"target", {{"type", "volume"}}}}), "lane");
+	run(client, "automationPoint.add",
+		{{"lane", lane},
+			{"points",
+				{{{"position", 0}, {"value", -6.0}, {"shape", "step"}}, {{"position", 96000}, {"value", -12.0}}}}});
+
+	// Copy Automation of All Tracks, pasted onto all tracks: the VCA fader's volume goes onto its own lane.
+	run(client, "automation.copy", {{"start", 0}, {"end", 96000}});
+	CHECK(run(client, "automation.paste", {{"start", 192000}, {"end", 288000}}).at("lanes") == Json{lane});
+	CHECK(lanePoints(client, vca, "volume").points ==
+		Points{{0, -6.0}, {96000, -12.0}, {192000, -12.0}, {192000, -6.0}, {288000, -12.0}, {288000, -12.0}});
+	// And onto another VCA track.
+	const Json pasted = run(client, "automation.paste", {{"tracks", {other}}, {"start", 0}, {"end", 96000}});
+	const LanePoints otherVolume = lanePoints(client, other, "volume");
+	CHECK(pasted.at("lanes") == Json{otherVolume.id});
+	CHECK(otherVolume.points == Points{{0, -6.0}, {96000, -12.0}});
+
+	// The clipboard holds this project's track ids, which a new project hands out again.
+	run(client, "automation.copy", {{"start", 0}, {"end", 96000}});
+	run(client, "project.new");
+	addVca();
+	CHECK_THAT(reject(client, "automation.paste", Json::object()), ContainsSubstring("nothing to paste"));
+}
