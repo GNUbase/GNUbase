@@ -17,6 +17,7 @@ project or undo.
 |---|---|---|---|---|
 | Object Selection (`objectSelection`) | Selects ([parts-and-events.md](parts-and-events.md)) | Moves, copies, resizes; from an empty spot a rectangle that selects what it touches (Ctrl or Shift: adds it) | Adds a part on an empty MIDI lane | pp. 253, 256-270 |
 | Range Selection (`rangeSelection`) | A range of no length there | A range from where it started, across the lanes it passes | The range of the event, or of the gap between two events; with Shift added to the range | pp. 285-287 |
+| Comp (`comp`) | Brings the take to the front; with Shift selects it | On a lane of a track whose lanes show: comps the range ([comping.md](comping.md)) | | p. 228 |
 | Draw (`draw`) | The bar there as an empty part | An empty part from where it started, shown while dragging | | p. 250 |
 | Erase (`erase`) | Deletes the event | | | p. 255 |
 | Split (`split`) | Splits the event there | | | p. 268 |
@@ -81,7 +82,7 @@ first click chooses the tool and the next opens its modes (p. 265): `#object-sel
 
 The commands are in `EventDisplay::actions()`, and `app::AppUi` binds the reference's keys (p. 1569) in the project
 window: `tool.objectSelection` 1, `tool.rangeSelection` 2, `tool.split` 3, `tool.glue` 4, `tool.erase` 5, `tool.zoom`
-6, `tool.mute` 7, `tool.draw` 8, `tool.play` 9, `tool.line` (no key), `tool.previous` F9, `tool.next` F10 (along the
+6, `tool.mute` 7, `tool.draw` 8, `tool.play` 9, `tool.line` and `tool.comp` (no key), `tool.previous` F9, `tool.next` F10 (along the
 toolbar, around at the ends) and `tool.combineSelectionTools` Alt+Shift+1.
 
 A tool chosen with one of these commands, by its key or from Lua's `gnubase.ui.command`, shows its name for a
@@ -114,7 +115,7 @@ RmlUi's `cursor` property; the pointers are SVG files in `resources/cursors` ([s
 
 | `pointer` | Where | Pointer |
 |---|---|---|
-| `objectSelection` | The object selection tool | The OS's arrow |
+| `objectSelection`, `comp` | The object selection and comp tools | The OS's arrow |
 | `resize` | The object selection tool at an event's left or right edge, where a drag resizes it (6 dp, on events wider than 18 dp), except on a fade handle ([fades.md](fades.md)) | `resize` |
 | `rangeSelection` | The range selection tool, and with the selection tools combined a lane's upper half (p. 253) | `tool-range` |
 | `draw`, `erase`, `split`, `glue`, `mute`, `zoom`, `line`, `play` | That tool | `tool-<name>`, the play tool's `tool-play` |
@@ -123,7 +124,7 @@ The pointer changes as the mouse moves, and at once when a tool is chosen or the
 rests; over the event lanes a drag keeps the one it started with (outside them, the pointer of what's under the mouse).
 MCP's `ui_windows` reports the pointer shown, as `cursor`.
 
-Not yet: the time warp, comp and color tools, the drumstick tool, resizing an event's edge with the scrub tool,
+Not yet: the time warp and color tools, the drumstick tool, resizing an event's edge with the scrub tool,
 which scrubs as it resizes (p. 268), and pointers of their own for the sizing modes; the rest of the reference's context
 menu, with the Audio and MIDI menus' functions, follows with those menus. The Preferences dialog's Editing - Tools page
 (#162) will show the two settings, which `settings.get` and `settings.set` reach until then.

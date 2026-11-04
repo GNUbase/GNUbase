@@ -513,3 +513,29 @@ TEST_CASE("Show Only Automation Tracks of a plugin shows its lanes and hides the
 	std::sort(expected.begin(), expected.end());
 	CHECK(only == expected);
 }
+
+TEST_CASE("a track's lanes come between its own lane and its automation tracks, under its row", "[ui]")
+{
+	Automation f;
+	const Json volume = f.show();
+	const Json media =
+		f.app.call("media.add", {{"path", "take.wav"}, {"sampleRate", 48000}, {"channels", 1}, {"length", 48000}})
+			.at("media");
+	const Json clip = f.app.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	const Json event =
+		f.app.call("audioEvent.add", {{"track", f.track}, {"clip", clip.at("id")}, {"position", 0}}).at("event");
+	f.app.call("event.set", {{"events", {event.at("id")}}, {"lane", 1}});
+	// Show Lanes from the track list's context menu command: lanes 0 and 1, then the automation track.
+	f.app.appUi().trackList()->select({f.track});
+	f.app.keys().run("track.toggleLanesSelected", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil([&] { return f.display.laneTakes() == std::vector<int>{-1, 0, 1, -1}; }));
+	CHECK(f.display.laneAutomation()[3] == volume.get<uint64_t>());
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const Json trackRow = elements(f.app, row(f.track)).at(0).at("box");
+	CHECK(trackRow.at("height").get<int>() == static_cast<int>(4 * ui::g_trackHeight));
+	CHECK(elements(f.app, ".automation-row").size() == 1);
+	CHECK(elements(f.app, ".automation-row").at(0).at("box").at("y") == f.box(volume).at("y"));
+	// The command again hides them.
+	f.app.keys().run("track.toggleLanesSelected", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil([&] { return f.display.laneTakes() == std::vector<int>{-1, -1}; }));
+}

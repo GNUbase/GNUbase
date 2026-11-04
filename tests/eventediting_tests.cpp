@@ -1488,3 +1488,69 @@ TEST_CASE("Remove Volume Curve removes the selected events' curves, or resets th
 	CHECK(curve[2] == Json{{"position", 4800}, {"volume", 0.0}, {"curve", 0.0}});
 	CHECK(curve[3] == Json{{"position", 14400}, {"volume", 0.0}, {"curve", 0.0}});
 }
+
+TEST_CASE("lanes show below their track, which shows the take in front; the comp tool brings takes to the front and "
+		  "comps a range dragged on a lane",
+	"[unit]")
+{
+	Fixture f;
+	const auto audioTrack = f.call("project.get").at("tracks").at(0).at("id").get<uint64_t>();
+	// A second take over the first, on lane 1: in front, it covers the first on the track's lane.
+	const Json clip = f.audioEvents()[0].at("clip");
+	const auto second =
+		f.call("audioEvent.add", {{"track", audioTrack}, {"clip", clip}, {"position", 96000}, {"length", 24000}})
+			.at("event")
+			.at("id")
+			.get<uint64_t>();
+	f.call("event.set", {{"events", {second}}, {"lane", 1}});
+	REQUIRE(f.waitUntil([&f] { return f.display.project().at("audioEvents").size() == 2; }));
+	CHECK(f.lanes("events")[0].events.size() == 1);
+
+	// Show Lanes: a lane each below the track's, as high as the track.
+	f.display.showLanes(audioTrack, true);
+	f.step();
+	CHECK(f.display.laneTakes() == std::vector<int>{-1, 0, 1, -1});
+	CHECK(f.display.laneTracks()[2] == audioTrack);
+	REQUIRE(f.lanes("events").size() == 4);
+	CHECK(f.lanes("events")[1].events.size() == 1);
+	CHECK(f.lanes("events")[2].events.size() == 1);
+
+	// A click with the comp tool on the first take, on its lane (40 to 80 dp), brings it to the front.
+	f.display.setTool(ui::Tool::Comp);
+	CHECK(f.document.GetElementById("display")->GetAttribute<std::string>("tool", "") == "comp");
+	f.click(225, 60);
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("front") != 0; }));
+	// A drag on the second take's lane from 2.1 to 2.3 seconds comps it in: both takes split there, and the track's
+	// lane shows the first take, the second, the first.
+	f.drag(210, 100, 230, 100);
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents().size() == 6; }));
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events")[0].events.size() == 3; }));
+	const std::vector<ui::TimeSpan>& shown = f.lanes("events")[0].events;
+	CHECK(std::abs(shown[1].start - 2.1) < 1e-6);
+	CHECK(std::abs(shown[1].end() - 2.3) < 1e-6);
+	uint64_t front = 0;
+	int64_t frontOrder = 0;
+	for (const Json& event : f.audioEvents())
+	{
+		const auto order =
+			event.at("front").get<int64_t>() != 0 ? event.at("front").get<int64_t>() : event.at("id").get<int64_t>();
+		if (order > frontOrder)
+		{
+			frontOrder = order;
+			front = event.at("id").get<uint64_t>();
+		}
+	}
+	for (const Json& event : f.audioEvents())
+		if (event.at("id") == front)
+		{
+			CHECK(event.at("lane") == 1);
+			CHECK(event.at("position") == 100800);
+		}
+
+	// Shift and a click selects a take; hiding the lanes leaves the track's own lane.
+	f.click(205, 100, {"shift"});
+	CHECK(f.display.selection().size() == 1);
+	f.display.showLanes(audioTrack, false);
+	f.step();
+	CHECK(f.display.laneTakes() == std::vector<int>{-1, -1});
+}

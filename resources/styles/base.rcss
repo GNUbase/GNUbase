@@ -875,8 +875,8 @@ meter .meter-peak
 }
 
 /* The mouse pointer over the event lanes (docs/features/tools.md): code names it in the event area's attribute
-   pointer, by the tool and where the mouse is; the object selection tool has the OS's arrow. The pointers are
-   resources/cursors. */
+   pointer, by the tool and where the mouse is; the object selection and comp tools have the OS's arrow. The pointers
+   are resources/cursors. */
 .event-display .event-area[pointer=rangeSelection]
 {
 	cursor: tool-range;

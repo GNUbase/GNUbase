@@ -121,7 +121,7 @@ Width (`#track-name-width`, global), held at the setting's limits. OK saves ever
 
 ## Not yet
 
-Lanes and comping (#99), write automation (#122),
+The Show Lanes control and the lanes' headers ([comping.md](comping.md)), write automation (#122),
 dividing the track list, track visibility agents and the track type
 filter, track presets, track pictures, the lock control, edit channel settings, volume and pan in the track list,
 the settings dialog's groups, controls area preview, presets, Reset All and the MIDI tracks' Output Group and
