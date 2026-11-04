@@ -85,8 +85,11 @@ namespace gnubase::engine
 
 	bool Transport::play()
 	{
+		const time::Samples start = startWithoutPreRoll(m_requested, position());
 		if (!send({Request::Type::Play, 0, {}, 0}))
 			return false;
+		if (!m_requestedPlaying)
+			m_playbackStart = start;
 		m_requestedPlaying = true;
 		return true;
 	}
@@ -110,6 +113,7 @@ namespace gnubase::engine
 		bool now = !m_requested.punchIn || position() >= m_requested.left; // while playing
 		if (!m_requestedPlaying)
 		{
+			m_playbackStart = startWithoutPreRoll(m_requested, position());
 			const time::Samples from = startPosition();
 			now = from == recordStart(m_requested, startWithoutPreRoll(m_requested, position()), from);
 		}

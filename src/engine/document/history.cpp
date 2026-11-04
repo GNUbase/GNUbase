@@ -14,17 +14,17 @@ namespace gnubase::engine
 	{
 		bool operator==(const ProjectSettings& a, const ProjectSettings& b)
 		{
-			return std::tie(a.name, a.sampleRate, a.tempo, a.signatures, a.autoFades, a.panLaw, a.maxVolume, a.colors,
-					   a.setup, a.busses, a.tracks, a.activeMarkerTrack) ==
-				std::tie(b.name, b.sampleRate, b.tempo, b.signatures, b.autoFades, b.panLaw, b.maxVolume, b.colors,
-					b.setup, b.busses, b.tracks, b.activeMarkerTrack);
+			return std::tie(a.name, a.sampleRate, a.tempo, a.tempoTrackActive, a.otherTempo, a.signatures, a.autoFades,
+					   a.panLaw, a.maxVolume, a.colors, a.setup, a.busses, a.tracks, a.activeMarkerTrack) ==
+				std::tie(b.name, b.sampleRate, b.tempo, b.tempoTrackActive, b.otherTempo, b.signatures, b.autoFades,
+					b.panLaw, b.maxVolume, b.colors, b.setup, b.busses, b.tracks, b.activeMarkerTrack);
 		}
 
 		ProjectSettings settings(const Project& project)
 		{
-			return {project.name, project.sampleRate, project.tempo, project.signatures, project.autoFades,
-				project.panLaw, project.maxVolume, project.colors, project.setup, project.busses, project.tracks,
-				project.activeMarkerTrack};
+			return {project.name, project.sampleRate, project.tempo, project.tempoTrackActive, project.otherTempo,
+				project.signatures, project.autoFades, project.panLaw, project.maxVolume, project.colors, project.setup,
+				project.busses, project.tracks, project.activeMarkerTrack};
 		}
 
 		// Walks two maps in id order and calls visit(id, before, after) with nullptr for a missing object.
@@ -180,6 +180,8 @@ namespace gnubase::engine
 			project.name = target.name;
 			project.sampleRate = target.sampleRate;
 			project.tempo = target.tempo;
+			project.tempoTrackActive = target.tempoTrackActive;
+			project.otherTempo = target.otherTempo;
 			project.signatures = target.signatures;
 			project.autoFades = target.autoFades;
 			project.panLaw = target.panLaw;

@@ -196,6 +196,9 @@ namespace gnubase::ui
 		// the locators when the click is between them; one below the tracks adds a MIDI track.
 		const std::vector<uint64_t>& selection() const { return m_selection; }
 		void select(std::vector<uint64_t> events);
+		// Where the selection starts, in ticks: the selection range's start, else the first selected event's; none
+		// without either (Tap Tempo's tempo event, reference manual p. 1458).
+		std::optional<int64_t> selectionStart() const;
 		// Selects the first event on the track's lane, by start; with none there or the track not shown, the
 		// selection stays (Up and Down while an event is selected, reference manual p. 218, ui/tracklist.h).
 		void selectFirstOn(uint64_t track);

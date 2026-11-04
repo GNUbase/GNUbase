@@ -59,6 +59,7 @@ namespace gnubase::engine
 		Effect, // receives sends; holds no events
 		Marker, // holds markers; has no channel and stays at the top level
 		Ruler,  // shows a ruler in a time format of its own; has no channel
+		Tempo,  // shows and edits the project's tempo track; has no channel, stays at the top level, at most one
 	};
 
 	// The time formats of ruler tracks, as the event display's ruler names them.
@@ -209,11 +210,14 @@ namespace gnubase::engine
 		bool recordEnable = false;
 		// MIDI and instrument tracks: where their MIDI input comes from, "all" (all MIDI inputs) or "none".
 		std::string midiInput = "all";
-		// The mute and solo buttons (docs/features/track-list.md): a muted channel is silent, unless mute automation
-		// plays (docs/features/automation.md); while any channel is soloed, only soloed ones, where they play through
-		// and what plays into them are heard.
+		// The mute and solo buttons (docs/features/solo-mute-listen.md): a muted channel is silent, unless mute
+		// automation plays (docs/features/automation.md); while any channel is soloed, only soloed ones, where they
+		// play through and what plays into them are heard, and channels with solo defeat, with where they play through.
+		// A listening channel also plays on the monitoring bus.
 		bool mute = false;
 		bool solo = false;
+		bool soloDefeat = false;
+		bool listen = false;
 		// Audio channels: the plugin slots, from top to bottom; the audio passes through them before the fader.
 		// NOLINTNEXTLINE(readability-redundant-member-init): see instrumentParameters
 		std::vector<ObjectId> slots = {};
@@ -624,7 +628,13 @@ namespace gnubase::engine
 	{
 		std::string name = "Untitled";
 		double sampleRate = 48000.0;
+		// The tempo the project plays: the tempo track's tempo events while it is active (tempo track mode), the fixed
+		// tempo otherwise (#155, reference manual p. 1446).
 		time::TempoMap tempo{120.0};
+		bool tempoTrackActive = false;
+		// The tempo of the mode not in use: the tempo track's events in fixed tempo mode, the fixed tempo (one point)
+		// in tempo track mode. Switching modes swaps it with tempo; tempoTrack() and fixedTempo() read either.
+		time::TempoMap otherTempo{120.0};
 		time::SignatureMap signatures;
 		AutoFades autoFades; // for audio tracks without settings of their own
 		PanLaw panLaw = PanLaw::Minus3;
@@ -664,6 +674,12 @@ namespace gnubase::engine
 
 		// Every track id from top to bottom, folders before the tracks they contain.
 		std::vector<ObjectId> trackOrder() const;
+
+		// The tempo track's tempo events, in either tempo mode.
+		const time::TempoMap& tempoTrack() const { return tempoTrackActive ? tempo : otherTempo; }
+		time::TempoMap& tempoTrack() { return tempoTrackActive ? tempo : otherTempo; }
+		// The tempo of fixed tempo mode, in either tempo mode.
+		double fixedTempo() const { return (tempoTrackActive ? otherTempo : tempo).points().front().bpm; }
 	};
 
 	// An empty project with a stereo input and a stereo output bus.
@@ -710,10 +726,10 @@ namespace gnubase::engine
 	{
 		return std::tie(a.id, a.track, a.format, a.input, a.output, a.instrument, a.volume, a.pan, a.panner, a.panLeft,
 				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.instrumentParameters, a.monitor, a.recordEnable,
-				   a.midiInput, a.mute, a.solo, a.slots, a.notes, a.sections) ==
+				   a.midiInput, a.mute, a.solo, a.soloDefeat, a.listen, a.slots, a.notes, a.sections) ==
 			std::tie(b.id, b.track, b.format, b.input, b.output, b.instrument, b.volume, b.pan, b.panner, b.panLeft,
 				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.instrumentParameters, b.monitor, b.recordEnable,
-				b.midiInput, b.mute, b.solo, b.slots, b.notes, b.sections);
+				b.midiInput, b.mute, b.solo, b.soloDefeat, b.listen, b.slots, b.notes, b.sections);
 	}
 
 	inline bool operator==(const Slot& a, const Slot& b)

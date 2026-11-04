@@ -448,8 +448,9 @@ namespace gnubase::engine
 
 			void writeTrack(pugi::xml_node parent, const Track& track)
 			{
-				// Markers go into the arrangement; ruler tracks only into GNUbase's entry.
-				if (track.type == TrackType::Marker || track.type == TrackType::Ruler)
+				// Markers go into the arrangement, the tempo into the transport and the tempo automation; ruler and
+				// tempo tracks only into GNUbase's entry.
+				if (track.type == TrackType::Marker || track.type == TrackType::Ruler || track.type == TrackType::Tempo)
 					return;
 				pugi::xml_node node = parent.append_child("Track");
 				node.append_attribute("id") = xmlId("t", track.id).c_str();
@@ -1065,6 +1066,10 @@ namespace gnubase::engine
 				try
 				{
 					m_project.tempo = time::TempoMap(tempo);
+					// Tempo changes play from the tempo track; fixed tempo mode keeps the first tempo.
+					m_project.tempoTrackActive = tempo.size() > 1;
+					m_project.otherTempo =
+						m_project.tempoTrackActive ? time::TempoMap(tempo.front().bpm) : m_project.tempo;
 					m_project.signatures = time::SignatureMap(changes);
 				}
 				catch (const std::invalid_argument& error)

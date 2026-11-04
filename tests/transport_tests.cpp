@@ -724,11 +724,11 @@ TEST_CASE("transport commands play, stop, locate and set the locators", "[integr
 
 	Json state = run(client, "transport.get");
 	CHECK(state ==
-		Json{{"playing", false}, {"recording", false}, {"position", 0}, {"left", 0}, {"right", 0}, {"cycle", false},
-			{"startMode", "cursor"}, {"returnToStart", false}, {"punchIn", false}, {"punchOut", false},
-			{"preRoll", false}, {"preRollAmount", 0}, {"postRoll", false}, {"postRollAmount", 0}, {"metronome", false},
-			{"audioRecordMode", "keepHistory"}, {"midiRecordMode", "newParts"}, {"midiCycleRecordMode", "mix"},
-			{"lockRecord", false}});
+		Json{{"playing", false}, {"recording", false}, {"position", 0}, {"start", 0}, {"left", 0}, {"right", 0},
+			{"cycle", false}, {"startMode", "cursor"}, {"returnToStart", false}, {"punchIn", false},
+			{"punchOut", false}, {"preRoll", false}, {"preRollAmount", 0}, {"postRoll", false}, {"postRollAmount", 0},
+			{"metronome", false}, {"audioRecordMode", "keepHistory"}, {"midiRecordMode", "newParts"},
+			{"midiCycleRecordMode", "mix"}, {"lockRecord", false}});
 
 	state = run(client, "transport.set", {{"left", 48000}, {"right", 96000}, {"cycle", true}});
 	CHECK(state.at("left") == 48000);
@@ -752,7 +752,10 @@ TEST_CASE("transport commands play, stop, locate and set the locators", "[integr
 	CHECK(state.at("right") == 1000);
 
 	CHECK(run(client, "transport.play").at("playing") == true);
+	// Where playback started stays after it stops, until it starts again (tempo.tap).
+	CHECK(run(client, "transport.get").at("start") == 1000);
 	CHECK(run(client, "transport.toggle").at("playing") == false);
+	CHECK(run(client, "transport.get").at("start") == 1000);
 	CHECK(run(client, "transport.toggle").at("playing") == true);
 	CHECK(run(client, "transport.stop").at("playing") == false);
 
@@ -771,6 +774,15 @@ TEST_CASE("transport commands play, stop, locate and set the locators", "[integr
 	CHECK_THAT(reject(client, "transport.locate", {{"position", g_maxPosition + 1}}), ContainsSubstring("position"));
 	CHECK(run(client, "transport.locate", {{"by", 1e300}}).at("position") == g_maxPosition); // not past the end
 	CHECK(run(client, "transport.locate", {{"position", g_maxPosition}}).at("position") == g_maxPosition);
+	// by from the maximum, and huge amounts both ways, as MCP and Lua may send them (#457).
+	CHECK(run(client, "transport.locate", {{"by", 1.0}}).at("position") == g_maxPosition);
+	CHECK(run(client, "transport.locate", {{"by", 1e15}}).at("position") == g_maxPosition);
+	CHECK(run(client, "transport.locate", {{"by", -1.0}}).at("position") == g_maxPosition - 48000);
+	CHECK(run(client, "transport.locate", {{"by", -1e15}}).at("position") == 0);
+	CHECK(run(client, "transport.locate", {{"by", -1e300}}).at("position") == 0);           // from the start: stays
+	CHECK(run(client, "transport.locate", {{"by", 1e15}}).at("position") == g_maxPosition); // from the start
+	CHECK(run(client, "transport.locate", {{"by", -1e300}}).at("position") == 0);           // from the end
+	CHECK_THAT(reject(client, "transport.locate", {{"by", "far"}}), ContainsSubstring("by"));
 	run(client, "transport.locate", {{"position", 0}});
 	CHECK_THAT(reject(client, "transport.set", {{"left", "somewhere"}}), ContainsSubstring("left"));
 	CHECK_THAT(reject(client, "transport.set", {{"startMode", "selection"}}), ContainsSubstring("startMode"));

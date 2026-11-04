@@ -244,6 +244,54 @@ TEST_CASE("the info line edits an audio event's volume", "[ui]")
 	CHECK(window.app.waitUntil([&] { return window.find("audioEvents", event).at("volume") == 0.0; }));
 }
 
+TEST_CASE("an untouched Ctrl+Enter on the volume gives every selected audio event the first one's volume", "[ui]")
+{
+	Window window;
+	const uint64_t audio = window.addTrack({{"type", "audio"}, {"timeBase", "linear"}});
+	const Json media =
+		window.call("media.add", {{"path", "take.wav"}, {"sampleRate", 48000}, {"channels", 1}, {"length", 480000}})
+			.at("media");
+	const Json clip = window.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	const auto add = [&](int64_t position, double volume)
+	{
+		return window
+			.call("audioEvent.add",
+				{{"track", audio}, {"clip", clip.at("id")}, {"position", position}, {"length", 24000},
+					{"volume", volume}})
+			.at("event")
+			.at("id")
+			.get<uint64_t>();
+	};
+	const uint64_t first = add(96000, -4.5);
+	const uint64_t second = add(192000, 0.0);
+	const uint64_t third = add(288000, -12.0);
+	const auto volume = [&window](uint64_t id) { return window.find("audioEvents", id).at("volume").get<double>(); };
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("audioEvents").size() == 3; }));
+	// The first one is the one that starts first, whatever the order selected in.
+	window.display.select({third, second, first});
+	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, "#info-line", "multiple"); }));
+	REQUIRE(window.app.waitUntil(
+		[&]
+		{
+			const std::string shown = attribute(window.app, "#info-line valuefield[field=volume]", "value");
+			return !shown.empty() && std::stod(shown) == -4.5;
+		}));
+	const int64_t position = window.historyPosition();
+
+	// Double-clicked, nothing typed, Ctrl+Enter: the field sends no change, and the first one's volume goes to all.
+	window.click("#info-line valuefield[field=volume]", ui::MouseButton::Left, 2);
+	window.app.ui().key(std::nullopt, "Ctrl+Enter");
+	window.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(window.app.waitUntil([&] { return volume(second) == -4.5 && volume(third) == -4.5; }));
+	CHECK(volume(first) == -4.5);
+	// As one undo step.
+	CHECK(window.historyPosition() == position + 1);
+	window.call("history.undo");
+	REQUIRE(window.app.waitUntil([&] { return volume(third) == -12.0; }));
+	CHECK(volume(second) == 0.0);
+	CHECK(volume(first) == -4.5);
+}
+
 TEST_CASE(
 	"the info line shows the marker selected on the marker track, and its edits change every selected one", "[ui]")
 {
@@ -392,6 +440,56 @@ TEST_CASE("the project window selects events or markers, and the info line shows
 	// Only showMarkers' branch for markers the project doesn't have sets both.
 	CHECK(window.app.waitUntil(
 		[&] { return hasClass(window.app, "#info-line", "markers") && hasClass(window.app, "#info-line", "empty"); }));
+}
+
+TEST_CASE("an untouched Ctrl+Enter on a marker's start gives every selected marker the first one's position", "[ui]")
+{
+	Window window;
+	window.addTrack({{"type", "marker"}});
+	const auto add = [&window](const Json& parameters)
+	{ return window.call("marker.add", parameters).at("marker").at("id").get<uint64_t>(); };
+	const uint64_t intro = add({{"position", 2 * g_quarter}, {"name", "Intro"}});
+	const uint64_t verse =
+		add({{"type", "cycle"}, {"position", 4 * g_quarter}, {"end", 8 * g_quarter}, {"name", "Verse"}});
+	// Every label in view: CI's screens make the window 1024 pixels wide, where the timeline beside the inspector shows
+	// less than 10 quarters.
+	const uint64_t outro = add({{"position", 6 * g_quarter}, {"name", "Outro"}});
+	const auto marker = [&window](uint64_t id) { return window.find("markers", id); };
+	REQUIRE(window.app.waitUntil([&] { return elements(window.app, ".marker-label").size() == 3; }));
+	const auto clickMarker = [&window](int index, const std::vector<std::string>& modifiers = {})
+	{
+		window.app.ui().click(
+			std::nullopt, {".marker-label", index, std::nullopt}, ui::MouseButton::Left, 1, modifiers);
+		window.app.shell().step(std::chrono::milliseconds(0));
+	};
+
+	// All three selected, the last one first: the one that starts first shows.
+	clickMarker(2);
+	clickMarker(1, {"ctrl"});
+	clickMarker(0, {"ctrl"});
+	const ui::MarkerLines& lines = *window.app.appUi().markerLines();
+	REQUIRE(window.app.waitUntil([&] { return lines.selection().size() == 3; }));
+	REQUIRE(window.shows("#info-line textdisplay[field=name]", "Intro"));
+	REQUIRE(hasClass(window.app, "#info-line", "multiple"));
+	REQUIRE(window.shows("#info-line textdisplay[field=start]", "1.3.1.0"));
+	const int64_t position = window.historyPosition();
+
+	// Double-clicked, nothing typed, Ctrl+Enter: the display sends no change, and the first one's position goes to
+	// all, a cycle marker keeping its length.
+	window.click("#info-line textdisplay[field=start]", ui::MouseButton::Left, 2);
+	window.app.ui().key(std::nullopt, "Ctrl+Enter");
+	window.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(window.app.waitUntil([&] { return marker(outro).at("position") == 2 * g_quarter; }));
+	CHECK(marker(verse).at("position") == 2 * g_quarter);
+	CHECK(marker(verse).at("end") == 6 * g_quarter);
+	CHECK(marker(intro).at("position") == 2 * g_quarter);
+	// As one undo step.
+	CHECK(window.historyPosition() == position + 1);
+	window.call("history.undo");
+	REQUIRE(window.app.waitUntil([&] { return marker(outro).at("position") == 6 * g_quarter; }));
+	CHECK(marker(verse).at("position") == 4 * g_quarter);
+	CHECK(marker(verse).at("end") == 8 * g_quarter);
+	CHECK(marker(intro).at("position") == 2 * g_quarter);
 }
 
 TEST_CASE("the inspector shows the selected track, and its controls change the track's channel", "[ui]")

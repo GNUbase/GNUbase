@@ -7,12 +7,16 @@
 
 #include <RmlUi/Core/ComputedValues.h>
 #include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/Input.h>
 #include <RmlUi/Core/ObserverPtr.h>
+#include <RmlUi/Core/SystemInterface.h>
 
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <cstddef>
 #include <iterator>
 #include <sstream>
@@ -30,8 +34,16 @@ namespace gnubase::ui
 		// How far a tree row's level indents it, in dp.
 		constexpr float g_indent = 16.0F;
 
+		// A drag past a list view's edge (dragscroll) scrolls it this many times as far as the mouse is past the edge
+		// each second, counting at most this long between two updates.
+		constexpr float g_dragScrollRate = 10.0F;
+		constexpr double g_dragScrollStep = 0.1; // seconds
+		constexpr std::array<Rml::EventId, 4> g_dragScrollEvents = {
+			Rml::EventId::Drag, Rml::EventId::Dragend, Rml::EventId::Mouseup, Rml::EventId::Blur};
+
 		// <listview>: a list, tree or table of rows that the user selects. Its rows are its <listitem> descendants,
-		// or else the rows (<tr>) of a table in it, but not those of its <thead>; each has a value attribute.
+		// or else the rows (<tr>) of the tables in it, but not those of their <thead>s, in the document's order; each
+		// has a value attribute.
 		//
 		// A click selects a row. With the multiple attribute, Ctrl-click (Cmd-click on macOS) adds or removes a row
 		// and Shift-click selects the rows from the last one clicked. Up and Down move the selection (Shift extends
@@ -45,10 +57,29 @@ namespace gnubase::ui
 		// .tree-toggle part, and parents the state class .parent; a click on the toggle, or Right and Left, expand
 		// and collapse a parent, which sends a toggle event with the row's value and "expanded". Rows inside a
 		// collapsed parent have the state class .hidden.
+		//
+		// With the dragscroll attribute, a drag of an element in the view (drag: drag) scrolls it while the mouse is
+		// above or below it, faster the further the mouse is past its edge, e.g. so that the edit history's separator
+		// reaches rows the view doesn't show.
 		class ListView final : public Rml::Element
 		{
 		public:
-			using Rml::Element::Element;
+			explicit ListView(const Rml::String& tag) : Rml::Element(tag)
+			{
+				for (const Rml::EventId id : g_dragScrollEvents)
+					AddEventListener(id, &m_dragListener);
+			}
+
+			~ListView() override
+			{
+				for (const Rml::EventId id : g_dragScrollEvents)
+					RemoveEventListener(id, &m_dragListener);
+			}
+
+			ListView(const ListView&) = delete;
+			ListView& operator=(const ListView&) = delete;
+			ListView(ListView&&) = delete;
+			ListView& operator=(ListView&&) = delete;
 
 			void ProcessDefaultAction(Rml::Event& event) override
 			{
@@ -66,6 +97,9 @@ namespace gnubase::ui
 			void OnUpdate() override
 			{
 				Rml::Element::OnUpdate();
+				if (m_dragScrolling)
+					scrollWhileDragged(); // before the rows are looked at: a scroll can move them, as in the edit
+										  // history
 				const std::vector<Rml::Element*> all = rows();
 				if (all.size() != m_rowCount || GetAttribute<Rml::String>("value", "") != m_value || rowsReplaced(all))
 					select(all, GetAttribute<Rml::String>("value", ""));
@@ -73,6 +107,57 @@ namespace gnubase::ui
 			}
 
 		private:
+			// A drag in the view goes on (with dragscroll), or is over: it ends, the button goes up, or the view loses
+			// the focus, as when RmlUi drops a drag whose element leaves the document.
+			void dragged(const Rml::Event& event)
+			{
+				if (event == Rml::EventId::Drag && HasAttribute("dragscroll"))
+				{
+					if (!m_dragScrolling)
+					{
+						m_dragScrolling = true;
+						m_dragTime = Rml::GetSystemInterface()->GetElapsedTime();
+						m_dragRemainder = 0.0F;
+					}
+					m_dragMouse = event.GetParameter("mouse_y", 0.0F);
+					if (Rml::Context* context = GetContext())
+						context->RequestNextUpdate(0);
+				}
+				else if (event.GetId() != Rml::EventId::Drag)
+				{
+					m_dragScrolling = false;
+				}
+			}
+
+			// With the mouse past the top or bottom edge, scrolls on by the time since the last update.
+			void scrollWhileDragged()
+			{
+				const double now = Rml::GetSystemInterface()->GetElapsedTime();
+				const auto seconds = static_cast<float>(std::min(now - m_dragTime, g_dragScrollStep));
+				m_dragTime = now;
+				const float top = GetAbsoluteOffset(Rml::BoxArea::Padding).y;
+				const float bottom = top + GetClientHeight();
+				float past = 0.0F;
+				if (m_dragMouse < top)
+					past = m_dragMouse - top;
+				else if (m_dragMouse > bottom)
+					past = m_dragMouse - bottom;
+				const float scroll = GetScrollTop();
+				const bool more =
+					past < 0.0F ? scroll > 0.0F : (past > 0.0F && scroll < GetScrollHeight() - GetClientHeight());
+				if (!more)
+				{
+					m_dragRemainder = 0.0F;
+					return;
+				}
+				m_dragRemainder += past * g_dragScrollRate * seconds;
+				const float whole = std::trunc(m_dragRemainder);
+				m_dragRemainder -= whole;
+				if (whole != 0.0F)
+					SetScrollTop(scroll + whole);
+				GetContext()->RequestNextUpdate(0);
+			}
+
 			// Whether the element is in a form control in a row, such as a text field, whose clicks and keys are its
 			// own.
 			bool inControl(Rml::Element* element) const
@@ -84,17 +169,30 @@ namespace gnubase::ui
 				return false;
 			}
 
+			// The rows in the document's order, also from several tables at different depths (RmlUi's
+			// GetElementsByTagName goes breadth first).
 			std::vector<Rml::Element*> rows()
 			{
-				Rml::ElementList found;
-				GetElementsByTagName(found, "listitem");
+				std::vector<Rml::Element*> found;
+				collect(*this, "listitem", found);
 				if (!found.empty())
 					return found;
-				GetElementsByTagName(found, "tr");
+				collect(*this, "tr", found);
 				found.erase(std::remove_if(found.begin(), found.end(),
 								[](const Rml::Element* row) { return row->GetParentNode()->GetTagName() == "thead"; }),
 					found.end());
 				return found;
+			}
+
+			static void collect(Rml::Element& parent, const Rml::String& tag, std::vector<Rml::Element*>& found)
+			{
+				for (int i = 0; i < parent.GetNumChildren(); ++i)
+				{
+					Rml::Element* child = parent.GetChild(i);
+					if (child->GetTagName() == tag)
+						found.push_back(child);
+					collect(*child, tag, found);
+				}
 			}
 
 			// The row that the event's target is in, or null.
@@ -341,6 +439,13 @@ namespace gnubase::ui
 			Rml::ObserverPtr<Rml::Element> m_current;  // the row the keys move from
 			bool m_hadCurrent = false;                 // m_current was set to a row
 			Rml::ObserverPtr<Rml::Element> m_firstRow; // the first row when the view last selected rows
+			// While a drag in it scrolls it (dragscroll): the mouse's last y in the window, when it last scrolled, and
+			// the part of a pixel it has yet to scroll.
+			bool m_dragScrolling = false;
+			float m_dragMouse = 0.0F;
+			double m_dragTime = 0.0;
+			float m_dragRemainder = 0.0F;
+			widgets::Listener m_dragListener{[this](const Rml::Event& event) { dragged(event); }};
 		};
 
 		// <splitter>: between two elements of a flex row or column, dragging it moves the boundary between them. It

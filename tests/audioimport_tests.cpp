@@ -2,11 +2,13 @@
 // Audio file import (#92): audioFile.import puts audio files on tracks as events, copying, converting and splitting
 // them on the way as the import options say.
 #include "engine/audiofile/audiofile.h"
+#include "engine/audiofile/resampler.h"
 #include "engine/engine.h"
 #include "engine/time/tempomap.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <chrono>
@@ -506,6 +508,72 @@ TEST_CASE("audioFile.import splits channels into mono files on tracks of their o
 	const Json clap = byId(after.at("audioEvents"), placed.at("events")[2]);
 	CHECK(clap.at("track") == drums.at("id"));
 	CHECK(clap.at("position") == 4800);
+}
+
+TEST_CASE("audioFile.import splits and converts a file in one pass into mono files at the project's sample rate",
+	"[integration]")
+{
+	// One second at 44.1 kHz, which the conversion reads in several pieces, the last one shorter; and a length that
+	// has no whole number of frames at 48 kHz (20001 * 48000 / 44100 = 21769.8), so the converted length is rounded.
+	const int64_t frames = GENERATE(int64_t{44100}, int64_t{20001});
+	const int64_t converted = std::llround(static_cast<double>(frames) * 48000.0 / 44100.0);
+	INFO(frames << " frames");
+	SavedProject song;
+	REQUIRE(run(song.client, "project.get").at("sampleRate") == 48000.0);
+	writeFile(song.library / "room.wav", frames, 2, 44100.0);
+	const Json result = run(song.client, "audioFile.import",
+		{{"files", {utf8(song.library / "room.wav")}}, {"splitChannels", true}, {"convert", true}});
+	REQUIRE(result.at("tracks").size() == 2);
+	REQUIRE(result.at("media").size() == 2);
+	const Json project = run(song.client, "project.get");
+
+	// What each channel of the original sounds like at 48 kHz, converted on its own.
+	const std::vector<float> stereo = rampSamples(2, frames);
+	const std::vector<std::string> names{"room-L", "room-R"};
+	for (size_t channel = 0; channel < names.size(); ++channel)
+	{
+		INFO(names[channel]);
+		const Json track = byId(project.at("tracks"), result.at("tracks")[channel]);
+		CHECK(track.at("name") == names[channel]);
+		CHECK(byId(project.at("channels"), track.at("channel")).at("format") == "mono");
+		const Json media = byId(project.at("media"), result.at("media")[channel]);
+		const std::string path = utf8(song.media / (names[channel] + ".wav"));
+		CHECK(media.at("path") == path);
+		CHECK(media.at("channels") == 1);
+		CHECK(media.at("sampleRate") == 48000.0);
+		CHECK(media.at("length") == converted);
+		const AudioFileInfo info = AudioFileReader::open(path)->info();
+		CHECK(info.format == AudioFormat::Wav);
+		CHECK(info.sampleRate == 48000.0);
+		CHECK(info.channels == 1);
+		CHECK(info.frames == converted);
+		const Json event = byId(project.at("audioEvents"), result.at("events")[channel]);
+		CHECK(event.at("track") == track.at("id"));
+		CHECK(event.at("position") == 0);
+
+		std::vector<float> original(static_cast<size_t>(frames));
+		for (size_t frame = 0; frame < original.size(); ++frame)
+			original[frame] = stereo[(frame * 2) + channel];
+		Resampler resampler(44100.0, 48000.0, 1, original.size());
+		std::vector<float> expected;
+		resampler.process(original.data(), original.size(), expected);
+		resampler.finish(expected);
+		REQUIRE(expected.size() == static_cast<size_t>(converted));
+
+		// The file holds its own channel, not the other one: the channels are 0.1 apart.
+		const std::vector<float> samples = readAll(path);
+		REQUIRE(samples.size() == expected.size());
+		float largest = 0.0f;
+		size_t worst = 0;
+		for (size_t frame = 0; frame < samples.size(); ++frame)
+			if (const float difference = std::abs(samples[frame] - expected[frame]); difference > largest)
+			{
+				largest = difference;
+				worst = frame;
+			}
+		INFO("frame " << worst << " differs by " << largest);
+		CHECK(largest < 1e-5f);
+	}
 }
 
 TEST_CASE("audioFile.import copies files into the media folder with one job", "[integration]")

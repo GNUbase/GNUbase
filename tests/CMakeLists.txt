@@ -61,6 +61,8 @@ add_executable(gnubase-tests
 	ipc_process_tests.cpp
 	ipc_tests.cpp
 	keycommands_tests.cpp
+	keyeditor_tests.cpp
+	keyeditor_ui_tests.cpp
 	latency_tests.cpp
 	lockrecord_tests.cpp
 	log_tests.cpp
@@ -110,6 +112,8 @@ add_executable(gnubase-tests
 	studiosetup_tests.cpp
 	stylerules_tests.cpp
 	svg_tests.cpp
+	tempo_tests.cpp
+	tempotrack_ui_tests.cpp
 	testing_tests.cpp
 	testutils_tests.cpp
 	theme_tests.cpp

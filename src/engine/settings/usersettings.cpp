@@ -114,6 +114,13 @@ namespace gnubase::engine::settings
 					Json{{"type", "object"}}, Json{{"input", Json::object()}, {"output", Json::object()}}},
 				{"audio.device", "The audio device's id, or empty for the backend's default device.",
 					Json{{"type", "string"}}, ""},
+				{"audio.listenDim",
+					"How far the main mix is turned down on the monitoring bus while channels listen (channel.set "
+					"listen), in dB from -144 (silence: only the listening channels are heard) to 0.",
+					Json{{"type", "number"}, {"minimum", -144}, {"maximum", 0}}, -144.0},
+				{"audio.listenLevel",
+					"The level at which listening channels play on the monitoring bus, in dB from -144 to 12.",
+					Json{{"type", "number"}, {"minimum", -144}, {"maximum", 12}}, 0.0},
 				{"audio.portSettings",
 					"How the audio devices' ports are shown (audio.setPort), by backend/device id/in or out/system "
 					"name, also for devices that aren't connected: the name shown (showAs) and whether it is "
@@ -155,6 +162,10 @@ namespace gnubase::engine::settings
 					Json{{"type", "string"},
 						{"enum", {"default", "previous", "previousPlusOne", "lastApplied", "random"}}},
 					"default"},
+				{"editing.tempoType",
+					"The type of new tempo events (reference manual p. 1448): ramp changes the tempo gradually from "
+					"the event before, step jumps, auto takes the type of the event before (tempo.add, tempo.tap).",
+					Json{{"type", "string"}, {"enum", {"ramp", "step", "auto"}}}, "auto"},
 				{"meter.resetOnStart",
 					"Reset on Start: the loudness meter, and the main mix's peak and RMS maxima, start over when "
 					"playback starts (see meter.get).",
@@ -233,6 +244,12 @@ namespace gnubase::engine::settings
 					"Locating to a marker sets the left and right locators to it (marker.locate, marker.locateNext, "
 					"marker.locatePrevious): a cycle marker's range, or from a position marker to the next marker.",
 					Json{{"type", "boolean"}}, false},
+				{"transport.tapTempoMode",
+					"Where a tapped tempo goes (Tap Tempo Mode, reference manual p. 1458; see tempo.tap): auto, "
+					"selection, playbackStart, cursor, project or display.",
+					Json{{"type", "string"},
+						{"enum", {"auto", "selection", "playbackStart", "cursor", "project", "display"}}},
+					"auto"},
 				{"ui.folderData",
 					"When folder tracks show the events and parts of the tracks inside them as data blocks in the "
 					"event display: always, never, or hideWhenExpanded (only while the folder is folded).",
@@ -304,20 +321,22 @@ namespace gnubase::engine::settings
 					Json{{"type", "boolean"}}, false},
 				{"ui.trackControls",
 					"The controls the track list shows, by track type (audio, instrument, midi, group, effect, "
-					"folder, marker, ruler), in order: mute, solo, record, monitor (audio, instrument and MIDI "
-					"tracks), read (automation) and timeBase. Mute and solo always show on tracks with a channel; a "
-					"type left out shows none.",
+					"folder, marker, ruler, tempo), in order: mute, solo, record, monitor (audio, instrument and MIDI "
+					"tracks), read (automation), timeBase and tempoTrack (the tempo track's Activate Tempo Track). "
+					"Mute and solo always show on tracks with a channel; a type left out shows none.",
 					Json{{"type", "object"},
 						{"additionalProperties",
 							{{"type", "array"},
 								{"items",
 									{{"type", "string"},
-										{"enum", {"mute", "solo", "record", "monitor", "read", "timeBase"}}}}}}},
+										{"enum",
+											{"mute", "solo", "record", "monitor", "read", "timeBase",
+												"tempoTrack"}}}}}}},
 					Json{{"audio", {"mute", "solo", "record", "monitor", "read"}},
 						{"instrument", {"mute", "solo", "record", "monitor", "read"}},
 						{"midi", {"mute", "solo", "record", "monitor", "read"}}, {"group", {"mute", "solo", "read"}},
 						{"effect", {"mute", "solo", "read"}}, {"folder", {"mute", "solo", "read"}},
-						{"marker", Json::array()}, {"ruler", Json::array()}}},
+						{"marker", Json::array()}, {"ruler", Json::array()}, {"tempo", {"tempoTrack"}}}},
 				{"ui.trackWidths",
 					"The widths in the track list's rows, in dp: name, the track name's for every track type (20 to "
 					"400), and controls, by track type, the width of its controls area (0 to 800), whose controls go "
@@ -332,7 +351,7 @@ namespace gnubase::engine::settings
 					Json{{"name", 120},
 						{"controls",
 							{{"audio", 120}, {"instrument", 120}, {"midi", 120}, {"group", 120}, {"effect", 120},
-								{"folder", 120}, {"marker", 120}, {"ruler", 120}}}}},
+								{"folder", 120}, {"marker", 120}, {"ruler", 120}, {"tempo", 120}}}}},
 				{"ui.zoomPresets",
 					"The horizontal zoom presets of the event display, for every project: each a name and the "
 					"seconds the view shows.",

@@ -53,6 +53,8 @@ add_library(gnubase-ui STATIC
 	inspector.h
 	keycommands.cpp
 	keycommands.h
+	keyeditor.cpp
+	keyeditor.h
 	livereload.cpp
 	livereload.h
 	mainmenu.cpp
@@ -80,6 +82,8 @@ add_library(gnubase-ui STATIC
 	shell.h
 	statusline.cpp
 	statusline.h
+	tempotrack.cpp
+	tempotrack.h
 	themes.cpp
 	themes.h
 	timeformat.cpp
