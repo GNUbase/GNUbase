@@ -237,6 +237,8 @@ TEST_CASE("VCA faders control one link group each, pass their buttons on and nev
 	CHECK_THAT(reject(client, "channel.set", {{"channel", vca}, {"pan", 0.5}}), ContainsSubstring("no pan"));
 	CHECK_THAT(reject(client, "channel.set", {{"channel", vca}, {"output", 0}}), ContainsSubstring("no input"));
 	CHECK_THAT(reject(client, "track.add", {{"type", "vca"}, {"format", "mono"}}), ContainsSubstring("no audio"));
+	CHECK_THAT(reject(client, "channel.set", {{"channel", vca}, {"format", "stereo"}}), ContainsSubstring("no audio"));
+	CHECK_THAT(reject(client, "channel.set", {{"channel", vca}, {"channels", 2}}), ContainsSubstring("no audio"));
 	const Json parameters = run(client, "parameter.list", {{"channel", vca}}).at("parameters");
 	REQUIRE(parameters.size() == 1);
 	CHECK(parameters[0].at("target") == Json({{"type", "volume"}}));
@@ -298,6 +300,8 @@ TEST_CASE("link groups and VCA tracks are saved and loaded with the project", "[
 	const ObjectId b = add(client, "group");
 	run(client, "channel.set", {{"channel", vca}, {"volume", -4.5}});
 	run(client, "linkGroup.add", {{"channels", {a, b}}, {"vca", vca}, {"name", "Strings"}, {"mute", true}});
+	run(client, "channel.set", {{"channel", vca}, {"monitor", true}, {"recordEnable", true}, {"listen", true}});
+	const Json vcaBefore = channelJson(client, vca);
 	const Json before = run(client, "project.get");
 	run(client, "project.save", {{"path", file}});
 	run(client, "project.new");
@@ -306,6 +310,8 @@ TEST_CASE("link groups and VCA tracks are saved and loaded with the project", "[
 	CHECK(after.at("linkGroups") == before.at("linkGroups"));
 	CHECK(after.at("tracks").at(0).at("type") == "vca");
 	CHECK(channelJson(client, vca).at("volume") == -4.5);
+	CHECK(channelJson(client, vca) == vcaBefore); // its buttons too
+	CHECK(channelJson(client, a).at("monitor") == true);
 }
 
 TEST_CASE("a VCA fader adds its volume to its channels', through nested VCA faders", "[integration]")

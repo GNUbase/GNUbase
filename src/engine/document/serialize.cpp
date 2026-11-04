@@ -1367,18 +1367,19 @@ namespace gnubase::engine
 			// Files from before instrument parameters have none.
 			channel.instrumentParameters = instrumentParametersFromJson(
 				item.value("instrumentParameters", Json::array()), channel.instrument, name);
-			// Audio, MIDI and instrument tracks have the buttons; files from before them have them off. MIDI input
-			// other than none is all MIDI inputs, also in files from before it.
+			// Audio, MIDI and instrument tracks and VCA faders have the buttons; files from before them have them off.
+			// MIDI input other than none is all MIDI inputs, also in files from before it.
 			const TrackType type = track != project.trackById.end() ? track->second.type : TrackType::Folder;
 			const bool midi = type == TrackType::Midi || type == TrackType::Instrument;
-			const bool buttons = type == TrackType::Audio || midi;
+			const bool buttons = type == TrackType::Audio || midi || type == TrackType::Vca;
 			channel.monitor = buttons && item.value("monitor", false);
 			channel.recordEnable = buttons && item.value("recordEnable", false);
 			channel.midiInput = midi && item.value("midiInput", std::string()) == "none" ? "none" : "all";
 			channel.mute = item.value("mute", false); // files from before mute and solo have neither
 			channel.solo = item.value("solo", false);
 			channel.soloDefeat = item.value("soloDefeat", false); // files from before #109 have neither
-			channel.listen = channel.format != ChannelFormat::None && item.value("listen", false);
+			channel.listen =
+				(channel.format != ChannelFormat::None || type == TrackType::Vca) && item.value("listen", false);
 			channel.slots = item.value("slots", std::vector<ObjectId>()); // files from before #282 have none
 			channel.notes = item.value("notes", std::string());           // files from before #89 have none
 			channel.sections = sectionsFromJson(item);                    // files from before #107 have them off

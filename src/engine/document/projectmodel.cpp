@@ -1518,6 +1518,7 @@ namespace gnubase::engine
 			if (parameters.contains("channels") || parameters.contains("format"))
 			{
 				require(type != TrackType::Midi, "a MIDI channel has no audio channels");
+				require(type != TrackType::Vca, "a VCA channel has no audio channels");
 				changed.format = channelFormat(parameters, channel.format);
 			}
 			require(type != TrackType::Vca ||
