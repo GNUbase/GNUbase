@@ -3449,7 +3449,8 @@ namespace gnubase::engine
 				"Adds an audio event that plays a section of a clip on an audio track. position is in the track's time "
 				"base (ticks or samples); offset and length are in the clip's sample frames, length defaulting to the "
 				"rest of the clip. volume is in dB, from -144 to 6 (default 0); a muted event doesn't play. A track "
-				"plays one event at a time: where events overlap, the one added last plays, unless they crossfade.",
+				"plays one event at a time: where events overlap, the one added last plays, unless they crossfade; "
+				"event.toFront brings another one to the front.",
 				objectSchema(
 					{{"track", idSchema}, {"clip", idSchema}, {"position", integerSchema}, {"offset", integerSchema},
 						{"length", integerSchema}, {"volume", numberSchema}, {"mute", booleanSchema}},

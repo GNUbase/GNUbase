@@ -79,9 +79,10 @@ namespace gnubase::ui
 			bool crossHair; // whether the tool uses the cross-hair cursor (reference manual p. 110)
 		};
 
-		constexpr std::array<ToolInfo, 10> g_tools{{
+		constexpr std::array<ToolInfo, 11> g_tools{{
 			{Tool::ObjectSelection, "objectSelection", "Object Selection", true},
 			{Tool::RangeSelection, "rangeSelection", "Range Selection", true},
+			{Tool::Comp, "comp", "Comp", false},
 			{Tool::Draw, "draw", "Draw", true},
 			{Tool::Erase, "erase", "Erase", false},
 			{Tool::Split, "split", "Split", true},

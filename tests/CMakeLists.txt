@@ -38,6 +38,7 @@ add_executable(gnubase-tests
 	channelstrip_tests.cpp
 	clock_tests.cpp
 	color_tests.cpp
+	comping_tests.cpp
 	controllerlanes_tests.cpp
 	controllerlanes_ui_tests.cpp
 	coverage_tests.cpp
