@@ -169,12 +169,15 @@ namespace gnubase::ui
 		double value = 0.0;
 		engine::AutomationShape shape = engine::AutomationShape::Linear;
 		double curve = 0.0;
-		bool selected = false; // its handle is drawn as selected
+		bool selected = false;   // its handle is drawn as selected
+		bool terminator = false; // the curve ends at it: no line up to the next point, a gap (engine::AutomationPoint)
 	};
 
 	// <curve>: an automation curve, a line in stroke-color, level with the first point before it and with the last
 	// one after it. With handles, each point is a square filled with color, a selected one a larger one in
 	// stroke-color (automation tracks, #121); dashed draws the line in dashes, as automation tracks' static value line.
+	// Gaps (reference manual p. 881) have no line: from a terminator up to the next point, and in virgin territory
+	// before the first point and after the last one.
 	class Curve final : public Canvas
 	{
 	public:
@@ -183,6 +186,9 @@ namespace gnubase::ui
 		// Points by position.
 		void setPoints(std::vector<CurvePoint> points, bool handles = false, bool dashed = false);
 		const std::vector<CurvePoint>& points() const { return m_points; }
+		// Virgin territory instead of initial values (engine::Project::virginTerritory).
+		void setVirginTerritory(bool on);
+		bool virginTerritory() const { return m_virginTerritory; }
 
 	protected:
 		void build(const Frame& frame, Rml::TexturedMeshList& meshes) override;
@@ -191,6 +197,7 @@ namespace gnubase::ui
 		std::vector<CurvePoint> m_points;
 		bool m_handles = false;
 		bool m_dashed = false;
+		bool m_virginTerritory = false;
 	};
 
 	// A fade of an audio event (#138): from start over length, rising from the bottom of its lane to the top (a fade

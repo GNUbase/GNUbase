@@ -802,9 +802,11 @@ TEST_CASE("range.delete removes what is in the range, and with time closes the g
 	CHECK(f.spans(f.audioTrack) == Spans{{g_second, g_start}});
 	CHECK(f.spans(f.midiTrack) == Spans{{2 * g_second, g_start}, {g_end, 4 * g_second}});
 	// The automation outside the range keeps its curve: the value at the start holds until the end, where the curve
-	// goes on from its value there. The modulation has no point in the range: nothing to delete there.
+	// goes on from its value there. The modulation has no point in the range, but its ramp goes across it, which is
+	// automation too (#724): its value holds there as well.
 	f.checkPoints(f.pan, {{0, -1.0}, {g_start, 0.25}, {g_end, 0.75}, {4 * g_second, 1.0}});
-	f.checkPoints(f.modulation, {{0, 0.0}, {2 * g_bar, 1.0}});
+	f.checkPoints(
+		f.modulation, {{0, 0.0}, {g_bar + g_quarter, 0.625}, {g_bar + (3 * g_quarter), 0.875}, {2 * g_bar, 1.0}});
 	f.call("history.undo");
 	CHECK(f.spans(f.midiTrack) == Spans{{2 * g_second, 4 * g_second}});
 
@@ -981,6 +983,63 @@ TEST_CASE(
 		closed["time"] = true;
 		f.call("range.delete", closed);
 		CHECK(points() == GapPoints{{0, -1.0, false}, {500, -0.5, false}, {500, 0.5, false}, {1000, 1.0, false}});
+	}
+	SECTION("a range on a segment of the curve, without points in it")
+	{
+		// A ramp from -1 at 1000 to 1 at 3000 with a terminator at 4000 and a gap to the last point at 5000. A range in
+		// the ramp is automation data too (#724): it gets its edge points like a range with points in it.
+		f.call("automationPoint.add",
+			{{"lane", lane},
+				{"points",
+					{{{"position", 1000}, {"value", -1.0}}, {{"position", 3000}, {"value", 1.0}},
+						{{"position", 4000}, {"value", 1.0}, {"terminator", true}},
+						{{"position", 5000}, {"value", 0.0}}}}});
+		const GapPoints before = points();
+		const GapPoints held{{1000, -1.0, false}, {1500, -0.5, false}, {2500, 0.5, false}, {3000, 1.0, false},
+			{4000, 1.0, true}, {5000, 0.0, false}};
+		// With initial values the value at the range's start holds up to its end, where the ramp goes on.
+		f.call("range.delete", range(1500, 2500));
+		CHECK(points() == held);
+		CHECK(f.call("automationLane.list").at("lanes")[0].at("points")[1].at("shape") == "step");
+		f.call("history.undo");
+		CHECK(points() == before);
+		// Up to the point at the ramp's end: the value holds up to it.
+		f.call("range.delete", range(1500, 3000));
+		CHECK(points() ==
+			GapPoints{
+				{1000, -1.0, false}, {1500, -0.5, false}, {3000, 1.0, false}, {4000, 1.0, true}, {5000, 0.0, false}});
+		f.call("history.undo");
+		// range.cut takes the piece of the ramp and leaves what range.delete leaves.
+		CHECK(f.call("range.cut", range(1500, 2500)).at("lanes") == 1);
+		CHECK(points() == held);
+		f.call("history.undo");
+		// A range in a gap, or before the first or after the last point, has none: nothing changes.
+		const std::vector<std::pair<int64_t, int64_t>> empty{{200, 800}, {4200, 4800}, {5500, 6000}};
+		for (const auto& [start, end] : empty)
+		{
+			const size_t steps = f.call("history.get").at("steps").size();
+			f.call("range.delete", range(start, end));
+			CHECK(points() == before);
+			CHECK(f.call("history.get").at("steps").size() == steps);
+		}
+
+		// With virgin territory it becomes a gap: the ramp ends at a terminator at its start and goes on at its end.
+		f.call("automation.set", {{"virginTerritory", true}});
+		f.call("range.delete", range(1500, 2500));
+		CHECK(points() ==
+			GapPoints{{1000, -1.0, false}, {1500, -0.5, true}, {2500, 0.5, false}, {3000, 1.0, false},
+				{4000, 1.0, true}, {5000, 0.0, false}});
+		f.call("history.undo");
+		f.call("range.delete", range(1500, 3000));
+		CHECK(points() ==
+			GapPoints{
+				{1000, -1.0, false}, {1500, -0.5, true}, {3000, 1.0, false}, {4000, 1.0, true}, {5000, 0.0, false}});
+		f.call("history.undo");
+		for (const auto& [start, end] : empty)
+		{
+			f.call("range.delete", range(start, end));
+			CHECK(points() == before);
+		}
 	}
 }
 

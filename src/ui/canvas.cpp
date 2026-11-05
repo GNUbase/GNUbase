@@ -22,6 +22,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <iterator>
+#include <limits>
+#include <utility>
 
 namespace gnubase::ui
 {
@@ -340,6 +342,12 @@ namespace gnubase::ui
 		changed();
 	}
 
+	void Curve::setVirginTerritory(bool on)
+	{
+		if (std::exchange(m_virginTerritory, on) != on)
+			changed();
+	}
+
 	void Curve::build(const Frame& frame, Rml::TexturedMeshList& meshes)
 	{
 		const Colour colour = stroke();
@@ -352,6 +360,8 @@ namespace gnubase::ui
 		const auto x = [&](double position) { return std::round(position / frame.unitsPerPixel) - frame.left; };
 		const auto y = [&](double value)
 		{ return frame.y(((1.0 - std::clamp(value, 0.0, 1.0)) * (frame.size.y - width)) + (width / 2.0)); };
+		// A gap lifts the pen: no line from the point before it to the one after it.
+		const Rml::Vector2<double> gap{std::numeric_limits<double>::quiet_NaN(), 0.0};
 		std::vector<Rml::Vector2<double>> path;
 		auto point =
 			static_cast<size_t>(std::lower_bound(m_points.begin(), m_points.end(), frame.from(),
@@ -359,7 +369,7 @@ namespace gnubase::ui
 				m_points.begin());
 		if (point > 0)
 			--point;
-		else
+		else if (!m_virginTerritory)
 			path.emplace_back(-1.0, y(m_points.front().value)); // level before the first point
 		for (; point < m_points.size(); ++point)
 		{
@@ -370,8 +380,14 @@ namespace gnubase::ui
 				break;
 			if (point + 1 == m_points.size())
 			{
-				path.emplace_back(right + 1.0, y(from.value)); // level after the last point
+				if (!from.terminator && !m_virginTerritory)
+					path.emplace_back(right + 1.0, y(from.value)); // level after the last point
 				break;
+			}
+			if (from.terminator)
+			{
+				path.push_back(gap);
+				continue;
 			}
 			const CurvePoint& to = m_points[point + 1];
 			const double x1 = x(to.position);
@@ -402,7 +418,7 @@ namespace gnubase::ui
 		{
 			Rml::Vector2<double> a = path[i - 1];
 			Rml::Vector2<double> b = path[i];
-			if ((a.x < low && b.x < low) || (a.x > high && b.x > high))
+			if (std::isnan(a.x) || std::isnan(b.x) || (a.x < low && b.x < low) || (a.x > high && b.x > high))
 				continue;
 			const auto cut = [](Rml::Vector2<double>& p, const Rml::Vector2<double>& q, double edge)
 			{
