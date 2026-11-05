@@ -1733,3 +1733,55 @@ TEST_CASE("section parameters' automation lanes have their ranges and are saved 
 	const ObjectId copy = idOf(run(client, "track.duplicate", {{"track", opened}}), "track");
 	CHECK(run(client, "automationLane.list", {{"track", copy}}).at("lanes").size() == 2);
 }
+
+TEST_CASE("a lane of the limiter's switch plays it bypassed with its look-ahead, and limits once it turns it on",
+	"[integration]")
+{
+	const int blockSize = GENERATE(64, 100);
+	INFO("block size " << blockSize);
+	Mixer mixer(blockSize);
+	// The sine's peaks (0.5) are above the threshold (0.25); the limiter is off, so only its lane switches it.
+	const double threshold = gain(-12.0);
+	run(mixer.client, "channel.set",
+		{{"channel", mixer.channel},
+			{"strip", {{"limiter", {{"on", false}, {"threshold", -12.0}, {"release", 1.0}}}}}});
+	const ObjectId lane = mixer.lane({{"type", "strip"}, {"parameter", 70}});
+	mixer.add(lane, {{0, 0.0, "step"}, {2000, 1.0, "step"}, {6000, 0.0, "step"}});
+	run(mixer.client, "transport.play");
+	run(mixer.client, "audio.render", {{"frames", 12000}});
+
+	Mixer reference(64);
+	run(reference.client, "audio.render", {{"frames", 12000}});
+	const std::vector<float> input = reference.capture(0, 12000);
+	const size_t lookAhead = 48; // 1 ms at 48 kHz, the whole time
+	for (int channel = 0; channel < 2; ++channel)
+	{
+		const std::vector<float> output = mixer.capture(channel, 12000);
+		size_t wrong = 0;
+		float before = 0.0F;
+		float limited = 0.0F;
+		for (size_t i = 0; i < output.size(); ++i)
+		{
+			const float delayed = i < lookAhead ? 0.0F : input[i - lookAhead];
+			if (i < 2000)
+			{
+				// Off: the input delayed by the look-ahead, unclamped.
+				wrong += output[i] == delayed ? 0 : 1;
+				before = std::max(before, std::abs(output[i]));
+			}
+			else if (i < 6000)
+			{
+				wrong += std::abs(output[i]) <= threshold * (1.0 + 1e-6) ? 0 : 1;
+				limited = std::max(limited, std::abs(output[i]));
+			}
+			else if (i >= 8000) // off again, once its gain has released: the same delay as before
+			{
+				wrong += std::abs(output[i] - delayed) <= 1e-5 ? 0 : 1;
+			}
+		}
+		INFO("channel " << channel);
+		CHECK(wrong == 0);
+		CHECK(before > 0.49F);
+		CHECK(limited > 0.9 * threshold);
+	}
+}
