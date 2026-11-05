@@ -467,6 +467,22 @@ namespace gnubase::app
 					ui::parseTime(ui::TimeFormat::Timecode, parameters.at("text").get<std::string>(), context);
 				return seconds ? engine::Json{{"seconds", *seconds}} : engine::Json::object();
 			});
+		// For the add track dialog's Time Offset: a position typed in a time format, as position displays show it in
+		// the project (ui/timeformat.h), in seconds and ticks; nothing for text that isn't one.
+		m_lua.addFunction("ui.parseTime",
+			[this](const engine::Json& parameters)
+			{
+				const std::optional<ui::TimeFormat> format =
+					ui::timeFormatFromName(parameters.value("format", std::string()));
+				const engine::Result project = engine::Client(m_engine).call("project.get");
+				ui::TimeContext context;
+				if (!format || !project.ok() || !ui::readTimeContext(project.value, context))
+					return engine::Json::object();
+				const std::optional<double> seconds =
+					ui::parseTime(*format, parameters.at("text").get<std::string>(), context);
+				return seconds ? engine::Json{{"seconds", *seconds}, {"ticks", context.tempo.toTicks(*seconds)}}
+							   : engine::Json::object();
+			});
 		// File > Import (docs/features/file-import.md): the OS's file dialog, then the event display imports the files.
 		m_keys.add({"file.importAudio", "Imports audio files into the project window at the project cursor.",
 			[this](ui::Window& window, Rml::Element* /*zone*/)
@@ -879,6 +895,7 @@ namespace gnubase::app
 		m_markerLines.reset();
 		m_tempoLane.reset();
 		m_signatureLane.reset();
+		m_rulerLanes.reset();
 		// The transport bar's sections are there when the docking system reads them.
 		m_transportBar.reset();
 		if (Rml::Element* bar = document->GetElementById("transport-bar"))
@@ -904,6 +921,7 @@ namespace gnubase::app
 		m_markerLines = std::make_unique<ui::MarkerLines>(*m_eventDisplay, m_binding);
 		m_tempoLane = std::make_unique<ui::TempoLane>(*m_eventDisplay, m_binding);
 		m_signatureLane = std::make_unique<ui::SignatureLane>(*m_eventDisplay, m_binding);
+		m_rulerLanes = std::make_unique<ui::RulerLanes>(*m_eventDisplay);
 		if (m_infoLine)
 			m_infoLine->followMarkers(
 				[this] { return m_markerLines != nullptr ? m_markerLines->selection() : std::vector<uint64_t>(); });

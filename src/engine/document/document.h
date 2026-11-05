@@ -598,6 +598,10 @@ namespace gnubase::engine
 		// leave it out, as for Channel::instrumentParameters.
 		// NOLINTNEXTLINE(readability-redundant-member-init): see above
 		std::string picture = {};
+		// Ruler tracks (reference manual p. 159): where their ruler counts from while timeOffsetOn, in the track's time
+		// base (ticks or samples); while it is off, the ruler follows the project setup's start time and bar offset.
+		int64_t timeOffset = 0;
+		bool timeOffsetOn = false;
 		// Audio and instrument tracks: what plays while the track is frozen, or none. Initialized like picture.
 		// NOLINTNEXTLINE(readability-redundant-member-init): see above
 		std::optional<Freeze> frozen = {};
@@ -1083,9 +1087,9 @@ namespace gnubase::engine
 	inline bool operator==(const Track& a, const Track& b)
 	{
 		return std::tie(a.id, a.type, a.name, a.color, a.timeBase, a.parent, a.channel, a.children, a.autoFades,
-				   a.timeFormat, a.enabled, a.picture, a.frozen, a.drumMap) ==
+				   a.timeFormat, a.enabled, a.picture, a.timeOffset, a.timeOffsetOn, a.frozen, a.drumMap) ==
 			std::tie(b.id, b.type, b.name, b.color, b.timeBase, b.parent, b.channel, b.children, b.autoFades,
-				b.timeFormat, b.enabled, b.picture, b.frozen, b.drumMap);
+				b.timeFormat, b.enabled, b.picture, b.timeOffset, b.timeOffsetOn, b.frozen, b.drumMap);
 	}
 	// Where an audio event plays, in the project's samples (fadeedits.cpp).
 	struct EventSpan

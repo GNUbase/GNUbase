@@ -4,6 +4,7 @@
 #include "uiapp.h"
 
 #include "engine/engine.h"
+#include "engine/time/tempomap.h"
 #include "mcp/server.h"
 #include "ui/automation.h"
 
@@ -147,6 +148,14 @@ TEST_CASE("the add track dialog adds every track type as MCP's track_add does", 
 	page(app, "ruler");
 	CHECK(elements(app, "#track-name").empty());
 	choose(app, "#track-time-format", 2); // timecode, after Bars+Beats and Seconds
+	// A time offset that isn't a timecode keeps the dialog open with a message; a second is two beats.
+	click(app, "#track-time-offset");
+	app.ui().text(std::nullopt, "x");
+	click(app, "#add-track-confirm");
+	CHECK_THAT(elements(app, "#add-track-message").at(0).value("text", ""), ContainsSubstring("time offset"));
+	click(app, "#track-time-offset");
+	app.ui().key(std::nullopt, "Ctrl+A");
+	app.ui().text(std::nullopt, "00:00:01:00");
 	click(app, "#add-track-confirm");
 	CHECK(open(app));
 	CHECK(elements(app, "#add-track-message").at(0).value("text", "").empty());
@@ -169,7 +178,9 @@ TEST_CASE("the add track dialog adds every track type as MCP's track_add does", 
 		mcp.call("track_add", {{"type", "midi"}, {"output", synth.at("channel").at("id")}});
 	mcp.call("track_add", {{"type", "effect"}, {"format", "stereo"}, {"output", group.at("channel").at("id")}});
 	mcp.call("track_add", {{"type", "marker"}, {"name", "Song"}});
-	mcp.call("track_add", {{"type", "ruler"}, {"timeFormat", "timecode"}});
+	mcp.call("track_add",
+		{{"type", "ruler"}, {"timeFormat", "timecode"}, {"timeOffset", 2 * time::g_ticksPerQuarter},
+			{"timeOffsetOn", true}});
 
 	const Json expected = mcp.call("project_get");
 	const Json actual = app.call("project.get");
