@@ -102,12 +102,7 @@ sends engine commands, so whatever another client changes shows at once.
   `track.duplicateSelected`, `track.disableSelected`, `track.enableSelected`), each one undo step: Remove Empty
   Tracks is the engine command `track.removeEmpty` (#630), which the menus and key commands run like any engine
   command, the others are UI commands that send a `history.transaction`.
-  Before Remove Selected Tracks removes tracks that aren't empty, which hold events, parts, markers or automation or
-  are folders with such tracks inside, it asks (`resources/ui/remove-tracks.rml`): Remove removes them, Cancel or
-  Escape keeps them, and Remove with "Don't show this warning again" checked also turns the user setting
-  `ui.removeTracksWarning` (Display Warning before Deleting Non-Empty Tracks, on by default) off, which any client
-  can turn on again with `settings.set`. The engine finds the empty tracks in its
-  current project, so a Lua script or MCP client gets the same result without the UI, and the list's copy of the
+  The engine finds the empty tracks in its current project, so a Lua script or MCP client gets the same result without the UI, and the list's copy of the
   project, which can be behind a change from another client, doesn't decide. Empty tracks are
   audio, instrument, MIDI and marker tracks without events, parts, markers or automation, and folders without tracks,
   unless another track's channel outputs or sends to theirs; group and effect tracks are where others play through,
@@ -116,6 +111,12 @@ sends engine commands, so whatever another client changes shows at once.
   channel, nested or not) that held only empty tracks, so it looks again until nothing more goes: one run leaves no
   empty tracks, in one undo step, and none if nothing is empty. It removes a folder with one `track.remove`, which
   takes the tracks inside along, and returns every track removed.
+  Remove Selected Tracks asks first when a track it removes holds something (`resources/ui/remove-tracks.rml`): the
+  list decides from its copy of the project, by content alone, so a track with events, parts, markers or automation,
+  or a folder with such a track inside, warns, whatever plays into it. Remove removes them, Cancel or Escape keeps
+  them, and Remove with "Don't show this warning again" checked also turns the user setting `ui.removeTracksWarning`
+  (Display Warning before Deleting Non-Empty Tracks, on by default) off, which any client can turn on again with
+  `settings.set`.
 - **Freeze and render in place** (pp. 219-220, 1471-1477): the context menu's Freeze/Unfreeze Selected Tracks
   (`track.freezeSelected`) freezes the selected audio and instrument tracks that aren't frozen, or unfreezes them when
   every one is; a frozen track's row has `.frozen`, which the themes show like a disabled one. Edit > Render in Place
@@ -161,7 +162,8 @@ New Folder are in [folder-tracks.md](folder-tracks.md).
   Shift-click deselecting, the arrow keys and the key commands; Up, Down and Alt+F2 pressed with the focus in the
   event display and in the list, selecting the first part on the new track or keeping the parts selected on an
   empty one, Shift+Up in the list, and `ui.upDownSelectsTracksOnly`; the warning before removing tracks that aren't
-  empty, also folders for the tracks inside, with Cancel, Escape, Remove, one undo step, "Don't show this warning
+  empty, for a track per kind of content (audio events, audio parts, MIDI parts, markers, automation) and folders for
+  the tracks inside, with Cancel, Escape, Remove, one undo step, "Don't show this warning
   again" and `ui.removeTracksWarning` from another client; renaming with Enter and Escape; moving by a drag and undoing it; heights by a
   drag, with Ctrl for all; the wheel; folding from the toggle and the commands, in the event display too; duplicating,
   disabling, enabling and removing from the context menu and the commands; the settings dialog's Add, Remove,

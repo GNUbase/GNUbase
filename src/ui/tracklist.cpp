@@ -486,7 +486,8 @@ namespace gnubase::ui
 			index[row.id] = tracks.size();
 			tracks.push_back(row);
 		}
-		// What Remove Selected Tracks warns about.
+		// What Remove Selected Tracks warns about: the kinds the engine's track.removeEmpty counts as content too
+		// (emptyTracks in src/engine/document/projectmodel.cpp); change both together.
 		for (const char* kind : {"audioEvents", "audioParts", "midiParts", "markers", "automation"})
 			for (const Json& item : project.at(kind))
 				if (const auto track = index.find(item.at("track").get<uint64_t>()); track != index.end())

@@ -385,6 +385,48 @@ TEST_CASE(
 	CHECK(tracks.order() == std::vector<uint64_t>{full});
 }
 
+TEST_CASE("Remove Selected Tracks warns for every kind of content, each on a track that holds only that", "[ui]")
+{
+	Tracks tracks;
+	const uint64_t event = tracks.add({{"type", "audio"}, {"name", "Event"}});
+	const uint64_t media =
+		tracks.app
+			.call(
+				"media.add", {{"path", "/audio/loop.wav"}, {"sampleRate", 48000.0}, {"channels", 2}, {"length", 96000}})
+			.at("media")
+			.at("id")
+			.get<uint64_t>();
+	tracks.app.call("audioEvent.add",
+		{{"track", event}, {"clip", tracks.app.call("clip.add", {{"media", media}}).at("clip").at("id")},
+			{"position", 0}});
+	const uint64_t audioPart = tracks.add({{"type", "audio"}, {"name", "Audio part"}});
+	tracks.app.call("audioPart.add", {{"track", audioPart}, {"position", 0}, {"length", 1000}});
+	const uint64_t midiPart = tracks.add({{"type", "midi"}, {"name", "MIDI part"}});
+	tracks.app.call("midiPart.add", {{"track", midiPart}, {"position", 0}, {"length", 1000}});
+	const uint64_t markers = tracks.add({{"type", "marker"}, {"name", "Markers"}});
+	tracks.app.call("marker.add", {{"track", markers}, {"position", 0}});
+	const uint64_t automated = tracks.add({{"type", "audio"}, {"name", "Automation"}});
+	tracks.app.call("automationLane.add", {{"track", automated}, {"target", {{"type", "volume"}}}});
+	tracks.rows(5);
+	const std::vector<uint64_t> all = tracks.order();
+	const auto warning = [&tracks] { return elements(tracks.app, "#remove-tracks-dialog"); };
+	REQUIRE(tracks.app.waitUntil([&] { return tracks.list.warnsBeforeRemoving(); }));
+
+	// Each one alone asks first; Escape keeps it.
+	for (const uint64_t track : all)
+	{
+		INFO(tracks.track(track).at("name").get<std::string>());
+		tracks.click(row(track) + " .track-name");
+		REQUIRE(tracks.list.selection() == std::vector<uint64_t>{track});
+		tracks.app.keys().run("track.removeSelected", Json::object(), tracks.app.main(), nullptr);
+		tracks.app.shell().step(std::chrono::milliseconds(0));
+		REQUIRE(warning().size() == 1);
+		tracks.app.ui().key(std::nullopt, "Escape");
+		REQUIRE(tracks.app.waitUntil([&] { return warning().empty(); }));
+		CHECK(tracks.order() == all);
+	}
+}
+
 TEST_CASE(
 	"track heights follow drags of a row's lower edge, with Ctrl every track's, and the wheel scrolls the list", "[ui]")
 {
