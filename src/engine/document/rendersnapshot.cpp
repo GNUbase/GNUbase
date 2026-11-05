@@ -54,9 +54,8 @@ namespace gnubase::engine
 					continue;
 				// A note moved before its part's start, or the project's, starts there, with its length: the part plays
 				// only what lies in it.
-				const time::Ticks position =
-					std::max(note.position + midi::randomOffset(modifiers, midi::RandomTarget::Position, seed),
-						std::max<time::Ticks>(0, -start));
+				const time::Ticks position = std::max<time::Ticks>(
+					{note.position + midi::randomOffset(modifiers, midi::RandomTarget::Position, seed), 0, -start});
 				if (position >= end - start) // moved out of the part
 					continue;
 				const time::Ticks length = note.length > 0 ? midi::modifyLength(modifiers, seed, note.length) : 0;

@@ -139,5 +139,6 @@ which is in the project window's document, doesn't open, waits for #517.
   section's bypass, values, a fraction's denominator, a generator's target with positions in ticks, a range the engine
   refuses, changes from another client with undo, and an audio track without it. A drag of the
   inspector's volume up to the project's maximum, wheel turns on the pan and a drag of the info line's volume are one
-  undo step each.
+  undo step each, and a MIDI modifier and a part's transpose dragged back to where they started while the engine
+  answers late end there.
 - `tests/mixerwindow_tests.cpp`: a drag of a mixer fader is one undo step.

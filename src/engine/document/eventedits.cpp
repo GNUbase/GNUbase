@@ -2273,7 +2273,8 @@ namespace gnubase::engine
 				"holding all their events. MIDI parts become the first of them, from the first start to the last "
 				"end, with all their notes and controllers; it keeps its transpose and velocity, and the notes of the "
 				"others get the difference of their part's transpose and velocity to them, so that they play as "
-				"before (refused if that would transpose a note beyond 0 to 127). Returns the event or part.",
+				"before as far as velocities from 1 to 127 allow (refused if that would transpose a note beyond 0 to "
+				"127). Returns the event or part.",
 				schema({{"events", events()}}, {"events"}), schema({{"event", integer()}}, {"event"}), false},
 			"Glue", glueEvents);
 

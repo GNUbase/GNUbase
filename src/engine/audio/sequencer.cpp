@@ -221,11 +221,10 @@ namespace gnubase::engine
 		{
 			auto ends = static_cast<uint16_t>(g_notes);
 			const bool plays = modifyInput(sequence.modifiers, event, ends);
-			if (ends != g_notes)
-			{
-				context.eventsOut.add(noteEvent(graph::ProcessEvent::Type::NoteOff, ends, event.offset));
+			// Still held if the buffer was full: then a stop ends it.
+			if (ends != g_notes &&
+				context.eventsOut.add(noteEvent(graph::ProcessEvent::Type::NoteOff, ends, event.offset)))
 				m_inputHeld[ends] = false;
-			}
 			if (!plays)
 				continue;
 			context.eventsOut.add(event);

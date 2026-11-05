@@ -68,10 +68,17 @@ namespace gnubase::ui
 		// The MIDI modifiers (pp. 1099-1102): their controls are named after the channel's modifiers in channel.set,
 		// "modifiers-" then the key, separated by dashes, with the index of a pair and the field of a generator or
 		// range.
-		const Options g_randomTargets = {{"off", "Off"}, {"position", "Position"}, {"pitch", "Pitch"},
-			{"velocity", "Velocity"}, {"length", "Length"}};
-		const Options g_rangeTargets = {{"off", "Off"}, {"velocityLimit", "Vel. Limit"},
-			{"velocityFilter", "Vel. Filter"}, {"noteLimit", "Note Limit"}, {"noteFilter", "Note Filter"}};
+		Options randomTargets()
+		{
+			return {{"off", "Off"}, {"position", "Position"}, {"pitch", "Pitch"}, {"velocity", "Velocity"},
+				{"length", "Length"}};
+		}
+
+		Options rangeTargets()
+		{
+			return {{"off", "Off"}, {"velocityLimit", "Vel. Limit"}, {"velocityFilter", "Vel. Filter"},
+				{"noteLimit", "Note Limit"}, {"noteFilter", "Note Filter"}};
+		}
 
 		// Random positions and lengths show in ticks of 480 to a quarter note, as the reference's do; the engine's
 		// are finer.
@@ -110,8 +117,12 @@ namespace gnubase::ui
 					const std::string name = std::string(kind) + "-" + std::to_string(i);
 					const std::string label = std::string(random ? "Random " : "Range ") + std::to_string(i + 1);
 					const int low = random ? -127 : 0; // ranges: velocities or pitches
-					rml += row(name, label,
-						R"(<select control="modifiers-)" + name + R"(-target" title=")" + label + R"( Target"/>)");
+					std::string select = R"(<select control="modifiers-)";
+					select += name;
+					select += R"(-target" title=")";
+					select += label;
+					select += R"( Target"/>)";
+					rml += row(name, label, select);
 					rml += row(name + "-values", "",
 						integerField(name + "-minimum", low, 127, 0, "Minimum") +
 							integerField(name + "-maximum", low, 127, random ? 0 : 127, "Maximum"));
@@ -381,7 +392,7 @@ namespace gnubase::ui
 			const size_t index = path.size() > 1 && path[1] == "1" ? 1 : 0;
 			if (path.size() == 3 && path[2] == "target")
 			{
-				widgets::fill(*control, path[0] == "random" ? g_randomTargets : g_rangeTargets,
+				widgets::fill(*control, path[0] == "random" ? randomTargets() : rangeTargets(),
 					value.at(index).at("target").get<std::string>());
 				continue;
 			}
@@ -411,7 +422,7 @@ namespace gnubase::ui
 			}
 			// Not while the project is older than the field's own steps (#716).
 			if (!m_binding.ahead(stepKey(m_stepOwner, m_channel.at("id"), name), m_read))
-				setAttribute(*control, "value", widgets::format(static_cast<float>(std::round(shown))));
+				setAttribute(*control, "value", widgets::format(static_cast<float>(std::round(shown) + 0.0))); // not -0
 		}
 	}
 
@@ -552,7 +563,9 @@ namespace gnubase::ui
 			pair[index][path[2]] = value;
 			modifiers[key] = std::move(pair);
 		}
-		// What it is already, such as a value typed again: no undo step.
+		// What it is already, such as a value typed again: no undo step. Not during a gesture, whose earlier steps the
+		// channel shown may not have yet: a drag back to where it started must still send that value.
+		const int gesture = event.GetParameter<int>("gesture", 0);
 		Json changed = current;
 		if (path.size() == 1)
 			changed[key] = value;
@@ -560,14 +573,14 @@ namespace gnubase::ui
 			changed[key][index] = value;
 		else
 			changed[key][index][path[2]] = value;
-		if (changed == current)
+		if (gesture == 0 && changed == current)
 			return;
 		// A drag, wheel turns or a held arrow key: one undo step.
 		const Json channel = m_channel.at("id");
 		const Json step = {
 			{"command", "channel.set"}, {"parameters", {{"channel", channel}, {"modifiers", std::move(modifiers)}}}};
-		m_binding.sendStep(event.GetParameter<int>("gesture", 0), stepKey(m_stepOwner, channel, control),
-			"Change MIDI Modifiers", Json::array({step}), whenRefused());
+		m_binding.sendStep(gesture, stepKey(m_stepOwner, channel, control), "Change MIDI Modifiers",
+			Json::array({step}), whenRefused());
 	}
 
 	void Inspector::sendChannel(Json parameters)

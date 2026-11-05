@@ -485,7 +485,9 @@ namespace gnubase::ui
 					const uint64_t id = event.at("id").get<uint64_t>();
 					const int own = partValue(id, field.c_str());
 					const int value = std::clamp(m_absolute ? typed : own + change, -127, 127);
-					if (value != own)
+					// During a gesture the project may not have its earlier steps yet: a drag back to where it
+					// started still sends that value.
+					if (value != own || gesture != 0)
 						commands.push_back(
 							{{"command", "midiPart.set"}, {"parameters", {{"part", id}, {field, value}}}});
 				}
