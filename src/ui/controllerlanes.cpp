@@ -560,20 +560,22 @@ namespace gnubase::ui
 					menuItem(*menu.get(), *item);
 				return;
 			}
-		if (m_view.empty())
+		if (event.GetId() == Rml::EventId::Mousedown && event.GetCurrentElement() == m_document.get())
+		{
+			// A left press anywhere in the document while a gesture goes on: the gesture's mouseup never came, as when
+			// the mouse went up outside the window. It ends without its effect before anything hears the press.
+			if (event.GetParameter("button", 0) == 0)
+				cancel();
 			return;
+		}
+		if (m_view.empty())
+		{
+			cancel();
+			return;
+		}
 		switch (event.GetId())
 		{
 		case Rml::EventId::Mousedown:
-			if (event.GetCurrentElement() == m_document.get())
-			{
-				// A left press anywhere in the document while a gesture goes on: the gesture's mouseup never came, as
-				// when the mouse went up outside the window. It ends without its effect before anything hears the
-				// press.
-				if (event.GetParameter("button", 0) == 0)
-					cancel();
-				break;
-			}
 			if (const Rml::Element* button = withAttribute(target, "lane-menu", m_root.get()))
 				m_menuLane = static_cast<size_t>(std::stoul(attribute(*button, "lane-menu")));
 			else if (event.GetParameter("button", 0) == 0)
@@ -969,7 +971,8 @@ namespace gnubase::ui
 			edit("Draw values", std::move(commands));
 			return;
 		}
-		const Part* part = partAt(m_painted.front().first);
+		// The part where the paint started, wherever it ended.
+		const Part* part = partAt(std::llround(m_pressedAt.first));
 		if (part == nullptr)
 			return;
 		// An event at every step from the first point to the last, or only where the mouse went with snap off.
