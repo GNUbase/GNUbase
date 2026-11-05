@@ -76,27 +76,40 @@ namespace gnubase::engine
 			return range;
 		}
 
-		// Reads the frames of a media file from range.start to range.end in blocks of interleaved frames: feed(frames,
-		// count) with the file's channels.
-		template <typename Feed> int readRange(const MediaFile& media, Range range, Feed feed)
+		std::unique_ptr<AudioFileReader> openMedia(const MediaFile& media)
 		{
 			try
 			{
-				const std::unique_ptr<AudioFileReader> reader = AudioFileReader::open(media.path);
-				const int channels = std::max(reader->info().channels, 1);
-				feed(nullptr, 0, channels); // tells the channels first
-				reader->seek(range.start);
-				std::vector<float> buffer(g_readFrames * static_cast<size_t>(channels));
+				return AudioFileReader::open(media.path);
+			}
+			catch (const AudioFileError& error)
+			{
+				throw CommandError("can't read " + media.path + ": " + error.what());
+			}
+		}
+
+		int channelsOf(const AudioFileReader& reader)
+		{
+			return std::max(reader.info().channels, 1);
+		}
+
+		// Reads the frames of a media file from range.start to range.end in blocks of interleaved frames: feed(frames,
+		// count).
+		template <typename Feed> void readRange(AudioFileReader& reader, const MediaFile& media, Range range, Feed feed)
+		{
+			try
+			{
+				reader.seek(range.start);
+				std::vector<float> buffer(g_readFrames * static_cast<size_t>(channelsOf(reader)));
 				for (time::Samples at = range.start; at < range.end;)
 				{
 					const auto wanted = static_cast<size_t>(std::min<time::Samples>(g_readFrames, range.end - at));
-					const size_t read = reader->read(buffer.data(), wanted);
+					const size_t read = reader.read(buffer.data(), wanted);
 					if (read == 0)
 						break;
-					feed(buffer.data(), read, channels);
+					feed(buffer.data(), read);
 					at += static_cast<time::Samples>(read);
 				}
-				return channels;
 			}
 			catch (const AudioFileError& error)
 			{
@@ -131,15 +144,11 @@ namespace gnubase::engine
 		std::vector<analysis::Section> detectSilence(
 			const MediaFile& media, Range range, const analysis::SilenceSettings& settings)
 		{
-			std::optional<analysis::SilenceDetector> detector;
-			readRange(media, range,
-				[&](const float* frames, size_t count, int channels)
-				{
-					if (!detector)
-						detector.emplace(media.sampleRate, channels, settings);
-					detector->feed(frames, count);
-				});
-			std::vector<analysis::Section> sections = detector->finish();
+			const std::unique_ptr<AudioFileReader> reader = openMedia(media);
+			analysis::SilenceDetector detector(media.sampleRate, channelsOf(*reader), settings);
+			readRange(*reader, media, range,
+				[&detector](const float* frames, size_t count) { detector.feed(frames, count); });
+			std::vector<analysis::Section> sections = detector.finish();
 			for (analysis::Section& section : sections)
 			{
 				section.start += range.start;
@@ -338,12 +347,12 @@ namespace gnubase::engine
 				const Clip& clip = clipOf(project, parameters);
 				const Range range = rangeOf(project, clip, parameters);
 				const MediaFile& media = project.media.at(clip.media);
-				std::vector<analysis::PowerSpectrum> spectra;
-				readRange(media, range,
-					[&spectra](const float* frames, size_t count, int channels)
+				const std::unique_ptr<AudioFileReader> reader = openMedia(media);
+				std::vector<analysis::PowerSpectrum> spectra(static_cast<size_t>(channelsOf(*reader)));
+				readRange(*reader, media, range,
+					[&spectra](const float* frames, size_t count)
 					{
-						spectra.resize(static_cast<size_t>(channels));
-						for (size_t c = 0; c < spectra.size() && frames != nullptr; ++c)
+						for (size_t c = 0; c < spectra.size(); ++c)
 							spectra[c].feed(frames + c, count, spectra.size());
 					});
 				Json frequencies = Json::array();
@@ -412,11 +421,14 @@ namespace gnubase::engine
 				const Clip& clip = clipOf(project, parameters);
 				const Range range = rangeOf(project, clip, parameters);
 				const MediaFile& media = project.media.at(clip.media);
-				std::optional<analysis::StatisticsMeter> meter;
+				const std::unique_ptr<AudioFileReader> reader = openMedia(media);
+				const auto channelCount = static_cast<size_t>(channelsOf(*reader));
+				analysis::StatisticsMeter meter(media.sampleRate, static_cast<int>(channelCount));
 				LoudnessMeter loudness;
 				loudness.prepare(media.sampleRate);
-				std::vector<std::vector<float>> planar;
+				std::vector<std::vector<float>> planar(std::min<size_t>(channelCount, g_maxMeterChannels));
 				int64_t frames = 0;
+				// The loudness meter's channels of interleaved frames, or silence without them.
 				const auto measure = [&](const float* samples, size_t count, bool measuring)
 				{
 					std::vector<const float*> pointers;
@@ -424,23 +436,16 @@ namespace gnubase::engine
 					{
 						planar[c].resize(count);
 						for (size_t i = 0; i < count; ++i)
-							planar[c][i] = samples != nullptr ? samples[(i * planar.size()) + c] : 0.0F;
+							planar[c][i] = samples != nullptr ? samples[(i * channelCount) + c] : 0.0F;
 						pointers.push_back(planar[c].data());
 					}
 					loudness.process(
 						pointers.data(), static_cast<int>(planar.size()), static_cast<uint32_t>(count), measuring);
 				};
-				readRange(media, range,
-					[&](const float* samples, size_t count, int channels)
+				readRange(*reader, media, range,
+					[&](const float* samples, size_t count)
 					{
-						if (!meter)
-						{
-							meter.emplace(media.sampleRate, channels);
-							planar.resize(static_cast<size_t>(std::min(channels, g_maxMeterChannels)));
-						}
-						if (count == 0)
-							return;
-						meter->feed(samples, count);
+						meter.feed(samples, count);
 						measure(samples, count, true);
 						frames += static_cast<int64_t>(count);
 					});
@@ -458,7 +463,7 @@ namespace gnubase::engine
 					for (size_t c = 0; c < planar.size(); ++c)
 						truePeaks[c] = std::max(truePeaks[c], after.truePeak[c]);
 				}
-				const std::vector<analysis::ChannelStatistics> statistics = meter->finish();
+				const std::vector<analysis::ChannelStatistics> statistics = meter.finish();
 				const auto aes17 = [frames](double rms)
 				{ return frames == 0 ? Json(nullptr) : decibels(rms * std::sqrt(2.0)); };
 				Json channels = Json::array();
