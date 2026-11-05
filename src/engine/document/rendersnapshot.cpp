@@ -52,9 +52,11 @@ namespace gnubase::engine
 				uint16_t velocity = midi::playedVelocity(note, part.id);
 				if (!midi::modifyNote(modifiers, seed, pitch, velocity))
 					continue;
-				// A note moved before the project's start starts there.
-				const time::Ticks position =
-					std::max(note.position + midi::randomOffset(modifiers, midi::RandomTarget::Position, seed), -start);
+				// A note moved before its part's start, or the project's, starts there, with its length: the part plays
+				// only what lies in it.
+				const time::Ticks moved =
+					note.position + midi::randomOffset(modifiers, midi::RandomTarget::Position, seed);
+				const time::Ticks position = std::max({moved, time::Ticks{0}, -start});
 				if (position >= end - start) // moved out of the part
 					continue;
 				const time::Ticks length = note.length > 0 ? midi::modifyLength(modifiers, seed, note.length) : 0;

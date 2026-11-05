@@ -142,6 +142,9 @@ namespace gnubase::ui
 			m_binding.send("history.transaction",
 				{{"description", "Delete Automation Points"}, {"commands", std::move(commands)}});
 		};
+		// Virgin territory isn't an undo step: the curves show their gaps anew when the settings change.
+		m_subscriptions.push_back(
+			m_binding.on("automation.changed", [this](const engine::Event&) { requestProject(); }));
 	}
 
 	void EventDisplay::readAutomation(const Json& project)
@@ -169,7 +172,8 @@ namespace gnubase::ui
 					lane.linear ? static_cast<double>(position) / m_time.sampleRate : m_time.tempo.toSeconds(position);
 				lane.ids.push_back(point.at("id").get<uint64_t>());
 				lane.points.push_back({seconds, displayValue(lane.info, point.at("value").get<double>()),
-					shapeOf(point.at("shape").get<std::string>()), point.value("curve", 0.0), false});
+					shapeOf(point.at("shape").get<std::string>()), point.value("curve", 0.0), false,
+					point.value("terminator", false)});
 			}
 			lanes[lane.id] = std::move(lane);
 		}
@@ -446,6 +450,7 @@ namespace gnubase::ui
 				for (size_t i = 0; i < points.size(); ++i)
 					points[i].selected = selected != m_selectedPoints.end() && selected->second.count(lane.ids[i]) != 0;
 				curve->setPoints(std::move(points), true);
+				curve->setVirginTerritory(m_project.is_object() && m_project.value("virginTerritory", false));
 			}
 		}
 		showPointSelection();

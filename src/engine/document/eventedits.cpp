@@ -11,6 +11,7 @@
 #include "engine/document/rendersnapshot.h"
 #include "engine/document/serialize.h"
 #include "engine/engine.h"
+#include "engine/midi/midivalues.h"
 
 #include <algorithm>
 #include <cmath>
@@ -980,6 +981,18 @@ namespace gnubase::engine
 			else
 			{
 				MidiPart& part = *first.part;
+				// Each part's transpose and velocity (reference manual p. 1107) stay in the sound of its notes: the
+				// glued part keeps the first one's, and the notes of the others get the difference to them. A note
+				// the difference would move beyond 0 to 127 can't keep its pitch, so the glue is refused.
+				for (size_t i = 1; i < items.size(); ++i)
+				{
+					const MidiPart& other = *items[i].part;
+					const int transpose = other.transpose - part.transpose;
+					for (const auto& [id, note] : other.notes)
+						require(note.pitch + transpose >= 0 && note.pitch + transpose <= 127,
+							"a note of MIDI part " + std::to_string(other.id) +
+								" would be transposed beyond 0 to 127 by the difference of the parts' transpose");
+				}
 				detach(project, part);
 				const time::Ticks start = ticks(project, part.position);
 				int64_t end = part.position.value + part.length;
@@ -988,11 +1001,18 @@ namespace gnubase::engine
 					const MidiPart& other = *items[i].part;
 					end = std::max(end, other.position.value + other.length);
 					const time::Ticks offset = ticks(project, other.position) - start;
+					const int transpose = other.transpose - part.transpose;
+					const int velocity = other.velocity - part.velocity;
 					for (const auto& [id, each] : other.notes)
 					{
 						Note note = each;
 						note.id = project.newId();
 						note.position += offset;
+						note.pitch = static_cast<uint8_t>(note.pitch + transpose);
+						// As the velocity shift plays it: in MIDI 1.0 velocities, from 1 to 127.
+						if (velocity != 0)
+							note.velocity = midi::velocityFromMidi1(static_cast<uint8_t>(
+								std::clamp(midi::velocityToMidi1(note.velocity) + velocity, 1, 127)));
 						part.notes[note.id] = note;
 					}
 					for (const auto& [id, each] : other.controllers)
@@ -1488,12 +1508,16 @@ namespace gnubase::engine
 		// Takes the automation between from and to out of a lane and keeps the curve outside: the value it arrives
 		// at from with holds up to to, where the curve goes on. With virgin territory the range becomes a gap instead
 		// (reference manual p. 881): the point at from is a terminator. Closing the gap moves the points after it back
-		// instead. Points at to make way for one that has their value and shape. Edges in gaps stay in them.
+		// instead. Points at to make way for one that has their value and shape. Edges in gaps stay in them. A range
+		// without points in it is automation too where the curve goes across it, between two points outside a gap.
 		// ponytail: a curve shaped point at an edge keeps its bend over the shorter rest of its segment.
 		void cutAutomation(
 			Project& project, AutomationLane& lane, int64_t from, int64_t to, bool close, CommandContext& context)
 		{
-			if (!anyPoint(lane, from, close ? std::numeric_limits<int64_t>::max() : to))
+			constexpr int64_t endless = std::numeric_limits<int64_t>::max();
+			const bool across = anyPoint(lane, std::numeric_limits<int64_t>::min(), from) &&
+				anyPoint(lane, to, endless) && !inGap(project, lane, from, true);
+			if (!anyPoint(lane, from, close ? endless : to) && !across)
 				return;
 			const time::TimeBase base = project.trackById.at(lane.track).timeBase;
 			const double left = valueAt(lane, from, true);
@@ -2292,7 +2316,10 @@ namespace gnubase::engine
 				"other in the same clip, as after a split, become one event; other audio events and audio parts "
 				"become one audio part from the first start to the last end, the first of the parts or a new one, "
 				"holding all their events. MIDI parts become the first of them, from the first start to the last "
-				"end, with all their notes and controllers. Returns the event or part.",
+				"end, with all their notes and controllers; it keeps its transpose and velocity, and the notes of the "
+				"others get the difference of their part's transpose and velocity to them, so that they play as "
+				"before as far as velocities from 1 to 127 allow (refused if that would transpose a note beyond 0 to "
+				"127). Returns the event or part.",
 				schema({{"events", events()}}, {"events"}), schema({{"event", integer()}}, {"event"}), false},
 			"Glue", glueEvents);
 
@@ -2421,8 +2448,11 @@ namespace gnubase::engine
 			{"range.delete", 1,
 				"Deletes what lies in " + range +
 					": the audio events and MIDI parts in it, cut at its edges (splitNotes as in range.split), and the "
-					"automation points in it. The automation outside keeps its curve: the value it arrives at the "
-					"start with holds up to the end. time (Delete Time) closes the gap: what comes after the range on "
+					"automation in it: its points, and the curve between two points that goes across it. The "
+					"automation "
+					"outside keeps its curve: the value it arrives at the start with holds up to the end; with virgin "
+					"territory (automation.set) the range becomes a gap instead, the point at its start a terminator. "
+					"time (Delete Time) closes the gap: what comes after the range on "
 					"its tracks moves back by its length, in ticks on musical tracks. Locked events stay.",
 				schema(withTime, {}), {{"type", "object"}}, false},
 			"Delete",
