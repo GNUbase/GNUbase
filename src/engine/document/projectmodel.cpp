@@ -1469,6 +1469,78 @@ namespace gnubase::engine
 			return Json::object();
 		}
 
+		// The tracks track.removeEmpty removes (docs/features/track-list.md): audio, instrument, MIDI and marker
+		// tracks without events, parts, markers or automation, and folders without tracks, unless a channel of
+		// another track plays or sends into theirs. Group and effect tracks are where others play through, VCA
+		// tracks control channels, ruler, tempo and signature tracks hold no events. What goes can leave others
+		// empty, such as a folder that held only empty tracks or an instrument track that only empty MIDI tracks
+		// played, so it looks again until nothing more goes.
+		std::set<ObjectId> emptyTracks(const Project& project)
+		{
+			std::set<ObjectId> holding;
+			const auto hold = [&holding](const auto& objects)
+			{
+				for (const auto& item : objects)
+					holding.insert(item.second.track);
+			};
+			hold(project.audioEvents);
+			hold(project.audioParts);
+			hold(project.midiParts);
+			hold(project.markers);
+			hold(project.automation);
+			std::set<ObjectId> gone;
+			size_t before = 0;
+			do
+			{
+				before = gone.size();
+				std::set<ObjectId> filled; // folders with tracks that stay
+				std::set<ObjectId> played; // channels that tracks that stay play or send into
+				for (const auto& [id, track] : project.trackById)
+				{
+					if (gone.count(id) != 0)
+						continue;
+					filled.insert(track.parent);
+					if (track.channel == 0)
+						continue;
+					const Channel& channel = project.channels.at(track.channel);
+					played.insert(channel.output);
+					for (const Send& send : channel.sends)
+						played.insert(send.destination);
+				}
+				for (const auto& [id, track] : project.trackById)
+				{
+					const bool kind = track.type == TrackType::Audio || track.type == TrackType::Instrument ||
+						track.type == TrackType::Midi || track.type == TrackType::Marker ||
+						track.type == TrackType::Folder;
+					if (kind && holding.count(id) == 0 && filled.count(id) == 0 &&
+						(track.channel == 0 || played.count(track.channel) == 0))
+						gone.insert(id);
+				}
+			} while (gone.size() != before);
+			return gone;
+		}
+
+		Json removeEmptyTracks(Project& project, CommandContext& context)
+		{
+			const std::set<ObjectId> gone = emptyTracks(project);
+			Json removed = Json::array();
+			std::vector<ObjectId> top; // a folder takes the tracks inside it along
+			for (const ObjectId id : project.trackOrder())
+				if (gone.count(id) != 0)
+				{
+					removed.push_back(id);
+					if (gone.count(project.trackById.at(id).parent) == 0)
+						top.push_back(id);
+				}
+			for (const ObjectId id : top)
+			{
+				const Json parameters = {{"track", id}}; // the context keeps a reference
+				CommandContext inner(parameters, &context);
+				removeTrack(project, inner);
+			}
+			return Json{{"tracks", std::move(removed)}};
+		}
+
 		// channel.set's sends: each changes what it has of the send with its number.
 		void setSends(const Project& project, Channel& changed, const Json& sends)
 		{
@@ -1712,6 +1784,19 @@ namespace gnubase::engine
 				try
 				{
 					changed.sections = sectionsFromJson(parameters, changed.sections);
+				}
+				catch (const std::invalid_argument& error)
+				{
+					throw CommandError(error.what());
+				}
+			}
+			if (parameters.contains("modifiers"))
+			{
+				require(type == TrackType::Midi || type == TrackType::Instrument,
+					"only MIDI and instrument tracks have modifiers");
+				try
+				{
+					changed.modifiers = modifiersFromJson(parameters.at("modifiers"), changed.modifiers);
 				}
 				catch (const std::invalid_argument& error)
 				{
@@ -2483,6 +2568,14 @@ namespace gnubase::engine
 			part.position = newPosition;
 			part.length = length;
 			part.name = parameters.value("name", part.name);
+			for (const auto& [key, value] :
+				{std::pair{"transpose", &part.transpose}, std::pair{"velocity", &part.velocity}})
+				if (parameters.contains(key))
+				{
+					const auto number = parameters.at(key).get<int64_t>();
+					requireRange(number, -127, 127, key);
+					*value = static_cast<int>(number);
+				}
 			Json result = {{"part", toJson(part)}};
 			context.emit("midiPart.changed", result);
 			return result;
@@ -2756,6 +2849,7 @@ namespace gnubase::engine
 			{"track.set", "Change track"},
 			{"track.move", "Move track"},
 			{"track.remove", "Remove track"},
+			{"track.removeEmpty", "Remove empty tracks"},
 			{"track.duplicate", "Duplicate track"},
 			{"channel.set", "Change channel"},
 			{"channel.deactivateAll", "Deactivate all states"},
@@ -3547,6 +3641,19 @@ namespace gnubase::engine
 				objectSchema({{"track", idSchema}}, {"track"}), noResult, false},
 			removeTrack);
 		add(engine,
+			{"track.removeEmpty", 1,
+				"Removes the empty tracks (Remove Empty Tracks, reference manual p. 213): audio, instrument, MIDI and "
+				"marker tracks without events, parts, markers or automation, and folders without tracks, unless "
+				"another track's channel plays or sends into theirs (an instrument track a MIDI track plays, a "
+				"folder's group channel). Group, effect, VCA, ruler, tempo and signature tracks stay. What it removes "
+				"can leave others empty, such as a folder that held only empty tracks, so it looks again until no "
+				"empty track is left. One undo step; none if nothing is empty. Returns the tracks removed, from top "
+				"to bottom, with those inside removed folders.",
+				objectSchema(Json::object()),
+				Json{{"type", "object"}, {"properties", {{"tracks", arraySchema(idSchema)}}}, {"required", {"tracks"}}},
+				false},
+			removeEmptyTracks);
+		add(engine,
 			{"track.duplicate", 1,
 				"Duplicates a track below it: its channel with every setting, its events, parts, markers and "
 				"automation, and for a folder the tracks inside it, whose channels play through the copies of the "
@@ -3588,7 +3695,18 @@ namespace gnubase::engine
 				"is turned down to the user setting audio.listenDim while any channel listens; the listening channels "
 				"play there at audio.listenLevel, and their signal flow stays as it is. Muting, soloing and the dim "
 				"glide over one audio block. notes is the "
-				"channel's notepad, the user's text about it. The channel strip's sections (audio channels only; "
+				"channel's notepad, the user's text about it. modifiers (MIDI and instrument tracks; it changes only "
+				"what it has, as project.get shows it) changes how the track's notes play, not the notes, both those "
+				"of its parts and those played into it live: bypass, transpose (semitones, -127 to 127; notes beyond "
+				"0 to 127 don't play), velocityShift (-127 to 127, added to MIDI 1.0 velocities), velocityCompression "
+				"and lengthCompression ([numerator, denominator], each 1 to 16: multipliers of velocities, before the "
+				"shift, and of lengths), random (two generators, [{target (off, position, pitch, velocity or length), "
+				"minimum, maximum}]: each adds a value from its minimum to its maximum to every note, the same on "
+				"every playback; positions and lengths in ticks, up to a quarter note either way, the others up to "
+				"127; live notes get pitch and velocity only) and range (two, [{target (off, velocityLimit, "
+				"velocityFilter, noteLimit or noteFilter), minimum, maximum (0 to 127)}], in order after the others: "
+				"the limits move velocities to the nearest end and pitches by octaves into the range, the filters "
+				"leave out the notes outside it). The channel strip's sections (audio channels only; "
 				"each object changes only what it has, as project.get shows them) run before the fader: pre "
 				"{gain (dB, -24 to 24), phase (inverts the polarity), lowCut and highCut {on, frequency (Hz, 20 or "
 				"for the high cut 50 to 20000), slope (6, 12, 24, 36 or 48 dB per octave)}} before the plugin slots; "
@@ -3621,7 +3739,7 @@ namespace gnubase::engine
 						{"mute", booleanSchema}, {"solo", booleanSchema}, {"exclusive", booleanSchema},
 						{"soloDefeat", booleanSchema}, {"listen", booleanSchema}, {"notes", stringSchema},
 						{"linked", booleanSchema}, {"pre", {{"type", "object"}}}, {"eq", {{"type", "object"}}},
-						{"strip", {{"type", "object"}}},
+						{"strip", {{"type", "object"}}}, {"modifiers", {{"type", "object"}}},
 						{"sends",
 							arraySchema(
 								objectSchema({{"send", integerSchema}, {"destination", idSchema}, {"on", booleanSchema},
@@ -3774,9 +3892,12 @@ namespace gnubase::engine
 				resultSchema({"part"}), false},
 			addMidiPart);
 		add(engine,
-			{"midiPart.set", 1, "Changes a MIDI part's name, position or length.",
+			{"midiPart.set", 1,
+				"Changes a MIDI part's name, position or length, or how its notes play: transpose (semitones) and "
+				"velocity (added to MIDI 1.0 velocities), each -127 to 127 and added to the track's MIDI modifiers "
+				"(channel.set modifiers), also while they are bypassed. The notes themselves stay as they are.",
 				objectSchema({{"part", idSchema}, {"name", stringSchema}, {"position", integerSchema},
-								 {"length", integerSchema}},
+								 {"length", integerSchema}, {"transpose", integerSchema}, {"velocity", integerSchema}},
 					{"part"}),
 				resultSchema({"part"}), false},
 			[this](Project& project, CommandContext& context)
@@ -4092,7 +4213,7 @@ namespace gnubase::engine
 				else
 				{
 					options.name = safeFileName(
-						m_file.empty() ? m_project.name : std::filesystem::u8path(m_file).stem().u8string());
+						m_file.empty() ? m_project.name : projectFileStem(std::filesystem::u8path(m_file)));
 				}
 				options.minimize = parameters.value("minimize", false);
 				options.handles = parameters.value("handles", 1.0);

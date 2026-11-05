@@ -548,6 +548,28 @@ TEST_CASE(
 	CHECK(tracks.track(inner).at("parent") == outer);
 }
 
+TEST_CASE("Remove Empty Tracks keeps a folder and a folder nested in it while a track inside holds a part", "[ui]")
+{
+	Tracks tracks;
+	const uint64_t outer = tracks.add({{"type", "folder"}});
+	const uint64_t outerFull = tracks.add({{"type", "instrument"}, {"parent", outer}});
+	tracks.app.call("midiPart.add", {{"track", outerFull}, {"position", 0}, {"length", 1000}});
+	tracks.add({{"type", "audio"}, {"parent", outer}}); // empty, goes
+	const uint64_t inner = tracks.add({{"type", "folder"}, {"parent", outer}});
+	const uint64_t innerFull = tracks.add({{"type", "audio"}, {"parent", inner}});
+	tracks.app.call("audioPart.add", {{"track", innerFull}, {"position", 0}, {"length", 1000}});
+	tracks.add({{"type", "midi"}, {"parent", inner}}); // empty, goes
+	tracks.rows(6);
+
+	tracks.app.keys().run("track.removeEmpty", Json::object(), tracks.app.main(), nullptr);
+	tracks.rows(4);
+	CHECK(tracks.order() == std::vector<uint64_t>{outer, outerFull, inner, innerFull});
+	CHECK(tracks.track(inner).at("parent") == outer);
+	CHECK(tracks.track(innerFull).at("parent") == inner);
+	tracks.app.call("history.undo");
+	tracks.rows(6);
+}
+
 TEST_CASE(
 	"the tempo and signature tracks stay through Remove Empty Tracks, and out of new folders and duplicates", "[ui]")
 {
