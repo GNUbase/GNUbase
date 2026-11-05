@@ -252,8 +252,9 @@ namespace gnubase::engine::midi
 				parameters.value("period", project.quantize.grid.ticks())};
 			require(shape.from.position <= shape.to.position, "from.position must not be after to.position");
 			const time::Ticks length = lengthInTicks(project, part);
-			require(shape.to.position <= length,
-				"to.position must not be past the part's end, " + std::to_string(length) + " ticks");
+			// Playback leaves out events from the part's end on.
+			require(shape.to.position < length,
+				"to.position must lie before the part's end, " + std::to_string(length) + " ticks");
 			require(shape.period > 0, "period must be positive");
 			if (isNoteLane(type))
 				return lineOnNotes(part, type, shape, parameters, context);
@@ -319,7 +320,7 @@ namespace gnubase::engine::midi
 				"type, one of velocity, offVelocity, probability and velocityVariance (properties of the notes) or "
 				"controller, pitchBend, channelPressure, polyPressure and program (controller events), number (the "
 				"controller, or the pitch of poly pressure) and channel 0-15, both default 0. from and to: positions "
-				"from the part's start in ticks, to no further than the part's end, and values, 0-1 (velocityVariance "
+				"from the part's start in ticks, to before the part's end, and values, 0-1 (velocityVariance "
 				"-1 to 1; a program change's 0-1 is program 0-127). mode: line draws a straight line from the start to "
 				"the end value; parabola a curve "
 				"that starts slowly, with reverse fast; sine, triangle and square go from the start value to the end "
