@@ -183,6 +183,28 @@ namespace gnubase::engine
 		return true;
 	}
 
+	bool keepMinimumLength(const Project& project, ArrangerEvent& event)
+	{
+		Marker marker; // a cycle marker has the same rule
+		marker.type = MarkerType::Cycle;
+		marker.position = event.position;
+		marker.end = event.end;
+		if (!keepMinimumLength(project, marker))
+			return false;
+		event.end = marker.end;
+		return true;
+	}
+
+	const ArrangerChain* activeArrangerChain(const Project& project)
+	{
+		const std::vector<ArrangerChain>& chains = project.arranger.chains;
+		const auto found = std::find_if(chains.begin(), chains.end(),
+			[&project](const ArrangerChain& chain) { return chain.id == project.arrangerChain; });
+		if (found != chains.end())
+			return &*found;
+		return chains.empty() ? nullptr : &chains.front();
+	}
+
 	bool poolFolderOutside(const Project& project, ObjectId folder, ObjectId excluded)
 	{
 		// More steps than there are folders means a loop.

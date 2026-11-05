@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "engine/audio/arranger.h"
 #include "engine/document/channelformat.h"
 #include "engine/document/snap.h"
 #include "engine/metronome/metronomesettings.h"
@@ -64,6 +65,7 @@ namespace gnubase::engine
 		Tempo,     // shows and edits the project's tempo track; has no channel, stays at the top level, at most one
 		Signature, // shows and edits the project's time signatures; has no channel, stays at the top level, at most one
 		Vca,       // a VCA fader (docs/features/link-groups.md): a channel without audio that controls a link group
+		Arranger,  // holds the arranger events (#167); has no channel, stays at the top level, at most one
 	};
 
 	// The time formats of ruler tracks, as the event display's ruler names them.
@@ -634,6 +636,39 @@ namespace gnubase::engine
 		std::string color; // "#rrggbb", or empty for the default color
 	};
 
+	// An arranger event (#167, reference manual p. 404): a section of the project on the arranger track, in its time
+	// base, at least one sample long.
+	struct ArrangerEvent
+	{
+		ObjectId id = 0;
+		std::string name;
+		time::Position position;
+		time::Position end;
+	};
+
+	// A step of an arranger chain: an arranger event, played repeats times.
+	struct ArrangerStep
+	{
+		ObjectId event = 0;
+		int repeats = 1;
+		ArrangerRepeat mode = ArrangerRepeat::Normal;
+	};
+
+	// An arranger chain: the order in which arranger mode plays the arranger events.
+	struct ArrangerChain
+	{
+		ObjectId id = 0;
+		std::string name;
+		std::vector<ArrangerStep> steps;
+	};
+
+	// The arranger track's events and chains (#167). A project with an arranger track has at least one chain.
+	struct Arranger
+	{
+		std::vector<ArrangerEvent> events; // in the order they were added
+		std::vector<ArrangerChain> chains; // in the order they were added
+	};
+
 	// What an automation lane changes.
 	enum class AutomationTargetType : uint8_t
 	{
@@ -833,6 +868,12 @@ namespace gnubase::engine
 		ObjectId activeMarkerTrack = 0; // the marker track that marker commands use by default, or 0
 		std::map<ObjectId, AutomationLane> automation;
 		std::map<ObjectId, LinkGroup> linkGroups;
+		Arranger arranger;
+		// Arranger mode, its jump mode and the active chain (0: the first one): settings saved with the project, not
+		// part of undo.
+		bool arrangerMode = false;
+		ArrangerJump arrangerJump = ArrangerJump::None;
+		ObjectId arrangerChain = 0;
 		std::map<ObjectId, DrumMap> drumMaps; // a new project has the GM Map (#129)
 		// Virgin territory instead of initial values (reference manual p. 881): automation lanes have gaps before their
 		// first and after their last point too, where their parameters have their static values. A setting saved with
@@ -902,6 +943,13 @@ namespace gnubase::engine
 	// Moves the end of a cycle marker that isn't long enough, e.g. after a new time base or sample rate, to one sample
 	// after its position. Returns whether it moved it.
 	bool keepMinimumLength(const Project& project, Marker& marker);
+
+	// Moves the end of an arranger event that isn't at least one sample long to one sample after its position, as
+	// keepMinimumLength does for cycle markers. Returns whether it moved it.
+	bool keepMinimumLength(const Project& project, ArrangerEvent& event);
+
+	// The project's active arranger chain: arrangerChain, or the first chain if that is gone; none without chains.
+	const ArrangerChain* activeArrangerChain(const Project& project);
 
 	// Whether folder is the pool's Audio folder (0) or a pool folder whose parents lead there without passing
 	// excluded: false for a folder that isn't there, one in a loop, and excluded or a folder inside it.
@@ -1064,6 +1112,26 @@ namespace gnubase::engine
 	{
 		return std::tie(a.id, a.track, a.type, a.number, a.position, a.end, a.name, a.color) ==
 			std::tie(b.id, b.track, b.type, b.number, b.position, b.end, b.name, b.color);
+	}
+
+	inline bool operator==(const ArrangerEvent& a, const ArrangerEvent& b)
+	{
+		return std::tie(a.id, a.name, a.position, a.end) == std::tie(b.id, b.name, b.position, b.end);
+	}
+
+	inline bool operator==(const ArrangerStep& a, const ArrangerStep& b)
+	{
+		return std::tie(a.event, a.repeats, a.mode) == std::tie(b.event, b.repeats, b.mode);
+	}
+
+	inline bool operator==(const ArrangerChain& a, const ArrangerChain& b)
+	{
+		return std::tie(a.id, a.name, a.steps) == std::tie(b.id, b.name, b.steps);
+	}
+
+	inline bool operator==(const Arranger& a, const Arranger& b)
+	{
+		return std::tie(a.events, a.chains) == std::tie(b.events, b.chains);
 	}
 
 	inline bool operator==(const AutomationTarget& a, const AutomationTarget& b)

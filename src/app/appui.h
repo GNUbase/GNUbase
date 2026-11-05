@@ -110,6 +110,11 @@ namespace gnubase::app
 			return m_shell.find(m_tempoWindow) != nullptr ? m_tempoEditor.get() : nullptr;
 		}
 		ui::WindowId tempoWindow() const { return m_tempoWindow; }
+		// Opens the arranger editor in a window of its own (resources/ui/arranger-editor.rml,
+		// docs/features/arranger.md), or closes it if it is open: the UI command window.arranger. Its script follows
+		// the engine on its own. Throws std::runtime_error if the document can't be loaded.
+		void toggleArranger();
+		ui::WindowId arrangerWindow() const { return m_arrangerWindow; }
 		// The tempo curve on the tempo track's lane in the project window, null before showProject.
 		ui::TempoLane* tempoLane() { return m_tempoLane.get(); }
 		// The time signature events on the signature track's lane in the project window, null before showProject.
@@ -286,6 +291,7 @@ namespace gnubase::app
 		std::unique_ptr<ui::RulerLanes> m_rulerLanes;       // as well
 		std::unique_ptr<ui::TempoEditor> m_tempoEditor;
 		ui::WindowId m_tempoWindow = 0;
+		ui::WindowId m_arrangerWindow = 0;
 		std::vector<uint64_t> m_eventSelection; // the display's, as the last step saw it
 		ui::Winding m_winding{m_binding};       // Rewind and Forward held, which the transport controls end
 		std::unique_ptr<ui::TransportControls> m_transportBar;

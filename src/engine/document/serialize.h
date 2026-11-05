@@ -112,6 +112,11 @@ namespace gnubase::engine
 	Json toJson(const time::TempoMap& tempo);
 	time::TempoMap tempoFromJson(const Json& points);
 
+	// The arranger (#167) as arranger.get describes it, arranger.changed announces it and the project file keeps it:
+	// the arranger track (0 for none); its events in timeline order, positions in the track's time base and start
+	// and end in samples; the chains with their steps, the active chain (chain), mode and jumpMode.
+	Json arrangerJson(const Project& project);
+
 	// The whole project, with the tracks from top to bottom. The id counter is left out: undo doesn't restore it,
 	// so that ids stay unique.
 	Json toJson(const Project& project);

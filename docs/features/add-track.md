@@ -68,7 +68,8 @@ with its input and output, and the same double click in the track list come with
 ## Not yet
 
 The track color (the default color until the color picker joins the dialog), the reference's other track types
-(sampler, drum, and the arranger, transpose, chord and video tracks with their tickets), an
+(sampler, drum, and the transpose, chord and video tracks with their tickets; the arranger track is there, once per
+project, [arranger.md](arranger.md)), an
 instrument or effect plugin chosen on the page (M05), MIDI inputs and MIDI 2.0 output groups, the event type
 (pattern events), the project's VCA folder, and track presets.
 
