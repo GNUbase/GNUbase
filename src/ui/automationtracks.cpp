@@ -142,14 +142,9 @@ namespace gnubase::ui
 			m_binding.send("history.transaction",
 				{{"description", "Delete Automation Points"}, {"commands", std::move(commands)}});
 		};
-		// Virgin territory isn't an undo step: the curves show their gaps anew when it changes.
-		m_subscriptions.push_back(m_binding.on("automation.changed",
-			[this](const engine::Event& event)
-			{
-				if (!m_project.is_object() ||
-					event.data.at("virginTerritory") != m_project.value("virginTerritory", false))
-					requestProject();
-			}));
+		// Virgin territory isn't an undo step: the curves show their gaps anew when the settings change.
+		m_subscriptions.push_back(
+			m_binding.on("automation.changed", [this](const engine::Event&) { requestProject(); }));
 	}
 
 	void EventDisplay::readAutomation(const Json& project)

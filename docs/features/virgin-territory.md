@@ -9,9 +9,10 @@ plugin's parameter as the user sets it. The lanes and their playback are in [aut
 
 - **`automation.set`** `{virginTerritory}` switches between the two modes, `automation.get` reports it. It is saved
   with the project (in GNUbase's entry of the file), not part of undo, so that a project renders the same wherever it
-  is opened; a new project starts with initial values. Emits `automation.changed`. Only a change of `virginTerritory`
-  changes the project (`project.revision` and its `modified`); `followsEvents` is the user's setting. A transaction
-  can run `automation.set`, and if it fails, both settings are as before.
+  is opened; a new project starts with initial values. Emits `automation.changed`. Run on its own, only a change of
+  `virginTerritory` changes the project (`project.revision` and its `modified`); `followsEvents` is the user's
+  setting. A transaction can run `automation.set` (the transaction counts as a change, as every transaction does), and
+  if it fails, both settings are as before.
   - **Initial value** (the default): a lane's curve covers the whole timeline: before its first point the first
     point's value, after its last point the last one's.
   - **Virgin territory**: no curve before the first point and after the last one.
@@ -20,9 +21,10 @@ plugin's parameter as the user sets it. The lanes and their playback are in [aut
   the curve to it and jumps to the static value there, like points at one position (the last one is the value from
   there on).
 - **Points at one position** between two gaps have no curve: with virgin territory a lane whose points all sit at one
-  position, e.g. a single point, and a point right after a terminator's gap that is also the lane's last one never
-  play. The gap point at their position comes after them, so the parameter keeps its static value there too, and a
-  MIDI controller lane sends nothing. A curve needs two positions; a value sent once belongs in a MIDI part.
+  position, e.g. a single point, and a point right after a terminator's gap that is also the lane's last one. The gap
+  point at their position comes after them, so a parameter with a static value keeps it there too: the points never
+  play. A MIDI lane without a static value sends the last one's value once at that position, as it sends a
+  terminator's value, and nothing after it. A curve needs two positions.
 - **Playback**: `compile()` (`rendersnapshot.cpp`) adds a gap point, a step marked `gap`, at a terminator's position,
   and with virgin territory one at the first and one at the last point's position. `channelAutomation()` gives gap
   points the lane's static value, and a mute lane's gaps have the mute button's value, since a mute lane that plays
@@ -55,10 +57,12 @@ before the first point and after the last one ([automation-tracks.md](automation
 
 - `tests/automation_tests.cpp`: the setting and terminators through the engine API, saved with the project, not undo
   steps, and the terminator's undo; only `virginTerritory` changing the project's revision, and a failed transaction
-  leaving both settings as they were; the values of a volume and a mute lane in both modes, points at one position
-  that never play with virgin territory, and a controller lane that sends nothing in its gaps, also at a locate and
-  while stopped; volume automation rendered with both modes and block sizes 64 and 100, sample by sample.
+  leaving both settings as they were; the values of a volume and a mute lane in both modes, a pan lane's points at
+  one position that never play with virgin territory, and a controller lane that sends nothing in its gaps, also at
+  a locate and while stopped, and a lone point's value once; volume automation rendered with both modes and block
+  sizes 64 and 100, sample by sample.
 - `tests/eventedit_tests.cpp`: `range.delete` across a terminator and, with virgin territory, in a lane's curve and
-  across its last point, a range in a ramp without points in it in both modes, in a gap and after the last point,
+  across its last point; a range in a ramp without points in it, also up to the ramp's end point and with
+  `range.cut`, in both modes, and ranges in a gap, before the first and after the last point that change nothing;
   Delete Time, Insert Silence in a gap, and a copy with a gap pasted.
 - `tests/automationtracks_tests.cpp` and `tests/canvas_tests.cpp`: the gaps on the automation tracks.

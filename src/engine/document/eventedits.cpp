@@ -2384,8 +2384,11 @@ namespace gnubase::engine
 			{"range.delete", 1,
 				"Deletes what lies in " + range +
 					": the audio events and MIDI parts in it, cut at its edges (splitNotes as in range.split), and the "
-					"automation points in it. The automation outside keeps its curve: the value it arrives at the "
-					"start with holds up to the end. time (Delete Time) closes the gap: what comes after the range on "
+					"automation in it: its points, and the curve between two points that goes across it. The "
+					"automation "
+					"outside keeps its curve: the value it arrives at the start with holds up to the end; with virgin "
+					"territory (automation.set) the range becomes a gap instead, the point at its start a terminator. "
+					"time (Delete Time) closes the gap: what comes after the range on "
 					"its tracks moves back by its length, in ticks on musical tracks. Locked events stay.",
 				schema(withTime, {}), {{"type", "object"}}, false},
 			"Delete",

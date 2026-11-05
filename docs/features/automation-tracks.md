@@ -54,9 +54,9 @@ the project or its undo history.
   A lane's values fill its height from its parameter's minimum to its maximum; volume from -60 dB to the project's
   maximum, like the mixer's fader, with silence at the bottom. A lane that doesn't read is grayed out (`.off`).
   Gaps (p. 881, [virgin-territory.md](virgin-territory.md)) have no line: from a terminator point up to the next
-  point, and with virgin territory before the first point and after the last one (`ui::Curve`'s `terminator` and
-  `setVirginTerritory`). The display asks for the project again when `automation.changed` reports another virgin
-  territory setting, since that is no undo step.
+  point, and with virgin territory before the first point and after the last one (`ui::CurvePoint`'s `terminator`,
+  `ui::Curve::setVirginTerritory`). The display asks for the project again on `automation.changed`, since virgin
+  territory is no undo step.
 - **Static value line** (p. 870): a dashed line at the parameter's static value (`automationLane.targets`' `value`)
   while the lane has no points or doesn't read.
 

@@ -4086,8 +4086,9 @@ namespace gnubase::engine
 		// transaction can run it, and if the transaction fails, addEdit puts both back.
 		CommandInfo setInfo{"automation.set", 1,
 			"Changes the automation settings (see automation.get). followsEvents is a setting, so it stays when a new "
-			"project starts; virginTerritory is saved with the project. Neither is an undo step, and only a change of "
-			"virginTerritory changes the project (project.revision).",
+			"project starts; virginTerritory is saved with the project. Neither is an undo step, and run on its own "
+			"only a change of virginTerritory changes the project (project.revision); in a transaction, the "
+			"transaction counts as a change.",
 			objectSchema({{"followsEvents", booleanSchema}, {"virginTerritory", booleanSchema}}), settings, false};
 		Handler set = [this, settingsJson](Project& project, CommandContext& context)
 		{
