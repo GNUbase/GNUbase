@@ -402,3 +402,48 @@ TEST_CASE("audioEvent.add, audioPart.add, midiPart.add and audioFile.import put 
 	// Without a track there is no lane to put them on.
 	CHECK_THAT(f.fails("audioFile.import", {{"files", {file.u8string()}}, {"lane", 1}}), ContainsSubstring("track"));
 }
+
+TEST_CASE("takes copied, duplicated, pasted or brought to the front together keep their order in the stack", "[unit]")
+{
+	Fixture f;
+	const int64_t track = f.track("audio");
+	const Json media =
+		f.call("media.add", {{"path", "take.wav"}, {"sampleRate", 48000}, {"channels", 1}, {"length", 48000}})
+			.at("media");
+	const auto clip = f.call("clip.add", {{"media", media.at("id")}}).at("clip").at("id").get<int64_t>();
+	// Two overlapping takes on one lane, told apart by their offsets: the first, brought to the front, plays.
+	const int64_t first = f.take(track, clip, 0, 1000, 1);
+	const int64_t second = f.take(track, clip, 2000, 1000, 1);
+	f.call("event.toFront", {{"events", {first}}});
+	// Whether, of the events at position, the first take's is in front of the second's.
+	const auto firstInFront = [&f](int64_t position)
+	{
+		int64_t firstPlace = -1;
+		int64_t secondPlace = -1;
+		const Json project = f.call("project.get");
+		for (const Json& event : project.at("audioEvents"))
+		{
+			if (event.at("position") != position)
+				continue;
+			const auto own = event.at("front").get<int64_t>();
+			const int64_t place = own != 0 ? own : event.at("id").get<int64_t>();
+			(event.at("offset") == 0 ? firstPlace : secondPlace) = place;
+		}
+		INFO("first " << firstPlace << ", second " << secondPlace);
+		return firstPlace > 0 && secondPlace > 0 && firstPlace > secondPlace;
+	};
+	REQUIRE(firstInFront(0));
+
+	f.call("event.copy", {{"events", {first, second}}, {"delta", 48000}});
+	CHECK(firstInFront(48000));
+	f.call("event.duplicate", {{"events", {first, second}}});
+	CHECK(firstInFront(1000));
+	f.call("range.copy", {{"start", 0}, {"end", 1000}, {"tracks", {track}}});
+	f.call("range.paste", {{"position", 96000}});
+	CHECK(firstInFront(96000));
+	// Brought to the front together, and comped, they keep it too.
+	f.call("event.toFront", {{"events", {first, second}}});
+	CHECK(firstInFront(0));
+	f.call("event.comp", {{"track", track}, {"lane", 1}, {"start", 0}, {"end", 1000}});
+	CHECK(firstInFront(0));
+}
