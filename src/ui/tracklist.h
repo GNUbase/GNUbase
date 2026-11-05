@@ -68,7 +68,7 @@ namespace gnubase::ui
 		// The commands that key commands and menus bind to, by id: track.selectPrevious and track.selectNext (Up and
 		// Down, which also select the first event on the new track while the event display has one selected),
 		// track.rename (the first selected track),
-		// track.removeSelected, track.removeEmpty, track.duplicateSelected, track.disableSelected,
+		// track.removeSelected, track.duplicateSelected, track.disableSelected,
 		// track.enableSelected, track.toggleFolding (the selected folders), track.foldAll, track.unfoldAll and
 		// track.flipFolding; track.freezeSelected (freezes the selected audio and instrument tracks, or unfreezes them
 		// if every one is frozen) and track.renderSelected (renders them in place); and for folder tracks
@@ -96,8 +96,6 @@ namespace gnubase::ui
 			uint64_t parent = 0;
 			int level = 0;
 			uint64_t channel = 0;
-			uint64_t output = 0; // where its channel plays into, 0 for none
-			bool holds = false;  // events, parts, markers or automation
 		};
 
 		enum class Drag : uint8_t
@@ -157,8 +155,6 @@ namespace gnubase::ui
 
 		// The selected tracks without those inside other selected folders.
 		std::vector<uint64_t> topSelection() const;
-		// The tracks Remove Empty Tracks removes, with those that are only empty once the others went.
-		std::set<uint64_t> emptyTracks() const;
 		// Runs the commands as one undo step.
 		void transaction(const std::string& description, engine::Json commands);
 
