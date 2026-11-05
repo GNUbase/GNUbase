@@ -694,7 +694,7 @@ namespace gnubase::engine
 					clip.name = source.name + " Flattened";
 					clip.media = file.id;
 					clip.folder = source.folder;
-					const auto moved = [&map, &event](time::Samples frame)
+					const auto moved = [&map](time::Samples frame)
 					{ return std::llround(dsp::warpTarget(map, static_cast<double>(frame))); };
 					for (VolumePoint& point : event.volumeCurve)
 						point.position = moved(point.position);
