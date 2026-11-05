@@ -528,6 +528,26 @@ TEST_CASE("the play and scrub tools audition the part's track", "[ui]")
 		}));
 }
 
+TEST_CASE("the play tool auditions the active part from an empty spot and nothing after a part's end", "[ui]")
+{
+	Fixture f;
+	// The second event, from 3 to 3.5 seconds, is out of its part (0 to 2 seconds): the display reaches it.
+	f.app.call("event.move", {{"events", {f.second}}, {"delta", 2 * g_second}});
+	f.open();
+	f.tool("play");
+	// After the part's end, on the event out of it and in the empty display: nothing.
+	f.click(f.at(3.25, 0, 3.5));
+	f.click(f.at(2.5, 0, 3.5));
+	// In the empty display within the part: the active part's track up to its end.
+	f.click(f.at(1.5, 0, 3.5));
+	REQUIRE(f.app.waitUntil([&] { return f.ran("audition.stop").size() == 1; }));
+	const Json started = f.ran("audition.start");
+	REQUIRE(started.size() == 1);
+	CHECK(started.at(0).at("parameters").at("track") == f.track);
+	CHECK(started.at(0).at("parameters").at("end") == 2 * g_second);
+	CHECK(std::abs(started.at(0).at("parameters").at("position").get<double>() - (1.5 * g_second)) < g_second / 50.0);
+}
+
 TEST_CASE("the info line edits the selected events", "[ui]")
 {
 	Fixture f;
@@ -604,15 +624,70 @@ TEST_CASE("a gesture released outside the audio part editor ends there", "[ui]")
 
 // The next test loses a mouseup, as when the mouse goes up outside the window: it presses through the editor window's
 // context and never releases the button.
+TEST_CASE("a gesture of the audio part editor ends when the button goes up outside the window", "[ui]")
+{
+	Fixture f;
+	f.open();
+	const Json shown = f.box(".ape-display");
+	// Past the window's right edge, level with the first lane.
+	const ui::Target outside{"", 0,
+		ui::Point{static_cast<int>(std::lround(f.context().GetDimensions().x + 40.0)), pointOf(f.at(0.25, 0)).y}};
+	REQUIRE(pointOf(outside).x > shown.at("x").get<double>() + shown.at("width").get<double>());
+
+	// A move released there moves the event later than the part's end, in one undo step.
+	const size_t before = f.steps();
+	f.drag(f.at(0.25, 0), outside);
+	REQUIRE(f.app.waitUntil([&] { return f.event(f.first).at("position").get<int64_t>() > 2 * g_second; }));
+	f.settle();
+	CHECK(f.event(f.first).at("lane") == 0);
+	CHECK(f.steps() == before + 1);
+	f.app.call("history.undo");
+	REQUIRE(f.app.waitUntil([&] { return f.event(f.first).at("position") == 0; }));
+	f.settle();
+
+	// The play and the scrub tool each stop auditioning there.
+	ui::EngineBinding binding(f.app.engine());
+	std::vector<std::string> modes;
+	const ui::Subscription subscription = binding.on("audition.changed",
+		[&](const engine::Event& event) { modes.push_back(event.data.at("mode").get<std::string>()); });
+	f.tool("play");
+	f.drag(f.at(1.25, 0), outside);
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			binding.update();
+			return modes == std::vector<std::string>{"play", "off"};
+		}));
+	f.tool("scrub");
+	f.drag(f.at(0.25, 0), outside);
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			binding.update();
+			return modes.size() >= 4 && modes[2] == "scrub" && modes.back() == "off";
+		}));
+	// The mouse over the display afterwards, with no button held, scrubs nothing.
+	const size_t scrubs = f.ran("audition.scrub").size();
+	f.app.ui().move(f.window, f.at(0.5, 0));
+	f.app.ui().move(f.window, f.at(1.0, 0));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.ran("audition.scrub").size() == scrubs);
+	binding.update();
+	CHECK(modes.back() == "off");
+}
+
 TEST_CASE("a press in the window ends a gesture of the audio part editor whose mouseup never came", "[ui]")
 {
 	Fixture f;
 	f.open();
 	const size_t before = f.steps();
-	// A move: a click on the toolbar's empty space, and one in the display, move nothing.
+	// A move: a click on the toolbar's empty space, and one in the display, move nothing. The click on the toolbar
+	// already puts the event back where it is, from where the move showed it.
 	f.press(f.at(0.25, 0));
 	f.moveTo(f.at(0.77, 1));
+	REQUIRE(std::abs(f.box(eventSelector(f.first)).at("x").get<double>() - pointOf(f.at(0.5, 0)).x) <= 2.0);
 	f.click(f.spare());
+	f.settle();
 	f.click(f.at(1.75, 0));
 	f.settle();
 	CHECK(f.event(f.first).at("position") == 0);

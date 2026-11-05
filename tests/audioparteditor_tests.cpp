@@ -166,6 +166,43 @@ TEST_CASE("the audio part editor's selection is audio events of its editable par
 	CHECK(f.call("editor.close", {{"editor", "window"}}).at("eventSelection").empty());
 }
 
+TEST_CASE("Events to Part and Dissolve Part keep the events' lanes, the track's lanes and the part's", "[unit]")
+{
+	Fixture f;
+	const uint64_t vocals = f.track("audio");
+	const auto add = [&](int64_t position, int lane)
+	{
+		const auto event =
+			f.call("audioEvent.add",
+				 {{"track", vocals}, {"clip", f.clip}, {"position", position}, {"offset", 0}, {"length", g_second}})
+				.at("event")
+				.at("id")
+				.get<uint64_t>();
+		f.call("event.set", {{"events", {event}}, {"lane", lane}});
+		return event;
+	};
+	f.part(vocals, 8 * g_second); // makes the clip
+	const uint64_t low = add(0, 0);
+	const uint64_t high = add(g_second, 2);
+	const auto lanes = [&]
+	{
+		std::vector<int> found;
+		for (const Json& event : f.call("project.get").at("audioEvents"))
+			if (event.at("id") == low || event.at("id") == high)
+				found.push_back(event.at("lane").get<int>());
+		return found;
+	};
+	// Into a part on the track's first lane: lanes 0 and 2 of the part.
+	const auto made = f.call("event.toPart", {{"events", {low, high}}}).at("events").at(0).get<uint64_t>();
+	for (const Json& part : f.call("project.get").at("audioParts"))
+		if (part.at("id") == made)
+			CHECK(part.at("lane") == 0);
+	CHECK(lanes() == std::vector<int>{0, 2});
+	// Out of it again: lanes 0 and 2 of the track.
+	f.call("event.dissolvePart", {{"events", {made}}});
+	CHECK(lanes() == std::vector<int>{0, 2});
+}
+
 TEST_CASE("editor.set refuses notes of audio parts and shows the tracks of a content given with it", "[unit]")
 {
 	Fixture f;
