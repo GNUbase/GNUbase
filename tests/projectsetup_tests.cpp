@@ -310,6 +310,25 @@ TEST_CASE("the project setup dialog conforms the audio files to a new sample rat
 	CHECK(app.call("project.get").at("media")[0].at("sampleRate") == 48000.0);
 }
 
+TEST_CASE("the project setup dialog needs no saved project when no file it would conform is there", "[ui]")
+{
+	test::UiApp app({900, 700});
+	const test::TempDir dir;
+	// A missing file at 32 kHz, which Conform Files leaves out, and one at the new rate already.
+	const Json missing = app.call("media.add",
+		{{"path", (dir.path() / "gone.wav").u8string()}, {"sampleRate", 32000.0}, {"channels", 1}, {"length", 320}});
+	app.call("clip.add", {{"media", missing.at("media").at("id")}});
+	test::writeWav(dir.path() / "slow.wav", {std::vector<float>(4410, 0.25F), 1, 44100});
+	app.call("media.add", {{"path", (dir.path() / "slow.wav").u8string()}});
+
+	openDialog(app);
+	choose(app, "#setup-sample-rate", -1); // 44100, before 48000
+	click(app, "#setup-ok");
+	CHECK(closed(app));
+	CHECK(app.call("project.get").at("sampleRate") == 44100.0);
+	CHECK(app.call("job.list").at("jobs").empty());
+}
+
 TEST_CASE("the status line's record format shows the project's record bit depth", "[ui]")
 {
 	test::UiApp app({1000, 700});

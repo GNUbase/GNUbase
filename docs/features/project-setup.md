@@ -91,5 +91,5 @@ frame rate, start time and bar offset. In the app, the dialog shows the defaults
 frame rate, start, length, bar offset, pan law and maximum volume as one undo step; Cancel drops a change and an
 unreadable length keeps it open with the message; a new sample rate keeps the dialog open on an unsaved project
 with media, and conforms a saved project's audio file with the pool's job, which the pool shows, undone in one step,
-and doesn't with Conform Audio Files off; the status line shows a new record bit depth, follows undo and opens
+and doesn't with Conform Audio Files off; an unsaved project whose only file at another rate is missing, the others at the new rate, takes the new rate without asking for a save; the status line shows a new record bit depth, follows undo and opens
 the dialog with a click. `tests/eventdisplay_tests.cpp` checks Zoom Full and the overview line with the project's length.

@@ -176,14 +176,6 @@ namespace gnubase::engine
 			}
 		}
 
-		// Whether project (ProjectModel::openedRevision) is still the open one, asked before a job's final command:
-		// one opened meanwhile isn't sent the command, which would skip every entry but still count as a change of
-		// it (project.revision). The command checks it again, for a project opened right after this.
-		bool stillOpen(JobContext& job, uint64_t project)
-		{
-			return job.command("project.revision", Json::object()).at("project").get<uint64_t>() == project;
-		}
-
 		// Lets a job announce its progress at most every 50 ms, so that walking a folder with many small folders in
 		// it doesn't send an event for each.
 		class Throttle
@@ -309,7 +301,7 @@ namespace gnubase::engine
 
 			job.checkCancelled();
 			std::set<ObjectId> skipped;
-			if (!relink.empty() && !stillOpen(job, project))
+			if (!relink.empty() && !projectStillOpen(job, project))
 			{
 				skipped.insert(found.begin(), found.end());
 			}
@@ -483,7 +475,7 @@ namespace gnubase::engine
 						{{"media", file.id}, {"path", path}, {"from", file.path}, {"fromSampleRate", file.sampleRate}});
 				}
 				job.checkCancelled();
-				if (stillOpen(job, target.project))
+				if (projectStillOpen(job, target.project))
 				{
 					Json transaction = {{"description", "Conform files"},
 						{"commands",

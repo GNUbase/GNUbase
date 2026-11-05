@@ -4002,7 +4002,7 @@ namespace gnubase::engine
 		registerChannelSettingsCommands(*this, engine);
 		registerEditorCommands(*this, engine);
 		registerSampleEditorCommands(*this, engine);
-		registerHitpointCommands(*this, engine);
+		registerHitpointCommands(*this, engine, jobs);
 		registerHistoryCommands(engine);
 		registerMediaFolderCommands(engine, jobs);
 		registerProjectFileCommands(engine);

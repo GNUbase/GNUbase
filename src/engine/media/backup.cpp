@@ -434,11 +434,7 @@ namespace gnubase::engine
 				try
 				{
 					job.checkCancelled();
-					// A project opened meanwhile isn't sent the command, which would skip every entry but still
-					// count as a change of it (project.revision); the command checks again, for one opened right
-					// after this.
-					if (!relink.empty() &&
-						job.command("project.revision", Json::object()).at("project").get<uint64_t>() != project)
+					if (!relink.empty() && !projectStillOpen(job, project))
 					{
 						for (const Json& entry : relink)
 							skipped.insert(entry.at("media").get<ObjectId>());
@@ -478,6 +474,11 @@ namespace gnubase::engine
 				return Json{
 					{"copied", std::move(copied)}, {"missing", std::move(missing)}, {"changed", std::move(changed)}};
 			});
+	}
+
+	bool projectStillOpen(JobContext& job, uint64_t project)
+	{
+		return job.command("project.revision", Json::object()).at("project").get<uint64_t>() == project;
 	}
 
 	std::string fileNameProblem(const std::string& name)

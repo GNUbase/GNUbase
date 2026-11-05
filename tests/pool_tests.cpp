@@ -855,6 +855,46 @@ TEST_CASE("media.locate looks through a folder as a job, while other commands ar
 	CHECK(run(song.client, "history.get").at("steps").back().at("action") == "Locate missing files");
 }
 
+TEST_CASE("media.locate relinks the files it found but one that no longer fits, which it reports", "[integration]")
+{
+	SavedProject song;
+	writeFile(song.library / "kick.wav", 4800, 1);
+	writeFile(song.library / "snare.wav", 48000, 1);
+	const uint64_t kick = song.mediaOf(song.clip(song.library / "kick.wav"));
+	const uint64_t snare = song.mediaOf(song.clip(song.library / "snare.wav"));
+	song.prepareHold();
+	song.settle();
+	// snare is pointed at a 44.1 kHz file at its path, which then goes missing with kick: media.locate looks for both
+	// and finds them in a folder of 2500 files.
+	writeFile(song.library / "snare.wav", 44100, 1, 44100.0);
+	run(song.client, "media.relinkResampled",
+		{{"files", Json::array({{{"media", snare}, {"path", utf8(song.library / "snare.wav")}}})}});
+	song.settle();
+	const fs::path moved = song.dir.path() / "moved";
+	fillFolder(moved, 50);
+	fs::rename(song.library / "kick.wav", moved / "folder49" / "kick.wav");
+	fs::rename(song.library / "snare.wav", moved / "folder49" / "snare.wav");
+
+	// While the job looks, undo takes snare back to 48 kHz (and the hold's step): it keeps its path, so the job's
+	// entry for it still applies by from, but the file found no longer fits. The job relinks kick all the same.
+	song.hold();
+	const RequestId locate = song.client.send("media.locate", {{"folder", utf8(moved)}});
+	run(song.client, "history.undo", {{"steps", 2}});
+	const Json finished = waitForJob(song.client, startedJob(song.client, locate));
+	INFO(finished.dump());
+	REQUIRE(finished.at("state") == "done");
+	CHECK(finished.at("result").at("relinked") == Json::array({kick}));
+	CHECK(finished.at("result").at("changed") == Json::array({snare}));
+	CHECK(finished.at("result").at("missing").empty());
+	const Json project = run(song.client, "project.get");
+	CHECK(fs::equivalent(
+		fs::u8path(byId(project.at("media"), kick).at("path").get<std::string>()), moved / "folder49" / "kick.wav"));
+	const Json kept = byId(project.at("media"), snare);
+	CHECK(kept.at("path") == utf8(song.library / "snare.wav"));
+	CHECK(kept.at("sampleRate") == 48000.0);
+	CHECK(run(song.client, "history.get").at("steps").back().at("action") == "Locate missing files");
+}
+
 TEST_CASE("job.cancel stops media.locate, which then changes nothing", "[integration]")
 {
 	SavedProject song;

@@ -310,6 +310,8 @@ TEST_CASE("the pool panel shows the Conform Files job's progress and that it was
 	const std::filesystem::path slow = dir.path() / "slow.wav";
 	test::writeWav(slow, {std::vector<float>(size_t{44100} * 60 * 2, 0.25f), 2, 44100});
 	addClip(app, slow.u8string());
+	openPool(app, 2);
+	const Json listTop = elements(app, "#pool").at(0).at("box").at("y");
 
 	// While it converts, the message line says how far it got and with which file.
 	click(app, "#menu-bar button[menu=media-menu]");
@@ -328,6 +330,7 @@ TEST_CASE("the pool panel shows the Conform Files job's progress and that it was
 	// Meanwhile the line offers Stop (reference manual p. 751), which cancels it; cancelled, it says so, doesn't offer
 	// Stop any more and leaves the media file as it was.
 	REQUIRE(offersStop(app));
+	CHECK(elements(app, "#pool").at(0).at("box").at("y") == listTop); // the list doesn't move for Stop
 	click(app, "#pool-stop");
 	REQUIRE(app.waitUntil([&app] { return message(app) == "Conform Files was cancelled."; }, std::chrono::seconds(30)));
 	CHECK(!has(elements(app, "#pool-message").at(0), "error"));

@@ -148,7 +148,7 @@ wait for: `transport.locate` sent right behind `media.locate` on a folder of 250
 ends, whose progress names the folder; `job.cancel` stops `media.locate` and `media.conform` with nothing changed
 and no file left in the media folder; a missing file removed while `media.locate` looks for it, a media file
 relinked by hand while `media.conform` converts it, and a new project sample rate set meanwhile keep the edit, and
-the conformed file is removed; `media.relinkResampled` refuses unknown media files, files of another channel count,
+the conformed file is removed; `media.locate` relinks a file it found although another one it found no longer fits by the time of the relink (undo took its media file back to another sample rate while the job looked), which it reports as `changed`; `media.relinkResampled` refuses unknown media files, files of another channel count,
 missing or empty files and a media file given twice, and skips entries whose `from`, `fromSampleRate` or
 `projectSampleRate` or `project` no longer fit, and a media file given twice even when an entry wouldn't apply;
 `media.conform` refuses a given media file that is missing and can't be part of a transaction, and with a merge key
@@ -165,7 +165,7 @@ by typing, dragging a clip onto a folder, New Folder and Remove Unused Media wit
 client, Import Medium through the Import Options dialog; names sorted in any case, a clip let go outside the panel not
 moved by a click on a folder's name or a drag from outside, a name typed away kept, no reading while another tab
 shows; Conform Files from the Media menu on a project that was never saved opening the pool with the error, and on a
-saved one showing the job's result once it is done, its progress, and Stop, which cancels it; Find Missing Files'
+saved one showing the job's result once it is done, its progress, and Stop, which cancels it without moving the list; Find Missing Files'
 result from its job; a failed job's message; and, with a panel and binding of its own, a job that ended before its
 command's result came (the `job.get` path) and found files that changed meanwhile counted among those looked for.
 `tests/docking_tests.cpp` checks `Docking::showing`, `tests/enginebinding_tests.cpp` `EngineBinding::onResult`.

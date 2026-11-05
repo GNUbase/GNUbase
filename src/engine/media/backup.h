@@ -55,6 +55,11 @@ namespace gnubase::engine
 	Json startMediaCopy(Jobs& jobs, std::string kind, std::vector<MediaCopy> files, std::filesystem::path folder,
 		std::string action, uint64_t project);
 
+	// Whether project (ProjectModel::openedRevision) is still the open one, for a job to ask before its final command:
+	// one opened meanwhile isn't sent the command, which would skip every entry but still count as a change of it
+	// (project.revision). The command checks it again, for a project opened right after this. Throws CommandError.
+	bool projectStillOpen(JobContext& job, uint64_t project);
+
 	// Removes files, ignoring errors, e.g. copies that a job made and doesn't need.
 	void removeFiles(const std::vector<std::string>& files);
 
