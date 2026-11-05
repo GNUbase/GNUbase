@@ -3629,7 +3629,7 @@ Returns:
 
 #### `gnubase.quantize.extractGroove`
 
-Makes a groove preset from a MIDI part's rhythm: a groove position at every note start, with the highest velocity and the longest length of the notes there. The groove is length ticks long, by default the part's length, and the preset is named name, by default after the part. The groove's origin is the part's start, so it repeats in phase with the part.
+Makes a groove preset from a MIDI part's rhythm: a groove position at every note start, with the highest velocity and the longest length of the notes there. The groove is length ticks long, by default the part's length, and the preset is named name, by default after the part. The groove's origin is the part's start, so it repeats in phase with the part. Like quantize.savePreset, it replaces the user's preset of that name, and quantize.changed announces when another preset is the one the project's settings are (see quantize.get).
 
 Parameters:
 
@@ -3657,13 +3657,14 @@ Returns:
 
 #### `gnubase.quantize.get`
 
-The project's quantize settings and whether auto quantize is on (see quantize.set for the settings).
+The project's quantize settings (see quantize.set), the preset they are and whether auto quantize is on. Among presets with equal settings, preset is the one last chosen with quantize.set, saved or renamed while the settings are its own, else the first of the user's, else the factory preset; null if no preset has the settings. quantize.changed announces the same whenever it changes. The project saves it, so a preset command that changes it changes the project (see project.revision).
 
 Only reads; changes nothing.
 
 Returns:
 
 - `autoQuantize`: boolean, required
+- `preset`: string or null, required
 - `settings`: object, required
 
 #### `gnubase.quantize.lengths`
@@ -3698,7 +3699,7 @@ Returns:
 
 #### `gnubase.quantize.removePreset`
 
-Removes one of the user's quantize presets, and the presets of that name that this GNUbase can't read (see quantize.presets).
+Removes one of the user's quantize presets, and the presets of that name that this GNUbase can't read (see quantize.presets). quantize.changed announces when another preset is the one the project's settings are (see quantize.get).
 
 Parameters:
 
@@ -3706,7 +3707,7 @@ Parameters:
 
 #### `gnubase.quantize.renamePreset`
 
-Renames one of the user's quantize presets.
+Renames one of the user's quantize presets. A preset with the project's settings is the preset they are from now on (see quantize.get); quantize.changed announces when that changes.
 
 Parameters:
 
@@ -3729,7 +3730,7 @@ Returns:
 
 #### `gnubase.quantize.savePreset`
 
-Saves the project's quantize settings, changed by settings, as a preset, replacing the user's preset of that name. Factory presets can't be replaced. Presets belong to the user, not to the project: they are saved in the settings folder.
+Saves the project's quantize settings, changed by settings, as a preset, replacing the user's preset of that name. Factory presets can't be replaced. Presets belong to the user, not to the project: they are saved in the settings folder. A preset with the project's settings is the preset they are from now on (see quantize.get); quantize.changed announces when that changes.
 
 Parameters:
 
@@ -3742,7 +3743,7 @@ Returns:
 
 #### `gnubase.quantize.set`
 
-Changes the project's quantize settings: to preset's, if given, then changed by settings. Settings: grid, a note value from "1/1" to "1/128", "T" for a triplet and "." for dotted; tuplet, 0 (off) or 3 to 15 notes in the time of the largest power of two below it; swing 0-1, moving every second grid position later, at 1 by a third of a step (straight grids without tuplets only); catchRange, ticks from a grid position within which notes are quantized (0: all); safeRange, ticks within which they stay; randomize, ticks by which quantized notes move at random, by seed; soft, starting from the current positions instead of the original ones; strength 0-1, the part of the way notes move. groove {length, points: [{position, velocity 0-1, length}]} quantizes to a groove instead of the grid, with preQuantize (a note value), maxMove (ticks), velocityStrength, lengthStrength and origin (where it starts repeating, in project ticks). autoQuantize is whether recording quantizes. Settings are not undo steps; they are saved with the project.
+Changes the project's quantize settings: to preset's, if given, then changed by settings. Settings: grid, a note value from "1/1" to "1/128", "T" for a triplet and "." for dotted; tuplet, 0 (off) or 3 to 15 notes in the time of the largest power of two below it; swing 0-1, moving every second grid position later, at 1 by a third of a step (straight grids without tuplets only); catchRange, ticks from a grid position within which notes are quantized (0: all); safeRange, ticks within which they stay; randomize, ticks by which quantized notes move at random, by seed; soft, starting from the current positions instead of the original ones; strength 0-1, the part of the way notes move. groove {length, points: [{position, velocity 0-1, length}]} quantizes to a groove instead of the grid, with preQuantize (a note value), maxMove (ticks), velocityStrength, lengthStrength and origin (where it starts repeating, in project ticks). autoQuantize is whether recording quantizes. Settings are not undo steps; they are saved with the project, and so is the preset they are (see quantize.get). Announces quantize.changed with the result.
 
 Parameters:
 
@@ -3753,6 +3754,7 @@ Parameters:
 Returns:
 
 - `autoQuantize`: boolean, required
+- `preset`: string or null, required
 - `settings`: object, required
 
 ### range
@@ -4190,6 +4192,23 @@ Returns:
 - `position`: integer
 - `tempo`: object, required
 
+#### `gnubase.tempo.detect`
+
+Detects the tempo of an audio event or a MIDI part (event, its id) of at least 7 seconds with discernible beats (Tempo Detection) and makes the tempo track follow it: where its sounds start (the hitpoints of the clip's section, or the notes) give the beats, which may drift. The tempo events inside the event but the first go, which an earlier detection made, and a step tempo event at each beat but the last, a quarter apart, replaces those from the first beat, which keeps its position, to the last. factor (default 1) makes the beats that many times as fast: 2 (Multiply by 2), 0.5 (Divide by 2), 4/3 or 3/4. offbeat moves them by half a beat (Offbeat Correction), smooth puts them on one steady tempo (Smooth Tempo). Every musical track that holds events, parts, markers or automation becomes linear first, so nothing moves in time. reset only removes the tempo events inside the event (Reset the analysis result). Makes the tempo track active. One undo step. Returns the tempo as tempo.changed reports it and the number of beats.
+
+Parameters:
+
+- `event`: integer, required
+- `factor`: number
+- `offbeat`: boolean
+- `reset`: boolean
+- `smooth`: boolean
+
+Returns:
+
+- `beats`: integer, required
+- `tempo`: object, required
+
 #### `gnubase.tempo.export`
 
 Exports the tempo track's events, which fixed tempo mode keeps too, and the time signature events into an XML file at path (File > Export > Tempo Track), which tempo.import reads. Returns the number of tempo and time signature events.
@@ -4204,6 +4223,22 @@ Returns:
 
 - `signatureEvents`: integer, required
 - `tempoEvents`: integer, required
+
+#### `gnubase.tempo.fromMidi`
+
+Calculates the tempo from MIDI notes tapped to freely played material (Calculate Tempo from MIDI Events): the notes of parts (MIDI part ids), or the selected ones among them (notes), are distance ticks apart (Distance of Notes, default a quarter). Notes that start within 30 ms of each other are one. A step tempo event at each note but the last replaces the tempo events from the first note to the last, so that each note is distance after the one before and keeps its time; the first one keeps its position, or with beginAtBarStart moves to the nearest bar start after the project start, where a tempo event at the bar before puts it. Notes on linear tracks stay at their time, those on musical ones follow the tempo. Makes the tempo track active; its events come from the tempo the project played. Returns the tempo as tempo.changed reports it.
+
+Parameters:
+
+- `beginAtBarStart`: boolean
+- `distance`: integer
+- `notes`: array of integer
+- `parts`: array of integer, required
+
+Returns:
+
+- `position`: integer
+- `tempo`: object, required
 
 #### `gnubase.tempo.import`
 

@@ -15,6 +15,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace gnubase::engine
@@ -117,6 +118,16 @@ namespace gnubase::engine
 
 		// The project, for commands defined in other files that read it. Only on the command thread.
 		const Project& project() const { return m_project; }
+		// Sets Project::quantizePreset, for the quantize preset commands, which change presets, not the project's
+		// content, so they aren't edits. The project file saves the name, though: a new one advances the revision, so
+		// that the project counts as modified and is auto saved. Only on the command thread.
+		void setQuantizePreset(std::string name)
+		{
+			if (name == m_project.quantizePreset)
+				return;
+			m_project.quantizePreset = std::move(name);
+			publish();
+		}
 		// The project file it was last saved as or loaded from, absolute; empty for none. Only on the command thread.
 		const std::string& file() const { return m_file; }
 		// Identifies the open project: the revision at which it was loaded or started (project.revision's project).
@@ -146,6 +157,7 @@ namespace gnubase::engine
 		void registerMidiEditCommands(Engine& engine);                // midiedits.cpp: note.set and controller.set
 		void registerMarkerCommands(Engine& engine);                  // markers.cpp: marker.*
 		void registerTempoCommands(Engine& engine);                   // tempo.cpp: tempo.*
+		Json detectTempo(Project& project, CommandContext& context);  // tempo.cpp: tempo.detect
 		void registerSignatureCommands(Engine& engine);               // signature.cpp: signature.*
 		void registerMidiFileCommands(Engine& engine); // midifilecommands.cpp: midiFile.export and midiFile.import
 		Json importMidiFile(Project& project, CommandContext& context);

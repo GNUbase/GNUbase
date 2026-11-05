@@ -398,6 +398,51 @@ TEST_CASE("a watched value draws the window that shows it when it changes, and n
 	CHECK(other.frames() == otherFrames);
 }
 
+TEST_CASE("a watched value draws its window only when apply says it changed what an element shows", "[unit]")
+{
+	engine::Engine engine;
+	test::FakeUi fake({{1, "Monitor", {0, 0, 1920, 1080}, {0, 0, 1920, 1080}, 1.0F}});
+	const ui::Window& shows = fake.shell.open(bounds(100, 100, 800, 600));
+	ui::EngineBinding binding(engine, [&fake] { fake.shell.wake(); }, [&fake] { fake.shell.requestRender(); });
+	fake.shell.eachStep([&binding] { return binding.update(); });
+	Rml::ElementDocument* document =
+		shows.context().LoadDocumentFromMemory(R"(<rml><body><p id="beat"/></body></rml>)");
+	REQUIRE(document != nullptr);
+	document->Show();
+	Rml::Element* beat = document->GetElementById("beat");
+	REQUIRE(beat != nullptr);
+	fake.shell.step(milliseconds(0));
+
+	// A display that shows the beat of a position in samples, which changes far more often than the beat does: as a
+	// time display does in a coarse format during playback.
+	int64_t position = 0;
+	const ui::Subscription watch = binding.watch<int64_t>(
+		beat, [&position] { return position; },
+		[beat](const int64_t& now)
+		{
+			const std::string text = std::to_string(now / 1000);
+			if (beat->GetInnerRML() == text)
+				return false;
+			beat->SetInnerRML(text);
+			return true;
+		});
+	fake.shell.step(milliseconds(0)); // the first value
+	const uint64_t frames = shows.frames();
+	CHECK(beat->GetInnerRML() == "0");
+
+	// The value changes, what the element shows doesn't: the window stays idle.
+	for (const int64_t now : {100, 200, 999})
+	{
+		position = now;
+		fake.shell.step(milliseconds(0));
+		CHECK(shows.frames() == frames);
+	}
+	position = 1000;
+	fake.shell.step(milliseconds(0));
+	CHECK(beat->GetInnerRML() == "1");
+	CHECK(shows.frames() == frames + 1);
+}
+
 TEST_CASE("events, results and posted work draw every window in the step they reach the UI's handlers", "[integration]")
 {
 	engine::Engine engine;

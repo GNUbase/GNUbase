@@ -2923,6 +2923,8 @@ namespace gnubase::engine
 			{"tempo.remove", "Remove tempo events"},
 			{"tempo.tap", "Tap tempo"},
 			{"tempo.import", "Import tempo track"},
+			{"tempo.fromMidi", "Calculate tempo from MIDI"},
+			{"tempo.detect", "Detect tempo"},
 			{"signature.add", "Add time signature event"},
 			{"signature.set", "Change time signature events"},
 			{"signature.remove", "Remove time signature events"},

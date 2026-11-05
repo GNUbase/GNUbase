@@ -141,6 +141,7 @@ add_executable(gnubase-tests
 	stylerules_tests.cpp
 	svg_tests.cpp
 	tempo_tests.cpp
+	tempodetection_tests.cpp
 	tempotrack_ui_tests.cpp
 	testing_tests.cpp
 	testutils_tests.cpp
@@ -154,6 +155,7 @@ add_executable(gnubase-tests
 	uiapp.cpp
 	uiapp.h
 	uiapp_tests.cpp
+	uiscripts_tests.cpp
 	uisettings_tests.cpp
 	uithemes_tests.cpp
 	uitools_tests.cpp

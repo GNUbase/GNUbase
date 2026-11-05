@@ -237,12 +237,8 @@ namespace gnubase::ui
 		element.AddEventListener(Rml::EventId::Click, this);
 		element.AddEventListener(Rml::EventId::Change, this);
 
-		m_subscriptions.push_back(m_binding.on("quantize.changed",
-			[this](const engine::Event& event)
-			{
-				m_settings = event.data.at("settings");
-				show();
-			}));
+		m_subscriptions.push_back(
+			m_binding.on("quantize.changed", [this](const engine::Event& event) { showSettings(event.data); }));
 		m_subscriptions.push_back(m_binding.on("quantize.presetsChanged", [this](const engine::Event&) { request(); }));
 		m_subscriptions.push_back(m_binding.on("project.reset", [this](const engine::Event&) { request(); }));
 		request();
@@ -272,8 +268,7 @@ namespace gnubase::ui
 			{
 				if (alive.expired() || !result.ok())
 					return;
-				m_settings = result.value.at("settings");
-				show();
+				showSettings(result.value);
 			});
 		m_binding.send("quantize.presets", Json::object(),
 			[this, alive](const engine::Result& result)
@@ -307,8 +302,7 @@ namespace gnubase::ui
 			return;
 		if (const Rml::Element* item = withAttribute(target, m_presetAttribute.c_str()))
 		{
-			m_chosen = attribute(*item, m_presetAttribute.c_str());
-			set({{"preset", m_chosen}});
+			set({{"preset", attribute(*item, m_presetAttribute.c_str())}});
 		}
 		else if (const Rml::Element* grid = withAttribute(target, "grid"))
 		{
@@ -365,9 +359,6 @@ namespace gnubase::ui
 			m_binding.send("quantize.savePreset", {{"name", name}});
 		else if (isUserPreset(currentPreset()))
 			m_binding.send("quantize.renamePreset", {{"name", currentPreset()}, {"newName", name}});
-		else
-			return;
-		m_chosen = name;
 	}
 
 	std::string QuantizePanel::presetName() const
@@ -376,24 +367,19 @@ namespace gnubase::ui
 		return field != nullptr ? field->GetValue() : std::string();
 	}
 
+	void QuantizePanel::showSettings(const Json& data)
+	{
+		m_settings = data.at("settings");
+		const auto preset = data.find("preset");
+		m_preset = preset != data.end() && preset->is_string() ? preset->get<std::string>() : std::string();
+		show();
+	}
+
 	std::string QuantizePanel::currentPreset() const
 	{
-		// Presets can have equal settings, a user preset saved from a factory preset's for one: the one last chosen,
-		// saved or renamed here while the settings are still its own, else a user preset, else a factory one.
-		std::string factory;
-		std::string user;
-		for (const Json& preset : m_presets)
-		{
-			if (preset.at("settings") != m_settings)
-				continue;
-			const auto name = preset.at("name").get<std::string>();
-			if (name == m_chosen)
-				return name;
-			std::string& first = preset.at("factory").get<bool>() ? factory : user;
-			if (first.empty())
-				first = name;
-		}
-		return !user.empty() ? user : factory;
+		// Among presets with equal settings, such as a user preset saved from a factory preset's, the engine picks
+		// the one every client shows (#770).
+		return m_preset;
 	}
 
 	bool QuantizePanel::isUserPreset(const std::string& name) const

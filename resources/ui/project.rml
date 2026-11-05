@@ -308,6 +308,9 @@
 			<menu>
 				<menuitem command="window.tempoTrack">Open Tempo Track Editor</menuitem>
 				<menuitem command="tempo.toggleTrack">Activate Tempo Track</menuitem>
+				<menuseparator/>
+				<!-- docs/features/tempo-detection.md -->
+				<menuitem command="tempo.detection">Tempo Detection...</menuitem>
 			</menu>
 		</menuitem>
 		<menuseparator/>
@@ -381,6 +384,8 @@
 				<menuseparator/>
 				<menuitem command="midi.functionsReverse">Reverse</menuitem>
 				<menuitem command="midi.functionsMirror">Mirror</menuitem>
+				<menuseparator/>
+				<menuitem command="midi.calculateTempo">Calculate Tempo from MIDI Events...</menuitem>
 			</menu>
 		</menuitem>
 	</menu>
