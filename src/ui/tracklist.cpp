@@ -130,6 +130,15 @@ namespace gnubase::ui
 			return false;
 		}
 
+		// Whether the element is a drop-down list or inside one, which keeps Up and Down.
+		bool inSelect(const Rml::Element* element)
+		{
+			for (; element != nullptr; element = element->GetParentNode())
+				if (element->GetTagName() == "select")
+					return true;
+			return false;
+		}
+
 		void setClass(Rml::Element& element, const char* name, bool set)
 		{
 			if (element.IsClassSet(name) != set)
@@ -1017,11 +1026,11 @@ namespace gnubase::ui
 				}
 			}
 			else if ((key == Rml::Input::KI_UP || key == Rml::Input::KI_DOWN) && inside(target, m_view) &&
-				target->GetTagName() != "input" && !held(event, "shift_key") && !held(event, "ctrl_key") &&
-				!held(event, "alt_key") && !held(event, "meta_key"))
+				target->GetTagName() != "input" && !inSelect(target) && !held(event, "shift_key") &&
+				!held(event, "ctrl_key") && !held(event, "alt_key") && !held(event, "meta_key"))
 			{
-				// Up and Down in the list step the tracks as their key commands do, selecting the first event on
-				// the track too; Shift extends the list view's selection.
+				// Up and Down in the list step the tracks as their key commands do (a drop-down list keeps them),
+				// selecting the first event on the track too; Shift extends the list view's selection.
 				step(key == Rml::Input::KI_UP ? -1 : 1);
 				event.StopPropagation();
 			}
