@@ -1472,10 +1472,11 @@ namespace gnubase::engine
 
 		// The tracks track.removeEmpty removes (docs/features/track-list.md): audio, instrument, MIDI and marker
 		// tracks without events, parts, markers or automation, and folders without tracks, unless a channel of
-		// another track plays or sends into theirs. Group and effect tracks are where others play through, VCA
-		// tracks control channels, ruler, tempo and signature tracks hold no events. What goes can leave others
-		// empty, such as a folder that held only empty tracks or an instrument track that only empty MIDI tracks
-		// played, so it looks again until nothing more goes.
+		// another track plays or sends into theirs. Plugins in a channel's slots and an instrument track's instrument
+		// don't keep a track. Group and effect tracks are where others play through, VCA tracks control channels,
+		// ruler, tempo and signature tracks hold no events. What goes can leave others empty, such as a folder that
+		// held only empty tracks or an instrument track that only empty MIDI tracks played, so it looks again until
+		// nothing more goes.
 		std::set<ObjectId> emptyTracks(const Project& project)
 		{
 			std::set<ObjectId> holding;
@@ -1533,6 +1534,11 @@ namespace gnubase::engine
 					if (gone.count(project.trackById.at(id).parent) == 0)
 						top.push_back(id);
 				}
+			// The active marker track goes last (marker tracks are never inside a folder), so that track.remove
+			// activates a marker track that stays rather than one that goes next.
+			const auto active = std::find(top.begin(), top.end(), project.activeMarkerTrack);
+			if (active != top.end())
+				std::rotate(active, std::next(active), top.end());
 			for (const ObjectId id : top)
 			{
 				const Json parameters = {{"track", id}}; // the context keeps a reference
@@ -3647,7 +3653,9 @@ namespace gnubase::engine
 				"Removes the empty tracks (Remove Empty Tracks, reference manual p. 213): audio, instrument, MIDI and "
 				"marker tracks without events, parts, markers or automation, and folders without tracks, unless "
 				"another track's channel plays or sends into theirs (an instrument track a MIDI track plays, a "
-				"folder's group channel). Group, effect, VCA, ruler, tempo and signature tracks stay. What it removes "
+				"folder's group channel). Plugins in a channel's slots and an instrument track's instrument don't keep "
+				"a track. Group, effect, VCA, ruler, tempo and signature tracks stay. If the active marker track goes, "
+				"the topmost marker track that stays becomes the active one. What it removes "
 				"can leave others empty, such as a folder that held only empty tracks, so it looks again until no "
 				"empty track is left. One undo step; none if nothing is empty. Returns the tracks removed, from top "
 				"to bottom, with those inside removed folders.",
