@@ -108,7 +108,7 @@ namespace gnubase::app
 					{
 						// The setting's ticks are 480 to a quarter note.
 						m_binding.send("settings.get", {{"key", "editing.legatoOverlap"}},
-							[this, parameters](const engine::Result& result) mutable
+							[this, parameters = parameters](const engine::Result& result) mutable
 							{
 								if (!result.ok())
 									return;
@@ -131,7 +131,7 @@ namespace gnubase::app
 							return;
 						}
 						m_binding.send("quantize.get", Json::object(),
-							[this, parameters](const engine::Result& result) mutable
+							[this, parameters = parameters](const engine::Result& result) mutable
 							{
 								if (!result.ok())
 									return;
