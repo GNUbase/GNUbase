@@ -545,7 +545,9 @@ namespace gnubase::ui
 			show(); // the value that holds
 			return;
 		}
-		std::string label = field == "rootKey" ? "Root Key" : field == "globalTranspose" ? "Global Transpose" : field;
+		const std::map<std::string, std::string> labels = {
+			{"rootKey", "Root Key"}, {"globalTranspose", "Global Transpose"}};
+		std::string label = labels.count(field) != 0 ? labels.at(field) : field;
 		label.front() = static_cast<char>(std::toupper(static_cast<unsigned char>(label.front())));
 		// A drag, wheel turns or a held arrow key on the volume: one undo step.
 		m_binding.sendStep(gesture, stepKey(m_stepOwner, field), "Change " + label, std::move(commands),

@@ -68,6 +68,7 @@ namespace
 						notes.emplace_back(note.start, note.pitch);
 			std::sort(notes.begin(), notes.end());
 			std::vector<int> result;
+			result.reserve(notes.size());
 			for (const auto& [start, pitch] : notes)
 				result.push_back(pitch);
 			return result;

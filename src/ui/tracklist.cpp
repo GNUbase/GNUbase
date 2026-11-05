@@ -61,6 +61,16 @@ namespace gnubase::ui
 			return control == "transposeMute" || control == "keepInOctave" || control == "transposeLock";
 		}
 
+		// What transpose.setTrack calls a transpose track control.
+		std::string transposeKey(const std::string& control)
+		{
+			if (control == "transposeMute")
+				return "mute";
+			if (control == "transposeLock")
+				return "lock";
+			return "keepInOctave";
+		}
+
 		// The ruler time formats as the track list's drop-down list names them.
 		const widgets::Options& timeFormatOptions()
 		{
@@ -701,11 +711,7 @@ namespace gnubase::ui
 				else if (name == "timeOffsetOn")
 					on = track.value("timeOffsetOn", false);
 				else if (transposeControl(name))
-					on = project.at("transpose")
-							 .value(name == "transposeMute"    ? "mute"
-									 : name == "transposeLock" ? "lock"
-															   : "keepInOctave",
-								 false);
+					on = project.at("transpose").value(transposeKey(name), false);
 				else if (name == "read")
 					on = !lanes.empty() && std::all_of(lanes.begin(), lanes.end(), [](bool read) { return read; });
 				else
@@ -1105,9 +1111,7 @@ namespace gnubase::ui
 		}
 		if (transposeControl(name))
 		{
-			const std::string key = name == "transposeMute" ? "mute"
-				: name == "transposeLock"                   ? "lock"
-															: "keepInOctave";
+			const std::string key = transposeKey(name);
 			m_binding.send("transpose.setTrack", {{key, !project.at("transpose").value(key, false)}});
 			return;
 		}
