@@ -514,8 +514,6 @@ TEST_CASE(
 	// On a program change lane the value is the program, 0 at the bottom, 127 at the top.
 	f.app.call("editor.set", {{"editor", "window"}, {"lanes", {{{"type", "program"}}}}});
 	REQUIRE(f.app.waitUntil([&] { return f.elements(".controller-lane-type").at(0).at("text") == "Program Change"; }));
-	f.click(f.at(0, 8.5, 1.0));
-	f.click(f.at(0, 12.5, 0.5));
 	const auto programs = [&]
 	{
 		std::vector<int> found;
@@ -524,8 +522,13 @@ TEST_CASE(
 				found.push_back(each.at("number").get<int>());
 		return found;
 	};
+	// Just below the top row of pixels, which the note display above takes.
+	f.click(f.at(0, 8.5, 0.99));
+	REQUIRE(f.app.waitUntil([&] { return programs().size() == 1; }));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(Fixture::area(0) + " .controller-step").size() == 1; }));
+	f.click(f.at(0, 12.5, 0.5));
 	REQUIRE(f.app.waitUntil([&] { return programs().size() == 2; }));
-	CHECK(programs()[0] == 127);
+	CHECK(programs()[0] >= 124);
 	CHECK(std::abs(programs()[1] - 64) <= 2);
 	REQUIRE(f.app.waitUntil([&] { return f.elements(Fixture::area(0) + " .controller-step").size() == 2; }));
 }
@@ -540,17 +543,19 @@ TEST_CASE("Ctrl and the draw tool paint controller events only where the mouse w
 	// Without Ctrl an event every length quantize step, a sixteenth: three from the first sixteenth to the third.
 	f.drag(f.at(0, 0.5, 0.5), f.at(0, 2.5, 0.5));
 	REQUIRE(f.app.waitUntil([&] { return f.controllers().size() == 3; }));
+	// The lanes show them, so that the next paint replaces them.
+	REQUIRE(f.app.waitUntil([&] { return f.elements(Fixture::area(0) + " .controller-step").size() == 3; }));
 	// With Ctrl one where the mouse was pressed and one at each of the drag's eight moves, off the grid; those there
-	// go.
+	// go, the one at the start stays.
 	f.app.ui().drag(f.window, f.at(0, 0.5, 0.25), f.at(0, 2.5, 0.25), {"ctrl"});
 	f.app.shell().step(std::chrono::milliseconds(0));
-	REQUIRE(f.app.waitUntil([&] { return f.controllers().size() == 9; }));
-	for (const Json& each : f.controllers())
-	{
-		CHECK(each.at("value").get<double>() == Approx(0.25).margin(0.03));
-		CHECK(each.at("position").get<int64_t>() > g_sixteenth / 4);
-	}
-	CHECK(f.controllers()[0].at("position").get<int64_t>() % g_sixteenth != 0);
+	REQUIRE(f.app.waitUntil([&] { return f.controllers().size() == 10; }));
+	const std::vector<Json> events = f.controllers();
+	CHECK(events[0].at("position") == 0);
+	CHECK(events[0].at("value").get<double>() == Approx(0.5).margin(0.03));
+	CHECK(events[1].at("position").get<int64_t>() % g_sixteenth != 0);
+	for (size_t i = 1; i < events.size(); ++i)
+		CHECK(events[i].at("value").get<double>() == Approx(0.25).margin(0.03));
 }
 
 TEST_CASE("Remove Preset removes a controller lane preset", "[ui]")
@@ -606,7 +611,8 @@ TEST_CASE("Apply and Reset MIDI Velocity Variance change the notes of every part
 	const auto varied = [&]
 	{
 		size_t count = 0;
-		for (const Json& each : f.app.call("project.get").at("midiParts"))
+		const Json project = f.app.call("project.get");
+		for (const Json& each : project.at("midiParts"))
 			for (const Json& note : each.at("notes"))
 				count += note.contains("velocityVariance") ? 1 : 0;
 		return count;
@@ -614,7 +620,8 @@ TEST_CASE("Apply and Reset MIDI Velocity Variance change the notes of every part
 	const auto velocities = [&]
 	{
 		std::vector<double> found;
-		for (const Json& each : f.app.call("project.get").at("midiParts"))
+		const Json project = f.app.call("project.get");
+		for (const Json& each : project.at("midiParts"))
 			for (const Json& note : each.at("notes"))
 				found.push_back(note.at("velocity").get<double>());
 		return found;

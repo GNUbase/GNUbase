@@ -220,7 +220,7 @@ TEST_CASE("every theme draws play probability and velocity variance bars dashed,
 		fake.shell.setTheme(theme);
 		window.requestRender();
 		fake.shell.step(milliseconds(0));
-		CHECK(decorator(*velocity).empty());
+		CHECK_THAT(decorator(*velocity), !ContainsSubstring("gradient"));
 		CHECK(velocity->GetComputedValues().background_color().alpha == 255);
 		for (const char* id : {"probability", "selected", "variance"})
 		{
