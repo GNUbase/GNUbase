@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/document/serialize.h"
 
+#include "engine/document/linkgroups.h"
 #include "engine/processors/builtin.h"
 
 #include <algorithm>
@@ -15,6 +16,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -867,7 +869,7 @@ namespace gnubase::engine
 			{"linkGroups", toJsonArray(project.linkGroups)}, {"virginTerritory", project.virginTerritory},
 			{"quantize", midi::toJson(project.quantize)}, {"autoQuantize", project.autoQuantize},
 			{"activeMarkerTrack", project.activeMarkerTrack}, {"snap", toJson(project.snap)},
-			{"mixers", mixersJson(project.mixers)}};
+			{"mixers", mixersJson(project.mixers)}, {"metronome", metronome::toJson(project.metronome)}};
 		json.update(toJson(project.setup));
 		return json;
 	}
@@ -1597,15 +1599,20 @@ namespace gnubase::engine
 		for (const Json& item : json.at("clips"))
 		{
 			const auto id = item.at("id").get<ObjectId>();
-			// Files from before regions (#140) have none; regions that aren't sections of the clip are left out.
+			// Files from before regions (#140) have none; regions that aren't sections of the clip's media file are
+			// left out, and the others go by start, as clip.addRegion keeps them.
+			const auto media = project.media.find(item.at("media").get<ObjectId>());
+			const time::Samples length = media != project.media.end() ? media->second.length : 0;
 			std::vector<ClipRegion> regions;
 			for (const Json& region : item.value("regions", Json::array()))
 			{
 				ClipRegion read{region.at("id").get<ObjectId>(), region.value("name", std::string()),
 					region.at("start").get<time::Samples>(), region.at("end").get<time::Samples>()};
-				if (read.start >= 0 && read.start < read.end)
+				if (read.start >= 0 && read.start < read.end && read.end <= length)
 					regions.push_back(std::move(read));
 			}
+			std::sort(regions.begin(), regions.end(), [](const ClipRegion& a, const ClipRegion& b)
+				{ return std::tie(a.start, a.id) < std::tie(b.start, b.id); });
 			// Files from before hitpoints (#143) have none; hitpoints before the clip's start, values out of range
 			// and a second hitpoint at a position are left out.
 			std::vector<Hitpoint> hitpoints;
@@ -1775,7 +1782,9 @@ namespace gnubase::engine
 			project.automation[id] = std::move(lane);
 		}
 		// Files from before link groups (#110) have none. A channel stays in its first group; channels that are gone
-		// and controllers that aren't VCA faders, or control another group already, are left out.
+		// and controllers that aren't VCA faders, control another group already or would control themselves are left
+		// out, and so are groups without channels, which older builds left behind. A group that loses its VCA fader
+		// links the volume again, as with linkGroup.set.
 		for (const Json& item : json.value("linkGroups", Json::array()))
 		{
 			LinkGroup group = linkGroupFromJson(item);
@@ -1784,14 +1793,21 @@ namespace gnubase::engine
 				if (project.channels.count(channel) != 0 && linkGroupOf(project, channel) == nullptr &&
 					std::find(channels.begin(), channels.end(), channel) == channels.end())
 					channels.push_back(channel);
+			if (channels.empty())
+				continue;
 			group.channels = std::move(channels);
 			const auto vca = project.channels.find(group.vca);
-			if (vca == project.channels.end() || project.trackById.at(vca->second.track).type != TrackType::Vca ||
-				controlledBy(project, group.vca) != nullptr)
+			if (group.vca != 0 &&
+				(vca == project.channels.end() || project.trackById.at(vca->second.track).type != TrackType::Vca ||
+					controlledBy(project, group.vca) != nullptr))
+			{
 				group.vca = 0;
+				group.volume = true;
+			}
 			group.volume = group.volume && group.vca == 0;
 			project.linkGroups[group.id] = std::move(group);
 		}
+		dropLinkGroupLoops(project);
 		project.virginTerritory = json.value("virginTerritory", false); // files from before #124 have none
 		// Files from before quantizing have neither.
 		if (json.contains("quantize"))
@@ -1802,6 +1818,9 @@ namespace gnubase::engine
 		for (const auto& [name, view] : mixers.items())
 			project.mixers[name] = {
 				view.value("hidden", std::vector<ObjectId>()), view.value("hiddenTypes", std::vector<std::string>())};
+		// Files from before the metronome have none; values that aren't valid keep their defaults.
+		if (const auto found = json.find("metronome"); found != json.end())
+			metronome::apply(project.metronome, *found, false);
 
 		// Without a counter, ids continue after the highest one.
 		ObjectId highest = 0;

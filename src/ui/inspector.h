@@ -22,11 +22,12 @@ namespace gnubase::ui
 {
 	// Fills an element with the inspector of a track: its name (<textdisplay class="inspector-name">) above the
 	// sections of the set "inspector" (docs/features/docking.md): basics (mute, solo, record and monitor buttons, and
-	// volume and pan value fields), routing (input and output drop-down lists), inserts (the channel's plugin slots)
-	// and notepad (the channel's notes in a <textarea>). A click on a section's header closes or opens it (.collapsed);
-	// what a track doesn't have gets the class unavailable. The controls send engine commands. The element has the
-	// class empty without a track. Beside the name, Edit Channel Settings (button.inspector-edit) runs editChannel
-	// with the track, for tracks with a channel. Use it on the UI thread; the binding must outlive it.
+	// volume and pan value fields), routing (input and output drop-down lists), MIDI modifiers (MIDI and instrument
+	// tracks: bypass, value fields and the random generators' and ranges' targets), inserts (the channel's plugin
+	// slots) and notepad (the channel's notes in a <textarea>). A click on a section's header closes or opens it
+	// (.collapsed); what a track doesn't have gets the class unavailable. The controls send engine commands. The
+	// element has the class empty without a track. Beside the name, Edit Channel Settings (button.inspector-edit) runs
+	// editChannel with the track, for tracks with a channel. Use it on the UI thread; the binding must outlive it.
 	class Inspector final : private Rml::EventListener
 	{
 	public:
@@ -46,6 +47,10 @@ namespace gnubase::ui
 		void ProcessEvent(Rml::Event& event) override;
 		void show();
 		void change(Rml::Element& control, const Rml::Event& event);
+		// The MIDI Modifiers section (pp. 1099-1102): shows the channel's modifiers, and sends a control's change
+		// (channel.set modifiers).
+		void showModifiers(const engine::Json& modifiers);
+		void changeModifier(const std::string& control, const Rml::Event& event);
 		void saveNotes();
 		// Sends a change of the channel (channel.set).
 		void sendChannel(engine::Json parameters);

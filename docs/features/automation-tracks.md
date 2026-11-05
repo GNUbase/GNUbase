@@ -53,6 +53,10 @@ the project or its undo history.
 - **Curves** (p. 870): ramps for continuous parameters, steps for on/off and stepped ones, as the engine plays them.
   A lane's values fill its height from its parameter's minimum to its maximum; volume from -60 dB to the project's
   maximum, like the mixer's fader, with silence at the bottom. A lane that doesn't read is grayed out (`.off`).
+  Gaps (p. 881, [virgin-territory.md](virgin-territory.md)) have no line: from a terminator point up to the next
+  point, and with virgin territory before the first point and after the last one (`ui::CurvePoint`'s `terminator`,
+  `ui::Curve::setVirginTerritory`). The display asks for the project again on `automation.changed`, since virgin
+  territory is no undo step.
 - **Static value line** (p. 870): a dashed line at the parameter's static value (`automationLane.targets`' `value`)
   while the lane has no points or doesn't read.
 
@@ -83,9 +87,8 @@ Write automation (#122), automation track heights of their own, the automation p
 Level, Reveal Parameter on Write), bézier handles and quick vertical scaling of one segment (pp. 874, 877), the
 editor's compress, relative and absolute centre scaling, Range Selection on automation tracks with its added points,
 Alt with the object selection tool to draw, Shift to set the line
-tool's period, the most recent parameters at the top of the selector, Open Plugin Editor, the gaps of virgin
-territory and terminators ([virgin-territory.md](virgin-territory.md)), and automation of the channel strip's sections
-(#658).
+tool's period, the most recent parameters at the top of the selector, Open Plugin Editor, setting terminators on the
+info line ([virgin-territory.md](virgin-territory.md)), and automation of the channel strip's sections (#658).
 
 ## Checks
 
@@ -96,4 +99,7 @@ territory and terminators ([virgin-territory.md](virgin-territory.md)), and auto
   Parameters; hiding, Show All Used Automation, Hide All Automation and the selected tracks' command; the draw tool's
   click and curve, the line tool's line, square, sine, triangle and parabola, nothing on a step curve, the erase tool,
   and reading off with the static value line; selecting points with clicks, Ctrl and a rectangle, the event editor's
-  vertical scaling and moving, moving points by a drag, Delete, and selecting events deselecting points.
+  vertical scaling and moving, moving points by a drag, Delete, and selecting events deselecting points; the curve's
+  terminators and virgin territory following `automation.set`.
+- `tests/canvas_tests.cpp`: a curve's lines with a terminator in the middle and at the end, with virgin territory,
+  and scrolled to start after a terminator.

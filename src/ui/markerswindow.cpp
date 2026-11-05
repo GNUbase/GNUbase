@@ -516,7 +516,7 @@ namespace gnubase::ui
 			break;
 		}
 		case Rml::EventId::Mousedown:
-			// A press ends a header drag that RmlUi dropped without its end, because the header was shown again
+			// A left press ends a header drag that RmlUi dropped without its end, because the header was shown again
 			// under it, e.g. for a change of ui.markerColumns from MCP.
 			if (event.GetParameter<int>("button", 0) == 0)
 				m_drag.reset();

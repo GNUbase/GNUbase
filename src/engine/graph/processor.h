@@ -17,9 +17,21 @@ namespace gnubase::engine::graph
 		bool recording = false;
 	};
 
-	// Where a block plays in the project. While playing, the segments cover the block in order; a new segment starts
-	// where cycle playback jumps from the right to the left locator, and where recording punches in or out. While
-	// stopped there are none.
+	// A count-in before playback starts, during which the metronome clicks on a timeline of its own (#101): the
+	// project's tempo and signatures from origin on, or one tempo and signature with bars from 0.
+	struct CountIn
+	{
+		int64_t length = 0; // samples
+		bool projectTime = false;
+		int64_t origin = 0; // projectTime: the project position the count-in starts at
+		double bpm = 120.0;
+		int numerator = 4;
+		int denominator = 4;
+	};
+
+	// Where a block plays in the project. While playing, the segments cover the block in order, after the frames that
+	// count in; a new segment starts where cycle playback jumps from the right to the left locator, and where recording
+	// punches in or out. While stopped there are none.
 	struct TransportBlock
 	{
 		bool playing = false;
@@ -28,6 +40,12 @@ namespace gnubase::engine::graph
 		size_t segmentCount = 0;
 		double tempo = 120.0;   // quarter notes per minute at the block's first frame, from the project's tempo map
 		bool recording = false; // whether any segment records
+		bool click = false;     // the metronome click is on: transport.set metronome
+		// While counting in: the block's first countInFrames frames count in, from countInPosition samples into
+		// countIn. If the count-in ends in the block, playback starts after them, with the first segment.
+		uint32_t countInFrames = 0;
+		int64_t countInPosition = 0;
+		CountIn countIn{};
 	};
 
 	// What a processor gets for one block.

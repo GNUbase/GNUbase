@@ -18,31 +18,44 @@
 
 namespace gnubase::engine
 {
-	// Auditions one audio track (#470, reference manual pp. 252-253): plays its events from a position, as the play
-	// tool does while the mouse is pressed, or scrubs them forwards and backwards at the speed new positions come in,
-	// as the scrub tool does. Either goes straight to the main mix's device ports, past the track's channel (fader,
-	// pan, mute, effects) and without the transport. docs/features/audition.md describes it.
+	// Auditions one audio track (#470, reference manual pp. 252-253), or one media file on its own, as the sample
+	// editor plays its clip (#730, p. 630): plays its events, or the file, from a position, as the play tool does
+	// while the mouse is pressed, or scrubs them forwards and backwards at the speed new positions come in, as the
+	// scrub tool does. Either goes straight to the main mix's device ports, past the track's channel (fader, pan, mute,
+	// effects) and without the transport. docs/features/audition.md describes it.
 	class Audition
 	{
 	public:
+		// What is auditioned: an audio track, or a media file (0 for the other).
+		struct Subject
+		{
+			ObjectId track = 0;
+			ObjectId media = 0;
+
+			bool operator==(const Subject& other) const { return track == other.track && media == other.media; }
+			bool operator!=(const Subject& other) const { return !(*this == other); }
+		};
+
 		Audition();
 
-		// Command thread: plays the track from position on, streamed from its clips, up to end (exclusive, a project
-		// sample), then nothing until stop. channels: the main mix's; maxFrames: the device's block size.
-		void play(ObjectId track, const Playback::Track& source, std::map<ObjectId, std::string> mediaPaths,
+		// Command thread: plays the subject from position on, streamed from its clips, up to end (exclusive, a
+		// position of source's playlist), then nothing until stop. channels: the main mix's; maxFrames: the device's
+		// block size.
+		void play(const Subject& subject, const Playback::Track& source, std::map<ObjectId, std::string> mediaPaths,
 			double sampleRate, time::Samples position, time::Samples end, int channels, uint32_t maxFrames);
 
-		// Command thread: plays the track from where the last scrub of it got to, to position, forwards or backwards,
-		// in seconds (default: the time since that scrub, from 0.01 to 0.1 seconds), so speed and pitch follow how
-		// fast the positions come. The first scrub of a track only sets where the next one starts.
-		void scrub(ObjectId track, const Playback::Track& source, const std::map<ObjectId, std::string>& mediaPaths,
-			double sampleRate, time::Samples position, std::optional<double> seconds, int channels);
+		// Command thread: plays the subject from where the last scrub of it got to, to position, forwards or
+		// backwards, in seconds (default: the time since that scrub, from 0.01 to 0.1 seconds), so speed and pitch
+		// follow how fast the positions come. The first scrub of a subject only sets where the next one starts.
+		void scrub(const Subject& subject, const Playback::Track& source,
+			const std::map<ObjectId, std::string>& mediaPaths, double sampleRate, time::Samples position,
+			std::optional<double> seconds, int channels);
 
 		// Command thread: ends playing or scrubbing.
 		void stop();
 
-		// Command thread: the auditioned track, or 0, and whether it scrubs.
-		ObjectId track() const { return m_track; }
+		// Command thread: what is auditioned (both 0 for nothing), and whether it scrubs.
+		const Subject& subject() const { return m_subject; }
 		bool scrubbing() const { return m_scrubbing; }
 
 		// Any thread but the audio thread: positions the disk streams of the track that plays, ahead of the audio
@@ -80,7 +93,7 @@ namespace gnubase::engine
 		Playback m_playback; // before m_states: their players use it
 
 		// Command side.
-		ObjectId m_track = 0;
+		Subject m_subject;
 		bool m_scrubbing = false;
 		time::Samples m_head = 0; // where the next scrub starts
 		std::chrono::steady_clock::time_point m_lastScrub;

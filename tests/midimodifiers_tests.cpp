@@ -59,21 +59,28 @@ namespace
 			const Json added = run(client, "track.add", {{"type", "instrument"}});
 			channel = added.at("channel").at("id").get<ObjectId>();
 			run(client, "channel.set", {{"channel", channel}, {"instrument", "noteProbe"}});
-			const ObjectId track = added.at("track").at("id").get<ObjectId>();
-			part = run(client, "midiPart.add", {{"track", track}, {"position", 0}, {"length", 4 * g_beatTicks}})
-					   .at("part")
-					   .at("id")
-					   .get<ObjectId>();
+			track = added.at("track").at("id").get<ObjectId>();
+			part = addPart(0);
 		}
 
-		// Adds notes of half a beat, one on each beat from 0, with these pitches and MIDI 1.0 velocities.
-		void add(const std::vector<std::pair<int, int>>& notes)
+		// Adds a part of four beats at a position in ticks.
+		ObjectId addPart(int64_t position)
+		{
+			return run(client, "midiPart.add", {{"track", track}, {"position", position}, {"length", 4 * g_beatTicks}})
+				.at("part")
+				.at("id")
+				.get<ObjectId>();
+		}
+
+		// Adds notes of half a beat, one on each beat from 0, with these pitches and MIDI 1.0 velocities, to the first
+		// part or another one.
+		void add(const std::vector<std::pair<int, int>>& notes, ObjectId to = 0)
 		{
 			Json list = Json::array();
 			for (size_t i = 0; i < notes.size(); ++i)
 				list.push_back({{"position", static_cast<int64_t>(i) * g_beatTicks}, {"length", g_beatTicks / 2},
 					{"pitch", notes[i].first}, {"velocity", notes[i].second / 127.0}});
-			run(client, "note.add", {{"part", part}, {"notes", std::move(list)}});
+			run(client, "note.add", {{"part", to == 0 ? part : to}, {"notes", std::move(list)}});
 		}
 
 		Json modify(Json modifiers)
@@ -96,8 +103,28 @@ namespace
 		Engine engine;
 		Client client{engine};
 		ObjectId channel = 0;
+		ObjectId track = 0;
 		ObjectId part = 0;
 	};
+
+	// What midi.capture captured, each message's position before its bytes.
+	std::vector<std::vector<int64_t>> captured(Client& client)
+	{
+		std::vector<std::vector<int64_t>> messages;
+		const Json capture = run(client, "midi.capture");
+		for (const Json& c : capture.at("captured"))
+		{
+			std::vector<int64_t> bytes = c.at("bytes").get<std::vector<int64_t>>();
+			bytes.insert(bytes.begin(), c.at("position").get<int64_t>());
+			messages.push_back(bytes);
+		}
+		return messages;
+	}
+
+	Json message(int64_t position, std::vector<int> bytes)
+	{
+		return Json{{"position", position}, {"bytes", std::move(bytes)}};
+	}
 
 	std::vector<int> pitches(const std::vector<RenderNote>& notes)
 	{
@@ -405,8 +432,6 @@ TEST_CASE(
 	ModifiedTrack track;
 	track.modify({{"transpose", 12}, {"velocityShift", -20}, {"range", {{{"target", "noteFilter"}, {"maximum", 90}}}}});
 	run(track.client, "midi.capture", {{"start", true}});
-	const auto message = [](int64_t position, std::vector<int> bytes)
-	{ return Json{{"position", position}, {"bytes", std::move(bytes)}}; };
 	run(track.client, "midi.inject",
 		{{"channel", track.channel},
 			{"messages", {message(10, {0x90, 60, 100}), message(20, {0x90, 80, 100}), message(30, {0xA0, 60, 50})}}});
@@ -416,17 +441,38 @@ TEST_CASE(
 	run(track.client, "midi.inject",
 		{{"channel", track.channel}, {"messages", {message(100, {0x80, 60, 64}), message(110, {0x80, 80, 64})}}});
 	run(track.client, "audio.render", {{"frames", 128}});
-
-	std::vector<std::vector<int64_t>> captured;
-	const Json capture = run(track.client, "midi.capture");
-	for (const Json& c : capture.at("captured"))
-	{
-		std::vector<int64_t> bytes = c.at("bytes").get<std::vector<int64_t>>();
-		bytes.insert(bytes.begin(), c.at("position").get<int64_t>());
-		captured.push_back(bytes);
-	}
 	// 80 + 12 is beyond the range: neither its note-on nor its note-off plays.
-	CHECK(captured == std::vector<std::vector<int64_t>>{{10, 0x90, 72, 80}, {30, 0xA0, 72, 50}, {100, 0x80, 72, 64}});
+	CHECK(captured(track.client) ==
+		std::vector<std::vector<int64_t>>{{10, 0x90, 72, 80}, {30, 0xA0, 72, 50}, {100, 0x80, 72, 64}});
+}
+
+TEST_CASE("a second note-on for a held key ends the note the first one started, if it goes elsewhere", "[integration]")
+{
+	ModifiedTrack track;
+	track.modify({{"transpose", 12}});
+	run(track.client, "midi.capture", {{"start", true}});
+	run(track.client, "midi.inject", {{"channel", track.channel}, {"messages", {message(10, {0x90, 60, 100})}}});
+	run(track.client, "audio.render", {{"frames", 64}});
+	// The same target again: as without modifiers, the second note-on goes where the first went.
+	run(track.client, "midi.inject", {{"channel", track.channel}, {"messages", {message(70, {0x90, 60, 90})}}});
+	run(track.client, "audio.render", {{"frames", 64}});
+	// Another target: the first one ends before the second starts, and the key's note-off ends the second.
+	track.modify({{"transpose", 5}});
+	run(track.client, "midi.inject",
+		{{"channel", track.channel}, {"messages", {message(140, {0x90, 60, 80}), message(150, {0x80, 60, 64})}}});
+	run(track.client, "audio.render", {{"frames", 64}});
+	CHECK(captured(track.client) ==
+		std::vector<std::vector<int64_t>>{
+			{10, 0x90, 72, 100}, {70, 0x90, 72, 90}, {140, 0x80, 72, 0}, {140, 0x90, 65, 80}, {150, 0x80, 65, 64}});
+
+	// A note a range leaves out the second time: the first one ends, and nothing else plays for the key.
+	track.modify({{"transpose", 0}, {"range", {{{"target", "velocityFilter"}, {"minimum", 50}}}}});
+	run(track.client, "midi.capture", {{"start", true}});
+	run(track.client, "midi.inject",
+		{{"channel", track.channel},
+			{"messages", {message(200, {0x90, 62, 100}), message(210, {0x90, 62, 20}), message(220, {0x80, 62, 64})}}});
+	run(track.client, "audio.render", {{"frames", 64}});
+	CHECK(captured(track.client) == std::vector<std::vector<int64_t>>{{200, 0x90, 62, 100}, {210, 0x80, 62, 0}});
 }
 
 TEST_CASE("the MIDI modifiers are saved with the project", "[integration]")
@@ -481,6 +527,59 @@ TEST_CASE("a part's transpose and velocity add to the track's modifiers, also wh
 		ContainsSubstring("transpose"));
 	CHECK_THAT(reject(track.client, "midiPart.set", {{"part", track.part}, {"velocity", -128}}),
 		ContainsSubstring("velocity"));
+}
+
+TEST_CASE("a note a random position moves before its part's start starts there, with its length", "[integration]")
+{
+	ModifiedTrack track;
+	const ObjectId later = track.addPart(4 * g_beatTicks);
+	track.add({{60, 100}, {62, 100}}, later);
+	track.modify(
+		{{"random", {{{"target", "position"}, {"minimum", -g_beatTicks / 4}, {"maximum", -g_beatTicks / 4}}}}});
+	const std::vector<RenderNote> notes = track.notes();
+	REQUIRE(notes.size() == 2);
+	CHECK(notes[0].start == 4 * g_beat);
+	CHECK(notes[0].end == (4 * g_beat) + (g_beat / 2));
+	CHECK(notes[1].start == (5 * g_beat) - (g_beat / 4));
+	CHECK(notes[1].end == (5 * g_beat) + (g_beat / 4));
+}
+
+TEST_CASE("glued MIDI parts keep the sound of each part's transpose and velocity in their notes", "[integration]")
+{
+	ModifiedTrack track;
+	track.add({{60, 100}});
+	const ObjectId second = track.addPart(4 * g_beatTicks);
+	track.add({{64, 50}, {70, 120}}, second);
+	run(track.client, "midiPart.set", {{"part", track.part}, {"transpose", 2}, {"velocity", 10}});
+	run(track.client, "midiPart.set", {{"part", second}, {"transpose", -3}, {"velocity", -20}});
+	track.modify({{"transpose", 1}});
+	CHECK(pitches(track.notes()) == std::vector<int>{63, 62, 68});
+	CHECK(velocities(track.notes()) == std::vector<int>{110, 30, 100});
+
+	run(track.client, "event.glue", {{"events", {second, track.part}}});
+	const Json project = run(track.client, "project.get");
+	REQUIRE(project.at("midiParts").size() == 1);
+	const Json& glued = project.at("midiParts")[0];
+	CHECK(glued.at("transpose") == 2);
+	CHECK(glued.at("velocity") == 10);
+	// The second part's notes have the differences to the first part's values written into them.
+	std::vector<std::pair<int, int>> stored;
+	for (const Json& note : glued.at("notes"))
+		stored.emplace_back(note.at("pitch").get<int>(),
+			midi::velocityToMidi1(static_cast<uint16_t>(std::lround(note.at("velocity").get<double>() * 65535))));
+	std::sort(stored.begin(), stored.end());
+	CHECK(stored == std::vector<std::pair<int, int>>{{59, 20}, {60, 100}, {65, 90}});
+	CHECK(pitches(track.notes()) == std::vector<int>{63, 62, 68});
+	CHECK(velocities(track.notes()) == std::vector<int>{110, 30, 100});
+
+	// A note the difference would move beyond 0 to 127: refused, and nothing changes.
+	run(track.client, "history.undo");
+	run(track.client, "midiPart.set", {{"part", track.part}, {"transpose", -60}});
+	run(track.client, "note.add",
+		{{"part", second}, {"notes", {{{"position", 0}, {"length", g_beatTicks}, {"pitch", 100}, {"velocity", 0.5}}}}});
+	const Json before = run(track.client, "project.get");
+	CHECK_THAT(reject(track.client, "event.glue", {{"events", {track.part, second}}}), ContainsSubstring("0 to 127"));
+	CHECK(run(track.client, "project.get") == before);
 }
 
 TEST_CASE("a random position doesn't pull a note the part hides beyond its end back into it", "[integration]")

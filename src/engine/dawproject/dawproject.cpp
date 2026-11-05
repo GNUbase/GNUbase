@@ -1204,10 +1204,12 @@ namespace gnubase::engine
 								channel.input = bus.id;
 								break;
 							}
+					// A VCA channel has a fader, but no pan, sends or routing.
+					const bool vca = type == TrackType::Vca;
 					if (type != TrackType::Midi)
 					{
 						const pugi::xml_node volume = channelNode.child("Volume");
-						const pugi::xml_node pan = channelNode.child("Pan");
+						const pugi::xml_node pan = vca ? pugi::xml_node() : channelNode.child("Pan");
 						if (!volume.empty())
 						{
 							const double value = finiteNumber(volume.attribute("value"), 1.0);
@@ -1230,9 +1232,10 @@ namespace gnubase::engine
 					track.channel = channel.id;
 					m_project.channels[channel.id] = channel;
 					m_channels[channelNode.attribute("id").as_string()] = channel.id;
-					if (const pugi::xml_attribute destination = channelNode.attribute("destination"))
+					if (const pugi::xml_attribute destination = channelNode.attribute("destination");
+						!destination.empty() && !vca)
 						m_destinations.emplace_back(channel.id, destination.as_string());
-					if (type != TrackType::Midi)
+					if (type != TrackType::Midi && !vca)
 						readSends(channelNode.child("Sends"), m_project.channels.at(channel.id));
 				}
 				(parent == 0 ? m_project.tracks : m_project.trackById.at(parent).children).push_back(track.id);
