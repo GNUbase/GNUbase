@@ -240,11 +240,12 @@ Generated from what the MCP server lists, with `script_run`: every tool by area,
 
 Engine command `audioEvent.add`.
 
-Adds an audio event that plays a section of a clip on an audio track. position is in the track's time base (ticks or samples); offset and length are in the clip's sample frames, length defaulting to the rest of the clip. volume is in dB, from -144 to 6 (default 0); a muted event doesn't play. A track plays one event at a time: where events overlap, the one added last plays, unless they crossfade; event.toFront brings another one to the front.
+Adds an audio event that plays a section of a clip on an audio track. position is in the track's time base (ticks or samples); offset and length are in the clip's sample frames, length defaulting to the rest of the clip. volume is in dB, from -144 to 6 (default 0); a muted event doesn't play. A track plays one event at a time: where events overlap, the one added last plays, unless they crossfade; event.toFront brings another one to the front. lane puts it on that lane of the track, from 0 (default), as event.set does.
 
 Arguments:
 
 - `clip`: integer, required
+- `lane`: integer
 - `length`: integer
 - `mute`: boolean
 - `offset`: integer
@@ -323,7 +324,7 @@ Result:
 
 Engine command `audioFile.import`.
 
-Imports audio files (WAV, RF64, Wave64, AIFF, FLAC, Ogg Vorbis or MP3) as audio events at position, in sample frames from the project start (default 0). Each file goes on an audio track of its own: the first on track if given (such as the selected track), the others on new audio tracks named after them, with their channels. With oneTrack they go one after another on one track: track, or a new one. copy copies files from outside the project folder into its media folder (see project.location) as a job, returned as job (null without one) with the result media.add's copy job has; the media are pointed at the copies as an undo step of its own. MP3 and Ogg Vorbis files are always written into the media folder as 32-bit float WAV files (FLAC files stay as they are); in a project without a file, into the folder its recordings go to. convert writes files at another sample rate than the project's into the media folder as 32-bit float WAV files at the project's sample rate, MP3 and Ogg Vorbis files included. splitChannels writes each channel of a file with several into the media folder as a mono WAV file, named after the file and its speaker (such as take-L.wav), on a new mono track of its own at position; track and oneTrack only place the files that aren't split. copy, convert and splitChannels need a saved project. clipsOnly adds the media files and clips to the pool without tracks or events (the pool's Import Medium). One undo step. Returns the new tracks, and per file (per channel when split) the media files and events, in the order of files.
+Imports audio files (WAV, RF64, Wave64, AIFF, FLAC, Ogg Vorbis or MP3) as audio events at position, in sample frames from the project start (default 0). Each file goes on an audio track of its own: the first on track if given (such as the selected track), the others on new audio tracks named after them, with their channels. With oneTrack they go one after another on one track: track, or a new one. lane puts those that go on track on that lane of it, from 0 (default), as event.set does. copy copies files from outside the project folder into its media folder (see project.location) as a job, returned as job (null without one) with the result media.add's copy job has; the media are pointed at the copies as an undo step of its own. MP3 and Ogg Vorbis files are always written into the media folder as 32-bit float WAV files (FLAC files stay as they are); in a project without a file, into the folder its recordings go to. convert writes files at another sample rate than the project's into the media folder as 32-bit float WAV files at the project's sample rate, MP3 and Ogg Vorbis files included. splitChannels writes each channel of a file with several into the media folder as a mono WAV file, named after the file and its speaker (such as take-L.wav), on a new mono track of its own at position; track and oneTrack only place the files that aren't split. copy, convert and splitChannels need a saved project. clipsOnly adds the media files and clips to the pool without tracks or events (the pool's Import Medium). One undo step. Returns the new tracks, and per file (per channel when split) the media files and events, in the order of files.
 
 Arguments:
 
@@ -331,6 +332,7 @@ Arguments:
 - `convert`: boolean
 - `copy`: boolean
 - `files`: array of string, required
+- `lane`: integer
 - `oneTrack`: boolean
 - `position`: integer
 - `splitChannels`: boolean
@@ -349,10 +351,11 @@ Result:
 
 Engine command `audioPart.add`.
 
-Adds an empty audio part to an audio track (reference manual p. 250): a container of audio events, which play only within it and move, copy, split and glue with it through the event commands. position and length are in the track's time base; name defaults to the track's. event.toPart puts events into a part, event.dissolvePart takes them out again.
+Adds an empty audio part to an audio track (reference manual p. 250): a container of audio events, which play only within it and move, copy, split and glue with it through the event commands. position and length are in the track's time base; name defaults to the track's. event.toPart puts events into a part, event.dissolvePart takes them out again. lane puts it on that lane of the track, from 0 (default), as event.set does.
 
 Arguments:
 
+- `lane`: integer
 - `length`: integer, required
 - `name`: string
 - `position`: integer, required
@@ -2145,7 +2148,7 @@ Result:
 
 Engine command `event.toFront`.
 
-Brings takes to the front (To Front, the comp tool's click): audio events, and the audio events of audio parts, play where they overlap other events on their track, as if added last (their front in project.get); MIDI parts are unmuted, and the MIDI parts on their track's other lanes that they overlap are muted. Returns the events.
+Brings takes to the front (To Front, the comp tool's click): audio events, and the audio events of audio parts, play where they overlap other events on their track, as if added last (their front in project.get), a part's events in the order they were stacked in; MIDI parts are unmuted, and the MIDI parts on their track's other lanes that they overlap are muted. Returns the events.
 
 Arguments:
 
@@ -2852,10 +2855,11 @@ Result:
 
 Engine command `midiPart.add`.
 
-Adds a MIDI part to a MIDI or instrument track. position and length are in the track's time base.
+Adds a MIDI part to a MIDI or instrument track. position and length are in the track's time base. lane puts it on that lane of the track, from 0 (default), as event.set does.
 
 Arguments:
 
+- `lane`: integer
 - `length`: integer, required
 - `name`: string
 - `position`: integer, required

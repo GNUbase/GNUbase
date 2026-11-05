@@ -343,9 +343,10 @@ TEST_CASE("an audio part's events keep their order in the stack when the part co
 	// So does a pasted one.
 	f.call("range.copy", {{"start", 0}, {"end", 1000}, {"tracks", {track}}});
 	const Json pasted = f.call("range.paste", {{"position", 48000}}).at("events");
+	const Json project = f.call("project.get");
 	Json pastedPart;
 	for (const Json& id : pasted)
-		for (const Json& audioPart : f.call("project.get").at("audioParts"))
+		for (const Json& audioPart : project.at("audioParts"))
 			if (audioPart.at("id") == id)
 				pastedPart = id;
 	REQUIRE(pastedPart.is_number());
@@ -375,8 +376,8 @@ TEST_CASE("audioEvent.add, audioPart.add, midiPart.add and audioFile.import put 
 	CHECK(f.object("audioEvents", event.at("id")).at("lane") == 2);
 	CHECK(f.object("midiParts", midiPart.at("id")).at("lane") == 3);
 	// Without one, on lane 0; lanes go from 0 to 1000.
-	CHECK(f.call("midiPart.add", {{"track", midiTrack}, {"position", 0}, {"length", g_bar}}).at("part").at("lane") ==
-		0);
+	CHECK(
+		f.call("midiPart.add", {{"track", midiTrack}, {"position", 0}, {"length", g_bar}}).at("part").at("lane") == 0);
 	CHECK_THAT(f.fails("midiPart.add", {{"track", midiTrack}, {"position", 0}, {"length", g_bar}, {"lane", -1}}),
 		ContainsSubstring("lane"));
 	CHECK_THAT(f.fails("audioPart.add", {{"track", audioTrack}, {"position", 0}, {"length", 1}, {"lane", 1001}}),
