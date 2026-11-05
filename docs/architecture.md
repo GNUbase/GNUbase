@@ -87,6 +87,7 @@ flowchart TD
 | Plugin control | Reads the replies and notifications of one host process and watches the process; main-thread calls to its plugins (loading, state, presets, editors, [plugin-api.md](plugin-api.md#threading-rules)) wait for their replies with a timeout | One per host process connection |
 | Plugin jobs | Everything that waits for a plugin host: starting host processes, creating, activating and moving plugins, states, fetching what plugins' notifications changed (`HostManager::run`) | One, so jobs run in order; host processes are started only here, since on Linux a host ends with the thread that started it |
 | Plugin monitor | Notices remote plugins that failed and has the engine report them | Low priority, every 20 ms |
+| Plugin retirer | Waits until the audio thread runs a graph without the slots' plugins that left it, then queues their deactivation, reactivation or destruction as plugin jobs (`SlotInstances`, [plugin slots](features/plugin-slots.md)) | Sleeps on a semaphore that the audio thread releases when it starts a newer graph; never polls |
 | Background threads | Peak files (the peak cache's worker), analysis, saving projects, plugin scan coordination | Low priority |
 | Job threads | Background jobs such as backups, one thread each (`src/engine/jobs`) | Normal priority, never wait for the command thread |
 | Log writer | Writes what audio threads logged, every 10 ms (#8) | Low priority |

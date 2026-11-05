@@ -24,12 +24,15 @@ audio device, `noDevice`. `plugin.changed` announces a slot whenever its status 
 - after `audio.updatePlugins`, which the engine runs when a plugin is ready, failed or asked to be restarted;
 - when the device closes or opens: `audio.setDevice`, `audio.set`, `audio.reset`, `audio.reconnect`, and a new
   project sample rate that the device follows. A device that goes away turns every slot to `noDevice`; one that
-  returns with the same format brings back the statuses the slots had. If one of these commands fails after it closed
-  the device, every client still gets the events, as it does `audio.changed`.
+  returns with the same format brings back the statuses the slots had, and slots added while there was none are
+  made. If one of these commands fails after it closed the device, every client still gets the events, as it does
+  `audio.changed`. A new project sample rate reopens the device after the command that changed it, so its
+  `plugin.changed` events, like its `audio.changed`, go to every client before that command's own events.
 
 `plugin.move` to another channel emits `channel.changed` for both channels (by id), `plugin.changed` with the slot's
-new channel and index, then `automationLane.removed` for the lanes of its parameters, the same events in the same
-order as undoing and redoing the move. Within a channel only the order changes, which `channel.changed` carries.
+new channel and index, then `automationLane.removed` for the lanes of its parameters: the same events in the same
+order as redoing the move, and as undoing it, which adds the lanes back. Within a channel only the order changes,
+which `channel.changed` carries.
 
 ## Files
 
