@@ -302,7 +302,7 @@
 
 		-- Add Track: Count tracks in one undo step. The dialog stays open with Keep Dialog Open, and when the engine
 		-- refuses, with its message. The selected tracks go to the first new track only, once: each new group would
-		-- take them from the one before.
+		-- take them from the one before, each new effect track another send of every one of them.
 		function dialog.add(document)
 			local track = parameters(document)
 			local count = math.floor((tonumber(valueOf(document, "track-count")) or 1) + 0.5)

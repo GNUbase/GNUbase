@@ -41,8 +41,9 @@ studio setup dialog ([studio-setup.md](studio-setup.md)).
 - **For selected tracks.** Group Track to Selected Tracks and Effect Track to Selected Tracks in the track list's
   context menu open the dialog on the group or effect page with the document attributes `type` and `tracks` (the
   selected tracks' ids); Add Track then passes them as `track.add` `tracks`, so they play or send into the new track
-  ([routing.md](routing.md)). With a Count above 1 they go to the first new track only, since each new group would
-  take them from the one before, and Keep Dialog Open's next Add Track adds tracks without them.
+  ([routing.md](routing.md)). With a Count above 1 they go to the first new track only, for group and effect tracks
+  alike: each new group would take them from the one before, and each new effect track would take another send of
+  every selected track. Keep Dialog Open's next Add Track adds tracks without them.
 
 ## Double click
 
@@ -80,8 +81,8 @@ display and controls (#447), and track presets.
   channel, an instrument track with a built-in instrument, three MIDI tracks into it, an effect track into the group,
   a named marker track and a timecode ruler track make the same tracks and channels as the same `track_add` calls
   through MCP, and the three MIDI tracks go with one undo; an eleventh marker track shows the engine's message and
-  keeps the dialog open. Group and Effect Track to Selected Tracks route the selected tracks into the new track, with
-  a Count of 2 into the first one only, and not again with Keep Dialog Open.
+  keeps the dialog open. Group and Effect Track to Selected Tracks route the selected tracks into the new track;
+  Group Track to Selected Tracks with a Count of 2 into the first one only, and not again with Keep Dialog Open.
 - `tests/eventediting_tests.cpp` double-clicks below the tracks.
 - `tests/document_tests.cpp` checks `track.add`'s routing and what it refuses, and ruler tracks;
   `tests/dawproject_tests.cpp` saves and loads a ruler track.

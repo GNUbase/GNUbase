@@ -109,5 +109,5 @@ context menu, where the reference has it.
 - `tests/mixerwindow_tests.cpp`: the Sends section picks a destination, switches a send on and before the fader,
   turns its level with the wheel, gives it the default send level with Ctrl-click, above +6 dB and below -60 dB too,
   and shows another client's change.
-- `tests/addtrack_tests.cpp`: Group and Effect Track to Selected Tracks through the dialog, with a Count of 2 and
-  Keep Dialog Open.
+- `tests/addtrack_tests.cpp`: Group and Effect Track to Selected Tracks through the dialog, and Group Track to
+  Selected Tracks with a Count of 2 and Keep Dialog Open.

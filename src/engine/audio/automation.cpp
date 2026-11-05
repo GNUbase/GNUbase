@@ -560,7 +560,7 @@ namespace gnubase::engine
 			const double panRight = gliding ? m_panRight.next() : m_panRight.value;
 			applyGains(context, panning, i, until, volume * audible, pan, panLeft, panRight);
 			if (muted != nullptr && audible != 1.0)
-				for (int c = 0; c < muted->channels(); ++c)
+				for (int c = 0; c < std::min(context.channels, muted->channels()); ++c)
 					for (uint32_t frame = i; frame < until; ++frame)
 						muted->channel(c)[frame] *= static_cast<float>(audible);
 			i = until;
