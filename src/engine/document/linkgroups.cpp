@@ -206,9 +206,10 @@ namespace gnubase::engine
 	{
 		for (auto& [id, group] : project.linkGroups)
 			if (group.vca != 0 && controlsItself(project, group.vca))
+			{
 				group.vca = 0;
-		for (auto group = project.linkGroups.begin(); group != project.linkGroups.end();)
-			group = group->second.channels.empty() ? project.linkGroups.erase(group) : std::next(group);
+				group.volume = true;
+			}
 	}
 
 	void registerLinkGroupCommands(ProjectModel& model, Engine& engine)

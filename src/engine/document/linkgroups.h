@@ -21,7 +21,7 @@ namespace gnubase::engine
 	void removeFromLinkGroups(Project& project, const std::vector<ObjectId>& gone, CommandContext& context);
 
 	// For a project just loaded, whose link groups are otherwise valid: VCA faders that would control themselves, in
-	// the group they control or through others, leave the groups they control, from the first group on, and groups
-	// without channels go.
+	// the group they control or through others, leave the groups they control, from the first group on, which link
+	// the volume again.
 	void dropLinkGroupLoops(Project& project);
 }

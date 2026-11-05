@@ -4770,7 +4770,7 @@ Arguments:
 
 Engine command `track.remove`.
 
-Removes a track with its channel, events, parts or markers; a folder also removes the tracks inside it. Without the active marker track, the topmost marker track becomes the active one.
+Removes a track with its channel, events, parts or markers; a folder also removes the tracks inside it. The channel leaves its link group, which goes if it has no channels left (linkGroup.removed); a VCA track's group links the volume again (linkGroup.changed). Without the active marker track, the topmost marker track becomes the active one.
 
 Arguments:
 

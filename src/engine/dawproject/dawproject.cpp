@@ -1232,7 +1232,7 @@ namespace gnubase::engine
 					m_project.channels[channel.id] = channel;
 					m_channels[channelNode.attribute("id").as_string()] = channel.id;
 					if (const pugi::xml_attribute destination = channelNode.attribute("destination");
-						destination && !vca)
+						!destination.empty() && !vca)
 						m_destinations.emplace_back(channel.id, destination.as_string());
 					if (type != TrackType::Midi && !vca)
 						readSends(channelNode.child("Sends"), m_project.channels.at(channel.id));
