@@ -165,3 +165,41 @@ TEST_CASE("the audio part editor's selection is audio events of its editable par
 	CHECK(f.call("history.get") == history);
 	CHECK(f.call("editor.close", {{"editor", "window"}}).at("eventSelection").empty());
 }
+
+TEST_CASE("editor.set refuses notes of audio parts and shows the tracks of a content given with it", "[unit]")
+{
+	Fixture f;
+	const uint64_t vocals = f.track("audio");
+	const auto [audioPart, audioEvent] = f.part(vocals, 0);
+	const uint64_t keys = f.track("midi");
+	const uint64_t bass = f.track("midi");
+	const auto midiPart = [&](uint64_t track)
+	{
+		return f.call("midiPart.add", {{"track", track}, {"position", 0}, {"length", 1920}})
+			.at("part")
+			.at("id")
+			.get<uint64_t>();
+	};
+	const uint64_t keysPart = midiPart(keys);
+	const uint64_t bassPart = midiPart(bass);
+	f.call("editor.open", {{"editor", "window"}, {"parts", {audioPart}}});
+
+	// An audio part's notes and controller events: a refusal that names it, not a lookup that fails.
+	CHECK_THAT(f.fails("editor.set", {{"editor", "window"}, {"selection", {{{"part", audioPart}, {"note", 1}}}}}),
+		ContainsSubstring("part " + std::to_string(audioPart) + " isn't a MIDI part"));
+	CHECK_THAT(f.fails("editor.set",
+				   {{"editor", "window"}, {"controllerSelection", {{{"part", audioPart}, {"controller", 1}}}}}),
+		ContainsSubstring("part " + std::to_string(audioPart) + " isn't a MIDI part"));
+	CHECK(f.view().at("parts") == Json::array({audioPart}));
+
+	// showTracks shows the parts of the content given with it: the key editor's MIDI parts.
+	const Json shown = f.call(
+		"editor.set", {{"editor", "window"}, {"parts", {keysPart}}, {"content", "key"}, {"showTracks", {bass}}});
+	CHECK(shown.at("content") == "key");
+	CHECK(ids(shown.at("parts")) == std::vector<uint64_t>{keysPart, bassPart});
+	// And the other way round, the audio part editor's audio parts.
+	const Json back = f.call("editor.set",
+		{{"editor", "window"}, {"exclusive", true}, {"content", "audioPart"}, {"showTracks", {vocals}}});
+	CHECK(back.at("content") == "audioPart");
+	CHECK(ids(back.at("parts")) == std::vector<uint64_t>{audioPart});
+}
