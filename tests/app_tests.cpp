@@ -5,6 +5,7 @@
 #include "app/scripttool.h"
 #include "engine/engine.h"
 #include "mcp/server.h"
+#include "platform/audio/dummydevice.h"
 #include "platform/files.h"
 #include "testutils/testutils.h"
 
@@ -12,12 +13,17 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <memory>
+#include <optional>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 using gnubase::engine::Json;
@@ -90,7 +96,9 @@ TEST_CASE("the command line selects headless mode, the MCP transport, the audio 
 	const Options defaults = parseOptions({});
 	CHECK_FALSE(defaults.headless);
 	CHECK(defaults.transport == Transport::Stdio);
-	CHECK(defaults.audio == "dummy");
+	CHECK(defaults.audio.empty()); // headless the dummy device, with the UI the one chosen last
+	CHECK(!defaults.sampleRate.has_value());
+	CHECK(!defaults.blockSize.has_value());
 
 	const Options options = parseOptions({"--headless", "--mcp-http=8123", "--project", "song.dawproject", "--audio",
 		"dummy", "--sample-rate", "44100", "--block-size", "512"});
@@ -98,8 +106,9 @@ TEST_CASE("the command line selects headless mode, the MCP transport, the audio 
 	CHECK(options.transport == Transport::Http);
 	CHECK(options.port == 8123);
 	CHECK(options.project == "song.dawproject");
-	CHECK(options.sampleRate == 44100.0);
-	CHECK(options.blockSize == 512);
+	CHECK(options.audio == "dummy");
+	CHECK(options.sampleRate == std::optional<double>(44100.0));
+	CHECK(options.blockSize == std::optional<int64_t>(512));
 	CHECK(parseOptions({"--headless", "--mcp-http"}).port == 0);      // a free port
 	CHECK(parseOptions({"--mcp-http"}).transport == Transport::Http); // the windowed app with the UI tools
 	CHECK_THROWS_AS(parseOptions({"--mcp-stdio"}), UsageError);       // stdin and stdout are the terminal's
@@ -284,6 +293,197 @@ TEST_CASE("headless GNUbase keeps the settings in the folder it is given", "[int
 	CHECK(err.str().empty());
 	CHECK(Json::parse(gnubase::test::readText(dir.path() / "settings" / "settings.json")).at("values") ==
 		Json{{"ui.scale", 2}});
+}
+
+namespace
+{
+	// An audio interface without hardware, fake-1, that runs like the dummy device.
+	class FakeDevice : public gnubase::audio::DummyDevice
+	{
+	public:
+		explicit FakeDevice(const gnubase::audio::DeviceFormat& format) : DummyDevice(format, 0) {}
+
+		gnubase::audio::DeviceInfo info() const override
+		{
+			gnubase::audio::DeviceInfo info = DummyDevice::info();
+			info.id = "fake-1";
+			info.name = "Fake interface";
+			return info;
+		}
+	};
+
+	class FakeBackend : public gnubase::audio::Backend
+	{
+	public:
+		std::string name() const override { return "fake"; }
+
+		std::vector<gnubase::audio::DeviceInfo> devices() override
+		{
+			return {FakeDevice(gnubase::audio::DeviceFormat{}).info()};
+		}
+
+		std::unique_ptr<gnubase::audio::Device> open(const gnubase::audio::DeviceConfig& config) override
+		{
+			if (!config.device.empty() && config.device != "fake-1")
+				throw gnubase::audio::DeviceError("no device " + config.device);
+			gnubase::audio::DeviceFormat format;
+			format.sampleRate = config.sampleRate == 0.0 ? format.sampleRate : config.sampleRate;
+			format.blockSize = config.blockSize == 0 ? format.blockSize : config.blockSize;
+			return std::make_unique<FakeDevice>(format);
+		}
+	};
+
+	// The fake interface's backend, the preferred one, and the dummy device's.
+	std::vector<std::unique_ptr<gnubase::audio::Backend>> fakeBackends()
+	{
+		std::vector<std::unique_ptr<gnubase::audio::Backend>> backends;
+		backends.push_back(std::make_unique<FakeBackend>());
+		backends.push_back(std::make_unique<gnubase::audio::DummyBackend>());
+		return backends;
+	}
+
+	Json call(gnubase::engine::Client& client, const std::string& command, const Json& parameters = Json::object())
+	{
+		const gnubase::engine::Result result = client.call(command, parameters);
+		INFO(command << ": " << result.error);
+		REQUIRE(result.ok());
+		return result.value;
+	}
+
+	// Whether the transport moves past position 0 within ten seconds, as it does only on a device that runs.
+	bool moves(gnubase::engine::Client& client)
+	{
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+		while (call(client, "transport.get").at("position").get<int64_t>() <= 0)
+		{
+			if (std::chrono::steady_clock::now() > deadline)
+				return false;
+			std::this_thread::sleep_for(std::chrono::milliseconds(10));
+		}
+		return true;
+	}
+}
+
+TEST_CASE("the windowed app starts the device the user chose last, so Play moves the cursor at once", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	{
+		// Nothing chosen yet: the platform's default backend, which the fake one stands in for as the preferred one.
+		gnubase::engine::Engine engine(fakeBackends(), dir.path());
+		std::ostringstream err;
+		REQUIRE(setUpWindowedEngine(engine, Options{}, err));
+		CHECK(err.str().empty());
+		gnubase::engine::Client client(engine);
+		const Json status = call(client, "audio.get");
+		CHECK(status.at("device").at("backend") == "fake");
+		CHECK(status.at("running") == true);
+		CHECK(status.at("failed").is_null());
+		call(client, "transport.play");
+		CHECK(moves(client));
+
+		// The user chooses the dummy device, as Studio Setup does.
+		call(client, "audio.setDevice", {{"backend", "dummy"}, {"remember", true}});
+	}
+	{
+		gnubase::engine::Engine engine(fakeBackends(), dir.path());
+		std::ostringstream err;
+		REQUIRE(setUpWindowedEngine(engine, Options{}, err));
+		gnubase::engine::Client client(engine);
+		const Json status = call(client, "audio.get");
+		CHECK(status.at("device").at("backend") == "dummy");
+		CHECK(status.at("running") == true);
+		call(client, "transport.play");
+		CHECK(moves(client));
+		call(client, "audio.setDevice", {{"backend", "fake"}, {"device", "fake-1"}, {"remember", true}});
+	}
+
+	// The saved device again, at the sample rate and block size of the command line.
+	gnubase::engine::Engine engine(fakeBackends(), dir.path());
+	std::ostringstream err;
+	Options options;
+	options.sampleRate = 44100.0;
+	options.blockSize = 128;
+	REQUIRE(setUpWindowedEngine(engine, options, err));
+	gnubase::engine::Client client(engine);
+	const Json device = call(client, "audio.get").at("device");
+	CHECK(device.at("id") == "fake-1");
+	CHECK(device.at("sampleRate") == 44100.0);
+	CHECK(device.at("blockSize") == 128);
+}
+
+TEST_CASE("the windowed app starts on the dummy device if the device chosen last can't be opened", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	const auto start = [&dir](const Options& options, std::string& errors)
+	{
+		auto engine = std::make_unique<gnubase::engine::Engine>(fakeBackends(), dir.path());
+		std::ostringstream err;
+		REQUIRE(setUpWindowedEngine(*engine, options, err));
+		errors = err.str();
+		return engine;
+	};
+	{
+		gnubase::engine::Engine engine(fakeBackends(), dir.path());
+		gnubase::engine::Client client(engine);
+		call(client, "settings.set", {{"key", "audio.backend"}, {"value", "fake"}});
+		call(client, "settings.set", {{"key", "audio.device"}, {"value", "fake-2"}}); // unplugged
+	}
+	std::string errors;
+	auto engine = start(Options{}, errors);
+	CHECK_THAT(errors, ContainsSubstring("cannot use the audio device (fake fake-2)"));
+	CHECK_THAT(errors, ContainsSubstring("no device fake-2"));
+	{
+		gnubase::engine::Client client(*engine);
+		const Json status = call(client, "audio.get");
+		CHECK(status.at("device").at("backend") == "dummy");
+		CHECK(status.at("running") == true);
+		CHECK(status.at("failed") == Json{{"backend", "fake"}, {"device", "fake-2"}, {"reason", "no device fake-2"}});
+		call(client, "transport.play");
+		CHECK(moves(client));
+		// The choice stays, for when the device is back.
+		CHECK(call(client, "settings.get", {{"key", "audio.device"}}).at("value") == "fake-2");
+		// A backend this build doesn't have, e.g. in settings copied from another OS.
+		call(client, "settings.set", {{"key", "audio.backend"}, {"value", "coreaudio-elsewhere"}});
+	}
+	engine.reset();
+	Options blocks; // the dummy device takes the command line's block size too
+	blocks.blockSize = 128;
+	engine = start(blocks, errors);
+	{
+		gnubase::engine::Client client(*engine);
+		const Json status = call(client, "audio.get");
+		CHECK(status.at("device").at("backend") == "dummy");
+		CHECK(status.at("device").at("blockSize") == 128);
+		CHECK(status.at("failed").at("backend") == "coreaudio-elsewhere");
+	}
+
+	// --audio wins over the user's choice, and isn't saved.
+	engine.reset();
+	Options options;
+	options.audio = "fake";
+	engine = start(options, errors);
+	CHECK(errors.empty());
+	gnubase::engine::Client client(*engine);
+	const Json status = call(client, "audio.get");
+	CHECK(status.at("device").at("id") == "fake-1");
+	CHECK(status.at("running") == true);
+	CHECK(call(client, "settings.get", {{"key", "audio.backend"}}).at("value") == "coreaudio-elsewhere");
+}
+
+TEST_CASE("headless runs and tests open the dummy device stopped, whatever the user chose", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	gnubase::engine::Engine engine(fakeBackends(), dir.path());
+	gnubase::engine::Client client(engine);
+	call(client, "settings.set", {{"key", "audio.backend"}, {"value", "fake"}});
+	std::ostringstream err;
+	REQUIRE(setUpEngine(engine, Options{}, err));
+	const Json status = call(client, "audio.get");
+	CHECK(status.at("device").at("backend") == "dummy");
+	CHECK(status.at("device").at("sampleRate") == 48000.0);
+	CHECK(status.at("device").at("blockSize") == 256);
+	CHECK(status.at("running") == false); // so audio.render renders offline
+	CHECK(call(client, "audio.render", {{"frames", 256}}).at("position") == 256);
 }
 
 #ifdef GNUBASE_APP

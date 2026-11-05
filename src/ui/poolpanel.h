@@ -44,7 +44,8 @@ namespace gnubase::ui
 		// Shows in the message line (#pool-message, with the class error for a failure) what a pool command did:
 		// pool.removeUnused, media.locate, media.removeMissing or media.conform, wherever in the UI it was sent.
 		// media.locate and media.conform start jobs: the line follows the job's progress and shows its result once it
-		// is done.
+		// is done. While one runs, the line's row (.pool-status) has the class running, which shows Stop (#pool-stop),
+		// and Stop cancels it (reference manual p. 751).
 		void report(const std::string& command, const engine::Result& result);
 
 	private:
@@ -60,6 +61,10 @@ namespace gnubase::ui
 		void showMessage(const std::string& text, bool error);
 		// A job of a pool command ended (job.finished, or job.get for one that ended before report heard of it).
 		void jobEnded(const engine::Json& job);
+		// Cancels the jobs of pool commands that run.
+		void stop();
+		// Marks the message line's row running while a job of a pool command runs.
+		void showRunning();
 		std::vector<std::string> selection() const;
 
 		EngineBinding& m_binding;

@@ -110,7 +110,9 @@ sends engine commands, so whatever another client changes shows at once.
   leave other tracks empty, such as an instrument track that only empty MIDI tracks played or a folder (with its group
   channel, nested or not) that held only empty tracks, so it looks again until nothing more goes: one run leaves no
   empty tracks, in one undo step, and none if nothing is empty. It removes a folder with one `track.remove`, which
-  takes the tracks inside along, and returns every track removed.
+  takes the tracks inside along, and returns every track removed. Plugins in a channel's slots and an instrument
+  track's instrument don't keep a track. It removes the active marker track last, so the marker track that becomes
+  active is one that stays (#797).
   Remove Selected Tracks asks first when a track it removes holds something (`resources/ui/remove-tracks.rml`): the
   list decides from its copy of the project, by content alone, so a track with events, parts, markers or automation,
   or a folder with such a track inside, warns, whatever plays into it. Remove removes them, Cancel or Escape keeps
