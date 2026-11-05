@@ -7,6 +7,7 @@
 #include "engine/document/document.h"
 #include "engine/document/projectmodel.h"
 #include "engine/engine.h"
+#include "engine/midi/drummaps.h"
 #include "engine/time/signaturemap.h"
 #include "engine/time/tempomap.h"
 
@@ -288,13 +289,18 @@ namespace gnubase::engine
 				takes.push_back(std::move(next));
 			}
 			require(!takes.empty(), "a MIDI track's recording needs a take");
-			const auto distribute = [&takes](const Json& items, std::vector<Json> MidiTake::* into)
+			const auto distribute = [&](const Json& items, std::vector<Json> MidiTake::* into)
 			{
 				for (Json item : items)
 				{
 					const auto index = item.value("take", size_t{0});
 					require(index < takes.size(), "a note or controller event names a take that isn't there");
 					item.erase("take");
+					// Notes played into a track with a drum map take the pitch of the sound whose I-note they are
+					// (#129, reference manual p. 1239).
+					if (const Json pitch = item.value("pitch", Json()); into == &MidiTake::notes &&
+						pitch.is_number_integer() && pitch.get<int64_t>() >= 0 && pitch.get<int64_t>() <= 127)
+						item["pitch"] = midi::inputPitch(project, track.id, pitch.get<uint8_t>());
 					(takes[index].*into).push_back(std::move(item));
 				}
 			};

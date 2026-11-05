@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/audio/stripsections.h"
+#include "engine/document/stripparameters.h"
 
 #include <algorithm>
 #include <array>
+#include <tuple>
 
 namespace gnubase::engine
 {
@@ -47,10 +49,54 @@ namespace gnubase::engine
 			core.setParameter(Equalizer::parameter(band, Equalizer::Q), q);
 			core.setParameter(Equalizer::parameter(band, Equalizer::Slope), slope);
 		}
+
+		bool samePre(const ChannelSections& a, const ChannelSections& b)
+		{
+			return std::tie(a.phase, a.lowCut, a.highCut) == std::tie(b.phase, b.lowCut, b.highCut);
+		}
+
+		bool samePost(const ChannelSections& a, const ChannelSections& b)
+		{
+			return std::tie(a.eqBypass, a.eq, a.gate, a.compressor, a.limiter) ==
+				std::tie(b.eqBypass, b.eq, b.gate, b.compressor, b.limiter);
+		}
+	}
+
+	void ParameterRamp::set(double newValue, uint32_t ramp) noexcept
+	{
+		if (ramp == 0)
+		{
+			value = target = newValue;
+			length = 0;
+			return;
+		}
+		start = value;
+		target = newValue;
+		length = ramp;
+		done = 0;
+	}
+
+	double ParameterRamp::next() noexcept
+	{
+		if (length == 0)
+			return value;
+		const double current = value;
+		++done;
+		if (done >= length)
+		{
+			value = target;
+			length = 0;
+		}
+		else
+		{
+			value = start + ((target - start) * (static_cast<double>(done) / static_cast<double>(length)));
+		}
+		return current;
 	}
 
 	StripSections::StripSections()
 	{
+		m_gain.set(1.0, 0);
 		// Each equalizer has only its own bands: the cuts the first and the last, the channel EQ those between.
 		for (int band = 0; band < Equalizer::g_bands; ++band)
 			(band == 0 || band == Equalizer::g_bands - 1 ? m_eq : m_cuts)
@@ -64,32 +110,52 @@ namespace gnubase::engine
 		m_sampleRate = sampleRate;
 		m_maxFrames = maxFrames;
 		m_tailFrames = static_cast<uint32_t>(sampleRate * g_filterTailSeconds);
-		m_gain.setTime(dsp::g_smoothingSeconds, sampleRate);
+		m_polarity.setTime(dsp::g_smoothingSeconds, sampleRate);
 		m_cuts.core.prepare(sampleRate, maxFrames);
 		m_eq.core.prepare(sampleRate, maxFrames);
-		if (!m_fresh)
-		{
+		if (!m_freshPre)
 			m_cuts.core.glideChanges();
+		if (!m_freshPost)
 			m_eq.core.glideChanges();
-		}
 		m_gate.prepare(sampleRate, maxFrames);
 		m_compressor.prepare(sampleRate, maxFrames);
 		m_limiter.prepare(sampleRate, maxFrames);
+		m_limiterRuns = false; // prepare cleared it
 	}
 
-	uint32_t StripSections::latency(const ChannelSections& settings) const
+	template <typename Render>
+	void StripSections::play(const graph::EventBuffer& events, bool pre, uint32_t frames, const Render& render) noexcept
 	{
-		return settings.limiter.on ? m_limiter.latency() : 0;
+		uint32_t at = 0;
+		for (const graph::ProcessEvent& event : events)
+		{
+			if (event.type != graph::ProcessEvent::Type::Parameter || event.parameter < g_stripEvents ||
+				isPreSection(event.parameter - g_stripEvents) != pre)
+				continue;
+			const uint32_t offset = std::min(event.offset, frames);
+			if (offset > at)
+			{
+				render(at, offset);
+				at = offset;
+			}
+			const uint32_t id = event.parameter - g_stripEvents;
+			if (id == StripParameter::PreGain)
+				m_gain.set(event.parameterValue, event.ramp);
+			else
+				setStripValue(m_values, id, event.parameterValue);
+		}
+		if (at < frames)
+			render(at, frames);
 	}
 
-	void StripSections::apply(const ChannelSections& settings) noexcept
+	void StripSections::applyPre() noexcept
 	{
-		if (!m_fresh && settings == m_applied)
+		const ChannelSections& settings = m_values;
+		if (!m_freshPre && samePre(settings, m_appliedPre))
 			return;
-		const ChannelSections& old = m_applied;
-		const bool all = m_fresh;
-		m_gain.set(dsp::dbToGain(settings.gain) * (settings.phase ? -1.0 : 1.0), !all);
-
+		const ChannelSections& old = m_appliedPre;
+		const bool all = m_freshPre;
+		m_polarity.set(settings.phase ? -1.0 : 1.0, !all);
 		if (all || !(settings.lowCut == old.lowCut) || !(settings.highCut == old.highCut))
 		{
 			const auto cut = [this](int band, const CutFilter& filter, dsp::FilterType type)
@@ -98,6 +164,19 @@ namespace gnubase::engine
 			cut(Equalizer::g_bands - 1, settings.highCut, dsp::FilterType::HighCut);
 			m_cuts.on = settings.lowCut.on || settings.highCut.on;
 		}
+		m_appliedPre = settings;
+		m_freshPre = false;
+		// Only the first values apply at once, even to an equalizer that hasn't processed yet.
+		m_cuts.core.glideChanges();
+	}
+
+	void StripSections::applyPost() noexcept
+	{
+		const ChannelSections& settings = m_values;
+		if (!m_freshPost && samePost(settings, m_appliedPost))
+			return;
+		const ChannelSections& old = m_appliedPost;
+		const bool all = m_freshPost;
 		if (all || settings.eqBypass != old.eqBypass || settings.eq != old.eq)
 		{
 			m_eq.on = false;
@@ -127,52 +206,65 @@ namespace gnubase::engine
 		m_compressor.setParameter(dsp::Compressor::Attack, compressor.attack);
 		m_compressor.setParameter(dsp::Compressor::Release, compressor.release);
 		m_compressor.setParameter(dsp::Compressor::Makeup, compressor.makeup);
-		if (settings.limiter.on && (all || !old.limiter.on))
-			m_limiter.reset();
 		m_limiter.setParameter(dsp::Limiter::Ceiling, settings.limiter.threshold);
 		m_limiter.setParameter(dsp::Limiter::Release, settings.limiter.release);
 
-		m_applied = settings;
-		m_fresh = false;
-		// Only the first settings apply at once, even to an equalizer that hasn't processed yet.
-		m_cuts.core.glideChanges();
+		m_appliedPost = settings;
+		m_freshPost = false;
 		m_eq.core.glideChanges();
 	}
 
 	void StripSections::Filters::process(
-		float* const* audio, int channels, uint32_t frames, uint32_t tailFrames) noexcept
+		float* const* audio, int channels, uint32_t begin, uint32_t end, uint32_t tailFrames) noexcept
 	{
 		if (!on && tail == 0)
 			return;
 		// Coming back after it stopped needs no reset: a band clears the filter sections it starts to use.
-		tail = on ? tailFrames : tail - std::min(tail, frames);
-		core.process(audio, channels, 0, frames);
+		tail = on ? tailFrames : tail - std::min(tail, end - begin);
+		core.process(audio, channels, begin, end);
 	}
 
 	void StripSections::processPre(
-		const ChannelSections& settings, float* const* audio, int channels, uint32_t frames) noexcept
+		const graph::EventBuffer& events, float* const* audio, int channels, uint32_t frames) noexcept
 	{
-		apply(settings);
-		if (!m_gain.settled() || m_gain.value() != 1.0)
-			for (uint32_t i = 0; i < frames; ++i)
+		play(events, true, frames,
+			[&](uint32_t begin, uint32_t end)
 			{
-				const auto gain = static_cast<float>(m_gain.next());
-				for (int c = 0; c < channels; ++c)
-					audio[c][i] *= gain;
-			}
-		m_cuts.process(audio, channels, frames, m_tailFrames);
+				applyPre();
+				if (m_gain.length != 0 || !m_polarity.settled() || m_gain.value * m_polarity.value() != 1.0)
+					for (uint32_t i = begin; i < end; ++i)
+					{
+						const auto gain = static_cast<float>(m_gain.next() * m_polarity.next());
+						for (int c = 0; c < channels; ++c)
+							audio[c][i] *= gain;
+					}
+				m_cuts.process(audio, channels, begin, end, m_tailFrames);
+			});
 	}
 
 	void StripSections::processPost(
-		const ChannelSections& settings, float* const* audio, int channels, uint32_t frames) noexcept
+		const graph::EventBuffer& events, bool lookAhead, float* const* audio, int channels, uint32_t frames) noexcept
 	{
-		apply(settings);
-		if (settings.gate.on)
-			m_gate.process(audio, channels, 0, frames);
-		if (settings.compressor.on)
-			m_compressor.process(audio, channels, 0, frames);
-		m_eq.process(audio, channels, frames, m_tailFrames);
-		if (settings.limiter.on)
-			m_limiter.process(audio, channels, 0, frames);
+		play(events, false, frames,
+			[&](uint32_t begin, uint32_t end)
+			{
+				applyPost();
+				const ChannelSections& settings = m_values;
+				if (settings.gate.on)
+					m_gate.process(audio, channels, begin, end);
+				if (settings.compressor.on)
+					m_compressor.process(audio, channels, begin, end);
+				m_eq.process(audio, channels, begin, end, m_tailFrames);
+				// A limiter that comes on starts afresh, unless it ran bypassed to keep its look-ahead.
+				const bool runs = settings.limiter.on || lookAhead;
+				if (runs && !m_limiterRuns)
+					m_limiter.reset();
+				m_limiterRuns = runs;
+				if (runs)
+				{
+					m_limiter.setBypass(!settings.limiter.on);
+					m_limiter.process(audio, channels, begin, end);
+				}
+			});
 	}
 }

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/audio/automation.h"
+#include "engine/document/stripparameters.h"
 #include "engine/processors/builtin.h"
 
 #include "engine/graph/graph.h"
@@ -98,7 +99,7 @@ namespace gnubase::engine
 
 			graph::EventBuffer& of(const PlayedLane& lane) const noexcept
 			{
-				if (lane.kind == Kind::Fader)
+				if (lane.kind == Kind::Fader || lane.kind == Kind::Strip)
 					return fader;
 				return lane.kind == Kind::Plugin ? plugins : source;
 			}
@@ -241,9 +242,9 @@ namespace gnubase::engine
 			if (jump && !inGap(points, begin))
 				emit(lane, segment.offset, automationValue(points, begin), 0, out);
 
-			// The fader glides along ramps; instruments, plugins and MIDI get the value at each g_automationInterval
+			// The fader and the pre gain glide along ramps; the others get the value at each g_automationInterval
 			// frame.
-			const bool glides = lane.kind == Kind::Fader;
+			const bool glides = lane.glides();
 			int64_t at = begin;
 			for (;;)
 			{
@@ -281,8 +282,8 @@ namespace gnubase::engine
 				const int64_t until = std::min(end, to.position);
 				if (from.shape != AutomationShape::Step)
 				{
-					// Only the fader follows a straight ramp exactly; everything else goes in pieces.
-					const bool pieces = lane.kind != Kind::Fader || from.shape == AutomationShape::Curve;
+					// Only what glides follows a straight ramp exactly; everything else goes in pieces.
+					const bool pieces = !glides || from.shape == AutomationShape::Curve;
 					for (int64_t piece = at; piece < until;)
 					{
 						int64_t pieceEnd = until;
@@ -349,6 +350,16 @@ namespace gnubase::engine
 				lanes.push_back({{AutomationTargetType::Instrument, parameter.id, 0, 0, 0}, Kind::Instrument,
 					parameter.id, value, parameter.minimum, parameter.maximum, {}});
 			}
+		if (channel.format != ChannelFormat::None)
+			for (const processors::ParameterInfo& parameter : stripParameters())
+			{
+				// The pre gain glides as a linear gain, like the fader's volume.
+				const auto unit = [&parameter](double value)
+				{ return parameter.id == StripParameter::PreGain ? dsp::dbToGain(value) : value; };
+				lanes.push_back({{AutomationTargetType::Strip, parameter.id, 0, 0, 0}, Kind::Strip,
+					g_stripEvents + parameter.id, unit(stripValue(channel.sections, parameter.id)),
+					unit(parameter.minimum), unit(parameter.maximum), {}});
+			}
 		for (const RenderSlot& slot : channel.slots)
 		{
 			// Other plugins report their parameters once they run (#283).
@@ -405,6 +416,11 @@ namespace gnubase::engine
 		return std::tie(target, kind, parameter, staticValue, minimum, maximum, points) ==
 			std::tie(other.target, other.kind, other.parameter, other.staticValue, other.minimum, other.maximum,
 				other.points);
+	}
+
+	bool PlayedLane::glides() const
+	{
+		return kind == Kind::Fader || (kind == Kind::Strip && parameter == g_stripEvents + StripParameter::PreGain);
 	}
 
 	double automationValue(const std::vector<RenderAutomationPoint>& points, int64_t position)
@@ -518,38 +534,6 @@ namespace gnubase::engine
 		m_audible.set(1.0, 0);
 	}
 
-	void ChannelFader::Ramp::set(double newValue, uint32_t ramp) noexcept
-	{
-		if (ramp == 0)
-		{
-			value = target = newValue;
-			length = 0;
-			return;
-		}
-		start = value;
-		target = newValue;
-		length = ramp;
-		done = 0;
-	}
-
-	double ChannelFader::Ramp::next() noexcept
-	{
-		if (length == 0)
-			return value;
-		const double current = value;
-		++done;
-		if (done >= length)
-		{
-			value = target;
-			length = 0;
-		}
-		else
-		{
-			value = start + ((target - start) * (static_cast<double>(done) / static_cast<double>(length)));
-		}
-		return current;
-	}
-
 	void ChannelFader::process(const graph::ProcessContext& context, const Panning& panning) noexcept
 	{
 		uint32_t position = 0;
@@ -628,10 +612,10 @@ namespace gnubase::engine
 	}
 
 	ChannelStrip::ChannelStrip(std::shared_ptr<ChannelState> state, std::shared_ptr<graph::Processor> source,
-		Panning panning, std::optional<Monitoring> monitoring, bool silent, StripPart part,
-		const ChannelSections& sections, std::vector<const void*> slots, std::vector<ObjectId> slotIds)
+		Panning panning, std::optional<Monitoring> monitoring, bool silent, StripPart part, bool lookAhead,
+		std::vector<const void*> slots, std::vector<ObjectId> slotIds)
 		: m_state(std::move(state)), m_source(std::move(source)), m_panning(panning), m_monitoring(monitoring),
-		  m_silent(silent), m_part(part), m_sections(sections), m_processors(std::move(slots)),
+		  m_silent(silent), m_part(part), m_lookAhead(lookAhead), m_processors(std::move(slots)),
 		  m_slots(std::move(slotIds)), m_sourceEvents(graph::g_maxEventsPerBlock),
 		  m_faderEvents(graph::g_maxEventsPerBlock), m_faderOut(graph::g_maxEventsPerBlock)
 	{
@@ -674,7 +658,7 @@ namespace gnubase::engine
 	uint32_t ChannelStrip::latency() const
 	{
 		const uint32_t source = m_source ? m_source->latency() : 0;
-		return source + (m_part == StripPart::Source ? 0 : m_state->sections.latency(m_sections));
+		return source + (m_part == StripPart::Source ? 0 : m_state->sections.latency(m_lookAhead));
 	}
 
 	void ChannelStrip::process(const graph::ProcessContext& context) noexcept
@@ -708,7 +692,7 @@ namespace gnubase::engine
 			for (const graph::ProcessEvent& event : m_sourceEvents)
 				context.eventsOut.add(event);
 		render(RenderPoint::Source, context);
-		m_state->sections.processPre(m_sections, context.audio, context.channels, context.frames);
+		m_state->sections.processPre(m_faderEvents, context.audio, context.channels, context.frames);
 
 		if (m_part == StripPart::Source)
 		{
@@ -732,7 +716,7 @@ namespace gnubase::engine
 		if (context.channels == 0)
 			return;
 		render(RenderPoint::Inserts, context);
-		m_state->sections.processPost(m_sections, context.audio, context.channels, context.frames);
+		m_state->sections.processPost(events, m_lookAhead, context.audio, context.channels, context.frames);
 		render(RenderPoint::Strip, context);
 		if (m_tap)
 			for (int c = 0; c < std::min(context.channels, m_tap->channels()); ++c)

@@ -1,0 +1,203 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The Spectrum Analyzer (#147, docs/features/audio-functions.md, reference manual pp. 607-608) of the first audio
+     event in the document's attribute events (ids): ui::EventDisplay opens it (audio.spectrumAnalyzer). Its Lua
+     measures the section of the clip the event plays (clip.spectrum) and draws the chosen channel's levels as bars
+     from -120 dB at the bottom to 0 dB at the top of #sa-graph, a bar per 1/24 octave from 20 Hz. The mouse over
+     the graph shows the channel, frequency, note and level in #sa-value; a right click makes that frequency the one
+     the difference D is measured from (.reference), and a click drops it. -->
+<rml>
+<head>
+	<title>Spectrum Analyzer</title>
+	<style>
+		dialog
+		{
+			width: 640dp;
+		}
+
+		.row, #sa-graph
+		{
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.row
+		{
+			display: flex;
+			align-items: center;
+		}
+
+		#sa-value
+		{
+			flex: 1;
+			margin-left: 12dp;
+		}
+
+		#sa-graph
+		{
+			position: relative;
+			height: 260dp;
+		}
+
+		.sa-bar
+		{
+			position: absolute;
+			bottom: 0;
+		}
+
+		.row button
+		{
+			margin-left: 6dp;
+		}
+
+		.buttons
+		{
+			justify-content: flex-end;
+		}
+	</style>
+	<script>
+		SpectrumAnalyzer = {}
+		local dialog = SpectrumAnalyzer
+		local floor = -120 -- dB at the bottom of the graph
+
+		local function escape(text)
+			return (tostring(text):gsub('[&<>"]', {["&"] = "&amp;", ["<"] = "&lt;", [">"] = "&gt;", ['"'] = "&quot;"}))
+		end
+
+		local noteNames = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"}
+
+		local function note(frequency)
+			local nearest = math.floor(69 + (12 * math.log(frequency / 440, 2)) + 0.5)
+			return noteNames[(nearest % 12) + 1] .. ((nearest // 12) - 2)
+		end
+
+		local function channelName(index, count)
+			if count == 1 then
+				return "Mono"
+			end
+			if count == 2 then
+				return index == 1 and "Left" or "Right"
+			end
+			return "Channel " .. index
+		end
+
+		local function levelText(level)
+			return level and string.format("%.1f dB", level) or "-oo dB"
+		end
+
+		-- Draws the chosen channel's bars.
+		local function draw(document)
+			local levels = dialog.result.channels[dialog.channel].levels
+			local width = 100 / #levels
+			local bars = {}
+			for i = 1, #levels do
+				local level = levels[i]
+				local height = level and math.max(0, math.min(100, (level - floor) * 100 / -floor)) or 0
+				bars[#bars + 1] = string.format(
+					'<div class="sa-bar%s" index="%d" style="left: %.4f%%; width: %.4f%%; height: %.4f%%"/>',
+					i == dialog.reference and " reference" or "", i, (i - 1) * width, width, height)
+			end
+			document:GetElementById("sa-graph").inner_rml = table.concat(bars)
+		end
+
+		function dialog.load(document)
+			local first = tonumber(tostring(document:GetAttribute("events") or ""):match("%d+"))
+			local event = nil
+			for _, each in ipairs(gnubase.project.get().audioEvents) do
+				if each.id == first then
+					event = each
+				end
+			end
+			if event == nil then
+				document:Close()
+				return
+			end
+			dialog.result = gnubase.clip.spectrum({clip = event.clip, start = event.offset,
+				["end"] = event.offset + event.length})
+			local count = #dialog.result.channels
+			local options = {}
+			for i = 1, count do
+				options[#options + 1] = '<option value="' .. i .. '"' .. (i == 1 and " selected" or "") .. ">" ..
+					escape(channelName(i, count)) .. "</option>"
+			end
+			document:GetElementById("sa-channel").inner_rml = table.concat(options)
+			dialog.channel = 1
+			dialog.reference = nil
+			draw(document)
+		end
+
+		function dialog.chooseChannel(document)
+			local value = tonumber(tostring(document:GetElementById("sa-channel"):GetAttribute("value") or ""))
+			if value and dialog.result and dialog.result.channels[value] then
+				dialog.channel = value
+				draw(document)
+			end
+		end
+
+		-- The bar at the mouse's x: from the left of the graph's content, which is the sum of the offsets up its
+		-- offset parents (nothing between scrolls).
+		local function barAt(graph, x)
+			local left = graph.client_left
+			local element = graph
+			while element do
+				left = left + element.offset_left
+				element = element.offset_parent
+			end
+			local count = #dialog.result.frequencies
+			local index = math.floor((x - left) * count / graph.client_width) + 1
+			return math.max(1, math.min(count, index))
+		end
+
+		-- The value field: channel, frequency, note and level at the bar, and the difference to the reference bar.
+		function dialog.show(document, index)
+			local frequency = dialog.result.frequencies[index]
+			local levels = dialog.result.channels[dialog.channel].levels
+			local text = string.format("%s  %.1f Hz  %s  %s", channelName(dialog.channel, #dialog.result.channels),
+				frequency, note(frequency), levelText(levels[index]))
+			if dialog.reference then
+				local from = levels[dialog.reference]
+				local to = levels[index]
+				text = text .. "  D: " .. ((from and to) and string.format("%.1f dB", to - from) or "-")
+			end
+			document:GetElementById("sa-value"):SetAttribute("index", tostring(index))
+			document:GetElementById("sa-value").inner_rml = escape(text)
+		end
+
+		function dialog.move(document, event)
+			if dialog.result then
+				dialog.show(document, barAt(document:GetElementById("sa-graph"), event.parameters.mouse_x))
+			end
+		end
+
+		-- A right click picks the reference, a click drops it.
+		function dialog.press(document, event)
+			if not dialog.result then
+				return
+			end
+			local index = barAt(document:GetElementById("sa-graph"), event.parameters.mouse_x)
+			local function mark(on)
+				local bar = dialog.reference and document:QuerySelector('.sa-bar[index="' .. dialog.reference .. '"]')
+				if bar then
+					bar:SetClass("reference", on)
+				end
+			end
+			mark(false)
+			dialog.reference = event.parameters.button == 1 and index or nil
+			mark(true)
+			dialog.show(document, index)
+		end
+	</script>
+</head>
+<body onshow="SpectrumAnalyzer.load(document)">
+	<dialog id="spectrum-analyzer-dialog">
+		<div class="dialog-titlebar">Spectrum Analyzer</div>
+		<div class="row">
+			<select id="sa-channel" onchange="SpectrumAnalyzer.chooseChannel(document)"/>
+			<div id="sa-value"/>
+		</div>
+		<div id="sa-graph" class="sa-graph" onmousemove="SpectrumAnalyzer.move(document, event)"
+			onmousedown="SpectrumAnalyzer.press(document, event)"/>
+		<div class="row buttons">
+			<button id="sa-close" class="primary" result="ok">Close</button>
+		</div>
+	</dialog>
+</body>
+</rml>

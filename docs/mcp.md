@@ -941,7 +941,7 @@ Result:
 
 Engine command `automationLane.add`.
 
-Adds an automation lane to a track: the curve of one parameter. target.type says which: volume (the channel's fader, in dB), pan, panLeft and panRight (-1 to 1, see channel.set) and mute (0 off, 1 on; a lane that plays overrides the mute button) on tracks with audio channels; instrument, a parameter of an instrument track's built-in instrument (target.parameter, an id from processor.list, in its range); plugin, a parameter of the built-in plugin in one of the track's slots (target.slot and target.parameter, as parameter.list gives them, in its range; the lane goes when the plugin is removed or moves to another channel); controller (target.number 0-127), pitchBend (0.5 is no bend) and channelPressure, all 0 to 1, on MIDI and instrument tracks, with target.channel 0-15 (default 0). A track has one lane per target. read (default true): the curve plays; without it, or without points, the parameter keeps its static value.
+Adds an automation lane to a track: the curve of one parameter. target.type says which: volume (the channel's fader, in dB), pan, panLeft and panRight (-1 to 1, see channel.set) and mute (0 off, 1 on; a lane that plays overrides the mute button) on tracks with audio channels; instrument, a parameter of an instrument track's built-in instrument (target.parameter, an id from processor.list, in its range); plugin, a parameter of the built-in plugin in one of the track's slots (target.slot and target.parameter, as parameter.list gives them, in its range; the lane goes when the plugin is removed or moves to another channel); strip, a parameter of the channel strip's sections on tracks with audio channels (target.parameter, as parameter.list gives them: the pre section's gain, phase and cut filters, the equalizer and the gate, compressor and limiter, in their ranges; switches and stepped choices have step curves); controller (target.number 0-127), pitchBend (0.5 is no bend) and channelPressure, all 0 to 1, on MIDI and instrument tracks, with target.channel 0-15 (default 0). A track has one lane per target. read (default true): the curve plays; without it, or without points, the parameter keeps its static value.
 
 Arguments:
 
@@ -996,7 +996,7 @@ Result:
 
 Engine command `automationLane.targets`. Read-only.
 
-What a track's automation lanes can automate, in the order automation tracks offer them: its channel's parameters as parameter.list returns them, then on MIDI and instrument tracks pitch bend, channel pressure and controllers 0 to 127 (MIDI channel 0, from 0 to 1, pitch bend's default 0.5). Each also has group (Channel, the instrument's or plugin's name, or MIDI) and lane, the id of the track's automation lane for it, or 0. Tracks without a channel have none.
+What a track's automation lanes can automate, in the order automation tracks offer them: its channel's parameters as parameter.list returns them, then on MIDI and instrument tracks pitch bend, channel pressure and controllers 0 to 127 (MIDI channel 0, from 0 to 1, pitch bend's default 0.5). Each also has group (Channel, the instrument's or plugin's name, Pre, Equalizer or Strip for the channel strip's sections, or MIDI) and lane, the id of the track's automation lane for it, or 0. Tracks without a channel have none.
 
 Arguments:
 
@@ -1392,6 +1392,29 @@ Result:
 
 - `job`: object, required
 
+#### `clip_detectSilence`
+
+Engine command `clip.detectSilence`. Read-only.
+
+Finds the sections of a clip that aren't silent (the Detect Silence dialog's Analyze, reference manual pp. 603-606). The audio of clip from frame start to end (default: the whole clip). A section opens at the first frame where a sample of any channel reaches openThreshold (dBFS, default -20) and closes after the last frame that reaches closeThreshold (dBFS, default -30, at most openThreshold) before 20 ms below it. Once open, a section stays open for at least minimumOpen (ms, default 10), joining what sounds within it; once closed, none opens before minimumClosed (ms, default 100) has passed. preRoll and postRoll (ms, default 0) start and end the sections earlier and later, joining those that then overlap. Reads the clip's file. Returns the clip and its sections, start to end in clip frames, by start.
+
+Arguments:
+
+- `clip`: integer, required
+- `closeThreshold`: number
+- `end`: integer
+- `minimumClosed`: number
+- `minimumOpen`: number
+- `openThreshold`: number
+- `postRoll`: number
+- `preRoll`: number
+- `start`: integer
+
+Result:
+
+- `clip`: integer
+- `sections`: array of object
+
 #### `clip_remove`
 
 Engine command `clip.remove`.
@@ -1538,6 +1561,46 @@ Result:
 - `clip`: integer, required
 - `region`: object, required
 
+#### `clip_spectrum`
+
+Engine command `clip.spectrum`. Read-only.
+
+The average spectrum of a clip (the Spectrum Analyzer, reference manual pp. 607-608). The audio of clip from frame start to end (default: the whole clip). Welch's method with 4-term Blackman-Harris windows of 8192 samples that overlap by half (shorter audio is one zero-padded window). Its frequencies go from 20 Hz up to the Nyquist frequency in steps of 1/24 octave; each channel's levels has a level in dBFS at each, the strongest of the frequencies within 1/48 octave of it, where a sine reads its peak level (a full-scale sine 0 dBFS); null for silence. Reads the clip's file.
+
+Arguments:
+
+- `clip`: integer, required
+- `end`: integer
+- `start`: integer
+
+Result:
+
+- `channels`: array of object, required
+- `clip`: integer, required
+- `frequencies`: array of number, required
+- `sampleRate`: number, required
+
+#### `clip_statistics`
+
+Engine command `clip.statistics`. Read-only.
+
+The statistics of a clip (the Statistics window, reference manual p. 609). The audio of clip from frame start to end (default: the whole clip). Per channel: minSample and maxSample, the lowest and highest sample; peak, the largest absolute sample; truePeak, the largest absolute level between the samples too, 4 times oversampled; dcOffset, the mean of the samples, also in percent of full scale; bitDepth, the bits the samples need (32 for floating point beyond 24 bits, 0 for silence); pitch, the strongest frequency in Hz; averageRms, the RMS of every sample, and maxRms, the highest RMS of 50 ms windows 10 ms apart, both in dB as AES17 has it, where a full-scale sine reads 0 dB. The levels are linear and in dBFS (Db; minSampleDb and maxSampleDb of the samples' absolute values); null for silence. maxRmsAllChannels is the highest maxRms. loudness (EBU R 128, every channel weighted like front left and right): maxMomentary (400 ms) and maxShortTerm (3 s) in LUFS, ungated; integrated in LUFS (ITU-R BS.1770); range in LU (EBU Tech 3342); maxTruePeak in dBTP; null for silence or audio shorter than their windows. Reads the clip's file.
+
+Arguments:
+
+- `clip`: integer, required
+- `end`: integer
+- `start`: integer
+
+Result:
+
+- `channels`: array of object, required
+- `clip`: integer, required
+- `frames`: integer, required
+- `loudness`: object, required
+- `maxRmsAllChannels`: number or null, required
+- `sampleRate`: number, required
+
 ### controller
 
 #### `controller_add`
@@ -1637,13 +1700,84 @@ Result:
 
 - `event`: object, required
 
+### drumMap
+
+#### `drumMap_add`
+
+Engine command `drumMap.add`.
+
+Adds a drum map to the project: New Map, Empty Map with the sounds Sound 1 to Sound 128 on their own pitch and the track's channel, or New Copy of the map copy (named after it, with Copy) (p. 1236), then changed by what is given. A drum map (reference manual pp. 1235-1240) has a name, a sound for each of the 128 pitches and the drum sound list's order, from the top: each pitch once. sounds changes those named by pitch, each with what it has: name; snap, the note value (such as 1/16, 1/8T or 1/4.) that the drum editor snaps to and that is the length of the sound's new notes with lengthQuantize drumMap; mute, it doesn't play; iNote, the note played in (editor.input, recording) that becomes the pitch; oNote, the note that plays; channel, 0-15, the MIDI channel it plays on, or null for Any, the note's own; output, the MIDI output it plays on, or empty for the track's (Default). The map is {id, name, sounds: [{pitch, name, snap, mute, iNote, oNote, channel, output}], order}, as project.get lists the project's drumMaps; tracks use one with track.set drumMap. Emits drumMap.added and returns the map.
+
+Arguments:
+
+- `copy`: integer
+- `name`: string
+- `order`: array of integer
+- `sounds`: array of object
+
+Result:
+
+- `map`: object, required
+
+#### `drumMap_export`
+
+Engine command `drumMap.export`. Read-only.
+
+Saves a drum map as a drum map file (.drm, p. 1236) at path: XML with its name, sounds and order, which drumMap.import reads back.
+
+Arguments:
+
+- `map`: integer, required
+- `path`: string, required
+
+#### `drumMap_import`
+
+Engine command `drumMap.import`.
+
+Loads a drum map file (.drm, p. 1236), as drumMap.export saves it, into the project as a new drum map. Settings the file doesn't have are Empty Map's. Emits drumMap.added and returns the map.
+
+Arguments:
+
+- `path`: string, required
+
+Result:
+
+- `map`: object, required
+
+#### `drumMap_remove`
+
+Engine command `drumMap.remove`.
+
+Removes a drum map from the project (p. 1236); the tracks that used it have none. Emits drumMap.removed and track.changed for those tracks.
+
+Arguments:
+
+- `map`: integer, required
+
+#### `drumMap_set`
+
+Engine command `drumMap.set`.
+
+Changes a drum map: what isn't given stays; the changes go to every track using it (p. 1237). A drum map (reference manual pp. 1235-1240) has a name, a sound for each of the 128 pitches and the drum sound list's order, from the top: each pitch once. sounds changes those named by pitch, each with what it has: name; snap, the note value (such as 1/16, 1/8T or 1/4.) that the drum editor snaps to and that is the length of the sound's new notes with lengthQuantize drumMap; mute, it doesn't play; iNote, the note played in (editor.input, recording) that becomes the pitch; oNote, the note that plays; channel, 0-15, the MIDI channel it plays on, or null for Any, the note's own; output, the MIDI output it plays on, or empty for the track's (Default). The map is {id, name, sounds: [{pitch, name, snap, mute, iNote, oNote, channel, output}], order}, as project.get lists the project's drumMaps; tracks use one with track.set drumMap. Emits drumMap.changed and returns the map.
+
+Arguments:
+
+- `map`: integer, required
+- `name`: string
+- `order`: array of integer
+- `sounds`: array of object
+
+Result:
+
+- `map`: object, required
+
 ### editor
 
 #### `editor_close`
 
 Engine command `editor.close`.
 
-Closes an editor: it shows no parts, and Keep Editor Contents goes off (p. 1153). Emits editor.changed. editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: open; parts, the MIDI parts or audio parts it shows, in the track list's order and by position; activePart, the part active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the marker and ruler tracks the editor window shows above its events. The key editor's (pp. 1189-1220): selection, the selected notes, each {part, note}, of the editable parts; stepInput and midiInput, what editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, recordPitch, recordVelocity, recordReleaseVelocity and keepNotes, how they go in; insertVelocity (0-1), the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, a note value such as 1/16, 1/8T or 1/4., or link for the quantize grid's (quantize.set). content: what shows the parts, key (the key editor) or list (the list editor, pp. 1243-1258); controllerSelection, the list editor's selected controller events, each {part, controller}, of the editable parts. Audio parts show in the audio part editor (content audioPart, pp. 692-702), whose eventSelection is the selected audio events of the editable parts. The controller lanes' (pp. 1157-1188): lanes, from the top, each {type, number}: velocity, offVelocity, probability or velocityVariance (the notes' play probability and velocity variance), or the controller events of a type: controller (number is the controller), pitchBend, channelPressure, polyPressure (number is the pitch) or program; showLanes, whether the controller display shows them; autoSelectControllers, whether selecting notes selects the controller events from their start to their end. View state: no undo steps, not saved, and a new or loaded project closes the editors.
+Closes an editor: it shows no parts, and Keep Editor Contents goes off (p. 1153). Emits editor.changed. editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: open; parts, the MIDI parts or audio parts it shows, in the track list's order and by position; activePart, the part active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the marker and ruler tracks the editor window shows above its events. The key editor's (pp. 1189-1220): selection, the selected notes, each {part, note}, of the editable parts; stepInput and midiInput, what editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, recordPitch, recordVelocity, recordReleaseVelocity and keepNotes, how they go in; insertVelocity (0-1), the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, a note value such as 1/16, 1/8T or 1/4., link for the quantize grid's (quantize.set), or drumMap for the snap of the note's sound in its track's drum map (drumMap.add), without one the quantize grid's; notes played into a track with a drum map take the pitch of the sound whose iNote they are. content: what shows the parts, key (the key editor), list (the list editor, pp. 1243-1258) or drum (the drum editor, pp. 1221-1242); controllerSelection, the list editor's selected controller events, each {part, controller}, of the editable parts. Audio parts show in the audio part editor (content audioPart, pp. 692-702), whose eventSelection is the selected audio events of the editable parts. The controller lanes' (pp. 1157-1188): lanes, from the top, each {type, number}: velocity, offVelocity, probability or velocityVariance (the notes' play probability and velocity variance), or the controller events of a type: controller (number is the controller), pitchBend, channelPressure, polyPressure (number is the pitch) or program; showLanes, whether the controller display shows them; autoSelectControllers, whether selecting notes selects the controller events from their start to their end. View state: no undo steps, not saved, and a new or loaded project closes the editors.
 
 Arguments:
 
@@ -1654,7 +1788,7 @@ Result:
 - `activePart`: integer, required
 - `activeTrack`: integer, required
 - `autoSelectControllers`: boolean, required
-- `content`: one of "key" | "list" | "audioPart", required
+- `content`: one of "key" | "list" | "drum" | "audioPart", required
 - `controllerSelection`: array of object, required
 - `editable`: array of integer, required
 - `editingMode`: one of "allParts" | "activePart" | "activeTrack", required
@@ -1682,7 +1816,7 @@ Result:
 
 Engine command `editor.get`. Read-only.
 
-What an editor shows. editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: open; parts, the MIDI parts or audio parts it shows, in the track list's order and by position; activePart, the part active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the marker and ruler tracks the editor window shows above its events. The key editor's (pp. 1189-1220): selection, the selected notes, each {part, note}, of the editable parts; stepInput and midiInput, what editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, recordPitch, recordVelocity, recordReleaseVelocity and keepNotes, how they go in; insertVelocity (0-1), the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, a note value such as 1/16, 1/8T or 1/4., or link for the quantize grid's (quantize.set). content: what shows the parts, key (the key editor) or list (the list editor, pp. 1243-1258); controllerSelection, the list editor's selected controller events, each {part, controller}, of the editable parts. Audio parts show in the audio part editor (content audioPart, pp. 692-702), whose eventSelection is the selected audio events of the editable parts. The controller lanes' (pp. 1157-1188): lanes, from the top, each {type, number}: velocity, offVelocity, probability or velocityVariance (the notes' play probability and velocity variance), or the controller events of a type: controller (number is the controller), pitchBend, channelPressure, polyPressure (number is the pitch) or program; showLanes, whether the controller display shows them; autoSelectControllers, whether selecting notes selects the controller events from their start to their end. View state: no undo steps, not saved, and a new or loaded project closes the editors.
+What an editor shows. editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: open; parts, the MIDI parts or audio parts it shows, in the track list's order and by position; activePart, the part active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the marker and ruler tracks the editor window shows above its events. The key editor's (pp. 1189-1220): selection, the selected notes, each {part, note}, of the editable parts; stepInput and midiInput, what editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, recordPitch, recordVelocity, recordReleaseVelocity and keepNotes, how they go in; insertVelocity (0-1), the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, a note value such as 1/16, 1/8T or 1/4., link for the quantize grid's (quantize.set), or drumMap for the snap of the note's sound in its track's drum map (drumMap.add), without one the quantize grid's; notes played into a track with a drum map take the pitch of the sound whose iNote they are. content: what shows the parts, key (the key editor), list (the list editor, pp. 1243-1258) or drum (the drum editor, pp. 1221-1242); controllerSelection, the list editor's selected controller events, each {part, controller}, of the editable parts. Audio parts show in the audio part editor (content audioPart, pp. 692-702), whose eventSelection is the selected audio events of the editable parts. The controller lanes' (pp. 1157-1188): lanes, from the top, each {type, number}: velocity, offVelocity, probability or velocityVariance (the notes' play probability and velocity variance), or the controller events of a type: controller (number is the controller), pitchBend, channelPressure, polyPressure (number is the pitch) or program; showLanes, whether the controller display shows them; autoSelectControllers, whether selecting notes selects the controller events from their start to their end. View state: no undo steps, not saved, and a new or loaded project closes the editors.
 
 Arguments:
 
@@ -1693,7 +1827,7 @@ Result:
 - `activePart`: integer, required
 - `activeTrack`: integer, required
 - `autoSelectControllers`: boolean, required
-- `content`: one of "key" | "list" | "audioPart", required
+- `content`: one of "key" | "list" | "drum" | "audioPart", required
 - `controllerSelection`: array of object, required
 - `editable`: array of integer, required
 - `editingMode`: one of "allParts" | "activePart" | "activeTrack", required
@@ -1737,12 +1871,12 @@ Result:
 
 Engine command `editor.open`.
 
-Opens an editor with MIDI parts or audio parts, such as the ones selected in the project window, or shows those parts in it if it is open. activePart becomes the part active for editing, by default the first. content shows MIDI parts in the key editor or the list editor; an open editor keeps its content unless it is given, a closed one opens with the key editor. Audio parts open in the audio part editor (audioPart). Emits editor.changed. editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: open; parts, the MIDI parts or audio parts it shows, in the track list's order and by position; activePart, the part active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the marker and ruler tracks the editor window shows above its events. The key editor's (pp. 1189-1220): selection, the selected notes, each {part, note}, of the editable parts; stepInput and midiInput, what editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, recordPitch, recordVelocity, recordReleaseVelocity and keepNotes, how they go in; insertVelocity (0-1), the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, a note value such as 1/16, 1/8T or 1/4., or link for the quantize grid's (quantize.set). content: what shows the parts, key (the key editor) or list (the list editor, pp. 1243-1258); controllerSelection, the list editor's selected controller events, each {part, controller}, of the editable parts. Audio parts show in the audio part editor (content audioPart, pp. 692-702), whose eventSelection is the selected audio events of the editable parts. The controller lanes' (pp. 1157-1188): lanes, from the top, each {type, number}: velocity, offVelocity, probability or velocityVariance (the notes' play probability and velocity variance), or the controller events of a type: controller (number is the controller), pitchBend, channelPressure, polyPressure (number is the pitch) or program; showLanes, whether the controller display shows them; autoSelectControllers, whether selecting notes selects the controller events from their start to their end. View state: no undo steps, not saved, and a new or loaded project closes the editors.
+Opens an editor with MIDI parts or audio parts, such as the ones selected in the project window, or shows those parts in it if it is open. activePart becomes the part active for editing, by default the first. content shows MIDI parts in the key editor, the list editor or the drum editor; an open editor keeps its content unless it is given, a closed one opens with the drum editor if the first part's track has a drum map, else with the key editor. Audio parts open in the audio part editor (audioPart). Emits editor.changed. editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: open; parts, the MIDI parts or audio parts it shows, in the track list's order and by position; activePart, the part active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the marker and ruler tracks the editor window shows above its events. The key editor's (pp. 1189-1220): selection, the selected notes, each {part, note}, of the editable parts; stepInput and midiInput, what editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, recordPitch, recordVelocity, recordReleaseVelocity and keepNotes, how they go in; insertVelocity (0-1), the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, a note value such as 1/16, 1/8T or 1/4., link for the quantize grid's (quantize.set), or drumMap for the snap of the note's sound in its track's drum map (drumMap.add), without one the quantize grid's; notes played into a track with a drum map take the pitch of the sound whose iNote they are. content: what shows the parts, key (the key editor), list (the list editor, pp. 1243-1258) or drum (the drum editor, pp. 1221-1242); controllerSelection, the list editor's selected controller events, each {part, controller}, of the editable parts. Audio parts show in the audio part editor (content audioPart, pp. 692-702), whose eventSelection is the selected audio events of the editable parts. The controller lanes' (pp. 1157-1188): lanes, from the top, each {type, number}: velocity, offVelocity, probability or velocityVariance (the notes' play probability and velocity variance), or the controller events of a type: controller (number is the controller), pitchBend, channelPressure, polyPressure (number is the pitch) or program; showLanes, whether the controller display shows them; autoSelectControllers, whether selecting notes selects the controller events from their start to their end. View state: no undo steps, not saved, and a new or loaded project closes the editors.
 
 Arguments:
 
 - `activePart`: integer
-- `content`: one of "key" | "list" | "audioPart"
+- `content`: one of "key" | "list" | "drum" | "audioPart"
 - `editor`: one of "lower" | "window", required
 - `parts`: array of integer, required
 
@@ -1751,7 +1885,7 @@ Result:
 - `activePart`: integer, required
 - `activeTrack`: integer, required
 - `autoSelectControllers`: boolean, required
-- `content`: one of "key" | "list" | "audioPart", required
+- `content`: one of "key" | "list" | "drum" | "audioPart", required
 - `controllerSelection`: array of object, required
 - `editable`: array of integer, required
 - `editingMode`: one of "allParts" | "activePart" | "activeTrack", required
@@ -1779,14 +1913,14 @@ Result:
 
 Engine command `editor.set`.
 
-Changes what an open editor shows (reference manual pp. 1142-1156); what isn't given stays. parts replaces its parts. Then the Visibility tab's changes: exclusive hides every track first, showTracks shows every MIDI part of these tracks (all tracks in a folder), in the audio part editor every audio part, and activates the last, hideTracks hides theirs; at least one part stays. activeTrack activates the track's first part shown, activePart a part shown. editingMode, keepContents and globalTracks (marker and ruler tracks, the editor window only) also apply to a closed editor. selection replaces the selected notes, of the editable parts, controllerSelection the selected controller events and eventSelection the selected audio events of the editable audio parts. content and the key editor's settings apply to any editor; turning stepInput on puts the step input cursor at the active part's start unless stepPosition is given. lanes replaces the controller lanes. With autoSelectControllers on, a new selection of notes, or turning it on, selects the controller events in the notes' ranges unless controllerSelection is given. Emits editor.changed. editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: open; parts, the MIDI parts or audio parts it shows, in the track list's order and by position; activePart, the part active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the marker and ruler tracks the editor window shows above its events. The key editor's (pp. 1189-1220): selection, the selected notes, each {part, note}, of the editable parts; stepInput and midiInput, what editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, recordPitch, recordVelocity, recordReleaseVelocity and keepNotes, how they go in; insertVelocity (0-1), the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, a note value such as 1/16, 1/8T or 1/4., or link for the quantize grid's (quantize.set). content: what shows the parts, key (the key editor) or list (the list editor, pp. 1243-1258); controllerSelection, the list editor's selected controller events, each {part, controller}, of the editable parts. Audio parts show in the audio part editor (content audioPart, pp. 692-702), whose eventSelection is the selected audio events of the editable parts. The controller lanes' (pp. 1157-1188): lanes, from the top, each {type, number}: velocity, offVelocity, probability or velocityVariance (the notes' play probability and velocity variance), or the controller events of a type: controller (number is the controller), pitchBend, channelPressure, polyPressure (number is the pitch) or program; showLanes, whether the controller display shows them; autoSelectControllers, whether selecting notes selects the controller events from their start to their end. View state: no undo steps, not saved, and a new or loaded project closes the editors.
+Changes what an open editor shows (reference manual pp. 1142-1156); what isn't given stays. parts replaces its parts. Then the Visibility tab's changes: exclusive hides every track first, showTracks shows every MIDI part of these tracks (all tracks in a folder), in the audio part editor every audio part, and activates the last, hideTracks hides theirs; at least one part stays. activeTrack activates the track's first part shown, activePart a part shown. editingMode, keepContents and globalTracks (marker and ruler tracks, the editor window only) also apply to a closed editor. selection replaces the selected notes, of the editable parts, controllerSelection the selected controller events and eventSelection the selected audio events of the editable audio parts. content and the key editor's settings apply to any editor; turning stepInput on puts the step input cursor at the active part's start unless stepPosition is given. lanes replaces the controller lanes. With autoSelectControllers on, a new selection of notes, or turning it on, selects the controller events in the notes' ranges unless controllerSelection is given. Emits editor.changed. editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: open; parts, the MIDI parts or audio parts it shows, in the track list's order and by position; activePart, the part active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the marker and ruler tracks the editor window shows above its events. The key editor's (pp. 1189-1220): selection, the selected notes, each {part, note}, of the editable parts; stepInput and midiInput, what editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, recordPitch, recordVelocity, recordReleaseVelocity and keepNotes, how they go in; insertVelocity (0-1), the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, a note value such as 1/16, 1/8T or 1/4., link for the quantize grid's (quantize.set), or drumMap for the snap of the note's sound in its track's drum map (drumMap.add), without one the quantize grid's; notes played into a track with a drum map take the pitch of the sound whose iNote they are. content: what shows the parts, key (the key editor), list (the list editor, pp. 1243-1258) or drum (the drum editor, pp. 1221-1242); controllerSelection, the list editor's selected controller events, each {part, controller}, of the editable parts. Audio parts show in the audio part editor (content audioPart, pp. 692-702), whose eventSelection is the selected audio events of the editable parts. The controller lanes' (pp. 1157-1188): lanes, from the top, each {type, number}: velocity, offVelocity, probability or velocityVariance (the notes' play probability and velocity variance), or the controller events of a type: controller (number is the controller), pitchBend, channelPressure, polyPressure (number is the pitch) or program; showLanes, whether the controller display shows them; autoSelectControllers, whether selecting notes selects the controller events from their start to their end. View state: no undo steps, not saved, and a new or loaded project closes the editors.
 
 Arguments:
 
 - `activePart`: integer
 - `activeTrack`: integer
 - `autoSelectControllers`: boolean
-- `content`: one of "key" | "list" | "audioPart"
+- `content`: one of "key" | "list" | "drum" | "audioPart"
 - `controllerSelection`: array of object
 - `editingMode`: one of "allParts" | "activePart" | "activeTrack"
 - `editor`: one of "lower" | "window", required
@@ -1816,7 +1950,7 @@ Result:
 - `activePart`: integer, required
 - `activeTrack`: integer, required
 - `autoSelectControllers`: boolean, required
-- `content`: one of "key" | "list" | "audioPart", required
+- `content`: one of "key" | "list" | "drum" | "audioPart", required
 - `controllerSelection`: array of object, required
 - `editable`: array of integer, required
 - `editingMode`: one of "allParts" | "activePart" | "activeTrack", required
@@ -2184,6 +2318,33 @@ Arguments:
 Result:
 
 - `events`: array of integer, required
+
+#### `event_stripSilence`
+
+Engine command `event.stripSilence`.
+
+Processes the sections of audio events that aren't silent (the Detect Silence dialog's Process, reference manual pp. 603-606), as clip.detectSilence finds them in the section of the clip each plays. A section opens at the first frame where a sample of any channel reaches openThreshold (dBFS, default -20) and closes after the last frame that reaches closeThreshold (dBFS, default -30, at most openThreshold) before 20 ms below it. Once open, a section stays open for at least minimumOpen (ms, default 10), joining what sounds within it; once closed, none opens before minimumClosed (ms, default 100) has passed. preRoll and postRoll (ms, default 0) start and end the sections earlier and later, joining those that then overlap. strip (Strip Silence, default true) splits each event at the sections' edges and removes the silent parts between them; regions (Add as Regions) adds a region of the clip for each section, named regionName (default Region) and a number from autoNumberStart (default 1) up, across the events; fades (Apply Fades, ms) gives the events that remain a fade in and a fade out of that length, at most half their length each. An event that strip would remove completely, or that is locked, is an error. Returns the events that remain and the regions, and the number of sections.
+
+Arguments:
+
+- `autoNumberStart`: integer
+- `closeThreshold`: number
+- `events`: array of integer, required
+- `fades`: number
+- `minimumClosed`: number
+- `minimumOpen`: number
+- `openThreshold`: number
+- `postRoll`: number
+- `preRoll`: number
+- `regionName`: string
+- `regions`: boolean
+- `strip`: boolean
+
+Result:
+
+- `events`: array of integer, required
+- `regions`: array of integer, required
+- `sections`: integer, required
 
 #### `event_toFront`
 
@@ -3615,7 +3776,7 @@ Result:
 
 Engine command `parameter.list`. Read-only.
 
-The automatable parameters of a channel: on channels with audio the fader's volume (in dB, up to the project's maxVolume), pan, panLeft and panRight (-1 to 1, see channel.set) and mute (0 off, 1 on, the channel's mute button), and on instrument tracks the parameters of their built-in instrument (see processor.list), then those of the built-in plugins in its slots, top to bottom, with targets of type plugin that name the slot. Each has its target, as automationLane.add takes it, its name, minimum, maximum, default, unit, whether it is stepped (whole numbers only), options (the names of a stepped parameter's values from the minimum on, if it has any), its static value and text, the value as it is displayed. Automation overrides the static value while it plays. MIDI channels have none: their volume and pan are MIDI controllers (channel.set midiVolume and midiPan).
+The automatable parameters of a channel: on channels with audio the fader's volume (in dB, up to the project's maxVolume), pan, panLeft and panRight (-1 to 1, see channel.set) and mute (0 off, 1 on, the channel's mute button), and on instrument tracks the parameters of their built-in instrument (see processor.list), then on channels with audio the channel strip's sections (targets of type strip: the pre section's gain, phase and low and high cut, the equalizer's bypass and bands and the gate, compressor and limiter, the values channel.set changes in pre, eq and strip; switches are 0 or 1, cut slopes and the types of EQ bands 1 and 4 stepped choices), then those of the built-in plugins in its slots, top to bottom, with targets of type plugin that name the slot. Each has its target, as automationLane.add takes it, its name, minimum, maximum, default, unit, whether it is stepped (whole numbers only), options (the names of a stepped parameter's values from the minimum on, if it has any), its static value and text, the value as it is displayed. Automation overrides the static value while it plays. MIDI channels have none: their volume and pan are MIDI controllers (channel.set midiVolume and midiPan).
 
 Arguments:
 
@@ -4988,11 +5149,12 @@ Result:
 
 Engine command `track.set`.
 
-Changes a track's name, color (#rrggbb, or null for the default), time base or, for ruler tracks, time format. A new time base keeps its events, parts, markers and automation at the same time; on a linear track they keep their time when the tempo changes too, the notes in its MIDI parts with them. enabled false disables an audio, instrument or MIDI track: it keeps its events and channel settings but plays nothing and is silent. groupChannel turns a folder's group channel on or off: a new one is stereo and plays through the next group channel up, or the main output; the audio of the tracks inside then plays through it, or without it through the next group channel up, or the main output, and its automation and the routing of other channels to it go. Channels routed elsewhere by hand or disconnected keep their routing. With the user setting editing.applyFolderColor, a folder's new color goes to the tracks inside it. picture is an image file (PNG, JPEG or SVG) that the mixer shows on the track's channel, or empty for none.
+Changes a track's name, color (#rrggbb, or null for the default), time base or, for ruler tracks, time format. A new time base keeps its events, parts, markers and automation at the same time; on a linear track they keep their time when the tempo changes too, the notes in its MIDI parts with them. enabled false disables an audio, instrument or MIDI track: it keeps its events and channel settings but plays nothing and is silent. groupChannel turns a folder's group channel on or off: a new one is stereo and plays through the next group channel up, or the main output; the audio of the tracks inside then plays through it, or without it through the next group channel up, or the main output, and its automation and the routing of other channels to it go. Channels routed elsewhere by hand or disconnected keep their routing. With the user setting editing.applyFolderColor, a folder's new color goes to the tracks inside it. picture is an image file (PNG, JPEG or SVG) that the mixer shows on the track's channel, or empty for none. drumMap is the drum map (drumMap.add) a MIDI or instrument track's notes play through, or 0 for none.
 
 Arguments:
 
 - `color`: string or null
+- `drumMap`: integer
 - `enabled`: boolean
 - `groupChannel`: boolean
 - `name`: string

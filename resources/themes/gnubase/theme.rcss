@@ -715,6 +715,16 @@
 	{
 		background-color: #10dff2;
 	}
+	.key-editor-key.drum-sound
+	{
+		background-color: #171c32;
+		color: #f1f4ff;
+	}
+	.key-editor-key.drum-sound.selected
+	{
+		background-color: #10dff2;
+		color: #090b18;
+	}
 	.controller-lane-area
 	{
 		background-color: #101426;
@@ -819,6 +829,26 @@
 	.se-hitpoint.disabled .se-hitpoint-line, .se-hitpoint.disabled .se-hitpoint-handle
 	{
 		background-color: #aeb7d066;
+	}
+	.ds-display, .sa-graph
+	{
+		background-color: #101426;
+	}
+	.ds-section
+	{
+		background-color: #1391a5;
+	}
+	.sa-bar
+	{
+		background-color: #10dff2;
+	}
+	.sa-bar.reference
+	{
+		background-color: #e12ad8;
+	}
+	.st-header, .st-name
+	{
+		color: #aeb7d0;
 	}
 	.list-editor-header
 	{

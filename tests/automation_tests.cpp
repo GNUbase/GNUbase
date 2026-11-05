@@ -1678,3 +1678,170 @@ TEST_CASE("automation.paste pastes VCA faders' volume, and a new project has not
 	addVca();
 	CHECK_THAT(reject(client, "automation.paste", Json::object()), ContainsSubstring("nothing to paste"));
 }
+
+TEST_CASE("pre gain automation is sample-accurate, and the static gain plays again with reading off", "[integration]")
+{
+	const int blockSize = GENERATE(64, 100);
+	INFO("block size " << blockSize);
+	Mixer mixer(blockSize);
+	run(mixer.client, "channel.set", {{"channel", mixer.channel}, {"pre", {{"gain", 3.0}}}});
+	const Json target = {{"type", "strip"}, {"parameter", 0}};
+	const ObjectId lane = mixer.lane(target);
+	// Like the fader's volume, the pre gain glides along ramps in a straight line of its linear gain.
+	const std::vector<TestPoint> points = {
+		{1000, -12.0, "step"}, {2000, -12.0, "linear"}, {3000, 6.0, "step"}, {3500, -6.0, "step"}};
+	mixer.add(lane, points);
+	run(mixer.client, "transport.play");
+	run(mixer.client, "audio.render", {{"frames", 4000}});
+	run(mixer.client, "automationLane.set", {{"lane", lane}, {"read", false}});
+	run(mixer.client, "audio.render", {{"frames", 500}});
+
+	Mixer reference(64);
+	run(reference.client, "audio.render", {{"frames", 4500}});
+	const std::vector<float> input = reference.capture(0, 4500);
+	size_t wrong = 0;
+	size_t first = 0;
+	for (int channel = 0; channel < 2; ++channel)
+	{
+		const std::vector<float> output = mixer.capture(channel, 4500);
+		for (size_t i = 0; i < output.size(); ++i)
+		{
+			const auto position = static_cast<int64_t>(i);
+			const double expected = input[i] * (position < 4000 ? expectedGain(points, position) : gain(3.0));
+			if (std::abs(output[i] - expected) > 1e-6 && wrong++ == 0)
+				first = i;
+		}
+	}
+	INFO(wrong << " wrong samples, the first at frame " << first);
+	CHECK(wrong == 0);
+}
+
+TEST_CASE("a section switch's automation is a step curve that switches at its point's sample", "[integration]")
+{
+	const int blockSize = GENERATE(64, 100);
+	INFO("block size " << blockSize);
+	Mixer mixer(blockSize);
+	const ObjectId lane = mixer.lane({{"type", "strip"}, {"parameter", 1}}); // the phase
+	const Json points = run(mixer.client, "automationPoint.add",
+		{{"lane", lane},
+			{"points",
+				{{{"position", 0}, {"value", 0.0}, {"shape", "linear"}}, {{"position", ticks(1000)}, {"value", 0.6}}}}})
+							.at("points");
+	for (const Json& point : points)
+		CHECK(point.at("shape") == "step");
+	CHECK(points.at(1).at("value") == 1.0);
+	run(mixer.client, "transport.play");
+	run(mixer.client, "audio.render", {{"frames", 40000}});
+
+	// Up to the point the audio passes unchanged; from its sample on the polarity glides through zero to inverted.
+	Mixer reference(64);
+	run(reference.client, "audio.render", {{"frames", 40000}});
+	const std::vector<float> input = reference.capture(0, 40000);
+	const std::vector<float> output = mixer.capture(0, 40000);
+	CHECK(std::equal(input.begin(), input.begin() + 1000, output.begin()));
+	CHECK(output[1000] != input[1000]);
+	size_t wrong = 0;
+	for (size_t i = 30000; i < output.size(); ++i)
+		wrong += output[i] == -input[i] ? 0 : 1;
+	CHECK(wrong == 0);
+}
+
+TEST_CASE("section parameters' automation lanes have their ranges and are saved with the project", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId track = idOf(run(client, "track.add", {{"type", "audio"}}), "track");
+	const ObjectId midi = idOf(run(client, "track.add", {{"type", "midi"}}), "track");
+	const Json frequency = {{"type", "strip"}, {"parameter", 33}}; // EQ band 3's frequency
+	const ObjectId lane = idOf(run(client, "automationLane.add", {{"track", track}, {"target", frequency}}), "lane");
+	CHECK_THAT(reject(client, "automationPoint.add", {{"lane", lane}, {"points", {{{"position", 0}, {"value", 5.0}}}}}),
+		ContainsSubstring("from 20 to 20000"));
+	run(client, "automationPoint.add",
+		{{"lane", lane}, {"points", {{{"position", 0}, {"value", 200.0}}, {{"position", 960}, {"value", 4000.0}}}}});
+	// The low cut's slope is a stepped choice, with a step curve.
+	const ObjectId slope =
+		idOf(run(client, "automationLane.add", {{"track", track}, {"target", {{"type", "strip"}, {"parameter", 4}}}}),
+			"lane");
+	CHECK(run(client, "automationPoint.add", {{"lane", slope}, {"points", {{{"position", 0}, {"value", 3.4}}}}})
+			  .at("points")
+			  .at(0)
+			  .at("value") == 3.0);
+	CHECK_THAT(reject(client, "automationLane.add",
+				   {{"track", track}, {"target", {{"type", "strip"}, {"parameter", 22}}}}), // band 2 is a bell
+		ContainsSubstring("no parameter 22"));
+	CHECK_THAT(reject(client, "automationLane.add", {{"track", track}, {"target", {{"type", "strip"}, {"slot", 1}}}}),
+		ContainsSubstring("target.slot"));
+	CHECK_THAT(
+		reject(client, "automationLane.add", {{"track", midi}, {"target", frequency}}), ContainsSubstring("MIDI"));
+
+	// Saved in GNUbase's entry of the project file and loaded again.
+	const gnubase::test::TempDir dir;
+	const std::string path = (dir.path() / "strip.dawproject").u8string();
+	run(client, "project.save", {{"path", path}});
+	run(client, "project.new");
+	run(client, "project.load", {{"path", path}});
+	const ObjectId opened = run(client, "project.get").at("tracks").at(0).at("id").get<ObjectId>();
+	const Json lanes = run(client, "automationLane.list", {{"track", opened}}).at("lanes");
+	REQUIRE(lanes.size() == 2);
+	CHECK(lanes.at(0).at("target") == frequency);
+	CHECK(lanes.at(0).at("points").size() == 2);
+	CHECK(lanes.at(0).at("points").at(1).at("value") == 4000.0);
+	CHECK(lanes.at(1).at("target") == Json{{"type", "strip"}, {"parameter", 4}});
+	CHECK(lanes.at(1).at("points").at(0).at("shape") == "step");
+
+	// A copy of the track has them too.
+	const ObjectId copy = idOf(run(client, "track.duplicate", {{"track", opened}}), "track");
+	CHECK(run(client, "automationLane.list", {{"track", copy}}).at("lanes").size() == 2);
+}
+
+TEST_CASE("a lane of the limiter's switch plays it bypassed with its look-ahead, and limits once it turns it on",
+	"[integration]")
+{
+	const int blockSize = GENERATE(64, 100);
+	INFO("block size " << blockSize);
+	Mixer mixer(blockSize);
+	// The sine's peaks (0.5) are above the threshold (0.25); the limiter is off, so only its lane switches it.
+	const double threshold = gain(-12.0);
+	run(mixer.client, "channel.set",
+		{{"channel", mixer.channel},
+			{"strip", {{"limiter", {{"on", false}, {"threshold", -12.0}, {"release", 1.0}}}}}});
+	const ObjectId lane = mixer.lane({{"type", "strip"}, {"parameter", 70}});
+	mixer.add(lane, {{0, 0.0, "step"}, {2000, 1.0, "step"}, {6000, 0.0, "step"}});
+	run(mixer.client, "transport.play");
+	run(mixer.client, "audio.render", {{"frames", 12000}});
+
+	Mixer reference(64);
+	run(reference.client, "audio.render", {{"frames", 12000}});
+	const std::vector<float> input = reference.capture(0, 12000);
+	const size_t lookAhead = 48; // 1 ms at 48 kHz, the whole time
+	for (int channel = 0; channel < 2; ++channel)
+	{
+		const std::vector<float> output = mixer.capture(channel, 12000);
+		size_t wrong = 0;
+		float before = 0.0F;
+		float limited = 0.0F;
+		for (size_t i = 0; i < output.size(); ++i)
+		{
+			const float delayed = i < lookAhead ? 0.0F : input[i - lookAhead];
+			if (i < 2000)
+			{
+				// Off: the input delayed by the look-ahead, unclamped.
+				wrong += output[i] == delayed ? 0 : 1;
+				before = std::max(before, std::abs(output[i]));
+			}
+			else if (i < 6000)
+			{
+				wrong += std::abs(output[i]) <= threshold * (1.0 + 1e-6) ? 0 : 1;
+				limited = std::max(limited, std::abs(output[i]));
+			}
+			else if (i >= 8000) // off again, once its gain has released: the same delay as before
+			{
+				wrong += std::abs(output[i] - delayed) <= 1e-5 ? 0 : 1;
+			}
+		}
+		INFO("channel " << channel);
+		CHECK(wrong == 0);
+		CHECK(before > 0.49F);
+		CHECK(limited > 0.9 * threshold);
+	}
+}

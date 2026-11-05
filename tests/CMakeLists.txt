@@ -27,6 +27,8 @@ add_executable(gnubase-tests
 	app_tests.cpp
 	audio_tests.cpp
 	audiofile_tests.cpp
+	audiofunctions_tests.cpp
+	audiofunctions_ui_tests.cpp
 	audioimport_tests.cpp
 	audiopart_tests.cpp
 	audioparteditor_tests.cpp
@@ -50,6 +52,8 @@ add_executable(gnubase-tests
 	device_tests.cpp
 	docking_tests.cpp
 	document_tests.cpp
+	drumeditor_ui_tests.cpp
+	drummaps_tests.cpp
 	editors_tests.cpp
 	effects_tests.cpp
 	emptytracks_tests.cpp
