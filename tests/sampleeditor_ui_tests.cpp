@@ -369,6 +369,37 @@ TEST_CASE("double-clicking a region's name, start or end in the list types a new
 		CHECK(f.regions().at(1).at("end") == 6000);
 		CHECK(f.text(f.row(1) + " .se-region-end") == "6000");
 	}
+
+	// Leaving the field takes what was typed, as a click on the other region does.
+	f.doubleClick(of(f.row(1) + " .se-region-name"));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".se-region-field").size() == 1; }));
+	f.app.ui().text(f.window, "Chorus");
+	f.click(of(f.row(0)));
+	REQUIRE(f.app.waitUntil([&] { return f.regions().at(1).at("name") == "Chorus"; }));
+	REQUIRE(f.app.waitUntil(
+		[&] { return f.text(f.row(1) + " .se-region-name") == "Chorus" && f.elements(".se-region-field").empty(); }));
+
+	// The same number written another way is no undo step.
+	const size_t steps = f.app.call("history.get").at("steps").size();
+	f.doubleClick(of(f.row(1) + " .se-region-start"));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".se-region-field").size() == 1; }));
+	f.app.ui().text(f.window, "01500");
+	f.app.ui().key(f.window, "Enter");
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".se-region-field").empty(); }));
+	f.app.call("project.get"); // after whatever Enter sent
+	CHECK(f.app.call("history.get").at("steps").size() == steps);
+
+	// What is being typed while the regions change elsewhere, such as by MCP, goes instead of into the region.
+	f.doubleClick(of(f.row(1) + " .se-region-name"));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".se-region-field").size() == 1; }));
+	f.app.ui().text(f.window, "Ver");
+	f.app.call("clip.setRegion", {{"clip", f.clip}, {"region", f.regions().at(0).at("id")}, {"name", "Intro"}});
+	REQUIRE(f.app.waitUntil([&] { return f.text(f.row(0) + " .se-region-name") == "Intro"; }));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".se-region-field").empty(); }));
+	f.app.call("project.get");
+	CHECK(f.regions().at(1).at("name") == "Chorus");
+	CHECK(f.app.call("history.get").at("steps").size() == steps + 1);
+	CHECK(f.text(f.row(1) + " .se-region-name") == "Chorus");
 }
 
 TEST_CASE("the snap point, the zoom, play and scrub tools, the overview and the window layout", "[ui]")

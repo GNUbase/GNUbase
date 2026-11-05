@@ -81,6 +81,7 @@ namespace
 			mz_zip_reader_get_filename(&zip, i, name, sizeof name);
 			size_t size = 0;
 			void* data = mz_zip_reader_extract_to_heap(&zip, i, &size, 0);
+			REQUIRE(data != nullptr);
 			entries[name] = std::string(static_cast<const char*>(data), size);
 			mz_free(data);
 		}
