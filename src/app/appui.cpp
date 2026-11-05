@@ -386,6 +386,7 @@ namespace gnubase::app
 		// The edit history (reference manual pp. 110-111), a dialog there, which Edit > History opens.
 		m_docking.add({"history", "History", "project", "right",
 			[this](Rml::Element& element) { return std::make_shared<ui::HistoryPanel>(m_binding, element); }});
+		addQuantize();
 		// The pool (reference manual pp. 739-760, docs/features/pool.md), a window of its own there. Its file dialogs
 		// belong to the window it shows in, and it reads the pool only while it shows.
 		m_docking.add({"pool", "Pool", "project", "lower", [this](Rml::Element& element)
@@ -559,12 +560,21 @@ namespace gnubase::app
 		m_keys.add({"project.colorsSetup", "Opens the project colors setup dialog, which edits the project's colors.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { openDialog(window, "project-colors.rml"); }});
 		// For documents' buttons and menu items: gnubase.ui.command{command = "project.addTrack"} runs a key command
-		// in the main window, as its keys would.
+		// in the main window, as its keys would. A command that doesn't exist or parameters it doesn't take are a Lua
+		// error at the call (KeyCommands::check), in users' scripts too, instead of an engine error later or parameters
+		// a UI command drops (#669).
 		m_lua.addFunction("ui.command",
 			[this](const engine::Json& parameters)
 			{
-				m_keys.run(parameters.at("command").get<std::string>(),
-					parameters.value("parameters", engine::Json::object()), m_main, nullptr);
+				const auto command = parameters.find("command");
+				if (!parameters.is_object() || command == parameters.end() || !command->is_string())
+					throw std::invalid_argument("ui.command needs a table with a command, the name of a key command");
+				for (const auto& item : parameters.items())
+					if (item.key() != "command" && item.key() != "parameters")
+						throw std::invalid_argument("ui.command takes a command and its parameters, not " + item.key());
+				const engine::Json commandParameters = parameters.value("parameters", engine::Json::object());
+				m_keys.check(command->get<std::string>(), commandParameters);
+				m_keys.run(command->get<std::string>(), commandParameters, m_main, nullptr);
 				return engine::Json::object();
 			});
 		for (const ProjectCommand& command : g_projectCommands)
@@ -845,7 +855,12 @@ namespace gnubase::app
 		m_colorMenu.reset();
 		m_trackList.reset();
 		m_infoLine.reset();
+		m_toolbarQuantize.reset();
 		m_eventDisplay = std::make_unique<ui::EventDisplay>(m_engine, m_binding, *root);
+		if (Rml::Element* quantize = document->GetElementById("toolbar-quantize"))
+			m_toolbarQuantize = std::make_unique<ui::QuantizePanel>(m_binding, *quantize,
+				ui::QuantizePanel::Layout::Toolbar,
+				[this](const std::string& command) { m_keys.run(command, engine::Json::object(), m_main, nullptr); });
 		m_statusLine = std::make_unique<ui::StatusLine>(m_binding, *document);
 		if (Rml::Element* info = document->GetElementById("info-line"))
 			m_infoLine = std::make_unique<ui::InfoLine>(*m_eventDisplay, m_binding, *info);
