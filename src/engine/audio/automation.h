@@ -66,7 +66,10 @@ namespace gnubase::engine
 	// points.
 	struct ChannelAutomation
 	{
-		uint64_t revision = 0;  // set by AutomationPlayer::setAutomation
+		uint64_t revision = 0; // set by AutomationPlayer::setAutomation
+		// The revision whose program lane (or its absence) this one has, set by AutomationPlayer::setAutomation: other
+		// new automation doesn't send the program again, which would override a part's own program change.
+		uint64_t programRevision = 0;
 		std::string instrument; // a new instrument gets every value again
 		std::vector<PlayedLane> lanes;
 

@@ -170,3 +170,25 @@ TEST_CASE("a patch selected for a MIDI track reaches its instrument as bank sele
 	track.set({{"device", "Sound Module"}, {"program", 4}, {"bank", nullptr}});
 	CHECK(track.played() == Bytes{{0xC0, 4}});
 }
+
+TEST_CASE("other changes of a MIDI track's channel don't send its patch again", "[integration]")
+{
+	PatchTrack track;
+	track.set({{"program", 5}, {"bank", 300}});
+	track.played();
+
+	// Stopped: the new MIDI volume alone.
+	track.set({{"midiVolume", 90}});
+	CHECK(track.played() == Bytes{{0xB0, 7, 90}});
+
+	// Playing: the patch where playback starts, then the new MIDI volume alone, so a program change a part has played
+	// stays.
+	run(track.client, "transport.play");
+	CHECK(track.played() == Bytes{{0xB0, 0, 2}, {0xB0, 32, 44}, {0xC0, 5}, {0xB0, 7, 90}});
+	track.set({{"midiVolume", 100}});
+	CHECK(track.played() == Bytes{{0xB0, 7, 100}});
+
+	// A new program goes out at once, with the controllers after it.
+	track.set({{"program", 6}});
+	CHECK(track.played() == Bytes{{0xB0, 0, 2}, {0xB0, 32, 44}, {0xC0, 6}, {0xB0, 7, 100}});
+}
