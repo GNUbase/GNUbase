@@ -507,3 +507,67 @@ TEST_CASE("Open/Close Editor without an audio event selected closes the sample e
 	REQUIRE(f.app.waitUntil([&] { return f.view().at("open") == false; }));
 	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().sampleEditorWindow() == nullptr; }));
 }
+
+// Tempo matching and warping (#144, docs/features/warp.md): the Warp section, Free Warp's gestures, Flatten and
+// the Audio menu's Realtime Processing.
+TEST_CASE("the Warp section, Free Warp and Flatten warp the clip", "[ui]")
+{
+	Fixture f;
+	f.open();
+	const auto warp = [&f]
+	{
+		const Json project = f.app.call("project.get");
+		Json found = Json::object();
+		for (const Json& each : project.at("clips"))
+			if (each.at("id") == f.clip)
+				found = each.at("warp");
+		return found;
+	};
+	f.click(of("#se-musical"));
+	REQUIRE(f.app.waitUntil([&] { return warp().at("musical") == true && f.has("#se-musical", "checked"); }));
+	CHECK(warp().at("tempo") == 120.0);
+	// Auto Adjust over the event without a selection: the event is one bar of one quarter at 720 BPM.
+	f.app.call("clip.setWarp", {{"clip", f.clip}, {"beatsPerBar", 1}, {"tempo", 720.0}});
+	f.app.call("clip.setHitpoints",
+		{{"clip", f.clip}, {"hitpoints", {{{"position", 3000}, {"peak", -6.0}, {"intensity", 1.0}}}}});
+	f.click(of("#se-auto-adjust"));
+	REQUIRE(f.app.waitUntil([&] { return warp().at("gridStart") == 1000; }));
+	CHECK(f.lastParameters("clip.autoAdjust") == Json{{"clip", f.clip}, {"start", 1000}, {"end", 5000}});
+
+	// Free Warp: a drag inserts a marker and moves it; a modifier and a click removes it; Reset removes them all.
+	f.click(of("#se-free-warp"));
+	REQUIRE(f.has("#se-free-warp", "checked"));
+	REQUIRE(f.has(".sample-editor", "free-warp"));
+	f.drag(f.at(3000), f.at(3400));
+	REQUIRE(f.app.waitUntil([&] { return warp().at("markers").size() == 1; }));
+	const Json marker = warp().at("markers").at(0);
+	CHECK(f.near(marker.at("position").get<double>(), 3000, 2 * f.editor().scale()));
+	CHECK(f.near(marker.at("target").get<double>(), 3400, 2 * f.editor().scale()));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".se-warp-marker").size() == 1; }));
+	CHECK(f.near(
+		f.box(".se-warp-marker").at("x").get<double>() + (3 * f.dpRatio()), f.x(marker.at("target").get<double>()), 2));
+	const auto target = marker.at("target").get<double>();
+	f.drag(f.at(target), f.at(target + 200));
+	REQUIRE(f.app.waitUntil([&] { return warp().at("markers").at(0).at("target").get<double>() > target + 100; }));
+	const double moved = warp().at("markers").at(0).at("target").get<double>();
+	REQUIRE(f.app.waitUntil(
+		[&] { return f.near(f.box(".se-warp-marker").at("x").get<double>() + (3 * f.dpRatio()), f.x(moved), 2); }));
+	f.click(f.at(moved), {"alt"});
+	REQUIRE(f.app.waitUntil([&] { return warp().at("markers").empty(); }));
+	f.drag(f.at(3000), f.at(3400));
+	REQUIRE(f.app.waitUntil([&] { return warp().at("markers").size() == 1; }));
+	f.click(of("#se-warp-reset"));
+	REQUIRE(f.app.waitUntil([&] { return warp().at("markers").empty(); }));
+
+	// Unstretch Audio in the Audio menu turns musical mode off.
+	f.app.keys().run("audio.unstretch", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil([&] { return warp().at("musical") == false && !f.has("#se-musical", "checked"); }));
+
+	// Flatten makes the event play a new clip.
+	f.click(of("#se-musical"));
+	REQUIRE(f.app.waitUntil([&] { return warp().at("musical") == true; }));
+	f.click(of("#se-flatten"));
+	REQUIRE(f.app.waitUntil([&] { return f.lastParameters("event.flatten").is_object(); }));
+	CHECK(f.lastParameters("event.flatten").at("events") == Json::array({f.event}));
+	REQUIRE(f.app.waitUntil([&] { return f.app.call("project.get").at("audioEvents").at(0).at("clip") != f.clip; }));
+}

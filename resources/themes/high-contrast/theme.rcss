@@ -830,6 +830,10 @@
 	{
 		background-color: #c8c8c866;
 	}
+	.se-warp-marker-line, .se-warp-marker-handle
+	{
+		background-color: #00ffff;
+	}
 	.ds-display, .sa-graph
 	{
 		background-color: #000000;

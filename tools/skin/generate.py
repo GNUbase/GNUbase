@@ -623,6 +623,8 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".se-hitpoint.locked .se-hitpoint-handle", {"background-color": c["accent2"]}),
         (".se-hitpoint.disabled .se-hitpoint-line, .se-hitpoint.disabled .se-hitpoint-handle",
          {"background-color": c["textMuted"] + "66"}),
+        # Its warp markers (docs/features/warp.md)
+        (".se-warp-marker-line, .se-warp-marker-handle", {"background-color": c["accent2"]}),
         # The audio functions (docs/features/audio-functions.md): Detect Silence's sections along the event, the
         # Spectrum Analyzer's bars with the one D is measured from in the second accent, the Statistics' headings
         (".ds-display, .sa-graph", {"background-color": c["surface"]}),

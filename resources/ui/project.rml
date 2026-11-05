@@ -367,6 +367,13 @@
 		</menuitem>
 		<menuitem command="audio.spectrumAnalyzer">Spectrum Analyzer</menuitem>
 		<menuitem command="audio.statistics">Statistics</menuitem>
+		<!-- Warping (reference manual pp. 657-658, docs/features/warp.md) -->
+		<menuitem id="audio-realtime-submenu">Realtime Processing
+			<menu>
+				<menuitem command="audio.flatten">Flatten Realtime Processing</menuitem>
+				<menuitem command="audio.unstretch">Unstretch Audio</menuitem>
+			</menu>
+		</menuitem>
 	</menu>
 	<!-- MIDI functions (reference manual pp. 1118-1131, docs/features/midi-functions.md) -->
 	<menu id="midi-menu">
