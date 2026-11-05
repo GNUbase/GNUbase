@@ -448,6 +448,7 @@ namespace gnubase::ui
 		void showPresets();
 		void showAutoScroll();
 		void showSnap();
+		void showRootKey(const engine::Json& project);
 		void setSnap(const engine::Json& settings); // sends snap.set; one with a format counts in m_formatsSent
 
 		// Importing files (fileimport.cpp).
@@ -792,6 +793,8 @@ namespace gnubase::ui
 		Rml::Element* m_gridTypeButton = nullptr;
 		Rml::Element* m_gridTypeMenu = nullptr;
 		Rml::Element* m_zeroCrossingButton = nullptr;
+		Rml::Element* m_rootKeyButton = nullptr; // the Project Root Key (#168)
+		Rml::Element* m_rootKeyMenu = nullptr;
 		Rml::ObserverPtr<Rml::Element> m_dialog; // the dialog document open now
 		// What the Tempo Detection dialog analyzes, and how its buttons changed the result.
 		struct TempoDetection

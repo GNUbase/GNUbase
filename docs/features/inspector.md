@@ -21,6 +21,7 @@ Layout and Mod+I show and hide ([docking.md](docking.md)). It follows the event 
     valuefield[field=volume]  audio events, in dB; .hidden for parts
     button[field=mute], button[field=lock]                  toggle buttons
     valuefield[field=transpose], [field=velocity]           MIDI parts, -127 to 127; .hidden for others
+    select[field=rootKey], button[field=globalTranspose]    MIDI parts' root key and Global Transpose; .hidden for others
 ```
 
 - **Editing** (p. 72). A double click edits a display or the volume as text, Enter takes it; mute and lock are toggles.
@@ -35,6 +36,9 @@ Layout and Mod+I show and hide ([docking.md](docking.md)). It follows the event 
   track's MIDI modifiers ([midi-modifiers.md](midi-modifiers.md)). Like the volume they change every selected part by
   as much as the first one changes, kept from -127 to 127, or with Ctrl+Enter give them all the value typed
   (`midiPart.set` `transpose` and `velocity`).
+- **Root Key and Global Transpose** (pp. 417, 421, [transpose.md](transpose.md)): a MIDI part's root key, from a
+  drop-down list, and a toggle that is checked for Independent; both go to every selected part (`midiPart.set`
+  `rootKey` and `globalTranspose`).
 - **Positions.** In bars and beats the moves and resizes are in ticks, exact on musical tracks; in the other formats
   in samples. Lengths are typed as `formatLength` shows them, e.g. "2.0.0.0" for two bars.
 - The themes give `.multiple` its own color, as the reference shows a multiple selection "in another color".
@@ -112,7 +116,7 @@ one it has the class `empty` and says "No Track Selected".
 
 ## Not yet
 
-The info line's other fields (offset, fades, snap point, global transpose, root key), hiding fields from its
+The info line's other fields (offset, fades, snap point; audio events' global transpose and root key), hiding fields from its
 context menu, and its own modifier setting (Preferences, Editing - Tool Modifiers); the inspector's other sections
 (track versions, chords, articulations, MIDI inserts, equalizer, fader, cue sends, remote controls),
 sends (#108), the MIDI tracks' MIDI volume and pan, the folder track inspector's list of the tracks inside, the

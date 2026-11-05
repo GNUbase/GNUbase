@@ -55,6 +55,12 @@ namespace gnubase::ui
 				control == "setTimeOffset";
 		}
 
+		// The transpose track's controls (reference manual p. 165), besides Switch Time Base.
+		bool transposeControl(const std::string& control)
+		{
+			return control == "transposeMute" || control == "keepInOctave" || control == "transposeLock";
+		}
+
 		// The ruler time formats as the track list's drop-down list names them.
 		const widgets::Options& timeFormatOptions()
 		{
@@ -85,6 +91,8 @@ namespace gnubase::ui
 			// The tempo track's only control is Activate Tempo Track (reference manual p. 162).
 			if (type == "tempo" || control == "tempoTrack")
 				return type == "tempo" && control == "tempoTrack";
+			if (type == "transpose" || transposeControl(control))
+				return type == "transpose" && (transposeControl(control) || control == "timeBase");
 			if (!hasChannel)
 				return control == "timeBase" && type != "folder" && type != "ruler" && type != "signature";
 			if (control == "record" || control == "monitor")
@@ -110,7 +118,8 @@ namespace gnubase::ui
 				{"monitor", {"Monitor", R"(<svg class="icon" src="../icons/track-monitor.svg"/>)"}},
 				{"read", {"Read Automation", R"(<svg class="icon" src="../icons/track-read-automation.svg"/>)"}},
 				{"timeBase", {"Switch Time Base", "L"}}, {"tempoTrack", {"Activate Tempo Track", "T"}},
-				{"timeOffsetOn", {"Time Offset On/Off", "O"}}};
+				{"timeOffsetOn", {"Time Offset On/Off", "O"}}, {"transposeMute", {"Mute Transpose Events", "M"}},
+				{"keepInOctave", {"Keep Transpose in Octave Range", "O"}}, {"transposeLock", {"Lock", "L"}}};
 			const auto& [title, content] = looks.at(control);
 			return R"(<button class="toggle )" + control + R"(" control=")" + control + R"(" title=")" + title +
 				R"(">)" + content + "</button>";
@@ -691,6 +700,12 @@ namespace gnubase::ui
 					on = project.value("tempoTrackActive", false);
 				else if (name == "timeOffsetOn")
 					on = track.value("timeOffsetOn", false);
+				else if (transposeControl(name))
+					on = project.at("transpose")
+							 .value(name == "transposeMute"    ? "mute"
+									 : name == "transposeLock" ? "lock"
+															   : "keepInOctave",
+								 false);
 				else if (name == "read")
 					on = !lanes.empty() && std::all_of(lanes.begin(), lanes.end(), [](bool read) { return read; });
 				else
@@ -1086,6 +1101,14 @@ namespace gnubase::ui
 		if (name == "tempoTrack")
 		{
 			m_binding.send("project.set", {{"tempoTrackActive", !project.value("tempoTrackActive", false)}});
+			return;
+		}
+		if (transposeControl(name))
+		{
+			const std::string key = name == "transposeMute" ? "mute"
+				: name == "transposeLock"                   ? "lock"
+															: "keepInOctave";
+			m_binding.send("transpose.setTrack", {{key, !project.at("transpose").value(key, false)}});
 			return;
 		}
 		if (name == "timeOffsetOn")

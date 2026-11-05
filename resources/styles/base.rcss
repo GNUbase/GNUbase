@@ -912,6 +912,48 @@ meter .meter-peak
 	width: 48dp;
 }
 
+/* The transpose track (docs/features/transpose.md): the transpose events over the transpose track's lane and the
+   field that edits one's value. Code places the row on its lane, the events at their positions and the field over the
+   event it edits. */
+.transpose-row
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	height: 100%;
+}
+
+.transpose-row.hidden, .transpose-row .transpose-field
+{
+	display: none;
+}
+
+.transpose-row .transpose-events
+{
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 100%;
+	height: 100%;
+}
+
+.transpose-row .transpose-event
+{
+	position: absolute;
+	top: 0;
+	padding: 2dp 3dp;
+	white-space: nowrap;
+}
+
+.transpose-row .transpose-field.shown
+{
+	display: block;
+	position: absolute;
+	top: 0;
+	width: 48dp;
+}
+
 /* The tools (docs/features/tools.md): the selection range, at least a line wide, and the rectangle a tool drags. Code
    sets where they are and the state class .shown. */
 .event-display .range-selection, .event-display .tool-rectangle

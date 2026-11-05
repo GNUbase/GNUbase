@@ -552,6 +552,13 @@
 		color: #090b18;
 		background-color: #e12ad8;
 	}
+	.transpose-row .transpose-event
+	{
+		color: #f1f4ff;
+		font-size: 11dp;
+		border-left-width: 1dp;
+		border-left-color: #10dff2;
+	}
 	.event-display .range-selection
 	{
 		border-width: 1dp;

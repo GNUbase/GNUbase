@@ -333,6 +333,7 @@ namespace gnubase::ui
 			logging::warning("The event display can't read the project's tempo or signatures");
 		readMarkerMagnets(project);
 		showSnap();
+		showRootKey(project);
 
 		// A lane per track that isn't hidden, in the project's order.
 		std::map<uint64_t, size_t> lanes;

@@ -514,6 +514,10 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
                                              "border-left-width": f"{widths['hairline']}dp",
                                              "border-left-color": c["accent2"]}),
         (".signature-row .signature-event.selected", {"color": c["background"], "background-color": c["accent2"]}),
+        # The transpose track (docs/features/transpose.md): a transpose event's value from its position on
+        (".transpose-row .transpose-event", {"color": c["text"], "font-size": f"{sizes['small']}dp",
+                                             "border-left-width": f"{widths['hairline']}dp",
+                                             "border-left-color": c["accent"]}),
         # The tools (docs/features/tools.md): the selection range and the rectangle a tool drags
         (".event-display .range-selection", {"border-width": f"{widths['hairline']}dp", "border-color": c["text"],
                                              "background-color": c["text"] + "33"}),

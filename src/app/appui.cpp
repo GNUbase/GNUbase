@@ -897,6 +897,7 @@ namespace gnubase::app
 		m_markerLines.reset();
 		m_tempoLane.reset();
 		m_signatureLane.reset();
+		m_transposeLane.reset();
 		m_rulerLanes.reset();
 		// The transport bar's sections are there when the docking system reads them.
 		m_transportBar.reset();
@@ -923,6 +924,7 @@ namespace gnubase::app
 		m_markerLines = std::make_unique<ui::MarkerLines>(*m_eventDisplay, m_binding);
 		m_tempoLane = std::make_unique<ui::TempoLane>(*m_eventDisplay, m_binding);
 		m_signatureLane = std::make_unique<ui::SignatureLane>(*m_eventDisplay, m_binding);
+		m_transposeLane = std::make_unique<ui::TransposeLane>(*m_eventDisplay, m_binding);
 		m_rulerLanes = std::make_unique<ui::RulerLanes>(*m_eventDisplay);
 		if (m_infoLine)
 			m_infoLine->followMarkers(

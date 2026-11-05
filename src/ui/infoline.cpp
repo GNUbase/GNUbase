@@ -49,7 +49,20 @@ namespace gnubase::ui
 			R"(<div class="info-field" info-field="transpose"><span class="info-label">Transpose</span>)"
 			R"(<valuefield field="transpose" min="-127" max="127" default="0" step="1" decimals="0"/></div>)"
 			R"(<div class="info-field" info-field="velocity"><span class="info-label">Velocity</span>)"
-			R"(<valuefield field="velocity" min="-127" max="127" default="0" step="1" decimals="0"/></div>)";
+			R"(<valuefield field="velocity" min="-127" max="127" default="0" step="1" decimals="0"/></div>)"
+			// A MIDI part's root key and Global Transpose (pp. 417, 421, #168).
+			R"(<div class="info-field" info-field="rootKey"><span class="info-label">Root Key</span>)"
+			R"(<select field="rootKey" title="Root Key"/></div>)"
+			R"(<div class="info-field" info-field="globalTranspose"><button type="toggle" field="globalTranspose")"
+			R"( title="Global Transpose: Independent">Independent</button></div>)";
+
+		// The root keys, as midiPart.set takes them.
+		const widgets::Options& rootKeys()
+		{
+			static const widgets::Options keys = {{"", "-"}, {"C", "C"}, {"C#", "C#"}, {"D", "D"}, {"D#", "D#"},
+				{"E", "E"}, {"F", "F"}, {"F#", "F#"}, {"G", "G"}, {"G#", "G#"}, {"A", "A"}, {"A#", "A#"}, {"B", "B"}};
+			return keys;
+		}
 
 		void setClass(Rml::Element& element, const char* name, bool set)
 		{
@@ -206,6 +219,17 @@ namespace gnubase::ui
 		return 0;
 	}
 
+	const engine::Json* InfoLine::partOf(uint64_t part) const
+	{
+		const Json& project = m_display.project();
+		if (!project.is_object())
+			return nullptr;
+		for (const Json& midi : project.at("midiParts"))
+			if (midi.at("id") == part)
+				return &midi;
+		return nullptr;
+	}
+
 	void InfoLine::show()
 	{
 		if (!m_root)
@@ -258,6 +282,16 @@ namespace gnubase::ui
 				value != nullptr && midi && !m_binding.ahead(stepKey(m_stepOwner, field), m_display.read()))
 				setValue(*value, widgets::format(static_cast<float>(partValue(first.at("id").get<uint64_t>(), field))));
 		}
+		const Json* part = midi ? partOf(first.at("id").get<uint64_t>()) : nullptr;
+		for (const char* field : {"rootKey", "globalTranspose"})
+			if (Rml::Element* shown = root.QuerySelector("[info-field=" + std::string(field) + "]"))
+				setClass(*shown, "hidden", part == nullptr);
+		if (part == nullptr)
+			return;
+		if (Rml::Element* key = root.QuerySelector("select[field=rootKey]"))
+			widgets::fill(*key, rootKeys(), part->value("rootKey", std::string()));
+		if (Rml::Element* button = root.QuerySelector("button[field=globalTranspose]"))
+			setFlag(*button, "checked", part->value("globalTranspose", std::string()) == "independent");
 	}
 
 	void InfoLine::ProcessEvent(Rml::Event& event)
@@ -319,7 +353,7 @@ namespace gnubase::ui
 		for (const char* field : {"end", "length"})
 			if (Rml::Element* shown = root.QuerySelector("[info-field=" + std::string(field) + "]"))
 				setClass(*shown, "hidden", !first.cycle);
-		for (const char* field : {"volume", "mute", "lock", "transpose", "velocity"})
+		for (const char* field : {"volume", "mute", "lock", "transpose", "velocity", "rootKey", "globalTranspose"})
 			if (Rml::Element* shown = root.QuerySelector("[info-field=" + std::string(field) + "]"))
 				setClass(*shown, "hidden", true);
 	}
@@ -492,6 +526,16 @@ namespace gnubase::ui
 							{{"command", "midiPart.set"}, {"parameters", {{"part", id}, {field, value}}}});
 				}
 		}
+		else if (field == "rootKey" || field == "globalTranspose")
+		{
+			const std::string value =
+				field == "rootKey" ? text : std::string(number != 0.0F ? "independent" : "follow");
+			for (const Json& event : m_events)
+				if (const Json* part = event.at("kind") == "midi" ? partOf(event.at("id").get<uint64_t>()) : nullptr;
+					part != nullptr && part->value(field, std::string()) != value)
+					commands.push_back(
+						{{"command", "midiPart.set"}, {"parameters", {{"part", event.at("id")}, {field, value}}}});
+		}
 		else if (field == "mute" || field == "lock")
 		{
 			commands.push_back({{"command", "event.set"}, {"parameters", {{"events", ids}, {field, number != 0.0F}}}});
@@ -501,7 +545,7 @@ namespace gnubase::ui
 			show(); // the value that holds
 			return;
 		}
-		std::string label = field;
+		std::string label = field == "rootKey" ? "Root Key" : field == "globalTranspose" ? "Global Transpose" : field;
 		label.front() = static_cast<char>(std::toupper(static_cast<unsigned char>(label.front())));
 		// A drag, wheel turns or a held arrow key on the volume: one undo step.
 		m_binding.sendStep(gesture, stepKey(m_stepOwner, field), "Change " + label, std::move(commands),
