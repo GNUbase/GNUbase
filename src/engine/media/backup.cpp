@@ -15,6 +15,7 @@
 #include <functional>
 #include <memory>
 #include <numeric>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <string_view>
@@ -292,6 +293,7 @@ namespace gnubase::engine
 				for (const fs::path& file : m_files)
 					fs::remove(file, ignored);
 				fs::remove(m_audio, ignored); // only if it's empty
+				fs::remove(m_folder / "Freeze", ignored);
 				if (m_createdFolder)
 					fs::remove(m_folder, ignored);
 			}
@@ -565,6 +567,15 @@ namespace gnubase::engine
 			total += plan.bytes;
 			plans.push_back(plan);
 		}
+		// Frozen tracks' freeze files (docs/features/render-in-place.md) go along whole, into the folder Freeze.
+		std::vector<std::pair<ObjectId, std::uintmax_t>> freezes;
+		for (const auto& [id, track] : project.trackById)
+			if (track.frozen)
+			{
+				const std::uintmax_t size = fs::file_size(pathOf(track.frozen->path), error);
+				freezes.emplace_back(id, error ? 0 : size);
+				total += freezes.back().second;
+			}
 
 		std::uintmax_t done = 0;
 		std::string detail;
@@ -651,6 +662,34 @@ namespace gnubase::engine
 				copyFile(source, target, advance);
 				media.path = target.u8string();
 			}
+			++files;
+		}
+
+		std::set<std::string> takenFreezes;
+		for (const auto& [id, bytes] : freezes)
+		{
+			job.checkCancelled();
+			std::optional<Freeze>& freeze = project.trackById.at(id).frozen;
+			if (!freeze)
+				continue;
+			const fs::path source = pathOf(freeze->path);
+			detail = source.filename().u8string();
+			job.progress(static_cast<double>(done) / static_cast<double>(total), detail);
+			const std::ifstream readable(source, std::ios::binary);
+			if (!readable || fs::is_directory(source, error))
+			{
+				missing.push_back({{"track", id}, {"path", freeze->path}});
+				done += bytes;
+				continue;
+			}
+			const fs::path frozenFolder = folder / "Freeze";
+			fs::create_directories(frozenFolder, error);
+			if (error)
+				throw std::runtime_error("can't create " + frozenFolder.u8string() + ": " + error.message());
+			const fs::path target = createFreeFile(frozenFolder, source.filename(), takenFreezes);
+			cleanup.add(target);
+			copyFile(source, target, advance);
+			freeze->path = target.u8string();
 			++files;
 		}
 

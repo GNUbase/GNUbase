@@ -307,8 +307,7 @@ TEST_CASE("scrubbing a frozen track reads the freeze file of that time", "[integ
 	const ObjectId slot = project.insertGain(audio.channel, -6.0);
 	run(project.client, "audio.render", {{"frames", 4096}});
 	const Json first = run(project.client, "track.freeze", {{"tracks", {audio.track}}, {"tail", 0}});
-	const std::vector<float> firstFile =
-		samplesOf(first.at("tracks").at(0).at("frozen").at("path").get<std::string>());
+	const std::vector<float> firstFile = samplesOf(first.at("tracks").at(0).at("frozen").at("path").get<std::string>());
 	const double rate = run(project.client, "project.get").at("sampleRate").get<double>();
 
 	// Scrubs 480 frames from where the last scrub got to, to position, in as long: at normal speed, so it plays
@@ -319,18 +318,19 @@ TEST_CASE("scrubbing a frozen track reads the freeze file of that time", "[integ
 	const auto scrubs = [&project, &audio, rate](int64_t position, const std::vector<float>& file)
 	{
 		constexpr int64_t frames = g_scrubFrames;
-		const size_t start =
-			run(project.client, "audio.capture", {{"channel", 0}, {"start", 0}, {"frames", 1048576}}).at("samples").size();
+		const size_t start = run(project.client, "audio.capture", {{"channel", 0}, {"start", 0}, {"frames", 1048576}})
+								 .at("samples")
+								 .size();
 		run(project.client, "audition.scrub",
 			{{"track", audio.track}, {"position", position}, {"seconds", static_cast<double>(frames) / rate}});
 		run(project.client, "audio.render", {{"frames", 600}});
 		size_t wrong = 0;
 		for (int channel = 0; channel < 2; ++channel)
 		{
-			const auto output = run(project.client, "audio.capture",
-				{{"channel", channel}, {"start", start}, {"frames", frames}})
-									.at("samples")
-									.get<std::vector<float>>();
+			const auto output =
+				run(project.client, "audio.capture", {{"channel", channel}, {"start", start}, {"frames", frames}})
+					.at("samples")
+					.get<std::vector<float>>();
 			REQUIRE(output.size() == static_cast<size_t>(frames));
 			for (int64_t k = 0; k < frames; ++k)
 			{
@@ -404,8 +404,7 @@ TEST_CASE("a backup carries the freeze files along", "[integration]")
 	Session project;
 	const Session::Track audio = project.addTrack("Ramp");
 	const Json frozen = run(project.client, "track.freeze", {{"tracks", {audio.track}}, {"tail", 0}});
-	const std::vector<float> rendered =
-		samplesOf(frozen.at("tracks").at(0).at("frozen").at("path").get<std::string>());
+	const std::vector<float> rendered = samplesOf(frozen.at("tracks").at(0).at("frozen").at("path").get<std::string>());
 	const fs::path folder = project.folder.path() / "backup";
 	const Json job = run(project.client, "project.backup", {{"folder", folder.u8string()}, {"name", "copy"}});
 	Json state;
@@ -433,11 +432,13 @@ TEST_CASE("a frozen track neither monitors nor records", "[integration]")
 	const Session::Track other = project.addTrack("Other");
 	const auto buttons = [&project](ObjectId channel)
 	{
-		for (const Json& found : run(project.client, "project.get").at("channels"))
+		Json state;
+		const Json current = run(project.client, "project.get");
+		for (const Json& found : current.at("channels"))
 			if (found.at("id") == channel)
-				return std::pair{found.at("monitor").get<bool>(), found.at("recordEnable").get<bool>()};
-		FAIL("no channel " << channel);
-		return std::pair{false, false};
+				state = found;
+		REQUIRE(state.is_object());
+		return std::pair{state.at("monitor").get<bool>(), state.at("recordEnable").get<bool>()};
 	};
 	run(project.client, "channel.set", {{"channel", audio.channel}, {"monitor", true}, {"recordEnable", true}});
 

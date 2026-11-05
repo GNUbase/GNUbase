@@ -1757,8 +1757,9 @@ namespace gnubase::engine
 
 	void saveDawProject(const Project& project, const std::string& path, const DawProjectSaveOptions& options)
 	{
-		Exporter exporter(
-			project, options.embedMedia, std::filesystem::absolute(pathOf(path)).parent_path().lexically_normal());
+		const std::filesystem::path fileFolder =
+			std::filesystem::absolute(pathOf(path)).parent_path().lexically_normal();
+		Exporter exporter(project, options.embedMedia, fileFolder);
 		const std::string xml = exporter.projectXml();
 		Json document = toJson(project);
 		document["nextId"] = project.nextId;
@@ -1766,8 +1767,29 @@ namespace gnubase::engine
 		Json media = Json::object();
 		for (const auto& [id, mediaPath] : exporter.mediaPaths())
 			media[std::to_string(id)] = mediaPath;
+		// Frozen tracks' freeze files go with the media files: into the file (but one that isn't there to embed), or
+		// else referred to relative to the file if they are in its folder, so that they move with it. Files from
+		// before "frozen" have only the paths in the project.
+		Json frozen = Json::object();
+		std::map<std::string, std::string> embeddedFreezes; // entry in the file -> freeze file
+		for (const auto& [id, track] : project.trackById)
+		{
+			if (!track.frozen)
+				continue;
+			std::string stored = referencePath(track.frozen->path, fileFolder);
+			std::error_code error;
+			if (options.embedMedia && std::filesystem::is_regular_file(pathOf(track.frozen->path), error))
+			{
+				const std::string name = pathOf(track.frozen->path).filename().u8string();
+				stored = "freeze/" + name;
+				if (embeddedFreezes.count(stored) != 0)
+					stored = "freeze/" + std::to_string(id) + "-" + name;
+				embeddedFreezes[stored] = track.frozen->path;
+			}
+			frozen[std::to_string(id)] = stored;
+		}
 		const Json extension = {{"format", g_extensionFormat}, {"application", std::string("GNUbase ") + version()},
-			{"projectXml", checksum(xml)}, {"media", media}, {"project", document}};
+			{"projectXml", checksum(xml)}, {"media", media}, {"frozen", frozen}, {"project", document}};
 
 		pugi::xml_document metadata;
 		metadata.append_child("MetaData").append_child("Title").text() = project.name.c_str();
@@ -1788,6 +1810,11 @@ namespace gnubase::engine
 					const std::vector<char> bytes = readBytes(project.media.at(id).path);
 					zip.add(mediaPath, bytes.data(), bytes.size(), false);
 				}
+			for (const auto& [entry, file] : embeddedFreezes)
+			{
+				const std::vector<char> bytes = readBytes(file);
+				zip.add(entry, bytes.data(), bytes.size(), false);
+			}
 			zip.finish();
 		}
 		catch (...)
@@ -1836,6 +1863,18 @@ namespace gnubase::engine
 				if (stored != media.end())
 					file.path =
 						importer.resolvedPath(stored->get<std::string>(), !zip.contains(stored->get<std::string>()));
+			}
+			const Json frozen = extension.value("frozen", Json::object());
+			for (auto& [id, track] : project.trackById)
+			{
+				if (!track.frozen)
+					continue;
+				if (const auto stored = frozen.find(std::to_string(id)); stored != frozen.end())
+					track.frozen->path =
+						importer.resolvedPath(stored->get<std::string>(), !zip.contains(stored->get<std::string>()));
+				// A frozen track neither monitors nor records (track.freeze), also when a file from before says so.
+				if (const auto channel = project.channels.find(track.channel); channel != project.channels.end())
+					channel->second.monitor = channel->second.recordEnable = false;
 			}
 			return project;
 		}

@@ -88,11 +88,11 @@ namespace gnubase::engine
 		bool skipVideo = false;           // no effect until projects have video (#198)
 	};
 
-	// Writes <folder>/<name>.dawproject and copies the media into <folder>/Audio, where the project file refers to
-	// them relative to itself, so the folder opens anywhere. A media file that can't be read is reported and keeps its
-	// path. Reports progress to the job and stops when it is cancelled. If it doesn't complete, it removes what it
-	// wrote. Returns {file, files, missing: [{media, path}]}. Throws JobCancelled, DawProjectError, AudioFileError or
-	// std::runtime_error.
+	// Writes <folder>/<name>.dawproject and copies the media into <folder>/Audio and the frozen tracks' freeze files
+	// into <folder>/Freeze, where the project file refers to them relative to itself, so the folder opens anywhere. A
+	// media or freeze file that can't be read is reported and keeps its path. Reports progress to the job and stops
+	// when it is cancelled. If it doesn't complete, it removes what it wrote. Returns {file, files, missing: [{media,
+	// path} or {track, path}]}. Throws JobCancelled, DawProjectError, AudioFileError or std::runtime_error.
 	//
 	// Minimized files start their ranges on the resampling grid of their sample rate in the project's, so that
 	// they play sample for sample as the originals do. They keep every sample: files whose samples GNUbase can't

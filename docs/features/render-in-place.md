@@ -36,10 +36,19 @@ last sample a 24-bit file doesn't hold as silence, or at the range's end.
   panning, EQ and sends can still be changed). So it null-tests against the live render: the test renders a project
   with a frozen audio track and an instrument track, each with an insert and strip settings, and compares it with the
   live render, before freezing and after unfreezing.
+- **A frozen track neither monitors nor records** (p. 220: its controls are locked): its input would play past the
+  freeze file, and its takes wouldn't play. Freezing turns its monitor and record enable buttons off in the same step,
+  `channel.set` refuses to turn them on, the channels of its link group or VCA fader don't pass them on to it, and a
+  project file that has them on for a frozen track loads with them off.
 - **`track.unfreeze`** plays the events, instrument and slots again; the freeze files stay, so freezing and
-  unfreezing can be undone.
+  unfreezing can be undone. The monitor and record enable buttons stay off.
+- **Freeze files move with the project.** The project file refers to them as to its media files: `project.save`
+  copies them into the file (into `freeze/`, extracted into the media folder when it loads) unless `embedMedia` is
+  false, and then refers to them relative to itself if they are in its folder, so the project's folder can move.
+  `project.backup` copies them into the backup's `Freeze` folder.
 - Refused for a track that is frozen already, disabled or has nothing to play, and when `mixdown.export` refuses
   (no device, a device at another sample rate than the project).
+- Scrubbing a frozen track reads its freeze file; when undo brings back an earlier freeze, it reads that one.
 
 ## Render in place
 
@@ -54,6 +63,10 @@ audio track below the track, named after it with "(Rendered)", in its folder, ti
   track gets the fader, pan and sends; `completeSignalPath` renders at `output`, so a mono track panned on a stereo
   bus gives a stereo track, with no settings of its own.
 - `sourceTracks` (p. 1473): `keep` (the default), `mute`, `disable` or `remove` the tracks it rendered.
+- Refused for a disabled track; `dry` for a frozen track, whose freeze file is already through the slots that `dry`
+  copies onto the new track (unfreeze it first); and `completeSignalPath` for a silent track, muted or silenced by
+  another track's solo, since the complete signal path ends after the mute (unmute it, or solo it too). Before the
+  fader, mute and solo don't matter. If a step fails after rendering, the rendered files are removed.
 
 ## In the UI
 
@@ -73,5 +86,6 @@ audio track below the track, named after it with "(Rendered)", in its folder, ti
   in the complete signal path; copying the track's automation to the new track.
 - Freezing only the instrument (p. 991) or the inserts before a given slot (p. 548), freezing external instruments
   and effects, and removing freeze files when unfreezing.
-- Freeze files are local files: a project saved with its media embedded doesn't carry them.
+- Plugin delay compensation (#71): a freeze file rendered at `inserts` holds its slots' latency, so once latency is
+  compensated it has to play earlier by the latency of the slots it replaces.
 - A frozen track's pre section and cut filters glide from their old settings over the first block after freezing.
