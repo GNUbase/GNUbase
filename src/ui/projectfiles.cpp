@@ -30,16 +30,20 @@ namespace gnubase::ui
 		}
 
 		// A file chosen to save a project as, with the DAWproject extension unless it has it already, in any case:
-		// "Song.DAWPROJECT" stays as it is, "Song v1.2" becomes "Song v1.2.dawproject", and "Song.", as the dialogs of
-		// Linux return the name as typed, "Song.dawproject" rather than "Song..dawproject".
+		// "Song.DAWPROJECT" stays as it is and "Song v1.2" becomes "Song v1.2.dawproject". The dots and spaces at the
+		// end of the name, which Windows drops and the dialogs of Linux return as typed, go first, so that "Song." and
+		// "Song.dawproject." are "Song.dawproject" rather than "Song..dawproject" and "Song.dawproject.dawproject"
+		// (#706). A name of nothing else is "Untitled".
 		std::filesystem::path withProjectExtension(const std::filesystem::path& file)
 		{
-			if (Rml::StringUtilities::ToLower(file.extension().u8string()) == ".dawproject")
-				return file;
 			std::string name = file.filename().u8string();
-			if (name.size() > 1 && name.back() == '.' && name != "..")
+			while (!name.empty() && (name.back() == '.' || name.back() == ' '))
 				name.pop_back();
-			return file.parent_path() / std::filesystem::u8path(name + ".dawproject");
+			if (name.empty())
+				name = "Untitled";
+			if (Rml::StringUtilities::ToLower(std::filesystem::u8path(name).extension().u8string()) != ".dawproject")
+				name += ".dawproject";
+			return file.parent_path() / std::filesystem::u8path(name);
 		}
 
 		// The rows of a start screen list: value is the row's index in the list, text what it shows.
@@ -69,6 +73,18 @@ namespace gnubase::ui
 			for (; element != nullptr; element = element->GetParentNode())
 				if (element->GetId() == id)
 					return true;
+			return false;
+		}
+
+		// Whether a modal document other than own is open in the context, such as the fade editor.
+		bool otherModalOpen(Rml::Context& context, const Rml::Element* own)
+		{
+			for (int i = 0; i < context.GetNumDocuments(); ++i)
+			{
+				const Rml::ElementDocument* document = context.GetDocument(i);
+				if (document != own && document->IsModal())
+					return true;
+			}
 			return false;
 		}
 	}
@@ -323,6 +339,11 @@ namespace gnubase::ui
 			[this, window, error, autoSave]
 			{
 				Window* showing = m_shell.find(window);
+				// A failed auto save's error doesn't open over another modal dialog, such as the fade editor, which the
+				// user works in: it shows at the next failure instead, as it does while the start screen is open. The
+				// project dialog that is open (m_dialog) is left to openDialog, where an auto save's error makes way.
+				if (autoSave && showing != nullptr && otherModalOpen(showing->context(), m_dialog.get()))
+					return;
 				Rml::ElementDocument* dialog = showing != nullptr
 					? openDialog(*showing, "project-error.rml",
 						  [this, autoSave](Rml::ElementDocument&, const std::string& result)

@@ -150,10 +150,7 @@ namespace gnubase::engine
 
 		// The new tracks, parts, events and markers come from the commands that make them.
 		const auto run = [this, &project, &context](const char* command, const Json& commandParameters)
-		{
-			CommandContext inner(commandParameters, &context);
-			return m_edits.at(command).handler(project, inner);
-		};
+		{ return runEdit(command, project, commandParameters, context); };
 
 		if (parameters.value("tempo", true))
 		{

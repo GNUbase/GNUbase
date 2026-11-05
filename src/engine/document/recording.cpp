@@ -432,10 +432,7 @@ namespace gnubase::engine
 		const std::string cycleMode = parameters.value("cycleMode", std::string(g_midiCycleRecordModes[0]));
 		const bool snap = parameters.value("snapToBars", false);
 		const Run run = [this, &project, &context](const char* command, const Json& commandParameters)
-		{
-			CommandContext inner(commandParameters, &context);
-			return m_edits.at(command).handler(project, inner);
-		};
+		{ return runEdit(command, project, commandParameters, context); };
 
 		// Cuts the track's unlocked audio events out of [start, end).
 		const auto replace = [&project, &run](ObjectId track, time::Samples start, time::Samples end)
