@@ -47,7 +47,10 @@ last sample a 24-bit file doesn't hold as silence, or at the range's end.
 - **Freeze files move with the project.** The project file refers to them as to its media files: `project.save`
   copies them into the file (into `freeze/`, extracted into the media folder when it loads) unless `embedMedia` is
   false, and then refers to them relative to itself if they are in its folder, so the project's folder can move.
-  `project.backup` copies them into the backup's `Freeze` folder.
+  Each file goes in once, under a name no other one has in any case (`freeze/2-ramp.wav` next to
+  `freeze/Ramp.wav`), since entries are looked up in any case and extracted into one folder; one that isn't there
+  when the project is saved is referred to by its absolute path. `project.backup` copies each into the backup's
+  `Freeze` folder once.
 - Refused for a track that is frozen already, disabled or has nothing to play, and when `mixdown.export` refuses
   (no device, a device at another sample rate than the project).
 - Scrubbing a frozen track reads its freeze file; when undo brings back an earlier freeze, it reads that one.

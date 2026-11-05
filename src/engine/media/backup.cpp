@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <fstream>
 #include <functional>
+#include <map>
 #include <memory>
 #include <numeric>
 #include <optional>
@@ -40,15 +41,6 @@ namespace gnubase::engine
 			return fs::u8path(utf8);
 		}
 
-		// Folded to lower case, so names that differ only in case count as the same on every file system.
-		std::string folded(const fs::path& name)
-		{
-			std::string text = name.u8string();
-			std::transform(text.begin(), text.end(), text.begin(),
-				[](char c) { return static_cast<char>(std::tolower(static_cast<unsigned char>(c))); });
-			return text;
-		}
-
 		// Whether Windows keeps name for a device: CON, PRN, AUX, NUL, COM0 to COM9 and LPT0 to LPT9, also with a
 		// superscript 1, 2 or 3, in any case. Before Windows 11 they are devices with an extension too, and with spaces
 		// before it ("nul.mix", "CON .x"), so a project file named so would be one there.
@@ -57,7 +49,7 @@ namespace gnubase::engine
 			std::string device = name.substr(0, name.find('.'));
 			while (!device.empty() && device.back() == ' ')
 				device.pop_back();
-			device = folded(fs::u8path(device));
+			device = foldedName(fs::u8path(device));
 			if (device == "con" || device == "prn" || device == "aux" || device == "nul")
 				return true;
 			if (device.compare(0, 3, "com") != 0 && device.compare(0, 3, "lpt") != 0)
@@ -92,9 +84,9 @@ namespace gnubase::engine
 			for (int number = 1;; ++number)
 			{
 				const fs::path candidate = numbered(name, number);
-				if (taken.count(folded(candidate)) == 0 && createExclusively(folder / candidate))
+				if (taken.count(foldedName(candidate)) == 0 && createExclusively(folder / candidate))
 				{
-					taken.insert(folded(candidate));
+					taken.insert(foldedName(candidate));
 					return folder / candidate;
 				}
 			}
@@ -325,6 +317,14 @@ namespace gnubase::engine
 		std::error_code error;
 		const fs::path temporary = fs::temp_directory_path(error);
 		return error ? fs::path() : temporary / "GNUbase Recordings";
+	}
+
+	std::string foldedName(const fs::path& name)
+	{
+		std::string text = name.u8string();
+		std::transform(text.begin(), text.end(), text.begin(),
+			[](char c) { return static_cast<char>(std::tolower(static_cast<unsigned char>(c))); });
+		return text;
 	}
 
 	bool isInside(const std::string& file, const fs::path& folder)
@@ -579,14 +579,14 @@ namespace gnubase::engine
 			total += plan.bytes;
 			plans.push_back(plan);
 		}
-		// Frozen tracks' freeze files (docs/features/render-in-place.md) go along whole, into the folder Freeze.
-		std::vector<std::pair<ObjectId, std::uintmax_t>> freezes;
+		// Frozen tracks' freeze files (docs/features/render-in-place.md) go along whole, into the folder Freeze, each
+		// once, also when several tracks play it (a duplicated frozen track).
+		std::map<std::string, std::uintmax_t> freezes; // freeze file -> its size
 		for (const auto& [id, track] : project.trackById)
-			if (track.frozen)
+			if (track.frozen && freezes.count(track.frozen->path) == 0)
 			{
 				const std::uintmax_t size = fs::file_size(pathOf(track.frozen->path), error);
-				freezes.emplace_back(id, error ? 0 : size);
-				total += freezes.back().second;
+				total += freezes[track.frozen->path] = error ? 0 : size;
 			}
 
 		std::uintmax_t done = 0;
@@ -678,19 +678,16 @@ namespace gnubase::engine
 		}
 
 		std::set<std::string> takenFreezes;
-		for (const auto& [id, bytes] : freezes)
+		std::map<std::string, std::string> freezeCopies; // freeze file -> its copy
+		for (const auto& [path, bytes] : freezes)
 		{
 			job.checkCancelled();
-			std::optional<Freeze>& freeze = project.trackById.at(id).frozen;
-			if (!freeze)
-				continue;
-			const fs::path source = pathOf(freeze->path);
+			const fs::path source = pathOf(path);
 			detail = source.filename().u8string();
 			job.progress(static_cast<double>(done) / static_cast<double>(total), detail);
 			const std::ifstream readable(source, std::ios::binary);
 			if (!readable || fs::is_directory(source, error))
 			{
-				missing.push_back({{"track", id}, {"path", freeze->path}});
 				done += bytes;
 				continue;
 			}
@@ -701,8 +698,18 @@ namespace gnubase::engine
 			const fs::path target = createFreeFile(frozenFolder, source.filename(), takenFreezes);
 			cleanup.add(target);
 			copyFile(source, target, advance);
-			freeze->path = target.u8string();
+			freezeCopies[path] = target.u8string();
 			++files;
+		}
+		// Each track that plays a file that couldn't be read is reported.
+		for (auto& [id, track] : project.trackById)
+		{
+			if (!track.frozen)
+				continue;
+			if (const auto copy = freezeCopies.find(track.frozen->path); copy != freezeCopies.end())
+				track.frozen->path = copy->second;
+			else
+				missing.push_back({{"track", id}, {"path", track.frozen->path}});
 		}
 
 		job.checkCancelled();

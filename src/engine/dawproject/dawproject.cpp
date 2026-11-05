@@ -8,6 +8,7 @@
 #include "engine/document/rendersnapshot.h"
 #include "engine/document/serialize.h"
 #include "engine/engine.h"
+#include "engine/media/backup.h"
 #include "engine/processors/builtin.h"
 
 #include <miniz.h>
@@ -1771,9 +1772,10 @@ namespace gnubase::engine
 		Json media = Json::object();
 		for (const auto& [id, mediaPath] : exporter.mediaPaths())
 			media[std::to_string(id)] = mediaPath;
-		// Frozen tracks' freeze files go with the media files: into the file (but one that isn't there to embed), or
-		// else referred to relative to the file if they are in its folder, so that they move with it. Files from
-		// before "frozen" have only the paths in the project.
+		// Frozen tracks' freeze files go with the media files: into the file, or else referred to relative to the file
+		// if they are in its folder, so that they move with it. Files from before "frozen" have only the paths in the
+		// project. One that isn't there to embed is referred to by its absolute path: a relative one could name an
+		// embedded file, as the file's entries are looked up in any case.
 		Json frozen = Json::object();
 		// Each file goes in once, under a name that no other one has, also in another case: they are extracted into
 		// one folder.
@@ -1785,20 +1787,19 @@ namespace gnubase::engine
 				continue;
 			std::string stored = referencePath(track.frozen->path, fileFolder);
 			std::error_code error;
-			if (options.embedMedia && std::filesystem::is_regular_file(pathOf(track.frozen->path), error))
+			if (options.embedMedia && !std::filesystem::is_regular_file(pathOf(track.frozen->path), error))
+			{
+				const std::filesystem::path absolute = std::filesystem::absolute(pathOf(track.frozen->path), error);
+				stored = error ? track.frozen->path : absolute.lexically_normal().u8string();
+			}
+			else if (options.embedMedia)
 			{
 				auto found = embeddedFreezes.find(track.frozen->path);
 				if (found == embeddedFreezes.end())
 				{
 					const std::string name = pathOf(track.frozen->path).filename().u8string();
 					std::string entry = "freeze/" + name;
-					const auto lower = [](std::string text)
-					{
-						std::transform(text.begin(), text.end(), text.begin(),
-							[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-						return text;
-					};
-					for (int copy = 2; !taken.insert(lower(entry)).second; ++copy)
+					for (int copy = 2; !taken.insert(foldedName(pathOf(entry))).second; ++copy)
 						entry = "freeze/" + std::to_string(copy) + "-" + name;
 					found = embeddedFreezes.emplace(track.frozen->path, entry).first;
 				}

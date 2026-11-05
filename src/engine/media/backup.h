@@ -27,6 +27,10 @@ namespace gnubase::engine
 	// links.
 	bool isInside(const std::string& file, const std::filesystem::path& folder);
 
+	// name folded to lower case, so that names that differ only in case count as the same, as on the file systems of
+	// Windows and macOS. Only ASCII letters fold.
+	std::string foldedName(const std::filesystem::path& name);
+
 	// Creates an empty file in folder, which must exist, and returns its path: name, or if a file of that name is
 	// there, "<stem>-2<extension>", "<stem>-3<extension>" and so on. Creating fails if the file is there, even if
 	// another job or program creates it at the same moment, so two writers never get the same file. Throws
