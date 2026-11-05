@@ -8,11 +8,13 @@
 #include "ui/datamodel.h"
 #include "ui/rmlui.h"
 #include "ui/widgets.h"
+#include "ui/widgetutils.h"
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/Input.h>
 #include <SDL3/SDL.h>
@@ -22,6 +24,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <map>
 #include <memory>
@@ -251,6 +254,63 @@ TEST_CASE("knobs turn with drags, the wheel and the arrow keys, finer with Shift
 	CHECK(test::compareImages(app.ui().screenshot(std::nullopt, at("#pan")), centred, {8}).equal);
 	page.drag("#pan", 0, -500);
 	CHECK(page.value("#pan") == Catch::Approx(100.0F));
+}
+
+TEST_CASE(
+	"a value set during a drag waits until the drag ends, and goes if the drag changes the value after it", "[ui]")
+{
+	test::UiApp app;
+	const ValuesPage page(app);
+	Rml::Element& pan = *page.document->GetElementById("pan");
+	Rml::Context& context = app.main().context();
+	const Json box = page.box("#pan");
+	const int x = box.at("x").get<int>() + (box.at("width").get<int>() / 2);
+	const int y = box.at("y").get<int>() + (box.at("height").get<int>() / 2);
+	context.ProcessMouseMove(x, y, 0);
+	context.ProcessMouseButtonDown(0, 0);
+	context.ProcessMouseMove(x, y - 10, 0);
+	const float dragged = page.value("#pan");
+	CHECK(dragged > 0.0F);
+
+	// A value that the document sets, such as the engine's answer to an earlier step (#716), doesn't move the knob,
+	// and the drag goes on from where the mouse put it.
+	pan.SetAttribute("value", "-30");
+	CHECK(page.value("#pan") == dragged);
+	context.ProcessMouseMove(x, y - 20, 0);
+	CHECK(page.value("#pan") == Catch::Approx(dragged + 10.0F));
+	// The drag changed the value after it: the end of the drag keeps the drag's.
+	context.ProcessMouseButtonUp(0, 0);
+	CHECK(page.value("#pan") == Catch::Approx(dragged + 10.0F));
+
+	// A value set after the last change of the drag shows when it ends.
+	context.ProcessMouseButtonDown(0, 0);
+	context.ProcessMouseMove(x, y - 30, 0);
+	const float again = page.value("#pan");
+	CHECK(again > dragged + 10.0F);
+	pan.SetAttribute("value", "-40");
+	CHECK(page.value("#pan") == again);
+	context.ProcessMouseButtonUp(0, 0);
+	CHECK(page.value("#pan") == -40.0F);
+
+	// Without a drag, it shows at once.
+	pan.SetAttribute("value", "5");
+	CHECK(page.value("#pan") == 5.0F);
+
+	// A value that the document sets in answer to a change, such as the change rounded, shows at once.
+	ui::widgets::Listener rounding(
+		[](Rml::Event& event)
+		{
+			const float tens = std::round(event.GetParameter("value", 0.0F) / 10.0F);
+			event.GetTargetElement()->SetAttribute("value", ui::widgets::format(tens * 10.0F));
+		});
+	pan.AddEventListener(Rml::EventId::Change, &rounding);
+	context.ProcessMouseMove(x, y, 0);
+	context.ProcessMouseButtonDown(0, 0);
+	context.ProcessMouseMove(x, y - 13, 0);
+	CHECK(page.value("#pan") == 20.0F);
+	context.ProcessMouseButtonUp(0, 0);
+	CHECK(page.value("#pan") == 20.0F);
+	pan.RemoveEventListener(Rml::EventId::Change, &rounding);
 }
 
 TEST_CASE("fader caps follow the mouse, data-value binds faders, and the wheel turns them instead of scrolling", "[ui]")

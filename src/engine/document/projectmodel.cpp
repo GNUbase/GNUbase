@@ -2890,6 +2890,7 @@ namespace gnubase::engine
 			{"marker.set", "Change marker"},
 			{"marker.remove", "Remove markers"},
 			{"marker.renumber", "Renumber markers"},
+			{"marker.import", "Import markers"},
 			{"tempo.add", "Add tempo event"},
 			{"tempo.set", "Change tempo events"},
 			{"tempo.remove", "Remove tempo events"},
