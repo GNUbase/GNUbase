@@ -286,6 +286,53 @@ TEST_CASE("a curve builds only the segments around the view", "[unit]")
 	CHECK(vertices <= 4 * 130);
 }
 
+TEST_CASE("a curve leaves its gaps empty: after a terminator, and in virgin territory outside its points", "[unit]")
+{
+	OneWindow fixture;
+	fixture.show("curve { width: 400dp; height: 40dp; stroke-color: #0000ff; stroke-width: 2dp; }",
+		R"(<curve id="curve" scale="10"/>)");
+	auto& curve = fixture.element<ui::Curve>("curve");
+	using engine::AutomationShape;
+	// At 50, 150, 250 and 350 dp, the one at 150 a terminator, so that there is no line from it to the next.
+	std::vector<ui::CurvePoint> points{{500.0, 0.5, AutomationShape::Linear, 0.0},
+		{1500.0, 0.5, AutomationShape::Step, 0.0}, {2500.0, 0.5, AutomationShape::Linear, 0.0},
+		{3500.0, 0.5, AutomationShape::Linear, 0.0}};
+	points[1].terminator = true;
+	// The lines drawn, from left to right, in the frame's pixels: a quad each, the line's width (2 dp) around its
+	// ends. The frame reaches a view's width (400 dp) to the left of the view.
+	const auto lines = [&fixture]()
+	{
+		std::vector<Rml::Vertex> vertices = fixture.draw();
+		vertices.erase(std::remove_if(vertices.begin(), vertices.end(),
+						   [](const Rml::Vertex& vertex) { return vertex.colour != blue(); }),
+			vertices.end());
+		std::vector<std::pair<float, float>> result;
+		for (size_t i = 0; i + 4 <= vertices.size(); i += 4)
+			result.emplace_back(std::min(vertices[i].position.x, vertices[i + 1].position.x) + 1.0F,
+				std::max(vertices[i].position.x, vertices[i + 1].position.x) - 1.0F);
+		return result;
+	};
+	using Lines = std::vector<std::pair<float, float>>;
+
+	// With initial values the curve is level with its first point before it and with its last point after it.
+	curve.setPoints(points);
+	CHECK(lines() == Lines{{-1.0F, 450.0F}, {450.0F, 550.0F}, {650.0F, 750.0F}, {750.0F, 1201.0F}});
+	// A terminator as the last point ends the curve there.
+	points[3].terminator = true;
+	curve.setPoints(points);
+	CHECK(lines() == Lines{{-1.0F, 450.0F}, {450.0F, 550.0F}, {650.0F, 750.0F}});
+	points[3].terminator = false;
+
+	// Virgin territory: no curve before the first point or after the last one.
+	curve.setVirginTerritory(true);
+	curve.setPoints(points);
+	CHECK(lines() == Lines{{450.0F, 550.0F}, {650.0F, 750.0F}});
+	// Scrolled so that the frame starts between the terminator and the next point (at 2000): no line comes from the
+	// terminator.
+	curve.SetAttribute("start", 6000);
+	CHECK(lines() == Lines{{50.0F, 150.0F}});
+}
+
 TEST_CASE("a ruler's default scale counts in decimal steps of 1, 2 and 5", "[unit]")
 {
 	CHECK(ui::decimalStep(1.0) == std::pair<double, int>{1.0, 5});

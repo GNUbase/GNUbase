@@ -23,10 +23,12 @@ MCP and Lua scripts can do all it does.
     not present) and, for inputs, In 'All MIDI Inputs'.
 - **Apply, OK, Cancel.** The pages keep what the user changes until Apply or OK sends it; Cancel and Escape drop it.
   Only what changed is sent: another driver with `audio.setDevice` (the old device's page doesn't apply to the new
-  one, so the reference's "Switch" is this Apply), the device's settings with `audio.set`, ports with `audio.setPort`
+  one, so the reference's "Switch" is this Apply) with `remember`, so the app opens it again when it starts, and
+  running if the old one ran ([audio-devices.md](audio-devices.md), #712), the device's settings with `audio.set`, ports with `audio.setPort`
   and `midi.setPort`. Multi-processing changes while the device stands, so the dialog stops a running device for it
   and starts it again. Apply reads everything again from the engine and shows the errors of commands that failed; OK
-  closes the dialog unless one failed. Reset at the bottom opens the device again (`audio.reset`), as the reference's
+  closes the dialog unless one failed. While the dummy device plays because the device chosen last couldn't be used
+  at startup (`failed` in `audio.get`), the message line says which and why. Reset at the bottom opens the device again (`audio.reset`), as the reference's
   Reset does; the Reset above a ports table restores the system names and makes every port visible, sent with Apply
   or OK.
 - **`audio.set`** changes some of the device's settings and keeps the others, including the dummy device's own

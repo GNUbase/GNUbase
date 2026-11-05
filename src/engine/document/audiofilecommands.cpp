@@ -223,8 +223,8 @@ namespace gnubase::engine
 
 		Json job = nullptr;
 		if (!copies.empty())
-			job = startMediaCopy(
-				jobs, "audioFile.import", std::move(copies), mediaFolder, "Copy imported files into the project");
+			job = startMediaCopy(jobs, "audioFile.import", std::move(copies), mediaFolder,
+				"Copy imported files into the project", m_openedRevision);
 		return {{"tracks", std::move(tracks)}, {"media", std::move(media)}, {"events", std::move(events)},
 			{"job", std::move(job)}};
 	}

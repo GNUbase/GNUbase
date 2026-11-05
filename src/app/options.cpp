@@ -177,10 +177,14 @@ Opens GNUbase's main window, or with --headless runs without UI.
                         Headless it serves until Ctrl+C; with the UI, until GNUbase quits, with the UI tools too
   --project FILE        load a DAWproject file
   --script FILE         run a Lua script, then exit (trusted: all standard libraries but os.exit)
-  --audio BACKEND       the audio backend: )" +
-			backendNames() + R"(; by default dummy, which has no hardware
-  --sample-rate HZ      the audio device's sample rate (default 48000)
-  --block-size FRAMES   frames per audio block (default 256)
+  --audio BACKEND       the audio backend's default device: )" +
+			backendNames() + R"(. With the UI, by default the device
+                        chosen last in Studio Setup, else )" +
+			audio::defaultBackend() + R"('s default device, and the dummy device, which has no
+                        hardware, if that can't be opened; the device starts with the app. Headless, by default the
+                        dummy device, which stays stopped until audio.start, so audio.render can render offline
+  --sample-rate HZ      the audio device's sample rate (default: the project's, if the device supports it)
+  --block-size FRAMES   frames per audio block (default: the driver's choice; the dummy device's is 256)
   --settings DIR        keep the user settings in DIR, e.g. for a portable install; by default the folder in
                         GNUBASE_SETTINGS_DIR or the user's settings folder
   --version             print the version

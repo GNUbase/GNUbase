@@ -107,7 +107,9 @@ sends engine commands, so whatever another client changes shows at once.
   leave other tracks empty, such as an instrument track that only empty MIDI tracks played or a folder (with its group
   channel, nested or not) that held only empty tracks, so it looks again until nothing more goes: one run leaves no
   empty tracks, in one undo step, and none if nothing is empty. It removes a folder with one `track.remove`, which
-  takes the tracks inside along, and returns every track removed.
+  takes the tracks inside along, and returns every track removed. Plugins in a channel's slots and an instrument
+  track's instrument don't keep a track. It removes the active marker track last, so the marker track that becomes
+  active is one that stays (#797).
 - **Freeze and render in place** (pp. 219-220, 1471-1477): the context menu's Freeze/Unfreeze Selected Tracks
   (`track.freezeSelected`) freezes the selected audio and instrument tracks that aren't frozen, or unfreezes them when
   every one is; a frozen track's row has `.frozen`, which the themes show like a disabled one. Edit > Render in Place
