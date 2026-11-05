@@ -219,7 +219,14 @@ namespace gnubase::engine
 			m_inputHeld.fill(false);
 		for (graph::ProcessEvent event : m_input)
 		{
-			if (!modifyInput(sequence.modifiers, event))
+			auto ends = static_cast<uint16_t>(g_notes);
+			const bool plays = modifyInput(sequence.modifiers, event, ends);
+			if (ends != g_notes)
+			{
+				context.eventsOut.add(noteEvent(graph::ProcessEvent::Type::NoteOff, ends, event.offset));
+				m_inputHeld[ends] = false;
+			}
+			if (!plays)
 				continue;
 			context.eventsOut.add(event);
 			if (event.type != graph::ProcessEvent::Type::NoteOn && event.type != graph::ProcessEvent::Type::NoteOff)
@@ -428,7 +435,8 @@ namespace gnubase::engine
 		return true;
 	}
 
-	bool MidiSequencer::modifyInput(const midi::Modifiers& modifiers, graph::ProcessEvent& event) noexcept
+	bool MidiSequencer::modifyInput(
+		const midi::Modifiers& modifiers, graph::ProcessEvent& event, uint16_t& ends) noexcept
 	{
 		using Type = graph::ProcessEvent::Type;
 		if (event.type != Type::NoteOn && event.type != Type::NoteOff && event.type != Type::PolyPressure)
@@ -436,14 +444,22 @@ namespace gnubase::engine
 		const size_t from = ((event.channel % 16) * 128) + (event.key % 128);
 		if (event.type == Type::NoteOn)
 		{
+			const uint16_t before = m_inputTo[from];
 			auto pitch = static_cast<uint8_t>(event.key % 128);
 			m_inputTo[from] = midi::modifyNote(modifiers, midi::noteSeed(0, ++m_random), pitch, event.velocity)
 				? static_cast<uint16_t>(((event.channel % 16) * 128) + pitch)
 				: static_cast<uint16_t>(g_notes);
+			// The key is held and its note goes elsewhere this time: the key's one note-off can end only one of them.
+			if (m_inputDown[from] && before != g_notes && before != m_inputTo[from] && m_inputHeld[before])
+				ends = before;
+			m_inputDown[from] = true;
 		}
 		const uint16_t to = m_inputTo[from];
 		if (event.type == Type::NoteOff)
+		{
 			m_inputTo[from] = static_cast<uint16_t>(from);
+			m_inputDown[from] = false;
+		}
 		if (to == g_notes)
 			return false;
 		event.key = static_cast<uint8_t>(to % 128);
