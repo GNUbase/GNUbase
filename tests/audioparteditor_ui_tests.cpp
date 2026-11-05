@@ -119,7 +119,9 @@ namespace
 			return nullptr;
 		}
 
-		// Waits until the display shows the part's events as the engine has them, each at its time and lane.
+		// Waits until the display shows the part's events as the engine has them, each at its time and lane, and the
+		// lanes they are on with one more. A drag leaves the events where it dropped them until the engine's change
+		// comes back, so their places alone can match before the editor has it: the lanes then are still the old ones.
 		void settle()
 		{
 			REQUIRE(app.waitUntil(
@@ -127,7 +129,10 @@ namespace
 				{
 					const Json shown = box(".ape-display");
 					const Json all = events();
-					if (elements(".ape-event").size() != all.size())
+					size_t lanes = 1;
+					for (const Json& each : all)
+						lanes = std::max(lanes, each.at("lane").get<size_t>() + 1);
+					if (elements(".ape-event").size() != all.size() || elements(".ape-lane").size() != lanes + 1)
 						return false;
 					return std::all_of(all.begin(), all.end(),
 						[&](const Json& each)
