@@ -153,6 +153,7 @@ add_library(gnubase-engine STATIC
 	media/backup.cpp media/backup.h
 	midi/chords.cpp midi/chords.h
 	midi/controllerlanes.cpp midi/controllerlanes.h
+	midi/devices.cpp midi/devices.h
 	midi/functioncommands.cpp midi/functioncommands.h
 	midi/functions.cpp midi/functions.h
 	midi/midivalues.cpp midi/midivalues.h

@@ -402,6 +402,8 @@ namespace gnubase::engine
 			render.sections = channel.sections;
 			render.midiVolume = channel.midiVolume;
 			render.midiPan = channel.midiPan;
+			render.program = channel.program;
+			render.bank = channel.bank;
 			render.modifiers = channel.modifiers;
 			render.monitor = channel.monitor;
 			render.recordEnable = channel.recordEnable;

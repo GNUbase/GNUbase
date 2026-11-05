@@ -39,6 +39,7 @@
 #include <stdexcept>
 #include <string>
 #include <system_error>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -1681,6 +1682,27 @@ namespace gnubase::engine
 				const auto number = given.get<int64_t>();
 				requireRange(number, 0, 127, key);
 				*value = static_cast<int>(number);
+			}
+			for (const auto& [key, value, maximum] : {std::tuple{"program", &changed.program, int64_t{127}},
+					 std::tuple{"bank", &changed.bank, int64_t{g_maxBank}}})
+			{
+				if (!parameters.contains(key))
+					continue;
+				require(type == TrackType::Midi, std::string("only MIDI channels have ") + key);
+				const Json& given = parameters.at(key);
+				if (given.is_null())
+				{
+					value->reset();
+					continue;
+				}
+				const auto number = given.get<int64_t>();
+				requireRange(number, 0, maximum, key);
+				*value = static_cast<int>(number);
+			}
+			if (parameters.contains("device"))
+			{
+				require(type == TrackType::Midi, "only MIDI channels have device");
+				changed.device = parameters.at("device").get<std::string>();
 			}
 			for (const auto& [key, value] :
 				{std::pair{"monitor", &changed.monitor}, std::pair{"recordEnable", &changed.recordEnable}})
@@ -3594,8 +3616,12 @@ namespace gnubase::engine
 				"overrides them while it plays; changes glide over 5 ms. MIDI channels have no audio: midiVolume "
 				"and midiPan (0 to 127, 64 is the center pan, null for none, the default) are sent to the "
 				"instrument as MIDI volume (CC 7) and pan (CC 10) on MIDI channel 1, whenever they change and when "
-				"playback starts or jumps; automation of those controllers overrides them. monitor and recordEnable "
-				"are an audio track's buttons: monitor hears the input bus, recordEnable arms the track for recording "
+				"playback starts or jumps; automation of those controllers overrides them. program (0 to 127) and bank "
+				"(0 to 16383, null for none, the default) are a MIDI channel's patch: the program change, after bank "
+				"select MSB (CC 0) and LSB (CC 32) if bank is set, goes to the instrument on MIDI channel 1 whenever "
+				"they change and when playback starts or jumps; without a program nothing is sent. device names the "
+				"installed MIDI device (midiDevice.install) whose patches choose them, or is empty. monitor and "
+				"recordEnable are an audio track's buttons: monitor hears the input bus, recordEnable arms the track for recording "
 				"and, by the user setting audio.autoMonitoring, monitors too: manual never, whileRecordEnabled always, "
 				"whileRecording while the transport records, tapeMachine while it stands or records (the default). "
 				"Monitoring glides in and out over one audio block. MIDI and instrument tracks have them too: "
@@ -3648,12 +3674,14 @@ namespace gnubase::engine
 						{"panner", enumSchema({"balance", "combined"})}, {"panLeft", numberSchema},
 						{"panRight", numberSchema}, {"panBypass", booleanSchema},
 						{"midiVolume", {{"type", {"integer", "null"}}}}, {"midiPan", {{"type", {"integer", "null"}}}},
-						{"volume", numberSchema}, {"pan", numberSchema}, {"monitor", booleanSchema},
-						{"recordEnable", booleanSchema}, {"midiInput", enumSchema({"all", "none"})},
-						{"mute", booleanSchema}, {"solo", booleanSchema}, {"exclusive", booleanSchema},
-						{"soloDefeat", booleanSchema}, {"listen", booleanSchema}, {"notes", stringSchema},
-						{"linked", booleanSchema}, {"pre", {{"type", "object"}}}, {"eq", {{"type", "object"}}},
-						{"strip", {{"type", "object"}}}, {"modifiers", {{"type", "object"}}},
+						{"program", {{"type", {"integer", "null"}}}}, {"bank", {{"type", {"integer", "null"}}}},
+						{"device", stringSchema}, {"volume", numberSchema}, {"pan", numberSchema},
+						{"monitor", booleanSchema}, {"recordEnable", booleanSchema},
+						{"midiInput", enumSchema({"all", "none"})}, {"mute", booleanSchema}, {"solo", booleanSchema},
+						{"exclusive", booleanSchema}, {"soloDefeat", booleanSchema}, {"listen", booleanSchema},
+						{"notes", stringSchema}, {"linked", booleanSchema}, {"pre", {{"type", "object"}}},
+						{"eq", {{"type", "object"}}}, {"strip", {{"type", "object"}}},
+						{"modifiers", {{"type", "object"}}},
 						{"sends",
 							arraySchema(
 								objectSchema({{"send", integerSchema}, {"destination", idSchema}, {"on", booleanSchema},

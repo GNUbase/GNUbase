@@ -3,6 +3,7 @@
 
 #include "engine/engine.h"
 #include "engine/midi/controllerlanes.h"
+#include "engine/midi/devices.h"
 
 #include <string>
 #include <utility>
@@ -207,6 +208,12 @@ namespace gnubase::engine::settings
 					"Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each "
 					"channel's last program change before that position.",
 					Json{{"type", "boolean"}}, true},
+				{"midi.devices",
+					"The installed MIDI devices (midiDevice.install), by name: each has banks, each bank a name and "
+					"patches, each patch a name, a program (0 to 127), an optional bank (0 to 16383, sent as bank "
+					"select MSB and LSB) and an optional folder it is listed in. A MIDI track that names a device "
+					"(channel.set device) chooses its program and bank by patch.",
+					midi::devicesSchema(), Json::object()},
 				{"midi.portSettings",
 					"The MIDI ports' settings (midi.setPort), by backend/in or out/port id, also for ports that aren't "
 					"connected: the name shown (showAs), whether it is visible, and for inputs whether it belongs to "

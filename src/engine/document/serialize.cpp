@@ -542,10 +542,13 @@ namespace gnubase::engine
 			{"panner", channel.panner == StereoPanner::Combined ? "combined" : "balance"}, {"panLeft", channel.panLeft},
 			{"panRight", channel.panRight}, {"panBypass", channel.panBypass},
 			{"midiVolume", channel.midiVolume ? Json(*channel.midiVolume) : Json(nullptr)},
-			{"midiPan", channel.midiPan ? Json(*channel.midiPan) : Json(nullptr)}, {"monitor", channel.monitor},
-			{"recordEnable", channel.recordEnable}, {"midiInput", channel.midiInput}, {"mute", channel.mute},
-			{"solo", channel.solo}, {"soloDefeat", channel.soloDefeat}, {"listen", channel.listen},
-			{"slots", channel.slots}, {"notes", channel.notes}, {"modifiers", toJson(channel.modifiers)}};
+			{"midiPan", channel.midiPan ? Json(*channel.midiPan) : Json(nullptr)},
+			{"program", channel.program ? Json(*channel.program) : Json(nullptr)},
+			{"bank", channel.bank ? Json(*channel.bank) : Json(nullptr)}, {"device", channel.device},
+			{"monitor", channel.monitor}, {"recordEnable", channel.recordEnable}, {"midiInput", channel.midiInput},
+			{"mute", channel.mute}, {"solo", channel.solo}, {"soloDefeat", channel.soloDefeat},
+			{"listen", channel.listen}, {"slots", channel.slots}, {"notes", channel.notes},
+			{"modifiers", toJson(channel.modifiers)}};
 		json.update(toJson(channel.sections));
 		Json sends = Json::array();
 		if (channel.format != ChannelFormat::None)
@@ -1510,6 +1513,12 @@ namespace gnubase::engine
 				{std::pair{"midiVolume", &channel.midiVolume}, std::pair{"midiPan", &channel.midiPan}})
 				if (const Json stored = item.value(key, Json()); !stored.is_null())
 					*value = static_cast<int>(checkedNumber(stored, 0.0, 127.0, name + " " + key));
+			// Files from before patches have none.
+			if (const Json stored = item.value("program", Json()); !stored.is_null())
+				channel.program = static_cast<int>(checkedNumber(stored, 0.0, 127.0, name + " program"));
+			if (const Json stored = item.value("bank", Json()); !stored.is_null())
+				channel.bank = static_cast<int>(checkedNumber(stored, 0.0, g_maxBank, name + " bank"));
+			channel.device = item.value("device", std::string());
 			// An instrument this build doesn't have, e.g. in a file from a newer one, or one on a track that doesn't
 			// play instruments: the channel plays none.
 			const auto track = project.trackById.find(channel.track);

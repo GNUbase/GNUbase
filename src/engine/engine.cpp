@@ -6,6 +6,7 @@
 #include "engine/document/projectmodel.h"
 #include "engine/jobs/jobs.h"
 #include "engine/media/backup.h"
+#include "engine/midi/devices.h"
 #include "engine/peaks/peakcache.h"
 #include "engine/plugins/hostmanager.h"
 #include "engine/processors/builtin.h"
@@ -142,6 +143,7 @@ namespace gnubase::engine
 		m_audio = std::make_unique<AudioEngine>(
 			m_project->snapshots(), *m_settings, std::move(backends), std::move(midiBackends));
 		m_audio->registerCommands(*this);
+		midi::registerDeviceCommands(*this);
 		m_project->setSlotStatus([this](ObjectId slot) { return m_audio->slotStatus(slot); });
 		m_audio->setSlotDescriber(
 			[this](ObjectId slot) { return m_project->describeSlot(m_project->project(), slot); });

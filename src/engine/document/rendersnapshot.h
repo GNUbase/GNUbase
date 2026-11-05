@@ -157,6 +157,8 @@ namespace gnubase::engine
 		bool panBypass = false;
 		std::optional<int> midiVolume; // MIDI channels: CC 7 and CC 10 to send, 0 to 127
 		std::optional<int> midiPan;
+		std::optional<int> program; // MIDI channels: the program change to send, with bank select if bank is set
+		std::optional<int> bank;
 		midi::Modifiers modifiers; // MIDI and instrument channels: notes has them applied, live notes get them
 		bool monitor = false;      // the monitor and record enable buttons
 		bool recordEnable = false;

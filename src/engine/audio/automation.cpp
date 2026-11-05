@@ -186,7 +186,7 @@ namespace gnubase::engine
 			value = std::clamp(value, lane.minimum, lane.maximum);
 			graph::ProcessEvent event;
 			event.offset = offset;
-			if (lane.kind != Kind::Midi)
+			if (lane.kind != Kind::Midi && lane.kind != Kind::Program)
 			{
 				event.type = Type::Parameter;
 				event.parameter = lane.parameter;
@@ -194,6 +194,14 @@ namespace gnubase::engine
 				event.ramp = lane.target.type == AutomationTargetType::Mute ? std::max(ramp, out.declick) : ramp;
 				event.key = out.key;
 				out.of(lane).add(event);
+				return;
+			}
+			if (lane.kind == Kind::Program)
+			{
+				event.type = Type::Program;
+				event.key = static_cast<uint8_t>(lane.parameter);
+				event.value = value < 0.0 ? g_noBank : static_cast<uint32_t>(value);
+				out.source.add(event);
 				return;
 			}
 			event.channel = lane.target.channel;
@@ -383,6 +391,12 @@ namespace gnubase::engine
 						point.gap = false;
 					}
 		}
+		// The program first, so the instrument has the patch before the controllers. No automation lane targets it.
+		if (channel.program)
+			lanes.insert(lanes.begin(),
+				PlayedLane{{AutomationTargetType::Controller, 0, 0, 0, 0}, Kind::Program,
+					static_cast<uint32_t>(*channel.program), channel.bank ? static_cast<double>(*channel.bank) : -1.0,
+					-1.0, static_cast<double>(g_maxBank), {}});
 		return automation;
 	}
 
