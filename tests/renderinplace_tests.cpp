@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <thread>
 #include <utility>
@@ -433,12 +434,71 @@ TEST_CASE("a frozen track stays frozen in the project file", "[integration]")
 	}
 }
 
+TEST_CASE("freeze files of the same name, also in another case, keep apart in the project file", "[integration]")
+{
+	Session project;
+	const Session::Track one = project.addTrack("One");
+	project.insertGain(one.channel, -6.0);
+	const Session::Track two = project.addTrack("Two");
+	const Session::Track three = project.addTrack("Three");
+	run(project.client, "audio.render", {{"frames", 4096}});
+	const Json frozen =
+		run(project.client, "track.freeze", {{"tracks", {one.track, two.track, three.track}}, {"tail", 0}});
+	const auto pathOf = [&frozen](size_t i)
+	{ return fs::u8path(frozen.at("tracks").at(i).at("frozen").at("path").get<std::string>()); };
+
+	// Two different files named Ramp.wav and ramp.wav, frozen in folders of their own, say before the project's first
+	// save and after it; and the third track's, which isn't there any more, in the project's Freeze folder.
+	run(project.client, "project.save", {{"embedMedia", false}});
+	const fs::path saved = project.media.path() / "project.dawproject";
+	const gnubase::test::TempDir first;
+	const gnubase::test::TempDir second;
+	fs::copy_file(pathOf(0), first.path() / "Ramp.wav");
+	fs::copy_file(pathOf(1), second.path() / "ramp.wav");
+	const std::vector<float> oneSamples = samplesOf((first.path() / "Ramp.wav").u8string());
+	const std::vector<float> twoSamples = samplesOf((second.path() / "ramp.wav").u8string());
+	REQUIRE(firstDifference(oneSamples, twoSamples) >= 0);
+	const fs::path gone = project.media.path() / "Freeze" / "RAMP.wav";
+	Project file = loadDawProject(saved.u8string(), (project.folder.path() / "media").u8string());
+	const auto refer = [&file](ObjectId track, const fs::path& path)
+	{
+		std::optional<Freeze>& freeze = file.trackById.at(track).frozen;
+		REQUIRE(freeze.has_value());
+		if (freeze)
+			freeze->path = path.u8string();
+	};
+	refer(one.track, first.path() / "Ramp.wav");
+	refer(two.track, second.path() / "ramp.wav");
+	refer(three.track, gone);
+	DawProjectSaveOptions options;
+	options.embedMedia = true;
+	saveDawProject(file, saved.u8string(), options);
+
+	run(project.client, "project.load", {{"path", saved.u8string()}});
+	const auto loaded = [&project](ObjectId track)
+	{ return project.track(track).at("frozen").at("path").get<std::string>(); };
+	CHECK(firstDifference(samplesOf(loaded(one.track)), oneSamples) == -1);
+	CHECK(firstDifference(samplesOf(loaded(two.track)), twoSamples) == -1);
+	// The missing one is still referred to where it was, not to another track's file.
+	CHECK(fs::u8path(loaded(three.track)) == gone);
+}
+
 TEST_CASE("a backup carries the freeze files along", "[integration]")
 {
 	Session project;
 	const Session::Track audio = project.addTrack("Ramp");
 	const Json frozen = run(project.client, "track.freeze", {{"tracks", {audio.track}}, {"tail", 0}});
 	const std::vector<float> rendered = samplesOf(frozen.at("tracks").at(0).at("frozen").at("path").get<std::string>());
+	// A duplicated frozen track plays the same freeze file, which the backup copies once.
+	run(project.client, "track.duplicate", {{"track", audio.track}});
+	const auto paths = [&project]
+	{
+		std::vector<std::string> result;
+		const Json current = run(project.client, "project.get");
+		for (const Json& track : current.at("tracks"))
+			result.push_back(track.at("frozen").at("path").get<std::string>());
+		return result;
+	};
 	const fs::path folder = project.folder.path() / "backup";
 	const Json job = run(project.client, "project.backup", {{"folder", folder.u8string()}, {"name", "copy"}});
 	Json state;
@@ -456,6 +516,7 @@ TEST_CASE("a backup carries the freeze files along", "[integration]")
 	run(project.client, "project.load", {{"path", (folder / "copy.dawproject").u8string()}});
 	const std::string path = project.track(audio.track).at("frozen").at("path").get<std::string>();
 	CHECK(fs::u8path(path) == folder / "Freeze" / "Ramp.wav");
+	CHECK(paths() == std::vector<std::string>{path, path});
 	CHECK(firstDifference(samplesOf(path), rendered) == -1);
 
 	// A freeze file that can't be read is reported, and keeps its path.
@@ -468,7 +529,11 @@ TEST_CASE("a backup carries the freeze files along", "[integration]")
 		state = run(project.client, "job.get", {{"job", again.at("job").at("id")}}).at("job");
 	} while (state.at("state") == "running" && std::chrono::steady_clock::now() < deadline);
 	REQUIRE(state.at("state") == "done");
-	CHECK(state.at("result").at("missing") == Json::array({{{"track", audio.track}, {"path", path}}}));
+	// Reported for each track that plays it.
+	const Json missing = state.at("result").at("missing");
+	REQUIRE(missing.size() == 2);
+	CHECK(missing.at(0) == Json{{"track", audio.track}, {"path", path}});
+	CHECK(missing.at(1).at("path") == path);
 	CHECK(!fs::exists(project.folder.path() / "again" / "Freeze"));
 }
 
@@ -499,6 +564,16 @@ TEST_CASE("a frozen track neither monitors nor records", "[integration]")
 		run(project.client, "history.undo");
 	CHECK(project.track(audio.track).at("frozen").is_null());
 	CHECK(buttons(audio.channel) == std::pair{true, true});
+
+	SECTION("nor through a VCA fader")
+	{
+		run(project.client, "track.freeze", {{"tracks", {audio.track}}, {"tail", 0}});
+		const auto vca = run(project.client, "track.add", {{"type", "vca"}}).at("channel").at("id").get<ObjectId>();
+		run(project.client, "linkGroup.add", {{"channels", {audio.channel, other.channel}}, {"vca", vca}});
+		run(project.client, "channel.set", {{"channel", vca}, {"monitor", true}, {"recordEnable", true}});
+		CHECK(buttons(other.channel) == std::pair{true, true});
+		CHECK(buttons(audio.channel) == std::pair{false, false});
+	}
 
 	SECTION("nor when a file says it does")
 	{
