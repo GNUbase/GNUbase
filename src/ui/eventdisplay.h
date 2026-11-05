@@ -392,9 +392,9 @@ namespace gnubase::ui
 			double end = 0.0;
 			bool mute = false;
 			std::optional<double> snapPoint; // audio events, inside them, in seconds
-			// An audio event on its track's lane, which shows it only where none in front covers it (#99): if it is
-			// muted, m_mutedPieces has what shows.
-			bool covered = false;
+			// An audio event's entry on its track's lane, which shows it only where none in front covers it (#99): if
+			// it is muted, m_mutedPieces has what shows.
+			bool onTrackLane = false;
 		};
 
 		void ProcessEvent(Rml::Event& event) override;

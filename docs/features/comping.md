@@ -12,9 +12,10 @@ own, and works the same on takes and overlapping events put on lanes by hand (`e
   orders a track's events by it (`frontOf` in `document.h`), and the playlist's front layer follows
   (`makePlaylist`). A split leaves the piece after it where the event was in the stack (its `front` is the event's
   place), so splitting a take behind another doesn't bring half of it to the front; a copy or a pasted event comes in
-  front, as added last. Events copied, duplicated or pasted together, and the events of a copied audio part, keep
-  the order they were stacked in among them, and so do takes that `event.toFront` or `event.comp` bring to the front
-  together. The project file keeps `front` in GNUbase's entry; ids loaded go on after the highest one.
+  front, as added last. Events copied, duplicated or pasted together, the events of a copied audio part and those
+  of a duplicated track keep the order they were stacked in among them, and so do takes that `event.toFront` or
+  `event.comp` bring to the front together. The project file keeps `front` in GNUbase's entry; ids loaded go on after
+  the highest one.
 - **`event.toFront`** brings takes to the front, one undo step "To Front": an audio event gets a new place in front
   of every other, an audio part's events too, in the order they are stacked in. MIDI parts all play where they
   overlap (p. 226), so a MIDI take comes to the front unmuted, and the MIDI parts on its track's other lanes that it

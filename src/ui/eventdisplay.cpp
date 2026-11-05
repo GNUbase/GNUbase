@@ -577,7 +577,7 @@ namespace gnubase::ui
 		const double shift = m_drag == Drag::Events && m_dragMoved ? m_dragDx * m_view.scale : 0.0;
 		for (const Shown& shown : m_events)
 		{
-			if (shown.mute && !shown.covered)
+			if (shown.mute && !shown.onTrackLane)
 				muted[shown.lane].events.push_back({shown.start, shown.end - shown.start});
 			const auto lane = static_cast<int64_t>(shown.lane) + (m_drag == Drag::Events ? m_dragLanes : 0);
 			if (std::binary_search(m_selection.begin(), m_selection.end(), shown.id) && lane >= 0 &&

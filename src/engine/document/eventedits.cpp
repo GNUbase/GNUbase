@@ -777,7 +777,9 @@ namespace gnubase::engine
 			{
 				if (k == 0)
 					continue;
-				// In the order they are stacked, so that the copies keep it.
+				// Each round copied in the order they are stacked, so that the copies keep it; returned in the order
+				// named.
+				std::vector<Item> round(items.size());
 				for (const size_t index : order)
 				{
 					const Item& item = items[index];
@@ -788,8 +790,11 @@ namespace gnubase::engine
 					if (inUnit(project, endOf(project, copy), musical) > to)
 						setEnd(project, copy, {time::TimeBase::Linear, right}, false);
 					announce(project, context, copy, "added");
-					copies.push_back(copy);
+					round[index] = copy;
 				}
+				for (const Item& copy : round)
+					if (copy)
+						copies.push_back(copy);
 			}
 			return {{"events", idsOf(copies)}};
 		}

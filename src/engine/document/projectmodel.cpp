@@ -1312,18 +1312,25 @@ namespace gnubase::engine
 				project.audioParts[part.id] = part;
 				added.emplace_back("audioPart.added", Json{{"part", toJson(part)}});
 			}
-			// Crossfades join the copies of the events they joined.
+			// Crossfades join the copies of the events they joined. The copies come in front, as added last, in the
+			// order the events are stacked in (#99): their new ids follow it.
 			std::map<ObjectId, ObjectId> events;
 			std::vector<AudioEvent> audio;
 			for (const auto& [eventId, event] : project.audioEvents)
 				if (event.track == id)
-				{
 					audio.push_back(event);
-					events[eventId] = project.newId();
-				}
+			std::vector<const AudioEvent*> stacked;
+			stacked.reserve(audio.size());
+			for (const AudioEvent& event : audio)
+				stacked.push_back(&event);
+			std::stable_sort(stacked.begin(), stacked.end(),
+				[](const AudioEvent* a, const AudioEvent* b) { return frontOf(*a) < frontOf(*b); });
+			for (const AudioEvent* event : stacked)
+				events[event->id] = project.newId();
 			for (AudioEvent& event : audio)
 			{
 				event.id = events.at(event.id);
+				event.front = 0;
 				event.track = copy.id;
 				const auto from = events.find(event.crossfade.from);
 				event.crossfade.from = from == events.end() ? 0 : from->second;
