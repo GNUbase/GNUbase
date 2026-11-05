@@ -263,7 +263,7 @@ namespace gnubase::engine::dsp
 			double peak = 0.0;
 			for (int c = 0; c < count; ++c)
 				peak = std::max(peak, static_cast<double>(std::abs(audio[c][i] * input)));
-			const double required = peak > m_ceiling ? m_ceiling / peak : 1.0;
+			const double required = peak > m_ceiling && !m_bypass ? m_ceiling / peak : 1.0;
 
 			// The minimum over the last L + 1 frames. The candidates that leave the window go first, which makes room
 			// for the new one: the window holds L + 1 frames, this one included.
@@ -299,7 +299,7 @@ namespace gnubase::engine::dsp
 				float& delayed = m_delay[(static_cast<size_t>(c) * m_lookahead) + m_position];
 				const float out = delayed * gain;
 				delayed = audio[c][i] * input;
-				audio[c][i] = std::clamp(flushDenormal(out), -ceiling, ceiling);
+				audio[c][i] = m_bypass ? flushDenormal(out) : std::clamp(flushDenormal(out), -ceiling, ceiling);
 			}
 			m_position = m_position + 1 == m_lookahead ? 0 : m_position + 1;
 			++m_frame;

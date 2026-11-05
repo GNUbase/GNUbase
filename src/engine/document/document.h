@@ -639,6 +639,7 @@ namespace gnubase::engine
 		Mute,            // the channel's mute button: 0 off, 1 on; a step curve
 		Instrument,      // a parameter of the channel's built-in instrument, in its range
 		Plugin,          // a parameter of the plugin in one of the channel's slots, in its range: slot and parameter
+		Strip,           // a parameter of the channel strip's sections (StripParameter), in its range
 		Controller,      // a MIDI control change: number and channel; 0 to 1
 		PitchBend,       // channel; 0 to 1, 0.5 is no bend
 		ChannelPressure, // channel; 0 to 1
@@ -647,7 +648,7 @@ namespace gnubase::engine
 	struct AutomationTarget
 	{
 		AutomationTargetType type = AutomationTargetType::Volume;
-		uint32_t parameter = 0; // Instrument and Plugin: the parameter's id
+		uint32_t parameter = 0; // Instrument, Plugin and Strip: the parameter's id
 		uint8_t number = 0;     // Controller: 0-127
 		uint8_t channel = 0;    // the MIDI types: 0-15
 		ObjectId slot = 0;      // Plugin: the slot

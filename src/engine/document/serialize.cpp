@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/document/serialize.h"
+#include "engine/document/stripparameters.h"
 
 #include "engine/document/linkgroups.h"
 #include "engine/processors/builtin.h"
@@ -78,6 +79,7 @@ namespace gnubase::engine
 			{AutomationTargetType::PanRight, "panRight"},
 			{AutomationTargetType::Instrument, "instrument"},
 			{AutomationTargetType::Plugin, "plugin"},
+			{AutomationTargetType::Strip, "strip"},
 			{AutomationTargetType::Mute, "mute"},
 			{AutomationTargetType::Controller, "controller"},
 			{AutomationTargetType::PitchBend, "pitchBend"},
@@ -744,6 +746,7 @@ namespace gnubase::engine
 		case AutomationTargetType::Mute:
 			break;
 		case AutomationTargetType::Instrument:
+		case AutomationTargetType::Strip:
 			json["parameter"] = target.parameter;
 			break;
 		case AutomationTargetType::Plugin:
@@ -1101,6 +1104,15 @@ namespace gnubase::engine
 				fits = project.channels.at(track.channel).format != ChannelFormat::None;
 				maximum = 1.0;
 				break;
+			case AutomationTargetType::Strip:
+			{
+				// A parameter of a newer build stays, without playing, like an instrument's that is gone.
+				fits = project.channels.at(track.channel).format != ChannelFormat::None;
+				const processors::ParameterInfo* parameter = findStripParameter(lane.target.parameter);
+				minimum = parameter != nullptr ? parameter->minimum : std::numeric_limits<double>::lowest();
+				maximum = parameter != nullptr ? parameter->maximum : std::numeric_limits<double>::max();
+				break;
+			}
 			case AutomationTargetType::Plugin:
 			{
 				// A slot of the track's channel; the plugin's range applies when it plays, like an instrument's.

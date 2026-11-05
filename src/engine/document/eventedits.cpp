@@ -2031,6 +2031,7 @@ namespace gnubase::engine
 					(track.type == TrackType::Vca && target.type == AutomationTargetType::Volume);
 				break;
 			case AutomationTargetType::Mute:
+			case AutomationTargetType::Strip:
 				has = channel.format != ChannelFormat::None;
 				break;
 			case AutomationTargetType::Instrument:

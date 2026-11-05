@@ -3,6 +3,8 @@
 
 #include "engine/audio/automation.h"
 #include "engine/audio/fades.h"
+#include "engine/document/stripparameters.h"
+#include "engine/dsp/dsp.h"
 #include "engine/midi/controllerlanes.h"
 
 #include <algorithm>
@@ -101,11 +103,14 @@ namespace gnubase::engine
 			return event.length > 0;
 		}
 
-		// What still plays on a frozen track: the fader, pan and mute; its freeze file has the rest.
-		bool afterFreeze(AutomationTargetType type)
+		// What still plays on a frozen track: the fader, pan and mute, and the strip's sections after the plugin slots;
+		// its freeze file has the rest.
+		bool afterFreeze(const AutomationTarget& target)
 		{
-			switch (type)
+			switch (target.type)
 			{
+			case AutomationTargetType::Strip:
+				return !isPreSection(target.parameter);
 			case AutomationTargetType::Volume:
 			case AutomationTargetType::Pan:
 			case AutomationTargetType::PanLeft:
@@ -497,7 +502,7 @@ namespace gnubase::engine
 			const Track& track = project.trackById.at(lane.track);
 			const bool vca = track.type == TrackType::Vca && lane.target.type == AutomationTargetType::Volume;
 			if (!lane.read || lane.points.empty() || (channel == trackChannel.end() && !vca) ||
-				(track.frozen && !afterFreeze(lane.target.type)))
+				(track.frozen && !afterFreeze(lane.target)))
 				continue;
 			std::vector<const AutomationPoint*> sorted;
 			sorted.reserve(lane.points.size());
@@ -520,9 +525,13 @@ namespace gnubase::engine
 				const time::Samples position = toSamples(project, point->position);
 				if (project.virginTerritory && played.points.empty())
 					played.points.push_back(gapAt(position));
-				played.points.push_back({position,
-					lane.target.type == AutomationTargetType::Volume ? volumeGain(point->value) : point->value,
-					point->shape, point->curve});
+				// The fader's volume and the pre gain glide in a straight line of their linear gain.
+				double value = point->value;
+				if (lane.target.type == AutomationTargetType::Volume)
+					value = volumeGain(point->value);
+				else if (lane.target == AutomationTarget{AutomationTargetType::Strip, StripParameter::PreGain, 0, 0, 0})
+					value = dsp::dbToGain(point->value);
+				played.points.push_back({position, value, point->shape, point->curve});
 				if (point->terminator || (project.virginTerritory && point == sorted.back()))
 					played.points.push_back(gapAt(position));
 			}
