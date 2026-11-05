@@ -1,0 +1,235 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// The MIDI menu in the app (#133, docs/features/midi-functions.md, reference manual pp. 1118-1131): MIDI > Functions
+// on an editor's selected notes or the project window's selected MIDI parts, as quantizing takes them, Bounce MIDI, and
+// the dialogs of Transpose Setup, Merge MIDI in Loop, Dissolve Part and Restrict Polyphony.
+#include "app/appui.h"
+
+#include "engine/midi/quantizesettings.h"
+#include "engine/time/tempomap.h"
+
+#include <RmlUi/Core/Element.h>
+
+#include <algorithm>
+#include <array>
+#include <functional>
+#include <map>
+#include <optional>
+#include <string>
+#include <utility>
+#include <vector>
+
+namespace gnubase::app
+{
+	using engine::Json;
+
+	namespace
+	{
+		struct MidiFunction
+		{
+			const char* id;
+			const char* command; // the engine's
+			const char* mode;    // midi.deleteOverlaps' mode, or null
+			bool notes;          // takes the selected notes
+			const char* description;
+		};
+
+		constexpr std::array<MidiFunction, 12> g_midiFunctions{{
+			{"midi.functionsLegato", "midi.legato", nullptr, true,
+				"Extends the selected MIDI notes or parts' notes to the next notes, by Legato Overlap "
+				"(editing.legatoOverlap)."},
+			{"midi.functionsFixedLengths", "midi.fixLengths", nullptr, true,
+				"Sets the length of the selected MIDI notes or parts' notes to the length quantize value."},
+			{"midi.functionsFixedVelocity", "midi.fixVelocities", nullptr, true,
+				"Sets the velocity of the selected MIDI notes or parts' notes to the editor's insert velocity."},
+			{"midi.functionsPedalsToNoteLength", "midi.pedalToNoteLength", nullptr, true,
+				"Lengthens the selected MIDI notes or parts' notes to where the sustain pedal is released."},
+			{"midi.functionsDeleteOverlapsMono", "midi.deleteOverlaps", "mono", true,
+				"Shortens the selected MIDI notes or parts' notes that overlap notes of the same pitch."},
+			{"midi.functionsDeleteOverlapsPoly", "midi.deleteOverlaps", "poly", true,
+				"Shortens the selected MIDI notes or parts' notes that overlap any note."},
+			{"midi.functionsDeleteDoubles", "midi.deleteDoubles", nullptr, true,
+				"Deletes the doubles among the selected MIDI notes or parts' notes."},
+			{"midi.functionsDeleteControllers", "midi.deleteControllers", nullptr, false,
+				"Deletes the controllers of the selected MIDI parts."},
+			{"midi.functionsDeleteContinuousControllers", "midi.deleteContinuousControllers", nullptr, false,
+				"Deletes the continuous controllers of the selected MIDI parts."},
+			{"midi.functionsThinOut", "midi.thinOut", nullptr, false,
+				"Thins out the controller data of the selected MIDI parts."},
+			{"midi.functionsReverse", "midi.reverse", nullptr, true,
+				"Reverses the playback order of the selected MIDI notes or parts' events."},
+			{"midi.functionsMirror", "midi.invert", nullptr, true,
+				"Mirrors the selected MIDI notes or parts' events in time."},
+		}};
+
+		// Ids as a dialog's attribute: "1,2,3".
+		std::string listOf(const std::vector<uint64_t>& ids)
+		{
+			std::string text;
+			for (const uint64_t id : ids)
+				text.append(text.empty() ? "" : ",").append(std::to_string(id));
+			return text;
+		}
+	}
+
+	void AppUi::addMidiFunctions()
+	{
+		// The parameters of a function on what quantizing takes: the parts, and their selected notes if any.
+		const auto targetOf = [this](ui::Window& window, Rml::Element* zone, bool notes)
+		{
+			const QuantizeTarget target = quantizeTarget(window, zone);
+			std::vector<uint64_t> parts;
+			std::vector<uint64_t> selected;
+			for (const auto& [part, partNotes] : target.parts)
+			{
+				parts.push_back(part);
+				selected.insert(selected.end(), partNotes.begin(), partNotes.end());
+			}
+			Json parameters = {{"parts", parts}};
+			if (notes && !selected.empty())
+				parameters["notes"] = selected;
+			return std::make_pair(target, parameters);
+		};
+		const auto hasTarget = [this](ui::Window& window, Rml::Element* zone)
+		{ return !quantizeTarget(window, zone).parts.empty(); };
+
+		for (const MidiFunction& each : g_midiFunctions)
+		{
+			m_keys.add({each.id, each.description, [this, each, targetOf](ui::Window& window, Rml::Element* zone)
+				{
+					auto [target, parameters] = targetOf(window, zone, each.notes);
+					if (target.parts.empty())
+						return;
+					const std::string command = each.command;
+					if (each.mode != nullptr)
+						parameters["mode"] = each.mode;
+					if (command == "midi.fixVelocities")
+						parameters["velocity"] = target.insertVelocity;
+					if (command == "midi.legato")
+					{
+						// The setting's ticks are 480 to a quarter note.
+						m_binding.send("settings.get", {{"key", "editing.legatoOverlap"}},
+							[this, parameters](const engine::Result& result) mutable
+							{
+								if (!result.ok())
+									return;
+								parameters["overlap"] =
+									result.value.at("value").get<int64_t>() * (time::g_ticksPerQuarter / 480);
+								m_binding.send("midi.legato", parameters);
+							});
+						return;
+					}
+					if (command == "midi.fixLengths")
+					{
+						// The editor's length quantize, or the quantize grid when it is linked to it, as in the
+						// project window.
+						const std::optional<engine::midi::NoteValue> length =
+							engine::midi::noteValueFromString(target.lengthQuantize);
+						if (length.has_value())
+						{
+							parameters["length"] = length->ticks();
+							m_binding.send(command, parameters);
+							return;
+						}
+						m_binding.send("quantize.get", Json::object(),
+							[this, parameters](const engine::Result& result) mutable
+							{
+								if (!result.ok())
+									return;
+								const std::optional<engine::midi::NoteValue> grid = engine::midi::noteValueFromString(
+									result.value.at("settings").at("grid").get<std::string>());
+								if (!grid.has_value())
+									return;
+								parameters["length"] = grid->ticks();
+								m_binding.send("midi.fixLengths", parameters);
+							});
+						return;
+					}
+					m_binding.send(command, parameters);
+				}});
+			m_keys.enableWhen(each.id, hasTarget);
+		}
+
+		// The functions with a dialog get what they work on as the document's attributes.
+		const auto openFunction = [this](ui::Window& window, const std::string& function, const Json& parameters)
+		{
+			std::vector<std::pair<std::string, std::string>> attributes = {{"function", function}};
+			for (const char* key : {"parts", "notes"})
+				if (parameters.contains(key))
+					attributes.emplace_back(key, listOf(parameters.at(key).get<std::vector<uint64_t>>()));
+			if (parameters.contains("destination"))
+				attributes.emplace_back("destination", std::to_string(parameters.at("destination").get<uint64_t>()));
+			openDialog(window, "midi-function.rml", attributes);
+		};
+		m_keys.add({"midi.transposeSetup", "Opens the Transpose Setup dialog for the selected MIDI notes or parts.",
+			[openFunction, targetOf](ui::Window& window, Rml::Element* zone)
+			{
+				const auto [target, parameters] = targetOf(window, zone, true);
+				if (!target.parts.empty())
+					openFunction(window, "transpose", parameters);
+			}});
+		m_keys.enableWhen("midi.transposeSetup", hasTarget);
+		m_keys.add({"midi.functionsRestrictPolyphony",
+			"Opens the Restrict Polyphony dialog for the selected MIDI notes or parts.",
+			[openFunction, targetOf](ui::Window& window, Rml::Element* zone)
+			{
+				const auto [target, parameters] = targetOf(window, zone, true);
+				if (!target.parts.empty())
+					openFunction(window, "restrictPolyphony", parameters);
+			}});
+		m_keys.enableWhen("midi.functionsRestrictPolyphony", hasTarget);
+
+		// Merge MIDI in Loop (pp. 1119-1120): onto the first selected MIDI or instrument track, or a new one.
+		m_keys.add({"midi.mergeInLoop",
+			"Opens the MIDI Merge Options dialog, which merges the MIDI events between the locators into a new part.",
+			[this, openFunction](ui::Window& window, Rml::Element* /*zone*/)
+			{
+				Json parameters = Json::object();
+				const Json project = m_eventDisplay ? m_eventDisplay->project() : Json();
+				std::map<uint64_t, std::string> types;
+				if (project.is_object())
+					for (const Json& track : project.value("tracks", Json::array()))
+						types[track.at("id").get<uint64_t>()] = track.value("type", std::string());
+				for (const uint64_t track : m_trackList ? m_trackList->selection() : std::vector<uint64_t>())
+					if (types[track] == "midi" || types[track] == "instrument")
+					{
+						parameters["destination"] = track;
+						break;
+					}
+				openFunction(window, "merge", parameters);
+			}});
+
+		// Dissolve Part (pp. 1121-1122) and Bounce MIDI (p. 1123) of the project window's selected MIDI parts.
+		const auto hasParts = [this](ui::Window& /*window*/, Rml::Element* /*zone*/)
+		{ return !selected("midiParts").empty(); };
+		m_keys.add({"midi.dissolvePart", "Opens the Dissolve Part dialog for the selected MIDI parts.",
+			[this, openFunction](ui::Window& window, Rml::Element* /*zone*/)
+			{
+				const std::vector<uint64_t> parts = selected("midiParts");
+				if (!parts.empty())
+					openFunction(window, "dissolve", {{"parts", parts}});
+			}});
+		m_keys.enableWhen("midi.dissolvePart", hasParts);
+		m_keys.add({"midi.bounceMidi", "Combines the selected MIDI parts of each track into one part.",
+			[this](ui::Window& /*window*/, Rml::Element* /*zone*/)
+			{
+				// The engine bounces the parts of one track; several tracks are one undo step.
+				std::map<uint64_t, std::vector<uint64_t>> byTrack;
+				const std::vector<uint64_t> parts = selected("midiParts");
+				if (parts.empty())
+					return;
+				for (const Json& part : m_eventDisplay->project().value("midiParts", Json::array()))
+					if (const auto id = part.at("id").get<uint64_t>();
+						std::find(parts.begin(), parts.end(), id) != parts.end())
+						byTrack[part.at("track").get<uint64_t>()].push_back(id);
+				Json commands = Json::array();
+				for (const auto& [track, ids] : byTrack)
+					commands.push_back({{"command", "midi.bounce"}, {"parameters", {{"parts", ids}}}});
+				if (commands.size() == 1)
+					m_binding.send("midi.bounce", commands[0].at("parameters"));
+				else if (!commands.empty())
+					m_binding.send(
+						"history.transaction", {{"description", "Bounce MIDI"}, {"commands", std::move(commands)}});
+			}});
+		m_keys.enableWhen("midi.bounceMidi", hasParts);
+	}
+}
