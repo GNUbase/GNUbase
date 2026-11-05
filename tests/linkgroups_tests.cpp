@@ -13,6 +13,7 @@
 #include <functional>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 using namespace gnubase;
@@ -57,6 +58,16 @@ namespace
 			if (item.at("id") == id)
 				return item;
 		FAIL("no channel " << id);
+	}
+
+	// The last event of that name the client received, or null. Takes every event waiting.
+	Json lastEvent(Client& client, const std::string& name)
+	{
+		Json found;
+		while (const auto message = client.poll())
+			if (const auto* event = std::get_if<Event>(&*message); event != nullptr && event->name == name)
+				found = event->data;
+		return found;
 	}
 
 	Json groups(Client& client)
@@ -283,10 +294,127 @@ TEST_CASE("VCA faders control one link group each, pass their buttons on and nev
 	run(client, "linkGroup.set", {{"group", other}, {"vca", 0}});
 	CHECK(groups(client).at(2).at("volume") == true);
 
-	// Removing a VCA track leaves its group without a VCA fader.
+	// Removing a VCA track leaves its group without a VCA fader; the group it was the only channel of goes.
+	run(client, "track.remove", {{"track", trackOf(client, vca)}});
+	REQUIRE(groups(client).size() == 2);
+	CHECK(groups(client).at(0).at("vca") == 0);
+	CHECK(groups(client).at(1).at("id") == other);
+}
+
+TEST_CASE("removing a VCA track turns its group's volume link back on, in one undo step", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId vca = add(client, "vca");
+	const ObjectId a = add(client, "audio");
+	run(client, "linkGroup.add", {{"channels", {a}}, {"vca", vca}});
+	CHECK(groups(client).at(0).at("volume") == false);
+
+	// As when the group loses its VCA fader through linkGroup.set (reference manual p. 518).
 	run(client, "track.remove", {{"track", trackOf(client, vca)}});
 	CHECK(groups(client).at(0).at("vca") == 0);
-	CHECK(groups(client).at(1).at("channels") == Json::array());
+	CHECK(groups(client).at(0).at("volume") == true);
+	CHECK(lastEvent(client, "linkGroup.changed").at("group").at("volume") == true);
+	run(client, "history.undo");
+	CHECK(groups(client).at(0).at("vca") == vca);
+	CHECK(groups(client).at(0).at("volume") == false);
+}
+
+TEST_CASE("a link group that loses all its channels goes, and its VCA fader stays", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId vca = add(client, "vca");
+	const ObjectId a = add(client, "audio");
+	const ObjectId b = add(client, "audio");
+	const ObjectId c = add(client, "audio");
+
+	// Its channels move to another group, as linkGroup.add refuses a group without channels.
+	const ObjectId first = groupOf(run(client, "linkGroup.add", {{"channels", {a, b}}, {"vca", vca}}));
+	lastEvent(client, "linkGroup.removed");
+	const ObjectId second = groupOf(run(client, "linkGroup.add", {{"channels", {a, b}}}));
+	REQUIRE(groups(client).size() == 1);
+	CHECK(groups(client).at(0).at("id") == second);
+	CHECK(lastEvent(client, "linkGroup.removed") == Json({{"group", first}}));
+	// Redo takes it away again.
+	run(client, "history.undo");
+	CHECK(groups(client).at(0).at("id") == first);
+	run(client, "history.redo");
+	REQUIRE(groups(client).size() == 1);
+	CHECK(groups(client).at(0).at("id") == second);
+	CHECK(lastEvent(client, "linkGroup.removed") == Json({{"group", first}}));
+	// The VCA fader controls nothing now and can take another group.
+	run(client, "linkGroup.set", {{"group", second}, {"vca", vca}});
+	CHECK(groups(client).at(0).at("vca") == vca);
+	run(client, "history.undo");
+	run(client, "history.undo");
+	REQUIRE(groups(client).size() == 1);
+	CHECK(groups(client).at(0).at("id") == first);
+	CHECK(groups(client).at(0).at("channels") == Json({a, b}));
+	CHECK(groups(client).at(0).at("vca") == vca);
+
+	// linkGroup.set taking a group's last channel.
+	const ObjectId third = groupOf(run(client, "linkGroup.add", {{"channels", {c}}}));
+	run(client, "linkGroup.set", {{"group", first}, {"channels", {a, b, c}}});
+	REQUIRE(groups(client).size() == 1);
+	CHECK(lastEvent(client, "linkGroup.removed") == Json({{"group", third}}));
+	run(client, "history.undo");
+	REQUIRE(groups(client).size() == 2);
+
+	// Removing the tracks of its channels.
+	run(client, "track.remove", {{"track", trackOf(client, c)}});
+	REQUIRE(groups(client).size() == 1);
+	CHECK(groups(client).at(0).at("id") == first);
+	CHECK(lastEvent(client, "linkGroup.removed") == Json({{"group", third}}));
+	run(client, "track.remove", {{"track", trackOf(client, a)}});
+	run(client, "track.remove", {{"track", trackOf(client, b)}});
+	CHECK(groups(client).empty());
+	CHECK(channelJson(client, vca).at("id") == vca);
+	run(client, "history.undo"); // b's track comes back, and the group with it
+	REQUIRE(groups(client).size() == 1);
+	CHECK(groups(client).at(0).at("channels") == Json({b}));
+	CHECK(groups(client).at(0).at("vca") == vca);
+	run(client, "history.redo");
+	CHECK(groups(client).empty());
+
+	// Turning off a folder's group channel takes it out of its group too.
+	const Json folder = run(client, "track.add", {{"type", "folder"}, {"groupChannel", true}});
+	const ObjectId folderChannel = folder.at("channel").at("id").get<ObjectId>();
+	const ObjectId alone = groupOf(run(client, "linkGroup.add", {{"channels", {folderChannel}}}));
+	const ObjectId d = add(client, "audio");
+	const ObjectId withAudio = groupOf(run(client, "linkGroup.add", {{"channels", {d}}}));
+	lastEvent(client, "linkGroup.removed");
+	run(client, "track.set", {{"track", folder.at("track").at("id")}, {"groupChannel", false}});
+	REQUIRE(groups(client).size() == 1);
+	CHECK(lastEvent(client, "linkGroup.removed") == Json({{"group", alone}}));
+	run(client, "history.undo");
+	REQUIRE(groups(client).size() == 2);
+	run(client, "linkGroup.set", {{"group", withAudio}, {"channels", {d, folderChannel}}});
+	run(client, "track.set", {{"track", folder.at("track").at("id")}, {"groupChannel", false}});
+	REQUIRE(groups(client).size() == 1);
+	CHECK(groups(client).at(0).at("channels") == Json({d}));
+}
+
+TEST_CASE("new link groups get a name no other group has", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId a = add(client, "audio");
+	const ObjectId b = add(client, "audio");
+	const ObjectId c = add(client, "audio");
+	const ObjectId d = add(client, "audio");
+	const ObjectId first = groupOf(run(client, "linkGroup.add", {{"channels", {a}}}));
+	run(client, "linkGroup.add", {{"channels", {b}}});
+	run(client, "linkGroup.remove", {{"group", first}});
+
+	// With one group, the next one would be Link Group 2, which that one is called.
+	CHECK(run(client, "linkGroup.add", {{"channels", {c}}}).at("group").at("name") == "Link Group 3");
+	// A name the user gave counts too.
+	run(client, "linkGroup.set", {{"group", groups(client).at(0).at("id")}, {"name", "Link Group 4"}});
+	CHECK(run(client, "linkGroup.add", {{"channels", {d}}}).at("group").at("name") == "Link Group 5");
+	// A given name stays as it is, even one that is taken.
+	CHECK(run(client, "linkGroup.add", {{"channels", {a}}, {"name", "Link Group 3"}}).at("group").at("name") ==
+		"Link Group 3");
 }
 
 TEST_CASE("link groups and VCA tracks are saved and loaded with the project", "[integration]")

@@ -10,6 +10,7 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -85,6 +86,11 @@ namespace gnubase::ui
 		void ask(bool overview);
 		void zoom(double factor, double around);
 		void fit(double from, double to);
+		void reveal(double from, double to); // scrolls the display to show these frames, at the same zoom
+		void editRegion(Rml::Element& cell); // a field instead of a region's name, start or end in the list
+		void finishEditing(bool keep);       // Enter (and leaving the field) or Escape
+		void auditionClip(int64_t from, std::optional<int64_t> to); // plays the clip, in its frames
+		void scrub(double frame);
 
 		float dpRatio() const;
 		double displayWidth() const; // dp
@@ -127,6 +133,12 @@ namespace gnubase::ui
 		int64_t m_hitpoint = 0;                        // the hitpoint dragged, by position
 		std::array<bool, 2> m_asking = {false, false}; // media.peaks in flight: the display's, the overview's
 		std::array<bool, 2> m_again = {false, false};  // asked again meanwhile
+
+		// The field a region's name, start or end is typed in, in the regions list.
+		Rml::ObserverPtr<Rml::Element> m_editing;
+		uint64_t m_editedRegion = 0;
+		std::string m_editedField; // name, start or end
+		std::string m_edited;      // what it showed
 
 		Drag m_drag = Drag::None;
 		double m_pressed = 0.0; // clip frames

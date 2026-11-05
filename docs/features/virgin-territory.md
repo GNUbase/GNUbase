@@ -9,7 +9,10 @@ plugin's parameter as the user sets it. The lanes and their playback are in [aut
 
 - **`automation.set`** `{virginTerritory}` switches between the two modes, `automation.get` reports it. It is saved
   with the project (in GNUbase's entry of the file), not part of undo, so that a project renders the same wherever it
-  is opened; a new project starts with initial values. Emits `automation.changed`.
+  is opened; a new project starts with initial values. Emits `automation.changed`. Run on its own, only a change of
+  `virginTerritory` changes the project (`project.revision` and its `modified`); `followsEvents` is the user's
+  setting. A transaction can run `automation.set` (the transaction counts as a change, as every transaction does), and
+  if it fails, both settings are as before.
   - **Initial value** (the default): a lane's curve covers the whole timeline: before its first point the first
     point's value, after its last point the last one's.
   - **Virgin territory**: no curve before the first point and after the last one.
@@ -17,6 +20,11 @@ plugin's parameter as the user sets it. The lanes and their playback are in [aut
   gap starts at the point and goes up to the next one, in both modes. The value arrives at the terminator's value on
   the curve to it and jumps to the static value there, like points at one position (the last one is the value from
   there on).
+- **Points at one position** between two gaps have no curve: with virgin territory a lane whose points all sit at one
+  position, e.g. a single point, and a point right after a terminator's gap that is also the lane's last one. The gap
+  point at their position comes after them, so a parameter with a static value keeps it there too: the points never
+  play. A MIDI lane without a static value sends the last one's value once at that position, as it sends a
+  terminator's value, and nothing after it. A curve needs two positions.
 - **Playback**: `compile()` (`rendersnapshot.cpp`) adds a gap point, a step marked `gap`, at a terminator's position,
   and with virgin territory one at the first and one at the last point's position. `channelAutomation()` gives gap
   points the lane's static value, and a mute lane's gaps have the mute button's value, since a mute lane that plays
@@ -27,19 +35,34 @@ plugin's parameter as the user sets it. The lanes and their playback are in [aut
 - **Range edits** (`range.delete`, `range.cut`, `range.copy`, `range.paste`, `range.insertSilence`, in
   `eventedits.cpp`) keep the gaps: an edge in a gap gets no point with a value, but a terminator or nothing. With
   virgin territory `range.delete` makes the range a gap (p. 881): the point at its start is a terminator, and across
-  a lane's last point the curve ends there. Delete Time closes the range and leaves no gap; Insert Silence in a gap
-  makes it longer. Copied automation keeps its gaps as terminators.
+  a lane's last point the curve ends there. A range on the curve between two points is automation data too, also
+  without points in it, e.g. in the middle of a long ramp (#724): it gets its edge points, with virgin territory a
+  terminator at its start, with initial values the value held up to its end. A range in a gap, or with initial values
+  before the first or after the last point, changes nothing. Delete Time closes the range and leaves no gap; Insert
+  Silence in a gap makes it longer. Copied automation keeps its gaps as terminators.
+
+## In the UI
+
+The automation tracks leave gaps empty: no line from a terminator to the next point, and with virgin territory none
+before the first point and after the last one ([automation-tracks.md](automation-tracks.md)).
 
 ## Not yet
 
-Gaps on the automation tracks (they still draw the curve over the whole timeline), the info line's Terminator field,
-the automation panel's settings page.
+- The info line's Terminator field (p. 881): the info line doesn't show automation points yet.
+- Write modes (#122): with virgin territory a pass that ends inside a gap ends with a terminator, so that automation
+  data is found only where a pass wrote it (p. 881).
+- The automation panel's settings page.
 
 ## Checks
 
 - `tests/automation_tests.cpp`: the setting and terminators through the engine API, saved with the project, not undo
-  steps, and the terminator's undo; the values of a volume and a mute lane in both modes, and a controller lane that
-  sends nothing in its gaps, also at a locate and while stopped; volume automation rendered with both modes and block
+  steps, and the terminator's undo; only `virginTerritory` changing the project's revision, and a failed transaction
+  leaving both settings as they were; the values of a volume and a mute lane in both modes, a pan lane's points at
+  one position that never play with virgin territory, and a controller lane that sends nothing in its gaps, also at
+  a locate and while stopped, and a lone point's value once; volume automation rendered with both modes and block
   sizes 64 and 100, sample by sample.
 - `tests/eventedit_tests.cpp`: `range.delete` across a terminator and, with virgin territory, in a lane's curve and
-  across its last point, Delete Time, Insert Silence in a gap, and a copy with a gap pasted.
+  across its last point; a range in a ramp without points in it, also up to the ramp's end point and with
+  `range.cut`, in both modes, and ranges in a gap, before the first and after the last point that change nothing;
+  Delete Time, Insert Silence in a gap, and a copy with a gap pasted.
+- `tests/automationtracks_tests.cpp` and `tests/canvas_tests.cpp`: the gaps on the automation tracks.
