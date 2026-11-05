@@ -232,7 +232,7 @@ TEST_CASE("track.removeEmpty leaves a marker track with markers active and a lin
 							   .at("id")
 							   .get<ObjectId>();
 
-	activatedMarkerTracks(listener);
+	activatedMarkerTracks(listener); // drops what adding the tracks announced
 
 	CHECK(removeEmpty(client).size() == 3);
 	Json project = run(client, "project.get");
@@ -246,8 +246,24 @@ TEST_CASE("track.removeEmpty leaves a marker track with markers active and a lin
 	run(client, "history.undo");
 	project = run(client, "project.get");
 	CHECK(project.at("activeMarkerTrack") == first);
+	CHECK(activatedMarkerTracks(listener) == std::vector<ObjectId>{first});
 	linkGroup = withId(project.at("linkGroups"), group);
 	CHECK(linkGroup.at("channels") == Json(channels));
+}
+
+TEST_CASE("track.removeEmpty removing every marker track announces once that none is active", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	Client listener(engine);
+	const ObjectId first = addTrack(client, {{"type", "marker"}});
+	addTrack(client, {{"type", "marker"}});
+	run(client, "marker.activateTrack", {{"track", first}});
+	activatedMarkerTracks(listener); // drops what adding the tracks announced
+
+	CHECK(removeEmpty(client).size() == 2);
+	CHECK(run(client, "project.get").at("activeMarkerTrack") == 0);
+	CHECK(activatedMarkerTracks(listener) == std::vector<ObjectId>{0});
 }
 
 TEST_CASE("track.removeEmpty removes nested group channels at once, and one undo restores their routing", "[unit]")

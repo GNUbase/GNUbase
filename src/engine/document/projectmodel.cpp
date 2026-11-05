@@ -1471,10 +1471,11 @@ namespace gnubase::engine
 
 		// The tracks track.removeEmpty removes (docs/features/track-list.md): audio, instrument, MIDI and marker
 		// tracks without events, parts, markers or automation, and folders without tracks, unless a channel of
-		// another track plays or sends into theirs; plugins in its slots and an instrument don't keep a track. Group
-		// and effect tracks are where others play through, VCA tracks control channels, ruler, tempo and signature
-		// tracks hold no events. What goes can leave others empty, such as a folder that held only empty tracks or an
-		// instrument track that only empty MIDI tracks played, so it looks again until nothing more goes.
+		// another track plays or sends into theirs. Plugins in a channel's slots and an instrument track's instrument
+		// don't keep a track. Group and effect tracks are where others play through, VCA tracks control channels,
+		// ruler, tempo and signature tracks hold no events. What goes can leave others empty, such as a folder that
+		// held only empty tracks or an instrument track that only empty MIDI tracks played, so it looks again until
+		// nothing more goes.
 		std::set<ObjectId> emptyTracks(const Project& project)
 		{
 			std::set<ObjectId> holding;
