@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 using namespace gnubase::engine;
@@ -61,6 +62,17 @@ namespace
 	std::vector<ObjectId> removeEmpty(Client& client)
 	{
 		return run(client, "track.removeEmpty").at("tracks").get<std::vector<ObjectId>>();
+	}
+
+	// The marker tracks marker.trackActivated announced to a client since it last looked, in order.
+	std::vector<ObjectId> activatedMarkerTracks(Client& client)
+	{
+		std::vector<ObjectId> tracks;
+		while (const auto message = client.poll())
+			if (const auto* event = std::get_if<Event>(&*message))
+				if (event->name == "marker.trackActivated")
+					tracks.push_back(event->data.at("track").get<ObjectId>());
+		return tracks;
 	}
 
 	void addPart(Client& client, ObjectId track)
@@ -129,6 +141,38 @@ TEST_CASE("track.removeEmpty removes the tracks that hold nothing, in one undo s
 	CHECK(run(client, "history.get").at("position") == steps + 1);
 }
 
+TEST_CASE(
+	"track.removeEmpty removes empty tracks with plugins or an instrument, and one undo brings them back", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	// Plugins in a channel's slots and an instrument track's instrument don't keep a track.
+	const ObjectId audio = addTrack(client, {{"type", "audio"}});
+	const ObjectId slot =
+		run(client, "plugin.insert", {{"channel", channelOf(client, audio)}, {"plugin", "builtin:eq"}})
+			.at("slot")
+			.at("id")
+			.get<ObjectId>();
+	const ObjectId instrument = addTrack(client, {{"type", "instrument"}, {"instrument", "testSynth"}});
+	const Json before = run(client, "project.get");
+	REQUIRE(withId(before.at("slots"), slot).at("channel") == channelOf(client, audio));
+	REQUIRE(withId(before.at("channels"), channelOf(client, instrument)).at("instrument") == "testSynth");
+	const int64_t steps = run(client, "history.get").at("position").get<int64_t>();
+
+	CHECK(removeEmpty(client) == std::vector<ObjectId>{audio, instrument});
+	Json project = run(client, "project.get");
+	CHECK(project.at("tracks").empty());
+	CHECK(project.at("channels").empty());
+	CHECK(project.at("slots").empty());
+
+	run(client, "history.undo");
+	CHECK(run(client, "history.get").at("position") == steps);
+	project = run(client, "project.get");
+	CHECK(project.at("tracks") == before.at("tracks"));
+	CHECK(project.at("channels") == before.at("channels"));
+	CHECK(project.at("slots") == before.at("slots"));
+}
+
 TEST_CASE("track.removeEmpty keeps tracks that others play or send into, until those go too", "[unit]")
 {
 	Engine engine;
@@ -168,6 +212,7 @@ TEST_CASE("track.removeEmpty leaves a marker track with markers active and a lin
 {
 	Engine engine;
 	Client client(engine);
+	Client listener(engine);
 	const ObjectId first = addTrack(client, {{"type", "marker"}}); // empty and made active, goes
 	addTrack(client, {{"type", "marker"}});                        // empty, goes
 	const ObjectId markers = addTrack(client, {{"type", "marker"}});
@@ -187,9 +232,13 @@ TEST_CASE("track.removeEmpty leaves a marker track with markers active and a lin
 							   .at("id")
 							   .get<ObjectId>();
 
+	activatedMarkerTracks(listener); // drops what adding the tracks announced
+
 	CHECK(removeEmpty(client).size() == 3);
 	Json project = run(client, "project.get");
 	CHECK(project.at("activeMarkerTrack") == markers);
+	// Only the marker track that stays is announced as active, never one the command removes next.
+	CHECK(activatedMarkerTracks(listener) == std::vector<ObjectId>{markers});
 	Json linkGroup = withId(project.at("linkGroups"), group);
 	CHECK(linkGroup.at("channels") == Json{channels[0], channels[1]});
 	CHECK(linkGroup.at("vca") == channelOf(client, vca));
@@ -197,8 +246,24 @@ TEST_CASE("track.removeEmpty leaves a marker track with markers active and a lin
 	run(client, "history.undo");
 	project = run(client, "project.get");
 	CHECK(project.at("activeMarkerTrack") == first);
+	CHECK(activatedMarkerTracks(listener) == std::vector<ObjectId>{first});
 	linkGroup = withId(project.at("linkGroups"), group);
 	CHECK(linkGroup.at("channels") == Json(channels));
+}
+
+TEST_CASE("track.removeEmpty removing every marker track announces once that none is active", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	Client listener(engine);
+	const ObjectId first = addTrack(client, {{"type", "marker"}});
+	addTrack(client, {{"type", "marker"}});
+	run(client, "marker.activateTrack", {{"track", first}});
+	activatedMarkerTracks(listener); // drops what adding the tracks announced
+
+	CHECK(removeEmpty(client).size() == 2);
+	CHECK(run(client, "project.get").at("activeMarkerTrack") == 0);
+	CHECK(activatedMarkerTracks(listener) == std::vector<ObjectId>{0});
 }
 
 TEST_CASE("track.removeEmpty removes nested group channels at once, and one undo restores their routing", "[unit]")

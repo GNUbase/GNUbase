@@ -92,8 +92,17 @@ namespace gnubase::ui
 	ProjectFiles::ProjectFiles(KeyCommands& keys, EngineBinding& binding, Shell& shell, std::filesystem::path folder)
 		: m_binding(binding), m_shell(shell), m_folder(std::move(folder)),
 		  m_saved(binding.on("project.saved",
-			  [this](const engine::Event& event) { m_file = event.data.at("file").get<std::string>(); })),
-		  m_reset(binding.on("project.reset", [this](const engine::Event&) { readLocation(); })),
+			  [this](const engine::Event& event)
+			  {
+				  m_file = event.data.at("file").get<std::string>();
+				  autoSaveWorks();
+			  })),
+		  m_reset(binding.on("project.reset",
+			  [this](const engine::Event&)
+			  {
+				  autoSaveWorks();
+				  readLocation();
+			  })),
 		  m_jobFinished(binding.on("job.finished",
 			  [this](const engine::Event& event)
 			  {
@@ -103,7 +112,8 @@ namespace gnubase::ui
 					  showError(*m_backupWindow, job.at("error").get<std::string>());
 			  })),
 		  m_autoSaveFailed(
-			  binding.on("project.autoSaveFailed", [this](const engine::Event& event) { autoSaveFailed(event.data); }))
+			  binding.on("project.autoSaveFailed", [this](const engine::Event& event) { autoSaveFailed(event.data); })),
+		  m_autoSaved(binding.on("project.autoSaved", [this](const engine::Event&) { autoSaveWorks(); }))
 	{
 		readLocation();
 
@@ -177,6 +187,7 @@ namespace gnubase::ui
 	ProjectFiles::~ProjectFiles()
 	{
 		m_shell.onQuitRequest({});
+		dropWaitingError();
 		if (Rml::Element* dialog = m_dialog.get())
 		{
 			dialog->RemoveEventListener(Rml::EventId::Dblclick, this);
@@ -274,10 +285,16 @@ namespace gnubase::ui
 		return dialog;
 	}
 
-	// Double clicks in the start screen, which create from a template or open a recent project, and every dialog's
-	// close event.
+	// Double clicks in the start screen, which create from a template or open a recent project, every dialog's close
+	// event, and the dialogs that keep a failed auto save's error away hiding or unloading.
 	void ProjectFiles::ProcessEvent(Rml::Event& event)
 	{
+		if (event.GetId() == Rml::EventId::Hide || event.GetId() == Rml::EventId::Unload)
+		{
+			// The dialog is still in its context while it unloads.
+			m_shell.post([this] { showWaitingError(); });
+			return;
+		}
 		auto* dialog = dynamic_cast<Rml::ElementDocument*>(event.GetCurrentElement());
 		if (dialog == nullptr)
 			return;
@@ -336,14 +353,19 @@ namespace gnubase::ui
 		// The dialog that asked may still be closing.
 		m_shell.post(
 			// NOLINTNEXTLINE(bugprone-exception-escape): only MSVC's std::string; out of memory only
-			[this, window, error, autoSave]
+			[this, window, error, autoSave, worked = m_autoSaveWorked]
 			{
+				if (autoSave && worked != m_autoSaveWorked)
+					return; // an auto save succeeded or the project was saved or opened since it failed
 				Window* showing = m_shell.find(window);
 				// A failed auto save's error doesn't open over another modal dialog, such as the fade editor, which the
-				// user works in: it shows at the next failure instead, as it does while the start screen is open. The
-				// project dialog that is open (m_dialog) is left to openDialog, where an auto save's error makes way.
+				// user works in: it waits until that closed. The project dialog that is open (m_dialog) is left to
+				// openDialog, where an auto save's error makes way or else shows at the next failure.
 				if (autoSave && showing != nullptr && otherModalOpen(showing->context(), m_dialog.get()))
+				{
+					waitForDialogs(showing->context(), window, error);
 					return;
+				}
 				Rml::ElementDocument* dialog = showing != nullptr
 					? openDialog(*showing, "project-error.rml",
 						  [this, autoSave](Rml::ElementDocument&, const std::string& result)
@@ -361,8 +383,51 @@ namespace gnubase::ui
 				{
 					m_autoSaveFailureShown = true;
 					m_autoSaveErrorOpen = true;
+					dropWaitingError(); // an older one
 				}
 			});
+	}
+
+	void ProjectFiles::waitForDialogs(Rml::Context& context, WindowId window, const std::string& error)
+	{
+		dropWaitingError();
+		m_waitingError = WaitingError{window, error};
+		for (int i = 0; i < context.GetNumDocuments(); ++i)
+		{
+			Rml::ElementDocument* document = context.GetDocument(i);
+			if (document == m_dialog.get() || !document->IsModal())
+				continue;
+			document->AddEventListener(Rml::EventId::Hide, this);
+			document->AddEventListener(Rml::EventId::Unload, this);
+			m_keptAwayBy.push_back(document->GetObserverPtr());
+		}
+	}
+
+	void ProjectFiles::showWaitingError()
+	{
+		if (!m_waitingError)
+			return;
+		const WaitingError waiting = std::move(*m_waitingError);
+		dropWaitingError();
+		openError(waiting.window, waiting.error, true);
+	}
+
+	void ProjectFiles::autoSaveWorks()
+	{
+		++m_autoSaveWorked;
+		dropWaitingError();
+	}
+
+	void ProjectFiles::dropWaitingError()
+	{
+		m_waitingError.reset();
+		for (const Rml::ObserverPtr<Rml::Element>& dialog : m_keptAwayBy)
+			if (Rml::Element* document = dialog.get())
+			{
+				document->RemoveEventListener(Rml::EventId::Hide, this);
+				document->RemoveEventListener(Rml::EventId::Unload, this);
+			}
+		m_keptAwayBy.clear();
 	}
 
 	void ProjectFiles::closeDialog(const std::string& result)

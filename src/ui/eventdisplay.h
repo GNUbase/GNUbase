@@ -412,6 +412,8 @@ namespace gnubase::ui
 		double dpFrom(Rml::Element& element, float x) const;
 
 		void requestProject();
+		// Shows m_project, with event.previewResize's answer over it while an edge is dragged.
+		void showProject();
 		void loadProject(const engine::Json& project);
 		void setFolderMode(const std::string& mode); // ui.folderData
 		void setLanes();
@@ -471,7 +473,7 @@ namespace gnubase::ui
 		void areaDown(Rml::Event& event, double x, double y);
 		// A right click that opens the context menu selects the event there, unless it's selected already.
 		void areaRightDown(Rml::Event& event, double x, double y);
-		void areaMove(double dx, double dy, bool constrained); // constrained: restricts() says so
+		void areaMove(Rml::Event& event, double dx, double dy);
 		// Whether the keys are exactly the tool modifier of Copy or Shared Copy.
 		bool copyKeys(const std::string& keys) const;
 		// Whether the keys held restrict a drag of events: Ctrl (Cmd), unless they are a copy's tool modifier.
@@ -482,6 +484,17 @@ namespace gnubase::ui
 		// How many lanes a drag dy dp down moves the selection: none unless every selected event lands on a lane of
 		// a track of its type.
 		int laneShift(double dy) const;
+		// Resizing the selection (#732): event.resize's parameters for a drag of the pressed event's edge dx dp across;
+		// the preview of them that the display shows while the edge is dragged; the release, which sends them; and
+		// Escape, which cancels the drag if it is one of edges.
+		engine::Json resizeParameters(double dx, Drag drag) const;
+		void previewResize(engine::Json parameters);
+		void askResizePreview();
+		void endResize(); // drops the preview and the answers still on their way
+		void resizeUp(engine::Json parameters);
+		bool cancelResize();
+		void resizeProjectChanged(); // a project.get answer came in
+		void resizeKeysChanged();    // the modifier keys held changed
 		// Sends the move or copy of the selection: the shift's parameters (event.move's delta or ticks), lanes down.
 		void moveSelection(engine::Json shift, int lanes, bool copy, bool shared);
 		void doubleClick(Rml::Event& event);
@@ -684,7 +697,17 @@ namespace gnubase::ui
 		int64_t m_left = 0;                  // the locators, in samples
 		int64_t m_right = 0;
 		bool m_sizingMovesContents = false;
-		uint64_t m_dragEvent = 0; // pressed on
+		double m_resizeFrom = 0.0;      // the pressed event's edge when a drag of edges started, in seconds
+		engine::Json m_resizeWanted;    // event.previewResize's parameters for where the edge is now, null for none
+		engine::Json m_resizeAsked;     // those of the last one sent
+		bool m_resizeAsking = false;    // its answer is on its way
+		engine::Json m_resizePreview;   // the answer shown, null for none
+		double m_resizeDx = 0.0;        // dp the edge was dragged
+		engine::Json m_releasedPreview; // the last release's, until the project shows its resize
+		uint64_t m_resizeReleases = 0;  // counts releases, so that only the last one's answer counts
+		bool m_resizeLanded = false;    // the last release's event.resize is done; the next project shows it
+		uint64_t m_resizeGesture = 0;   // counts drags of edges, so that late answers are dropped
+		uint64_t m_dragEvent = 0;       // pressed on
 		bool m_dragMoved = false;
 		double m_dragDy = 0.0;             // dp, dragging the event volume or a curve point
 		std::optional<size_t> m_dragPoint; // the curve point dragged, none for a new one

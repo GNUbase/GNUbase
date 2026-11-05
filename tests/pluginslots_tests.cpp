@@ -469,6 +469,34 @@ TEST_CASE("a plugin sees which segments of a block record", "[unit]")
 	CHECK(plugin.transport[1].transport.position == 1064);
 }
 
+TEST_CASE("a plugin sees a block where playback starts within it as stopped until then", "[unit]")
+{
+	// The block in which a count-in ends: playback starts at frame 64.
+	auto made = std::make_unique<CountingPlugin>(0, true);
+	CountingPlugin& plugin = *made;
+	plugins::PluginSlot slot(std::move(made));
+	REQUIRE(slot.activate(48000.0, 128));
+	const std::array<graph::TransportSegment, 1> segments{{{64, 64, 24000, false}}};
+	graph::TransportBlock transport;
+	transport.playing = true;
+	transport.position = 28000; // the cursor the count-in counted toward
+	transport.segments = segments.data();
+	transport.segmentCount = segments.size();
+	const graph::EventBuffer eventsIn(4);
+	graph::EventBuffer eventsOut(4);
+	std::vector<float> left(128);
+	std::vector<float> right(128);
+	const std::array<float*, 2> audio{left.data(), right.data()};
+	slot.process({audio.data(), 2, 128, eventsIn, eventsOut, transport});
+	REQUIRE(plugin.transportCount == 2);
+	CHECK(plugin.transport[0].offset == 0);
+	CHECK(plugin.transport[0].transport.flags == 0); // stopped
+	CHECK(plugin.transport[0].transport.position == 28000);
+	CHECK(plugin.transport[1].offset == 64);
+	CHECK(plugin.transport[1].transport.flags == gnubase::plugin::Transport::Playing);
+	CHECK(plugin.transport[1].transport.position == 24000);
+}
+
 TEST_CASE("a built-in processor behind the plugin wrapper sees which segments record", "[unit]")
 {
 	std::array<gnubase::plugin::TransportSegment, 2> transport{};
