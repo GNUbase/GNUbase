@@ -512,8 +512,8 @@ TEST_CASE("the true peak of sines between the samples is within EBU Tech 3341's 
 	// Sines at a quarter, a sixth and an eighth of the sample rate, with phases that put their peaks as far between
 	// the samples as they get, at -6 dBTP and, with samples up to 0 dBFS, at +3 dBTP: within +0.2 and -0.4 dB.
 	const double rate = GENERATE(44100.0, 48000.0, 96000.0);
-	const auto [divisor, phase, level] = GENERATE(std::tuple{4.0, g_pi / 4.0, -6.0},
-		std::tuple{6.0, g_pi / 6.0, -6.0}, std::tuple{8.0, g_pi / 8.0, -6.0}, std::tuple{4.0, g_pi / 4.0, 3.01});
+	const auto [divisor, phase, level] = GENERATE(std::tuple{4.0, g_pi / 4.0, -6.0}, std::tuple{6.0, g_pi / 6.0, -6.0},
+		std::tuple{8.0, g_pi / 8.0, -6.0}, std::tuple{4.0, g_pi / 4.0, 3.01});
 	INFO(rate << " Hz, a sine at 1/" << divisor << " of it, " << level << " dBTP");
 	LoudnessMeter meter;
 	meter.prepare(rate);
@@ -535,7 +535,7 @@ TEST_CASE("the master meter's RMS level follows its resolution and AES17", "[uni
 	signal.silence(1.0);
 	signal.sine(0.1, -6.0);
 	signal.silence(0.02);
-	const double sineRms = -6.0206 - 3.0103;
+	const double sineRms = -6.0 - 3.0103;
 
 	LevelMeter slow;
 	slow.setRms(1000, false);
@@ -549,13 +549,13 @@ TEST_CASE("the master meter's RMS level follows its resolution and AES17", "[uni
 	signal.play(fast);
 	CHECK(fast.read().rms[0] == 0.0f); // the last 10 ms are silent
 	CHECK(decibels(fast.read().rmsMax[0]) == Approx(sineRms).margin(0.05));
-	CHECK(decibels(fast.read().peakMax[0]) == Approx(-6.02).margin(0.01));
+	CHECK(decibels(fast.read().peakMax[0]) == Approx(-6.0).margin(0.01));
 
 	// AES17 adds 3 dB, also to the maximum, so that a sine's RMS level is its peak level.
 	fast.setRms(10, true);
-	CHECK(decibels(fast.read().rmsMax[0]) == Approx(-6.02).margin(0.05));
-	CHECK(decibels(fast.readFrame().rmsMax[1]) == Approx(-6.02).margin(0.05));
-	CHECK(decibels(fast.read().peakMax[0]) == Approx(-6.02).margin(0.01)); // peaks stay
+	CHECK(decibels(fast.read().rmsMax[0]) == Approx(-6.0).margin(0.02));
+	CHECK(decibels(fast.readFrame().rmsMax[1]) == Approx(-6.0).margin(0.02));
+	CHECK(decibels(fast.read().peakMax[0]) == Approx(-6.0).margin(0.01)); // peaks stay
 
 	// Resolutions out of range are clamped: a millisecond still reads a steady sine, a second at most.
 	LevelMeter shortest;
@@ -639,8 +639,8 @@ TEST_CASE("a device reset keeps the loudness measurement, a new device starts it
 {
 	Engine engine;
 	Client client(engine);
-	const Json device = {{"blockSize", 64},
-		{"input", {{"processor", "sine"}, {"parameters", {{"Frequency", 1000.0}, {"Level", 0.5}}}}}};
+	const Json device = {
+		{"blockSize", 64}, {"input", {{"processor", "sine"}, {"parameters", {{"Frequency", 1000.0}, {"Level", 0.5}}}}}};
 	run(client, "audio.setDevice", device);
 	const auto channel = run(client, "track.add", {{"type", "audio"}}).at("channel").at("id").get<ObjectId>();
 	run(client, "settings.set", {{"key", "audio.autoMonitoring"}, {"value", "whileRecordEnabled"}}); // playing too

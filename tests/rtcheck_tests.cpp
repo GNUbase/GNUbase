@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "engine/audio/meters.h"
 #include "engine/audio/transport.h"
 #include "engine/audiofile/diskstream.h"
 #include "engine/engine.h"
@@ -343,6 +344,42 @@ TEST_CASE("the transport applies requests and computes cycle segments without al
 	{
 		const ScopedRealtimeContext realtime;
 		transport.advance(256);
+	}
+	CHECK(g_violations == 0);
+}
+
+TEST_CASE("the meters measure at every RMS resolution and sample rate without allocating", "[unit]")
+{
+	using namespace gnubase::engine;
+	LevelMeter level;
+	LoudnessMeter loudness;
+	std::vector<float> signal(4096);
+	for (size_t i = 0; i < signal.size(); ++i)
+		signal[i] = (i % 7 == 0) ? 0.9f : -0.3f;
+	const std::array<const float*, g_maxMeterChannels> audio{signal.data(), signal.data(), signal.data(), signal.data(),
+		signal.data(), signal.data(), signal.data(), signal.data()};
+	const RecordViolations record;
+	for (const double rate : {44100.0, 96000.0})
+	{
+		loudness.prepare(rate, true);
+		for (const int resolution : {1, 7, 300, 1000})
+		{
+			level.setRms(resolution, resolution == 7);
+			for (const int channels : {2, 1, g_maxMeterChannels})
+			{
+				const uint32_t frames = channels == 1 ? 1 : 4096;
+				for (int block = 0; block < 16; ++block)
+				{
+					const ScopedRealtimeContext realtime;
+					level.process(audio.data(), channels, frames, rate);
+					loudness.process(audio.data(), channels, frames, block % 2 == 0);
+				}
+				level.reset();
+				loudness.reset();
+				CHECK(level.readFrame().channels == channels);
+				CHECK(loudness.readFrame().channels == channels);
+			}
+		}
 	}
 	CHECK(g_violations == 0);
 }
