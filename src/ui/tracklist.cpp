@@ -347,7 +347,7 @@ namespace gnubase::ui
 					only != values.end() && only->is_boolean())
 					m_upDownTracksOnly = only->get<bool>();
 			}));
-		for (const std::pair<const char*, bool*> setting :
+		for (const std::pair<const char*, bool*>& setting :
 			{std::make_pair("ui.removeTracksWarning", &m_warnBeforeRemoving),
 				std::make_pair("ui.upDownSelectsTracksOnly", &m_upDownTracksOnly)})
 			m_binding.send("settings.get", {{"key", setting.first}},
