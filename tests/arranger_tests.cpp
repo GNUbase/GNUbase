@@ -188,6 +188,23 @@ TEST_CASE("a new plan while playing: playback finds its step again", "[unit]")
 	}
 }
 
+TEST_CASE("arranger mode switched on while playing enters the chain where playback is", "[unit]")
+{
+	const uint32_t blockSize = GENERATE(1u, 64u, 100u);
+	INFO("block size " << blockSize);
+	ArrangerPlan off = abPlan();
+	off.active = false;
+	off.steps = {{0, 1, ArrangerRepeat::Normal}, {2, 1, ArrangerRepeat::Normal}}; // A, C
+	Transport transport;
+	REQUIRE(transport.locate(1100)); // in A
+	REQUIRE(transport.play());
+	CHECK(play(transport, off, 2100, blockSize) == path({{1100, 3200}}, 2100)); // linear into C
+	ArrangerPlan on = off;
+	on.active = true;
+	CHECK(play(transport, on, 400, blockSize) == path({{3200, 3600}}, 400)); // on in C, no jump back
+	CHECK(transport.arranger().step == -1);                                  // past the chain
+}
+
 TEST_CASE("with a pre-roll playback enters the chain where it starts without it", "[unit]")
 {
 	const uint32_t blockSize = GENERATE(1u, 64u, 100u);
@@ -460,6 +477,22 @@ TEST_CASE("chain playback render: arranger mode plays the chain's sections sampl
 	run(song.client, "audio.render", {{"frames", 2600}});
 	checkOutput(song, path({{2000, 2500}, {2000, 2500}, {1000, 1600}}, 2600));
 	CHECK(run(song.client, "transport.get").at("arranger").at("step") == -1); // past the chain
+}
+
+TEST_CASE("an edit during the pre-roll keeps the chain playing", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	Song song;
+	song.addAudio(dir);
+	run(song.client, "arranger.setChain", {{"steps", {{{"event", song.b}}, {{"event", song.a}}}}});
+	run(song.client, "arranger.setMode", {{"mode", true}});
+	run(song.client, "transport.set", {{"preRoll", true}, {"preRollAmount", 300}});
+	run(song.client, "transport.locate", {{"position", 2000}});
+	run(song.client, "transport.play");
+	run(song.client, "audio.render", {{"frames", 128}});                      // in the pre-roll, before B
+	run(song.client, "arranger.set", {{"event", song.a}, {"name", "Verse"}}); // an edit that leaves the plan as it is
+	run(song.client, "audio.render", {{"frames", 1300}});
+	checkOutput(song, path({{1700, 2500}, {1000, 1600}}, 1428));
 }
 
 TEST_CASE("chain playback in real time renders the same as offline", "[integration]")

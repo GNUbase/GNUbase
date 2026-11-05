@@ -204,7 +204,10 @@ namespace gnubase::engine
 		std::shared_ptr<const ArrangerPlan> arranger = std::make_shared<const ArrangerPlan>();
 	};
 
-	std::unique_ptr<const RenderSnapshot> compile(const Project& project, uint64_t revision);
+	// previous is the snapshot published before: its arranger plan stays if the new one plays the same, since the
+	// transport finds its place again in every new plan.
+	std::unique_ptr<const RenderSnapshot> compile(
+		const Project& project, uint64_t revision, const RenderSnapshot* previous = nullptr);
 
 	// The arranger plan of a project: its arranger events and the active chain's steps in samples (arranger.cpp).
 	ArrangerPlan arrangerPlan(const Project& project);

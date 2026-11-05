@@ -46,6 +46,11 @@ namespace gnubase::engine
 		time::Samples end = 0;
 		std::vector<time::Samples> jumps;
 		uint64_t event = 0; // the arranger event's id
+
+		bool operator==(const ArrangerSection& other) const
+		{
+			return start == other.start && end == other.end && jumps == other.jumps && event == other.event;
+		}
 	};
 
 	struct ArrangerPlanStep
@@ -53,6 +58,11 @@ namespace gnubase::engine
 		int32_t section = 0; // an index into ArrangerPlan::sections
 		int32_t repeats = 1; // at least 1
 		ArrangerRepeat mode = ArrangerRepeat::Normal;
+
+		bool operator==(const ArrangerPlanStep& other) const
+		{
+			return section == other.section && repeats == other.repeats && mode == other.mode;
+		}
 	};
 
 	// What arranger mode plays: the active chain's steps over the arranger events.
@@ -64,6 +74,10 @@ namespace gnubase::engine
 		std::vector<ArrangerPlanStep> steps;
 
 		bool plays() const { return active && !steps.empty(); }
+		bool operator==(const ArrangerPlan& other) const
+		{
+			return active == other.active && jump == other.jump && sections == other.sections && steps == other.steps;
+		}
 	};
 
 	// Where arranger playback is: a chain step and its repeat, or an event that loops since it was triggered, and

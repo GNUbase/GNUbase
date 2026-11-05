@@ -357,14 +357,19 @@ namespace gnubase::engine
 		return decibels <= g_minChannelVolume ? 0.0 : std::pow(10.0, decibels / 20.0);
 	}
 
-	std::unique_ptr<const RenderSnapshot> compile(const Project& project, uint64_t revision)
+	std::unique_ptr<const RenderSnapshot> compile(
+		const Project& project, uint64_t revision, const RenderSnapshot* previous)
 	{
 		auto snapshot = std::make_unique<RenderSnapshot>();
 		snapshot->revision = revision;
 		snapshot->sampleRate = project.sampleRate;
 		snapshot->tempo = project.tempo;
 		snapshot->signatures = project.signatures;
-		snapshot->arranger = std::make_shared<const ArrangerPlan>(arrangerPlan(project));
+		ArrangerPlan plan = arrangerPlan(project);
+		if (previous != nullptr && *previous->arranger == plan)
+			snapshot->arranger = previous->arranger;
+		else
+			snapshot->arranger = std::make_shared<const ArrangerPlan>(std::move(plan));
 		snapshot->metronome = project.metronome;
 		std::vector<ObjectId>& outputs = snapshot->metronome.outputs;
 		outputs.erase(std::remove_if(outputs.begin(), outputs.end(),

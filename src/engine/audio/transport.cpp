@@ -347,9 +347,11 @@ namespace gnubase::engine
 		const bool arranged = plan != nullptr && plan->plays();
 		// Playback enters the chain where it starts without the pre-roll, so that the pre-roll plays into the step. A
 		// new plan (a chain edit, another active chain) has other step indices: playback finds its place again.
-		if (arranged && m_arranger.entering)
+		if (!arranged)
+			m_arranger.entering = false; // linear playback is where it is: arranger mode switched on enters there
+		else if (m_arranger.entering)
 			m_arranger = arrangerEnter(*plan, m_arranger, m_start);
-		else if (arranged && plan != m_plan)
+		else if (plan != m_plan)
 			m_arranger = arrangerEnter(*plan, m_arranger, m_position);
 		m_plan = plan;
 		GNUBASE_ASSERT(frames <= m_segments.size());
