@@ -69,8 +69,10 @@ namespace gnubase::ui
 	// Zones get the state class .hidden when hidden and .focused while the keyboard focus is in them; strips get
 	// .hidden. A tab is dragged onto another to move it there; a right click on the tabs opens the zone's tab menu,
 	// with Open in Separate Window and an item to show or hide each tab. A panel in a window of its own has a Dock
-	// button (#dock), and closing the window docks it too. Use it on the UI thread; the engine, the binding and the
-	// shell must outlive it.
+	// button (#dock), and closing the window docks it too. A docking window's or a panel window's document that live
+	// reload loads again (ui/livereload.h) is attached in its place: what the panels' create returned for the old one
+	// goes first, then they fill the new one. Use it on the UI thread; the engine, the binding and the shell must
+	// outlive it.
 	class Docking final : private Rml::EventListener
 	{
 	public:
@@ -194,6 +196,12 @@ namespace gnubase::ui
 		// Runs change in the shell's next step, unless the docking system is gone by then.
 		void later(std::function<void()> change);
 		void applyFloating(bool open);
+		// Makes the document the panel's window of its own: its title, its listeners and the panel's content in its
+		// #panel-content. False if it has none, and then shows nothing.
+		bool fillPanelWindow(const Panel& panel, Shown& shown, Rml::ElementDocument& document);
+		// Puts loaded, a document that live reload loaded again, in the place of old, the docking window or panel
+		// window it was.
+		void reload(Rml::ElementDocument& old, Rml::ElementDocument& loaded);
 		void save();
 		void saveBounds();
 
@@ -201,7 +209,9 @@ namespace gnubase::ui
 		Shell& m_shell;
 		std::filesystem::path m_panelWindow;
 		bool m_hiddenWindows = false;
-		int m_saving = 0; // layouts sent to the engine that it hasn't answered yet
+		Rml::String
+			m_reloadEvent; // g_documentReloadEvent, made once: the destructor removes listeners without allocating
+		int m_saving = 0;  // layouts sent to the engine that it hasn't answered yet
 		engine::Json m_layout = engine::Json::object();
 		std::vector<Panel> m_panels;
 		std::map<std::string, Attached> m_windows;

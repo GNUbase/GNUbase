@@ -259,24 +259,46 @@ TEST_CASE("the project setup dialog conforms the audio files to a new sample rat
 {
 	// Reference manual p. 128: audio files must be converted to a new project sample rate to play back properly.
 	test::UiApp app({900, 700});
+	app.appUi().showProject(); // the pool, which shows how the conform job goes, is in the project window
 	const test::TempDir dir;
 	const std::filesystem::path wav = dir.path() / "tone.wav";
 	test::writeWav(wav, {std::vector<float>(4800, 0.25F), 1, 48000});
-	app.call("project.save", {{"path", (dir.path() / "song.dawproject").u8string()}});
 	app.call("media.add", {{"path", wav.u8string()}});
 
+	// The files are conformed into the project's media folder: an unsaved project keeps the dialog open, unchanged.
 	openDialog(app);
 	CHECK(element(app, "#setup-conform").at("attributes").contains("checked"));
 	choose(app, "#setup-sample-rate", -1); // 44100, before 48000
 	click(app, "#setup-ok");
+	CHECK(open(app));
+	CHECK_THAT(text(app, "#project-setup-message"), ContainsSubstring("save the project first"));
+	CHECK(app.call("project.get").at("sampleRate") == 48000.0);
+	click(app, "#setup-cancel");
 	CHECK(closed(app));
-	const Json project = app.call("project.get");
-	CHECK(project.at("sampleRate") == 44100.0);
-	CHECK(project.at("media")[0].at("sampleRate") == 44100.0);
-	CHECK(project.at("media")[0].at("length") == 4410);
-	// The sample rate and the files change back together.
+
+	// The pool's Conform Files job converts them once the sample rate is set; the pool opens to show it.
+	app.call("project.save", {{"path", (dir.path() / "song.dawproject").u8string()}});
+	openDialog(app);
+	choose(app, "#setup-sample-rate", -1);
+	click(app, "#setup-ok");
+	CHECK(closed(app));
+	CHECK(app.call("project.get").at("sampleRate") == 44100.0);
+	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("media")[0].at("sampleRate") == 44100.0; },
+		std::chrono::seconds(30)));
+	CHECK(app.call("project.get").at("media")[0].at("length") == 4410);
+	CHECK(app.waitUntil(
+		[&app]
+		{
+			const Json line = elements(app, "#pool-message");
+			return !line.empty() && line[0].value("text", "") == "Conformed 1 file to the project's sample rate.";
+		}));
+	// The sample rate and the files are one undo step, and change back together.
+	const Json steps = app.call("history.get").at("steps");
+	CHECK(steps.back().at("action") == "Project Setup");
 	app.call("history.undo");
+	CHECK(app.call("project.get").at("sampleRate") == 48000.0);
 	CHECK(app.call("project.get").at("media")[0].at("sampleRate") == 48000.0);
+	CHECK(app.call("history.get").at("position") == steps.size() - 1);
 
 	// Without Conform, the files keep their sample rate.
 	openDialog(app);
@@ -286,6 +308,25 @@ TEST_CASE("the project setup dialog conforms the audio files to a new sample rat
 	CHECK(closed(app));
 	CHECK(app.call("project.get").at("sampleRate") == 88200.0);
 	CHECK(app.call("project.get").at("media")[0].at("sampleRate") == 48000.0);
+}
+
+TEST_CASE("the project setup dialog needs no saved project when no file it would conform is there", "[ui]")
+{
+	test::UiApp app({900, 700});
+	const test::TempDir dir;
+	// A missing file at 32 kHz, which Conform Files leaves out, and one at the new rate already.
+	const Json missing = app.call("media.add",
+		{{"path", (dir.path() / "gone.wav").u8string()}, {"sampleRate", 32000.0}, {"channels", 1}, {"length", 320}});
+	app.call("clip.add", {{"media", missing.at("media").at("id")}});
+	test::writeWav(dir.path() / "slow.wav", {std::vector<float>(4410, 0.25F), 1, 44100});
+	app.call("media.add", {{"path", (dir.path() / "slow.wav").u8string()}});
+
+	openDialog(app);
+	choose(app, "#setup-sample-rate", -1); // 44100, before 48000
+	click(app, "#setup-ok");
+	CHECK(closed(app));
+	CHECK(app.call("project.get").at("sampleRate") == 44100.0);
+	CHECK(app.call("job.list").at("jobs").empty());
 }
 
 TEST_CASE("the status line's record format shows the project's record bit depth", "[ui]")

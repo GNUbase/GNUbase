@@ -106,6 +106,7 @@ namespace gnubase::app
 					notes[part.get<uint64_t>()];
 			target.parts.assign(notes.begin(), notes.end());
 			target.lengthQuantize = view.value("lengthQuantize", std::string("link"));
+			target.insertVelocity = view.value("insertVelocity", target.insertVelocity);
 			return target;
 		};
 		// From an editor: its window, or the lower zone while the zone shows the Editor tab.

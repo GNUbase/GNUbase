@@ -7,6 +7,36 @@ Marker tracks and markers, locating with them, and the markers in the UI (#91, r
 - Locating with markers moves the transport, which is not in the document: `marker.locateNext`, `marker.locatePrevious`, `marker.locate` (marker N, or by id) and `marker.setLocators` (to a cycle marker) compute sample positions from the document and run `transport.locate` or `transport.set` inside the command (`CommandContext::call`), so clients see `transport.changed` and no undo step. Marker commands that default to the cursor or the locators read them with `transport.get` the same way.
 - **Cycle Follows When Locating to Markers** (p. 428), the user setting `transport.cycleFollowsMarkers` (off by default): `marker.locate`, `marker.locateNext` and `marker.locatePrevious` also set the locators to the marker they locate to: a cycle marker's range (also when they reach its end), or from a position marker to the next marker position or cycle marker end after it on its track. After the last marker, the locators stay.
 
+## Marker files
+
+Markers are imported and exported with MIDI files and CSV files (#171, pp. 432–433):
+
+- **MIDI files** ([midi-files.md](midi-files.md)) have the start of every position and cycle marker and their marker
+  tracks: in a type 1 file the tempo track has the active marker track's markers, where other applications look for
+  them, and each other marker track with markers a file track of its own after the others, named after it and with
+  nothing but its markers. `midiFile.import` puts the tempo track's markers, and those of any track with other events,
+  on the active marker track and makes each marker-only track a new marker track at the top, while the project has
+  room for one (at most 10); otherwise its markers go on the active one too. So a file from another application has
+  all its markers on one marker track, as in the reference. A type 0 file has every marker in its one track. The
+  marker track that takes the tempo track's markers is active afterwards; its name and the cycle markers' ends and the
+  marker ids are not in the file.
+- **CSV files**: `marker.export` writes marker tracks (default all) as a header row with the columns Track
+  Number, Track, Time Base, Type, ID, Position, End, Description and Color, then a row per marker, tracks in track
+  order and markers in timeline order. Track Number numbers the tracks in the file from 1, so marker tracks with the
+  same name stay apart; rows with the same number are one track, rows without one those with the same Track name.
+  Positions and ends are beats (quarter notes) on musical tracks and seconds on linear ones, as the shortest decimals
+  that read back exactly, so `marker.import` gives back every marker track with its name and time base and every
+  marker with its type, id, position, end, description and color, and exporting them again gives the same file. The
+  import makes each track of the file a new marker track at the top, keeps the active marker track (or activates the
+  first new one) and is one undo step. It reads files from spreadsheets too: RFC 4180 quoting, CRLF or LF line ends
+  and a UTF-8 byte order mark; columns are found by their header in any order and others are left out, and only
+  Position is needed (without Track one marker track, without Time Base musical, without Type position markers,
+  without ID the first free number). A row it can't read, an id that's taken, a row whose Track name or Time Base
+  differs from the earlier rows of its track (also an empty one), or too many marker tracks change nothing, and the
+  error names the row. **File > Export > Markers...** (`file.exportMarkers`) and **File > Import > Markers...**
+  (`file.importMarkers`) choose the file in the OS's file dialog; an exported file without an extension gets `.csv`.
+  The reference's track archives, which also hold marker tracks, come with track import and export.
+
 ## Key commands
 
 The reference's defaults (`ui::defaultKeyMap`, [key-commands.md](key-commands.md)), everywhere:
@@ -93,7 +123,11 @@ refusing what isn't valid; sorting by a column with the position second, moving 
 setting's changes from MCP; Auto-Scroll on and off, Page Up and Page Down; changing the descriptions and lengths of
 several selected markers in one undo step; the marker settings: marker ids on the marker track, cycle follows and
 sync selection both ways, paused while recording; and the marker key commands locating, setting and recalling
-markers. `tests/marker_tests.cpp` covers `transport.cycleFollowsMarkers` for the three locate commands.
+markers. `tests/marker_tests.cpp` covers `transport.cycleFollowsMarkers` for the three locate commands. Marker files:
+`tests/marker_tests.cpp` has the CSV round trip byte for byte with undo, also of marker tracks with the same name,
+a spreadsheet's file and files that change nothing, among them rows of one Track Number with different names;
+`tests/midifile_tests.cpp` the marker tracks in type 1 and type 0 files, the same file exported again and the limit
+of 10 marker tracks; `tests/markers_ui_tests.cpp` the File menu's items through the file dialog.
 
 Not yet: dragging markers and resizing cycle markers on the marker track, Ctrl-drag for a cycle marker and Shift to
 rename at once (with parts editing, #85); range selections by markers (the range tool, #86; `marker.range` gives the

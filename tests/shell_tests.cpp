@@ -536,12 +536,14 @@ TEST_CASE("file dialogs answer on the UI thread with what the user chose", "[uni
 	CHECK(shown->second.kind == ui::FileDialogKind::Folder);
 	ui.shell.step(milliseconds(0));
 	CHECK(results.empty());
+	const uint64_t frames = window.frames();
 
 	ui.windows.answerFileDialog(saveId, {});
 	ui.windows.answerFileDialog(importId, {"/audio/kick.wav", "/audio/snare.flac"});
 	ui.windows.answerFileDialog(folderId, {}, "no file dialog on this system");
 	ui.shell.step(milliseconds(0));
 	REQUIRE(results.size() == 3);
+	CHECK(window.frames() == frames + 1); // what the answers changed shows in that step
 	CHECK(results[0].first == "save");
 	CHECK(results[0].second.cancelled());
 	CHECK(results[1].first == "import");
@@ -550,12 +552,25 @@ TEST_CASE("file dialogs answer on the UI thread with what the user chose", "[uni
 	CHECK(results[2].first == "folder");
 	CHECK(results[2].second.error == "no file dialog on this system");
 	CHECK_FALSE(results[2].second.cancelled());
+
+	// An answer through automation (the MCP UI tools) shows in the next step too.
+	ui.shell.showFileDialog(folder, record("automated"));
+	REQUIRE(ui.shell.fileDialogs().size() == 1);
+	const uint64_t automatedId = ui.shell.fileDialogs().begin()->first;
+	ui.shell.step(milliseconds(0));
+	const uint64_t before = window.frames();
+	REQUIRE(ui.shell.answerFileDialog(automatedId, {"/projects"}));
+	REQUIRE(results.size() == 4);
+	ui.shell.step(milliseconds(0));
+	CHECK(window.frames() == before + 1);
 }
 
 TEST_CASE("work posted from any thread runs on the UI thread in the shell's next step, which it wakes", "[unit]")
 {
 	Ui ui{{primary()}};
-	ui.shell.open(at({100, 100, 800, 600}));
+	const ui::Window& window = ui.shell.open(at({100, 100, 800, 600}));
+	ui.shell.step(milliseconds(0));
+	const uint64_t frames = window.frames();
 	const std::thread::id uiThread = std::this_thread::get_id();
 	std::thread::id ranOn;
 	int runs = 0;
@@ -576,8 +591,10 @@ TEST_CASE("work posted from any thread runs on the UI thread in the shell's next
 	ui.shell.step(milliseconds(0));
 	CHECK(runs == 1);
 	CHECK(ranOn == uiThread);
+	CHECK(window.frames() == frames + 1); // what the work changed shows in that step, in whichever window
 	ui.shell.step(milliseconds(0));
 	CHECK(runs == 1); // once
+	CHECK(window.frames() == frames + 1);
 }
 
 TEST_CASE("the shell doesn't step inside one of its steps, e.g. for a script that waits in an event handler", "[unit]")

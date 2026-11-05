@@ -9,6 +9,7 @@
 #include "engine/midifile/midiconvert.h"
 #include "engine/midifile/smf.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -102,7 +103,9 @@ namespace gnubase::engine
 				"(one track with every MIDI channel) or 1 (default: a tempo track, then a track per exported track), "
 				"with ppq ticks per quarter note (24-960, default 480). The file has the notes and controllers as they "
 				"play, converted to MIDI 1.0, the track names, tempo and time signatures, and the markers unless "
-				"markers is false. A note ends where the next note of its pitch and channel starts, so that "
+				"markers is false: in a type 1 file the active marker track's in the tempo track, each other marker "
+				"track's in a track of its own after the others, named after it. A note ends where the next note of "
+				"its pitch and channel starts, so that "
 				"overlapping notes read back the same. range {start, end} in ticks exports only what starts in it, "
 				"moved to the file's start. Returns the number of tracks in the file.",
 				{{"type", "object"}, {"additionalProperties", false},
@@ -122,7 +125,9 @@ namespace gnubase::engine
 				"another, each from a bar start. Names that aren't UTF-8 are read as Windows-1252. Unless tempo is "
 				"false, the file's tempo and time signatures replace the project's (tempo changes on the tempo track, "
 				"which becomes active); unless markers is false, its "
-				"markers are added to the active marker track (one is added if there is none). One undo step. Returns "
+				"markers are added to the active marker track (one is added if there is none), except that a type 1 "
+				"file's tracks of nothing but a name and markers, which midiFile.export writes for marker tracks, "
+				"become new marker tracks at the top while the project has room for them. One undo step. Returns "
 				"the new tracks and parts.",
 				{{"type", "object"}, {"additionalProperties", false},
 					{"properties",
@@ -150,10 +155,7 @@ namespace gnubase::engine
 
 		// The new tracks, parts, events and markers come from the commands that make them.
 		const auto run = [this, &project, &context](const char* command, const Json& commandParameters)
-		{
-			CommandContext inner(commandParameters, &context);
-			return m_edits.at(command).handler(project, inner);
-		};
+		{ return runEdit(command, project, commandParameters, context); };
 
 		if (parameters.value("tempo", true))
 		{
@@ -169,17 +171,42 @@ namespace gnubase::engine
 			context.emit("project.changed", {{"name", project.name}, {"sampleRate", project.sampleRate}});
 			tempoChanged(project, before, context);
 		}
-		if (parameters.value("markers", true) && !imported.markers.empty())
+		if (parameters.value("markers", true))
 		{
-			ObjectId markerTrack = project.activeMarkerTrack;
-			if (markerTrack == 0)
-				markerTrack = run("track.add", {{"type", "marker"}, {"index", 0}}).at("track").at("id").get<ObjectId>();
-			const time::TimeBase base = project.trackById.at(markerTrack).timeBase;
-			for (const Marker& marker : imported.markers)
-				run("marker.add",
-					{{"track", markerTrack},
-						{"position", time::rebase(marker.position, base, project.tempo, project.sampleRate).value},
-						{"name", marker.name}});
+			// The merged markers go on the active marker track. Each marker track of the file becomes a new one, at
+			// the top in file order, while the project has room for it; otherwise its markers go on the active one
+			// too. The active marker track stays active, or the first new one becomes it.
+			ObjectId active = project.activeMarkerTrack;
+			int index = 0;
+			const auto newTrack = [&run, &active, &index](const std::string& name)
+			{
+				Json trackParameters = {{"type", "marker"}, {"index", index++}};
+				if (!name.empty())
+					trackParameters["name"] = name;
+				const auto id = run("track.add", trackParameters).at("track").at("id").get<ObjectId>();
+				if (active == 0)
+					active = id;
+				return id;
+			};
+			const auto addMarkers = [&run, &project](ObjectId track, const std::vector<Marker>& markers)
+			{
+				const time::TimeBase base = project.trackById.at(track).timeBase;
+				for (const Marker& marker : markers)
+					run("marker.add",
+						{{"track", track},
+							{"position", time::rebase(marker.position, base, project.tempo, project.sampleRate).value},
+							{"name", marker.name}});
+			};
+			if (!imported.markers.empty())
+				addMarkers(active != 0 ? active : newTrack(""), imported.markers);
+			for (const midifile::ImportedMarkerTrack& track : imported.markerTracks)
+			{
+				const auto markerTracks = std::count_if(project.tracks.begin(), project.tracks.end(),
+					[&project](ObjectId id) { return project.trackById.at(id).type == TrackType::Marker; });
+				addMarkers(markerTracks < g_maxMarkerTracks ? newTrack(track.name) : active, track.markers);
+			}
+			if (active != 0 && project.activeMarkerTrack != active)
+				run("marker.activateTrack", {{"track", active}});
 		}
 		Json tracks = Json::array();
 		Json parts = Json::array();
