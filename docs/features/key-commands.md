@@ -93,6 +93,7 @@ UI commands are added after the key map, so their keys are bound where the app a
 | Alt+X | `edit.splitAtCursor` | Split At Cursor |
 | Mod+D | `edit.duplicate` | Duplicate |
 | Mod+K | `edit.repeat` | Repeat |
+| Q | `edit.quantize` (the app's, everywhere) | Quantize ([quantize.md](quantize.md)) |
 | Mod+L | `edit.moveStartToCursor` | Move Event Start/Range Start to Cursor |
 | Mod+Left, Mod+Right | `edit.nudgeLeft`, `edit.nudgeRight` | Nudge Left, Right |
 | Alt+Left, Alt+Shift+Right | `edit.nudgeStartLeft`, `edit.nudgeStartRight` | Nudge Start Left, Right |
