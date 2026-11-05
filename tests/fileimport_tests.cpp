@@ -230,6 +230,32 @@ TEST_CASE("files dropped on the event display are imported where they are droppe
 		CHECK(project.at("tracks")[i].at("type") == "midi");
 }
 
+TEST_CASE("files dropped on a lane of a track whose lanes show go on that lane", "[ui]")
+{
+	const test::TempDir dir;
+	const std::string take = writeAudio(dir.path() / "take.wav", 4800);
+	test::UiApp app({900, 640});
+	ui::EventDisplay& display = app.appUi().showProject();
+	const auto track = app.call("track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track").at("id");
+	const Json media =
+		app.call("media.add", {{"path", "first.wav"}, {"sampleRate", 48000}, {"channels", 1}, {"length", 4800}})
+			.at("media");
+	const Json clip = app.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	app.call("audioEvent.add", {{"track", track}, {"clip", clip.at("id")}, {"position", 0}, {"lane", 1}});
+	// The track's lane from 0 to 40 dp, its lanes 0 and 1 below it.
+	display.showLanes(track.get<uint64_t>(), true);
+	REQUIRE(app.waitUntil([&display] { return display.laneTakes() == std::vector<int>{-1, 0, 1}; }));
+
+	const double x = (2.0 - display.view().start) / display.view().scale;
+	drop(app, {take}, x, 100.0);
+	REQUIRE(app.waitUntil([&app] { return dialogShown(app); }));
+	click(app, "#import-options-dialog button.primary");
+	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("audioEvents").size() == 2; }));
+	const Json dropped = app.call("project.get").at("audioEvents")[1];
+	CHECK(dropped.at("track") == track);
+	CHECK(dropped.at("lane") == 1);
+}
+
 TEST_CASE("File > Import > Audio File puts the files on the selected audio track, else on new tracks", "[ui]")
 {
 	const test::TempDir dir;

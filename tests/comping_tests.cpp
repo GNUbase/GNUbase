@@ -292,3 +292,112 @@ TEST_CASE("MIDI takes come to the front unmuted, muting the takes on other lanes
 	CHECK(playing == 2);
 	CHECK(project.at("midiParts").size() == 7);
 }
+
+TEST_CASE("an audio part's events keep their order in the stack when the part comes to the front, is copied or "
+		  "pasted",
+	"[unit]")
+{
+	Fixture f;
+	const int64_t track = f.track("audio");
+	const Json media =
+		f.call("media.add", {{"path", "take.wav"}, {"sampleRate", 48000}, {"channels", 1}, {"length", 48000}})
+			.at("media");
+	const auto clip = f.call("clip.add", {{"media", media.at("id")}}).at("clip").at("id").get<int64_t>();
+	// Two takes in a part, told apart by their offsets: the first, brought to the front, plays.
+	const int64_t first = f.take(track, clip, 0, 1000, 0);
+	const int64_t second = f.take(track, clip, 2000, 1000, 1);
+	f.call("event.toFront", {{"events", {first}}});
+	const Json parts = f.call("event.toPart", {{"events", {first, second}}}).at("events");
+	REQUIRE(parts.size() == 1);
+	const auto part = parts.at(0).get<int64_t>();
+	const auto stacked = [](const Json& event)
+	{
+		const auto own = event.at("front").get<int64_t>();
+		return own != 0 ? own : event.at("id").get<int64_t>();
+	};
+	// The front place of the event at offset in the part, -1 for none.
+	const auto placeIn = [&f, &stacked](const Json& inPart, int64_t offset)
+	{
+		const Json project = f.call("project.get");
+		for (const Json& event : project.at("audioEvents"))
+			if (event.at("part") == inPart && event.at("offset") == offset)
+				return stacked(event);
+		return int64_t{-1};
+	};
+	REQUIRE(placeIn(part, 0) > placeIn(part, 2000));
+
+	// The part to the front: both come before every other event, the first still in front of the second.
+	const int64_t later = f.take(track, clip, 4000, 1000, 2);
+	f.call("event.toFront", {{"events", {part}}});
+	CHECK(placeIn(part, 0) > placeIn(part, 2000));
+	CHECK(placeIn(part, 2000) > later);
+
+	// A copy of the part comes in front of what was added before it, as copied events do, keeping its events' order.
+	const int64_t before = f.take(track, clip, 6000, 1000, 2);
+	const Json copies = f.call("event.copy", {{"events", {part}}, {"delta", 0}}).at("events");
+	REQUIRE(copies.size() == 1);
+	CHECK(placeIn(copies.at(0), 0) > placeIn(copies.at(0), 2000));
+	CHECK(placeIn(copies.at(0), 2000) > before);
+	CHECK(f.object("audioEvents", before).at("front") == 0);
+
+	// So does a pasted one.
+	f.call("range.copy", {{"start", 0}, {"end", 1000}, {"tracks", {track}}});
+	const Json pasted = f.call("range.paste", {{"position", 48000}}).at("events");
+	Json pastedPart;
+	for (const Json& id : pasted)
+		for (const Json& audioPart : f.call("project.get").at("audioParts"))
+			if (audioPart.at("id") == id)
+				pastedPart = id;
+	REQUIRE(pastedPart.is_number());
+	CHECK(placeIn(pastedPart, 0) > placeIn(pastedPart, 2000));
+}
+
+TEST_CASE("audioEvent.add, audioPart.add, midiPart.add and audioFile.import put what they add on a lane", "[unit]")
+{
+	const gnubase::test::TempDir dir;
+	Fixture f;
+	const int64_t audioTrack = f.track("audio");
+	const int64_t midiTrack = f.track("midi", "musical");
+	const Json media =
+		f.call("media.add", {{"path", "take.wav"}, {"sampleRate", 48000}, {"channels", 1}, {"length", 48000}})
+			.at("media");
+	const auto clip = f.call("clip.add", {{"media", media.at("id")}}).at("clip").at("id").get<int64_t>();
+
+	const Json event =
+		f.call("audioEvent.add", {{"track", audioTrack}, {"clip", clip}, {"position", 0}, {"lane", 2}}).at("event");
+	CHECK(event.at("lane") == 2);
+	const Json audioPart =
+		f.call("audioPart.add", {{"track", audioTrack}, {"position", 0}, {"length", 1000}, {"lane", 1}}).at("part");
+	CHECK(audioPart.at("lane") == 1);
+	const Json midiPart =
+		f.call("midiPart.add", {{"track", midiTrack}, {"position", 0}, {"length", g_bar}, {"lane", 3}}).at("part");
+	CHECK(midiPart.at("lane") == 3);
+	CHECK(f.object("audioEvents", event.at("id")).at("lane") == 2);
+	CHECK(f.object("midiParts", midiPart.at("id")).at("lane") == 3);
+	// Without one, on lane 0; lanes go from 0 to 1000.
+	CHECK(f.call("midiPart.add", {{"track", midiTrack}, {"position", 0}, {"length", g_bar}}).at("part").at("lane") ==
+		0);
+	CHECK_THAT(f.fails("midiPart.add", {{"track", midiTrack}, {"position", 0}, {"length", g_bar}, {"lane", -1}}),
+		ContainsSubstring("lane"));
+	CHECK_THAT(f.fails("audioPart.add", {{"track", audioTrack}, {"position", 0}, {"length", 1}, {"lane", 1001}}),
+		ContainsSubstring("lane"));
+
+	// Imported files go on the lane of the track they go on, not on the new tracks of the others.
+	gnubase::test::Audio audio;
+	audio.sampleRate = 48000;
+	audio.samples.assign(4800, 0.25f);
+	const std::filesystem::path file = dir.path() / "take.wav";
+	gnubase::test::writeWav(file, audio);
+	const Json imported = f.call("audioFile.import",
+		{{"files", {file.u8string(), file.u8string()}}, {"track", audioTrack}, {"position", 0}, {"lane", 4}});
+	REQUIRE(imported.at("events").size() == 2);
+	CHECK(f.object("audioEvents", imported.at("events").at(0)).at("lane") == 4);
+	CHECK(f.object("audioEvents", imported.at("events").at(0)).at("track") == audioTrack);
+	CHECK(f.object("audioEvents", imported.at("events").at(1)).at("lane") == 0);
+	const Json together = f.call("audioFile.import",
+		{{"files", {file.u8string(), file.u8string()}}, {"track", audioTrack}, {"oneTrack", true}, {"lane", 1}});
+	for (const Json& id : together.at("events"))
+		CHECK(f.object("audioEvents", id).at("lane") == 1);
+	// Without a track there is no lane to put them on.
+	CHECK_THAT(f.fails("audioFile.import", {{"files", {file.u8string()}}, {"lane", 1}}), ContainsSubstring("track"));
+}

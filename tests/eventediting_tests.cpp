@@ -1796,3 +1796,67 @@ TEST_CASE("lanes show below their track, which shows the take in front; the comp
 	f.step();
 	CHECK(f.display.laneTakes() == std::vector<int>{-1, -1});
 }
+
+TEST_CASE("a muted take covers nothing on its track's lane, which shows what plays", "[unit]")
+{
+	Fixture f;
+	const auto audioTrack = f.call("project.get").at("tracks").at(0).at("id").get<uint64_t>();
+	// A second take from 2.1 to 2.3 seconds on lane 1, in front of the first but muted: the first plays all through.
+	const auto second = f.call("audioEvent.add",
+							 {{"track", audioTrack}, {"clip", f.audioEvents()[0].at("clip")}, {"position", 100800},
+								 {"length", 9600}, {"lane", 1}, {"mute", true}})
+							.at("event")
+							.at("id")
+							.get<uint64_t>();
+	REQUIRE(f.waitUntil([&f] { return f.display.project().at("audioEvents").size() == 2; }));
+	REQUIRE(f.lanes("events")[0].events.size() == 1);
+	CHECK(std::abs(f.lanes("events")[0].events[0].start - 2.0) < 1e-6);
+	CHECK(std::abs(f.lanes("events")[0].events[0].end() - 2.5) < 1e-6);
+	CHECK(f.lanes("muted-events")[0].events.empty());
+	// A click there finds the take that plays.
+	f.click(220, 20);
+	CHECK(f.display.selection() == std::vector<uint64_t>{f.event});
+
+	// The first take muted, the second unmuted: the track's lane shows the second where it plays, and the muted one
+	// around it, muted only there.
+	f.call("event.set", {{"events", {f.event}}, {"mute", true}});
+	f.call("event.set", {{"events", {second}}, {"mute", false}});
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events")[0].events.size() == 3; }));
+	const std::vector<ui::TimeSpan>& muted = f.lanes("muted-events")[0].events;
+	REQUIRE(muted.size() == 2);
+	CHECK(std::abs(muted[0].end() - 2.1) < 1e-6);
+	CHECK(std::abs(muted[1].start - 2.3) < 1e-6);
+	f.click(220, 20);
+	CHECK(f.display.selection() == std::vector<uint64_t>{second});
+	f.click(205, 20);
+	CHECK(f.display.selection() == std::vector<uint64_t>{f.event});
+}
+
+TEST_CASE("the draw tool draws parts on the lane it draws on", "[unit]")
+{
+	Fixture f;
+	const Json tracks = f.call("project.get").at("tracks");
+	const auto audioTrack = tracks.at(0).at("id").get<uint64_t>();
+	const auto midiTrack = tracks.at(1).at("id").get<uint64_t>();
+	// Both tracks with something on lane 1 show lanes 0 and 1 below them: the audio track's from 40 to 120 dp, the
+	// MIDI track's from 160 to 240 dp.
+	f.call("event.set", {{"events", {f.event, f.part}}, {"lane", 1}});
+	f.display.showLanes(audioTrack, true);
+	f.display.showLanes(midiTrack, true);
+	REQUIRE(f.waitUntil([&f] { return f.display.laneTakes() == std::vector<int>{-1, 0, 1, -1, 0, 1}; }));
+
+	f.display.setTool(ui::Tool::Draw);
+	// A click on the MIDI track's lane 1 at 5 seconds draws the bar there on lane 1, one on its lane 0 on lane 0.
+	f.click(500, 220);
+	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 2; }));
+	CHECK(f.parts()[1].at("position") == 8 * g_quarter);
+	CHECK(f.parts()[1].at("lane") == 1);
+	f.click(700, 180);
+	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 3; }));
+	CHECK(f.parts()[2].at("lane") == 0);
+	// A drag on the audio track's lane 1 draws an audio part there.
+	f.drag(400, 100, 550, 100);
+	REQUIRE(f.waitUntil([&f] { return f.audioParts().size() == 1; }));
+	CHECK(f.audioParts()[0].at("lane") == 1);
+	CHECK(f.audioParts()[0].at("track") == audioTrack);
+}
