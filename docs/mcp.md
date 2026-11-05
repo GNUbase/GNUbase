@@ -2369,7 +2369,7 @@ Result:
 
 Engine command `linkGroup.add`.
 
-Links channels in a new link group (reference manual pp. 457-459), named Link Group N unless name is given; by default it links the volume and the sends, or with a VCA fader the sends. channels: the linked channels; a channel is in one link group at most, so they leave the groups they were in. What a change to one of them passes on to the others (channel.set, unless linked is false): volume (the fader, by as much as it moved), pan (likewise), mute (the mute, solo and listen buttons), record (record enable and monitor), eq (the equalizer's changes), dynamics (the strip's: gate, compressor and limiter), sends (the sends' changes, on by default; a channel that can't take one, such as a send to itself, keeps its own). vca: the channel of a VCA track that controls the group, or 0; it leaves the group it controlled. The VCA fader's volume adds to each channel's, its automation to theirs, and its buttons pass on to them; VCA faders can be in groups that other VCA faders control, but never control themselves. A group with a VCA fader doesn't link the volume: giving it one turns volume off, taking it away turns it on, unless volume is given. Emits linkGroup.added.
+Links channels in a new link group (reference manual pp. 457-459), named Link Group N, with a number no other group's name has, unless name is given; by default it links the volume and the sends, or with a VCA fader the sends. channels: the linked channels; a channel is in one link group at most, so they leave the groups they were in, and a group left without channels goes (linkGroup.removed). What a change to one of them passes on to the others (channel.set, unless linked is false): volume (the fader, by as much as it moved), pan (likewise), mute (the mute, solo and listen buttons), record (record enable and monitor), eq (the equalizer's changes), dynamics (the strip's: gate, compressor and limiter), sends (the sends' changes, on by default; a channel that can't take one, such as a send to itself, keeps its own). vca: the channel of a VCA track that controls the group, or 0; it leaves the group it controlled. The VCA fader's volume adds to each channel's, its automation to theirs, and its buttons pass on to them; VCA faders can be in groups that other VCA faders control, but never control themselves. A group with a VCA fader doesn't link the volume: giving it one turns volume off, taking it away turns it on, unless volume is given. Emits linkGroup.added.
 
 Arguments:
 
@@ -2402,7 +2402,7 @@ Arguments:
 
 Engine command `linkGroup.set`.
 
-Changes a link group: what isn't given stays. channels: the linked channels; a channel is in one link group at most, so they leave the groups they were in. What a change to one of them passes on to the others (channel.set, unless linked is false): volume (the fader, by as much as it moved), pan (likewise), mute (the mute, solo and listen buttons), record (record enable and monitor), eq (the equalizer's changes), dynamics (the strip's: gate, compressor and limiter), sends (the sends' changes, on by default; a channel that can't take one, such as a send to itself, keeps its own). vca: the channel of a VCA track that controls the group, or 0; it leaves the group it controlled. The VCA fader's volume adds to each channel's, its automation to theirs, and its buttons pass on to them; VCA faders can be in groups that other VCA faders control, but never control themselves. A group with a VCA fader doesn't link the volume: giving it one turns volume off, taking it away turns it on, unless volume is given. Emits linkGroup.changed.
+Changes a link group: what isn't given stays. channels: the linked channels; a channel is in one link group at most, so they leave the groups they were in, and a group left without channels goes (linkGroup.removed). What a change to one of them passes on to the others (channel.set, unless linked is false): volume (the fader, by as much as it moved), pan (likewise), mute (the mute, solo and listen buttons), record (record enable and monitor), eq (the equalizer's changes), dynamics (the strip's: gate, compressor and limiter), sends (the sends' changes, on by default; a channel that can't take one, such as a send to itself, keeps its own). vca: the channel of a VCA track that controls the group, or 0; it leaves the group it controlled. The VCA fader's volume adds to each channel's, its automation to theirs, and its buttons pass on to them; VCA faders can be in groups that other VCA faders control, but never control themselves. A group with a VCA fader doesn't link the volume: giving it one turns volume off, taking it away turns it on, unless volume is given. Emits linkGroup.changed.
 
 Arguments:
 
@@ -4876,7 +4876,7 @@ Arguments:
 
 Engine command `track.remove`.
 
-Removes a track with its channel, events, parts or markers; a folder also removes the tracks inside it. Without the active marker track, the topmost marker track becomes the active one.
+Removes a track with its channel, events, parts or markers; a folder also removes the tracks inside it. The channel leaves its link group, which goes if it has no channels left (linkGroup.removed); a VCA track's group links the volume again (linkGroup.changed). Without the active marker track, the topmost marker track becomes the active one.
 
 Arguments:
 

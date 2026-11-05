@@ -1185,17 +1185,7 @@ namespace gnubase::engine
 				if (input || output || send)
 					context.emit("channel.changed", {{"channel", toJson(channel)}});
 			}
-			// Link groups lose the channels that are gone and VCA faders that are gone (docs/features/link-groups.md).
-			for (auto& [id, group] : project.linkGroups)
-			{
-				const LinkGroup before = group;
-				group.channels.erase(
-					std::remove_if(group.channels.begin(), group.channels.end(), isGone), group.channels.end());
-				if (isGone(group.vca))
-					group.vca = 0;
-				if (!(group == before))
-					context.emit("linkGroup.changed", {{"group", toJson(group)}});
-			}
+			removeFromLinkGroups(project, gone, context);
 		}
 
 		// Turns a folder's group channel on or off (reference manual pp. 222, 224): a new one plays through the
@@ -3666,7 +3656,8 @@ namespace gnubase::engine
 		add(engine,
 			{"track.remove", 1,
 				"Removes a track with its channel, events, parts or markers; a folder also removes the tracks inside "
-				"it. "
+				"it. The channel leaves its link group, which goes if it has no channels left (linkGroup.removed); a "
+				"VCA track's group links the volume again (linkGroup.changed). "
 				"Without the active marker track, the topmost marker track becomes the active one.",
 				objectSchema({{"track", idSchema}}, {"track"}), noResult, false},
 			removeTrack);
