@@ -66,6 +66,7 @@ namespace gnubase::engine
 		Signature, // shows and edits the project's time signatures; has no channel, stays at the top level, at most one
 		Vca,       // a VCA fader (docs/features/link-groups.md): a channel without audio that controls a link group
 		Arranger,  // holds the arranger events (#167); has no channel, stays at the top level, at most one
+		Transpose, // holds the transpose events (#168); has no channel, stays at the top level, at most one
 	};
 
 	// The time formats of ruler tracks, as the event display's ruler names them.
@@ -565,6 +566,11 @@ namespace gnubase::engine
 		// -127 to 127: the info line's Transpose and Velocity.
 		int transpose = 0;
 		int velocity = 0;
+		// Global transposition (#168, reference manual pp. 414-421): the part's root key (-1 for none, 0 C to 11 B),
+		// which the project root key transposes to, and Global Transpose Independent, which keeps the part out of the
+		// project root key's and the transpose track's transposition.
+		int rootKey = -1;
+		bool independent = false;
 	};
 
 	// A frozen track's rendered audio (#116, reference manual pp. 219-220): a file of the project's media folder's
@@ -667,6 +673,24 @@ namespace gnubase::engine
 	{
 		std::vector<ArrangerEvent> events; // in the order they were added
 		std::vector<ArrangerChain> chains; // in the order they were added
+	};
+
+	// A transpose event (#168, reference manual p. 418): from its position, in the transpose track's time base, to the
+	// next one, what follows global transpose plays value semitones (-24 to 24) higher.
+	struct TransposeEvent
+	{
+		ObjectId id = 0;
+		time::Position position;
+		int value = 0;
+	};
+
+	// The transpose track's events and controls (reference manual pp. 165, 418-419).
+	struct TransposeTrack
+	{
+		std::vector<TransposeEvent> events; // in timeline order
+		bool mute = false;                  // Mute Transpose Events: the events don't play
+		bool keepInOctave = false;          // Keep Transpose in Octave Range: never more than 7 semitones either way
+		bool lock = false;                  // the events can't be added, changed or removed
 	};
 
 	// What an automation lane changes.
@@ -874,6 +898,8 @@ namespace gnubase::engine
 		bool arrangerMode = false;
 		ArrangerJump arrangerJump = ArrangerJump::None;
 		ObjectId arrangerChain = 0;
+		int rootKey = -1;                     // the Project Root Key (#168): -1 for none, 0 C to 11 B
+		TransposeTrack transpose;             // the transpose track's events and controls; reset when the track goes
 		std::map<ObjectId, DrumMap> drumMaps; // a new project has the GM Map (#129)
 		// Virgin territory instead of initial values (reference manual p. 881): automation lanes have gaps before their
 		// first and after their last point too, where their parameters have their static values. A setting saved with
@@ -950,6 +976,18 @@ namespace gnubase::engine
 
 	// The project's active arranger chain: arrangerChain, or the first chain if that is gone; none without chains.
 	const ArrangerChain* activeArrangerChain(const Project& project);
+
+	// Root key names (#168): "" for none (-1), then "C", "C#" and so on to "B" (0 to 11).
+	const std::vector<std::string>& rootKeyNames();
+	std::string rootKeyName(int key);
+	std::optional<int> rootKeyFromName(const std::string& name);
+
+	// The semitones that global transposition adds to a part's notes at a position (project samples): nothing for an
+	// Independent part; otherwise the step from the part's root key to the project root key, the nearer way (-5 to
+	// 6; nothing unless both have one), plus the value of the transpose event playing there unless the transpose track
+	// is muted, kept within 7 semitones either way with Keep Transpose in Octave Range. The part's own transpose adds
+	// to that.
+	int globalTranspose(const Project& project, const MidiPart& part, time::Samples at);
 
 	// Whether folder is the pool's Audio folder (0) or a pool folder whose parents lead there without passing
 	// excluded: false for a folder that isn't there, one in a loop, and excluded or a folder inside it.
@@ -1098,9 +1136,9 @@ namespace gnubase::engine
 	inline bool sameProperties(const MidiPart& a, const MidiPart& b)
 	{
 		return std::tie(a.id, a.track, a.name, a.position, a.length, a.mute, a.lock, a.shared, a.color, a.lane,
-				   a.transpose, a.velocity) ==
+				   a.transpose, a.velocity, a.rootKey, a.independent) ==
 			std::tie(b.id, b.track, b.name, b.position, b.length, b.mute, b.lock, b.shared, b.color, b.lane,
-				b.transpose, b.velocity);
+				b.transpose, b.velocity, b.rootKey, b.independent);
 	}
 
 	inline bool operator==(const ProjectColor& a, const ProjectColor& b)
@@ -1132,6 +1170,16 @@ namespace gnubase::engine
 	inline bool operator==(const Arranger& a, const Arranger& b)
 	{
 		return std::tie(a.events, a.chains) == std::tie(b.events, b.chains);
+	}
+
+	inline bool operator==(const TransposeEvent& a, const TransposeEvent& b)
+	{
+		return std::tie(a.id, a.position, a.value) == std::tie(b.id, b.position, b.value);
+	}
+
+	inline bool operator==(const TransposeTrack& a, const TransposeTrack& b)
+	{
+		return std::tie(a.events, a.mute, a.keepInOctave, a.lock) == std::tie(b.events, b.mute, b.keepInOctave, b.lock);
 	}
 
 	inline bool operator==(const AutomationTarget& a, const AutomationTarget& b)

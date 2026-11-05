@@ -1,0 +1,251 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// The project root key and the transpose track (#168, reference manual pp. 165, 414-421): global transposition of the
+// MIDI parts that follow it, Keep Transpose in Octave Range, muting and locking the transpose track, parts excluded
+// with Global Transpose Independent, Set Root Key for Unassigned Events, recording and the project file.
+#include "engine/document/document.h"
+#include "engine/document/rendersnapshot.h"
+#include "engine/engine.h"
+#include "testutils/testutils.h"
+
+#include <catch2/catch_test_macros.hpp>
+
+#include <algorithm>
+#include <cstdint>
+#include <string>
+#include <utility>
+#include <vector>
+
+using namespace gnubase::engine;
+
+namespace
+{
+	// 120 BPM at 48 kHz: a beat is 24000 samples.
+	constexpr int64_t g_beat = 24000;
+	constexpr int64_t g_beatTicks = 1720320;
+
+	Json run(Client& client, const std::string& command, Json parameters = Json::object())
+	{
+		const Result result = client.call(command, std::move(parameters));
+		INFO(command << " failed: " << result.error);
+		REQUIRE(result.ok());
+		return result.value;
+	}
+
+	std::string reject(Client& client, const std::string& command, Json parameters = Json::object())
+	{
+		const Result result = client.call(command, std::move(parameters));
+		INFO(command << " succeeded: " << result.value.dump());
+		REQUIRE(!result.ok());
+		return result.error;
+	}
+
+	// A MIDI track with a part of four beats from 0 that has a C4 (60) on every beat.
+	struct Song
+	{
+		Song()
+		{
+			const Json added = run(client, "track.add", {{"type", "midi"}});
+			channel = added.at("channel").at("id").get<ObjectId>();
+			track = added.at("track").at("id").get<ObjectId>();
+			part = run(client, "midiPart.add", {{"track", track}, {"position", 0}, {"length", 4 * g_beatTicks}})
+					   .at("part")
+					   .at("id")
+					   .get<ObjectId>();
+			Json notes = Json::array();
+			for (int64_t beat = 0; beat < 4; ++beat)
+				notes.push_back(
+					{{"position", beat * g_beatTicks}, {"length", g_beatTicks / 2}, {"pitch", 60}, {"velocity", 0.75}});
+			run(client, "note.add", {{"part", part}, {"notes", notes}});
+		}
+
+		// The pitches the track plays, by position, from the render snapshot.
+		std::vector<int> pitches()
+		{
+			std::vector<std::pair<int64_t, int>> notes;
+			for (const RenderChannel& render : engine.renderSnapshots().acquire().channels)
+				if (render.id == channel)
+					for (const RenderNote& note : render.notes)
+						notes.emplace_back(note.start, note.pitch);
+			std::sort(notes.begin(), notes.end());
+			std::vector<int> result;
+			for (const auto& [start, pitch] : notes)
+				result.push_back(pitch);
+			return result;
+		}
+
+		Json partJson()
+		{
+			const Json project = run(client, "project.get");
+			for (const Json& item : project.at("midiParts"))
+				if (item.at("id") == part)
+					return item;
+			return {};
+		}
+
+		Engine engine;
+		Client client{engine};
+		ObjectId channel = 0;
+		ObjectId track = 0;
+		ObjectId part = 0;
+	};
+}
+
+TEST_CASE("the project root key transposes parts with a root key of their own to it", "[integration]")
+{
+	Song song;
+	CHECK(run(song.client, "project.get").at("rootKey") == "");
+	CHECK(song.partJson().at("rootKey") == "");
+	CHECK(song.partJson().at("globalTranspose") == "follow");
+	// Neither a project root key nor one of the part's: nothing moves.
+	run(song.client, "project.set", {{"rootKey", "D"}});
+	CHECK(song.pitches() == std::vector<int>{60, 60, 60, 60});
+	// A part in C in a project in D plays a whole tone higher; in G, a fourth lower, the nearer way.
+	run(song.client, "midiPart.set", {{"part", song.part}, {"rootKey", "C"}});
+	CHECK(song.pitches() == std::vector<int>{62, 62, 62, 62});
+	run(song.client, "project.set", {{"rootKey", "G"}});
+	CHECK(song.pitches() == std::vector<int>{55, 55, 55, 55});
+	run(song.client, "project.set", {{"rootKey", "F#"}});
+	CHECK(song.pitches() == std::vector<int>{66, 66, 66, 66});
+	// The part's own transpose adds to it.
+	run(song.client, "midiPart.set", {{"part", song.part}, {"transpose", -1}});
+	CHECK(song.pitches() == std::vector<int>{65, 65, 65, 65});
+	// Independent parts keep their pitch.
+	run(song.client, "midiPart.set", {{"part", song.part}, {"globalTranspose", "independent"}});
+	CHECK(song.pitches() == std::vector<int>{59, 59, 59, 59});
+	CHECK(song.partJson().at("globalTranspose") == "independent");
+	// Undo brings back what the part followed; the root key is an undo step too.
+	run(song.client, "history.undo");
+	CHECK(song.pitches() == std::vector<int>{65, 65, 65, 65});
+	CHECK(reject(song.client, "project.set", {{"rootKey", "H"}}).find("rootKey") != std::string::npos);
+	CHECK(reject(song.client, "midiPart.set", {{"part", song.part}, {"globalTranspose", "both"}})
+			  .find("globalTranspose") != std::string::npos);
+}
+
+TEST_CASE("transpose events transpose what follows global transpose from their position on", "[integration]")
+{
+	Song song;
+	CHECK(run(song.client, "transpose.get").at("track") == 0);
+	// The first event adds the transpose track.
+	const Json first = run(song.client, "transpose.add", {{"position", 2 * g_beatTicks}, {"value", 5}});
+	const Json transpose = run(song.client, "transpose.get");
+	const auto track = transpose.at("track").get<ObjectId>();
+	CHECK(track != 0);
+	CHECK(transpose.at("events").size() == 1);
+	CHECK(transpose.at("events")[0].at("start") == 2 * g_beat);
+	CHECK(song.pitches() == std::vector<int>{60, 60, 65, 65});
+	CHECK(reject(song.client, "track.add", {{"type", "transpose"}}) == "a project has one transpose track at most");
+
+	// An event before it sets the beats up to it; values add to the root key's transposition.
+	const auto second =
+		run(song.client, "transpose.add", {{"position", g_beatTicks}, {"value", -2}}).at("event").at("id");
+	CHECK(song.pitches() == std::vector<int>{60, 58, 65, 65});
+	run(song.client, "project.set", {{"rootKey", "D"}});
+	run(song.client, "midiPart.set", {{"part", song.part}, {"rootKey", "C"}});
+	CHECK(song.pitches() == std::vector<int>{62, 60, 67, 67});
+	CHECK(run(song.client, "transpose.get").at("events")[0].at("id") == second); // in timeline order
+
+	// Keep Transpose in Octave Range: never more than seven semitones either way.
+	run(song.client, "transpose.set", {{"events", {{{"event", first.at("event").at("id")}, {"value", 8}}}}});
+	CHECK(song.pitches() == std::vector<int>{62, 60, 70, 70});
+	run(song.client, "transpose.setTrack", {{"keepInOctave", true}});
+	CHECK(song.pitches() == std::vector<int>{62, 60, 58, 58}); // 2 + 8 = 10 is -2
+	// Muted, the events don't play; the root key still does.
+	run(song.client, "transpose.setTrack", {{"mute", true}});
+	CHECK(song.pitches() == std::vector<int>{62, 62, 62, 62});
+	run(song.client, "history.undo");
+	CHECK(song.pitches() == std::vector<int>{62, 60, 58, 58});
+
+	// Moving an event moves where it starts.
+	run(song.client, "transpose.set", {{"events", {{{"event", second}, {"position", 3 * g_beatTicks}}}}});
+	CHECK(song.pitches() == std::vector<int>{62, 62, 58, 60});
+	CHECK(reject(song.client, "transpose.set", {{"events", {{{"event", second}, {"value", 25}}}}}) ==
+		"a transpose event's value must be -24 to 24 semitones");
+	CHECK(reject(song.client, "transpose.add", {{"position", 2 * g_beatTicks}}) ==
+		"there is a transpose event at that position already");
+
+	// Locked, the events can't be changed.
+	run(song.client, "transpose.setTrack", {{"lock", true}});
+	CHECK(reject(song.client, "transpose.remove", {{"events", {second}}}) == "the transpose track is locked");
+	CHECK(reject(song.client, "transpose.add", {{"position", 0}}) == "the transpose track is locked");
+	run(song.client, "transpose.setTrack", {{"lock", false}});
+	run(song.client, "transpose.remove", {{"events", {second}}});
+	CHECK(run(song.client, "transpose.get").at("events").size() == 1);
+
+	// Removing the transpose track removes its events.
+	run(song.client, "track.remove", {{"track", track}});
+	CHECK(run(song.client, "transpose.get").at("events").empty());
+	CHECK(song.pitches() == std::vector<int>{62, 62, 62, 62});
+}
+
+TEST_CASE("Set Root Key for Unassigned Events gives parts without a root key the project's", "[integration]")
+{
+	Song song;
+	CHECK(reject(song.client, "transpose.assignRootKey") == "the project has no root key");
+	const ObjectId other = run(
+		song.client, "midiPart.add", {{"track", song.track}, {"position", 4 * g_beatTicks}, {"length", g_beatTicks}})
+							   .at("part")
+							   .at("id")
+							   .get<ObjectId>();
+	run(song.client, "midiPart.set", {{"part", other}, {"rootKey", "A"}});
+	run(song.client, "project.set", {{"rootKey", "E"}});
+	run(song.client, "transpose.assignRootKey");
+	const Json project = run(song.client, "project.get");
+	for (const Json& part : project.at("midiParts"))
+		CHECK(part.at("rootKey") == (part.at("id") == other ? "A" : "E"));
+	run(song.client, "history.undo");
+	CHECK(song.partJson().at("rootKey") == "");
+}
+
+TEST_CASE("recorded parts follow the root key without transpose events, and are independent with them", "[integration]")
+{
+	Song song;
+	run(song.client, "project.set", {{"rootKey", "D"}});
+	const auto record = [&song](int64_t at)
+	{
+		const Json added = run(song.client, "recording.add",
+			{{"tracks",
+				{{{"track", song.track}, {"takes", {{{"position", at}, {"length", 4 * g_beat}}}},
+					{"notes", {{{"position", at}, {"length", g_beat}, {"pitch", 60}, {"velocity", 0.75}}}}}}}});
+		const auto id = added.at("parts")[0];
+		const Json project = run(song.client, "project.get");
+		for (const Json& part : project.at("midiParts"))
+			if (part.at("id") == id)
+				return part;
+		return Json();
+	};
+	Json part = record(8 * g_beat);
+	CHECK(part.at("rootKey") == "D");
+	CHECK(part.at("globalTranspose") == "follow");
+	run(song.client, "transpose.add", {{"position", 0}, {"value", 3}});
+	part = record(16 * g_beat);
+	CHECK(part.at("rootKey") == "");
+	CHECK(part.at("globalTranspose") == "independent");
+}
+
+TEST_CASE("the root key and the transpose track are saved with the project", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	const std::string path = (dir.path() / "Song.dawproject").u8string();
+	Json saved;
+	Json part;
+	{
+		Song song;
+		run(song.client, "project.set", {{"rootKey", "A#"}});
+		run(song.client, "track.add", {{"type", "transpose"}, {"timeBase", "linear"}});
+		run(song.client, "transpose.add", {{"position", 3 * g_beat}, {"value", -12}});
+		run(song.client, "transpose.setTrack", {{"keepInOctave", true}, {"mute", true}, {"lock", true}});
+		run(song.client, "midiPart.set", {{"part", song.part}, {"rootKey", "C#"}, {"globalTranspose", "independent"}});
+		saved = run(song.client, "transpose.get");
+		part = song.partJson();
+		run(song.client, "project.save", {{"path", path}});
+	}
+	Engine engine;
+	Client client{engine};
+	run(client, "project.load", {{"path", path}});
+	CHECK(run(client, "transpose.get") == saved);
+	CHECK(saved.at("events")[0].at("position") == 3 * g_beat); // linear: in samples
+	CHECK(run(client, "project.get").at("rootKey") == "A#");
+	const Json loaded = run(client, "project.get").at("midiParts")[0];
+	CHECK(loaded.at("rootKey") == part.at("rootKey"));
+	CHECK(loaded.at("globalTranspose") == part.at("globalTranspose"));
+}

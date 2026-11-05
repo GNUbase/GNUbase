@@ -150,6 +150,7 @@ add_library(gnubase-engine STATIC
 	document/snap.cpp document/snap.h
 	document/stripparameters.cpp document/stripparameters.h
 	document/tempo.cpp
+	document/transpose.cpp
 	document/volumecurves.cpp document/volumecurves.h
 	dsp/biquad.cpp dsp/biquad.h
 	dsp/delay.cpp dsp/delay.h

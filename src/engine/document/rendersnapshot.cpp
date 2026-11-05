@@ -32,8 +32,8 @@ namespace gnubase::engine
 			return project.tempo.toSamples(tick, project.sampleRate);
 		}
 
-		// Adds a part's notes and controllers, cut at the part's end, the notes as the channel's MIDI modifiers and the
-		// part's transpose and velocity play them.
+		// Adds a part's notes and controllers, cut at the part's end, the notes as the channel's MIDI modifiers, the
+		// part's transpose and velocity and global transposition (#168) at their start play them.
 		void compilePart(const Project& project, ObjectId partId, const MidiPart& part, RenderChannel& channel)
 		{
 			const time::Ticks start = time::toTicks(part.position, project.tempo, project.sampleRate);
@@ -59,7 +59,9 @@ namespace gnubase::engine
 				const uint64_t seed = midi::noteSeed(partId, id);
 				uint8_t pitch = sound != nullptr ? sound->oNote : note.pitch;
 				uint16_t velocity = midi::playedVelocity(note, part.id);
-				if (!midi::modifyNote(modifiers, seed, pitch, velocity))
+				midi::Modifiers transposed = modifiers;
+				transposed.transpose += globalTranspose(project, part, toSamples(project, start + note.position));
+				if (!midi::modifyNote(transposed, seed, pitch, velocity))
 					continue;
 				// A note moved before its part's start, or the project's, starts there, with its length: the part plays
 				// only what lies in it.

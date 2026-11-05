@@ -205,6 +205,60 @@ namespace gnubase::engine
 		return chains.empty() ? nullptr : &chains.front();
 	}
 
+	const std::vector<std::string>& rootKeyNames()
+	{
+		static const std::vector<std::string> names = {
+			"", "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+		return names;
+	}
+
+	std::string rootKeyName(int key)
+	{
+		return key >= 0 && key < 12 ? rootKeyNames().at(static_cast<size_t>(key) + 1) : std::string();
+	}
+
+	std::optional<int> rootKeyFromName(const std::string& name)
+	{
+		const std::vector<std::string>& names = rootKeyNames();
+		const auto found = std::find(names.begin(), names.end(), name);
+		if (found == names.end())
+			return std::nullopt;
+		return static_cast<int>(found - names.begin()) - 1;
+	}
+
+	int globalTranspose(const Project& project, const MidiPart& part, time::Samples at)
+	{
+		if (part.independent)
+			return 0;
+		int semitones = 0;
+		if (project.rootKey >= 0 && part.rootKey >= 0)
+		{
+			semitones = (((project.rootKey - part.rootKey) % 12) + 12) % 12; // 0 to 11 up
+			if (semitones > 6)
+				semitones -= 12;
+		}
+		const TransposeTrack& track = project.transpose;
+		if (track.mute)
+			return semitones;
+		// ponytail: a scan of the events per note; a song has a handful of them.
+		int value = 0;
+		for (const TransposeEvent& event : track.events)
+		{
+			if (time::toSamples(event.position, project.tempo, project.sampleRate) > at)
+				break;
+			value = event.value;
+		}
+		semitones += value;
+		if (track.keepInOctave)
+		{
+			while (semitones > 7)
+				semitones -= 12;
+			while (semitones < -7)
+				semitones += 12;
+		}
+		return semitones;
+	}
+
 	bool poolFolderOutside(const Project& project, ObjectId folder, ObjectId excluded)
 	{
 		// More steps than there are folders means a loop.

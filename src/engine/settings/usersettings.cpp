@@ -357,11 +357,12 @@ namespace gnubase::engine::settings
 					Json{{"type", "boolean"}}, false},
 				{"ui.trackControls",
 					"The controls the track list shows, by track type (audio, instrument, midi, group, effect, "
-					"folder, marker, ruler, tempo), in order: mute, solo, record, monitor (audio, instrument and MIDI "
-					"tracks), read (automation), timeBase, tempoTrack (the tempo track's Activate Tempo Track), and "
-					"for "
-					"ruler tracks timeFormat, timeOffsetOn, timeOffset and setTimeOffset (Set Time Offset to Project "
-					"Cursor Position). "
+					"folder, marker, ruler, tempo, transpose), in order: mute, solo, record, monitor (audio, "
+					"instrument "
+					"and MIDI tracks), read (automation), timeBase, tempoTrack (the tempo track's Activate Tempo "
+					"Track), for ruler tracks timeFormat, timeOffsetOn, timeOffset and setTimeOffset (Set Time Offset "
+					"to Project Cursor Position), and for the transpose track transposeMute (Mute Transpose Events), "
+					"keepInOctave (Keep Transpose in Octave Range) and transposeLock (Lock). "
 					"Mute and solo always show on tracks with a channel; a type left out shows none.",
 					Json{{"type", "object"},
 						{"additionalProperties",
@@ -370,14 +371,16 @@ namespace gnubase::engine::settings
 									{{"type", "string"},
 										{"enum",
 											{"mute", "solo", "record", "monitor", "read", "timeBase", "tempoTrack",
-												"timeFormat", "timeOffsetOn", "timeOffset", "setTimeOffset"}}}}}}},
+												"timeFormat", "timeOffsetOn", "timeOffset", "setTimeOffset",
+												"transposeMute", "keepInOctave", "transposeLock"}}}}}}},
 					Json{{"audio", {"mute", "solo", "record", "monitor", "read"}},
 						{"instrument", {"mute", "solo", "record", "monitor", "read"}},
 						{"midi", {"mute", "solo", "record", "monitor", "read"}}, {"group", {"mute", "solo", "read"}},
 						{"effect", {"mute", "solo", "read"}}, {"folder", {"mute", "solo", "read"}},
 						{"marker", Json::array()},
 						{"ruler", {"timeFormat", "timeOffsetOn", "timeOffset", "setTimeOffset"}},
-						{"tempo", {"tempoTrack"}}, {"signature", Json::array()}}},
+						{"tempo", {"tempoTrack"}}, {"signature", Json::array()},
+						{"transpose", {"transposeMute", "keepInOctave", "timeBase", "transposeLock"}}}},
 				{"ui.trackWidths",
 					"The widths in the track list's rows, in dp: name, the track name's for every track type (20 to "
 					"400), and controls, by track type, the width of its controls area (0 to 800), whose controls go "

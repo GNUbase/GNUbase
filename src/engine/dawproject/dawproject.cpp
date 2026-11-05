@@ -555,7 +555,7 @@ namespace gnubase::engine
 				// GNUbase's entry.
 				if (track.type == TrackType::Marker || track.type == TrackType::Ruler ||
 					track.type == TrackType::Tempo || track.type == TrackType::Signature ||
-					track.type == TrackType::Arranger)
+					track.type == TrackType::Arranger || track.type == TrackType::Transpose)
 					return;
 				pugi::xml_node node = parent.append_child("Track");
 				node.append_attribute("id") = xmlId("t", track.id).c_str();
