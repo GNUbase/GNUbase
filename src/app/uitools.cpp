@@ -78,7 +78,9 @@ namespace gnubase::app
 			ui::Target target;
 			target.selector = arguments.value("selector", std::string());
 			target.index = arguments.value("index", 0);
-			if (arguments.contains("x") && arguments.contains("y"))
+			if (arguments.contains("x") != arguments.contains("y"))
+				throw std::invalid_argument("x and y go together: a point needs both");
+			if (arguments.contains("x"))
 				target.point = ui::Point{arguments.at("x").get<int>(), arguments.at("y").get<int>()};
 			return target;
 		}
@@ -224,27 +226,46 @@ namespace gnubase::app
 			[&shell, caller, automation](const Json& arguments)
 			{ return wait(shell, caller, automation, arguments); }});
 
+		Json moveProperties = targetProperties();
+		moveProperties["modifiers"] = modifiersProperty("Keys held while moving.");
 		tools.push_back({"ui_move",
-			"Moves the mouse to the centre of an element or to a point, e.g. to hover over it. Returns the element "
-			"now under the mouse.",
-			object(targetProperties()), elementResult, false,
-			run([](ui::Automation& ui, const Json& arguments)
-				{ return ui.move(windowOf(arguments), targetOf(arguments)); })});
+			"Moves the mouse to the centre of an element or to a point, e.g. to hover over it, or with a button that "
+			"ui_click's action down holds, to drag. Returns the element now under the mouse.",
+			object(std::move(moveProperties)), elementResult, false,
+			run(
+				[](ui::Automation& ui, const Json& arguments)
+				{
+					return ui.move(windowOf(arguments), targetOf(arguments),
+						arguments.value("modifiers", std::vector<std::string>()));
+				})});
 
 		Json clickProperties = targetProperties();
 		clickProperties["button"] = {{"enum", {"left", "right", "middle"}}, {"description", "Left if left out."}};
 		clickProperties["count"] = {{"type", "integer"}, {"minimum", 1}, {"maximum", 3},
 			{"description", "2 for a double click; 1 if left out."}};
 		clickProperties["modifiers"] = modifiersProperty("Keys held while clicking.");
+		clickProperties["action"] = {{"type", "string"}, {"enum", {"click", "down", "up"}},
+			{"description", "click (the default) presses and releases the button."}};
 		tools.push_back({"ui_click",
 			"Clicks the centre of the element that the CSS selector matches, or a point. The element must be visible. "
-			"Returns the element under the mouse, the one that got the click unless another covers it.",
+			"With action down the button stays pressed until an action up for it, and with neither selector nor x and "
+			"y they press or release it where the mouse is: ui_move in between moves the mouse with the button held, "
+			"and other tools run while it is, e.g. a settings change halfway through a drag. Returns the element under "
+			"the mouse, the one that got the click unless another covers it.",
 			object(std::move(clickProperties)), elementResult, false,
 			run(
 				[](ui::Automation& ui, const Json& arguments)
 				{
-					return ui.click(windowOf(arguments), targetOf(arguments), buttonOf(arguments),
-						arguments.value("count", 1), arguments.value("modifiers", std::vector<std::string>()));
+					const std::string action = arguments.value("action", std::string("click"));
+					const auto modifiers = arguments.value("modifiers", std::vector<std::string>());
+					if (action == "click")
+						return ui.click(windowOf(arguments), targetOf(arguments), buttonOf(arguments),
+							arguments.value("count", 1), modifiers);
+					if (arguments.value("count", 1) != 1)
+						throw std::invalid_argument("count is for clicks; action " + action + " doesn't take one");
+					if (action == "down")
+						return ui.press(windowOf(arguments), targetOf(arguments), buttonOf(arguments), modifiers);
+					return ui.release(windowOf(arguments), targetOf(arguments), buttonOf(arguments), modifiers);
 				})});
 
 		Json dragTarget = targetProperties();

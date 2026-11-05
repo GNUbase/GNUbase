@@ -686,10 +686,15 @@
 	{
 		background-color: #000000;
 		color: #ffffff;
+		border-bottom-color: #000000;
 	}
 	.key-editor-key.selected
 	{
 		background-color: #ffff00;
+	}
+	.key-editor-key.black.selected
+	{
+		border-bottom-color: #ffff00;
 	}
 	.key-editor-grid
 	{
