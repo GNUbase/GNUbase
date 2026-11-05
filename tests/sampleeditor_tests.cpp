@@ -261,7 +261,7 @@ TEST_CASE("regions that aren't sections of their clip are left out when a projec
 	// A hand-edited file: regions past the clip's end, empty, before its start and out of order.
 	std::map<std::string, std::string> entries = readZip(file);
 	Json gnubase = Json::parse(entries.at("gnubase.json"));
-	Json& regions = gnubase.at("clips").at(0).at("regions");
+	Json& regions = gnubase.at("project").at("clips").at(0).at("regions");
 	regions.push_back({{"id", 90001}, {"name", "Past the end"}, {"start", 9000}, {"end", 9601}});
 	regions.push_back({{"id", 90002}, {"name", "Empty"}, {"start", 500}, {"end", 500}});
 	regions.push_back({{"id", 90003}, {"name", "Before the start"}, {"start", -1}, {"end", 10}});

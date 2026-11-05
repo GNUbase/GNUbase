@@ -649,9 +649,11 @@ TEST_CASE("auditioning a media file plays its frames, also outside the events th
 	run(song.client, "audition.start", {{"media", slow}, {"position", 500}});
 	run(song.client, "audio.render", {{"frames", 1200}});
 	run(song.client, "audition.stop");
-	const std::vector<float> output = song.capture(0, 1200);
+	const auto output = run(song.client, "audio.capture", {{"channel", 0}, {"start", 800}, {"frames", 1200}})
+							.at("samples")
+							.get<std::vector<float>>();
 	CHECK(std::abs(output[10] - ramp(505, 0)) < 1e-4f);
-	CHECK(std::abs(output[980] - ramp(990, 0)) < 1e-4f);
+	CHECK(std::abs(output[600] - ramp(800, 0)) < 1e-4f);
 	CHECK(std::all_of(output.begin() + 1010, output.end(), [](float sample) { return sample == 0.0f; }));
 }
 

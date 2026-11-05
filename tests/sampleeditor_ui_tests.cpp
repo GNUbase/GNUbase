@@ -135,7 +135,8 @@ namespace
 		Json lastParameters(const std::string& command)
 		{
 			Json found;
-			for (const Json& each : app.call("engine.commandLog").at("commands"))
+			const Json log = app.call("engine.commandLog");
+			for (const Json& each : log.at("commands"))
 				if (each.at("command") == command)
 					found = each.at("parameters");
 			return found;
@@ -345,12 +346,15 @@ TEST_CASE("double-clicking a region's name, start or end in the list types a new
 	f.app.ui().text(f.window, "1500");
 	f.app.ui().key(f.window, "Enter");
 	REQUIRE(f.app.waitUntil([&] { return f.regions().at(1).at("start") == 1500; }));
-	REQUIRE(f.app.waitUntil([&] { return f.elements(".se-region-field").empty(); }));
+	// Once the list shows it: until then, the new start would build the rows again under the double click.
+	REQUIRE(f.app.waitUntil([&] { return f.text(f.row(1) + " .se-region-start") == "1500"; }));
+	REQUIRE(f.elements(".se-region-field").empty());
 	f.doubleClick(of(f.row(1) + " .se-region-end"));
 	REQUIRE(f.app.waitUntil([&] { return f.elements(".se-region-field").size() == 1; }));
 	f.app.ui().text(f.window, "6000");
 	f.app.ui().key(f.window, "Enter");
 	REQUIRE(f.app.waitUntil([&] { return f.regions().at(1).at("end") == 6000; }));
+	REQUIRE(f.app.waitUntil([&] { return f.text(f.row(1) + " .se-region-end") == "6000"; }));
 
 	// Escape keeps what was there, and so does what isn't a number or a section of the clip.
 	for (const std::string& typed : {std::string("100"), std::string("abc"), std::string("9601")})
