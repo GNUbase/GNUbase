@@ -3,6 +3,7 @@
 // ui::Automation as MCP's UI tools drive it: MIDI > Functions on the project window's selected MIDI parts and on an
 // editor's selected notes, and the Transpose Setup, MIDI Merge Options, Dissolve Part, Velocity, Delete Notes and
 // Restrict Polyphony dialogs. tests/midifunctions_tests.cpp checks the functions themselves.
+#include "engine/midi/midivalues.h"
 #include "engine/time/tempomap.h"
 #include "ui/automation.h"
 #include "ui/eventdisplay.h"
@@ -431,7 +432,7 @@ namespace
 		app.call("controller.add",
 			{{"part", part},
 				{"controllers",
-					{cc(4 * g_quarter - 10, 64, 1.0), cc(5 * g_quarter, 64, 0.0), cc(0, 7, 0.1), cc(5, 7, 0.2),
+					{cc((4 * g_quarter) - 10, 64, 1.0), cc(5 * g_quarter, 64, 0.0), cc(0, 7, 0.1), cc(5, 7, 0.2),
 						cc(10, 7, 0.3), cc(15, 7, 0.4), cc(0, 1, 0.5)}}});
 		return part;
 	}
@@ -569,26 +570,49 @@ TEST_CASE("MIDI > Functions > Velocity and Delete Notes change the selected note
 	Fixture f;
 	CHECK(!f.app.keys().canRun("midi.functionsVelocity", f.app.main(), nullptr));
 	f.display.select({f.part});
-	const auto velocities = [&f](double expected)
+	// The notes' velocities as MIDI 1.0 values, as playback sends them.
+	const auto velocities = [&f](int expected)
 	{
 		return f.app.waitUntil(
 			[&]
 			{
 				const std::vector<Json> notes = f.notesOf(f.part);
 				return notes.size() == 3 &&
-					std::all_of(notes.begin(), notes.end(), [expected](const Json& note)
-						{ return std::abs(note.at("velocity").get<double>() - expected) < 0.001; });
+					std::all_of(notes.begin(), notes.end(),
+						[expected](const Json& note)
+						{
+							const auto velocity =
+								static_cast<uint16_t>(std::lround(note.at("velocity").get<double>() * 65535.0));
+							return engine::midi::velocityToMidi1(velocity) == expected;
+						});
 			});
 	};
 
-	// Add/Subtract, in MIDI 1.0 values: from 0.5 up by 10.
+	// Add/Subtract, in MIDI 1.0 values as playback maps them: 64 down by 1 is 63, not 62.
 	f.menu("midi.functionsVelocity", true);
 	REQUIRE(f.app.waitUntil([&] { return f.shown("#midi-function"); }));
 	f.app.shell().step(std::chrono::milliseconds(0));
 	CHECK(f.text("#midi-function-title") == "Velocity");
-	f.write("#midi-function-amount", "10");
+	REQUIRE(velocities(64));
+	f.write("#midi-function-amount", "-1");
 	f.ok();
-	CHECK(velocities(0.5 + (10.0 / 127.0)));
+	CHECK(velocities(63));
+
+	// Values outside the dialog's ranges are refused in the dialog's units, and the dialog stays open.
+	f.menu("midi.functionsVelocity", true);
+	REQUIRE(f.app.waitUntil([&] { return f.shown("#midi-function"); }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	f.write("#midi-function-amount", "200");
+	f.click("#midi-function-ok");
+	CHECK(f.app.waitUntil([&] { return f.text("#midi-function-message") == "Amount must be -127 to 127"; }));
+	CHECK(f.shown("#midi-function"));
+	f.choose("#midi-function-type", 1); // Compress/Expand
+	f.write("#midi-function-ratio", "400");
+	f.click("#midi-function-ok");
+	CHECK(f.app.waitUntil([&] { return f.text("#midi-function-message") == "Ratio must be 0 to 300"; }));
+	f.click("#midi-function-cancel");
+	CHECK(f.app.waitUntil([&] { return !f.shown("#midi-function"); }));
+	CHECK(velocities(63));
 
 	// Limit: only its fields are on.
 	f.menu("midi.functionsVelocity", true);
@@ -598,7 +622,25 @@ TEST_CASE("MIDI > Functions > Velocity and Delete Notes change the selected note
 	CHECK(f.app.waitUntil([&] { return f.disabled("#midi-function-amount") && !f.disabled("#midi-function-upper"); }));
 	f.write("#midi-function-upper", "50");
 	f.ok();
-	CHECK(velocities(50.0 / 127.0));
+	CHECK(velocities(50));
+
+	// Delete Notes: a note exactly at Minimum Velocity stays; one below it goes.
+	f.menu("midi.functionsDeleteNotes", true);
+	REQUIRE(f.app.waitUntil([&] { return f.shown("#midi-function"); }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	f.click("#midi-function-length-on");
+	f.click("#midi-function-velocity-on");
+	f.write("#midi-function-velocity", "50");
+	f.ok();
+	CHECK(velocities(50));
+	f.menu("midi.functionsDeleteNotes", true);
+	REQUIRE(f.app.waitUntil([&] { return f.shown("#midi-function"); }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	f.click("#midi-function-length-on");
+	f.click("#midi-function-velocity-on");
+	f.write("#midi-function-velocity", "51");
+	f.ok();
+	CHECK(f.app.waitUntil([&] { return f.notesOf(f.part).empty(); }));
 
 	// Delete Notes: Minimum Length in ticks of 480 per quarter; Remove when under counts with both minimums only.
 	const uint64_t mixed = f.addPart(g_bar, {{0, 60}, {g_quarter, 62}});
@@ -614,7 +656,6 @@ TEST_CASE("MIDI > Functions > Velocity and Delete Notes change the selected note
 	f.ok();
 	CHECK(f.app.waitUntil([&] { return f.notesOf(mixed).size() == 1; }));
 	CHECK(f.notesOf(mixed)[0].at("pitch") == 60);
-	CHECK(f.notesOf(f.part).size() == 3);
 }
 
 TEST_CASE("The MIDI menu's dialogs open one at a time", "[ui]")

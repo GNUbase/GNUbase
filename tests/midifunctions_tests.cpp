@@ -8,6 +8,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -1124,6 +1125,7 @@ TEST_CASE("bounce removes muted parts and plays the parts' transpose and velocit
 	CHECK(part.velocity == 0);
 	CHECK(notesOf(part) == std::vector<std::vector<int64_t>>{{0, 72, 10, 0}, {2 * g_quarter, 64, 10, 0}});
 	std::vector<int> velocities;
+	velocities.reserve(part.notes.size());
 	for (const auto& [id, note] : part.notes)
 		velocities.push_back(velocityToMidi1(note.velocity));
 	std::sort(velocities.begin(), velocities.end());
@@ -1212,6 +1214,7 @@ TEST_CASE("velocity adds, compresses, limits, fixes and varies the velocities of
 		builder.part.id = 7;
 		changeVelocities(builder.part, selection, settings);
 		std::vector<double> velocities;
+		velocities.reserve(builder.part.notes.size());
 		for (const auto& [id, note] : builder.part.notes)
 			velocities.push_back(std::round(note.velocity / 655.35) / 100.0); // to two decimals
 		return velocities;
@@ -1250,7 +1253,7 @@ TEST_CASE("velocity adds, compresses, limits, fixes and varies the velocities of
 	for (size_t i = 0; i < 3; ++i)
 	{
 		CHECK(varied[i] <= before[i]);
-		CHECK(varied[i] >= before[i] * 0.5 - 0.01);
+		CHECK(varied[i] >= (before[i] * 0.5) - 0.01);
 		lowered = lowered || varied[i] < before[i];
 	}
 	CHECK(lowered);
@@ -1327,13 +1330,49 @@ TEST_CASE("extract MIDI automation moves continuous controllers into automation 
 		Project linear = newProject();
 		const ObjectId keys = addTrack(linear, TrackType::Instrument, "Keys");
 		linear.trackById.at(keys).timeBase = TimeBase::Linear;
-		const Samples second = static_cast<Samples>(linear.sampleRate);
+		const auto second = static_cast<Samples>(linear.sampleRate);
 		const ObjectId onLinear = addPart(linear, keys, second, second, PartBuilder().cc(1, g_quarter, 7, 127).part);
 		const AutomationChanges result = extractAutomation(linear, {onLinear});
 		REQUIRE(result.addedLanes.size() == 1);
 		const AutomationPoint& point = linear.automation.at(result.addedLanes[0]).points.begin()->second;
 		CHECK(point.position.base == TimeBase::Linear);
 		CHECK(point.position.value == second + linear.tempo.toSamples(g_quarter, linear.sampleRate));
+	}
+
+	SECTION("overlapping parts keep each other's points and clear only the lane's earlier ones")
+	{
+		Project overlap = newProject();
+		const ObjectId keys = addTrack(overlap, TrackType::Instrument, "Keys");
+		const ObjectId first =
+			addPart(overlap, keys, 0, 4 * g_quarter, PartBuilder().cc(1, 2 * g_quarter, 7, 127).part);
+		const ObjectId second =
+			addPart(overlap, keys, 2 * g_quarter, 4 * g_quarter, PartBuilder().cc(1, g_quarter, 7, 0).part);
+		AutomationLane lane;
+		lane.id = overlap.newId();
+		lane.track = keys;
+		lane.target.type = AutomationTargetType::Controller;
+		lane.target.number = 7;
+		// The first point lies in the second part's range, the other after it.
+		for (const Ticks at : {5 * g_quarter, 7 * g_quarter})
+		{
+			AutomationPoint point;
+			point.id = overlap.newId();
+			point.position = {TimeBase::Musical, at};
+			point.value = 0.25;
+			point.shape = AutomationShape::Step;
+			lane.points[point.id] = point;
+		}
+		overlap.automation[lane.id] = lane;
+
+		const AutomationChanges result = extractAutomation(overlap, {first, second});
+		CHECK(result.changedLanes == std::vector<ObjectId>{lane.id});
+		CHECK(result.addedLanes.empty());
+		std::vector<std::pair<int64_t, double>> points;
+		for (const auto& [id, point] : overlap.automation.at(lane.id).points)
+			points.emplace_back(point.position.value, std::round(point.value * 1000.0) / 1000.0);
+		std::sort(points.begin(), points.end());
+		CHECK(points ==
+			std::vector<std::pair<int64_t, double>>{{2 * g_quarter, 1.0}, {3 * g_quarter, 0.0}, {7 * g_quarter, 0.25}});
 	}
 }
 
