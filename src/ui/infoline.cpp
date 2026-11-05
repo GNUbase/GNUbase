@@ -72,10 +72,18 @@ namespace gnubase::ui
 			else if (!set && element.HasAttribute(name))
 				element.RemoveAttribute(name);
 		}
+
+		// What a field's gesture changes, as EngineBinding::sendStep names it: the info line's step owner, then the
+		// field.
+		std::string stepKey(const std::string& owner, const std::string& field)
+		{
+			return owner + field;
+		}
 	}
 
 	InfoLine::InfoLine(EventDisplay& display, EngineBinding& binding, Rml::Element& root)
-		: m_display(display), m_binding(binding), m_root(root.GetObserverPtr()),
+		: m_display(display), m_binding(binding), m_stepOwner(binding.stepOwner("info line")),
+		  m_root(root.GetObserverPtr()),
 		  // Another project ends the edits in progress without taking them: the ids may be the new project's too.
 		  m_reset(binding.on("project.reset",
 			  [this](const engine::Event&)
@@ -216,7 +224,9 @@ namespace gnubase::ui
 			setFlag(*name, "disabled", audio); // an audio event's name is its clip's
 		if (Rml::Element* volume = root.QuerySelector("[info-field=volume]"))
 			setClass(*volume, "hidden", !audio);
-		if (Rml::Element* volume = root.QuerySelector("valuefield[field=volume]"); volume != nullptr && audio)
+		// Not while the project is older than the field's own steps (#716).
+		if (Rml::Element* volume = root.QuerySelector("valuefield[field=volume]");
+			volume != nullptr && audio && !m_binding.ahead(stepKey(m_stepOwner, "volume"), m_display.read()))
 			setValue(*volume, widgets::format(static_cast<float>(volumeOf(first.at("id").get<uint64_t>()))));
 		for (const char* field : {"mute", "lock"})
 			if (Rml::Element* button = root.QuerySelector("button[field=" + std::string(field) + "]"))
@@ -449,6 +459,11 @@ namespace gnubase::ui
 		std::string label = field;
 		label.front() = static_cast<char>(std::toupper(static_cast<unsigned char>(label.front())));
 		// A drag, wheel turns or a held arrow key on the volume: one undo step.
-		m_binding.sendStep(gesture, "info line " + field, "Change " + label, std::move(commands));
+		m_binding.sendStep(gesture, stepKey(m_stepOwner, field), "Change " + label, std::move(commands),
+			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (!alive.expired() && !result.ok())
+					m_loads = 0; // refused: the next update shows the events as they are again
+			});
 	}
 }

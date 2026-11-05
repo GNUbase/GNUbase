@@ -3,18 +3,26 @@
 // marker.set, marker.remove, marker.renumber and marker.activateTrack change the project, so each is one undo step and
 // changes nothing if it fails (ProjectModel::add). marker.list and marker.range are queries. marker.locate,
 // marker.locateNext, marker.locatePrevious and marker.setLocators move the transport through transport.locate and
-// transport.set: what key commands for markers call.
+// transport.set: what key commands for markers call. marker.export and marker.import write and read marker tracks as
+// CSV files (#171).
 #include "engine/document/document.h"
 #include "engine/document/projectmodel.h"
 #include "engine/document/serialize.h"
 #include "engine/engine.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
+#include <cmath>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <map>
 #include <optional>
 #include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 namespace gnubase::engine
@@ -425,6 +433,250 @@ namespace gnubase::engine
 				context.call("transport.set", {{"left", left}, {"right", *right}});
 		}
 
+		// Marker CSV files (#171): a header row, then a row per marker, the tracks in track order and each track's
+		// markers in timeline order. Track Number numbers the tracks in the file, so that tracks with the same name
+		// stay apart. Positions are in beats (quarter notes) on musical tracks and in seconds on linear ones, written
+		// so that they read back exactly.
+		constexpr std::array<const char*, 9> g_csvColumns = {
+			"Track Number", "Track", "Time Base", "Type", "ID", "Position", "End", "Description", "Color"};
+
+		// A field, quoted if it holds a comma, a quote or a line end (RFC 4180).
+		std::string csvField(const std::string& text)
+		{
+			if (text.find_first_of(",\"\r\n") == std::string::npos)
+				return text;
+			std::string quoted = "\"";
+			for (const char c : text)
+			{
+				if (c == '"')
+					quoted += '"';
+				quoted += c;
+			}
+			return quoted + '"';
+		}
+
+		std::string csvRow(const std::vector<std::string>& fields)
+		{
+			std::string row;
+			for (size_t i = 0; i < fields.size(); ++i)
+				row += (i == 0 ? "" : ",") + csvField(fields[i]);
+			return row + "\r\n";
+		}
+
+		// Ticks per beat or samples per second.
+		double timeScale(const Project& project, time::TimeBase base)
+		{
+			return base == time::TimeBase::Musical ? static_cast<double>(time::g_ticksPerQuarter) : project.sampleRate;
+		}
+
+		// The shortest text that reads back as the same number.
+		std::string csvTime(const Project& project, const time::Position& position)
+		{
+			return Json(static_cast<double>(position.value) / timeScale(project, position.base)).dump();
+		}
+
+		Json exportMarkers(Project& project, CommandContext& context)
+		{
+			const Json& parameters = context.parameters();
+			std::vector<ObjectId> chosen;
+			if (parameters.contains("tracks"))
+				for (const Json& id : parameters.at("tracks"))
+					chosen.push_back(markerTrack(project, id.get<ObjectId>()).id);
+			std::vector<ObjectId> tracks;
+			for (const ObjectId id : project.tracks)
+				if (project.trackById.at(id).type == TrackType::Marker &&
+					(chosen.empty() || std::find(chosen.begin(), chosen.end(), id) != chosen.end()))
+					tracks.push_back(id);
+			require(!tracks.empty(), "the project has no marker track");
+
+			std::string text = csvRow({g_csvColumns.begin(), g_csvColumns.end()});
+			size_t count = 0;
+			for (size_t index = 0; index < tracks.size(); ++index)
+			{
+				const Track& track = project.trackById.at(tracks[index]);
+				for (const Marker* marker : markersOf(project, track.id))
+				{
+					const bool cycle = marker->type == MarkerType::Cycle;
+					text += csvRow({std::to_string(index + 1), track.name,
+						track.timeBase == time::TimeBase::Musical ? "Musical" : "Linear", cycle ? "Cycle" : "Position",
+						std::to_string(marker->number), csvTime(project, marker->position),
+						cycle ? csvTime(project, marker->end) : "", marker->name, marker->color});
+					++count;
+				}
+			}
+			const std::string path = parameters.at("path").get<std::string>();
+			std::ofstream out(std::filesystem::u8path(path), std::ios::binary | std::ios::trunc);
+			out << text;
+			out.close();
+			require(static_cast<bool>(out), "can't write " + path);
+			return {{"markers", count}};
+		}
+
+		// A CSV file's records (RFC 4180), the header first; also with LF line ends and a byte order mark.
+		std::vector<std::vector<std::string>> csvRecords(const std::string& text)
+		{
+			std::vector<std::vector<std::string>> records;
+			std::vector<std::string> record;
+			std::string field;
+			bool quoted = false;
+			bool started = false; // whether the current record has a character
+			const auto endRecord = [&records, &record, &field, &started]()
+			{
+				record.push_back(std::exchange(field, {}));
+				records.push_back(std::exchange(record, {}));
+				started = false;
+			};
+			const std::string byteOrderMark = "\xEF\xBB\xBF";
+			for (size_t i = text.rfind(byteOrderMark, 0) == 0 ? byteOrderMark.size() : 0; i < text.size(); ++i)
+			{
+				const char c = text[i];
+				if (quoted)
+				{
+					if (c != '"')
+						field += c;
+					else if (i + 1 < text.size() && text[i + 1] == '"')
+						field += text[++i];
+					else
+						quoted = false;
+					continue;
+				}
+				if (c == '\r' || c == '\n')
+				{
+					if (c == '\r' && i + 1 < text.size() && text[i + 1] == '\n')
+						++i;
+					endRecord();
+					continue;
+				}
+				started = true;
+				if (c == '"')
+					quoted = true;
+				else if (c == ',')
+					record.push_back(std::exchange(field, {}));
+				else
+					field += c;
+			}
+			require(!quoted, "the quote in row " + std::to_string(records.size() + 1) + " is not closed");
+			if (started)
+				endRecord();
+			return records;
+		}
+
+		std::string trimmed(const std::string& text)
+		{
+			const auto space = [](char c) { return std::isspace(static_cast<unsigned char>(c)) != 0; };
+			const auto first = std::find_if_not(text.begin(), text.end(), space);
+			const auto last = std::find_if_not(text.rbegin(), text.rend(), space).base();
+			return first < last ? std::string(first, last) : std::string();
+		}
+
+		std::string lowered(std::string text)
+		{
+			std::transform(text.begin(), text.end(), text.begin(),
+				[](char c) { return static_cast<char>(std::tolower(static_cast<unsigned char>(c))); });
+			return text;
+		}
+
+		// A time in beats or seconds as ticks or samples.
+		int64_t fromCsvTime(const Project& project, time::TimeBase base, const std::string& text, const char* column)
+		{
+			const Json value = Json::parse(text, nullptr, false);
+			require(value.is_number(), std::string(column) + " must be a number");
+			const double scaled = value.get<double>() * timeScale(project, base);
+			constexpr double latest = 4.0e18; // well within 64 bits
+			require(scaled >= 0.0 && scaled < latest, std::string(column) + " must be a time from 0 on");
+			return std::llround(scaled);
+		}
+
+		// A marker track as a CSV file has it: its markers as marker.add's parameters, with their row numbers.
+		struct CsvTrack
+		{
+			std::string key; // the Track Number if the row has one, otherwise the name
+			std::string name;
+			time::TimeBase base = time::TimeBase::Musical;
+			std::vector<std::pair<size_t, Json>> markers;
+		};
+
+		// Adds the marker in a row to its track, with the columns by their header.
+		void readCsvRow(const Project& project, const std::map<std::string, size_t>& columns,
+			const std::vector<std::string>& record, size_t row, std::vector<CsvTrack>& tracks)
+		{
+			const auto field = [&columns, &record](const char* column)
+			{
+				const auto found = columns.find(column);
+				return found != columns.end() && found->second < record.size() ? record[found->second] : std::string();
+			};
+			const std::string name = trimmed(field("track"));
+			const std::string baseName = lowered(trimmed(field("time base")));
+			require(baseName.empty() || baseName == "musical" || baseName == "linear",
+				"Time Base must be Musical or Linear");
+			const time::TimeBase base = timeBaseFromName(baseName);
+			std::string key = "name:" + name;
+			if (const std::string number = trimmed(field("track number")); !number.empty())
+			{
+				const Json value = Json::parse(number, nullptr, false);
+				require(value.is_number_integer(), "Track Number must be a whole number");
+				key = "number:" + value.dump();
+			}
+			auto track =
+				std::find_if(tracks.begin(), tracks.end(), [&key](const CsvTrack& other) { return other.key == key; });
+			if (track == tracks.end())
+				track = tracks.insert(tracks.end(), CsvTrack{key, name, base, {}});
+			require(track->base == base, "the markers of a track must have one time base");
+
+			const std::string type = lowered(trimmed(field("type")));
+			require(type.empty() || type == "position" || type == "cycle", "Type must be Position or Cycle");
+			Json marker = {{"type", type == "cycle" ? "cycle" : "position"},
+				{"position", fromCsvTime(project, base, trimmed(field("position")), "Position")},
+				{"name", field("description")}};
+			if (type == "cycle")
+			{
+				const std::string end = trimmed(field("end"));
+				require(!end.empty(), "a cycle marker needs an End");
+				marker["end"] = fromCsvTime(project, base, end, "End");
+			}
+			if (const std::string number = trimmed(field("id")); !number.empty())
+			{
+				const Json value = Json::parse(number, nullptr, false);
+				require(value.is_number_integer(), "ID must be a whole number");
+				marker["number"] = value;
+			}
+			if (const std::string color = trimmed(field("color")); !color.empty())
+				marker["color"] = color;
+			track->markers.emplace_back(row, std::move(marker));
+		}
+
+		std::vector<CsvTrack> readCsvTracks(const Project& project, const std::string& path)
+		{
+			std::ifstream in(std::filesystem::u8path(path), std::ios::binary);
+			require(static_cast<bool>(in), "can't open " + path);
+			const std::vector<std::vector<std::string>> records =
+				csvRecords({std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()});
+
+			// Columns by their header, in any order; others are left out.
+			std::map<std::string, size_t> columns;
+			if (!records.empty())
+				for (size_t i = 0; i < records[0].size(); ++i)
+					columns.emplace(lowered(trimmed(records[0][i])), i);
+			require(columns.count("position") != 0, path + " has no header row with a Position column");
+
+			std::vector<CsvTrack> tracks;
+			for (size_t row = 1; row < records.size(); ++row)
+			{
+				const std::vector<std::string>& record = records[row];
+				if (std::all_of(record.begin(), record.end(), [](const std::string& text) { return text.empty(); }))
+					continue;
+				try
+				{
+					readCsvRow(project, columns, record, row + 1, tracks);
+				}
+				catch (const CommandError& error)
+				{
+					throw CommandError("row " + std::to_string(row + 1) + ": " + error.what());
+				}
+			}
+			return tracks;
+		}
+
 		Json locateNeighbour(const Project& project, CommandContext& context, bool next)
 		{
 			const time::Samples cursor = context.call("transport.get").at("position").get<time::Samples>();
@@ -545,6 +797,74 @@ namespace gnubase::engine
 				"Makes a marker track the active one, which marker commands use when they are given no track.",
 				objectSchema({{"track", idSchema}}, {"track"}), noResult, false},
 			activateTrack);
+
+		add(engine,
+			{"marker.export", 1,
+				"Exports marker tracks (tracks, default all of them) into a CSV file at path, which marker.import "
+				"reads: a header row with the columns Track Number, Track, Time Base, Type, ID, Position, End, "
+				"Description and "
+				"Color, then a row per marker, the tracks in track order and their markers in timeline order. "
+				"Track Number numbers the tracks in the file, 1 on. Positions and ends are in beats (quarter notes) on "
+				"musical tracks and in seconds on linear ones. "
+				"Returns the number of markers.",
+				objectSchema({{"path", stringSchema}, {"tracks", {{"type", "array"}, {"items", idSchema}}}}, {"path"}),
+				{{"type", "object"}, {"properties", {{"markers", integerSchema}}}, {"required", {"markers"}}}, true},
+			exportMarkers);
+		add(engine,
+			{"marker.import", 1,
+				"Imports a CSV file of markers, such as marker.export writes: each track in it becomes a new marker "
+				"track at the top, in file order, with its time base and its markers' types, ids, positions, ends, "
+				"descriptions and colors. Columns are found by their header, in any order; only Position is "
+				"required. Rows with the same Track Number are one track, rows without one those with the same Track "
+				"name. Without either all markers go on one track, without Time Base it is musical, without Type "
+				"they are position markers and without an ID they get the first free number. The active marker "
+				"track stays active, or the first new one becomes it. One undo step; a file with an invalid row "
+				"changes nothing. Returns the new tracks and the number of markers.",
+				objectSchema({{"path", stringSchema}}, {"path"}),
+				{{"type", "object"},
+					{"properties", {{"tracks", {{"type", "array"}, {"items", idSchema}}}, {"markers", integerSchema}}},
+					{"required", {"tracks", "markers"}}},
+				false},
+			[this](Project& project, CommandContext& context)
+			{
+				const std::vector<CsvTrack> tracks =
+					readCsvTracks(project, context.parameters().at("path").get<std::string>());
+				const ObjectId active = project.activeMarkerTrack;
+				std::vector<ObjectId> ids;
+				size_t count = 0;
+				for (const CsvTrack& track : tracks)
+				{
+					Json parameters = {
+						{"type", "marker"}, {"index", ids.size()}, {"timeBase", timeBaseName(track.base)}};
+					if (!track.name.empty())
+						parameters["name"] = track.name;
+					CommandContext inner(parameters, &context);
+					ids.push_back(m_edits.at("track.add").handler(project, inner).at("track").at("id").get<ObjectId>());
+					for (const auto& [row, marker] : track.markers)
+					{
+						Json markerParameters = marker;
+						markerParameters["track"] = ids.back();
+						CommandContext markerContext(markerParameters, &context);
+						try
+						{
+							addMarker(project, markerContext, ids.back());
+						}
+						catch (const CommandError& error)
+						{
+							throw CommandError("row " + std::to_string(row) + ": " + error.what());
+						}
+						++count;
+					}
+				}
+				const ObjectId keep = (active != 0 || ids.empty()) ? active : ids.front();
+				if (keep != 0)
+				{
+					const Json parameters = {{"track", keep}};
+					CommandContext inner(parameters, &context);
+					activateTrack(project, inner);
+				}
+				return Json{{"tracks", ids}, {"markers", count}};
+			});
 
 		add(engine,
 			{"marker.list", 1,

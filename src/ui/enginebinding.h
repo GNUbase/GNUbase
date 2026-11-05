@@ -7,9 +7,11 @@
 
 #include <atomic>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 
@@ -53,7 +55,8 @@ namespace gnubase::ui
 		explicit EngineBinding(
 			engine::Engine& engine, std::function<void()> woken = {}, std::function<void()> handled = {});
 
-		// Sends a command. done runs in update() with its result; without done, a failure is logged.
+		// Sends a command. done runs in update() with its result; without done, a failure is logged. A command that
+		// isn't a query sends the steps that wait (sendStep) first, so that it comes after them, as the user did them.
 		void send(std::string command, engine::Json parameters = engine::Json::object(),
 			std::function<void(const engine::Result&)> done = {});
 
@@ -66,8 +69,32 @@ namespace gnubase::ui
 		// "gesture" parameter of its change event, ui/widgets.h): a history.transaction named description whose merge
 		// key is what the gesture changes (e.g. "channel 5 volume") and the gesture, so that a drag, wheel turns or a
 		// held arrow key are one undo step. With gesture 0 the commands are a step of their own.
+		// The steps of one thing go one at a time (#716): while one is in flight the next waits, and a newer step of
+		// the same gesture replaces the one waiting, so that a fast drag sends its newest value whenever the engine
+		// has answered instead of piling up commands. done runs for every step sent; a step replaced before it was
+		// sent is dropped with its done.
 		void sendStep(int gesture, const std::string& what, std::string description, engine::Json commands,
 			std::function<void(const engine::Result&)> done = {});
+
+		// Whether steps of what (sendStep) are in flight or waiting. Until they aren't, the engine's values for what
+		// are older than the control that sent them, so a view leaves the control as it is (#716); the engine's
+		// events for the last step, and its value then, come after.
+		bool sending(const std::string& what) const;
+
+		// How many results and events update() has handed on, counting the one being handed on: a view that shows
+		// what an answer said later, rather than in its handler, keeps this with it to ask ahead().
+		uint64_t handed() const { return m_handed; }
+
+		// Whether the control that sends the steps of what is ahead of the engine's answer that update() handed on as
+		// handed() returned read: a step of it is on its way, or the last one that the engine took was answered after
+		// that answer. A refused step changes nothing, so it doesn't count.
+		bool ahead(const std::string& what, uint64_t read) const;
+
+		// A name for one view to begin the whats of its steps with, e.g. "mixer 3 ", a new one for each call. Views
+		// that show the same value, such as two mixers and the inspector, send their steps under names of their own,
+		// so only the view whose control sends leaves that control as it is, and the others show each step the engine
+		// took (#716).
+		std::string stepOwner(const std::string& view) { return view + " " + std::to_string(++m_owners) + " "; }
 
 		// How many commands of that name were sent and their results not handed on yet, e.g. for tests of how many
 		// queries a view keeps open.
@@ -122,6 +149,24 @@ namespace gnubase::ui
 			bool quiet; // done draws what it changed itself (sendQuietly)
 		};
 
+		// A step of sendStep, until it is sent.
+		struct Step
+		{
+			std::string merge;
+			std::string description;
+			engine::Json commands;
+			std::function<void(const engine::Result&)> done;
+		};
+
+		// The steps of one thing: the dones of those in flight, in order, those that wait, and when the engine last
+		// took one.
+		struct Steps
+		{
+			std::deque<std::function<void(const engine::Result&)>> inFlight;
+			std::deque<Step> waiting;
+			uint64_t taken = 0; // m_handed when its result was handed on
+		};
+
 		Subscription follow(std::function<void()> read);
 		void end(uint64_t id) noexcept;
 		// Each returns whether handlers took the message.
@@ -129,6 +174,11 @@ namespace gnubase::ui
 		bool dispatch(const engine::Event& event);
 		// Draws the element's window in the shell's step (Rml::Context::RequestNextUpdate).
 		static void redraw(Rml::Element* shows);
+		void sendWaitingSteps(const std::string& before);
+		void transmit(
+			std::string command, engine::Json parameters, std::function<void(const engine::Result&)> done, bool quiet);
+		void sendNextStep(const std::string& what);
+		void answerStep(const std::string& what, const engine::Result& result);
 
 		std::atomic<bool> m_woken{false}; // woken was called and update() hasn't run since
 		engine::Client m_client;
@@ -137,6 +187,10 @@ namespace gnubase::ui
 		std::map<uint64_t, Handler> m_handlers;
 		std::map<uint64_t, Waiting> m_resultHandlers; // onResult's, by subscription
 		std::map<uint64_t, std::function<void()>> m_watches;
+		std::map<std::string, Steps> m_steps; // sendStep's, by what they change; entries are never erased
+		std::set<std::string> m_queries;      // the engine's commands that only read
+		uint64_t m_handed = 0;
+		uint64_t m_owners = 0; // stepOwner's
 		uint64_t m_nextId = 1;
 	};
 }
