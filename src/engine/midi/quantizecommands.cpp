@@ -433,16 +433,18 @@ namespace gnubase::engine::midi
 		}
 
 		// After a preset command changed presets, which can change the preset shown without changing the settings:
-		// remembers the preset named remember if it has the project's settings, forgets the one remembered if it no
-		// longer has them, and announces quantize.changed if the preset shown changed from before's.
+		// forgets the preset remembered if it no longer has the project's settings, remembers the preset named
+		// remember if it has them and isn't the one shown anyway, and announces quantize.changed if the preset shown
+		// changed from before's. So the project, which saves the name, changes only when the preset shown does.
 		void presetsChanged(ProjectModel& model, const PresetLibrary& presets, const Json& before,
 			CommandContext& context, const std::string& remember = {})
 		{
 			const Project& project = model.project();
-			if (!remember.empty() && presets.has(remember, project.quantize))
-				model.setQuantizePreset(remember);
-			else if (!presets.has(project.quantizePreset, project.quantize))
-				model.setQuantizePreset({});
+			std::string name = presets.has(project.quantizePreset, project.quantize) ? project.quantizePreset : std::string();
+			if (!remember.empty() && presets.has(remember, project.quantize) &&
+				presets.shown(project.quantize, name) != remember)
+				name = remember;
+			model.setQuantizePreset(std::move(name));
 			Json result = settingsResult(project, presets);
 			if (result != before)
 				context.emit("quantize.changed", std::move(result));
@@ -556,7 +558,8 @@ namespace gnubase::engine::midi
 				"The project's quantize settings (see quantize.set), the preset they are and whether auto quantize is "
 				"on. Among presets with equal settings, preset is the one last chosen with quantize.set, saved or "
 				"renamed while the settings are its own, else the first of the user's, else the factory preset; null "
-				"if no preset has the settings. quantize.changed announces the same whenever it changes.",
+				"if no preset has the settings. quantize.changed announces the same whenever it changes. The project "
+				"saves it, so a preset command that changes it changes the project (see project.revision).",
 				objectSchema({}), settingsResultSchema, true},
 			[&model, presets](CommandContext&) { return settingsResult(model.project(), *presets); });
 		model.addEdit(engine,
@@ -666,7 +669,9 @@ namespace gnubase::engine::midi
 				"Makes a groove preset from a MIDI part's rhythm: a groove position at every note start, with the "
 				"highest velocity and the longest length of the notes there. The groove is length ticks long, by "
 				"default the part's length, and the preset is named name, by default after the part. The groove's "
-				"origin is the part's start, so it repeats in phase with the part.",
+				"origin is the part's start, so it repeats in phase with the part. Like quantize.savePreset, it "
+				"replaces the user's preset of that name, and quantize.changed announces when another preset is the "
+				"one the project's settings are (see quantize.get).",
 				objectSchema({{"part", idSchema}, {"name", stringSchema}, {"length", idSchema}}, {"part"}),
 				presetResult, false},
 			[presets, &model](CommandContext& context)

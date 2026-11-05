@@ -8,10 +8,13 @@ Quantizing notes to grids and grooves (#132).
   engine reports it: `quantize.get` and `quantize.changed` have `preset`, the preset last chosen with `quantize.set`,
   saved or renamed while the settings are its own (`Project::quantizePreset`), else the first of the user's presets with
   the settings, else the factory one, or null for none. The project forgets the preset once the settings change, so
-  changing them back shows the user's preset first. Saving, renaming or removing a preset can change the one shown
-  without changing the settings: then those commands announce `quantize.changed` too. The name is saved with the
-  project, as only a name: where the user has no such preset, or it has other settings, another preset with the settings
-  shows.
+  changing them back shows the user's preset first. Saving, renaming or removing a preset, or extracting a groove, can
+  change the one shown without changing the settings: then those commands announce `quantize.changed` too. The name is
+  saved with the project, as only a name: where the user has no such preset, or it has other settings, another preset
+  with the settings shows. So a preset command that changes the preset shown changes the project: it advances
+  `project.revision` without an undo step (`ProjectModel::setQuantizePreset`), so the project counts as modified, asks
+  to be saved when it closes and is auto saved. One that leaves the preset shown as it was leaves the project as it was:
+  a preset saved with the settings that already shows isn't remembered again.
 
 ## In the UI
 

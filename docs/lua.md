@@ -3464,7 +3464,7 @@ Returns:
 
 #### `gnubase.quantize.extractGroove`
 
-Makes a groove preset from a MIDI part's rhythm: a groove position at every note start, with the highest velocity and the longest length of the notes there. The groove is length ticks long, by default the part's length, and the preset is named name, by default after the part. The groove's origin is the part's start, so it repeats in phase with the part.
+Makes a groove preset from a MIDI part's rhythm: a groove position at every note start, with the highest velocity and the longest length of the notes there. The groove is length ticks long, by default the part's length, and the preset is named name, by default after the part. The groove's origin is the part's start, so it repeats in phase with the part. Like quantize.savePreset, it replaces the user's preset of that name, and quantize.changed announces when another preset is the one the project's settings are (see quantize.get).
 
 Parameters:
 
@@ -3492,7 +3492,7 @@ Returns:
 
 #### `gnubase.quantize.get`
 
-The project's quantize settings (see quantize.set), the preset they are and whether auto quantize is on. Among presets with equal settings, preset is the one last chosen with quantize.set, saved or renamed while the settings are its own, else the first of the user's, else the factory preset; null if no preset has the settings. quantize.changed announces the same whenever it changes.
+The project's quantize settings (see quantize.set), the preset they are and whether auto quantize is on. Among presets with equal settings, preset is the one last chosen with quantize.set, saved or renamed while the settings are its own, else the first of the user's, else the factory preset; null if no preset has the settings. quantize.changed announces the same whenever it changes. The project saves it, so a preset command that changes it changes the project (see project.revision).
 
 Only reads; changes nothing.
 

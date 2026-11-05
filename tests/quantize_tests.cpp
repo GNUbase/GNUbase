@@ -965,6 +965,13 @@ TEST_CASE("every client sees one preset for the settings: the one last set, save
 		CHECK(run(f.client, "quantize.set", {{"settings", {{"grid", "1/16"}, {"strength", 1.0}}}}).at("preset") ==
 			"Sixteenths");
 	}
+	SECTION("of the user's presets with the settings, the first one shows")
+	{
+		run(f.client, "quantize.savePreset", {{"name", "Later"}});
+		CHECK(run(f.client, "quantize.set", {{"preset", "Later"}}).at("preset") == "Later");
+		run(f.client, "quantize.set", {{"settings", {{"grid", "1/8"}}}});
+		CHECK(run(f.client, "quantize.set", {{"settings", {{"grid", "1/16"}}}}).at("preset") == "Sixteenths");
+	}
 	SECTION("a preset given with changed settings isn't the one shown")
 	{
 		CHECK(run(f.client, "quantize.set", {{"preset", "1/8"}, {"settings", {{"strength", 0.5}}}}).at("preset") ==
@@ -1109,9 +1116,13 @@ TEST_CASE("a preset command that changes the preset shown changes the project, w
 	{
 		run(f.client, "quantize.set", {{"preset", "Drums"}});
 		const ObjectId other = f.addPart(quarters(8));
-		f.addNotes(other, {quarters(8), quarters(93, 10)});
+		f.addNotes(other, {0, quarters(13, 10)});
 		run(f.client, "project.save", {{"path", file}});
+		quantizeChanges(f.client);
 		run(f.client, "quantize.extractGroove", {{"part", other}, {"name", "Drums"}});
+		const std::vector<Json> changes = quantizeChanges(f.client);
+		REQUIRE(changes.size() == 1);
+		CHECK(changes[0].at("preset") == nullptr);
 		CHECK(shownPreset(f.client) == nullptr);
 		reopened(nullptr);
 	}
