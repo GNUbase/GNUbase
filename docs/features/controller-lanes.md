@@ -20,13 +20,14 @@ key editor's tools edit; lane presets, the line tool's modes and Auto Select Con
   copies of a part choose apart. It is also the same on every pass of a cycle.
 - **`note.apply`** (pp. 1171, 1173) makes it permanent: `what: probability` removes the notes that don't play and
   gives the others a probability of 1; `velocityVariance` writes the velocity they play with and a variance of 0. For
-  the notes named, by default all of the part's. One undo step.
+  the notes named, by default all of the part's. One undo step. Shared copies share their notes, so Apply in one copy
+  applies that copy's choice to every copy: the others then play what it played, not their own choice from before.
 - **`controller.line`** (p. 1186) draws on a lane: `lane` is `{type, number, channel}`, `from` and `to` are positions
   in the part and values, `mode` is `line`, `parabola` (with `reverse` fast first), or `sine`, `triangle` and `square`,
   which go from the start value to the end value and back every `period` ticks. On a note lane the notes starting in
-  the range (or those of `notes`) take the value at their position; on a controller lane the lane's events in the
-  range go and new ones come every `density` ticks and at the end. Period and density default to the quantize grid.
-  One undo step.
+  the range (or those of `notes`) take the value at their position; on a controller lane the lane's events of the
+  channel in the range go and new ones come every `density` ticks and at the end, at most 65536 events. Period and
+  density default to the quantize grid. `to` lies no further than the part's end. One undo step.
 
 **Editor views** (`src/engine/document/editors.cpp`) have the lanes, view state like the rest of a view:
 
@@ -63,9 +64,12 @@ and on its time axis. It shows the project and the view as the key editor hands 
 ```
 
 Code places and sizes the bars and steps in percent of their area; `resources/styles/controllerlanes.rcss` lays the
-lanes out and the themes color them (`tools/skin/generate.py`). A lane's value goes from 0 at its bottom to 1 at its
-top; the velocity variance's 0 is in the middle, a program change's 0-1 is program 0-127. A poly pressure lane takes
-the pitch of the first selected note.
+lanes out and the themes color them (`tools/skin/generate.py`), play probability and velocity variance bars dashed
+(`lane-kind`, pp. 1169, 1171). A lane's value goes from 0 at its bottom to 1 at its top; the velocity variance's 0 is
+in the middle, a program change's 0-1 is program 0-127. A poly pressure lane takes the pitch of the first selected
+note. A lane shows the events of every MIDI channel: painting and the line tool replace those of every channel in
+their range, and the new events get the channel of the lane's first event there, or else of its first event in the
+part, or else channel 0.
 
 | Tool | On a lane | Reference |
 |---|---|---|
@@ -77,6 +81,11 @@ the pitch of the first selected note.
 - **Auto Select Controllers** is a button of the key editor's toolbar (`.key-input[setting=autoSelectControllers]`).
   Selected controller events move with the notes that the object selection tool moves (p. 1188).
 - **Bars are thin**: a press on a note lane that misses a bar takes the note starting nearest in the grid cell.
+- **Gestures**: while a drag goes on the lanes hear the mouseup in the whole document, so a drag released outside the
+  lanes ends there, with its effect at that point. A left press anywhere in the document while a drag goes on means its
+  mouseup never came (released outside the window): the drag ends without its effect.
+- **Rendering**: `show` keeps the view and the parts it shows, not the whole project, and indexes the parts and the
+  selection once, so each lane's items take a pass over the parts' notes or events.
 
 ## Not yet
 
@@ -99,10 +108,16 @@ display; the selection rectangle on lanes; the info line for controller events; 
   velocities, for named notes, with undo; `controller.line`'s line, parabola (and reversed), sine, triangle and square
   on a controller lane, replacing only that lane's events in the range, a program change lane, its errors; on note
   lanes for velocities, off velocities, probabilities and variances, named notes and undo; events it draws playing
-  back through `midi.capture`; the views' lanes, `showLanes`, `controllerSelection` and Auto Select Controllers.
+  back through `midi.capture`; `controller.line` refusing positions past the part's end, also on a linear track, and
+  lines of more than 65536 events; `note.apply` in a shared copy; the views' lanes, `showLanes`,
+  `controllerSelection` and Auto Select Controllers.
 - `tests/controllerlanes_ui_tests.cpp` drives the app with `ui::Automation`: velocity bars at their notes, dragged,
   painted and drawn with the line tool; a lane from the Create Controller Lane menu, events drawn, painted, selected,
-  dragged and erased; the line tool's line and square modes from its menu; Show Used Controllers, a lane's type,
-  Select All Events on Lane, Remove This Lane, play probability drawn, applied and reset, Show/Hide and Show Velocity
-  Lane Only; Auto Select Controllers with a note moved; a preset saved with Add Preset and loaded; events drawn on a
-  lane playing back.
+  dragged and erased; the line tool's line, square, parabola, sine, triangle and Paint modes from its menu, which
+  shows only after the second click; Ctrl painting only where the mouse went; poly pressure lanes taking the selected
+  note's pitch and program change lanes; Show Used Controllers, a lane's type, Select All Events on Lane, Remove This
+  Lane, play probability drawn, applied and reset, Apply and Reset MIDI Velocity Variance over two parts as one undo
+  step, Show/Hide and Show Velocity Lane Only; the line tool and painting on a lane whose events are on another
+  channel; drags released outside the lanes and never released; Auto Select Controllers with a note moved; a preset
+  saved with Add Preset, loaded and removed with Remove Preset; events drawn on a lane playing back.
+  `tests/uithemes_tests.cpp`: every theme draws play probability and velocity variance bars dashed.
