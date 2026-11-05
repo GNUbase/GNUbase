@@ -145,8 +145,8 @@ namespace
 					for (const Json& each : all)
 					{
 						lanes = std::max(lanes, each.at("lane").get<int>() + 1);
-						range = std::max(range,
-							(each.at("position").get<double>() + each.at("length").get<double>()) / g_second);
+						range = std::max(
+							range, (each.at("position").get<double>() + each.at("length").get<double>()) / g_second);
 					}
 					if (elements(".ape-lane").size() != static_cast<size_t>(lanes) + 1)
 						return false;
@@ -229,8 +229,8 @@ namespace
 		ui::Target toolbar(const ui::Target& below)
 		{
 			const Json shown = box(".midi-editor-toolbar");
-			const auto y = static_cast<int>(
-				std::lround(shown.at("y").get<double>() + (shown.at("height").get<double>() / 2.0)));
+			const auto y =
+				static_cast<int>(std::lround(shown.at("y").get<double>() + (shown.at("height").get<double>() / 2.0)));
 			return {"", 0, ui::Point{pointOf(below).x, y}};
 		}
 
@@ -239,7 +239,8 @@ namespace
 		{
 			const Json shown = box(".midi-editor-toolbar .spacer");
 			return {"", 0,
-				ui::Point{static_cast<int>(std::lround(shown.at("x").get<double>() + shown.at("width").get<double>() - 5)),
+				ui::Point{
+					static_cast<int>(std::lround(shown.at("x").get<double>() + shown.at("width").get<double>() - 5)),
 					pointOf(toolbar(at(0.0, 0))).y}};
 		}
 
@@ -249,7 +250,8 @@ namespace
 		Json ran(const std::string& command)
 		{
 			Json found = Json::array();
-			for (const Json& each : app.call("engine.commandLog").at("commands"))
+			const Json log = app.call("engine.commandLog");
+			for (const Json& each : log.at("commands"))
 				if (each.at("command") == command)
 					found.push_back(each);
 			return found;
@@ -579,8 +581,8 @@ TEST_CASE("a gesture released outside the audio part editor ends there", "[ui]")
 	// The play tool auditions until the mouse goes up over the toolbar.
 	ui::EngineBinding binding(f.app.engine());
 	std::vector<std::string> modes;
-	const ui::Subscription subscription = binding.on(
-		"audition.changed", [&](const engine::Event& event) { modes.push_back(event.data.at("mode").get<std::string>()); });
+	const ui::Subscription subscription = binding.on("audition.changed",
+		[&](const engine::Event& event) { modes.push_back(event.data.at("mode").get<std::string>()); });
 	f.tool("play");
 	f.drag(f.at(1.25, 0), f.toolbar(f.at(1.25, 0)));
 	REQUIRE(f.app.waitUntil(
@@ -611,8 +613,8 @@ TEST_CASE("a press in the window ends a gesture of the audio part editor whose m
 	// The play tool's audition ends with the next press.
 	ui::EngineBinding binding(f.app.engine());
 	std::vector<std::string> modes;
-	const ui::Subscription subscription = binding.on(
-		"audition.changed", [&](const engine::Event& event) { modes.push_back(event.data.at("mode").get<std::string>()); });
+	const ui::Subscription subscription = binding.on("audition.changed",
+		[&](const engine::Event& event) { modes.push_back(event.data.at("mode").get<std::string>()); });
 	f.tool("play");
 	f.press(f.at(1.25, 0));
 	REQUIRE(f.app.waitUntil(

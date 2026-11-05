@@ -193,13 +193,13 @@ TEST_CASE("editor.set refuses notes of audio parts and shows the tracks of a con
 	CHECK(f.view().at("parts") == Json::array({audioPart}));
 
 	// showTracks shows the parts of the content given with it: the key editor's MIDI parts.
-	const Json shown = f.call(
-		"editor.set", {{"editor", "window"}, {"parts", {keysPart}}, {"content", "key"}, {"showTracks", {bass}}});
+	const Json shown =
+		f.call("editor.set", {{"editor", "window"}, {"parts", {keysPart}}, {"content", "key"}, {"showTracks", {bass}}});
 	CHECK(shown.at("content") == "key");
 	CHECK(ids(shown.at("parts")) == std::vector<uint64_t>{keysPart, bassPart});
 	// And the other way round, the audio part editor's audio parts.
-	const Json back = f.call("editor.set",
-		{{"editor", "window"}, {"exclusive", true}, {"content", "audioPart"}, {"showTracks", {vocals}}});
+	const Json back = f.call(
+		"editor.set", {{"editor", "window"}, {"exclusive", true}, {"content", "audioPart"}, {"showTracks", {vocals}}});
 	CHECK(back.at("content") == "audioPart");
 	CHECK(ids(back.at("parts")) == std::vector<uint64_t>{audioPart});
 }
