@@ -94,6 +94,23 @@ namespace gnubase::ui
 			return key == 1 || key == 3 || key == 6 || key == 8 || key == 10;
 		}
 
+		// A key of the keyboard beside the grid of pitch rows, top and height in rows from the keyboard's top. A black
+		// key is its pitch's row. The 7 white keys of an octave share its 12 rows equally, as on a piano, from the
+		// bottom of the C's row up; the keyboard's top cuts the last octave's highest white key.
+		std::pair<double, double> keyRows(int pitch)
+		{
+			if (black(pitch))
+				return {static_cast<double>(g_pitches - 1 - pitch), 1.0};
+			constexpr double share = 12.0 / 7.0;
+			const int octave = pitch - (pitch % 12);
+			int white = 0;
+			for (int each = octave; each < pitch; ++each)
+				white += black(each) ? 0 : 1;
+			const double bottom = octave + (white * share);
+			const double top = std::min(bottom + share, static_cast<double>(g_pitches));
+			return {g_pitches - top, top - bottom};
+		}
+
 		std::string attribute(const Rml::Element& element, const char* name)
 		{
 			return element.GetAttribute<Rml::String>(name, "");
@@ -180,16 +197,19 @@ namespace gnubase::ui
 				 {"releaseVelocity", "Off Velocity"}, {"channel", "Channel"}})
 			info += std::string(R"(<div class="info-field" info-field=")") + field + R"("><span class="info-label">)" +
 				label + R"(</span><textdisplay class="display" field=")" + field + R"("/></div>)";
-		// The keyboard and the rows of the grid, from the highest pitch down; the C keys are labelled (p. 1204).
-		std::string keys;
+		// The rows of the grid from the highest pitch down, and the piano keyboard beside them: the white keys, then
+		// the black keys over them. The C keys are labelled (p. 1204).
+		std::string whiteKeys;
+		std::string blackKeys;
 		std::string rows;
 		for (int pitch = g_pitches - 1; pitch >= 0; --pitch)
 		{
 			const std::string shade = black(pitch) ? " black" : "";
-			keys += R"(<div class="key-editor-key)" + shade + R"(" pitch=")" + std::to_string(pitch) + R"(">)" +
-				(pitch % 12 == 0 ? engine::midi::pitchName(pitch) : "") + "</div>";
+			(black(pitch) ? blackKeys : whiteKeys) += R"(<div class="key-editor-key)" + shade + R"(" pitch=")" +
+				std::to_string(pitch) + R"(">)" + (pitch % 12 == 0 ? engine::midi::pitchName(pitch) : "") + "</div>";
 			rows += R"(<div class="key-editor-row)" + shade + R"("/>)";
 		}
+		const std::string keys = whiteKeys + blackKeys;
 		root.SetInnerRML(R"(<div class="toolbar key-editor-toolbar">)" + tools + R"(<span class="separator"/>)" +
 			transpose + R"(<span class="separator"/>)" + inputs +
 			R"(<button id="key-length-quantize" menu="key-length-menu" title="Length Quantize"/>)"
@@ -200,6 +220,14 @@ namespace gnubase::ui
 			keys + R"(</div><div class="key-editor-grid"><div class="key-editor-rows">)" + rows +
 			R"(</div><div class="key-editor-notes"/><div class="key-editor-step-cursor off"/></div></div>)"
 			R"(<div class="controller-lanes"/>)");
+		Rml::ElementList placed;
+		root.QuerySelectorAll(placed, ".key-editor-key");
+		for (Rml::Element* key : placed)
+		{
+			const auto [top, height] = keyRows(std::stoi(attribute(*key, "pitch")));
+			key->SetProperty(Rml::PropertyId::Top, percent(top * 100.0 / g_pitches));
+			key->SetProperty(Rml::PropertyId::Height, percent(height * 100.0 / g_pitches));
+		}
 		m_lanes = std::make_unique<ControllerLanes>(binding, *root.QuerySelector(".controller-lanes"), m_name);
 		Rml::ElementDocument* document = root.GetOwnerDocument();
 		const Rml::ElementPtr holder = document->CreateElement("div");

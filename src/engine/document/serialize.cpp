@@ -867,7 +867,8 @@ namespace gnubase::engine
 			{"linkGroups", toJsonArray(project.linkGroups)}, {"virginTerritory", project.virginTerritory},
 			{"quantize", midi::toJson(project.quantize)}, {"autoQuantize", project.autoQuantize},
 			{"quantizePreset", project.quantizePreset}, {"activeMarkerTrack", project.activeMarkerTrack},
-			{"snap", toJson(project.snap)}, {"mixers", mixersJson(project.mixers)}};
+			{"snap", toJson(project.snap)}, {"mixers", mixersJson(project.mixers)},
+			{"metronome", metronome::toJson(project.metronome)}};
 		json.update(toJson(project.setup));
 		return json;
 	}
@@ -1805,6 +1806,9 @@ namespace gnubase::engine
 		for (const auto& [name, view] : mixers.items())
 			project.mixers[name] = {
 				view.value("hidden", std::vector<ObjectId>()), view.value("hiddenTypes", std::vector<std::string>())};
+		// Files from before the metronome have none; values that aren't valid keep their defaults.
+		if (const auto found = json.find("metronome"); found != json.end())
+			metronome::apply(project.metronome, *found, false);
 
 		// Without a counter, ids continue after the highest one.
 		ObjectId highest = 0;

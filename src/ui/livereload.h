@@ -10,10 +10,15 @@ namespace gnubase::ui
 	class FileInterface;
 	class Shell;
 
+	// The RmlUi event a document gets when live reload has loaded it again, just before it closes: its parameter
+	// "document" (void*) is the Rml::ElementDocument that takes its place, already in the same context and shown if
+	// it was. Code that filled the old document in, such as the docking system, fills the new one with it.
+	inline constexpr const char* g_documentReloadEvent = "documentreload";
+
 	// If a file that RmlUi read has changed since (FileInterface::changedFiles), loads every window's documents again
 	// from their files: style sheets and templates are read afresh, documents that were shown are shown again, and
 	// data models stay bound. Documents that weren't loaded from a file are left as they are. Elements made in code
-	// are lost with the old document, so documents should get their data through data models. Returns how many
-	// documents were loaded again.
+	// are lost with the old document, so documents should get their data through data models, or listen for
+	// g_documentReloadEvent. Returns how many documents were loaded again.
 	size_t reloadChangedDocuments(FileInterface& files, Shell& shell);
 }

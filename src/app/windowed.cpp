@@ -46,7 +46,7 @@ namespace gnubase::app
 	int runWindowed(const Options& options, std::ostream& out, std::ostream& err)
 	{
 		engine::Engine engine(audio::makeBackends(), std::filesystem::u8path(options.settings));
-		if (!setUpEngine(engine, options, err))
+		if (!setUpWindowedEngine(engine, options, err))
 			return g_exitSetup;
 		const std::optional<std::filesystem::path> resources = findResources();
 		if (!resources)
