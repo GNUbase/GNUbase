@@ -79,7 +79,8 @@ namespace gnubase::test
 		m_engine =
 			std::make_unique<engine::Engine>(std::move(audioBackends), m_settings.path(), std::move(midiBackends));
 		std::ostringstream problems;
-		const bool ready = app::setUpEngine(*m_engine, app::Options{}, problems); // the dummy device, the app's default
+		// The dummy device, stopped: tests render offline and start it when they need real time.
+		const bool ready = app::setUpEngine(*m_engine, app::Options{}, problems);
 		INFO(problems.str());
 		REQUIRE(ready);
 

@@ -16,6 +16,7 @@
 #include "engine/graph/graph.h"
 #include "engine/jobs/jobs.h"
 #include "engine/media/backup.h"
+#include "engine/metronome/metronomecommands.h"
 #include "engine/midi/controllerlanes.h"
 #include "engine/midi/functioncommands.h"
 #include "engine/midi/quantizecommands.h"
@@ -1184,17 +1185,7 @@ namespace gnubase::engine
 				if (input || output || send)
 					context.emit("channel.changed", {{"channel", toJson(channel)}});
 			}
-			// Link groups lose the channels that are gone and VCA faders that are gone (docs/features/link-groups.md).
-			for (auto& [id, group] : project.linkGroups)
-			{
-				const LinkGroup before = group;
-				group.channels.erase(
-					std::remove_if(group.channels.begin(), group.channels.end(), isGone), group.channels.end());
-				if (isGone(group.vca))
-					group.vca = 0;
-				if (!(group == before))
-					context.emit("linkGroup.changed", {{"group", toJson(group)}});
-			}
+			removeFromLinkGroups(project, gone, context);
 		}
 
 		// Turns a folder's group channel on or off (reference manual pp. 222, 224): a new one plays through the
@@ -1471,10 +1462,11 @@ namespace gnubase::engine
 
 		// The tracks track.removeEmpty removes (docs/features/track-list.md): audio, instrument, MIDI and marker
 		// tracks without events, parts, markers or automation, and folders without tracks, unless a channel of
-		// another track plays or sends into theirs. Group and effect tracks are where others play through, VCA
-		// tracks control channels, ruler, tempo and signature tracks hold no events. What goes can leave others
-		// empty, such as a folder that held only empty tracks or an instrument track that only empty MIDI tracks
-		// played, so it looks again until nothing more goes.
+		// another track plays or sends into theirs. Plugins in a channel's slots and an instrument track's instrument
+		// don't keep a track. Group and effect tracks are where others play through, VCA tracks control channels,
+		// ruler, tempo and signature tracks hold no events. What goes can leave others empty, such as a folder that
+		// held only empty tracks or an instrument track that only empty MIDI tracks played, so it looks again until
+		// nothing more goes.
 		std::set<ObjectId> emptyTracks(const Project& project)
 		{
 			std::set<ObjectId> holding;
@@ -1532,6 +1524,11 @@ namespace gnubase::engine
 					if (gone.count(project.trackById.at(id).parent) == 0)
 						top.push_back(id);
 				}
+			// The active marker track goes last (marker tracks are never inside a folder), so that track.remove
+			// activates a marker track that stays rather than one that goes next.
+			const auto active = std::find(top.begin(), top.end(), project.activeMarkerTrack);
+			if (active != top.end())
+				std::rotate(active, std::next(active), top.end());
 			for (const ObjectId id : top)
 			{
 				const Json parameters = {{"track", id}}; // the context keeps a reference
@@ -2296,15 +2293,25 @@ namespace gnubase::engine
 				require(!sameFile(path, media.path), "path is media file " + idText(id) + "; choose a new file");
 		}
 
-		Json relinkMedia(Project& project, CommandContext& context)
+		// media.relink; openedProject is the open project's ProjectModel::openedRevision.
+		Json relinkMedia(Project& project, CommandContext& context, uint64_t openedProject)
 		{
+			const Json& parameters = context.parameters();
+			// Files found or copied for another project don't belong to this one.
+			const bool otherProject =
+				parameters.contains("project") && parameters.at("project").get<uint64_t>() != openedProject;
 			Json relinked = Json::array();
 			Json skipped = Json::array();
-			for (const Json& entry : context.parameters().at("files"))
+			for (const Json& entry : parameters.at("files"))
 			{
 				const ObjectId id = entry.at("media").get<ObjectId>();
 				const std::string path = entry.at("path").get<std::string>();
 				require(!path.empty(), "path must not be empty");
+				if (otherProject)
+				{
+					skipped.push_back(id);
+					continue;
+				}
 				if (entry.contains("from"))
 				{
 					const auto found = project.media.find(id);
@@ -2315,6 +2322,8 @@ namespace gnubase::engine
 					}
 				}
 				MediaFile& media = find(project.media, id, "media file");
+				// An entry with length is skipped, not refused, if its file went or doesn't fit (any more).
+				const bool checked = entry.contains("length");
 				AudioFileInfo info;
 				try
 				{
@@ -2322,7 +2331,17 @@ namespace gnubase::engine
 				}
 				catch (const AudioFileError& error)
 				{
-					throw CommandError(error.what());
+					if (!checked)
+						throw CommandError(error.what());
+					skipped.push_back(id);
+					continue;
+				}
+				if (checked &&
+					(info.sampleRate != media.sampleRate || info.channels != media.channels ||
+						info.frames != entry.at("length").get<int64_t>()))
+				{
+					skipped.push_back(id);
+					continue;
 				}
 				require(info.sampleRate == media.sampleRate && info.channels == media.channels,
 					path + " has " + std::to_string(info.channels) + " channels at " +
@@ -2913,9 +2932,7 @@ namespace gnubase::engine
 			{"poolFolder.set", "Change pool folder"},
 			{"poolFolder.remove", "Remove pool folder"},
 			{"pool.removeUnused", "Remove unused media"},
-			{"media.locate", "Locate missing files"},
 			{"media.removeMissing", "Remove missing files"},
-			{"media.conform", "Conform files"},
 		};
 
 		// Empty for commands without a fixed name, such as transactions.
@@ -3060,6 +3077,7 @@ namespace gnubase::engine
 			[this, action = std::move(action), handler = std::move(handler)](CommandContext& context)
 			{
 				Project before = m_project;
+				const bool followsEvents = m_automationFollowsEvents; // automation.set in a transaction changes it
 				Json result;
 				try
 				{
@@ -3069,6 +3087,7 @@ namespace gnubase::engine
 				catch (...)
 				{
 					m_project = std::move(before);
+					m_automationFollowsEvents = followsEvents;
 					throw;
 				}
 				if (action.empty()) // a transaction
@@ -3637,7 +3656,8 @@ namespace gnubase::engine
 		add(engine,
 			{"track.remove", 1,
 				"Removes a track with its channel, events, parts or markers; a folder also removes the tracks inside "
-				"it. "
+				"it. The channel leaves its link group, which goes if it has no channels left (linkGroup.removed); a "
+				"VCA track's group links the volume again (linkGroup.changed). "
 				"Without the active marker track, the topmost marker track becomes the active one.",
 				objectSchema({{"track", idSchema}}, {"track"}), noResult, false},
 			removeTrack);
@@ -3646,7 +3666,9 @@ namespace gnubase::engine
 				"Removes the empty tracks (Remove Empty Tracks, reference manual p. 213): audio, instrument, MIDI and "
 				"marker tracks without events, parts, markers or automation, and folders without tracks, unless "
 				"another track's channel plays or sends into theirs (an instrument track a MIDI track plays, a "
-				"folder's group channel). Group, effect, VCA, ruler, tempo and signature tracks stay. What it removes "
+				"folder's group channel). Plugins in a channel's slots and an instrument track's instrument don't keep "
+				"a track. Group, effect, VCA, ruler, tempo and signature tracks stay. If the active marker track goes, "
+				"the topmost marker track that stays becomes the active one. What it removes "
 				"can leave others empty, such as a folder that held only empty tracks, so it looks again until no "
 				"empty track is left. One undo step; none if nothing is empty. Returns the tracks removed, from top "
 				"to bottom, with those inside removed folders.",
@@ -3785,25 +3807,29 @@ namespace gnubase::engine
 				const MediaFile& media = project.media.at(result.at("media").at("id").get<ObjectId>());
 				if (context.parameters().value("copy", false) && !isInside(media.path, mediaFolder.parent_path()))
 					result["job"] = startMediaCopy(jobs, "media.add", {MediaCopy{media.id, media.path, {}}},
-						mediaFolder, "Copy media file into the project");
+						mediaFolder, "Copy media file into the project", m_openedRevision);
 				return result;
 			});
 		add(engine,
 			{"media.relink", 1,
 				"Points media files at other files, such as copies, as one undo step. Each new file must be an audio "
 				"file with the media file's sample rate and channel count. An entry with from applies only if the "
-				"media file is still there and still points at from; otherwise it is skipped. Returns the media "
-				"files it relinked and the ones it skipped.",
-				objectSchema(
-					{{"files",
-						arraySchema(objectSchema({{"media", idSchema}, {"path", stringSchema}, {"from", stringSchema}},
-							{"media", "path"}))}},
+				"media file is still there and still points at from; one with length only if its new file can be "
+				"read, fits and has that many sample frames; otherwise it is skipped. With project, every entry is "
+				"skipped unless that project is still open (project.revision's project). Returns the media files it "
+				"relinked and the ones it skipped.",
+				objectSchema({{"files",
+								  arraySchema(objectSchema({{"media", idSchema}, {"path", stringSchema},
+															   {"from", stringSchema}, {"length", integerSchema}},
+									  {"media", "path"}))},
+								 {"project", integerSchema}},
 					{"files"}),
 				{{"type", "object"},
 					{"properties", {{"relinked", arraySchema(idSchema)}, {"skipped", arraySchema(idSchema)}}},
 					{"required", {"relinked", "skipped"}}},
 				false},
-			relinkMedia);
+			[this](Project& project, CommandContext& context)
+			{ return relinkMedia(project, context, m_openedRevision); });
 		add(engine,
 			{"media.convert", 1,
 				"Converts a media file to another sample rate (by default the project's), writes the result to path as "
@@ -3964,12 +3990,13 @@ namespace gnubase::engine
 		registerSlotCommands(engine);
 		midi::registerQuantizeCommands(*this, engine);
 		midi::registerFunctionCommands(*this, engine);
+		metronome::registerMetronomeCommands(*this, engine);
 		midi::registerControllerLaneCommands(*this, engine);
 		registerMidiFileCommands(engine);
 		registerAudioFileCommands(engine, jobs);
 		registerRecordingCommands(engine);
 		registerRenderCommands(engine);
-		registerPoolCommands(engine);
+		registerPoolCommands(engine, jobs);
 		registerFadeCommands(engine);
 		registerVolumeCurveCommands(*this, engine);
 		registerEventEditCommands(engine);
@@ -3979,7 +4006,7 @@ namespace gnubase::engine
 		registerChannelSettingsCommands(*this, engine);
 		registerEditorCommands(*this, engine);
 		registerSampleEditorCommands(*this, engine);
-		registerHitpointCommands(*this, engine);
+		registerHitpointCommands(*this, engine, jobs);
 		registerHistoryCommands(engine);
 		registerMediaFolderCommands(engine, jobs);
 		registerProjectFileCommands(engine);
@@ -4080,19 +4107,31 @@ namespace gnubase::engine
 				"it and the last point's after it.",
 				objectSchema({}), settings, true},
 			[settingsJson](CommandContext&) { return settingsJson(); });
-		addEdit(engine,
-			{"automation.set", 1,
-				"Changes the automation settings (see automation.get). followsEvents is a setting, so it stays when a "
-				"new project starts; virginTerritory is saved with the project. Neither is an undo step.",
-				objectSchema({{"followsEvents", booleanSchema}, {"virginTerritory", booleanSchema}}), settings, false},
-			"Change automation settings",
-			[this, settingsJson](Project& project, CommandContext& context)
+		// Only a change of virginTerritory changes the project (project.revision): followsEvents is the user's. A
+		// transaction can run it, and if the transaction fails, addEdit puts both back.
+		CommandInfo setInfo{"automation.set", 1,
+			"Changes the automation settings (see automation.get). followsEvents is a setting, so it stays when a new "
+			"project starts; virginTerritory is saved with the project. Neither is an undo step, and run on its own "
+			"only a change of virginTerritory changes the project (project.revision); in a transaction, the "
+			"transaction counts as a change.",
+			objectSchema({{"followsEvents", booleanSchema}, {"virginTerritory", booleanSchema}}), settings, false};
+		Handler set = [this, settingsJson](Project& project, CommandContext& context)
+		{
+			const Json& parameters = context.parameters();
+			m_automationFollowsEvents = parameters.value("followsEvents", m_automationFollowsEvents);
+			project.virginTerritory = parameters.value("virginTerritory", project.virginTerritory);
+			Json result = settingsJson();
+			context.emit("automation.changed", result);
+			return result;
+		};
+		m_edits[setInfo.name] = {setInfo, set};
+		engine.registerCommand(std::move(setInfo),
+			[this, set = std::move(set)](CommandContext& context)
 			{
-				const Json& parameters = context.parameters();
-				m_automationFollowsEvents = parameters.value("followsEvents", m_automationFollowsEvents);
-				project.virginTerritory = parameters.value("virginTerritory", project.virginTerritory);
-				Json result = settingsJson();
-				context.emit("automation.changed", result);
+				const bool virginTerritory = m_project.virginTerritory;
+				Json result = set(m_project, context);
+				if (m_project.virginTerritory != virginTerritory)
+					publish();
 				return result;
 			});
 	}
@@ -4146,8 +4185,8 @@ namespace gnubase::engine
 					if (!isInside(media.path, file.parent_path()))
 						files.push_back({id, media.path, {}});
 				return Json{{"job",
-					startMediaCopy(
-						jobs, "media.prepareArchive", std::move(files), mediaFolderFor(file), "Prepare archive")}};
+					startMediaCopy(jobs, "media.prepareArchive", std::move(files), mediaFolderFor(file),
+						"Prepare archive", m_openedRevision)}};
 			});
 		addControl(engine,
 			{"project.revision", 1,

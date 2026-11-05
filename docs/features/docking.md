@@ -66,6 +66,11 @@ again.
   (architecture.md, "UI shell"). Its bounds are read twice a second and kept when they changed.
 - **Contents.** Rebuilding a tab group, e.g. after a tab moved, keeps what the panels that stay in it show. A panel
   that moves to a window, or whose tab is hidden, gets its element made again where it shows next.
+- **Live reload.** When live reload (Debug builds, `ui/livereload.h`) loads a docking window's or a panel window's
+  document again, the document gets `ui::g_documentReloadEvent` with the new one just before it closes. The docking
+  system then releases what the panels' functions returned for the old document, before its elements go, and attaches
+  the new one in its place: tab groups, tab menus, listeners and the panels' contents made again, with the layout as
+  it was. Only another document of the same window takes the old one's place, whatever else the event names.
 
 ## Setup panes and sections
 
@@ -173,8 +178,9 @@ and a panel in a window of its own, whose document has no zones. Ctrl+Tab, Alt+T
 Sections in a panel that shows in a window of its own keep the document's order; the Channel zone's contents (p. 73)
 with the channel strip (#107), shown as its zone's one tab until then; a theme look for tabs at the bottom, whose
 active tab has its marker on the side away from the panels; dragging a tab out of its zone to open it in a window; the
-editor in the lower zone taking the focus when it opens (p. 100), once editors open there; and live reload keeps the
-panels' contents only when the app opens again.
+editor in the lower zone taking the focus when it opens (p. 100), once editors open there; and after live reload, what
+the app fills outside panels (the transport bar and its sections, the event display, the mixer, editor and transport
+panel windows) stays empty until GNUbase opens again.
 
 ## Checks
 
@@ -193,7 +199,11 @@ text field, Ctrl+Tab and Tab in an open menu left alone; a panel moved into a wi
 contents made there and gone from the zone, docked with the Dock button and by closing its window, which reopens where
 it was; `open` on a panel in a window of its own that is behind the project window, minimized, or both, which brings
 its window to the front, restored and with the focus, and leaves the layout alone (on the fake window system, which
-knows the windows' order, minimized state and focus); and the complete layout, with zone sizes, tab orders, hidden
+knows the windows' order, minimized state and focus); the project window's and a panel window's documents loaded
+again by live reload, from a copy of the resources, with the panels' contents released before the old elements and
+made once in the new documents, an event naming something other than a document of the window ignored, a panel window
+without `#panel-content` left empty until its panel docks, and the zone toggles, keys, splitters, tabs, tab menu and
+Dock button working there; and the complete layout, with zone sizes, tab orders, hidden
 and active tabs, strips and a panel's window, back exactly after a restart. `tests/tracklist_tests.cpp` drags the track list's divider, a resizable element's
 splitter. On a test window with sections, the setup pane shows and hides sections in every
 channel and stays open, reorders them by drag and drop between the channel's other elements, and shows and hides a

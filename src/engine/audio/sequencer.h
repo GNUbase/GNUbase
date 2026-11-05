@@ -150,8 +150,10 @@ namespace gnubase::engine
 		graph::EventBuffer& input() noexcept { return m_input; }
 
 	private:
-		// An event of its input as the modifiers play it; false if left out.
-		bool modifyInput(const midi::Modifiers& modifiers, graph::ProcessEvent& event) noexcept;
+		// An event of its input as the modifiers play it; false if left out. A second note-on for a held key whose
+		// note goes elsewhere this time sets ends to where the first one went, which still sounds: that note ends
+		// first, so that no note hangs.
+		bool modifyInput(const midi::Modifiers& modifiers, graph::ProcessEvent& event, uint16_t& ends) noexcept;
 		void play(
 			const MidiSequence& sequence, const graph::TransportSegment& segment, graph::EventBuffer& out) noexcept;
 		// Each returns false if the event buffer was full; then the note didn't start or end (though noteOn may have
@@ -200,8 +202,9 @@ namespace gnubase::engine
 		std::array<bool, g_notes> m_inputHeld{}; // notes its input sent a note-on for and no note-off since
 		// Where each note of its input went after the modifiers, as channel * 128 + pitch; g_notes: left out.
 		std::array<uint16_t, g_notes> m_inputTo{};
-		uint64_t m_random = 0;     // the random modifiers' seed for the next note of its input
-		uint64_t m_instrument = 0; // playOn: where its notes went in the graph that runs
+		std::array<bool, g_notes> m_inputDown{}; // the keys of its input, as channel * 128 + pitch, that are held
+		uint64_t m_random = 0;                   // the random modifiers' seed for the next note of its input
+		uint64_t m_instrument = 0;               // playOn: where its notes went in the graph that runs
 	};
 
 	// An instrument track's channel: its own parts' events and those of the MIDI tracks routed to it, played by its

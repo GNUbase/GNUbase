@@ -9,6 +9,8 @@
 #include "engine/engine.h"
 
 #include <algorithm>
+#include <iterator>
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
@@ -49,6 +51,20 @@ namespace gnubase::engine
 			return false;
 		}
 
+		// After a group changed: removes it if no channel is left, or announces the change. Returns the next group.
+		std::map<ObjectId, LinkGroup>::iterator keepOrRemove(Project& project,
+			std::map<ObjectId, LinkGroup>::iterator group, const LinkGroup& before, CommandContext& context)
+		{
+			if (group->second.channels.empty())
+			{
+				context.emit("linkGroup.removed", {{"group", group->first}});
+				return project.linkGroups.erase(group);
+			}
+			if (!(group->second == before))
+				context.emit("linkGroup.changed", {{"group", toJson(group->second)}});
+			return std::next(group);
+		}
+
 		// Changes a group by what the parameters have, takes its channels and its VCA fader from other groups, and
 		// checks the result. A group with a VCA fader doesn't link the volume (p. 517): giving it one turns volume off
 		// unless the parameters say otherwise, taking it away turns it back on.
@@ -87,26 +103,30 @@ namespace gnubase::engine
 			require(std::find(group.channels.begin(), group.channels.end(), group.vca) == group.channels.end(),
 				"a VCA fader can't control a link group it is in");
 
-			// A channel is in one group at most, a VCA fader controls one group at most (p. 515).
-			for (auto& [id, other] : project.linkGroups)
+			// A channel is in one group at most, a VCA fader controls one group at most (p. 515). A group that loses
+			// its last channel goes.
+			for (auto other = project.linkGroups.begin(); other != project.linkGroups.end();)
 			{
-				if (id == group.id)
-					continue;
-				const LinkGroup before = other;
-				other.channels.erase(std::remove_if(other.channels.begin(), other.channels.end(),
-										 [&group](ObjectId channel)
-										 {
-											 return std::find(group.channels.begin(), group.channels.end(), channel) !=
-												 group.channels.end();
-										 }),
-					other.channels.end());
-				if (group.vca != 0 && other.vca == group.vca)
+				LinkGroup& changed = other->second;
+				if (changed.id == group.id)
 				{
-					other.vca = 0;
-					other.volume = true;
+					++other;
+					continue;
 				}
-				if (!(other == before))
-					context.emit("linkGroup.changed", {{"group", toJson(other)}});
+				const LinkGroup before = changed;
+				changed.channels.erase(std::remove_if(changed.channels.begin(), changed.channels.end(),
+										   [&group](ObjectId channel)
+										   {
+											   return std::find(group.channels.begin(), group.channels.end(),
+														  channel) != group.channels.end();
+										   }),
+					changed.channels.end());
+				if (group.vca != 0 && changed.vca == group.vca)
+				{
+					changed.vca = 0;
+					changed.volume = true;
+				}
+				other = keepOrRemove(project, other, before, context);
 			}
 			project.linkGroups[group.id] = group;
 			for (const auto& [id, other] : project.linkGroups)
@@ -114,11 +134,24 @@ namespace gnubase::engine
 					"VCA fader " + idText(other.vca) + " would control itself");
 		}
 
+		// Link Group N, N one more than the number of groups, or the next number no group's name has.
+		std::string defaultName(const Project& project)
+		{
+			const auto taken = [&project](const std::string& name)
+			{
+				return std::any_of(project.linkGroups.begin(), project.linkGroups.end(),
+					[&name](const auto& entry) { return entry.second.name == name; });
+			};
+			for (size_t number = project.linkGroups.size() + 1;; ++number)
+				if (const std::string name = "Link Group " + std::to_string(number); !taken(name))
+					return name;
+		}
+
 		Json addGroup(Project& project, CommandContext& context)
 		{
 			LinkGroup group;
 			group.id = project.newId();
-			group.name = "Link Group " + std::to_string(project.linkGroups.size() + 1);
+			group.name = defaultName(project);
 			change(project, group, context.parameters(), context);
 			Json result = {{"group", toJson(project.linkGroups.at(group.id))}};
 			context.emit("linkGroup.added", result);
@@ -151,6 +184,34 @@ namespace gnubase::engine
 		}
 	}
 
+	void removeFromLinkGroups(Project& project, const std::vector<ObjectId>& gone, CommandContext& context)
+	{
+		const auto isGone = [&gone](ObjectId id) { return std::find(gone.begin(), gone.end(), id) != gone.end(); };
+		for (auto group = project.linkGroups.begin(); group != project.linkGroups.end();)
+		{
+			LinkGroup& changed = group->second;
+			const LinkGroup before = changed;
+			changed.channels.erase(
+				std::remove_if(changed.channels.begin(), changed.channels.end(), isGone), changed.channels.end());
+			if (changed.vca != 0 && isGone(changed.vca))
+			{
+				changed.vca = 0;
+				changed.volume = true;
+			}
+			group = keepOrRemove(project, group, before, context);
+		}
+	}
+
+	void dropLinkGroupLoops(Project& project)
+	{
+		for (auto& [id, group] : project.linkGroups)
+			if (group.vca != 0 && controlsItself(project, group.vca))
+			{
+				group.vca = 0;
+				group.volume = true;
+			}
+	}
+
 	void registerLinkGroupCommands(ProjectModel& model, Engine& engine)
 	{
 		const Json idSchema = {{"type", "integer"}};
@@ -162,7 +223,8 @@ namespace gnubase::engine
 			{"type", "object"}, {"properties", {{"group", {{"type", "object"}}}}}, {"required", {"group"}}};
 		const std::string settings =
 			"channels: the linked channels; a channel is in one link group at most, so they leave the groups they "
-			"were in. What a change to one of them passes on to the others (channel.set, unless linked is false): "
+			"were in, and a group left without channels goes (linkGroup.removed). What a change to one of them passes "
+			"on to the others (channel.set, unless linked is false): "
 			"volume (the fader, by as much as it moved), pan (likewise), mute (the mute, solo and listen buttons), "
 			"record (record enable and monitor), eq (the equalizer's changes), dynamics (the strip's: gate, compressor "
 			"and limiter), sends (the sends' changes, on by default; a channel that can't take one, such as a send to "
@@ -184,8 +246,9 @@ namespace gnubase::engine
 
 		model.addEdit(engine,
 			{"linkGroup.add", 1,
-				"Links channels in a new link group (reference manual pp. 457-459), named Link Group N unless name is "
-				"given; by default it links the volume and the sends, or with a VCA fader the sends. " +
+				"Links channels in a new link group (reference manual pp. 457-459), named Link Group N, with a number "
+				"no other group's name has, unless name is given; by default it links the volume and the sends, or "
+				"with a VCA fader the sends. " +
 					settings + " Emits linkGroup.added.",
 				schema(true), groupResult, false},
 			"Link channels", addGroup);
