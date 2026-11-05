@@ -4,6 +4,7 @@
 // Events dialog.
 #include "ui/eventdisplay.h"
 
+#include "engine/time/tempomap.h"
 #include "platform/log.h"
 
 #include <RmlUi/Core/Context.h>
@@ -142,7 +143,7 @@ namespace gnubase::ui
 		showContextMenus();
 	}
 
-	// The cycle markers of the active marker track, for the zoom presets menu; its markers, for snapping.
+	// The cycle markers of the active marker track, for the zoom presets menu.
 	void EventDisplay::requestMarkers()
 	{
 		m_binding.send("marker.list", Json::object(),
@@ -151,12 +152,8 @@ namespace gnubase::ui
 				if (alive.expired() || !result.ok())
 					return;
 				m_cycleMarkers.clear();
-				m_markers.clear();
 				for (const Json& marker : result.value.at("markers"))
 				{
-					m_markers.push_back(marker.at("positionSamples").get<int64_t>());
-					if (!marker.at("endSamples").is_null()) // position markers have no end
-						m_markers.push_back(marker.at("endSamples").get<int64_t>());
 					if (marker.at("type") != "cycle")
 						continue;
 					std::string name = marker.at("name").get<std::string>();
@@ -167,6 +164,28 @@ namespace gnubase::ui
 				}
 				showPresets();
 			});
+	}
+
+	// What attracts with snap to events besides the events (reference manual p. 106: markers are events on the marker
+	// tracks): every marker track's markers, the active one's or not, as in snap.position. Each marker's position, and
+	// a cycle marker's end, in project samples as the engine converts them, from the same project.get answer as the
+	// events, so that they never come from different revisions.
+	void EventDisplay::readMarkerMagnets(const Json& project)
+	{
+		m_markers.clear();
+		std::map<uint64_t, time::TimeBase> bases; // each track's
+		for (const Json& track : project.at("tracks"))
+			bases[track.at("id").get<uint64_t>()] =
+				track.at("timeBase") == "linear" ? time::TimeBase::Linear : time::TimeBase::Musical;
+		for (const Json& marker : project.at("markers"))
+		{
+			const time::TimeBase base = bases[marker.at("track").get<uint64_t>()];
+			const auto magnet = [this, base](const Json& position)
+			{ return time::toSamples({base, position.get<int64_t>()}, m_time.tempo, m_time.sampleRate); };
+			m_markers.push_back(magnet(marker.at("position")));
+			if (!marker.at("end").is_null()) // position markers have no end
+				m_markers.push_back(magnet(marker.at("end")));
+		}
 	}
 
 	void EventDisplay::click(Rml::Element* target)

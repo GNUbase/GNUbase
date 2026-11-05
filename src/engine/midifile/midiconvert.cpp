@@ -179,6 +179,17 @@ namespace gnubase::engine::midifile
 				file.tracks.push_back(toTrack(std::move(conductor), end));
 				for (Content& content : contents)
 					file.tracks.push_back(toTrack(std::move(content), end));
+				for (const ObjectId id : m_project.tracks)
+				{
+					if (!ownFileTrack(id))
+						continue;
+					Content markers{markerEvents(id), {}};
+					if (markers.events.empty())
+						continue;
+					markers.events.insert(markers.events.begin(),
+						{Rank::Meta, metaText(0, g_metaTrackName, m_project.trackById.at(id).name)});
+					file.tracks.push_back(toTrack(std::move(markers), end));
+				}
 				return file;
 			}
 
@@ -281,21 +292,39 @@ namespace gnubase::engine::midifile
 						events.push_back(meta(toFile(at), g_metaTimeSignature, signatureData(change.signature)));
 				}
 
-				if (m_options.markers)
+				const std::vector<Ranked> markers = markerEvents(0);
+				events.insert(events.end(), markers.begin(), markers.end());
+				return events;
+			}
+
+			// In a type 1 file, the markers of each marker track but the active one go into a file track of their
+			// own; the tempo track has the others.
+			bool ownFileTrack(ObjectId track) const
+			{
+				if (m_options.format != 1 || track == m_project.activeMarkerTrack)
+					return false;
+				const auto found = m_project.trackById.find(track);
+				return found != m_project.trackById.end() && found->second.type == TrackType::Marker;
+			}
+
+			// The markers of a marker track's file track, or with 0 the tempo track's, by position: cycle markers at
+			// their start, as in DAWproject.
+			std::vector<Ranked> markerEvents(ObjectId track) const
+			{
+				std::vector<Ranked> events;
+				if (!m_options.markers)
+					return events;
+				std::vector<std::pair<Ticks, const Marker*>> markers;
+				for (const auto& [id, marker] : m_project.markers)
 				{
-					// The markers of every marker track, cycle markers at their start, as in DAWproject.
-					std::vector<std::pair<Ticks, const Marker*>> markers;
-					for (const auto& [id, marker] : m_project.markers)
-					{
-						const Ticks at = time::toTicks(marker.position, m_project.tempo, m_project.sampleRate);
-						if (inRange(at))
-							markers.emplace_back(at, &marker);
-					}
-					std::stable_sort(
-						markers.begin(), markers.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
-					for (const auto& [at, marker] : markers)
-						events.push_back({Rank::Meta, metaText(toFile(at), g_metaMarker, marker->name)});
+					const Ticks at = time::toTicks(marker.position, m_project.tempo, m_project.sampleRate);
+					if ((ownFileTrack(marker.track) ? marker.track : 0) == track && inRange(at))
+						markers.emplace_back(at, &marker);
 				}
+				std::stable_sort(
+					markers.begin(), markers.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+				for (const auto& [at, marker] : markers)
+					events.push_back({Rank::Meta, metaText(toFile(at), g_metaMarker, marker->name)});
 				return events;
 			}
 
@@ -859,8 +888,40 @@ namespace gnubase::engine::midifile
 			}
 		}
 
-		// Tempo, signatures and markers from every track, by position. A sequence starts at 120 BPM in 4/4 unless it
-		// sets its own.
+		// A type 1 file's track after the first with nothing but markers and a name is a marker track of its own.
+		const auto markerTrack = [&file, &toProject](size_t index) -> std::optional<ImportedMarkerTrack>
+		{
+			if (file.format != 1 || index == 0)
+				return std::nullopt;
+			ImportedMarkerTrack track;
+			for (const Event& event : file.tracks[index].events)
+			{
+				if (event.status != g_statusMeta)
+					return std::nullopt;
+				if (event.meta == g_metaTrackName)
+				{
+					track.name = fileText(event.data);
+				}
+				else if (event.meta == g_metaMarker)
+				{
+					Marker marker;
+					marker.position = {time::TimeBase::Musical, toProject(event.tick)};
+					marker.end = marker.position;
+					marker.name = fileText(event.data);
+					track.markers.push_back(std::move(marker));
+				}
+				else
+				{
+					return std::nullopt;
+				}
+			}
+			if (track.markers.empty())
+				return std::nullopt;
+			return track;
+		};
+
+		// Tempo, signatures and markers from every other track, by position. A sequence starts at 120 BPM in 4/4
+		// unless it sets its own.
 		Import result;
 		std::vector<std::pair<Ticks, double>> tempo;
 		std::vector<std::pair<Ticks, time::TimeSignature>> signatures;
@@ -870,6 +931,11 @@ namespace gnubase::engine::midifile
 			{
 				tempo.emplace_back(offsets[i], g_defaultBpm);
 				signatures.emplace_back(offsets[i], time::TimeSignature{});
+			}
+			if (std::optional<ImportedMarkerTrack> markers = markerTrack(i))
+			{
+				result.markerTracks.push_back(std::move(*markers));
+				continue;
 			}
 			for (const Event& event : file.tracks[i].events)
 			{
