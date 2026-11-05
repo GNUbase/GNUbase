@@ -538,6 +538,55 @@ namespace
 			app.appUi().markers()->markers()[1].id);
 	}
 
+	TEST_CASE("during playback the markers window draws in the steps its arrow moves in, and in no other", "[ui]")
+	{
+		test::UiApp app;
+		app.call("track.add", {{"type", "marker"}});
+		app.call("marker.add", {{"position", 2 * g_quarter}}); // one second
+		app.call("marker.add", {{"position", 3 * g_quarter}});
+		openMarkers(app, 2);
+		const ui::Window* window = app.shell().find(app.appUi().markersWindow());
+		REQUIRE(window != nullptr);
+		Rml::ElementDocument& document = markersDocument(app);
+		const auto arrow = [&document]
+		{
+			const Rml::Element* row = document.QuerySelector("#marker-rows tr.at-cursor");
+			return row != nullptr ? row->GetAttribute<uint64_t>("value", 0) : uint64_t{0};
+		};
+		app.call("audio.setDevice", {{"blockSize", 256}}); // the dummy device
+		app.call("audio.start");
+		app.call("transport.play");
+		REQUIRE(app.waitUntil([&app] { return app.call("transport.get").at("playing") == true; }));
+		settle(app); // what the transport's events changed
+		REQUIRE(arrow() == 0);
+
+		// No input from here on: the window follows the playback position, but its document changes only when the
+		// arrow moves to the next marker.
+		int moved = 0;
+		int still = 0;
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+		while (moved < 2 && std::chrono::steady_clock::now() < deadline)
+		{
+			const uint64_t before = arrow();
+			const uint64_t frames = window->frames();
+			app.shell().step(milliseconds(20));
+			if (arrow() != before)
+			{
+				++moved;
+				CHECK(window->frames() == frames + 1);
+			}
+			else
+			{
+				++still;
+				CHECK(window->frames() == frames);
+			}
+		}
+		CHECK(moved == 2);
+		CHECK(still > 10);
+		app.call("transport.stop");
+		app.call("audio.stop");
+	}
+
 	TEST_CASE("the markers window's lengths don't count from the project's start time", "[ui]")
 	{
 		test::UiApp app;
@@ -706,6 +755,33 @@ TEST_CASE("the markers window sorts by a click on a column header, and its colum
 		[&app] { return setting(app, "ui.markerColumns").value("widths", Json::object()).contains("type"); }));
 	CHECK(rowOrder(document) == std::vector<uint64_t>{first, second, cycle});
 
+	// A click on the line between two headers doesn't sort, so the next click on the header turns the order around.
+	const auto descending = [&app]
+	{
+		const Json columns = setting(app, "ui.markerColumns");
+		return columns.value("sort", "") == "type" && columns.value("descending", false);
+	};
+	document.UpdateDocument();
+	type = document.QuerySelector("#marker-head td.type");
+	REQUIRE(type != nullptr);
+	app.ui().click(window, pointIn(*type, type->GetOffsetWidth() - 1.0F), ui::MouseButton::Left, 1, {});
+	CHECK(rowOrder(document) == std::vector<uint64_t>{first, second, cycle});
+	app.ui().click(window, at("#marker-head td.type"), ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil([&document, first, cycle, second]
+		{ return rowOrder(document) == std::vector<uint64_t>{cycle, first, second}; }));
+	REQUIRE(app.waitUntil(descending));
+
+	// A drag that stays within reach of where it began is a click: it sorts by its header, the other way round again.
+	document.UpdateDocument();
+	type = document.QuerySelector("#marker-head td.type");
+	REQUIRE(type != nullptr);
+	const float ratio = document.GetContext()->GetDensityIndependentPixelRatio();
+	app.ui().drag(window, pointIn(*type, 12.0F * ratio), pointIn(*type, 14.0F * ratio));
+	REQUIRE(app.waitUntil([&document, first, cycle, second]
+		{ return rowOrder(document) == std::vector<uint64_t>{first, second, cycle}; }));
+	REQUIRE(app.waitUntil([&descending] { return !descending(); }));
+	CHECK(setting(app, "ui.markerColumns").at("sort") == "type");
+
 	// The setting from MCP or Lua applies at once; a column named twice counts once, those it leaves out follow in
 	// their usual order.
 	app.call("settings.set", {{"key", "ui.markerColumns"}, {"value", {{"order", {"position", "number", "position"}}}}});
@@ -723,6 +799,79 @@ TEST_CASE("the markers window sorts by a click on a column header, and its colum
 	openMarkers(app, 3);
 	Rml::ElementDocument& reopened = markersDocument(app);
 	REQUIRE(app.waitUntil([&reopened] { return headerOrder(reopened).front() == "position"; }));
+}
+
+TEST_CASE("a markers window header drag ends when the button goes up outside the window", "[ui]")
+{
+	test::UiApp app;
+	app.call("track.add", {{"type", "marker"}});
+	addMarker(app, {{"position", 2 * g_quarter}, {"name", "B"}});
+	openMarkers(app, 1);
+	const ui::WindowId window = app.appUi().markersWindow();
+	Rml::ElementDocument& document = markersDocument(app);
+	Rml::Context* context = document.GetContext();
+	REQUIRE(context != nullptr);
+	const auto typeWidth = [&document]
+	{
+		document.UpdateDocument(); // a hidden window lays out only when it draws
+		Rml::Element* type = document.QuerySelector("#marker-head td.type");
+		return type == nullptr ? 0.0F : type->GetOffsetWidth();
+	};
+
+	// The line after the type header dragged to the right past the window's edge, where the button goes up: the
+	// column is wider, and that is kept.
+	document.UpdateDocument();
+	Rml::Element* type = document.QuerySelector("#marker-head td.type");
+	REQUIRE(type != nullptr);
+	const float width = type->GetOffsetWidth();
+	const float top = type->GetAbsoluteTop() + (type->GetOffsetHeight() / 2.0F);
+	app.ui().drag(window, pointIn(*type, width - 1.0F), point(context->GetDimensions().x + 40.0, top));
+	REQUIRE(app.waitUntil(
+		[&app] { return setting(app, "ui.markerColumns").value("widths", Json::object()).contains("type"); }));
+	const float dragged = typeWidth();
+	CHECK(dragged > width + 40.0F);
+	const Json saved = setting(app, "ui.markerColumns");
+
+	// The mouse back over the header with no button held doesn't resize it any more. A click then sorts, and keeps
+	// the width as it was.
+	Rml::Element* shown = document.QuerySelector("#marker-head td.type"); // shown again, with its new width
+	REQUIRE(shown != nullptr);
+	app.ui().move(window, pointIn(*shown, 2.0F));
+	app.ui().move(window, at("#marker-head td.locate"));
+	app.ui().click(window, at("#marker-head td.number"), ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil([&app] { return setting(app, "ui.markerColumns").value("sort", "") == "number"; }));
+	CHECK(typeWidth() == Approx(dragged));
+	CHECK(setting(app, "ui.markerColumns").at("widths") == saved.at("widths"));
+	CHECK(setting(app, "ui.markerColumns").at("order") == saved.at("order"));
+
+	// A drag that RmlUi drops, because the header is shown again under it for a change of the setting from MCP or
+	// Lua while the button is held, doesn't keep the next click from sorting.
+	document.UpdateDocument();
+	Rml::Element* number = document.QuerySelector("#marker-head td.number");
+	REQUIRE(number != nullptr);
+	app.ui().press(window, at("#marker-head td.number"), ui::MouseButton::Left);
+	app.ui().move(window, pointIn(*number, (number->GetOffsetWidth() / 2.0F) + 30.0F));
+	app.call("settings.set", {{"key", "ui.markerColumns"}, {"value", {{"order", {"type", "number"}}}}});
+	REQUIRE(app.waitUntil([&document] { return headerOrder(document).front() == "type"; }));
+	app.ui().release(window, {}, ui::MouseButton::Left);
+	app.ui().click(window, at("#marker-head td.end"), ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil([&app] { return setting(app, "ui.markerColumns").value("sort", "") == "end"; }));
+	CHECK(!setting(app, "ui.markerColumns").value("widths", Json::object()).contains("type"));
+
+	// Another button pressed and released during a header drag doesn't end it: the line after the type header,
+	// dragged 30 pixels with the right button pressed halfway, still resizes the column and keeps its width.
+	const float before = typeWidth();
+	type = document.QuerySelector("#marker-head td.type");
+	REQUIRE(type != nullptr);
+	app.ui().press(window, pointIn(*type, before - 1.0F), ui::MouseButton::Left);
+	app.ui().move(window, pointIn(*type, before + 9.0F));
+	app.ui().press(window, {}, ui::MouseButton::Right);
+	app.ui().release(window, {}, ui::MouseButton::Right);
+	app.ui().move(window, pointIn(*type, before + 29.0F));
+	app.ui().release(window, {}, ui::MouseButton::Left);
+	REQUIRE(app.waitUntil(
+		[&app] { return setting(app, "ui.markerColumns").value("widths", Json::object()).contains("type"); }));
+	CHECK(typeWidth() == Approx(before + 30.0F).margin(2.0));
 }
 
 TEST_CASE("the markers window scrolls to the locate arrow, and Page Up and Page Down move through it", "[ui]")
@@ -956,4 +1105,39 @@ TEST_CASE("the marker settings: marker ids on the marker track, cycle follows an
 	REQUIRE(app.waitUntil([&lines, intro] { return lines.selection() == std::vector<uint64_t>{intro}; }));
 	const ui::MarkersWindow& reopened = openMarkers(app, 2);
 	REQUIRE(app.waitUntil([&reopened, intro] { return reopened.selection() == std::vector<uint64_t>{intro}; }));
+}
+
+TEST_CASE("File > Export and File > Import > Markers write and read the marker file chosen", "[ui]")
+{
+	test::UiApp app{{1000, 700}};
+	const test::TempDir dir;
+	app.appUi().showProject();
+	for (const char* command : {"file.exportMarkers", "file.importMarkers"})
+	{
+		CHECK(app.ui()
+				  .dom(std::nullopt, std::string("#file-menu menuitem[command=\"") + command + "\"]", 0)
+				  .at("elements")
+				  .size() == 1);
+		CHECK(app.keys().canRun(command, app.main(), nullptr));
+	}
+	app.call("marker.add", {{"position", 2 * g_quarter}, {"name", "Intro"}});
+
+	// The file chosen gets the extension .csv if it has none.
+	app.keys().run("file.exportMarkers", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return app.shell().fileDialogs().size() == 1; }));
+	CHECK(app.shell().fileDialogs().begin()->second.kind == ui::FileDialogKind::Save);
+	CHECK(app.shell().answerFileDialog(app.shell().fileDialogs().begin()->first, {dir.path() / "song"}));
+	app.shell().step(milliseconds(0));
+	app.call("project.revision"); // after the export, which the command thread runs first
+	REQUIRE(std::filesystem::exists(dir.path() / "song.csv"));
+
+	app.call("project.new");
+	app.keys().run("file.importMarkers", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return app.shell().fileDialogs().size() == 1; }));
+	CHECK(app.shell().fileDialogs().begin()->second.kind == ui::FileDialogKind::Open);
+	CHECK(app.shell().answerFileDialog(app.shell().fileDialogs().begin()->first, {dir.path() / "song.csv"}));
+	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("markers").size() == 1; }));
+	const Json marker = app.call("project.get").at("markers")[0];
+	CHECK(marker.at("name") == "Intro");
+	CHECK(marker.at("position") == 2 * g_quarter);
 }

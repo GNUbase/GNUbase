@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -22,12 +23,14 @@ namespace gnubase::app
 		bool version = false;
 		bool headless = false;
 		Transport transport = Transport::Stdio;
-		int port = 0;                // HTTP: 0 picks a free port
-		std::string project;         // a DAWproject file to load (UTF-8), or none
-		std::string script;          // a Lua file to run instead of serving MCP (UTF-8), or none
-		std::string audio = "dummy"; // the audio device
-		double sampleRate = 48000.0;
-		int64_t blockSize = 256;
+		int port = 0;        // HTTP: 0 picks a free port
+		std::string project; // a DAWproject file to load (UTF-8), or none
+		std::string script;  // a Lua file to run instead of serving MCP (UTF-8), or none
+		// The audio backend --audio names, or empty: headless then opens the dummy device, the windowed app the
+		// device the user chose last (setUpWindowedEngine).
+		std::string audio;
+		std::optional<double> sampleRate; // by default the project's (audio.setDevice)
+		std::optional<int64_t> blockSize; // by default the driver's
 		// The user settings folder (UTF-8). parseOptions leaves it empty unless --settings gives one; main then
 		// fills in settingsDirectory(options). runHeadless keeps the settings in memory if it is still empty.
 		std::string settings;

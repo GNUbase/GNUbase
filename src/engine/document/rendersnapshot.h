@@ -194,6 +194,8 @@ namespace gnubase::engine
 		uint64_t revision = 0; // counts the snapshots compiled for an engine
 		double sampleRate = 48000.0;
 		time::TempoMap tempo{120.0}; // for processors that follow the tempo, e.g. a synced delay
+		time::SignatureMap signatures;
+		metronome::MetronomeSettings metronome;
 		PanLaw panLaw = PanLaw::Minus3;
 		double maxVolume = 6.0;               // dB
 		std::string recordBitDepth = "int24"; // the project's, for audio.get; not read on the audio thread

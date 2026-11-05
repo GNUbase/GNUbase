@@ -231,9 +231,14 @@ namespace gnubase::app
 		{
 			std::vector<std::pair<uint64_t, std::vector<uint64_t>>> parts;
 			std::string lengthQuantize;
+			double insertVelocity = 100.0 / 127.0; // the editor's, for Fixed Velocity
 		};
 		QuantizeTarget quantizeTarget(ui::Window& window, Rml::Element* zone) const;
 		void quantize(const std::string& command, const std::string& step, const QuantizeTarget& target);
+		// The MIDI menu (#133, docs/features/midi-functions.md, appmidifunctions.cpp): MIDI > Functions on what
+		// quantizeTarget gives, and the dialogs of Transpose Setup, Merge MIDI in Loop, Dissolve Part and Restrict
+		// Polyphony (resources/ui/midi-function.rml).
+		void addMidiFunctions();
 		// The OS's file dialog for a track's picture in the mixer, then track.set.
 		void choosePicture(uint64_t track);
 		// Opens resources/ui/<name> in the window, modal. Throws std::runtime_error if it can't be loaded.

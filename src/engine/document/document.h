@@ -3,6 +3,7 @@
 
 #include "engine/document/channelformat.h"
 #include "engine/document/snap.h"
+#include "engine/metronome/metronomesettings.h"
 #include "engine/midi/modifiers.h"
 #include "engine/midi/quantizesettings.h"
 #include "engine/time/signaturemap.h"
@@ -813,6 +814,9 @@ namespace gnubase::engine
 		std::string lastAppliedColor;
 		// What each mixer hides (#106), by mixer: lower, window1 to window4. Settings, not part of undo.
 		std::map<std::string, MixerView> mixers;
+
+		// The metronome and count-in (#101). Settings, not part of undo.
+		metronome::MetronomeSettings metronome;
 
 		ObjectId newId() { return nextId++; }
 

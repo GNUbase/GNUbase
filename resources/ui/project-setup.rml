@@ -2,8 +2,9 @@
 <!-- The project setup dialog (#78, docs/features/project-setup.md, reference manual pp. 128-130): the project's start
      time and length, frame rate, time format and bar offset, sample rate, record bit depth and file type, pan law and
      maximum volume. app::AppUi opens it (the UI command window.projectSetup). Its Lua reads the project when the
-     dialog loads and on OK sends what changed with project.set, in one history.transaction with media.conform when
-     the sample rate changes and Conform Audio Files is on; Cancel drops it. -->
+     dialog loads and on OK sends what changed with project.set in a history.transaction, then starts media.conform's
+     job when the sample rate changes and Conform Audio Files is on, its undo step joining the dialog's; Cancel drops
+     it. -->
 <rml>
 <head>
 	<title>Project Setup</title>
@@ -207,19 +208,40 @@
 			return changed, errors
 		end
 
-		-- OK: sends what changed as one undo step and closes, unless that failed.
+		-- Whether the project has a media file at another sample rate than sampleRate that isn't missing, which Conform
+		-- Audio Files converts.
+		local function otherRates(sampleRate)
+			local missing = {}
+			for _, clip in ipairs(gnubase.pool.get().clips) do
+				missing[clip.media] = clip.missing
+			end
+			for _, media in ipairs(gnubase.project.get().media) do
+				if media.sampleRate ~= sampleRate and not missing[media.id] then
+					return true
+				end
+			end
+			return false
+		end
+
+		-- OK: sends what changed as one undo step and closes, unless that failed. Reference manual p. 128: audio files
+		-- must be converted to a new sample rate to play back properly. That runs as the pool's Conform Files job, so
+		-- the pool opens and shows how it goes; its undo step joins this one (a merge key) unless something else was
+		-- done meanwhile.
 		function setup.ok(document)
 			local changed, errors = changes(document)
+			local conform = changed.sampleRate ~= nil and
+				document:GetElementById("setup-conform"):HasAttribute("checked") and otherRates(changed.sampleRate)
+			if conform and gnubase.project.location().file == nil then
+				errors[#errors + 1] = "save the project first: files are conformed into the folder of its project file"
+			end
 			if #errors == 0 and next(changed) ~= nil then
-				local commands = {{command = "project.set", parameters = changed}}
-				-- Reference manual p. 128: audio files must be converted to a new sample rate to play back properly.
-				if changed.sampleRate ~= nil and document:GetElementById("setup-conform"):HasAttribute("checked") then
-					commands[2] = {command = "media.conform"}
-				end
-				local ok, problem = pcall(gnubase.history.transaction, {description = "Project Setup",
-					commands = commands})
+				local merge = "Project Setup " .. gnubase.project.revision().revision
+				local ok, problem = pcall(gnubase.history.transaction, {description = "Project Setup", merge = merge,
+					commands = {{command = "project.set", parameters = changed}}})
 				if not ok then
 					errors[#errors + 1] = tostring(problem)
+				elseif conform then
+					gnubase.ui.command{command = "media.conform", parameters = {merge = merge}}
 				end
 			end
 			if #errors == 0 then
