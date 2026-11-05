@@ -56,7 +56,8 @@ one it has the class `empty` and says "No Track Selected".
   .inspector-sections[sections=inspector]
     [section=basics]               mute, solo, record, monitor, timeBase (button[control]); volume (dB), pan
                                    (-100 to 100)
-    [section=routing]              select[control=input] (audio tracks), select[control=output]
+    [section=routing]              select[control=input] (audio tracks), select[control=output]; MIDI tracks:
+                                   select[control=device], textdisplay[control=bank], select[control=program]
     [section=inserts]              .insert per plugin slot, .bypassed and .inactive
     [section=notepad]              textarea.notepad
 ```
@@ -74,7 +75,7 @@ one it has the class `empty` and says "No Track Selected".
   inspector shows the channel as it is again.
 - **Routing** (p. 168): the input bus of an audio track, and where the channel plays: an output bus or a group
   channel, for MIDI tracks an instrument track's channel, as in the add track dialog (`channel.set` `input` and
-  `output`).
+  `output`). On MIDI tracks also the MIDI device, bank and program (pp. 1108, 1113, [midi-devices.md](midi-devices.md)).
 - **Inserts**: an overview of the channel's plugin slots by name, top to bottom (`plugin.*` changes them).
 - **Notepad** (p. 168): the channel's notes. What is typed goes to the engine when the field loses the focus, also
   with Escape (`channel.set` `notes`, one undo step). When another track shows while the notepad or the name is being

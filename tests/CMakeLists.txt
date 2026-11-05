@@ -87,6 +87,7 @@ add_executable(gnubase-tests
 	meter_tests.cpp
 	midi_tests.cpp
 	mididevice_tests.cpp
+	mididevices_ui_tests.cpp
 	midiedit_tests.cpp
 	midieditor_tests.cpp
 	midifile_tests.cpp
