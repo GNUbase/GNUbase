@@ -160,6 +160,7 @@ add_library(gnubase-engine STATIC
 	midi/functioncommands.cpp midi/functioncommands.h
 	midi/functions.cpp midi/functions.h
 	midi/midivalues.cpp midi/midivalues.h
+	midi/modifiers.cpp midi/modifiers.h
 	midi/quantize.cpp midi/quantize.h
 	midi/quantizecommands.cpp midi/quantizecommands.h
 	midi/quantizesettings.cpp midi/quantizesettings.h

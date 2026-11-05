@@ -4,6 +4,7 @@
 #include "engine/document/channelformat.h"
 #include "engine/document/snap.h"
 #include "engine/metronome/metronomesettings.h"
+#include "engine/midi/modifiers.h"
 #include "engine/midi/quantizesettings.h"
 #include "engine/time/signaturemap.h"
 #include "engine/time/tempomap.h"
@@ -219,6 +220,10 @@ namespace gnubase::engine
 		// none sends nothing, which leaves the instrument's own.
 		std::optional<int> midiVolume = std::nullopt;
 		std::optional<int> midiPan = std::nullopt;
+		// MIDI and instrument tracks: the MIDI modifiers, which change how the track's notes play
+		// (docs/features/midi-modifiers.md).
+		// NOLINTNEXTLINE(readability-redundant-member-init): see instrumentParameters
+		midi::Modifiers modifiers = {};
 		// The values set for the instrument's parameters (parameter.set), by parameter id; the others are at their
 		// defaults. A new instrument starts with none.
 		// The initializer lets Channel{...} leave it out without GCC's and Clang's -Wmissing-field-initializers, like
@@ -554,6 +559,10 @@ namespace gnubase::engine
 		int lane = 0;      // the track's lane it is on, from 0: cycle recordings put their takes on lanes (#98)
 		std::map<ObjectId, Note> notes;
 		std::map<ObjectId, Controller> controllers;
+		// Added to the track's MIDI modifiers' transpose and velocity shift as it plays (reference manual p. 1107),
+		// -127 to 127: the info line's Transpose and Velocity.
+		int transpose = 0;
+		int velocity = 0;
 	};
 
 	// A frozen track's rendered audio (#116, reference manual pp. 219-220): a file of the project's media folder's
@@ -876,11 +885,13 @@ namespace gnubase::engine
 	inline bool operator==(const Channel& a, const Channel& b)
 	{
 		return std::tie(a.id, a.track, a.format, a.input, a.output, a.instrument, a.volume, a.pan, a.panner, a.panLeft,
-				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.instrumentParameters, a.monitor, a.recordEnable,
-				   a.midiInput, a.mute, a.solo, a.soloDefeat, a.listen, a.slots, a.notes, a.sections, a.sends) ==
+				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.modifiers, a.instrumentParameters, a.monitor,
+				   a.recordEnable, a.midiInput, a.mute, a.solo, a.soloDefeat, a.listen, a.slots, a.notes, a.sections,
+				   a.sends) ==
 			std::tie(b.id, b.track, b.format, b.input, b.output, b.instrument, b.volume, b.pan, b.panner, b.panLeft,
-				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.instrumentParameters, b.monitor, b.recordEnable,
-				b.midiInput, b.mute, b.solo, b.soloDefeat, b.listen, b.slots, b.notes, b.sections, b.sends);
+				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.modifiers, b.instrumentParameters, b.monitor,
+				b.recordEnable, b.midiInput, b.mute, b.solo, b.soloDefeat, b.listen, b.slots, b.notes, b.sections,
+				b.sends);
 	}
 
 	inline bool operator==(const Slot& a, const Slot& b)
@@ -991,8 +1002,10 @@ namespace gnubase::engine
 	// A MIDI part's own properties, without its notes and controllers.
 	inline bool sameProperties(const MidiPart& a, const MidiPart& b)
 	{
-		return std::tie(a.id, a.track, a.name, a.position, a.length, a.mute, a.lock, a.shared, a.color, a.lane) ==
-			std::tie(b.id, b.track, b.name, b.position, b.length, b.mute, b.lock, b.shared, b.color, b.lane);
+		return std::tie(a.id, a.track, a.name, a.position, a.length, a.mute, a.lock, a.shared, a.color, a.lane,
+				   a.transpose, a.velocity) ==
+			std::tie(b.id, b.track, b.name, b.position, b.length, b.mute, b.lock, b.shared, b.color, b.lane,
+				b.transpose, b.velocity);
 	}
 
 	inline bool operator==(const ProjectColor& a, const ProjectColor& b)

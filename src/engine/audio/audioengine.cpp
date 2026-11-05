@@ -609,6 +609,7 @@ namespace gnubase::engine
 			auto sequence = std::make_unique<MidiSequence>();
 			sequence->notes = channel.notes;
 			sequence->controllers = channel.controllers;
+			sequence->modifiers = channel.modifiers;
 			// An instrument chases the controller events of the MIDI tracks routed to it with its own, so the latest of
 			// each kind wins, whichever track it is on.
 			if (routed.count(channel.id) == 0)
