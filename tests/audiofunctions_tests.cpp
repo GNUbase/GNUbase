@@ -382,7 +382,7 @@ TEST_CASE("clip.spectrum shows the levels of a signal's frequencies", "[unit]")
 				  { return channel == 0 ? sine(1000.0, 0.5, t) + sine(5000.0, 0.1, t) : sine(250.0, 0.25, t); }),
 			"spectrum");
 	const Json result = f.call("clip.spectrum", {{"clip", clip}});
-	const Json frequencies = result.at("frequencies");
+	const Json& frequencies = result.at("frequencies");
 	REQUIRE(frequencies.size() > 200);
 	CHECK(number(frequencies.at(0)) == Approx(20.0));
 	CHECK(number(frequencies.back()) <= 24000.0);

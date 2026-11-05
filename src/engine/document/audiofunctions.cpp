@@ -183,7 +183,7 @@ namespace gnubase::engine
 			{"type", "array"}, {"items", objectSchema({{"start", integer}, {"end", integer}}, {"start", "end"})}};
 		const Json settingsProperties = {{"openThreshold", number}, {"closeThreshold", number}, {"minimumOpen", number},
 			{"minimumClosed", number}, {"preRoll", number}, {"postRoll", number}};
-		const auto rangeSchema = [&](Json more)
+		const auto rangeSchema = [&](const Json& more)
 		{
 			Json properties = {{"clip", integer}, {"start", integer}, {"end", integer}};
 			properties.update(more);
@@ -303,8 +303,8 @@ namespace gnubase::engine
 						if (fades > 0.0)
 						{
 							const AudioEvent& part = project.audioEvents.at(piece);
-							const time::Samples length =
-								std::min(std::llround(fades / 1000.0 * media.sampleRate), part.length / 2);
+							const time::Samples length = std::min<time::Samples>(
+								std::llround(fades / 1000.0 * media.sampleRate), part.length / 2);
 							run("audioEvent.setFades",
 								{{"event", piece}, {"fadeIn", {{"length", length}}},
 									{"fadeOut", {{"length", length}}}});

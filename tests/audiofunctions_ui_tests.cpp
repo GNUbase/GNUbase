@@ -91,11 +91,15 @@ namespace
 		{
 			test::Audio audio;
 			audio.sampleRate = 48000;
-			audio.samples.resize(3 * 48000);
+			audio.samples.resize(size_t{3} * 48000);
 			for (size_t i = 0; i < audio.samples.size(); ++i)
 			{
 				const double t = static_cast<double>(i) / 48000.0;
-				const double amplitude = t >= 0.5 && t < 1.5 ? 0.5 : (t >= 2.0 && t < 2.5 ? 0.25 : 0.0);
+				double amplitude = 0.0;
+				if (t >= 0.5 && t < 1.5)
+					amplitude = 0.5;
+				else if (t >= 2.0 && t < 2.5)
+					amplitude = 0.25;
 				audio.samples[i] = static_cast<float>(amplitude * std::sin(2.0 * g_pi * 1000.0 * t));
 			}
 			const std::string file = (dir.path() / "tones.wav").u8string();
@@ -106,7 +110,7 @@ namespace
 				app.call("media.add", {{"path", file}, {"sampleRate", 48000}, {"channels", 1}, {"length", 3 * 48000}})
 					.at("media");
 			const Json clip = app.call("clip.add", {{"media", media.at("id")}}).at("clip").at("id");
-			for (const int64_t position : {int64_t{0}, int64_t{4 * 48000}})
+			for (const int64_t position : {int64_t{0}, int64_t{4} * 48000})
 				events.push_back(
 					app.call("audioEvent.add",
 						   {{"track", track}, {"clip", clip}, {"position", position}, {"length", 3 * 48000}})
