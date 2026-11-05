@@ -58,6 +58,13 @@
 			margin-left: auto;
 		}
 
+		/* A header is dragged to move or resize its column: RmlUi's drag ends when the button goes up, also outside the
+		   window. */
+		#marker-head td
+		{
+			drag: drag;
+		}
+
 		td.locate
 		{
 			width: 20dp;

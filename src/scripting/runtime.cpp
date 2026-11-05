@@ -157,8 +157,9 @@ namespace gnubase::scripting
 			lua_setfield(state, -2, "request");
 		}
 
-		// Calls the handlers registered with gnubase.on for the event's name and for "*".
-		void dispatch(lua_State* state, const engine::Event& event)
+		// Calls the handlers registered with gnubase.on for the event's name and for "*". called, if given, is set
+		// before the first one runs.
+		void dispatch(lua_State* state, const engine::Event& event, bool* called = nullptr)
 		{
 			lua_getfield(state, LUA_REGISTRYINDEX, g_handlersKey);
 			for (const std::string& name : {event.name, std::string("*")})
@@ -168,6 +169,8 @@ namespace gnubase::scripting
 					const auto count = static_cast<lua_Integer>(lua_rawlen(state, -1));
 					for (lua_Integer i = 1; i <= count; ++i)
 					{
+						if (called != nullptr)
+							*called = true;
 						lua_rawgeti(state, -1, i);
 						pushEvent(state, event);
 						lua_call(state, 1, 0); // errors in handlers stop the script, like any other error
@@ -438,8 +441,9 @@ namespace gnubase::scripting
 		return luaL_error(state, "%s", error.c_str());
 	}
 
-	std::optional<std::string> Runtime::dispatchEvents()
+	std::optional<std::string> Runtime::dispatchEvents(bool* handled)
 	{
+		m_handledEvents = false;
 		lua_State* state = m_state.get();
 		const int top = lua_gettop(state);
 		lua_pushcfunction(state, traceback);
@@ -453,6 +457,8 @@ namespace gnubase::scripting
 		if (lua_pcall(state, 0, 0, top + 1) != LUA_OK)
 			error = lua_tostring(state, -1) != nullptr ? lua_tostring(state, -1) : "(the error is not a string)";
 		lua_settop(state, top);
+		if (handled != nullptr)
+			*handled = m_handledEvents;
 		return error;
 	}
 
@@ -551,7 +557,7 @@ namespace gnubase::scripting
 			m_events.push_back(event);
 			if (m_events.size() > g_maxQueuedEvents)
 				m_events.pop_front();
-			dispatch(state, event);
+			dispatch(state, event, &m_handledEvents);
 		}
 	}
 }

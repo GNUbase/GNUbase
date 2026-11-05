@@ -1,20 +1,22 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The list editor in the app (#130, docs/features/list-editor.md), driven with ui::Automation as MCP's UI tools drive
 // it: Open List Editor, the event list with every event type, editing values of several events and SysEx, the filters
-// bar and the Focus menu, the draw and erase tools, moving events and the value display. tests/listeditor_tests.cpp
-// checks the engine's side.
+// bar and the Focus menu, the draw and erase tools, moving events and the value display, and gestures released outside
+// the editor or never released. tests/listeditor_tests.cpp checks the engine's side.
 #include "engine/midi/midivalues.h"
 #include "engine/time/tempomap.h"
 #include "ui/automation.h"
 #include "ui/eventdisplay.h"
 #include "uiapp.h"
 
+#include <RmlUi/Core/Context.h>
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -153,6 +155,92 @@ namespace
 		{
 			click(of(".list-tool[list-tool=" + name + "]"));
 			REQUIRE(has(".list-tool[list-tool=" + name + "]", "checked"));
+		}
+
+		// The vertical middle of the element, and the place in a lane at a fraction of its width, in the window's
+		// pixels.
+		int middle(const std::string& selector)
+		{
+			const Json shown = box(selector);
+			return static_cast<int>(std::lround(shown.at("y").get<double>() + (shown.at("height").get<double>() / 2)));
+		}
+
+		int xAt(const std::string& lane, double fraction)
+		{
+			const Json shown = box(lane);
+			return static_cast<int>(
+				std::lround(shown.at("x").get<double>() + (fraction * shown.at("width").get<double>())));
+		}
+
+		static ui::Target point(int x, int y) { return {"", 0, ui::Point{x, y}}; }
+
+		// The right end of the editor window's toolbar's empty space, where a click does nothing.
+		int spare()
+		{
+			const Json shown = box(".midi-editor-toolbar .spacer");
+			return static_cast<int>(std::lround(shown.at("x").get<double>() + shown.at("width").get<double>() - 5));
+		}
+
+		// Where a drag picks up the note's event in the event display, and the place half the event display further.
+		ui::Point grip(uint64_t note)
+		{
+			const Json shown = box(row("note", note) + " .list-event");
+			return {static_cast<int>(std::lround(shown.at("x").get<double>() + 10)),
+				static_cast<int>(std::lround(shown.at("y").get<double>() + (shown.at("height").get<double>() / 2)))};
+		}
+
+		int halfway(uint64_t note)
+		{
+			return grip(note).x +
+				static_cast<int>(
+					std::lround(box(row("note", note) + " .list-event-lane").at("width").get<double>() / 2));
+		}
+
+		size_t steps() { return app.call("history.get").at("steps").size(); }
+
+		size_t notes() { return app.call("project.get").at("midiParts").at(0).at("notes").size(); }
+
+		// The value display's bar of the row, as a fraction of its lane.
+		double bar(const std::string& selector)
+		{
+			return box(selector + " .list-value").at("width").get<double>() /
+				box(selector + " .list-value-lane").at("width").get<double>();
+		}
+
+		// Selects a note with a click on its row and waits for the engine's view: whatever the list editor sent before
+		// has arrived then.
+		void settle(uint64_t note)
+		{
+			click(of(row("note", note) + " .list-type"));
+			REQUIRE(app.waitUntil(
+				[&]
+				{
+					const Json selection = view().at("selection");
+					return selection.size() == 1 && selection.at(0).value("note", uint64_t{0}) == note;
+				}));
+		}
+
+		// The editor window's context: through it a test presses a button and keeps it down, as a mouseup lost
+		// outside the window leaves it, where RmlUi has no element to send the mouseup to.
+		Rml::Context& context()
+		{
+			const ui::Window* shown = app.shell().find(app.appUi().editorWindowId());
+			if (shown == nullptr)
+				throw std::logic_error("the editor window doesn't show");
+			return shown->context();
+		}
+
+		void press(int x, int y)
+		{
+			context().ProcessMouseMove(x, y, 0);
+			context().ProcessMouseButtonDown(0, 0);
+			app.shell().step(std::chrono::milliseconds(0));
+		}
+
+		void moveTo(int x, int y)
+		{
+			context().ProcessMouseMove(x, y, 0);
+			app.shell().step(std::chrono::milliseconds(0));
 		}
 
 		test::UiApp app{{1400, 800}};
@@ -368,4 +456,165 @@ TEST_CASE("dragging an unselected event with a Focus filter on selects it, filte
 	CHECK(f.types() == std::vector<std::string>{"note", "note"});
 	CHECK(f.has(low, "selected"));
 	CHECK(f.event("notes", f.high).at("position") == g_quarter);
+}
+
+TEST_CASE("a move, draw or value display drag released outside the list editor ends there", "[ui]")
+{
+	Fixture f;
+	// The editor window's toolbar, above the list editor, and the list editor's header: neither is the editor's body.
+	const int outside = f.middle(".midi-editor-toolbar");
+	const int header = f.middle(".list-editor-header");
+
+	// A move released over the window's toolbar, where it was pressed: nothing moves, and a later click on the
+	// header doesn't move the events by the distance from the pressed point to it.
+	const ui::Point grip = f.grip(f.low);
+	const int half = f.halfway(f.low);
+	const size_t before = f.steps();
+	f.app.ui().drag(f.window, Fixture::point(grip.x, grip.y), Fixture::point(grip.x, outside));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	f.click(Fixture::point(half, header));
+	f.settle(f.high);
+	CHECK(f.event("notes", f.low).at("position") == 0);
+	CHECK(f.steps() == before);
+	// Released outside further on, it moves the events there, in one undo step.
+	f.app.ui().drag(f.window, Fixture::point(grip.x, grip.y), Fixture::point(half, outside));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.event("notes", f.low).at("position") == 2 * g_quarter; }));
+	CHECK(f.event("notes", f.high).at("position") == g_quarter);
+	CHECK(f.steps() == before + 1);
+
+	// A drawn note released outside is drawn where it was pressed; a click on the toolbar then draws nothing.
+	f.tool("draw");
+	const std::string filler = ".list-filler .list-event-lane";
+	const int drawAt = f.xAt(filler, 0.26);
+	f.app.ui().drag(f.window, Fixture::point(drawAt, f.middle(filler)), Fixture::point(drawAt, outside));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.notes() == 3; }));
+	const Json project = f.app.call("project.get");
+	for (const Json& each : project.at("midiParts").at(0).at("notes"))
+		if (each.at("id") != f.low && each.at("id") != f.high)
+			CHECK(each.at("position") == g_quarter);
+	f.tool("objectSelection");
+	f.settle(f.high);
+	CHECK(f.notes() == 3);
+
+	// A drag in the value display released outside sets the values it crossed. Moving over the value display then
+	// changes no bar, and a click on the header sets nothing.
+	const std::string volume = row("controller", f.events[0]);
+	const std::string values = volume + " .list-value-lane";
+	const int valueAt = f.xAt(values, 0.5);
+	f.app.ui().drag(f.window, Fixture::point(valueAt, f.middle(values)), Fixture::point(valueAt, outside));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const auto value = [&] { return f.event("controllers", f.events[0]).at("value").get<double>(); };
+	REQUIRE(f.app.waitUntil([&] { return std::abs(value() - 0.5) < 0.02; }));
+	f.app.ui().move(f.window, Fixture::point(f.xAt(values, 0.9), f.middle(values)));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(std::abs(f.bar(volume) - 0.5) < 0.05);
+	f.click(Fixture::point(f.xAt(values, 0.9), header));
+	f.settle(f.low);
+	CHECK(std::abs(value() - 0.5) < 0.02);
+}
+
+// The next tests lose a mouseup, as when the mouse goes up outside the window: they press through the editor window's
+// context and never release the button.
+TEST_CASE("a press anywhere in the window ends a gesture whose mouseup never came, without its effect", "[ui]")
+{
+	Fixture f;
+	const int outside = f.middle(".midi-editor-toolbar");
+	const ui::Point grip = f.grip(f.low);
+	const int spare = f.spare();
+	INFO("the toolbar's empty space ends at " << spare << ", the note is pressed at " << grip.x);
+	REQUIRE(spare > grip.x + 50); // a move ending there would move the note on
+	const size_t before = f.steps();
+
+	// A move: a click on the editor window's toolbar, away from the pressed point, moves nothing.
+	f.press(grip.x, grip.y);
+	f.click(Fixture::point(spare, outside));
+	f.settle(f.high);
+	CHECK(f.event("notes", f.low).at("position") == 0);
+	CHECK(f.steps() == before);
+
+	// A draw: the click draws no note.
+	f.tool("draw");
+	const std::string filler = ".list-filler .list-event-lane";
+	const int drawAt = f.xAt(filler, 0.26);
+	f.press(drawAt, f.middle(filler));
+	f.click(Fixture::point(spare, outside));
+	f.tool("objectSelection");
+	f.settle(f.low);
+	CHECK(f.notes() == 2);
+	CHECK(f.steps() == before);
+
+	// A value display drag: the click sets no value, and the bar shows the event's value again.
+	const std::string volume = row("controller", f.events[0]);
+	const std::string values = volume + " .list-value-lane";
+	const int from = f.xAt(values, 0.5);
+	const int to = f.xAt(values, 0.25);
+	const int y = f.middle(values);
+	f.press(from, y);
+	f.moveTo(to, y);
+	REQUIRE(std::abs(f.bar(volume) - 0.25) < 0.05);
+	f.click(Fixture::point(spare, outside));
+	f.settle(f.high);
+	CHECK(std::abs(f.event("controllers", f.events[0]).at("value").get<double>() - controller(100)) < 1e-9);
+	CHECK(std::abs(f.bar(volume) - controller(100)) < 0.05);
+	CHECK(f.steps() == before);
+}
+
+TEST_CASE("a press in the list editor ends a gesture whose mouseup never came, without its effect", "[ui]")
+{
+	Fixture f;
+	const int header = f.middle(".list-editor-header");
+	const ui::Point grip = f.grip(f.low);
+	const int half = f.halfway(f.low);
+	const size_t before = f.steps();
+
+	// A move: a click on the list editor's header moves nothing.
+	f.press(grip.x, grip.y);
+	f.click(Fixture::point(half, header));
+	f.settle(f.high);
+	CHECK(f.event("notes", f.low).at("position") == 0);
+	CHECK(f.steps() == before);
+
+	// A value display drag: the click on the header sets no value, and the bar shows the event's value again.
+	const std::string volume = row("controller", f.events[0]);
+	const std::string values = volume + " .list-value-lane";
+	const int from = f.xAt(values, 0.5);
+	const int to = f.xAt(values, 0.25);
+	const int y = f.middle(values);
+	f.press(from, y);
+	f.moveTo(to, y);
+	REQUIRE(std::abs(f.bar(volume) - 0.25) < 0.05);
+	f.click(Fixture::point(to, header));
+	f.settle(f.low);
+	CHECK(std::abs(f.event("controllers", f.events[0]).at("value").get<double>() - controller(100)) < 1e-9);
+	CHECK(std::abs(f.bar(volume) - controller(100)) < 0.05);
+	CHECK(f.steps() == before);
+}
+
+TEST_CASE("another button pressed and released during a move doesn't end it", "[ui]")
+{
+	Fixture f;
+	const ui::Point grip = f.grip(f.low);
+	const int half = f.halfway(f.low);
+	const size_t before = f.steps();
+	// The right button's mouseup doesn't end the move there: the click that then selects a note cancels it.
+	f.press(grip.x, grip.y);
+	f.moveTo(half, grip.y);
+	f.context().ProcessMouseButtonDown(1, 0);
+	f.context().ProcessMouseButtonUp(1, 0);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	f.settle(f.high);
+	CHECK(f.event("notes", f.low).at("position") == 0);
+	CHECK(f.steps() == before);
+	// Nor does its mousedown: the left button's mouseup ends the move, in one undo step.
+	f.press(grip.x, grip.y);
+	f.moveTo(half, grip.y);
+	f.context().ProcessMouseButtonDown(1, 0);
+	f.context().ProcessMouseButtonUp(1, 0);
+	f.context().ProcessMouseButtonUp(0, 0);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.event("notes", f.low).at("position") == 2 * g_quarter; }));
+	CHECK(f.event("notes", f.high).at("position") == g_quarter);
+	CHECK(f.steps() == before + 1);
 }
