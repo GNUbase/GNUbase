@@ -53,7 +53,10 @@ namespace gnubase::ui
 	class KeyEditor final : private Rml::EventListener
 	{
 	public:
-		KeyEditor(EngineBinding& binding, Rml::Element& root, std::string view);
+		// drum: the drum editor (#129, reference manual pp. 1221-1242): the active track's drum map's sound list
+		// instead of the keyboard, its rows in the map's order, notes as diamonds and the drumstick instead of the draw
+		// tool.
+		KeyEditor(EngineBinding& binding, Rml::Element& root, std::string view, bool drum = false);
 		~KeyEditor() override;
 		KeyEditor(const KeyEditor&) = delete;
 		KeyEditor& operator=(const KeyEditor&) = delete;
@@ -63,10 +66,12 @@ namespace gnubase::ui
 		void show(const engine::Json& project, const engine::Json& view);
 
 		KeyTool tool() const { return m_tool; }
+		bool drum() const { return m_drum; }
 		void setTool(KeyTool tool);
 
 		// Scrolls the note display so that the pitch is in the middle; false before the display has its size. The
-		// display scrolls to the middle of its notes, or to middle C, when it first has a size.
+		// display scrolls to the middle of its notes, or to middle C, when it first has a size, unless it was
+		// scrolled to a pitch before.
 		bool scrollToPitch(int pitch);
 
 	private:
@@ -114,6 +119,13 @@ namespace gnubase::ui
 
 		void render();
 		void renderInfo();
+		// The drum editor's: the active track's drum map, the rows' order from it, and the sound list and Map menu.
+		const engine::Json* activeMap() const;
+		void updateOrder();
+		std::string soundsRml() const;
+		void renderDrumMap();
+		void drumMapMenu(Rml::Element& target);
+		void editSound(int pitch, const std::string& field, const std::string& text);
 		void place(Rml::Element& element, int64_t start, int64_t length, int pitch) const;
 		std::string partsRml() const;
 
@@ -122,7 +134,10 @@ namespace gnubase::ui
 		int64_t snap(double ticks, bool off) const;
 		int64_t delta(Gesture gesture, double ticks) const;
 		int64_t grid() const;
-		int64_t lengthQuantize() const;
+		// The length of new notes of the pitch: with Drum-Map Link its sound's snap.
+		int64_t lengthQuantize(int pitch) const;
+		// The pitch rows away from pitch in the display's order, or -1 beyond its ends.
+		int shifted(int pitch, int rows) const;
 		const Note* note(uint64_t part, uint64_t id) const;
 		const Note* noteOf(Rml::Element* element) const;
 		// The editable part at the ticks: the active one if it is there, else the first.
@@ -134,14 +149,20 @@ namespace gnubase::ui
 		void setView(engine::Json parameters);
 		// Sends note.* commands, each {command, parameters}: one alone, several in a history.transaction.
 		void edit(const std::string& description, engine::Json commands);
-		void addNote(const Part& part, int64_t start, int64_t length, int pitch);
+		// Notes of the pitch at the starts, each of the length.
+		void addNotes(const Part& part, const std::vector<int64_t>& starts, int64_t length, int pitch);
 		void transpose(int semitones);
 		void editInfo(const std::string& field, const std::string& text);
 
 		EngineBinding& m_binding;
 		Rml::ObserverPtr<Rml::Element> m_root;
 		std::string m_name;
+		bool m_drum = false;
 		KeyTool m_tool = KeyTool::ObjectSelection;
+		std::vector<int> m_order; // the pitches of the rows, from the top
+		std::vector<int> m_rowOf; // each pitch's row
+		std::string m_soundsRml;  // the drum sound list as last set
+		std::string m_mapMenuRml; // the Map menu as last set
 		engine::Json m_project = engine::Json::object();
 		engine::Json m_view = engine::Json::object();
 		std::vector<Part> m_parts;
@@ -157,7 +178,7 @@ namespace gnubase::ui
 		std::optional<Note> m_pressed; // the note pressed, as it was
 		bool m_snapOff = false;
 		Rml::ObserverPtr<Rml::Element> m_drawn; // the note a draw drags out
-		// the length quantize menu, the line tool's menu, then the toolbox
+		// the length quantize menu, the line tool's menu, the toolbox, then the drum editor's Map menu
 		std::vector<Rml::ObserverPtr<Rml::Element>> m_menus;
 		std::string m_lineMode = "line"; // the line tool's (#128)
 		std::unique_ptr<ControllerLanes> m_lanes;

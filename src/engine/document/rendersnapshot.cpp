@@ -3,7 +3,10 @@
 
 #include "engine/audio/automation.h"
 #include "engine/audio/fades.h"
+#include "engine/document/stripparameters.h"
+#include "engine/dsp/dsp.h"
 #include "engine/midi/controllerlanes.h"
+#include "engine/midi/drummaps.h"
 
 #include <algorithm>
 #include <array>
@@ -42,13 +45,19 @@ namespace gnubase::engine
 			midi::Modifiers modifiers = channel.modifiers.bypass ? midi::Modifiers() : channel.modifiers;
 			modifiers.transpose += part.transpose;
 			modifiers.velocityShift += part.velocity;
+			// The track's drum map plays each note's sound: its O-note, on its channel unless that is Any, and not
+			// at all if it is muted (#129). The modifiers then apply to the O-note.
+			const DrumMap* map = midi::drumMapOf(project, part.track);
 			for (const auto& [id, note] : part.notes)
 			{
 				// Notes the part hides beyond its end don't play, wherever a random position would move them.
 				if (note.position >= end - start || !midi::notePlays(note, part.id))
 					continue;
+				const DrumSound* sound = map != nullptr ? &map->sounds.at(note.pitch) : nullptr;
+				if (sound != nullptr && sound->mute)
+					continue;
 				const uint64_t seed = midi::noteSeed(partId, id);
-				uint8_t pitch = note.pitch;
+				uint8_t pitch = sound != nullptr ? sound->oNote : note.pitch;
 				uint16_t velocity = midi::playedVelocity(note, part.id);
 				if (!midi::modifyNote(modifiers, seed, pitch, velocity))
 					continue;
@@ -62,7 +71,8 @@ namespace gnubase::engine
 				const time::Ticks length = note.length > 0 ? midi::modifyLength(modifiers, seed, note.length) : 0;
 				const time::Ticks noteEnd = std::min(start + position + length, end);
 				channel.notes.push_back(
-					{toSamples(project, start + position), toSamples(project, noteEnd), pitch, velocity, note.channel});
+					{toSamples(project, start + position), toSamples(project, noteEnd), pitch, velocity,
+						sound != nullptr && sound->channel >= 0 ? static_cast<uint8_t>(sound->channel) : note.channel});
 			}
 			for (const auto& [id, controller] : part.controllers)
 				if (controller.position < end - start)
@@ -101,11 +111,14 @@ namespace gnubase::engine
 			return event.length > 0;
 		}
 
-		// What still plays on a frozen track: the fader, pan and mute; its freeze file has the rest.
-		bool afterFreeze(AutomationTargetType type)
+		// What still plays on a frozen track: the fader, pan and mute, and the strip's sections after the plugin slots;
+		// its freeze file has the rest.
+		bool afterFreeze(const AutomationTarget& target)
 		{
-			switch (type)
+			switch (target.type)
 			{
+			case AutomationTargetType::Strip:
+				return !isPreSection(target.parameter);
 			case AutomationTargetType::Volume:
 			case AutomationTargetType::Pan:
 			case AutomationTargetType::PanLeft:
@@ -498,7 +511,7 @@ namespace gnubase::engine
 			const Track& track = project.trackById.at(lane.track);
 			const bool vca = track.type == TrackType::Vca && lane.target.type == AutomationTargetType::Volume;
 			if (!lane.read || lane.points.empty() || (channel == trackChannel.end() && !vca) ||
-				(track.frozen && !afterFreeze(lane.target.type)))
+				(track.frozen && !afterFreeze(lane.target)))
 				continue;
 			std::vector<const AutomationPoint*> sorted;
 			sorted.reserve(lane.points.size());
@@ -521,9 +534,13 @@ namespace gnubase::engine
 				const time::Samples position = toSamples(project, point->position);
 				if (project.virginTerritory && played.points.empty())
 					played.points.push_back(gapAt(position));
-				played.points.push_back({position,
-					lane.target.type == AutomationTargetType::Volume ? volumeGain(point->value) : point->value,
-					point->shape, point->curve});
+				// The fader's volume and the pre gain glide in a straight line of their linear gain.
+				double value = point->value;
+				if (lane.target.type == AutomationTargetType::Volume)
+					value = volumeGain(point->value);
+				else if (lane.target == AutomationTarget{AutomationTargetType::Strip, StripParameter::PreGain, 0, 0, 0})
+					value = dsp::dbToGain(point->value);
+				played.points.push_back({position, value, point->shape, point->curve});
 				if (point->terminator || (project.virginTerritory && point == sorted.back()))
 					played.points.push_back(gapAt(position));
 			}

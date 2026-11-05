@@ -93,6 +93,7 @@ endif()
 add_library(gnubase-engine STATIC
 	analysis/analysis.cpp analysis/analysis.h
 	analysis/onsets.cpp analysis/onsets.h
+	analysis/statistics.cpp analysis/statistics.h
 	analysis/tempodetect.cpp analysis/tempodetect.h
 	audio/analysiscommands.cpp
 	audio/arranger.cpp audio/arranger.h
@@ -121,6 +122,7 @@ add_library(gnubase-engine STATIC
 	dawproject/dawproject.cpp dawproject/dawproject.h
 	document/arranger.cpp
 	document/audiofilecommands.cpp
+	document/audiofunctions.cpp document/audiofunctions.h
 	document/channelformat.cpp document/channelformat.h
 	document/channelsettings.cpp document/channelsettings.h
 	document/document.cpp document/document.h
@@ -146,6 +148,7 @@ add_library(gnubase-engine STATIC
 	document/serialize.cpp document/serialize.h
 	document/signature.cpp
 	document/snap.cpp document/snap.h
+	document/stripparameters.cpp document/stripparameters.h
 	document/tempo.cpp
 	document/volumecurves.cpp document/volumecurves.h
 	dsp/biquad.cpp dsp/biquad.h
@@ -168,6 +171,7 @@ add_library(gnubase-engine STATIC
 	metronome/metronomesettings.cpp metronome/metronomesettings.h
 	midi/chords.cpp midi/chords.h
 	midi/controllerlanes.cpp midi/controllerlanes.h
+	midi/drummaps.cpp midi/drummaps.h
 	midi/functioncommands.cpp midi/functioncommands.h
 	midi/functions.cpp midi/functions.h
 	midi/midivalues.cpp midi/midivalues.h

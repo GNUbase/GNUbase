@@ -4,6 +4,7 @@
 #include "engine/audiofile/audiofile.h"
 #include "engine/audiofile/resampler.h"
 #include "engine/dawproject/dawproject.h"
+#include "engine/document/audiofunctions.h"
 #include "engine/document/channelsettings.h"
 #include "engine/document/editors.h"
 #include "engine/document/hitpoints.h"
@@ -11,6 +12,7 @@
 #include "engine/document/mixerviews.h"
 #include "engine/document/sampleeditor.h"
 #include "engine/document/serialize.h"
+#include "engine/document/stripparameters.h"
 #include "engine/document/volumecurves.h"
 #include "engine/dsp/timestretch.h"
 #include "engine/graph/graph.h"
@@ -18,6 +20,7 @@
 #include "engine/media/backup.h"
 #include "engine/metronome/metronomecommands.h"
 #include "engine/midi/controllerlanes.h"
+#include "engine/midi/drummaps.h"
 #include "engine/midi/functioncommands.h"
 #include "engine/midi/quantizecommands.h"
 #include "engine/processors/builtin.h"
@@ -590,7 +593,7 @@ namespace gnubase::engine
 				automationTargetTypeFromName(json.at("type").get<std::string>());
 			if (!parsed.has_value())
 				throw CommandError(
-					"target.type must be volume, pan, panLeft, panRight, mute, instrument, plugin, controller, "
+					"target.type must be volume, pan, panLeft, panRight, mute, instrument, plugin, strip, controller, "
 					"pitchBend or channelPressure");
 			const AutomationTargetType type = *parsed;
 			AutomationTarget target;
@@ -661,6 +664,15 @@ namespace gnubase::engine
 				target.parameter = json.at("parameter").get<uint32_t>();
 				break;
 			}
+			case AutomationTargetType::Strip:
+				only({"parameter"});
+				require(channel.format != ChannelFormat::None, "a MIDI track has no channel strip sections");
+				require(json.contains("parameter"), "target.parameter is required");
+				require(isParameterId(json.at("parameter")) &&
+						findStripParameter(json.at("parameter").get<uint32_t>()) != nullptr,
+					"the channel strip has no parameter " + json.at("parameter").dump() + " (see parameter.list)");
+				target.parameter = json.at("parameter").get<uint32_t>();
+				break;
 			case AutomationTargetType::Controller:
 				only({"number", "channel"});
 				require(midi, "MIDI controllers are automated on MIDI and instrument tracks");
@@ -679,8 +691,8 @@ namespace gnubase::engine
 			return target;
 		}
 
-		// The parameter of an instrument or a plugin that a lane automates, or none for the other targets and for
-		// parameters that are gone.
+		// The parameter of an instrument, a plugin or the channel strip that a lane automates, or none for the other
+		// targets and for parameters that are gone.
 		const processors::ParameterInfo* automatedParameter(const Project& project, const AutomationLane& lane)
 		{
 			const processors::BuiltinInfo* info = nullptr;
@@ -693,6 +705,8 @@ namespace gnubase::engine
 				if (slot != project.slots.end())
 					info = processors::findBuiltinPlugin(slot->second.plugin);
 			}
+			if (lane.target.type == AutomationTargetType::Strip)
+				return findStripParameter(lane.target.parameter);
 			return info != nullptr ? processors::findParameter(*info, lane.target.parameter) : nullptr;
 		}
 
@@ -718,8 +732,11 @@ namespace gnubase::engine
 				return {0.0, 1.0};
 			case AutomationTargetType::Instrument:
 			case AutomationTargetType::Plugin:
+			case AutomationTargetType::Strip:
 				if (const processors::ParameterInfo* parameter = automatedParameter(project, lane))
 					return {parameter->minimum, parameter->maximum};
+				if (lane.target.type == AutomationTargetType::Strip) // from a newer build's file
+					throw CommandError("the channel strip has no parameter " + std::to_string(lane.target.parameter));
 				throw CommandError(std::string("the ") +
 					(lane.target.type == AutomationTargetType::Plugin ? "plugin" : "instrument") +
 					" of automation lane " + idText(lane.id) + " has no parameter " +
@@ -1273,6 +1290,14 @@ namespace gnubase::engine
 			track.color = newColor;
 			track.timeFormat = parameters.value("timeFormat", track.timeFormat);
 			track.picture = parameters.value("picture", track.picture);
+			if (parameters.contains("drumMap"))
+			{
+				track.drumMap = parameters.at("drumMap").get<ObjectId>();
+				require(track.drumMap == 0 || track.type == TrackType::Midi || track.type == TrackType::Instrument,
+					"only MIDI and instrument tracks have a drum map");
+				require(track.drumMap == 0 || project.drumMaps.count(track.drumMap) != 0,
+					"no drum map " + std::to_string(track.drumMap));
+			}
 			if (parameters.contains("enabled"))
 			{
 				const bool enabled = parameters.at("enabled").get<bool>();
@@ -3060,6 +3085,7 @@ namespace gnubase::engine
 			announceObjects(change.audioEvents, direction, "audioEvent", "event", context);
 			announceObjects(change.markers, direction, "marker", "marker", context);
 			announceObjects(change.linkGroups, direction, "linkGroup", "group", context);
+			announceObjects(change.drumMaps, direction, "drumMap", "map", context);
 			// Slots as plugin.insert, plugin.remove and the other plugin.* commands announce them. Those of a channel
 			// that came or went are in its events.
 			std::set<ObjectId> channels; // that came or went
@@ -3686,10 +3712,11 @@ namespace gnubase::engine
 				"its automation and the routing of other channels to it go. Channels routed elsewhere by hand or "
 				"disconnected keep their routing. With the user setting editing.applyFolderColor, a folder's new "
 				"color goes to the tracks inside it. picture is an image file (PNG, JPEG or SVG) that the mixer shows "
-				"on the track's channel, or empty for none.",
+				"on the track's channel, or empty for none. drumMap is the drum map (drumMap.add) a MIDI or instrument "
+				"track's notes play through, or 0 for none.",
 				objectSchema({{"track", idSchema}, {"name", stringSchema}, {"color", color}, {"timeBase", timeBases},
 								 {"timeFormat", timeFormats}, {"enabled", booleanSchema},
-								 {"groupChannel", booleanSchema}, {"picture", stringSchema}},
+								 {"groupChannel", booleanSchema}, {"picture", stringSchema}, {"drumMap", idSchema}},
 					{"track"}),
 				resultSchema({"track"}), false},
 			setTrack);
@@ -4056,10 +4083,12 @@ namespace gnubase::engine
 		registerSnapCommands(*this, engine);
 		registerMixerCommands(*this, engine);
 		registerLinkGroupCommands(*this, engine);
+		midi::registerDrumMapCommands(*this, engine);
 		registerChannelSettingsCommands(*this, engine);
 		registerEditorCommands(*this, engine);
 		registerSampleEditorCommands(*this, engine);
 		registerHitpointCommands(*this, engine, jobs);
+		registerAudioFunctionCommands(*this, engine);
 		registerHistoryCommands(engine);
 		registerMediaFolderCommands(engine, jobs);
 		registerProjectFileCommands(engine);
@@ -4074,7 +4103,7 @@ namespace gnubase::engine
 		const Json target =
 			objectSchema({{"type",
 							  enumSchema({"volume", "pan", "panLeft", "panRight", "mute", "instrument", "plugin",
-								  "controller", "pitchBend", "channelPressure"})},
+								  "strip", "controller", "pitchBend", "channelPressure"})},
 							 {"parameter", idSchema}, {"slot", idSchema}, {"number", idSchema}, {"channel", idSchema}},
 				{"type"});
 		const Json shape = enumSchema({"step", "linear", "curve"});
@@ -4089,7 +4118,10 @@ namespace gnubase::engine
 				"of an instrument track's built-in instrument (target.parameter, an id from processor.list, in its "
 				"range); plugin, a parameter of the built-in plugin in one of the track's slots (target.slot and "
 				"target.parameter, as parameter.list gives them, in its range; the lane goes when the plugin is "
-				"removed or moves to another channel); controller (target.number 0-127), pitchBend (0.5 is no bend) "
+				"removed or moves to another channel); strip, a parameter of the channel strip's sections on tracks "
+				"with audio channels (target.parameter, as parameter.list gives them: the pre section's gain, phase "
+				"and cut filters, the equalizer and the gate, compressor and limiter, in their ranges; switches and "
+				"stepped choices have step curves); controller (target.number 0-127), pitchBend (0.5 is no bend) "
 				"and channelPressure, all 0 to 1, on MIDI and instrument tracks, with target.channel 0-15 (default 0). "
 				"A track has one lane per target. read (default true): the curve plays; without it, or without points, "
 				"the parameter keeps its static value.",
