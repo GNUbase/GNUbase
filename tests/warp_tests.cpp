@@ -246,6 +246,63 @@ TEST_CASE("audio in musical mode follows tempo changes", "[integration]")
 	CHECK_THAT(reject(client, "clip.setWarp", {{"clip", 999}}), ContainsSubstring("no clip"));
 }
 
+TEST_CASE("splitting and resizing a warped event leaves its audio where it plays", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	run(client, "audio.setDevice", {{"blockSize", 256}, {"inputChannels", 0}, {"captureSeconds", 6}});
+	const std::vector<double> slow{2000.0, 50000.0, 98000.0, 146000.0};
+
+	SECTION("musical mode")
+	{
+		// Four quarters at 120 BPM in musical mode, then the project goes to 60 BPM: each quarter takes twice as long.
+		const Loop loop = addLoop(client, dir, clicks({1000, 25000, 49000, 73000}, 4 * g_quarter));
+		run(client, "project.set", {{"tempo", 120.0}});
+		run(client, "clip.setWarp", {{"clip", loop.clip}, {"musical", true}});
+		run(client, "project.set", {{"tempo", 60.0}});
+		checkClicks(render(client, 8 * g_quarter), slow);
+
+		// A split at project beat 1 cuts at clip beat 1.
+		const Json pieces =
+			run(client, "event.split", {{"events", {loop.event}}, {"positions", {2 * g_quarter}}}).at("events");
+		REQUIRE(pieces.size() == 1);
+		const auto right = pieces[0].get<ObjectId>();
+		CHECK(eventOf(client, loop.event).at("length") == g_quarter);
+		CHECK(eventOf(client, right).at("offset") == g_quarter);
+		CHECK(eventOf(client, right).at("length") == 3 * g_quarter);
+		checkClicks(render(client, 8 * g_quarter), slow);
+		CHECK(
+			run(client, "event.split", {{"events", {right}}, {"positions", {4 * g_quarter}}}).at("events").size() == 1);
+		run(client, "history.undo");
+
+		// The start a beat later hides clip beat 1, the end a beat earlier clip beat 3.
+		run(client, "event.resize", {{"events", {right}}, {"edge", "start"}, {"delta", 2 * g_quarter}});
+		CHECK(eventOf(client, right).at("offset") == 2 * g_quarter);
+		CHECK(eventOf(client, right).at("length") == 2 * g_quarter);
+		run(client, "event.resize", {{"events", {right}}, {"edge", "end"}, {"delta", -2 * g_quarter}});
+		CHECK(eventOf(client, right).at("length") == g_quarter);
+		checkClicks(render(client, 8 * g_quarter), {2000.0, 98000.0});
+
+		// The snap point at project beat 2 is clip beat 2.
+		run(client, "event.setSnapPoint", {{"events", {right}}, {"position", 4 * g_quarter}});
+		CHECK(eventOf(client, right).at("snapPoint") == 2 * g_quarter);
+	}
+
+	SECTION("free warp markers")
+	{
+		const Loop loop = addLoop(client, dir, clicks({1000, 25000, 52000, 73000}, 4 * g_quarter), "linear");
+		run(client, "clip.addWarpMarker", {{"clip", loop.clip}, {"position", 52000}, {"target", 49000}});
+		const std::vector<double> warped{
+			1000.0 * 49000.0 / 52000.0, 25000.0 * 49000.0 / 52000.0, 49000.0, 49000.0 + (21000.0 * 47000.0 / 44000.0)};
+		run(client, "event.split", {{"events", {loop.event}}, {"positions", {30000}}});
+		checkClicks(render(client, 4 * g_quarter), warped);
+		// A snap point goes to the clip frame that plays at its position.
+		run(client, "event.setSnapPoint", {{"events", {loop.event}}, {"position", 49000 - 30000}});
+		CHECK(eventOf(client, loop.event).at("snapPoint") == std::llround((49000.0 - 30000.0) * 52000.0 / 49000.0));
+	}
+}
+
 TEST_CASE("bars and beats, Auto Adjust and Manual Adjust define a clip's grid", "[integration]")
 {
 	const test::TempDir dir;

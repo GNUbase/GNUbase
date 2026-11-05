@@ -1147,6 +1147,11 @@ namespace gnubase::engine
 
 	EventSpan eventSpan(const Project& project, const AudioEvent& event);
 
+	// How many project samples after an audio event's start the clip frames frames after its offset play, and the
+	// other way round: through the clip's warp when it plays warped (warp.h), else at the ratio of the sample rates.
+	double eventSamples(const Project& project, const AudioEvent& event, double frames);
+	double eventFrames(const Project& project, const AudioEvent& event, double samples);
+
 	// Whether an event's crossfade plays: the event it comes from is on the same track, neither is muted, and this
 	// one starts inside it and ends after it. Otherwise the crossfade rests, and both play their own fades at those
 	// ends. Playback (through the render snapshot) and the DAWproject export decide by this.

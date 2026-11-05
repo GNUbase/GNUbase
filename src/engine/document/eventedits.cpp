@@ -411,18 +411,20 @@ namespace gnubase::engine
 				AudioEvent& event = *item.audio;
 				const EventSpan span = eventSpan(project, event);
 				const time::Samples media = project.media.at(project.clips.at(event.clip).media).length;
-				const int64_t wanted =
-					std::llround(static_cast<double>(samples(project, start) - span.start) / span.ratio);
+				const int64_t wanted = std::llround(
+					eventFrames(project, event, static_cast<double>(samples(project, start) - span.start)));
 				int64_t frames = std::min(wanted, event.length - 1);
 				frames = std::max(frames, moveContents ? event.length - (media - event.offset) : -event.offset);
-				frames = std::max(frames, -static_cast<int64_t>(static_cast<double>(span.start) / span.ratio));
+				frames = std::max(frames,
+					static_cast<int64_t>(std::ceil(eventFrames(project, event, -static_cast<double>(span.start)))));
 				if (!moveContents)
 					event.offset += frames;
 				event.length -= frames;
 				event.position = frames == wanted
 					? rebased(project, start, event.position.base)
 					: rebased(project,
-						  {time::TimeBase::Linear, span.start + std::llround(static_cast<double>(frames) * span.ratio)},
+						  {time::TimeBase::Linear,
+							  span.start + std::llround(eventSamples(project, event, static_cast<double>(frames)))},
 						  event.position.base);
 				return;
 			}
@@ -459,7 +461,8 @@ namespace gnubase::engine
 				const time::Samples to = samples(project, end);
 				if (moveContents)
 				{
-					int64_t frames = std::llround(static_cast<double>(to - span.end) / span.ratio);
+					int64_t frames = std::llround(eventFrames(project, event, static_cast<double>(to - span.start)) -
+						eventFrames(project, event, static_cast<double>(span.end - span.start)));
 					frames = std::clamp<int64_t>(frames, 1 - event.length, event.offset);
 					event.offset -= frames;
 					event.length += frames;
@@ -467,7 +470,8 @@ namespace gnubase::engine
 				else
 				{
 					event.length = std::clamp<int64_t>(
-						std::llround(static_cast<double>(to - span.start) / span.ratio), 1, media - event.offset);
+						std::llround(eventFrames(project, event, static_cast<double>(to - span.start))), 1,
+						media - event.offset);
 				}
 				return;
 			}
@@ -518,7 +522,7 @@ namespace gnubase::engine
 			{
 				AudioEvent& event = *item.audio;
 				const EventSpan span = eventSpan(project, event);
-				const int64_t frames = std::llround(static_cast<double>(at - span.start) / span.ratio);
+				const int64_t frames = std::llround(eventFrames(project, event, static_cast<double>(at - span.start)));
 				if (at <= span.start || at >= span.end || frames <= 0 || frames >= event.length)
 					return {};
 				AudioEvent right = event;
@@ -1198,8 +1202,8 @@ namespace gnubase::engine
 				const EventSpan span = eventSpan(project, *item.audio);
 				require(
 					at >= span.start && at < span.end, "the position isn't inside event " + std::to_string(item.id()));
-				item.audio->snapPoint =
-					item.audio->offset + std::llround(static_cast<double>(at - span.start) / span.ratio);
+				item.audio->snapPoint = item.audio->offset +
+					std::llround(eventFrames(project, *item.audio, static_cast<double>(at - span.start)));
 				announce(project, context, item, "changed");
 			}
 			return {{"events", idsOf(items)}};

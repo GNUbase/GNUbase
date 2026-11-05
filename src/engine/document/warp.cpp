@@ -307,6 +307,35 @@ namespace gnubase::engine
 		return EventWarp(project, event).offset(frame);
 	}
 
+	double warpedFrameAt(const Project& project, const AudioEvent& event, double offset)
+	{
+		// The offset grows with the frame: bracket it, widening from the event, then halve the bracket.
+		const EventWarp warp(project, event);
+		auto low = static_cast<double>(event.offset);
+		double high = low;
+		double step = std::max(1.0, static_cast<double>(event.length));
+		while (warp.offset(high) < offset && step < 1e15)
+		{
+			high += step;
+			step *= 2.0;
+		}
+		step = std::max(1.0, static_cast<double>(event.length));
+		while (warp.offset(low) > offset && step < 1e15)
+		{
+			low -= step;
+			step *= 2.0;
+		}
+		for (int i = 0; i < 100 && high - low > 1e-6; ++i)
+		{
+			const double middle = (low + high) / 2.0;
+			if (warp.offset(middle) < offset)
+				low = middle;
+			else
+				high = middle;
+		}
+		return (low + high) / 2.0;
+	}
+
 	std::vector<dsp::WarpPoint> warpMap(const Project& project, const AudioEvent& event)
 	{
 		const EventWarp warp(project, event);

@@ -21,6 +21,9 @@ namespace gnubase::engine
 	// and in musical mode through its definition and the project's tempo. For frames within the event.
 	double warpedOffset(const Project& project, const AudioEvent& event, double frame);
 
+	// The inverse of warpedOffset: the clip frame that plays offset project samples after the event's start.
+	double warpedFrameAt(const Project& project, const AudioEvent& event, double offset);
+
 	// The warp map an audio event of a warped clip plays by: its clip frames from offset to offset + length, to frames
 	// at the clip's sample rate from the event's start, a point every 4096 clip frames and at every warp marker and
 	// edited beat.
