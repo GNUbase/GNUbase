@@ -531,7 +531,11 @@ namespace gnubase::engine
 			json["frozen"] = {{"path", track.frozen->path}, {"sampleRate", track.frozen->sampleRate},
 				{"channels", track.frozen->channels}, {"length", track.frozen->length}};
 		if (track.type == TrackType::Ruler)
+		{
 			json["timeFormat"] = track.timeFormat;
+			json["timeOffset"] = track.timeOffset;
+			json["timeOffsetOn"] = track.timeOffsetOn;
+		}
 		if (hasVersions(track.type))
 		{
 			// The versions without their events and parts, which toJson(const Project&) has.
@@ -1617,6 +1621,9 @@ namespace gnubase::engine
 				if (std::find(g_rulerTimeFormats.begin(), g_rulerTimeFormats.end(), track.timeFormat) ==
 					g_rulerTimeFormats.end())
 					throw std::invalid_argument("unknown ruler time format " + track.timeFormat);
+				// Files from before #447 have no time offset.
+				track.timeOffset = std::max<int64_t>(0, item.value("timeOffset", int64_t{0}));
+				track.timeOffsetOn = item.value("timeOffsetOn", false);
 			}
 			// Files from before #165 have no versions; a track with only its first one keeps none of its own.
 			if (const Json versions = item.value("versions", Json::array());
