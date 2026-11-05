@@ -217,16 +217,19 @@
 			end,
 		}
 
-		-- The engine merges the tracks that play, by playback's solo and mute rules.
+		-- The engine merges the tracks that play, by playback's solo and mute rules. Include Inserts plays the tracks'
+		-- MIDI modifiers into the notes (p. 1120).
 		forms.merge = {
 			fields = function()
-				return field("Erase Destination", check("erase", false)) ..
+				return field("Include Inserts", check("inserts", true)) ..
+					field("Erase Destination", check("erase", false)) ..
 					field("Include Chase", check("chase", false))
 			end,
 			run = function(document, parameters)
 				local transport = gnubase.transport.get()
 				local merge = {start = transport.left, ["end"] = transport.right, destination = dialog.destination,
-					eraseDestination = checked(document, "erase"), includeChase = checked(document, "chase")}
+					includeInserts = checked(document, "inserts"), eraseDestination = checked(document, "erase"),
+					includeChase = checked(document, "chase")}
 				gnubase.midi.merge(merge)
 			end,
 		}

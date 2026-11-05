@@ -743,16 +743,28 @@ namespace gnubase::engine::midi
 				continue;
 			const Ticks partFrom = partStart(project, part);
 			const Ticks partTo = partEnd(project, part);
+			// As playback plays them (compilePart in rendersnapshot.cpp): the part's transpose and velocity, which the
+			// new part doesn't have, and with Include Inserts the track's MIDI modifiers.
+			const Modifiers& trackModifiers = project.channels.at(project.trackById.at(part.track).channel).modifiers;
+			Modifiers modifiers = settings.includeInserts && !trackModifiers.bypass ? trackModifiers : Modifiers();
+			modifiers.transpose += part.transpose;
+			modifiers.velocityShift += part.velocity;
 			for (const auto& [noteId, note] : part.notes)
 			{
-				const Ticks at = partFrom + note.position;
-				if (at < partTo && inRange(at))
-				{
-					Note copy = note;
-					copy.position = at;
-					copy.length = std::min(at + note.length, partTo) - at;
-					notes.push_back(copy);
-				}
+				if (partFrom + note.position >= partTo)
+					continue;
+				const uint64_t seed = noteSeed(part.id, noteId);
+				Note copy = note;
+				if (!modifyNote(modifiers, seed, copy.pitch, copy.velocity))
+					continue;
+				const Ticks at = partFrom +
+					std::max(note.position + randomOffset(modifiers, RandomTarget::Position, seed), -partFrom);
+				if (at >= partTo || !inRange(at))
+					continue;
+				const Ticks length = note.length > 0 ? modifyLength(modifiers, seed, note.length) : 0;
+				copy.position = at;
+				copy.length = std::min(at + length, partTo) - at;
+				notes.push_back(copy);
 			}
 			for (const auto& [controllerId, controller] : part.controllers)
 			{
@@ -901,6 +913,9 @@ namespace gnubase::engine::midi
 				{
 					trackFor[key] = addMidiTrack(project, source.name + " " + suffixOf(key), source.parent, ++index,
 						instrument, source.timeBase);
+					// The track's MIDI modifiers, so that the new parts play as the part did.
+					project.channels.at(project.trackById.at(trackFor[key]).channel).modifiers =
+						project.channels.at(source.channel).modifiers;
 					changes.tracks.push_back(trackFor[key]);
 				}
 			}

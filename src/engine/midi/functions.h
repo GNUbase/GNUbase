@@ -220,7 +220,8 @@ namespace gnubase::engine::midi
 		ObjectId destination = 0;     // a MIDI or instrument track; 0 adds a MIDI track
 		bool eraseDestination = false;
 		bool includeChase = false;
-		std::string name; // the new part's; empty: the destination track's
+		bool includeInserts = false; // also the tracks' MIDI modifiers (Include Inserts)
+		std::string name;            // the new part's; empty: the destination track's
 	};
 
 	// The MIDI and instrument tracks that play, in track order, by playback's rules: neither their channel nor a
@@ -230,10 +231,12 @@ namespace gnubase::engine::midi
 
 	// Copies the notes and controllers that start in the range on the tracks into a new part between start and end
 	// on the destination track, leaving out muted parts, which don't play. Events are in the range when their
-	// position in samples is, as in playback; the new
-	// part starts at the first of them if that is earlier than start in ticks. Notes keep their lengths, cut where
-	// their part ends. eraseDestination first removes the destination track's parts that lie in the range and the
-	// events of other parts that start in it. includeChase adds the last controller value of every controller, program
+	// position in samples is, as in playback; the new part starts at the first of them if that is earlier than start
+	// in ticks. Notes keep their lengths, cut where their part ends. They get their parts' transpose and velocity as
+	// playback applies them, and with includeInserts also their tracks' MIDI modifiers (reference manual pp. 1096,
+	// 1120), with the random values playback draws; a note they move out of the range or that doesn't play is left
+	// out. eraseDestination first removes the destination track's parts that lie in the range and the events of other
+	// parts that start in it. includeChase adds the last controller value of every controller, program
 	// and channel before start at the new part's start. A new destination track goes to the end of the track list,
 	// routed to the instrument of the first track merged.
 	PartChanges merge(Project& project, const MergeSettings& settings);

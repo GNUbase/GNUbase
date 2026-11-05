@@ -2632,7 +2632,7 @@ Returns:
 
 #### `gnubase.midi.merge`
 
-Merges the notes and controllers that start between start and end (project samples, like the locators, compared in samples as playback does) on the MIDI and instrument tracks in tracks into a new part on the destination track from start, or from the first merged event if that is earlier, to end, named name (default: the track's name). Without tracks, the MIDI and instrument tracks that play, by playback's solo and mute rules: neither their channel nor one it plays into is muted, silenced by a solo or on a disabled track (sends aren't followed); it refuses if none does. Muted parts are left out. Notes keep their length, cut where their part ends. Without destination a new MIDI track is added at the end, routed to the instrument of the first track merged. eraseDestination first removes the destination's parts that lie between start and end, and the events of its other parts that start there. includeChase adds the last value of every controller and program before start at the new part's start. Returns the tracks it added, the parts it added (parts), changed and removed.
+Merges the notes and controllers that start between start and end (project samples, like the locators, compared in samples as playback does) on the MIDI and instrument tracks in tracks into a new part on the destination track from start, or from the first merged event if that is earlier, to end, named name (default: the track's name). Without tracks, the MIDI and instrument tracks that play, by playback's solo and mute rules: neither their channel nor one it plays into is muted, silenced by a solo or on a disabled track (sends aren't followed); it refuses if none does. Muted parts are left out. Notes keep their length, cut where their part ends, and get their parts' transpose and velocity as playback applies them; includeInserts also plays their tracks' MIDI modifiers into them (channel.set modifiers, with the random values playback draws), leaving out notes they filter out or move out of the range. Without destination a new MIDI track is added at the end, routed to the instrument of the first track merged. eraseDestination first removes the destination's parts that lie between start and end, and the events of its other parts that start there. includeChase adds the last value of every controller and program before start at the new part's start. Returns the tracks it added, the parts it added (parts), changed and removed.
 
 Parameters:
 
@@ -2640,6 +2640,7 @@ Parameters:
 - `end`: integer, required
 - `eraseDestination`: boolean
 - `includeChase`: boolean
+- `includeInserts`: boolean
 - `name`: string
 - `start`: integer, required
 - `tracks`: array of integer
