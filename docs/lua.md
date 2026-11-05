@@ -1713,7 +1713,7 @@ Returns:
 
 #### `gnubase.event.glue`
 
-Glues audio events and parts or MIDI parts of one track together. Audio events that continue each other in the same clip, as after a split, become one event; other audio events and audio parts become one audio part from the first start to the last end, the first of the parts or a new one, holding all their events. MIDI parts become the first of them, from the first start to the last end, with all their notes and controllers. Returns the event or part.
+Glues audio events and parts or MIDI parts of one track together. Audio events that continue each other in the same clip, as after a split, become one event; other audio events and audio parts become one audio part from the first start to the last end, the first of the parts or a new one, holding all their events. MIDI parts become the first of them, from the first start to the last end, with all their notes and controllers; it keeps its transpose and velocity, and the notes of the others get the difference of their part's transpose and velocity to them, so that they play as before as far as velocities from 1 to 127 allow (refused if that would transpose a note beyond 0 to 127). Returns the event or part.
 
 Parameters:
 
