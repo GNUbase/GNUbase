@@ -109,44 +109,6 @@ namespace gnubase::engine
 			return {{"clip", clip.id}, {"hitpoints", std::move(hitpoints)}};
 		}
 
-		// The onsets of a media file as hitpoints, intensities relative to the sharpest. Checks for job.cancel and
-		// reports its progress between blocks.
-		std::vector<Hitpoint> detect(const MediaFile& media, JobContext& job)
-		{
-			std::vector<analysis::Onset> onsets;
-			try
-			{
-				const std::unique_ptr<AudioFileReader> reader = AudioFileReader::open(media.path);
-				const int channels = reader->info().channels;
-				const auto frames = static_cast<double>(std::max<time::Samples>(1, reader->info().frames));
-				analysis::OnsetDetector detector(media.sampleRate, channels);
-				std::vector<float> buffer(g_readFrames * static_cast<size_t>(std::max(channels, 1)));
-				size_t done = 0;
-				for (size_t read = g_readFrames; read == g_readFrames;)
-				{
-					job.checkCancelled();
-					read = reader->read(buffer.data(), g_readFrames);
-					detector.feed(buffer.data(), read);
-					done += read;
-					job.progress(std::min(1.0, static_cast<double>(done) / frames), media.path);
-				}
-				onsets = detector.finish();
-			}
-			catch (const AudioFileError& error)
-			{
-				throw CommandError("can't read " + media.path + ": " + error.what());
-			}
-			double sharpest = 0.0;
-			for (const analysis::Onset& onset : onsets)
-				sharpest = std::max(sharpest, onset.rise);
-			std::vector<Hitpoint> hitpoints;
-			for (const analysis::Onset& onset : onsets)
-				if (onset.frame < media.length)
-					hitpoints.push_back(
-						{onset.frame, onset.peak, sharpest > 0.0 ? onset.rise / sharpest : 0.0, false, false});
-			return hitpoints;
-		}
-
 		// The sound at a frame of a media file, as the detection measures the onsets it finds.
 		analysis::Onset measure(const MediaFile& media, time::Samples position)
 		{
@@ -232,6 +194,44 @@ namespace gnubase::engine
 		}
 	}
 
+	std::vector<Hitpoint> detectHitpoints(const MediaFile& media, JobContext* job)
+	{
+		std::vector<analysis::Onset> onsets;
+		try
+		{
+			const std::unique_ptr<AudioFileReader> reader = AudioFileReader::open(media.path);
+			const int channels = reader->info().channels;
+			const auto frames = static_cast<double>(std::max<time::Samples>(1, reader->info().frames));
+			analysis::OnsetDetector detector(media.sampleRate, channels);
+			std::vector<float> buffer(g_readFrames * static_cast<size_t>(std::max(channels, 1)));
+			size_t done = 0;
+			for (size_t read = g_readFrames; read == g_readFrames;)
+			{
+				if (job != nullptr)
+					job->checkCancelled();
+				read = reader->read(buffer.data(), g_readFrames);
+				detector.feed(buffer.data(), read);
+				done += read;
+				if (job != nullptr)
+					job->progress(std::min(1.0, static_cast<double>(done) / frames), media.path);
+			}
+			onsets = detector.finish();
+		}
+		catch (const AudioFileError& error)
+		{
+			throw CommandError("can't read " + media.path + ": " + error.what());
+		}
+		double sharpest = 0.0;
+		for (const analysis::Onset& onset : onsets)
+			sharpest = std::max(sharpest, onset.rise);
+		std::vector<Hitpoint> hitpoints;
+		for (const analysis::Onset& onset : onsets)
+			if (onset.frame < media.length)
+				hitpoints.push_back(
+					{onset.frame, onset.peak, sharpest > 0.0 ? onset.rise / sharpest : 0.0, false, false});
+		return hitpoints;
+	}
+
 	void registerHitpointCommands(ProjectModel& model, Engine& engine, Jobs& jobs)
 	{
 		const Json integer = {{"type", "integer"}};
@@ -273,7 +273,7 @@ namespace gnubase::engine
 							JobContext& job)
 						{
 							Json hitpoints = Json::array();
-							for (const Hitpoint& hitpoint : detect(media, job))
+							for (const Hitpoint& hitpoint : detectHitpoints(media, &job))
 								hitpoints.push_back({{"position", hitpoint.position}, {"peak", hitpoint.peak},
 									{"intensity", hitpoint.intensity}});
 							return job.command("clip.setHitpoints",
