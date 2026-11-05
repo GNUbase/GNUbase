@@ -3,6 +3,7 @@
 
 #include "platform/log.h"
 #include "ui/keycommands.h"
+#include "ui/livereload.h"
 
 #include <RmlUi/Core/ComputedValues.h>
 #include <RmlUi/Core/Context.h>
@@ -139,7 +140,8 @@ namespace gnubase::ui
 
 	Docking::Docking(engine::Engine& engine, EngineBinding& binding, Shell& shell, std::filesystem::path panelWindow,
 		bool hiddenWindows)
-		: m_binding(binding), m_shell(shell), m_panelWindow(std::move(panelWindow)), m_hiddenWindows(hiddenWindows)
+		: m_binding(binding), m_shell(shell), m_panelWindow(std::move(panelWindow)), m_hiddenWindows(hiddenWindows),
+		  m_reloadEvent(g_documentReloadEvent)
 	{
 		const engine::Result layout = engine::Client(engine).call("settings.get", {{"key", "ui.layout"}});
 		if (layout.ok() && layout.value.at("value").is_object())
@@ -197,9 +199,15 @@ namespace gnubase::ui
 			else
 				document.RemoveEventListener(id, this);
 		if (on)
+		{
 			document.AddEventListener(Rml::EventId::Focus, this, true);
+			document.AddEventListener(m_reloadEvent, this);
+		}
 		else
+		{
 			document.RemoveEventListener(Rml::EventId::Focus, this, true);
+			document.RemoveEventListener(m_reloadEvent, this);
+		}
 	}
 
 	void Docking::add(Panel panel)
@@ -920,22 +928,15 @@ namespace gnubase::ui
 				{
 					const Window& window = m_shell.open(spec);
 					Rml::ElementDocument* document = window.context().LoadDocument(m_panelWindow.generic_u8string());
-					Rml::Element* content = document == nullptr ? nullptr : document->GetElementById("panel-content");
-					if (content == nullptr)
+					if (document == nullptr || document->GetElementById("panel-content") == nullptr)
 					{
 						m_shell.close(window.id());
 						logging::error("Cannot load the panel window {}", m_panelWindow.u8string());
 						continue;
 					}
-					document->SetTitle(panel.title);
-					document->SetAttribute("panel", panel.id);
 					document->Show();
-					listen(*document, true);
 					shown.window = window.id();
-					shown.document = document->GetObserverPtr();
-					shown.element = content;
-					if (panel.create)
-						shown.content = panel.create(*content);
+					fillPanelWindow(panel, shown, *document);
 				}
 				catch (const std::runtime_error& error)
 				{
@@ -943,6 +944,50 @@ namespace gnubase::ui
 				}
 			}
 		}
+	}
+
+	bool Docking::fillPanelWindow(const Panel& panel, Shown& shown, Rml::ElementDocument& document)
+	{
+		document.SetTitle(panel.title);
+		document.SetAttribute("panel", panel.id);
+		listen(document, true);
+		shown.document = document.GetObserverPtr();
+		Rml::Element* content = document.GetElementById("panel-content");
+		shown.element = content;
+		if (content != nullptr && panel.create)
+			shown.content = panel.create(*content);
+		return content != nullptr;
+	}
+
+	void Docking::reload(Rml::ElementDocument& old, Rml::ElementDocument& loaded)
+	{
+		const auto attached =
+			std::find_if(m_windows.begin(), m_windows.end(), [&old](const std::pair<const std::string, Attached>& entry)
+				{ return entry.second.document.get() == &old; });
+		if (attached != m_windows.end())
+		{
+			// What the panels docked there filled goes first, what create returned before its element.
+			for (auto& [id, shown] : m_shown)
+				if (shown.window == 0 && shown.element != nullptr && shown.element->GetOwnerDocument() == &old)
+				{
+					shown.content.reset();
+					shown.element = nullptr;
+				}
+			attach(attached->first, loaded);
+			return;
+		}
+		for (auto& [id, shown] : m_shown)
+			if (shown.document.get() == &old)
+			{
+				listen(old, false);
+				shown.content.reset();
+				shown.element = nullptr;
+				const Panel* info = panel(id);
+				if (info != nullptr && !fillPanelWindow(*info, shown, loaded))
+					logging::warning("{} has no #panel-content now; the panel {} shows nothing until it docks",
+						m_panelWindow.u8string(), id);
+				return;
+			}
 	}
 
 	bool Docking::focusZone(Rml::Element& from, int step)
@@ -985,12 +1030,27 @@ namespace gnubase::ui
 	}
 
 	// From the documents' events. What changes the documents waits for the shell's next step, since elements must not
-	// go while their events are handled.
+	// go while their events are handled. A document loaded again is the exception: its panels' contents must go while
+	// it is still there, and they and the new document are off the event's path.
 	void Docking::ProcessEvent(Rml::Event& event)
 	{
 		Rml::Element* target = event.GetTargetElement();
 		if (target == nullptr)
 			return;
+		if (event.GetType() == m_reloadEvent)
+		{
+			// Only another document of the same context takes its place, whatever pointer the event has.
+			auto* old = dynamic_cast<Rml::ElementDocument*>(target);
+			Rml::Context* context = target->GetContext();
+			const void* named = event.GetParameter<void*>("document", nullptr);
+			for (int i = 0; old != nullptr && context != nullptr && i < context->GetNumDocuments(); ++i)
+				if (Rml::ElementDocument* loaded = context->GetDocument(i); loaded != old && loaded == named)
+				{
+					reload(*old, *loaded);
+					break;
+				}
+			return;
+		}
 		std::string window = windowOf(*target);
 		switch (event.GetId())
 		{

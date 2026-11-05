@@ -3,14 +3,18 @@
 // tools drive it. The OS's file and folder dialogs are left out, since tests can't answer them; tests/pool_tests.cpp
 // checks the engine's pool commands.
 #include "ui/automation.h"
+#include "ui/enginebinding.h"
 #include "ui/eventdisplay.h"
+#include "ui/poolpanel.h"
 #include "uiapp.h"
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <optional>
 #include <string>
 #include <vector>
@@ -86,6 +90,20 @@ namespace
 				return item.at("folder").get<uint64_t>();
 		FAIL_CHECK("no clip " << clip);
 		return 0;
+	}
+
+	// Whether the message line offers Stop: a job of a pool command runs.
+	bool offersStop(test::UiApp& app)
+	{
+		const Json row = elements(app, ".pool-status");
+		return !row.empty() && has(row.at(0), "running") && elements(app, "#pool-stop").at(0).at("visible") == true;
+	}
+
+	// A media file that isn't at path, as media.add takes it for a file that is still being recorded: one second of
+	// mono at 48 kHz.
+	void addMissing(test::UiApp& app, const std::filesystem::path& path)
+	{
+		app.call("media.add", {{"path", path.u8string()}, {"sampleRate", 48000.0}, {"channels", 1}, {"length", 48000}});
 	}
 
 	void openPool(test::UiApp& app, size_t rowCount)
@@ -292,6 +310,8 @@ TEST_CASE("the pool panel shows the Conform Files job's progress and that it was
 	const std::filesystem::path slow = dir.path() / "slow.wav";
 	test::writeWav(slow, {std::vector<float>(size_t{44100} * 60 * 2, 0.25f), 2, 44100});
 	addClip(app, slow.u8string());
+	openPool(app, 2);
+	const Json listTop = elements(app, "#pool").at(0).at("box").at("y");
 
 	// While it converts, the message line says how far it got and with which file.
 	click(app, "#menu-bar button[menu=media-menu]");
@@ -306,12 +326,93 @@ TEST_CASE("the pool panel shows the Conform Files job's progress and that it was
 	const Json jobs = app.call("job.list").at("jobs");
 	REQUIRE(jobs.size() == 1);
 	CHECK(jobs.at(0).at("kind") == "media.conform");
-	app.call("job.cancel", {{"job", jobs.at(0).at("id")}});
 
-	// Cancelled, it says so and leaves the media file as it was.
+	// Meanwhile the line offers Stop (reference manual p. 751), which cancels it; cancelled, it says so, doesn't offer
+	// Stop any more and leaves the media file as it was.
+	REQUIRE(offersStop(app));
+	CHECK(elements(app, "#pool").at(0).at("box").at("y") == listTop); // the list doesn't move for Stop
+	click(app, "#pool-stop");
 	REQUIRE(app.waitUntil([&app] { return message(app) == "Conform Files was cancelled."; }, std::chrono::seconds(30)));
 	CHECK(!has(elements(app, "#pool-message").at(0), "error"));
+	CHECK(!offersStop(app));
+	CHECK(elements(app, "#pool-stop").at(0).at("visible") == false);
 	const Json media = app.call("project.get").at("media").at(0);
 	CHECK(media.at("path") == slow.u8string());
 	CHECK(media.at("sampleRate") == 44100.0);
+}
+
+TEST_CASE("the pool panel shows what Find Missing Files' job found, and why a job failed", "[ui]")
+{
+	const test::TempDir dir;
+	test::UiApp app({1024, 600});
+	app.appUi().showProject();
+	std::filesystem::create_directories(dir.path() / "project");
+	app.call(
+		"project.save", {{"path", (dir.path() / "project" / "Song.dawproject").u8string()}, {"embedMedia", false}});
+	addMissing(app, dir.path() / "lost" / "kick.wav");
+	addMissing(app, dir.path() / "lost" / "snare.wav");
+	std::filesystem::create_directories(dir.path() / "found");
+	test::writeWav(dir.path() / "found" / "kick.wav", {std::vector<float>(48000, 0.25f), 1, 48000});
+
+	// The folder dialog can't be answered in a test: media.locate goes the way it sends it, through the UI's binding.
+	app.keys().run("media.locate", {{"folder", (dir.path() / "found").u8string()}}, app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return message(app) == "Found 1 of 2 missing files."; }, std::chrono::seconds(30)));
+	CHECK(!has(elements(app, "#pool-message").at(0), "error"));
+	CHECK(!offersStop(app));
+	CHECK(app.call("pool.get").at("missingFiles") == 1);
+
+	// A job that fails says why: the media folder can't be made where a file is.
+	std::ofstream(dir.path() / "project" / "Audio").put('x');
+	test::writeWav(dir.path() / "slow.wav", {std::vector<float>(4410, 0.25f), 1, 44100});
+	addClip(app, (dir.path() / "slow.wav").u8string());
+	click(app, "#menu-bar button[menu=media-menu]");
+	click(app, "#media-menu menuitem[command=\"media.conform\"]");
+	REQUIRE(app.waitUntil(
+		[&app] { return message(app).rfind("Conform Files failed: ", 0) == 0; }, std::chrono::seconds(30)));
+	CHECK(has(elements(app, "#pool-message").at(0), "error"));
+	CHECK(!offersStop(app));
+}
+
+TEST_CASE("the pool panel asks how a job ended that ended before its command's result came", "[ui]")
+{
+	// A panel of its own, with a binding of its own, so that the test decides when the result comes.
+	const test::TempDir dir;
+	test::UiApp app({640, 480});
+	ui::EngineBinding binding{app.engine()};
+	Rml::ElementDocument& document = app.show("other.rml");
+	ui::PoolPanel panel(binding, *document.GetElementById("box"), [](const std::string&) {}, [] { return true; });
+	const auto line = [&document] { return document.GetElementById("pool-message")->GetInnerRML(); };
+	const auto running = [&document]
+	{ return document.GetElementById("pool-stop")->GetParentNode()->IsClassSet("running"); };
+	addMissing(app, dir.path() / "lost" / "kick.wav");
+	addMissing(app, dir.path() / "lost" / "snare.wav");
+	std::filesystem::create_directories(dir.path() / "found");
+	test::writeWav(dir.path() / "found" / "kick.wav", {std::vector<float>(48000, 0.25f), 1, 48000});
+
+	// The job ends, and its job.finished goes by, before the panel hears that media.locate started it.
+	bool finished = false;
+	const ui::Subscription heard = binding.on("job.finished", [&finished](const engine::Event&) { finished = true; });
+	const Json job = app.call("media.locate", {{"folder", (dir.path() / "found").u8string()}}).at("job");
+	REQUIRE(app.waitUntil(
+		[&binding, &finished]
+		{
+			binding.update();
+			return finished;
+		}));
+	CHECK(app.call("job.get", {{"job", job.at("id")}}).at("job").at("state") == "done");
+	panel.report("media.locate", {0, {{"job", job}}, {}});
+	CHECK(line() == "Find Missing Files...");
+	CHECK(running());
+	REQUIRE(app.waitUntil(
+		[&binding, &line]
+		{
+			binding.update();
+			return line() == "Found 1 of 2 missing files.";
+		}));
+	CHECK(!running());
+
+	// Files found that changed meanwhile were looked for too.
+	panel.report("media.locate",
+		{0, {{"relinked", Json::array({1})}, {"missing", Json::array()}, {"changed", Json::array({2, 3})}}, {}});
+	CHECK(line() == "Found 1 of 3 missing files.");
 }

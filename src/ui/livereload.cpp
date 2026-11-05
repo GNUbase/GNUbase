@@ -9,6 +9,7 @@
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Factory.h>
 #include <RmlUi/Core/StringUtilities.h>
+#include <RmlUi/Core/Variant.h>
 
 #include <filesystem>
 #include <vector>
@@ -47,6 +48,9 @@ namespace gnubase::ui
 				}
 				if (document->IsVisible())
 					loaded->Show();
+				// Code that filled the old document in fills the new one, while the old one is still there.
+				document->DispatchEvent(
+					g_documentReloadEvent, {{"document", Rml::Variant(static_cast<void*>(loaded))}});
 				document->Close();
 				++reloaded;
 			}

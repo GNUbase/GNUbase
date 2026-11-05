@@ -150,13 +150,12 @@ namespace gnubase::engine::processors
 	void PositionProbe::process(const graph::ProcessContext& context) noexcept
 	{
 		const graph::TransportBlock& transport = context.transport;
-		if (!transport.playing)
-		{
-			for (uint32_t i = 0; i < context.frames; ++i)
-				writeAll(context, i, -1.0f);
-			return;
-		}
-		for (size_t s = 0; s < transport.segmentCount; ++s)
+		// Frames that don't play, such as a count-in's before playback starts in the block, are -1.
+		const uint32_t playing =
+			transport.playing && transport.segmentCount > 0 ? transport.segments[0].offset : context.frames;
+		for (uint32_t i = 0; i < playing && i < context.frames; ++i)
+			writeAll(context, i, -1.0f);
+		for (size_t s = 0; transport.playing && s < transport.segmentCount; ++s)
 		{
 			const graph::TransportSegment& segment = transport.segments[s];
 			for (uint32_t i = 0; i < segment.frames && segment.offset + i < context.frames; ++i)
