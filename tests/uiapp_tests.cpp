@@ -29,6 +29,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <optional>
 #include <string>
@@ -159,6 +160,43 @@ TEST_CASE("UI tests click through GNUbase's UI and read it back, as MCP's UI too
 	CHECK(app.ui().dom(std::nullopt, "#name", 0).at("elements")[0].at("value") == "Bass");
 	const ui::Image field = app.ui().screenshot(std::nullopt, selector("#name"));
 	CHECK(field.width == static_cast<int>(200.0F * app.main().dpRatio()));
+}
+
+TEST_CASE("UI tests run the UI from another resources folder, which a restart keeps", "[ui]")
+{
+	// A copy of GNUbase's resources with a button in the transport controls that has a command that doesn't exist.
+	const test::TempDir folder;
+	const std::filesystem::path resources = folder.path() / "resources";
+	std::filesystem::copy(GNUBASE_RESOURCES_DIR, resources, std::filesystem::copy_options::recursive);
+	const std::filesystem::path file = resources / "ui" / "transport.rml";
+	std::string text = test::readText(file);
+	const std::string from = R"(command="locate.nextMarker")";
+	const size_t at = text.find(from);
+	REQUIRE(at != std::string::npos);
+	text.replace(at, from.size(), R"(command="locate.nextMarkr")");
+	std::ofstream(file, std::ios::binary) << text;
+
+	// The transport panel's controls are refused, so it closes again; the time display, whose controls are fine,
+	// opens from the same copy. A restart that fell back to GNUbase's resources would open the transport panel.
+	test::UiApp app({800, 600}, resources);
+	for (int run = 0; run < 2; ++run)
+	{
+		INFO((run == 0 ? "started" : "restarted"));
+		app::AppUi& appUi = app.appUi();
+		appUi.toggleTransportPanel();
+		app.shell().step(std::chrono::milliseconds(0));
+		CHECK(appUi.transportPanel() == nullptr);
+		CHECK(app.shell().windows().size() == 1);
+		appUi.toggleTimeDisplay();
+		app.shell().step(std::chrono::milliseconds(0));
+		CHECK(appUi.timeDisplay() != nullptr);
+		CHECK(app.shell().windows().size() == 2);
+		appUi.toggleTimeDisplay();
+		app.shell().step(std::chrono::milliseconds(0));
+		REQUIRE(appUi.timeDisplay() == nullptr);
+		if (run == 0)
+			app.restart();
+	}
 }
 
 TEST_CASE("settings changed through the engine restyle GNUbase's UI", "[ui]")

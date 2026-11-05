@@ -91,6 +91,7 @@
 		<button menu="media-menu">Media</button>
 		<button menu="project-menu">Project</button>
 		<button menu="audio-menu">Audio</button>
+		<button menu="midi-menu">MIDI</button>
 		<button menu="transport-menu">Transport</button>
 		<button menu="studio-menu">Studio</button>
 	</menubar>
@@ -350,6 +351,34 @@
 		</menuitem>
 		<!-- Volume curves (reference manual p. 401, docs/features/volume-curves.md) -->
 		<menuitem command="audio.removeVolumeCurve">Remove Volume Curve</menuitem>
+	</menu>
+	<!-- MIDI functions (reference manual pp. 1118-1131, docs/features/midi-functions.md) -->
+	<menu id="midi-menu">
+		<menuitem command="midi.transposeSetup">Transpose Setup...</menuitem>
+		<menuseparator/>
+		<menuitem command="midi.mergeInLoop">Merge MIDI in Loop...</menuitem>
+		<menuitem command="midi.dissolvePart">Dissolve Part...</menuitem>
+		<menuitem command="midi.bounceMidi">Bounce MIDI</menuitem>
+		<menuseparator/>
+		<menuitem id="midi-functions-submenu">Functions
+			<menu>
+				<menuitem command="midi.functionsLegato">Legato</menuitem>
+				<menuitem command="midi.functionsFixedLengths">Fixed Lengths</menuitem>
+				<menuitem command="midi.functionsFixedVelocity">Fixed Velocity</menuitem>
+				<menuitem command="midi.functionsPedalsToNoteLength">Pedals to Note Length</menuitem>
+				<menuseparator/>
+				<menuitem command="midi.functionsDeleteOverlapsMono">Delete Overlaps (mono)</menuitem>
+				<menuitem command="midi.functionsDeleteOverlapsPoly">Delete Overlaps (poly)</menuitem>
+				<menuitem command="midi.functionsDeleteDoubles">Delete Doubles</menuitem>
+				<menuitem command="midi.functionsDeleteControllers">Delete Controllers</menuitem>
+				<menuitem command="midi.functionsDeleteContinuousControllers">Delete Continuous Controllers</menuitem>
+				<menuitem command="midi.functionsRestrictPolyphony">Restrict Polyphony...</menuitem>
+				<menuitem command="midi.functionsThinOut">Thin Out Data</menuitem>
+				<menuseparator/>
+				<menuitem command="midi.functionsReverse">Reverse</menuitem>
+				<menuitem command="midi.functionsMirror">Mirror</menuitem>
+			</menu>
+		</menuitem>
 	</menu>
 	<menu id="track-list-menu">
 		<menuitem command="project.addTrack">Add Track...</menuitem>
