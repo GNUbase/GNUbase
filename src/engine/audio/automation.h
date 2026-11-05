@@ -134,6 +134,8 @@ namespace gnubase::engine
 		PanLaw law = PanLaw::Minus3;
 	};
 
+	class PreFaderTap;
+
 	// A channel's fader: a linear gain, then its panner. A mono channel on a stereo destination is placed with the
 	// pan law and becomes stereo; a stereo channel has a balance as in the built-in gainPan (the side panned away from
 	// is lowered, the center is unity gain) or the combined panner, which places its left and its right channel each
@@ -154,8 +156,9 @@ namespace gnubase::engine
 		ChannelFader();
 
 		// Audio thread. The context has the channel's own channels; a mono panner writes the second one of its
-		// stereo output after them.
-		void process(const graph::ProcessContext& context, const Panning& panning) noexcept;
+		// stereo output after them. muted, if any, is scaled by the mute alone, frame by frame as the channel is.
+		void process(
+			const graph::ProcessContext& context, const Panning& panning, PreFaderTap* muted = nullptr) noexcept;
 
 	private:
 		struct Ramp
@@ -170,8 +173,8 @@ namespace gnubase::engine
 			double next() noexcept; // the value for this frame; moves on by one frame
 		};
 
-		void render(
-			const graph::ProcessContext& context, const Panning& panning, uint32_t begin, uint32_t end) noexcept;
+		void render(const graph::ProcessContext& context, const Panning& panning, PreFaderTap* muted, uint32_t begin,
+			uint32_t end) noexcept;
 
 		Ramp m_volume;
 		Ramp m_pan;
@@ -283,8 +286,14 @@ namespace gnubase::engine
 		void process(const graph::ProcessContext& context) noexcept override;
 		uint32_t latency() const override;
 
-		// Command thread, before the graph compiles: where the strip leaves its audio before the fader in every block.
-		void tapPreFader(std::shared_ptr<PreFaderTap> tap) { m_tap = std::move(tap); }
+		// Command thread, before the graph compiles: where the strip leaves its audio before the fader in every block;
+		// with followMute (Mute Pre-Send when Mute), muted as the fader mutes the channel, so that mute automation
+		// mutes the pre-fader sends too, from its sample on.
+		void tapPreFader(std::shared_ptr<PreFaderTap> tap, bool followMute)
+		{
+			m_tap = std::move(tap);
+			m_tapFollowsMute = followMute;
+		}
 		// Command thread, before the graph compiles: where the strip leaves its audio at point in every block, for an
 		// offline render. Source is for the strip that runs the source, the others for the one with the fader.
 		void tapRender(std::shared_ptr<PreFaderTap> tap, RenderPoint point)
@@ -321,6 +330,7 @@ namespace gnubase::engine
 		graph::EventBuffer m_faderEvents;
 		graph::EventBuffer m_faderOut;
 		std::shared_ptr<PreFaderTap> m_tap;    // or none, without pre-fader sends
+		bool m_tapFollowsMute = false;         // the fader's mute applies to m_tap
 		std::shared_ptr<PreFaderTap> m_render; // or none, while nothing renders from the channel
 		RenderPoint m_renderPoint = RenderPoint::Strip;
 	};
