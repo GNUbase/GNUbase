@@ -2,6 +2,7 @@
 #include "engine/audio/arranger.h"
 #include "engine/audio/transport.h"
 #include "engine/document/document.h"
+#include "engine/document/rendersnapshot.h"
 #include "engine/engine.h"
 #include "testutils/testutils.h"
 
@@ -158,6 +159,80 @@ TEST_CASE("a triggered event loops until another one is triggered", "[unit]")
 	REQUIRE(transport.arrange(trigger, true));
 	CHECK(play(transport, plan, 600, 100) == path({{1000, 1300}, {2000, 2100}, {2000, 2100}, {2000, 2100}}, 600));
 	CHECK(transport.arranger().section == 1);
+}
+
+TEST_CASE("a new plan while playing: playback finds its step again", "[unit]")
+{
+	const uint32_t blockSize = GENERATE(1u, 64u, 100u);
+	INFO("block size " << blockSize);
+	ArrangerPlan plan = abPlan();
+	plan.steps = {{1, 1, ArrangerRepeat::Normal}, {0, 1, ArrangerRepeat::Normal}, {2, 1, ArrangerRepeat::Normal}};
+	Transport transport;
+	REQUIRE(transport.locate(1100)); // in A, step 1 of B, A, C
+	REQUIRE(transport.play());
+	CHECK(play(transport, plan, 100, blockSize) == path({{1100, 1200}}, 100));
+	CHECK(transport.arranger().step == 1);
+	SECTION("a step removed before the one playing")
+	{
+		ArrangerPlan edited = plan;
+		edited.steps.erase(edited.steps.begin()); // A, C: A is step 0 now
+		CHECK(play(transport, edited, 700, blockSize) == path({{1200, 1300}, {3000, 3500}}, 700));
+	}
+	SECTION("another chain with fewer steps")
+	{
+		ArrangerPlan other = plan;
+		other.steps = {{0, 2, ArrangerRepeat::Normal}}; // A twice
+		CHECK(play(transport, other, 50, blockSize) == path({{1200, 1250}}, 50));
+		CHECK(transport.arranger().step == 0);
+		CHECK(play(transport, other, 450, blockSize) == path({{1250, 1300}, {1000, 1300}}, 450));
+	}
+}
+
+TEST_CASE("with a pre-roll playback enters the chain where it starts without it", "[unit]")
+{
+	const uint32_t blockSize = GENERATE(1u, 64u, 100u);
+	INFO("block size " << blockSize);
+	ArrangerPlan plan = abPlan();
+	plan.steps = {{0, 1, ArrangerRepeat::Normal}, {2, 1, ArrangerRepeat::Normal}}; // A, C
+	Transport transport;
+	TransportSettings settings;
+	settings.preRoll = true;
+	settings.preRollAmount = 200;
+	REQUIRE(transport.set(settings));
+	REQUIRE(transport.locate(1000)); // where play puts playback from outside the chain: the first step's start
+	REQUIRE(transport.play());
+	CHECK(play(transport, plan, 1100, blockSize) == path({{800, 1300}, {3000, 3500}}, 1100));
+}
+
+TEST_CASE("jump points for 4 bars, 2 bars, 1 bar and 1 beat from an event that starts in the middle of a bar", "[unit]")
+{
+	using gnubase::time::Position;
+	using gnubase::time::TimeBase;
+	Project project; // 120 BPM at 48 kHz: a quarter is 24000 samples
+	project.signatures = gnubase::time::SignatureMap({{0, {4, 4}}, {2, {3, 4}}});
+	const auto bar = [&project](int64_t b) { return project.signatures.barStart(b); };
+	ArrangerEvent event;
+	event.id = 1;
+	event.position = {TimeBase::Musical, gnubase::time::g_ticksPerQuarter * 2}; // beat 3 of bar 1
+	event.end = {TimeBase::Musical, bar(7)};
+	project.arranger.events.push_back(event);
+	project.arrangerMode = true;
+	const auto points = [&project](ArrangerJump jump)
+	{
+		project.arrangerJump = jump;
+		return arrangerPlan(project).sections.at(0).jumps;
+	};
+	// Bar lines: 96000, 192000 (3/4 from there), 264000, 336000, 408000, 480000; the event ends at 552000.
+	CHECK(points(ArrangerJump::OneBar) == std::vector<Samples>{96000, 192000, 264000, 336000, 408000, 480000, 552000});
+	CHECK(points(ArrangerJump::TwoBars) == std::vector<Samples>{96000, 264000, 408000, 552000});
+	CHECK(points(ArrangerJump::FourBars) == std::vector<Samples>{96000, 408000, 552000});
+	std::vector<Samples> beats;
+	for (Samples at = 72000; at < 552000; at += 24000)
+		beats.push_back(at);
+	beats.push_back(552000);
+	CHECK(points(ArrangerJump::OneBeat) == beats);
+	CHECK(points(ArrangerJump::End) == std::vector<Samples>{552000});
+	CHECK(points(ArrangerJump::None).empty());
 }
 
 TEST_CASE("arranger state survives packing", "[unit]")

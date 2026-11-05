@@ -589,7 +589,7 @@ namespace gnubase::engine
 		ArrangerState startState(const Playback::Cue& cue)
 		{
 			return cue.arranger != nullptr && cue.arrangerState.entering
-				? arrangerEnter(*cue.arranger, cue.arrangerState, cue.position)
+				? arrangerEnter(*cue.arranger, cue.arrangerState, cue.enter >= 0 ? cue.enter : cue.position)
 				: cue.arrangerState;
 		}
 	}

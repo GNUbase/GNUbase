@@ -93,6 +93,7 @@ namespace gnubase::engine
 			// Arranger mode (#167): the plan the transport plays and where it is in it; none plays no chain.
 			const ArrangerPlan* arranger = nullptr;
 			ArrangerState arrangerState;
+			time::Samples enter = -1; // where an entering arrangerState enters, if not at position: past the pre-roll
 		};
 
 		struct Track

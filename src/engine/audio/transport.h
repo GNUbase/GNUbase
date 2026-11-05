@@ -134,6 +134,7 @@ namespace gnubase::engine
 		bool countingIn() const { return m_requestedCountingIn; }
 		// Command thread: where play starts playback.
 		time::Samples startPosition() const;
+		time::Samples playStart() const; // where play starts playback without the pre-roll
 		// Command thread: where the last playback started, without the pre-roll (0 before any).
 		time::Samples playbackStart() const { return m_playbackStart; }
 		// Where recording from stop starts, for playback that starts at start before the pre-roll and at from with
@@ -221,6 +222,7 @@ namespace gnubase::engine
 		std::vector<graph::TransportSegment> m_segments;
 		graph::TransportBlock m_block;
 		ArrangerState m_arranger;
+		const ArrangerPlan* m_plan = nullptr; // the plan advance last played, only compared
 		ArrangerState m_publishedArranger;
 
 		// Written by the command thread: how many locates were sent and where the last one goes.

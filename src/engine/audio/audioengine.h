@@ -278,7 +278,7 @@ namespace gnubase::engine
 		// rendered after each block with its frames. The dummy device renders them; any other device's blocks are
 		// processed here, with silent inputs.
 		void render(uint64_t frames, const std::function<void(uint32_t)>& rendered = {});
-		void cue(time::Samples position, bool playing, time::Samples window, bool wait);
+		void cue(time::Samples position, bool playing, time::Samples window, bool wait, time::Samples enter = -1);
 		void startCueing();
 		void stopCueing();
 		void startDevice();

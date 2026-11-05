@@ -60,6 +60,11 @@ namespace gnubase::engine
 		return withPreRoll(m_requested, startWithoutPreRoll(m_requested, position()));
 	}
 
+	time::Samples Transport::playStart() const
+	{
+		return startWithoutPreRoll(m_requested, position());
+	}
+
 	bool Transport::sync()
 	{
 		if (m_appliedRequests.load(std::memory_order_acquire) != m_sentRequests)
@@ -340,8 +345,13 @@ namespace gnubase::engine
 	{
 		update();
 		const bool arranged = plan != nullptr && plan->plays();
+		// Playback enters the chain where it starts without the pre-roll, so that the pre-roll plays into the step. A
+		// new plan (a chain edit, another active chain) has other step indices: playback finds its place again.
 		if (arranged && m_arranger.entering)
+			m_arranger = arrangerEnter(*plan, m_arranger, m_start);
+		else if (arranged && plan != m_plan)
 			m_arranger = arrangerEnter(*plan, m_arranger, m_position);
+		m_plan = plan;
 		GNUBASE_ASSERT(frames <= m_segments.size());
 		frames = std::min(frames, static_cast<uint32_t>(m_segments.size()));
 		if (m_playing && m_stopAt >= 0 && m_position >= m_stopAt)

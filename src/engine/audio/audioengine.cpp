@@ -243,7 +243,7 @@ namespace gnubase::engine
 		stopCueing();
 	}
 
-	void AudioEngine::cue(time::Samples position, bool playing, time::Samples window, bool wait)
+	void AudioEngine::cue(time::Samples position, bool playing, time::Samples window, bool wait, time::Samples enter)
 	{
 		Playback::Cue cue;
 		cue.position = position;
@@ -253,6 +253,7 @@ namespace gnubase::engine
 		const std::shared_ptr<const ArrangerPlan> plan = m_snapshots.latest().arranger;
 		cue.arranger = plan.get();
 		cue.arrangerState = m_transport.arranger();
+		cue.enter = enter;
 		m_playback.cue(cue);
 		if (wait)
 			m_playback.waitUntilBuffered(g_startWait);
@@ -2369,7 +2370,7 @@ namespace gnubase::engine
 			}
 		}
 		if (m_device && !m_transport.playing())
-			cue(m_transport.startPosition(), false, m_device->format().blockSize, true);
+			cue(m_transport.startPosition(), false, m_device->format().blockSize, true, m_transport.playStart());
 		sent(m_transport.play());
 	}
 
