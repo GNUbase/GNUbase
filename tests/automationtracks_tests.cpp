@@ -427,6 +427,40 @@ TEST_CASE(
 	CHECK(pointer() == "objectSelection");
 }
 
+TEST_CASE("an automation track's curve leaves gaps after terminators and in virgin territory", "[ui]")
+{
+	Automation f;
+	const Json volume = f.show();
+	f.app.call("automationPoint.add",
+		{{"lane", volume},
+			{"points",
+				{{{"position", 48000}, {"value", -6.0}, {"terminator", true}}, {{"position", 96000}, {"value", 0.0}},
+					{{"position", 144000}, {"value", -12.0}}}}});
+	f.settle(volume);
+	const auto terminators = [&f, &volume]()
+	{
+		std::vector<bool> result;
+		for (const ui::CurvePoint& point : f.curve("automation-curve", volume))
+			result.push_back(point.terminator);
+		return result;
+	};
+	CHECK(terminators() == std::vector<bool>{true, false, false});
+	const auto virgin = [&f, &volume]()
+	{
+		const std::string selector = ".automation-lane[lane=\"" + volume.dump() + "\"] curve.automation-curve";
+		const auto* curve = dynamic_cast<const ui::Curve*>(f.display.eventArea().QuerySelector(selector));
+		return curve != nullptr && curve->virginTerritory();
+	};
+	CHECK(!virgin());
+
+	// Virgin territory is no undo step, but the curve follows it.
+	f.app.call("automation.set", {{"virginTerritory", true}});
+	REQUIRE(f.app.waitUntil(virgin));
+	f.app.call("automation.set", {{"virginTerritory", false}});
+	REQUIRE(f.app.waitUntil([&] { return !virgin(); }));
+	CHECK(terminators() == std::vector<bool>{true, false, false});
+}
+
 TEST_CASE("a Ctrl-drag moves the selected automation points in one direction, and the editor tilts and stretches them",
 	"[ui]")
 {
