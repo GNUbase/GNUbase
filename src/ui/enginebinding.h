@@ -118,6 +118,8 @@ namespace gnubase::ui
 		template <typename T, typename Apply>
 		[[nodiscard]] Subscription watch(Rml::Element* shows, std::function<T()> read, Apply apply)
 		{
+			using Returns = std::invoke_result_t<Apply&, const T&>;
+			static_assert(std::is_void_v<Returns> || std::is_same_v<Returns, bool>, "apply returns nothing or bool");
 			return follow(
 				[shows = shows != nullptr ? shows->GetObserverPtr() : Rml::ObserverPtr<Rml::Element>(),
 					read = std::move(read), apply = std::move(apply), last = std::optional<T>()]() mutable
@@ -126,7 +128,7 @@ namespace gnubase::ui
 					if (last && *last == value)
 						return;
 					last = value;
-					if constexpr (std::is_same_v<std::invoke_result_t<Apply&, const T&>, bool>)
+					if constexpr (std::is_same_v<Returns, bool>)
 					{
 						if (apply(std::as_const(value)))
 							redraw(shows.get());

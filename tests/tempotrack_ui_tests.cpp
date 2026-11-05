@@ -384,6 +384,8 @@ TEST_CASE("a single tap ends after the tap pause without input, and the transpor
 	REQUIRE(clock != nullptr);
 	clock->freeze(true); // RmlUi's time stands still but for advance()
 	app.ui().click(std::nullopt, {"#transport-bar #tap-tempo", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+	// Off the button, whose tooltip would ask for a draw of its own later.
+	app.ui().move(std::nullopt, point(512, 450));
 	app.shell().step(milliseconds(0));
 	const bool tapping = button->IsClassSet("tapping");
 

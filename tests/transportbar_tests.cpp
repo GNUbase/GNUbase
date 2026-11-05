@@ -1136,17 +1136,18 @@ TEST_CASE("windows whose documents nothing changed in don't draw, also during pl
 		const uint64_t mainFrames = app.main().frames();
 		const uint64_t mixerFrames = mixer->frames();
 		int beats = 0;
+		int wrong = 0; // steps in which the time display window drew without its beat changing, or the other way round
 		const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(2500);
 		while (std::chrono::steady_clock::now() < until)
 		{
 			const uint64_t timeFrames = timeWindow->frames();
 			const std::string before = value(beat);
 			app.shell().step(std::chrono::milliseconds(20));
-			// The time display window draws in the steps its beat changes in, and in no other.
 			const bool changed = value(beat) != before;
 			beats += changed ? 1 : 0;
-			CHECK(timeWindow->frames() == timeFrames + (changed ? 1 : 0));
+			wrong += timeWindow->frames() == timeFrames + (changed ? 1 : 0) ? 0 : 1;
 		}
+		CHECK(wrong == 0); // it draws in the steps its beat changes in, and in no other
 		CHECK(mixer->frames() == mixerFrames);
 		if (playing)
 		{

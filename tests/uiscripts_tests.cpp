@@ -3,8 +3,6 @@
 // windows draw what they changed without input (#715, #745).
 #include "uiapp.h"
 
-#include "engine/engine.h"
-
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <catch2/catch_test_macros.hpp>
@@ -14,7 +12,6 @@
 #include <string>
 
 using namespace gnubase;
-using engine::Json;
 
 TEST_CASE("a document's Lua event handler draws what it changed in the step the event arrives in", "[ui]")
 {
