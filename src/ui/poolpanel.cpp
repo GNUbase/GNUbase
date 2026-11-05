@@ -152,7 +152,8 @@ namespace gnubase::ui
 		std::string rml = R"(<div class="pool"><div class="toolbar pool-toolbar">)";
 		for (const Button& button : g_buttons)
 			rml += std::string(R"(<button id=")") + button.id + R"(">)" + button.label + "</button>";
-		rml += R"(</div><div id="pool-message" class="pool-message"/><div id="pool-info" class="pool-info"/>)"
+		rml += R"(</div><div class="pool-status"><div id="pool-message" class="pool-message"/>)"
+			   R"(<button id="pool-stop">Stop</button></div><div id="pool-info" class="pool-info"/>)"
 			   R"(<div class="pool-header"><span class="name">Media</span><span class="used">Used</span>)"
 			   R"(<span class="status">Status</span><span class="info">Info</span><span class="path">Path</span></div>)"
 			   R"(<listview id="pool" class="pool-list" multiple/></div>)";
@@ -188,6 +189,8 @@ namespace gnubase::ui
 		if (event == Rml::EventId::Click && target->GetTagName() == "button")
 		{
 			const std::string id = target->GetId();
+			if (id == "pool-stop")
+				stop();
 			for (const Button& button : g_buttons)
 				if (id == button.id)
 				{
@@ -263,6 +266,7 @@ namespace gnubase::ui
 			// The job's events tell how it goes on. It may have ended before its command's result came: job.get tells.
 			const auto id = value.at("job").at("id").get<uint64_t>();
 			m_jobs[id] = command;
+			showRunning();
 			showMessage(actionOf(command) + "...", false);
 			m_binding.send("job.get", {{"job", id}},
 				[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& state)
@@ -304,6 +308,7 @@ namespace gnubase::ui
 			return;
 		const std::string command = found->second;
 		m_jobs.erase(found);
+		showRunning();
 		const Json& state = job.at("state");
 		if (state == "done")
 			report(command, {0, job.at("result"), {}});
@@ -311,6 +316,19 @@ namespace gnubase::ui
 			showMessage(actionOf(command) + " was cancelled.", false);
 		else if (const Json& error = job.at("error"); error.is_string())
 			report(command, {0, nullptr, error.get<std::string>()});
+	}
+
+	void PoolPanel::stop()
+	{
+		// A job may end before its job.cancel comes: nothing to say then.
+		for (const auto& [id, command] : m_jobs)
+			m_binding.send("job.cancel", {{"job", id}}, [](const engine::Result&) {});
+	}
+
+	void PoolPanel::showRunning()
+	{
+		if (const Rml::Element* line = m_root ? m_root->GetElementById("pool-message") : nullptr)
+			line->GetParentNode()->SetClass("running", !m_jobs.empty());
 	}
 
 	void PoolPanel::showMessage(const std::string& text, bool error)
