@@ -253,6 +253,10 @@ TEST_CASE("ruler tracks have a time offset that is switched on and off", "[unit]
 	run(client, "transport.locate", {{"position", 24000}});
 	run(client, "track.set", {{"track", id}, {"timeOffset", "cursor"}});
 	CHECK(track(client, id).at("timeOffset") == 24000);
+	// In samples, it keeps its time when the sample rate changes: half a second at 96 kHz too.
+	run(client, "project.set", {{"sampleRate", 96000.0}});
+	CHECK(track(client, id).at("timeOffset") == 48000);
+	CHECK(track(client, timecode).at("timeOffset") == 4 * g_ticksPerQuarter); // musical: in ticks
 
 	// Only ruler tracks have one, at or after the project start.
 	const ObjectId folder = addTrack(client, {{"type", "folder"}});

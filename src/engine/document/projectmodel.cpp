@@ -544,6 +544,12 @@ namespace gnubase::engine
 				if (changed)
 					context.emit("automationLane.changed", {{"lane", toJson(lane)}});
 			}
+			for (auto& [id, track] : project.trackById)
+				if (track.type == TrackType::Ruler && track.timeBase == time::TimeBase::Linear)
+				{
+					track.timeOffset = rescale(track.timeOffset, factor);
+					context.emit("track.changed", {{"track", toJson(track)}});
+				}
 			project.sampleRate = sampleRate;
 			// At a lower rate, a short cycle marker may become shorter than a sample, in either time base.
 			for (auto& [id, marker] : project.markers)
