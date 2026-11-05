@@ -121,7 +121,7 @@
 		<div id="toolbar-quantize" class="toolbar-quantize"/>
 		<button id="select-color" class="icon-only" menu="color-menu" title="Select Color for Selected Tracks or Events"><svg class="icon" src="../icons/general-color.svg"/></button>
 		<!-- The Project Root Key (reference manual p. 414, docs/features/transpose.md), which the display shows -->
-		<button id="root-key" menu="root-key-menu" title="Project Root Key">-</button>
+		<button id="root-key" class="toolbar-root-key" menu="root-key-menu" title="Project Root Key">-</button>
 		<div class="spacer"/>
 		<button id="show-channel-zone" type="toggle" toggle="channel" class="icon-only" title="Show/Hide Channel"><svg class="icon" src="../icons/layout-channel-zone.svg"/></button>
 		<button id="show-left-zone" type="toggle" toggle="left" class="icon-only" title="Show/Hide Left Zone"><svg class="icon" src="../icons/layout-left-zone.svg"/></button>

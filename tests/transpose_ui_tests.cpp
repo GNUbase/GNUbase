@@ -25,12 +25,13 @@ namespace
 {
 	constexpr int64_t g_quarter = time::g_ticksPerQuarter;
 
-	// The project window at a dp ratio of 1 with the info line shown.
+	// The project window at a dp ratio of 0.5 with the info line shown: 2000 dp wide, enough for every field of the
+	// info line, in a window that fits on the test machines' screens.
 	struct Window
 	{
 		Window() : display(app.appUi().showProject())
 		{
-			app.setDpRatio(1.0F);
+			app.setDpRatio(0.5F);
 			app.appUi().docking().setVisible("project", "infoLine", true);
 			app.shell().step(std::chrono::milliseconds(0));
 		}
@@ -68,7 +69,7 @@ namespace
 			return Json::object();
 		}
 
-		test::UiApp app{{1800, 600}}; // wide enough for every field of the info line
+		test::UiApp app{{1000, 600}};
 		ui::EventDisplay& display;
 	};
 }
@@ -130,7 +131,7 @@ TEST_CASE("the transpose track's lane draws, edits and erases transpose events",
 			 std::pair{"transposeLock", "lock"}})
 	{
 		window.click(row + " button[control=" + control + "]");
-		CHECK(window.app.waitUntil([&] { return window.call("transpose.get").at(key) == true; }));
+		CHECK(window.app.waitUntil([&window, key = key] { return window.call("transpose.get").at(key) == true; }));
 	}
 	CHECK(window.app.waitUntil([&] { return window.hasClass(row + " button[control=keepInOctave]", "checked"); }));
 	window.call("transpose.setTrack", {{"lock", false}});

@@ -954,6 +954,20 @@ meter .meter-peak
 	width: 48dp;
 }
 
+/* The toolbar's Project Root Key, in project windows wide enough for it next to the quantize section. */
+.toolbar-root-key
+{
+	display: none;
+}
+
+@media (min-width: 1100dp)
+{
+	.toolbar-root-key
+	{
+		display: inline-block;
+	}
+}
+
 /* The tools (docs/features/tools.md): the selection range, at least a line wide, and the rectangle a tool drags. Code
    sets where they are and the state class .shown. */
 .event-display .range-selection, .event-display .tool-rectangle
