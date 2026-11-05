@@ -412,8 +412,8 @@ TEST_CASE("controller.line stays in the part and refuses lines of too many event
 							 .at("id")
 							 .get<uint64_t>();
 	CHECK(f.call("controller.line", line(seconds, 2 * g_quarter, g_quarter)).at("controllers").size() == 3);
-	CHECK_THAT(f.fails("controller.line", line(seconds, (2 * g_quarter) + 1, g_quarter)),
-		ContainsSubstring("part's end"));
+	CHECK_THAT(
+		f.fails("controller.line", line(seconds, (2 * g_quarter) + 1, g_quarter)), ContainsSubstring("part's end"));
 
 	// A long part takes a line of at most 65536 events.
 	const auto ticks = f.call("midiPart.add", {{"track", f.track}, {"position", g_bar}, {"length", 1000 * g_bar}})
