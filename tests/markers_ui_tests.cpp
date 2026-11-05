@@ -1106,3 +1106,38 @@ TEST_CASE("the marker settings: marker ids on the marker track, cycle follows an
 	const ui::MarkersWindow& reopened = openMarkers(app, 2);
 	REQUIRE(app.waitUntil([&reopened, intro] { return reopened.selection() == std::vector<uint64_t>{intro}; }));
 }
+
+TEST_CASE("File > Export and File > Import > Markers write and read the marker file chosen", "[ui]")
+{
+	test::UiApp app{{1000, 700}};
+	const test::TempDir dir;
+	app.appUi().showProject();
+	for (const char* command : {"file.exportMarkers", "file.importMarkers"})
+	{
+		CHECK(app.ui()
+				  .dom(std::nullopt, std::string("#file-menu menuitem[command=\"") + command + "\"]", 0)
+				  .at("elements")
+				  .size() == 1);
+		CHECK(app.keys().canRun(command, app.main(), nullptr));
+	}
+	app.call("marker.add", {{"position", 2 * g_quarter}, {"name", "Intro"}});
+
+	// The file chosen gets the extension .csv if it has none.
+	app.keys().run("file.exportMarkers", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return app.shell().fileDialogs().size() == 1; }));
+	CHECK(app.shell().fileDialogs().begin()->second.kind == ui::FileDialogKind::Save);
+	CHECK(app.shell().answerFileDialog(app.shell().fileDialogs().begin()->first, {dir.path() / "song"}));
+	app.shell().step(milliseconds(0));
+	app.call("project.revision"); // after the export, which the command thread runs first
+	REQUIRE(std::filesystem::exists(dir.path() / "song.csv"));
+
+	app.call("project.new");
+	app.keys().run("file.importMarkers", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return app.shell().fileDialogs().size() == 1; }));
+	CHECK(app.shell().fileDialogs().begin()->second.kind == ui::FileDialogKind::Open);
+	CHECK(app.shell().answerFileDialog(app.shell().fileDialogs().begin()->first, {dir.path() / "song.csv"}));
+	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("markers").size() == 1; }));
+	const Json marker = app.call("project.get").at("markers")[0];
+	CHECK(marker.at("name") == "Intro");
+	CHECK(marker.at("position") == 2 * g_quarter);
+}

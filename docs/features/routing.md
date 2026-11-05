@@ -67,12 +67,12 @@ in [busses.md](busses.md) and [folder-tracks.md](folder-tracks.md), the fader in
 
 The mixer's strips have a Sends section (`.mixer-sends`, docking set `channel`, hidden by default and shown with Set
 up Window Layout), with a row per send: its on switch, its destination (a drop-down list of No Destination and the
-other group and effect channels), Pre for a pre-fader send and a knob for its level. They send `channel.set` and show
-the engine's values after every undo step, as the strip's other sections do ([channel-strip.md](channel-strip.md)).
-Ctrl-click on a send's knob sets the default send level. The destination list ends with Add Effect Track to Send
-(p. 554), which opens the add track dialog's effect page for that send, as in the channel settings window
-([channel-settings.md](channel-settings.md)). Output lists in the inspector and the add track dialog offer effect
-channels too.
+other group and effect channels), Pre for a pre-fader send and a knob for its level, whose drag is one undo step
+(#716). They send `channel.set` and show the engine's values after every undo step, as the strip's other sections do
+([channel-strip.md](channel-strip.md)). Ctrl-click on a send's knob sets the default send level. The destination list
+ends with Add Effect Track to Send (p. 554), which opens the add track dialog's effect page for that send, as in the
+channel settings window ([channel-settings.md](channel-settings.md)). Output lists in the inspector and the add track
+dialog offer effect channels too.
 
 The track list's context menu has Group Track to Selected Tracks and Effect Track to Selected Tracks
 (`track.addGroupToSelected`, `track.addEffectToSelected`): they open the add track dialog on the group or effect page,
