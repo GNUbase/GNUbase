@@ -394,15 +394,17 @@ TEST_CASE("controller.line stays in the part and refuses lines of too many event
 		return Json{{"part", part}, {"lane", lane}, {"mode", "line"}, {"from", {{"position", 0}, {"value", 0.0}}},
 			{"to", {{"position", to}, {"value", 1.0}}}, {"density", density}};
 	};
-	// The part's end is the last position: past it the command changes nothing.
-	CHECK_THAT(f.fails("controller.line", line(f.part, g_bar + 1, g_quarter)), ContainsSubstring("part's end"));
+	// The part's last tick is the last position: playback leaves out events from the part's end on, so at and past it
+	// the command changes nothing.
+	CHECK_THAT(f.fails("controller.line", line(f.part, g_bar, g_quarter)), ContainsSubstring("part's end"));
 	CHECK_THAT(f.fails("controller.line", line(f.part, 100000 * g_bar, 1)), ContainsSubstring("part's end"));
 	CHECK(f.controllers().empty());
-	CHECK(f.call("controller.line", line(f.part, g_bar, g_quarter)).at("controllers").size() == 5);
+	CHECK(f.call("controller.line", line(f.part, g_bar - 1, g_quarter)).at("controllers").size() == 5);
+	CHECK(f.controllers().back().at("position") == g_bar - 1);
 	// On a note lane too.
 	CHECK_THAT(f.fails("controller.line",
 				   {{"part", f.part}, {"lane", {{"type", "velocity"}}}, {"mode", "line"},
-					   {"from", {{"position", 0}, {"value", 0.0}}}, {"to", {{"position", g_bar + 1}, {"value", 1.0}}}}),
+					   {"from", {{"position", 0}, {"value", 0.0}}}, {"to", {{"position", g_bar}, {"value", 1.0}}}}),
 		ContainsSubstring("part's end"));
 
 	// A part on a linear track is measured in samples: its end in ticks follows the tempo, 120 BPM by default.
@@ -411,9 +413,8 @@ TEST_CASE("controller.line stays in the part and refuses lines of too many event
 							 .at("part")
 							 .at("id")
 							 .get<uint64_t>();
-	CHECK(f.call("controller.line", line(seconds, 2 * g_quarter, g_quarter)).at("controllers").size() == 3);
-	CHECK_THAT(
-		f.fails("controller.line", line(seconds, (2 * g_quarter) + 1, g_quarter)), ContainsSubstring("part's end"));
+	CHECK(f.call("controller.line", line(seconds, (2 * g_quarter) - 1, g_quarter)).at("controllers").size() == 3);
+	CHECK_THAT(f.fails("controller.line", line(seconds, 2 * g_quarter, g_quarter)), ContainsSubstring("part's end"));
 
 	// A long part takes a line of at most 65536 events.
 	const auto ticks = f.call("midiPart.add", {{"track", f.track}, {"position", g_bar}, {"length", 1000 * g_bar}})

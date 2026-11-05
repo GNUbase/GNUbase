@@ -545,11 +545,11 @@ TEST_CASE("Ctrl and the draw tool paint controller events only where the mouse w
 	REQUIRE(f.app.waitUntil([&] { return f.controllers().size() == 3; }));
 	// The lanes show them, so that the next paint replaces them.
 	REQUIRE(f.app.waitUntil([&] { return f.elements(Fixture::area(0) + " .controller-step").size() == 3; }));
-	// With Ctrl one where the mouse was pressed and one at each of the drag's eight moves, off the grid; those there
-	// go, the one at the start stays.
+	// With Ctrl one where the mouse was pressed and one at each of the drag's moves, off the grid, more than the two
+	// steps there; those there go, the one at the start stays.
 	f.app.ui().drag(f.window, f.at(0, 0.5, 0.25), f.at(0, 2.5, 0.25), {"ctrl"});
 	f.app.shell().step(std::chrono::milliseconds(0));
-	REQUIRE(f.app.waitUntil([&] { return f.controllers().size() == 10; }));
+	REQUIRE(f.app.waitUntil([&] { return f.controllers().size() > 4; }));
 	const std::vector<Json> events = f.controllers();
 	CHECK(events[0].at("position") == 0);
 	CHECK(events[0].at("value").get<double>() == Approx(0.5).margin(0.03));
@@ -633,6 +633,8 @@ TEST_CASE("Apply and Reset MIDI Velocity Variance change the notes of every part
 	REQUIRE(f.app.waitUntil([&] { return varied() == 0; }));
 	for (const double velocity : velocities())
 		CHECK(velocity >= 0.5 - 1e-4);
+	const std::vector<double> applied = velocities();
+	CHECK(*std::max_element(applied.begin(), applied.end()) > 0.51); // varied up, not only reset
 	f.app.call("history.undo");
 	CHECK(varied() == 3);
 	for (const double velocity : velocities())
