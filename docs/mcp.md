@@ -866,10 +866,11 @@ Result:
 
 Engine command `audition.start`.
 
-Auditions an audio track, as the play tool does while the mouse is pressed: plays its events from position (samples) until audition.stop, straight to the main mix's outputs, without its channel's fader, pan, mute and effects, and without the transport. A mono clip plays on every channel. Ends what was auditioned before. Announces audition.changed.
+Auditions an audio track, as the play tool does while the mouse is pressed: plays its events from position (samples) until audition.stop, straight to the main mix's outputs, without its channel's fader, pan, mute and effects, and without the transport. With end (samples, after position) it plays up to there and then nothing, as the sample editor plays a slice, while its mode stays play until audition.stop or another audition. A mono clip plays on every channel. Ends what was auditioned before. Announces audition.changed.
 
 Arguments:
 
+- `end`: integer
 - `position`: integer, required
 - `track`: integer, required
 
@@ -1265,7 +1266,7 @@ Result:
 
 Engine command `channel.set`.
 
-Changes a channel's format (or channels, as in bus.add), input (an input bus) or output (an output bus or a group channel; for MIDI tracks an instrument channel). 0 disconnects. Audio converts between formats where a channel feeds a destination of another one: speakers both formats have connect, the others are mixed down (5.1 to stereo: C and LFE into L and R at -3 dB, Ls into L and Rs into R at -6 dB; 7.1 to 5.1: Sl and Sr into the front and surround sides at -3 dB) or up (mono to C, or to L and R at the pan law's center). instrument is the built-in instrument an instrument track plays (see processor.list), or empty for none. volume is the fader in dB, from -144 (silence) to the project's maxVolume (default 0); values beyond them stop there. The panner depends on the routing: a mono channel on a stereo destination has its position pan, -1 (left) to 1 (right), placed with the project's pan law; a stereo channel on a stereo or mono destination has the balance panner (panner balance, the default: pan turns down the other side) or the combined panner (panner combined: panLeft and panRight place its left and right channel, by default -1 and 1). panBypass plays mono channels at the center and stereo ones hard left and right. Destinations wider than stereo have no panner yet. Automation of volume, pan, panLeft and panRight overrides them while it plays; changes glide over 5 ms. MIDI channels have no audio: midiVolume and midiPan (0 to 127, 64 is the center pan, null for none, the default) are sent to the instrument as MIDI volume (CC 7) and pan (CC 10) on MIDI channel 1, whenever they change and when playback starts or jumps; automation of those controllers overrides them. monitor and recordEnable are an audio track's buttons: monitor hears the input bus, recordEnable arms the track for recording and, by the user setting audio.autoMonitoring, monitors too: manual never, whileRecordEnabled always, whileRecording while the transport records, tapeMachine while it stands or records (the default). Monitoring glides in and out over one audio block. MIDI and instrument tracks have them too: recordEnable arms the track for MIDI recording, and while either is on, the track plays what comes from its MIDI input, midiInput: all (all MIDI inputs, the default) or none. mute silences a channel; while any channel is soloed (solo), only the soloed ones, the channels they play through (groups, instruments) and the channels that play into them are heard; exclusive (with solo) turns every other channel's solo off; soloDefeat keeps a channel and the channels it plays through heard while others are soloed. listen (not MIDI channels) also plays the channel after its fader on the monitoring bus, the main mix, which is turned down to the user setting audio.listenDim while any channel listens; the listening channels play there at audio.listenLevel, and their signal flow stays as it is. Muting, soloing and the dim glide over one audio block. notes is the channel's notepad, the user's text about it. The channel strip's sections (audio channels only; each object changes only what it has, as project.get shows them) run before the fader: pre {gain (dB, -24 to 24), phase (inverts the polarity), lowCut and highCut {on, frequency (Hz, 20 or for the high cut 50 to 20000), slope (6, 12, 24, 36 or 48 dB per octave)}} before the plugin slots; after them strip {gate {on, threshold (dB, -80 to 0), range (dB, -80 to 0), attack (ms, 0.01 to 100), release (ms, 1 to 4000)}, compressor {on, threshold (dB, -60 to 0), ratio (1 to 20), attack (ms, 0.1 to 100), release (ms, 10 to 2000), makeup (dB, 0 to 24)}}, then eq {bypass, bands: [{band (1 to 4), on, type (bell; band 1 also lowShelf or lowCut, band 4 highShelf or highCut, cuts at 12 dB per octave), frequency (Hz, 20 to 20000), gain (dB, -24 to 24), q (0.1 to 12)}]}, then the strip's limiter {on, threshold (dB, -30 to 0: no sample leaves above it, 1 ms of latency), release (ms, 1 to 1000)}. Everything starts off; changes glide. sends (audio channels only) changes the channel's eight sends, each by its send number (1 to 8) and only in what it has: destination (a group or effect channel, 0 for none), on, level (dB, from -144 to the project's maxVolume, stopping there, default 0) and preFader (before the fader and the mute button, after the strip's sections; default after the fader). A send starts off and without a destination. Neither an output nor a send may lead back to the channel through other outputs and sends, on or off, so routing never makes a loop; removing a destination's track clears the destination. A send's level and on glide over one audio block. A VCA track's channel has volume, mute, solo, soloDefeat, listen, monitor and recordEnable only. On a channel in a link group (linkGroup.add) the changes the group links go on to its other channels, the fader and the pan by as much as they moved, unless linked is false; a VCA fader's buttons go on to the channels of the group it controls, all in the same undo step.
+Changes a channel's format (or channels, as in bus.add), input (an input bus) or output (an output bus or a group channel; for MIDI tracks an instrument channel). 0 disconnects. Audio converts between formats where a channel feeds a destination of another one: speakers both formats have connect, the others are mixed down (5.1 to stereo: C and LFE into L and R at -3 dB, Ls into L and Rs into R at -6 dB; 7.1 to 5.1: Sl and Sr into the front and surround sides at -3 dB) or up (mono to C, or to L and R at the pan law's center). instrument is the built-in instrument an instrument track plays (see processor.list), or empty for none. volume is the fader in dB, from -144 (silence) to the project's maxVolume (default 0); values beyond them stop there. The panner depends on the routing: a mono channel on a stereo destination has its position pan, -1 (left) to 1 (right), placed with the project's pan law; a stereo channel on a stereo or mono destination has the balance panner (panner balance, the default: pan turns down the other side) or the combined panner (panner combined: panLeft and panRight place its left and right channel, by default -1 and 1). panBypass plays mono channels at the center and stereo ones hard left and right. Destinations wider than stereo have no panner yet. Automation of volume, pan, panLeft and panRight overrides them while it plays; changes glide over 5 ms. MIDI channels have no audio: midiVolume and midiPan (0 to 127, 64 is the center pan, null for none, the default) are sent to the instrument as MIDI volume (CC 7) and pan (CC 10) on MIDI channel 1, whenever they change and when playback starts or jumps; automation of those controllers overrides them. monitor and recordEnable are an audio track's buttons: monitor hears the input bus, recordEnable arms the track for recording and, by the user setting audio.autoMonitoring, monitors too: manual never, whileRecordEnabled always, whileRecording while the transport records, tapeMachine while it stands or records (the default). Monitoring glides in and out over one audio block. MIDI and instrument tracks have them too: recordEnable arms the track for MIDI recording, and while either is on, the track plays what comes from its MIDI input, midiInput: all (all MIDI inputs, the default) or none. mute silences a channel; while any channel is soloed (solo), only the soloed ones, the channels they play through (groups, instruments) and the channels that play into them are heard; exclusive (with solo) turns every other channel's solo off; soloDefeat keeps a channel and the channels it plays through heard while others are soloed. listen (not MIDI channels) also plays the channel after its fader on the monitoring bus, the main mix, which is turned down to the user setting audio.listenDim while any channel listens; the listening channels play there at audio.listenLevel, and their signal flow stays as it is. Muting, soloing and the dim glide over one audio block. notes is the channel's notepad, the user's text about it. modifiers (MIDI and instrument tracks; it changes only what it has, as project.get shows it) changes how the track's notes play, not the notes, both those of its parts and those played into it live: bypass, transpose (semitones, -127 to 127; notes beyond 0 to 127 don't play), velocityShift (-127 to 127, added to MIDI 1.0 velocities), velocityCompression and lengthCompression ([numerator, denominator], each 1 to 16: multipliers of velocities, before the shift, and of lengths), random (two generators, [{target (off, position, pitch, velocity or length), minimum, maximum}]: each adds a value from its minimum to its maximum to every note, the same on every playback; positions and lengths in ticks, up to a quarter note either way, the others up to 127; live notes get pitch and velocity only) and range (two, [{target (off, velocityLimit, velocityFilter, noteLimit or noteFilter), minimum, maximum (0 to 127)}], in order after the others: the limits move velocities to the nearest end and pitches by octaves into the range, the filters leave out the notes outside it). The channel strip's sections (audio channels only; each object changes only what it has, as project.get shows them) run before the fader: pre {gain (dB, -24 to 24), phase (inverts the polarity), lowCut and highCut {on, frequency (Hz, 20 or for the high cut 50 to 20000), slope (6, 12, 24, 36 or 48 dB per octave)}} before the plugin slots; after them strip {gate {on, threshold (dB, -80 to 0), range (dB, -80 to 0), attack (ms, 0.01 to 100), release (ms, 1 to 4000)}, compressor {on, threshold (dB, -60 to 0), ratio (1 to 20), attack (ms, 0.1 to 100), release (ms, 10 to 2000), makeup (dB, 0 to 24)}}, then eq {bypass, bands: [{band (1 to 4), on, type (bell; band 1 also lowShelf or lowCut, band 4 highShelf or highCut, cuts at 12 dB per octave), frequency (Hz, 20 to 20000), gain (dB, -24 to 24), q (0.1 to 12)}]}, then the strip's limiter {on, threshold (dB, -30 to 0: no sample leaves above it, 1 ms of latency), release (ms, 1 to 1000)}. Everything starts off; changes glide. sends (audio channels only) changes the channel's eight sends, each by its send number (1 to 8) and only in what it has: destination (a group or effect channel, 0 for none), on, level (dB, from -144 to the project's maxVolume, stopping there, default 0) and preFader (before the fader and the mute button, after the strip's sections; default after the fader). A send starts off and without a destination. Neither an output nor a send may lead back to the channel through other outputs and sends, on or off, so routing never makes a loop; removing a destination's track clears the destination. A send's level and on glide over one audio block. A VCA track's channel has volume, mute, solo, soloDefeat, listen, monitor and recordEnable only. On a channel in a link group (linkGroup.add) the changes the group links go on to its other channels, the fader and the pan by as much as they moved, unless linked is false; a VCA fader's buttons go on to the channels of the group it controls, all in the same undo step.
 
 Arguments:
 
@@ -1281,6 +1282,7 @@ Arguments:
 - `midiInput`: one of "all" | "none"
 - `midiPan`: integer or null
 - `midiVolume`: integer or null
+- `modifiers`: object
 - `monitor`: boolean
 - `mute`: boolean
 - `notes`: string
@@ -1323,7 +1325,7 @@ Result:
 
 Engine command `clip.addHitpoint`.
 
-Inserts a hitpoint into a clip at position, a clip frame (Alt-click with Edit Hitpoints, reference manual p. 640). It is locked, so that it counts whatever the filters. A clip's hitpoints are in its hitpoints, by position: each with its position in the clip's sample frames, its peak (dBFS, the loudest sample in the 20 ms from there) and intensity (0-1, how sharply the level rises there, 1 for the sharpest the detection found), whether it is locked and disabled, and active, whether it counts: not disabled, and locked or let through by the clip's hitpointFilter (clip.setHitpointFilter). Emits clip.changed. Returns the clip's id and its hitpoints.
+Inserts a hitpoint into a clip at position, a clip frame (Alt-click with Edit Hitpoints, reference manual p. 640). It is locked, so that it counts whatever the filters, and gets the peak and intensity of the sound there, measured from the clip's file as the detection measures those it finds, the intensity relative to the sharpest the detection found (the rise at the hitpoint of the highest intensity, detected ones first, measured again). Fails if the clip's file can't be read. A clip's hitpoints are in its hitpoints, by position: each with its position in the clip's sample frames, its peak (dBFS, the loudest sample in the 20 ms from there) and intensity (0-1, how sharply the level rises there, 1 for the sharpest the detection found), whether it is locked and disabled, and active, whether it counts: not disabled, and locked or let through by the clip's hitpointFilter (clip.setHitpointFilter). Emits clip.changed. Returns the clip's id and its hitpoints.
 
 Arguments:
 
@@ -1357,7 +1359,7 @@ Result:
 
 Engine command `clip.detectHitpoints`.
 
-Finds where sounds start in a clip (calculating hitpoints, reference manual p. 637) and makes them its hitpoints, in place of those it had: where the level, or that of the high frequencies, rises by 6 dB or more within 5 ms from at least -60 dBFS, 20 ms apart at least. Edit Hitpoints restores the hitpoints found this way after Remove All. Reads the clip's file. A clip's hitpoints are in its hitpoints, by position: each with its position in the clip's sample frames, its peak (dBFS, the loudest sample in the 20 ms from there) and intensity (0-1, how sharply the level rises there, 1 for the sharpest the detection found), whether it is locked and disabled, and active, whether it counts: not disabled, and locked or let through by the clip's hitpointFilter (clip.setHitpointFilter). Emits clip.changed. Returns the clip's id and its hitpoints.
+Finds where sounds start in a clip (calculating hitpoints, reference manual p. 637) and makes them its hitpoints, in place of those it has then: where the level, or that of the high frequencies, rises by 6 dB or more within 5 ms from at least -60 dBFS, 20 ms apart at least. Edit Hitpoints restores the hitpoints found this way after Remove All. It reads the clip's whole file, so it runs as a job and can't be part of a history.transaction: this returns at once, job.progress events say how much of the file it read, job.cancel stops it, and once it is done it sets them with clip.setHitpoints, one undo step, whose result is the job's result. A clip removed meanwhile, another project opened or the clip's media file relinked fails the job.
 
 Arguments:
 
@@ -1365,8 +1367,7 @@ Arguments:
 
 Result:
 
-- `clip`: integer, required
-- `hitpoints`: array of object, required
+- `job`: object, required
 
 #### `clip_remove`
 
@@ -1444,7 +1445,7 @@ Result:
 
 Engine command `clip.setHitpoint`.
 
-Edits the hitpoint of a clip at position (reference manual p. 640): moveTo moves it to that clip frame, which locks it unless locked is given; locked locks or unlocks it (Lock Hitpoint), disabled disables or enables it (Disable Hitpoint); both false reset it (Enable/Unlock Hitpoints). What isn't given stays. A clip's hitpoints are in its hitpoints, by position: each with its position in the clip's sample frames, its peak (dBFS, the loudest sample in the 20 ms from there) and intensity (0-1, how sharply the level rises there, 1 for the sharpest the detection found), whether it is locked and disabled, and active, whether it counts: not disabled, and locked or let through by the clip's hitpointFilter (clip.setHitpointFilter). Emits clip.changed. Returns the clip's id and its hitpoints.
+Edits the hitpoint of a clip at position (reference manual p. 640): moveTo moves it to that clip frame, which locks it unless locked is given and measures its peak and intensity there as clip.addHitpoint does (failing if the file can't be read); locked locks or unlocks it (Lock Hitpoint), disabled disables or enables it (Disable Hitpoint); both false reset it (Enable/Unlock Hitpoints). What isn't given stays. A clip's hitpoints are in its hitpoints, by position: each with its position in the clip's sample frames, its peak (dBFS, the loudest sample in the 20 ms from there) and intensity (0-1, how sharply the level rises there, 1 for the sharpest the detection found), whether it is locked and disabled, and active, whether it counts: not disabled, and locked or let through by the clip's hitpointFilter (clip.setHitpointFilter). Emits clip.changed. Returns the clip's id and its hitpoints.
 
 Arguments:
 
@@ -1471,6 +1472,24 @@ Arguments:
 - `intensity`: number
 - `minimumLength`: integer
 - `threshold`: number
+
+Result:
+
+- `clip`: integer, required
+- `hitpoints`: array of object, required
+
+#### `clip_setHitpoints`
+
+Engine command `clip.setHitpoints`.
+
+Makes hitpoints a clip's hitpoints, in place of those it had: what clip.detectHitpoints found, or hitpoints from elsewhere. Each has its position (a clip frame, each one once), peak (dBFS) and intensity (0-1), and may say whether it is locked and disabled (default false); active is ignored, so that a clip's hitpoints can be given as they come. With project (project.revision's), it fails if another project was opened since; with path, if the clip's media file has another path now (it was relinked), so that a job's hitpoints never go to another clip or file. A clip's hitpoints are in its hitpoints, by position: each with its position in the clip's sample frames, its peak (dBFS, the loudest sample in the 20 ms from there) and intensity (0-1, how sharply the level rises there, 1 for the sharpest the detection found), whether it is locked and disabled, and active, whether it counts: not disabled, and locked or let through by the clip's hitpointFilter (clip.setHitpointFilter). Emits clip.changed. Returns the clip's id and its hitpoints.
+
+Arguments:
+
+- `clip`: integer, required
+- `hitpoints`: array of object, required
+- `path`: string
+- `project`: integer
 
 Result:
 
@@ -2833,7 +2852,7 @@ Arguments:
 
 Engine command `midiPart.set`.
 
-Changes a MIDI part's name, position or length.
+Changes a MIDI part's name, position or length, or how its notes play: transpose (semitones) and velocity (added to MIDI 1.0 velocities), each -127 to 127 and added to the track's MIDI modifiers (channel.set modifiers), also while they are bypassed. The notes themselves stay as they are.
 
 Arguments:
 
@@ -2841,6 +2860,8 @@ Arguments:
 - `name`: string
 - `part`: integer, required
 - `position`: integer
+- `transpose`: integer
+- `velocity`: integer
 
 Result:
 
@@ -4727,6 +4748,16 @@ Removes a track with its channel, events, parts or markers; a folder also remove
 Arguments:
 
 - `track`: integer, required
+
+#### `track_removeEmpty`
+
+Engine command `track.removeEmpty`.
+
+Removes the empty tracks (Remove Empty Tracks, reference manual p. 213): audio, instrument, MIDI and marker tracks without events, parts, markers or automation, and folders without tracks, unless another track's channel plays or sends into theirs (an instrument track a MIDI track plays, a folder's group channel). Group, effect, VCA, ruler, tempo and signature tracks stay. What it removes can leave others empty, such as a folder that held only empty tracks, so it looks again until no empty track is left. One undo step; none if nothing is empty. Returns the tracks removed, from top to bottom, with those inside removed folders.
+
+Result:
+
+- `tracks`: array of integer, required
 
 #### `track_renderInPlace`
 

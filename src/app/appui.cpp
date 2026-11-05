@@ -193,14 +193,13 @@ namespace gnubase::app
 		}
 
 		// The track list's commands (ui::TrackList::actions, docs/features/track-list.md) and their keys.
-		constexpr std::array<ProjectCommand, 29> g_trackCommands{{
+		constexpr std::array<ProjectCommand, 28> g_trackCommands{{
 			{"track.selectPrevious",
 				"Selects the track above the selected one, and its first event while an event is selected.", "Up"},
 			{"track.selectNext",
 				"Selects the track below the selected one, and its first event while an event is selected.", "Down"},
 			{"track.rename", "Renames the first selected track.", "Alt+F2"},
 			{"track.removeSelected", "Removes the selected tracks.", nullptr},
-			{"track.removeEmpty", "Removes the tracks that hold nothing.", nullptr},
 			{"track.duplicateSelected", "Duplicates the selected tracks with their contents.", nullptr},
 			{"track.disableSelected", "Disables the selected audio, instrument and MIDI tracks.", nullptr},
 			{"track.enableSelected", "Enables the selected tracks again.", nullptr},
@@ -248,7 +247,9 @@ namespace gnubase::app
 		std::ostream& output, int msaaSamples)
 		: m_renderer(m_windows, msaaSamples), m_lua(engine, scripting::Trust::Trusted, output), m_rmlui(m_windows),
 		  m_themes(fontsAndThemes(resources)), m_shell(m_windows, m_renderer), m_settings(engine, m_shell, m_themes),
-		  m_binding(engine, [this] { m_shell.wake(); }), m_keys(engine, m_binding), m_main(m_shell.open(main)),
+		  m_binding(
+			  engine, [this] { m_shell.wake(); }, [this] { m_shell.requestRender(); }),
+		  m_keys(engine, m_binding), m_main(m_shell.open(main)),
 		  m_docking(engine, m_binding, m_shell, resources / "ui" / "panel-window.rml", main.hidden), m_engine(engine),
 		  m_resources(resources), m_hidden(main.hidden),
 		  m_history(m_binding.on("history.changed",
@@ -270,8 +271,11 @@ namespace gnubase::app
 		m_shell.eachStep(
 			[this]
 			{
-				if (const std::optional<std::string> error = m_lua.dispatchEvents())
+				bool scripted = false;
+				if (const std::optional<std::string> error = m_lua.dispatchEvents(&scripted))
 					logging::warning("A Lua event handler of the UI failed: {}", *error);
+				if (scripted)
+					m_shell.requestRender(); // what documents' gnubase.on handlers changed, wherever it shows
 				const bool follows = m_binding.update();
 				if (m_menu)
 					m_menu->update();

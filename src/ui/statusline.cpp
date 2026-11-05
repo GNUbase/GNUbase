@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/statusline.h"
 
+#include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/StringUtilities.h>
 
@@ -38,7 +39,7 @@ namespace gnubase::ui
 	{
 		if (!m_recordTime || m_binding.waiting("recording.remainingTime") > 0)
 			return;
-		m_binding.send("recording.remainingTime", engine::Json::object(),
+		m_binding.sendQuietly("recording.remainingTime", engine::Json::object(),
 			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
 				if (!alive.expired() && result.ok())
@@ -60,8 +61,11 @@ namespace gnubase::ui
 								   : std::to_string(seconds / 60) + " min " + twoDigits(seconds % 60) + " s";
 		}
 		const std::string shown = Rml::StringUtilities::EncodeRml("Max. Record Time: " + text);
-		if (m_recordTime->GetInnerRML() != shown)
-			m_recordTime->SetInnerRML(shown);
+		if (m_recordTime->GetInnerRML() == shown)
+			return;
+		m_recordTime->SetInnerRML(shown);
+		if (Rml::Context* context = m_recordTime->GetContext())
+			context->RequestNextUpdate(0); // asked for once a second, quietly (EngineBinding::sendQuietly)
 	}
 
 	void StatusLine::show(const engine::Json& status)

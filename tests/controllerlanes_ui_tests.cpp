@@ -230,18 +230,24 @@ TEST_CASE("controller lanes come from the menus and the tools add, select, chang
 TEST_CASE("the line tool's modes draw lines, parabolas and periodic curves on a controller lane", "[ui]")
 {
 	Fixture f;
+	// The quantize grid, the period of the periodic modes below, comes with the project that the editor reads after
+	// quantize.changed. It is set first, so that the project showing the line's events has it.
+	f.app.call("quantize.set", {{"settings", {{"grid", "1/4"}}}});
 	f.app.call("editor.set", {{"editor", "window"}, {"lanes", {{{"type", "pitchBend"}}}}});
+	f.app.call("editor.set", {{"editor", "window"}, {"lengthQuantize", "1/16"}});
 	REQUIRE(f.app.waitUntil([&] { return f.elements(".controller-lane-type").at(0).at("text") == "Pitchbend"; }));
+	REQUIRE(f.app.waitUntil([&] { return f.elements("#key-length-quantize").at(0).at("text") == "1/16"; }));
 	f.tool("line");
 	f.drag(f.at(0, 0, 0.0), f.at(0, 8, 1.0));
 	REQUIRE(f.app.waitUntil([&] { return f.controllers().size() == 9; })); // every sixteenth, and the end
 	CHECK(f.controllers()[4].at("type") == "pitchBend");
 	CHECK(f.controllers()[4].at("value").get<double>() == Approx(0.5).margin(0.05));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(Fixture::area(0) + " .controller-step").size() == 9; }));
 
 	// A second click on the line tool opens its modes. Square goes from the start value to the end value and back
 	// every period, the quantize grid; the length quantize sets the density of the events.
-	f.app.call("quantize.set", {{"settings", {{"grid", "1/4"}}}});
 	f.app.call("editor.set", {{"editor", "window"}, {"lengthQuantize", "1/8"}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements("#key-length-quantize").at(0).at("text") == "1/8"; }));
 	f.choose(".key-tool[key-tool=line]", "#key-line-menu menuitem[line-mode=square]");
 	f.drag(f.at(0, 0, 0.0), f.at(0, 8, 1.0));
 	REQUIRE(f.app.waitUntil([&] { return f.controllers().size() == 5; })); // every eighth
