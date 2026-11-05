@@ -373,6 +373,34 @@ namespace gnubase::ui
 		if (m_parameterMenu != nullptr)
 			for (const Rml::EventId id : {Rml::EventId::Click, Rml::EventId::Change})
 				m_parameterMenu->AddEventListener(id, this);
+		// Track versions (#165, docs/features/track-versions.md) of the selected audio, instrument and MIDI tracks.
+		for (const auto& [action, command] : {std::pair{"track.newVersion", "trackVersion.add"},
+				 std::pair{"track.duplicateVersion", "trackVersion.duplicate"},
+				 std::pair{"track.deleteVersion", "trackVersion.remove"},
+				 std::pair{"track.assignCommonVersionId", "trackVersion.assignCommonId"}})
+			m_actions[action] = [this, command = std::string(command)]
+			{
+				if (const std::vector<uint64_t> tracks = versioned(); !tracks.empty())
+					m_binding.send(command, {{"tracks", tracks}});
+			};
+		m_actions["track.selectSameVersionId"] = [this]
+		{
+			const std::vector<uint64_t> tracks = versioned();
+			if (tracks.empty())
+				return;
+			const Json& all = m_display.project().at("tracks");
+			const Json& id = all.at(m_index.at(tracks.front())).at("activeVersion");
+			std::vector<uint64_t> same;
+			for (const Json& track : all)
+				for (const Json& version : track.value("versions", Json::array()))
+					if (version.at("id") == id)
+						same.push_back(track.at("id").get<uint64_t>());
+			select(same);
+			showVersions();
+		};
+		m_versionMenu = m_document->GetElementById("track-versions-list");
+		if (m_versionMenu != nullptr)
+			m_versionMenu->AddEventListener(Rml::EventId::Click, this);
 
 		m_subscriptions.push_back(m_binding.on("settings.changed",
 			[this](const engine::Event& event)
@@ -427,6 +455,8 @@ namespace gnubase::ui
 		if (m_parameterMenu != nullptr)
 			for (const Rml::EventId id : {Rml::EventId::Click, Rml::EventId::Change})
 				m_parameterMenu->RemoveEventListener(id, this);
+		if (m_versionMenu != nullptr)
+			m_versionMenu->RemoveEventListener(Rml::EventId::Click, this);
 		for (const Rml::EventId id : g_rootEvents)
 			m_root->RemoveEventListener(id, this);
 		m_root->RemoveEventListener(Rml::EventId::Blur, this, true);
@@ -532,6 +562,7 @@ namespace gnubase::ui
 			row.type = track.at("type").get<std::string>();
 			row.parent = track.at("parent").get<uint64_t>();
 			row.channel = track.at("channel").get<uint64_t>();
+			row.holds = track.value("versions", Json::array()).size() > 1; // as track.removeEmpty counts them
 			if (const auto parent = index.find(row.parent); parent != index.end())
 				row.level = tracks[parent->second].level + 1;
 			index[row.id] = tracks.size();
@@ -599,6 +630,7 @@ namespace gnubase::ui
 		const Json& project = m_display.project();
 		if (!alive() || !project.is_object())
 			return;
+		showVersions();
 		std::map<uint64_t, std::vector<bool>> reading; // each track's automation lanes, whether they read
 		for (const Json& lane : project.at("automation"))
 			reading[lane.at("track").get<uint64_t>()].push_back(lane.at("read").get<bool>());
@@ -640,7 +672,12 @@ namespace gnubase::ui
 			Rml::Element* label = element->QuerySelector(".track-name");
 			if (label != nullptr && row.id != m_renaming)
 			{
-				const std::string text = Rml::StringUtilities::EncodeRml(track.at("name").get<std::string>());
+				std::string text = Rml::StringUtilities::EncodeRml(track.at("name").get<std::string>());
+				// With more than one version, the active one's name (reference manual p. 236).
+				for (const Json& version : track.value("versions", Json::array()))
+					if (track.at("versions").size() > 1 && version.at("id") == track.at("activeVersion"))
+						text += R"( <span class="track-version">)" +
+							Rml::StringUtilities::EncodeRml(version.at("name").get<std::string>()) + "</span>";
 				if (label->GetInnerRML() != text)
 					label->SetInnerRML(text);
 			}
@@ -839,6 +876,48 @@ namespace gnubase::ui
 
 	// The parameter selector (reference manual p. 880): the track's parameters, which a search narrows, and the
 	// automation track's functions.
+	std::vector<uint64_t> TrackList::versioned() const
+	{
+		std::vector<uint64_t> tracks;
+		for (const uint64_t track : selection())
+			if (const std::string& type = m_tracks[m_index.at(track)].type;
+				type == "audio" || type == "instrument" || type == "midi")
+				tracks.push_back(track);
+		return tracks;
+	}
+
+	void TrackList::showVersions()
+	{
+		const std::vector<uint64_t> tracks = versioned();
+		std::string rml;
+		if (!tracks.empty())
+		{
+			const Json& track = m_display.project().at("tracks").at(m_index.at(tracks.front()));
+			for (const Json& version : track.at("versions"))
+				rml += R"(<menuitem class="track-version)" +
+					std::string(version.at("id") == track.at("activeVersion") ? " checked" : "") + R"(" version=")" +
+					std::to_string(version.at("id").get<int>()) + R"(">)" +
+					Rml::StringUtilities::EncodeRml(version.at("name").get<std::string>()) + "</menuitem>";
+		}
+		if (m_versionMenu != nullptr && rml != m_versionRml)
+		{
+			m_versionRml = rml;
+			m_versionMenu->SetInnerRML(rml);
+		}
+	}
+
+	void TrackList::versionEvent(Rml::Event& event)
+	{
+		const Rml::Element* item = event.GetTargetElement();
+		while (item != nullptr && item != m_versionMenu && !item->HasAttribute("version"))
+			item = item->GetParentNode();
+		const std::vector<uint64_t> tracks = versioned();
+		if (item == nullptr || item == m_versionMenu || tracks.empty())
+			return;
+		m_binding.send(
+			"trackVersion.activate", {{"tracks", tracks}, {"version", item->GetAttribute<int>("version", 1)}});
+	}
+
 	void TrackList::openParameters(uint64_t lane)
 	{
 		const Json* json = laneOf(lane);
@@ -943,6 +1022,11 @@ namespace gnubase::ui
 			parameterEvent(event);
 			return;
 		}
+		if (m_versionMenu != nullptr && event.GetCurrentElement() == m_versionMenu)
+		{
+			versionEvent(event);
+			return;
+		}
 		Rml::Element* target = event.GetTargetElement();
 		// The automation tracks' rows and Show/Hide Automation (#121).
 		const auto automationLane = [this](Rml::Element* element) { return laneAt(element); };
@@ -1044,12 +1128,19 @@ namespace gnubase::ui
 			// Enter in the name being typed; the selection, which the keys may have moved out of view.
 			if (m_renaming != 0 && target != nullptr && target->GetTagName() == "input" &&
 				event.GetParameter<bool>("linebreak", false))
+			{
 				finishRename(true);
+			}
 			else if (target != nullptr && target->HasAttribute("control"))
+			{
 				rulerChange(*target, event.GetParameter<Rml::String>("value", ""));
+			}
 			else if (target == m_view)
+			{
 				if (const std::vector<uint64_t> tracks = selection(); !tracks.empty())
 					reveal(tracks.front());
+				showVersions();
+			}
 			break;
 		default:
 			if (event.GetType() == g_treeToggleEvent && target == m_view)

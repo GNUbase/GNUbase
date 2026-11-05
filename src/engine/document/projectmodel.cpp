@@ -13,6 +13,7 @@
 #include "engine/document/sampleeditor.h"
 #include "engine/document/serialize.h"
 #include "engine/document/stripparameters.h"
+#include "engine/document/trackversions.h"
 #include "engine/document/volumecurves.h"
 #include "engine/dsp/timestretch.h"
 #include "engine/graph/graph.h"
@@ -522,6 +523,25 @@ namespace gnubase::engine
 				}
 			track.timeOffset =
 				time::rebase({track.timeBase, track.timeOffset}, base, project.tempo, project.sampleRate).value;
+			// The inactive versions' events and parts are in the track's time base too.
+			for (TrackVersion& version : track.versions)
+			{
+				for (AudioEvent& event : version.audioEvents)
+					event.position = time::rebase(event.position, base, project.tempo, project.sampleRate);
+				for (AudioPart& part : version.audioParts)
+				{
+					const time::Position end = time::rebase({part.position.base, part.position.value + part.length},
+						base, project.tempo, project.sampleRate);
+					part.position = time::rebase(part.position, base, project.tempo, project.sampleRate);
+					part.length = end.value - part.position.value;
+				}
+				for (MidiPart& part : version.midiParts)
+				{
+					const time::Position end = time::rebase(partEnd(part), base, project.tempo, project.sampleRate);
+					part.position = time::rebase(part.position, base, project.tempo, project.sampleRate);
+					part.length = end.value - part.position.value;
+				}
+			}
 			track.timeBase = base;
 		}
 
@@ -548,6 +568,25 @@ namespace gnubase::engine
 					part.position.value = rescale(part.position.value, factor);
 					part.length = rescale(part.length, factor);
 					context.emit("audioPart.changed", {{"part", toJson(part)}});
+				}
+			for (auto& [id, track] : project.trackById)
+				for (TrackVersion& version : track.versions)
+				{
+					for (AudioEvent& event : version.audioEvents)
+						if (event.position.base == time::TimeBase::Linear)
+							event.position.value = rescale(event.position.value, factor);
+					for (AudioPart& part : version.audioParts)
+						if (part.position.base == time::TimeBase::Linear)
+						{
+							part.position.value = rescale(part.position.value, factor);
+							part.length = rescale(part.length, factor);
+						}
+					for (MidiPart& part : version.midiParts)
+						if (part.position.base == time::TimeBase::Linear)
+						{
+							part.position.value = rescale(part.position.value, factor);
+							part.length = rescale(part.length, factor);
+						}
 				}
 			for (auto& [id, lane] : project.automation)
 			{
@@ -1372,6 +1411,8 @@ namespace gnubase::engine
 			copy.id = project.newId();
 			copy.parent = parent;
 			copy.children.clear();
+			for (TrackVersion& version : copy.versions)
+				version = copyVersion(project, version, copy.id);
 			std::map<ObjectId, ObjectId> slots; // each copied slot's copy
 			if (copy.channel != 0)
 			{
@@ -1572,13 +1613,13 @@ namespace gnubase::engine
 		}
 
 		// The tracks track.removeEmpty removes (docs/features/track-list.md): audio, instrument, MIDI and marker
-		// tracks without events, parts, markers or automation, and folders without tracks, unless a channel of
-		// another track plays or sends into theirs. Plugins in a channel's slots and an instrument track's instrument
-		// don't keep a track. Group and effect tracks are where others play through, VCA tracks control channels,
-		// ruler, tempo and signature tracks hold no events. What goes can leave others empty, such as a folder that
-		// held only empty tracks or an instrument track that only empty MIDI tracks played, so it looks again until
-		// nothing more goes. What a track holds is the same in the track list's warning before Remove Selected Tracks
-		// (TrackList::build, src/ui/tracklist.cpp): change both together.
+		// tracks without events, parts, markers, automation or other versions, and folders without tracks, unless a
+		// channel of another track plays or sends into theirs. Plugins in a channel's slots and an instrument track's
+		// instrument don't keep a track. Group and effect tracks are where others play through, VCA tracks control
+		// channels, ruler, tempo and signature tracks hold no events. What goes can leave others empty, such as a
+		// folder that held only empty tracks or an instrument track that only empty MIDI tracks played, so it looks
+		// again until nothing more goes. What a track holds is the same in the track list's warning before Remove
+		// Selected Tracks (TrackList::build, src/ui/tracklist.cpp): change both together.
 		std::set<ObjectId> emptyTracks(const Project& project)
 		{
 			std::set<ObjectId> holding;
@@ -1592,6 +1633,9 @@ namespace gnubase::engine
 			hold(project.midiParts);
 			hold(project.markers);
 			hold(project.automation);
+			for (const auto& [id, track] : project.trackById)
+				if (track.versions.size() > 1) // its other versions hold events or parts, or will
+					holding.insert(id);
 			std::set<ObjectId> gone;
 			size_t before = 0;
 			do
@@ -2587,8 +2631,8 @@ namespace gnubase::engine
 		{
 			const ObjectId id = context.parameters().at("clip").get<ObjectId>();
 			find(project.clips, id, "clip");
-			for (const auto& [eventId, event] : project.audioEvents)
-				require(event.clip != id, "clip " + idText(id) + " is used by audio event " + idText(eventId));
+			forEveryAudioEvent(project, [id](const AudioEvent& event)
+				{ require(event.clip != id, "clip " + idText(id) + " is used by audio event " + idText(event.id)); });
 			project.clips.erase(id);
 			context.emit("clip.removed", {{"clip", id}});
 			return Json::object();
@@ -4163,6 +4207,7 @@ namespace gnubase::engine
 		registerSnapCommands(*this, engine);
 		registerMixerCommands(*this, engine);
 		registerLinkGroupCommands(*this, engine);
+		registerTrackVersionCommands(*this, engine);
 		midi::registerDrumMapCommands(*this, engine);
 		registerChannelSettingsCommands(*this, engine);
 		registerEditorCommands(*this, engine);

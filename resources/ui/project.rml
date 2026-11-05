@@ -318,6 +318,22 @@
 		<menuitem command="track.removeEmpty">Remove Empty Tracks</menuitem>
 		<menuitem command="track.duplicateSelected">Duplicate Tracks</menuitem>
 		<menuseparator/>
+		<!-- Track versions of the selected tracks (reference manual pp. 230-237, docs/features/track-versions.md);
+		     ui::TrackList fills the list with the first one's versions, which a click activates. -->
+		<menuitem id="track-versions-submenu">Track Versions
+			<menu>
+				<menuitem command="track.newVersion">New Version</menuitem>
+				<menuitem command="track.duplicateVersion">Duplicate Version</menuitem>
+				<menuitem command="track.deleteVersion">Delete Version</menuitem>
+				<menuseparator/>
+				<menuitem command="track.selectSameVersionId">Select Tracks with Same Version ID</menuitem>
+				<menuitem command="track.assignCommonVersionId">Assign Common Version ID</menuitem>
+				<menuseparator/>
+				<menuitem id="track-versions-list-submenu">Activate Version
+					<menu id="track-versions-list"/>
+				</menuitem>
+			</menu>
+		</menuitem>
 		<menuitem id="track-folding-submenu">Track Folding
 			<menu>
 				<menuitem command="track.toggleFolding">Toggle Selected Track</menuitem>
