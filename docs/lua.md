@@ -2410,7 +2410,7 @@ Resets the meters' maxima (peakMax, rmsMax, truePeakMax, momentaryMax, shortTerm
 
 #### `gnubase.midi.bounce`
 
-Bounces MIDI parts on one track into a single part from the first one's start to the last one's end, named after the first, on the lowest lane they are on. Muted parts are removed and add nothing. Events keep their time; notes are cut where their part ended. The parts' transpose and velocity go into the notes, which play as before; a note transposed beyond 0-127, which doesn't play, is left out. Returns the tracks it added, the parts it added (parts), changed and removed.
+Bounces MIDI parts on one track into a single part from the first one's start to the last one's end, named after the first, on the lowest lane they are on. Muted parts are removed and add nothing. Events keep their time; notes are cut where their part ended. The parts' transpose and velocity go into the notes as playback applies them; a note transposed beyond 0-127, which doesn't play, is left out. The copied notes get new ids, so play probability and velocity variance draw anew. Returns the tracks it added, the parts it added (parts), changed and removed.
 
 Parameters:
 
@@ -2533,7 +2533,7 @@ Returns:
 
 #### `gnubase.midi.extractAutomation`
 
-Moves the continuous controllers of MIDI parts (as midi.deleteContinuousControllers takes them) into controller automation lanes of their tracks, one per controller and MIDI channel: each event becomes a step point where it plays, its value 0 to 1. A lane the track already has loses its points in the part's range first. Pitch bend, pressure, switches such as the sustain pedal, events past a part's end and muted parts stay. Returns the parts it changed, the lanes it added (lanes) and the lanes it changed.
+Moves the continuous controllers of MIDI parts (as midi.deleteContinuousControllers takes them) into controller automation lanes of their tracks, one per controller and MIDI channel: each event becomes a step point where it plays, its value 0 to 1. A lane the track already has loses its points in the part's range first, except those an earlier part of the call added. Pitch bend, pressure, switches such as the sustain pedal, events past a part's end and muted parts stay. Returns the parts it changed, the lanes it added (lanes) and the lanes it changed.
 
 Parameters:
 
@@ -2632,7 +2632,7 @@ Returns:
 
 #### `gnubase.midi.merge`
 
-Merges the notes and controllers that start between start and end (project samples, like the locators, compared in samples as playback does) on the MIDI and instrument tracks in tracks into a new part on the destination track from start, or from the first merged event if that is earlier, to end, named name (default: the track's name). Without tracks, the MIDI and instrument tracks that play, by playback's solo and mute rules: neither their channel nor one it plays into is muted, silenced by a solo or on a disabled track; it refuses if none does. Muted parts are left out. Notes keep their length, cut where their part ends. Without destination a new MIDI track is added at the end, routed to the instrument of the first track merged. eraseDestination first removes the destination's parts that lie between start and end, and the events of its other parts that start there. includeChase adds the last value of every controller and program before start at the new part's start. Returns the tracks it added, the parts it added (parts), changed and removed.
+Merges the notes and controllers that start between start and end (project samples, like the locators, compared in samples as playback does) on the MIDI and instrument tracks in tracks into a new part on the destination track from start, or from the first merged event if that is earlier, to end, named name (default: the track's name). Without tracks, the MIDI and instrument tracks that play, by playback's solo and mute rules: neither their channel nor one it plays into is muted, silenced by a solo or on a disabled track (sends aren't followed); it refuses if none does. Muted parts are left out. Notes keep their length, cut where their part ends. Without destination a new MIDI track is added at the end, routed to the instrument of the first track merged. eraseDestination first removes the destination's parts that lie between start and end, and the events of its other parts that start there. includeChase adds the last value of every controller and program before start at the new part's start. Returns the tracks it added, the parts it added (parts), changed and removed.
 
 Parameters:
 

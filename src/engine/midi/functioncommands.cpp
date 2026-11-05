@@ -511,7 +511,8 @@ namespace gnubase::engine::midi
 				"end, named "
 				"name (default: the track's name). Without tracks, the MIDI and instrument tracks that play, by "
 				"playback's solo and mute rules: neither their channel nor one it plays into is muted, silenced by a "
-				"solo or on a disabled track; it refuses if none does. Muted parts are left out. Notes keep their "
+				"solo or on a disabled track (sends aren't followed); it refuses if none does. Muted parts are left "
+				"out. Notes keep their "
 				"length, cut where their part ends. Without destination a new MIDI track is added at the end, routed "
 				"to the instrument of the first track merged. eraseDestination first removes the destination's parts "
 				"that lie between start and end, and the events of its other parts that start there. includeChase "
@@ -545,8 +546,8 @@ namespace gnubase::engine::midi
 				"Bounces MIDI parts on one track into a single part from the first one's start to the last one's "
 				"end, named after the first, on the lowest lane they are on. Muted parts are removed and add nothing. "
 				"Events keep their time; notes are cut where their part ended. The parts' transpose and velocity go "
-				"into the notes, which play as before; a note transposed beyond 0-127, which doesn't play, is left "
-				"out." +
+				"into the notes as playback applies them; a note transposed beyond 0-127, which doesn't play, is left "
+				"out. The copied notes get new ids, so play probability and velocity variance draw anew." +
 					returns,
 				objectSchema({{"parts", ids}}, {"parts"}), changesResult, false},
 			"Bounce MIDI", runBounce);
@@ -555,7 +556,8 @@ namespace gnubase::engine::midi
 				"Moves the continuous controllers of MIDI parts (as midi.deleteContinuousControllers takes them) into "
 				"controller automation lanes of their tracks, one per controller and MIDI channel: each event becomes "
 				"a step point where it plays, its value 0 to 1. A lane the track already has loses its points in the "
-				"part's range first. Pitch bend, pressure, switches such as the sustain pedal, events past a part's "
+				"part's range first, except those an earlier part of the call added. Pitch bend, pressure, switches "
+				"such as the sustain pedal, events past a part's "
 				"end and muted parts stay. Returns the parts it changed, the lanes it added (lanes) and the lanes it "
 				"changed.",
 				objectSchema({{"parts", ids}}, {"parts"}),

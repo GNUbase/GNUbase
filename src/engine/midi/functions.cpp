@@ -433,25 +433,24 @@ namespace gnubase::engine::midi
 			if (!selection.contains(id))
 				continue;
 			const double velocity = static_cast<double>(note.velocity) / maxVelocity;
-			double changed = velocity;
-			switch (settings.type)
+			const auto change = [&settings, &part, velocity, noteId = id]
 			{
-			case VelocityChange::Add:
-				changed = velocity + settings.amount;
-				break;
-			case VelocityChange::Compress:
-				changed = velocity * settings.ratio;
-				break;
-			case VelocityChange::Limit:
-				changed = std::clamp(velocity, settings.lower, settings.upper);
-				break;
-			case VelocityChange::Fixed:
-				changed = settings.amount;
-				break;
-			case VelocityChange::Variance:
-				changed = velocity * (1.0 - (settings.variance * unitRandom(part.id, id)));
-				break;
-			}
+				switch (settings.type)
+				{
+				case VelocityChange::Add:
+					return velocity + settings.amount;
+				case VelocityChange::Compress:
+					return velocity * settings.ratio;
+				case VelocityChange::Limit:
+					return std::clamp(velocity, settings.lower, settings.upper);
+				case VelocityChange::Fixed:
+					return settings.amount;
+				case VelocityChange::Variance:
+					return velocity * (1.0 - (settings.variance * unitRandom(part.id, noteId)));
+				}
+				return velocity;
+			};
+			const double changed = change();
 			note.velocity = static_cast<uint16_t>(std::lround(std::clamp(changed, 0.0, 1.0) * maxVelocity));
 		}
 	}
@@ -1085,6 +1084,7 @@ namespace gnubase::engine::midi
 	AutomationChanges extractAutomation(Project& project, const std::vector<ObjectId>& parts)
 	{
 		AutomationChanges changes;
+		std::set<ObjectId> placed; // the points this run adds
 		for (const ObjectId id : parts)
 		{
 			MidiPart& part = project.midiParts.at(id);
@@ -1130,10 +1130,13 @@ namespace gnubase::engine::midi
 				}
 				else
 				{
+					// Points an earlier part of this run added stay, so overlapping parts keep each other's.
 					for (auto point = lane->points.begin(); point != lane->points.end();)
 					{
 						const int64_t at = point->second.position.value;
-						point = at >= rangeStart && at < rangeEnd ? lane->points.erase(point) : std::next(point);
+						const bool before = placed.count(point->first) == 0;
+						point =
+							before && at >= rangeStart && at < rangeEnd ? lane->points.erase(point) : std::next(point);
 					}
 					addUnique(changes.changedLanes, lane->id);
 				}
@@ -1145,6 +1148,7 @@ namespace gnubase::engine::midi
 					point.value =
 						static_cast<double>(event->value) / static_cast<double>(std::numeric_limits<uint32_t>::max());
 					point.shape = AutomationShape::Step;
+					placed.insert(point.id);
 					lane->points[point.id] = point;
 				}
 			}

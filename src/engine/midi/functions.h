@@ -196,7 +196,8 @@ namespace gnubase::engine::midi
 	// Extract MIDI Automation (reference manual p. 1129): moves the continuous controllers (isContinuousController)
 	// that play in the parts into automation lanes of their tracks, a lane per controller and channel. Each event
 	// becomes a step point where it plays, with its value scaled to 0 to 1. A lane the track already has for the
-	// controller loses its points in the part's range first; otherwise a lane is added. Pitch bend, pressure,
+	// controller loses its points in the part's range first, but not those an earlier part of the same call added, so
+	// overlapping parts keep each other's; otherwise a lane is added. Pitch bend, pressure,
 	// switches such as the sustain pedal, events past a part's end and the events of muted parts stay, as none of
 	// them would play the same as automation.
 	AutomationChanges extractAutomation(Project& project, const std::vector<ObjectId>& parts);
@@ -223,7 +224,8 @@ namespace gnubase::engine::midi
 	};
 
 	// The MIDI and instrument tracks that play, in track order, by playback's rules: neither their channel nor a
-	// channel it plays into is muted, silenced by another channel's solo or on a disabled track.
+	// channel it plays into is muted, silenced by another channel's solo or on a disabled track. Sends aren't
+	// followed: a track heard only through a send doesn't count.
 	std::vector<ObjectId> playingTracks(const Project& project);
 
 	// Copies the notes and controllers that start in the range on the tracks into a new part between start and end
@@ -250,7 +252,7 @@ namespace gnubase::engine::midi
 
 	// Copies the events of the parts into new parts at the same place, one per channel or pitch found in the parts of
 	// a track, on a new track or lane for each, and mutes the parts (reference manual pp. 1121-1122). Events that
-	// belong to no channel or pitch go with the first new part of their part, so the new parts play what it did; a
+	// belong to no channel or pitch go with the first new part of their part, so none is lost; a
 	// part with nothing to separate stays as it is. The new parts keep the part's mute, transpose and velocity, on
 	// lanes also its name, with the channel or pitch added, and color. optimize shortens new parts on tracks to the
 	// bars their events play in; parts on lanes keep the part's place.
@@ -260,6 +262,8 @@ namespace gnubase::engine::midi
 	// Combines parts on one track into a single part from the first one's start to the last one's end, named after
 	// the earliest, on the lowest lane they are on (reference manual p. 1123). Muted parts are removed and add
 	// nothing. Events keep their time; notes are cut where their part ended. The parts' transpose and velocity go into
-	// the notes, so they play as before, and a note transposed beyond 0 to 127, which doesn't play, is left out.
+	// the notes as playback applies them, and a note transposed beyond 0 to 127, which doesn't play, is left out. The
+	// track's MIDI modifiers stay on the track, and the copied notes get new ids, so the play probability and
+	// velocity variance of a note, drawn from its part's and its own id, draw anew.
 	PartChanges bounce(Project& project, const std::vector<ObjectId>& parts);
 }

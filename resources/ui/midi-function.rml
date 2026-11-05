@@ -134,11 +134,15 @@
 			return element(document, id):HasAttribute("checked")
 		end
 
+		-- A field the document doesn't have yet (load is still filling the fields) is left alone.
 		local function enable(document, id, on)
-			if on then
-				element(document, id):RemoveAttribute("disabled")
+			local field = element(document, id)
+			if field == nil then
+				return
+			elseif on then
+				field:RemoveAttribute("disabled")
 			else
-				element(document, id):SetAttribute("disabled", "")
+				field:SetAttribute("disabled", "")
 			end
 		end
 
@@ -149,6 +153,32 @@
 				error(name .. " must be a whole number", 0)
 			end
 			return value
+		end
+
+		-- A whole number from a text field within min to max, or an error naming it with the range.
+		local function ranged(document, id, name, min, max)
+			local value = integer(document, id, name)
+			if value < min or value > max then
+				error(name .. " must be " .. min .. " to " .. max, 0)
+			end
+			return value
+		end
+
+		-- The engine's velocity, 0 to 1, of a MIDI 1.0 velocity, -127 to 127, scaled as playback scales MIDI 1.0
+		-- velocities (velocityFromMidi1 in src/engine/midi/midivalues.h): up to 64 the value shifts by 9 bits, above it
+		-- the bits below the top one repeat into the new low bits, so 127 is 1. With a plain value / 127, 64 minus 1
+		-- would be 62 and a Minimum Velocity of 10 would delete a note of velocity 10.
+		local function velocityOf(value)
+			local magnitude = math.abs(value)
+			local scaled = magnitude << 9
+			if magnitude > 64 then
+				local repeated = (magnitude & 63) << 3
+				while repeated ~= 0 do
+					scaled = scaled | repeated
+					repeated = repeated >> 6
+				end
+			end
+			return (value < 0 and -scaled or scaled) / 65535
 		end
 
 		local function ids(text)
@@ -241,15 +271,21 @@
 			run = function(document, parameters)
 				local kind = valueOf(document, "type")
 				parameters.type = kind
-				if kind == "add" or kind == "fixed" then
-					parameters.amount = integer(document, "amount", "Amount") / 127
+				if kind == "add" then
+					parameters.amount = velocityOf(ranged(document, "amount", "Amount", -127, 127))
+				elseif kind == "fixed" then
+					parameters.amount = velocityOf(ranged(document, "amount", "Amount", 0, 127))
 				elseif kind == "compress" then
-					parameters.ratio = integer(document, "ratio", "Ratio") / 100
+					parameters.ratio = ranged(document, "ratio", "Ratio", 0, 300) / 100
 				elseif kind == "limit" then
-					parameters.lower = integer(document, "lower", "Lower") / 127
-					parameters.upper = integer(document, "upper", "Upper") / 127
+					local lower = ranged(document, "lower", "Lower", 0, 127)
+					local upper = ranged(document, "upper", "Upper", 0, 127)
+					if lower > upper then
+						error("Lower must not be above Upper", 0)
+					end
+					parameters.lower, parameters.upper = velocityOf(lower), velocityOf(upper)
 				else
-					parameters.variance = integer(document, "variance", "Variance") / 100
+					parameters.variance = ranged(document, "variance", "Variance", 0, 100) / 100
 				end
 				gnubase.midi.velocity(parameters)
 			end,
@@ -279,7 +315,7 @@
 					parameters.minimumLength = integer(document, "length", "Minimum Length") * dialog.tickScale
 				end
 				if velocity then
-					parameters.minimumVelocity = integer(document, "velocity", "Minimum Velocity") / 127
+					parameters.minimumVelocity = velocityOf(ranged(document, "velocity", "Minimum Velocity", 0, 127))
 				end
 				if length and velocity then
 					parameters.removeWhen = valueOf(document, "when")
@@ -315,10 +351,11 @@
 			dialog.update(document)
 		end
 
-		-- Enables the fields that the settings use.
+		-- Enables the fields that the settings use. The fields' change events also come while load fills them in, before
+		-- they have a document or all fields are there; load calls this once they are.
 		function dialog.update(document)
 			local form = forms[dialog.function_]
-			if form ~= nil and form.update ~= nil then
+			if document ~= nil and form ~= nil and form.update ~= nil then
 				form.update(document)
 			end
 		end
