@@ -475,6 +475,22 @@ namespace gnubase::engine
 		const Material material = materialOf(project, parameters.at("event").get<ObjectId>());
 		require(material.end - material.start >= g_minDetectSeconds - 1e-9,
 			"tempo detection needs 7 seconds of material at least");
+		const bool reset = parameters.value("reset", false);
+		const double factor = parameters.value("factor", 1.0);
+		require(reset || factor > 0.0, "factor must be positive");
+		// Nothing moves in time while the tempo changes (reference manual p. 1461): the musical tracks become linear
+		// before the old tempo events go.
+		if (!reset)
+		{
+			std::vector<ObjectId> musical;
+			for (const auto& [id, track] : project.trackById)
+				if (track.timeBase == time::TimeBase::Musical && track.type != TrackType::Folder &&
+					track.type != TrackType::Ruler && track.type != TrackType::Tempo &&
+					track.type != TrackType::Signature)
+					musical.push_back(id);
+			for (const ObjectId id : musical)
+				runEdit("track.set", project, {{"track", id}, {"timeBase", "linear"}}, context);
+		}
 		// What an analysis of the event made before goes: the tempo events inside it, but the first.
 		const time::Ticks from = project.tempo.toTicks(material.start);
 		const time::Ticks to = project.tempo.toTicks(material.end);
@@ -484,18 +500,8 @@ namespace gnubase::engine
 			points.end());
 		if (points.size() != project.tempoTrack().points().size())
 			setTempoTrack(project, std::move(points), context);
-		if (parameters.value("reset", false))
+		if (reset)
 			return {{"tempo", tempoJson(project)}, {"beats", 0}};
-		const double factor = parameters.value("factor", 1.0);
-		require(factor > 0.0, "factor must be positive");
-		// Nothing moves in time while the tempo changes (reference manual p. 1461).
-		std::vector<ObjectId> musical;
-		for (const auto& [id, track] : project.trackById)
-			if (track.timeBase == time::TimeBase::Musical && track.type != TrackType::Folder &&
-				track.type != TrackType::Ruler && track.type != TrackType::Tempo && track.type != TrackType::Signature)
-				musical.push_back(id);
-		for (const ObjectId id : musical)
-			runEdit("track.set", project, {{"track", id}, {"timeBase", "linear"}}, context);
 		std::vector<double> beats =
 			analysis::rescaleBeats(analysis::detectBeats(material.pulses, material.end - material.start), factor,
 				parameters.value("offbeat", false));

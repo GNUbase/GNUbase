@@ -326,6 +326,25 @@ TEST_CASE("tempo detection makes the tempo track follow a drum loop", "[integrat
 	}
 }
 
+TEST_CASE("tempo detection keeps musical content after old tempo events where it plays", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	// 120 BPM with a step to 90 BPM at bar 3, inside the loop, and a musical MIDI part at bar 9: 4 seconds to bar 3,
+	// then 24 quarters at 90 BPM, so the part starts at 20 seconds.
+	run(client, "tempo.add", {{"position", 8 * g_ticksPerQuarter}, {"bpm", 90.0}, {"ramp", false}});
+	run(client, "project.set", {{"tempoTrackActive", true}});
+	const engine::ObjectId midi =
+		run(client, "track.add", {{"type", "midi"}}).at("track").at("id").get<engine::ObjectId>();
+	run(client, "midiPart.add", {{"track", midi}, {"position", 32 * g_ticksPerQuarter}, {"length", g_ticksPerQuarter}});
+	const int64_t event = addLoop(client, dir, drumLoop(beatsOf(0.0, 104.0, 104.0, 21), 12.0));
+
+	run(client, "tempo.detect", {{"event", event}});
+	const Json part = run(client, "project.get").at("midiParts").at(0);
+	CHECK(part.at("position") == int64_t{20} * 48000);
+}
+
 TEST_CASE("tempo detection follows a drum loop that speeds up", "[integration]")
 {
 	const test::TempDir dir;
