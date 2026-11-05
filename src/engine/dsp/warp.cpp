@@ -61,14 +61,20 @@ namespace gnubase::engine::dsp
 		m_planar.assign(channels, std::vector<float>(g_blockFrames));
 		for (std::vector<float>& channel : m_planar)
 			m_pointers.push_back(channel.data());
-		seekTo(0);
+		restart(0);
 	}
 
 	WarpReader::~WarpReader() = default;
 
 	bool WarpReader::seekTo(time::Samples frame)
 	{
-		m_stretcher->reset();
+		restart(frame);
+		return true;
+	}
+
+	void WarpReader::restart(time::Samples frame)
+	{
+		(*m_stretcher).reset();
 		const double source = warpSource(m_map, static_cast<double>(frame));
 		const size_t s = segmentOf(m_map, source, &WarpPoint::source);
 		m_stretcher->setRatio((m_map[s + 1].target - m_map[s].target) / (m_map[s + 1].source - m_map[s].source));
@@ -76,14 +82,13 @@ namespace gnubase::engine::dsp
 		m_drop = m_stretcher->latency();
 		m_position = frame;
 		m_final = false;
-		return true;
 	}
 
 	void WarpReader::feed()
 	{
 		// A ratio takes effect on the input that the stretcher outputs next, which is its start pad behind the input
 		// it takes: the ratio of each segment is set that much early.
-		const double pad = static_cast<double>(m_stretcher->startPad());
+		const auto pad = static_cast<double>(m_stretcher->startPad());
 		const double at = static_cast<double>(m_input) - pad;
 		const size_t s = segmentOf(m_map, at, &WarpPoint::source);
 		const WarpPoint& a = m_map[s];

@@ -219,7 +219,7 @@ TEST_CASE("audio in musical mode follows tempo changes", "[integration]")
 	CHECK(result.at("warp").at("tempo") == 60.0);
 	run(client, "clip.setWarp", {{"clip", loop.clip}, {"tempo", 120.0}});
 	// At 60 BPM each quarter takes twice as long.
-	std::vector<float> slow = render(client, 10 * g_quarter);
+	const std::vector<float> slow = render(client, 10 * g_quarter);
 	checkClicks(slow, {2000.0, 50000.0, 98000.0, 146000.0});
 	CHECK(eventOf(client, loop.event).at("length") == 4 * g_quarter); // in clip frames, as before
 	// Undo brings back the tempo the clip took, at which it plays as recorded; redo the tempo again.
@@ -254,6 +254,7 @@ TEST_CASE("bars and beats, Auto Adjust and Manual Adjust define a clip's grid", 
 	// Two bars at 100 BPM (28800 frames a quarter), the third quarter's click 1000 frames late.
 	const int64_t beat = 28800;
 	std::vector<int64_t> at;
+	at.reserve(8);
 	for (int64_t q = 0; q < 8; ++q)
 		at.push_back(500 + (q * beat) + (q == 2 ? 1000 : 0));
 	const Loop loop = addLoop(client, dir, clicks(at, (8 * beat) + 1000), "linear");
@@ -397,7 +398,7 @@ TEST_CASE("unstretching and flattening end real-time warping", "[integration]")
 		const Json event = eventOf(client, loop.event);
 		CHECK(event.at("clip") == clip);
 		CHECK(event.at("offset") == 0);
-		CHECK(std::abs(event.at("length").get<int64_t>() - (4 * 36000)) <= 1); // four quarters at 80 BPM
+		CHECK(std::abs(event.at("length").get<int64_t>() - (int64_t{4} * 36000)) <= 1); // four quarters at 80 BPM
 		CHECK(warpOf(client, clip).at("musical") == false);
 		// It plays as it did, and no longer follows the tempo.
 		const std::vector<float> flat = render(client, 6 * g_quarter);

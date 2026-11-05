@@ -46,6 +46,8 @@ namespace gnubase::engine::dsp
 		bool seekTo(time::Samples frame) override;
 
 	private:
+		// Starts over at a frame of this reader: the stretcher reset, its start pad to feed and its latency to drop.
+		void restart(time::Samples frame);
 		// Feeds the stretcher the next input frames, up to the next point of the map.
 		void feed();
 

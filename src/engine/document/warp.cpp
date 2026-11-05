@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -137,6 +138,7 @@ namespace gnubase::engine
 			std::vector<double> breaks() const
 			{
 				std::vector<double> result;
+				result.reserve(m_markers.size() + m_definition.anchors().size());
 				for (const dsp::WarpPoint& point : m_markers)
 					result.push_back(point.source);
 				if (m_clip.warp.musical)
@@ -311,8 +313,8 @@ namespace gnubase::engine
 		const auto start = static_cast<double>(event.offset);
 		const double end = start + static_cast<double>(event.length);
 		std::vector<double> frames;
-		for (double frame = start; frame < end; frame += g_mapStep)
-			frames.push_back(frame);
+		for (int64_t step = 0; start + (static_cast<double>(step) * g_mapStep) < end; ++step)
+			frames.push_back(start + (static_cast<double>(step) * g_mapStep));
 		frames.push_back(end);
 		for (const double at : warp.breaks())
 			if (at > start && at < end)
