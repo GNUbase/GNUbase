@@ -3060,6 +3060,7 @@ namespace gnubase::engine
 			[this, action = std::move(action), handler = std::move(handler)](CommandContext& context)
 			{
 				Project before = m_project;
+				const bool followsEvents = m_automationFollowsEvents; // automation.set in a transaction changes it
 				Json result;
 				try
 				{
@@ -3069,6 +3070,7 @@ namespace gnubase::engine
 				catch (...)
 				{
 					m_project = std::move(before);
+					m_automationFollowsEvents = followsEvents;
 					throw;
 				}
 				if (action.empty()) // a transaction
@@ -4080,19 +4082,30 @@ namespace gnubase::engine
 				"it and the last point's after it.",
 				objectSchema({}), settings, true},
 			[settingsJson](CommandContext&) { return settingsJson(); });
-		addEdit(engine,
-			{"automation.set", 1,
-				"Changes the automation settings (see automation.get). followsEvents is a setting, so it stays when a "
-				"new project starts; virginTerritory is saved with the project. Neither is an undo step.",
-				objectSchema({{"followsEvents", booleanSchema}, {"virginTerritory", booleanSchema}}), settings, false},
-			"Change automation settings",
-			[this, settingsJson](Project& project, CommandContext& context)
+		// Only a change of virginTerritory changes the project (project.revision): followsEvents is the user's. A
+		// transaction can run it, and if the transaction fails, addEdit puts both back.
+		CommandInfo setInfo{"automation.set", 1,
+			"Changes the automation settings (see automation.get). followsEvents is a setting, so it stays when a new "
+			"project starts; virginTerritory is saved with the project. Neither is an undo step, and only a change of "
+			"virginTerritory changes the project (project.revision).",
+			objectSchema({{"followsEvents", booleanSchema}, {"virginTerritory", booleanSchema}}), settings, false};
+		Handler set = [this, settingsJson](Project& project, CommandContext& context)
+		{
+			const Json& parameters = context.parameters();
+			m_automationFollowsEvents = parameters.value("followsEvents", m_automationFollowsEvents);
+			project.virginTerritory = parameters.value("virginTerritory", project.virginTerritory);
+			Json result = settingsJson();
+			context.emit("automation.changed", result);
+			return result;
+		};
+		m_edits[setInfo.name] = {setInfo, set};
+		engine.registerCommand(std::move(setInfo),
+			[this, set = std::move(set)](CommandContext& context)
 			{
-				const Json& parameters = context.parameters();
-				m_automationFollowsEvents = parameters.value("followsEvents", m_automationFollowsEvents);
-				project.virginTerritory = parameters.value("virginTerritory", project.virginTerritory);
-				Json result = settingsJson();
-				context.emit("automation.changed", result);
+				const bool virginTerritory = m_project.virginTerritory;
+				Json result = set(m_project, context);
+				if (m_project.virginTerritory != virginTerritory)
+					publish();
 				return result;
 			});
 	}

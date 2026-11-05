@@ -1459,12 +1459,16 @@ namespace gnubase::engine
 		// Takes the automation between from and to out of a lane and keeps the curve outside: the value it arrives
 		// at from with holds up to to, where the curve goes on. With virgin territory the range becomes a gap instead
 		// (reference manual p. 881): the point at from is a terminator. Closing the gap moves the points after it back
-		// instead. Points at to make way for one that has their value and shape. Edges in gaps stay in them.
+		// instead. Points at to make way for one that has their value and shape. Edges in gaps stay in them. A range
+		// without points in it is automation too where the curve goes across it, between two points outside a gap.
 		// ponytail: a curve shaped point at an edge keeps its bend over the shorter rest of its segment.
 		void cutAutomation(
 			Project& project, AutomationLane& lane, int64_t from, int64_t to, bool close, CommandContext& context)
 		{
-			if (!anyPoint(lane, from, close ? std::numeric_limits<int64_t>::max() : to))
+			constexpr int64_t endless = std::numeric_limits<int64_t>::max();
+			const bool across = anyPoint(lane, std::numeric_limits<int64_t>::min(), from) &&
+				anyPoint(lane, to, endless) && !inGap(project, lane, from, true);
+			if (!anyPoint(lane, from, close ? endless : to) && !across)
 				return;
 			const time::TimeBase base = project.trackById.at(lane.track).timeBase;
 			const double left = valueAt(lane, from, true);
