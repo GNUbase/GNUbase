@@ -557,6 +557,39 @@ TEST_CASE("auditioning plays only the pressed audio track, past its channel and 
 	CHECK(run(song.client, "transport.get") == transport); // the transport never played or moved
 }
 
+TEST_CASE("auditioning up to an end plays the track to there and then nothing", "[integration]")
+{
+	const int blockSize = GENERATE(64, 100);
+	INFO("block size " << blockSize);
+	const gnubase::test::TempDir dir;
+	Song song(blockSize);
+	const TestTrack track = song.addTrack(2);
+	const ObjectId clip = song.addClip(writeRamp(dir, "stereo", 2, 4000));
+	song.add({track.id, 0, 0, 4000, 2}, clip);
+
+	CHECK_THAT(song.client.call("audition.start", {{"track", track.id}, {"position", 100}, {"end", 100}}).error,
+		ContainsSubstring("end must be after position"));
+	// The sample editor's Play back Slice: from 100 to 1000, which is in the middle of a block of 64.
+	CHECK(run(song.client, "audition.start", {{"track", track.id}, {"position", 100}, {"end", 1000}}) ==
+		Json{{"track", track.id}, {"mode", "play"}});
+	run(song.client, "audio.render", {{"frames", 1200}});
+	CHECK(run(song.client, "audition.stop") == Json{{"track", 0}, {"mode", "off"}});
+	for (int channel = 0; channel < 2; ++channel)
+	{
+		const std::vector<float> output = song.capture(channel, 1200);
+		size_t wrong = 0;
+		for (int64_t i = 0; i < 1200; ++i)
+		{
+			const int64_t position = 100 + i;
+			const float expected = position < 1000 ? ramp(position, channel) : 0.0f;
+			if (output[static_cast<size_t>(i)] != expected && wrong++ == 0)
+				UNSCOPED_INFO("channel " << channel << ", frame " << i << ": " << output[static_cast<size_t>(i)]
+										 << " instead of " << expected);
+		}
+		CHECK(wrong == 0);
+	}
+}
+
 TEST_CASE("auditioning needs a device and an audio track", "[integration]")
 {
 	Engine engine;
