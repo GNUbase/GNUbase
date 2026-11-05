@@ -832,6 +832,9 @@ TEST_CASE("marker files that can't be read or written change nothing", "[integra
 	CHECK_THAT(rejected("base.csv", "Time Base,Type,Position\nMusical,Position,1\nLinear,Position,2\n"),
 		ContainsSubstring("row 3"));
 	CHECK_THAT(rejected("tracknumber.csv", "Track Number,Position\n1,1\nx,2\n"), ContainsSubstring("row 3"));
+	// Rows of one Track Number with different names, as a hand-edited or sorted file can have them.
+	CHECK_THAT(rejected("names.csv", "Track Number,Track,Position\n1,A,1\n2,B,1\n1,C,2\n"),
+		ContainsSubstring("row 4: the markers of a track must have one Track name"));
 	CHECK_THAT(rejected("quote.csv", "Type,Position,Description\nPosition,1,\"open\n"), ContainsSubstring("quote"));
 	// A tenth marker track fits, an eleventh doesn't.
 	CHECK_THAT(
