@@ -199,9 +199,13 @@ namespace gnubase::app
 		// The track list's commands (ui::TrackList::actions, docs/features/track-list.md) and their keys.
 		constexpr std::array<ProjectCommand, 28> g_trackCommands{{
 			{"track.selectPrevious",
-				"Selects the track above the selected one, and its first event while an event is selected.", "Up"},
+				"Selects the track above the selected one, and its first event while an event is selected (unless "
+				"ui.upDownSelectsTracksOnly).",
+				"Up"},
 			{"track.selectNext",
-				"Selects the track below the selected one, and its first event while an event is selected.", "Down"},
+				"Selects the track below the selected one, and its first event while an event is selected (unless "
+				"ui.upDownSelectsTracksOnly).",
+				"Down"},
 			{"track.rename", "Renames the first selected track.", "Alt+F2"},
 			{"track.removeSelected", "Removes the selected tracks.", nullptr},
 			{"track.duplicateSelected", "Duplicates the selected tracks with their contents.", nullptr},

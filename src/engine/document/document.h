@@ -807,6 +807,10 @@ namespace gnubase::engine
 		// not part of undo.
 		midi::QuantizeSettings quantize;
 		bool autoQuantize = false;
+		// The preset last chosen with quantize.set, saved or renamed while the quantize settings are its own, which
+		// quantize.get reports among presets with equal settings (#770); empty once the settings change. A setting,
+		// not part of undo.
+		std::string quantizePreset;
 		// Snap and grid (#87): settings, not part of undo.
 		SnapSettings snap;
 		// The color last given to events or parts, for editing.autoTrackColor's lastApplied: not part of undo or the
