@@ -112,6 +112,22 @@ namespace
 			return {"", 0, ui::Point{static_cast<int>(std::lround(x)), static_cast<int>(std::lround(y))}};
 		}
 
+		// Whether the lane shows the part's controller events as the engine has them. A paint replaces the events the
+		// lane shows, by id: a test that paints over events the engine changed waits for this first, since the
+		// project reaches the lanes after the command's result reaches the test.
+		bool shows(int lane)
+		{
+			std::vector<std::string> shown;
+			for (const Json& step : elements(area(lane) + " .controller-step"))
+				shown.push_back(step.at("attributes").at("controller").get<std::string>());
+			std::vector<std::string> events;
+			for (const Json& event : controllers())
+				events.push_back(std::to_string(event.at("id").get<uint64_t>()));
+			std::sort(shown.begin(), shown.end());
+			std::sort(events.begin(), events.end());
+			return shown == events;
+		}
+
 		void click(const ui::Target& target, const std::vector<std::string>& modifiers = {})
 		{
 			app.ui().click(window, target, ui::MouseButton::Left, 1, modifiers);
@@ -327,6 +343,7 @@ TEST_CASE("the line tool's modes draw lines, parabolas and periodic curves on a 
 	CHECK(valueAt(2 * g_sixteenth) == Approx(1.0).margin(0.01));
 
 	// Paint paints like the draw tool: an event every length quantize step, replacing those there.
+	REQUIRE(f.app.waitUntil([&] { return f.shows(0); }));
 	const std::vector<Json> triangle = f.controllers();
 	f.choose(".key-tool[key-tool=line]", "#key-line-menu menuitem[line-mode=paint]");
 	f.drag(f.at(0, 0.25, 0.75), f.at(0, 4.75, 0.75));
