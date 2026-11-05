@@ -2,7 +2,9 @@
 #include "ui/tracklist.h"
 
 #include "ui/mixer.h"
+#include "ui/timeformat.h"
 #include "ui/widgets.h"
+#include "ui/widgetutils.h"
 
 #include "platform/log.h"
 
@@ -21,6 +23,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <iterator>
+#include <optional>
 #include <sstream>
 #include <tuple>
 #include <utility>
@@ -45,9 +48,40 @@ namespace gnubase::ui
 			return {static_cast<float>(value), Rml::Unit::DP};
 		}
 
+		// Ruler tracks' controls (reference manual p. 159).
+		bool rulerControl(const std::string& control)
+		{
+			return control == "timeFormat" || control == "timeOffsetOn" || control == "timeOffset" ||
+				control == "setTimeOffset";
+		}
+
+		// The ruler time formats as the track list's drop-down list names them.
+		const widgets::Options& timeFormatOptions()
+		{
+			static const widgets::Options options = {{"barsBeats", "Bars+Beats"}, {"seconds", "Seconds"},
+				{"timecode", "Timecode"}, {"samples", "Samples"}, {"userFrames", "fps (User)"}};
+			return options;
+		}
+
+		// A ruler track's time offset in seconds, and a time in seconds in the track's time base.
+		double offsetSeconds(const Json& track, const TimeContext& time)
+		{
+			const auto offset = track.value("timeOffset", int64_t{0});
+			return track.at("timeBase") == "linear" ? static_cast<double>(offset) / time.sampleRate
+													: time.tempo.toSeconds(offset);
+		}
+
+		int64_t inTimeBase(const Json& track, double seconds, const TimeContext& time)
+		{
+			return track.at("timeBase") == "linear" ? std::llround(seconds * time.sampleRate)
+													: time.tempo.toTicks(seconds);
+		}
+
 		// The controls a track type can have.
 		bool applies(const std::string& control, const std::string& type, bool hasChannel)
 		{
+			if (type == "ruler" || rulerControl(control))
+				return type == "ruler" && rulerControl(control);
 			// The tempo track's only control is Activate Tempo Track (reference manual p. 162).
 			if (type == "tempo" || control == "tempoTrack")
 				return type == "tempo" && control == "tempoTrack";
@@ -60,15 +94,23 @@ namespace gnubase::ui
 			return true;
 		}
 
-		// How a control looks in its button.
+		// How a control looks in its button, or the ruler tracks' drop-down list and display.
 		std::string buttonRml(const std::string& control)
 		{
+			if (control == "timeFormat")
+				return R"(<select class="time-format" control="timeFormat" title="Time Format"/>)";
+			if (control == "timeOffset")
+				return R"(<textdisplay class="display time-offset" control="timeOffset" title="Time Offset"/>)";
+			if (control == "setTimeOffset")
+				return R"(<button class="set-time-offset" control="setTimeOffset" )"
+					   R"(title="Set Time Offset to Project Cursor Position">C</button>)";
 			static const std::map<std::string, std::pair<const char*, const char*>> looks = {{"mute", {"Mute", "M"}},
 				{"solo", {"Solo", "S"}},
 				{"record", {"Record Enable", R"(<svg class="icon" src="../icons/track-record-arm.svg"/>)"}},
 				{"monitor", {"Monitor", R"(<svg class="icon" src="../icons/track-monitor.svg"/>)"}},
 				{"read", {"Read Automation", R"(<svg class="icon" src="../icons/track-read-automation.svg"/>)"}},
-				{"timeBase", {"Switch Time Base", "L"}}, {"tempoTrack", {"Activate Tempo Track", "T"}}};
+				{"timeBase", {"Switch Time Base", "L"}}, {"tempoTrack", {"Activate Tempo Track", "T"}},
+				{"timeOffsetOn", {"Time Offset On/Off", "O"}}};
 			const auto& [title, content] = looks.at(control);
 			return R"(<button class="toggle )" + control + R"(" control=")" + control + R"(" title=")" + title +
 				R"(">)" + content + "</button>";
@@ -84,6 +126,15 @@ namespace gnubase::ui
 		{
 			for (; element != nullptr; element = element->GetParentNode())
 				if (element == ancestor)
+					return true;
+			return false;
+		}
+
+		// Whether the element is a drop-down list or inside one, which keeps Up and Down.
+		bool inSelect(const Rml::Element* element)
+		{
+			for (; element != nullptr; element = element->GetParentNode())
+				if (element->GetTagName() == "select")
 					return true;
 			return false;
 		}
@@ -552,6 +603,8 @@ namespace gnubase::ui
 		for (const Json& lane : project.at("automation"))
 			reading[lane.at("track").get<uint64_t>()].push_back(lane.at("read").get<bool>());
 		const Json& tracks = project.at("tracks");
+		TimeContext time;
+		readTimeContext(project, time);
 		const double nameWidth = widthOf(m_widths, "name");
 		const Json controlsWidths = m_widths.value("controls", Json::object());
 		for (int i = 0; i < m_view->GetNumChildren() && static_cast<size_t>(i) < m_tracks.size(); ++i)
@@ -613,6 +666,22 @@ namespace gnubase::ui
 			{
 				Rml::Element* button = controls->GetChild(c);
 				const auto name = button->GetAttribute<Rml::String>("control", "");
+				if (name == "timeFormat")
+				{
+					widgets::fill(*button, timeFormatOptions(), track.value("timeFormat", std::string()));
+					continue;
+				}
+				if (name == "timeOffset")
+				{
+					const std::optional<TimeFormat> format =
+						timeFormatFromName(track.value("timeFormat", std::string()));
+					const std::string text = format ? formatTime(*format, offsetSeconds(track, time), time) : "";
+					if (button->GetAttribute<Rml::String>("value", "") != text)
+						button->SetAttribute("value", text);
+					continue;
+				}
+				if (name == "setTimeOffset")
+					continue;
 				bool on = false;
 				if (name == "record")
 					on = channel != nullptr && channel->at("recordEnable").get<bool>();
@@ -620,6 +689,8 @@ namespace gnubase::ui
 					on = track.at("timeBase") == "linear";
 				else if (name == "tempoTrack")
 					on = project.value("tempoTrackActive", false);
+				else if (name == "timeOffsetOn")
+					on = track.value("timeOffsetOn", false);
 				else if (name == "read")
 					on = !lanes.empty() && std::all_of(lanes.begin(), lanes.end(), [](bool read) { return read; });
 				else
@@ -955,11 +1026,11 @@ namespace gnubase::ui
 				}
 			}
 			else if ((key == Rml::Input::KI_UP || key == Rml::Input::KI_DOWN) && inside(target, m_view) &&
-				target->GetTagName() != "input" && !held(event, "shift_key") && !held(event, "ctrl_key") &&
-				!held(event, "alt_key") && !held(event, "meta_key"))
+				target->GetTagName() != "input" && !inSelect(target) && !held(event, "shift_key") &&
+				!held(event, "ctrl_key") && !held(event, "alt_key") && !held(event, "meta_key"))
 			{
-				// Up and Down in the list step the tracks as their key commands do, selecting the first event on
-				// the track too; Shift extends the list view's selection.
+				// Up and Down in the list step the tracks as their key commands do (a drop-down list keeps them),
+				// selecting the first event on the track too; Shift extends the list view's selection.
 				step(key == Rml::Input::KI_UP ? -1 : 1);
 				event.StopPropagation();
 			}
@@ -974,6 +1045,8 @@ namespace gnubase::ui
 			if (m_renaming != 0 && target != nullptr && target->GetTagName() == "input" &&
 				event.GetParameter<bool>("linebreak", false))
 				finishRename(true);
+			else if (target != nullptr && target->HasAttribute("control"))
+				rulerChange(*target, event.GetParameter<Rml::String>("value", ""));
 			else if (target == m_view)
 				if (const std::vector<uint64_t> tracks = selection(); !tracks.empty())
 					reveal(tracks.front());
@@ -1015,6 +1088,19 @@ namespace gnubase::ui
 			m_binding.send("project.set", {{"tempoTrackActive", !project.value("tempoTrackActive", false)}});
 			return;
 		}
+		if (name == "timeOffsetOn")
+		{
+			const Json& track = project.at("tracks").at(m_index.at(row.id));
+			m_binding.send("track.set", {{"track", row.id}, {"timeOffsetOn", !track.value("timeOffsetOn", false)}});
+			return;
+		}
+		if (name == "setTimeOffset")
+		{
+			m_binding.send("track.set", {{"track", row.id}, {"timeOffset", "cursor"}});
+			return;
+		}
+		if (name == "timeFormat" || name == "timeOffset")
+			return; // they change with what is chosen or typed
 		if (name == "timeBase")
 		{
 			const Json& track = project.at("tracks").at(m_index.at(row.id));
@@ -1030,6 +1116,33 @@ namespace gnubase::ui
 			key == "solo" ? soloClick(*channel, exclusive, defeat) : Json{{key, !channel->value(key, false)}};
 		parameters["channel"] = row.channel;
 		m_binding.send("channel.set", std::move(parameters));
+	}
+
+	void TrackList::rulerChange(Rml::Element& control, const std::string& value)
+	{
+		const Row* row = rowOf(&control);
+		const auto name = control.GetAttribute<Rml::String>("control", "");
+		if (row == nullptr || row->type != "ruler")
+			return;
+		const Json& project = m_display.project();
+		const Json& track = project.at("tracks").at(m_index.at(row->id));
+		if (name == "timeFormat")
+		{
+			if (!value.empty() && track.value("timeFormat", std::string()) != value)
+				m_binding.send("track.set", {{"track", row->id}, {"timeFormat", value}});
+			return;
+		}
+		if (name != "timeOffset")
+			return;
+		// A position typed in the track's time format; the display shows the offset again for anything else.
+		TimeContext time;
+		readTimeContext(project, time);
+		const std::optional<TimeFormat> format = timeFormatFromName(track.value("timeFormat", std::string()));
+		const std::optional<double> seconds = format ? parseTime(*format, value, time) : std::nullopt;
+		if (seconds)
+			m_binding.send("track.set", {{"track", row->id}, {"timeOffset", inTimeBase(track, *seconds, time)}});
+		else
+			control.SetAttribute("value", format ? formatTime(*format, offsetSeconds(track, time), time) : "");
 	}
 
 	void TrackList::transaction(const std::string& description, Json commands)

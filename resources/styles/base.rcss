@@ -857,6 +857,19 @@ meter .meter-peak
 	margin-top: -3.5dp;
 }
 
+/* Ruler tracks (docs/features/ruler-tracks.md): a ruler over each ruler track's lane; code places it on its lane. */
+.event-display ruler.ruler-lane
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+}
+
+.event-display ruler.ruler-lane.hidden
+{
+	display: none;
+}
+
 /* The signature track (docs/features/signature-track.md): the time signature events over the signature track's lane,
    or filling the tempo track editor's time signature display, and the field that edits one. Code places the row on
    its lane, the events at their bars and the field over the event it edits. */
@@ -1093,11 +1106,28 @@ meter .meter-peak
 
 .track-list .track-controls button
 {
+	min-width: 0;
 	width: 22dp;
 	height: 18dp;
 	margin-left: 2dp;
 	padding: 0;
 	text-align: center;
+}
+
+/* Ruler tracks' time format and time offset (docs/features/ruler-tracks.md): each with a button beside it fits the
+   ruler tracks' default controls area of 140dp, on two lines. */
+.track-list .track-controls select,
+.track-list .track-controls textdisplay
+{
+	width: 110dp;
+	height: 18dp;
+	margin-left: 2dp;
+}
+
+.track-list .track-controls textdisplay
+{
+	min-width: 0;
+	padding: 1dp 4dp;
 }
 
 .track-list .track-controls svg.icon
