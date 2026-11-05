@@ -34,16 +34,71 @@ namespace gnubase::app
 			}
 			return result.ok();
 		}
+
+		// audio.setDevice's parameters for the backend's default device, at the options' sample rate and block size.
+		engine::Json deviceParameters(const Options& options, const std::string& backend)
+		{
+			engine::Json parameters = {{"backend", backend}};
+			if (options.sampleRate)
+				parameters["sampleRate"] = *options.sampleRate;
+			if (options.blockSize)
+				parameters["blockSize"] = *options.blockSize;
+			return parameters;
+		}
+
+		bool loadProject(engine::Client& client, const Options& options, std::ostream& err)
+		{
+			return options.project.empty() ||
+				setUp(client, "project.load", {{"path", options.project}}, "cannot load " + options.project, err);
+		}
+
+		// A user setting that is a string; empty if it can't be read.
+		std::string stringSetting(engine::Client& client, const std::string& key)
+		{
+			const engine::Result result = client.call("settings.get", {{"key", key}});
+			return result.ok() ? result.value.at("value").get<std::string>() : std::string();
+		}
 	}
 
 	bool setUpEngine(engine::Engine& engine, const Options& options, std::ostream& err)
 	{
 		engine::Client client(engine, "app");
 		return setUp(client, "audio.setDevice",
-				   {{"backend", options.audio}, {"sampleRate", options.sampleRate}, {"blockSize", options.blockSize}},
+				   deviceParameters(options, options.audio.empty() ? "dummy" : options.audio),
 				   "cannot set up the audio device", err) &&
-			(options.project.empty() ||
-				setUp(client, "project.load", {{"path", options.project}}, "cannot load " + options.project, err));
+			loadProject(client, options, err);
+	}
+
+	bool setUpWindowedEngine(engine::Engine& engine, const Options& options, std::ostream& err)
+	{
+		engine::Client client(engine, "app");
+		engine::Json parameters;
+		if (!options.audio.empty())
+		{
+			parameters = deviceParameters(options, options.audio);
+		}
+		else
+		{
+			parameters = deviceParameters(options, stringSetting(client, "audio.backend"));
+			if (const std::string device = stringSetting(client, "audio.device"); !device.empty())
+				parameters["device"] = device;
+		}
+		parameters["fallBackToDummy"] = true;
+		parameters["start"] = true;
+		const engine::Result result = client.call("audio.setDevice", parameters);
+		if (!result.ok())
+		{
+			err << "gnubase: cannot set up the audio device: " << result.error << '\n';
+			logging::error("Cannot set up the audio device: {}", result.error);
+			return false;
+		}
+		if (const engine::Json& failed = result.value.at("failed"); !failed.is_null())
+			err << "gnubase: cannot use the audio device (" << failed.at("backend").get<std::string>() << ' '
+				<< failed.at("device").get<std::string>()
+				<< "), playing on the dummy device instead: " << failed.at("reason").get<std::string>() << '\n';
+		const engine::Json& device = result.value.at("device");
+		logging::info("Audio on {} {}", device.at("backend").get<std::string>(), device.at("id").get<std::string>());
+		return loadProject(client, options, err);
 	}
 
 	int runHeadless(const Options& options, std::istream& in, std::ostream& out, std::ostream& err)

@@ -258,6 +258,40 @@ TEST_CASE("the plugin API processes a built-in processor with sample-accurate pa
 	plugin->deactivate();
 }
 
+TEST_CASE("a built-in plugin plays from where a block's stopped segment ends, as after a count-in", "[unit]")
+{
+	BuiltinFactory factory;
+	TestHost host;
+	const std::unique_ptr<Plugin> plugin = createActive(factory, "builtin:positionProbe", host);
+	std::vector<float> in(size_t{2} * g_frames, 0.0f);
+	std::vector<float> out(size_t{2} * g_frames, 0.0f);
+	std::vector<float*> inPointers{in.data(), in.data() + g_frames};
+	std::vector<float*> outPointers{out.data(), out.data() + g_frames};
+	const AudioBuffer input{inPointers.data(), 2, 0};
+	AudioBuffer output{outPointers.data(), 2, 0};
+	const EventList eventsIn{4};
+	EventList eventsOut{4};
+	std::vector<TransportSegment> transport(2);
+	transport[0].transport.position = 5000; // stopped until frame 20
+	transport[1].offset = 20;
+	transport[1].transport.flags = Transport::Playing;
+	transport[1].transport.position = 5000;
+	Process process = blockWith(eventsIn, eventsOut);
+	process.frames = g_frames;
+	process.audioInputs = &input;
+	process.audioInputCount = 1;
+	process.audioOutputs = &output;
+	process.audioOutputCount = 1;
+	process.transport = transport.data();
+	process.transportCount = static_cast<uint32_t>(transport.size());
+	CHECK(plugin->process(process) == ProcessStatus::Continue);
+	for (uint32_t i = 0; i < g_frames; ++i)
+		CHECK(out[i] == (i < 20 ? -1.0f : static_cast<float>(5000 + i - 20)));
+
+	plugin->stopProcessing();
+	plugin->deactivate();
+}
+
 TEST_CASE("built-in plugins ignore events of namespaces they don't know", "[unit]")
 {
 	BuiltinFactory factory;

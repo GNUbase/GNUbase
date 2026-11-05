@@ -603,6 +603,10 @@ TEST_CASE("snap.position snaps as the project window does", "[unit]")
 		f.call("snap.position", {{"position", (4 * g_second) + 6000}, {"range", 6000}}).at("position") == 4 * g_second);
 	f.call("marker.add", {{"position", 10 * g_quarter}}); // 5 seconds
 	CHECK(f.call("snap.position", {{"position", (5 * g_second) - 100}}).at("position") == 5 * g_second);
+	// Every marker track's markers attract (#415): with another marker track active, the marker still does.
+	f.call("track.add", {{"type", "marker"}});
+	REQUIRE(f.call("marker.list").at("markers").empty());
+	CHECK(f.call("snap.position", {{"position", (5 * g_second) - 100}}).at("position") == 5 * g_second);
 	// An audio event's snap point attracts, and is a point in its clip.
 	f.call("event.setSnapPoint", {{"events", {event}}, {"position", (9 * g_second) + 12000}});
 	CHECK(f.object("audioEvents", event).at("snapPoint") == 12000);

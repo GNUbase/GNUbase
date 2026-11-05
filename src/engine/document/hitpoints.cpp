@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Hitpoints and slices (#143, reference manual pp. 636-647): the hitpoints are in the clip, so each command is one undo
-// step and changes nothing if it fails (ProjectModel::addEdit). Detecting them reads the clip's file on the command
-// thread (analysis::OnsetDetector). What is made of them is made by the commands that make such things, run as part
-// of event.fromHitpoints (ProjectModel::runEdit), so that it is one undo step with their events.
+// step and changes nothing if it fails (ProjectModel::addEdit). Detecting them reads the clip's whole file, so it runs
+// as a job (analysis::OnsetDetector) that sets them with clip.setHitpoints; inserting or moving one measures the
+// sound where it goes from a short read of the file on the command thread. What is made of them is made by the
+// commands that make such things, run as part of event.fromHitpoints (ProjectModel::runEdit), so that it is one undo
+// step with their events.
 #include "engine/document/hitpoints.h"
 
 #include "engine/analysis/onsets.h"
@@ -11,6 +13,7 @@
 #include "engine/document/projectmodel.h"
 #include "engine/document/serialize.h"
 #include "engine/engine.h"
+#include "engine/jobs/jobs.h"
 #include "engine/time/tempomap.h"
 
 #include <algorithm>
@@ -106,20 +109,26 @@ namespace gnubase::engine
 			return {{"clip", clip.id}, {"hitpoints", std::move(hitpoints)}};
 		}
 
-		// The onsets of a media file as hitpoints, intensities relative to the sharpest.
-		std::vector<Hitpoint> detect(const MediaFile& media)
+		// The onsets of a media file as hitpoints, intensities relative to the sharpest. Checks for job.cancel and
+		// reports its progress between blocks.
+		std::vector<Hitpoint> detect(const MediaFile& media, JobContext& job)
 		{
 			std::vector<analysis::Onset> onsets;
 			try
 			{
 				const std::unique_ptr<AudioFileReader> reader = AudioFileReader::open(media.path);
 				const int channels = reader->info().channels;
+				const auto frames = static_cast<double>(std::max<time::Samples>(1, reader->info().frames));
 				analysis::OnsetDetector detector(media.sampleRate, channels);
 				std::vector<float> buffer(g_readFrames * static_cast<size_t>(std::max(channels, 1)));
+				size_t done = 0;
 				for (size_t read = g_readFrames; read == g_readFrames;)
 				{
+					job.checkCancelled();
 					read = reader->read(buffer.data(), g_readFrames);
 					detector.feed(buffer.data(), read);
+					done += read;
+					job.progress(std::min(1.0, static_cast<double>(done) / frames), media.path);
 				}
 				onsets = detector.finish();
 			}
@@ -136,6 +145,59 @@ namespace gnubase::engine
 					hitpoints.push_back(
 						{onset.frame, onset.peak, sharpest > 0.0 ? onset.rise / sharpest : 0.0, false, false});
 			return hitpoints;
+		}
+
+		// The sound at a frame of a media file, as the detection measures the onsets it finds.
+		analysis::Onset measure(const MediaFile& media, time::Samples position)
+		{
+			try
+			{
+				const std::unique_ptr<AudioFileReader> reader = AudioFileReader::open(media.path);
+				const auto channels = static_cast<size_t>(std::max(reader->info().channels, 1));
+				const time::Samples from =
+					std::max<time::Samples>(0, position - analysis::OnsetDetector::lead(media.sampleRate));
+				const auto count =
+					static_cast<size_t>(position - from + analysis::OnsetDetector::window(media.sampleRate));
+				std::vector<float> buffer(count * channels);
+				reader->seek(from);
+				const size_t read = reader->read(buffer.data(), count);
+				return analysis::OnsetDetector::measure(media.sampleRate, reader->info().channels, buffer.data(), read,
+					static_cast<size_t>(position - from));
+			}
+			catch (const AudioFileError& error)
+			{
+				throw CommandError("can't read " + media.path + ": " + error.what());
+			}
+		}
+
+		// Gives a hitpoint inserted or moved by hand the peak and intensity of the sound where it is, so that the
+		// filters and MIDI notes' velocities treat it as if detected there (#753). The intensity is relative to the
+		// sharpest the detection found: the rise at the clip's other hitpoint of the highest intensity, preferring
+		// detected (unlocked) ones, whose intensity isn't capped at 1, divided by that intensity; without one, the
+		// hitpoint is the sharpest if its level rises at all.
+		void measureHitpoint(const Project& project, const Clip& clip, Hitpoint& hitpoint)
+		{
+			const MediaFile& media = project.media.at(clip.media);
+			const analysis::Onset sound = measure(media, hitpoint.position);
+			const auto better = [](const Hitpoint& other, const Hitpoint* than)
+			{
+				if (than == nullptr || other.locked != than->locked)
+					return than == nullptr || !other.locked;
+				return other.intensity > than->intensity;
+			};
+			const Hitpoint* reference = nullptr;
+			for (const Hitpoint& other : clip.hitpoints)
+				if (&other != &hitpoint && other.intensity > 0.0 && better(other, reference))
+					reference = &other;
+			double sharpest = 0.0;
+			if (reference != nullptr)
+				sharpest = measure(media, reference->position).rise / reference->intensity;
+			const double rise = std::max(sound.rise, 0.0);
+			hitpoint.peak = sound.peak;
+			if (sharpest > 0.0)
+				hitpoint.intensity = std::min(rise / sharpest, 1.0);
+			else
+				hitpoint.intensity = rise > 0.0 ? 1.0 : 0.0;
 		}
 
 		// The hitpoints that count from frame from to before to, by position.
@@ -170,7 +232,7 @@ namespace gnubase::engine
 		}
 	}
 
-	void registerHitpointCommands(ProjectModel& model, Engine& engine)
+	void registerHitpointCommands(ProjectModel& model, Engine& engine, Jobs& jobs)
 	{
 		const Json integer = {{"type", "integer"}};
 		const Json number = {{"type", "number"}};
@@ -188,19 +250,92 @@ namespace gnubase::engine
 			"active, whether it counts: not disabled, and locked or let through by the clip's hitpointFilter "
 			"(clip.setHitpointFilter). Emits clip.changed. Returns the clip's id and its hitpoints.";
 
-		model.addEdit(engine,
+		engine.registerCommand(
 			{"clip.detectHitpoints", 1,
 				"Finds where sounds start in a clip (calculating hitpoints, reference manual p. 637) and makes them "
-				"its hitpoints, in place of those it had: where the level, or that of the high frequencies, rises by "
-				"6 dB or more within 5 ms from at least -60 dBFS, 20 ms apart at least. Edit Hitpoints restores "
-				"the hitpoints found this way after Remove All. Reads the clip's file. " +
-					hitpointsText,
-				objectSchema({{"clip", integer}}, {"clip"}), resultSchema, false},
-			"Detect hitpoints",
-			[](Project& project, CommandContext& context)
+				"its hitpoints, in place of those it has then: where the level, or that of the high frequencies, "
+				"rises by 6 dB or more within 5 ms from at least -60 dBFS, 20 ms apart at least. Edit Hitpoints "
+				"restores the hitpoints found this way after Remove All. It reads the clip's whole file, so it runs "
+				"as a job and can't be part of a history.transaction: this returns at once, job.progress events say "
+				"how much of the file it read, job.cancel stops it, and once it is done it sets them with "
+				"clip.setHitpoints, one undo step, whose result is the job's result. A clip removed meanwhile, another "
+				"project opened or the clip's media file relinked fails the job.",
+				objectSchema({{"clip", integer}}, {"clip"}), objectSchema({{"job", Jobs::schema()}}, {"job"}), false},
+			[&model, &jobs](CommandContext& context)
 			{
-				Clip& clip = clipOf(project, context.parameters());
-				clip.hitpoints = detect(project.media.at(clip.media));
+				const auto id = context.parameters().at("clip").get<ObjectId>();
+				const Project& project = model.project();
+				const auto found = project.clips.find(id);
+				require(found != project.clips.end(), "no clip " + std::to_string(id));
+				return Json{{"job",
+					jobs.start("clip.detectHitpoints",
+						[id, media = project.media.at(found->second.media), opened = model.openedRevision()](
+							JobContext& job)
+						{
+							Json hitpoints = Json::array();
+							for (const Hitpoint& hitpoint : detect(media, job))
+								hitpoints.push_back({{"position", hitpoint.position}, {"peak", hitpoint.peak},
+									{"intensity", hitpoint.intensity}});
+							return job.command("clip.setHitpoints",
+								{{"clip", id}, {"hitpoints", std::move(hitpoints)}, {"project", opened},
+									{"path", media.path}});
+						})}};
+			});
+
+		model.addEdit(engine,
+			{"clip.setHitpoints", 1,
+				"Makes hitpoints a clip's hitpoints, in place of those it had: what clip.detectHitpoints found, or "
+				"hitpoints from elsewhere. Each has its position (a clip frame, each one once), peak (dBFS) and "
+				"intensity (0-1), and may say whether it is locked and disabled (default false); active is ignored, "
+				"so that a clip's hitpoints can be given as they come. With project (project.revision's), it fails if "
+				"another project was opened since; with path, if the clip's media file has another path now (it was "
+				"relinked), so that a job's hitpoints never go to another clip or file. " +
+					hitpointsText,
+				objectSchema(
+					{{"clip", integer}, {"project", integer}, {"path", {{"type", "string"}}},
+						{"hitpoints",
+							{{"type", "array"},
+								{"items",
+									objectSchema({{"position", integer}, {"peak", number}, {"intensity", number},
+													 {"locked", boolean}, {"disabled", boolean}, {"active", boolean}},
+										{"position", "peak", "intensity"})}}}},
+					{"clip", "hitpoints"}),
+				resultSchema, false},
+			"Set hitpoints",
+			[&model](Project& project, CommandContext& context)
+			{
+				const Json& parameters = context.parameters();
+				require(!parameters.contains("project") ||
+						parameters.at("project").get<uint64_t>() == model.openedRevision(),
+					"another project was opened meanwhile");
+				Clip& clip = clipOf(project, parameters);
+				require(!parameters.contains("path") ||
+						parameters.at("path").get<std::string>() == project.media.at(clip.media).path,
+					"clip " + std::to_string(clip.id) + "'s media file was relinked meanwhile");
+				const time::Samples length = clipLength(project, clip);
+				std::vector<Hitpoint> hitpoints;
+				for (const Json& given : parameters.at("hitpoints"))
+				{
+					Hitpoint hitpoint;
+					hitpoint.position = given.at("position").get<time::Samples>();
+					hitpoint.peak = given.at("peak").get<double>();
+					hitpoint.intensity = given.at("intensity").get<double>();
+					hitpoint.locked = given.value("locked", false);
+					hitpoint.disabled = given.value("disabled", false);
+					require(hitpoint.position >= 0 && hitpoint.position < length,
+						"a hitpoint must be within the clip (0 to " + std::to_string(length - 1) + ")");
+					require(std::isfinite(hitpoint.peak), "a hitpoint's peak must be a number of dBFS");
+					require(hitpoint.intensity >= 0.0 && hitpoint.intensity <= 1.0,
+						"a hitpoint's intensity must be from 0 to 1");
+					hitpoints.push_back(hitpoint);
+				}
+				std::stable_sort(hitpoints.begin(), hitpoints.end(),
+					[](const Hitpoint& a, const Hitpoint& b) { return a.position < b.position; });
+				const auto twice = std::adjacent_find(hitpoints.begin(), hitpoints.end(),
+					[](const Hitpoint& a, const Hitpoint& b) { return a.position == b.position; });
+				if (twice != hitpoints.end())
+					throw CommandError("two hitpoints at " + std::to_string(twice->position));
+				clip.hitpoints = std::move(hitpoints);
 				return hitpointsResult(clip, context);
 			});
 
@@ -234,7 +369,10 @@ namespace gnubase::engine
 		model.addEdit(engine,
 			{"clip.addHitpoint", 1,
 				"Inserts a hitpoint into a clip at position, a clip frame (Alt-click with Edit Hitpoints, reference "
-				"manual p. 640). It is locked, so that it counts whatever the filters. " +
+				"manual p. 640). It is locked, so that it counts whatever the filters, and gets the peak and "
+				"intensity of the sound there, measured from the clip's file as the detection measures those it "
+				"finds, the intensity relative to the sharpest the detection found (the rise at the hitpoint of the "
+				"highest intensity, detected ones first, measured again). Fails if the clip's file can't be read. " +
 					hitpointsText,
 				objectSchema({{"clip", integer}, {"position", integer}}, {"clip", "position"}), resultSchema, false},
 			"Insert hitpoint",
@@ -245,13 +383,16 @@ namespace gnubase::engine
 				const auto position = parameters.at("position").get<time::Samples>();
 				clip.hitpoints.push_back({position, g_minHitpointThreshold, 0.0, true, false});
 				settle(project, clip, position);
+				measureHitpoint(project, clip, hitpointAt(clip, position));
 				return hitpointsResult(clip, context);
 			});
 
 		model.addEdit(engine,
 			{"clip.setHitpoint", 1,
 				"Edits the hitpoint of a clip at position (reference manual p. 640): moveTo moves it to that clip "
-				"frame, which locks it unless locked is given; locked locks or unlocks it (Lock Hitpoint), disabled "
+				"frame, which locks it unless locked is given and measures its peak and intensity there as "
+				"clip.addHitpoint does (failing if the file can't be read); locked locks or unlocks it (Lock "
+				"Hitpoint), disabled "
 				"disables or enables it (Disable Hitpoint); both false reset it (Enable/Unlock Hitpoints). What isn't "
 				"given stays. " +
 					hitpointsText,
@@ -272,7 +413,10 @@ namespace gnubase::engine
 				}
 				hitpoint.locked = parameters.value("locked", hitpoint.locked);
 				hitpoint.disabled = parameters.value("disabled", hitpoint.disabled);
-				settle(project, clip, hitpoint.position);
+				const time::Samples position = hitpoint.position;
+				settle(project, clip, position);
+				if (parameters.contains("moveTo"))
+					measureHitpoint(project, clip, hitpointAt(clip, position));
 				return hitpointsResult(clip, context);
 			});
 

@@ -60,9 +60,12 @@ namespace gnubase::ui
 		bool shows() const { return m_showsMarkers ? !m_markers.empty() : !m_events.empty(); }
 		// The selected event's volume in dB, from the display's project.
 		double volumeOf(uint64_t event) const;
+		// A MIDI part's transpose or velocity (key), from the display's project.
+		int partValue(uint64_t part, const char* key) const;
 
 		EventDisplay& m_display;
 		EngineBinding& m_binding;
+		const std::string m_stepOwner; // begins the whats of its steps (EngineBinding::stepOwner)
 		Rml::ObserverPtr<Rml::Element> m_root;
 		std::vector<uint64_t> m_selection;             // shown, or asked for
 		uint64_t m_loads = 0;                          // the display's project shown

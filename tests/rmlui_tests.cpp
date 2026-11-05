@@ -12,6 +12,8 @@
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Event.h>
+#include <RmlUi/Core/EventListener.h>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
@@ -263,6 +265,48 @@ TEST_CASE("live reload loads documents again when their RML or RCSS files change
 	CHECK(fixture.window.context().GetDocument(1)->IsVisible());
 	CHECK_FALSE(fixture.window.context().GetDocument(2)->IsVisible());
 	CHECK(ui::reloadChangedDocuments(files, fixture.ui.shell) == 0);
+}
+
+TEST_CASE("live reload tells a document that it was loaded again, and which document takes its place", "[unit]")
+{
+	// What the event says, while the old document is still there. It outlives the documents.
+	struct Listener final : Rml::EventListener
+	{
+		void ProcessEvent(Rml::Event& event) override
+		{
+			loaded = static_cast<Rml::ElementDocument*>(event.GetParameter<void*>("document", nullptr));
+			oldShown = event.GetTargetElement()->IsVisible();
+			loadedShown = loaded != nullptr && loaded->IsVisible();
+			++count;
+		}
+		Rml::ElementDocument* loaded = nullptr;
+		bool oldShown = false;
+		bool loadedShown = false;
+		int count = 0;
+	} listener;
+
+	OneWindow fixture;
+	const test::TempDir temp;
+	const std::filesystem::path rml = temp.path() / "panel.rml";
+	write(rml, R"(<rml><head><title>Panel</title></head><body><p id="name">Audio 1</p></body></rml>)");
+	Rml::ElementDocument* old = fixture.window.context().LoadDocument(rml.generic_u8string());
+	REQUIRE(old != nullptr);
+	old->Show();
+	old->AddEventListener(ui::g_documentReloadEvent, &listener);
+	fixture.ui.shell.step(milliseconds(0));
+
+	change(rml, R"(<rml><head><title>Panel</title></head><body><h1 id="name">Audio 1</h1></body></rml>)");
+	CHECK(ui::reloadChangedDocuments(fixture.ui.rmlui.files(), fixture.ui.shell) == 1);
+	CHECK(listener.count == 1);
+	CHECK(listener.oldShown);
+	CHECK(listener.loadedShown);
+	REQUIRE(listener.loaded != nullptr);
+	CHECK(listener.loaded != old);
+	REQUIRE(listener.loaded->GetElementById("name") != nullptr);
+	CHECK(listener.loaded->GetElementById("name")->GetTagName() == "h1");
+	fixture.ui.shell.step(milliseconds(0));
+	REQUIRE(fixture.window.context().GetNumDocuments() == 1);
+	CHECK(fixture.window.context().GetDocument(0) == listener.loaded);
 }
 
 TEST_CASE("the shell runs periodic tasks between its waits for events", "[unit]")

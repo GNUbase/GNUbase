@@ -52,6 +52,7 @@ add_executable(gnubase-tests
 	document_tests.cpp
 	editors_tests.cpp
 	effects_tests.cpp
+	emptytracks_tests.cpp
 	engine_tests.cpp
 	enginebinding_tests.cpp
 	eventdisplay_tests.cpp
@@ -85,12 +86,14 @@ add_executable(gnubase-tests
 	mcpevents_tests.cpp
 	mcptools_tests.cpp
 	meter_tests.cpp
+	metronome_tests.cpp
 	midi_tests.cpp
 	mididevice_tests.cpp
 	midiedit_tests.cpp
 	midieditor_tests.cpp
 	midifile_tests.cpp
 	midifunctions_tests.cpp
+	midifunctions_ui_tests.cpp
 	midimodifiers_tests.cpp
 	midirecording_tests.cpp
 	miditap_tests.cpp
