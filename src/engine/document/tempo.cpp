@@ -267,7 +267,8 @@ namespace gnubase::engine
 	void tempoChanged(Project& project, const time::TempoMap& before, CommandContext& context)
 	{
 		// A linear part stays where it is in samples, and its notes and controllers, in ticks from its start, stay at
-		// their time with it (reference manual p. 1446). Only parts whose notes or controllers move are reported.
+		// their time with it (reference manual p. 1446). Parts whose notes or controllers move are reported, and below
+		// the copies a split changes.
 		std::set<ObjectId> changed;
 		if (project.tempo != before)
 			for (auto& [id, part] : project.midiParts)
