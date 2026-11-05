@@ -715,6 +715,7 @@ namespace gnubase::engine
 		const auto track = std::find_if(project.trackById.begin(), project.trackById.end(),
 			[](const auto& entry) { return entry.second.type == TrackType::Arranger; });
 		std::vector<const ArrangerEvent*> order;
+		order.reserve(project.arranger.events.size());
 		for (const ArrangerEvent& event : project.arranger.events)
 			order.push_back(&event);
 		const auto start = [&project](const time::Position& position)

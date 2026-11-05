@@ -68,9 +68,11 @@ namespace gnubase::engine
 		ArrangerTurn turn;
 		if (!plan.plays())
 			return turn;
-		const int32_t current = validStep(plan, state.step)       ? stepOf(plan, state.step).section
-			: state.step < 0 && validSection(plan, state.section) ? state.section
-																  : -1;
+		int32_t current = -1; // the section playing
+		if (validStep(plan, state.step))
+			current = stepOf(plan, state.step).section;
+		else if (state.step < 0 && validSection(plan, state.section))
+			current = state.section;
 		// A step or event that waits takes over at the next jump point of the event playing, or at once outside one.
 		const bool pendingStep = validStep(plan, state.pendingStep);
 		if (pendingStep || validSection(plan, state.pendingSection))

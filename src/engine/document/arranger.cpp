@@ -12,6 +12,7 @@
 #include "engine/engine.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <set>
 #include <string>
@@ -82,9 +83,9 @@ namespace gnubase::engine
 		{
 			requireTrack(project);
 			const ArrangerChain* active = activeArrangerChain(project);
-			const ObjectId id = parameters.contains("chain") ? parameters.at("chain").get<ObjectId>()
-				: active != nullptr                          ? active->id
-															 : 0;
+			ObjectId id = active != nullptr ? active->id : 0;
+			if (parameters.contains("chain"))
+				id = parameters.at("chain").get<ObjectId>();
 			for (ArrangerChain& chain : project.arranger.chains)
 				if (chain.id == id)
 					return chain;
@@ -144,9 +145,12 @@ namespace gnubase::engine
 				step.repeats = item.value("repeats", 1);
 				require(step.repeats >= 1 && step.repeats <= 999, "repeats must be 1 to 999");
 				const std::string mode = item.value("mode", std::string("normal"));
-				const auto found = std::find(g_arrangerRepeatModes.begin(), g_arrangerRepeatModes.end(), mode);
-				require(found != g_arrangerRepeatModes.end(), "unknown repeat mode " + mode);
-				step.mode = static_cast<ArrangerRepeat>(found - g_arrangerRepeatModes.begin());
+				const std::ptrdiff_t index =
+					std::find(g_arrangerRepeatModes.begin(), g_arrangerRepeatModes.end(), mode) -
+					g_arrangerRepeatModes.begin();
+				require(
+					index < static_cast<std::ptrdiff_t>(g_arrangerRepeatModes.size()), "unknown repeat mode " + mode);
+				step.mode = static_cast<ArrangerRepeat>(index);
 				steps.push_back(step);
 			}
 			return steps;
@@ -180,7 +184,11 @@ namespace gnubase::engine
 				int64_t bar = signatures.toBarsBeats(from).bar;
 				if (tempo.toSamples(signatures.barStart(bar), rate) < start)
 					++bar; // the first bar line at or after the start
-				const int64_t every = jump == ArrangerJump::FourBars ? 4 : jump == ArrangerJump::TwoBars ? 2 : 1;
+				int64_t every = 1;
+				if (jump == ArrangerJump::FourBars)
+					every = 4;
+				else if (jump == ArrangerJump::TwoBars)
+					every = 2;
 				// ponytail: one point per beat or bar of the section; a grid per section is enough for any song.
 				for (int64_t b = jump == ArrangerJump::OneBeat ? bar - 1 : bar;; ++b)
 				{
@@ -428,11 +436,12 @@ namespace gnubase::engine
 				parameters.contains("chain") ? findChain(project, parameters).id : project.arrangerChain;
 			const std::string name =
 				parameters.value("jumpMode", g_arrangerJumpModes.at(static_cast<size_t>(project.arrangerJump)));
-			const auto found = std::find(g_arrangerJumpModes.begin(), g_arrangerJumpModes.end(), name);
-			require(found != g_arrangerJumpModes.end(), "unknown jump mode " + name);
+			const std::ptrdiff_t index =
+				std::find(g_arrangerJumpModes.begin(), g_arrangerJumpModes.end(), name) - g_arrangerJumpModes.begin();
+			require(index < static_cast<std::ptrdiff_t>(g_arrangerJumpModes.size()), "unknown jump mode " + name);
 			project.arrangerChain = chain;
 			project.arrangerMode = parameters.value("mode", project.arrangerMode);
-			project.arrangerJump = static_cast<ArrangerJump>(found - g_arrangerJumpModes.begin());
+			project.arrangerJump = static_cast<ArrangerJump>(index);
 			Json result = arrangerJson(project);
 			context.emit("arranger.changed", result);
 			return result;

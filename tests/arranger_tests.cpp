@@ -413,14 +413,14 @@ TEST_CASE("chain playback in real time renders the same as offline", "[integrati
 		std::this_thread::sleep_for(std::chrono::milliseconds(5));
 	run(realtime.client, "audio.stop");
 	CHECK(run(realtime.client, "audio.get").at("playbackDropouts").get<int64_t>() == 0);
-	const auto capture = [](Song& song)
+	const auto capture = [](Song& song, int64_t count)
 	{
-		return run(song.client, "audio.capture", {{"channel", 0}, {"start", 0}, {"frames", frames}})
+		return run(song.client, "audio.capture", {{"channel", 0}, {"start", 0}, {"frames", count}})
 			.at("samples")
 			.get<std::vector<float>>();
 	};
-	const std::vector<float> actual = capture(realtime);
-	const std::vector<float> expected = capture(offline);
+	const std::vector<float> actual = capture(realtime, frames);
+	const std::vector<float> expected = capture(offline, frames);
 	REQUIRE(actual.size() == expected.size());
 	const auto difference = std::mismatch(actual.begin(), actual.end(), expected.begin());
 	INFO("first difference at frame " << (difference.first - actual.begin()));
