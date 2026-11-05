@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Marker tracks, position and cycle markers, and locating with them (#91).
+// Marker tracks, position and cycle markers, and locating with them (#91); marker CSV files (#171).
 #include "engine/document/rendersnapshot.h"
 #include "engine/engine.h"
 #include "engine/time/tempomap.h"
+#include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <utility>
 #include <variant>
@@ -653,4 +656,185 @@ TEST_CASE("redo announces a marker track before activating it", "[unit]")
 		CHECK(announcedBefore("track.added"));
 		CHECK(announcedBefore("track.removed"));
 	}
+}
+
+TEST_CASE("markers are exported and imported as CSV files with their tracks, ids and times", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	const std::string file = (dir.path() / "markers.csv").u8string();
+	Engine engine;
+	Client client(engine);
+	const ObjectId song = addMarkerTrack(client, {{"name", "Song"}});
+	addMarker(client, {{"track", song}, {"position", 4 * g_ticksPerQuarter}, {"name", "Verse"}});
+	addMarker(client,
+		{{"track", song}, {"type", "cycle"}, {"position", 8 * g_ticksPerQuarter}, {"end", (25 * g_ticksPerQuarter) / 2},
+			{"name", "Chorus, \"big\""}, {"color", "#ff0000"}});
+	addMarker(client, {{"track", song}, {"position", 2 * g_ticksPerQuarter}, {"name", "Intro\nslow"}, {"number", 5}});
+	const ObjectId takes = addMarkerTrack(client, {{"name", "Takes"}, {"timeBase", "linear"}});
+	addMarker(client, {{"track", takes}, {"position", 3 * g_quarterSamples}}); // 1.5 s at 48 kHz
+
+	// Beats on musical tracks, seconds on linear ones; tracks in track order, markers in timeline order.
+	CHECK(run(client, "marker.export", {{"path", file}}).at("markers") == 4);
+	CHECK(gnubase::test::readText(dir.path() / "markers.csv") ==
+		"Track Number,Track,Time Base,Type,ID,Position,End,Description,Color\r\n"
+		"1,Song,Musical,Position,5,2.0,,\"Intro\nslow\",\r\n"
+		"1,Song,Musical,Position,1,4.0,,Verse,\r\n"
+		"1,Song,Musical,Cycle,1,8.0,12.5,\"Chorus, \"\"big\"\"\",#ff0000\r\n"
+		"2,Takes,Linear,Position,1,1.5,,,\r\n");
+	const Json before = run(client, "project.get");
+
+	// Imported, each track in the file is a new marker track at the top; the active marker track stays.
+	run(client, "project.new");
+	const ObjectId old = addMarkerTrack(client, {{"name", "Old"}});
+	addPosition(client, 1, "Old marker");
+	const Json empty = run(client, "project.get");
+	const Json imported = run(client, "marker.import", {{"path", file}});
+	CHECK(imported.at("markers") == 4);
+	REQUIRE(imported.at("tracks").size() == 2);
+	const Json after = run(client, "project.get");
+	REQUIRE(after.at("tracks").size() == 3);
+	CHECK(after.at("tracks")[2].at("id") == old);
+	CHECK(after.at("activeMarkerTrack") == old);
+	for (size_t i = 0; i < 2; ++i)
+	{
+		const Json& track = after.at("tracks")[i];
+		CHECK(track.at("id") == imported.at("tracks")[i]);
+		for (const char* key : {"name", "type", "timeBase"})
+			CHECK(track.at(key) == before.at("tracks")[i].at(key));
+	}
+	const auto markersOf = [](const Json& project, const Json& track)
+	{
+		std::vector<Json> markers;
+		for (Json marker : project.at("markers"))
+			if (marker.at("track") == track)
+			{
+				marker.erase("id");
+				marker.erase("track");
+				markers.push_back(marker);
+			}
+		std::sort(markers.begin(), markers.end(), [](const Json& a, const Json& b) { return a.dump() < b.dump(); });
+		return markers;
+	};
+	for (size_t i = 0; i < 2; ++i)
+		CHECK(markersOf(after, after.at("tracks")[i].at("id")) == markersOf(before, before.at("tracks")[i].at("id")));
+
+	// Exported again, the imported tracks give the same file.
+	const std::string again = (dir.path() / "again.csv").u8string();
+	run(client, "marker.export", {{"path", again}, {"tracks", imported.at("tracks")}});
+	CHECK(gnubase::test::readText(dir.path() / "again.csv") == gnubase::test::readText(dir.path() / "markers.csv"));
+
+	// One undo step.
+	CHECK(run(client, "history.get").at("steps").back().at("action") == "Import markers");
+	run(client, "history.undo");
+	CHECK(run(client, "project.get") == empty);
+
+	// In a project without marker tracks, the first imported one becomes active.
+	run(client, "project.new");
+	const Json fresh = run(client, "marker.import", {{"path", file}});
+	CHECK(run(client, "project.get").at("activeMarkerTrack") == fresh.at("tracks")[0]);
+}
+
+TEST_CASE("marker CSV files keep marker tracks with the same name apart", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	const std::string file = (dir.path() / "markers.csv").u8string();
+	Engine engine;
+	Client client(engine);
+	const ObjectId first = addMarkerTrack(client, {{"name", "Same"}});
+	addMarker(client, {{"track", first}, {"position", g_ticksPerQuarter}, {"name", "A"}});
+	const ObjectId second = addMarkerTrack(client, {{"name", "Same"}, {"timeBase", "linear"}});
+	addMarker(client, {{"track", second}, {"position", g_quarterSamples}, {"name", "B"}});
+	run(client, "marker.export", {{"path", file}});
+
+	run(client, "project.new");
+	const Json imported = run(client, "marker.import", {{"path", file}});
+	REQUIRE(imported.at("tracks").size() == 2);
+	CHECK(imported.at("markers") == 2);
+	const Json tracks = run(client, "project.get").at("tracks");
+	CHECK(tracks[0].at("name") == "Same");
+	CHECK(tracks[0].at("timeBase") == "musical");
+	CHECK(tracks[1].at("name") == "Same");
+	CHECK(tracks[1].at("timeBase") == "linear");
+	for (size_t i = 0; i < 2; ++i)
+	{
+		const Json list = run(client, "marker.list", {{"track", imported.at("tracks")[i]}}).at("markers");
+		REQUIRE(list.size() == 1);
+		CHECK(list[0].at("number") == 1);
+		CHECK(list[0].at("name") == (i == 0 ? "A" : "B"));
+	}
+
+	const std::string again = (dir.path() / "again.csv").u8string();
+	run(client, "marker.export", {{"path", again}});
+	CHECK(gnubase::test::readText(dir.path() / "again.csv") == gnubase::test::readText(dir.path() / "markers.csv"));
+}
+
+TEST_CASE("marker CSV files from spreadsheets: columns by their header, in any order", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	const std::filesystem::path path = dir.path() / "sheet.csv";
+	// A byte order mark, LF line ends, columns in another order, one unknown and the optional ones left out.
+	std::ofstream(path, std::ios::binary) << "\xEF\xBB\xBF"
+										  << "Description,position,Type,End,Note\n"
+										  << "Intro,1,position,,x\n"
+										  << "Loop,2,CYCLE,3.5,\n"
+										  << "\n";
+	Engine engine;
+	Client client(engine);
+	const Json imported = run(client, "marker.import", {{"path", path.u8string()}});
+	REQUIRE(imported.at("tracks").size() == 1);
+	const Json track = run(client, "project.get").at("tracks")[0];
+	CHECK(track.at("name") == "Markers");
+	CHECK(track.at("timeBase") == "musical");
+	const Json list = run(client, "marker.list").at("markers");
+	REQUIRE(list.size() == 2);
+	CHECK(list[0].at("name") == "Intro");
+	CHECK(list[0].at("position") == g_ticksPerQuarter);
+	CHECK(list[0].at("number") == 1);
+	CHECK(list[1].at("name") == "Loop");
+	CHECK(list[1].at("type") == "cycle");
+	CHECK(list[1].at("position") == 2 * g_ticksPerQuarter);
+	CHECK(list[1].at("end") == (7 * g_ticksPerQuarter) / 2);
+	CHECK(list[1].at("number") == 1);
+}
+
+TEST_CASE("marker files that can't be read or written change nothing", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	CHECK_THAT(reject(client, "marker.export", {{"path", (dir.path() / "none.csv").u8string()}}),
+		ContainsSubstring("no marker track"));
+	for (int i = 0; i < 9; ++i)
+		addMarkerTrack(client);
+	addPosition(client, 1, "A");
+	const ObjectId audio = idOf(run(client, "track.add", {{"type", "audio"}}).at("track"));
+	CHECK_THAT(reject(client, "marker.export", {{"path", (dir.path() / "a.csv").u8string()}, {"tracks", {audio}}}),
+		ContainsSubstring("not a marker track"));
+	CHECK_THAT(reject(client, "marker.export", {{"path", (dir.path() / "no" / "such" / "folder.csv").u8string()}}),
+		ContainsSubstring("folder.csv"));
+	const Json before = run(client, "project.get");
+
+	const auto rejected = [&client, &dir](const std::string& name, const std::string& text)
+	{
+		const std::filesystem::path path = dir.path() / name;
+		std::ofstream(path, std::ios::binary) << text;
+		return reject(client, "marker.import", {{"path", path.u8string()}});
+	};
+	CHECK_THAT(reject(client, "marker.import", {{"path", (dir.path() / "missing.csv").u8string()}}),
+		ContainsSubstring("missing.csv"));
+	CHECK_THAT(rejected("empty.csv", ""), ContainsSubstring("Position"));
+	CHECK_THAT(rejected("columns.csv", "Type,Description\nPosition,A\n"), ContainsSubstring("Position"));
+	CHECK_THAT(rejected("number.csv", "Type,Position\nPosition,1\nPosition,abc\n"), ContainsSubstring("row 3"));
+	CHECK_THAT(rejected("negative.csv", "Type,Position\nPosition,-1\n"), ContainsSubstring("row 2"));
+	CHECK_THAT(rejected("type.csv", "Type,Position\nRange,1\n"), ContainsSubstring("row 2"));
+	CHECK_THAT(rejected("end.csv", "Type,Position,End\nCycle,1,\n"), ContainsSubstring("row 2"));
+	CHECK_THAT(rejected("taken.csv", "Type,ID,Position\nPosition,1,1\nPosition,1,2\n"), ContainsSubstring("row 3"));
+	CHECK_THAT(rejected("base.csv", "Time Base,Type,Position\nMusical,Position,1\nLinear,Position,2\n"),
+		ContainsSubstring("row 3"));
+	CHECK_THAT(rejected("tracknumber.csv", "Track Number,Position\n1,1\nx,2\n"), ContainsSubstring("row 3"));
+	CHECK_THAT(rejected("quote.csv", "Type,Position,Description\nPosition,1,\"open\n"), ContainsSubstring("quote"));
+	// A tenth marker track fits, an eleventh doesn't.
+	CHECK_THAT(
+		rejected("tracks.csv", "Track,Type,Position\nA,Position,1\nB,Position,1\n"), ContainsSubstring("at most 10"));
+	CHECK(run(client, "project.get") == before);
 }

@@ -724,6 +724,7 @@ meter .meter-peak
 	top: 20dp;
 	bottom: 0;
 	overflow: hidden;
+	clip: always; /* the project cursor, absolute too, isn't drawn outside it (#731), as in .event-area */
 }
 
 .event-display ruler
