@@ -495,6 +495,11 @@
 		<menuitem command="window.mixer4">Mixer 4</menuitem>
 		<menuseparator/>
 		<menuitem command="window.onScreenKeyboard">On-Screen Keyboard</menuitem>
+		<menuitem id="studio-more-options">More Options
+			<menu>
+				<menuitem command="window.midiDeviceManager">MIDI Device Manager</menuitem>
+			</menu>
+		</menuitem>
 		<menuitem command="window.studioSetup">Studio Setup...</menuitem>
 	</menu>
 

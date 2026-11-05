@@ -94,12 +94,14 @@ add_executable(gnubase-tests
 	metronome_tests.cpp
 	midi_tests.cpp
 	mididevice_tests.cpp
+	mididevices_ui_tests.cpp
 	midiedit_tests.cpp
 	midieditor_tests.cpp
 	midifile_tests.cpp
 	midifunctions_tests.cpp
 	midifunctions_ui_tests.cpp
 	midimodifiers_tests.cpp
+	midipatches_tests.cpp
 	midirecording_tests.cpp
 	miditap_tests.cpp
 	mixdown_tests.cpp

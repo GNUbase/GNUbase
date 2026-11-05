@@ -445,6 +445,10 @@ namespace gnubase::app
 			[this](ui::Window& window, Rml::Element* /*zone*/) { chooseMissingFolder(window); }});
 		m_keys.add({"window.studioSetup", "Opens the studio setup dialog for the audio and MIDI devices.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { openStudioSetup(window); }});
+		m_keys.add({"window.midiDeviceManager",
+			"Opens the MIDI device manager, which installs and removes MIDI devices and shows their patch banks.",
+			[this](ui::Window& window, Rml::Element* /*zone*/)
+			{ openOnce(window, "midi-devices.rml", m_midiDevices); }});
 		m_keys.add({"window.projectSetup",
 			"Opens the project setup dialog for the project's sample rate, record format, frame rate, start time, "
 			"length, time display, pan law and maximum volume.",

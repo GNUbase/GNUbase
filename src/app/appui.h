@@ -309,6 +309,7 @@ namespace gnubase::app
 		ui::ProjectFiles m_files;                          // the File menu's project commands
 		std::unique_ptr<ui::MainMenu> m_menu;              // the project window's
 		Rml::ObserverPtr<Rml::Element> m_studioSetup;      // the open studio setup dialog's document
+		Rml::ObserverPtr<Rml::Element> m_midiDevices;      // the open MIDI device manager's document
 		Rml::ObserverPtr<Rml::Element> m_projectSetup;     // the open project setup dialog's document
 		std::weak_ptr<ui::PoolPanel> m_pool;               // the docking system owns it while it is there
 		std::weak_ptr<ui::Inspector> m_inspector;          // so too

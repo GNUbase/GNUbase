@@ -222,6 +222,13 @@ namespace gnubase::engine
 		// none sends nothing, which leaves the instrument's own.
 		std::optional<int> midiVolume = std::nullopt;
 		std::optional<int> midiPan = std::nullopt;
+		// MIDI channels: the program (0 to 127) and bank (0 to 16383) sent to the instrument, none: nothing, and the
+		// installed MIDI device (user setting midi.devices) whose patches choose them, by name, or empty
+		// (docs/features/midi-devices.md).
+		std::optional<int> program = std::nullopt;
+		std::optional<int> bank = std::nullopt;
+		// NOLINTNEXTLINE(readability-redundant-member-init): see instrumentParameters
+		std::string device = {};
 		// MIDI and instrument tracks: the MIDI modifiers, which change how the track's notes play
 		// (docs/features/midi-modifiers.md).
 		// NOLINTNEXTLINE(readability-redundant-member-init): see instrumentParameters
@@ -980,13 +987,13 @@ namespace gnubase::engine
 	inline bool operator==(const Channel& a, const Channel& b)
 	{
 		return std::tie(a.id, a.track, a.format, a.input, a.output, a.instrument, a.volume, a.pan, a.panner, a.panLeft,
-				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.modifiers, a.instrumentParameters, a.monitor,
-				   a.recordEnable, a.midiInput, a.mute, a.solo, a.soloDefeat, a.listen, a.slots, a.notes, a.sections,
-				   a.sends) ==
+				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.program, a.bank, a.device, a.modifiers,
+				   a.instrumentParameters, a.monitor, a.recordEnable, a.midiInput, a.mute, a.solo, a.soloDefeat,
+				   a.listen, a.slots, a.notes, a.sections, a.sends) ==
 			std::tie(b.id, b.track, b.format, b.input, b.output, b.instrument, b.volume, b.pan, b.panner, b.panLeft,
-				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.modifiers, b.instrumentParameters, b.monitor,
-				b.recordEnable, b.midiInput, b.mute, b.solo, b.soloDefeat, b.listen, b.slots, b.notes, b.sections,
-				b.sends);
+				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.program, b.bank, b.device, b.modifiers,
+				b.instrumentParameters, b.monitor, b.recordEnable, b.midiInput, b.mute, b.solo, b.soloDefeat, b.listen,
+				b.slots, b.notes, b.sections, b.sends);
 	}
 
 	inline bool operator==(const Slot& a, const Slot& b)
