@@ -19,6 +19,7 @@
 #include <cstdlib>
 #include <limits>
 #include <map>
+#include <numeric>
 #include <optional>
 #include <set>
 #include <string>
@@ -114,6 +115,15 @@ namespace gnubase::engine
 			for (auto& [id, event] : project.audioEvents)
 				if (event.part == part)
 					events.push_back(&event);
+			return events;
+		}
+
+		// An audio part's events in the order they are stacked (#99), the one in front last.
+		std::vector<AudioEvent*> stackedIn(Project& project, ObjectId part)
+		{
+			std::vector<AudioEvent*> events = eventsIn(project, part);
+			std::stable_sort(events.begin(), events.end(),
+				[](const AudioEvent* a, const AudioEvent* b) { return frontOf(*a) < frontOf(*b); });
 			return events;
 		}
 
@@ -320,14 +330,15 @@ namespace gnubase::engine
 			}
 			if (item.audioPart != nullptr)
 			{
-				// Copies of its events, with the crossfades between them.
+				// Copies of its events, with the crossfades between them. They come in front, as added last, in the
+				// order they are stacked: their new ids follow it.
 				AudioPart part = *item.audioPart;
 				part.id = project.newId();
 				part.lock = false;
 				AudioPart& copy = project.audioParts[part.id] = part;
 				std::map<ObjectId, ObjectId> ids;
 				std::vector<AudioEvent> events;
-				for (const AudioEvent* event : eventsIn(project, item.audioPart->id))
+				for (const AudioEvent* event : stackedIn(project, item.audioPart->id))
 				{
 					ids[event->id] = project.newId();
 					events.push_back(*event);
@@ -340,6 +351,7 @@ namespace gnubase::engine
 					else
 						event.crossfade.from = from->second;
 					event.id = ids.at(event.id);
+					event.front = 0;
 					event.part = copy.id;
 					project.audioEvents[event.id] = event;
 				}
@@ -1697,7 +1709,8 @@ namespace gnubase::engine
 			}
 			else if (item.audioPart != nullptr)
 			{
-				for (AudioEvent* event : eventsIn(project, item.audioPart->id))
+				// In the order they are stacked, so that the part's events keep theirs.
+				for (AudioEvent* event : stackedIn(project, item.audioPart->id))
 					event->front = project.newId();
 			}
 			else
@@ -1856,11 +1869,21 @@ namespace gnubase::engine
 				parts[copied.id] = part.id;
 				pastedParts.push_back(&(project.audioParts[part.id] = part));
 			}
-			for (const AudioEvent& copied : clipboard.audioEvents)
+			// The events come in front, as added last, in the order they were stacked: their new ids follow it.
+			const std::vector<AudioEvent>& copiedEvents = clipboard.audioEvents;
+			std::vector<size_t> stacked(copiedEvents.size());
+			std::iota(stacked.begin(), stacked.end(), size_t{0});
+			std::stable_sort(stacked.begin(), stacked.end(),
+				[&copiedEvents](size_t a, size_t b) { return frontOf(copiedEvents[a]) < frontOf(copiedEvents[b]); });
+			std::vector<ObjectId> newIds(copiedEvents.size());
+			for (const size_t index : stacked)
+				newIds[index] = project.newId();
+			for (size_t index = 0; index < copiedEvents.size(); ++index)
 			{
+				const AudioEvent& copied = copiedEvents[index];
 				require(project.clips.count(copied.clip) != 0, "the clip of a copied audio event is gone");
 				AudioEvent event = copied;
-				event.id = project.newId();
+				event.id = newIds[index];
 				event.front = 0;
 				event.lock = false;
 				event.crossfade = Crossfade();
@@ -2272,8 +2295,8 @@ namespace gnubase::engine
 			{"event.toFront", 1,
 				"Brings takes to the front (To Front, the comp tool's click): audio events, and the audio events of "
 				"audio parts, play where they overlap other events on their track, as if added last (their front in "
-				"project.get); MIDI parts are unmuted, and the MIDI parts on their track's other lanes that they "
-				"overlap are muted. Returns the events.",
+				"project.get), a part's events in the order they were stacked in; MIDI parts are unmuted, and the MIDI "
+				"parts on their track's other lanes that they overlap are muted. Returns the events.",
 				schema({{"events", events()}}, {"events"}), eventsResult(), false},
 			"To Front", bringToFront);
 
