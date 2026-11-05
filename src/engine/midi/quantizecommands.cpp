@@ -440,7 +440,8 @@ namespace gnubase::engine::midi
 			CommandContext& context, const std::string& remember = {})
 		{
 			const Project& project = model.project();
-			std::string name = presets.has(project.quantizePreset, project.quantize) ? project.quantizePreset : std::string();
+			std::string name =
+				presets.has(project.quantizePreset, project.quantize) ? project.quantizePreset : std::string();
 			if (!remember.empty() && presets.has(remember, project.quantize) &&
 				presets.shown(project.quantize, name) != remember)
 				name = remember;
