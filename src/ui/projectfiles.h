@@ -10,6 +10,7 @@
 #include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/ObserverPtr.h>
 
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <optional>
@@ -80,9 +81,11 @@ namespace gnubase::ui
 		// Opens the error that waited, if any, once the dialog that closed is gone; it waits again for dialogs that
 		// are still open.
 		void showWaitingError();
-		// Forgets the error that waited and stops watching the dialogs: an auto save that succeeded and a project that
-		// was saved or opened make it out of date.
+		// Forgets the error that waited and stops watching the dialogs.
 		void dropWaitingError();
+		// An auto save succeeded or the project was saved or opened: a failed auto save's error that waits, or that
+		// openError is still to open, is out of date.
+		void autoSaveWorks();
 		// Tells the user in the main window that the project can't be auto saved (project.autoSaveFailed): once, not
 		// at every interval, until it fails for another reason or after an auto save succeeded or the project was
 		// saved or opened, as the engine says with repeated.
@@ -121,5 +124,6 @@ namespace gnubase::ui
 		// A failed auto save's error that modal dialogs keep away, and those dialogs, which ProcessEvent hears close.
 		std::optional<WaitingError> m_waitingError;
 		std::vector<Rml::ObserverPtr<Rml::Element>> m_keptAwayBy;
+		uint64_t m_autoSaveWorked = 0; // how often autoSaveWorks ran, so that openError knows an error is out of date
 	};
 }

@@ -95,12 +95,12 @@ namespace gnubase::ui
 			  [this](const engine::Event& event)
 			  {
 				  m_file = event.data.at("file").get<std::string>();
-				  dropWaitingError();
+				  autoSaveWorks();
 			  })),
 		  m_reset(binding.on("project.reset",
 			  [this](const engine::Event&)
 			  {
-				  dropWaitingError();
+				  autoSaveWorks();
 				  readLocation();
 			  })),
 		  m_jobFinished(binding.on("job.finished",
@@ -113,7 +113,7 @@ namespace gnubase::ui
 			  })),
 		  m_autoSaveFailed(
 			  binding.on("project.autoSaveFailed", [this](const engine::Event& event) { autoSaveFailed(event.data); })),
-		  m_autoSaved(binding.on("project.autoSaved", [this](const engine::Event&) { dropWaitingError(); }))
+		  m_autoSaved(binding.on("project.autoSaved", [this](const engine::Event&) { autoSaveWorks(); }))
 	{
 		readLocation();
 
@@ -353,8 +353,10 @@ namespace gnubase::ui
 		// The dialog that asked may still be closing.
 		m_shell.post(
 			// NOLINTNEXTLINE(bugprone-exception-escape): only MSVC's std::string; out of memory only
-			[this, window, error, autoSave]
+			[this, window, error, autoSave, worked = m_autoSaveWorked]
 			{
+				if (autoSave && worked != m_autoSaveWorked)
+					return; // an auto save succeeded or the project was saved or opened since it failed
 				Window* showing = m_shell.find(window);
 				// A failed auto save's error doesn't open over another modal dialog, such as the fade editor, which the
 				// user works in: it waits until that closed. The project dialog that is open (m_dialog) is left to
@@ -381,6 +383,7 @@ namespace gnubase::ui
 				{
 					m_autoSaveFailureShown = true;
 					m_autoSaveErrorOpen = true;
+					dropWaitingError(); // an older one
 				}
 			});
 	}
@@ -407,6 +410,12 @@ namespace gnubase::ui
 		const WaitingError waiting = std::move(*m_waitingError);
 		dropWaitingError();
 		openError(waiting.window, waiting.error, true);
+	}
+
+	void ProjectFiles::autoSaveWorks()
+	{
+		++m_autoSaveWorked;
+		dropWaitingError();
 	}
 
 	void ProjectFiles::dropWaitingError()
