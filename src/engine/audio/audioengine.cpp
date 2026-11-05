@@ -553,14 +553,16 @@ namespace gnubase::engine
 			else if (m_engine != nullptr)
 				m_engine->broadcast("plugin.changed", std::move(data));
 		};
+		// A new slot's command reported it loading, or noDevice without a device. Every command that opens or closes
+		// the device announces, so the device the slots were announced with last is the one the command saw.
+		const std::string reported = m_slotsHadDevice ? "loading" : "noDevice";
 		std::map<ObjectId, std::string> statuses;
 		for (const RenderChannel& channel : m_snapshots.latest().channels)
 			for (const RenderSlot& slot : channel.slots)
 			{
 				std::string status = slotStatus(slot.id);
 				const auto announced = m_slotStatuses.find(slot.id);
-				// A new slot's command reported it loading.
-				if (status != (announced != m_slotStatuses.end() ? announced->second : "loading") && m_describeSlot)
+				if (status != (announced != m_slotStatuses.end() ? announced->second : reported) && m_describeSlot)
 				{
 					Json described = m_describeSlot(slot.id);
 					if (!described.is_null())
@@ -569,6 +571,7 @@ namespace gnubase::engine
 				statuses[slot.id] = std::move(status);
 			}
 		m_slotStatuses = std::move(statuses);
+		m_slotsHadDevice = m_device != nullptr;
 	}
 
 	std::string AudioEngine::slotStatus(ObjectId slot) const

@@ -397,6 +397,7 @@ namespace gnubase::engine
 		std::atomic<bool> m_updatingPlugins{false}; // an audio.updatePlugins it posted hasn't run yet
 		std::function<Json(ObjectId)> m_describeSlot;
 		std::map<ObjectId, std::string> m_slotStatuses; // as announced last
+		bool m_slotsHadDevice = false;                  // whether a device was open when they were announced last
 		std::map<ObjectId, int> m_sourceNodes;          // rebuild: per channel
 		Transport m_transport;                          // advanced by the audio thread
 		MidiPorts m_midi;
