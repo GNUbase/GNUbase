@@ -334,3 +334,71 @@ TEST_CASE("the project file, track.duplicate, time bases and the pool keep inact
 	f.call("trackVersion.activate", {{"tracks", {track}}, {"version", 1}});
 	CHECK(f.on("audioEvents", track) == std::vector<int64_t>{original});
 }
+
+TEST_CASE("media.relinkResampled rescales the events of inactive versions too", "[integration]")
+{
+	Fixture f;
+	const int64_t clip = f.clip();
+	const int64_t track = f.track("audio");
+	const int64_t first = f.event(track, clip, 0, 100, 1000);
+	const int64_t second = f.event(track, clip, 900, 1200, 1000);
+	f.call("crossfade.set", {{"from", first}, {"to", second}, {"length", 50}, {"outLength", 80}});
+	const Json before = f.call("project.get").at("audioEvents");
+	REQUIRE(before.size() == 2);
+	f.call("trackVersion.add", {{"tracks", {track}}});
+
+	// The ramp file's 96 kHz copy, twice the frames.
+	gnubase::test::Audio audio;
+	audio.sampleRate = 96000;
+	audio.samples.assign(10000, 0.0f);
+	const std::filesystem::path file = f.dir.path() / "ramp96.wav";
+	gnubase::test::writeWav(file, audio);
+	const Json media = f.call("project.get").at("media").at(0).at("id");
+	f.call("media.relinkResampled", {{"files", {{{"media", media}, {"path", file.u8string()}}}}});
+
+	f.call("trackVersion.activate", {{"tracks", {track}}, {"version", 1}});
+	const Json events = f.call("project.get").at("audioEvents");
+	REQUIRE(events.size() == 2);
+	CHECK(events.at(0).at("offset") == 200);
+	CHECK(events.at(0).at("length") == 2000);
+	CHECK(events.at(1).at("offset") == 2 * before.at(1).at("offset").get<int64_t>());
+	const auto outLength = before.at(1).at("crossfade").at("outLength").get<int64_t>();
+	CHECK(outLength == 80);
+	CHECK(events.at(1).at("crossfade").at("outLength") == 2 * outLength);
+}
+
+TEST_CASE("a tempo change retimes the linear MIDI parts of inactive versions too", "[unit]")
+{
+	Fixture f;
+	constexpr int64_t quarterSamples = 24000; // at 48 kHz and 120 BPM
+	const auto addPart = [&f](int64_t track)
+	{
+		const Json part =
+			f.call("midiPart.add", {{"track", track}, {"position", 8 * quarterSamples}, {"length", 4 * quarterSamples}})
+				.at("part");
+		f.call("note.add",
+			{{"part", part.at("id")},
+				{"notes", {{{"position", g_quarter}, {"length", g_quarter}, {"pitch", 60}, {"velocity", 1.0}}}}});
+	};
+	const int64_t versioned = f.track("midi");
+	const int64_t plain = f.track("midi");
+	addPart(versioned);
+	addPart(plain);
+	f.call("trackVersion.add", {{"tracks", {versioned}}});
+	f.call("project.set", {{"tempo", 60.0}});
+	f.call("trackVersion.activate", {{"tracks", {versioned}}, {"version", 1}});
+
+	const auto note = [&f](int64_t track) -> std::vector<int64_t>
+	{
+		const Json project = f.call("project.get");
+		for (const Json& part : project.at("midiParts"))
+			if (part.at("track") == track)
+			{
+				const Json& found = part.at("notes").at(0);
+				return std::vector<int64_t>{found.at("position").get<int64_t>(), found.at("length").get<int64_t>()};
+			}
+		FAIL("no part on track " << track);
+	};
+	CHECK(note(plain) == std::vector<int64_t>{g_quarter / 2, g_quarter / 2});
+	CHECK(note(versioned) == note(plain));
+}

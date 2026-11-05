@@ -61,5 +61,4 @@ The Track Versions pop-up menu at the track name and the inspector's Track Versi
 Rename Version's dialog (the engine has `trackVersion.set`) and Show Version Name in Track List; versions of the tempo
 and signature tracks (p. 230), and of chord, sampler and video tracks, which GNUbase doesn't have yet; Create Lanes
 from Versions and Create Versions from Lanes (p. 237); the Track Versions key command category; track archives.
-Pasting between versions works as copy and paste do, since only the active version's events are there. Pointing a
-media file at a file at another sample rate rescales only the active versions' events.
+Pasting between versions works as copy and paste do, since only the active version's events are there.

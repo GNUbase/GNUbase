@@ -415,35 +415,46 @@ namespace gnubase::engine
 	{
 		// A linear part stays where it is in samples, and its notes and controllers, in ticks from its start, stay at
 		// their time with it (reference manual p. 1446).
+		const auto retimePart = [&project, &before](MidiPart& part)
+		{
+			const time::Ticks startBefore = before.toTicks(part.position.value, project.sampleRate);
+			const time::Ticks start = project.tempo.toTicks(part.position.value, project.sampleRate);
+			const auto retime = [&](time::Ticks position)
+			{ return project.tempo.toTicks(before.toSeconds(startBefore + position)) - start; };
+			const auto retimeNote = [&retime](time::Ticks& position, time::Ticks& length)
+			{
+				const time::Ticks end = retime(position + length);
+				position = retime(position);
+				length = std::max<time::Ticks>(length > 0 ? 1 : 0, end - position);
+			};
+			for (auto& [noteId, note] : part.notes)
+			{
+				retimeNote(note.position, note.length);
+				if (note.origin)
+				{
+					retimeNote(note.origin->original.position, note.origin->original.length);
+					retimeNote(note.origin->quantized.position, note.origin->quantized.length);
+				}
+			}
+			for (auto& [controllerId, controller] : part.controllers)
+				controller.position = retime(controller.position);
+		};
 		std::set<ObjectId> changed;
 		if (project.tempo != before)
+		{
 			for (auto& [id, part] : project.midiParts)
-			{
-				if (part.position.base != time::TimeBase::Linear)
-					continue;
-				const time::Ticks startBefore = before.toTicks(part.position.value, project.sampleRate);
-				const time::Ticks start = project.tempo.toTicks(part.position.value, project.sampleRate);
-				const auto retime = [&](time::Ticks position)
-				{ return project.tempo.toTicks(before.toSeconds(startBefore + position)) - start; };
-				const auto retimeNote = [&retime](time::Ticks& position, time::Ticks& length)
+				if (part.position.base == time::TimeBase::Linear)
 				{
-					const time::Ticks end = retime(position + length);
-					position = retime(position);
-					length = std::max<time::Ticks>(length > 0 ? 1 : 0, end - position);
-				};
-				for (auto& [noteId, note] : part.notes)
-				{
-					retimeNote(note.position, note.length);
-					if (note.origin)
-					{
-						retimeNote(note.origin->original.position, note.origin->original.length);
-						retimeNote(note.origin->quantized.position, note.origin->quantized.length);
-					}
+					retimePart(part);
+					changed.insert(id);
 				}
-				for (auto& [controllerId, controller] : part.controllers)
-					controller.position = retime(controller.position);
-				changed.insert(id);
-			}
+			// The linear parts of inactive track versions too, which aren't shared copies.
+			for (auto& [id, track] : project.trackById)
+				for (TrackVersion& version : track.versions)
+					for (MidiPart& part : version.midiParts)
+						if (part.position.base == time::TimeBase::Linear)
+							retimePart(part);
+		}
 		// Shared copies that now hold different notes, such as copies before and after a tempo event, or a linear and
 		// a musical copy, can't share them: each copy that differs from its group's first becomes a real copy, as
 		// event.toRealCopy makes it. A first copy left alone is no longer shared (syncSharedParts).
