@@ -27,7 +27,8 @@ key editor's tools edit; lane presets, the line tool's modes and Auto Select Con
   which go from the start value to the end value and back every `period` ticks. On a note lane the notes starting in
   the range (or those of `notes`) take the value at their position; on a controller lane the lane's events of the
   channel in the range go and new ones come every `density` ticks and at the end, at most 65536 events. Period and
-  density default to the quantize grid. `to` lies no further than the part's end. One undo step.
+  density default to the quantize grid. `to` lies before the part's end, since playback leaves out events from there
+  on. One undo step.
 
 **Editor views** (`src/engine/document/editors.cpp`) have the lanes, view state like the rest of a view:
 
@@ -89,8 +90,8 @@ part, or else channel 0.
 
 ## Not yet
 
-The controller event editor's smart controls (p. 1187); ramps and curves between controller events and Type of New
-Controller Events (pp. 1159, 1181); the pitchbend lane's semitone grid and Snap Pitchbend Events (pp. 1173-1176);
+The controller event editor and its smart controls (p. 1187); ramps and curves between controller events and Type of New
+Controller Events (pp. 1159, 1181); the pitchbend lane's semitone grid, Grid Settings and Snap Pitchbend Events (pp. 1173-1176);
 SysEx, articulation and dynamics lanes, and the Dynamics Mapping Setup (pp. 1177-1179); the MIDI Controller Setup
 dialog, RPN and NRPN controllers (p. 1165); the poly pressure lane's pitch menu and editing its events with
 Ctrl+Alt (pp. 1179-1180); the context menu's Cut, Copy, Paste and Paste at Origin, and pasting notes as modulation
@@ -108,7 +109,7 @@ display; the selection rectangle on lanes; the info line for controller events; 
   velocities, for named notes, with undo; `controller.line`'s line, parabola (and reversed), sine, triangle and square
   on a controller lane, replacing only that lane's events in the range, a program change lane, its errors; on note
   lanes for velocities, off velocities, probabilities and variances, named notes and undo; events it draws playing
-  back through `midi.capture`; `controller.line` refusing positions past the part's end, also on a linear track, and
+  back through `midi.capture`; `controller.line` refusing positions at or past the part's end, also on a linear track, and
   lines of more than 65536 events; `note.apply` in a shared copy; the views' lanes, `showLanes`,
   `controllerSelection` and Auto Select Controllers.
 - `tests/controllerlanes_ui_tests.cpp` drives the app with `ui::Automation`: velocity bars at their notes, dragged,
