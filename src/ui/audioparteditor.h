@@ -101,9 +101,11 @@ namespace gnubase::ui
 		void begin(Rml::Event& event);
 		// Ends a gesture without its effect, as when its mouseup never came; whether the events need placing again.
 		bool cancel();
-		// While a gesture goes on, the document's mouse moves, mouseups and (in the capture phase) presses.
+		// While a gesture goes on, the document's mouseups and (in the capture phase) presses.
 		void listen(bool document);
 		void drag(Rml::Event& event);
+		// Shows the events a move moves m_moved further, also after a render during the drag.
+		void preview();
 		void release(Rml::Event& event);
 		void doubleClick(Rml::Event& event);
 
@@ -151,6 +153,7 @@ namespace gnubase::ui
 		std::pair<double, int> m_pressedAt;
 		Rml::Vector2f m_pressedMouse; // px
 		bool m_dragged = false;
+		std::pair<double, int> m_moved;            // a dragged move's seconds and lanes
 		std::optional<Event> m_pressed;            // the event pressed, as it was
 		uint64_t m_auditioned = 0;                 // the track the play or scrub tool auditions
 		Rml::ObserverPtr<Rml::Element> m_document; // whose resize fits the waveforms to the display again

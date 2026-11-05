@@ -187,14 +187,16 @@ TEST_CASE("Events to Part and Dissolve Part keep the events' lanes, the track's 
 	const auto lanes = [&]
 	{
 		std::vector<int> found;
-		for (const Json& event : f.call("project.get").at("audioEvents"))
+		const Json project = f.call("project.get");
+		for (const Json& event : project.at("audioEvents"))
 			if (event.at("id") == low || event.at("id") == high)
 				found.push_back(event.at("lane").get<int>());
 		return found;
 	};
 	// Into a part on the track's first lane: lanes 0 and 2 of the part.
 	const auto made = f.call("event.toPart", {{"events", {low, high}}}).at("events").at(0).get<uint64_t>();
-	for (const Json& part : f.call("project.get").at("audioParts"))
+	const Json project = f.call("project.get");
+	for (const Json& part : project.at("audioParts"))
 		if (part.at("id") == made)
 			CHECK(part.at("lane") == 0);
 	CHECK(lanes() == std::vector<int>{0, 2});

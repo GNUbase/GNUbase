@@ -41,10 +41,12 @@ namespace gnubase::ui
 		constexpr std::array<const char*, 7> g_toolLabels = {
 			"Select", "Erase", "Split", "Glue", "Mute", "Play", "Scrub"};
 
-		// The root's; a gesture's mouse moves and mouseup come from the document (listen()), so that it ends
-		// wherever the mouse goes up.
-		constexpr std::array<Rml::EventId, 3> g_events = {
-			Rml::EventId::Mousedown, Rml::EventId::Click, Rml::EventId::Dblclick};
+		// The root's. The part display is an RmlUi drag element (drag: drag): a gesture's mouse moves come as its
+		// drag events, and its dragend comes wherever the button goes up, also outside the window, where no element
+		// gets a mouseup. A gesture's mouseup in the window comes from the document (listen()), also for a press that
+		// didn't move, which makes no drag.
+		constexpr std::array<Rml::EventId, 5> g_events = {Rml::EventId::Mousedown, Rml::EventId::Click,
+			Rml::EventId::Dblclick, Rml::EventId::Drag, Rml::EventId::Dragend};
 
 		std::string attribute(const Rml::Element& element, const char* name)
 		{
@@ -384,6 +386,7 @@ namespace gnubase::ui
 					setClass(events->GetChild(i), "muted", found->mute);
 					setClass(events->GetChild(i), "outside", found->outside);
 				}
+		preview(); // a render while a move drags, as when the selection comes back, keeps showing it
 		if (m_waveforms && display != nullptr)
 		{
 			const double width = display->GetClientWidth() / dpRatio();
@@ -582,8 +585,13 @@ namespace gnubase::ui
 			}
 			press(event);
 			break;
-		case Rml::EventId::Mousemove:
+		case Rml::EventId::Drag:
 			drag(event);
+			break;
+		case Rml::EventId::Dragend:
+			// After the button went up outside the window; in it, the mouseup has ended the gesture already.
+			if (m_gesture != Gesture::None)
+				release(event);
 			break;
 		case Rml::EventId::Mouseup:
 			if (event.GetParameter("button", 0) == 0)
@@ -611,10 +619,8 @@ namespace gnubase::ui
 
 	void AudioPartEditor::press(Rml::Event& event)
 	{
-		// The document's mousedown (ProcessEvent) has normally ended a gesture whose mouseup never came already; this
-		// ends one that went on while the root moved to another document.
-		if (cancel())
-			render(); // the events the stale move showed elsewhere go back
+		// The document's mousedown (ProcessEvent) has ended a gesture whose mouseup never came already.
+		m_gesture = Gesture::None;
 		begin(event);
 		if (m_gesture != Gesture::None)
 			listen(true);
@@ -633,7 +639,6 @@ namespace gnubase::ui
 	{
 		if (Rml::Element* listened = m_listened.get())
 		{
-			listened->RemoveEventListener(Rml::EventId::Mousemove, this);
 			listened->RemoveEventListener(Rml::EventId::Mouseup, this);
 			listened->RemoveEventListener(Rml::EventId::Mousedown, this, true);
 		}
@@ -641,7 +646,6 @@ namespace gnubase::ui
 		if (const Rml::Element* root = m_root.get(); document && root != nullptr)
 			if (Rml::ElementDocument* owner = root->GetOwnerDocument())
 			{
-				owner->AddEventListener(Rml::EventId::Mousemove, this);
 				owner->AddEventListener(Rml::EventId::Mouseup, this);
 				// In the capture phase: before the press reaches the root or anything else in the document.
 				owner->AddEventListener(Rml::EventId::Mousedown, this, true);
@@ -775,9 +779,17 @@ namespace gnubase::ui
 		}
 		if (!dragged(event) || !m_pressed)
 			return; // a click only selects
-		const double dt =
-			m_gesture == Gesture::Move ? snap(m_pressed->start + seconds - m_pressedAt.first) - m_pressed->start : 0.0;
-		const int dl = lane - m_pressedAt.second;
+		m_moved = {
+			m_gesture == Gesture::Move ? snap(m_pressed->start + seconds - m_pressedAt.first) - m_pressed->start : 0.0,
+			lane - m_pressedAt.second};
+		preview();
+	}
+
+	void AudioPartEditor::preview()
+	{
+		if ((m_gesture != Gesture::Move && m_gesture != Gesture::MoveVertical) || !m_dragged || !m_pressed)
+			return;
+		const auto [dt, dl] = m_moved;
 		const Rml::Element* events = m_root.get()->QuerySelector(".ape-events");
 		if (events == nullptr)
 			return;

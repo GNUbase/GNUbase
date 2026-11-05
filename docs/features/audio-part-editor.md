@@ -26,7 +26,8 @@ tracks. Like the rest of a view it is view state: no undo steps, not saved, and 
 Edits are the `event.*` commands on the events in the parts ([parts-and-events.md](parts-and-events.md)); the events
 keep their own positions on the track, and `lane` is the lane they are on (`event.set`). The lanes of the events in an
 audio part are the part's own, not lanes of the track: the project window's Show Lanes doesn't count them
-([comping.md](comping.md)), and an event moved onto another lane in the editor adds no lane to its track.
+([comping.md](comping.md)), and an event moved onto another lane in the editor adds no lane to its track. Events to
+Part and Dissolve Part keep the events' lane numbers: lanes of the track become the part's and back.
 
 ## In the UI
 
@@ -44,7 +45,7 @@ hands them on and sends `event.*`, `audioEvent.set`, `audition.*` and `editor.se
                                     without, .multiple with several selected
   .editor-parts                     an .editor-part-row[track] per track, its .editor-part[part] at their time
   .ape-body                         scrolls vertically
-    .ape-display
+    .ape-display                    an RmlUi drag element (drag: drag), for the gestures
       .ape-lanes                    an .ape-lane[lane] per lane the events are on, and one more below
       .ape-events                   an .ape-event[part][event] per event (.selected, .muted, .inactive outside the
                                     part editing mode, .outside where its part hides it entirely)
@@ -57,9 +58,12 @@ that it can be selected and moved back. Code places the parts and the events in 
 events at their lane, 48 dp each. While the project's snap is on (`snap.set`), moves and splits snap to the project's
 quantize grid; with it off they go where the mouse is.
 
-A gesture (a move or an audition) hears the mouse in the editor's whole document until its mouseup, so it ends
-wherever the mouse goes up, with its effect there. A press anywhere in the document while one goes on, whose mouseup
-never came (released outside the window), ends it without its effect: a move moves nothing, an audition stops.
+A gesture (a move or an audition) follows the display's drag events, and its mouseup in the editor's whole document
+or the display's dragend ends it, so it ends wherever the button goes up, also outside the window, with its effect
+there. A press anywhere in the document while one goes on, whose end never came, ends it without its effect: a move
+moves nothing, an audition stops, and the events show where they are again. While a move drags, the events it moves
+show where it takes them, also after the editor shows the project again, as when the selection of the press comes
+back.
 
 | Tool | Gesture | Reference |
 |---|---|---|
@@ -98,7 +102,8 @@ of the window's size, not yet one of the lower zone's.
   and contents of the other kind refused, MIDI parts going back to the key editor, the Visibility tab's audio tracks,
   removed parts leaving and coming back with undo; the selected audio events of the editable parts, refused outside
   them, leaving with the part editing mode and with removed events, no undo step, cleared by closing; notes and
-  controller events of audio parts refused, and `showTracks` showing the parts of a `content` given with it.
+  controller events of audio parts refused, and `showTracks` showing the parts of a `content` given with it; Events
+  to Part and Dissolve Part keeping the events' lanes.
 - `tests/audioparteditor_ui_tests.cpp` drives the app with `ui::Automation`: Open/Close Editor with an audio part
   selected, the events at their time and lane, the extra lane, a waveform each, the part row and the Visibility tab's
   audio track; Open Audio Part Editor and the lower zone showing the editor; following the project window's
@@ -108,6 +113,6 @@ of the window's size, not yet one of the lower zone's.
   of an event that isn't selected showing and moving only it; moves and splits off the grid with snap off; the split,
   glue (nothing for an event that nothing continues), mute and erase tools with undo; the play tool auditioning up to
   the part's end and the scrub tool; typing a start and a volume on the info line; a move and an audition released
-  over the window's toolbar, and a press ending a gesture whose mouseup never came; an event out of its part shown,
-  selected and moved back.
+  over the window's toolbar and outside the window, and a press ending a gesture whose mouseup never came; the play
+  tool from an empty spot and after a part's end; an event out of its part shown, selected and moved back.
 - `tests/eventediting_tests.cpp`: a double click on an audio part opens it in the audio part editor.

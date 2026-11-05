@@ -1924,7 +1924,7 @@ Result:
 
 Engine command `event.dissolvePart`.
 
-Dissolve Part (Audio menu): removes audio parts (events, by id) and makes their audio events events of their own on the track, cut at the part's edges so that they play as they did; events the part hid entirely are removed. Locked parts are refused. Returns the events.
+Dissolve Part (Audio menu): removes audio parts (events, by id) and makes their audio events events of their own on the track, cut at the part's edges so that they play as they did; events the part hid entirely are removed. Locked parts are refused. The events keep their lane numbers, now lanes of the track. Returns the events.
 
 Arguments:
 
@@ -2200,7 +2200,7 @@ Result:
 
 Engine command `event.toPart`.
 
-Events to Part (Audio menu): puts audio events (events, by id) into a new audio part on their track, from the first start to the last end; events on several tracks make a part on each. Events already in a part, and locked ones, are refused. Returns the parts in events.
+Events to Part (Audio menu): puts audio events (events, by id) into a new audio part on their track, from the first start to the last end; events on several tracks make a part on each. Events already in a part, and locked ones, are refused. The part is on the track's first lane, and the events keep their lane numbers, now lanes of the part (the audio part editor's). Returns the parts in events.
 
 Arguments:
 

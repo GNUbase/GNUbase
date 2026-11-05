@@ -634,10 +634,13 @@ TEST_CASE("a gesture of the audio part editor ends when the button goes up outsi
 		ui::Point{static_cast<int>(std::lround(f.context().GetDimensions().x + 40.0)), pointOf(f.at(0.25, 0)).y}};
 	REQUIRE(pointOf(outside).x > shown.at("x").get<double>() + shown.at("width").get<double>());
 
-	// A move released there moves the event later than the part's end, in one undo step.
+	// A move released there moves the event to the time there, on the grid of sixteenths (an eighth of a second at
+	// 120 BPM), in one undo step.
 	const size_t before = f.steps();
 	f.drag(f.at(0.25, 0), outside);
-	REQUIRE(f.app.waitUntil([&] { return f.event(f.first).at("position").get<int64_t>() > 2 * g_second; }));
+	REQUIRE(f.app.waitUntil([&] { return f.event(f.first).at("position") != 0; }));
+	const double there = (pointOf(outside).x - shown.at("x").get<double>()) / shown.at("width").get<double>() * 2.0;
+	CHECK(std::abs(f.event(f.first).at("position").get<double>() - ((there - 0.25) * g_second)) <= g_second / 16.0);
 	f.settle();
 	CHECK(f.event(f.first).at("lane") == 0);
 	CHECK(f.steps() == before + 1);

@@ -49,10 +49,12 @@
 	min-height: 0;
 }
 
+/* A drag element: a gesture's drag ends wherever the button goes up, also outside the window. */
 .ape-display
 {
 	position: relative;
 	width: 100%;
+	drag: drag;
 }
 
 .ape-lane, .ape-event
