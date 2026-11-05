@@ -997,6 +997,20 @@ TEST_CASE("dissolve copies events into new tracks by channel or by pitch and mut
 		for (const auto& [id, note] : first.notes)
 			CHECK(original.notes.count(id) == 0);
 	}
+	SECTION("the new tracks take the track's MIDI modifiers, so their notes play as the part's did")
+	{
+		Modifiers modifiers;
+		modifiers.transpose = 3;
+		modifiers.velocityShift = -5;
+		modifiers.lengthCompression = {3, 2};
+		modifiers.random[0] = {RandomTarget::Velocity, -4, 4};
+		modifiers.range[1] = {RangeTarget::NoteFilter, 30, 90};
+		project.channels.at(project.trackById.at(drums).channel).modifiers = modifiers;
+		const PartChanges changes = dissolve(project, {source}, DissolveBy::Channel, false);
+		REQUIRE(changes.tracks.size() == 2);
+		for (const ObjectId track : changes.tracks)
+			CHECK(project.channels.at(project.trackById.at(track).channel).modifiers == modifiers);
+	}
 	SECTION("by pitch, with the parts shortened to their bars")
 	{
 		const PartChanges changes = dissolve(project, {source}, DissolveBy::Pitch, true);
@@ -1141,6 +1155,59 @@ TEST_CASE("bounce removes muted parts and plays the parts' transpose and velocit
 		CHECK(result.removedParts == std::vector<ObjectId>{silent});
 		CHECK(result.addedParts.empty());
 		CHECK(other.midiParts.empty());
+	}
+}
+
+TEST_CASE("merge plays the parts' transpose and velocity and, with includeInserts, the MIDI modifiers into the notes",
+	"[unit]")
+{
+	Project project = newProject();
+	const ObjectId piano = addTrack(project, TrackType::Instrument, "Piano");
+	const ObjectId part = addPart(project, piano, 0, g_quarter,
+		PartBuilder()
+			.note(1, 0, 10, 60, 0, velocityFromMidi1(64))
+			.note(2, 0, 10, 70, 0, velocityFromMidi1(64))
+			.note(3, 20, 10, 126, 0, velocityFromMidi1(64)) // transposed beyond 127 by the part: doesn't play
+			.part);
+	project.midiParts.at(part).transpose = 2;
+	project.midiParts.at(part).velocity = 10;
+	Modifiers& modifiers = project.channels.at(project.trackById.at(piano).channel).modifiers;
+	modifiers.transpose = 5;
+	modifiers.lengthCompression = {2, 1};
+	modifiers.random[0] = {RandomTarget::Position, g_quarter / 4, g_quarter / 4};
+	modifiers.range[0] = {RangeTarget::NoteFilter, 0, 70};
+	MergeSettings settings;
+	settings.end = project.tempo.toSamples(4 * g_quarter, project.sampleRate);
+	settings.tracks = {piano};
+	const auto merged = [&project](const PartChanges& changes) -> const MidiPart&
+	{
+		REQUIRE(changes.addedParts.size() == 1);
+		const MidiPart& result = project.midiParts.at(changes.addedParts[0]);
+		CHECK(result.transpose == 0);
+		CHECK(result.velocity == 0);
+		for (const auto& [id, note] : result.notes)
+			CHECK(velocityToMidi1(note.velocity) == 74);
+		return result;
+	};
+
+	SECTION("without includeInserts, the parts' transpose and velocity")
+	{
+		CHECK(notesOf(merged(merge(project, settings))) ==
+			std::vector<std::vector<int64_t>>{{0, 62, 10, 0}, {0, 72, 10, 0}});
+	}
+	SECTION("with includeInserts, also the track's MIDI modifiers, as playback applies them")
+	{
+		settings.includeInserts = true;
+		// 60 + 2 + 5 plays 1/16 later and twice as long; 70 + 7 is outside the note filter.
+		CHECK(
+			notesOf(merged(merge(project, settings))) == std::vector<std::vector<int64_t>>{{g_quarter / 4, 67, 20, 0}});
+	}
+	SECTION("bypassed modifiers don't count")
+	{
+		settings.includeInserts = true;
+		modifiers.bypass = true;
+		CHECK(notesOf(merged(merge(project, settings))) ==
+			std::vector<std::vector<int64_t>>{{0, 62, 10, 0}, {0, 72, 10, 0}});
 	}
 }
 
@@ -1578,6 +1645,22 @@ TEST_CASE("merge, dissolve and bounce commands return and announce the parts and
 			CHECK(part.at("controllers").size() == 4); // the pedal's release is at the range's end
 		}
 	CHECK(found);
+
+	// includeInserts plays the track's MIDI modifiers into the merged notes.
+	const Json channel = run(client, "project.get").at("tracks")[0].at("channel");
+	run(client, "channel.set", {{"channel", channel}, {"modifiers", {{"transpose", 12}}}});
+	const Json withInserts = run(client, "midi.merge",
+		{{"start", 0}, {"end", 48000}, {"tracks", {fixture.track}}, {"destination", fixture.track},
+			{"includeInserts", true}});
+	const auto insertsPart = withInserts.at("parts")[0].get<ObjectId>();
+	std::vector<int> pitches;
+	const Json withInsertsProject = run(client, "project.get");
+	for (const Json& part : withInsertsProject.at("midiParts"))
+		if (part.at("id") == insertsPart)
+			for (const Json& note : part.at("notes"))
+				pitches.push_back(note.at("pitch").get<int>());
+	std::sort(pitches.begin(), pitches.end());
+	CHECK(pitches == std::vector<int>{72, 76, 76});
 }
 
 TEST_CASE("merge refuses when no MIDI track plays; extract MIDI automation announces lanes and parts", "[integration]")

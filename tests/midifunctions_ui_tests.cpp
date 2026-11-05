@@ -379,17 +379,32 @@ TEST_CASE("MIDI > Merge MIDI in Loop merges between the locators, and Bounce MID
 	f.app.call("history.undo"); // the audio track
 	REQUIRE(f.app.waitUntil([&] { return f.count("tracks") == 1; }));
 
-	// Onto the selected track, erasing what was there: one part with the three notes.
+	// Onto the selected track, erasing what was there: one part with the three notes, which Include Inserts, on by
+	// default, plays the track's MIDI modifiers into.
+	std::vector<int> pitches;
+	for (const Json& note : f.notesOf(f.part))
+		pitches.push_back(note.at("pitch").get<int>() + 12);
+	std::sort(pitches.begin(), pitches.end());
+	const Json channel = f.app.call("project.get").at("tracks")[0].at("channel");
+	f.app.call("channel.set", {{"channel", channel}, {"modifiers", {{"transpose", 12}}}});
 	f.app.appUi().trackList()->select({f.track});
 	f.dialog("midi.mergeInLoop", "MIDI Merge Options");
+	const Json inserts = f.elements("#midi-function-inserts");
+	REQUIRE(inserts.size() == 1);
+	CHECK((inserts[0].contains("attributes") && inserts[0].at("attributes").contains("checked")));
 	f.click("#midi-function-erase");
 	f.ok();
 	CHECK(f.app.waitUntil(
 		[&]
 		{
 			const Json parts = f.app.call("project.get").at("midiParts");
-			return f.count("tracks") == 1 && parts.size() == 1 && parts[0].at("id") != f.part &&
-				parts[0].at("notes").size() == 3;
+			if (f.count("tracks") != 1 || parts.size() != 1 || parts[0].at("id") == f.part)
+				return false;
+			std::vector<int> merged;
+			for (const Json& note : parts[0].at("notes"))
+				merged.push_back(note.at("pitch").get<int>());
+			std::sort(merged.begin(), merged.end());
+			return merged == pitches;
 		}));
 
 	// Bounce MIDI: two parts on the track into one.
