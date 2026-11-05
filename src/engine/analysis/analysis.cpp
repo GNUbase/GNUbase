@@ -300,7 +300,8 @@ namespace gnubase::engine::analysis
 			if (frequency > sampleRate / 2.0)
 				break;
 			const auto low = static_cast<size_t>(std::ceil(frequency / halfStep / binWidth));
-			const size_t high = std::min(power.size() - 1, static_cast<size_t>(std::floor(frequency * halfStep / binWidth)));
+			const size_t high =
+				std::min(power.size() - 1, static_cast<size_t>(std::floor(frequency * halfStep / binWidth)));
 			double level = 0.0;
 			if (low <= high)
 			{

@@ -815,6 +815,26 @@
 	{
 		background-color: #c8c8c866;
 	}
+	.ds-display, .sa-graph
+	{
+		background-color: #000000;
+	}
+	.ds-section
+	{
+		background-color: #9e9e05;
+	}
+	.sa-bar
+	{
+		background-color: #ffff00;
+	}
+	.sa-bar.reference
+	{
+		background-color: #00ffff;
+	}
+	.st-header, .st-name
+	{
+		color: #c8c8c8;
+	}
 	.list-editor-header
 	{
 		color: #c8c8c8;

@@ -10,9 +10,9 @@ namespace gnubase::engine::analysis
 {
 	namespace
 	{
-		constexpr double g_hold = 0.020;          // seconds below the close threshold that close a section
-		constexpr double g_rmsPart = 0.010;       // seconds: Max. RMS windows start this far apart
-		constexpr int g_mantissaBits = 24;        // a float's
+		constexpr double g_hold = 0.020;    // seconds below the close threshold that close a section
+		constexpr double g_rmsPart = 0.010; // seconds: Max. RMS windows start this far apart
+		constexpr int g_mantissaBits = 24;  // a float's
 		constexpr int g_floatDepth = 32;
 
 		double linear(double decibels)
@@ -94,7 +94,8 @@ namespace gnubase::engine::analysis
 		{
 			if (section.end - section.start < minimumOpen)
 				continue;
-			const Section wide = {std::max<int64_t>(0, section.start - preRoll), std::min(m_frame, section.end + postRoll)};
+			const Section wide = {
+				std::max<int64_t>(0, section.start - preRoll), std::min(m_frame, section.end + postRoll)};
 			if (!result.empty() && wide.start <= result.back().end)
 				result.back().end = std::max(result.back().end, wide.end);
 			else

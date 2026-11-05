@@ -47,9 +47,9 @@ namespace gnubase::engine::analysis
 		double m_sampleRate = 0.0;
 		int m_channels = 1;
 		SilenceSettings m_settings;
-		double m_open = 0.0;  // the thresholds, linear
+		double m_open = 0.0; // the thresholds, linear
 		double m_close = 0.0;
-		int64_t m_hold = 0;   // the frames below the close threshold that close a section
+		int64_t m_hold = 0; // the frames below the close threshold that close a section
 		int64_t m_frame = 0;
 		int64_t m_start = -1; // where the open section started, or -1
 		int64_t m_last = 0;   // the open section's last frame at the close threshold
@@ -58,11 +58,11 @@ namespace gnubase::engine::analysis
 
 	struct ChannelStatistics
 	{
-		double minSample = 0.0; // the lowest sample
-		double maxSample = 0.0; // the highest sample
-		double peak = 0.0;      // the largest absolute sample
-		double dcOffset = 0.0;  // the mean of the samples
-		int bitDepth = 0;       // the bits the samples need, 32 for floating point, 0 for silence
+		double minSample = 0.0;      // the lowest sample
+		double maxSample = 0.0;      // the highest sample
+		double peak = 0.0;           // the largest absolute sample
+		double dcOffset = 0.0;       // the mean of the samples
+		int bitDepth = 0;            // the bits the samples need, 32 for floating point, 0 for silence
 		double averageRms = 0.0;     // the RMS of every sample
 		double maxRms = 0.0;         // the highest RMS of 50 ms windows, 10 ms apart; averageRms if shorter
 		std::optional<double> pitch; // Hz, the strongest frequency

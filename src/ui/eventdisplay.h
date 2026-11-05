@@ -269,6 +269,8 @@ namespace gnubase::ui
 		// audio.fadeOutFromRange and audio.adjustFadesToRange on the selection range, audio.crossfade (crossfades the
 		// selected audio events, or opens the crossfade editor for a crossfade they have), audio.removeFadeIn,
 		// audio.removeFadeOut, audio.removeFades and audio.fadeEditor (the fade dialog) on the selected audio events.
+		// audio.detectSilence, audio.spectrumAnalyzer and audio.statistics (#147, docs/features/audio-functions.md)
+		// open the Detect Silence dialog, the Spectrum Analyzer and the Statistics window for them.
 		// audio.removeVolumeCurve (#139, docs/features/volume-curves.md) resets the volume curves in the selection
 		// range, else removes the selected audio events'.
 		// With the range selection tool,

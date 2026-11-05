@@ -271,6 +271,26 @@ namespace gnubase::ui
 					if (const std::vector<uint64_t> events = selectedAudio(); !events.empty())
 						openFadeDialog("fade-editor.rml", {{"events", ids(events)}});
 				}},
+			// The audio functions (#147, docs/features/audio-functions.md), whose dialogs work on the selected audio
+			// events as the fade dialog does.
+			{"audio.detectSilence",
+				[this]
+				{
+					if (const std::vector<uint64_t> events = selectedAudio(); !events.empty())
+						openFadeDialog("detect-silence.rml", {{"events", ids(events)}});
+				}},
+			{"audio.spectrumAnalyzer",
+				[this]
+				{
+					if (const std::vector<uint64_t> events = selectedAudio(); !events.empty())
+						openFadeDialog("spectrum-analyzer.rml", {{"events", ids(events)}});
+				}},
+			{"audio.statistics",
+				[this]
+				{
+					if (const std::vector<uint64_t> events = selectedAudio(); !events.empty())
+						openFadeDialog("statistics.rml", {{"events", ids(events)}});
+				}},
 			// Crossfade (reference manual pp. 388-389): crossfades the selected events, or opens the crossfade editor
 			// for the crossfade that one of them has.
 			{"audio.crossfade", [this]

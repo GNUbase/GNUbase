@@ -62,7 +62,8 @@ namespace
 			});
 	}
 
-	std::vector<engine::analysis::Section> sections(const test::Audio& audio, const engine::analysis::SilenceSettings& settings)
+	std::vector<engine::analysis::Section> sections(
+		const test::Audio& audio, const engine::analysis::SilenceSettings& settings)
 	{
 		engine::analysis::SilenceDetector detector(audio.sampleRate, audio.channels, settings);
 		// In blocks that don't divide the sections, as files are read.
@@ -78,12 +79,14 @@ namespace
 	}
 
 	// Whether sections are those from and to, each within a millisecond.
-	bool near(const std::vector<engine::analysis::Section>& found, const std::vector<std::pair<double, double>>& expected)
+	bool near(
+		const std::vector<engine::analysis::Section>& found, const std::vector<std::pair<double, double>>& expected)
 	{
 		if (found.size() != expected.size())
 			return false;
 		for (size_t i = 0; i < found.size(); ++i)
-			if (std::abs(found[i].start - at(expected[i].first)) > 48 || std::abs(found[i].end - at(expected[i].second)) > 48)
+			if (std::abs(found[i].start - at(expected[i].first)) > 48 ||
+				std::abs(found[i].end - at(expected[i].second)) > 48)
 				return false;
 		return true;
 	}
@@ -116,7 +119,8 @@ namespace
 								   .at("media");
 			clip = call("clip.add", {{"media", media.at("id")}}).at("clip").at("id").get<int64_t>();
 			if (track == 0)
-				track = call("track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track").at("id").get<int64_t>();
+				track =
+					call("track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track").at("id").get<int64_t>();
 			event = call("audioEvent.add",
 				{{"track", track}, {"clip", clip}, {"position", g_rate}, {"offset", 0},
 					{"length", static_cast<int64_t>(audio.frames())}})
@@ -200,8 +204,8 @@ TEST_CASE("Detect Silence finds the tones of a signal, with its thresholds, mini
 	CHECK(sections(make(1.0, 1, [](int, double) { return 0.0; }), {}).empty());
 }
 
-TEST_CASE("clip.detectSilence and event.stripSilence split events at the sounds and add regions, as one undo step",
-	"[unit]")
+TEST_CASE(
+	"clip.detectSilence and event.stripSilence split events at the sounds and add regions, as one undo step", "[unit]")
 {
 	Fixture f;
 	const int64_t clip = f.add(tones(), "tones");
@@ -227,8 +231,8 @@ TEST_CASE("clip.detectSilence and event.stripSilence split events at the sounds 
 
 	// Strip Silence, Add as Regions and Apply Fades.
 	const Json processed = f.call("event.stripSilence",
-		{{"events", {f.event}}, {"minimumClosed", 0}, {"regions", true}, {"regionName", "Take"},
-			{"autoNumberStart", 3}, {"fades", 5}});
+		{{"events", {f.event}}, {"minimumClosed", 0}, {"regions", true}, {"regionName", "Take"}, {"autoNumberStart", 3},
+			{"fades", 5}});
 	CHECK(processed.at("sections") == 2);
 	REQUIRE(processed.at("events").size() == 2);
 	REQUIRE(processed.at("regions").size() == 2);
@@ -288,10 +292,10 @@ TEST_CASE("clip.statistics measures reference signals", "[unit]")
 
 	SECTION("between the samples: a sine at a quarter of the sample rate, its samples 3 dB below its peak")
 	{
-		const Json channel =
-			f.statistics(make(1.0, 1, [](int, double t) { return std::sin((2.0 * g_pi * 12000.0 * t) + (g_pi / 4.0)); }))
-				.at("channels")
-				.at(0);
+		const Json channel = f.statistics(make(1.0, 1, [](int, double t)
+											  { return std::sin((2.0 * g_pi * 12000.0 * t) + (g_pi / 4.0)); }))
+								 .at("channels")
+								 .at(0);
 		CHECK(number(channel.at("peakDb")) == Approx(-3.01).margin(0.01));
 		// Within the tolerance of EBU Tech 3341's true peak tests.
 		CHECK(number(channel.at("truePeakDb")) >= -0.4);
@@ -319,7 +323,8 @@ TEST_CASE("clip.statistics measures reference signals", "[unit]")
 		CHECK(number(result.at("maxRmsAllChannels")) == Approx(20.0 * std::log10(0.8)).margin(0.05));
 		CHECK(number(right.at("averageRms")) < number(right.at("maxRms")) - 5.0);
 
-		const Json eight = f.statistics(make(0.1, 1, [](int, double t) { return std::round(sine(50.0, 0.5, t) * 128.0) / 128.0; }));
+		const Json eight =
+			f.statistics(make(0.1, 1, [](int, double t) { return std::round(sine(50.0, 0.5, t) * 128.0) / 128.0; }));
 		CHECK(eight.at("channels").at(0).at("bitDepth") == 8);
 	}
 
@@ -345,12 +350,13 @@ TEST_CASE("clip.statistics measures reference signals", "[unit]")
 
 	SECTION("silence and a range of the clip")
 	{
-		const Json result = f.statistics(make(1.0, 1, [](int, double t) { return t < 0.5 ? 0.0 : sine(1000.0, 0.5, t); }));
+		const Json result =
+			f.statistics(make(1.0, 1, [](int, double t) { return t < 0.5 ? 0.0 : sine(1000.0, 0.5, t); }));
 		const Json silent = f.call("clip.statistics", {{"clip", f.clip}, {"end", g_rate / 2}});
 		CHECK(silent.at("frames") == g_rate / 2);
 		const Json channel = silent.at("channels").at(0);
-		for (const char* name : {"peakDb", "truePeakDb", "minSampleDb", "maxSampleDb", "dcOffsetDb", "pitch", "averageRms",
-				 "maxRms"})
+		for (const char* name :
+			{"peakDb", "truePeakDb", "minSampleDb", "maxSampleDb", "dcOffsetDb", "pitch", "averageRms", "maxRms"})
 		{
 			INFO(name);
 			CHECK(channel.at(name).is_null());
@@ -362,7 +368,8 @@ TEST_CASE("clip.statistics measures reference signals", "[unit]")
 			CHECK(value.is_null());
 		}
 		CHECK(number(result.at("channels").at(0).at("peakDb")) == Approx(-6.02).margin(0.01));
-		CHECK_THAT(f.fails("clip.statistics", {{"clip", f.clip}, {"end", 2 * g_rate}}), ContainsSubstring("within the clip"));
+		CHECK_THAT(
+			f.fails("clip.statistics", {{"clip", f.clip}, {"end", 2 * g_rate}}), ContainsSubstring("within the clip"));
 		CHECK_THAT(f.fails("clip.statistics", {{"clip", 999}}), ContainsSubstring("no clip 999"));
 	}
 }
@@ -371,8 +378,7 @@ TEST_CASE("clip.spectrum shows the levels of a signal's frequencies", "[unit]")
 {
 	Fixture f;
 	const int64_t clip =
-		f.add(make(1.0, 2,
-				  [](int channel, double t)
+		f.add(make(1.0, 2, [](int channel, double t)
 				  { return channel == 0 ? sine(1000.0, 0.5, t) + sine(5000.0, 0.1, t) : sine(250.0, 0.25, t); }),
 			"spectrum");
 	const Json result = f.call("clip.spectrum", {{"clip", clip}});
@@ -402,7 +408,8 @@ TEST_CASE("clip.spectrum shows the levels of a signal's frequencies", "[unit]")
 	CHECK(levelAt(1, 1000.0) < -90.0);
 
 	// A short range is one zero-padded window, and silence has no levels.
-	const Json silent = f.call("clip.spectrum", {{"clip", f.add(make(0.05, 1, [](int, double) { return 0.0; }), "silent")}});
+	const Json silent =
+		f.call("clip.spectrum", {{"clip", f.add(make(0.05, 1, [](int, double) { return 0.0; }), "silent")}});
 	for (const Json& level : silent.at("channels").at(0).at("levels"))
 		CHECK(level.is_null());
 }

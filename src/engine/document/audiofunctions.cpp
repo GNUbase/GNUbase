@@ -78,8 +78,7 @@ namespace gnubase::engine
 
 		// Reads the frames of a media file from range.start to range.end in blocks of interleaved frames: feed(frames,
 		// count) with the file's channels.
-		template <typename Feed>
-		int readRange(const MediaFile& media, Range range, Feed feed)
+		template <typename Feed> int readRange(const MediaFile& media, Range range, Feed feed)
 		{
 			try
 			{
@@ -180,10 +179,10 @@ namespace gnubase::engine
 		const Json boolean = {{"type", "boolean"}};
 		const Json string = {{"type", "string"}};
 		const Json ids = {{"type", "array"}, {"items", integer}};
-		const Json sectionsSchema = {{"type", "array"},
-			{"items", objectSchema({{"start", integer}, {"end", integer}}, {"start", "end"})}};
-		const Json settingsProperties = {{"openThreshold", number}, {"closeThreshold", number},
-			{"minimumOpen", number}, {"minimumClosed", number}, {"preRoll", number}, {"postRoll", number}};
+		const Json sectionsSchema = {
+			{"type", "array"}, {"items", objectSchema({{"start", integer}, {"end", integer}}, {"start", "end"})}};
+		const Json settingsProperties = {{"openThreshold", number}, {"closeThreshold", number}, {"minimumOpen", number},
+			{"minimumClosed", number}, {"preRoll", number}, {"postRoll", number}};
 		const auto rangeSchema = [&](Json more)
 		{
 			Json properties = {{"clip", integer}, {"start", integer}, {"end", integer}};
@@ -198,8 +197,7 @@ namespace gnubase::engine
 				"manual pp. 603-606). " +
 					rangeText + " " + g_settingsText +
 					" Reads the clip's file. Returns the clip and its sections, start to end in clip frames, by start.",
-				rangeSchema(settingsProperties), objectSchema({{"clip", integer}, {"sections", sectionsSchema}}),
-				true},
+				rangeSchema(settingsProperties), objectSchema({{"clip", integer}, {"sections", sectionsSchema}}), true},
 			[&model](CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
@@ -228,7 +226,8 @@ namespace gnubase::engine
 					"locked, is an error. Returns the events that remain and the regions, and the number of "
 					"sections.",
 				objectSchema(stripProperties, {"events"}),
-				objectSchema({{"events", ids}, {"regions", ids}, {"sections", integer}}, {"events", "regions", "sections"}),
+				objectSchema(
+					{{"events", ids}, {"regions", ids}, {"sections", integer}}, {"events", "regions", "sections"}),
 				false},
 			"Detect silence",
 			[&model](Project& project, CommandContext& context)
@@ -287,9 +286,9 @@ namespace gnubase::engine
 						{
 							const AudioEvent& part = project.audioEvents.at(piece);
 							const time::Samples middle = part.offset + (part.length / 2);
-							const bool inside = std::any_of(sections.begin(), sections.end(),
-								[middle](const analysis::Section& section)
-								{ return middle >= section.start && middle < section.end; });
+							const bool inside =
+								std::any_of(sections.begin(), sections.end(), [middle](const analysis::Section& section)
+									{ return middle >= section.start && middle < section.end; });
 							if (inside)
 								sounding.push_back(piece);
 							else
@@ -307,7 +306,8 @@ namespace gnubase::engine
 							const time::Samples length =
 								std::min(std::llround(fades / 1000.0 * media.sampleRate), part.length / 2);
 							run("audioEvent.setFades",
-								{{"event", piece}, {"fadeIn", {{"length", length}}}, {"fadeOut", {{"length", length}}}});
+								{{"event", piece}, {"fadeIn", {{"length", length}}},
+									{"fadeOut", {{"length", length}}}});
 						}
 						kept.push_back(piece);
 					}
@@ -315,8 +315,8 @@ namespace gnubase::engine
 				return Json{{"events", kept}, {"regions", made}, {"sections", count}};
 			});
 
-		const Json spectrumChannel =
-			objectSchema({{"channel", integer}, {"levels", {{"type", "array"}, {"items", nullable}}}}, {"channel", "levels"});
+		const Json spectrumChannel = objectSchema(
+			{{"channel", integer}, {"levels", {{"type", "array"}, {"items", nullable}}}}, {"channel", "levels"});
 		engine.registerCommand(
 			{"clip.spectrum", 1,
 				"The average spectrum of a clip (the Spectrum Analyzer, reference manual pp. 607-608). " + rangeText +
@@ -326,8 +326,9 @@ namespace gnubase::engine
 					"frequencies within 1/48 octave of it, where a sine reads its peak level (a full-scale sine "
 					"0 dBFS); null for silence. Reads the clip's file.",
 				rangeSchema(Json::object()),
-				objectSchema({{"clip", integer}, {"sampleRate", number}, {"frequencies", {{"type", "array"}, {"items", number}}},
-								 {"channels", {{"type", "array"}, {"items", spectrumChannel}}}},
+				objectSchema(
+					{{"clip", integer}, {"sampleRate", number}, {"frequencies", {{"type", "array"}, {"items", number}}},
+						{"channels", {{"type", "array"}, {"items", spectrumChannel}}}},
 					{"clip", "sampleRate", "frequencies", "channels"}),
 				true},
 			[&model](CommandContext& context)
@@ -349,7 +350,8 @@ namespace gnubase::engine
 				Json channels = Json::array();
 				for (size_t c = 0; c < spectra.size(); ++c)
 				{
-					const analysis::SpectrumCurve curve = analysis::spectrumCurve(spectra[c].finish(), media.sampleRate);
+					const analysis::SpectrumCurve curve =
+						analysis::spectrumCurve(spectra[c].finish(), media.sampleRate);
 					if (c == 0)
 						frequencies = curve.frequencies;
 					Json levels = Json::array();
@@ -373,15 +375,16 @@ namespace gnubase::engine
 			statisticsChannel["properties"][name] = number;
 			statisticsChannel["required"].push_back(name);
 		}
-		for (const char* name : {"minSampleDb", "maxSampleDb", "peakDb", "truePeakDb", "dcOffsetDb", "pitch",
-				 "averageRms", "maxRms"})
+		for (const char* name :
+			{"minSampleDb", "maxSampleDb", "peakDb", "truePeakDb", "dcOffsetDb", "pitch", "averageRms", "maxRms"})
 		{
 			statisticsChannel["properties"][name] = nullable;
 			statisticsChannel["required"].push_back(name);
 		}
-		const Json loudnessSchema = objectSchema({{"maxMomentary", nullable}, {"maxShortTerm", nullable},
-													 {"integrated", nullable}, {"range", nullable}, {"maxTruePeak", nullable}},
-			{"maxMomentary", "maxShortTerm", "integrated", "range", "maxTruePeak"});
+		const Json loudnessSchema =
+			objectSchema({{"maxMomentary", nullable}, {"maxShortTerm", nullable}, {"integrated", nullable},
+							 {"range", nullable}, {"maxTruePeak", nullable}},
+				{"maxMomentary", "maxShortTerm", "integrated", "range", "maxTruePeak"});
 		engine.registerCommand(
 			{"clip.statistics", 1,
 				"The statistics of a clip (the Statistics window, reference manual p. 609). " + rangeText +
@@ -424,7 +427,8 @@ namespace gnubase::engine
 							planar[c][i] = samples != nullptr ? samples[(i * planar.size()) + c] : 0.0F;
 						pointers.push_back(planar[c].data());
 					}
-					loudness.process(pointers.data(), static_cast<int>(planar.size()), static_cast<uint32_t>(count), measuring);
+					loudness.process(
+						pointers.data(), static_cast<int>(planar.size()), static_cast<uint32_t>(count), measuring);
 				};
 				readRange(media, range,
 					[&](const float* samples, size_t count, int channels)
@@ -464,24 +468,24 @@ namespace gnubase::engine
 				{
 					const analysis::ChannelStatistics& channel = statistics[c];
 					// Channels beyond the meter's have their sample peak.
-					const double truePeak = c < planar.size()
-						? std::max(static_cast<double>(truePeaks[c]), channel.peak)
-						: channel.peak;
+					const double truePeak =
+						c < planar.size() ? std::max(static_cast<double>(truePeaks[c]), channel.peak) : channel.peak;
 					maxRms = std::max(maxRms, channel.maxRms);
 					maxTruePeak = std::max(maxTruePeak, truePeak);
 					channels.push_back({{"channel", c}, {"minSample", channel.minSample},
 						{"minSampleDb", decibels(std::abs(channel.minSample))}, {"maxSample", channel.maxSample},
 						{"maxSampleDb", decibels(std::abs(channel.maxSample))}, {"peak", channel.peak},
-						{"peakDb", decibels(channel.peak)}, {"truePeak", truePeak},
-						{"truePeakDb", decibels(truePeak)}, {"dcOffset", channel.dcOffset},
-						{"dcOffsetPercent", channel.dcOffset * 100.0}, {"dcOffsetDb", decibels(std::abs(channel.dcOffset))},
-						{"bitDepth", channel.bitDepth}, {"pitch", orNull(channel.pitch)},
-						{"averageRms", aes17(channel.averageRms)}, {"maxRms", aes17(channel.maxRms)}});
+						{"peakDb", decibels(channel.peak)}, {"truePeak", truePeak}, {"truePeakDb", decibels(truePeak)},
+						{"dcOffset", channel.dcOffset}, {"dcOffsetPercent", channel.dcOffset * 100.0},
+						{"dcOffsetDb", decibels(std::abs(channel.dcOffset))}, {"bitDepth", channel.bitDepth},
+						{"pitch", orNull(channel.pitch)}, {"averageRms", aes17(channel.averageRms)},
+						{"maxRms", aes17(channel.maxRms)}});
 				}
 				return Json{{"clip", clip.id}, {"sampleRate", media.sampleRate}, {"frames", frames},
 					{"channels", channels}, {"maxRmsAllChannels", aes17(maxRms)},
 					{"loudness",
-						{{"maxMomentary", orNull(measured.momentaryMax)}, {"maxShortTerm", orNull(measured.shortTermMax)},
+						{{"maxMomentary", orNull(measured.momentaryMax)},
+							{"maxShortTerm", orNull(measured.shortTermMax)},
 							{"integrated", orNull(measured.integrated)}, {"range", orNull(measured.range)},
 							{"maxTruePeak", decibels(maxTruePeak)}}}};
 			});
