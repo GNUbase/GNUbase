@@ -120,6 +120,91 @@ TEST_CASE("command results reach the UI thread when the binding updates, after w
 	CHECK_FALSE(failure.value_or(engine::Result{}).ok());
 }
 
+TEST_CASE("the steps of one control go one at a time, the newest of a gesture replacing those that wait", "[unit]")
+{
+	engine::Engine engine;
+	ui::EngineBinding binding(engine);
+	engine::Client client(engine);
+	const Json channel = client.call("track.add", {{"type", "audio"}}).value.at("channel").at("id");
+	const auto set = [&channel](const char* key, double value)
+	{ return Json::array({Json{{"command", "channel.set"}, {"parameters", {{"channel", channel}, {key, value}}}}}); };
+	const auto position = [&client] { return client.call("history.get").value.at("position").get<int64_t>(); };
+	const auto read = [&client](const char* key)
+	{ return client.call("project.get").value.at("channels").at(0).at(key).get<double>(); };
+	REQUIRE(client.call("project.get").value.at("channels").at(0).at("id") == channel);
+	const int64_t before = position();
+
+	// A drag's steps: one is in flight, the newest waits, and the others never go (#716).
+	std::vector<double> answered;
+	for (int step = 1; step <= 10; ++step)
+		binding.sendStep(7, "volume", "Change Volume", set("volume", -step),
+			[&answered, step](const engine::Result& result)
+			{
+				CHECK(result.ok());
+				answered.push_back(-step);
+			});
+	CHECK(binding.waiting("history.transaction") == 1);
+	CHECK(binding.sending("volume"));
+	CHECK(!binding.sending("pan"));
+	updateUntil(binding, [&binding] { return !binding.sending("volume"); });
+	CHECK(answered == std::vector<double>{-1.0, -10.0});
+	CHECK(read("volume") == -10.0);
+	CHECK(position() == before + 1); // one undo step
+
+	// Steps without a gesture are steps of their own: none is replaced. Another control's don't wait for them.
+	for (int step = 1; step <= 3; ++step)
+		binding.sendStep(0, "volume", "Change Volume", set("volume", -20.0 - step));
+	binding.sendStep(0, "pan", "Change Pan", set("pan", 0.5));
+	CHECK(binding.waiting("history.transaction") == 2);
+	updateUntil(binding, [&binding] { return !binding.sending("volume") && !binding.sending("pan"); });
+	CHECK(read("volume") == -23.0);
+	CHECK(read("pan") == 0.5);
+	CHECK(position() == before + 5);
+
+	// Another gesture's step doesn't replace the last one's: each ends where it was left.
+	binding.sendStep(8, "volume", "Change Volume", set("volume", -30.0));
+	binding.sendStep(8, "volume", "Change Volume", set("volume", -31.0));
+	binding.sendStep(9, "volume", "Change Volume", set("volume", -40.0));
+	updateUntil(binding, [&binding] { return !binding.sending("volume"); });
+	CHECK(position() == before + 7);
+	REQUIRE(client.call("history.undo").ok());
+	CHECK(read("volume") == -31.0);
+
+	// A refused step reaches its done, and the next one goes after it.
+	std::optional<engine::Result> refused;
+	const Json unknown = Json::array({Json{{"command", "channel.set"}, {"parameters", {{"channel", 999999}}}}});
+	binding.sendStep(
+		10, "volume", "Change Volume", unknown, [&refused](const engine::Result& result) { refused = result; });
+	binding.sendStep(11, "volume", "Change Volume", set("volume", -50.0));
+	updateUntil(binding, [&binding] { return !binding.sending("volume"); });
+	REQUIRE(refused.has_value());
+	CHECK(!refused.value_or(engine::Result{}).ok());
+	CHECK(read("volume") == -50.0);
+
+	// An answer handed on before the last step that the engine took is older than the control; one after isn't.
+	CHECK(binding.ahead("volume", 0));
+	CHECK(!binding.ahead("volume", binding.handed()));
+	CHECK(!binding.ahead("pan", binding.handed()));
+
+	// A command that isn't a query goes after the steps that wait: an undo right after a drag undoes all of it.
+	const int64_t dragged = position();
+	for (int step = 1; step <= 5; ++step)
+		binding.sendStep(12, "volume", "Change Volume", set("volume", -60.0 + step));
+	CHECK(binding.waiting("history.transaction") == 1);
+	binding.send("history.undo");
+	CHECK(binding.waiting("history.transaction") == 2);
+	updateUntil(binding, [&binding] { return !binding.sending("volume") && binding.waiting("history.undo") == 0; });
+	CHECK(read("volume") == -50.0);
+	CHECK(position() == dragged);
+	// A query doesn't wait for them.
+	binding.sendStep(13, "volume", "Change Volume", set("volume", -1.0));
+	binding.sendStep(13, "volume", "Change Volume", set("volume", -2.0));
+	binding.send("project.get");
+	CHECK(binding.waiting("history.transaction") == 1);
+	updateUntil(binding, [&binding] { return !binding.sending("volume"); });
+	CHECK(read("volume") == -2.0);
+}
+
 TEST_CASE("the UI follows the events of every client while it subscribes", "[unit]")
 {
 	engine::Engine engine;
