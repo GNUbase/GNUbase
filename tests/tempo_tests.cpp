@@ -424,9 +424,13 @@ TEST_CASE("a tempo change reports only the linear parts whose notes or controlle
 	// One after both changes neither.
 	run(client, "tempo.add", point(40, 90.0));
 	CHECK(changedParts().empty());
-	// The project tempo changes both.
+	// The project tempo, the first tempo event's, retimes the earlier part; the later one lies after the 60 BPM event,
+	// where the tempo stays, so its notes keep their ticks from its start.
 	run(client, "project.set", {{"tempo", 100.0}});
-	CHECK(changedParts() == std::vector<ObjectId>{early, late});
+	CHECK(changedParts() == std::vector<ObjectId>{early});
+	// Removing the 60 BPM event retimes the later part only.
+	run(client, "tempo.remove", {{"positions", {6 * g_ticksPerQuarter}}});
+	CHECK(changedParts() == std::vector<ObjectId>{late});
 }
 
 TEST_CASE("tapping the project tempo and importing a MIDI file's tempo keep linear parts' notes at their time",

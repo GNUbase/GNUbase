@@ -305,8 +305,9 @@ namespace gnubase::engine
 		// with new note and controller ids, and a copy that matches no other becomes a real copy, as event.toRealCopy
 		// makes it.
 		std::map<ObjectId, std::vector<std::vector<MidiPart*>>> groups; // the sets of matching copies, in id order
-		for (auto& [id, part] : project.midiParts)
+		for (auto& entry : project.midiParts)
 		{
+			MidiPart& part = entry.second;
 			if (part.shared == 0)
 				continue;
 			std::vector<std::vector<MidiPart*>>& sets = groups[part.shared];
