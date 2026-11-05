@@ -234,6 +234,8 @@ namespace gnubase::engine
 		if (m_device)
 			m_device->stop();
 		m_deviceRunning = false;
+		if (m_slots)
+			m_slots->wake(); // no graph runs any more
 		stopCueing();
 	}
 
@@ -348,6 +350,7 @@ namespace gnubase::engine
 		// A new record bit depth is only announced, for the status line's record format.
 		const std::string depth = m_snapshots.latest().recordBitDepth;
 		bool announce = !m_recordBitDepth.empty() && depth != m_recordBitDepth;
+		bool reopened = false;
 		m_recordBitDepth = depth;
 		// A new project sample rate: the device changes to it if it can, otherwise it plays faster or slower.
 		const double rate = m_snapshots.latest().sampleRate;
@@ -362,6 +365,7 @@ namespace gnubase::engine
 				if (!m_lost)
 					m_parameters["sampleRate"] = rate;
 				reset(); // retry the lost device, or reopen the fallback at the new rate
+				reopened = true;
 			}
 			else if (m_lost)
 			{
@@ -372,6 +376,8 @@ namespace gnubase::engine
 		}
 		if (announce && m_engine != nullptr)
 			m_engine->broadcast("audio.changed", status());
+		if (reopened)
+			announceSlots(nullptr);
 		if (m_device &&
 			(m_snapshots.latest().revision != m_revision || autoMonitoring() != m_autoMonitoring ||
 				listenGains() != m_listenGains || m_settings.get(settings::g_audioMutePreSends) != m_mutePreSends))
@@ -538,8 +544,15 @@ namespace gnubase::engine
 		return found != m_sourceNodes.end() ? found->second : -1;
 	}
 
-	void AudioEngine::announceSlots(CommandContext& context)
+	void AudioEngine::announceSlots(CommandContext* context)
 	{
+		const auto announce = [this, context](Json data)
+		{
+			if (context != nullptr)
+				context->emit("plugin.changed", std::move(data));
+			else if (m_engine != nullptr)
+				m_engine->broadcast("plugin.changed", std::move(data));
+		};
 		std::map<ObjectId, std::string> statuses;
 		for (const RenderChannel& channel : m_snapshots.latest().channels)
 			for (const RenderSlot& slot : channel.slots)
@@ -551,7 +564,7 @@ namespace gnubase::engine
 				{
 					Json described = m_describeSlot(slot.id);
 					if (!described.is_null())
-						context.emit("plugin.changed", {{"slot", std::move(described)}});
+						announce({{"slot", std::move(described)}});
 				}
 				statuses[slot.id] = std::move(status);
 			}
@@ -852,6 +865,8 @@ namespace gnubase::engine
 			for (size_t i = 0; i < program.sequencers.size(); ++i)
 				program.sequencers[i].second->playOn(program.destinations[i]);
 			m_started.store(program.generation, std::memory_order_release);
+			if (m_slots)
+				m_slots->wake(); // plugins that left the graph can go: a semaphore release, which never blocks
 		}
 		const audio::DeviceFormat& format = m_device->format();
 		m_midiInput.clear();
@@ -1698,6 +1713,7 @@ namespace gnubase::engine
 			{
 				if (m_closed != closed)
 					m_engine->broadcast("audio.changed", status());
+				announceSlots(nullptr); // e.g. noDevice, if it closed the device
 				throw;
 			}
 		};
@@ -1757,6 +1773,7 @@ namespace gnubase::engine
 				announcingFailure([this, &context] { setDevice(context.parameters()); });
 				Json result = status();
 				context.emit("audio.changed", result);
+				announceSlots(&context);
 				return result;
 			});
 		Json settingsSchema = deviceSchema;
@@ -1777,6 +1794,7 @@ namespace gnubase::engine
 				announcingFailure([this, &context] { set(context.parameters()); });
 				Json result = status();
 				context.emit("audio.changed", result);
+				announceSlots(&context);
 				return result;
 			});
 		engine.registerCommand(
@@ -1917,6 +1935,7 @@ namespace gnubase::engine
 				Json result = status();
 				if (changed)
 					context.emit("audio.changed", result);
+				announceSlots(&context);
 				return result;
 			});
 		engine.registerCommand(
@@ -1934,9 +1953,14 @@ namespace gnubase::engine
 				announcingFailure([this, &changed] { changed = reconnect(); });
 				Json result = status();
 				if (changed)
+				{
 					context.emit("audio.changed", result);
+					announceSlots(&context);
+				}
 				else
+				{
 					context.leaveOutOfLog();
+				}
 				return result;
 			});
 		engine.registerCommand(
@@ -1954,7 +1978,7 @@ namespace gnubase::engine
 				if (m_device)
 				{
 					rebuild();
-					announceSlots(context);
+					announceSlots(&context);
 				}
 				context.leaveOutOfLog();
 				return Json::object();

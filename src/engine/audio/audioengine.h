@@ -114,8 +114,8 @@ namespace gnubase::engine
 
 		// Command thread: the status of a slot's plugin, as the plugin.* commands report it.
 		std::string slotStatus(ObjectId slot) const;
-		// Command thread: describes a slot for the plugin.changed that audio.updatePlugins emits when the status of its
-		// plugin changed (ProjectModel::describeSlot).
+		// Command thread: describes a slot for the plugin.changed that audio.updatePlugins and the device commands emit
+		// when the status of its plugin changed (ProjectModel::describeSlot).
 		void setSlotDescriber(std::function<Json(ObjectId slot)> describe) { m_describeSlot = std::move(describe); }
 		// Command thread: where a recording that starts writes, in which format, and which tracks it records, from
 		// the project; the audio engine adds the device inputs of each track's input bus and the transport's audio
@@ -275,8 +275,10 @@ namespace gnubase::engine
 		void attachStrips(const RenderSnapshot& snapshot, graph::GraphDesc& desc);
 		// Brings the slots' plugins in line with the snapshot and gives the slot nodes those that are ready.
 		void attachSlots(const RenderSnapshot& snapshot, graph::GraphDesc& desc);
-		// Emits plugin.changed for the slots whose plugin's status changed since the last call.
-		void announceSlots(CommandContext& context);
+		// Emits plugin.changed for the slots whose plugin's status changed since the last call, e.g. to or from
+		// noDevice when the device closed or opened. Without a context, as for a failed command, every client gets it
+		// at once.
+		void announceSlots(CommandContext* context);
 		// The node that plays what a channel plays in the graph rebuild describes: its source node if it has plugin
 		// slots (graph::describe), else its own; -1 for none.
 		int sourceNode(ObjectId channel) const;
