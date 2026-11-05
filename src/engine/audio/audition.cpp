@@ -341,6 +341,8 @@ namespace gnubase::engine
 				const auto found = std::find_if(snapshot.media.begin(), snapshot.media.end(),
 					[&result](const RenderMedia& media) { return media.id == result.subject.media; });
 				require(found != snapshot.media.end(), "no media file " + std::to_string(result.subject.media));
+				require(found->sampleRate > 0.0 && found->length >= 0, // a hand-edited project's, say
+					"media file " + std::to_string(found->id) + " has no sample rate or length");
 				require(position >= 0 && position <= found->length,
 					"position must be 0 to " + std::to_string(found->length) + " sample frames of the media file");
 				const double ratio = snapshot.sampleRate / found->sampleRate;

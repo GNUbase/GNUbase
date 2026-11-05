@@ -631,7 +631,10 @@ namespace gnubase::ui
 				}
 		if (rml != m_regionRows)
 		{
-			list->SetInnerRML(rml); // ends typing in a field: its region changed
+			// The regions changed meanwhile, such as by an undo: what is being typed goes, before its field does,
+			// whose blur would otherwise take it.
+			finishEditing(false);
+			list->SetInnerRML(rml);
 			m_regionRows = rml;
 		}
 		if (!m_editing)
@@ -904,9 +907,9 @@ namespace gnubase::ui
 		m_editing.reset();
 		if (field == nullptr)
 			return;
-		const std::string typed = field->GetAttribute<Rml::String>("value", m_edited);
+		const auto typed = field->GetAttribute<Rml::String>("value", m_edited);
 		setClass(field, "off", true);
-		if (Rml::Element* row = field->GetParentNode())
+		if (const Rml::Element* row = field->GetParentNode())
 			for (int i = 0; i < row->GetNumChildren(); ++i)
 				if (row->GetChild(i)->HasAttribute("field"))
 					setClass(row->GetChild(i), "off", false);
@@ -915,8 +918,9 @@ namespace gnubase::ui
 			Json parameters = {{"clip", m_view.at("clip")}, {"region", m_editedRegion}};
 			if (m_editedField == "name" && !typed.empty())
 				parameters["name"] = typed;
-			else if (const std::optional<int64_t> frame = integer(typed); frame && m_editedField != "name")
-				parameters[m_editedField] = *frame;
+			else if (const std::optional<int64_t> frame = integer(typed);
+				frame && m_editedField != "name" && frame != integer(m_edited))
+				parameters[m_editedField] = *frame; // not 0100 for 100: no undo step that changes nothing
 			if (parameters.size() > 2)
 				m_binding.send("clip.setRegion", parameters); // the engine refuses what isn't a section of the clip
 		}
