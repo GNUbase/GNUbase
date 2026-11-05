@@ -826,7 +826,7 @@ TEST_CASE("plugin.changed announces the slots whose status changes when the devi
 	// A slot added meanwhile has no device either.
 	const Json added = run(client, "plugin.insert", {{"channel", channel}, {"plugin", "builtin:gainPan"}}).at("slot");
 	CHECK(added.at("status") == "noDevice");
-	const Json gain = added.at("id");
+	const Json& gain = added.at("id");
 
 	// It returns, with the same format: the plugins are as they were, and the new one is made.
 	run(client, "audio.simulateDeviceLoss", {{"connected", true}});
