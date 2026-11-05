@@ -46,8 +46,9 @@ namespace gnubase::engine
 			return up && start < tick ? bars.barStart(bar + 1) : start;
 		}
 
-		// A part's start and end in the project's samples.
-		std::pair<time::Samples, time::Samples> partSpan(const Project& project, const MidiPart& part)
+		// A MIDI or audio part's start and end in the project's samples.
+		template <typename Part>
+		std::pair<time::Samples, time::Samples> partSpan(const Project& project, const Part& part)
 		{
 			const time::Position end{part.position.base, part.position.value + part.length};
 			return {time::toSamples(part.position, project.tempo, project.sampleRate),
@@ -67,22 +68,28 @@ namespace gnubase::engine
 		};
 
 		// The lane after the highest one that the track's events or parts in [start, end) are on, or 0 if there are
-		// none: where a cycle recording's takes go.
+		// none: where a cycle recording's takes go. The lane of an audio event in an audio part is one of the part's,
+		// not of the track: the part's lane counts instead.
 		int firstFreeLane(const Project& project, ObjectId track, time::Samples start, time::Samples end)
 		{
 			int lane = 0;
 			for (const auto& [id, event] : project.audioEvents)
 			{
 				const EventSpan span = eventSpan(project, event);
-				if (event.track == track && span.start < end && span.end > start)
+				if (event.track == track && event.part == 0 && span.start < end && span.end > start)
 					lane = std::max(lane, event.lane + 1);
 			}
-			for (const auto& [id, part] : project.midiParts)
+			const auto partLanes = [&](const auto& parts)
 			{
-				const auto [partStart, partEnd] = partSpan(project, part);
-				if (part.track == track && partStart < end && partEnd > start)
-					lane = std::max(lane, part.lane + 1);
-			}
+				for (const auto& [id, part] : parts)
+				{
+					const auto [partStart, partEnd] = partSpan(project, part);
+					if (part.track == track && partStart < end && partEnd > start)
+						lane = std::max(lane, part.lane + 1);
+				}
+			};
+			partLanes(project.midiParts);
+			partLanes(project.audioParts);
 			return lane;
 		}
 

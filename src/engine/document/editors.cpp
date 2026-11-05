@@ -286,7 +286,8 @@ namespace gnubase::engine
 		// Audio parts show in the audio part editor, MIDI parts in the key editor or the list editor.
 		void requireContent(const Project& project, const EditorView& view)
 		{
-			require(view.parts.empty() || (project.audioParts.count(view.parts.front()) != 0) == showsAudio(view),
+			require(std::all_of(view.parts.begin(), view.parts.end(),
+						[&](ObjectId part) { return (project.audioParts.count(part) != 0) == showsAudio(view); }),
 				"audio parts show in the audio part editor (content audioPart), MIDI parts in the key editor or the "
 				"list editor");
 		}

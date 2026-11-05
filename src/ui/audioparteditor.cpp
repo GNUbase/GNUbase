@@ -613,12 +613,11 @@ namespace gnubase::ui
 	{
 		// The document's mousedown (ProcessEvent) has normally ended a gesture whose mouseup never came already; this
 		// ends one that went on while the root moved to another document.
-		const bool stale = cancel();
+		if (cancel())
+			render(); // the events the stale move showed elsewhere go back
 		begin(event);
 		if (m_gesture != Gesture::None)
 			listen(true);
-		else if (stale)
-			render();
 	}
 
 	bool AudioPartEditor::cancel()
