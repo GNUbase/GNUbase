@@ -46,6 +46,19 @@ namespace gnubase::engine
 		return order;
 	}
 
+	bool operator==(const TrackVersion& a, const TrackVersion& b)
+	{
+		const auto sameParts = [](const MidiPart& x, const MidiPart& y)
+		{ return sameProperties(x, y) && x.notes == y.notes && x.controllers == y.controllers; };
+		return a.id == b.id && a.name == b.name && a.audioEvents == b.audioEvents && a.audioParts == b.audioParts &&
+			std::equal(a.midiParts.begin(), a.midiParts.end(), b.midiParts.begin(), b.midiParts.end(), sameParts);
+	}
+
+	std::vector<TrackVersion> versionsOf(const Track& track)
+	{
+		return track.versions.empty() ? std::vector<TrackVersion>(1) : track.versions;
+	}
+
 	void renumber(Project& project, MidiPart& part)
 	{
 		std::map<ObjectId, Note> notes;

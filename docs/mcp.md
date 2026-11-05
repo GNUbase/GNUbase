@@ -4999,6 +4999,96 @@ Result:
 - `bpm`: number, required
 - `position`: integer or null, required
 
+### trackVersion
+
+#### `trackVersion_activate`
+
+Engine command `trackVersion.activate`.
+
+Activates the version with the ID version on each of the tracks that has one (pp. 233-234): its events and parts play and show, while those of the version that was active stay with that one. Fails if none of the tracks has such a version. tracks: audio, instrument and MIDI tracks; each has its first version, v1 with ID 1, until it gets more (versions and activeVersion in project.get).  Returns the tracks with such a version, with their versions; emits track.changed for each that changed, and the events of the events and parts that come and go.
+
+Arguments:
+
+- `tracks`: array of integer, required
+- `version`: integer, required
+
+Result:
+
+- `tracks`: array of object, required
+
+#### `trackVersion_add`
+
+Engine command `trackVersion.add`.
+
+New Version (reference manual p. 232): gives each of the tracks a new, empty version and activates it; the events and parts of the version that was active stay with it. The new versions share a new ID; each is named vN (N one more than the track's number of versions, or the next number none of its versions' names has) unless name is given. tracks: audio, instrument and MIDI tracks; each has its first version, v1 with ID 1, until it gets more (versions and activeVersion in project.get).  Returns the tracks with their versions; emits track.changed for each, and the events of the events and parts that come and go.
+
+Arguments:
+
+- `name`: string
+- `tracks`: array of integer, required
+
+Result:
+
+- `tracks`: array of object, required
+
+#### `trackVersion_assignCommonId`
+
+Engine command `trackVersion.assignCommonId`.
+
+Assign Common Version ID (p. 233): gives the active versions of the tracks a new ID they share, so that trackVersion.activate activates them together. tracks: audio, instrument and MIDI tracks; each has its first version, v1 with ID 1, until it gets more (versions and activeVersion in project.get).  Returns the tracks with their versions; emits track.changed for each, and the events of the events and parts that come and go.
+
+Arguments:
+
+- `tracks`: array of integer, required
+
+Result:
+
+- `tracks`: array of object, required
+
+#### `trackVersion_duplicate`
+
+Engine command `trackVersion.duplicate`.
+
+Duplicate Version (p. 234): gives each of the tracks a new version with a copy of the active one's events and parts, named and with an ID as trackVersion.add gives them, and activates it. tracks: audio, instrument and MIDI tracks; each has its first version, v1 with ID 1, until it gets more (versions and activeVersion in project.get).  Returns the tracks with their versions; emits track.changed for each, and the events of the events and parts that come and go.
+
+Arguments:
+
+- `name`: string
+- `tracks`: array of integer, required
+
+Result:
+
+- `tracks`: array of object, required
+
+#### `trackVersion_remove`
+
+Engine command `trackVersion.remove`.
+
+Delete Version (p. 235): deletes the active version of each of the tracks that have more than one, with its events and parts, and activates the version before it (the next one for the first). Fails if every track has only one version. tracks: audio, instrument and MIDI tracks; each has its first version, v1 with ID 1, until it gets more (versions and activeVersion in project.get).  Returns the tracks that lost a version, with their versions; emits track.changed for each, and the events of the events and parts that come and go.
+
+Arguments:
+
+- `tracks`: array of integer, required
+
+Result:
+
+- `tracks`: array of object, required
+
+#### `trackVersion_set`
+
+Engine command `trackVersion.set`.
+
+Rename Version (p. 236): names the active version of each of the tracks. tracks: audio, instrument and MIDI tracks; each has its first version, v1 with ID 1, until it gets more (versions and activeVersion in project.get).  Returns the tracks with their versions; emits track.changed for each, and the events of the events and parts that come and go.
+
+Arguments:
+
+- `name`: string, required
+- `tracks`: array of integer, required
+
+Result:
+
+- `tracks`: array of object, required
+
 ### track
 
 #### `track_add`

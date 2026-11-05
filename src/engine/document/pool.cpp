@@ -106,8 +106,7 @@ namespace gnubase::engine
 		std::map<ObjectId, int> clipUses(const Project& project)
 		{
 			std::map<ObjectId, int> uses;
-			for (const auto& [id, event] : project.audioEvents)
-				++uses[event.clip];
+			forEveryAudioEvent(project, [&uses](const AudioEvent& event) { ++uses[event.clip]; });
 			return uses;
 		}
 
@@ -782,6 +781,13 @@ namespace gnubase::engine
 							m_edits.at("audioEvent.remove").handler(project, inner);
 							events.push_back(eventId);
 						}
+						// Inactive track versions lose theirs too.
+						for (auto& [trackId, track] : project.trackById)
+							for (TrackVersion& version : track.versions)
+								version.audioEvents.erase(
+									std::remove_if(version.audioEvents.begin(), version.audioEvents.end(),
+										[clipId](const AudioEvent& event) { return event.clip == clipId; }),
+									version.audioEvents.end());
 						project.clips.erase(clipId);
 						context.emit("clip.removed", {{"clip", clipId}});
 						clips.push_back(clipId);

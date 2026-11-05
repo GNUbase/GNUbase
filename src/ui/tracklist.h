@@ -166,6 +166,11 @@ namespace gnubase::ui
 		void closedRemoveDialog(Rml::Event& event);
 		// Runs the commands as one undo step.
 		void transaction(const std::string& description, engine::Json commands);
+		// Track versions (docs/features/track-versions.md): the selected audio, instrument and MIDI tracks, and the
+		// first one's versions in the Project menu's Track Versions, where a click activates one on them.
+		std::vector<uint64_t> versioned() const;
+		void showVersions();
+		void versionEvent(Rml::Event& event);
 
 		EventDisplay& m_display;
 		EngineBinding& m_binding;
@@ -176,6 +181,8 @@ namespace gnubase::ui
 		Rml::Element* m_dropLine = nullptr;
 		Rml::Element* m_parameterMenu = nullptr; // the document's #automation-parameter-menu
 		uint64_t m_parameterLane = 0;            // the automation lane it was opened for
+		Rml::Element* m_versionMenu = nullptr;   // the document's #track-versions-list
+		std::string m_versionRml;                // what it shows
 		std::set<uint64_t> m_selectedLanes;      // the selected automation tracks' lanes
 		std::vector<Row> m_tracks;               // every track in the project's order
 		std::map<uint64_t, size_t> m_index;
