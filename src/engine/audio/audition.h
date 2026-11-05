@@ -27,10 +27,10 @@ namespace gnubase::engine
 	public:
 		Audition();
 
-		// Command thread: plays the track from position on, streamed from its clips, until stop. channels: the main
-		// mix's; maxFrames: the device's block size.
+		// Command thread: plays the track from position on, streamed from its clips, up to end (exclusive, a project
+		// sample), then nothing until stop. channels: the main mix's; maxFrames: the device's block size.
 		void play(ObjectId track, const Playback::Track& source, std::map<ObjectId, std::string> mediaPaths,
-			double sampleRate, time::Samples position, int channels, uint32_t maxFrames);
+			double sampleRate, time::Samples position, time::Samples end, int channels, uint32_t maxFrames);
 
 		// Command thread: plays the track from where the last scrub of it got to, to position, forwards or backwards,
 		// in seconds (default: the time since that scrub, from 0.01 to 0.1 seconds), so speed and pitch follow how
@@ -61,9 +61,10 @@ namespace gnubase::engine
 		{
 			uint64_t serial = 0; // counts up with each new state
 			int channels = 0;
-			// Playing: the track's player from start on, and its output, channels blocks of maxFrames frames.
+			// Playing: the track's player from start to end, and its output, channels blocks of maxFrames frames.
 			std::shared_ptr<TrackPlayer> player;
 			time::Samples start = 0;
+			time::Samples end = 0;
 			uint32_t maxFrames = 0;
 			std::vector<float> buffer;
 			std::vector<float*> audio; // into buffer, per channel

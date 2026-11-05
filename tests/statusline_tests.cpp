@@ -7,12 +7,16 @@
 #include "testutils/testutils.h"
 #include "ui/automation.h"
 
+#include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/ElementDocument.h>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <regex>
@@ -114,9 +118,31 @@ TEST_CASE("the status line shows the remaining record time of the record-enabled
 	test::UiApp app({1000, 700});
 	app.appUi().showProject();
 	CHECK(app.waitUntil([&] { return text(app, "#record-time") == "Max. Record Time: -"; }));
+	Rml::Element* recordTime = nullptr;
+	Rml::Context& context = app.main().context();
+	for (int i = 0; i < context.GetNumDocuments() && recordTime == nullptr; ++i)
+		recordTime = context.GetDocument(i)->GetElementById("record-time");
+	REQUIRE(recordTime != nullptr);
 	const Json added = app.call("track.add", {{"type", "audio"}, {"channels", 1}});
 	app.call("channel.set", {{"channel", added.at("channel").at("id")}, {"recordEnable", true}});
-	// Hours and minutes, or minutes and seconds under an hour; it follows within a second or so.
+
+	// Hours and minutes, or minutes and seconds under an hour; it follows within a second or so. With no input, read
+	// from the element itself (the UI tools are posted work, which draws every window): the project window draws the
+	// new text in the step it changes in, though the status line asks for it quietly (#715).
+	bool changed = false;
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+	while (!changed && std::chrono::steady_clock::now() < deadline)
+	{
+		const std::string before = recordTime->GetInnerRML();
+		const uint64_t frames = app.main().frames();
+		app.shell().step(std::chrono::milliseconds(20));
+		if (recordTime->GetInnerRML() != before)
+		{
+			changed = true;
+			CHECK(app.main().frames() == frames + 1);
+		}
+	}
+	REQUIRE(changed);
 	const std::regex shown(R"(Max\. Record Time: (\d+ h \d\d min|\d+ min \d\d s))");
-	CHECK(app.waitUntil([&] { return std::regex_match(text(app, "#record-time"), shown); }));
+	CHECK(std::regex_match(text(app, "#record-time"), shown));
 }
