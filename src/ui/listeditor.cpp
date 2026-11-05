@@ -905,6 +905,7 @@ namespace gnubase::ui
 
 	void ListEditor::begin(Rml::Event& event)
 	{
+		m_gesture = Gesture::None;
 		const Rml::Element* root = m_root.get();
 		Rml::Element* target = event.GetTargetElement();
 		if (closest(target, "list-editor-body", root) == nullptr)

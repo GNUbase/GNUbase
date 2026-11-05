@@ -221,7 +221,8 @@ namespace
 		}
 
 		// The editor window's context: through it a test presses a button and keeps it down, as a mouseup lost
-		// outside the window leaves it, where RmlUi has no element to send the mouseup to.
+		// outside the window leaves it, where RmlUi has no element to send the mouseup to, or moves the mouse in
+		// steps of its own.
 		Rml::Context& context()
 		{
 			const ui::Window* shown = app.shell().find(app.appUi().editorWindowId());
@@ -528,10 +529,7 @@ TEST_CASE("a move, draw or value display drag released outside the window ends t
 	// A move released below the window moves the events by as far as the mouse went, in one undo step.
 	const ui::Point grip = f.grip(f.low);
 	const int half = f.halfway(f.low);
-	f.press(grip.x, grip.y);
-	f.moveTo(half, grip.y);
-	f.moveTo(half, below);
-	f.context().ProcessMouseButtonUp(0, 0);
+	f.app.ui().drag(f.window, Fixture::point(grip.x, grip.y), Fixture::point(half, below));
 	f.app.shell().step(std::chrono::milliseconds(0));
 	REQUIRE(f.app.waitUntil([&] { return f.event("notes", f.low).at("position") == 2 * g_quarter; }));
 	CHECK(f.event("notes", f.high).at("position") == g_quarter);
@@ -541,9 +539,7 @@ TEST_CASE("a move, draw or value display drag released outside the window ends t
 	f.tool("draw");
 	const std::string filler = ".list-filler .list-event-lane";
 	const int drawAt = f.xAt(filler, 0.26);
-	f.press(drawAt, f.middle(filler));
-	f.moveTo(drawAt, below);
-	f.context().ProcessMouseButtonUp(0, 0);
+	f.app.ui().drag(f.window, Fixture::point(drawAt, f.middle(filler)), Fixture::point(drawAt, below));
 	f.app.shell().step(std::chrono::milliseconds(0));
 	REQUIRE(f.app.waitUntil([&] { return f.notes() == 3; }));
 	const Json project = f.app.call("project.get");
@@ -554,8 +550,9 @@ TEST_CASE("a move, draw or value display drag released outside the window ends t
 	f.settle(f.high);
 	CHECK(f.notes() == 3);
 
-	// A value display drag pulled past the window's right edge sets the value it last set there. The bar then no
-	// longer follows the mouse over the value display, and a click on the header sets nothing.
+	// A value display drag pulled past the window's right edge sets the value it last set there: through the context,
+	// so that it leaves the lane at a value the test knows. The bar then no longer follows the mouse over the value
+	// display, and a click on the header sets nothing.
 	const std::string volume = row("controller", f.events[0]);
 	const std::string values = volume + " .list-value-lane";
 	const int y = f.middle(values);
