@@ -797,6 +797,19 @@ TEST_CASE("marker CSV files from spreadsheets: columns by their header, in any o
 	CHECK(list[1].at("number") == 1);
 }
 
+TEST_CASE("marker CSV files: the rows of one Track Number are one track with the name in spaces", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	const std::filesystem::path path = dir.path() / "spaces.csv";
+	std::ofstream(path, std::ios::binary) << "Track Number,Track,Position\n1,Verse,1\n1, Verse ,2\n";
+	Engine engine;
+	Client client(engine);
+	const Json imported = run(client, "marker.import", {{"path", path.u8string()}});
+	REQUIRE(imported.at("tracks").size() == 1);
+	CHECK(imported.at("markers") == 2);
+	CHECK(run(client, "project.get").at("tracks")[0].at("name") == "Verse");
+}
+
 TEST_CASE("marker files that can't be read or written change nothing", "[integration]")
 {
 	const gnubase::test::TempDir dir;
@@ -832,6 +845,14 @@ TEST_CASE("marker files that can't be read or written change nothing", "[integra
 	CHECK_THAT(rejected("base.csv", "Time Base,Type,Position\nMusical,Position,1\nLinear,Position,2\n"),
 		ContainsSubstring("row 3"));
 	CHECK_THAT(rejected("tracknumber.csv", "Track Number,Position\n1,1\nx,2\n"), ContainsSubstring("row 3"));
+	// Rows of one Track Number with different names, as a hand-edited or sorted file can have them.
+	CHECK_THAT(rejected("names.csv", "Track Number,Track,Position\n1,A,1\n2,B,1\n1,C,2\n"),
+		ContainsSubstring("row 4: the markers of a track must have one Track name"));
+	// Names are compared as written, without the spaces around them: another case or an empty name is another name.
+	CHECK_THAT(rejected("case.csv", "Track Number,Track,Position\n1,Verse,1\n1,verse,2\n"),
+		ContainsSubstring("row 3: the markers of a track must have one Track name"));
+	CHECK_THAT(rejected("unnamed.csv", "Track Number,Track,Position\n1,Verse,1\n1,,2\n"),
+		ContainsSubstring("row 3: the markers of a track must have one Track name"));
 	CHECK_THAT(rejected("quote.csv", "Type,Position,Description\nPosition,1,\"open\n"), ContainsSubstring("quote"));
 	// A tenth marker track fits, an eleventh doesn't.
 	CHECK_THAT(
