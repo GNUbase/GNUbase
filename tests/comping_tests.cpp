@@ -434,10 +434,20 @@ TEST_CASE("takes copied, duplicated, pasted or brought to the front together kee
 	};
 	REQUIRE(firstInFront(0));
 
-	f.call("event.copy", {{"events", {first, second}}, {"delta", 48000}});
+	// The copies come back in the order named: the first take's, then the second's.
+	const auto inOrderNamed = [&f](const Json& copies)
+	{
+		return copies.size() == 2 && f.object("audioEvents", copies.at(0)).at("offset") == 0 &&
+			f.object("audioEvents", copies.at(1)).at("offset") == 2000;
+	};
+	CHECK(inOrderNamed(f.call("event.copy", {{"events", {first, second}}, {"delta", 48000}}).at("events")));
 	CHECK(firstInFront(48000));
-	f.call("event.duplicate", {{"events", {first, second}}});
+	CHECK(inOrderNamed(f.call("event.duplicate", {{"events", {first, second}}}).at("events")));
 	CHECK(firstInFront(1000));
+	// Filling from 144000 to 145000 samples, one copy of the two.
+	CHECK(inOrderNamed(
+		f.call("event.fillLoop", {{"events", {first, second}}, {"start", 144000}, {"end", 145000}}).at("events")));
+	CHECK(firstInFront(144000));
 	f.call("range.copy", {{"start", 0}, {"end", 1000}, {"tracks", {track}}});
 	f.call("range.paste", {{"position", 96000}});
 	CHECK(firstInFront(96000));
@@ -446,4 +456,70 @@ TEST_CASE("takes copied, duplicated, pasted or brought to the front together kee
 	CHECK(firstInFront(0));
 	f.call("event.comp", {{"track", track}, {"lane", 1}, {"start", 0}, {"end", 1000}});
 	CHECK(firstInFront(0));
+}
+
+TEST_CASE("audio parts copied or brought to the front together keep their order in the stack", "[unit]")
+{
+	Fixture f;
+	const int64_t track = f.track("audio");
+	const Json media =
+		f.call("media.add", {{"path", "take.wav"}, {"sampleRate", 48000}, {"channels", 1}, {"length", 48000}})
+			.at("media");
+	const auto clip = f.call("clip.add", {{"media", media.at("id")}}).at("clip").at("id").get<int64_t>();
+	// Two overlapping parts with a take each, told apart by their offsets; the first, brought to the front, plays.
+	const auto partOf = [&f](int64_t take)
+	{ return f.call("event.toPart", {{"events", {take}}}).at("events").at(0).get<int64_t>(); };
+	const int64_t first = partOf(f.take(track, clip, 0, 1000, 0));
+	const int64_t second = partOf(f.take(track, clip, 2000, 1000, 1));
+	f.call("event.toFront", {{"events", {first}}});
+	// Whether, of the takes in parts at position, the first part's is in front of the second's.
+	const auto firstInFront = [&f](int64_t position)
+	{
+		int64_t firstPlace = -1;
+		int64_t secondPlace = -1;
+		const Json project = f.call("project.get");
+		for (const Json& event : project.at("audioEvents"))
+		{
+			if (event.at("position") != position || event.at("part") == 0)
+				continue;
+			const auto own = event.at("front").get<int64_t>();
+			const int64_t place = own != 0 ? own : event.at("id").get<int64_t>();
+			(event.at("offset") == 0 ? firstPlace : secondPlace) = place;
+		}
+		INFO("first " << firstPlace << ", second " << secondPlace);
+		return firstPlace > 0 && secondPlace > 0 && firstPlace > secondPlace;
+	};
+	REQUIRE(firstInFront(0));
+
+	f.call("event.copy", {{"events", {first, second}}, {"delta", 48000}});
+	CHECK(firstInFront(48000));
+	f.call("event.toFront", {{"events", {first, second}}});
+	CHECK(firstInFront(0));
+}
+
+TEST_CASE("a duplicated track's takes come in front, keeping their order in the stack", "[unit]")
+{
+	Fixture f;
+	const int64_t track = f.track("audio");
+	const Json media =
+		f.call("media.add", {{"path", "take.wav"}, {"sampleRate", 48000}, {"channels", 1}, {"length", 48000}})
+			.at("media");
+	const auto clip = f.call("clip.add", {{"media", media.at("id")}}).at("clip").at("id").get<int64_t>();
+	// Two overlapping takes, the first brought to the front: on the copy the first plays too.
+	const int64_t first = f.take(track, clip, 0, 1000, 0);
+	f.take(track, clip, 2000, 1000, 1);
+	f.call("event.toFront", {{"events", {first}}});
+	const Json copy = f.call("track.duplicate", {{"track", track}}).at("track").at("id");
+	int64_t firstPlace = -1;
+	int64_t secondPlace = -1;
+	const Json project = f.call("project.get");
+	for (const Json& event : project.at("audioEvents"))
+	{
+		if (event.at("track") != copy)
+			continue;
+		CHECK(event.at("front") == 0); // in front of every event added before, as added last
+		(event.at("offset") == 0 ? firstPlace : secondPlace) = event.at("id").get<int64_t>();
+	}
+	CHECK(secondPlace > 0);
+	CHECK(firstPlace > secondPlace);
 }

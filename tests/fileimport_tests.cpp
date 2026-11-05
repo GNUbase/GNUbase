@@ -242,12 +242,14 @@ TEST_CASE("files dropped on a lane of a track whose lanes show go on that lane",
 			.at("media");
 	const Json clip = app.call("clip.add", {{"media", media.at("id")}}).at("clip");
 	app.call("audioEvent.add", {{"track", track}, {"clip", clip.at("id")}, {"position", 0}, {"lane", 1}});
-	// The track's lane from 0 to 40 dp, its lanes 0 and 1 below it.
+	// A track 80 dp high, higher than the default: its lane from 0 to 80 dp, its lanes 0 and 1 below it, as high.
+	display.setTrackHeight(track.get<uint64_t>(), 80.0);
 	display.showLanes(track.get<uint64_t>(), true);
 	REQUIRE(app.waitUntil([&display] { return display.laneTakes() == std::vector<int>{-1, 0, 1}; }));
 
+	// On lane 1, from 160 to 240 dp: the lanes' own heights find it, not the default height's.
 	const double x = (2.0 - display.view().start) / display.view().scale;
-	drop(app, {take}, x, 100.0);
+	drop(app, {take}, x, 200.0);
 	REQUIRE(app.waitUntil([&app] { return dialogShown(app); }));
 	click(app, "#import-options-dialog button.primary");
 	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("audioEvents").size() == 2; }));
