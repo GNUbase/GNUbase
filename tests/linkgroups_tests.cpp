@@ -363,9 +363,9 @@ TEST_CASE("a link group that loses all its channels goes, and its VCA fader stay
 	run(client, "track.remove", {{"track", trackOf(client, b)}});
 	CHECK(groups(client).empty());
 	CHECK(channelJson(client, vca).at("id") == vca);
-	run(client, "history.undo");
+	run(client, "history.undo"); // b's track comes back, and the group with it
 	REQUIRE(groups(client).size() == 1);
-	CHECK(groups(client).at(0).at("channels") == Json({a}));
+	CHECK(groups(client).at(0).at("channels") == Json({b}));
 	CHECK(groups(client).at(0).at("vca") == vca);
 }
 
