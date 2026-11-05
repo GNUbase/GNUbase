@@ -424,6 +424,7 @@ namespace gnubase::app
 		m_docking.add({"history", "History", "project", "right",
 			[this](Rml::Element& element) { return std::make_shared<ui::HistoryPanel>(m_binding, element); }});
 		addQuantize();
+		addMidiFunctions();
 		// The pool (reference manual pp. 739-760, docs/features/pool.md), a window of its own there. Its file dialogs
 		// belong to the window it shows in, and it reads the pool only while it shows.
 		m_docking.add({"pool", "Pool", "project", "lower", [this](Rml::Element& element)
@@ -532,35 +533,54 @@ namespace gnubase::app
 						m_binding.send("mixdown.quickExport", {{"path", file.u8string()}});
 					});
 			}});
-		// File > Export and File > Import > Tempo Track (docs/features/tempo-track.md): the tempo track's file, chosen
-		// in the OS's file dialog.
-		for (const bool exporting : {true, false})
+		// File > Export and File > Import > Tempo Track (docs/features/tempo-track.md) and Markers
+		// (docs/features/markers.md): their files, chosen in the OS's file dialog.
+		struct TrackFile
 		{
-			m_keys.add({exporting ? "file.exportTempo" : "file.importTempo",
-				exporting ? "Exports the tempo track and the time signature events into an XML file."
-						  : "Replaces the tempo track and the time signature events with those of an exported file.",
-				[this, exporting](ui::Window& window, Rml::Element* /*zone*/)
-				{
-					ui::FileDialog dialog;
-					dialog.kind = exporting ? ui::FileDialogKind::Save : ui::FileDialogKind::Open;
-					dialog.title = exporting ? "Export Tempo Track" : "Import Tempo Track";
-					dialog.filters = {{"Tempo track files", "xml"}, {"All files", "*"}};
-					if (exporting)
-						dialog.location = "Tempo Track.xml";
-					dialog.parent = window.id();
-					m_shell.showFileDialog(dialog,
-						[this, exporting](const ui::FileDialogResult& chosen)
-						{
-							if (!chosen.error.empty())
-								logging::warning("The file dialog failed: {}", chosen.error);
-							if (chosen.files.empty())
-								return;
-							std::filesystem::path file = chosen.files.front();
-							if (exporting && file.extension().empty())
-								file += ".xml";
-							m_binding.send(exporting ? "tempo.export" : "tempo.import", {{"path", file.u8string()}});
-						});
-				}});
+			const char* name;    // in the dialog's title and the exported file's name
+			const char* command; // the UI commands' suffix
+			const char* engine;  // the engine commands' prefix
+			const char* filter;
+			const char* extension; // an exported file without one gets it
+			const char* exportDescription;
+			const char* importDescription;
+		};
+		for (const TrackFile& kind : {TrackFile{"Tempo Track", "Tempo", "tempo", "Tempo track files", "xml",
+										  "Exports the tempo track and the time signature events into an XML file.",
+										  "Replaces the tempo track and the time signature events with those of an "
+										  "exported file."},
+				 TrackFile{"Markers", "Markers", "marker", "Marker files", "csv",
+					 "Exports the marker tracks into a CSV file.",
+					 "Adds the marker tracks of a CSV file to the project."}})
+		{
+			for (const bool exporting : {true, false})
+			{
+				m_keys.add({std::string(exporting ? "file.export" : "file.import") + kind.command,
+					exporting ? kind.exportDescription : kind.importDescription,
+					[this, kind, exporting](ui::Window& window, Rml::Element* /*zone*/)
+					{
+						ui::FileDialog dialog;
+						dialog.kind = exporting ? ui::FileDialogKind::Save : ui::FileDialogKind::Open;
+						dialog.title = std::string(exporting ? "Export " : "Import ") + kind.name;
+						dialog.filters = {{kind.filter, kind.extension}, {"All files", "*"}};
+						if (exporting)
+							dialog.location = std::string(kind.name) + "." + kind.extension;
+						dialog.parent = window.id();
+						m_shell.showFileDialog(dialog,
+							[this, kind, exporting](const ui::FileDialogResult& chosen)
+							{
+								if (!chosen.error.empty())
+									logging::warning("The file dialog failed: {}", chosen.error);
+								if (chosen.files.empty())
+									return;
+								std::filesystem::path file = chosen.files.front();
+								if (exporting && file.extension().empty())
+									file += std::string(".") + kind.extension;
+								m_binding.send(std::string(kind.engine) + (exporting ? ".export" : ".import"),
+									{{"path", file.u8string()}});
+							});
+					}});
+			}
 		}
 		// Auto fades (docs/features/fades.md): the project's, or the first selected track's.
 		m_keys.add({"project.autoFades", "Opens the auto fades dialog for the whole project.",

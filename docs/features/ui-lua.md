@@ -25,9 +25,10 @@ Lua reaches the engine only through the engine API, like every other client.
   `gnubase.ui.command`, which runs a key command in the main window as its keys would, by `command` and optional
   `parameters` ([key-commands.md](key-commands.md)), for documents' buttons such as the project window's Add Track
   (`gnubase.ui.command{command = "project.addTrack"}`). It checks the command first, as `KeyCommands::check` does for
-  keys, menu items and buttons (#669): a command that doesn't exist, parameters an engine command doesn't take or has
-  of the wrong type, parameters for a UI command, and anything but `command` and `parameters` in its table raise a Lua
-  error at the call, in users' scripts too, and nothing runs. The app also adds `gnubase.ui.formatTimecode` and
+  keys, menu items and buttons (#669): a command that doesn't exist, parameters that aren't a table with keys (a list
+  such as `{1, 2}`, or a string), parameters an engine command doesn't take or has of the wrong type, parameters for a
+  UI command, and anything but `command` and `parameters` in its table raise a Lua error at the call, in users'
+  scripts too, and nothing runs. The app also adds `gnubase.ui.formatTimecode` and
   `gnubase.ui.parseTimecode`, which the project setup dialog converts timecodes with
   ([project-setup.md](project-setup.md)). On the UI thread the functions run at once;
   `gnubase.ui.wait` steps the shell between its checks. A step can't run inside a step (`Shell::step` throws), so
