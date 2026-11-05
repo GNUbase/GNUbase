@@ -3,7 +3,10 @@
 
 #include "platform/log.h"
 
+#include <RmlUi/Core/Context.h>
+
 #include <algorithm>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -37,13 +40,14 @@ namespace gnubase::ui
 		m_binding = nullptr;
 	}
 
-	EngineBinding::EngineBinding(engine::Engine& engine, std::function<void()> woken)
+	EngineBinding::EngineBinding(engine::Engine& engine, std::function<void()> woken, std::function<void()> handled)
 		: m_client(engine, "ui",
 			  [this, woken = std::move(woken)]
 			  {
 				  if (woken && !m_woken.exchange(true))
 					  woken();
-			  })
+			  }),
+		  m_handled(std::move(handled))
 	{
 		for (const engine::CommandInfo& info : engine.commands())
 			if (info.query)
@@ -53,21 +57,33 @@ namespace gnubase::ui
 	void EngineBinding::send(
 		std::string command, engine::Json parameters, std::function<void(const engine::Result&)> done)
 	{
+		sendWaitingSteps(command);
+		transmit(std::move(command), std::move(parameters), std::move(done), false);
+	}
+
+	void EngineBinding::sendQuietly(
+		std::string command, engine::Json parameters, std::function<void(const engine::Result&)> done)
+	{
+		sendWaitingSteps(command);
+		transmit(std::move(command), std::move(parameters), std::move(done), true);
+	}
+
+	void EngineBinding::sendWaitingSteps(const std::string& before)
+	{
 		// A command that may change something goes after the steps the user made before it, e.g. an undo right after a
 		// drag undoes all of the drag.
-		if (m_queries.count(command) == 0)
+		if (m_queries.count(before) == 0)
 			for (auto& [what, steps] : m_steps)
 				while (!steps.waiting.empty())
 					sendNextStep(what);
-		transmit(std::move(command), std::move(parameters), std::move(done));
 	}
 
 	void EngineBinding::transmit(
-		std::string command, engine::Json parameters, std::function<void(const engine::Result&)> done)
+		std::string command, engine::Json parameters, std::function<void(const engine::Result&)> done, bool quiet)
 	{
 		std::string name = command;
 		const engine::RequestId id = m_client.send(std::move(command), std::move(parameters));
-		m_waiting.emplace(id, Waiting{std::move(name), std::move(done)});
+		m_waiting.emplace(id, Waiting{std::move(name), std::move(done), quiet});
 	}
 
 	void EngineBinding::sendStep(int gesture, const std::string& what, std::string description, engine::Json commands,
@@ -93,10 +109,11 @@ namespace gnubase::ui
 		steps.inFlight.push_back(std::move(step.done));
 		// The map's entries stay for the binding's life, so the key outlives the answer.
 		const std::string* key = &entry->first;
-		transmit("history.transaction",
+		transmit(
+			"history.transaction",
 			{{"description", std::move(step.description)}, {"merge", std::move(step.merge)},
 				{"commands", std::move(step.commands)}},
-			[this, key](const engine::Result& result) { answerStep(*key, result); });
+			[this, key](const engine::Result& result) { answerStep(*key, result); }, false);
 	}
 
 	void EngineBinding::answerStep(const std::string& what, const engine::Result& result)
@@ -147,7 +164,7 @@ namespace gnubase::ui
 	Subscription EngineBinding::onResult(std::string command, std::function<void(const engine::Result&)> handler)
 	{
 		const uint64_t id = m_nextId++;
-		m_resultHandlers.emplace(id, Waiting{std::move(command), std::move(handler)});
+		m_resultHandlers.emplace(id, Waiting{std::move(command), std::move(handler), false});
 		return {*this, id};
 	}
 
@@ -168,13 +185,16 @@ namespace gnubase::ui
 	bool EngineBinding::update()
 	{
 		m_woken = false; // before taking the messages, so one that arrives meanwhile wakes the UI again
+		bool handled = false;
 		while (std::optional<engine::Message> message = m_client.poll())
 		{
 			if (const auto* result = std::get_if<engine::Result>(&*message))
-				answer(*result);
+				handled = answer(*result) || handled;
 			else
-				dispatch(std::get<engine::Event>(*message));
+				handled = dispatch(std::get<engine::Event>(*message)) || handled;
 		}
+		if (handled && m_handled)
+			m_handled();
 		// Each function is taken out while it runs, since it may end its own subscription or others.
 		std::vector<uint64_t> ids;
 		ids.reserve(m_watches.size());
@@ -193,12 +213,12 @@ namespace gnubase::ui
 		return !m_watches.empty();
 	}
 
-	void EngineBinding::answer(const engine::Result& result)
+	bool EngineBinding::answer(const engine::Result& result)
 	{
 		++m_handed;
 		const auto found = m_waiting.find(result.request);
 		if (found == m_waiting.end())
-			return;
+			return false;
 		const Waiting waiting = std::move(found->second);
 		m_waiting.erase(found);
 		if (waiting.done)
@@ -210,6 +230,7 @@ namespace gnubase::ui
 		for (const auto& [id, handler] : m_resultHandlers)
 			if (handler.command == waiting.command)
 				ids.push_back(id);
+		const bool handled = (waiting.done && !waiting.quiet) || !ids.empty();
 		for (const uint64_t id : ids)
 		{
 			auto handler = m_resultHandlers.find(id);
@@ -220,9 +241,10 @@ namespace gnubase::ui
 			if (handler = m_resultHandlers.find(id); handler != m_resultHandlers.end())
 				handler->second.done = std::move(call);
 		}
+		return handled;
 	}
 
-	void EngineBinding::dispatch(const engine::Event& event)
+	bool EngineBinding::dispatch(const engine::Event& event)
 	{
 		++m_handed;
 		std::vector<uint64_t> ids;
@@ -239,5 +261,14 @@ namespace gnubase::ui
 			if (found = m_handlers.find(id); found != m_handlers.end())
 				found->second.call = std::move(call);
 		}
+		return !ids.empty();
+	}
+
+	void EngineBinding::redraw(Rml::Element* shows)
+	{
+		if (shows == nullptr)
+			return;
+		if (Rml::Context* context = shows->GetContext())
+			context->RequestNextUpdate(0);
 	}
 }

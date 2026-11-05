@@ -3,6 +3,8 @@
 
 #include "engine/engine.h"
 
+#include <RmlUi/Core/Element.h>
+
 #include <atomic>
 #include <cstdint>
 #include <deque>
@@ -47,13 +49,21 @@ namespace gnubase::ui
 	public:
 		// woken is called on the engine's thread when results or events start to wait for update(), once until
 		// update() runs, e.g. Shell::wake. It must be quick, must not block and must not call the engine or the
-		// binding.
-		explicit EngineBinding(engine::Engine& engine, std::function<void()> woken = {});
+		// binding. handled is called in update(), once, when results or events reached handlers there (a command's
+		// done, onResult's or on's handlers): they may have changed what any window shows, so the app draws every
+		// window then (Shell::requestRender).
+		explicit EngineBinding(
+			engine::Engine& engine, std::function<void()> woken = {}, std::function<void()> handled = {});
 
 		// Sends a command. done runs in update() with its result; without done, a failure is logged. A command that
 		// isn't a query sends the steps that wait (sendStep) first, so that it comes after them, as the user did them.
 		void send(std::string command, engine::Json parameters = engine::Json::object(),
 			std::function<void(const engine::Result&)> done = {});
+
+		// Sends a command, like send, for a view that asks again and again, e.g. once a second: done's run doesn't
+		// make every window draw, so done asks for a draw itself when it changed what an element shows
+		// (Rml::Context::RequestNextUpdate(0)), and an idle UI stays idle. onResult's handlers still draw every window.
+		void sendQuietly(std::string command, engine::Json parameters, std::function<void(const engine::Result&)> done);
 
 		// Sends document commands ({"command", "parameters"} each) as a step of a value widget's gesture (the
 		// "gesture" parameter of its change event, ui/widgets.h): a history.transaction named description whose merge
@@ -99,18 +109,22 @@ namespace gnubase::ui
 
 		// Calls apply in update() with what read returns, the first time and whenever it changed since: for values
 		// that change faster than the UI draws, such as the playback position and meters, which the UI reads once a
-		// frame instead of getting an event for every change.
-		template <typename T>
-		[[nodiscard]] Subscription watch(std::function<T()> read, std::function<void(const T&)> apply)
+		// frame instead of getting an event for every change. shows is the element that shows the value: after apply,
+		// the window it is in draws in that step, and no other window does for it. With null nothing draws for it, so
+		// apply must ask for a draw itself if it changes an element (Rml::Context::RequestNextUpdate(0)).
+		template <typename T> [[nodiscard]] Subscription watch(
+			Rml::Element* shows, std::function<T()> read, std::function<void(const T&)> apply)
 		{
 			return follow(
-				[read = std::move(read), apply = std::move(apply), last = std::optional<T>()]() mutable
+				[shows = shows != nullptr ? shows->GetObserverPtr() : Rml::ObserverPtr<Rml::Element>(),
+					read = std::move(read), apply = std::move(apply), last = std::optional<T>()]() mutable
 				{
 					T value = read();
 					if (last && *last == value)
 						return;
 					last = value;
 					apply(value);
+					redraw(shows.get());
 				});
 		}
 
@@ -132,6 +146,7 @@ namespace gnubase::ui
 		{
 			std::string command;
 			std::function<void(const engine::Result&)> done;
+			bool quiet; // done draws what it changed itself (sendQuietly)
 		};
 
 		// A step of sendStep, until it is sent.
@@ -154,14 +169,20 @@ namespace gnubase::ui
 
 		Subscription follow(std::function<void()> read);
 		void end(uint64_t id) noexcept;
-		void answer(const engine::Result& result);
-		void dispatch(const engine::Event& event);
-		void transmit(std::string command, engine::Json parameters, std::function<void(const engine::Result&)> done);
+		// Each returns whether handlers took the message.
+		bool answer(const engine::Result& result);
+		bool dispatch(const engine::Event& event);
+		// Draws the element's window in the shell's step (Rml::Context::RequestNextUpdate).
+		static void redraw(Rml::Element* shows);
+		void sendWaitingSteps(const std::string& before);
+		void transmit(
+			std::string command, engine::Json parameters, std::function<void(const engine::Result&)> done, bool quiet);
 		void sendNextStep(const std::string& what);
 		void answerStep(const std::string& what, const engine::Result& result);
 
 		std::atomic<bool> m_woken{false}; // woken was called and update() hasn't run since
 		engine::Client m_client;
+		std::function<void()> m_handled;
 		std::map<engine::RequestId, Waiting> m_waiting; // commands sent, until their results arrive
 		std::map<uint64_t, Handler> m_handlers;
 		std::map<uint64_t, Waiting> m_resultHandlers; // onResult's, by subscription

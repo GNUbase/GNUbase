@@ -97,7 +97,7 @@ one it has the class `empty` and says "No Track Selected".
 
 ## Not yet
 
-The info line's other fields (offset, fades, snap point, transpose and velocity of parts), hiding fields from its
+The info line's other fields (offset, fades, snap point, transpose and velocity of parts, which `midiPart.set` changes: [midi-modifiers.md](midi-modifiers.md)), hiding fields from its
 context menu, and its own modifier setting (Preferences, Editing - Tool Modifiers); the inspector's other sections
 (track versions, chords, articulations, MIDI inserts and modifiers, equalizer, fader, cue sends, remote controls),
 sends (#108), the MIDI tracks' MIDI volume and pan, the folder track inspector's list of the tracks inside, the
