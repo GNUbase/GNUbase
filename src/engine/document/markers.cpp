@@ -621,7 +621,7 @@ namespace gnubase::engine
 				std::find_if(tracks.begin(), tracks.end(), [&key](const CsvTrack& other) { return other.key == key; });
 			if (track == tracks.end())
 				track = tracks.insert(tracks.end(), CsvTrack{key, name, base, {}});
-			require(track->base == base, "the markers of a track must have one time base");
+			require(track->base == base, "the markers of a track must have one Time Base");
 			require(track->name == name, "the markers of a track must have one Track name");
 
 			const std::string type = lowered(trimmed(field("type")));

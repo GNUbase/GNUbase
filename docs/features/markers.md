@@ -32,10 +32,10 @@ Markers are imported and exported with MIDI files and CSV files (#171, pp. 432â€
   and a UTF-8 byte order mark; columns are found by their header in any order and others are left out, and only
   Position is needed (without Track one marker track, without Time Base musical, without Type position markers,
   without ID the first free number). A row it can't read, an id that's taken, a row whose Track name or Time Base
-  differs from the earlier rows of its track, or too many marker tracks change nothing, and the error names the row. **File > Export > Markers...** (`file.exportMarkers`) and **File >
-  Import > Markers...** (`file.importMarkers`) choose the file in the OS's file dialog; an exported file without an
-  extension gets `.csv`. The reference's track archives, which also hold marker tracks, come with track import and
-  export.
+  differs from the earlier rows of its track (also an empty one), or too many marker tracks change nothing, and the
+  error names the row. **File > Export > Markers...** (`file.exportMarkers`) and **File > Import > Markers...**
+  (`file.importMarkers`) choose the file in the OS's file dialog; an exported file without an extension gets `.csv`.
+  The reference's track archives, which also hold marker tracks, come with track import and export.
 
 ## Key commands
 
