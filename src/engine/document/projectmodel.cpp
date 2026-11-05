@@ -16,6 +16,7 @@
 #include "engine/graph/graph.h"
 #include "engine/jobs/jobs.h"
 #include "engine/media/backup.h"
+#include "engine/midi/controllerlanes.h"
 #include "engine/midi/functioncommands.h"
 #include "engine/midi/quantizecommands.h"
 #include "engine/processors/builtin.h"
@@ -1717,6 +1718,19 @@ namespace gnubase::engine
 					throw CommandError(error.what());
 				}
 			}
+			if (parameters.contains("modifiers"))
+			{
+				require(type == TrackType::Midi || type == TrackType::Instrument,
+					"only MIDI and instrument tracks have modifiers");
+				try
+				{
+					changed.modifiers = modifiersFromJson(parameters.at("modifiers"), changed.modifiers);
+				}
+				catch (const std::invalid_argument& error)
+				{
+					throw CommandError(error.what());
+				}
+			}
 			if (parameters.contains("sends"))
 				setSends(project, changed, parameters.at("sends"));
 			const Channel before = channel;
@@ -2482,6 +2496,14 @@ namespace gnubase::engine
 			part.position = newPosition;
 			part.length = length;
 			part.name = parameters.value("name", part.name);
+			for (const auto& [key, value] :
+				{std::pair{"transpose", &part.transpose}, std::pair{"velocity", &part.velocity}})
+				if (parameters.contains(key))
+				{
+					const auto number = parameters.at(key).get<int64_t>();
+					requireRange(number, -127, 127, key);
+					*value = static_cast<int>(number);
+				}
 			Json result = {{"part", toJson(part)}};
 			context.emit("midiPart.changed", result);
 			return result;
@@ -2526,6 +2548,10 @@ namespace gnubase::engine
 				if (item.contains("releaseVelocity"))
 					note.releaseVelocity =
 						static_cast<uint16_t>(std::lround(unitValue(item, "releaseVelocity", name) * g_maxVelocity));
+				if (item.contains("probability"))
+					note.probability = unitValue(item, "probability", name);
+				note.velocityVariance = item.value("velocityVariance", 0.0);
+				require(std::abs(note.velocityVariance) <= 1.0, name + ".velocityVariance must be -1 to 1");
 				notes.push_back(note);
 			}
 			Json added = Json::array();
@@ -3584,7 +3610,18 @@ namespace gnubase::engine
 				"is turned down to the user setting audio.listenDim while any channel listens; the listening channels "
 				"play there at audio.listenLevel, and their signal flow stays as it is. Muting, soloing and the dim "
 				"glide over one audio block. notes is the "
-				"channel's notepad, the user's text about it. The channel strip's sections (audio channels only; "
+				"channel's notepad, the user's text about it. modifiers (MIDI and instrument tracks; it changes only "
+				"what it has, as project.get shows it) changes how the track's notes play, not the notes, both those "
+				"of its parts and those played into it live: bypass, transpose (semitones, -127 to 127; notes beyond "
+				"0 to 127 don't play), velocityShift (-127 to 127, added to MIDI 1.0 velocities), velocityCompression "
+				"and lengthCompression ([numerator, denominator], each 1 to 16: multipliers of velocities, before the "
+				"shift, and of lengths), random (two generators, [{target (off, position, pitch, velocity or length), "
+				"minimum, maximum}]: each adds a value from its minimum to its maximum to every note, the same on "
+				"every playback; positions and lengths in ticks, up to a quarter note either way, the others up to "
+				"127; live notes get pitch and velocity only) and range (two, [{target (off, velocityLimit, "
+				"velocityFilter, noteLimit or noteFilter), minimum, maximum (0 to 127)}], in order after the others: "
+				"the limits move velocities to the nearest end and pitches by octaves into the range, the filters "
+				"leave out the notes outside it). The channel strip's sections (audio channels only; "
 				"each object changes only what it has, as project.get shows them) run before the fader: pre "
 				"{gain (dB, -24 to 24), phase (inverts the polarity), lowCut and highCut {on, frequency (Hz, 20 or "
 				"for the high cut 50 to 20000), slope (6, 12, 24, 36 or 48 dB per octave)}} before the plugin slots; "
@@ -3617,7 +3654,7 @@ namespace gnubase::engine
 						{"mute", booleanSchema}, {"solo", booleanSchema}, {"exclusive", booleanSchema},
 						{"soloDefeat", booleanSchema}, {"listen", booleanSchema}, {"notes", stringSchema},
 						{"linked", booleanSchema}, {"pre", {{"type", "object"}}}, {"eq", {{"type", "object"}}},
-						{"strip", {{"type", "object"}}},
+						{"strip", {{"type", "object"}}}, {"modifiers", {{"type", "object"}}},
 						{"sends",
 							arraySchema(
 								objectSchema({{"send", integerSchema}, {"destination", idSchema}, {"on", booleanSchema},
@@ -3770,9 +3807,12 @@ namespace gnubase::engine
 				resultSchema({"part"}), false},
 			addMidiPart);
 		add(engine,
-			{"midiPart.set", 1, "Changes a MIDI part's name, position or length.",
+			{"midiPart.set", 1,
+				"Changes a MIDI part's name, position or length, or how its notes play: transpose (semitones) and "
+				"velocity (added to MIDI 1.0 velocities), each -127 to 127 and added to the track's MIDI modifiers "
+				"(channel.set modifiers), also while they are bypassed. The notes themselves stay as they are.",
 				objectSchema({{"part", idSchema}, {"name", stringSchema}, {"position", integerSchema},
-								 {"length", integerSchema}},
+								 {"length", integerSchema}, {"transpose", integerSchema}, {"velocity", integerSchema}},
 					{"part"}),
 				resultSchema({"part"}), false},
 			[this](Project& project, CommandContext& context)
@@ -3784,12 +3824,15 @@ namespace gnubase::engine
 
 		const Json note =
 			objectSchema({{"position", integerSchema}, {"length", integerSchema}, {"pitch", integerSchema},
-							 {"velocity", numberSchema}, {"releaseVelocity", numberSchema}, {"channel", integerSchema}},
+							 {"velocity", numberSchema}, {"releaseVelocity", numberSchema}, {"channel", integerSchema},
+							 {"probability", numberSchema}, {"velocityVariance", numberSchema}},
 				{"position", "length", "pitch", "velocity"});
 		add(engine,
 			{"note.add", 1,
 				"Adds notes to a MIDI part: position from the part's start and length in ticks, pitch 0-127, velocity "
-				"0-1, release (note-off) velocity 0-1 (default 0.5), MIDI channel 0-15 (default 0).",
+				"0-1, release (note-off) velocity 0-1 (default 0.5), MIDI channel 0-15 (default 0), play probability "
+				"0-1, the chance that the note plays (default 1), and velocity variance -1 to 1, the share by which "
+				"playback raises (positive) or lowers (negative) its velocity at most (default 0).",
 				objectSchema({{"part", idSchema}, {"notes", arraySchema(note)}}, {"part", "notes"}),
 				{{"type", "object"}, {"properties", {{"notes", {{"type", "array"}}}}}, {"required", {"notes"}}}, false},
 			addNotes);
@@ -3835,6 +3878,7 @@ namespace gnubase::engine
 		registerSlotCommands(engine);
 		midi::registerQuantizeCommands(*this, engine);
 		midi::registerFunctionCommands(*this, engine);
+		midi::registerControllerLaneCommands(*this, engine);
 		registerMidiFileCommands(engine);
 		registerAudioFileCommands(engine, jobs);
 		registerRecordingCommands(engine);

@@ -3,6 +3,7 @@
 
 #include "engine/midi/chords.h"
 #include "engine/midi/quantizesettings.h"
+#include "ui/controllerlanes.h"
 #include "ui/timeformat.h"
 
 #include <RmlUi/Core/Context.h>
@@ -28,17 +29,28 @@ namespace gnubase::ui
 		constexpr double g_maxVelocity = 127.0;
 		constexpr float g_edge = 6.0F; // dp at a note's ends where the object selection tool resizes it
 
-		constexpr std::array<std::pair<KeyTool, const char*>, 6> g_tools = {{
+		constexpr std::array<std::pair<KeyTool, const char*>, 7> g_tools = {{
 			{KeyTool::ObjectSelection, "objectSelection"},
 			{KeyTool::Draw, "draw"},
+			{KeyTool::Line, "line"},
 			{KeyTool::Erase, "erase"},
 			{KeyTool::Trim, "trim"},
 			{KeyTool::Split, "split"},
 			{KeyTool::Glue, "glue"},
 		}};
-		constexpr std::array<const char*, 6> g_toolTitles = {
-			"Object Selection", "Draw", "Erase", "Trim", "Split", "Glue"};
-		constexpr std::array<const char*, 6> g_toolLabels = {"Select", "Draw", "Erase", "Trim", "Split", "Glue"};
+		constexpr std::array<const char*, 7> g_toolTitles = {
+			"Object Selection", "Draw", "Line", "Erase", "Trim", "Split", "Glue"};
+		constexpr std::array<const char*, 7> g_toolLabels = {
+			"Select", "Draw", "Line", "Erase", "Trim", "Split", "Glue"};
+		// The line tool's modes (p. 1186), its menu's.
+		constexpr std::array<std::pair<const char*, const char*>, 6> g_lineModes = {{
+			{"line", "Line"},
+			{"parabola", "Parabola"},
+			{"sine", "Sine"},
+			{"triangle", "Triangle"},
+			{"square", "Square"},
+			{"paint", "Paint"},
+		}};
 
 		// The Length Quantize menu (p. 1196): Quantize Link, then note values.
 		constexpr std::array<const char*, 11> g_lengths = {
@@ -51,7 +63,7 @@ namespace gnubase::ui
 			const char* title;
 			const char* label;
 		};
-		constexpr std::array<Input, 7> g_inputs = {{
+		constexpr std::array<Input, 8> g_inputs = {{
 			{"stepInput", "Step Input", "Step"},
 			{"midiInput", "MIDI Input", "MIDI"},
 			{"moveInsert", "Move Insert Mode", "Insert"},
@@ -59,6 +71,7 @@ namespace gnubase::ui
 			{"recordVelocity", "Record Note On Velocity", "On"},
 			{"recordReleaseVelocity", "Record Note Off Velocity", "Off"},
 			{"keepNotes", "Keep Existing Notes", "Keep"},
+			{"autoSelectControllers", "Auto Select Controllers", "Auto"},
 		}};
 
 		// The transpose palette (p. 1195): semitones.
@@ -185,19 +198,24 @@ namespace gnubase::ui
 			R"(<div class="info-line key-editor-info empty"><span class="info-empty">No Object Selected</span>)" +
 			info + R"(</div><div class="editor-parts"/><div class="key-editor-body"><div class="key-editor-keys">)" +
 			keys + R"(</div><div class="key-editor-grid"><div class="key-editor-rows">)" + rows +
-			R"(</div><div class="key-editor-notes"/><div class="key-editor-step-cursor off"/></div></div>)");
+			R"(</div><div class="key-editor-notes"/><div class="key-editor-step-cursor off"/></div></div>)"
+			R"(<div class="controller-lanes"/>)");
+		m_lanes = std::make_unique<ControllerLanes>(binding, *root.QuerySelector(".controller-lanes"), m_name);
 		Rml::ElementDocument* document = root.GetOwnerDocument();
 		const Rml::ElementPtr holder = document->CreateElement("div");
 		std::string items;
 		for (const char* length : g_lengths)
 			items += std::string(R"(<menuitem type="toggle" length=")") + length + R"(">)" +
 				(std::string(length) == "link" ? "Quantize Link" : length) + "</menuitem>";
+		std::string modes;
+		for (const auto& [mode, label] : g_lineModes)
+			modes += std::string(R"(<menuitem type="toggle" line-mode=")") + mode + R"(">)" + label + "</menuitem>";
 		// The toolbox: the toolbar's tools, as its buttons show them.
 		std::string toolbox;
 		for (size_t i = 0; i < g_tools.size(); ++i)
 			toolbox += std::string(R"(<menuitem key-tool=")") + g_tools[i].second + R"(" title=")" + g_toolTitles[i] +
 				R"(">)" + g_toolLabels[i] + "</menuitem>";
-		holder->SetInnerRML(R"(<menu id="key-length-menu">)" + items +
+		holder->SetInnerRML(R"(<menu id="key-length-menu">)" + items + R"(</menu><menu id="key-line-menu">)" + modes +
 			R"(</menu><menu id="key-editor-toolbox" class="toolbox">)" + toolbox + "</menu>");
 		while (holder->HasChildNodes())
 		{
@@ -268,7 +286,15 @@ namespace gnubase::ui
 		Rml::ElementList buttons;
 		root->QuerySelectorAll(buttons, ".key-tool");
 		for (Rml::Element* button : buttons)
-			setClass(button, "checked", attribute(*button, "key-tool") == keyToolName(tool));
+		{
+			const bool chosen = attribute(*button, "key-tool") == keyToolName(tool);
+			setClass(button, "checked", chosen);
+			// The chosen line tool's button opens the menu of its modes (p. 1186).
+			if (chosen && tool == KeyTool::Line)
+				button->SetAttribute("menu", "key-line-menu");
+			else if (button->HasAttribute("menu"))
+				button->RemoveAttribute("menu");
+		}
 		// The toolbox's items, by the attribute that gives them the state class .checked.
 		for (const Rml::ObserverPtr<Rml::Element>& menu : m_menus)
 			if (const Rml::Element* element = menu.get())
@@ -281,6 +307,18 @@ namespace gnubase::ui
 							item->RemoveAttribute("checked");
 					}
 		root->SetAttribute("tool", keyToolName(tool));
+		if (const Rml::Element* menu = m_menus.size() > 1 ? m_menus[1].get() : nullptr)
+			for (int i = 0; i < menu->GetNumChildren(); ++i)
+				if (Rml::Element* item = menu->GetChild(i);
+					(attribute(*item, "line-mode") == m_lineMode) != item->HasAttribute("checked"))
+				{
+					if (item->HasAttribute("checked"))
+						item->RemoveAttribute("checked");
+					else
+						item->SetAttribute("checked", "");
+				}
+		if (m_lanes)
+			m_lanes->setTool(keyToolName(tool), m_lineMode);
 	}
 
 	void KeyEditor::show(const Json& project, const Json& view)
@@ -331,6 +369,7 @@ namespace gnubase::ui
 			m_to = std::max(m_to, m_from + 1);
 		}
 		render();
+		m_lanes->show(m_project, m_view, m_from, m_to);
 	}
 
 	bool KeyEditor::scrollToPitch(int pitch)
@@ -761,6 +800,11 @@ namespace gnubase::ui
 		{
 			setView({{"lengthQuantize", attribute(target, "length")}});
 		}
+		else if (target.HasAttribute("line-mode"))
+		{
+			m_lineMode = attribute(target, "line-mode");
+			setTool(KeyTool::Line);
+		}
 	}
 
 	void KeyEditor::ProcessEvent(Rml::Event& event)
@@ -950,6 +994,8 @@ namespace gnubase::ui
 			edit("Split", std::move(commands));
 			return;
 		}
+		case KeyTool::Line: // only on the controller lanes
+			return;
 		case KeyTool::Glue:
 		{
 			// Glues the note to the next one of its pitch in its part; the first one's values stay (p. 1215).
@@ -1079,6 +1125,18 @@ namespace gnubase::ui
 		Json commands = Json::array();
 		for (auto& [part, items] : changes)
 			commands.push_back({{"command", "note.set"}, {"parameters", {{"part", part}, {"notes", items}}}});
+		// Selected controller events move with the notes (p. 1188), such as those Auto Select Controllers selects.
+		std::map<uint64_t, Json> controllers;
+		for (const Json& selected : m_view.value("controllerSelection", Json::array()))
+			for (const Json& part : gesture == Gesture::Move ? m_project.at("midiParts") : Json::array())
+				if (part.at("id") == selected.at("part"))
+					for (const Json& controller : part.at("controllers"))
+						if (controller.at("id") == selected.at("controller"))
+							controllers[part.at("id").get<uint64_t>()].push_back({{"id", controller.at("id")},
+								{"position", std::max<int64_t>(controller.at("position").get<int64_t>() + dt, 0)}});
+		for (auto& [part, items] : controllers)
+			commands.push_back(
+				{{"command", "controller.set"}, {"parameters", {{"part", part}, {"controllers", items}}}});
 		edit(gesture == Gesture::Move ? "Move" : "Resize", std::move(commands));
 	}
 
