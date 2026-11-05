@@ -622,6 +622,7 @@ namespace gnubase::engine
 			if (track == tracks.end())
 				track = tracks.insert(tracks.end(), CsvTrack{key, name, base, {}});
 			require(track->base == base, "the markers of a track must have one time base");
+			require(track->name == name, "the markers of a track must have one Track name");
 
 			const std::string type = lowered(trimmed(field("type")));
 			require(type.empty() || type == "position" || type == "cycle", "Type must be Position or Cycle");
@@ -802,11 +803,9 @@ namespace gnubase::engine
 			{"marker.export", 1,
 				"Exports marker tracks (tracks, default all of them) into a CSV file at path, which marker.import "
 				"reads: a header row with the columns Track Number, Track, Time Base, Type, ID, Position, End, "
-				"Description and "
-				"Color, then a row per marker, the tracks in track order and their markers in timeline order. "
-				"Track Number numbers the tracks in the file, 1 on. Positions and ends are in beats (quarter notes) on "
-				"musical tracks and in seconds on linear ones. "
-				"Returns the number of markers.",
+				"Description and Color, then a row per marker, the tracks in track order and their markers in "
+				"timeline order. Track Number numbers the tracks in the file, 1 on. Positions and ends are in beats "
+				"(quarter notes) on musical tracks and in seconds on linear ones. Returns the number of markers.",
 				objectSchema({{"path", stringSchema}, {"tracks", {{"type", "array"}, {"items", idSchema}}}}, {"path"}),
 				{{"type", "object"}, {"properties", {{"markers", integerSchema}}}, {"required", {"markers"}}}, true},
 			exportMarkers);
@@ -816,10 +815,11 @@ namespace gnubase::engine
 				"track at the top, in file order, with its time base and its markers' types, ids, positions, ends, "
 				"descriptions and colors. Columns are found by their header, in any order; only Position is "
 				"required. Rows with the same Track Number are one track, rows without one those with the same Track "
-				"name. Without either all markers go on one track, without Time Base it is musical, without Type "
-				"they are position markers and without an ID they get the first free number. The active marker "
-				"track stays active, or the first new one becomes it. One undo step; a file with an invalid row "
-				"changes nothing. Returns the new tracks and the number of markers.",
+				"name, and without either all markers go on one track; the rows of a track have one Track name and "
+				"one Time Base. Without Time Base a track is musical, without Type markers are position markers and "
+				"without an ID they get the first free number. The active marker track stays active, or the first new "
+				"one becomes it. One undo step; a file with an invalid row changes nothing. Returns the new tracks and "
+				"the number of markers.",
 				objectSchema({{"path", stringSchema}}, {"path"}),
 				{{"type", "object"},
 					{"properties", {{"tracks", {{"type", "array"}, {"items", idSchema}}}, {"markers", integerSchema}}},

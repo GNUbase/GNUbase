@@ -23,15 +23,16 @@ Markers are imported and exported with MIDI files and CSV files (#171, pp. 432â€
 - **CSV files**: `marker.export` writes marker tracks (default all) as a header row with the columns Track
   Number, Track, Time Base, Type, ID, Position, End, Description and Color, then a row per marker, tracks in track
   order and markers in timeline order. Track Number numbers the tracks in the file from 1, so marker tracks with the
-  same name stay apart; rows with the same number are one track, rows without one those with the same Track name. Positions and ends are beats (quarter notes) on musical tracks and seconds on linear ones, as the
-  shortest decimals that read back exactly, so `marker.import` gives back every marker track with its name and time
-  base and every marker with its type, id, position, end, description and color, and exporting them again gives the
-  same file. The import makes each track of the file a new marker track at the top, keeps the active marker track (or
-  activates the first new one) and is one undo step. It reads files from spreadsheets too: RFC 4180 quoting, CRLF or
-  LF line ends and a UTF-8 byte order mark; columns are found by their header in any order and others are left out,
-  and only Position is needed (without Track one marker track, without Time Base musical, without Type position
-  markers, without ID the first free number). A row it can't read, an id that's taken or too many marker tracks
-  change nothing, and the error names the row. **File > Export > Markers...** (`file.exportMarkers`) and **File >
+  same name stay apart; rows with the same number are one track, rows without one those with the same Track name.
+  Positions and ends are beats (quarter notes) on musical tracks and seconds on linear ones, as the shortest decimals
+  that read back exactly, so `marker.import` gives back every marker track with its name and time base and every
+  marker with its type, id, position, end, description and color, and exporting them again gives the same file. The
+  import makes each track of the file a new marker track at the top, keeps the active marker track (or activates the
+  first new one) and is one undo step. It reads files from spreadsheets too: RFC 4180 quoting, CRLF or LF line ends
+  and a UTF-8 byte order mark; columns are found by their header in any order and others are left out, and only
+  Position is needed (without Track one marker track, without Time Base musical, without Type position markers,
+  without ID the first free number). A row it can't read, an id that's taken, a row whose Track name or Time Base
+  differs from the earlier rows of its track, or too many marker tracks change nothing, and the error names the row. **File > Export > Markers...** (`file.exportMarkers`) and **File >
   Import > Markers...** (`file.importMarkers`) choose the file in the OS's file dialog; an exported file without an
   extension gets `.csv`. The reference's track archives, which also hold marker tracks, come with track import and
   export.
@@ -123,9 +124,10 @@ setting's changes from MCP; Auto-Scroll on and off, Page Up and Page Down; chang
 several selected markers in one undo step; the marker settings: marker ids on the marker track, cycle follows and
 sync selection both ways, paused while recording; and the marker key commands locating, setting and recalling
 markers. `tests/marker_tests.cpp` covers `transport.cycleFollowsMarkers` for the three locate commands. Marker files:
-`tests/marker_tests.cpp` has the CSV round trip byte for byte with undo, also of marker tracks with the same name, a spreadsheet's file and files that change
-nothing; `tests/midifile_tests.cpp` the marker tracks in type 1 and type 0 files, the same file exported again and
-the limit of 10 marker tracks; `tests/markers_ui_tests.cpp` the File menu's items through the file dialog.
+`tests/marker_tests.cpp` has the CSV round trip byte for byte with undo, also of marker tracks with the same name,
+a spreadsheet's file and files that change nothing, among them rows of one Track Number with different names;
+`tests/midifile_tests.cpp` the marker tracks in type 1 and type 0 files, the same file exported again and the limit
+of 10 marker tracks; `tests/markers_ui_tests.cpp` the File menu's items through the file dialog.
 
 Not yet: dragging markers and resizing cycle markers on the marker track, Ctrl-drag for a cycle marker and Shift to
 rename at once (with parts editing, #85); range selections by markers (the range tool, #86; `marker.range` gives the
