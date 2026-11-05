@@ -307,20 +307,24 @@ namespace gnubase::engine::processors
 	{
 		const plugin::Transport& first = process.transport[0].transport;
 		graph::TransportBlock block;
-		block.playing = (first.flags & plugin::Transport::Playing) != 0;
 		block.position = first.position;
 		if ((first.flags & plugin::Transport::TempoValid) != 0 && first.tempo > 0.0)
 			block.tempo = first.tempo;
+		// After a count-in the block plays from a later segment on: the frames before it are stopped.
+		const size_t total = process.transportCount;
+		size_t start = 0;
+		while (start < total && (process.transport[start].transport.flags & plugin::Transport::Playing) == 0)
+			++start;
+		block.playing = start < total;
 		if (!block.playing)
 			return block;
-		const size_t count = std::min<size_t>(process.transportCount, segments.size());
+		const size_t count = std::min<size_t>(total - start, segments.size());
 		for (size_t i = 0; i < count; ++i)
 		{
-			const plugin::TransportSegment& segment = process.transport[i];
-			const uint32_t begin = segment.offset;
-			const uint32_t end = i + 1 < count ? process.transport[i + 1].offset : process.frames;
+			const plugin::TransportSegment& segment = process.transport[start + i];
+			const uint32_t end = i + 1 < count ? process.transport[start + i + 1].offset : process.frames;
 			const bool recording = (segment.transport.flags & plugin::Transport::Recording) != 0;
-			segments[i] = {begin, end - begin, segment.transport.position, recording};
+			segments[i] = {segment.offset, end - segment.offset, segment.transport.position, recording};
 			block.recording = block.recording || recording;
 		}
 		block.segments = segments.data();

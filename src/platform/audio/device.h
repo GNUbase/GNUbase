@@ -257,4 +257,10 @@ namespace gnubase::audio
 
 	// The backends this build has, the preferred one first and the dummy backend last.
 	std::vector<std::unique_ptr<Backend>> makeBackends();
+
+	// The backend whose default device is the one the OS plays everything else on, for when the user hasn't chosen
+	// a device: wasapi on Windows (shared, so other applications go on playing), coreaudio on macOS, pipewire on
+	// Linux. The preferred backend may be another one: the first in makeBackends, such as ASIO, whose default device
+	// is merely the first driver installed.
+	std::string defaultBackend();
 }

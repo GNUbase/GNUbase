@@ -288,15 +288,38 @@ TEST_CASE("the studio setup dialog keeps a sample rate and buffer size that the 
 TEST_CASE("the studio setup dialog switches the audio driver through the engine", "[ui]")
 {
 	test::UiApp app({900, 640}, keyboard(), fakeInterface());
+	app.call("audio.start");
 	openDialog(app);
 	CHECK(selected(app, "driver") == "dummy - Dummy device");
 	choose(app, "#driver", 1); // the fake interface, listed before the dummy device
 	CHECK(selected(app, "driver") == "fake - Fake interface");
 	click(app, "#apply");
 	CHECK(open(app));
-	CHECK(lastRun(app, "audio.setDevice") == Json{{"backend", "fake"}, {"device", "fake-1"}});
-	CHECK(app.call("audio.get").at("device").at("id") == "fake-1");
+	// The new driver runs as the old one did, and the app opens it again when it starts.
+	CHECK(lastRun(app, "audio.setDevice") == Json{{"backend", "fake"}, {"device", "fake-1"}, {"remember", true}});
+	const Json status = app.call("audio.get");
+	CHECK(status.at("device").at("id") == "fake-1");
+	CHECK(status.at("running") == true);
+	CHECK(app.call("settings.get", {{"key", "audio.backend"}}).at("value") == "fake");
+	CHECK(app.call("settings.get", {{"key", "audio.device"}}).at("value") == "fake-1");
 	CHECK(element(app, "#devices-device").at("text") == "Fake interface");
+	CHECK(element(app, "#studio-setup-message").value("text", "").empty());
+	app.call("audio.stop");
+}
+
+TEST_CASE("the studio setup dialog says why the device chosen last can't be used while the dummy device plays", "[ui]")
+{
+	test::UiApp app({900, 640}, keyboard(), fakeInterface());
+	app.call("audio.setDevice", {{"backend", "fake"}, {"device", "fake-9"}, {"fallBackToDummy", true}});
+	openDialog(app);
+	CHECK(selected(app, "driver") == "dummy - Dummy device");
+	CHECK(element(app, "#studio-setup-message").value("text", "") ==
+		"Cannot use fake - fake-9: no device fake-9; the dummy device plays instead");
+
+	// Another driver that opens ends it.
+	choose(app, "#driver", 1);
+	click(app, "#apply");
+	CHECK(app.call("audio.get").at("failed").is_null());
 	CHECK(element(app, "#studio-setup-message").value("text", "").empty());
 }
 
