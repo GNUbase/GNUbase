@@ -1623,6 +1623,31 @@ TEST_CASE("multiple list views extend the selection from rows rebuilt before a k
 	CHECK(tracksValue(page) == "3");
 }
 
+TEST_CASE("multiple list views with shiftdeselects deselect a selected row with Shift-click", "[ui]")
+{
+	test::UiApp app;
+	const ViewsPage page(app);
+	Rml::Element& tracks = byId(page, "tracks");
+	click(app, "#drums");
+	clickNow(byId(page, "keys"), "shift_key");
+	REQUIRE(tracksValue(page) == "1,2,3");
+
+	// Without the attribute, Shift-click on a selected row selects the range to it.
+	clickNow(byId(page, "bass"), "shift_key");
+	CHECK(tracksValue(page) == "1,2");
+
+	// With it, Shift-click on a selected row deselects it and leaves the others selected, and on a row that isn't
+	// selected still selects the range from the last one clicked.
+	tracks.SetAttribute("shiftdeselects", "");
+	clickNow(byId(page, "keys"), "shift_key");
+	REQUIRE(tracksValue(page) == "1,2,3");
+	clickNow(byId(page, "bass"), "shift_key");
+	CHECK(tracksValue(page) == "1,3");
+	CHECK(!byId(page, "bass").IsClassSet("selected"));
+	clickNow(byId(page, "vocals"), "shift_key");
+	CHECK(tracksValue(page) == "1,2,3,4");
+}
+
 TEST_CASE("list views move from a value that code set before a key or a click", "[ui]")
 {
 	test::UiApp app;

@@ -34,7 +34,8 @@ namespace gnubase::ui
 	// the rows show it. Use it on the UI thread; the display and the binding must outlive it. If the element goes,
 	// the list shows nothing more.
 	//
-	// The list view selects tracks (click, Ctrl-click, Shift-click, the arrow keys) and folds folders. A double click
+	// The list view selects tracks (click, Ctrl-click, Shift-click, which deselects a selected track, the arrow keys)
+	// and folds folders. A double click
 	// on a name renames the track; a drag of a row moves the selected tracks there, into a folder when dropped on the
 	// middle of a folder's row; a drag of a row's lower edge sets its track's height, with Ctrl every track's; the
 	// wheel scrolls the display.
@@ -65,17 +66,23 @@ namespace gnubase::ui
 		// Starts renaming a track: its name becomes a text field, which Enter or leaving it sends, Escape drops.
 		void rename(uint64_t track);
 
+		// The user settings as the list last heard of them: ui.removeTracksWarning (Remove Selected Tracks asks
+		// before it removes tracks that aren't empty, in the document's remove-tracks.rml) and
+		// ui.upDownSelectsTracksOnly (Up and Down leave the event display's selection alone).
+		bool warnsBeforeRemoving() const { return m_warnBeforeRemoving; }
+		bool upDownSelectsTracksOnly() const { return m_upDownTracksOnly; }
+
 		// The commands that key commands and menus bind to, by id: track.selectPrevious and track.selectNext (Up and
-		// Down, which also select the first event on the new track while the event display has one selected),
-		// track.rename (the first selected track),
-		// track.removeSelected, track.duplicateSelected, track.disableSelected,
-		// track.enableSelected, track.toggleFolding (the selected folders), track.foldAll, track.unfoldAll and
-		// track.flipFolding; track.freezeSelected (freezes the selected audio and instrument tracks, or unfreezes them
-		// if every one is frozen) and track.renderSelected (renders them in place); and for folder tracks
-		// track.enableSelectedGroupChannels, track.disableSelectedGroupChannels, track.moveSelectedToNewFolder and
-		// track.moveSelectedToNewFolderWithGroupChannel; and for automation tracks (#121)
-		// track.toggleAutomationSelected (shows the selected tracks' automation, or hides it if every one shows it),
-		// track.showUsedAutomation and track.hideAllAutomation; and for copying automation to other tracks between
+		// Down, in the list too, which also select the first event on the new track while the event display has one
+		// selected, unless ui.upDownSelectsTracksOnly), track.rename (the first selected track),
+		// track.removeSelected (asks first for tracks that aren't empty, see warnsBeforeRemoving),
+		// track.duplicateSelected, track.disableSelected, track.enableSelected, track.toggleFolding (the selected
+		// folders), track.foldAll, track.unfoldAll and track.flipFolding; track.freezeSelected (freezes the selected
+		// audio and instrument tracks, or unfreezes them if every one is frozen) and track.renderSelected (renders them
+		// in place); and for folder tracks track.enableSelectedGroupChannels, track.disableSelectedGroupChannels,
+		// track.moveSelectedToNewFolder and track.moveSelectedToNewFolderWithGroupChannel; and for automation tracks
+		// (#121) track.toggleAutomationSelected (shows the selected tracks' automation, or hides it if every one shows
+		// it), track.showUsedAutomation and track.hideAllAutomation; and for copying automation to other tracks between
 		// the locators (#125) track.copyAutomationAll, track.copyAutomationSelected,
 		// track.copyAutomationSelectedParameters (the selected automation tracks), track.pasteAutomationAll,
 		// track.pasteAutomationSelected and track.pasteAutomationSelectedParameters.
@@ -96,6 +103,7 @@ namespace gnubase::ui
 			uint64_t parent = 0;
 			int level = 0;
 			uint64_t channel = 0;
+			bool holds = false; // events, parts, markers or automation
 		};
 
 		enum class Drag : uint8_t
@@ -152,6 +160,10 @@ namespace gnubase::ui
 
 		// The selected tracks without those inside other selected folders.
 		std::vector<uint64_t> topSelection() const;
+		// Remove Selected Tracks: removes the tracks, after asking if they, or tracks inside them, hold anything.
+		void removeSelected();
+		void removeTracks(const std::vector<uint64_t>& tracks);
+		void closedRemoveDialog(Rml::Event& event);
 		// Runs the commands as one undo step.
 		void transaction(const std::string& description, engine::Json commands);
 
@@ -173,7 +185,11 @@ namespace gnubase::ui
 		uint64_t m_loads = 0;                             // the display's, when the rows were last built
 		bool m_layingOut = false;
 		uint64_t m_renaming = 0;
-		std::string m_renamed; // the name before renaming
+		std::string m_renamed;                         // the name before renaming
+		bool m_warnBeforeRemoving = true;              // ui.removeTracksWarning
+		bool m_upDownTracksOnly = false;               // ui.upDownSelectsTracksOnly
+		Rml::ObserverPtr<Rml::Element> m_removeDialog; // remove-tracks.rml while open
+		std::vector<uint64_t> m_removing;              // the tracks it asks about
 
 		Drag m_drag = Drag::None;
 		uint64_t m_dragTrack = 0;
