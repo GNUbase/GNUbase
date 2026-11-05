@@ -1057,7 +1057,9 @@ namespace gnubase::ui
 			// Enter in the name being typed; the selection, which the keys may have moved out of view.
 			if (m_renaming != 0 && target != nullptr && target->GetTagName() == "input" &&
 				event.GetParameter<bool>("linebreak", false))
+			{
 				finishRename(true);
+			}
 			else if (target == m_view)
 			{
 				if (const std::vector<uint64_t> tracks = selection(); !tracks.empty())
