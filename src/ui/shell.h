@@ -187,6 +187,11 @@ namespace gnubase::ui
 		// From any thread: makes the shell step soon, e.g. when the engine sent the UI something.
 		void wake() { m_windows.wake(); }
 
+		// Makes the shell update and draw every window in its next step, or in this one if it hasn't drawn yet: for
+		// changes that may show in any window, such as what the engine's events and results changed
+		// (ui/enginebinding.h). The shell does so itself after it ran posted work or a file dialog answered.
+		void requestRender();
+
 		// How long run() may wait for events before a window needs drawing or a task is due; empty to wait for the
 		// next event.
 		std::optional<std::chrono::milliseconds> idleTimeout() const;
