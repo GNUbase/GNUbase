@@ -40,6 +40,16 @@ namespace
 		return std::find(classes.begin(), classes.end(), name) != classes.end();
 	}
 
+	// Whether the first element that the selector finds has the focus.
+	bool focused(test::UiApp& app, const std::string& selector)
+	{
+		const Json found = elements(app, selector);
+		if (found.empty())
+			return false;
+		const Json pseudoClasses = found.at(0).value("pseudoClasses", Json::array());
+		return std::find(pseudoClasses.begin(), pseudoClasses.end(), "focus") != pseudoClasses.end();
+	}
+
 	std::string row(uint64_t track)
 	{
 		return "#track-list listitem[value=\"" + std::to_string(track) + "\"]";
@@ -185,6 +195,23 @@ TEST_CASE("automation tracks show and hide below their track, and the parameter 
 	f.app.ui().text(std::nullopt, "LEFT");
 	f.app.shell().step(std::chrono::milliseconds(0));
 	CHECK(elements(f.app, "#automation-parameter-menu menuitem.automation-target:not(.hidden)").size() == 1);
+	// The keys skip the parameters that the search hides: Shift+Tab from the search field and Up from the first item
+	// go round to the last shown one, and Tab from there round to the search field (#524).
+	const std::string search = "#automation-parameter-menu .automation-search";
+	const std::string first = "#automation-parameter-menu menuitem[automation-function=remove]";
+	const std::string shown = "#automation-parameter-menu menuitem.automation-target:not(.hidden)";
+	REQUIRE(focused(f.app, search));
+	f.app.ui().key(std::nullopt, "Shift+Tab");
+	CHECK(focused(f.app, shown));
+	f.app.ui().key(std::nullopt, "Tab");
+	CHECK(focused(f.app, search));
+	f.app.ui().key(std::nullopt, "Tab");
+	CHECK(focused(f.app, first));
+	f.app.ui().key(std::nullopt, "Up");
+	CHECK(focused(f.app, shown));
+	f.app.ui().key(std::nullopt, "Down");
+	CHECK(focused(f.app, first));
+	REQUIRE(hasClass(elements(f.app, "#automation-parameter-menu").at(0), "open"));
 	f.click("#automation-parameter-menu menuitem.automation-target:not(.hidden)");
 	REQUIRE(f.app.waitUntil(
 		[&]
