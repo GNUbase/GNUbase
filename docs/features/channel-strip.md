@@ -38,7 +38,8 @@ The mixer's strips (`ui::Mixer`) have three more sections of the docking set `ch
 with Set up Window Layout: Pre (`.mixer-pre`), Equalizer (`.mixer-eq`) and Strip (`.mixer-strip`), on audio channels
 only; the fader section has the panner, a knob (`.mixer-pan`) for `pan`. Every control has a `param` attribute, the
 path of its value in the channel's JSON (`pre.lowCut.on`, `eq.bands.3.gain`): toggle buttons for the switches, knobs
-for gains, thresholds, ratios and Q, value fields in Hz for frequencies. A change sends `channel.set` with that value;
+for gains, thresholds, ratios and Q, value fields in Hz for frequencies. A change sends `channel.set` with that value,
+a knob's or value field's drag, wheel turns or held arrow key as one undo step (`EngineBinding::sendStep`, #716);
 the strip shows the engine's values after every undo step, whichever client changed them.
 
 ## Not yet

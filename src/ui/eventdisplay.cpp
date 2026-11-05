@@ -286,6 +286,7 @@ namespace gnubase::ui
 				{
 					m_project = result.value;
 					++m_loads;
+					m_read = m_binding.handed();
 					// Settings, not undo steps: only a fresh answer has them, not m_project shown again later.
 					takeSnap(m_project.at("snap"));
 					m_quantize = engine::midi::quantizeSettingsFromJson(m_project.at("quantize"));
@@ -330,6 +331,7 @@ namespace gnubase::ui
 	{
 		if (!readTimeContext(project, m_time))
 			logging::warning("The event display can't read the project's tempo or signatures");
+		readMarkerMagnets(project);
 		showSnap();
 
 		// A lane per track that isn't hidden, in the project's order.
@@ -629,7 +631,8 @@ namespace gnubase::ui
 		const bool playing = status.at("playing").get<bool>();
 		if (playing && !m_position)
 		{
-			m_position = m_binding.watch<int64_t>([this] { return m_engine.playbackPosition(); },
+			m_position = m_binding.watch<int64_t>(
+				m_root.get(), [this] { return m_engine.playbackPosition(); },
 				[this](const int64_t& sample)
 				{
 					setCursor(sample);

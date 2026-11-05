@@ -556,6 +556,8 @@ namespace gnubase::engine
 			right.lock = part.lock;
 			right.color = part.color;
 			right.lane = part.lane;
+			right.transpose = part.transpose;
+			right.velocity = part.velocity;
 			for (auto it = part.notes.begin(); it != part.notes.end();)
 			{
 				Note& note = it->second;

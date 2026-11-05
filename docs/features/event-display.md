@@ -114,8 +114,10 @@ tempo changes, comes with the tempo track (#155).
   the view is), with a rectangle for the view. Dragging the rectangle scrolls, dragging its edges zooms (one step in
   the history), a click outside it centres the view there.
 - **Project cursor.** A line across the ruler and the lanes at the transport's position. A click in the lower half of
-  the ruler moves it there (`transport.locate`).
-- **Cross-hair cursor.** Two lines through the mouse while it is over the lanes.
+  the ruler moves it there (`transport.locate`). Before the view's start or after its end it isn't drawn: like the
+  events, it is clipped to the timeline (`clip: always`, since RmlUi doesn't clip absolutely positioned children
+  otherwise), never drawn over the track list or the zones beside the display.
+- **Cross-hair cursor.** Two lines through the mouse while it is over the lanes; the lanes (`.event-area`) clip them.
 - **Auto-scroll** (`setAutoScroll`, `setAutoScrollMode`) keeps the cursor in view while playing: *page* turns the
   view a page when the cursor leaves it, *stationary* keeps the cursor in the middle. With
   `setSuspendAutoScrollWhenEditing`, a click in the lanes while playing suspends it until playback stops or
@@ -145,4 +147,6 @@ tempo changes, comes with the tempo track (#155).
   auto-scroll button on and off, the modes and suspending from its menu, checked, and the button suspended by a click
   in the lanes while the dummy device plays, and resumed by a click on it.
   The keys zoom, vertically too, zoom full and switch auto-scroll when the window opens and after a click into
-  it, and zoom undo runs as a command.
+  it, and zoom undo runs as a command. At 1024 by 600, with the cursor scrolled left of the view's start or located
+  right of its end, and with the vertical cross-hair cursor moved outside the lanes, the track list and the right zone
+  look as they did with both inside.

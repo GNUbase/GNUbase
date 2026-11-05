@@ -7,7 +7,7 @@
 #include <vector>
 
 // Where sounds start in audio (#143): the transient detection behind hitpoints (docs/features/hitpoints.md). It
-// allocates and takes time in proportion to the audio, so it runs on the command thread, never on audio threads.
+// allocates and takes time in proportion to the audio, so it runs in a job, never on audio threads.
 namespace gnubase::engine::analysis
 {
 	struct Onset
@@ -31,7 +31,28 @@ namespace gnubase::engine::analysis
 		// The onsets of everything fed, by frame.
 		std::vector<Onset> finish();
 
+		// The peak and rise of a sound that starts at frame at of frames (count frames of interleaved samples), as
+		// the detection measures those it finds, here over the 20 ms from at and the frame after, as there: for a
+		// hitpoint inserted or moved by hand (#753). The rise is the same as the detection's only if the frames start
+		// lead(sampleRate) frames or more before at, or where the audio starts; what came before has decayed below -60
+		// dBFS by then.
+		static Onset measure(double sampleRate, int channels, const float* frames, size_t count, size_t at);
+		static int64_t lead(double sampleRate);
+		// The frames from where a sound starts that its peak and rise are measured over.
+		static int64_t window(double sampleRate);
+
 	private:
+		// A frame's peak (the largest sample) and the most either envelope rose within 5 ms there, in dB.
+		struct Step
+		{
+			double level = 0.0;
+			std::array<double, 2> rises = {0.0, 0.0};
+			std::array<double, 2> before = {0.0, 0.0}; // each envelope 5 ms before, at least -60 dBFS
+		};
+
+		// Takes the next frame, of m_channels samples.
+		Step step(const float* frame);
+
 		struct Band
 		{
 			double envelope = 0.0;

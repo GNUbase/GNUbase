@@ -63,7 +63,8 @@ namespace gnubase::ui
 		// Logs the error and shows it in a dialog in the window (project-error.rml).
 		void showError(WindowId window, const std::string& error);
 		// Shows the error in project-error.rml in the window once the event that asked is done. A failed auto save's
-		// error (autoSave) counts as shown only once it opened and while no other dialog took its place.
+		// error (autoSave) takes the place of an earlier one's but doesn't open over any other modal dialog in the
+		// window, and counts as shown only once it opened and while no other dialog took its place.
 		void openError(WindowId window, const std::string& error, bool autoSave);
 		// Tells the user in the main window that the project can't be auto saved (project.autoSaveFailed): once, not
 		// at every interval, until it fails for another reason or after an auto save succeeded or the project was
