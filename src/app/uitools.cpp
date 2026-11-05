@@ -78,7 +78,9 @@ namespace gnubase::app
 			ui::Target target;
 			target.selector = arguments.value("selector", std::string());
 			target.index = arguments.value("index", 0);
-			if (arguments.contains("x") && arguments.contains("y"))
+			if (arguments.contains("x") != arguments.contains("y"))
+				throw std::invalid_argument("x and y go together: a point needs both");
+			if (arguments.contains("x"))
 				target.point = ui::Point{arguments.at("x").get<int>(), arguments.at("y").get<int>()};
 			return target;
 		}
@@ -224,12 +226,18 @@ namespace gnubase::app
 			[&shell, caller, automation](const Json& arguments)
 			{ return wait(shell, caller, automation, arguments); }});
 
+		Json moveProperties = targetProperties();
+		moveProperties["modifiers"] = modifiersProperty("Keys held while moving.");
 		tools.push_back({"ui_move",
-			"Moves the mouse to the centre of an element or to a point, e.g. to hover over it. Returns the element "
-			"now under the mouse.",
-			object(targetProperties()), elementResult, false,
-			run([](ui::Automation& ui, const Json& arguments)
-				{ return ui.move(windowOf(arguments), targetOf(arguments)); })});
+			"Moves the mouse to the centre of an element or to a point, e.g. to hover over it, or with a button that "
+			"ui_click's action down holds, to drag. Returns the element now under the mouse.",
+			object(std::move(moveProperties)), elementResult, false,
+			run(
+				[](ui::Automation& ui, const Json& arguments)
+				{
+					return ui.move(windowOf(arguments), targetOf(arguments),
+						arguments.value("modifiers", std::vector<std::string>()));
+				})});
 
 		Json clickProperties = targetProperties();
 		clickProperties["button"] = {{"enum", {"left", "right", "middle"}}, {"description", "Left if left out."}};

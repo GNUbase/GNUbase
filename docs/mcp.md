@@ -5204,11 +5204,12 @@ Result:
 
 #### `ui_move`
 
-Moves the mouse to the centre of an element or to a point, e.g. to hover over it. Returns the element now under the mouse.
+Moves the mouse to the centre of an element or to a point, e.g. to hover over it, or with a button that ui_click's action down holds, to drag. Returns the element now under the mouse.
 
 Arguments:
 
 - `index`: integer. Which of the elements the selector matches; 0, the first, if left out.
+- `modifiers`: array of one of "ctrl" | "shift" | "alt" | "meta". Keys held while moving.
 - `selector`: string. A CSS selector; the mouse goes to the centre of the element it matches.
 - `window`: integer. The window's id from ui_windows; the main window if left out.
 - `x`: integer. Instead of a selector: the point in the window's pixels, with y.

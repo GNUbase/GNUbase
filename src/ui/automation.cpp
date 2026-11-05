@@ -293,11 +293,11 @@ namespace gnubase::ui
 		return cropped;
 	}
 
-	Json Automation::move(std::optional<WindowId> window, const Target& to)
+	Json Automation::move(std::optional<WindowId> window, const Target& to, const std::vector<std::string>& modifiers)
 	{
 		Window& shown = resolve(window);
 		const Point at = targetPoint(shown, to);
-		updated(shown).ProcessMouseMove(at.x, at.y, 0);
+		updated(shown).ProcessMouseMove(at.x, at.y, modifierState(modifiers));
 		return under(shown);
 	}
 

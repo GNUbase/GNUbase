@@ -354,17 +354,20 @@ TEST_CASE("ui_click with action down holds the button across other tool calls un
 {
 	Fixture fixture;
 	Recorder recorder;
-	for (const Rml::EventId id :
-		{Rml::EventId::Mousedown, Rml::EventId::Mouseup, Rml::EventId::Dragstart, Rml::EventId::Dragdrop})
+	for (const Rml::EventId id : {Rml::EventId::Mousedown, Rml::EventId::Mouseup, Rml::EventId::Dragstart,
+			 Rml::EventId::Drag, Rml::EventId::Dragdrop})
 		fixture.main->AddEventListener(id, &recorder);
 
-	// Pressed on the handle, the button stays down while other tools run and the mouse moves: the handle is dragged
-	// and dropped only when the button goes up, where the mouse is.
+	// Pressed on the handle, the button stays down while other tools run and the mouse moves: the handle is dragged,
+	// with the keys each move holds, and dropped only when the button goes up, where the mouse is.
 	CHECK(fixture.call("ui_click", {{"selector", "#handle"}, {"action", "down"}}).at("element").at("id") == "handle");
 	CHECK(recorder.events.at("mousedown").at("target") == "handle");
 	CHECK(recorder.events.at("mousedown").at("button") == "0");
-	fixture.call("ui_move", {{"selector", "#target"}});
+	fixture.call("ui_move", {{"x", 300}, {"y", 60}, {"modifiers", Json::array({"shift"})}});
 	CHECK(recorder.events.at("dragstart").at("target") == "handle");
+	CHECK(recorder.events.at("drag").at("shift_key") == "1");
+	fixture.call("ui_move", {{"selector", "#target"}});
+	CHECK(recorder.events.at("drag").at("shift_key") == "0");
 	fixture.call("ui_windows");
 	CHECK(!recorder.events.contains("mouseup"));
 	CHECK(!recorder.events.contains("dragdrop"));
@@ -385,9 +388,13 @@ TEST_CASE("ui_click with action down holds the button across other tool calls un
 	CHECK(recorder.events.at("mouseup").at("button") == "1");
 	CHECK(recorder.events.at("mouseup").at("shift_key") == "0");
 
-	// A count is for clicks.
+	// A count is for clicks, and a point needs x and y.
+	recorder.events = Json::object();
 	CHECK_THAT(fixture.fail("ui_click", {{"selector", "#handle"}, {"action", "down"}, {"count", 2}}),
 		ContainsSubstring("count"));
+	CHECK_THAT(fixture.fail("ui_click", {{"x", 300}, {"action", "down"}}), ContainsSubstring("x and y"));
+	CHECK_THAT(fixture.fail("ui_move", {{"y", 130}}), ContainsSubstring("x and y"));
+	CHECK(!recorder.events.contains("mousedown"));
 }
 
 TEST_CASE("ui_drop drops files on an element, as the window system does", "[unit]")
