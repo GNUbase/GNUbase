@@ -69,6 +69,11 @@ namespace gnubase::engine
 				parameters.push_back(
 					{{AutomationTargetType::Mute, 0, 0, 0, 0}, {0, "Mute", 0.0, 1.0, 0.0, {}, true, {"Off", "On"}}});
 			}
+			else if (project.trackById.at(channel.track).type == TrackType::Vca) // a VCA fader: its fader only
+			{
+				parameters.push_back({{AutomationTargetType::Volume, 0, 0, 0, 0},
+					{0, "Volume", g_minChannelVolume, project.maxVolume, 0.0, "dB", false, {}}});
+			}
 			if (const processors::BuiltinInfo* instrument = processors::findBuiltin(channel.instrument))
 				for (const processors::ParameterInfo& parameter : instrument->parameters)
 					parameters.push_back({{AutomationTargetType::Instrument, parameter.id, 0, 0, 0}, parameter});

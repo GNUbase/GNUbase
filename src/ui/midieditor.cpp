@@ -70,10 +70,11 @@ namespace gnubase::ui
 			return std::find(ids.begin(), ids.end(), Json(id)) != ids.end();
 		}
 
-		bool holdsParts(const Json& track)
+		// Whether the track's parts can show: audio tracks' in the audio part editor, else MIDI and instrument tracks'.
+		bool holdsParts(const Json& track, bool audio)
 		{
 			const std::string type = track.at("type").get<std::string>();
-			return type == "midi" || type == "instrument";
+			return audio ? type == "audio" : type == "midi" || type == "instrument";
 		}
 
 		std::string idText(uint64_t value)
@@ -102,9 +103,8 @@ namespace gnubase::ui
 				R"(<div class="spacer"/>)" +
 				(window ? R"(<button id="editor-move" title="Open in Lower Zone">Open in Lower Zone</button>)"
 						: R"(<button id="editor-move" title="Open in Separate Window">Open in Separate Window</button>)") +
-				R"(</div>)" + (window ? R"(<div class="editor-global-tracks"/>)" : "") +
-				R"(<div class="key-editor"/></div>)");
-			m_keys = std::make_unique<KeyEditor>(m_binding, *root.QuerySelector(".key-editor"), m_name);
+				R"(</div>)" + (window ? R"(<div class="editor-global-tracks"/>)" : "") + R"(</div>)");
+			showContent();
 			Rml::ElementDocument* document = root.GetOwnerDocument();
 			for (const char* menu : {"editor-editing-mode-menu", "editor-active-part-menu"})
 			{
@@ -234,7 +234,7 @@ namespace gnubase::ui
 					tracks.push_back(child.at("id").get<uint64_t>());
 		std::pair<size_t, size_t> counts;
 		const Json parts = m_view.value("parts", Json::array());
-		for (const Json& part : m_project.value("midiParts", Json::array()))
+		for (const Json& part : projectParts())
 			if (std::find(tracks.begin(), tracks.end(), part.at("track").get<uint64_t>()) != tracks.end())
 			{
 				++counts.first;
@@ -255,13 +255,18 @@ namespace gnubase::ui
 			if (Rml::Element* keep = root->QuerySelector("#editor-keep-contents"))
 				keep->SetClass("checked", m_view.at("keepContents").get<bool>());
 			std::string active;
-			for (const Json& part : m_project.at("midiParts"))
+			for (const Json& part : projectParts())
 				if (part.at("id") == m_view.at("activePart"))
 					active = part.at("name").get<std::string>();
 			setInner(root->QuerySelector("#editor-active-part"), encode(active.empty() ? "No Part" : active));
 			setInner(root->QuerySelector(".editor-global-tracks"), globalTracksRml());
+			showContent();
 			if (m_keys)
 				m_keys->show(m_project, m_view);
+			if (m_list)
+				m_list->show(m_project, m_view);
+			if (m_audio)
+				m_audio->show(m_project, m_view);
 			fillMenus();
 		}
 		else if (m_part == EditorPart::Visibility)
@@ -275,6 +280,47 @@ namespace gnubase::ui
 		}
 		if (Rml::Context* context = root->GetContext())
 			context->RequestNextUpdate(0);
+	}
+
+	bool MidiEditor::showsAudio() const
+	{
+		return m_view.value("content", std::string("key")) == "audioPart";
+	}
+
+	Json MidiEditor::projectParts() const
+	{
+		return m_project.value(showsAudio() ? "audioParts" : "midiParts", Json::array());
+	}
+
+	void MidiEditor::showContent()
+	{
+		const std::string shown = m_view.value("content", std::string("key"));
+		Rml::Element* editor = m_root.get() != nullptr ? m_root.get()->QuerySelector(".midi-editor") : nullptr;
+		if (editor == nullptr || (shown == "list" && m_list) || (shown == "audioPart" && m_audio) ||
+			(shown != "list" && shown != "audioPart" && m_keys))
+			return;
+		m_keys.reset();
+		m_list.reset();
+		m_audio.reset();
+		for (const char* name : {".key-editor", ".list-editor", ".audio-part-editor"})
+			if (Rml::Element* old = editor->QuerySelector(name))
+				editor->RemoveChild(old);
+		Rml::Element* added = editor->AppendChild(editor->GetOwnerDocument()->CreateElement("div"));
+		if (shown == "list")
+		{
+			added->SetClass("list-editor", true);
+			m_list = std::make_unique<ListEditor>(m_binding, *added, m_name);
+		}
+		else if (shown == "audioPart")
+		{
+			added->SetClass("audio-part-editor", true);
+			m_audio = std::make_unique<AudioPartEditor>(m_binding, *added, m_name);
+		}
+		else
+		{
+			added->SetClass("key-editor", true);
+			m_keys = std::make_unique<KeyEditor>(m_binding, *added, m_name);
+		}
 	}
 
 	// The chord the selected notes make, as the Chord Editing section's Chord Type field shows it (p. 1216).
@@ -332,8 +378,9 @@ namespace gnubase::ui
 		return rml;
 	}
 
-	// The tracks whose parts the editor can show (p. 1148): MIDI and instrument tracks, and folders with such tracks
-	// in them. A check while all their parts show, a rectangle (.partial) while some do (p. 1151).
+	// The tracks whose parts the editor can show (p. 1148): MIDI and instrument tracks, or in the audio part editor
+	// audio tracks, and folders with such tracks in them. A check while all their parts show, a rectangle (.partial)
+	// while some do (p. 1151).
 	std::string MidiEditor::visibilityRml() const
 	{
 		std::string rml;
@@ -341,7 +388,7 @@ namespace gnubase::ui
 		{
 			const auto trackId = track.at("id").get<uint64_t>();
 			const bool folder = track.at("type") == "folder";
-			if (!holdsParts(track) && !folder)
+			if (!holdsParts(track, showsAudio()) && !folder)
 				continue;
 			const auto [parts, shown] = partsShown(trackId);
 			if (folder && parts == 0)
@@ -375,8 +422,9 @@ namespace gnubase::ui
 			// Under the name of each track, its parts by position (p. 1143).
 			std::string rml;
 			uint64_t last = 0;
+			const Json parts = projectParts();
 			for (const Json& id : m_view.at("parts"))
-				for (const Json& part : m_project.at("midiParts"))
+				for (const Json& part : parts)
 					if (part.at("id") == id)
 					{
 						const auto owner = part.at("track").get<uint64_t>();
@@ -455,7 +503,7 @@ namespace gnubase::ui
 				return;
 			m_binding.send("editor.open",
 				{{"editor", m_name == "window" ? "lower" : "window"}, {"parts", m_view.at("parts")},
-					{"activePart", m_view.at("activePart")}});
+					{"activePart", m_view.at("activePart")}, {"content", m_view.value("content", "key")}});
 			m_binding.send("editor.close", {{"editor", m_name}});
 			if (m_moved)
 				m_moved();
@@ -468,7 +516,8 @@ namespace gnubase::ui
 		{
 			// Clicking a shown track's name activates it for editing (p. 1149).
 			const uint64_t clicked = idOf(target, "track", root);
-			if (partsShown(clicked).second > 0 && (track(clicked) == nullptr || holdsParts(*track(clicked))))
+			if (partsShown(clicked).second > 0 &&
+				(track(clicked) == nullptr || holdsParts(*track(clicked), showsAudio())))
 				set({{"activeTrack", clicked}});
 		}
 		else if (closest(target, "editor-global-toggle", root) != nullptr)

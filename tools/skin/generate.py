@@ -509,6 +509,11 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".tempo-curve.inactive .tempo-point", {"background-color": c["textMuted"]}),
         (".tempo-curve .tempo-point.selected", {"background-color": c["text"]}),
         (".tempo-editor .tempo-scale-label", {"color": c["textMuted"], "font-size": f"{sizes['small']}dp"}),
+        # The signature track (docs/features/signature-track.md): a time signature event at the start of its bar
+        (".signature-row .signature-event", {"color": c["text"], "font-size": f"{sizes['small']}dp",
+                                             "border-left-width": f"{widths['hairline']}dp",
+                                             "border-left-color": c["accent2"]}),
+        (".signature-row .signature-event.selected", {"color": c["background"], "background-color": c["accent2"]}),
         # The tools (docs/features/tools.md): the selection range and the rectangle a tool drags
         (".event-display .range-selection", {"border-width": f"{widths['hairline']}dp", "border-color": c["text"],
                                              "background-color": c["text"] + "33"}),
@@ -520,6 +525,7 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".track-list listitem", {"border-bottom-width": f"{widths['hairline']}dp",
                                   "border-bottom-color": c["border"]}),
         (".track-list listitem.disabled", {"color": c["textMuted"]}),
+        (".track-list listitem.frozen", {"color": c["textMuted"]}),
         (".track-list .drop-line", {"background-color": c["accent"]}),
         # Automation tracks (docs/features/automation-tracks.md): their rows and lanes below their track's, the
         # curve with its points, grayed out while it doesn't read, the static value line and the automation event
@@ -527,6 +533,7 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".track-list .automation-rows", {"background-color": mix(c["surface"], c["background"], .5)}),
         (".track-list .automation-row", {"border-top-width": f"{widths['hairline']}dp",
                                          "border-top-color": c["border"]}),
+        (".track-list .automation-row.selected", {"decorator": skin("list-item-selected")}),
         (".event-display .automation-lane", {"background-color": c["surface"] + "80",
                                              "border-top-width": f"{widths['hairline']}dp",
                                              "border-top-color": c["border"]}),
@@ -568,6 +575,62 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
                                 "border-color": c["textMuted"]}),
         (".key-note.drawing", {"background-color": c["accent"] + "66"}),
         (".key-editor-step-cursor", {"background-color": c["accent"]}),
+        # The controller lanes (docs/features/controller-lanes.md): the lanes' areas like the note display, a line
+        # between lanes, the bars and steps in the notes' colors, selected ones in the second accent, those outside
+        # the part editing mode dimmed
+        (".controller-lane-area", {"background-color": c["surface"], "border-bottom-width": f"{widths['hairline']}px",
+                                   "border-bottom-color": c["border"]}),
+        (".controller-bar, .controller-step", {"background-color": mix(c["surfaceRaised"], c["accent"], .6)}),
+        (".controller-bar.selected, .controller-step.selected", {"background-color": c["accent2"]}),
+        (".controller-bar.inactive, .controller-step.inactive",
+         {"background-color": mix(c["surface"], c["textMuted"], .3)}),
+        # The audio part editor (docs/features/audio-part-editor.md): lines between the lanes, the events, selected
+        # ones in the second accent, muted ones and those outside the part editing mode dimmed
+        (".ape-display", {"background-color": c["surface"]}),
+        (".ape-lane", {"border-bottom-width": f"{widths['hairline']}px",
+                       "border-bottom-color": mix(c["surface"], c["border"], .5)}),
+        (".ape-event", {"background-color": mix(c["surfaceRaised"], c["accent"], .3),
+                        "border-width": f"{widths['hairline']}px", "border-color": c["accent"]}),
+        (".ape-event.selected", {"background-color": mix(c["surfaceRaised"], c["accent2"], .5),
+                                 "border-color": c["text"]}),
+        (".ape-event.muted, .ape-event.inactive", {"background-color": mix(c["surface"], c["textMuted"], .3),
+                                                   "border-color": c["textMuted"]}),
+        (".audio-part-editor .editor-part", {"color": c["textMuted"], "border-width": f"{widths['hairline']}dp",
+                                             "border-color": c["border"],
+                                             "background-color": mix(c["surface"], c["surfaceRaised"], .5)}),
+        (".audio-part-editor .editor-part.editable", {"color": c["text"]}),
+        (".audio-part-editor .editor-part.active", {"color": c["accent"]}),
+        # The sample editor (docs/features/sample-editor.md): the overview with the event, the selection and what
+        # the display shows, the display's audio outside the event shaded, the selection range, the region selected in
+        # the list, the snap point, and the selected region's row
+        (".se-overview, .se-display", {"background-color": c["surface"]}),
+        (".se-overview-event", {"background-color": c["text"] + "1a"}),
+        (".se-overview-selection, .se-selection", {"background-color": c["text"] + "33"}),
+        (".se-overview-view", {"border-width": f"{widths['hairline']}dp", "border-color": c["accent"]}),
+        (".se-overview-snap, .se-snap-point", {"background-color": c["accent2"]}),
+        (".se-outside", {"background-color": c["background"] + "99"}),
+        (".se-region-shown", {"border-width": f"{widths['hairline']}dp", "border-color": c["accent2"],
+                              "background-color": c["accent2"] + "1a"}),
+        (".se-region.selected", {"background-color": mix(c["surface"], c["accent"], .4)}),
+        # Its hitpoints (docs/features/hitpoints.md): lines with a handle, locked ones' handles lit, disabled ones dim
+        (".se-hitpoint-line, .se-hitpoint-handle", {"background-color": c["accent"]}),
+        (".se-hitpoint.locked .se-hitpoint-handle", {"background-color": c["accent2"]}),
+        (".se-hitpoint.disabled .se-hitpoint-line, .se-hitpoint.disabled .se-hitpoint-handle",
+         {"background-color": c["textMuted"] + "66"}),
+        # The list editor (docs/features/list-editor.md): lines between the rows, the selected rows lit, those
+        # outside the part editing mode dimmed, the events in the event display and the bars of the value display
+        (".list-editor-header", {"color": c["textMuted"], "border-bottom-width": f"{widths['hairline']}px",
+                                 "border-bottom-color": c["border"]}),
+        (".list-editor-rows .list-row", {"border-bottom-width": f"{widths['hairline']}px",
+                                         "border-bottom-color": mix(c["surface"], c["border"], .5)}),
+        (".list-editor-body", {"background-color": c["surface"]}),
+        (".list-row.selected", {"background-color": mix(c["surface"], c["accent"], .25)}),
+        (".list-row.inactive", {"color": c["textMuted"]}),
+        (".list-event", {"background-color": mix(c["surfaceRaised"], c["accent"], .6),
+                         "border-width": f"{widths['hairline']}px", "border-color": c["accent"]}),
+        (".list-row.selected .list-event", {"background-color": c["accent2"], "border-color": c["text"]}),
+        (".list-value", {"background-color": c["accent"]}),
+        (".list-row.selected .list-value", {"background-color": c["accent2"]}),
         # Docking windows (docs/features/docking.md): zones, the frame of the zone with the keyboard focus, and strips
         (".docking [zone]", {"background-color": mix(c["background"], c["surface"], .5)}),
         (".docking .zone-frame", {"border-width": f"{widths['focus']}dp", "border-color": c["accent"]}),
@@ -586,6 +649,11 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         # The edit history (docs/features/edit-history.md): undone steps dimmed, and the separator after the done ones
         (".history tr.undone, .history tr.undone input.text", {"color": c["textMuted"]}),
         (".history .history-separator", {"background-color": c["accent"]}),
+        # The quantize panel's grid display (docs/features/quantize.md): the grid positions and the catch range around
+        # them
+        (".quantize-display", {"background-color": c["surface"]}),
+        (".quantize-line", {"background-color": c["accent"]}),
+        (".quantize-catch", {"background-color": c["accent"] + "33"}),
         # The on-screen keyboard (docs/features/onscreen-keyboard.md): white and black keys, lit while they sound
         (".onscreen-keyboard .white-key", {"background-color": c["text"], "color": c["background"],
                                            "border-color": c["border"]}),

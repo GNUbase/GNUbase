@@ -59,6 +59,9 @@ namespace gnubase::engine::plugins
 		// [command thread] "loading", "active", "inactive", "failed" (it couldn't be made or activated) or
 		// "unavailable" (this build has no such plugin); "" for no slot.
 		std::string status(uint64_t slot) const;
+		// [command thread] How the slots' plugins process their blocks from the next block on, e.g. offline for an
+		// export, so that a host process gives them the offline deadline (PluginSlot::setProcessMode).
+		void setProcessMode(plugin::ProcessMode mode) const;
 		// [command thread] The graph of this generation, now published, has none of the plugins update marked: they
 		// are deactivated, activated again or destroyed as soon as the audio thread runs it.
 		void retire(uint64_t generation);

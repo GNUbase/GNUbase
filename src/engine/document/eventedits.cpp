@@ -50,6 +50,7 @@ namespace gnubase::engine
 			bool& lock() const { return pick(&AudioEvent::lock, &AudioPart::lock, &MidiPart::lock); }
 			bool& mute() const { return pick(&AudioEvent::mute, &AudioPart::mute, &MidiPart::mute); }
 			std::string& color() const { return pick(&AudioEvent::color, &AudioPart::color, &MidiPart::color); }
+			int& lane() const { return pick(&AudioEvent::lane, &AudioPart::lane, &MidiPart::lane); }
 			bool locked() const { return lock(); }
 			time::Position& position() const
 			{
@@ -312,6 +313,7 @@ namespace gnubase::engine
 			{
 				AudioEvent copy = *item.audio;
 				copy.id = project.newId();
+				copy.front = 0; // in front, as added last
 				copy.lock = false;
 				copy.crossfade = Crossfade();
 				return audioItem(project.audioEvents[copy.id] = copy);
@@ -520,6 +522,7 @@ namespace gnubase::engine
 					return {};
 				AudioEvent right = event;
 				right.id = project.newId();
+				right.front = frontOf(event); // the piece after the split stays where the event is in the stack
 				right.position = rebased(project, {time::TimeBase::Linear, at}, event.position.base);
 				right.offset += frames;
 				right.length -= frames;
@@ -552,6 +555,9 @@ namespace gnubase::engine
 			right.mute = part.mute;
 			right.lock = part.lock;
 			right.color = part.color;
+			right.lane = part.lane;
+			right.transpose = part.transpose;
+			right.velocity = part.velocity;
 			for (auto it = part.notes.begin(); it != part.notes.end();)
 			{
 				Note& note = it->second;
@@ -989,6 +995,7 @@ namespace gnubase::engine
 			{
 				item.mute() = parameters.value("mute", item.mute());
 				item.lock() = parameters.value("lock", item.lock());
+				item.lane() = parameters.value("lane", item.lane());
 				if (recolor)
 					item.color() = color;
 				announce(project, context, item, "changed");
@@ -1121,7 +1128,7 @@ namespace gnubase::engine
 				Json info = {{"id", item.id()}, {"kind", kind}, {"track", item.track()}, {"name", name},
 					{"start", start}, {"end", samples(project, end)}, {"length", samples(project, end) - start},
 					{"startTicks", ticks(project, item.position())}, {"endTicks", ticks(project, end)},
-					{"mute", item.mute()}, {"lock", item.locked()},
+					{"mute", item.mute()}, {"lock", item.locked()}, {"lane", item.lane()},
 					{"shared", item.part != nullptr ? item.part->shared : ObjectId{0}}};
 				result.push_back(std::move(info));
 			}
@@ -1411,14 +1418,15 @@ namespace gnubase::engine
 		}
 
 		// A point without an id, shaped like shape, or else a step.
-		AutomationPoint makePoint(
-			time::TimeBase base, int64_t at, double value, const std::optional<AutomationPoint>& shape)
+		AutomationPoint makePoint(time::TimeBase base, int64_t at, double value,
+			const std::optional<AutomationPoint>& shape, bool terminator = false)
 		{
 			AutomationPoint point;
 			point.position = {base, at};
 			point.value = value;
 			point.shape = shape ? shape->shape : AutomationShape::Step;
 			point.curve = shape ? shape->curve : 0.0;
+			point.terminator = terminator;
 			return point;
 		}
 
@@ -1435,9 +1443,23 @@ namespace gnubase::engine
 				{ return entry.second.position.value >= from && entry.second.position.value < to; });
 		}
 
+		// Whether a lane has no curve at a position, a gap (reference manual p. 881): from a terminator up to the next
+		// point, and with virgin territory before the first and after the last point. fromLeft: where the curve
+		// arrives there from, else where it goes on from there. An edge of an edit in a gap gets no point with a value.
+		bool inGap(const Project& project, const AutomationLane& lane, int64_t at, bool fromLeft)
+		{
+			const std::optional<AutomationPoint> point = shapingPoint(lane, at, !fromLeft);
+			if (!point)
+				return project.virginTerritory;
+			return point->terminator ||
+				(project.virginTerritory &&
+					!anyPoint(lane, fromLeft ? at : at + 1, std::numeric_limits<int64_t>::max()));
+		}
+
 		// Takes the automation between from and to out of a lane and keeps the curve outside: the value it arrives
-		// at from with holds up to to, where the curve goes on. Closing the gap moves the points after it back
-		// instead. Points at to make way for one that has their value and shape.
+		// at from with holds up to to, where the curve goes on. With virgin territory the range becomes a gap instead
+		// (reference manual p. 881): the point at from is a terminator. Closing the gap moves the points after it back
+		// instead. Points at to make way for one that has their value and shape. Edges in gaps stay in them.
 		// ponytail: a curve shaped point at an edge keeps its bend over the shorter rest of its segment.
 		void cutAutomation(
 			Project& project, AutomationLane& lane, int64_t from, int64_t to, bool close, CommandContext& context)
@@ -1448,6 +1470,8 @@ namespace gnubase::engine
 			const double left = valueAt(lane, from, true);
 			const double right = valueAt(lane, to, false);
 			const std::optional<AutomationPoint> shape = shapingPoint(lane, to, true);
+			const bool leftGap = inGap(project, lane, from, true);
+			const bool rightGap = inGap(project, lane, to, false);
 			for (auto point = lane.points.begin(); point != lane.points.end();)
 			{
 				int64_t& at = point->second.position.value;
@@ -1460,13 +1484,18 @@ namespace gnubase::engine
 					at -= to - from;
 				++point;
 			}
-			addPoint(project, lane, makePoint(base, from, left, std::nullopt));
-			addPoint(project, lane, makePoint(base, close ? from : to, right, shape));
+			if (!leftGap)
+				addPoint(project, lane,
+					makePoint(base, from, left, std::nullopt, close ? rightGap : project.virginTerritory));
+			if (!rightGap)
+				addPoint(project, lane, makePoint(base, close ? from : to, right, shape));
+			else if (!leftGap && !close && !project.virginTerritory)
+				addPoint(project, lane, makePoint(base, to, left, std::nullopt, true)); // the held value ends there
 			context.emit("automationLane.changed", {{"lane", toJson(lane)}});
 		}
 
 		// Makes room of a length at a position in a lane: the value the curve arrives there with holds over it, then
-		// the curve goes on.
+		// the curve goes on. In a gap the gap goes on over it.
 		void openAutomation(Project& project, AutomationLane& lane, int64_t at, int64_t length, CommandContext& context)
 		{
 			if (!anyPoint(lane, at, std::numeric_limits<int64_t>::max()))
@@ -1476,30 +1505,40 @@ namespace gnubase::engine
 			const double right = valueAt(lane, at, false);
 			const std::optional<AutomationPoint> shape = shapingPoint(lane, at, false);
 			const bool pointThere = anyPoint(lane, at, at + 1);
+			const bool leftGap = inGap(project, lane, at, true);
+			const bool rightGap = inGap(project, lane, at, false);
 			for (auto& [id, point] : lane.points)
 				if (point.position.value >= at)
 					point.position.value += length;
-			addPoint(project, lane, makePoint(base, at, left, std::nullopt));
-			if (!pointThere)
+			if (!leftGap)
+				addPoint(project, lane, makePoint(base, at, left, std::nullopt));
+			if (!pointThere && !rightGap)
 				addPoint(project, lane, makePoint(base, at + length, right, shape));
 			context.emit("automationLane.changed", {{"lane", toJson(lane)}});
 		}
 
 		// The automation between from and to in a lane, as the clipboard keeps it: the points there, with the curve's
-		// values at both edges. The points' ids only keep their order.
+		// values at both edges, and its gaps: edges in gaps are terminators, and with virgin territory the lane's last
+		// point is one. The points' ids only keep their order.
 		AutomationLane automationWithin(const Project& project, const AutomationLane& lane, int64_t from, int64_t to)
 		{
 			const time::TimeBase base = project.trackById.at(lane.track).timeBase;
+			const std::optional<AutomationPoint> last = shapingPoint(lane, std::numeric_limits<int64_t>::max(), true);
 			std::vector<AutomationPoint> points;
 			for (const auto& [id, point] : lane.points)
 				if (point.position.value >= from && point.position.value < to)
+				{
 					points.push_back(point);
+					points.back().terminator |= project.virginTerritory && last && last->id == id;
+				}
 			std::stable_sort(points.begin(), points.end(),
 				[](const AutomationPoint& a, const AutomationPoint& b) { return a.position.value < b.position.value; });
 			if (!anyPoint(lane, from, from + 1))
-				points.insert(
-					points.begin(), makePoint(base, from, valueAt(lane, from, false), shapingPoint(lane, from, false)));
-			points.push_back(makePoint(base, to, valueAt(lane, to, true), std::nullopt));
+				points.insert(points.begin(),
+					makePoint(base, from, valueAt(lane, from, false), shapingPoint(lane, from, false),
+						inGap(project, lane, from, false)));
+			points.push_back(
+				makePoint(base, to, valueAt(lane, to, true), std::nullopt, inGap(project, lane, to, true)));
 			AutomationLane copy = lane;
 			copy.points.clear();
 			ObjectId id = 0;
@@ -1512,7 +1551,7 @@ namespace gnubase::engine
 		}
 
 		// Pastes copied automation into a lane, moved by shift: it replaces the curve from its first to its last
-		// point, and the curve outside stays.
+		// point, and the curve outside stays, with its gaps.
 		void pasteAutomation(Project& project, AutomationLane& lane, const AutomationLane& copied, const Gap& shift,
 			CommandContext& context)
 		{
@@ -1535,16 +1574,18 @@ namespace gnubase::engine
 			const double left = had ? valueAt(lane, from, true) : 0.0;
 			const double right = had ? valueAt(lane, to, false) : 0.0;
 			const std::optional<AutomationPoint> shape = shapingPoint(lane, to, true);
+			const bool leftGap = had && inGap(project, lane, from, true);
+			const bool rightGap = had && inGap(project, lane, to, false);
 			for (auto point = lane.points.begin(); point != lane.points.end();)
 				point = point->second.position.value >= from && point->second.position.value <= to
 					? lane.points.erase(point)
 					: std::next(point);
-			if (had)
+			if (had && !leftGap)
 				addPoint(project, lane, makePoint(base, from, left, std::nullopt));
 			for (const AutomationPoint& point : points)
 				addPoint(project, lane, point);
 			if (had)
-				addPoint(project, lane, makePoint(base, to, right, shape));
+				addPoint(project, lane, makePoint(base, to, right, shape, rightGap));
 			context.emit("automationLane.changed", {{"lane", toJson(lane)}});
 		}
 
@@ -1642,6 +1683,75 @@ namespace gnubase::engine
 				added.insert(added.end(), more.begin(), more.end());
 			}
 			return {{"events", idsOf(added)}};
+		}
+
+		// Lanes and comping (#99, reference manual pp. 225-228).
+
+		// Brings a take to the front: an audio event plays where it overlaps others on its track, as do an audio part's
+		// events; a MIDI part is unmuted, and the MIDI parts on its track's other lanes that it overlaps are muted.
+		void toFront(Project& project, const Item& item, CommandContext& context)
+		{
+			if (item.audio != nullptr)
+			{
+				item.audio->front = project.newId();
+			}
+			else if (item.audioPart != nullptr)
+			{
+				for (AudioEvent* event : eventsIn(project, item.audioPart->id))
+					event->front = project.newId();
+			}
+			else
+			{
+				MidiPart& part = *item.part;
+				part.mute = false;
+				const time::Samples start = samples(project, part.position);
+				const time::Samples end = samples(project, endOf(project, item));
+				for (auto& [id, other] : project.midiParts)
+				{
+					const Item overlapping{nullptr, &other};
+					if (other.track != part.track || other.lane == part.lane || other.mute ||
+						samples(project, other.position) >= end ||
+						samples(project, endOf(project, overlapping)) <= start)
+						continue;
+					other.mute = true;
+					announce(project, context, overlapping, "changed");
+				}
+			}
+			announce(project, context, item, "changed");
+		}
+
+		Json bringToFront(Project& project, CommandContext& context)
+		{
+			const std::vector<Item> items = itemsFrom(project, context.parameters(), false);
+			for (const Item& item : items)
+				toFront(project, item, context);
+			return {{"events", idsOf(items)}};
+		}
+
+		// The comp tool's drag on a lane (p. 228): every take on the track splits at the range's edges, and the takes
+		// of the lane within it come to the front.
+		Json comp(Project& project, CommandContext& context)
+		{
+			const Json& parameters = context.parameters();
+			const auto track = parameters.at("track").get<ObjectId>();
+			const auto lane = parameters.at("lane").get<int>();
+			const auto start = parameters.at("start").get<time::Samples>();
+			const auto end = parameters.at("end").get<time::Samples>();
+			require(project.trackById.count(track) != 0, "no track " + std::to_string(track));
+			require(start >= 0 && end > start, "the range is empty");
+			for (const time::Samples at : {start, end})
+				splitTracks(project, {track}, at, false, false, context);
+			// The splits leave locked takes whole: those are taken only when they lie wholly in the range.
+			std::vector<Item> taken;
+			for (const Item& item : within(project, {track}, start, end, true))
+				if (item.lane() == lane &&
+					(!item.locked() ||
+						(samples(project, item.position()) >= start && samples(project, endOf(project, item)) <= end)))
+					taken.push_back(item);
+			require(!taken.empty(), "lane " + std::to_string(lane) + " has nothing from start to end");
+			for (const Item& item : taken)
+				toFront(project, item, context);
+			return {{"events", idsOf(taken)}};
 		}
 
 		// Crop (reference manual p. 293): what crosses an edge loses what lies outside.
@@ -1751,6 +1861,7 @@ namespace gnubase::engine
 				require(project.clips.count(copied.clip) != 0, "the clip of a copied audio event is gone");
 				AudioEvent event = copied;
 				event.id = project.newId();
+				event.front = 0;
 				event.lock = false;
 				event.crossfade = Crossfade();
 				const auto part = parts.find(copied.part);
@@ -1780,6 +1891,210 @@ namespace gnubase::engine
 						pasteAutomation(project, lane, copied, shift, context);
 			}
 			return {{"events", idsOf(added)}};
+		}
+
+		// Copying automation to other tracks (reference manual pp. 878-879).
+
+		// The lanes with points that automation.copy copies: those of the tracks, or the lanes, or else every lane.
+		std::vector<const AutomationLane*> lanesToCopy(const Project& project, const Json& parameters)
+		{
+			const bool byLanes = parameters.contains("lanes");
+			const bool byTracks = parameters.contains("tracks");
+			require(!(byLanes && byTracks), "give tracks or lanes, not both");
+			const auto lanes = parameters.value("lanes", std::set<ObjectId>());
+			for (const ObjectId id : lanes)
+				require(project.automation.count(id) != 0, "no automation lane " + std::to_string(id));
+			const auto tracks = parameters.value("tracks", std::set<ObjectId>());
+			for (const ObjectId id : tracks)
+				require(project.trackById.count(id) != 0, "no track " + std::to_string(id));
+			std::vector<const AutomationLane*> copied;
+			for (const ObjectId track : project.trackOrder())
+				for (const auto& [id, lane] : project.automation)
+					if (lane.track == track && !lane.points.empty() &&
+						(byLanes ? lanes.count(id) != 0 : !byTracks || tracks.count(track) != 0))
+						copied.push_back(&lane);
+			return copied;
+		}
+
+		AutomationClipboard copyAutomation(const Project& project, CommandContext& context)
+		{
+			const std::vector<const AutomationLane*> lanes = lanesToCopy(project, context.parameters());
+			const auto [start, end] = startAndEnd(context);
+			require(start >= 0 && end >= start, "the range must start at or after 0 and not end before its start");
+			require(end > start, "the range is empty");
+			AutomationClipboard clipboard;
+			clipboard.start = start;
+			clipboard.startTicks = ticks(project, {time::TimeBase::Linear, start});
+			for (const AutomationLane* lane : lanes)
+			{
+				const time::TimeBase base = project.trackById.at(lane->track).timeBase;
+				AutomationClipboard::Lane copied{
+					automationWithin(project, *lane, inBase(project, start, base), inBase(project, end, base)), 0, {}};
+				const Channel& channel = project.channels.at(project.trackById.at(lane->track).channel);
+				if (lane->target.type == AutomationTargetType::Plugin)
+				{
+					copied.slot =
+						static_cast<size_t>(std::find(channel.slots.begin(), channel.slots.end(), lane->target.slot) -
+							channel.slots.begin());
+					copied.processor = project.slots.at(lane->target.slot).plugin;
+				}
+				if (lane->target.type == AutomationTargetType::Instrument)
+					copied.processor = channel.instrument;
+				if (!contains(clipboard.tracks, lane->track))
+					clipboard.tracks.push_back(lane->track);
+				clipboard.lanes.push_back(std::move(copied));
+			}
+			return clipboard;
+		}
+
+		// A copied lane's parameter on a track, if the track has it: a plugin's in the slot at the same place, which
+		// must hold the same plugin (reference manual p. 878), an instrument's on a track with the same instrument.
+		std::optional<AutomationTarget> parameterOn(
+			const Project& project, const AutomationClipboard::Lane& copied, ObjectId id)
+		{
+			const Track& track = project.trackById.at(id);
+			if (track.channel == 0)
+				return std::nullopt;
+			const Channel& channel = project.channels.at(track.channel);
+			AutomationTarget target = copied.lane.target;
+			bool has = false;
+			switch (target.type)
+			{
+			case AutomationTargetType::Volume:
+			case AutomationTargetType::Pan:
+			case AutomationTargetType::PanLeft:
+			case AutomationTargetType::PanRight:
+				// automationLane.add's rule: a VCA track has a volume lane, but no pan (#110)
+				has = channel.format != ChannelFormat::None ||
+					(track.type == TrackType::Vca && target.type == AutomationTargetType::Volume);
+				break;
+			case AutomationTargetType::Mute:
+				has = channel.format != ChannelFormat::None;
+				break;
+			case AutomationTargetType::Instrument:
+				has = track.type == TrackType::Instrument && channel.instrument == copied.processor;
+				break;
+			case AutomationTargetType::Plugin:
+				has = copied.slot < channel.slots.size() &&
+					project.slots.at(channel.slots[copied.slot]).plugin == copied.processor;
+				if (has)
+					target.slot = channel.slots[copied.slot];
+				break;
+			case AutomationTargetType::Controller:
+			case AutomationTargetType::PitchBend:
+			case AutomationTargetType::ChannelPressure:
+				has = track.type == TrackType::Midi || track.type == TrackType::Instrument;
+				break;
+			}
+			return has ? std::optional<AutomationTarget>(target) : std::nullopt;
+		}
+
+		// Pastes a copied lane into a lane, moved by shift, up to end (project samples): it replaces the curve there
+		// (reference manual p. 879). A copy longer than that is cut at the curve's value at end; up to the end of a
+		// longer range its last value holds.
+		void pasteCopiedLane(Project& project, AutomationLane& lane, const AutomationLane& copied, const Gap& shift,
+			time::Samples end, CommandContext& context)
+		{
+			const time::TimeBase base = project.trackById.at(lane.track).timeBase;
+			const int64_t to = inBase(project, end, base);
+			AutomationLane fitted = copied; // where it lands, in the lane's time base
+			for (auto& [id, point] : fitted.points)
+				point.position =
+					rebased(project, shifted(project, point.position, shift.shift(point.position.base, 1), true), base);
+			const std::optional<AutomationPoint> before = shapingPoint(fitted, to, false);
+			std::optional<AutomationPoint> held;
+			if (before && !anyPoint(fitted, to, to + 1))
+				held = makePoint(base, to, valueAt(fitted, to, true), std::nullopt, before->terminator);
+			for (auto point = fitted.points.begin(); point != fitted.points.end();)
+				point = point->second.position.value > to ? fitted.points.erase(point) : std::next(point);
+			if (held)
+			{
+				const ObjectId last = fitted.points.empty() ? 0 : fitted.points.rbegin()->first;
+				fitted.points[last + 1] = *held; // after the others at its position
+			}
+			pasteAutomation(project, lane, fitted, Gap{}, context);
+		}
+
+		// The lane of a track for a parameter, added if the track has none.
+		AutomationLane& laneFor(
+			Project& project, ObjectId track, const AutomationTarget& target, CommandContext& context)
+		{
+			for (auto& [id, lane] : project.automation)
+				if (lane.track == track && lane.target == target)
+					return lane;
+			AutomationLane lane;
+			lane.id = project.newId();
+			lane.track = track;
+			lane.target = target;
+			context.emit("automationLane.added", {{"lane", toJson(lane)}});
+			return project.automation[lane.id] = std::move(lane);
+		}
+
+		Json pasteCopiedAutomation(
+			Project& project, CommandContext& context, const std::optional<AutomationClipboard>& stored)
+		{
+			if (!stored)
+				throw CommandError("nothing to paste: copy automation first");
+			const AutomationClipboard& clipboard = *stored;
+			const Json& parameters = context.parameters();
+			require(!(parameters.contains("tracks") && parameters.contains("lanes")), "give tracks or lanes, not both");
+			const auto [start, end] = startAndEnd(context);
+			require(start >= 0 && end >= start, "the range must start at or after 0 and not end before its start");
+			require(end > start, "the range is empty");
+			// Which copied lanes go onto which tracks: onto their own tracks; onto the tracks, from the top, one
+			// copied track onto each, or the one copied track onto all; or onto the lanes of the same parameter.
+			std::vector<std::pair<const AutomationClipboard::Lane*, ObjectId>> pastes;
+			if (parameters.contains("lanes"))
+			{
+				for (const ObjectId id : parameters.at("lanes").get<std::set<ObjectId>>())
+				{
+					require(project.automation.count(id) != 0, "no automation lane " + std::to_string(id));
+					const AutomationLane& lane = project.automation.at(id);
+					const auto same = std::find_if(clipboard.lanes.begin(), clipboard.lanes.end(),
+						[&project, &lane](const AutomationClipboard::Lane& copied)
+						{
+							const std::optional<AutomationTarget> target = parameterOn(project, copied, lane.track);
+							return target && *target == lane.target;
+						});
+					if (same != clipboard.lanes.end())
+						pastes.emplace_back(&*same, lane.track);
+				}
+			}
+			else if (parameters.contains("tracks"))
+			{
+				const auto named = parameters.at("tracks").get<std::set<ObjectId>>();
+				for (const ObjectId id : named)
+					require(project.trackById.count(id) != 0, "no track " + std::to_string(id));
+				std::vector<ObjectId> tracks = project.trackOrder();
+				tracks.erase(std::remove_if(
+								 tracks.begin(), tracks.end(), [&named](ObjectId id) { return named.count(id) == 0; }),
+					tracks.end());
+				for (size_t i = 0; i < tracks.size() && (clipboard.tracks.size() == 1 || i < clipboard.tracks.size());
+					++i)
+				{
+					const ObjectId source = clipboard.tracks.size() == 1 ? clipboard.tracks[0] : clipboard.tracks[i];
+					for (const AutomationClipboard::Lane& copied : clipboard.lanes)
+						if (copied.lane.track == source)
+							pastes.emplace_back(&copied, tracks[i]);
+				}
+			}
+			else
+			{
+				for (const AutomationClipboard::Lane& copied : clipboard.lanes)
+					if (project.trackById.count(copied.lane.track) != 0)
+						pastes.emplace_back(&copied, copied.lane.track);
+			}
+			const Gap shift{
+				start - clipboard.start, ticks(project, {time::TimeBase::Linear, start}) - clipboard.startTicks};
+			Json pasted = Json::array();
+			for (const auto& [copied, track] : pastes)
+				if (const std::optional<AutomationTarget> target = parameterOn(project, *copied, track))
+				{
+					AutomationLane& lane = laneFor(project, track, *target, context);
+					pasteCopiedLane(project, lane, copied->lane, shift, end, context);
+					pasted.push_back(lane.id);
+				}
+			return {{"lanes", std::move(pasted)}};
 		}
 
 		// Schemas.
@@ -1944,12 +2259,34 @@ namespace gnubase::engine
 			{"event.set", 1,
 				"Mutes or unmutes, locks or unlocks and colors audio events and MIDI parts. Muted ones don't play; "
 				"locked ones can't be moved, resized, split, glued or removed by the event commands. color (#rrggbb) "
-				"is a color of their own; null makes them follow their track's color again. Returns the events.",
+				"is a color of their own; null makes them follow their track's color again. lane puts them on that "
+				"lane of their track, from 0, as cycle recordings put their takes (recording.add). Returns the events.",
 				schema({{"events", events()}, {"mute", boolean()}, {"lock", boolean()},
-						   {"color", {{"type", {"string", "null"}}}}},
+						   {"color", {{"type", {"string", "null"}}}},
+						   {"lane", {{"type", "integer"}, {"minimum", 0}, {"maximum", 1000}}}},
 					{"events"}),
 				eventsResult(), false},
 			"Change events", setEvents);
+
+		addEdit(engine,
+			{"event.toFront", 1,
+				"Brings takes to the front (To Front, the comp tool's click): audio events, and the audio events of "
+				"audio parts, play where they overlap other events on their track, as if added last (their front in "
+				"project.get); MIDI parts are unmuted, and the MIDI parts on their track's other lanes that they "
+				"overlap are muted. Returns the events.",
+				schema({{"events", events()}}, {"events"}), eventsResult(), false},
+			"To Front", bringToFront);
+
+		addEdit(engine,
+			{"event.comp", 1,
+				"Comps a track's takes (the comp tool's drag on a lane): splits every unlocked audio event and part "
+				"and MIDI part on track at start and end (project samples), then brings what lies on lane between "
+				"them to the front, as event.toFront does. Returns the events brought to the front.",
+				schema({{"track", integer()}, {"lane", {{"type", "integer"}, {"minimum", 0}, {"maximum", 1000}}},
+						   {"start", integer()}, {"end", integer()}},
+					{"track", "lane", "start", "end"}),
+				eventsResult(), false},
+			"Comp", comp);
 
 		addEdit(engine,
 			{"event.remove", 1, "Removes audio events and MIDI parts. Locked ones can't be removed.",
@@ -1962,7 +2299,7 @@ namespace gnubase::engine
 				"audioPart or midi), track, name (an audio event's clip's), start, end and length in project samples, "
 				"start and end "
 
-				"in ticks, mute, lock and its shared copies' group (0: none).",
+				"in ticks, mute, lock, lane and its shared copies' group (0: none).",
 				schema({{"events", events()}}, {"events"}),
 				schema({{"events", {{"type", "array"}, {"items", {{"type", "object"}}}}}}, {"events"}), true},
 			{}, eventInfo);
@@ -2109,5 +2446,40 @@ namespace gnubase::engine
 				false},
 			"Paste",
 			[this](Project& project, CommandContext& context) { return pasteRange(project, context, m_clipboard); });
+
+		// Copying automation to other tracks (reference manual pp. 878-879).
+		const std::string between = "between start and end (project samples, default the locators)";
+		addControl(engine,
+			{"automation.copy", 1,
+				"Copies the automation " + between +
+					" for automation.paste: of every track (Copy Automation of All Tracks), of tracks (ids, Copy "
+					"Automation of Selected Tracks) or of lanes (ids, Copy Automation of Selected Parameters), each "
+					"lane with points with the curve's values at the range's edges. It has a clipboard of its own, "
+					"apart from range.copy's. Changes nothing in the project. Returns how many lanes it copied.",
+				schema({{"start", integer()}, {"end", integer()}, {"tracks", events()}, {"lanes", events()}}, {}),
+				schema({{"lanes", integer()}}, {"lanes"}), false},
+			[this](CommandContext& context)
+			{
+				AutomationClipboard clipboard = copyAutomation(m_project, context);
+				Json result = {{"lanes", clipboard.lanes.size()}};
+				m_automationClipboard = std::move(clipboard);
+				return result;
+			});
+		addEdit(engine,
+			{"automation.paste", 1,
+				"Pastes what automation.copy copied " + between +
+					", where it replaces the automation: without tracks and lanes each lane onto its own track (Paste "
+					"Automation of All Tracks); onto tracks (ids), the copied tracks from the top one onto each, or "
+					"one "
+					"copied track onto all of them; or onto lanes (ids), each getting the copied lane of its "
+					"parameter. "
+					"A track takes the parameters it has, adding their lanes: a plugin's needs the same plugin in the "
+					"slot at the same place, an instrument's the same instrument; the others are left out. A shorter "
+					"range cuts the copy at the curve's value there, in a longer one its last value holds up to the "
+					"end. Returns the lanes it pasted into.",
+				schema({{"start", integer()}, {"end", integer()}, {"tracks", events()}, {"lanes", events()}}, {}),
+				schema({{"lanes", events()}}, {"lanes"}), false},
+			"Paste Automation", [this](Project& project, CommandContext& context)
+			{ return pasteCopiedAutomation(project, context, m_automationClipboard); });
 	}
 }

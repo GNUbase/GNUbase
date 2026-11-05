@@ -8,7 +8,9 @@
 #include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/ObserverPtr.h>
 
+#include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <set>
 #include <string>
@@ -41,6 +43,8 @@ namespace gnubase::ui
 
 		// Shows in the message line (#pool-message, with the class error for a failure) what a pool command did:
 		// pool.removeUnused, media.locate, media.removeMissing or media.conform, wherever in the UI it was sent.
+		// media.locate and media.conform start jobs: the line follows the job's progress and shows its result once it
+		// is done.
 		void report(const std::string& command, const engine::Result& result);
 
 	private:
@@ -54,6 +58,8 @@ namespace gnubase::ui
 		// Sends a command of the panel's own; a failure shows in the message line as the action's.
 		void send(const char* action, const std::string& command, const engine::Json& parameters);
 		void showMessage(const std::string& text, bool error);
+		// A job of a pool command ended (job.finished, or job.get for one that ended before report heard of it).
+		void jobEnded(const engine::Json& job);
 		std::vector<std::string> selection() const;
 
 		EngineBinding& m_binding;
@@ -68,7 +74,10 @@ namespace gnubase::ui
 		std::vector<std::string> m_dragged;       // clips a mouse button went down on, until it goes up
 		Rml::ObserverPtr<Rml::Element> m_pressed; // what it went down on
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers that come after it went
+		std::map<uint64_t, std::string> m_jobs; // the running jobs of pool commands it reports, with their commands
 		Subscription m_changed;
 		Subscription m_saved;
+		Subscription m_jobProgress;
+		Subscription m_jobFinished;
 	};
 }

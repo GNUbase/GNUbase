@@ -70,14 +70,17 @@ namespace gnubase::engine
 			return name + (digits.size() < 2 ? "-0" : "-") + digits;
 		}
 
-		// The next version of a project file: the same name with the next number after the highest one of that name in
-		// its folder and its own, "Song-01.dawproject" for "Song.dawproject" and "Song v2.1-01.dawproject" for a file
-		// "Song v2.1" that project.save saved as named. Versions count whatever case their name and extension are in,
-		// so that the next one doesn't overwrite one of them where case doesn't tell files apart.
+		// The next version of a project file: the same name (projectFileStem) with the next number after the highest
+		// one of that name in its folder and its own, "Song-01.dawproject" for "Song.dawproject" and
+		// "Song.dawproject.", and "Song v2.1-01.dawproject" for a file "Song v2.1" that project.save saved as named.
+		// Versions count whatever case their name and extension are in, so that the next one doesn't overwrite one of
+		// them where case doesn't tell files apart. As folded only knows ASCII letters, a number whose file the file
+		// system says is there all the same is skipped: on Windows and macOS "Übung-01" is "übung-01", which the scan
+		// doesn't count for "Übung".
 		fs::path nextVersion(const fs::path& file)
 		{
 			static const std::regex version(R"((.*)-(\d{1,9}))"); // longer numbers aren't versions
-			std::string name = (folded(file.extension()) == g_extension ? file.stem() : file.filename()).u8string();
+			std::string name = projectFileStem(file);
 			int highest = 0;
 			std::smatch match;
 			if (std::regex_match(name, match, version))
@@ -94,7 +97,12 @@ namespace gnubase::engine
 					folded(fs::u8path(match[1].str())) == key)
 					highest = std::max(highest, std::stoi(match[2].str()));
 			}
-			return file.parent_path() / fs::u8path(numbered(name, highest + 1) + g_extension);
+			for (int number = highest + 1;; ++number)
+			{
+				const fs::path next = file.parent_path() / fs::u8path(numbered(name, number) + g_extension);
+				if (!fs::exists(next, error)) // also if it can't tell: saving then fails or saves there
+					return next;
+			}
 		}
 
 		// Where the next auto save of a project named name goes: the first of name-01.bak to name-<count>.bak that
@@ -152,7 +160,8 @@ namespace gnubase::engine
 		m_project = std::move(project);
 		m_file = autoSave ? std::string() : file;
 		m_history.clear();
-		m_clipboard.reset(); // it holds the old project's track and clip ids
+		m_clipboard.reset();           // it holds the old project's track and clip ids
+		m_automationClipboard.reset(); // so does this one
 		context.emit("project.reset");
 		announceHistory(context);
 		publish();
@@ -200,7 +209,7 @@ namespace gnubase::engine
 
 	Project ProjectModel::loadTemplate(const std::string& name) const
 	{
-		const std::string problem = fileNameProblem(name);
+		const std::string problem = pathNameProblem(name); // a template saved before device names were refused opens
 		require(problem.empty(), problem);
 		const fs::path file = m_settingsDirectory / g_templates / fs::u8path(name + g_extension);
 		std::error_code error;
@@ -302,7 +311,7 @@ namespace gnubase::engine
 				}
 				folder /= g_autoSaves;
 				const std::string name =
-					m_file.empty() ? safeFileName(m_project.name) : fs::u8path(m_file).stem().u8string();
+					m_file.empty() ? safeFileName(m_project.name) : projectFileStem(fs::u8path(m_file));
 				const fs::path file =
 					nextAutoSave(folder, name, userSetting(context, "project.autoSaveFiles").get<int>());
 				m_lastSave = current; // also if it fails, so that a due one is tried again only after the interval

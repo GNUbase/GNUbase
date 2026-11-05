@@ -84,10 +84,10 @@ namespace gnubase::ui
 					m_toolModifiers[action] = keys.get<std::string>();
 	}
 
-	bool EventDisplay::modifiers(const char* action) const
+	bool EventDisplay::modifiers(const char* action, const std::string& keys) const
 	{
 		const auto found = m_toolModifiers.find(action);
-		return found != m_toolModifiers.end() && !found->second.empty() && found->second == m_pressed;
+		return found != m_toolModifiers.end() && !found->second.empty() && found->second == keys;
 	}
 
 	void EventDisplay::addToolActions()
@@ -174,21 +174,11 @@ namespace gnubase::ui
 		return m_tool;
 	}
 
-	std::string EventDisplay::pointerAt(double x, double y) const
-	{
-		const Tool tool = toolAt(y);
-		if (tool == Tool::ObjectSelection)
-			if (const Shown* shown = eventAt(x, y);
-				shown != nullptr && edgeAt(*shown, x) != 0 && fadeHandleAt(*shown, x, y) == 0) // a press drags a fade
-				return "resize";
-		return toolName(tool);
-	}
-
 	void EventDisplay::showPointer()
 	{
 		if (!alive() || !m_mouse || m_drag != Drag::None)
 			return;
-		const std::string pointer = pointerAt(m_mouse->first, m_mouse->second);
+		const std::string pointer = pointerAt(m_mouse->first, m_mouse->second, m_held);
 		if (m_area->GetAttribute<Rml::String>("pointer", "") == pointer)
 			return;
 		m_area->SetAttribute("pointer", pointer);
@@ -243,6 +233,16 @@ namespace gnubase::ui
 		case Tool::Mute:
 			m_drag = Drag::Rectangle;
 			return true;
+		case Tool::Comp:
+			// Shift and a click selects a take (reference manual p. 228).
+			if (m_pressed == "shift")
+			{
+				if (shown != nullptr)
+					select({shown->id});
+				return true;
+			}
+			m_drag = Drag::Comp;
+			return true;
 		case Tool::Draw:
 			// Volume curve points on audio events (reference manual p. 399).
 			if (shown != nullptr && curveDown(*shown, x, y))
@@ -286,8 +286,9 @@ namespace gnubase::ui
 			setRangeFrom(x, y);
 			break;
 		case Drag::DrawPart:
+		case Drag::Comp:
 		{
-			// The part as it will be: snapped, on the pressed lane.
+			// The part or the comp's range as it will be: snapped, on the pressed lane.
 			const size_t lane = laneAt(m_pressY + m_view.top);
 			if (lane >= m_laneTracks.size())
 				return;
@@ -414,6 +415,27 @@ namespace gnubase::ui
 		case Drag::Play:
 			m_binding.send("audition.stop", Json::object());
 			break;
+		case Drag::Comp:
+		{
+			// A click brings the take to the front; a drag on a lane of a track whose lanes show comps the range
+			// (reference manual p. 228).
+			const std::optional<size_t> lane = visibleLaneAt(m_pressY);
+			if (!moved)
+			{
+				if (onEvent)
+					edit("event.toFront", {{"events", {pressed->id}}});
+				break;
+			}
+			if (!lane || m_laneTakes[*lane] < 0)
+				break;
+			const double releaseTime = m_view.start + (x * m_view.scale);
+			const int64_t start = snappedSamples(std::min(pressTime, releaseTime));
+			const int64_t end = snappedSamples(std::max(pressTime, releaseTime));
+			if (end > start && start >= 0)
+				edit("event.comp",
+					{{"track", m_laneTracks[*lane]}, {"lane", m_laneTakes[*lane]}, {"start", start}, {"end", end}});
+			break;
+		}
 		case Drag::VolumePoint:
 			curveUp();
 			break;

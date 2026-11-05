@@ -13,6 +13,8 @@ target_compile_definitions(gnubase-ui-thirdparty PUBLIC RMLUI_SDL_VERSION_MAJOR=
 target_link_libraries(gnubase-ui-thirdparty PUBLIC RmlUi::RmlUi SDL3::SDL3)
 
 add_library(gnubase-ui STATIC
+	audioparteditor.cpp
+	audioparteditor.h
 	automation.cpp
 	automation.h
 	automationtracks.cpp
@@ -21,6 +23,8 @@ add_library(gnubase-ui STATIC
 	colormenu.cpp
 	colormenu.h
 	colorwidgets.cpp
+	controllerlanes.cpp
+	controllerlanes.h
 	cursors.cpp
 	cursors.h
 	datamodel.cpp
@@ -56,6 +60,8 @@ add_library(gnubase-ui STATIC
 	keycommands.h
 	keyeditor.cpp
 	keyeditor.h
+	listeditor.cpp
+	listeditor.h
 	livereload.cpp
 	livereload.h
 	mainmenu.cpp
@@ -76,13 +82,19 @@ add_library(gnubase-ui STATIC
 	projectfiles.h
 	pseudolocale.cpp
 	pseudolocale.h
+	quantizepanel.cpp
+	quantizepanel.h
 	renderer.h
 	rmlui.cpp
 	rmlui.h
+	sampleeditor.cpp
+	sampleeditor.h
 	sdlwindowsystem.cpp
 	sdlwindowsystem.h
 	shell.cpp
 	shell.h
+	signaturetrack.cpp
+	signaturetrack.h
 	statusline.cpp
 	statusline.h
 	tempotrack.cpp

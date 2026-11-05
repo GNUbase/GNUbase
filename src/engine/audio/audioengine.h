@@ -23,6 +23,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -244,6 +245,7 @@ namespace gnubase::engine
 		void registerTransportCommands(Engine& engine);
 		void registerAnalysisCommands(Engine& engine); // analysiscommands.cpp
 		void registerMeterCommands(Engine& engine);    // metercommands.cpp
+		void registerMixdownCommands(Engine& engine);  // mixdown.cpp
 		void registerMidiTapCommands(Engine& engine);  // miditap.cpp
 		void registerAuditionCommands(Engine& engine); // audition.cpp
 		void setTransport(const Json& parameters);
@@ -254,7 +256,10 @@ namespace gnubase::engine
 		void record(bool on);
 		Json transportStatus() const;
 		time::Samples projectEnd() const;
-		void render(audio::DummyDevice& device, uint64_t frames);
+		// Command thread, while the device stands: processes frames frames offline, as fast as possible, calling
+		// rendered after each block with its frames. The dummy device renders them; any other device's blocks are
+		// processed here, with silent inputs.
+		void render(uint64_t frames, const std::function<void(uint32_t)>& rendered = {});
 		void cue(time::Samples position, bool playing, time::Samples window, bool wait);
 		void startCueing();
 		void stopCueing();
@@ -300,6 +305,7 @@ namespace gnubase::engine
 		const settings::Store& m_settings;
 		AutoMonitoring m_autoMonitoring = AutoMonitoring::TapeMachine; // the graph's
 		ListenGains m_listenGains;                                     // the graph's
+		bool m_mutePreSends = false;                                   // the graph's audio.mutePreSends
 		float m_dim = 1.0f; // audio thread: the main mix's gain at the end of the last block
 
 		Engine* m_engine = nullptr;
@@ -367,6 +373,14 @@ namespace gnubase::engine
 		MidiChase m_chase;                                                 // what they chase
 		std::map<ObjectId, Instrument> m_instruments;                      // per instrument channel
 		std::map<ObjectId, std::shared_ptr<ChannelState>> m_channelStates; // per channel
+		// The channels that mixdown.export renders from a point inside their strip while it renders, and where their
+		// audio goes; attachStrips taps their strips.
+		struct RenderTap
+		{
+			RenderPoint point = RenderPoint::Strip;
+			std::shared_ptr<PreFaderTap> tap;
+		};
+		std::map<ObjectId, RenderTap> m_renderTaps;
 		std::vector<PendingRelease> m_releases;
 		uint64_t m_instrumentSerial = 0; // the last InstrumentChannel::serial given, counting up from 1
 

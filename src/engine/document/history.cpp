@@ -100,6 +100,9 @@ namespace gnubase::engine
 			copy.lock = part->lock;
 			copy.shared = part->shared;
 			copy.color = part->color;
+			copy.lane = part->lane;
+			copy.transpose = part->transpose;
+			copy.velocity = part->velocity;
 			return copy;
 		}
 
@@ -121,7 +124,7 @@ namespace gnubase::engine
 	{
 		return !settingsBefore && tracks.empty() && channels.empty() && slots.empty() && media.empty() &&
 			clips.empty() && poolFolders.empty() && audioEvents.empty() && audioParts.empty() && midiParts.empty() &&
-			markers.empty() && automation.empty();
+			markers.empty() && automation.empty() && linkGroups.empty();
 	}
 
 	ProjectChange difference(const Project& before, const Project& after)
@@ -143,6 +146,7 @@ namespace gnubase::engine
 		change.audioEvents = differences(before.audioEvents, after.audioEvents);
 		change.audioParts = differences(before.audioParts, after.audioParts);
 		change.markers = differences(before.markers, after.markers);
+		change.linkGroups = differences(before.linkGroups, after.linkGroups);
 
 		const MidiPart empty;
 		compare(before.midiParts, after.midiParts,
@@ -200,6 +204,7 @@ namespace gnubase::engine
 		applyObjects(project.audioEvents, change.audioEvents, direction);
 		applyObjects(project.audioParts, change.audioParts, direction);
 		applyObjects(project.markers, change.markers, direction);
+		applyObjects(project.linkGroups, change.linkGroups, direction);
 		for (const MidiPartChange& partChange : change.midiParts)
 		{
 			const std::optional<MidiPart>& target = direction == Direction::Redo ? partChange.after : partChange.before;
@@ -218,6 +223,9 @@ namespace gnubase::engine
 			part.lock = target->lock;
 			part.shared = target->shared;
 			part.color = target->color;
+			part.lane = target->lane;
+			part.transpose = target->transpose;
+			part.velocity = target->velocity;
 			applyObjects(part.notes, partChange.notes, direction);
 			applyObjects(part.controllers, partChange.controllers, direction);
 		}

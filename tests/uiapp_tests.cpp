@@ -9,14 +9,17 @@
 #include "ui/automation.h"
 #include "ui/canvas.h"
 #include "ui/eventdisplay.h"
+#include "ui/rmlui.h"
 #include "ui/themes.h"
 #include "ui/timeformat.h"
 #include "ui/tracklist.h"
 
 #include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/EventListener.h>
+#include <RmlUi/Core/Property.h>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
@@ -26,6 +29,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -213,6 +217,74 @@ TEST_CASE("the project window shows events and the project cursor where the engi
 	CHECK(display.view().scale < 0.01);
 	app.shell().step(std::chrono::milliseconds(0));
 	CHECK(element(".project-cursor").at("box").at("x").get<int>() - lanes.at("box").at("x").get<int>() == 150);
+}
+
+TEST_CASE("the project cursor and the cross-hair cursor are drawn only inside the event display's time area", "[ui]")
+{
+	// CI's window size, with the track list left of the event display and the right zone right of it (#731).
+	test::UiApp app({1024, 600});
+	ui::EventDisplay& display = app.appUi().showProject();
+	app.setDpRatio(1.0F);
+	app.ui().key(std::nullopt, "Mod+Alt+R");
+	app.call("track.add", {{"type", "midi"}});
+	app.call("transport.locate", {{"position", 72000}}); // 1.5 seconds: 150 dp into the view at 0.01 seconds per dp
+	REQUIRE(app.waitUntil([&app, &display]
+		{ return visible(app, "#right-zone") && count(app, ".track-list listitem") == 1 && display.cursor() == 1.5; }));
+	app.shell().step(std::chrono::milliseconds(0));
+	const auto x = [&app](const char* selector) { return element(app, selector).at("box").at("x").get<int>(); };
+	const int timelineLeft = x(".event-display .timeline");
+	const int timelineRight = timelineLeft + element(app, ".event-display .timeline").at("box").at("width").get<int>();
+	CHECK(x(".project-cursor") - timelineLeft == 150);
+
+	// The zones beside the event display as they look with the cursor inside the view; it must never change them.
+	const ui::Image trackList = app.ui().screenshot(std::nullopt, selector("#track-list"));
+	const ui::Image rightZone = app.ui().screenshot(std::nullopt, selector("#right-zone"));
+	const auto unchanged = [&app, &trackList, &rightZone]
+	{
+		app.shell().step(std::chrono::milliseconds(0));
+		for (const auto& [zone, before] :
+			{std::make_pair("#track-list", &trackList), std::make_pair("#right-zone", &rightZone)})
+		{
+			const test::ImageDiff diff =
+				test::compareImages(app.ui().screenshot(std::nullopt, selector(zone)), *before, {});
+			INFO(zone << ": " << diff.report);
+			CHECK(diff.equal);
+		}
+	};
+
+	// The view scrolled right past the cursor: 100 dp left of the view's start, it would be over the track list.
+	display.scrollTo(2.5);
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(x(".project-cursor") == timelineLeft - 100);
+	unchanged();
+
+	// The cursor 100 dp right of the view's end, where it would be over the right zone.
+	display.scrollTo(0.0);
+	const int64_t end = std::llround((display.visibleLength() + 1.0) * 48000.0);
+	app.call("transport.locate", {{"position", end}});
+	REQUIRE(app.waitUntil([&display, end] { return display.cursor() == static_cast<double>(end) / 48000.0; }));
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(x(".project-cursor") == timelineRight + 100);
+	unchanged();
+
+	// The vertical cross-hair cursor shows over the event lanes. Nothing moves it outside them, but if anything did,
+	// it would be clipped as the project cursor is: left of the lanes over the track list, right of them over the
+	// right zone.
+	const Json lanes = element(app, "event-lanes.events").at("box");
+	app.ui().move(std::nullopt, {"", 0, ui::Point{lanes.at("x").get<int>() + 50, lanes.at("y").get<int>() + 10}});
+	app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(visible(app, ".cross-hair-vertical"));
+	CHECK(x(".cross-hair-vertical") == timelineLeft + 50);
+	Rml::Element* vertical = app.main().context().GetDocument(0)->QuerySelector(".cross-hair-vertical");
+	REQUIRE(vertical != nullptr);
+	for (const int left : {-100, timelineRight - timelineLeft + 100})
+	{
+		INFO(left);
+		vertical->SetProperty(Rml::PropertyId::Left, Rml::Property(static_cast<float>(left), Rml::Unit::DP));
+		app.shell().step(std::chrono::milliseconds(0));
+		REQUIRE(visible(app, ".cross-hair-vertical"));
+		unchanged();
+	}
 }
 
 TEST_CASE("the ruler's time format menu opens from its arrow button and with a right click in the ruler", "[ui]")
@@ -577,6 +649,8 @@ TEST_CASE(
 	CHECK(display.tool() == ui::Tool::Draw);
 	CHECK(!visible(app, "#toolbox"));
 	CHECK(hasClass(app, "button[tool=draw]", "checked"));
+	// The mouse rests over the lanes where the toolbox was: the pointer is the tool's at once.
+	CHECK(app.waitUntil([&app] { return app.ui().windows().at("cursor") == "tool-draw"; }));
 	for (const char* modifier : {"ctrl", "alt", "shift"})
 	{
 		INFO(modifier);
@@ -661,19 +735,102 @@ TEST_CASE("a right click on an event selects it for the context menu, unless it'
 	CHECK(display.selection() == std::vector<uint64_t>{first});
 }
 
+TEST_CASE("the context menu's range commands wait for a selection range, which a right click leaves alone", "[ui]")
+{
+	ProjectWindow window;
+	test::UiApp& app = window.app;
+	const ui::EventDisplay& display = window.display;
+	const Json track = app.call("track.add", {{"type", "midi"}}).at("track");
+	app.call("midiPart.add", // from 1 to 3 seconds at 120 BPM, 100 to 300 dp
+		{{"track", track.at("id")}, {"position", 2 * time::g_ticksPerQuarter},
+			{"length", 4 * time::g_ticksPerQuarter}});
+	const auto parts = [&app] { return app.call("project.get").at("midiParts").size(); };
+	REQUIRE(app.waitUntil(
+		[&app]
+		{
+			auto* lanes =
+				dynamic_cast<ui::EventLanes*>(app.main().context().GetDocument(0)->QuerySelector("event-lanes.events"));
+			return lanes != nullptr && !lanes->lanes().empty() && !lanes->lanes()[0].events.empty();
+		}));
+	const Json lanes = element(app, "event-lanes.events").at("box");
+	const auto at = [&lanes](int x) { return ui::Point{lanes.at("x").get<int>() + x, lanes.at("y").get<int>() + 20}; };
+	const auto rightClick = [&app](ui::Point point)
+	{
+		app.ui().click(std::nullopt, {"", 0, point}, ui::MouseButton::Right, 1, {});
+		app.shell().step(std::chrono::milliseconds(0));
+		REQUIRE(visible(app, "#event-display-menu"));
+	};
+	const auto disabled = [&app](const char* command)
+	{
+		return element(app, std::string("#event-display-menu > menuitem[command=") + command + "]")
+			.at("attributes")
+			.contains("disabled");
+	};
+	const std::vector<const char*> rangeCommands = {"edit.cut", "edit.copy", "edit.splitRange", "edit.cropRange"};
+
+	// The object selection tool selects the part for the menu, whose range commands have no range to act on.
+	rightClick(at(200));
+	CHECK(display.selection().size() == 1);
+	for (const char* command : rangeCommands)
+	{
+		INFO(command);
+		CHECK(disabled(command));
+	}
+	CHECK(!disabled("edit.delete"));
+	CHECK(!disabled("edit.paste"));
+	// A disabled item does nothing.
+	click(app, selector("#event-display-menu > menuitem[command=edit.cut]"));
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(parts() == 1);
+	CHECK(display.selection().size() == 1);
+	app.ui().key(std::nullopt, "Escape");
+
+	// The range selection tool: a range from 1.5 to 2.5 seconds. A right click on the part leaves it unselected, and
+	// the range commands act on the range.
+	app.ui().key(std::nullopt, "2");
+	app.ui().drag(std::nullopt, {"", 0, at(150)}, {"", 0, at(250)});
+	app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(display.range().has_value());
+	rightClick(at(200));
+	CHECK(display.selection().empty());
+	REQUIRE(display.range().has_value());
+	REQUIRE(app.waitUntil([&] { return !disabled("edit.cut"); }));
+	for (const char* command : rangeCommands)
+	{
+		INFO(command);
+		CHECK(!disabled(command));
+	}
+	// Cut takes the middle of the part out: two parts are left.
+	click(app, selector("#event-display-menu > menuitem[command=edit.cut]"));
+	REQUIRE(app.waitUntil([&parts] { return parts() == 2; }));
+}
+
 TEST_CASE("a tool chosen with a key command shows its name for a moment, unless the setting is off", "[ui]")
 {
 	ProjectWindow window;
 	test::UiApp& app = window.app;
+	// RmlUi's time stands still but for advance(), so that the notification's 1.5 seconds take none.
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	clock->freeze(true);
+	const std::shared_ptr<void> thaw(nullptr, [clock](void*) { clock->freeze(false); });
+	const auto after = [&app, clock](double seconds)
+	{
+		clock->advance(seconds);
+		app.shell().step(std::chrono::milliseconds(0));
+		return visible(app, "#tool-notification");
+	};
 	CHECK(!visible(app, "#tool-notification"));
 	// 8 chooses the draw tool: its name shows over the event display (reference manual p. 1602), then goes.
 	app.ui().key(std::nullopt, "8");
 	REQUIRE(visible(app, "#tool-notification"));
 	CHECK(element(app, "#tool-notification").at("text") == "Draw");
-	REQUIRE(app.waitUntil([&app] { return !visible(app, "#tool-notification"); }));
+	CHECK(after(1.4));
+	CHECK(!after(0.2));
 	app.ui().key(std::nullopt, "Alt+Shift+1");
 	CHECK(element(app, "#tool-notification").at("text") == "Combine Selection Tools On");
-	REQUIRE(app.waitUntil([&app] { return !visible(app, "#tool-notification"); }));
+	CHECK(after(1.4));
+	CHECK(!after(0.2));
 
 	// A tool button shows none: the notification is for keys.
 	click(app, selector("button[tool=split]"));

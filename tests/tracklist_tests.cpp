@@ -373,39 +373,68 @@ TEST_CASE(
 	CHECK(tracks.track(inner).at("parent") == outer);
 }
 
-TEST_CASE("the tempo track stays through Remove Empty Tracks, and out of new folders and duplicates", "[ui]")
+TEST_CASE("Remove Empty Tracks keeps a folder and a folder nested in it while a track inside holds a part", "[ui]")
+{
+	Tracks tracks;
+	const uint64_t outer = tracks.add({{"type", "folder"}});
+	const uint64_t outerFull = tracks.add({{"type", "instrument"}, {"parent", outer}});
+	tracks.app.call("midiPart.add", {{"track", outerFull}, {"position", 0}, {"length", 1000}});
+	tracks.add({{"type", "audio"}, {"parent", outer}}); // empty, goes
+	const uint64_t inner = tracks.add({{"type", "folder"}, {"parent", outer}});
+	const uint64_t innerFull = tracks.add({{"type", "audio"}, {"parent", inner}});
+	tracks.app.call("audioPart.add", {{"track", innerFull}, {"position", 0}, {"length", 1000}});
+	tracks.add({{"type", "midi"}, {"parent", inner}}); // empty, goes
+	tracks.rows(6);
+
+	tracks.app.keys().run("track.removeEmpty", Json::object(), tracks.app.main(), nullptr);
+	tracks.rows(4);
+	CHECK(tracks.order() == std::vector<uint64_t>{outer, outerFull, inner, innerFull});
+	CHECK(tracks.track(inner).at("parent") == outer);
+	CHECK(tracks.track(innerFull).at("parent") == inner);
+	tracks.app.call("history.undo");
+	tracks.rows(6);
+}
+
+TEST_CASE(
+	"the tempo and signature tracks stay through Remove Empty Tracks, and out of new folders and duplicates", "[ui]")
 {
 	Tracks tracks;
 	const uint64_t tempo = tracks.add({{"type", "tempo"}});
+	const uint64_t signature = tracks.add({{"type", "signature"}});
 	const uint64_t audio = tracks.add({{"type", "audio"}});
-	tracks.rows(2);
+	tracks.rows(3);
 
-	// Remove Empty Tracks removes the empty audio track, not the tempo track.
+	// Remove Empty Tracks removes the empty audio track, not the tempo and signature tracks.
 	tracks.app.keys().run("track.removeEmpty", Json::object(), tracks.app.main(), nullptr);
-	REQUIRE(tracks.app.waitUntil([&] { return tracks.order() == std::vector<uint64_t>{tempo}; }));
+	REQUIRE(tracks.app.waitUntil([&] { return tracks.order() == std::vector<uint64_t>{tempo, signature}; }));
 
-	// Move Selected Tracks to New Folder moves the other tracks and leaves the tempo track at the top level.
+	// Move Selected Tracks to New Folder moves the other tracks and leaves them at the top level.
 	tracks.app.call("history.undo");
-	tracks.rows(2);
+	tracks.rows(3);
 	tracks.click(row(tempo) + " .track-name");
+	tracks.click(row(signature) + " .track-name", {"ctrl"});
 	tracks.click(row(audio) + " .track-name", {"ctrl"});
 	tracks.app.keys().run("track.moveSelectedToNewFolder", Json::object(), tracks.app.main(), nullptr);
-	tracks.rows(3);
+	tracks.rows(4);
 	const std::vector<uint64_t> order = tracks.order();
-	REQUIRE(order.size() == 3);
+	REQUIRE(order.size() == 4);
 	CHECK(order[0] == tempo);
+	CHECK(order[1] == signature);
 	CHECK(tracks.track(tempo).at("parent") == 0);
-	CHECK(tracks.track(order[1]).at("type") == "folder");
-	CHECK(tracks.track(audio).at("parent") == order[1]);
+	CHECK(tracks.track(signature).at("parent") == 0);
+	CHECK(tracks.track(order[2]).at("type") == "folder");
+	CHECK(tracks.track(audio).at("parent") == order[2]);
 
 	// Duplicate Tracks duplicates the other tracks only.
 	tracks.click(row(tempo) + " .track-name");
+	tracks.click(row(signature) + " .track-name", {"ctrl"});
 	tracks.click(row(audio) + " .track-name", {"ctrl"});
 	tracks.app.keys().run("track.duplicateSelected", Json::object(), tracks.app.main(), nullptr);
-	tracks.rows(4);
+	tracks.rows(5);
 	const std::vector<uint64_t> after = tracks.order();
-	CHECK(std::count_if(after.begin(), after.end(),
-			  [&tracks](uint64_t track) { return tracks.track(track).at("type") == "tempo"; }) == 1);
+	for (const char* type : {"tempo", "signature"})
+		CHECK(std::count_if(after.begin(), after.end(),
+				  [&tracks, type](uint64_t track) { return tracks.track(track).at("type") == type; }) == 1);
 }
 
 TEST_CASE("the track controls settings dialog chooses and orders each track type's controls", "[ui]")
@@ -782,4 +811,33 @@ TEST_CASE("folder tracks: new folders for the selected tracks, group channels an
 	CHECK(tracks.track(inner).at("parent") == folder);
 	CHECK(tracks.track(inner).at("channel") == 0);
 	CHECK(tracks.channel(other).at("output") == tracks.track(folder).at("channel"));
+}
+
+TEST_CASE("Freeze/Unfreeze Selected Tracks freezes and unfreezes them, Render in Place renders them", "[ui]")
+{
+	Tracks tracks;
+	tracks.app.call("audio.setDevice", {{"blockSize", 64}, {"inputChannels", 0}});
+	const uint64_t synth =
+		tracks.add({{"type", "instrument"}, {"instrument", "testSynth"}, {"timeBase", "linear"}, {"name", "Synth"}});
+	const Json part = tracks.app.call("midiPart.add", {{"track", synth}, {"position", 0}, {"length", 4800}});
+	tracks.app.call("note.add",
+		{{"part", part.at("part").at("id")},
+			{"notes", {{{"position", 0}, {"length", 100000}, {"pitch", 60}, {"velocity", 0.8}}}}});
+	tracks.rows(1);
+	tracks.click(row(synth) + " .track-name");
+
+	tracks.app.keys().run("track.freezeSelected", Json::object(), tracks.app.main(), nullptr);
+	REQUIRE(tracks.app.waitUntil([&] { return !tracks.track(synth).at("frozen").is_null(); }));
+	REQUIRE(tracks.app.waitUntil([&] { return hasClass(elements(tracks.app, row(synth)).at(0), "frozen"); }));
+	// Again, with every selected track frozen, it unfreezes them.
+	tracks.app.keys().run("track.freezeSelected", Json::object(), tracks.app.main(), nullptr);
+	REQUIRE(tracks.app.waitUntil([&] { return tracks.track(synth).at("frozen").is_null(); }));
+	REQUIRE(tracks.app.waitUntil([&] { return !hasClass(elements(tracks.app, row(synth)).at(0), "frozen"); }));
+
+	tracks.app.keys().run("track.renderSelected", Json::object(), tracks.app.main(), nullptr);
+	tracks.rows(2);
+	const std::vector<uint64_t> order = tracks.order();
+	REQUIRE(order.size() == 2);
+	CHECK(tracks.track(order[1]).at("name") == "Synth (Rendered)");
+	CHECK(tracks.track(order[1]).at("type") == "audio");
 }

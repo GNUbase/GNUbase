@@ -148,7 +148,7 @@ namespace
 		part.length = 4 * g_quarter;
 		const auto note = [&part](ObjectId id, Ticks position, Ticks length, uint8_t pitch, uint16_t velocity,
 							  uint16_t release, uint8_t channel)
-		{ part.notes[id] = Note{id, position, length, pitch, velocity, channel, release, {}}; };
+		{ part.notes[id] = Note{id, position, length, pitch, velocity, channel, release, {}, 1.0, 0.0}; };
 		note(10, 0, g_quarter, 60, midi::velocityFromMidi1(100), midi::velocityFromMidi1(30), 0);
 		note(11, g_quarter / 2, g_quarter / 2, 64, midi::velocityFromMidi1(80), g_defaultReleaseVelocity, 1);
 		// MIDI 2.0 velocity 0x0100 is 0 in MIDI 1.0, which a note-on can't have; the note is cut at the part's end.
@@ -604,6 +604,46 @@ TEST_CASE("MIDI file export writes the markers of every marker track, cycle mark
 	CHECK(imported.markers[1].type == MarkerType::Position);
 }
 
+TEST_CASE("MIDI file import reads a type 1 file's tracks of nothing but markers as marker tracks", "[unit]")
+{
+	using midifile::g_metaMarker;
+	using midifile::g_metaTrackName;
+	using midifile::metaText;
+	midifile::File file;
+	file.ticksPerQuarter = 96;
+	file.tracks.push_back({{metaText(0, g_metaTrackName, "Song"), metaText(96, g_metaMarker, "Verse")}, 96});
+	// Markers in a track with notes merge with the tempo track's, as do those of another application's file.
+	file.tracks.push_back({{metaText(0, g_metaTrackName, "Piano"), metaText(192, g_metaMarker, "Solo"),
+							   midifile::channelEvent(192, 0x90, 60, 100), midifile::channelEvent(288, 0x80, 60, 0)},
+		288});
+	file.tracks.push_back({{metaText(0, g_metaTrackName, "Cues"), metaText(48, g_metaMarker, "Cue")}, 96});
+	file.tracks.push_back({{metaText(0, g_metaMarker, "Unnamed")}, 96});
+
+	midifile::Import imported = midifile::importFile(file);
+	REQUIRE(imported.markers.size() == 2);
+	CHECK(imported.markers[0].name == "Verse");
+	CHECK(imported.markers[1].name == "Solo");
+	REQUIRE(imported.markerTracks.size() == 2);
+	CHECK(imported.markerTracks[0].name == "Cues");
+	REQUIRE(imported.markerTracks[0].markers.size() == 1);
+	CHECK(imported.markerTracks[0].markers[0].name == "Cue");
+	CHECK(imported.markerTracks[0].markers[0].position.value == g_quarter / 2);
+	CHECK(imported.markerTracks[1].name.empty());
+	CHECK(imported.markerTracks[1].markers[0].name == "Unnamed");
+	CHECK(imported.tracks.size() == 1);
+
+	// In a type 0 or type 2 file every marker merges.
+	for (const int format : {0, 2})
+	{
+		INFO(format);
+		file.format = format;
+		if (format == 0)
+			file.tracks.resize(1);
+		imported = midifile::importFile(file);
+		CHECK(imported.markerTracks.empty());
+	}
+}
+
 TEST_CASE("MIDI file export turns tempo ramps into steps that take as long", "[unit]")
 {
 	Project project = newProject();
@@ -716,7 +756,8 @@ TEST_CASE("MIDI file export rescales positions far into the project exactly", "[
 	Project project = midiProject();
 	constexpr Ticks far = Ticks{1} << 34; // quarter notes: far * g_quarter * 480 doesn't fit 64 bits
 	MidiPart& part = addPart(project, 3, far * g_quarter, g_quarter);
-	part.notes[4] = Note{4, 0, g_quarter / 2, 60, midi::velocityFromMidi1(100), 0, g_defaultReleaseVelocity, {}};
+	part.notes[4] =
+		Note{4, 0, g_quarter / 2, 60, midi::velocityFromMidi1(100), 0, g_defaultReleaseVelocity, {}, 1.0, 0.0};
 	const midifile::File file = midifile::exportProject(project, {});
 	REQUIRE(file.tracks.size() == 2);
 	std::vector<int64_t> noteTicks;
@@ -733,7 +774,7 @@ TEST_CASE("MIDI file export ends a note where the next one of its pitch and chan
 	const uint16_t velocity = midi::velocityFromMidi1(100);
 	const auto note = [velocity](
 						  MidiPart& part, ObjectId id, Ticks position, Ticks length, uint8_t pitch, uint8_t channel)
-	{ part.notes[id] = Note{id, position, length, pitch, velocity, channel, g_defaultReleaseVelocity, {}}; };
+	{ part.notes[id] = Note{id, position, length, pitch, velocity, channel, g_defaultReleaseVelocity, {}, 1.0, 0.0}; };
 	MidiPart& first = addPart(project, 3, 0, 8 * g_quarter);
 	note(first, 10, 0, 2 * g_quarter, 60, 0);                     // B inside it: ends where B starts
 	note(first, 11, g_quarter / 2, g_quarter / 2, 60, 0);         // B
@@ -887,6 +928,90 @@ TEST_CASE(
 	REQUIRE(list.size() == 1);
 	CHECK(list[0].at("id") == cycle);
 	CHECK(list[0].at("endSamples").get<int64_t>() > list[0].at("positionSamples").get<int64_t>());
+}
+
+TEST_CASE("MIDI files keep the markers of every marker track on their tracks", "[integration]")
+{
+	const test::TempDir dir;
+	const std::string path = utf8(dir.path() / "markers.mid");
+	Engine engine;
+	Client client(engine);
+	const auto song =
+		run(client, "track.add", {{"type", "marker"}, {"name", "Song"}}).at("track").at("id").get<ObjectId>();
+	run(client, "marker.add", {{"track", song}, {"position", 4 * g_quarter}, {"name", "Verse"}});
+	run(client, "marker.add",
+		{{"track", song}, {"type", "cycle"}, {"position", 8 * g_quarter}, {"end", 12 * g_quarter}, {"name", "Chorus"}});
+	const auto takes = run(client, "track.add", {{"type", "marker"}, {"name", "Takes"}, {"timeBase", "linear"}})
+						   .at("track")
+						   .at("id")
+						   .get<ObjectId>();
+	run(client, "marker.add", {{"track", takes}, {"position", 48000}, {"name", "Take 1"}}); // two quarters
+	run(client, "track.add", {{"type", "marker"}, {"name", "Empty"}});
+	run(client, "marker.activateTrack", {{"track", song}});
+
+	// The active marker track's markers are in the tempo track, where other applications look for them; every other
+	// marker track with markers gets a file track of its own, after the MIDI tracks.
+	run(client, "midiFile.export", {{"path", path}});
+	const midifile::File file = midifile::load(path);
+	REQUIRE(file.tracks.size() == 2);
+	const auto markerTexts = [](const midifile::Track& track)
+	{
+		std::vector<std::pair<int64_t, std::string>> texts;
+		for (const midifile::Event& event : track.events)
+			if (event.meta == midifile::g_metaMarker || event.meta == midifile::g_metaTrackName)
+				texts.emplace_back(event.tick, std::string(event.data.begin(), event.data.end()));
+		return texts;
+	};
+	CHECK(markerTexts(file.tracks[0]) ==
+		std::vector<std::pair<int64_t, std::string>>{{0, "Untitled"}, {4 * 480, "Verse"}, {8 * 480, "Chorus"}});
+	CHECK(markerTexts(file.tracks[1]) == std::vector<std::pair<int64_t, std::string>>{{0, "Takes"}, {960, "Take 1"}});
+
+	// Imported, the tempo track's markers go on the active marker track, here a new one, and every marker-only track
+	// becomes a marker track named after it, all at the top. The track the tempo track's markers went on is active.
+	run(client, "project.new");
+	run(client, "midiFile.import", {{"path", path}});
+	Json project = run(client, "project.get");
+	REQUIRE(project.at("tracks").size() == 2);
+	CHECK(project.at("tracks")[0].at("name") == "Markers");
+	CHECK(project.at("tracks")[1].at("name") == "Takes");
+	CHECK(project.at("tracks")[1].at("type") == "marker");
+	CHECK(project.at("activeMarkerTrack") == project.at("tracks")[0].at("id"));
+	const auto names = [&client](const Json& track)
+	{
+		const auto id = track.get<ObjectId>();
+		std::vector<std::pair<int64_t, std::string>> result;
+		const Json list = run(client, "marker.list", {{"track", id}});
+		for (const Json& marker : list.at("markers"))
+			result.emplace_back(marker.at("positionSamples").get<int64_t>(), marker.at("name").get<std::string>());
+		return result;
+	};
+	CHECK(names(project.at("tracks")[0].at("id")) ==
+		std::vector<std::pair<int64_t, std::string>>{{96000, "Verse"}, {192000, "Chorus"}});
+	CHECK(names(project.at("tracks")[1].at("id")) == std::vector<std::pair<int64_t, std::string>>{{48000, "Take 1"}});
+	CHECK(run(client, "history.get").at("steps").back().at("action") == "Import MIDI file");
+
+	// Exported again, the file is the same.
+	const std::string again = utf8(dir.path() / "again.mid");
+	run(client, "midiFile.export", {{"path", again}});
+	CHECK(hex(readBytes(std::filesystem::u8path(again))) == hex(readBytes(std::filesystem::u8path(path))));
+
+	// A type 0 file has every marker in its one track.
+	run(client, "midiFile.export", {{"path", path}, {"type", 0}});
+	run(client, "project.new");
+	run(client, "midiFile.import", {{"path", path}});
+	project = run(client, "project.get");
+	REQUIRE(project.at("tracks").size() == 1);
+	CHECK(names(project.at("tracks")[0].at("id")) ==
+		std::vector<std::pair<int64_t, std::string>>{{48000, "Take 1"}, {96000, "Verse"}, {192000, "Chorus"}});
+
+	// With ten marker tracks, the file's other marker tracks' markers go on the active one too.
+	run(client, "project.new");
+	for (int i = 0; i < 10; ++i)
+		run(client, "track.add", {{"type", "marker"}});
+	run(client, "midiFile.import", {{"path", again}});
+	project = run(client, "project.get");
+	CHECK(project.at("tracks").size() == 10);
+	CHECK(names(project.at("activeMarkerTrack")).size() == 3);
 }
 
 TEST_CASE("midiFile.import splits a type 0 file by channel", "[integration]")

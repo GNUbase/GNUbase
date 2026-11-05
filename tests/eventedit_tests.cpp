@@ -5,6 +5,7 @@
 #include "engine/document/projectmodel.h"
 #include "engine/engine.h"
 #include "engine/time/tempomap.h"
+#include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
@@ -14,6 +15,7 @@
 #include <cstdint>
 #include <map>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -525,6 +527,39 @@ TEST_CASE("event.set mutes and locks, event.remove deletes unlocked events", "[u
 	CHECK(f.count("midiParts") == 1);
 }
 
+TEST_CASE("event.set puts events on lanes, which splits, undo and the project file keep", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	Fixture f;
+	const int64_t event = f.audioEvent(f.track("audio", "linear"));
+	const int64_t part = f.part(f.track("midi"));
+	CHECK(f.midi(part).at("lane") == 0);
+
+	f.call("event.set", {{"events", {event, part}}, {"lane", 2}});
+	CHECK(f.audio(event).at("lane") == 2);
+	CHECK(f.midi(part).at("lane") == 2);
+	CHECK(f.call("event.get", {{"events", {part}}}).at("events").at(0).at("lane") == 2);
+	f.call("history.undo");
+	CHECK(f.midi(part).at("lane") == 0);
+	CHECK(f.audio(event).at("lane") == 0);
+	f.call("history.redo");
+	CHECK(f.midi(part).at("lane") == 2);
+
+	f.call("event.split", {{"events", {part}}, {"positions", {3 * g_second}}});
+	REQUIRE(f.count("midiParts") == 2);
+	const Json project = f.call("project.get");
+	for (const Json& item : project.at("midiParts"))
+		CHECK(item.at("lane") == 2);
+	CHECK_THAT(f.fails("event.set", {{"events", {event}}, {"lane", -1}}), ContainsSubstring("lane"));
+
+	const std::string file = (dir.path() / "lanes.dawproject").u8string();
+	f.call("project.save", {{"path", file}, {"embedMedia", false}});
+	f.call("project.new");
+	f.call("project.load", {{"path", file}});
+	CHECK(f.audio(event).at("lane") == 2);
+	CHECK(f.midi(part).at("lane") == 2);
+}
+
 TEST_CASE("event.fillLoop fills the locators with copies, cutting the last one", "[unit]")
 {
 	Fixture f;
@@ -799,6 +834,79 @@ TEST_CASE("range.copy and range.cut keep the range for range.paste, which can pa
 	CHECK(f.spans(midi2) == Spans{{0, g_second}});
 	CHECK_THAT(f.fails("range.paste", {{"track", f.midiTrack}}), ContainsSubstring("audio track"));
 	CHECK_THAT(f.fails("range.paste", {{"track", midi2}}), ContainsSubstring("enough tracks"));
+}
+
+TEST_CASE(
+	"range edits leave automation gaps without values, and with virgin territory range.delete makes one", "[unit]")
+{
+	using GapPoints = std::vector<std::tuple<int64_t, double, bool>>; // position, value, terminator
+	Fixture f;
+	const int64_t track = f.track("audio", "linear");
+	const auto lane = f.call("automationLane.add", {{"track", track}, {"target", {{"type", "pan"}}}})
+						  .at("lane")
+						  .at("id")
+						  .get<int64_t>();
+	const auto points = [&]()
+	{
+		GapPoints result;
+		const Json lanes = f.call("automationLane.list");
+		for (const Json& point : lanes.at("lanes")[0].at("points"))
+			result.emplace_back(
+				point.at("position").get<int64_t>(), point.at("value").get<double>(), point.value("terminator", false));
+		return result;
+	};
+	const auto range = [track](int64_t start, int64_t end)
+	{ return Json{{"start", start}, {"end", end}, {"tracks", {track}}}; };
+
+	SECTION("across a terminator")
+	{
+		// A ramp from -1 at 0 to 0 at the terminator at 1000, a gap up to 2000, then 1.
+		f.call("automationPoint.add",
+			{{"lane", lane},
+				{"points",
+					{{{"position", 0}, {"value", -1.0}}, {{"position", 1000}, {"value", 0.0}, {"terminator", true}},
+						{{"position", 2000}, {"value", 1.0}}}}});
+		// From the gap on: the gap goes on up to the range's end, where the curve goes on.
+		f.call("range.delete", range(1500, 2500));
+		CHECK(points() == GapPoints{{0, -1.0, false}, {1000, 0.0, true}, {2500, 1.0, false}});
+		f.call("history.undo");
+		// Into the gap: the value at the range's start holds up to its end, where the gap goes on up to 2000.
+		f.call("range.delete", range(500, 1500));
+		CHECK(points() == GapPoints{{0, -1.0, false}, {500, -0.5, false}, {1500, -0.5, true}, {2000, 1.0, false}});
+		f.call("history.undo");
+		// Insert Silence in the gap makes the gap longer.
+		f.call("range.insertSilence", range(1500, 2000));
+		CHECK(points() == GapPoints{{0, -1.0, false}, {1000, 0.0, true}, {2500, 1.0, false}});
+		f.call("history.undo");
+		// Pasted, the gap comes along and ends where the copy ends; the curve after it goes on there.
+		f.call("range.copy", range(500, 1500));
+		f.call("range.paste", {{"position", 3000}});
+		CHECK(points() ==
+			GapPoints{{0, -1.0, false}, {1000, 0.0, true}, {2000, 1.0, false}, {3000, 1.0, false}, {3000, -0.5, false},
+				{3500, 0.0, true}, {4000, 0.5, true}, {4000, 1.0, false}});
+	}
+	SECTION("virgin territory")
+	{
+		f.call("automation.set", {{"virginTerritory", true}});
+		f.call("automationPoint.add",
+			{{"lane", lane},
+				{"points",
+					{{{"position", 0}, {"value", -1.0}}, {{"position", 1000}, {"value", 0.0}},
+						{{"position", 2000}, {"value", 1.0}}}}});
+		// The range becomes a gap: the curve to its left ends at a terminator at its start.
+		f.call("range.delete", range(500, 1500));
+		CHECK(points() == GapPoints{{0, -1.0, false}, {500, -0.5, true}, {1500, 0.5, false}, {2000, 1.0, false}});
+		f.call("history.undo");
+		// Across the lane's last point the curve ends at the range's start, not its end.
+		f.call("range.delete", range(1500, 2500));
+		CHECK(points() == GapPoints{{0, -1.0, false}, {1000, 0.0, false}, {1500, 0.5, true}});
+		f.call("history.undo");
+		// Delete Time closes the range: no gap is left.
+		Json closed = range(500, 1500);
+		closed["time"] = true;
+		f.call("range.delete", closed);
+		CHECK(points() == GapPoints{{0, -1.0, false}, {500, -0.5, false}, {500, 0.5, false}, {1000, 1.0, false}});
+	}
 }
 
 TEST_CASE("range.copy without a range copies everything between the locators: global copy", "[unit]")

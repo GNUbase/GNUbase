@@ -24,7 +24,7 @@ namespace gnubase::ui
 		// The track's name above the sections, which the docking system shows, hides and orders (sections="inspector").
 		const char* const g_rml =
 			R"(<div class="inspector-header"><textdisplay class="display inspector-name" control="name")"
-			R"( title="Track Name"/></div>)"
+			R"( title="Track Name"/><button class="inspector-edit" title="Edit Channel Settings">e</button></div>)"
 			R"(<div class="inspector-empty">No Track Selected</div>)"
 			R"(<div class="inspector-sections" sections="inspector">)"
 			R"(<div class="inspector-section" section="basics" label="Basics">)"
@@ -35,7 +35,9 @@ namespace gnubase::ui
 			R"(<button type="toggle" class="toggle record" control="record" title="Record Enable">)"
 			R"(<svg class="icon" src="../icons/track-record-arm.svg"/></button>)"
 			R"(<button type="toggle" class="toggle monitor" control="monitor" title="Monitor">)"
-			R"(<svg class="icon" src="../icons/track-monitor.svg"/></button></div>)"
+			R"(<svg class="icon" src="../icons/track-monitor.svg"/></button>)"
+			R"(<button type="toggle" class="toggle timeBase" control="timeBase" title="Switch Time Base">L</button>)"
+			R"(</div>)"
 			R"(<div class="inspector-row" row="volume"><span class="inspector-label">Volume</span>)"
 			R"(<valuefield control="volume" min="-144" max="6" default="0" step="0.5" decimals="1" unit="dB"/></div>)"
 			R"(<div class="inspector-row" row="pan"><span class="inspector-label">Pan</span>)"
@@ -74,8 +76,8 @@ namespace gnubase::ui
 
 		using widgets::Options;
 
-		// Where the channel of a track of the type can play: output busses and group channels, or for MIDI tracks
-		// the instrument channels, as in the add track dialog; and where an audio track records from.
+		// Where the channel of a track of the type can play: output busses, group and effect channels, or for MIDI
+		// tracks the instrument channels, as in the add track dialog; and where an audio track records from.
 		Options outputs(const Json& project, const std::string& type, uint64_t channel)
 		{
 			Options options;
@@ -92,8 +94,8 @@ namespace gnubase::ui
 				if (bus.at("direction") == "output")
 					options.emplace_back(std::to_string(bus.at("id").get<uint64_t>()), bus.at("name"));
 			for (const Json& track : project.at("tracks"))
-				if ((track.at("type") == "group" || track.at("type") == "folder") && track.at("channel") != 0 &&
-					track.at("channel") != channel)
+				if ((track.at("type") == "group" || track.at("type") == "effect" || track.at("type") == "folder") &&
+					track.at("channel") != 0 && track.at("channel") != channel)
 					options.emplace_back(std::to_string(track.at("channel").get<uint64_t>()), track.at("name"));
 			return options;
 		}
@@ -107,10 +109,17 @@ namespace gnubase::ui
 			return options;
 		}
 
+		// What a field's gesture changes, as EngineBinding::sendStep names it: the inspector's step owner, then e.g.
+		// "channel 5 volume". The mixers have owners of their own, so they follow its steps (#716).
+		std::string stepKey(const std::string& owner, const Json& channel, const std::string& name)
+		{
+			return owner + "channel " + channel.dump() + " " + name;
+		}
 	}
 
-	Inspector::Inspector(EngineBinding& binding, Rml::Element& root)
-		: m_binding(binding), m_root(root.GetObserverPtr()),
+	Inspector::Inspector(EngineBinding& binding, Rml::Element& root, std::function<void(uint64_t track)> editChannel)
+		: m_binding(binding), m_stepOwner(binding.stepOwner("inspector")), m_root(root.GetObserverPtr()),
+		  m_editChannel(std::move(editChannel)),
 		  // Another project replaces the edits in progress: the ids they were for may be the new project's too.
 		  m_reset(binding.on("project.reset", [this](const engine::Event&) { dropEdits(); }))
 	{
@@ -139,9 +148,10 @@ namespace gnubase::ui
 		m_root->RemoveEventListener(Rml::EventId::Keydown, this, true);
 	}
 
-	void Inspector::update(uint64_t track, const Json& project, uint64_t loads)
+	void Inspector::update(uint64_t track, const Json& project, uint64_t loads, uint64_t read)
 	{
 		m_project = &project;
+		m_read = read;
 		if (track == m_track && loads == m_loads && !m_stale)
 			return;
 		m_stale = false;
@@ -180,7 +190,8 @@ namespace gnubase::ui
 			return;
 		m_showing = true;
 		const std::string type = track->at("type").get<std::string>();
-		const bool audio = channel != nullptr && type != "midi"; // a MIDI channel has no audio
+		const bool vca = channel != nullptr && type == "vca";            // a VCA fader: a fader and buttons
+		const bool audio = channel != nullptr && type != "midi" && !vca; // a MIDI channel has no audio
 		const auto element = [&root](const std::string& selector) { return root.QuerySelector(selector); };
 		const auto available = [&element](const std::string& selector, bool yes)
 		{
@@ -191,12 +202,23 @@ namespace gnubase::ui
 		if (Rml::Element* name = element("textdisplay.inspector-name"))
 			name->SetAttribute("value", track->at("name").get<std::string>());
 		for (const char* section : {"basics", "routing", "notepad"})
-			available("[section=" + std::string(section) + "]", channel != nullptr);
+			available("[section=" + std::string(section) + "]",
+				channel != nullptr && (!vca || std::string(section) != "routing"));
 		available("[section=inserts]", audio);
-		const bool records = type == "audio" || type == "instrument" || type == "midi";
+		available(".inspector-edit", channel != nullptr && m_editChannel);
+		const bool records = type == "audio" || type == "instrument" || type == "midi" || vca;
 		available("button[control=record]", records);
 		available("button[control=monitor]", records);
-		available("[row=volume]", audio);
+		// Switch Time Base (reference manual pp. 179-181, 229), checked when linear.
+		available("button[control=timeBase]", records || type == "group" || type == "effect");
+		if (Rml::Element* button = element("button[control=timeBase]"))
+		{
+			if (track->at("timeBase") == "linear")
+				button->SetAttribute("checked", "");
+			else
+				button->RemoveAttribute("checked");
+		}
+		available("[row=volume]", audio || vca);
 		available("[row=pan]", audio);
 		available("[row=input]", type == "audio");
 		if (channel != nullptr)
@@ -210,16 +232,17 @@ namespace gnubase::ui
 					else
 						button->RemoveAttribute("checked");
 				}
-			if (audio)
+			// Not while the project is older than the fields' own steps (#716).
+			const auto sending = [this, channel](const char* name)
+			{ return m_binding.ahead(stepKey(m_stepOwner, channel->at("id"), name), m_read); };
+			if (Rml::Element* volume = element("valuefield[control=volume]"); volume != nullptr && (audio || vca))
 			{
-				if (Rml::Element* volume = element("valuefield[control=volume]"))
-				{
-					volume->SetAttribute("max", widgets::format(m_project->value("maxVolume", 6.0F)));
+				volume->SetAttribute("max", widgets::format(m_project->value("maxVolume", 6.0F)));
+				if (!sending("volume"))
 					volume->SetAttribute("value", widgets::format(channel->at("volume").get<float>()));
-				}
-				if (Rml::Element* pan = element("valuefield[control=pan]"))
-					pan->SetAttribute("value", widgets::format(channel->at("pan").get<float>() * 100.0F));
 			}
+			if (Rml::Element* pan = element("valuefield[control=pan]"); pan != nullptr && audio && !sending("pan"))
+				pan->SetAttribute("value", widgets::format(channel->at("pan").get<float>() * 100.0F));
 			const auto id = channel->at("id").get<uint64_t>();
 			if (Rml::Element* output = element("select[control=output]"))
 				widgets::fill(
@@ -254,6 +277,8 @@ namespace gnubase::ui
 		switch (event.GetId())
 		{
 		case Rml::EventId::Click:
+			if (target->IsClassSet("inspector-edit") && m_editChannel && m_track != 0)
+				m_editChannel(m_track); // Edit Channel Settings (reference manual p. 500)
 			// A section's header opens and closes it.
 			for (const Rml::Element* up = target; up != nullptr && up != m_root.get(); up = up->GetParentNode())
 				if (up->IsClassSet("section-header") && up->GetParentNode() != nullptr)
@@ -292,6 +317,15 @@ namespace gnubase::ui
 			m_binding.send("track.set", {{"track", m_track}, {"name", event.GetParameter<Rml::String>("value", "")}});
 			return;
 		}
+		if (name == "timeBase")
+		{
+			const bool linear = event.GetParameter<bool>("value", false);
+			const Json* track = findIn(m_project, "tracks", m_track);
+			if (track != nullptr && (track->at("timeBase") == "linear") != linear)
+				m_binding.send(
+					"track.set", {{"track", m_track}, {"timeBase", linear ? "linear" : "musical"}}, whenRefused());
+			return;
+		}
 		if (!m_channel.is_object())
 			return;
 		if (name == "volume" || name == "pan")
@@ -301,7 +335,7 @@ namespace gnubase::ui
 			const Json channel = m_channel.at("id");
 			const Json step = {{"command", "channel.set"},
 				{"parameters", {{"channel", channel}, {name, name == "volume" ? number : number / 100.0}}}};
-			m_binding.sendStep(event.GetParameter<int>("gesture", 0), "channel " + channel.dump() + " " + name,
+			m_binding.sendStep(event.GetParameter<int>("gesture", 0), stepKey(m_stepOwner, channel, name),
 				name == "volume" ? "Change Volume" : "Change Pan", Json::array({step}), whenRefused());
 			return;
 		}

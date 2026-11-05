@@ -72,7 +72,7 @@ sends engine commands, so whatever another client changes shows at once.
   `mute` (M) and `solo` (S), which tracks with a channel always show, `record` and `monitor` (audio tracks), `read`
   (every automation lane of the track reads, or with a click none does; disabled without lanes) and `timeBase`
   (musical or linear, `.checked` when linear). A click sends `channel.set`, `automationLane.set` in one transaction,
-  or `track.set`. Folders without a group channel, marker and ruler tracks show none. The tempo track's only control
+  or `track.set`. Folders without a group channel, marker, ruler and signature tracks show none. The tempo track's only control
   is `tempoTrack`, Activate Tempo Track (`project.set` `tempoTrackActive`, [tempo-track.md](tempo-track.md)). The
   defaults: mute, solo, record, monitor and read on audio tracks; mute, solo and read on the others with a channel;
   tempoTrack on the tempo track.
@@ -96,13 +96,23 @@ sends engine commands, so whatever another client changes shows at once.
   (`track.toggleFolding`, `track.foldAll`, `track.unfoldAll`, `track.flipFolding`). Folding is view state too.
 - **Track handling** (pp. 213, 219): Project > Remove Selected Tracks, Remove Empty Tracks, Duplicate Tracks, and in
   the context menu also Disable and Enable Selected Tracks (`track.removeSelected`, `track.removeEmpty`,
-  `track.duplicateSelected`, `track.disableSelected`, `track.enableSelected`), each one `history.transaction`. Empty
-  tracks are audio, instrument, MIDI and marker tracks without events, parts, markers or automation, and folders
-  without tracks, unless other tracks' channels output to theirs; group and effect tracks are where others play
-  through and stay, ruler tracks never hold anything. What it removes can leave other tracks empty, such as an
-  instrument track that only empty MIDI tracks played or a folder that held only empty tracks, so it looks again
-  until nothing more goes: one run leaves no empty tracks, in one undo step. It removes a folder with one
-  `track.remove`, which takes the tracks inside along.
+  `track.duplicateSelected`, `track.disableSelected`, `track.enableSelected`), each one undo step: Remove Empty
+  Tracks is the engine command `track.removeEmpty` (#630), which the menus and key commands run like any engine
+  command, the others are UI commands that send a `history.transaction`. The engine finds the empty tracks in its
+  current project, so a Lua script or MCP client gets the same result without the UI, and the list's copy of the
+  project, which can be behind a change from another client, doesn't decide. Empty tracks are
+  audio, instrument, MIDI and marker tracks without events, parts, markers or automation, and folders without tracks,
+  unless another track's channel outputs or sends to theirs; group and effect tracks are where others play through,
+  VCA tracks control channels, and ruler, tempo and signature tracks hold no events: they stay. What it removes can
+  leave other tracks empty, such as an instrument track that only empty MIDI tracks played or a folder (with its group
+  channel, nested or not) that held only empty tracks, so it looks again until nothing more goes: one run leaves no
+  empty tracks, in one undo step, and none if nothing is empty. It removes a folder with one `track.remove`, which
+  takes the tracks inside along, and returns every track removed.
+- **Freeze and render in place** (pp. 219-220, 1471-1477): the context menu's Freeze/Unfreeze Selected Tracks
+  (`track.freezeSelected`) freezes the selected audio and instrument tracks that aren't frozen, or unfreezes them when
+  every one is; a frozen track's row has `.frozen`, which the themes show like a disabled one. Edit > Render in Place
+  > Render (with Current Settings) (`track.renderSelected`) renders them in place
+  ([render-in-place.md](render-in-place.md)).
 - **Key commands.** `AppUi` adds the track list's commands (`TrackList::actions`) as key commands in the project
   window's focus zone, enabled while the list exists and, for those of selected tracks, while tracks are selected,
   so the menus disable them otherwise.
@@ -121,7 +131,7 @@ Width (`#track-name-width`, global), held at the setting's limits. OK saves ever
 
 ## Not yet
 
-Lanes and comping (#99), write automation (#122),
+The Show Lanes control and the lanes' headers ([comping.md](comping.md)), write automation (#122),
 dividing the track list, track visibility agents and the track type
 filter, track presets, track pictures, the lock control, edit channel settings, volume and pan in the track list,
 the settings dialog's groups, controls area preview, presets, Reset All and the MIDI tracks' Output Group and

@@ -43,6 +43,7 @@ engine commands, so whichever client changes the project or the view, the mixer 
       .mixer-sends[section=sends]       Sends (audio channels), hidden by default (routing.md)
       .mixer-notes[section=notes]       Notepad, hidden by default: textarea.mixer-notes-field
       .mixer-fader[section=fader]       Fader: the panner (.mixer-pan), M, S and L (button[control], solo-mute-listen.md), the fader and .mixer-volume
+        button.mixer-edit               Edit Channel Settings on a track's channel (channel-settings.md)
 ```
 
 - **Channels** (p. 438): the input busses first, then the channels of the tracks from top to bottom (audio,
@@ -52,6 +53,10 @@ engine commands, so whichever client changes the project or the view, the mixer 
   strip's dB law (#107); its value and dB text show the channel's volume.
 - **Following the project.** Strips are made again only when the channels shown or their order change; otherwise the
   names, pictures, notes, buttons and faders are set where they are, so a fader being dragged stays under the mouse.
+  A drag, wheel turns or a held arrow key on the fader, a knob or a value field is one undo step, sent with
+  `EngineBinding::sendStep`; while its steps are on their way, the project read in between doesn't set the control,
+  and during a drag the control keeps the mouse's value, so it never jumps back (#716,
+  [ui-engine-binding.md](ui-engine-binding.md)). The dB text follows the fader as it moves.
   New strips go through `Docking::arrangeSections`, so they get the user's order and hidden sections.
 - **Visibility and filter** (pp. 442, 454–456). The channel type filter's menu has a check item per type; the agents'
   menu has Show All Channels, which shows every hidden channel again. In a window, the left zone's Visibility tab
@@ -86,7 +91,7 @@ Channel selection and the agents and Move Selected Channels commands that work o
 once and the green drop line; the Zones tab (locking channels to the left and right), the History and Snapshots tabs and
 the right zone; the channel overview, the meter bridge, Channel Latency, the routing and inserts sections (#113) and the
 channel meters; Find Track/Channel, channel visibility configurations, Undo Visibility Change, syncing the visibility
-with the project window's track visibility, linking channels and mixers, the zoom palette and the transport buttons of the toolbar (the state buttons: solo-mute-listen.md); the track pictures browser and pictures in the track list; faders of busses; and the
+with the project window's track visibility, linking mixers ([link-groups.md](link-groups.md) links channels), the zoom palette and the transport buttons of the toolbar (the state buttons: solo-mute-listen.md); the track pictures browser and pictures in the track list; faders of busses; and the
 windows' places, which workspaces will keep (#163).
 
 ## Checks
@@ -100,4 +105,6 @@ windows' places, which workspaces will keep (#163).
   type filter hiding channels in one window only, Show All Channels, and `mixer.set` from the engine; Alt+F3 showing
   the lower zone's mixer with its own view and hiding the zone again; a closed window letting go of its mixer; the
   setup pane's Pictures, Notepad and Fader, notes from the engine and typed in the notepad, a picture shown and
-  removed, and channel names dragged onto others reordering the tracks, while busses stay.
+  removed, and channel names dragged onto others reordering the tracks, while busses stay. A fader and a send's level
+  dragged and the panner turned while the engine answers late follow the mouse, never back, end where the engine is,
+  and are one undo step; values set through MCP show at once, and during a drag when it ends.

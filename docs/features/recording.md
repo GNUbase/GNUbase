@@ -76,8 +76,7 @@ transport's record state and the record mode setting.
 ## Not yet
 
 Record folders per track (p. 343); the common record modes (Punch In/Out, Re-Record, starting at the left locator or
-the selection, p. 339); punch points apart from the locators (p. 319); stacking cycle takes in lanes and comping;
-drawing the waveform while recording (`peaks::PeakRecorder` is ready for it); setting up the Broadcast Wave chunk's
+the selection, p. 339); punch points apart from the locators (p. 319); drawing the waveform while recording (`peaks::PeakRecorder` is ready for it); setting up the Broadcast Wave chunk's
 description, author and reference (#580); recording the output of a bus or channel (p. 345);
 adjusting for plugin latency on the input (#71); moving undone recordings' files to the pool's trash; the Max. Record
 Time window of its own (Studio > More Options, p. 356), which the status line field stands for, and with record

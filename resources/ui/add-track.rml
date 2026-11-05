@@ -80,12 +80,14 @@
 			audio = {"input", "format", "output", "name", "count"},
 			instrument = {"instrument", "output", "name", "count"},
 			midi = {"output", "name", "count"},
-			group = {"format", "output", "name", "count"},
-			effect = {"format", "output", "name", "count"},
+			group = {"format", "output", "projectFolder", "name", "count"},
+			effect = {"format", "output", "projectFolder", "name", "count"},
 			folder = {"groupChannel", "format", "output", "name", "count"},
 			marker = {"name", "count"},
 			ruler = {"timeFormat", "count"},
 			tempo = {}, -- one per project (reference manual p. 162)
+			signature = {}, -- one per project (reference manual p. 163)
+			vca = {"name", "count"}, -- reference manual p. 154
 		}
 
 		local timeFormatNames = {barsBeats = "Bars+Beats", seconds = "Seconds", timecode = "Timecode",
@@ -123,7 +125,7 @@
 			return value and math.tointeger(tonumber(value))
 		end
 
-		-- Where a new track's channel can play: output busses and group channels, or for MIDI tracks the instrument
+		-- Where a new track's channel can play: output busses, group and effect channels, or for MIDI tracks the instrument
 		-- channels. The engine's defaults are selected: the main output, or for MIDI none.
 		local function outputs(project, type)
 			if type == "midi" then
@@ -142,7 +144,7 @@
 				end
 			end
 			for _, track in ipairs(project.tracks) do
-				if (track.type == "group" or track.type == "folder") and track.channel ~= 0 then
+				if (track.type == "group" or track.type == "effect" or track.type == "folder") and track.channel ~= 0 then
 					options[#options + 1] = option(track.channel, track.name)
 				end
 			end
@@ -190,6 +192,12 @@
 				end
 				return field("Time Format", dropdown("track-time-format", options))
 			end,
+			projectFolder = function(_, type)
+				local name = type == "group" and "Group" or "FX"
+				return '<div class="field"><input type="checkbox" id="track-project-folder"/>' ..
+					'<label for="track-project-folder">' .. escape("Add to Project '" .. name .. "' Folder") ..
+					"</label></div>"
+			end,
 			name = function()
 				return field("Name", '<input type="text" id="track-name"/>')
 			end,
@@ -215,7 +223,18 @@
 					dialog.instruments[#dialog.instruments + 1] = processor
 				end
 			end
-			dialog.show(document, "audio")
+			-- Group Track and Effect Track to Selected Tracks open the page with the tracks to route.
+			dialog.forType = document:GetAttribute("type")
+			dialog.tracks = {}
+			for id in (document:GetAttribute("tracks") or ""):gmatch("%d+") do
+				dialog.tracks[#dialog.tracks + 1] = math.tointeger(tonumber(id))
+			end
+			-- Add Effect Track to Send: the send of the track that goes to the new effect track.
+			local send = tonumber(document:GetAttribute("send") or "")
+			dialog.send = send and math.tointeger(send)
+			local type = dialog.forType or "audio"
+			document:GetElementById("track-types"):SetAttribute("value", type)
+			dialog.show(document, type)
 		end
 
 		-- Shows a track type's page, with the project's busses and channels as they are now.
@@ -270,6 +289,14 @@
 				result.instrument = instrument
 			end
 			result.timeFormat = valueOf(document, "track-time-format")
+			local folder = document:GetElementById("track-project-folder")
+			if folder ~= nil and folder:HasAttribute("checked") then
+				result.projectFolder = true
+			end
+			if type == dialog.forType and #dialog.tracks > 0 then
+				result.tracks = dialog.tracks
+				result.send = dialog.send
+			end
 			return result
 		end
 
@@ -294,7 +321,7 @@
 		end
 	</script>
 </head>
-<body onload="AddTrack.load(document)">
+<body onshow="AddTrack.load(document)">
 	<dialog id="add-track-dialog">
 		<div class="dialog-titlebar">Add Track</div>
 		<div class="content">
@@ -308,6 +335,8 @@
 				<listitem id="type-marker" value="marker">Marker</listitem>
 				<listitem id="type-ruler" value="ruler">Ruler</listitem>
 				<listitem id="type-tempo" value="tempo">Tempo</listitem>
+				<listitem id="type-signature" value="signature">Signature</listitem>
+				<listitem id="type-vca" value="vca">VCA</listitem>
 			</listview>
 			<div id="track-fields"/>
 		</div>

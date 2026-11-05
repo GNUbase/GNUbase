@@ -51,6 +51,9 @@ namespace gnubase::ui
 		// The selected tracks, top to bottom, and selecting them (the list view's value).
 		std::vector<uint64_t> selection() const;
 		void select(const std::vector<uint64_t>& tracks);
+		// The selected automation tracks' lanes (#125): a click on an automation track's row, beside its buttons,
+		// selects it, Ctrl or Shift adds or removes it, a click on a track's own row deselects them.
+		std::vector<uint64_t> selectedLanes() const;
 		// Whether a selected folder has a group channel (withGroupChannel) or has none: when Disable or Enable Group
 		// Channel has something to do.
 		bool selectsFolder(bool withGroupChannel) const;
@@ -65,13 +68,17 @@ namespace gnubase::ui
 		// The commands that key commands and menus bind to, by id: track.selectPrevious and track.selectNext (Up and
 		// Down, which also select the first event on the new track while the event display has one selected),
 		// track.rename (the first selected track),
-		// track.removeSelected, track.removeEmpty, track.duplicateSelected, track.disableSelected,
+		// track.removeSelected, track.duplicateSelected, track.disableSelected,
 		// track.enableSelected, track.toggleFolding (the selected folders), track.foldAll, track.unfoldAll and
-		// track.flipFolding; and for folder tracks track.enableSelectedGroupChannels,
-		// track.disableSelectedGroupChannels, track.moveSelectedToNewFolder and
+		// track.flipFolding; track.freezeSelected (freezes the selected audio and instrument tracks, or unfreezes them
+		// if every one is frozen) and track.renderSelected (renders them in place); and for folder tracks
+		// track.enableSelectedGroupChannels, track.disableSelectedGroupChannels, track.moveSelectedToNewFolder and
 		// track.moveSelectedToNewFolderWithGroupChannel; and for automation tracks (#121)
 		// track.toggleAutomationSelected (shows the selected tracks' automation, or hides it if every one shows it),
-		// track.showUsedAutomation and track.hideAllAutomation.
+		// track.showUsedAutomation and track.hideAllAutomation; and for copying automation to other tracks between
+		// the locators (#125) track.copyAutomationAll, track.copyAutomationSelected,
+		// track.copyAutomationSelectedParameters (the selected automation tracks), track.pasteAutomationAll,
+		// track.pasteAutomationSelected and track.pasteAutomationSelectedParameters.
 		//
 		// A track with a channel has Show/Hide Automation (.automation-toggle, .checked while shown) in its lower
 		// left corner, and below its own row a .automation-row[lane] per automation track the event display shows:
@@ -89,8 +96,6 @@ namespace gnubase::ui
 			uint64_t parent = 0;
 			int level = 0;
 			uint64_t channel = 0;
-			uint64_t output = 0; // where its channel plays into, 0 for none
-			bool holds = false;  // events, parts, markers or automation
 		};
 
 		enum class Drag : uint8_t
@@ -130,17 +135,23 @@ namespace gnubase::ui
 		std::pair<uint64_t, uint64_t> dropAt(float y) const;
 		void move(uint64_t parent, uint64_t before);
 
+		// Whether a display lane is a track's own, not one of its lanes (#99) or automation tracks; the display lane
+		// after a track's row, which reaches over its lanes and automation tracks.
+		bool ownLane(size_t lane) const;
+		size_t rowEnd(size_t lane) const;
+
 		// Automation tracks (#121): the rows below a track's own, at its automation lanes' heights.
 		void showAutomationRows(Rml::Element& row, size_t lane, size_t end); // display lanes lane+1 to end
 		const engine::Json* laneOf(uint64_t lane) const;                     // as project.get has it
 		const engine::Json* targetOf(const engine::Json& lane) const;        // its automationLane.targets entry
-		void openParameters(uint64_t lane); // fills the parameter selector for the automation track
+		void openParameters(uint64_t lane);                // fills the parameter selector for the automation track
+		uint64_t laneAt(Rml::Element* element) const;      // the lane of the automation row it is in, or 0
+		void selectLane(Rml::Event& event, uint64_t lane); // a mouse press on an automation row, or a track's (0)
+		void showLaneSelection();
 		void parameterEvent(Rml::Event& event);
 
 		// The selected tracks without those inside other selected folders.
 		std::vector<uint64_t> topSelection() const;
-		// The tracks Remove Empty Tracks removes, with those that are only empty once the others went.
-		std::set<uint64_t> emptyTracks() const;
 		// Runs the commands as one undo step.
 		void transaction(const std::string& description, engine::Json commands);
 
@@ -153,6 +164,7 @@ namespace gnubase::ui
 		Rml::Element* m_dropLine = nullptr;
 		Rml::Element* m_parameterMenu = nullptr; // the document's #automation-parameter-menu
 		uint64_t m_parameterLane = 0;            // the automation lane it was opened for
+		std::set<uint64_t> m_selectedLanes;      // the selected automation tracks' lanes
 		std::vector<Row> m_tracks;               // every track in the project's order
 		std::map<uint64_t, size_t> m_index;
 		std::set<uint64_t> m_folded;

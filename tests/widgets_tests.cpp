@@ -8,11 +8,13 @@
 #include "ui/datamodel.h"
 #include "ui/rmlui.h"
 #include "ui/widgets.h"
+#include "ui/widgetutils.h"
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/Input.h>
 #include <SDL3/SDL.h>
@@ -22,6 +24,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <map>
 #include <memory>
@@ -251,6 +254,63 @@ TEST_CASE("knobs turn with drags, the wheel and the arrow keys, finer with Shift
 	CHECK(test::compareImages(app.ui().screenshot(std::nullopt, at("#pan")), centred, {8}).equal);
 	page.drag("#pan", 0, -500);
 	CHECK(page.value("#pan") == Catch::Approx(100.0F));
+}
+
+TEST_CASE(
+	"a value set during a drag waits until the drag ends, and goes if the drag changes the value after it", "[ui]")
+{
+	test::UiApp app;
+	const ValuesPage page(app);
+	Rml::Element& pan = *page.document->GetElementById("pan");
+	Rml::Context& context = app.main().context();
+	const Json box = page.box("#pan");
+	const int x = box.at("x").get<int>() + (box.at("width").get<int>() / 2);
+	const int y = box.at("y").get<int>() + (box.at("height").get<int>() / 2);
+	context.ProcessMouseMove(x, y, 0);
+	context.ProcessMouseButtonDown(0, 0);
+	context.ProcessMouseMove(x, y - 10, 0);
+	const float dragged = page.value("#pan");
+	CHECK(dragged > 0.0F);
+
+	// A value that the document sets, such as the engine's answer to an earlier step (#716), doesn't move the knob,
+	// and the drag goes on from where the mouse put it.
+	pan.SetAttribute("value", "-30");
+	CHECK(page.value("#pan") == dragged);
+	context.ProcessMouseMove(x, y - 20, 0);
+	CHECK(page.value("#pan") == Catch::Approx(dragged + 10.0F));
+	// The drag changed the value after it: the end of the drag keeps the drag's.
+	context.ProcessMouseButtonUp(0, 0);
+	CHECK(page.value("#pan") == Catch::Approx(dragged + 10.0F));
+
+	// A value set after the last change of the drag shows when it ends.
+	context.ProcessMouseButtonDown(0, 0);
+	context.ProcessMouseMove(x, y - 30, 0);
+	const float again = page.value("#pan");
+	CHECK(again > dragged + 10.0F);
+	pan.SetAttribute("value", "-40");
+	CHECK(page.value("#pan") == again);
+	context.ProcessMouseButtonUp(0, 0);
+	CHECK(page.value("#pan") == -40.0F);
+
+	// Without a drag, it shows at once.
+	pan.SetAttribute("value", "5");
+	CHECK(page.value("#pan") == 5.0F);
+
+	// A value that the document sets in answer to a change, such as the change rounded, shows at once.
+	ui::widgets::Listener rounding(
+		[](Rml::Event& event)
+		{
+			const float tens = std::round(event.GetParameter("value", 0.0F) / 10.0F);
+			event.GetTargetElement()->SetAttribute("value", ui::widgets::format(tens * 10.0F));
+		});
+	pan.AddEventListener(Rml::EventId::Change, &rounding);
+	context.ProcessMouseMove(x, y, 0);
+	context.ProcessMouseButtonDown(0, 0);
+	context.ProcessMouseMove(x, y - 13, 0);
+	CHECK(page.value("#pan") == 20.0F);
+	context.ProcessMouseButtonUp(0, 0);
+	CHECK(page.value("#pan") == 20.0F);
+	pan.RemoveEventListener(Rml::EventId::Change, &rounding);
 }
 
 TEST_CASE("fader caps follow the mouse, data-value binds faders, and the wheel turns them instead of scrolling", "[ui]")
@@ -1141,6 +1201,66 @@ namespace
 	{
 		app.ui().click(std::nullopt, at(selector), ui::MouseButton::Left, 1, {modifier});
 	}
+
+	// A key or a click sent to the element itself, before the next update: input from the automation updates the
+	// context first.
+	void keyNow(Rml::Element& element, Rml::Input::KeyIdentifier key, bool shift = false)
+	{
+		Rml::Dictionary parameters;
+		parameters["key_identifier"] = static_cast<int>(key);
+		parameters["shift_key"] = shift;
+		element.DispatchEvent(Rml::EventId::Keydown, parameters);
+	}
+
+	void clickNow(Rml::Element& element, const char* modifier = nullptr)
+	{
+		Rml::Dictionary parameters;
+		parameters["button"] = 0;
+		if (modifier != nullptr)
+			parameters[modifier] = true;
+		element.DispatchEvent(Rml::EventId::Click, parameters);
+	}
+
+	// The element's id, which the test gives every row it makes.
+	Rml::Element& byId(const ViewsPage& page, const std::string& id)
+	{
+		Rml::Element* element = page.document->GetElementById(id);
+		REQUIRE(element != nullptr);
+		return *element;
+	}
+
+	// Appends a row for rebuilt rows: a <listitem> with the prefix and the name as its id, the value and further
+	// attributes, and the name as its text.
+	void appendRow(std::string& rml, const std::string& prefix, const std::string& name, const std::string& value,
+		const std::string& attributes = {})
+	{
+		rml += R"(<listitem id=")";
+		rml += prefix;
+		rml += name;
+		rml += R"(" value=")";
+		rml += value;
+		rml += R"(")";
+		rml += attributes;
+		rml += ">";
+		rml += name;
+		rml += "</listitem>";
+	}
+
+	// Rebuilds the tracks list's rows as they were, with new elements whose ids have the prefix, as a panel does.
+	void rebuildTracks(const ViewsPage& page, const std::string& prefix)
+	{
+		std::string rml;
+		for (const auto& [name, value] : std::array<std::pair<const char*, const char*>, 4>{
+				 {{"drums", "1"}, {"bass", "2"}, {"keys", "3"}, {"vocals", "4"}}})
+			appendRow(rml, prefix, name, value);
+		byId(page, "tracks").SetInnerRML(rml);
+	}
+
+	// The tracks list's value attribute.
+	std::string tracksValue(const ViewsPage& page)
+	{
+		return byId(page, "tracks").GetAttribute<Rml::String>("value", "");
+	}
 }
 
 TEST_CASE("tabs show the panel of the tab clicked", "[ui]")
@@ -1347,9 +1467,7 @@ TEST_CASE("table views keep the selection of rows rebuilt twice between two upda
 	body.SetInnerRML(R"(<tr value="verse"><td>Verse</td><td>16 bars</td></tr>)");
 	body.SetInnerRML(R"(<tr id="last-intro" value="intro"><td>Intro</td><td>8 bars</td></tr>)"
 					 R"(<tr id="last-verse" value="verse"><td>Verse</td><td>16 bars</td></tr>)");
-	Rml::Dictionary down;
-	down["key_identifier"] = static_cast<int>(Rml::Input::KI_DOWN);
-	page.document->GetElementById("table")->DispatchEvent(Rml::EventId::Keydown, down);
+	keyNow(byId(page, "table"), Rml::Input::KI_DOWN);
 	CHECK(selected(app, "#last-verse"));
 	CHECK(!selected(app, "#last-intro"));
 }
@@ -1368,6 +1486,124 @@ TEST_CASE("table views select among rows rebuilt twice between two updates when 
 					 R"(<tr id="new-chorus" value="chorus"><td>Chorus</td><td>8 bars</td></tr>)");
 	CHECK(app.waitUntil([&app] { return selected(app, "#new-chorus"); }));
 	CHECK(!selected(app, "#new-intro"));
+}
+
+TEST_CASE("tree views shape rows rebuilt before a key, so the keys skip hidden rows and expand and collapse", "[ui]")
+{
+	test::UiApp app;
+	const ViewsPage page(app);
+	Rml::Element& tree = byId(page, "tree");
+	click(app, "#audio");
+	REQUIRE(tree.GetAttribute<Rml::String>("value", "") == "audio");
+	// Rebuilds the tree's rows as a panel does: the same rows with new elements, whose ids have the prefix, so with as
+	// many rows and the same value. Project is expanded, Audio as asked.
+	const auto rebuild = [&tree](const std::string& prefix, bool audioExpanded)
+	{
+		std::string rml;
+		for (const auto& [name, level] : std::array<std::pair<std::string, const char*>, 5>{
+				 {{"project", "0"}, {"audio", "1"}, {"kick", "2"}, {"snare", "2"}, {"midi", "1"}}})
+		{
+			std::string attributes = R"( level=")";
+			attributes += level;
+			attributes += name == "project" || (name == "audio" && audioExpanded) ? R"(" expanded="expanded")" : R"(")";
+			appendRow(rml, prefix, name, name, attributes);
+		}
+		tree.SetInnerRML(rml);
+	};
+
+	// Down before the next update skips the collapsed Audio's children.
+	rebuild("a-", false);
+	keyNow(tree, Rml::Input::KI_DOWN);
+	CHECK(byId(page, "a-midi").IsClassSet("selected"));
+	CHECK(!byId(page, "a-kick").IsClassSet("selected"));
+	CHECK(byId(page, "a-kick").IsClassSet("hidden"));
+	CHECK(tree.GetAttribute<Rml::String>("value", "") == "midi");
+
+	// Right expands the selected row, Left collapses it, both before the next update.
+	click(app, "#a-audio");
+	rebuild("b-", false);
+	keyNow(tree, Rml::Input::KI_RIGHT);
+	CHECK(byId(page, "b-audio").HasAttribute("expanded"));
+	CHECK(!byId(page, "b-kick").IsClassSet("hidden"));
+	rebuild("c-", true);
+	keyNow(tree, Rml::Input::KI_LEFT);
+	CHECK(!byId(page, "c-audio").HasAttribute("expanded"));
+	CHECK(byId(page, "c-kick").IsClassSet("hidden"));
+	CHECK(app.waitUntil([&app] { return !visible(app, "#c-kick") && selected(app, "#c-audio"); }));
+}
+
+TEST_CASE("multiple list views extend the selection from rows rebuilt before a key or a click", "[ui]")
+{
+	test::UiApp app;
+	const ViewsPage page(app);
+	click(app, "#bass");
+	REQUIRE(tracksValue(page) == "2");
+
+	// Shift+Down before the next update extends from the new Bass.
+	rebuildTracks(page, "a-");
+	keyNow(byId(page, "tracks"), Rml::Input::KI_DOWN, true);
+	CHECK(tracksValue(page) == "2,3");
+	CHECK(byId(page, "a-bass").IsClassSet("selected"));
+	CHECK(byId(page, "a-keys").IsClassSet("selected"));
+
+	// So does a Shift-click, and Ctrl-click adds to the rebuilt selection.
+	click(app, "#a-bass");
+	rebuildTracks(page, "b-");
+	clickNow(byId(page, "b-vocals"), "shift_key");
+	CHECK(tracksValue(page) == "2,3,4");
+	rebuildTracks(page, "c-");
+	clickNow(byId(page, "c-drums"), "ctrl_key");
+	CHECK(tracksValue(page) == "1,2,3,4");
+
+	// The next update leaves the keys at the row last clicked in the rebuilt rows, rather than moving them to the
+	// first selected row: Up goes from Vocals to Keys.
+	rebuildTracks(page, "d-");
+	clickNow(byId(page, "d-keys"));
+	clickNow(byId(page, "d-vocals"), "ctrl_key");
+	REQUIRE(tracksValue(page) == "3,4");
+	app.ui().key(std::nullopt, "Up"); // the automation updates the context first
+	CHECK(tracksValue(page) == "3");
+}
+
+TEST_CASE("list views move from a value that code set before a key or a click", "[ui]")
+{
+	test::UiApp app;
+	const ViewsPage page(app);
+	Rml::Element& tracks = byId(page, "tracks");
+	click(app, "#drums");
+
+	// Down moves from the row the code selected, not from the one clicked.
+	tracks.SetAttribute("value", "3");
+	keyNow(tracks, Rml::Input::KI_DOWN);
+	CHECK(tracksValue(page) == "4");
+
+	// Shift-click selects the range from it.
+	tracks.SetAttribute("value", "1");
+	clickNow(byId(page, "keys"), "shift_key");
+	CHECK(tracksValue(page) == "1,2,3");
+}
+
+TEST_CASE("list views select a row that code replaced on its own, with as many rows and the same value", "[ui]")
+{
+	test::UiApp app;
+	const ViewsPage page(app);
+	click(app, "#vocals");
+	ctrlClick(app, "#bass", "ctrl"); // the keys move from Bass
+	REQUIRE(tracksValue(page) == "2,4");
+
+	// The second of the two selected rows goes, neither the first row nor the keys' row, and a new one with its value
+	// takes its place.
+	Rml::Element& tracks = byId(page, "tracks");
+	Rml::ElementPtr row = page.document->CreateElement("listitem");
+	row->SetId("new-vocals");
+	row->SetAttribute("value", "4");
+	row->SetInnerRML("Vocals");
+	// Outside REQUIRE, whose do-while makes the analyzer see the move as repeated. The old row is destroyed.
+	const bool replaced = tracks.ReplaceChild(std::move(row), &byId(page, "vocals")) != nullptr;
+	REQUIRE(replaced);
+	CHECK(app.waitUntil([&app] { return selected(app, "#new-vocals"); }));
+	CHECK(selected(app, "#bass"));
+	CHECK(tracksValue(page) == "2,4");
 }
 
 TEST_CASE("splitters move the boundary between the elements of a row or a column", "[ui]")

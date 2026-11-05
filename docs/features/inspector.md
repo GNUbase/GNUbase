@@ -54,7 +54,8 @@ one it has the class `empty` and says "No Track Selected".
 .inspector                         contextmenu #inspector-setup
   textdisplay.inspector-name       the track's name: a double click renames it (track.set name)
   .inspector-sections[sections=inspector]
-    [section=basics]               mute, solo, record, monitor (button[control]); volume (dB), pan (-100 to 100)
+    [section=basics]               mute, solo, record, monitor, timeBase (button[control]); volume (dB), pan
+                                   (-100 to 100)
     [section=routing]              select[control=input] (audio tracks), select[control=output]
     [section=inserts]              .insert per plugin slot, .bypassed and .inactive
     [section=notepad]              textarea.notepad
@@ -65,9 +66,12 @@ one it has the class `empty` and says "No Track Selected".
   tracks without a channel (marker and ruler tracks, folders without a group channel), record, monitor and input on
   tracks other than audio tracks, inserts, volume and pan on MIDI tracks, which have no audio.
 - **Basics** (pp. 170–182): the channel's switches, fader and panner, sent with `channel.set` (`mute`, `solo`,
-  `recordEnable`, `monitor`, `volume`, `pan`). The volume goes up to the project's `maxVolume` (`project.set`). A drag,
-  wheel turns or a held arrow key on the volume or the pan are one undo step ([edit-history.md](edit-history.md),
-  gestures), sent step by step so that they are heard.
+  `recordEnable`, `monitor`, `volume`, `pan`), and Switch Time Base (pp. 179–181, 229) on audio, instrument, MIDI,
+  group, effect and VCA fader tracks, checked when linear (`track.set` `timeBase`, [time-base.md](time-base.md)).
+  The volume goes up to the project's `maxVolume` (`project.set`). A drag, wheel turns or a held arrow key on the
+  volume or the pan are one undo step ([edit-history.md](edit-history.md), gestures), sent step by step so that they
+  are heard, one at a time; while they are on their way the fields keep their own values rather than the engine's
+  older ones (#716, [ui-engine-binding.md](ui-engine-binding.md)).
 - **Refused changes.** When the engine refuses a change, such as an output that would make a routing loop, the
   inspector shows the channel as it is again.
 - **Routing** (p. 168): the input bus of an audio track, and where the channel plays: an output bus or a group
@@ -93,7 +97,7 @@ one it has the class `empty` and says "No Track Selected".
 
 ## Not yet
 
-The info line's other fields (offset, fades, snap point, transpose and velocity of parts), hiding fields from its
+The info line's other fields (offset, fades, snap point, transpose and velocity of parts, which `midiPart.set` changes: [midi-modifiers.md](midi-modifiers.md)), hiding fields from its
 context menu, and its own modifier setting (Preferences, Editing - Tool Modifiers); the inspector's other sections
 (track versions, chords, articulations, MIDI inserts and modifiers, equalizer, fader, cue sends, remote controls),
 sends (#108), the MIDI tracks' MIDI volume and pan, the folder track inspector's list of the tracks inside, the

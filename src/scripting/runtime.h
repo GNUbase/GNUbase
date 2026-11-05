@@ -66,8 +66,9 @@ namespace gnubase::scripting
 		void addFunction(const std::string& name, Function function);
 
 		// Takes the events that arrived and calls their gnubase.on handlers, for a runtime whose code doesn't run
-		// commands or wait, such as the UI's (app/appui.h). Returns a handler's error, if one fails.
-		std::optional<std::string> dispatchEvents();
+		// commands or wait, such as the UI's (app/appui.h). Returns a handler's error, if one fails. handled, if
+		// given, tells whether a handler ran, also one that failed, e.g. so that the UI draws what it changed.
+		std::optional<std::string> dispatchEvents(bool* handled = nullptr);
 
 		// The Lua state, for libraries that add to it, such as RmlUi's Lua plugin.
 		lua_State* state() { return m_state.get(); }
@@ -96,6 +97,7 @@ namespace gnubase::scripting
 		engine::Client m_client;
 		std::ostream& m_output;
 		std::deque<engine::Event> m_events;                 // arrived, not taken yet
+		bool m_handledEvents = false;                       // a gnubase.on handler ran in dispatchEvents
 		std::vector<std::unique_ptr<Function>> m_functions; // added with addFunction; Lua holds pointers to them
 		std::chrono::milliseconds m_timeLimit{0};
 		std::chrono::steady_clock::time_point m_deadline;

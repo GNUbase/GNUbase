@@ -46,7 +46,7 @@ namespace gnubase::engine
 	}
 
 	void Audition::play(ObjectId track, const Playback::Track& source, std::map<ObjectId, std::string> mediaPaths,
-		double sampleRate, time::Samples position, int channels, uint32_t maxFrames)
+		double sampleRate, time::Samples position, time::Samples end, int channels, uint32_t maxFrames)
 	{
 		m_track = track;
 		m_scrubbing = false;
@@ -54,6 +54,7 @@ namespace gnubase::engine
 		auto state = std::make_unique<State>();
 		state->channels = channels;
 		state->start = position;
+		state->end = end;
 		state->maxFrames = maxFrames;
 		state->buffer.assign(static_cast<size_t>(channels) * maxFrames, 0.0f);
 		for (int c = 0; c < channels; ++c)
@@ -96,6 +97,11 @@ namespace gnubase::engine
 		// The track between both positions, then read through at the speed it takes from one to the other.
 		const time::Samples low = std::min(from, position);
 		const time::Samples length = std::max(from, position) - low + 1;
+		if (mediaPaths != m_readerPaths)
+		{
+			m_readers.clear(); // a media file changed, as a freeze file does on undo
+			m_readerPaths = mediaPaths;
+		}
 		const std::vector<float> material = read(*source.playlist, mediaPaths, sampleRate, low, length, channels);
 		const auto width = static_cast<size_t>(channels);
 		auto audio = std::make_shared<std::vector<float>>(frames * width);
@@ -239,7 +245,7 @@ namespace gnubase::engine
 			for (size_t i = 0; i < count; ++i)
 				outputs[port][i] += audio[i * stride];
 		};
-		if (state.player)
+		if (state.player && m_position < state.end)
 		{
 			const uint32_t count = std::min(frames, state.maxFrames);
 			for (size_t c = 0; c < channels; ++c)
@@ -254,9 +260,11 @@ namespace gnubase::engine
 			state.player->process(
 				{state.audio.data(), static_cast<int>(channels), count, m_eventsIn, m_eventsOut, transport});
 			m_playback.endBlock();
+			// Up to the end, where the position stays, so that the streams aren't read any further.
+			const auto audible = static_cast<size_t>(std::min<time::Samples>(count, state.end - m_position));
 			for (size_t c = 0; c < channels; ++c)
-				add(c, state.audio[c], 1, count);
-			m_position += count;
+				add(c, state.audio[c], 1, audible);
+			m_position += static_cast<time::Samples>(audible);
 		}
 		else if (state.scrub)
 		{
@@ -279,6 +287,8 @@ namespace gnubase::engine
 		const Json parameters = Json::parse(R"({"type": "object", "additionalProperties": false,
 			"required": ["track", "position"],
 			"properties": {"track": {"type": "integer"}, "position": {"type": "integer"}}})");
+		Json startParameters = parameters;
+		startParameters["properties"]["end"] = {{"type", "integer"}};
 		Json scrubParameters = parameters;
 		scrubParameters["properties"]["seconds"] = {{"type", "number"}, {"exclusiveMinimum", 0}, {"maximum", 1}};
 		const auto report = [this](CommandContext& context)
@@ -319,14 +329,18 @@ namespace gnubase::engine
 			{"audition.start", 1,
 				"Auditions an audio track, as the play tool does while the mouse is pressed: plays its events from "
 				"position (samples) until audition.stop, straight to the main mix's outputs, without its channel's "
-				"fader, pan, mute and effects, and without the transport. A mono clip plays on every channel. Ends "
-				"what was auditioned before. Announces audition.changed.",
-				parameters, status, false},
+				"fader, pan, mute and effects, and without the transport. With end (samples, after position) it plays "
+				"up to there and then nothing, as the sample editor plays a slice, while its mode stays play until "
+				"audition.stop or another audition. A mono clip plays on every channel. Ends what was auditioned "
+				"before. Announces audition.changed.",
+				startParameters, status, false},
 			[this, source, report](CommandContext& context)
 			{
 				const Source given = source(context.parameters());
+				const auto end = context.parameters().value("end", g_maxPosition + 1);
+				require(end > given.position, "end must be after position");
 				m_audition.play(given.track, *given.playback, m_mediaPaths, m_snapshots.latest().sampleRate,
-					given.position, given.channels, m_device->format().blockSize);
+					given.position, end, given.channels, m_device->format().blockSize);
 				return report(context);
 			});
 		engine.registerCommand(

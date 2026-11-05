@@ -6,6 +6,7 @@
 #include "engine/plugins/slotinstances.h"
 #include "engine/processors/builtin.h"
 #include "engine/settings/usersettings.h"
+#include "platform/hosttime.h"
 #include "platform/log.h"
 #include "platform/rt/realtime.h"
 
@@ -32,6 +33,7 @@ namespace gnubase::engine
 		constexpr time::Samples g_maxRollAmount = time::Samples{3600} * 768000;
 		constexpr auto g_startWait = std::chrono::seconds(2);    // for the streams before playback starts or locates
 		constexpr auto g_offlineWait = std::chrono::seconds(30); // for the streams before an offline block
+		constexpr size_t g_offlineMidi = 1024;                   // MIDI messages per block another device renders
 		constexpr int64_t g_maxCaptureRead = int64_t{1} << 20;   // frames one audio.capture returns at most
 		constexpr int64_t g_maxThreads = 64;
 		constexpr int64_t g_maxLatency = 65536; // frames: the dummy device's latencies and the record shift
@@ -82,10 +84,12 @@ namespace gnubase::engine
 				"metronome": {"type": "boolean"},
 				"audioRecordMode": {"type": "string", "enum": ["keepHistory", "cycleHistoryReplace", "replace"]},
 				"midiRecordMode": {"type": "string", "enum": ["newParts", "merge", "replace"]},
+				"midiCycleRecordMode": {"type": "string",
+					"enum": ["mix", "overwrite", "keepLast", "stacked", "mixStacked"]},
 				"lockRecord": {"type": "boolean"}},
 			"required": ["playing", "recording", "position", "start", "left", "right", "cycle", "startMode",
 				"returnToStart", "punchIn", "punchOut", "preRoll", "preRollAmount", "postRoll", "postRollAmount",
-				"metronome", "audioRecordMode", "midiRecordMode", "lockRecord"]})");
+				"metronome", "audioRecordMode", "midiRecordMode", "midiCycleRecordMode", "lockRecord"]})");
 		}
 
 		Json noParameters()
@@ -298,20 +302,44 @@ namespace gnubase::engine
 			m_cueThread.join();
 	}
 
-	void AudioEngine::render(audio::DummyDevice& device, uint64_t frames)
+	void AudioEngine::render(uint64_t frames, const std::function<void(uint32_t)>& rendered)
 	{
 		// Block by block, each after its streams are positioned and buffered: the same output every time. Between
 		// blocks nothing reads the streams, so the cue is as for a stopped transport: exactly at the cursor.
-		const uint32_t blockSize = device.format().blockSize;
+		const audio::DeviceFormat& format = m_device->format();
+		// Another device's blocks: silent inputs and outputs of its format, at the positions it would play next.
+		const auto channels =
+			m_dummy != nullptr ? size_t{0} : static_cast<size_t>(format.inputChannels + format.outputChannels);
+		std::vector<float> samples(channels * format.blockSize);
+		std::vector<float*> buffers(channels);
+		for (size_t c = 0; c < channels; ++c)
+			buffers[c] = samples.data() + (c * format.blockSize);
+		const audio::MidiBuffer midiIn;
+		audio::MidiBuffer midiOut(g_offlineMidi);
+		uint64_t position = m_device->position();
 		for (uint64_t done = 0; done < frames;)
 		{
-			const auto block = static_cast<uint32_t>(std::min<uint64_t>(blockSize, frames - done));
+			const auto block = static_cast<uint32_t>(std::min<uint64_t>(format.blockSize, frames - done));
 			cue(m_transport.position(), false, block, false);
 			m_audition.cue(block, false);
 			m_playback.waitUntilBuffered(g_offlineWait);
 			m_audition.waitUntilBuffered(g_offlineWait);
-			device.render(*this, block);
+			if (m_dummy != nullptr)
+			{
+				m_dummy->render(*this, block);
+			}
+			else
+			{
+				std::fill(samples.begin(), samples.end(), 0.0f);
+				midiOut.clear();
+				const rt::ScopedRealtimeContext realtime;
+				process({buffers.data(), buffers.data() + format.inputChannels, block, position, hostTime(), midiIn,
+					midiOut});
+				position += block;
+			}
 			done += block;
+			if (rendered)
+				rendered(block);
 		}
 	}
 
@@ -346,7 +374,7 @@ namespace gnubase::engine
 			m_engine->broadcast("audio.changed", status());
 		if (m_device &&
 			(m_snapshots.latest().revision != m_revision || autoMonitoring() != m_autoMonitoring ||
-				listenGains() != m_listenGains))
+				listenGains() != m_listenGains || m_settings.get(settings::g_audioMutePreSends) != m_mutePreSends))
 			rebuild();
 		updateRecorder();
 	}
@@ -363,6 +391,7 @@ namespace gnubase::engine
 		setup.preRecordFrames =
 			std::llround(std::clamp(m_settings.get(settings::g_audioPreRecordSeconds), 0.0, 60.0) * deviceRate);
 		setup.midiMode = m_transport.settings().midiRecordMode;
+		setup.midiCycleMode = m_transport.settings().midiCycleRecordMode;
 		setup.midiFilter = MidiRecordFilter::fromJson(m_settings.value("midi.recordFilter"));
 		setup.snapToBars = m_settings.get(settings::g_midiSnapPartsToBars);
 		setup.catchFrames = std::llround(
@@ -417,6 +446,7 @@ namespace gnubase::engine
 		const RenderSnapshot& snapshot = m_snapshots.latest();
 		m_autoMonitoring = autoMonitoring();
 		m_listenGains = listenGains();
+		m_mutePreSends = m_settings.get(settings::g_audioMutePreSends);
 		const audio::DeviceFormat& format = m_device->format();
 		graph::GraphDesc desc = graph::describe(snapshot);
 		m_sourceNodes.clear();
@@ -574,6 +604,7 @@ namespace gnubase::engine
 			auto sequence = std::make_unique<MidiSequence>();
 			sequence->notes = channel.notes;
 			sequence->controllers = channel.controllers;
+			sequence->modifiers = channel.modifiers;
 			// An instrument chases the controller events of the MIDI tracks routed to it with its own, so the latest of
 			// each kind wins, whichever track it is on.
 			if (routed.count(channel.id) == 0)
@@ -658,10 +689,12 @@ namespace gnubase::engine
 			graph::NodeDesc& node = desc.nodes[firstChannel + i];
 			const auto source = static_cast<size_t>(sourceNode(channel.id));
 			std::shared_ptr<ChannelStrip> fader;
+			std::shared_ptr<ChannelStrip> sourceStrip; // the strip that runs the source
 			if (source == firstChannel + i)
 			{
 				fader = std::make_shared<ChannelStrip>(
 					state, node.processor, panning, monitoring, channel.silent, StripPart::Whole, channel.sections);
+				sourceStrip = fader;
 			}
 			else
 			{
@@ -679,12 +712,16 @@ namespace gnubase::engine
 							std::make_shared<SlotStrip>(state, slot.processor, static_cast<uint8_t>(index));
 				}
 				graph::NodeDesc& sourceDesc = desc.nodes[source];
-				sourceDesc.processor = std::make_shared<ChannelStrip>(state, sourceDesc.processor, panning, monitoring,
+				sourceStrip = std::make_shared<ChannelStrip>(state, sourceDesc.processor, panning, monitoring,
 					channel.silent, StripPart::Source, channel.sections, std::move(plugins), std::move(slotIds));
+				sourceDesc.processor = sourceStrip;
 				fader = std::make_shared<ChannelStrip>(
 					state, nullptr, panning, std::nullopt, channel.silent, StripPart::Fader, channel.sections);
 			}
 			node.processor = fader;
+			if (const auto tap = m_renderTaps.find(channel.id); tap != m_renderTaps.end())
+				(tap->second.point == RenderPoint::Source ? sourceStrip : fader)
+					->tapRender(tap->second.tap, tap->second.point);
 
 			// The send nodes come in the order of the channels and their sends (graph::describe).
 			std::shared_ptr<PreFaderTap> tap;
@@ -697,8 +734,10 @@ namespace gnubase::engine
 				}
 				while (desc.nodes[sendNode].kind != graph::NodeKind::Send)
 					++sendNode;
+				// Mute Pre-Send when Mute (reference manual p. 1623): the mute button mutes pre-fader sends too.
+				const float gain = send.preFader && channel.muted && m_mutePreSends ? 0.0f : send.gain;
 				desc.nodes[sendNode++].processor =
-					std::make_shared<SendStrip>(state, send.number, send.gain, send.preFader ? tap : nullptr);
+					std::make_shared<SendStrip>(state, send.number, gain, send.preFader ? tap : nullptr);
 			}
 		}
 		m_channelStates = std::move(states);
@@ -1991,9 +2030,9 @@ namespace gnubase::engine
 			{
 				const auto frames = context.parameters().at("frames").get<int64_t>();
 				require(frames >= 0, "frames must not be negative");
-				audio::DummyDevice& device = requireDummy();
+				const audio::DummyDevice& device = requireDummy();
 				require(!device.running(), "the audio device is running");
-				render(device, static_cast<uint64_t>(frames));
+				render(static_cast<uint64_t>(frames));
 				if (syncTransport()) // punched in or out, or stopped after a punch out
 					context.emit("transport.changed", transportStatus());
 				Json result = status();
@@ -2105,6 +2144,7 @@ namespace gnubase::engine
 						samples.begin() + static_cast<std::ptrdiff_t>(end))}};
 			});
 		registerAnalysisCommands(engine);
+		registerMixdownCommands(engine);
 		registerMeterCommands(engine);
 		registerTransportCommands(engine);
 		m_midi.registerCommands(engine);
@@ -2162,6 +2202,7 @@ namespace gnubase::engine
 			{"postRollAmount", settings.postRollAmount}, {"metronome", settings.metronome},
 			{"audioRecordMode", g_audioRecordModes.at(static_cast<size_t>(settings.audioRecordMode))},
 			{"midiRecordMode", g_midiRecordModes.at(static_cast<size_t>(settings.midiRecordMode))},
+			{"midiCycleRecordMode", g_midiCycleRecordModes.at(static_cast<size_t>(settings.midiCycleRecordMode))},
 			{"lockRecord", settings.lockRecord}};
 	}
 
@@ -2313,6 +2354,16 @@ namespace gnubase::engine
 			require(index < g_midiRecordModes.size(), "midiRecordMode must be newParts, merge or replace");
 			settings.midiRecordMode = static_cast<MidiRecordMode>(index);
 		}
+		if (const auto mode = parameters.find("midiCycleRecordMode"); mode != parameters.end())
+		{
+			const auto name = mode->get<std::string>();
+			const auto index =
+				static_cast<size_t>(std::find(g_midiCycleRecordModes.begin(), g_midiCycleRecordModes.end(), name) -
+					g_midiCycleRecordModes.begin());
+			require(index < g_midiCycleRecordModes.size(),
+				"midiCycleRecordMode must be mix, overwrite, keepLast, stacked or mixStacked");
+			settings.midiCycleRecordMode = static_cast<MidiCycleRecordMode>(index);
+		}
 		sent(m_transport.set(settings));
 	}
 
@@ -2441,7 +2492,8 @@ namespace gnubase::engine
 			"events it overlaps on its track (see "
 			"recording.add): keepHistory (the default), cycleHistoryReplace or replace. midiRecordMode: what a MIDI "
 			"recording does to the MIDI parts it overlaps (see recording.add): newParts (the default), merge or "
-			"replace. lockRecord: Lock Record, which "
+			"replace. midiCycleRecordMode: what a MIDI cycle recording makes of its laps (see recording.add): mix "
+			"(the default), overwrite, keepLast, stacked or mixStacked. lockRecord: Lock Record, which "
 			"keeps a recording from stopping or punching out by accident: transport.stop stops it only with "
 			"confirmed, transport.record and transport.toggle don't end it, and recording ignores the punch out at "
 			"the right locator; it stays on until it is set off.",
@@ -2453,6 +2505,7 @@ namespace gnubase::engine
 				"preRollAmount": {"type": "integer"}, "postRoll": {"type": "boolean"},
 				"postRollAmount": {"type": "integer"}, "metronome": {"type": "boolean"},
 				"audioRecordMode": {"type": "string"}, "midiRecordMode": {"type": "string"},
+				"midiCycleRecordMode": {"type": "string"},
 				"lockRecord": {"type": "boolean"}}})",
 			[this](const Json& parameters) { setTransport(parameters); });
 		command("transport.exchangeLocators", "Swaps the left and right locators.", nullptr,

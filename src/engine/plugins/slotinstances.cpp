@@ -334,6 +334,13 @@ namespace gnubase::engine::plugins
 		return found->second->processor;
 	}
 
+	void SlotInstances::setProcessMode(plugin::ProcessMode mode) const
+	{
+		for (const auto& [slot, instance] : m_instances)
+			if (const std::shared_ptr<PluginSlot> processor = instance->currentProcessor())
+				processor->setProcessMode(mode);
+	}
+
 	std::string SlotInstances::status(uint64_t slot) const
 	{
 		const auto found = m_instances.find(slot);

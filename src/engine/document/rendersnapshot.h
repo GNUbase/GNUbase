@@ -62,6 +62,7 @@ namespace gnubase::engine
 		Fade clipFadeOut;
 		Crossfade crossfade;                // only one that applies (crossfadeApplies)
 		std::vector<GainPoint> volumeCurve; // in the media file's sample frames
+		ObjectId front = 0;                 // frontOf: where events overlap, the highest plays
 	};
 
 	struct RenderNote
@@ -96,14 +97,19 @@ namespace gnubase::engine
 		double value = 0.0; // in the target's unit; volume as a linear gain
 		AutomationShape shape = AutomationShape::Linear;
 		double curve = 0.0;
+		// A gap from here to the next point (virgin territory, or after a terminator): the lane's static value, which
+		// channelAutomation() gives it; a mute lane's has the mute button's value already. A MIDI lane without a static
+		// value of the channel sends nothing there.
+		bool gap = false;
 
 		bool operator==(const RenderAutomationPoint& other) const
 		{
-			return position == other.position && value == other.value && shape == other.shape && curve == other.curve;
+			return position == other.position && value == other.value && shape == other.shape && curve == other.curve &&
+				gap == other.gap;
 		}
 	};
 
-	// A lane that plays: read-enabled and with points.
+	// A lane that plays: read-enabled and with points, and with gap points where it has gaps.
 	struct RenderAutomationLane
 	{
 		AutomationTarget target;
@@ -151,7 +157,8 @@ namespace gnubase::engine
 		bool panBypass = false;
 		std::optional<int> midiVolume; // MIDI channels: CC 7 and CC 10 to send, 0 to 127
 		std::optional<int> midiPan;
-		bool monitor = false; // the monitor and record enable buttons
+		midi::Modifiers modifiers; // MIDI and instrument channels: notes has them applied, live notes get them
+		bool monitor = false;      // the monitor and record enable buttons
 		bool recordEnable = false;
 		// MIDI and instrument tracks: they play what comes from all MIDI inputs (MIDI thru), since they monitor or
 		// are record-enabled and their MIDI input is all MIDI inputs.
@@ -159,6 +166,9 @@ namespace gnubase::engine
 		// Muted, silenced by another channel's solo, or on a disabled track: outputs silence. A silent MIDI channel
 		// has no notes or controllers, and a disabled track no events or parts.
 		bool silent = false;
+		// Its mute button mutes it (no mute automation plays): pre-fader sends follow it with the user setting
+		// audio.mutePreSends.
+		bool muted = false;
 		bool listen = false; // also plays on the monitoring bus, after its fader (graph::NodeKind::ListenBus)
 		AutoFades autoFades; // audio tracks: their own settings or the project's
 		std::vector<RenderAudioEvent> audioEvents;    // sorted by start

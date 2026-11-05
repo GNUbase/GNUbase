@@ -1,0 +1,33 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The sample editor window (docs/features/sample-editor.md, reference manual pp. 613-635), which ui::SampleEditor
+     fills (#sample-editor). app::AppUi opens and closes it as the engine's sampleEditor view opens and closes
+     (sampleEditor.open, sampleEditor.close). -->
+<rml>
+<head>
+	<title>Sample Editor</title>
+	<style>
+		body
+		{
+			position: absolute;
+			left: 0;
+			top: 0;
+			right: 0;
+			bottom: 0;
+		}
+
+		#sample-editor
+		{
+			position: absolute;
+			left: 0;
+			top: 0;
+			right: 0;
+			bottom: 0;
+			display: flex;
+			flex-direction: column;
+		}
+	</style>
+</head>
+<body>
+	<div id="sample-editor"/>
+</body>
+</rml>

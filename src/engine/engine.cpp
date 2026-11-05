@@ -321,6 +321,11 @@ namespace gnubase::engine
 		return *m_plugins;
 	}
 
+	Jobs& Engine::jobs()
+	{
+		return *m_jobs;
+	}
+
 	int64_t Engine::playbackPosition() const
 	{
 		return m_audio->position();

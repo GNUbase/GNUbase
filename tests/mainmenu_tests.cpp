@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The main menu bar (#392, ui/mainmenu.h): the project window's menus run engine and UI commands as keys do, show
 // their keys and are disabled while their command can't run. The tests click through them with ui::Automation, as
-// MCP's ui_click does. Items with a command that doesn't exist or parameters it doesn't take are refused (#446).
+// MCP's ui_click does. Items with a command that doesn't exist or parameters it doesn't take are refused (#446), and
+// the transport windows whose controls are refused close again (#669).
 #include "engine/engine.h"
 #include "testutils/fakeui.h"
+#include "testutils/testutils.h"
 #include "ui/automation.h"
 #include "ui/canvas.h"
 #include "ui/enginebinding.h"
@@ -18,6 +20,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <chrono>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -153,6 +156,18 @@ TEST_CASE("Transport > MIDI Record Mode sets the transport's MIDI record mode", 
 	app.shell().step(std::chrono::milliseconds(0));
 	click(app, "#midi-record-mode-merge");
 	REQUIRE(app.waitUntil([&app] { return app.call("transport.get").at("midiRecordMode") == "merge"; }));
+}
+
+TEST_CASE("Transport > MIDI Record Mode sets the transport's MIDI cycle record mode", "[ui]")
+{
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	app.shell().step(std::chrono::milliseconds(0));
+	click(app, "#menu-bar button[menu=transport-menu]");
+	app.ui().move(std::nullopt, {"#midi-record-mode-submenu", 0, std::nullopt});
+	app.shell().step(std::chrono::milliseconds(0));
+	click(app, "#midi-cycle-record-mode-stacked");
+	REQUIRE(app.waitUntil([&app] { return app.call("transport.get").at("midiCycleRecordMode") == "stacked"; }));
 }
 
 TEST_CASE("main menu items are disabled while their command can't run", "[ui]")
@@ -350,4 +365,71 @@ TEST_CASE(
 	}
 	CHECK(items > 100);
 	CHECK(calls >= 3);
+}
+
+TEST_CASE("a transport window whose controls are refused closes again (#669)", "[ui]")
+{
+	struct Broken
+	{
+		const char* file; // in resources/ui
+		const char* from;
+		const char* to;
+		bool panel; // the transport panel, otherwise the time display window
+	};
+	const Broken broken[] = {
+		// A button with a command that doesn't exist, in the transport controls that fill the transport panel.
+		{"transport.rml", R"(command="locate.nextMarker")", R"(command="locate.nextMarkr")", true},
+		// A menu item that gives a UI command parameters, in the time display window's context menu.
+		{"time-display.rml", R"(command="timeDisplay.increaseSize")",
+			R"(command="timeDisplay.increaseSize" parameters='{"steps": 2}')", false},
+	};
+	for (const Broken& each : broken)
+	{
+		INFO(each.file);
+		// A copy of GNUbase's resources with the control changed.
+		const test::TempDir folder;
+		const std::filesystem::path resources = folder.path() / "resources";
+		std::filesystem::copy(GNUBASE_RESOURCES_DIR, resources, std::filesystem::copy_options::recursive);
+		const std::filesystem::path file = resources / "ui" / each.file;
+		std::string text;
+		{
+			std::ifstream in(file, std::ios::binary);
+			text.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+		}
+		const size_t at = text.find(each.from);
+		REQUIRE(at != std::string::npos);
+		text.replace(at, std::strlen(each.from), each.to);
+		std::ofstream(file, std::ios::binary) << text;
+
+		// The project window isn't shown: the broken transport.rml would refuse its transport bar too.
+		test::UiApp app({900, 640}, resources);
+		app::AppUi& appUi = app.appUi();
+		const auto toggleBroken = [&appUi, &each]
+		{
+			if (each.panel)
+				appUi.toggleTransportPanel();
+			else
+				appUi.toggleTimeDisplay();
+		};
+		const auto brokenShown = [&appUi, &each]
+		{ return each.panel ? appUi.transportPanel() != nullptr : appUi.timeDisplay() != nullptr; };
+
+		// Twice, as F2 pressed again would: the window opens, its controls are refused and it closes again.
+		for (int attempt = 0; attempt < 2; ++attempt)
+		{
+			toggleBroken();
+			app.shell().step(std::chrono::milliseconds(0));
+			CHECK(!brokenShown());
+			CHECK(app.shell().windows().size() == 1);
+		}
+
+		// The other window, whose controls are fine, opens from the same copy.
+		if (each.panel)
+			appUi.toggleTimeDisplay();
+		else
+			appUi.toggleTransportPanel();
+		app.shell().step(std::chrono::milliseconds(0));
+		CHECK((each.panel ? appUi.timeDisplay() != nullptr : appUi.transportPanel() != nullptr));
+		CHECK(app.shell().windows().size() == 2);
+	}
 }

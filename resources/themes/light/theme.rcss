@@ -540,6 +540,18 @@
 		color: #566273;
 		font-size: 11dp;
 	}
+	.signature-row .signature-event
+	{
+		color: #17202d;
+		font-size: 11dp;
+		border-left-width: 1dp;
+		border-left-color: #6554c0;
+	}
+	.signature-row .signature-event.selected
+	{
+		color: #eef1f5;
+		background-color: #6554c0;
+	}
 	.event-display .range-selection
 	{
 		border-width: 1dp;
@@ -565,6 +577,10 @@
 	{
 		color: #566273;
 	}
+	.track-list listitem.frozen
+	{
+		color: #566273;
+	}
 	.track-list .drop-line
 	{
 		background-color: #0969da;
@@ -577,6 +593,10 @@
 	{
 		border-top-width: 1dp;
 		border-top-color: #b9c1cc;
+	}
+	.track-list .automation-row.selected
+	{
+		decorator: svg-ninepatch(list-item-selected.svg, 6 6 6 6);
 	}
 	.event-display .automation-lane
 	{
@@ -690,6 +710,153 @@
 	{
 		background-color: #0969da;
 	}
+	.controller-lane-area
+	{
+		background-color: #ffffff;
+		border-bottom-width: 1px;
+		border-bottom-color: #b9c1cc;
+	}
+	.controller-bar, .controller-step
+	{
+		background-color: #68a3e8;
+	}
+	.controller-bar.selected, .controller-step.selected
+	{
+		background-color: #6554c0;
+	}
+	.controller-bar.inactive, .controller-step.inactive
+	{
+		background-color: #ccd0d5;
+	}
+	.ape-display
+	{
+		background-color: #ffffff;
+	}
+	.ape-lane
+	{
+		border-bottom-width: 1px;
+		border-bottom-color: #dce0e6;
+	}
+	.ape-event
+	{
+		background-color: #b0cef2;
+		border-width: 1px;
+		border-color: #0969da;
+	}
+	.ape-event.selected
+	{
+		background-color: #aea6de;
+		border-color: #17202d;
+	}
+	.ape-event.muted, .ape-event.inactive
+	{
+		background-color: #ccd0d5;
+		border-color: #566273;
+	}
+	.audio-part-editor .editor-part
+	{
+		color: #566273;
+		border-width: 1dp;
+		border-color: #b9c1cc;
+		background-color: #fbfcfe;
+	}
+	.audio-part-editor .editor-part.editable
+	{
+		color: #17202d;
+	}
+	.audio-part-editor .editor-part.active
+	{
+		color: #0969da;
+	}
+	.se-overview, .se-display
+	{
+		background-color: #ffffff;
+	}
+	.se-overview-event
+	{
+		background-color: #17202d1a;
+	}
+	.se-overview-selection, .se-selection
+	{
+		background-color: #17202d33;
+	}
+	.se-overview-view
+	{
+		border-width: 1dp;
+		border-color: #0969da;
+	}
+	.se-overview-snap, .se-snap-point
+	{
+		background-color: #6554c0;
+	}
+	.se-outside
+	{
+		background-color: #eef1f599;
+	}
+	.se-region-shown
+	{
+		border-width: 1dp;
+		border-color: #6554c0;
+		background-color: #6554c01a;
+	}
+	.se-region.selected
+	{
+		background-color: #9dc3f0;
+	}
+	.se-hitpoint-line, .se-hitpoint-handle
+	{
+		background-color: #0969da;
+	}
+	.se-hitpoint.locked .se-hitpoint-handle
+	{
+		background-color: #6554c0;
+	}
+	.se-hitpoint.disabled .se-hitpoint-line, .se-hitpoint.disabled .se-hitpoint-handle
+	{
+		background-color: #56627366;
+	}
+	.list-editor-header
+	{
+		color: #566273;
+		border-bottom-width: 1px;
+		border-bottom-color: #b9c1cc;
+	}
+	.list-editor-rows .list-row
+	{
+		border-bottom-width: 1px;
+		border-bottom-color: #dce0e6;
+	}
+	.list-editor-body
+	{
+		background-color: #ffffff;
+	}
+	.list-row.selected
+	{
+		background-color: #c2daf6;
+	}
+	.list-row.inactive
+	{
+		color: #566273;
+	}
+	.list-event
+	{
+		background-color: #68a3e8;
+		border-width: 1px;
+		border-color: #0969da;
+	}
+	.list-row.selected .list-event
+	{
+		background-color: #6554c0;
+		border-color: #17202d;
+	}
+	.list-value
+	{
+		background-color: #0969da;
+	}
+	.list-row.selected .list-value
+	{
+		background-color: #6554c0;
+	}
 	.docking [zone]
 	{
 		background-color: #f6f8fa;
@@ -739,6 +906,18 @@
 	.history .history-separator
 	{
 		background-color: #0969da;
+	}
+	.quantize-display
+	{
+		background-color: #ffffff;
+	}
+	.quantize-line
+	{
+		background-color: #0969da;
+	}
+	.quantize-catch
+	{
+		background-color: #0969da33;
 	}
 	.onscreen-keyboard .white-key
 	{

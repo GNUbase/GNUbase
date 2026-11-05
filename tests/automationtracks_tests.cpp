@@ -384,6 +384,22 @@ TEST_CASE("automation points are selected, moved, scaled and deleted with the ob
 	CHECK(selection().empty());
 }
 
+TEST_CASE(
+	"with the selection tools combined, an automation track's pointer is the tool chosen, as a press uses it", "[ui]")
+{
+	Automation f;
+	const Json volume = f.show();
+	f.display.setCombineSelectionTools(true);
+	const auto pointer = [&f] { return elements(f.app, ".event-area").at(0).at("attributes").value("pointer", ""); };
+	// In the upper half, where an event lane's pointer is the range selection tool's.
+	f.app.ui().move(std::nullopt, {"", 0, ui::Point{f.x(1.0), f.y(volume, 0.9)}});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.app.waitUntil([&] { return pointer() == "objectSelection"; }));
+	f.app.ui().move(std::nullopt, {"", 0, ui::Point{f.x(1.0) + 1, f.y(volume, 0.9)}});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(pointer() == "objectSelection");
+}
+
 TEST_CASE("a Ctrl-drag moves the selected automation points in one direction, and the editor tilts and stretches them",
 	"[ui]")
 {
@@ -512,4 +528,98 @@ TEST_CASE("Show Only Automation Tracks of a plugin shows its lanes and hides the
 	std::vector<uint64_t> expected = {0, gain.get<uint64_t>(), pan.get<uint64_t>()};
 	std::sort(expected.begin(), expected.end());
 	CHECK(only == expected);
+}
+
+TEST_CASE("automation tracks are selected, and the track list copies their automation to other tracks", "[ui]")
+{
+	Automation f;
+	const Json volume = f.show();
+	f.app.call("automationPoint.add",
+		{{"lane", volume}, {"points", {{{"position", 0}, {"value", -6.0}}, {{"position", 48000}, {"value", 0.0}}}}});
+	const uint64_t other = f.app.call("track.add", {{"type", "audio"}}).at("track").at("id").get<uint64_t>();
+	f.app.call("track.set", {{"track", other}, {"timeBase", "linear"}});
+	const Json otherVolume =
+		f.app.call("automationLane.add", {{"track", other}, {"target", {{"type", "volume"}}}}).at("lane").at("id");
+	f.app.call("automationPoint.add",
+		{{"lane", otherVolume}, {"points", {{{"position", 0}, {"value", -20.0}, {"shape", "step"}}}}});
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			const Json& lanes = f.display.project().at("automation");
+			return lanes.size() == 2 && !lanes[1].at("points").empty();
+		}));
+	f.app.keys().run("track.showUsedAutomation", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil([&] { return elements(f.app, ".automation-row").size() == 2; }));
+	f.app.call("transport.set", {{"left", 0}, {"right", 48000}});
+
+	// A click beside an automation track's buttons selects it, Ctrl adds another, a click on a track deselects them.
+	const auto clickRow = [&](const std::string& selector, const std::vector<std::string>& modifiers = {})
+	{
+		const Json box = elements(f.app, selector).at(0).at("box");
+		f.clickAt(box.at("x").get<int>() + 10, box.at("y").get<int>() + (box.at("height").get<int>() / 2), modifiers);
+	};
+	const std::string first = row(f.track) + " .automation-row";
+	const std::string second = row(other) + " .automation-row";
+	clickRow(first);
+	CHECK(hasClass(elements(f.app, first).at(0), "selected"));
+	CHECK(f.app.appUi().trackList()->selectedLanes() == std::vector<uint64_t>{volume.get<uint64_t>()});
+	clickRow(second, {"ctrl"});
+	CHECK(f.app.appUi().trackList()->selectedLanes().size() == 2);
+	clickRow(row(f.track) + " .track-name");
+	CHECK(f.app.appUi().trackList()->selectedLanes().empty());
+	CHECK(!hasClass(elements(f.app, first).at(0), "selected"));
+
+	// Copy Automation of Selected Parameters, then Paste onto the other track's selected automation track, between
+	// the locators (reference manual pp. 878-879).
+	clickRow(first);
+	f.app.keys().run("track.copyAutomationSelectedParameters", Json::object(), f.app.main(), nullptr);
+	clickRow(second);
+	f.app.call("transport.set", {{"left", 96000}, {"right", 144000}});
+	f.app.keys().run("track.pasteAutomationSelectedParameters", Json::object(), f.app.main(), nullptr);
+	const auto positions = [&]()
+	{
+		std::vector<int64_t> found;
+		const Json lanes = f.app.call("automationLane.list", {{"track", other}}).at("lanes");
+		for (const Json& point : lanes.at(0).at("points"))
+			found.push_back(point.at("position").get<int64_t>());
+		return found;
+	};
+	REQUIRE(f.app.waitUntil([&] { return positions().size() == 5; }));
+	CHECK(positions() == std::vector<int64_t>{0, 96000, 96000, 144000, 144000});
+
+	// Copy and Paste Automation of Selected Tracks.
+	f.app.appUi().trackList()->select({f.track});
+	f.app.call("transport.set", {{"left", 0}, {"right", 48000}});
+	f.app.keys().run("track.copyAutomationSelected", Json::object(), f.app.main(), nullptr);
+	f.app.appUi().trackList()->select({other});
+	f.app.call("transport.set", {{"left", 192000}, {"right", 240000}});
+	f.app.keys().run("track.pasteAutomationSelected", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil([&] { return positions().size() == 9; }));
+	CHECK(positions().at(5) == 192000);
+}
+
+TEST_CASE("a track's lanes come between its own lane and its automation tracks, under its row", "[ui]")
+{
+	Automation f;
+	const Json volume = f.show();
+	const Json media =
+		f.app.call("media.add", {{"path", "take.wav"}, {"sampleRate", 48000}, {"channels", 1}, {"length", 48000}})
+			.at("media");
+	const Json clip = f.app.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	const Json event =
+		f.app.call("audioEvent.add", {{"track", f.track}, {"clip", clip.at("id")}, {"position", 0}}).at("event");
+	f.app.call("event.set", {{"events", {event.at("id")}}, {"lane", 1}});
+	// Show Lanes from the track list's context menu command: lanes 0 and 1, then the automation track.
+	f.app.appUi().trackList()->select({f.track});
+	f.app.keys().run("track.toggleLanesSelected", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil([&] { return f.display.laneTakes() == std::vector<int>{-1, 0, 1, -1}; }));
+	CHECK(f.display.laneAutomation()[3] == volume.get<uint64_t>());
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const Json trackRow = elements(f.app, row(f.track)).at(0).at("box");
+	CHECK(trackRow.at("height").get<int>() == static_cast<int>(4 * ui::g_trackHeight));
+	CHECK(elements(f.app, ".automation-row").size() == 1);
+	CHECK(elements(f.app, ".automation-row").at(0).at("box").at("y") == f.box(volume).at("y"));
+	// The command again hides them.
+	f.app.keys().run("track.toggleLanesSelected", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil([&] { return f.display.laneTakes() == std::vector<int>{-1, -1}; }));
 }

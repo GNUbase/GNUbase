@@ -29,15 +29,21 @@ add_executable(gnubase-tests
 	audiofile_tests.cpp
 	audioimport_tests.cpp
 	audiopart_tests.cpp
+	audioparteditor_tests.cpp
+	audioparteditor_ui_tests.cpp
 	automation_tests.cpp
 	automationtracks_tests.cpp
 	backup_tests.cpp
 	bus_tests.cpp
 	canvas_tests.cpp
 	channelformat_tests.cpp
+	channelsettings_tests.cpp
 	channelstrip_tests.cpp
 	clock_tests.cpp
 	color_tests.cpp
+	comping_tests.cpp
+	controllerlanes_tests.cpp
+	controllerlanes_ui_tests.cpp
 	coverage_tests.cpp
 	dawproject_tests.cpp
 	debugreports.cpp
@@ -46,6 +52,7 @@ add_executable(gnubase-tests
 	document_tests.cpp
 	editors_tests.cpp
 	effects_tests.cpp
+	emptytracks_tests.cpp
 	engine_tests.cpp
 	enginebinding_tests.cpp
 	eventdisplay_tests.cpp
@@ -58,6 +65,8 @@ add_executable(gnubase-tests
 	graph_tests.cpp
 	history_tests.cpp
 	historypanel_tests.cpp
+	hitpoints_tests.cpp
+	hitpoints_ui_tests.cpp
 	inspector_tests.cpp
 	ipc_process_tests.cpp
 	ipc_tests.cpp
@@ -65,6 +74,9 @@ add_executable(gnubase-tests
 	keyeditor_tests.cpp
 	keyeditor_ui_tests.cpp
 	latency_tests.cpp
+	linkgroups_tests.cpp
+	listeditor_tests.cpp
+	listeditor_ui_tests.cpp
 	lockrecord_tests.cpp
 	log_tests.cpp
 	mainmenu_tests.cpp
@@ -80,8 +92,11 @@ add_executable(gnubase-tests
 	midieditor_tests.cpp
 	midifile_tests.cpp
 	midifunctions_tests.cpp
+	midimodifiers_tests.cpp
 	midirecording_tests.cpp
 	miditap_tests.cpp
+	mixdown_tests.cpp
+	mixdown_ui_tests.cpp
 	mixer_tests.cpp
 	mixerviews_tests.cpp
 	mixerwindow_tests.cpp
@@ -101,14 +116,20 @@ add_executable(gnubase-tests
 	projectfiles_tests.cpp
 	projectsetup_tests.cpp
 	quantize_tests.cpp
+	quantize_ui_tests.cpp
 	recording_tests.cpp
+	renderinplace_tests.cpp
 	rmlui_tests.cpp
 	routing_tests.cpp
 	rt_tests.cpp
+	sampleeditor_tests.cpp
+	sampleeditor_ui_tests.cpp
 	scripting_tests.cpp
 	sequencing_tests.cpp
 	settings_tests.cpp
 	shell_tests.cpp
+	signature_tests.cpp
+	signaturetrack_ui_tests.cpp
 	snap_tests.cpp
 	statusline_tests.cpp
 	streaming_tests.cpp

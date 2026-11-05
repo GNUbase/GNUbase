@@ -17,12 +17,14 @@
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
 #include <chrono>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <vector>
 
 using namespace gnubase;
@@ -499,7 +501,8 @@ TEST_CASE("the inspector shows the selected track, and its controls change the t
 	const uint64_t group = window.addTrack({{"type", "group"}, {"name", "Drums"}});
 	const uint64_t audio = window.addTrack({{"type", "audio"}, {"name", "Vox"}});
 	const uint64_t marker = window.addTrack({{"type", "marker"}});
-	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("tracks").size() == 3; }));
+	const uint64_t vca = window.addTrack({{"type", "vca"}, {"name", "Strings"}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("tracks").size() == 4; }));
 	window.list.select({audio});
 	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Vox"));
 	CHECK_FALSE(hasClass(window.app, ".inspector", "empty"));
@@ -519,6 +522,14 @@ TEST_CASE("the inspector shows the selected track, and its controls change the t
 		window.call("channel.set", {{"channel", window.channel(audio).at("id")}, {key, false}});
 		REQUIRE(window.app.waitUntil([&] { return !hasClass(window.app, button, "checked"); }));
 	}
+	// Switch Time Base (p. 229): checked when the track is linear.
+	const std::string timeBase = ".inspector button[control=timeBase]";
+	CHECK_FALSE(hasClass(window.app, timeBase, "unavailable"));
+	window.click(timeBase);
+	REQUIRE(window.app.waitUntil([&] { return window.find("tracks", audio).at("timeBase") == "linear"; }));
+	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, timeBase, "checked"); }));
+	window.call("track.set", {{"track", audio}, {"timeBase", "musical"}});
+	REQUIRE(window.app.waitUntil([&] { return !hasClass(window.app, timeBase, "checked"); }));
 	window.type(".inspector valuefield[control=volume]", "-6");
 	REQUIRE(window.app.waitUntil([&] { return window.channel(audio).at("volume") == -6.0; }));
 	CHECK(window.shows(".inspector valuefield[control=volume]", "-6")); // whatever the C locale is
@@ -575,11 +586,21 @@ TEST_CASE("the inspector shows the selected track, and its controls change the t
 	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, ".inspector [section=notepad]", "hidden"); }));
 	CHECK(window.call("settings.get", {{"key", "ui.layout"}}).dump().find("notepad") != std::string::npos);
 
-	// Another track: the group has no input or record buttons; a marker track has no channel to show.
+	// Another track: the group has no input or record buttons, but switches its time base (pp. 179-180); a marker
+	// track has no channel to show.
 	window.list.select({group});
 	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Drums"));
 	CHECK(hasClass(window.app, ".inspector [row=input]", "unavailable"));
 	CHECK(hasClass(window.app, ".inspector button[control=record]", "unavailable"));
+	CHECK_FALSE(hasClass(window.app, timeBase, "unavailable"));
+	window.click(timeBase);
+	REQUIRE(window.app.waitUntil([&] { return window.find("tracks", group).at("timeBase") == "linear"; }));
+	// A VCA fader track switches its time base too (p. 181).
+	window.list.select({vca});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Strings"));
+	CHECK_FALSE(hasClass(window.app, timeBase, "unavailable"));
+	window.click(timeBase);
+	REQUIRE(window.app.waitUntil([&] { return window.find("tracks", vca).at("timeBase") == "linear"; }));
 	window.list.select({marker});
 	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, ".inspector [section=basics]", "unavailable"); }));
 	CHECK(hasClass(window.app, ".inspector [section=notepad]", "unavailable"));
@@ -667,6 +688,91 @@ TEST_CASE("a drag or wheel turns on a volume or pan field is one undo step, up t
 	CHECK(window.historyPosition() == position + 1);
 	window.call("history.undo");
 	CHECK(window.app.waitUntil([&] { return window.find("audioEvents", event).at("volume") == 0.0; }));
+}
+
+TEST_CASE("the inspector's volume and pan fields dragged while the engine answers late follow the mouse", "[ui]")
+{
+	Window window;
+	const uint64_t audio = window.addTrack({{"type", "audio"}, {"name", "Vox"}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("tracks").size() == 1; }));
+	window.list.select({audio});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Vox"));
+
+	for (const auto& [control, key, scale] : {std::tuple{"volume", "volume", 1.0}, std::tuple{"pan", "pan", 100.0}})
+	{
+		INFO(control);
+		const std::string field = ".inspector valuefield[control=" + std::string(control) + "]";
+		const int64_t position = window.historyPosition();
+		test::LateDrag drag(window.app, std::nullopt, field);
+		const double dragged = drag.move(15, 1);
+		CHECK(dragged < -5.0);
+		drag.release();
+		// The engine and the field agree on where the mouse left it, in one undo step.
+		const std::string name = key;
+		const double wanted = dragged / scale;
+		REQUIRE(window.app.waitUntil(
+			[&] { return window.channel(audio).at(name).get<double>() == Catch::Approx(wanted).margin(1e-5); }));
+		window.app.shell().step(std::chrono::milliseconds(0));
+		CHECK(drag.value() == Catch::Approx(dragged).margin(1e-5));
+		CHECK(window.historyPosition() == position + 1);
+	}
+
+	// Wheel turns too.
+	const std::string pan = ".inspector valuefield[control=pan]";
+	const int64_t position = window.historyPosition();
+	const double turned = test::lateSteps(window.app, std::nullopt, pan, 10, -1,
+		[&] { window.app.ui().wheel(std::nullopt, {pan, 0, std::nullopt}, 0.0F, -1.0F); });
+	REQUIRE(window.app.waitUntil([&] { return window.channel(audio).at("pan") == Catch::Approx(turned / 100.0); }));
+	CHECK(window.historyPosition() == position + 1);
+
+	// Without a gesture, a value set through MCP shows at once.
+	window.call("channel.set", {{"channel", window.channel(audio).at("id")}, {"volume", -12.0}, {"pan", 0.25}});
+	CHECK(window.shows(".inspector valuefield[control=volume]", "-12"));
+	CHECK(window.shows(".inspector valuefield[control=pan]", "25"));
+}
+
+TEST_CASE("the info line's volume turned or dragged while the engine answers late follows the mouse", "[ui]")
+{
+	Window window;
+	const uint64_t audio = window.addTrack({{"type", "audio"}, {"timeBase", "linear"}});
+	const Json media =
+		window.call("media.add", {{"path", "take.wav"}, {"sampleRate", 48000}, {"channels", 1}, {"length", 480000}})
+			.at("media");
+	const Json clip = window.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	const uint64_t event =
+		window
+			.call("audioEvent.add", {{"track", audio}, {"clip", clip.at("id")}, {"position", 96000}, {"length", 24000}})
+			.at("event")
+			.at("id")
+			.get<uint64_t>();
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("audioEvents").size() == 1; }));
+	window.display.select({event});
+	REQUIRE(window.shows("#info-line textdisplay[field=name]", "take"));
+	const std::string field = "#info-line valuefield[field=volume]";
+	const auto volume = [&] { return window.find("audioEvents", event).at("volume").get<double>(); };
+
+	// Wheel turns, which the field doesn't hold as it holds a drag: the project read after each step's history.changed
+	// is older than the step that came after it (#716).
+	int64_t position = window.historyPosition();
+	const double turned = test::lateSteps(window.app, std::nullopt, field, 10, 1,
+		[&] { window.app.ui().wheel(std::nullopt, {field, 0, std::nullopt}, 0.0F, 1.0F); });
+	REQUIRE(window.app.waitUntil([&] { return volume() == Catch::Approx(turned).margin(1e-5); }));
+	window.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(test::controlValue(window.app, std::nullopt, field) == Catch::Approx(turned).margin(1e-5));
+	CHECK(window.historyPosition() == position + 1);
+
+	// A drag.
+	window.app.ui().move(
+		std::nullopt, {"#info-line textdisplay[field=name]", 0, std::nullopt}); // the wheel's gesture ends
+	position = window.historyPosition();
+	test::LateDrag drag(window.app, std::nullopt, field);
+	const double dragged = drag.move(15, 1);
+	CHECK(dragged < turned);
+	drag.release();
+	REQUIRE(window.app.waitUntil([&] { return volume() == Catch::Approx(dragged).margin(1e-5); }));
+	window.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(drag.value() == Catch::Approx(dragged).margin(1e-5));
+	CHECK(window.historyPosition() == position + 1);
 }
 
 TEST_CASE("the inspector shows the channel as it is when a change is refused", "[ui]")

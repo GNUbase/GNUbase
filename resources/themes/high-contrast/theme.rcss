@@ -540,6 +540,18 @@
 		color: #c8c8c8;
 		font-size: 11dp;
 	}
+	.signature-row .signature-event
+	{
+		color: #ffffff;
+		font-size: 11dp;
+		border-left-width: 1dp;
+		border-left-color: #00ffff;
+	}
+	.signature-row .signature-event.selected
+	{
+		color: #000000;
+		background-color: #00ffff;
+	}
 	.event-display .range-selection
 	{
 		border-width: 1dp;
@@ -565,6 +577,10 @@
 	{
 		color: #c8c8c8;
 	}
+	.track-list listitem.frozen
+	{
+		color: #c8c8c8;
+	}
 	.track-list .drop-line
 	{
 		background-color: #ffff00;
@@ -577,6 +593,10 @@
 	{
 		border-top-width: 1dp;
 		border-top-color: #ffffff;
+	}
+	.track-list .automation-row.selected
+	{
+		decorator: svg-ninepatch(list-item-selected.svg, 6 6 6 6);
 	}
 	.event-display .automation-lane
 	{
@@ -690,6 +710,153 @@
 	{
 		background-color: #ffff00;
 	}
+	.controller-lane-area
+	{
+		background-color: #000000;
+		border-bottom-width: 1px;
+		border-bottom-color: #ffffff;
+	}
+	.controller-bar, .controller-step
+	{
+		background-color: #9e9e05;
+	}
+	.controller-bar.selected, .controller-step.selected
+	{
+		background-color: #00ffff;
+	}
+	.controller-bar.inactive, .controller-step.inactive
+	{
+		background-color: #3c3c3c;
+	}
+	.ape-display
+	{
+		background-color: #000000;
+	}
+	.ape-lane
+	{
+		border-bottom-width: 1px;
+		border-bottom-color: #808080;
+	}
+	.ape-event
+	{
+		background-color: #565609;
+		border-width: 1px;
+		border-color: #ffff00;
+	}
+	.ape-event.selected
+	{
+		background-color: #068686;
+		border-color: #ffffff;
+	}
+	.ape-event.muted, .ape-event.inactive
+	{
+		background-color: #3c3c3c;
+		border-color: #c8c8c8;
+	}
+	.audio-part-editor .editor-part
+	{
+		color: #c8c8c8;
+		border-width: 1dp;
+		border-color: #ffffff;
+		background-color: #060606;
+	}
+	.audio-part-editor .editor-part.editable
+	{
+		color: #ffffff;
+	}
+	.audio-part-editor .editor-part.active
+	{
+		color: #ffff00;
+	}
+	.se-overview, .se-display
+	{
+		background-color: #000000;
+	}
+	.se-overview-event
+	{
+		background-color: #ffffff1a;
+	}
+	.se-overview-selection, .se-selection
+	{
+		background-color: #ffffff33;
+	}
+	.se-overview-view
+	{
+		border-width: 1dp;
+		border-color: #ffff00;
+	}
+	.se-overview-snap, .se-snap-point
+	{
+		background-color: #00ffff;
+	}
+	.se-outside
+	{
+		background-color: #00000099;
+	}
+	.se-region-shown
+	{
+		border-width: 1dp;
+		border-color: #00ffff;
+		background-color: #00ffff1a;
+	}
+	.se-region.selected
+	{
+		background-color: #666600;
+	}
+	.se-hitpoint-line, .se-hitpoint-handle
+	{
+		background-color: #ffff00;
+	}
+	.se-hitpoint.locked .se-hitpoint-handle
+	{
+		background-color: #00ffff;
+	}
+	.se-hitpoint.disabled .se-hitpoint-line, .se-hitpoint.disabled .se-hitpoint-handle
+	{
+		background-color: #c8c8c866;
+	}
+	.list-editor-header
+	{
+		color: #c8c8c8;
+		border-bottom-width: 1px;
+		border-bottom-color: #ffffff;
+	}
+	.list-editor-rows .list-row
+	{
+		border-bottom-width: 1px;
+		border-bottom-color: #808080;
+	}
+	.list-editor-body
+	{
+		background-color: #000000;
+	}
+	.list-row.selected
+	{
+		background-color: #404000;
+	}
+	.list-row.inactive
+	{
+		color: #c8c8c8;
+	}
+	.list-event
+	{
+		background-color: #9e9e05;
+		border-width: 1px;
+		border-color: #ffff00;
+	}
+	.list-row.selected .list-event
+	{
+		background-color: #00ffff;
+		border-color: #ffffff;
+	}
+	.list-value
+	{
+		background-color: #ffff00;
+	}
+	.list-row.selected .list-value
+	{
+		background-color: #00ffff;
+	}
 	.docking [zone]
 	{
 		background-color: #000000;
@@ -739,6 +906,18 @@
 	.history .history-separator
 	{
 		background-color: #ffff00;
+	}
+	.quantize-display
+	{
+		background-color: #000000;
+	}
+	.quantize-line
+	{
+		background-color: #ffff00;
+	}
+	.quantize-catch
+	{
+		background-color: #ffff0033;
 	}
 	.onscreen-keyboard .white-key
 	{

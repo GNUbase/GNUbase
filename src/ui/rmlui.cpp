@@ -86,8 +86,11 @@ namespace gnubase::ui
 
 	void SystemInterface::SetMouseCursor(const Rml::String& name)
 	{
-		m_cursor = name;
-		m_windows.setCursor(m_cursors.get(name));
+		// The name of the pointer that shows: none for the OS's arrow, also where it stands in for one that didn't
+		// load.
+		const Cursor& cursor = m_cursors.get(name);
+		m_cursor = cursor.name;
+		m_windows.setCursor(cursor);
 	}
 
 	void SystemInterface::JoinPath(

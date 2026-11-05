@@ -1,0 +1,216 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The Export Audio Mixdown dialog (#115, docs/features/mixdown.md, reference manual pp. 1479-1485): app::AppUi opens
+     it with File > Export > Audio Mixdown (the UI command file.exportMixdown). Its Lua lists the output busses and the
+     audio, instrument, group and effect channels, the main mix checked, and on Export sends mixdown.export for the
+     checked ones over the locator range, with the name, folder and file format chosen; the dialog closes unless the
+     export failed, whose reason it shows. The export holds the UI until it is done. -->
+<rml>
+<head>
+	<title>Export Audio Mixdown</title>
+	<style>
+		dialog
+		{
+			width: 640dp;
+		}
+
+		.content
+		{
+			display: flex;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.column
+		{
+			flex: 1;
+		}
+
+		.column + .column
+		{
+			margin-left: 16dp;
+		}
+
+		.section
+		{
+			margin-top: 8dp;
+		}
+
+		#mixdown-channels
+		{
+			height: 240dp;
+			overflow-y: auto;
+		}
+
+		.field
+		{
+			display: flex;
+			align-items: center;
+			height: 28dp;
+		}
+
+		.channel span
+		{
+			margin-left: 6dp;
+		}
+
+		.field .label
+		{
+			width: 110dp;
+		}
+
+		.field select, .field input.text, .field valuefield
+		{
+			width: 180dp;
+		}
+
+		.row
+		{
+			display: flex;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		#mixdown-message
+		{
+			flex: 1;
+		}
+
+		.row button
+		{
+			margin-left: 6dp;
+		}
+	</style>
+	<script>
+		-- The dialog's state, in the UI's Lua: the channels it lists, in their order.
+		ExportMixdown = {}
+		local mixdown = ExportMixdown
+
+		-- The choices of each setting: the engine's name (see mixdown.export) and the text shown.
+		local fileTypes = {{"wav", "Wave File"}, {"aiff", "AIFF File"}, {"flac", "FLAC File"}}
+		local sampleRates = {22050, 32000, 44100, 48000, 88200, 96000, 176400, 192000}
+		local bitDepths = {{"int16", "16 Bit"}, {"int24", "24 Bit"}, {"int32", "32 Bit"}, {"float32", "32 Bit Float"},
+			{"float64", "64 Bit Float"}}
+		local channelTypes = {audio = true, instrument = true, group = true, effect = true}
+
+		local function escape(text)
+			return (tostring(text):gsub('[&<>"]', {["&"] = "&amp;", ["<"] = "&lt;", [">"] = "&gt;", ['"'] = "&quot;"}))
+		end
+
+		local function numberText(value)
+			return math.tointeger(value) and tostring(math.tointeger(value)) or tostring(value)
+		end
+
+		local function field(label, control)
+			return '<div class="field"><span class="label">' .. escape(label) .. "</span>" .. control .. "</div>"
+		end
+
+		local function dropDown(id, choices, current)
+			local options = {}
+			for _, choice in ipairs(choices) do
+				options[#options + 1] = '<option value="' .. escape(choice[1]) .. '"' ..
+					(choice[1] == current and " selected" or "") .. ">" .. escape(choice[2]) .. "</option>"
+			end
+			return '<select id="' .. id .. '">' .. table.concat(options) .. "</select>"
+		end
+
+		local function valueOf(document, id)
+			local value = document:GetElementById(id):GetAttribute("value")
+			return value ~= nil and tostring(value) or ""
+		end
+
+		local function checked(document, id)
+			return document:GetElementById(id):HasAttribute("checked")
+		end
+
+		-- Lists the channels and fills in the name, the folder and the format.
+		function mixdown.load(document)
+			local project = gnubase.project.get()
+			local location = gnubase.project.location()
+			mixdown.channels = {}
+			local rows = {}
+			local function add(id, name, main)
+				mixdown.channels[#mixdown.channels + 1] = id
+				rows[#rows + 1] = '<div class="field channel"><input type="checkbox" id="mixdown-channel-' .. id .. '"' ..
+					(main and " checked" or "") .. "/><span>" .. escape(name) .. "</span></div>"
+			end
+			for _, bus in ipairs(project.busses) do
+				if bus.direction == "output" then
+					add(bus.id, bus.name, bus.mainMix)
+				end
+			end
+			for _, track in ipairs(project.tracks) do
+				if channelTypes[track.type] and track.channel ~= 0 then
+					add(track.channel, track.name, false)
+				end
+			end
+			document:GetElementById("mixdown-channels").inner_rml = table.concat(rows)
+
+			local name = location.file and location.file:match("([^/\\]+)%.[^.]*$") or "Mixdown"
+			local folder = location.folder or os.getenv("USERPROFILE") or os.getenv("HOME") or "."
+			local rates = {}
+			for _, rate in ipairs(sampleRates) do
+				rates[#rates + 1] = {numberText(rate), numberText(rate) .. " Hz"}
+			end
+			document:GetElementById("mixdown-settings").inner_rml =
+				field("Name", '<input type="text" class="text" id="mixdown-name" value="' .. escape(name) .. '"/>') ..
+				field("Path", '<input type="text" class="text" id="mixdown-folder" value="' ..
+					escape(folder .. package.config:sub(1, 1) .. "Mixdown") .. '"/>') ..
+				'<div class="section"/>' ..
+				field("File Type", dropDown("mixdown-format", fileTypes, "wav")) ..
+				field("Sample Rate", dropDown("mixdown-sample-rate", rates, numberText(project.sampleRate))) ..
+				field("Bit Depth", dropDown("mixdown-bit-depth", bitDepths, "int24")) ..
+				field("Dither", '<input type="checkbox" id="mixdown-dither"/>') ..
+				field("Normalize", '<input type="checkbox" id="mixdown-normalize"/>') ..
+				field("Peak (dB)", '<valuefield id="mixdown-peak" value="-0.3" min="-60" max="0" step="0.1" ' ..
+					'decimals="1"/>')
+		end
+
+		-- Export: mixdown.export with what the dialog shows, then closes, unless it failed.
+		function mixdown.export(document)
+			local channels = {}
+			for _, id in ipairs(mixdown.channels) do
+				if checked(document, "mixdown-channel-" .. id) then
+					channels[#channels + 1] = id
+				end
+			end
+			local parameters = {name = valueOf(document, "mixdown-name"), folder = valueOf(document, "mixdown-folder"),
+				channels = channels, format = valueOf(document, "mixdown-format"),
+				sampleRate = tonumber(valueOf(document, "mixdown-sample-rate")),
+				sampleFormat = valueOf(document, "mixdown-bit-depth"), dither = checked(document, "mixdown-dither")}
+			if checked(document, "mixdown-normalize") then
+				parameters.normalize = tonumber(valueOf(document, "mixdown-peak")) or 0
+			end
+			local problem
+			if #channels == 0 then
+				problem = "Choose a channel to export"
+			else
+				local ok, failure = pcall(gnubase.mixdown.export, parameters)
+				problem = not ok and tostring(failure) or nil
+			end
+			if problem == nil then
+				document:Close()
+			else
+				document:GetElementById("mixdown-message").inner_rml = escape(problem)
+			end
+		end
+	</script>
+</head>
+<body onload="ExportMixdown.load(document)">
+	<dialog id="export-mixdown-dialog">
+		<div class="dialog-titlebar">Export Audio Mixdown</div>
+		<div class="content">
+			<div class="column">
+				<div>Channel Selection</div>
+				<div id="mixdown-channels"/>
+			</div>
+			<div class="column">
+				<div>From the left to the right locator</div>
+				<div id="mixdown-settings"/>
+			</div>
+		</div>
+		<div class="row">
+			<div id="mixdown-message"/>
+			<button id="mixdown-cancel" result="cancel">Cancel</button>
+			<button id="mixdown-export" class="primary" onclick="ExportMixdown.export(document)">Export Audio</button>
+		</div>
+	</dialog>
+</body>
+</rml>

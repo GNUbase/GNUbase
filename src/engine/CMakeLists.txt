@@ -92,6 +92,7 @@ endif()
 
 add_library(gnubase-engine STATIC
 	analysis/analysis.cpp analysis/analysis.h
+	analysis/onsets.cpp analysis/onsets.h
 	audio/analysiscommands.cpp
 	audio/audioengine.cpp audio/audioengine.h
 	audio/audition.cpp audio/audition.h
@@ -101,6 +102,7 @@ add_library(gnubase-engine STATIC
 	audio/meters.cpp audio/meters.h
 	audio/midiports.cpp audio/midiports.h
 	audio/miditap.cpp audio/miditap.h
+	audio/mixdown.cpp
 	audio/performance.cpp audio/performance.h
 	audio/playback.cpp audio/playback.h
 	audio/recorder.cpp audio/recorder.h
@@ -117,11 +119,14 @@ add_library(gnubase-engine STATIC
 	dawproject/dawproject.cpp dawproject/dawproject.h
 	document/audiofilecommands.cpp
 	document/channelformat.cpp document/channelformat.h
+	document/channelsettings.cpp document/channelsettings.h
 	document/document.cpp document/document.h
 	document/editors.cpp document/editors.h
 	document/eventedits.cpp
 	document/fadeedits.cpp
 	document/history.cpp document/history.h
+	document/hitpoints.cpp document/hitpoints.h
+	document/linkgroups.cpp document/linkgroups.h
 	document/markers.cpp
 	document/midiedits.cpp
 	document/midifilecommands.cpp
@@ -132,8 +137,11 @@ add_library(gnubase-engine STATIC
 	document/slotcommands.cpp
 	document/projectmodel.cpp document/projectmodel.h
 	document/recording.cpp
+	document/renderinplace.cpp
 	document/rendersnapshot.cpp document/rendersnapshot.h
+	document/sampleeditor.cpp document/sampleeditor.h
 	document/serialize.cpp document/serialize.h
+	document/signature.cpp
 	document/snap.cpp document/snap.h
 	document/tempo.cpp
 	document/volumecurves.cpp document/volumecurves.h
@@ -152,9 +160,11 @@ add_library(gnubase-engine STATIC
 	jobs/jobs.cpp jobs/jobs.h
 	media/backup.cpp media/backup.h
 	midi/chords.cpp midi/chords.h
+	midi/controllerlanes.cpp midi/controllerlanes.h
 	midi/functioncommands.cpp midi/functioncommands.h
 	midi/functions.cpp midi/functions.h
 	midi/midivalues.cpp midi/midivalues.h
+	midi/modifiers.cpp midi/modifiers.h
 	midi/quantize.cpp midi/quantize.h
 	midi/quantizecommands.cpp midi/quantizecommands.h
 	midi/quantizesettings.cpp midi/quantizesettings.h

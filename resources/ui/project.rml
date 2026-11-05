@@ -98,6 +98,7 @@
 		<button id="combine-selection-tools" type="toggle" class="icon-only" title="Combine Selection Tools"><svg class="icon" src="../icons/tool-pointer.svg"/></button>
 		<button tool="objectSelection" tool-menu="object-selection-menu" class="icon-only" title="Object Selection"><svg class="icon" src="../icons/tool-pointer.svg"/></button>
 		<button tool="rangeSelection" class="icon-only" title="Range Selection"><svg class="icon" src="../icons/tool-range.svg"/></button>
+		<button tool="comp" class="icon-only" title="Comp"><svg class="icon" src="../icons/tool-comp.svg"/></button>
 		<button tool="draw" class="icon-only" title="Draw"><svg class="icon" src="../icons/tool-draw.svg"/></button>
 		<button tool="erase" class="icon-only" title="Erase"><svg class="icon" src="../icons/tool-erase.svg"/></button>
 		<button tool="split" class="icon-only" title="Split"><svg class="icon" src="../icons/tool-split.svg"/></button>
@@ -113,6 +114,9 @@
 		<button id="snap-type" menu="snap-type-menu" title="Snap Type">Grid</button>
 		<button id="grid-type" menu="grid-type-menu" title="Grid Type">Bar</button>
 		<button id="snap-zero-crossing" type="toggle" class="icon-only" title="Snap to Zero Crossing"><svg class="icon" src="../icons/general-zero-crossing.svg"/></button>
+		<!-- Apply Quantize, the quantize presets, Soft Quantize and Open Quantize Panel (reference manual p. 368), which
+		     ui::QuantizePanel fills (docs/features/quantize.md) -->
+		<div id="toolbar-quantize" class="toolbar-quantize"/>
 		<button id="select-color" class="icon-only" menu="color-menu" title="Select Color for Selected Tracks or Events"><svg class="icon" src="../icons/general-color.svg"/></button>
 		<div class="spacer"/>
 		<button id="show-channel-zone" type="toggle" toggle="channel" class="icon-only" title="Show/Hide Channel"><svg class="icon" src="../icons/layout-channel-zone.svg"/></button>
@@ -173,6 +177,16 @@
 			<menu>
 				<menuitem command="file.importAudio">Audio File...</menuitem>
 				<menuitem command="file.importMidi">MIDI File...</menuitem>
+				<menuitem command="file.importTempo">Tempo Track...</menuitem>
+				<menuitem command="file.importMarkers">Markers...</menuitem>
+			</menu>
+		</menuitem>
+		<menuitem id="export-submenu">Export
+			<menu>
+				<menuitem command="file.exportMixdown">Audio Mixdown...</menuitem>
+				<menuitem command="file.quickExport">Quick Audio Export...</menuitem>
+				<menuitem command="file.exportTempo">Tempo Track...</menuitem>
+				<menuitem command="file.exportMarkers">Markers...</menuitem>
 			</menu>
 		</menuitem>
 		<menuseparator/>
@@ -241,14 +255,41 @@
 			</menu>
 		</menuitem>
 		<menuseparator/>
+		<!-- Render in place and freeze (reference manual pp. 219-220, 1471-1477, docs/features/render-in-place.md) -->
+		<menuitem id="render-in-place-submenu">Render in Place
+			<menu>
+				<menuitem command="track.renderSelected">Render (with Current Settings)</menuitem>
+			</menu>
+		</menuitem>
+		<menuitem id="freeze-submenu">Freeze/Unfreeze
+			<menu>
+				<menuitem command="track.freezeSelected">Selected Tracks (with Current Settings)</menuitem>
+			</menu>
+		</menuitem>
+		<menuseparator/>
 		<menuitem command="edit.mute">Mute</menuitem>
 		<menuitem command="edit.unmute">Unmute</menuitem>
 		<menuitem command="edit.lock">Lock</menuitem>
 		<menuitem command="edit.unlock">Unlock</menuitem>
 		<menuseparator/>
+		<!-- Quantizing (reference manual pp. 367-368, docs/features/quantize.md) -->
+		<menuitem command="edit.quantize">Quantize</menuitem>
+		<menuitem command="edit.resetQuantize">Reset Quantize</menuitem>
+		<menuitem command="window.quantizePanel">Quantize Panel</menuitem>
+		<menuitem id="advanced-quantize-submenu">Advanced Quantize
+			<menu>
+				<menuitem command="edit.quantizeLengths">Quantize MIDI Event Lengths</menuitem>
+				<menuitem command="edit.quantizeEnds">Quantize MIDI Event Ends</menuitem>
+				<menuitem command="edit.freezeQuantize">Freeze MIDI Quantize</menuitem>
+				<menuseparator/>
+				<menuitem command="edit.createGrooveQuantize">Create Groove Quantize Preset</menuitem>
+			</menu>
+		</menuitem>
+		<menuseparator/>
 		<!-- The MIDI editors (docs/features/midi-editors.md) -->
 		<menuitem command="editor.openClose">Open/Close Editor</menuitem>
 		<menuitem command="window.lowerZoneEditor">Open Editor in Lower Zone</menuitem>
+		<menuitem command="editor.openList">Open List Editor</menuitem>
 	</menu>
 	<!-- Track handling (reference manual pp. 213-225) -->
 	<menu id="color-menu"/>
@@ -284,9 +325,12 @@
 		<menuitem command="project.autoFades">Auto Fades Settings...</menuitem>
 		<menuitem command="window.projectSetup">Project Setup...</menuitem>
 	</menu>
-	<!-- Audio parts (reference manual p. 250, docs/features/audio-parts.md), fades and crossfades (reference manual
+	<!-- Audio parts (reference manual p. 250, docs/features/audio-parts.md) and their editor (pp. 692-702,
+	     docs/features/audio-part-editor.md), fades and crossfades (reference manual
 	     pp. 381-397, docs/features/fades.md) -->
 	<menu id="audio-menu">
+		<menuitem command="audio.openPartEditor">Open Audio Part Editor</menuitem>
+		<menuseparator/>
 		<menuitem command="audio.eventsToPart">Events to Part</menuitem>
 		<menuitem command="audio.dissolvePart">Dissolve Part</menuitem>
 		<menuseparator/>
@@ -309,17 +353,29 @@
 	</menu>
 	<menu id="track-list-menu">
 		<menuitem command="project.addTrack">Add Track...</menuitem>
+		<!-- Routing (reference manual pp. 546, 554, docs/features/routing.md) -->
+		<menuitem command="track.addGroupToSelected">Group Track to Selected Tracks...</menuitem>
+		<menuitem command="track.addEffectToSelected">Effect Track to Selected Tracks...</menuitem>
 		<menuitem command="track.duplicateSelected">Duplicate Tracks</menuitem>
 		<menuitem command="track.removeSelected">Remove Selected Tracks</menuitem>
 		<menuitem command="track.removeEmpty">Remove Empty Tracks</menuitem>
 		<menuseparator/>
 		<menuitem command="track.disableSelected">Disable Selected Tracks</menuitem>
 		<menuitem command="track.enableSelected">Enable Selected Tracks</menuitem>
+		<menuitem command="track.freezeSelected">Freeze/Unfreeze Selected Tracks</menuitem>
 		<menuseparator/>
 		<!-- Automation tracks (reference manual p. 880) -->
 		<menuitem command="track.toggleAutomationSelected">Show/Hide Automation</menuitem>
+		<menuitem command="track.toggleLanesSelected">Show Lanes</menuitem>
 		<menuitem command="track.showUsedAutomation">Show All Used Automation</menuitem>
 		<menuitem command="track.hideAllAutomation">Hide All Automation</menuitem>
+		<!-- Copying automation to other tracks (reference manual pp. 878-879) -->
+		<menuitem command="track.copyAutomationAll">Copy Automation of All Tracks (Locator Range)</menuitem>
+		<menuitem command="track.copyAutomationSelected">Copy Automation of Selected Tracks (Locator Range)</menuitem>
+		<menuitem command="track.copyAutomationSelectedParameters">Copy Automation of Selected Parameters (Locator Range)</menuitem>
+		<menuitem command="track.pasteAutomationAll">Paste Automation of All Tracks (Locator Range)</menuitem>
+		<menuitem command="track.pasteAutomationSelected">Paste Automation of Selected Tracks (Locator Range)</menuitem>
+		<menuitem command="track.pasteAutomationSelectedParameters">Paste Automation of Selected Parameters (Locator Range)</menuitem>
 		<menuseparator/>
 		<!-- Folder tracks (reference manual pp. 222-224) -->
 		<menuitem command="track.enableSelectedGroupChannels">Enable Group Channel</menuitem>
@@ -357,6 +413,12 @@
 				<menuitem command="transport.set" parameters='{"midiRecordMode": "newParts"}'>New Parts</menuitem>
 				<menuitem id="midi-record-mode-merge" command="transport.set" parameters='{"midiRecordMode": "merge"}'>Merge</menuitem>
 				<menuitem command="transport.set" parameters='{"midiRecordMode": "replace"}'>Replace</menuitem>
+				<menuseparator/>
+				<menuitem command="transport.set" parameters='{"midiCycleRecordMode": "mix"}'>Mix</menuitem>
+				<menuitem command="transport.set" parameters='{"midiCycleRecordMode": "overwrite"}'>Overwrite</menuitem>
+				<menuitem command="transport.set" parameters='{"midiCycleRecordMode": "keepLast"}'>Keep Last</menuitem>
+				<menuitem id="midi-cycle-record-mode-stacked" command="transport.set" parameters='{"midiCycleRecordMode": "stacked"}'>Stacked</menuitem>
+				<menuitem command="transport.set" parameters='{"midiCycleRecordMode": "mixStacked"}'>Mix-Stacked (No Mute)</menuitem>
 			</menu>
 		</menuitem>
 		<menuseparator/>
@@ -454,6 +516,7 @@
 	<menu id="toolbox" class="toolbox">
 		<menuitem tool="objectSelection" title="Object Selection"><svg class="icon" src="../icons/tool-pointer.svg"/></menuitem>
 		<menuitem tool="rangeSelection" title="Range Selection"><svg class="icon" src="../icons/tool-range.svg"/></menuitem>
+		<menuitem tool="comp" title="Comp"><svg class="icon" src="../icons/tool-comp.svg"/></menuitem>
 		<menuitem tool="draw" title="Draw"><svg class="icon" src="../icons/tool-draw.svg"/></menuitem>
 		<menuitem tool="erase" title="Erase"><svg class="icon" src="../icons/tool-erase.svg"/></menuitem>
 		<menuitem tool="split" title="Split"><svg class="icon" src="../icons/tool-split.svg"/></menuitem>
@@ -468,6 +531,7 @@
 			<menu>
 				<menuitem tool="objectSelection">Object Selection</menuitem>
 				<menuitem tool="rangeSelection">Range Selection</menuitem>
+				<menuitem tool="comp">Comp</menuitem>
 				<menuitem tool="draw">Draw</menuitem>
 				<menuitem tool="erase">Erase</menuitem>
 				<menuitem tool="split">Split</menuitem>

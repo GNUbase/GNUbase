@@ -3,6 +3,7 @@
 
 #include "engine/document/channelformat.h"
 #include "engine/document/snap.h"
+#include "engine/midi/modifiers.h"
 #include "engine/midi/quantizesettings.h"
 #include "engine/time/signaturemap.h"
 #include "engine/time/tempomap.h"
@@ -54,12 +55,14 @@ namespace gnubase::engine
 		Audio,
 		Instrument,
 		Midi,
-		Folder, // contains other tracks; has a channel only if its group channel is on
-		Group,  // sums the channels routed to it; holds no events
-		Effect, // receives sends; holds no events
-		Marker, // holds markers; has no channel and stays at the top level
-		Ruler,  // shows a ruler in a time format of its own; has no channel
-		Tempo,  // shows and edits the project's tempo track; has no channel, stays at the top level, at most one
+		Folder,    // contains other tracks; has a channel only if its group channel is on
+		Group,     // sums the channels routed to it; holds no events
+		Effect,    // receives sends; holds no events
+		Marker,    // holds markers; has no channel and stays at the top level
+		Ruler,     // shows a ruler in a time format of its own; has no channel
+		Tempo,     // shows and edits the project's tempo track; has no channel, stays at the top level, at most one
+		Signature, // shows and edits the project's time signatures; has no channel, stays at the top level, at most one
+		Vca,       // a VCA fader (docs/features/link-groups.md): a channel without audio that controls a link group
 	};
 
 	// The time formats of ruler tracks, as the event display's ruler names them.
@@ -216,6 +219,10 @@ namespace gnubase::engine
 		// none sends nothing, which leaves the instrument's own.
 		std::optional<int> midiVolume = std::nullopt;
 		std::optional<int> midiPan = std::nullopt;
+		// MIDI and instrument tracks: the MIDI modifiers, which change how the track's notes play
+		// (docs/features/midi-modifiers.md).
+		// NOLINTNEXTLINE(readability-redundant-member-init): see instrumentParameters
+		midi::Modifiers modifiers = {};
 		// The values set for the instrument's parameters (parameter.set), by parameter id; the others are at their
 		// defaults. A new instrument starts with none.
 		// The initializer lets Channel{...} leave it out without GCC's and Clang's -Wmissing-field-initializers, like
@@ -346,6 +353,41 @@ namespace gnubase::engine
 		FadeShape crossfadeShape = FadeShape::Linear; // the fade in, as in Crossfade
 	};
 
+	// A named section of a clip that marks something in its audio (#140, reference manual pp. 624-626): its start and
+	// end in the clip's sample frames, start before end.
+	struct ClipRegion
+	{
+		ObjectId id = 0;
+		std::string name;
+		time::Samples start = 0;
+		time::Samples end = 0;
+	};
+
+	// A position in a clip where a sound starts (#143, reference manual pp. 636-641): its clip frame, the peak level
+	// of the sound there in dBFS and its intensity, how sharply its level rises (0 to 1, 1 for the sharpest of the
+	// clip's detected ones), as clip.detectHitpoints finds them; whether it is locked, so that the filters keep it,
+	// as hitpoints inserted or moved by hand are; and whether it is disabled, so that it counts for nothing.
+	struct Hitpoint
+	{
+		time::Samples position = 0;
+		double peak = 0.0;
+		double intensity = 0.0;
+		bool locked = false;
+		bool disabled = false;
+	};
+
+	inline constexpr double g_minHitpointThreshold = -60.0; // dBFS
+
+	// The Hitpoints section's filters (p. 638): the hitpoints that count are those that aren't disabled and are
+	// locked, or have a peak of threshold dBFS or more and an intensity of intensity (0 to 1) or more, and start
+	// minimumLength clip frames or more after the one before that counts.
+	struct HitpointFilter
+	{
+		double threshold = g_minHitpointThreshold; // g_minHitpointThreshold to 0
+		double intensity = 0.0;
+		time::Samples minimumLength = 0;
+	};
+
 	// What audio events play: for now, a whole media file. Its fades apply to every event that plays it, at the
 	// file's start and end.
 	struct Clip
@@ -355,8 +397,14 @@ namespace gnubase::engine
 		ObjectId media = 0;
 		Fade fadeIn;
 		Fade fadeOut;
-		ObjectId folder = 0; // the pool folder it is in; 0: the pool's Audio folder itself
+		ObjectId folder = 0;             // the pool folder it is in; 0: the pool's Audio folder itself
+		std::vector<ClipRegion> regions; // by start, then id
+		std::vector<Hitpoint> hitpoints; // by position, one at most at each
+		HitpointFilter hitpointFilter;
 	};
+
+	// Which of a clip's hitpoints count, as its filters leave them (hitpoints.cpp): one for each of them.
+	std::vector<bool> activeHitpoints(const Clip& clip);
 
 	// A folder of the pool that clips are organized in (#93, reference manual p. 757). It only organizes the pool:
 	// the files stay where they are.
@@ -403,7 +451,16 @@ namespace gnubase::engine
 		// The audio part it is in, on the same track, or 0 for none. It keeps its position on the track: it plays
 		// only where the part is, and moves, splits and goes with the part.
 		ObjectId part = 0;
+		int lane = 0; // the track's lane it is on, from 0: cycle recordings put their takes on lanes (#98)
+		// Where it is in the stack of its track's events (#99): where events overlap, the one whose frontOf is highest
+		// plays. 0 orders it by its id, so an event added later is in front; event.toFront gives it a new id here.
+		ObjectId front = 0;
 	};
+
+	inline ObjectId frontOf(const AudioEvent& event)
+	{
+		return event.front != 0 ? event.front : event.id;
+	}
 
 	// A container of audio events on an audio track (#471, reference manual p. 250). Its events are the audio events
 	// whose part it is; they play only within it.
@@ -417,6 +474,7 @@ namespace gnubase::engine
 		bool mute = false;       // its events don't play
 		bool lock = false;       // event.* commands don't move, resize, split, glue or remove it
 		std::string color;       // "#rrggbb", or empty to follow the track's color
+		int lane = 0;            // the track's lane it is on, from 0
 	};
 
 	inline constexpr double g_minEventVolume = -144.0;
@@ -453,6 +511,8 @@ namespace gnubase::engine
 		uint8_t channel = 0;                                 // 0-15
 		uint16_t releaseVelocity = g_defaultReleaseVelocity; // 0-65535, the note-off velocity
 		std::optional<QuantizeOrigin> origin;                // set while the note is quantized
+		double probability = 1.0;                            // 0-1, the chance that it plays (#128)
+		double velocityVariance = 0.0; // -1 to 1, how far playback varies the velocity, up or down (#128)
 	};
 
 	// The MIDI events besides notes, all held as controller events.
@@ -495,9 +555,30 @@ namespace gnubase::engine
 		// with the same ids: a change to one goes to the others. 0: not shared.
 		ObjectId shared = 0;
 		std::string color; // "#rrggbb", or empty to follow the track's color
+		int lane = 0;      // the track's lane it is on, from 0: cycle recordings put their takes on lanes (#98)
 		std::map<ObjectId, Note> notes;
 		std::map<ObjectId, Controller> controllers;
+		// Added to the track's MIDI modifiers' transpose and velocity shift as it plays (reference manual p. 1107),
+		// -127 to 127: the info line's Transpose and Velocity.
+		int transpose = 0;
+		int velocity = 0;
 	};
+
+	// A frozen track's rendered audio (#116, reference manual pp. 219-220): a file of the project's media folder's
+	// Freeze folder that plays from the project's start instead of the track's events, instrument and plugin slots.
+	struct Freeze
+	{
+		std::string path;
+		double sampleRate = 48000.0;
+		int channels = 2;
+		time::Samples length = 0; // in the file's sample frames
+	};
+
+	inline bool operator==(const Freeze& a, const Freeze& b)
+	{
+		return std::tie(a.path, a.sampleRate, a.channels, a.length) ==
+			std::tie(b.path, b.sampleRate, b.channels, b.length);
+	}
 
 	struct Track
 	{
@@ -516,6 +597,9 @@ namespace gnubase::engine
 		// leave it out, as for Channel::instrumentParameters.
 		// NOLINTNEXTLINE(readability-redundant-member-init): see above
 		std::string picture = {};
+		// Audio and instrument tracks: what plays while the track is frozen, or none. Initialized like picture.
+		// NOLINTNEXTLINE(readability-redundant-member-init): see above
+		std::optional<Freeze> frozen = {};
 	};
 
 	// Whether tracks of a type can be disabled (reference manual p. 219): audio, instrument and MIDI tracks.
@@ -583,11 +667,15 @@ namespace gnubase::engine
 		double value = 0.0;      // in the target's unit
 		AutomationShape shape = AutomationShape::Linear;
 		double curve = 0.0; // Curve: -1 to 1; above 0 the value moves fast at first, below 0 slowly at first
+		// Ends its curve (reference manual p. 881): from here to the next point is a gap, where the parameter has its
+		// static value.
+		bool terminator = false;
 	};
 
 	// The automation of one parameter on a track. Points at the same position make a jump; before the first point the
-	// curve has its value, after the last point the last one's. read: the curve plays; without it, or without points,
-	// the parameter keeps its static value (write modes come with #122).
+	// curve has its value, after the last point the last one's, unless the project uses virgin territory
+	// (Project::virginTerritory). read: the curve plays; without it, or without points, the parameter keeps its static
+	// value (write modes come with #122).
 	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
 	struct AutomationLane
 	{
@@ -597,6 +685,32 @@ namespace gnubase::engine
 		bool read = true;
 		std::map<ObjectId, AutomationPoint> points;
 	};
+
+	// Linked channels (reference manual pp. 457-461, docs/features/link-groups.md): a change to one of them goes to the
+	// others, for the settings the group links. A channel is in one link group at most. A VCA fader that controls the
+	// group (pp. 515-519) adds its volume to theirs and passes its mute, solo, listen, monitor and record buttons on.
+	struct LinkGroup
+	{
+		ObjectId id = 0;
+		std::string name;
+		// NOLINTNEXTLINE(readability-redundant-member-init): see Channel::instrumentParameters
+		std::vector<ObjectId> channels = {}; // in the order they were linked
+		bool volume = true;                  // relative changes of the fader; never with a VCA fader
+		bool pan = false;                    // relative changes of the pan
+		bool mute = false;                   // the mute, solo and listen buttons
+		bool record = false;                 // the record enable and monitor buttons
+		bool eq = false;                     // the equalizer's changes (channel.set eq)
+		bool dynamics = false;               // the strip's changes: gate, compressor, limiter (channel.set strip)
+		bool sends = true;                   // the sends' changes (channel.set sends)
+		ObjectId vca = 0;                    // the channel of the VCA track that controls the group, or 0
+	};
+
+	inline bool operator==(const LinkGroup& a, const LinkGroup& b)
+	{
+		return std::tie(
+				   a.id, a.name, a.channels, a.volume, a.pan, a.mute, a.record, a.eq, a.dynamics, a.sends, a.vca) ==
+			std::tie(b.id, b.name, b.channels, b.volume, b.pan, b.mute, b.record, b.eq, b.dynamics, b.sends, b.vca);
+	}
 
 	// A color of the project's color set (reference manual pp. 115-118), which colors are picked from.
 	struct ProjectColor
@@ -612,9 +726,9 @@ namespace gnubase::engine
 	bool isColor(const std::string& text);
 
 	// The channel types a mixer's filter shows or hides (reference manual p. 454): input and output busses, and the
-	// channels of audio, instrument, MIDI, group and effect tracks; folders' group channels are group channels.
-	inline constexpr std::array<const char*, 7> g_mixerChannelTypes = {
-		"input", "audio", "instrument", "midi", "group", "effect", "output"};
+	// channels of audio, instrument, MIDI, group, effect and VCA tracks; folders' group channels are group channels.
+	inline constexpr std::array<const char*, 8> g_mixerChannelTypes = {
+		"input", "audio", "instrument", "midi", "group", "effect", "vca", "output"};
 
 	// What a mixer hides (#106, docs/features/mixer-window.md): channels and busses by id, and channel types.
 	struct MixerView
@@ -675,6 +789,11 @@ namespace gnubase::engine
 		std::map<ObjectId, Marker> markers;
 		ObjectId activeMarkerTrack = 0; // the marker track that marker commands use by default, or 0
 		std::map<ObjectId, AutomationLane> automation;
+		std::map<ObjectId, LinkGroup> linkGroups;
+		// Virgin territory instead of initial values (reference manual p. 881): automation lanes have gaps before their
+		// first and after their last point too, where their parameters have their static values. A setting saved with
+		// the project, not part of undo.
+		bool virginTerritory = false;
 
 		// The quantize settings that apply when none are given, and whether recording quantizes (#132). Settings,
 		// not part of undo.
@@ -708,6 +827,17 @@ namespace gnubase::engine
 
 	// Makes the first top-level output bus the main mix if no bus is.
 	void keepMainMix(Project& project);
+
+	// The link group a channel is in, or none.
+	const LinkGroup* linkGroupOf(const Project& project, ObjectId channel);
+
+	// The link group a VCA fader's channel controls, or none.
+	const LinkGroup* controlledBy(const Project& project, ObjectId vca);
+
+	// The VCA faders that control a channel, nearest first: the one of its link group, the one of that VCA fader's
+	// group, and so on (nested VCA faders, reference manual p. 518). Stops before a VCA fader it has met, so a loop
+	// ends it.
+	std::vector<ObjectId> vcaChain(const Project& project, ObjectId channel);
 
 	// Gives a part's notes and controllers new ids.
 	void renumber(Project& project, MidiPart& part);
@@ -751,11 +881,13 @@ namespace gnubase::engine
 	inline bool operator==(const Channel& a, const Channel& b)
 	{
 		return std::tie(a.id, a.track, a.format, a.input, a.output, a.instrument, a.volume, a.pan, a.panner, a.panLeft,
-				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.instrumentParameters, a.monitor, a.recordEnable,
-				   a.midiInput, a.mute, a.solo, a.soloDefeat, a.listen, a.slots, a.notes, a.sections, a.sends) ==
+				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.modifiers, a.instrumentParameters, a.monitor,
+				   a.recordEnable, a.midiInput, a.mute, a.solo, a.soloDefeat, a.listen, a.slots, a.notes, a.sections,
+				   a.sends) ==
 			std::tie(b.id, b.track, b.format, b.input, b.output, b.instrument, b.volume, b.pan, b.panner, b.panLeft,
-				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.instrumentParameters, b.monitor, b.recordEnable,
-				b.midiInput, b.mute, b.solo, b.soloDefeat, b.listen, b.slots, b.notes, b.sections, b.sends);
+				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.modifiers, b.instrumentParameters, b.monitor,
+				b.recordEnable, b.midiInput, b.mute, b.solo, b.soloDefeat, b.listen, b.slots, b.notes, b.sections,
+				b.sends);
 	}
 
 	inline bool operator==(const Slot& a, const Slot& b)
@@ -791,10 +923,28 @@ namespace gnubase::engine
 				b.crossfadeShape);
 	}
 
+	inline bool operator==(const ClipRegion& a, const ClipRegion& b)
+	{
+		return std::tie(a.id, a.name, a.start, a.end) == std::tie(b.id, b.name, b.start, b.end);
+	}
+
+	inline bool operator==(const Hitpoint& a, const Hitpoint& b)
+	{
+		return std::tie(a.position, a.peak, a.intensity, a.locked, a.disabled) ==
+			std::tie(b.position, b.peak, b.intensity, b.locked, b.disabled);
+	}
+
+	inline bool operator==(const HitpointFilter& a, const HitpointFilter& b)
+	{
+		return std::tie(a.threshold, a.intensity, a.minimumLength) ==
+			std::tie(b.threshold, b.intensity, b.minimumLength);
+	}
+
 	inline bool operator==(const Clip& a, const Clip& b)
 	{
-		return std::tie(a.id, a.name, a.media, a.fadeIn, a.fadeOut, a.folder) ==
-			std::tie(b.id, b.name, b.media, b.fadeIn, b.fadeOut, b.folder);
+		return std::tie(
+				   a.id, a.name, a.media, a.fadeIn, a.fadeOut, a.folder, a.regions, a.hitpoints, a.hitpointFilter) ==
+			std::tie(b.id, b.name, b.media, b.fadeIn, b.fadeOut, b.folder, b.regions, b.hitpoints, b.hitpointFilter);
 	}
 
 	inline bool operator==(const PoolFolder& a, const PoolFolder& b)
@@ -810,15 +960,15 @@ namespace gnubase::engine
 	inline bool operator==(const AudioEvent& a, const AudioEvent& b)
 	{
 		return std::tie(a.id, a.track, a.position, a.clip, a.offset, a.length, a.volume, a.mute, a.lock, a.fadeIn,
-				   a.fadeOut, a.crossfade, a.snapPoint, a.color, a.part, a.volumeCurve) ==
+				   a.fadeOut, a.crossfade, a.snapPoint, a.color, a.part, a.lane, a.volumeCurve, a.front) ==
 			std::tie(b.id, b.track, b.position, b.clip, b.offset, b.length, b.volume, b.mute, b.lock, b.fadeIn,
-				b.fadeOut, b.crossfade, b.snapPoint, b.color, b.part, b.volumeCurve);
+				b.fadeOut, b.crossfade, b.snapPoint, b.color, b.part, b.lane, b.volumeCurve, b.front);
 	}
 
 	inline bool operator==(const AudioPart& a, const AudioPart& b)
 	{
-		return std::tie(a.id, a.track, a.name, a.position, a.length, a.mute, a.lock, a.color) ==
-			std::tie(b.id, b.track, b.name, b.position, b.length, b.mute, b.lock, b.color);
+		return std::tie(a.id, a.track, a.name, a.position, a.length, a.mute, a.lock, a.color, a.lane) ==
+			std::tie(b.id, b.track, b.name, b.position, b.length, b.mute, b.lock, b.color, b.lane);
 	}
 
 	inline bool operator==(const NoteTiming& a, const NoteTiming& b)
@@ -833,8 +983,10 @@ namespace gnubase::engine
 
 	inline bool operator==(const Note& a, const Note& b)
 	{
-		return std::tie(a.id, a.position, a.length, a.pitch, a.velocity, a.channel, a.releaseVelocity, a.origin) ==
-			std::tie(b.id, b.position, b.length, b.pitch, b.velocity, b.channel, b.releaseVelocity, b.origin);
+		return std::tie(a.id, a.position, a.length, a.pitch, a.velocity, a.channel, a.releaseVelocity, a.origin,
+				   a.probability, a.velocityVariance) ==
+			std::tie(b.id, b.position, b.length, b.pitch, b.velocity, b.channel, b.releaseVelocity, b.origin,
+				b.probability, b.velocityVariance);
 	}
 
 	inline bool operator==(const Controller& a, const Controller& b)
@@ -846,8 +998,10 @@ namespace gnubase::engine
 	// A MIDI part's own properties, without its notes and controllers.
 	inline bool sameProperties(const MidiPart& a, const MidiPart& b)
 	{
-		return std::tie(a.id, a.track, a.name, a.position, a.length, a.mute, a.lock, a.shared, a.color) ==
-			std::tie(b.id, b.track, b.name, b.position, b.length, b.mute, b.lock, b.shared, b.color);
+		return std::tie(a.id, a.track, a.name, a.position, a.length, a.mute, a.lock, a.shared, a.color, a.lane,
+				   a.transpose, a.velocity) ==
+			std::tie(b.id, b.track, b.name, b.position, b.length, b.mute, b.lock, b.shared, b.color, b.lane,
+				b.transpose, b.velocity);
 	}
 
 	inline bool operator==(const ProjectColor& a, const ProjectColor& b)
@@ -869,8 +1023,8 @@ namespace gnubase::engine
 
 	inline bool operator==(const AutomationPoint& a, const AutomationPoint& b)
 	{
-		return std::tie(a.id, a.position, a.value, a.shape, a.curve) ==
-			std::tie(b.id, b.position, b.value, b.shape, b.curve);
+		return std::tie(a.id, a.position, a.value, a.shape, a.curve, a.terminator) ==
+			std::tie(b.id, b.position, b.value, b.shape, b.curve, b.terminator);
 	}
 
 	// An automation lane's own properties, without its points.
@@ -882,9 +1036,9 @@ namespace gnubase::engine
 	inline bool operator==(const Track& a, const Track& b)
 	{
 		return std::tie(a.id, a.type, a.name, a.color, a.timeBase, a.parent, a.channel, a.children, a.autoFades,
-				   a.timeFormat, a.enabled, a.picture) ==
+				   a.timeFormat, a.enabled, a.picture, a.frozen) ==
 			std::tie(b.id, b.type, b.name, b.color, b.timeBase, b.parent, b.channel, b.children, b.autoFades,
-				b.timeFormat, b.enabled, b.picture);
+				b.timeFormat, b.enabled, b.picture, b.frozen);
 	}
 	// Where an audio event plays, in the project's samples (fadeedits.cpp).
 	struct EventSpan

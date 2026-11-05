@@ -297,6 +297,113 @@ namespace gnubase::engine
 			return std::llround(beats * static_cast<double>(time::g_ticksPerQuarter));
 		}
 
+		// The tempo and the time signatures in DAWproject's terms: the first tempo and signature in the transport, the
+		// changes as the arrangement's tempo and time signature automation. project.xml has them, and so does a tempo
+		// track file (#160).
+		void writeTransport(pugi::xml_node root, const time::TempoMap& tempoMap, const time::SignatureMap& signatures)
+		{
+			pugi::xml_node transport = root.append_child("Transport");
+			pugi::xml_node tempo = transport.append_child("Tempo");
+			tempo.append_attribute("unit") = "bpm";
+			tempo.append_attribute("value") = tempoMap.points().front().bpm;
+			tempo.append_attribute("id") = "tempo";
+			pugi::xml_node signature = transport.append_child("TimeSignature");
+			const time::TimeSignature first = signatures.changes().front().signature;
+			signature.append_attribute("numerator") = first.numerator;
+			signature.append_attribute("denominator") = first.denominator;
+			signature.append_attribute("id") = "signature";
+		}
+
+		void writeTempoAutomation(pugi::xml_node arrangement, const time::TempoMap& tempo)
+		{
+			const std::vector<time::TempoPoint>& points = tempo.points();
+			if (points.size() < 2)
+				return;
+			pugi::xml_node automation = arrangement.append_child("TempoAutomation");
+			automation.append_attribute("id") = "tempoAutomation";
+			automation.append_attribute("unit") = "bpm";
+			automation.append_child("Target").append_attribute("parameter") = "tempo";
+			for (size_t i = 0; i < points.size(); ++i)
+			{
+				pugi::xml_node point = automation.append_child("RealPoint");
+				point.append_attribute("time") = toBeats(points[i].position);
+				point.append_attribute("value") = points[i].bpm;
+				// DAWproject describes the curve from a point to the next one; GNUbase marks ramps on the next.
+				const bool ramp = i + 1 < points.size() && points[i + 1].ramp;
+				point.append_attribute("interpolation") = ramp ? "linear" : "hold";
+			}
+		}
+
+		void writeSignatureAutomation(pugi::xml_node arrangement, const time::SignatureMap& signatures)
+		{
+			const std::vector<time::SignatureChange> changes = signatures.changes();
+			if (changes.size() < 2)
+				return;
+			pugi::xml_node automation = arrangement.append_child("TimeSignatureAutomation");
+			automation.append_attribute("id") = "signatureAutomation";
+			automation.append_child("Target").append_attribute("parameter") = "signature";
+			for (const time::SignatureChange& change : changes)
+			{
+				pugi::xml_node point = automation.append_child("TimeSignaturePoint");
+				point.append_attribute("time") = toBeats(signatures.barStart(change.bar));
+				point.append_attribute("numerator") = change.signature.numerator;
+				point.append_attribute("denominator") = change.signature.denominator;
+			}
+		}
+
+		// What writeTransport and the automation wrote, from the element above Transport and Arrangement.
+		TempoTrackFile readTempoAndSignatures(const pugi::xml_node& root)
+		{
+			const pugi::xml_node transport = root.child("Transport");
+			const double bpm = transport.child("Tempo").attribute("value").as_double(120.0);
+			std::vector<time::TempoPoint> tempo{{0, bpm, false}};
+			bool ramp = false;
+			for (const pugi::xml_node point : root.child("Arrangement").child("TempoAutomation").children("RealPoint"))
+			{
+				const time::Ticks position = fromBeats(point.attribute("time").as_double());
+				const double value = point.attribute("value").as_double(bpm);
+				if (position <= 0)
+					tempo.front().bpm = value;
+				else
+					tempo.push_back({position, value, ramp});
+				ramp = std::string(point.attribute("interpolation").as_string("hold")) == "linear";
+			}
+			const pugi::xml_node signature = transport.child("TimeSignature");
+			time::TimeSignature first{
+				signature.attribute("numerator").as_int(4), signature.attribute("denominator").as_int(4)};
+			std::vector<time::SignatureChange> changes{{0, first}};
+			// Points are at beats; a signature changes at a bar, counted with the signature before it.
+			double changeBeat = 0.0;
+			for (const pugi::xml_node point :
+				root.child("Arrangement").child("TimeSignatureAutomation").children("TimeSignaturePoint"))
+			{
+				const double beat = point.attribute("time").as_double();
+				const time::TimeSignature next{
+					point.attribute("numerator").as_int(4), point.attribute("denominator").as_int(4)};
+				if (beat <= 0.0)
+				{
+					changes.front().signature = next;
+					continue;
+				}
+				const time::TimeSignature previous = changes.back().signature;
+				const double barBeats = previous.numerator * 4.0 / previous.denominator;
+				const int64_t bar = changes.back().bar + std::llround((beat - changeBeat) / barBeats);
+				if (bar > changes.back().bar)
+				{
+					changes.push_back({bar, next});
+					changeBeat = beat;
+				}
+			}
+			try
+			{
+				return {time::TempoMap(tempo), time::SignatureMap(changes)};
+			}
+			catch (const std::invalid_argument& error)
+			{
+				throw DawProjectError(std::string("the file's tempo or time signature is invalid: ") + error.what());
+			}
+		}
+
 		std::string xmlId(const char* prefix, ObjectId id)
 		{
 			return prefix + std::to_string(id);
@@ -365,16 +472,7 @@ namespace gnubase::engine
 				application.append_attribute("name") = "GNUbase";
 				application.append_attribute("version") = version();
 
-				pugi::xml_node transport = root.append_child("Transport");
-				pugi::xml_node tempo = transport.append_child("Tempo");
-				tempo.append_attribute("unit") = "bpm";
-				tempo.append_attribute("value") = m_project.tempo.points().front().bpm;
-				tempo.append_attribute("id") = "tempo";
-				pugi::xml_node signature = transport.append_child("TimeSignature");
-				const time::TimeSignature first = m_project.signatures.changes().front().signature;
-				signature.append_attribute("numerator") = first.numerator;
-				signature.append_attribute("denominator") = first.denominator;
-				signature.append_attribute("id") = "signature";
+				writeTransport(root, m_project.tempo, m_project.signatures);
 
 				pugi::xml_node structure = root.append_child("Structure");
 				for (const ObjectId id : m_project.tracks)
@@ -405,8 +503,8 @@ namespace gnubase::engine
 				for (const ObjectId id : m_project.trackOrder())
 					writeLanes(lanes, m_project.trackById.at(id));
 				writeMarkers(arrangement);
-				writeTempo(arrangement);
-				writeSignatures(arrangement);
+				writeTempoAutomation(arrangement, m_project.tempo);
+				writeSignatureAutomation(arrangement, m_project.signatures);
 
 				std::ostringstream xml;
 				document.save(xml, "  ", pugi::format_default, pugi::encoding_utf8);
@@ -423,6 +521,8 @@ namespace gnubase::engine
 					return "notes";
 				case TrackType::Folder:
 					return "tracks";
+				case TrackType::Vca:
+					return "automation";
 				default:
 					return "audio";
 				}
@@ -432,6 +532,8 @@ namespace gnubase::engine
 			{
 				if (type == TrackType::Group || type == TrackType::Folder)
 					return "submix";
+				if (type == TrackType::Vca)
+					return "vca";
 				return type == TrackType::Effect ? "effect" : "regular";
 			}
 
@@ -448,9 +550,11 @@ namespace gnubase::engine
 
 			void writeTrack(pugi::xml_node parent, const Track& track)
 			{
-				// Markers go into the arrangement, the tempo into the transport and the tempo automation; ruler and
-				// tempo tracks only into GNUbase's entry.
-				if (track.type == TrackType::Marker || track.type == TrackType::Ruler || track.type == TrackType::Tempo)
+				// Markers go into the arrangement, the tempo into the transport and the tempo automation, the
+				// signatures into the time signature automation; ruler, tempo and signature tracks only into
+				// GNUbase's entry.
+				if (track.type == TrackType::Marker || track.type == TrackType::Ruler ||
+					track.type == TrackType::Tempo || track.type == TrackType::Signature)
 					return;
 				pugi::xml_node node = parent.append_child("Track");
 				node.append_attribute("id") = xmlId("t", track.id).c_str();
@@ -477,6 +581,8 @@ namespace gnubase::engine
 					mute.append_attribute("id") = xmlId("cm", channel.id).c_str();
 					mute.append_attribute("name") = "Mute";
 					mute.append_attribute("value") = channel.mute;
+					if (track.type == TrackType::Vca)
+						writeVolume(element, channel);
 					if (channel.format != ChannelFormat::None && track.type != TrackType::Midi)
 					{
 						pugi::xml_node pan = element.append_child("Pan");
@@ -486,19 +592,25 @@ namespace gnubase::engine
 						pan.append_attribute("min") = 0.0;
 						pan.append_attribute("max") = 1.0;
 						pan.append_attribute("value") = panToNormalized(channel.pan);
-						pugi::xml_node volume = element.append_child("Volume");
-						volume.append_attribute("id") = xmlId("cv", channel.id).c_str();
-						volume.append_attribute("name") = "Volume";
-						volume.append_attribute("unit") = "linear";
-						volume.append_attribute("min") = 0.0;
-						volume.append_attribute("max") = volumeToGain(m_project.maxVolume);
-						volume.append_attribute("value") = volumeToGain(channel.volume);
+						writeVolume(element, channel);
 						writeSends(element, channel);
 						writeDevices(element, channel);
 					}
 				}
 				for (const ObjectId child : track.children)
 					writeTrack(node, m_project.trackById.at(child));
+			}
+
+			// The fader, as a linear gain.
+			void writeVolume(pugi::xml_node channelNode, const Channel& channel) const
+			{
+				pugi::xml_node volume = channelNode.append_child("Volume");
+				volume.append_attribute("id") = xmlId("cv", channel.id).c_str();
+				volume.append_attribute("name") = "Volume";
+				volume.append_attribute("unit") = "linear";
+				volume.append_attribute("min") = 0.0;
+				volume.append_attribute("max") = volumeToGain(m_project.maxVolume);
+				volume.append_attribute("value") = volumeToGain(channel.volume);
 			}
 
 			// The sends with a destination, with their level as a linear gain. Their numbers are in GNUbase's entry.
@@ -893,43 +1005,6 @@ namespace gnubase::engine
 				}
 			}
 
-			void writeTempo(pugi::xml_node arrangement) const
-			{
-				const std::vector<time::TempoPoint>& points = m_project.tempo.points();
-				if (points.size() < 2)
-					return;
-				pugi::xml_node automation = arrangement.append_child("TempoAutomation");
-				automation.append_attribute("id") = "tempoAutomation";
-				automation.append_attribute("unit") = "bpm";
-				automation.append_child("Target").append_attribute("parameter") = "tempo";
-				for (size_t i = 0; i < points.size(); ++i)
-				{
-					pugi::xml_node point = automation.append_child("RealPoint");
-					point.append_attribute("time") = toBeats(points[i].position);
-					point.append_attribute("value") = points[i].bpm;
-					// DAWproject describes the curve from a point to the next one; GNUbase marks ramps on the next.
-					const bool ramp = i + 1 < points.size() && points[i + 1].ramp;
-					point.append_attribute("interpolation") = ramp ? "linear" : "hold";
-				}
-			}
-
-			void writeSignatures(pugi::xml_node arrangement) const
-			{
-				const std::vector<time::SignatureChange> changes = m_project.signatures.changes();
-				if (changes.size() < 2)
-					return;
-				pugi::xml_node automation = arrangement.append_child("TimeSignatureAutomation");
-				automation.append_attribute("id") = "signatureAutomation";
-				automation.append_child("Target").append_attribute("parameter") = "signature";
-				for (const time::SignatureChange& change : changes)
-				{
-					pugi::xml_node point = automation.append_child("TimeSignaturePoint");
-					point.append_attribute("time") = toBeats(m_project.signatures.barStart(change.bar));
-					point.append_attribute("numerator") = change.signature.numerator;
-					point.append_attribute("denominator") = change.signature.denominator;
-				}
-			}
-
 			const Project& m_project;
 			std::map<ObjectId, std::string> m_mediaPaths; // the path project.xml uses for each media file
 			bool m_embed;
@@ -1053,61 +1128,13 @@ namespace gnubase::engine
 
 			void readTransport(const pugi::xml_node& root)
 			{
-				const pugi::xml_node transport = root.child("Transport");
-				const double bpm = transport.child("Tempo").attribute("value").as_double(120.0);
-				std::vector<time::TempoPoint> tempo{{0, bpm, false}};
-				bool ramp = false;
-				for (const pugi::xml_node point :
-					root.child("Arrangement").child("TempoAutomation").children("RealPoint"))
-				{
-					const time::Ticks position = fromBeats(point.attribute("time").as_double());
-					const double value = point.attribute("value").as_double(bpm);
-					if (position <= 0)
-						tempo.front().bpm = value;
-					else
-						tempo.push_back({position, value, ramp});
-					ramp = std::string(point.attribute("interpolation").as_string("hold")) == "linear";
-				}
-				const pugi::xml_node signature = transport.child("TimeSignature");
-				time::TimeSignature first{
-					signature.attribute("numerator").as_int(4), signature.attribute("denominator").as_int(4)};
-				std::vector<time::SignatureChange> changes{{0, first}};
-				// Points are at beats; a signature changes at a bar, counted with the signature before it.
-				double changeBeat = 0.0;
-				for (const pugi::xml_node point :
-					root.child("Arrangement").child("TimeSignatureAutomation").children("TimeSignaturePoint"))
-				{
-					const double beat = point.attribute("time").as_double();
-					const time::TimeSignature next{
-						point.attribute("numerator").as_int(4), point.attribute("denominator").as_int(4)};
-					if (beat <= 0.0)
-					{
-						changes.front().signature = next;
-						continue;
-					}
-					const time::TimeSignature previous = changes.back().signature;
-					const double barBeats = previous.numerator * 4.0 / previous.denominator;
-					const int64_t bar = changes.back().bar + std::llround((beat - changeBeat) / barBeats);
-					if (bar > changes.back().bar)
-					{
-						changes.push_back({bar, next});
-						changeBeat = beat;
-					}
-				}
-				try
-				{
-					m_project.tempo = time::TempoMap(tempo);
-					// Tempo changes play from the tempo track; fixed tempo mode keeps the first tempo.
-					m_project.tempoTrackActive = tempo.size() > 1;
-					m_project.otherTempo =
-						m_project.tempoTrackActive ? time::TempoMap(tempo.front().bpm) : m_project.tempo;
-					m_project.signatures = time::SignatureMap(changes);
-				}
-				catch (const std::invalid_argument& error)
-				{
-					throw DawProjectError(
-						std::string("the file's tempo or time signature is invalid: ") + error.what());
-				}
+				TempoTrackFile read = readTempoAndSignatures(root);
+				// Tempo changes play from the tempo track; fixed tempo mode keeps the first tempo.
+				m_project.tempoTrackActive = read.tempo.points().size() > 1;
+				m_project.otherTempo =
+					m_project.tempoTrackActive ? time::TempoMap(read.tempo.points().front().bpm) : read.tempo;
+				m_project.tempo = std::move(read.tempo);
+				m_project.signatures = std::move(read.signatures);
 			}
 
 			Bus& mainOutput()
@@ -1145,6 +1172,8 @@ namespace gnubase::engine
 					type = TrackType::Folder;
 				else if (role == "effect")
 					type = TrackType::Effect;
+				else if (role == "vca")
+					type = TrackType::Vca;
 				else if (role == "submix")
 					type = TrackType::Group;
 				else if (content.find("notes") != std::string::npos)
@@ -1163,8 +1192,9 @@ namespace gnubase::engine
 					Channel channel;
 					channel.id = m_project.newId();
 					channel.track = track.id;
-					channel.format = type == TrackType::Midi ? ChannelFormat::None : importedFormat(audioChannels);
-					if (type != TrackType::Midi)
+					const bool audio = type != TrackType::Midi && type != TrackType::Vca;
+					channel.format = audio ? importedFormat(audioChannels) : ChannelFormat::None;
+					if (audio)
 						channel.output = mainOutput().id;
 					if (type == TrackType::Audio)
 						for (const Bus& bus : m_project.busses)
@@ -1194,7 +1224,7 @@ namespace gnubase::engine
 					channel.mute = channelNode.child("Mute").attribute("value").as_bool(false);
 					channel.solo = channelNode.attribute("solo").as_bool(false);
 					channel.notes = channelNode.attribute("comment").as_string();
-					if (type != TrackType::Midi)
+					if (audio)
 						readDevices(channelNode.child("Devices"), channel);
 					track.channel = channel.id;
 					m_project.channels[channel.id] = channel;
@@ -1283,11 +1313,7 @@ namespace gnubase::engine
 						continue;
 					const bool bus = std::any_of(m_project.busses.begin(), m_project.busses.end(),
 						[&target](const Bus& b) { return b.id == target->second; });
-					const auto channel = m_project.channels.find(target->second);
-					const bool group = channel != m_project.channels.end() &&
-						(m_project.trackById.at(channel->second.track).type == TrackType::Group ||
-							m_project.trackById.at(channel->second.track).type == TrackType::Folder);
-					if (bus || group)
+					if (bus || isSendDestination(m_project, target->second)) // a group or an effect channel
 						m_project.channels.at(channelId).output = target->second;
 				}
 				// A group routed into a group must not close a loop; such outputs fall back to the main output.
@@ -1611,7 +1637,7 @@ namespace gnubase::engine
 				}
 				media.channels = std::clamp(media.channels, 1, g_maxAudioChannels);
 				m_project.media[media.id] = media;
-				const Clip clip{m_project.newId(), pathOf(xmlPath).stem().u8string(), media.id, {}, {}, 0};
+				const Clip clip{m_project.newId(), pathOf(xmlPath).stem().u8string(), media.id, {}, {}, 0, {}, {}, {}};
 				m_project.clips[clip.id] = clip;
 				return m_clips[xmlPath] = clip.id;
 			}
@@ -1817,5 +1843,43 @@ namespace gnubase::engine
 		{
 			return fromXml; // a damaged extension entry: project.xml still describes the project
 		}
+	}
+
+	void saveTempoTrack(const TempoTrackFile& file, const std::string& path)
+	{
+		pugi::xml_document document;
+		pugi::xml_node declaration = document.append_child(pugi::node_declaration);
+		declaration.append_attribute("version") = "1.0";
+		declaration.append_attribute("encoding") = "UTF-8";
+		pugi::xml_node root = document.append_child("TempoTrack");
+		root.append_attribute("version") = "1.0";
+		pugi::xml_node application = root.append_child("Application");
+		application.append_attribute("name") = "GNUbase";
+		application.append_attribute("version") = version();
+		writeTransport(root, file.tempo, file.signatures);
+		const pugi::xml_node arrangement = root.append_child("Arrangement");
+		writeTempoAutomation(arrangement, file.tempo);
+		writeSignatureAutomation(arrangement, file.signatures);
+		std::ostringstream xml;
+		document.save(xml, "  ", pugi::format_default, pugi::encoding_utf8);
+		const std::string text = xml.str();
+		const detail::File out = detail::openFile(path, "wb");
+		if (!out)
+			throw DawProjectError("can't write " + path + ": " + detail::lastError());
+		if (std::fwrite(text.data(), 1, text.size(), out.get()) != text.size() || std::fflush(out.get()) != 0)
+			throw DawProjectError("can't write " + path + ": " + detail::lastError());
+	}
+
+	TempoTrackFile loadTempoTrack(const std::string& path)
+	{
+		const std::vector<char> bytes = readBytes(path);
+		pugi::xml_document document;
+		const pugi::xml_parse_result parsed = document.load_buffer(bytes.data(), bytes.size());
+		if (!parsed)
+			throw DawProjectError("can't read " + path + ": " + parsed.description());
+		const pugi::xml_node root = document.child("TempoTrack");
+		if (!root)
+			throw DawProjectError(path + " has no tempo track");
+		return readTempoAndSignatures(root);
 	}
 }

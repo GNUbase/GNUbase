@@ -46,7 +46,7 @@ modes, solo defeat, the Deactivate All buttons and listen.
 The control room (#191), and with it PFL, listen on input and output channels, and the listen level and dim in its
 panel rather than in user settings; listened channels gliding in and out (they come in at once; the dim glides);
 the project window toolbar's state buttons (p. 58); click and hold for solo defeat; the inspector's solo modifiers
-and its Listen indicator; linking mute, solo and listen in link groups (p. 458); the preferences Group Channels:
+and its Listen indicator; the preferences Group Channels:
 Mute Sources as well and Mute Pre-Send when Mute (p. 1622); solo on directly monitored inputs
 with dimming.
 

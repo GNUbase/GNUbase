@@ -51,6 +51,8 @@ namespace
 	{
 		Fixture()
 		{
+			// GNUbase's mouse pointers, as the app has them: a name the window system shows is one of them.
+			ui.rmlui.loadCursors(std::filesystem::path(GNUBASE_RESOURCES_DIR) / "cursors");
 			ui.shell.eachStep([this] { return binding.update(); });
 			step();
 			const Json audio = call("track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track");
@@ -272,6 +274,26 @@ TEST_CASE("the object selection tool's modifiers act on events whatever keys the
 	CHECK(f.parts()[3].at("track") == midi.at("id"));
 }
 
+TEST_CASE("a double click on an audio event opens it in the sample editor, on an audio part in its editor", "[unit]")
+{
+	Fixture f;
+	// On the MIDI part it doesn't (the MIDI editors open with Open/Close Editor).
+	f.click(150, 60, {}, 2);
+	f.step();
+	CHECK(f.call("sampleEditor.get").at("open") == false);
+	f.click(220, 20, {}, 2);
+	REQUIRE(f.waitUntil([&f] { return f.call("sampleEditor.get").at("open") == true; }));
+	CHECK(f.call("sampleEditor.get").at("event") == f.event);
+
+	// An audio part opens in the audio part editor (p. 692).
+	const Json part = f.call("event.toPart", {{"events", {f.event}}}).at("events").at(0);
+	REQUIRE(f.waitUntil([&f] { return f.display.project().at("audioParts").size() == 1; }));
+	f.click(240, 20, {}, 2); // away from the last double click, so the clicks don't count with it
+	REQUIRE(f.waitUntil([&f] { return f.call("editor.get", {{"editor", "window"}}).at("open") == true; }));
+	CHECK(f.call("editor.get", {{"editor", "window"}}).at("parts") == Json::array({part}));
+	CHECK(f.call("editor.get", {{"editor", "window"}}).at("content") == "audioPart");
+}
+
 TEST_CASE("a double click below the tracks adds a MIDI track", "[unit]")
 {
 	Fixture f;
@@ -481,16 +503,57 @@ TEST_CASE("with snap on, moving, resizing, splitting and nudging follow the grid
 TEST_CASE("with snap to events, a position marker attracts a dragged event", "[unit]")
 {
 	Fixture f;
-	// A position marker at 6 seconds has no end; the display lists the markers again after every change.
+	// A position marker at 6 seconds has no end; the display reads the markers with the project after every change.
 	f.call("marker.add", {{"position", 12 * g_quarter}});
-	f.step();
-	f.call("marker.list"); // the display has asked for the markers
-	f.step();
 	f.call("snap.set", {{"on", true}, {"type", "events"}});
 	REQUIRE(f.waitUntil([&f] { return f.display.snap().on && f.display.snap().type == engine::SnapType::Events; }));
+	REQUIRE(f.waitUntil([&f] { return f.display.project().at("markers").size() == 1; }));
 	// The audio event dragged from 2 to 5.95 seconds starts on the marker (8 dp attract).
 	f.drag(225, 20, 620, 20);
 	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("position") == 288000; }));
+}
+
+// #415: every marker track's markers attract, the active one's or not, in the display as in snap.position.
+TEST_CASE("with snap to events, the markers of a marker track that isn't active attract as in snap.position", "[unit]")
+{
+	Fixture f;
+	// On the first marker track, a linear one with positions in samples, a position marker at 6 seconds and a cycle
+	// marker from 7 to 8.5; the second marker track, musical and without markers, is the active one. (The test above
+	// has a musical marker track's marker.)
+	const Json first = f.call("track.add", {{"type", "marker"}, {"timeBase", "linear"}}).at("track").at("id");
+	f.call("marker.add", {{"track", first}, {"position", 288000}});
+	f.call("marker.add", {{"track", first}, {"type", "cycle"}, {"position", 336000}, {"end", 408000}});
+	REQUIRE(f.call("marker.list", {{"track", first}}).at("markers").at(0).at("positionSamples") == 288000);
+	const Json second = f.call("track.add", {{"type", "marker"}}).at("track").at("id");
+	f.call("marker.activateTrack", {{"track", second}});
+	CHECK(f.call("marker.list").at("markers").empty());
+	f.call("snap.set", {{"on", true}, {"type", "events"}});
+	REQUIRE(f.waitUntil(
+		[&f, &second]
+		{
+			return f.display.snap().type == engine::SnapType::Events &&
+				f.display.project().at("activeMarkerTrack") == second;
+		}));
+
+	// 8 dp attract: 0.08 seconds. The audio event's start dragged from 2 to 5.95 seconds goes where snap.position
+	// puts 5.95 seconds: on the position marker.
+	const int64_t range = 3840;
+	const Json onMarker = f.call("snap.position", {{"position", 285600}, {"range", range}, {"events", {f.event}}});
+	CHECK(onMarker.at("position") == 288000);
+	f.drag(225, 20, 620, 20);
+	REQUIRE(f.waitUntil([&f, &onMarker] { return f.audioEvents()[0].at("position") == onMarker.at("position"); }));
+
+	// Dragged on from 6 to 8.45 seconds, it starts at the cycle marker's end, as snap.position has it.
+	const Json onEnd = f.call("snap.position", {{"position", 405600}, {"range", range}, {"events", {f.event}}});
+	CHECK(onEnd.at("position") == 408000);
+	REQUIRE(f.waitUntil(
+		[&f]
+		{
+			const std::vector<ui::TimeSpan>& events = f.lanes("events")[0].events;
+			return events.size() == 1 && std::abs(events[0].start - 6.0) < 1e-9;
+		}));
+	f.drag(625, 20, 870, 20);
+	REQUIRE(f.waitUntil([&f, &onEnd] { return f.audioEvents()[0].at("position") == onEnd.at("position"); }));
 }
 
 // Reference manual pp. 107-109: the grid types depend on the ruler's time format.
@@ -694,6 +757,185 @@ TEST_CASE(
 	f.automation.move(
 		std::nullopt, point(ruler->GetAbsoluteLeft() + 100, ruler->GetAbsoluteTop() + (ruler->GetClientHeight() / 2)));
 	CHECK(shown().empty());
+}
+
+TEST_CASE("the mouse pointer shows what a press with the modifier keys held does", "[unit]")
+{
+	Fixture f;
+	Rml::Context& context = f.window.context();
+	const Rml::Element* area = f.document.QuerySelector(".event-area");
+	Rml::Element* lanes = f.document.QuerySelector("event-lanes.events");
+	const auto pointer = [area] { return area->GetAttribute<std::string>("pointer", ""); };
+	const auto shown = [&f]
+	{
+		f.window.context().Update();
+		return f.ui.windows.cursor().name;
+	};
+	const auto moveTo = [&f, &context, lanes](double x, double y, int keys = 0)
+	{
+		context.ProcessMouseMove(
+			static_cast<int>(lanes->GetAbsoluteLeft() + x), static_cast<int>(lanes->GetAbsoluteTop() + y), keys);
+		f.step();
+	};
+
+	// The object selection tool with the tool modifier Split Event (Alt): over an event a click splits it, on an
+	// empty spot of a lane a drag draws a part (reference manual pp. 250, 268). At an edge a drag still resizes.
+	moveTo(200, 60, Rml::Input::KM_ALT);
+	CHECK(pointer() == "split");
+	CHECK(shown() == "tool-split");
+	moveTo(500, 60, Rml::Input::KM_ALT);
+	CHECK(pointer() == "draw");
+	moveTo(102, 60, Rml::Input::KM_ALT);
+	CHECK(pointer() == "resize");
+	// Shift adds the event to the selection, at its edge too; Ctrl there is Disable Snapping, which resizes. (RmlUi
+	// sends a move only where the mouse moves.)
+	moveTo(103, 60, Rml::Input::KM_SHIFT);
+	CHECK(pointer() == "objectSelection");
+	moveTo(102, 60, Rml::Input::KM_CTRL);
+	CHECK(pointer() == "resize");
+	moveTo(200, 60);
+	CHECK(pointer() == "objectSelection");
+
+	// Alt going down and up while the mouse rests changes it at once.
+	f.automation.key(std::nullopt, "Alt", ui::KeyAction::Down);
+	f.step();
+	CHECK(pointer() == "split");
+	CHECK(shown() == "tool-split");
+	f.automation.key(std::nullopt, "Alt", ui::KeyAction::Up);
+	f.step();
+	CHECK(pointer() == "objectSelection");
+	CHECK(shown().empty());
+	// Both Alt keys down, one up: the other still holds Alt, which the window system's modifiers say too.
+	context.ProcessKeyDown(Rml::Input::KI_LMENU, Rml::Input::KM_ALT);
+	context.ProcessKeyDown(Rml::Input::KI_RMENU, Rml::Input::KM_ALT);
+	context.ProcessKeyUp(Rml::Input::KI_LMENU, Rml::Input::KM_ALT);
+	f.step();
+	CHECK(pointer() == "split");
+	context.ProcessKeyUp(Rml::Input::KI_RMENU, 0);
+	f.step();
+	CHECK(pointer() == "objectSelection");
+	// So does Cmd, which is Ctrl for the tool modifiers on macOS, when Ctrl goes up; a move without them ends both.
+	f.call("settings.set", {{"key", "ui.toolModifiers"}, {"value", {{"select.splitEvent", "ctrl"}}}});
+	int x = 200;
+	REQUIRE(f.waitUntil(
+		[&]
+		{
+			x = x == 200 ? 201 : 200; // moves, without walking to the event's edge
+			moveTo(x, 60, Rml::Input::KM_CTRL);
+			return pointer() == "split";
+		}));
+	moveTo(x == 200 ? 201 : 200, 60);
+	CHECK(pointer() == "objectSelection");
+	context.ProcessKeyDown(Rml::Input::KI_LMETA, Rml::Input::KM_META);
+	context.ProcessKeyDown(Rml::Input::KI_LCONTROL, Rml::Input::KM_META | Rml::Input::KM_CTRL);
+	context.ProcessKeyUp(Rml::Input::KI_LCONTROL, Rml::Input::KM_META);
+	f.step();
+	CHECK(pointer() == "split");
+	moveTo(x, 60);
+	CHECK(pointer() == "objectSelection");
+	context.ProcessKeyUp(Rml::Input::KI_LMETA, 0);
+
+	// The tool modifiers are the user's: with Split Event on Ctrl and Alt, Alt alone splits nothing.
+	f.call("settings.set", {{"key", "ui.toolModifiers"}, {"value", {{"select.splitEvent", "ctrl+alt"}}}});
+	REQUIRE(f.waitUntil(
+		[&]
+		{
+			x = x == 200 ? 201 : 200;
+			moveTo(x, 60, Rml::Input::KM_CTRL | Rml::Input::KM_ALT);
+			return pointer() == "split";
+		}));
+	moveTo(x == 200 ? 201 : 200, 60, Rml::Input::KM_ALT);
+	CHECK(pointer() == "objectSelection");
+	// Other tools keep theirs.
+	f.display.setTool(ui::Tool::Draw);
+	moveTo(x, 60, Rml::Input::KM_CTRL | Rml::Input::KM_ALT);
+	CHECK(pointer() == "draw");
+}
+
+TEST_CASE("the pointer stays the drag's while it leaves the lanes, and stops following once the mouse is out", "[unit]")
+{
+	Fixture f;
+	Rml::Context& context = f.window.context();
+	const Rml::Element* area = f.document.QuerySelector(".event-area");
+	Rml::Element* lanes = f.document.QuerySelector("event-lanes.events");
+	Rml::Element* ruler = f.document.QuerySelector("ruler");
+	const auto pointer = [area] { return area->GetAttribute<std::string>("pointer", ""); };
+	const auto shown = [&f]
+	{
+		f.window.context().Update();
+		return f.ui.windows.cursor().name;
+	};
+	const auto moveTo = [&f, &context](float x, float y)
+	{
+		context.ProcessMouseMove(static_cast<int>(x), static_cast<int>(y), 0);
+		f.step();
+	};
+	const float rulerY = ruler->GetAbsoluteTop() + (ruler->GetClientHeight() / 2);
+
+	// A drag of the draw tool from the lanes over the ruler shows the draw tool's pointer all the way.
+	f.display.setTool(ui::Tool::Draw);
+	moveTo(lanes->GetAbsoluteLeft() + 500, lanes->GetAbsoluteTop() + 60);
+	CHECK(shown() == "tool-draw");
+	context.ProcessMouseButtonDown(0, 0);
+	f.step();
+	moveTo(lanes->GetAbsoluteLeft() + 550, rulerY);
+	CHECK(shown() == "tool-draw");
+	context.ProcessMouseButtonUp(0, 0);
+	f.step();
+	CHECK(shown().empty()); // up over the ruler: its own, the OS's arrow
+
+	// Out of the lanes, changes to the view or the tool don't change the pointer for where the mouse was.
+	f.display.setTool(ui::Tool::ObjectSelection);
+	moveTo(lanes->GetAbsoluteLeft() + 298, lanes->GetAbsoluteTop() + 60);
+	CHECK(pointer() == "resize");
+	moveTo(lanes->GetAbsoluteLeft() + 298, rulerY);
+	f.display.setTool(ui::Tool::Split);
+	f.step();
+	CHECK(pointer() == "resize");
+	// Back over the lanes, it follows again.
+	moveTo(lanes->GetAbsoluteLeft() + 298, lanes->GetAbsoluteTop() + 60);
+	CHECK(pointer() == "split");
+	CHECK(shown() == "tool-split");
+}
+
+TEST_CASE("a right click selects the event under the mouse only where a press selects events", "[unit]")
+{
+	Fixture f;
+	const auto rightClick = [&f](double x, double y)
+	{
+		f.automation.click(std::nullopt, f.at(x, y), ui::MouseButton::Right, 1, {});
+		f.step();
+	};
+	// The object selection tool selects it, for the context menu to act on.
+	rightClick(200, 60);
+	CHECK(f.display.selection() == std::vector<uint64_t>{f.part});
+	f.display.select({});
+	// The range selection tool leaves events unselected, with a range or without.
+	f.display.setTool(ui::Tool::RangeSelection);
+	rightClick(200, 60);
+	CHECK(f.display.selection().empty());
+	f.drag(150, 60, 250, 60);
+	REQUIRE(f.display.range().has_value());
+	const ui::RangeSelection range = f.display.range().value_or(ui::RangeSelection{});
+	rightClick(225, 20);
+	CHECK(f.display.selection().empty());
+	REQUIRE(f.display.range().has_value());
+	CHECK(f.display.range().value_or(ui::RangeSelection{}).start == range.start);
+	// Combined, so does a lane's upper half, where a press selects a range; its lower half selects events.
+	f.display.setTool(ui::Tool::ObjectSelection);
+	f.display.select({}); // the other tool took over the range's events
+	f.display.setCombineSelectionTools(true);
+	rightClick(200, 45);
+	CHECK(f.display.selection().empty());
+	rightClick(200, 75);
+	CHECK(f.display.selection() == std::vector<uint64_t>{f.part});
+	// There, as a press would, it ends a range, which the context menu would act on instead of the event.
+	f.display.select({});
+	f.drag(150, 45, 250, 45);
+	REQUIRE(f.display.range().has_value());
+	rightClick(200, 75);
+	CHECK(f.display.selection() == std::vector<uint64_t>{f.part});
+	CHECK(!f.display.range().has_value());
 }
 
 TEST_CASE("the object selection tool selects with a rectangle and sets the cursor with Alt and Shift", "[unit]")
@@ -1487,4 +1729,70 @@ TEST_CASE("Remove Volume Curve removes the selected events' curves, or resets th
 	const Json curve = f.audioEvents()[0].at("volumeCurve");
 	CHECK(curve[2] == Json{{"position", 4800}, {"volume", 0.0}, {"curve", 0.0}});
 	CHECK(curve[3] == Json{{"position", 14400}, {"volume", 0.0}, {"curve", 0.0}});
+}
+
+TEST_CASE("lanes show below their track, which shows the take in front; the comp tool brings takes to the front and "
+		  "comps a range dragged on a lane",
+	"[unit]")
+{
+	Fixture f;
+	const auto audioTrack = f.call("project.get").at("tracks").at(0).at("id").get<uint64_t>();
+	// A second take over the first, on lane 1: in front, it covers the first on the track's lane.
+	const Json clip = f.audioEvents()[0].at("clip");
+	const auto second =
+		f.call("audioEvent.add", {{"track", audioTrack}, {"clip", clip}, {"position", 96000}, {"length", 24000}})
+			.at("event")
+			.at("id")
+			.get<uint64_t>();
+	f.call("event.set", {{"events", {second}}, {"lane", 1}});
+	REQUIRE(f.waitUntil([&f] { return f.display.project().at("audioEvents").size() == 2; }));
+	CHECK(f.lanes("events")[0].events.size() == 1);
+
+	// Show Lanes: a lane each below the track's, as high as the track.
+	f.display.showLanes(audioTrack, true);
+	f.step();
+	CHECK(f.display.laneTakes() == std::vector<int>{-1, 0, 1, -1});
+	CHECK(f.display.laneTracks()[2] == audioTrack);
+	REQUIRE(f.lanes("events").size() == 4);
+	CHECK(f.lanes("events")[1].events.size() == 1);
+	CHECK(f.lanes("events")[2].events.size() == 1);
+
+	// A click with the comp tool on the first take, on its lane (40 to 80 dp), brings it to the front.
+	f.display.setTool(ui::Tool::Comp);
+	CHECK(f.document.GetElementById("display")->GetAttribute<std::string>("tool", "") == "comp");
+	f.click(225, 60);
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("front") != 0; }));
+	// A drag on the second take's lane from 2.1 to 2.3 seconds comps it in: both takes split there, and the track's
+	// lane shows the first take, the second, the first.
+	f.drag(210, 100, 230, 100);
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents().size() == 6; }));
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events")[0].events.size() == 3; }));
+	const std::vector<ui::TimeSpan>& shown = f.lanes("events")[0].events;
+	CHECK(std::abs(shown[1].start - 2.1) < 1e-6);
+	CHECK(std::abs(shown[1].end() - 2.3) < 1e-6);
+	uint64_t front = 0;
+	int64_t frontOrder = 0;
+	for (const Json& event : f.audioEvents())
+	{
+		const auto order =
+			event.at("front").get<int64_t>() != 0 ? event.at("front").get<int64_t>() : event.at("id").get<int64_t>();
+		if (order > frontOrder)
+		{
+			frontOrder = order;
+			front = event.at("id").get<uint64_t>();
+		}
+	}
+	for (const Json& event : f.audioEvents())
+		if (event.at("id") == front)
+		{
+			CHECK(event.at("lane") == 1);
+			CHECK(event.at("position") == 100800);
+		}
+
+	// Shift and a click selects a take; hiding the lanes leaves the track's own lane.
+	f.click(205, 100, {"shift"});
+	CHECK(f.display.selection().size() == 1);
+	f.display.showLanes(audioTrack, false);
+	f.step();
+	CHECK(f.display.laneTakes() == std::vector<int>{-1, -1});
 }
