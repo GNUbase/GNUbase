@@ -68,6 +68,34 @@ namespace
 		REQUIRE(found != snapshot.channels.end());
 		return *found;
 	}
+
+	// A MIDI part at position, four quarters long in the track's unit at 120 BPM, with a note from its first to its
+	// second quarter and a controller at its second.
+	ObjectId addPartWithNote(Client& client, ObjectId track, int64_t position)
+	{
+		const ObjectId part =
+			run(client, "midiPart.add", {{"track", track}, {"position", position}, {"length", 4 * g_quarterSamples}})
+				.at("part")
+				.at("id")
+				.get<ObjectId>();
+		run(client, "note.add",
+			{{"part", part},
+				{"notes",
+					{{{"position", g_ticksPerQuarter}, {"length", g_ticksPerQuarter}, {"pitch", 60},
+						{"velocity", 1.0}}}}});
+		run(client, "controller.add",
+			{{"part", part}, {"controllers", {{{"position", 2 * g_ticksPerQuarter}, {"number", 7}, {"value", 1.0}}}}});
+		return part;
+	}
+
+	Json midiPartJson(Client& client, ObjectId id)
+	{
+		const Json parts = run(client, "project.get").at("midiParts");
+		const auto found =
+			std::find_if(parts.begin(), parts.end(), [id](const Json& candidate) { return candidate.at("id") == id; });
+		REQUIRE(found != parts.end());
+		return *found;
+	}
 }
 
 TEST_CASE("a project has one tempo track at most, without a channel, at the top level", "[unit]")
@@ -322,6 +350,135 @@ TEST_CASE(
 	CHECK(midiPart(later).at("notes") == midiPart(part).at("notes"));
 }
 
+TEST_CASE("shared copies that still hold the same notes after a tempo change stay shared with each other", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	run(client, "project.set", {{"tempoTrackActive", true}});
+	const ObjectId linear = addTrack(client, {{"type", "midi"}, {"timeBase", "linear"}});
+	const ObjectId musical = addTrack(client, {{"type", "midi"}});
+	const ObjectId part = addPartWithNote(client, linear, 0);
+	const auto copy = [&client, part](Json parameters)
+	{
+		parameters["events"] = {part};
+		parameters["shared"] = true;
+		return run(client, "event.copy", parameters).at("events").at(0).get<ObjectId>();
+	};
+	// Two linear copies after the tempo event below, and a musical copy.
+	const ObjectId later = copy({{"delta", 8 * g_quarterSamples}});
+	const ObjectId latest = copy({{"delta", 12 * g_quarterSamples}});
+	const ObjectId other = copy({{"ticks", 0}, {"track", musical}});
+	const Json group = midiPartJson(client, part).at("shared");
+	REQUIRE(group != 0);
+	for (const ObjectId id : {later, latest, other})
+		REQUIRE(midiPartJson(client, id).at("shared") == group);
+
+	// Half the tempo from the sixth quarter retimes both later copies the same way: they share their new notes in a
+	// group of their own, and the first part keeps its group with the musical copy.
+	run(client, "tempo.add", point(6, 60.0));
+	const Json first = midiPartJson(client, part);
+	const Json second = midiPartJson(client, later);
+	const Json third = midiPartJson(client, latest);
+	CHECK(first.at("shared") == group);
+	CHECK(midiPartJson(client, other).at("shared") == group);
+	CHECK(second.at("shared") != 0);
+	CHECK(second.at("shared") != group);
+	CHECK(third.at("shared") == second.at("shared"));
+	CHECK(third.at("notes") == second.at("notes"));
+	CHECK(second.at("notes").at(0).at("id") != first.at("notes").at(0).at("id"));
+	// An edit of one of them reaches the other, not the first group.
+	const auto noteId = second.at("notes").at(0).at("id").get<ObjectId>();
+	run(client, "note.set", {{"part", later}, {"notes", {{{"id", noteId}, {"pitch", 64}}}}});
+	CHECK(midiPartJson(client, latest).at("notes").at(0).at("pitch") == 64);
+	CHECK(midiPartJson(client, part).at("notes").at(0).at("pitch") == 60);
+
+	// Undo shares all four again.
+	run(client, "history.undo");
+	run(client, "history.undo");
+	for (const ObjectId id : {later, latest, other})
+		CHECK(midiPartJson(client, id).at("shared") == group);
+}
+
+TEST_CASE("a tempo change reports only the linear parts whose notes or controllers it retimes", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	run(client, "project.set", {{"tempoTrackActive", true}});
+	const ObjectId linear = addTrack(client, {{"type", "midi"}, {"timeBase", "linear"}});
+	const ObjectId early = addPartWithNote(client, linear, 0);
+	const ObjectId late = addPartWithNote(client, linear, 8 * g_quarterSamples);
+	const auto changedParts = [&client]
+	{
+		std::vector<ObjectId> parts;
+		while (const auto message = client.poll())
+			if (const auto* event = std::get_if<Event>(&*message); event != nullptr && event->name == "midiPart.changed")
+				parts.push_back(event->data.at("part").at("id").get<ObjectId>());
+		return parts;
+	};
+	changedParts();
+
+	// A tempo event between the parts retimes the later one's notes only.
+	run(client, "tempo.add", point(6, 60.0));
+	CHECK(changedParts() == std::vector<ObjectId>{late});
+	// One after both changes neither.
+	run(client, "tempo.add", point(40, 90.0));
+	CHECK(changedParts().empty());
+	// The project tempo changes both.
+	run(client, "project.set", {{"tempo", 100.0}});
+	CHECK(changedParts() == std::vector<ObjectId>{early, late});
+}
+
+TEST_CASE("tapping the project tempo and importing a MIDI file's tempo keep linear parts' notes at their time",
+	"[integration]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId linear = addTrack(client, {{"type", "midi"}, {"timeBase", "linear"}});
+	addPartWithNote(client, linear, 8 * g_quarterSamples);
+	const auto times = [&engine, linear]
+	{
+		const RenderChannel& channel = renderChannel(engine.renderSnapshots().acquire(), linear);
+		REQUIRE(channel.notes.size() == 1);
+		REQUIRE(channel.controllers.size() == 1);
+		return std::vector<int64_t>{
+			channel.notes.at(0).start, channel.notes.at(0).end, channel.controllers.at(0).position};
+	};
+	const std::vector<int64_t> before{9 * g_quarterSamples, 10 * g_quarterSamples, 10 * g_quarterSamples};
+	REQUIRE(times() == before);
+	const auto near = [&times, &before]
+	{
+		const std::vector<int64_t> now = times();
+		return std::equal(now.begin(), now.end(), before.begin(), before.end(),
+			[](int64_t x, int64_t y) { return std::abs(x - y) <= 1; });
+	};
+
+	// The tapped tempo is the project tempo, in fixed tempo mode and then in tempo track mode.
+	REQUIRE(run(client, "tempo.tap", {{"bpm", 93.0}, {"mode", "project"}}).at("applied") == "project");
+	CHECK(near());
+	run(client, "project.set", {{"tempoTrackActive", true}});
+	run(client, "tempo.add", point(2, 140.0));
+	REQUIRE(run(client, "tempo.tap", {{"bpm", 75.0}, {"mode", "project"}}).at("applied") == "project");
+	CHECK(near());
+
+	// A MIDI file whose tempo changes inside the part, from another project.
+	const gnubase::test::TempDir dir;
+	const std::string path = (dir.path() / "tempo.mid").string();
+	{
+		Engine source;
+		Client sourceClient(source);
+		run(sourceClient, "project.set", {{"tempoTrackActive", true}});
+		addTrack(sourceClient, {{"type", "midi"}});
+		run(sourceClient, "tempo.add", point(3, 50.0));
+		run(sourceClient, "tempo.add", point(5, 170.0));
+		run(sourceClient, "midiFile.export", {{"path", path}});
+	}
+	run(client, "midiFile.import", {{"path", path}, {"markers", false}});
+	REQUIRE(run(client, "project.get").at("tempo").size() == 3);
+	CHECK(near());
+	run(client, "history.undo");
+	CHECK(near());
+}
+
 TEST_CASE("a track's events, parts, markers and automation keep their time when its time base switches, and then "
 		  "follow the tempo or not",
 	"[unit]")
@@ -395,6 +552,15 @@ TEST_CASE("new tracks get the time base of the user setting editing.defaultTimeB
 	CHECK(timeBase("audio") == "musical");
 
 	run(client, "settings.set", {{"key", "editing.defaultTimeBase"}, {"value", "linear"}});
+	// marker.add without a marker track adds one with the setting's time base: its position is in that track's unit,
+	// which project.get reports for the track the marker names.
+	const Json marker = run(client, "marker.add", {{"position", g_quarterSamples}}).at("marker");
+	const Json tracks = run(client, "project.get").at("tracks");
+	const auto markerTrack = std::find_if(tracks.begin(), tracks.end(),
+		[&marker](const Json& track) { return track.at("id") == marker.at("track"); });
+	REQUIRE(markerTrack != tracks.end());
+	CHECK(markerTrack->at("timeBase") == "linear");
+	CHECK(marker.at("position") == g_quarterSamples);
 	for (const char* type : {"audio", "instrument", "midi", "group", "effect", "vca", "marker"})
 	{
 		INFO(type);

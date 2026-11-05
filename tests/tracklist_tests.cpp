@@ -483,6 +483,38 @@ TEST_CASE("the track controls settings dialog chooses and orders each track type
 	REQUIRE(tracks.app.waitUntil([&] { return tracks.track(audio).at("timeBase") == "linear"; }));
 }
 
+TEST_CASE("group and effect tracks can show Switch Time Base in the track list", "[ui]")
+{
+	Tracks tracks;
+	const uint64_t group = tracks.add({{"type", "group"}});
+	const uint64_t effect = tracks.add({{"type", "effect"}});
+	tracks.rows(2);
+
+	// The track controls settings dialog offers it for both types (reference manual pp. 179-180).
+	const auto open = [&tracks] { return !elements(tracks.app, "#track-controls-dialog").empty(); };
+	tracks.click("#track-controls-settings");
+	REQUIRE(tracks.app.waitUntil(open));
+	for (const char* type : {"group", "effect"})
+	{
+		INFO(type);
+		tracks.click(std::string("#controls-types > [value=") + type + "]");
+		tracks.click("#hidden-controls > [value=timeBase]");
+		tracks.click("#controls-add");
+		CHECK(elements(tracks.app, "#visible-controls > [value=timeBase]").size() == 1);
+	}
+	tracks.click("#controls-ok");
+	REQUIRE(tracks.app.waitUntil([&] { return !open(); }));
+
+	for (const uint64_t track : {group, effect})
+	{
+		INFO(tracks.track(track).at("type"));
+		REQUIRE(tracks.app.waitUntil([&] { return elements(tracks.app, row(track) + " button.timeBase").size() == 1; }));
+		tracks.click(row(track) + " button.timeBase");
+		REQUIRE(tracks.app.waitUntil([&] { return tracks.track(track).at("timeBase") == "linear"; }));
+		REQUIRE(tracks.app.waitUntil([&] { return !elements(tracks.app, row(track) + " button.timeBase.checked").empty(); }));
+	}
+}
+
 TEST_CASE("the divider beside the track list sizes it, and the width comes back after a restart", "[ui]")
 {
 	test::UiApp app({1000, 500});
