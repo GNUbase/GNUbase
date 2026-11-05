@@ -746,3 +746,22 @@ TEST_CASE("a drag on a lane released outside the lanes ends there, and one whose
 	f.click(f.at(0, 10.5, 0.5));
 	REQUIRE(f.app.waitUntil([&] { return f.controllers().size() == 2; }));
 }
+
+TEST_CASE("a paint on a controller lane goes into the part where it was pressed, wherever it is released", "[ui]")
+{
+	Fixture f;
+	f.app.call("editor.set", {{"editor", "window"}, {"lanes", {{{"type", "controller"}, {"number", 1}}}}});
+	REQUIRE(
+		f.app.waitUntil([&] { return f.elements(".controller-lane-type").at(0).at("text") == "Modulation (CC 1)"; }));
+	f.tool("draw");
+	// Pressed at 4.5 sixteenths and released left of the lane area, over the lane's header, before the part's start:
+	// an event every length quantize step, a sixteenth, from the part's start to the pressed one.
+	const Json header = f.box(".controller-lane-header");
+	const ui::Target left{"", 0,
+		ui::Point{static_cast<int>(std::lround(header.at("x").get<double>() + (header.at("width").get<double>() / 2))),
+			f.at(0, 4.5, 0.5).point.value_or(ui::Point{}).y}};
+	f.drag(f.at(0, 4.5, 0.5), left);
+	REQUIRE(f.app.waitUntil([&] { return f.controllers().size() == 5; }));
+	for (size_t i = 0; i < 5; ++i)
+		CHECK(f.controllers()[i].at("position") == static_cast<int64_t>(i) * g_sixteenth);
+}

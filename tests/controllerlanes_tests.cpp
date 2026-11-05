@@ -422,6 +422,7 @@ TEST_CASE("controller.line stays in the part and refuses lines of too many event
 						   .at("id")
 						   .get<uint64_t>();
 	CHECK_THAT(f.fails("controller.line", line(ticks, (1000 * g_bar) - 1, 1)), ContainsSubstring("65536"));
+	CHECK_THAT(f.fails("controller.line", line(ticks, 65536, 1)), ContainsSubstring("65536")); // 65537 events
 	CHECK(f.call("controller.line", line(ticks, 65535, 1)).at("controllers").size() == 65536);
 }
 
