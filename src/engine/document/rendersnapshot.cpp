@@ -29,21 +29,38 @@ namespace gnubase::engine
 			return project.tempo.toSamples(tick, project.sampleRate);
 		}
 
-		// Adds a part's notes and controllers, cut at the part's end.
-		void compilePart(const Project& project, const MidiPart& part, RenderChannel& channel)
+		// Adds a part's notes and controllers, cut at the part's end, the notes as the channel's MIDI modifiers and the
+		// part's transpose and velocity play them.
+		void compilePart(const Project& project, ObjectId partId, const MidiPart& part, RenderChannel& channel)
 		{
 			const time::Ticks start = time::toTicks(part.position, project.tempo, project.sampleRate);
 			const time::Position endPosition{part.position.base, part.position.value + part.length};
 			const time::Ticks end = time::toTicks(endPosition, project.tempo, project.sampleRate);
 			const auto index = static_cast<int32_t>(channel.midiParts.size());
 			channel.midiParts.push_back({toSamples(project, start), toSamples(project, end)});
+			// The part's transpose and velocity add to the track's modifiers, also while those are bypassed.
+			midi::Modifiers modifiers = channel.modifiers.bypass ? midi::Modifiers() : channel.modifiers;
+			modifiers.transpose += part.transpose;
+			modifiers.velocityShift += part.velocity;
 			for (const auto& [id, note] : part.notes)
 			{
+				// Notes the part hides beyond its end don't play, wherever a random position would move them.
 				if (note.position >= end - start || !midi::notePlays(note, part.id))
 					continue;
-				const time::Ticks noteEnd = std::min(start + note.position + note.length, end);
-				channel.notes.push_back({toSamples(project, start + note.position), toSamples(project, noteEnd),
-					note.pitch, midi::playedVelocity(note, part.id), note.channel});
+				const uint64_t seed = midi::noteSeed(partId, id);
+				uint8_t pitch = note.pitch;
+				uint16_t velocity = midi::playedVelocity(note, part.id);
+				if (!midi::modifyNote(modifiers, seed, pitch, velocity))
+					continue;
+				// A note moved before the project's start starts there.
+				const time::Ticks position =
+					std::max(note.position + midi::randomOffset(modifiers, midi::RandomTarget::Position, seed), -start);
+				if (position >= end - start) // moved out of the part
+					continue;
+				const time::Ticks length = note.length > 0 ? midi::modifyLength(modifiers, seed, note.length) : 0;
+				const time::Ticks noteEnd = std::min(start + position + length, end);
+				channel.notes.push_back(
+					{toSamples(project, start + position), toSamples(project, noteEnd), pitch, velocity, note.channel});
 			}
 			for (const auto& [id, controller] : part.controllers)
 				if (controller.position < end - start)
@@ -385,6 +402,7 @@ namespace gnubase::engine
 			render.sections = channel.sections;
 			render.midiVolume = channel.midiVolume;
 			render.midiPan = channel.midiPan;
+			render.modifiers = channel.modifiers;
 			render.monitor = channel.monitor;
 			render.recordEnable = channel.recordEnable;
 			render.listen = channel.listen;
@@ -455,7 +473,7 @@ namespace gnubase::engine
 			RenderChannel& channel = snapshot->channels[static_cast<size_t>(trackChannel.at(part.track))];
 			// A silent MIDI track's notes would still reach its instrument.
 			if (!part.mute && plays(part.track) && (!channel.silent || channel.type != TrackType::Midi))
-				compilePart(project, part, channel);
+				compilePart(project, id, part, channel);
 		}
 
 		std::map<ObjectId, Points> vcaCurves; // by the VCA fader's channel

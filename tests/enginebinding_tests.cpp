@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The UI-engine binding (#50): the UI sends commands and follows events through an engine client, on the UI thread,
-// and reads values that change faster than it draws, such as the playback position, once a frame. The last test
-// drives a document through MCP and the document's clicks into the engine's command log.
+// and reads values that change faster than it draws, such as the playback position, once a frame. One test drives a
+// document through MCP and the document's clicks into the engine's command log; the last ones check which windows draw
+// what arrived (#715).
 #include "engine/engine.h"
 #include "mcp/server.h"
 #include "testutils/fakeui.h"
@@ -119,6 +120,91 @@ TEST_CASE("command results reach the UI thread when the binding updates, after w
 	CHECK_FALSE(failure.value_or(engine::Result{}).ok());
 }
 
+TEST_CASE("the steps of one control go one at a time, the newest of a gesture replacing those that wait", "[unit]")
+{
+	engine::Engine engine;
+	ui::EngineBinding binding(engine);
+	engine::Client client(engine);
+	const Json channel = client.call("track.add", {{"type", "audio"}}).value.at("channel").at("id");
+	const auto set = [&channel](const char* key, double value)
+	{ return Json::array({Json{{"command", "channel.set"}, {"parameters", {{"channel", channel}, {key, value}}}}}); };
+	const auto position = [&client] { return client.call("history.get").value.at("position").get<int64_t>(); };
+	const auto read = [&client](const char* key)
+	{ return client.call("project.get").value.at("channels").at(0).at(key).get<double>(); };
+	REQUIRE(client.call("project.get").value.at("channels").at(0).at("id") == channel);
+	const int64_t before = position();
+
+	// A drag's steps: one is in flight, the newest waits, and the others never go (#716).
+	std::vector<double> answered;
+	for (int step = 1; step <= 10; ++step)
+		binding.sendStep(7, "volume", "Change Volume", set("volume", -step),
+			[&answered, step](const engine::Result& result)
+			{
+				CHECK(result.ok());
+				answered.push_back(-step);
+			});
+	CHECK(binding.waiting("history.transaction") == 1);
+	CHECK(binding.sending("volume"));
+	CHECK(!binding.sending("pan"));
+	updateUntil(binding, [&binding] { return !binding.sending("volume"); });
+	CHECK(answered == std::vector<double>{-1.0, -10.0});
+	CHECK(read("volume") == -10.0);
+	CHECK(position() == before + 1); // one undo step
+
+	// Steps without a gesture are steps of their own: none is replaced. Another control's don't wait for them.
+	for (int step = 1; step <= 3; ++step)
+		binding.sendStep(0, "volume", "Change Volume", set("volume", -20.0 - step));
+	binding.sendStep(0, "pan", "Change Pan", set("pan", 0.5));
+	CHECK(binding.waiting("history.transaction") == 2);
+	updateUntil(binding, [&binding] { return !binding.sending("volume") && !binding.sending("pan"); });
+	CHECK(read("volume") == -23.0);
+	CHECK(read("pan") == 0.5);
+	CHECK(position() == before + 5);
+
+	// Another gesture's step doesn't replace the last one's: each ends where it was left.
+	binding.sendStep(8, "volume", "Change Volume", set("volume", -30.0));
+	binding.sendStep(8, "volume", "Change Volume", set("volume", -31.0));
+	binding.sendStep(9, "volume", "Change Volume", set("volume", -40.0));
+	updateUntil(binding, [&binding] { return !binding.sending("volume"); });
+	CHECK(position() == before + 7);
+	REQUIRE(client.call("history.undo").ok());
+	CHECK(read("volume") == -31.0);
+
+	// A refused step reaches its done, and the next one goes after it.
+	std::optional<engine::Result> refused;
+	const Json unknown = Json::array({Json{{"command", "channel.set"}, {"parameters", {{"channel", 999999}}}}});
+	binding.sendStep(
+		10, "volume", "Change Volume", unknown, [&refused](const engine::Result& result) { refused = result; });
+	binding.sendStep(11, "volume", "Change Volume", set("volume", -50.0));
+	updateUntil(binding, [&binding] { return !binding.sending("volume"); });
+	REQUIRE(refused.has_value());
+	CHECK(!refused.value_or(engine::Result{}).ok());
+	CHECK(read("volume") == -50.0);
+
+	// An answer handed on before the last step that the engine took is older than the control; one after isn't.
+	CHECK(binding.ahead("volume", 0));
+	CHECK(!binding.ahead("volume", binding.handed()));
+	CHECK(!binding.ahead("pan", binding.handed()));
+
+	// A command that isn't a query goes after the steps that wait: an undo right after a drag undoes all of it.
+	const int64_t dragged = position();
+	for (int step = 1; step <= 5; ++step)
+		binding.sendStep(12, "volume", "Change Volume", set("volume", -60.0 + step));
+	CHECK(binding.waiting("history.transaction") == 1);
+	binding.send("history.undo");
+	CHECK(binding.waiting("history.transaction") == 2);
+	updateUntil(binding, [&binding] { return !binding.sending("volume") && binding.waiting("history.undo") == 0; });
+	CHECK(read("volume") == -50.0);
+	CHECK(position() == dragged);
+	// A query doesn't wait for them.
+	binding.sendStep(13, "volume", "Change Volume", set("volume", -1.0));
+	binding.sendStep(13, "volume", "Change Volume", set("volume", -2.0));
+	binding.send("project.get");
+	CHECK(binding.waiting("history.transaction") == 1);
+	updateUntil(binding, [&binding] { return !binding.sending("volume"); });
+	CHECK(read("volume") == -2.0);
+}
+
 TEST_CASE("the UI follows the events of every client while it subscribes", "[unit]")
 {
 	engine::Engine engine;
@@ -180,8 +266,8 @@ TEST_CASE("watched values reach the UI once an update, and only when they change
 
 	int value = 1;
 	std::vector<int> seen;
-	std::optional<ui::Subscription> watch =
-		binding.watch<int>([&value] { return value; }, [&seen](const int& changed) { seen.push_back(changed); });
+	std::optional<ui::Subscription> watch = binding.watch<int>(
+		nullptr, [&value] { return value; }, [&seen](const int& changed) { seen.push_back(changed); });
 	CHECK(binding.update()); // follows a value now
 	CHECK(binding.update());
 	CHECK(seen == std::vector<int>{1});
@@ -222,7 +308,8 @@ TEST_CASE("state changed through MCP shows in the UI, and UI actions reach the e
 			playing = event.data.at("playing").get<bool>();
 			model.changed("playing");
 		});
-	const ui::Subscription positions = binding.watch<int64_t>([&engine] { return engine.playbackPosition(); },
+	const ui::Subscription positions = binding.watch<int64_t>(
+		nullptr, [&engine] { return engine.playbackPosition(); },
 		[&](const int64_t& now)
 		{
 			position = now;
@@ -263,4 +350,161 @@ TEST_CASE("state changed through MCP shows in the UI, and UI actions reach the e
 	CHECK(log[0].at("command") == "transport.locate");
 	CHECK(log[1].at("client") == "ui");
 	CHECK(log[1].at("command") == "transport.toggle");
+}
+
+namespace
+{
+	ui::WindowSpec bounds(int x, int y, int width, int height)
+	{
+		ui::WindowSpec spec;
+		spec.bounds = ui::Rect{x, y, width, height};
+		return spec;
+	}
+}
+
+TEST_CASE("a watched value draws the window that shows it when it changes, and no other window", "[unit]")
+{
+	engine::Engine engine;
+	test::FakeUi fake({{1, "Monitor", {0, 0, 1920, 1080}, {0, 0, 1920, 1080}, 1.0F}});
+	const ui::Window& shows = fake.shell.open(bounds(100, 100, 800, 600));
+	const ui::Window& other = fake.shell.open(bounds(1000, 100, 400, 300));
+	ui::EngineBinding binding(engine, [&fake] { fake.shell.wake(); }, [&fake] { fake.shell.requestRender(); });
+	fake.shell.eachStep([&binding] { return binding.update(); });
+	Rml::ElementDocument* document = shows.context().LoadDocumentFromMemory(
+		R"(<rml><body><div id="cursor" style="position: absolute; left: 0dp; width: 1dp; height: 10dp;"/></body></rml>)");
+	REQUIRE(document != nullptr);
+	document->Show();
+	Rml::Element* cursor = document->GetElementById("cursor");
+	REQUIRE(cursor != nullptr);
+	fake.shell.step(milliseconds(0));
+	const uint64_t frames = shows.frames();
+	const uint64_t otherFrames = other.frames();
+
+	int64_t position = 0;
+	const ui::Subscription watch = binding.watch<int64_t>(
+		cursor, [&position] { return position; }, [cursor](const int64_t& now)
+		{ cursor->SetProperty(Rml::PropertyId::Left, Rml::Property(static_cast<float>(now), Rml::Unit::DP)); });
+	fake.shell.step(milliseconds(0)); // the first value
+	CHECK(shows.frames() == frames + 1);
+	fake.shell.step(milliseconds(0)); // unchanged: the shell follows the value once a frame, but draws nothing
+	CHECK(shows.frames() == frames + 1);
+	CHECK(fake.shell.idleTimeout().has_value());
+
+	// No input: the window draws the value in the step it changed in, where the element shows it.
+	position = 120;
+	fake.shell.step(milliseconds(0));
+	CHECK(shows.frames() == frames + 2);
+	CHECK(cursor->GetAbsoluteLeft() == 120.0F);
+	CHECK(other.frames() == otherFrames);
+}
+
+TEST_CASE("events, results and posted work draw every window in the step they reach the UI's handlers", "[integration]")
+{
+	engine::Engine engine;
+	test::FakeUi fake({{1, "Monitor", {0, 0, 1920, 1080}, {0, 0, 1920, 1080}, 1.0F}});
+	const ui::Window& window = fake.shell.open(bounds(100, 100, 800, 600));
+	const ui::Window& other = fake.shell.open(bounds(1000, 100, 400, 300));
+	ui::EngineBinding binding(engine, [&fake] { fake.shell.wake(); }, [&fake] { fake.shell.requestRender(); });
+	fake.shell.eachStep([&binding] { return binding.update(); });
+	Rml::ElementDocument* document =
+		window.context().LoadDocumentFromMemory(R"(<rml><body><p id="state">stopped</p></body></rml>)");
+	REQUIRE(document != nullptr);
+	document->Show();
+	Rml::Element* state = document->GetElementById("state");
+	REQUIRE(state != nullptr);
+	// A view that changes its element on an event, without asking for its window to be drawn.
+	std::optional<ui::Subscription> changed = binding.on("transport.changed", [state](const engine::Event& event)
+		{ state->SetInnerRML(std::to_string(event.data.at("position").get<int64_t>())); });
+	fake.shell.step(milliseconds(0));
+	uint64_t frames = window.frames();
+	uint64_t otherFrames = other.frames();
+	const auto drewOnce = [&]
+	{
+		CHECK(window.frames() == frames + 1);
+		CHECK(other.frames() == otherFrames + 1);
+		frames = window.frames();
+		otherFrames = other.frames();
+	};
+
+	// An event, here from another client: MCP.
+	McpClient mcp(engine);
+	mcp.call("transport_locate", {{"position", 4800}});
+	fake.shell.step(milliseconds(0));
+	CHECK(state->GetInnerRML() == "4800");
+	drewOnce();
+	fake.shell.step(milliseconds(0)); // nothing new: the UI sleeps
+	CHECK(window.frames() == frames);
+	CHECK(!fake.shell.idleTimeout().has_value());
+
+	// A result.
+	bool answered = false;
+	binding.send("transport.get", Json::object(),
+		[&answered, state](const engine::Result&)
+		{
+			state->SetInnerRML("answered");
+			answered = true;
+		});
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+	while (!answered && std::chrono::steady_clock::now() < deadline)
+	{
+		frames = window.frames();
+		otherFrames = other.frames();
+		fake.shell.step(milliseconds(1));
+	}
+	REQUIRE(answered);
+	drewOnce();
+
+	// A result that only an onResult handler takes, as the pool's reports of its commands do.
+	{
+		const ui::Subscription reported =
+			binding.onResult("transport.get", [state](const engine::Result&) { state->SetInnerRML("reported"); });
+		binding.send("transport.get");
+		while (binding.waiting("transport.get") > 0 && std::chrono::steady_clock::now() < deadline)
+		{
+			frames = window.frames();
+			otherFrames = other.frames();
+			fake.shell.step(milliseconds(1));
+		}
+		REQUIRE(binding.waiting("transport.get") == 0);
+		CHECK(state->GetInnerRML() == "reported");
+		drewOnce();
+	}
+
+	// Work posted to the UI thread.
+	fake.shell.post([state] { state->SetInnerRML("posted"); });
+	fake.shell.step(milliseconds(0));
+	drewOnce();
+
+	// Events that no handler takes, and results that nothing waits for, draw nothing.
+	changed.reset();
+	mcp.call("transport_locate", {{"position", 9600}});
+	binding.send("transport.set", {{"metronome", true}});
+	while (binding.waiting("transport.set") > 0 && std::chrono::steady_clock::now() < deadline)
+		fake.shell.step(milliseconds(1));
+	CHECK(binding.waiting("transport.set") == 0);
+	CHECK(window.frames() == frames);
+	CHECK(other.frames() == otherFrames);
+
+	// A quiet query's done draws only what it asks for: nothing when nothing changed, else the window it changed.
+	const auto query = [&](bool change)
+	{
+		binding.sendQuietly("transport.get", Json::object(),
+			[change, state](const engine::Result&)
+			{
+				if (!change)
+					return;
+				state->SetInnerRML("queried");
+				state->GetContext()->RequestNextUpdate(0);
+			});
+		while (binding.waiting("transport.get") > 0 && std::chrono::steady_clock::now() < deadline)
+			fake.shell.step(milliseconds(1));
+		REQUIRE(binding.waiting("transport.get") == 0);
+	};
+	query(false);
+	CHECK(window.frames() == frames);
+	CHECK(other.frames() == otherFrames);
+	query(true);
+	CHECK(state->GetInnerRML() == "queried");
+	CHECK(window.frames() == frames + 1);
+	CHECK(other.frames() == otherFrames);
 }

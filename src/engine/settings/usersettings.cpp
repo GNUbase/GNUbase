@@ -198,6 +198,11 @@ namespace gnubase::engine::settings
 				{"editing.importAudioSplitChannels",
 					"Use Settings imports audio files with Split Channels (audioFile.import splitChannels).",
 					Json{{"type", "boolean"}}, false},
+				{"editing.legatoOverlap",
+					"Legato Overlap (reference manual p. 1124): how far MIDI > Functions > Legato extends notes past "
+					"the start of the next note, in ticks of 480 per quarter note, -1920 to 1920; negative values "
+					"leave a gap.",
+					Json{{"type", "integer"}, {"minimum", -1920}, {"maximum", 1920}}, 0},
 				{"editing.onImportAudio",
 					"What importing audio files in the project window does (reference manual p. 357): "
 					"openOptionsDialog opens the Import Options dialog, useSettings imports at once with the "
