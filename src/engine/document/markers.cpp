@@ -719,8 +719,11 @@ namespace gnubase::engine
 			{"marker.add", 1,
 				"Adds a position marker, or with type cycle a cycle marker, to a marker track (default: the active "
 				"one; "
-				"without a marker track one is added). position and end are in the track's time base (ticks or "
-				"samples) or \"cursor\". A position marker defaults to the cursor, a cycle marker to the locators; "
+				"without a marker track one is added as track.add adds it, in the time base the user setting "
+				"editing.defaultTimeBase gives new tracks). position and end are in the track's time base (ticks or "
+				"samples; project.get reports each track's timeBase) or \"cursor\": to give numbers without knowing "
+				"the setting, add the marker track first with track.add timeBase and pass it as track. A position "
+				"marker defaults to the cursor, a cycle marker to the locators; "
 				"a cycle marker ends at least one sample after its position. "
 				"Position and cycle markers are numbered separately on each track; a new marker gets the first free "
 				"number unless one is given.",

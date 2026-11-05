@@ -266,13 +266,15 @@ namespace gnubase::engine
 	void tempoChanged(Project& project, const time::TempoMap& before, CommandContext& context)
 	{
 		// A linear part stays where it is in samples, and its notes and controllers, in ticks from its start, stay at
-		// their time with it (reference manual p. 1446).
+		// their time with it (reference manual p. 1446). Only parts whose notes or controllers move are reported.
 		std::set<ObjectId> changed;
 		if (project.tempo != before)
 			for (auto& [id, part] : project.midiParts)
 			{
 				if (part.position.base != time::TimeBase::Linear)
 					continue;
+				const std::map<ObjectId, Note> notesBefore = part.notes;
+				const std::map<ObjectId, Controller> controllersBefore = part.controllers;
 				const time::Ticks startBefore = before.toTicks(part.position.value, project.sampleRate);
 				const time::Ticks start = project.tempo.toTicks(part.position.value, project.sampleRate);
 				const auto retime = [&](time::Ticks position)
@@ -294,22 +296,50 @@ namespace gnubase::engine
 				}
 				for (auto& [controllerId, controller] : part.controllers)
 					controller.position = retime(controller.position);
-				changed.insert(id);
+				if (part.notes != notesBefore || part.controllers != controllersBefore)
+					changed.insert(id);
 			}
 		// Shared copies that now hold different notes, such as copies before and after a tempo event, or a linear and
-		// a musical copy, can't share them: each copy that differs from its group's first becomes a real copy, as
-		// event.toRealCopy makes it. A first copy left alone is no longer shared (syncSharedParts).
-		std::map<ObjectId, const MidiPart*> firsts;
+		// a musical copy, can't share them all. Copies that still hold the same notes as each other stay shared: the
+		// ones that match the group's first keep the group, every other set of matching copies gets a group of its own
+		// with new note and controller ids, and a copy that matches no other becomes a real copy, as event.toRealCopy
+		// makes it.
+		std::map<ObjectId, std::vector<std::vector<MidiPart*>>> groups; // the sets of matching copies, in id order
 		for (auto& [id, part] : project.midiParts)
 		{
 			if (part.shared == 0)
 				continue;
-			const MidiPart* first = firsts.emplace(part.shared, &part).first->second;
-			if (first->notes != part.notes || first->controllers != part.controllers)
+			std::vector<std::vector<MidiPart*>>& sets = groups[part.shared];
+			const auto matching = std::find_if(sets.begin(), sets.end(), [&part](const std::vector<MidiPart*>& set)
+				{ return set.front()->notes == part.notes && set.front()->controllers == part.controllers; });
+			if (matching != sets.end())
+				matching->push_back(&part);
+			else
+				sets.push_back({&part});
+		}
+		for (auto& [group, sets] : groups)
+		{
+			if (sets.size() < 2)
+				continue;
+			if (sets.front().size() < 2)
 			{
-				part.shared = 0;
-				renumber(project, part);
-				changed.insert(id);
+				sets.front().front()->shared = 0; // the first is left alone
+				changed.insert(sets.front().front()->id);
+			}
+			for (size_t i = 1; i < sets.size(); ++i)
+			{
+				const std::vector<MidiPart*>& set = sets[i];
+				MidiPart& source = *set.front();
+				renumber(project, source);
+				source.shared = set.size() < 2 ? 0 : project.newId();
+				changed.insert(source.id);
+				for (size_t j = 1; j < set.size(); ++j)
+				{
+					set[j]->shared = source.shared;
+					set[j]->notes = source.notes;
+					set[j]->controllers = source.controllers;
+					changed.insert(set[j]->id);
+				}
 			}
 		}
 		for (const ObjectId id : changed)
