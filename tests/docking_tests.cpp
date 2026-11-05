@@ -639,7 +639,7 @@ TEST_CASE("documents that live reload loads again are docking windows again", "[
 	// A copy of the resources, whose files the test can change.
 	const test::TempDir resources;
 	std::filesystem::copy(GNUBASE_RESOURCES_DIR, resources.path(), std::filesystem::copy_options::recursive);
-	test::UiApp app({1000, 700}, midi::makeBackends(), audio::makeBackends(), resources.path());
+	test::UiApp app({1000, 700}, resources.path());
 	app.appUi().showProject();
 	const TestPanel docked(app);
 	const TestPanel floating(app, "floating");
@@ -790,7 +790,7 @@ TEST_CASE("the layout comes back exactly after a restart", "[ui]")
 	const Json layout = docking.layout();
 	CHECK(before["left"] == Json{"visibility", "inspector"});
 	CHECK(before["lower"] == Json{"editor", "pool"});
-	CHECK(before["right"] == Json{"media", "history"});
+	CHECK(before["right"] == Json{"media", "history", "quantize"});
 	CHECK(before["active"] == "inspector");
 
 	app.restart();

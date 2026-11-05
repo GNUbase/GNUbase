@@ -44,12 +44,13 @@ namespace gnubase::test
 	{
 	public:
 		// The main window's size in desktop coordinates; in pixels at a monitor scale of 1. The engine takes MIDI and
-		// audio from these backends, by default the system's; the audio backends must include the dummy device's. The
-		// UI's fonts, themes and documents come from resources, by default GNUbase's resources folder.
+		// audio from these backends, by default the system's; the audio backends must include the dummy device's.
 		explicit UiApp(ui::Size size = {640, 480},
 			std::vector<std::unique_ptr<midi::Backend>> midiBackends = midi::makeBackends(),
-			std::vector<std::unique_ptr<audio::Backend>> audioBackends = audio::makeBackends(),
-			std::filesystem::path resources = {});
+			std::vector<std::unique_ptr<audio::Backend>> audioBackends = audio::makeBackends());
+		// The same with the fonts, themes and documents of another resources folder than GNUbase's, such as a copy
+		// with a document changed.
+		UiApp(ui::Size size, std::filesystem::path resources);
 
 		engine::Engine& engine() { return *m_engine; }
 		app::AppUi& appUi() { return *m_ui; }
@@ -91,7 +92,7 @@ namespace gnubase::test
 
 		TempDir m_settings;
 		ui::Size m_size;
-		std::filesystem::path m_resources;
+		std::filesystem::path m_resources{GNUBASE_RESOURCES_DIR};
 		std::unique_ptr<engine::Engine> m_engine;
 		std::unique_ptr<app::AppUi> m_ui;
 		std::unique_ptr<ui::Automation> m_automation;

@@ -14,6 +14,8 @@ UI setup as the app, and drive it with the interface behind MCP's UI tools ([ui-
     has followed (`waitUntil`);
   - quits the UI and the engine and starts them again with the same user settings (`restart`), e.g. to check what the
     user gets back after a restart;
+  - runs the UI from another resources folder than GNUbase's, such as a copy with a document changed, to test what
+    the app does with a document it refuses;
   - clicks, types and reads the DOM through `ui()`, the `ui::Automation` that MCP's UI tools use. What the mouse is
     over stays while the shell steps: a hidden window ignores the OS's word that the mouse left it;
   - lays the UI out at a fixed dp ratio, whatever the monitor's scale (`setDpRatio`), and compares screenshots with

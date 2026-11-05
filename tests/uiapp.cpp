@@ -53,11 +53,15 @@ namespace gnubase::test
 	}
 
 	UiApp::UiApp(ui::Size size, std::vector<std::unique_ptr<midi::Backend>> midiBackends,
-		std::vector<std::unique_ptr<audio::Backend>> audioBackends, std::filesystem::path resources)
-		: m_size(size),
-		  m_resources(resources.empty() ? std::filesystem::path(GNUBASE_RESOURCES_DIR) : std::move(resources))
+		std::vector<std::unique_ptr<audio::Backend>> audioBackends)
+		: m_size(size)
 	{
 		start(std::move(midiBackends), std::move(audioBackends));
+	}
+
+	UiApp::UiApp(ui::Size size, std::filesystem::path resources) : m_size(size), m_resources(std::move(resources))
+	{
+		start(midi::makeBackends(), audio::makeBackends());
 	}
 
 	void UiApp::restart()
