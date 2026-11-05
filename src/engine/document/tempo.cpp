@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <iterator>
 #include <map>
 #include <optional>
 #include <set>
@@ -273,17 +274,21 @@ namespace gnubase::engine
 			{
 				if (part.position.base != time::TimeBase::Linear)
 					continue;
-				const std::map<ObjectId, Note> notesBefore = part.notes;
-				const std::map<ObjectId, Controller> controllersBefore = part.controllers;
 				const time::Ticks startBefore = before.toTicks(part.position.value, project.sampleRate);
 				const time::Ticks start = project.tempo.toTicks(part.position.value, project.sampleRate);
 				const auto retime = [&](time::Ticks position)
 				{ return project.tempo.toTicks(before.toSeconds(startBefore + position)) - start; };
-				const auto retimeNote = [&retime](time::Ticks& position, time::Ticks& length)
+				bool moved = false;
+				const auto update = [&moved](time::Ticks& value, time::Ticks to)
+				{
+					moved = moved || value != to;
+					value = to;
+				};
+				const auto retimeNote = [&retime, &update](time::Ticks& position, time::Ticks& length)
 				{
 					const time::Ticks end = retime(position + length);
-					position = retime(position);
-					length = std::max<time::Ticks>(length > 0 ? 1 : 0, end - position);
+					update(position, retime(position));
+					update(length, std::max<time::Ticks>(length > 0 ? 1 : 0, end - position));
 				};
 				for (auto& [noteId, note] : part.notes)
 				{
@@ -295,15 +300,15 @@ namespace gnubase::engine
 					}
 				}
 				for (auto& [controllerId, controller] : part.controllers)
-					controller.position = retime(controller.position);
-				if (part.notes != notesBefore || part.controllers != controllersBefore)
+					update(controller.position, retime(controller.position));
+				if (moved)
 					changed.insert(id);
 			}
 		// Shared copies that now hold different notes, such as copies before and after a tempo event, or a linear and
 		// a musical copy, can't share them all. Copies that still hold the same notes as each other stay shared: the
-		// ones that match the group's first keep the group, every other set of matching copies gets a group of its own
-		// with new note and controller ids, and a copy that matches no other becomes a real copy, as event.toRealCopy
-		// makes it.
+		// largest set of matching copies (the first of equal ones) keeps the group and its note and controller ids,
+		// every other set gets a group of its own with new ids, and a copy that matches no other becomes a real copy,
+		// as event.toRealCopy makes it.
 		std::map<ObjectId, std::vector<std::vector<MidiPart*>>> groups; // the sets of matching copies, in id order
 		for (auto& entry : project.midiParts)
 		{
@@ -318,28 +323,34 @@ namespace gnubase::engine
 			else
 				sets.push_back({&part});
 		}
-		for (auto& [group, sets] : groups)
+		for (auto& entry : groups)
 		{
+			const std::vector<std::vector<MidiPart*>>& sets = entry.second;
 			if (sets.size() < 2)
 				continue;
-			if (sets.front().size() < 2)
+			const auto keeps = std::max_element(sets.begin(), sets.end(),
+				[](const std::vector<MidiPart*>& a, const std::vector<MidiPart*>& b) { return a.size() < b.size(); });
+			for (auto set = sets.begin(); set != sets.end(); ++set)
 			{
-				sets.front().front()->shared = 0; // the first is left alone
-				changed.insert(sets.front().front()->id);
-			}
-			for (size_t i = 1; i < sets.size(); ++i)
-			{
-				const std::vector<MidiPart*>& set = sets[i];
-				MidiPart& source = *set.front();
-				renumber(project, source);
-				source.shared = set.size() < 2 ? 0 : project.newId();
-				changed.insert(source.id);
-				for (size_t j = 1; j < set.size(); ++j)
+				MidiPart& source = *set->front();
+				if (set == keeps)
 				{
-					set[j]->shared = source.shared;
-					set[j]->notes = source.notes;
-					set[j]->controllers = source.controllers;
-					changed.insert(set[j]->id);
+					if (set->size() < 2)
+					{
+						source.shared = 0; // the last of its copies is a part like any other
+						changed.insert(source.id);
+					}
+					continue;
+				}
+				renumber(project, source);
+				source.shared = set->size() < 2 ? 0 : project.newId();
+				changed.insert(source.id);
+				for (auto other = std::next(set->begin()); other != set->end(); ++other)
+				{
+					(*other)->shared = source.shared;
+					(*other)->notes = source.notes;
+					(*other)->controllers = source.controllers;
+					changed.insert((*other)->id);
 				}
 			}
 		}

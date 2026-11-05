@@ -16,10 +16,10 @@ tempo track's ([tempo-track.md](tempo-track.md)).
   (`tempoChanged` in `tempo.cpp`, with the tempo before the change): their ticks are worked out again through seconds,
   as are a quantized note's original and quantized timing. Only parts whose notes or controllers this moves get a
   `midiPart.changed` event, not those before the change. Shared copies that then differ, such as copies before and
-  after a tempo event or a linear and a musical copy, split by what they hold: the copies that still match the group's
-  first keep the group, every other set of copies that hold the same notes and controllers as each other shares them
-  in a new group with new note and controller ids, and a copy that matches no other becomes a real copy, as
-  `event.toRealCopy` makes it (the first too if no copy is left with it). Ticks are rounded from each linear part's
+  after a tempo event or a linear and a musical copy, split by what they hold: the largest set of copies that hold the
+  same notes and controllers as each other (the first of sets as large) keeps the group and the ids of its notes and
+  controllers, every other such set shares its notes in a new group with new ids, and a copy that matches no other
+  becomes a real copy, as `event.toRealCopy` makes it. Ticks are rounded from each linear part's
   own start, so copies at sample positions that aren't on a tick can differ by a tick and split where the tempo is the
   same at all of them. Cycle markers that a faster tempo makes shorter than a sample get longer.
 - **Switching** (`track.set` `timeBase`, `rebaseTrack` in `projectmodel.cpp`) converts every position on the track to
@@ -52,7 +52,8 @@ moving linear MIDI parts keeping their notes' time across tempo changes inside t
 `tests/tempo_tests.cpp`: musical events moving and linear ones staying under tempo changes, the notes and controllers of
 linear parts keeping their time through tempo events, ramps, the project tempo, tap tempo, a MIDI file's tempo and the
 tempo mode, and undo, with `midiPart.changed` only for the parts that change; shared copies of linear parts becoming
-real copies when their notes retime differently, and copies that still match staying shared in a new group; switching
+real copies when their notes retime differently, copies that still match staying shared in a new group, and the
+largest set keeping the group; switching
 the time base of audio, MIDI and marker tracks with automation keeping everything in place, then following the tempo
 or not; `editing.defaultTimeBase` for every track type, a marker track `marker.add` adds, and the primary time
 format. `tests/inspector_tests.cpp`: Switch Time Base in the inspector; `tests/tracklist_tests.cpp`: in the track list,
