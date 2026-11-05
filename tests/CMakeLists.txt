@@ -27,6 +27,8 @@ add_executable(gnubase-tests
 	app_tests.cpp
 	audio_tests.cpp
 	audiofile_tests.cpp
+	audiofunctions_tests.cpp
+	audiofunctions_ui_tests.cpp
 	audioimport_tests.cpp
 	audiopart_tests.cpp
 	audioparteditor_tests.cpp

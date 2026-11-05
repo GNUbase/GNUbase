@@ -354,6 +354,15 @@
 		</menuitem>
 		<!-- Volume curves (reference manual p. 401, docs/features/volume-curves.md) -->
 		<menuitem command="audio.removeVolumeCurve">Remove Volume Curve</menuitem>
+		<menuseparator/>
+		<!-- The audio functions (reference manual pp. 603-609, docs/features/audio-functions.md) -->
+		<menuitem id="audio-advanced-submenu">Advanced
+			<menu>
+				<menuitem command="audio.detectSilence">Detect Silence...</menuitem>
+			</menu>
+		</menuitem>
+		<menuitem command="audio.spectrumAnalyzer">Spectrum Analyzer</menuitem>
+		<menuitem command="audio.statistics">Statistics</menuitem>
 	</menu>
 	<!-- MIDI functions (reference manual pp. 1118-1131, docs/features/midi-functions.md) -->
 	<menu id="midi-menu">

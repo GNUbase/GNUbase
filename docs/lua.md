@@ -1146,6 +1146,29 @@ Returns:
 
 - `job`: object, required
 
+#### `gnubase.clip.detectSilence`
+
+Finds the sections of a clip that aren't silent (the Detect Silence dialog's Analyze, reference manual pp. 603-606). The audio of clip from frame start to end (default: the whole clip). A section opens at the first frame where a sample of any channel reaches openThreshold (dBFS, default -20) and closes after the last frame that reaches closeThreshold (dBFS, default -30, at most openThreshold) before 20 ms below it. Once open, a section stays open for at least minimumOpen (ms, default 10), joining what sounds within it; once closed, none opens before minimumClosed (ms, default 100) has passed. preRoll and postRoll (ms, default 0) start and end the sections earlier and later, joining those that then overlap. Reads the clip's file. Returns the clip and its sections, start to end in clip frames, by start.
+
+Only reads; changes nothing.
+
+Parameters:
+
+- `clip`: integer, required
+- `closeThreshold`: number
+- `end`: integer
+- `minimumClosed`: number
+- `minimumOpen`: number
+- `openThreshold`: number
+- `postRoll`: number
+- `preRoll`: number
+- `start`: integer
+
+Returns:
+
+- `clip`: integer
+- `sections`: array of object
+
 #### `gnubase.clip.remove`
 
 Removes a clip that no audio event uses.
@@ -1273,6 +1296,46 @@ Returns:
 
 - `clip`: integer, required
 - `region`: object, required
+
+#### `gnubase.clip.spectrum`
+
+The average spectrum of a clip (the Spectrum Analyzer, reference manual pp. 607-608). The audio of clip from frame start to end (default: the whole clip). Welch's method with 4-term Blackman-Harris windows of 8192 samples that overlap by half (shorter audio is one zero-padded window). Its frequencies go from 20 Hz up to the Nyquist frequency in steps of 1/24 octave; each channel's levels has a level in dBFS at each, the strongest of the frequencies within 1/48 octave of it, where a sine reads its peak level (a full-scale sine 0 dBFS); null for silence. Reads the clip's file.
+
+Only reads; changes nothing.
+
+Parameters:
+
+- `clip`: integer, required
+- `end`: integer
+- `start`: integer
+
+Returns:
+
+- `channels`: array of object, required
+- `clip`: integer, required
+- `frequencies`: array of number, required
+- `sampleRate`: number, required
+
+#### `gnubase.clip.statistics`
+
+The statistics of a clip (the Statistics window, reference manual p. 609). The audio of clip from frame start to end (default: the whole clip). Per channel: minSample and maxSample, the lowest and highest sample; peak, the largest absolute sample; truePeak, the largest absolute level between the samples too, 4 times oversampled; dcOffset, the mean of the samples, also in percent of full scale; bitDepth, the bits the samples need (32 for floating point beyond 24 bits, 0 for silence); pitch, the strongest frequency in Hz; averageRms, the RMS of every sample, and maxRms, the highest RMS of 50 ms windows 10 ms apart, both in dB as AES17 has it, where a full-scale sine reads 0 dB. The levels are linear and in dBFS (Db; minSampleDb and maxSampleDb of the samples' absolute values); null for silence. maxRmsAllChannels is the highest maxRms. loudness (EBU R 128, every channel weighted like front left and right): maxMomentary (400 ms) and maxShortTerm (3 s) in LUFS, ungated; integrated in LUFS (ITU-R BS.1770); range in LU (EBU Tech 3342); maxTruePeak in dBTP; null for silence or audio shorter than their windows. Reads the clip's file.
+
+Only reads; changes nothing.
+
+Parameters:
+
+- `clip`: integer, required
+- `end`: integer
+- `start`: integer
+
+Returns:
+
+- `channels`: array of object, required
+- `clip`: integer, required
+- `frames`: integer, required
+- `loudness`: object, required
+- `maxRmsAllChannels`: number or null, required
+- `sampleRate`: number, required
 
 ### controller
 
@@ -1866,6 +1929,31 @@ Parameters:
 Returns:
 
 - `events`: array of integer, required
+
+#### `gnubase.event.stripSilence`
+
+Processes the sections of audio events that aren't silent (the Detect Silence dialog's Process, reference manual pp. 603-606), as clip.detectSilence finds them in the section of the clip each plays. A section opens at the first frame where a sample of any channel reaches openThreshold (dBFS, default -20) and closes after the last frame that reaches closeThreshold (dBFS, default -30, at most openThreshold) before 20 ms below it. Once open, a section stays open for at least minimumOpen (ms, default 10), joining what sounds within it; once closed, none opens before minimumClosed (ms, default 100) has passed. preRoll and postRoll (ms, default 0) start and end the sections earlier and later, joining those that then overlap. strip (Strip Silence, default true) splits each event at the sections' edges and removes the silent parts between them; regions (Add as Regions) adds a region of the clip for each section, named regionName (default Region) and a number from autoNumberStart (default 1) up, across the events; fades (Apply Fades, ms) gives the events that remain a fade in and a fade out of that length, at most half their length each. An event that strip would remove completely, or that is locked, is an error. Returns the events that remain and the regions, and the number of sections.
+
+Parameters:
+
+- `autoNumberStart`: integer
+- `closeThreshold`: number
+- `events`: array of integer, required
+- `fades`: number
+- `minimumClosed`: number
+- `minimumOpen`: number
+- `openThreshold`: number
+- `postRoll`: number
+- `preRoll`: number
+- `regionName`: string
+- `regions`: boolean
+- `strip`: boolean
+
+Returns:
+
+- `events`: array of integer, required
+- `regions`: array of integer, required
+- `sections`: integer, required
 
 #### `gnubase.event.toFront`
 

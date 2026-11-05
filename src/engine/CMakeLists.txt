@@ -93,6 +93,7 @@ endif()
 add_library(gnubase-engine STATIC
 	analysis/analysis.cpp analysis/analysis.h
 	analysis/onsets.cpp analysis/onsets.h
+	analysis/statistics.cpp analysis/statistics.h
 	analysis/tempodetect.cpp analysis/tempodetect.h
 	audio/analysiscommands.cpp
 	audio/audioengine.cpp audio/audioengine.h
@@ -119,6 +120,7 @@ add_library(gnubase-engine STATIC
 	clock.cpp clock.h
 	dawproject/dawproject.cpp dawproject/dawproject.h
 	document/audiofilecommands.cpp
+	document/audiofunctions.cpp document/audiofunctions.h
 	document/channelformat.cpp document/channelformat.h
 	document/channelsettings.cpp document/channelsettings.h
 	document/document.cpp document/document.h
