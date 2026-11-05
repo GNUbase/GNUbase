@@ -1433,6 +1433,17 @@ TEST_CASE("in virgin territory and after terminators a lane plays its static val
 		CHECK(pedalEvents[0].position == 100);
 		CHECK(pedalEvents[0].value == 0);
 
+		// A lone point between two gaps, as compile() makes it of a single point with virgin territory, is sent once,
+		// like a terminator's value, and nothing after it.
+		RenderChannel lone = midi;
+		lone.automation[0].points = {gap(100), {100, 1.0, AutomationShape::Step, 0.0}, gap(100)};
+		AutomationPlayer lonePlayer;
+		lonePlayer.setAutomation(channelAutomation(lone, 6.0));
+		const std::vector<PlayedEvent> loneEvents = playInBlocks(lonePlayer, 1000, 1000);
+		REQUIRE(loneEvents.size() == 1);
+		CHECK(loneEvents[0].position == 100);
+		CHECK(loneEvents[0].value > 0.0);
+
 		// Nor at a locate into a gap, or stopped in one.
 		graph::EventBuffer source(graph::g_maxEventsPerBlock);
 		graph::EventBuffer fader(graph::g_maxEventsPerBlock);
