@@ -232,7 +232,7 @@ namespace gnubase::engine
 		return hitpoints;
 	}
 
-	void registerHitpointCommands(ProjectModel& model, Engine& engine)
+	void registerHitpointCommands(ProjectModel& model, Engine& engine, Jobs& jobs)
 	{
 		const Json integer = {{"type", "integer"}};
 		const Json number = {{"type", "number"}};
@@ -261,14 +261,14 @@ namespace gnubase::engine
 				"clip.setHitpoints, one undo step, whose result is the job's result. A clip removed meanwhile, another "
 				"project opened or the clip's media file relinked fails the job.",
 				objectSchema({{"clip", integer}}, {"clip"}), objectSchema({{"job", Jobs::schema()}}, {"job"}), false},
-			[&model, &engine](CommandContext& context)
+			[&model, &jobs](CommandContext& context)
 			{
 				const auto id = context.parameters().at("clip").get<ObjectId>();
 				const Project& project = model.project();
 				const auto found = project.clips.find(id);
 				require(found != project.clips.end(), "no clip " + std::to_string(id));
 				return Json{{"job",
-					engine.jobs().start("clip.detectHitpoints",
+					jobs.start("clip.detectHitpoints",
 						[id, media = project.media.at(found->second.media), opened = model.openedRevision()](
 							JobContext& job)
 						{

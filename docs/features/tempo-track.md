@@ -66,8 +66,9 @@ The tempo track, its tempo events and ramps, the project tempo modes and tap tem
   (`EventDisplay::selectionStart`). The times are RmlUi's clock, which tests stop and move on.
 - **File > Export > Tempo Track...** (`file.exportTempo`) and **File > Import > Tempo Track...** (`file.importTempo`)
   choose the file in the OS's file dialog; an exported file without an extension gets `.xml`.
-- The track list's Remove Empty Tracks, Duplicate Tracks, Move Selected Tracks to New Folder and drags into folders
-  leave the tempo track out: the project has one, at the top level.
+- The track list's Duplicate Tracks, Move Selected Tracks to New Folder and drags into folders leave the tempo track
+  out: the project has one, at the top level. Remove Empty Tracks, the engine command `track.removeEmpty`, never
+  removes it.
 - **The tempo track editor** (`ui::TempoEditor`, `resources/ui/tempo-editor.rml`, pp. 1447-1449, 1455): Mod+T (the
   UI command `window.tempoTrack`, also Project > Tempo Track > Open Tempo Track Editor) opens it in a window of its own
   and closes it. The toolbar has Activate Tempo Track, the object selection, draw and erase tools, the type of new tempo

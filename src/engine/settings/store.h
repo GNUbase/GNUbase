@@ -114,6 +114,11 @@ namespace gnubase::engine::settings
 		// can't be written; then nothing changes.
 		bool set(std::string_view key, Json value);
 
+		// Changes several settings, values by key, in one write of the file: all of them or, if one doesn't exist or
+		// its value doesn't fit, or the file can't be written, none. Returns the keys of those whose value changed,
+		// sorted. Throws SettingsError like set.
+		std::vector<std::string> set(const Json& values);
+
 		// Changes a setting from its value in the file, for a setting that holds a collection, such as a list of
 		// presets, that several processes change bit by bit: change gets the value that the file has now, which
 		// another process may have saved since this one read it, and returns the new value. A file without the

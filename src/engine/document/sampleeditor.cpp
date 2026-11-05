@@ -121,6 +121,18 @@ namespace gnubase::engine
 				{ return std::tie(a.start, a.id) < std::tie(b.start, b.id); });
 		}
 
+		// Region and a number that no region of the clip has in its name, from the count of regions on.
+		std::string newRegionName(const Clip& clip)
+		{
+			for (size_t number = clip.regions.size() + 1;; ++number)
+			{
+				std::string name = "Region " + std::to_string(number);
+				if (std::none_of(clip.regions.begin(), clip.regions.end(),
+						[&name](const ClipRegion& region) { return region.name == name; }))
+					return name;
+			}
+		}
+
 		Json regionResult(const Clip& clip, ObjectId region, CommandContext& context)
 		{
 			context.emit("clip.changed", {{"clip", toJson(clip)}});
@@ -261,8 +273,8 @@ namespace gnubase::engine
 			{"clip.addRegion", 1,
 				"Adds a region to a clip (Add Region, Event or Range as Region, reference manual pp. 620, 624-625): a "
 				"named section of its audio, from start to end in the clip's sample frames, start before end; name "
-				"defaults to Region and its number. A clip's regions are in its regions, by start. Emits clip.changed. "
-				"Returns the clip's id and the region.",
+				"defaults to Region and a number that no other region of the clip has in its name. A clip's regions "
+				"are in its regions, by start. Emits clip.changed. Returns the clip's id and the region.",
 				objectSchema({{"clip", integer}, {"start", integer}, {"end", integer}, {"name", string}},
 					{"clip", "start", "end"}),
 				regionResultSchema, false},
@@ -271,8 +283,7 @@ namespace gnubase::engine
 			{
 				const Json& parameters = context.parameters();
 				Clip& clip = clipOf(project, parameters);
-				const ClipRegion region{project.newId(),
-					parameters.value("name", "Region " + std::to_string(clip.regions.size() + 1)),
+				const ClipRegion region{project.newId(), parameters.value("name", newRegionName(clip)),
 					parameters.at("start").get<time::Samples>(), parameters.at("end").get<time::Samples>()};
 				clip.regions.push_back(region);
 				settle(project, clip, region);

@@ -535,9 +535,9 @@ TEST_CASE("auditioning plays only the pressed audio track, past its channel and 
 	const Json transport = run(song.client, "transport.get");
 
 	CHECK(run(song.client, "audition.start", {{"track", track}, {"position", 50}}) ==
-		Json{{"track", track}, {"mode", "play"}});
+		Json{{"track", track}, {"media", 0}, {"mode", "play"}});
 	run(song.client, "audio.render", {{"frames", 1000}});
-	CHECK(run(song.client, "audition.stop") == Json{{"track", 0}, {"mode", "off"}});
+	CHECK(run(song.client, "audition.stop") == Json{{"track", 0}, {"media", 0}, {"mode", "off"}});
 	run(song.client, "audio.render", {{"frames", 200}});
 
 	for (int channel = 0; channel < 2; ++channel)
@@ -571,9 +571,9 @@ TEST_CASE("auditioning up to an end plays the track to there and then nothing", 
 		ContainsSubstring("end must be after position"));
 	// The sample editor's Play back Slice: from 100 to 1000, which is in the middle of a block of 64.
 	CHECK(run(song.client, "audition.start", {{"track", track.id}, {"position", 100}, {"end", 1000}}) ==
-		Json{{"track", track.id}, {"mode", "play"}});
+		Json{{"track", track.id}, {"media", 0}, {"mode", "play"}});
 	run(song.client, "audio.render", {{"frames", 1200}});
-	CHECK(run(song.client, "audition.stop") == Json{{"track", 0}, {"mode", "off"}});
+	CHECK(run(song.client, "audition.stop") == Json{{"track", 0}, {"media", 0}, {"mode", "off"}});
 	for (int channel = 0; channel < 2; ++channel)
 	{
 		const std::vector<float> output = song.capture(channel, 1200);
@@ -585,6 +585,103 @@ TEST_CASE("auditioning up to an end plays the track to there and then nothing", 
 			if (output[static_cast<size_t>(i)] != expected && wrong++ == 0)
 				UNSCOPED_INFO("channel " << channel << ", frame " << i << ": " << output[static_cast<size_t>(i)]
 										 << " instead of " << expected);
+		}
+		CHECK(wrong == 0);
+	}
+}
+
+TEST_CASE("auditioning a media file plays its frames, also outside the events that play it", "[integration]")
+{
+	// The sample editor's play tool plays the clip (reference manual p. 630): its media file from a frame, also in
+	// the shaded part outside the event and past its end, without the event's volume and mute.
+	const int blockSize = GENERATE(64, 100);
+	INFO("block size " << blockSize);
+	const gnubase::test::TempDir dir;
+	Song song(blockSize);
+	const TestTrack track = song.addTrack(2);
+	const ObjectId media = idOf(run(song.client, "media.add", {{"path", writeRamp(dir, "stereo", 2, 4000)}}), "media");
+	const ObjectId clip = idOf(run(song.client, "clip.add", {{"media", media}}), "clip");
+	run(song.client, "audioEvent.add",
+		{{"track", track.id}, {"clip", clip}, {"position", 0}, {"offset", 1000}, {"length", 1000}, {"volume", -20.0},
+			{"mute", true}});
+	const Json transport = run(song.client, "transport.get");
+
+	// From frame 500, before the event, to 3900 and on past the file's end, where it plays nothing.
+	CHECK(run(song.client, "audition.start", {{"media", media}, {"position", 500}, {"end", 900}}) ==
+		Json{{"track", 0}, {"media", media}, {"mode", "play"}});
+	run(song.client, "audio.render", {{"frames", 500}});
+	CHECK(run(song.client, "audition.start", {{"media", media}, {"position", 3900}}) ==
+		Json{{"track", 0}, {"media", media}, {"mode", "play"}});
+	run(song.client, "audio.render", {{"frames", 300}});
+	CHECK(run(song.client, "audition.stop") == Json{{"track", 0}, {"media", 0}, {"mode", "off"}});
+	for (int channel = 0; channel < 2; ++channel)
+	{
+		const std::vector<float> output = song.capture(channel, 800);
+		size_t wrong = 0;
+		for (int64_t i = 0; i < 800; ++i)
+		{
+			float expected = 0.0f;
+			if (i < 400)
+				expected = ramp(500 + i, channel);
+			else if (i >= 500 && i < 600)
+				expected = ramp(3900 + i - 500, channel);
+			if (output[static_cast<size_t>(i)] != expected && wrong++ == 0)
+				UNSCOPED_INFO("channel " << channel << ", frame " << i << ": " << output[static_cast<size_t>(i)]
+										 << " instead of " << expected);
+		}
+		CHECK(wrong == 0);
+	}
+	CHECK(run(song.client, "transport.get") == transport);
+
+	// Its errors: a media file that isn't there, a frame past its end, both a track and a media file, neither.
+	CHECK(song.client.call("audition.start", {{"media", 999}, {"position", 0}}).error == "no media file 999");
+	CHECK_THAT(song.client.call("audition.start", {{"media", media}, {"position", 4001}}).error,
+		ContainsSubstring("position must be 0 to 4000"));
+	CHECK_THAT(song.client.call("audition.scrub", {{"media", media}, {"track", track.id}, {"position", 0}}).error,
+		ContainsSubstring("a track or a media file"));
+	CHECK_THAT(
+		song.client.call("audition.start", {{"position", 0}}).error, ContainsSubstring("a track or a media file"));
+
+	// Positions are the file's frames: the last 500 frames of a file at half the project's rate play for 1000
+	// samples.
+	const ObjectId slow =
+		idOf(run(song.client, "media.add", {{"path", writeRamp(dir, "slow", 1, 1000, 24000)}}), "media");
+	run(song.client, "audition.start", {{"media", slow}, {"position", 500}});
+	run(song.client, "audio.render", {{"frames", 1200}});
+	run(song.client, "audition.stop");
+	const auto output = run(song.client, "audio.capture", {{"channel", 0}, {"start", 800}, {"frames", 1200}})
+							.at("samples")
+							.get<std::vector<float>>();
+	CHECK(std::abs(output[10] - ramp(505, 0)) < 1e-4f);
+	CHECK(std::abs(output[600] - ramp(800, 0)) < 1e-4f);
+	CHECK(std::all_of(output.begin() + 1010, output.end(), [](float sample) { return sample == 0.0f; }));
+}
+
+TEST_CASE("scrubbing a media file plays its frames and leaves the cursor alone", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	Song song(64);
+	song.addTrack(2);
+	const ObjectId media = idOf(run(song.client, "media.add", {{"path", writeRamp(dir, "mono", 1, 4000)}}), "media");
+	const Json transport = run(song.client, "transport.get");
+
+	// No event plays the file. 480 frames back in 0.01 seconds play backwards at normal speed.
+	CHECK(run(song.client, "audition.scrub", {{"media", media}, {"position", 1000}}) ==
+		Json{{"track", 0}, {"media", media}, {"mode", "scrub"}});
+	run(song.client, "audition.scrub", {{"media", media}, {"position", 520}, {"seconds", 0.01}});
+	run(song.client, "audio.render", {{"frames", 600}});
+	run(song.client, "audition.stop");
+	CHECK(run(song.client, "transport.get") == transport); // the sample editor locates the cursor itself
+	for (int channel = 0; channel < 2; ++channel)
+	{
+		const std::vector<float> output = song.capture(channel, 600);
+		size_t wrong = 0;
+		for (size_t i = 0; i < 600; ++i)
+		{
+			const float expected = i < 480 ? ramp(1000 - static_cast<int64_t>(i), 0) : 0.0f;
+			if (output[i] != expected && wrong++ == 0)
+				UNSCOPED_INFO(
+					"channel " << channel << ", frame " << i << ": " << output[i] << " instead of " << expected);
 		}
 		CHECK(wrong == 0);
 	}
@@ -603,7 +700,7 @@ TEST_CASE("auditioning needs a device and an audio track", "[integration]")
 		ContainsSubstring("position must be 0 to"));
 	CHECK_THAT(client.call("audition.scrub", {{"track", midi}, {"position", g_maxPosition + 1}}).error,
 		ContainsSubstring("position must be 0 to"));
-	CHECK(run(client, "audition.stop") == Json{{"track", 0}, {"mode", "off"}});
+	CHECK(run(client, "audition.stop") == Json{{"track", 0}, {"media", 0}, {"mode", "off"}});
 }
 
 TEST_CASE("scrubbing plays an audio track forwards and backwards at the speed positions come, and moves the cursor",
@@ -620,7 +717,7 @@ TEST_CASE("scrubbing plays an audio track forwards and backwards at the speed po
 	// The first scrub only sets where it starts and moves the cursor there; 480 frames back in 0.01 seconds (480
 	// frames) play backwards at normal speed.
 	CHECK(run(song.client, "audition.scrub", {{"track", track.id}, {"position", 1000}}) ==
-		Json{{"track", track.id}, {"mode", "scrub"}});
+		Json{{"track", track.id}, {"media", 0}, {"mode", "scrub"}});
 	CHECK(run(song.client, "transport.get").at("position") == 1000);
 	run(song.client, "audition.scrub", {{"track", track.id}, {"position", 520}, {"seconds", 0.01}});
 	CHECK(run(song.client, "transport.get").at("position") == 520);

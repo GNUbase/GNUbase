@@ -62,8 +62,8 @@ namespace gnubase::test
 		ui::KeyCommands& keys() { return m_ui->keyCommands(); }
 
 		// Quits the UI and the engine and starts them again with the same user settings, as a user restarting GNUbase
-		// would, with the main window as it was first opened. The engine takes MIDI and audio from the system's
-		// backends then.
+		// would, with the main window as it was first opened and the resources folder it was started with. The engine
+		// takes MIDI and audio from the system's backends then.
 		void restart();
 
 		// Runs an engine command that must succeed; returns its result.

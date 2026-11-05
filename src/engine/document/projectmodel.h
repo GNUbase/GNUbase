@@ -155,8 +155,8 @@ namespace gnubase::engine
 		void registerRecordingCommands(Engine& engine); // recording.cpp: recording.add
 		void registerRenderCommands(Engine& engine);    // renderinplace.cpp: track.freeze, track.renderInPlace
 		Json addRecording(Project& project, CommandContext& context);
-		void registerPoolCommands(Engine& engine); // pool.cpp: pool.*, poolFolder.*, clip.set, media management (#93)
-		void registerFadeCommands(Engine& engine); // fadeedits.cpp: fades, crossfades and auto fades
+		void registerPoolCommands(Engine& engine, Jobs& jobs); // pool.cpp: pool.*, poolFolder.*, clip.set, media (#93)
+		void registerFadeCommands(Engine& engine);             // fadeedits.cpp: fades, crossfades and auto fades
 		void registerParameterCommands(Engine& engine); // parameters.cpp: parameter.list, parameter.get, parameter.set
 		void registerSlotCommands(Engine& engine);      // slotcommands.cpp: plugin.*
 		void registerEventEditCommands(Engine& engine); // eventedits.cpp: event.*, parts and events (#85)

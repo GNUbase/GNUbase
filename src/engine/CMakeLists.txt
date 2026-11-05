@@ -1,7 +1,15 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # The single-file decoders in ext/, compiled once as third-party code: without GNUbase's warnings or clang-tidy.
+# Their configuration is part of the interface, so that every file that includes their headers sees the same
+# declarations: dr_libs without its stdio functions (see decoders.c), so a call to one of them fails to compile, and
+# stb_vorbis without its push data API.
 add_library(gnubase-decoders STATIC audiofile/decoders.c)
 target_include_directories(gnubase-decoders SYSTEM PUBLIC ${PROJECT_SOURCE_DIR}/ext/dr_libs ${PROJECT_SOURCE_DIR}/ext/stb)
+target_compile_definitions(gnubase-decoders PUBLIC
+	DR_FLAC_NO_STDIO
+	DR_MP3_NO_STDIO
+	DR_WAV_NO_STDIO
+	STB_VORBIS_NO_PUSHDATA_API)
 
 find_package(Threads REQUIRED)
 
@@ -152,6 +160,10 @@ add_library(gnubase-engine STATIC
 	graph/processor.h
 	jobs/jobs.cpp jobs/jobs.h
 	media/backup.cpp media/backup.h
+	metronome/clicks.h
+	metronome/metronome.cpp metronome/metronome.h
+	metronome/metronomecommands.cpp metronome/metronomecommands.h
+	metronome/metronomesettings.cpp metronome/metronomesettings.h
 	midi/chords.cpp midi/chords.h
 	midi/controllerlanes.cpp midi/controllerlanes.h
 	midi/functioncommands.cpp midi/functioncommands.h

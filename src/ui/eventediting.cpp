@@ -674,6 +674,7 @@ namespace gnubase::ui
 			m_drag = Drag::ResizeEnd;
 		else
 			m_drag = Drag::Events;
+		m_resizeFrom = atStart ? shown->start : shown->end;
 	}
 
 	std::string EventDisplay::pointerAt(double x, double y, const std::string& keys) const
@@ -728,11 +729,12 @@ namespace gnubase::ui
 		showPointer();
 	}
 
-	void EventDisplay::areaMove(double dx, double dy, bool constrained)
+	void EventDisplay::areaMove(Rml::Event& event, double dx, double dy)
 	{
 		if (!m_dragMoved && std::abs(dx) < g_dragThreshold && std::abs(dy) < g_dragThreshold)
 			return;
 		m_dragMoved = true;
+		const bool constrained = restricts(event);
 		if (m_drag == Drag::Automation)
 		{
 			automationMove(m_pressX + dx, m_pressY + dy);
@@ -745,10 +747,19 @@ namespace gnubase::ui
 			showFades();
 			return;
 		}
-		if (m_drag != Drag::Events && m_drag != Drag::ResizeStart && m_drag != Drag::ResizeEnd)
-			toolMove(m_pressX + dx, m_pressY + dy);
-		if (m_drag != Drag::Events)
+		if (m_drag == Drag::ResizeStart || m_drag == Drag::ResizeEnd)
+		{
+			// The selection shows the size the release gives it, with the keys held now (#732).
+			m_pressed = modifiersOf(event);
+			m_resizeDx = dx;
+			previewResize(resizeParameters(dx, m_drag));
 			return;
+		}
+		if (m_drag != Drag::Events)
+		{
+			toolMove(m_pressX + dx, m_pressY + dy);
+			return;
+		}
 		// The drag delay (reference manual p. 256): events move once the press is held that long.
 		if (!m_dragStarted && now() - m_pressTime < g_dragDelay)
 			return;
@@ -879,24 +890,15 @@ namespace gnubase::ui
 		const double dy = (event.GetParameter<float>("mouse_y", 0.0F) - m_dragY) / dpRatio();
 		if (drag != Drag::Events)
 		{
-			// The pressed event's edge snaps, unless the tool modifier Disable Snapping is held; the selection's
-			// edges move as far.
-			const auto pressed = std::find_if(
-				m_events.begin(), m_events.end(), [this](const Shown& shown) { return shown.id == m_dragEvent; });
-			if (pressed == m_events.end())
+			// Not if the pressed event went meanwhile: the selection's edges move as far as its edge.
+			if (std::none_of(
+					m_events.begin(), m_events.end(), [this](const Shown& shown) { return shown.id == m_dragEvent; }))
+			{
+				endResize();
+				showProject();
 				return;
-			const double from = drag == Drag::ResizeStart ? pressed->start : pressed->end;
-			const double to = from + (dx * m_view.scale);
-			Json parameters =
-				shiftTo(modifiers("sizeObjects.disableSnapping") ? time::Position{time::TimeBase::Linear, samples(to)}
-																 : snapAt(to, from),
-					from)
-					.first;
-			parameters["events"] = m_selection;
-			parameters["edge"] = drag == Drag::ResizeStart ? "start" : "end";
-			parameters["mode"] = m_sizingMovesContents ? "moveContents" : "normal";
-			parameters["zeroCrossing"] = m_snap.zeroCrossing;
-			edit("event.resize", std::move(parameters));
+			}
+			resizeUp(resizeParameters(dx, drag));
 			return;
 		}
 		// Released before the drag delay: neither a move nor a click.
@@ -928,6 +930,126 @@ namespace gnubase::ui
 			return;
 		}
 		moveSelection(moveShift(shift.first).first, lanes, copy, shared);
+	}
+
+	// The pressed event's edge snaps, unless the tool modifier Disable Snapping is held; the selection's edges move as
+	// far.
+	Json EventDisplay::resizeParameters(double dx, Drag drag) const
+	{
+		const double to = m_resizeFrom + (dx * m_view.scale);
+		Json parameters =
+			shiftTo(modifiers("sizeObjects.disableSnapping") ? time::Position{time::TimeBase::Linear, samples(to)}
+															 : snapAt(to, m_resizeFrom),
+				m_resizeFrom)
+				.first;
+		parameters["events"] = m_selection;
+		parameters["edge"] = drag == Drag::ResizeStart ? "start" : "end";
+		parameters["mode"] = m_sizingMovesContents ? "moveContents" : "normal";
+		parameters["zeroCrossing"] = m_snap.zeroCrossing;
+		return parameters;
+	}
+
+	void EventDisplay::previewResize(Json parameters)
+	{
+		m_resizeWanted = std::move(parameters);
+		askResizePreview();
+	}
+
+	// One preview on its way at a time; when it is in, the latest one wanted, if that's another.
+	void EventDisplay::askResizePreview()
+	{
+		if (m_resizeAsking || m_resizeWanted.is_null() || m_resizeWanted == m_resizeAsked)
+			return;
+		m_resizeAsked = m_resizeWanted;
+		m_resizeAsking = true;
+		m_binding.send("event.previewResize", m_resizeAsked,
+			[this, gesture = m_resizeGesture, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (alive.expired())
+					return;
+				m_resizeAsking = false;
+				if (gesture == m_resizeGesture)
+				{
+					// One that fails, e.g. for a locked event, shows the events as they are, as the release leaves
+					// them.
+					m_resizePreview = result.ok() ? result.value : Json();
+					showProject();
+				}
+				askResizePreview();
+			});
+	}
+
+	void EventDisplay::resizeProjectChanged()
+	{
+		if (m_resizeLanded)
+		{
+			// The first project after the last release's resize shows it: its preview has done its part.
+			m_resizeLanded = false;
+			m_releasedPreview = Json();
+		}
+		if (!m_resizeWanted.is_null())
+		{
+			// Changed during the drag (an undo, another client's edit): the preview is asked again.
+			m_resizeAsked = Json();
+			askResizePreview();
+		}
+	}
+
+	void EventDisplay::resizeKeysChanged()
+	{
+		if ((m_drag != Drag::ResizeStart && m_drag != Drag::ResizeEnd) || !m_dragMoved || m_held == m_pressed)
+			return;
+		m_pressed = m_held; // e.g. Disable Snapping, without the mouse moving
+		previewResize(resizeParameters(m_resizeDx, m_drag));
+	}
+
+	void EventDisplay::endResize()
+	{
+		++m_resizeGesture;
+		m_resizeWanted = Json();
+		m_resizeAsked = Json();
+		m_resizePreview = Json();
+	}
+
+	void EventDisplay::resizeUp(Json parameters)
+	{
+		// The preview stays until a project answer after the resize shows it, which then looks the same. If the
+		// resize fails, or the preview shown isn't the release's, the project is asked for: a resize that changes
+		// nothing announces nothing.
+		// A drag that starts meanwhile has its own preview over this one, and the engine resizes from where this
+		// release leaves the events.
+		const bool previewed = !m_resizeAsking && parameters == m_resizeAsked && !m_resizePreview.is_null();
+		if (!m_resizePreview.is_null())
+			m_releasedPreview = m_resizePreview;
+		endResize();
+		m_resizeLanded = false;
+		m_binding.send("event.resize", std::move(parameters),
+			[this, previewed, release = ++m_resizeReleases, alive = std::weak_ptr<bool>(m_alive)](
+				const engine::Result& result)
+			{
+				if (alive.expired())
+					return;
+				if (!result.ok())
+					logging::warning("An edit of events failed: {}", result.error);
+				if (release == m_resizeReleases) // the last one: its preview goes with the next project
+					m_resizeLanded = true;
+				if (!result.ok() || !previewed)
+					requestProject();
+			});
+	}
+
+	bool EventDisplay::cancelResize()
+	{
+		if (m_drag != Drag::ResizeStart && m_drag != Drag::ResizeEnd)
+			return false;
+		m_drag = Drag::None;
+		m_dragMoved = false;
+		const bool shown = !m_resizePreview.is_null();
+		endResize();
+		if (shown)
+			showProject();
+		showPointer();
+		return true;
 	}
 
 	bool EventDisplay::copyKeys(const std::string& keys) const

@@ -11,6 +11,7 @@ namespace gnubase::engine
 {
 	class Engine;
 	class JobContext;
+	class Jobs;
 	class ProjectModel;
 
 	// The onsets of a media file as hitpoints, intensities relative to the sharpest. Reads the file; throws
@@ -19,5 +20,5 @@ namespace gnubase::engine
 
 	// clip.detectHitpoints (a job), clip.setHitpoints, clip.setHitpointFilter, clip.addHitpoint, clip.setHitpoint,
 	// clip.removeHitpoints and event.fromHitpoints.
-	void registerHitpointCommands(ProjectModel& model, Engine& engine);
+	void registerHitpointCommands(ProjectModel& model, Engine& engine, Jobs& jobs);
 }

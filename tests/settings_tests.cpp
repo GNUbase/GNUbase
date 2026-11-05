@@ -603,6 +603,40 @@ TEST_CASE("an older GNUbase keeps the settings and values that only a newer one 
 	CHECK(store.value("width") == 1024);
 }
 
+TEST_CASE("several settings change together in one write, or none does", "[unit]")
+{
+	const TempDir dir;
+	settings::Store store(windowFormat(), dir.path());
+	settings::Store other(windowFormat(), dir.path());
+	CHECK(other.set("level", 0.25)); // another process's change stays
+
+	CHECK(store.set(Json{{"width", 1024}, {"title", "Mixer"}, {"height", 600}}) ==
+		std::vector<std::string>{"title", "width"}); // the ones that changed, sorted
+	CHECK(store.value("width") == 1024);
+	CHECK(store.value("title") == "Mixer");
+	CHECK(readJson(store.file()).at("values") == Json::parse(R"({"level": 0.25, "width": 1024, "title": "Mixer"})"));
+	CHECK(store.set(Json{{"width", 1024}}).empty());
+	CHECK(store.set(Json{{"width", 800}, {"title", "GNUbase"}}) == std::vector<std::string>{"title", "width"});
+	CHECK(readJson(store.file()).at("values") == Json::parse(R"({"level": 0.25})")); // back to the defaults
+
+	// One value that doesn't fit, or an unknown setting, changes none of them.
+	CHECK_THROWS_WITH(store.set(Json{{"width", 1280}, {"height", 50}}), "height must be at least 100");
+	CHECK_THROWS_WITH(store.set(Json{{"width", 1280}, {"depth", 3}}), "there is no setting depth");
+	CHECK_THROWS_AS(store.set(Json::array()), settings::SettingsError);
+	{
+		const files::FileLock locked(dir.path() / "window.lock", std::chrono::milliseconds(0));
+		store.setLockTimeout(std::chrono::milliseconds(50));
+		CHECK_THROWS_AS(store.set(Json{{"width", 1280}, {"title", "Mix"}}), settings::SettingsError);
+	}
+	CHECK(store.value("width") == 800);
+	CHECK(store.value("title") == "GNUbase");
+	CHECK(readJson(store.file()).at("values") == Json::parse(R"({"level": 0.25})"));
+
+	settings::Store memory(windowFormat());
+	CHECK(memory.set(Json{{"width", 1024}, {"title", "Mixer"}}) == std::vector<std::string>{"title", "width"});
+	CHECK(memory.value("width") == 1024);
+}
+
 TEST_CASE("several GNUbase processes share the settings file without losing each other's changes", "[unit]")
 {
 	const TempDir dir;
