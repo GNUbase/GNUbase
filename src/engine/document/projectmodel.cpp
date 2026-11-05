@@ -16,6 +16,7 @@
 #include "engine/graph/graph.h"
 #include "engine/jobs/jobs.h"
 #include "engine/media/backup.h"
+#include "engine/metronome/metronomecommands.h"
 #include "engine/midi/controllerlanes.h"
 #include "engine/midi/functioncommands.h"
 #include "engine/midi/quantizecommands.h"
@@ -3964,6 +3965,7 @@ namespace gnubase::engine
 		registerSlotCommands(engine);
 		midi::registerQuantizeCommands(*this, engine);
 		midi::registerFunctionCommands(*this, engine);
+		metronome::registerMetronomeCommands(*this, engine);
 		midi::registerControllerLaneCommands(*this, engine);
 		registerMidiFileCommands(engine);
 		registerAudioFileCommands(engine, jobs);

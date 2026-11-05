@@ -159,6 +159,10 @@ add_library(gnubase-engine STATIC
 	graph/processor.h
 	jobs/jobs.cpp jobs/jobs.h
 	media/backup.cpp media/backup.h
+	metronome/clicks.h
+	metronome/metronome.cpp metronome/metronome.h
+	metronome/metronomecommands.cpp metronome/metronomecommands.h
+	metronome/metronomesettings.cpp metronome/metronomesettings.h
 	midi/chords.cpp midi/chords.h
 	midi/controllerlanes.cpp midi/controllerlanes.h
 	midi/functioncommands.cpp midi/functioncommands.h

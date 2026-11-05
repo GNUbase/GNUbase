@@ -79,7 +79,7 @@ namespace gnubase::engine
 		{
 			return Json::parse(R"({"type": "object",
 			"properties": {"playing": {"type": "boolean"}, "recording": {"type": "boolean"},
-				"position": {"type": "integer"}, "start": {"type": "integer"},
+				"countingIn": {"type": "boolean"}, "position": {"type": "integer"}, "start": {"type": "integer"},
 				"left": {"type": "integer"}, "right": {"type": "integer"}, "cycle": {"type": "boolean"},
 				"startMode": {"type": "string", "enum": ["cursor", "cycleStart"]},
 				"returnToStart": {"type": "boolean"}, "punchIn": {"type": "boolean"},
@@ -91,7 +91,7 @@ namespace gnubase::engine
 				"midiCycleRecordMode": {"type": "string",
 					"enum": ["mix", "overwrite", "keepLast", "stacked", "mixStacked"]},
 				"lockRecord": {"type": "boolean"}},
-			"required": ["playing", "recording", "position", "start", "left", "right", "cycle", "startMode",
+			"required": ["playing", "recording", "countingIn", "position", "start", "left", "right", "cycle", "startMode",
 				"returnToStart", "punchIn", "punchOut", "preRoll", "preRollAmount", "postRoll", "postRollAmount",
 				"metronome", "audioRecordMode", "midiRecordMode", "midiCycleRecordMode", "lockRecord"]})");
 		}
@@ -274,7 +274,10 @@ namespace gnubase::engine
 						cue.playing = m_cueState.playing;
 						cue.settings = m_cueState.settings;
 					}
-					cue.position = m_transport.position();
+					// While counting in, where playback will start, as for a stopped transport.
+					const time::Samples countInStart = m_transport.countInStart();
+					cue.position = countInStart >= 0 ? countInStart : m_transport.position();
+					cue.playing = cue.playing && countInStart < 0;
 					cue.window = static_cast<time::Samples>(g_cueSeconds * m_device->format().sampleRate);
 					m_playback.cue(cue);
 					m_audition.cue(cue.window, true);
@@ -324,7 +327,8 @@ namespace gnubase::engine
 		for (uint64_t done = 0; done < frames;)
 		{
 			const auto block = static_cast<uint32_t>(std::min<uint64_t>(format.blockSize, frames - done));
-			cue(m_transport.position(), false, block, false);
+			const time::Samples countInStart = m_transport.countInStart(); // playback starts there after it
+			cue(countInStart >= 0 ? countInStart : m_transport.position(), false, block, false);
 			m_audition.cue(block, false);
 			m_playback.waitUntilBuffered(g_offlineWait);
 			m_audition.waitUntilBuffered(g_offlineWait);
@@ -490,6 +494,7 @@ namespace gnubase::engine
 		std::vector<std::vector<int>> ports = devicePorts(snapshot.busses, m_inputPorts, m_outputPorts);
 		if (m_directMonitoring)
 			monitorDirectly(snapshot, desc, ports);
+		attachMetronome(snapshot, desc);
 
 		auto program = std::make_unique<Program>(desc, format.sampleRate, format.blockSize);
 		program->tempo = snapshot.tempo;
@@ -745,6 +750,58 @@ namespace gnubase::engine
 			}
 		}
 		m_channelStates = std::move(states);
+	}
+
+	void AudioEngine::attachMetronome(const RenderSnapshot& snapshot, graph::GraphDesc& desc)
+	{
+		// Always there, so the metronome switch (transport.set metronome) clicks without a rebuild.
+		const metronome::MetronomeSettings& settings = snapshot.metronome;
+		const double deviceRate = m_device->format().sampleRate;
+		std::array<metronome::SoundLibrary::Stamp, metronome::g_accents> samples;
+		if (settings.sounds == metronome::Sounds::Samples)
+			for (size_t accent = 0; accent < samples.size(); ++accent)
+				if (!settings.samples[accent].path.empty())
+					samples[accent] = metronome::SoundLibrary::stamp(settings.samples[accent].path);
+		const bool same = m_clickSource && m_clickSource->settings == settings &&
+			m_clickSource->tempo == snapshot.tempo && m_clickSource->signatures == snapshot.signatures &&
+			m_clickSource->projectRate == snapshot.sampleRate && m_clickSource->deviceRate == deviceRate &&
+			m_clickSource->samples == samples;
+		if (!same)
+		{
+			m_metronome->setConfig(metronome::compile(
+				settings, snapshot.tempo, snapshot.signatures, snapshot.sampleRate, deviceRate, m_clickSounds));
+			m_clickSource =
+				ClickSource{settings, snapshot.tempo, snapshot.signatures, snapshot.sampleRate, deviceRate, samples};
+		}
+
+		// After every other node, so busses add the click last. Outputs and destinations that are gone are left out.
+		const int node = static_cast<int>(desc.nodes.size());
+		std::vector<int> outputs;
+		int destination = -1;
+		for (size_t i = 0; i < desc.nodes.size(); ++i)
+		{
+			const graph::NodeDesc& other = desc.nodes[i];
+			if (other.kind == graph::NodeKind::OutputBus &&
+				std::find(settings.outputs.begin(), settings.outputs.end(), other.object) != settings.outputs.end())
+			{
+				outputs.push_back(static_cast<int>(i));
+			}
+			else if (other.kind == graph::NodeKind::Channel && settings.destination != 0 &&
+				other.object == settings.destination && m_instruments.count(other.object) != 0)
+			{
+				destination = static_cast<int>(i);
+			}
+		}
+		graph::NodeDesc click;
+		click.kind = graph::NodeKind::Builtin;
+		click.format = ChannelFormat::Mono;
+		click.processor = m_metronome;
+		desc.nodes.push_back(std::move(click));
+		if (settings.audio)
+			for (const int output : outputs)
+				desc.audio.push_back({node, output});
+		if (settings.midi && destination >= 0)
+			desc.events.push_back({node, destination});
 	}
 
 	namespace
@@ -2280,19 +2337,73 @@ namespace gnubase::engine
 		sent(m_transport.play());
 	}
 
+	graph::CountIn AudioEngine::countInFrom(time::Samples start, time::Samples recordStart) const
+	{
+		const RenderSnapshot& snapshot = m_snapshots.latest();
+		const metronome::MetronomeSettings& settings = snapshot.metronome;
+		graph::CountIn countIn;
+		if (!settings.countIn)
+			return countIn;
+		const double rate = snapshot.sampleRate;
+		const time::Ticks tick = snapshot.tempo.toTicks(start, rate);
+		const time::Ticks at =
+			snapshot.tempo.toTicks(recordStart, rate); // the signature and tempo where recording starts
+		if (settings.countInSignature == metronome::CountInSignature::Project)
+		{
+			// From the start of the bar countInBars before the one playback starts in. A start that rounds to just
+			// before a bar line is in the bar that starts there.
+			int64_t bar = snapshot.signatures.toBarsBeats(tick).bar;
+			if (snapshot.tempo.toSamples(snapshot.signatures.barStart(bar + 1), rate) <= start)
+				++bar;
+			countIn.projectTime = true;
+			countIn.origin = snapshot.tempo.toSamples(snapshot.signatures.barStart(bar - settings.countInBars), rate);
+			countIn.length = start - countIn.origin;
+			return countIn;
+		}
+		const time::TimeSignature signature = settings.countInSignature == metronome::CountInSignature::Custom
+			? settings.customSignature
+			: snapshot.signatures.signatureAt(at);
+		countIn.bpm = snapshot.tempo.bpmAt(at);
+		countIn.numerator = signature.numerator;
+		countIn.denominator = signature.denominator;
+		const metronome::ConstantTimeline timeline{countIn.bpm, signature, rate};
+		countIn.length = timeline.toSamples(timeline.barStart(settings.countInBars));
+		return countIn;
+	}
+
+	graph::CountIn AudioEngine::cueCountIn()
+	{
+		const time::Samples from = m_transport.startPosition();
+		if (m_device)
+			cue(from, false, m_device->format().blockSize, true);
+		const TransportSettings& settings = m_transport.settings();
+		const time::Samples start =
+			settings.startMode == StartMode::CycleStart ? settings.left : m_transport.position();
+		return countInFrom(from, Transport::recordStart(settings, start, from));
+	}
+
 	void AudioEngine::record(bool on)
 	{
-		if (on && m_device && !m_transport.playing())
-			cue(m_transport.startPosition(), false, m_device->format().blockSize, true);
-		sent(m_transport.record(on));
+		if (on && m_transport.countingIn())
+			return; // already on its way
+		sent(m_transport.record(on, on && !m_transport.playing() ? cueCountIn() : graph::CountIn{}));
+	}
+
+	void AudioEngine::setTransportSettings(const TransportSettings& settings)
+	{
+		const time::Samples before = m_transport.startPosition();
+		sent(m_transport.set(settings));
+		if (m_transport.countingIn() && m_transport.startPosition() != before)
+			sent(m_transport.record(true, cueCountIn()));
 	}
 
 	Json AudioEngine::transportStatus() const
 	{
 		const TransportSettings& settings = m_transport.settings();
 		return {{"playing", m_transport.playing()}, {"recording", m_transport.recording()},
-			{"position", m_transport.position()}, {"start", m_transport.playbackStart()}, {"left", settings.left},
-			{"right", settings.right}, {"cycle", settings.cycle},
+			{"countingIn", m_transport.countingIn()}, {"position", m_transport.position()},
+			{"start", m_transport.playbackStart()}, {"left", settings.left}, {"right", settings.right},
+			{"cycle", settings.cycle},
 			{"startMode", settings.startMode == StartMode::CycleStart ? "cycleStart" : "cursor"},
 			{"returnToStart", settings.returnToStart}, {"punchIn", settings.punchIn}, {"punchOut", settings.punchOut},
 			{"preRoll", settings.preRoll}, {"preRollAmount", settings.preRollAmount}, {"postRoll", settings.postRoll},
@@ -2390,6 +2501,8 @@ namespace gnubase::engine
 		if (m_device)
 			cue(position, false, m_device->format().blockSize, true); // exactly there, like a start
 		sent(m_transport.locate(position));
+		if (m_transport.countingIn()) // again, so that it ends on the bar line where playback now starts
+			sent(m_transport.record(true, cueCountIn()));
 	}
 
 	void AudioEngine::setTransport(const Json& parameters)
@@ -2461,7 +2574,7 @@ namespace gnubase::engine
 				"midiCycleRecordMode must be mix, overwrite, keepLast, stacked or mixStacked");
 			settings.midiCycleRecordMode = static_cast<MidiCycleRecordMode>(index);
 		}
-		sent(m_transport.set(settings));
+		setTransportSettings(settings);
 	}
 
 	void AudioEngine::registerTransportCommands(Engine& engine)
@@ -2493,7 +2606,8 @@ namespace gnubase::engine
 		// Lock Record: a recording doesn't stop or punch out by these commands, only by a confirmed stop.
 		const auto unlocked = [this]
 		{
-			require(!m_transport.settings().lockRecord || !m_transport.recording(),
+			// A count-in hasn't recorded anything yet.
+			require(!m_transport.settings().lockRecord || !m_transport.recording() || m_transport.countingIn(),
 				"recording is locked: stop it with transport.stop confirmed, or unlock it with transport.set "
 				"lockRecord false first");
 		};
@@ -2511,7 +2625,9 @@ namespace gnubase::engine
 		command("transport.record",
 			"Starts recording (record true, the default): playback starts as with transport.play if it stood, and "
 			"recording where playback would start without the pre-roll; or recording punches in where it plays. With "
-			"punchIn before the left locator, recording starts at the left locator instead. record false punches out "
+			"punchIn before the left locator, recording starts at the left locator instead. From stop, with the "
+			"metronome's count-in on (metronome.set countIn), the metronome counts in first and playback starts at "
+			"the exact sample where the count-in ends; transport.stop ends a count-in. record false punches out "
 			"and playback goes on, refused while lockRecord is on. Record-enabled tracks may monitor their input "
 			"meanwhile, by the user setting audio.autoMonitoring (see channel.set).",
 			R"({"type": "object", "additionalProperties": false, "properties": {"record": {"type": "boolean"}}})",
@@ -2533,9 +2649,10 @@ namespace gnubase::engine
 				const std::string setting = parameters.value("setting", "");
 				if (setting == "record")
 				{
-					if (m_transport.recording())
+					const bool on = m_transport.recording() || m_transport.countingIn();
+					if (on)
 						unlocked();
-					record(!m_transport.recording());
+					record(!on);
 					return;
 				}
 				if (!setting.empty())
@@ -2553,7 +2670,7 @@ namespace gnubase::engine
 					else if (setting == "postRoll")
 						value = &settings.postRoll;
 					*value = !*value;
-					sent(m_transport.set(settings));
+					setTransportSettings(settings);
 					return;
 				}
 				if (m_transport.playing())
@@ -2585,7 +2702,8 @@ namespace gnubase::engine
 			"and postRollAmount (the same): after an automatic punch out with audio.stopAfterPunchOut, playback goes "
 			"on that much longer before it stops. Recording that "
 			"punches in or out and playback that stops on their own announce transport.changed. metronome is the "
-			"transport bar's switch; the click comes with the metronome. audioRecordMode: what a recording does to the "
+			"transport bar's switch for the metronome click (metronome.set). audioRecordMode: what a recording does to "
+			"the "
 			"events it overlaps on its track (see "
 			"recording.add): keepHistory (the default), cycleHistoryReplace or replace. midiRecordMode: what a MIDI "
 			"recording does to the MIDI parts it overlaps (see recording.add): newParts (the default), merge or "
@@ -2634,7 +2752,9 @@ namespace gnubase::engine
 			{"transport.get", 1,
 				"Whether playback and recording run, the project cursor in samples, where the last playback started "
 				"(start, in samples, without the pre-roll), the locators and the modes. "
-				"After a locate the cursor is where it goes, even before the audio thread has applied it.",
+				"After a locate the cursor is where it goes, even before the audio thread has applied it. countingIn: "
+				"the metronome counts in before a recording from stop (see transport.record); meanwhile playing is "
+				"true, and recording is whether recording starts where playback starts.",
 				noParameters(), transportSchema(), true},
 			[this](CommandContext&) { return transportStatus(); });
 	}

@@ -2421,6 +2421,64 @@ Returns:
 
 Resets the meters' maxima (peakMax, rmsMax, truePeakMax, momentaryMax, shortTermMax) and starts the loudness measurement over (integrated, range, seconds); see meter.get. Announces meter.reset.
 
+### metronome
+
+#### `gnubase.metronome.get`
+
+The project's metronome settings and click patterns (see metronome.set).
+
+Only reads; changes nothing.
+
+Returns:
+
+- `audio`: object, required
+- `countIn`: object, required
+- `midi`: object, required
+- `patterns`: array, required
+- `whilePlaying`: boolean, required
+- `whileRecording`: boolean, required
+
+#### `gnubase.metronome.set`
+
+Changes the given metronome settings and keeps the rest. The metronome switch, transport.set metronome, turns the click on; whilePlaying, whileRecording: when it sounds then. audio: the audio click; enabled, outputs (the output busses it plays through; empty: the main mix), level (dB, -144 to 6, on top of each accent's), sounds (beeps, or samples: sample files where an accent has one) and per accent 1 to 4 by index, beeps [{frequency (Hz, 20-20000), level}] and samples [{path (an audio file, up to 10 s are played, or null), level}]. midi: the MIDI click; enabled, destination (an instrument channel, or null), channel (1-16) and per accent notes [{note (0-127), velocity (0-1)}]. countIn: enabled (transport.record from stop counts in first, whether the click is on or not), bars (1-16) and signature: start (the signature and tempo where recording starts), project (the bars before where playback starts, as the project has them) or custom (customSignature {numerator, denominator} at the tempo where recording starts). patterns replaces every click pattern (see metronome.setPattern). Accent 1 is the sound of a bar's first beat. Settings are not undo steps; they are saved with the project.
+
+Parameters:
+
+- `audio`: object
+- `countIn`: object
+- `midi`: object
+- `patterns`: array of object
+- `whilePlaying`: boolean
+- `whileRecording`: boolean
+
+Returns:
+
+- `audio`: object, required
+- `countIn`: object, required
+- `midi`: object, required
+- `patterns`: array, required
+- `whilePlaying`: boolean, required
+- `whileRecording`: boolean, required
+
+#### `gnubase.metronome.setPattern`
+
+Sets the click pattern of a time signature: accents, the bar's clicks, evenly spread over it, each with an accent from 1 (the first beat's sound) to 4, or 0 for a click that stays silent; up to 64 clicks, e.g. [1, 3, 3, 2, 3, 3] for triplet eighths in 2/4. Without accents, or with an empty array, the signature goes back to its default pattern: a click per beat, the first with accent 1, the others with accent 2. The patterns apply wherever a signature holds, during playback and count-ins. Signatures with a numerator up to 64 have patterns; longer bars click on every beat.
+
+Parameters:
+
+- `accents`: array of integer
+- `denominator`: integer, required
+- `numerator`: integer, required
+
+Returns:
+
+- `audio`: object, required
+- `countIn`: object, required
+- `midi`: object, required
+- `patterns`: array, required
+- `whilePlaying`: boolean, required
+- `whileRecording`: boolean, required
+
 ### midi
 
 #### `gnubase.midi.bounce`
@@ -4252,6 +4310,7 @@ Swaps the left and right locators.
 Returns:
 
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
+- `countingIn`: boolean, required
 - `cycle`: boolean, required
 - `left`: integer, required
 - `lockRecord`: boolean, required
@@ -4274,13 +4333,14 @@ Returns:
 
 #### `gnubase.transport.get`
 
-Whether playback and recording run, the project cursor in samples, where the last playback started (start, in samples, without the pre-roll), the locators and the modes. After a locate the cursor is where it goes, even before the audio thread has applied it.
+Whether playback and recording run, the project cursor in samples, where the last playback started (start, in samples, without the pre-roll), the locators and the modes. After a locate the cursor is where it goes, even before the audio thread has applied it. countingIn: the metronome counts in before a recording from stop (see transport.record); meanwhile playing is true, and recording is whether recording starts where playback starts.
 
 Only reads; changes nothing.
 
 Returns:
 
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
+- `countingIn`: boolean, required
 - `cycle`: boolean, required
 - `left`: integer, required
 - `lockRecord`: boolean, required
@@ -4314,6 +4374,7 @@ Parameters:
 Returns:
 
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
+- `countingIn`: boolean, required
 - `cycle`: boolean, required
 - `left`: integer, required
 - `lockRecord`: boolean, required
@@ -4341,6 +4402,7 @@ Starts playback from the project cursor, or from the left locator if startMode i
 Returns:
 
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
+- `countingIn`: boolean, required
 - `cycle`: boolean, required
 - `left`: integer, required
 - `lockRecord`: boolean, required
@@ -4363,7 +4425,7 @@ Returns:
 
 #### `gnubase.transport.record`
 
-Starts recording (record true, the default): playback starts as with transport.play if it stood, and recording where playback would start without the pre-roll; or recording punches in where it plays. With punchIn before the left locator, recording starts at the left locator instead. record false punches out and playback goes on, refused while lockRecord is on. Record-enabled tracks may monitor their input meanwhile, by the user setting audio.autoMonitoring (see channel.set).
+Starts recording (record true, the default): playback starts as with transport.play if it stood, and recording where playback would start without the pre-roll; or recording punches in where it plays. With punchIn before the left locator, recording starts at the left locator instead. From stop, with the metronome's count-in on (metronome.set countIn), the metronome counts in first and playback starts at the exact sample where the count-in ends; transport.stop ends a count-in. record false punches out and playback goes on, refused while lockRecord is on. Record-enabled tracks may monitor their input meanwhile, by the user setting audio.autoMonitoring (see channel.set).
 
 Parameters:
 
@@ -4372,6 +4434,7 @@ Parameters:
 Returns:
 
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
+- `countingIn`: boolean, required
 - `cycle`: boolean, required
 - `left`: integer, required
 - `lockRecord`: boolean, required
@@ -4394,7 +4457,7 @@ Returns:
 
 #### `gnubase.transport.set`
 
-Changes the given settings and keeps the rest. left and right: the locators, in samples, or "cursor" for the cursor position. cycle: cycle playback between the locators; with the right locator before the left one, playback skips the range instead. startMode: cursor or cycleStart (the left locator). returnToStart: on stop, return to where playback started. punchIn: playback that reaches the left locator starts recording there. punchOut: recording that reaches the right locator ends there and playback goes on, or stops with the user setting audio.stopAfterPunchOut, unless it cycles. preRoll and preRollAmount (samples, up to an hour at 768 kHz): playback starts that much before the cursor. postRoll and postRollAmount (the same): after an automatic punch out with audio.stopAfterPunchOut, playback goes on that much longer before it stops. Recording that punches in or out and playback that stops on their own announce transport.changed. metronome is the transport bar's switch; the click comes with the metronome. audioRecordMode: what a recording does to the events it overlaps on its track (see recording.add): keepHistory (the default), cycleHistoryReplace or replace. midiRecordMode: what a MIDI recording does to the MIDI parts it overlaps (see recording.add): newParts (the default), merge or replace. midiCycleRecordMode: what a MIDI cycle recording makes of its laps (see recording.add): mix (the default), overwrite, keepLast, stacked or mixStacked. lockRecord: Lock Record, which keeps a recording from stopping or punching out by accident: transport.stop stops it only with confirmed, transport.record and transport.toggle don't end it, and recording ignores the punch out at the right locator; it stays on until it is set off.
+Changes the given settings and keeps the rest. left and right: the locators, in samples, or "cursor" for the cursor position. cycle: cycle playback between the locators; with the right locator before the left one, playback skips the range instead. startMode: cursor or cycleStart (the left locator). returnToStart: on stop, return to where playback started. punchIn: playback that reaches the left locator starts recording there. punchOut: recording that reaches the right locator ends there and playback goes on, or stops with the user setting audio.stopAfterPunchOut, unless it cycles. preRoll and preRollAmount (samples, up to an hour at 768 kHz): playback starts that much before the cursor. postRoll and postRollAmount (the same): after an automatic punch out with audio.stopAfterPunchOut, playback goes on that much longer before it stops. Recording that punches in or out and playback that stops on their own announce transport.changed. metronome is the transport bar's switch for the metronome click (metronome.set). audioRecordMode: what a recording does to the events it overlaps on its track (see recording.add): keepHistory (the default), cycleHistoryReplace or replace. midiRecordMode: what a MIDI recording does to the MIDI parts it overlaps (see recording.add): newParts (the default), merge or replace. midiCycleRecordMode: what a MIDI cycle recording makes of its laps (see recording.add): mix (the default), overwrite, keepLast, stacked or mixStacked. lockRecord: Lock Record, which keeps a recording from stopping or punching out by accident: transport.stop stops it only with confirmed, transport.record and transport.toggle don't end it, and recording ignores the punch out at the right locator; it stays on until it is set off.
 
 Parameters:
 
@@ -4418,6 +4481,7 @@ Parameters:
 Returns:
 
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
+- `countingIn`: boolean, required
 - `cycle`: boolean, required
 - `left`: integer, required
 - `lockRecord`: boolean, required
@@ -4449,6 +4513,7 @@ Parameters:
 Returns:
 
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
+- `countingIn`: boolean, required
 - `cycle`: boolean, required
 - `left`: integer, required
 - `lockRecord`: boolean, required
@@ -4480,6 +4545,7 @@ Parameters:
 Returns:
 
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
+- `countingIn`: boolean, required
 - `cycle`: boolean, required
 - `left`: integer, required
 - `lockRecord`: boolean, required
@@ -4507,6 +4573,7 @@ Takes over what the audio thread changed on its own: recording that punched in o
 Returns:
 
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
+- `countingIn`: boolean, required
 - `cycle`: boolean, required
 - `left`: integer, required
 - `lockRecord`: boolean, required
