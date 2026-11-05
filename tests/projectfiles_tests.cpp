@@ -1061,10 +1061,14 @@ TEST_CASE("a failed auto save's error waits while other modal dialogs are open, 
 	CHECK(elements(app, "#project-error-dialog").empty());
 }
 
-TEST_CASE("a failed auto save's error that waits for a dialog is dropped by an auto save or save that succeeds", "[ui]")
+TEST_CASE("a failed auto save's error that waits for a dialog is dropped once auto save works or the project was saved "
+		  "or opened",
+	"[ui]")
 {
 	test::UiApp app({900, 640});
 	app.appUi().showProject();
+	Client client(app.engine());
+	AutoSaveEvents events(app.engine());
 	const test::TempDir dir;
 	const fs::path autoSaves = dir.path() / "Auto Saves";
 	app.call("project.save", {{"path", utf8(dir.path() / "Song.dawproject")}});
@@ -1072,11 +1076,21 @@ TEST_CASE("a failed auto save's error that waits for a dialog is dropped by an a
 	std::ofstream(autoSaves) << "not a folder";
 	REQUIRE(app.waitUntil([&app] { return elements(app, "#track-list .track-name").size() == 1; }));
 
-	const auto failWhileOpen = [&app]
+	const auto lastEvent = [&events, &client]
+	{
+		const std::vector<std::string> names = events.names(client);
+		return names.empty() ? std::string() : names.back();
+	};
+	const auto openAutoFades = [&app]
 	{
 		app.keys().run("project.autoFades", Json::object(), app.main(), nullptr);
 		REQUIRE(app.waitUntil([&app] { return shown(app, "#auto-fades"); }));
+	};
+	const auto failWhileOpen = [&app, &openAutoFades, &lastEvent]
+	{
+		openAutoFades();
 		app.engine().advanceClock(g_pastInterval);
+		CHECK(lastEvent() == "project.autoSaveFailed");
 		handleEarlierEvents(app);
 		CHECK(elements(app, "#project-error-dialog").empty());
 	};
@@ -1092,15 +1106,32 @@ TEST_CASE("a failed auto save's error that waits for a dialog is dropped by an a
 	failWhileOpen();
 	fs::remove(autoSaves);
 	app.engine().advanceClock(g_pastInterval);
-	REQUIRE(app.waitUntil([&autoSaves] { return fs::is_regular_file(autoSaves / "Song-01.bak"); }));
+	CHECK(lastEvent() == "project.autoSaved");
 	handleEarlierEvents(app);
 	closeAndCheck();
 
 	// The project is saved while the dialog is open.
 	blockSaving(autoSaves / "Song-02.bak");
 	failWhileOpen();
+	const size_t saved = elements(app, "#track-list .track-name").size();
 	app.call("project.save");
 	handleEarlierEvents(app);
+	closeAndCheck();
+
+	// An auto save fails and the next succeeds before the UI hears of either.
+	openAutoFades();
+	CHECK(!client.call("project.autoSave").ok());
+	fs::remove_all(fs::u8path((autoSaves / "Song-02.bak").u8string() + ".saving"));
+	CHECK(client.call("project.autoSave").ok());
+	handleEarlierEvents(app);
+	CHECK(elements(app, "#project-error-dialog").empty());
+	closeAndCheck();
+
+	// The project is opened again while the dialog is open: File > Revert.
+	blockSaving(autoSaves / "Song-03.bak");
+	failWhileOpen();
+	app.call("project.revert");
+	REQUIRE(app.waitUntil([&app, saved] { return elements(app, "#track-list .track-name").size() == saved; }));
 	closeAndCheck();
 }
 
