@@ -2,6 +2,7 @@
 #include "uiapp.h"
 
 #include "app/headless.h"
+#include "ui/shell.h"
 
 #include <RmlUi/Core/Context.h>
 #include <SDL3/SDL.h>
@@ -59,6 +60,11 @@ namespace gnubase::test
 		start(std::move(midiBackends), std::move(audioBackends));
 	}
 
+	UiApp::UiApp(ui::Size size, std::filesystem::path resources) : m_size(size), m_resources(std::move(resources))
+	{
+		start(midi::makeBackends(), audio::makeBackends());
+	}
+
 	void UiApp::restart()
 	{
 		m_automation.reset();
@@ -83,8 +89,7 @@ namespace gnubase::test
 		main.hidden = true; // tests don't flash windows on the desktop
 		try
 		{
-			m_ui = std::make_unique<app::AppUi>(
-				*m_engine, std::filesystem::path(GNUBASE_RESOURCES_DIR), main, std::cout, 4);
+			m_ui = std::make_unique<app::AppUi>(*m_engine, m_resources, main, std::cout, 4);
 		}
 		catch (const ui::GpuUnavailable& error)
 		{
@@ -160,5 +165,79 @@ namespace gnubase::test
 		const ImageDiff diff = compareWithGolden("ui/" + name, image, {8, image.pixels.size() / 4 / 500});
 		INFO(diff.report);
 		CHECK(diff.equal);
+	}
+
+	namespace
+	{
+		Rml::Context& contextOf(UiApp& app, std::optional<ui::WindowId> window)
+		{
+			const ui::Window* found = window ? app.shell().find(*window) : &app.main();
+			if (found == nullptr)
+				throw std::invalid_argument("no such window");
+			return found->context();
+		}
+	}
+
+	double controlValue(UiApp& app, std::optional<ui::WindowId> window, const std::string& selector)
+	{
+		const engine::Json found = app.ui().dom(window, selector, 0).at("elements");
+		REQUIRE(found.size() == 1);
+		return std::stod(found.at(0).at("attributes").at("value").get<std::string>());
+	}
+
+	double lateSteps(UiApp& app, std::optional<ui::WindowId> window, const std::string& selector, int steps,
+		int direction, const std::function<void()>& step)
+	{
+		double value = controlValue(app, window, selector);
+		for (int taken = 0; taken < steps; ++taken)
+		{
+			step();
+			const double stepped = controlValue(app, window, selector);
+			app.call("engine.version"); // after the commands that the step sent
+			app.shell().step(std::chrono::milliseconds(0));
+			const double now = controlValue(app, window, selector);
+			INFO("step " << taken << ": from " << value << " to " << stepped << ", then " << now);
+			CHECK((stepped - value) * direction < 0.0);
+			CHECK(now == stepped);
+			value = now;
+		}
+		return value;
+	}
+
+	LateDrag::LateDrag(UiApp& app, std::optional<ui::WindowId> window, std::string selector)
+		: m_app(app), m_window(window), m_selector(std::move(selector)), m_context(contextOf(app, window))
+	{
+		const engine::Json found = app.ui().dom(window, m_selector, 0).at("elements");
+		REQUIRE(found.size() == 1);
+		const engine::Json& box = found.at(0).at("box");
+		m_at = {box.at("x").get<int>() + (box.at("width").get<int>() / 2),
+			box.at("y").get<int>() + (box.at("height").get<int>() / 2)};
+		m_context.ProcessMouseMove(m_at.x, m_at.y, 0);
+		m_context.ProcessMouseButtonDown(0, 0);
+	}
+
+	double LateDrag::move(int steps, int direction, int perAnswer)
+	{
+		return lateSteps(m_app, m_window, m_selector, steps, direction,
+			[this, direction, perAnswer]
+			{
+				for (int step = 0; step < perAnswer; ++step)
+				{
+					m_moved += 2 * direction;
+					m_context.ProcessMouseMove(m_at.x, m_at.y + m_moved, 0);
+				}
+			});
+	}
+
+	void LateDrag::release(bool stays)
+	{
+		const double dragged = value();
+		m_context.ProcessMouseButtonUp(0, 0);
+		for (int answer = 0; stays && answer < 3; ++answer)
+		{
+			m_app.call("engine.version");
+			m_app.shell().step(std::chrono::milliseconds(0));
+			CHECK(value() == dragged);
+		}
 	}
 }

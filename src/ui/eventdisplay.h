@@ -155,9 +155,11 @@ namespace gnubase::ui
 		void setTrackHeight(uint64_t track, double height);
 		void setTrackHeights(double height); // every track's
 		void setHiddenTracks(std::set<uint64_t> tracks);
-		// The project as project.get last returned it, or null before the first answer; loads() counts the answers.
+		// The project as project.get last returned it, or null before the first answer; loads() counts the answers,
+		// and read() is when the binding handed the last one on (EngineBinding::handed).
 		const engine::Json& project() const { return m_project; }
 		uint64_t loads() const { return m_loads; }
+		uint64_t read() const { return m_read; }
 		// Folder tracks' data blocks (reference manual p. 226, docs/features/folder-tracks.md): per lane, the events
 		// and parts of the tracks inside a folder's lane, by the user setting ui.folderData (always, never, or
 		// hideWhenExpanded: while the folder is folded); empty for the other lanes.
@@ -431,6 +433,7 @@ namespace gnubase::ui
 		};
 		void findControls();
 		void requestMarkers();
+		void readMarkerMagnets(const engine::Json& project); // m_markers, from a project.get answer
 		void click(Rml::Element* target);
 		void dialogEvent(Rml::Event& event);
 		void openDialog(const char* file);
@@ -664,6 +667,7 @@ namespace gnubase::ui
 		std::set<uint64_t> m_hidden;
 		engine::Json m_project;
 		uint64_t m_loads = 0;
+		uint64_t m_read = 0;
 		std::function<void()> m_layoutListener;
 		std::vector<std::string> m_laneTypes; // and its type
 		std::vector<bool> m_laneLinear;       // and whether its time base is linear
@@ -753,7 +757,7 @@ namespace gnubase::ui
 		std::string m_held;           // the modifier keys held, as modifiersOf joins them, for the pointer
 		std::set<int> m_modifierKeys; // the modifier keys seen going down and not up (Rml::Input::KeyIdentifier)
 		std::vector<CycleMarker> m_cycleMarkers;
-		std::vector<int64_t> m_markers; // every marker's position and end, in samples, for snapping
+		std::vector<int64_t> m_markers; // every marker track's markers' positions and ends, in samples, for snapping
 		engine::SnapSettings m_snap;
 		int m_formatsSent = 0; // snap.set {format} from the ruler or the grid type menu that isn't answered yet
 		engine::midi::QuantizeSettings m_quantize;

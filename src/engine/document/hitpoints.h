@@ -10,13 +10,14 @@
 namespace gnubase::engine
 {
 	class Engine;
+	class JobContext;
 	class ProjectModel;
 
 	// The onsets of a media file as hitpoints, intensities relative to the sharpest. Reads the file; throws
-	// CommandError if it can't.
-	std::vector<Hitpoint> detectHitpoints(const MediaFile& media);
+	// CommandError if it can't. With a job, checks for job.cancel and reports its progress between blocks.
+	std::vector<Hitpoint> detectHitpoints(const MediaFile& media, JobContext* job = nullptr);
 
-	// clip.detectHitpoints, clip.setHitpointFilter, clip.addHitpoint, clip.setHitpoint, clip.removeHitpoints and
-	// event.fromHitpoints.
+	// clip.detectHitpoints (a job), clip.setHitpoints, clip.setHitpointFilter, clip.addHitpoint, clip.setHitpoint,
+	// clip.removeHitpoints and event.fromHitpoints.
 	void registerHitpointCommands(ProjectModel& model, Engine& engine);
 }

@@ -349,7 +349,7 @@ TEST_CASE("a right click in the note display opens the toolbox, by the setting a
 	CHECK(!toolbox());
 	rightClick(f.at(8, 70), {"shift"});
 	REQUIRE(toolbox());
-	CHECK(f.elements("#key-editor-toolbox > menuitem").size() == 6);
+	CHECK(f.elements("#key-editor-toolbox > menuitem").size() == 7);
 	CHECK(f.elements("#key-editor-toolbox > menuitem[checked]").at(0).at("attributes").at("key-tool") ==
 		"objectSelection");
 	// A tool in it chooses the tool, as the toolbar does, and closes it.
@@ -381,13 +381,11 @@ TEST_CASE("the transpose palette and the info line edit the selected notes", "[u
 	f.click(of(noteSelector(ids[0])));
 	f.click(of(noteSelector(ids[1])), 1, {"shift"});
 	REQUIRE(f.app.waitUntil([&] { return f.selection().size() == 2; }));
-	// The info line shows the first selected note, in another color with several (p. 1199).
-	REQUIRE(f.app.waitUntil(
-		[&]
-		{
-			return f.elements(".key-editor-info textdisplay[field=pitch]").at(0).at("attributes").at("value") == "C3";
-		}));
-	CHECK(f.has(".key-editor-info", "multiple"));
+	// The info line shows the first selected note, in another color with several (p. 1199). The engine's selection
+	// comes before the display's: the first click's editor.changed can show one note selected again until the
+	// second's arrives, so a palette click before that would transpose only the first.
+	REQUIRE(f.app.waitUntil([&] { return f.has(".key-editor-info", "multiple"); }));
+	CHECK(f.elements(".key-editor-info textdisplay[field=pitch]").at(0).at("attributes").at("value") == "C3");
 	CHECK(f.elements(".key-editor-info textdisplay[field=start]").at(0).at("attributes").at("value") == "1.1.1.0");
 	CHECK(f.elements(".key-editor-info textdisplay[field=velocity]").at(0).at("attributes").at("value") == "64");
 

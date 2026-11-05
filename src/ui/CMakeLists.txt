@@ -23,6 +23,8 @@ add_library(gnubase-ui STATIC
 	colormenu.cpp
 	colormenu.h
 	colorwidgets.cpp
+	controllerlanes.cpp
+	controllerlanes.h
 	cursors.cpp
 	cursors.h
 	datamodel.cpp
@@ -80,6 +82,8 @@ add_library(gnubase-ui STATIC
 	projectfiles.h
 	pseudolocale.cpp
 	pseudolocale.h
+	quantizepanel.cpp
+	quantizepanel.h
 	renderer.h
 	rmlui.cpp
 	rmlui.h

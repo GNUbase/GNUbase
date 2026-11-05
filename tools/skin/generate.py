@@ -575,6 +575,15 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
                                 "border-color": c["textMuted"]}),
         (".key-note.drawing", {"background-color": c["accent"] + "66"}),
         (".key-editor-step-cursor", {"background-color": c["accent"]}),
+        # The controller lanes (docs/features/controller-lanes.md): the lanes' areas like the note display, a line
+        # between lanes, the bars and steps in the notes' colors, selected ones in the second accent, those outside
+        # the part editing mode dimmed
+        (".controller-lane-area", {"background-color": c["surface"], "border-bottom-width": f"{widths['hairline']}px",
+                                   "border-bottom-color": c["border"]}),
+        (".controller-bar, .controller-step", {"background-color": mix(c["surfaceRaised"], c["accent"], .6)}),
+        (".controller-bar.selected, .controller-step.selected", {"background-color": c["accent2"]}),
+        (".controller-bar.inactive, .controller-step.inactive",
+         {"background-color": mix(c["surface"], c["textMuted"], .3)}),
         # The audio part editor (docs/features/audio-part-editor.md): lines between the lanes, the events, selected
         # ones in the second accent, muted ones and those outside the part editing mode dimmed
         (".ape-display", {"background-color": c["surface"]}),
@@ -640,6 +649,11 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         # The edit history (docs/features/edit-history.md): undone steps dimmed, and the separator after the done ones
         (".history tr.undone, .history tr.undone input.text", {"color": c["textMuted"]}),
         (".history .history-separator", {"background-color": c["accent"]}),
+        # The quantize panel's grid display (docs/features/quantize.md): the grid positions and the catch range around
+        # them
+        (".quantize-display", {"background-color": c["surface"]}),
+        (".quantize-line", {"background-color": c["accent"]}),
+        (".quantize-catch", {"background-color": c["accent"] + "33"}),
         # The on-screen keyboard (docs/features/onscreen-keyboard.md): white and black keys, lit while they sound
         (".onscreen-keyboard .white-key", {"background-color": c["text"], "color": c["background"],
                                            "border-color": c["border"]}),
