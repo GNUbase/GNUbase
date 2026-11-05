@@ -58,6 +58,7 @@ namespace gnubase::engine
 		std::vector<uint32_t> noteOrder;  // filled in by setSequence: indices into notes with a length, by pitch, then
 										  // start
 		std::vector<ChaseLane> noteLanes; // filled in by setSequence: runs of noteOrder, by channel and pitch
+		midi::Modifiers modifiers;        // for the notes played into the track (input); notes has them applied
 	};
 
 	// Which events a jump chases (the midi.chase* user settings): the controller events in effect where playback
@@ -143,11 +144,14 @@ namespace gnubase::engine
 		uint64_t playsOn() const noexcept { return m_instrument; }
 
 		// Audio thread: the events played into the track in this block (midi.inject), as from its MIDI input. They go
-		// out after the events it receives and before its parts' events, also while the transport stands. The audio
-		// engine fills them before the graph processes a block.
+		// out after the events it receives and before its parts' events, also while the transport stands, their notes
+		// as the track's MIDI modifiers play them; a note-off and poly pressure go where their note-on went, also
+		// after the modifiers changed. The audio engine fills them before the graph processes a block.
 		graph::EventBuffer& input() noexcept { return m_input; }
 
 	private:
+		// An event of its input as the modifiers play it; false if left out.
+		bool modifyInput(const midi::Modifiers& modifiers, graph::ProcessEvent& event) noexcept;
 		void play(
 			const MidiSequence& sequence, const graph::TransportSegment& segment, graph::EventBuffer& out) noexcept;
 		// Each returns false if the event buffer was full; then the note didn't start or end (though noteOn may have
@@ -194,7 +198,10 @@ namespace gnubase::engine
 		std::array<uint32_t, g_notes> m_chasedNotes{}; // while chasing: the notes to start, as indices into notes
 		graph::EventBuffer m_input;
 		std::array<bool, g_notes> m_inputHeld{}; // notes its input sent a note-on for and no note-off since
-		uint64_t m_instrument = 0;               // playOn: where its notes went in the graph that runs
+		// Where each note of its input went after the modifiers, as channel * 128 + pitch; g_notes: left out.
+		std::array<uint16_t, g_notes> m_inputTo{};
+		uint64_t m_random = 0;     // the random modifiers' seed for the next note of its input
+		uint64_t m_instrument = 0; // playOn: where its notes went in the graph that runs
 	};
 
 	// An instrument track's channel: its own parts' events and those of the MIDI tracks routed to it, played by its

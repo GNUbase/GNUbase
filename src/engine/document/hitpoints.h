@@ -8,7 +8,7 @@ namespace gnubase::engine
 	class Engine;
 	class ProjectModel;
 
-	// clip.detectHitpoints, clip.setHitpointFilter, clip.addHitpoint, clip.setHitpoint, clip.removeHitpoints and
-	// event.fromHitpoints.
+	// clip.detectHitpoints (a job), clip.setHitpoints, clip.setHitpointFilter, clip.addHitpoint, clip.setHitpoint,
+	// clip.removeHitpoints and event.fromHitpoints.
 	void registerHitpointCommands(ProjectModel& model, Engine& engine);
 }
