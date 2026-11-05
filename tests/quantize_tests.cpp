@@ -1050,6 +1050,91 @@ TEST_CASE("the preset shown is saved with the project", "[integration]")
 	CHECK(shownPreset(elsewhere.client) == "1/16");
 }
 
+namespace
+{
+	bool modified(Client& client)
+	{
+		return run(client, "project.revision").at("modified").get<bool>();
+	}
+}
+
+TEST_CASE("a preset command that changes the preset shown changes the project, which saves it", "[integration]")
+{
+	const test::TempDir dir;
+	const std::string file = (dir.path() / "shown.dawproject").u8string();
+	Fixture f;
+	const ObjectId drums = f.addPart(0);
+	f.addNotes(drums, {0, quarters(11, 10)});
+	run(f.client, "quantize.savePreset", {{"name", "Loose"}, {"settings", {{"strength", 0.5}}}});
+	run(f.client, "quantize.extractGroove", {{"part", drums}, {"name", "Drums"}});
+	run(f.client, "quantize.set", {{"preset", "1/16"}});
+	run(f.client, "project.save", {{"path", file}});
+	REQUIRE(!modified(f.client));
+
+	// Saved, closed and opened again, the project shows the preset it showed when it was saved.
+	const auto reopened = [&f, &file](const Json& preset)
+	{
+		CHECK(modified(f.client));
+		run(f.client, "project.save", {{"path", file}});
+		CHECK(!modified(f.client));
+		run(f.client, "project.new");
+		run(f.client, "project.load", {{"path", file}});
+		CHECK(shownPreset(f.client) == preset);
+	};
+
+	SECTION("saving the project's settings as a preset")
+	{
+		const uint64_t revision = run(f.client, "project.revision").at("revision").get<uint64_t>();
+		run(f.client, "quantize.savePreset", {{"name", "Sixteenths"}});
+		CHECK(shownPreset(f.client) == "Sixteenths");
+		CHECK(run(f.client, "project.revision").at("revision").get<uint64_t>() > revision);
+		reopened("Sixteenths");
+	}
+	SECTION("renaming the preset shown")
+	{
+		run(f.client, "quantize.set", {{"preset", "Loose"}});
+		run(f.client, "project.save", {{"path", file}});
+		run(f.client, "quantize.renamePreset", {{"name", "Loose"}, {"newName", "Looser"}});
+		reopened("Looser");
+	}
+	SECTION("removing the preset shown")
+	{
+		run(f.client, "quantize.savePreset", {{"name", "Sixteenths"}});
+		run(f.client, "project.save", {{"path", file}});
+		run(f.client, "quantize.removePreset", {{"name", "Sixteenths"}});
+		CHECK(shownPreset(f.client) == "1/16");
+		reopened("1/16");
+	}
+	SECTION("extracting another groove under the name of the groove shown")
+	{
+		run(f.client, "quantize.set", {{"preset", "Drums"}});
+		const ObjectId other = f.addPart(quarters(8));
+		f.addNotes(other, {quarters(8), quarters(93, 10)});
+		run(f.client, "project.save", {{"path", file}});
+		run(f.client, "quantize.extractGroove", {{"part", other}, {"name", "Drums"}});
+		CHECK(shownPreset(f.client) == nullptr);
+		reopened(nullptr);
+	}
+	SECTION("preset commands that leave the preset shown as it was leave the project as it was")
+	{
+		run(f.client, "quantize.savePreset", {{"name", "Loose"}, {"settings", {{"strength", 0.25}}}});
+		run(f.client, "quantize.renamePreset", {{"name", "Loose"}, {"newName", "Looser"}});
+		run(f.client, "quantize.removePreset", {{"name", "Looser"}});
+		run(f.client, "quantize.extractGroove", {{"part", drums}, {"name", "Drums again"}});
+		CHECK(!modified(f.client));
+
+		// Saving the preset that the settings already show, without the project naming it, changes nothing either.
+		run(f.client, "quantize.savePreset", {{"name", "Sixteenths"}});
+		run(f.client, "quantize.set", {{"settings", {{"grid", "1/8"}}}});
+		run(f.client, "quantize.set", {{"settings", {{"grid", "1/16"}}}});
+		run(f.client, "project.save", {{"path", file}});
+		REQUIRE(shownPreset(f.client) == "Sixteenths");
+		run(f.client, "quantize.savePreset", {{"name", "Sixteenths"}});
+		CHECK(shownPreset(f.client) == "Sixteenths");
+		CHECK(!modified(f.client));
+	}
+}
+
 TEST_CASE("projects keep the preset shown, and files without one or with a wrong one still load", "[unit]")
 {
 	Project project;
