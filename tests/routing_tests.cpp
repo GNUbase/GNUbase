@@ -455,8 +455,8 @@ TEST_CASE("Mute Pre-Send when Mute: mute automation mutes pre-fader sends from i
 	CHECK(wrong == 0);
 }
 
-TEST_CASE("Mute Pre-Send when Mute switched on or off for a muted channel glides its pre-fader sends there",
-	"[integration]")
+TEST_CASE(
+	"Mute Pre-Send when Mute switched on or off for a muted channel glides its pre-fader sends there", "[integration]")
 {
 	Sends mixer;
 	mixer.set({{"mute", true},
@@ -549,8 +549,8 @@ TEST_CASE("a new group or effect track for selected tracks takes their outputs o
 		ContainsSubstring("loop"));
 }
 
-TEST_CASE("group and effect tracks for selected tracks route those that can be routed and leave out the others",
-	"[unit]")
+TEST_CASE(
+	"group and effect tracks for selected tracks route those that can be routed and leave out the others", "[unit]")
 {
 	Engine engine;
 	Client client(engine);
@@ -590,8 +590,8 @@ TEST_CASE("group and effect tracks for selected tracks route those that can be r
 		Json{{"destination", 0}, {"on", false}, {"level", 0.0}, {"preFader", false}});
 	CHECK(channel(client, channelOf(grouped)).at("sends")[0].at("destination") == 0);
 	const Json channels = run(client, "project.get").at("channels");
-	CHECK(std::none_of(
-		channels.begin(), channels.end(), [effect](const Json& item) { return item.at("id") == effect; }));
+	CHECK(
+		std::none_of(channels.begin(), channels.end(), [effect](const Json& item) { return item.at("id") == effect; }));
 }
 
 TEST_CASE("group and effect tracks go into the project's Group and FX folders", "[unit]")
