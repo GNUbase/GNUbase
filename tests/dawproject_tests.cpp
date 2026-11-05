@@ -761,13 +761,53 @@ TEST_CASE("VCA faders that would control themselves are left out when a project 
 	const Json loaded = run(client, "project.get").at("linkGroups");
 	REQUIRE(loaded.size() == 3);
 	CHECK(loaded[0].at("channels") == Json({a, second}));
-	CHECK(loaded[0].at("vca") == 0); // the first group in the loop loses its VCA fader, which ends the loop
+	CHECK(loaded[0].at("vca") == 0);       // the first group in the loop loses its VCA fader, which ends the loop
+	CHECK(loaded[0].at("volume") == true); // and links the volume again
 	CHECK(loaded[1].at("vca") == second);
 	CHECK(loaded[2].at("channels") == Json({b, third}));
 	CHECK(loaded[2].at("vca") == 0);
+	CHECK(loaded[2].at("volume") == true);
 	// Link groups can be changed again.
 	run(client, "linkGroup.add", {{"channels", {c}}});
 	run(client, "linkGroup.set", {{"group", loaded[2].at("id")}, {"channels", {b}}, {"vca", third}});
+}
+
+TEST_CASE(
+	"link groups without channels, which older builds left behind, are left out when a project loads", "[integration]")
+{
+	const test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	const ObjectId vca = idOf(run(client, "track.add", {{"type", "vca"}}), "channel");
+	const ObjectId a = idOf(run(client, "track.add", {{"type", "audio"}}), "channel");
+	const ObjectId b = idOf(run(client, "track.add", {{"type", "audio"}}), "channel");
+	const ObjectId c = idOf(run(client, "track.add", {{"type", "audio"}}), "channel");
+	run(client, "linkGroup.add", {{"channels", {a}}, {"vca", vca}});
+	run(client, "linkGroup.add", {{"channels", {c}}});
+	const ObjectId kept = idOf(run(client, "linkGroup.add", {{"channels", {b}}}), "group");
+	const std::string file = utf8(dir.path() / "song.dawproject");
+	run(client, "project.save", {{"path", file}});
+
+	// The first two groups lost their channels, the first one still with its VCA fader, which the third one has too.
+	std::map<std::string, std::string> entries = readZip(file);
+	Json extension = Json::parse(entries.at("gnubase.json"));
+	Json& groups = extension.at("project").at("linkGroups");
+	REQUIRE(groups.size() == 3);
+	groups[0]["channels"] = Json::array();
+	groups[1]["channels"] = {999999};
+	groups[2]["vca"] = vca;
+	groups[2]["volume"] = false;
+	entries["gnubase.json"] = extension.dump();
+	writeZip(file, entries);
+
+	run(client, "project.new");
+	run(client, "project.load", {{"path", file}});
+	const Json loaded = run(client, "project.get").at("linkGroups");
+	REQUIRE(loaded.size() == 1);
+	CHECK(loaded[0].at("id") == kept);
+	CHECK(loaded[0].at("vca") == vca); // the empty group before it doesn't take it
+	CHECK(loaded[0].at("volume") == false);
+	run(client, "linkGroup.add", {{"channels", {a, c}}});
 }
 
 TEST_CASE("a VCA channel from another application gets no pan, sends or routing", "[integration]")

@@ -336,6 +336,13 @@ TEST_CASE("a link group that loses all its channels goes, and its VCA fader stay
 	REQUIRE(groups(client).size() == 1);
 	CHECK(groups(client).at(0).at("id") == second);
 	CHECK(lastEvent(client, "linkGroup.removed") == Json({{"group", first}}));
+	// Redo takes it away again.
+	run(client, "history.undo");
+	CHECK(groups(client).at(0).at("id") == first);
+	run(client, "history.redo");
+	REQUIRE(groups(client).size() == 1);
+	CHECK(groups(client).at(0).at("id") == second);
+	CHECK(lastEvent(client, "linkGroup.removed") == Json({{"group", first}}));
 	// The VCA fader controls nothing now and can take another group.
 	run(client, "linkGroup.set", {{"group", second}, {"vca", vca}});
 	CHECK(groups(client).at(0).at("vca") == vca);
@@ -367,6 +374,25 @@ TEST_CASE("a link group that loses all its channels goes, and its VCA fader stay
 	REQUIRE(groups(client).size() == 1);
 	CHECK(groups(client).at(0).at("channels") == Json({b}));
 	CHECK(groups(client).at(0).at("vca") == vca);
+	run(client, "history.redo");
+	CHECK(groups(client).empty());
+
+	// Turning off a folder's group channel takes it out of its group too.
+	const Json folder = run(client, "track.add", {{"type", "folder"}, {"groupChannel", true}});
+	const ObjectId folderChannel = folder.at("channel").at("id").get<ObjectId>();
+	const ObjectId alone = groupOf(run(client, "linkGroup.add", {{"channels", {folderChannel}}}));
+	const ObjectId d = add(client, "audio");
+	const ObjectId withAudio = groupOf(run(client, "linkGroup.add", {{"channels", {d}}}));
+	lastEvent(client, "linkGroup.removed");
+	run(client, "track.set", {{"track", folder.at("track").at("id")}, {"groupChannel", false}});
+	REQUIRE(groups(client).size() == 1);
+	CHECK(lastEvent(client, "linkGroup.removed") == Json({{"group", alone}}));
+	run(client, "history.undo");
+	REQUIRE(groups(client).size() == 2);
+	run(client, "linkGroup.set", {{"group", withAudio}, {"channels", {d, folderChannel}}});
+	run(client, "track.set", {{"track", folder.at("track").at("id")}, {"groupChannel", false}});
+	REQUIRE(groups(client).size() == 1);
+	CHECK(groups(client).at(0).at("channels") == Json({d}));
 }
 
 TEST_CASE("new link groups get a name no other group has", "[unit]")
