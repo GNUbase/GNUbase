@@ -392,11 +392,62 @@ TEST_CASE("shared copies that still hold the same notes after a tempo change sta
 	CHECK(midiPartJson(client, latest).at("notes").at(0).at("pitch") == 64);
 	CHECK(midiPartJson(client, part).at("notes").at(0).at("pitch") == 60);
 
-	// Undo shares all four again.
+	// Undo shares all four again, and redo splits them again.
 	run(client, "history.undo");
 	run(client, "history.undo");
 	for (const ObjectId id : {later, latest, other})
 		CHECK(midiPartJson(client, id).at("shared") == group);
+	run(client, "history.redo");
+	CHECK(midiPartJson(client, later).at("shared") == second.at("shared"));
+	CHECK(midiPartJson(client, latest).at("shared") == second.at("shared"));
+	CHECK(midiPartJson(client, latest).at("notes") == second.at("notes"));
+	CHECK(midiPartJson(client, other).at("shared") == group);
+}
+
+TEST_CASE("the largest set of shared copies that still match keeps their group when a tempo change splits it", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId linear = addTrack(client, {{"type", "midi"}, {"timeBase", "linear"}});
+	const ObjectId musical = addTrack(client, {{"type", "midi"}});
+	const ObjectId part = addPartWithNote(client, linear, 0);
+	const auto copy = [&client, part, musical](int64_t ticks)
+	{
+		return run(client, "event.copy", {{"events", {part}}, {"shared", true}, {"ticks", ticks}, {"track", musical}})
+			.at("events")
+			.at(0)
+			.get<ObjectId>();
+	};
+	const ObjectId one = copy(0);
+	const ObjectId two = copy(8 * g_ticksPerQuarter);
+	const Json group = midiPartJson(client, part).at("shared");
+	const Json notes = midiPartJson(client, one).at("notes");
+	REQUIRE(group != 0);
+	REQUIRE(midiPartJson(client, two).at("shared") == group);
+
+	// A new project tempo retimes the linear part, not the two musical copies: they keep the group and their notes'
+	// ids, and the linear part, the group's first, becomes a real copy.
+	run(client, "project.set", {{"tempo", 90.0}});
+	CHECK(midiPartJson(client, one).at("shared") == group);
+	CHECK(midiPartJson(client, two).at("shared") == group);
+	CHECK(midiPartJson(client, one).at("notes") == notes);
+	const Json first = midiPartJson(client, part);
+	CHECK(first.at("shared") == 0);
+	CHECK(first.at("notes").at(0).at("id") != notes.at(0).at("id"));
+	// An edit of one musical copy reaches the other, not the linear part.
+	const auto noteId = notes.at(0).at("id").get<ObjectId>();
+	run(client, "note.set", {{"part", one}, {"notes", {{{"id", noteId}, {"pitch", 64}}}}});
+	CHECK(midiPartJson(client, two).at("notes").at(0).at("pitch") == 64);
+	CHECK(midiPartJson(client, part).at("notes").at(0).at("pitch") == 60);
+
+	// Undo shares all three again, redo splits them again.
+	run(client, "history.undo");
+	run(client, "history.undo");
+	CHECK(midiPartJson(client, part).at("shared") == group);
+	CHECK(midiPartJson(client, part).at("notes") == notes);
+	run(client, "history.redo");
+	CHECK(midiPartJson(client, part).at("shared") == 0);
+	CHECK(midiPartJson(client, two).at("shared") == group);
 }
 
 TEST_CASE("a tempo change reports only the linear parts whose notes or controllers it retimes", "[unit]")
@@ -457,15 +508,17 @@ TEST_CASE("tapping the project tempo and importing a MIDI file's tempo keep line
 			[](int64_t x, int64_t y) { return std::abs(x - y) <= 1; });
 	};
 
-	// The tapped tempo is the project tempo, in fixed tempo mode and then in tempo track mode.
+	// The tapped tempo is the project tempo, in fixed tempo mode and then in tempo track mode, where it is the first
+	// tempo event's, which the part is in.
 	REQUIRE(run(client, "tempo.tap", {{"bpm", 93.0}, {"mode", "project"}}).at("applied") == "project");
 	CHECK(near());
 	run(client, "project.set", {{"tempoTrackActive", true}});
-	run(client, "tempo.add", point(2, 140.0));
+	run(client, "tempo.add", point(20, 140.0));
 	REQUIRE(run(client, "tempo.tap", {{"bpm", 75.0}, {"mode", "project"}}).at("applied") == "project");
 	CHECK(near());
 
-	// A MIDI file whose tempo changes inside the part, from another project.
+	// A MIDI file from another project whose tempo changes before the part and inside its note: 50 BPM from 1.5 s,
+	// 170 BPM from 4.8 s.
 	const gnubase::test::TempDir dir;
 	const std::string path = (dir.path() / "tempo.mid").string();
 	{
@@ -474,7 +527,7 @@ TEST_CASE("tapping the project tempo and importing a MIDI file's tempo keep line
 		run(sourceClient, "project.set", {{"tempoTrackActive", true}});
 		addTrack(sourceClient, {{"type", "midi"}});
 		run(sourceClient, "tempo.add", point(3, 50.0));
-		run(sourceClient, "tempo.add", point(5, 170.0));
+		run(sourceClient, "tempo.add", {{"position", 23 * g_ticksPerQuarter / 4}, {"bpm", 170.0}});
 		run(sourceClient, "midiFile.export", {{"path", path}});
 	}
 	run(client, "midiFile.import", {{"path", path}, {"markers", false}});
