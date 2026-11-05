@@ -105,7 +105,7 @@ namespace gnubase::engine
 				std::min({frames - done, sliceLength - m_sliceFrames, m_windowLength - m_windowFrames});
 			for (size_t c = 0; c < static_cast<size_t>(channels); ++c)
 			{
-				float peak = blockPeak[c];
+				float peak = 0.0f; // of this part only, which lies in one 100 ms window
 				double squares = m_sliceSquares[c];
 				for (uint32_t i = done; i < done + count; ++i)
 				{
@@ -113,7 +113,7 @@ namespace gnubase::engine
 					peak = std::max(peak, std::abs(x));
 					squares += static_cast<double>(x) * x;
 				}
-				blockPeak[c] = peak;
+				blockPeak[c] = std::max(blockPeak[c], peak);
 				m_windowPeak[c] = std::max(m_windowPeak[c], peak);
 				m_sliceSquares[c] = squares;
 			}
@@ -332,6 +332,7 @@ namespace gnubase::engine
 			m_freshSamples = g_taps / 4;
 		}
 		m_wasMeasuring = measuring;
+		std::array<float, g_maxMeterChannels> blockTruePeak{}; // for the frame's reading
 		const analysis::Biquad& shelf = m_filters[0];
 		const analysis::Biquad& highPass = m_filters[1];
 		constexpr int length = g_taps / 4;
@@ -356,7 +357,7 @@ namespace gnubase::engine
 				std::array<float, g_taps / 2>& history = m_history[c];
 				history[static_cast<size_t>(m_historyIndex)] = sample;
 				history[static_cast<size_t>(m_historyIndex) + static_cast<size_t>(length)] = sample;
-				float peak = std::max(m_windowTruePeak[c], std::abs(sample));
+				float peak = std::abs(sample);
 				const float* newest = history.data() + m_historyIndex + length; // newest[-k] is k samples ago
 				// Right after playback starts, the points between the samples would still read audio from before.
 				for (int phase = 0; phase < 4 && m_freshSamples == 0; ++phase)
@@ -367,7 +368,8 @@ namespace gnubase::engine
 							m_interpolator[static_cast<size_t>(phase) + (4 * static_cast<size_t>(k))] * newest[-k];
 					peak = std::max(peak, static_cast<float>(std::abs(interpolated)));
 				}
-				m_windowTruePeak[c] = peak;
+				m_windowTruePeak[c] = std::max(m_windowTruePeak[c], peak);
+				blockTruePeak[c] = std::max(blockTruePeak[c], peak);
 			}
 			m_historyIndex = (m_historyIndex + 1) % length;
 			if (m_freshSamples > 0)
@@ -377,7 +379,7 @@ namespace gnubase::engine
 				step(measuring);
 		}
 		for (size_t c = 0; c < static_cast<size_t>(channels); ++c)
-			raise(m_frameTruePeak[c], m_windowTruePeak[c]);
+			raise(m_frameTruePeak[c], blockTruePeak[c]);
 	}
 
 	void LoudnessMeter::step(bool measuring) noexcept
@@ -422,8 +424,6 @@ namespace gnubase::engine
 				m_truePeakMax[c] = std::max(m_truePeakMax[c], m_windowTruePeak[c]);
 		}
 		publish();
-		for (size_t c = 0; c < static_cast<size_t>(m_channels); ++c)
-			raise(m_frameTruePeak[c], m_windowTruePeak[c]);
 		m_windowTruePeak.fill(0.0f);
 	}
 

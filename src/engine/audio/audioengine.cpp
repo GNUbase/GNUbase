@@ -740,8 +740,8 @@ namespace gnubase::engine
 					std::make_shared<SendStrip>(state, send.number, gain, send.preFader ? tap : nullptr);
 			}
 		}
-		const std::scoped_lock lock(m_channelStatesMutex); // readMeters
-		m_channelStates = std::move(states);
+		const std::scoped_lock lock(m_channelStatesMutex); // readMeters; the old states go after it unlocks
+		m_channelStates.swap(states);
 	}
 
 	namespace
