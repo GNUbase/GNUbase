@@ -69,18 +69,21 @@ namespace gnubase::ui
 				element.RemoveAttribute("checked");
 		}
 
-		// A <textdisplay> shows its value attribute; other elements show their text.
-		void setText(Rml::Element& element, const std::string& text)
+		// A <textdisplay> shows its value attribute; other elements show their text. Returns whether that changed.
+		bool setText(Rml::Element& element, const std::string& text)
 		{
 			if (element.GetTagName() == "textdisplay")
 			{
-				if (attribute(element, "value") != text)
-					element.SetAttribute("value", text);
+				if (attribute(element, "value") == text)
+					return false;
+				element.SetAttribute("value", text);
+				return true;
 			}
-			else if (element.GetInnerRML() != Rml::StringUtilities::EncodeRml(text))
-			{
-				element.SetInnerRML(Rml::StringUtilities::EncodeRml(text));
-			}
+			const std::string encoded = Rml::StringUtilities::EncodeRml(text);
+			if (element.GetInnerRML() == encoded)
+				return false;
+			element.SetInnerRML(encoded);
+			return true;
 		}
 
 		// Throws std::invalid_argument for a control whose parameters aren't a JSON object, or whose command and
@@ -311,7 +314,7 @@ namespace gnubase::ui
 				[this](const int64_t& sample)
 				{
 					m_position = sample;
-					showTime();
+					return showTime(); // the window draws only when a display's text changed
 				});
 		else if (!status.at("playing").get<bool>())
 			m_playback.reset();
@@ -641,10 +644,11 @@ namespace gnubase::ui
 		showTime();
 	}
 
-	void TransportControls::showTime()
+	bool TransportControls::showTime()
 	{
 		if (!alive())
-			return;
+			return false;
+		bool changed = false;
 		const double rate = m_time.sampleRate;
 		const double left = static_cast<double>(m_status.value("left", int64_t{0})) / rate;
 		const double right = static_cast<double>(m_status.value("right", int64_t{0})) / rate;
@@ -655,25 +659,27 @@ namespace gnubase::ui
 			if (time == "position" && m_beatCountOnly && attribute(*element, "format") == "timeDisplay")
 			{
 				const time::Ticks at = m_time.tempo.toTicks(static_cast<double>(m_position) / rate);
-				setText(*element, std::to_string(m_time.signatures.toBarsBeats(at).beat + 1));
+				changed = setText(*element, std::to_string(m_time.signatures.toBarsBeats(at).beat + 1)) || changed;
 			}
 			else if (time == "position")
 			{
-				setText(*element, formatTime(format, static_cast<double>(m_position) / rate, m_time));
+				changed =
+					setText(*element, formatTime(format, static_cast<double>(m_position) / rate, m_time)) || changed;
 			}
 			else if (time == "left")
 			{
-				setText(*element, formatTime(format, left, m_time));
+				changed = setText(*element, formatTime(format, left, m_time)) || changed;
 			}
 			else if (time == "right")
 			{
-				setText(*element, formatTime(format, right, m_time));
+				changed = setText(*element, formatTime(format, right, m_time)) || changed;
 			}
 			else if (time == "length")
 			{
-				setText(*element, formatLength(format, left, std::max(left, right), m_time));
+				changed = setText(*element, formatLength(format, left, std::max(left, right), m_time)) || changed;
 			}
 		}
+		return changed;
 	}
 
 	void Winding::start(double seconds)

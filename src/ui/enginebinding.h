@@ -13,6 +13,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <type_traits>
 #include <utility>
 
 // The UI-engine binding (#50): user actions go to the engine as commands, and the UI's state follows the engine's
@@ -110,10 +111,12 @@ namespace gnubase::ui
 		// Calls apply in update() with what read returns, the first time and whenever it changed since: for values
 		// that change faster than the UI draws, such as the playback position and meters, which the UI reads once a
 		// frame instead of getting an event for every change. shows is the element that shows the value: after apply,
-		// the window it is in draws in that step, and no other window does for it. With null nothing draws for it, so
-		// apply must ask for a draw itself if it changes an element (Rml::Context::RequestNextUpdate(0)).
-		template <typename T> [[nodiscard]] Subscription watch(
-			Rml::Element* shows, std::function<T()> read, std::function<void(const T&)> apply)
+		// the window it is in draws in that step, and no other window does for it. An apply that returns bool tells
+		// whether it changed what an element shows, and the window draws only then: e.g. a time display whose text
+		// changes less often than the position it shows. With null nothing draws for it, so apply must ask for a draw
+		// itself if it changes an element (Rml::Context::RequestNextUpdate(0)).
+		template <typename T, typename Apply>
+		[[nodiscard]] Subscription watch(Rml::Element* shows, std::function<T()> read, Apply apply)
 		{
 			return follow(
 				[shows = shows != nullptr ? shows->GetObserverPtr() : Rml::ObserverPtr<Rml::Element>(),
@@ -123,8 +126,16 @@ namespace gnubase::ui
 					if (last && *last == value)
 						return;
 					last = value;
-					apply(value);
-					redraw(shows.get());
+					if constexpr (std::is_same_v<std::invoke_result_t<Apply&, const T&>, bool>)
+					{
+						if (apply(std::as_const(value)))
+							redraw(shows.get());
+					}
+					else
+					{
+						apply(std::as_const(value));
+						redraw(shows.get());
+					}
 				});
 		}
 
