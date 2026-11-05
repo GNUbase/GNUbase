@@ -83,12 +83,12 @@ namespace
 		}
 
 		// Feeds the signal to a meter block by block.
-		template <class Meter> void play(Meter& meter, bool measuring = true) const
+		template <class Meter> void play(Meter& meter, bool measuring = true, uint32_t blockSize = g_block) const
 		{
-			std::vector<float> block(g_block);
-			for (size_t start = 0; start < m_samples.size(); start += g_block)
+			std::vector<float> block(blockSize);
+			for (size_t start = 0; start < m_samples.size(); start += blockSize)
 			{
-				const size_t frames = std::min<size_t>(g_block, m_samples.size() - start);
+				const size_t frames = std::min<size_t>(blockSize, m_samples.size() - start);
 				std::copy_n(m_samples.begin() + static_cast<std::ptrdiff_t>(start), frames, block.begin());
 				const std::array<const float*, 2> audio{block.data(), block.data()};
 				if constexpr (std::is_same_v<Meter, LoudnessMeter>)
@@ -557,6 +557,13 @@ TEST_CASE("the master meter's RMS level follows its resolution and AES17", "[uni
 	CHECK(decibels(fast.readFrame().rmsMax[1]) == Approx(-6.0).margin(0.02));
 	CHECK(decibels(fast.read().peakMax[0]) == Approx(-6.0).margin(0.01)); // peaks stay
 
+	// A new resolution while it runs: the window starts again at that length.
+	slow.setRms(10, false);
+	Signal more;
+	more.sine(0.05, -6.0);
+	more.play(slow);
+	CHECK(decibels(slow.read().rms[0]) == Approx(sineRms).margin(0.05));
+
 	// Resolutions out of range are clamped: a millisecond still reads a steady sine, a second at most.
 	LevelMeter shortest;
 	shortest.setRms(0, false);
@@ -598,6 +605,37 @@ TEST_CASE("the per-frame reading holds each peak until it is read", "[unit]")
 	CHECK(loudness.read().truePeak[0] == 0.0f);
 	CHECK(loudness.readFrame().truePeak[0] == Approx(0.8f).margin(0.001));
 	CHECK(loudness.readFrame().truePeak[0] == 0.0f);
+
+	// Read in the middle of a 100 ms step: the next frame holds only what came after.
+	Signal spike;
+	spike.impulse(0.8f);
+	spike.silence(0.001);
+	spike.play(loudness, false);
+	CHECK(loudness.readFrame().truePeak[0] == Approx(0.8f).margin(0.001));
+	Signal quiet;
+	quiet.silence(0.002); // a block of the same step
+	quiet.play(loudness, false);
+	CHECK(loudness.readFrame().truePeak[0] == 0.0f);
+	spike.play(level);
+	CHECK(level.readFrame().peak[0] == Approx(0.8f));
+	quiet.play(level);
+	CHECK(level.readFrame().peak[0] == 0.0f);
+}
+
+TEST_CASE("the 100 ms peak doesn't depend on the block size", "[unit]")
+{
+	// A loud sample 100 frames before the first 100 ms window ends, then silence: only that window holds it, also
+	// when a block spans the window's end.
+	const uint32_t blockSize = GENERATE(1U, 17U, 256U, 4096U);
+	INFO("blocks of " << blockSize);
+	Signal signal;
+	signal.silence(4700.0 / g_rate);
+	signal.impulse(0.9f);
+	signal.silence(4899.0 / g_rate); // to the end of the second window, at 9600 frames
+	LevelMeter meter;
+	signal.play(meter, true, blockSize);
+	CHECK(meter.read().peak[0] == 0.0f);
+	CHECK(meter.read().peakMax[0] == Approx(0.9f));
 }
 
 TEST_CASE("the loudness meter keeps its measurement through a restart at the same sample rate", "[unit]")
