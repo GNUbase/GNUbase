@@ -122,9 +122,10 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
   the engine says the failure isn't `repeated`, after a new reason or after an auto save succeeded or the project was
   saved or opened. As it comes on its own, it never keeps away a dialog of something the user does: a project dialog
   that opens meanwhile, such as a failed save's error or the unsaved changes question, takes its place, and the auto
-  save's error shows again at the next failure. If another project dialog, such as the start screen, is open when the
-  auto save fails, the error shows at the next failure instead. Other modal dialogs, such as the fade editor, don't
-  know about it yet, so the error can open over them.
+  save's error shows again at the next failure. An auto save that fails for a new reason while the error is open
+  closes it and shows its own error at once. If another project dialog, such as the start screen, or any other modal dialog of the main
+  window, such as the fade editor or the auto fades dialog, is open when the auto save fails, the error doesn't open
+  over it and shows at the next failure instead, so that it doesn't come between the user and a dialog they work in.
 - The UI knows the project's file from `project.saved` and, after `project.reset`, from `project.location`.
 
 ## Not yet
@@ -159,9 +160,10 @@ window's close button and the OS's quit request with and without unsaved changes
 last window and more requests while the question is open asking one question (the same document stays open) that
 Cancel and Discard answer, a question asked in a panel's own window that closes with it leaving the next quit request
 to ask again, the start screen's buttons and double clicks, Save as Template and Back up Project, and the error dialog
-for a failed save and backup, and for failed auto saves: once per reason, at the next failure if another project
-dialog kept it from showing, again after the unsaved changes question took its place, and with the quit question:
-the error makes way for it, an auto save failing while it is open leaves it open, and the error shows at the next
-failure after Cancel. `tests/uitools_tests.cpp` checks `ui_file_dialog` and `ui_close`, `tests/lua/ui/dialog.lua` the
-unsaved changes question through `gnubase.ui.close`, and `tests/widgets_tests.cpp` `ui::closeDialog`.
+for a failed save and backup, and for failed auto saves: once per reason and again after File > Save, in place of the
+open error when the reason changes, at the next failure if another project dialog or the auto fades dialog kept it
+from showing, again after the unsaved changes question or a failed save's error took its place, and with the quit
+question: the error makes way for it, an auto save failing while it is open leaves it open, and the error shows at the
+next failure after Cancel. `tests/uitools_tests.cpp` checks `ui_file_dialog` and `ui_close`, `tests/lua/ui/dialog.lua`
+the unsaved changes question through `gnubase.ui.close`, and `tests/widgets_tests.cpp` `ui::closeDialog`.
 `tests/clock_tests.cpp` checks the clock's ticks and `advance` on their own.
