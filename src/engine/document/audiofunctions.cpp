@@ -175,9 +175,10 @@ namespace gnubase::engine
 		const char* const g_settingsText =
 			"A section opens at the first frame where a sample of any channel reaches openThreshold (dBFS, default "
 			"-20) and closes after the last frame that reaches closeThreshold (dBFS, default -30, at most "
-			"openThreshold) before 20 ms below it. Silences shorter than minimumClosed (ms, default 100) between "
-			"sections are kept, sections shorter than minimumOpen (ms, default 10) dropped; preRoll and postRoll (ms, "
-			"default 0) start and end the rest earlier and later, joining those that then overlap.";
+			"openThreshold) before 20 ms below it. Once open, a section stays open for at least minimumOpen (ms, "
+			"default 10), joining what sounds within it; once closed, none opens before minimumClosed (ms, default "
+			"100) has passed. preRoll and postRoll (ms, default 0) start and end the sections earlier and later, "
+			"joining those that then overlap.";
 	}
 
 	void registerAudioFunctionCommands(ProjectModel& model, Engine& engine)

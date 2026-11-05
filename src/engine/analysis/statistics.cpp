@@ -42,7 +42,8 @@ namespace gnubase::engine::analysis
 	SilenceDetector::SilenceDetector(double sampleRate, int channels, const SilenceSettings& settings)
 		: m_sampleRate(sampleRate), m_channels(std::max(channels, 1)), m_settings(settings),
 		  m_open(linear(settings.openThreshold)), m_close(linear(settings.closeThreshold)),
-		  m_hold(frames(g_hold, sampleRate))
+		  m_hold(frames(g_hold, sampleRate)), m_minimumOpen(frames(settings.minimumOpen, sampleRate)),
+		  m_minimumClosed(frames(settings.minimumClosed, sampleRate))
 	{
 	}
 
@@ -56,44 +57,38 @@ namespace gnubase::engine::analysis
 				level = std::max(level, static_cast<double>(std::abs(frames[(i * channels) + c])));
 			if (m_start < 0)
 			{
-				if (level >= m_open)
+				if (level >= m_open && m_frame >= m_reopen)
 					m_start = m_last = m_frame;
 			}
 			else if (level >= m_close)
 			{
 				m_last = m_frame;
 			}
-			else if (m_frame - m_last > m_hold)
+			else if (m_frame - m_last > m_hold && m_frame >= m_start + m_minimumOpen)
 			{
-				m_sections.push_back({m_start, m_last + 1});
-				m_start = -1;
+				close(m_frame);
 			}
 		}
+	}
+
+	void SilenceDetector::close(int64_t limit)
+	{
+		const int64_t end = std::min(limit, std::max(m_last + 1, m_start + m_minimumOpen));
+		m_sections.push_back({m_start, end});
+		m_reopen = end + m_minimumClosed;
+		m_start = -1;
 	}
 
 	std::vector<Section> SilenceDetector::finish()
 	{
 		if (m_start >= 0)
-			m_sections.push_back({m_start, m_last + 1});
-		m_start = -1;
+			close(m_frame);
 
-		std::vector<Section> joined;
-		const int64_t minimumClosed = frames(m_settings.minimumClosed, m_sampleRate);
-		for (const Section& section : m_sections)
-		{
-			if (!joined.empty() && section.start - joined.back().end < minimumClosed)
-				joined.back().end = section.end;
-			else
-				joined.push_back(section);
-		}
 		std::vector<Section> result;
-		const int64_t minimumOpen = frames(m_settings.minimumOpen, m_sampleRate);
 		const int64_t preRoll = frames(m_settings.preRoll, m_sampleRate);
 		const int64_t postRoll = frames(m_settings.postRoll, m_sampleRate);
-		for (const Section& section : joined)
+		for (const Section& section : m_sections)
 		{
-			if (section.end - section.start < minimumOpen)
-				continue;
 			const Section wide = {
 				std::max<int64_t>(0, section.start - preRoll), std::min(m_frame, section.end + postRoll)};
 			if (!result.empty() && wide.start <= result.back().end)

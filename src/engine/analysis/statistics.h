@@ -17,8 +17,8 @@ namespace gnubase::engine::analysis
 	{
 		double openThreshold = -20.0;  // dBFS a sample must reach to open
 		double closeThreshold = -30.0; // dBFS that keeps it open, at most openThreshold
-		double minimumOpen = 0.010;    // seconds: shorter sounds are dropped
-		double minimumClosed = 0.100;  // seconds: shorter silences between sounds are kept
+		double minimumOpen = 0.010;    // seconds a section stays open at least
+		double minimumClosed = 0.100;  // seconds it stays closed at least after a section
 		double preRoll = 0.0;          // seconds a section starts earlier
 		double postRoll = 0.0;         // seconds it ends later
 	};
@@ -31,9 +31,10 @@ namespace gnubase::engine::analysis
 
 	// Finds the sections that aren't silent in audio fed to it in blocks of interleaved frames: a section opens at the
 	// first frame where a sample of any channel reaches the open threshold and closes after the last frame whose
-	// sample reaches the close threshold before 20 ms below it (so that a tone's zero crossings don't close it). Then
-	// silences shorter than the minimum time closed are kept and sections shorter than the minimum time open dropped;
-	// pre-roll and post-roll widen the rest, which merge where they overlap.
+	// sample reaches the close threshold before 20 ms below it (so that a tone's zero crossings don't close it). Once
+	// open, a section stays open for at least the minimum time open, joining what sounds within it; once closed,
+	// nothing opens before the minimum time closed has passed. Pre-roll and post-roll widen the sections, which merge
+	// where they then overlap.
 	class SilenceDetector
 	{
 	public:
@@ -44,6 +45,8 @@ namespace gnubase::engine::analysis
 		std::vector<Section> finish();
 
 	private:
+		void close(int64_t limit); // ends the open section, at most at limit
+
 		double m_sampleRate = 0.0;
 		int m_channels = 1;
 		SilenceSettings m_settings;
@@ -51,8 +54,11 @@ namespace gnubase::engine::analysis
 		double m_close = 0.0;
 		int64_t m_hold = 0; // the frames below the close threshold that close a section
 		int64_t m_frame = 0;
-		int64_t m_start = -1; // where the open section started, or -1
-		int64_t m_last = 0;   // the open section's last frame at the close threshold
+		int64_t m_start = -1;      // where the open section started, or -1
+		int64_t m_last = 0;        // the open section's last frame at the close threshold
+		int64_t m_minimumOpen = 0; // the minimum times, in frames
+		int64_t m_minimumClosed = 0;
+		int64_t m_reopen = 0; // the first frame that may open a section again
 		std::vector<Section> m_sections;
 	};
 

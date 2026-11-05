@@ -18,9 +18,9 @@ clip's sample frames; `start` and `end` default to the whole clip.
 
 - **Detect Silence** (`analysis::SilenceDetector`). A section opens at the first frame where a sample of any channel
   reaches the open threshold and closes after the last frame that reaches the close threshold (at most the open one),
-  once 20 ms have stayed below it, so that a tone's zero crossings don't close it. Silences shorter than Minimum Time
-  Closed between sections are kept, sections shorter than Minimum Time Open dropped; Pre-roll and Post-roll widen the
-  rest, which join where they then overlap. Thresholds are dBFS (-120 to 0, defaults -20 and -30), times milliseconds
+  once 20 ms have stayed below it, so that a tone's zero crossings don't close it. Once open, a section stays open
+  for at least Minimum Time Open, joining what sounds within it; once closed, none opens before Minimum Time Closed
+  has passed. Pre-roll and Post-roll widen the sections, which join where they then overlap. Thresholds are dBFS (-120 to 0, defaults -20 and -30), times milliseconds
   (defaults 10, 100, 0 and 0).
 - **Process** (`event.stripSilence`, one undo step, "Detect silence"): `regions` adds a region of the clip per section
   ([sample-editor.md](sample-editor.md)), named `regionName` and a number counting from `autoNumberStart` across the

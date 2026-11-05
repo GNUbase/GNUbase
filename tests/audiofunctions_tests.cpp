@@ -175,7 +175,9 @@ TEST_CASE("Detect Silence finds the tones of a signal, with its thresholds, mini
 		});
 	CHECK(near(sections(tail, settings), {{0.0, 1.0}}));
 
-	// Silences shorter than the minimum time closed stay, sounds shorter than the minimum time open go.
+	// A section stays open for at least the minimum time open, and nothing opens within the minimum time closed after
+	// a section: the sound at 0.35 s opens 100 ms after the section that closed at 0.3 s, the click of 5 ms stays open
+	// for 10 ms.
 	const test::Audio gaps = make(1.0, 2,
 		[](int channel, double t)
 		{
@@ -189,7 +191,7 @@ TEST_CASE("Detect Silence finds the tones of a signal, with its thresholds, mini
 		});
 	settings.minimumClosed = 0.1;
 	settings.minimumOpen = 0.01;
-	CHECK(near(sections(gaps, settings), {{0.1, 0.6}}));
+	CHECK(near(sections(gaps, settings), {{0.1, 0.3}, {0.4, 0.6}, {0.8, 0.81}}));
 	settings.minimumClosed = 0.03;
 	settings.minimumOpen = 0.0;
 	CHECK(near(sections(gaps, settings), {{0.1, 0.3}, {0.35, 0.6}, {0.8, 0.805}}));
@@ -198,7 +200,14 @@ TEST_CASE("Detect Silence finds the tones of a signal, with its thresholds, mini
 	settings.minimumOpen = 0.01;
 	settings.preRoll = 0.2;
 	settings.postRoll = 0.1;
-	CHECK(near(sections(gaps, settings), {{0.0, 0.7}}));
+	CHECK(near(sections(gaps, settings), {{0.0, 0.91}}));
+
+	// A sound within the minimum time open joins the section: a second click 35 ms after the first.
+	const test::Audio clicks =
+		make(1.0, 1, [](int, double t) { return (t >= 0.5 && t < 0.505) || (t >= 0.54 && t < 0.545) ? 0.9 : 0.0; });
+	settings = {};
+	settings.minimumOpen = 0.05;
+	CHECK(near(sections(clicks, settings), {{0.5, 0.55}}));
 
 	// Silence has no sections.
 	CHECK(sections(make(1.0, 1, [](int, double) { return 0.0; }), {}).empty());
