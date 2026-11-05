@@ -26,8 +26,9 @@ namespace gnubase::ui
 	{
 		using engine::Json;
 
-		constexpr std::array<Rml::EventId, 6> g_events = {Rml::EventId::Click, Rml::EventId::Change,
-			Rml::EventId::Keydown, Rml::EventId::Mousedown, Rml::EventId::Mousemove, Rml::EventId::Mouseup};
+		constexpr std::array<Rml::EventId, 7> g_events = {Rml::EventId::Click, Rml::EventId::Change,
+			Rml::EventId::Keydown, Rml::EventId::Mousedown, Rml::EventId::Dragstart, Rml::EventId::Drag,
+			Rml::EventId::Dragend};
 
 		// The columns after the locate column, in their usual order, and their headers.
 		constexpr std::array<const char*, 6> g_columns = {"number", "type", "position", "end", "length", "description"};
@@ -470,6 +471,7 @@ namespace gnubase::ui
 		{
 		case Rml::EventId::Click:
 			click(target);
+			header(event);
 			break;
 		case Rml::EventId::Change:
 			if (target != nullptr && target == m_list)
@@ -507,8 +509,14 @@ namespace gnubase::ui
 			break;
 		}
 		case Rml::EventId::Mousedown:
-		case Rml::EventId::Mousemove:
-		case Rml::EventId::Mouseup:
+			// A press ends a header drag that RmlUi dropped without its end, because the header was shown again
+			// under it, e.g. for a change of ui.markerColumns from MCP.
+			if (event.GetParameter<int>("button", 0) == 0)
+				m_drag.reset();
+			break;
+		case Rml::EventId::Dragstart:
+		case Rml::EventId::Drag:
+		case Rml::EventId::Dragend:
 			header(event);
 			break;
 		default:
@@ -516,42 +524,71 @@ namespace gnubase::ui
 		}
 	}
 
+	// Where a press at x on the header grabs it: the column it moves or, within reach of the line between two headers,
+	// the column on the line's left, which it resizes. Nothing outside the column headers.
+	std::optional<MarkersWindow::HeaderDrag> MarkersWindow::grab(Rml::Element* target, float x) const
+	{
+		Rml::Element* cell = closest(target, "td");
+		if (m_head == nullptr || cell == nullptr || cell->GetParentNode() != m_head)
+			return std::nullopt;
+		const float ratio = dpRatio();
+		const float left = cell->GetAbsoluteLeft();
+		const float right = left + cell->GetOffsetWidth();
+		HeaderDrag drag;
+		drag.x = x;
+		if (right - x <= g_reach * ratio)
+		{
+			drag.resize = true;
+		}
+		else if (x - left <= g_reach * ratio)
+		{
+			drag.resize = true;
+			cell = cell->GetPreviousSibling();
+		}
+		if (cell == nullptr || !cell->HasAttribute("column"))
+			return std::nullopt;
+		drag.column = cell->GetAttribute<Rml::String>("column", "");
+		drag.width = cell->GetBox().GetSize(Rml::BoxArea::Content).x / ratio;
+		return drag;
+	}
+
+	float MarkersWindow::dpRatio() const
+	{
+		const Rml::Context* context = m_document ? m_document->GetContext() : nullptr;
+		return context == nullptr ? 1.0F : context->GetDensityIndependentPixelRatio();
+	}
+
 	// Dragging a header moves its column, dragging the line between two headers resizes the column on its left, and a
-	// click sorts by the column, a second one the other way round (reference manual p. 429).
+	// click sorts by the column, a second one the other way round (reference manual p. 429). The headers are RmlUi drag
+	// elements (drag: drag): their drag ends when the button goes up wherever the mouse is, also outside the window,
+	// where the document gets no mouseup.
 	void MarkersWindow::header(Rml::Event& event)
 	{
-		const Rml::Context* context = m_document->GetContext();
-		const float ratio = context == nullptr ? 1.0F : context->GetDensityIndependentPixelRatio();
 		const auto x = event.GetParameter<float>("mouse_x", 0.0F);
-		if (event.GetId() == Rml::EventId::Mousedown)
+		Rml::Element* target = event.GetTargetElement();
+		const auto sortBy = [this](const std::string& column)
 		{
-			Rml::Element* cell = closest(event.GetTargetElement(), "td");
-			if (event.GetParameter<int>("button", 0) != 0 || cell == nullptr || cell->GetParentNode() != m_head ||
-				m_head == nullptr)
-				return;
-			const float left = cell->GetAbsoluteLeft();
-			const float right = left + cell->GetOffsetWidth();
-			HeaderDrag drag;
-			drag.x = x;
-			if (right - x <= g_reach * ratio)
-			{
-				drag.resize = true;
-			}
-			else if (x - left <= g_reach * ratio)
-			{
-				drag.resize = true;
-				cell = cell->GetPreviousSibling();
-			}
-			if (cell == nullptr || !cell->HasAttribute("column"))
-				return;
-			drag.column = cell->GetAttribute<Rml::String>("column", "");
-			drag.width = cell->GetBox().GetSize(Rml::BoxArea::Content).x / ratio;
-			m_drag = drag;
-			event.StopPropagation();
+			m_columns.descending = m_columns.sort == column && !m_columns.descending;
+			m_columns.sort = column;
+			saveColumns();
+		};
+		if (event.GetId() == Rml::EventId::Click)
+		{
+			// A click at the end of a drag leaves it to the drag's end; one on the line between two headers doesn't
+			// sort.
+			if (const std::optional<HeaderDrag> clicked = grab(target, x); clicked && !clicked->resize && !m_drag)
+				sortBy(clicked->column);
 			return;
 		}
-		if (!m_drag)
+		if (event.GetId() == Rml::EventId::Dragstart)
+		{
+			m_drag = grab(target, x); // x is where the button went down
 			return;
+		}
+		const Rml::Element* dragged = closest(target, "td");
+		if (!m_drag || dragged == nullptr || dragged->GetParentNode() != m_head)
+			return;
+		const float ratio = dpRatio();
 		const float distance = (x - m_drag->x) / ratio;
 		if (m_drag->resize)
 		{
@@ -566,7 +603,7 @@ namespace gnubase::ui
 		{
 			m_drag->moved = true;
 		}
-		if (event.GetId() != Rml::EventId::Mouseup)
+		if (event.GetId() != Rml::EventId::Dragend)
 			return;
 		const HeaderDrag drag = *m_drag;
 		m_drag.reset();
@@ -577,9 +614,7 @@ namespace gnubase::ui
 		}
 		if (!drag.moved)
 		{
-			m_columns.descending = m_columns.sort == drag.column && !m_columns.descending;
-			m_columns.sort = drag.column;
-			saveColumns();
+			sortBy(drag.column);
 			return;
 		}
 		// Dropped on a header: before it on its left half, after it on its right half.
