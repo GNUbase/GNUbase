@@ -2,6 +2,7 @@
 // The audio part editor in the app (#146, docs/features/audio-part-editor.md), driven with ui::Automation as MCP's UI
 // tools drive it: opening it, the part display with its lanes, events and waveforms, every tool, the info line and
 // opening an event in the sample editor. tests/audioparteditor_tests.cpp checks the engine's side.
+#include "ui/audioparteditor.h"
 #include "ui/enginebinding.h"
 #include "ui/keycommands.h"
 #include "ui/midieditor.h"
@@ -670,7 +671,8 @@ TEST_CASE("with snap off the audio part editor moves and splits events where the
 	REQUIRE(f.app.waitUntil(
 		[&]
 		{
-			const ui::MidiEditor* editor = f.app.appUi().editorWindow();
+			ui::MidiEditor* window = f.app.appUi().editorWindow();
+			const ui::AudioPartEditor* editor = window != nullptr ? window->audioPartEditor() : nullptr;
 			return editor != nullptr && editor->project().contains("snap") &&
 				editor->project().at("snap").at("on") == false;
 		}));

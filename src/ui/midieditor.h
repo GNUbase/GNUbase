@@ -58,8 +58,6 @@ namespace gnubase::ui
 
 		// The editor's view as editor.get returns it, once it came.
 		const engine::Json& view() const { return m_view; }
-		// The project as project.get returns it, once it came, as the editor shows it.
-		const engine::Json& project() const { return m_project; }
 		// The key editor, of an EditorPart::Editor while it shows the key editor.
 		KeyEditor* keyEditor() { return m_keys.get(); }
 		// The list editor, of an EditorPart::Editor while it shows the list editor.

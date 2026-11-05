@@ -54,6 +54,8 @@ namespace gnubase::ui
 		void show(const engine::Json& project, const engine::Json& view);
 
 		AudioPartTool tool() const { return m_tool; }
+		// The project as show() last had it.
+		const engine::Json& project() const { return m_project; }
 		void setTool(AudioPartTool tool);
 
 	private:
