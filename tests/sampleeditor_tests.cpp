@@ -7,8 +7,11 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <miniz.h>
+
 #include <cmath>
 #include <filesystem>
+#include <map>
 #include <string>
 
 using Catch::Matchers::ContainsSubstring;
@@ -66,6 +69,34 @@ namespace
 		int64_t clip = 0;
 		int64_t event = 0;
 	};
+
+	std::map<std::string, std::string> readZip(const std::string& path)
+	{
+		mz_zip_archive zip{};
+		REQUIRE(mz_zip_reader_init_file(&zip, path.c_str(), 0) != MZ_FALSE);
+		std::map<std::string, std::string> entries;
+		for (mz_uint i = 0; i < mz_zip_reader_get_num_files(&zip); ++i)
+		{
+			char name[512];
+			mz_zip_reader_get_filename(&zip, i, name, sizeof name);
+			size_t size = 0;
+			void* data = mz_zip_reader_extract_to_heap(&zip, i, &size, 0);
+			entries[name] = std::string(static_cast<const char*>(data), size);
+			mz_free(data);
+		}
+		mz_zip_reader_end(&zip);
+		return entries;
+	}
+
+	void writeZip(const std::string& path, const std::map<std::string, std::string>& entries)
+	{
+		mz_zip_archive zip{};
+		REQUIRE(mz_zip_writer_init_file(&zip, path.c_str(), 0) != MZ_FALSE);
+		for (const auto& [name, data] : entries)
+			REQUIRE(mz_zip_writer_add_mem(&zip, name.c_str(), data.data(), data.size(), MZ_DEFAULT_LEVEL) != MZ_FALSE);
+		REQUIRE(mz_zip_writer_finalize_archive(&zip) != MZ_FALSE);
+		mz_zip_writer_end(&zip);
+	}
 }
 
 TEST_CASE("the sample editor shows an audio event and its selection range as view state", "[unit]")
@@ -122,10 +153,16 @@ TEST_CASE("the sample editor shows an audio event and its selection range as vie
 	f.call("history.undo");
 	CHECK(f.call("sampleEditor.get").at("event") == f.event);
 
-	// Opening another event drops the selection; closing and a new project close it.
+	// Opening the same event again keeps the selection, another event drops it; closing and a new project close it.
 	f.call("sampleEditor.set", {{"select", "all"}});
 	view = f.call("sampleEditor.open", {{"event", f.event}});
-	CHECK(view.at("selectionEnd") == 9600); // the same event keeps it
+	CHECK(view.at("selectionEnd") == 9600);
+	const Json other = f.call("audioEvent.add",
+		{{"track", f.track}, {"clip", f.clip}, {"position", 3 * g_second}, {"offset", 0}, {"length", 2000}});
+	view = f.call("sampleEditor.open", {{"event", other.at("event").at("id")}});
+	CHECK(view.at("event") == other.at("event").at("id"));
+	CHECK(view.at("selectionStart") == 0);
+	CHECK(view.at("selectionEnd") == 0);
 	view = f.call("sampleEditor.close");
 	CHECK(view.at("open") == false);
 	CHECK(view.at("event") == 0);
@@ -191,6 +228,18 @@ TEST_CASE("clips have regions, which are undo steps and saved with the project",
 	CHECK(f.regions().at(1).at("name") == "Region 1");
 	CHECK(f.regions().at(1).at("start") == 3000);
 
+	// A new region's name is Region and a number no other region of the clip has: after a removal, the count of
+	// regions would name a second Region 2.
+	const Json third = f.call("clip.addRegion", {{"clip", f.clip}, {"start", 5000}, {"end", 6000}}).at("region");
+	CHECK(third.at("name") == "Region 3");
+	f.call("clip.removeRegion", {{"clip", f.clip}, {"region", first}});
+	CHECK(f.call("clip.addRegion", {{"clip", f.clip}, {"start", 7000}, {"end", 8000}}).at("region").at("name") ==
+		"Region 4");
+	f.call("history.undo");
+	f.call("history.undo");
+	f.call("history.undo");
+	REQUIRE(f.regions().size() == 2);
+
 	// Saved in GNUbase's entry of the project file.
 	const test::TempDir dir;
 	const std::string file = (dir.path() / "regions.dawproject").u8string();
@@ -199,4 +248,31 @@ TEST_CASE("clips have regions, which are undo steps and saved with the project",
 	f.call("project.new");
 	f.call("project.load", {{"path", file}});
 	CHECK(f.call("project.get").at("clips").at(0).at("regions") == before);
+}
+
+TEST_CASE("regions that aren't sections of their clip are left out when a project loads", "[unit]")
+{
+	Fixture f;
+	f.call("clip.addRegion", {{"clip", f.clip}, {"start", 3000}, {"end", 4000}, {"name", "Kept"}});
+	const test::TempDir dir;
+	const std::string file = (dir.path() / "regions.dawproject").u8string();
+	f.call("project.save", {{"path", file}, {"embedMedia", false}});
+
+	// A hand-edited file: regions past the clip's end, empty, before its start and out of order.
+	std::map<std::string, std::string> entries = readZip(file);
+	Json gnubase = Json::parse(entries.at("gnubase.json"));
+	Json& regions = gnubase.at("clips").at(0).at("regions");
+	regions.push_back({{"id", 90001}, {"name", "Past the end"}, {"start", 9000}, {"end", 9601}});
+	regions.push_back({{"id", 90002}, {"name", "Empty"}, {"start", 500}, {"end", 500}});
+	regions.push_back({{"id", 90003}, {"name", "Before the start"}, {"start", -1}, {"end", 10}});
+	regions.push_back({{"id", 90004}, {"name", "To the end"}, {"start", 100}, {"end", 9600}});
+	entries["gnubase.json"] = gnubase.dump();
+	const std::string edited = (dir.path() / "edited.dawproject").u8string();
+	writeZip(edited, entries);
+
+	f.call("project.load", {{"path", edited}});
+	const Json loaded = f.call("project.get").at("clips").at(0).at("regions");
+	REQUIRE(loaded.size() == 2);
+	CHECK(loaded.at(0).at("name") == "To the end"); // by start
+	CHECK(loaded.at(1).at("name") == "Kept");
 }
