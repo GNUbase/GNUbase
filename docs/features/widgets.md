@@ -45,6 +45,11 @@ Widgets with a number share their behaviour (reference manual p. 1598, "Editing 
   leaves the widget, of an arrow key until it is released, and a typed value each have one, and the next gesture of any
   widget has a higher one. Documents make a gesture one undo step with it (`EngineBinding::sendStep`,
   [edit-history.md](edit-history.md)).
+- **Values set during a drag.** While it is dragged, a widget shows the drag's value. A `value` that a document or a
+  data binding sets meanwhile, such as the engine's answer to an earlier step of the drag, doesn't move it, and the
+  drag goes on from where the mouse put it; when the drag ends, the widget shows the last value set during it, unless
+  the drag changed the value after that (#716, [ui-engine-binding.md](ui-engine-binding.md)). A value set while
+  `change` is handled, such as the change rounded, is the drag's.
 - `disabled` gives `:disabled` and ignores the user.
 
 The widgets:
