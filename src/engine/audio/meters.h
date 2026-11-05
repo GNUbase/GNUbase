@@ -2,15 +2,19 @@
 #pragma once
 
 #include "engine/analysis/analysis.h"
+#include "engine/document/document.h"
 
 #include <array>
 #include <atomic>
 #include <cstdint>
 #include <optional>
 #include <utility>
+#include <vector>
 
 // Level meters and the loudness meter (reference manual pp. 533-540, docs/features/metering.md). The audio thread
-// measures, without allocating or locking, and publishes through atomics every 100 ms; any thread reads.
+// measures, without allocating or locking, and publishes through atomics: the peaks and the loudness every 100 ms,
+// the RMS levels at every tenth of their resolution, and each block's peaks, which it holds until the one reader that
+// reads once a frame (the UI) reads them. Any thread reads.
 namespace gnubase::engine
 {
 	inline constexpr int g_maxMeterChannels = 8;
@@ -19,8 +23,9 @@ namespace gnubase::engine
 	struct LevelReading
 	{
 		int channels = 0;
-		std::array<float, g_maxMeterChannels> peak{};    // the largest sample of the last 100 ms
-		std::array<float, g_maxMeterChannels> rms{};     // over the last 300 ms
+		// The largest sample of the last 100 ms; in a frame's reading (readFrame), the largest since the last one.
+		std::array<float, g_maxMeterChannels> peak{};
+		std::array<float, g_maxMeterChannels> rms{};     // over the last 300 ms, or the meter's RMS resolution
 		std::array<float, g_maxMeterChannels> peakMax{}; // since the last reset
 		std::array<float, g_maxMeterChannels> rmsMax{};
 	};
@@ -35,27 +40,48 @@ namespace gnubase::engine
 		// Any thread.
 		LevelReading read() const noexcept;
 		void reset() noexcept; // the maxima
+		// The RMS level's resolution, how much of the signal it averages, 1 to 1000 ms (300 until set), and whether
+		// it adds AES17's 3 dB, so that a sine's RMS level is its peak level (reference manual p. 540).
+		void setRms(int milliseconds, bool aes17) noexcept;
+
+		// The one reader that reads once a frame, the UI (Engine::readMeters): the same as read, but each channel's
+		// peak is the largest sample since its last readFrame, so no peak between two frames goes unseen.
+		LevelReading readFrame() noexcept;
 
 	private:
+		static constexpr int g_slices = 10; // that the RMS level's window is made of
+
+		void endSlice(int channels) noexcept;
+		void endWindow(int channels) noexcept;
+
 		// Audio thread.
-		// The sums of squares of the last three 100 ms windows, a ring, and of the current one.
-		std::array<std::array<double, 3>, g_maxMeterChannels> m_squares{};
-		std::array<double, g_maxMeterChannels> m_windowSquares{};
-		int m_squaresIndex = 0;
-		uint32_t m_squaresFrames = 0; // in the three windows
-		std::array<uint32_t, 3> m_windowLengths{};
+		// The sums of squares of the last slices of the RMS window, a ring, and of the current one.
+		std::array<std::array<double, g_slices>, g_maxMeterChannels> m_squares{};
+		std::array<double, g_maxMeterChannels> m_sliceSquares{};
+		std::array<uint32_t, g_slices> m_sliceLengths{}; // the frames each slice in the ring holds
+		int m_sliceIndex = 0;                            // where the next slice goes
+		int m_slices = g_slices;                         // in the window, fewer when it has fewer frames
+		uint32_t m_rmsFrames = 0;                        // the window's length
+		uint32_t m_sliceFrames = 0;                      // in the current slice
+		uint32_t m_squaresFrames = 0;                    // in the ring
+		int m_resolution = 0;                            // the RMS resolution in ms that the window is for
+		double m_sampleRate = 0.0;                       // and the sample rate
 		std::array<float, g_maxMeterChannels> m_windowPeak{};
 		std::array<float, g_maxMeterChannels> m_peakMax{};
 		std::array<float, g_maxMeterChannels> m_rmsMax{};
 		uint32_t m_windowFrames = 0;
+		uint32_t m_windowLength = 4800; // 100 ms
 		uint32_t m_resetsSeen = 0;
 
 		std::atomic<int> m_channels{0};
 		std::array<std::atomic<float>, g_maxMeterChannels> m_peak{};
+		std::array<std::atomic<float>, g_maxMeterChannels> m_framePeak{}; // since the last readFrame
 		std::array<std::atomic<float>, g_maxMeterChannels> m_rms{};
 		std::array<std::atomic<float>, g_maxMeterChannels> m_publishedPeakMax{};
 		std::array<std::atomic<float>, g_maxMeterChannels> m_publishedRmsMax{};
 		std::atomic<uint32_t> m_resets{0};
+		std::atomic<int> m_rmsResolution{300}; // ms
+		std::atomic<bool> m_aes17{false};
 	};
 
 	// The loudness meter's reading (EBU R 128, ITU-R BS.1770-4, EBU Tech 3341 and 3342). Loudness in LUFS, nothing
@@ -69,7 +95,8 @@ namespace gnubase::engine
 		std::optional<double> integrated; // gated, while measuring
 		std::optional<double> range;      // the loudness range in LU, while measuring
 		int channels = 0;
-		std::array<float, g_maxMeterChannels> truePeak{};    // the last 100 ms, 4x oversampled
+		// The last 100 ms, 4x oversampled; in a frame's reading (readFrame), the largest since the last one.
+		std::array<float, g_maxMeterChannels> truePeak{};
 		std::array<float, g_maxMeterChannels> truePeakMax{}; // while measuring
 		double seconds = 0.0;                                // how long it measured
 	};
@@ -82,8 +109,10 @@ namespace gnubase::engine
 	public:
 		LoudnessMeter();
 
-		// Not while the audio thread processes: the sample rate. Starts over.
-		void prepare(double sampleRate);
+		// Not while the audio thread processes: the sample rate. Starts over; with keepMeasurement, as for a device
+		// reset, and the same sample rate as before, only what follows the signal does (momentary and short-term
+		// loudness, the true peak), and the integrated loudness, range, maxima and time go on.
+		void prepare(double sampleRate, bool keepMeasurement = false);
 
 		// Audio thread: a block of the main mix's channels.
 		void process(const float* const* audio, int channels, uint32_t frames, bool measuring) noexcept;
@@ -91,6 +120,10 @@ namespace gnubase::engine
 		// Any thread.
 		LoudnessReading read() const noexcept;
 		void reset() noexcept; // everything but momentary and short-term loudness
+
+		// The one reader that reads once a frame (Engine::readMeters): the same as read, but truePeak is the largest
+		// since its last readFrame.
+		LoudnessReading readFrame() noexcept;
 
 	private:
 		// Gated loudness of blocks: the energy and count of the blocks per 0.1 LU from -70 LUFS up.
@@ -138,6 +171,7 @@ namespace gnubase::engine
 		int m_freshSamples = 0; // samples since playback started while the interpolator still holds older ones
 		uint32_t m_resetsSeen = 0;
 		int m_channels = 0;
+		double m_sampleRate = 0.0; // that it was last prepared for
 
 		// Published; NaN for nothing.
 		std::atomic<double> m_momentary;
@@ -149,7 +183,18 @@ namespace gnubase::engine
 		std::atomic<double> m_seconds{0.0};
 		std::atomic<int> m_publishedChannels{0};
 		std::array<std::atomic<float>, g_maxMeterChannels> m_truePeak{};
+		std::array<std::atomic<float>, g_maxMeterChannels> m_frameTruePeak{}; // since the last readFrame
 		std::array<std::atomic<float>, g_maxMeterChannels> m_publishedTruePeakMax{};
 		std::atomic<uint32_t> m_resets{0};
+	};
+
+	// All meters at once, as the UI reads them once a frame (Engine::readMeters): the channels to read go in, the
+	// readings come out, in vectors that keep their memory from frame to frame.
+	struct MeterFrame
+	{
+		std::vector<ObjectId> channels;   // set by the reader
+		std::vector<LevelReading> levels; // one per channel; no channels for one without a meter (yet)
+		LevelReading main;                // the main mix
+		LoudnessReading loudness;
 	};
 }
