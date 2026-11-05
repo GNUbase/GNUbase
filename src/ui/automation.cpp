@@ -195,6 +195,18 @@ namespace gnubase::ui
 			return {bounds.x + (bounds.width / 2), bounds.y + (bounds.height / 2)};
 		}
 
+		// The window's context, updated, with the mouse moved to the target, or left where it is if there's none.
+		Rml::Context& movedTo(Window& window, const Target& at, int state)
+		{
+			Rml::Context& context = updated(window);
+			if (!at.empty())
+			{
+				const Point point = targetPoint(window, at);
+				context.ProcessMouseMove(point.x, point.y, state);
+			}
+			return context;
+		}
+
 		// The element under the mouse after input, which the window draws again.
 		Json under(Window& window)
 		{
@@ -329,17 +341,32 @@ namespace gnubase::ui
 		return under(shown);
 	}
 
+	Json Automation::press(
+		std::optional<WindowId> window, const Target& at, MouseButton button, const std::vector<std::string>& modifiers)
+	{
+		Window& shown = resolve(window);
+		const int state = modifierState(modifiers);
+		Rml::Context& context = movedTo(shown, at, state);
+		context.ProcessMouseButtonDown(buttonIndex(button), state);
+		return under(shown);
+	}
+
+	Json Automation::release(
+		std::optional<WindowId> window, const Target& at, MouseButton button, const std::vector<std::string>& modifiers)
+	{
+		Window& shown = resolve(window);
+		const int state = modifierState(modifiers);
+		Rml::Context& context = movedTo(shown, at, state);
+		context.ProcessMouseButtonUp(buttonIndex(button), state);
+		return under(shown);
+	}
+
 	Json Automation::wheel(
 		std::optional<WindowId> window, const Target& at, float dx, float dy, const std::vector<std::string>& modifiers)
 	{
 		Window& shown = resolve(window);
 		const int state = modifierState(modifiers);
-		Rml::Context& context = updated(shown);
-		if (!at.empty())
-		{
-			const Point point = targetPoint(shown, at);
-			context.ProcessMouseMove(point.x, point.y, state);
-		}
+		Rml::Context& context = movedTo(shown, at, state);
 		context.ProcessMouseWheel(Rml::Vector2f(dx, dy), state);
 		return under(shown);
 	}

@@ -84,6 +84,18 @@ namespace gnubase::ui
 		engine::Json drag(std::optional<WindowId> window, const Target& from, const Target& to,
 			const std::vector<std::string>& modifiers = {});
 
+		// Presses the button at the target, or where the mouse is, holding the modifiers, and keeps it down until
+		// release lets it go: moves in between move the mouse with the button held, and other calls, such as a
+		// settings change, run while it is, e.g. halfway through a drag. Time passes as it does between the calls.
+		// Returns the element under the mouse, as move does.
+		engine::Json press(std::optional<WindowId> window, const Target& at, MouseButton button,
+			const std::vector<std::string>& modifiers = {});
+
+		// Lets go of the button that press held, at the target or where the mouse is, holding the modifiers. Returns
+		// the element under the mouse, as move does.
+		engine::Json release(std::optional<WindowId> window, const Target& at, MouseButton button,
+			const std::vector<std::string>& modifiers = {});
+
 		// Turns the mouse wheel by dx and dy lines (positive is right and down) at the target, or where the mouse is,
 		// holding the modifiers.
 		engine::Json wheel(std::optional<WindowId> window, const Target& at, float dx, float dy,

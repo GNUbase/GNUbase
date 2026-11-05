@@ -166,7 +166,7 @@ GNUbase started with its UI and `--mcp-http` also has tools to look at the UI an
 - `ui_windows` lists the windows: their ids, which is the main window, their size in pixels and their dp ratio, and the documents each shows. The other tools take a `window`; without one they use the main window.
 - `ui_dom` reads the DOM: every element's tag, id, classes, other attributes, a form control's value, pseudo-classes such as `hover`, `focus` or `checked`, whether it's visible and its box. With a `selector` it returns the elements that match; `depth` limits how many levels of children come with them, and `depth: 0` returns the elements with their text.
 - `ui_screenshot` returns a PNG of the window, or with a `selector` of one element.
-- `ui_click`, `ui_move`, `ui_drag` and `ui_wheel` use the mouse on an element, by `selector` (and `index` among its matches), or on a point `x`, `y`. `ui_key` presses keys such as `Enter` or `Ctrl+S`; `ui_text` types text into the focused field. `ui_drop` drops files on an element or a point, as if dragged there from the OS's file manager, e.g. audio files on the event display to import them. Each answers with the element it reached, so the agent sees what it hit.
+- `ui_click`, `ui_move`, `ui_drag` and `ui_wheel` use the mouse on an element, by `selector` (and `index` among its matches), or on a point `x`, `y`; `ui_click` with `action` `down` holds the button until an `action` `up`, with `ui_move` and other tools in between, e.g. to change a setting halfway through a drag. `ui_key` presses keys such as `Enter` or `Ctrl+S`; `ui_text` types text into the focused field. `ui_drop` drops files on an element or a point, as if dragged there from the OS's file manager, e.g. audio files on the event display to import them. Each answers with the element it reached, so the agent sees what it hit.
 - `ui_wait` waits until an element is visible, or has a text, or until none is, e.g. for a dialog that a click opens.
 - `ui_close` asks to close a `window` as its title bar's close button does, or with `quit: true` asks GNUbase to quit as the OS does; quitting asks about unsaved changes first, so `ui_wait` for `#discard-changes-dialog` afterwards.
 
@@ -5100,10 +5100,11 @@ Result:
 
 #### `ui_click`
 
-Clicks the centre of the element that the CSS selector matches, or a point. The element must be visible. Returns the element under the mouse, the one that got the click unless another covers it.
+Clicks the centre of the element that the CSS selector matches, or a point. The element must be visible. With action down the button stays pressed until an action up for it, and with neither selector nor x and y they press or release it where the mouse is: ui_move in between moves the mouse with the button held, and other tools run while it is, e.g. a settings change halfway through a drag. Returns the element under the mouse, the one that got the click unless another covers it.
 
 Arguments:
 
+- `action`: one of "click" | "down" | "up". click (the default) presses and releases the button.
 - `button`: one of "left" | "right" | "middle". Left if left out.
 - `count`: integer. 2 for a double click; 1 if left out.
 - `index`: integer. Which of the elements the selector matches; 0, the first, if left out.

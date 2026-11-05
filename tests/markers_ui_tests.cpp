@@ -755,6 +755,33 @@ TEST_CASE("the markers window sorts by a click on a column header, and its colum
 		[&app] { return setting(app, "ui.markerColumns").value("widths", Json::object()).contains("type"); }));
 	CHECK(rowOrder(document) == std::vector<uint64_t>{first, second, cycle});
 
+	// A click on the line between two headers doesn't sort, so the next click on the header turns the order around.
+	const auto descending = [&app]
+	{
+		const Json columns = setting(app, "ui.markerColumns");
+		return columns.value("sort", "") == "type" && columns.value("descending", false);
+	};
+	document.UpdateDocument();
+	type = document.QuerySelector("#marker-head td.type");
+	REQUIRE(type != nullptr);
+	app.ui().click(window, pointIn(*type, type->GetOffsetWidth() - 1.0F), ui::MouseButton::Left, 1, {});
+	CHECK(rowOrder(document) == std::vector<uint64_t>{first, second, cycle});
+	app.ui().click(window, at("#marker-head td.type"), ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil([&document, first, cycle, second]
+		{ return rowOrder(document) == std::vector<uint64_t>{cycle, first, second}; }));
+	REQUIRE(app.waitUntil(descending));
+
+	// A drag that stays within reach of where it began is a click: it sorts by its header, the other way round again.
+	document.UpdateDocument();
+	type = document.QuerySelector("#marker-head td.type");
+	REQUIRE(type != nullptr);
+	const float ratio = document.GetContext()->GetDensityIndependentPixelRatio();
+	app.ui().drag(window, pointIn(*type, 12.0F * ratio), pointIn(*type, 14.0F * ratio));
+	REQUIRE(app.waitUntil([&document, first, cycle, second]
+		{ return rowOrder(document) == std::vector<uint64_t>{first, second, cycle}; }));
+	REQUIRE(app.waitUntil([&descending] { return !descending(); }));
+	CHECK(setting(app, "ui.markerColumns").at("sort") == "type");
+
 	// The setting from MCP or Lua applies at once; a column named twice counts once, those it leaves out follow in
 	// their usual order.
 	app.call("settings.set", {{"key", "ui.markerColumns"}, {"value", {{"order", {"position", "number", "position"}}}}});
@@ -818,20 +845,33 @@ TEST_CASE("a markers window header drag ends when the button goes up outside the
 	CHECK(setting(app, "ui.markerColumns").at("order") == saved.at("order"));
 
 	// A drag that RmlUi drops, because the header is shown again under it for a change of the setting from MCP or
-	// Lua, doesn't keep the next click from sorting.
+	// Lua while the button is held, doesn't keep the next click from sorting.
 	document.UpdateDocument();
 	Rml::Element* number = document.QuerySelector("#marker-head td.number");
 	REQUIRE(number != nullptr);
-	const auto x = static_cast<int>(number->GetAbsoluteLeft() + (number->GetOffsetWidth() / 2.0F));
-	const auto y = static_cast<int>(number->GetAbsoluteTop() + (number->GetOffsetHeight() / 2.0F));
-	context->ProcessMouseMove(x, y, 0);
-	context->ProcessMouseButtonDown(0, 0);
-	context->ProcessMouseMove(x + 30, y, 0);
+	app.ui().press(window, at("#marker-head td.number"), ui::MouseButton::Left);
+	app.ui().move(window, pointIn(*number, (number->GetOffsetWidth() / 2.0F) + 30.0F));
 	app.call("settings.set", {{"key", "ui.markerColumns"}, {"value", {{"order", {"type", "number"}}}}});
 	REQUIRE(app.waitUntil([&document] { return headerOrder(document).front() == "type"; }));
-	context->ProcessMouseButtonUp(0, 0);
+	app.ui().release(window, {}, ui::MouseButton::Left);
 	app.ui().click(window, at("#marker-head td.end"), ui::MouseButton::Left, 1, {});
 	REQUIRE(app.waitUntil([&app] { return setting(app, "ui.markerColumns").value("sort", "") == "end"; }));
+	CHECK(!setting(app, "ui.markerColumns").value("widths", Json::object()).contains("type"));
+
+	// Another button pressed and released during a header drag doesn't end it: the line after the type header,
+	// dragged 30 pixels with the right button pressed halfway, still resizes the column and keeps its width.
+	const float before = typeWidth();
+	type = document.QuerySelector("#marker-head td.type");
+	REQUIRE(type != nullptr);
+	app.ui().press(window, pointIn(*type, before - 1.0F), ui::MouseButton::Left);
+	app.ui().move(window, pointIn(*type, before + 9.0F));
+	app.ui().press(window, {}, ui::MouseButton::Right);
+	app.ui().release(window, {}, ui::MouseButton::Right);
+	app.ui().move(window, pointIn(*type, before + 29.0F));
+	app.ui().release(window, {}, ui::MouseButton::Left);
+	REQUIRE(app.waitUntil(
+		[&app] { return setting(app, "ui.markerColumns").value("widths", Json::object()).contains("type"); }));
+	CHECK(typeWidth() == Approx(before + 30.0F).margin(2.0));
 }
 
 TEST_CASE("the markers window scrolls to the locate arrow, and Page Up and Page Down move through it", "[ui]")

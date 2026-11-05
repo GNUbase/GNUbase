@@ -29,10 +29,13 @@ and keyboard input. [mcp.md](../mcp.md#ui-tools) is the guide for agents.
 - **Input.** A click moves the mouse to the centre of the element, or to the point, and presses and releases the
   button; a double click is two clicks, which RmlUi recognises by their timing, with the UI updated between them as
   frames would be, so a first click that opens a field leaves the second to the field. A drag presses at the start,
-  moves in eight steps and releases at the end, so RmlUi sends `dragstart`, `drag` and `dragdrop`. Wheel turns are in
+  moves in eight steps and releases at the end, so RmlUi sends `dragstart`, `drag` and `dragdrop`. A press and a
+  release can also come on their own (`Automation::press` and `release`, `ui_click`'s `action` `down` and `up`): the
+  button stays down in between, while moves and other calls run, e.g. a settings change halfway through a drag, and
+  time passes as it does between the calls. Wheel turns are in
   lines, positive to the right and down. A file drop hands files to the element under the target as the window system
   hands the user's drops from the OS's file manager (`ui::dropFiles`: a `filedrop` event with the files, their count
-  and the point), e.g. audio files on the event display to import them. Clicks, drags and wheel turns can hold modifiers, e.g. Shift for a fine drag. Keys are pressed and released with modifiers; they don't type text, which `ui_text`
+  and the point), e.g. audio files on the event display to import them. Clicks, presses, drags and wheel turns can hold modifiers, e.g. Shift for a fine drag. Keys are pressed and released with modifiers; they don't type text, which `ui_text`
   sends as text input, as the OS's text input does after a key press. A key that no element uses runs its key command,
   as the user's does ([key-commands.md](key-commands.md)). Each input tool answers with the element under
   the mouse or with the focus, so a client sees what it hit.
