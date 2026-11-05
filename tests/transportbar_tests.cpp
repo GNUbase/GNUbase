@@ -1110,7 +1110,7 @@ TEST_CASE(
 	CHECK(shown);
 }
 
-TEST_CASE("windows whose documents nothing changed in don't draw, also during playback", "[ui]")
+TEST_CASE("windows whose documents nothing changed in don't draw, also during playback", "[ui][slow]")
 {
 	test::UiApp app({1024, 600});
 	showBar(app);
@@ -1118,21 +1118,41 @@ TEST_CASE("windows whose documents nothing changed in don't draw, also during pl
 	REQUIRE(app.waitUntil([&app] { return app.appUi().mixer(1) != nullptr; }));
 	const ui::Window* mixer = app.shell().find(app.appUi().mixerWindow(1));
 	REQUIRE(mixer != nullptr);
+	// The time display window shows only the beat, which changes twice a second at 120 BPM, while the position it
+	// follows changes once a frame (#745).
+	app.keys().run("window.timeDisplay", Json::object(), app.main(), nullptr);
+	ui::Window* timeWindow = app.appUi().timeDisplay();
+	REQUIRE(timeWindow != nullptr);
+	Rml::Element& beat = drawn(*timeWindow, "#time-display");
+	app.call("settings.set", {{"key", "ui.timeDisplay"}, {"value", {{"beatCountOnly", true}, {"size", 1}}}});
+	REQUIRE(app.waitUntil([&beat] { return value(beat) == "1"; }));
 	app.call("audio.setDevice", {{"blockSize", 256}}); // the dummy device
 	app.call("audio.start");
 
 	// Longer than the status line takes to ask the engine for the record time again (once a second): its answer
 	// draws only what it changed.
-	const auto idle = [&app, mixer](bool playing)
+	const auto idle = [&app, mixer, timeWindow, &beat](bool playing)
 	{
 		const uint64_t mainFrames = app.main().frames();
 		const uint64_t mixerFrames = mixer->frames();
+		int beats = 0;
 		const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(2500);
 		while (std::chrono::steady_clock::now() < until)
+		{
+			const uint64_t timeFrames = timeWindow->frames();
+			const std::string before = value(beat);
 			app.shell().step(std::chrono::milliseconds(20));
+			// The time display window draws in the steps its beat changes in, and in no other.
+			const bool changed = value(beat) != before;
+			beats += changed ? 1 : 0;
+			CHECK(timeWindow->frames() == timeFrames + (changed ? 1 : 0));
+		}
 		CHECK(mixer->frames() == mixerFrames);
 		if (playing)
-			CHECK(app.main().frames() > mainFrames + 10); // the project cursor and the time displays move
+		{
+			CHECK(app.main().frames() > mainFrames + 10); // the project cursor and the transport bar's time displays
+			CHECK(beats >= 3);
+		}
 	};
 	const auto settle = [&app]
 	{

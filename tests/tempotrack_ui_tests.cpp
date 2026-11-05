@@ -372,6 +372,39 @@ TEST_CASE("Tap Tempo sets the tempo the taps beat once they stop", "[ui]")
 	CHECK(set);
 }
 
+TEST_CASE("a single tap ends after the tap pause without input, and the transport bar's window draws its end", "[ui]")
+{
+	test::UiApp app{{1024, 500}};
+	showBar(app);
+	Rml::Element* button = nullptr;
+	for (int i = 0; i < app.main().context().GetNumDocuments() && button == nullptr; ++i)
+		button = app.main().context().GetDocument(i)->QuerySelector("#transport-bar #tap-tempo");
+	REQUIRE(button != nullptr);
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	clock->freeze(true); // RmlUi's time stands still but for advance()
+	app.ui().click(std::nullopt, {"#transport-bar #tap-tempo", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+	app.shell().step(milliseconds(0));
+	const bool tapping = button->IsClassSet("tapping");
+
+	// No input from here on. One tap gives no tempo, so nothing is sent and no answer draws: the end of the tap
+	// draws the window itself, in the step the pause ends in.
+	clock->advance(1.0);
+	app.shell().step(milliseconds(0));
+	const bool waiting = button->IsClassSet("tapping");
+	const uint64_t frames = app.main().frames();
+	clock->advance(1.5); // past the tap pause, two seconds
+	app.shell().step(milliseconds(0));
+	const bool ended = !button->IsClassSet("tapping");
+	const uint64_t endFrames = app.main().frames();
+	clock->freeze(false);
+	CHECK(tapping);
+	CHECK(waiting);
+	CHECK(ended);
+	CHECK(endFrames == frames + 1);
+	CHECK(app.call("project.get").at("fixedTempo") == 120.0);
+}
+
 TEST_CASE("Tap Tempo in tempo track mode adds a tempo event at the start of the selected part", "[ui]")
 {
 	test::UiApp app{{1024, 500}};
