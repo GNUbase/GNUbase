@@ -1014,7 +1014,7 @@ TEST_CASE("a failed auto save's error makes way for the error of a newer one and
 	closeError(app);
 }
 
-TEST_CASE("a failed auto save's error doesn't open over another modal dialog, and shows at the next failure", "[ui]")
+TEST_CASE("a failed auto save's error waits while other modal dialogs are open, and shows once they closed", "[ui]")
 {
 	test::UiApp app({900, 640});
 	app.appUi().showProject();
@@ -1026,19 +1026,114 @@ TEST_CASE("a failed auto save's error doesn't open over another modal dialog, an
 
 	REQUIRE(app.waitUntil([&app] { return elements(app, "#track-list .track-name").size() == 1; }));
 
-	// The auto fades dialog is a modal dialog of the main window that isn't a project dialog.
+	// The auto fades dialog and the studio setup over it are modal dialogs of the main window that aren't project
+	// dialogs.
 	app.keys().run("project.autoFades", Json::object(), app.main(), nullptr);
 	REQUIRE(app.waitUntil([&app] { return shown(app, "#auto-fades"); }));
+	app.keys().run("window.studioSetup", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#studio-setup"); }));
 	app.engine().advanceClock(g_pastInterval);
 	handleEarlierEvents(app);
 	CHECK(elements(app, "#project-error-dialog").empty());
 	CHECK(shown(app, "#auto-fades"));
 
+	// The studio setup closes, the auto fades dialog is still open: the error waits for it.
+	click(app, "#studio-setup #cancel");
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#studio-setup"); }));
+	handleEarlierEvents(app);
+	CHECK(elements(app, "#project-error-dialog").empty());
+
+	// Cancel closes the last one, and the error shows without another failure.
 	click(app, "#auto-fades-cancel");
 	REQUIRE(app.waitUntil([&app] { return elements(app, "#auto-fades").empty(); }));
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
+	CHECK_THAT(errorMessage(app), ContainsSubstring("auto saved"));
+	closeError(app);
+
+	// Once per reason: an auto save that fails for the same reason while a dialog is open doesn't show it again.
+	app.keys().run("project.autoFades", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#auto-fades"); }));
+	app.engine().advanceClock(g_pastInterval);
+	handleEarlierEvents(app);
+	click(app, "#auto-fades-cancel");
+	REQUIRE(app.waitUntil([&app] { return elements(app, "#auto-fades").empty(); }));
+	handleEarlierEvents(app);
+	CHECK(elements(app, "#project-error-dialog").empty());
+}
+
+TEST_CASE("a failed auto save's error that waits for a dialog is dropped by an auto save or save that succeeds", "[ui]")
+{
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	const test::TempDir dir;
+	const fs::path autoSaves = dir.path() / "Auto Saves";
+	app.call("project.save", {{"path", utf8(dir.path() / "Song.dawproject")}});
+	app.call("track.add", {{"type", "audio"}});
+	std::ofstream(autoSaves) << "not a folder";
+	REQUIRE(app.waitUntil([&app] { return elements(app, "#track-list .track-name").size() == 1; }));
+
+	const auto failWhileOpen = [&app]
+	{
+		app.keys().run("project.autoFades", Json::object(), app.main(), nullptr);
+		REQUIRE(app.waitUntil([&app] { return shown(app, "#auto-fades"); }));
+		app.engine().advanceClock(g_pastInterval);
+		handleEarlierEvents(app);
+		CHECK(elements(app, "#project-error-dialog").empty());
+	};
+	const auto closeAndCheck = [&app]
+	{
+		click(app, "#auto-fades-cancel");
+		REQUIRE(app.waitUntil([&app] { return elements(app, "#auto-fades").empty(); }));
+		handleEarlierEvents(app);
+		CHECK(elements(app, "#project-error-dialog").empty());
+	};
+
+	// The next auto save succeeds while the dialog is open: the error is out of date when it closes.
+	failWhileOpen();
+	fs::remove(autoSaves);
+	app.engine().advanceClock(g_pastInterval);
+	REQUIRE(app.waitUntil([&autoSaves] { return fs::is_regular_file(autoSaves / "Song-01.bak"); }));
+	handleEarlierEvents(app);
+	closeAndCheck();
+
+	// The project is saved while the dialog is open.
+	blockSaving(autoSaves / "Song-02.bak");
+	failWhileOpen();
+	app.call("project.save");
+	handleEarlierEvents(app);
+	closeAndCheck();
+}
+
+TEST_CASE("a modal dialog in a panel's own window doesn't keep a failed auto save's error away", "[ui]")
+{
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	const test::TempDir dir;
+	const fs::path autoSaves = dir.path() / "Auto Saves";
+	app.call("project.save", {{"path", utf8(dir.path() / "Song.dawproject")}});
+	app.call("track.add", {{"type", "audio"}});
+	std::ofstream(autoSaves) << "not a folder";
+	REQUIRE(app.waitUntil([&app] { return elements(app, "#track-list .track-name").size() == 1; }));
+
+	app.appUi().docking().setFloating("history", true);
+	const gnubase::ui::Window* floating = app.appUi().docking().windowOf("history");
+	REQUIRE(floating != nullptr);
+	const gnubase::ui::WindowId panel = floating->id();
+	gnubase::ui::Window* window = app.shell().find(panel);
+	REQUIRE(window != nullptr);
+	app.keys().run("project.autoFades", Json::object(), *window, nullptr);
+	const auto autoFadesInPanel = [&app, panel]
+	{
+		const Json found = app.ui().dom(panel, "#auto-fades", 0).at("elements");
+		return found.size() == 1 && found[0].at("visible").get<bool>();
+	};
+	REQUIRE(app.waitUntil(autoFadesInPanel));
+
+	// The error opens in the main window, whose documents have no other modal dialog.
 	app.engine().advanceClock(g_pastInterval);
 	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
 	CHECK_THAT(errorMessage(app), ContainsSubstring("auto saved"));
+	CHECK(autoFadesInPanel());
 	closeError(app);
 }
 
