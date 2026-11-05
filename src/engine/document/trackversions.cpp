@@ -90,34 +90,26 @@ namespace gnubase::engine
 		void stash(Project& project, Track& track, CommandContext& context)
 		{
 			TrackVersion& version = active(track);
-			for (auto event = project.audioEvents.begin(); event != project.audioEvents.end();)
-				if (event->second.track == track.id)
+			// Takes out of objects those on the track, in id order, announcing each as kind.removed.
+			const auto take = [&track, &context](auto& objects, auto& into, const char* kind, const char* key)
+			{
+				for (auto object = objects.begin(); object != objects.end();)
 				{
-					context.emit("audioEvent.removed", {{"event", event->first}});
-					version.audioEvents.push_back(std::move(event->second));
-					event = project.audioEvents.erase(event);
+					if (object->second.track != track.id)
+					{
+						++object;
+						continue;
+					}
+					context.emit(std::string(kind) + ".removed", {{key, object->first}});
+					into.push_back(std::move(object->second));
+					object = objects.erase(object);
 				}
-				else
-					++event;
-			for (auto part = project.audioParts.begin(); part != project.audioParts.end();)
-				if (part->second.track == track.id)
-				{
-					context.emit("audioPart.removed", {{"part", part->first}});
-					version.audioParts.push_back(std::move(part->second));
-					part = project.audioParts.erase(part);
-				}
-				else
-					++part;
-			for (auto part = project.midiParts.begin(); part != project.midiParts.end();)
-				if (part->second.track == track.id)
-				{
-					context.emit("midiPart.removed", {{"part", part->first}});
-					part->second.shared = 0;
-					version.midiParts.push_back(std::move(part->second));
-					part = project.midiParts.erase(part);
-				}
-				else
-					++part;
+			};
+			take(project.audioEvents, version.audioEvents, "audioEvent", "event");
+			take(project.audioParts, version.audioParts, "audioPart", "part");
+			take(project.midiParts, version.midiParts, "midiPart", "part");
+			for (MidiPart& part : version.midiParts)
+				part.shared = 0;
 		}
 
 		// Makes a version of the track active: its events and parts go into the project. The active one's must be
