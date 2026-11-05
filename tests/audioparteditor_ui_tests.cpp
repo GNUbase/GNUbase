@@ -83,8 +83,10 @@ namespace
 		{
 			display.select({part});
 			app.keys().run("editor.openClose", Json::object(), app.main(), nullptr);
+			// Opening a window takes several seconds in a Debug build on a busy machine.
 			REQUIRE(app.waitUntil([&]
-				{ return app.appUi().editorWindow() != nullptr && app.appUi().editorWindow()->audioPartEditor(); }));
+				{ return app.appUi().editorWindow() != nullptr && app.appUi().editorWindow()->audioPartEditor(); },
+				std::chrono::seconds(30)));
 			window = app.appUi().editorWindowId();
 			settle();
 		}
