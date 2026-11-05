@@ -86,6 +86,7 @@ add_executable(gnubase-tests
 	mcpevents_tests.cpp
 	mcptools_tests.cpp
 	meter_tests.cpp
+	metronome_tests.cpp
 	midi_tests.cpp
 	mididevice_tests.cpp
 	midiedit_tests.cpp

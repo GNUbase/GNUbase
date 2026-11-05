@@ -228,8 +228,7 @@ namespace gnubase::ui
 
 	void EventDisplay::reload()
 	{
-		if (m_project.is_object())
-			loadProject(m_project);
+		showProject();
 	}
 
 	void EventDisplay::showAutomation(uint64_t track, bool shown)

@@ -1,8 +1,8 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- Menus, context menus and tooltips of the widget library (#54) for tests/widgets_tests.cpp: a menu button, a track
-     with a context menu that has submenus (one with only a disabled item) and a disabled item, an element whose right
-     click with a modifier key opens another menu, elements with tooltips, a notification, and a menu bar whose File
-     menu has a submenu and whose Tools title is disabled. -->
+     with a context menu that has submenus (one with only a disabled item), a disabled item and a hidden one (#524), an
+     element whose right click with a modifier key opens another menu, elements with tooltips, a notification, and a
+     menu bar whose File menu has a submenu and whose Tools title is disabled. -->
 <rml>
 <head>
 	<title>Popups</title>
@@ -42,6 +42,7 @@
 				<menuitem id="locked" disabled="disabled">Locked</menuitem>
 			</menu>
 		</menuitem>
+		<menuitem id="gone" class="hidden">Gone</menuitem>
 	</menu>
 	<menubar id="menubar">
 		<button id="file-title" menu="file">File</button>
