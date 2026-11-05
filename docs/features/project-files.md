@@ -166,7 +166,9 @@ to ask again, the start screen's buttons and double clicks, Save as Template and
 for a failed save and backup, and for failed auto saves: once per reason and again after File > Save, in place of the
 open error when the reason changes, at the next failure if another project dialog kept it from showing, once the
 auto fades dialog and the studio setup over it closed, without another failure, but not after an auto save succeeded
-or the project was saved meanwhile, not kept away by a modal dialog in a panel's own window, again after the unsaved changes question or a failed save's error took its place, and with the quit
+or the project was saved or reverted meanwhile, nor when a success follows the failure before the UI heard of either,
+not kept away by a modal dialog in a panel's own window, again after the unsaved changes question or a failed save's
+error took its place, and with the quit
 question: the error makes way for it, an auto save failing while it is open leaves it open, and the error shows at the
 next failure after Cancel. `tests/uitools_tests.cpp` checks `ui_file_dialog` and `ui_close`, `tests/lua/ui/dialog.lua`
 the unsaved changes question through `gnubase.ui.close`, and `tests/widgets_tests.cpp` `ui::closeDialog`.
