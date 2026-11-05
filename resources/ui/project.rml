@@ -291,6 +291,10 @@
 		<menuitem command="editor.openClose">Open/Close Editor</menuitem>
 		<menuitem command="window.lowerZoneEditor">Open Editor in Lower Zone</menuitem>
 		<menuitem command="editor.openList">Open List Editor</menuitem>
+		<menuitem command="editor.openDrum">Open Drum Editor</menuitem>
+		<!-- Drum maps (docs/features/drum-editor.md) -->
+		<menuitem command="drumMap.load">Load Drum Map...</menuitem>
+		<menuitem command="drumMap.save">Save Drum Map...</menuitem>
 	</menu>
 	<!-- Track handling (reference manual pp. 213-225) -->
 	<menu id="color-menu"/>

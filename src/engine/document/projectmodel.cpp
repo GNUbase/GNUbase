@@ -20,6 +20,7 @@
 #include "engine/media/backup.h"
 #include "engine/metronome/metronomecommands.h"
 #include "engine/midi/controllerlanes.h"
+#include "engine/midi/drummaps.h"
 #include "engine/midi/functioncommands.h"
 #include "engine/midi/quantizecommands.h"
 #include "engine/processors/builtin.h"
@@ -1252,6 +1253,14 @@ namespace gnubase::engine
 			track.color = newColor;
 			track.timeFormat = parameters.value("timeFormat", track.timeFormat);
 			track.picture = parameters.value("picture", track.picture);
+			if (parameters.contains("drumMap"))
+			{
+				track.drumMap = parameters.at("drumMap").get<ObjectId>();
+				require(track.drumMap == 0 || track.type == TrackType::Midi || track.type == TrackType::Instrument,
+					"only MIDI and instrument tracks have a drum map");
+				require(track.drumMap == 0 || project.drumMaps.count(track.drumMap) != 0,
+					"no drum map " + std::to_string(track.drumMap));
+			}
 			if (parameters.contains("enabled"))
 			{
 				const bool enabled = parameters.at("enabled").get<bool>();
@@ -3027,6 +3036,7 @@ namespace gnubase::engine
 			announceObjects(change.audioEvents, direction, "audioEvent", "event", context);
 			announceObjects(change.markers, direction, "marker", "marker", context);
 			announceObjects(change.linkGroups, direction, "linkGroup", "group", context);
+			announceObjects(change.drumMaps, direction, "drumMap", "map", context);
 			// Slots as plugin.insert, plugin.remove and the other plugin.* commands announce them. Those of a channel
 			// that came or went are in its events.
 			std::set<ObjectId> channels; // that came or went
@@ -3653,10 +3663,11 @@ namespace gnubase::engine
 				"its automation and the routing of other channels to it go. Channels routed elsewhere by hand or "
 				"disconnected keep their routing. With the user setting editing.applyFolderColor, a folder's new "
 				"color goes to the tracks inside it. picture is an image file (PNG, JPEG or SVG) that the mixer shows "
-				"on the track's channel, or empty for none.",
+				"on the track's channel, or empty for none. drumMap is the drum map (drumMap.add) a MIDI or instrument "
+				"track's notes play through, or 0 for none.",
 				objectSchema({{"track", idSchema}, {"name", stringSchema}, {"color", color}, {"timeBase", timeBases},
 								 {"timeFormat", timeFormats}, {"enabled", booleanSchema},
-								 {"groupChannel", booleanSchema}, {"picture", stringSchema}},
+								 {"groupChannel", booleanSchema}, {"picture", stringSchema}, {"drumMap", idSchema}},
 					{"track"}),
 				resultSchema({"track"}), false},
 			setTrack);
@@ -4022,6 +4033,7 @@ namespace gnubase::engine
 		registerSnapCommands(*this, engine);
 		registerMixerCommands(*this, engine);
 		registerLinkGroupCommands(*this, engine);
+		midi::registerDrumMapCommands(*this, engine);
 		registerChannelSettingsCommands(*this, engine);
 		registerEditorCommands(*this, engine);
 		registerSampleEditorCommands(*this, engine);

@@ -241,6 +241,10 @@ namespace gnubase::app
 		void addMidiFunctions();
 		// The OS's file dialog for a track's picture in the mixer, then track.set.
 		void choosePicture(uint64_t track);
+		// The drum map of the active track of an editor (window, else lower), then the OS's file dialog to save it in
+		// and drumMap.export.
+		void saveDrumMap(ui::WindowId parent, const std::string& editor = "window");
+		void chooseDrumMapFile(ui::WindowId parent, uint64_t map);
 		// Opens resources/ui/<name> in the window, modal. Throws std::runtime_error if it can't be loaded.
 		// attributes go on the document before it shows, for its Lua.
 		Rml::ElementDocument& openDialog(ui::Window& window, const char* name,

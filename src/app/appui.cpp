@@ -1226,6 +1226,33 @@ namespace gnubase::app
 				if (!parts.empty())
 					m_binding.send("editor.open", {{"editor", "window"}, {"parts", parts}, {"content", "list"}});
 			}});
+		// Open Drum Editor (reference manual p. 1221): the selected MIDI parts in the editor window's drum editor.
+		m_keys.add({"editor.openDrum", "Opens the selected MIDI parts in the drum editor window.",
+			[this](ui::Window&, Rml::Element*)
+			{
+				const std::vector<uint64_t> parts = selected("midiParts");
+				if (!parts.empty())
+					m_binding.send("editor.open", {{"editor", "window"}, {"parts", parts}, {"content", "drum"}});
+			}});
+		// The Drum Map Setup's Load and Save (p. 1236): a drum map file into the project, and the drum map of the
+		// editor window's active track into a file.
+		m_keys.add({"drumMap.load", "Loads a drum map file into the project.", [this](ui::Window& window, Rml::Element*)
+			{
+				ui::FileDialog dialog;
+				dialog.title = "Load Drum Map";
+				dialog.filters = {{"Drum maps", "drm"}, {"All files", "*"}};
+				dialog.parent = window.id();
+				m_shell.showFileDialog(dialog,
+					[this](const ui::FileDialogResult& result)
+					{
+						if (!result.error.empty())
+							logging::warning("The file dialog failed: {}", result.error);
+						if (!result.files.empty())
+							m_binding.send("drumMap.import", {{"path", result.files.front().u8string()}});
+					});
+			}});
+		m_keys.add({"drumMap.save", "Saves the drum map of the editor's active track as a drum map file.",
+			[this](ui::Window& window, Rml::Element*) { saveDrumMap(window.id()); }});
 		// Open Audio Part Editor (Audio menu, reference manual p. 692): the selected audio parts in the editor window.
 		m_keys.add({"audio.openPartEditor", "Opens the selected audio parts in the audio part editor window.",
 			[this](ui::Window&, Rml::Element*)
@@ -1426,6 +1453,54 @@ namespace gnubase::app
 					logging::warning("The file dialog failed: {}", result.error);
 				if (!result.files.empty())
 					m_binding.send("track.set", {{"track", track}, {"picture", result.files.front().u8string()}});
+			});
+	}
+
+	void AppUi::saveDrumMap(ui::WindowId parent, const std::string& editor)
+	{
+		// The editor window's active track, else the lower zone's.
+		m_binding.send("editor.get", {{"editor", editor}},
+			[this, parent, editor](const engine::Result& view)
+			{
+				if (!view.ok())
+					return;
+				const engine::Json track = view.value.at("activeTrack");
+				if (track == 0)
+				{
+					if (editor == "window")
+						saveDrumMap(parent, "lower");
+					return;
+				}
+				m_binding.send("project.get", engine::Json::object(),
+					[this, parent, track](const engine::Result& project)
+					{
+						if (!project.ok())
+							return;
+						for (const engine::Json& each : project.value.at("tracks"))
+							if (each.at("id") == track && each.value("drumMap", uint64_t{0}) != 0)
+								chooseDrumMapFile(parent, each.at("drumMap").get<uint64_t>());
+					});
+			});
+	}
+
+	void AppUi::chooseDrumMapFile(ui::WindowId parent, uint64_t map)
+	{
+		ui::FileDialog dialog;
+		dialog.kind = ui::FileDialogKind::Save;
+		dialog.title = "Save Drum Map";
+		dialog.filters = {{"Drum maps", "drm"}};
+		dialog.parent = parent;
+		m_shell.showFileDialog(dialog,
+			[this, map](const ui::FileDialogResult& result)
+			{
+				if (!result.error.empty())
+					logging::warning("The file dialog failed: {}", result.error);
+				if (result.files.empty())
+					return;
+				std::filesystem::path file = result.files.front();
+				if (file.extension() != ".drm")
+					file += ".drm";
+				m_binding.send("drumMap.export", {{"map", map}, {"path", file.u8string()}});
 			});
 	}
 

@@ -6,6 +6,7 @@
 #include "engine/document/stripparameters.h"
 #include "engine/dsp/dsp.h"
 #include "engine/midi/controllerlanes.h"
+#include "engine/midi/drummaps.h"
 
 #include <algorithm>
 #include <array>
@@ -44,13 +45,19 @@ namespace gnubase::engine
 			midi::Modifiers modifiers = channel.modifiers.bypass ? midi::Modifiers() : channel.modifiers;
 			modifiers.transpose += part.transpose;
 			modifiers.velocityShift += part.velocity;
+			// The track's drum map plays each note's sound: its O-note, on its channel unless that is Any, and not
+			// at all if it is muted (#129). The modifiers then apply to the O-note.
+			const DrumMap* map = midi::drumMapOf(project, part.track);
 			for (const auto& [id, note] : part.notes)
 			{
 				// Notes the part hides beyond its end don't play, wherever a random position would move them.
 				if (note.position >= end - start || !midi::notePlays(note, part.id))
 					continue;
+				const DrumSound* sound = map != nullptr ? &map->sounds.at(note.pitch) : nullptr;
+				if (sound != nullptr && sound->mute)
+					continue;
 				const uint64_t seed = midi::noteSeed(partId, id);
-				uint8_t pitch = note.pitch;
+				uint8_t pitch = sound != nullptr ? sound->oNote : note.pitch;
 				uint16_t velocity = midi::playedVelocity(note, part.id);
 				if (!midi::modifyNote(modifiers, seed, pitch, velocity))
 					continue;
@@ -64,7 +71,8 @@ namespace gnubase::engine
 				const time::Ticks length = note.length > 0 ? midi::modifyLength(modifiers, seed, note.length) : 0;
 				const time::Ticks noteEnd = std::min(start + position + length, end);
 				channel.notes.push_back(
-					{toSamples(project, start + position), toSamples(project, noteEnd), pitch, velocity, note.channel});
+					{toSamples(project, start + position), toSamples(project, noteEnd), pitch, velocity,
+						sound != nullptr && sound->channel >= 0 ? static_cast<uint8_t>(sound->channel) : note.channel});
 			}
 			for (const auto& [id, controller] : part.controllers)
 				if (controller.position < end - start)

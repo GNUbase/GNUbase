@@ -577,6 +577,10 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
                                 "border-color": c["textMuted"]}),
         (".key-note.drawing", {"background-color": c["accent"] + "66"}),
         (".key-editor-step-cursor", {"background-color": c["accent"]}),
+        # The drum editor's sound list (docs/features/drum-editor.md): rows like a list, the sounds of selected
+        # notes lit
+        (".key-editor-key.drum-sound", {"background-color": c["surfaceRaised"], "color": c["text"]}),
+        (".key-editor-key.drum-sound.selected", {"background-color": c["accent"], "color": c["background"]}),
         # The controller lanes (docs/features/controller-lanes.md): the lanes' areas like the note display, a line
         # between lanes, the bars and steps in the notes' colors, selected ones in the second accent, those outside
         # the part editing mode dimmed

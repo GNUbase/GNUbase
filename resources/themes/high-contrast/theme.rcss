@@ -715,6 +715,16 @@
 	{
 		background-color: #ffff00;
 	}
+	.key-editor-key.drum-sound
+	{
+		background-color: #0d0d0d;
+		color: #ffffff;
+	}
+	.key-editor-key.drum-sound.selected
+	{
+		background-color: #ffff00;
+		color: #000000;
+	}
 	.controller-lane-area
 	{
 		background-color: #000000;

@@ -601,6 +601,7 @@ namespace gnubase::engine
 		// Audio and instrument tracks: what plays while the track is frozen, or none. Initialized like picture.
 		// NOLINTNEXTLINE(readability-redundant-member-init): see above
 		std::optional<Freeze> frozen = {};
+		ObjectId drumMap = 0; // MIDI and instrument tracks: the drum map their notes play through, or 0 (#129)
 	};
 
 	// Whether tracks of a type can be disabled (reference manual p. 219): audio, instrument and MIDI tracks.
@@ -714,6 +715,42 @@ namespace gnubase::engine
 			std::tie(b.id, b.name, b.channels, b.volume, b.pan, b.mute, b.record, b.eq, b.dynamics, b.sends, b.vca);
 	}
 
+	// A drum sound of a drum map (#129, reference manual pp. 1235-1240, docs/features/drum-editor.md): the sound of
+	// the pitch that is its index in the map.
+	struct DrumSound
+	{
+		std::string name;
+		midi::NoteValue snap; // the drum editor's grid and length for the sound
+		bool mute = false;    // doesn't play
+		uint8_t iNote = 0;    // the note played in that becomes this pitch
+		uint8_t oNote = 0;    // the note that plays
+		int channel = -1;     // 0-15, the MIDI channel it plays on; -1: Any, the note's
+		std::string output;   // the MIDI output it plays on; empty: the track's (Default)
+	};
+
+	inline bool operator==(const DrumSound& a, const DrumSound& b)
+	{
+		return std::tie(a.name, a.snap, a.mute, a.iNote, a.oNote, a.channel, a.output) ==
+			std::tie(b.name, b.snap, b.mute, b.iNote, b.oNote, b.channel, b.output);
+	}
+
+	inline constexpr int g_drumSounds = 128;
+
+	// Settings for each of the 128 pitches that change how the notes of the tracks using the map play and come in,
+	// and how the drum editor shows them.
+	struct DrumMap
+	{
+		ObjectId id = 0;
+		std::string name;
+		std::array<DrumSound, g_drumSounds> sounds;
+		std::array<uint8_t, g_drumSounds> order{}; // the drum sound list's order, from the top: each pitch once
+	};
+
+	inline bool operator==(const DrumMap& a, const DrumMap& b)
+	{
+		return std::tie(a.id, a.name, a.sounds, a.order) == std::tie(b.id, b.name, b.sounds, b.order);
+	}
+
 	// A color of the project's color set (reference manual pp. 115-118), which colors are picked from.
 	struct ProjectColor
 	{
@@ -792,6 +829,7 @@ namespace gnubase::engine
 		ObjectId activeMarkerTrack = 0; // the marker track that marker commands use by default, or 0
 		std::map<ObjectId, AutomationLane> automation;
 		std::map<ObjectId, LinkGroup> linkGroups;
+		std::map<ObjectId, DrumMap> drumMaps; // a new project has the GM Map (#129)
 		// Virgin territory instead of initial values (reference manual p. 881): automation lanes have gaps before their
 		// first and after their last point too, where their parameters have their static values. A setting saved with
 		// the project, not part of undo.
@@ -1045,9 +1083,9 @@ namespace gnubase::engine
 	inline bool operator==(const Track& a, const Track& b)
 	{
 		return std::tie(a.id, a.type, a.name, a.color, a.timeBase, a.parent, a.channel, a.children, a.autoFades,
-				   a.timeFormat, a.enabled, a.picture, a.frozen) ==
+				   a.timeFormat, a.enabled, a.picture, a.frozen, a.drumMap) ==
 			std::tie(b.id, b.type, b.name, b.color, b.timeBase, b.parent, b.channel, b.children, b.autoFades,
-				b.timeFormat, b.enabled, b.picture, b.frozen);
+				b.timeFormat, b.enabled, b.picture, b.frozen, b.drumMap);
 	}
 	// Where an audio event plays, in the project's samples (fadeedits.cpp).
 	struct EventSpan
