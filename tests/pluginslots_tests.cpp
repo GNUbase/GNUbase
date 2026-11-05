@@ -674,6 +674,25 @@ namespace
 
 		void update() { slots.update({{&slot, 2}}, 48000.0, 128); }
 
+		// How often retired was asked once that stopped changing for 20 ms.
+		int settled() const
+		{
+			const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+			int seen = asked;
+			auto since = std::chrono::steady_clock::now();
+			while (std::chrono::steady_clock::now() < deadline &&
+				(seen == 0 || std::chrono::steady_clock::now() - since < std::chrono::milliseconds(20)))
+			{
+				std::this_thread::sleep_for(std::chrono::milliseconds(1));
+				if (asked != seen)
+				{
+					seen = asked;
+					since = std::chrono::steady_clock::now();
+				}
+			}
+			return seen;
+		}
+
 		// Waits until the slot's plugin has the status.
 		bool waitFor(const std::string& wanted) const
 		{
@@ -696,12 +715,8 @@ TEST_CASE("a plugin leaving the graph waits for the audio thread's signal, and n
 	retiring.update();
 	CHECK(retiring.slots.processor(1) == nullptr);
 	retiring.slots.retire(2);
-	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-	while (retiring.asked == 0 && std::chrono::steady_clock::now() < deadline)
-		std::this_thread::sleep_for(std::chrono::milliseconds(1));
 	// Once when it was retired, or twice if the retirer thread had just started; then not again and again.
-	std::this_thread::sleep_for(std::chrono::milliseconds(10));
-	const int asked = retiring.asked;
+	const int asked = retiring.settled();
 	CHECK(asked >= 1);
 	CHECK(asked <= 2);
 	std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -720,6 +735,10 @@ TEST_CASE("a plugin leaving the graph waits for the audio thread's signal, and n
 	retiring.update();
 	retiring.slots.retire(3);
 	retiring.slots.wake();
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+	while (retiring.asked < asked + 3 && std::chrono::steady_clock::now() < deadline) // for retire and the wake
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	CHECK(retiring.asked == asked + 3);
 	retiring.jobs.run([] {}).get();
 	CHECK(retiring.slots.status(1) == "loading");
 	retiring.started = 3;
@@ -736,8 +755,8 @@ TEST_CASE("slots close while a plugin waits for the audio thread to leave its gr
 		if (active)
 			retiring.slot.plugin = "test:other"; // replaced: the old plugin is destroyed once retired
 		retiring.update();
-		retiring.slots.retire(2); // the audio thread never starts it
-								  // The slots go now, without waiting for generation 2.
+		// The audio thread never starts generation 2: the slots go now, without waiting for it.
+		retiring.slots.retire(2);
 	}
 	SUCCEED();
 }
@@ -804,8 +823,12 @@ TEST_CASE("plugin.changed announces the slots whose status changes when the devi
 	CHECK(statuses[eq.get<ObjectId>()] == std::vector<std::string>{"noDevice"});
 	CHECK(statuses[limiter.get<ObjectId>()] == std::vector<std::string>{"noDevice"});
 	CHECK(status(client, eq) == "noDevice");
+	// A slot added meanwhile has no device either.
+	const Json added = run(client, "plugin.insert", {{"channel", channel}, {"plugin", "builtin:gainPan"}}).at("slot");
+	CHECK(added.at("status") == "noDevice");
+	const Json gain = added.at("id");
 
-	// It returns, with the same format: the plugins are as they were.
+	// It returns, with the same format: the plugins are as they were, and the new one is made.
 	run(client, "audio.simulateDeviceLoss", {{"connected", true}});
 	received = eventsUntil(client, "audio.changed",
 		[](const Json& data) { return data.at("lost").is_null() && !data.at("device").is_null(); });
@@ -813,6 +836,11 @@ TEST_CASE("plugin.changed announces the slots whose status changes when the devi
 	statuses = announcedStatuses(client, received);
 	CHECK(statuses[eq.get<ObjectId>()] == std::vector<std::string>{"active"});
 	CHECK(statuses[limiter.get<ObjectId>()] == std::vector<std::string>{"inactive"});
+	const std::vector<std::string>& made = statuses[gain.get<ObjectId>()];
+	REQUIRE(!made.empty());
+	CHECK((made.front() == "loading" || made.front() == "active"));
+	waitFor(client, gain, "active");
+	events(client);
 	run(client, "audio.updatePlugins");
 	CHECK(events(client)["plugin.changed"].empty());
 
