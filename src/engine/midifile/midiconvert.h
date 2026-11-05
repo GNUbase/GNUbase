@@ -27,7 +27,9 @@ namespace gnubase::engine::midifile
 
 	// The project's MIDI and instrument tracks as a MIDI file: notes and controllers as they play (cut at the end of
 	// their parts), track names, the project's name, tempo (ramps in sixteenth-note steps), time signatures and
-	// markers (of every marker track, cycle markers at their start). At one tick, meta events come first, then
+	// markers (cycle markers at their start). In a type 1 file the tempo track has the active marker track's markers
+	// and each other marker track with markers a file track of its own after the others, with its name and nothing
+	// but its markers; a type 0 file has every marker. At one tick, meta events come first, then
 	// note-offs, then controllers, then note-ons. Program changes with a bank are preceded by bank select (controllers
 	// 0 and 32). A note ends where the next note of its pitch and channel in the same file track starts, at least a
 	// tick after its own start: a note-off ends the oldest sounding note of its key, so overlapping notes of one key
@@ -43,23 +45,33 @@ namespace gnubase::engine::midifile
 		std::vector<Controller> controllers;
 	};
 
+	// A type 1 file's track with nothing but a name and markers, which a marker track of its own exported.
+	struct ImportedMarkerTrack
+	{
+		std::string name;            // empty if the file has none
+		std::vector<Marker> markers; // as in Import
+	};
+
 	struct Import
 	{
 		time::TempoMap tempo{120.0};
 		time::SignatureMap signatures;
-		std::vector<Marker> markers;       // position markers in ticks, without a marker track or number
-		std::vector<ImportedTrack> tracks; // those with notes or controllers, in file order
+		std::vector<Marker> markers; // position markers in ticks, without a marker track or number; by position
+		std::vector<ImportedMarkerTrack> markerTracks; // in file order
+		std::vector<ImportedTrack> tracks;             // those with notes or controllers, in file order
 	};
 
 	// What a MIDI file holds. A type 1 or 2 file gives a track per file track with events, a type 0 file a track
-	// per MIDI channel. The tracks of a type 2 file are independent sequences: they are laid out one after another,
-	// each from the first bar start after the previous one's end, and each starts at 120 BPM in 4/4 unless it sets
-	// its own tempo and signature at its start; sequences that would start after 2^53 ticks are left out. Notes end
-	// at their note-off (the first note-on of a pitch and channel ends first) or, if they have none, at the track's
-	// end. Bank select directly before a program change at the same tick becomes the program change's bank. Tempo
-	// and time signatures that the project can't hold are adjusted: tempo to 1-999 BPM, signature changes to the
-	// next bar start; signatures with a beat other than 1, 2, 4, 8 or 16 are left out. Track and marker names that
-	// aren't valid UTF-8 are read as Windows-1252 (Latin-1 with more characters in 0x80-0x9F). Ids are left at 0.
+	// per MIDI channel. The markers of a type 1 file's tracks after the first that hold nothing but a name and
+	// markers are marker tracks of their own; all other markers are merged. The tracks of a type 2 file are independent
+	// sequences: they are laid out one after another, each from the first bar start after the previous one's end, and
+	// each starts at 120 BPM in 4/4 unless it sets its own tempo and signature at its start; sequences that would start
+	// after 2^53 ticks are left out. Notes end at their note-off (the first note-on of a pitch and channel ends first)
+	// or, if they have none, at the track's end. Bank select directly before a program change at the same tick becomes
+	// the program change's bank. Tempo and time signatures that the project can't hold are adjusted: tempo to 1-999
+	// BPM, signature changes to the next bar start; signatures with a beat other than 1, 2, 4, 8 or 16 are left out.
+	// Track and marker names that aren't valid UTF-8 are read as Windows-1252 (Latin-1 with more characters in
+	// 0x80-0x9F). Ids are left at 0.
 	Import importFile(const File& file);
 
 	// The part a track's events go into: from the start of the bar of its first event to the end of the bar of its
