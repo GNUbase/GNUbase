@@ -4,6 +4,7 @@
 #include "engine/engine.h"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
@@ -63,12 +64,14 @@ namespace
 	class Sends
 	{
 	public:
-		Sends()
+		explicit Sends(int blockSize = 64)
 		{
 			run(client, "audio.setDevice",
-				{{"blockSize", 64}, {"inputChannels", 2}, {"outputChannels", 2}, {"captureSeconds", 1},
+				{{"blockSize", blockSize}, {"inputChannels", 2}, {"outputChannels", 2}, {"captureSeconds", 1},
 					{"input", {{"processor", "sine"}, {"parameters", {{"Frequency", 441.0}, {"Level", 0.5}}}}}});
-			track = channelOf(run(client, "track.add", {{"type", "audio"}}));
+			const Json added = run(client, "track.add", {{"type", "audio"}});
+			track = channelOf(added);
+			trackId = added.at("track").at("id").get<ObjectId>();
 			effect = channelOf(run(client, "track.add", {{"type", "effect"}}));
 		}
 
@@ -87,9 +90,22 @@ namespace
 
 		Engine engine;
 		Client client{engine};
-		ObjectId track = 0;
+		ObjectId track = 0; // the audio track's channel
+		ObjectId trackId = 0;
 		ObjectId effect = 0;
 	};
+
+	// Ticks for a number of samples at the default 120 BPM and 48 kHz, exact for multiples of 25 samples.
+	int64_t ticks(int64_t samples)
+	{
+		REQUIRE(samples % 25 == 0);
+		return samples / 25 * 1792;
+	}
+
+	ObjectId trackOf(const Json& added)
+	{
+		return added.at("track").at("id").get<ObjectId>();
+	}
 
 	// The sine as the track alone passes it on.
 	const std::vector<float>& sine()
@@ -388,6 +404,81 @@ TEST_CASE("Mute Pre-Send when Mute: the user setting mutes pre-fader sends with 
 	checkGain(unmuted.output(1000), 1.0 + gain(-6.0));
 }
 
+TEST_CASE("Mute Pre-Send when Mute: mute automation mutes pre-fader sends from its sample on", "[integration]")
+{
+	const int blockSize = GENERATE(64, 100);
+	const bool mutePreSends = GENERATE(true, false);
+	INFO("block size " << blockSize << (mutePreSends ? ", Mute Pre-Send when Mute" : ""));
+	Sends mixer(blockSize);
+	run(mixer.client, "settings.set", {{"key", "audio.mutePreSends"}, {"value", mutePreSends}});
+	mixer.set({{"monitor", true},
+		{"sends", {{{"send", 1}, {"destination", mixer.effect}, {"on", true}, {"level", -6.0}, {"preFader", true}}}}});
+	const ObjectId lane =
+		run(mixer.client, "automationLane.add", {{"track", mixer.trackId}, {"target", {{"type", "mute"}}}})
+			.at("lane")
+			.at("id")
+			.get<ObjectId>();
+	run(mixer.client, "automationPoint.add",
+		{{"lane", lane},
+			{"points",
+				{{{"position", 0}, {"value", 0.0}}, {{"position", ticks(1000)}, {"value", 1.0}},
+					{{"position", ticks(3000)}, {"value", 0.0}}}}});
+	run(mixer.client, "transport.play");
+	run(mixer.client, "audio.render", {{"frames", 4000}});
+
+	// The track alone, as it plays its input.
+	Sends reference(blockSize);
+	reference.set({{"monitor", true}});
+	run(reference.client, "transport.play");
+	run(reference.client, "audio.render", {{"frames", 4000}});
+	const std::vector<float> input = reference.output(4000);
+
+	// Mute glides over 5 ms (240 frames) from the point's sample on; with the setting, the pre-fader send with it.
+	const auto audible = [](size_t position)
+	{
+		if (position < 1000)
+			return 1.0;
+		if (position < 3000)
+			return std::max(0.0, 1.0 - (static_cast<double>(position - 1000) / 240.0));
+		return std::min(1.0, static_cast<double>(position - 3000) / 240.0);
+	};
+	const std::vector<float> output = mixer.output(4000);
+	size_t wrong = 0;
+	size_t first = 0;
+	for (size_t i = 0; i < output.size(); ++i)
+	{
+		const double send = gain(-6.0) * (mutePreSends ? audible(i) : 1.0);
+		if (std::abs(output[i] - (input[i] * (audible(i) + send))) > 1e-6 && wrong++ == 0)
+			first = i;
+	}
+	INFO(wrong << " wrong frames, the first at " << first);
+	CHECK(wrong == 0);
+}
+
+TEST_CASE("Mute Pre-Send when Mute switched on or off for a muted channel glides its pre-fader sends there",
+	"[integration]")
+{
+	Sends mixer;
+	mixer.set({{"mute", true},
+		{"sends", {{{"send", 1}, {"destination", mixer.effect}, {"on", true}, {"level", -6.0}, {"preFader", true}}}}});
+	run(mixer.client, "audio.render", {{"frames", 128}});
+	run(mixer.client, "settings.set", {{"key", "audio.mutePreSends"}, {"value", true}});
+	run(mixer.client, "audio.render", {{"frames", 128}});
+	run(mixer.client, "settings.set", {{"key", "audio.mutePreSends"}, {"value", false}});
+	run(mixer.client, "audio.render", {{"frames", 128}});
+	const double half = gain(-6.0);
+	checkGain(mixer.output(384),
+		[half](size_t i)
+		{
+			const double x = std::min(1.0, static_cast<double>((i % 128) + 1) / 64.0); // through a block's glide
+			if (i < 128)
+				return half;
+			if (i < 256)
+				return half * (1.0 - x);
+			return half * x;
+		});
+}
+
 TEST_CASE("a send wider than its destination is converted like an output", "[integration]")
 {
 	// A stereo track's pre-fader send into a mono effect channel: L and R merge at -3.01 dB each, and the mono
@@ -439,20 +530,68 @@ TEST_CASE("a new group or effect track for selected tracks takes their outputs o
 		client, "track.add", {{"type", "effect"}, {"tracks", Json::array({first.at("track").at("id")})}, {"send", 1}}));
 	CHECK(channel(client, channelOf(first)).at("sends")[0].at("destination") == third);
 
+	// A track without an audio channel is left out, and the group is added all the same.
 	const Json one = Json::array({midi.at("track").at("id")});
-	CHECK_THAT(
-		reject(client, "track.add", {{"type", "group"}, {"tracks", one}}), ContainsSubstring("no audio channel"));
+	CHECK(run(client, "track.add", {{"type", "group"}, {"tracks", one}}).at("track").at("type") == "group");
+	CHECK_THAT(reject(client, "track.add", {{"type", "group"}, {"tracks", Json::array({999999})}}),
+		ContainsSubstring("no track 999999"));
 	CHECK_THAT(reject(client, "track.add", {{"type", "audio"}, {"tracks", ids}}), ContainsSubstring("take tracks"));
 	CHECK_THAT(reject(client, "track.add", {{"type", "group"}, {"tracks", ids}, {"send", 1}}),
 		ContainsSubstring("only effect tracks"));
 	CHECK_THAT(
 		reject(client, "track.add", {{"type", "effect"}, {"tracks", ids}, {"send", 9}}), ContainsSubstring("send"));
+	CHECK_THAT(reject(client, "track.add", {{"type", "effect"}, {"send", 1}}), ContainsSubstring("send needs tracks"));
 	// A group playing into a group of its own channels would be a loop.
 	const Json inner = run(client, "track.add", {{"type", "group"}});
 	CHECK_THAT(
 		reject(client, "track.add",
 			{{"type", "group"}, {"output", channelOf(inner)}, {"tracks", Json::array({inner.at("track").at("id")})}}),
 		ContainsSubstring("loop"));
+}
+
+TEST_CASE("group and effect tracks for selected tracks route those that can be routed and leave out the others",
+	"[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const Json audio = run(client, "track.add", {{"type", "audio"}});
+	const Json full = run(client, "track.add", {{"type", "audio"}});
+	const Json midi = run(client, "track.add", {{"type", "midi"}});
+	const Json marker = run(client, "track.add", {{"type", "marker"}});
+	const Json folder = run(client, "track.add", {{"type", "folder"}});
+	const Json inside = run(client, "track.add", {{"type", "audio"}, {"parent", trackOf(folder)}});
+	const Json grouped = run(client, "track.add", {{"type", "folder"}, {"groupChannel", true}});
+	const ObjectId old = channelOf(run(client, "track.add", {{"type", "effect"}}));
+	Json all = Json::array();
+	for (int send = 1; send <= 8; ++send)
+		all.push_back({{"send", send}, {"destination", old}});
+	run(client, "channel.set", sends(channelOf(full), all));
+	const Json selection = {
+		trackOf(audio), trackOf(full), trackOf(midi), trackOf(marker), trackOf(folder), trackOf(grouped)};
+	const ObjectId main = channel(client, channelOf(inside)).at("output").get<ObjectId>();
+
+	// The audio channels play into the group, the folder's group channel too; a folder without one stands for none of
+	// the tracks inside it, which only play into the group when they are selected themselves.
+	const ObjectId group = channelOf(run(client, "track.add", {{"type", "group"}, {"tracks", selection}}));
+	CHECK(channel(client, channelOf(audio)).at("output") == group);
+	CHECK(channel(client, channelOf(full)).at("output") == group);
+	CHECK(channel(client, channelOf(grouped)).at("output") == group);
+	CHECK(channel(client, channelOf(inside)).at("output") == main);
+
+	// Those with a free send send to the effect channel; one without stays as it is. One undo takes it all back.
+	const ObjectId effect = channelOf(run(client, "track.add", {{"type", "effect"}, {"tracks", selection}}));
+	CHECK(channel(client, channelOf(audio)).at("sends")[0].at("destination") == effect);
+	CHECK(channel(client, channelOf(grouped)).at("sends")[0].at("destination") == effect);
+	const Json fullSends = channel(client, channelOf(full)).at("sends");
+	CHECK(std::all_of(
+		fullSends.begin(), fullSends.end(), [old](const Json& send) { return send.at("destination") == old; }));
+	run(client, "history.undo");
+	CHECK(channel(client, channelOf(audio)).at("sends")[0] ==
+		Json{{"destination", 0}, {"on", false}, {"level", 0.0}, {"preFader", false}});
+	CHECK(channel(client, channelOf(grouped)).at("sends")[0].at("destination") == 0);
+	const Json channels = run(client, "project.get").at("channels");
+	CHECK(std::none_of(
+		channels.begin(), channels.end(), [effect](const Json& item) { return item.at("id") == effect; }));
 }
 
 TEST_CASE("group and effect tracks go into the project's Group and FX folders", "[unit]")

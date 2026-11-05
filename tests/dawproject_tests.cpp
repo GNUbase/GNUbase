@@ -1209,6 +1209,36 @@ TEST_CASE("sends are saved, with their destination, type, level and on also in p
 	CHECK(loadedSends[2].at("destination") == 0);
 }
 
+TEST_CASE("outputs into effect channels load from project.xml alone", "[integration]")
+{
+	const test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	const ObjectId audio = idOf(run(client, "track.add", {{"type", "audio"}, {"name", "Audio"}}), "channel");
+	const ObjectId reverb = idOf(run(client, "track.add", {{"type", "effect"}, {"name", "Reverb"}}), "channel");
+	const ObjectId delay = idOf(run(client, "track.add", {{"type", "effect"}, {"name", "Delay"}}), "channel");
+	run(client, "channel.set", {{"channel", audio}, {"output", reverb}});
+	run(client, "channel.set", {{"channel", reverb}, {"output", delay}});
+	const std::string file = utf8(dir.path() / "song.dawproject");
+	run(client, "project.save", {{"path", file}});
+	std::map<std::string, std::string> entries = readZip(file);
+	REQUIRE(entries.erase("gnubase.json") == 1);
+	const std::string other = utf8(dir.path() / "other.dawproject");
+	writeZip(other, entries);
+
+	// An audio channel plays into an effect channel, which plays into another one.
+	run(client, "project.load", {{"path", other}});
+	const Json project = run(client, "project.get");
+	const auto channel = [&project](const std::string& name)
+	{
+		const Json track = withId(project.at("tracks"), "name", name);
+		return withId(project.at("channels"), "id", track.at("channel"));
+	};
+	CHECK(channel("Audio").at("output") == channel("Reverb").at("id"));
+	CHECK(channel("Reverb").at("output") == channel("Delay").at("id"));
+	CHECK(withId(project.at("busses"), "id", channel("Delay").at("output")).at("direction") == "output");
+}
+
 TEST_CASE(
 	"loading clears sends to what can't take them and sends that close a loop, from either entry", "[integration]")
 {
