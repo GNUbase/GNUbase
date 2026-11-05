@@ -901,9 +901,9 @@ namespace gnubase::engine
 			{"markers", toJsonArray(project.markers)}, {"automation", toJsonArray(project.automation)},
 			{"linkGroups", toJsonArray(project.linkGroups)}, {"arranger", arrangerJson(project)},
 			{"virginTerritory", project.virginTerritory}, {"quantize", midi::toJson(project.quantize)},
-			{"autoQuantize", project.autoQuantize}, {"activeMarkerTrack", project.activeMarkerTrack},
-			{"snap", toJson(project.snap)}, {"mixers", mixersJson(project.mixers)},
-			{"metronome", metronome::toJson(project.metronome)}};
+			{"autoQuantize", project.autoQuantize}, {"quantizePreset", project.quantizePreset},
+			{"activeMarkerTrack", project.activeMarkerTrack}, {"snap", toJson(project.snap)},
+			{"mixers", mixersJson(project.mixers)}, {"metronome", metronome::toJson(project.metronome)}};
 		json.update(toJson(project.setup));
 		return json;
 	}
@@ -1901,6 +1901,9 @@ namespace gnubase::engine
 		if (json.contains("quantize"))
 			project.quantize = midi::quantizeSettingsFromJson(json.at("quantize"));
 		project.autoQuantize = json.value("autoQuantize", false);
+		// Files from before #770 have none. Only a name: quantize.get checks that the preset has the settings.
+		if (const auto preset = json.find("quantizePreset"); preset != json.end() && preset->is_string())
+			project.quantizePreset = preset->get<std::string>();
 		project.snap = snapSettingsFrom(json.value("snap", Json::object()), SnapSettings(), true); // before #87: none
 		const Json mixers = json.value("mixers", Json::object()); // files from before #106 have none
 		for (const auto& [name, view] : mixers.items())

@@ -1509,7 +1509,8 @@ namespace gnubase::engine
 		// don't keep a track. Group and effect tracks are where others play through, VCA tracks control channels,
 		// ruler, tempo and signature tracks hold no events. What goes can leave others empty, such as a folder that
 		// held only empty tracks or an instrument track that only empty MIDI tracks played, so it looks again until
-		// nothing more goes.
+		// nothing more goes. What a track holds is the same in the track list's warning before Remove Selected Tracks
+		// (TrackList::build, src/ui/tracklist.cpp): change both together.
 		std::set<ObjectId> emptyTracks(const Project& project)
 		{
 			std::set<ObjectId> holding;
@@ -2957,6 +2958,8 @@ namespace gnubase::engine
 			{"tempo.remove", "Remove tempo events"},
 			{"tempo.tap", "Tap tempo"},
 			{"tempo.import", "Import tempo track"},
+			{"tempo.fromMidi", "Calculate tempo from MIDI"},
+			{"tempo.detect", "Detect tempo"},
 			{"signature.add", "Add time signature event"},
 			{"signature.set", "Change time signature events"},
 			{"signature.remove", "Remove time signature events"},

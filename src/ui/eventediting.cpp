@@ -381,6 +381,24 @@ namespace gnubase::ui
 						openDialog("repeat-events.rml");
 				}},
 			{"edit.fillLoop", onSelection("event.fillLoop", Json::object())},
+			// Tempo detection (reference manual pp. 1460-1461) of the first selected audio event or MIDI part, and
+			// Calculate Tempo from MIDI Events (pp. 1459-1460) of the selected MIDI parts.
+			{"tempo.detection",
+				[this]
+				{
+					const std::vector<uint64_t> parts = selectedMidi();
+					const std::vector<uint64_t> audio = selectedAudio();
+					if (audio.empty() && parts.empty())
+						return;
+					m_detection = TempoDetection{audio.empty() ? parts.front() : audio.front()};
+					openDialog("tempo-detection.rml");
+				}},
+			{"midi.calculateTempo",
+				[this]
+				{
+					if (!selectedMidi().empty())
+						openDialog("calculate-tempo.rml");
+				}},
 			{"edit.toRealCopy", onSelection("event.toRealCopy", Json::object())},
 			// Audio parts (reference manual p. 250): the selected audio events into a part, the selected audio parts
 			// back into events.

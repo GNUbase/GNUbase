@@ -63,7 +63,7 @@ namespace gnubase::app
 			const char* keys;
 		};
 
-		constexpr std::array<ProjectCommand, 77> g_projectCommands{{
+		constexpr std::array<ProjectCommand, 79> g_projectCommands{{
 			{"zoom.in", "Zooms the project window in.", "H"},
 			{"zoom.out", "Zooms the project window out.", "G"},
 			{"zoom.inVertically", "Makes the project window's tracks taller.", "Shift+H"},
@@ -88,6 +88,10 @@ namespace gnubase::app
 			{"edit.repeat", "Opens the Repeat Events dialog for the selected events.", "Mod+K"},
 			{"edit.fillLoop", "Fills the locator range with copies of the selected events.", nullptr},
 			{"edit.toRealCopy", "Converts the selected shared copies to real copies.", nullptr},
+			// Tempo detection and tempo from MIDI (docs/features/tempo-detection.md).
+			{"tempo.detection", "Opens the Tempo Detection dialog for the selected audio event or MIDI part.", nullptr},
+			{"midi.calculateTempo", "Opens the Calculate Tempo from MIDI Events dialog for the selected MIDI parts.",
+				nullptr},
 			// Fades and crossfades (docs/features/fades.md), with the reference's key for Crossfade (manual p. 388).
 			{"audio.fadeInToRange", "Fades the audio events in the selection range in up to the range's start.",
 				nullptr},
@@ -195,9 +199,13 @@ namespace gnubase::app
 		// The track list's commands (ui::TrackList::actions, docs/features/track-list.md) and their keys.
 		constexpr std::array<ProjectCommand, 28> g_trackCommands{{
 			{"track.selectPrevious",
-				"Selects the track above the selected one, and its first event while an event is selected.", "Up"},
+				"Selects the track above the selected one, and its first event while an event is selected (unless "
+				"ui.upDownSelectsTracksOnly).",
+				"Up"},
 			{"track.selectNext",
-				"Selects the track below the selected one, and its first event while an event is selected.", "Down"},
+				"Selects the track below the selected one, and its first event while an event is selected (unless "
+				"ui.upDownSelectsTracksOnly).",
+				"Down"},
 			{"track.rename", "Renames the first selected track.", "Alt+F2"},
 			{"track.removeSelected", "Removes the selected tracks.", nullptr},
 			{"track.duplicateSelected", "Duplicates the selected tracks with their contents.", nullptr},
