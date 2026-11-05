@@ -197,9 +197,20 @@ TEST_CASE("editor.set refuses notes of audio parts and shows the tracks of a con
 		f.call("editor.set", {{"editor", "window"}, {"parts", {keysPart}}, {"content", "key"}, {"showTracks", {bass}}});
 	CHECK(shown.at("content") == "key");
 	CHECK(ids(shown.at("parts")) == std::vector<uint64_t>{keysPart, bassPart});
+	// Without parts or exclusive the shown MIDI parts would stay with the audio parts: refused, whichever comes first.
+	CHECK_THAT(f.fails("editor.set", {{"editor", "window"}, {"content", "audioPart"}, {"showTracks", {vocals}}}),
+		ContainsSubstring("audio parts show in the audio part editor"));
+	CHECK(ids(f.view().at("parts")) == std::vector<uint64_t>{keysPart, bassPart});
 	// And the other way round, the audio part editor's audio parts.
 	const Json back = f.call(
 		"editor.set", {{"editor", "window"}, {"exclusive", true}, {"content", "audioPart"}, {"showTracks", {vocals}}});
 	CHECK(back.at("content") == "audioPart");
 	CHECK(ids(back.at("parts")) == std::vector<uint64_t>{audioPart});
+	// An audio track below the MIDI tracks: its audio part would come after the MIDI part shown with it.
+	const uint64_t drums = f.track("audio");
+	const auto [drumPart, drumEvent] = f.part(drums, 0);
+	f.call("editor.set", {{"editor", "window"}, {"exclusive", true}, {"showTracks", {drums}}});
+	CHECK_THAT(f.fails("editor.set", {{"editor", "window"}, {"content", "key"}, {"showTracks", {keys}}}),
+		ContainsSubstring("audio parts show in the audio part editor"));
+	CHECK(ids(f.view().at("parts")) == std::vector<uint64_t>{drumPart});
 }

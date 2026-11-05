@@ -4,6 +4,7 @@
 // opening an event in the sample editor. tests/audioparteditor_tests.cpp checks the engine's side.
 #include "ui/enginebinding.h"
 #include "ui/keycommands.h"
+#include "ui/midieditor.h"
 #include "uiapp.h"
 
 #include <RmlUi/Core/Context.h>
@@ -130,7 +131,7 @@ namespace
 		// Waits until the display shows the part's events as the engine has them, each at its time and lane, and one
 		// lane more than they are on. A drag already shows the events where it moves them before the engine has them;
 		// the lane that it adds shows only with the engine's. The display shows the part, and events after its end
-		// up to theirs.
+		// that it hides entirely up to theirs.
 		void settle()
 		{
 			REQUIRE(app.waitUntil(
@@ -145,8 +146,9 @@ namespace
 					for (const Json& each : all)
 					{
 						lanes = std::max(lanes, each.at("lane").get<int>() + 1);
-						range = std::max(
-							range, (each.at("position").get<double>() + each.at("length").get<double>()) / g_second);
+						if (each.at("position").get<double>() >= 2.0 * g_second)
+							range = std::max(range,
+								(each.at("position").get<double>() + each.at("length").get<double>()) / g_second);
 					}
 					if (elements(".ape-lane").size() != static_cast<size_t>(lanes) + 1)
 						return false;
@@ -328,10 +330,14 @@ TEST_CASE("an open audio part editor follows the audio parts selected in the pro
 	REQUIRE(f.app.waitUntil([&] { return f.view().at("parts") == Json::array({other}); }));
 	REQUIRE(f.app.waitUntil([&] { return f.elements(".ape-event").size() == 1; }));
 	CHECK(f.elements(eventSelector(event)).size() == 1);
-	// With Keep Editor Contents it stays with what it shows.
+	// With Keep Editor Contents it stays with what it shows, while the lower zone's editor follows.
 	f.app.call("editor.set", {{"editor", "window"}, {"keepContents", true}});
+	f.app.keys().run("window.lowerZoneEditor", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil(
+		[&] { return f.app.call("editor.get", {{"editor", "lower"}}).at("parts") == Json::array({other}); }));
 	f.display.select({f.part});
-	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil(
+		[&] { return f.app.call("editor.get", {{"editor", "lower"}}).at("parts") == Json::array({f.part}); }));
 	CHECK(f.view().at("parts") == Json::array({other}));
 }
 
@@ -648,7 +654,8 @@ TEST_CASE("events moved out of their part show where they are and move back into
 	// It selects and drags back into the part.
 	f.click(f.at(3.25, 0, 3.5));
 	REQUIRE(f.app.waitUntil([&] { return f.selection() == std::vector<uint64_t>{f.second}; }));
-	f.drag(f.at(3.25, 0, 3.5), f.at(1.25, 0, 3.5));
+	// Away from the click, so that the press isn't a double click.
+	f.drag(f.at(3.4, 0, 3.5), f.at(1.4, 0, 3.5));
 	REQUIRE(f.app.waitUntil([&] { return f.event(f.second).at("position") == g_second; }));
 	f.settle();
 	CHECK(!f.has(eventSelector(f.second), "outside"));
@@ -657,8 +664,16 @@ TEST_CASE("events moved out of their part show where they are and move back into
 TEST_CASE("with snap off the audio part editor moves and splits events where the mouse is", "[ui]")
 {
 	Fixture f;
-	f.app.call("snap.set", {{"on", false}});
 	f.open();
+	// Turned off while the editor is open.
+	f.app.call("snap.set", {{"on", false}});
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			const ui::MidiEditor* editor = f.app.appUi().editorWindow();
+			return editor != nullptr && editor->project().contains("snap") &&
+				editor->project().at("snap").at("on") == false;
+		}));
 	// 0.27 seconds is off the grid of eighths of a second; a pixel of the display is under 2 ms.
 	f.drag(f.at(0.25, 0), f.at(0.52, 0));
 	REQUIRE(f.app.waitUntil([&] { return f.event(f.first).at("position") != 0; }));

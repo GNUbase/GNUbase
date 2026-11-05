@@ -33,10 +33,10 @@ checks `event.toFront` on audio and MIDI takes, splits, the project file and und
   `track.toggleLanesSelected`) shows an audio, instrument or MIDI track's lanes: a display lane per lane from 0 to the
   highest one its events and parts are on, below the track's own lane and above its automation tracks, as high as
   the track. The audio events in an audio part don't count: their lanes are the part's, which the audio part editor
-  shows ([audio-part-editor.md](audio-part-editor.md)). Each shows the events and parts on that lane; `laneTakes()` names the lane each display lane shows (-1
-  for a track's own and automation lanes), and the lanes have the track's id in `laneTracks()`. Which tracks show
-  their lanes is view state, like folding. The track list's row reaches over its lanes, with its automation rows
-  below them.
+  shows ([audio-part-editor.md](audio-part-editor.md)); cycle recordings don't count them either. Each shows the
+  events and parts on that lane; `laneTakes()` names the lane each display lane shows (-1 for a track's own and
+  automation lanes), and the lanes have the track's id in `laneTracks()`. Which tracks show their lanes is view state,
+  like folding. The track list's row reaches over its lanes, with its automation rows below them.
 - **The comp result.** A track's own lane shows its audio events where none in front of them covers them, with
   their waveforms there, so it shows what plays; clicks there find the event in front. `EventWaveforms` keeps an
   event's waves apart by their order, as an event can show on its track's lane and on its own.
