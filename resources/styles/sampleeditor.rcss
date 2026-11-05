@@ -231,6 +231,23 @@
 	text-align: right;
 }
 
+/* The field a region's name, start or end is typed in: in its column, as high as the row. */
+.se-region input.se-region-field
+{
+	height: 20dp;
+	padding: 0 4dp;
+}
+
+.se-region input.se-region-name
+{
+	width: auto;
+}
+
+.se-region input.se-region-start, .se-region input.se-region-end
+{
+	width: 80dp;
+}
+
 .sample-editor.empty .se-overview, .sample-editor.empty .se-body, .sample-editor.no-info .se-info,
 .sample-editor.no-overview .se-overview, .sample-editor.no-regions .se-regions, .sample-editor .off
 {

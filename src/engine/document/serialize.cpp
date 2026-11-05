@@ -15,6 +15,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -1597,15 +1598,20 @@ namespace gnubase::engine
 		for (const Json& item : json.at("clips"))
 		{
 			const auto id = item.at("id").get<ObjectId>();
-			// Files from before regions (#140) have none; regions that aren't sections of the clip are left out.
+			// Files from before regions (#140) have none; regions that aren't sections of the clip's media file are
+			// left out, and the others go by start, as clip.addRegion keeps them.
+			const auto media = project.media.find(item.at("media").get<ObjectId>());
+			const time::Samples length = media != project.media.end() ? media->second.length : 0;
 			std::vector<ClipRegion> regions;
 			for (const Json& region : item.value("regions", Json::array()))
 			{
 				ClipRegion read{region.at("id").get<ObjectId>(), region.value("name", std::string()),
 					region.at("start").get<time::Samples>(), region.at("end").get<time::Samples>()};
-				if (read.start >= 0 && read.start < read.end)
+				if (read.start >= 0 && read.start < read.end && read.end <= length)
 					regions.push_back(std::move(read));
 			}
+			std::sort(regions.begin(), regions.end(), [](const ClipRegion& a, const ClipRegion& b)
+				{ return std::tie(a.start, a.id) < std::tie(b.start, b.id); });
 			// Files from before hitpoints (#143) have none; hitpoints before the clip's start, values out of range
 			// and a second hitpoint at a position are left out.
 			std::vector<Hitpoint> hitpoints;

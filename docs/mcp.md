@@ -864,16 +864,18 @@ Builds the processing graph again with the plugins of the slots as they are now.
 
 Engine command `audition.scrub`.
 
-Scrubs an audio track, as the scrub tool does while the mouse drags: plays its events from where the last scrub of the track got to, to position (samples), forwards or backwards, in seconds (default: the time since that scrub, 0.01 to 0.1 seconds), so speed and pitch follow how fast the positions come; the first scrub only sets where the next one starts. Like audition.start it goes straight to the main mix's outputs; it also moves the project cursor to position (transport.changed). Ends with audition.stop. Announces audition.changed.
+Scrubs an audio track, as the scrub tool does while the mouse drags: plays its events from where the last scrub of the track got to, to position (samples), forwards or backwards, in seconds (default: the time since that scrub, 0.01 to 0.1 seconds), so speed and pitch follow how fast the positions come; the first scrub only sets where the next one starts. Like audition.start it goes straight to the main mix's outputs; it also moves the project cursor to position (transport.changed). Or, instead of track, a media file on its own, as the sample editor scrubs its clip: position is then one of its sample frames, and the cursor stays. Ends with audition.stop. Announces audition.changed.
 
 Arguments:
 
+- `media`: integer
 - `position`: integer, required
 - `seconds`: number
-- `track`: integer, required
+- `track`: integer
 
 Result:
 
+- `media`: integer, required
 - `mode`: one of "off" | "play" | "scrub", required
 - `track`: integer, required
 
@@ -881,16 +883,18 @@ Result:
 
 Engine command `audition.start`.
 
-Auditions an audio track, as the play tool does while the mouse is pressed: plays its events from position (samples) until audition.stop, straight to the main mix's outputs, without its channel's fader, pan, mute and effects, and without the transport. With end (samples, after position) it plays up to there and then nothing, as the sample editor plays a slice, while its mode stays play until audition.stop or another audition. A mono clip plays on every channel. Ends what was auditioned before. Announces audition.changed.
+Auditions an audio track, as the play tool does while the mouse is pressed: plays its events from position (samples) until audition.stop, straight to the main mix's outputs, without its channel's fader, pan, mute and effects, and without the transport. With end (samples, after position) it plays up to there and then nothing, as the sample editor plays a slice, while its mode stays play until audition.stop or another audition. A mono clip plays on every channel. Or, instead of track, a media file on its own, as the sample editor plays its clip: position and end are then its sample frames, from 0 to its length, without the events that play it. Ends what was auditioned before. Announces audition.changed.
 
 Arguments:
 
 - `end`: integer
+- `media`: integer
 - `position`: integer, required
-- `track`: integer, required
+- `track`: integer
 
 Result:
 
+- `media`: integer, required
 - `mode`: one of "off" | "play" | "scrub", required
 - `track`: integer, required
 
@@ -902,6 +906,7 @@ Ends auditioning and scrubbing. Does nothing if neither runs. Announces audition
 
 Result:
 
+- `media`: integer, required
 - `mode`: one of "off" | "play" | "scrub", required
 - `track`: integer, required
 
@@ -1356,7 +1361,7 @@ Result:
 
 Engine command `clip.addRegion`.
 
-Adds a region to a clip (Add Region, Event or Range as Region, reference manual pp. 620, 624-625): a named section of its audio, from start to end in the clip's sample frames, start before end; name defaults to Region and its number. A clip's regions are in its regions, by start. Emits clip.changed. Returns the clip's id and the region.
+Adds a region to a clip (Add Region, Event or Range as Region, reference manual pp. 620, 624-625): a named section of its audio, from start to end in the clip's sample frames, start before end; name defaults to Region and a number that no other region of the clip has in its name. A clip's regions are in its regions, by start. Emits clip.changed. Returns the clip's id and the region.
 
 Arguments:
 
