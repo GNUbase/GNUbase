@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/inspector.h"
 
+#include "engine/midi/modifiers.h"
+#include "engine/time/tempomap.h"
 #include "ui/widgetutils.h"
 
 #include <RmlUi/Core/Context.h>
@@ -10,6 +12,9 @@
 #include <RmlUi/Core/Input.h>
 #include <RmlUi/Core/StringUtilities.h>
 
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <string>
 #include <utility>
@@ -50,12 +55,95 @@ namespace gnubase::ui
 			R"(<div class="inspector-row" row="output"><span class="inspector-label">Output</span>)"
 			R"(<select control="output" title="Output Routing"/></div>)"
 			R"(</div></div>)"
+			R"(<div class="inspector-section" section="modifiers" label="MIDI Modifiers"/>)"
 			R"(<div class="inspector-section" section="inserts" label="Inserts">)"
 			R"(<button class="section-header">Inserts</button><div class="section-body inserts"/></div>)"
 			R"(<div class="inspector-section" section="notepad" label="Notepad">)"
 			R"(<button class="section-header">Notepad</button><div class="section-body">)"
 			R"(<textarea class="notepad" rows="5"/></div></div>)"
 			R"(</div>)";
+
+		using widgets::Options;
+
+		// The MIDI modifiers (pp. 1099-1102): their controls are named after the channel's modifiers in channel.set,
+		// "modifiers-" then the key, separated by dashes, with the index of a pair and the field of a generator or
+		// range.
+		const Options g_randomTargets = {{"off", "Off"}, {"position", "Position"}, {"pitch", "Pitch"},
+			{"velocity", "Velocity"}, {"length", "Length"}};
+		const Options g_rangeTargets = {{"off", "Off"}, {"velocityLimit", "Vel. Limit"},
+			{"velocityFilter", "Vel. Filter"}, {"noteLimit", "Note Limit"}, {"noteFilter", "Note Filter"}};
+
+		// Random positions and lengths show in ticks of 480 to a quarter note, as the reference's do; the engine's
+		// are finer.
+		constexpr int64_t g_ticksPerShownTick = time::g_ticksPerQuarter / 480;
+
+		std::string integerField(const std::string& control, int min, int max, int value, const char* title = "")
+		{
+			return R"(<valuefield control="modifiers-)" + control + R"(" min=")" + std::to_string(min) + R"(" max=")" +
+				std::to_string(max) + R"(" default=")" + std::to_string(value) + R"(" step="1" decimals="0" title=")" +
+				title + R"("/>)";
+		}
+
+		std::string row(const std::string& name, const std::string& label, const std::string& controls)
+		{
+			return R"(<div class="inspector-row" row=")" + name + R"("><span class="inspector-label">)" + label +
+				"</span>" + controls + "</div>";
+		}
+
+		std::string modifiersRml()
+		{
+			std::string rml = R"(<button class="section-header">MIDI Modifiers</button><div class="section-body">)"
+							  R"(<div class="inspector-buttons"><button type="toggle" class="toggle bypass")"
+							  R"( control="modifiers-bypass" title="Bypass MIDI Modifiers">Bypass</button></div>)";
+			rml += row("transpose", "Transpose", integerField("transpose", -127, 127, 0));
+			rml += row("velocityShift", "Vel. Shift", integerField("velocityShift", -127, 127, 0));
+			rml += row("velocityCompression", "Vel. Comp.",
+				integerField("velocityCompression-0", 1, 16, 1, "Numerator") +
+					integerField("velocityCompression-1", 1, 16, 1, "Denominator"));
+			rml += row("lengthCompression", "Len. Comp.",
+				integerField("lengthCompression-0", 1, 16, 1, "Numerator") +
+					integerField("lengthCompression-1", 1, 16, 1, "Denominator"));
+			for (const char* kind : {"random", "range"})
+				for (int i = 0; i < 2; ++i)
+				{
+					const bool random = kind == std::string("random");
+					const std::string name = std::string(kind) + "-" + std::to_string(i);
+					const std::string label = std::string(random ? "Random " : "Range ") + std::to_string(i + 1);
+					const int low = random ? -127 : 0; // ranges: velocities or pitches
+					rml += row(name, label,
+						R"(<select control="modifiers-)" + name + R"(-target" title=")" + label + R"( Target"/>)");
+					rml += row(name + "-values", "",
+						integerField(name + "-minimum", low, 127, 0, "Minimum") +
+							integerField(name + "-maximum", low, 127, random ? 0 : 127, "Maximum"));
+				}
+			return rml + "</div>";
+		}
+
+		bool showsTicks(const Json& random)
+		{
+			return random.at("target") == "position" || random.at("target") == "length";
+		}
+
+		// A modifier control's name after "modifiers-": the key, then the index of a pair and a generator's or range's
+		// field.
+		std::vector<std::string> modifierPath(const std::string& control)
+		{
+			std::vector<std::string> path;
+			size_t from = std::string("modifiers-").size();
+			while (from <= control.size())
+			{
+				const size_t dash = std::min(control.find('-', from), control.size());
+				path.push_back(control.substr(from, dash - from));
+				from = dash + 1;
+			}
+			return path;
+		}
+
+		void setAttribute(Rml::Element& element, const char* name, const std::string& value)
+		{
+			if (element.GetAttribute<Rml::String>(name, "") != value)
+				element.SetAttribute(name, value);
+		}
 
 		void setClass(Rml::Element& element, const char* name, bool set)
 		{
@@ -73,8 +161,6 @@ namespace gnubase::ui
 					return &object;
 			return nullptr;
 		}
-
-		using widgets::Options;
 
 		// Where the channel of a track of the type can play: output busses, group and effect channels, or for MIDI
 		// tracks the instrument channels, as in the add track dialog; and where an audio track records from.
@@ -127,6 +213,8 @@ namespace gnubase::ui
 		// Set up Sections from an empty area (p. 167), in the project window's document; the controls have none.
 		root.SetAttribute("contextmenu", "inspector-setup");
 		root.SetInnerRML(g_rml);
+		if (Rml::Element* modifiers = root.QuerySelector("[section=modifiers]"))
+			modifiers->SetInnerRML(modifiersRml());
 		Rml::ElementList controls;
 		root.QuerySelectorAll(controls, "[control], textarea, .inserts");
 		for (Rml::Element* control : controls)
@@ -205,6 +293,8 @@ namespace gnubase::ui
 			available("[section=" + std::string(section) + "]",
 				channel != nullptr && (!vca || std::string(section) != "routing"));
 		available("[section=inserts]", audio);
+		const bool noteTrack = channel != nullptr && (type == "midi" || type == "instrument");
+		available("[section=modifiers]", noteTrack);
 		available(".inspector-edit", channel != nullptr && m_editChannel);
 		const bool records = type == "audio" || type == "instrument" || type == "midi" || vca;
 		available("button[control=record]", records);
@@ -249,6 +339,8 @@ namespace gnubase::ui
 					*output, outputs(*m_project, type, id), std::to_string(channel->at("output").get<uint64_t>()));
 			if (Rml::Element* input = element("select[control=input]"); input != nullptr && type == "audio")
 				widgets::fill(*input, inputs(*m_project), std::to_string(channel->at("input").get<uint64_t>()));
+			if (noteTrack && channel->contains("modifiers"))
+				showModifiers(channel->at("modifiers"));
 
 			// The inserts: an overview of the slots, bypassed and deactivated ones marked.
 			std::string slots;
@@ -267,6 +359,60 @@ namespace gnubase::ui
 				notes->SetValue(channel->value("notes", std::string()));
 		}
 		m_showing = false;
+	}
+
+	void Inspector::showModifiers(const Json& modifiers)
+	{
+		Rml::ElementList controls;
+		m_root->QuerySelectorAll(controls, "[section=modifiers] [control]");
+		for (Rml::Element* control : controls)
+		{
+			const auto name = control->GetAttribute<Rml::String>("control", "");
+			const std::vector<std::string> path = modifierPath(name);
+			const Json& value = modifiers.at(path[0]);
+			if (path[0] == "bypass")
+			{
+				if (value == true)
+					control->SetAttribute("checked", "");
+				else
+					control->RemoveAttribute("checked");
+				continue;
+			}
+			const size_t index = path.size() > 1 && path[1] == "1" ? 1 : 0;
+			if (path.size() == 3 && path[2] == "target")
+			{
+				widgets::fill(*control, path[0] == "random" ? g_randomTargets : g_rangeTargets,
+					value.at(index).at("target").get<std::string>());
+				continue;
+			}
+			double shown = 0.0;
+			if (path.size() == 1)
+			{
+				shown = value.get<double>();
+			}
+			else if (path.size() == 2)
+			{
+				shown = value.at(index).get<double>();
+			}
+			else
+			{
+				const Json& each = value.at(index);
+				shown = each.at(path[2]).get<double>();
+				// A generator's limits follow its target: ticks for positions and lengths.
+				if (path[0] == "random")
+				{
+					const bool ticks = showsTicks(each);
+					const int64_t limit = ticks ? engine::midi::g_maxRandomTicks / g_ticksPerShownTick : 127;
+					setAttribute(*control, "min", std::to_string(-limit));
+					setAttribute(*control, "max", std::to_string(limit));
+					if (ticks)
+						shown /= static_cast<double>(g_ticksPerShownTick);
+				}
+			}
+			// Not while the project is older than the field's own steps (#716).
+			if (!m_binding.ahead(stepKey(m_stepOwner, m_channel.at("id"), name), m_read))
+				setAttribute(*control, "value", widgets::format(static_cast<float>(std::round(shown))));
+		}
 	}
 
 	void Inspector::ProcessEvent(Rml::Event& event)
@@ -328,6 +474,11 @@ namespace gnubase::ui
 		}
 		if (!m_channel.is_object())
 			return;
+		if (name.rfind("modifiers-", 0) == 0)
+		{
+			changeModifier(name, event);
+			return;
+		}
 		if (name == "volume" || name == "pan")
 		{
 			// A drag, wheel turns or a held arrow key: one undo step.
@@ -354,6 +505,69 @@ namespace gnubase::ui
 		if (value.is_null() || m_channel.value(key, Json()) == value)
 			return;
 		sendChannel({{key, std::move(value)}});
+	}
+
+	void Inspector::changeModifier(const std::string& control, const Rml::Event& event)
+	{
+		const Json current = m_channel.value("modifiers", Json());
+		if (!current.is_object())
+			return;
+		const std::vector<std::string> path = modifierPath(control);
+		const std::string& key = path[0];
+		if (key == "bypass")
+		{
+			const bool bypass = event.GetParameter<bool>("value", false);
+			if (current.at("bypass") != bypass)
+				sendChannel({{"modifiers", {{"bypass", bypass}}}});
+			return;
+		}
+		const size_t index = path.size() > 1 && path[1] == "1" ? 1 : 0;
+		// A generator or range changes only the field given: channel.set keeps the rest.
+		Json pair = Json::array({Json::object(), Json::object()});
+		if (path.size() == 3 && path[2] == "target")
+		{
+			const auto target = event.GetParameter<Rml::String>("value", "");
+			if (current.at(key).at(index).at("target") == target)
+				return;
+			pair[index]["target"] = target;
+			sendChannel({{"modifiers", {{key, std::move(pair)}}}});
+			return;
+		}
+		int64_t value = std::llround(event.GetParameter<float>("value", 0.0F));
+		Json modifiers = Json::object();
+		if (path.size() == 1)
+		{
+			modifiers[key] = value;
+		}
+		else if (path.size() == 2)
+		{
+			Json fraction = current.at(key); // numerator and denominator both
+			fraction[index] = value;
+			modifiers[key] = std::move(fraction);
+		}
+		else
+		{
+			if (key == "random" && showsTicks(current.at(key).at(index)))
+				value *= g_ticksPerShownTick;
+			pair[index][path[2]] = value;
+			modifiers[key] = std::move(pair);
+		}
+		// What it is already, such as a value typed again: no undo step.
+		Json changed = current;
+		if (path.size() == 1)
+			changed[key] = value;
+		else if (path.size() == 2)
+			changed[key][index] = value;
+		else
+			changed[key][index][path[2]] = value;
+		if (changed == current)
+			return;
+		// A drag, wheel turns or a held arrow key: one undo step.
+		const Json channel = m_channel.at("id");
+		const Json step = {
+			{"command", "channel.set"}, {"parameters", {{"channel", channel}, {"modifiers", std::move(modifiers)}}}};
+		m_binding.sendStep(event.GetParameter<int>("gesture", 0), stepKey(m_stepOwner, channel, control),
+			"Change MIDI Modifiers", Json::array({step}), whenRefused());
 	}
 
 	void Inspector::sendChannel(Json parameters)
