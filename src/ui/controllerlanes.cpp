@@ -187,8 +187,8 @@ namespace gnubase::ui
 			menu->AddEventListener(Rml::EventId::Click, this);
 			m_menus.push_back(menu->GetObserverPtr());
 		}
-		for (const Rml::EventId event :
-			{Rml::EventId::Mousedown, Rml::EventId::Mousemove, Rml::EventId::Mouseup, Rml::EventId::Click})
+		// The mouseup that ends a gesture goes to the document (listen), so that it ends wherever the mouse goes up.
+		for (const Rml::EventId event : {Rml::EventId::Mousedown, Rml::EventId::Mousemove, Rml::EventId::Click})
 			root.AddEventListener(event, this);
 
 		// The presets are a user setting (p. 1166).
@@ -215,9 +215,9 @@ namespace gnubase::ui
 
 	ControllerLanes::~ControllerLanes()
 	{
+		listen(false);
 		if (Rml::Element* root = m_root.get())
-			for (const Rml::EventId event :
-				{Rml::EventId::Mousedown, Rml::EventId::Mousemove, Rml::EventId::Mouseup, Rml::EventId::Click})
+			for (const Rml::EventId event : {Rml::EventId::Mousedown, Rml::EventId::Mousemove, Rml::EventId::Click})
 				root->RemoveEventListener(event, this);
 		for (const Rml::ObserverPtr<Rml::Element>& menu : m_menus)
 			if (Rml::Element* element = menu.get())
@@ -238,28 +238,44 @@ namespace gnubase::ui
 
 	void ControllerLanes::show(const Json& project, const Json& view, int64_t from, int64_t to)
 	{
-		m_project = project;
 		m_view = view;
 		m_from = from;
 		m_to = std::max(to, from + 1);
 		m_parts.clear();
+		m_partIndex.clear();
+		m_noteSelection.clear();
+		m_controllerSelection.clear();
 		m_lanes.clear();
-		if (m_project.contains("midiParts") && m_view.contains("parts"))
+		const std::string grid = project.value("quantize", Json::object()).value("grid", std::string("1/16"));
+		m_grid = engine::midi::noteValueFromString(grid).value_or(engine::midi::NoteValue{}).ticks();
+		const auto midiParts = project.find("midiParts");
+		if (midiParts != project.end() && m_view.contains("parts"))
 		{
-			const TimeContext time = projectTime(m_project);
+			// Indexed once here, not for every lane on every render.
+			const TimeContext time = projectTime(project);
 			std::map<uint64_t, const Json*> tracks;
-			for (const Json& track : m_project.at("tracks"))
+			for (const Json& track : project.at("tracks"))
 				tracks[track.at("id").get<uint64_t>()] = &track;
-			const Json& editable = m_view.at("editable");
+			std::map<uint64_t, const Json*> parts;
+			for (const Json& part : *midiParts)
+				parts[part.at("id").get<uint64_t>()] = &part;
+			const auto editable = m_view.at("editable").get<std::set<uint64_t>>();
 			for (const Json& id : m_view.at("parts"))
-				if (const Json* part = partJson(id.get<uint64_t>()))
+				if (const auto found = parts.find(id.get<uint64_t>()); found != parts.end())
 				{
-					const Json& track = *tracks.at(part->at("track").get<uint64_t>());
-					const auto position = part->at("position").get<int64_t>();
-					m_parts.push_back({id.get<uint64_t>(), ticksOf(track, position, time),
-						ticksOf(track, position + part->at("length").get<int64_t>(), time),
-						std::find(editable.begin(), editable.end(), id) != editable.end()});
+					const Json& part = *found->second;
+					const Json& track = *tracks.at(part.at("track").get<uint64_t>());
+					const auto position = part.at("position").get<int64_t>();
+					m_partIndex[found->first] = m_parts.size();
+					m_parts.push_back({found->first, ticksOf(track, position, time),
+						ticksOf(track, position + part.at("length").get<int64_t>(), time),
+						editable.count(found->first) != 0, part});
 				}
+			for (const Json& selected : m_view.value("selection", Json::array()))
+				m_noteSelection.emplace(selected.at("part").get<uint64_t>(), selected.at("note").get<uint64_t>());
+			for (const Json& selected : m_view.value("controllerSelection", Json::array()))
+				m_controllerSelection.emplace(
+					selected.at("part").get<uint64_t>(), selected.at("controller").get<uint64_t>());
 			for (const Json& lane : m_view.value("lanes", Json::array()))
 				m_lanes.push_back({lane.at("type").get<std::string>(), lane.value("number", 0)});
 		}
@@ -268,55 +284,57 @@ namespace gnubase::ui
 
 	const Json* ControllerLanes::partJson(uint64_t id) const
 	{
-		const auto parts = m_project.find("midiParts");
-		if (parts == m_project.end())
-			return nullptr;
-		for (const Json& part : *parts)
-			if (part.at("id") == id)
-				return &part;
-		return nullptr;
+		const auto found = m_partIndex.find(id);
+		return found != m_partIndex.end() ? &m_parts[found->second].json : nullptr;
 	}
 
 	bool ControllerLanes::noteSelected(uint64_t part, uint64_t note) const
 	{
-		const Json selection = m_view.value("selection", Json::array());
-		return std::any_of(selection.begin(), selection.end(),
-			[&](const Json& selected) { return selected.at("part") == part && selected.at("note") == note; });
+		return m_noteSelection.count({part, note}) != 0;
+	}
+
+	int ControllerLanes::laneChannel(const Lane& lane, const Part& part, int64_t from, int64_t to) const
+	{
+		std::optional<int> first;
+		for (const Item& item : items(lane))
+			if (item.part == part.id)
+			{
+				if (item.start >= from && item.start <= to)
+					return item.channel;
+				if (!first)
+					first = item.channel;
+			}
+		return first.value_or(0);
 	}
 
 	// The lane's bars or steps, by part and position.
 	std::vector<ControllerLanes::Item> ControllerLanes::items(const Lane& lane) const
 	{
 		std::vector<Item> found;
-		const Json selection = m_view.value("controllerSelection", Json::array());
 		for (const Part& part : m_parts)
 		{
-			const Json* json = partJson(part.id);
-			if (json == nullptr)
-				continue;
 			if (isNoteLane(lane.type))
 			{
-				for (const Json& note : json->at("notes"))
+				for (const Json& note : part.json.at("notes"))
 				{
 					const uint64_t id = note.at("id").get<uint64_t>();
 					const int64_t start = part.start + note.at("position").get<int64_t>();
-					found.push_back({part.id, id, start, start, noteValue(note, lane.type), part.editable,
+					found.push_back({part.id, id, start, start, noteValue(note, lane.type), 0, part.editable,
 						noteSelected(part.id, id)});
 				}
 				continue;
 			}
 			std::vector<Item> events;
-			for (const Json& event : json->at("controllers"))
+			for (const Json& event : part.json.at("controllers"))
 			{
 				if (event.at("type") != lane.type ||
 					((lane.type == "controller" || lane.type == "polyPressure") &&
 						event.value("number", 0) != lane.number))
 					continue;
 				const uint64_t id = event.at("id").get<uint64_t>();
-				const bool selected = std::any_of(selection.begin(), selection.end(),
-					[&](const Json& each) { return each.at("part") == part.id && each.at("controller") == id; });
-				events.push_back({part.id, id, part.start + event.at("position").get<int64_t>(), part.end,
-					eventValue(event), part.editable, selected});
+				events.push_back(
+					{part.id, id, part.start + event.at("position").get<int64_t>(), part.end, eventValue(event),
+						event.value("channel", 0), part.editable, m_controllerSelection.count({part.id, id}) != 0});
 			}
 			std::stable_sort(
 				events.begin(), events.end(), [](const Item& a, const Item& b) { return a.start < b.start; });
@@ -407,7 +425,9 @@ namespace gnubase::ui
 			}
 			const std::string items = presets + (presets.empty() ? "" : "<menuseparator/>") +
 				actionItem("addPreset", "Add Preset...") +
-				(removes.empty() ? "" : "<menuitem>Remove Preset<menu>" + removes + "</menu></menuitem>");
+				(removes.empty() ? ""
+								 : R"(<menuitem id="controller-remove-preset">Remove Preset<menu>)" + removes +
+							"</menu></menuitem>");
 			if (menu->GetInnerRML() != items)
 				menu->SetInnerRML(items);
 		}
@@ -441,8 +461,7 @@ namespace gnubase::ui
 
 	int64_t ControllerLanes::grid() const
 	{
-		const std::string grid = m_project.value("quantize", Json::object()).value("grid", std::string("1/16"));
-		return engine::midi::noteValueFromString(grid).value_or(engine::midi::NoteValue{}).ticks();
+		return m_grid;
 	}
 
 	int64_t ControllerLanes::snap(double ticks, bool off) const
@@ -546,6 +565,15 @@ namespace gnubase::ui
 		switch (event.GetId())
 		{
 		case Rml::EventId::Mousedown:
+			if (event.GetCurrentElement() == m_document.get())
+			{
+				// A left press anywhere in the document while a gesture goes on: the gesture's mouseup never came, as
+				// when the mouse went up outside the window. It ends without its effect before anything hears the
+				// press.
+				if (event.GetParameter("button", 0) == 0)
+					cancel();
+				break;
+			}
 			if (const Rml::Element* button = withAttribute(target, "lane-menu", m_root.get()))
 				m_menuLane = static_cast<size_t>(std::stoul(attribute(*button, "lane-menu")));
 			else if (event.GetParameter("button", 0) == 0)
@@ -555,7 +583,8 @@ namespace gnubase::ui
 			drag(event);
 			break;
 		case Rml::EventId::Mouseup:
-			release(event);
+			if (event.GetParameter("button", 0) == 0)
+				release(event);
 			break;
 		default:
 			break;
@@ -625,18 +654,17 @@ namespace gnubase::ui
 		{
 			// Every lane that has controller events, after the lanes shown (p. 1162).
 			for (const Part& part : m_parts)
-				if (const Json* json = partJson(part.id))
-					for (const Json& event : json->at("controllers"))
-					{
-						const std::string type = event.at("type").get<std::string>();
-						if (type == "sysEx")
-							continue;
-						const Lane lane{
-							type, type == "controller" || type == "polyPressure" ? event.value("number", 0) : 0};
-						if (std::none_of(lanes.begin(), lanes.end(),
-								[&](const Lane& each) { return each.type == lane.type && each.number == lane.number; }))
-							lanes.push_back(lane);
-					}
+				for (const Json& event : part.json.at("controllers"))
+				{
+					const std::string type = event.at("type").get<std::string>();
+					if (type == "sysEx")
+						continue;
+					const Lane lane{
+						type, type == "controller" || type == "polyPressure" ? event.value("number", 0) : 0};
+					if (std::none_of(lanes.begin(), lanes.end(),
+							[&](const Lane& each) { return each.type == lane.type && each.number == lane.number; }))
+						lanes.push_back(lane);
+				}
 			setLanes(lanes);
 		}
 		if (!laneMenu || !m_menuLane || *m_menuLane >= m_lanes.size())
@@ -668,11 +696,10 @@ namespace gnubase::ui
 			Json commands = Json::array();
 			for (const Part& part : m_parts)
 			{
-				const Json* json = partJson(part.id);
-				if (!part.editable || json == nullptr)
+				if (!part.editable)
 					continue;
 				Json notes = Json::array();
-				for (const Json& note : json->at("notes"))
+				for (const Json& note : part.json.at("notes"))
 					if (!selected || noteSelected(part.id, note.at("id").get<uint64_t>()))
 						notes.push_back(note.at("id"));
 				if (notes.empty())
@@ -743,8 +770,41 @@ namespace gnubase::ui
 
 	void ControllerLanes::press(Rml::Event& event)
 	{
-		const std::optional<size_t> lane = laneAt(event.GetTargetElement());
+		// The document's mousedown (ProcessEvent) has normally ended a gesture whose mouseup never came already; this
+		// ends one that went on while the root moved to another document.
+		cancel();
+		begin(event);
+		if (m_gesture != Gesture::None)
+			listen(true);
+	}
+
+	void ControllerLanes::cancel()
+	{
+		listen(false);
 		m_gesture = Gesture::None;
+	}
+
+	void ControllerLanes::listen(bool document)
+	{
+		if (Rml::Element* listened = m_document.get())
+		{
+			listened->RemoveEventListener(Rml::EventId::Mouseup, this);
+			listened->RemoveEventListener(Rml::EventId::Mousedown, this, true);
+		}
+		m_document.reset();
+		if (const Rml::Element* root = m_root.get(); document && root != nullptr)
+			if (Rml::ElementDocument* owner = root->GetOwnerDocument())
+			{
+				owner->AddEventListener(Rml::EventId::Mouseup, this);
+				// In the capture phase: before the press reaches the root or anything else in the document.
+				owner->AddEventListener(Rml::EventId::Mousedown, this, true);
+				m_document = owner->GetObserverPtr();
+			}
+	}
+
+	void ControllerLanes::begin(Rml::Event& event)
+	{
+		const std::optional<size_t> lane = laneAt(event.GetTargetElement());
 		if (!lane)
 			return;
 		m_lane = *lane;
@@ -826,8 +886,9 @@ namespace gnubase::ui
 
 	void ControllerLanes::release(Rml::Event& event)
 	{
+		listen(false);
 		const Gesture gesture = std::exchange(m_gesture, Gesture::None);
-		if (gesture == Gesture::None)
+		if (gesture == Gesture::None || m_lane >= m_lanes.size())
 			return;
 		const std::pair<double, double> end = at(event, m_lane);
 		if (gesture == Gesture::Value)
@@ -929,6 +990,7 @@ namespace gnubase::ui
 			event = event->first >= part->start && event->first < part->end ? std::next(event) : events.erase(event);
 		if (events.empty())
 			return;
+		const int channel = laneChannel(shown, *part, events.begin()->first, events.rbegin()->first);
 		Json removed = Json::array();
 		for (const Item& item : items(shown))
 			if (item.part == part->id && item.start >= events.begin()->first && item.start <= events.rbegin()->first)
@@ -939,7 +1001,7 @@ namespace gnubase::ui
 		Json added = Json::array();
 		for (const auto& [ticks, value] : events)
 		{
-			Json event = {{"position", ticks - part->start}, {"type", shown.type}};
+			Json event = {{"position", ticks - part->start}, {"type", shown.type}, {"channel", channel}};
 			if (shown.type == "program")
 				event["number"] = std::lround(std::clamp(value, 0.0, 1.0) * 127.0);
 			else
@@ -955,7 +1017,9 @@ namespace gnubase::ui
 
 	// The line tool (p. 1186): controller.line in its mode from where the drag started to where it ended, in the
 	// part where it started; the quantize grid is a period, the length quantize the density of the events. On a
-	// note lane it changes the selected notes of the part, or all of them without a selection there.
+	// note lane it changes the selected notes of the part, or all of them without a selection there. On a controller
+	// lane it replaces the events of every channel in the range, as painting does, and draws on the channel of the
+	// lane's events there (laneChannel).
 	void ControllerLanes::finishLine(size_t lane, const std::pair<double, double>& end, bool snapOff)
 	{
 		const Lane& shown = m_lanes[lane];
@@ -968,7 +1032,22 @@ namespace gnubase::ui
 			std::swap(first, last);
 		first.first = std::max(first.first, part->start);
 		last.first = std::clamp(last.first, first.first, part->end - 1);
-		Json parameters = {{"part", part->id}, {"lane", laneSpec(shown)}, {"mode", m_lineMode},
+		Json spec = laneSpec(shown);
+		Json commands = Json::array();
+		if (!isNoteLane(shown.type))
+		{
+			const int channel = laneChannel(shown, *part, first.first, last.first);
+			spec["channel"] = channel;
+			Json others = Json::array();
+			for (const Item& item : items(shown))
+				if (item.part == part->id && item.channel != channel && item.start >= first.first &&
+					item.start <= last.first)
+					others.push_back(item.id);
+			if (!others.empty())
+				commands.push_back(
+					{{"command", "controller.remove"}, {"parameters", {{"part", part->id}, {"controllers", others}}}});
+		}
+		Json parameters = {{"part", part->id}, {"lane", spec}, {"mode", m_lineMode},
 			{"from", {{"position", first.first - part->start}, {"value", fieldValue(shown.type, first.second)}}},
 			{"to", {{"position", last.first - part->start}, {"value", fieldValue(shown.type, last.second)}}},
 			{"density", lengthQuantize()}, {"period", grid()}};
@@ -981,6 +1060,7 @@ namespace gnubase::ui
 			if (!notes.empty())
 				parameters["notes"] = notes;
 		}
-		m_binding.send("controller.line", std::move(parameters));
+		commands.push_back({{"command", "controller.line"}, {"parameters", std::move(parameters)}});
+		edit("Draw line", std::move(commands));
 	}
 }
