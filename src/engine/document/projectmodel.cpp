@@ -1469,6 +1469,78 @@ namespace gnubase::engine
 			return Json::object();
 		}
 
+		// The tracks track.removeEmpty removes (docs/features/track-list.md): audio, instrument, MIDI and marker
+		// tracks without events, parts, markers or automation, and folders without tracks, unless a channel of
+		// another track plays or sends into theirs. Group and effect tracks are where others play through, VCA
+		// tracks control channels, ruler, tempo and signature tracks hold no events. What goes can leave others
+		// empty, such as a folder that held only empty tracks or an instrument track that only empty MIDI tracks
+		// played, so it looks again until nothing more goes.
+		std::set<ObjectId> emptyTracks(const Project& project)
+		{
+			std::set<ObjectId> holding;
+			const auto hold = [&holding](const auto& objects)
+			{
+				for (const auto& item : objects)
+					holding.insert(item.second.track);
+			};
+			hold(project.audioEvents);
+			hold(project.audioParts);
+			hold(project.midiParts);
+			hold(project.markers);
+			hold(project.automation);
+			std::set<ObjectId> gone;
+			size_t before = 0;
+			do
+			{
+				before = gone.size();
+				std::set<ObjectId> filled; // folders with tracks that stay
+				std::set<ObjectId> played; // channels that tracks that stay play or send into
+				for (const auto& [id, track] : project.trackById)
+				{
+					if (gone.count(id) != 0)
+						continue;
+					filled.insert(track.parent);
+					if (track.channel == 0)
+						continue;
+					const Channel& channel = project.channels.at(track.channel);
+					played.insert(channel.output);
+					for (const Send& send : channel.sends)
+						played.insert(send.destination);
+				}
+				for (const auto& [id, track] : project.trackById)
+				{
+					const bool kind = track.type == TrackType::Audio || track.type == TrackType::Instrument ||
+						track.type == TrackType::Midi || track.type == TrackType::Marker ||
+						track.type == TrackType::Folder;
+					if (kind && holding.count(id) == 0 && filled.count(id) == 0 &&
+						(track.channel == 0 || played.count(track.channel) == 0))
+						gone.insert(id);
+				}
+			} while (gone.size() != before);
+			return gone;
+		}
+
+		Json removeEmptyTracks(Project& project, CommandContext& context)
+		{
+			const std::set<ObjectId> gone = emptyTracks(project);
+			Json removed = Json::array();
+			std::vector<ObjectId> top; // a folder takes the tracks inside it along
+			for (const ObjectId id : project.trackOrder())
+				if (gone.count(id) != 0)
+				{
+					removed.push_back(id);
+					if (gone.count(project.trackById.at(id).parent) == 0)
+						top.push_back(id);
+				}
+			for (const ObjectId id : top)
+			{
+				const Json parameters = {{"track", id}}; // the context keeps a reference
+				CommandContext inner(parameters, &context);
+				removeTrack(project, inner);
+			}
+			return Json{{"tracks", std::move(removed)}};
+		}
+
 		// channel.set's sends: each changes what it has of the send with its number.
 		void setSends(const Project& project, Channel& changed, const Json& sends)
 		{
@@ -2777,6 +2849,7 @@ namespace gnubase::engine
 			{"track.set", "Change track"},
 			{"track.move", "Move track"},
 			{"track.remove", "Remove track"},
+			{"track.removeEmpty", "Remove empty tracks"},
 			{"track.duplicate", "Duplicate track"},
 			{"channel.set", "Change channel"},
 			{"channel.deactivateAll", "Deactivate all states"},
@@ -3567,6 +3640,19 @@ namespace gnubase::engine
 				"Without the active marker track, the topmost marker track becomes the active one.",
 				objectSchema({{"track", idSchema}}, {"track"}), noResult, false},
 			removeTrack);
+		add(engine,
+			{"track.removeEmpty", 1,
+				"Removes the empty tracks (Remove Empty Tracks, reference manual p. 213): audio, instrument, MIDI and "
+				"marker tracks without events, parts, markers or automation, and folders without tracks, unless "
+				"another track's channel plays or sends into theirs (an instrument track a MIDI track plays, a "
+				"folder's group channel). Group, effect, VCA, ruler, tempo and signature tracks stay. What it removes "
+				"can leave others empty, such as a folder that held only empty tracks, so it looks again until no "
+				"empty track is left. One undo step; none if nothing is empty. Returns the tracks removed, from top "
+				"to bottom, with those inside removed folders.",
+				objectSchema(Json::object()),
+				Json{{"type", "object"}, {"properties", {{"tracks", arraySchema(idSchema)}}}, {"required", {"tracks"}}},
+				false},
+			removeEmptyTracks);
 		add(engine,
 			{"track.duplicate", 1,
 				"Duplicates a track below it: its channel with every setting, its events, parts, markers and "
