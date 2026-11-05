@@ -923,6 +923,8 @@ TEST_CASE("the info line edits the selected MIDI parts' transpose and velocity, 
 			.at("event")
 			.at("id")
 			.get<uint64_t>();
+	// The display drops ids it doesn't show yet from the selection, so it waits for the event first.
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("audioEvents").size() == 1; }));
 	window.display.select({event});
 	REQUIRE(window.shows("#info-line textdisplay[field=name]", "take"));
 	CHECK(hasClass(window.app, "#info-line [info-field=transpose]", "hidden"));
