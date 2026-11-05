@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <functional>
 #include <optional>
 #include <string>
 #include <tuple>
@@ -894,6 +895,13 @@ TEST_CASE("the info line edits the selected MIDI parts' transpose and velocity, 
 	REQUIRE(window.app.waitUntil([&] { return window.part(second).at("velocity") == -20; }));
 	CHECK(window.part(first).at("velocity") == -20);
 	window.call("midiPart.set", {{"part", second}, {"velocity", -120}});
+	// The display has the other client's change before the edit, which is relative to it.
+	REQUIRE(window.app.waitUntil(
+		[&]
+		{
+			return window.display.project().at("midiParts")[1].at("velocity") == -120 ||
+				window.display.project().at("midiParts")[0].at("velocity") == -120;
+		}));
 	REQUIRE(window.shows("#info-line valuefield[field=velocity]", "-20"));
 	window.type("#info-line valuefield[field=velocity]", "-30");
 	REQUIRE(window.app.waitUntil([&] { return window.part(first).at("velocity") == -30; }));
@@ -982,4 +990,51 @@ TEST_CASE("the inspector's MIDI Modifiers section shows and changes the track's 
 	window.list.select({vox});
 	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Vox"));
 	CHECK(hasClass(window.app, ".inspector [section=modifiers]", "unavailable"));
+}
+
+TEST_CASE("a MIDI modifier or a part's transpose dragged back to where it started while the engine answers late ends "
+		  "there",
+	"[ui]")
+{
+	Window window;
+	const uint64_t keys = window.addTrack({{"type", "instrument"}, {"name", "Keys"}});
+	const uint64_t part = window.addPart(keys, 0, 4 * g_quarter, "Intro");
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("midiParts").size() == 1; }));
+	window.list.select({keys});
+	window.display.select({part});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Keys"));
+	REQUIRE(window.shows("#info-line valuefield[field=transpose]", "0"));
+	for (const char* section : {"basics", "routing"})
+		window.click(".inspector [section=" + std::string(section) + "] .section-header");
+
+	const auto dragBack = [&](const std::string& field, const std::function<int64_t()>& engineValue)
+	{
+		INFO(field);
+		const int64_t position = window.historyPosition();
+		// Down and back up to where it started before the UI hands on any answer: the project it shows still has the
+		// value the drag ends at, while a step of the way is in flight and another waits.
+		Rml::Context& context = window.app.main().context();
+		const Json box = element(window.app, field).at("box");
+		const int x = box.at("x").get<int>() + (box.at("width").get<int>() / 2);
+		const int y = box.at("y").get<int>() + (box.at("height").get<int>() / 2);
+		context.ProcessMouseMove(x, y, 0);
+		context.ProcessMouseButtonDown(0, 0);
+		for (int moved = 2; moved <= 12; moved += 2)
+			context.ProcessMouseMove(x, y + moved, 0);
+		CHECK(test::controlValue(window.app, std::nullopt, field) < 0.0);
+		context.ProcessMouseMove(x, y, 0);
+		context.ProcessMouseButtonUp(0, 0);
+		CHECK(test::controlValue(window.app, std::nullopt, field) == 0.0);
+		// The engine ends where the field does, not at a step of the way, and stays there: the gesture changed nothing
+		// in the end, so it leaves at most one undo step.
+		REQUIRE(window.app.waitUntil([&] { return engineValue() == 0; }));
+		CHECK_FALSE(window.app.waitUntil([&] { return engineValue() != 0; }, std::chrono::milliseconds(300)));
+		CHECK(window.historyPosition() - position <= 1);
+		window.app.shell().step(std::chrono::milliseconds(0));
+		CHECK(test::controlValue(window.app, std::nullopt, field) == 0.0);
+	};
+	dragBack(".inspector valuefield[control=modifiers-transpose]",
+		[&] { return window.channel(keys).at("modifiers").at("transpose").get<int64_t>(); });
+	dragBack(
+		"#info-line valuefield[field=transpose]", [&] { return window.part(part).at("transpose").get<int64_t>(); });
 }
