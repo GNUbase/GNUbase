@@ -678,31 +678,35 @@ Returns:
 
 #### `gnubase.audition.scrub`
 
-Scrubs an audio track, as the scrub tool does while the mouse drags: plays its events from where the last scrub of the track got to, to position (samples), forwards or backwards, in seconds (default: the time since that scrub, 0.01 to 0.1 seconds), so speed and pitch follow how fast the positions come; the first scrub only sets where the next one starts. Like audition.start it goes straight to the main mix's outputs; it also moves the project cursor to position (transport.changed). Ends with audition.stop. Announces audition.changed.
+Scrubs an audio track, as the scrub tool does while the mouse drags: plays its events from where the last scrub of the track got to, to position (samples), forwards or backwards, in seconds (default: the time since that scrub, 0.01 to 0.1 seconds), so speed and pitch follow how fast the positions come; the first scrub only sets where the next one starts. Like audition.start it goes straight to the main mix's outputs; it also moves the project cursor to position (transport.changed). Or, instead of track, a media file on its own, as the sample editor scrubs its clip: position is then one of its sample frames, and the cursor stays. Ends with audition.stop. Announces audition.changed.
 
 Parameters:
 
+- `media`: integer
 - `position`: integer, required
 - `seconds`: number
-- `track`: integer, required
+- `track`: integer
 
 Returns:
 
+- `media`: integer, required
 - `mode`: one of "off" | "play" | "scrub", required
 - `track`: integer, required
 
 #### `gnubase.audition.start`
 
-Auditions an audio track, as the play tool does while the mouse is pressed: plays its events from position (samples) until audition.stop, straight to the main mix's outputs, without its channel's fader, pan, mute and effects, and without the transport. With end (samples, after position) it plays up to there and then nothing, as the sample editor plays a slice, while its mode stays play until audition.stop or another audition. A mono clip plays on every channel. Ends what was auditioned before. Announces audition.changed.
+Auditions an audio track, as the play tool does while the mouse is pressed: plays its events from position (samples) until audition.stop, straight to the main mix's outputs, without its channel's fader, pan, mute and effects, and without the transport. With end (samples, after position) it plays up to there and then nothing, as the sample editor plays a slice, while its mode stays play until audition.stop or another audition. A mono clip plays on every channel. Or, instead of track, a media file on its own, as the sample editor plays its clip: position and end are then its sample frames, from 0 to its length, without the events that play it. Ends what was auditioned before. Announces audition.changed.
 
 Parameters:
 
 - `end`: integer
+- `media`: integer
 - `position`: integer, required
-- `track`: integer, required
+- `track`: integer
 
 Returns:
 
+- `media`: integer, required
 - `mode`: one of "off" | "play" | "scrub", required
 - `track`: integer, required
 
@@ -712,6 +716,7 @@ Ends auditioning and scrubbing. Does nothing if neither runs. Announces audition
 
 Returns:
 
+- `media`: integer, required
 - `mode`: one of "off" | "play" | "scrub", required
 - `track`: integer, required
 
@@ -783,7 +788,7 @@ Returns:
 
 #### `gnubase.automation.set`
 
-Changes the automation settings (see automation.get). followsEvents is a setting, so it stays when a new project starts; virginTerritory is saved with the project. Neither is an undo step.
+Changes the automation settings (see automation.get). followsEvents is a setting, so it stays when a new project starts; virginTerritory is saved with the project. Neither is an undo step, and run on its own only a change of virginTerritory changes the project (project.revision); in a transaction, the transaction counts as a change.
 
 Parameters:
 
@@ -1116,7 +1121,7 @@ Returns:
 
 #### `gnubase.clip.addRegion`
 
-Adds a region to a clip (Add Region, Event or Range as Region, reference manual pp. 620, 624-625): a named section of its audio, from start to end in the clip's sample frames, start before end; name defaults to Region and its number. A clip's regions are in its regions, by start. Emits clip.changed. Returns the clip's id and the region.
+Adds a region to a clip (Add Region, Event or Range as Region, reference manual pp. 620, 624-625): a named section of its audio, from start to end in the clip's sample frames, start before end; name defaults to Region and a number that no other region of the clip has in its name. A clip's regions are in its regions, by start. Emits clip.changed. Returns the clip's id and the region.
 
 Parameters:
 
@@ -1709,7 +1714,7 @@ Returns:
 
 #### `gnubase.event.glue`
 
-Glues audio events and parts or MIDI parts of one track together. Audio events that continue each other in the same clip, as after a split, become one event; other audio events and audio parts become one audio part from the first start to the last end, the first of the parts or a new one, holding all their events. MIDI parts become the first of them, from the first start to the last end, with all their notes and controllers. Returns the event or part.
+Glues audio events and parts or MIDI parts of one track together. Audio events that continue each other in the same clip, as after a split, become one event; other audio events and audio parts become one audio part from the first start to the last end, the first of the parts or a new one, holding all their events. MIDI parts become the first of them, from the first start to the last end, with all their notes and controllers; it keeps its transpose and velocity, and the notes of the others get the difference of their part's transpose and velocity to them, so that they play as before as far as velocities from 1 to 127 allow (refused if that would transpose a note beyond 0 to 127). Returns the event or part.
 
 Parameters:
 
@@ -2012,7 +2017,7 @@ Returns:
 
 #### `gnubase.linkGroup.add`
 
-Links channels in a new link group (reference manual pp. 457-459), named Link Group N unless name is given; by default it links the volume and the sends, or with a VCA fader the sends. channels: the linked channels; a channel is in one link group at most, so they leave the groups they were in. What a change to one of them passes on to the others (channel.set, unless linked is false): volume (the fader, by as much as it moved), pan (likewise), mute (the mute, solo and listen buttons), record (record enable and monitor), eq (the equalizer's changes), dynamics (the strip's: gate, compressor and limiter), sends (the sends' changes, on by default; a channel that can't take one, such as a send to itself, keeps its own). vca: the channel of a VCA track that controls the group, or 0; it leaves the group it controlled. The VCA fader's volume adds to each channel's, its automation to theirs, and its buttons pass on to them; VCA faders can be in groups that other VCA faders control, but never control themselves. A group with a VCA fader doesn't link the volume: giving it one turns volume off, taking it away turns it on, unless volume is given. Emits linkGroup.added.
+Links channels in a new link group (reference manual pp. 457-459), named Link Group N, with a number no other group's name has, unless name is given; by default it links the volume and the sends, or with a VCA fader the sends. channels: the linked channels; a channel is in one link group at most, so they leave the groups they were in, and a group left without channels goes (linkGroup.removed). What a change to one of them passes on to the others (channel.set, unless linked is false): volume (the fader, by as much as it moved), pan (likewise), mute (the mute, solo and listen buttons), record (record enable and monitor), eq (the equalizer's changes), dynamics (the strip's: gate, compressor and limiter), sends (the sends' changes, on by default; a channel that can't take one, such as a send to itself, keeps its own). vca: the channel of a VCA track that controls the group, or 0; it leaves the group it controlled. The VCA fader's volume adds to each channel's, its automation to theirs, and its buttons pass on to them; VCA faders can be in groups that other VCA faders control, but never control themselves. A group with a VCA fader doesn't link the volume: giving it one turns volume off, taking it away turns it on, unless volume is given. Emits linkGroup.added.
 
 Parameters:
 
@@ -2041,7 +2046,7 @@ Parameters:
 
 #### `gnubase.linkGroup.set`
 
-Changes a link group: what isn't given stays. channels: the linked channels; a channel is in one link group at most, so they leave the groups they were in. What a change to one of them passes on to the others (channel.set, unless linked is false): volume (the fader, by as much as it moved), pan (likewise), mute (the mute, solo and listen buttons), record (record enable and monitor), eq (the equalizer's changes), dynamics (the strip's: gate, compressor and limiter), sends (the sends' changes, on by default; a channel that can't take one, such as a send to itself, keeps its own). vca: the channel of a VCA track that controls the group, or 0; it leaves the group it controlled. The VCA fader's volume adds to each channel's, its automation to theirs, and its buttons pass on to them; VCA faders can be in groups that other VCA faders control, but never control themselves. A group with a VCA fader doesn't link the volume: giving it one turns volume off, taking it away turns it on, unless volume is given. Emits linkGroup.changed.
+Changes a link group: what isn't given stays. channels: the linked channels; a channel is in one link group at most, so they leave the groups they were in, and a group left without channels goes (linkGroup.removed). What a change to one of them passes on to the others (channel.set, unless linked is false): volume (the fader, by as much as it moved), pan (likewise), mute (the mute, solo and listen buttons), record (record enable and monitor), eq (the equalizer's changes), dynamics (the strip's: gate, compressor and limiter), sends (the sends' changes, on by default; a channel that can't take one, such as a send to itself, keeps its own). vca: the channel of a VCA track that controls the group, or 0; it leaves the group it controlled. The VCA fader's volume adds to each channel's, its automation to theirs, and its buttons pass on to them; VCA faders can be in groups that other VCA faders control, but never control themselves. A group with a VCA fader doesn't link the volume: giving it one turns volume off, taking it away turns it on, unless volume is given. Emits linkGroup.changed.
 
 Parameters:
 
@@ -2106,7 +2111,7 @@ Returns:
 
 #### `gnubase.marker.import`
 
-Imports a CSV file of markers, such as marker.export writes: each track in it becomes a new marker track at the top, in file order, with its time base and its markers' types, ids, positions, ends, descriptions and colors. Columns are found by their header, in any order; only Position is required. Rows with the same Track Number are one track, rows without one those with the same Track name. Without either all markers go on one track, without Time Base it is musical, without Type they are position markers and without an ID they get the first free number. The active marker track stays active, or the first new one becomes it. One undo step; a file with an invalid row changes nothing. Returns the new tracks and the number of markers.
+Imports a CSV file of markers, such as marker.export writes: each track in it becomes a new marker track at the top, in file order, with its time base and its markers' types, ids, positions, ends, descriptions and colors. Columns are found by their header, in any order; only Position is required. Rows with the same Track Number are one track, rows without one those with the same Track name, and without either all markers go on one track; the rows of a track have one Track name and one Time Base. Without Time Base a track is musical, without Type markers are position markers and without an ID they get the first free number. The active marker track stays active, or the first new one becomes it. One undo step; a file with an invalid row changes nothing. Returns the new tracks and the number of markers.
 
 Parameters:
 
@@ -3740,7 +3745,7 @@ Returns:
 
 #### `gnubase.range.delete`
 
-Deletes what lies in the range from start to end (project samples, default the locators) on tracks (ids, default every track): the audio events and MIDI parts in it, cut at its edges (splitNotes as in range.split), and the automation points in it. The automation outside keeps its curve: the value it arrives at the start with holds up to the end. time (Delete Time) closes the gap: what comes after the range on its tracks moves back by its length, in ticks on musical tracks. Locked events stay.
+Deletes what lies in the range from start to end (project samples, default the locators) on tracks (ids, default every track): the audio events and MIDI parts in it, cut at its edges (splitNotes as in range.split), and the automation in it: its points, and the curve between two points that goes across it. The automation outside keeps its curve: the value it arrives at the start with holds up to the end; with virgin territory (automation.set) the range becomes a gap instead, the point at its start a terminator. time (Delete Time) closes the gap: what comes after the range on its tracks moves back by its length, in ticks on musical tracks. Locked events stay.
 
 Parameters:
 
@@ -4260,7 +4265,7 @@ Parameters:
 
 #### `gnubase.track.remove`
 
-Removes a track with its channel, events, parts or markers; a folder also removes the tracks inside it. Without the active marker track, the topmost marker track becomes the active one.
+Removes a track with its channel, events, parts or markers; a folder also removes the tracks inside it. The channel leaves its link group, which goes if it has no channels left (linkGroup.removed); a VCA track's group links the volume again (linkGroup.changed). Without the active marker track, the topmost marker track becomes the active one.
 
 Parameters:
 

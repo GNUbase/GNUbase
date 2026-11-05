@@ -1185,17 +1185,7 @@ namespace gnubase::engine
 				if (input || output || send)
 					context.emit("channel.changed", {{"channel", toJson(channel)}});
 			}
-			// Link groups lose the channels that are gone and VCA faders that are gone (docs/features/link-groups.md).
-			for (auto& [id, group] : project.linkGroups)
-			{
-				const LinkGroup before = group;
-				group.channels.erase(
-					std::remove_if(group.channels.begin(), group.channels.end(), isGone), group.channels.end());
-				if (isGone(group.vca))
-					group.vca = 0;
-				if (!(group == before))
-					context.emit("linkGroup.changed", {{"group", toJson(group)}});
-			}
+			removeFromLinkGroups(project, gone, context);
 		}
 
 		// Turns a folder's group channel on or off (reference manual pp. 222, 224): a new one plays through the
@@ -3087,6 +3077,7 @@ namespace gnubase::engine
 			[this, action = std::move(action), handler = std::move(handler)](CommandContext& context)
 			{
 				Project before = m_project;
+				const bool followsEvents = m_automationFollowsEvents; // automation.set in a transaction changes it
 				Json result;
 				try
 				{
@@ -3096,6 +3087,7 @@ namespace gnubase::engine
 				catch (...)
 				{
 					m_project = std::move(before);
+					m_automationFollowsEvents = followsEvents;
 					throw;
 				}
 				if (action.empty()) // a transaction
@@ -3664,7 +3656,8 @@ namespace gnubase::engine
 		add(engine,
 			{"track.remove", 1,
 				"Removes a track with its channel, events, parts or markers; a folder also removes the tracks inside "
-				"it. "
+				"it. The channel leaves its link group, which goes if it has no channels left (linkGroup.removed); a "
+				"VCA track's group links the volume again (linkGroup.changed). "
 				"Without the active marker track, the topmost marker track becomes the active one.",
 				objectSchema({{"track", idSchema}}, {"track"}), noResult, false},
 			removeTrack);
@@ -4114,19 +4107,31 @@ namespace gnubase::engine
 				"it and the last point's after it.",
 				objectSchema({}), settings, true},
 			[settingsJson](CommandContext&) { return settingsJson(); });
-		addEdit(engine,
-			{"automation.set", 1,
-				"Changes the automation settings (see automation.get). followsEvents is a setting, so it stays when a "
-				"new project starts; virginTerritory is saved with the project. Neither is an undo step.",
-				objectSchema({{"followsEvents", booleanSchema}, {"virginTerritory", booleanSchema}}), settings, false},
-			"Change automation settings",
-			[this, settingsJson](Project& project, CommandContext& context)
+		// Only a change of virginTerritory changes the project (project.revision): followsEvents is the user's. A
+		// transaction can run it, and if the transaction fails, addEdit puts both back.
+		CommandInfo setInfo{"automation.set", 1,
+			"Changes the automation settings (see automation.get). followsEvents is a setting, so it stays when a new "
+			"project starts; virginTerritory is saved with the project. Neither is an undo step, and run on its own "
+			"only a change of virginTerritory changes the project (project.revision); in a transaction, the "
+			"transaction counts as a change.",
+			objectSchema({{"followsEvents", booleanSchema}, {"virginTerritory", booleanSchema}}), settings, false};
+		Handler set = [this, settingsJson](Project& project, CommandContext& context)
+		{
+			const Json& parameters = context.parameters();
+			m_automationFollowsEvents = parameters.value("followsEvents", m_automationFollowsEvents);
+			project.virginTerritory = parameters.value("virginTerritory", project.virginTerritory);
+			Json result = settingsJson();
+			context.emit("automation.changed", result);
+			return result;
+		};
+		m_edits[setInfo.name] = {setInfo, set};
+		engine.registerCommand(std::move(setInfo),
+			[this, set = std::move(set)](CommandContext& context)
 			{
-				const Json& parameters = context.parameters();
-				m_automationFollowsEvents = parameters.value("followsEvents", m_automationFollowsEvents);
-				project.virginTerritory = parameters.value("virginTerritory", project.virginTerritory);
-				Json result = settingsJson();
-				context.emit("automation.changed", result);
+				const bool virginTerritory = m_project.virginTerritory;
+				Json result = set(m_project, context);
+				if (m_project.virginTerritory != virginTerritory)
+					publish();
 				return result;
 			});
 	}

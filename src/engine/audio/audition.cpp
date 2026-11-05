@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Auditioning and scrubbing one audio track (#470, docs/features/audition.md), and the commands audition.start,
-// audition.scrub and audition.stop.
+// Auditioning and scrubbing one audio track (#470, docs/features/audition.md) or one media file (#730), and the
+// commands audition.start, audition.scrub and audition.stop.
 #include "engine/audio/audition.h"
 
 #include "engine/audio/audioengine.h"
@@ -45,10 +45,11 @@ namespace gnubase::engine
 		m_states.publish(std::move(state));
 	}
 
-	void Audition::play(ObjectId track, const Playback::Track& source, std::map<ObjectId, std::string> mediaPaths,
-		double sampleRate, time::Samples position, time::Samples end, int channels, uint32_t maxFrames)
+	void Audition::play(const Subject& subject, const Playback::Track& source,
+		std::map<ObjectId, std::string> mediaPaths, double sampleRate, time::Samples position, time::Samples end,
+		int channels, uint32_t maxFrames)
 	{
-		m_track = track;
+		m_subject = subject;
 		m_scrubbing = false;
 		m_readers.clear();
 		auto state = std::make_unique<State>();
@@ -71,15 +72,15 @@ namespace gnubase::engine
 		publish(std::move(state));
 	}
 
-	void Audition::scrub(ObjectId track, const Playback::Track& source,
+	void Audition::scrub(const Subject& subject, const Playback::Track& source,
 		const std::map<ObjectId, std::string>& mediaPaths, double sampleRate, time::Samples position,
 		std::optional<double> seconds, int channels)
 	{
 		const auto now = std::chrono::steady_clock::now();
-		if (m_track != track || !m_scrubbing)
+		if (m_subject != subject || !m_scrubbing)
 		{
 			stop();
-			m_track = track;
+			m_subject = subject;
 			m_scrubbing = true;
 			m_head = position;
 			m_lastScrub = now;
@@ -127,7 +128,7 @@ namespace gnubase::engine
 
 	void Audition::stop()
 	{
-		m_track = 0;
+		m_subject = Subject();
 		m_scrubbing = false;
 		m_readers.clear();
 		publish(std::make_unique<State>());
@@ -282,44 +283,84 @@ namespace gnubase::engine
 	void AudioEngine::registerAuditionCommands(Engine& engine)
 	{
 		const Json status = Json::parse(R"({"type": "object", "additionalProperties": false,
-			"required": ["track", "mode"], "properties": {"track": {"type": "integer"},
-			"mode": {"type": "string", "enum": ["off", "play", "scrub"]}}})");
+			"required": ["track", "media", "mode"], "properties": {"track": {"type": "integer"},
+			"media": {"type": "integer"}, "mode": {"type": "string", "enum": ["off", "play", "scrub"]}}})");
 		const Json parameters = Json::parse(R"({"type": "object", "additionalProperties": false,
-			"required": ["track", "position"],
-			"properties": {"track": {"type": "integer"}, "position": {"type": "integer"}}})");
+			"required": ["position"], "properties": {"track": {"type": "integer"}, "media": {"type": "integer"},
+			"position": {"type": "integer"}}})");
 		Json startParameters = parameters;
 		startParameters["properties"]["end"] = {{"type", "integer"}};
 		Json scrubParameters = parameters;
 		scrubParameters["properties"]["seconds"] = {{"type", "number"}, {"exclusiveMinimum", 0}, {"maximum", 1}};
 		const auto report = [this](CommandContext& context)
 		{
+			const Audition::Subject& subject = m_audition.subject();
 			std::string mode = "off";
-			if (m_audition.track() != 0)
+			if (subject != Audition::Subject())
 				mode = m_audition.scrubbing() ? "scrub" : "play";
-			Json result = {{"track", m_audition.track()}, {"mode", mode}};
+			Json result = {{"track", subject.track}, {"media", subject.media}, {"mode", mode}};
 			context.emit("audition.changed", result);
 			return result;
 		};
-		// The audio track, its playlist and the main mix's channels for a command's parameters.
+		// The audio track or media file, its playlist and the main mix's channels for a command's parameters, with
+		// position and end in the playlist's samples. A media file plays on its own from the project's sample 0, so
+		// that its frames, at its own sample rate, are converted to the project's.
 		struct Source
 		{
-			ObjectId track = 0;
-			const Playback::Track* playback = nullptr;
+			Audition::Subject subject;
+			Playback::Track playback;
 			time::Samples position = 0;
+			std::optional<time::Samples> end;
 			int channels = 0;
 		};
 		const auto source = [this](const Json& given)
 		{
 			require(m_device != nullptr, "there is no audio device; set one with audio.setDevice");
+			require(given.contains("track") != given.contains("media"), "give either a track or a media file");
 			Source result;
-			result.track = given.at("track").get<ObjectId>();
-			result.position = given.at("position").get<time::Samples>();
-			require(result.position >= 0 && result.position <= g_maxPosition,
-				"position must be 0 to " + std::to_string(g_maxPosition) + " samples");
-			const auto found = m_auditionTracks.find(result.track);
-			require(found != m_auditionTracks.end(), "no audio track " + std::to_string(result.track));
-			result.playback = &found->second;
-			for (const RenderBus& bus : m_snapshots.latest().busses)
+			const RenderSnapshot& snapshot = m_snapshots.latest();
+			const auto position = given.at("position").get<time::Samples>();
+			const auto end = given.find("end");
+			if (end != given.end())
+				require(end->get<time::Samples>() > position, "end must be after position");
+			if (given.contains("track"))
+			{
+				result.subject.track = given.at("track").get<ObjectId>();
+				require(position >= 0 && position <= g_maxPosition,
+					"position must be 0 to " + std::to_string(g_maxPosition) + " samples");
+				const auto found = m_auditionTracks.find(result.subject.track);
+				require(found != m_auditionTracks.end(), "no audio track " + std::to_string(result.subject.track));
+				result.playback = found->second;
+				result.position = position;
+				if (end != given.end())
+					result.end = end->get<time::Samples>();
+			}
+			else
+			{
+				result.subject.media = given.at("media").get<ObjectId>();
+				const auto found = std::find_if(snapshot.media.begin(), snapshot.media.end(),
+					[&result](const RenderMedia& media) { return media.id == result.subject.media; });
+				require(found != snapshot.media.end(), "no media file " + std::to_string(result.subject.media));
+				require(found->sampleRate > 0.0 && found->length >= 0, // a hand-edited project's, say
+					"media file " + std::to_string(found->id) + " has no sample rate or length");
+				require(position >= 0 && position <= found->length,
+					"position must be 0 to " + std::to_string(found->length) + " sample frames of the media file");
+				const double ratio = snapshot.sampleRate / found->sampleRate;
+				const auto samples = [ratio](time::Samples frames)
+				{ return static_cast<time::Samples>(std::llround(static_cast<double>(frames) * ratio)); };
+				PlaylistEntry entry;
+				entry.end = samples(found->length);
+				entry.media = found->id;
+				entry.channels = found->channels;
+				Playlist playlist;
+				playlist.layers.push_back({entry});
+				result.playback = {found->id, std::make_shared<const Playlist>(std::move(playlist))};
+				result.position = samples(position);
+				if (end != given.end())
+					result.end = std::max( // past the file's end, nothing plays
+						result.position + 1, samples(std::min(end->get<time::Samples>(), found->length)));
+			}
+			for (const RenderBus& bus : snapshot.busses)
 				if (bus.mainMix)
 					result.channels = channelCount(bus.format);
 			return result;
@@ -331,16 +372,17 @@ namespace gnubase::engine
 				"position (samples) until audition.stop, straight to the main mix's outputs, without its channel's "
 				"fader, pan, mute and effects, and without the transport. With end (samples, after position) it plays "
 				"up to there and then nothing, as the sample editor plays a slice, while its mode stays play until "
-				"audition.stop or another audition. A mono clip plays on every channel. Ends what was auditioned "
-				"before. Announces audition.changed.",
+				"audition.stop or another audition. A mono clip plays on every channel. Or, instead of track, a media "
+				"file on its own, as the sample editor plays its clip: position and end are then its sample frames, "
+				"from 0 to its length, without the events that play it. Ends what was auditioned before. Announces "
+				"audition.changed.",
 				startParameters, status, false},
 			[this, source, report](CommandContext& context)
 			{
 				const Source given = source(context.parameters());
-				const auto end = context.parameters().value("end", g_maxPosition + 1);
-				require(end > given.position, "end must be after position");
-				m_audition.play(given.track, *given.playback, m_mediaPaths, m_snapshots.latest().sampleRate,
-					given.position, end, given.channels, m_device->format().blockSize);
+				m_audition.play(given.subject, given.playback, m_mediaPaths, m_snapshots.latest().sampleRate,
+					given.position, given.end.value_or(g_maxPosition + 1), given.channels,
+					m_device->format().blockSize);
 				return report(context);
 			});
 		engine.registerCommand(
@@ -349,8 +391,10 @@ namespace gnubase::engine
 				"last scrub of the track got to, to position (samples), forwards or backwards, in seconds (default: "
 				"the time since that scrub, 0.01 to 0.1 seconds), so speed and pitch follow how fast the positions "
 				"come; the first scrub only sets where the next one starts. Like audition.start it goes straight to "
-				"the main mix's outputs; it also moves the project cursor to position (transport.changed). Ends with "
-				"audition.stop. Announces audition.changed.",
+				"the main mix's outputs; it also moves the project cursor to position (transport.changed). Or, "
+				"instead of track, a media file on its own, as the sample editor scrubs its clip: position is then "
+				"one of its sample frames, and the cursor stays. Ends with audition.stop. Announces "
+				"audition.changed.",
 				scrubParameters, status, false},
 			[this, source, report](CommandContext& context)
 			{
@@ -358,10 +402,13 @@ namespace gnubase::engine
 				std::optional<double> seconds;
 				if (const auto found = context.parameters().find("seconds"); found != context.parameters().end())
 					seconds = found->get<double>();
-				m_audition.scrub(given.track, *given.playback, m_mediaPaths, m_snapshots.latest().sampleRate,
+				m_audition.scrub(given.subject, given.playback, m_mediaPaths, m_snapshots.latest().sampleRate,
 					given.position, seconds, given.channels);
-				sent(m_transport.locate(given.position));
-				context.emit("transport.changed", transportStatus());
+				if (given.subject.track != 0)
+				{
+					sent(m_transport.locate(given.position));
+					context.emit("transport.changed", transportStatus());
+				}
 				return report(context);
 			});
 		engine.registerCommand(
@@ -370,7 +417,7 @@ namespace gnubase::engine
 				Json{{"type", "object"}, {"additionalProperties", false}}, status, false},
 			[this, report](CommandContext& context)
 			{
-				if (m_audition.track() != 0)
+				if (m_audition.subject() != Audition::Subject())
 					m_audition.stop();
 				return report(context);
 			});
