@@ -313,8 +313,8 @@ namespace gnubase::app
 				{
 					const std::vector<uint64_t> tracks =
 						m_trackList ? m_trackList->selection() : std::vector<uint64_t>();
-					inspector->update(
-						tracks.empty() ? 0 : tracks.front(), m_eventDisplay->project(), m_eventDisplay->loads());
+					inspector->update(tracks.empty() ? 0 : tracks.front(), m_eventDisplay->project(),
+						m_eventDisplay->loads(), m_eventDisplay->read());
 				}
 				return follows;
 			});
