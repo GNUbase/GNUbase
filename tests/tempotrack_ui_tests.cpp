@@ -450,3 +450,99 @@ TEST_CASE("File > Export and File > Import > Tempo Track write and read the temp
 	CHECK(after.at("tempoTrack") == before.at("tempoTrack"));
 	CHECK(after.at("signatures") == before.at("signatures"));
 }
+
+namespace
+{
+	// A part on a new linear MIDI track from the project start, seconds long, with a note at each of the times,
+	// selected in the project window. At the default 120 BPM a second is two quarters.
+	void selectedNotes(test::UiApp& app, ui::EventDisplay& display, const std::vector<double>& times, double seconds)
+	{
+		const auto track =
+			app.call("track.add", {{"type", "midi"}, {"timeBase", "linear"}}).at("track").at("id").get<uint64_t>();
+		const auto part =
+			app.call("midiPart.add", {{"track", track}, {"position", 0}, {"length", std::llround(seconds * 48000.0)}})
+				.at("part")
+				.at("id")
+				.get<uint64_t>();
+		Json notes = Json::array();
+		for (const double at : times)
+			notes.push_back({{"position", std::llround(at * 2.0 * static_cast<double>(g_quarter))},
+				{"length", g_quarter / 8}, {"pitch", 60}, {"velocity", 0.8}});
+		app.call("note.add", {{"part", part}, {"notes", notes}});
+		REQUIRE(app.waitUntil(
+			[&]
+			{
+				app.ui().key(std::nullopt, "Mod+A");
+				return display.selection() == std::vector<uint64_t>{part};
+			}));
+	}
+
+	void clickButton(test::UiApp& app, const std::string& selector)
+	{
+		app.ui().click(std::nullopt, {selector, 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+		app.shell().step(milliseconds(0));
+	}
+
+	size_t elements(test::UiApp& app, const std::string& selector)
+	{
+		return app.ui().dom(std::nullopt, selector, 0).at("elements").size();
+	}
+
+	double firstTempo(test::UiApp& app)
+	{
+		return app.call("project.get").at("tempoTrack").at(0).at("bpm").get<double>();
+	}
+}
+
+TEST_CASE(
+	"Project > Tempo Track > Tempo Detection detects the tempo of the selected part, which its buttons change", "[ui]")
+{
+	test::UiApp app{{1000, 700}};
+	ui::EventDisplay& display = app.appUi().showProject();
+	CHECK(elements(app, "#project-menu menuitem[command=\"tempo.detection\"]") == 1);
+	std::vector<double> beats;
+	beats.reserve(16);
+	for (int i = 0; i < 16; ++i)
+		beats.push_back(i * 60.0 / 90.0); // 90 BPM
+	selectedNotes(app, display, beats, 10.5);
+
+	app.keys().run("tempo.detection", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return elements(app, "#tempo-detection-dialog") == 1; }));
+	clickButton(app, "#tempo-detection-analyze");
+	REQUIRE(app.waitUntil([&app] { return std::abs(firstTempo(app) - 90.0) < 0.1; }));
+	CHECK(app.call("project.get").at("tempoTrackActive") == true);
+	clickButton(app, "#tempo-detection-double");
+	REQUIRE(app.waitUntil([&app] { return std::abs(firstTempo(app) - 180.0) < 0.2; }));
+	clickButton(app, "#tempo-detection-three-quarters");
+	REQUIRE(app.waitUntil([&app] { return std::abs(firstTempo(app) - 135.0) < 0.2; }));
+	clickButton(app, "#tempo-detection-analyze");
+	REQUIRE(app.waitUntil([&app] { return std::abs(firstTempo(app) - 90.0) < 0.1; }));
+	clickButton(app, "#tempo-detection-reset");
+	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("tempoTrack").size() == 1; }));
+	app.ui().key(std::nullopt, "Escape");
+	REQUIRE(app.waitUntil([&app] { return elements(app, "#tempo-detection-dialog") == 0; }));
+}
+
+TEST_CASE("MIDI > Functions > Calculate Tempo from MIDI Events calculates the tempo from the selected part", "[ui]")
+{
+	test::UiApp app{{1000, 700}};
+	ui::EventDisplay& display = app.appUi().showProject();
+	CHECK(elements(app, "#midi-menu menuitem[command=\"midi.calculateTempo\"]") == 1);
+	// Quarters at 100 BPM from 1.8 seconds, 3.6 quarters at 120 BPM: nearest to bar 2.
+	std::vector<double> taps;
+	taps.reserve(8);
+	for (int i = 0; i < 8; ++i)
+		taps.push_back(1.8 + (i * 0.6));
+	selectedNotes(app, display, taps, 8.0);
+
+	app.keys().run("midi.calculateTempo", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return elements(app, "#calculate-tempo-dialog") == 1; }));
+	clickButton(app, "#calculate-tempo-bar-start");
+	clickButton(app, "#calculate-tempo-dialog button[result=ok]");
+	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("tempoTrack").size() == 8; }));
+	const Json tempo = app.call("project.get").at("tempoTrack");
+	CHECK(tempo[0].at("bpm").get<double>() == Approx(60.0 * 4 / 1.8)); // bar 1 lasts until the first note
+	CHECK(tempo[1].at("position") == 4 * g_quarter);
+	CHECK(tempo[1].at("bpm").get<double>() == Approx(100.0));
+	CHECK(elements(app, "#calculate-tempo-dialog") == 0);
+}
