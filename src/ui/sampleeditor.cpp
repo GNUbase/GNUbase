@@ -856,7 +856,7 @@ namespace gnubase::ui
 
 	// Edit Hitpoints' gestures in the display (pp. 636, 639-640): a click on a hitpoint's handle locks or unlocks
 	// it; on its line, with Shift it disables or enables it, with Ctrl and Alt it resets it, and a drag moves it; Alt
-	// and a click elsewhere inserts one, and a click between two plays that slice while the mouse is pressed.
+	// and a click elsewhere inserts one, and a click between two plays that slice.
 	void SampleEditor::pressHitpoint(Rml::Event& event, Rml::Element& target, double frame)
 	{
 		const Rml::Element* root = m_root.get();
@@ -887,18 +887,25 @@ namespace gnubase::ui
 			m_binding.send("clip.addHitpoint", {{"clip", clipId}, {"position", std::llround(frame)}});
 			return;
 		}
-		// Play back Slice: from the hitpoint before, or the event's start.
+		// Play back Slice: from the hitpoint that counts before to the one after, or the event's start and end. A
+		// click plays all of it (p. 639).
 		auto from = static_cast<double>(m_offset);
+		auto to = static_cast<double>(m_offset + m_eventLength);
 		if (const Json* item = clip())
 			for (const Json& hitpoint : item->value("hitpoints", Json::array()))
 			{
 				const auto position = hitpoint.at("position").get<double>();
-				if (hitpoint.at("active").get<bool>() && position <= frame && position > from)
+				if (!hitpoint.at("active").get<bool>())
+					continue;
+				if (position <= frame && position > from)
 					from = position;
+				else if (position > frame && position < to)
+					to = position;
 			}
-		m_drag = Drag::Play;
-		m_binding.send(
-			"audition.start", {{"track", m_view.at("track")}, {"position", std::max<int64_t>(0, projectSample(from))}});
+		const int64_t start = std::max<int64_t>(0, projectSample(from));
+		const int64_t end = projectSample(to);
+		if (end > start)
+			m_binding.send("audition.start", {{"track", m_view.at("track")}, {"position", start}, {"end", end}});
 	}
 
 	void SampleEditor::press(Rml::Event& event, Rml::Element& target)
