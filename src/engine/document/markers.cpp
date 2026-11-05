@@ -434,10 +434,11 @@ namespace gnubase::engine
 		}
 
 		// Marker CSV files (#171): a header row, then a row per marker, the tracks in track order and each track's
-		// markers in timeline order. Positions are in beats (quarter notes) on musical tracks and in seconds on
-		// linear ones, written so that they read back exactly.
-		constexpr std::array<const char*, 8> g_csvColumns = {
-			"Track", "Time Base", "Type", "ID", "Position", "End", "Description", "Color"};
+		// markers in timeline order. Track Number numbers the tracks in the file, so that tracks with the same name
+		// stay apart. Positions are in beats (quarter notes) on musical tracks and in seconds on linear ones, written
+		// so that they read back exactly.
+		constexpr std::array<const char*, 9> g_csvColumns = {
+			"Track Number", "Track", "Time Base", "Type", "ID", "Position", "End", "Description", "Color"};
 
 		// A field, quoted if it holds a comma, a quote or a line end (RFC 4180).
 		std::string csvField(const std::string& text)
@@ -490,16 +491,16 @@ namespace gnubase::engine
 
 			std::string text = csvRow({g_csvColumns.begin(), g_csvColumns.end()});
 			size_t count = 0;
-			for (const ObjectId id : tracks)
+			for (size_t index = 0; index < tracks.size(); ++index)
 			{
-				const Track& track = project.trackById.at(id);
-				for (const Marker* marker : markersOf(project, id))
+				const Track& track = project.trackById.at(tracks[index]);
+				for (const Marker* marker : markersOf(project, track.id))
 				{
 					const bool cycle = marker->type == MarkerType::Cycle;
-					text += csvRow({track.name, track.timeBase == time::TimeBase::Musical ? "Musical" : "Linear",
-						cycle ? "Cycle" : "Position", std::to_string(marker->number),
-						csvTime(project, marker->position), cycle ? csvTime(project, marker->end) : "", marker->name,
-						marker->color});
+					text += csvRow({std::to_string(index + 1), track.name,
+						track.timeBase == time::TimeBase::Musical ? "Musical" : "Linear", cycle ? "Cycle" : "Position",
+						std::to_string(marker->number), csvTime(project, marker->position),
+						cycle ? csvTime(project, marker->end) : "", marker->name, marker->color});
 					++count;
 				}
 			}
@@ -589,6 +590,7 @@ namespace gnubase::engine
 		// A marker track as a CSV file has it: its markers as marker.add's parameters, with their row numbers.
 		struct CsvTrack
 		{
+			std::string key; // the Track Number if the row has one, otherwise the name
 			std::string name;
 			time::TimeBase base = time::TimeBase::Musical;
 			std::vector<std::pair<size_t, Json>> markers;
@@ -608,10 +610,17 @@ namespace gnubase::engine
 			require(baseName.empty() || baseName == "musical" || baseName == "linear",
 				"Time Base must be Musical or Linear");
 			const time::TimeBase base = timeBaseFromName(baseName);
-			auto track = std::find_if(
-				tracks.begin(), tracks.end(), [&name](const CsvTrack& other) { return other.name == name; });
+			std::string key = "name:" + name;
+			if (const std::string number = trimmed(field("track number")); !number.empty())
+			{
+				const Json value = Json::parse(number, nullptr, false);
+				require(value.is_number_integer(), "Track Number must be a whole number");
+				key = "number:" + value.dump();
+			}
+			auto track =
+				std::find_if(tracks.begin(), tracks.end(), [&key](const CsvTrack& other) { return other.key == key; });
 			if (track == tracks.end())
-				track = tracks.insert(tracks.end(), CsvTrack{name, base, {}});
+				track = tracks.insert(tracks.end(), CsvTrack{key, name, base, {}});
 			require(track->base == base, "the markers of a track must have one time base");
 
 			const std::string type = lowered(trimmed(field("type")));
@@ -792,9 +801,11 @@ namespace gnubase::engine
 		add(engine,
 			{"marker.export", 1,
 				"Exports marker tracks (tracks, default all of them) into a CSV file at path, which marker.import "
-				"reads: a header row with the columns Track, Time Base, Type, ID, Position, End, Description and "
+				"reads: a header row with the columns Track Number, Track, Time Base, Type, ID, Position, End, "
+				"Description and "
 				"Color, then a row per marker, the tracks in track order and their markers in timeline order. "
-				"Positions and ends are in beats (quarter notes) on musical tracks and in seconds on linear ones. "
+				"Track Number numbers the tracks in the file, 1 on. Positions and ends are in beats (quarter notes) on "
+				"musical tracks and in seconds on linear ones. "
 				"Returns the number of markers.",
 				objectSchema({{"path", stringSchema}, {"tracks", {{"type", "array"}, {"items", idSchema}}}}, {"path"}),
 				{{"type", "object"}, {"properties", {{"markers", integerSchema}}}, {"required", {"markers"}}}, true},
@@ -804,7 +815,8 @@ namespace gnubase::engine
 				"Imports a CSV file of markers, such as marker.export writes: each track in it becomes a new marker "
 				"track at the top, in file order, with its time base and its markers' types, ids, positions, ends, "
 				"descriptions and colors. Columns are found by their header, in any order; only Position is "
-				"required. Without Track all markers go on one track, without Time Base it is musical, without Type "
+				"required. Rows with the same Track Number are one track, rows without one those with the same Track "
+				"name. Without either all markers go on one track, without Time Base it is musical, without Type "
 				"they are position markers and without an ID they get the first free number. The active marker "
 				"track stays active, or the first new one becomes it. One undo step; a file with an invalid row "
 				"changes nothing. Returns the new tracks and the number of markers.",

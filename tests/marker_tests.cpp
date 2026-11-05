@@ -676,11 +676,11 @@ TEST_CASE("markers are exported and imported as CSV files with their tracks, ids
 	// Beats on musical tracks, seconds on linear ones; tracks in track order, markers in timeline order.
 	CHECK(run(client, "marker.export", {{"path", file}}).at("markers") == 4);
 	CHECK(gnubase::test::readText(dir.path() / "markers.csv") ==
-		"Track,Time Base,Type,ID,Position,End,Description,Color\r\n"
-		"Song,Musical,Position,5,2.0,,\"Intro\nslow\",\r\n"
-		"Song,Musical,Position,1,4.0,,Verse,\r\n"
-		"Song,Musical,Cycle,1,8.0,12.5,\"Chorus, \"\"big\"\"\",#ff0000\r\n"
-		"Takes,Linear,Position,1,1.5,,,\r\n");
+		"Track Number,Track,Time Base,Type,ID,Position,End,Description,Color\r\n"
+		"1,Song,Musical,Position,5,2.0,,\"Intro\nslow\",\r\n"
+		"1,Song,Musical,Position,1,4.0,,Verse,\r\n"
+		"1,Song,Musical,Cycle,1,8.0,12.5,\"Chorus, \"\"big\"\"\",#ff0000\r\n"
+		"2,Takes,Linear,Position,1,1.5,,,\r\n");
 	const Json before = run(client, "project.get");
 
 	// Imported, each track in the file is a new marker track at the top; the active marker track stays.
@@ -732,6 +732,40 @@ TEST_CASE("markers are exported and imported as CSV files with their tracks, ids
 	run(client, "project.new");
 	const Json fresh = run(client, "marker.import", {{"path", file}});
 	CHECK(run(client, "project.get").at("activeMarkerTrack") == fresh.at("tracks")[0]);
+}
+
+TEST_CASE("marker CSV files keep marker tracks with the same name apart", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	const std::string file = (dir.path() / "markers.csv").u8string();
+	Engine engine;
+	Client client(engine);
+	const ObjectId first = addMarkerTrack(client, {{"name", "Same"}});
+	addMarker(client, {{"track", first}, {"position", g_ticksPerQuarter}, {"name", "A"}});
+	const ObjectId second = addMarkerTrack(client, {{"name", "Same"}, {"timeBase", "linear"}});
+	addMarker(client, {{"track", second}, {"position", g_quarterSamples}, {"name", "B"}});
+	run(client, "marker.export", {{"path", file}});
+
+	run(client, "project.new");
+	const Json imported = run(client, "marker.import", {{"path", file}});
+	REQUIRE(imported.at("tracks").size() == 2);
+	CHECK(imported.at("markers") == 2);
+	const Json tracks = run(client, "project.get").at("tracks");
+	CHECK(tracks[0].at("name") == "Same");
+	CHECK(tracks[0].at("timeBase") == "musical");
+	CHECK(tracks[1].at("name") == "Same");
+	CHECK(tracks[1].at("timeBase") == "linear");
+	for (size_t i = 0; i < 2; ++i)
+	{
+		const Json list = run(client, "marker.list", {{"track", imported.at("tracks")[i]}}).at("markers");
+		REQUIRE(list.size() == 1);
+		CHECK(list[0].at("number") == 1);
+		CHECK(list[0].at("name") == (i == 0 ? "A" : "B"));
+	}
+
+	const std::string again = (dir.path() / "again.csv").u8string();
+	run(client, "marker.export", {{"path", again}});
+	CHECK(gnubase::test::readText(dir.path() / "again.csv") == gnubase::test::readText(dir.path() / "markers.csv"));
 }
 
 TEST_CASE("marker CSV files from spreadsheets: columns by their header, in any order", "[integration]")
@@ -797,6 +831,7 @@ TEST_CASE("marker files that can't be read or written change nothing", "[integra
 	CHECK_THAT(rejected("taken.csv", "Type,ID,Position\nPosition,1,1\nPosition,1,2\n"), ContainsSubstring("row 3"));
 	CHECK_THAT(rejected("base.csv", "Time Base,Type,Position\nMusical,Position,1\nLinear,Position,2\n"),
 		ContainsSubstring("row 3"));
+	CHECK_THAT(rejected("tracknumber.csv", "Track Number,Position\n1,1\nx,2\n"), ContainsSubstring("row 3"));
 	CHECK_THAT(rejected("quote.csv", "Type,Position,Description\nPosition,1,\"open\n"), ContainsSubstring("quote"));
 	// A tenth marker track fits, an eleventh doesn't.
 	CHECK_THAT(

@@ -2399,7 +2399,7 @@ Result:
 
 Engine command `marker.export`. Read-only.
 
-Exports marker tracks (tracks, default all of them) into a CSV file at path, which marker.import reads: a header row with the columns Track, Time Base, Type, ID, Position, End, Description and Color, then a row per marker, the tracks in track order and their markers in timeline order. Positions and ends are in beats (quarter notes) on musical tracks and in seconds on linear ones. Returns the number of markers.
+Exports marker tracks (tracks, default all of them) into a CSV file at path, which marker.import reads: a header row with the columns Track Number, Track, Time Base, Type, ID, Position, End, Description and Color, then a row per marker, the tracks in track order and their markers in timeline order. Track Number numbers the tracks in the file, 1 on. Positions and ends are in beats (quarter notes) on musical tracks and in seconds on linear ones. Returns the number of markers.
 
 Arguments:
 
@@ -2414,7 +2414,7 @@ Result:
 
 Engine command `marker.import`.
 
-Imports a CSV file of markers, such as marker.export writes: each track in it becomes a new marker track at the top, in file order, with its time base and its markers' types, ids, positions, ends, descriptions and colors. Columns are found by their header, in any order; only Position is required. Without Track all markers go on one track, without Time Base it is musical, without Type they are position markers and without an ID they get the first free number. The active marker track stays active, or the first new one becomes it. One undo step; a file with an invalid row changes nothing. Returns the new tracks and the number of markers.
+Imports a CSV file of markers, such as marker.export writes: each track in it becomes a new marker track at the top, in file order, with its time base and its markers' types, ids, positions, ends, descriptions and colors. Columns are found by their header, in any order; only Position is required. Rows with the same Track Number are one track, rows without one those with the same Track name. Without either all markers go on one track, without Time Base it is musical, without Type they are position markers and without an ID they get the first free number. The active marker track stays active, or the first new one becomes it. One undo step; a file with an invalid row changes nothing. Returns the new tracks and the number of markers.
 
 Arguments:
 

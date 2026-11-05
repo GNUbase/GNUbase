@@ -20,9 +20,10 @@ Markers are imported and exported with MIDI files and CSV files (#171, pp. 432â€
   all its markers on one marker track, as in the reference. A type 0 file has every marker in its one track. The
   marker track that takes the tempo track's markers is active afterwards; its name and the cycle markers' ends and the
   marker ids are not in the file.
-- **CSV files**: `marker.export` writes marker tracks (default all) as a header row with the columns Track, Time
-  Base, Type, ID, Position, End, Description and Color, then a row per marker, tracks in track order and markers in
-  timeline order. Positions and ends are beats (quarter notes) on musical tracks and seconds on linear ones, as the
+- **CSV files**: `marker.export` writes marker tracks (default all) as a header row with the columns Track
+  Number, Track, Time Base, Type, ID, Position, End, Description and Color, then a row per marker, tracks in track
+  order and markers in timeline order. Track Number numbers the tracks in the file from 1, so marker tracks with the
+  same name stay apart; rows with the same number are one track, rows without one those with the same Track name. Positions and ends are beats (quarter notes) on musical tracks and seconds on linear ones, as the
   shortest decimals that read back exactly, so `marker.import` gives back every marker track with its name and time
   base and every marker with its type, id, position, end, description and color, and exporting them again gives the
   same file. The import makes each track of the file a new marker track at the top, keeps the active marker track (or
@@ -122,7 +123,7 @@ setting's changes from MCP; Auto-Scroll on and off, Page Up and Page Down; chang
 several selected markers in one undo step; the marker settings: marker ids on the marker track, cycle follows and
 sync selection both ways, paused while recording; and the marker key commands locating, setting and recalling
 markers. `tests/marker_tests.cpp` covers `transport.cycleFollowsMarkers` for the three locate commands. Marker files:
-`tests/marker_tests.cpp` has the CSV round trip byte for byte with undo, a spreadsheet's file and files that change
+`tests/marker_tests.cpp` has the CSV round trip byte for byte with undo, also of marker tracks with the same name, a spreadsheet's file and files that change
 nothing; `tests/midifile_tests.cpp` the marker tracks in type 1 and type 0 files, the same file exported again and
 the limit of 10 marker tracks; `tests/markers_ui_tests.cpp` the File menu's items through the file dialog.
 
