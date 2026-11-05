@@ -179,7 +179,9 @@ namespace gnubase::ui
 				if (!event.data.at("playing").get<bool>())
 					m_position.reset();
 				else if (!m_position)
-					m_position = m_binding.watch<int64_t>([this] { return m_engine.playbackPosition(); },
+					// The document changes only when the arrow moves to another marker, and showCursor draws it then.
+					m_position = m_binding.watch<int64_t>(
+						nullptr, [this] { return m_engine.playbackPosition(); },
 						[this](const int64_t& sample) { setCursor(sample); });
 			}));
 		m_subscriptions.push_back(m_binding.on("settings.changed",
@@ -447,7 +449,12 @@ namespace gnubase::ui
 			Rml::Element* row = m_rows->GetChild(i);
 			row->SetClass("at-cursor", at != 0 && row->GetAttribute<uint64_t>("value", 0) == at);
 		}
-		if (std::exchange(m_arrow, at) != at && m_flags.at("ui.markersAutoScroll"))
+		if (std::exchange(m_arrow, at) == at)
+			return;
+		// Also during playback, which follows the cursor without asking for a draw (EngineBinding::watch).
+		if (Rml::Context* context = m_document->GetContext())
+			context->RequestNextUpdate(0);
+		if (m_flags.at("ui.markersAutoScroll"))
 			scrollToArrow();
 	}
 

@@ -191,9 +191,14 @@ TEST_CASE("Lua calls functions that C++ adds next to the commands, and takes eve
 	)");
 	REQUIRE(gnubase::engine::Client(engine).call("fake.emit", {{"value", 7}}).ok());
 	REQUIRE(gnubase::engine::Client(engine).call("fake.emit", {{"value", 8}}).ok());
-	CHECK_FALSE(lua.dispatchEvents().has_value());
+	bool handled = false;
+	CHECK_FALSE(lua.dispatchEvents(&handled).has_value());
+	CHECK(handled); // so the UI draws what the handlers changed
 	run(lua, "assert(#seen == 2 and seen[1] == 7 and seen[2] == 8)");
+	CHECK_FALSE(lua.dispatchEvents(&handled).has_value());
+	CHECK(!handled); // nothing arrived
 	run(lua, "gnubase.on('fake.changed', function() error('broken handler') end)");
 	REQUIRE(gnubase::engine::Client(engine).call("fake.emit", {{"value", 9}}).ok());
-	CHECK_THAT(lua.dispatchEvents().value_or(""), ContainsSubstring("broken handler"));
+	CHECK_THAT(lua.dispatchEvents(&handled).value_or(""), ContainsSubstring("broken handler"));
+	CHECK(handled);
 }
