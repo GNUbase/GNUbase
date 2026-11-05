@@ -52,6 +52,7 @@ add_executable(gnubase-tests
 	document_tests.cpp
 	editors_tests.cpp
 	effects_tests.cpp
+	emptytracks_tests.cpp
 	engine_tests.cpp
 	enginebinding_tests.cpp
 	eventdisplay_tests.cpp
@@ -91,6 +92,7 @@ add_executable(gnubase-tests
 	midieditor_tests.cpp
 	midifile_tests.cpp
 	midifunctions_tests.cpp
+	midimodifiers_tests.cpp
 	midirecording_tests.cpp
 	miditap_tests.cpp
 	mixdown_tests.cpp
@@ -114,6 +116,7 @@ add_executable(gnubase-tests
 	projectfiles_tests.cpp
 	projectsetup_tests.cpp
 	quantize_tests.cpp
+	quantize_ui_tests.cpp
 	recording_tests.cpp
 	renderinplace_tests.cpp
 	rmlui_tests.cpp
