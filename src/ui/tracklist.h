@@ -118,7 +118,7 @@ namespace gnubase::ui
 		void hide();      // tells the display which tracks folded folders hide
 		void loadControls(const engine::Json& value);
 		// A tempo typed into the tempo track's Current Tempo, or the type chosen in Type of New Tempo Points.
-		void tempoChanged(const Rml::Element& field, const Rml::Event& event);
+		void tempoChanged(Rml::Element& field, const Rml::Event& event);
 		void loadWidths(const engine::Json& value);
 
 		const Row* rowOf(Rml::Element* element) const;

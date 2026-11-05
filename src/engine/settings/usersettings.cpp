@@ -371,7 +371,7 @@ namespace gnubase::engine::settings
 					Json{{"name", 120},
 						{"controls",
 							{{"audio", 120}, {"instrument", 120}, {"midi", 120}, {"group", 120}, {"effect", 120},
-								{"folder", 120}, {"marker", 120}, {"ruler", 120}, {"tempo", 120},
+								{"folder", 120}, {"marker", 120}, {"ruler", 120}, {"tempo", 144},
 								{"signature", 120}}}}},
 				{"ui.controllerLanePresets",
 					"The controller lane presets of the MIDI editors (#128, reference manual p. 1166): each a name and "

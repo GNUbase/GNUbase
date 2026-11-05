@@ -1003,7 +1003,7 @@ namespace gnubase::ui
 		}
 	}
 
-	void TrackList::tempoChanged(const Rml::Element& field, const Rml::Event& event)
+	void TrackList::tempoChanged(Rml::Element& field, const Rml::Event& event)
 	{
 		const auto name = field.GetAttribute<Rml::String>("control", "");
 		const auto value = event.GetParameter<Rml::String>("value", "");
@@ -1027,10 +1027,10 @@ namespace gnubase::ui
 				currentTempoCommand(context, project.value("tempoTrackActive", false), cursor, bpm);
 			m_binding.send(command, parameters);
 		}
-		else
-		{
-			showTempo(); // what isn't a tempo goes
-		}
+		// Enter ends the typing: the field shows Current Tempo again, which the change updates, and what isn't a tempo
+		// goes.
+		field.Blur();
+		showTempo();
 	}
 
 	void TrackList::control(const Row& row, const std::string& name, bool exclusive, bool defeat)

@@ -350,6 +350,20 @@ TEST_CASE("the transport bar's tempo field is the tempo at the cursor in tempo t
 	CHECK(app.call("project.get").at("tempoTrack")[1].at("bpm") == 90.0);
 }
 
+TEST_CASE("the Tap Tempo Mode menu shows the mode the user setting has", "[ui]")
+{
+	test::UiApp app{{1024, 500}};
+	app.call("settings.set", {{"key", "transport.tapTempoMode"}, {"value", "project"}});
+	showBar(app);
+	REQUIRE(app.waitUntil(
+		[&app] { return elements(app, "menuitem[tap-mode=project]")[0].at("attributes").contains("checked"); }));
+	CHECK(!elements(app, "menuitem[tap-mode=auto]")[0].at("attributes").contains("checked"));
+	// Taps say what this mode does.
+	app.ui().click(std::nullopt, {"#transport-bar #tap-tempo", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil([&app] { return hasClass(app, "#tap-tempo-message", "shown"); }));
+	CHECK(elements(app, "#tap-tempo-message")[0].value("text", "") == "Tap Tempo: sets the project tempo");
+}
+
 TEST_CASE("the Tap Tempo Mode menu picks where the tapped tempo goes, and tapping says where", "[ui]")
 {
 	test::UiApp app{{1024, 500}};
@@ -406,6 +420,14 @@ TEST_CASE("the tempo track's Current Tempo and Type of New Tempo Points in the t
 	REQUIRE(app.waitUntil([&value] { return value() == "120.000"; }));
 	CHECK(elements(app, row + " button[control]").size() == 1); // Activate Tempo Track
 	REQUIRE(elements(app, row + " select.tempo-type").size() == 1);
+
+	// In fixed tempo mode it is the fixed tempo, which it changes; what isn't a tempo goes.
+	type(app, row + " input.current-tempo", "90", 1);
+	REQUIRE(app.waitUntil([&app] { return app.call("project.get").value("fixedTempo", 0.0) == 90.0; }));
+	REQUIRE(app.waitUntil([&value] { return value() == "90.000"; }));
+	type(app, row + " input.current-tempo", "fast", 1);
+	REQUIRE(app.waitUntil([&value] { return value() == "90.000"; }));
+	CHECK(app.call("project.get").value("fixedTempo", 0.0) == 90.0);
 
 	// The tempo at the cursor (reference manual p. 162), which it changes.
 	app.call("project.set", {{"tempoTrackActive", true}});
