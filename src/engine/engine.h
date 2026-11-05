@@ -199,9 +199,6 @@ namespace gnubase::engine
 		// The plugin host processes and the plugins that run in them.
 		plugins::HostManager& pluginHosts();
 
-		// The background jobs (jobs/jobs.h), for commands that start one, such as media.locate.
-		Jobs& jobs();
-
 		// The folder of the user settings; empty when they are kept in memory only. Features whose user settings
 		// have files of their own, such as the quantize presets, keep them there.
 		const std::filesystem::path& settingsDirectory() const { return m_settingsDirectory; }
@@ -213,6 +210,11 @@ namespace gnubase::engine
 		// midi.changed). Returns the new value; throws like settings.set. Command thread only.
 		Json modifySetting(
 			CommandContext& context, std::string_view key, const std::function<Json(const Json& value)>& change);
+
+		// Changes several user settings as part of a command, values by key, in one write of the settings file
+		// (settings::Store::set): all of them or none. If any changed, emits settings.changed with those and applies
+		// the settings, as settings.set does. Throws like settings.set. Command thread only.
+		void setSettings(CommandContext& context, const Json& values);
 
 		// The project cursor in samples, where the audio thread last moved it or a locate puts it, read without a
 		// command and without waiting: for the UI to read once a frame while playing. Not for audio threads.

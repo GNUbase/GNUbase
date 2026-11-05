@@ -263,6 +263,19 @@ namespace gnubase::engine
 		return value;
 	}
 
+	void Engine::setSettings(CommandContext& context, const Json& values)
+	{
+		rt::assertNotRealtime("engine::Engine::setSettings");
+		const std::vector<std::string> keys = m_settings->set(values);
+		if (keys.empty())
+			return;
+		Json changed = Json::object();
+		for (const std::string& key : keys)
+			changed[key] = m_settings->value(key);
+		context.emit("settings.changed", {{"values", std::move(changed)}});
+		settingsChanged(context, keys);
+	}
+
 	void Engine::registerCommand(CommandInfo info, CommandHandler handler)
 	{
 		rt::assertNotRealtime("engine::Engine::registerCommand");
@@ -321,11 +334,6 @@ namespace gnubase::engine
 	plugins::HostManager& Engine::pluginHosts()
 	{
 		return *m_plugins;
-	}
-
-	Jobs& Engine::jobs()
-	{
-		return *m_jobs;
 	}
 
 	int64_t Engine::playbackPosition() const

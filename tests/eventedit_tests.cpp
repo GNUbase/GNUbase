@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <map>
+#include <mutex>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -419,6 +420,80 @@ TEST_CASE("event.resize moves the start or the end, revealing content or moving 
 	midi = f.midi(part);
 	CHECK(midi.at("length") == g_bar);
 	CHECK(midi.at("notes")[0].at("position") == g_quarter);
+}
+
+TEST_CASE("event.previewResize tells what event.resize would make of the events and changes nothing", "[unit]")
+{
+	Fixture f;
+	const int64_t audioTrack = f.track("audio", "linear");
+	const int64_t event = f.audioEvent(audioTrack);
+	const int64_t part = f.part(f.track("midi"));
+	const int64_t inPart = f.audioEvent(audioTrack);
+	f.call("event.move", {{"events", {inPart}}, {"delta", 4 * g_second}}); // from 5 to 7 seconds
+	const int64_t audioPart = f.call("event.toPart", {{"events", {inPart}}}).at("events").at(0).get<int64_t>();
+	std::mutex mutex;
+	std::vector<std::string> announced;
+	const gnubase::engine::Listener listener(f.engine,
+		[&](const gnubase::engine::Event& change)
+		{
+			const std::scoped_lock lock(mutex);
+			announced.push_back(change.name);
+		});
+
+	// What event.resize makes of each event, as project.get lists it; the preview first, then the resize itself.
+	const auto agrees = [&f](const Json& resize)
+	{
+		const Json preview = f.call("event.previewResize", resize);
+		f.call("event.resize", resize);
+		const Json now = f.call("project.get");
+		size_t count = 0;
+		for (const char* kind : {"audioEvents", "audioParts", "midiParts"})
+			for (const Json& item : preview.at(kind))
+			{
+				++count;
+				const auto found = std::find_if(now.at(kind).begin(), now.at(kind).end(),
+					[&item](const Json& other) { return other.at("id") == item.at("id"); });
+				REQUIRE(found != now.at(kind).end());
+				CHECK(*found == item);
+			}
+		f.call("history.undo");
+		return count;
+	};
+	// The end past the clip's stops at it, the start before it at its beginning, as event.resize does.
+	CHECK(agrees({{"events", {event}}, {"edge", "end"}, {"delta", 100 * g_second}}) == 1);
+	CHECK(agrees({{"events", {event}}, {"edge", "start"}, {"delta", -100 * g_second}}) == 1);
+	CHECK(
+		agrees({{"events", {event, part}}, {"edge", "start"}, {"delta", g_second / 2}, {"mode", "moveContents"}}) == 2);
+	CHECK(agrees({{"events", {part}}, {"edge", "start"}, {"ticks", g_quarter}}) == 1);
+	// An audio part comes with its events.
+	CHECK(agrees({{"events", {audioPart}}, {"edge", "end"}, {"delta", -g_second}}) == 2);
+
+	// The preview itself changed nothing, announced nothing and left no undo step.
+	const Json project = f.call("project.get");
+	const Json history = f.call("history.get");
+	{
+		const std::scoped_lock lock(mutex);
+		announced.clear();
+	}
+	const Json preview =
+		f.call("event.previewResize", {{"events", {event}}, {"edge", "end"}, {"delta", -g_second / 2}});
+	REQUIRE(preview.at("audioEvents").size() == 1);
+	CHECK(preview.at("audioEvents")[0].at("length") == (2 * g_second) - (g_second / 2));
+	CHECK(preview.at("audioParts").empty());
+	CHECK(preview.at("midiParts").empty());
+	CHECK(f.call("project.get") == project);
+	CHECK(f.call("history.get").at("position") == history.at("position"));
+	{
+		const std::scoped_lock lock(mutex);
+		CHECK(announced.empty());
+	}
+
+	// It fails where event.resize does: unknown and locked events.
+	CHECK_THAT(f.fails("event.previewResize", {{"events", {12345}}, {"edge", "end"}, {"delta", 1}}),
+		ContainsSubstring("12345"));
+	f.call("event.set", {{"events", {part}}, {"lock", true}});
+	CHECK_THAT(f.fails("event.previewResize", {{"events", {part}}, {"edge", "end"}, {"delta", 1}}),
+		ContainsSubstring("locked"));
 }
 
 TEST_CASE("event.split splits events and parts at positions", "[unit]")

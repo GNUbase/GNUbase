@@ -773,6 +773,35 @@ namespace gnubase::engine
 			return {{"events", idsOf(items)}};
 		}
 
+		// What event.resize would make of the events, on a copy of the project: the event display shows it while an
+		// edge is dragged (#732). The copy's announcements go nowhere.
+		Json previewResize(Project& project, CommandContext& context)
+		{
+			Project copy = project;
+			CommandContext inner(context.parameters());
+			resizeEvents(copy, inner);
+			syncSharedParts(project.midiParts, copy, inner); // as ProjectModel does after the edit
+			Json result = {{"audioEvents", Json::array()}, {"audioParts", Json::array()}, {"midiParts", Json::array()}};
+			for (const Item& item : itemsFrom(copy, context.parameters(), true))
+			{
+				if (item.audio != nullptr)
+				{
+					result["audioEvents"].push_back(toJson(*item.audio));
+				}
+				else if (item.audioPart != nullptr)
+				{
+					result["audioParts"].push_back(toJson(*item.audioPart));
+					for (const AudioEvent* event : eventsIn(copy, item.audioPart->id))
+						result["audioEvents"].push_back(toJson(*event));
+				}
+				else
+				{
+					result["midiParts"].push_back(toJson(*item.part));
+				}
+			}
+			return result;
+		}
+
 		Json splitEvents(Project& project, CommandContext& context)
 		{
 			const Json& parameters = context.parameters();
@@ -2232,6 +2261,18 @@ namespace gnubase::engine
 				"change. Returns the events.",
 				schema(resizeParameters, {"events", "edge"}), eventsResult(), false},
 			"Resize", resizeEvents);
+
+		const Json objects = {{"type", "array"}, {"items", {{"type", "object"}}}};
+		addEdit(engine,
+			{"event.previewResize", 1,
+				"Tells what event.resize with the same parameters would make of the events, without changing them: "
+				"the audio events, audio parts (with their audio events) and MIDI parts as project.get lists them. "
+				"The event display shows it while an edge is dragged. Fails where event.resize would.",
+				schema(resizeParameters, {"events", "edge"}),
+				schema({{"audioEvents", objects}, {"audioParts", objects}, {"midiParts", objects}},
+					{"audioEvents", "audioParts", "midiParts"}),
+				true},
+			{}, previewResize);
 
 		addEdit(engine,
 			{"event.split", 1,

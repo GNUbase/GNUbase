@@ -12,6 +12,7 @@
 #include "engine/audio/sequencer.h"
 #include "engine/audio/transport.h"
 #include "engine/graph/graph.h"
+#include "engine/metronome/metronome.h"
 #include "engine/schema.h"
 #include "platform/audio/device.h"
 #include "platform/audio/dummydevice.h"
@@ -19,6 +20,7 @@
 #include "platform/rt/triplebuffer.h"
 #include "platform/rt/workerpool.h"
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -195,6 +197,9 @@ namespace gnubase::engine
 		};
 
 		void rebuild();
+		// audio.setDevice: opens the device, starts it if asked or if the one it replaces ran, falls back to the dummy
+		// device and saves the choice as the user's if asked (start, fallBackToDummy, remember).
+		void replaceDevice(CommandContext& context);
 		// keepMeasurement: a reset, which keeps the loudness measurement if the sample rate stays.
 		void setDevice(const Json& parameters, bool keepMeasurement = false);
 		void openDummy(const Json& parameters);
@@ -259,6 +264,13 @@ namespace gnubase::engine
 		bool syncTransport();     // Transport::sync, and the cue thread's copy; whether anything changed
 		void play();
 		void record(bool on);
+		// Cues where a recording from stop starts playback and returns its count-in (length 0 for none).
+		graph::CountIn cueCountIn();
+		// New transport settings; a count-in that runs starts again if they move where playback starts.
+		void setTransportSettings(const TransportSettings& settings);
+		// The count-in before a recording from stop, as the metronome's settings have it, or length 0 for none: it ends
+		// where playback starts (start, the pre-roll's start), in the signature and tempo where recording starts.
+		graph::CountIn countInFrom(time::Samples start, time::Samples recordStart) const;
 		Json transportStatus() const;
 		time::Samples projectEnd() const;
 		// Command thread, while the device stands: processes frames frames offline, as fast as possible, calling
@@ -278,6 +290,9 @@ namespace gnubase::engine
 		// Puts every channel's processor into a channel strip with the channel's fader and automation, and the
 		// plugins of its slots into slot strips that get their automation; after attachSlots.
 		void attachStrips(const RenderSnapshot& snapshot, graph::GraphDesc& desc);
+		// Adds the metronome's node, always, with its audio and MIDI routing, and compiles what it plays
+		// when that changed.
+		void attachMetronome(const RenderSnapshot& snapshot, graph::GraphDesc& desc);
 		// Brings the slots' plugins in line with the snapshot and gives the slot nodes those that are ready.
 		void attachSlots(const RenderSnapshot& snapshot, graph::GraphDesc& desc);
 		// Emits plugin.changed for the slots whose plugin's status changed since the last call.
@@ -317,6 +332,12 @@ namespace gnubase::engine
 		std::vector<std::unique_ptr<audio::Backend>> m_backends;
 		std::string m_backend; // the device's
 		Json m_parameters;     // what audio.setDevice opened the device with
+		// The device the last audio.setDevice couldn't open or start, so the dummy device plays instead
+		// (fallBackToDummy): its backend, id and the reason. Null if it opened.
+		Json m_failed = nullptr;
+		// The last audio.setDevice failed and left no running device although it was to run one: the next one
+		// starts unless told otherwise. audio.start and audio.stop decide anew.
+		bool m_startAfterFailure = false;
 		std::unique_ptr<audio::Device> m_device;
 		audio::DummyDevice* m_dummy = nullptr; // m_device, if it is the dummy device
 		std::vector<std::string> m_inputPorts; // the device's port names, each one once
@@ -389,6 +410,20 @@ namespace gnubase::engine
 		std::map<ObjectId, RenderTap> m_renderTaps;
 		std::vector<PendingRelease> m_releases;
 		uint64_t m_instrumentSerial = 0; // the last InstrumentChannel::serial given, counting up from 1
+
+		// The metronome lasts across rebuilds; its sounds are compiled again only when they change.
+		struct ClickSource
+		{
+			metronome::MetronomeSettings settings;
+			time::TempoMap tempo{120.0};
+			time::SignatureMap signatures;
+			double projectRate = 0.0;
+			double deviceRate = 0.0;
+			std::array<metronome::SoundLibrary::Stamp, metronome::g_accents> samples; // the files as they were
+		};
+		std::shared_ptr<metronome::Metronome> m_metronome = std::make_shared<metronome::Metronome>();
+		metronome::SoundLibrary m_clickSounds;
+		std::optional<ClickSource> m_clickSource; // what m_metronome's config was compiled from
 
 		std::unique_ptr<rt::SnapshotPublisher<Program>> m_programs;
 		uint64_t m_generation = 0;          // the newest program's
