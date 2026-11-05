@@ -12,11 +12,12 @@ own, and works the same on takes and overlapping events put on lanes by hand (`e
   orders a track's events by it (`frontOf` in `document.h`), and the playlist's front layer follows
   (`makePlaylist`). A split leaves the piece after it where the event was in the stack (its `front` is the event's
   place), so splitting a take behind another doesn't bring half of it to the front; a copy or a pasted event comes in
-  front, as added last. The project file keeps `front` in GNUbase's entry; ids loaded go on after the highest one.
+  front, as added last, and so do the events of a copied audio part and of a pasted range, in the order they were
+  stacked in. The project file keeps `front` in GNUbase's entry; ids loaded go on after the highest one.
 - **`event.toFront`** brings takes to the front, one undo step "To Front": an audio event gets a new place in front
-  of every other, an audio part's events too. MIDI parts all play where they overlap (p. 226), so a MIDI take comes
-  to the front unmuted, and the MIDI parts on its track's other lanes that it overlaps are muted, as a stacked
-  recording leaves all but the last lap muted.
+  of every other, an audio part's events too, in the order they are stacked in. MIDI parts all play where they
+  overlap (p. 226), so a MIDI take comes to the front unmuted, and the MIDI parts on its track's other lanes that it
+  overlaps are muted, as a stacked recording leaves all but the last lap muted.
 - **`event.comp`** is the comp tool's drag on a lane (p. 228): it splits every unlocked audio event, audio part and
   MIDI part on the track at the range's start and end (project samples), as `range.split` does, then brings what
   lies on the lane between them to the front, as `event.toFront` does; one undo step "Comp". A lane with nothing in
@@ -33,11 +34,14 @@ checks `event.toFront` on audio and MIDI takes, splits, the project file and und
   `track.toggleLanesSelected`) shows an audio, instrument or MIDI track's lanes: a display lane per lane from 0 to the
   highest one its events and parts are on, below the track's own lane and above its automation tracks, as high as
   the track. Each shows the events and parts on that lane; `laneTakes()` names the lane each display lane shows (-1
-  for a track's own and automation lanes), and the lanes have the track's id in `laneTracks()`. Which tracks show
+  for a track's own and automation lanes), and the lanes have the track's id in `laneTracks()`. A part drawn with the
+  draw tool or a file dropped on a lane goes on that lane (`lane` of `midiPart.add`, `audioPart.add`,
+  `audioEvent.add` and `audioFile.import`). Which tracks show
   their lanes is view state, like folding. The track list's row reaches over its lanes, with its automation rows
   below them.
 - **The comp result.** A track's own lane shows its audio events where none in front of them covers them, with
-  their waveforms there, so it shows what plays; clicks there find the event in front. `EventWaveforms` keeps an
+  their waveforms there, so it shows what plays; clicks there find the event in front. A muted event plays nothing
+  and covers nothing, as in `makePlaylist`: it shows, muted, where no other covers it. `EventWaveforms` keeps an
   event's waves apart by their order, as an event can show on its track's lane and on its own.
 - **The comp tool** (`comp`, the toolbar's and the toolbox's Comp, `tool.comp` without a key, after the range
   selection tool, as in the reference's toolbar): a click on a take brings it to the front (`event.toFront`), Shift
@@ -45,7 +49,8 @@ checks `event.toFront` on audio and MIDI takes, splits, the project file and und
   snapped (`event.comp`), showing it as `.tool-rectangle` while dragging. Its pointer is the OS's arrow.
 
 Tests: `tests/eventediting_tests.cpp` shows a track's lanes, checks that the track's lane shows only the take in
-front, brings a take to the front with a click and comps a range with a drag.
+front and that a muted take covers nothing, brings a take to the front with a click, comps a range with a drag and
+draws parts on lanes; `tests/fileimport_tests.cpp` drops a file on a lane.
 
 ## Not yet
 

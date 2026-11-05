@@ -1060,8 +1060,10 @@ namespace gnubase::ui
 			position = m_time.tempo.toSamples(start, m_time.sampleRate);
 			length = m_time.tempo.toSamples(end, m_time.sampleRate) - position;
 		}
+		// On a lane of a track whose lanes show, on that lane (#99).
 		m_binding.send(m_laneTypes[lane] == "audio" ? "audioPart.add" : "midiPart.add",
-			{{"track", m_laneTracks[lane]}, {"position", position}, {"length", length}},
+			{{"track", m_laneTracks[lane]}, {"position", position}, {"length", length},
+				{"lane", std::max(m_laneTakes[lane], 0)}},
 			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
 				if (!alive.expired() && result.ok())

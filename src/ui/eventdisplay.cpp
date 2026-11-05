@@ -316,6 +316,7 @@ namespace gnubase::ui
 		m_laneAutomation.clear();
 		m_laneTakes.clear();
 		m_events.clear();
+		m_mutedPieces.clear();
 		m_fades.clear();
 		readAutomation(project);
 		// Each track's highest lane (#99), and the display lane of each lane of a track whose lanes show.
@@ -402,13 +403,13 @@ namespace gnubase::ui
 				return;
 			if (onTrackLane)
 				m_tracks[lanes[track]].events.push_back(span);
-			m_events.push_back(
-				{event.at("id").get<uint64_t>(), lanes[track], start, end, event.value("mute", false), std::nullopt});
+			m_events.push_back({event.at("id").get<uint64_t>(), lanes[track], start, end, event.value("mute", false),
+				std::nullopt, !onTrackLane});
 			if (const std::optional<size_t> taken = takeLane(event))
 			{
 				m_tracks[*taken].events.push_back(span);
-				m_events.push_back(
-					{event.at("id").get<uint64_t>(), *taken, start, end, event.value("mute", false), std::nullopt});
+				m_events.push_back({event.at("id").get<uint64_t>(), *taken, start, end, event.value("mute", false),
+					std::nullopt, false});
 			}
 			m_end = std::max(m_end, end);
 		};
@@ -424,14 +425,15 @@ namespace gnubase::ui
 			addEvent(part, start, end);
 		}
 		std::vector<EventWaveforms::Event> waves;
-		// Audio events in the order they are stacked, the one in front last, so that a click finds it (#99).
+		// Audio events in the order they are stacked, the one in front last, so that a click finds it (#99). Muted
+		// ones play nothing and hide nothing (makePlaylist): they come behind every other.
 		std::vector<const Json*> stacked;
 		for (const Json& event : project.at("audioEvents"))
 			stacked.push_back(&event);
 		const auto front = [](const Json* event)
 		{
 			const auto own = event->value("front", uint64_t{0});
-			return own != 0 ? own : event->at("id").get<uint64_t>();
+			return std::make_pair(!event->value("mute", false), own != 0 ? own : event->at("id").get<uint64_t>());
 		};
 		std::stable_sort(
 			stacked.begin(), stacked.end(), [&front](const Json* a, const Json* b) { return front(a) < front(b); });
@@ -440,6 +442,7 @@ namespace gnubase::ui
 		{
 			TimeSpan span;
 			EventWaveforms::Event wave; // with media 0 for none
+			bool mute = false;
 		};
 		std::map<size_t, std::vector<Piece>> pieces; // by lane
 		for (const Json* stackedEvent : stacked)
@@ -464,7 +467,8 @@ namespace gnubase::ui
 			if (lanes.count(track) != 0)
 			{
 				const Json& own = event.at("color");
-				Piece piece{{start, length, own.is_string() ? spanColor(own.get<std::string>()) : colors[track]}, {}};
+				Piece piece{{start, length, own.is_string() ? spanColor(own.get<std::string>()) : colors[track]}, {},
+					event.value("mute", false)};
 				if (file != media.end() && rate > 0.0)
 					piece.wave = {event.at("id").get<uint64_t>(), lanes[track], {start, length}, file->first, rate,
 						file->second->at("channels").get<int>(), event.at("offset").get<int64_t>()};
@@ -508,6 +512,8 @@ namespace gnubase::ui
 			for (const Piece& piece : shown)
 			{
 				m_tracks[lane].events.push_back(piece.span);
+				if (piece.mute)
+					m_mutedPieces.emplace_back(lane, piece.span);
 				if (piece.wave.media == 0)
 					continue;
 				EventWaveforms::Event wave = piece.wave;
@@ -565,10 +571,13 @@ namespace gnubase::ui
 		std::vector<EventLanes::Lane> folders = m_folderData;
 		for (size_t i = 0; i < folders.size() && i < lanes.size(); ++i)
 			folders[i].height = lanes[i].height;
+		for (const auto& [lane, piece] : m_mutedPieces)
+			if (lane < muted.size())
+				muted[lane].events.push_back({piece.start, piece.length});
 		const double shift = m_drag == Drag::Events && m_dragMoved ? m_dragDx * m_view.scale : 0.0;
 		for (const Shown& shown : m_events)
 		{
-			if (shown.mute)
+			if (shown.mute && !shown.covered)
 				muted[shown.lane].events.push_back({shown.start, shown.end - shown.start});
 			const auto lane = static_cast<int64_t>(shown.lane) + (m_drag == Drag::Events ? m_dragLanes : 0);
 			if (std::binary_search(m_selection.begin(), m_selection.end(), shown.id) && lane >= 0 &&
