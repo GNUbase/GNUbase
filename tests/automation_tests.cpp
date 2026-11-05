@@ -1282,6 +1282,45 @@ TEST_CASE("virgin territory is a project setting, and terminators end curves, wi
 	CHECK(run(client, "automation.get").at("virginTerritory") == false);
 }
 
+TEST_CASE("only virgin territory changes the project, and a failed transaction takes the settings back", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const auto revision = [&client]() { return run(client, "project.revision"); };
+	const Json start = revision();
+	CHECK(start.at("modified") == false);
+
+	// followsEvents is a user setting: the project stays as it is, also when virginTerritory is given unchanged.
+	run(client, "automation.set", {{"followsEvents", true}});
+	run(client, "automation.set", {{"followsEvents", false}, {"virginTerritory", false}});
+	CHECK(revision() == start);
+
+	// virginTerritory is the project's.
+	run(client, "automation.set", {{"virginTerritory", true}});
+	const Json changed = revision();
+	CHECK(changed.at("revision").get<uint64_t>() > start.at("revision").get<uint64_t>());
+	CHECK(changed.at("modified") == true);
+
+	// A transaction that fails leaves both settings as they were.
+	const std::string error = reject(client, "history.transaction",
+		{{"description", "Settings"},
+			{"commands",
+				{{{"command", "automation.set"}, {"parameters", {{"followsEvents", true}, {"virginTerritory", false}}}},
+					{{"command", "track.remove"}, {"parameters", {{"track", 12345}}}}}}});
+	CHECK_THAT(error, ContainsSubstring("commands[1]"));
+	CHECK(run(client, "automation.get") == Json{{"followsEvents", false}, {"virginTerritory", true}});
+	CHECK(revision() == changed);
+
+	// One that succeeds keeps them.
+	run(client, "history.transaction",
+		{{"description", "Settings"},
+			{"commands",
+				{{{"command", "automation.set"},
+					{"parameters", {{"followsEvents", true}, {"virginTerritory", false}}}}}}});
+	CHECK(run(client, "automation.get") == Json{{"followsEvents", true}, {"virginTerritory", false}});
+	run(client, "automation.set", {{"followsEvents", false}});
+}
+
 TEST_CASE("in virgin territory and after terminators a lane plays its static value", "[unit]")
 {
 	using gnubase::time::TimeBase;
@@ -1311,6 +1350,9 @@ TEST_CASE("in virgin territory and after terminators a lane plays its static val
 			{0, at(3000), 0.0, AutomationShape::Linear, 0.0}, {0, at(4000), -6.0, AutomationShape::Linear, 0.0}});
 	lane(AutomationTargetType::Mute,
 		{{0, at(1000), 0.0, AutomationShape::Step, 0.0}, {0, at(2000), 0.0, AutomationShape::Step, 0.0}});
+	// A lane whose points all sit at one position (#717).
+	lane(AutomationTargetType::Pan,
+		{{0, at(5000), -0.5, AutomationShape::Linear, 0.0}, {0, at(5000), 0.5, AutomationShape::Linear, 0.0}});
 	const auto valueAt = [&](AutomationTargetType type, int64_t position)
 	{
 		const std::unique_ptr<ChannelAutomation> automation =
@@ -1334,6 +1376,8 @@ TEST_CASE("in virgin territory and after terminators a lane plays its static val
 		CHECK(near(valueAt(AutomationTargetType::Volume, 9000), gain(-6.0)));
 		CHECK(valueAt(AutomationTargetType::Mute, 0) == 0.0);
 		CHECK(valueAt(AutomationTargetType::Mute, 9000) == 0.0);
+		CHECK(valueAt(AutomationTargetType::Pan, 0) == -0.5);
+		CHECK(valueAt(AutomationTargetType::Pan, 5000) == 0.5);
 	}
 	SECTION("virgin territory")
 	{
@@ -1349,6 +1393,11 @@ TEST_CASE("in virgin territory and after terminators a lane plays its static val
 		CHECK(valueAt(AutomationTargetType::Mute, 500) == 1.0);
 		CHECK(valueAt(AutomationTargetType::Mute, 1500) == 0.0);
 		CHECK(valueAt(AutomationTargetType::Mute, 2500) == 1.0);
+		// Points at one position have no curve between them and the gaps around them: they never play, and the
+		// parameter keeps its static value there too.
+		project.channels[channel].pan = 0.25;
+		for (const int64_t position : {0, 4999, 5000, 9000})
+			CHECK(valueAt(AutomationTargetType::Pan, position) == 0.25);
 	}
 	SECTION("MIDI lanes' gaps")
 	{

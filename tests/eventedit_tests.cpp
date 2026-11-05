@@ -907,6 +907,48 @@ TEST_CASE(
 		f.call("range.delete", closed);
 		CHECK(points() == GapPoints{{0, -1.0, false}, {500, -0.5, false}, {500, 0.5, false}, {1000, 1.0, false}});
 	}
+	SECTION("a range on a segment of the curve, without points in it")
+	{
+		// A ramp from -1 at 0 to 1 at 2000 with a terminator at 3000 and a gap to the last point at 4000. A range in
+		// the ramp is automation data too (#724): it gets its edge points like a range with points in it.
+		f.call("automationPoint.add",
+			{{"lane", lane},
+				{"points",
+					{{{"position", 0}, {"value", -1.0}}, {{"position", 2000}, {"value", 1.0}},
+						{{"position", 3000}, {"value", 1.0}, {"terminator", true}},
+						{{"position", 4000}, {"value", 0.0}}}}});
+		const GapPoints before = points();
+		// With initial values the value at the range's start holds up to its end, where the ramp goes on.
+		f.call("range.delete", range(500, 1500));
+		CHECK(points() ==
+			GapPoints{{0, -1.0, false}, {500, -0.5, false}, {1500, 0.5, false}, {2000, 1.0, false}, {3000, 1.0, true},
+				{4000, 0.0, false}});
+		const Json held = f.call("automationLane.list").at("lanes")[0].at("points")[1];
+		CHECK(held.at("shape") == "step");
+		f.call("history.undo");
+		CHECK(points() == before);
+		// A range in a gap, or before the first or after the last point, has none: nothing changes.
+		for (const auto& [start, end] : std::vector<std::pair<int64_t, int64_t>>{{3200, 3800}, {4500, 5000}})
+		{
+			const size_t steps = f.call("history.get").at("steps").size();
+			f.call("range.delete", range(start, end));
+			CHECK(points() == before);
+			CHECK(f.call("history.get").at("steps").size() == steps);
+		}
+
+		// With virgin territory it becomes a gap: the ramp ends at a terminator at its start and goes on at its end.
+		f.call("automation.set", {{"virginTerritory", true}});
+		f.call("range.delete", range(500, 1500));
+		CHECK(points() ==
+			GapPoints{{0, -1.0, false}, {500, -0.5, true}, {1500, 0.5, false}, {2000, 1.0, false}, {3000, 1.0, true},
+				{4000, 0.0, false}});
+		f.call("history.undo");
+		for (const auto& [start, end] : std::vector<std::pair<int64_t, int64_t>>{{3200, 3800}, {4500, 5000}})
+		{
+			f.call("range.delete", range(start, end));
+			CHECK(points() == before);
+		}
+	}
 }
 
 TEST_CASE("range.copy without a range copies everything between the locators: global copy", "[unit]")
