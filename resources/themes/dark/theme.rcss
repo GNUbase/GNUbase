@@ -728,6 +728,21 @@
 	{
 		background-color: #4c4e51;
 	}
+	.controller-lane[lane-kind=probability] .controller-bar, .controller-lane[lane-kind=velocityVariance] .controller-bar
+	{
+		background-color: transparent;
+		decorator: repeating-linear-gradient(to top, #49767e 0dp, #49767e 3dp, #49767e00 3dp, #49767e00 5dp);
+	}
+	.controller-lane[lane-kind=probability] .controller-bar.selected, .controller-lane[lane-kind=velocityVariance] .controller-bar.selected
+	{
+		background-color: transparent;
+		decorator: repeating-linear-gradient(to top, #7896bd 0dp, #7896bd 3dp, #7896bd00 3dp, #7896bd00 5dp);
+	}
+	.controller-lane[lane-kind=probability] .controller-bar.inactive, .controller-lane[lane-kind=velocityVariance] .controller-bar.inactive
+	{
+		background-color: transparent;
+		decorator: repeating-linear-gradient(to top, #4c4e51 0dp, #4c4e51 3dp, #4c4e5100 3dp, #4c4e5100 5dp);
+	}
 	.ape-display
 	{
 		background-color: #1e2022;
