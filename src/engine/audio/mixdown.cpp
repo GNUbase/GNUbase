@@ -237,7 +237,7 @@ namespace gnubase::engine
 									 std::optional<RenderPoint> point)
 		{
 			require(m_device != nullptr && m_programs, "there is no audio device; set one with audio.setDevice");
-			require(!m_transport.recording(), "stop recording first");
+			require(!m_transport.recording() && !m_transport.countingIn(), "stop recording first");
 			const double projectRate = m_snapshots.latest().sampleRate;
 			// The graph and its processors run at the device's rate, the events at the project's.
 			require(m_device->format().sampleRate == projectRate,

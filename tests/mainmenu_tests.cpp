@@ -391,11 +391,7 @@ TEST_CASE("a transport window whose controls are refused closes again (#669)", "
 		const std::filesystem::path resources = folder.path() / "resources";
 		std::filesystem::copy(GNUBASE_RESOURCES_DIR, resources, std::filesystem::copy_options::recursive);
 		const std::filesystem::path file = resources / "ui" / each.file;
-		std::string text;
-		{
-			std::ifstream in(file, std::ios::binary);
-			text.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
-		}
+		std::string text = test::readText(file);
 		const size_t at = text.find(each.from);
 		REQUIRE(at != std::string::npos);
 		text.replace(at, std::strlen(each.from), each.to);

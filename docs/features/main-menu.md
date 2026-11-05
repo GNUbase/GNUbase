@@ -39,9 +39,10 @@ project window.
 | Transport | Start, Stop, Start/Stop, Record, Lock Record, Unlock Record ([recording.md](recording.md)); Audio Record Mode (Keep History, Cycle History + Replace, Replace, [recording.md](recording.md)); MIDI Record Mode (New Parts, Merge, Replace, [midi-recording.md](midi-recording.md); Mix, Overwrite, Keep Last, Stacked, Mix-Stacked (No Mute), [cycle-recording.md](cycle-recording.md)); Go to Project Start; Locators (Go to Left/Right Locator Position, Set Left/Right Locator to Project Cursor Position, Exchange Left & Right Locator Positions); Set Project Cursor Position (Locate Next/Previous Marker) |
 | Project | Add Track...; Remove Selected Tracks, Remove Empty Tracks, Duplicate Tracks; Track Folding; Auto Fades Settings... (`project.autoFades`, [fades.md](fades.md)); Project Setup... (`window.projectSetup`, [project-setup.md](project-setup.md)) |
 | Audio | Fades (Fade In to Range Start, Fade Out from Range End, Adjust Fades to Range, Crossfade (X), Remove Fade In, Remove Fade Out, Remove Fades, Open Fade Editor(s), [fades.md](fades.md)) |
+| MIDI | Transpose Setup...; Merge MIDI in Loop..., Dissolve Part..., Bounce MIDI; Functions (Legato, Fixed Lengths, Fixed Velocity, Pedals to Note Length; Delete Overlaps (mono), Delete Overlaps (poly), Delete Doubles, Delete Controllers, Delete Continuous Controllers, Restrict Polyphony..., Thin Out Data; Reverse, Mirror, [midi-functions.md](midi-functions.md)) |
 | Studio | Mixer, Mixer in Project Window, Mixer 2, 3 and 4 (`window.mixer`, `window.lowerZoneMixer`, `window.mixer2` to `window.mixer4`, [mixer-window.md](mixer-window.md)), On-Screen Keyboard (`window.onScreenKeyboard`, Alt+K, [onscreen-keyboard.md](onscreen-keyboard.md)), Studio Setup... (`window.studioSetup`, [studio-setup.md](studio-setup.md)) |
 
-The other menus of the reference (MIDI, Workspaces, Window, Help) and their items come with the
+The other menus of the reference (Workspaces, Window, Help) and their items come with the
 features they run. Quitting waits for the shell's next step, since it closes every window.
 
 ## Not yet

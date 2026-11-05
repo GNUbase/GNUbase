@@ -69,8 +69,9 @@ namespace gnubase::ui
 		// The window as it looks, or the element's border box in it. The element must be visible.
 		Image screenshot(std::optional<WindowId> window, const Target& element);
 
-		// Moves the mouse. Returns {"element": ...}, the element now under it, or null.
-		engine::Json move(std::optional<WindowId> window, const Target& to);
+		// Moves the mouse, holding the modifiers. Returns {"element": ...}, the element now under it, or null.
+		engine::Json move(
+			std::optional<WindowId> window, const Target& to, const std::vector<std::string>& modifiers = {});
 
 		// Moves the mouse to the target and clicks count times, holding the modifiers ("ctrl", "shift", "alt",
 		// "meta"). Returns the element under the mouse, as move does.
@@ -82,6 +83,18 @@ namespace gnubase::ui
 		// that long, so that presses that become drags only after a delay do. Returns the element under the mouse at
 		// the end.
 		engine::Json drag(std::optional<WindowId> window, const Target& from, const Target& to,
+			const std::vector<std::string>& modifiers = {});
+
+		// Presses the button at the target, or where the mouse is, holding the modifiers, and keeps it down until
+		// release lets it go: moves in between move the mouse with the button held, each holding modifiers of its own,
+		// and other calls, such as a settings change, run while it is, e.g. halfway through a drag. Time passes as it
+		// does between the calls. Returns the element under the mouse, as move does.
+		engine::Json press(std::optional<WindowId> window, const Target& at, MouseButton button,
+			const std::vector<std::string>& modifiers = {});
+
+		// Lets go of the button that press held, at the target or where the mouse is, holding the modifiers. Returns
+		// the element under the mouse, as move does.
+		engine::Json release(std::optional<WindowId> window, const Target& at, MouseButton button,
 			const std::vector<std::string>& modifiers = {});
 
 		// Turns the mouse wheel by dx and dy lines (positive is right and down) at the target, or where the mouse is,

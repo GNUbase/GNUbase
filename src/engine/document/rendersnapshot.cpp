@@ -59,9 +59,11 @@ namespace gnubase::engine
 				uint16_t velocity = midi::playedVelocity(note, part.id);
 				if (!midi::modifyNote(modifiers, seed, pitch, velocity))
 					continue;
-				// A note moved before the project's start starts there.
-				const time::Ticks position =
-					std::max(note.position + midi::randomOffset(modifiers, midi::RandomTarget::Position, seed), -start);
+				// A note moved before its part's start, or the project's, starts there, with its length: the part plays
+				// only what lies in it.
+				const time::Ticks moved =
+					note.position + midi::randomOffset(modifiers, midi::RandomTarget::Position, seed);
+				const time::Ticks position = std::max({moved, time::Ticks{0}, -start});
 				if (position >= end - start) // moved out of the part
 					continue;
 				const time::Ticks length = note.length > 0 ? midi::modifyLength(modifiers, seed, note.length) : 0;
@@ -356,6 +358,18 @@ namespace gnubase::engine
 		snapshot->revision = revision;
 		snapshot->sampleRate = project.sampleRate;
 		snapshot->tempo = project.tempo;
+		snapshot->signatures = project.signatures;
+		snapshot->metronome = project.metronome;
+		std::vector<ObjectId>& outputs = snapshot->metronome.outputs;
+		outputs.erase(std::remove_if(outputs.begin(), outputs.end(),
+						  [&project](ObjectId id)
+						  {
+							  return std::none_of(project.busses.begin(), project.busses.end(), [id](const Bus& bus)
+								  { return bus.id == id && bus.direction == BusDirection::Output; });
+						  }),
+			outputs.end());
+		if (outputs.empty() && mainMix(project) != 0)
+			outputs.push_back(mainMix(project)); // the default output, also when the chosen busses are gone
 		snapshot->panLaw = project.panLaw;
 		snapshot->maxVolume = project.maxVolume;
 		snapshot->recordBitDepth = project.setup.recordBitDepth;

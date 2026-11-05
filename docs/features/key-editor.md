@@ -63,7 +63,8 @@ the edits of several parts go in one `history.transaction`.
                                       releaseVelocity|channel]; .empty without, .multiple with several selected
   .editor-parts                       an .editor-part-row[track] per track, its .editor-part[part] at their time
   .key-editor-body                    scrolls vertically
-    .key-editor-keys                  128 .key-editor-key[pitch], .black, C keys named, .selected for selected notes
+    .key-editor-keys                  the piano keyboard: 128 .key-editor-key[pitch], the 75 white keys first, then
+                                      the 53 .black ones over them; C keys named, .selected for selected notes
     .key-editor-grid                  128 .key-editor-row (.black); .key-editor-notes with a .key-note[part][note]
                                       per note (.selected, .inactive outside the part editing mode, .drawing);
                                       .key-editor-step-cursor (.off while step input is off)
@@ -76,6 +77,13 @@ the edits of several parts go in one `history.transaction`.
 The note display fits the shown parts' range into its width; each pitch is a row of the height `keyeditor.rcss` gives
 it, highest at the top, and it first scrolls to the middle of the notes. Code places the notes, parts and the cursor
 in percent of the grid. Positions snap to the project's quantize grid; Ctrl (Cmd) turns snapping off.
+
+The keyboard beside the grid is a piano keyboard (p. 1204), as high as the grid's rows. Each black key is exactly its
+pitch's row and narrower than the white keys, drawn over them at the left. The 7 white keys of an octave span the
+keyboard's width and share the octave's 12 rows equally, from the bottom of the C's row up, so that the right part of
+a white key reaches into the rows of the black keys beside it; the top of the keyboard cuts G8, the highest key. Code
+places the keys' tops and heights in percent of the keyboard; `keyeditor.rcss` gives the widths and the themes the
+look. A C key's name sits at its right, level with its own row.
 
 | Tool | Gesture | Reference |
 |---|---|---|
@@ -120,8 +128,11 @@ functions (#133); the key editor's context menu.
   Record Pitch, a chord, Keep Existing Notes and no selection; chord recognition, fitting and voicings; `note.chord`
   and `note.voicing` with undo and their errors.
 - `tests/keyeditor_ui_tests.cpp` drives the app with `ui::Automation`: the keyboard and notes at their time and pitch,
-  keys lit for selected notes; the object selection tool selecting, deselecting, moving, resizing, inserting and
-  deleting; the draw tool with Quantize Link and an eighth from the Length Quantize menu; the erase, trim (and with
-  Alt), split and glue tools; the transpose palette and typing a pitch on the info line; step input with its cursor,
-  a click moving it, and MIDI input selecting the next note; the Chord Editing section naming and changing a chord;
-  the toolbox with the setting on and off, with and without a modifier key, choosing tools.
+  keys lit for selected notes; the piano keyboard at 1024x600: white keys of equal height across the keyboard, black
+  keys narrower on their rows, the mouse on the right part of a white key beside a black key over the white key, and
+  a golden image of two octaves with a black and a white key lit (`tests/golden/ui/key-editor-keyboard.png`); the
+  object selection tool selecting, deselecting, moving, resizing, inserting and deleting; the draw tool with Quantize
+  Link and an eighth from the Length Quantize menu; the erase, trim (and with Alt), split and glue tools; the
+  transpose palette and typing a pitch on the info line; step input with its cursor, a click moving it, and MIDI input
+  selecting the next note; the Chord Editing section naming and changing a chord; the toolbox with the setting on and
+  off, with and without a modifier key, choosing tools.
