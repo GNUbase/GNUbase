@@ -39,6 +39,7 @@ namespace gnubase::ui
 		}};
 
 		constexpr double g_silence = -144.0;       // engine::g_minChannelVolume
+		constexpr double g_sendKnobMin = -60.0;    // a send level knob's lowest level, as the fader's
 		constexpr int g_sends = 8;                 // engine::g_maxSends
 		constexpr const char* g_addEffect = "add"; // a send destination list's Add Effect Track to Send
 
@@ -225,7 +226,7 @@ namespace gnubase::ui
 				std::string controls = toggle(path + "on", "Send on/off", std::to_string(send));
 				controls += R"(<select param=")" + path + R"(destination" title="Send Destination"/>)";
 				controls += toggle(path + "preFader", "Pre-Fader", "Pre");
-				controls += knob(path + "level", "Send Level", -60.0, 6.0, 0.0);
+				controls += knob(path + "level", "Send Level", g_sendKnobMin, 6.0, 0.0);
 				sends += row(controls);
 			}
 			return section("pre", "Pre",
@@ -682,13 +683,20 @@ namespace gnubase::ui
 		Rml::ElementList controls;
 		strip.QuerySelectorAll(controls, "[param]");
 		m_updating = true; // filling a drop-down list sends a change
+		// A send level's Ctrl-click value follows the default send level, also while its knob is ahead. The knob goes
+		// up to the project's maximum volume, as the fader does, and down to the default send level below its usual
+		// -60 dB, so that it gives a send the level track.add gives it.
+		const std::string level = widgets::format(static_cast<float>(m_defaultSendLevel));
+		const std::string lowest = widgets::format(static_cast<float>(std::min(m_defaultSendLevel, g_sendKnobMin)));
+		const std::string highest = widgets::format(m_project.value("maxVolume", 6.0F));
 		for (Rml::Element* control : controls)
 		{
 			const std::string param = attribute(*control, "param");
-			// A send level's Ctrl-click value follows the default send level, also while its knob is ahead.
-			const std::string level = widgets::format(static_cast<float>(m_defaultSendLevel));
-			if (param.rfind("sends.", 0) == 0 && endsWith(param, ".level") && attribute(*control, "default") != level)
-				control->SetAttribute("default", level);
+			if (param.rfind("sends.", 0) == 0 && endsWith(param, ".level"))
+				for (const auto& [name, value] :
+					{std::pair{"default", &level}, std::pair{"min", &lowest}, std::pair{"max", &highest}})
+					if (attribute(*control, name) != *value)
+						control->SetAttribute(name, *value);
 			if (control->HasAttribute("value") && m_binding.sending(stepKey(m_stepOwner, channel.id, param)))
 				continue; // the control is ahead of the engine
 			const Json value = paramValue(json, param);
