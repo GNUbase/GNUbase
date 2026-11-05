@@ -90,6 +90,14 @@ namespace gnubase::ui
 				element.SetInnerRML(rml);
 		}
 
+		// The dB text under a fader: what the fader shows, which is the drag's during a drag.
+		void showVolume(const Rml::Element& fader)
+		{
+			Rml::Element* parent = fader.GetParentNode();
+			if (Rml::Element* text = parent != nullptr ? parent->QuerySelector(".mixer-volume") : nullptr)
+				setText(*text, decibels(widgets::number(fader, "value", 0.0F)));
+		}
+
 		void setChecked(Rml::Element& element, bool checked)
 		{
 			if (checked == element.HasAttribute("checked"))
@@ -141,6 +149,13 @@ namespace gnubase::ui
 				}
 			}
 			return *value;
+		}
+
+		// What a strip control's gesture changes, as EngineBinding::sendStep names it: the mixer's step owner, then
+		// e.g. "channel 5 volume". Each mixer has an owner of its own, so the others follow its steps (#716).
+		std::string stepKey(const std::string& owner, uint64_t channel, const std::string& param)
+		{
+			return owner + "channel " + std::to_string(channel) + " " + param;
 		}
 
 		// The parameters of channel.set that give a strip control the value.
@@ -276,8 +291,8 @@ namespace gnubase::ui
 			return event.GetParameter<int>(key, 0) != 0;
 		}
 
-		constexpr std::array<Rml::EventId, 5> g_rootEvents = {Rml::EventId::Click, Rml::EventId::Dblclick,
-			Rml::EventId::Change, Rml::EventId::Mousedown, Rml::EventId::Mouseup};
+		constexpr std::array<Rml::EventId, 6> g_rootEvents = {Rml::EventId::Click, Rml::EventId::Dblclick,
+			Rml::EventId::Change, Rml::EventId::Mousedown, Rml::EventId::Mouseup, Rml::EventId::Dragend};
 	}
 
 	Json soloClick(const Json& channel, bool exclusive, bool defeat)
@@ -317,8 +332,8 @@ namespace gnubase::ui
 
 	Mixer::Mixer(EngineBinding& binding, Docking& docking, Rml::Element& root, std::string view, MixerKind kind,
 		MixerActions actions)
-		: m_binding(binding), m_docking(docking), m_root(root.GetObserverPtr()), m_view(std::move(view)), m_kind(kind),
-		  m_actions(std::move(actions))
+		: m_binding(binding), m_stepOwner(binding.stepOwner("mixer")), m_docking(docking),
+		  m_root(root.GetObserverPtr()), m_view(std::move(view)), m_kind(kind), m_actions(std::move(actions))
 	{
 		Rml::ElementDocument* document = root.GetOwnerDocument();
 		const bool settings = m_kind == MixerKind::ChannelSettings;
@@ -491,6 +506,15 @@ namespace gnubase::ui
 			});
 	}
 
+	std::function<void(const engine::Result&)> Mixer::whenRefused()
+	{
+		return [this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+		{
+			if (!alive.expired() && !result.ok())
+				requestProject();
+		};
+	}
+
 	void Mixer::requestView()
 	{
 		m_binding.send("mixer.get", {{"mixer", m_view}},
@@ -660,7 +684,14 @@ namespace gnubase::ui
 		m_updating = true; // filling a drop-down list sends a change
 		for (Rml::Element* control : controls)
 		{
-			const Json value = paramValue(json, attribute(*control, "param"));
+			const std::string param = attribute(*control, "param");
+			// A send level's Ctrl-click value follows the default send level, also while its knob is ahead.
+			const std::string level = widgets::format(static_cast<float>(m_defaultSendLevel));
+			if (param.rfind("sends.", 0) == 0 && endsWith(param, ".level") && attribute(*control, "default") != level)
+				control->SetAttribute("default", level);
+			if (control->HasAttribute("value") && m_binding.sending(stepKey(m_stepOwner, channel.id, param)))
+				continue; // the control is ahead of the engine
+			const Json value = paramValue(json, param);
 			if (control->GetTagName() == "select")
 			{
 				if (value.is_number())
@@ -678,10 +709,6 @@ namespace gnubase::ui
 				if (attribute(*control, "value") != text)
 					control->SetAttribute("value", text);
 			}
-			const std::string param = attribute(*control, "param");
-			const std::string level = widgets::format(static_cast<float>(m_defaultSendLevel));
-			if (param.rfind("sends.", 0) == 0 && endsWith(param, ".level") && attribute(*control, "default") != level)
-				control->SetAttribute("default", level);
 		}
 		m_updating = false;
 		if (Rml::Element* fader = strip.QuerySelector("fader"))
@@ -690,11 +717,12 @@ namespace gnubase::ui
 			const std::string max = widgets::format(m_project.value("maxVolume", 6.0F));
 			if (attribute(*fader, "max") != max)
 				fader->SetAttribute("max", max);
+			// Not while the fader is ahead of the engine; a strip made again shows the engine's volume at once.
 			const std::string value = widgets::format(static_cast<float>(volume));
-			if (attribute(*fader, "value") != value)
+			if (attribute(*fader, "value") != value &&
+				!(fader->HasAttribute("value") && m_binding.sending(stepKey(m_stepOwner, channel.id, "volume"))))
 				fader->SetAttribute("value", value);
-			if (Rml::Element* text = strip.QuerySelector(".mixer-volume"))
-				setText(*text, decibels(volume));
+			showVolume(*fader);
 		}
 	}
 
@@ -882,11 +910,15 @@ namespace gnubase::ui
 			else if (target->GetTagName() == "fader")
 			{
 				if (const MixerChannel* channel = channelOf(target)) // a drag is one undo step
-					m_binding.sendStep(event.GetParameter("gesture", 0),
-						"channel " + std::to_string(channel->id) + " volume", "Change Volume",
+				{
+					const float volume = event.GetParameter("value", 0.0F);
+					showVolume(*target); // with the fader, ahead of the engine
+					m_binding.sendStep(event.GetParameter("gesture", 0), stepKey(m_stepOwner, channel->id, "volume"),
+						"Change Volume",
 						Json::array({Json{{"command", "channel.set"},
-							{"parameters",
-								{{"channel", channel->id}, {"volume", event.GetParameter("value", 0.0F)}}}}}));
+							{"parameters", {{"channel", channel->id}, {"volume", volume}}}}}),
+						whenRefused());
+				}
 			}
 			else if (target->HasAttribute("param") && !m_updating)
 			{
@@ -896,25 +928,33 @@ namespace gnubase::ui
 						event.GetParameters().count("value") != 0 ? &event.GetParameters().at("value") : nullptr;
 					if (given == nullptr)
 						break;
-					Json value =
-						given->GetType() == Rml::Variant::BOOL ? Json(given->Get<bool>()) : Json(given->Get<double>());
-					if (target->GetTagName() == "select") // a send's destination, a channel id
+					const std::string param = attribute(*target, "param");
+					if (target->GetTagName() == "select" && given->Get<Rml::String>() == g_addEffect)
 					{
-						const std::string param = attribute(*target, "param");
-						if (given->Get<Rml::String>() == g_addEffect)
-						{
-							// Add Effect Track to Send; the list shows the send's destination again once the project
-							// comes back.
-							if (m_actions.addEffectTrack)
-								m_actions.addEffectTrack(*target, channel->track, std::stoi(paramPath(param).at(1)));
-							requestProject();
-							break;
-						}
-						value = std::stoull(given->Get<Rml::String>("0"));
+						// Add Effect Track to Send; the list shows the send's destination again once the project
+						// comes back.
+						if (m_actions.addEffectTrack)
+							m_actions.addEffectTrack(*target, channel->track, std::stoi(paramPath(param).at(1)));
+						requestProject();
+						break;
 					}
-					Json parameters = paramChange(attribute(*target, "param"), std::move(value));
+					if (given->GetType() == Rml::Variant::BOOL || target->GetTagName() == "select")
+					{
+						// A toggle, or a send's destination, a channel id.
+						Json parameters = paramChange(param,
+							given->GetType() == Rml::Variant::BOOL ? Json(given->Get<bool>())
+																   : Json(std::stoull(given->Get<Rml::String>("0"))));
+						parameters["channel"] = channel->id;
+						m_binding.send("channel.set", std::move(parameters));
+						break;
+					}
+					// A knob's or a value field's drag, wheel turns or held arrow key: one undo step.
+					Json parameters = paramChange(param, given->Get<double>());
 					parameters["channel"] = channel->id;
-					m_binding.send("channel.set", std::move(parameters));
+					m_binding.sendStep(event.GetParameter("gesture", 0), stepKey(m_stepOwner, channel->id, param),
+						"Change " + attribute(*target, "title"),
+						Json::array({Json{{"command", "channel.set"}, {"parameters", std::move(parameters)}}}),
+						whenRefused());
 				}
 			}
 			break;
@@ -978,6 +1018,15 @@ namespace gnubase::ui
 			if (const MixerChannel* channel = channelOf(target); channel != nullptr && m_dragged != 0)
 				drop(channel->id);
 			m_dragged = 0;
+			break;
+		case Rml::EventId::Dragend:
+			// The fader may show a value that came during the drag now.
+			for (const Rml::Element* up = target; up != nullptr && up != m_root.get(); up = up->GetParentNode())
+				if (up->GetTagName() == "fader")
+				{
+					showVolume(*up);
+					break;
+				}
 			break;
 		case Rml::EventId::Blur:
 			if (target->IsClassSet("mixer-notes-field"))

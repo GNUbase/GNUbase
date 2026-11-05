@@ -178,6 +178,7 @@
 				<menuitem command="file.importAudio">Audio File...</menuitem>
 				<menuitem command="file.importMidi">MIDI File...</menuitem>
 				<menuitem command="file.importTempo">Tempo Track...</menuitem>
+				<menuitem command="file.importMarkers">Markers...</menuitem>
 			</menu>
 		</menuitem>
 		<menuitem id="export-submenu">Export
@@ -185,6 +186,7 @@
 				<menuitem command="file.exportMixdown">Audio Mixdown...</menuitem>
 				<menuitem command="file.quickExport">Quick Audio Export...</menuitem>
 				<menuitem command="file.exportTempo">Tempo Track...</menuitem>
+				<menuitem command="file.exportMarkers">Markers...</menuitem>
 			</menu>
 		</menuitem>
 		<menuseparator/>
