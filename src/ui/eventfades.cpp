@@ -75,6 +75,16 @@ namespace gnubase::ui
 		return events;
 	}
 
+	std::vector<uint64_t> EventDisplay::selectedMidi() const
+	{
+		std::vector<uint64_t> parts;
+		for (const Shown& shown : m_events)
+			if ((m_laneTypes[shown.lane] == "midi" || m_laneTypes[shown.lane] == "instrument") &&
+				std::binary_search(m_selection.begin(), m_selection.end(), shown.id))
+				parts.push_back(shown.id);
+		return parts;
+	}
+
 	double EventDisplay::draggedFade(uint64_t event, bool in) const
 	{
 		const AudioFades& fades = m_fades.at(event);
