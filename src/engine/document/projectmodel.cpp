@@ -4213,7 +4213,7 @@ namespace gnubase::engine
 				else
 				{
 					options.name = safeFileName(
-						m_file.empty() ? m_project.name : std::filesystem::u8path(m_file).stem().u8string());
+						m_file.empty() ? m_project.name : projectFileStem(std::filesystem::u8path(m_file)));
 				}
 				options.minimize = parameters.value("minimize", false);
 				options.handles = parameters.value("handles", 1.0);
