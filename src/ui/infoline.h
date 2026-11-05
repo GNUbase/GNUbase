@@ -63,6 +63,7 @@ namespace gnubase::ui
 
 		EventDisplay& m_display;
 		EngineBinding& m_binding;
+		const std::string m_stepOwner; // begins the whats of its steps (EngineBinding::stepOwner)
 		Rml::ObserverPtr<Rml::Element> m_root;
 		std::vector<uint64_t> m_selection;             // shown, or asked for
 		uint64_t m_loads = 0;                          // the display's project shown

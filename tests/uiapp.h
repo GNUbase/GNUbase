@@ -16,6 +16,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -96,5 +97,42 @@ namespace gnubase::test
 		std::unique_ptr<engine::Engine> m_engine;
 		std::unique_ptr<app::AppUi> m_ui;
 		std::unique_ptr<ui::Automation> m_automation;
+	};
+
+	// The value attribute of a value control (a fader, a knob, a value field) as a number.
+	double controlValue(UiApp& app, std::optional<ui::WindowId> window, const std::string& selector);
+
+	// Changes a value control step by step while the engine answers late (#716): after each step the engine has done
+	// what the UI sent, and the UI hands the answers on only after the next step sent its commands, so that the
+	// answers to earlier steps arrive during the gesture. Checks after every step that the control is where the step
+	// put it, never back toward an earlier step: down (direction 1) is less, up (-1) more. Returns the control's
+	// value.
+	double lateSteps(UiApp& app, std::optional<ui::WindowId> window, const std::string& selector, int steps,
+		int direction, const std::function<void()>& step);
+
+	// A drag of a value control through its window's context, with lateSteps.
+	class LateDrag
+	{
+	public:
+		// Presses the left button on the control that the selector matches.
+		LateDrag(UiApp& app, std::optional<ui::WindowId> window, std::string selector);
+
+		// Moves the mouse by steps of two pixels, down (1) or up (-1), perAnswer steps for each time the engine
+		// answers. Returns the control's value.
+		double move(int steps, int direction, int perAnswer = 1);
+
+		// Releases the button. If stays, checks that the control then stays where the drag left it while the engine
+		// answers late; it doesn't if another client set its value during the drag.
+		void release(bool stays = true);
+
+		double value() const { return controlValue(m_app, m_window, m_selector); }
+
+	private:
+		UiApp& m_app;
+		std::optional<ui::WindowId> m_window;
+		std::string m_selector;
+		Rml::Context& m_context;
+		ui::Point m_at;
+		int m_moved = 0;
 	};
 }
