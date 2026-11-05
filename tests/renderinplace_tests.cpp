@@ -188,6 +188,18 @@ namespace
 			return found;
 		}
 
+		// A channel's monitor and record enable buttons.
+		std::pair<bool, bool> buttons(ObjectId channel)
+		{
+			Json state;
+			const Json current = run(client, "project.get");
+			for (const Json& found : current.at("channels"))
+				if (found.at("id") == channel)
+					state = found;
+			REQUIRE(state.is_object());
+			return std::pair{state.at("monitor").get<bool>(), state.at("recordEnable").get<bool>()};
+		}
+
 		Engine engine;
 		Client client{engine};
 		gnubase::test::TempDir media;
@@ -388,6 +400,28 @@ TEST_CASE("a frozen track stays frozen in the project file", "[integration]")
 		CHECK(firstDifference(samplesOf(loaded.at("path").get<std::string>()), rendered) == -1);
 	}
 
+	SECTION("in it once for the tracks that play it")
+	{
+		// A duplicated frozen track plays the same freeze file.
+		run(project.client, "track.duplicate", {{"track", audio.track}});
+		const fs::path file = project.folder.path() / "twice.dawproject";
+		run(project.client, "project.save", {{"path", file.u8string()}});
+		run(project.client, "project.load", {{"path", file.u8string()}});
+		const Json tracks = run(project.client, "project.get").at("tracks");
+		REQUIRE(tracks.size() == 2);
+		CHECK(tracks.at(0).at("frozen") == tracks.at(1).at("frozen"));
+		CHECK(firstDifference(samplesOf(tracks.at(1).at("frozen").at("path").get<std::string>()), rendered) == -1);
+	}
+
+	SECTION("referring to it where it was, if it isn't there")
+	{
+		fs::remove(fs::u8path(freeze.at("path").get<std::string>()));
+		const fs::path file = project.folder.path() / "missing.dawproject";
+		run(project.client, "project.save", {{"path", file.u8string()}});
+		run(project.client, "project.load", {{"path", file.u8string()}});
+		CHECK(project.track(audio.track).at("frozen") == freeze);
+	}
+
 	SECTION("referring to it in the project's folder, which moves")
 	{
 		run(project.client, "project.save", {{"embedMedia", false}});
@@ -423,6 +457,19 @@ TEST_CASE("a backup carries the freeze files along", "[integration]")
 	const std::string path = project.track(audio.track).at("frozen").at("path").get<std::string>();
 	CHECK(fs::u8path(path) == folder / "Freeze" / "Ramp.wav");
 	CHECK(firstDifference(samplesOf(path), rendered) == -1);
+
+	// A freeze file that can't be read is reported, and keeps its path.
+	fs::remove(fs::u8path(path));
+	const Json again =
+		run(project.client, "project.backup", {{"folder", (project.folder.path() / "again").u8string()}});
+	do
+	{
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+		state = run(project.client, "job.get", {{"job", again.at("job").at("id")}}).at("job");
+	} while (state.at("state") == "running" && std::chrono::steady_clock::now() < deadline);
+	REQUIRE(state.at("state") == "done");
+	CHECK(state.at("result").at("missing") == Json::array({{{"track", audio.track}, {"path", path}}}));
+	CHECK(!fs::exists(project.folder.path() / "again" / "Freeze"));
 }
 
 TEST_CASE("a frozen track neither monitors nor records", "[integration]")
@@ -430,16 +477,7 @@ TEST_CASE("a frozen track neither monitors nor records", "[integration]")
 	Session project;
 	const Session::Track audio = project.addTrack("Ramp");
 	const Session::Track other = project.addTrack("Other");
-	const auto buttons = [&project](ObjectId channel)
-	{
-		Json state;
-		const Json current = run(project.client, "project.get");
-		for (const Json& found : current.at("channels"))
-			if (found.at("id") == channel)
-				state = found;
-		REQUIRE(state.is_object());
-		return std::pair{state.at("monitor").get<bool>(), state.at("recordEnable").get<bool>()};
-	};
+	const auto buttons = [&project](ObjectId channel) { return project.buttons(channel); };
 	run(project.client, "channel.set", {{"channel", audio.channel}, {"monitor", true}, {"recordEnable", true}});
 
 	// Freezing turns both buttons off in the same step, and they can't be turned on again while it is frozen.
@@ -478,6 +516,32 @@ TEST_CASE("a frozen track neither monitors nor records", "[integration]")
 		CHECK(!project.track(audio.track).at("frozen").is_null());
 		CHECK(buttons(audio.channel) == std::pair{false, false});
 	}
+}
+
+TEST_CASE("a MIDI track that plays a frozen instrument track neither monitors nor records", "[integration]")
+{
+	Session project;
+	const Session::Track synth = project.addSynth();
+	const Json added = run(project.client, "track.add", {{"type", "midi"}, {"name", "Keys"}});
+	const auto keys = added.at("channel").at("id").get<ObjectId>();
+	const auto loose = run(project.client, "track.add", {{"type", "midi"}}).at("channel").at("id").get<ObjectId>();
+	run(project.client, "channel.set", {{"channel", keys}, {"output", synth.channel}, {"recordEnable", true}});
+	run(project.client, "channel.set", {{"channel", loose}, {"monitor", true}});
+
+	// The freeze file plays its notes instead of the instrument.
+	run(project.client, "track.freeze", {{"tracks", {synth.track}}, {"tail", 0}});
+	CHECK(project.buttons(keys) == std::pair{false, false});
+	CHECK(project.buttons(loose) == std::pair{true, false}); // it plays no frozen track
+	CHECK_THAT(reject(project.client, "channel.set", {{"channel", keys}, {"recordEnable", true}}),
+		ContainsSubstring("frozen"));
+	// Nor does a MIDI track go to it with its buttons on.
+	CHECK_THAT(reject(project.client, "channel.set", {{"channel", loose}, {"output", synth.channel}}),
+		ContainsSubstring("frozen"));
+	run(project.client, "channel.set", {{"channel", loose}, {"monitor", false}, {"output", synth.channel}});
+
+	run(project.client, "track.unfreeze", {{"tracks", {synth.track}}});
+	run(project.client, "channel.set", {{"channel", keys}, {"recordEnable", true}});
+	CHECK(project.buttons(keys) == std::pair{false, true});
 }
 
 TEST_CASE("freezing refuses what it can't freeze", "[integration]")

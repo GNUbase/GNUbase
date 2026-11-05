@@ -4,6 +4,7 @@
 
 #include "engine/audiofile/audiofile.h"
 #include "engine/audiofile/file.h"
+#include "engine/document/renderinplace.h"
 #include "engine/document/rendersnapshot.h"
 #include "engine/document/serialize.h"
 #include "engine/engine.h"
@@ -1771,7 +1772,10 @@ namespace gnubase::engine
 		// else referred to relative to the file if they are in its folder, so that they move with it. Files from
 		// before "frozen" have only the paths in the project.
 		Json frozen = Json::object();
-		std::map<std::string, std::string> embeddedFreezes; // entry in the file -> freeze file
+		// Each file goes in once, under a name that no other one has, also in another case: they are extracted into
+		// one folder.
+		std::map<std::string, std::string> embeddedFreezes; // freeze file -> entry in the file
+		std::set<std::string> taken;                        // the entries in lowercase
 		for (const auto& [id, track] : project.trackById)
 		{
 			if (!track.frozen)
@@ -1780,11 +1784,22 @@ namespace gnubase::engine
 			std::error_code error;
 			if (options.embedMedia && std::filesystem::is_regular_file(pathOf(track.frozen->path), error))
 			{
-				const std::string name = pathOf(track.frozen->path).filename().u8string();
-				stored = "freeze/" + name;
-				if (embeddedFreezes.count(stored) != 0)
-					stored = "freeze/" + std::to_string(id) + "-" + name;
-				embeddedFreezes[stored] = track.frozen->path;
+				auto found = embeddedFreezes.find(track.frozen->path);
+				if (found == embeddedFreezes.end())
+				{
+					const std::string name = pathOf(track.frozen->path).filename().u8string();
+					std::string entry = "freeze/" + name;
+					const auto lower = [](std::string text)
+					{
+						std::transform(text.begin(), text.end(), text.begin(),
+							[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+						return text;
+					};
+					for (int copy = 2; !taken.insert(lower(entry)).second; ++copy)
+						entry = "freeze/" + std::to_string(copy) + "-" + name;
+					found = embeddedFreezes.emplace(track.frozen->path, entry).first;
+				}
+				stored = found->second;
 			}
 			frozen[std::to_string(id)] = stored;
 		}
@@ -1810,7 +1825,7 @@ namespace gnubase::engine
 					const std::vector<char> bytes = readBytes(project.media.at(id).path);
 					zip.add(mediaPath, bytes.data(), bytes.size(), false);
 				}
-			for (const auto& [entry, file] : embeddedFreezes)
+			for (const auto& [file, entry] : embeddedFreezes)
 			{
 				const std::vector<char> bytes = readBytes(file);
 				zip.add(entry, bytes.data(), bytes.size(), false);
@@ -1872,10 +1887,11 @@ namespace gnubase::engine
 				if (const auto stored = frozen.find(std::to_string(id)); stored != frozen.end())
 					track.frozen->path =
 						importer.resolvedPath(stored->get<std::string>(), !zip.contains(stored->get<std::string>()));
-				// A frozen track neither monitors nor records (track.freeze), also when a file from before says so.
-				if (const auto channel = project.channels.find(track.channel); channel != project.channels.end())
-					channel->second.monitor = channel->second.recordEnable = false;
 			}
+			// The buttons a freeze locks are off (track.freeze), also when a file from before says they are on.
+			for (auto& entry : project.channels)
+				if (lockedByFreeze(project, entry.second))
+					entry.second.monitor = entry.second.recordEnable = false;
 			return project;
 		}
 		catch (const std::exception&)

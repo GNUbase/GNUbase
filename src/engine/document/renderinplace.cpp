@@ -2,6 +2,7 @@
 // Render in place and freeze (#116, docs/features/render-in-place.md): track.renderInPlace, track.freeze and
 // track.unfreeze. Both render with mixdown.export, from a point inside the channel's strip, before they change the
 // project, so a render is bit-identical to an export of the same range; then they change it in one undo step.
+#include "engine/document/renderinplace.h"
 #include "engine/document/channelformat.h"
 #include "engine/document/document.h"
 #include "engine/document/projectmodel.h"
@@ -105,6 +106,22 @@ namespace gnubase::engine
 		}
 	}
 
+	bool lockedByFreeze(const Project& project, const Channel& channel)
+	{
+		const auto frozen = [&project](ObjectId track)
+		{
+			const auto found = project.trackById.find(track);
+			return found != project.trackById.end() && found->second.frozen.has_value();
+		};
+		if (frozen(channel.track))
+			return true;
+		const auto track = project.trackById.find(channel.track);
+		if (track == project.trackById.end() || track->second.type != TrackType::Midi)
+			return false;
+		const auto output = project.channels.find(channel.output);
+		return output != project.channels.end() && frozen(output->second.track);
+	}
+
 	void ProjectModel::registerRenderCommands(Engine& engine)
 	{
 		const Json integer = {{"type", "integer"}};
@@ -129,9 +146,10 @@ namespace gnubase::engine
 				"folder (for a project without a file, of the folder its recordings go to). The track then plays the "
 				"file from the project's start instead of its events, parts, instrument, pre section and slots, which "
 				"stay as they are; the strip's other sections, the fader, pan, mute and sends still play, with their "
-				"automation. Its monitor and record enable buttons go off and stay off until it is unfrozen. Renders "
-				"as mixdown.export does, and is refused when it is, for a frozen or disabled track and for one with "
-				"nothing to play. One undo step. Returns the tracks.",
+				"automation. Its monitor and record enable buttons go off, and those of the MIDI tracks that play it, "
+				"and can't be turned on while it is frozen (see channel.set). Renders as mixdown.export does, and is "
+				"refused when it is, for a frozen or disabled track and for one with nothing to play. One undo step. "
+				"Returns the tracks.",
 				{{"type", "object"}, {"additionalProperties", false}, {"properties", {{"tracks", ids}, {"tail", tail}}},
 					{"required", {"tracks"}}},
 				{{"type", "object"}, {"properties", {{"tracks", {{"type", "array"}}}}}, {"required", {"tracks"}}},
@@ -173,19 +191,19 @@ namespace gnubase::engine
 				for (size_t i = 0; i < tracks.size(); ++i)
 				{
 					Track& track = project.trackById.at(tracks[i]);
-					Channel& channel = project.channels.at(track.channel);
+					const Channel& channel = project.channels.at(track.channel);
 					track.frozen = Freeze{files[i].at("path").get<std::string>(), project.sampleRate,
 						channelCount(channel.format), files[i].at("frames").get<time::Samples>()};
 					result.push_back(toJson(track));
 					context.emit("track.changed", {{"track", result.back()}});
-					// Its input would play past the freeze file, and takes recorded on it wouldn't play (p. 220: the
-					// track's controls are locked).
-					if (channel.monitor || channel.recordEnable)
+				}
+				// The buttons the freezes lock (lockedByFreeze) go off.
+				for (auto& [id, channel] : project.channels)
+					if ((channel.monitor || channel.recordEnable) && lockedByFreeze(project, channel))
 					{
 						channel.monitor = channel.recordEnable = false;
 						context.emit("channel.changed", {{"channel", toJson(channel)}});
 					}
-				}
 				return Json{{"tracks", std::move(result)}};
 			});
 

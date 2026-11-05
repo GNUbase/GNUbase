@@ -37,9 +37,11 @@ last sample a 24-bit file doesn't hold as silence, or at the range's end.
   with a frozen audio track and an instrument track, each with an insert and strip settings, and compares it with the
   live render, before freezing and after unfreezing.
 - **A frozen track neither monitors nor records** (p. 220: its controls are locked): its input would play past the
-  freeze file, and its takes wouldn't play. Freezing turns its monitor and record enable buttons off in the same step,
-  `channel.set` refuses to turn them on, the channels of its link group or VCA fader don't pass them on to it, and a
-  project file that has them on for a frozen track loads with them off.
+  freeze file, and its takes wouldn't play. Nor do the MIDI tracks that play a frozen instrument track, whose notes
+  the freeze file plays (`lockedByFreeze` in `renderinplace.h`). Freezing turns their monitor and record enable
+  buttons off in the same step, `channel.set` refuses to turn them on or to route a MIDI track with them on to a
+  frozen instrument track, the channels of their link groups or VCA faders don't pass them on to them, and a project
+  file that has them on loads with them off.
 - **`track.unfreeze`** plays the events, instrument and slots again; the freeze files stay, so freezing and
   unfreezing can be undone. The monitor and record enable buttons stay off.
 - **Freeze files move with the project.** The project file refers to them as to its media files: `project.save`

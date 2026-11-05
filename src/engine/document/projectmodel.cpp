@@ -9,6 +9,7 @@
 #include "engine/document/hitpoints.h"
 #include "engine/document/linkgroups.h"
 #include "engine/document/mixerviews.h"
+#include "engine/document/renderinplace.h"
 #include "engine/document/sampleeditor.h"
 #include "engine/document/serialize.h"
 #include "engine/document/volumecurves.h"
@@ -1683,9 +1684,8 @@ namespace gnubase::engine
 					if ((name == "monitor" || name == "recordEnable") && type != TrackType::Audio &&
 						type != TrackType::Midi && type != TrackType::Instrument && type != TrackType::Vca)
 						continue;
-					// A frozen track's monitor and record enable buttons stay off (track.freeze).
-					if ((name == "monitor" || name == "recordEnable") && channel.*member &&
-						project.trackById.at(to.track).frozen)
+					// The buttons a freeze locks stay off (track.freeze).
+					if ((name == "monitor" || name == "recordEnable") && channel.*member && lockedByFreeze(project, to))
 						continue;
 					to.*member = channel.*member;
 					if (name == "solo")
@@ -1767,9 +1767,11 @@ namespace gnubase::engine
 						type == TrackType::Vca,
 					std::string("only audio, MIDI and instrument tracks and VCA faders have ") + key);
 				*value = parameters.at(key).get<bool>();
-				const Track& track = project.trackById.at(channel.track);
-				require(!*value || !track.frozen, track.name + " is frozen: unfreeze it to monitor or record");
 			}
+			// Nor does it play into a frozen instrument track with them on.
+			require(!(changed.monitor || changed.recordEnable) || !lockedByFreeze(project, changed),
+				project.trackById.at(channel.track).name +
+					" is frozen or plays a frozen track: unfreeze it to monitor or record");
 			if (parameters.contains("midiInput"))
 			{
 				require(type == TrackType::Midi || type == TrackType::Instrument,
@@ -3694,9 +3696,10 @@ namespace gnubase::engine
 				"whileRecording while the transport records, tapeMachine while it stands or records (the default). "
 				"Monitoring glides in and out over one audio block. MIDI and instrument tracks have them too: "
 				"recordEnable arms the track for MIDI recording, and while either is on, the track plays what comes "
-				"from its MIDI input, midiInput: all (all MIDI inputs, the default) or none. A frozen track's "
-				"monitor and recordEnable stay off (track.freeze): they can't be turned on, and the channels linked "
-				"to it don't pass them on to it. mute silences a channel; "
+				"from its MIDI input, midiInput: all (all MIDI inputs, the default) or none. monitor and "
+				"recordEnable stay off on a frozen track and on a MIDI track that plays a frozen instrument track "
+				"(track.freeze): they can't be turned on, nor such a track routed to one with them on, and linked "
+				"channels and VCA faders don't pass them on to it. mute silences a channel; "
 				"while any channel is "
 				"soloed (solo), only the soloed ones, the channels they play through (groups, instruments) and the "
 				"channels that play into them are heard; exclusive (with solo) turns every other channel's solo off; "
