@@ -89,7 +89,8 @@ Waveforms come from `media.peaks` ([peaks.md](peaks.md)), one question for each 
   (`audition.start` up to its end). A click on a region selects it in the list and shows it in the display, scrolled
   to it at the same zoom; the display marks it. A double click on its name, start or end types a new one in a field:
   Enter or leaving the field takes it (`clip.setRegion`), Escape doesn't, and what isn't a whole number or a section
-  of the clip changes nothing.
+  of the clip changes nothing, nor does the number shown written another way. When the regions change meanwhile,
+  such as by an undo, what was typed goes.
 
 `resources/styles/sampleeditor.rcss` lays it out; the themes color it (`tools/skin/generate.py`).
 
@@ -117,8 +118,9 @@ Definition, warping, musical mode and the Time Warp tool (#144), and making a sa
   range tool's drag, Shift and a click, Snap to Zero Crossing, the Select menu, Set Locators to Selection Range and
   Locate Selection to the start and the end, Loop Selection; Event or Range as Region, Add Region, the list, Select
   Region and Remove Region with undo, a click on a region scrolling the display to it, typing a region's name, start
-  and end, and Escape and wrong values; dragging the snap point, the zoom tool in and out, a click in the overview,
-  the play and scrub tools auditioning the clip past the event's end, the cursor following the scrub, Play Region and
-  the window layout's switches; Open/Close Editor without a selection closing it.
+  and end, by Enter and by leaving the field, and Escape, wrong and unchanged values and regions changing meanwhile;
+  dragging the snap point, the zoom tool in and out, a click in the overview, the play and scrub tools auditioning
+  the clip past the event's end, the cursor following the scrub, Play Region and the window layout's switches;
+  Open/Close Editor without a selection closing it.
 - `tests/playback_tests.cpp`: auditioning and scrubbing a media file ([audition.md](audition.md)).
 - `tests/eventediting_tests.cpp`: a double click on an audio event opens it in the sample editor.
