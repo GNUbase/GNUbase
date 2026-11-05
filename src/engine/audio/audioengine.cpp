@@ -740,6 +740,7 @@ namespace gnubase::engine
 					std::make_shared<SendStrip>(state, send.number, gain, send.preFader ? tap : nullptr);
 			}
 		}
+		const std::scoped_lock lock(m_channelStatesMutex); // readMeters
 		m_channelStates = std::move(states);
 	}
 
@@ -1006,7 +1007,7 @@ namespace gnubase::engine
 		m_waitingForDevice = false;
 	}
 
-	void AudioEngine::setDevice(const Json& parameters)
+	void AudioEngine::setDevice(const Json& parameters, bool keepMeasurement)
 	{
 		const auto name = parameters.value("backend", std::string("dummy"));
 		const auto backend = std::find_if(m_backends.begin(), m_backends.end(),
@@ -1061,7 +1062,7 @@ namespace gnubase::engine
 		{
 			Json atProjectRate = parameters;
 			atProjectRate["sampleRate"] = m_projectRate;
-			setDevice(atProjectRate);
+			setDevice(atProjectRate, keepMeasurement);
 			return;
 		}
 		m_backend = name;
@@ -1078,7 +1079,7 @@ namespace gnubase::engine
 		m_recordOffset = recordOffset();
 		m_played = PlayedPositions(static_cast<size_t>(g_maxRecordOffset) + m_device->format().blockSize);
 		m_recorder.prepare(m_device->format().inputChannels, m_device->format().blockSize);
-		m_loudness.prepare(m_device->format().sampleRate);
+		m_loudness.prepare(m_device->format().sampleRate, keepMeasurement);
 		m_recordSetup = {}; // its pre-record follows the device's sample rate
 		m_capturedInput.assign(static_cast<size_t>(m_device->format().inputChannels),
 			std::vector<float>(static_cast<size_t>(std::llround(captureSeconds * m_device->format().sampleRate))));
@@ -1123,7 +1124,7 @@ namespace gnubase::engine
 		}
 		try
 		{
-			setDevice(parameters);
+			setDevice(parameters, true); // the loudness measurement goes on too
 			if (measured)
 			{
 				m_meter.resume(*measured);

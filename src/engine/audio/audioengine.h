@@ -97,6 +97,10 @@ namespace gnubase::engine
 		void setStopAfterPunchOut(bool stop);
 		// The user setting meter.resetOnStart.
 		void setMeterResetOnStart(bool reset) { m_meterResetOnStart.store(reset, std::memory_order_relaxed); }
+		// The user settings meter.rmsResolution and meter.rmsAes17, for the master meter.
+		void setMeterRms(int milliseconds, bool aes17) { m_mainMeter.setRms(milliseconds, aes17); }
+		// The one reader that reads all meters once a frame (Engine::readMeters); not the audio thread.
+		void readMeters(MeterFrame& frame); // metercommands.cpp
 		// Command thread: what the MIDI and instrument tracks chase when playback jumps (MidiSequencer).
 		void setChase(const MidiChase& chase);
 
@@ -191,7 +195,8 @@ namespace gnubase::engine
 		};
 
 		void rebuild();
-		void setDevice(const Json& parameters);
+		// keepMeasurement: a reset, which keeps the loudness measurement if the sample rate stays.
+		void setDevice(const Json& parameters, bool keepMeasurement = false);
 		void openDummy(const Json& parameters);
 		void closeDevice();
 		// audio.reset; a device that can't be opened is lost. While one is, opens the lost device instead of the
@@ -373,6 +378,7 @@ namespace gnubase::engine
 		MidiChase m_chase;                                                 // what they chase
 		std::map<ObjectId, Instrument> m_instruments;                      // per instrument channel
 		std::map<ObjectId, std::shared_ptr<ChannelState>> m_channelStates; // per channel
+		std::mutex m_channelStatesMutex; // the command thread changes m_channelStates with it, readMeters reads with it
 		// The channels that mixdown.export renders from a point inside their strip while it renders, and where their
 		// audio goes; attachStrips taps their strips.
 		struct RenderTap
