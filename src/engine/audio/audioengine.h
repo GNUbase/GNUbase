@@ -191,6 +191,9 @@ namespace gnubase::engine
 		};
 
 		void rebuild();
+		// audio.setDevice: opens the device, starts it if asked or if the one it replaces ran, falls back to the dummy
+		// device and saves the choice as the user's if asked (start, fallBackToDummy, remember).
+		void replaceDevice(CommandContext& context);
 		void setDevice(const Json& parameters);
 		void openDummy(const Json& parameters);
 		void closeDevice();
@@ -312,6 +315,12 @@ namespace gnubase::engine
 		std::vector<std::unique_ptr<audio::Backend>> m_backends;
 		std::string m_backend; // the device's
 		Json m_parameters;     // what audio.setDevice opened the device with
+		// The device the last audio.setDevice couldn't open or start, so the dummy device plays instead
+		// (fallBackToDummy): its backend, id and the reason. Null if it opened.
+		Json m_failed = nullptr;
+		// The last audio.setDevice failed and left no running device although it was to run one: the next one
+		// starts unless told otherwise. audio.start and audio.stop decide anew.
+		bool m_startAfterFailure = false;
 		std::unique_ptr<audio::Device> m_device;
 		audio::DummyDevice* m_dummy = nullptr; // m_device, if it is the dummy device
 		std::vector<std::string> m_inputPorts; // the device's port names, each one once
