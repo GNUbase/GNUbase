@@ -4,6 +4,7 @@
 #include "engine/audiofile/audiofile.h"
 #include "engine/audiofile/resampler.h"
 #include "engine/dawproject/dawproject.h"
+#include "engine/document/audiofunctions.h"
 #include "engine/document/channelsettings.h"
 #include "engine/document/editors.h"
 #include "engine/document/hitpoints.h"
@@ -3893,6 +3894,7 @@ namespace gnubase::engine
 		registerEditorCommands(*this, engine);
 		registerSampleEditorCommands(*this, engine);
 		registerHitpointCommands(*this, engine);
+		registerAudioFunctionCommands(*this, engine);
 		registerHistoryCommands(engine);
 		registerMediaFolderCommands(engine, jobs);
 		registerProjectFileCommands(engine);
