@@ -11,6 +11,7 @@
 #include "engine/document/rendersnapshot.h"
 #include "engine/document/serialize.h"
 #include "engine/engine.h"
+#include "engine/midi/midivalues.h"
 
 #include <algorithm>
 #include <cmath>
@@ -556,6 +557,8 @@ namespace gnubase::engine
 			right.lock = part.lock;
 			right.color = part.color;
 			right.lane = part.lane;
+			right.transpose = part.transpose;
+			right.velocity = part.velocity;
 			for (auto it = part.notes.begin(); it != part.notes.end();)
 			{
 				Note& note = it->second;
@@ -771,6 +774,35 @@ namespace gnubase::engine
 			return {{"events", idsOf(items)}};
 		}
 
+		// What event.resize would make of the events, on a copy of the project: the event display shows it while an
+		// edge is dragged (#732). The copy's announcements go nowhere.
+		Json previewResize(Project& project, CommandContext& context)
+		{
+			Project copy = project;
+			CommandContext inner(context.parameters());
+			resizeEvents(copy, inner);
+			syncSharedParts(project.midiParts, copy, inner); // as ProjectModel does after the edit
+			Json result = {{"audioEvents", Json::array()}, {"audioParts", Json::array()}, {"midiParts", Json::array()}};
+			for (const Item& item : itemsFrom(copy, context.parameters(), true))
+			{
+				if (item.audio != nullptr)
+				{
+					result["audioEvents"].push_back(toJson(*item.audio));
+				}
+				else if (item.audioPart != nullptr)
+				{
+					result["audioParts"].push_back(toJson(*item.audioPart));
+					for (const AudioEvent* event : eventsIn(copy, item.audioPart->id))
+						result["audioEvents"].push_back(toJson(*event));
+				}
+				else
+				{
+					result["midiParts"].push_back(toJson(*item.part));
+				}
+			}
+			return result;
+		}
+
 		Json splitEvents(Project& project, CommandContext& context)
 		{
 			const Json& parameters = context.parameters();
@@ -949,6 +981,18 @@ namespace gnubase::engine
 			else
 			{
 				MidiPart& part = *first.part;
+				// Each part's transpose and velocity (reference manual p. 1107) stay in the sound of its notes: the
+				// glued part keeps the first one's, and the notes of the others get the difference to them. A note
+				// the difference would move beyond 0 to 127 can't keep its pitch, so the glue is refused.
+				for (size_t i = 1; i < items.size(); ++i)
+				{
+					const MidiPart& other = *items[i].part;
+					const int transpose = other.transpose - part.transpose;
+					for (const auto& [id, note] : other.notes)
+						require(note.pitch + transpose >= 0 && note.pitch + transpose <= 127,
+							"a note of MIDI part " + std::to_string(other.id) +
+								" would be transposed beyond 0 to 127 by the difference of the parts' transpose");
+				}
 				detach(project, part);
 				const time::Ticks start = ticks(project, part.position);
 				int64_t end = part.position.value + part.length;
@@ -957,11 +1001,18 @@ namespace gnubase::engine
 					const MidiPart& other = *items[i].part;
 					end = std::max(end, other.position.value + other.length);
 					const time::Ticks offset = ticks(project, other.position) - start;
+					const int transpose = other.transpose - part.transpose;
+					const int velocity = other.velocity - part.velocity;
 					for (const auto& [id, each] : other.notes)
 					{
 						Note note = each;
 						note.id = project.newId();
 						note.position += offset;
+						note.pitch = static_cast<uint8_t>(note.pitch + transpose);
+						// As the velocity shift plays it: in MIDI 1.0 velocities, from 1 to 127.
+						if (velocity != 0)
+							note.velocity = midi::velocityFromMidi1(static_cast<uint8_t>(
+								std::clamp(midi::velocityToMidi1(note.velocity) + velocity, 1, 127)));
 						part.notes[note.id] = note;
 					}
 					for (const auto& [id, each] : other.controllers)
@@ -1204,8 +1255,16 @@ namespace gnubase::engine
 			const int64_t rowStart = inUnit(project, row[first].position(), musical);
 			const int64_t at =
 				inUnit(project, {time::TimeBase::Linear, parameters.at("position").get<time::Samples>()}, musical);
-			const auto length = [&project, musical](const Item& item)
-			{ return inUnit(project, endOf(project, item), musical) - inUnit(project, item.position(), musical); };
+			// An item's length in the unit when it starts at x. Audio events keep their length in samples, so on a
+			// musical track their length in ticks depends on where they start (#414).
+			const auto length = [&project, musical](const Item& item, int64_t x)
+			{
+				if (item.audio == nullptr || !musical)
+					return inUnit(project, endOf(project, item), musical) - inUnit(project, item.position(), musical);
+				const EventSpan span = eventSpan(project, *item.audio);
+				const time::Samples end = samples(project, {time::TimeBase::Musical, x}) + (span.end - span.start);
+				return ticks(project, {time::TimeBase::Linear, end}) - x;
+			};
 			// The others close up; the moved events go after each one whose middle they start past. An empty slot
 			// stands for them.
 			std::vector<Item> order;
@@ -1219,13 +1278,14 @@ namespace gnubase::engine
 					block.push_back(row[i]);
 					continue;
 				}
-				if (!placed && at < x + (length(row[i]) / 2))
+				const int64_t size = length(row[i], x);
+				if (!placed && at < x + (size / 2))
 				{
 					order.emplace_back();
 					placed = true;
 				}
 				order.push_back(row[i]);
-				x += length(row[i]);
+				x += size;
 			}
 			if (!placed)
 				order.emplace_back();
@@ -1234,7 +1294,7 @@ namespace gnubase::engine
 				for (const Item& item : slot ? std::vector<Item>{slot} : block)
 				{
 					const int64_t delta = x - inUnit(project, item.position(), musical);
-					x += length(item);
+					x += length(item, x);
 					if (delta == 0)
 						continue;
 					place(project, item, {delta, musical}, track);
@@ -1457,12 +1517,16 @@ namespace gnubase::engine
 		// Takes the automation between from and to out of a lane and keeps the curve outside: the value it arrives
 		// at from with holds up to to, where the curve goes on. With virgin territory the range becomes a gap instead
 		// (reference manual p. 881): the point at from is a terminator. Closing the gap moves the points after it back
-		// instead. Points at to make way for one that has their value and shape. Edges in gaps stay in them.
+		// instead. Points at to make way for one that has their value and shape. Edges in gaps stay in them. A range
+		// without points in it is automation too where the curve goes across it, between two points outside a gap.
 		// ponytail: a curve shaped point at an edge keeps its bend over the shorter rest of its segment.
 		void cutAutomation(
 			Project& project, AutomationLane& lane, int64_t from, int64_t to, bool close, CommandContext& context)
 		{
-			if (!anyPoint(lane, from, close ? std::numeric_limits<int64_t>::max() : to))
+			constexpr int64_t endless = std::numeric_limits<int64_t>::max();
+			const bool across = anyPoint(lane, std::numeric_limits<int64_t>::min(), from) &&
+				anyPoint(lane, to, endless) && !inGap(project, lane, from, true);
+			if (!anyPoint(lane, from, close ? endless : to) && !across)
 				return;
 			const time::TimeBase base = project.trackById.at(lane.track).timeBase;
 			const double left = valueAt(lane, from, true);
@@ -1967,6 +2031,7 @@ namespace gnubase::engine
 					(track.type == TrackType::Vca && target.type == AutomationTargetType::Volume);
 				break;
 			case AutomationTargetType::Mute:
+			case AutomationTargetType::Strip:
 				has = channel.format != ChannelFormat::None;
 				break;
 			case AutomationTargetType::Instrument:
@@ -2231,6 +2296,18 @@ namespace gnubase::engine
 				schema(resizeParameters, {"events", "edge"}), eventsResult(), false},
 			"Resize", resizeEvents);
 
+		const Json objects = {{"type", "array"}, {"items", {{"type", "object"}}}};
+		addEdit(engine,
+			{"event.previewResize", 1,
+				"Tells what event.resize with the same parameters would make of the events, without changing them: "
+				"the audio events, audio parts (with their audio events) and MIDI parts as project.get lists them. "
+				"The event display shows it while an edge is dragged. Fails where event.resize would.",
+				schema(resizeParameters, {"events", "edge"}),
+				schema({{"audioEvents", objects}, {"audioParts", objects}, {"midiParts", objects}},
+					{"audioEvents", "audioParts", "midiParts"}),
+				true},
+			{}, previewResize);
+
 		addEdit(engine,
 			{"event.split", 1,
 				"Splits audio events and MIDI parts at positions (project samples): events, or without it every "
@@ -2249,7 +2326,10 @@ namespace gnubase::engine
 				"other in the same clip, as after a split, become one event; other audio events and audio parts "
 				"become one audio part from the first start to the last end, the first of the parts or a new one, "
 				"holding all their events. MIDI parts become the first of them, from the first start to the last "
-				"end, with all their notes and controllers. Returns the event or part.",
+				"end, with all their notes and controllers; it keeps its transpose and velocity, and the notes of the "
+				"others get the difference of their part's transpose and velocity to them, so that they play as "
+				"before as far as velocities from 1 to 127 allow (refused if that would transpose a note beyond 0 to "
+				"127). Returns the event or part.",
 				schema({{"events", events()}}, {"events"}), schema({{"event", integer()}}, {"event"}), false},
 			"Glue", glueEvents);
 
@@ -2378,8 +2458,11 @@ namespace gnubase::engine
 			{"range.delete", 1,
 				"Deletes what lies in " + range +
 					": the audio events and MIDI parts in it, cut at its edges (splitNotes as in range.split), and the "
-					"automation points in it. The automation outside keeps its curve: the value it arrives at the "
-					"start with holds up to the end. time (Delete Time) closes the gap: what comes after the range on "
+					"automation in it: its points, and the curve between two points that goes across it. The "
+					"automation "
+					"outside keeps its curve: the value it arrives at the start with holds up to the end; with virgin "
+					"territory (automation.set) the range becomes a gap instead, the point at its start a terminator. "
+					"time (Delete Time) closes the gap: what comes after the range on "
 					"its tracks moves back by its length, in ticks on musical tracks. Locked events stay.",
 				schema(withTime, {}), {{"type", "object"}}, false},
 			"Delete",

@@ -4,6 +4,7 @@
 #include "engine/audiofile/audiofile.h"
 #include "engine/audiofile/resampler.h"
 #include "engine/dawproject/dawproject.h"
+#include "engine/document/audiofunctions.h"
 #include "engine/document/channelsettings.h"
 #include "engine/document/editors.h"
 #include "engine/document/hitpoints.h"
@@ -11,12 +12,15 @@
 #include "engine/document/mixerviews.h"
 #include "engine/document/sampleeditor.h"
 #include "engine/document/serialize.h"
+#include "engine/document/stripparameters.h"
 #include "engine/document/volumecurves.h"
 #include "engine/dsp/timestretch.h"
 #include "engine/graph/graph.h"
 #include "engine/jobs/jobs.h"
 #include "engine/media/backup.h"
+#include "engine/metronome/metronomecommands.h"
 #include "engine/midi/controllerlanes.h"
+#include "engine/midi/drummaps.h"
 #include "engine/midi/functioncommands.h"
 #include "engine/midi/quantizecommands.h"
 #include "engine/processors/builtin.h"
@@ -602,7 +606,7 @@ namespace gnubase::engine
 				automationTargetTypeFromName(json.at("type").get<std::string>());
 			if (!parsed.has_value())
 				throw CommandError(
-					"target.type must be volume, pan, panLeft, panRight, mute, instrument, plugin, controller, "
+					"target.type must be volume, pan, panLeft, panRight, mute, instrument, plugin, strip, controller, "
 					"pitchBend or channelPressure");
 			const AutomationTargetType type = *parsed;
 			AutomationTarget target;
@@ -673,6 +677,15 @@ namespace gnubase::engine
 				target.parameter = json.at("parameter").get<uint32_t>();
 				break;
 			}
+			case AutomationTargetType::Strip:
+				only({"parameter"});
+				require(channel.format != ChannelFormat::None, "a MIDI track has no channel strip sections");
+				require(json.contains("parameter"), "target.parameter is required");
+				require(isParameterId(json.at("parameter")) &&
+						findStripParameter(json.at("parameter").get<uint32_t>()) != nullptr,
+					"the channel strip has no parameter " + json.at("parameter").dump() + " (see parameter.list)");
+				target.parameter = json.at("parameter").get<uint32_t>();
+				break;
 			case AutomationTargetType::Controller:
 				only({"number", "channel"});
 				require(midi, "MIDI controllers are automated on MIDI and instrument tracks");
@@ -691,8 +704,8 @@ namespace gnubase::engine
 			return target;
 		}
 
-		// The parameter of an instrument or a plugin that a lane automates, or none for the other targets and for
-		// parameters that are gone.
+		// The parameter of an instrument, a plugin or the channel strip that a lane automates, or none for the other
+		// targets and for parameters that are gone.
 		const processors::ParameterInfo* automatedParameter(const Project& project, const AutomationLane& lane)
 		{
 			const processors::BuiltinInfo* info = nullptr;
@@ -705,6 +718,8 @@ namespace gnubase::engine
 				if (slot != project.slots.end())
 					info = processors::findBuiltinPlugin(slot->second.plugin);
 			}
+			if (lane.target.type == AutomationTargetType::Strip)
+				return findStripParameter(lane.target.parameter);
 			return info != nullptr ? processors::findParameter(*info, lane.target.parameter) : nullptr;
 		}
 
@@ -730,8 +745,11 @@ namespace gnubase::engine
 				return {0.0, 1.0};
 			case AutomationTargetType::Instrument:
 			case AutomationTargetType::Plugin:
+			case AutomationTargetType::Strip:
 				if (const processors::ParameterInfo* parameter = automatedParameter(project, lane))
 					return {parameter->minimum, parameter->maximum};
+				if (lane.target.type == AutomationTargetType::Strip) // from a newer build's file
+					throw CommandError("the channel strip has no parameter " + std::to_string(lane.target.parameter));
 				throw CommandError(std::string("the ") +
 					(lane.target.type == AutomationTargetType::Plugin ? "plugin" : "instrument") +
 					" of automation lane " + idText(lane.id) + " has no parameter " +
@@ -1226,17 +1244,7 @@ namespace gnubase::engine
 				if (input || output || send)
 					context.emit("channel.changed", {{"channel", toJson(channel)}});
 			}
-			// Link groups lose the channels that are gone and VCA faders that are gone (docs/features/link-groups.md).
-			for (auto& [id, group] : project.linkGroups)
-			{
-				const LinkGroup before = group;
-				group.channels.erase(
-					std::remove_if(group.channels.begin(), group.channels.end(), isGone), group.channels.end());
-				if (isGone(group.vca))
-					group.vca = 0;
-				if (!(group == before))
-					context.emit("linkGroup.changed", {{"group", toJson(group)}});
-			}
+			removeFromLinkGroups(project, gone, context);
 		}
 
 		// Turns a folder's group channel on or off (reference manual pp. 222, 224): a new one plays through the
@@ -1286,6 +1294,14 @@ namespace gnubase::engine
 			track.color = newColor;
 			track.timeFormat = parameters.value("timeFormat", track.timeFormat);
 			track.picture = parameters.value("picture", track.picture);
+			if (parameters.contains("drumMap"))
+			{
+				track.drumMap = parameters.at("drumMap").get<ObjectId>();
+				require(track.drumMap == 0 || track.type == TrackType::Midi || track.type == TrackType::Instrument,
+					"only MIDI and instrument tracks have a drum map");
+				require(track.drumMap == 0 || project.drumMaps.count(track.drumMap) != 0,
+					"no drum map " + std::to_string(track.drumMap));
+			}
 			if (parameters.contains("enabled"))
 			{
 				const bool enabled = parameters.at("enabled").get<bool>();
@@ -1509,6 +1525,85 @@ namespace gnubase::engine
 				activateMarkerTrack(project, top == project.tracks.end() ? 0 : *top, context);
 			}
 			return Json::object();
+		}
+
+		// The tracks track.removeEmpty removes (docs/features/track-list.md): audio, instrument, MIDI and marker
+		// tracks without events, parts, markers or automation, and folders without tracks, unless a channel of
+		// another track plays or sends into theirs. Plugins in a channel's slots and an instrument track's instrument
+		// don't keep a track. Group and effect tracks are where others play through, VCA tracks control channels,
+		// ruler, tempo and signature tracks hold no events. What goes can leave others empty, such as a folder that
+		// held only empty tracks or an instrument track that only empty MIDI tracks played, so it looks again until
+		// nothing more goes. What a track holds is the same in the track list's warning before Remove Selected Tracks
+		// (TrackList::build, src/ui/tracklist.cpp): change both together.
+		std::set<ObjectId> emptyTracks(const Project& project)
+		{
+			std::set<ObjectId> holding;
+			const auto hold = [&holding](const auto& objects)
+			{
+				for (const auto& item : objects)
+					holding.insert(item.second.track);
+			};
+			hold(project.audioEvents);
+			hold(project.audioParts);
+			hold(project.midiParts);
+			hold(project.markers);
+			hold(project.automation);
+			std::set<ObjectId> gone;
+			size_t before = 0;
+			do
+			{
+				before = gone.size();
+				std::set<ObjectId> filled; // folders with tracks that stay
+				std::set<ObjectId> played; // channels that tracks that stay play or send into
+				for (const auto& [id, track] : project.trackById)
+				{
+					if (gone.count(id) != 0)
+						continue;
+					filled.insert(track.parent);
+					if (track.channel == 0)
+						continue;
+					const Channel& channel = project.channels.at(track.channel);
+					played.insert(channel.output);
+					for (const Send& send : channel.sends)
+						played.insert(send.destination);
+				}
+				for (const auto& [id, track] : project.trackById)
+				{
+					const bool kind = track.type == TrackType::Audio || track.type == TrackType::Instrument ||
+						track.type == TrackType::Midi || track.type == TrackType::Marker ||
+						track.type == TrackType::Folder;
+					if (kind && holding.count(id) == 0 && filled.count(id) == 0 &&
+						(track.channel == 0 || played.count(track.channel) == 0))
+						gone.insert(id);
+				}
+			} while (gone.size() != before);
+			return gone;
+		}
+
+		Json removeEmptyTracks(Project& project, CommandContext& context)
+		{
+			const std::set<ObjectId> gone = emptyTracks(project);
+			Json removed = Json::array();
+			std::vector<ObjectId> top; // a folder takes the tracks inside it along
+			for (const ObjectId id : project.trackOrder())
+				if (gone.count(id) != 0)
+				{
+					removed.push_back(id);
+					if (gone.count(project.trackById.at(id).parent) == 0)
+						top.push_back(id);
+				}
+			// The active marker track goes last (marker tracks are never inside a folder), so that track.remove
+			// activates a marker track that stays rather than one that goes next.
+			const auto active = std::find(top.begin(), top.end(), project.activeMarkerTrack);
+			if (active != top.end())
+				std::rotate(active, std::next(active), top.end());
+			for (const ObjectId id : top)
+			{
+				const Json parameters = {{"track", id}}; // the context keeps a reference
+				CommandContext inner(parameters, &context);
+				removeTrack(project, inner);
+			}
+			return Json{{"tracks", std::move(removed)}};
 		}
 
 		// channel.set's sends: each changes what it has of the send with its number.
@@ -1754,6 +1849,19 @@ namespace gnubase::engine
 				try
 				{
 					changed.sections = sectionsFromJson(parameters, changed.sections);
+				}
+				catch (const std::invalid_argument& error)
+				{
+					throw CommandError(error.what());
+				}
+			}
+			if (parameters.contains("modifiers"))
+			{
+				require(type == TrackType::Midi || type == TrackType::Instrument,
+					"only MIDI and instrument tracks have modifiers");
+				try
+				{
+					changed.modifiers = modifiersFromJson(parameters.at("modifiers"), changed.modifiers);
 				}
 				catch (const std::invalid_argument& error)
 				{
@@ -2253,15 +2361,25 @@ namespace gnubase::engine
 				require(!sameFile(path, media.path), "path is media file " + idText(id) + "; choose a new file");
 		}
 
-		Json relinkMedia(Project& project, CommandContext& context)
+		// media.relink; openedProject is the open project's ProjectModel::openedRevision.
+		Json relinkMedia(Project& project, CommandContext& context, uint64_t openedProject)
 		{
+			const Json& parameters = context.parameters();
+			// Files found or copied for another project don't belong to this one.
+			const bool otherProject =
+				parameters.contains("project") && parameters.at("project").get<uint64_t>() != openedProject;
 			Json relinked = Json::array();
 			Json skipped = Json::array();
-			for (const Json& entry : context.parameters().at("files"))
+			for (const Json& entry : parameters.at("files"))
 			{
 				const ObjectId id = entry.at("media").get<ObjectId>();
 				const std::string path = entry.at("path").get<std::string>();
 				require(!path.empty(), "path must not be empty");
+				if (otherProject)
+				{
+					skipped.push_back(id);
+					continue;
+				}
 				if (entry.contains("from"))
 				{
 					const auto found = project.media.find(id);
@@ -2272,6 +2390,8 @@ namespace gnubase::engine
 					}
 				}
 				MediaFile& media = find(project.media, id, "media file");
+				// An entry with length is skipped, not refused, if its file went or doesn't fit (any more).
+				const bool checked = entry.contains("length");
 				AudioFileInfo info;
 				try
 				{
@@ -2279,7 +2399,17 @@ namespace gnubase::engine
 				}
 				catch (const AudioFileError& error)
 				{
-					throw CommandError(error.what());
+					if (!checked)
+						throw CommandError(error.what());
+					skipped.push_back(id);
+					continue;
+				}
+				if (checked &&
+					(info.sampleRate != media.sampleRate || info.channels != media.channels ||
+						info.frames != entry.at("length").get<int64_t>()))
+				{
+					skipped.push_back(id);
+					continue;
 				}
 				require(info.sampleRate == media.sampleRate && info.channels == media.channels,
 					path + " has " + std::to_string(info.channels) + " channels at " +
@@ -2525,6 +2655,14 @@ namespace gnubase::engine
 			part.position = newPosition;
 			part.length = length;
 			part.name = parameters.value("name", part.name);
+			for (const auto& [key, value] :
+				{std::pair{"transpose", &part.transpose}, std::pair{"velocity", &part.velocity}})
+				if (parameters.contains(key))
+				{
+					const auto number = parameters.at(key).get<int64_t>();
+					requireRange(number, -127, 127, key);
+					*value = static_cast<int>(number);
+				}
 			Json result = {{"part", toJson(part)}};
 			context.emit("midiPart.changed", result);
 			return result;
@@ -2798,6 +2936,7 @@ namespace gnubase::engine
 			{"track.set", "Change track"},
 			{"track.move", "Move track"},
 			{"track.remove", "Remove track"},
+			{"track.removeEmpty", "Remove empty tracks"},
 			{"track.duplicate", "Duplicate track"},
 			{"channel.set", "Change channel"},
 			{"channel.deactivateAll", "Deactivate all states"},
@@ -2837,11 +2976,14 @@ namespace gnubase::engine
 			{"marker.set", "Change marker"},
 			{"marker.remove", "Remove markers"},
 			{"marker.renumber", "Renumber markers"},
+			{"marker.import", "Import markers"},
 			{"tempo.add", "Add tempo event"},
 			{"tempo.set", "Change tempo events"},
 			{"tempo.remove", "Remove tempo events"},
 			{"tempo.tap", "Tap tempo"},
 			{"tempo.import", "Import tempo track"},
+			{"tempo.fromMidi", "Calculate tempo from MIDI"},
+			{"tempo.detect", "Detect tempo"},
 			{"signature.add", "Add time signature event"},
 			{"signature.set", "Change time signature events"},
 			{"signature.remove", "Remove time signature events"},
@@ -2860,9 +3002,7 @@ namespace gnubase::engine
 			{"poolFolder.set", "Change pool folder"},
 			{"poolFolder.remove", "Remove pool folder"},
 			{"pool.removeUnused", "Remove unused media"},
-			{"media.locate", "Locate missing files"},
 			{"media.removeMissing", "Remove missing files"},
-			{"media.conform", "Conform files"},
 		};
 
 		// Empty for commands without a fixed name, such as transactions.
@@ -2938,6 +3078,7 @@ namespace gnubase::engine
 			announceObjects(change.audioEvents, direction, "audioEvent", "event", context);
 			announceObjects(change.markers, direction, "marker", "marker", context);
 			announceObjects(change.linkGroups, direction, "linkGroup", "group", context);
+			announceObjects(change.drumMaps, direction, "drumMap", "map", context);
 			// Slots as plugin.insert, plugin.remove and the other plugin.* commands announce them. Those of a channel
 			// that came or went are in its events.
 			std::set<ObjectId> channels; // that came or went
@@ -3007,6 +3148,7 @@ namespace gnubase::engine
 			[this, action = std::move(action), handler = std::move(handler)](CommandContext& context)
 			{
 				Project before = m_project;
+				const bool followsEvents = m_automationFollowsEvents; // automation.set in a transaction changes it
 				Json result;
 				try
 				{
@@ -3016,6 +3158,7 @@ namespace gnubase::engine
 				catch (...)
 				{
 					m_project = std::move(before);
+					m_automationFollowsEvents = followsEvents;
 					throw;
 				}
 				if (action.empty()) // a transaction
@@ -3570,11 +3713,12 @@ namespace gnubase::engine
 				"its automation and the routing of other channels to it go. Channels routed elsewhere by hand or "
 				"disconnected keep their routing. With the user setting editing.applyFolderColor, a folder's new "
 				"color goes to the tracks inside it. picture is an image file (PNG, JPEG or SVG) that the mixer shows "
-				"on the track's channel, or empty for none.",
-				objectSchema(
-					{{"track", idSchema}, {"name", stringSchema}, {"color", color}, {"timeBase", timeBases},
-						{"timeFormat", timeFormats}, {"timeOffset", positionSchema}, {"timeOffsetOn", booleanSchema},
-						{"enabled", booleanSchema}, {"groupChannel", booleanSchema}, {"picture", stringSchema}},
+				"on the track's channel, or empty for none. drumMap is the drum map (drumMap.add) a MIDI or instrument "
+				"track's notes play through, or 0 for none.",
+				objectSchema({{"track", idSchema}, {"name", stringSchema}, {"color", color}, {"timeBase", timeBases},
+								 {"timeFormat", timeFormats}, {"timeOffset", positionSchema},
+								 {"timeOffsetOn", booleanSchema}, {"enabled", booleanSchema},
+								 {"groupChannel", booleanSchema}, {"picture", stringSchema}, {"drumMap", idSchema}},
 					{"track"}),
 				resultSchema({"track"}), false},
 			setTrack);
@@ -3593,10 +3737,26 @@ namespace gnubase::engine
 		add(engine,
 			{"track.remove", 1,
 				"Removes a track with its channel, events, parts or markers; a folder also removes the tracks inside "
-				"it. "
+				"it. The channel leaves its link group, which goes if it has no channels left (linkGroup.removed); a "
+				"VCA track's group links the volume again (linkGroup.changed). "
 				"Without the active marker track, the topmost marker track becomes the active one.",
 				objectSchema({{"track", idSchema}}, {"track"}), noResult, false},
 			removeTrack);
+		add(engine,
+			{"track.removeEmpty", 1,
+				"Removes the empty tracks (Remove Empty Tracks, reference manual p. 213): audio, instrument, MIDI and "
+				"marker tracks without events, parts, markers or automation, and folders without tracks, unless "
+				"another track's channel plays or sends into theirs (an instrument track a MIDI track plays, a "
+				"folder's group channel). Plugins in a channel's slots and an instrument track's instrument don't keep "
+				"a track. Group, effect, VCA, ruler, tempo and signature tracks stay. If the active marker track goes, "
+				"the topmost marker track that stays becomes the active one. What it removes "
+				"can leave others empty, such as a folder that held only empty tracks, so it looks again until no "
+				"empty track is left. One undo step; none if nothing is empty. Returns the tracks removed, from top "
+				"to bottom, with those inside removed folders.",
+				objectSchema(Json::object()),
+				Json{{"type", "object"}, {"properties", {{"tracks", arraySchema(idSchema)}}}, {"required", {"tracks"}}},
+				false},
+			removeEmptyTracks);
 		add(engine,
 			{"track.duplicate", 1,
 				"Duplicates a track below it: its channel with every setting, its events, parts, markers and "
@@ -3639,7 +3799,18 @@ namespace gnubase::engine
 				"is turned down to the user setting audio.listenDim while any channel listens; the listening channels "
 				"play there at audio.listenLevel, and their signal flow stays as it is. Muting, soloing and the dim "
 				"glide over one audio block. notes is the "
-				"channel's notepad, the user's text about it. The channel strip's sections (audio channels only; "
+				"channel's notepad, the user's text about it. modifiers (MIDI and instrument tracks; it changes only "
+				"what it has, as project.get shows it) changes how the track's notes play, not the notes, both those "
+				"of its parts and those played into it live: bypass, transpose (semitones, -127 to 127; notes beyond "
+				"0 to 127 don't play), velocityShift (-127 to 127, added to MIDI 1.0 velocities), velocityCompression "
+				"and lengthCompression ([numerator, denominator], each 1 to 16: multipliers of velocities, before the "
+				"shift, and of lengths), random (two generators, [{target (off, position, pitch, velocity or length), "
+				"minimum, maximum}]: each adds a value from its minimum to its maximum to every note, the same on "
+				"every playback; positions and lengths in ticks, up to a quarter note either way, the others up to "
+				"127; live notes get pitch and velocity only) and range (two, [{target (off, velocityLimit, "
+				"velocityFilter, noteLimit or noteFilter), minimum, maximum (0 to 127)}], in order after the others: "
+				"the limits move velocities to the nearest end and pitches by octaves into the range, the filters "
+				"leave out the notes outside it). The channel strip's sections (audio channels only; "
 				"each object changes only what it has, as project.get shows them) run before the fader: pre "
 				"{gain (dB, -24 to 24), phase (inverts the polarity), lowCut and highCut {on, frequency (Hz, 20 or "
 				"for the high cut 50 to 20000), slope (6, 12, 24, 36 or 48 dB per octave)}} before the plugin slots; "
@@ -3672,7 +3843,7 @@ namespace gnubase::engine
 						{"mute", booleanSchema}, {"solo", booleanSchema}, {"exclusive", booleanSchema},
 						{"soloDefeat", booleanSchema}, {"listen", booleanSchema}, {"notes", stringSchema},
 						{"linked", booleanSchema}, {"pre", {{"type", "object"}}}, {"eq", {{"type", "object"}}},
-						{"strip", {{"type", "object"}}},
+						{"strip", {{"type", "object"}}}, {"modifiers", {{"type", "object"}}},
 						{"sends",
 							arraySchema(
 								objectSchema({{"send", integerSchema}, {"destination", idSchema}, {"on", booleanSchema},
@@ -3717,25 +3888,29 @@ namespace gnubase::engine
 				const MediaFile& media = project.media.at(result.at("media").at("id").get<ObjectId>());
 				if (context.parameters().value("copy", false) && !isInside(media.path, mediaFolder.parent_path()))
 					result["job"] = startMediaCopy(jobs, "media.add", {MediaCopy{media.id, media.path, {}}},
-						mediaFolder, "Copy media file into the project");
+						mediaFolder, "Copy media file into the project", m_openedRevision);
 				return result;
 			});
 		add(engine,
 			{"media.relink", 1,
 				"Points media files at other files, such as copies, as one undo step. Each new file must be an audio "
 				"file with the media file's sample rate and channel count. An entry with from applies only if the "
-				"media file is still there and still points at from; otherwise it is skipped. Returns the media "
-				"files it relinked and the ones it skipped.",
-				objectSchema(
-					{{"files",
-						arraySchema(objectSchema({{"media", idSchema}, {"path", stringSchema}, {"from", stringSchema}},
-							{"media", "path"}))}},
+				"media file is still there and still points at from; one with length only if its new file can be "
+				"read, fits and has that many sample frames; otherwise it is skipped. With project, every entry is "
+				"skipped unless that project is still open (project.revision's project). Returns the media files it "
+				"relinked and the ones it skipped.",
+				objectSchema({{"files",
+								  arraySchema(objectSchema({{"media", idSchema}, {"path", stringSchema},
+															   {"from", stringSchema}, {"length", integerSchema}},
+									  {"media", "path"}))},
+								 {"project", integerSchema}},
 					{"files"}),
 				{{"type", "object"},
 					{"properties", {{"relinked", arraySchema(idSchema)}, {"skipped", arraySchema(idSchema)}}},
 					{"required", {"relinked", "skipped"}}},
 				false},
-			relinkMedia);
+			[this](Project& project, CommandContext& context)
+			{ return relinkMedia(project, context, m_openedRevision); });
 		add(engine,
 			{"media.convert", 1,
 				"Converts a media file to another sample rate (by default the project's), writes the result to path as "
@@ -3825,9 +4000,12 @@ namespace gnubase::engine
 				resultSchema({"part"}), false},
 			addMidiPart);
 		add(engine,
-			{"midiPart.set", 1, "Changes a MIDI part's name, position or length.",
+			{"midiPart.set", 1,
+				"Changes a MIDI part's name, position or length, or how its notes play: transpose (semitones) and "
+				"velocity (added to MIDI 1.0 velocities), each -127 to 127 and added to the track's MIDI modifiers "
+				"(channel.set modifiers), also while they are bypassed. The notes themselves stay as they are.",
 				objectSchema({{"part", idSchema}, {"name", stringSchema}, {"position", integerSchema},
-								 {"length", integerSchema}},
+								 {"length", integerSchema}, {"transpose", integerSchema}, {"velocity", integerSchema}},
 					{"part"}),
 				resultSchema({"part"}), false},
 			[this](Project& project, CommandContext& context)
@@ -3893,22 +4071,25 @@ namespace gnubase::engine
 		registerSlotCommands(engine);
 		midi::registerQuantizeCommands(*this, engine);
 		midi::registerFunctionCommands(*this, engine);
+		metronome::registerMetronomeCommands(*this, engine);
 		midi::registerControllerLaneCommands(*this, engine);
 		registerMidiFileCommands(engine);
 		registerAudioFileCommands(engine, jobs);
 		registerRecordingCommands(engine);
 		registerRenderCommands(engine);
-		registerPoolCommands(engine);
+		registerPoolCommands(engine, jobs);
 		registerFadeCommands(engine);
 		registerVolumeCurveCommands(*this, engine);
 		registerEventEditCommands(engine);
 		registerSnapCommands(*this, engine);
 		registerMixerCommands(*this, engine);
 		registerLinkGroupCommands(*this, engine);
+		midi::registerDrumMapCommands(*this, engine);
 		registerChannelSettingsCommands(*this, engine);
 		registerEditorCommands(*this, engine);
 		registerSampleEditorCommands(*this, engine);
-		registerHitpointCommands(*this, engine);
+		registerHitpointCommands(*this, engine, jobs);
+		registerAudioFunctionCommands(*this, engine);
 		registerHistoryCommands(engine);
 		registerMediaFolderCommands(engine, jobs);
 		registerProjectFileCommands(engine);
@@ -3923,7 +4104,7 @@ namespace gnubase::engine
 		const Json target =
 			objectSchema({{"type",
 							  enumSchema({"volume", "pan", "panLeft", "panRight", "mute", "instrument", "plugin",
-								  "controller", "pitchBend", "channelPressure"})},
+								  "strip", "controller", "pitchBend", "channelPressure"})},
 							 {"parameter", idSchema}, {"slot", idSchema}, {"number", idSchema}, {"channel", idSchema}},
 				{"type"});
 		const Json shape = enumSchema({"step", "linear", "curve"});
@@ -3938,7 +4119,10 @@ namespace gnubase::engine
 				"of an instrument track's built-in instrument (target.parameter, an id from processor.list, in its "
 				"range); plugin, a parameter of the built-in plugin in one of the track's slots (target.slot and "
 				"target.parameter, as parameter.list gives them, in its range; the lane goes when the plugin is "
-				"removed or moves to another channel); controller (target.number 0-127), pitchBend (0.5 is no bend) "
+				"removed or moves to another channel); strip, a parameter of the channel strip's sections on tracks "
+				"with audio channels (target.parameter, as parameter.list gives them: the pre section's gain, phase "
+				"and cut filters, the equalizer and the gate, compressor and limiter, in their ranges; switches and "
+				"stepped choices have step curves); controller (target.number 0-127), pitchBend (0.5 is no bend) "
 				"and channelPressure, all 0 to 1, on MIDI and instrument tracks, with target.channel 0-15 (default 0). "
 				"A track has one lane per target. read (default true): the curve plays; without it, or without points, "
 				"the parameter keeps its static value.",
@@ -4009,19 +4193,31 @@ namespace gnubase::engine
 				"it and the last point's after it.",
 				objectSchema({}), settings, true},
 			[settingsJson](CommandContext&) { return settingsJson(); });
-		addEdit(engine,
-			{"automation.set", 1,
-				"Changes the automation settings (see automation.get). followsEvents is a setting, so it stays when a "
-				"new project starts; virginTerritory is saved with the project. Neither is an undo step.",
-				objectSchema({{"followsEvents", booleanSchema}, {"virginTerritory", booleanSchema}}), settings, false},
-			"Change automation settings",
-			[this, settingsJson](Project& project, CommandContext& context)
+		// Only a change of virginTerritory changes the project (project.revision): followsEvents is the user's. A
+		// transaction can run it, and if the transaction fails, addEdit puts both back.
+		CommandInfo setInfo{"automation.set", 1,
+			"Changes the automation settings (see automation.get). followsEvents is a setting, so it stays when a new "
+			"project starts; virginTerritory is saved with the project. Neither is an undo step, and run on its own "
+			"only a change of virginTerritory changes the project (project.revision); in a transaction, the "
+			"transaction counts as a change.",
+			objectSchema({{"followsEvents", booleanSchema}, {"virginTerritory", booleanSchema}}), settings, false};
+		Handler set = [this, settingsJson](Project& project, CommandContext& context)
+		{
+			const Json& parameters = context.parameters();
+			m_automationFollowsEvents = parameters.value("followsEvents", m_automationFollowsEvents);
+			project.virginTerritory = parameters.value("virginTerritory", project.virginTerritory);
+			Json result = settingsJson();
+			context.emit("automation.changed", result);
+			return result;
+		};
+		m_edits[setInfo.name] = {setInfo, set};
+		engine.registerCommand(std::move(setInfo),
+			[this, set = std::move(set)](CommandContext& context)
 			{
-				const Json& parameters = context.parameters();
-				m_automationFollowsEvents = parameters.value("followsEvents", m_automationFollowsEvents);
-				project.virginTerritory = parameters.value("virginTerritory", project.virginTerritory);
-				Json result = settingsJson();
-				context.emit("automation.changed", result);
+				const bool virginTerritory = m_project.virginTerritory;
+				Json result = set(m_project, context);
+				if (m_project.virginTerritory != virginTerritory)
+					publish();
 				return result;
 			});
 	}
@@ -4075,8 +4271,8 @@ namespace gnubase::engine
 					if (!isInside(media.path, file.parent_path()))
 						files.push_back({id, media.path, {}});
 				return Json{{"job",
-					startMediaCopy(
-						jobs, "media.prepareArchive", std::move(files), mediaFolderFor(file), "Prepare archive")}};
+					startMediaCopy(jobs, "media.prepareArchive", std::move(files), mediaFolderFor(file),
+						"Prepare archive", m_openedRevision)}};
 			});
 		addControl(engine,
 			{"project.revision", 1,
@@ -4143,7 +4339,7 @@ namespace gnubase::engine
 				else
 				{
 					options.name = safeFileName(
-						m_file.empty() ? m_project.name : std::filesystem::u8path(m_file).stem().u8string());
+						m_file.empty() ? m_project.name : projectFileStem(std::filesystem::u8path(m_file)));
 				}
 				options.minimize = parameters.value("minimize", false);
 				options.handles = parameters.value("handles", 1.0);

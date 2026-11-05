@@ -157,7 +157,8 @@ namespace gnubase::engine
 		bool panBypass = false;
 		std::optional<int> midiVolume; // MIDI channels: CC 7 and CC 10 to send, 0 to 127
 		std::optional<int> midiPan;
-		bool monitor = false; // the monitor and record enable buttons
+		midi::Modifiers modifiers; // MIDI and instrument channels: notes has them applied, live notes get them
+		bool monitor = false;      // the monitor and record enable buttons
 		bool recordEnable = false;
 		// MIDI and instrument tracks: they play what comes from all MIDI inputs (MIDI thru), since they monitor or
 		// are record-enabled and their MIDI input is all MIDI inputs.
@@ -191,6 +192,8 @@ namespace gnubase::engine
 		uint64_t revision = 0; // counts the snapshots compiled for an engine
 		double sampleRate = 48000.0;
 		time::TempoMap tempo{120.0}; // for processors that follow the tempo, e.g. a synced delay
+		time::SignatureMap signatures;
+		metronome::MetronomeSettings metronome;
 		PanLaw panLaw = PanLaw::Minus3;
 		double maxVolume = 6.0;               // dB
 		std::string recordBitDepth = "int24"; // the project's, for audio.get; not read on the audio thread

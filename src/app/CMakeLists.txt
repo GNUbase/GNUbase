@@ -16,6 +16,8 @@ gnubase_target_defaults(gnubase-app)
 
 # The app's UI and its MCP tools (#58), for the executable and the UI tests.
 add_library(gnubase-app-ui STATIC
+	appmidifunctions.cpp
+	appquantize.cpp
 	appui.cpp
 	appui.h
 	uitools.cpp

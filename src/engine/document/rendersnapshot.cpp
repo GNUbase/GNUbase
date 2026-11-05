@@ -3,7 +3,10 @@
 
 #include "engine/audio/automation.h"
 #include "engine/audio/fades.h"
+#include "engine/document/stripparameters.h"
+#include "engine/dsp/dsp.h"
 #include "engine/midi/controllerlanes.h"
+#include "engine/midi/drummaps.h"
 
 #include <algorithm>
 #include <array>
@@ -29,21 +32,47 @@ namespace gnubase::engine
 			return project.tempo.toSamples(tick, project.sampleRate);
 		}
 
-		// Adds a part's notes and controllers, cut at the part's end.
-		void compilePart(const Project& project, const MidiPart& part, RenderChannel& channel)
+		// Adds a part's notes and controllers, cut at the part's end, the notes as the channel's MIDI modifiers and the
+		// part's transpose and velocity play them.
+		void compilePart(const Project& project, ObjectId partId, const MidiPart& part, RenderChannel& channel)
 		{
 			const time::Ticks start = time::toTicks(part.position, project.tempo, project.sampleRate);
 			const time::Position endPosition{part.position.base, part.position.value + part.length};
 			const time::Ticks end = time::toTicks(endPosition, project.tempo, project.sampleRate);
 			const auto index = static_cast<int32_t>(channel.midiParts.size());
 			channel.midiParts.push_back({toSamples(project, start), toSamples(project, end)});
+			// The part's transpose and velocity add to the track's modifiers, also while those are bypassed.
+			midi::Modifiers modifiers = channel.modifiers.bypass ? midi::Modifiers() : channel.modifiers;
+			modifiers.transpose += part.transpose;
+			modifiers.velocityShift += part.velocity;
+			// The track's drum map plays each note's sound: its O-note, on its channel unless that is Any, and not
+			// at all if it is muted (#129). The modifiers then apply to the O-note.
+			const DrumMap* map = midi::drumMapOf(project, part.track);
 			for (const auto& [id, note] : part.notes)
 			{
+				// Notes the part hides beyond its end don't play, wherever a random position would move them.
 				if (note.position >= end - start || !midi::notePlays(note, part.id))
 					continue;
-				const time::Ticks noteEnd = std::min(start + note.position + note.length, end);
-				channel.notes.push_back({toSamples(project, start + note.position), toSamples(project, noteEnd),
-					note.pitch, midi::playedVelocity(note, part.id), note.channel});
+				const DrumSound* sound = map != nullptr ? &map->sounds.at(note.pitch) : nullptr;
+				if (sound != nullptr && sound->mute)
+					continue;
+				const uint64_t seed = midi::noteSeed(partId, id);
+				uint8_t pitch = sound != nullptr ? sound->oNote : note.pitch;
+				uint16_t velocity = midi::playedVelocity(note, part.id);
+				if (!midi::modifyNote(modifiers, seed, pitch, velocity))
+					continue;
+				// A note moved before its part's start, or the project's, starts there, with its length: the part plays
+				// only what lies in it.
+				const time::Ticks moved =
+					note.position + midi::randomOffset(modifiers, midi::RandomTarget::Position, seed);
+				const time::Ticks position = std::max({moved, time::Ticks{0}, -start});
+				if (position >= end - start) // moved out of the part
+					continue;
+				const time::Ticks length = note.length > 0 ? midi::modifyLength(modifiers, seed, note.length) : 0;
+				const time::Ticks noteEnd = std::min(start + position + length, end);
+				channel.notes.push_back(
+					{toSamples(project, start + position), toSamples(project, noteEnd), pitch, velocity,
+						sound != nullptr && sound->channel >= 0 ? static_cast<uint8_t>(sound->channel) : note.channel});
 			}
 			for (const auto& [id, controller] : part.controllers)
 				if (controller.position < end - start)
@@ -82,11 +111,14 @@ namespace gnubase::engine
 			return event.length > 0;
 		}
 
-		// What still plays on a frozen track: the fader, pan and mute; its freeze file has the rest.
-		bool afterFreeze(AutomationTargetType type)
+		// What still plays on a frozen track: the fader, pan and mute, and the strip's sections after the plugin slots;
+		// its freeze file has the rest.
+		bool afterFreeze(const AutomationTarget& target)
 		{
-			switch (type)
+			switch (target.type)
 			{
+			case AutomationTargetType::Strip:
+				return !isPreSection(target.parameter);
 			case AutomationTargetType::Volume:
 			case AutomationTargetType::Pan:
 			case AutomationTargetType::PanLeft:
@@ -331,6 +363,18 @@ namespace gnubase::engine
 		snapshot->revision = revision;
 		snapshot->sampleRate = project.sampleRate;
 		snapshot->tempo = project.tempo;
+		snapshot->signatures = project.signatures;
+		snapshot->metronome = project.metronome;
+		std::vector<ObjectId>& outputs = snapshot->metronome.outputs;
+		outputs.erase(std::remove_if(outputs.begin(), outputs.end(),
+						  [&project](ObjectId id)
+						  {
+							  return std::none_of(project.busses.begin(), project.busses.end(), [id](const Bus& bus)
+								  { return bus.id == id && bus.direction == BusDirection::Output; });
+						  }),
+			outputs.end());
+		if (outputs.empty() && mainMix(project) != 0)
+			outputs.push_back(mainMix(project)); // the default output, also when the chosen busses are gone
 		snapshot->panLaw = project.panLaw;
 		snapshot->maxVolume = project.maxVolume;
 		snapshot->recordBitDepth = project.setup.recordBitDepth;
@@ -385,6 +429,7 @@ namespace gnubase::engine
 			render.sections = channel.sections;
 			render.midiVolume = channel.midiVolume;
 			render.midiPan = channel.midiPan;
+			render.modifiers = channel.modifiers;
 			render.monitor = channel.monitor;
 			render.recordEnable = channel.recordEnable;
 			render.listen = channel.listen;
@@ -455,7 +500,7 @@ namespace gnubase::engine
 			RenderChannel& channel = snapshot->channels[static_cast<size_t>(trackChannel.at(part.track))];
 			// A silent MIDI track's notes would still reach its instrument.
 			if (!part.mute && plays(part.track) && (!channel.silent || channel.type != TrackType::Midi))
-				compilePart(project, part, channel);
+				compilePart(project, id, part, channel);
 		}
 
 		std::map<ObjectId, Points> vcaCurves; // by the VCA fader's channel
@@ -465,7 +510,7 @@ namespace gnubase::engine
 			const Track& track = project.trackById.at(lane.track);
 			const bool vca = track.type == TrackType::Vca && lane.target.type == AutomationTargetType::Volume;
 			if (!lane.read || lane.points.empty() || (channel == trackChannel.end() && !vca) ||
-				(track.frozen && !afterFreeze(lane.target.type)))
+				(track.frozen && !afterFreeze(lane.target)))
 				continue;
 			std::vector<const AutomationPoint*> sorted;
 			sorted.reserve(lane.points.size());
@@ -488,9 +533,13 @@ namespace gnubase::engine
 				const time::Samples position = toSamples(project, point->position);
 				if (project.virginTerritory && played.points.empty())
 					played.points.push_back(gapAt(position));
-				played.points.push_back({position,
-					lane.target.type == AutomationTargetType::Volume ? volumeGain(point->value) : point->value,
-					point->shape, point->curve});
+				// The fader's volume and the pre gain glide in a straight line of their linear gain.
+				double value = point->value;
+				if (lane.target.type == AutomationTargetType::Volume)
+					value = volumeGain(point->value);
+				else if (lane.target == AutomationTarget{AutomationTargetType::Strip, StripParameter::PreGain, 0, 0, 0})
+					value = dsp::dbToGain(point->value);
+				played.points.push_back({position, value, point->shape, point->curve});
 				if (point->terminator || (project.virginTerritory && point == sorted.back()))
 					played.points.push_back(gapAt(position));
 			}

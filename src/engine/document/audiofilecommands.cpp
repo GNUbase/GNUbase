@@ -150,10 +150,7 @@ namespace gnubase::engine
 		const fs::path writeFolder = mediaFolder.empty() ? unsavedMediaFolder(m_settingsDirectory) : mediaFolder;
 
 		const auto run = [this, &project, &context](const char* command, const Json& commandParameters)
-		{
-			CommandContext inner(commandParameters, &context);
-			return m_edits.at(command).handler(project, inner);
-		};
+		{ return runEdit(command, project, commandParameters, context); };
 
 		Json tracks = Json::array();
 		Json media = Json::array();
@@ -226,8 +223,8 @@ namespace gnubase::engine
 
 		Json job = nullptr;
 		if (!copies.empty())
-			job = startMediaCopy(
-				jobs, "audioFile.import", std::move(copies), mediaFolder, "Copy imported files into the project");
+			job = startMediaCopy(jobs, "audioFile.import", std::move(copies), mediaFolder,
+				"Copy imported files into the project", m_openedRevision);
 		return {{"tracks", std::move(tracks)}, {"media", std::move(media)}, {"events", std::move(events)},
 			{"job", std::move(job)}};
 	}

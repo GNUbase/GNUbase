@@ -668,10 +668,15 @@
 	{
 		background-color: #151617;
 		color: #f3f4f5;
+		border-bottom-color: #151617;
 	}
 	.key-editor-key.selected
 	{
 		background-color: #5ea7b3;
+	}
+	.key-editor-key.black.selected
+	{
+		border-bottom-color: #5ea7b3;
 	}
 	.key-editor-grid
 	{
@@ -709,6 +714,16 @@
 	.key-editor-step-cursor
 	{
 		background-color: #5ea7b3;
+	}
+	.key-editor-key.drum-sound
+	{
+		background-color: #292c2f;
+		color: #f3f4f5;
+	}
+	.key-editor-key.drum-sound.selected
+	{
+		background-color: #5ea7b3;
+		color: #151617;
 	}
 	.controller-lane-area
 	{
@@ -815,6 +830,26 @@
 	{
 		background-color: #b7bbc066;
 	}
+	.ds-display, .sa-graph
+	{
+		background-color: #1e2022;
+	}
+	.ds-section
+	{
+		background-color: #49767e;
+	}
+	.sa-bar
+	{
+		background-color: #5ea7b3;
+	}
+	.sa-bar.reference
+	{
+		background-color: #7896bd;
+	}
+	.st-header, .st-name
+	{
+		color: #b7bbc0;
+	}
 	.list-editor-header
 	{
 		color: #b7bbc0;
@@ -906,6 +941,18 @@
 	.history .history-separator
 	{
 		background-color: #5ea7b3;
+	}
+	.quantize-display
+	{
+		background-color: #1e2022;
+	}
+	.quantize-line
+	{
+		background-color: #5ea7b3;
+	}
+	.quantize-catch
+	{
+		background-color: #5ea7b333;
 	}
 	.onscreen-keyboard .white-key
 	{

@@ -20,6 +20,7 @@ Layout and Mod+I show and hide ([docking.md](docking.md)). It follows the event 
     textdisplay[field=start], [field=end], [field=length]   in the ruler's time format
     valuefield[field=volume]  audio events, in dB; .hidden for parts
     button[field=mute], button[field=lock]                  toggle buttons
+    valuefield[field=transpose], [field=velocity]           MIDI parts, -127 to 127; .hidden for others
 ```
 
 - **Editing** (p. 72). A double click edits a display or the volume as text, Enter takes it; mute and lock are toggles.
@@ -30,6 +31,10 @@ Layout and Mod+I show and hide ([docking.md](docking.md)). It follows the event 
   (`audioEvent.set`, -144 to 6 dB), mute and lock to all (`event.set`). Each edit is one `history.transaction`, so one
   undo restores every event; a drag, wheel turns or a held arrow key on the volume are one undo step too
   ([edit-history.md](edit-history.md), gestures).
+- **Transpose and Velocity** (p. 1107): a MIDI part's transpose in semitones and velocity offset, which add to the
+  track's MIDI modifiers ([midi-modifiers.md](midi-modifiers.md)). Like the volume they change every selected part by
+  as much as the first one changes, kept from -127 to 127, or with Ctrl+Enter give them all the value typed
+  (`midiPart.set` `transpose` and `velocity`).
 - **Positions.** In bars and beats the moves and resizes are in ticks, exact on musical tracks; in the other formats
   in samples. Lengths are typed as `formatLength` shows them, e.g. "2.0.0.0" for two bars.
 - The themes give `.multiple` its own color, as the reference shows a multiple selection "in another color".
@@ -57,6 +62,8 @@ one it has the class `empty` and says "No Track Selected".
     [section=basics]               mute, solo, record, monitor, timeBase (button[control]); volume (dB), pan
                                    (-100 to 100)
     [section=routing]              select[control=input] (audio tracks), select[control=output]
+    [section=modifiers]            MIDI and instrument tracks: button[control=modifiers-bypass], valuefields and the
+                                   random generators' and ranges' select[control=modifiers-random-0-target] etc.
     [section=inserts]              .insert per plugin slot, .bypassed and .inactive
     [section=notepad]              textarea.notepad
 ```
@@ -67,14 +74,24 @@ one it has the class `empty` and says "No Track Selected".
   tracks other than audio tracks, inserts, volume and pan on MIDI tracks, which have no audio.
 - **Basics** (pp. 170–182): the channel's switches, fader and panner, sent with `channel.set` (`mute`, `solo`,
   `recordEnable`, `monitor`, `volume`, `pan`), and Switch Time Base (pp. 179–181, 229) on audio, instrument, MIDI,
-  group, effect and VCA fader tracks, checked when linear (`track.set` `timeBase`, [time-base.md](time-base.md)). The volume goes up to the project's
-  `maxVolume` (`project.set`). A drag, wheel turns or a held arrow key on the volume or the pan are one undo step
-  ([edit-history.md](edit-history.md), gestures), sent step by step so that they are heard.
+  group, effect and VCA fader tracks, checked when linear (`track.set` `timeBase`, [time-base.md](time-base.md)).
+  The volume goes up to the project's `maxVolume` (`project.set`). A drag, wheel turns or a held arrow key on the
+  volume or the pan are one undo step ([edit-history.md](edit-history.md), gestures), sent step by step so that they
+  are heard, one at a time; while they are on their way the fields keep their own values rather than the engine's
+  older ones (#716, [ui-engine-binding.md](ui-engine-binding.md)).
 - **Refused changes.** When the engine refuses a change, such as an output that would make a routing loop, the
   inspector shows the channel as it is again.
 - **Routing** (p. 168): the input bus of an audio track, and where the channel plays: an output bus or a group
   channel, for MIDI tracks an instrument track's channel, as in the add track dialog (`channel.set` `input` and
   `output`).
+- **MIDI Modifiers** (pp. 1099–1102, [midi-modifiers.md](midi-modifiers.md)): Bypass, Transpose, Velocity Shift,
+  Velocity and Length Compression as numerator and denominator, Random 1 and 2 with their target and minimum and
+  maximum, and Range 1 and 2 with their mode and minimum and maximum, sent with `channel.set` `modifiers`. Each control
+  is named after what it changes: `modifiers-` and the key, then the index of a pair and the field of a generator or
+  range (`modifiers-velocityCompression-1`, `modifiers-range-0-minimum`). Random positions and lengths show in ticks of
+  480 to a quarter note, up to 480 either way; the other values as `channel.set` takes them. A drag, wheel turns or a
+  held arrow key on a value are one undo step, and a value the engine refuses, such as a minimum above the maximum,
+  shows as it is again.
 - **Inserts**: an overview of the channel's plugin slots by name, top to bottom (`plugin.*` changes them).
 - **Notepad** (p. 168): the channel's notes. What is typed goes to the engine when the field loses the focus, also
   with Escape (`channel.set` `notes`, one undo step). When another track shows while the notepad or the name is being
@@ -95,9 +112,9 @@ one it has the class `empty` and says "No Track Selected".
 
 ## Not yet
 
-The info line's other fields (offset, fades, snap point, transpose and velocity of parts), hiding fields from its
+The info line's other fields (offset, fades, snap point, global transpose, root key), hiding fields from its
 context menu, and its own modifier setting (Preferences, Editing - Tool Modifiers); the inspector's other sections
-(track versions, chords, articulations, MIDI inserts and modifiers, equalizer, fader, cue sends, remote controls),
+(track versions, chords, articulations, MIDI inserts, equalizer, fader, cue sends, remote controls),
 sends (#108), the MIDI tracks' MIDI volume and pan, the folder track inspector's list of the tracks inside, the
 editor tab and the tempo, signature and marker track inspectors, Show All, Reset All and presets in Set up Sections,
 Expand Sections Exclusively, and the Channel zone's channel strip (#107). Record and monitor on instrument and MIDI
@@ -111,14 +128,17 @@ which is in the project window's document, doesn't open, waits for #517.
 - `tests/inspector_tests.cpp` drives the app's project window with `ui::Automation`: the info line of one and of two
   selected parts, start, length (relative and with Ctrl+Enter absolute, also with the first part's own value, after
   which an edit taken by leaving the field is relative again) and end edits with undo, name, mute and lock
-  for every selected part, changes from another client, an audio event's volume, and asking only while it shows; a
+  for every selected part, changes from another client, an audio event's volume, the parts' transpose and velocity (relative, kept in range, with Ctrl+Enter, undo, hidden for audio events), and asking only while it shows; a
   marker selected on the marker track with each field edited, two markers changed relatively and with Ctrl+Enter in
   one undo step, and an event selected after it; a marker clicked again after a part, Ctrl+Enter on the first marker's
   own position with a part shown before, and a selection naming removed markers; the inspector's buttons, volume and
   pan both ways, the output from another client and from the drop-down list, a refused output, the inserts overview
   with a bypassed slot, the notepad, renaming, notes and a name being typed when another track is selected and when
   another client loads a project, arrow keys in the notepad and the name, closing a section, hiding one in Set up
-  Sections and opening it only from an empty area, and what a group and a marker track don't have. A drag of the
+  Sections and opening it only from an empty area, and what a group and a marker track don't have; the MIDI Modifiers
+  section's bypass, values, a fraction's denominator, a generator's target with positions in ticks, a range the engine
+  refuses, changes from another client with undo, and an audio track without it. A drag of the
   inspector's volume up to the project's maximum, wheel turns on the pan and a drag of the info line's volume are one
-  undo step each.
+  undo step each, and a MIDI modifier and a part's transpose dragged back to where they started while the engine
+  answers late end there.
 - `tests/mixerwindow_tests.cpp`: a drag of a mixer fader is one undo step.

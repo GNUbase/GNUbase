@@ -101,6 +101,8 @@ namespace gnubase::engine
 			copy.shared = part->shared;
 			copy.color = part->color;
 			copy.lane = part->lane;
+			copy.transpose = part->transpose;
+			copy.velocity = part->velocity;
 			return copy;
 		}
 
@@ -122,7 +124,7 @@ namespace gnubase::engine
 	{
 		return !settingsBefore && tracks.empty() && channels.empty() && slots.empty() && media.empty() &&
 			clips.empty() && poolFolders.empty() && audioEvents.empty() && audioParts.empty() && midiParts.empty() &&
-			markers.empty() && automation.empty() && linkGroups.empty();
+			markers.empty() && automation.empty() && linkGroups.empty() && drumMaps.empty();
 	}
 
 	ProjectChange difference(const Project& before, const Project& after)
@@ -145,6 +147,7 @@ namespace gnubase::engine
 		change.audioParts = differences(before.audioParts, after.audioParts);
 		change.markers = differences(before.markers, after.markers);
 		change.linkGroups = differences(before.linkGroups, after.linkGroups);
+		change.drumMaps = differences(before.drumMaps, after.drumMaps);
 
 		const MidiPart empty;
 		compare(before.midiParts, after.midiParts,
@@ -203,6 +206,7 @@ namespace gnubase::engine
 		applyObjects(project.audioParts, change.audioParts, direction);
 		applyObjects(project.markers, change.markers, direction);
 		applyObjects(project.linkGroups, change.linkGroups, direction);
+		applyObjects(project.drumMaps, change.drumMaps, direction);
 		for (const MidiPartChange& partChange : change.midiParts)
 		{
 			const std::optional<MidiPart>& target = direction == Direction::Redo ? partChange.after : partChange.before;
@@ -222,6 +226,8 @@ namespace gnubase::engine
 			part.shared = target->shared;
 			part.color = target->color;
 			part.lane = target->lane;
+			part.transpose = target->transpose;
+			part.velocity = target->velocity;
 			applyObjects(part.notes, partChange.notes, direction);
 			applyObjects(part.controllers, partChange.controllers, direction);
 		}

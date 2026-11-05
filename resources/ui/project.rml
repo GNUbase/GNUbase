@@ -91,6 +91,7 @@
 		<button menu="media-menu">Media</button>
 		<button menu="project-menu">Project</button>
 		<button menu="audio-menu">Audio</button>
+		<button menu="midi-menu">MIDI</button>
 		<button menu="transport-menu">Transport</button>
 		<button menu="studio-menu">Studio</button>
 	</menubar>
@@ -114,6 +115,9 @@
 		<button id="snap-type" menu="snap-type-menu" title="Snap Type">Grid</button>
 		<button id="grid-type" menu="grid-type-menu" title="Grid Type">Bar</button>
 		<button id="snap-zero-crossing" type="toggle" class="icon-only" title="Snap to Zero Crossing"><svg class="icon" src="../icons/general-zero-crossing.svg"/></button>
+		<!-- Apply Quantize, the quantize presets, Soft Quantize and Open Quantize Panel (reference manual p. 368), which
+		     ui::QuantizePanel fills (docs/features/quantize.md) -->
+		<div id="toolbar-quantize" class="toolbar-quantize"/>
 		<button id="select-color" class="icon-only" menu="color-menu" title="Select Color for Selected Tracks or Events"><svg class="icon" src="../icons/general-color.svg"/></button>
 		<div class="spacer"/>
 		<button id="show-channel-zone" type="toggle" toggle="channel" class="icon-only" title="Show/Hide Channel"><svg class="icon" src="../icons/layout-channel-zone.svg"/></button>
@@ -175,6 +179,7 @@
 				<menuitem command="file.importAudio">Audio File...</menuitem>
 				<menuitem command="file.importMidi">MIDI File...</menuitem>
 				<menuitem command="file.importTempo">Tempo Track...</menuitem>
+				<menuitem command="file.importMarkers">Markers...</menuitem>
 			</menu>
 		</menuitem>
 		<menuitem id="export-submenu">Export
@@ -182,6 +187,7 @@
 				<menuitem command="file.exportMixdown">Audio Mixdown...</menuitem>
 				<menuitem command="file.quickExport">Quick Audio Export...</menuitem>
 				<menuitem command="file.exportTempo">Tempo Track...</menuitem>
+				<menuitem command="file.exportMarkers">Markers...</menuitem>
 			</menu>
 		</menuitem>
 		<menuseparator/>
@@ -267,10 +273,28 @@
 		<menuitem command="edit.lock">Lock</menuitem>
 		<menuitem command="edit.unlock">Unlock</menuitem>
 		<menuseparator/>
+		<!-- Quantizing (reference manual pp. 367-368, docs/features/quantize.md) -->
+		<menuitem command="edit.quantize">Quantize</menuitem>
+		<menuitem command="edit.resetQuantize">Reset Quantize</menuitem>
+		<menuitem command="window.quantizePanel">Quantize Panel</menuitem>
+		<menuitem id="advanced-quantize-submenu">Advanced Quantize
+			<menu>
+				<menuitem command="edit.quantizeLengths">Quantize MIDI Event Lengths</menuitem>
+				<menuitem command="edit.quantizeEnds">Quantize MIDI Event Ends</menuitem>
+				<menuitem command="edit.freezeQuantize">Freeze MIDI Quantize</menuitem>
+				<menuseparator/>
+				<menuitem command="edit.createGrooveQuantize">Create Groove Quantize Preset</menuitem>
+			</menu>
+		</menuitem>
+		<menuseparator/>
 		<!-- The MIDI editors (docs/features/midi-editors.md) -->
 		<menuitem command="editor.openClose">Open/Close Editor</menuitem>
 		<menuitem command="window.lowerZoneEditor">Open Editor in Lower Zone</menuitem>
 		<menuitem command="editor.openList">Open List Editor</menuitem>
+		<menuitem command="editor.openDrum">Open Drum Editor</menuitem>
+		<!-- Drum maps (docs/features/drum-editor.md) -->
+		<menuitem command="drumMap.load">Load Drum Map...</menuitem>
+		<menuitem command="drumMap.save">Save Drum Map...</menuitem>
 	</menu>
 	<!-- Track handling (reference manual pp. 213-225) -->
 	<menu id="color-menu"/>
@@ -284,6 +308,9 @@
 			<menu>
 				<menuitem command="window.tempoTrack">Open Tempo Track Editor</menuitem>
 				<menuitem command="tempo.toggleTrack">Activate Tempo Track</menuitem>
+				<menuseparator/>
+				<!-- docs/features/tempo-detection.md -->
+				<menuitem command="tempo.detection">Tempo Detection...</menuitem>
 			</menu>
 		</menuitem>
 		<menuseparator/>
@@ -331,6 +358,45 @@
 		</menuitem>
 		<!-- Volume curves (reference manual p. 401, docs/features/volume-curves.md) -->
 		<menuitem command="audio.removeVolumeCurve">Remove Volume Curve</menuitem>
+		<menuseparator/>
+		<!-- The audio functions (reference manual pp. 603-609, docs/features/audio-functions.md) -->
+		<menuitem id="audio-advanced-submenu">Advanced
+			<menu>
+				<menuitem command="audio.detectSilence">Detect Silence...</menuitem>
+			</menu>
+		</menuitem>
+		<menuitem command="audio.spectrumAnalyzer">Spectrum Analyzer</menuitem>
+		<menuitem command="audio.statistics">Statistics</menuitem>
+	</menu>
+	<!-- MIDI functions (reference manual pp. 1118-1131, docs/features/midi-functions.md) -->
+	<menu id="midi-menu">
+		<menuitem command="midi.transposeSetup">Transpose Setup...</menuitem>
+		<menuseparator/>
+		<menuitem command="midi.mergeInLoop">Merge MIDI in Loop...</menuitem>
+		<menuitem command="midi.dissolvePart">Dissolve Part...</menuitem>
+		<menuitem command="midi.bounceMidi">Bounce MIDI</menuitem>
+		<menuseparator/>
+		<menuitem id="midi-functions-submenu">Functions
+			<menu>
+				<menuitem command="midi.functionsLegato">Legato</menuitem>
+				<menuitem command="midi.functionsFixedLengths">Fixed Lengths</menuitem>
+				<menuitem command="midi.functionsFixedVelocity">Fixed Velocity</menuitem>
+				<menuitem command="midi.functionsPedalsToNoteLength">Pedals to Note Length</menuitem>
+				<menuseparator/>
+				<menuitem command="midi.functionsDeleteOverlapsMono">Delete Overlaps (mono)</menuitem>
+				<menuitem command="midi.functionsDeleteOverlapsPoly">Delete Overlaps (poly)</menuitem>
+				<menuitem command="midi.functionsDeleteDoubles">Delete Doubles</menuitem>
+				<menuitem command="midi.functionsDeleteControllers">Delete Controllers</menuitem>
+				<menuitem command="midi.functionsDeleteContinuousControllers">Delete Continuous Controllers</menuitem>
+				<menuitem command="midi.functionsRestrictPolyphony">Restrict Polyphony...</menuitem>
+				<menuitem command="midi.functionsThinOut">Thin Out Data</menuitem>
+				<menuseparator/>
+				<menuitem command="midi.functionsReverse">Reverse</menuitem>
+				<menuitem command="midi.functionsMirror">Mirror</menuitem>
+				<menuseparator/>
+				<menuitem command="midi.calculateTempo">Calculate Tempo from MIDI Events...</menuitem>
+			</menu>
+		</menuitem>
 	</menu>
 	<menu id="track-list-menu">
 		<menuitem command="project.addTrack">Add Track...</menuitem>

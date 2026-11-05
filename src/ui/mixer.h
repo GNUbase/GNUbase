@@ -111,6 +111,8 @@ namespace gnubase::ui
 	private:
 		void ProcessEvent(Rml::Event& event) override;
 		void requestProject();
+		// For the steps of a gesture: a refused one reads the project, so the control shows the engine's value again.
+		std::function<void(const engine::Result&)> whenRefused();
 		void requestView();
 		void show();
 		void buildStrips(const std::vector<const MixerChannel*>& strips);
@@ -125,6 +127,7 @@ namespace gnubase::ui
 		const MixerChannel* channelOf(Rml::Element* element) const;
 
 		EngineBinding& m_binding;
+		const std::string m_stepOwner; // begins the whats of its steps (EngineBinding::stepOwner)
 		Docking& m_docking;
 		Rml::ObserverPtr<Rml::Element> m_root;
 		Rml::ObserverPtr<Rml::Element> m_strips;             // the fader section

@@ -82,6 +82,8 @@ add_library(gnubase-ui STATIC
 	projectfiles.h
 	pseudolocale.cpp
 	pseudolocale.h
+	quantizepanel.cpp
+	quantizepanel.h
 	renderer.h
 	rmlui.cpp
 	rmlui.h

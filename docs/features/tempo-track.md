@@ -66,8 +66,9 @@ The tempo track, its tempo events and ramps, the project tempo modes and tap tem
   (`EventDisplay::selectionStart`). The times are RmlUi's clock, which tests stop and move on.
 - **File > Export > Tempo Track...** (`file.exportTempo`) and **File > Import > Tempo Track...** (`file.importTempo`)
   choose the file in the OS's file dialog; an exported file without an extension gets `.xml`.
-- The track list's Remove Empty Tracks, Duplicate Tracks, Move Selected Tracks to New Folder and drags into folders
-  leave the tempo track out: the project has one, at the top level.
+- The track list's Duplicate Tracks, Move Selected Tracks to New Folder and drags into folders leave the tempo track
+  out: the project has one, at the top level. Remove Empty Tracks, the engine command `track.removeEmpty`, never
+  removes it.
 - **The tempo track editor** (`ui::TempoEditor`, `resources/ui/tempo-editor.rml`, pp. 1447-1449, 1455): Mod+T (the
   UI command `window.tempoTrack`, also Project > Tempo Track > Open Tempo Track Editor) opens it in a window of its own
   and closes it. The toolbar has Activate Tempo Track, the object selection, draw and erase tools, the type of new tempo
@@ -84,7 +85,8 @@ The tempo track, its tempo events and ramps, the project tempo modes and tap tem
 The tempo event editor's smart controls for tilting, compressing and scaling a selection of events (p. 1450), drawing
 several events in one drag with the draw tool, snapping new and moved events to the grid, the editor's zoom and
 auto-scroll, visible tempo limits of the user's own, Lock, tempo recording (p. 1453) and the Process Tempo and Process
-Bars dialogs (pp. 1463-1464), reading the reference's own tempo track files, tempo detection (#157) and time warp. The
+Bars dialogs (pp. 1463-1464), reading the reference's own tempo track files and time warp. Tempo detection and tempo from MIDI are
+[tempo-detection.md](tempo-detection.md)'s. The
 selected events on the tempo track's lane are removed with the erase tool, not with Backspace, which deletes the
 selected events and parts. The key command for Tap Tempo (Shift and Space) is not bound.
 

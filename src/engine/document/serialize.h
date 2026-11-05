@@ -67,6 +67,10 @@ namespace gnubase::engine
 	// has and throws std::invalid_argument for values out of range.
 	Json toJson(const ChannelSections& sections);
 	ChannelSections sectionsFromJson(const Json& json, const ChannelSections& fallback = {});
+	// A MIDI or instrument channel's MIDI modifiers, and back: modifiersFromJson changes what the JSON has and throws
+	// std::invalid_argument for values out of range.
+	Json toJson(const midi::Modifiers& modifiers);
+	midi::Modifiers modifiersFromJson(const Json& json, const midi::Modifiers& fallback = {});
 	Json toJson(const Slot& slot); // its state as base64
 	Json toJson(const MediaFile& media);
 	Json toJson(const ClipRegion& region);
@@ -96,6 +100,13 @@ namespace gnubase::engine
 	// {id, name, channels, volume, pan, mute, record, vca}; linkGroupFromJson leaves what the JSON doesn't have.
 	Json toJson(const LinkGroup& group);
 	LinkGroup linkGroupFromJson(const Json& json, const LinkGroup& fallback = {});
+	// {id, name, sounds: [{pitch, name, snap, mute, iNote, oNote, channel (null: Any), output}], order}. The sound's
+	// pitch is its index. drumSoundFromJson leaves what the JSON doesn't have and throws std::invalid_argument, naming
+	// the field, for a value a sound can't have; drumMapFromJson does too, also for an order that isn't each pitch
+	// once.
+	Json toJson(const DrumMap& map);
+	DrumSound drumSoundFromJson(const Json& json, DrumSound sound);
+	DrumMap drumMapFromJson(const Json& json, DrumMap map);
 	// [{"position": ticks, "bpm": ..., "ramp": ...}], and back; tempoFromJson throws std::invalid_argument for points a
 	// tempo map can't have.
 	Json toJson(const time::TempoMap& tempo);

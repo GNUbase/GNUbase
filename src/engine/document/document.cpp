@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/document/document.h"
 
+#include "engine/midi/drummaps.h"
+
 #include <algorithm>
 #include <cctype>
 #include <map>
@@ -70,6 +72,9 @@ namespace gnubase::engine
 		project.busses.push_back(
 			{project.newId(), "Stereo Out", BusDirection::Output, ChannelFormat::Stereo, {}, 0, {}, false});
 		keepMainMix(project);
+		DrumMap gm = midi::gmDrumMap(); // initially the only drum map (reference manual p. 1239)
+		gm.id = project.newId();
+		project.drumMaps[gm.id] = std::move(gm);
 		return project;
 	}
 

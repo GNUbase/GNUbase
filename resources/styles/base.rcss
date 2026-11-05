@@ -724,6 +724,7 @@ meter .meter-peak
 	top: 20dp;
 	bottom: 0;
 	overflow: hidden;
+	clip: always; /* the project cursor, absolute too, isn't drawn outside it (#731), as in .event-area */
 }
 
 .event-display ruler
@@ -1794,7 +1795,8 @@ listview.history
 
 /* The pool (ui/poolpanel.h): a toolbar, the message line, the info line, the column headers and a tree of folders and
    clips that fills the rest of its panel. The Media column takes the room the others leave. Rows have the state
-   classes .folder or .clip, and clips .missing and .unused; the message line has .error for a failure. */
+   classes .folder or .clip, and clips .missing and .unused; the message line has .error for a failure, and its row
+   .running while a job of a pool command runs, which shows Stop. */
 .pool
 {
 	position: absolute;
@@ -1824,10 +1826,29 @@ listview.history
 	margin-right: 16dp;
 }
 
+.pool-status
+{
+	display: flex;
+	flex-shrink: 0;
+	align-items: center;
+	padding: 2dp 10dp 0 10dp;
+}
+
 .pool-message
 {
-	flex-shrink: 0;
-	padding: 2dp 10dp 0 10dp;
+	flex: 1;
+}
+
+/* Hidden rather than left out, so that the row keeps its height and the list doesn't move when a job starts. */
+.pool-status button
+{
+	visibility: hidden;
+	margin-left: 8dp;
+}
+
+.pool-status.running button
+{
+	visibility: visible;
 }
 
 listview.pool-list

@@ -44,7 +44,12 @@ namespace gnubase::ui
 			R"(<div class="info-field" info-field="mute"><button type="toggle" field="mute")"
 			R"( title="Mute">Mute</button></div>)"
 			R"(<div class="info-field" info-field="lock"><button type="toggle" field="lock")"
-			R"( title="Lock">Lock</button></div>)";
+			R"( title="Lock">Lock</button></div>)"
+			// A MIDI part's transpose and velocity (p. 1107), added to the track's MIDI modifiers.
+			R"(<div class="info-field" info-field="transpose"><span class="info-label">Transpose</span>)"
+			R"(<valuefield field="transpose" min="-127" max="127" default="0" step="1" decimals="0"/></div>)"
+			R"(<div class="info-field" info-field="velocity"><span class="info-label">Velocity</span>)"
+			R"(<valuefield field="velocity" min="-127" max="127" default="0" step="1" decimals="0"/></div>)";
 
 		void setClass(Rml::Element& element, const char* name, bool set)
 		{
@@ -72,10 +77,18 @@ namespace gnubase::ui
 			else if (!set && element.HasAttribute(name))
 				element.RemoveAttribute(name);
 		}
+
+		// What a field's gesture changes, as EngineBinding::sendStep names it: the info line's step owner, then the
+		// field.
+		std::string stepKey(const std::string& owner, const std::string& field)
+		{
+			return owner + field;
+		}
 	}
 
 	InfoLine::InfoLine(EventDisplay& display, EngineBinding& binding, Rml::Element& root)
-		: m_display(display), m_binding(binding), m_root(root.GetObserverPtr()),
+		: m_display(display), m_binding(binding), m_stepOwner(binding.stepOwner("info line")),
+		  m_root(root.GetObserverPtr()),
 		  // Another project ends the edits in progress without taking them: the ids may be the new project's too.
 		  m_reset(binding.on("project.reset",
 			  [this](const engine::Event&)
@@ -114,7 +127,8 @@ namespace gnubase::ui
 			const auto [field, text] = *m_absoluteTake;
 			m_absoluteTake.reset();
 			const std::optional<float> number = widgets::parse(text);
-			if (shows() && (field != "volume" || number))
+			const bool numeric = field == "volume" || field == "transpose" || field == "velocity";
+			if (shows() && (!numeric || number))
 			{
 				m_absolute = true;
 				if (m_showsMarkers)
@@ -181,6 +195,17 @@ namespace gnubase::ui
 		return 0.0;
 	}
 
+	int InfoLine::partValue(uint64_t part, const char* key) const
+	{
+		const Json& project = m_display.project();
+		if (!project.is_object())
+			return 0;
+		for (const Json& midi : project.at("midiParts"))
+			if (midi.at("id") == part)
+				return midi.value(key, 0);
+		return 0;
+	}
+
 	void InfoLine::show()
 	{
 		if (!m_root)
@@ -216,11 +241,23 @@ namespace gnubase::ui
 			setFlag(*name, "disabled", audio); // an audio event's name is its clip's
 		if (Rml::Element* volume = root.QuerySelector("[info-field=volume]"))
 			setClass(*volume, "hidden", !audio);
-		if (Rml::Element* volume = root.QuerySelector("valuefield[field=volume]"); volume != nullptr && audio)
+		// Not while the project is older than the field's own steps (#716).
+		if (Rml::Element* volume = root.QuerySelector("valuefield[field=volume]");
+			volume != nullptr && audio && !m_binding.ahead(stepKey(m_stepOwner, "volume"), m_display.read()))
 			setValue(*volume, widgets::format(static_cast<float>(volumeOf(first.at("id").get<uint64_t>()))));
 		for (const char* field : {"mute", "lock"})
 			if (Rml::Element* button = root.QuerySelector("button[field=" + std::string(field) + "]"))
 				setFlag(*button, "checked", first.at(field).get<bool>());
+		// A MIDI part's transpose and velocity.
+		const bool midi = first.at("kind") == "midi";
+		for (const char* field : {"transpose", "velocity"})
+		{
+			if (Rml::Element* shown = root.QuerySelector("[info-field=" + std::string(field) + "]"))
+				setClass(*shown, "hidden", !midi);
+			if (Rml::Element* value = root.QuerySelector("valuefield[field=" + std::string(field) + "]");
+				value != nullptr && midi && !m_binding.ahead(stepKey(m_stepOwner, field), m_display.read()))
+				setValue(*value, widgets::format(static_cast<float>(partValue(first.at("id").get<uint64_t>(), field))));
+		}
 	}
 
 	void InfoLine::ProcessEvent(Rml::Event& event)
@@ -282,7 +319,7 @@ namespace gnubase::ui
 		for (const char* field : {"end", "length"})
 			if (Rml::Element* shown = root.QuerySelector("[info-field=" + std::string(field) + "]"))
 				setClass(*shown, "hidden", !first.cycle);
-		for (const char* field : {"volume", "mute", "lock"})
+		for (const char* field : {"volume", "mute", "lock", "transpose", "velocity"})
 			if (Rml::Element* shown = root.QuerySelector("[info-field=" + std::string(field) + "]"))
 				setClass(*shown, "hidden", true);
 	}
@@ -437,6 +474,24 @@ namespace gnubase::ui
 						{"parameters", {{"event", id}, {"volume", std::clamp(volume, g_minVolume, g_maxVolume)}}}});
 				}
 		}
+		else if (field == "transpose" || field == "velocity")
+		{
+			// Relative to the first part's value, or with Ctrl+Enter the same for all; each from -127 to 127.
+			const auto typed = static_cast<int>(std::lround(number));
+			const int change = typed - partValue(first.at("id").get<uint64_t>(), field.c_str());
+			for (const Json& event : m_events)
+				if (event.at("kind") == "midi")
+				{
+					const uint64_t id = event.at("id").get<uint64_t>();
+					const int own = partValue(id, field.c_str());
+					const int value = std::clamp(m_absolute ? typed : own + change, -127, 127);
+					// During a gesture the project may not have its earlier steps yet: a drag back to where it
+					// started still sends that value.
+					if (value != own || gesture != 0)
+						commands.push_back(
+							{{"command", "midiPart.set"}, {"parameters", {{"part", id}, {field, value}}}});
+				}
+		}
 		else if (field == "mute" || field == "lock")
 		{
 			commands.push_back({{"command", "event.set"}, {"parameters", {{"events", ids}, {field, number != 0.0F}}}});
@@ -449,6 +504,11 @@ namespace gnubase::ui
 		std::string label = field;
 		label.front() = static_cast<char>(std::toupper(static_cast<unsigned char>(label.front())));
 		// A drag, wheel turns or a held arrow key on the volume: one undo step.
-		m_binding.sendStep(gesture, "info line " + field, "Change " + label, std::move(commands));
+		m_binding.sendStep(gesture, stepKey(m_stepOwner, field), "Change " + label, std::move(commands),
+			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (!alive.expired() && !result.ok())
+					m_loads = 0; // refused: the next update shows the events as they are again
+			});
 	}
 }

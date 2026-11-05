@@ -63,7 +63,7 @@ namespace gnubase::app
 			const char* keys;
 		};
 
-		constexpr std::array<ProjectCommand, 77> g_projectCommands{{
+		constexpr std::array<ProjectCommand, 82> g_projectCommands{{
 			{"zoom.in", "Zooms the project window in.", "H"},
 			{"zoom.out", "Zooms the project window out.", "G"},
 			{"zoom.inVertically", "Makes the project window's tracks taller.", "Shift+H"},
@@ -88,6 +88,10 @@ namespace gnubase::app
 			{"edit.repeat", "Opens the Repeat Events dialog for the selected events.", "Mod+K"},
 			{"edit.fillLoop", "Fills the locator range with copies of the selected events.", nullptr},
 			{"edit.toRealCopy", "Converts the selected shared copies to real copies.", nullptr},
+			// Tempo detection and tempo from MIDI (docs/features/tempo-detection.md).
+			{"tempo.detection", "Opens the Tempo Detection dialog for the selected audio event or MIDI part.", nullptr},
+			{"midi.calculateTempo", "Opens the Calculate Tempo from MIDI Events dialog for the selected MIDI parts.",
+				nullptr},
 			// Fades and crossfades (docs/features/fades.md), with the reference's key for Crossfade (manual p. 388).
 			{"audio.fadeInToRange", "Fades the audio events in the selection range in up to the range's start.",
 				nullptr},
@@ -101,6 +105,10 @@ namespace gnubase::app
 			{"audio.removeFadeOut", "Removes the fade out of the selected audio events.", nullptr},
 			{"audio.removeFades", "Removes the fades and crossfades of the selected audio events.", nullptr},
 			{"audio.fadeEditor", "Opens the fade dialog for the selected audio events.", nullptr},
+			// The audio functions (docs/features/audio-functions.md).
+			{"audio.detectSilence", "Opens the Detect Silence dialog for the selected audio events.", nullptr},
+			{"audio.spectrumAnalyzer", "Opens the Spectrum Analyzer for the selected audio event.", nullptr},
+			{"audio.statistics", "Opens the Statistics window for the selected audio events.", nullptr},
 			// Volume curves (docs/features/volume-curves.md).
 			{"audio.removeVolumeCurve",
 				"Resets the volume curves of the audio events in the selection range, or of the selected ones.",
@@ -193,14 +201,17 @@ namespace gnubase::app
 		}
 
 		// The track list's commands (ui::TrackList::actions, docs/features/track-list.md) and their keys.
-		constexpr std::array<ProjectCommand, 29> g_trackCommands{{
+		constexpr std::array<ProjectCommand, 28> g_trackCommands{{
 			{"track.selectPrevious",
-				"Selects the track above the selected one, and its first event while an event is selected.", "Up"},
+				"Selects the track above the selected one, and its first event while an event is selected (unless "
+				"ui.upDownSelectsTracksOnly).",
+				"Up"},
 			{"track.selectNext",
-				"Selects the track below the selected one, and its first event while an event is selected.", "Down"},
+				"Selects the track below the selected one, and its first event while an event is selected (unless "
+				"ui.upDownSelectsTracksOnly).",
+				"Down"},
 			{"track.rename", "Renames the first selected track.", "Alt+F2"},
 			{"track.removeSelected", "Removes the selected tracks.", nullptr},
-			{"track.removeEmpty", "Removes the tracks that hold nothing.", nullptr},
 			{"track.duplicateSelected", "Duplicates the selected tracks with their contents.", nullptr},
 			{"track.disableSelected", "Disables the selected audio, instrument and MIDI tracks.", nullptr},
 			{"track.enableSelected", "Enables the selected tracks again.", nullptr},
@@ -248,7 +259,9 @@ namespace gnubase::app
 		std::ostream& output, int msaaSamples)
 		: m_renderer(m_windows, msaaSamples), m_lua(engine, scripting::Trust::Trusted, output), m_rmlui(m_windows),
 		  m_themes(fontsAndThemes(resources)), m_shell(m_windows, m_renderer), m_settings(engine, m_shell, m_themes),
-		  m_binding(engine, [this] { m_shell.wake(); }), m_keys(engine, m_binding), m_main(m_shell.open(main)),
+		  m_binding(
+			  engine, [this] { m_shell.wake(); }, [this] { m_shell.requestRender(); }),
+		  m_keys(engine, m_binding), m_main(m_shell.open(main)),
 		  m_docking(engine, m_binding, m_shell, resources / "ui" / "panel-window.rml", main.hidden), m_engine(engine),
 		  m_resources(resources), m_hidden(main.hidden),
 		  m_history(m_binding.on("history.changed",
@@ -270,8 +283,11 @@ namespace gnubase::app
 		m_shell.eachStep(
 			[this]
 			{
-				if (const std::optional<std::string> error = m_lua.dispatchEvents())
+				bool scripted = false;
+				if (const std::optional<std::string> error = m_lua.dispatchEvents(&scripted))
 					logging::warning("A Lua event handler of the UI failed: {}", *error);
+				if (scripted)
+					m_shell.requestRender(); // what documents' gnubase.on handlers changed, wherever it shows
 				const bool follows = m_binding.update();
 				if (m_menu)
 					m_menu->update();
@@ -309,8 +325,8 @@ namespace gnubase::app
 				{
 					const std::vector<uint64_t> tracks =
 						m_trackList ? m_trackList->selection() : std::vector<uint64_t>();
-					inspector->update(
-						tracks.empty() ? 0 : tracks.front(), m_eventDisplay->project(), m_eventDisplay->loads());
+					inspector->update(tracks.empty() ? 0 : tracks.front(), m_eventDisplay->project(),
+						m_eventDisplay->loads(), m_eventDisplay->read());
 				}
 				return follows;
 			});
@@ -382,6 +398,8 @@ namespace gnubase::app
 		// The edit history (reference manual pp. 110-111), a dialog there, which Edit > History opens.
 		m_docking.add({"history", "History", "project", "right",
 			[this](Rml::Element& element) { return std::make_shared<ui::HistoryPanel>(m_binding, element); }});
+		addQuantize();
+		addMidiFunctions();
 		// The pool (reference manual pp. 739-760, docs/features/pool.md), a window of its own there. Its file dialogs
 		// belong to the window it shows in, and it reads the pool only while it shows.
 		m_docking.add({"pool", "Pool", "project", "lower", [this](Rml::Element& element)
@@ -506,35 +524,54 @@ namespace gnubase::app
 						m_binding.send("mixdown.quickExport", {{"path", file.u8string()}});
 					});
 			}});
-		// File > Export and File > Import > Tempo Track (docs/features/tempo-track.md): the tempo track's file, chosen
-		// in the OS's file dialog.
-		for (const bool exporting : {true, false})
+		// File > Export and File > Import > Tempo Track (docs/features/tempo-track.md) and Markers
+		// (docs/features/markers.md): their files, chosen in the OS's file dialog.
+		struct TrackFile
 		{
-			m_keys.add({exporting ? "file.exportTempo" : "file.importTempo",
-				exporting ? "Exports the tempo track and the time signature events into an XML file."
-						  : "Replaces the tempo track and the time signature events with those of an exported file.",
-				[this, exporting](ui::Window& window, Rml::Element* /*zone*/)
-				{
-					ui::FileDialog dialog;
-					dialog.kind = exporting ? ui::FileDialogKind::Save : ui::FileDialogKind::Open;
-					dialog.title = exporting ? "Export Tempo Track" : "Import Tempo Track";
-					dialog.filters = {{"Tempo track files", "xml"}, {"All files", "*"}};
-					if (exporting)
-						dialog.location = "Tempo Track.xml";
-					dialog.parent = window.id();
-					m_shell.showFileDialog(dialog,
-						[this, exporting](const ui::FileDialogResult& chosen)
-						{
-							if (!chosen.error.empty())
-								logging::warning("The file dialog failed: {}", chosen.error);
-							if (chosen.files.empty())
-								return;
-							std::filesystem::path file = chosen.files.front();
-							if (exporting && file.extension().empty())
-								file += ".xml";
-							m_binding.send(exporting ? "tempo.export" : "tempo.import", {{"path", file.u8string()}});
-						});
-				}});
+			const char* name;    // in the dialog's title and the exported file's name
+			const char* command; // the UI commands' suffix
+			const char* engine;  // the engine commands' prefix
+			const char* filter;
+			const char* extension; // an exported file without one gets it
+			const char* exportDescription;
+			const char* importDescription;
+		};
+		for (const TrackFile& kind : {TrackFile{"Tempo Track", "Tempo", "tempo", "Tempo track files", "xml",
+										  "Exports the tempo track and the time signature events into an XML file.",
+										  "Replaces the tempo track and the time signature events with those of an "
+										  "exported file."},
+				 TrackFile{"Markers", "Markers", "marker", "Marker files", "csv",
+					 "Exports the marker tracks into a CSV file.",
+					 "Adds the marker tracks of a CSV file to the project."}})
+		{
+			for (const bool exporting : {true, false})
+			{
+				m_keys.add({std::string(exporting ? "file.export" : "file.import") + kind.command,
+					exporting ? kind.exportDescription : kind.importDescription,
+					[this, kind, exporting](ui::Window& window, Rml::Element* /*zone*/)
+					{
+						ui::FileDialog dialog;
+						dialog.kind = exporting ? ui::FileDialogKind::Save : ui::FileDialogKind::Open;
+						dialog.title = std::string(exporting ? "Export " : "Import ") + kind.name;
+						dialog.filters = {{kind.filter, kind.extension}, {"All files", "*"}};
+						if (exporting)
+							dialog.location = std::string(kind.name) + "." + kind.extension;
+						dialog.parent = window.id();
+						m_shell.showFileDialog(dialog,
+							[this, kind, exporting](const ui::FileDialogResult& chosen)
+							{
+								if (!chosen.error.empty())
+									logging::warning("The file dialog failed: {}", chosen.error);
+								if (chosen.files.empty())
+									return;
+								std::filesystem::path file = chosen.files.front();
+								if (exporting && file.extension().empty())
+									file += std::string(".") + kind.extension;
+								m_binding.send(std::string(kind.engine) + (exporting ? ".export" : ".import"),
+									{{"path", file.u8string()}});
+							});
+					}});
+			}
 		}
 		// Auto fades (docs/features/fades.md): the project's, or the first selected track's.
 		m_keys.add({"project.autoFades", "Opens the auto fades dialog for the whole project.",
@@ -571,12 +608,21 @@ namespace gnubase::app
 		m_keys.add({"project.colorsSetup", "Opens the project colors setup dialog, which edits the project's colors.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { openDialog(window, "project-colors.rml"); }});
 		// For documents' buttons and menu items: gnubase.ui.command{command = "project.addTrack"} runs a key command
-		// in the main window, as its keys would.
+		// in the main window, as its keys would. A command that doesn't exist or parameters it doesn't take are a Lua
+		// error at the call (KeyCommands::check), in users' scripts too, instead of an engine error later or parameters
+		// a UI command drops (#669).
 		m_lua.addFunction("ui.command",
 			[this](const engine::Json& parameters)
 			{
-				m_keys.run(parameters.at("command").get<std::string>(),
-					parameters.value("parameters", engine::Json::object()), m_main, nullptr);
+				const auto command = parameters.find("command");
+				if (!parameters.is_object() || command == parameters.end() || !command->is_string())
+					throw std::invalid_argument("ui.command needs a table with a command, the name of a key command");
+				for (const auto& item : parameters.items())
+					if (item.key() != "command" && item.key() != "parameters")
+						throw std::invalid_argument("ui.command takes a command and its parameters, not " + item.key());
+				const engine::Json commandParameters = parameters.value("parameters", engine::Json::object());
+				m_keys.check(command->get<std::string>(), commandParameters);
+				m_keys.run(command->get<std::string>(), commandParameters, m_main, nullptr);
 				return engine::Json::object();
 			});
 		for (const ProjectCommand& command : g_projectCommands)
@@ -858,7 +904,12 @@ namespace gnubase::app
 		m_colorMenu.reset();
 		m_trackList.reset();
 		m_infoLine.reset();
+		m_toolbarQuantize.reset();
 		m_eventDisplay = std::make_unique<ui::EventDisplay>(m_engine, m_binding, *root);
+		if (Rml::Element* quantize = document->GetElementById("toolbar-quantize"))
+			m_toolbarQuantize = std::make_unique<ui::QuantizePanel>(m_binding, *quantize,
+				ui::QuantizePanel::Layout::Toolbar,
+				[this](const std::string& command) { m_keys.run(command, engine::Json::object(), m_main, nullptr); });
 		m_statusLine = std::make_unique<ui::StatusLine>(m_binding, *document);
 		if (Rml::Element* info = document->GetElementById("info-line"))
 			m_infoLine = std::make_unique<ui::InfoLine>(*m_eventDisplay, m_binding, *info);
@@ -1193,6 +1244,33 @@ namespace gnubase::app
 				if (!parts.empty())
 					m_binding.send("editor.open", {{"editor", "window"}, {"parts", parts}, {"content", "list"}});
 			}});
+		// Open Drum Editor (reference manual p. 1221): the selected MIDI parts in the editor window's drum editor.
+		m_keys.add({"editor.openDrum", "Opens the selected MIDI parts in the drum editor window.",
+			[this](ui::Window&, Rml::Element*)
+			{
+				const std::vector<uint64_t> parts = selected("midiParts");
+				if (!parts.empty())
+					m_binding.send("editor.open", {{"editor", "window"}, {"parts", parts}, {"content", "drum"}});
+			}});
+		// The Drum Map Setup's Load and Save (p. 1236): a drum map file into the project, and the drum map of the
+		// editor window's active track into a file.
+		m_keys.add({"drumMap.load", "Loads a drum map file into the project.", [this](ui::Window& window, Rml::Element*)
+			{
+				ui::FileDialog dialog;
+				dialog.title = "Load Drum Map";
+				dialog.filters = {{"Drum maps", "drm"}, {"All files", "*"}};
+				dialog.parent = window.id();
+				m_shell.showFileDialog(dialog,
+					[this](const ui::FileDialogResult& result)
+					{
+						if (!result.error.empty())
+							logging::warning("The file dialog failed: {}", result.error);
+						if (!result.files.empty())
+							m_binding.send("drumMap.import", {{"path", result.files.front().u8string()}});
+					});
+			}});
+		m_keys.add({"drumMap.save", "Saves the drum map of the editor's active track as a drum map file.",
+			[this](ui::Window& window, Rml::Element*) { saveDrumMap(window.id()); }});
 		// Open Audio Part Editor (Audio menu, reference manual p. 692): the selected audio parts in the editor window.
 		m_keys.add({"audio.openPartEditor", "Opens the selected audio parts in the audio part editor window.",
 			[this](ui::Window&, Rml::Element*)
@@ -1393,6 +1471,54 @@ namespace gnubase::app
 					logging::warning("The file dialog failed: {}", result.error);
 				if (!result.files.empty())
 					m_binding.send("track.set", {{"track", track}, {"picture", result.files.front().u8string()}});
+			});
+	}
+
+	void AppUi::saveDrumMap(ui::WindowId parent, const std::string& editor)
+	{
+		// The editor window's active track, else the lower zone's.
+		m_binding.send("editor.get", {{"editor", editor}},
+			[this, parent, editor](const engine::Result& view)
+			{
+				if (!view.ok())
+					return;
+				const engine::Json track = view.value.at("activeTrack");
+				if (track == 0)
+				{
+					if (editor == "window")
+						saveDrumMap(parent, "lower");
+					return;
+				}
+				m_binding.send("project.get", engine::Json::object(),
+					[this, parent, track](const engine::Result& project)
+					{
+						if (!project.ok())
+							return;
+						for (const engine::Json& each : project.value.at("tracks"))
+							if (each.at("id") == track && each.value("drumMap", uint64_t{0}) != 0)
+								chooseDrumMapFile(parent, each.at("drumMap").get<uint64_t>());
+					});
+			});
+	}
+
+	void AppUi::chooseDrumMapFile(ui::WindowId parent, uint64_t map)
+	{
+		ui::FileDialog dialog;
+		dialog.kind = ui::FileDialogKind::Save;
+		dialog.title = "Save Drum Map";
+		dialog.filters = {{"Drum maps", "drm"}};
+		dialog.parent = parent;
+		m_shell.showFileDialog(dialog,
+			[this, map](const ui::FileDialogResult& result)
+			{
+				if (!result.error.empty())
+					logging::warning("The file dialog failed: {}", result.error);
+				if (result.files.empty())
+					return;
+				std::filesystem::path file = result.files.front();
+				if (file.extension() != ".drm")
+					file += ".drm";
+				m_binding.send("drumMap.export", {{"map", map}, {"path", file.u8string()}});
 			});
 	}
 

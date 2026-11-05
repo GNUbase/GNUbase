@@ -374,11 +374,10 @@ TEST_CASE("the pre section runs before the plugin slots, the equalizer and the d
 
 TEST_CASE("the strip's limiter adds its look-ahead to the channel's latency while it is on", "[unit]")
 {
+	// limiter: on, or its automation plays (#658).
 	const auto latency = [](StripPart part, bool limiter)
 	{
-		ChannelSections sections;
-		sections.limiter.on = limiter;
-		ChannelStrip strip(std::make_shared<ChannelState>(), nullptr, {}, std::nullopt, false, part, sections);
+		ChannelStrip strip(std::make_shared<ChannelState>(), nullptr, {}, std::nullopt, false, part, limiter);
 		strip.prepareFor(48000.0, 64);
 		return strip.latency();
 	};

@@ -18,6 +18,7 @@
 #include "ui/onscreenkeyboard.h"
 #include "ui/poolpanel.h"
 #include "ui/projectfiles.h"
+#include "ui/quantizepanel.h"
 #include "ui/rmlui.h"
 #include "ui/rulertracks.h"
 #include "ui/sampleeditor.h"
@@ -222,8 +223,29 @@ namespace gnubase::app
 		std::vector<uint64_t> selectedParts() const;
 		// Shows or closes the sample editor window as the engine's sampleEditor view says.
 		void followSampleEditor(const engine::Json& view);
+		// Quantizing (#132, docs/features/quantize.md, appquantize.cpp): the quantize panel, the Edit menu's quantize
+		// commands and what they quantize.
+		void addQuantize();
+		// The commands that quantize what a command run in the window and zone takes: the notes of an editor, by part,
+		// or all notes of each part (none), and the editor's length quantize (empty for the project window).
+		struct QuantizeTarget
+		{
+			std::vector<std::pair<uint64_t, std::vector<uint64_t>>> parts;
+			std::string lengthQuantize;
+			double insertVelocity = 100.0 / 127.0; // the editor's, for Fixed Velocity
+		};
+		QuantizeTarget quantizeTarget(ui::Window& window, Rml::Element* zone) const;
+		void quantize(const std::string& command, const std::string& step, const QuantizeTarget& target);
+		// The MIDI menu (#133, docs/features/midi-functions.md, appmidifunctions.cpp): MIDI > Functions on what
+		// quantizeTarget gives, and the dialogs of Transpose Setup, Merge MIDI in Loop, Dissolve Part and Restrict
+		// Polyphony (resources/ui/midi-function.rml).
+		void addMidiFunctions();
 		// The OS's file dialog for a track's picture in the mixer, then track.set.
 		void choosePicture(uint64_t track);
+		// The drum map of the active track of an editor (window, else lower), then the OS's file dialog to save it in
+		// and drumMap.export.
+		void saveDrumMap(ui::WindowId parent, const std::string& editor = "window");
+		void chooseDrumMapFile(ui::WindowId parent, uint64_t map);
 		// Opens resources/ui/<name> in the window, modal. Throws std::runtime_error if it can't be loaded.
 		// attributes go on the document before it shows, for its Lua.
 		Rml::ElementDocument& openDialog(ui::Window& window, const char* name,
@@ -269,10 +291,11 @@ namespace gnubase::app
 		std::unique_ptr<ui::TransportControls> m_transportBar;
 		TransportWindow m_transportPanel;
 		TransportWindow m_timeDisplay;
-		std::unique_ptr<ui::StatusLine> m_statusLine; // too
-		std::unique_ptr<ui::TrackList> m_trackList;   // and before the display
-		std::unique_ptr<ui::ColorMenu> m_colorMenu;   // before the track list
-		std::unique_ptr<ui::InfoLine> m_infoLine;     // and this too
+		std::unique_ptr<ui::StatusLine> m_statusLine;         // too
+		std::unique_ptr<ui::TrackList> m_trackList;           // and before the display
+		std::unique_ptr<ui::ColorMenu> m_colorMenu;           // before the track list
+		std::unique_ptr<ui::InfoLine> m_infoLine;             // and this too
+		std::unique_ptr<ui::QuantizePanel> m_toolbarQuantize; // the toolbar's quantize section
 		// What the undo history can undo and redo now, for the Edit menu's Undo and Redo.
 		bool m_canUndo = false;
 		bool m_canRedo = false;

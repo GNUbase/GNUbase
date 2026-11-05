@@ -40,6 +40,16 @@ namespace
 		return std::find(classes.begin(), classes.end(), name) != classes.end();
 	}
 
+	// Whether the first element that the selector finds has the focus.
+	bool focused(test::UiApp& app, const std::string& selector)
+	{
+		const Json found = elements(app, selector);
+		if (found.empty())
+			return false;
+		const Json pseudoClasses = found.at(0).value("pseudoClasses", Json::array());
+		return std::find(pseudoClasses.begin(), pseudoClasses.end(), "focus") != pseudoClasses.end();
+	}
+
 	std::string row(uint64_t track)
 	{
 		return "#track-list listitem[value=\"" + std::to_string(track) + "\"]";
@@ -179,12 +189,30 @@ TEST_CASE("automation tracks show and hide below their track, and the parameter 
 	f.app.ui().click(std::nullopt, {".automation-parameter", 1, std::nullopt}, ui::MouseButton::Left, 1, {});
 	f.app.shell().step(std::chrono::milliseconds(0));
 	REQUIRE(hasClass(elements(f.app, "#automation-parameter-menu").at(0), "open"));
-	CHECK(elements(f.app, "#automation-parameter-menu menuitem.automation-target").size() == 5);
+	// The fader's five and the 41 of the channel strip's sections.
+	CHECK(elements(f.app, "#automation-parameter-menu menuitem.automation-target").size() == 5 + 41);
 	CHECK(elements(f.app, "#automation-parameter-menu menuitem.checked").at(0).value("text", "") == "Pan");
 	f.click("#automation-parameter-menu .automation-search");
 	f.app.ui().text(std::nullopt, "LEFT");
 	f.app.shell().step(std::chrono::milliseconds(0));
 	CHECK(elements(f.app, "#automation-parameter-menu menuitem.automation-target:not(.hidden)").size() == 1);
+	// The keys skip the parameters that the search hides: Shift+Tab from the search field and Up from the first item
+	// go round to the last shown one, and Tab from there round to the search field (#524).
+	const std::string search = "#automation-parameter-menu .automation-search";
+	const std::string first = "#automation-parameter-menu menuitem[automation-function=remove]";
+	const std::string shown = "#automation-parameter-menu menuitem.automation-target:not(.hidden)";
+	REQUIRE(focused(f.app, search));
+	f.app.ui().key(std::nullopt, "Shift+Tab");
+	CHECK(focused(f.app, shown));
+	f.app.ui().key(std::nullopt, "Tab");
+	CHECK(focused(f.app, search));
+	f.app.ui().key(std::nullopt, "Tab");
+	CHECK(focused(f.app, first));
+	f.app.ui().key(std::nullopt, "Up");
+	CHECK(focused(f.app, shown));
+	f.app.ui().key(std::nullopt, "Down");
+	CHECK(focused(f.app, first));
+	REQUIRE(hasClass(elements(f.app, "#automation-parameter-menu").at(0), "open"));
 	f.click("#automation-parameter-menu menuitem.automation-target:not(.hidden)");
 	REQUIRE(f.app.waitUntil(
 		[&]
@@ -398,6 +426,40 @@ TEST_CASE(
 	f.app.ui().move(std::nullopt, {"", 0, ui::Point{f.x(1.0) + 1, f.y(volume, 0.9)}});
 	f.app.shell().step(std::chrono::milliseconds(0));
 	CHECK(pointer() == "objectSelection");
+}
+
+TEST_CASE("an automation track's curve leaves gaps after terminators and in virgin territory", "[ui]")
+{
+	Automation f;
+	const Json volume = f.show();
+	f.app.call("automationPoint.add",
+		{{"lane", volume},
+			{"points",
+				{{{"position", 48000}, {"value", -6.0}, {"terminator", true}}, {{"position", 96000}, {"value", 0.0}},
+					{{"position", 144000}, {"value", -12.0}}}}});
+	f.settle(volume);
+	const auto terminators = [&f, &volume]()
+	{
+		std::vector<bool> result;
+		for (const ui::CurvePoint& point : f.curve("automation-curve", volume))
+			result.push_back(point.terminator);
+		return result;
+	};
+	CHECK(terminators() == std::vector<bool>{true, false, false});
+	const auto virgin = [&f, &volume]()
+	{
+		const std::string selector = ".automation-lane[lane=\"" + volume.dump() + "\"] curve.automation-curve";
+		const auto* curve = dynamic_cast<const ui::Curve*>(f.display.eventArea().QuerySelector(selector));
+		return curve != nullptr && curve->virginTerritory();
+	};
+	CHECK(!virgin());
+
+	// Virgin territory is no undo step, but the curve follows it.
+	f.app.call("automation.set", {{"virginTerritory", true}});
+	REQUIRE(f.app.waitUntil(virgin));
+	f.app.call("automation.set", {{"virginTerritory", false}});
+	REQUIRE(f.app.waitUntil([&] { return !virgin(); }));
+	CHECK(terminators() == std::vector<bool>{true, false, false});
 }
 
 TEST_CASE("a Ctrl-drag moves the selected automation points in one direction, and the editor tilts and stretches them",

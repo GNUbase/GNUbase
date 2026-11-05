@@ -7,10 +7,14 @@
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Elements/ElementFormControlInput.h>
 #include <RmlUi/Core/Event.h>
+#include <RmlUi/Core/Factory.h>
+#include <RmlUi/Core/Input.h>
 #include <RmlUi/Core/StringUtilities.h>
 
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <utility>
 
@@ -59,6 +63,8 @@ namespace gnubase::ui
 			Rml::EventId::Mousedown, Rml::EventId::Click, Rml::EventId::Dblclick, Rml::EventId::Change};
 		constexpr std::array<Rml::EventId, 3> g_documentEvents = {
 			Rml::EventId::Mousemove, Rml::EventId::Mouseup, Rml::EventId::Resize};
+		// And in the capture phase: the keys and the focus leaving a region's field, before the field takes them.
+		constexpr std::array<Rml::EventId, 2> g_captureEvents = {Rml::EventId::Keydown, Rml::EventId::Blur};
 
 		constexpr int64_t g_maxPixels = 65536; // media.peaks' limits
 		constexpr int64_t g_maxColumnValues = 262144;
@@ -120,6 +126,21 @@ namespace gnubase::ui
 		Rml::Property dp(double value)
 		{
 			return {static_cast<float>(value), Rml::Unit::DP};
+		}
+
+		// A whole number, with nothing else but spaces around it.
+		std::optional<int64_t> integer(const std::string& text)
+		{
+			const size_t first = text.find_first_not_of(' ');
+			const size_t last = text.find_last_not_of(' ');
+			if (first == std::string::npos)
+				return std::nullopt;
+			int64_t value = 0;
+			const char* end = text.data() + last + 1;
+			const auto [at, error] = std::from_chars(text.data() + first, end, value);
+			if (error != std::errc() || at != end)
+				return std::nullopt;
+			return value;
 		}
 
 		std::string channelsName(int channels)
@@ -186,7 +207,7 @@ namespace gnubase::ui
 			R"(</div><div class="se-body"><div class="se-inspector"><div class="section-header">Range</div>)" +
 			selects +
 			R"(<button id="se-set-locators">Set Locators to Selection Range</button>)"
-			R"(<button id="se-locate">Locate Selection</button>)"
+			R"(<button id="se-locate">Locate Selection</button><button id="se-loop">Loop Selection</button>)"
 			R"(<div class="section-header">Process</div>)"
 			R"(<button id="se-range-region">Event or Range as Region</button>)" +
 			hitpoints +
@@ -195,12 +216,15 @@ namespace gnubase::ui
 			R"(<div class="se-selection"/><div class="se-hitpoints"/><div class="se-snap-point"/></div>)"
 			R"(<div class="se-regions"><div class="toolbar se-regions-toolbar">)"
 			R"(<button id="se-add-region">Add Region</button><button id="se-remove-region">Remove Region</button>)"
-			R"(<button id="se-select-region">Select Region</button></div><div class="se-region-list"/></div>)"
+			R"(<button id="se-select-region">Select Region</button><button id="se-play-region">Play Region</button>)"
+			R"(</div><div class="se-region-list"/></div>)"
 			R"(</div></div></div>)");
 		for (const Rml::EventId event : g_rootEvents)
 			root.AddEventListener(event, this);
 		for (const Rml::EventId event : g_documentEvents)
 			root.GetOwnerDocument()->AddEventListener(event, this);
+		for (const Rml::EventId event : g_captureEvents)
+			root.AddEventListener(event, this, true);
 		setTool(SampleTool::Range);
 
 		for (const char* event : {"history.changed", "project.reset", "snap.changed"})
@@ -239,6 +263,8 @@ namespace gnubase::ui
 				root->RemoveEventListener(event, this);
 			for (const Rml::EventId event : g_documentEvents)
 				root->GetOwnerDocument()->RemoveEventListener(event, this);
+			for (const Rml::EventId event : g_captureEvents)
+				root->RemoveEventListener(event, this, true);
 		}
 	}
 
@@ -420,6 +446,26 @@ namespace gnubase::ui
 		ask(false);
 	}
 
+	void SampleEditor::reveal(double from, double to)
+	{
+		const double visible = displayWidth() * m_scale;
+		if (!(visible > 0.0) || (from >= m_start && to <= m_start + visible))
+			return;
+		// In the middle, or from its start if it is longer than the display.
+		const double start = to - from < visible ? from - ((visible - (to - from)) / 2.0) : from;
+		m_start = std::clamp(start, 0.0, std::max(0.0, static_cast<double>(m_length) - visible));
+		render();
+		ask(false);
+	}
+
+	void SampleEditor::auditionClip(int64_t from, std::optional<int64_t> to)
+	{
+		Json parameters = {{"media", m_media}, {"position", std::clamp<int64_t>(from, 0, m_length)}};
+		if (to)
+			parameters["end"] = *to;
+		m_binding.send("audition.start", parameters);
+	}
+
 	void SampleEditor::render()
 	{
 		Rml::Element* root = m_root.get();
@@ -576,16 +622,29 @@ namespace gnubase::ui
 				{
 					const auto id = each.at("id").get<uint64_t>();
 					rml += R"(<div class="se-region" region=")" + std::to_string(id) +
-						R"("><span class="se-region-name">)" +
+						R"("><span class="se-region-name" field="name">)" +
 						Rml::StringUtilities::EncodeRml(each.at("name").get<std::string>()) +
-						R"(</span><span class="se-region-start">)" + std::to_string(each.at("start").get<int64_t>()) +
-						R"(</span><span class="se-region-end">)" + std::to_string(each.at("end").get<int64_t>()) +
-						"</span></div>";
+						R"(</span><span class="se-region-start" field="start">)" +
+						std::to_string(each.at("start").get<int64_t>()) +
+						R"(</span><span class="se-region-end" field="end">)" +
+						std::to_string(each.at("end").get<int64_t>()) + "</span></div>";
 				}
 		if (rml != m_regionRows)
 		{
+			// The regions changed meanwhile, such as by an undo: what is being typed goes, before its field does,
+			// whose blur would otherwise take it.
+			finishEditing(false);
 			list->SetInnerRML(rml);
 			m_regionRows = rml;
+		}
+		if (!m_editing)
+		{
+			// The field of the last edit, hidden since; not from its own events, which this never runs in.
+			m_editedRegion = 0;
+			Rml::ElementList fields;
+			list->QuerySelectorAll(fields, ".se-region-field");
+			for (Rml::Element* field : fields)
+				field->GetParentNode()->RemoveChild(field);
 		}
 		for (int i = 0; i < list->GetNumChildren(); ++i)
 		{
@@ -671,12 +730,25 @@ namespace gnubase::ui
 			click(*target);
 			break;
 		case Rml::EventId::Dblclick:
-			// A double click on a region selects it, as Select Region does.
-			if (const Rml::Element* row = withAttribute(target, "region", m_root.get()))
+			// A double click on a region's name, start or end types a new one (p. 625).
+			if (Rml::Element* cell = withAttribute(target, "field", m_root.get());
+				cell != nullptr && cell->GetParentNode() != nullptr && cell->GetParentNode()->HasAttribute("region"))
+				editRegion(*cell);
+			break;
+		case Rml::EventId::Keydown:
+			if (m_editing && target == m_editing.get())
 			{
-				m_region = std::stoull(attribute(*row, "region"));
-				click(*m_root->QuerySelector("#se-select-region"));
+				const auto key = event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN);
+				if (key == Rml::Input::KI_RETURN || key == Rml::Input::KI_NUMPADENTER || key == Rml::Input::KI_ESCAPE)
+				{
+					finishEditing(key != Rml::Input::KI_ESCAPE);
+					event.StopPropagation(); // not a key command
+				}
 			}
+			break;
+		case Rml::EventId::Blur:
+			if (m_editing && target == m_editing.get())
+				finishEditing(true);
 			break;
 		case Rml::EventId::Mousedown:
 			press(event, *target);
@@ -714,8 +786,11 @@ namespace gnubase::ui
 		}
 		if (const Rml::Element* row = withAttribute(&target, "region", root))
 		{
+			// A click on a region shows it in the display (p. 625).
 			m_region = std::stoull(attribute(*row, "region"));
 			render();
+			if (const Json* shown = region(m_region))
+				reveal(shown->at("start").get<double>(), shown->at("end").get<double>());
 			return;
 		}
 		const Rml::Element* named = withAttribute(&target, "id", root);
@@ -745,8 +820,26 @@ namespace gnubase::ui
 		}
 		if (id == "se-locate")
 		{
-			m_binding.send(
-				"transport.locate", {{"position", std::max<int64_t>(0, projectSample(static_cast<double>(start)))}});
+			// To the start, and from there to the end (p. 619).
+			const int64_t first = std::max<int64_t>(0, projectSample(static_cast<double>(start)));
+			const int64_t last = std::max<int64_t>(0, projectSample(static_cast<double>(end)));
+			m_binding.send("transport.get", Json::object(),
+				[this, alive = std::weak_ptr<bool>(m_alive), first, last](const engine::Result& result)
+				{
+					if (!alive.expired() && result.ok())
+						m_binding.send("transport.locate",
+							{{"position", result.value.at("position").get<int64_t>() == first ? last : first}});
+				});
+			return;
+		}
+		if (id == "se-loop")
+		{
+			// Loop Selection: the locators around it, and cycle playback from its start (p. 619).
+			const int64_t left = std::max<int64_t>(0, projectSample(static_cast<double>(start)));
+			const int64_t right = std::max<int64_t>(left, projectSample(static_cast<double>(end)));
+			m_binding.send("transport.set", {{"left", left}, {"right", right}, {"cycle", true}});
+			m_binding.send("transport.locate", {{"position", left}});
+			m_binding.send("transport.play");
 			return;
 		}
 		if (id == "se-add-region" || id == "se-range-region")
@@ -769,6 +862,10 @@ namespace gnubase::ui
 		{
 			m_binding.send("clip.removeRegion", {{"clip", m_view.at("clip")}, {"region", m_region}});
 		}
+		else if (id == "se-play-region")
+		{
+			auditionClip(selected->at("start").get<int64_t>(), selected->at("end").get<int64_t>());
+		}
 		else if (id == "se-select-region")
 		{
 			// Selects the region and zooms to it (p. 624).
@@ -776,6 +873,60 @@ namespace gnubase::ui
 				"sampleEditor.set", {{"selectionStart", selected->at("start")}, {"selectionEnd", selected->at("end")}});
 			fit(selected->at("start").get<double>(), selected->at("end").get<double>());
 		}
+	}
+
+	// A field in the regions list in place of a region's name, start or end, with what it shows selected, so that
+	// typing replaces it. The cell hides while the field shows; finishEditing hides the field, and the next
+	// renderRegions removes it.
+	void SampleEditor::editRegion(Rml::Element& cell)
+	{
+		finishEditing(true);
+		Rml::Element* row = cell.GetParentNode();
+		const std::string field = attribute(cell, "field");
+		Rml::XMLAttributes attributes;
+		attributes["type"] = "text";
+		attributes["class"] = "se-region-field se-region-" + field;
+		Rml::Element* input =
+			row->InsertBefore(Rml::Factory::InstanceElement(row, "input", "input", attributes), cell.GetNextSibling());
+		if (input == nullptr)
+			return;
+		m_editing = input->GetObserverPtr();
+		m_editedRegion = std::stoull(attribute(*row, "region"));
+		m_editedField = field;
+		m_edited = Rml::StringUtilities::DecodeRml(cell.GetInnerRML());
+		input->SetAttribute("value", m_edited);
+		setClass(&cell, "off", true);
+		input->Focus();
+		if (auto* text = dynamic_cast<Rml::ElementFormControlInput*>(input))
+			text->Select();
+	}
+
+	void SampleEditor::finishEditing(bool keep)
+	{
+		Rml::Element* field = m_editing.get();
+		m_editing.reset();
+		if (field == nullptr)
+			return;
+		const auto typed = field->GetAttribute<Rml::String>("value", m_edited);
+		setClass(field, "off", true);
+		if (const Rml::Element* row = field->GetParentNode())
+			for (int i = 0; i < row->GetNumChildren(); ++i)
+				if (row->GetChild(i)->HasAttribute("field"))
+					setClass(row->GetChild(i), "off", false);
+		if (keep && typed != m_edited && hasEvent())
+		{
+			Json parameters = {{"clip", m_view.at("clip")}, {"region", m_editedRegion}};
+			if (m_editedField == "name" && !typed.empty())
+				parameters["name"] = typed;
+			else if (const std::optional<int64_t> frame = integer(typed);
+				frame && m_editedField != "name" && frame != integer(m_edited))
+				parameters[m_editedField] = *frame; // not 0100 for 100: no undo step that changes nothing
+			if (parameters.size() > 2)
+				m_binding.send("clip.setRegion", parameters); // the engine refuses what isn't a section of the clip
+		}
+		if (m_root)
+			m_root->GetOwnerDocument()->Focus(); // keys are key commands again
+		requestView();                           // whose answer renders the list without the field
 	}
 
 	// The Hitpoints section's buttons (pp. 637-647). Edit Hitpoints detects the hitpoints of a clip that has none.
@@ -856,7 +1007,7 @@ namespace gnubase::ui
 
 	// Edit Hitpoints' gestures in the display (pp. 636, 639-640): a click on a hitpoint's handle locks or unlocks
 	// it; on its line, with Shift it disables or enables it, with Ctrl and Alt it resets it, and a drag moves it; Alt
-	// and a click elsewhere inserts one, and a click between two plays that slice while the mouse is pressed.
+	// and a click elsewhere inserts one, and a click between two plays that slice.
 	void SampleEditor::pressHitpoint(Rml::Event& event, Rml::Element& target, double frame)
 	{
 		const Rml::Element* root = m_root.get();
@@ -887,18 +1038,32 @@ namespace gnubase::ui
 			m_binding.send("clip.addHitpoint", {{"clip", clipId}, {"position", std::llround(frame)}});
 			return;
 		}
-		// Play back Slice: from the hitpoint before, or the event's start.
+		// Play back Slice: from the hitpoint that counts before to the one after, or the event's start and end. A
+		// click plays all of it (p. 639).
 		auto from = static_cast<double>(m_offset);
+		auto to = static_cast<double>(m_offset + m_eventLength);
 		if (const Json* item = clip())
 			for (const Json& hitpoint : item->value("hitpoints", Json::array()))
 			{
 				const auto position = hitpoint.at("position").get<double>();
-				if (hitpoint.at("active").get<bool>() && position <= frame && position > from)
+				if (!hitpoint.at("active").get<bool>())
+					continue;
+				if (position <= frame && position > from)
 					from = position;
+				else if (position > frame && position < to)
+					to = position;
 			}
-		m_drag = Drag::Play;
-		m_binding.send(
-			"audition.start", {{"track", m_view.at("track")}, {"position", std::max<int64_t>(0, projectSample(from))}});
+		const int64_t start = std::max<int64_t>(0, projectSample(from));
+		const int64_t end = projectSample(to);
+		if (end > start)
+			m_binding.send("audition.start", {{"track", m_view.at("track")}, {"position", start}, {"end", end}});
+	}
+
+	// Scrubs the clip, and moves the project cursor to where the frame plays, as scrubbing locates (p. 634).
+	void SampleEditor::scrub(double frame)
+	{
+		m_binding.send("audition.scrub", {{"media", m_media}, {"position", std::llround(frame)}});
+		m_binding.send("transport.locate", {{"position", std::max<int64_t>(0, projectSample(frame))}});
 	}
 
 	void SampleEditor::press(Rml::Event& event, Rml::Element& target)
@@ -917,7 +1082,6 @@ namespace gnubase::ui
 			return;
 		const double frame = frameAt(event);
 		m_pressed = m_dragged = frame;
-		const int64_t track = m_view.at("track").get<int64_t>();
 		// The snap point can be dragged with any tool (p. 628).
 		if (withClass(&target, "se-snap-point", root) != nullptr)
 		{
@@ -946,14 +1110,13 @@ namespace gnubase::ui
 			zoom(event.GetParameter<int>("alt_key", 0) != 0 ? 1.0 / g_zoomStep : g_zoomStep, frame);
 			break;
 		case SampleTool::Play:
+			// The clip, also outside the event (p. 630).
 			m_drag = Drag::Play;
-			m_binding.send(
-				"audition.start", {{"track", track}, {"position", std::max<int64_t>(0, projectSample(frame))}});
+			auditionClip(std::llround(frame), std::nullopt);
 			break;
 		case SampleTool::Scrub:
 			m_drag = Drag::Scrub;
-			m_binding.send(
-				"audition.scrub", {{"track", track}, {"position", std::max<int64_t>(0, projectSample(frame))}});
+			scrub(frame);
 			break;
 		}
 	}
@@ -979,8 +1142,7 @@ namespace gnubase::ui
 		m_dragged = frameAt(event);
 		if (m_drag == Drag::Scrub)
 		{
-			m_binding.send("audition.scrub",
-				{{"track", m_view.at("track")}, {"position", std::max<int64_t>(0, projectSample(m_dragged))}});
+			scrub(m_dragged);
 		}
 		else
 		{

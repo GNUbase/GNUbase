@@ -1,0 +1,274 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The Detect Silence dialog (#147, docs/features/audio-functions.md, reference manual pp. 603-606) for the audio
+     events in the document's attribute events (ids), one after the other: ui::EventDisplay opens it
+     (audio.detectSilence). Analyze, or every change with Auto, shows the sections that aren't silent
+     (clip.detectSilence) along the event in #ds-display and their number; Process sends event.stripSilence for the
+     event, or with Process All Selected Events for all that are left, and shows the next event or closes. -->
+<rml>
+<head>
+	<title>Detect Silence</title>
+	<style>
+		dialog
+		{
+			width: 520dp;
+		}
+
+		#ds-event, #ds-display, .content, .row
+		{
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		#ds-display
+		{
+			position: relative;
+			height: 48dp;
+		}
+
+		.ds-section
+		{
+			position: absolute;
+			top: 0;
+			bottom: 0;
+		}
+
+		.content
+		{
+			display: flex;
+		}
+
+		.column
+		{
+			flex: 1;
+		}
+
+		.column + .column
+		{
+			margin-left: 16dp;
+		}
+
+		.field
+		{
+			display: flex;
+			align-items: center;
+			height: 28dp;
+		}
+
+		.field .label
+		{
+			width: 130dp;
+		}
+
+		.field valuefield, .field input.text
+		{
+			width: 100dp;
+		}
+
+		.row
+		{
+			display: flex;
+			align-items: center;
+		}
+
+		#ds-message
+		{
+			flex: 1;
+		}
+
+		.row button, .row input
+		{
+			margin-left: 6dp;
+		}
+	</style>
+	<script>
+		-- The dialog's state, in the UI's Lua: the events to process, the one shown, and its sections.
+		DetectSilence = {}
+		local dialog = DetectSilence
+
+		local function escape(text)
+			return (tostring(text):gsub('[&<>"]', {["&"] = "&amp;", ["<"] = "&lt;", [">"] = "&gt;", ['"'] = "&quot;"}))
+		end
+
+		local function numberOf(document, id)
+			return tonumber(tostring(document:GetElementById(id):GetAttribute("value") or "")) or 0
+		end
+
+		local function checked(document, id)
+			return document:GetElementById(id):HasAttribute("checked")
+		end
+
+		local function message(document, text)
+			document:GetElementById("ds-message").inner_rml = escape(text or "")
+		end
+
+		-- The detection settings as clip.detectSilence and event.stripSilence take them.
+		local function settings(document)
+			return {openThreshold = numberOf(document, "ds-open-threshold"),
+				closeThreshold = numberOf(document, "ds-close-threshold"),
+				minimumOpen = numberOf(document, "ds-minimum-open"), minimumClosed = numberOf(document, "ds-minimum-closed"),
+				preRoll = numberOf(document, "ds-pre-roll"), postRoll = numberOf(document, "ds-post-roll")}
+		end
+
+		-- Shows the event to process next: its name and where it is in the list, and no sections until analyzed.
+		local function show(document)
+			local event = dialog.events[dialog.index]
+			local text = event.name
+			if #dialog.events > 1 then
+				text = text .. " (" .. dialog.index .. " of " .. #dialog.events .. ")"
+			end
+			document:GetElementById("ds-event").inner_rml = escape(text)
+			document:GetElementById("ds-display").inner_rml = ""
+			document:GetElementById("ds-sections").inner_rml = "-"
+			document:GetElementById("ds-region-name"):SetAttribute("value", event.name)
+			if checked(document, "ds-auto") then
+				dialog.analyze(document)
+			end
+		end
+
+		function dialog.load(document)
+			local wanted = {}
+			for id in tostring(document:GetAttribute("events") or ""):gmatch("%d+") do
+				wanted[tonumber(id)] = true
+			end
+			local project = gnubase.project.get()
+			local names = {}
+			for _, clip in ipairs(project.clips) do
+				names[clip.id] = clip.name
+			end
+			dialog.events = {}
+			for _, event in ipairs(project.audioEvents) do
+				if wanted[event.id] then
+					dialog.events[#dialog.events + 1] = {id = event.id, clip = event.clip, offset = event.offset,
+						length = event.length, name = names[event.clip] or "Region"}
+				end
+			end
+			if #dialog.events == 0 then
+				document:Close()
+				return
+			end
+			dialog.index = 1
+			local all = document:GetElementById("ds-process-all")
+			if #dialog.events < 2 then
+				all:SetAttribute("disabled", "")
+			end
+			show(document)
+		end
+
+		-- Analyze: the sections of the event's audio that aren't silent, along the event.
+		function dialog.analyze(document)
+			local event = dialog.events[dialog.index]
+			local parameters = settings(document)
+			parameters.clip = event.clip
+			parameters.start = event.offset
+			parameters["end"] = event.offset + event.length
+			local ok, result = pcall(gnubase.clip.detectSilence, parameters)
+			if not ok then
+				message(document, tostring(result))
+				return
+			end
+			message(document, nil)
+			local sections = {}
+			for _, section in ipairs(result.sections) do
+				local left = (section.start - event.offset) * 100 / event.length
+				local width = (section["end"] - section.start) * 100 / event.length
+				sections[#sections + 1] = string.format('<div class="ds-section" style="left: %.4f%%; width: %.4f%%"/>',
+					left, width)
+			end
+			document:GetElementById("ds-display").inner_rml = table.concat(sections)
+			document:GetElementById("ds-sections").inner_rml = tostring(#result.sections)
+		end
+
+		-- A change of a setting: Linked keeps the thresholds the same, the close threshold stays at most the open
+		-- one, and Auto analyzes again.
+		function dialog.changed(document, element)
+			local open = numberOf(document, "ds-open-threshold")
+			local close = numberOf(document, "ds-close-threshold")
+			if checked(document, "ds-linked") or close > open then
+				if element.id == "ds-close-threshold" and checked(document, "ds-linked") then
+					document:GetElementById("ds-open-threshold"):SetAttribute("value", tostring(close))
+				else
+					document:GetElementById("ds-close-threshold"):SetAttribute("value", tostring(open))
+				end
+			end
+			if checked(document, "ds-auto") then
+				dialog.analyze(document)
+			end
+		end
+
+		-- Process: this event, or all that are left, then the next one or close.
+		function dialog.process(document)
+			local parameters = settings(document)
+			local all = checked(document, "ds-process-all") and #dialog.events > 1
+			parameters.events = {}
+			for i = dialog.index, all and #dialog.events or dialog.index do
+				parameters.events[#parameters.events + 1] = dialog.events[i].id
+			end
+			parameters.strip = checked(document, "ds-strip")
+			parameters.regions = checked(document, "ds-add-regions")
+			parameters.regionName = tostring(document:GetElementById("ds-region-name"):GetAttribute("value") or "")
+			parameters.autoNumberStart = math.floor(numberOf(document, "ds-auto-number"))
+			if checked(document, "ds-apply-fades") then
+				parameters.fades = numberOf(document, "ds-fade-length")
+			end
+			local ok, failure = pcall(gnubase.event.stripSilence, parameters)
+			if not ok then
+				message(document, tostring(failure))
+				return
+			end
+			if all or dialog.index == #dialog.events then
+				document:Close()
+				return
+			end
+			dialog.index = dialog.index + 1
+			show(document)
+		end
+	</script>
+</head>
+<body onshow="DetectSilence.load(document)">
+	<dialog id="detect-silence-dialog">
+		<div class="dialog-titlebar">Detect Silence</div>
+		<div id="ds-event"/>
+		<div id="ds-display" class="ds-display"/>
+		<div class="content" onchange="DetectSilence.changed(document, event.target_element)">
+			<div class="column">
+				<div>Detection</div>
+				<div class="field"><span class="label">Open Threshold (dB)</span>
+					<valuefield id="ds-open-threshold" value="-20" min="-120" max="0" step="1" decimals="1"/></div>
+				<div class="field"><span class="label">Close Threshold (dB)</span>
+					<valuefield id="ds-close-threshold" value="-30" min="-120" max="0" step="1" decimals="1"/></div>
+				<div class="field"><span class="label">Linked</span><input type="checkbox" id="ds-linked"/></div>
+				<div class="field"><span class="label">Minimum Time Open (ms)</span>
+					<valuefield id="ds-minimum-open" value="10" min="0" max="10000" step="1" decimals="0"/></div>
+				<div class="field"><span class="label">Minimum Time Closed (ms)</span>
+					<valuefield id="ds-minimum-closed" value="100" min="0" max="10000" step="1" decimals="0"/></div>
+				<div class="field"><span class="label">Pre-roll (ms)</span>
+					<valuefield id="ds-pre-roll" value="0" min="0" max="10000" step="1" decimals="0"/></div>
+				<div class="field"><span class="label">Post-roll (ms)</span>
+					<valuefield id="ds-post-roll" value="0" min="0" max="10000" step="1" decimals="0"/></div>
+			</div>
+			<div class="column">
+				<div>Result</div>
+				<div class="field"><span class="label">Number of Sections</span><span id="ds-sections">-</span></div>
+				<div class="field"><span class="label">Add as Regions</span><input type="checkbox" id="ds-add-regions"/></div>
+				<div class="field"><span class="label">Region Name</span>
+					<input type="text" class="text" id="ds-region-name"/></div>
+				<div class="field"><span class="label">Auto Number Start</span>
+					<valuefield id="ds-auto-number" value="1" min="0" max="100000" step="1" decimals="0"/></div>
+				<div class="field"><span class="label">Strip Silence</span>
+					<input type="checkbox" id="ds-strip" checked=""/></div>
+				<div class="field"><span class="label">Process All Selected Events</span>
+					<input type="checkbox" id="ds-process-all"/></div>
+				<div class="field"><span class="label">Apply Fades (ms)</span>
+					<input type="checkbox" id="ds-apply-fades"/>
+					<valuefield id="ds-fade-length" value="10" min="0" max="10000" step="1" decimals="0"/></div>
+			</div>
+		</div>
+		<div class="row">
+			<div id="ds-message"/>
+			<button id="ds-analyze" onclick="DetectSilence.analyze(document)">Analyze</button>
+			<input type="checkbox" id="ds-auto" onchange="DetectSilence.changed(document, element)"/><span>Auto</span>
+			<button id="ds-cancel" result="cancel">Cancel</button>
+			<button id="ds-process" class="primary" onclick="DetectSilence.process(document)">Process</button>
+		</div>
+	</dialog>
+</body>
+</rml>

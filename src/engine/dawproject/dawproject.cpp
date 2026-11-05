@@ -69,13 +69,13 @@ namespace gnubase::engine
 			return false;
 		}
 
-		// Automation lanes DAWproject can describe: the fader and MIDI controllers. Instrument and plugin parameters
-		// and mute stay in GNUbase's entry until plugin slots are written as devices (#72).
+		// Automation lanes DAWproject can describe: the fader and MIDI controllers. Instrument, plugin and channel
+		// strip parameters and mute stay in GNUbase's entry until plugin slots are written as devices (#72).
 		bool exportable(const AutomationTarget& target)
 		{
 			return target.type != AutomationTargetType::Instrument && target.type != AutomationTargetType::Plugin &&
-				target.type != AutomationTargetType::PanLeft && target.type != AutomationTargetType::PanRight &&
-				target.type != AutomationTargetType::Mute;
+				target.type != AutomationTargetType::Strip && target.type != AutomationTargetType::PanLeft &&
+				target.type != AutomationTargetType::PanRight && target.type != AutomationTargetType::Mute;
 		}
 
 		// The built-in effect a slot's plugin id names, or nullptr.
@@ -760,6 +760,7 @@ namespace gnubase::engine
 					break;
 				case AutomationTargetType::Instrument:
 				case AutomationTargetType::Plugin:
+				case AutomationTargetType::Strip:
 				case AutomationTargetType::PanLeft:
 				case AutomationTargetType::PanRight:
 				case AutomationTargetType::Mute:
@@ -1203,10 +1204,12 @@ namespace gnubase::engine
 								channel.input = bus.id;
 								break;
 							}
+					// A VCA channel has a fader, but no pan, sends or routing.
+					const bool vca = type == TrackType::Vca;
 					if (type != TrackType::Midi)
 					{
 						const pugi::xml_node volume = channelNode.child("Volume");
-						const pugi::xml_node pan = channelNode.child("Pan");
+						const pugi::xml_node pan = vca ? pugi::xml_node() : channelNode.child("Pan");
 						if (!volume.empty())
 						{
 							const double value = finiteNumber(volume.attribute("value"), 1.0);
@@ -1229,9 +1232,10 @@ namespace gnubase::engine
 					track.channel = channel.id;
 					m_project.channels[channel.id] = channel;
 					m_channels[channelNode.attribute("id").as_string()] = channel.id;
-					if (const pugi::xml_attribute destination = channelNode.attribute("destination"))
+					if (const pugi::xml_attribute destination = channelNode.attribute("destination");
+						!destination.empty() && !vca)
 						m_destinations.emplace_back(channel.id, destination.as_string());
-					if (type != TrackType::Midi)
+					if (type != TrackType::Midi && !vca)
 						readSends(channelNode.child("Sends"), m_project.channels.at(channel.id));
 				}
 				(parent == 0 ? m_project.tracks : m_project.trackById.at(parent).children).push_back(track.id);
@@ -1428,6 +1432,7 @@ namespace gnubase::engine
 						break;
 					case AutomationTargetType::Instrument:
 					case AutomationTargetType::Plugin:
+					case AutomationTargetType::Strip:
 					case AutomationTargetType::Mute:
 					case AutomationTargetType::Controller:
 					case AutomationTargetType::PitchBend:

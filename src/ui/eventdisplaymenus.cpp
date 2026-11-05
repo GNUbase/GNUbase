@@ -4,6 +4,7 @@
 // Events dialog.
 #include "ui/eventdisplay.h"
 
+#include "engine/time/tempomap.h"
 #include "platform/log.h"
 
 #include <RmlUi/Core/Context.h>
@@ -142,7 +143,7 @@ namespace gnubase::ui
 		showContextMenus();
 	}
 
-	// The cycle markers of the active marker track, for the zoom presets menu; its markers, for snapping.
+	// The cycle markers of the active marker track, for the zoom presets menu.
 	void EventDisplay::requestMarkers()
 	{
 		m_binding.send("marker.list", Json::object(),
@@ -151,12 +152,8 @@ namespace gnubase::ui
 				if (alive.expired() || !result.ok())
 					return;
 				m_cycleMarkers.clear();
-				m_markers.clear();
 				for (const Json& marker : result.value.at("markers"))
 				{
-					m_markers.push_back(marker.at("positionSamples").get<int64_t>());
-					if (!marker.at("endSamples").is_null()) // position markers have no end
-						m_markers.push_back(marker.at("endSamples").get<int64_t>());
 					if (marker.at("type") != "cycle")
 						continue;
 					std::string name = marker.at("name").get<std::string>();
@@ -167,6 +164,28 @@ namespace gnubase::ui
 				}
 				showPresets();
 			});
+	}
+
+	// What attracts with snap to events besides the events (reference manual p. 106: markers are events on the marker
+	// tracks): every marker track's markers, the active one's or not, as in snap.position. Each marker's position, and
+	// a cycle marker's end, in project samples as the engine converts them, from the same project.get answer as the
+	// events, so that they never come from different revisions.
+	void EventDisplay::readMarkerMagnets(const Json& project)
+	{
+		m_markers.clear();
+		std::map<uint64_t, time::TimeBase> bases; // each track's
+		for (const Json& track : project.at("tracks"))
+			bases[track.at("id").get<uint64_t>()] =
+				track.at("timeBase") == "linear" ? time::TimeBase::Linear : time::TimeBase::Musical;
+		for (const Json& marker : project.at("markers"))
+		{
+			const time::TimeBase base = bases[marker.at("track").get<uint64_t>()];
+			const auto magnet = [this, base](const Json& position)
+			{ return time::toSamples({base, position.get<int64_t>()}, m_time.tempo, m_time.sampleRate); };
+			m_markers.push_back(magnet(marker.at("position")));
+			if (!marker.at("end").is_null()) // position markers have no end
+				m_markers.push_back(magnet(marker.at("end")));
+		}
 	}
 
 	void EventDisplay::click(Rml::Element* target)
@@ -282,6 +301,12 @@ namespace gnubase::ui
 	{
 		Rml::Element* dialog = event.GetCurrentElement();
 		Rml::Element* target = event.GetTargetElement();
+		if (dialog->GetElementById("tempo-detection-dialog") != nullptr)
+		{
+			if (const Rml::Element* button = closest(target, "button"); button != nullptr && !button->GetId().empty())
+				detectTempo(button->GetId());
+			return;
+		}
 		if (resultOf(target) != "ok")
 		{
 			// A row's Delete button marks the row deleted, for the dialog's style sheet to hide it.
@@ -295,6 +320,15 @@ namespace gnubase::ui
 			const Rml::Element* shared = dialog->GetElementById("repeat-shared");
 			repeat(static_cast<int>(std::lround(count->GetAttribute<float>("value", 1.0F))),
 				shared != nullptr && shared->HasAttribute("checked"));
+		}
+		else if (Rml::Element* distance = dialog->GetElementById("calculate-tempo-distance"))
+		{
+			const Rml::Element* barStart = dialog->GetElementById("calculate-tempo-bar-start");
+			const std::vector<uint64_t> parts = selectedMidi();
+			if (!parts.empty())
+				edit("tempo.fromMidi",
+					{{"parts", parts}, {"distance", std::stoll(valueOf(distance))},
+						{"beginAtBarStart", barStart != nullptr && barStart->HasAttribute("checked")}});
 		}
 		else if (dialog->GetElementById("import-copy") != nullptr)
 		{
@@ -324,6 +358,41 @@ namespace gnubase::ui
 			m_presets = std::move(presets);
 			savePresets();
 		}
+	}
+
+	// The Tempo Detection dialog's buttons (reference manual pp. 1460-1461): Analyze detects the tempo afresh, the
+	// factors, Offbeat Correction and Smooth Tempo detect it again with them, Reset removes what it made.
+	void EventDisplay::detectTempo(const std::string& button)
+	{
+		TempoDetection& detection = m_detection;
+		Json parameters = {{"event", detection.event}};
+		if (button == "tempo-detection-reset")
+		{
+			detection = TempoDetection{detection.event};
+			parameters["reset"] = true;
+			edit("tempo.detect", std::move(parameters));
+			return;
+		}
+		if (button == "tempo-detection-analyze")
+			detection = TempoDetection{detection.event};
+		else if (button == "tempo-detection-double")
+			detection.factor *= 2.0;
+		else if (button == "tempo-detection-halve")
+			detection.factor /= 2.0;
+		else if (button == "tempo-detection-four-thirds")
+			detection.factor *= 4.0 / 3.0;
+		else if (button == "tempo-detection-three-quarters")
+			detection.factor *= 3.0 / 4.0;
+		else if (button == "tempo-detection-offbeat")
+			detection.offbeat = !detection.offbeat;
+		else if (button == "tempo-detection-smooth")
+			detection.smooth = true;
+		else
+			return;
+		parameters["factor"] = detection.factor;
+		parameters["offbeat"] = detection.offbeat;
+		parameters["smooth"] = detection.smooth;
+		edit("tempo.detect", std::move(parameters));
 	}
 
 	void EventDisplay::showFormat()

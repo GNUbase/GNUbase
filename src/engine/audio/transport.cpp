@@ -67,10 +67,12 @@ namespace gnubase::engine
 		const uint8_t state = m_state.load(std::memory_order_acquire);
 		const bool playing = (state & 1U) != 0;
 		const bool recording = (state & 2U) != 0;
-		if (playing == m_requestedPlaying && recording == m_requestedRecording)
+		const bool countingIn = (state & 4U) != 0;
+		if (playing == m_requestedPlaying && recording == m_requestedRecording && countingIn == m_requestedCountingIn)
 			return false;
 		m_requestedPlaying = playing;
 		m_requestedRecording = recording;
+		m_requestedCountingIn = countingIn;
 		return true;
 	}
 
@@ -100,23 +102,34 @@ namespace gnubase::engine
 			return false;
 		m_requestedPlaying = false;
 		m_requestedRecording = false;
+		m_requestedCountingIn = false;
 		return true;
 	}
 
-	bool Transport::record(bool on)
+	bool Transport::record(bool on, const graph::CountIn& countIn)
 	{
 		Request request{Request::Type::Record, 0, {}, 0};
 		request.record = on;
+		request.countIn = countIn;
 		if (!send(request))
 			return false;
 		// What the audio thread will do, unless playback reaches a locator meanwhile; sync() corrects it.
+		if (!on && m_requestedCountingIn) // nothing played yet
+		{
+			m_requestedPlaying = false;
+			m_requestedRecording = false;
+			m_requestedCountingIn = false;
+			return true;
+		}
 		bool now = !m_requested.punchIn || position() >= m_requested.left; // while playing
-		if (!m_requestedPlaying)
+		const bool fromStop = !m_requestedPlaying || m_requestedCountingIn;
+		if (fromStop)
 		{
 			m_playbackStart = startWithoutPreRoll(m_requested, position());
 			const time::Samples from = startPosition();
 			now = from == recordStart(m_requested, startWithoutPreRoll(m_requested, position()), from);
 		}
+		m_requestedCountingIn = on && (m_requestedCountingIn || (fromStop && countIn.length > 0));
 		m_requestedRecording = on && now;
 		m_requestedPlaying = m_requestedPlaying || on;
 		return true;
@@ -159,6 +172,16 @@ namespace gnubase::engine
 		m_stopAt = -1;
 	}
 
+	// Recording from stop: playback starts as play does, recording where it would start without the pre-roll.
+	void Transport::startRecording() noexcept
+	{
+		start();
+		m_recordAt = recordStart(m_settings, m_start, m_position);
+		m_recording = m_position == m_recordAt;
+		if (m_recording)
+			m_recordAt = -1;
+	}
+
 	void Transport::autoStop() noexcept
 	{
 		m_playing = false;
@@ -173,10 +196,11 @@ namespace gnubase::engine
 		switch (request.type)
 		{
 		case Request::Type::Play:
-			if (!m_playing)
+			if (!m_playing && !m_countingIn)
 				start();
 			return;
 		case Request::Type::Stop:
+			m_countingIn = false;
 			if (!m_playing)
 				return;
 			m_playing = false;
@@ -201,16 +225,29 @@ namespace gnubase::engine
 			{
 				m_recording = false;
 				m_recordAt = -1;
+				m_countingIn = false;
 				return;
 			}
 			m_stopAt = -1; // recording again during the post-roll
+			if (m_countingIn)
+			{
+				if (request.countIn.length > 0) // from where playback now starts
+				{
+					m_countIn = request.countIn;
+					m_countedIn = 0;
+				}
+				return;
+			}
+			if (!m_playing && request.countIn.length > 0)
+			{
+				m_countingIn = true;
+				m_countIn = request.countIn;
+				m_countedIn = 0;
+				return;
+			}
 			if (!m_playing)
 			{
-				start();
-				m_recordAt = recordStart(m_settings, m_start, m_position);
-				m_recording = m_position == m_recordAt;
-				if (m_recording)
-					m_recordAt = -1;
+				startRecording();
 				return;
 			}
 			// With punch in before the left locator, the punch in starts recording.
@@ -225,7 +262,19 @@ namespace gnubase::engine
 
 	void Transport::publish(bool changed) noexcept
 	{
-		const auto state = static_cast<uint8_t>((m_playing ? 1U : 0U) | (m_recording ? 2U : 0U));
+		// A count-in plays toward a recording: it counts as playing, and as recording if recording starts where
+		// playback starts, so recording stays as it is when the count-in ends.
+		bool recording = m_recording;
+		time::Samples countInStart = -1;
+		if (m_countingIn)
+		{
+			const time::Samples start = startWithoutPreRoll(m_settings, m_position);
+			countInStart = withPreRoll(m_settings, start);
+			recording = recordStart(m_settings, start, countInStart) == countInStart;
+		}
+		m_countInStart.store(countInStart, std::memory_order_release);
+		const auto state = static_cast<uint8_t>(
+			(m_playing || m_countingIn ? 1U : 0U) | (recording ? 2U : 0U) | (m_countingIn ? 4U : 0U));
 		if (state == m_published && !changed)
 			return;
 		m_published = state;
@@ -257,11 +306,28 @@ namespace gnubase::engine
 		frames = std::min(frames, static_cast<uint32_t>(m_segments.size()));
 		if (m_playing && m_stopAt >= 0 && m_position >= m_stopAt)
 			autoStop();
-		m_block.playing = m_playing;
 		m_block.recording = false;
 		m_block.position = m_position;
 		m_block.segmentCount = 0;
-		if (!m_playing)
+		m_block.countInFrames = 0;
+		m_block.click = m_settings.metronome;
+		uint32_t offset = 0;
+		if (m_countingIn)
+		{
+			offset = static_cast<uint32_t>(std::min<time::Samples>(frames, m_countIn.length - m_countedIn));
+			m_block.countInFrames = offset;
+			m_block.countInPosition = m_countedIn;
+			m_block.countIn = m_countIn;
+			m_countedIn += offset;
+			if (m_countedIn >= m_countIn.length)
+			{
+				m_countingIn = false;
+				startRecording();
+				m_block.position = m_position;
+			}
+		}
+		m_block.playing = m_playing && offset < frames;
+		if (!m_block.playing)
 		{
 			m_applied.store(m_locate, m_position);
 			publish(false);
@@ -270,7 +336,6 @@ namespace gnubase::engine
 
 		const bool cycles = m_settings.cycle && m_settings.left != m_settings.right;
 		const bool punchesOut = m_settings.punchOut && !m_settings.lockRecord; // Lock Record ignores it
-		uint32_t offset = 0;
 		while (offset < frames)
 		{
 			// Punching in where recording from stop starts or at the left locator.

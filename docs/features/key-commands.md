@@ -93,6 +93,7 @@ UI commands are added after the key map, so their keys are bound where the app a
 | Alt+X | `edit.splitAtCursor` | Split At Cursor |
 | Mod+D | `edit.duplicate` | Duplicate |
 | Mod+K | `edit.repeat` | Repeat |
+| Q | `edit.quantize` (the app's, everywhere) | Quantize ([quantize.md](quantize.md)) |
 | Mod+L | `edit.moveStartToCursor` | Move Event Start/Range Start to Cursor |
 | Mod+Left, Mod+Right | `edit.nudgeLeft`, `edit.nudgeRight` | Nudge Left, Right |
 | Alt+Left, Alt+Shift+Right | `edit.nudgeStartLeft`, `edit.nudgeStartRight` | Nudge Start Left, Right |
@@ -100,7 +101,8 @@ UI commands are added after the key map, so their keys are bound where the app a
 | Mod+A, Mod+Shift+A | `edit.selectAll`, `edit.selectNone` | Select All, Select None |
 | Mod+Alt+I | `edit.invertSelection` | Invert Selection |
 | Left, Right | `edit.selectPrevious`, `edit.selectNext` | Navigate Left, Right |
-| Up, Down | `track.selectPrevious`, `track.selectNext`, and the first event on the track while an event is selected | Navigate Up, Down |
+| Up, Down | `track.selectPrevious`, `track.selectNext`, and the first event on the track while an event is selected, unless `ui.upDownSelectsTracksOnly` ([track-list.md](track-list.md)) | Navigate Up, Down |
+| Alt+F2 | `track.rename` | Rename Track |
 | Mod+X, Mod+C, Mod+V | `edit.cut`, `edit.copy`, `edit.paste` | Cut, Copy, Paste ([range-editing.md](range-editing.md)) |
 | Mod+Shift+X, Shift+Backspace, Mod+Shift+V | `edit.cutTime`, `edit.deleteTime`, `edit.pasteTime` | Cut Time, Delete Time, Paste Time |
 | Mod+Shift+E | `edit.insertSilence` | Insert Silence |

@@ -107,7 +107,12 @@ namespace gnubase::engine::settings
 					Json{{"type", "string"},
 						{"enum", {"manual", "whileRecordEnabled", "whileRecording", "tapeMachine"}}},
 					"tapeMachine"},
-				{"audio.backend", "The audio backend, such as wasapi or coreaudio, or empty for the preferred one.",
+				{"audio.backend",
+					"The backend of the audio device that the windowed app opens when it starts, such as asio, wasapi "
+					"or "
+					"coreaudio, or empty for the platform's default backend (see audio.setDevice). audio.setDevice "
+					"with remember saves it, as Studio Setup does; a backend this build doesn't have opens the dummy "
+					"device instead.",
 					Json{{"type", "string"}}, ""},
 				{"audio.blockSize", "Frames per audio block.",
 					Json{{"type", "integer"}, {"minimum", 16}, {"maximum", 8192}}, 256},
@@ -119,7 +124,11 @@ namespace gnubase::engine::settings
 					"The level of the sends that track.add sends to a new effect channel, and the one Ctrl-click "
 					"gives a send in the mixer, in dB from -144 to 12 (reference manual p. 1623).",
 					Json{{"type", "number"}, {"minimum", -144}, {"maximum", 12}}, 0.0},
-				{"audio.device", "The audio device's id, or empty for the backend's default device.",
+				{"audio.device",
+					"The id of the audio device that the windowed app opens when it starts (see audio.backend), or "
+					"empty "
+					"for the backend's default device. If it can't be opened, the app starts on the dummy device and "
+					"Studio Setup says why.",
 					Json{{"type", "string"}}, ""},
 				{"audio.listenDim",
 					"How far the main mix is turned down on the monitoring bus while channels listen (channel.set "
@@ -180,6 +189,11 @@ namespace gnubase::engine::settings
 					"timeFormat) is barsBeats, linear with any other. Folder, ruler, tempo and signature tracks, "
 					"which hold no events of their own, are musical.",
 					Json{{"type", "string"}, {"enum", {"musical", "linear", "followTimeFormat"}}}, "musical"},
+				{"editing.legatoOverlap",
+					"Legato Overlap (reference manual p. 1124): how far MIDI > Functions > Legato extends notes past "
+					"the start of the next note, in ticks of 480 per quarter note, -1920 to 1920; negative values "
+					"leave a gap.",
+					Json{{"type", "integer"}, {"minimum", -1920}, {"maximum", 1920}}, 0},
 				{"editing.tempoType",
 					"The type of new tempo events (reference manual p. 1448): ramp changes the tempo gradually from "
 					"the event before, step jumps, auto takes the type of the event before (tempo.add, tempo.tap).",
@@ -300,6 +314,10 @@ namespace gnubase::engine::settings
 					"Whether the markers window and the project window select the same markers. It pauses while "
 					"recording.",
 					Json{{"type", "boolean"}}, true},
+				{"ui.removeTracksWarning",
+					"Whether Remove Selected Tracks asks before it removes tracks that aren't empty: that hold events, "
+					"parts, markers or automation, or are folders with such tracks inside (reference manual p. 213).",
+					Json{{"type", "boolean"}}, true},
 				{"ui.scale", "The UI scale, applied on top of each monitor's own scale.",
 					Json{{"type", "number"}, {"minimum", 0.5}, {"maximum", 4}}, 1.0},
 				{"ui.theme", "The theme's folder name in resources/themes.", Json{{"type", "string"}}, "gnubase"},
@@ -376,6 +394,11 @@ namespace gnubase::engine::settings
 							{{"audio", 120}, {"instrument", 120}, {"midi", 120}, {"group", 120}, {"effect", 120},
 								{"folder", 120}, {"marker", 120}, {"ruler", 140}, {"tempo", 120},
 								{"signature", 120}}}}},
+				{"ui.upDownSelectsTracksOnly",
+					"Whether Up and Down (track.selectPrevious, track.selectNext) only select tracks; when off, while "
+					"an event or part is selected they also select the first one on the newly selected track "
+					"(reference manual p. 218).",
+					Json{{"type", "boolean"}}, false},
 				{"ui.controllerLanePresets",
 					"The controller lane presets of the MIDI editors (#128, reference manual p. 1166): each a name and "
 					"the lanes it shows, as editor.set takes them.",

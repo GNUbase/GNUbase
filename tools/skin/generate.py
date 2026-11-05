@@ -562,8 +562,10 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".key-editor-key", {"background-color": mix(c["surfaceRaised"], c["text"], .8), "color": c["background"],
                              "border-bottom-width": f"{widths['hairline']}px",
                              "border-bottom-color": c["textMuted"]}),
-        (".key-editor-key.black", {"background-color": c["background"], "color": c["text"]}),
+        (".key-editor-key.black", {"background-color": c["background"], "color": c["text"],
+                                   "border-bottom-color": c["background"]}),
         (".key-editor-key.selected", {"background-color": c["accent"]}),
+        (".key-editor-key.black.selected", {"border-bottom-color": c["accent"]}),
         (".key-editor-grid", {"background-color": c["surface"]}),
         (".key-editor-row", {"border-bottom-width": f"{widths['hairline']}px",
                              "border-bottom-color": mix(c["surface"], c["border"], .5)}),
@@ -575,6 +577,10 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
                                 "border-color": c["textMuted"]}),
         (".key-note.drawing", {"background-color": c["accent"] + "66"}),
         (".key-editor-step-cursor", {"background-color": c["accent"]}),
+        # The drum editor's sound list (docs/features/drum-editor.md): rows like a list, the sounds of selected
+        # notes lit
+        (".key-editor-key.drum-sound", {"background-color": c["surfaceRaised"], "color": c["text"]}),
+        (".key-editor-key.drum-sound.selected", {"background-color": c["accent"], "color": c["background"]}),
         # The controller lanes (docs/features/controller-lanes.md): the lanes' areas like the note display, a line
         # between lanes, the bars and steps in the notes' colors, selected ones in the second accent, those outside
         # the part editing mode dimmed
@@ -617,6 +623,13 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".se-hitpoint.locked .se-hitpoint-handle", {"background-color": c["accent2"]}),
         (".se-hitpoint.disabled .se-hitpoint-line, .se-hitpoint.disabled .se-hitpoint-handle",
          {"background-color": c["textMuted"] + "66"}),
+        # The audio functions (docs/features/audio-functions.md): Detect Silence's sections along the event, the
+        # Spectrum Analyzer's bars with the one D is measured from in the second accent, the Statistics' headings
+        (".ds-display, .sa-graph", {"background-color": c["surface"]}),
+        (".ds-section", {"background-color": mix(c["surfaceRaised"], c["accent"], .6)}),
+        (".sa-bar", {"background-color": c["accent"]}),
+        (".sa-bar.reference", {"background-color": c["accent2"]}),
+        (".st-header, .st-name", {"color": c["textMuted"]}),
         # The list editor (docs/features/list-editor.md): lines between the rows, the selected rows lit, those
         # outside the part editing mode dimmed, the events in the event display and the bars of the value display
         (".list-editor-header", {"color": c["textMuted"], "border-bottom-width": f"{widths['hairline']}px",
@@ -649,6 +662,11 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         # The edit history (docs/features/edit-history.md): undone steps dimmed, and the separator after the done ones
         (".history tr.undone, .history tr.undone input.text", {"color": c["textMuted"]}),
         (".history .history-separator", {"background-color": c["accent"]}),
+        # The quantize panel's grid display (docs/features/quantize.md): the grid positions and the catch range around
+        # them
+        (".quantize-display", {"background-color": c["surface"]}),
+        (".quantize-line", {"background-color": c["accent"]}),
+        (".quantize-catch", {"background-color": c["accent"] + "33"}),
         # The on-screen keyboard (docs/features/onscreen-keyboard.md): white and black keys, lit while they sound
         (".onscreen-keyboard .white-key", {"background-color": c["text"], "color": c["background"],
                                            "border-color": c["border"]}),

@@ -25,12 +25,25 @@ equalizer and the strip's dynamics, and their controls in the mixer. The fader a
 - **Processing**: `StripSections` (`src/engine/audio/stripsections.h`) runs the sections on the DSP cores of the
   built-in effects ([processors.md](processors.md)): one `dsp::Equalizer` for the cuts (its first and last band),
   another for the four bands, and the gate, compressor and limiter cores. The channel keeps it across graph rebuilds
-  (`ChannelState`); each graph's `ChannelStrip` hands it the channel's settings, which it applies on the audio thread
-  at the start of a block, without allocating. The pre gain and phase are one gain that glides over 20 ms, through
-  zero when the phase flips; the equalizers glide their bands; dynamics start afresh when they come on. Sections
-  that are off cost nothing: an equalizer runs while a band is on and 100 ms after the last one went off, to glide
-  out, and the output of a strip with everything off is bit-identical to its input. The limiter's look-ahead counts
-  in the channel node's latency while it is on (`ChannelStrip::latency`).
+  (`ChannelState`). Its values arrive as parameter events from the channel's `AutomationPlayer`, with the fader's
+  (parameter `g_stripEvents` plus the parameter's id): the static values whenever they change, and the automation
+  as it plays. It applies each one at its sample on the audio thread, splitting the block there, without
+  allocating. The pre gain glides along the events' ramps frame by frame, like the fader, and over 5 ms to a new
+  static value; the phase glides over 20 ms through zero; the equalizers glide their bands; dynamics start afresh
+  when they come on. Sections that are off cost nothing: an equalizer runs while a band is on and 100 ms after the
+  last one went off, to glide out, and the output of a strip with everything off is bit-identical to its input. The
+  limiter's look-ahead counts in the channel node's latency while it is on or a lane of its switch plays
+  (`ChannelStrip::latency`); while such a lane has it off, it runs bypassed, so the latency stays and the switch
+  doesn't click.
+- **Parameters and automation** (#658): every setting is a parameter with a target of type `strip` and an id
+  (`StripParameter`, `src/engine/document/stripparameters.h`), in `parameter.list`, `parameter.get` and
+  `parameter.set` with its range, unit and options, and a target of automation lanes ([automation.md](automation.md),
+  [parameters.md](parameters.md)): the pre section 0 to 7 (gain, phase, then the low and the high cut's switch,
+  frequency and slope), the EQ's bypass 10 and band n's switch, type (bands 1 and 4: bell, shelf, cut), frequency,
+  gain and Q at 10n+1 to 10n+5, the gate 50 to 54, the compressor 60 to 65 and the limiter 70 to 72, each switch
+  first. Switches are 0 or 1, the slopes (6 to 48 dB per octave) and band types stepped choices, so their lanes are
+  step curves. `automationLane.targets` groups them as Pre, Equalizer and Strip. A frozen track still plays the lanes
+  of the sections after the plugin slots; its freeze file has the pre section's.
 
 ## In the mixer
 
@@ -38,7 +51,8 @@ The mixer's strips (`ui::Mixer`) have three more sections of the docking set `ch
 with Set up Window Layout: Pre (`.mixer-pre`), Equalizer (`.mixer-eq`) and Strip (`.mixer-strip`), on audio channels
 only; the fader section has the panner, a knob (`.mixer-pan`) for `pan`. Every control has a `param` attribute, the
 path of its value in the channel's JSON (`pre.lowCut.on`, `eq.bands.3.gain`): toggle buttons for the switches, knobs
-for gains, thresholds, ratios and Q, value fields in Hz for frequencies. A change sends `channel.set` with that value;
+for gains, thresholds, ratios and Q, value fields in Hz for frequencies. A change sends `channel.set` with that value,
+a knob's or value field's drag, wheel turns or held arrow key as one undo step (`EngineBinding::sendStep`, #716);
 the strip shows the engine's values after every undo step, whichever client changed them.
 
 ## Not yet
@@ -47,8 +61,8 @@ The strip's other modules (tools: de-esser and envelope shaper; saturation), the
 the maximizer and standard limiter, moving modules in the signal flow, side-chains, auto release and auto makeup,
 gain reduction and gate state LEDs, the EQ curve display and note names for frequencies, EQ and strip presets,
 choosing the cut filters' slopes and the EQ band types in the mixer, the combined panner's two controls, pre-fader
-and post-fader insert slots, the sections of input and output channels, automation of the sections' parameters,
-the sections in the inspector, and routing. The channel settings window shows them for one channel
+and post-fader insert slots, the sections of input and output channels, passing `parameter.set` changes of the
+sections to linked channels, the sections in the inspector, and routing. The channel settings window shows them for one channel
 ([channel-settings.md](channel-settings.md)). The sends are in [routing.md](routing.md). Mapping the equalizer onto DAWproject's `Equalizer` device comes with DAWproject devices.
 
 ## Checks
@@ -58,5 +72,12 @@ the sections in the inspector, and routing. The channel settings window shows th
   the pre gain, the phase (the negated input), the low and high cuts at their slopes, EQ bells, shelves and cuts and
   the EQ bypass, the gate's range, the compressor's reduction and makeup and the limiter's threshold change the output
   as they should; the pre section drives a plugin slot and the EQ lifts what comes out of it; the limiter's latency.
+- `tests/parameter_tests.cpp`: the sections' parameters with their ranges, units and options, `parameter.set` and
+  `channel.set` changing the same values, their groups, and none on MIDI channels.
+- `tests/automation_tests.cpp`: at block sizes 64 and 100, a pre gain lane with steps and a ramp gives the expected
+  gain on every sample and the static gain with reading off; the phase's lane is a step curve that switches at its
+  point's sample; section lanes check their ranges and targets, round-trip through the project file and are copied
+  with the track. `tests/rtcheck_tests.cpp` plays section automation, the limiter's switch included, under the RT
+  checker.
 - `tests/mixerwindow_tests.cpp`: the setup pane shows the sections, which MIDI channels don't have; the toggles,
   knobs and the panner send `channel.set`, and the controls show values set from the engine.

@@ -7,6 +7,7 @@
 
 #include "engine/engine.h"
 #include "engine/time/tempomap.h"
+#include "scripting/runtime.h"
 #include "testutils/fakeui.h"
 #include "ui/automation.h"
 #include "ui/canvas.h"
@@ -23,7 +24,9 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -1001,4 +1004,168 @@ TEST_CASE("the transport controls refuse buttons and menu items with a command t
 	REQUIRE(document != nullptr);
 	CHECK_THROWS_AS(std::make_unique<ui::TransportControls>(engine, binding, *document, run), std::invalid_argument);
 	document->Close();
+}
+
+namespace
+{
+	// The first element in the window's documents that matches the selector. Only drawing updates RmlUi here, so its
+	// box is where the window last drew it.
+	Rml::Element& drawn(ui::Window& window, const std::string& selector)
+	{
+		Rml::Context& context = window.context();
+		for (int i = 0; i < context.GetNumDocuments(); ++i)
+			if (Rml::Element* found = context.GetDocument(i)->QuerySelector(selector))
+				return *found;
+		throw std::invalid_argument("no " + selector);
+	}
+
+	// What a time display shows: a text display's value, another element's text.
+	std::string value(Rml::Element& display)
+	{
+		return display.GetTagName() == "textdisplay" ? display.GetAttribute<Rml::String>("value", "")
+													 : display.GetInnerRML();
+	}
+
+	// Where the project window draws the project cursor for the position its event display has: pixels right of the
+	// lanes' left edge.
+	double cursorPixels(test::UiApp& app, const ui::EventDisplay& display)
+	{
+		return (display.cursor() - display.view().start) / display.view().scale * app.main().dpRatio();
+	}
+}
+
+TEST_CASE(
+	"the project cursor and the time displays follow playback and changes made through Lua, without input", "[ui]")
+{
+	test::UiApp app({1024, 600});
+	const ui::EventDisplay& display = showBar(app);
+	app.keys().run("window.timeDisplay", Json::object(), app.main(), nullptr);
+	ui::Window* timeWindow = app.appUi().timeDisplay();
+	REQUIRE(timeWindow != nullptr);
+	Rml::Element& cursor = drawn(app.main(), ".project-cursor");
+	Rml::Element& bar = drawn(app.main(), "#primary-time");
+	Rml::Element& time = drawn(*timeWindow, "#time-display");
+	REQUIRE(app.waitUntil([&] { return value(bar) == "1.1.1.0" && !value(time).empty(); }));
+	app.call("audio.setDevice", {{"blockSize", 256}}); // the dummy device
+	app.call("audio.start");
+	app.call("transport.play");
+
+	// No input from here on. The views follow the playback position once a frame, and whenever what one shows changes
+	// in a step, its window draws it in that step.
+	int moved = 0;
+	int counted = 0;
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+	while ((moved < 10 || counted < 10) && std::chrono::steady_clock::now() < deadline)
+	{
+		const uint64_t mainFrames = app.main().frames();
+		const uint64_t timeFrames = timeWindow->frames();
+		const double before = display.cursor();
+		const std::string barBefore = value(bar);
+		const std::string timeBefore = value(time);
+		app.shell().step(std::chrono::milliseconds(20));
+		if (display.cursor() != before || value(bar) != barBefore)
+		{
+			++moved;
+			CHECK(app.main().frames() == mainFrames + 1);
+			CHECK(std::abs(cursor.GetOffsetLeft() - cursorPixels(app, display)) < 1.0);
+		}
+		if (value(time) != timeBefore)
+		{
+			++counted;
+			CHECK(timeWindow->frames() == timeFrames + 1);
+		}
+	}
+	CHECK(moved >= 10);
+	CHECK(counted >= 10);
+	app.call("transport.stop");
+	app.call("audio.stop");
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("playing") == false; }));
+	// The cursor is in seconds: sample / 48000 * 48000 doesn't give every sample back exactly.
+	REQUIRE(app.waitUntil([&display, &app]
+		{ return std::llround(display.cursor() * 48000.0) == static_cast<long long>(position(app)); }));
+
+	// A change made through Lua, as through any other engine client: the windows draw it in the step it arrives in.
+	app.shell().step(std::chrono::milliseconds(0));
+	const std::string stopped = value(time);
+	CHECK(!app.lua().run("gnubase.transport.locate{position = 96000}", "locate").has_value());
+	bool shown = false;
+	const auto locateDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+	while (!shown && std::chrono::steady_clock::now() < locateDeadline)
+	{
+		const uint64_t mainFrames = app.main().frames();
+		const uint64_t timeFrames = timeWindow->frames();
+		const double before = display.cursor();
+		const std::string barBefore = value(bar);
+		const std::string timeBefore = value(time);
+		app.shell().step(std::chrono::milliseconds(20));
+		if (display.cursor() != before || value(bar) != barBefore)
+		{
+			CHECK(app.main().frames() == mainFrames + 1);
+			CHECK(std::abs(cursor.GetOffsetLeft() - cursorPixels(app, display)) < 1.0);
+		}
+		if (value(time) != timeBefore)
+			CHECK(timeWindow->frames() == timeFrames + 1);
+		shown = display.cursor() == 2.0 && value(bar) == "2.1.1.0" && value(time) != stopped;
+	}
+	CHECK(shown);
+}
+
+TEST_CASE("windows whose documents nothing changed in don't draw, also during playback", "[ui][slow]")
+{
+	test::UiApp app({1024, 600});
+	showBar(app);
+	app.keys().run("window.mixer", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return app.appUi().mixer(1) != nullptr; }));
+	const ui::Window* mixer = app.shell().find(app.appUi().mixerWindow(1));
+	REQUIRE(mixer != nullptr);
+	// The time display window shows only the beat, which changes twice a second at 120 BPM, while the position it
+	// follows changes once a frame (#745).
+	app.keys().run("window.timeDisplay", Json::object(), app.main(), nullptr);
+	ui::Window* timeWindow = app.appUi().timeDisplay();
+	REQUIRE(timeWindow != nullptr);
+	Rml::Element& beat = drawn(*timeWindow, "#time-display");
+	app.call("settings.set", {{"key", "ui.timeDisplay"}, {"value", {{"beatCountOnly", true}, {"size", 1}}}});
+	REQUIRE(app.waitUntil([&beat] { return value(beat) == "1"; }));
+	app.call("audio.setDevice", {{"blockSize", 256}}); // the dummy device
+	app.call("audio.start");
+
+	// Longer than the status line takes to ask the engine for the record time again (once a second): its answer
+	// draws only what it changed.
+	const auto idle = [&app, mixer, timeWindow, &beat](bool playing)
+	{
+		const uint64_t mainFrames = app.main().frames();
+		const uint64_t mixerFrames = mixer->frames();
+		int beats = 0;
+		int wrong = 0; // steps in which the time display window drew without its beat changing, or the other way round
+		const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(2500);
+		while (std::chrono::steady_clock::now() < until)
+		{
+			const uint64_t timeFrames = timeWindow->frames();
+			const std::string before = value(beat);
+			app.shell().step(std::chrono::milliseconds(20));
+			const bool changed = value(beat) != before;
+			beats += changed ? 1 : 0;
+			wrong += timeWindow->frames() == timeFrames + (changed ? 1 : 0) ? 0 : 1;
+		}
+		CHECK(wrong == 0); // it draws in the steps its beat changes in, and in no other
+		CHECK(mixer->frames() == mixerFrames);
+		if (playing)
+		{
+			CHECK(app.main().frames() > mainFrames + 10); // the project cursor and the transport bar's time displays
+			CHECK(beats >= 3);
+		}
+	};
+	const auto settle = [&app]
+	{
+		for (int i = 0; i < 10; ++i)
+			app.shell().step(std::chrono::milliseconds(20));
+	};
+	settle(); // what the audio's events changed
+	idle(false);
+	app.call("transport.play");
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("playing") == true; }));
+	settle(); // what the transport's events changed
+	idle(true);
+	app.call("transport.stop");
+	app.call("audio.stop");
 }

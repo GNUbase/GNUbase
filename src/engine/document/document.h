@@ -3,6 +3,8 @@
 
 #include "engine/document/channelformat.h"
 #include "engine/document/snap.h"
+#include "engine/metronome/metronomesettings.h"
+#include "engine/midi/modifiers.h"
 #include "engine/midi/quantizesettings.h"
 #include "engine/time/signaturemap.h"
 #include "engine/time/tempomap.h"
@@ -218,6 +220,10 @@ namespace gnubase::engine
 		// none sends nothing, which leaves the instrument's own.
 		std::optional<int> midiVolume = std::nullopt;
 		std::optional<int> midiPan = std::nullopt;
+		// MIDI and instrument tracks: the MIDI modifiers, which change how the track's notes play
+		// (docs/features/midi-modifiers.md).
+		// NOLINTNEXTLINE(readability-redundant-member-init): see instrumentParameters
+		midi::Modifiers modifiers = {};
 		// The values set for the instrument's parameters (parameter.set), by parameter id; the others are at their
 		// defaults. A new instrument starts with none.
 		// The initializer lets Channel{...} leave it out without GCC's and Clang's -Wmissing-field-initializers, like
@@ -553,6 +559,10 @@ namespace gnubase::engine
 		int lane = 0;      // the track's lane it is on, from 0: cycle recordings put their takes on lanes (#98)
 		std::map<ObjectId, Note> notes;
 		std::map<ObjectId, Controller> controllers;
+		// Added to the track's MIDI modifiers' transpose and velocity shift as it plays (reference manual p. 1107),
+		// -127 to 127: the info line's Transpose and Velocity.
+		int transpose = 0;
+		int velocity = 0;
 	};
 
 	// A frozen track's rendered audio (#116, reference manual pp. 219-220): a file of the project's media folder's
@@ -595,6 +605,7 @@ namespace gnubase::engine
 		// Audio and instrument tracks: what plays while the track is frozen, or none. Initialized like picture.
 		// NOLINTNEXTLINE(readability-redundant-member-init): see above
 		std::optional<Freeze> frozen = {};
+		ObjectId drumMap = 0; // MIDI and instrument tracks: the drum map their notes play through, or 0 (#129)
 	};
 
 	// Whether tracks of a type can be disabled (reference manual p. 219): audio, instrument and MIDI tracks.
@@ -633,6 +644,7 @@ namespace gnubase::engine
 		Mute,            // the channel's mute button: 0 off, 1 on; a step curve
 		Instrument,      // a parameter of the channel's built-in instrument, in its range
 		Plugin,          // a parameter of the plugin in one of the channel's slots, in its range: slot and parameter
+		Strip,           // a parameter of the channel strip's sections (StripParameter), in its range
 		Controller,      // a MIDI control change: number and channel; 0 to 1
 		PitchBend,       // channel; 0 to 1, 0.5 is no bend
 		ChannelPressure, // channel; 0 to 1
@@ -641,7 +653,7 @@ namespace gnubase::engine
 	struct AutomationTarget
 	{
 		AutomationTargetType type = AutomationTargetType::Volume;
-		uint32_t parameter = 0; // Instrument and Plugin: the parameter's id
+		uint32_t parameter = 0; // Instrument, Plugin and Strip: the parameter's id
 		uint8_t number = 0;     // Controller: 0-127
 		uint8_t channel = 0;    // the MIDI types: 0-15
 		ObjectId slot = 0;      // Plugin: the slot
@@ -705,6 +717,42 @@ namespace gnubase::engine
 		return std::tie(
 				   a.id, a.name, a.channels, a.volume, a.pan, a.mute, a.record, a.eq, a.dynamics, a.sends, a.vca) ==
 			std::tie(b.id, b.name, b.channels, b.volume, b.pan, b.mute, b.record, b.eq, b.dynamics, b.sends, b.vca);
+	}
+
+	// A drum sound of a drum map (#129, reference manual pp. 1235-1240, docs/features/drum-editor.md): the sound of
+	// the pitch that is its index in the map.
+	struct DrumSound
+	{
+		std::string name;
+		midi::NoteValue snap; // the drum editor's grid and length for the sound
+		bool mute = false;    // doesn't play
+		uint8_t iNote = 0;    // the note played in that becomes this pitch
+		uint8_t oNote = 0;    // the note that plays
+		int channel = -1;     // 0-15, the MIDI channel it plays on; -1: Any, the note's
+		std::string output;   // the MIDI output it plays on; empty: the track's (Default)
+	};
+
+	inline bool operator==(const DrumSound& a, const DrumSound& b)
+	{
+		return std::tie(a.name, a.snap, a.mute, a.iNote, a.oNote, a.channel, a.output) ==
+			std::tie(b.name, b.snap, b.mute, b.iNote, b.oNote, b.channel, b.output);
+	}
+
+	inline constexpr int g_drumSounds = 128;
+
+	// Settings for each of the 128 pitches that change how the notes of the tracks using the map play and come in,
+	// and how the drum editor shows them.
+	struct DrumMap
+	{
+		ObjectId id = 0;
+		std::string name;
+		std::array<DrumSound, g_drumSounds> sounds;
+		std::array<uint8_t, g_drumSounds> order{}; // the drum sound list's order, from the top: each pitch once
+	};
+
+	inline bool operator==(const DrumMap& a, const DrumMap& b)
+	{
+		return std::tie(a.id, a.name, a.sounds, a.order) == std::tie(b.id, b.name, b.sounds, b.order);
 	}
 
 	// A color of the project's color set (reference manual pp. 115-118), which colors are picked from.
@@ -785,6 +833,7 @@ namespace gnubase::engine
 		ObjectId activeMarkerTrack = 0; // the marker track that marker commands use by default, or 0
 		std::map<ObjectId, AutomationLane> automation;
 		std::map<ObjectId, LinkGroup> linkGroups;
+		std::map<ObjectId, DrumMap> drumMaps; // a new project has the GM Map (#129)
 		// Virgin territory instead of initial values (reference manual p. 881): automation lanes have gaps before their
 		// first and after their last point too, where their parameters have their static values. A setting saved with
 		// the project, not part of undo.
@@ -794,6 +843,10 @@ namespace gnubase::engine
 		// not part of undo.
 		midi::QuantizeSettings quantize;
 		bool autoQuantize = false;
+		// The preset last chosen with quantize.set, saved or renamed while the quantize settings are its own, which
+		// quantize.get reports among presets with equal settings (#770); empty once the settings change. A setting,
+		// not part of undo.
+		std::string quantizePreset;
 		// Snap and grid (#87): settings, not part of undo.
 		SnapSettings snap;
 		// The color last given to events or parts, for editing.autoTrackColor's lastApplied: not part of undo or the
@@ -801,6 +854,9 @@ namespace gnubase::engine
 		std::string lastAppliedColor;
 		// What each mixer hides (#106), by mixer: lower, window1 to window4. Settings, not part of undo.
 		std::map<std::string, MixerView> mixers;
+
+		// The metronome and count-in (#101). Settings, not part of undo.
+		metronome::MetronomeSettings metronome;
 
 		ObjectId newId() { return nextId++; }
 
@@ -876,11 +932,13 @@ namespace gnubase::engine
 	inline bool operator==(const Channel& a, const Channel& b)
 	{
 		return std::tie(a.id, a.track, a.format, a.input, a.output, a.instrument, a.volume, a.pan, a.panner, a.panLeft,
-				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.instrumentParameters, a.monitor, a.recordEnable,
-				   a.midiInput, a.mute, a.solo, a.soloDefeat, a.listen, a.slots, a.notes, a.sections, a.sends) ==
+				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.modifiers, a.instrumentParameters, a.monitor,
+				   a.recordEnable, a.midiInput, a.mute, a.solo, a.soloDefeat, a.listen, a.slots, a.notes, a.sections,
+				   a.sends) ==
 			std::tie(b.id, b.track, b.format, b.input, b.output, b.instrument, b.volume, b.pan, b.panner, b.panLeft,
-				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.instrumentParameters, b.monitor, b.recordEnable,
-				b.midiInput, b.mute, b.solo, b.soloDefeat, b.listen, b.slots, b.notes, b.sections, b.sends);
+				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.modifiers, b.instrumentParameters, b.monitor,
+				b.recordEnable, b.midiInput, b.mute, b.solo, b.soloDefeat, b.listen, b.slots, b.notes, b.sections,
+				b.sends);
 	}
 
 	inline bool operator==(const Slot& a, const Slot& b)
@@ -991,8 +1049,10 @@ namespace gnubase::engine
 	// A MIDI part's own properties, without its notes and controllers.
 	inline bool sameProperties(const MidiPart& a, const MidiPart& b)
 	{
-		return std::tie(a.id, a.track, a.name, a.position, a.length, a.mute, a.lock, a.shared, a.color, a.lane) ==
-			std::tie(b.id, b.track, b.name, b.position, b.length, b.mute, b.lock, b.shared, b.color, b.lane);
+		return std::tie(a.id, a.track, a.name, a.position, a.length, a.mute, a.lock, a.shared, a.color, a.lane,
+				   a.transpose, a.velocity) ==
+			std::tie(b.id, b.track, b.name, b.position, b.length, b.mute, b.lock, b.shared, b.color, b.lane,
+				b.transpose, b.velocity);
 	}
 
 	inline bool operator==(const ProjectColor& a, const ProjectColor& b)
@@ -1027,9 +1087,9 @@ namespace gnubase::engine
 	inline bool operator==(const Track& a, const Track& b)
 	{
 		return std::tie(a.id, a.type, a.name, a.color, a.timeBase, a.parent, a.channel, a.children, a.autoFades,
-				   a.timeFormat, a.enabled, a.picture, a.timeOffset, a.timeOffsetOn, a.frozen) ==
+				   a.timeFormat, a.enabled, a.picture, a.timeOffset, a.timeOffsetOn, a.frozen, a.drumMap) ==
 			std::tie(b.id, b.type, b.name, b.color, b.timeBase, b.parent, b.channel, b.children, b.autoFades,
-				b.timeFormat, b.enabled, b.picture, b.timeOffset, b.timeOffsetOn, b.frozen);
+				b.timeFormat, b.enabled, b.picture, b.timeOffset, b.timeOffsetOn, b.frozen, b.drumMap);
 	}
 	// Where an audio event plays, in the project's samples (fadeedits.cpp).
 	struct EventSpan

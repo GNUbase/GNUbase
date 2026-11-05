@@ -1,0 +1,170 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The Statistics window (#147, docs/features/audio-functions.md, reference manual p. 609) for the audio events in the
+     document's attribute events (ids): ui::EventDisplay opens it (audio.statistics). Its Lua measures the section of
+     the clip each event plays (clip.statistics) and shows a table per event, a column per channel. -->
+<rml>
+<head>
+	<title>Statistics</title>
+	<style>
+		dialog
+		{
+			width: 560dp;
+		}
+
+		#st-tables
+		{
+			margin: 8dp 12dp 0 12dp;
+			max-height: 520dp;
+			overflow-y: auto;
+		}
+
+		.st-event
+		{
+			margin-top: 8dp;
+		}
+
+		.st-row
+		{
+			display: flex;
+			height: 22dp;
+			align-items: center;
+		}
+
+		.st-label
+		{
+			width: 200dp;
+		}
+
+		.st-value
+		{
+			flex: 1;
+		}
+
+		.row
+		{
+			display: flex;
+			justify-content: flex-end;
+			margin: 8dp 12dp 0 12dp;
+		}
+	</style>
+	<script>
+		Statistics = {}
+		local dialog = Statistics
+
+		local function escape(text)
+			return (tostring(text):gsub('[&<>"]', {["&"] = "&amp;", ["<"] = "&lt;", [">"] = "&gt;", ['"'] = "&quot;"}))
+		end
+
+		-- A level in dB, or -oo for silence.
+		local function db(value, unit)
+			if value == nil then
+				return "-oo " .. unit
+			end
+			return string.format("%.2f %s", value, unit)
+		end
+
+		local noteNames = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"}
+
+		-- A frequency's note, with C3 as middle C, and how many cents it is off.
+		function dialog.note(frequency)
+			local pitch = 69 + (12 * math.log(frequency / 440, 2))
+			local nearest = math.floor(pitch + 0.5)
+			local cents = math.floor(((pitch - nearest) * 100) + 0.5)
+			return string.format("%s%d %+d cents", noteNames[(nearest % 12) + 1], (nearest // 12) - 2, cents)
+		end
+
+		local function channelNames(count)
+			if count == 1 then
+				return {"Mono"}
+			end
+			if count == 2 then
+				return {"Left", "Right"}
+			end
+			local names = {}
+			for i = 1, count do
+				names[i] = "Channel " .. i
+			end
+			return names
+		end
+
+		local function row(label, values, class)
+			local cells = {}
+			for _, value in ipairs(values) do
+				cells[#cells + 1] = '<span class="st-value">' .. escape(value) .. "</span>"
+			end
+			return '<div class="st-row' .. (class and " " .. class or "") .. '"><span class="st-label">' .. escape(label) ..
+				"</span>" .. table.concat(cells) .. "</div>"
+		end
+
+		-- One table: the statistics of a channel per column.
+		local function tableOf(name, result)
+			local columns = {}
+			local function add(label, format)
+				local values = {}
+				for _, channel in ipairs(result.channels) do
+					values[#values + 1] = format(channel)
+				end
+				columns[#columns + 1] = row(label, values)
+			end
+			columns[#columns + 1] = row("Channel", channelNames(#result.channels), "st-header")
+			add("Min. Sample Value", function(c) return db(c.minSampleDb, "dB") end)
+			add("Max. Sample Value", function(c) return db(c.maxSampleDb, "dB") end)
+			add("Peak Amplitude", function(c) return db(c.peakDb, "dB") end)
+			add("True Peak", function(c) return db(c.truePeakDb, "dB") end)
+			add("DC Offset", function(c)
+				return string.format("%.4f %% (%s)", c.dcOffsetPercent, db(c.dcOffsetDb, "dB"))
+			end)
+			add("Bit Depth", function(c)
+				return c.bitDepth == 32 and "32 Bit Float" or (c.bitDepth .. " Bit")
+			end)
+			add("Estimated Pitch", function(c)
+				return c.pitch and string.format("%.1f Hz (%s)", c.pitch, dialog.note(c.pitch)) or "-"
+			end)
+			add("Sample Rate", function() return string.format("%d Hz", math.floor(result.sampleRate + 0.5)) end)
+			add("Average RMS (AES17)", function(c) return db(c.averageRms, "dB") end)
+			add("Max. RMS", function(c) return db(c.maxRms, "dB") end)
+			local loudness = result.loudness
+			local lines = {'<div class="st-event">', '<div class="st-name">' .. escape(name) .. "</div>",
+				table.concat(columns), row("Max. RMS All Channels", {db(result.maxRmsAllChannels, "dB")}),
+				'<div class="st-name">Loudness (EBU R 128)</div>',
+				row("Max. Momentary Loudness", {db(loudness.maxMomentary, "LUFS")}),
+				row("Max. Short-Term Loudness", {db(loudness.maxShortTerm, "LUFS")}),
+				row("Integrated Loudness", {db(loudness.integrated, "LUFS")}),
+				row("Loudness Range", {loudness.range and string.format("%.2f LU", loudness.range) or "-"}),
+				row("Max. True Peak Level", {db(loudness.maxTruePeak, "dBTP")}), "</div>"}
+			return table.concat(lines)
+		end
+
+		function dialog.load(document)
+			local wanted = {}
+			for id in tostring(document:GetAttribute("events") or ""):gmatch("%d+") do
+				wanted[tonumber(id)] = true
+			end
+			local project = gnubase.project.get()
+			local names = {}
+			for _, clip in ipairs(project.clips) do
+				names[clip.id] = clip.name
+			end
+			local tables = {}
+			for _, event in ipairs(project.audioEvents) do
+				if wanted[event.id] then
+					local ok, result = pcall(gnubase.clip.statistics,
+						{clip = event.clip, start = event.offset, ["end"] = event.offset + event.length})
+					tables[#tables + 1] = ok and tableOf(names[event.clip] or "", result) or
+						('<div class="st-event">' .. escape(tostring(result)) .. "</div>")
+				end
+			end
+			document:GetElementById("st-tables").inner_rml = table.concat(tables)
+		end
+	</script>
+</head>
+<body onshow="Statistics.load(document)">
+	<dialog id="statistics-dialog">
+		<div class="dialog-titlebar">Statistics</div>
+		<div id="st-tables"/>
+		<div class="row">
+			<button id="st-close" class="primary" result="ok">Close</button>
+		</div>
+	</dialog>
+</body>
+</rml>

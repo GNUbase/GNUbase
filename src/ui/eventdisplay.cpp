@@ -8,6 +8,7 @@
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Event.h>
+#include <RmlUi/Core/Input.h>
 #include <RmlUi/Core/Property.h>
 
 #include <algorithm>
@@ -285,20 +286,52 @@ namespace gnubase::ui
 				{
 					m_project = result.value;
 					++m_loads;
+					m_read = m_binding.handed();
 					// Settings, not undo steps: only a fresh answer has them, not m_project shown again later.
 					takeSnap(m_project.at("snap"));
 					m_quantize = engine::midi::quantizeSettingsFromJson(m_project.at("quantize"));
-					loadProject(m_project);
+					resizeProjectChanged();
+					showProject();
 				}
 				if (std::exchange(m_stale, false))
 					requestProject();
 			});
 	}
 
+	void EventDisplay::showProject()
+	{
+		if (!m_project.is_object())
+			return;
+		if (m_resizePreview.is_null() && m_releasedPreview.is_null())
+		{
+			loadProject(m_project);
+			return;
+		}
+		// While an edge is dragged, and after the release until the project shows the resize, the events as
+		// event.previewResize says the release leaves them (#732).
+		Json project = m_project;
+		for (const Json* preview : {&m_releasedPreview, &m_resizePreview})
+		{
+			if (preview->is_null())
+				continue;
+			for (const char* kind : {"audioEvents", "audioParts", "midiParts"})
+			{
+				std::map<uint64_t, const Json*> previewed;
+				for (const Json& item : preview->at(kind))
+					previewed[item.at("id").get<uint64_t>()] = &item;
+				for (Json& item : project.at(kind))
+					if (const auto found = previewed.find(item.at("id").get<uint64_t>()); found != previewed.end())
+						item = *found->second;
+			}
+		}
+		loadProject(project);
+	}
+
 	void EventDisplay::loadProject(const Json& project)
 	{
 		if (!readTimeContext(project, m_time))
 			logging::warning("The event display can't read the project's tempo or signatures");
+		readMarkerMagnets(project);
 		showSnap();
 
 		// A lane per track that isn't hidden, in the project's order.
@@ -598,7 +631,8 @@ namespace gnubase::ui
 		const bool playing = status.at("playing").get<bool>();
 		if (playing && !m_position)
 		{
-			m_position = m_binding.watch<int64_t>([this] { return m_engine.playbackPosition(); },
+			m_position = m_binding.watch<int64_t>(
+				m_root.get(), [this] { return m_engine.playbackPosition(); },
 				[this](const int64_t& sample)
 				{
 					setCursor(sample);
@@ -805,8 +839,7 @@ namespace gnubase::ui
 		if (tracks == m_hidden)
 			return;
 		m_hidden = std::move(tracks);
-		if (m_project.is_object())
-			loadProject(m_project);
+		showProject();
 	}
 
 	void EventDisplay::showLanes(uint64_t track, bool shown)
@@ -817,8 +850,7 @@ namespace gnubase::ui
 			m_lanesShown.insert(track);
 		else
 			m_lanesShown.erase(track);
-		if (m_project.is_object())
-			loadProject(m_project);
+		showProject();
 	}
 
 	void EventDisplay::setFolderMode(const std::string& mode)
@@ -826,8 +858,7 @@ namespace gnubase::ui
 		if (mode == m_folderMode)
 			return;
 		m_folderMode = mode;
-		if (m_project.is_object())
-			loadProject(m_project);
+		showProject();
 	}
 
 	void EventDisplay::setAutoScroll(bool on)
@@ -997,8 +1028,19 @@ namespace gnubase::ui
 				m_mouse.reset();
 			break;
 		case Rml::EventId::Keydown:
-		case Rml::EventId::Keyup:
+			// Escape cancels a drag of edges (#732), and does nothing else then.
+			if (event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN) == Rml::Input::KI_ESCAPE &&
+				cancelResize())
+			{
+				event.StopPropagation();
+				break;
+			}
 			heldKeys(event); // a modifier key may change what a press does
+			resizeKeysChanged();
+			break;
+		case Rml::EventId::Keyup:
+			heldKeys(event);
+			resizeKeysChanged();
 			break;
 		case Rml::EventId::Mouseup:
 			areaUp(event);
@@ -1035,6 +1077,12 @@ namespace gnubase::ui
 
 	void EventDisplay::mouseDown(Rml::Event& event, Rml::Element& target)
 	{
+		// A drag of edges whose release the display didn't see (#732).
+		if (!m_resizeWanted.is_null())
+		{
+			endResize();
+			showProject();
+		}
 		const auto x = event.GetParameter<float>("mouse_x", 0.0F);
 		const auto y = event.GetParameter<float>("mouse_y", 0.0F);
 		m_dragX = x;
@@ -1146,7 +1194,7 @@ namespace gnubase::ui
 		case Drag::Automation:
 		case Drag::Volume:
 		case Drag::VolumePoint:
-			areaMove(dx, dy, restricts(event));
+			areaMove(event, dx, dy);
 			return;
 		case Drag::None:
 			return;

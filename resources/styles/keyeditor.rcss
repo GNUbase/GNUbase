@@ -3,7 +3,8 @@
    the note display: the keyboard beside the grid of 128 pitch rows, the notes over it and the step input cursor. Code
    places the parts, the notes and the cursor in percent of the grid; the rows' height here sets the pitches' height.
    The keys and rows of black keys get .black, lit keys .selected, notes .selected, .inactive (outside the part
-   editing mode) and .drawing (being drawn), the tools and input buttons .checked; the themes color them. */
+   editing mode) and .drawing (being drawn), the tools and input buttons .checked; the themes color them. The drum
+   editor is .key-editor.drum-editor, below. */
 .key-editor
 {
 	flex: 1 1 0;
@@ -71,10 +72,14 @@
 	min-height: 0;
 }
 
+/* The piano keyboard as high as the grid's 128 rows of 10dp. Code places each key's top and height: a black key on
+   its pitch's row, the white keys in equal shares of their octave. */
 .key-editor-keys
 {
+	position: relative;
 	flex-shrink: 0;
 	width: 48dp;
+	height: 1280dp;
 }
 
 .key-editor-grid
@@ -83,24 +88,34 @@
 	flex: 1 1 0;
 }
 
-.key-editor-key, .key-editor-row
+/* The row height: .key-editor-keys is 128 of them high. */
+.key-editor-row
 {
 	display: block;
 	height: 10dp;
 	box-sizing: border-box;
 }
 
+/* A C key's name sits at the right, level with its own row (the bottom 10dp of the key's 120/7dp) but 1dp higher, clear
+   of the key's bottom border. */
 .key-editor-key
 {
+	position: absolute;
+	left: 0;
+	width: 100%;
+	box-sizing: border-box;
+	overflow: hidden;
 	font-size: 8dp;
 	line-height: 10dp;
 	text-align: right;
+	padding-top: 6dp;
 	padding-right: 2dp;
 }
 
 .key-editor-key.black
 {
-	margin-right: 16dp;
+	width: 60%;
+	padding-top: 0;
 }
 
 .key-editor-notes
@@ -129,6 +144,90 @@
 .key-editor-step-cursor.off
 {
 	display: none;
+}
+
+/* The drum editor (#129, docs/features/drum-editor.md): the drum sound list instead of the keyboard, a row per
+   sound with its pitch, mute button, name, snap, I-note, O-note and channel; taller rows; the notes as diamonds at
+   their start, which code places by their left edge. */
+.drum-editor .editor-parts
+{
+	margin-left: 300dp;
+}
+
+/* The drum sounds stack in the list's flow, unlike the piano keys code places. */
+.drum-editor .key-editor-keys
+{
+	width: 300dp;
+	height: auto;
+}
+
+.drum-editor .key-editor-row, .key-editor-key.drum-sound
+{
+	height: 16dp;
+}
+
+.key-editor-key.drum-sound
+{
+	position: static;
+	padding-top: 0;
+	display: flex;
+	flex-direction: row;
+	align-items: center;
+	font-size: 10dp;
+	line-height: 14dp;
+	text-align: left;
+	padding-right: 0;
+	white-space: nowrap;
+}
+
+.drum-sound-pitch
+{
+	width: 32dp;
+	padding-left: 4dp;
+}
+
+.drum-sound-mute
+{
+	width: 16dp;
+	min-width: 16dp;
+	height: 14dp;
+	padding: 0;
+	font-size: 9dp;
+	line-height: 14dp;
+}
+
+.drum-sound textdisplay
+{
+	min-width: 0;
+	height: 14dp;
+	padding: 0 2dp;
+	overflow: hidden;
+}
+
+.drum-sound textdisplay.drum-sound-name
+{
+	flex: 1 1 0;
+	margin-left: 4dp;
+	text-align: left;
+}
+
+.drum-sound textdisplay.drum-sound-field
+{
+	flex: 0 0 auto;
+	width: 40dp;
+}
+
+.key-note.drum-note
+{
+	width: 10dp;
+	height: 10dp;
+	margin: 3dp 0 0 -5dp;
+	transform: rotate(45deg);
+}
+
+#drum-map
+{
+	min-width: 80dp;
 }
 
 /* The inspector's Chord Editing section (pp. 1215-1218). */

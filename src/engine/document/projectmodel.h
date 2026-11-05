@@ -15,6 +15,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace gnubase::engine
@@ -108,12 +109,25 @@ namespace gnubase::engine
 		// Registers a command defined in another file, such as quantize.* (#132). A command that changes the project
 		// is one undo step named action, like the commands here, and transactions can run it.
 		void addEdit(Engine& engine, CommandInfo info, std::string action, Handler handler);
-		// Runs a command registered with addEdit as part of the command running, as transactions run them: on its
-		// project, with its events going out with that command's and its changes in that command's undo step.
+		// Runs a command registered with addEdit as part of the command running: on its project, with its events
+		// going out with that command's and its changes in that command's undo step. Unlike a transaction it doesn't
+		// check the parameters against the command's schema, so the caller passes valid ones, and doesn't sync shared
+		// parts between commands (syncSharedParts): the copies of a shared part it edits catch up only when the
+		// command running ends, so its caller must not read them before.
 		Json runEdit(const std::string& command, Project& project, const Json& parameters, CommandContext& context);
 
 		// The project, for commands defined in other files that read it. Only on the command thread.
 		const Project& project() const { return m_project; }
+		// Sets Project::quantizePreset, for the quantize preset commands, which change presets, not the project's
+		// content, so they aren't edits. The project file saves the name, though: a new one advances the revision, so
+		// that the project counts as modified and is auto saved. Only on the command thread.
+		void setQuantizePreset(std::string name)
+		{
+			if (name == m_project.quantizePreset)
+				return;
+			m_project.quantizePreset = std::move(name);
+			publish();
+		}
 		// The project file it was last saved as or loaded from, absolute; empty for none. Only on the command thread.
 		const std::string& file() const { return m_file; }
 		// Identifies the open project: the revision at which it was loaded or started (project.revision's project).
@@ -143,6 +157,7 @@ namespace gnubase::engine
 		void registerMidiEditCommands(Engine& engine);                // midiedits.cpp: note.set and controller.set
 		void registerMarkerCommands(Engine& engine);                  // markers.cpp: marker.*
 		void registerTempoCommands(Engine& engine);                   // tempo.cpp: tempo.*
+		Json detectTempo(Project& project, CommandContext& context);  // tempo.cpp: tempo.detect
 		void registerSignatureCommands(Engine& engine);               // signature.cpp: signature.*
 		void registerMidiFileCommands(Engine& engine); // midifilecommands.cpp: midiFile.export and midiFile.import
 		Json importMidiFile(Project& project, CommandContext& context);
@@ -151,8 +166,8 @@ namespace gnubase::engine
 		void registerRecordingCommands(Engine& engine); // recording.cpp: recording.add
 		void registerRenderCommands(Engine& engine);    // renderinplace.cpp: track.freeze, track.renderInPlace
 		Json addRecording(Project& project, CommandContext& context);
-		void registerPoolCommands(Engine& engine); // pool.cpp: pool.*, poolFolder.*, clip.set, media management (#93)
-		void registerFadeCommands(Engine& engine); // fadeedits.cpp: fades, crossfades and auto fades
+		void registerPoolCommands(Engine& engine, Jobs& jobs); // pool.cpp: pool.*, poolFolder.*, clip.set, media (#93)
+		void registerFadeCommands(Engine& engine);             // fadeedits.cpp: fades, crossfades and auto fades
 		void registerParameterCommands(Engine& engine); // parameters.cpp: parameter.list, parameter.get, parameter.set
 		void registerSlotCommands(Engine& engine);      // slotcommands.cpp: plugin.*
 		void registerEventEditCommands(Engine& engine); // eventedits.cpp: event.*, parts and events (#85)
