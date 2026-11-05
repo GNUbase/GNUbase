@@ -101,6 +101,8 @@ namespace gnubase::engine
 			copy.shared = part->shared;
 			copy.color = part->color;
 			copy.lane = part->lane;
+			copy.transpose = part->transpose;
+			copy.velocity = part->velocity;
 			return copy;
 		}
 
@@ -222,6 +224,8 @@ namespace gnubase::engine
 			part.shared = target->shared;
 			part.color = target->color;
 			part.lane = target->lane;
+			part.transpose = target->transpose;
+			part.velocity = target->velocity;
 			applyObjects(part.notes, partChange.notes, direction);
 			applyObjects(part.controllers, partChange.controllers, direction);
 		}
