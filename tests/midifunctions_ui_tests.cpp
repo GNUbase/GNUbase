@@ -198,7 +198,7 @@ TEST_CASE("MIDI > Functions edit the selected MIDI parts", "[ui]")
 		{
 			const std::vector<Json> notes = f.notesOf(f.part);
 			return std::all_of(notes.begin(), notes.end(),
-				[](const Json& note) { return std::abs(note.at("velocity").get<double>() - 100.0 / 127.0) < 0.005; });
+				[](const Json& note) { return std::abs(note.at("velocity").get<double>() - (100.0 / 127.0)) < 0.005; });
 		}));
 
 	// Reverse plays them backwards, Mirror back again.
