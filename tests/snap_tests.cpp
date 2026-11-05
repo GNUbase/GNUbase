@@ -18,6 +18,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 using Catch::Matchers::ContainsSubstring;
@@ -674,6 +675,41 @@ TEST_CASE("event.shuffle changes the order of adjoining events", "[unit]")
 	CHECK(start(b) == g_bar);
 	CHECK(start(a) == 3 * g_bar);
 	CHECK(start(c) == 4 * g_bar);
+}
+
+TEST_CASE("event.shuffle lays out audio events on musical tracks by their length where they go", "[unit]")
+{
+	// Audio events keep their length in samples, so across a tempo change their length in ticks depends on where
+	// they start (#414). 120 BPM for a quarter (24000 samples), then 60 BPM.
+	Fixture f;
+	f.call("project.set", {{"tempoTrackActive", true}});
+	f.call("tempo.add", {{"position", g_quarter}, {"bpm", 60.0}, {"ramp", false}});
+	const int64_t audio = f.track("audio");
+	// A, half a second from the start; B and C, a second each, one after the other (positions in ticks).
+	const int64_t a = f.audioEvent(audio, "a.wav", g_second, 0, 0, g_second / 2);
+	const int64_t b = f.audioEvent(audio, "b.wav", g_second, g_quarter, 0, g_second);
+	const int64_t c = f.audioEvent(audio, "c.wav", g_second, 2 * g_quarter, 0, g_second);
+	const auto span = [&f](int64_t id)
+	{
+		const Json info = f.call("event.get", {{"events", {id}}}).at("events").at(0);
+		return std::pair<int64_t, int64_t>{info.at("start").get<int64_t>(), info.at("end").get<int64_t>()};
+	};
+	const auto near = [](int64_t actual, int64_t expected) { return std::abs(actual - expected) <= 1; };
+
+	// A to the end: B and C close up from the start, A after them, with no gap or overlap.
+	f.call("event.shuffle", {{"events", {a}}, {"position", 3 * g_second}});
+	CHECK(near(span(b).first, 0));
+	CHECK(near(span(b).second, g_second));
+	CHECK(near(span(c).first, g_second));
+	CHECK(near(span(c).second, 2 * g_second));
+	CHECK(near(span(a).first, 2 * g_second));
+	CHECK(near(span(a).second, 5 * g_second / 2));
+	// Still one row: A back to the front.
+	f.call("event.shuffle", {{"events", {a}}, {"position", 0}});
+	CHECK(near(span(a).first, 0));
+	CHECK(near(span(b).first, g_second / 2));
+	CHECK(near(span(c).first, 3 * g_second / 2));
+	CHECK(near(span(c).second, 5 * g_second / 2));
 }
 
 TEST_CASE("splitting and resizing audio events snap to zero crossings", "[unit]")

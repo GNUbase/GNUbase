@@ -1206,8 +1206,16 @@ namespace gnubase::engine
 			const int64_t rowStart = inUnit(project, row[first].position(), musical);
 			const int64_t at =
 				inUnit(project, {time::TimeBase::Linear, parameters.at("position").get<time::Samples>()}, musical);
-			const auto length = [&project, musical](const Item& item)
-			{ return inUnit(project, endOf(project, item), musical) - inUnit(project, item.position(), musical); };
+			// An item's length in the unit when it starts at x. Audio events keep their length in samples, so on a
+			// musical track their length in ticks depends on where they start (#414).
+			const auto length = [&project, musical](const Item& item, int64_t x)
+			{
+				if (item.audio == nullptr || !musical)
+					return inUnit(project, endOf(project, item), musical) - inUnit(project, item.position(), musical);
+				const EventSpan span = eventSpan(project, *item.audio);
+				const time::Samples end = samples(project, {time::TimeBase::Musical, x}) + (span.end - span.start);
+				return ticks(project, {time::TimeBase::Linear, end}) - x;
+			};
 			// The others close up; the moved events go after each one whose middle they start past. An empty slot
 			// stands for them.
 			std::vector<Item> order;
@@ -1221,13 +1229,14 @@ namespace gnubase::engine
 					block.push_back(row[i]);
 					continue;
 				}
-				if (!placed && at < x + (length(row[i]) / 2))
+				const int64_t size = length(row[i], x);
+				if (!placed && at < x + (size / 2))
 				{
 					order.emplace_back();
 					placed = true;
 				}
 				order.push_back(row[i]);
-				x += length(row[i]);
+				x += size;
 			}
 			if (!placed)
 				order.emplace_back();
@@ -1236,7 +1245,7 @@ namespace gnubase::engine
 				for (const Item& item : slot ? std::vector<Item>{slot} : block)
 				{
 					const int64_t delta = x - inUnit(project, item.position(), musical);
-					x += length(item);
+					x += length(item, x);
 					if (delta == 0)
 						continue;
 					place(project, item, {delta, musical}, track);
