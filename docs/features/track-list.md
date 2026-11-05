@@ -108,6 +108,9 @@ sends engine commands, so whatever another client changes shows at once.
   channel, nested or not) that held only empty tracks, so it looks again until nothing more goes: one run leaves no
   empty tracks, in one undo step, and none if nothing is empty. It removes a folder with one `track.remove`, which
   takes the tracks inside along, and returns every track removed.
+- **Group Track and Effect Track to Selected Tracks** (pp. 546, 554): the context menu's commands
+  `track.addGroupToSelected` and `track.addEffectToSelected` open the add track dialog for a group or effect track
+  that the selected tracks play or send into ([add-track.md](add-track.md), [routing.md](routing.md)).
 - **Freeze and render in place** (pp. 219-220, 1471-1477): the context menu's Freeze/Unfreeze Selected Tracks
   (`track.freezeSelected`) freezes the selected audio and instrument tracks that aren't frozen, or unfreezes them when
   every one is; a frozen track's row has `.frozen`, which the themes show like a disabled one. Edit > Render in Place
