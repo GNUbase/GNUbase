@@ -11,17 +11,21 @@
 #include "ui/docking.h"
 #include "ui/enginebinding.h"
 #include "ui/keycommands.h"
+#include "ui/livereload.h"
+#include "ui/rmlui.h"
 #include "ui/shell.h"
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Variant.h>
 #include <SDL3/SDL.h>
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <optional>
 #include <string>
@@ -106,20 +110,29 @@ namespace
 		REQUIRE(app.waitUntil([&app] { return savedLayout(app) == app.appUi().docking().layout(); }));
 	}
 
-	// A test panel in the lower zone, which marks what it fills and counts how many of it there are.
+	// A test panel in the lower zone, which marks what it fills with #<id>-content, counts how many of it there are and
+	// how many went after the element they filled.
 	struct TestPanel
 	{
-		explicit TestPanel(test::UiApp& app)
+		explicit TestPanel(test::UiApp& app, const std::string& id = "test")
 		{
-			app.appUi().docking().add({"test", "Test", "project", "lower", [this](Rml::Element& element)
-				{
-					element.SetInnerRML("<div id='test-content'>Test</div>");
-					++*alive;
-					return std::shared_ptr<void>(nullptr, [count = alive](void*) { --*count; });
-				}});
+			app.appUi().docking().add(
+				{id, "Test", "project", "lower", [this, content = id + "-content"](Rml::Element& element)
+					{
+						element.SetInnerRML("<div id='" + content + "'>Test</div>");
+						++*alive;
+						return std::shared_ptr<void>(nullptr,
+							[count = alive, late = late, filled = element.GetObserverPtr()](void*)
+							{
+								--*count;
+								if (!filled)
+									++*late;
+							});
+					}});
 		}
 
 		std::shared_ptr<int> alive = std::make_shared<int>(0);
+		std::shared_ptr<int> late = std::make_shared<int>(0);
 	};
 
 	// tests/data/ui/sections.rml as the docking window "test".
@@ -637,6 +650,113 @@ TEST_CASE("a panel moves between its zone and a window of its own", "[ui]")
 	docking.setFloating("test", true);
 	REQUIRE(docking.windowOf("test") != nullptr);
 	CHECK(app.shell().bounds(docking.windowOf("test")->id()) == placed);
+}
+
+TEST_CASE("documents that live reload loads again are docking windows again", "[ui]")
+{
+	// A copy of the resources, whose files the test can change.
+	const test::TempDir resources;
+	std::filesystem::copy(GNUBASE_RESOURCES_DIR, resources.path(), std::filesystem::copy_options::recursive);
+	test::UiApp app({1000, 700}, resources.path());
+	app.appUi().showProject();
+	const TestPanel docked(app);
+	const TestPanel floating(app, "floating");
+	ui::Docking& docking = app.appUi().docking();
+	docking.setVisible("project", "lower", true);
+	docking.showTab("test");
+	docking.setFloating("floating", true);
+	app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(docking.windowOf("floating") != nullptr);
+	const ui::WindowId window = docking.windowOf("floating")->id();
+
+	// The project window's document and the panel window's are loaded again, once for each file that changes. What
+	// the panels' create returned for the old documents goes, and they fill the new ones.
+	for (const char* name : {"project.rml", "panel-window.rml"})
+	{
+		INFO(name);
+		const std::filesystem::path file = resources.path() / "ui" / name;
+		std::filesystem::last_write_time(file, std::filesystem::last_write_time(file) + std::chrono::seconds(3));
+		CHECK(ui::reloadChangedDocuments(app.appUi().rmlui().files(), app.shell()) >= 2);
+		app.shell().step(std::chrono::milliseconds(0));
+		CHECK(*docked.alive == 1);
+		CHECK(*floating.alive == 1);
+		CHECK(*docked.late == 0);
+		CHECK(*floating.late == 0);
+		CHECK(elements(app, "#test-content").size() == 1);
+		CHECK(shown(app, "#test-content"));
+		CHECK(docking.showing("test"));
+		CHECK(element(app, "#floating-content", window).at("visible") == true);
+		CHECK(tabs(app, "lower") == std::vector<std::string>{"editor", "mixer", "pool", "test"});
+		CHECK(shown(app, "#lower-zone"));
+	}
+
+	// An event that names anything but another document of the same window changes nothing.
+	Rml::ElementDocument* project = nullptr;
+	for (int i = 0; i < app.main().context().GetNumDocuments(); ++i)
+		if (Rml::ElementDocument* document = app.main().context().GetDocument(i);
+			document->GetElementById("event-display") != nullptr)
+			project = document;
+	ui::Window* panelWindow = app.shell().find(window);
+	REQUIRE(project != nullptr);
+	REQUIRE(panelWindow != nullptr);
+	for (void* named : {static_cast<void*>(project->GetElementById("event-display")),
+			 static_cast<void*>(panelWindow->context().GetDocument(0)), static_cast<void*>(project),
+			 static_cast<void*>(nullptr)})
+	{
+		project->DispatchEvent(ui::g_documentReloadEvent, {{"document", Rml::Variant(named)}});
+		app.shell().step(std::chrono::milliseconds(0));
+		CHECK(*docked.alive == 1);
+		CHECK(elements(app, "#test-content").size() == 1);
+		CHECK(docking.showing("test"));
+	}
+
+	// A panel window document without #panel-content leaves the window empty until its panel docks.
+	const std::filesystem::path panelFile = resources.path() / "ui" / "panel-window.rml";
+	const std::filesystem::file_time_type before = std::filesystem::last_write_time(panelFile);
+	{
+		std::ofstream out(panelFile, std::ios::binary);
+		out << R"(<rml><head><title>Panel</title></head><body class="docking">
+			<div id="toolbar" class="toolbar"><button id="dock">Dock</button></div></body></rml>)";
+	}
+	std::filesystem::last_write_time(panelFile, before + std::chrono::seconds(3));
+	CHECK(ui::reloadChangedDocuments(app.appUi().rmlui().files(), app.shell()) >= 2);
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(*floating.alive == 0);
+	CHECK(*floating.late == 0);
+	CHECK(!docking.showing("floating"));
+	CHECK(app.shell().find(window) != nullptr);
+	CHECK(*docked.alive == 1);
+
+	// Toggles, keys and splitters show and hide zones.
+	app.ui().click(std::nullopt, at("#show-left-zone"), ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#left-zone"); }));
+	CHECK(element(app, "#show-left-zone").at("attributes").contains("checked"));
+	CHECK(shown(app, "splitter[for=left]"));
+	app.ui().key(std::nullopt, "Mod+Alt+R");
+	CHECK(shown(app, "#right-zone"));
+	app.ui().click(std::nullopt, middle(app, "splitter[for=right]"), ui::MouseButton::Left, 2, {});
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#right-zone"); }));
+	waitUntilSaved(app);
+	CHECK(savedLayout(app).at("windows").at("project").at("zones").at("right").at("visible") == false);
+
+	// A tab shows its panel, and the tab menu hides tabs.
+	app.ui().click(std::nullopt, at("tab[panel=mixer]"), ui::MouseButton::Left, 1, {});
+	waitUntilSaved(app);
+	CHECK(savedLayout(app).at("windows").at("project").at("zones").at("lower").at("active") == "mixer");
+	CHECK(!docking.showing("test"));
+	app.ui().click(std::nullopt, at("tab[panel=pool]"), ui::MouseButton::Right, 1, {});
+	CHECK(has(element(app, "#tab-menu-lower"), "open"));
+	app.ui().click(std::nullopt, at("menuitem[tab=pool]"), ui::MouseButton::Left, 1, {});
+	REQUIRE(
+		app.waitUntil([&app] { return tabs(app, "lower") == std::vector<std::string>{"editor", "mixer", "test"}; }));
+
+	// The panel window's Dock button puts its panel back into its zone.
+	app.ui().click(window, at("#dock"), ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil([&docking] { return docking.windowOf("floating") == nullptr; }));
+	CHECK(app.shell().find(window) == nullptr);
+	CHECK(tabs(app, "lower") == std::vector<std::string>{"editor", "mixer", "test", "floating"});
+	CHECK(*floating.alive == 1);
+	CHECK(*docked.alive == 1);
 }
 
 TEST_CASE("the layout comes back exactly after a restart", "[ui]")
