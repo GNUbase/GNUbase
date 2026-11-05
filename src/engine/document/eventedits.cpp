@@ -127,6 +127,28 @@ namespace gnubase::engine
 			return events;
 		}
 
+		// The indices of items in the order they are stacked (#99), the one in front last: an audio part where its
+		// event in front is. MIDI parts, which don't stack, come first. Copying or bringing items to the front in this
+		// order keeps it among them.
+		std::vector<size_t> stackOrder(Project& project, const std::vector<Item>& items)
+		{
+			std::vector<ObjectId> places(items.size(), 0);
+			for (size_t index = 0; index < items.size(); ++index)
+			{
+				const Item& item = items[index];
+				if (item.audio != nullptr)
+					places[index] = frontOf(*item.audio);
+				else if (item.audioPart != nullptr)
+					for (const AudioEvent* event : eventsIn(project, item.audioPart->id))
+						places[index] = std::max(places[index], frontOf(*event));
+			}
+			std::vector<size_t> order(items.size());
+			std::iota(order.begin(), order.end(), size_t{0});
+			std::stable_sort(
+				order.begin(), order.end(), [&places](size_t a, size_t b) { return places[a] < places[b]; });
+			return order;
+		}
+
 		// The items a command names in events, each once. Editing ones must not be locked.
 		std::vector<Item> itemsFrom(Project& project, const Json& parameters, bool editing)
 		{
@@ -676,16 +698,17 @@ namespace gnubase::engine
 			const std::vector<Item> items = itemsFrom(project, parameters, false);
 			const Shift shift = shiftFrom(parameters);
 			const bool shared = parameters.value("shared", false);
-			std::vector<Item> copies;
-			copies.reserve(items.size());
-			for (const Item& item : items)
+			// Copied in the order they are stacked, so that the copies keep it; returned in the order named.
+			std::vector<Item> copies(items.size());
+			for (const size_t index : stackOrder(project, items))
 			{
+				const Item& item = items[index];
 				const ObjectId track = parameters.value("track", item.track());
 				checkTrack(project, item, track);
 				const Item copy = copyOf(project, item, shared, context);
 				place(project, copy, shift, track);
 				announce(project, context, copy, "added");
-				copies.push_back(copy);
+				copies[index] = copy;
 			}
 			return {{"events", idsOf(copies)}};
 		}
@@ -700,15 +723,21 @@ namespace gnubase::engine
 			const bool musical = allMusical(items);
 			const auto [start, end] = block(project, items, musical);
 			require(end > start, g_tooShort);
+			// Each round copied in the order they are stacked, so that the copies keep it; returned in the order named.
+			const std::vector<size_t> order = stackOrder(project, items);
 			std::vector<Item> copies;
 			for (int64_t k = 1; k <= count; ++k)
-				for (const Item& item : items)
+			{
+				std::vector<Item> round(items.size());
+				for (const size_t index : order)
 				{
-					const Item copy = copyOf(project, item, shared, context);
+					const Item copy = copyOf(project, items[index], shared, context);
 					place(project, copy, {k * (end - start), musical}, copy.track());
 					announce(project, context, copy, "added");
-					copies.push_back(copy);
+					round[index] = copy;
 				}
+				copies.insert(copies.end(), round.begin(), round.end());
+			}
 			return {{"events", idsOf(copies)}};
 		}
 
@@ -739,6 +768,7 @@ namespace gnubase::engine
 			const int64_t from = inUnit(project, {time::TimeBase::Linear, left}, musical);
 			const int64_t to = inUnit(project, {time::TimeBase::Linear, right}, musical);
 			require((to - from) / length <= 1000, "the range holds more than 1000 copies");
+			const std::vector<size_t> order = stackOrder(project, items);
 			std::vector<Item> copies;
 			// Copies on the grid of the block's length, from the first that starts in the range to the right locator.
 			for (auto k =
@@ -747,8 +777,10 @@ namespace gnubase::engine
 			{
 				if (k == 0)
 					continue;
-				for (const Item& item : items)
+				// In the order they are stacked, so that the copies keep it.
+				for (const size_t index : order)
 				{
+					const Item& item = items[index];
 					if (inUnit(project, item.position(), musical) + (k * length) >= to)
 						continue;
 					const Item copy = copyOf(project, item, shared, context);
@@ -1736,8 +1768,9 @@ namespace gnubase::engine
 		Json bringToFront(Project& project, CommandContext& context)
 		{
 			const std::vector<Item> items = itemsFrom(project, context.parameters(), false);
-			for (const Item& item : items)
-				toFront(project, item, context);
+			// In the order they are stacked, so that they keep it among them.
+			for (const size_t index : stackOrder(project, items))
+				toFront(project, items[index], context);
 			return {{"events", idsOf(items)}};
 		}
 
@@ -1762,8 +1795,8 @@ namespace gnubase::engine
 						(samples(project, item.position()) >= start && samples(project, endOf(project, item)) <= end)))
 					taken.push_back(item);
 			require(!taken.empty(), "lane " + std::to_string(lane) + " has nothing from start to end");
-			for (const Item& item : taken)
-				toFront(project, item, context);
+			for (const size_t index : stackOrder(project, taken))
+				toFront(project, taken[index], context);
 			return {{"events", idsOf(taken)}};
 		}
 
@@ -2295,7 +2328,7 @@ namespace gnubase::engine
 			{"event.toFront", 1,
 				"Brings takes to the front (To Front, the comp tool's click): audio events, and the audio events of "
 				"audio parts, play where they overlap other events on their track, as if added last (their front in "
-				"project.get), a part's events in the order they were stacked in; MIDI parts are unmuted, and the MIDI "
+				"project.get), keeping the order they were stacked in among them; MIDI parts are unmuted, and the MIDI "
 				"parts on their track's other lanes that they overlap are muted. Returns the events.",
 				schema({{"events", events()}}, {"events"}), eventsResult(), false},
 			"To Front", bringToFront);

@@ -1831,7 +1831,7 @@ Returns:
 
 #### `gnubase.event.toFront`
 
-Brings takes to the front (To Front, the comp tool's click): audio events, and the audio events of audio parts, play where they overlap other events on their track, as if added last (their front in project.get), a part's events in the order they were stacked in; MIDI parts are unmuted, and the MIDI parts on their track's other lanes that they overlap are muted. Returns the events.
+Brings takes to the front (To Front, the comp tool's click): audio events, and the audio events of audio parts, play where they overlap other events on their track, as if added last (their front in project.get), keeping the order they were stacked in among them; MIDI parts are unmuted, and the MIDI parts on their track's other lanes that they overlap are muted. Returns the events.
 
 Parameters:
 
