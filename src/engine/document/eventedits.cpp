@@ -2260,7 +2260,8 @@ namespace gnubase::engine
 				"Mutes or unmutes, locks or unlocks and colors audio events and MIDI parts. Muted ones don't play; "
 				"locked ones can't be moved, resized, split, glued or removed by the event commands. color (#rrggbb) "
 				"is a color of their own; null makes them follow their track's color again. lane puts them on that "
-				"lane of their track, from 0, as cycle recordings put their takes (recording.add). Returns the events.",
+				"lane of their track, from 0, as cycle recordings put their takes (recording.add); audio events in an "
+				"audio part on that lane of the part, as the audio part editor shows them. Returns the events.",
 				schema({{"events", events()}, {"mute", boolean()}, {"lock", boolean()},
 						   {"color", {{"type", {"string", "null"}}}},
 						   {"lane", {{"type", "integer"}, {"minimum", 0}, {"maximum", 1000}}}},

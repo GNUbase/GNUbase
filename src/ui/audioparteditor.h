@@ -9,6 +9,7 @@
 #include <RmlUi/Core/ObserverPtr.h>
 
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -63,11 +64,24 @@ namespace gnubase::ui
 			uint64_t track = 0;
 			double start = 0.0; // seconds, the event's own
 			double end = 0.0;
-			double shownStart = 0.0; // what its part lets play of it
+			double shownStart = 0.0; // what its part lets play of it, or all of it if its part hides it entirely
 			double shownEnd = 0.0;
 			int lane = 0;
 			double volume = 0.0; // dB
 			bool mute = false;
+			bool editable = false;
+			bool outside = false; // moved out of its part, which hides it entirely
+			uint64_t clip = 0;
+			int64_t offset = 0; // in the clip, its samples
+			int64_t length = 0;
+		};
+
+		// A part the editor shows: its time in seconds and track, and whether the editing mode reaches it.
+		struct Part
+		{
+			double start = 0.0;
+			double end = 0.0;
+			uint64_t track = 0;
 			bool editable = false;
 		};
 
@@ -82,6 +96,11 @@ namespace gnubase::ui
 
 		void ProcessEvent(Rml::Event& event) override;
 		void press(Rml::Event& event);
+		void begin(Rml::Event& event);
+		// Ends a gesture without its effect, as when its mouseup never came; whether the events need placing again.
+		bool cancel();
+		// While a gesture goes on, the document's mouse moves, mouseups and (in the capture phase) presses.
+		void listen(bool document);
 		void drag(Rml::Event& event);
 		void release(Rml::Event& event);
 		void doubleClick(Rml::Event& event);
@@ -102,6 +121,8 @@ namespace gnubase::ui
 		int64_t samples(double seconds) const;
 		const Event* eventOf(Rml::Element* element) const;
 		bool selected(const Event& event) const;
+		// Whether next continues event in its clip, as after a split: event.glue makes them one event.
+		bool continues(const Event& event, const Event& next) const;
 		std::vector<const Event*> selectedEvents() const; // by start
 
 		void select(std::vector<uint64_t> events);
@@ -116,6 +137,7 @@ namespace gnubase::ui
 		engine::Json m_project = engine::Json::object();
 		engine::Json m_view = engine::Json::object();
 		std::vector<Event> m_events;
+		std::map<uint64_t, Part> m_parts; // by id
 		std::vector<EventWaveforms::Event> m_waves;
 		std::vector<uint64_t> m_selection;
 		double m_from = 0.0; // the time axis, seconds
@@ -130,6 +152,7 @@ namespace gnubase::ui
 		std::optional<Event> m_pressed;            // the event pressed, as it was
 		uint64_t m_auditioned = 0;                 // the track the play or scrub tool auditions
 		Rml::ObserverPtr<Rml::Element> m_document; // whose resize fits the waveforms to the display again
+		Rml::ObserverPtr<Rml::Element> m_listened; // the document listen() hears a gesture's mouse in
 	};
 
 	const char* audioPartToolName(AudioPartTool tool);

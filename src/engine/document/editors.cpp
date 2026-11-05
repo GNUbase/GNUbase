@@ -494,11 +494,12 @@ namespace gnubase::engine
 				"Changes what an open editor shows (reference manual pp. 1142-1156); what isn't given stays. "
 				"parts replaces its parts. Then the Visibility tab's changes: exclusive hides every track first, "
 				"showTracks shows every MIDI part of these tracks (all tracks in a folder), in the audio part editor "
-				"every audio part, and activates the last, "
+				"(content audioPart, also one given with it) every audio part, and activates the last, "
 				"hideTracks hides theirs; at least one part stays. activeTrack activates the track's first part shown, "
 				"activePart a part shown. editingMode, keepContents and globalTracks (marker and ruler tracks, the "
 				"editor window only) also apply to a closed editor. selection replaces the selected notes, of the "
-				"editable parts, controllerSelection the selected controller events and eventSelection the selected "
+				"editable MIDI parts, controllerSelection the selected controller events and eventSelection the "
+				"selected "
 				"audio events of the editable audio parts. content and the key editor's "
 				"settings apply to any editor; turning stepInput on puts the step input cursor at the active part's "
 				"start unless stepPosition is given. lanes replaces the controller lanes. With autoSelectControllers "
@@ -530,6 +531,9 @@ namespace gnubase::engine
 					view.parts = checkedParts(project, ids(parameters, "parts"));
 				if (parameters.value("exclusive", false))
 					view.parts.clear();
+				// The tracks show the parts of the content given with them.
+				if (parameters.contains("content"))
+					view.content = parameters.at("content").get<std::string>();
 				const bool audio = showsAudio(view);
 				for (const ObjectId track : ids(parameters, "showTracks"))
 				{
@@ -587,6 +591,8 @@ namespace gnubase::engine
 						const auto event = item.at(key).get<ObjectId>();
 						require(contains(editable, part),
 							"part " + std::to_string(part) + " isn't editable in the " + editor + " editor");
+						require(
+							project.midiParts.count(part) != 0, "part " + std::to_string(part) + " isn't a MIDI part");
 						require((project.midiParts.at(part).*events).count(event) != 0,
 							"part " + std::to_string(part) + " has no " + key + " " + std::to_string(event));
 						if (!contains(selection, std::make_pair(part, event)))
@@ -608,8 +614,6 @@ namespace gnubase::engine
 							view.eventSelection.push_back(event);
 					}
 				}
-				if (parameters.contains("content"))
-					view.content = parameters.at("content").get<std::string>();
 				requireContent(project, view);
 				const bool stepTurnsOn = parameters.value("stepInput", view.stepInput) && !view.stepInput;
 				for (const auto& [name, flag] : {std::pair<const char*, bool*>{"stepInput", &view.stepInput},
