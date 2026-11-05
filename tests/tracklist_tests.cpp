@@ -508,10 +508,12 @@ TEST_CASE("group and effect tracks can show Switch Time Base in the track list",
 	for (const uint64_t track : {group, effect})
 	{
 		INFO(tracks.track(track).at("type"));
-		REQUIRE(tracks.app.waitUntil([&] { return elements(tracks.app, row(track) + " button.timeBase").size() == 1; }));
+		REQUIRE(
+			tracks.app.waitUntil([&] { return elements(tracks.app, row(track) + " button.timeBase").size() == 1; }));
 		tracks.click(row(track) + " button.timeBase");
 		REQUIRE(tracks.app.waitUntil([&] { return tracks.track(track).at("timeBase") == "linear"; }));
-		REQUIRE(tracks.app.waitUntil([&] { return !elements(tracks.app, row(track) + " button.timeBase.checked").empty(); }));
+		REQUIRE(tracks.app.waitUntil(
+			[&] { return !elements(tracks.app, row(track) + " button.timeBase.checked").empty(); }));
 	}
 }
 

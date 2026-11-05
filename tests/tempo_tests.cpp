@@ -411,7 +411,8 @@ TEST_CASE("a tempo change reports only the linear parts whose notes or controlle
 	{
 		std::vector<ObjectId> parts;
 		while (const auto message = client.poll())
-			if (const auto* event = std::get_if<Event>(&*message); event != nullptr && event->name == "midiPart.changed")
+			if (const auto* event = std::get_if<Event>(&*message);
+				event != nullptr && event->name == "midiPart.changed")
 				parts.push_back(event->data.at("part").at("id").get<ObjectId>());
 		return parts;
 	};
@@ -556,8 +557,8 @@ TEST_CASE("new tracks get the time base of the user setting editing.defaultTimeB
 	// which project.get reports for the track the marker names.
 	const Json marker = run(client, "marker.add", {{"position", g_quarterSamples}}).at("marker");
 	const Json tracks = run(client, "project.get").at("tracks");
-	const auto markerTrack = std::find_if(tracks.begin(), tracks.end(),
-		[&marker](const Json& track) { return track.at("id") == marker.at("track"); });
+	const auto markerTrack = std::find_if(
+		tracks.begin(), tracks.end(), [&marker](const Json& track) { return track.at("id") == marker.at("track"); });
 	REQUIRE(markerTrack != tracks.end());
 	CHECK(markerTrack->at("timeBase") == "linear");
 	CHECK(marker.at("position") == g_quarterSamples);
