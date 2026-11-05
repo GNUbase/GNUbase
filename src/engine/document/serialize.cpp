@@ -605,7 +605,47 @@ namespace gnubase::engine
 			{"hitpoints", std::move(hitpoints)},
 			{"hitpointFilter",
 				{{"threshold", filter.threshold}, {"intensity", filter.intensity},
-					{"minimumLength", filter.minimumLength}}}};
+					{"minimumLength", filter.minimumLength}}},
+			{"warp", toJson(clip.warp)}};
+	}
+
+	Json toJson(const ClipWarp& warp)
+	{
+		Json beats = Json::array();
+		for (const BeatEdit& beat : warp.beats)
+			beats.push_back({{"beat", beat.beat}, {"frame", beat.frame}});
+		Json markers = Json::array();
+		for (const WarpMarker& marker : warp.markers)
+			markers.push_back({{"position", marker.position}, {"target", marker.target}});
+		return {{"musical", warp.musical}, {"tempo", warp.tempo}, {"beatsPerBar", warp.beatsPerBar},
+			{"gridStart", warp.gridStart}, {"beats", std::move(beats)}, {"markers", std::move(markers)},
+			{"preset", warp.preset}};
+	}
+
+	ClipWarp clipWarpFromJson(const Json& json)
+	{
+		ClipWarp warp;
+		warp.musical = json.value("musical", false);
+		warp.tempo = std::clamp(json.value("tempo", 0.0), 0.0, 999.0);
+		warp.beatsPerBar = std::clamp(json.value("beatsPerBar", 4), 1, 64);
+		warp.gridStart = json.value("gridStart", time::Samples{0});
+		warp.preset = json.value("preset", std::string("quality"));
+		// Edits and markers out of order are left out, as the commands never make them.
+		for (const Json& beat : json.value("beats", Json::array()))
+		{
+			const BeatEdit read{beat.at("beat").get<int64_t>(), beat.at("frame").get<time::Samples>()};
+			if (warp.beats.empty() || (read.beat > warp.beats.back().beat && read.frame > warp.beats.back().frame))
+				warp.beats.push_back(read);
+		}
+		for (const Json& marker : json.value("markers", Json::array()))
+		{
+			const WarpMarker read{marker.at("position").get<time::Samples>(), marker.at("target").get<time::Samples>()};
+			if (read.position > 0 && read.target > 0 &&
+				(warp.markers.empty() ||
+					(read.position > warp.markers.back().position && read.target > warp.markers.back().target)))
+				warp.markers.push_back(read);
+		}
+		return warp;
 	}
 
 	Json toJson(const PoolFolder& folder)
@@ -1737,7 +1777,8 @@ namespace gnubase::engine
 				std::max<time::Samples>(0, filter.value("minimumLength", time::Samples{0}))};
 			project.clips[id] = {id, item.at("name").get<std::string>(), item.at("media").get<ObjectId>(),
 				fadeFromJson(item.value("fadeIn", Json::object())), fadeFromJson(item.value("fadeOut", Json::object())),
-				item.value("folder", ObjectId{0}), std::move(regions), std::move(hitpoints), hitpointFilter};
+				item.value("folder", ObjectId{0}), std::move(regions), std::move(hitpoints), hitpointFilter,
+				clipWarpFromJson(item.value("warp", Json::object()))};
 		}
 		// Files from before the pool's folders have none. Folders inside folders that aren't there go to the top, and
 		// of each loop of folders inside each other the first one; clips in folders that aren't there go to the

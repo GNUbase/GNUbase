@@ -162,6 +162,7 @@ add_executable(gnubase-tests
 	uithemes_tests.cpp
 	uitools_tests.cpp
 	volumecurve_tests.cpp
+	warp_tests.cpp
 	widgets_tests.cpp
 	window_tests.cpp)
 target_link_libraries(gnubase-tests PRIVATE

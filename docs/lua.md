@@ -1134,6 +1134,53 @@ Returns:
 - `clip`: integer, required
 - `region`: object, required
 
+#### `gnubase.clip.addWarpMarker`
+
+Inserts a free warp marker into a clip at position (a clip frame) that plays it at target, default position (Free Warp, reference manual pp. 654-655). Markers can't pass each other. A clip's warp has musical (musical mode: its beats follow the project's tempo), its definition: tempo (BPM of quarter notes, 0 until one is set), beatsPerBar, gridStart (the clip frame of beat 0) and beats (the beats, counted in quarters from the grid start, that Auto Adjust or Manual Adjust put elsewhere than the tempo would, each at a clip frame), its free warp markers (each plays the audio at its position where the clip frame target would play without it) and preset, the time stretch algorithm of real-time warping. Emits clip.changed. Returns the clip's id and its warp.
+
+Parameters:
+
+- `clip`: integer, required
+- `position`: integer, required
+- `target`: integer
+
+Returns:
+
+- `clip`: integer, required
+- `warp`: object, required
+
+#### `gnubase.clip.adjustGrid`
+
+Corrects a clip's definition grid by hand (Manual Adjust, reference manual pp. 652-654), moving a line of the grid to the clip frame frame. mode start: the grid start, and the beats edited with it (Set Grid Start); stretch: makes beat beat (default the second bar's first) be at frame by changing the tempo, dropping the beats edited, so that every bar is as long (Stretch Grid); bar: puts beat beat at frame and the beats edited after it with it (Set Bar Position, Move Following Bars); beat: puts beat beat at frame alone (Set Beat Position); remove: drops the edit of beat beat (Remove Beat Edit). A clip without a tempo gets the project's first. A clip's warp has musical (musical mode: its beats follow the project's tempo), its definition: tempo (BPM of quarter notes, 0 until one is set), beatsPerBar, gridStart (the clip frame of beat 0) and beats (the beats, counted in quarters from the grid start, that Auto Adjust or Manual Adjust put elsewhere than the tempo would, each at a clip frame), its free warp markers (each plays the audio at its position where the clip frame target would play without it) and preset, the time stretch algorithm of real-time warping. Emits clip.changed. Returns the clip's id and its warp.
+
+Parameters:
+
+- `beat`: integer
+- `clip`: integer, required
+- `frame`: integer
+- `mode`: one of "start" | "stretch" | "bar" | "beat" | "remove", required
+
+Returns:
+
+- `clip`: integer, required
+- `warp`: object, required
+
+#### `gnubase.clip.autoAdjust`
+
+Extracts a clip's definition grid from its hitpoints (Auto Adjust, reference manual pp. 651-652): the section from start to end (clip frames; default the whole clip) is taken to start and end at a barline and to be bars bars long (default: the whole bars nearest its length at the clip's tempo, or the project's without one). That makes the clip's tempo and grid start; every beat with a hitpoint that counts within a quarter beat of it is then edited to be at that hitpoint. Fails without such hitpoints. A clip's warp has musical (musical mode: its beats follow the project's tempo), its definition: tempo (BPM of quarter notes, 0 until one is set), beatsPerBar, gridStart (the clip frame of beat 0) and beats (the beats, counted in quarters from the grid start, that Auto Adjust or Manual Adjust put elsewhere than the tempo would, each at a clip frame), its free warp markers (each plays the audio at its position where the clip frame target would play without it) and preset, the time stretch algorithm of real-time warping. Emits clip.changed. Returns the clip's id and its warp.
+
+Parameters:
+
+- `bars`: integer
+- `clip`: integer, required
+- `end`: integer
+- `start`: integer
+
+Returns:
+
+- `clip`: integer, required
+- `warp`: object, required
+
 #### `gnubase.clip.detectHitpoints`
 
 Finds where sounds start in a clip (calculating hitpoints, reference manual p. 637) and makes them its hitpoints, in place of those it has then: where the level, or that of the high frequencies, rises by 6 dB or more within 5 ms from at least -60 dBFS, 20 ms apart at least. Edit Hitpoints restores the hitpoints found this way after Remove All. It reads the clip's whole file, so it runs as a job and can't be part of a history.transaction: this returns at once, job.progress events say how much of the file it read, job.cancel stops it, and once it is done it sets them with clip.setHitpoints, one undo step, whose result is the job's result. A clip removed meanwhile, another project opened or the clip's media file relinked fails the job.
@@ -1202,6 +1249,20 @@ Parameters:
 Returns:
 
 - `clip`: integer, required
+
+#### `gnubase.clip.removeWarpMarkers`
+
+Removes the free warp markers of a clip at positions (Deleting Warp Markers, reference manual p. 656), or without positions all of them, which resets the free warp edits and leaves musical mode and the definition as they are (Reset, p. 656). A clip's warp has musical (musical mode: its beats follow the project's tempo), its definition: tempo (BPM of quarter notes, 0 until one is set), beatsPerBar, gridStart (the clip frame of beat 0) and beats (the beats, counted in quarters from the grid start, that Auto Adjust or Manual Adjust put elsewhere than the tempo would, each at a clip frame), its free warp markers (each plays the audio at its position where the clip frame target would play without it) and preset, the time stretch algorithm of real-time warping. Emits clip.changed. Returns the clip's id and its warp.
+
+Parameters:
+
+- `clip`: integer, required
+- `positions`: array of integer
+
+Returns:
+
+- `clip`: integer, required
+- `warp`: object, required
 
 #### `gnubase.clip.set`
 
@@ -1296,6 +1357,41 @@ Returns:
 
 - `clip`: integer, required
 - `region`: object, required
+
+#### `gnubase.clip.setWarp`
+
+Changes a clip's musical mode and definition (the Definition and Warp sections of the sample editor, the pool's Musical Mode column, reference manual pp. 616, 648-650): musical turns musical mode on or off, which in a clip without a tempo takes the project's at the start of its first event so that nothing changes until the tempo does; tempo (1-999 BPM); bars and beats, its length from the grid start to its end in bars and quarters, which sets the tempo that makes it that long; beatsPerBar (1-64); gridStart (a clip frame; the edited beats move with it); preset (the algorithm preset of real-time warping). What isn't given stays. A clip's warp has musical (musical mode: its beats follow the project's tempo), its definition: tempo (BPM of quarter notes, 0 until one is set), beatsPerBar, gridStart (the clip frame of beat 0) and beats (the beats, counted in quarters from the grid start, that Auto Adjust or Manual Adjust put elsewhere than the tempo would, each at a clip frame), its free warp markers (each plays the audio at its position where the clip frame target would play without it) and preset, the time stretch algorithm of real-time warping. Emits clip.changed. Returns the clip's id and its warp.
+
+Parameters:
+
+- `bars`: integer
+- `beats`: integer
+- `beatsPerBar`: integer
+- `clip`: integer, required
+- `gridStart`: integer
+- `musical`: boolean
+- `preset`: one of "quality" | "efficient" | "drums" | "plucked" | "pads" | "vocals" | "mix" | "solo"
+- `tempo`: number
+
+Returns:
+
+- `clip`: integer, required
+- `warp`: object, required
+
+#### `gnubase.clip.setWarpMarker`
+
+Moves the free warp marker of a clip at position so that it plays at target, a clip frame (Correcting Warp Marker Positions, reference manual p. 656). Markers can't pass each other. A clip's warp has musical (musical mode: its beats follow the project's tempo), its definition: tempo (BPM of quarter notes, 0 until one is set), beatsPerBar, gridStart (the clip frame of beat 0) and beats (the beats, counted in quarters from the grid start, that Auto Adjust or Manual Adjust put elsewhere than the tempo would, each at a clip frame), its free warp markers (each plays the audio at its position where the clip frame target would play without it) and preset, the time stretch algorithm of real-time warping. Emits clip.changed. Returns the clip's id and its warp.
+
+Parameters:
+
+- `clip`: integer, required
+- `position`: integer, required
+- `target`: integer, required
+
+Returns:
+
+- `clip`: integer, required
+- `warp`: object, required
 
 #### `gnubase.clip.spectrum`
 
@@ -1800,6 +1896,21 @@ Returns:
 
 - `events`: array of integer, required
 
+#### `gnubase.event.flatten`
+
+Flattens the real-time processing of audio events (Flatten Real Time Processing, reference manual p. 657): renders what each event of a warped clip plays, as it plays it now, into a 32-bit float WAV file in the project's media folder (for a project without a file, the folder its recordings go to) with the algorithm preset (default the clip's), named after the clip with Flattened, and makes the event play a new clip of it from its start, with its volume curve and snap point where its audio is. It then no longer follows tempo changes or warp edits. Events of clips that aren't warped stay; fails if none is. Emits media.added, clip.added and audioEvent.changed. Returns the events flattened and their new media files and clips.
+
+Parameters:
+
+- `events`: array of integer, required
+- `preset`: one of "quality" | "efficient" | "drums" | "plucked" | "pads" | "vocals" | "mix" | "solo"
+
+Returns:
+
+- `clips`: array of integer, required
+- `events`: array of integer, required
+- `media`: array of integer, required
+
 #### `gnubase.event.fromHitpoints`
 
 Makes something of the hitpoints of an audio event's clip that count and are inside the section it plays (the Hitpoints section's Create section, reference manual pp. 638-647). create: slices cuts every unlocked event that plays the clip at its hitpoints and puts the slices into an audio part in its place (slices of an event in a part stay in it), returning the parts, or those slices, in events; events cuts this event at them, returning it and the new events in events; regions makes a region of the clip from the event's start to the first hitpoint, from each to the next and from the last to the event's end, returning them in regions; markers adds a position marker at each to the active marker track (adding one without), returning them in markers; groove makes the project's quantize settings a groove of them, as long as the event and starting where it does (quantize.set), returning those settings in quantize; midiNotes adds a MIDI part as long as the event with a note at each, to track (a MIDI or instrument track, such as the first selected one) or to a new MIDI track named after the clip, returning track and part. The notes have pitch (default 36, C1) and length (ticks, default a sixteenth); velocityMode dynamic (the default) gives the loudest hitpoint velocity 1 and the others less as their peaks are quieter, fixed gives every note velocity (0-1, default 100/127).
@@ -2053,6 +2164,18 @@ Parameters:
 Returns:
 
 - `events`: array of integer, required
+
+#### `gnubase.event.unstretch`
+
+Removes all real-time stretching from the clips of audio events (Unstretch Audio, reference manual pp. 657-658): turns musical mode off and removes their free warp markers, keeping their definitions. Every event of those clips plays its audio unstretched again. Emits clip.changed for each clip that changes. Returns the clips changed.
+
+Parameters:
+
+- `events`: array of integer, required
+
+Returns:
+
+- `clips`: array of integer, required
 
 ### graph
 

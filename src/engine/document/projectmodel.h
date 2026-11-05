@@ -168,6 +168,7 @@ namespace gnubase::engine
 		Json addRecording(Project& project, CommandContext& context);
 		void registerPoolCommands(Engine& engine, Jobs& jobs); // pool.cpp: pool.*, poolFolder.*, clip.set, media (#93)
 		void registerFadeCommands(Engine& engine);             // fadeedits.cpp: fades, crossfades and auto fades
+		void registerWarpCommands(Engine& engine);      // warp.cpp: musical mode, definition grid, warp markers (#144)
 		void registerParameterCommands(Engine& engine); // parameters.cpp: parameter.list, parameter.get, parameter.set
 		void registerSlotCommands(Engine& engine);      // slotcommands.cpp: plugin.*
 		void registerEventEditCommands(Engine& engine); // eventedits.cpp: event.*, parts and events (#85)

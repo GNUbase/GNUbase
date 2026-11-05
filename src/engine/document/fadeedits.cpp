@@ -7,6 +7,7 @@
 #include "engine/document/document.h"
 #include "engine/document/projectmodel.h"
 #include "engine/document/serialize.h"
+#include "engine/document/warp.h"
 #include "engine/engine.h"
 
 #include <algorithm>
@@ -410,6 +411,9 @@ namespace gnubase::engine
 		result.ratio = project.sampleRate / project.media.at(project.clips.at(event.clip).media).sampleRate;
 		result.start = time::toSamples(event.position, project.tempo, project.sampleRate);
 		result.end = result.start + std::llround(static_cast<double>(event.length) * result.ratio);
+		if (warped(project.clips.at(event.clip)))
+			result.end = result.start +
+				std::llround(warpedOffset(project, event, static_cast<double>(event.offset + event.length)));
 		return result;
 	}
 

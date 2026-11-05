@@ -151,6 +151,7 @@ Warping audio events in real time (musical mode, tempo changes, warp markers, tr
 
 - Fork Rubber Band into the GNUbase organisation with the patch, point `ext/rubberband` there, and send the patch upstream.
 - The real-time lag of the R2 presets when ratio times pitch scale reaches 4 (see [Alignment](#alignment)).
-- Warp settings on audio events and real-time warping in the disk streams (M11).
+- Real-time warping in the disk streams is in [features/warp.md](features/warp.md) (#144); its offline flattening
+  and transposing audio events are still to come.
 - Tape mode (varispeed) through the existing resampler.
 - The UI for the offline processes and the sample editor's warp tools.

@@ -389,6 +389,38 @@ namespace gnubase::engine
 		time::Samples minimumLength = 0;
 	};
 
+	// A beat of a clip's definition grid that isn't where the clip's tempo puts it (#144, Auto Adjust and Manual
+	// Adjust, reference manual pp. 651-654): the clip frame it is at. Beats count in quarter notes from the grid start.
+	struct BeatEdit
+	{
+		int64_t beat = 0;
+		time::Samples frame = 0;
+	};
+
+	// A free warp marker (#144, reference manual pp. 654-656): the audio at the clip frame position plays where the
+	// clip frame target would without it. The audio between markers, and between them and the clip's ends, is
+	// stretched to fit.
+	struct WarpMarker
+	{
+		time::Samples position = 0;
+		time::Samples target = 0;
+	};
+
+	// How a clip's audio is warped in real time (#144, docs/features/warp.md). Its definition is its tempo (BPM of
+	// quarter notes; 0 until one is set or musical mode is turned on), beats per bar, the clip frame of its first beat
+	// and the beats edited from there. In musical mode its beats follow the project's tempo. Its warp markers move
+	// sections of its audio in time. preset is the time stretch algorithm (dsp::stretchPresetNames()).
+	struct ClipWarp
+	{
+		bool musical = false;
+		double tempo = 0.0;
+		int beatsPerBar = 4;
+		time::Samples gridStart = 0;
+		std::vector<BeatEdit> beats;     // by beat, frames increasing
+		std::vector<WarpMarker> markers; // by position, targets increasing
+		std::string preset = "quality";
+	};
+
 	// What audio events play: for now, a whole media file. Its fades apply to every event that plays it, at the
 	// file's start and end.
 	struct Clip
@@ -402,6 +434,7 @@ namespace gnubase::engine
 		std::vector<ClipRegion> regions; // by start, then id
 		std::vector<Hitpoint> hitpoints; // by position, one at most at each
 		HitpointFilter hitpointFilter;
+		ClipWarp warp;
 	};
 
 	// Which of a clip's hitpoints count, as its filters leave them (hitpoints.cpp): one for each of them.
@@ -987,11 +1020,28 @@ namespace gnubase::engine
 			std::tie(b.threshold, b.intensity, b.minimumLength);
 	}
 
+	inline bool operator==(const BeatEdit& a, const BeatEdit& b)
+	{
+		return a.beat == b.beat && a.frame == b.frame;
+	}
+
+	inline bool operator==(const WarpMarker& a, const WarpMarker& b)
+	{
+		return a.position == b.position && a.target == b.target;
+	}
+
+	inline bool operator==(const ClipWarp& a, const ClipWarp& b)
+	{
+		return std::tie(a.musical, a.tempo, a.beatsPerBar, a.gridStart, a.beats, a.markers, a.preset) ==
+			std::tie(b.musical, b.tempo, b.beatsPerBar, b.gridStart, b.beats, b.markers, b.preset);
+	}
+
 	inline bool operator==(const Clip& a, const Clip& b)
 	{
-		return std::tie(
-				   a.id, a.name, a.media, a.fadeIn, a.fadeOut, a.folder, a.regions, a.hitpoints, a.hitpointFilter) ==
-			std::tie(b.id, b.name, b.media, b.fadeIn, b.fadeOut, b.folder, b.regions, b.hitpoints, b.hitpointFilter);
+		return std::tie(a.id, a.name, a.media, a.fadeIn, a.fadeOut, a.folder, a.regions, a.hitpoints, a.hitpointFilter,
+				   a.warp) ==
+			std::tie(
+				b.id, b.name, b.media, b.fadeIn, b.fadeOut, b.folder, b.regions, b.hitpoints, b.hitpointFilter, b.warp);
 	}
 
 	inline bool operator==(const PoolFolder& a, const PoolFolder& b)

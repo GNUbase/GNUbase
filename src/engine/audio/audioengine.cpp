@@ -471,8 +471,13 @@ namespace gnubase::engine
 		// Audio tracks play their playlists.
 		std::vector<Playback::Track> tracks;
 		std::map<ObjectId, std::string> paths;
+		std::map<ObjectId, Playback::Warp> warps;
 		for (const RenderMedia& media : snapshot.media)
+		{
 			paths[media.id] = media.path;
+			if (!media.warp.empty())
+				warps[media.id] = {media.warp, media.preset};
+		}
 		m_mediaPaths = paths;
 		m_auditionTracks.clear();
 		for (const RenderChannel& channel : snapshot.channels)
@@ -487,7 +492,7 @@ namespace gnubase::engine
 			m_auditionTracks[channel.track] = {channel.id, playlist};
 			tracks.push_back({channel.id, std::move(playlist)});
 		}
-		m_playback.setTracks(std::move(tracks), std::move(paths), snapshot.sampleRate);
+		m_playback.setTracks(std::move(tracks), std::move(paths), snapshot.sampleRate, std::move(warps));
 		const uint64_t generation = ++m_generation;
 		attachMidi(snapshot, desc, generation);
 		attachSlots(snapshot, desc);
