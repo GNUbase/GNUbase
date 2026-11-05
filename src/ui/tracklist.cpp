@@ -1000,10 +1000,14 @@ namespace gnubase::ui
 			}
 			else if (m_renaming != 0 && target != nullptr && target->GetTagName() == "input" &&
 				event.GetParameter<bool>("linebreak", false))
+			{
 				finishRename(true);
+			}
 			else if (target == m_view)
+			{
 				if (const std::vector<uint64_t> tracks = selection(); !tracks.empty())
 					reveal(tracks.front());
+			}
 			break;
 		default:
 			if (event.GetType() == g_treeToggleEvent && target == m_view)
