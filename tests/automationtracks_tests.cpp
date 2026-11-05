@@ -179,7 +179,8 @@ TEST_CASE("automation tracks show and hide below their track, and the parameter 
 	f.app.ui().click(std::nullopt, {".automation-parameter", 1, std::nullopt}, ui::MouseButton::Left, 1, {});
 	f.app.shell().step(std::chrono::milliseconds(0));
 	REQUIRE(hasClass(elements(f.app, "#automation-parameter-menu").at(0), "open"));
-	CHECK(elements(f.app, "#automation-parameter-menu menuitem.automation-target").size() == 5);
+	// The fader's five and the 41 of the channel strip's sections.
+	CHECK(elements(f.app, "#automation-parameter-menu menuitem.automation-target").size() == 5 + 41);
 	CHECK(elements(f.app, "#automation-parameter-menu menuitem.checked").at(0).value("text", "") == "Pan");
 	f.click("#automation-parameter-menu .automation-search");
 	f.app.ui().text(std::nullopt, "LEFT");

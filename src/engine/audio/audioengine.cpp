@@ -2,6 +2,7 @@
 #include "engine/audio/audioengine.h"
 
 #include "engine/document/rendersnapshot.h"
+#include "engine/document/stripparameters.h"
 #include "engine/engine.h"
 #include "engine/plugins/slotinstances.h"
 #include "engine/processors/builtin.h"
@@ -672,17 +673,25 @@ namespace gnubase::engine
 			std::unique_ptr<ChannelAutomation> automation = channelAutomation(channel, snapshot.maxVolume);
 			if (kept != m_channelStates.end())
 			{
-				// A fader set to another value glides there.
+				// A fader or pre gain set to another value glides there.
 				for (PlayedLane& lane : automation->lanes)
 					for (const PlayedLane& old : state->automation.latest().lanes)
 						lane.smooth = lane.smooth ||
-							(lane.kind == PlayedLane::Kind::Fader && lane.target == old.target && lane.points.empty() &&
-								old.points.empty() && lane.staticValue != old.staticValue);
+							(lane.glides() && lane.target == old.target && lane.points.empty() && old.points.empty() &&
+								lane.staticValue != old.staticValue);
 			}
 			if (kept == m_channelStates.end() || !automation->sameContent(state->automation.latest()))
 				state->automation.setAutomation(std::move(automation));
 			states[channel.id] = state;
 			const Panning panning{channel.panner, channel.stereoPanner, channel.panBypass, snapshot.panLaw};
+			// The limiter's look-ahead counts while it is on or its automation could turn it on.
+			const bool lookAhead = channel.sections.limiter.on ||
+				std::any_of(channel.automation.begin(), channel.automation.end(),
+					[](const RenderAutomationLane& lane)
+					{
+						return lane.target ==
+							AutomationTarget{AutomationTargetType::Strip, StripParameter::LimiterOn, 0, 0, 0};
+					});
 			std::optional<Monitoring> monitoring;
 			if (channel.input >= 0)
 				monitoring = Monitoring{channel.monitor, channel.recordEnable, m_autoMonitoring};
@@ -693,7 +702,7 @@ namespace gnubase::engine
 			if (source == firstChannel + i)
 			{
 				fader = std::make_shared<ChannelStrip>(
-					state, node.processor, panning, monitoring, channel.silent, StripPart::Whole, channel.sections);
+					state, node.processor, panning, monitoring, channel.silent, StripPart::Whole, lookAhead);
 				sourceStrip = fader;
 			}
 			else
@@ -713,10 +722,10 @@ namespace gnubase::engine
 				}
 				graph::NodeDesc& sourceDesc = desc.nodes[source];
 				sourceStrip = std::make_shared<ChannelStrip>(state, sourceDesc.processor, panning, monitoring,
-					channel.silent, StripPart::Source, channel.sections, std::move(plugins), std::move(slotIds));
+					channel.silent, StripPart::Source, false, std::move(plugins), std::move(slotIds));
 				sourceDesc.processor = sourceStrip;
 				fader = std::make_shared<ChannelStrip>(
-					state, nullptr, panning, std::nullopt, channel.silent, StripPart::Fader, channel.sections);
+					state, nullptr, panning, std::nullopt, channel.silent, StripPart::Fader, lookAhead);
 			}
 			node.processor = fader;
 			if (const auto tap = m_renderTaps.find(channel.id); tap != m_renderTaps.end())

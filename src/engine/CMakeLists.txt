@@ -135,6 +135,7 @@ add_library(gnubase-engine STATIC
 	document/serialize.cpp document/serialize.h
 	document/signature.cpp
 	document/snap.cpp document/snap.h
+	document/stripparameters.cpp document/stripparameters.h
 	document/tempo.cpp
 	document/volumecurves.cpp document/volumecurves.h
 	dsp/biquad.cpp dsp/biquad.h

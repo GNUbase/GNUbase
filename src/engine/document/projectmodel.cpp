@@ -11,6 +11,7 @@
 #include "engine/document/mixerviews.h"
 #include "engine/document/sampleeditor.h"
 #include "engine/document/serialize.h"
+#include "engine/document/stripparameters.h"
 #include "engine/document/volumecurves.h"
 #include "engine/dsp/timestretch.h"
 #include "engine/graph/graph.h"
@@ -562,7 +563,7 @@ namespace gnubase::engine
 				automationTargetTypeFromName(json.at("type").get<std::string>());
 			if (!parsed.has_value())
 				throw CommandError(
-					"target.type must be volume, pan, panLeft, panRight, mute, instrument, plugin, controller, "
+					"target.type must be volume, pan, panLeft, panRight, mute, instrument, plugin, strip, controller, "
 					"pitchBend or channelPressure");
 			const AutomationTargetType type = *parsed;
 			AutomationTarget target;
@@ -633,6 +634,15 @@ namespace gnubase::engine
 				target.parameter = json.at("parameter").get<uint32_t>();
 				break;
 			}
+			case AutomationTargetType::Strip:
+				only({"parameter"});
+				require(channel.format != ChannelFormat::None, "a MIDI track has no channel strip sections");
+				require(json.contains("parameter"), "target.parameter is required");
+				require(isParameterId(json.at("parameter")) &&
+						findStripParameter(json.at("parameter").get<uint32_t>()) != nullptr,
+					"the channel strip has no parameter " + json.at("parameter").dump() + " (see parameter.list)");
+				target.parameter = json.at("parameter").get<uint32_t>();
+				break;
 			case AutomationTargetType::Controller:
 				only({"number", "channel"});
 				require(midi, "MIDI controllers are automated on MIDI and instrument tracks");
@@ -651,8 +661,8 @@ namespace gnubase::engine
 			return target;
 		}
 
-		// The parameter of an instrument or a plugin that a lane automates, or none for the other targets and for
-		// parameters that are gone.
+		// The parameter of an instrument, a plugin or the channel strip that a lane automates, or none for the other
+		// targets and for parameters that are gone.
 		const processors::ParameterInfo* automatedParameter(const Project& project, const AutomationLane& lane)
 		{
 			const processors::BuiltinInfo* info = nullptr;
@@ -665,6 +675,8 @@ namespace gnubase::engine
 				if (slot != project.slots.end())
 					info = processors::findBuiltinPlugin(slot->second.plugin);
 			}
+			if (lane.target.type == AutomationTargetType::Strip)
+				return findStripParameter(lane.target.parameter);
 			return info != nullptr ? processors::findParameter(*info, lane.target.parameter) : nullptr;
 		}
 
@@ -690,8 +702,11 @@ namespace gnubase::engine
 				return {0.0, 1.0};
 			case AutomationTargetType::Instrument:
 			case AutomationTargetType::Plugin:
+			case AutomationTargetType::Strip:
 				if (const processors::ParameterInfo* parameter = automatedParameter(project, lane))
 					return {parameter->minimum, parameter->maximum};
+				if (lane.target.type == AutomationTargetType::Strip) // from a newer build's file
+					throw CommandError("the channel strip has no parameter " + std::to_string(lane.target.parameter));
 				throw CommandError(std::string("the ") +
 					(lane.target.type == AutomationTargetType::Plugin ? "plugin" : "instrument") +
 					" of automation lane " + idText(lane.id) + " has no parameter " +
@@ -3993,7 +4008,7 @@ namespace gnubase::engine
 		const Json target =
 			objectSchema({{"type",
 							  enumSchema({"volume", "pan", "panLeft", "panRight", "mute", "instrument", "plugin",
-								  "controller", "pitchBend", "channelPressure"})},
+								  "strip", "controller", "pitchBend", "channelPressure"})},
 							 {"parameter", idSchema}, {"slot", idSchema}, {"number", idSchema}, {"channel", idSchema}},
 				{"type"});
 		const Json shape = enumSchema({"step", "linear", "curve"});
@@ -4008,7 +4023,10 @@ namespace gnubase::engine
 				"of an instrument track's built-in instrument (target.parameter, an id from processor.list, in its "
 				"range); plugin, a parameter of the built-in plugin in one of the track's slots (target.slot and "
 				"target.parameter, as parameter.list gives them, in its range; the lane goes when the plugin is "
-				"removed or moves to another channel); controller (target.number 0-127), pitchBend (0.5 is no bend) "
+				"removed or moves to another channel); strip, a parameter of the channel strip's sections on tracks "
+				"with audio channels (target.parameter, as parameter.list gives them: the pre section's gain, phase "
+				"and cut filters, the equalizer and the gate, compressor and limiter, in their ranges; switches and "
+				"stepped choices have step curves); controller (target.number 0-127), pitchBend (0.5 is no bend) "
 				"and channelPressure, all 0 to 1, on MIDI and instrument tracks, with target.channel 0-15 (default 0). "
 				"A track has one lane per target. read (default true): the curve plays; without it, or without points, "
 				"the parameter keeps its static value.",
