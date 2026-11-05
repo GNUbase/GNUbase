@@ -2,6 +2,7 @@
 // Render in place and freeze (#116, docs/features/render-in-place.md): track.renderInPlace, track.freeze,
 // track.unfreeze and mixdown.export's render points.
 #include "engine/audiofile/audiofile.h"
+#include "engine/dawproject/dawproject.h"
 #include "engine/document/document.h"
 #include "engine/engine.h"
 #include "testutils/testutils.h"
@@ -26,6 +27,8 @@ using Catch::Matchers::ContainsSubstring;
 namespace
 {
 	namespace fs = std::filesystem;
+
+	constexpr int64_t g_scrubFrames = 480; // how far each scrub of a test goes
 
 	Json run(Client& client, const std::string& command, Json parameters = Json::object())
 	{
@@ -297,15 +300,183 @@ TEST_CASE("undo brings back the freeze file that was frozen then", "[integration
 	CHECK(nullTest(project.mainMix(), frozen) < 1e-20f);
 }
 
+TEST_CASE("scrubbing a frozen track reads the freeze file of that time", "[integration]")
+{
+	Session project;
+	const Session::Track audio = project.addTrack("Ramp");
+	const ObjectId slot = project.insertGain(audio.channel, -6.0);
+	run(project.client, "audio.render", {{"frames", 4096}});
+	const Json first = run(project.client, "track.freeze", {{"tracks", {audio.track}}, {"tail", 0}});
+	const std::vector<float> firstFile =
+		samplesOf(first.at("tracks").at(0).at("frozen").at("path").get<std::string>());
+	const double rate = run(project.client, "project.get").at("sampleRate").get<double>();
+
+	// Scrubs 480 frames from where the last scrub got to, to position, in as long: at normal speed, so it plays
+	// the freeze file's frames there, forwards or backwards. The audition goes straight to the outputs. The scrub
+	// goes on throughout, so it keeps its file readers open.
+	constexpr int64_t frames = g_scrubFrames;
+	run(project.client, "audition.scrub", {{"track", audio.track}, {"position", 1000}});
+	const auto scrubs = [&project, &audio, rate](int64_t position, const std::vector<float>& file)
+	{
+		constexpr int64_t frames = g_scrubFrames;
+		const size_t start =
+			run(project.client, "audio.capture", {{"channel", 0}, {"start", 0}, {"frames", 1048576}}).at("samples").size();
+		run(project.client, "audition.scrub",
+			{{"track", audio.track}, {"position", position}, {"seconds", static_cast<double>(frames) / rate}});
+		run(project.client, "audio.render", {{"frames", 600}});
+		size_t wrong = 0;
+		for (int channel = 0; channel < 2; ++channel)
+		{
+			const auto output = run(project.client, "audio.capture",
+				{{"channel", channel}, {"start", start}, {"frames", frames}})
+									.at("samples")
+									.get<std::vector<float>>();
+			REQUIRE(output.size() == static_cast<size_t>(frames));
+			for (int64_t k = 0; k < frames; ++k)
+			{
+				// Forwards from position - frames, or backwards from position + frames.
+				const int64_t frame = position > 1000 ? position - frames + k : position + frames - k;
+				const float expected = file[static_cast<size_t>((frame * 2) + channel)];
+				if (output[static_cast<size_t>(k)] != expected && wrong++ == 0)
+					UNSCOPED_INFO("channel " << channel << ", frame " << k << ": " << output[static_cast<size_t>(k)]
+											 << " instead of " << expected);
+			}
+		}
+		return wrong == 0;
+	};
+	CHECK(scrubs(1000 + frames, firstFile));
+
+	// Frozen again with another gain, the scrub reads the new file.
+	run(project.client, "track.unfreeze", {{"tracks", {audio.track}}});
+	run(project.client, "parameter.set",
+		{{"channel", audio.channel}, {"target", {{"type", "plugin"}, {"slot", slot}, {"parameter", 0}}},
+			{"value", 0.0}});
+	run(project.client, "audio.render", {{"frames", 4096}});
+	const Json second = run(project.client, "track.freeze", {{"tracks", {audio.track}}, {"tail", 0}});
+	const std::string secondPath = second.at("tracks").at(0).at("frozen").at("path").get<std::string>();
+	REQUIRE(secondPath != first.at("tracks").at(0).at("frozen").at("path"));
+	const std::vector<float> secondFile = samplesOf(secondPath);
+	REQUIRE(firstDifference(secondFile, firstFile) >= 0);
+	CHECK(scrubs(1000, secondFile));
+
+	// Undone back to the first freeze, it reads the first file again.
+	for (int step = 0; step < 3; ++step) // the freeze, the gain and the unfreeze
+		run(project.client, "history.undo");
+	REQUIRE(project.track(audio.track).at("frozen") == first.at("tracks").at(0).at("frozen"));
+	CHECK(scrubs(1000 + frames, firstFile));
+	run(project.client, "audition.stop");
+}
+
 TEST_CASE("a frozen track stays frozen in the project file", "[integration]")
 {
 	Session project;
 	const Session::Track audio = project.addTrack("Ramp");
 	const Json frozen = run(project.client, "track.freeze", {{"tracks", {audio.track}}, {"tail", 0}});
-	const std::string file = (project.folder.path() / "frozen.dawproject").u8string();
-	run(project.client, "project.save", {{"path", file}});
-	run(project.client, "project.load", {{"path", file}});
-	CHECK(project.track(audio.track).at("frozen") == frozen.at("tracks").at(0).at("frozen"));
+	const Json freeze = frozen.at("tracks").at(0).at("frozen");
+	const std::vector<float> rendered = samplesOf(freeze.at("path").get<std::string>());
+
+	SECTION("with the freeze file in it")
+	{
+		// Like the media, the freeze file goes into the file and comes out into its media folder.
+		const fs::path file = project.folder.path() / "frozen.dawproject";
+		run(project.client, "project.save", {{"path", file.u8string()}});
+		run(project.client, "project.load", {{"path", file.u8string()}});
+		const Json loaded = project.track(audio.track).at("frozen");
+		CHECK(fs::u8path(loaded.at("path").get<std::string>()).parent_path().parent_path() ==
+			project.folder.path() / "frozen media");
+		CHECK(loaded.at("length") == freeze.at("length"));
+		CHECK(firstDifference(samplesOf(loaded.at("path").get<std::string>()), rendered) == -1);
+	}
+
+	SECTION("referring to it in the project's folder, which moves")
+	{
+		run(project.client, "project.save", {{"embedMedia", false}});
+		const fs::path moved = project.folder.path() / "moved";
+		fs::copy(project.media.path(), moved, fs::copy_options::recursive);
+		run(project.client, "project.load", {{"path", (moved / "project.dawproject").u8string()}});
+		CHECK(fs::u8path(project.track(audio.track).at("frozen").at("path").get<std::string>()) ==
+			moved / "Freeze" / "Ramp.wav");
+	}
+}
+
+TEST_CASE("a backup carries the freeze files along", "[integration]")
+{
+	Session project;
+	const Session::Track audio = project.addTrack("Ramp");
+	const Json frozen = run(project.client, "track.freeze", {{"tracks", {audio.track}}, {"tail", 0}});
+	const std::vector<float> rendered =
+		samplesOf(frozen.at("tracks").at(0).at("frozen").at("path").get<std::string>());
+	const fs::path folder = project.folder.path() / "backup";
+	const Json job = run(project.client, "project.backup", {{"folder", folder.u8string()}, {"name", "copy"}});
+	Json state;
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+	do
+	{
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+		state = run(project.client, "job.get", {{"job", job.at("job").at("id")}}).at("job");
+	} while (state.at("state") == "running" && std::chrono::steady_clock::now() < deadline);
+	INFO(state.dump());
+	REQUIRE(state.at("state") == "done");
+	CHECK(state.at("result").at("missing").empty());
+	CHECK(state.at("result").at("files") == 2); // the ramp and the freeze file
+
+	run(project.client, "project.load", {{"path", (folder / "copy.dawproject").u8string()}});
+	const std::string path = project.track(audio.track).at("frozen").at("path").get<std::string>();
+	CHECK(fs::u8path(path) == folder / "Freeze" / "Ramp.wav");
+	CHECK(firstDifference(samplesOf(path), rendered) == -1);
+}
+
+TEST_CASE("a frozen track neither monitors nor records", "[integration]")
+{
+	Session project;
+	const Session::Track audio = project.addTrack("Ramp");
+	const Session::Track other = project.addTrack("Other");
+	const auto buttons = [&project](ObjectId channel)
+	{
+		for (const Json& found : run(project.client, "project.get").at("channels"))
+			if (found.at("id") == channel)
+				return std::pair{found.at("monitor").get<bool>(), found.at("recordEnable").get<bool>()};
+		FAIL("no channel " << channel);
+		return std::pair{false, false};
+	};
+	run(project.client, "channel.set", {{"channel", audio.channel}, {"monitor", true}, {"recordEnable", true}});
+
+	// Freezing turns both buttons off in the same step, and they can't be turned on again while it is frozen.
+	run(project.client, "track.freeze", {{"tracks", {audio.track}}, {"tail", 0}});
+	CHECK(buttons(audio.channel) == std::pair{false, false});
+	CHECK_THAT(reject(project.client, "channel.set", {{"channel", audio.channel}, {"monitor", true}}),
+		ContainsSubstring("frozen"));
+	CHECK_THAT(reject(project.client, "channel.set", {{"channel", audio.channel}, {"recordEnable", true}}),
+		ContainsSubstring("frozen"));
+
+	// A channel linked to it doesn't pass them on to it.
+	run(project.client, "linkGroup.add", {{"channels", {audio.channel, other.channel}}, {"record", true}});
+	run(project.client, "channel.set", {{"channel", other.channel}, {"monitor", true}, {"recordEnable", true}});
+	CHECK(buttons(other.channel) == std::pair{true, true});
+	CHECK(buttons(audio.channel) == std::pair{false, false});
+
+	// Undoing the freeze brings them back.
+	for (int step = 0; step < 3; ++step) // the buttons of the other channel, the link group and the freeze
+		run(project.client, "history.undo");
+	CHECK(project.track(audio.track).at("frozen").is_null());
+	CHECK(buttons(audio.channel) == std::pair{true, true});
+
+	SECTION("nor when a file says it does")
+	{
+		// A file from a build that let a frozen track keep its buttons: they are off when it loads.
+		run(project.client, "track.freeze", {{"tracks", {audio.track}}, {"tail", 0}});
+		run(project.client, "project.save", {{"embedMedia", false}});
+		const fs::path saved = project.media.path() / "project.dawproject";
+		Project file = loadDawProject(saved.u8string(), (project.folder.path() / "media").u8string());
+		file.channels.at(audio.channel).monitor = true;
+		file.channels.at(audio.channel).recordEnable = true;
+		DawProjectSaveOptions options;
+		options.embedMedia = false;
+		saveDawProject(file, saved.u8string(), options);
+		run(project.client, "project.load", {{"path", saved.u8string()}});
+		CHECK(!project.track(audio.track).at("frozen").is_null());
+		CHECK(buttons(audio.channel) == std::pair{false, false});
+	}
 }
 
 TEST_CASE("freezing refuses what it can't freeze", "[integration]")
@@ -419,8 +590,33 @@ TEST_CASE("render in place refuses what it can't render", "[integration]")
 	CHECK_THAT(reject(project.client, "track.renderInPlace", {{"tracks", {audio.track}}, {"start", 10}, {"end", 10}}),
 		ContainsSubstring("empty"));
 	CHECK_THAT(reject(project.client, "track.renderInPlace", {{"tracks", {empty}}}), ContainsSubstring("nothing"));
+
+	// The complete signal path ends after the mute: a muted track, or one that another track's solo silences, would
+	// render silence. Before the fader, mute and solo don't matter.
+	const Json complete = {{"tracks", {audio.track}}, {"processing", "completeSignalPath"}};
+	const auto tracks = [&project] { return run(project.client, "project.get").at("tracks").size(); };
+	run(project.client, "channel.set", {{"channel", audio.channel}, {"mute", true}});
+	CHECK_THAT(reject(project.client, "track.renderInPlace", complete), ContainsSubstring("silent"));
+	run(project.client, "track.renderInPlace", {{"tracks", {audio.track}}});
+	run(project.client, "history.undo");
+	run(project.client, "channel.set", {{"channel", audio.channel}, {"mute", false}});
+	const Session::Track soloed = project.addTrack("Soloed");
+	run(project.client, "channel.set", {{"channel", soloed.channel}, {"solo", true}});
+	CHECK_THAT(reject(project.client, "track.renderInPlace", complete), ContainsSubstring("silent"));
+	run(project.client, "channel.set", {{"channel", audio.channel}, {"solo", true}});
+	run(project.client, "track.renderInPlace", complete);
+	run(project.client, "history.undo");
+	run(project.client, "channel.set", {{"channel", audio.channel}, {"solo", false}});
+	run(project.client, "channel.set", {{"channel", soloed.channel}, {"solo", false}});
+	// A disabled track plays nothing, also in a range.
+	run(project.client, "track.set", {{"track", audio.track}, {"enabled", false}});
+	CHECK_THAT(reject(project.client, "track.renderInPlace", {{"tracks", {audio.track}}, {"start", 0}, {"end", 100}}),
+		ContainsSubstring("disabled"));
+	run(project.client, "track.set", {{"track", audio.track}, {"enabled", true}});
+	CHECK(tracks() == 3);
+
 	run(project.client, "track.freeze", {{"tracks", {audio.track}}, {"tail", 0}});
 	CHECK_THAT(reject(project.client, "track.renderInPlace", {{"tracks", {audio.track}}, {"processing", "dry"}}),
 		ContainsSubstring("frozen"));
-	CHECK(run(project.client, "project.get").at("tracks").size() == 2);
+	CHECK(tracks() == 3);
 }
