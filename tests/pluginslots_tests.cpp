@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -639,4 +640,194 @@ TEST_CASE("plugin.changed announces a slot once its plugin's status changed", "[
 	CHECK(std::count(statuses.begin(), statuses.end(), "active") >= 1);
 	CHECK(std::count(statuses.begin(), statuses.end(), "inactive") == 1);
 	CHECK(statuses.back() == "inactive");
+}
+
+namespace
+{
+	// SlotInstances whose slots all get a CountingPlugin, with the audio thread's newest graph in started; asked counts
+	// how often they ask whether a generation is retired.
+	struct RetiringSlots
+	{
+		plugins::HostManager jobs;
+		std::atomic<uint64_t> started{1};
+		std::atomic<int> asked{0};
+		plugins::SlotInstances slots{jobs, [] {},
+			[this](uint64_t generation)
+			{
+				++asked;
+				return started.load() >= generation;
+			},
+			[](const std::string& /*plugin*/, uint32_t /*channels*/,
+				gnubase::plugin::Host& /*host*/) -> std::unique_ptr<gnubase::plugin::Plugin>
+			{ return std::make_unique<CountingPlugin>(1, true); }};
+		RenderSlot slot;
+
+		// Makes the slot's plugin and puts it into the graph.
+		RetiringSlots()
+		{
+			slot.id = 1;
+			slot.plugin = "test:counting";
+			update();
+			jobs.run([] {}).get();
+			update();
+		}
+
+		void update() { slots.update({{&slot, 2}}, 48000.0, 128); }
+
+		// Waits until the slot's plugin has the status.
+		bool waitFor(const std::string& wanted) const
+		{
+			const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+			while (slots.status(1) != wanted && std::chrono::steady_clock::now() < deadline)
+				std::this_thread::sleep_for(std::chrono::milliseconds(1));
+			return slots.status(1) == wanted;
+		}
+	};
+}
+
+TEST_CASE("a plugin leaving the graph waits for the audio thread's signal, and nothing polls meanwhile", "[unit]")
+{
+	RetiringSlots retiring;
+	REQUIRE(retiring.slots.processor(1) != nullptr);
+	REQUIRE(retiring.slots.status(1) == "active");
+
+	// Deactivated: it leaves the graph of generation 2, which the audio thread hasn't started yet.
+	retiring.slot.active = false;
+	retiring.update();
+	CHECK(retiring.slots.processor(1) == nullptr);
+	retiring.slots.retire(2);
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+	while (retiring.asked == 0 && std::chrono::steady_clock::now() < deadline)
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	// Once when it was retired, or twice if the retirer thread had just started; then not again and again.
+	std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	const int asked = retiring.asked;
+	CHECK(asked >= 1);
+	CHECK(asked <= 2);
+	std::this_thread::sleep_for(std::chrono::milliseconds(50));
+	retiring.jobs.run([] {}).get(); // other jobs run meanwhile
+	CHECK(retiring.slots.status(1) == "loading");
+	CHECK(retiring.asked == asked);
+
+	// The audio thread starts generation 2 and says so: the plugin is deactivated right away.
+	retiring.started = 2;
+	retiring.slots.wake();
+	CHECK(retiring.waitFor("inactive"));
+	CHECK(retiring.asked == asked + 1);
+
+	// Waking without a new graph changes nothing.
+	retiring.slot.active = true;
+	retiring.update();
+	retiring.slots.retire(3);
+	retiring.slots.wake();
+	retiring.jobs.run([] {}).get();
+	CHECK(retiring.slots.status(1) == "loading");
+	retiring.started = 3;
+	retiring.slots.wake();
+	CHECK(retiring.waitFor("active"));
+}
+
+TEST_CASE("slots close while a plugin waits for the audio thread to leave its graph", "[unit]")
+{
+	for (const bool active : {false, true})
+	{
+		RetiringSlots retiring;
+		retiring.slot.active = active;
+		if (active)
+			retiring.slot.plugin = "test:other"; // replaced: the old plugin is destroyed once retired
+		retiring.update();
+		retiring.slots.retire(2); // the audio thread never starts it
+								  // The slots go now, without waiting for generation 2.
+	}
+	SUCCEED();
+}
+
+namespace
+{
+	// Waits for an event that matches, and returns the events that came until then, the one that matched last; empty
+	// if none did within 10 s.
+	template <typename Match> std::vector<Event> eventsUntil(Client& client, const std::string& name, Match match)
+	{
+		std::vector<Event> received;
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+		while (std::chrono::steady_clock::now() < deadline)
+		{
+			const std::optional<Message> message = client.wait(std::chrono::milliseconds(50));
+			const auto* event = message ? std::get_if<Event>(&*message) : nullptr;
+			if (event == nullptr)
+				continue;
+			received.push_back(*event);
+			if (event->name == name && match(event->data))
+				return received;
+		}
+		return {};
+	}
+
+	// The statuses plugin.changed announced among the events, and the events of the same command after them, by slot.
+	std::map<ObjectId, std::vector<std::string>> announcedStatuses(Client& client, std::vector<Event> received)
+	{
+		run(client, "audio.get"); // after the events of the commands before it
+		while (const auto message = client.poll())
+			if (const auto* event = std::get_if<Event>(&*message))
+				received.push_back(*event);
+		std::map<ObjectId, std::vector<std::string>> statuses;
+		for (const Event& event : received)
+			if (event.name == "plugin.changed")
+				statuses[event.data.at("slot").at("id").get<ObjectId>()].push_back(
+					event.data.at("slot").at("status").get<std::string>());
+		return statuses;
+	}
+}
+
+TEST_CASE("plugin.changed announces the slots whose status changes when the device closes or opens", "[integration]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId channel = monitorSine(client, 500.0, -24.0);
+	const Json eq = insert(client, channel, "builtin:eq");
+	const Json limiter = insert(client, channel, "builtin:limiter");
+	run(client, "plugin.set", {{"slot", limiter}, {"active", false}});
+	waitFor(client, eq, "active");
+	waitFor(client, limiter, "inactive");
+	events(client);
+
+	// A reset closes the device and opens it again as it was: no slot's status changes.
+	run(client, "audio.reset");
+	CHECK(events(client)["plugin.changed"].empty());
+
+	// The device goes away.
+	run(client, "audio.simulateDeviceLoss", {{"connected", false}});
+	std::vector<Event> received =
+		eventsUntil(client, "audio.changed", [](const Json& data) { return !data.at("lost").is_null(); });
+	REQUIRE(!received.empty());
+	std::map<ObjectId, std::vector<std::string>> statuses = announcedStatuses(client, received);
+	CHECK(statuses[eq.get<ObjectId>()] == std::vector<std::string>{"noDevice"});
+	CHECK(statuses[limiter.get<ObjectId>()] == std::vector<std::string>{"noDevice"});
+	CHECK(status(client, eq) == "noDevice");
+
+	// It returns, with the same format: the plugins are as they were.
+	run(client, "audio.simulateDeviceLoss", {{"connected", true}});
+	received = eventsUntil(client, "audio.changed",
+		[](const Json& data) { return data.at("lost").is_null() && !data.at("device").is_null(); });
+	REQUIRE(!received.empty());
+	statuses = announcedStatuses(client, received);
+	CHECK(statuses[eq.get<ObjectId>()] == std::vector<std::string>{"active"});
+	CHECK(statuses[limiter.get<ObjectId>()] == std::vector<std::string>{"inactive"});
+	run(client, "audio.updatePlugins");
+	CHECK(events(client)["plugin.changed"].empty());
+
+	// Another sample rate activates the active plugin again: loading, then active, unless it was active again before
+	// the command ended. So does a new project sample rate, which the device follows.
+	for (const auto& [command, parameters] : std::vector<std::pair<std::string, Json>>{
+			 {"audio.set", {{"sampleRate", 44100.0}}}, {"project.set", {{"sampleRate", 96000.0}}}})
+	{
+		INFO(command);
+		run(client, command, parameters);
+		waitFor(client, eq, "active");
+		statuses = announcedStatuses(client, {});
+		const std::vector<std::string>& reactivated = statuses[eq.get<ObjectId>()];
+		CHECK((reactivated.empty() || reactivated == std::vector<std::string>{"loading", "active"}));
+		CHECK(statuses.count(limiter.get<ObjectId>()) == 0);
+	}
+	CHECK(run(client, "audio.get").at("device").at("sampleRate") == 96000.0);
 }

@@ -455,3 +455,91 @@ TEST_CASE("the plugin.* commands, parameter.set, undo and redo announce slots al
 	CHECK(announced["plugin.added"].empty());
 	CHECK(!announced["channel.added"].empty());
 }
+
+namespace
+{
+	// The events since the last call, in order, each as [name, data], without those of the undo history.
+	std::vector<Json> eventSequence(Client& client)
+	{
+		std::vector<Json> found;
+		while (const auto message = client.poll())
+			if (const auto* event = std::get_if<Event>(&*message); event != nullptr && event->name != "history.changed")
+				found.push_back({event->name, event->data});
+		return found;
+	}
+
+	// A channel as project.get has it.
+	Json channelJson(Client& client, ObjectId channel)
+	{
+		const Json channels = run(client, "project.get").at("channels");
+		for (const Json& found : channels)
+			if (found.at("id") == channel)
+				return found;
+		return nullptr;
+	}
+}
+
+TEST_CASE("plugin.move announces a move as its undo and redo do", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const TestTrack first = addTrack(client, "audio");
+	const TestTrack second = addTrack(client, "group");
+	const ObjectId eq = insert(client, first.channel, "builtin:eq");
+	const ObjectId gain = insert(client, first.channel, "builtin:gainPan");
+	const ObjectId limiter = insert(client, second.channel, "builtin:limiter");
+	for (const uint32_t parameter : {0U, 1U})
+		run(client, "automationLane.add", {{"track", first.track}, {"target", pluginTarget(gain, parameter)}});
+	eventSequence(client);
+
+	// To another channel: both channels, by id, the slot with its new channel and index, then the automation
+	// lanes that stay behind, whichever way it moves.
+	struct Move
+	{
+		ObjectId slot;
+		TestTrack from;
+		TestTrack to;
+		int64_t index;
+		size_t lanes;
+	};
+	for (const Move& move : {Move{gain, first, second, 0, 2}, Move{limiter, second, first, 2, 0}})
+	{
+		INFO("slot " << move.slot);
+		run(client, "plugin.move", {{"slot", move.slot}, {"channel", move.to.channel}, {"index", move.index}});
+		const std::vector<Json> moved = eventSequence(client);
+		REQUIRE(moved.size() == 3 + move.lanes);
+		CHECK(moved[0] == Json{"channel.changed", {{"channel", channelJson(client, first.channel)}}});
+		CHECK(moved[1] == Json{"channel.changed", {{"channel", channelJson(client, second.channel)}}});
+		CHECK(moved[2] == Json{"plugin.changed", run(client, "plugin.get", {{"slot", move.slot}})});
+		CHECK(moved[2].at(1).at("slot").at("channel") == move.to.channel);
+		CHECK(moved[2].at(1).at("slot").at("index") == move.index);
+		for (size_t lane = 3; lane < moved.size(); ++lane)
+			CHECK(moved[lane].at(0) == "automationLane.removed");
+
+		run(client, "history.undo");
+		const std::vector<Json> undone = eventSequence(client);
+		REQUIRE(undone.size() == moved.size());
+		CHECK(undone[0] == Json{"channel.changed", {{"channel", channelJson(client, first.channel)}}});
+		CHECK(undone[1] == Json{"channel.changed", {{"channel", channelJson(client, second.channel)}}});
+		CHECK(undone[2] == Json{"plugin.changed", run(client, "plugin.get", {{"slot", move.slot}})});
+		CHECK(undone[2].at(1).at("slot").at("channel") == move.from.channel);
+		for (size_t lane = 3; lane < undone.size(); ++lane)
+			CHECK(undone[lane].at(0) == "automationLane.added");
+
+		run(client, "history.redo");
+		CHECK(eventSequence(client) == moved);
+		run(client, "history.undo");
+		eventSequence(client);
+	}
+
+	// Within its channel the slot stays the same: the channel has the new order, for this slot and those it passed.
+	run(client, "plugin.move", {{"slot", gain}, {"index", 0}});
+	const std::vector<Json> moved = eventSequence(client);
+	CHECK(moved == std::vector<Json>{Json{"channel.changed", {{"channel", channelJson(client, first.channel)}}}});
+	CHECK(run(client, "plugin.get", {{"slot", eq}}).at("slot").at("index") == 1);
+	run(client, "history.undo");
+	CHECK(eventSequence(client) ==
+		std::vector<Json>{Json{"channel.changed", {{"channel", channelJson(client, first.channel)}}}});
+	run(client, "history.redo");
+	CHECK(eventSequence(client) == moved);
+}
