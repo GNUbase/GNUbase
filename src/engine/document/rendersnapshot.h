@@ -200,7 +200,12 @@ namespace gnubase::engine
 		std::vector<RenderBus> busses;
 		std::vector<RenderMedia> media;
 		std::vector<RenderChannel> channels; // in track order
+		// What arranger mode plays (#167); shared with the cue thread.
+		std::shared_ptr<const ArrangerPlan> arranger = std::make_shared<const ArrangerPlan>();
 	};
 
 	std::unique_ptr<const RenderSnapshot> compile(const Project& project, uint64_t revision);
+
+	// The arranger plan of a project: its arranger events and the active chain's steps in samples (arranger.cpp).
+	ArrangerPlan arrangerPlan(const Project& project);
 }

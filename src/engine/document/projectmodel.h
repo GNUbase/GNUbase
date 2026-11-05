@@ -145,6 +145,7 @@ namespace gnubase::engine
 		void registerMediaFolderCommands(Engine& engine, Jobs& jobs); // project.backup, media.prepareArchive and more
 		void registerMidiEditCommands(Engine& engine);                // midiedits.cpp: note.set and controller.set
 		void registerMarkerCommands(Engine& engine);                  // markers.cpp: marker.*
+		void registerArrangerCommands(Engine& engine);                // arranger.cpp: arranger.* (#167)
 		void registerTempoCommands(Engine& engine);                   // tempo.cpp: tempo.*
 		void registerSignatureCommands(Engine& engine);               // signature.cpp: signature.*
 		void registerMidiFileCommands(Engine& engine); // midifilecommands.cpp: midiFile.export and midiFile.import

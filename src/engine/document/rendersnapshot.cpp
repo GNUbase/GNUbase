@@ -351,6 +351,7 @@ namespace gnubase::engine
 		snapshot->sampleRate = project.sampleRate;
 		snapshot->tempo = project.tempo;
 		snapshot->signatures = project.signatures;
+		snapshot->arranger = std::make_shared<const ArrangerPlan>(arrangerPlan(project));
 		snapshot->metronome = project.metronome;
 		std::vector<ObjectId>& outputs = snapshot->metronome.outputs;
 		outputs.erase(std::remove_if(outputs.begin(), outputs.end(),

@@ -94,6 +94,7 @@ add_library(gnubase-engine STATIC
 	analysis/analysis.cpp analysis/analysis.h
 	analysis/onsets.cpp analysis/onsets.h
 	audio/analysiscommands.cpp
+	audio/arranger.cpp audio/arranger.h
 	audio/audioengine.cpp audio/audioengine.h
 	audio/audition.cpp audio/audition.h
 	audio/automation.cpp audio/automation.h
@@ -117,6 +118,7 @@ add_library(gnubase-engine STATIC
 	audiofile/writer.cpp
 	clock.cpp clock.h
 	dawproject/dawproject.cpp dawproject/dawproject.h
+	document/arranger.cpp
 	document/audiofilecommands.cpp
 	document/channelformat.cpp document/channelformat.h
 	document/channelsettings.cpp document/channelsettings.h

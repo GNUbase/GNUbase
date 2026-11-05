@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "engine/audio/arranger.h"
 #include "engine/graph/processor.h"
 #include "engine/time/tempomap.h"
 #include "platform/rt/seqlockpair.h"
@@ -97,6 +98,9 @@ namespace gnubase::engine
 	// Punching in and out at the locators (reference manual pp. 318-319, 336-338) happens on the audio thread at the
 	// exact sample, and so does stopping after an automatic punch out, at the first block that starts at or after
 	// the right locator plus the post-roll. The command thread takes such changes over with sync().
+	//
+	// Arranger mode (#167): with a plan that plays, playback follows the active chain instead of the cycle, jumping
+	// at the exact sample where a step's event ends (arrangerNext), and stops there after a step that pauses.
 	class Transport
 	{
 	public:
@@ -116,6 +120,11 @@ namespace gnubase::engine
 		// Positions and locators are clamped to 0 to g_maxPosition.
 		bool locate(time::Samples position);         // also the new start position for returnToStart
 		bool set(const TransportSettings& settings); // new locators and modes
+		// Arranger playback: makes state the one playing (after a locate to where it plays), or with pending lets its
+		// step or event take over at the next jump point.
+		bool arrange(const ArrangerState& state, bool pending);
+		// Any thread but the audio thread: where arranger playback is, as of the last block or request.
+		ArrangerState arranger() const;
 
 		// Command thread: the settings as requested and whether playback was requested.
 		const TransportSettings& settings() const { return m_requested; }
@@ -152,9 +161,9 @@ namespace gnubase::engine
 		// Audio thread, or the command thread while no audio thread runs: applies the waiting requests.
 		void update() noexcept;
 
-		// Audio thread: applies the waiting requests, then plays a block of up to maxFrames frames. The result stays
-		// valid until the next call.
-		const graph::TransportBlock& advance(uint32_t frames) noexcept;
+		// Audio thread: applies the waiting requests, then plays a block of up to maxFrames frames, in arranger mode
+		// along the plan. The result stays valid until the next call.
+		const graph::TransportBlock& advance(uint32_t frames, const ArrangerPlan* plan = nullptr) noexcept;
 
 	private:
 		struct Request
@@ -166,6 +175,7 @@ namespace gnubase::engine
 				Locate,
 				Set,
 				Record,
+				Arrange,
 			};
 
 			Type type = Type::Play;
@@ -174,6 +184,7 @@ namespace gnubase::engine
 			uint64_t locate = 0;      // Locate: which one, counted from 1
 			bool record = false;      // Record: punch in, or out
 			graph::CountIn countIn{}; // Record from stop
+			ArrangerState arranger;   // Arrange; record: pending
 		};
 
 		bool send(const Request& request);
@@ -209,6 +220,8 @@ namespace gnubase::engine
 		uint8_t m_published = 0;       // what m_state says
 		std::vector<graph::TransportSegment> m_segments;
 		graph::TransportBlock m_block;
+		ArrangerState m_arranger;
+		ArrangerState m_publishedArranger;
 
 		// Written by the command thread: how many locates were sent and where the last one goes.
 		rt::SeqLockPair<uint64_t, time::Samples> m_sent;
@@ -221,6 +234,8 @@ namespace gnubase::engine
 		std::atomic<time::Samples> m_countInStart{-1};
 		std::atomic<uint8_t> m_state{0};
 		std::atomic<uint64_t> m_changes{0};
+		// Written by the audio thread: m_arranger, packed (arranger()).
+		rt::SeqLockPair<int64_t, int64_t> m_arrangerShared;
 	};
 
 	// Where the transport played each of the device's last frames, so recorded input finds where it belongs: with

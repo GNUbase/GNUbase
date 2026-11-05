@@ -344,6 +344,8 @@ namespace gnubase::app
 		m_keys.add({"window.tempoTrack", "Opens or closes the tempo track editor.",
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_shell.post([this] { toggleTempoEditor(); }); }});
 		m_keys.bind({"Mod+T", "window.tempoTrack"});
+		m_keys.add({"window.arranger", "Opens or closes the arranger editor.",
+			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_shell.post([this] { toggleArranger(); }); }});
 		m_keys.add({"tempo.toggleTrack", "Switches between fixed tempo and tempo track mode (Activate Tempo Track).",
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/)
 			{
@@ -992,6 +994,29 @@ namespace gnubase::app
 		document->Show();
 		m_tempoEditor = std::make_unique<ui::TempoEditor>(m_binding, *document);
 		return m_tempoEditor.get();
+	}
+
+	void AppUi::toggleArranger()
+	{
+		if (m_shell.find(m_arrangerWindow) != nullptr)
+		{
+			m_shell.close(m_arrangerWindow);
+			return;
+		}
+		ui::WindowSpec spec;
+		spec.title = "Arranger";
+		spec.size = {640, 360};
+		spec.hidden = m_hidden;
+		const ui::Window& window = m_shell.open(spec);
+		m_arrangerWindow = window.id();
+		const std::filesystem::path file = m_resources / "ui" / "arranger-editor.rml";
+		Rml::ElementDocument* document = window.context().LoadDocument(file.generic_u8string());
+		if (document == nullptr)
+		{
+			m_shell.close(m_arrangerWindow);
+			throw std::runtime_error("cannot load the arranger editor from " + file.u8string());
+		}
+		document->Show();
 	}
 
 	void AppUi::chooseImport(

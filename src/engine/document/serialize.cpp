@@ -13,6 +13,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -39,6 +40,7 @@ namespace gnubase::engine
 			{TrackType::Ruler, "ruler"},
 			{TrackType::Tempo, "tempo"},
 			{TrackType::Signature, "signature"},
+			{TrackType::Arranger, "arranger"},
 			{TrackType::Vca, "vca"},
 		};
 
@@ -708,6 +710,36 @@ namespace gnubase::engine
 			{"color", colorJson(marker.color)}};
 	}
 
+	Json arrangerJson(const Project& project)
+	{
+		const auto track = std::find_if(project.trackById.begin(), project.trackById.end(),
+			[](const auto& entry) { return entry.second.type == TrackType::Arranger; });
+		std::vector<const ArrangerEvent*> order;
+		for (const ArrangerEvent& event : project.arranger.events)
+			order.push_back(&event);
+		const auto start = [&project](const time::Position& position)
+		{ return time::toSamples(position, project.tempo, project.sampleRate); };
+		std::stable_sort(order.begin(), order.end(), [&start](const ArrangerEvent* a, const ArrangerEvent* b)
+			{ return start(a->position) < start(b->position); });
+		Json events = Json::array();
+		for (const ArrangerEvent* event : order)
+			events.push_back({{"id", event->id}, {"name", event->name}, {"position", event->position.value},
+				{"end", event->end.value}, {"start", start(event->position)}, {"endSamples", start(event->end)}});
+		Json chains = Json::array();
+		for (const ArrangerChain& chain : project.arranger.chains)
+		{
+			Json steps = Json::array();
+			for (const ArrangerStep& step : chain.steps)
+				steps.push_back({{"event", step.event}, {"repeats", step.repeats},
+					{"mode", g_arrangerRepeatModes.at(static_cast<size_t>(step.mode))}});
+			chains.push_back({{"id", chain.id}, {"name", chain.name}, {"steps", steps}});
+		}
+		const ArrangerChain* active = activeArrangerChain(project);
+		return {{"track", track == project.trackById.end() ? ObjectId{0} : track->first}, {"events", events},
+			{"chains", chains}, {"chain", active == nullptr ? ObjectId{0} : active->id}, {"mode", project.arrangerMode},
+			{"jumpMode", g_arrangerJumpModes.at(static_cast<size_t>(project.arrangerJump))}};
+	}
+
 	Json toJson(const LinkGroup& group)
 	{
 		return {{"id", group.id}, {"name", group.name}, {"channels", group.channels}, {"volume", group.volume},
@@ -866,10 +898,11 @@ namespace gnubase::engine
 			{"poolFolders", toJsonArray(project.poolFolders)}, {"audioEvents", toJsonArray(project.audioEvents)},
 			{"audioParts", toJsonArray(project.audioParts)}, {"midiParts", toJsonArray(project.midiParts)},
 			{"markers", toJsonArray(project.markers)}, {"automation", toJsonArray(project.automation)},
-			{"linkGroups", toJsonArray(project.linkGroups)}, {"virginTerritory", project.virginTerritory},
-			{"quantize", midi::toJson(project.quantize)}, {"autoQuantize", project.autoQuantize},
-			{"activeMarkerTrack", project.activeMarkerTrack}, {"snap", toJson(project.snap)},
-			{"mixers", mixersJson(project.mixers)}, {"metronome", metronome::toJson(project.metronome)}};
+			{"linkGroups", toJsonArray(project.linkGroups)}, {"arranger", arrangerJson(project)},
+			{"virginTerritory", project.virginTerritory}, {"quantize", midi::toJson(project.quantize)},
+			{"autoQuantize", project.autoQuantize}, {"activeMarkerTrack", project.activeMarkerTrack},
+			{"snap", toJson(project.snap)}, {"mixers", mixersJson(project.mixers)},
+			{"metronome", metronome::toJson(project.metronome)}};
 		json.update(toJson(project.setup));
 		return json;
 	}
@@ -1147,6 +1180,59 @@ namespace gnubase::engine
 
 	namespace
 	{
+		template <size_t N>
+		std::optional<size_t> indexOf(const std::array<const char*, N>& names, const std::string& name)
+		{
+			for (size_t i = 0; i < N; ++i)
+				if (name == names[i])
+					return i;
+			return std::nullopt;
+		}
+
+		// The arranger as arrangerJson writes it, in the arranger track's time base. Steps of events that aren't
+		// there are left out; a project with an arranger track has a chain.
+		void arrangerFromJson(Project& project, const Json& json)
+		{
+			const auto track = std::find_if(project.trackById.begin(), project.trackById.end(),
+				[](const auto& entry) { return entry.second.type == TrackType::Arranger; });
+			if (track == project.trackById.end())
+				return;
+			const time::TimeBase base = track->second.timeBase;
+			std::set<ObjectId> events;
+			for (const Json& item : json.value("events", Json::array()))
+			{
+				ArrangerEvent event;
+				event.id = item.at("id").get<ObjectId>();
+				event.name = item.value("name", std::string());
+				event.position = {base, item.at("position").get<int64_t>()};
+				event.end = {base, item.at("end").get<int64_t>()};
+				keepMinimumLength(project, event);
+				if (events.insert(event.id).second)
+					project.arranger.events.push_back(event);
+			}
+			for (const Json& item : json.value("chains", Json::array()))
+			{
+				ArrangerChain chain;
+				chain.id = item.at("id").get<ObjectId>();
+				chain.name = item.value("name", std::string());
+				for (const Json& step : item.value("steps", Json::array()))
+				{
+					const auto mode = indexOf(g_arrangerRepeatModes, step.value("mode", std::string("normal")));
+					const auto event = step.at("event").get<ObjectId>();
+					if (events.count(event) != 0)
+						chain.steps.push_back({event, std::max(1, step.value("repeats", 1)),
+							static_cast<ArrangerRepeat>(mode.value_or(0))});
+				}
+				project.arranger.chains.push_back(std::move(chain));
+			}
+			if (project.arranger.chains.empty())
+				project.arranger.chains.push_back({0, "Chain 1", {}}); // gets an id below
+			project.arrangerChain = json.value("chain", ObjectId{0});
+			project.arrangerMode = json.value("mode", false);
+			project.arrangerJump = static_cast<ArrangerJump>(
+				indexOf(g_arrangerJumpModes, json.value("jumpMode", std::string("none"))).value_or(0));
+		}
+
 		const std::array<const char*, 5> g_eqBandTypes = {"bell", "lowShelf", "highShelf", "lowCut", "highCut"};
 
 		Json toJson(const CutFilter& filter)
@@ -1775,6 +1861,7 @@ namespace gnubase::engine
 			project.markers[marker.id] = marker;
 		}
 		project.activeMarkerTrack = json.value("activeMarkerTrack", ObjectId{0});
+		arrangerFromJson(project, json.value("arranger", Json::object())); // files from before #167 have none
 		for (const Json& item : json.value("automation", Json::array()))
 		{
 			AutomationLane lane = automationLaneFromJson(project, item);
@@ -1865,7 +1952,14 @@ namespace gnubase::engine
 			for (const auto& [pointId, point] : lane.points)
 				see(pointId);
 		}
+		for (const ArrangerEvent& event : project.arranger.events)
+			see(event.id);
+		for (const ArrangerChain& chain : project.arranger.chains)
+			see(chain.id);
 		project.nextId = std::max(json.value("nextId", ObjectId{0}), highest + 1);
+		for (ArrangerChain& chain : project.arranger.chains)
+			if (chain.id == 0)
+				chain.id = project.newId();
 		placeOldMarkers(project);
 		return project;
 	}

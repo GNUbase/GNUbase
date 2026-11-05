@@ -1680,6 +1680,9 @@ namespace gnubase::engine
 					clipboard.automation.push_back(automationWithin(
 						project, lane, inBase(project, range.start, base), inBase(project, range.end, base)));
 				}
+			// In stack order: pasted copies stack in the order they are added, and a split moves no piece in the stack.
+			std::stable_sort(clipboard.audioEvents.begin(), clipboard.audioEvents.end(),
+				[](const AudioEvent& a, const AudioEvent& b) { return frontOf(a) < frontOf(b); });
 			return clipboard;
 		}
 
@@ -1850,44 +1853,16 @@ namespace gnubase::engine
 			return Json::object();
 		}
 
-		Json pasteRange(Project& project, CommandContext& context, const std::optional<RangeClipboard>& stored)
+		// Pastes a range clipboard at a position onto tracks, one for each copied track. Returns what it pasted.
+		std::vector<Item> pasteClipboard(Project& project, const RangeClipboard& clipboard,
+			const std::vector<ObjectId>& tracks, time::Samples at, CommandContext& context)
 		{
-			if (!stored)
-				throw CommandError("nothing to paste: copy or cut a range first");
-			const RangeClipboard& clipboard = *stored;
-			const Json& parameters = context.parameters();
-			const time::Samples at = parameters.contains("position")
-				? parameters.at("position").get<time::Samples>()
-				: context.call("transport.get").at("position").get<time::Samples>();
-			require(at >= 0, "position must not be before the project start");
-			// Onto the tracks it came from, or from track on down.
-			std::vector<ObjectId> tracks = clipboard.tracks;
-			if (parameters.contains("track"))
-			{
-				const auto first = parameters.at("track").get<ObjectId>();
-				const std::vector<ObjectId> order = project.trackOrder();
-				const auto found = std::find(order.begin(), order.end(), first);
-				require(found != order.end(), "no track " + std::to_string(first));
-				require(static_cast<size_t>(order.end() - found) >= tracks.size(),
-					"there aren't enough tracks from track " + std::to_string(first) + " down for the " +
-						std::to_string(tracks.size()) + " copied tracks");
-				tracks.assign(found, found + static_cast<std::ptrdiff_t>(tracks.size()));
-			}
-			else
-			{
-				for (const ObjectId id : tracks)
-					require(project.trackById.count(id) != 0,
-						"track " + std::to_string(id) + " that the range was copied from is gone: paste onto a track");
-			}
 			const auto onto = [&clipboard, &tracks](ObjectId source)
 			{
 				const auto index =
 					std::find(clipboard.tracks.begin(), clipboard.tracks.end(), source) - clipboard.tracks.begin();
 				return tracks.at(static_cast<size_t>(index));
 			};
-			if (parameters.value("time", false))
-				insertSpace(project, tracks, at,
-					{clipboard.end - clipboard.start, clipboard.endTicks - clipboard.startTicks}, false, context);
 			const Gap shift{at - clipboard.start, ticks(project, {time::TimeBase::Linear, at}) - clipboard.startTicks};
 			std::vector<Item> added;
 			const auto paste = [&](const Item& item)
@@ -1943,7 +1918,113 @@ namespace gnubase::engine
 					if (lane.track == track && lane.target == copied.target)
 						pasteAutomation(project, lane, copied, shift, context);
 			}
-			return {{"events", idsOf(added)}};
+			return added;
+		}
+
+		Json pasteRange(Project& project, CommandContext& context, const std::optional<RangeClipboard>& stored)
+		{
+			if (!stored)
+				throw CommandError("nothing to paste: copy or cut a range first");
+			const RangeClipboard& clipboard = *stored;
+			const Json& parameters = context.parameters();
+			const time::Samples at = parameters.contains("position")
+				? parameters.at("position").get<time::Samples>()
+				: context.call("transport.get").at("position").get<time::Samples>();
+			require(at >= 0, "position must not be before the project start");
+			// Onto the tracks it came from, or from track on down.
+			std::vector<ObjectId> tracks = clipboard.tracks;
+			if (parameters.contains("track"))
+			{
+				const auto first = parameters.at("track").get<ObjectId>();
+				const std::vector<ObjectId> order = project.trackOrder();
+				const auto found = std::find(order.begin(), order.end(), first);
+				require(found != order.end(), "no track " + std::to_string(first));
+				require(static_cast<size_t>(order.end() - found) >= tracks.size(),
+					"there aren't enough tracks from track " + std::to_string(first) + " down for the " +
+						std::to_string(tracks.size()) + " copied tracks");
+				tracks.assign(found, found + static_cast<std::ptrdiff_t>(tracks.size()));
+			}
+			else
+			{
+				for (const ObjectId id : tracks)
+					require(project.trackById.count(id) != 0,
+						"track " + std::to_string(id) + " that the range was copied from is gone: paste onto a track");
+			}
+			if (parameters.value("time", false))
+				insertSpace(project, tracks, at,
+					{clipboard.end - clipboard.start, clipboard.endTicks - clipboard.startTicks}, false, context);
+			return {{"events", idsOf(pasteClipboard(project, clipboard, tracks, at, context))}};
+		}
+
+		// Flatten Chain (#167, reference manual pp. 407-411): from the start of the chain's first event on, the project
+		// becomes what the chain plays, every step's event repeated, one after the other. What lies before stays.
+		// Returns where the flattened chain starts and ends, in samples.
+		Json flattenChain(Project& project, CommandContext& context, bool keepTrack)
+		{
+			const Json& parameters = context.parameters();
+			const ArrangerChain* chain = activeArrangerChain(project);
+			if (parameters.contains("chain"))
+			{
+				const auto id = parameters.at("chain").get<ObjectId>();
+				const auto found = std::find_if(project.arranger.chains.begin(), project.arranger.chains.end(),
+					[id](const ArrangerChain& candidate) { return candidate.id == id; });
+				require(found != project.arranger.chains.end(), "no arranger chain " + std::to_string(id));
+				chain = &*found;
+			}
+			require(chain != nullptr && !chain->steps.empty(), "the arranger chain is empty");
+			struct Section
+			{
+				const ArrangerEvent* event = nullptr;
+				time::Samples start = 0;
+				time::Samples end = 0;
+			};
+			std::vector<Section> sections;
+			for (const ArrangerStep& step : chain->steps)
+				for (const ArrangerEvent& event : project.arranger.events)
+					if (event.id == step.event)
+						for (int r = 0; r < step.repeats; ++r)
+							sections.push_back({&event, samples(project, event.position), samples(project, event.end)});
+			require(!sections.empty(), "the arranger chain is empty");
+			const Project original = project;
+			const std::vector<ObjectId> tracks = project.trackOrder();
+			// Everything from the chain's start on goes, up to the end of the last thing in the project.
+			time::Samples last = 0;
+			for (const Item& item : itemsOn(project, tracks, true))
+				last = std::max(last, samples(project, endOf(project, item)));
+			for (const auto& [id, lane] : project.automation)
+				for (const auto& [pointId, point] : lane.points)
+					last = std::max(last, samples(project, point.position));
+			for (const Section& section : sections)
+				last = std::max(last, section.end);
+			const time::Samples start = sections.front().start;
+			deleteRange(project, {start, last + 1, tracks, false}, false, context);
+			// ponytail: sections follow each other in samples; on musical tracks with tempo changes a section may land
+			// a few ticks off its beat. Chain the positions in ticks if that matters.
+			time::Samples at = start;
+			std::vector<ArrangerEvent> placed;
+			for (const Section& section : sections)
+			{
+				pasteClipboard(
+					project, copyRange(original, {section.start, section.end, tracks, false}), tracks, at, context);
+				const time::TimeBase base = section.event->position.base;
+				placed.push_back(
+					{project.newId(), section.event->name, rebased(project, {time::TimeBase::Linear, at}, base),
+						rebased(project, {time::TimeBase::Linear, at + (section.end - section.start)}, base)});
+				at += section.end - section.start;
+			}
+			if (keepTrack) // the events where they now are, in a chain that plays them in order
+			{
+				ArrangerChain flat{chain->id, chain->name, {}};
+				for (ArrangerEvent& event : placed)
+				{
+					keepMinimumLength(project, event);
+					flat.steps.push_back({event.id, 1, ArrangerRepeat::Normal});
+				}
+				project.arranger = {placed, {flat}};
+				project.arrangerChain = flat.id;
+				context.emit("arranger.changed", arrangerJson(project));
+			}
+			return {{"start", start}, {"end", at}};
 		}
 
 		// Copying automation to other tracks (reference manual pp. 878-879).
@@ -2517,6 +2598,29 @@ namespace gnubase::engine
 				false},
 			"Paste",
 			[this](Project& project, CommandContext& context) { return pasteRange(project, context, m_clipboard); });
+
+		addEdit(engine,
+			{"arranger.flatten", 1,
+				"Flatten Chain (#167): makes the project play the arranger chain (default: the active one) linearly. "
+				"From the start of the chain's first event on, every track's events, parts and automation are "
+				"replaced by the chain's sections, each step's event as often as it repeats, one after the other; "
+				"what lies before stays, and so do locked events. Copies are real copies. Without keepTrack (Keep "
+				"Arranger Track) the arranger track goes; with it, it has an event per section where it now is and "
+				"one chain that plays them in order. One undo step. Returns where the flattened chain starts and "
+				"ends, in samples.",
+				schema({{"chain", integer()}, {"keepTrack", boolean()}}, {}),
+				schema({{"start", integer()}, {"end", integer()}}, {"start", "end"}), false},
+			"Flatten arranger chain",
+			[this](Project& project, CommandContext& context)
+			{
+				const bool keep = context.parameters().value("keepTrack", false);
+				Json result = flattenChain(project, context, keep);
+				const auto track = std::find_if(project.trackById.begin(), project.trackById.end(),
+					[](const auto& entry) { return entry.second.type == TrackType::Arranger; });
+				if (!keep && track != project.trackById.end())
+					runEdit("track.remove", project, {{"track", track->first}}, context);
+				return result;
+			});
 
 		// Copying automation to other tracks (reference manual pp. 878-879).
 		const std::string between = "between start and end (project samples, default the locators)";

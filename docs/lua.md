@@ -93,6 +93,196 @@ has the report.
 
 ## Commands
 
+### arranger
+
+#### `gnubase.arranger.add`
+
+Adds an arranger event to the arranger track, which is added if the project has none. position and end are in the track's time base (ticks or samples) and default to the left and right locators; the event ends at least one sample after its position. Without a name it gets the first free one in alphabetical order: A, B, ..., Z, AA and so on.
+
+Parameters:
+
+- `end`: integer
+- `name`: string
+- `position`: integer
+
+Returns:
+
+- `event`: object, required
+
+#### `gnubase.arranger.addChain`
+
+Adds an arranger chain, empty or with duplicate a copy of the active chain's steps (Create New Chain and Duplicate Current Chain), and makes it the active one. Without a name it is "Chain N".
+
+Parameters:
+
+- `duplicate`: boolean
+- `name`: string
+
+Returns:
+
+- `chain`: object, required
+
+#### `gnubase.arranger.flatten`
+
+Flatten Chain (#167): makes the project play the arranger chain (default: the active one) linearly. From the start of the chain's first event on, every track's events, parts and automation are replaced by the chain's sections, each step's event as often as it repeats, one after the other; what lies before stays, and so do locked events. Copies are real copies. Without keepTrack (Keep Arranger Track) the arranger track goes; with it, it has an event per section where it now is and one chain that plays them in order. One undo step. Returns where the flattened chain starts and ends, in samples.
+
+Parameters:
+
+- `chain`: integer
+- `keepTrack`: boolean
+
+Returns:
+
+- `end`: integer, required
+- `start`: integer, required
+
+#### `gnubase.arranger.get`
+
+The arranger: the arranger track (0 for none), its events in timeline order (positions in the track's time base, start and endSamples in samples), the chains with their steps, the active chain, whether arranger mode is on and the jump mode.
+
+Only reads; changes nothing.
+
+Returns:
+
+- `chain`: integer, required
+- `chains`: array, required
+- `events`: array, required
+- `jumpMode`: string, required
+- `mode`: boolean, required
+- `track`: integer, required
+
+#### `gnubase.arranger.goToStep`
+
+Arranger mode: plays the active chain from a step (0 for the first) and repeat (default 0): at once while stopped (the cursor goes to the step's event) or with the jump mode none, otherwise at the next jump point of the event playing (arranger.setMode jumpMode). Previous and Next Chain Step, First and Last Repeat, and a click in the chain list do this. Returns the transport's state.
+
+Parameters:
+
+- `repeat`: integer
+- `step`: integer, required
+
+Returns:
+
+- `arranger`: object, required
+- `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
+- `countingIn`: boolean, required
+- `cycle`: boolean, required
+- `left`: integer, required
+- `lockRecord`: boolean, required
+- `metronome`: boolean, required
+- `midiCycleRecordMode`: one of "mix" | "overwrite" | "keepLast" | "stacked" | "mixStacked", required
+- `midiRecordMode`: one of "newParts" | "merge" | "replace", required
+- `playing`: boolean, required
+- `position`: integer, required
+- `postRoll`: boolean, required
+- `postRollAmount`: integer, required
+- `preRoll`: boolean, required
+- `preRollAmount`: integer, required
+- `punchIn`: boolean, required
+- `punchOut`: boolean, required
+- `recording`: boolean, required
+- `returnToStart`: boolean, required
+- `right`: integer, required
+- `start`: integer, required
+- `startMode`: one of "cursor" | "cycleStart", required
+
+#### `gnubase.arranger.remove`
+
+Removes arranger events, and their steps from every arranger chain.
+
+Parameters:
+
+- `events`: array of integer, required
+
+#### `gnubase.arranger.removeChain`
+
+Removes an arranger chain (default: the active one), unless it is the only one. The first chain is active if the active one goes.
+
+Parameters:
+
+- `chain`: integer
+
+#### `gnubase.arranger.set`
+
+Changes an arranger event: moves it (position, in the track's time base; it keeps its length unless end is given), changes its end or renames it.
+
+Parameters:
+
+- `end`: integer
+- `event`: integer, required
+- `name`: string
+- `position`: integer
+
+Returns:
+
+- `event`: object, required
+
+#### `gnubase.arranger.setChain`
+
+Changes an arranger chain (default: the active one): renames it, or gives it new steps, each an arranger event played repeats times (1 to 999, default 1) in a repeat mode: normal (then the next step), repeatForever (until another step or event is chosen) or pauseAfterRepeats (then playback stops at the next step). Appending, moving and copying steps give the whole list; removeSteps removes the steps at those indices (0 for the first; Remove Touched and Remove Selected).
+
+Parameters:
+
+- `chain`: integer
+- `name`: string
+- `removeSteps`: array of integer
+- `steps`: array of object
+
+Returns:
+
+- `chain`: object, required
+
+#### `gnubase.arranger.setMode`
+
+Changes the arranger's playback settings: mode (Activate Arranger Mode: playback follows the active chain instead of the cycle), chain (the active chain, Select Active Chain) and jumpMode (Jump Mode: when a step chosen with arranger.goToStep or an event triggered with arranger.trigger takes over while playing: none at once, 4bars or 2bars every 4 or 2 bars from the event's start, 1bar at the next bar line, 1beat at the next beat, end at the end of the event playing). Saved with the project, not undo steps.
+
+Parameters:
+
+- `chain`: integer
+- `jumpMode`: one of "none" | "4bars" | "2bars" | "1bar" | "1beat" | "end"
+- `mode`: boolean
+
+Returns:
+
+- `chain`: integer, required
+- `chains`: array, required
+- `events`: array, required
+- `jumpMode`: string, required
+- `mode`: boolean, required
+- `track`: integer, required
+
+#### `gnubase.arranger.trigger`
+
+Arranger mode, Jump Mode: plays an arranger event (event, its id) in a loop until another one is triggered or a step is chosen with arranger.goToStep: at once while stopped or with the jump mode none, otherwise at the next jump point of the event playing. Returns the transport's state.
+
+Parameters:
+
+- `event`: integer, required
+
+Returns:
+
+- `arranger`: object, required
+- `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
+- `countingIn`: boolean, required
+- `cycle`: boolean, required
+- `left`: integer, required
+- `lockRecord`: boolean, required
+- `metronome`: boolean, required
+- `midiCycleRecordMode`: one of "mix" | "overwrite" | "keepLast" | "stacked" | "mixStacked", required
+- `midiRecordMode`: one of "newParts" | "merge" | "replace", required
+- `playing`: boolean, required
+- `position`: integer, required
+- `postRoll`: boolean, required
+- `postRollAmount`: integer, required
+- `preRoll`: boolean, required
+- `preRollAmount`: integer, required
+- `punchIn`: boolean, required
+- `punchOut`: boolean, required
+- `recording`: boolean, required
+- `returnToStart`: boolean, required
+- `right`: integer, required
+- `start`: integer, required
+- `startMode`: one of "cursor" | "cycleStart", required
+
 ### audio
 
 #### `gnubase.audio.analyze`
@@ -4220,7 +4410,7 @@ Parameters:
 - `timeBase`: one of "musical" | "linear"
 - `timeFormat`: one of "barsBeats" | "seconds" | "timecode" | "samples" | "userFrames"
 - `tracks`: array of integer
-- `type`: one of "audio" | "instrument" | "midi" | "folder" | "group" | "effect" | "marker" | "ruler" | "tempo" | "signature" | "vca", required
+- `type`: one of "audio" | "instrument" | "midi" | "folder" | "group" | "effect" | "marker" | "ruler" | "tempo" | "signature" | "vca" | "arranger", required
 
 Returns:
 
@@ -4338,6 +4528,7 @@ Swaps the left and right locators.
 
 Returns:
 
+- `arranger`: object, required
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
 - `countingIn`: boolean, required
 - `cycle`: boolean, required
@@ -4368,6 +4559,7 @@ Only reads; changes nothing.
 
 Returns:
 
+- `arranger`: object, required
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
 - `countingIn`: boolean, required
 - `cycle`: boolean, required
@@ -4402,6 +4594,7 @@ Parameters:
 
 Returns:
 
+- `arranger`: object, required
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
 - `countingIn`: boolean, required
 - `cycle`: boolean, required
@@ -4430,6 +4623,7 @@ Starts playback from the project cursor, or from the left locator if startMode i
 
 Returns:
 
+- `arranger`: object, required
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
 - `countingIn`: boolean, required
 - `cycle`: boolean, required
@@ -4462,6 +4656,7 @@ Parameters:
 
 Returns:
 
+- `arranger`: object, required
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
 - `countingIn`: boolean, required
 - `cycle`: boolean, required
@@ -4509,6 +4704,7 @@ Parameters:
 
 Returns:
 
+- `arranger`: object, required
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
 - `countingIn`: boolean, required
 - `cycle`: boolean, required
@@ -4541,6 +4737,7 @@ Parameters:
 
 Returns:
 
+- `arranger`: object, required
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
 - `countingIn`: boolean, required
 - `cycle`: boolean, required
@@ -4573,6 +4770,7 @@ Parameters:
 
 Returns:
 
+- `arranger`: object, required
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
 - `countingIn`: boolean, required
 - `cycle`: boolean, required
@@ -4601,6 +4799,7 @@ Takes over what the audio thread changed on its own: recording that punched in o
 
 Returns:
 
+- `arranger`: object, required
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
 - `countingIn`: boolean, required
 - `cycle`: boolean, required

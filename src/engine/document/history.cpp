@@ -15,16 +15,16 @@ namespace gnubase::engine
 		bool operator==(const ProjectSettings& a, const ProjectSettings& b)
 		{
 			return std::tie(a.name, a.sampleRate, a.tempo, a.tempoTrackActive, a.otherTempo, a.signatures, a.autoFades,
-					   a.panLaw, a.maxVolume, a.colors, a.setup, a.busses, a.tracks, a.activeMarkerTrack) ==
+					   a.panLaw, a.maxVolume, a.colors, a.setup, a.busses, a.tracks, a.activeMarkerTrack, a.arranger) ==
 				std::tie(b.name, b.sampleRate, b.tempo, b.tempoTrackActive, b.otherTempo, b.signatures, b.autoFades,
-					b.panLaw, b.maxVolume, b.colors, b.setup, b.busses, b.tracks, b.activeMarkerTrack);
+					b.panLaw, b.maxVolume, b.colors, b.setup, b.busses, b.tracks, b.activeMarkerTrack, b.arranger);
 		}
 
 		ProjectSettings settings(const Project& project)
 		{
 			return {project.name, project.sampleRate, project.tempo, project.tempoTrackActive, project.otherTempo,
 				project.signatures, project.autoFades, project.panLaw, project.maxVolume, project.colors, project.setup,
-				project.busses, project.tracks, project.activeMarkerTrack};
+				project.busses, project.tracks, project.activeMarkerTrack, project.arranger};
 		}
 
 		// Walks two maps in id order and calls visit(id, before, after) with nullptr for a missing object.
@@ -194,6 +194,7 @@ namespace gnubase::engine
 			project.busses = target.busses;
 			project.tracks = target.tracks;
 			project.activeMarkerTrack = target.activeMarkerTrack;
+			project.arranger = target.arranger;
 		}
 		applyObjects(project.trackById, change.tracks, direction);
 		applyObjects(project.channels, change.channels, direction);

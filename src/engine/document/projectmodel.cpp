@@ -68,6 +68,7 @@ namespace gnubase::engine
 			{TrackType::Tempo, "tempo", "Tempo"},
 			{TrackType::Signature, "signature", "Signature"},
 			{TrackType::Vca, "vca", "VCA"},
+			{TrackType::Arranger, "arranger", "Arranger"},
 		};
 
 		const TrackTypeName& trackTypeEntry(TrackType type)
@@ -372,6 +373,7 @@ namespace gnubase::engine
 			require(track.type != TrackType::Marker || parent == 0, "marker tracks can't be inside a folder");
 			require(track.type != TrackType::Tempo || parent == 0, "the tempo track can't be inside a folder");
 			require(track.type != TrackType::Signature || parent == 0, "the signature track can't be inside a folder");
+			require(track.type != TrackType::Arranger || parent == 0, "the arranger track can't be inside a folder");
 			const std::vector<ObjectId> moved = subtree(project, id);
 			require(std::find(moved.begin(), moved.end(), parent) == moved.end(),
 				"can't move a folder into itself or a folder inside it");
@@ -465,6 +467,16 @@ namespace gnubase::engine
 					keepMinimumLength(project, marker); // rounding may have left it shorter than a sample
 					context.emit("marker.changed", {{"marker", toJson(marker)}});
 				}
+			if (track.type == TrackType::Arranger && !project.arranger.events.empty())
+			{
+				for (ArrangerEvent& event : project.arranger.events)
+				{
+					event.position = time::rebase(event.position, base, project.tempo, project.sampleRate);
+					event.end = time::rebase(event.end, base, project.tempo, project.sampleRate);
+					keepMinimumLength(project, event);
+				}
+				context.emit("arranger.changed", arrangerJson(project));
+			}
 			for (auto& [id, lane] : project.automation)
 				if (lane.track == track.id && !lane.points.empty())
 				{
@@ -524,6 +536,19 @@ namespace gnubase::engine
 				if (keepMinimumLength(project, marker) || linear)
 					context.emit("marker.changed", {{"marker", toJson(marker)}});
 			}
+			bool arranged = false;
+			for (ArrangerEvent& event : project.arranger.events)
+			{
+				if (event.position.base == time::TimeBase::Linear)
+				{
+					event.position.value = rescale(event.position.value, factor);
+					event.end.value = rescale(event.end.value, factor);
+					arranged = true;
+				}
+				arranged = keepMinimumLength(project, event) || arranged;
+			}
+			if (arranged)
+				context.emit("arranger.changed", arrangerJson(project));
 		}
 
 		int64_t countTracks(const Project& project, TrackType type)
@@ -542,6 +567,8 @@ namespace gnubase::engine
 				return "Tempo";
 			if (type == TrackType::Signature)
 				return "Signature";
+			if (type == TrackType::Arranger)
+				return "Arranger";
 			const std::string number = std::to_string(type == TrackType::Marker ? count : count + 1);
 			return trackTypeEntry(type).defaultName + std::string(number.size() < 2 ? " 0" : " ") + number;
 		}
@@ -1071,9 +1098,14 @@ namespace gnubase::engine
 				require(parent == 0, "the signature track can't be inside a folder");
 				require(countTracks(project, TrackType::Signature) == 0, "a project has one signature track at most");
 			}
+			if (type == TrackType::Arranger)
+			{
+				require(parent == 0, "the arranger track can't be inside a folder");
+				require(countTracks(project, TrackType::Arranger) == 0, "a project has one arranger track at most");
+			}
 			const bool hasChannel =
 				(type != TrackType::Folder && type != TrackType::Marker && type != TrackType::Ruler &&
-					type != TrackType::Tempo && type != TrackType::Signature) ||
+					type != TrackType::Tempo && type != TrackType::Signature && type != TrackType::Arranger) ||
 				groupChannel;
 			const bool hasAudio = hasChannel && type != TrackType::Midi && type != TrackType::Vca;
 			require(type != TrackType::Vca ||
@@ -1124,6 +1156,11 @@ namespace gnubase::engine
 			std::vector<ObjectId>& list = siblings(project, parent);
 			list.insert(list.begin() + static_cast<std::ptrdiff_t>(index), track.id);
 			project.trackById[track.id] = track;
+			if (type == TrackType::Arranger && project.arranger.chains.empty())
+			{
+				project.arranger.chains.push_back({project.newId(), "Chain 1", {}});
+				context.emit("arranger.changed", arrangerJson(project));
+			}
 			// Routing is checked with the track in place; a failure restores the project.
 			if (channel)
 			{
@@ -1386,6 +1423,7 @@ namespace gnubase::engine
 				"a project has at most " + std::to_string(g_maxMarkerTracks) + " marker tracks");
 			require(track.type != TrackType::Tempo, "a project has one tempo track at most");
 			require(track.type != TrackType::Signature, "a project has one signature track at most");
+			require(track.type != TrackType::Arranger, "a project has one arranger track at most");
 			const ObjectId parent = track.parent;
 			std::map<ObjectId, ObjectId> channels;
 			std::vector<std::pair<std::string, Json>> added;
@@ -1442,6 +1480,11 @@ namespace gnubase::engine
 					marker = marker->second.track == removed ? project.markers.erase(marker) : std::next(marker);
 				for (auto lane = project.automation.begin(); lane != project.automation.end();)
 					lane = lane->second.track == removed ? project.automation.erase(lane) : std::next(lane);
+				if (gone.type == TrackType::Arranger)
+				{
+					project.arranger = Arranger();
+					context.emit("arranger.changed", arrangerJson(project));
+				}
 				if (gone.channel != 0)
 					for (const ObjectId slot : project.channels.at(gone.channel).slots)
 						project.slots.erase(slot);
@@ -2918,6 +2961,12 @@ namespace gnubase::engine
 			{"signature.set", "Change time signature events"},
 			{"signature.remove", "Remove time signature events"},
 			{"marker.activateTrack", "Activate marker track"},
+			{"arranger.add", "Add arranger event"},
+			{"arranger.set", "Change arranger event"},
+			{"arranger.remove", "Remove arranger events"},
+			{"arranger.addChain", "Add arranger chain"},
+			{"arranger.setChain", "Change arranger chain"},
+			{"arranger.removeChain", "Remove arranger chain"},
 			{"automationLane.add", "Add automation lane"},
 			{"automationLane.set", "Change automation lane"},
 			{"automationLane.remove", "Remove automation lane"},
@@ -3299,7 +3348,7 @@ namespace gnubase::engine
 		const Json booleanSchema = {{"type", "boolean"}};
 		const Json noResult = Json::object();
 		const Json trackTypes = enumSchema({"audio", "instrument", "midi", "folder", "group", "effect", "marker",
-			"ruler", "tempo", "signature", "vca"});
+			"ruler", "tempo", "signature", "vca", "arranger"});
 		const Json timeBases = enumSchema({"musical", "linear"});
 		const Json timeFormats =
 			enumSchema(std::vector<std::string>(g_rulerTimeFormats.begin(), g_rulerTimeFormats.end()));
@@ -3983,6 +4032,7 @@ namespace gnubase::engine
 
 		registerMidiEditCommands(engine);
 		registerMarkerCommands(engine);
+		registerArrangerCommands(engine);
 		registerTempoCommands(engine);
 		registerSignatureCommands(engine);
 		registerAutomationCommands(engine);
