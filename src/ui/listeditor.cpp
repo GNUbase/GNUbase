@@ -31,6 +31,10 @@ namespace gnubase::ui
 		constexpr double g_maxController = 4294967295.0;
 		constexpr int64_t g_bendCenter = 8192;
 
+		// What the root hears in the bubble phase.
+		constexpr std::array<Rml::EventId, 5> g_events = {Rml::EventId::Mousedown, Rml::EventId::Mousemove,
+			Rml::EventId::Click, Rml::EventId::Change, Rml::EventId::Dragend};
+
 		// The event types, as controller.add names them, with the list's names (p. 1253), in the filters bar's order.
 		constexpr std::array<std::pair<const char*, const char*>, 7> g_types = {{
 			{"note", "Note"},
@@ -251,9 +255,10 @@ namespace gnubase::ui
 			menu->AddEventListener(Rml::EventId::Click, this);
 			m_menus.push_back(menu->GetObserverPtr());
 		}
-		// The mouseup that ends a gesture goes to the document (listen), so that it ends wherever the mouse goes up.
-		for (const Rml::EventId event :
-			{Rml::EventId::Mousedown, Rml::EventId::Mousemove, Rml::EventId::Click, Rml::EventId::Change})
+		// The mouseup that ends a gesture goes to the document (listen), so that it ends wherever the mouse goes up in
+		// it. Past the window's edge RmlUi has no element to send the mouseup to; the body is a drag element (drag:
+		// drag), whose dragend comes wherever the button goes up.
+		for (const Rml::EventId event : g_events)
 			root.AddEventListener(event, this);
 		// Before a text display takes Enter: Ctrl (Cmd) with it sets every selected event to the value (p. 1255).
 		root.AddEventListener(Rml::EventId::Keydown, this, true);
@@ -264,8 +269,7 @@ namespace gnubase::ui
 		listen(false);
 		if (Rml::Element* root = m_root.get())
 		{
-			for (const Rml::EventId event :
-				{Rml::EventId::Mousedown, Rml::EventId::Mousemove, Rml::EventId::Click, Rml::EventId::Change})
+			for (const Rml::EventId event : g_events)
 				root->RemoveEventListener(event, this);
 			root->RemoveEventListener(Rml::EventId::Keydown, this, true);
 		}
@@ -844,6 +848,11 @@ namespace gnubase::ui
 			if (event.GetParameter("button", 0) == 0)
 				release(event);
 			break;
+		case Rml::EventId::Dragend:
+			// After the mouseup, if there was one: a gesture that it ended is over.
+			if (m_gesture != Gesture::None)
+				release(event);
+			break;
 		case Rml::EventId::Click:
 			click(*target, ctrl);
 			break;
@@ -861,14 +870,10 @@ namespace gnubase::ui
 
 	void ListEditor::press(Rml::Event& event)
 	{
-		// The document's mousedown (ProcessEvent) has normally ended a gesture whose mouseup never came already; this
-		// ends one that went on while the root moved to another document.
-		const bool stale = cancel();
+		// The document's mousedown in the capture phase (ProcessEvent) has ended a gesture whose end never came.
 		begin(event);
 		if (m_gesture != Gesture::None)
 			listen(true);
-		if (stale)
-			render(); // the value display's bars show the events' values again
 	}
 
 	bool ListEditor::cancel()
@@ -900,6 +905,7 @@ namespace gnubase::ui
 
 	void ListEditor::begin(Rml::Event& event)
 	{
+		m_gesture = Gesture::None;
 		const Rml::Element* root = m_root.get();
 		Rml::Element* target = event.GetTargetElement();
 		if (closest(target, "list-editor-body", root) == nullptr)

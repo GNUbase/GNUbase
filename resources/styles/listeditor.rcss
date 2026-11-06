@@ -38,6 +38,9 @@
 	flex-direction: column;
 	overflow-y: auto;
 	min-height: 0;
+	/* A move, draw or value display drag is an RmlUi drag: its end comes when the button goes up, also outside the
+	   window, where the document gets no mouseup. */
+	drag: drag;
 }
 
 .list-editor-rows
