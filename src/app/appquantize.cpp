@@ -159,12 +159,17 @@ namespace gnubase::app
 			m_binding.send(command, std::move(parameters));
 			return;
 		}
-		// Every slice is selected, so that Quantize and Crossfade go on with all of them (p. 370).
+		// Every slice is selected, so that Quantize and Crossfade go on with all of them (p. 370). Selected parts stay
+		// selected for the slices in them, which the project window shows only as the parts' waveforms.
 		m_binding.send(command, std::move(parameters),
-			[this](const engine::Result& result)
+			[this, parts](const engine::Result& result)
 			{
-				if (result.ok() && m_eventDisplay)
-					m_eventDisplay->select(result.value.at("events").get<std::vector<uint64_t>>());
+				if (!result.ok() || !m_eventDisplay)
+					return;
+				std::vector<uint64_t> selection = parts;
+				for (const Json& event : result.value.at("events"))
+					selection.push_back(event.get<uint64_t>());
+				m_eventDisplay->select(std::move(selection));
 			});
 	}
 

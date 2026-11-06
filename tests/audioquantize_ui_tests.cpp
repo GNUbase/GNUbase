@@ -196,6 +196,36 @@ TEST_CASE("the quantize panel slices, quantizes and crossfades several audio tra
 		}));
 }
 
+TEST_CASE("the quantize panel slices audio parts and quantizes and crossfades every slice in them", "[ui]")
+{
+	Fixture f;
+	const std::vector<uint64_t> parts =
+		f.app.call("event.toPart", {{"events", f.events}}).at("events").get<std::vector<uint64_t>>();
+	REQUIRE(parts.size() == 2);
+	REQUIRE(f.app.waitUntil([&] { return f.display.project().at("audioParts").size() == 2; }));
+	f.display.select(parts);
+	f.openPanel();
+	f.click("#quantize-slice");
+	CHECK(f.positionsAre(f.tracks[0], {2000, 3000, 27000, 49000, 75000}));
+	CHECK(f.positions(f.tracks[1]) == f.positions(f.tracks[0]));
+
+	// The parts stay selected, so that Quantize and Crossfade go on with every slice in them.
+	const size_t slices = f.project().at("audioEvents").size();
+	REQUIRE(f.app.waitUntil([&] { return f.display.project().at("audioEvents").size() == slices; }));
+	CHECK(f.app.waitUntil([&] { return f.display.selection() == parts; }));
+	f.click("#quantize-apply");
+	CHECK(f.positionsAre(f.tracks[0], {0, 0, 24000, 48000, 72000}));
+	CHECK(f.positions(f.tracks[1]) == f.positions(f.tracks[0]));
+	f.click("#quantize-crossfade");
+	CHECK(f.app.waitUntil(
+		[&]
+		{
+			const Json now = f.project();
+			return std::count_if(now.at("audioEvents").begin(), now.at("audioEvents").end(),
+					   [](const Json& event) { return event.at("crossfade").is_object(); }) == 6;
+		}));
+}
+
 TEST_CASE("the quantize panel creates warp markers on several audio tracks", "[ui]")
 {
 	Fixture f;
