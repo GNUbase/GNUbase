@@ -64,13 +64,13 @@ namespace gnubase::ui
 			m_menu = menu->GetObserverPtr();
 			menu->AddEventListener(Rml::EventId::Click, this);
 		}
+		// The visibility again too, which leaves out the tracks that are gone: changes are sent from it.
 		for (const char* event : {"history.changed", "project.reset"})
 			m_subscriptions.push_back(m_binding.on(event,
-				[this, reset = std::string(event) == "project.reset"](const engine::Event&)
+				[this](const engine::Event&)
 				{
 					requestProject();
-					if (reset)
-						requestVisibility();
+					requestVisibility();
 				}));
 		m_subscriptions.push_back(m_binding.on("trackVisibility.changed",
 			[this](const engine::Event& event)
@@ -323,7 +323,9 @@ namespace gnubase::ui
 		{
 			configurations.push_back({{"name", name}, {"hidden", m_hidden}});
 		}
-		m_binding.send("trackVisibility.set", {{"configurations", configurations}, {"configuration", name}});
+		// With the tracks hidden now: renaming a modified configuration keeps them (p. 455).
+		m_binding.send(
+			"trackVisibility.set", {{"configurations", configurations}, {"configuration", name}, {"hidden", m_hidden}});
 	}
 
 	void TrackVisibility::ProcessEvent(Rml::Event& event)

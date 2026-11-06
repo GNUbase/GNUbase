@@ -214,16 +214,38 @@ TEST_CASE("Track Visibility Configurations add, apply, update, rename and delete
 	choose("menuitem[configuration=\"No Bass\"]");
 	REQUIRE(app.waitUntil([&] { return hidden(app) == Json{guitar.track, bass.track}; }));
 
-	// Rename Configuration renames the active one; Delete Configuration deletes it.
+	// Rename Configuration only renames the active one, also while it is modified; Delete Configuration deletes it.
+	app.call("trackVisibility.set", {{"hidden", {bass.track}}});
+	REQUIRE(app.waitUntil([&] { return text() == "No Bass *"; }));
 	choose("menuitem[visibility-configuration=rename]");
 	REQUIRE(app.waitUntil([&] { return elements(app, std::nullopt, "#visibility-configuration-name").size() == 1; }));
 	app.ui().key(std::nullopt, "Mod+A");
 	app.ui().text(std::nullopt, "Nothing");
 	app.ui().key(std::nullopt, "Enter");
 	REQUIRE(app.waitUntil([&] { return configurations().at(0).at("name") == "Nothing"; }));
-	REQUIRE(app.waitUntil([&] { return text() == "Nothing"; }));
+	REQUIRE(app.waitUntil([&] { return text() == "Nothing *"; }));
+	CHECK(hidden(app) == Json{bass.track});
+	CHECK(configurations().at(0).at("hidden") == Json{guitar.track, bass.track});
 	choose("menuitem[visibility-configuration=delete]");
 	REQUIRE(app.waitUntil([&] { return configurations().size() == 1; }));
 	CHECK(configurations().at(0).at("name") == "All");
 	REQUIRE(app.waitUntil([&] { return text() == "Configurations"; }));
+}
+
+TEST_CASE("the Track page keeps working after a hidden track is removed", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	const Added guitar = addTrack(app, "audio", "Guitar");
+	const Added bass = addTrack(app, "audio", "Bass");
+	app.appUi().docking().open("visibility");
+	REQUIRE(app.waitUntil([&] { return elements(app, std::nullopt, ".track-visibility-item").size() == 2; }));
+	click(app, std::nullopt, item(bass.track));
+	REQUIRE(app.waitUntil([&] { return hidden(app) == Json{bass.track}; }));
+
+	// Undoing its addition removes the hidden track; the next click mustn't send its id, which the engine refuses.
+	app.call("history.undo");
+	REQUIRE(app.waitUntil([&] { return elements(app, std::nullopt, ".track-visibility-item").size() == 1; }));
+	click(app, std::nullopt, item(guitar.track));
+	REQUIRE(app.waitUntil([&] { return hidden(app) == Json{guitar.track}; }));
 }
