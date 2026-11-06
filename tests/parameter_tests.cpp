@@ -77,6 +77,14 @@ namespace
 		return run(client, "parameter.set", {{"channel", channel}, {"target", target}, {key, value}}).at("parameter");
 	}
 
+	// The channel strip's section parameters of an audio channel (docs/features/channel-strip.md).
+	constexpr size_t g_stripParameterCount = 41;
+
+	Json stripTarget(uint32_t parameter)
+	{
+		return {{"type", "strip"}, {"parameter", parameter}};
+	}
+
 	// A copy: GCC warns about references from a function that takes temporaries.
 	processors::ParameterInfo builtinParameter(const std::string& processor, const std::string& name)
 	{
@@ -97,7 +105,8 @@ TEST_CASE("parameter.list returns a channel's parameters with their ranges, valu
 	const Json parameters = run(client, "parameter.list", {{"channel", audio.channel}}).at("parameters");
 	std::vector<std::string> types;
 	for (const Json& parameter : parameters)
-		types.push_back(parameter.at("target").at("type").get<std::string>());
+		if (parameter.at("target").at("type") != "strip") // see the test of the strip's parameters
+			types.push_back(parameter.at("target").at("type").get<std::string>());
 	CHECK(types == std::vector<std::string>{"volume", "pan", "panLeft", "panRight", "mute"});
 
 	const Json& volume = parameters.at(0);
@@ -128,7 +137,7 @@ TEST_CASE("parameter.list returns a channel's parameters with their ranges, valu
 	// An instrument track's channel also has its instrument's parameters, with targets automation lanes take.
 	const TestTrack synth = addSynth(client);
 	const Json synthParameters = run(client, "parameter.list", {{"channel", synth.channel}}).at("parameters");
-	REQUIRE(synthParameters.size() == 8);
+	REQUIRE(synthParameters.size() == 8 + g_stripParameterCount);
 	const Json& level = synthParameters.at(5);
 	CHECK(level.at("target") == instrumentTarget(processors::TestSynth::Level));
 	CHECK(level.at("name") == "Level");
@@ -141,6 +150,67 @@ TEST_CASE("parameter.list returns a channel's parameters with their ranges, valu
 	const TestTrack midi = addTrack(client, "midi");
 	CHECK(run(client, "parameter.list", {{"channel", midi.channel}}).at("parameters").empty());
 	CHECK_THAT(reject(client, "parameter.list", {{"channel", 9999}}), ContainsSubstring("9999"));
+}
+
+TEST_CASE("the channel strip's sections have parameters that parameter.set and channel.set change alike", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const TestTrack audio = addTrack(client, "audio");
+	std::vector<Json> strip;
+	const Json parameters = run(client, "parameter.list", {{"channel", audio.channel}}).at("parameters");
+	for (const Json& parameter : parameters)
+		if (parameter.at("target").at("type") == "strip")
+			strip.push_back(parameter);
+	REQUIRE(strip.size() == g_stripParameterCount);
+	CHECK(strip.at(0).at("target") == stripTarget(0));
+	CHECK(strip.at(0).at("name") == "Pre Gain");
+	CHECK(strip.at(0).at("minimum") == -24.0);
+	CHECK(strip.at(0).at("maximum") == 24.0);
+	CHECK(strip.at(0).at("unit") == "dB");
+	const Json slope = get(client, audio.channel, stripTarget(4));
+	CHECK(slope.at("name") == "Low Cut Slope");
+	CHECK(slope.at("stepped") == true);
+	CHECK(slope.at("options") == Json::array({"6 dB/oct", "12 dB/oct", "24 dB/oct", "36 dB/oct", "48 dB/oct"}));
+	CHECK(slope.at("text") == "12 dB/oct");
+	const Json type = get(client, audio.channel, stripTarget(12));
+	CHECK(type.at("name") == "EQ 1 Type");
+	CHECK(type.at("options") == Json::array({"Bell", "Low Shelf", "Low Cut"}));
+	CHECK(type.at("text") == "Low Shelf");
+	CHECK(get(client, audio.channel, stripTarget(70)).at("options") == Json::array({"Off", "On"}));
+
+	// parameter.set changes the sections as channel.set does, and parameter.get reads what channel.set changed.
+	set(client, audio.channel, stripTarget(0), "text", "-6 dB");
+	set(client, audio.channel, stripTarget(1), "value", 1.0);
+	set(client, audio.channel, stripTarget(4), "text", "48 dB/oct");
+	set(client, audio.channel, stripTarget(42), "text", "high cut");
+	set(client, audio.channel, stripTarget(62), "value", 50.0);
+	const Json channel = run(client, "project.get").at("channels").at(0);
+	CHECK(channel.at("pre").at("gain") == -6.0);
+	CHECK(channel.at("pre").at("phase") == true);
+	CHECK(channel.at("pre").at("lowCut").at("slope") == 48);
+	CHECK(channel.at("eq").at("bands").at(3).at("type") == "highCut");
+	CHECK(channel.at("strip").at("compressor").at("ratio") == 20.0);
+	run(client, "channel.set", {{"channel", audio.channel}, {"eq", {{"bands", {{{"band", 2}, {"gain", 3.0}}}}}}});
+	CHECK(get(client, audio.channel, stripTarget(24)).at("value") == 3.0);
+	CHECK(get(client, audio.channel, stripTarget(24)).at("text") == "3.00 dB");
+
+	// automationLane.targets groups them by section.
+	std::map<uint32_t, std::string> groups;
+	const Json targets = run(client, "automationLane.targets", {{"track", audio.track}}).at("targets");
+	for (const Json& target : targets)
+		if (target.at("target").at("type") == "strip")
+			groups[target.at("target").at("parameter").get<uint32_t>()] = target.at("group").get<std::string>();
+	CHECK(groups.at(0) == "Pre");
+	CHECK(groups.at(10) == "Equalizer");
+	CHECK(groups.at(70) == "Strip");
+
+	// Only audio channels have them.
+	const TestTrack midi = addTrack(client, "midi");
+	CHECK_THAT(reject(client, "parameter.get", {{"channel", midi.channel}, {"target", stripTarget(0)}}),
+		ContainsSubstring("MIDI"));
+	CHECK_THAT(reject(client, "parameter.get", {{"channel", audio.channel}, {"target", stripTarget(99)}}),
+		ContainsSubstring("no parameter 99"));
 }
 
 TEST_CASE("parameter.set takes a value or a display text, stops at the range and is one undo step", "[unit]")
@@ -214,7 +284,8 @@ TEST_CASE("instrument parameters keep their values per channel until the instrum
 
 	// Another instrument, or the same one again, starts at its defaults.
 	run(client, "channel.set", {{"channel", synth.channel}, {"instrument", ""}});
-	CHECK(run(client, "parameter.list", {{"channel", synth.channel}}).at("parameters").size() == 5);
+	CHECK(run(client, "parameter.list", {{"channel", synth.channel}}).at("parameters").size() ==
+		5 + g_stripParameterCount);
 	CHECK_THAT(reject(client, "parameter.get", {{"channel", synth.channel}, {"target", level}}),
 		ContainsSubstring("instrument"));
 	run(client, "channel.set", {{"channel", synth.channel}, {"instrument", "testSynth"}});
@@ -389,7 +460,8 @@ TEST_CASE("automationLane.targets lists what a track's automation tracks can sho
 	run(client, "automationLane.add", {{"track", midi.track}, {"target", midiTargets[9].at("target")}});
 	CHECK(run(client, "automationLane.targets", {{"track", midi.track}}).at("targets")[9].at("lane") != 0);
 	const TestTrack synth = addSynth(client);
-	CHECK(run(client, "automationLane.targets", {{"track", synth.track}}).at("targets").size() == 8 + 130);
+	CHECK(run(client, "automationLane.targets", {{"track", synth.track}}).at("targets").size() ==
+		8 + g_stripParameterCount + 130);
 
 	// Tracks without a channel have none.
 	const Json marker = run(client, "track.add", {{"type", "marker"}}).at("track").at("id");

@@ -1,0 +1,24 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- For UI tests of drawing without input (#745): its Lua counts the meter.reset events in the document, through a
+     gnubase.on handler, for an event that none of the UI's C++ views takes. -->
+<rml>
+<head>
+	<title>Events</title>
+	<style>
+		body { display: block; position: absolute; left: 0; top: 0; right: 0; bottom: 0; margin: 0; font-family: Inter; font-size: 14dp; }
+		p { display: block; position: absolute; left: 10dp; top: 10dp; width: 120dp; height: 30dp; }
+	</style>
+	<script>
+		function countResets(document)
+			local resets = 0
+			gnubase.on("meter.reset", function()
+				resets = resets + 1
+				document:GetElementById("resets").inner_rml = tostring(resets)
+			end)
+		end
+	</script>
+</head>
+<body onload="countResets(document)">
+	<p id="resets">0</p>
+</body>
+</rml>

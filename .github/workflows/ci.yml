@@ -274,7 +274,7 @@ jobs:
         run: ctest --preset linux-clang
 
   clang-tidy:
-    timeout-minutes: 60
+    timeout-minutes: 90 # main took up to 51 min in Nov 2026; a PR that changes a widely included header takes longer
     runs-on: ubuntu-24.04
     env:
       CCACHE_MAXSIZE: 400M

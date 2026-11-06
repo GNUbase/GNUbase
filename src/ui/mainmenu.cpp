@@ -57,6 +57,13 @@ namespace gnubase::ui
 	{
 		if (Rml::Element* document = m_document.get())
 			document->RemoveEventListener(Rml::EventId::Click, this);
+		// A menu built again on the same document adds spans of its own.
+		for (const Item& item : m_items)
+		{
+			Rml::Element* shown = item.keys.get();
+			if (shown != nullptr && shown->GetParentNode() != nullptr)
+				shown->GetParentNode()->RemoveChild(shown);
+		}
 	}
 
 	void MainMenu::update()

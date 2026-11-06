@@ -73,7 +73,8 @@ and the files the import wrote are removed. Undo leaves written files on disk, a
     selected; mono files still go onto the selected track.
   - New tracks go to the end of the project, as Add Track's do; below the selected track comes with #448.
 - **Drag and drop**: files dropped on the event display (the shell's `filedrop` event) go to the track of the lane
-  under the mouse if it is an audio track, else to new tracks, at the time under the mouse (dropped outside the lanes:
+  under the mouse if it is an audio track, on a take lane of a track whose lanes show on that lane
+  ([comping.md](comping.md)), else to new tracks, at the time under the mouse (dropped outside the lanes:
   at the project cursor). Agents and UI tests drop files with `ui_drop` (`ui::Automation::drop`).
 - MIDI files (`.mid`, `.midi`, `.smf`) are imported at once with `midiFile.import`'s defaults. Audio files open the
   **Import Options** dialog (`resources/ui/import-options.rml`): Copy Files to Project Folder, Convert to Project

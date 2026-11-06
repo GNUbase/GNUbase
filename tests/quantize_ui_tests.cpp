@@ -411,6 +411,40 @@ TEST_CASE("the toolbar's quantize section applies, chooses presets, switches sof
 	CHECK(f.app.waitUntil([&] { return f.shown("#quantize-panel"); }));
 }
 
+TEST_CASE("the panel, the toolbar and MCP show the same one of presets with equal settings", "[ui]")
+{
+	Fixture f;
+	f.openPanel();
+	// Every client shows the preset the engine reports (#770): the one last chosen, saved or renamed.
+	const auto showing = [&f](const std::string& name)
+	{
+		return f.app.waitUntil(
+			[&]
+			{
+				return f.text("#quantize-presets") == name && f.text("#toolbar-quantize-presets") == name &&
+					f.app.call("quantize.get").at("preset") == name;
+			});
+	};
+	CHECK(showing("1/16"));
+	f.write("#quantize-preset-name", "Sixteenths");
+	f.click("#quantize-save-preset");
+	CHECK(showing("Sixteenths"));
+	f.click("#quantize-presets");
+	f.click("menuitem[preset=\"1/16\"]");
+	CHECK(showing("1/16"));
+	f.click("#toolbar-quantize-presets");
+	f.click("menuitem[toolbar-preset=\"Sixteenths\"]");
+	CHECK(showing("Sixteenths"));
+	f.app.call("quantize.set", {{"preset", "1/16"}});
+	CHECK(showing("1/16"));
+	f.click("#quantize-presets");
+	f.click("menuitem[preset=\"Sixteenths\"]");
+	CHECK(showing("Sixteenths"));
+	f.write("#quantize-preset-name", "Semiquavers");
+	f.click("#quantize-rename-preset");
+	CHECK(showing("Semiquavers"));
+}
+
 TEST_CASE("Create Groove Quantize Preset makes a groove of the selected MIDI part, which the panel then shows", "[ui]")
 {
 	Fixture f;

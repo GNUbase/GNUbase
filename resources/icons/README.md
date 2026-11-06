@@ -42,6 +42,7 @@ Documents show an icon with `<svg src="…/icons/transport-play.svg"/>`. It is r
 - `track-group.svg` — Group tracks into one bus.
 - `track-effect.svg` — Effect track (`fx`).
 - `track-marker.svg` — Marker track.
+- `part-independent.svg` — A part excluded from global transpose (an anchor), in its upper right corner.
 - `layout-channel-zone.svg` — Show or hide the Channel zone.
 - `layout-left-zone.svg` — Show or hide the left zone.
 - `layout-lower-zone.svg` — Show or hide the lower zone.

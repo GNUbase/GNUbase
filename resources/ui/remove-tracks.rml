@@ -1,0 +1,51 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Asks before Remove Selected Tracks removes tracks that aren't empty (docs/features/track-list.md, reference manual
+     p. 213): ui::TrackList opens it while the user setting ui.removeTracksWarning is on, and removes the tracks if it
+     closes with Remove (the result ok). With #remove-tracks-dont-warn checked, Remove also turns the setting off. -->
+<rml>
+<head>
+	<title>Remove Tracks</title>
+	<style>
+		dialog
+		{
+			width: 360dp;
+		}
+
+		.row
+		{
+			display: flex;
+			align-items: center;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.row label
+		{
+			flex: 1;
+		}
+
+		.buttons
+		{
+			justify-content: flex-end;
+		}
+
+		.buttons button
+		{
+			margin-left: 6dp;
+		}
+	</style>
+</head>
+<body>
+	<dialog id="remove-tracks-dialog">
+		<div class="dialog-titlebar">Remove Tracks</div>
+		<div class="row">The tracks to remove aren't empty. Remove them anyway?</div>
+		<div class="row">
+			<label for="remove-tracks-dont-warn">Don't show this warning again</label>
+			<input type="checkbox" id="remove-tracks-dont-warn"/>
+		</div>
+		<div class="row buttons">
+			<button result="cancel">Cancel</button>
+			<button id="remove-tracks" class="primary" result="ok">Remove</button>
+		</div>
+	</dialog>
+</body>
+</rml>

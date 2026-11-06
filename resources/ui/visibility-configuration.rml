@@ -1,0 +1,46 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Names a track visibility configuration (docs/features/track-visibility.md): ui::TrackVisibility opens it from the
+     Track Visibility Configurations menu's Add Configuration and Rename Configuration, and takes the name in
+     #visibility-configuration-name when it closes with OK. -->
+<rml>
+<head>
+	<title>Add Configuration</title>
+	<style>
+		dialog
+		{
+			width: 300dp;
+		}
+
+		.row
+		{
+			display: flex;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		#visibility-configuration-name
+		{
+			flex: 1;
+		}
+
+		.buttons
+		{
+			justify-content: flex-end;
+		}
+
+		.buttons button
+		{
+			margin-left: 6dp;
+		}
+	</style>
+</head>
+<body>
+	<dialog id="visibility-configuration-dialog">
+		<div class="dialog-titlebar" id="visibility-configuration-title">Add Configuration</div>
+		<div class="row"><input type="text" id="visibility-configuration-name" autofocus="autofocus"/></div>
+		<div class="row buttons">
+			<button result="cancel">Cancel</button>
+			<button class="primary" result="ok">OK</button>
+		</div>
+	</dialog>
+</body>
+</rml>
