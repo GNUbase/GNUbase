@@ -167,6 +167,7 @@ namespace gnubase::engine
 			for (const Move& move : moves)
 			{
 				WarpMarker& marker = markers[move.index];
+				const double to = move.to.value_or(move.from); // every move has one by now
 				const time::Samples lowest = move.index == 0 ? 1 : markers[move.index - 1].target + 1;
 				time::Samples low = lowest;
 				const auto next = std::find_if(markers.begin() + static_cast<std::ptrdiff_t>(move.index) + 1,
@@ -182,14 +183,13 @@ namespace gnubase::engine
 				while (low < high)
 				{
 					const time::Samples middle = low + ((high - low) / 2);
-					if (playsAt(middle) < *move.to)
+					if (playsAt(middle) < to)
 						low = middle + 1;
 					else
 						high = middle;
 				}
 				// The first target that plays it there or later, or the one before if that comes nearer.
-				const bool earlier =
-					low > lowest && std::abs(playsAt(low - 1) - *move.to) <= std::abs(playsAt(low) - *move.to);
+				const bool earlier = low > lowest && std::abs(playsAt(low - 1) - to) <= std::abs(playsAt(low) - to);
 				marker.target = earlier ? low - 1 : low;
 			}
 		}

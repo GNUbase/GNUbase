@@ -45,7 +45,8 @@ namespace
 				const auto clip = app.call("clip.add", {{"media", media.at("id")}}).at("clip").at("id").get<uint64_t>();
 				Json hitpoints = Json::array();
 				for (const int64_t position : {1000, 25000, 47000, 73000})
-					hitpoints.push_back({{"position", position + (i * 100)}, {"peak", -6.0}, {"intensity", 1.0}});
+					hitpoints.push_back(
+						{{"position", position + (static_cast<int64_t>(i) * 100)}, {"peak", -6.0}, {"intensity", 1.0}});
 				app.call("clip.setHitpoints", {{"clip", clip}, {"hitpoints", hitpoints}});
 				tracks.push_back(track);
 				clips.push_back(clip);
