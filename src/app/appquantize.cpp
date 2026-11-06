@@ -154,7 +154,18 @@ namespace gnubase::app
 		if (events.empty())
 			return;
 		parameters["events"] = events;
-		m_binding.send(command, std::move(parameters));
+		if (command != "quantize.slice")
+		{
+			m_binding.send(command, std::move(parameters));
+			return;
+		}
+		// Every slice is selected, so that Quantize and Crossfade go on with all of them (p. 370).
+		m_binding.send(command, std::move(parameters),
+			[this](const engine::Result& result)
+			{
+				if (result.ok() && m_eventDisplay)
+					m_eventDisplay->select(result.value.at("events").get<std::vector<uint64_t>>());
+			});
 	}
 
 	void AppUi::quantize(const std::string& command, const std::string& step, const QuantizeTarget& target)

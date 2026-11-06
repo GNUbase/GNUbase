@@ -387,6 +387,29 @@ TEST_CASE("quantizing several audio tracks keeps them phase coherent", "[integra
 	CHECK_THAT(reject(client, "quantize.crossfade", {{"events", {999}}}), ContainsSubstring("no audio event 999"));
 }
 
+TEST_CASE("Crossfade leaves a gap that the later event's audio can't close", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	// An event at 2000 with a hitpoint 2000 frames in, sliced there and quantized to 1/16: the first slice moves to
+	// 0 and ends at 2000, the second one to 6000, with only 2000 frames of audio before it.
+	const Loop loop = addLoop(client, dir, "loop", clicks({2000}, 12000), 2000);
+	setHitpoints(client, loop.clip, {2000});
+	const Json sliced = run(client, "quantize.slice",
+		{{"events", {loop.event}}, {"priorities", {{{"track", loop.track}, {"priority", 1}}}}});
+	run(client, "quantize.set", {{"preset", "1/16"}});
+	run(client, "quantize.apply", {{"events", sliced.at("events")}});
+	REQUIRE(eventsOn(client, loop.track) == std::vector<std::vector<int64_t>>{{0, 0, 2000}, {6000, 2000, 10000}});
+
+	// The gap closes down to 4000, and the first slice, 10 ms longer, still ends before it: no crossfade there.
+	run(client, "quantize.crossfade", {{"events", sliced.at("events")}});
+	CHECK(eventsOn(client, loop.track) == std::vector<std::vector<int64_t>>{{0, 0, 2000}, {4000, 0, 12000}});
+	const Json project = run(client, "project.get");
+	for (const Json& event : project.at("audioEvents"))
+		CHECK(!event.at("crossfade").is_object());
+}
+
 TEST_CASE("warp markers for several audio tracks come from the hitpoints of the highest priority", "[integration]")
 {
 	const test::TempDir dir;

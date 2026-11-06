@@ -176,13 +176,11 @@ TEST_CASE("the quantize panel slices, quantizes and crossfades several audio tra
 	CHECK(f.positionsAre(f.tracks[0], {2000, 3000, 27000, 49000, 75000}));
 	CHECK(f.positions(f.tracks[1]) == f.positions(f.tracks[0]));
 
+	// Slicing selects every slice, so that Quantize and Crossfade go on with all of them.
+	const size_t slices = f.project().at("audioEvents").size();
+	REQUIRE(f.app.waitUntil([&] { return f.display.project().at("audioEvents").size() == slices; }));
+	REQUIRE(f.app.waitUntil([&] { return f.display.selection().size() == slices; }));
 	// Quantized, both tracks' slices move alike: the first two to the bar's start.
-	std::vector<uint64_t> slices;
-	const Json all = f.project();
-	for (const Json& event : all.at("audioEvents"))
-		slices.push_back(event.at("id").get<uint64_t>());
-	REQUIRE(f.app.waitUntil([&] { return f.display.project().at("audioEvents").size() == slices.size(); }));
-	f.display.select(slices);
 	f.click("#quantize-apply");
 	CHECK(f.positionsAre(f.tracks[0], {0, 0, 24000, 48000, 72000}));
 	CHECK(f.positions(f.tracks[1]) == f.positions(f.tracks[0]));

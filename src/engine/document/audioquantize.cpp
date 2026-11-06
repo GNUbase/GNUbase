@@ -397,8 +397,11 @@ namespace gnubase::engine
 					if (extension <= 0)
 						continue;
 					a.length += extension;
-					// Only into an event that goes on after it.
-					if (eventSpan(project, a).end >= eventSpan(project, b).end)
+					// Only into an event that it overlaps and that goes on after it: a gap that the later event's audio
+					// can't close stays.
+					const time::Samples end = eventSpan(project, a).end;
+					const EventSpan next = eventSpan(project, b);
+					if (end <= next.start || end >= next.end)
 					{
 						a.length -= extension;
 						continue;
