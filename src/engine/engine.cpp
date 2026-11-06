@@ -239,6 +239,8 @@ namespace gnubase::engine
 		m_audio->setChase(chase);
 		m_audio->setStopAfterPunchOut(m_settings->get(settings::g_audioStopAfterPunchOut));
 		m_audio->setMeterResetOnStart(m_settings->get(settings::g_meterResetOnStart));
+		m_audio->setMeterRms(static_cast<int>(m_settings->get(settings::g_meterRmsResolution)),
+			m_settings->get(settings::g_meterRmsAes17));
 	}
 
 	void Engine::settingsChanged(CommandContext& context, const std::vector<std::string>& keys)
@@ -339,6 +341,11 @@ namespace gnubase::engine
 	int64_t Engine::playbackPosition() const
 	{
 		return m_audio->position();
+	}
+
+	void Engine::readMeters(MeterFrame& frame)
+	{
+		m_audio->readMeters(frame);
 	}
 
 	std::vector<CommandInfo> Engine::commands() const

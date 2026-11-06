@@ -28,6 +28,7 @@ namespace gnubase::engine
 {
 	class AudioEngine;
 	class Jobs;
+	struct MeterFrame;
 	class ProjectModel;
 
 	namespace plugins
@@ -218,6 +219,11 @@ namespace gnubase::engine
 		// The project cursor in samples, where the audio thread last moved it or a locate puts it, read without a
 		// command and without waiting: for the UI to read once a frame while playing. Not for audio threads.
 		int64_t playbackPosition() const;
+
+		// Every meter at once, without a command and without JSON, for the UI to read once a frame: the levels of the
+		// channels in frame.channels, the main mix and its loudness (audio/meters.h). Each peak is the largest since
+		// the last read, so none between two frames goes unseen; meant for one reader. Not for audio threads.
+		void readMeters(MeterFrame& frame);
 
 		// The time that the engine's timed work goes by, such as due auto saves. Only the engine starts and stops it.
 		const Clock& clock() const { return m_clock; }

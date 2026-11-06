@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The meters' commands (#111, docs/features/metering.md): meter.get reads the channels' level meters, the main
 // mix's master meter and the loudness meter, which the audio thread publishes; meter.reset starts their maxima and
-// the loudness measurement over.
+// the loudness measurement over. readMeters reads them all once a frame for the UI (Engine::readMeters).
 #include "engine/analysis/analysis.h"
 #include "engine/audio/audioengine.h"
 #include "engine/engine.h"
 
 #include <algorithm>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -55,22 +56,38 @@ namespace gnubase::engine
 		}
 	}
 
+	void AudioEngine::readMeters(MeterFrame& frame)
+	{
+		frame.levels.resize(frame.channels.size());
+		{
+			const std::scoped_lock lock(m_channelStatesMutex);
+			for (size_t i = 0; i < frame.channels.size(); ++i)
+			{
+				const auto state = m_channelStates.find(frame.channels[i]);
+				frame.levels[i] = state != m_channelStates.end() ? state->second->meter.readFrame() : LevelReading{};
+			}
+		}
+		frame.main = m_mainMeter.readFrame();
+		frame.loudness = m_loudness.readFrame();
+	}
+
 	void AudioEngine::registerMeterCommands(Engine& engine)
 	{
 		engine.registerCommand(
 			{"meter.get", 1,
-				"The meters, as the audio thread measured them last; it publishes every 100 ms while the device "
-				"runs. channels: each channel's output after its fader, panner and muting (all channels, or those "
-				"given), per audio channel: peak (the largest sample of the last 100 ms) and rms (averaged over 300 "
-				"ms) in dBFS, and their maxima peakMax and rmsMax since meter.reset, also while the transport "
-				"stands; null for silence, empty lists for MIDI channels and channels that haven't played yet. "
-				"main: the same for the main mix's first 8 device outputs, plus the master meter's truePeak and "
-				"truePeakMax (4x oversampled, dBTP). loudness: the main mix's loudness per EBU R 128 in LUFS: "
-				"momentary (400 ms), shortTerm (3 s), their maxima, integrated (gated) and range (LU), and seconds "
-				"measured. truePeakMax, the loudness maxima, integrated, range and seconds only count while the "
-				"transport plays, with blocks from where playback started; null until there is a value. The user "
-				"setting "
-				"meter.resetOnStart starts the loudness meter and the main mix's maxima over when playback starts.",
+				"The meters, as the audio thread measured them last while the device ran. channels: each channel's "
+				"output after its fader, panner and muting (all channels, or those given), per audio channel: peak "
+				"(the largest sample of the last 100 ms) and rms (averaged over the last 300 ms) in dBFS, and their "
+				"maxima peakMax and rmsMax since meter.reset, also while the transport stands; null for silence, "
+				"empty lists for MIDI channels and channels that haven't played yet. main: the same for the main "
+				"mix's first 8 device outputs, with rms averaged over the user setting meter.rmsResolution and 3 dB "
+				"higher with meter.rmsAes17, plus the master meter's truePeak and truePeakMax (4x oversampled, "
+				"dBTP). loudness: the main mix's loudness per EBU R 128 in LUFS: momentary (400 ms), shortTerm (3 "
+				"s), their maxima, integrated (gated) and range (LU), and seconds measured; they change every 100 "
+				"ms. truePeakMax, the loudness maxima, integrated, range and seconds only count while the transport "
+				"plays, with blocks from where playback started, and go on across audio.reset at the same sample "
+				"rate; null until there is a value. The user setting meter.resetOnStart starts the loudness meter "
+				"and the main mix's maxima over when playback starts.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "properties": {
 					"channels": {"type": "array", "items": {"type": "integer"}}}})"),
 				meterSchema(), true},

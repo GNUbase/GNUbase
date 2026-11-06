@@ -458,6 +458,14 @@ namespace gnubase::engine::settings
 					"Reset on Start: the loudness meter, and the main mix's peak and RMS maxima, start over when "
 					"playback starts (see meter.get).",
 					Json{{"type", "boolean"}}, false},
+				{"meter.rmsAes17",
+					"AES 17 (reference manual p. 540): the master meter's RMS level is 3 dB higher, so that a sine's "
+					"RMS level is its peak level (see meter.get).",
+					Json{{"type", "boolean"}}, false},
+				{"meter.rmsResolution",
+					"Resolution (reference manual p. 540): how much of the signal the master meter's RMS level "
+					"averages, 1 to 1000 ms (see meter.get).",
+					Json{{"type", "integer"}, {"minimum", 1}, {"maximum", 1000}}, 300},
 				{"midi.chaseBeyondParts",
 					"Chases controller events from the whole track; off, only from the MIDI parts under the "
 					"position, so none outside parts.",
