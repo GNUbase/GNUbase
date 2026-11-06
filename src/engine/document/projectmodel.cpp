@@ -1449,18 +1449,25 @@ namespace gnubase::engine
 				project.audioParts[part.id] = part;
 				added.emplace_back("audioPart.added", Json{{"part", toJson(part)}});
 			}
-			// Crossfades join the copies of the events they joined.
+			// Crossfades join the copies of the events they joined. The copies come in front, as added last, in the
+			// order the events are stacked in (#99): their new ids follow it.
 			std::map<ObjectId, ObjectId> events;
 			std::vector<AudioEvent> audio;
 			for (const auto& [eventId, event] : project.audioEvents)
 				if (event.track == id)
-				{
 					audio.push_back(event);
-					events[eventId] = project.newId();
-				}
+			std::vector<const AudioEvent*> stacked;
+			stacked.reserve(audio.size());
+			for (const AudioEvent& event : audio)
+				stacked.push_back(&event);
+			std::stable_sort(stacked.begin(), stacked.end(),
+				[](const AudioEvent* a, const AudioEvent* b) { return frontOf(*a) < frontOf(*b); });
+			for (const AudioEvent* event : stacked)
+				events[event->id] = project.newId();
 			for (AudioEvent& event : audio)
 			{
 				event.id = events.at(event.id);
+				event.front = 0;
 				event.track = copy.id;
 				const auto from = events.find(event.crossfade.from);
 				event.crossfade.from = from == events.end() ? 0 : from->second;
@@ -2667,6 +2674,7 @@ namespace gnubase::engine
 			event.length = parameters.value("length", time::Samples{0});
 			event.volume = parameters.value("volume", 0.0);
 			event.mute = parameters.value("mute", false);
+			event.lane = parameters.value("lane", 0);
 			require(!parameters.contains("length") || event.length > 0, "length must be positive");
 			checkAudioEvent(project, event);
 			event.id = project.newId();
@@ -2725,6 +2733,7 @@ namespace gnubase::engine
 			part.length = parameters.at("length").get<int64_t>();
 			require(part.length > 0, "length must be positive");
 			part.name = parameters.value("name", track.name);
+			part.lane = parameters.value("lane", 0);
 			part.id = project.newId();
 			Json result = {{"part", toJson(part)}};
 			project.midiParts[part.id] = std::move(part);
@@ -2743,6 +2752,7 @@ namespace gnubase::engine
 			part.length = parameters.at("length").get<int64_t>();
 			require(part.length > 0, "length must be positive");
 			part.name = parameters.value("name", track.name);
+			part.lane = parameters.value("lane", 0);
 			part.id = project.newId();
 			project.audioParts[part.id] = part;
 			Json result = {{"part", toJson(part)}};
@@ -3492,6 +3502,7 @@ namespace gnubase::engine
 			enumSchema(std::vector<std::string>(g_rulerTimeFormats.begin(), g_rulerTimeFormats.end()));
 		const Json formats = enumSchema(formatNames());
 		const Json color = {{"type", {"string", "null"}}};
+		const Json laneSchema = {{"type", "integer"}, {"minimum", 0}, {"maximum", 1000}};
 
 		add(engine,
 			{"project.get", 1, "The whole project: busses, tracks in order, channels, media, clips, events and parts.",
@@ -4080,10 +4091,11 @@ namespace gnubase::engine
 				"base (ticks or samples); offset and length are in the clip's sample frames, length defaulting to the "
 				"rest of the clip. volume is in dB, from -144 to 6 (default 0); a muted event doesn't play. A track "
 				"plays one event at a time: where events overlap, the one added last plays, unless they crossfade; "
-				"event.toFront brings another one to the front.",
-				objectSchema(
-					{{"track", idSchema}, {"clip", idSchema}, {"position", integerSchema}, {"offset", integerSchema},
-						{"length", integerSchema}, {"volume", numberSchema}, {"mute", booleanSchema}},
+				"event.toFront brings another one to the front. lane puts it on that lane of the track, from 0 "
+				"(default), as event.set does.",
+				objectSchema({{"track", idSchema}, {"clip", idSchema}, {"position", integerSchema},
+								 {"offset", integerSchema}, {"length", integerSchema}, {"volume", numberSchema},
+								 {"mute", booleanSchema}, {"lane", laneSchema}},
 					{"track", "clip", "position"}),
 				resultSchema({"event"}), false},
 			addAudioEvent);
@@ -4106,18 +4118,19 @@ namespace gnubase::engine
 				"Adds an empty audio part to an audio track (reference manual p. 250): a container of audio events, "
 				"which play only within it and move, copy, split and glue with it through the event commands. "
 				"position and length are in the track's time base; name defaults to the track's. event.toPart puts "
-				"events into a part, event.dissolvePart takes them out again.",
+				"events into a part, event.dissolvePart takes them out again. lane puts it on that lane of the track, "
+				"from 0 (default), as event.set does.",
 				objectSchema({{"track", idSchema}, {"position", integerSchema}, {"length", integerSchema},
-								 {"name", stringSchema}},
+								 {"name", stringSchema}, {"lane", laneSchema}},
 					{"track", "position", "length"}),
 				resultSchema({"part"}), false},
 			addAudioPart);
 		add(engine,
 			{"midiPart.add", 1,
-
-				"Adds a MIDI part to a MIDI or instrument track. position and length are in the track's time base.",
+				"Adds a MIDI part to a MIDI or instrument track. position and length are in the track's time base. "
+				"lane puts it on that lane of the track, from 0 (default), as event.set does.",
 				objectSchema({{"track", idSchema}, {"position", integerSchema}, {"length", integerSchema},
-								 {"name", stringSchema}},
+								 {"name", stringSchema}, {"lane", laneSchema}},
 					{"track", "position", "length"}),
 				resultSchema({"part"}), false},
 			addMidiPart);
