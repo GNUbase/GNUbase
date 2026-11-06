@@ -236,14 +236,14 @@ TEST_CASE("process bars inserts, deletes, replaces and reinterprets bars", "[uni
 		CHECK(result.at("signatures") == Json::array({signature(0, 4, 4), signature(2, 3, 4), signature(3, 4, 4)}));
 		const TempoMap tempo = tempoTrack(client);
 		CHECK(tempo.bpmAt(19 * g_q) == 100.0);
-		CHECK(tempo.bpmAt(19 * g_q - 1) == 120.0);
+		CHECK(tempo.bpmAt((19 * g_q) - 1) == 120.0);
 		CHECK(byId(client, "midiParts", part).at("position") == 8 * g_q); // positions stay
 
 		// Deleting the bar again brings the tempo event back to where it was.
 		run(client, "tempo.processBars", {{"bar", 2}, {"bars", 1}, {"type", "delete"}});
 		CHECK(signatures(client) == Json::array({signature(0, 4, 4), signature(2, 4, 4)}));
 		CHECK(tempoTrack(client).bpmAt(16 * g_q) == 100.0);
-		CHECK(tempoTrack(client).bpmAt(16 * g_q - 1) == 120.0);
+		CHECK(tempoTrack(client).bpmAt((16 * g_q) - 1) == 120.0);
 		CHECK(rendered(engine, midi).first == 8 * g_quarterSamples);
 	}
 	SECTION("replace")
@@ -252,7 +252,7 @@ TEST_CASE("process bars inserts, deletes, replaces and reinterprets bars", "[uni
 			{{"bar", 1}, {"bars", 2}, {"type", "replace"}, {"numerator", 3}, {"denominator", 4}});
 		CHECK(signatures(client) == Json::array({signature(0, 4, 4), signature(1, 3, 4), signature(3, 4, 4)}));
 		CHECK(tempoTrack(client).bpmAt(14 * g_q) == 100.0); // two quarters fewer before it
-		CHECK(tempoTrack(client).bpmAt(14 * g_q - 1) == 120.0);
+		CHECK(tempoTrack(client).bpmAt((14 * g_q) - 1) == 120.0);
 		CHECK(rendered(engine, midi).first == 8 * g_quarterSamples);
 	}
 	SECTION("reinterpret")
