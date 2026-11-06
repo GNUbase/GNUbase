@@ -74,6 +74,7 @@ namespace gnubase::engine
 			{TrackType::Signature, "signature", "Signature"},
 			{TrackType::Vca, "vca", "VCA"},
 			{TrackType::Arranger, "arranger", "Arranger"},
+			{TrackType::Transpose, "transpose", "Transpose"},
 		};
 
 		const TrackTypeName& trackTypeEntry(TrackType type)
@@ -379,6 +380,7 @@ namespace gnubase::engine
 			require(track.type != TrackType::Tempo || parent == 0, "the tempo track can't be inside a folder");
 			require(track.type != TrackType::Signature || parent == 0, "the signature track can't be inside a folder");
 			require(track.type != TrackType::Arranger || parent == 0, "the arranger track can't be inside a folder");
+			require(track.type != TrackType::Transpose || parent == 0, "the transpose track can't be inside a folder");
 			const std::vector<ObjectId> moved = subtree(project, id);
 			require(std::find(moved.begin(), moved.end(), parent) == moved.end(),
 				"can't move a folder into itself or a folder inside it");
@@ -514,6 +516,12 @@ namespace gnubase::engine
 				}
 				context.emit("arranger.changed", arrangerJson(project));
 			}
+			if (track.type == TrackType::Transpose && !project.transpose.events.empty())
+			{
+				for (TransposeEvent& event : project.transpose.events)
+					event.position = time::rebase(event.position, base, project.tempo, project.sampleRate);
+				context.emit("transpose.changed", transposeJson(project));
+			}
 			for (auto& [id, lane] : project.automation)
 				if (lane.track == track.id && !lane.points.empty())
 				{
@@ -632,6 +640,15 @@ namespace gnubase::engine
 			}
 			if (arranged)
 				context.emit("arranger.changed", arrangerJson(project));
+			bool transposed = false;
+			for (TransposeEvent& event : project.transpose.events)
+				if (event.position.base == time::TimeBase::Linear)
+				{
+					event.position.value = rescale(event.position.value, factor);
+					transposed = true;
+				}
+			if (transposed)
+				context.emit("transpose.changed", transposeJson(project));
 		}
 
 		int64_t countTracks(const Project& project, TrackType type)
@@ -652,6 +669,8 @@ namespace gnubase::engine
 				return "Signature";
 			if (type == TrackType::Arranger)
 				return "Arranger";
+			if (type == TrackType::Transpose)
+				return "Transpose";
 			const std::string number = std::to_string(type == TrackType::Marker ? count : count + 1);
 			return trackTypeEntry(type).defaultName + std::string(number.size() < 2 ? " 0" : " ") + number;
 		}
@@ -1200,9 +1219,15 @@ namespace gnubase::engine
 				require(parent == 0, "the arranger track can't be inside a folder");
 				require(countTracks(project, TrackType::Arranger) == 0, "a project has one arranger track at most");
 			}
+			if (type == TrackType::Transpose)
+			{
+				require(parent == 0, "the transpose track can't be inside a folder");
+				require(countTracks(project, TrackType::Transpose) == 0, "a project has one transpose track at most");
+			}
 			const bool hasChannel =
 				(type != TrackType::Folder && type != TrackType::Marker && type != TrackType::Ruler &&
-					type != TrackType::Tempo && type != TrackType::Signature && type != TrackType::Arranger) ||
+					type != TrackType::Tempo && type != TrackType::Signature && type != TrackType::Arranger &&
+					type != TrackType::Transpose) ||
 				groupChannel;
 			const bool hasAudio = hasChannel && type != TrackType::Midi && type != TrackType::Vca;
 			require(type != TrackType::Vca ||
@@ -1540,6 +1565,7 @@ namespace gnubase::engine
 			require(track.type != TrackType::Tempo, "a project has one tempo track at most");
 			require(track.type != TrackType::Signature, "a project has one signature track at most");
 			require(track.type != TrackType::Arranger, "a project has one arranger track at most");
+			require(track.type != TrackType::Transpose, "a project has one transpose track at most");
 			const ObjectId parent = track.parent;
 			std::map<ObjectId, ObjectId> channels;
 			std::vector<std::pair<std::string, Json>> added;
@@ -1600,6 +1626,11 @@ namespace gnubase::engine
 				{
 					project.arranger = Arranger();
 					context.emit("arranger.changed", arrangerJson(project));
+				}
+				if (gone.type == TrackType::Transpose)
+				{
+					project.transpose = TransposeTrack();
+					context.emit("transpose.changed", transposeJson(project));
 				}
 				if (gone.channel != 0)
 					for (const ObjectId slot : project.channels.at(gone.channel).slots)
@@ -2782,6 +2813,19 @@ namespace gnubase::engine
 					requireRange(number, -127, 127, key);
 					*value = static_cast<int>(number);
 				}
+			if (parameters.contains("rootKey"))
+			{
+				const std::string name = parameters.at("rootKey").get<std::string>();
+				const std::optional<int> key = rootKeyFromName(name);
+				require(key.has_value(), "unknown root key " + name);
+				part.rootKey = key.value_or(-1);
+			}
+			if (parameters.contains("globalTranspose"))
+			{
+				const std::string mode = parameters.at("globalTranspose").get<std::string>();
+				require(mode == "follow" || mode == "independent", "globalTranspose must be follow or independent");
+				part.independent = mode == "independent";
+			}
 			Json result = {{"part", toJson(part)}};
 			context.emit("midiPart.changed", result);
 			return result;
@@ -2930,7 +2974,8 @@ namespace gnubase::engine
 		{
 			Json json = {{"name", settings.name}, {"sampleRate", settings.sampleRate},
 				{"autoFades", toJson(settings.autoFades)}, {"panLaw", panLawName(settings.panLaw)},
-				{"maxVolume", settings.maxVolume}, {"colors", toJson(settings.colors)}};
+				{"maxVolume", settings.maxVolume}, {"colors", toJson(settings.colors)},
+				{"rootKey", rootKeyName(settings.rootKey)}};
 			json.update(toJson(settings.setup));
 			return json;
 		}
@@ -3001,6 +3046,13 @@ namespace gnubase::engine
 			if (parameters.contains("panLaw"))
 				project.panLaw = panLawFromName(parameters.at("panLaw").get<std::string>()).value_or(project.panLaw);
 			project.maxVolume = maxVolume;
+			if (parameters.contains("rootKey"))
+			{
+				const std::string name = parameters.at("rootKey").get<std::string>();
+				const std::optional<int> key = rootKeyFromName(name);
+				require(key.has_value(), "unknown root key " + name);
+				project.rootKey = key.value_or(-1);
+			}
 			if (parameters.contains("colors"))
 			{
 				require(!parameters.at("colors").empty(), "a color set has at least one color");
@@ -3113,6 +3165,11 @@ namespace gnubase::engine
 			{"arranger.addChain", "Add arranger chain"},
 			{"arranger.setChain", "Change arranger chain"},
 			{"arranger.removeChain", "Remove arranger chain"},
+			{"transpose.add", "Add transpose event"},
+			{"transpose.set", "Change transpose events"},
+			{"transpose.remove", "Remove transpose events"},
+			{"transpose.setTrack", "Change transpose track"},
+			{"transpose.assignRootKey", "Set root key for unassigned events"},
 			{"automationLane.add", "Add automation lane"},
 			{"automationLane.set", "Change automation lane"},
 			{"automationLane.remove", "Remove automation lane"},
@@ -3185,7 +3242,7 @@ namespace gnubase::engine
 					current.tempo != previous.tempo || current.signatures != previous.signatures ||
 					!(current.autoFades == previous.autoFades) || current.panLaw != previous.panLaw ||
 					current.maxVolume != previous.maxVolume || !(current.colors == previous.colors) ||
-					!(current.setup == previous.setup))
+					!(current.setup == previous.setup) || current.rootKey != previous.rootKey)
 					context.emit("project.changed", projectSettingsJson(current));
 				announceBusses(previous.busses, current.busses, context);
 				reordered = current.tracks != previous.tracks;
@@ -3496,7 +3553,7 @@ namespace gnubase::engine
 		const Json positionSchema = {{"type", {"integer", "string"}}}; // ticks or samples, or "cursor"
 		const Json noResult = Json::object();
 		const Json trackTypes = enumSchema({"audio", "instrument", "midi", "folder", "group", "effect", "marker",
-			"ruler", "tempo", "signature", "vca", "arranger"});
+			"ruler", "tempo", "signature", "vca", "arranger", "transpose"});
 		const Json timeBases = enumSchema({"musical", "linear"});
 		const Json timeFormats =
 			enumSchema(std::vector<std::string>(g_rulerTimeFormats.begin(), g_rulerTimeFormats.end()));
@@ -3505,9 +3562,21 @@ namespace gnubase::engine
 		const Json laneSchema = {{"type", "integer"}, {"minimum", 0}, {"maximum", 1000}};
 
 		add(engine,
-			{"project.get", 1, "The whole project: busses, tracks in order, channels, media, clips, events and parts.",
+			{"project.get", 1,
+				"The whole project: busses, tracks in order, channels, media, clips, events and parts. Each MIDI part "
+				"has rootKeyTranspose too, the semitones that the project root key transposes it by (-5 to 6; 0 for "
+				"an independent part and unless both have a root key).",
 				objectSchema({}), {{"type", "object"}}, true},
-			[](Project& project, CommandContext&) { return toJson(project); });
+			[](Project& project, CommandContext&)
+			{
+				Json json = toJson(project);
+				// Derived, so not in the project file.
+				for (Json& part : json.at("midiParts"))
+					if (const auto found = project.midiParts.find(part.at("id").get<ObjectId>());
+						found != project.midiParts.end())
+						part["rootKeyTranspose"] = rootKeyTranspose(project, found->second);
+				return json;
+			});
 		add(engine,
 			{"graph.get", 1,
 				"The project's audio processing graph: its nodes (busses, then channels in track order, then for each "
@@ -3632,7 +3701,10 @@ namespace gnubase::engine
 				"(seconds, up to 24 hours, default 600) how long the project is, barOffset (-9999 to 9999) is added "
 				"to the bar numbers shown, and timeFormat is the primary time format of rulers and position "
 				"displays. A new timeFormat, also by undo or redo, is the snap settings' format too (see snap.set; "
-				"emits snap.changed).",
+				"emits snap.changed). rootKey is the Project Root Key (\"\" for none, C, C# and so on to B): MIDI "
+				"parts "
+				"with a root key of their own that follow global transpose play transposed to it, the nearer way "
+				"(midiPart.set rootKey and globalTranspose; transpose.assignRootKey).",
 				objectSchema({{"name", stringSchema}, {"sampleRate", numberSchema},
 					{"panLaw", enumSchema(panLawNames())}, {"maxVolume", numberSchema}, {"tempo", numberSchema},
 					{"tempoTrackActive", booleanSchema},
@@ -3648,7 +3720,8 @@ namespace gnubase::engine
 					{"recordBitDepth",
 						enumSchema(std::vector<std::string>(g_recordBitDepths.begin(), g_recordBitDepths.end()))},
 					{"frameRate", enumSchema(time::frameRateNames())}, {"startTime", numberSchema},
-					{"length", numberSchema}, {"barOffset", integerSchema}, {"timeFormat", timeFormats}}),
+					{"length", numberSchema}, {"barOffset", integerSchema}, {"timeFormat", timeFormats},
+					{"rootKey", enumSchema(rootKeyNames())}}),
 				noResult, false},
 			setProject);
 		add(engine,
@@ -3805,8 +3878,9 @@ namespace gnubase::engine
 				"0, the project start), instead of the project setup's start time and bar offset. The tempo track "
 				"shows "
 				"and "
-				"edits the project's tempo (tempo.*), the signature track its time signatures (signature.*): a "
-				"project has one of each at most, without a channel, at the top level. "
+				"edits the project's tempo (tempo.*), the signature track its time signatures (signature.*), the "
+				"arranger track its arranger events (arranger.*), the transpose track its transpose events "
+				"(transpose.*): a project has one of each at most, without a channel, at the top level. "
 
 				"A VCA track's channel is a VCA fader (reference manual p. 153): no audio, input or output, a fader "
 				"that controls a link group (linkGroup.add).",
@@ -4138,9 +4212,14 @@ namespace gnubase::engine
 			{"midiPart.set", 1,
 				"Changes a MIDI part's name, position or length, or how its notes play: transpose (semitones) and "
 				"velocity (added to MIDI 1.0 velocities), each -127 to 127 and added to the track's MIDI modifiers "
-				"(channel.set modifiers), also while they are bypassed. The notes themselves stay as they are.",
+				"(channel.set modifiers), also while they are bypassed. The notes themselves stay as they are. "
+				"rootKey is the part's root key (\"\" for none, C, C# and so on to B), which the project root key "
+				"transposes it to (project.set rootKey); globalTranspose follow (the default) or independent says "
+				"whether the project root key and the transpose track transpose it (transpose.add).",
 				objectSchema({{"part", idSchema}, {"name", stringSchema}, {"position", integerSchema},
-								 {"length", integerSchema}, {"transpose", integerSchema}, {"velocity", integerSchema}},
+								 {"length", integerSchema}, {"transpose", integerSchema}, {"velocity", integerSchema},
+								 {"rootKey", enumSchema(rootKeyNames())},
+								 {"globalTranspose", enumSchema({"follow", "independent"})}},
 					{"part"}),
 				resultSchema({"part"}), false},
 			[this](Project& project, CommandContext& context)
@@ -4200,6 +4279,7 @@ namespace gnubase::engine
 		registerMidiEditCommands(engine);
 		registerMarkerCommands(engine);
 		registerArrangerCommands(engine);
+		registerTransposeCommands(engine);
 		registerTempoCommands(engine);
 		registerSignatureCommands(engine);
 		registerAutomationCommands(engine);

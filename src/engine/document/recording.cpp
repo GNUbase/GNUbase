@@ -169,6 +169,13 @@ namespace gnubase::engine
 						.at("part")
 						.at("id")
 						.get<ObjectId>();
+				// Recorded parts follow global transpose with the project root key, or with transpose events are
+				// independent of it (#168, reference manual p. 420).
+				const bool transposed = !project.transpose.events.empty();
+				if (transposed || project.rootKey >= 0)
+					run("midiPart.set",
+						{{"part", part}, {"rootKey", transposed ? std::string() : rootKeyName(project.rootKey)},
+							{"globalTranspose", transposed ? "independent" : "follow"}});
 			}
 			else
 			{

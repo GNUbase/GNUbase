@@ -128,6 +128,8 @@ namespace gnubase::ui
 		m_gridTypeButton = m_document->GetElementById("grid-type");
 		m_gridTypeMenu = m_document->GetElementById("grid-type-menu");
 		m_zeroCrossingButton = m_document->GetElementById("snap-zero-crossing");
+		m_rootKeyButton = m_document->GetElementById("root-key");
+		m_rootKeyMenu = m_document->GetElementById("root-key-menu");
 		Rml::ElementList buttons;
 		m_document->QuerySelectorAll(buttons, "button[tool], menuitem[tool]");
 		m_toolButtons.assign(buttons.begin(), buttons.end());
@@ -228,6 +230,10 @@ namespace gnubase::ui
 				openDialog("zoom-preset.rml");
 			else if (id == "zoom-presets-organize")
 				openDialog("zoom-presets.rml");
+		}
+		else if (menu == m_rootKeyMenu)
+		{
+			m_binding.send("project.set", {{"rootKey", item->GetAttribute<Rml::String>("root-key", "")}});
 		}
 		else if (menu == m_snapTypeMenu)
 		{
@@ -502,6 +508,22 @@ namespace gnubase::ui
 				if (!result.ok())
 					logging::warning("The event display can't change the snap settings: {}", result.error);
 			});
+	}
+
+	// The Project Root Key button shows the project's, its menu checks it.
+	void EventDisplay::showRootKey(const Json& project)
+	{
+		if (m_rootKeyMenu == nullptr)
+			return;
+		const std::string key = project.value("rootKey", std::string());
+		for (int i = 0; i < m_rootKeyMenu->GetNumChildren(); ++i)
+		{
+			Rml::Element* item = m_rootKeyMenu->GetChild(i);
+			const bool chosen = item->GetAttribute<Rml::String>("root-key", "") == key;
+			check(*item, chosen);
+			if (chosen && m_rootKeyButton != nullptr && m_rootKeyButton->GetInnerRML() != item->GetInnerRML())
+				m_rootKeyButton->SetInnerRML(item->GetInnerRML());
+		}
 	}
 
 	// The buttons show the settings, the snap type menu checks the type, the grid type menu has the format's grid

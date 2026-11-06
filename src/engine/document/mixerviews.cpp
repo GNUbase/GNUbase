@@ -63,6 +63,7 @@ namespace gnubase::engine
 		case TrackType::Tempo:
 		case TrackType::Signature:
 		case TrackType::Arranger:
+		case TrackType::Transpose:
 			break;
 		}
 		return "group";

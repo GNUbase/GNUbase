@@ -593,6 +593,8 @@ namespace gnubase::engine
 			right.lane = part.lane;
 			right.transpose = part.transpose;
 			right.velocity = part.velocity;
+			right.rootKey = part.rootKey;
+			right.independent = part.independent;
 			for (auto it = part.notes.begin(); it != part.notes.end();)
 			{
 				Note& note = it->second;
@@ -846,7 +848,9 @@ namespace gnubase::engine
 				}
 				else
 				{
-					result["midiParts"].push_back(toJson(*item.part));
+					Json part = toJson(*item.part);
+					part["rootKeyTranspose"] = rootKeyTranspose(copy, *item.part); // derived, as project.get gives it
+					result["midiParts"].push_back(std::move(part));
 				}
 			}
 			return result;
