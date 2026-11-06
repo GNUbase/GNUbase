@@ -41,7 +41,7 @@ One exception: the VST3 SDK's C++ namespace is a keyword, so the list allows it 
 4. Make small, focused commits with a summary line and a body that explains why.
 5. Open a pull request: say what changed and why, list what you deliberately left out, and add "Closes #N". Code, build and CI changes always go through a pull request.
 6. CI must pass on every platform: builds and tests on Windows, macOS and Linux, sanitizers, clang-tidy, formatting and license headers, and the keyword scan. When a check fails, read its log and fix it with a new commit. Don't force-push a pull request branch.
-7. Merge `main` into your branch only when it conflicts or you need something from it: a pull request doesn't have to be up to date to be merged, and every push runs all of CI again.
+7. Merge `main` into your branch only when it conflicts or you need something from it: a pull request doesn't have to be up to date to be merged, and every push runs all of CI again. On a branch made before the generated API references left the repository, a conflict on `docs/lua.md` or `docs/mcp.md` is resolved by taking `main`'s side ([API references](docs/api-reference.md)).
 8. Maintainers squash-merge, so `main` gets one commit per pull request.
 
 Keep pull requests out of each other's way: a feature's notes go into its own file in [docs/features/](docs/features/), not into [docs/architecture.md](docs/architecture.md), which only covers what features build on; and CMake lists sources one per line, sorted.
