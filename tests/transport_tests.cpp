@@ -728,7 +728,8 @@ TEST_CASE("transport commands play, stop, locate and set the locators", "[integr
 			{"left", 0}, {"right", 0}, {"cycle", false}, {"startMode", "cursor"}, {"returnToStart", false},
 			{"punchIn", false}, {"punchOut", false}, {"preRoll", false}, {"preRollAmount", 0}, {"postRoll", false},
 			{"postRollAmount", 0}, {"metronome", false}, {"audioRecordMode", "keepHistory"},
-			{"midiRecordMode", "newParts"}, {"midiCycleRecordMode", "mix"}, {"lockRecord", false}});
+			{"midiRecordMode", "newParts"}, {"midiCycleRecordMode", "mix"}, {"lockRecord", false},
+			{"arranger", {{"step", -1}, {"repeat", 0}, {"event", 0}}}});
 
 	state = run(client, "transport.set", {{"left", 48000}, {"right", 96000}, {"cycle", true}});
 	CHECK(state.at("left") == 48000);

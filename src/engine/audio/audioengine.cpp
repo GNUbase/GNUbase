@@ -2,6 +2,7 @@
 #include "engine/audio/audioengine.h"
 
 #include "engine/document/rendersnapshot.h"
+#include "engine/document/stripparameters.h"
 #include "engine/engine.h"
 #include "engine/plugins/slotinstances.h"
 #include "engine/processors/builtin.h"
@@ -90,10 +91,12 @@ namespace gnubase::engine
 				"midiRecordMode": {"type": "string", "enum": ["newParts", "merge", "replace"]},
 				"midiCycleRecordMode": {"type": "string",
 					"enum": ["mix", "overwrite", "keepLast", "stacked", "mixStacked"]},
-				"lockRecord": {"type": "boolean"}},
+				"lockRecord": {"type": "boolean"},
+				"arranger": {"type": "object", "properties": {"step": {"type": "integer"},
+					"repeat": {"type": "integer"}, "event": {"type": "integer"}}}},
 			"required": ["playing", "recording", "countingIn", "position", "start", "left", "right", "cycle", "startMode",
 				"returnToStart", "punchIn", "punchOut", "preRoll", "preRollAmount", "postRoll", "postRollAmount",
-				"metronome", "audioRecordMode", "midiRecordMode", "midiCycleRecordMode", "lockRecord"]})");
+				"metronome", "audioRecordMode", "midiRecordMode", "midiCycleRecordMode", "lockRecord", "arranger"]})");
 		}
 
 		Json noParameters()
@@ -241,13 +244,17 @@ namespace gnubase::engine
 		stopCueing();
 	}
 
-	void AudioEngine::cue(time::Samples position, bool playing, time::Samples window, bool wait)
+	void AudioEngine::cue(time::Samples position, bool playing, time::Samples window, bool wait, time::Samples enter)
 	{
 		Playback::Cue cue;
 		cue.position = position;
 		cue.playing = playing;
 		cue.settings = m_transport.settings();
 		cue.window = window;
+		const std::shared_ptr<const ArrangerPlan> plan = m_snapshots.latest().arranger;
+		cue.arranger = plan.get();
+		cue.arrangerState = m_transport.arranger();
+		cue.enter = enter;
 		m_playback.cue(cue);
 		if (wait)
 			m_playback.waitUntilBuffered(g_startWait);
@@ -269,11 +276,15 @@ namespace gnubase::engine
 						m_engine->post("transport.update");
 					}
 					Playback::Cue cue;
+					std::shared_ptr<const ArrangerPlan> plan;
 					{
 						const std::scoped_lock lock(m_cueMutex);
 						cue.playing = m_cueState.playing;
 						cue.settings = m_cueState.settings;
+						plan = m_cueState.arranger;
 					}
+					cue.arranger = plan.get();
+					cue.arrangerState = m_transport.arranger();
 					// While counting in, where playback will start, as for a stopped transport.
 					const time::Samples countInStart = m_transport.countInStart();
 					cue.position = countInStart >= 0 ? countInStart : m_transport.position();
@@ -498,6 +509,11 @@ namespace gnubase::engine
 
 		auto program = std::make_unique<Program>(desc, format.sampleRate, format.blockSize);
 		program->tempo = snapshot.tempo;
+		program->arranger = snapshot.arranger;
+		{
+			const std::scoped_lock lock(m_cueMutex);
+			m_cueState.arranger = snapshot.arranger;
+		}
 		program->sampleRate = snapshot.sampleRate;
 		program->generation = generation;
 		program->releases = releases();
@@ -681,17 +697,25 @@ namespace gnubase::engine
 			std::unique_ptr<ChannelAutomation> automation = channelAutomation(channel, snapshot.maxVolume);
 			if (kept != m_channelStates.end())
 			{
-				// A fader set to another value glides there.
+				// A fader or pre gain set to another value glides there.
 				for (PlayedLane& lane : automation->lanes)
 					for (const PlayedLane& old : state->automation.latest().lanes)
 						lane.smooth = lane.smooth ||
-							(lane.kind == PlayedLane::Kind::Fader && lane.target == old.target && lane.points.empty() &&
-								old.points.empty() && lane.staticValue != old.staticValue);
+							(lane.glides() && lane.target == old.target && lane.points.empty() && old.points.empty() &&
+								lane.staticValue != old.staticValue);
 			}
 			if (kept == m_channelStates.end() || !automation->sameContent(state->automation.latest()))
 				state->automation.setAutomation(std::move(automation));
 			states[channel.id] = state;
 			const Panning panning{channel.panner, channel.stereoPanner, channel.panBypass, snapshot.panLaw};
+			// The limiter's look-ahead counts while it is on or its automation could turn it on.
+			const bool lookAhead = channel.sections.limiter.on ||
+				std::any_of(channel.automation.begin(), channel.automation.end(),
+					[](const RenderAutomationLane& lane)
+					{
+						return lane.target ==
+							AutomationTarget{AutomationTargetType::Strip, StripParameter::LimiterOn, 0, 0, 0};
+					});
 			std::optional<Monitoring> monitoring;
 			if (channel.input >= 0)
 				monitoring = Monitoring{channel.monitor, channel.recordEnable, m_autoMonitoring};
@@ -702,7 +726,7 @@ namespace gnubase::engine
 			if (source == firstChannel + i)
 			{
 				fader = std::make_shared<ChannelStrip>(
-					state, node.processor, panning, monitoring, channel.silent, StripPart::Whole, channel.sections);
+					state, node.processor, panning, monitoring, channel.silent, StripPart::Whole, lookAhead);
 				sourceStrip = fader;
 			}
 			else
@@ -722,10 +746,10 @@ namespace gnubase::engine
 				}
 				graph::NodeDesc& sourceDesc = desc.nodes[source];
 				sourceStrip = std::make_shared<ChannelStrip>(state, sourceDesc.processor, panning, monitoring,
-					channel.silent, StripPart::Source, channel.sections, std::move(plugins), std::move(slotIds));
+					channel.silent, StripPart::Source, false, std::move(plugins), std::move(slotIds));
 				sourceDesc.processor = sourceStrip;
 				fader = std::make_shared<ChannelStrip>(
-					state, nullptr, panning, std::nullopt, channel.silent, StripPart::Fader, channel.sections);
+					state, nullptr, panning, std::nullopt, channel.silent, StripPart::Fader, lookAhead);
 			}
 			node.processor = fader;
 			if (const auto tap = m_renderTaps.find(channel.id); tap != m_renderTaps.end())
@@ -931,7 +955,7 @@ namespace gnubase::engine
 			}
 		}
 		m_playback.beginBlock();
-		graph::TransportBlock transport = m_transport.advance(block.frames);
+		graph::TransportBlock transport = m_transport.advance(block.frames, program.arranger.get());
 		m_played.add(block.position, block.frames, transport);
 		captureInput(block);
 		m_tap.deliver(block.position, block.frames, program.sequencers);
@@ -2301,6 +2325,7 @@ namespace gnubase::engine
 		registerMixdownCommands(engine);
 		registerMeterCommands(engine);
 		registerTransportCommands(engine);
+		registerArrangerCommands(engine);
 		m_midi.registerCommands(engine);
 		registerMidiTapCommands(engine);
 		registerAuditionCommands(engine);
@@ -2319,8 +2344,11 @@ namespace gnubase::engine
 
 	bool AudioEngine::syncTransport()
 	{
+		const ArrangerState arranger = m_transport.arranger(); // a new step or repeat is announced too
+		const bool moved = !samePlace(arranger, m_announcedArranger);
+		m_announcedArranger = arranger;
 		if (!m_transport.sync())
-			return false;
+			return moved;
 		{
 			const std::scoped_lock lock(m_cueMutex);
 			m_cueState.playing = m_transport.playing();
@@ -2332,8 +2360,26 @@ namespace gnubase::engine
 
 	void AudioEngine::play()
 	{
+		// In arranger mode playback outside the chain's events starts at the chain's start.
+		const ArrangerPlan& plan = *m_snapshots.latest().arranger;
+		if (plan.plays() && !m_transport.playing())
+		{
+			const time::Samples at = m_transport.position();
+			const bool inside = std::any_of(plan.steps.begin(), plan.steps.end(),
+				[&](const ArrangerPlanStep& step)
+				{
+					const ArrangerSection& section = plan.sections.at(static_cast<size_t>(step.section));
+					return section.start <= at && at < section.end;
+				});
+			if (!inside)
+			{
+				ArrangerState first;
+				first.step = 0;
+				arrange(first);
+			}
+		}
 		if (m_device && !m_transport.playing())
-			cue(m_transport.startPosition(), false, m_device->format().blockSize, true);
+			cue(m_transport.startPosition(), false, m_device->format().blockSize, true, m_transport.playStart());
 		sent(m_transport.play());
 	}
 
@@ -2411,7 +2457,89 @@ namespace gnubase::engine
 			{"audioRecordMode", g_audioRecordModes.at(static_cast<size_t>(settings.audioRecordMode))},
 			{"midiRecordMode", g_midiRecordModes.at(static_cast<size_t>(settings.midiRecordMode))},
 			{"midiCycleRecordMode", g_midiCycleRecordModes.at(static_cast<size_t>(settings.midiCycleRecordMode))},
-			{"lockRecord", settings.lockRecord}};
+			{"lockRecord", settings.lockRecord}, {"arranger", arrangerStatus()}};
+	}
+
+	Json AudioEngine::arrangerStatus() const
+	{
+		const ArrangerPlan& plan = *m_snapshots.latest().arranger;
+		const ArrangerState state = m_transport.arranger();
+		const auto step = static_cast<size_t>(state.step);
+		const int32_t section = state.step >= 0 && step < plan.steps.size() ? plan.steps[step].section : state.section;
+		const auto event = section >= 0 && static_cast<size_t>(section) < plan.sections.size()
+			? plan.sections[static_cast<size_t>(section)].event
+			: uint64_t{0};
+		return {{"step", state.step}, {"repeat", state.repeat}, {"event", event}};
+	}
+
+	void AudioEngine::arrange(const ArrangerState& state)
+	{
+		const ArrangerPlan& plan = *m_snapshots.latest().arranger;
+		const int32_t section =
+			state.step >= 0 ? plan.steps.at(static_cast<size_t>(state.step)).section : state.section;
+		if (m_transport.playing() && plan.jump != ArrangerJump::None)
+		{
+			sent(m_transport.arrange(state, true));
+			return;
+		}
+		locate({{"position", plan.sections.at(static_cast<size_t>(section)).start}});
+		sent(m_transport.arrange(state, false));
+	}
+
+	void AudioEngine::registerArrangerCommands(Engine& engine)
+	{
+		const auto command = [this, &engine](const char* name, const char* description, const char* parameters,
+								 std::function<void(const Json&)> handle)
+		{
+			engine.registerCommand({name, 1, description, Json::parse(parameters), transportSchema(), false},
+				[this, handle = std::move(handle)](CommandContext& context)
+				{
+					handle(context.parameters());
+					m_announcedArranger = m_transport.arranger();
+					Json result = transportStatus();
+					context.emit("transport.changed", result);
+					return result;
+				});
+		};
+		command("arranger.goToStep",
+			"Arranger mode: plays the active chain from a step (0 for the first) and repeat (default 0): at once while "
+			"stopped (the cursor goes to the step's event) or with the jump mode none, otherwise at the next jump "
+			"point of the event playing (arranger.setMode jumpMode). Previous and Next Chain Step, First and Last "
+			"Repeat, and a click in the chain list do this. Returns the transport's state.",
+			R"({"type": "object", "additionalProperties": false, "required": ["step"],
+				"properties": {"step": {"type": "integer"}, "repeat": {"type": "integer"}}})",
+			[this](const Json& parameters)
+			{
+				const ArrangerPlan& plan = *m_snapshots.latest().arranger;
+				require(plan.plays(), "arranger mode is off or the active chain is empty");
+				ArrangerState state;
+				state.step = parameters.at("step").get<int32_t>();
+				state.repeat = parameters.value("repeat", 0);
+				require(state.step >= 0 && static_cast<size_t>(state.step) < plan.steps.size(),
+					"the active chain has no step " + std::to_string(state.step));
+				const ArrangerPlanStep& step = plan.steps.at(static_cast<size_t>(state.step));
+				require(state.repeat >= 0 && (step.mode == ArrangerRepeat::Forever || state.repeat < step.repeats),
+					"step " + std::to_string(state.step) + " has " + std::to_string(step.repeats) + " repeats");
+				arrange(state);
+			});
+		command("arranger.trigger",
+			"Arranger mode, Jump Mode: plays an arranger event (event, its id) in a loop until another one is "
+			"triggered or a step is chosen with arranger.goToStep: at once while stopped or with the jump mode none, "
+			"otherwise at the next jump point of the event playing. Returns the transport's state.",
+			R"({"type": "object", "additionalProperties": false, "required": ["event"],
+				"properties": {"event": {"type": "integer"}}})",
+			[this](const Json& parameters)
+			{
+				const ArrangerPlan& plan = *m_snapshots.latest().arranger;
+				require(plan.plays(), "arranger mode is off or the active chain is empty");
+				const auto id = parameters.at("event").get<uint64_t>();
+				const auto found = std::find_if(plan.sections.begin(), plan.sections.end(),
+					[id](const ArrangerSection& section) { return section.event == id; });
+				require(found != plan.sections.end(), "no arranger event " + std::to_string(id));
+				ArrangerState state;
+				state.section = static_cast<int32_t>(found - plan.sections.begin());
+				arrange(state);
+			});
 	}
 
 	void AudioEngine::portSettingsChanged(CommandContext& context, bool audioPorts, bool midiPorts)

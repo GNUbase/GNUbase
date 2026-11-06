@@ -118,7 +118,7 @@ namespace gnubase::ui
 		void endTap();
 		void release();
 		void show();     // everything
-		void showTime(); // the displays with times, e.g. once a frame while playing
+		bool showTime(); // the displays with times, e.g. once a frame while playing; whether one's text changed
 		int64_t samples(double seconds) const;
 
 		engine::Engine& m_engine;

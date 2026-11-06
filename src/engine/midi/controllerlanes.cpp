@@ -8,6 +8,7 @@
 #include "engine/document/projectmodel.h"
 #include "engine/document/serialize.h"
 #include "engine/engine.h"
+#include "engine/midi/functions.h"
 
 #include <algorithm>
 #include <cmath>
@@ -20,6 +21,9 @@ namespace gnubase::engine::midi
 	namespace
 	{
 		constexpr double g_pi = 3.14159265358979323846;
+		// The most controller events one controller.line adds: a line over a long part at a density of a few ticks
+		// would otherwise add millions.
+		constexpr time::Ticks g_maxLineEvents = 65536;
 
 		void require(bool condition, const std::string& message)
 		{
@@ -247,11 +251,20 @@ namespace gnubase::engine::midi
 				pointFrom(parameters, "to", minimum), parameters.value("reverse", false),
 				parameters.value("period", project.quantize.grid.ticks())};
 			require(shape.from.position <= shape.to.position, "from.position must not be after to.position");
+			const time::Ticks length = lengthInTicks(project, part);
+			// Playback leaves out events from the part's end on.
+			require(shape.to.position < length,
+				"to.position must lie before the part's end, " + std::to_string(length) + " ticks");
 			require(shape.period > 0, "period must be positive");
 			if (isNoteLane(type))
 				return lineOnNotes(part, type, shape, parameters, context);
 			const time::Ticks density = parameters.value("density", project.quantize.grid.ticks());
 			require(density > 0, "density must be positive");
+			// An event every density ticks from the start, short of the end, and one at the end.
+			const time::Ticks span = shape.to.position - shape.from.position;
+			const time::Ticks events = (span / density) + (span % density != 0 ? 1 : 0) + 1;
+			require(events <= g_maxLineEvents,
+				"the line would add more than " + std::to_string(g_maxLineEvents) + " events: use a larger density");
 			return lineOnControllers(project, part, lane, shape, density, context);
 		}
 	}
@@ -307,14 +320,16 @@ namespace gnubase::engine::midi
 				"type, one of velocity, offVelocity, probability and velocityVariance (properties of the notes) or "
 				"controller, pitchBend, channelPressure, polyPressure and program (controller events), number (the "
 				"controller, or the pitch of poly pressure) and channel 0-15, both default 0. from and to: positions "
-				"from the part's start in ticks and values, 0-1 (velocityVariance -1 to 1; a program change's 0-1 is "
-				"program 0-127). mode: line draws a straight line from the start to the end value; parabola a curve "
+				"from the part's start in ticks, to before the part's end, and values, 0-1 (velocityVariance "
+				"-1 to 1; a program change's 0-1 is program 0-127). mode: line draws a straight line from the start to "
+				"the end value; parabola a curve "
 				"that starts slowly, with reverse fast; sine, triangle and square go from the start value to the end "
 				"value and back once every period ticks (default the quantize grid's). On a note lane the notes "
 				"starting in the range, or those of them named in notes, take the value at their position. On a "
 				"controller "
-				"lane the lane's events in the range go, and new ones come every density ticks (default the quantize "
-				"grid's) and at the end. Returns the notes changed, the controller events added and the ids of those "
+				"lane the lane's events of the channel in the range go, and new ones come every density ticks (default "
+				"the quantize grid's) and at the end, at most 65536. Returns the notes changed, the controller events "
+				"added and the ids of those "
 				"removed.",
 				{{"type", "object"}, {"additionalProperties", false},
 					{"required", {"part", "lane", "mode", "from", "to"}},

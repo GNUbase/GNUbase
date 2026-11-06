@@ -3,6 +3,7 @@
 // and the quantize panel: a grid moves notes to the closest position, strength moves them part of the way, swing
 // offsets every second grid position, notes outside the catch range and inside the safe range stay put, and
 // quantizing starts from the original positions unless it is soft (iterative).
+#include "engine/document/serialize.h"
 #include "engine/engine.h"
 #include "engine/midi/quantize.h"
 #include "engine/midi/quantizecommands.h"
@@ -19,6 +20,7 @@
 #include <set>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 using namespace gnubase;
@@ -910,6 +912,256 @@ TEST_CASE("a groove extracted from a part that starts later is in phase with it"
 	f.addNotes(played, {quarters(9, 10), quarters(29, 10)});
 	run(f.client, "quantize.apply", {{"part", played}, {"preset", "Late"}});
 	CHECK(f.positions(played) == std::vector<Ticks>{quarters(11, 10), quarters(31, 10)});
+}
+
+namespace
+{
+	// The quantize.changed events the client received since it last asked, oldest first.
+	std::vector<Json> quantizeChanges(Client& client)
+	{
+		std::vector<Json> changes;
+		while (const auto message = client.poll())
+			if (const auto* event = std::get_if<Event>(&*message);
+				event != nullptr && event->name == "quantize.changed")
+				changes.push_back(event->data);
+		return changes;
+	}
+
+	Json shownPreset(Client& client)
+	{
+		return run(client, "quantize.get").at("preset");
+	}
+}
+
+TEST_CASE("every client sees one preset for the settings: the one last set, saved or renamed", "[integration]")
+{
+	Fixture f;
+	Client other(f.engine, "other");
+	// A new project has the 1/16 grid, a factory preset's settings.
+	CHECK(shownPreset(f.client) == "1/16");
+
+	// A preset saved from the settings is the one they are now, for every client.
+	run(f.client, "quantize.savePreset", {{"name", "Sixteenths"}});
+	std::vector<Json> changes = quantizeChanges(f.client);
+	REQUIRE(changes.size() == 1);
+	CHECK(changes[0].at("preset") == "Sixteenths");
+	CHECK(changes[0].at("settings") == run(f.client, "quantize.get").at("settings"));
+	CHECK(shownPreset(other) == "Sixteenths");
+
+	// Choosing the factory preset with the same settings shows it, though a user preset has them too.
+	CHECK(run(other, "quantize.set", {{"preset", "1/16"}}).at("preset") == "1/16");
+	changes = quantizeChanges(f.client);
+	REQUIRE(changes.size() == 1);
+	CHECK(changes[0].at("preset") == "1/16");
+	CHECK(shownPreset(f.client) == "1/16");
+
+	SECTION("changing the settings shows the preset with the new ones, or none")
+	{
+		CHECK(run(f.client, "quantize.set", {{"settings", {{"grid", "1/8"}}}}).at("preset") == "1/8");
+		CHECK(run(f.client, "quantize.set", {{"settings", {{"strength", 0.5}}}}).at("preset") == nullptr);
+		CHECK(quantizeChanges(f.client).back().at("preset") == nullptr);
+		// Settings that equal a preset's are that preset, the user's before the factory one: the preset chosen
+		// last was forgotten when the settings stopped being its own.
+		CHECK(run(f.client, "quantize.set", {{"settings", {{"grid", "1/16"}, {"strength", 1.0}}}}).at("preset") ==
+			"Sixteenths");
+	}
+	SECTION("of the user's presets with the settings, the first one shows")
+	{
+		run(f.client, "quantize.savePreset", {{"name", "Later"}});
+		CHECK(run(f.client, "quantize.set", {{"preset", "Later"}}).at("preset") == "Later");
+		run(f.client, "quantize.set", {{"settings", {{"grid", "1/8"}}}});
+		CHECK(run(f.client, "quantize.set", {{"settings", {{"grid", "1/16"}}}}).at("preset") == "Sixteenths");
+	}
+	SECTION("a preset given with changed settings isn't the one shown")
+	{
+		CHECK(run(f.client, "quantize.set", {{"preset", "1/8"}, {"settings", {{"strength", 0.5}}}}).at("preset") ==
+			nullptr);
+		CHECK(run(f.client, "quantize.set", {{"settings", {{"strength", 1.0}}}}).at("preset") == "1/8");
+	}
+	SECTION("renaming a preset with the settings shows it under its new name")
+	{
+		run(f.client, "quantize.renamePreset", {{"name", "Sixteenths"}, {"newName", "Semis"}});
+		changes = quantizeChanges(f.client);
+		REQUIRE(changes.size() == 1);
+		CHECK(changes[0].at("preset") == "Semis");
+		CHECK(shownPreset(other) == "Semis");
+	}
+	SECTION("saving or renaming presets with other settings changes nothing shown")
+	{
+		run(f.client, "quantize.savePreset", {{"name", "Loose"}, {"settings", {{"strength", 0.5}}}});
+		run(f.client, "quantize.renamePreset", {{"name", "Loose"}, {"newName", "Looser"}});
+		CHECK(quantizeChanges(f.client).empty());
+		CHECK(shownPreset(f.client) == "1/16");
+	}
+	SECTION("saving other settings under the name shown shows another preset")
+	{
+		run(f.client, "quantize.set", {{"preset", "Sixteenths"}});
+		quantizeChanges(f.client);
+		run(f.client, "quantize.savePreset", {{"name", "Sixteenths"}, {"settings", {{"strength", 0.5}}}});
+		changes = quantizeChanges(f.client);
+		REQUIRE(changes.size() == 1);
+		CHECK(changes[0].at("preset") == "1/16");
+	}
+	SECTION("removing the preset shown shows another one with the settings")
+	{
+		run(f.client, "quantize.set", {{"preset", "Sixteenths"}});
+		quantizeChanges(f.client);
+		run(f.client, "quantize.removePreset", {{"name", "Sixteenths"}});
+		changes = quantizeChanges(f.client);
+		REQUIRE(changes.size() == 1);
+		CHECK(changes[0].at("preset") == "1/16");
+	}
+	SECTION("a groove preset shows for its settings")
+	{
+		const ObjectId drums = f.addPart(0);
+		f.addNotes(drums, {0, quarters(11, 10)});
+		run(f.client, "quantize.extractGroove", {{"part", drums}, {"name", "Drums"}});
+		CHECK(quantizeChanges(f.client).empty()); // the settings aren't the groove's
+		CHECK(run(f.client, "quantize.set", {{"preset", "Drums"}}).at("preset") == "Drums");
+	}
+	SECTION("a failed change changes nothing shown")
+	{
+		reject(f.client, "quantize.set", {{"preset", "Sixteenths"}, {"settings", {{"grid", "1/3"}}}});
+		reject(f.client, "history.transaction",
+			{{"description", "Fails"},
+				{"commands",
+					{{{"command", "quantize.set"}, {"parameters", {{"preset", "Sixteenths"}}}},
+						{{"command", "quantize.apply"}, {"parameters", {{"part", 9999}}}}}}});
+		CHECK(quantizeChanges(f.client).empty());
+		CHECK(shownPreset(f.client) == "1/16");
+	}
+}
+
+TEST_CASE("the preset shown is saved with the project", "[integration]")
+{
+	const test::TempDir settings;
+	const test::TempDir dir;
+	const std::string file = (dir.path() / "preset.dawproject").u8string();
+	{
+		Fixture f(settings.path());
+		run(f.client, "quantize.savePreset", {{"name", "Sixteenths"}});
+		run(f.client, "quantize.set", {{"preset", "1/16"}});
+		run(f.client, "project.save", {{"path", file}});
+		run(f.client, "quantize.set", {{"preset", "Sixteenths"}});
+		run(f.client, "project.load", {{"path", file}});
+		CHECK(shownPreset(f.client) == "1/16");
+		run(f.client, "quantize.set", {{"preset", "Sixteenths"}});
+		run(f.client, "project.save", {{"path", file}});
+	}
+
+	// Where the user has no such preset, settings that equal another one's show that one.
+	Fixture elsewhere;
+	run(elsewhere.client, "project.load", {{"path", file}});
+	CHECK(shownPreset(elsewhere.client) == "1/16");
+	run(elsewhere.client, "quantize.savePreset", {{"name", "Sixteenths"}, {"settings", {{"strength", 0.5}}}});
+	CHECK(shownPreset(elsewhere.client) == "1/16");
+}
+
+namespace
+{
+	bool modified(Client& client)
+	{
+		return run(client, "project.revision").at("modified").get<bool>();
+	}
+}
+
+TEST_CASE("a preset command that changes the preset shown changes the project, which saves it", "[integration]")
+{
+	const test::TempDir dir;
+	const std::string file = (dir.path() / "shown.dawproject").u8string();
+	Fixture f;
+	const ObjectId drums = f.addPart(0);
+	f.addNotes(drums, {0, quarters(11, 10)});
+	run(f.client, "quantize.savePreset", {{"name", "Loose"}, {"settings", {{"strength", 0.5}}}});
+	run(f.client, "quantize.extractGroove", {{"part", drums}, {"name", "Drums"}});
+	run(f.client, "quantize.set", {{"preset", "1/16"}});
+	run(f.client, "project.save", {{"path", file}});
+	REQUIRE(!modified(f.client));
+
+	// Saved, closed and opened again, the project shows the preset it showed when it was saved.
+	const auto reopened = [&f, &file](const Json& preset)
+	{
+		CHECK(modified(f.client));
+		run(f.client, "project.save", {{"path", file}});
+		CHECK(!modified(f.client));
+		run(f.client, "project.new");
+		run(f.client, "project.load", {{"path", file}});
+		CHECK(shownPreset(f.client) == preset);
+	};
+
+	SECTION("saving the project's settings as a preset")
+	{
+		const uint64_t revision = run(f.client, "project.revision").at("revision").get<uint64_t>();
+		run(f.client, "quantize.savePreset", {{"name", "Sixteenths"}});
+		CHECK(shownPreset(f.client) == "Sixteenths");
+		CHECK(run(f.client, "project.revision").at("revision").get<uint64_t>() > revision);
+		reopened("Sixteenths");
+	}
+	SECTION("renaming the preset shown")
+	{
+		run(f.client, "quantize.set", {{"preset", "Loose"}});
+		run(f.client, "project.save", {{"path", file}});
+		run(f.client, "quantize.renamePreset", {{"name", "Loose"}, {"newName", "Looser"}});
+		reopened("Looser");
+	}
+	SECTION("removing the preset shown")
+	{
+		run(f.client, "quantize.savePreset", {{"name", "Sixteenths"}});
+		run(f.client, "project.save", {{"path", file}});
+		run(f.client, "quantize.removePreset", {{"name", "Sixteenths"}});
+		CHECK(shownPreset(f.client) == "1/16");
+		reopened("1/16");
+	}
+	SECTION("extracting another groove under the name of the groove shown")
+	{
+		run(f.client, "quantize.set", {{"preset", "Drums"}});
+		const ObjectId other = f.addPart(quarters(8));
+		f.addNotes(other, {0, quarters(13, 10)});
+		run(f.client, "project.save", {{"path", file}});
+		quantizeChanges(f.client);
+		run(f.client, "quantize.extractGroove", {{"part", other}, {"name", "Drums"}});
+		const std::vector<Json> changes = quantizeChanges(f.client);
+		REQUIRE(changes.size() == 1);
+		CHECK(changes[0].at("preset") == nullptr);
+		CHECK(shownPreset(f.client) == nullptr);
+		reopened(nullptr);
+	}
+	SECTION("preset commands that leave the preset shown as it was leave the project as it was")
+	{
+		run(f.client, "quantize.savePreset", {{"name", "Loose"}, {"settings", {{"strength", 0.25}}}});
+		run(f.client, "quantize.renamePreset", {{"name", "Loose"}, {"newName", "Looser"}});
+		run(f.client, "quantize.removePreset", {{"name", "Looser"}});
+		run(f.client, "quantize.extractGroove", {{"part", drums}, {"name", "Drums again"}});
+		CHECK(!modified(f.client));
+
+		// Saving the preset that the settings already show, without the project naming it, changes nothing either.
+		run(f.client, "quantize.savePreset", {{"name", "Sixteenths"}});
+		run(f.client, "quantize.set", {{"settings", {{"grid", "1/8"}}}});
+		run(f.client, "quantize.set", {{"settings", {{"grid", "1/16"}}}});
+		run(f.client, "project.save", {{"path", file}});
+		REQUIRE(shownPreset(f.client) == "Sixteenths");
+		run(f.client, "quantize.savePreset", {{"name", "Sixteenths"}});
+		CHECK(shownPreset(f.client) == "Sixteenths");
+		CHECK(!modified(f.client));
+	}
+}
+
+TEST_CASE("projects keep the preset shown, and files without one or with a wrong one still load", "[unit]")
+{
+	Project project;
+	project.quantizePreset = "Sixteenths";
+	Json json = toJson(project);
+	CHECK(json.at("quantizePreset") == "Sixteenths");
+	CHECK(projectFromJson(json).quantizePreset == "Sixteenths");
+
+	json.erase("quantizePreset"); // as in files from before #770
+	CHECK(projectFromJson(json).quantizePreset.empty());
+	for (const Json& wrong : {Json(42), Json(nullptr), Json::array()})
+	{
+		INFO(wrong.dump());
+		json["quantizePreset"] = wrong;
+		CHECK(projectFromJson(json).quantizePreset.empty());
+	}
 }
 
 namespace

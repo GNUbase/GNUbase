@@ -24,10 +24,10 @@ namespace gnubase::ui
 	// quantize.changed) and the quantize presets (quantize.presets, quantize.presetsChanged), whichever client changes
 	// them, and change them with quantize.set.
 	//
-	// The panel: the Quantize Presets menu (#quantize-presets), which shows the preset the settings match, or No
-	// Preset, with a name field to save the settings as a preset and to rename or remove the user preset shown; Soft
-	// Quantize and the strength (Position for a groove); for a grid its type, Quantize Tuplet, Quantize Swing (straight
-	// grids without tuplets only) and Catch Range, for a groove Velocity, Length, Pre-Q, Max. Move and Orig.
+	// The panel: the Quantize Presets menu (#quantize-presets), which shows the preset the settings are (quantize.get),
+	// or No Preset, with a name field to save the settings as a preset and to rename or remove the user preset shown;
+	// Soft Quantize and the strength (Position for a groove); for a grid its type, Quantize Tuplet, Quantize Swing
+	// (straight grids without tuplets only) and Catch Range, for a groove Velocity, Length, Pre-Q, Max. Move and Orig.
 	// Position; Safe Range and Rough Quantize; the grid display, a bar of the grid or groove's positions with the
 	// catch range around them; Auto Apply Quantize, Reset Quantize and Apply Quantize. The toolbar's section: Apply
 	// Quantize, the Quantize Presets menu, Soft Quantize and Open Quantize Panel.
@@ -58,7 +58,9 @@ namespace gnubase::ui
 		void show();
 		void showGrid();
 		std::string presetsMenu() const;
-		// The preset whose settings the project's are, or "": with several, m_chosen, else a user preset.
+		// From quantize.get's result or a quantize.changed event's data.
+		void showSettings(const engine::Json& data);
+		// The preset the project's settings are, as quantize.get reports it, or "" for none.
 		std::string currentPreset() const;
 		bool isUserPreset(const std::string& name) const;
 		void set(engine::Json parameters);
@@ -75,7 +77,7 @@ namespace gnubase::ui
 		std::function<void(const std::string&)> m_run;
 		engine::Json m_settings = engine::Json::object();
 		engine::Json m_presets = engine::Json::array();
-		std::string m_chosen; // the preset last chosen, saved or renamed in this panel
+		std::string m_preset; // the preset the settings are (quantize.get), the same in every client
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers that come after it went
 		std::vector<Subscription> m_subscriptions;
 	};

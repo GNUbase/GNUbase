@@ -168,9 +168,10 @@ namespace gnubase::engine
 			graph::CompiledGraph graph;
 			std::vector<BusLink> inputs;
 			std::vector<BusLink> outputs;
-			time::TempoMap tempo{120.0}; // the project's, for the tempo in each transport block
-			double sampleRate = 48000.0; // the project's: transport positions are in its samples
-			uint64_t generation = 0;     // counts up from 1
+			time::TempoMap tempo{120.0};                  // the project's, for the tempo in each transport block
+			std::shared_ptr<const ArrangerPlan> arranger; // what arranger mode plays
+			double sampleRate = 48000.0;                  // the project's: transport positions are in its samples
+			uint64_t generation = 0;                      // counts up from 1
 			std::vector<Release> releases;
 			MidiTap::Sequencers sequencers;     // of the MIDI and instrument channels, for midi.inject
 			std::vector<uint64_t> destinations; // per sequencer, where it plays (MidiSequencer::playOn)
@@ -248,6 +249,10 @@ namespace gnubase::engine
 		void publishPerformance(const PerformanceData& data);
 		audio::DummyDevice& requireDummy();
 		void registerTransportCommands(Engine& engine);
+		void registerArrangerCommands(Engine& engine); // arranger.goToStep and arranger.trigger (#167)
+		// Arranger playback: makes state the one playing, from the start of its step or event, or while playing with a
+		// jump mode lets it take over at the next jump point.
+		void arrange(const ArrangerState& state);
 		void registerAnalysisCommands(Engine& engine); // analysiscommands.cpp
 		void registerMeterCommands(Engine& engine);    // metercommands.cpp
 		void registerMixdownCommands(Engine& engine);  // mixdown.cpp
@@ -267,12 +272,13 @@ namespace gnubase::engine
 		// where playback starts (start, the pre-roll's start), in the signature and tempo where recording starts.
 		graph::CountIn countInFrom(time::Samples start, time::Samples recordStart) const;
 		Json transportStatus() const;
+		Json arrangerStatus() const; // transport.get's arranger: step, repeat and the event playing
 		time::Samples projectEnd() const;
 		// Command thread, while the device stands: processes frames frames offline, as fast as possible, calling
 		// rendered after each block with its frames. The dummy device renders them; any other device's blocks are
 		// processed here, with silent inputs.
 		void render(uint64_t frames, const std::function<void(uint32_t)>& rendered = {});
-		void cue(time::Samples position, bool playing, time::Samples window, bool wait);
+		void cue(time::Samples position, bool playing, time::Samples window, bool wait, time::Samples enter = -1);
 		void startCueing();
 		void stopCueing();
 		void startDevice();
@@ -466,8 +472,10 @@ namespace gnubase::engine
 		{
 			bool playing = false;
 			TransportSettings settings;
+			std::shared_ptr<const ArrangerPlan> arranger = std::make_shared<const ArrangerPlan>();
 		};
-		std::mutex m_cueMutex; // guards m_cueState
+		std::mutex m_cueMutex;             // guards m_cueState
+		ArrangerState m_announcedArranger; // as transport.changed last announced it
 		CueState m_cueState;
 		std::atomic<bool> m_cueing{false};
 		std::thread m_cueThread;
