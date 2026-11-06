@@ -76,6 +76,7 @@ add_executable(gnubase-tests
 	ipc_process_tests.cpp
 	ipc_tests.cpp
 	keycommands_tests.cpp
+	keycommandsdialog_tests.cpp
 	keyeditor_tests.cpp
 	keyeditor_ui_tests.cpp
 	latency_tests.cpp

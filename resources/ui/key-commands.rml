@@ -1,0 +1,918 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The key commands dialog (#161, docs/features/key-commands.md, reference manual pp. 1554-1559): the commands by
+     category with their keys, which the user searches, filters, assigns, removes and resets, the macros, and the key
+     commands presets. app::AppUi opens it (the UI command window.keyCommands). Its Lua reads the commands with
+     gnubase.ui.keyCommands and the user settings ui.keyCommands and ui.macros when the dialog loads, and changes them
+     only through engine commands: Apply and OK send what changed, Cancel drops it. -->
+<rml>
+<head>
+	<title>Key Commands</title>
+	<style>
+		dialog
+		{
+			width: 900dp;
+		}
+
+		.row
+		{
+			display: flex;
+			align-items: center;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.row button, .row select, .row input.text, .row .field
+		{
+			margin-left: 6dp;
+		}
+
+		.row span
+		{
+			white-space: nowrap;
+			margin-left: 6dp;
+		}
+
+		#keycommands-search, #keycommands-key-search
+		{
+			width: 220dp;
+		}
+
+		#keycommands-key-search, dialog.press-key #keycommands-search, dialog.press-key #keycommands-reset-search
+		{
+			display: none;
+		}
+
+		dialog.press-key #keycommands-key-search
+		{
+			display: block;
+		}
+
+		.content
+		{
+			display: flex;
+			height: 300dp;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		#keycommands-list
+		{
+			flex: 1;
+			overflow-y: auto;
+			margin-right: 12dp;
+		}
+
+		#keycommands-list .keys
+		{
+			margin-left: 12dp;
+		}
+
+		.side
+		{
+			display: flex;
+			flex-direction: column;
+			width: 260dp;
+		}
+
+		#keycommands-keys
+		{
+			height: 110dp;
+			overflow-y: auto;
+		}
+
+		#keycommands-description
+		{
+			margin-top: 6dp;
+			height: 60dp;
+			overflow-y: auto;
+		}
+
+		.field
+		{
+			padding: 4dp 6dp;
+			margin-top: 6dp;
+		}
+
+		.side button
+		{
+			margin-top: 6dp;
+		}
+
+		#keycommands-macros-section
+		{
+			display: none;
+			height: 150dp;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		dialog.macros #keycommands-macros-section
+		{
+			display: flex;
+		}
+
+		#keycommands-macros, #keycommands-macro-commands
+		{
+			flex: 1;
+			overflow-y: auto;
+			margin-right: 12dp;
+		}
+
+		.buttons
+		{
+			display: flex;
+			flex-direction: column;
+			width: 170dp;
+			margin-right: 12dp;
+		}
+
+		#keycommands-preset, #keycommands-preset-name, #keycommands-filter
+		{
+			width: 150dp;
+		}
+
+		#keycommands-message
+		{
+			flex: 1;
+		}
+	</style>
+	<script>
+		-- The dialog's state, in the UI's Lua: every command a key can run with its default keys, the keys the user gave
+		-- some (keys, nil for the defaults) and the macros, as the dialog shows them.
+		KeyCommands = {}
+		local kc = KeyCommands
+
+		local function escape(text)
+			return (tostring(text):gsub('[&<>"]', {["&"] = "&amp;", ["<"] = "&lt;", [">"] = "&gt;", ['"'] = "&quot;"}))
+		end
+
+		-- Whether two values from the engine are the same, also objects and lists.
+		local function same(a, b)
+			if type(a) ~= "table" or type(b) ~= "table" then
+				return a == b
+			end
+			for key, value in pairs(a) do
+				if not same(value, b[key]) then
+					return false
+				end
+			end
+			for key in pairs(b) do
+				if a[key] == nil then
+					return false
+				end
+			end
+			return true
+		end
+
+		local function copy(list)
+			local copied = {}
+			for index, value in ipairs(list or {}) do
+				copied[index] = value
+			end
+			return copied
+		end
+
+		local function contains(list, wanted)
+			for _, value in ipairs(list) do
+				if value == wanted then
+					return true
+				end
+			end
+			return false
+		end
+
+		local function value(element)
+			local text = element:GetAttribute("value")
+			return text ~= nil and tostring(text) or ""
+		end
+
+		local function keyName(keys)
+			return gnubase.ui.keyName{keys = keys}.name or keys
+		end
+
+		local function report(document, text)
+			document:GetElementById("keycommands-message").inner_rml = escape(text or "")
+		end
+
+		local function macroId(name)
+			return "macro." .. name
+		end
+
+		-- The keys that entries' own keys take, by zone and keys.
+		local function takenKeys()
+			local taken = {}
+			for _, entry in ipairs(kc.entries) do
+				for _, keys in ipairs(entry.keys or {}) do
+					taken[entry.zone .. "\n" .. keys] = true
+				end
+			end
+			return taken
+		end
+
+		-- The keys the entry has: its own, or its defaults less those that other entries' own keys take in its zone.
+		local function keysOf(entry, taken)
+			if entry.keys then
+				return entry.keys
+			end
+			taken = taken or takenKeys()
+			local kept = {}
+			for _, keys in ipairs(entry.defaults) do
+				if not taken[entry.zone .. "\n" .. keys] then
+					kept[#kept + 1] = keys
+				end
+			end
+			return kept
+		end
+
+		local function customized(entry)
+			return entry.keys ~= nil and not same(entry.keys, entry.defaults)
+		end
+
+		-- The entries: the commands, then one for each macro.
+		local function buildEntries(custom)
+			kc.entries = {}
+			for _, command in ipairs(kc.commands) do
+				kc.entries[#kc.entries + 1] = {command = command.command, parameters = command.parameters,
+					description = command.description, zone = command.zone, defaults = command.keys}
+			end
+			for _, macro in ipairs(kc.macros) do
+				kc.entries[#kc.entries + 1] = {command = macroId(macro.name), parameters = {},
+					description = "Runs the macro " .. macro.name .. ".", zone = "", defaults = {}, macro = macro}
+			end
+			-- The user's keys, and those of commands this dialog doesn't list, which stay as they are.
+			kc.unlisted = {}
+			for _, saved in ipairs(custom) do
+				local found = nil
+				for _, entry in ipairs(kc.entries) do
+					if entry.command == saved.command and same(entry.parameters, saved.parameters or {}) then
+						found = entry
+					end
+				end
+				if found then
+					found.keys = copy(saved.keys)
+				else
+					kc.unlisted[#kc.unlisted + 1] = saved
+				end
+			end
+		end
+
+		local function parametersText(parameters)
+			local names = {}
+			for name in pairs(parameters) do
+				names[#names + 1] = name
+			end
+			table.sort(names)
+			local parts = {}
+			for _, name in ipairs(names) do
+				parts[#parts + 1] = name .. ": " .. tostring(parameters[name])
+			end
+			return #parts > 0 and " (" .. table.concat(parts, ", ") .. ")" or ""
+		end
+
+		local function areaOf(entry)
+			return entry.command:match("^([^.]+)") or entry.command
+		end
+
+		-- Whether the entry shows with the search and the filter.
+		local function shows(entry, taken)
+			local keys = keysOf(entry, taken)
+			if kc.keyFilter then
+				if not contains(keys, kc.keyFilter) then
+					return false
+				end
+			elseif kc.search ~= "" then
+				local text = (entry.command .. parametersText(entry.parameters) .. " " .. entry.description):lower()
+				if not text:find(kc.search:lower(), 1, true) then
+					return false
+				end
+			end
+			if kc.filter == "assigned" then
+				return #keys > 0
+			elseif kc.filter == "unassigned" then
+				return #keys == 0
+			elseif kc.filter == "customized" then
+				return customized(entry)
+			end
+			return true
+		end
+
+		-- The list of commands by category, with the selected entry selected. Categories are expanded while a search
+		-- or a filter is on, or when expand says so.
+		local function showList(document, expand)
+			local filtered = kc.keyFilter ~= nil or kc.search ~= "" or kc.filter ~= "all"
+			if expand ~= nil then
+				kc.expanded = expand
+			end
+			local areas, order = {}, {}
+			local taken = takenKeys()
+			for index, entry in ipairs(kc.entries) do
+				if shows(entry, taken) then
+					local area = areaOf(entry)
+					if not areas[area] then
+						areas[area] = {}
+						order[#order + 1] = area
+					end
+					local names = {}
+					for _, keys in ipairs(keysOf(entry, taken)) do
+						names[#names + 1] = escape(keyName(keys))
+					end
+					areas[area][#areas[area] + 1] = '<listitem class="command" id="kc-' .. index .. '" value="c' ..
+						index .. '" level="1" command="' .. escape(entry.command) .. '"><span class="name">' ..
+						escape(entry.command .. parametersText(entry.parameters)) .. '</span><span class="keys">' ..
+						table.concat(names, ", ") .. "</span></listitem>"
+				end
+			end
+			table.sort(order)
+			local rows = {}
+			for _, area in ipairs(order) do
+				rows[#rows + 1] = '<listitem id="kc-area-' .. escape(area) .. '" value="a-' .. escape(area) ..
+					'" level="0"' .. ((filtered or kc.expanded) and " expanded" or "") .. ">" .. escape(area) ..
+					"</listitem>"
+				rows[#rows + 1] = table.concat(areas[area])
+			end
+			local list = document:GetElementById("keycommands-list")
+			list.inner_rml = table.concat(rows)
+			list:SetAttribute("value", kc.selected and "c" .. kc.selected or "")
+		end
+
+		local function selectedEntry()
+			return kc.selected and kc.entries[kc.selected] or nil
+		end
+
+		-- The selected command's keys and description.
+		local function showKeys(document)
+			local entry = selectedEntry()
+			local items = {}
+			for index, keys in ipairs(entry and keysOf(entry) or {}) do
+				items[#items + 1] = '<listitem value="k' .. index .. '" keys="' .. escape(keys) .. '">' ..
+					escape(keyName(keys)) .. "</listitem>"
+			end
+			document:GetElementById("keycommands-keys").inner_rml = table.concat(items)
+			document:GetElementById("keycommands-description").inner_rml = entry and escape(entry.description) or ""
+		end
+
+		local function refresh(document)
+			showList(document)
+			showKeys(document)
+		end
+
+		local function showMacros(document)
+			local items = {}
+			for index, macro in ipairs(kc.macros) do
+				items[#items + 1] = '<listitem value="m' .. index .. '">' .. escape(macro.name) .. "</listitem>"
+			end
+			local list = document:GetElementById("keycommands-macros")
+			list.inner_rml = table.concat(items)
+			list:SetAttribute("value", kc.macro and "m" .. kc.macro or "")
+			local commands = {}
+			for index, command in ipairs(kc.macro and kc.macros[kc.macro].commands or {}) do
+				commands[#commands + 1] = '<listitem value="s' .. index .. '">' ..
+					escape(command.command .. parametersText(command.parameters or {})) .. "</listitem>"
+			end
+			local steps = document:GetElementById("keycommands-macro-commands")
+			steps.inner_rml = table.concat(commands)
+			steps:SetAttribute("value", kc.step and "s" .. kc.step or "")
+			document:GetElementById("keycommands-macro-name"):SetAttribute("value",
+				kc.macro and kc.macros[kc.macro].name or "")
+		end
+
+		-- The macros and keys from the settings or a preset, into the dialog.
+		local function take(document, custom, macros)
+			kc.macros = {}
+			for _, macro in ipairs(macros or {}) do
+				local commands = {}
+				for _, command in ipairs(macro.commands or {}) do
+					commands[#commands + 1] = {command = command.command, parameters = command.parameters or {}}
+				end
+				kc.macros[#kc.macros + 1] = {name = macro.name, commands = commands}
+			end
+			buildEntries(custom or {})
+			kc.selected, kc.macro, kc.step = nil, nil, nil
+			refresh(document)
+			showMacros(document)
+		end
+
+		local function showPresets(document, chosen)
+			local names = {}
+			for name in pairs(gnubase.settings.get{key = "ui.keyCommandPresets"}.value) do
+				names[#names + 1] = name
+			end
+			table.sort(names)
+			local options = {'<option value=""' .. (chosen == "" and " selected" or "") .. ">No Preset</option>"}
+			for _, name in ipairs(names) do
+				options[#options + 1] = '<option value="' .. escape(name) .. '"' ..
+					(name == chosen and " selected" or "") .. ">" .. escape(name) .. "</option>"
+			end
+			kc.updating = true
+			document:GetElementById("keycommands-presets").inner_rml =
+				'<select id="keycommands-preset" onchange="KeyCommands.choosePreset(document)">' ..
+				table.concat(options) .. "</select>"
+			kc.updating = false
+			kc.preset = chosen
+		end
+
+		function kc.open(document)
+			kc.document = document
+			kc.commands = gnubase.ui.keyCommands().commands
+			kc.search, kc.filter, kc.keyFilter, kc.expanded = "", "all", nil, false
+			take(document, gnubase.settings.get{key = "ui.keyCommands"}.value,
+				gnubase.settings.get{key = "ui.macros"}.value)
+			showPresets(document, "")
+			report(document, "")
+			if not KeyCommandsSubscribed then
+				KeyCommandsSubscribed = true
+				gnubase.on("settings.changed", function(event)
+					local dialog = KeyCommands
+					if dialog.document and event.data.values["ui.keyCommandPresets"] ~= nil then
+						showPresets(dialog.document, dialog.preset or "")
+					end
+				end)
+			end
+		end
+
+		function kc.closed()
+			kc.document = nil
+		end
+
+		function kc.expand(document, expanded)
+			showList(document, expanded)
+		end
+
+		function kc.searchChanged(document)
+			if not kc.entries then
+				return -- while the dialog loads
+			end
+			kc.search = value(document:GetElementById("keycommands-search"))
+			showList(document)
+		end
+
+		function kc.resetSearch(document)
+			document:GetElementById("keycommands-search"):SetAttribute("value", "")
+			kc.search, kc.keyFilter = "", nil
+			showList(document)
+		end
+
+		-- Press Key/Search Command: on, a key pressed into the key field shows the commands it runs.
+		function kc.pressKey(document)
+			local on = document:GetElementById("keycommands-press-key"):HasAttribute("checked")
+			document:GetElementById("key-commands"):SetClass("press-key", on)
+			kc.keyFilter = nil
+			document:GetElementById("keycommands-key-search").inner_rml = "Press a key"
+			showList(document)
+		end
+
+		function kc.filterChanged(document)
+			if not kc.entries then
+				return -- while the dialog loads
+			end
+			kc.filter = value(document:GetElementById("keycommands-filter"))
+			showList(document)
+		end
+
+		-- The keys of a key event, as the settings write them; nil for one on its own, such as a modifier.
+		local function pressed(event)
+			local parameters = event.parameters
+			local function held(name)
+				local state = parameters[name]
+				return state == true or state == 1
+			end
+			return gnubase.ui.keyName{key = parameters.key_identifier, ctrl = held("ctrl_key"),
+				alt = held("alt_key"), shift = held("shift_key"), meta = held("meta_key")}.keys
+		end
+
+		-- The keys pressed into a key field, which keeps every key but Escape: that closes the dialog.
+		local function kept(event)
+			local keys = pressed(event)
+			if keys == "Escape" then
+				return nil
+			end
+			event:StopPropagation()
+			return keys
+		end
+
+		function kc.searchKey(document, event)
+			local keys = kept(event)
+			if keys then
+				kc.keyFilter = keys
+				document:GetElementById("keycommands-key-search").inner_rml = escape(keyName(keys))
+				showList(document)
+			end
+		end
+
+		function kc.choose(document)
+			local chosen = value(document:GetElementById("keycommands-list"))
+			local index = tonumber(chosen:match("^c(%d+)$"))
+			if index ~= kc.selected then
+				kc.selected = index
+				showKeys(document)
+			end
+		end
+
+		-- Takes the keys from every other entry that has them in the entry's zone; returns those entries' commands.
+		local function takeFromOthers(entry, keys)
+			local moved = {}
+			for _, other in ipairs(kc.entries) do
+				local others = keysOf(other)
+				if other ~= entry and other.zone == entry.zone and contains(others, keys) then
+					local left = {}
+					for _, each in ipairs(others) do
+						if each ~= keys then
+							left[#left + 1] = each
+						end
+					end
+					other.keys = left
+					moved[#moved + 1] = other.command
+				end
+			end
+			return moved
+		end
+
+		-- A key pressed into the key field: added to the selected command's keys and taken from any other command
+		-- that has it in the same zone.
+		function kc.assignKey(document, event)
+			local keys = kept(event)
+			local entry = selectedEntry()
+			if not keys or not entry then
+				return
+			end
+			local moved = takeFromOthers(entry, keys)
+			local own = copy(keysOf(entry))
+			if not contains(own, keys) then
+				own[#own + 1] = keys
+			end
+			entry.keys = own
+			report(document, #moved > 0 and keyName(keys) .. " was assigned to " .. table.concat(moved, ", ") ..
+				"; it runs " .. entry.command .. " now" or "")
+			refresh(document)
+		end
+
+		function kc.removeKey(document)
+			local entry = selectedEntry()
+			local index = tonumber(value(document:GetElementById("keycommands-keys")):match("^k(%d+)$"))
+			if not entry or not index then
+				report(document, "Select the key to remove")
+				return
+			end
+			local keys = copy(keysOf(entry))
+			table.remove(keys, index)
+			entry.keys = keys
+			refresh(document)
+		end
+
+		-- Reset: the command's default keys, taken back from the commands that have them now.
+		function kc.resetKey(document)
+			local entry = selectedEntry()
+			if entry then
+				entry.keys = nil
+				for _, keys in ipairs(entry.defaults) do
+					takeFromOthers(entry, keys)
+				end
+				for _, other in ipairs(kc.entries) do
+					if other.keys and same(other.keys, other.defaults) then
+						other.keys = nil
+					end
+				end
+				refresh(document)
+			end
+		end
+
+		-- Defaults: every command's default keys; Clear All: no command has keys.
+		function kc.defaults(document)
+			for _, entry in ipairs(kc.entries) do
+				entry.keys = nil
+			end
+			kc.unlisted = {}
+			refresh(document)
+		end
+
+		function kc.clearAll(document)
+			for _, entry in ipairs(kc.entries) do
+				entry.keys = (#entry.defaults > 0 or #(entry.keys or {}) > 0) and {} or nil
+			end
+			refresh(document)
+		end
+
+		-- The settings' values of what the dialog shows. Empty lists are nil, as Lua would send them as objects.
+		local function settings()
+			local custom = {}
+			for _, entry in ipairs(kc.entries) do
+				if customized(entry) then
+					custom[#custom + 1] = {command = entry.command,
+						parameters = next(entry.parameters) ~= nil and entry.parameters or nil,
+						keys = #entry.keys > 0 and entry.keys or nil}
+				end
+			end
+			for _, saved in ipairs(kc.unlisted) do
+				custom[#custom + 1] = saved
+			end
+			local macros = {}
+			for _, macro in ipairs(kc.macros) do
+				local commands = {}
+				for _, command in ipairs(macro.commands) do
+					commands[#commands + 1] = {command = command.command,
+						parameters = next(command.parameters) ~= nil and command.parameters or nil}
+				end
+				macros[#macros + 1] = {name = macro.name, commands = #commands > 0 and commands or nil}
+			end
+			return #custom > 0 and custom or nil, #macros > 0 and macros or nil
+		end
+
+		-- Sends what the dialog shows: settings.set, or settings.reset for none. Returns an error.
+		local function apply()
+			local custom, macros = settings()
+			local values = {}
+			for key, shown in pairs({["ui.keyCommands"] = custom or false, ["ui.macros"] = macros or false}) do
+				local saved = gnubase.settings.get{key = key}.value
+				if shown == false then
+					if #saved > 0 then
+						local ok, problem = pcall(gnubase.settings.reset, {key = key})
+						if not ok then
+							return tostring(problem)
+						end
+					end
+				elseif not same(shown, saved) then
+					values[key] = shown
+				end
+			end
+			if next(values) ~= nil then
+				local ok, problem = pcall(gnubase.settings.set, {values = values})
+				if not ok then
+					return tostring(problem)
+				end
+			end
+		end
+
+		function kc.apply(document)
+			report(document, apply())
+		end
+
+		function kc.ok(document)
+			local problem = apply()
+			if problem then
+				report(document, problem)
+			else
+				document:Close()
+			end
+		end
+
+		-- Presets (p. 1559): Save applies what the dialog shows and keeps it; choosing one puts it into the dialog.
+		function kc.choosePreset(document)
+			if kc.updating then
+				return
+			end
+			local name = value(document:GetElementById("keycommands-preset"))
+			kc.preset = name
+			document:GetElementById("keycommands-preset-name"):SetAttribute("value", name)
+			local preset = gnubase.settings.get{key = "ui.keyCommandPresets"}.value[name]
+			if preset then
+				take(document, preset.keyCommands, preset.macros)
+			end
+		end
+
+		function kc.savePreset(document)
+			local name = value(document:GetElementById("keycommands-preset-name"))
+			if name == "" then
+				report(document, "Enter the preset's name")
+				return
+			end
+			local problem = apply()
+			if not problem then
+				local ok, failed = pcall(gnubase.keyCommands.savePreset, {name = name})
+				problem = not ok and tostring(failed) or nil
+			end
+			if not problem then
+				showPresets(document, name)
+			end
+			report(document, problem)
+		end
+
+		function kc.deletePreset(document)
+			local name = value(document:GetElementById("keycommands-preset"))
+			local ok, problem = pcall(gnubase.keyCommands.removePreset, {name = name})
+			if ok then
+				showPresets(document, "")
+				document:GetElementById("keycommands-preset-name"):SetAttribute("value", "")
+			end
+			report(document, not ok and tostring(problem) or nil)
+		end
+
+		-- Export writes the applied key commands and macros; Import makes a preset of a file.
+		function kc.exportFile(document)
+			local problem = apply()
+			if problem then
+				report(document, problem)
+			else
+				gnubase.ui.command{command = "keyCommands.exportFile"}
+			end
+		end
+
+		function kc.importFile()
+			gnubase.ui.command{command = "keyCommands.importFile"}
+		end
+
+		-- Macros (p. 1556).
+		function kc.showMacros(document)
+			document:GetElementById("key-commands"):SetClass("macros",
+				document:GetElementById("keycommands-show-macros"):HasAttribute("checked"))
+		end
+
+		local function uniqueName(base)
+			local number = 1
+			while true do
+				local name = base .. " " .. number
+				local taken = false
+				for _, macro in ipairs(kc.macros) do
+					taken = taken or macro.name == name
+				end
+				if not taken then
+					return name
+				end
+				number = number + 1
+			end
+		end
+
+		-- The macros changed: their entries in the list follow, keeping the keys they have.
+		local function macrosChanged(document)
+			local custom = select(1, settings()) or {}
+			buildEntries(custom)
+			kc.selected = nil
+			refresh(document)
+			showMacros(document)
+		end
+
+		function kc.newMacro(document, from)
+			local macro = {name = uniqueName("Macro"), commands = {}}
+			for _, command in ipairs(from and from.commands or {}) do
+				macro.commands[#macro.commands + 1] = {command = command.command, parameters = command.parameters}
+			end
+			kc.macros[#kc.macros + 1] = macro
+			kc.macro, kc.step = #kc.macros, nil
+			macrosChanged(document)
+		end
+
+		function kc.duplicateMacro(document)
+			if kc.macro then
+				kc.newMacro(document, kc.macros[kc.macro])
+			end
+		end
+
+		function kc.deleteMacro(document)
+			if kc.macro then
+				table.remove(kc.macros, kc.macro)
+				kc.macro, kc.step = nil, nil
+				macrosChanged(document)
+			end
+		end
+
+		function kc.renameMacro(document)
+			local name = value(document:GetElementById("keycommands-macro-name"))
+			if not kc.macro or name == "" then
+				report(document, "Select a macro and enter its name")
+				return
+			end
+			for index, macro in ipairs(kc.macros) do
+				if macro.name == name and index ~= kc.macro then
+					report(document, "There is a macro " .. name .. " already")
+					return
+				end
+			end
+			local old = macroId(kc.macros[kc.macro].name)
+			for _, entry in ipairs(kc.entries) do
+				if entry.command == old then
+					entry.command = macroId(name)
+				end
+			end
+			kc.macros[kc.macro].name = name
+			macrosChanged(document)
+			report(document, "")
+		end
+
+		function kc.chooseMacro(document)
+			local index = tonumber(value(document:GetElementById("keycommands-macros")):match("^m(%d+)$"))
+			if index ~= kc.macro then
+				kc.macro, kc.step = index, nil
+				showMacros(document)
+			end
+		end
+
+		function kc.chooseStep(document)
+			kc.step = tonumber(value(document:GetElementById("keycommands-macro-commands")):match("^s(%d+)$"))
+		end
+
+		-- Add Command: the command selected above, after the selected command of the macro.
+		function kc.addCommand(document)
+			local entry = selectedEntry()
+			if not kc.macro or not entry or entry.macro then
+				report(document, "Select a macro and a command that isn't a macro")
+				return
+			end
+			local commands = kc.macros[kc.macro].commands
+			local at = (kc.step or #commands) + 1
+			table.insert(commands, at, {command = entry.command, parameters = entry.parameters})
+			kc.step = at
+			showMacros(document)
+			report(document, "")
+		end
+
+		function kc.removeCommand(document)
+			if kc.macro and kc.step then
+				table.remove(kc.macros[kc.macro].commands, kc.step)
+				kc.step = nil
+				showMacros(document)
+			end
+		end
+
+		function kc.moveCommand(document, by)
+			local commands = kc.macro and kc.macros[kc.macro].commands
+			local to = kc.step and kc.step + by
+			if commands and to and to >= 1 and to <= #commands then
+				commands[kc.step], commands[to] = commands[to], commands[kc.step]
+				kc.step = to
+				showMacros(document)
+			end
+		end
+
+		-- Run Macro: the macro's commands as the dialog shows them, one after the other.
+		function kc.runMacro(document)
+			if not kc.macro then
+				return
+			end
+			for _, command in ipairs(kc.macros[kc.macro].commands) do
+				local ok, problem = pcall(gnubase.ui.command, {command = command.command,
+					parameters = next(command.parameters) ~= nil and command.parameters or nil})
+				if not ok then
+					report(document, tostring(problem))
+					return
+				end
+			end
+		end
+	</script>
+</head>
+<body onload="KeyCommands.open(document)" onunload="KeyCommands.closed()">
+	<dialog id="key-commands">
+		<div class="dialog-titlebar">Key Commands</div>
+		<div class="row">
+			<button id="keycommands-expand" onclick="KeyCommands.expand(document, true)">Expand All</button>
+			<button id="keycommands-collapse" onclick="KeyCommands.expand(document, false)">Collapse All</button>
+			<input type="checkbox" id="keycommands-press-key" onchange="KeyCommands.pressKey(document)"/>
+			<span>Press Key</span>
+			<input type="text" id="keycommands-search" value="" onchange="KeyCommands.searchChanged(document)"/>
+			<div id="keycommands-key-search" class="field" onkeydown="KeyCommands.searchKey(document, event)">Press a key</div>
+			<button id="keycommands-reset-search" onclick="KeyCommands.resetSearch(document)">Reset Search</button>
+			<select id="keycommands-filter" onchange="KeyCommands.filterChanged(document)">
+				<option value="all" selected>All</option>
+				<option value="assigned">Assigned</option>
+				<option value="customized">Customized</option>
+				<option value="unassigned">Unassigned</option>
+			</select>
+		</div>
+		<div class="row">
+			<span>Presets</span>
+			<span id="keycommands-presets"/>
+			<input type="text" id="keycommands-preset-name" value=""/>
+			<button id="keycommands-save-preset" onclick="KeyCommands.savePreset(document)">Save</button>
+			<button id="keycommands-delete-preset" onclick="KeyCommands.deletePreset(document)">Delete</button>
+			<button id="keycommands-import" onclick="KeyCommands.importFile()">Import...</button>
+			<button id="keycommands-export" onclick="KeyCommands.exportFile(document)">Export...</button>
+		</div>
+		<div class="content">
+			<listview id="keycommands-list" onchange="KeyCommands.choose(document)"/>
+			<div class="side">
+				<span>Keys</span>
+				<listview id="keycommands-keys"/>
+				<div id="keycommands-assign" class="field" onkeydown="KeyCommands.assignKey(document, event)">Click here and press a key to assign it</div>
+				<button id="keycommands-remove" onclick="KeyCommands.removeKey(document)">Remove Key Command</button>
+				<button id="keycommands-reset" onclick="KeyCommands.resetKey(document)">Reset Key Command</button>
+				<div id="keycommands-description"/>
+			</div>
+		</div>
+		<div class="row">
+			<input type="checkbox" id="keycommands-show-macros" onchange="KeyCommands.showMacros(document)"/>
+			<span>Macros</span>
+			<button id="keycommands-defaults" onclick="KeyCommands.defaults(document)">Defaults</button>
+			<button id="keycommands-clear-all" onclick="KeyCommands.clearAll(document)">Clear All</button>
+		</div>
+		<div id="keycommands-macros-section">
+			<listview id="keycommands-macros" onchange="KeyCommands.chooseMacro(document)"/>
+			<div class="buttons">
+				<input type="text" id="keycommands-macro-name" value=""/>
+				<button id="keycommands-rename-macro" onclick="KeyCommands.renameMacro(document)">Rename Macro</button>
+				<button id="keycommands-new-macro" onclick="KeyCommands.newMacro(document)">New Macro</button>
+				<button id="keycommands-duplicate-macro" onclick="KeyCommands.duplicateMacro(document)">Duplicate Macro</button>
+				<button id="keycommands-delete-macro" onclick="KeyCommands.deleteMacro(document)">Delete Macro</button>
+			</div>
+			<listview id="keycommands-macro-commands" onchange="KeyCommands.chooseStep(document)"/>
+			<div class="buttons">
+				<button id="keycommands-add-command" onclick="KeyCommands.addCommand(document)">Add Command</button>
+				<button id="keycommands-remove-command" onclick="KeyCommands.removeCommand(document)">Remove Command</button>
+				<button id="keycommands-command-up" onclick="KeyCommands.moveCommand(document, -1)">Move Up</button>
+				<button id="keycommands-command-down" onclick="KeyCommands.moveCommand(document, 1)">Move Down</button>
+				<button id="keycommands-run-macro" onclick="KeyCommands.runMacro(document)">Run Macro</button>
+			</div>
+		</div>
+		<div class="row">
+			<div id="keycommands-message"/>
+			<button id="keycommands-apply" onclick="KeyCommands.apply(document)">Apply</button>
+			<button id="keycommands-cancel" result="cancel">Cancel</button>
+			<button id="keycommands-ok" class="primary" onclick="KeyCommands.ok(document)">OK</button>
+		</div>
+	</dialog>
+</body>
+</rml>
