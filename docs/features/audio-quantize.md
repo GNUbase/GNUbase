@@ -49,9 +49,26 @@ snapping there is what keeps them phase coherent: `quantize.apply` then moves th
 by the same amount. Warp quantizing several tracks stretches each clip by itself, so it doesn't keep them phase
 coherent (p. 371).
 
+## In the UI
+
+`src/app/appquantize.cpp` and `ui::QuantizePanel` (`src/ui/quantizepanel.h`), as for MIDI ([quantize.md](quantize.md)):
+
+- **Edit > Quantize and Reset Quantize** (and the panel's Apply and Reset) take the project window's selected audio
+  events and audio parts too, with its MIDI parts in one `quantize.apply` or `quantize.reset`. Quantize MIDI Event
+  Ends and Lengths and Freeze MIDI Quantize stay MIDI only.
+- **Warp Quantize On/Off**: `#quantize-warp` in the panel, next to the strength, and `#toolbar-quantize-warp` in the
+  toolbar's quantize section, which shows it in windows at least 1100 dp wide only, where the toolbar has room for it.
+  Both are `.checked` while `warpQuantize` is on and switch it with `quantize.set`.
+- **Several audio tracks** (`#quantize-tracks`, below Apply): Range (`#quantize-range`) and Offset
+  (`#quantize-offset`) in ms, Slice (`#quantize-slice`), or with warp quantizing on Create
+  (`#quantize-create-markers`; the other one is `.hidden`), and Crossfade Length (`#quantize-crossfade-length`) with
+  Crossfade (`#quantize-crossfade`). Each sends its engine command with the selected audio events and those of the
+  selected audio parts, every track at priority 1.
+
 ## Not yet
 
-Group editing of folder tracks (the commands take the events, of any tracks); Slice Rules' Reset (undo does it) and
+Group editing of folder tracks (the commands take the events, of any tracks); the panel's Hitpoint Tracks list with
+each track's priority (the engine takes `priorities`); Slice Rules' Reset (undo does it) and
 cutting positions shown in the project window; Nudge Crossfade Left/Right and the crossfade editor of the Crossfades
 section; quantizing a selection range of an event; Create Groove Quantize Preset from an audio event's hitpoints in
 the Edit menu (`event.fromHitpoints` with `groove` makes it).
@@ -63,3 +80,5 @@ moved since, audio parts, locked events, the catch range, errors and the origin 
 quantizing a loop played on eighths with a quarter grid, rendered, with reset and existing markers; several tracks
 sliced by priority and range, quantized and crossfaded, then rendered with the second track's audio inverted: the sum
 is silence, so they stayed phase coherent; warp markers for several tracks of the same priority.
+`tests/audioquantize_ui_tests.cpp` drives the app with `ui::Automation`: Edit > Quantize and Reset Quantize on a
+selected audio event, Warp Quantize On/Off, and the panel's Slice, Apply, Crossfade and Create on two tracks.

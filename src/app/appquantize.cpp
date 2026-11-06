@@ -5,6 +5,7 @@
 
 #include <RmlUi/Core/Element.h>
 
+#include <algorithm>
 #include <array>
 #include <map>
 #include <memory>
@@ -29,9 +30,13 @@ namespace gnubase::app
 
 		constexpr std::array<QuantizeCommand, 5> g_quantizeCommands{{
 			{"edit.quantize", "quantize.apply", "Quantize",
-				"Quantizes the starts of the selected MIDI notes or parts to the quantize grid.", "Q"},
+				"Quantizes the starts of the selected MIDI notes or parts, or audio events or parts, to the quantize "
+				"grid.",
+				"Q"},
 			{"edit.resetQuantize", "quantize.reset", "Reset quantize",
-				"Puts the selected MIDI notes or parts back to their timing before quantizing.", nullptr},
+				"Puts the selected MIDI notes or parts, or audio events or parts, back to their timing before "
+				"quantizing.",
+				nullptr},
 			{"edit.quantizeLengths", "quantize.lengths", "Quantize lengths",
 				"Sets the lengths of the selected MIDI notes or parts to the length quantize value.", nullptr},
 			{"edit.quantizeEnds", "quantize.ends", "Quantize ends",
@@ -46,12 +51,15 @@ namespace gnubase::app
 		// The quantize panel (pp. 372-378), a window of its own there: the right zone, or a window of its own here.
 		m_docking.add({"quantize", "Quantize", "project", "right", [this](Rml::Element& element)
 			{
-				return std::make_shared<ui::QuantizePanel>(m_binding, element, ui::QuantizePanel::Layout::Panel,
+				return std::make_shared<ui::QuantizePanel>(
+					m_binding, element, ui::QuantizePanel::Layout::Panel,
 					[this](const std::string& command)
 					{
 						ui::Window* window = m_docking.windowOf("quantize");
 						m_keys.run(command, Json::object(), window != nullptr ? *window : m_main, nullptr);
-					});
+					},
+					[this](const std::string& command, Json parameters)
+					{ quantizeAudioTracks(command, std::move(parameters)); });
 			}});
 		m_keys.add({"window.quantizePanel", "Opens the quantize panel.",
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_docking.open("quantize"); }});
@@ -61,8 +69,15 @@ namespace gnubase::app
 			m_keys.add({each.id, each.description,
 				[this, command = std::string(each.command), step = std::string(each.step)](ui::Window& window,
 					Rml::Element* zone) { quantize(command, step, quantizeTarget(window, zone)); }});
+			// Audio events and parts have starts to quantize, not ends or lengths.
+			const bool audio =
+				each.command == std::string("quantize.apply") || each.command == std::string("quantize.reset");
 			m_keys.enableWhen(each.id,
-				[this](ui::Window& window, Rml::Element* zone) { return !quantizeTarget(window, zone).parts.empty(); });
+				[this, audio](ui::Window& window, Rml::Element* zone)
+				{
+					const QuantizeTarget target = quantizeTarget(window, zone);
+					return !target.parts.empty() || (audio && (!target.events.empty() || !target.audioParts.empty()));
+				});
 			if (each.keys != nullptr)
 				m_keys.bind({each.keys, each.id});
 		}
@@ -123,12 +138,30 @@ namespace gnubase::app
 		QuantizeTarget target;
 		for (const uint64_t part : selected("midiParts"))
 			target.parts.emplace_back(part, std::vector<uint64_t>());
+		target.events = selected("audioEvents");
+		target.audioParts = selected("audioParts");
 		return target;
+	}
+
+	void AppUi::quantizeAudioTracks(const std::string& command, Json parameters)
+	{
+		std::vector<uint64_t> events = selected("audioEvents");
+		const std::vector<uint64_t> parts = selected("audioParts");
+		if (m_eventDisplay && !parts.empty())
+			for (const Json& event : m_eventDisplay->project().value("audioEvents", Json::array()))
+				if (std::find(parts.begin(), parts.end(), event.value("part", uint64_t{0})) != parts.end())
+					events.push_back(event.at("id").get<uint64_t>());
+		if (events.empty())
+			return;
+		parameters["events"] = events;
+		m_binding.send(command, std::move(parameters));
 	}
 
 	void AppUi::quantize(const std::string& command, const std::string& step, const QuantizeTarget& target)
 	{
-		if (target.parts.empty())
+		const bool audio = (command == "quantize.apply" || command == "quantize.reset") &&
+			(!target.events.empty() || !target.audioParts.empty());
+		if (target.parts.empty() && !audio)
 			return;
 		Json extra = Json::object();
 		if (command == "quantize.lengths" && !target.lengthQuantize.empty() && target.lengthQuantize != "link")
@@ -148,10 +181,16 @@ namespace gnubase::app
 			parameters["notes"] = notes;
 			commands.push_back({{"command", command}, {"parameters", std::move(parameters)}});
 		}
-		if (!whole.empty())
+		if (!whole.empty() || audio)
 		{
 			Json parameters = extra;
-			parameters["parts"] = std::move(whole);
+			if (!whole.empty())
+				parameters["parts"] = std::move(whole);
+			if (audio)
+			{
+				parameters["events"] = target.events;
+				parameters["audioParts"] = target.audioParts;
+			}
 			commands.push_back({{"command", command}, {"parameters", std::move(parameters)}});
 		}
 		if (commands.size() == 1)

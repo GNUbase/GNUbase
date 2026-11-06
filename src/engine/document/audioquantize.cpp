@@ -380,7 +380,7 @@ namespace gnubase::engine
 					}
 					else if (first.end < second.start)
 					{
-						const time::Samples frames = std::min(
+						const time::Samples frames = std::min<time::Samples>(
 							b.offset, std::llround(static_cast<double>(second.start - first.end) / second.ratio));
 						const time::Samples start =
 							second.start - std::llround(static_cast<double>(frames) * second.ratio);
@@ -391,11 +391,18 @@ namespace gnubase::engine
 						note(b.id);
 					}
 					const Clip& clip = project.clips.at(a.clip);
-					const time::Samples extension = std::min(std::llround(crossfadeSamples / first.ratio),
-						clipLength(project, clip) - (a.offset + a.length));
+					const time::Samples extension =
+						std::min<time::Samples>(std::llround(crossfadeSamples / first.ratio),
+							clipLength(project, clip) - (a.offset + a.length));
 					if (extension <= 0)
 						continue;
 					a.length += extension;
+					// Only into an event that goes on after it.
+					if (eventSpan(project, a).end >= eventSpan(project, b).end)
+					{
+						a.length -= extension;
+						continue;
+					}
 					note(a.id);
 					model.runEdit("crossfade.set", project, {{"from", a.id}, {"to", b.id}}, context);
 				}
