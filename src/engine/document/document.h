@@ -863,6 +863,24 @@ namespace gnubase::engine
 		std::vector<std::string> hiddenTypes; // from g_mixerChannelTypes
 	};
 
+	// A track visibility configuration (#166, reference manual p. 58): a name for a set of hidden tracks.
+	struct VisibilityConfiguration
+	{
+		std::string name;
+		std::vector<ObjectId> hidden;
+	};
+
+	// What the project window's track list hides (#166, docs/features/track-visibility.md, reference manual pp. 80-82).
+	struct TrackVisibility
+	{
+		std::vector<ObjectId> hidden; // tracks, sorted
+		// The mixer window whose channel visibility follows the tracks' (window1 to window4), or empty; the lower
+		// zone's mixer always does.
+		std::string sync;
+		std::vector<VisibilityConfiguration> configurations;
+		std::string configuration; // the active configuration's name, or empty
+	};
+
 	// The record file types and bit depths of the project setup (reference manual pp. 129-130), as the engine API
 	// names them. Recording (#96) writes its files in them.
 	inline constexpr std::array<const char*, 4> g_recordFileTypes = {"wav", "broadcastWav", "aiff", "flac"};
@@ -943,6 +961,8 @@ namespace gnubase::engine
 		std::string lastAppliedColor;
 		// What each mixer hides (#106), by mixer: lower, window1 to window4. Settings, not part of undo.
 		std::map<std::string, MixerView> mixers;
+		// What the track list hides (#166). A setting, not part of undo.
+		TrackVisibility trackVisibility;
 
 		// The metronome and count-in (#101). Settings, not part of undo.
 		metronome::MetronomeSettings metronome;
