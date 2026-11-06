@@ -8,8 +8,10 @@
 #include <RmlUi/Core/ObserverPtr.h>
 
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -40,7 +42,8 @@ namespace gnubase::ui
 		ControllerLanes(ControllerLanes&&) = delete;
 		ControllerLanes& operator=(ControllerLanes&&) = delete;
 
-		// The project, the editor view and the time axis of the note display, project ticks.
+		// The project, the editor view and the time axis of the note display, project ticks. Keeps the view and the
+		// parts it shows, not the whole project.
 		void show(const engine::Json& project, const engine::Json& view, int64_t from, int64_t to);
 		// The key editor's tool by name (keyToolName) and the line tool's mode: line, parabola, sine, triangle, square
 		// or paint.
@@ -53,6 +56,7 @@ namespace gnubase::ui
 			int64_t start = 0; // project ticks
 			int64_t end = 0;
 			bool editable = false;
+			engine::Json json; // the part as project.get lists it
 		};
 
 		// A bar or step of a lane: a note's value or a controller event's, 0 to 1 from the lane's bottom to its top.
@@ -63,6 +67,7 @@ namespace gnubase::ui
 			int64_t start = 0; // project ticks
 			int64_t end = 0;   // controller events: the next event of the lane, or the part's end
 			double value = 0.0;
+			int channel = 0; // controller events' MIDI channel
 			bool editable = false;
 			bool selected = false;
 		};
@@ -83,6 +88,12 @@ namespace gnubase::ui
 
 		void ProcessEvent(Rml::Event& event) override;
 		void press(Rml::Event& event);
+		void begin(Rml::Event& event);
+		// Ends the gesture without its effect.
+		void cancel();
+		// Hears the mouseup and, in the capture phase, the mousedown in the root's document while a gesture goes on,
+		// or stops hearing them.
+		void listen(bool document);
 		void drag(Rml::Event& event);
 		void release(Rml::Event& event);
 		void menuItem(Rml::Element& menu, Rml::Element& item);
@@ -101,6 +112,9 @@ namespace gnubase::ui
 		const Part* partAt(int64_t ticks) const;
 		const engine::Json* partJson(uint64_t id) const;
 		bool noteSelected(uint64_t part, uint64_t note) const;
+		// The MIDI channel that a lane's new events in a part get: that of its first event from one position to another
+		// (project ticks), or else its first event in the part, or else 0. Lanes show the events of every channel.
+		int laneChannel(const Lane& lane, const Part& part, int64_t from, int64_t to) const;
 
 		// Edits: the field a note lane changes from a display value, and the change of a controller event to one.
 		static engine::Json noteChange(const Lane& lane, uint64_t note, double value);
@@ -118,9 +132,12 @@ namespace gnubase::ui
 		std::string m_name;
 		std::string m_tool = "objectSelection";
 		std::string m_lineMode = "line";
-		engine::Json m_project = engine::Json::object();
 		engine::Json m_view = engine::Json::object();
+		int64_t m_grid = 0; // the project's quantize grid, ticks
 		std::vector<Part> m_parts;
+		std::map<uint64_t, size_t> m_partIndex;                  // m_parts by id
+		std::set<std::pair<uint64_t, uint64_t>> m_noteSelection; // the view's selection: parts and notes
+		std::set<std::pair<uint64_t, uint64_t>> m_controllerSelection;
 		std::vector<Lane> m_lanes;
 		int64_t m_from = 0;
 		int64_t m_to = 1;
@@ -132,6 +149,8 @@ namespace gnubase::ui
 		std::optional<size_t> m_menuLane;                    // the lane whose menu opened
 		Rml::ObserverPtr<Rml::Element> m_dialog;
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers that come after it's gone
+		// The document that a gesture hears the mouseup in, wherever in it the mouse goes up.
+		Rml::ObserverPtr<Rml::Element> m_document;
 
 		Gesture m_gesture = Gesture::None;
 		size_t m_lane = 0;

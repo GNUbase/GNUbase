@@ -394,6 +394,9 @@ namespace gnubase::ui
 			double end = 0.0;
 			bool mute = false;
 			std::optional<double> snapPoint; // audio events, inside them, in seconds
+			// An audio event's entry on its track's lane, which shows it only where none in front covers it (#99): if
+			// it is muted, m_mutedPieces has what shows.
+			bool onTrackLane = false;
 		};
 
 		void ProcessEvent(Rml::Event& event) override;
@@ -459,6 +462,7 @@ namespace gnubase::ui
 			int64_t sample = 0;
 			bool clipsOnly = false;
 			bool selected = false; // track is the selected one, which takes the first file, not all of them
+			int lane = 0;          // the lane of track the files go on
 		};
 		void startImport(const std::vector<std::string>& files, Import import);
 		void dropFiles(Rml::Event& event);
@@ -689,6 +693,7 @@ namespace gnubase::ui
 		std::vector<std::string> m_laneTypes; // and its type
 		std::vector<bool> m_laneLinear;       // and whether its time base is linear
 		std::vector<Shown> m_events;
+		std::vector<std::pair<size_t, TimeSpan>> m_mutedPieces; // by lane: what shows of covered muted events
 		std::vector<uint64_t> m_selection;
 		EventLanes* m_mutedLanes = nullptr;    // muted events over the others
 		EventLanes* m_selectedLanes = nullptr; // selected events over those
