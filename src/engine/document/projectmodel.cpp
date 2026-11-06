@@ -5,6 +5,7 @@
 #include "engine/audiofile/resampler.h"
 #include "engine/dawproject/dawproject.h"
 #include "engine/document/audiofunctions.h"
+#include "engine/document/audioquantize.h"
 #include "engine/document/channelsettings.h"
 #include "engine/document/editors.h"
 #include "engine/document/hitpoints.h"
@@ -4019,6 +4020,7 @@ namespace gnubase::engine
 		registerParameterCommands(engine);
 		registerSlotCommands(engine);
 		midi::registerQuantizeCommands(*this, engine);
+		registerAudioQuantizeCommands(*this, engine);
 		midi::registerFunctionCommands(*this, engine);
 		metronome::registerMetronomeCommands(*this, engine);
 		midi::registerControllerLaneCommands(*this, engine);
