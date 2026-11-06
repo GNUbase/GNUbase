@@ -2489,7 +2489,8 @@ namespace gnubase::engine
 				"Mutes or unmutes, locks or unlocks and colors audio events and MIDI parts. Muted ones don't play; "
 				"locked ones can't be moved, resized, split, glued or removed by the event commands. color (#rrggbb) "
 				"is a color of their own; null makes them follow their track's color again. lane puts them on that "
-				"lane of their track, from 0, as cycle recordings put their takes (recording.add). Returns the events.",
+				"lane of their track, from 0, as cycle recordings put their takes (recording.add); audio events in an "
+				"audio part on that lane of the part, as the audio part editor shows them. Returns the events.",
 				schema({{"events", events()}, {"mute", boolean()}, {"lock", boolean()},
 						   {"color", {{"type", {"string", "null"}}}},
 						   {"lane", {{"type", "integer"}, {"minimum", 0}, {"maximum", 1000}}}},
@@ -2555,7 +2556,8 @@ namespace gnubase::engine
 			{"event.toPart", 1,
 				"Events to Part (Audio menu): puts audio events (events, by id) into a new audio part on their track, "
 				"from the first start to the last end; events on several tracks make a part on each. Events already "
-				"in a part, and locked ones, are refused. Returns the parts in events.",
+				"in a part, and locked ones, are refused. The part is on the track's first lane, and the events keep "
+				"their lane numbers, now lanes of the part (the audio part editor's). Returns the parts in events.",
 				schema({{"events", events()}}, {"events"}), eventsResult(), false},
 			"Events to Part", eventsToPart);
 
@@ -2564,7 +2566,8 @@ namespace gnubase::engine
 				"Dissolve Part (Audio menu): removes audio parts (events, by id) and makes their audio events events "
 				"of "
 				"their own on the track, cut at the part's edges so that they play as they did; events the part hid "
-				"entirely are removed. Locked parts are refused. Returns the events.",
+				"entirely are removed. Locked parts are refused. The events keep their lane numbers, now lanes of the "
+				"track. Returns the events.",
 				schema({{"events", events()}}, {"events"}), eventsResult(), false},
 			"Dissolve Part", dissolveParts);
 

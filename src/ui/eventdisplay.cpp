@@ -353,11 +353,14 @@ namespace gnubase::ui
 		m_mutedPieces.clear();
 		m_fades.clear();
 		readAutomation(project);
-		// Each track's highest lane (#99), and the display lane of each lane of a track whose lanes show.
+		// Each track's highest lane (#99), and the display lane of each lane of a track whose lanes show. The lane of
+		// an audio event in an audio part is one of the part's, in the audio part editor, not one of the track.
 		std::map<uint64_t, int> topLanes;
 		for (const char* kind : {"audioEvents", "audioParts", "midiParts"})
 			for (const Json& item : project.at(kind))
 			{
+				if (item.value("part", uint64_t{0}) != 0)
+					continue;
 				int& top = topLanes[item.at("track").get<uint64_t>()];
 				top = std::max(top, item.value("lane", 0));
 			}
