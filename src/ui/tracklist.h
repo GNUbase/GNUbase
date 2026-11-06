@@ -122,7 +122,7 @@ namespace gnubase::ui
 		void build();     // the rows, from the project
 		void showState(); // names, controls and state classes
 		void place();     // heights and scrolling, from the display's lanes
-		void hide();      // tells the display which tracks folded folders hide
+		void hide();      // tells the display which tracks folded folders and the track visibility hide
 		void loadControls(const engine::Json& value);
 		void loadWidths(const engine::Json& value);
 
@@ -189,6 +189,7 @@ namespace gnubase::ui
 		std::vector<Row> m_tracks;               // every track in the project's order
 		std::map<uint64_t, size_t> m_index;
 		std::set<uint64_t> m_folded;
+		std::set<uint64_t> m_filtered;                    // what the track visibility hides (#166)
 		engine::Json m_controls = engine::Json::object(); // ui.trackControls
 		engine::Json m_widths = engine::Json::object();   // ui.trackWidths
 		uint64_t m_loads = 0;                             // the display's, when the rows were last built

@@ -47,7 +47,8 @@ A panel (`ui::Panel`) has an id, a title, the docking window and the zone it doc
 element it shows in, wherever that is; what the function returns lives as long as the panel shows there. `add`
 registers panels; the project window has the Inspector ([inspector.md](inspector.md)) and Visibility on the left,
 Editor and Mixer in the lower zone, and Media and Meter on the right (pp. 75–98), the others empty until their tickets
-fill them (the Editor and Visibility panels are the lower zone editor's, [midi-editors.md](midi-editors.md)), the Pool in the lower zone
+fill them (the Editor panel is the lower zone editor's, [midi-editors.md](midi-editors.md), the Visibility panel has
+the track visibility and the lower zone editor's, [track-visibility.md](track-visibility.md)), the Pool in the lower zone
 ([pool.md](pool.md), `window.pool`, Mod+P) and the edit history on the right ([edit-history.md](edit-history.md)).
 `open` shows a panel as its zone's active tab, with the zone shown; a panel in a window of its own stays there, and
 its window comes to the front with the keyboard focus, restored if it is minimized, so commands such as

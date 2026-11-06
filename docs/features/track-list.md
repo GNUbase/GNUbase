@@ -129,6 +129,8 @@ sends engine commands, so whatever another client changes shows at once.
   window's focus zone, enabled while the list exists and, for those of selected tracks, while tracks are selected,
   so the menus disable them otherwise.
 
+- **Track visibility** (#166): the tracks the Visibility tab hides leave the list and the event display
+  ([track-visibility.md](track-visibility.md)).
 - **Automation tracks** (#121) have rows below their track's own, which reaches down over them; Show/Hide
   Automation is in the lower left corner of each track with a channel ([automation-tracks.md](automation-tracks.md)).
 

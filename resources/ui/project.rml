@@ -18,6 +18,8 @@
      #select-color with #color-menu, which ui::ColorMenu fills with the project's colors (docs/features/colors.md).
      ui::StatusLine fills #record-format, #record-time and #lost-device (docs/features/status-line.md). ui::InfoLine fills
      #info-line; #inspector-setup is the inspector's Set up Sections pane (docs/features/inspector.md).
+     ui::TrackVisibility drives #track-visibility-configurations and its menu, with visibility-configuration.rml
+     (docs/features/track-visibility.md).
      The focus zone "project" has the project window's key commands, such as zooming with H and G. -->
 <rml>
 <head>
@@ -119,6 +121,7 @@
 		     ui::QuantizePanel fills (docs/features/quantize.md) -->
 		<div id="toolbar-quantize" class="toolbar-quantize"/>
 		<button id="select-color" class="icon-only" menu="color-menu" title="Select Color for Selected Tracks or Events"><svg class="icon" src="../icons/general-color.svg"/></button>
+		<button id="track-visibility-configurations" menu="track-visibility-configurations-menu" title="Track Visibility Configurations">Configurations</button>
 		<div class="spacer"/>
 		<button id="show-channel-zone" type="toggle" toggle="channel" class="icon-only" title="Show/Hide Channel"><svg class="icon" src="../icons/layout-channel-zone.svg"/></button>
 		<button id="show-left-zone" type="toggle" toggle="left" class="icon-only" title="Show/Hide Left Zone"><svg class="icon" src="../icons/layout-left-zone.svg"/></button>
@@ -637,5 +640,6 @@
 		<menuseparator/>
 		<menuitem id="suspend-auto-scroll">Suspend Auto-Scroll when Editing</menuitem>
 	</menu>
+	<menu id="track-visibility-configurations-menu"/>
 </body>
 </rml>

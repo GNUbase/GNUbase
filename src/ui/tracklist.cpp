@@ -437,6 +437,26 @@ namespace gnubase::ui
 				if (!alive.expired() && result.ok())
 					loadWidths(result.value.at("value"));
 			});
+		// Track visibility (#166, docs/features/track-visibility.md): the tracks the Visibility tab hides.
+		const auto filter = [this](const Json& visibility)
+		{
+			m_filtered = visibility.at("hidden").get<std::set<uint64_t>>();
+			hide();
+		};
+		const auto readVisibility = [this, filter]
+		{
+			m_binding.send("trackVisibility.get", Json::object(),
+				[filter, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+				{
+					if (!alive.expired() && result.ok())
+						filter(result.value);
+				});
+		};
+		m_subscriptions.push_back(
+			m_binding.on("trackVisibility.changed", [filter](const engine::Event& event) { filter(event.data); }));
+		m_subscriptions.push_back(
+			m_binding.on("project.reset", [readVisibility](const engine::Event&) { readVisibility(); }));
+		readVisibility();
 		m_display.onLayout([this] { layout(); });
 		layout();
 	}
@@ -753,14 +773,21 @@ namespace gnubase::ui
 	void TrackList::hide()
 	{
 		std::set<uint64_t> hidden;
+		std::set<uint64_t> filtered; // by the track visibility, with the tracks in hidden folders
 		for (const Row& row : m_tracks)
-			if (row.parent != 0 && (folded(row.parent) || hidden.count(row.parent) != 0))
+		{
+			if (m_filtered.count(row.id) != 0 || filtered.count(row.parent) != 0)
+				filtered.insert(row.id);
+			if (filtered.count(row.id) != 0 ||
+				(row.parent != 0 && (folded(row.parent) || hidden.count(row.parent) != 0)))
 				hidden.insert(row.id);
-		// The list view hides the same rows by their expanded attributes.
+		}
+		// The list view hides the same rows by their expanded attributes, the track visibility's with .filtered.
 		if (alive())
 			for (int i = 0; i < m_view->GetNumChildren() && static_cast<size_t>(i) < m_tracks.size(); ++i)
 			{
 				Rml::Element* element = m_view->GetChild(i);
+				element->SetClass("filtered", filtered.count(m_tracks[static_cast<size_t>(i)].id) != 0);
 				const bool expanded = !folded(m_tracks[static_cast<size_t>(i)].id);
 				if (expanded && !element->HasAttribute("expanded"))
 					element->SetAttribute("expanded", "");
