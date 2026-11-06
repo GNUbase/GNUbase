@@ -214,7 +214,7 @@ jobs:
           retention-days: 14
 
   sanitizers:
-    timeout-minutes: 60
+    timeout-minutes: 90 # asan-ubsan took up to 59 min on main on slow runners in Nov 2026
     name: ${{ matrix.name }}
     runs-on: ubuntu-24.04
     strategy:
