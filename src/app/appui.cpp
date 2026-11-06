@@ -12,6 +12,8 @@
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Input.h>
+#include <RmlUi/Core/StringUtilities.h>
 #include <RmlUi/Lua.h>
 #include <lua.h>
 
@@ -811,6 +813,121 @@ namespace gnubase::app
 				[this, field = std::string(command.field)](ui::Window&, Rml::Element*) { enter(field); }});
 			m_keys.bind({command.keys, command.id});
 		}
+		addKeyCommandsDialog();
+	}
+
+	void AppUi::addKeyCommandsDialog()
+	{
+		// The key commands dialog (#161, docs/features/key-commands.md, reference manual pp. 1554-1559), which
+		// Edit > Key Commands opens.
+		m_keys.add({"window.keyCommands",
+			"Opens the key commands dialog, which assigns keys to commands, sets up macros and keeps key commands "
+			"presets.",
+			[this](ui::Window& window, Rml::Element* /*zone*/) { openOnce(window, "key-commands.rml", m_keyDialog); }});
+		// Its Import and Export: the OS's file dialog, then keyCommands.import or keyCommands.export.
+		for (const bool exporting : {false, true})
+			m_keys.add({exporting ? "keyCommands.exportFile" : "keyCommands.importFile",
+				exporting ? "Exports the key commands and macros into a key commands file that the user chooses."
+						  : "Imports a key commands file that the user chooses as a key commands preset.",
+				[this, exporting](ui::Window& window, Rml::Element* /*zone*/)
+				{
+					ui::FileDialog dialog;
+					dialog.kind = exporting ? ui::FileDialogKind::Save : ui::FileDialogKind::Open;
+					dialog.title = exporting ? "Export Key Commands" : "Import Key Commands";
+					dialog.filters = {{"Key commands files", "json"}};
+					dialog.parent = window.id();
+					m_shell.showFileDialog(dialog,
+						[this, exporting](const ui::FileDialogResult& result)
+						{
+							if (!result.error.empty())
+								logging::warning("The file dialog failed: {}", result.error);
+							if (result.files.empty())
+								return;
+							const std::filesystem::path& file = result.files.front();
+							if (exporting)
+								m_binding.send("keyCommands.export", {{"path", file.u8string()}});
+							else
+								m_binding.send("keyCommands.import",
+									{{"path", file.u8string()}, {"name", file.stem().u8string()}});
+						});
+				}});
+		// For the dialog: the commands with their default keys, and keys as the settings and the platform write them.
+		m_lua.addFunction(
+			"ui.keyCommands", [this](const engine::Json&) { return engine::Json{{"commands", m_keys.commands()}}; });
+		m_lua.addFunction("ui.keyName",
+			[](const engine::Json& parameters)
+			{
+				ui::KeyPress keys;
+				try
+				{
+					if (const auto written = parameters.find("keys"); written != parameters.end())
+					{
+						keys = ui::parseKeys(written->get<std::string>());
+					}
+					else
+					{
+						keys.key = static_cast<Rml::Input::KeyIdentifier>(parameters.at("key").get<int>());
+						for (const auto& [name, flag] :
+							{std::pair<const char*, int>{"ctrl", Rml::Input::KM_CTRL}, {"alt", Rml::Input::KM_ALT},
+								{"shift", Rml::Input::KM_SHIFT}, {"meta", Rml::Input::KM_META}})
+							if (parameters.value(name, false))
+								keys.modifiers |= flag;
+					}
+					// Keys that can't be written, such as a modifier on its own, are none.
+					const std::string setting = ui::keySetting(keys);
+					if (!(ui::parseKeys(setting) == keys) || keys.key == Rml::Input::KI_LMENU)
+						return engine::Json::object();
+					return engine::Json{{"keys", setting}, {"name", ui::keyName(keys)}};
+				}
+				catch (const std::invalid_argument&)
+				{
+					return engine::Json::object();
+				}
+			});
+		// The user's key commands and macros, now and when they change.
+		const auto setting = [this](const char* key)
+		{
+			const engine::Result result = engine::Client(m_engine).call("settings.get", {{"key", key}});
+			return result.ok() ? result.value.at("value") : engine::Json::array();
+		};
+		m_keySettings = {{"ui.keyCommands", setting("ui.keyCommands")}, {"ui.macros", setting("ui.macros")}};
+		applyKeySettings();
+		m_keySettingsChanged.push_back(m_binding.on("settings.changed",
+			[this](const engine::Event& event)
+			{
+				const engine::Json& values = event.data.at("values");
+				bool changed = false;
+				for (const char* key : {"ui.keyCommands", "ui.macros"})
+					if (const auto value = values.find(key); value != values.end())
+					{
+						m_keySettings[key] = *value;
+						changed = true;
+					}
+				if (changed)
+					applyKeySettings();
+			}));
+	}
+
+	void AppUi::applyKeySettings()
+	{
+		m_keys.customize(m_keySettings.at("ui.keyCommands"), m_keySettings.at("ui.macros"));
+		// Edit > Macros: the macros, and Key Commands to set them up.
+		auto* document = dynamic_cast<Rml::ElementDocument*>(m_menuDocument.get());
+		Rml::Element* menu = document != nullptr ? document->GetElementById("macros-menu") : nullptr;
+		if (menu == nullptr)
+			return;
+		std::string items;
+		for (const engine::Json& macro : m_keySettings.at("ui.macros"))
+		{
+			const std::string name = macro.value("name", std::string());
+			items += "<menuitem command=\"macro." + Rml::StringUtilities::EncodeRml(name) + "\">" +
+				Rml::StringUtilities::EncodeRml(name) + "</menuitem>";
+		}
+		if (!items.empty())
+			items += "<menuseparator/>";
+		menu->SetInnerRML(items + "<menuitem command=\"window.keyCommands\">Key Commands...</menuitem>");
+		m_menu.reset(); // its items are gone
+		m_menu = std::make_unique<ui::MainMenu>(m_keys, m_main, *document);
 	}
 
 	std::unique_ptr<ui::TransportControls> AppUi::transportControls(Rml::Element& root, ui::Window& window, bool fill)
@@ -948,7 +1065,9 @@ namespace gnubase::app
 			m_trackList = std::make_unique<ui::TrackList>(*m_eventDisplay, m_binding, *tracks);
 		if (m_trackList)
 			m_colorMenu = std::make_unique<ui::ColorMenu>(*m_eventDisplay, *m_trackList, m_binding, *document);
+		m_menuDocument = document->GetObserverPtr();
 		m_menu = std::make_unique<ui::MainMenu>(m_keys, m_main, *document);
+		applyKeySettings(); // Edit > Macros
 		m_markerLines = std::make_unique<ui::MarkerLines>(*m_eventDisplay, m_binding);
 		m_tempoLane = std::make_unique<ui::TempoLane>(*m_eventDisplay, m_binding);
 		m_signatureLane = std::make_unique<ui::SignatureLane>(*m_eventDisplay, m_binding);

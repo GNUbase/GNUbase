@@ -161,7 +161,10 @@ namespace
 			"transport.cycleFollowsMarkers", // the markers window and the Transport menu
 			"transport.tapTempoMode",        // the tempo track's Tap Tempo Mode menu
 			"ui.controllerLanePresets",      // the MIDI editors' controller lane presets
+			"ui.keyCommandPresets",          // the key commands dialog's presets
+			"ui.keyCommands",                // the key commands dialog
 			"ui.layout",                     // the windows' zones and panels, as the user arranges them
+			"ui.macros",                     // the key commands dialog's macros
 			"ui.markerColumns",              // the markers window
 			"ui.markerIds",                  // the marker track
 			"ui.markersAutoScroll",          // the markers window
