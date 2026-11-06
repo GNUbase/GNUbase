@@ -121,6 +121,7 @@ add_executable(gnubase-tests
 	plugin_api_tests.cpp
 	pool_tests.cpp
 	poolpanel_tests.cpp
+	preferences_tests.cpp
 	processor_tests.cpp
 	projectfiles_tests.cpp
 	projectsetup_tests.cpp

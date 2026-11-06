@@ -1,0 +1,785 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The preferences dialog (#162, docs/features/preferences.md, reference manual pp. 1593-1625): the user settings that
+     are preferences, on the reference's pages, which the list on the left selects, and the preference presets.
+     app::AppUi opens it (the UI command window.preferences). Its Lua reads the settings with settings.list when the
+     dialog loads and changes them only through engine commands: Apply and OK send what changed with one settings.set,
+     Cancel drops it, Defaults puts the page's preferences back to their defaults in the dialog. A preset holds what
+     the dialog shows (preferences.savePreset); choosing one puts its values into the dialog. -->
+<rml>
+<head>
+	<title>Preferences</title>
+	<style>
+		dialog
+		{
+			width: 920dp;
+		}
+
+		.content
+		{
+			display: flex;
+			height: 480dp;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		#preferences-pages
+		{
+			width: 230dp;
+			margin-right: 12dp;
+			overflow-y: auto;
+		}
+
+		#preferences-pages input.save-page
+		{
+			display: none;
+		}
+
+		dialog.marked-only #preferences-pages input.save-page
+		{
+			display: inline-block;
+			margin-right: 4dp;
+		}
+
+		#preferences-page-area
+		{
+			display: flex;
+			flex: 1;
+		}
+
+		.page
+		{
+			display: none;
+			flex: 1;
+			overflow-y: auto;
+		}
+
+		.page.shown
+		{
+			display: block;
+		}
+
+		.page-title, .section
+		{
+			margin: 4dp 0 6dp 0;
+		}
+
+		.field
+		{
+			display: flex;
+			align-items: center;
+			min-height: 28dp;
+		}
+
+		.field .label
+		{
+			flex: 1;
+			margin-right: 8dp;
+		}
+
+		.field select, .field input.text
+		{
+			width: 200dp;
+		}
+
+		.field .unit
+		{
+			width: 40dp;
+			margin-left: 6dp;
+		}
+
+		.modifiers td
+		{
+			padding: 2dp 8dp 2dp 0;
+			vertical-align: middle;
+		}
+
+		.modifiers td:nth-child(1), .modifiers td:nth-child(2)
+		{
+			width: 150dp;
+		}
+
+		.modifiers select
+		{
+			width: 140dp;
+		}
+
+		.channels
+		{
+			display: flex;
+			flex-wrap: wrap;
+		}
+
+		.channels .channel
+		{
+			width: 64dp;
+			height: 26dp;
+		}
+
+		#preferences-filter-controllers
+		{
+			height: 110dp;
+			width: 200dp;
+			overflow-y: auto;
+		}
+
+		.row
+		{
+			display: flex;
+			align-items: center;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.row button, .row select, .row input.text
+		{
+			margin-left: 6dp;
+		}
+
+		#preferences-preset, #preferences-preset-name
+		{
+			width: 160dp;
+		}
+
+		.row span
+		{
+			white-space: nowrap;
+			margin-left: 6dp;
+		}
+
+		#preferences-message
+		{
+			flex: 1;
+		}
+	</style>
+	<script>
+		-- The dialog's state, in the UI's Lua: the settings as the engine had them when the dialog loaded, and what the
+		-- pages show.
+		Preferences = {}
+		local prefs = Preferences
+
+		local function escape(text)
+			return (tostring(text):gsub('[&<>"]', {["&"] = "&amp;", ["<"] = "&lt;", [">"] = "&gt;", ['"'] = "&quot;"}))
+		end
+
+		local function numberText(value)
+			return math.tointeger(value) and tostring(math.tointeger(value)) or tostring(value)
+		end
+
+		-- Whether two values from the engine are the same, also objects and lists.
+		local function same(a, b)
+			if type(a) ~= "table" or type(b) ~= "table" then
+				return a == b
+			end
+			for key, value in pairs(a) do
+				if not same(value, b[key]) then
+					return false
+				end
+			end
+			for key in pairs(b) do
+				if a[key] == nil then
+					return false
+				end
+			end
+			return true
+		end
+
+		-- The control of a setting: its id, from the key, such as pref-ui-scale.
+		local function controlId(key)
+			return "pref-" .. key:gsub("%.", "-")
+		end
+
+		local modifierChoices = {{"", "None"}, {"ctrl", "Ctrl"}, {"alt", "Alt"}, {"shift", "Shift"},
+			{"ctrl+alt", "Ctrl-Alt"}, {"ctrl+shift", "Ctrl-Shift"}, {"alt+shift", "Alt-Shift"},
+			{"ctrl+alt+shift", "Ctrl-Alt-Shift"}}
+		-- The tool modifiers' categories and actions (p. 1601); an action this list lacks shows its name.
+		local modifierActions = {
+			["dragDrop.copy"] = {"Drag &amp; Drop", "Copy"},
+			["dragDrop.sharedCopy"] = {"Drag &amp; Drop", "Shared Copy"},
+			["erase.deleteLaterEvents"] = {"Erase Tool", "Delete later events"},
+			["glue.glueAllFollowing"] = {"Glue Tool", "Glue All Following Events"},
+			["range.selectFullVertical"] = {"Range Tool", "Select Full Vertical"},
+			["select.setCursorPosition"] = {"Select Tool", "Set Cursor Position"},
+			["select.splitEvent"] = {"Select Tool", "Split Event"},
+			["sizeObjects.disableSnapping"] = {"Size Objects", "Disable Snapping"},
+			["split.splitRepeated"] = {"Split Tool", "Split repeated"},
+		}
+		-- The MIDI filter's Record section (p. 1613): the message types of midi.recordFilter.
+		local filterTypes = {{"notes", "Note"}, {"polyPressure", "Poly Pressure"}, {"controllers", "Controller"},
+			{"programs", "Program Change"}, {"channelPressure", "Aftertouch"}, {"pitchBend", "Pitchbend"}}
+		local themeNames = {gnubase = "GNUbase", dark = "Dark", light = "Light", ["high-contrast"] = "High Contrast"}
+
+		-- The pages, in the reference's order, with the preferences that GNUbase has (pp. 1595-1625). An item is a
+		-- setting with its label, choices for a drop-down list (otherwise a check box for booleans, a number field
+		-- for numbers), or a section's title. A page without items of its own is the title of the pages under it.
+		local pages = {
+			{id = "editing", name = "Editing", items = {
+				{key = "ui.removeTracksWarning", label = "Display Warning before Deleting Non-Empty Tracks"},
+				{key = "editing.defaultTimeBase", label = "Default Track Time Type", choices = {
+					{"musical", "Musical"}, {"linear", "Time Linear"},
+					{"followTimeFormat", "Follow Transport Main Display"}}},
+				{key = "ui.upDownSelectsTracksOnly",
+					label = "Use Up/Down Navigation Commands for Selecting Tracks only"}}},
+			{id = "editing-midi", parent = "Editing", name = "MIDI", items = {
+				{key = "editing.legatoOverlap", label = "Legato Overlap", unit = "Ticks"}}},
+			{id = "editing-tool-modifiers", parent = "Editing", name = "Tool Modifiers", custom = "toolModifiers",
+				keys = {"ui.toolModifiers"}},
+			{id = "editing-tools", parent = "Editing", name = "Tools", items = {
+				{key = "ui.toolboxOnRightClick", label = "Show Toolbox on Right-Click"},
+				{key = "ui.toolSwitchNotification",
+					label = "Show Notification when Switching Tool Mode with Key Command"}}},
+			{id = "event-display", name = "Event Display", items = {}},
+			{id = "event-display-folders", parent = "Event Display", name = "Folders", items = {
+				{key = "ui.folderData", label = "Show Data on Folder Tracks", choices = {
+					{"always", "Always Show Data"}, {"never", "Never Show Data"},
+					{"hideWhenExpanded", "Hide Data When Expanded"}}},
+				{key = "editing.applyFolderColor", label = "Apply Color of Folder Track Automatically"}}},
+			{id = "event-display-markers", parent = "Event Display", name = "Markers", items = {
+				{key = "ui.markerLines", label = "Show Marker Lines", choices = {
+					{"off", "Off"}, {"active", "From Active Marker Track"}, {"all", "From All Marker Tracks"}}}}},
+			{id = "general", name = "General", items = {
+				{key = "project.autoSave", label = "Auto Save"},
+				{key = "project.autoSaveInterval", label = "Auto Save Interval", unit = "min"},
+				{key = "project.autoSaveFiles", label = "Maximum Number of Auto Save Files"}}},
+			{id = "midi", name = "MIDI", items = {
+				{section = "Chase Events"},
+				{key = "midi.chaseNotes", label = "Note"},
+				{key = "midi.chaseControllers", label = "Controller"},
+				{key = "midi.chasePrograms", label = "Program Change"},
+				{key = "midi.chasePitchBend", label = "Pitchbend"},
+				{key = "midi.chaseBeyondParts", label = "Chase not limited to Part Boundaries"}}},
+			{id = "midi-filter", parent = "MIDI", name = "MIDI Filter", custom = "midiFilter",
+				keys = {"midi.recordFilter"}},
+			{id = "record", name = "Record", items = {
+				{key = "audio.stopAfterPunchOut", label = "Stop after Automatic Punch Out"}}},
+			{id = "record-audio", parent = "Record", name = "Audio", items = {
+				{key = "audio.preRecordSeconds", label = "Audio Pre-Record Seconds"}}},
+			{id = "record-midi", parent = "Record", name = "MIDI", items = {
+				{key = "midi.snapPartsToBars", label = "Snap MIDI Parts to Bars"},
+				{key = "midi.recordCatchRange", label = "MIDI Record Catch Range in ms"},
+				{key = "midi.retrospectiveEvents", label = "Retrospective Record Buffer Size in Events"}}},
+			{id = "user-interface", name = "User Interface", items = {
+				{key = "ui.scale", label = "Application Scaling", number = true, choices = {
+					{0.5, "50%"}, {0.75, "75%"}, {1, "100%"}, {1.25, "125%"}, {1.5, "150%"}, {1.75, "175%"},
+					{2, "200%"}, {2.5, "250%"}, {3, "300%"}, {4, "400%"}}},
+				{key = "ui.theme", label = "Theme", choices = "themes"}}},
+			{id = "user-interface-track-colors", parent = "User Interface", name = "Track & Channel Colors", items = {
+				{key = "editing.autoTrackColor", label = "Auto Track/Channel Color Mode", choices = {
+					{"default", "Use Track's Default Color"}, {"previous", "Use Previous Track Color"},
+					{"previousPlusOne", "Use Previous Track Color +1"}, {"lastApplied", "Use Last Applied Color"},
+					{"random", "Use Random Track Color"}}}}},
+			{id = "audio", name = "Audio", items = {
+				{key = "audio.mutePreSends", label = "Mute Pre-Send when Mute"},
+				{key = "audio.defaultSendLevel", label = "Default Send Level", unit = "dB"},
+				{key = "audio.autoMonitoring", label = "Auto Monitoring", choices = {
+					{"manual", "Manual"}, {"whileRecordEnabled", "While Record-Enabled"},
+					{"whileRecording", "While Record Running"}, {"tapeMachine", "Tapemachine Style"}}}}},
+		}
+
+		-- The settings a page shows.
+		local function keysOf(page)
+			if page.keys then
+				return page.keys
+			end
+			local keys = {}
+			for _, item in ipairs(page.items) do
+				if item.key and prefs.schemas[item.key] then
+					keys[#keys + 1] = item.key
+				end
+			end
+			return keys
+		end
+
+		local function option(value, text, selected)
+			return '<option value="' .. escape(value) .. '"' .. (selected and " selected" or "") .. ">" ..
+				text .. "</option>"
+		end
+
+		-- A select of choices with current selected; current is added when the choices lack it, so that the select
+		-- never falls back to another value the user didn't choose.
+		local function dropDown(attributes, choices, current)
+			local found = false
+			for _, choice in ipairs(choices) do
+				found = found or choice[1] == current
+			end
+			local options = {}
+			if not found then
+				options[1] = option(current, escape(current), true)
+			end
+			for _, choice in ipairs(choices) do
+				options[#options + 1] = option(choice[1], escape(choice[2]), choice[1] == current)
+			end
+			return "<select " .. attributes .. ">" .. table.concat(options) .. "</select>"
+		end
+
+		local function checkbox(attributes, checked)
+			return '<input type="checkbox" ' .. attributes .. (checked and " checked" or "") .. "/>"
+		end
+
+		local function field(label, control, unit)
+			return '<div class="field"><span class="label">' .. escape(label) .. "</span>" .. control ..
+				(unit and '<span class="unit">' .. escape(unit) .. "</span>" or "") .. "</div>"
+		end
+
+		-- What a control of a setting needs to be found: by id, and by the class and setting that every control of a
+		-- setting has.
+		local function attributes(id, key)
+			return 'id="' .. id .. '" class="preference" setting="' .. key .. '"'
+		end
+
+		local function itemRml(item, value)
+			local schema = prefs.schemas[item.key]
+			local attrs = attributes(controlId(item.key), item.key)
+			if item.choices then
+				local choices = item.choices
+				if choices == "themes" then
+					choices = {}
+					for _, name in ipairs(prefs.themes) do
+						choices[#choices + 1] = {name, themeNames[name] or name}
+					end
+				end
+				if item.number then
+					local texts = {}
+					for _, choice in ipairs(choices) do
+						texts[#texts + 1] = {numberText(choice[1]), choice[2]}
+					end
+					return field(item.label, dropDown(attrs, texts, numberText(value)), item.unit)
+				end
+				return field(item.label, dropDown(attrs, choices, value), item.unit)
+			elseif schema.type == "boolean" then
+				return field(item.label, checkbox(attrs, value), item.unit)
+			end
+			return field(item.label, '<input type="text" ' .. attrs .. ' value="' .. numberText(value) .. '"/>',
+				item.unit)
+		end
+
+		local custom = {}
+
+		-- Editing - Tool Modifiers (p. 1601): the modifier keys of each action, ui.toolModifiers over the defaults.
+		function custom.toolModifiers(values)
+			local set = values["ui.toolModifiers"] or {}
+			local actions = {}
+			for action in pairs(prefs.toolDefaults) do
+				actions[#actions + 1] = action
+			end
+			table.sort(actions)
+			local rows = {}
+			for _, action in ipairs(actions) do
+				local names = modifierActions[action] or {"", escape(action)}
+				rows[#rows + 1] = "<tr><td>" .. names[1] .. "</td><td>" .. names[2] .. "</td><td>" ..
+					dropDown(attributes("pref-tool-" .. action:gsub("%.", "-"), "ui.toolModifiers") ..
+						' action="' .. action .. '"', modifierChoices, set[action] or prefs.toolDefaults[action]) ..
+					"</td></tr>"
+			end
+			return '<table class="modifiers"><thead><tr><td>Categories</td><td>Action</td><td>Modifiers</td></tr>' ..
+				"</thead><tbody>" .. table.concat(rows) .. "</tbody></table>"
+		end
+
+		local function controllerItems(controllers)
+			local items = {}
+			for _, number in ipairs(controllers) do
+				items[#items + 1] = '<listitem value="' .. number .. '">' .. number .. "</listitem>"
+			end
+			return table.concat(items)
+		end
+
+		-- MIDI - MIDI Filter (p. 1613): its Record section, channels and controllers, midi.recordFilter.
+		function custom.midiFilter(values)
+			local filter = values["midi.recordFilter"] or {}
+			local function has(list, wanted)
+				for _, value in ipairs(list or {}) do
+					if value == wanted then
+						return true
+					end
+				end
+				return false
+			end
+			local key = "midi.recordFilter"
+			local types = {}
+			for _, entry in ipairs(filterTypes) do
+				types[#types + 1] = field(entry[2],
+					checkbox(attributes("pref-filter-type-" .. entry[1], key) .. ' type-name="' .. entry[1] .. '"',
+						has(filter.types, entry[1])))
+			end
+			local channels = {}
+			for channel = 1, 16 do
+				channels[#channels + 1] = '<div class="channel">' .. checkbox(attributes("pref-filter-channel-" ..
+					channel, key) .. ' channel="' .. channel .. '"', has(filter.channels, channel)) .. " " .. channel ..
+					"</div>"
+			end
+			prefs.filterControllers = {}
+			for _, number in ipairs(filter.controllers or {}) do
+				prefs.filterControllers[#prefs.filterControllers + 1] = number
+			end
+			local numbers = {}
+			for number = 0, 127 do
+				numbers[#numbers + 1] = {tostring(number), tostring(number)}
+			end
+			return '<div class="section">Record</div>' .. table.concat(types) ..
+				'<div class="section">Channels</div><div class="channels">' .. table.concat(channels) .. "</div>" ..
+				field("Controller", dropDown('id="preferences-filter-controller"', numbers, "0") ..
+					'<button id="preferences-filter-add" onclick="Preferences.addController(document)">Add</button>') ..
+				'<div class="field"><listview id="preferences-filter-controllers">' ..
+				controllerItems(prefs.filterControllers) .. "</listview>" ..
+				'<button id="preferences-filter-remove" onclick="Preferences.removeController(document)">Remove' ..
+				"</button></div>"
+		end
+
+		local function pageRml(page, values)
+			local title = (page.parent and page.parent .. " - " or "") .. page.name
+			local parts = {'<div class="page-title">' .. escape(title) .. "</div>"}
+			if page.custom then
+				parts[2] = custom[page.custom](values)
+			else
+				for _, item in ipairs(page.items) do
+					if item.section then
+						parts[#parts + 1] = '<div class="section">' .. escape(item.section) .. "</div>"
+					elseif prefs.schemas[item.key] then
+						parts[#parts + 1] = itemRml(item, values[item.key])
+					end
+				end
+			end
+			return table.concat(parts)
+		end
+
+		local function renderPage(document, page)
+			document:GetElementById("page-" .. page.id).inner_rml = pageRml(page, prefs.values)
+		end
+
+		local function report(document, errors)
+			document:GetElementById("preferences-message").inner_rml = escape(table.concat(errors, "; "))
+		end
+
+		-- The preset names, sorted, in the presets list, with chosen selected.
+		local function showPresets(document, chosen)
+			local names = {}
+			for name in pairs(gnubase.settings.get{key = "preferences.presets"}.value) do
+				names[#names + 1] = name
+			end
+			table.sort(names)
+			local choices = {{"", "No Preset"}}
+			for _, name in ipairs(names) do
+				choices[#choices + 1] = {name, name}
+			end
+			prefs.updating = true
+			document:GetElementById("preferences-presets").inner_rml =
+				dropDown('id="preferences-preset" onchange="Preferences.choose(document)"', choices, chosen or "")
+			prefs.updating = false
+		end
+
+		-- Reads the settings from the engine and fills the pages.
+		function prefs.load(document)
+			prefs.saved, prefs.defaults, prefs.schemas = {}, {}, {}
+			for _, entry in ipairs(gnubase.settings.list().settings) do
+				prefs.saved[entry.key] = entry.value
+				prefs.defaults[entry.key] = entry.default
+				prefs.schemas[entry.key] = entry.schema
+			end
+			prefs.toolDefaults = gnubase.ui.toolModifierDefaults().modifiers
+			prefs.themes = gnubase.ui.themes().themes
+			prefs.values = {}
+			for key, value in pairs(prefs.saved) do
+				prefs.values[key] = value
+			end
+			if not prefs.built then
+				local items, areas = {}, {}
+				for index, page in ipairs(pages) do
+					local parent = index < #pages and pages[index + 1].parent == page.name and not page.parent
+					items[#items + 1] = '<listitem id="pages-' .. page.id .. '" value="' .. page.id .. '" level="' ..
+						(page.parent and 1 or 0) .. '"' .. (parent and " expanded" or "") .. ">" ..
+						checkbox('class="save-page" id="save-' .. page.id .. '"', false) .. escape(page.name) ..
+						"</listitem>"
+					areas[#areas + 1] = '<div class="page' .. (index == 1 and " shown" or "") .. '" id="page-' ..
+						page.id .. '"/>'
+				end
+				document:GetElementById("preferences-pages").inner_rml = table.concat(items)
+				document:GetElementById("preferences-page-area").inner_rml = table.concat(areas)
+				prefs.active = pages[1].id
+				prefs.built = true
+			end
+			for _, page in ipairs(pages) do
+				renderPage(document, page)
+			end
+			report(document, {})
+		end
+
+		-- Shows the page that the list selects.
+		function prefs.show(document, id)
+			for _, page in ipairs(pages) do
+				document:GetElementById("page-" .. page.id):SetClass("shown", page.id == id)
+			end
+			prefs.active = id
+		end
+
+		local function checked(element)
+			return element:HasAttribute("checked")
+		end
+
+		local function value(element)
+			local text = element:GetAttribute("value")
+			return text ~= nil and tostring(text) or ""
+		end
+
+		-- What a page's controls show, into values; what can't be read goes into errors.
+		local function readPage(document, page, values, errors)
+			if page.custom == "toolModifiers" then
+				local set = {}
+				for _, control in ipairs(document:QuerySelectorAll("#page-" .. page.id .. " select.preference")) do
+					local action = tostring(control:GetAttribute("action"))
+					local keys = value(control)
+					if keys ~= prefs.toolDefaults[action] then
+						set[action] = keys
+					end
+				end
+				values["ui.toolModifiers"] = set
+			elseif page.custom == "midiFilter" then
+				local filter = {}
+				local types, channels = {}, {}
+				for _, entry in ipairs(filterTypes) do
+					if checked(document:GetElementById("pref-filter-type-" .. entry[1])) then
+						types[#types + 1] = entry[1]
+					end
+				end
+				for channel = 1, 16 do
+					if checked(document:GetElementById("pref-filter-channel-" .. channel)) then
+						channels[#channels + 1] = channel
+					end
+				end
+				-- Empty lists stay out: an empty table would reach the engine as an object.
+				filter.types = #types > 0 and types or nil
+				filter.channels = #channels > 0 and channels or nil
+				filter.controllers = #prefs.filterControllers > 0 and prefs.filterControllers or nil
+				values["midi.recordFilter"] = filter
+			else
+				for _, item in ipairs(page.items) do
+					local schema = item.key and prefs.schemas[item.key]
+					if schema then
+						local control = document:GetElementById(controlId(item.key))
+						if item.choices then
+							values[item.key] = item.number and tonumber(value(control)) or value(control)
+						elseif schema.type == "boolean" then
+							values[item.key] = checked(control)
+						else
+							local number = tonumber(value(control))
+							if schema.type == "integer" then
+								number = number and math.tointeger(number)
+							end
+							if number == nil then
+								errors[#errors + 1] = item.label .. " must be a " ..
+									(schema.type == "integer" and "whole number" or "number")
+							else
+								values[item.key] = number
+							end
+						end
+					end
+				end
+			end
+		end
+
+		-- What every page shows, by setting, and the errors of controls that can't be read.
+		local function read(document)
+			local values, errors = {}, {}
+			for _, page in ipairs(pages) do
+				readPage(document, page, values, errors)
+			end
+			return values, errors
+		end
+
+		-- Sends what changed, in one settings.set. Returns the errors.
+		local function apply(document)
+			local values, errors = read(document)
+			if #errors > 0 then
+				return errors
+			end
+			local changed = {}
+			for key, shown in pairs(values) do
+				if not same(shown, prefs.saved[key]) then
+					changed[key] = shown
+				end
+			end
+			if next(changed) ~= nil then
+				local ok, problem = pcall(gnubase.settings.set, {values = changed})
+				if not ok then
+					errors[#errors + 1] = tostring(problem)
+				end
+			end
+			return errors
+		end
+
+		-- Apply: sends the changes and shows what the engine has now.
+		function prefs.apply(document)
+			local errors = apply(document)
+			if #errors == 0 then
+				prefs.load(document)
+			end
+			report(document, errors)
+		end
+
+		-- OK: sends the changes and closes, unless that failed.
+		function prefs.ok(document)
+			local errors = apply(document)
+			if #errors == 0 then
+				document:Close()
+			else
+				report(document, errors)
+			end
+		end
+
+		local function activePage()
+			for _, page in ipairs(pages) do
+				if page.id == prefs.active then
+					return page
+				end
+			end
+		end
+
+		-- Defaults: the active page's preferences at their defaults, in the dialog; Apply or OK sends them.
+		function prefs.reset(document)
+			local page = activePage()
+			for _, key in ipairs(keysOf(page)) do
+				prefs.values[key] = prefs.defaults[key]
+			end
+			renderPage(document, page)
+		end
+
+		function prefs.addController(document)
+			local number = math.tointeger(tonumber(value(document:GetElementById("preferences-filter-controller"))))
+			for _, present in ipairs(prefs.filterControllers) do
+				if present == number then
+					return
+				end
+			end
+			prefs.filterControllers[#prefs.filterControllers + 1] = number
+			table.sort(prefs.filterControllers)
+			document:GetElementById("preferences-filter-controllers").inner_rml =
+				controllerItems(prefs.filterControllers)
+		end
+
+		function prefs.removeController(document)
+			local list = document:GetElementById("preferences-filter-controllers")
+			local selected = {}
+			for number in tostring(list:GetAttribute("value") or ""):gmatch("%d+") do
+				selected[tonumber(number)] = true
+			end
+			local kept = {}
+			for _, number in ipairs(prefs.filterControllers) do
+				if not selected[number] then
+					kept[#kept + 1] = number
+				end
+			end
+			prefs.filterControllers = kept
+			list.inner_rml = controllerItems(kept)
+		end
+
+		-- Save marked preferences only: the Save column in the list of pages.
+		function prefs.markedOnly(document)
+			document:GetElementById("preferences"):SetClass("marked-only",
+				checked(document:GetElementById("preferences-marked-only")))
+		end
+
+		-- Choosing a preset puts its values into the dialog; preferences it lacks stay as the dialog shows them.
+		function prefs.choose(document)
+			if prefs.updating then
+				return
+			end
+			local name = value(document:GetElementById("preferences-preset"))
+			document:GetElementById("preferences-preset-name"):SetAttribute("value", name)
+			local preset = gnubase.settings.get{key = "preferences.presets"}.value[name]
+			if preset == nil then
+				return
+			end
+			local values = read(document)
+			for key, shown in pairs(values) do
+				prefs.values[key] = shown
+			end
+			for key, presetValue in pairs(preset) do
+				if prefs.schemas[key] then
+					prefs.values[key] = presetValue
+				end
+			end
+			for _, page in ipairs(pages) do
+				renderPage(document, page)
+			end
+		end
+
+		-- Runs a preset command; shows the presets with chosen selected, or the error.
+		local function presetCommand(document, command, parameters, chosen)
+			local ok, problem = pcall(command, parameters)
+			if ok then
+				showPresets(document, chosen)
+				report(document, {})
+			else
+				report(document, {tostring(problem)})
+			end
+		end
+
+		local function presetName(document)
+			return value(document:GetElementById("preferences-preset-name"))
+		end
+
+		-- Save: what the dialog shows, on every page or on the marked ones.
+		function prefs.savePreset(document)
+			local name = presetName(document)
+			local values, errors = read(document)
+			if name == "" then
+				errors[#errors + 1] = "Enter the preset's name"
+			end
+			if #errors > 0 then
+				report(document, errors)
+				return
+			end
+			local markedOnly = checked(document:GetElementById("preferences-marked-only"))
+			local saved = {}
+			for _, page in ipairs(pages) do
+				if not markedOnly or checked(document:GetElementById("save-" .. page.id)) then
+					for _, key in ipairs(keysOf(page)) do
+						saved[key] = values[key]
+					end
+				end
+			end
+			presetCommand(document, gnubase.preferences.savePreset, {name = name, values = saved}, name)
+		end
+
+		function prefs.renamePreset(document)
+			local name = value(document:GetElementById("preferences-preset"))
+			local newName = presetName(document)
+			presetCommand(document, gnubase.preferences.renamePreset, {name = name, newName = newName}, newName)
+		end
+
+		function prefs.deletePreset(document)
+			local name = value(document:GetElementById("preferences-preset"))
+			presetCommand(document, gnubase.preferences.removePreset, {name = name}, "")
+			document:GetElementById("preferences-preset-name"):SetAttribute("value", "")
+		end
+
+		function prefs.open(document)
+			prefs.built = false
+			prefs.load(document)
+			showPresets(document, "")
+		end
+	</script>
+</head>
+<body onload="Preferences.open(document)">
+	<dialog id="preferences">
+		<div class="dialog-titlebar">Preferences</div>
+		<div class="content">
+			<listview id="preferences-pages" value="editing" onchange="Preferences.show(document, element:GetAttribute('value'))"/>
+			<div id="preferences-page-area"/>
+		</div>
+		<div class="row">
+			<span>Preference Presets</span>
+			<span id="preferences-presets"/>
+			<input type="text" id="preferences-preset-name" value=""/>
+			<button id="preferences-save-preset" onclick="Preferences.savePreset(document)">Save</button>
+			<button id="preferences-rename-preset" onclick="Preferences.renamePreset(document)">Rename</button>
+			<button id="preferences-delete-preset" onclick="Preferences.deletePreset(document)">Delete</button>
+			<input type="checkbox" id="preferences-marked-only" onchange="Preferences.markedOnly(document)"/>
+			<span>Save marked preferences only</span>
+		</div>
+		<div class="row">
+			<div id="preferences-message"/>
+			<button id="preferences-defaults" onclick="Preferences.reset(document)">Defaults</button>
+			<button id="preferences-apply" onclick="Preferences.apply(document)">Apply</button>
+			<button id="preferences-cancel" result="cancel">Cancel</button>
+			<button id="preferences-ok" class="primary" onclick="Preferences.ok(document)">OK</button>
+		</div>
+	</dialog>
+</body>
+</rml>
