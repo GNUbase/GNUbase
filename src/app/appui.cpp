@@ -65,7 +65,7 @@ namespace gnubase::app
 			const char* keys;
 		};
 
-		constexpr std::array<ProjectCommand, 82> g_projectCommands{{
+		constexpr std::array<ProjectCommand, 84> g_projectCommands{{
 			{"zoom.in", "Zooms the project window in.", "H"},
 			{"zoom.out", "Zooms the project window out.", "G"},
 			{"zoom.inVertically", "Makes the project window's tracks taller.", "Shift+H"},
@@ -111,6 +111,9 @@ namespace gnubase::app
 			{"audio.detectSilence", "Opens the Detect Silence dialog for the selected audio events.", nullptr},
 			{"audio.spectrumAnalyzer", "Opens the Spectrum Analyzer for the selected audio event.", nullptr},
 			{"audio.statistics", "Opens the Statistics window for the selected audio events.", nullptr},
+			// Warping (docs/features/warp.md).
+			{"audio.flatten", "Renders the real-time warping of the selected audio events into new files.", nullptr},
+			{"audio.unstretch", "Removes the real-time stretching from the selected audio events' clips.", nullptr},
 			// Volume curves (docs/features/volume-curves.md).
 			{"audio.removeVolumeCurve",
 				"Resets the volume curves of the audio events in the selection range, or of the selected ones.",

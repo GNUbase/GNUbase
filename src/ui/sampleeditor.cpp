@@ -199,6 +199,13 @@ namespace gnubase::ui
 			R"(<div class="se-filter"><span class="se-filter-label">Length</span><valuefield id="se-midi-length" )"
 			R"(min="1" max="64" default="1" value="1" step="1" decimals="0" unit="/16"/></div>)"
 			R"(<button id="se-midi-ok">OK</button><button id="se-midi-cancel">Cancel</button></div>)";
+		// The Warp section and the Definition's Auto Adjust and audio tempo (pp. 616, 648-656).
+		const std::string warpSection =
+			R"(<div class="section-header">Warp</div><button id="se-musical">Musical Mode</button>)" +
+			std::string(R"(<div class="se-filter"><span class="se-filter-label">Audio Tempo</span>)") +
+			R"(<valuefield id="se-audio-tempo" min="1" max="999" default="120" value="120" step="0.01" decimals="2"/>)"
+			R"(</div><button id="se-auto-adjust">Auto Adjust</button><button id="se-free-warp">Free Warp</button>)"
+			R"(<button id="se-warp-reset">Reset</button>)";
 		root.SetInnerRML(R"(<div class="sample-editor empty"><div class="toolbar sample-editor-toolbar">)" + tools +
 			R"(<button id="se-zero-crossing">Snap to Zero Crossing</button><div class="spacer"/>)" + layout +
 			R"(</div><div class="info-line se-info">)" + info +
@@ -209,11 +216,12 @@ namespace gnubase::ui
 			R"(<button id="se-set-locators">Set Locators to Selection Range</button>)"
 			R"(<button id="se-locate">Locate Selection</button><button id="se-loop">Loop Selection</button>)"
 			R"(<div class="section-header">Process</div>)"
-			R"(<button id="se-range-region">Event or Range as Region</button>)" +
-			hitpoints +
+			R"(<button id="se-range-region">Event or Range as Region</button><button id="se-flatten">Flatten</button>)" +
+			hitpoints + warpSection +
 			R"(</div><div class="se-main"><div class="se-display"><waveform class="se-wave"/>)"
 			R"(<div class="se-outside se-before"/><div class="se-outside se-after"/><div class="se-region-shown"/>)"
-			R"(<div class="se-selection"/><div class="se-hitpoints"/><div class="se-snap-point"/></div>)"
+			R"(<div class="se-selection"/><div class="se-hitpoints"/><div class="se-warp-markers"/>)"
+			R"(<div class="se-snap-point"/></div>)"
 			R"(<div class="se-regions"><div class="toolbar se-regions-toolbar">)"
 			R"(<button id="se-add-region">Add Region</button><button id="se-remove-region">Remove Region</button>)"
 			R"(<button id="se-select-region">Select Region</button><button id="se-play-region">Play Region</button>)"
@@ -509,6 +517,7 @@ namespace gnubase::ui
 		{
 			renderRegions();
 			renderHitpoints();
+			renderWarp();
 			return;
 		}
 
@@ -570,6 +579,108 @@ namespace gnubase::ui
 				shown->at("end").get<double>());
 		renderRegions();
 		renderHitpoints();
+		renderWarp();
+	}
+
+	// The Warp section's switches and the audio tempo, and the clip's warp markers in the display: a line each
+	// where its audio plays, with a handle at the top. The markers are rebuilt only when they change.
+	void SampleEditor::renderWarp()
+	{
+		Rml::Element* root = m_root.get();
+		Rml::Element* editor = root != nullptr ? root->QuerySelector(".sample-editor") : nullptr;
+		if (editor == nullptr)
+			return;
+		setClass(editor, "free-warp", m_freeWarp);
+		setClass(root->QuerySelector("#se-free-warp"), "checked", m_freeWarp);
+		const Json* item = hasEvent() ? clip() : nullptr;
+		const Json warp = item != nullptr ? item->value("warp", Json::object()) : Json::object();
+		setClass(root->QuerySelector("#se-musical"), "checked", warp.value("musical", false));
+		if (warp.value("tempo", 0.0) > 0.0)
+			setValue(root->QuerySelector("#se-audio-tempo"), warp.at("tempo").get<double>());
+		Rml::Element* shown = root->QuerySelector(".se-warp-markers");
+		if (shown == nullptr)
+			return;
+		std::string rml;
+		if (m_scale > 0.0)
+			for (const Json& marker : warp.value("markers", Json::array()))
+				rml += R"(<div class="se-warp-marker" marker=")" +
+					std::to_string(marker.at("position").get<int64_t>()) + R"(" target=")" +
+					std::to_string(marker.at("target").get<int64_t>()) +
+					R"("><div class="se-warp-marker-line"/><div class="se-warp-marker-handle"/></div>)";
+		if (rml != m_markerRows)
+		{
+			shown->SetInnerRML(rml);
+			m_markerRows = rml;
+		}
+		for (int i = 0; i < shown->GetNumChildren(); ++i)
+		{
+			Rml::Element* marker = shown->GetChild(i);
+			const auto position = std::stoll(attribute(*marker, "marker"));
+			const double frame = m_drag == Drag::WarpMarker && position == m_marker
+				? m_dragged
+				: static_cast<double>(std::stoll(attribute(*marker, "target")));
+			marker->SetProperty(Rml::PropertyId::Left, dp((frame - m_start) / m_scale));
+		}
+	}
+
+	// The Warp section's buttons, Auto Adjust and Flatten (pp. 649-657). Auto Adjust takes the selection range,
+	// or else the event.
+	bool SampleEditor::clickWarp(const std::string& id)
+	{
+		if (!hasEvent())
+			return false;
+		const Json* item = clip();
+		if (id == "se-musical")
+		{
+			const bool musical = item != nullptr && item->value("warp", Json::object()).value("musical", false);
+			m_binding.send("clip.setWarp", {{"clip", m_view.at("clip")}, {"musical", !musical}});
+		}
+		else if (id == "se-auto-adjust")
+		{
+			const auto [from, to] = rangeOrEvent();
+			m_binding.send("clip.autoAdjust", {{"clip", m_view.at("clip")}, {"start", from}, {"end", to}});
+		}
+		else if (id == "se-free-warp")
+		{
+			m_freeWarp = !m_freeWarp;
+			m_editHitpoints = m_editHitpoints && !m_freeWarp;
+			render();
+		}
+		else if (id == "se-warp-reset")
+		{
+			m_binding.send("clip.removeWarpMarkers", {{"clip", m_view.at("clip")}});
+		}
+		else if (id == "se-flatten")
+		{
+			m_binding.send("event.flatten", {{"events", Json::array({m_event})}});
+		}
+		else
+		{
+			return false;
+		}
+		return true;
+	}
+
+	// Free Warp's gestures in the display (pp. 654-656): a drag from anywhere inserts a warp marker there and moves it
+	// to where it ends, a drag of a marker moves it, and a click on one with a modifier key removes it.
+	void SampleEditor::pressWarp(Rml::Event& event, Rml::Element& target)
+	{
+		m_marker = -1;
+		if (const Rml::Element* marker = withClass(&target, "se-warp-marker", m_root.get()))
+		{
+			const auto position = std::stoll(attribute(*marker, "marker"));
+			if (event.GetParameter<int>("alt_key", 0) != 0 || event.GetParameter<int>("ctrl_key", 0) != 0 ||
+				event.GetParameter<int>("shift_key", 0) != 0 || event.GetParameter<int>("meta_key", 0) != 0)
+			{
+				m_binding.send(
+					"clip.removeWarpMarkers", {{"clip", m_view.at("clip")}, {"positions", Json::array({position})}});
+				return;
+			}
+			m_marker = position;
+			m_pressed = m_dragged = static_cast<double>(std::stoll(attribute(*marker, "target")));
+		}
+		m_drag = Drag::WarpMarker;
+		render();
 	}
 
 	// The hitpoints that count, and the disabled ones (pp. 636-640): a line each, with its handle at the top,
@@ -795,6 +906,8 @@ namespace gnubase::ui
 		}
 		const Rml::Element* named = withAttribute(&target, "id", root);
 		const std::string id = named != nullptr ? attribute(*named, "id") : std::string();
+		if (clickWarp(id))
+			return;
 		if (id == "se-zero-crossing")
 		{
 			const bool on = m_project.contains("snap") && m_project.at("snap").value("zeroCrossing", false);
@@ -991,6 +1104,12 @@ namespace gnubase::ui
 	void SampleEditor::changed(Rml::Event& event, Rml::Element& target)
 	{
 		const std::string id = attribute(target, "id");
+		if (hasEvent() && id == "se-audio-tempo")
+		{
+			m_binding.send(
+				"clip.setWarp", {{"clip", m_view.at("clip")}, {"tempo", event.GetParameter<float>("value", 120.0F)}});
+			return;
+		}
 		if (!hasEvent() || (id != "se-threshold" && id != "se-intensity" && id != "se-minimum-length"))
 			return;
 		const double value = event.GetParameter<float>("value", 0.0F);
@@ -1093,6 +1212,11 @@ namespace gnubase::ui
 			pressHitpoint(event, target, frame);
 			return;
 		}
+		if (m_freeWarp)
+		{
+			pressWarp(event, target);
+			return;
+		}
 		switch (m_tool)
 		{
 		case SampleTool::Range:
@@ -1171,6 +1295,22 @@ namespace gnubase::ui
 			if (moved >= g_dragThreshold && to != m_hitpoint)
 				m_binding.send(
 					"clip.setHitpoint", {{"clip", m_view.at("clip")}, {"position", m_hitpoint}, {"moveTo", to}});
+			render();
+			return;
+		}
+		if (drag == Drag::WarpMarker)
+		{
+			// A press without a drag changes nothing.
+			const auto to = std::clamp<int64_t>(std::llround(m_dragged), 1, m_length - 1);
+			if (std::abs(m_dragged - m_pressed) / m_scale >= g_dragThreshold)
+			{
+				if (m_marker < 0)
+					m_binding.send("clip.addWarpMarker",
+						{{"clip", m_view.at("clip")}, {"position", std::llround(m_pressed)}, {"target", to}});
+				else
+					m_binding.send(
+						"clip.setWarpMarker", {{"clip", m_view.at("clip")}, {"position", m_marker}, {"target", to}});
+			}
 			render();
 			return;
 		}

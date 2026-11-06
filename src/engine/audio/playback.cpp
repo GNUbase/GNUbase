@@ -11,6 +11,7 @@
 #include <limits>
 #include <map>
 #include <optional>
+#include <stdexcept>
 #include <thread>
 #include <tuple>
 #include <utility>
@@ -530,18 +531,28 @@ namespace gnubase::engine
 
 	Playback::~Playback() = default;
 
-	void Playback::setTracks(std::vector<Track> tracks, std::map<ObjectId, std::string> mediaPaths, double sampleRate)
+	void Playback::setTracks(std::vector<Track> tracks, std::map<ObjectId, std::string> mediaPaths, double sampleRate,
+		std::map<ObjectId, Warp> warps)
 	{
 		const std::scoped_lock lock(m_mutex);
 		// Streams convert to one sample rate, so a new rate opens new ones. So does media whose file changed, as a
-		// frozen channel's freeze file does when undo brings back an earlier freeze.
+		// frozen channel's freeze file does when undo brings back an earlier freeze, or whose warp changed, as a
+		// tempo change changes that of musical mode.
+		const auto warpOf = [](const std::map<ObjectId, Warp>& all, ObjectId media)
+		{
+			const auto found = all.find(media);
+			return found != all.end() ? &found->second : nullptr;
+		};
 		const auto kept = std::stable_partition(m_voices.begin(), m_voices.end(),
-			[this, &mediaPaths, sampleRate](const std::shared_ptr<Voice>& voice)
+			[this, &mediaPaths, &warps, &warpOf, sampleRate](const std::shared_ptr<Voice>& voice)
 			{
 				const auto before = m_mediaPaths.find(voice->media);
 				const auto after = mediaPaths.find(voice->media);
+				const Warp* warpBefore = warpOf(m_warps, voice->media);
+				const Warp* warpAfter = warpOf(warps, voice->media);
 				return sampleRate == m_sampleRate && before != m_mediaPaths.end() && after != mediaPaths.end() &&
-					before->second == after->second;
+					before->second == after->second && (warpBefore == nullptr) == (warpAfter == nullptr) &&
+					(warpBefore == nullptr || *warpBefore == *warpAfter);
 			});
 		if (kept != m_voices.end())
 		{
@@ -554,6 +565,7 @@ namespace gnubase::engine
 		}
 		m_tracks = std::move(tracks);
 		m_mediaPaths = std::move(mediaPaths);
+		m_warps = std::move(warps);
 		m_unreadable.clear();
 		m_sampleRate = sampleRate;
 	}
@@ -688,10 +700,17 @@ namespace gnubase::engine
 		try
 		{
 			reader = AudioFileReader::open(path->second);
+			if (const auto warp = m_warps.find(media); warp != m_warps.end())
+				reader = std::make_unique<dsp::WarpReader>(std::move(reader), warp->second.map, warp->second.preset);
 		}
 		catch (const AudioFileError&)
 		{
 			m_unreadable.insert(media); // plays as silence
+			return nullptr;
+		}
+		catch (const std::invalid_argument&) // a file the stretcher can't take
+		{
+			m_unreadable.insert(media);
 			return nullptr;
 		}
 		if (!m_streamer)

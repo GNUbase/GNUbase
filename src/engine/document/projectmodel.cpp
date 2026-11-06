@@ -4306,6 +4306,7 @@ namespace gnubase::engine
 		registerEditorCommands(*this, engine);
 		registerSampleEditorCommands(*this, engine);
 		registerHitpointCommands(*this, engine, jobs);
+		registerWarpCommands(engine);
 		registerAudioFunctionCommands(*this, engine);
 		registerHistoryCommands(engine);
 		registerMediaFolderCommands(engine, jobs);

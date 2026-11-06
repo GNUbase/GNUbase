@@ -75,6 +75,8 @@ namespace gnubase::engine
 	Json toJson(const MediaFile& media);
 	Json toJson(const ClipRegion& region);
 	Json toJson(const Clip& clip);
+	Json toJson(const ClipWarp& warp);
+	ClipWarp clipWarpFromJson(const Json& json); // as saved: values out of range clamped, edits out of order left out
 	Json toJson(const PoolFolder& folder);
 	Json toJson(const AudioEvent& event);
 	Json toJson(const AudioPart& part);
