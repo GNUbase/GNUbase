@@ -236,7 +236,8 @@
 				kc.entries[#kc.entries + 1] = {command = macroId(macro.name), parameters = {},
 					description = "Runs the macro " .. macro.name .. ".", zone = "", defaults = {}, macro = macro}
 			end
-			-- The user's keys, and those of commands this dialog doesn't list, which stay as they are.
+			-- The user's keys, and those of commands this dialog doesn't list, which stay as they are. A macro's keys
+			-- go with the macro: a new macro of a deleted one's name doesn't get them back.
 			kc.unlisted = {}
 			for _, saved in ipairs(custom) do
 				local found = nil
@@ -247,7 +248,7 @@
 				end
 				if found then
 					found.keys = copy(saved.keys)
-				else
+				elseif saved.command:sub(1, #"macro.") ~= "macro." then
 					kc.unlisted[#kc.unlisted + 1] = saved
 				end
 			end

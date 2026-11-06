@@ -300,11 +300,23 @@ TEST_CASE("the user's key commands and macros take effect in the app and the Edi
 {
 	test::UiApp app({1000, 760});
 	app.appUi().showProject();
+	// Each menu item shows its keys once, also after the menu was built again for the macros.
+	const auto menuKeys = [&app]
+	{
+		Strings shown;
+		for (const Json& found : elements(app, "menuitem[command=\"transport.toggle\"] .menu-keys"))
+			shown.push_back(found.value("text", std::string()));
+		return shown;
+	};
+	CHECK(menuKeys() == Strings{"Space"});
+	CHECK(elements(app, "menuitem[command] .menu-keys").size() == elements(app, "menuitem[command]").size());
 	app.call("settings.set",
 		{{"values",
 			{{"ui.keyCommands", {{{"command", "transport.toggle"}, {"keys", {"F11"}}}}},
 				{"ui.macros", {{{"name", "Play"}, {"commands", {{{"command", "transport.play"}}}}}}}}}});
 	REQUIRE(app.waitUntil([&app] { return app.keys().keysFor("transport.toggle") == Strings{"F11"}; }));
+	CHECK(app.waitUntil([&menuKeys] { return menuKeys() == Strings{"F11"}; }));
+	CHECK(elements(app, "menuitem[command] .menu-keys").size() == elements(app, "menuitem[command]").size());
 	press(app, "F11");
 	CHECK(app.waitUntil([&app] { return app.call("transport.get").at("playing") == true; }));
 	app.call("transport.stop");
@@ -444,6 +456,35 @@ TEST_CASE("the key commands dialog sets up macros", "[ui]")
 	CHECK(app.waitUntil([&app] { return app.call("transport.get").at("playing") == false; }));
 	click(app, "#keycommands-cancel");
 	CHECK(elements(app, "#macros-menu menuitem[command=\"macro.Restart\"]").size() == 1);
+
+	// A deleted macro's keys go with it: a new macro of its name has none.
+	openDialog(app);
+	click(app, "#keycommands-show-macros");
+	click(app, "#keycommands-new-macro");
+	select(app, "macro.Macro 1");
+	assign(app, "Ctrl+Alt+M");
+	click(app, "#keycommands-delete-macro");
+	click(app, "#keycommands-new-macro");
+	select(app, "macro.Macro 1");
+	CHECK(shownKeys(app).empty());
+	assign(app, "Ctrl+Alt+M");
+	ok(app);
+	REQUIRE(app.waitUntil([&app] { return app.keys().keysFor("macro.Macro 1") == Strings{"Ctrl+Alt+M"}; }));
+	openDialog(app);
+	click(app, "#keycommands-show-macros");
+	click(app, "#keycommands-macros listitem:last-child");
+	click(app, "#keycommands-delete-macro");
+	ok(app);
+	const Json saved = app.call("settings.get", {{"key", "ui.keyCommands"}}).at("value");
+	for (const Json& entry : saved)
+		CHECK(entry.at("command") != "macro.Macro 1");
+	openDialog(app);
+	click(app, "#keycommands-show-macros");
+	click(app, "#keycommands-new-macro");
+	select(app, "macro.Macro 1");
+	CHECK(shownKeys(app).empty());
+	click(app, "#keycommands-cancel");
+	REQUIRE(closed(app));
 }
 
 TEST_CASE("the key commands dialog saves, loads, deletes, exports and imports presets", "[ui]")
