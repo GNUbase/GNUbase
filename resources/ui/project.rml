@@ -298,6 +298,9 @@
 		<!-- Drum maps (docs/features/drum-editor.md) -->
 		<menuitem command="drumMap.load">Load Drum Map...</menuitem>
 		<menuitem command="drumMap.save">Save Drum Map...</menuitem>
+		<menuseparator/>
+		<!-- docs/features/preferences.md -->
+		<menuitem command="window.preferences">Preferences...</menuitem>
 	</menu>
 	<!-- Track handling (reference manual pp. 213-225) -->
 	<menu id="color-menu"/>

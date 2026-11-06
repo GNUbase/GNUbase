@@ -217,6 +217,10 @@ namespace gnubase::ui
 		// whose buttons #snap-type and #grid-type show the choice, and a toggle button #snap-zero-crossing.
 		const engine::SnapSettings& snap() const { return m_snap; }
 
+		// The default tool modifiers (reference manual p. 1601) of the tools that GNUbase has, by action, which the
+		// user setting ui.toolModifiers overrides one by one.
+		static const std::map<std::string, std::string>& defaultToolModifiers();
+
 		// The tools (#86, eventtools.cpp, docs/features/tools.md), also in the root's attribute tool. The object
 		// selection tool edits as above; the others send the same event.* commands (split, glue, erase, mute), zoom,
 		// draw MIDI parts, audition or scrub the pressed audio track, or select a range. With the selection tools

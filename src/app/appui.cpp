@@ -480,6 +480,15 @@ namespace gnubase::app
 					ui::parseTime(ui::TimeFormat::Timecode, parameters.at("text").get<std::string>(), context);
 				return seconds ? engine::Json{{"seconds", *seconds}} : engine::Json::object();
 			});
+		m_keys.add({"window.preferences",
+			"Opens the preferences dialog, which shows and changes the user's preferences, page by page, and their "
+			"presets.",
+			[this](ui::Window& window, Rml::Element* /*zone*/) { openPreferences(window); }});
+		// For the preferences dialog: the themes there are, and the tool modifiers that ui.toolModifiers overrides.
+		m_lua.addFunction(
+			"ui.themes", [this](const engine::Json&) { return engine::Json{{"themes", m_themes.names()}}; });
+		m_lua.addFunction("ui.toolModifierDefaults",
+			[](const engine::Json&) { return engine::Json{{"modifiers", ui::EventDisplay::defaultToolModifiers()}}; });
 		// For the add track dialog's Time Offset: a position typed in a time format, as position displays show it in
 		// the project (ui/timeformat.h), in seconds and ticks; nothing for text that isn't one.
 		m_lua.addFunction("ui.parseTime",
@@ -1588,6 +1597,11 @@ namespace gnubase::app
 	Rml::ElementDocument& AppUi::openProjectSetup(ui::Window& window)
 	{
 		return openOnce(window, "project-setup.rml", m_projectSetup);
+	}
+
+	Rml::ElementDocument& AppUi::openPreferences(ui::Window& window)
+	{
+		return openOnce(window, "preferences.rml", m_preferences);
 	}
 
 	Rml::ElementDocument& AppUi::openOnce(

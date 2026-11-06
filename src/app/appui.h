@@ -167,6 +167,9 @@ namespace gnubase::app
 		// Opens the project setup dialog (resources/ui/project-setup.rml, #78) the same way: the UI command
 		// window.projectSetup, which Project > Project Setup and a click on the status line's record format run.
 		Rml::ElementDocument& openProjectSetup(ui::Window& window);
+		// Opens the preferences dialog (resources/ui/preferences.rml, #162) the same way: the UI command
+		// window.preferences, which Edit > Preferences runs.
+		Rml::ElementDocument& openPreferences(ui::Window& window);
 
 		// Opens the start screen in the main window (ui/projectfiles.h, #77), as the app does when it starts without
 		// a project.
@@ -315,6 +318,7 @@ namespace gnubase::app
 		Rml::ObserverPtr<Rml::Element> m_studioSetup;      // the open studio setup dialog's document
 		Rml::ObserverPtr<Rml::Element> m_midiDevices;      // the open MIDI device manager's document
 		Rml::ObserverPtr<Rml::Element> m_projectSetup;     // the open project setup dialog's document
+		Rml::ObserverPtr<Rml::Element> m_preferences;      // the open preferences dialog's document
 		std::weak_ptr<ui::PoolPanel> m_pool;               // the docking system owns it while it is there
 		std::weak_ptr<ui::Inspector> m_inspector;          // so too
 		std::vector<ui::Subscription> m_poolResults;       // what the pool commands did, for the pool

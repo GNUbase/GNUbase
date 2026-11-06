@@ -442,6 +442,23 @@ TEST_CASE("the engine auto saves a changed project on its own once the interval 
 	CHECK(events.names(client).size() == 1);
 }
 
+TEST_CASE("project.autoSaveInterval sets how long the engine waits before it auto saves", "[integration]")
+{
+	const test::TempDir dir;
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	AutoSaveEvents events(engine);
+	run(client, "settings.set", {{"key", "project.autoSaveInterval"}, {"value", 5}});
+	run(client, "project.save", {{"path", utf8(dir.path() / "Song.dawproject")}});
+	run(client, "track.add", {{"type", "audio"}});
+
+	engine.advanceClock(std::chrono::minutes(4));
+	CHECK(events.names(client).empty());
+	engine.advanceClock(std::chrono::minutes(1) + std::chrono::seconds(1));
+	CHECK(events.names(client) == std::vector<std::string>{"project.autoSaved"});
+	CHECK(fs::is_regular_file(dir.path() / "Auto Saves" / "Song-01.bak"));
+}
+
 TEST_CASE("a failing auto save waits for the next interval, is logged once and announces each failure", "[integration]")
 {
 	const test::TempDir dir;
