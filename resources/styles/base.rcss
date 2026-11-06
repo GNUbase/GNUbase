@@ -1069,6 +1069,21 @@ meter .meter-peak
 	display: none;
 }
 
+/* The toolbar's Track Visibility Configurations, in windows at least 1100 dp wide: in narrower ones the toolbar has no
+   room for it next to the quantize section (docs/features/track-visibility.md). */
+.track-visibility-configurations
+{
+	display: none;
+}
+
+@media (min-width: 1100dp)
+{
+	.track-visibility-configurations
+	{
+		display: inline-block;
+	}
+}
+
 /* The project window's Visibility tab (docs/features/track-visibility.md): the Track and Editor pages above the
    tabs at its bottom, the Track page with a check per track, indented by its level in folders. */
 .visibility-page

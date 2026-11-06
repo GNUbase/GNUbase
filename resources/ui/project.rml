@@ -121,7 +121,7 @@
 		     ui::QuantizePanel fills (docs/features/quantize.md) -->
 		<div id="toolbar-quantize" class="toolbar-quantize"/>
 		<button id="select-color" class="icon-only" menu="color-menu" title="Select Color for Selected Tracks or Events"><svg class="icon" src="../icons/general-color.svg"/></button>
-		<button id="track-visibility-configurations" menu="track-visibility-configurations-menu" title="Track Visibility Configurations">Configurations</button>
+		<button id="track-visibility-configurations" class="track-visibility-configurations" menu="track-visibility-configurations-menu" title="Track Visibility Configurations">Configurations</button>
 		<div class="spacer"/>
 		<button id="show-channel-zone" type="toggle" toggle="channel" class="icon-only" title="Show/Hide Channel"><svg class="icon" src="../icons/layout-channel-zone.svg"/></button>
 		<button id="show-left-zone" type="toggle" toggle="left" class="icon-only" title="Show/Hide Left Zone"><svg class="icon" src="../icons/layout-left-zone.svg"/></button>

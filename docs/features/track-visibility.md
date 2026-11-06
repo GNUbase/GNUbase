@@ -60,7 +60,8 @@ and sends `trackVisibility.set`.
 - **Track Visibility Configurations** (pp. 58, 455): Add Configuration asks for a name
   (`resources/ui/visibility-configuration.rml`) and keeps the tracks hidden now under it, as the active one; Update
   Configuration takes the hidden tracks into the active one; Rename Configuration asks for its new name; Delete
-  Configuration deletes it. A configuration chosen in the menu hides its tracks.
+  Configuration deletes it. A configuration chosen in the menu hides its tracks. The toolbar shows them in windows at
+  least 1100 dp wide (`resources/styles/base.rcss`), where it has room next to the quantize section.
 
 ## Not yet
 
