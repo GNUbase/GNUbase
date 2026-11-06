@@ -263,11 +263,11 @@ namespace gnubase::app
 		Rml::ElementDocument& openDialog(ui::Window& window, const char* name,
 			const std::vector<std::pair<std::string, std::string>>& attributes = {}) const;
 		// The Auto Fades dialog (resources/ui/auto-fades.rml) for the project, or for a track (not 0).
-		void openAutoFades(ui::Window& window, uint64_t track) const;
+		void openAutoFades(ui::Window& window, uint64_t track);
 		// openDialog for a dialog whose Lua keeps its state in a global table, so that there is only one: while open
-		// is open, brings it to the front instead.
-		Rml::ElementDocument& openOnce(
-			ui::Window& window, const char* name, Rml::ObserverPtr<Rml::Element>& open) const;
+		// is open, brings it to the front instead, as it is, and the attributes go unused.
+		Rml::ElementDocument& openOnce(ui::Window& window, const char* name, Rml::ObserverPtr<Rml::Element>& open,
+			const std::vector<std::pair<std::string, std::string>>& attributes = {}) const;
 
 		// Made in this order and destroyed in the reverse: RmlUi releases its resources through the renderer and
 		// its Lua plugin's in Lua, the shell's windows need all of them, the settings and the binding tell the shell,
@@ -326,6 +326,9 @@ namespace gnubase::app
 		std::vector<ui::Subscription> m_poolResults;       // what the pool commands did, for the pool
 		std::vector<ui::Subscription> m_lockRecord;        // stops refused while recording is locked
 		Rml::ObserverPtr<Rml::Element> m_lockRecordDialog; // the open lock record dialog's document
+		Rml::ObserverPtr<Rml::Element> m_autoFades;        // the open auto fades dialog's document
+		Rml::ObserverPtr<Rml::Element> m_addTrack;         // the open add track dialog's document
+		Rml::ObserverPtr<Rml::Element> m_midiFunction;     // the open dialog of the MIDI menu's
 		// A mixer window: open while the shell has it; the app lets go of the mixer once the user closed the window.
 		struct MixerWindow
 		{

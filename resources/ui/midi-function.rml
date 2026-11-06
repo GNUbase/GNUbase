@@ -1,10 +1,12 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-<!-- The dialogs of the MIDI menu (#133, docs/features/midi-functions.md, reference manual pp. 1118-1128): Transpose
-     Setup, MIDI Merge Options, Dissolve Part and Restrict Polyphony. app::AppUi opens it with the document's attributes
-     function (transpose, merge, dissolve or restrictPolyphony), parts and notes (ids separated by commas) and, for
-     merge, destination (the selected track, if any). Its Lua fills the dialog for the function when it shows and on OK
-     runs the engine's command: midi.transpose, midi.merge, midi.dissolve or midi.restrictPolyphony. A command the engine
-     refuses keeps the dialog open with its message; Cancel closes it. -->
+<!-- The dialogs of the MIDI menu (#133, docs/features/midi-functions.md, reference manual pp. 1118-1140): Transpose
+     Setup, MIDI Merge Options, Dissolve Part, Velocity, Delete Notes and Restrict Polyphony. app::AppUi opens one at a
+     time with the document's attributes function (transpose, merge, dissolve, velocity, deleteNotes or
+     restrictPolyphony), parts and notes (ids separated by commas), tickScale (the engine's ticks per tick of 480 to a
+     quarter note, the unit the dialogs show) and, for merge, destination (the selected track, if any). Its Lua fills
+     the dialog for the function when it shows and on OK runs the engine's command: midi.transpose, midi.merge,
+     midi.dissolve, midi.velocity, midi.deleteNotes or midi.restrictPolyphony. A command the engine refuses keeps the
+     dialog open with its message; Cancel closes it. -->
 <rml>
 <head>
 	<title>MIDI Function</title>
@@ -37,6 +39,11 @@
 			margin-right: 6dp;
 		}
 
+		.field select.wide
+		{
+			width: 150dp;
+		}
+
 		.row
 		{
 			display: flex;
@@ -64,7 +71,13 @@
 			{"mixolydian", "Mixolydian"}, {"locrian", "Locrian"}, {"majorPentatonic", "Major Pentatonic"},
 			{"minorPentatonic", "Minor Pentatonic"}, {"blues", "Blues"}, {"wholeTone", "Whole Tone"}}
 		local titles = {transpose = "Transpose Setup", merge = "MIDI Merge Options", dissolve = "Dissolve Part",
-			restrictPolyphony = "Restrict Polyphony"}
+			velocity = "Velocity", deleteNotes = "Delete Notes", restrictPolyphony = "Restrict Polyphony"}
+		local velocityTypes = {{"add", "Add/Subtract"}, {"compress", "Compress/Expand"}, {"limit", "Limit"},
+			{"fixed", "Fixed To"}, {"variance", "Variance"}}
+		-- The fields each velocity type uses.
+		local velocityFields = {add = {amount = true}, compress = {ratio = true}, limit = {lower = true, upper = true},
+			fixed = {amount = true}, variance = {variance = true}}
+		local update = ' onchange="MidiFunction.update(document)"'
 
 		local function escape(text)
 			return (tostring(text):gsub('[&<>"]', {["&"] = "&amp;", ["<"] = "&lt;", [">"] = "&gt;", ['"'] = "&quot;"}))
@@ -75,8 +88,9 @@
 				"</div>"
 		end
 
-		local function check(id, on)
-			return '<input type="checkbox" id="midi-function-' .. id .. '"' .. (on and " checked" or "") .. "/>"
+		local function check(id, on, onchange)
+			return '<input type="checkbox" id="midi-function-' .. id .. '"' .. (on and " checked" or "") ..
+				(onchange or "") .. "/>"
 		end
 
 		local function radio(id, value, on)
@@ -88,13 +102,15 @@
 			return '<input type="text" class="text" id="midi-function-' .. id .. '" value="' .. escape(value) .. '"/>'
 		end
 
-		local function dropDown(id, choices)
+		-- A drop-down list; extra goes into its tag, such as a class or an onchange handler.
+		local function dropDown(id, choices, extra)
 			local options = {}
 			for index, choice in ipairs(choices) do
 				options[#options + 1] = '<option value="' .. choice[1] .. '"' .. (index == 1 and " selected" or "") ..
 					">" .. escape(choice[2]) .. "</option>"
 			end
-			return '<select id="midi-function-' .. id .. '">' .. table.concat(options) .. "</select>"
+			return '<select id="midi-function-' .. id .. '"' .. (extra or "") .. ">" .. table.concat(options) ..
+				"</select>"
 		end
 
 		local function rootDropDown(id)
@@ -118,6 +134,18 @@
 			return element(document, id):HasAttribute("checked")
 		end
 
+		-- A field the document doesn't have yet (load is still filling the fields) is left alone.
+		local function enable(document, id, on)
+			local field = element(document, id)
+			if field == nil then
+				return
+			elseif on then
+				field:RemoveAttribute("disabled")
+			else
+				field:SetAttribute("disabled", "")
+			end
+		end
+
 		-- A whole number from a text field, or an error naming it.
 		local function integer(document, id, name)
 			local value = math.tointeger(tonumber(valueOf(document, id)))
@@ -127,43 +155,38 @@
 			return value
 		end
 
+		-- A whole number from a text field within min to max, or an error naming it with the range.
+		local function ranged(document, id, name, min, max)
+			local value = integer(document, id, name)
+			if value < min or value > max then
+				error(name .. " must be " .. min .. " to " .. max, 0)
+			end
+			return value
+		end
+
+		-- The engine's velocity, 0 to 1, of a MIDI 1.0 velocity, -127 to 127, scaled as playback scales MIDI 1.0
+		-- velocities (velocityFromMidi1 in src/engine/midi/midivalues.h): up to 64 the value shifts by 9 bits, above it
+		-- the bits below the top one repeat into the new low bits, so 127 is 1. With a plain value / 127, 64 minus 1
+		-- would be 62 and a Minimum Velocity of 10 would delete a note of velocity 10.
+		local function velocityOf(value)
+			local magnitude = math.abs(value)
+			local scaled = magnitude << 9
+			if magnitude > 64 then
+				local repeated = (magnitude & 63) << 3
+				while repeated ~= 0 do
+					scaled = scaled | repeated
+					repeated = repeated >> 6
+				end
+			end
+			return (value < 0 and -scaled or scaled) / 65535
+		end
+
 		local function ids(text)
 			local list = {}
 			for id in tostring(text or ""):gmatch("%d+") do
 				list[#list + 1] = math.tointeger(tonumber(id))
 			end
 			return list
-		end
-
-		-- The MIDI and instrument tracks that play: the soloed ones if any are, else the unmuted ones. Nil when that
-		-- is all of them, since merge takes all by default.
-		local function playingTracks()
-			local project = gnubase.project.get()
-			local channels = {}
-			for _, channel in ipairs(project.channels) do
-				channels[channel.id] = channel
-			end
-			local all, soloed, unmuted = 0, {}, {}
-			for _, track in ipairs(project.tracks) do
-				if track.type == "midi" or track.type == "instrument" then
-					all = all + 1
-					local channel = channels[track.channel] or {}
-					if channel.solo then
-						soloed[#soloed + 1] = track.id
-					end
-					if not channel.mute then
-						unmuted[#unmuted + 1] = track.id
-					end
-				end
-			end
-			local playing = #soloed > 0 and soloed or unmuted
-			if #playing == all then
-				return nil
-			end
-			if #playing == 0 then
-				error("All MIDI tracks are muted", 0)
-			end
-			return playing
 		end
 
 		local forms = {}
@@ -194,31 +217,113 @@
 			end,
 		}
 
+		-- The engine merges the tracks that play, by playback's solo and mute rules. Include Inserts plays the tracks'
+		-- MIDI modifiers into the notes (p. 1120).
 		forms.merge = {
 			fields = function()
-				return field("Erase Destination", check("erase", false)) ..
+				return field("Include Inserts", check("inserts", true)) ..
+					field("Erase Destination", check("erase", false)) ..
 					field("Include Chase", check("chase", false))
 			end,
 			run = function(document, parameters)
 				local transport = gnubase.transport.get()
-				local merge = {start = transport.left, ["end"] = transport.right, tracks = playingTracks(),
-					destination = dialog.destination, eraseDestination = checked(document, "erase"),
+				local merge = {start = transport.left, ["end"] = transport.right, destination = dialog.destination,
+					includeInserts = checked(document, "inserts"), eraseDestination = checked(document, "erase"),
 					includeChase = checked(document, "chase")}
 				gnubase.midi.merge(merge)
 			end,
 		}
 
+		-- Optimized Display isn't available with Dissolve to Lanes (p. 1121).
 		forms.dissolve = {
 			fields = function()
 				return field("Separate Channels", radio("channels", "channel", true)) ..
 					field("Separate Pitches", radio("pitches", "pitch", false)) ..
+					field("Dissolve to Lanes", check("lanes", false, update)) ..
 					field("Optimized Display", check("optimize", false))
 			end,
+			update = function(document)
+				enable(document, "optimize", not checked(document, "lanes"))
+			end,
 			run = function(document, parameters)
+				local lanes = checked(document, "lanes")
 				parameters.notes = nil
 				parameters.by = checked(document, "pitches") and "pitch" or "channel"
-				parameters.optimize = checked(document, "optimize")
+				parameters.to = lanes and "lanes" or "tracks"
+				parameters.optimize = not lanes and checked(document, "optimize")
 				gnubase.midi.dissolve(parameters)
+			end,
+		}
+
+		-- Velocities in MIDI 1.0 values, 0 to 127, and ratio and variance in percent (pp. 1126-1127).
+		forms.velocity = {
+			fields = function()
+				return field("Type", dropDown("type", velocityTypes, ' class="wide"' .. update)) ..
+					field("Amount", text("amount", "0")) ..
+					field("Ratio (%)", text("ratio", "100")) ..
+					field("Lower", text("lower", "0")) ..
+					field("Upper", text("upper", "127")) ..
+					field("Variance (%)", text("variance", "10"))
+			end,
+			update = function(document)
+				local used = velocityFields[valueOf(document, "type")] or {}
+				for _, id in ipairs({"amount", "ratio", "lower", "upper", "variance"}) do
+					enable(document, id, used[id] == true)
+				end
+			end,
+			run = function(document, parameters)
+				local kind = valueOf(document, "type")
+				parameters.type = kind
+				if kind == "add" then
+					parameters.amount = velocityOf(ranged(document, "amount", "Amount", -127, 127))
+				elseif kind == "fixed" then
+					parameters.amount = velocityOf(ranged(document, "amount", "Amount", 0, 127))
+				elseif kind == "compress" then
+					parameters.ratio = ranged(document, "ratio", "Ratio", 0, 300) / 100
+				elseif kind == "limit" then
+					local lower = ranged(document, "lower", "Lower", 0, 127)
+					local upper = ranged(document, "upper", "Upper", 0, 127)
+					if lower > upper then
+						error("Lower must not be above Upper", 0)
+					end
+					parameters.lower, parameters.upper = velocityOf(lower), velocityOf(upper)
+				else
+					parameters.variance = ranged(document, "variance", "Variance", 0, 100) / 100
+				end
+				gnubase.midi.velocity(parameters)
+			end,
+		}
+
+		-- Minimum Length in ticks of 480 to a quarter note, Minimum Velocity in MIDI 1.0 values; Remove when under
+		-- counts with both (p. 1140).
+		forms.deleteNotes = {
+			fields = function()
+				return field("Minimum Length", check("length-on", true, update), text("length", "120")) ..
+					field("Minimum Velocity", check("velocity-on", false, update), text("velocity", "10")) ..
+					field("Remove when under", dropDown("when",
+						{{"either", "Length or Velocity"}, {"both", "Length and Velocity"}}, ' class="wide"'))
+			end,
+			update = function(document)
+				local length, velocity = checked(document, "length-on"), checked(document, "velocity-on")
+				enable(document, "length", length)
+				enable(document, "velocity", velocity)
+				enable(document, "when", length and velocity)
+			end,
+			run = function(document, parameters)
+				local length, velocity = checked(document, "length-on"), checked(document, "velocity-on")
+				if not length and not velocity then
+					error("Turn on Minimum Length or Minimum Velocity", 0)
+				end
+				if length then
+					parameters.minimumLength = integer(document, "length", "Minimum Length") * dialog.tickScale
+				end
+				if velocity then
+					parameters.minimumVelocity = velocityOf(ranged(document, "velocity", "Minimum Velocity", 0, 127))
+				end
+				if length and velocity then
+					parameters.removeWhen = valueOf(document, "when")
+				end
+				gnubase.midi.deleteNotes(parameters)
 			end,
 		}
 
@@ -238,6 +343,7 @@
 			dialog.parts = ids(document:GetAttribute("parts"))
 			dialog.notes = ids(document:GetAttribute("notes"))
 			dialog.destination = math.tointeger(tonumber(document:GetAttribute("destination")))
+			dialog.tickScale = math.tointeger(tonumber(document:GetAttribute("tickScale"))) or 1
 			local form = forms[dialog.function_]
 			if form == nil then
 				return
@@ -245,6 +351,16 @@
 			element(document, "title").inner_rml = escape(titles[dialog.function_])
 			element(document, "ok").inner_rml = dialog.function_ == "dissolve" and "Process" or "OK"
 			element(document, "fields").inner_rml = form.fields()
+			dialog.update(document)
+		end
+
+		-- Enables the fields that the settings use. The fields' change events also come while load fills them in, before
+		-- they have a document or all fields are there; load calls this once they are.
+		function dialog.update(document)
+			local form = forms[dialog.function_]
+			if document ~= nil and form ~= nil and form.update ~= nil then
+				form.update(document)
+			end
 		end
 
 		-- OK: runs the function and closes, unless the engine refuses it.

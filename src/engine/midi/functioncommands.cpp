@@ -210,11 +210,17 @@ namespace gnubase::engine::midi
 				noteTrack(project, id, "track " + std::to_string(id));
 				settings.tracks.push_back(id);
 			}
+			if (settings.tracks.empty())
+			{
+				settings.tracks = playingTracks(project);
+				require(!settings.tracks.empty(), "no MIDI or instrument track plays");
+			}
 			settings.destination = parameters.value("destination", ObjectId{0});
 			if (settings.destination != 0)
 				noteTrack(project, settings.destination, "destination");
 			settings.eraseDestination = parameters.value("eraseDestination", false);
 			settings.includeChase = parameters.value("includeChase", false);
+			settings.includeInserts = parameters.value("includeInserts", false);
 			settings.name = parameters.value("name", std::string());
 			return announce(project, merge(project, settings), context);
 		}
@@ -227,7 +233,11 @@ namespace gnubase::engine::midi
 				ids.push_back(part->id);
 			const DissolveBy by =
 				parameters.at("by").get<std::string>() == "pitch" ? DissolveBy::Pitch : DissolveBy::Channel;
-			return announce(project, dissolve(project, ids, by, parameters.value("optimize", false)), context);
+			const DissolveTo to =
+				parameters.value("to", std::string("tracks")) == "lanes" ? DissolveTo::Lanes : DissolveTo::Tracks;
+			const bool optimize = parameters.value("optimize", false);
+			require(!optimize || to == DissolveTo::Tracks, "optimize works with to tracks only");
+			return announce(project, dissolve(project, ids, by, optimize, to), context);
 		}
 
 		Json runBounce(Project& project, CommandContext& context)
@@ -241,6 +251,66 @@ namespace gnubase::engine::midi
 				ids.push_back(part->id);
 			}
 			return announce(project, bounce(project, ids), context);
+		}
+
+		Json runExtractAutomation(Project& project, CommandContext& context)
+		{
+			std::vector<ObjectId> ids;
+			for (const MidiPart* part : partsOf(project, context.parameters()))
+				ids.push_back(part->id);
+			const AutomationChanges changes = extractAutomation(project, ids);
+			for (const ObjectId id : changes.changedParts)
+				context.emit("midiPart.changed", {{"part", toJson(project.midiParts.at(id))}});
+			for (const ObjectId id : changes.addedLanes)
+				context.emit("automationLane.added", {{"lane", toJson(project.automation.at(id))}});
+			for (const ObjectId id : changes.changedLanes)
+				context.emit("automationLane.changed", {{"lane", toJson(project.automation.at(id))}});
+			return {
+				{"parts", changes.changedParts}, {"lanes", changes.addedLanes}, {"changedLanes", changes.changedLanes}};
+		}
+
+		PartFunction prepareVelocity(const Json& parameters)
+		{
+			VelocitySettings settings;
+			const std::string type = parameters.at("type").get<std::string>();
+			const auto number = [&parameters](const char* key, double min, double max)
+			{
+				require(parameters.contains(key), std::string(key) + " is required");
+				const double value = parameters.at(key).get<double>();
+				require(value >= min && value <= max,
+					std::string(key) + " must be " + std::to_string(static_cast<int>(min)) + " to " +
+						std::to_string(static_cast<int>(max)));
+				return value;
+			};
+			if (type == "add")
+			{
+				settings.type = VelocityChange::Add;
+				settings.amount = number("amount", -1.0, 1.0);
+			}
+			else if (type == "compress")
+			{
+				settings.type = VelocityChange::Compress;
+				settings.ratio = number("ratio", 0.0, 3.0);
+			}
+			else if (type == "limit")
+			{
+				settings.type = VelocityChange::Limit;
+				settings.lower = number("lower", 0.0, 1.0);
+				settings.upper = number("upper", 0.0, 1.0);
+				require(settings.lower <= settings.upper, "lower must not be above upper");
+			}
+			else if (type == "fixed")
+			{
+				settings.type = VelocityChange::Fixed;
+				settings.amount = number("amount", 0.0, 1.0);
+			}
+			else
+			{
+				settings.type = VelocityChange::Variance;
+				settings.variance = number("variance", 0.0, 1.0);
+			}
+			return [settings](Project&, MidiPart& part, const NoteSelection& selection)
+			{ changeVelocities(part, selection, settings); };
 		}
 
 		struct PartCommand
@@ -307,6 +377,16 @@ namespace gnubase::engine::midi
 					return [=](Project&, MidiPart& part, const NoteSelection& notes)
 					{ fixVelocities(part, notes, value); };
 				}},
+			{"midi.velocity", "Velocity",
+				"Changes the velocity of notes (0-1) by type: add adds amount (-1 to 1); compress multiplies by ratio "
+				"(0 to 3), below 1 compressing the differences between velocities, above 1 expanding them; limit "
+				"keeps velocities from lower to upper (0-1); fixed sets them to amount (0-1); variance lowers each "
+				"note by a random part of its velocity, up to variance (0-1), the same part for a note each time. "
+				"Velocities stay within 0-1.",
+				{{"type", enumSchema({"add", "compress", "limit", "fixed", "variance"})}, {"amount", numberSchema},
+					{"ratio", numberSchema}, {"lower", numberSchema}, {"upper", numberSchema},
+					{"variance", numberSchema}},
+				{"type"}, true, prepareVelocity},
 			{"midi.pedalToNoteLength", "Sustain pedal to note length",
 				"Extends notes that end while the sustain pedal (controller 64) on their channel is down to where it "
 				"is released (the part's end if never), but not past the next note of the same pitch, and removes "
@@ -427,40 +507,68 @@ namespace gnubase::engine::midi
 		model.addEdit(engine,
 			{"midi.merge", 1,
 				"Merges the notes and controllers that start between start and end (project samples, like the "
-				"locators, compared in samples as playback does) on the MIDI and instrument tracks in tracks (default: "
-				"all of them) into a new part on "
-				"the destination track from start, or from the first merged event if that is earlier, to end, named "
-				"name (default: the track's name). Notes keep their "
-				"length, cut where their part ends. Without destination a new MIDI track is added at the end, routed "
+				"locators, compared in samples as playback does) on the MIDI and instrument tracks in tracks into a "
+				"new part on the destination track from start, or from the first merged event if that is earlier, to "
+				"end, named "
+				"name (default: the track's name). Without tracks, the MIDI and instrument tracks that play, by "
+				"playback's solo and mute rules: neither their channel nor one it plays into is muted, silenced by a "
+				"solo or on a disabled track (sends aren't followed); it refuses if none does. Muted parts are left "
+				"out. Notes keep their "
+				"length, cut where their part ends, and get their parts' transpose and velocity as playback applies "
+				"them; includeInserts also plays their tracks' MIDI modifiers into them (channel.set modifiers, with "
+				"the random values playback draws), leaving out notes they filter out or move out of the range. "
+				"Without destination a new MIDI track is added at the end, routed "
 				"to the instrument of the first track merged. eraseDestination first removes the destination's parts "
 				"that lie between start and end, and the events of its other parts that start there. includeChase "
 				"adds the last value of every controller and program before start at the new part's start." +
 					returns,
-				objectSchema({{"start", integerSchema}, {"end", integerSchema}, {"tracks", ids},
-								 {"destination", idSchema}, {"eraseDestination", booleanSchema},
-								 {"includeChase", booleanSchema}, {"name", {{"type", "string"}}}},
+				objectSchema(
+					{{"start", integerSchema}, {"end", integerSchema}, {"tracks", ids}, {"destination", idSchema},
+						{"eraseDestination", booleanSchema}, {"includeChase", booleanSchema},
+						{"includeInserts", booleanSchema}, {"name", {{"type", "string"}}}},
 					{"start", "end"}),
 				changesResult, false},
 			"Merge MIDI in loop", runMerge);
 		model.addEdit(engine,
 			{"midi.dissolve", 1,
 				"Dissolves MIDI parts by MIDI channel or by pitch (by: channel or pitch): for each channel or pitch "
-				"found in the parts of a track, a new MIDI track after it, named after the track and the channel or "
-				"pitch (middle C, 60, is C3), routed to the same instrument, gets the events of that channel or "
-				"pitch in parts at the same place. By channel SysEx stays, by pitch everything but notes and poly "
-				"pressure; parts left empty are removed. optimize shortens the new parts to the bars their events "
-				"play in." +
+				"found in the parts of a track, the events of that channel or pitch are copied into parts at the same "
+				"place, and the parts are muted. to tracks (the default) puts them on a new MIDI track after the "
+				"track, named after it and the channel or pitch (middle C, 60, is C3) and routed to the same "
+				"instrument; to lanes on a new lane of the track, below the lanes its parts are on, named after the "
+				"part and the channel or pitch. Events of no channel or pitch (SysEx by channel, everything but notes "
+				"and poly pressure by pitch) go with the first new part of their part; a part with nothing to "
+				"separate stays as it is. New parts keep the part's mute, transpose and velocity. optimize (to tracks "
+				"only) shortens the new parts to the bars their events play in." +
 					returns,
-				objectSchema({{"parts", ids}, {"by", enumSchema({"channel", "pitch"})}, {"optimize", booleanSchema}},
+				objectSchema({{"parts", ids}, {"by", enumSchema({"channel", "pitch"})}, {"optimize", booleanSchema},
+								 {"to", enumSchema({"tracks", "lanes"})}},
 					{"parts", "by"}),
 				changesResult, false},
 			"Dissolve part", runDissolve);
 		model.addEdit(engine,
 			{"midi.bounce", 1,
 				"Bounces MIDI parts on one track into a single part from the first one's start to the last one's "
-				"end, named after the first. Events keep their time; notes are cut where their part ended." +
+				"end, named after the first, on the lowest lane they are on. Muted parts are removed and add nothing. "
+				"Events keep their time; notes are cut where their part ended. The parts' transpose and velocity go "
+				"into the notes as playback applies them; a note transposed beyond 0-127, which doesn't play, is left "
+				"out. The copied notes get new ids, so play probability and velocity variance draw anew." +
 					returns,
 				objectSchema({{"parts", ids}}, {"parts"}), changesResult, false},
 			"Bounce MIDI", runBounce);
+		model.addEdit(engine,
+			{"midi.extractAutomation", 1,
+				"Moves the continuous controllers of MIDI parts (as midi.deleteContinuousControllers takes them) into "
+				"controller automation lanes of their tracks, one per controller and MIDI channel: each event becomes "
+				"a step point where it plays, its value 0 to 1. A lane the track already has loses its points in the "
+				"part's range first, except those an earlier part of the call added. Pitch bend, pressure, switches "
+				"such as the sustain pedal, events past a part's "
+				"end and muted parts stay. Returns the parts it changed, the lanes it added (lanes) and the lanes it "
+				"changed.",
+				objectSchema({{"parts", ids}}, {"parts"}),
+				{{"type", "object"}, {"properties", {{"parts", ids}, {"lanes", ids}, {"changedLanes", ids}}},
+					{"required", {"parts", "lanes", "changedLanes"}}},
+				false},
+			"Extract MIDI automation", runExtractAutomation);
 	}
 }

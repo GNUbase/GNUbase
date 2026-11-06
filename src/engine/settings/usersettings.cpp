@@ -445,8 +445,12 @@ namespace gnubase::engine::settings
 					"timeFormat) is barsBeats, linear with any other. Folder, ruler, tempo and signature tracks, "
 					"which hold no events of their own, are musical.",
 					Json{{"type", "string"}, {"enum", {"musical", "linear", "followTimeFormat"}}}, "musical"},
+				{"editing.legatoBetweenSelected",
+					"Legato Mode: Between Selected Notes Only (reference manual p. 1599): MIDI > Functions > Legato "
+					"extends the selected notes to the next selected note, not to the next note.",
+					Json{{"type", "boolean"}}, false},
 				{"editing.legatoOverlap",
-					"Legato Overlap (reference manual p. 1124): how far MIDI > Functions > Legato extends notes past "
+					"Legato Overlap (reference manual p. 1599): how far MIDI > Functions > Legato extends notes past "
 					"the start of the next note, in ticks of 480 per quarter note, -1920 to 1920; negative values "
 					"leave a gap.",
 					Json{{"type", "integer"}, {"minimum", -1920}, {"maximum", 1920}}, 0},

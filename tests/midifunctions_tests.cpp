@@ -8,6 +8,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -941,7 +942,7 @@ TEST_CASE("merge and bounce keep the events of parts on linear tracks", "[unit]"
 	}
 }
 
-TEST_CASE("dissolve moves events into new tracks by channel or by pitch", "[unit]")
+TEST_CASE("dissolve copies events into new tracks by channel or by pitch and mutes the parts", "[unit]")
 {
 	Project project = newProject();
 	const ObjectId drums = addTrack(project, TrackType::Instrument, "Drums");
@@ -956,6 +957,15 @@ TEST_CASE("dissolve moves events into new tracks by channel or by pitch", "[unit
 			.cc(6, 0, 7, 100, 1)
 			.controller(7, 0, ControllerType::SysEx, 0, 0)
 			.part);
+	const MidiPart original = project.midiParts.at(source);
+	// The part keeps its events, muted (reference manual p. 1122).
+	const auto mutedAsItWas = [&]
+	{
+		const MidiPart& part = project.midiParts.at(source);
+		CHECK(part.mute);
+		CHECK(part.notes == original.notes);
+		CHECK(part.controllers == original.controllers);
+	};
 
 	SECTION("by channel")
 	{
@@ -973,14 +983,33 @@ TEST_CASE("dissolve moves events into new tracks by channel or by pitch", "[unit
 		const MidiPart& first = onlyPartOn(project, changes.tracks[0]);
 		CHECK(first.position.value == 4 * g_quarter);
 		CHECK(first.length == 16 * g_quarter);
+		CHECK(!first.mute);
 		CHECK(notesOf(first) == std::vector<std::vector<int64_t>>{{0, 36, 10, 0}, {9 * g_quarter, 42, 10, 0}});
+		// The SysEx, of no channel, goes with the first new part.
+		CHECK(controllerTypes(first) == std::vector<ControllerType>{ControllerType::SysEx});
 		const MidiPart& second = onlyPartOn(project, changes.tracks[1]);
 		CHECK(notesOf(second) == std::vector<std::vector<int64_t>>{{g_quarter, 38, 10, 1}, {2 * g_quarter, 36, 10, 1}});
 		CHECK(second.controllers.size() == 2);
-		// The SysEx stays in the original part.
 		CHECK(changes.changedParts == std::vector<ObjectId>{source});
-		CHECK(project.midiParts.at(source).notes.empty());
-		CHECK(controllerTypes(project.midiParts.at(source)) == std::vector<ControllerType>{ControllerType::SysEx});
+		CHECK(changes.removedParts.empty());
+		mutedAsItWas();
+		// The copies have ids of their own.
+		for (const auto& [id, note] : first.notes)
+			CHECK(original.notes.count(id) == 0);
+	}
+	SECTION("the new tracks take the track's MIDI modifiers, so their notes play as the part's did")
+	{
+		Modifiers modifiers;
+		modifiers.transpose = 3;
+		modifiers.velocityShift = -5;
+		modifiers.lengthCompression = {3, 2};
+		modifiers.random[0] = {RandomTarget::Velocity, -4, 4};
+		modifiers.range[1] = {RangeTarget::NoteFilter, 30, 90};
+		project.channels.at(project.trackById.at(drums).channel).modifiers = modifiers;
+		const PartChanges changes = dissolve(project, {source}, DissolveBy::Channel, false);
+		REQUIRE(changes.tracks.size() == 2);
+		for (const ObjectId track : changes.tracks)
+			CHECK(project.channels.at(project.trackById.at(track).channel).modifiers == modifiers);
 	}
 	SECTION("by pitch, with the parts shortened to their bars")
 	{
@@ -993,28 +1022,68 @@ TEST_CASE("dissolve moves events into new tracks by channel or by pitch", "[unit
 		CHECK(kick.position.value == 4 * g_quarter); // bar 2
 		CHECK(kick.length == 4 * g_quarter);
 		CHECK(notesOf(kick) == std::vector<std::vector<int64_t>>{{0, 36, 10, 0}, {2 * g_quarter, 36, 10, 1}});
+		// The controller and the SysEx belong to no pitch.
+		CHECK(controllerTypes(kick) == std::vector<ControllerType>{ControllerType::Control, ControllerType::SysEx});
 		const MidiPart& snare = onlyPartOn(project, changes.tracks[1]);
-		CHECK(snare.controllers.size() == 1); // its poly pressure
+		CHECK(controllerTypes(snare) == std::vector<ControllerType>{ControllerType::PolyPressure});
 		const MidiPart& hat = onlyPartOn(project, changes.tracks[2]);
 		CHECK(hat.position.value == 12 * g_quarter); // bar 4
 		CHECK(hat.length == 4 * g_quarter);
 		CHECK(notesOf(hat) == std::vector<std::vector<int64_t>>{{g_quarter, 42, 10, 0}});
-		CHECK(controllerTypes(project.midiParts.at(source)) ==
-			std::vector<ControllerType>{ControllerType::Control, ControllerType::SysEx});
+		mutedAsItWas();
 	}
-	SECTION("a part left empty is removed")
+	SECTION("to lanes of the track, below the lanes its parts are on")
 	{
-		project.midiParts.at(source).controllers.clear();
-		const PartChanges changes = dissolve(project, {source}, DissolveBy::Pitch, false);
-		CHECK(changes.removedParts == std::vector<ObjectId>{source});
-		CHECK(project.midiParts.count(source) == 0);
+		project.midiParts.at(source).color = "#ff0000";
+		project.midiParts.at(source).name = "Beat";
+		const ObjectId take = addPart(project, drums, 0, g_quarter);
+		project.midiParts.at(take).lane = 1;
+		const PartChanges changes = dissolve(project, {source}, DissolveBy::Pitch, false, DissolveTo::Lanes);
+		CHECK(changes.tracks.empty());
+		CHECK(project.tracks == std::vector<ObjectId>{drums, after});
+		REQUIRE(changes.addedParts.size() == 3);
+		const std::vector<std::string> names = {"Beat C1", "Beat D1", "Beat F#1"};
+		for (size_t i = 0; i < 3; ++i)
+		{
+			const MidiPart& piece = project.midiParts.at(changes.addedParts[i]);
+			CHECK(piece.track == drums);
+			CHECK(piece.lane == static_cast<int>(i) + 2);
+			CHECK(piece.name == names[i]);
+			CHECK(piece.color == "#ff0000");
+			CHECK(piece.position.value == 4 * g_quarter);
+			CHECK(piece.length == 16 * g_quarter);
+		}
+		CHECK(notesOf(project.midiParts.at(changes.addedParts[2])) ==
+			std::vector<std::vector<int64_t>>{{9 * g_quarter, 42, 10, 0}});
+		mutedAsItWas();
 	}
-	SECTION("an empty part makes no tracks")
+	SECTION("new parts keep a muted part's mute, transpose and velocity")
+	{
+		MidiPart& part = project.midiParts.at(source);
+		part.mute = true;
+		part.transpose = 3;
+		part.velocity = -10;
+		const PartChanges changes = dissolve(project, {source}, DissolveBy::Channel, false);
+		CHECK(changes.changedParts.empty());
+		REQUIRE(changes.addedParts.size() == 2);
+		for (const ObjectId id : changes.addedParts)
+		{
+			const MidiPart& piece = project.midiParts.at(id);
+			CHECK(piece.mute);
+			CHECK(piece.transpose == 3);
+			CHECK(piece.velocity == -10);
+		}
+	}
+	SECTION("a part with nothing to separate stays as it is")
 	{
 		const ObjectId empty = addPart(project, drums, 0, g_quarter);
-		const PartChanges changes = dissolve(project, {empty}, DissolveBy::Channel, false);
+		const ObjectId sysex =
+			addPart(project, drums, 0, g_quarter, PartBuilder().controller(1, 0, ControllerType::SysEx, 0, 0).part);
+		const PartChanges changes = dissolve(project, {empty, sysex}, DissolveBy::Channel, false);
 		CHECK(changes.tracks.empty());
-		CHECK(project.midiParts.count(empty) == 1);
+		CHECK(changes.changedParts.empty());
+		CHECK(!project.midiParts.at(empty).mute);
+		CHECK(!project.midiParts.at(sysex).mute);
 	}
 }
 
@@ -1039,6 +1108,339 @@ TEST_CASE("bounce combines parts on a track into one", "[unit]")
 	REQUIRE(part.controllers.size() == 1);
 	CHECK(part.controllers.begin()->second.position == 4 * g_quarter);
 	CHECK(project.midiParts.count(other) == 1);
+}
+
+TEST_CASE("bounce removes muted parts and plays the parts' transpose and velocity into the notes", "[unit]")
+{
+	Project project = newProject();
+	const ObjectId track = addTrack(project, TrackType::Instrument, "Keys");
+	const uint16_t velocity = velocityFromMidi1(100);
+	const ObjectId up = addPart(project, track, 0, g_quarter,
+		PartBuilder().note(1, 0, 10, 60, 0, velocity).note(2, 10, 10, 120, 0, velocity).part);
+	project.midiParts.at(up).transpose = 12; // 120 would go to 132, which doesn't play
+	project.midiParts.at(up).velocity = 40;  // 100 plays at 127
+	project.midiParts.at(up).lane = 2;
+	const ObjectId down = addPart(
+		project, track, 2 * g_quarter, g_quarter, PartBuilder().note(1, 0, 10, 64, 0, velocityFromMidi1(30)).part);
+	project.midiParts.at(down).velocity = -50; // a note-on plays at 1 at least
+	project.midiParts.at(down).lane = 1;
+	const ObjectId muted =
+		addPart(project, track, 8 * g_quarter, g_quarter, PartBuilder().note(1, 0, 10, 50, 0, velocity).part);
+	project.midiParts.at(muted).mute = true;
+
+	const PartChanges changes = bounce(project, {up, down, muted});
+	CHECK(changes.removedParts == std::vector<ObjectId>{up, down, muted});
+	REQUIRE(changes.addedParts.size() == 1);
+	const MidiPart& part = project.midiParts.at(changes.addedParts[0]);
+	// The muted part adds neither notes nor length.
+	CHECK(part.length == 3 * g_quarter);
+	CHECK(part.lane == 1);
+	CHECK(part.transpose == 0);
+	CHECK(part.velocity == 0);
+	CHECK(notesOf(part) == std::vector<std::vector<int64_t>>{{0, 72, 10, 0}, {2 * g_quarter, 64, 10, 0}});
+	std::vector<int> velocities;
+	velocities.reserve(part.notes.size());
+	for (const auto& [id, note] : part.notes)
+		velocities.push_back(velocityToMidi1(note.velocity));
+	std::sort(velocities.begin(), velocities.end());
+	CHECK(velocities == std::vector<int>{1, 127});
+
+	SECTION("only muted parts are removed")
+	{
+		Project other = newProject();
+		const ObjectId keys = addTrack(other, TrackType::Instrument, "Keys");
+		const ObjectId silent = addPart(other, keys, 0, g_quarter, PartBuilder().note(1, 0, 10, 60).part);
+		other.midiParts.at(silent).mute = true;
+		const PartChanges result = bounce(other, {silent});
+		CHECK(result.removedParts == std::vector<ObjectId>{silent});
+		CHECK(result.addedParts.empty());
+		CHECK(other.midiParts.empty());
+	}
+}
+
+TEST_CASE("merge plays the parts' transpose and velocity and, with includeInserts, the MIDI modifiers into the notes",
+	"[unit]")
+{
+	Project project = newProject();
+	const ObjectId piano = addTrack(project, TrackType::Instrument, "Piano");
+	const ObjectId part = addPart(project, piano, 0, g_quarter,
+		PartBuilder()
+			.note(1, 0, 10, 60, 0, velocityFromMidi1(64))
+			.note(2, 0, 10, 70, 0, velocityFromMidi1(64))
+			.note(3, 20, 10, 126, 0, velocityFromMidi1(64)) // transposed beyond 127 by the part: doesn't play
+			.part);
+	project.midiParts.at(part).transpose = 2;
+	project.midiParts.at(part).velocity = 10;
+	Modifiers& modifiers = project.channels.at(project.trackById.at(piano).channel).modifiers;
+	modifiers.transpose = 5;
+	modifiers.lengthCompression = {2, 1};
+	modifiers.random[0] = {RandomTarget::Position, g_quarter / 4, g_quarter / 4};
+	modifiers.range[0] = {RangeTarget::NoteFilter, 0, 70};
+	MergeSettings settings;
+	settings.end = project.tempo.toSamples(4 * g_quarter, project.sampleRate);
+	settings.tracks = {piano};
+	const auto merged = [&project](const PartChanges& changes) -> const MidiPart&
+	{
+		REQUIRE(changes.addedParts.size() == 1);
+		const MidiPart& result = project.midiParts.at(changes.addedParts[0]);
+		CHECK(result.transpose == 0);
+		CHECK(result.velocity == 0);
+		for (const auto& [id, note] : result.notes)
+			CHECK(velocityToMidi1(note.velocity) == 74);
+		return result;
+	};
+
+	SECTION("without includeInserts, the parts' transpose and velocity")
+	{
+		CHECK(notesOf(merged(merge(project, settings))) ==
+			std::vector<std::vector<int64_t>>{{0, 62, 10, 0}, {0, 72, 10, 0}});
+	}
+	SECTION("with includeInserts, also the track's MIDI modifiers, as playback applies them")
+	{
+		settings.includeInserts = true;
+		// 60 + 2 + 5 plays 1/16 later and twice as long; 70 + 7 is outside the note filter.
+		CHECK(
+			notesOf(merged(merge(project, settings))) == std::vector<std::vector<int64_t>>{{g_quarter / 4, 67, 20, 0}});
+	}
+	SECTION("bypassed modifiers don't count")
+	{
+		settings.includeInserts = true;
+		modifiers.bypass = true;
+		CHECK(notesOf(merged(merge(project, settings))) ==
+			std::vector<std::vector<int64_t>>{{0, 62, 10, 0}, {0, 72, 10, 0}});
+	}
+}
+
+TEST_CASE("merge leaves out muted parts and, by default, the tracks that don't play", "[unit]")
+{
+	Project project = newProject();
+	const ObjectId piano = addTrack(project, TrackType::Instrument, "Piano");
+	const ObjectId organ = addTrack(project, TrackType::Instrument, "Organ");
+	const ObjectId strings = addTrack(project, TrackType::Midi, "Strings");
+	const ObjectId vocals = addTrack(project, TrackType::Audio, "Vocals");
+	const ObjectId group = addTrack(project, TrackType::Group, "Group");
+	const auto channel = [&project](ObjectId track) -> Channel&
+	{ return project.channels.at(project.trackById.at(track).channel); };
+	channel(strings).output = channel(organ).id;
+	addPart(project, piano, 0, g_quarter, PartBuilder().note(1, 0, 10, 60).part);
+	addPart(project, organ, 0, g_quarter, PartBuilder().note(1, 0, 10, 62).part);
+	addPart(project, strings, 0, g_quarter, PartBuilder().note(1, 0, 10, 64).part);
+	const ObjectId muted = addPart(project, piano, 0, g_quarter, PartBuilder().note(1, 0, 10, 65).part);
+	project.midiParts.at(muted).mute = true;
+
+	CHECK(playingTracks(project) == std::vector<ObjectId>{piano, organ, strings});
+	SECTION("a muted part is left out")
+	{
+		MergeSettings settings;
+		settings.end = project.tempo.toSamples(4 * g_quarter, project.sampleRate);
+		const PartChanges changes = merge(project, settings);
+		REQUIRE(changes.addedParts.size() == 1);
+		CHECK(notesOf(project.midiParts.at(changes.addedParts[0])) ==
+			std::vector<std::vector<int64_t>>{{0, 60, 10, 0}, {0, 62, 10, 0}, {0, 64, 10, 0}});
+	}
+	SECTION("muted channels")
+	{
+		channel(piano).mute = true;
+		CHECK(playingTracks(project) == std::vector<ObjectId>{organ, strings});
+		// A MIDI track plays through its instrument's channel.
+		channel(organ).mute = true;
+		CHECK(playingTracks(project).empty());
+	}
+	SECTION("solo")
+	{
+		channel(organ).solo = true;
+		// The MIDI track that plays into the soloed channel is heard with it.
+		CHECK(playingTracks(project) == std::vector<ObjectId>{organ, strings});
+		// Soloed and muted, it doesn't play.
+		channel(organ).mute = true;
+		CHECK(playingTracks(project).empty());
+		channel(organ).mute = false;
+		channel(organ).solo = false;
+		channel(vocals).solo = true;
+		CHECK(playingTracks(project).empty());
+	}
+	SECTION("a muted group channel that a track plays into")
+	{
+		channel(piano).output = channel(group).id;
+		channel(group).mute = true;
+		CHECK(playingTracks(project) == std::vector<ObjectId>{organ, strings});
+	}
+	SECTION("a disabled track")
+	{
+		project.trackById.at(organ).enabled = false;
+		CHECK(playingTracks(project) == std::vector<ObjectId>{piano});
+	}
+}
+
+TEST_CASE("velocity adds, compresses, limits, fixes and varies the velocities of the selected notes", "[unit]")
+{
+	const auto run = [](const VelocitySettings& settings, const NoteSelection& selection = {})
+	{
+		PartBuilder builder;
+		builder.note(1, 0, 10, 60, 0, 6553).note(2, 10, 10, 62, 0, 32768).note(3, 20, 10, 64, 0, 58982);
+		builder.part.id = 7;
+		changeVelocities(builder.part, selection, settings);
+		std::vector<double> velocities;
+		velocities.reserve(builder.part.notes.size());
+		for (const auto& [id, note] : builder.part.notes)
+			velocities.push_back(std::round(note.velocity / 655.35) / 100.0); // to two decimals
+		return velocities;
+	};
+	VelocitySettings settings;
+	settings.amount = 0.2;
+	CHECK(run(settings) == std::vector<double>{0.3, 0.7, 1.0});
+	settings.amount = -0.2;
+	CHECK(run(settings) == std::vector<double>{0.0, 0.3, 0.7});
+	CHECK(run(settings, NoteSelection({2})) == std::vector<double>{0.1, 0.3, 0.9});
+
+	settings.type = VelocityChange::Compress;
+	settings.ratio = 0.5;
+	CHECK(run(settings) == std::vector<double>{0.05, 0.25, 0.45});
+	settings.ratio = 2.0;
+	CHECK(run(settings) == std::vector<double>{0.2, 1.0, 1.0});
+
+	settings.type = VelocityChange::Limit;
+	settings.lower = 0.2;
+	settings.upper = 0.6;
+	CHECK(run(settings) == std::vector<double>{0.2, 0.5, 0.6});
+
+	settings.type = VelocityChange::Fixed;
+	settings.amount = 0.4;
+	CHECK(run(settings) == std::vector<double>{0.4, 0.4, 0.4});
+
+	// Variance lowers each note by up to its part, the same each time.
+	settings.type = VelocityChange::Variance;
+	settings.variance = 0.0;
+	CHECK(run(settings) == std::vector<double>{0.1, 0.5, 0.9});
+	settings.variance = 0.5;
+	const std::vector<double> varied = run(settings);
+	CHECK(run(settings) == varied);
+	const std::vector<double> before = {0.1, 0.5, 0.9};
+	bool lowered = false;
+	for (size_t i = 0; i < 3; ++i)
+	{
+		CHECK(varied[i] <= before[i]);
+		CHECK(varied[i] >= (before[i] * 0.5) - 0.01);
+		lowered = lowered || varied[i] < before[i];
+	}
+	CHECK(lowered);
+}
+
+TEST_CASE("extract MIDI automation moves continuous controllers into automation lanes", "[unit]")
+{
+	Project project = newProject();
+	const ObjectId track = addTrack(project, TrackType::Instrument, "Keys");
+	const ObjectId part = addPart(project, track, 4 * g_quarter, 4 * g_quarter,
+		PartBuilder()
+			.note(1, 0, 10, 60)
+			.cc(2, g_quarter, 7, 127)
+			.cc(3, 0, 7, 0)
+			.cc(4, 0, 1, 64, 2)                                // modulation on channel 3
+			.cc(5, 0, 64, 127)                                 // the sustain pedal, a switch, stays
+			.cc(6, 8 * g_quarter, 7, 50)                       // past the part's end, doesn't play: stays
+			.controller(7, 0, ControllerType::PitchBend, 0, 5) // stays
+			.part);
+	const ObjectId muted = addPart(project, track, 16 * g_quarter, g_quarter, PartBuilder().cc(1, 0, 7, 10).part);
+	project.midiParts.at(muted).mute = true;
+	// A lane the track has for CC 7 on channel 1 keeps its points outside the part.
+	AutomationLane existing;
+	existing.id = project.newId();
+	existing.track = track;
+	existing.target.type = AutomationTargetType::Controller;
+	existing.target.number = 7;
+	for (const Ticks at : {Ticks{0}, 5 * g_quarter, 8 * g_quarter})
+	{
+		AutomationPoint point;
+		point.id = project.newId();
+		point.position = {TimeBase::Musical, at};
+		point.value = 0.25;
+		point.shape = AutomationShape::Step;
+		existing.points[point.id] = point;
+	}
+	project.automation[existing.id] = existing;
+
+	const AutomationChanges changes = extractAutomation(project, {part, muted});
+	CHECK(changes.changedParts == std::vector<ObjectId>{part});
+	CHECK(changes.changedLanes == std::vector<ObjectId>{existing.id});
+	REQUIRE(changes.addedLanes.size() == 1);
+
+	// (position, value) of a lane's points, in order.
+	const auto pointsOf = [&project](ObjectId lane)
+	{
+		std::vector<std::pair<int64_t, double>> points;
+		for (const auto& [id, point] : project.automation.at(lane).points)
+		{
+			CHECK(point.shape == AutomationShape::Step);
+			points.emplace_back(point.position.value, std::round(point.value * 1000.0) / 1000.0);
+		}
+		std::sort(points.begin(), points.end());
+		return points;
+	};
+	CHECK(pointsOf(existing.id) ==
+		std::vector<std::pair<int64_t, double>>{
+			{0, 0.25}, {4 * g_quarter, 0.0}, {5 * g_quarter, 1.0}, {8 * g_quarter, 0.25}});
+	const AutomationLane& modulation = project.automation.at(changes.addedLanes[0]);
+	CHECK(modulation.track == track);
+	CHECK(modulation.target.type == AutomationTargetType::Controller);
+	CHECK(modulation.target.number == 1);
+	CHECK(modulation.target.channel == 2);
+	CHECK(modulation.read);
+	CHECK(pointsOf(modulation.id) == std::vector<std::pair<int64_t, double>>{{4 * g_quarter, 0.5}});
+
+	CHECK(controllerIds(project.midiParts.at(part)).size() == 3);
+	CHECK(laneOf(project.midiParts.at(part), 7) == std::vector<std::pair<Ticks, int>>{{8 * g_quarter, 50}});
+	CHECK(laneOf(project.midiParts.at(part), 64).size() == 1);
+	CHECK(project.midiParts.at(muted).controllers.size() == 1);
+
+	SECTION("on a linear track, the points are in samples")
+	{
+		Project linear = newProject();
+		const ObjectId keys = addTrack(linear, TrackType::Instrument, "Keys");
+		linear.trackById.at(keys).timeBase = TimeBase::Linear;
+		const auto second = static_cast<Samples>(linear.sampleRate);
+		const ObjectId onLinear = addPart(linear, keys, second, second, PartBuilder().cc(1, g_quarter, 7, 127).part);
+		const AutomationChanges result = extractAutomation(linear, {onLinear});
+		REQUIRE(result.addedLanes.size() == 1);
+		const AutomationPoint& point = linear.automation.at(result.addedLanes[0]).points.begin()->second;
+		CHECK(point.position.base == TimeBase::Linear);
+		CHECK(point.position.value == second + linear.tempo.toSamples(g_quarter, linear.sampleRate));
+	}
+
+	SECTION("overlapping parts keep each other's points and clear only the lane's earlier ones")
+	{
+		Project overlap = newProject();
+		const ObjectId keys = addTrack(overlap, TrackType::Instrument, "Keys");
+		const ObjectId first =
+			addPart(overlap, keys, 0, 4 * g_quarter, PartBuilder().cc(1, 2 * g_quarter, 7, 127).part);
+		const ObjectId second =
+			addPart(overlap, keys, 2 * g_quarter, 4 * g_quarter, PartBuilder().cc(1, g_quarter, 7, 0).part);
+		AutomationLane lane;
+		lane.id = overlap.newId();
+		lane.track = keys;
+		lane.target.type = AutomationTargetType::Controller;
+		lane.target.number = 7;
+		// The first point lies in the second part's range, the other after it.
+		for (const Ticks at : {5 * g_quarter, 7 * g_quarter})
+		{
+			AutomationPoint point;
+			point.id = overlap.newId();
+			point.position = {TimeBase::Musical, at};
+			point.value = 0.25;
+			point.shape = AutomationShape::Step;
+			lane.points[point.id] = point;
+		}
+		overlap.automation[lane.id] = lane;
+
+		const AutomationChanges result = extractAutomation(overlap, {first, second});
+		CHECK(result.changedLanes == std::vector<ObjectId>{lane.id});
+		CHECK(result.addedLanes.empty());
+		std::vector<std::pair<int64_t, double>> points;
+		for (const auto& [id, point] : overlap.automation.at(lane.id).points)
+			points.emplace_back(point.position.value, std::round(point.value * 1000.0) / 1000.0);
+		std::sort(points.begin(), points.end());
+		CHECK(points ==
+			std::vector<std::pair<int64_t, double>>{{2 * g_quarter, 1.0}, {3 * g_quarter, 0.0}, {7 * g_quarter, 0.25}});
+	}
 }
 
 namespace
@@ -1113,6 +1515,7 @@ TEST_CASE("every MIDI function is a command that records an undo step", "[integr
 		{"midi.legato", {{"parts", parts}, {"overlap", -5}}},
 		{"midi.fixLengths", {{"parts", parts}, {"notes", {fixture.notes[0]}}, {"length", 20}}},
 		{"midi.fixVelocities", {{"parts", parts}, {"velocity", 1.0}}},
+		{"midi.velocity", {{"parts", parts}, {"type", "compress"}, {"ratio", 1.5}}},
 		{"midi.pedalToNoteLength", {{"parts", parts}}},
 		{"midi.deleteOverlaps", {{"parts", parts}, {"mode", "poly"}}},
 		{"midi.deleteDoubles", {{"parts", parts}}},
@@ -1125,7 +1528,9 @@ TEST_CASE("every MIDI function is a command that records an undo step", "[integr
 		{"midi.reverse", {{"parts", parts}}},
 		{"midi.invert", {{"parts", parts}}},
 		{"midi.dissolve", {{"parts", parts}, {"by", "pitch"}}},
+		{"midi.dissolve", {{"parts", parts}, {"by", "pitch"}, {"to", "lanes"}}},
 		{"midi.bounce", {{"parts", parts}}},
+		{"midi.extractAutomation", {{"parts", parts}}},
 		{"midi.merge", {{"start", 0}, {"end", 48000}}},
 	};
 	for (const auto& [command, parameters] : commands)
@@ -1181,6 +1586,16 @@ TEST_CASE("MIDI function commands change parts, announce them and check their pa
 	CHECK_THAT(reject(client, "midi.restrictPolyphony", {{"parts", {fixture.part}}, {"voices", 0}}),
 		ContainsSubstring("voices"));
 	CHECK_THAT(reject(client, "midi.deleteNotes", {{"parts", {fixture.part}}}), ContainsSubstring("minimum"));
+	CHECK_THAT(reject(client, "midi.velocity", {{"parts", {fixture.part}}, {"type", "add"}}),
+		ContainsSubstring("amount is required"));
+	CHECK_THAT(reject(client, "midi.velocity", {{"parts", {fixture.part}}, {"type", "compress"}, {"ratio", 4}}),
+		ContainsSubstring("ratio must be 0 to 3"));
+	CHECK_THAT(
+		reject(client, "midi.velocity", {{"parts", {fixture.part}}, {"type", "limit"}, {"lower", 0.6}, {"upper", 0.5}}),
+		ContainsSubstring("lower"));
+	CHECK_THAT(reject(client, "midi.dissolve",
+				   {{"parts", {fixture.part}}, {"by", "pitch"}, {"to", "lanes"}, {"optimize", true}}),
+		ContainsSubstring("optimize"));
 	CHECK_THAT(reject(client, "midi.merge", {{"start", 100}, {"end", 100}}), ContainsSubstring("end"));
 	const ObjectId audio = run(client, "track.add", {{"type", "audio"}}).at("track").at("id").get<ObjectId>();
 	CHECK_THAT(reject(client, "midi.merge", {{"start", 0}, {"end", 100}, {"destination", audio}}),
@@ -1204,12 +1619,14 @@ TEST_CASE("merge, dissolve and bounce commands return and announce the parts and
 	const Json dissolved = run(client, "midi.dissolve", {{"parts", {fixture.part}}, {"by", "channel"}});
 	CHECK(dissolved.at("tracks").size() == 1);
 	CHECK(dissolved.at("parts").size() == 1);
-	CHECK(dissolved.at("changedParts").empty());
-	CHECK(dissolved.at("removedParts") == Json{fixture.part});
+	CHECK(dissolved.at("changedParts") == Json{fixture.part});
+	CHECK(dissolved.at("removedParts").empty());
 	const Json project = run(client, "project.get");
 	CHECK(project.at("tracks").size() == 2);
 	CHECK(project.at("tracks")[1].at("name") == "Piano Ch 1");
+	CHECK(project.at("midiParts")[0].at("mute") == true);
 
+	// The muted part stays out of the merge; the new track plays through the piano.
 	const Json merged =
 		run(client, "midi.merge", {{"start", 0}, {"end", 48000}, {"destination", fixture.track}, {"name", "Merged"}});
 	CHECK(merged.at("tracks").empty());
@@ -1228,6 +1645,60 @@ TEST_CASE("merge, dissolve and bounce commands return and announce the parts and
 			CHECK(part.at("controllers").size() == 4); // the pedal's release is at the range's end
 		}
 	CHECK(found);
+
+	// includeInserts plays the track's MIDI modifiers into the merged notes.
+	const Json channel = run(client, "project.get").at("tracks")[0].at("channel");
+	run(client, "channel.set", {{"channel", channel}, {"modifiers", {{"transpose", 12}}}});
+	const Json withInserts = run(client, "midi.merge",
+		{{"start", 0}, {"end", 48000}, {"tracks", {fixture.track}}, {"destination", fixture.track},
+			{"includeInserts", true}});
+	const auto insertsPart = withInserts.at("parts")[0].get<ObjectId>();
+	std::vector<int> pitches;
+	const Json withInsertsProject = run(client, "project.get");
+	for (const Json& part : withInsertsProject.at("midiParts"))
+		if (part.at("id") == insertsPart)
+			for (const Json& note : part.at("notes"))
+				pitches.push_back(note.at("pitch").get<int>());
+	std::sort(pitches.begin(), pitches.end());
+	CHECK(pitches == std::vector<int>{72, 76, 76});
+}
+
+TEST_CASE("merge refuses when no MIDI track plays; extract MIDI automation announces lanes and parts", "[integration]")
+{
+	Fixture fixture;
+	Client& client = fixture.client;
+	const Json channel = run(client, "project.get").at("tracks")[0].at("channel");
+	run(client, "channel.set", {{"channel", channel}, {"mute", true}});
+	CHECK_THAT(reject(client, "midi.merge", {{"start", 0}, {"end", 48000}}), ContainsSubstring("plays"));
+	// Named tracks merge, muted or not.
+	run(client, "midi.merge", {{"start", 0}, {"end", 48000}, {"tracks", {fixture.track}}});
+
+	while (client.poll())
+	{
+	}
+	const Json result = run(client, "midi.extractAutomation", {{"parts", {fixture.part}}});
+	CHECK(result.at("parts") == Json{fixture.part});
+	CHECK(result.at("lanes").size() == 1);
+	CHECK(result.at("changedLanes").empty());
+	const Json lanes = run(client, "automationLane.list", {{"track", fixture.track}}).at("lanes");
+	REQUIRE(lanes.size() == 1);
+	CHECK(lanes[0].at("target").at("type") == "controller");
+	CHECK(lanes[0].at("target").at("number") == 7);
+	CHECK(lanes[0].at("points").size() == 3);
+	CHECK(fixture.partJson().at("controllers").size() == 2); // the sustain pedal
+	bool laneAdded = false;
+	bool partChanged = false;
+	while (const std::optional<Message> message = client.poll())
+		if (const auto* event = std::get_if<Event>(&*message))
+		{
+			laneAdded =
+				laneAdded || (event->name == "automationLane.added" && event->data.at("lane").at("points").size() == 3);
+			partChanged = partChanged || event->name == "midiPart.changed";
+		}
+	CHECK(laneAdded);
+	CHECK(partChanged);
+	// Once more, nothing is left to extract.
+	CHECK(run(client, "midi.extractAutomation", {{"parts", {fixture.part}}}).at("parts").empty());
 }
 
 TEST_CASE("sustain pedal to note length holds notes to the end of a part on a linear track", "[integration]")

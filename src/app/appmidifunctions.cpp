@@ -1,16 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The MIDI menu in the app (#133, docs/features/midi-functions.md, reference manual pp. 1118-1131): MIDI > Functions
 // on an editor's selected notes or the project window's selected MIDI parts, as quantizing takes them, Bounce MIDI, and
-// the dialogs of Transpose Setup, Merge MIDI in Loop, Dissolve Part and Restrict Polyphony.
+// the dialogs of Transpose Setup, Merge MIDI in Loop, Dissolve Part, Velocity, Delete Notes and Restrict Polyphony.
 #include "app/appui.h"
 
+#include "engine/midi/quantize.h"
 #include "engine/midi/quantizesettings.h"
+#include "engine/time/signaturemap.h"
 #include "engine/time/tempomap.h"
 
 #include <RmlUi/Core/Element.h>
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <functional>
 #include <map>
 #include <optional>
@@ -33,10 +36,10 @@ namespace gnubase::app
 			const char* description;
 		};
 
-		constexpr std::array<MidiFunction, 12> g_midiFunctions{{
+		constexpr std::array<MidiFunction, 13> g_midiFunctions{{
 			{"midi.functionsLegato", "midi.legato", nullptr, true,
 				"Extends the selected MIDI notes or parts' notes to the next notes, by Legato Overlap "
-				"(editing.legatoOverlap)."},
+				"(editing.legatoOverlap), or to the next selected notes with editing.legatoBetweenSelected."},
 			{"midi.functionsFixedLengths", "midi.fixLengths", nullptr, true,
 				"Sets the length of the selected MIDI notes or parts' notes to the length quantize value."},
 			{"midi.functionsFixedVelocity", "midi.fixVelocities", nullptr, true,
@@ -55,6 +58,8 @@ namespace gnubase::app
 				"Deletes the continuous controllers of the selected MIDI parts."},
 			{"midi.functionsThinOut", "midi.thinOut", nullptr, false,
 				"Thins out the controller data of the selected MIDI parts."},
+			{"midi.functionsExtractAutomation", "midi.extractAutomation", nullptr, false,
+				"Moves the continuous controllers of the selected MIDI parts into automation lanes of their tracks."},
 			{"midi.functionsReverse", "midi.reverse", nullptr, true,
 				"Reverses the playback order of the selected MIDI notes or parts' events."},
 			{"midi.functionsMirror", "midi.invert", nullptr, true,
@@ -106,7 +111,7 @@ namespace gnubase::app
 						parameters["velocity"] = target.insertVelocity;
 					if (command == "midi.legato")
 					{
-						// The setting's ticks are 480 to a quarter note.
+						// Legato Overlap, whose ticks are 480 to a quarter note, and Legato Mode (p. 1599).
 						m_binding.send("settings.get", {{"key", "editing.legatoOverlap"}},
 							[this, parameters = parameters](const engine::Result& result) mutable
 							{
@@ -114,7 +119,14 @@ namespace gnubase::app
 									return;
 								parameters["overlap"] =
 									result.value.at("value").get<int64_t>() * (time::g_ticksPerQuarter / 480);
-								m_binding.send("midi.legato", parameters);
+								m_binding.send("settings.get", {{"key", "editing.legatoBetweenSelected"}},
+									[this, parameters = std::move(parameters)](const engine::Result& mode) mutable
+									{
+										if (!mode.ok())
+											return;
+										parameters["betweenSelected"] = mode.value.at("value").get<bool>();
+										m_binding.send("midi.legato", parameters);
+									});
 							});
 						return;
 					}
@@ -135,11 +147,13 @@ namespace gnubase::app
 							{
 								if (!result.ok())
 									return;
-								const std::optional<engine::midi::NoteValue> grid = engine::midi::noteValueFromString(
-									result.value.at("settings").at("grid").get<std::string>());
-								if (!grid.has_value())
-									return;
-								parameters["length"] = grid->ticks();
+								// The grid's step with its tuplets, as Edit > Quantize Lengths takes it; swing and
+								// grooves, which change from step to step, don't count.
+								engine::midi::QuantizeSettings settings =
+									engine::midi::quantizeSettingsFromJson(result.value.at("settings"));
+								settings.groove.reset();
+								const engine::midi::QuantizeGrid grid(settings, time::SignatureMap());
+								parameters["length"] = std::max<int64_t>(1, std::llround(grid.step()));
 								m_binding.send("midi.fixLengths", parameters);
 							});
 						return;
@@ -149,16 +163,18 @@ namespace gnubase::app
 			m_keys.enableWhen(each.id, hasTarget);
 		}
 
-		// The functions with a dialog get what they work on as the document's attributes.
+		// The functions with a dialog get what they work on as the document's attributes, and the engine's ticks per
+		// tick of 480 to a quarter note, the unit the dialogs show. One dialog at a time: its Lua's state is global.
 		const auto openFunction = [this](ui::Window& window, const std::string& function, const Json& parameters)
 		{
-			std::vector<std::pair<std::string, std::string>> attributes = {{"function", function}};
+			std::vector<std::pair<std::string, std::string>> attributes = {
+				{"function", function}, {"tickScale", std::to_string(time::g_ticksPerQuarter / 480)}};
 			for (const char* key : {"parts", "notes"})
 				if (parameters.contains(key))
 					attributes.emplace_back(key, listOf(parameters.at(key).get<std::vector<uint64_t>>()));
 			if (parameters.contains("destination"))
 				attributes.emplace_back("destination", std::to_string(parameters.at("destination").get<uint64_t>()));
-			openDialog(window, "midi-function.rml", attributes);
+			openOnce(window, "midi-function.rml", m_midiFunction, attributes);
 		};
 		m_keys.add({"midi.transposeSetup", "Opens the Transpose Setup dialog for the selected MIDI notes or parts.",
 			[openFunction, targetOf](ui::Window& window, Rml::Element* zone)
@@ -177,6 +193,22 @@ namespace gnubase::app
 					openFunction(window, "restrictPolyphony", parameters);
 			}});
 		m_keys.enableWhen("midi.functionsRestrictPolyphony", hasTarget);
+		m_keys.add({"midi.functionsVelocity", "Opens the Velocity dialog for the selected MIDI notes or parts.",
+			[openFunction, targetOf](ui::Window& window, Rml::Element* zone)
+			{
+				const auto [target, parameters] = targetOf(window, zone, true);
+				if (!target.parts.empty())
+					openFunction(window, "velocity", parameters);
+			}});
+		m_keys.enableWhen("midi.functionsVelocity", hasTarget);
+		m_keys.add({"midi.functionsDeleteNotes", "Opens the Delete Notes dialog for the selected MIDI notes or parts.",
+			[openFunction, targetOf](ui::Window& window, Rml::Element* zone)
+			{
+				const auto [target, parameters] = targetOf(window, zone, true);
+				if (!target.parts.empty())
+					openFunction(window, "deleteNotes", parameters);
+			}});
+		m_keys.enableWhen("midi.functionsDeleteNotes", hasTarget);
 
 		// Merge MIDI in Loop (pp. 1119-1120): onto the first selected MIDI or instrument track, or a new one.
 		m_keys.add({"midi.mergeInLoop",
