@@ -46,7 +46,8 @@ namespace gnubase::ui
 		// has a value attribute.
 		//
 		// A click selects a row. With the multiple attribute, Ctrl-click (Cmd-click on macOS) adds or removes a row
-		// and Shift-click selects the rows from the last one clicked. Up and Down move the selection (Shift extends
+		// and Shift-click selects the rows from the last one clicked; with shiftdeselects too, Shift-click on a
+		// selected row deselects it, as in the track list. Up and Down move the selection (Shift extends
 		// it), Page Up and Page Down by one less than the rows the view shows, Home and End go to the first and last
 		// row. Selected rows have the state class .selected. The view's
 		// value attribute is the selected rows' values, separated by commas, and each change sends a change event
@@ -237,12 +238,17 @@ namespace gnubase::ui
 						return;
 					}
 				const bool multiple = HasAttribute("multiple");
+				const bool shift = event.GetParameter("shift_key", false);
 				if (multiple && (event.GetParameter("ctrl_key", false) || event.GetParameter("meta_key", false)))
 				{
 					row->SetClass("selected", !row->IsClassSet("selected"));
 					m_anchor = row->GetObserverPtr();
 				}
-				else if (multiple && event.GetParameter("shift_key", false) && m_anchor)
+				else if (multiple && shift && HasAttribute("shiftdeselects") && row->IsClassSet("selected"))
+				{
+					row->SetClass("selected", false); // the range keeps going from the last row clicked
+				}
+				else if (multiple && shift && m_anchor)
 				{
 					selectRange(visible(all), *row);
 				}

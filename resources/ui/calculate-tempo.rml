@@ -1,0 +1,65 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Calculate Tempo from MIDI Events (docs/features/tempo-detection.md, reference manual pp. 1459-1460):
+     ui::EventDisplay opens it with midi.calculateTempo, and on OK sends tempo.fromMidi for the selected MIDI parts with
+     the Distance of Notes (ticks, a quarter being 1720320) and Begin at Bar Start. -->
+<rml>
+<head>
+	<title>Calculate Tempo from MIDI Events</title>
+	<style>
+		dialog
+		{
+			width: 300dp;
+		}
+
+		.row
+		{
+			display: flex;
+			align-items: center;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.row label
+		{
+			flex: 1;
+		}
+
+		.buttons
+		{
+			justify-content: flex-end;
+		}
+
+		.buttons button
+		{
+			margin-left: 6dp;
+		}
+	</style>
+</head>
+<body>
+	<dialog id="calculate-tempo-dialog">
+		<div class="dialog-titlebar">Calculate Tempo from MIDI Events</div>
+		<div class="row">
+			<label for="calculate-tempo-distance">Distance of Notes</label>
+			<select id="calculate-tempo-distance">
+				<option value="6881280">1/1</option>
+				<option value="3440640">1/2</option>
+				<option value="1720320" selected="selected">1/4</option>
+				<option value="860160">1/8</option>
+				<option value="430080">1/16</option>
+				<option value="2293760">1/2 Triplet</option>
+				<option value="1146880">1/4 Triplet</option>
+				<option value="573440">1/8 Triplet</option>
+				<option value="2580480">1/4 Dotted</option>
+				<option value="1290240">1/8 Dotted</option>
+			</select>
+		</div>
+		<div class="row">
+			<label for="calculate-tempo-bar-start">Begin at Bar Start</label>
+			<input type="checkbox" id="calculate-tempo-bar-start"/>
+		</div>
+		<div class="row buttons">
+			<button result="cancel">Cancel</button>
+			<button class="primary" result="ok">OK</button>
+		</div>
+	</dialog>
+</body>
+</rml>

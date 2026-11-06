@@ -822,7 +822,8 @@ TEST_CASE("playing MIDI parts through an instrument, with edits, stops and cycle
 	CHECK(g_violations == 0);
 }
 
-TEST_CASE("playing automation of volume, pan, instrument and plugin parameters and controllers passes the RT checker",
+TEST_CASE("playing automation of volume, pan, instrument, plugin and strip parameters and controllers passes the RT "
+		  "checker",
 	"[integration]")
 {
 	using gnubase::engine::Json;
@@ -859,6 +860,18 @@ TEST_CASE("playing automation of volume, pan, instrument and plugin parameters a
 			{"points", points({{0, -30.0}, {2000, 0.0}, {5000, -6.0}, {9000, -60.0}}, "linear")}});
 	run("automationPoint.add",
 		{{"lane", lane(audio, {{"type", "pan"}})}, {"points", points({{0, -1.0}, {4000, 1.0}, {8000, 0.0}}, "curve")}});
+	// The strip's sections: the pre gain, a switch, the EQ band 3 and its frequency, and the limiter going on and off.
+	const auto strip = [](uint32_t parameter) { return Json{{"type", "strip"}, {"parameter", parameter}}; };
+	run("automationPoint.add",
+		{{"lane", lane(audio, strip(0))}, {"points", points({{0, -12.0}, {3000, 6.0}, {6000, 0.0}}, "linear")}});
+	run("automationPoint.add",
+		{{"lane", lane(audio, strip(1))}, {"points", points({{0, 0.0}, {2500, 1.0}, {5000, 0.0}}, "step")}});
+	run("automationPoint.add",
+		{{"lane", lane(audio, strip(31))}, {"points", points({{0, 0.0}, {1500, 1.0}, {8000, 0.0}}, "step")}});
+	run("automationPoint.add",
+		{{"lane", lane(audio, strip(33))}, {"points", points({{0, 200.0}, {4000, 8000.0}, {9000, 500.0}}, "curve")}});
+	run("automationPoint.add",
+		{{"lane", lane(audio, strip(70))}, {"points", points({{0, 1.0}, {3500, 0.0}, {7000, 1.0}}, "step")}});
 	const Json slot = run("plugin.insert", {{"channel", audio.at("channel").at("id")}, {"plugin", "builtin:gainPan"}})
 						  .at("slot")
 						  .at("id");

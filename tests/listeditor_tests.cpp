@@ -77,7 +77,7 @@ TEST_CASE("an editor shows its parts in the key editor or the list editor", "[un
 	f.call("editor.set", {{"editor", "window"}, {"content", "list"}});
 	// A closed editor opens with the key editor again.
 	CHECK(f.call("editor.close", {{"editor", "window"}}).at("content") == "key");
-	CHECK_THAT(f.fails("editor.open", {{"editor", "window"}, {"parts", {f.part}}, {"content", "drum"}}),
+	CHECK_THAT(f.fails("editor.open", {{"editor", "window"}, {"parts", {f.part}}, {"content", "score"}}),
 		ContainsSubstring("content"));
 }
 

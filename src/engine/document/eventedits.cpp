@@ -20,6 +20,7 @@
 #include <cstdlib>
 #include <limits>
 #include <map>
+#include <numeric>
 #include <optional>
 #include <set>
 #include <string>
@@ -116,6 +117,37 @@ namespace gnubase::engine
 				if (event.part == part)
 					events.push_back(&event);
 			return events;
+		}
+
+		// An audio part's events in the order they are stacked (#99), the one in front last.
+		std::vector<AudioEvent*> stackedIn(Project& project, ObjectId part)
+		{
+			std::vector<AudioEvent*> events = eventsIn(project, part);
+			std::stable_sort(events.begin(), events.end(),
+				[](const AudioEvent* a, const AudioEvent* b) { return frontOf(*a) < frontOf(*b); });
+			return events;
+		}
+
+		// The indices of items in the order they are stacked (#99), the one in front last: an audio part where its
+		// event in front is. MIDI parts, which don't stack, come first. Copying or bringing items to the front in this
+		// order keeps it among them.
+		std::vector<size_t> stackOrder(Project& project, const std::vector<Item>& items)
+		{
+			std::vector<ObjectId> places(items.size(), 0);
+			for (size_t index = 0; index < items.size(); ++index)
+			{
+				const Item& item = items[index];
+				if (item.audio != nullptr)
+					places[index] = frontOf(*item.audio);
+				else if (item.audioPart != nullptr)
+					for (const AudioEvent* event : eventsIn(project, item.audioPart->id))
+						places[index] = std::max(places[index], frontOf(*event));
+			}
+			std::vector<size_t> order(items.size());
+			std::iota(order.begin(), order.end(), size_t{0});
+			std::stable_sort(
+				order.begin(), order.end(), [&places](size_t a, size_t b) { return places[a] < places[b]; });
+			return order;
 		}
 
 		// The items a command names in events, each once. Editing ones must not be locked.
@@ -321,14 +353,15 @@ namespace gnubase::engine
 			}
 			if (item.audioPart != nullptr)
 			{
-				// Copies of its events, with the crossfades between them.
+				// Copies of its events, with the crossfades between them. They come in front, as added last, in the
+				// order they are stacked: their new ids follow it.
 				AudioPart part = *item.audioPart;
 				part.id = project.newId();
 				part.lock = false;
 				AudioPart& copy = project.audioParts[part.id] = part;
 				std::map<ObjectId, ObjectId> ids;
 				std::vector<AudioEvent> events;
-				for (const AudioEvent* event : eventsIn(project, item.audioPart->id))
+				for (const AudioEvent* event : stackedIn(project, item.audioPart->id))
 				{
 					ids[event->id] = project.newId();
 					events.push_back(*event);
@@ -341,6 +374,7 @@ namespace gnubase::engine
 					else
 						event.crossfade.from = from->second;
 					event.id = ids.at(event.id);
+					event.front = 0;
 					event.part = copy.id;
 					project.audioEvents[event.id] = event;
 				}
@@ -559,6 +593,8 @@ namespace gnubase::engine
 			right.lane = part.lane;
 			right.transpose = part.transpose;
 			right.velocity = part.velocity;
+			right.rootKey = part.rootKey;
+			right.independent = part.independent;
 			for (auto it = part.notes.begin(); it != part.notes.end();)
 			{
 				Note& note = it->second;
@@ -665,16 +701,17 @@ namespace gnubase::engine
 			const std::vector<Item> items = itemsFrom(project, parameters, false);
 			const Shift shift = shiftFrom(parameters);
 			const bool shared = parameters.value("shared", false);
-			std::vector<Item> copies;
-			copies.reserve(items.size());
-			for (const Item& item : items)
+			// Copied in the order they are stacked, so that the copies keep it; returned in the order named.
+			std::vector<Item> copies(items.size());
+			for (const size_t index : stackOrder(project, items))
 			{
+				const Item& item = items[index];
 				const ObjectId track = parameters.value("track", item.track());
 				checkTrack(project, item, track);
 				const Item copy = copyOf(project, item, shared, context);
 				place(project, copy, shift, track);
 				announce(project, context, copy, "added");
-				copies.push_back(copy);
+				copies[index] = copy;
 			}
 			return {{"events", idsOf(copies)}};
 		}
@@ -689,15 +726,21 @@ namespace gnubase::engine
 			const bool musical = allMusical(items);
 			const auto [start, end] = block(project, items, musical);
 			require(end > start, g_tooShort);
+			// Each round copied in the order they are stacked, so that the copies keep it; returned in the order named.
+			const std::vector<size_t> order = stackOrder(project, items);
 			std::vector<Item> copies;
 			for (int64_t k = 1; k <= count; ++k)
-				for (const Item& item : items)
+			{
+				std::vector<Item> round(items.size());
+				for (const size_t index : order)
 				{
-					const Item copy = copyOf(project, item, shared, context);
+					const Item copy = copyOf(project, items[index], shared, context);
 					place(project, copy, {k * (end - start), musical}, copy.track());
 					announce(project, context, copy, "added");
-					copies.push_back(copy);
+					round[index] = copy;
 				}
+				copies.insert(copies.end(), round.begin(), round.end());
+			}
 			return {{"events", idsOf(copies)}};
 		}
 
@@ -728,6 +771,7 @@ namespace gnubase::engine
 			const int64_t from = inUnit(project, {time::TimeBase::Linear, left}, musical);
 			const int64_t to = inUnit(project, {time::TimeBase::Linear, right}, musical);
 			require((to - from) / length <= 1000, "the range holds more than 1000 copies");
+			const std::vector<size_t> order = stackOrder(project, items);
 			std::vector<Item> copies;
 			// Copies on the grid of the block's length, from the first that starts in the range to the right locator.
 			for (auto k =
@@ -736,8 +780,12 @@ namespace gnubase::engine
 			{
 				if (k == 0)
 					continue;
-				for (const Item& item : items)
+				// Each round copied in the order they are stacked, so that the copies keep it; returned in the order
+				// named.
+				std::vector<Item> round(items.size());
+				for (const size_t index : order)
 				{
+					const Item& item = items[index];
 					if (inUnit(project, item.position(), musical) + (k * length) >= to)
 						continue;
 					const Item copy = copyOf(project, item, shared, context);
@@ -745,8 +793,11 @@ namespace gnubase::engine
 					if (inUnit(project, endOf(project, copy), musical) > to)
 						setEnd(project, copy, {time::TimeBase::Linear, right}, false);
 					announce(project, context, copy, "added");
-					copies.push_back(copy);
+					round[index] = copy;
 				}
+				for (const Item& copy : round)
+					if (copy)
+						copies.push_back(copy);
 			}
 			return {{"events", idsOf(copies)}};
 		}
@@ -797,7 +848,9 @@ namespace gnubase::engine
 				}
 				else
 				{
-					result["midiParts"].push_back(toJson(*item.part));
+					Json part = toJson(*item.part);
+					part["rootKeyTranspose"] = rootKeyTranspose(copy, *item.part); // derived, as project.get gives it
+					result["midiParts"].push_back(std::move(part));
 				}
 			}
 			return result;
@@ -1255,8 +1308,16 @@ namespace gnubase::engine
 			const int64_t rowStart = inUnit(project, row[first].position(), musical);
 			const int64_t at =
 				inUnit(project, {time::TimeBase::Linear, parameters.at("position").get<time::Samples>()}, musical);
-			const auto length = [&project, musical](const Item& item)
-			{ return inUnit(project, endOf(project, item), musical) - inUnit(project, item.position(), musical); };
+			// An item's length in the unit when it starts at x. Audio events keep their length in samples, so on a
+			// musical track their length in ticks depends on where they start (#414).
+			const auto length = [&project, musical](const Item& item, int64_t x)
+			{
+				if (item.audio == nullptr || !musical)
+					return inUnit(project, endOf(project, item), musical) - inUnit(project, item.position(), musical);
+				const EventSpan span = eventSpan(project, *item.audio);
+				const time::Samples end = samples(project, {time::TimeBase::Musical, x}) + (span.end - span.start);
+				return ticks(project, {time::TimeBase::Linear, end}) - x;
+			};
 			// The others close up; the moved events go after each one whose middle they start past. An empty slot
 			// stands for them.
 			std::vector<Item> order;
@@ -1270,13 +1331,14 @@ namespace gnubase::engine
 					block.push_back(row[i]);
 					continue;
 				}
-				if (!placed && at < x + (length(row[i]) / 2))
+				const int64_t size = length(row[i], x);
+				if (!placed && at < x + (size / 2))
 				{
 					order.emplace_back();
 					placed = true;
 				}
 				order.push_back(row[i]);
-				x += length(row[i]);
+				x += size;
 			}
 			if (!placed)
 				order.emplace_back();
@@ -1285,7 +1347,7 @@ namespace gnubase::engine
 				for (const Item& item : slot ? std::vector<Item>{slot} : block)
 				{
 					const int64_t delta = x - inUnit(project, item.position(), musical);
-					x += length(item);
+					x += length(item, x);
 					if (delta == 0)
 						continue;
 					place(project, item, {delta, musical}, track);
@@ -1680,6 +1742,9 @@ namespace gnubase::engine
 					clipboard.automation.push_back(automationWithin(
 						project, lane, inBase(project, range.start, base), inBase(project, range.end, base)));
 				}
+			// In stack order: pasted copies stack in the order they are added, and a split moves no piece in the stack.
+			std::stable_sort(clipboard.audioEvents.begin(), clipboard.audioEvents.end(),
+				[](const AudioEvent& a, const AudioEvent& b) { return frontOf(a) < frontOf(b); });
 			return clipboard;
 		}
 
@@ -1750,7 +1815,8 @@ namespace gnubase::engine
 			}
 			else if (item.audioPart != nullptr)
 			{
-				for (AudioEvent* event : eventsIn(project, item.audioPart->id))
+				// In the order they are stacked, so that the part's events keep theirs.
+				for (AudioEvent* event : stackedIn(project, item.audioPart->id))
 					event->front = project.newId();
 			}
 			else
@@ -1776,8 +1842,9 @@ namespace gnubase::engine
 		Json bringToFront(Project& project, CommandContext& context)
 		{
 			const std::vector<Item> items = itemsFrom(project, context.parameters(), false);
-			for (const Item& item : items)
-				toFront(project, item, context);
+			// In the order they are stacked, so that they keep it among them.
+			for (const size_t index : stackOrder(project, items))
+				toFront(project, items[index], context);
 			return {{"events", idsOf(items)}};
 		}
 
@@ -1802,8 +1869,8 @@ namespace gnubase::engine
 						(samples(project, item.position()) >= start && samples(project, endOf(project, item)) <= end)))
 					taken.push_back(item);
 			require(!taken.empty(), "lane " + std::to_string(lane) + " has nothing from start to end");
-			for (const Item& item : taken)
-				toFront(project, item, context);
+			for (const size_t index : stackOrder(project, taken))
+				toFront(project, taken[index], context);
 			return {{"events", idsOf(taken)}};
 		}
 
@@ -1850,44 +1917,16 @@ namespace gnubase::engine
 			return Json::object();
 		}
 
-		Json pasteRange(Project& project, CommandContext& context, const std::optional<RangeClipboard>& stored)
+		// Pastes a range clipboard at a position onto tracks, one for each copied track. Returns what it pasted.
+		std::vector<Item> pasteClipboard(Project& project, const RangeClipboard& clipboard,
+			const std::vector<ObjectId>& tracks, time::Samples at, CommandContext& context)
 		{
-			if (!stored)
-				throw CommandError("nothing to paste: copy or cut a range first");
-			const RangeClipboard& clipboard = *stored;
-			const Json& parameters = context.parameters();
-			const time::Samples at = parameters.contains("position")
-				? parameters.at("position").get<time::Samples>()
-				: context.call("transport.get").at("position").get<time::Samples>();
-			require(at >= 0, "position must not be before the project start");
-			// Onto the tracks it came from, or from track on down.
-			std::vector<ObjectId> tracks = clipboard.tracks;
-			if (parameters.contains("track"))
-			{
-				const auto first = parameters.at("track").get<ObjectId>();
-				const std::vector<ObjectId> order = project.trackOrder();
-				const auto found = std::find(order.begin(), order.end(), first);
-				require(found != order.end(), "no track " + std::to_string(first));
-				require(static_cast<size_t>(order.end() - found) >= tracks.size(),
-					"there aren't enough tracks from track " + std::to_string(first) + " down for the " +
-						std::to_string(tracks.size()) + " copied tracks");
-				tracks.assign(found, found + static_cast<std::ptrdiff_t>(tracks.size()));
-			}
-			else
-			{
-				for (const ObjectId id : tracks)
-					require(project.trackById.count(id) != 0,
-						"track " + std::to_string(id) + " that the range was copied from is gone: paste onto a track");
-			}
 			const auto onto = [&clipboard, &tracks](ObjectId source)
 			{
 				const auto index =
 					std::find(clipboard.tracks.begin(), clipboard.tracks.end(), source) - clipboard.tracks.begin();
 				return tracks.at(static_cast<size_t>(index));
 			};
-			if (parameters.value("time", false))
-				insertSpace(project, tracks, at,
-					{clipboard.end - clipboard.start, clipboard.endTicks - clipboard.startTicks}, false, context);
 			const Gap shift{at - clipboard.start, ticks(project, {time::TimeBase::Linear, at}) - clipboard.startTicks};
 			std::vector<Item> added;
 			const auto paste = [&](const Item& item)
@@ -1909,11 +1948,21 @@ namespace gnubase::engine
 				parts[copied.id] = part.id;
 				pastedParts.push_back(&(project.audioParts[part.id] = part));
 			}
-			for (const AudioEvent& copied : clipboard.audioEvents)
+			// The events come in front, as added last, in the order they were stacked: their new ids follow it.
+			const std::vector<AudioEvent>& copiedEvents = clipboard.audioEvents;
+			std::vector<size_t> stacked(copiedEvents.size());
+			std::iota(stacked.begin(), stacked.end(), size_t{0});
+			std::stable_sort(stacked.begin(), stacked.end(),
+				[&copiedEvents](size_t a, size_t b) { return frontOf(copiedEvents[a]) < frontOf(copiedEvents[b]); });
+			std::vector<ObjectId> newIds(copiedEvents.size());
+			for (const size_t index : stacked)
+				newIds[index] = project.newId();
+			for (size_t index = 0; index < copiedEvents.size(); ++index)
 			{
+				const AudioEvent& copied = copiedEvents[index];
 				require(project.clips.count(copied.clip) != 0, "the clip of a copied audio event is gone");
 				AudioEvent event = copied;
-				event.id = project.newId();
+				event.id = newIds[index];
 				event.front = 0;
 				event.lock = false;
 				event.crossfade = Crossfade();
@@ -1943,7 +1992,113 @@ namespace gnubase::engine
 					if (lane.track == track && lane.target == copied.target)
 						pasteAutomation(project, lane, copied, shift, context);
 			}
-			return {{"events", idsOf(added)}};
+			return added;
+		}
+
+		Json pasteRange(Project& project, CommandContext& context, const std::optional<RangeClipboard>& stored)
+		{
+			if (!stored)
+				throw CommandError("nothing to paste: copy or cut a range first");
+			const RangeClipboard& clipboard = *stored;
+			const Json& parameters = context.parameters();
+			const time::Samples at = parameters.contains("position")
+				? parameters.at("position").get<time::Samples>()
+				: context.call("transport.get").at("position").get<time::Samples>();
+			require(at >= 0, "position must not be before the project start");
+			// Onto the tracks it came from, or from track on down.
+			std::vector<ObjectId> tracks = clipboard.tracks;
+			if (parameters.contains("track"))
+			{
+				const auto first = parameters.at("track").get<ObjectId>();
+				const std::vector<ObjectId> order = project.trackOrder();
+				const auto found = std::find(order.begin(), order.end(), first);
+				require(found != order.end(), "no track " + std::to_string(first));
+				require(static_cast<size_t>(order.end() - found) >= tracks.size(),
+					"there aren't enough tracks from track " + std::to_string(first) + " down for the " +
+						std::to_string(tracks.size()) + " copied tracks");
+				tracks.assign(found, found + static_cast<std::ptrdiff_t>(tracks.size()));
+			}
+			else
+			{
+				for (const ObjectId id : tracks)
+					require(project.trackById.count(id) != 0,
+						"track " + std::to_string(id) + " that the range was copied from is gone: paste onto a track");
+			}
+			if (parameters.value("time", false))
+				insertSpace(project, tracks, at,
+					{clipboard.end - clipboard.start, clipboard.endTicks - clipboard.startTicks}, false, context);
+			return {{"events", idsOf(pasteClipboard(project, clipboard, tracks, at, context))}};
+		}
+
+		// Flatten Chain (#167, reference manual pp. 407-411): from the start of the chain's first event on, the project
+		// becomes what the chain plays, every step's event repeated, one after the other. What lies before stays.
+		// Returns where the flattened chain starts and ends, in samples.
+		Json flattenChain(Project& project, CommandContext& context, bool keepTrack)
+		{
+			const Json& parameters = context.parameters();
+			const ArrangerChain* chain = activeArrangerChain(project);
+			if (parameters.contains("chain"))
+			{
+				const auto id = parameters.at("chain").get<ObjectId>();
+				const auto found = std::find_if(project.arranger.chains.begin(), project.arranger.chains.end(),
+					[id](const ArrangerChain& candidate) { return candidate.id == id; });
+				require(found != project.arranger.chains.end(), "no arranger chain " + std::to_string(id));
+				chain = &*found;
+			}
+			require(chain != nullptr && !chain->steps.empty(), "the arranger chain is empty");
+			struct Section
+			{
+				const ArrangerEvent* event = nullptr;
+				time::Samples start = 0;
+				time::Samples end = 0;
+			};
+			std::vector<Section> sections;
+			for (const ArrangerStep& step : chain->steps)
+				for (const ArrangerEvent& event : project.arranger.events)
+					if (event.id == step.event)
+						for (int r = 0; r < step.repeats; ++r)
+							sections.push_back({&event, samples(project, event.position), samples(project, event.end)});
+			require(!sections.empty(), "the arranger chain is empty");
+			const Project original = project;
+			const std::vector<ObjectId> tracks = project.trackOrder();
+			// Everything from the chain's start on goes, up to the end of the last thing in the project.
+			time::Samples last = 0;
+			for (const Item& item : itemsOn(project, tracks, true))
+				last = std::max(last, samples(project, endOf(project, item)));
+			for (const auto& [id, lane] : project.automation)
+				for (const auto& [pointId, point] : lane.points)
+					last = std::max(last, samples(project, point.position));
+			for (const Section& section : sections)
+				last = std::max(last, section.end);
+			const time::Samples start = sections.front().start;
+			deleteRange(project, {start, last + 1, tracks, false}, false, context);
+			// ponytail: sections follow each other in samples; on musical tracks with tempo changes a section may land
+			// a few ticks off its beat. Chain the positions in ticks if that matters.
+			time::Samples at = start;
+			std::vector<ArrangerEvent> placed;
+			for (const Section& section : sections)
+			{
+				pasteClipboard(
+					project, copyRange(original, {section.start, section.end, tracks, false}), tracks, at, context);
+				const time::TimeBase base = section.event->position.base;
+				placed.push_back(
+					{project.newId(), section.event->name, rebased(project, {time::TimeBase::Linear, at}, base),
+						rebased(project, {time::TimeBase::Linear, at + (section.end - section.start)}, base)});
+				at += section.end - section.start;
+			}
+			if (keepTrack) // the events where they now are, in a chain that plays them in order
+			{
+				ArrangerChain flat{chain->id, chain->name, {}};
+				for (ArrangerEvent& event : placed)
+				{
+					keepMinimumLength(project, event);
+					flat.steps.push_back({event.id, 1, ArrangerRepeat::Normal});
+				}
+				project.arranger = {placed, {flat}};
+				project.arrangerChain = flat.id;
+				context.emit("arranger.changed", arrangerJson(project));
+			}
+			return {{"start", start}, {"end", at}};
 		}
 
 		// Copying automation to other tracks (reference manual pp. 878-879).
@@ -2022,6 +2177,7 @@ namespace gnubase::engine
 					(track.type == TrackType::Vca && target.type == AutomationTargetType::Volume);
 				break;
 			case AutomationTargetType::Mute:
+			case AutomationTargetType::Strip:
 				has = channel.format != ChannelFormat::None;
 				break;
 			case AutomationTargetType::Instrument:
@@ -2341,8 +2497,8 @@ namespace gnubase::engine
 			{"event.toFront", 1,
 				"Brings takes to the front (To Front, the comp tool's click): audio events, and the audio events of "
 				"audio parts, play where they overlap other events on their track, as if added last (their front in "
-				"project.get); MIDI parts are unmuted, and the MIDI parts on their track's other lanes that they "
-				"overlap are muted. Returns the events.",
+				"project.get), keeping the order they were stacked in among them; MIDI parts are unmuted, and the MIDI "
+				"parts on their track's other lanes that they overlap are muted. Returns the events.",
 				schema({{"events", events()}}, {"events"}), eventsResult(), false},
 			"To Front", bringToFront);
 
@@ -2520,6 +2676,29 @@ namespace gnubase::engine
 				false},
 			"Paste",
 			[this](Project& project, CommandContext& context) { return pasteRange(project, context, m_clipboard); });
+
+		addEdit(engine,
+			{"arranger.flatten", 1,
+				"Flatten Chain (#167): makes the project play the arranger chain (default: the active one) linearly. "
+				"From the start of the chain's first event on, every track's events, parts and automation are "
+				"replaced by the chain's sections, each step's event as often as it repeats, one after the other; "
+				"what lies before stays, and so do locked events. Copies are real copies. Without keepTrack (Keep "
+				"Arranger Track) the arranger track goes; with it, it has an event per section where it now is and "
+				"one chain that plays them in order. One undo step. Returns where the flattened chain starts and "
+				"ends, in samples.",
+				schema({{"chain", integer()}, {"keepTrack", boolean()}}, {}),
+				schema({{"start", integer()}, {"end", integer()}}, {"start", "end"}), false},
+			"Flatten arranger chain",
+			[this](Project& project, CommandContext& context)
+			{
+				const bool keep = context.parameters().value("keepTrack", false);
+				Json result = flattenChain(project, context, keep);
+				const auto track = std::find_if(project.trackById.begin(), project.trackById.end(),
+					[](const auto& entry) { return entry.second.type == TrackType::Arranger; });
+				if (!keep && track != project.trackById.end())
+					runEdit("track.remove", project, {{"track", track->first}}, context);
+				return result;
+			});
 
 		// Copying automation to other tracks (reference manual pp. 878-879).
 		const std::string between = "between start and end (project samples, default the locators)";

@@ -134,6 +134,9 @@ namespace gnubase::engine::dsp
 		void reset() noexcept;
 		void setParameter(uint32_t id, double value) noexcept;
 		void process(float* const* audio, int channels, uint32_t begin, uint32_t end) noexcept;
+		// Bypassed, it only delays: its gain returns to unity with its release, and nothing is clamped. Its delay
+		// stays, so it can be switched on and off while it plays.
+		void setBypass(bool bypass) noexcept { m_bypass = bypass; }
 
 		// The delay in samples, from prepare on.
 		uint32_t latency() const { return m_lookahead; }
@@ -169,5 +172,6 @@ namespace gnubase::engine::dsp
 		double m_released = 1.0;
 		double m_gain = 1.0;
 		bool m_fresh = true; // nothing processed since the last reset: parameters apply at once
+		bool m_bypass = false;
 	};
 }

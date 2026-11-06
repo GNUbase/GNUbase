@@ -84,9 +84,11 @@
 			effect = {"format", "output", "projectFolder", "name", "count"},
 			folder = {"groupChannel", "format", "output", "name", "count"},
 			marker = {"name", "count"},
-			ruler = {"timeFormat", "count"},
+			ruler = {"timeFormat", "timeOffset", "count"},
 			tempo = {}, -- one per project (reference manual p. 162)
 			signature = {}, -- one per project (reference manual p. 163)
+			arranger = {}, -- one per project (reference manual p. 164)
+			transpose = {}, -- one per project (reference manual p. 165)
 			vca = {"name", "count"}, -- reference manual p. 154
 		}
 
@@ -192,6 +194,10 @@
 				end
 				return field("Time Format", dropdown("track-time-format", options))
 			end,
+			-- A position in the time format above, from which the ruler counts (reference manual p. 158); empty for none.
+			timeOffset = function()
+				return field("Time Offset", '<input type="text" id="track-time-offset"/>')
+			end,
 			projectFolder = function(_, type)
 				local name = type == "group" and "Group" or "FX"
 				return '<div class="field"><input type="checkbox" id="track-project-folder"/>' ..
@@ -289,6 +295,15 @@
 				result.instrument = instrument
 			end
 			result.timeFormat = valueOf(document, "track-time-format")
+			local offset = valueOf(document, "track-time-offset")
+			if offset ~= nil and offset:find("%S") then
+				local position = gnubase.ui.parseTime{format = result.timeFormat, text = offset}
+				if position.ticks == nil then
+					return nil, "The time offset isn't a position in the time format."
+				end
+				result.timeOffset = position.ticks -- a new ruler track is musical
+				result.timeOffsetOn = true
+			end
 			local folder = document:GetElementById("track-project-folder")
 			if folder ~= nil and folder:HasAttribute("checked") then
 				result.projectFolder = true
@@ -303,7 +318,11 @@
 		-- Add Track: Count tracks in one undo step. The dialog stays open with Keep Dialog Open, and when the engine
 		-- refuses, with its message.
 		function dialog.add(document)
-			local track = parameters(document)
+			local track, problem = parameters(document)
+			if track == nil then
+				document:GetElementById("add-track-message").inner_rml = escape(problem)
+				return
+			end
 			local count = math.floor((tonumber(valueOf(document, "track-count")) or 1) + 0.5)
 			count = math.max(1, math.min(maxCount, count))
 			local commands = {}
@@ -336,6 +355,8 @@
 				<listitem id="type-ruler" value="ruler">Ruler</listitem>
 				<listitem id="type-tempo" value="tempo">Tempo</listitem>
 				<listitem id="type-signature" value="signature">Signature</listitem>
+				<listitem id="type-arranger" value="arranger">Arranger</listitem>
+				<listitem id="type-transpose" value="transpose">Transpose</listitem>
 				<listitem id="type-vca" value="vca">VCA</listitem>
 			</listview>
 			<div id="track-fields"/>

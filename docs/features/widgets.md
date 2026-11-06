@@ -165,7 +165,8 @@ as the edit history's done and undone steps with a separator between them ([edit
 rows are in the document's order. Each row has a `value` attribute (without commas).
 
 - **Selection.** A click selects a row. With the `multiple` attribute, Ctrl-click (Cmd-click on macOS) adds or removes
-  a row and Shift-click selects the rows from the last one clicked. Up and Down move the selection, Shift extends it,
+  a row and Shift-click selects the rows from the last one clicked; with `shiftdeselects` too, Shift-click on a
+  selected row deselects it, as in the track list ([track-list.md](track-list.md)). Up and Down move the selection, Shift extends it,
   Page Up and Page Down move it by one row less than the view shows, Home and End go to the first and last row.
   Selected rows have the state class `.selected`. The view's `value` attribute is the selected rows' values separated
   by commas, and `change` sends it, so `data-value` binds the selection both ways, also when `data-for` makes the rows.
@@ -240,6 +241,6 @@ collapse by click and keys, with indents by level; tables select body rows only,
 in the document's order. Rows rebuilt by code keep the selection given by the view's `value`: all rows rebuilt twice
 between two updates, a single row replaced, and rows rebuilt or a `value` set just before a key or a click, after which
 Down skips a collapsed parent's children, Right and Left expand and collapse, and Shift+Down, Shift-click and
-Ctrl-click extend the rebuilt selection; a drag held past a view's edge scrolls it with `dragscroll` only; splitters
+Ctrl-click extend the rebuilt selection; Shift-click with `shiftdeselects` deselects a selected row; a drag held past a view's edge scrolls it with `dragscroll` only; splitters
 move the boundary in a row and in a column, never below nothing. The color picker picks from its field, its hue strip
 and its numbers, draws the old and the new color, and follows its data.
