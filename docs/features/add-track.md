@@ -24,7 +24,7 @@ studio setup dialog ([studio-setup.md](studio-setup.md)).
 | Group, Effect | Configuration, Output Routing, Add to Project 'Group' / 'FX' Folder, Name, Count | `format`, `output`, `projectFolder`, `name` |
 | Folder | Group Channel, Configuration and Output Routing (for the group channel only), Name, Count | `groupChannel`, `format`, `output`, `name` |
 | Marker | Name, Count | `name` |
-| Ruler | Time Format, Count | `timeFormat` |
+| Ruler | Time Format, Time Offset, Count | `timeFormat`, `timeOffset` and `timeOffsetOn` ([ruler-tracks.md](ruler-tracks.md)) |
 
 - **Choices** come from the engine whenever a page shows: the input busses (and No Bus), the output busses, the
   group channels of group tracks and folders and the effect channels (and No Bus), the instrument channels for MIDI tracks (and Not
@@ -57,7 +57,8 @@ with its input and output, and the same double click in the track list come with
 - **Ruler tracks** (`type` `ruler`, p. 157) show a ruler in a time format of their own: `timeFormat`, one of
   `barsBeats` (the default), `seconds`, `timecode`, `samples` and `userFrames`, the event display ruler's formats
   ([event-display.md](event-display.md)). They have no channel, may go into folders, and only ruler tracks have a
-  `timeFormat`, in `project.get` too; `track.set` changes it. DAWproject has no ruler tracks: only GNUbase's entry
+  `timeFormat`, in `project.get` too; `track.set` changes it. Their time offset and their display are in
+  [ruler-tracks.md](ruler-tracks.md). DAWproject has no ruler tracks: only GNUbase's entry
   keeps them, and a project read from `project.xml` has none.
 - **The tempo track** (`type` `tempo`, p. 162) has a page without settings: a project has one at most
   ([tempo-track.md](tempo-track.md)). So has **the signature track** (`type` `signature`, p. 163,
@@ -67,17 +68,17 @@ with its input and output, and the same double click in the track list come with
 ## Not yet
 
 The track color (the default color until the color picker joins the dialog), the reference's other track types
-(sampler, drum, and the arranger, transpose, chord and video tracks with their tickets), an
+(sampler, drum, and the chord and video tracks with their tickets; the arranger and transpose tracks are there, once
+per project, [arranger.md](arranger.md), [transpose.md](transpose.md)), an
 instrument or effect plugin chosen on the page (M05), MIDI inputs and MIDI 2.0 output groups, the event type
-(pattern events), the project's VCA folder, a ruler track's time offset and the ruler track's own
-display and controls (#447), and track presets.
+(pattern events), the project's VCA folder, and track presets.
 
 ## Checks
 
 - `tests/addtrack_tests.cpp` opens the dialog with the toolbar button and through its UI command and drives it with
   `ui::Automation`: two mono audio tracks with a name, and with Keep Dialog Open a group, a folder with a group
   channel, an instrument track with a built-in instrument, three MIDI tracks into it, an effect track into the group,
-  a named marker track and a timecode ruler track make the same tracks and channels as the same `track_add` calls
+  a named marker track and a timecode ruler track with a time offset make the same tracks and channels as the same `track_add` calls
   through MCP, and the three MIDI tracks go with one undo; an eleventh marker track shows the engine's message and
   keeps the dialog open.
 - `tests/eventediting_tests.cpp` double-clicks below the tracks.

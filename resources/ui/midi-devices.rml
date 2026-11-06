@@ -1,0 +1,214 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The MIDI device manager (#136, docs/features/midi-devices.md, reference manual pp. 1109-1114): the installed MIDI
+     devices, installing a GM device or defining a new one, removing one, and the selected device's patch banks.
+     app::AppUi opens it (the UI command window.midiDeviceManager). Its Lua reads the devices from the user setting
+     midi.devices and changes them only through engine commands, at once, as the reference's manager does. -->
+<rml>
+<head>
+	<title>MIDI Device Manager</title>
+	<style>
+		dialog
+		{
+			width: 640dp;
+		}
+
+		.content
+		{
+			display: flex;
+			height: 380dp;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.devices
+		{
+			display: flex;
+			flex-direction: column;
+			width: 260dp;
+			margin-right: 12dp;
+		}
+
+		#installed-devices
+		{
+			flex: 1;
+		}
+
+		#patch-banks
+		{
+			flex: 1;
+		}
+
+		.patch-program
+		{
+			margin-left: 8dp;
+		}
+
+		.row
+		{
+			display: flex;
+			align-items: center;
+			margin-top: 6dp;
+		}
+
+		.row input.text, .row select
+		{
+			flex: 1;
+		}
+
+		.row button
+		{
+			margin-left: 6dp;
+			white-space: nowrap;
+		}
+
+		.devices .row button
+		{
+			flex: 1;
+		}
+
+		.devices .row button:first-child
+		{
+			margin-left: 0;
+		}
+
+		.buttons
+		{
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		#midi-devices-message
+		{
+			flex: 1;
+		}
+	</style>
+	<script>
+		-- The dialog's state, in the UI's Lua: the devices' names in the order the list shows them.
+		MidiDevices = {}
+		local manager = MidiDevices
+
+		local function escape(text)
+			return (tostring(text):gsub('[&<>"]', {["&"] = "&amp;", ["<"] = "&lt;", [">"] = "&gt;", ['"'] = "&quot;"}))
+		end
+
+		local function report(document, message)
+			document:GetElementById("midi-devices-message").inner_rml = escape(message or "")
+		end
+
+		-- A patch's program and bank as the reference shows them, from 1.
+		local function numbers(patch)
+			local text = "Program " .. (patch.program + 1)
+			if patch.bank ~= nil then
+				text = text .. ", Bank " .. (patch.bank + 1)
+			end
+			return text
+		end
+
+		-- The selected device's banks, with their folders and patches, as a tree.
+		local function showPatches(document)
+			local device = manager.devices[manager.names[tonumber(document:GetElementById("installed-devices"):GetAttribute("value"))]]
+			local rows = {}
+			local function row(level, value, text)
+				rows[#rows + 1] = '<listitem level="' .. level .. '" value="' .. value .. '" expanded="">' .. text ..
+					"</listitem>"
+			end
+			for b, bank in ipairs(device and device.banks or {}) do
+				row(0, "bank" .. b, escape(bank.name))
+				local folder = nil
+				for p, patch in ipairs(bank.patches) do
+					local level = 1
+					if patch.folder ~= nil and patch.folder ~= "" then
+						if patch.folder ~= folder then
+							row(1, "folder" .. b .. "-" .. p, escape(patch.folder))
+						end
+						level = 2
+					end
+					folder = patch.folder
+					row(level, "patch" .. b .. "-" .. p, '<span class="patch-name">' .. escape(patch.name) ..
+						'</span><span class="patch-program">' .. numbers(patch) .. "</span>")
+				end
+			end
+			document:GetElementById("patch-banks").inner_rml = table.concat(rows)
+		end
+
+		-- Reads the devices from the engine; selected is the name to select.
+		function manager.load(document, selected)
+			manager.devices = gnubase.settings.get{key = "midi.devices"}.value
+			manager.names = {}
+			for name in pairs(manager.devices) do
+				manager.names[#manager.names + 1] = name
+			end
+			table.sort(manager.names)
+			local items = {}
+			local index = 1
+			for i, name in ipairs(manager.names) do
+				items[#items + 1] = '<listitem value="' .. i .. '">' .. escape(name) .. "</listitem>"
+				if name == selected then
+					index = i
+				end
+			end
+			local list = document:GetElementById("installed-devices")
+			list.inner_rml = table.concat(items)
+			list:SetAttribute("value", tostring(index))
+			document:GetElementById("remove-device"):SetAttribute("disabled", "")
+			if #manager.names > 0 then
+				document:GetElementById("remove-device"):RemoveAttribute("disabled")
+			end
+			showPatches(document)
+		end
+
+		function manager.select(document)
+			showPatches(document)
+		end
+
+		-- Install Device: a GM device or a new one (Define New), with the name typed.
+		function manager.install(document)
+			local name = document:GetElementById("device-name"):GetAttribute("value") or ""
+			local template = document:GetElementById("device-template"):GetAttribute("value") or "gm"
+			local ok, result = pcall(gnubase.midiDevice.install, {name = tostring(name), template = tostring(template)})
+			report(document, ok and "" or tostring(result))
+			if ok then
+				document:GetElementById("device-name"):SetAttribute("value", "")
+				manager.load(document, tostring(name))
+			end
+		end
+
+		-- Remove Device: the selected one.
+		function manager.remove(document)
+			local name = manager.names[tonumber(document:GetElementById("installed-devices"):GetAttribute("value"))]
+			if name == nil then
+				return
+			end
+			local ok, result = pcall(gnubase.midiDevice.remove, {name = name})
+			report(document, ok and "" or tostring(result))
+			manager.load(document)
+		end
+	</script>
+</head>
+<body onload="MidiDevices.load(document)">
+	<dialog id="midi-devices">
+		<div class="dialog-titlebar">MIDI Device Manager</div>
+		<div class="content">
+			<div class="devices">
+				<listview id="installed-devices" title="Installed Devices" onchange="MidiDevices.select(document)"/>
+				<div class="row">
+					<select id="device-template" title="Device">
+						<option value="gm" selected>GM Device</option>
+						<option value="empty">Define New</option>
+					</select>
+				</div>
+				<div class="row">
+					<input type="text" class="text" id="device-name" title="Device Name"/>
+				</div>
+				<div class="row">
+					<button id="install-device" onclick="MidiDevices.install(document)">Install Device</button>
+					<button id="remove-device" onclick="MidiDevices.remove(document)">Remove Device</button>
+				</div>
+			</div>
+			<listview id="patch-banks" title="Patch Banks"/>
+		</div>
+		<div class="row buttons">
+			<div id="midi-devices-message"/>
+			<button id="close" class="primary" result="ok">Close</button>
+		</div>
+	</dialog>
+</body>
+</rml>

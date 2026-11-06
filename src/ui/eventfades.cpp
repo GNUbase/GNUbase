@@ -75,6 +75,16 @@ namespace gnubase::ui
 		return events;
 	}
 
+	std::vector<uint64_t> EventDisplay::selectedMidi() const
+	{
+		std::vector<uint64_t> parts;
+		for (const Shown& shown : m_events)
+			if ((m_laneTypes[shown.lane] == "midi" || m_laneTypes[shown.lane] == "instrument") &&
+				std::binary_search(m_selection.begin(), m_selection.end(), shown.id))
+				parts.push_back(shown.id);
+		return parts;
+	}
+
 	double EventDisplay::draggedFade(uint64_t event, bool in) const
 	{
 		const AudioFades& fades = m_fades.at(event);
@@ -270,6 +280,26 @@ namespace gnubase::ui
 				{
 					if (const std::vector<uint64_t> events = selectedAudio(); !events.empty())
 						openFadeDialog("fade-editor.rml", {{"events", ids(events)}});
+				}},
+			// The audio functions (#147, docs/features/audio-functions.md), whose dialogs work on the selected audio
+			// events as the fade dialog does.
+			{"audio.detectSilence",
+				[this]
+				{
+					if (const std::vector<uint64_t> events = selectedAudio(); !events.empty())
+						openFadeDialog("detect-silence.rml", {{"events", ids(events)}});
+				}},
+			{"audio.spectrumAnalyzer",
+				[this]
+				{
+					if (const std::vector<uint64_t> events = selectedAudio(); !events.empty())
+						openFadeDialog("spectrum-analyzer.rml", {{"events", ids(events)}});
+				}},
+			{"audio.statistics",
+				[this]
+				{
+					if (const std::vector<uint64_t> events = selectedAudio(); !events.empty())
+						openFadeDialog("statistics.rml", {{"events", ids(events)}});
 				}},
 			// Crossfade (reference manual pp. 388-389): crossfades the selected events, or opens the crossfade editor
 			// for the crossfade that one of them has.

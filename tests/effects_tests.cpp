@@ -1329,3 +1329,30 @@ TEST_CASE("the reverb decays at its decay time at 44.1 and 96 kHz", "[unit][slow
 		CHECK_THAT(static_cast<double>(reverb.tail()), WithinAbs(1.5 * rate, 1.0));
 	}
 }
+
+TEST_CASE("the bypassed limiter only delays, and limits again when its bypass ends", "[unit]")
+{
+	dsp::Limiter limiter;
+	limiter.setParameter(dsp::Limiter::Ceiling, -12.0);
+	limiter.prepare(g_sampleRate, 64);
+	const uint32_t latency = limiter.latency();
+	REQUIRE(latency > 0);
+	const Signal input = sine(2, 4800, 1000.0, 0.5);
+	Signal output = input;
+	float* const channels[] = {output[0].data(), output[1].data()};
+	limiter.setBypass(true);
+	limiter.process(channels, 2, 0, 2400);
+	CHECK(limiter.latency() == latency);
+	limiter.setBypass(false);
+	limiter.process(channels, 2, 2400, 4800);
+	CHECK(limiter.latency() == latency);
+	for (int c = 0; c < 2; ++c)
+	{
+		size_t wrong = 0;
+		for (uint32_t i = 0; i < 2400; ++i)
+			wrong += output[c][i] == (i < latency ? 0.0F : input[c][i - latency]) ? 0 : 1;
+		CHECK(wrong == 0);
+		CHECK(peak(output[c], 0, 2400) > 0.49);
+		CHECK(peak(output[c], 2400) <= dsp::dbToGain(-12.0) * (1.0 + 1e-6));
+	}
+}

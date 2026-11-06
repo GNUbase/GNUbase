@@ -17,7 +17,7 @@ namespace gnubase::engine
 namespace gnubase::engine::settings
 {
 	// The user's settings for GNUbase as a whole, in settings.json in the settings folder. Each one is read where its
-	// feature lives; the preferences dialog (#162) shows them all.
+	// feature lives; the preferences dialog (#162, docs/features/preferences.md) shows those that are preferences.
 	inline constexpr Key<double> g_uiScale{"ui.scale"};
 	inline constexpr Key<std::string> g_uiTheme{"ui.theme"};
 	inline constexpr Key<std::string> g_audioAutoMonitoring{"audio.autoMonitoring"};

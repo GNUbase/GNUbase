@@ -219,6 +219,54 @@ TEST_CASE("ruler tracks have a time format and no channel", "[unit]")
 	CHECK(engine.renderSnapshots().acquire().channels.empty());
 }
 
+TEST_CASE("ruler tracks have a time offset that is switched on and off", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	// Off at the project start by default.
+	const Json ruler = run(client, "track.add", {{"type", "ruler"}}).at("track");
+	CHECK(ruler.at("timeOffset") == 0);
+	CHECK(ruler.at("timeOffsetOn") == false);
+	const ObjectId id = ruler.at("id").get<ObjectId>();
+
+	// In the track's time base, ticks on a musical track; both in one undo step.
+	const ObjectId timecode = addTrack(client,
+		{{"type", "ruler"}, {"timeFormat", "timecode"}, {"timeOffset", 4 * g_ticksPerQuarter}, {"timeOffsetOn", true}});
+	CHECK(track(client, timecode).at("timeOffset") == 4 * g_ticksPerQuarter);
+	CHECK(track(client, timecode).at("timeOffsetOn") == true);
+	run(client, "track.set", {{"track", id}, {"timeOffset", g_ticksPerQuarter}});
+	CHECK(track(client, id).at("timeOffset") == g_ticksPerQuarter);
+	CHECK(track(client, id).at("timeOffsetOn") == false); // setting it doesn't switch it on
+	run(client, "track.set", {{"track", id}, {"timeOffsetOn", true}});
+	CHECK(track(client, id).at("timeOffsetOn") == true);
+	run(client, "history.undo");
+	CHECK(track(client, id).at("timeOffsetOn") == false);
+	CHECK(track(client, id).at("timeOffset") == g_ticksPerQuarter);
+
+	// Set Time Offset to Project Cursor Position: at 1.5 seconds, three beats at 120 BPM.
+	run(client, "transport.locate", {{"position", 72000}});
+	run(client, "track.set", {{"track", id}, {"timeOffset", "cursor"}});
+	CHECK(track(client, id).at("timeOffset") == 3 * g_ticksPerQuarter);
+	// A linear ruler track has it in samples, and a new time base keeps its time.
+	run(client, "track.set", {{"track", id}, {"timeBase", "linear"}});
+	CHECK(track(client, id).at("timeOffset") == 72000);
+	run(client, "transport.locate", {{"position", 24000}});
+	run(client, "track.set", {{"track", id}, {"timeOffset", "cursor"}});
+	CHECK(track(client, id).at("timeOffset") == 24000);
+	// In samples, it keeps its time when the sample rate changes: half a second at 96 kHz too.
+	run(client, "project.set", {{"sampleRate", 96000.0}});
+	CHECK(track(client, id).at("timeOffset") == 48000);
+	CHECK(track(client, timecode).at("timeOffset") == 4 * g_ticksPerQuarter); // musical: in ticks
+
+	// Only ruler tracks have one, at or after the project start.
+	const ObjectId folder = addTrack(client, {{"type", "folder"}});
+	CHECK_FALSE(track(client, folder).contains("timeOffset"));
+	CHECK_THAT(reject(client, "track.add", {{"type", "marker"}, {"timeOffset", 0}}), ContainsSubstring("ruler"));
+	CHECK_THAT(reject(client, "track.set", {{"track", folder}, {"timeOffsetOn", true}}), ContainsSubstring("ruler"));
+	CHECK_THAT(reject(client, "track.set", {{"track", id}, {"timeOffset", -1}}), ContainsSubstring("negative"));
+	reject(client, "track.set", {{"track", id}, {"timeOffset", "start"}});
+}
+
 TEST_CASE("every change is announced to every client", "[unit]")
 {
 	Engine engine;
