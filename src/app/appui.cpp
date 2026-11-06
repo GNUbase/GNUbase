@@ -855,7 +855,7 @@ namespace gnubase::app
 		m_lua.addFunction(
 			"ui.keyCommands", [this](const engine::Json&) { return engine::Json{{"commands", m_keys.commands()}}; });
 		m_lua.addFunction("ui.keyName",
-			[this](const engine::Json& parameters)
+			[](const engine::Json& parameters)
 			{
 				ui::KeyPress keys;
 				try
