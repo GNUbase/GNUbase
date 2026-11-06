@@ -174,6 +174,7 @@ add_executable(gnubase-tests
 	uithemes_tests.cpp
 	uitools_tests.cpp
 	volumecurve_tests.cpp
+	warp_tests.cpp
 	widgets_tests.cpp
 	window_tests.cpp)
 target_link_libraries(gnubase-tests PRIVATE
@@ -265,7 +266,7 @@ if(NOT GNUBASE_SANITIZERS)
 	target_compile_definitions(gnubase-tests PRIVATE GNUBASE_APP="$<TARGET_FILE:gnubase>")
 endif()
 
-# Every tests/lua/*.lua is a ctest test that the app runs headless; its test cases use gnubase.test (docs/lua.md).
+# Every tests/lua/*.lua is a ctest test that the app runs headless; its test cases use gnubase.test (the Lua API reference, docs/api-reference.md).
 # They run in the source folder, so a failure names tests/lua/<file>.lua and the line. Sanitizer builds run them too,
 # with the app built under the same sanitizers, so building gnubase-tests builds the app.
 add_dependencies(gnubase-tests gnubase)
@@ -289,7 +290,7 @@ foreach(luaTest IN LISTS luaUiTests)
 endforeach()
 
 target_compile_definitions(gnubase-tests PRIVATE GNUBASE_VERSION="${PROJECT_VERSION}"
-	GNUBASE_DOCS_DIR="${PROJECT_SOURCE_DIR}/docs"
+	GNUBASE_GENERATED_DOCS_DIR="${PROJECT_BINARY_DIR}/docs"
 	GNUBASE_RESOURCES_DIR="${PROJECT_SOURCE_DIR}/resources"
 	$<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>
 	GNUBASE_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")

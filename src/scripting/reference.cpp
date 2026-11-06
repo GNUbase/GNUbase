@@ -11,8 +11,7 @@ namespace gnubase::scripting
 	{
 		constexpr const char* g_introduction = R"(# Lua API
 
-Generated from the engine's command registry; don't edit it by hand. The tests check that it is up to date: run them
-with `GNUBASE_UPDATE_DOCS=1` to write it again.
+Generated from the engine's command registry by the unit tests, which write it to `docs/lua.md` in the build folder.
 
 Every engine command is a function of the global table `gnubase`: `track.add` is `gnubase.track.add`. Pass the
 parameters as a table and get the result as a table. A failed command raises an error with the reason, which `pcall`

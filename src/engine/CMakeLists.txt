@@ -154,6 +154,7 @@ add_library(gnubase-engine STATIC
 	document/trackvisibility.cpp document/trackvisibility.h
 	document/transpose.cpp
 	document/volumecurves.cpp document/volumecurves.h
+	document/warp.cpp document/warp.h
 	dsp/biquad.cpp dsp/biquad.h
 	dsp/delay.cpp dsp/delay.h
 	dsp/dither.cpp dsp/dither.h
@@ -162,6 +163,7 @@ add_library(gnubase-engine STATIC
 	dsp/equalizer.cpp dsp/equalizer.h
 	dsp/reverb.cpp dsp/reverb.h
 	dsp/timestretch.cpp dsp/timestretch.h
+	dsp/warp.cpp dsp/warp.h
 	engine.cpp engine.h
 	graph/events.h
 	graph/graph.cpp graph/graph.h

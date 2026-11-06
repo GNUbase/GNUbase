@@ -852,6 +852,10 @@
 	{
 		background-color: #aeb7d066;
 	}
+	.se-warp-marker-line, .se-warp-marker-handle
+	{
+		background-color: #e12ad8;
+	}
 	.ds-display, .sa-graph
 	{
 		background-color: #101426;
