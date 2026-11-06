@@ -61,6 +61,7 @@ namespace gnubase::ui
 			fades.crossfade.outLength = crossfade.at("outLength").get<int64_t>();
 		}
 		fades.offset = event.at("offset").get<int64_t>();
+		fades.clip = event.at("clip").get<uint64_t>();
 		fades.volume = event.at("volume").get<double>();
 		fades.curve = engine::volumeCurveFromJson(event.at("volumeCurve"));
 		m_fades[event.at("id").get<uint64_t>()] = fades;

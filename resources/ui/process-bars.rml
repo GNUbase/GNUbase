@@ -1,0 +1,100 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The Process Bars dialog (#159, docs/features/time-warp.md, reference manual p. 1464): ui::EventDisplay opens it
+     (tempo.openProcessBars). Process sends tempo.processBars with the Start at Bar (as the ruler numbers bars, from 1),
+     the Length in Bars, the Process Type and the Time Signature. -->
+<rml>
+<head>
+	<title>Process Bars</title>
+	<style>
+		dialog
+		{
+			width: 320dp;
+		}
+
+		.field
+		{
+			display: flex;
+			align-items: center;
+			height: 28dp;
+			margin: 0 12dp;
+		}
+
+		.field .label
+		{
+			flex: 1;
+		}
+
+		.field valuefield, .field select
+		{
+			width: 120dp;
+		}
+
+		.row
+		{
+			display: flex;
+			align-items: center;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		#pb-message
+		{
+			flex: 1;
+		}
+
+		.row button
+		{
+			margin-left: 6dp;
+		}
+	</style>
+	<script>
+		ProcessBars = {}
+		local function valueOf(document, id)
+			return tostring(document:GetElementById(id):GetAttribute("value") or "")
+		end
+		local function integer(document, id)
+			return math.tointeger(math.floor(tonumber(valueOf(document, id)) or 0))
+		end
+		function ProcessBars.process(document)
+			local ok, failure = pcall(gnubase.tempo.processBars, {bar = integer(document, "pb-start") - 1,
+				bars = integer(document, "pb-length"), type = valueOf(document, "pb-type"),
+				numerator = integer(document, "pb-numerator"), denominator = integer(document, "pb-denominator")})
+			if not ok then
+				document:GetElementById("pb-message").inner_rml = tostring(failure):gsub("[&<>]", "")
+				return
+			end
+			document:Close()
+		end
+	</script>
+</head>
+<body>
+	<dialog id="process-bars-dialog">
+		<div class="dialog-titlebar">Process Bars</div>
+		<div class="field"><span class="label">Start at Bar</span>
+			<valuefield id="pb-start" value="1" min="1" max="99999" step="1" decimals="0"/></div>
+		<div class="field"><span class="label">Length in Bars</span>
+			<valuefield id="pb-length" value="1" min="1" max="99999" step="1" decimals="0"/></div>
+		<div class="field"><span class="label">Process Type</span>
+			<select id="pb-type">
+				<option value="insert" selected="selected">Insert Bars</option>
+				<option value="delete">Delete Bars</option>
+				<option value="reinterpret">Reinterpret Bars</option>
+				<option value="replace">Replace Bars</option>
+			</select></div>
+		<div class="field"><span class="label">Time Signature</span>
+			<valuefield id="pb-numerator" value="4" min="1" max="99" step="1" decimals="0"/></div>
+		<div class="field"><span class="label"/>
+			<select id="pb-denominator">
+				<option value="1">1</option>
+				<option value="2">2</option>
+				<option value="4" selected="selected">4</option>
+				<option value="8">8</option>
+				<option value="16">16</option>
+			</select></div>
+		<div class="row">
+			<div id="pb-message"/>
+			<button result="cancel">Cancel</button>
+			<button id="pb-process" class="primary" onclick="ProcessBars.process(document)">Process</button>
+		</div>
+	</dialog>
+</body>
+</rml>

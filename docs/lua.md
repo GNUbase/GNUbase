@@ -2171,6 +2171,19 @@ Returns:
 
 - `events`: array of integer, required
 
+#### `gnubase.event.pasteWarpMarkers`
+
+Copies the free warp markers of the audio event from's clip into the clips of the audio events (Copy Warp Markers from Selected Event, Paste Warp Markers to Selected Events, reference manual p. 1467): each at the same time as in from, where the event plays it unwarped, if that is within the event and passes none of its clip's markers. The markers there stay. Returns how many it pasted.
+
+Parameters:
+
+- `events`: array of integer, required
+- `from`: integer, required
+
+Returns:
+
+- `markers`: integer, required
+
 #### `gnubase.event.previewResize`
 
 Tells what event.resize with the same parameters would make of the events, without changing them: the audio events, audio parts (with their audio events) and MIDI parts as project.get lists them. The event display shows it while an edge is dragged. Fails where event.resize would.
@@ -2258,6 +2271,19 @@ Parameters:
 Returns:
 
 - `events`: array of integer, required
+
+#### `gnubase.event.setDefinitionFromTempo`
+
+Set Definition from Tempo (reference manual pp. 1467-1468): gives the clips of the audio events (ids) the project's tempo as their definition, the grid on each quarter where the event plays it now, and turns musical mode on, so that they play as before and follow tempo changes from then on. The events' tracks, or with allTracks every track, become musical first, keeping their time. A clip in musical mode already is refused. Returns the clips.
+
+Parameters:
+
+- `allTracks`: boolean
+- `events`: array of integer, required
+
+Returns:
+
+- `clips`: array of integer, required
 
 #### `gnubase.event.setSnapPoint`
 
@@ -4769,6 +4795,39 @@ Returns:
 - `signatures`: array, required
 - `tempo`: object, required
 
+#### `gnubase.tempo.process`
+
+Process Tempo (reference manual pp. 1463-1464): scales the tempo track's tempo from start to end (ticks, default the locators) so that the range lasts newLength seconds, or ends at newEnd (seconds of project time). The tempo after the range stays, and musical tracks follow. A ramp across an edge of the range ends a tick before it. Needs tempo track mode. Returns the factor the tempo was multiplied by (Equivalent Tempo Scaling) and the tempo as tempo.changed reports it.
+
+Parameters:
+
+- `end`: integer
+- `newEnd`: number
+- `newLength`: number
+- `start`: integer
+
+Returns:
+
+- `factor`: number, required
+- `tempo`: object, required
+
+#### `gnubase.tempo.processBars`
+
+Process Bars (reference manual p. 1464) from bar (zero-based) for bars bars, in the time signature events and the tempo track's events: insert puts bars bars of numerator/denominator (default 4/4) there, at the tempo there, and moves the later events by them; delete removes the bars and moves the later events back; replace gives the bars the time signature, at the same tempo; reinterpret too, with the tempo scaled so that they last as long as before, and what musical tracks hold keeps its time. Otherwise events, parts, markers and automation keep their positions, as for any time signature change. Returns the tempo as tempo.changed and the time signature events as signature.changed report them.
+
+Parameters:
+
+- `bar`: integer, required
+- `bars`: integer, required
+- `denominator`: integer
+- `numerator`: integer
+- `type`: one of "insert" | "delete" | "replace" | "reinterpret", required
+
+Returns:
+
+- `signatures`: array, required
+- `tempo`: object, required
+
 #### `gnubase.tempo.remove`
 
 Removes tempo events from the tempo track, by their positions in ticks. The first one stays.
@@ -4810,6 +4869,22 @@ Returns:
 - `applied`: one of "event" | "project" | "none", required
 - `bpm`: number, required
 - `position`: integer or null, required
+
+#### `gnubase.tempo.warp`
+
+Time warp in Warp Grid mode (reference manual pp. 1465-1466): makes the musical position position (ticks, after the project start) play at the time to (project samples) by changing the tempo of the last tempo event before it, to 1 to 360 BPM; if later tempo events exist, a tempo event at position keeps the tempo after it as it was. Musical tracks keep the time of what they hold (Warp Grid), or with follow it keeps its position and follows the tempo (Warp Grid, musical events follow). Needs tempo track mode. Returns the position of the tempo event changed, its tempo, and the tempo as tempo.changed reports it.
+
+Parameters:
+
+- `follow`: boolean
+- `position`: integer, required
+- `to`: integer, required
+
+Returns:
+
+- `bpm`: number, required
+- `event`: integer, required
+- `tempo`: object, required
 
 ### track
 

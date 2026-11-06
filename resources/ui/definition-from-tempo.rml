@@ -1,0 +1,78 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The Set Definition from Tempo dialog (#159, docs/features/time-warp.md, reference manual pp. 1467-1468) for the
+     audio events in the document's attribute events (ids): ui::EventDisplay opens it
+     (audio.setDefinitionFromTempo), and OK sends event.setDefinitionFromTempo with Set all Tracks to Musical Time
+     Base. The definition goes into the project only. -->
+<rml>
+<head>
+	<title>Set Definition from Tempo</title>
+	<style>
+		dialog
+		{
+			width: 340dp;
+		}
+
+		.field
+		{
+			display: flex;
+			align-items: center;
+			height: 28dp;
+			margin: 0 12dp;
+		}
+
+		.field .label
+		{
+			flex: 1;
+		}
+
+		.row
+		{
+			display: flex;
+			align-items: center;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		#dt-message
+		{
+			flex: 1;
+		}
+
+		.row button
+		{
+			margin-left: 6dp;
+		}
+	</style>
+	<script>
+		DefinitionFromTempo = {}
+		function DefinitionFromTempo.ok(document)
+			local events = {}
+			for id in tostring(document:GetAttribute("events") or ""):gmatch("%d+") do
+				events[#events + 1] = math.tointeger(tonumber(id))
+			end
+			local ok, failure = pcall(gnubase.event.setDefinitionFromTempo, {events = events,
+				allTracks = document:GetElementById("dt-all-tracks"):HasAttribute("checked")})
+			if not ok then
+				document:GetElementById("dt-message").inner_rml = tostring(failure):gsub("[&<>]", "")
+				return
+			end
+			document:Close()
+		end
+	</script>
+</head>
+<body>
+	<dialog id="definition-from-tempo-dialog">
+		<div class="dialog-titlebar">Set Definition from Tempo</div>
+		<div class="field"><span class="label">Save Definition in Project Only</span>
+			<input type="radio" name="dt-save" id="dt-project-only" checked=""/></div>
+		<div class="field"><span class="label">Write Definition to Audio Files</span>
+			<input type="radio" name="dt-save" id="dt-write-files" disabled=""/></div>
+		<div class="field"><span class="label">Set all Tracks to Musical Time Base</span>
+			<input type="checkbox" id="dt-all-tracks"/></div>
+		<div class="row">
+			<div id="dt-message"/>
+			<button result="cancel">Cancel</button>
+			<button id="dt-ok" class="primary" onclick="DefinitionFromTempo.ok(document)">OK</button>
+		</div>
+	</dialog>
+</body>
+</rml>

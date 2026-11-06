@@ -84,8 +84,8 @@ Realtime Processing (`audio.flatten`) and Unstretch Audio (`audio.unstretch`) fo
 The Definition section's rulers, Grid Resolution and the bars and beats fields, and Manual Adjust's gestures in the
 display (the engine has them: `clip.adjustGrid`); the Warping Algorithm pop-up and the Flatten dialog's preset (the
 engine takes `preset`); Swing; Stretch to Project Tempo and Sizing Applies Time Stretch; Free Warp snapping to
-hitpoints, warp markers and zero crossings, several markers removed by a rectangle, and Free Warp in the project
-window and for several clips at once; the note and warp icons on events and the pool's Musical Mode column; ACID
+hitpoints, warp markers and zero crossings, several markers removed by a rectangle, and Free Warp for several clips at once (the
+project window's time warp tool has Free Warp, [time-warp.md](time-warp.md)); the note and warp icons on events and the pool's Musical Mode column; ACID
 loops' tempo on import; the waveform in the project window and the sample editor's positions following the warp
 (they show the unwarped clip); event fades keep their length in clip frames; auditioning and scrubbing play warped
 events unstretched; flattening in offline mode.
