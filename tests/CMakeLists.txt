@@ -156,6 +156,7 @@ add_executable(gnubase-tests
 	time_tests.cpp
 	timeformat_tests.cpp
 	timestretch_tests.cpp
+	timewarp_tests.cpp
 	tracklist_tests.cpp
 	trackversions_tests.cpp
 	trackversions_ui_tests.cpp
