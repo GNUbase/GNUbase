@@ -134,7 +134,7 @@ The same input and settings always give the same output, in both modes and for a
 
 ## Engine command
 
-`media.stretch` stretches and shifts a media file into a new 32-bit float WAV file and adds it as a new media file, one undo step, like `media.convert`. Parameters: `ratio`, `semitones`, `cents`, `preset`, `formants` and `mode` (`offline` by default; `realtime` renders what playback would sound like). It is the engine side of the offline time-stretch and pitch-shift processes; MCP and Lua get it from the command registry ([lua.md](lua.md)).
+`media.stretch` stretches and shifts a media file into a new 32-bit float WAV file and adds it as a new media file, one undo step, like `media.convert`. Parameters: `ratio`, `semitones`, `cents`, `preset`, `formants` and `mode` (`offline` by default; `realtime` renders what playback would sound like). It is the engine side of the offline time-stretch and pitch-shift processes; MCP and Lua get it from the command registry ([API references](api-reference.md)).
 
 ## How audio tracks will use it
 
