@@ -217,6 +217,10 @@ namespace gnubase::ui
 		// whose buttons #snap-type and #grid-type show the choice, and a toggle button #snap-zero-crossing.
 		const engine::SnapSettings& snap() const { return m_snap; }
 
+		// The default tool modifiers (reference manual p. 1601) of the tools that GNUbase has, by action, which the
+		// user setting ui.toolModifiers overrides one by one.
+		static const std::map<std::string, std::string>& defaultToolModifiers();
+
 		// The tools (#86, eventtools.cpp, docs/features/tools.md), also in the root's attribute tool. The object
 		// selection tool edits as above; the others send the same event.* commands (split, glue, erase, mute), zoom,
 		// draw MIDI parts, audition or scrub the pressed audio track, or select a range. With the selection tools
@@ -272,6 +276,8 @@ namespace gnubase::ui
 		// audio.fadeOutFromRange and audio.adjustFadesToRange on the selection range, audio.crossfade (crossfades the
 		// selected audio events, or opens the crossfade editor for a crossfade they have), audio.removeFadeIn,
 		// audio.removeFadeOut, audio.removeFades and audio.fadeEditor (the fade dialog) on the selected audio events.
+		// audio.detectSilence, audio.spectrumAnalyzer and audio.statistics (#147, docs/features/audio-functions.md)
+		// open the Detect Silence dialog, the Spectrum Analyzer and the Statistics window for them.
 		// audio.removeVolumeCurve (#139, docs/features/volume-curves.md) resets the volume curves in the selection
 		// range, else removes the selected audio events'.
 		// With the range selection tool,
@@ -393,6 +399,9 @@ namespace gnubase::ui
 			double end = 0.0;
 			bool mute = false;
 			std::optional<double> snapPoint; // audio events, inside them, in seconds
+			// An audio event's entry on its track's lane, which shows it only where none in front covers it (#99): if
+			// it is muted, m_mutedPieces has what shows.
+			bool onTrackLane = false;
 		};
 
 		void ProcessEvent(Rml::Event& event) override;
@@ -447,6 +456,7 @@ namespace gnubase::ui
 		void showPresets();
 		void showAutoScroll();
 		void showSnap();
+		void showRootKey(const engine::Json& project);
 		void setSnap(const engine::Json& settings); // sends snap.set; one with a format counts in m_formatsSent
 
 		// Importing files (fileimport.cpp).
@@ -457,6 +467,7 @@ namespace gnubase::ui
 			int64_t sample = 0;
 			bool clipsOnly = false;
 			bool selected = false; // track is the selected one, which takes the first file, not all of them
+			int lane = 0;          // the lane of track the files go on
 		};
 		// The import options (#477): the Import Options dialog's, and the user settings editing.importAudio* that it
 		// starts from and keeps its choices in.
@@ -565,6 +576,10 @@ namespace gnubase::ui
 		bool openCrossfadeAt(const Shown& shown, double seconds); // whether there is one
 		// The selected audio events, by id.
 		std::vector<uint64_t> selectedAudio() const;
+		// The selected MIDI parts, by id.
+		std::vector<uint64_t> selectedMidi() const;
+		// A click on one of the Tempo Detection dialog's buttons: tempo.detect with what they say.
+		void detectTempo(const std::string& button);
 		// Opens a dialog of the display's document folder whose Lua reads the attributes when it shows.
 		void openFadeDialog(const char* file, const std::vector<std::pair<std::string, std::string>>& attributes);
 
@@ -628,6 +643,7 @@ namespace gnubase::ui
 		void reload();              // the lanes again, from the project as it was last read
 		void showAutomationLanes(); // the curves, after the lanes changed
 		void placeAutomation();     // where they are, after the view changed
+		void placePartMarks();      // the marks of parts excluded from global transpose, after the view changed
 		// The automation lane of a display lane, or null for a track's own lane.
 		const AutomationView* automationAt(size_t lane) const;
 		double automationValue(size_t lane, double y) const; // y dp in the event lanes, as a display value
@@ -700,11 +716,17 @@ namespace gnubase::ui
 		std::vector<std::string> m_laneTypes; // and its type
 		std::vector<bool> m_laneLinear;       // and whether its time base is linear
 		std::vector<Shown> m_events;
+		std::vector<std::pair<size_t, TimeSpan>> m_mutedPieces; // by lane: what shows of covered muted events
 		std::vector<uint64_t> m_selection;
-		EventLanes* m_mutedLanes = nullptr;     // muted events over the others
-		EventLanes* m_selectedLanes = nullptr;  // selected events over those
-		EventLanes* m_folderLanes = nullptr;    // folders' data blocks, under the events
-		FadeLines* m_fadeLines = nullptr;       // over the waveforms
+		EventLanes* m_mutedLanes = nullptr;    // muted events over the others
+		EventLanes* m_selectedLanes = nullptr; // selected events over those
+		EventLanes* m_folderLanes = nullptr;   // folders' data blocks, under the events
+		FadeLines* m_fadeLines = nullptr;      // over the waveforms
+		// A .part-mark.independent (attribute part, its id) at the upper right corner of each MIDI part shown that is
+		// excluded from global transpose (#168, reference manual p. 421).
+		Rml::Element* m_partMarks = nullptr;
+		std::set<uint64_t> m_independent;
+		std::string m_partMarksRml;             // what m_partMarks holds
 		std::map<uint64_t, AudioFades> m_fades; // by audio event
 		std::vector<EventLanes::Lane> m_folderData;
 		std::string m_folderMode = "always"; // ui.folderData
@@ -805,11 +827,22 @@ namespace gnubase::ui
 		Rml::Element* m_gridTypeButton = nullptr;
 		Rml::Element* m_gridTypeMenu = nullptr;
 		Rml::Element* m_zeroCrossingButton = nullptr;
+		Rml::Element* m_rootKeyButton = nullptr; // the Project Root Key (#168)
+		Rml::Element* m_rootKeyMenu = nullptr;
 		Rml::ObserverPtr<Rml::Element> m_dialog; // the dialog document open now
-		engine::Json m_organized;                // the presets that the organize dialog lists, by index
-		Import m_import;                         // the files the Import Options dialog imports
-		ImportOptions m_importOptions;           // the options it showed when it opened
-		bool m_importSaved = false;              // the project had a file then
+		// What the Tempo Detection dialog analyzes, and how its buttons changed the result.
+		struct TempoDetection
+		{
+			uint64_t event = 0; // an audio event or a MIDI part
+			double factor = 1.0;
+			bool offbeat = false;
+			bool smooth = false;
+		};
+		TempoDetection m_detection;
+		engine::Json m_organized;      // the presets that the organize dialog lists, by index
+		Import m_import;               // the files the Import Options dialog imports
+		ImportOptions m_importOptions; // the options it showed when it opened
+		bool m_importSaved = false;    // the project had a file then
 
 		std::map<uint64_t, std::vector<uint64_t>> m_openAutomation; // the lanes each track shows, in order
 		std::map<uint64_t, AutomationView> m_automation;            // every lane of the project

@@ -30,7 +30,8 @@ Lua reaches the engine only through the engine API, like every other client.
   UI command, and anything but `command` and `parameters` in its table raise a Lua error at the call, in users'
   scripts too, and nothing runs. The app also adds `gnubase.ui.formatTimecode` and
   `gnubase.ui.parseTimecode`, which the project setup dialog converts timecodes with
-  ([project-setup.md](project-setup.md)). On the UI thread the functions run at once;
+  ([project-setup.md](project-setup.md)), and `gnubase.ui.parseTime`, which the add track dialog reads a ruler track's
+  time offset with ([ruler-tracks.md](ruler-tracks.md)). On the UI thread the functions run at once;
   `gnubase.ui.wait` steps the shell between its checks. A step can't run inside a step (`Shell::step` throws), so
   waiting fails inside the UI's own event handlers, instead of handling events within one.
 - **Lua UI tests.** Every `tests/lua/ui/*.lua` is a ctest test with the labels `ui` and `lua`. It runs in

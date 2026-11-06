@@ -96,7 +96,9 @@ namespace gnubase::ui
 		Mixer& operator=(Mixer&&) = delete;
 
 		// Fills an element with the Visibility tab (reference manual p. 442): a check box per channel of the project,
-		// checked while the mixer shows it. It shows nothing more once the element goes.
+		// checked while the mixer shows it, and Sync Visibility of Project and Mixer (#mixer-visibility-sync, .checked
+		// while the track visibility's sync is this mixer, docs/features/track-visibility.md). It shows nothing more
+		// once the element goes.
 		void showVisibility(Rml::Element& element);
 
 		// The ids of the channels the strips show, in order.
@@ -139,6 +141,7 @@ namespace gnubase::ui
 		MixerActions m_actions;
 		uint64_t m_track = 0;  // the channel settings window's
 		bool m_follows = true; // the channel settings window's Follow
+		bool m_syncs = false;  // its channel visibility follows the track visibility (#166)
 
 		engine::Json m_project = engine::Json::object();
 		std::vector<MixerChannel> m_channels;

@@ -297,7 +297,7 @@ namespace gnubase::ui
 		const std::string shown = m_view.value("content", std::string("key"));
 		Rml::Element* editor = m_root.get() != nullptr ? m_root.get()->QuerySelector(".midi-editor") : nullptr;
 		if (editor == nullptr || (shown == "list" && m_list) || (shown == "audioPart" && m_audio) ||
-			(shown != "list" && shown != "audioPart" && m_keys))
+			(shown != "list" && shown != "audioPart" && m_keys && m_keys->drum() == (shown == "drum")))
 			return;
 		m_keys.reset();
 		m_list.reset();
@@ -318,8 +318,9 @@ namespace gnubase::ui
 		}
 		else
 		{
+			// The drum editor (#129) is the key editor with the drum map's sounds as its rows.
 			added->SetClass("key-editor", true);
-			m_keys = std::make_unique<KeyEditor>(m_binding, *added, m_name);
+			m_keys = std::make_unique<KeyEditor>(m_binding, *added, m_name, shown == "drum");
 		}
 	}
 

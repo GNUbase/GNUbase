@@ -827,10 +827,19 @@ namespace gnubase::plugin::remote
 		}
 		const auto sentAt = std::chrono::steady_clock::now();
 		ipc::Connection& audio = binding.audio;
+		ipc::AudioBlock block;
+		if (!audio.beginBlock(block)) // the host still has the two blocks before: it is far behind, or hangs
+		{
+			keep(binding, in);
+			missed(binding, sentAt);
+			return result;
+		}
 		if (m_late)
 		{
 			// Answers that came too late are dropped before the next block goes out: the host can't answer a block
-			// while the answer ring is full of them, and would drop it unprocessed.
+			// while the answer ring is full of them, and would drop it unprocessed. They are dropped once the slot
+			// is taken, since the host answers a block before it frees its slot: the answer to the block that freed
+			// it is in then, and only the block ahead of this one can still be answered before it.
 			const ipc::WaitResult drained = audio.waitForAnswer(m_sequence + 1, std::chrono::nanoseconds::zero());
 			if (drained == ipc::WaitResult::PeerClosed)
 			{
@@ -842,13 +851,6 @@ namespace gnubase::plugin::remote
 				fail(Failure::Protocol);
 				return result;
 			}
-		}
-		ipc::AudioBlock block;
-		if (!audio.beginBlock(block)) // the host still has the two blocks before: it is far behind, or hangs
-		{
-			keep(binding, in);
-			missed(binding, sentAt);
-			return result;
 		}
 
 		// The block's messages: its info with the inputs' constant masks, the transport, the events.

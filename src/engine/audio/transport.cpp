@@ -60,6 +60,11 @@ namespace gnubase::engine
 		return withPreRoll(m_requested, startWithoutPreRoll(m_requested, position()));
 	}
 
+	time::Samples Transport::playStart() const
+	{
+		return startWithoutPreRoll(m_requested, position());
+	}
+
 	bool Transport::sync()
 	{
 		if (m_appliedRequests.load(std::memory_order_acquire) != m_sentRequests)
@@ -157,10 +162,25 @@ namespace gnubase::engine
 		return true;
 	}
 
+	bool Transport::arrange(const ArrangerState& state, bool pending)
+	{
+		Request request{Request::Type::Arrange, 0, {}, 0};
+		request.arranger = state;
+		request.record = pending;
+		return send(request);
+	}
+
+	ArrangerState Transport::arranger() const
+	{
+		const auto [a, b] = m_arrangerShared.load();
+		return unpackArranger(a, b);
+	}
+
 	void Transport::locateTo(time::Samples position) noexcept
 	{
 		m_position = position;
 		m_start = position;
+		m_arranger.entering = true;
 	}
 
 	// Starts playback from the cursor or the left locator, less the pre-roll; returnToStart comes back to the former.
@@ -170,6 +190,7 @@ namespace gnubase::engine
 		m_position = withPreRoll(m_settings, m_start);
 		m_playing = true;
 		m_stopAt = -1;
+		m_arranger.entering = true;
 	}
 
 	// Recording from stop: playback starts as play does, recording where it would start without the pre-roll.
@@ -219,6 +240,19 @@ namespace gnubase::engine
 			return;
 		case Request::Type::Set:
 			m_settings = request.settings;
+			return;
+		case Request::Type::Arrange:
+			if (request.record)
+			{
+				m_arranger.pendingStep = request.arranger.step;
+				m_arranger.pendingRepeat = request.arranger.repeat;
+				m_arranger.pendingSection = request.arranger.step >= 0 ? -1 : request.arranger.section;
+			}
+			else
+			{
+				m_arranger = request.arranger;
+				m_arranger.entering = false;
+			}
 			return;
 		case Request::Type::Record:
 			if (!request.record)
@@ -273,6 +307,14 @@ namespace gnubase::engine
 			recording = recordStart(m_settings, start, countInStart) == countInStart;
 		}
 		m_countInStart.store(countInStart, std::memory_order_release);
+		if (m_arranger != m_publishedArranger)
+		{
+			// Only where playback is counts as a change, not whether it still has to find that out.
+			changed = changed || !samePlace(m_arranger, m_publishedArranger);
+			m_publishedArranger = m_arranger;
+			const auto [a, b] = pack(m_arranger);
+			m_arrangerShared.store(a, b);
+		}
 		const auto state = static_cast<uint8_t>(
 			(m_playing || m_countingIn ? 1U : 0U) | (recording ? 2U : 0U) | (m_countingIn ? 4U : 0U));
 		if (state == m_published && !changed)
@@ -299,9 +341,19 @@ namespace gnubase::engine
 		m_appliedRequests.store(m_appliedRequests.load(std::memory_order_relaxed) + applied, std::memory_order_release);
 	}
 
-	const graph::TransportBlock& Transport::advance(uint32_t frames) noexcept
+	const graph::TransportBlock& Transport::advance(uint32_t frames, const ArrangerPlan* plan) noexcept
 	{
 		update();
+		const bool arranged = plan != nullptr && plan->plays();
+		// Playback enters the chain where it starts without the pre-roll, so that the pre-roll plays into the step. A
+		// new plan (a chain edit, another active chain) has other step indices: playback finds its place again.
+		if (!arranged)
+			m_arranger.entering = false; // linear playback is where it is: arranger mode switched on enters there
+		else if (m_arranger.entering)
+			m_arranger = arrangerEnter(*plan, m_arranger, m_start);
+		else if (plan != m_plan)
+			m_arranger = arrangerEnter(*plan, m_arranger, m_position);
+		m_plan = plan;
 		GNUBASE_ASSERT(frames <= m_segments.size());
 		frames = std::min(frames, static_cast<uint32_t>(m_segments.size()));
 		if (m_playing && m_stopAt >= 0 && m_position >= m_stopAt)
@@ -334,7 +386,8 @@ namespace gnubase::engine
 			return m_block;
 		}
 
-		const bool cycles = m_settings.cycle && m_settings.left != m_settings.right;
+		// In arranger mode the chain decides where playback goes, not the cycle.
+		const bool cycles = !arranged && m_settings.cycle && m_settings.left != m_settings.right;
 		const bool punchesOut = m_settings.punchOut && !m_settings.lockRecord; // Lock Record ignores it
 		while (offset < frames)
 		{
@@ -346,7 +399,30 @@ namespace gnubase::engine
 			}
 			uint32_t length = frames - offset;
 			bool jumps = false;
-			if (cycles && m_position < m_settings.right && m_settings.right - m_position <= length)
+			ArrangerTurn turn;
+			if (arranged)
+			{
+				turn = arrangerNext(*plan, m_arranger, m_position);
+				if (turn.at == m_position) // a turn here: no frames before it
+				{
+					m_arranger = turn.next;
+					m_position = turn.to;
+					if (turn.stops)
+					{
+						m_playing = false;
+						m_recording = false;
+						m_recordAt = -1;
+						break;
+					}
+					continue;
+				}
+				if (turn.at > m_position && turn.at - m_position <= length)
+				{
+					length = static_cast<uint32_t>(turn.at - m_position);
+					jumps = true;
+				}
+			}
+			else if (cycles && m_position < m_settings.right && m_settings.right - m_position <= length)
 			{
 				length = static_cast<uint32_t>(m_settings.right - m_position);
 				jumps = true;
@@ -376,8 +452,22 @@ namespace gnubase::engine
 				if (m_settings.stopAfterPunchOut && !cycles)
 					m_stopAt = m_settings.right + (m_settings.postRoll ? m_settings.postRollAmount : 0);
 			}
-			if (jumps)
+			if (jumps && arranged)
+			{
+				m_arranger = turn.next;
+				m_position = turn.to;
+				if (turn.stops) // Pause After Repeats: the rest of the block is silent
+				{
+					m_playing = false;
+					m_recording = false;
+					m_recordAt = -1;
+					break;
+				}
+			}
+			else if (jumps)
+			{
 				m_position = m_settings.left;
+			}
 		}
 		m_applied.store(m_locate, m_position);
 		publish(false);

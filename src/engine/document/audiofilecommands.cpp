@@ -109,7 +109,8 @@ namespace gnubase::engine
 				"in sample frames from the project start (default 0). Each file goes on an audio track of its own: "
 				"the first on track if given (such as the selected track), the others on new audio tracks named "
 				"after them, with their channels. With oneTrack they go one after another on one track: track, or a "
-				"new one. copy copies files from outside the project folder into its media folder (see "
+				"new one. lane puts those that go on track on that lane of it, from 0 (default), as event.set does. "
+				"copy copies files from outside the project folder into its media folder (see "
 				"project.location) as a job, returned as job (null without one) with the result media.add's copy job "
 				"has; the media are pointed at the copies as an undo step of its own. MP3 and "
 				"Ogg Vorbis files are always written into the media folder as 32-bit float WAV files (FLAC files "
@@ -130,7 +131,7 @@ namespace gnubase::engine
 							{"position", integer}, {"oneTrack", boolean}, {"copy", boolean}, {"convert", boolean},
 							{"splitChannels", boolean},
 							{"nameFormat", {{"type", "string"}, {"enum", {"dash", "underscore", "dot", "space"}}}},
-							{"clipsOnly", boolean}}},
+							{"clipsOnly", boolean}, {"lane", {{"type", "integer"}, {"minimum", 0}, {"maximum", 1000}}}}},
 					{"required", {"files"}}},
 				{{"type", "object"}, {"properties", {{"tracks", ids}, {"media", ids}, {"events", ids}, {"job", job}}},
 					{"required", {"tracks", "media", "events", "job"}}},
@@ -152,6 +153,10 @@ namespace gnubase::engine
 		const bool clipsOnly = parameters.value("clipsOnly", false);
 		ObjectId target = parameters.value("track", ObjectId{0});
 		require(!clipsOnly || (target == 0 && !oneTrack), "clipsOnly adds no events: leave out track and oneTrack");
+		// The lane of the given track that its files go on.
+		const ObjectId given = target;
+		const int lane = parameters.value("lane", 0);
+		require(given != 0 || lane == 0, "lane needs a track whose lane the files go on");
 		if (target != 0)
 		{
 			const auto track = project.trackById.find(target);
@@ -222,10 +227,10 @@ namespace gnubase::engine
 					}
 					const time::Position at = time::rebase({time::TimeBase::Linear, splits ? position : next},
 						project.trackById.at(track).timeBase, project.tempo, project.sampleRate);
-					events.push_back(
-						run("audioEvent.add", {{"track", track}, {"clip", clip.at("id")}, {"position", at.value}})
-							.at("event")
-							.at("id"));
+					Json eventParameters = {{"track", track}, {"clip", clip.at("id")}, {"position", at.value}};
+					if (track == given)
+						eventParameters["lane"] = lane;
+					events.push_back(run("audioEvent.add", eventParameters).at("event").at("id"));
 					length = std::llround(static_cast<double>(added.at("length").get<time::Samples>()) *
 						project.sampleRate / added.at("sampleRate").get<double>());
 				}

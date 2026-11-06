@@ -54,6 +54,12 @@ namespace gnubase::ui
 			R"(<select control="input" title="Input Routing"/></div>)"
 			R"(<div class="inspector-row" row="output"><span class="inspector-label">Output</span>)"
 			R"(<select control="output" title="Output Routing"/></div>)"
+			R"(<div class="inspector-row" row="device"><span class="inspector-label">Device</span>)"
+			R"(<select control="device" title="MIDI Device"/></div>)"
+			R"(<div class="inspector-row" row="bank"><span class="inspector-label">Bank</span>)"
+			R"(<textdisplay class="display" control="bank" title="Bank Selector"/></div>)"
+			R"(<div class="inspector-row" row="program"><span class="inspector-label">Program</span>)"
+			R"(<select control="program" title="Program Selector"/></div>)"
 			R"(</div></div>)"
 			R"(<div class="inspector-section" section="modifiers" label="MIDI Modifiers"/>)"
 			R"(<div class="inspector-section" section="inserts" label="Inserts">)"
@@ -197,6 +203,45 @@ namespace gnubase::ui
 			return options;
 		}
 
+		// A MIDI track's patch as the program selector's value: "off", or the program and bank, "5:300" ("5:" without a
+		// bank).
+		std::string patchValue(const Json& program, const Json& bank)
+		{
+			if (!program.is_number_integer())
+				return "off";
+			return std::to_string(program.get<int>()) + ":" + (bank.is_number_integer() ? bank.dump() : "");
+		}
+
+		// The program selector's choices (reference manual pp. 1108, 1113): a device's patches by name, or without one
+		// programs 1 to 128 (keeping the bank), always with Off, and the channel's own patch if no choice has it.
+		Options programs(const Json* device, const Json& channel)
+		{
+			Options options{{"off", "Off"}};
+			const Json bank = channel.value("bank", Json());
+			if (device == nullptr)
+			{
+				for (int program = 0; program < 128; ++program)
+					options.emplace_back(patchValue(program, bank), std::to_string(program + 1));
+				return options;
+			}
+			const Json& banks = device->at("banks");
+			for (const Json& deviceBank : banks)
+				for (const Json& patch : deviceBank.at("patches"))
+				{
+					std::string name;
+					for (const std::string& part : {banks.size() > 1 ? deviceBank.at("name").get<std::string>() : "",
+							 patch.value("folder", std::string()), patch.at("name").get<std::string>()})
+						if (!part.empty())
+							name += (name.empty() ? "" : " / ") + part;
+					options.emplace_back(patchValue(patch.at("program"), patch.value("bank", Json())), name);
+				}
+			const std::string current = patchValue(channel.value("program", Json()), bank);
+			if (std::none_of(
+					options.begin(), options.end(), [&](const auto& option) { return option.first == current; }))
+				options.emplace_back(current, "Program " + std::to_string(channel.at("program").get<int>() + 1));
+			return options;
+		}
+
 		Options inputs(const Json& project)
 		{
 			Options options{{"0", "No Bus"}};
@@ -218,7 +263,18 @@ namespace gnubase::ui
 		: m_binding(binding), m_stepOwner(binding.stepOwner("inspector")), m_root(root.GetObserverPtr()),
 		  m_editChannel(std::move(editChannel)),
 		  // Another project replaces the edits in progress: the ids they were for may be the new project's too.
-		  m_reset(binding.on("project.reset", [this](const engine::Event&) { dropEdits(); }))
+		  m_reset(binding.on("project.reset", [this](const engine::Event&) { dropEdits(); })),
+		  m_devicesChanged(binding.on("settings.changed",
+			  [this](const engine::Event& event)
+			  {
+				  const Json& values = event.data.at("values");
+				  if (const auto devices = values.find("midi.devices"); devices != values.end())
+				  {
+					  m_devices = *devices;
+					  m_devicesKnown = true;
+					  m_stale = true;
+				  }
+			  }))
 	{
 		root.SetClass("inspector", true);
 		// Set up Sections from an empty area (p. 167), in the project window's document; the controls have none.
@@ -234,6 +290,16 @@ namespace gnubase::ui
 		root.AddEventListener(Rml::EventId::Change, this);
 		root.AddEventListener(Rml::EventId::Blur, this, true);    // blur doesn't bubble
 		root.AddEventListener(Rml::EventId::Keydown, this, true); // Escape leaves the notepad
+
+		// The MIDI devices are a user setting (reference manual p. 1109); the next update shows them.
+		m_binding.send("settings.get", {{"key", "midi.devices"}},
+			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (alive.expired() || !result.ok() || m_devicesKnown) // gone, or newer changes win
+					return;
+				m_devices = result.value.at("value");
+				m_stale = true;
+			});
 		show();
 	}
 
@@ -322,6 +388,14 @@ namespace gnubase::ui
 		available("[row=volume]", audio || vca);
 		available("[row=pan]", audio);
 		available("[row=input]", type == "audio");
+		// A MIDI track's patch (pp. 1108, 1113): by its device's patches, or by bank and program without one.
+		const Json* device = nullptr;
+		if (channel != nullptr && type == "midi")
+			if (const auto found = m_devices.find(channel->value("device", std::string())); found != m_devices.end())
+				device = &*found;
+		available("[row=device]", type == "midi");
+		available("[row=bank]", type == "midi" && device == nullptr);
+		available("[row=program]", type == "midi");
 		if (channel != nullptr)
 		{
 			for (const auto& [control, key] : {std::pair{"mute", "mute"}, std::pair{"solo", "solo"},
@@ -350,6 +424,24 @@ namespace gnubase::ui
 					*output, outputs(*m_project, type, id), std::to_string(channel->at("output").get<uint64_t>()));
 			if (Rml::Element* input = element("select[control=input]"); input != nullptr && type == "audio")
 				widgets::fill(*input, inputs(*m_project), std::to_string(channel->at("input").get<uint64_t>()));
+			if (type == "midi")
+			{
+				const std::string named = channel->value("device", std::string());
+				Options devices{{"", "No Device"}};
+				for (const auto& [name, value] : m_devices.items())
+					devices.emplace_back(name, name);
+				if (!named.empty() && device == nullptr)
+					devices.emplace_back(named, named + " (not installed)");
+				if (Rml::Element* select = element("select[control=device]"))
+					widgets::fill(*select, devices, named);
+				const Json bank = channel->value("bank", Json());
+				if (Rml::Element* program = element("select[control=program]"))
+					widgets::fill(
+						*program, programs(device, *channel), patchValue(channel->value("program", Json()), bank));
+				if (Rml::Element* field = element("textdisplay[control=bank]"))
+					field->SetAttribute(
+						"value", bank.is_number_integer() ? std::to_string(bank.get<int>() + 1) : "Off");
+			}
 			if (noteTrack && channel->contains("modifiers"))
 				showModifiers(channel->at("modifiers"));
 
@@ -511,6 +603,40 @@ namespace gnubase::ui
 		else if (name == "input" || name == "output")
 		{
 			value = std::strtoull(event.GetParameter<Rml::String>("value", "0").c_str(), nullptr, 10);
+		}
+		else if (name == "device")
+		{
+			value = event.GetParameter<Rml::String>("value", "");
+		}
+		else if (name == "bank")
+		{
+			// Banks 1 to 16384 as typed; anything else, such as "Off", is none.
+			const auto typed = event.GetParameter<Rml::String>("value", "");
+			char* end = nullptr;
+			const long number = std::strtol(typed.c_str(), &end, 10);
+			const bool valid = end != typed.c_str() && *end == '\0' && number >= 1 && number <= 16384;
+			const Json bank = valid ? Json(number - 1) : Json(nullptr);
+			m_stale = true; // shows the bank as it is, such as "Off" for text that isn't one
+			if (m_channel.value("bank", Json()) != bank)
+				sendChannel({{"bank", bank}});
+			return;
+		}
+		else if (name == "program")
+		{
+			// The patch's program and bank: "off", or "5:300" ("5:" without a bank).
+			const auto chosen = event.GetParameter<Rml::String>("value", "off");
+			const size_t colon = chosen.find(':');
+			if (colon == std::string::npos)
+			{
+				if (!m_channel.value("program", Json()).is_null())
+					sendChannel({{"program", nullptr}});
+				return;
+			}
+			const Json program = std::stoi(chosen.substr(0, colon));
+			const Json bank = colon + 1 < chosen.size() ? Json(std::stoi(chosen.substr(colon + 1))) : Json(nullptr);
+			if (m_channel.value("program", Json()) != program || m_channel.value("bank", Json()) != bank)
+				sendChannel({{"program", program}, {"bank", bank}});
+			return;
 		}
 		// Not what it is already, such as a drop-down list that show filled.
 		if (value.is_null() || m_channel.value(key, Json()) == value)

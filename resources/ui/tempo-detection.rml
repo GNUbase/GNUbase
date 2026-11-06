@@ -1,0 +1,67 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Tempo Detection (docs/features/tempo-detection.md, reference manual pp. 1460-1461): ui::EventDisplay opens it with
+     tempo.detection for the first selected audio event or MIDI part, and each button sends tempo.detect: Analyze,
+     the factors, Offbeat Correction, Smooth Tempo and Reset. -->
+<rml>
+<head>
+	<title>Tempo Detection</title>
+	<style>
+		dialog
+		{
+			width: 300dp;
+		}
+
+		.row
+		{
+			display: flex;
+			align-items: center;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.row button
+		{
+			flex: 1;
+			margin-right: 6dp;
+		}
+
+		.row button:last-child
+		{
+			margin-right: 0;
+		}
+
+		.buttons
+		{
+			justify-content: flex-end;
+		}
+
+		.buttons button
+		{
+			flex: 0 0 auto;
+		}
+	</style>
+</head>
+<body>
+	<dialog id="tempo-detection-dialog">
+		<div class="dialog-titlebar">Tempo Detection</div>
+		<div class="row">
+			<button id="tempo-detection-analyze" class="primary">Analyze</button>
+		</div>
+		<div class="row">
+			<button id="tempo-detection-double" title="Multiply by 2">x2</button>
+			<button id="tempo-detection-halve" title="Divide by 2">/2</button>
+			<button id="tempo-detection-four-thirds" title="Multiply by 4/3">x4/3</button>
+			<button id="tempo-detection-three-quarters" title="Multiply by 3/4">x3/4</button>
+		</div>
+		<div class="row">
+			<button id="tempo-detection-offbeat">Offbeat Correction</button>
+			<button id="tempo-detection-smooth">Smooth Tempo</button>
+		</div>
+		<div class="row">
+			<button id="tempo-detection-reset" title="Reset the analysis result">Reset</button>
+		</div>
+		<div class="row buttons">
+			<button result="cancel">Close</button>
+		</div>
+	</dialog>
+</body>
+</rml>
