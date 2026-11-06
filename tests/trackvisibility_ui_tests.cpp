@@ -165,7 +165,7 @@ TEST_CASE("Sync Visibility of Project and Mixer links the track visibility with 
 
 	// Its button switches the link off; the window then keeps its own visibility.
 	click(app, mixer, "#mixer-visibility-sync");
-	REQUIRE(app.waitUntil([&] { return app.call("trackVisibility.get").at("sync") == ""; }));
+	REQUIRE(app.waitUntil([&] { return app.call("trackVisibility.get").at("sync").get<std::string>().empty(); }));
 	REQUIRE(app.waitUntil([&] { return !has(app, mixer, "#mixer-visibility-sync", "checked"); }));
 	app.call("trackVisibility.set", {{"hidden", Json::array()}});
 	REQUIRE(app.waitUntil([&] { return !has(app, std::nullopt, row(guitar.track), "filtered"); }));

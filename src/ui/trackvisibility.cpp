@@ -207,7 +207,7 @@ namespace gnubase::ui
 		const std::string sync = m_visibility.at("sync").get<std::string>();
 		if (Rml::Element* button = panel->QuerySelector("#track-visibility-sync"))
 			button->SetClass("checked", !sync.empty());
-		if (Rml::Element* menu = m_syncMenu.get())
+		if (const Rml::Element* menu = m_syncMenu.get())
 			for (int i = 0; i < menu->GetNumChildren(); ++i)
 			{
 				Rml::Element* item = menu->GetChild(i);
