@@ -314,7 +314,7 @@
 						names[#names + 1] = escape(keyName(keys))
 					end
 					areas[area][#areas[area] + 1] = '<listitem class="command" id="kc-' .. index .. '" value="c' ..
-						index .. '" level="1" command="' .. escape(entry.command) .. '"><span class="name">' ..
+						index .. '" level="1" kc-command="' .. escape(entry.command) .. '"><span class="name">' ..
 						escape(entry.command .. parametersText(entry.parameters)) .. '</span><span class="keys">' ..
 						table.concat(names, ", ") .. "</span></listitem>"
 				end

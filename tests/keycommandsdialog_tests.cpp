@@ -125,13 +125,13 @@ namespace
 		return app.waitUntil([&app] { return !open(app); });
 	}
 
-	// The command rows that the list shows, by their command attribute.
+	// The command rows that the list shows, by their kc-command attribute.
 	Strings shownCommands(test::UiApp& app)
 	{
 		Strings shown;
 		for (const Json& row : elements(app, "#keycommands-list listitem.command"))
 			if (row.at("visible") == true)
-				shown.push_back(row.at("attributes").at("command").get<std::string>());
+				shown.push_back(row.at("attributes").at("kc-command").get<std::string>());
 		return shown;
 	}
 
@@ -140,7 +140,7 @@ namespace
 	{
 		type(app, "#keycommands-search", search.empty() ? command : search);
 		for (const Json& row : elements(app, "#keycommands-list listitem.command"))
-			if (row.at("attributes").at("command") == command && row.at("visible") == true)
+			if (row.at("attributes").at("kc-command") == command && row.at("visible") == true)
 			{
 				click(app, "#" + row.at("id").get<std::string>());
 				return;
