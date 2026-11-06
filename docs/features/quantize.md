@@ -48,8 +48,10 @@ and the toolbar's section.
   controls. The section shows in windows at least 1000 dp wide (`resources/styles/quantize.rcss`), where the toolbar
   has room for it.
 
+Audio events and parts, Warp Quantize On/Off and the panel's section for several audio tracks are in
+[audio-quantize.md](audio-quantize.md).
+
 Not yet: Move MIDI Controllers (moving controllers with their notes) and dragging a part onto the grid display to make
-a groove; the audio parts of the panel (quantizing by time stretch, slice rules, crossfades) wait for audio quantizing; the Edit menu's
-items always take the project window's selection, since the menu bar is in its zone.
+a groove; the Edit menu's items always take the project window's selection, since the menu bar is in its zone.
 
 `tests/quantize_ui_tests.cpp` drives all of it in the app's UI with `ui::Automation`, as MCP's UI tools do.

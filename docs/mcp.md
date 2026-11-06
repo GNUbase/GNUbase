@@ -4636,10 +4636,12 @@ Result:
 
 Engine command `quantize.apply`.
 
-Quantizes note starts: moves them toward the nearest position of the grid, or of the groove, and keeps their lengths. Takes the notes of part (only notes, if given) or of every part in parts. The settings are the project's (see quantize.set), or preset's, changed by settings. Quantizing starts from the notes' original timing unless settings.soft is true, and keeps it, so quantize.reset puts it back. Notes moved by other means since they were quantized start from where they are; velocities and lengths changed by other means stay. Returns the notes that changed. Grids are in project time and start again at every bar; notes don't move before their part's start or to or past its end.
+Quantizes note starts: moves them toward the nearest position of the grid, or of the groove, and keeps their lengths. Takes the notes of part (only notes, if given) or of every part in parts. The settings are the project's (see quantize.set), or preset's, changed by settings. Quantizing starts from the notes' original timing unless settings.soft is true, and keeps it, so quantize.reset puts it back. Notes moved by other means since they were quantized start from where they are; velocities and lengths changed by other means stay. Returns the notes that changed. Grids are in project time and start again at every bar; notes don't move before their part's start or to or past its end. Audio events (events, and every event of the audio parts in audioParts) move so that their snap points, or without one their starts, move toward the grid in the same way (reference manual p. 369); with settings.warpQuantize, their audio is quantized by time stretch instead (warp quantizing, p. 370): the warp markers inside each event (made of its clip's hitpoints that count if it has none there) move to the grid, the one nearest to each grid position onto it and the others keeping their places relative to those. Locked events stay. They too start from their original positions or markers unless soft. Returns the notes and audio events that changed and the clips whose warp markers did.
 
 Arguments:
 
+- `audioParts`: array of integer
+- `events`: array of integer
 - `notes`: array of integer
 - `part`: integer
 - `parts`: array of integer
@@ -4648,7 +4650,41 @@ Arguments:
 
 Result:
 
+- `clips`: array of integer, required
+- `events`: array of integer, required
 - `notes`: array, required
+
+#### `quantize_createWarpMarkers`
+
+Engine command `quantize.createWarpMarkers`.
+
+Creates warp markers in the clips of audio events of several tracks at the same positions, for warp quantizing them with quantize.apply (Warp Marker Creation Rules, reference manual pp. 371-372, 379-380). The positions are the hitpoints that count (see clip.setHitpoints) of the events' clips: first those of the tracks with the highest priority in priorities ([{track, priority 0-5}], default 1; 0 leaves a track's hitpoints out), then those of the others with none of a higher priority, or of the same priority earlier, within range ms (default 20) of them. The audio on all tracks should start and end together. Each marker goes where the clip frame plays now, so nothing changes until quantizing moves them. Returns the clips changed and the positions (project samples).
+
+Arguments:
+
+- `events`: array of integer, required
+- `priorities`: array of object
+- `range`: number
+
+Result:
+
+- `clips`: array of integer, required
+- `positions`: array of integer, required
+
+#### `quantize_crossfade`
+
+Engine command `quantize.crossfade`.
+
+Corrects the overlaps and gaps between quantized audio events, such as slices (the quantize panel's Crossfades section, reference manual p. 379): on each track, in order, an event that overlaps the next one ends where that one starts, and an event after a gap starts earlier, where the one before ends, as far as its clip has audio there. Then each event goes on length ms (default 10, up to 500) into the next one and crossfades into it (crossfade.set). Locked events stay. Returns the events changed.
+
+Arguments:
+
+- `events`: array of integer, required
+- `length`: number
+
+Result:
+
+- `events`: array of integer, required
 
 #### `quantize_ends`
 
@@ -4769,16 +4805,20 @@ Arguments:
 
 Engine command `quantize.reset`.
 
-Puts quantized notes back to their timing before quantizing: starts, lengths and velocities. Notes moved by other means since keep their timing, and velocities and lengths changed by other means stay. Takes the notes of part (only notes, if given) or of every part in parts and returns the notes that changed.
+Puts quantized notes back to their timing before quantizing: starts, lengths and velocities. Notes moved by other means since keep their timing, and velocities and lengths changed by other means stay. Takes the notes of part (only notes, if given) or of every part in parts and returns the notes that changed. Audio events (events, and those of the audio parts in audioParts) go back to their positions before quantizing, and their clips to their warp markers before warp quantizing, unless they were changed by other means since; returns those events and clips too.
 
 Arguments:
 
+- `audioParts`: array of integer
+- `events`: array of integer
 - `notes`: array of integer
 - `part`: integer
 - `parts`: array of integer
 
 Result:
 
+- `clips`: array of integer, required
+- `events`: array of integer, required
 - `notes`: array, required
 
 #### `quantize_savePreset`
@@ -4813,6 +4853,24 @@ Result:
 - `autoQuantize`: boolean, required
 - `preset`: string or null, required
 - `settings`: object, required
+
+#### `quantize_slice`
+
+Engine command `quantize.slice`.
+
+Slices audio events of several tracks at the same positions, so that quantizing them keeps them phase coherent (Slice Rules, reference manual pp. 370-371, 378-379). The positions are the hitpoints that count (see clip.setHitpoints) of the events' clips: first those of the tracks with the highest priority in priorities ([{track, priority 0-5}], default 1; 0 leaves a track's hitpoints out), then those of the others with none of a higher priority, or of the same priority earlier, within range ms (default 20) of them. The audio on all tracks should start and end together. Every event is cut offset ms (default 0) before each position inside it, and each slice that starts there snaps at it (its snap point), so that quantize.apply moves the slices of every track at a position alike. Locked events stay whole. Returns the events, the slices included, and the positions (project samples).
+
+Arguments:
+
+- `events`: array of integer, required
+- `offset`: number
+- `priorities`: array of object
+- `range`: number
+
+Result:
+
+- `events`: array of integer, required
+- `positions`: array of integer, required
 
 ### range
 
