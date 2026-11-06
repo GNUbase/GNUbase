@@ -195,6 +195,44 @@ TEST_CASE("every theme dims the edit history's undone steps, details too, and dr
 	}
 }
 
+TEST_CASE("every theme draws play probability and velocity variance bars dashed, velocity bars solid", "[unit]")
+{
+	test::FakeUi fake{{{1, "Monitor", {0, 0, 1920, 1080}, {0, 0, 1920, 1080}, 1.0F}}};
+	ui::Fonts(resources() / "fonts").load();
+	const ui::Themes themes(resources());
+	ui::Window& window = fake.shell.open(spec());
+	// The controller lanes' elements (ui/controllerlanes.h, docs/features/controller-lanes.md).
+	Rml::ElementDocument* document = window.context().LoadDocumentFromMemory(R"(<rml><body>
+		<div class="controller-lane" lane-kind="velocity"><div class="controller-lane-area">
+			<div class="controller-bar" id="velocity"/></div></div>
+		<div class="controller-lane" lane-kind="probability"><div class="controller-lane-area">
+			<div class="controller-bar" id="probability"/><div class="controller-bar selected" id="selected"/></div></div>
+		<div class="controller-lane" lane-kind="velocityVariance"><div class="controller-lane-area">
+			<div class="controller-bar inactive" id="variance"/></div></div>
+	</body></rml>)");
+	REQUIRE(document != nullptr);
+	document->Show();
+	Rml::Element* velocity = document->GetElementById("velocity");
+	REQUIRE(velocity != nullptr);
+	for (const std::string theme : {"gnubase", "dark", "light", "high-contrast"})
+	{
+		INFO("theme " << theme);
+		fake.shell.setTheme(theme);
+		window.requestRender();
+		fake.shell.step(milliseconds(0));
+		CHECK_THAT(decorator(*velocity), !ContainsSubstring("gradient"));
+		CHECK(velocity->GetComputedValues().background_color().alpha == 255);
+		for (const char* id : {"probability", "selected", "variance"})
+		{
+			INFO(id);
+			Rml::Element* bar = document->GetElementById(id);
+			REQUIRE(bar != nullptr);
+			CHECK_THAT(decorator(*bar), ContainsSubstring("repeating-linear-gradient"));
+			CHECK(bar->GetComputedValues().background_color().alpha == 0);
+		}
+	}
+}
+
 TEST_CASE("a theme's style sheet that changed on disk applies to documents loaded again", "[unit]")
 {
 	// Live reload (ui/livereload.h) clears RmlUi's style sheet cache and loads the documents again.
