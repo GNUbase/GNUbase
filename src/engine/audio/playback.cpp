@@ -570,22 +570,58 @@ namespace gnubase::engine
 		m_sampleRate = sampleRate;
 	}
 
+	namespace
+	{
+		// A path through arranger turns or cycle jumps ends after this many, however short they are.
+		constexpr int g_maxTurns = 1000;
+
+		// The next jump on the playback path: playback that reaches at goes on at to (or stops there), in arranger
+		// state next; at is -1 if playback goes on.
+		struct PathJump
+		{
+			time::Samples at = -1;
+			time::Samples to = 0;
+			bool stops = false;
+			ArrangerState next;
+		};
+
+		PathJump nextJump(const Playback::Cue& cue, const ArrangerState& state, time::Samples position)
+		{
+			if (cue.arranger != nullptr && cue.arranger->plays())
+			{
+				const ArrangerTurn turn = arrangerNext(*cue.arranger, state, position);
+				return {turn.at, turn.to, turn.stops, turn.next};
+			}
+			const TransportSettings& settings = cue.settings;
+			if (settings.cycle && settings.left != settings.right && position < settings.right)
+				return {settings.right, settings.left, false, state};
+			return {};
+		}
+
+		ArrangerState startState(const Playback::Cue& cue)
+		{
+			return cue.arranger != nullptr && cue.arrangerState.entering
+				? arrangerEnter(*cue.arranger, cue.arrangerState, cue.enter >= 0 ? cue.enter : cue.position)
+				: cue.arrangerState;
+		}
+	}
+
 	std::vector<Playback::Point> Playback::points(const Playlist& playlist, const Cue& cue) const
 	{
 		std::vector<Point> result;
-		const TransportSettings& settings = cue.settings;
-		const bool cycles = settings.cycle && settings.left != settings.right;
 		time::Samples position = cue.position;
 		time::Samples remaining = cue.window;
+		ArrangerState state = startState(cue);
 		bool jumped = false;
-		bool lapped = false; // past a cycle jump, where entries behind the cursor play again
-		while (remaining > 0 && result.size() < m_voicesPerTrack)
+		bool lapped = false; // past a jump back, where entries behind the cursor play again
+		for (int turns = 0; remaining > 0 && result.size() < m_voicesPerTrack && turns < g_maxTurns; ++turns)
 		{
-			const bool bounded = cycles && position < settings.right;
-			const time::Samples end = bounded ? std::min(settings.right, position + remaining) : position + remaining;
-			// After a cycle jump playback enters wherever the left locator is. Otherwise reaching an entry's start
-			// plays it from a new voice, unless an entry ends there whose clip it continues: then that voice reads on,
-			// for one entry. The entries at the cursor are cue()'s.
+			const PathJump jump = nextJump(cue, state, position);
+			const bool bounded = jump.at >= 0;
+			const time::Samples end = bounded ? std::min(jump.at, position + remaining) : position + remaining;
+			// After a jump playback enters wherever it lands. Otherwise reaching an entry's start plays it from a new
+			// voice, unless an entry ends there whose clip it continues: then that voice reads on, for one entry. The
+			// entries at the cursor are cue()'s.
 			std::vector<const PlaylistEntry*> starting;
 			for (const PlaylistLayer& layer : playlist.layers)
 			{
@@ -611,9 +647,14 @@ namespace gnubase::engine
 					result.push_back({entry->media, entry->frame});
 			}
 			remaining -= end - position;
-			jumped = bounded && end == settings.right;
+			const bool reached = bounded && end == jump.at;
+			jumped = reached && jump.to != end; // a turn that goes on where it is doesn't jump
 			lapped = lapped || jumped;
-			position = jumped ? settings.left : end;
+			position = reached ? jump.to : end;
+			if (reached)
+				state = jump.next;
+			if (reached && jump.stops)
+				break;
 		}
 		if (result.size() > m_voicesPerTrack)
 			result.resize(m_voicesPerTrack);
@@ -622,20 +663,18 @@ namespace gnubase::engine
 
 	time::Samples Playback::ahead(const Cue& cue, time::Samples frames)
 	{
-		const TransportSettings& settings = cue.settings;
-		const bool cycles = settings.cycle && settings.left != settings.right;
 		time::Samples position = cue.position;
-		while (frames > 0)
+		ArrangerState state = startState(cue);
+		for (int turns = 0; turns < g_maxTurns; ++turns)
 		{
-			if (cycles && position < settings.right && settings.right - position <= frames)
-			{
-				frames -= settings.right - position;
-				position = settings.left;
-				if (settings.right - settings.left <= 0)
-					return position + frames; // the range is skipped: from the left locator on, no more jumps
-				continue;
-			}
-			return position + frames;
+			const PathJump jump = nextJump(cue, state, position);
+			if (jump.at < 0 || jump.at - position > frames)
+				return position + frames;
+			frames -= jump.at - position;
+			if (jump.stops)
+				return jump.to;
+			position = jump.to;
+			state = jump.next;
 		}
 		return position;
 	}

@@ -99,6 +99,10 @@ namespace gnubase::engine
 	Json toJson(const AutomationPoint& point);
 	Json toJson(const AutomationLane& lane); // with its points, sorted by position
 	Json toJson(const MixerView& view);      // {"hidden": [ids], "hiddenTypes": [types]}
+	// {hidden, sync, configurations: [{name, hidden}], configuration}; trackVisibilityFromJson takes what is valid
+	// JSON.
+	Json toJson(const TrackVisibility& visibility);
+	TrackVisibility trackVisibilityFromJson(const Json& json);
 	// {id, name, channels, volume, pan, mute, record, vca}; linkGroupFromJson leaves what the JSON doesn't have.
 	Json toJson(const LinkGroup& group);
 	LinkGroup linkGroupFromJson(const Json& json, const LinkGroup& fallback = {});
@@ -113,6 +117,16 @@ namespace gnubase::engine
 	// tempo map can't have.
 	Json toJson(const time::TempoMap& tempo);
 	time::TempoMap tempoFromJson(const Json& points);
+
+	// The arranger (#167) as arranger.get describes it, arranger.changed announces it and the project file keeps it:
+	// the arranger track (0 for none); its events in timeline order, positions in the track's time base and start
+	// and end in samples; the chains with their steps, the active chain (chain), mode and jumpMode.
+	Json arrangerJson(const Project& project);
+
+	// The transpose track (#168) as transpose.get describes it, transpose.changed announces it and the project file
+	// keeps it: the transpose track (0 for none); its events in timeline order, positions in the track's time base and
+	// start in samples, with their values; mute, keepInOctave and lock.
+	Json transposeJson(const Project& project);
 
 	// The whole project, with the tracks from top to bottom. The id counter is left out: undo doesn't restore it,
 	// so that ids stay unique.

@@ -72,10 +72,11 @@ sends engine commands, so whatever another client changes shows at once.
   `mute` (M) and `solo` (S), which tracks with a channel always show, `record` and `monitor` (audio tracks), `read`
   (every automation lane of the track reads, or with a click none does; disabled without lanes) and `timeBase`
   (musical or linear, `.checked` when linear). A click sends `channel.set`, `automationLane.set` in one transaction,
-  or `track.set`. Folders without a group channel, marker, ruler and signature tracks show none. The tempo track's only control
-  is `tempoTrack`, Activate Tempo Track (`project.set` `tempoTrackActive`, [tempo-track.md](tempo-track.md)). The
+  or `track.set`. Folders without a group channel, marker and signature tracks show none. The tempo track's only control
+  is `tempoTrack`, Activate Tempo Track (`project.set` `tempoTrackActive`, [tempo-track.md](tempo-track.md)); ruler
+  tracks have `timeFormat`, `timeOffsetOn`, `timeOffset` and `setTimeOffset` ([ruler-tracks.md](ruler-tracks.md)). The
   defaults: mute, solo, record, monitor and read on audio tracks; mute, solo and read on the others with a channel;
-  tempoTrack on the tempo track.
+  tempoTrack on the tempo track; all four on ruler tracks.
 - **Selection** (pp. 218–219) is the list view's: a click selects a track, Ctrl-click adds or removes one,
   Shift-click selects a range, and Shift-click on a selected track deselects it (the list view's `shiftdeselects`,
   [widgets.md](widgets.md)). Up and Down step through the shown tracks, in the list and wherever the project window
@@ -128,6 +129,8 @@ sends engine commands, so whatever another client changes shows at once.
   window's focus zone, enabled while the list exists and, for those of selected tracks, while tracks are selected,
   so the menus disable them otherwise.
 
+- **Track visibility** (#166): the tracks the Visibility tab hides leave the list and the event display
+  ([track-visibility.md](track-visibility.md)).
 - **Automation tracks** (#121) have rows below their track's own, which reaches down over them; Show/Hide
   Automation is in the lower left corner of each track with a channel ([automation-tracks.md](automation-tracks.md)).
 

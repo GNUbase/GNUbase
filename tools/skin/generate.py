@@ -514,6 +514,10 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
                                              "border-left-width": f"{widths['hairline']}dp",
                                              "border-left-color": c["accent2"]}),
         (".signature-row .signature-event.selected", {"color": c["background"], "background-color": c["accent2"]}),
+        # The transpose track (docs/features/transpose.md): a transpose event's value from its position on
+        (".transpose-row .transpose-event", {"color": c["text"], "font-size": f"{sizes['small']}dp",
+                                             "border-left-width": f"{widths['hairline']}dp",
+                                             "border-left-color": c["accent"]}),
         # The tools (docs/features/tools.md): the selection range and the rectangle a tool drags
         (".event-display .range-selection", {"border-width": f"{widths['hairline']}dp", "border-color": c["text"],
                                              "background-color": c["text"] + "33"}),
@@ -590,6 +594,13 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".controller-bar.selected, .controller-step.selected", {"background-color": c["accent2"]}),
         (".controller-bar.inactive, .controller-step.inactive",
          {"background-color": mix(c["surface"], c["textMuted"], .3)}),
+        # Play probability and velocity variance bars are dashed (reference manual pp. 1169, 1171), in the same colors
+        *[(", ".join(f".controller-lane[lane-kind={kind}] .controller-bar{state}"
+                     for kind in ("probability", "velocityVariance")),
+           {"background-color": "transparent",
+            "decorator": f"repeating-linear-gradient(to top, {color} 0dp, {color} 3dp, {color}00 3dp, {color}00 5dp)"})
+          for state, color in (("", mix(c["surfaceRaised"], c["accent"], .6)), (".selected", c["accent2"]),
+                               (".inactive", mix(c["surface"], c["textMuted"], .3)))],
         # The audio part editor (docs/features/audio-part-editor.md): lines between the lanes, the events, selected
         # ones in the second accent, muted ones and those outside the part editing mode dimmed
         (".ape-display", {"background-color": c["surface"]}),

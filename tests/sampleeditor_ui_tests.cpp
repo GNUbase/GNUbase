@@ -231,6 +231,9 @@ TEST_CASE("the range selection tool and the Range section select ranges of the c
 	f.click(of(".se-select[select=event]"));
 	REQUIRE(f.app.waitUntil([&] { return f.view().at("selectionStart") == 1000; }));
 	CHECK(f.view().at("selectionEnd") == 5000);
+	// The buttons take the selection the editor shows, which follows the engine's (#894).
+	REQUIRE(f.app.waitUntil([&] { return f.text(".se-info [field=selectionEnd]") == "5000"; }));
+	CHECK(f.text(".se-info [field=selectionStart]") == "1000");
 	// Set Locators to Selection Range and Locate Selection, in the project's samples.
 	f.click(of("#se-set-locators"));
 	REQUIRE(f.app.waitUntil([&] { return f.app.call("transport.get").at("left") == g_second; }));

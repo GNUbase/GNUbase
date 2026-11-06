@@ -91,6 +91,10 @@ namespace gnubase::engine
 			bool playing = false; // the audio thread reads the voices meanwhile; else they are cued exactly
 			TransportSettings settings;
 			time::Samples window = 0; // how far ahead along the playback path to cue
+			// Arranger mode (#167): the plan the transport plays and where it is in it; none plays no chain.
+			const ArrangerPlan* arranger = nullptr;
+			ArrangerState arrangerState;
+			time::Samples enter = -1; // where an entering arrangerState enters, if not at position: past the pre-roll
 		};
 
 		struct Track

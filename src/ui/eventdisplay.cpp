@@ -90,6 +90,7 @@ namespace gnubase::ui
 		m_selectedLanes = &addCanvas<EventLanes>(*m_area, "event-lanes", "selected-events");
 		m_waveforms = std::make_unique<EventWaveforms>(binding, add(*m_area, "div", "waveforms"));
 		m_fadeLines = &addCanvas<FadeLines>(*m_area, "fade-lines", "fades");
+		m_partMarks = &add(*m_area, "div", "part-marks");
 		m_automationArea = &add(*m_area, "div", "automation-lanes");
 		m_editor = &add(*m_area, "div", "automation-editor");
 		m_rangeElement = &add(*m_area, "div", "range-selection");
@@ -333,6 +334,7 @@ namespace gnubase::ui
 			logging::warning("The event display can't read the project's tempo or signatures");
 		readMarkerMagnets(project);
 		showSnap();
+		showRootKey(project);
 
 		// A lane per track that isn't hidden, in the project's order.
 		std::map<uint64_t, size_t> lanes;
@@ -347,6 +349,8 @@ namespace gnubase::ui
 		m_laneAutomation.clear();
 		m_laneTakes.clear();
 		m_events.clear();
+		m_independent.clear();
+		m_mutedPieces.clear();
 		m_fades.clear();
 		readAutomation(project);
 		// Each track's highest lane (#99), and the display lane of each lane of a track whose lanes show.
@@ -433,13 +437,13 @@ namespace gnubase::ui
 				return;
 			if (onTrackLane)
 				m_tracks[lanes[track]].events.push_back(span);
-			m_events.push_back(
-				{event.at("id").get<uint64_t>(), lanes[track], start, end, event.value("mute", false), std::nullopt});
+			m_events.push_back({event.at("id").get<uint64_t>(), lanes[track], start, end, event.value("mute", false),
+				std::nullopt, !onTrackLane});
 			if (const std::optional<size_t> taken = takeLane(event))
 			{
 				m_tracks[*taken].events.push_back(span);
-				m_events.push_back(
-					{event.at("id").get<uint64_t>(), *taken, start, end, event.value("mute", false), std::nullopt});
+				m_events.push_back({event.at("id").get<uint64_t>(), *taken, start, end, event.value("mute", false),
+					std::nullopt, false});
 			}
 			m_end = std::max(m_end, end);
 		};
@@ -455,14 +459,15 @@ namespace gnubase::ui
 			addEvent(part, start, end);
 		}
 		std::vector<EventWaveforms::Event> waves;
-		// Audio events in the order they are stacked, the one in front last, so that a click finds it (#99).
+		// Audio events in the order they are stacked, the one in front last, so that a click finds it (#99). Muted
+		// ones play nothing and hide nothing (makePlaylist): they come behind every other.
 		std::vector<const Json*> stacked;
 		for (const Json& event : project.at("audioEvents"))
 			stacked.push_back(&event);
 		const auto front = [](const Json* event)
 		{
 			const auto own = event->value("front", uint64_t{0});
-			return own != 0 ? own : event->at("id").get<uint64_t>();
+			return std::make_pair(!event->value("mute", false), own != 0 ? own : event->at("id").get<uint64_t>());
 		};
 		std::stable_sort(
 			stacked.begin(), stacked.end(), [&front](const Json* a, const Json* b) { return front(a) < front(b); });
@@ -471,6 +476,7 @@ namespace gnubase::ui
 		{
 			TimeSpan span;
 			EventWaveforms::Event wave; // with media 0 for none
+			bool mute = false;
 		};
 		std::map<size_t, std::vector<Piece>> pieces; // by lane
 		for (const Json* stackedEvent : stacked)
@@ -495,7 +501,8 @@ namespace gnubase::ui
 			if (lanes.count(track) != 0)
 			{
 				const Json& own = event.at("color");
-				Piece piece{{start, length, own.is_string() ? spanColor(own.get<std::string>()) : colors[track]}, {}};
+				Piece piece{{start, length, own.is_string() ? spanColor(own.get<std::string>()) : colors[track]}, {},
+					event.value("mute", false)};
 				if (file != media.end() && rate > 0.0)
 					piece.wave = {event.at("id").get<uint64_t>(), lanes[track], {start, length}, file->first, rate,
 						file->second->at("channels").get<int>(), event.at("offset").get<int64_t>()};
@@ -539,6 +546,8 @@ namespace gnubase::ui
 			for (const Piece& piece : shown)
 			{
 				m_tracks[lane].events.push_back(piece.span);
+				if (piece.mute)
+					m_mutedPieces.emplace_back(lane, piece.span);
 				if (piece.wave.media == 0)
 					continue;
 				EventWaveforms::Event wave = piece.wave;
@@ -553,6 +562,8 @@ namespace gnubase::ui
 			const auto position = part.at("position").get<int64_t>();
 			addEvent(part, seconds(position, linear[track]),
 				seconds(position + part.at("length").get<int64_t>(), linear[track]));
+			if (part.value("globalTranspose", std::string()) == "independent")
+				m_independent.insert(part.at("id").get<uint64_t>());
 		}
 		for (std::vector<EventLanes::Lane>* list : {&m_tracks, &m_folderData})
 			for (EventLanes::Lane& lane : *list)
@@ -596,10 +607,13 @@ namespace gnubase::ui
 		std::vector<EventLanes::Lane> folders = m_folderData;
 		for (size_t i = 0; i < folders.size() && i < lanes.size(); ++i)
 			folders[i].height = lanes[i].height;
+		for (const auto& [lane, piece] : m_mutedPieces)
+			if (lane < muted.size())
+				muted[lane].events.push_back({piece.start, piece.length});
 		const double shift = m_drag == Drag::Events && m_dragMoved ? m_dragDx * m_view.scale : 0.0;
 		for (const Shown& shown : m_events)
 		{
-			if (shown.mute)
+			if (shown.mute && !shown.onTrackLane)
 				muted[shown.lane].events.push_back({shown.start, shown.end - shown.start});
 			const auto lane = static_cast<int64_t>(shown.lane) + (m_drag == Drag::Events ? m_dragLanes : 0);
 			if (std::binary_search(m_selection.begin(), m_selection.end(), shown.id) && lane >= 0 &&
@@ -797,6 +811,7 @@ namespace gnubase::ui
 		setCursor(m_cursorSample);
 		showRange();
 		placeAutomation();
+		placePartMarks();
 
 		// The overview line shows the whole project, and the view as a rectangle.
 		const double across = m_overview->GetClientWidth() / dpRatio();
@@ -811,6 +826,31 @@ namespace gnubase::ui
 			listener();
 		if (m_layoutListener)
 			m_layoutListener();
+	}
+
+	void EventDisplay::placePartMarks()
+	{
+		std::vector<const Shown*> marked;
+		std::string rml;
+		for (const Shown& shown : m_events)
+			if (m_independent.count(shown.id) != 0 && shown.lane + 1 < m_laneTops.size())
+			{
+				marked.push_back(&shown);
+				rml += R"(<div class="part-mark independent" part=")" + std::to_string(shown.id) +
+					R"("><svg class="icon" src="../icons/part-independent.svg"/></div>)";
+			}
+		if (rml != m_partMarksRml)
+		{
+			m_partMarksRml = rml;
+			m_partMarks->SetInnerRML(rml);
+		}
+		const double scale = m_view.scale > 0.0 ? m_view.scale : g_minScale;
+		for (size_t i = 0; i < marked.size(); ++i)
+			if (Rml::Element* mark = m_partMarks->GetChild(static_cast<int>(i)))
+			{
+				mark->SetProperty(Rml::PropertyId::Left, dp((marked[i]->end - m_view.start) / scale));
+				mark->SetProperty(Rml::PropertyId::Top, dp(m_laneTops[marked[i]->lane] - m_view.top));
+			}
 	}
 
 	double EventDisplay::trackHeight(uint64_t track) const

@@ -204,7 +204,7 @@ namespace gnubase::app
 		}
 
 		// The track list's commands (ui::TrackList::actions, docs/features/track-list.md) and their keys.
-		constexpr std::array<ProjectCommand, 28> g_trackCommands{{
+		constexpr std::array<ProjectCommand, 33> g_trackCommands{{
 			{"track.selectPrevious",
 				"Selects the track above the selected one, and its first event while an event is selected (unless "
 				"ui.upDownSelectsTracksOnly).",
@@ -255,6 +255,13 @@ namespace gnubase::app
 			// Lanes (docs/features/comping.md).
 			{"track.toggleLanesSelected",
 				"Shows the lanes of the selected tracks, or hides them if every one shows them.", nullptr},
+			// Track versions (docs/features/track-versions.md).
+			{"track.newVersion", "Gives the selected tracks a new, empty version.", nullptr},
+			{"track.duplicateVersion", "Gives the selected tracks a copy of their active version.", nullptr},
+			{"track.deleteVersion", "Deletes the active version of the selected tracks.", nullptr},
+			{"track.selectSameVersionId",
+				"Selects the tracks with a version of the ID of the first selected track's active version.", nullptr},
+			{"track.assignCommonVersionId", "Gives the active versions of the selected tracks a common ID.", nullptr},
 		}};
 	}
 
@@ -359,6 +366,8 @@ namespace gnubase::app
 		m_keys.add({"window.tempoTrack", "Opens or closes the tempo track editor.",
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_shell.post([this] { toggleTempoEditor(); }); }});
 		m_keys.bind({"Mod+T", "window.tempoTrack"});
+		m_keys.add({"window.arranger", "Opens or closes the arranger editor.",
+			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_shell.post([this] { toggleArranger(); }); }});
 		m_keys.add({"tempo.toggleTrack", "Switches between fixed tempo and tempo track mode (Activate Tempo Track).",
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/)
 			{
@@ -384,12 +393,14 @@ namespace gnubase::app
 					m_inspector = inspector;
 					return std::shared_ptr<void>(inspector);
 				};
-			// The lower zone's editor (reference manual pp. 1132-1156) and, in the Visibility tab, its visibility.
+			// The lower zone's editor (reference manual pp. 1132-1156) and, on the Visibility tab's Editor page, its
+			// visibility; the Track page has the track visibility (#166).
 			else if (added.id == "editor" || added.id == "visibility")
 				added.create = [this, editor = added.id == "editor"](Rml::Element& element)
 				{
+					Rml::Element& page = editor || !m_trackVisibility ? element : m_trackVisibility->showPanel(element);
 					auto shown = std::make_shared<ui::MidiEditor>(
-						m_binding, element, "lower", editor ? ui::EditorPart::Editor : ui::EditorPart::Visibility);
+						m_binding, page, "lower", editor ? ui::EditorPart::Editor : ui::EditorPart::Visibility);
 					if (editor)
 						m_lowerEditor = shown;
 					return std::shared_ptr<void>(shown);
@@ -446,6 +457,10 @@ namespace gnubase::app
 			[this](ui::Window& window, Rml::Element* /*zone*/) { chooseMissingFolder(window); }});
 		m_keys.add({"window.studioSetup", "Opens the studio setup dialog for the audio and MIDI devices.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { openStudioSetup(window); }});
+		m_keys.add({"window.midiDeviceManager",
+			"Opens the MIDI device manager, which installs and removes MIDI devices and shows their patch banks.",
+			[this](ui::Window& window, Rml::Element* /*zone*/)
+			{ openOnce(window, "midi-devices.rml", m_midiDevices); }});
 		m_keys.add({"window.projectSetup",
 			"Opens the project setup dialog for the project's sample rate, record format, frame rate, start time, "
 			"length, time display, pan law and maximum volume.",
@@ -469,6 +484,31 @@ namespace gnubase::app
 				const std::optional<double> seconds =
 					ui::parseTime(ui::TimeFormat::Timecode, parameters.at("text").get<std::string>(), context);
 				return seconds ? engine::Json{{"seconds", *seconds}} : engine::Json::object();
+			});
+		m_keys.add({"window.preferences",
+			"Opens the preferences dialog, which shows and changes the user's preferences, page by page, and their "
+			"presets.",
+			[this](ui::Window& window, Rml::Element* /*zone*/) { openPreferences(window); }});
+		// For the preferences dialog: the themes there are, and the tool modifiers that ui.toolModifiers overrides.
+		m_lua.addFunction(
+			"ui.themes", [this](const engine::Json&) { return engine::Json{{"themes", m_themes.names()}}; });
+		m_lua.addFunction("ui.toolModifierDefaults",
+			[](const engine::Json&) { return engine::Json{{"modifiers", ui::EventDisplay::defaultToolModifiers()}}; });
+		// For the add track dialog's Time Offset: a position typed in a time format, as position displays show it in
+		// the project (ui/timeformat.h), in seconds and ticks; nothing for text that isn't one.
+		m_lua.addFunction("ui.parseTime",
+			[this](const engine::Json& parameters)
+			{
+				const std::optional<ui::TimeFormat> format =
+					ui::timeFormatFromName(parameters.value("format", std::string()));
+				const engine::Result project = engine::Client(m_engine).call("project.get");
+				ui::TimeContext context;
+				if (!format || !project.ok() || !ui::readTimeContext(project.value, context))
+					return engine::Json::object();
+				const std::optional<double> seconds =
+					ui::parseTime(*format, parameters.at("text").get<std::string>(), context);
+				return seconds ? engine::Json{{"seconds", *seconds}, {"ticks", context.tempo.toTicks(*seconds)}}
+							   : engine::Json::object();
 			});
 		// File > Import (docs/features/file-import.md): the OS's file dialog, then the event display imports the files.
 		m_keys.add({"file.importAudio", "Imports audio files into the project window at the project cursor.",
@@ -654,6 +694,10 @@ namespace gnubase::app
 			if (command.keys != nullptr)
 				m_keys.bind({command.keys, command.id, engine::Json::object(), "project"});
 		}
+
+		// Set Root Key for Unassigned Events in the context menu of the transpose track (reference manual p. 416).
+		m_keys.enableWhen("transpose.assignRootKey", [this](ui::Window&, Rml::Element*)
+			{ return m_trackList != nullptr && m_trackList->selectsType("transpose"); });
 
 		// Undo and Redo in the menus while the history has a step to undo or redo.
 		m_keys.enableWhen("history.undo", [this](ui::Window&, Rml::Element*) { return m_canUndo; });
@@ -882,10 +926,14 @@ namespace gnubase::app
 		m_markerLines.reset();
 		m_tempoLane.reset();
 		m_signatureLane.reset();
+		m_transposeLane.reset();
+		m_rulerLanes.reset();
 		// The transport bar's sections are there when the docking system reads them.
 		m_transportBar.reset();
 		if (Rml::Element* bar = document->GetElementById("transport-bar"))
 			m_transportBar = transportControls(*bar, m_main, true);
+		// Before the docking system fills the Visibility tab with it.
+		m_trackVisibility = std::make_unique<ui::TrackVisibility>(m_binding, *document);
 		m_docking.attach("project", *document);
 		m_colorMenu.reset();
 		m_trackList.reset();
@@ -907,6 +955,8 @@ namespace gnubase::app
 		m_markerLines = std::make_unique<ui::MarkerLines>(*m_eventDisplay, m_binding);
 		m_tempoLane = std::make_unique<ui::TempoLane>(*m_eventDisplay, m_binding);
 		m_signatureLane = std::make_unique<ui::SignatureLane>(*m_eventDisplay, m_binding);
+		m_transposeLane = std::make_unique<ui::TransposeLane>(*m_eventDisplay, m_binding);
+		m_rulerLanes = std::make_unique<ui::RulerLanes>(*m_eventDisplay);
 		if (m_infoLine)
 			m_infoLine->followMarkers(
 				[this] { return m_markerLines != nullptr ? m_markerLines->selection() : std::vector<uint64_t>(); });
@@ -1007,6 +1057,29 @@ namespace gnubase::app
 		document->Show();
 		m_tempoEditor = std::make_unique<ui::TempoEditor>(m_binding, *document);
 		return m_tempoEditor.get();
+	}
+
+	void AppUi::toggleArranger()
+	{
+		if (m_shell.find(m_arrangerWindow) != nullptr)
+		{
+			m_shell.close(m_arrangerWindow);
+			return;
+		}
+		ui::WindowSpec spec;
+		spec.title = "Arranger";
+		spec.size = {640, 360};
+		spec.hidden = m_hidden;
+		const ui::Window& window = m_shell.open(spec);
+		m_arrangerWindow = window.id();
+		const std::filesystem::path file = m_resources / "ui" / "arranger-editor.rml";
+		Rml::ElementDocument* document = window.context().LoadDocument(file.generic_u8string());
+		if (document == nullptr)
+		{
+			m_shell.close(m_arrangerWindow);
+			throw std::runtime_error("cannot load the arranger editor from " + file.u8string());
+		}
+		document->Show();
 	}
 
 	void AppUi::chooseImport(
@@ -1531,6 +1604,11 @@ namespace gnubase::app
 	Rml::ElementDocument& AppUi::openProjectSetup(ui::Window& window)
 	{
 		return openOnce(window, "project-setup.rml", m_projectSetup);
+	}
+
+	Rml::ElementDocument& AppUi::openPreferences(ui::Window& window)
+	{
+		return openOnce(window, "preferences.rml", m_preferences);
 	}
 
 	Rml::ElementDocument& AppUi::openOnce(

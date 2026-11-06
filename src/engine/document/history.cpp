@@ -15,16 +15,19 @@ namespace gnubase::engine
 		bool operator==(const ProjectSettings& a, const ProjectSettings& b)
 		{
 			return std::tie(a.name, a.sampleRate, a.tempo, a.tempoTrackActive, a.otherTempo, a.signatures, a.autoFades,
-					   a.panLaw, a.maxVolume, a.colors, a.setup, a.busses, a.tracks, a.activeMarkerTrack) ==
+					   a.panLaw, a.maxVolume, a.colors, a.setup, a.busses, a.tracks, a.activeMarkerTrack, a.arranger,
+					   a.rootKey, a.transpose) ==
 				std::tie(b.name, b.sampleRate, b.tempo, b.tempoTrackActive, b.otherTempo, b.signatures, b.autoFades,
-					b.panLaw, b.maxVolume, b.colors, b.setup, b.busses, b.tracks, b.activeMarkerTrack);
+					b.panLaw, b.maxVolume, b.colors, b.setup, b.busses, b.tracks, b.activeMarkerTrack, b.arranger,
+					b.rootKey, b.transpose);
 		}
 
 		ProjectSettings settings(const Project& project)
 		{
 			return {project.name, project.sampleRate, project.tempo, project.tempoTrackActive, project.otherTempo,
 				project.signatures, project.autoFades, project.panLaw, project.maxVolume, project.colors, project.setup,
-				project.busses, project.tracks, project.activeMarkerTrack};
+				project.busses, project.tracks, project.activeMarkerTrack, project.arranger, project.rootKey,
+				project.transpose};
 		}
 
 		// Walks two maps in id order and calls visit(id, before, after) with nullptr for a missing object.
@@ -103,6 +106,8 @@ namespace gnubase::engine
 			copy.lane = part->lane;
 			copy.transpose = part->transpose;
 			copy.velocity = part->velocity;
+			copy.rootKey = part->rootKey;
+			copy.independent = part->independent;
 			return copy;
 		}
 
@@ -195,6 +200,9 @@ namespace gnubase::engine
 			project.busses = target.busses;
 			project.tracks = target.tracks;
 			project.activeMarkerTrack = target.activeMarkerTrack;
+			project.arranger = target.arranger;
+			project.rootKey = target.rootKey;
+			project.transpose = target.transpose;
 		}
 		applyObjects(project.trackById, change.tracks, direction);
 		applyObjects(project.channels, change.channels, direction);
@@ -228,6 +236,8 @@ namespace gnubase::engine
 			part.lane = target->lane;
 			part.transpose = target->transpose;
 			part.velocity = target->velocity;
+			part.rootKey = target->rootKey;
+			part.independent = target->independent;
 			applyObjects(part.notes, partChange.notes, direction);
 			applyObjects(part.controllers, partChange.controllers, direction);
 		}

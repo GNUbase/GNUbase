@@ -62,6 +62,9 @@ namespace gnubase::engine
 		std::vector<Bus> busses;
 		std::vector<ObjectId> tracks;
 		ObjectId activeMarkerTrack = 0;
+		Arranger arranger;
+		int rootKey = -1;
+		TransposeTrack transpose;
 	};
 
 	// How a project changed, object by object. The id counter is left out on purpose: undoing an addition doesn't
