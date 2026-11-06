@@ -118,8 +118,9 @@ namespace gnubase::engine
 				add(points, {start - 1, map.bpmAt(start - 1), true});
 			if (span > 0)
 				add(points, {start, map.bpmAt(start) * factor, start > 0 && rampsInto(start) && !cut});
+			// Deleted ticks (span 0) drop their tempo events, so that the tempo at end carries on from start.
 			for (const TempoPoint& point : old)
-				if (point.position > start && point.position < end)
+				if (span > 0 && point.position > start && point.position < end)
 				{
 					const auto at = static_cast<double>(point.position - start) * static_cast<double>(span) /
 						static_cast<double>(end - start);

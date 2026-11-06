@@ -246,6 +246,18 @@ TEST_CASE("process bars inserts, deletes, replaces and reinterprets bars", "[uni
 		CHECK(tempoTrack(client).bpmAt((16 * g_q) - 1) == 120.0);
 		CHECK(rendered(engine, midi).first == 8 * g_quarterSamples);
 	}
+	SECTION("delete bars with tempo events in them")
+	{
+		// The tempo at the old end of the deleted bars carries on from their start.
+		run(client, "tempo.add", {{"position", 6 * g_q}, {"bpm", 60.0}, {"ramp", false}});
+		run(client, "tempo.add", {{"position", 10 * g_q}, {"bpm", 90.0}, {"ramp", false}});
+		run(client, "tempo.processBars", {{"bar", 1}, {"bars", 2}, {"type", "delete"}});
+		const TempoMap tempo = tempoTrack(client);
+		CHECK(tempo.bpmAt((4 * g_q) - 1) == 120.0);
+		CHECK(tempo.bpmAt(4 * g_q) == 90.0);
+		CHECK(tempo.bpmAt((8 * g_q) - 1) == 90.0);
+		CHECK(tempo.bpmAt(8 * g_q) == 100.0);
+	}
 	SECTION("replace")
 	{
 		run(client, "tempo.processBars",
