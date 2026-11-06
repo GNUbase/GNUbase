@@ -90,7 +90,7 @@ namespace gnubase::ui
 
 	void EventDisplay::addToolActions()
 	{
-		constexpr int count = static_cast<int>(Tool::Play) + 1;
+		constexpr int count = static_cast<int>(Tool::TimeWarp) + 1;
 		for (int i = 0; i < count; ++i)
 		{
 			const auto tool = static_cast<Tool>(i);
@@ -153,6 +153,12 @@ namespace gnubase::ui
 	void EventDisplay::setPlayMode(PlayMode mode)
 	{
 		m_playMode = mode;
+		showTools();
+	}
+
+	void EventDisplay::setWarpMode(WarpMode mode)
+	{
+		m_warpMode = mode;
 		showTools();
 	}
 
@@ -268,6 +274,8 @@ namespace gnubase::ui
 			return true;
 		case Tool::Line:
 			return true; // it draws on automation tracks, which the event display shows with #121
+		case Tool::TimeWarp:
+			return timeWarpDown();
 		}
 		return false;
 	}
@@ -436,6 +444,9 @@ namespace gnubase::ui
 		}
 		case Drag::VolumePoint:
 			curveUp();
+			break;
+		case Drag::TimeWarp:
+			timeWarpUp(x);
 			break;
 		case Drag::Click:
 		{

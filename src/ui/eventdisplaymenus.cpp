@@ -80,7 +80,7 @@ namespace gnubase::ui
 			bool crossHair; // whether the tool uses the cross-hair cursor (reference manual p. 110)
 		};
 
-		constexpr std::array<ToolInfo, 11> g_tools{{
+		constexpr std::array<ToolInfo, 12> g_tools{{
 			{Tool::ObjectSelection, "objectSelection", "Object Selection", true},
 			{Tool::RangeSelection, "rangeSelection", "Range Selection", true},
 			{Tool::Comp, "comp", "Comp", false},
@@ -92,10 +92,12 @@ namespace gnubase::ui
 			{Tool::Zoom, "zoom", "Zoom", false},
 			{Tool::Line, "line", "Line", true},
 			{Tool::Play, "play", "Play", false},
+			{Tool::TimeWarp, "timeWarp", "Time Warp", false},
 		}};
 
 		constexpr std::array<const char*, 5> g_lineModes = {"line", "parabola", "sine", "triangle", "square"};
 		constexpr std::array<const char*, 2> g_playModes = {"play", "scrub"};
+		constexpr std::array<const char*, 3> g_warpModes = {"warpGrid", "warpGridFollow", "freeWarp"};
 	}
 
 	const char* toolName(Tool tool)
@@ -137,6 +139,7 @@ namespace gnubase::ui
 		m_objectMenu = m_document->GetElementById("object-selection-menu");
 		m_lineMenu = m_document->GetElementById("line-menu");
 		m_playMenu = m_document->GetElementById("play-menu");
+		m_timeWarpMenu = m_document->GetElementById("time-warp-menu");
 		m_toolbox = m_document->GetElementById("toolbox");
 		m_contextMenu = m_document->GetElementById("event-display-menu");
 		m_notification = m_document->GetElementById("tool-notification");
@@ -259,6 +262,13 @@ namespace gnubase::ui
 		else if (menu == m_playMenu)
 		{
 			setPlayMode(item->GetAttribute<Rml::String>("play-mode", "") == "scrub" ? PlayMode::Scrub : PlayMode::Play);
+		}
+		else if (menu == m_timeWarpMenu)
+		{
+			const auto mode = item->GetAttribute<Rml::String>("warp-mode", "");
+			for (size_t i = 0; i < g_warpModes.size(); ++i)
+				if (mode == g_warpModes[i])
+					setWarpMode(static_cast<WarpMode>(i));
 		}
 		else if (menu == m_autoScrollMenu)
 		{
@@ -569,6 +579,7 @@ namespace gnubase::ui
 		m_root->SetAttribute("tool", toolName(m_tool));
 		m_root->SetAttribute("line-mode", g_lineModes.at(static_cast<size_t>(m_lineMode)));
 		m_root->SetAttribute("play-mode", g_playModes.at(static_cast<size_t>(m_playMode)));
+		m_root->SetAttribute("warp-mode", g_warpModes.at(static_cast<size_t>(m_warpMode)));
 		m_root->SetClass("cross-hair", m_crossHair && g_tools.at(static_cast<size_t>(m_tool)).crossHair);
 		for (Rml::Element* button : m_toolButtons)
 		{
@@ -599,6 +610,12 @@ namespace gnubase::ui
 					check(*item,
 						item->GetAttribute<Rml::String>("play-mode", "") ==
 							g_playModes.at(static_cast<size_t>(m_playMode)));
+		if (m_timeWarpMenu != nullptr)
+			for (int i = 0; i < m_timeWarpMenu->GetNumChildren(); ++i)
+				if (Rml::Element* item = m_timeWarpMenu->GetChild(i); item->HasAttribute("warp-mode"))
+					check(*item,
+						item->GetAttribute<Rml::String>("warp-mode", "") ==
+							g_warpModes.at(static_cast<size_t>(m_warpMode)));
 	}
 
 	void EventDisplay::showAutoScroll()
