@@ -190,6 +190,16 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      # The generated Lua API reference and MCP tool catalogue, which the unit tests wrote (docs/api-reference.md).
+      - name: Upload API references
+        if: always() && matrix.name == 'linux-x64-gcc'
+        uses: actions/upload-artifact@v7
+        with:
+          name: api-reference
+          path: build/${{ matrix.preset }}/docs/
+          if-no-files-found: ignore
+          retention-days: 90
+
       # Non-blocking (#24): shared runners vary too much to fail on numbers, so the results are only kept.
       - name: Benchmarks
         continue-on-error: true
@@ -214,7 +224,7 @@ jobs:
           retention-days: 14
 
   sanitizers:
-    timeout-minutes: 60
+    timeout-minutes: 90 # asan-ubsan took up to 59 min on main on slow runners in Nov 2026
     name: ${{ matrix.name }}
     runs-on: ubuntu-24.04
     strategy:

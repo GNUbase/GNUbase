@@ -66,6 +66,7 @@ namespace gnubase::ui
 			Scrub,
 			Overview,
 			Hitpoint,
+			WarpMarker,
 		};
 
 		void ProcessEvent(Rml::Event& event) override;
@@ -82,6 +83,9 @@ namespace gnubase::ui
 		void renderHitpoints();
 		bool clickHitpoints(Rml::Element& target, const std::string& id);
 		void pressHitpoint(Rml::Event& event, Rml::Element& target, double frame);
+		bool clickWarp(const std::string& id);
+		void renderWarp();
+		void pressWarp(Rml::Event& event, Rml::Element& target);
 		void changed(Rml::Event& event, Rml::Element& target);
 		void ask(bool overview);
 		void zoom(double factor, double around);
@@ -131,6 +135,9 @@ namespace gnubase::ui
 		bool m_editHitpoints = false;                  // Edit Hitpoints: the display's gestures edit them
 		std::string m_hitpointRows;                    // the hitpoints shown, as last built
 		int64_t m_hitpoint = 0;                        // the hitpoint dragged, by position
+		bool m_freeWarp = false;                       // Free Warp: the display's gestures edit warp markers
+		std::string m_markerRows;                      // the warp markers shown, as last built
+		int64_t m_marker = -1;                         // the warp marker dragged, by position; -1 for a new one
 		std::array<bool, 2> m_asking = {false, false}; // media.peaks in flight: the display's, the overview's
 		std::array<bool, 2> m_again = {false, false};  // asked again meanwhile
 
