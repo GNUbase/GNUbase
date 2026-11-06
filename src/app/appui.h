@@ -20,6 +20,7 @@
 #include "ui/projectfiles.h"
 #include "ui/quantizepanel.h"
 #include "ui/rmlui.h"
+#include "ui/rulertracks.h"
 #include "ui/sampleeditor.h"
 #include "ui/sdlwindowsystem.h"
 #include "ui/shell.h"
@@ -28,7 +29,9 @@
 #include "ui/tempotrack.h"
 #include "ui/themes.h"
 #include "ui/tracklist.h"
+#include "ui/trackvisibility.h"
 #include "ui/transport.h"
+#include "ui/transposetrack.h"
 #include "ui/uisettings.h"
 
 #include <RmlUi/Core/ObserverPtr.h>
@@ -109,10 +112,17 @@ namespace gnubase::app
 			return m_shell.find(m_tempoWindow) != nullptr ? m_tempoEditor.get() : nullptr;
 		}
 		ui::WindowId tempoWindow() const { return m_tempoWindow; }
+		// Opens the arranger editor in a window of its own (resources/ui/arranger-editor.rml,
+		// docs/features/arranger.md), or closes it if it is open: the UI command window.arranger. Its script follows
+		// the engine on its own. Throws std::runtime_error if the document can't be loaded.
+		void toggleArranger();
+		ui::WindowId arrangerWindow() const { return m_arrangerWindow; }
 		// The tempo curve on the tempo track's lane in the project window, null before showProject.
 		ui::TempoLane* tempoLane() { return m_tempoLane.get(); }
 		// The time signature events on the signature track's lane in the project window, null before showProject.
 		ui::SignatureLane* signatureLane() { return m_signatureLane.get(); }
+		// The transpose events on the transpose track's lane in the project window, null before showProject.
+		ui::TransposeLane* transposeLane() { return m_transposeLane.get(); }
 
 		// The mixers (#106, docs/features/mixer-window.md): mixer window number 1 to 4 opens in a window of its own
 		// (resources/ui/mixer.rml), hidden like the main window, or closes if it is open: the UI commands window.mixer
@@ -158,6 +168,9 @@ namespace gnubase::app
 		// Opens the project setup dialog (resources/ui/project-setup.rml, #78) the same way: the UI command
 		// window.projectSetup, which Project > Project Setup and a click on the status line's record format run.
 		Rml::ElementDocument& openProjectSetup(ui::Window& window);
+		// Opens the preferences dialog (resources/ui/preferences.rml, #162) the same way: the UI command
+		// window.preferences, which Edit > Preferences runs.
+		Rml::ElementDocument& openPreferences(ui::Window& window);
 
 		// Opens the start screen in the main window (ui/projectfiles.h, #77), as the app does when it starts without
 		// a project.
@@ -282,18 +295,22 @@ namespace gnubase::app
 		std::unique_ptr<ui::MarkerLines> m_markerLines;     // and before the display
 		std::unique_ptr<ui::TempoLane> m_tempoLane;         // as well
 		std::unique_ptr<ui::SignatureLane> m_signatureLane; // as well
+		std::unique_ptr<ui::TransposeLane> m_transposeLane; // as well
+		std::unique_ptr<ui::RulerLanes> m_rulerLanes;       // as well
 		std::unique_ptr<ui::TempoEditor> m_tempoEditor;
 		ui::WindowId m_tempoWindow = 0;
+		ui::WindowId m_arrangerWindow = 0;
 		std::vector<uint64_t> m_eventSelection; // the display's, as the last step saw it
 		ui::Winding m_winding{m_binding};       // Rewind and Forward held, which the transport controls end
 		std::unique_ptr<ui::TransportControls> m_transportBar;
 		TransportWindow m_transportPanel;
 		TransportWindow m_timeDisplay;
-		std::unique_ptr<ui::StatusLine> m_statusLine;         // too
-		std::unique_ptr<ui::TrackList> m_trackList;           // and before the display
-		std::unique_ptr<ui::ColorMenu> m_colorMenu;           // before the track list
-		std::unique_ptr<ui::InfoLine> m_infoLine;             // and this too
-		std::unique_ptr<ui::QuantizePanel> m_toolbarQuantize; // the toolbar's quantize section
+		std::unique_ptr<ui::StatusLine> m_statusLine;           // too
+		std::unique_ptr<ui::TrackList> m_trackList;             // and before the display
+		std::unique_ptr<ui::ColorMenu> m_colorMenu;             // before the track list
+		std::unique_ptr<ui::TrackVisibility> m_trackVisibility; // the project window's (#166)
+		std::unique_ptr<ui::InfoLine> m_infoLine;               // and this too
+		std::unique_ptr<ui::QuantizePanel> m_toolbarQuantize;   // the toolbar's quantize section
 		// What the undo history can undo and redo now, for the Edit menu's Undo and Redo.
 		bool m_canUndo = false;
 		bool m_canRedo = false;
@@ -301,7 +318,9 @@ namespace gnubase::app
 		ui::ProjectFiles m_files;                          // the File menu's project commands
 		std::unique_ptr<ui::MainMenu> m_menu;              // the project window's
 		Rml::ObserverPtr<Rml::Element> m_studioSetup;      // the open studio setup dialog's document
+		Rml::ObserverPtr<Rml::Element> m_midiDevices;      // the open MIDI device manager's document
 		Rml::ObserverPtr<Rml::Element> m_projectSetup;     // the open project setup dialog's document
+		Rml::ObserverPtr<Rml::Element> m_preferences;      // the open preferences dialog's document
 		std::weak_ptr<ui::PoolPanel> m_pool;               // the docking system owns it while it is there
 		std::weak_ptr<ui::Inspector> m_inspector;          // so too
 		std::vector<ui::Subscription> m_poolResults;       // what the pool commands did, for the pool

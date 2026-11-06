@@ -58,6 +58,9 @@ namespace gnubase::ui
 		// Whether a selected folder has a group channel (withGroupChannel) or has none: when Disable or Enable Group
 		// Channel has something to do.
 		bool selectsFolder(bool withGroupChannel) const;
+		// Whether a selected track has a type, as track.add names them: e.g. when Set Root Key for Unassigned Events
+		// is in the context menu of the transpose track.
+		bool selectsType(const std::string& type) const;
 
 		// Folding (reference manual p. 225): the tracks inside a folded folder are hidden, in the event display too.
 		bool folded(uint64_t folder) const { return m_folded.count(folder) != 0; }
@@ -122,7 +125,7 @@ namespace gnubase::ui
 		void build();     // the rows, from the project
 		void showState(); // names, controls and state classes
 		void place();     // heights and scrolling, from the display's lanes
-		void hide();      // tells the display which tracks folded folders hide
+		void hide();      // tells the display which tracks folded folders and the track visibility hide
 		void loadControls(const engine::Json& value);
 		void loadWidths(const engine::Json& value);
 
@@ -132,6 +135,8 @@ namespace gnubase::ui
 		std::vector<std::string> controlsOf(const Row& row) const;
 		// A click on a track control; solo takes Ctrl (exclusive) and Alt (solo defeat), see soloClick.
 		void control(const Row& row, const std::string& name, bool exclusive = false, bool defeat = false);
+		// A ruler track's time format chosen or time offset typed (reference manual p. 159).
+		void rulerChange(Rml::Element& control, const std::string& value);
 		void step(int direction);
 		void reveal(uint64_t track); // scrolls the display so that the track's lane shows
 		void finishRename(bool keep);
@@ -166,6 +171,11 @@ namespace gnubase::ui
 		void closedRemoveDialog(Rml::Event& event);
 		// Runs the commands as one undo step.
 		void transaction(const std::string& description, engine::Json commands);
+		// Track versions (docs/features/track-versions.md): the selected audio, instrument and MIDI tracks, and the
+		// first one's versions in the Project menu's Track Versions, where a click activates one on them.
+		std::vector<uint64_t> versioned() const;
+		void showVersions();
+		void versionEvent(Rml::Event& event);
 
 		EventDisplay& m_display;
 		EngineBinding& m_binding;
@@ -176,10 +186,13 @@ namespace gnubase::ui
 		Rml::Element* m_dropLine = nullptr;
 		Rml::Element* m_parameterMenu = nullptr; // the document's #automation-parameter-menu
 		uint64_t m_parameterLane = 0;            // the automation lane it was opened for
+		Rml::Element* m_versionMenu = nullptr;   // the document's #track-versions-list
+		std::string m_versionRml;                // what it shows
 		std::set<uint64_t> m_selectedLanes;      // the selected automation tracks' lanes
 		std::vector<Row> m_tracks;               // every track in the project's order
 		std::map<uint64_t, size_t> m_index;
 		std::set<uint64_t> m_folded;
+		std::set<uint64_t> m_filtered;                    // what the track visibility hides (#166)
 		engine::Json m_controls = engine::Json::object(); // ui.trackControls
 		engine::Json m_widths = engine::Json::object();   // ui.trackWidths
 		uint64_t m_loads = 0;                             // the display's, when the rows were last built

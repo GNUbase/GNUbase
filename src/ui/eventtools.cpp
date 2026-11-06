@@ -26,24 +26,6 @@ namespace gnubase::ui
 	{
 		using engine::Json;
 
-		// The default tool modifiers (reference manual p. 1601) of the tools that GNUbase has, which the user setting
-		// ui.toolModifiers overrides one by one.
-		const std::map<std::string, std::string>& defaultModifiers()
-		{
-			static const std::map<std::string, std::string> modifiers = {
-				{"dragDrop.copy", "alt"},
-				{"dragDrop.sharedCopy", "alt+shift"},
-				{"erase.deleteLaterEvents", "alt"},
-				{"glue.glueAllFollowing", "alt"},
-				{"range.selectFullVertical", "alt+shift"},
-				{"select.setCursorPosition", "alt+shift"},
-				{"select.splitEvent", "alt"},
-				{"sizeObjects.disableSnapping", "ctrl"},
-				{"split.splitRepeated", "alt"},
-			};
-			return modifiers;
-		}
-
 		Rml::Property dp(double value)
 		{
 			return {static_cast<float>(value), Rml::Unit::DP};
@@ -75,9 +57,25 @@ namespace gnubase::ui
 		}
 	}
 
+	const std::map<std::string, std::string>& EventDisplay::defaultToolModifiers()
+	{
+		static const std::map<std::string, std::string> modifiers = {
+			{"dragDrop.copy", "alt"},
+			{"dragDrop.sharedCopy", "alt+shift"},
+			{"erase.deleteLaterEvents", "alt"},
+			{"glue.glueAllFollowing", "alt"},
+			{"range.selectFullVertical", "alt+shift"},
+			{"select.setCursorPosition", "alt+shift"},
+			{"select.splitEvent", "alt"},
+			{"sizeObjects.disableSnapping", "ctrl"},
+			{"split.splitRepeated", "alt"},
+		};
+		return modifiers;
+	}
+
 	void EventDisplay::setToolModifiers(const Json& value)
 	{
-		m_toolModifiers = defaultModifiers();
+		m_toolModifiers = defaultToolModifiers();
 		if (value.is_object())
 			for (const auto& [action, keys] : value.items())
 				if (keys.is_string())

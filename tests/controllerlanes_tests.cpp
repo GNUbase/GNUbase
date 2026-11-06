@@ -254,6 +254,41 @@ TEST_CASE("note.apply makes play probability and velocity variance permanent as 
 	CHECK_THAT(f.fails("note.apply", {{"part", f.part}, {"what", "pitch"}}), ContainsSubstring("what"));
 }
 
+TEST_CASE("note.apply in a shared copy applies that copy's choice to every copy", "[unit]")
+{
+	Fixture f;
+	std::vector<int64_t> positions;
+	positions.reserve(32);
+	for (int i = 0; i < 32; ++i)
+		positions.push_back(i * (g_bar / 32));
+	f.notes(positions, {{"probability", 0.5}});
+	const auto copy = f.call("event.copy", {{"events", {f.part}}, {"ticks", g_bar}, {"shared", true}})
+						  .at("events")
+						  .at(0)
+						  .get<uint64_t>();
+	// The pitches each copy plays: shared copies choose apart, by their own ids.
+	const auto played = [&](int64_t from, int64_t to)
+	{
+		std::vector<int> pitches;
+		for (const engine::RenderNote& note : f.rendered())
+			if (note.start >= from && note.start < to)
+				pitches.push_back(note.pitch);
+		std::sort(pitches.begin(), pitches.end());
+		return pitches;
+	};
+	const auto bar = f.call("event.get", {{"events", {copy}}}).at("events").at(0).at("start").get<int64_t>();
+	const std::vector<int> original = played(0, bar);
+	REQUIRE(!original.empty());
+	CHECK(played(bar, 2 * bar) != original);
+
+	// The copies share their notes: Apply in the copy keeps what the copy plays, and the original then plays it too.
+	const Json result = f.call("note.apply", {{"part", copy}, {"what", "probability"}});
+	const std::vector<int> kept = played(bar, 2 * bar);
+	CHECK(played(0, bar) == kept);
+	CHECK(kept.size() + result.at("removed").size() == positions.size());
+	CHECK(f.midiPart().at("notes").size() == kept.size());
+}
+
 TEST_CASE("controller.line draws controller events along a line, a parabola or a periodic curve", "[unit]")
 {
 	Fixture f;
@@ -348,6 +383,47 @@ TEST_CASE("controller.line draws controller events along a line, a parabola or a
 				   {{"part", f.part}, {"lane", {{"type", "controller"}, {"number", 200}}}, {"mode", "line"},
 					   {"from", {{"position", 0}, {"value", 0.0}}}, {"to", {{"position", 10}, {"value", 1.0}}}}),
 		ContainsSubstring("number"));
+}
+
+TEST_CASE("controller.line stays in the part and refuses lines of too many events", "[unit]")
+{
+	Fixture f;
+	const Json lane = {{"type", "controller"}, {"number", 7}};
+	const auto line = [&](uint64_t part, int64_t to, int64_t density)
+	{
+		return Json{{"part", part}, {"lane", lane}, {"mode", "line"}, {"from", {{"position", 0}, {"value", 0.0}}},
+			{"to", {{"position", to}, {"value", 1.0}}}, {"density", density}};
+	};
+	// The part's last tick is the last position: playback leaves out events from the part's end on, so at and past it
+	// the command changes nothing.
+	CHECK_THAT(f.fails("controller.line", line(f.part, g_bar, g_quarter)), ContainsSubstring("part's end"));
+	CHECK_THAT(f.fails("controller.line", line(f.part, 100000 * g_bar, 1)), ContainsSubstring("part's end"));
+	CHECK(f.controllers().empty());
+	CHECK(f.call("controller.line", line(f.part, g_bar - 1, g_quarter)).at("controllers").size() == 5);
+	CHECK(f.controllers().back().at("position") == g_bar - 1);
+	// On a note lane too.
+	CHECK_THAT(f.fails("controller.line",
+				   {{"part", f.part}, {"lane", {{"type", "velocity"}}}, {"mode", "line"},
+					   {"from", {{"position", 0}, {"value", 0.0}}}, {"to", {{"position", g_bar}, {"value", 1.0}}}}),
+		ContainsSubstring("part's end"));
+
+	// A part on a linear track is measured in samples: its end in ticks follows the tempo, 120 BPM by default.
+	const auto linear = f.call("track.add", {{"type", "instrument"}, {"timeBase", "linear"}}).at("track").at("id");
+	const auto seconds = f.call("midiPart.add", {{"track", linear}, {"position", 0}, {"length", 48000}})
+							 .at("part")
+							 .at("id")
+							 .get<uint64_t>();
+	CHECK(f.call("controller.line", line(seconds, (2 * g_quarter) - 1, g_quarter)).at("controllers").size() == 3);
+	CHECK_THAT(f.fails("controller.line", line(seconds, 2 * g_quarter, g_quarter)), ContainsSubstring("part's end"));
+
+	// A long part takes a line of at most 65536 events.
+	const auto ticks = f.call("midiPart.add", {{"track", f.track}, {"position", g_bar}, {"length", 1000 * g_bar}})
+						   .at("part")
+						   .at("id")
+						   .get<uint64_t>();
+	CHECK_THAT(f.fails("controller.line", line(ticks, (1000 * g_bar) - 1, 1)), ContainsSubstring("65536"));
+	CHECK_THAT(f.fails("controller.line", line(ticks, 65536, 1)), ContainsSubstring("65536")); // 65537 events
+	CHECK(f.call("controller.line", line(ticks, 65535, 1)).at("controllers").size() == 65536);
 }
 
 TEST_CASE("controller.line on a note lane changes the notes in its range", "[unit]")

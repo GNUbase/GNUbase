@@ -81,7 +81,8 @@ namespace gnubase::engine
 		{
 			const auto found = project.trackById.find(id);
 			return found != project.trackById.end() &&
-				(found->second.type == TrackType::Marker || found->second.type == TrackType::Ruler);
+				(found->second.type == TrackType::Marker || found->second.type == TrackType::Ruler ||
+					found->second.type == TrackType::Arranger || found->second.type == TrackType::Transpose);
 		}
 
 		bool isPart(const Project& project, ObjectId id)

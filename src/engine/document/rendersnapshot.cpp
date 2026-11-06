@@ -33,8 +33,8 @@ namespace gnubase::engine
 			return project.tempo.toSamples(tick, project.sampleRate);
 		}
 
-		// Adds a part's notes and controllers, cut at the part's end, the notes as the channel's MIDI modifiers and the
-		// part's transpose and velocity play them.
+		// Adds a part's notes and controllers, cut at the part's end, the notes as the channel's MIDI modifiers, the
+		// part's transpose and velocity and global transposition (#168) at their start play them.
 		void compilePart(const Project& project, ObjectId partId, const MidiPart& part, RenderChannel& channel)
 		{
 			const time::Ticks start = time::toTicks(part.position, project.tempo, project.sampleRate);
@@ -60,7 +60,9 @@ namespace gnubase::engine
 				const uint64_t seed = midi::noteSeed(partId, id);
 				uint8_t pitch = sound != nullptr ? sound->oNote : note.pitch;
 				uint16_t velocity = midi::playedVelocity(note, part.id);
-				if (!midi::modifyNote(modifiers, seed, pitch, velocity))
+				midi::Modifiers transposed = modifiers;
+				transposed.transpose += globalTranspose(project, part, toSamples(project, start + note.position));
+				if (!midi::modifyNote(transposed, seed, pitch, velocity))
 					continue;
 				// A note moved before its part's start, or the project's, starts there, with its length: the part plays
 				// only what lies in it.
@@ -387,13 +389,19 @@ namespace gnubase::engine
 		return decibels <= g_minChannelVolume ? 0.0 : std::pow(10.0, decibels / 20.0);
 	}
 
-	std::unique_ptr<const RenderSnapshot> compile(const Project& project, uint64_t revision)
+	std::unique_ptr<const RenderSnapshot> compile(
+		const Project& project, uint64_t revision, const RenderSnapshot* previous)
 	{
 		auto snapshot = std::make_unique<RenderSnapshot>();
 		snapshot->revision = revision;
 		snapshot->sampleRate = project.sampleRate;
 		snapshot->tempo = project.tempo;
 		snapshot->signatures = project.signatures;
+		ArrangerPlan plan = arrangerPlan(project);
+		if (previous != nullptr && *previous->arranger == plan)
+			snapshot->arranger = previous->arranger;
+		else
+			snapshot->arranger = std::make_shared<const ArrangerPlan>(std::move(plan));
 		snapshot->metronome = project.metronome;
 		std::vector<ObjectId>& outputs = snapshot->metronome.outputs;
 		outputs.erase(std::remove_if(outputs.begin(), outputs.end(),
@@ -460,6 +468,8 @@ namespace gnubase::engine
 			render.sections = channel.sections;
 			render.midiVolume = channel.midiVolume;
 			render.midiPan = channel.midiPan;
+			render.program = channel.program;
+			render.bank = channel.bank;
 			render.modifiers = channel.modifiers;
 			render.monitor = channel.monitor;
 			render.recordEnable = channel.recordEnable;

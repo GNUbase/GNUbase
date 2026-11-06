@@ -46,6 +46,19 @@ namespace gnubase::engine
 		return order;
 	}
 
+	bool operator==(const TrackVersion& a, const TrackVersion& b)
+	{
+		const auto sameParts = [](const MidiPart& x, const MidiPart& y)
+		{ return sameProperties(x, y) && x.notes == y.notes && x.controllers == y.controllers; };
+		return a.id == b.id && a.name == b.name && a.audioEvents == b.audioEvents && a.audioParts == b.audioParts &&
+			std::equal(a.midiParts.begin(), a.midiParts.end(), b.midiParts.begin(), b.midiParts.end(), sameParts);
+	}
+
+	std::vector<TrackVersion> versionsOf(const Track& track)
+	{
+		return track.versions.empty() ? std::vector<TrackVersion>(1) : track.versions;
+	}
+
 	void renumber(Project& project, MidiPart& part)
 	{
 		std::map<ObjectId, Note> notes;
@@ -181,6 +194,84 @@ namespace gnubase::engine
 		while (!hasMinimumLength(project, marker))
 			++marker.end.value;
 		return true;
+	}
+
+	bool keepMinimumLength(const Project& project, ArrangerEvent& event)
+	{
+		Marker marker; // a cycle marker has the same rule
+		marker.type = MarkerType::Cycle;
+		marker.position = event.position;
+		marker.end = event.end;
+		if (!keepMinimumLength(project, marker))
+			return false;
+		event.end = marker.end;
+		return true;
+	}
+
+	const ArrangerChain* activeArrangerChain(const Project& project)
+	{
+		const std::vector<ArrangerChain>& chains = project.arranger.chains;
+		const auto found = std::find_if(chains.begin(), chains.end(),
+			[&project](const ArrangerChain& chain) { return chain.id == project.arrangerChain; });
+		if (found != chains.end())
+			return &*found;
+		return chains.empty() ? nullptr : &chains.front();
+	}
+
+	const std::vector<std::string>& rootKeyNames()
+	{
+		static const std::vector<std::string> names = {
+			"", "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+		return names;
+	}
+
+	std::string rootKeyName(int key)
+	{
+		return key >= 0 && key < 12 ? rootKeyNames().at(static_cast<size_t>(key) + 1) : std::string();
+	}
+
+	std::optional<int> rootKeyFromName(const std::string& name)
+	{
+		const std::vector<std::string>& names = rootKeyNames();
+		const auto found = std::find(names.begin(), names.end(), name);
+		if (found == names.end())
+			return std::nullopt;
+		return static_cast<int>(found - names.begin()) - 1;
+	}
+
+	int rootKeyTranspose(const Project& project, const MidiPart& part)
+	{
+		if (part.independent || project.rootKey < 0 || part.rootKey < 0)
+			return 0;
+		const int semitones = (((project.rootKey - part.rootKey) % 12) + 12) % 12; // 0 to 11 up
+		return semitones > 6 ? semitones - 12 : semitones;
+	}
+
+	int globalTranspose(const Project& project, const MidiPart& part, time::Samples at)
+	{
+		if (part.independent)
+			return 0;
+		int semitones = rootKeyTranspose(project, part);
+		const TransposeTrack& track = project.transpose;
+		if (track.mute)
+			return semitones;
+		// ponytail: a scan of the events per note; a song has a handful of them.
+		int value = 0;
+		for (const TransposeEvent& event : track.events)
+		{
+			if (time::toSamples(event.position, project.tempo, project.sampleRate) > at)
+				break;
+			value = event.value;
+		}
+		semitones += value;
+		if (track.keepInOctave)
+		{
+			while (semitones > 7)
+				semitones -= 12;
+			while (semitones < -7)
+				semitones += 12;
+		}
+		return semitones;
 	}
 
 	bool poolFolderOutside(const Project& project, ObjectId folder, ObjectId excluded)

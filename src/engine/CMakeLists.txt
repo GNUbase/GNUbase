@@ -96,6 +96,7 @@ add_library(gnubase-engine STATIC
 	analysis/statistics.cpp analysis/statistics.h
 	analysis/tempodetect.cpp analysis/tempodetect.h
 	audio/analysiscommands.cpp
+	audio/arranger.cpp audio/arranger.h
 	audio/audioengine.cpp audio/audioengine.h
 	audio/audition.cpp audio/audition.h
 	audio/automation.cpp audio/automation.h
@@ -119,6 +120,7 @@ add_library(gnubase-engine STATIC
 	audiofile/writer.cpp
 	clock.cpp clock.h
 	dawproject/dawproject.cpp dawproject/dawproject.h
+	document/arranger.cpp
 	document/audiofilecommands.cpp
 	document/audiofunctions.cpp document/audiofunctions.h
 	document/channelformat.cpp document/channelformat.h
@@ -148,6 +150,9 @@ add_library(gnubase-engine STATIC
 	document/snap.cpp document/snap.h
 	document/stripparameters.cpp document/stripparameters.h
 	document/tempo.cpp
+	document/trackversions.cpp document/trackversions.h
+	document/trackvisibility.cpp document/trackvisibility.h
+	document/transpose.cpp
 	document/volumecurves.cpp document/volumecurves.h
 	document/warp.cpp document/warp.h
 	dsp/biquad.cpp dsp/biquad.h
@@ -171,6 +176,7 @@ add_library(gnubase-engine STATIC
 	metronome/metronomesettings.cpp metronome/metronomesettings.h
 	midi/chords.cpp midi/chords.h
 	midi/controllerlanes.cpp midi/controllerlanes.h
+	midi/devices.cpp midi/devices.h
 	midi/drummaps.cpp midi/drummaps.h
 	midi/functioncommands.cpp midi/functioncommands.h
 	midi/functions.cpp midi/functions.h

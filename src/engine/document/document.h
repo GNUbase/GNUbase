@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "engine/audio/arranger.h"
 #include "engine/document/channelformat.h"
 #include "engine/document/snap.h"
 #include "engine/metronome/metronomesettings.h"
@@ -64,6 +65,8 @@ namespace gnubase::engine
 		Tempo,     // shows and edits the project's tempo track; has no channel, stays at the top level, at most one
 		Signature, // shows and edits the project's time signatures; has no channel, stays at the top level, at most one
 		Vca,       // a VCA fader (docs/features/link-groups.md): a channel without audio that controls a link group
+		Arranger,  // holds the arranger events (#167); has no channel, stays at the top level, at most one
+		Transpose, // holds the transpose events (#168); has no channel, stays at the top level, at most one
 	};
 
 	// The time formats of ruler tracks, as the event display's ruler names them.
@@ -220,6 +223,13 @@ namespace gnubase::engine
 		// none sends nothing, which leaves the instrument's own.
 		std::optional<int> midiVolume = std::nullopt;
 		std::optional<int> midiPan = std::nullopt;
+		// MIDI channels: the program (0 to 127) and bank (0 to 16383) sent to the instrument, none: nothing, and the
+		// installed MIDI device (user setting midi.devices) whose patches choose them, by name, or empty
+		// (docs/features/midi-devices.md).
+		std::optional<int> program = std::nullopt;
+		std::optional<int> bank = std::nullopt;
+		// NOLINTNEXTLINE(readability-redundant-member-init): see instrumentParameters
+		std::string device = {};
 		// MIDI and instrument tracks: the MIDI modifiers, which change how the track's notes play
 		// (docs/features/midi-modifiers.md).
 		// NOLINTNEXTLINE(readability-redundant-member-init): see instrumentParameters
@@ -596,6 +606,11 @@ namespace gnubase::engine
 		// -127 to 127: the info line's Transpose and Velocity.
 		int transpose = 0;
 		int velocity = 0;
+		// Global transposition (#168, reference manual pp. 414-421): the part's root key (-1 for none, 0 C to 11 B),
+		// which the project root key transposes to, and Global Transpose Independent, which keeps the part out of the
+		// project root key's and the transpose track's transposition.
+		int rootKey = -1;
+		bool independent = false;
 	};
 
 	// A frozen track's rendered audio (#116, reference manual pp. 219-220): a file of the project's media folder's
@@ -614,6 +629,21 @@ namespace gnubase::engine
 			std::tie(b.path, b.sampleRate, b.channels, b.length);
 	}
 
+	// A track version (#165, reference manual pp. 230-237): one of the sets of events and parts an audio, instrument
+	// or MIDI track can switch between. The active version's events and parts are the project's; another version
+	// holds its own here, as they were when it was last active, so playback, editing and the event display only ever
+	// see the active one.
+	struct TrackVersion
+	{
+		int id = 1;              // the version ID: versions made together on several tracks share it
+		std::string name = "v1"; // the version name
+		std::vector<AudioEvent> audioEvents;
+		std::vector<AudioPart> audioParts;
+		std::vector<MidiPart> midiParts;
+	};
+
+	bool operator==(const TrackVersion& a, const TrackVersion& b);
+
 	struct Track
 	{
 		ObjectId id = 0;
@@ -631,11 +661,41 @@ namespace gnubase::engine
 		// leave it out, as for Channel::instrumentParameters.
 		// NOLINTNEXTLINE(readability-redundant-member-init): see above
 		std::string picture = {};
+		// Ruler tracks (reference manual p. 159): where their ruler counts from while timeOffsetOn, in the track's time
+		// base (ticks or samples); while it is off, the ruler follows the project setup's start time and bar offset.
+		int64_t timeOffset = 0;
+		bool timeOffsetOn = false;
 		// Audio and instrument tracks: what plays while the track is frozen, or none. Initialized like picture.
 		// NOLINTNEXTLINE(readability-redundant-member-init): see above
 		std::optional<Freeze> frozen = {};
 		ObjectId drumMap = 0; // MIDI and instrument tracks: the drum map their notes play through, or 0 (#129)
+		// Audio, instrument and MIDI tracks: their versions in the order they were made; none for a track that has
+		// only its first one, v1 with ID 1 (versionsOf). Initialized like picture.
+		// NOLINTNEXTLINE(readability-redundant-member-init): see above
+		std::vector<TrackVersion> versions = {};
+		int activeVersion = 1; // the ID of the active version
 	};
+
+	// Whether tracks of a type have versions: audio, instrument and MIDI tracks.
+	inline bool hasVersions(TrackType type)
+	{
+		return type == TrackType::Audio || type == TrackType::Instrument || type == TrackType::Midi;
+	}
+
+	// A track's versions, with its first one if it has none of its own yet.
+	std::vector<TrackVersion> versionsOf(const Track& track);
+
+	// Calls visit with every audio event of the project, those that inactive track versions hold too: their clips are
+	// in use. Project may be const.
+	template <typename P, typename Visit> void forEveryAudioEvent(P& project, Visit visit)
+	{
+		for (auto& entry : project.audioEvents)
+			visit(entry.second);
+		for (auto& entry : project.trackById)
+			for (auto& version : entry.second.versions)
+				for (auto& event : version.audioEvents)
+					visit(event);
+	}
 
 	// Whether tracks of a type can be disabled (reference manual p. 219): audio, instrument and MIDI tracks.
 	inline bool canDisable(TrackType type)
@@ -661,6 +721,57 @@ namespace gnubase::engine
 		time::Position end;      // cycle markers: at least one sample after the position; position markers: the same
 		std::string name;
 		std::string color; // "#rrggbb", or empty for the default color
+	};
+
+	// An arranger event (#167, reference manual p. 404): a section of the project on the arranger track, in its time
+	// base, at least one sample long.
+	struct ArrangerEvent
+	{
+		ObjectId id = 0;
+		std::string name;
+		time::Position position;
+		time::Position end;
+	};
+
+	// A step of an arranger chain: an arranger event, played repeats times.
+	struct ArrangerStep
+	{
+		ObjectId event = 0;
+		int repeats = 1;
+		ArrangerRepeat mode = ArrangerRepeat::Normal;
+	};
+
+	// An arranger chain: the order in which arranger mode plays the arranger events.
+	struct ArrangerChain
+	{
+		ObjectId id = 0;
+		std::string name;
+		std::vector<ArrangerStep> steps;
+	};
+
+	// The arranger track's events and chains (#167). A project with an arranger track has at least one chain.
+	struct Arranger
+	{
+		std::vector<ArrangerEvent> events; // in the order they were added
+		std::vector<ArrangerChain> chains; // in the order they were added
+	};
+
+	// A transpose event (#168, reference manual p. 418): from its position, in the transpose track's time base, to the
+	// next one, what follows global transpose plays value semitones (-24 to 24) higher.
+	struct TransposeEvent
+	{
+		ObjectId id = 0;
+		time::Position position;
+		int value = 0;
+	};
+
+	// The transpose track's events and controls (reference manual pp. 165, 418-419).
+	struct TransposeTrack
+	{
+		std::vector<TransposeEvent> events; // in timeline order
+		bool mute = false;                  // Mute Transpose Events: the events don't play
+		bool keepInOctave = false;          // Keep Transpose in Octave Range: never more than 7 semitones either way
+		bool lock = false;                  // the events can't be added, changed or removed
 	};
 
 	// What an automation lane changes.
@@ -809,6 +920,24 @@ namespace gnubase::engine
 		std::vector<std::string> hiddenTypes; // from g_mixerChannelTypes
 	};
 
+	// A track visibility configuration (#166, reference manual p. 58): a name for a set of hidden tracks.
+	struct VisibilityConfiguration
+	{
+		std::string name;
+		std::vector<ObjectId> hidden;
+	};
+
+	// What the project window's track list hides (#166, docs/features/track-visibility.md, reference manual pp. 80-82).
+	struct TrackVisibility
+	{
+		std::vector<ObjectId> hidden; // tracks, sorted
+		// The mixer window whose channel visibility follows the tracks' (window1 to window4), or empty; the lower
+		// zone's mixer always does.
+		std::string sync;
+		std::vector<VisibilityConfiguration> configurations;
+		std::string configuration; // the active configuration's name, or empty
+	};
+
 	// The record file types and bit depths of the project setup (reference manual pp. 129-130), as the engine API
 	// names them. Recording (#96) writes its files in them.
 	inline constexpr std::array<const char*, 4> g_recordFileTypes = {"wav", "broadcastWav", "aiff", "flac"};
@@ -862,6 +991,14 @@ namespace gnubase::engine
 		ObjectId activeMarkerTrack = 0; // the marker track that marker commands use by default, or 0
 		std::map<ObjectId, AutomationLane> automation;
 		std::map<ObjectId, LinkGroup> linkGroups;
+		Arranger arranger;
+		// Arranger mode, its jump mode and the active chain (0: the first one): settings saved with the project, not
+		// part of undo.
+		bool arrangerMode = false;
+		ArrangerJump arrangerJump = ArrangerJump::None;
+		ObjectId arrangerChain = 0;
+		int rootKey = -1;                     // the Project Root Key (#168): -1 for none, 0 C to 11 B
+		TransposeTrack transpose;             // the transpose track's events and controls; reset when the track goes
 		std::map<ObjectId, DrumMap> drumMaps; // a new project has the GM Map (#129)
 		// Virgin territory instead of initial values (reference manual p. 881): automation lanes have gaps before their
 		// first and after their last point too, where their parameters have their static values. A setting saved with
@@ -883,6 +1020,8 @@ namespace gnubase::engine
 		std::string lastAppliedColor;
 		// What each mixer hides (#106), by mixer: lower, window1 to window4. Settings, not part of undo.
 		std::map<std::string, MixerView> mixers;
+		// What the track list hides (#166). A setting, not part of undo.
+		TrackVisibility trackVisibility;
 
 		// The metronome and count-in (#101). Settings, not part of undo.
 		metronome::MetronomeSettings metronome;
@@ -932,6 +1071,29 @@ namespace gnubase::engine
 	// after its position. Returns whether it moved it.
 	bool keepMinimumLength(const Project& project, Marker& marker);
 
+	// Moves the end of an arranger event that isn't at least one sample long to one sample after its position, as
+	// keepMinimumLength does for cycle markers. Returns whether it moved it.
+	bool keepMinimumLength(const Project& project, ArrangerEvent& event);
+
+	// The project's active arranger chain: arrangerChain, or the first chain if that is gone; none without chains.
+	const ArrangerChain* activeArrangerChain(const Project& project);
+
+	// Root key names (#168): "" for none (-1), then "C", "C#" and so on to "B" (0 to 11).
+	const std::vector<std::string>& rootKeyNames();
+	std::string rootKeyName(int key);
+	std::optional<int> rootKeyFromName(const std::string& name);
+
+	// The step from a part's root key to the project root key, the nearer way (-5 to 6 semitones): 0 for an
+	// Independent part and unless both have a root key. project.get gives it as each part's rootKeyTranspose.
+	int rootKeyTranspose(const Project& project, const MidiPart& part);
+
+	// The semitones that global transposition adds to a part's notes at a position (project samples): nothing for an
+	// Independent part; otherwise the step from the part's root key to the project root key, the nearer way (-5 to
+	// 6; nothing unless both have one), plus the value of the transpose event playing there unless the transpose track
+	// is muted, kept within 7 semitones either way with Keep Transpose in Octave Range. The part's own transpose adds
+	// to that.
+	int globalTranspose(const Project& project, const MidiPart& part, time::Samples at);
+
 	// Whether folder is the pool's Audio folder (0) or a pool folder whose parents lead there without passing
 	// excluded: false for a folder that isn't there, one in a loop, and excluded or a folder inside it.
 	bool poolFolderOutside(const Project& project, ObjectId folder, ObjectId excluded);
@@ -961,13 +1123,13 @@ namespace gnubase::engine
 	inline bool operator==(const Channel& a, const Channel& b)
 	{
 		return std::tie(a.id, a.track, a.format, a.input, a.output, a.instrument, a.volume, a.pan, a.panner, a.panLeft,
-				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.modifiers, a.instrumentParameters, a.monitor,
-				   a.recordEnable, a.midiInput, a.mute, a.solo, a.soloDefeat, a.listen, a.slots, a.notes, a.sections,
-				   a.sends) ==
+				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.program, a.bank, a.device, a.modifiers,
+				   a.instrumentParameters, a.monitor, a.recordEnable, a.midiInput, a.mute, a.solo, a.soloDefeat,
+				   a.listen, a.slots, a.notes, a.sections, a.sends) ==
 			std::tie(b.id, b.track, b.format, b.input, b.output, b.instrument, b.volume, b.pan, b.panner, b.panLeft,
-				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.modifiers, b.instrumentParameters, b.monitor,
-				b.recordEnable, b.midiInput, b.mute, b.solo, b.soloDefeat, b.listen, b.slots, b.notes, b.sections,
-				b.sends);
+				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.program, b.bank, b.device, b.modifiers,
+				b.instrumentParameters, b.monitor, b.recordEnable, b.midiInput, b.mute, b.solo, b.soloDefeat, b.listen,
+				b.slots, b.notes, b.sections, b.sends);
 	}
 
 	inline bool operator==(const Slot& a, const Slot& b)
@@ -1096,9 +1258,9 @@ namespace gnubase::engine
 	inline bool sameProperties(const MidiPart& a, const MidiPart& b)
 	{
 		return std::tie(a.id, a.track, a.name, a.position, a.length, a.mute, a.lock, a.shared, a.color, a.lane,
-				   a.transpose, a.velocity) ==
+				   a.transpose, a.velocity, a.rootKey, a.independent) ==
 			std::tie(b.id, b.track, b.name, b.position, b.length, b.mute, b.lock, b.shared, b.color, b.lane,
-				b.transpose, b.velocity);
+				b.transpose, b.velocity, b.rootKey, b.independent);
 	}
 
 	inline bool operator==(const ProjectColor& a, const ProjectColor& b)
@@ -1110,6 +1272,36 @@ namespace gnubase::engine
 	{
 		return std::tie(a.id, a.track, a.type, a.number, a.position, a.end, a.name, a.color) ==
 			std::tie(b.id, b.track, b.type, b.number, b.position, b.end, b.name, b.color);
+	}
+
+	inline bool operator==(const ArrangerEvent& a, const ArrangerEvent& b)
+	{
+		return std::tie(a.id, a.name, a.position, a.end) == std::tie(b.id, b.name, b.position, b.end);
+	}
+
+	inline bool operator==(const ArrangerStep& a, const ArrangerStep& b)
+	{
+		return std::tie(a.event, a.repeats, a.mode) == std::tie(b.event, b.repeats, b.mode);
+	}
+
+	inline bool operator==(const ArrangerChain& a, const ArrangerChain& b)
+	{
+		return std::tie(a.id, a.name, a.steps) == std::tie(b.id, b.name, b.steps);
+	}
+
+	inline bool operator==(const Arranger& a, const Arranger& b)
+	{
+		return std::tie(a.events, a.chains) == std::tie(b.events, b.chains);
+	}
+
+	inline bool operator==(const TransposeEvent& a, const TransposeEvent& b)
+	{
+		return std::tie(a.id, a.position, a.value) == std::tie(b.id, b.position, b.value);
+	}
+
+	inline bool operator==(const TransposeTrack& a, const TransposeTrack& b)
+	{
+		return std::tie(a.events, a.mute, a.keepInOctave, a.lock) == std::tie(b.events, b.mute, b.keepInOctave, b.lock);
 	}
 
 	inline bool operator==(const AutomationTarget& a, const AutomationTarget& b)
@@ -1133,9 +1325,11 @@ namespace gnubase::engine
 	inline bool operator==(const Track& a, const Track& b)
 	{
 		return std::tie(a.id, a.type, a.name, a.color, a.timeBase, a.parent, a.channel, a.children, a.autoFades,
-				   a.timeFormat, a.enabled, a.picture, a.frozen, a.drumMap) ==
+				   a.timeFormat, a.enabled, a.picture, a.timeOffset, a.timeOffsetOn, a.frozen, a.drumMap, a.versions,
+				   a.activeVersion) ==
 			std::tie(b.id, b.type, b.name, b.color, b.timeBase, b.parent, b.channel, b.children, b.autoFades,
-				b.timeFormat, b.enabled, b.picture, b.frozen, b.drumMap);
+				b.timeFormat, b.enabled, b.picture, b.timeOffset, b.timeOffsetOn, b.frozen, b.drumMap, b.versions,
+				b.activeVersion);
 	}
 	// Where an audio event plays, in the project's samples (fadeedits.cpp).
 	struct EventSpan

@@ -510,8 +510,10 @@ namespace gnubase::plugin::remote
 		output.frames = input.frames;
 		output.channels = m_outputChannels;
 		output.eventCount = count;
-		m_audio.releaseBlock();
+		// The answer goes out before the block's slot is free again: the engine takes a free slot for a block that is
+		// answered, and drops the late answers before it sends the next one.
 		m_audio.sendBlock(output);
+		m_audio.releaseBlock();
 		return true;
 	}
 }
