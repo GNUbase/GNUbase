@@ -40,7 +40,7 @@ Each is one undo step and emits `clip.changed`, except `event.flatten`, which em
 | `event.unstretch` | Unstretch Audio: musical mode off and no markers in the events' clips | pp. 657-658 |
 | `event.flatten` | Flatten Real Time Processing: renders each event of a warped clip as it plays now (with `preset`, default the clip's) into a 32-bit float WAV file in the project's media folder, and makes the event play a new clip of it | p. 657 |
 
-MCP and Lua get them from the command registry ([lua.md](../lua.md), [mcp.md](../mcp.md)).
+MCP and Lua get them from the command registry ([Lua API reference](../api-reference.md), [mcp.md](../mcp.md)).
 
 ## Playback
 

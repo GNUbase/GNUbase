@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- gnubase.test, GNUbase's Lua test framework (#206): test cases, assertions, fixtures and golden files. The runtime
 -- loads it into every Lua state, trusted or not, and calls the second function it returns when a script ends, which
--- runs the test cases the script registered. docs/lua.md describes it (src/scripting/reference.cpp).
+-- runs the test cases the script registered. The Lua API reference describes it (src/scripting/reference.cpp).
 
 -- The runtime's message handler: returns the message with a traceback. The sandbox has no debug library.
 local traceback = ...

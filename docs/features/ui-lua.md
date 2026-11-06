@@ -1,7 +1,7 @@
 # Lua in the UI
 
 The UI has a Lua runtime of its own (#208): GNUbase's documents script themselves with it, and UI tests written in Lua
-drive the UI with it. It is the same `scripting::Runtime` as headless scripts use ([lua.md](../lua.md)), so the UI's
+drive the UI with it. It is the same `scripting::Runtime` as headless scripts use ([Lua API reference](../api-reference.md)), so the UI's
 Lua reaches the engine only through the engine API, like every other client.
 
 - **Where it lives.** `app::AppUi` (`src/app/appui.h`) makes a trusted runtime (every standard library except
