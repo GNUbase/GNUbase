@@ -9,6 +9,7 @@
 #include "engine/processors/builtin.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <iterator>
@@ -149,12 +150,19 @@ namespace gnubase::engine
 			from.slots.erase(std::find(from.slots.begin(), from.slots.end(), slot.id));
 			to.slots.insert(to.slots.begin() + index, slot.id);
 			slot.channel = to.id;
-			if (to.id != from.id)
-				removeAutomation(project, context, slot.id);
-			context.emit("channel.changed", {{"channel", toJson(from)}});
-			if (to.id != from.id)
-				context.emit("channel.changed", {{"channel", toJson(to)}});
-			return {{"slot", describe(project, slot, status)}};
+			Json described = describe(project, slot, status);
+			// As undo and redo announce it (ProjectModel): the channels by id; for another channel then the slot and
+			// the automation lanes that stay behind. Within its channel only the order changes, which the channel has.
+			if (to.id == from.id)
+			{
+				context.emit("channel.changed", {{"channel", toJson(from)}});
+				return {{"slot", std::move(described)}};
+			}
+			for (const Channel* channel : from.id < to.id ? std::array{&from, &to} : std::array{&to, &from})
+				context.emit("channel.changed", {{"channel", toJson(*channel)}});
+			context.emit("plugin.changed", {{"slot", described}});
+			removeAutomation(project, context, slot.id);
+			return {{"slot", std::move(described)}};
 		}
 
 		Json setPlugin(Project& project, CommandContext& context, const SlotStatus& status)
@@ -229,7 +237,10 @@ namespace gnubase::engine
 		add(engine,
 			{"plugin.move", 1,
 				"Moves a slot to index on its channel or on another channel with audio (channel); the index counts the "
-				"slots without the moved one. The plugin keeps its parameters. Returns the slot.",
+				"slots without the moved one. The plugin keeps its parameters; the automation lanes of its parameters "
+				"are removed when it moves to another channel. Emits channel.changed with the channel's new order of "
+				"slots; a move to another channel emits it for both channels, then plugin.changed with the slot and "
+				"automationLane.removed for its lanes, in the order undo and redo do. Returns the slot.",
 				objectSchema({{"slot", idSchema}, {"channel", idSchema}, {"index", indexSchema}}, {"slot", "index"}),
 				slotResult, false},
 			with(movePlugin));

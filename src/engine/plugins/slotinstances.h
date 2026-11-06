@@ -11,6 +11,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace gnubase::engine::plugins
@@ -21,7 +22,7 @@ namespace gnubase::engine::plugins
 	// destroying a plugin are jobs on the plugin job thread (HostManager::run), never on the command or audio
 	// thread: until its plugin is active for the device's sample rate and block size, a slot's node has no processor
 	// and passes its audio on. A plugin that a graph may still process is deactivated only once the audio thread runs
-	// a graph without it.
+	// a graph without it: a thread of its own waits for that, woken by wake, so the job thread stays free meanwhile.
 	class SlotInstances
 	{
 	public:
@@ -39,7 +40,8 @@ namespace gnubase::engine::plugins
 
 		// changed is called on any thread when a plugin became ready or failed, or asked to be restarted; the engine
 		// then builds its graph again (update). retired(generation) tells whether the audio thread can no longer
-		// process a graph older than that generation. Without a factory, slots get the built-in plugins.
+		// process a graph older than that generation; it is asked again after each wake. Without a factory, slots get
+		// the built-in plugins.
 		SlotInstances(HostManager& jobs, std::function<void()> changed,
 			std::function<bool(uint64_t generation)> retired, Factory factory = {});
 		// Destroys the plugins on the job thread and waits for it; no graph may process them any more.
@@ -65,6 +67,9 @@ namespace gnubase::engine::plugins
 		// [command thread] The graph of this generation, now published, has none of the plugins update marked: they
 		// are deactivated, activated again or destroyed as soon as the audio thread runs it.
 		void retire(uint64_t generation);
+		// [any thread, real-time safe] The audio thread started another graph, or the device stopped: plugins waiting
+		// to leave a graph check retired again. Never blocks.
+		void wake() const noexcept;
 
 	private:
 		struct Instance;
@@ -73,14 +78,15 @@ namespace gnubase::engine::plugins
 
 		void start(const std::shared_ptr<Instance>& instance, const Wanted& wanted);
 		void post(std::function<void()> job);
-		// [any] Runs work as a job once the audio thread can't process a graph older than generation any more, or the
-		// engine closes. It waits in jobs queued again and again, so other jobs run meanwhile.
-		static void whenRetired(const std::shared_ptr<Shared>& shared, uint64_t generation, std::function<void()> work);
+		// [retirer thread] Queues the work of each retirement as a job once the audio thread can't process a graph
+		// older than its generation any more, or the slots close, and sleeps until the next wake in between.
+		static void retireWhenDue(Shared& shared);
 
 		std::shared_ptr<Shared> m_shared;
 		std::map<uint64_t, std::shared_ptr<Instance>> m_instances;
 		std::vector<std::shared_ptr<Instance>> m_leaving; // to retire: they leave or change
 		double m_sampleRate = 0.0;
 		uint32_t m_maxFrames = 0;
+		std::thread m_retirer; // last: it uses m_shared
 	};
 }

@@ -3591,7 +3591,7 @@ Returns:
 
 #### `gnubase.plugin.move`
 
-Moves a slot to index on its channel or on another channel with audio (channel); the index counts the slots without the moved one. The plugin keeps its parameters. Returns the slot.
+Moves a slot to index on its channel or on another channel with audio (channel); the index counts the slots without the moved one. The plugin keeps its parameters; the automation lanes of its parameters are removed when it moves to another channel. Emits channel.changed with the channel's new order of slots; a move to another channel emits it for both channels, then plugin.changed with the slot and automationLane.removed for its lanes, in the order undo and redo do. Returns the slot.
 
 Parameters:
 
