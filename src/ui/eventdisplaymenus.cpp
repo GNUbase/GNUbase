@@ -268,7 +268,10 @@ namespace gnubase::ui
 			const auto mode = item->GetAttribute<Rml::String>("warp-mode", "");
 			for (size_t i = 0; i < g_warpModes.size(); ++i)
 				if (mode == g_warpModes[i])
+				{
+					setTool(Tool::TimeWarp);
 					setWarpMode(static_cast<WarpMode>(i));
+				}
 		}
 		else if (menu == m_autoScrollMenu)
 		{

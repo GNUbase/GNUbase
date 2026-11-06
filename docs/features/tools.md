@@ -81,8 +81,9 @@ the info line).
 `resources/ui/project.rml` has a button per tool, `button[tool=<name>]`, checked for the tool chosen, and the toggle
 `#combine-selection-tools`. A button with `tool-menu` gets that menu as its `menu` once its tool is chosen, so the
 first click chooses the tool and the next opens its modes (p. 265): `#object-selection-menu` with the sizing modes and
-`#line-menu` with the line modes, `#play-menu` with the play modes and `#time-warp-menu` with the time warp modes, each
-with the mode checked.
+`#line-menu` with the line modes and `#play-menu` with the play modes, each with the mode checked. The time warp tool
+has no button, which the toolbar has no room for at 1024 pixels: the toolbox and the context menu's Tools choose it,
+and the Tools' Time Warp Mode, `#time-warp-menu`, chooses it with a mode.
 
 The commands are in `EventDisplay::actions()`, and `app::AppUi` binds the reference's keys (p. 1569) in the project
 window: `tool.objectSelection` 1, `tool.rangeSelection` 2, `tool.split` 3, `tool.glue` 4, `tool.erase` 5, `tool.zoom`

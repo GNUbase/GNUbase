@@ -39,10 +39,11 @@ signature events ([signature-track.md](signature-track.md)) and the clips' warp 
 
 ## UI
 
-- **The time warp tool** (`Tool::TimeWarp`, `timeWarp`, `src/ui/eventtimewarp.cpp`): the toolbar's
-  `#time-warp-tool`, the toolbox and the context menu's Tools; `tool.timeWarp` chooses it. Its button's second click
-  opens `#time-warp-menu` with the modes Warp Grid, Warp Grid (musical events follow) and Free Warp
-  (`EventDisplay::setWarpMode`). In the grid modes a drag sends `tempo.warp` on release, from the position pressed,
+- **The time warp tool** (`Tool::TimeWarp`, `timeWarp`, `src/ui/eventtimewarp.cpp`): the toolbox and the context
+  menu's Tools, or `tool.timeWarp`, choose it. The context menu's Tools > Time Warp Mode (`#time-warp-menu`) chooses
+  it with one of the modes Warp Grid, Warp Grid (musical events follow) and Free Warp (`EventDisplay::setWarpMode`),
+  checked as chosen. It has no toolbar button: the toolbar has no room for one at 1024 pixels, the width of CI's
+  displays. In the grid modes a drag sends `tempo.warp` on release, from the position pressed,
   snapped, to the time released, with `follow` in the second mode. In Free Warp a press on an audio event inserts a
   warp marker at the clip frame pressed that plays at the frame released (`clip.addWarpMarker`).
 - **Project > Tempo Track > Process Tempo...** (`tempo.openProcessTempo`) opens `resources/ui/process-tempo.rml`: the
@@ -61,7 +62,8 @@ signature events ([signature-track.md](signature-track.md)) and the clips' warp 
 ## Not yet
 
 The ruler's and the events' tempo flags while the time warp tool is chosen, the ruler switching to bars and beats,
-showing the warp while dragging and snapping the release to events; Free Warp snapping to hitpoints and magnetic
+showing the warp while dragging and snapping the release to events; a toolbar button with the modes behind it once
+the toolbar has room; Free Warp snapping to hitpoints and magnetic
 markers; the Process Tempo and Process Bars buttons of the tempo track editor, the dialogs' bars and beats and other
 time formats; Write Definition to Audio Files; a definition grid for the stretch before the first beat when the tempo
 changes there.
@@ -72,5 +74,5 @@ changes there.
 length and end, from the locators and with a ramp across the range's end; every Process Bars type and its errors;
 Set Definition from Tempo playing as before and following a tempo change, for the events' tracks or all; pasting warp
 markers at the same times, keeping those there, and undo. `tests/timewarp_ui_tests.cpp`: the tool's Warp Grid and
-Free Warp drags and its menu, the Process Tempo and Process Bars dialogs, and Audio > Advanced's Set Definition from
+Free Warp drags and its modes in the context menu, the Process Tempo and Process Bars dialogs, and Audio > Advanced's Set Definition from
 Tempo and Copy and Paste Warp Markers.

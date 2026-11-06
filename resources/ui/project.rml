@@ -111,7 +111,6 @@
 		<button tool="zoom" class="icon-only" title="Zoom"><svg class="icon" src="../icons/tool-zoom.svg"/></button>
 		<button tool="line" tool-menu="line-menu" class="icon-only" title="Line"><svg class="icon" src="../icons/tool-line.svg"/></button>
 		<button id="play-tool" tool="play" tool-menu="play-menu" class="icon-only" title="Play"><svg class="icon" src="../icons/tool-audition.svg"/></button>
-		<button id="time-warp-tool" tool="timeWarp" tool-menu="time-warp-menu" class="icon-only" title="Time Warp"><svg class="icon" src="../icons/tool-timewarp.svg"/></button>
 		<button id="auto-scroll" type="toggle" title="Auto-Scroll">Auto-Scroll</button>
 		<button id="auto-scroll-settings" class="icon-only" menu="auto-scroll-menu" title="Select Auto-Scroll Settings"><svg class="icon" src="../icons/general-arrow-down.svg"/></button>
 		<button id="zoom-presets" class="icon-only" menu="zoom-presets-menu" title="Horizontal Zoom Presets"><svg class="icon" src="../icons/tool-zoom.svg"/></button>
@@ -622,12 +621,6 @@
 		<menuitem play-mode="play">Play</menuitem>
 		<menuitem play-mode="scrub">Scrub</menuitem>
 	</menu>
-	<!-- The time warp tool's modes (reference manual p. 1465, docs/features/time-warp.md) -->
-	<menu id="time-warp-menu">
-		<menuitem warp-mode="warpGrid">Warp Grid</menuitem>
-		<menuitem warp-mode="warpGridFollow">Warp Grid (musical events follow)</menuitem>
-		<menuitem warp-mode="freeWarp">Free Warp</menuitem>
-	</menu>
 	<!-- A right click in the event lanes opens the toolbox or, with a modifier key, the context menu, or the other way
 	     round (reference manual pp. 65, 1602) -->
 	<menu id="toolbox" class="toolbox">
@@ -659,6 +652,15 @@
 				<menuitem tool="line">Line</menuitem>
 				<menuitem tool="play">Play</menuitem>
 				<menuitem tool="timeWarp">Time Warp</menuitem>
+				<!-- The time warp tool's modes (reference manual p. 1465, docs/features/time-warp.md), here rather than
+				     behind a toolbar button, which the toolbar has no room for at 1024 pixels -->
+				<menuitem id="time-warp-submenu">Time Warp Mode
+					<menu id="time-warp-menu">
+						<menuitem warp-mode="warpGrid">Warp Grid</menuitem>
+						<menuitem warp-mode="warpGridFollow">Warp Grid (musical events follow)</menuitem>
+						<menuitem warp-mode="freeWarp">Free Warp</menuitem>
+					</menu>
+				</menuitem>
 			</menu>
 		</menuitem>
 		<menuseparator/>

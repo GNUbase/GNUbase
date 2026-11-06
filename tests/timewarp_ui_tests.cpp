@@ -123,7 +123,6 @@ TEST_CASE("the time warp tool warps the grid by its modes, and Free Warp puts wa
 {
 	Fixture f;
 	f.app.call("project.set", {{"tempoTrackActive", true}});
-	CHECK(elements(f.app, "#time-warp-tool").size() == 1);
 	CHECK(elements(f.app, "#toolbox menuitem[tool=timeWarp]").size() == 1);
 	f.app.keys().run("tool.timeWarp", Json::object(), f.app.main(), nullptr);
 	step(f.app);
@@ -138,11 +137,14 @@ TEST_CASE("the time warp tool warps the grid by its modes, and Free Warp puts wa
 	CHECK(std::abs(bpm - 90.0) < 1.0);
 	CHECK(f.app.call("history.get").at("steps").back().at("action") == "Time Warp");
 
-	// The second click on the tool's button opens its modes.
-	click(f.app, "#time-warp-tool");
-	REQUIRE(f.app.waitUntil([&f] { return !elements(f.app, "#time-warp-menu menuitem[warp-mode=freeWarp]").empty(); }));
+	// The context menu's Tools has the modes, checked as chosen.
+	f.app.ui().click(std::nullopt, {"", 0, ui::Point{f.x(3.0), f.y()}}, ui::MouseButton::Right, 1, {});
+	step(f.app);
+	click(f.app, "#tools-submenu");
+	click(f.app, "#time-warp-submenu");
 	click(f.app, "#time-warp-menu menuitem[warp-mode=freeWarp]");
 	REQUIRE(f.display.warpMode() == ui::WarpMode::Free);
+	CHECK(elements(f.app, "#time-warp-menu menuitem[warp-mode=freeWarp]").at(0).at("attributes").contains("checked"));
 
 	// Free Warp: the audio at one second goes to 1.2 seconds, in clip frames.
 	f.drag(1.0, 1.2);

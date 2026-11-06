@@ -237,8 +237,9 @@ namespace gnubase::ui
 		// combined, the object selection tool selects ranges in a lane's upper half. Their tool modifiers are the user
 		// setting ui.toolModifiers. The document's toolbar may have a button per tool, button[tool=<name>], whose
 		// attribute tool-menu names a menu of its modes that a second click opens (#object-selection-menu with the
-		// sizing modes, #line-menu with the line modes, #play-menu with the play modes, #time-warp-menu with the time
-		// warp modes), and a toggle button #combine-selection-tools. Menu items with a tool attribute choose it too:
+		// sizing modes, #line-menu with the line modes, #play-menu with the play modes), and a toggle button
+		// #combine-selection-tools. Menu items with a tool attribute choose it too, and those of #time-warp-menu, the
+		// context menu's time warp modes, choose the time warp tool and the mode:
 		// the toolbox #toolbox and the context menu #event-display-menu, which a right click in the event lanes opens,
 		// the toolbox with the user setting ui.toolboxOnRightClick and the context menu with a modifier key, or the
 		// other way round while it is off. A tool chosen with its command (actions()) shows its name in the
