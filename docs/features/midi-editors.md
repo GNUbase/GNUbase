@@ -4,7 +4,8 @@ The MIDI editors' common framework (#126, reference manual pp. 1132-1156): the e
 zone and the editor window, which parts they show, the part active for editing, the part editing mode, the Visibility
 tab, the global tracks and Keep Editor Contents. The key editor ([key-editor.md](key-editor.md), #127) and the list
 editor ([list-editor.md](list-editor.md), #130) are the editors' contents for MIDI parts, the audio part editor
-([audio-part-editor.md](audio-part-editor.md), #146) for audio parts; the drum editor will build on the framework too.
+([audio-part-editor.md](audio-part-editor.md), #146) for audio parts; the drum editor ([drum-editor.md](drum-editor.md),
+#129) is the key editor with a track's drum map.
 
 ## In the engine
 
@@ -14,7 +15,7 @@ modified and aren't saved, and a new or loaded project closes the editors.
 
 | Command | What it does | Reference |
 |---|---|---|
-| `editor.get` | The view: `open`, `parts`, `activePart`, `activeTrack`, `editingMode`, `editable`, `keepContents`, `globalTracks`, `content` (`key` or `list`, [list-editor.md](list-editor.md), or `audioPart`), the key editor's selection and step and MIDI input ([key-editor.md](key-editor.md)), `controllerSelection`, the selected controller events of the list editor and the controller lanes ([controller-lanes.md](controller-lanes.md)), and the audio part editor's `eventSelection` ([audio-part-editor.md](audio-part-editor.md)) | |
+| `editor.get` | The view: `open`, `parts`, `activePart`, `activeTrack`, `editingMode`, `editable`, `keepContents`, `globalTracks`, `content` (`key`, `list` ([list-editor.md](list-editor.md)), `drum` ([drum-editor.md](drum-editor.md)) or `audioPart`), the key editor's selection and step and MIDI input ([key-editor.md](key-editor.md)), `controllerSelection`, the selected controller events of the list editor and the controller lanes ([controller-lanes.md](controller-lanes.md)), and the audio part editor's `eventSelection` ([audio-part-editor.md](audio-part-editor.md)) | |
 | `editor.open` | Opens the editor with MIDI parts or audio parts, such as those selected in the project window; `activePart`, by default the first | pp. 692, 1189 |
 | `editor.set` | Changes an open editor's parts and active part or track, and any editor's editing mode, Keep Editor Contents and global tracks | pp. 1142-1156 |
 | `editor.close` | Closes it: no parts, Keep Editor Contents off | p. 1153 |
@@ -49,6 +50,7 @@ sends `editor.*` commands.
   .key-editor                       the key editor (key-editor.md), with an .editor-part[part] per part: .active,
                                     .editable; a click activates it
   .list-editor                      instead, while the view's content is list: the list editor (list-editor.md)
+  .key-editor.drum-editor           instead, while the view's content is drum: the drum editor (drum-editor.md)
 .editor-visibility                  an .editor-visibility-track[track] per MIDI or instrument track or folder with them;
                                     .active for the active track
   button.editor-visibility-check    .checked while all its parts show, .partial while some do
@@ -64,7 +66,8 @@ sends `editor.*` commands.
 - **Windows and zones** (`app::AppUi`). The editor window (`resources/ui/editor.rml`, docking window `editorWindow`)
   opens and closes as the view `window` does, whichever client opens it; its left zone has the Visibility tab
   (`editorVisibility`) and the Inspector with the Global Tracks section (`editorInspector`). The view `lower` shows the
-  project window's Editor panel in the lower zone, and the project window's Visibility tab is the lower zone editor's.
+  project window's Editor panel in the lower zone, and the project window's Visibility tab has the lower zone editor's
+  on its Editor page ([track-visibility.md](track-visibility.md)).
   Closing the editor window, or hiding the lower zone while the Editor panel is docked there, closes the view, so Keep
   Editor Contents goes off (p. 1153); another tab of the lower zone in front of it doesn't. A new project closes both.
 - **Following the selection** (p. 1153): when the project window's selection changes, its MIDI parts, or else its
@@ -84,7 +87,7 @@ Visibility tab's checks with the check box skins.
 Event colors, the Part Editing Mode's effect on a
 selection rectangle and Show Part Borders, Independent Track Loop, the global tracks' events and editing them, Find
 Tracks, track visibility configurations and agents, the Track Display and its settings, selecting tracks in the
-Visibility tab, the Project/Editor switch of the project window's Visibility tab, the preference Editor Content Follows
+Visibility tab, the preference Editor Content Follows
 Event Selection and where editors open by default, double-clicking a part to open it, and saving the global track
 setup with the project.
 

@@ -157,6 +157,8 @@ namespace gnubase::engine
 		bool panBypass = false;
 		std::optional<int> midiVolume; // MIDI channels: CC 7 and CC 10 to send, 0 to 127
 		std::optional<int> midiPan;
+		std::optional<int> program; // MIDI channels: the program change to send, with bank select if bank is set
+		std::optional<int> bank;
 		midi::Modifiers modifiers; // MIDI and instrument channels: notes has them applied, live notes get them
 		bool monitor = false;      // the monitor and record enable buttons
 		bool recordEnable = false;
@@ -200,7 +202,15 @@ namespace gnubase::engine
 		std::vector<RenderBus> busses;
 		std::vector<RenderMedia> media;
 		std::vector<RenderChannel> channels; // in track order
+		// What arranger mode plays (#167); shared with the cue thread.
+		std::shared_ptr<const ArrangerPlan> arranger = std::make_shared<const ArrangerPlan>();
 	};
 
-	std::unique_ptr<const RenderSnapshot> compile(const Project& project, uint64_t revision);
+	// previous is the snapshot published before: its arranger plan stays if the new one plays the same, since the
+	// transport finds its place again in every new plan.
+	std::unique_ptr<const RenderSnapshot> compile(
+		const Project& project, uint64_t revision, const RenderSnapshot* previous = nullptr);
+
+	// The arranger plan of a project: its arranger events and the active chain's steps in samples (arranger.cpp).
+	ArrangerPlan arrangerPlan(const Project& project);
 }

@@ -155,16 +155,23 @@ namespace gnubase::engine
 			const Project& project, ObjectId media, time::Samples frames, time::Samples handle, time::Samples step)
 		{
 			std::vector<Range> ranges;
-			for (const auto& [id, event] : project.audioEvents)
-			{
-				if (project.clips.at(event.clip).media != media)
-					continue;
-				if (event.offset >= frames)
-					return {};
-				const time::Samples start = std::max<time::Samples>(0, event.offset - handle);
-				const time::Samples end = event.offset + event.length + handle;
-				ranges.push_back({start - (start % step), std::min(frames, (end + step - 1) / step * step), 0});
-			}
+			bool unmapped = false;
+			forEveryAudioEvent(project,
+				[&](const AudioEvent& event)
+				{
+					if (unmapped || project.clips.at(event.clip).media != media)
+						return;
+					if (event.offset >= frames)
+					{
+						unmapped = true;
+						return;
+					}
+					const time::Samples start = std::max<time::Samples>(0, event.offset - handle);
+					const time::Samples end = event.offset + event.length + handle;
+					ranges.push_back({start - (start % step), std::min(frames, (end + step - 1) / step * step), 0});
+				});
+			if (unmapped)
+				return {};
 			std::sort(ranges.begin(), ranges.end(), [](const Range& a, const Range& b) { return a.start < b.start; });
 			std::vector<Range> merged;
 			for (const Range& range : ranges)
@@ -249,8 +256,7 @@ namespace gnubase::engine
 		void removeUnused(Project& project)
 		{
 			std::set<ObjectId> usedClips;
-			for (const auto& [id, event] : project.audioEvents)
-				usedClips.insert(event.clip);
+			forEveryAudioEvent(project, [&usedClips](const AudioEvent& event) { usedClips.insert(event.clip); });
 			std::set<ObjectId> usedMedia;
 			for (auto clip = project.clips.begin(); clip != project.clips.end();)
 			{
@@ -271,8 +277,10 @@ namespace gnubase::engine
 
 		bool hasEvents(const Project& project, ObjectId media)
 		{
-			return std::any_of(project.audioEvents.begin(), project.audioEvents.end(),
-				[&](const auto& entry) { return project.clips.at(entry.second.clip).media == media; });
+			bool found = false;
+			forEveryAudioEvent(project,
+				[&](const AudioEvent& event) { found = found || project.clips.at(event.clip).media == media; });
+			return found;
 		}
 
 		// Removes what a backup wrote if it doesn't complete.
@@ -642,17 +650,17 @@ namespace gnubase::engine
 				const fs::path target = createFreeFile(audio, minimizedName(source, reader->info(), format), taken);
 				cleanup.add(target);
 				writeRanges(*reader, ranges, target, format, advance);
-				for (auto& entry : project.audioEvents)
-				{
-					AudioEvent& event = entry.second;
-					if (project.clips.at(event.clip).media != media.id)
-						continue;
-					const time::Samples offset = event.offset;
-					const auto range = std::find_if(ranges.cbegin(), ranges.cend(),
-						[offset](const Range& r) { return offset >= r.start && offset < r.end; });
-					if (range != ranges.cend())
-						event.offset = event.offset - range->start + range->target;
-				}
+				forEveryAudioEvent(project,
+					[&](AudioEvent& event)
+					{
+						if (project.clips.at(event.clip).media != media.id)
+							return;
+						const time::Samples offset = event.offset;
+						const auto range = std::find_if(ranges.cbegin(), ranges.cend(),
+							[offset](const Range& r) { return offset >= r.start && offset < r.end; });
+						if (range != ranges.cend())
+							event.offset = event.offset - range->start + range->target;
+					});
 				media.length = ranges.back().target + (ranges.back().end - ranges.back().start);
 				media.path = target.u8string();
 			}

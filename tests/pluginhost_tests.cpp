@@ -266,9 +266,14 @@ namespace
 		std::vector<plugin::Event> events;
 	};
 
-	std::optional<plugin::ProcessStatus> exchangeRaw(ipc::Connection& audio, uint64_t sequence, const RawBlock& raw)
+	// Sends a raw block without waiting for its answer. The host answers a block before it hands the block's slot
+	// back, so the slot of a block whose answer is in can still be taken for a moment: wait for a free one.
+	void sendRaw(ipc::Connection& audio, uint64_t sequence, const RawBlock& raw)
 	{
 		ipc::AudioBlock block;
+		const auto deadline = std::chrono::steady_clock::now() + 5s;
+		while (!audio.beginBlock(block) && std::chrono::steady_clock::now() < deadline)
+			std::this_thread::yield();
 		REQUIRE(audio.beginBlock(block));
 		plugin::remote::ProcessInfo info;
 		info.flags = raw.flags;
@@ -291,7 +296,11 @@ namespace
 		block.channels = raw.frames > 0 ? 2 : 0;
 		block.eventCount = static_cast<uint32_t>(1 + raw.segmentOffsets.size() + raw.events.size());
 		audio.sendBlock(block);
+	}
 
+	// The status of the answer to a raw block, dropping the late answers before it.
+	std::optional<plugin::ProcessStatus> answerRaw(ipc::Connection& audio, uint64_t sequence)
+	{
 		if (audio.waitForAnswer(sequence, 5s) != ipc::WaitResult::Ready)
 			return std::nullopt;
 		ipc::AudioBlock answer;
@@ -311,6 +320,12 @@ namespace
 		}
 		audio.releaseBlock();
 		return status;
+	}
+
+	std::optional<plugin::ProcessStatus> exchangeRaw(ipc::Connection& audio, uint64_t sequence, const RawBlock& raw)
+	{
+		sendRaw(audio, sequence, raw);
+		return answerRaw(audio, sequence);
 	}
 
 	// A pair of control connections in this process, with small rings.
@@ -609,6 +624,49 @@ TEST_CASE("the host process checks blocks and activation against what the plugin
 	// After a Stop, the control connection takes flushes again.
 	CHECK(exchangeRaw(audio, ++sequence, {0, plugin::remote::Stop, 0, {}, {}}) == plugin::ProcessStatus::Continue);
 	CHECK(flushRequest());
+	CHECK(!host->exited());
+}
+
+TEST_CASE("the host process hands a block's slot back only once the block's answer is in", "[integration]")
+{
+	// The engine takes a free slot for a block its host is done with, and drops that block's late answer before it
+	// sends the next. An answer still on its way then stays in the ring, which fills up, and the host drops the block
+	// after next unanswered, with its Start, its Reset and its parameter changes (#891).
+	plugin::remote::LaunchOptions options;
+	options.executable = GNUBASE_PLUGINHOST;
+	const std::shared_ptr<plugin::remote::HostConnection> host = plugin::remote::HostConnection::launch(options);
+	const uint32_t instance = host->newInstance();
+	plugin::remote::Writer create;
+	create.string("test:stall");
+	create.string("");
+	REQUIRE(host->request(plugin::remote::Message::Create, instance, create.data(), 5s).ok);
+	ipc::Connection audio = ipc::Connection::create(plugin::remote::audioConfig(2, 2, g_maxFrames));
+	plugin::remote::Writer activate;
+	activate.f64(g_sampleRate);
+	activate.u32(1);
+	activate.u32(g_maxFrames);
+	activate.string(audio.name());
+	REQUIRE(host->request(plugin::remote::Message::Activate, instance, activate.data(), 5s).ok);
+	uint64_t sequence = 0;
+	REQUIRE(exchangeRaw(audio, ++sequence, {0, plugin::remote::Start, 0, {}, {}}) == plugin::ProcessStatus::Continue);
+
+	// Two blocks in flight, the first of them a short stall; as soon as its slot is free, its answer is there.
+	int early = 0;
+	for (int i = 0; i < 50; ++i)
+	{
+		sendRaw(audio, ++sequence, {64, 0, 1, {0}, {paramEvent(g_stall, 1.0 + (i % 2))}});
+		const uint64_t stalled = sequence;
+		sendRaw(audio, ++sequence, {64, 0, 1, {0}, {}});
+		ipc::AudioBlock slot;
+		const auto deadline = std::chrono::steady_clock::now() + 5s;
+		while (!audio.beginBlock(slot) && std::chrono::steady_clock::now() < deadline)
+		{
+		}
+		if (audio.waitForAnswer(stalled, std::chrono::nanoseconds::zero()) != ipc::WaitResult::Ready)
+			++early;
+		REQUIRE(answerRaw(audio, sequence) == plugin::ProcessStatus::Continue);
+	}
+	CHECK(early == 0);
 	CHECK(!host->exited());
 }
 

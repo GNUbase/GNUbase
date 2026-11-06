@@ -566,6 +566,13 @@
 		color: #000000;
 		background-color: #00ffff;
 	}
+	.transpose-row .transpose-event
+	{
+		color: #ffffff;
+		font-size: 11dp;
+		border-left-width: 1dp;
+		border-left-color: #ffff00;
+	}
 	.event-display .range-selection
 	{
 		border-width: 1dp;
@@ -733,6 +740,16 @@
 	{
 		background-color: #ffff00;
 	}
+	.key-editor-key.drum-sound
+	{
+		background-color: #0d0d0d;
+		color: #ffffff;
+	}
+	.key-editor-key.drum-sound.selected
+	{
+		background-color: #ffff00;
+		color: #000000;
+	}
 	.controller-lane-area
 	{
 		background-color: #000000;
@@ -750,6 +767,21 @@
 	.controller-bar.inactive, .controller-step.inactive
 	{
 		background-color: #3c3c3c;
+	}
+	.controller-lane[lane-kind=probability] .controller-bar, .controller-lane[lane-kind=velocityVariance] .controller-bar
+	{
+		background-color: transparent;
+		decorator: repeating-linear-gradient(to top, #9e9e05 0dp, #9e9e05 3dp, #9e9e0500 3dp, #9e9e0500 5dp);
+	}
+	.controller-lane[lane-kind=probability] .controller-bar.selected, .controller-lane[lane-kind=velocityVariance] .controller-bar.selected
+	{
+		background-color: transparent;
+		decorator: repeating-linear-gradient(to top, #00ffff 0dp, #00ffff 3dp, #00ffff00 3dp, #00ffff00 5dp);
+	}
+	.controller-lane[lane-kind=probability] .controller-bar.inactive, .controller-lane[lane-kind=velocityVariance] .controller-bar.inactive
+	{
+		background-color: transparent;
+		decorator: repeating-linear-gradient(to top, #3c3c3c 0dp, #3c3c3c 3dp, #3c3c3c00 3dp, #3c3c3c00 5dp);
 	}
 	.ape-display
 	{
@@ -837,6 +869,26 @@
 	.se-hitpoint.disabled .se-hitpoint-line, .se-hitpoint.disabled .se-hitpoint-handle
 	{
 		background-color: #c8c8c866;
+	}
+	.ds-display, .sa-graph
+	{
+		background-color: #000000;
+	}
+	.ds-section
+	{
+		background-color: #9e9e05;
+	}
+	.sa-bar
+	{
+		background-color: #ffff00;
+	}
+	.sa-bar.reference
+	{
+		background-color: #00ffff;
+	}
+	.st-header, .st-name
+	{
+		color: #c8c8c8;
 	}
 	.list-editor-header
 	{

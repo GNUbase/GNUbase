@@ -34,7 +34,8 @@ namespace gnubase::ui
 	// the rows show it. Use it on the UI thread; the display and the binding must outlive it. If the element goes,
 	// the list shows nothing more.
 	//
-	// The list view selects tracks (click, Ctrl-click, Shift-click, the arrow keys) and folds folders. A double click
+	// The list view selects tracks (click, Ctrl-click, Shift-click, which deselects a selected track, the arrow keys)
+	// and folds folders. A double click
 	// on a name renames the track; a drag of a row moves the selected tracks there, into a folder when dropped on the
 	// middle of a folder's row; a drag of a row's lower edge sets its track's height, with Ctrl every track's; the
 	// wheel scrolls the display.
@@ -57,6 +58,9 @@ namespace gnubase::ui
 		// Whether a selected folder has a group channel (withGroupChannel) or has none: when Disable or Enable Group
 		// Channel has something to do.
 		bool selectsFolder(bool withGroupChannel) const;
+		// Whether a selected track has a type, as track.add names them: e.g. when Set Root Key for Unassigned Events
+		// is in the context menu of the transpose track.
+		bool selectsType(const std::string& type) const;
 
 		// Folding (reference manual p. 225): the tracks inside a folded folder are hidden, in the event display too.
 		bool folded(uint64_t folder) const { return m_folded.count(folder) != 0; }
@@ -65,17 +69,23 @@ namespace gnubase::ui
 		// Starts renaming a track: its name becomes a text field, which Enter or leaving it sends, Escape drops.
 		void rename(uint64_t track);
 
+		// The user settings as the list last heard of them: ui.removeTracksWarning (Remove Selected Tracks asks
+		// before it removes tracks that aren't empty, in the document's remove-tracks.rml) and
+		// ui.upDownSelectsTracksOnly (Up and Down leave the event display's selection alone).
+		bool warnsBeforeRemoving() const { return m_warnBeforeRemoving; }
+		bool upDownSelectsTracksOnly() const { return m_upDownTracksOnly; }
+
 		// The commands that key commands and menus bind to, by id: track.selectPrevious and track.selectNext (Up and
-		// Down, which also select the first event on the new track while the event display has one selected),
-		// track.rename (the first selected track),
-		// track.removeSelected, track.duplicateSelected, track.disableSelected,
-		// track.enableSelected, track.toggleFolding (the selected folders), track.foldAll, track.unfoldAll and
-		// track.flipFolding; track.freezeSelected (freezes the selected audio and instrument tracks, or unfreezes them
-		// if every one is frozen) and track.renderSelected (renders them in place); and for folder tracks
-		// track.enableSelectedGroupChannels, track.disableSelectedGroupChannels, track.moveSelectedToNewFolder and
-		// track.moveSelectedToNewFolderWithGroupChannel; and for automation tracks (#121)
-		// track.toggleAutomationSelected (shows the selected tracks' automation, or hides it if every one shows it),
-		// track.showUsedAutomation and track.hideAllAutomation; and for copying automation to other tracks between
+		// Down, in the list too, which also select the first event on the new track while the event display has one
+		// selected, unless ui.upDownSelectsTracksOnly), track.rename (the first selected track),
+		// track.removeSelected (asks first for tracks that aren't empty, see warnsBeforeRemoving),
+		// track.duplicateSelected, track.disableSelected, track.enableSelected, track.toggleFolding (the selected
+		// folders), track.foldAll, track.unfoldAll and track.flipFolding; track.freezeSelected (freezes the selected
+		// audio and instrument tracks, or unfreezes them if every one is frozen) and track.renderSelected (renders them
+		// in place); and for folder tracks track.enableSelectedGroupChannels, track.disableSelectedGroupChannels,
+		// track.moveSelectedToNewFolder and track.moveSelectedToNewFolderWithGroupChannel; and for automation tracks
+		// (#121) track.toggleAutomationSelected (shows the selected tracks' automation, or hides it if every one shows
+		// it), track.showUsedAutomation and track.hideAllAutomation; and for copying automation to other tracks between
 		// the locators (#125) track.copyAutomationAll, track.copyAutomationSelected,
 		// track.copyAutomationSelectedParameters (the selected automation tracks), track.pasteAutomationAll,
 		// track.pasteAutomationSelected and track.pasteAutomationSelectedParameters.
@@ -96,6 +106,7 @@ namespace gnubase::ui
 			uint64_t parent = 0;
 			int level = 0;
 			uint64_t channel = 0;
+			bool holds = false; // events, parts, markers or automation
 		};
 
 		enum class Drag : uint8_t
@@ -115,7 +126,7 @@ namespace gnubase::ui
 		void showState(); // names, controls and state classes
 		void showTempo(); // the tempo track's Current Tempo and Type of New Tempo Points
 		void place();     // heights and scrolling, from the display's lanes
-		void hide();      // tells the display which tracks folded folders hide
+		void hide();      // tells the display which tracks folded folders and the track visibility hide
 		void loadControls(const engine::Json& value);
 		// A tempo typed into the tempo track's Current Tempo, or the type chosen in Type of New Tempo Points.
 		void tempoChanged(Rml::Element& field, const Rml::Event& event);
@@ -127,6 +138,8 @@ namespace gnubase::ui
 		std::vector<std::string> controlsOf(const Row& row) const;
 		// A click on a track control; solo takes Ctrl (exclusive) and Alt (solo defeat), see soloClick.
 		void control(const Row& row, const std::string& name, bool exclusive = false, bool defeat = false);
+		// A ruler track's time format chosen or time offset typed (reference manual p. 159).
+		void rulerChange(Rml::Element& control, const std::string& value);
 		void step(int direction);
 		void reveal(uint64_t track); // scrolls the display so that the track's lane shows
 		void finishRename(bool keep);
@@ -155,8 +168,17 @@ namespace gnubase::ui
 
 		// The selected tracks without those inside other selected folders.
 		std::vector<uint64_t> topSelection() const;
+		// Remove Selected Tracks: removes the tracks, after asking if they, or tracks inside them, hold anything.
+		void removeSelected();
+		void removeTracks(const std::vector<uint64_t>& tracks);
+		void closedRemoveDialog(Rml::Event& event);
 		// Runs the commands as one undo step.
 		void transaction(const std::string& description, engine::Json commands);
+		// Track versions (docs/features/track-versions.md): the selected audio, instrument and MIDI tracks, and the
+		// first one's versions in the Project menu's Track Versions, where a click activates one on them.
+		std::vector<uint64_t> versioned() const;
+		void showVersions();
+		void versionEvent(Rml::Event& event);
 
 		EventDisplay& m_display;
 		EngineBinding& m_binding;
@@ -167,10 +189,13 @@ namespace gnubase::ui
 		Rml::Element* m_dropLine = nullptr;
 		Rml::Element* m_parameterMenu = nullptr; // the document's #automation-parameter-menu
 		uint64_t m_parameterLane = 0;            // the automation lane it was opened for
+		Rml::Element* m_versionMenu = nullptr;   // the document's #track-versions-list
+		std::string m_versionRml;                // what it shows
 		std::set<uint64_t> m_selectedLanes;      // the selected automation tracks' lanes
 		std::vector<Row> m_tracks;               // every track in the project's order
 		std::map<uint64_t, size_t> m_index;
 		std::set<uint64_t> m_folded;
+		std::set<uint64_t> m_filtered;                    // what the track visibility hides (#166)
 		engine::Json m_controls = engine::Json::object(); // ui.trackControls
 		engine::Json m_widths = engine::Json::object();   // ui.trackWidths
 		std::string m_tempoType = "auto";                 // editing.tempoType
@@ -178,7 +203,11 @@ namespace gnubase::ui
 		uint64_t m_loads = 0;                             // the display's, when the rows were last built
 		bool m_layingOut = false;
 		uint64_t m_renaming = 0;
-		std::string m_renamed; // the name before renaming
+		std::string m_renamed;                         // the name before renaming
+		bool m_warnBeforeRemoving = true;              // ui.removeTracksWarning
+		bool m_upDownTracksOnly = false;               // ui.upDownSelectsTracksOnly
+		Rml::ObserverPtr<Rml::Element> m_removeDialog; // remove-tracks.rml while open
+		std::vector<uint64_t> m_removing;              // the tracks it asks about
 
 		Drag m_drag = Drag::None;
 		uint64_t m_dragTrack = 0;

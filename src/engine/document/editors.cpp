@@ -12,6 +12,7 @@
 #include "engine/document/serialize.h"
 #include "engine/engine.h"
 #include "engine/midi/controllerlanes.h"
+#include "engine/midi/drummaps.h"
 #include "engine/midi/quantizesettings.h"
 
 #include <algorithm>
@@ -32,9 +33,9 @@ namespace gnubase::engine
 		constexpr std::array<const char*, 2> g_editors = {"lower", "window"};
 		// The part editing modes (p. 1143): what selecting and editing reach.
 		constexpr std::array<const char*, 3> g_editingModes = {"allParts", "activePart", "activeTrack"};
-		// What an editor shows its parts in: MIDI parts the key editor (#127) or the list editor (#130), audio parts
-		// the audio part editor (#146).
-		constexpr std::array<const char*, 3> g_contents = {"key", "list", "audioPart"};
+		// What an editor shows its parts in: MIDI parts the key editor (#127), the list editor (#130) or the drum
+		// editor (#129), audio parts the audio part editor (#146).
+		constexpr std::array<const char*, 4> g_contents = {"key", "list", "drum", "audioPart"};
 
 		struct EditorView
 		{
@@ -56,7 +57,8 @@ namespace gnubase::engine
 			bool recordReleaseVelocity = false;
 			bool keepNotes = false;
 			double insertVelocity = 100.0 / 127.0;
-			std::string lengthQuantize = "link"; // a note value, or link: the quantize grid's
+			std::string lengthQuantize =
+				"link"; // a note value, link: the quantize grid's, or drumMap: the sound's snap
 			std::string content = "key";
 			// The controller lanes (#128): each a type (midi::g_laneTypes) and a controller number or pitch.
 			std::vector<std::pair<std::string, int>> lanes = {{"velocity", 0}};
@@ -79,7 +81,8 @@ namespace gnubase::engine
 		{
 			const auto found = project.trackById.find(id);
 			return found != project.trackById.end() &&
-				(found->second.type == TrackType::Marker || found->second.type == TrackType::Ruler);
+				(found->second.type == TrackType::Marker || found->second.type == TrackType::Ruler ||
+					found->second.type == TrackType::Arranger || found->second.type == TrackType::Transpose);
 		}
 
 		bool isPart(const Project& project, ObjectId id)
@@ -287,8 +290,8 @@ namespace gnubase::engine
 		void requireContent(const Project& project, const EditorView& view)
 		{
 			require(view.parts.empty() || (project.audioParts.count(view.parts.front()) != 0) == showsAudio(view),
-				"audio parts show in the audio part editor (content audioPart), MIDI parts in the key editor or the "
-				"list editor");
+				"audio parts show in the audio part editor (content audioPart), MIDI parts in the key editor, the "
+				"list editor or the drum editor");
 		}
 
 		time::Ticks partStart(const Project& project, const MidiPart& part)
@@ -302,9 +305,16 @@ namespace gnubase::engine
 				project.sampleRate);
 		}
 
-		// The length of new notes: the length quantize's, or with link the quantize grid's (p. 1219).
-		time::Ticks noteLength(const Project& project, const EditorView& view)
+		// The length of new notes of a pitch on a track: the length quantize's, with link the quantize grid's
+		// (p. 1219), with drumMap the snap of the pitch's sound in the track's drum map (Drum-Map Link, p. 1240), or
+		// without a map the quantize grid's.
+		time::Ticks noteLength(const Project& project, const EditorView& view, ObjectId track, uint8_t pitch)
 		{
+			if (view.lengthQuantize == "drumMap")
+			{
+				const DrumMap* map = midi::drumMapOf(project, track);
+				return map != nullptr ? map->sounds.at(pitch).snap.ticks() : project.quantize.grid.ticks();
+			}
 			if (view.lengthQuantize == "link")
 				return project.quantize.grid.ticks();
 			return midi::noteValueFromString(view.lengthQuantize).value_or(project.quantize.grid).ticks();
@@ -420,8 +430,11 @@ namespace gnubase::engine
 			"editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, "
 			"recordPitch, recordVelocity, recordReleaseVelocity and keepNotes, how they go in; insertVelocity (0-1), "
 			"the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, "
-			"a note value such as 1/16, 1/8T or 1/4., or link for the quantize grid's (quantize.set). content: what "
-			"shows the parts, key (the key editor) or list (the list editor, pp. 1243-1258); controllerSelection, the "
+			"a note value such as 1/16, 1/8T or 1/4., link for the quantize grid's (quantize.set), or drumMap for the "
+			"snap of the note's sound in its track's drum map (drumMap.add), without one the quantize grid's; notes "
+			"played into a track with a drum map take the pitch of the sound whose iNote they are. content: what "
+			"shows the parts, key (the key editor), list (the list editor, pp. 1243-1258) or drum (the drum editor, "
+			"pp. 1221-1242); controllerSelection, the "
 			"list editor's selected controller events, each {part, controller}, of the editable parts. Audio parts "
 			"show in the audio part editor (content audioPart, pp. 692-702), whose eventSelection is the selected "
 			"audio events of the editable parts. The controller lanes' (pp. "
@@ -462,8 +475,9 @@ namespace gnubase::engine
 			{"editor.open", 1,
 				"Opens an editor with MIDI parts or audio parts, such as the ones selected in the project window, or "
 				"shows those parts in it if it is open. activePart becomes the part active for editing, by default "
-				"the first. content shows MIDI parts in the key editor or the list editor; an open editor keeps its "
-				"content unless it is given, a closed one opens with the key editor. Audio parts open in the audio "
+				"the first. content shows MIDI parts in the key editor, the list editor or the drum editor; an open "
+				"editor keeps its content unless it is given, a closed one opens with the drum editor if the first "
+				"part's track has a drum map, else with the key editor. Audio parts open in the audio "
 				"part editor (audioPart). Emits editor.changed. " +
 					viewText,
 				openSchema, viewSchema, false},
@@ -478,11 +492,14 @@ namespace gnubase::engine
 				view.activePart = parameters.value("activePart", view.parts.front());
 				require(contains(view.parts, view.activePart),
 					"the active part " + std::to_string(view.activePart) + " isn't one of the parts");
+				const bool opens = !view.open;
 				view.open = true;
 				if (parameters.contains("content"))
 					view.content = parameters.at("content").get<std::string>();
 				else if (project.audioParts.count(view.parts.front()) != 0)
 					view.content = "audioPart";
+				else if (opens && midi::drumMapOf(project, trackOf(project, view.parts.front())) != nullptr)
+					view.content = "drum"; // Use Drum Editor when Drum Map is assigned (p. 1221)
 				else if (showsAudio(view))
 					view.content = "key";
 				requireContent(project, view);
@@ -633,8 +650,8 @@ namespace gnubase::engine
 				if (parameters.contains("lengthQuantize"))
 				{
 					const std::string length = parameters.at("lengthQuantize").get<std::string>();
-					require(length == "link" || midi::noteValueFromString(length).has_value(),
-						"lengthQuantize must be a note value such as 1/16, 1/8T or 1/4., or link");
+					require(length == "link" || length == "drumMap" || midi::noteValueFromString(length).has_value(),
+						"lengthQuantize must be a note value such as 1/16, 1/8T or 1/4., link or drumMap");
 					view.lengthQuantize = length;
 				}
 				if (parameters.contains("lanes"))
@@ -735,7 +752,6 @@ namespace gnubase::engine
 					require(at >= 0 && view.stepPosition < partEnd(project, part),
 						"the step input cursor isn't within the active part");
 					const time::Ticks step = project.quantize.grid.ticks();
-					const time::Ticks length = noteLength(project, view);
 					uint8_t channel = 0;
 					std::vector<ObjectId> removed;
 					for (auto& [id, note] : part.notes)
@@ -756,9 +772,11 @@ namespace gnubase::engine
 					if (!removed.empty())
 						context.emit("note.removed", {{"part", partId}, {"notes", removed}});
 					view.selection.clear();
-					for (const Played& each : played)
+					for (Played each : played)
 					{
-						const Note note = newNote(project, view, each, at, length, channel);
+						each.pitch = midi::inputPitch(project, part.track, each.pitch); // the I-notes (p. 1239)
+						const Note note = newNote(
+							project, view, each, at, noteLength(project, view, part.track, each.pitch), channel);
 						part.notes[note.id] = note;
 						added.push_back(toJson(note));
 						view.selection.emplace_back(partId, note.id);
@@ -785,9 +803,11 @@ namespace gnubase::engine
 					const time::Ticks at = target.position;
 					const uint8_t pitch = target.pitch;
 					std::vector<Played> extra = played;
+					for (Played& each : extra) // the I-notes of the track's drum map (p. 1239)
+						each.pitch = midi::inputPitch(project, part.track, each.pitch);
 					if (!view.keepNotes)
 					{
-						const Played& lowest = played.front();
+						const Played& lowest = extra.front();
 						if (view.recordPitch)
 							target.pitch = lowest.pitch;
 						if (view.recordVelocity)

@@ -3,7 +3,13 @@
 
 #include "engine/engine.h"
 #include "engine/midi/controllerlanes.h"
+#include "engine/midi/devices.h"
+#include "platform/files.h"
 
+#include <algorithm>
+#include <exception>
+#include <filesystem>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -78,6 +84,43 @@ namespace gnubase::engine::settings
 			return {{"type", "object"}, {"properties", properties}, {"additionalProperties", false}};
 		}
 
+		// ui.keyCommands: the commands whose keys the user changed, each with all its keys
+		// (docs/features/key-commands.md).
+		Json keyCommandsSchema()
+		{
+			return {{"type", "array"},
+				{"items",
+					{{"type", "object"},
+						{"properties",
+							{{"command", {{"type", "string"}, {"minLength", 1}}}, {"parameters", {{"type", "object"}}},
+								{"keys", {{"type", "array"}, {"items", {{"type", "string"}, {"minLength", 1}}}}}}},
+						{"required", Json::array({"command"})}, {"additionalProperties", false}}}};
+		}
+
+		// ui.macros: each a name and the commands it runs, in order.
+		Json macrosSchema()
+		{
+			const Json command = {{"type", "object"},
+				{"properties",
+					{{"command", {{"type", "string"}, {"minLength", 1}}}, {"parameters", {{"type", "object"}}}}},
+				{"required", Json::array({"command"})}, {"additionalProperties", false}};
+			return {{"type", "array"},
+				{"items",
+					{{"type", "object"},
+						{"properties",
+							{{"name", {{"type", "string"}, {"minLength", 1}}},
+								{"commands", {{"type", "array"}, {"items", command}}}}},
+						{"required", Json::array({"name"})}, {"additionalProperties", false}}}};
+		}
+
+		// A key commands preset or file: the key commands and macros.
+		Json keyCommandsPresetSchema()
+		{
+			return {{"type", "object"},
+				{"properties", {{"keyCommands", keyCommandsSchema()}, {"macros", macrosSchema()}}},
+				{"required", Json::array({"keyCommands", "macros"})}};
+		}
+
 		Json markerColumnsSchema()
 		{
 			const Json column = {
@@ -89,6 +132,219 @@ namespace gnubase::engine::settings
 							{{"type", "object"},
 								{"additionalProperties", {{"type", "number"}, {"minimum", 16}, {"maximum", 2000}}}}},
 						{"sort", column}, {"descending", {{"type", "boolean"}}}}}};
+		}
+	}
+
+	namespace
+	{
+		void require(bool condition, const std::string& message)
+		{
+			if (!condition)
+				throw CommandError(message);
+		}
+
+		// Emits settings.changed with the new values of the settings that changed, and then what follows from them.
+		void emitChanged(
+			CommandContext& context, const Store& store, const std::vector<std::string>& keys, const Changed& changed)
+		{
+			if (keys.empty())
+				return;
+			Json values = Json::object();
+			for (const std::string& key : keys)
+				values[key] = store.value(key);
+			context.emit("settings.changed", {{"values", std::move(values)}});
+			changed(context, keys);
+		}
+
+		// Changes a setting of presets, such as preferences.presets, from its value in the settings file, so that
+		// presets another GNUbase process saved meanwhile stay.
+		void changePresets(CommandContext& context, Store& store, const Changed& changed,
+			const std::function<void(Json& presets)>& change, const std::string& setting = "preferences.presets")
+		{
+			const Json before = store.value(setting);
+			const Json after = store.modify(setting,
+				[&change](const Json& value)
+				{
+					Json presets = value;
+					change(presets);
+					return presets;
+				});
+			if (after != before)
+				emitChanged(context, store, {setting}, changed);
+		}
+
+		void registerPresetCommands(Engine& engine, Store& store, const Changed& changed)
+		{
+			const Json name = {{"type", "string"}, {"description", "The preset's name."}};
+			const Json noResult = {{"type", "object"}};
+			engine.registerCommand(
+				{"preferences.savePreset", 1,
+					"Saves a preferences preset (the user setting preferences.presets, reference manual p. 1594): "
+					"values, by setting, of all the preferences or only some, as the preferences dialog shows them. "
+					"Replaces a preset of the same name. Changes no preference; settings.set with its values applies "
+					"it.",
+					{{"type", "object"},
+						{"properties",
+							{{"name", name},
+								{"values",
+									{{"type", "object"},
+										{"description", "The values by setting; each must fit its setting."}}}}},
+						{"required", Json::array({"name", "values"})}, {"additionalProperties", false}},
+					noResult, false},
+				[&store, changed](CommandContext& context)
+				{
+					const auto preset = context.parameters().at("name").get<std::string>();
+					require(!preset.empty(), "name must not be empty");
+					const Json& values = context.parameters().at("values");
+					const auto& definitions = store.format().definitions;
+					for (const auto& item : values.items())
+					{
+						const std::string& setting = item.key();
+						const Json& value = item.value();
+						const auto found = std::find_if(definitions.begin(), definitions.end(),
+							[&setting](const Definition& definition) { return definition.key == setting; });
+						require(found != definitions.end() && setting != "preferences.presets",
+							setting + " is no preference");
+						if (const std::string problem = validate(value, found->schema, setting); !problem.empty())
+							throw CommandError(problem);
+					}
+					changePresets(context, store, changed, [&](Json& presets) { presets[preset] = values; });
+					return Json::object();
+				});
+			engine.registerCommand(
+				{"preferences.renamePreset", 1, "Renames one of the preferences presets.",
+					{{"type", "object"}, {"properties", {{"name", name}, {"newName", name}}},
+						{"required", Json::array({"name", "newName"})}, {"additionalProperties", false}},
+					noResult, false},
+				[&store, changed](CommandContext& context)
+				{
+					const auto preset = context.parameters().at("name").get<std::string>();
+					const auto newName = context.parameters().at("newName").get<std::string>();
+					require(!newName.empty(), "newName must not be empty");
+					changePresets(context, store, changed,
+						[&](Json& presets)
+						{
+							require(presets.contains(preset), "no preferences preset " + preset);
+							if (newName == preset)
+								return;
+							require(!presets.contains(newName), "a preferences preset " + newName + " exists already");
+							presets[newName] = presets.at(preset);
+							presets.erase(preset);
+						});
+					return Json::object();
+				});
+			engine.registerCommand({"preferences.removePreset", 1, "Removes one of the preferences presets.",
+									   {{"type", "object"}, {"properties", {{"name", name}}},
+										   {"required", Json::array({"name"})}, {"additionalProperties", false}},
+									   noResult, false},
+				[&store, changed](CommandContext& context)
+				{
+					const auto preset = context.parameters().at("name").get<std::string>();
+					changePresets(context, store, changed, [&preset](Json& presets)
+						{ require(presets.erase(preset) == 1, "no preferences preset " + preset); });
+					return Json::object();
+				});
+		}
+	}
+
+	namespace
+	{
+		// keyCommands.*: the key commands presets and files (docs/features/key-commands.md, reference manual p. 1559).
+		void registerKeyCommandCommands(Engine& engine, Store& store, const Changed& changed)
+		{
+			const Json name = {{"type", "string"}, {"description", "The preset's name."}};
+			const Json path = {{"type", "string"}, {"description", "The file's path."}};
+			const std::string presets = "ui.keyCommandPresets";
+			engine.registerCommand(
+				{"keyCommands.savePreset", 1,
+					"Saves a key commands preset (the user setting ui.keyCommandPresets): the key commands and macros "
+					"given, by default those of the user settings ui.keyCommands and ui.macros. Replaces a preset of "
+					"the same name. Loading one is settings.set with values ui.keyCommands and ui.macros from it.",
+					{{"type", "object"},
+						{"properties",
+							{{"name", name},
+								{"keyCommands",
+									{{"type", "array"},
+										{"description", "As the user setting ui.keyCommands takes them."}}},
+								{"macros",
+									{{"type", "array"},
+										{"description", "As the user setting ui.macros takes them."}}}}},
+						{"required", Json::array({"name"})}, {"additionalProperties", false}},
+					{{"type", "object"}}, false},
+				[&store, changed, presets](CommandContext& context)
+				{
+					const Json& parameters = context.parameters();
+					const auto preset = parameters.at("name").get<std::string>();
+					require(!preset.empty(), "name must not be empty");
+					const Json saved = {{"keyCommands", parameters.value("keyCommands", store.value("ui.keyCommands"))},
+						{"macros", parameters.value("macros", store.value("ui.macros"))}};
+					if (const std::string problem = validate(saved, keyCommandsPresetSchema(), "preset");
+						!problem.empty())
+						throw CommandError(problem);
+					changePresets(context, store, changed, [&](Json& all) { all[preset] = saved; }, presets);
+					return Json::object();
+				});
+			engine.registerCommand({"keyCommands.removePreset", 1, "Removes one of the key commands presets.",
+									   {{"type", "object"}, {"properties", {{"name", name}}},
+										   {"required", Json::array({"name"})}, {"additionalProperties", false}},
+									   {{"type", "object"}}, false},
+				[&store, changed, presets](CommandContext& context)
+				{
+					const auto preset = context.parameters().at("name").get<std::string>();
+					changePresets(
+						context, store, changed, [&preset](Json& all)
+						{ require(all.erase(preset) == 1, "no key commands preset " + preset); }, presets);
+					return Json::object();
+				});
+			engine.registerCommand(
+				{"keyCommands.export", 1,
+					"Writes the key commands and macros of the user settings ui.keyCommands and ui.macros into a key "
+					"commands file (JSON), which keyCommands.import reads, e.g. on another computer.",
+					{{"type", "object"}, {"properties", {{"path", path}}}, {"required", Json::array({"path"})},
+						{"additionalProperties", false}},
+					{{"type", "object"}}, false},
+				[&store](CommandContext& context)
+				{
+					const auto file = std::filesystem::u8path(context.parameters().at("path").get<std::string>());
+					const Json contents = {{"format", "gnubase.keyCommands"}, {"version", 1},
+						{"keyCommands", store.value("ui.keyCommands")}, {"macros", store.value("ui.macros")}};
+					try
+					{
+						files::writeAtomically(file, contents.dump(1, '\t') + "\n");
+					}
+					catch (const std::exception& error)
+					{
+						throw CommandError(std::string("can't write the key commands file: ") + error.what());
+					}
+					return Json::object();
+				});
+			engine.registerCommand(
+				{"keyCommands.import", 1,
+					"Reads a key commands file that keyCommands.export wrote into a key commands preset of the name "
+					"given, replacing a preset of that name.",
+					{{"type", "object"}, {"properties", {{"path", path}, {"name", name}}},
+						{"required", Json::array({"path", "name"})}, {"additionalProperties", false}},
+					{{"type", "object"}}, false},
+				[&store, changed, presets](CommandContext& context)
+				{
+					const auto preset = context.parameters().at("name").get<std::string>();
+					require(!preset.empty(), "name must not be empty");
+					const auto file = std::filesystem::u8path(context.parameters().at("path").get<std::string>());
+					const std::optional<std::string> text = files::readFile(file);
+					require(text.has_value(), "can't read the key commands file " + file.u8string());
+					const Json contents = Json::parse(text.value_or(std::string()), nullptr, false);
+					require(contents.is_object() && contents.value("format", std::string()) == "gnubase.keyCommands",
+						file.u8string() + " is no key commands file");
+					require(contents.value("version", 0) == 1,
+						file.u8string() + " is a key commands file of another version");
+					const Json saved = {{"keyCommands", contents.value("keyCommands", Json::array())},
+						{"macros", contents.value("macros", Json::array())}};
+					if (const std::string problem = validate(saved, keyCommandsPresetSchema(), "file");
+						!problem.empty())
+						throw CommandError(problem);
+					changePresets(context, store, changed, [&](Json& all) { all[preset] = saved; }, presets);
+					return Json::object();
+				});
 		}
 	}
 
@@ -221,6 +477,12 @@ namespace gnubase::engine::settings
 					"Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each "
 					"channel's last program change before that position.",
 					Json{{"type", "boolean"}}, true},
+				{"midi.devices",
+					"The installed MIDI devices (midiDevice.install), by name: each has banks, each bank a name and "
+					"patches, each patch a name, a program (0 to 127), an optional bank (0 to 16383, sent as bank "
+					"select MSB and LSB) and an optional folder it is listed in. A MIDI track that names a device "
+					"(channel.set device) chooses its program and bank by patch.",
+					midi::devicesSchema(), Json::object()},
 				{"midi.portSettings",
 					"The MIDI ports' settings (midi.setPort), by backend/in or out/port id, also for ports that aren't "
 					"connected: the name shown (showAs), whether it is visible, and for inputs whether it belongs to "
@@ -264,6 +526,11 @@ namespace gnubase::engine::settings
 					Json{{"type", "integer"}, {"minimum", 0}, {"maximum", 100000}}, 10000},
 				{"midi.snapPartsToBars", "Recorded MIDI parts start and end at whole bars.", Json{{"type", "boolean"}},
 					true},
+				{"preferences.presets",
+					"The preferences dialog's presets (reference manual pp. 1593-1595), by name: each the values of "
+					"the user settings it sets, all of them or only some (preferences.savePreset). Applying one is "
+					"settings.set with its values.",
+					Json{{"type", "object"}, {"additionalProperties", {{"type", "object"}}}}, Json::object()},
 				{"project.autoSave",
 					"Saves a copy of a project with unsaved changes every project.autoSaveInterval minutes into the "
 					"folder Auto Saves of its project folder (see project.autoSave).",
@@ -286,6 +553,23 @@ namespace gnubase::engine::settings
 					"When folder tracks show the events and parts of the tracks inside them as data blocks in the "
 					"event display: always, never, or hideWhenExpanded (only while the folder is folded).",
 					Json{{"type", "string"}, {"enum", {"always", "never", "hideWhenExpanded"}}}, "always"},
+				{"ui.keyCommandPresets",
+					"The key commands presets (reference manual p. 1559), by name: each the key commands and macros "
+					"as ui.keyCommands and ui.macros take them (keyCommands.savePreset). Loading one is settings.set "
+					"with those two values.",
+					Json{{"type", "object"}, {"additionalProperties", keyCommandsPresetSchema()}}, Json::object()},
+				{"ui.keyCommands",
+					"The key commands the user changed (docs/features/key-commands.md): each a command, the "
+					"parameters it runs with (none for an empty object), and all its keys, which replace its default "
+					"keys; without keys it has none. "
+					"Keys are written as in the default key map, Mod for Ctrl (Cmd on macOS), e.g. Mod+Shift+K. A "
+					"macro is the command macro.<name>.",
+					keyCommandsSchema(), Json::array()},
+				{"ui.macros",
+					"The key command macros (reference manual p. 1558): each a name and the commands it runs one "
+					"after the other, with their parameters (none for an empty object). A macro runs as the key "
+					"command macro.<name>.",
+					macrosSchema(), Json::array()},
 				{"ui.layout",
 					"The layout of the windows with zones: under windows, by window (project), its zones (left, "
 					"right, lower) with whether each is visible, its size in dp, the order of its tabs, the tabs "
@@ -313,6 +597,10 @@ namespace gnubase::engine::settings
 				{"ui.markersSyncSelection",
 					"Whether the markers window and the project window select the same markers. It pauses while "
 					"recording.",
+					Json{{"type", "boolean"}}, true},
+				{"ui.removeTracksWarning",
+					"Whether Remove Selected Tracks asks before it removes tracks that aren't empty: that hold events, "
+					"parts, markers or automation, or are folders with such tracks inside (reference manual p. 213).",
 					Json{{"type", "boolean"}}, true},
 				{"ui.scale", "The UI scale, applied on top of each monitor's own scale.",
 					Json{{"type", "number"}, {"minimum", 0.5}, {"maximum", 4}}, 1.0},
@@ -353,10 +641,14 @@ namespace gnubase::engine::settings
 					Json{{"type", "boolean"}}, false},
 				{"ui.trackControls",
 					"The controls the track list shows, by track type (audio, instrument, midi, group, effect, "
-					"folder, marker, ruler, tempo), in order: mute, solo, record, monitor (audio, instrument and MIDI "
-					"tracks), read (automation), timeBase, and on the tempo track tempoTrack (Activate Tempo Track), "
-					"currentTempo (Current Tempo) and tempoType (Type of New Tempo Points). Mute and solo always show "
-					"on tracks with a channel; a type left out shows none.",
+					"folder, marker, ruler, tempo, transpose), in order: mute, solo, record, monitor (audio, "
+					"instrument "
+					"and MIDI tracks), read (automation), timeBase, on the tempo track tempoTrack (Activate Tempo "
+					"Track), currentTempo (Current Tempo) and tempoType (Type of New Tempo Points), for ruler tracks "
+					"timeFormat, timeOffsetOn, timeOffset and setTimeOffset (Set Time Offset "
+					"to Project Cursor Position), and for the transpose track transposeMute (Mute Transpose Events), "
+					"keepInOctave (Keep Transpose in Octave Range) and transposeLock (Lock). "
+					"Mute and solo always show on tracks with a channel; a type left out shows none.",
 					Json{{"type", "object"},
 						{"additionalProperties",
 							{{"type", "array"},
@@ -364,17 +656,20 @@ namespace gnubase::engine::settings
 									{{"type", "string"},
 										{"enum",
 											{"mute", "solo", "record", "monitor", "read", "timeBase", "tempoTrack",
-												"currentTempo", "tempoType"}}}}}}},
+												"currentTempo", "tempoType", "timeFormat", "timeOffsetOn", "timeOffset",
+												"setTimeOffset", "transposeMute", "keepInOctave", "transposeLock"}}}}}}},
 					Json{{"audio", {"mute", "solo", "record", "monitor", "read"}},
 						{"instrument", {"mute", "solo", "record", "monitor", "read"}},
 						{"midi", {"mute", "solo", "record", "monitor", "read"}}, {"group", {"mute", "solo", "read"}},
 						{"effect", {"mute", "solo", "read"}}, {"folder", {"mute", "solo", "read"}},
-						{"marker", Json::array()}, {"ruler", Json::array()},
-						{"tempo", {"tempoTrack", "currentTempo", "tempoType"}}, {"signature", Json::array()}}},
+						{"marker", Json::array()},
+						{"ruler", {"timeFormat", "timeOffsetOn", "timeOffset", "setTimeOffset"}},
+						{"tempo", {"tempoTrack", "currentTempo", "tempoType"}}, {"signature", Json::array()},
+						{"transpose", {"transposeMute", "keepInOctave", "timeBase", "transposeLock"}}}},
 				{"ui.trackWidths",
 					"The widths in the track list's rows, in dp: name, the track name's for every track type (20 to "
 					"400), and controls, by track type, the width of its controls area (0 to 800), whose controls go "
-					"onto more lines when they don't fit. A width left out is 120.",
+					"onto more lines when they don't fit. A width left out is 120; ruler tracks' default is 140.",
 					Json{{"type", "object"},
 						{"properties",
 							{{"name", {{"type", "number"}, {"minimum", 20}, {"maximum", 400}}},
@@ -385,8 +680,13 @@ namespace gnubase::engine::settings
 					Json{{"name", 120},
 						{"controls",
 							{{"audio", 120}, {"instrument", 120}, {"midi", 120}, {"group", 120}, {"effect", 120},
-								{"folder", 120}, {"marker", 120}, {"ruler", 120}, {"tempo", 144},
+								{"folder", 120}, {"marker", 120}, {"ruler", 140}, {"tempo", 144},
 								{"signature", 120}}}}},
+				{"ui.upDownSelectsTracksOnly",
+					"Whether Up and Down (track.selectPrevious, track.selectNext) only select tracks; when off, while "
+					"an event or part is selected they also select the first one on the newly selected track "
+					"(reference manual p. 218).",
+					Json{{"type", "boolean"}}, false},
 				{"ui.controllerLanePresets",
 					"The controller lane presets of the MIDI editors (#128, reference manual p. 1166): each a name and "
 					"the lanes it shows, as editor.set takes them.",
@@ -472,20 +772,40 @@ namespace gnubase::engine::settings
 
 		engine.registerCommand(
 			{"settings.set", 1,
-				"Changes a user setting and saves the settings file, unless settings.list reports it read-only. User "
-				"settings belong to the user, not to a project. Emits settings.changed with the changed value, "
-				"unless it had that value already. The settings: " +
+				"Changes a user setting, key to value, or several at once, values by key: all of them or, if one "
+				"doesn't fit, none. Saves the settings file, unless settings.list reports it read-only. User "
+				"settings belong to the user, not to a project. Emits settings.changed with the changed values, "
+				"unless they had them already. The settings: " +
 					list + ".",
 				{{"type", "object"},
 					{"properties",
-						{{"key", key},
-							{"value", {{"description", "The new value; it must fit the setting's schema."}}}}},
-					{"required", Json::array({"key", "value"})}, {"additionalProperties", false}},
-				keyAndValue, false},
+						{{"key", key}, {"value", {{"description", "The new value; it must fit the setting's schema."}}},
+							{"values",
+								{{"type", "object"},
+									{"description", "Instead of key and value: the new values, by setting."}}}}},
+					{"additionalProperties", false}},
+				{{"type", "object"},
+					{"properties",
+						{{"key", {{"type", "string"}}}, {"value", {{"description", "The setting's value."}}},
+							{"values", {{"type", "object"}, {"description", "With values: the settings' values."}}}}}},
+				false},
 			[&store, changed](CommandContext& context)
 			{
-				const std::string name = context.parameters().at("key").get<std::string>();
-				const Json& value = context.parameters().at("value");
+				const Json& parameters = context.parameters();
+				if (const auto values = parameters.find("values"); values != parameters.end())
+				{
+					require(!parameters.contains("key") && !parameters.contains("value"),
+						"give either key and value or values");
+					emitChanged(context, store, store.set(*values), changed);
+					Json result = Json::object();
+					for (const auto& entry : values->items())
+						result[entry.key()] = store.value(entry.key());
+					return Json{{"values", std::move(result)}};
+				}
+				require(
+					parameters.contains("key") && parameters.contains("value"), "give either key and value or values");
+				const std::string name = parameters.at("key").get<std::string>();
+				const Json& value = parameters.at("value");
 				if (store.set(name, value))
 				{
 					context.emit("settings.changed", {{"values", {{name, value}}}});
@@ -493,6 +813,9 @@ namespace gnubase::engine::settings
 				}
 				return Json{{"key", name}, {"value", store.value(name)}};
 			});
+
+		registerPresetCommands(engine, store, changed);
+		registerKeyCommandCommands(engine, store, changed);
 
 		engine.registerCommand(
 			{"settings.reset", 1,

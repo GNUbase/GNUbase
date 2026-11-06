@@ -132,8 +132,8 @@ namespace gnubase::ui
 		void followTapMode(const engine::Json& mode);
 		void release();
 		void show();      // everything
-		void showTime();  // the displays with times, e.g. once a frame while playing
-		void showTempo(); // the tempo fields, also once a frame while playing
+		bool showTime();  // the displays with times, e.g. once a frame while playing; whether one's text changed
+		bool showTempo(); // the tempo fields, also once a frame while playing; whether one's text changed
 		int64_t samples(double seconds) const;
 
 		engine::Engine& m_engine;

@@ -25,8 +25,11 @@ add_executable(gnubase-tests
 	addtrack_tests.cpp
 	analysis_tests.cpp
 	app_tests.cpp
+	arranger_tests.cpp
 	audio_tests.cpp
 	audiofile_tests.cpp
+	audiofunctions_tests.cpp
+	audiofunctions_ui_tests.cpp
 	audioimport_tests.cpp
 	audiopart_tests.cpp
 	audioparteditor_tests.cpp
@@ -50,6 +53,8 @@ add_executable(gnubase-tests
 	device_tests.cpp
 	docking_tests.cpp
 	document_tests.cpp
+	drumeditor_ui_tests.cpp
+	drummaps_tests.cpp
 	editors_tests.cpp
 	effects_tests.cpp
 	emptytracks_tests.cpp
@@ -71,6 +76,7 @@ add_executable(gnubase-tests
 	ipc_process_tests.cpp
 	ipc_tests.cpp
 	keycommands_tests.cpp
+	keycommandsdialog_tests.cpp
 	keyeditor_tests.cpp
 	keyeditor_ui_tests.cpp
 	latency_tests.cpp
@@ -89,12 +95,14 @@ add_executable(gnubase-tests
 	metronome_tests.cpp
 	midi_tests.cpp
 	mididevice_tests.cpp
+	mididevices_ui_tests.cpp
 	midiedit_tests.cpp
 	midieditor_tests.cpp
 	midifile_tests.cpp
 	midifunctions_tests.cpp
 	midifunctions_ui_tests.cpp
 	midimodifiers_tests.cpp
+	midipatches_tests.cpp
 	midirecording_tests.cpp
 	miditap_tests.cpp
 	mixdown_tests.cpp
@@ -114,6 +122,7 @@ add_executable(gnubase-tests
 	plugin_api_tests.cpp
 	pool_tests.cpp
 	poolpanel_tests.cpp
+	preferences_tests.cpp
 	processor_tests.cpp
 	projectfiles_tests.cpp
 	projectsetup_tests.cpp
@@ -124,6 +133,7 @@ add_executable(gnubase-tests
 	rmlui_tests.cpp
 	routing_tests.cpp
 	rt_tests.cpp
+	rulertracks_tests.cpp
 	sampleeditor_tests.cpp
 	sampleeditor_ui_tests.cpp
 	scripting_tests.cpp
@@ -140,6 +150,7 @@ add_executable(gnubase-tests
 	svg_tests.cpp
 	tempo_tests.cpp
 	tempocontrols_ui_tests.cpp
+	tempodetection_tests.cpp
 	tempotrack_ui_tests.cpp
 	testing_tests.cpp
 	testutils_tests.cpp
@@ -148,11 +159,18 @@ add_executable(gnubase-tests
 	timeformat_tests.cpp
 	timestretch_tests.cpp
 	tracklist_tests.cpp
+	trackversions_tests.cpp
+	trackversions_ui_tests.cpp
+	trackvisibility_tests.cpp
+	trackvisibility_ui_tests.cpp
 	transport_tests.cpp
 	transportbar_tests.cpp
+	transpose_tests.cpp
+	transpose_ui_tests.cpp
 	uiapp.cpp
 	uiapp.h
 	uiapp_tests.cpp
+	uiscripts_tests.cpp
 	uisettings_tests.cpp
 	uithemes_tests.cpp
 	uitools_tests.cpp

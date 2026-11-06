@@ -445,6 +445,21 @@ namespace gnubase::ui
 				if (!alive.expired() && result.ok())
 					sendLevel(result.value.at("value"));
 			});
+		// Whether its channel visibility follows the track visibility (#166).
+		const auto sync = [this](const Json& visibility)
+		{
+			m_syncs = visibility.at("sync") == m_view;
+			showVisibilityList();
+		};
+		m_subscriptions.push_back(
+			m_binding.on("trackVisibility.changed", [sync](const engine::Event& event) { sync(event.data); }));
+		if (m_kind == MixerKind::Window)
+			m_binding.send("trackVisibility.get", Json::object(),
+				[sync, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+				{
+					if (!alive.expired() && result.ok())
+						sync(result.value);
+				});
 		if (!settings)
 			requestView();
 		requestProject();
@@ -459,7 +474,10 @@ namespace gnubase::ui
 			root->RemoveEventListener(Rml::EventId::Blur, this, true);
 		}
 		if (Rml::Element* visibility = m_visibility.get())
+		{
 			visibility->RemoveEventListener(Rml::EventId::Change, this);
+			visibility->RemoveEventListener(Rml::EventId::Click, this);
+		}
 		for (const Rml::ObserverPtr<Rml::Element>& menu : m_menus)
 			if (Rml::Element* element = menu.get())
 			{
@@ -473,10 +491,16 @@ namespace gnubase::ui
 	void Mixer::showVisibility(Rml::Element& element)
 	{
 		if (Rml::Element* old = m_visibility.get())
+		{
 			old->RemoveEventListener(Rml::EventId::Change, this);
+			old->RemoveEventListener(Rml::EventId::Click, this);
+		}
 		m_visibility = element.GetObserverPtr();
-		element.SetInnerRML(R"(<div class="mixer-visibility"/>)");
+		element.SetInnerRML(R"(<div class="toolbar mixer-visibility-toolbar"><button id="mixer-visibility-sync" )"
+							R"(title="Sync Visibility of Project and Mixer: On/Off">=</button></div>)"
+							R"(<div class="mixer-visibility"/>)");
 		element.AddEventListener(Rml::EventId::Change, this);
+		element.AddEventListener(Rml::EventId::Click, this);
 		showVisibilityList();
 	}
 
@@ -802,6 +826,8 @@ namespace gnubase::ui
 				"</button>";
 		if (list->GetInnerRML() != rml)
 			list->SetInnerRML(rml);
+		if (Rml::Element* sync = element->QuerySelector("#mixer-visibility-sync"))
+			sync->SetClass("checked", m_syncs);
 	}
 
 	void Mixer::setHidden(uint64_t id, bool hidden)
@@ -959,7 +985,14 @@ namespace gnubase::ui
 			}
 			break;
 		case Rml::EventId::Click:
-			if (attribute(*target, "agent") == "showAll")
+			if (m_visibility && event.GetCurrentElement() == m_visibility.get())
+			{
+				// Sync Visibility of Project and Mixer (reference manual p. 442): one window at a time.
+				for (const Rml::Element* up = target; up != nullptr; up = up->GetParentNode())
+					if (up->GetId() == "mixer-visibility-sync")
+						m_binding.send("trackVisibility.set", {{"sync", m_syncs ? std::string() : m_view}});
+			}
+			else if (attribute(*target, "agent") == "showAll")
 			{
 				sendView({{"hidden", Json::array()}});
 			}
