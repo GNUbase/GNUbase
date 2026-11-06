@@ -2,7 +2,6 @@
 // Time warp, Process Tempo, Process Bars, Set Definition from Tempo and copying warp markers in the app's UI (#159,
 // docs/features/time-warp.md): the time warp tool's modes in the project window, the dialogs and the Audio menu.
 #include "engine/engine.h"
-#include "engine/time/tempomap.h"
 #include "testutils/testutils.h"
 #include "ui/automation.h"
 #include "ui/eventdisplay.h"
@@ -21,8 +20,6 @@ using engine::Json;
 
 namespace
 {
-	constexpr int64_t g_quarter = time::g_ticksPerQuarter; // half a second at the default 120 BPM
-
 	Json elements(test::UiApp& app, const std::string& selector)
 	{
 		return app.ui().dom(std::nullopt, selector, 0).at("elements");
