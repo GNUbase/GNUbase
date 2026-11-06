@@ -223,6 +223,13 @@ namespace gnubase::engine
 		// none sends nothing, which leaves the instrument's own.
 		std::optional<int> midiVolume = std::nullopt;
 		std::optional<int> midiPan = std::nullopt;
+		// MIDI channels: the program (0 to 127) and bank (0 to 16383) sent to the instrument, none: nothing, and the
+		// installed MIDI device (user setting midi.devices) whose patches choose them, by name, or empty
+		// (docs/features/midi-devices.md).
+		std::optional<int> program = std::nullopt;
+		std::optional<int> bank = std::nullopt;
+		// NOLINTNEXTLINE(readability-redundant-member-init): see instrumentParameters
+		std::string device = {};
 		// MIDI and instrument tracks: the MIDI modifiers, which change how the track's notes play
 		// (docs/features/midi-modifiers.md).
 		// NOLINTNEXTLINE(readability-redundant-member-init): see instrumentParameters
@@ -589,6 +596,21 @@ namespace gnubase::engine
 			std::tie(b.path, b.sampleRate, b.channels, b.length);
 	}
 
+	// A track version (#165, reference manual pp. 230-237): one of the sets of events and parts an audio, instrument
+	// or MIDI track can switch between. The active version's events and parts are the project's; another version
+	// holds its own here, as they were when it was last active, so playback, editing and the event display only ever
+	// see the active one.
+	struct TrackVersion
+	{
+		int id = 1;              // the version ID: versions made together on several tracks share it
+		std::string name = "v1"; // the version name
+		std::vector<AudioEvent> audioEvents;
+		std::vector<AudioPart> audioParts;
+		std::vector<MidiPart> midiParts;
+	};
+
+	bool operator==(const TrackVersion& a, const TrackVersion& b);
+
 	struct Track
 	{
 		ObjectId id = 0;
@@ -614,7 +636,33 @@ namespace gnubase::engine
 		// NOLINTNEXTLINE(readability-redundant-member-init): see above
 		std::optional<Freeze> frozen = {};
 		ObjectId drumMap = 0; // MIDI and instrument tracks: the drum map their notes play through, or 0 (#129)
+		// Audio, instrument and MIDI tracks: their versions in the order they were made; none for a track that has
+		// only its first one, v1 with ID 1 (versionsOf). Initialized like picture.
+		// NOLINTNEXTLINE(readability-redundant-member-init): see above
+		std::vector<TrackVersion> versions = {};
+		int activeVersion = 1; // the ID of the active version
 	};
+
+	// Whether tracks of a type have versions: audio, instrument and MIDI tracks.
+	inline bool hasVersions(TrackType type)
+	{
+		return type == TrackType::Audio || type == TrackType::Instrument || type == TrackType::Midi;
+	}
+
+	// A track's versions, with its first one if it has none of its own yet.
+	std::vector<TrackVersion> versionsOf(const Track& track);
+
+	// Calls visit with every audio event of the project, those that inactive track versions hold too: their clips are
+	// in use. Project may be const.
+	template <typename P, typename Visit> void forEveryAudioEvent(P& project, Visit visit)
+	{
+		for (auto& entry : project.audioEvents)
+			visit(entry.second);
+		for (auto& entry : project.trackById)
+			for (auto& version : entry.second.versions)
+				for (auto& event : version.audioEvents)
+					visit(event);
+	}
 
 	// Whether tracks of a type can be disabled (reference manual p. 219): audio, instrument and MIDI tracks.
 	inline bool canDisable(TrackType type)
@@ -1018,13 +1066,13 @@ namespace gnubase::engine
 	inline bool operator==(const Channel& a, const Channel& b)
 	{
 		return std::tie(a.id, a.track, a.format, a.input, a.output, a.instrument, a.volume, a.pan, a.panner, a.panLeft,
-				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.modifiers, a.instrumentParameters, a.monitor,
-				   a.recordEnable, a.midiInput, a.mute, a.solo, a.soloDefeat, a.listen, a.slots, a.notes, a.sections,
-				   a.sends) ==
+				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.program, a.bank, a.device, a.modifiers,
+				   a.instrumentParameters, a.monitor, a.recordEnable, a.midiInput, a.mute, a.solo, a.soloDefeat,
+				   a.listen, a.slots, a.notes, a.sections, a.sends) ==
 			std::tie(b.id, b.track, b.format, b.input, b.output, b.instrument, b.volume, b.pan, b.panner, b.panLeft,
-				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.modifiers, b.instrumentParameters, b.monitor,
-				b.recordEnable, b.midiInput, b.mute, b.solo, b.soloDefeat, b.listen, b.slots, b.notes, b.sections,
-				b.sends);
+				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.program, b.bank, b.device, b.modifiers,
+				b.instrumentParameters, b.monitor, b.recordEnable, b.midiInput, b.mute, b.solo, b.soloDefeat, b.listen,
+				b.slots, b.notes, b.sections, b.sends);
 	}
 
 	inline bool operator==(const Slot& a, const Slot& b)
@@ -1203,9 +1251,11 @@ namespace gnubase::engine
 	inline bool operator==(const Track& a, const Track& b)
 	{
 		return std::tie(a.id, a.type, a.name, a.color, a.timeBase, a.parent, a.channel, a.children, a.autoFades,
-				   a.timeFormat, a.enabled, a.picture, a.timeOffset, a.timeOffsetOn, a.frozen, a.drumMap) ==
+				   a.timeFormat, a.enabled, a.picture, a.timeOffset, a.timeOffsetOn, a.frozen, a.drumMap, a.versions,
+				   a.activeVersion) ==
 			std::tie(b.id, b.type, b.name, b.color, b.timeBase, b.parent, b.channel, b.children, b.autoFades,
-				b.timeFormat, b.enabled, b.picture, b.timeOffset, b.timeOffsetOn, b.frozen, b.drumMap);
+				b.timeFormat, b.enabled, b.picture, b.timeOffset, b.timeOffsetOn, b.frozen, b.drumMap, b.versions,
+				b.activeVersion);
 	}
 	// Where an audio event plays, in the project's samples (fadeedits.cpp).
 	struct EventSpan

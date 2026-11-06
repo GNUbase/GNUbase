@@ -150,6 +150,7 @@ add_library(gnubase-engine STATIC
 	document/snap.cpp document/snap.h
 	document/stripparameters.cpp document/stripparameters.h
 	document/tempo.cpp
+	document/trackversions.cpp document/trackversions.h
 	document/transpose.cpp
 	document/volumecurves.cpp document/volumecurves.h
 	dsp/biquad.cpp dsp/biquad.h
@@ -172,6 +173,7 @@ add_library(gnubase-engine STATIC
 	metronome/metronomesettings.cpp metronome/metronomesettings.h
 	midi/chords.cpp midi/chords.h
 	midi/controllerlanes.cpp midi/controllerlanes.h
+	midi/devices.cpp midi/devices.h
 	midi/drummaps.cpp midi/drummaps.h
 	midi/functioncommands.cpp midi/functioncommands.h
 	midi/functions.cpp midi/functions.h

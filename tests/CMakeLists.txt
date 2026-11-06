@@ -94,12 +94,14 @@ add_executable(gnubase-tests
 	metronome_tests.cpp
 	midi_tests.cpp
 	mididevice_tests.cpp
+	mididevices_ui_tests.cpp
 	midiedit_tests.cpp
 	midieditor_tests.cpp
 	midifile_tests.cpp
 	midifunctions_tests.cpp
 	midifunctions_ui_tests.cpp
 	midimodifiers_tests.cpp
+	midipatches_tests.cpp
 	midirecording_tests.cpp
 	miditap_tests.cpp
 	mixdown_tests.cpp
@@ -154,6 +156,8 @@ add_executable(gnubase-tests
 	timeformat_tests.cpp
 	timestretch_tests.cpp
 	tracklist_tests.cpp
+	trackversions_tests.cpp
+	trackversions_ui_tests.cpp
 	transport_tests.cpp
 	transportbar_tests.cpp
 	transpose_tests.cpp

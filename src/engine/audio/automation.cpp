@@ -187,7 +187,7 @@ namespace gnubase::engine
 			value = std::clamp(value, lane.minimum, lane.maximum);
 			graph::ProcessEvent event;
 			event.offset = offset;
-			if (lane.kind != Kind::Midi)
+			if (lane.kind != Kind::Midi && lane.kind != Kind::Program)
 			{
 				event.type = Type::Parameter;
 				event.parameter = lane.parameter;
@@ -195,6 +195,14 @@ namespace gnubase::engine
 				event.ramp = lane.target.type == AutomationTargetType::Mute ? std::max(ramp, out.declick) : ramp;
 				event.key = out.key;
 				out.of(lane).add(event);
+				return;
+			}
+			if (lane.kind == Kind::Program)
+			{
+				event.type = Type::Program;
+				event.key = static_cast<uint8_t>(lane.parameter);
+				event.value = value < 0.0 ? g_noBank : static_cast<uint32_t>(value);
+				out.source.add(event);
 				return;
 			}
 			event.channel = lane.target.channel;
@@ -394,6 +402,12 @@ namespace gnubase::engine
 						point.gap = false;
 					}
 		}
+		// The program first, so the instrument has the patch before the controllers. No automation lane targets it.
+		if (channel.program)
+			lanes.insert(lanes.begin(),
+				PlayedLane{{AutomationTargetType::Controller, 0, 0, 0, 0}, Kind::Program,
+					static_cast<uint32_t>(*channel.program), channel.bank ? static_cast<double>(*channel.bank) : -1.0,
+					-1.0, static_cast<double>(g_maxBank), {}});
 		return automation;
 	}
 
@@ -428,6 +442,17 @@ namespace gnubase::engine
 	void AutomationPlayer::setAutomation(std::unique_ptr<ChannelAutomation> automation)
 	{
 		automation->revision = ++m_revision;
+		const auto program = [](const ChannelAutomation& of)
+		{
+			return std::find_if(of.lanes.begin(), of.lanes.end(),
+				[](const PlayedLane& lane) { return lane.kind == PlayedLane::Kind::Program; });
+		};
+		const ChannelAutomation& old = m_automation.latest();
+		const auto oldProgram = program(old);
+		const auto newProgram = program(*automation);
+		const bool same = (oldProgram == old.lanes.end()) == (newProgram == automation->lanes.end()) &&
+			(newProgram == automation->lanes.end() || *oldProgram == *newProgram);
+		automation->programRevision = same ? old.programRevision : automation->revision;
 		m_automation.publish(std::move(automation));
 	}
 
@@ -452,9 +477,13 @@ namespace gnubase::engine
 		// New automation, or a new source processor (e.g. another instrument) or plugin that hasn't had the values
 		// yet: the automation may have reached the audio thread before the graph with the new processor.
 		const size_t count = std::min(processors.size(), m_processors.size());
-		bool changed = automation.revision != m_played || count != m_processorCount ||
+		const bool newProcessors = count != m_processorCount ||
 			!std::equal(
 				processors.begin(), processors.begin() + static_cast<std::ptrdiff_t>(count), m_processors.begin());
+		bool changed = automation.revision != m_played || newProcessors;
+		// The program goes out again only for a new program or processor, a start, a locate or a jump: other new
+		// automation, e.g. a new MIDI volume, would override a program change a part has played.
+		bool programChanged = automation.programRevision > m_played || newProcessors;
 		// New static values glide, unless they are the first ones.
 		const bool revised = automation.revision != m_played && m_played != 0;
 		const auto glide = [revised, smoothing](const PlayedLane& lane)
@@ -465,9 +494,12 @@ namespace gnubase::engine
 
 		if (!transport.playing)
 		{
-			if (changed || m_next >= 0 || transport.position != m_stoppedAt)
+			const bool moved = m_next >= 0 || transport.position != m_stoppedAt;
+			if (changed || moved)
 				for (const PlayedLane& lane : automation.lanes)
 				{
+					if (lane.kind == PlayedLane::Kind::Program && !programChanged && !moved)
+						continue;
 					const std::optional<Outputs> out = outputs(lane);
 					if (out && (lane.points.empty() || !inGap(lane.points, transport.position)))
 						emit(lane, 0,
@@ -482,11 +514,14 @@ namespace gnubase::engine
 		for (size_t s = 0; s < transport.segmentCount; ++s)
 		{
 			const graph::TransportSegment& segment = transport.segments[s];
-			const bool jump = changed || segment.position != m_next;
+			const bool moved = segment.position != m_next;
 			for (const PlayedLane& lane : automation.lanes)
 				if (const std::optional<Outputs> out = outputs(lane))
-					playLane(lane, segment, jump, *out, changed ? glide(lane) : 0);
+					playLane(lane, segment,
+						moved || (lane.kind == PlayedLane::Kind::Program ? programChanged : changed), *out,
+						changed ? glide(lane) : 0);
 			changed = false;
+			programChanged = false;
 			m_next = segment.position + segment.frames;
 		}
 	}

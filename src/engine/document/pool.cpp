@@ -106,8 +106,7 @@ namespace gnubase::engine
 		std::map<ObjectId, int> clipUses(const Project& project)
 		{
 			std::map<ObjectId, int> uses;
-			for (const auto& [id, event] : project.audioEvents)
-				++uses[event.clip];
+			forEveryAudioEvent(project, [&uses](const AudioEvent& event) { ++uses[event.clip]; });
 			return uses;
 		}
 
@@ -147,33 +146,38 @@ namespace gnubase::engine
 					context.emit("clip.changed", {{"clip", toJson(clip)}});
 				}
 			// Crossfades' outLength is in the frames of the event they come from, so read those before changing.
+			// Inactive track versions' events play the media too.
 			std::map<ObjectId, const Rescale*> eventRescales;
-			for (const auto& [id, event] : project.audioEvents)
-				eventRescales[id] = rescaleOf(event.clip);
-			for (auto& [id, event] : project.audioEvents)
-			{
-				const Rescale* rescale = eventRescales.at(id);
-				const auto from = eventRescales.find(event.crossfade.from);
-				const Rescale* fromRescale = from == eventRescales.end() ? nullptr : from->second;
-				if (rescale == nullptr && fromRescale == nullptr)
-					continue;
-				if (rescale != nullptr)
+			forEveryAudioEvent(
+				project, [&](const AudioEvent& event) { eventRescales[event.id] = rescaleOf(event.clip); });
+			forEveryAudioEvent(project,
+				[&](AudioEvent& event)
 				{
-					const time::Samples offset = std::min((*rescale)(event.offset), rescale->length - 1);
-					const time::Samples end = std::min((*rescale)(event.offset + event.length), rescale->length);
-					event.offset = offset;
-					event.length = std::max<time::Samples>(end - offset, 1);
-					rescaleFades(event.fadeIn, event.fadeOut, *rescale, event.length);
-					event.crossfade.length = std::min((*rescale)(event.crossfade.length), event.length);
-					if (event.snapPoint)
-						event.snapPoint = (*rescale)(*event.snapPoint);
-					for (VolumePoint& point : event.volumeCurve)
-						point.position = std::min((*rescale)(point.position), rescale->length);
-				}
-				if (fromRescale != nullptr)
-					event.crossfade.outLength = (*fromRescale)(event.crossfade.outLength);
-				context.emit("audioEvent.changed", {{"event", toJson(event)}});
-			}
+					const Rescale* rescale = eventRescales.at(event.id);
+					const auto from = eventRescales.find(event.crossfade.from);
+					const Rescale* fromRescale = from == eventRescales.end() ? nullptr : from->second;
+					if (rescale == nullptr && fromRescale == nullptr)
+						return;
+					if (rescale != nullptr)
+					{
+						const time::Samples offset = std::min((*rescale)(event.offset), rescale->length - 1);
+						const time::Samples end = std::min((*rescale)(event.offset + event.length), rescale->length);
+						event.offset = offset;
+						event.length = std::max<time::Samples>(end - offset, 1);
+						rescaleFades(event.fadeIn, event.fadeOut, *rescale, event.length);
+						event.crossfade.length = std::min((*rescale)(event.crossfade.length), event.length);
+						if (event.snapPoint)
+							event.snapPoint = (*rescale)(*event.snapPoint);
+						for (VolumePoint& point : event.volumeCurve)
+							point.position = std::min((*rescale)(point.position), rescale->length);
+					}
+					if (fromRescale != nullptr)
+						event.crossfade.outLength = (*fromRescale)(event.crossfade.outLength);
+					// Only the active versions' events are the project's.
+					const auto inProject = project.audioEvents.find(event.id);
+					if (inProject != project.audioEvents.end() && &inProject->second == &event)
+						context.emit("audioEvent.changed", {{"event", toJson(event)}});
+				});
 		}
 
 		// Lets a job announce its progress at most every 50 ms, so that walking a folder with many small folders in
@@ -782,6 +786,13 @@ namespace gnubase::engine
 							m_edits.at("audioEvent.remove").handler(project, inner);
 							events.push_back(eventId);
 						}
+						// Inactive track versions lose theirs too.
+						for (auto& [trackId, track] : project.trackById)
+							for (TrackVersion& version : track.versions)
+								version.audioEvents.erase(
+									std::remove_if(version.audioEvents.begin(), version.audioEvents.end(),
+										[clipId](const AudioEvent& event) { return event.clip == clipId; }),
+									version.audioEvents.end());
 						project.clips.erase(clipId);
 						context.emit("clip.removed", {{"clip", clipId}});
 						clips.push_back(clipId);

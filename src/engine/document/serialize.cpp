@@ -539,6 +539,15 @@ namespace gnubase::engine
 			json["timeOffset"] = track.timeOffset;
 			json["timeOffsetOn"] = track.timeOffsetOn;
 		}
+		if (hasVersions(track.type))
+		{
+			// The versions without their events and parts, which toJson(const Project&) has.
+			Json versions = Json::array();
+			for (const TrackVersion& version : versionsOf(track))
+				versions.push_back({{"id", version.id}, {"name", version.name}});
+			json["versions"] = std::move(versions);
+			json["activeVersion"] = track.activeVersion;
+		}
 		return json;
 	}
 
@@ -554,10 +563,13 @@ namespace gnubase::engine
 			{"panner", channel.panner == StereoPanner::Combined ? "combined" : "balance"}, {"panLeft", channel.panLeft},
 			{"panRight", channel.panRight}, {"panBypass", channel.panBypass},
 			{"midiVolume", channel.midiVolume ? Json(*channel.midiVolume) : Json(nullptr)},
-			{"midiPan", channel.midiPan ? Json(*channel.midiPan) : Json(nullptr)}, {"monitor", channel.monitor},
-			{"recordEnable", channel.recordEnable}, {"midiInput", channel.midiInput}, {"mute", channel.mute},
-			{"solo", channel.solo}, {"soloDefeat", channel.soloDefeat}, {"listen", channel.listen},
-			{"slots", channel.slots}, {"notes", channel.notes}, {"modifiers", toJson(channel.modifiers)}};
+			{"midiPan", channel.midiPan ? Json(*channel.midiPan) : Json(nullptr)},
+			{"program", channel.program ? Json(*channel.program) : Json(nullptr)},
+			{"bank", channel.bank ? Json(*channel.bank) : Json(nullptr)}, {"device", channel.device},
+			{"monitor", channel.monitor}, {"recordEnable", channel.recordEnable}, {"midiInput", channel.midiInput},
+			{"mute", channel.mute}, {"solo", channel.solo}, {"soloDefeat", channel.soloDefeat},
+			{"listen", channel.listen}, {"slots", channel.slots}, {"notes", channel.notes},
+			{"modifiers", toJson(channel.modifiers)}};
 		json.update(toJson(channel.sections));
 		Json sends = Json::array();
 		if (channel.format != ChannelFormat::None)
@@ -1016,6 +1028,25 @@ namespace gnubase::engine
 			{"snap", toJson(project.snap)}, {"mixers", mixersJson(project.mixers)},
 			{"metronome", metronome::toJson(project.metronome)}};
 		json.update(toJson(project.setup));
+		// What the inactive track versions hold (#165).
+		Json versionContents = Json::array();
+		for (const ObjectId id : project.trackOrder())
+			for (const TrackVersion& version : project.trackById.at(id).versions)
+				if (version.id != project.trackById.at(id).activeVersion)
+				{
+					Json events = Json::array();
+					for (const AudioEvent& event : version.audioEvents)
+						events.push_back(toJson(event));
+					Json audioParts = Json::array();
+					for (const AudioPart& part : version.audioParts)
+						audioParts.push_back(toJson(part));
+					Json midiParts = Json::array();
+					for (const MidiPart& part : version.midiParts)
+						midiParts.push_back(toJson(part));
+					versionContents.push_back({{"track", id}, {"version", version.id}, {"audioEvents", events},
+						{"audioParts", audioParts}, {"midiParts", midiParts}});
+				}
+		json["versionContents"] = std::move(versionContents);
 		return json;
 	}
 
@@ -1719,6 +1750,30 @@ namespace gnubase::engine
 				track.timeOffset = std::max<int64_t>(0, item.value("timeOffset", int64_t{0}));
 				track.timeOffsetOn = item.value("timeOffsetOn", false);
 			}
+			// Files from before #165 have no versions; a track with only its first one keeps none of its own.
+			if (const Json versions = item.value("versions", Json::array());
+				hasVersions(track.type) && !versions.empty())
+			{
+				for (const Json& version : versions)
+				{
+					TrackVersion read;
+					read.id = version.at("id").get<int>();
+					read.name = version.at("name").get<std::string>();
+					if (read.id < 1 || read.name.empty() ||
+						std::any_of(
+							track.versions.begin(), track.versions.end(),
+							[&read](const TrackVersion& other) { return other.id == read.id; }))
+						throw std::invalid_argument(
+							"track " + std::to_string(track.id) + " has a version without a name or an ID of its own");
+					track.versions.push_back(std::move(read));
+				}
+				track.activeVersion = item.value("activeVersion", track.versions.front().id);
+				if (std::none_of(track.versions.begin(), track.versions.end(),
+						[&track](const TrackVersion& version) { return version.id == track.activeVersion; }))
+					throw std::invalid_argument("track " + std::to_string(track.id) + " has no active version");
+				if (track.versions.size() == 1 && track.versions.front() == TrackVersion())
+					track.versions.clear();
+			}
 			(track.parent == 0 ? project.tracks : project.trackById.at(track.parent).children).push_back(track.id);
 			project.trackById[track.id] = track;
 		}
@@ -1742,6 +1797,12 @@ namespace gnubase::engine
 				{std::pair{"midiVolume", &channel.midiVolume}, std::pair{"midiPan", &channel.midiPan}})
 				if (const Json stored = item.value(key, Json()); !stored.is_null())
 					*value = static_cast<int>(checkedNumber(stored, 0.0, 127.0, name + " " + key));
+			// Files from before patches have none.
+			if (const Json stored = item.value("program", Json()); !stored.is_null())
+				channel.program = static_cast<int>(checkedNumber(stored, 0.0, 127.0, name + " program"));
+			if (const Json stored = item.value("bank", Json()); !stored.is_null())
+				channel.bank = static_cast<int>(checkedNumber(stored, 0.0, g_maxBank, name + " bank"));
+			channel.device = item.value("device", std::string());
 			// An instrument this build doesn't have, e.g. in a file from a newer one, or one on a track that doesn't
 			// play instruments: the channel plays none.
 			const auto track = project.trackById.find(channel.track);
@@ -1895,7 +1956,7 @@ namespace gnubase::engine
 			if (project.poolFolders.count(clip.folder) == 0)
 				clip.folder = 0;
 		const auto base = [&project](ObjectId track) { return project.trackById.at(track).timeBase; };
-		for (const Json& item : json.at("audioEvents"))
+		const auto readAudioEvent = [&base](const Json& item)
 		{
 			AudioEvent event;
 			event.id = item.at("id").get<ObjectId>();
@@ -1917,9 +1978,14 @@ namespace gnubase::engine
 			event.part = item.value("part", ObjectId{0});    // files from before #471 have no audio parts
 			event.lane = std::max(0, item.value("lane", 0)); // files from before #98 have no lanes
 			event.front = item.value("front", ObjectId{0});  // nor from before #99 a stack order
+			return event;
+		};
+		for (const Json& item : json.at("audioEvents"))
+		{
+			const AudioEvent event = readAudioEvent(item);
 			project.audioEvents[event.id] = event;
 		}
-		for (const Json& item : json.value("audioParts", Json::array()))
+		const auto readAudioPart = [&base](const Json& item)
 		{
 			AudioPart part;
 			part.id = item.at("id").get<ObjectId>();
@@ -1931,6 +1997,11 @@ namespace gnubase::engine
 			part.lock = item.value("lock", false);
 			part.color = eventColorFrom(item);
 			part.lane = std::max(0, item.value("lane", 0));
+			return part;
+		};
+		for (const Json& item : json.value("audioParts", Json::array()))
+		{
+			const AudioPart part = readAudioPart(item);
 			project.audioParts[part.id] = part;
 		}
 		// An event in a part that isn't there, or on another track, is an event of its own.
@@ -1938,7 +2009,7 @@ namespace gnubase::engine
 			if (const auto part = project.audioParts.find(event.part);
 				part == project.audioParts.end() || part->second.track != event.track)
 				event.part = 0;
-		for (const Json& item : json.at("midiParts"))
+		const auto readMidiPart = [&base](const Json& item)
 		{
 			MidiPart part;
 			part.id = item.at("id").get<ObjectId>();
@@ -1985,7 +2056,55 @@ namespace gnubase::engine
 				controller.position = c.at("position").get<time::Ticks>();
 				part.controllers[controller.id] = std::move(controller);
 			}
-			project.midiParts[part.id] = std::move(part);
+			return part;
+		};
+		for (const Json& item : json.at("midiParts"))
+		{
+			MidiPart part = readMidiPart(item);
+			const ObjectId id = part.id;
+			project.midiParts[id] = std::move(part);
+		}
+		// What the inactive track versions hold (#165): only on their own track, and audio events only in their
+		// version's parts.
+		for (const Json& item : json.value("versionContents", Json::array()))
+		{
+			const auto trackId = item.at("track").get<ObjectId>();
+			const auto found = project.trackById.find(trackId);
+			const int id = item.at("version").get<int>();
+			const std::string name = "version " + std::to_string(id) + " of track " + std::to_string(trackId);
+			if (found == project.trackById.end())
+				throw std::invalid_argument(name + " isn't there");
+			Track& track = found->second;
+			const auto version = std::find_if(track.versions.begin(), track.versions.end(),
+				[id](const TrackVersion& other) { return other.id == id; });
+			if (version == track.versions.end() || id == track.activeVersion)
+				throw std::invalid_argument(name + " isn't an inactive version");
+			const auto check = [&name, trackId](ObjectId on)
+			{
+				if (on != trackId)
+					throw std::invalid_argument(name + " holds what is on another track");
+			};
+			for (const Json& part : item.value("audioParts", Json::array()))
+			{
+				version->audioParts.push_back(readAudioPart(part));
+				check(version->audioParts.back().track);
+			}
+			for (const Json& event : item.value("audioEvents", Json::array()))
+			{
+				AudioEvent read = readAudioEvent(event);
+				check(read.track);
+				if (std::none_of(version->audioParts.begin(), version->audioParts.end(),
+						[&read](const AudioPart& part) { return part.id == read.part; }))
+					read.part = 0;
+				if (project.clips.count(read.clip) == 0)
+					throw std::invalid_argument(name + " has an audio event without a clip");
+				version->audioEvents.push_back(std::move(read));
+			}
+			for (const Json& part : item.value("midiParts", Json::array()))
+			{
+				version->midiParts.push_back(readMidiPart(part));
+				check(version->midiParts.back().track);
+			}
 		}
 		// Files from before marker tracks have markers without a track, type and number: position markers in ticks.
 		for (const Json& item : json.at("markers"))
@@ -2105,6 +2224,25 @@ namespace gnubase::engine
 		}
 		for (const auto& [id, marker] : project.markers)
 			see(id);
+		for (const auto& [id, track] : project.trackById)
+			for (const TrackVersion& version : track.versions)
+			{
+				for (const AudioEvent& event : version.audioEvents)
+				{
+					see(event.id);
+					see(event.front);
+				}
+				for (const AudioPart& part : version.audioParts)
+					see(part.id);
+				for (const MidiPart& part : version.midiParts)
+				{
+					see(part.id);
+					for (const auto& [noteId, note] : part.notes)
+						see(noteId);
+					for (const auto& [controllerId, controller] : part.controllers)
+						see(controllerId);
+				}
+			}
 		for (const auto& [id, group] : project.linkGroups)
 			see(id);
 		for (const auto& [id, map] : project.drumMaps)

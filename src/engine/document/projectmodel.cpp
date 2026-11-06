@@ -13,6 +13,7 @@
 #include "engine/document/sampleeditor.h"
 #include "engine/document/serialize.h"
 #include "engine/document/stripparameters.h"
+#include "engine/document/trackversions.h"
 #include "engine/document/volumecurves.h"
 #include "engine/dsp/timestretch.h"
 #include "engine/graph/graph.h"
@@ -43,6 +44,7 @@
 #include <stdexcept>
 #include <string>
 #include <system_error>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -529,6 +531,25 @@ namespace gnubase::engine
 				}
 			track.timeOffset =
 				time::rebase({track.timeBase, track.timeOffset}, base, project.tempo, project.sampleRate).value;
+			// The inactive versions' events and parts are in the track's time base too.
+			for (TrackVersion& version : track.versions)
+			{
+				for (AudioEvent& event : version.audioEvents)
+					event.position = time::rebase(event.position, base, project.tempo, project.sampleRate);
+				for (AudioPart& part : version.audioParts)
+				{
+					const time::Position end = time::rebase({part.position.base, part.position.value + part.length},
+						base, project.tempo, project.sampleRate);
+					part.position = time::rebase(part.position, base, project.tempo, project.sampleRate);
+					part.length = end.value - part.position.value;
+				}
+				for (MidiPart& part : version.midiParts)
+				{
+					const time::Position end = time::rebase(partEnd(part), base, project.tempo, project.sampleRate);
+					part.position = time::rebase(part.position, base, project.tempo, project.sampleRate);
+					part.length = end.value - part.position.value;
+				}
+			}
 			track.timeBase = base;
 		}
 
@@ -555,6 +576,25 @@ namespace gnubase::engine
 					part.position.value = rescale(part.position.value, factor);
 					part.length = rescale(part.length, factor);
 					context.emit("audioPart.changed", {{"part", toJson(part)}});
+				}
+			for (auto& [id, track] : project.trackById)
+				for (TrackVersion& version : track.versions)
+				{
+					for (AudioEvent& event : version.audioEvents)
+						if (event.position.base == time::TimeBase::Linear)
+							event.position.value = rescale(event.position.value, factor);
+					for (AudioPart& part : version.audioParts)
+						if (part.position.base == time::TimeBase::Linear)
+						{
+							part.position.value = rescale(part.position.value, factor);
+							part.length = rescale(part.length, factor);
+						}
+					for (MidiPart& part : version.midiParts)
+						if (part.position.base == time::TimeBase::Linear)
+						{
+							part.position.value = rescale(part.position.value, factor);
+							part.length = rescale(part.length, factor);
+						}
 				}
 			for (auto& [id, lane] : project.automation)
 			{
@@ -1396,6 +1436,8 @@ namespace gnubase::engine
 			copy.id = project.newId();
 			copy.parent = parent;
 			copy.children.clear();
+			for (TrackVersion& version : copy.versions)
+				version = copyVersion(project, version, copy.id);
 			std::map<ObjectId, ObjectId> slots; // each copied slot's copy
 			if (copy.channel != 0)
 			{
@@ -1602,13 +1644,13 @@ namespace gnubase::engine
 		}
 
 		// The tracks track.removeEmpty removes (docs/features/track-list.md): audio, instrument, MIDI and marker
-		// tracks without events, parts, markers or automation, and folders without tracks, unless a channel of
-		// another track plays or sends into theirs. Plugins in a channel's slots and an instrument track's instrument
-		// don't keep a track. Group and effect tracks are where others play through, VCA tracks control channels,
-		// ruler, tempo and signature tracks hold no events. What goes can leave others empty, such as a folder that
-		// held only empty tracks or an instrument track that only empty MIDI tracks played, so it looks again until
-		// nothing more goes. What a track holds is the same in the track list's warning before Remove Selected Tracks
-		// (TrackList::build, src/ui/tracklist.cpp): change both together.
+		// tracks without events, parts, markers, automation or other versions, and folders without tracks, unless a
+		// channel of another track plays or sends into theirs. Plugins in a channel's slots and an instrument track's
+		// instrument don't keep a track. Group and effect tracks are where others play through, VCA tracks control
+		// channels, ruler, tempo and signature tracks hold no events. What goes can leave others empty, such as a
+		// folder that held only empty tracks or an instrument track that only empty MIDI tracks played, so it looks
+		// again until nothing more goes. What a track holds is the same in the track list's warning before Remove
+		// Selected Tracks (TrackList::build, src/ui/tracklist.cpp): change both together.
 		std::set<ObjectId> emptyTracks(const Project& project)
 		{
 			std::set<ObjectId> holding;
@@ -1622,6 +1664,9 @@ namespace gnubase::engine
 			hold(project.midiParts);
 			hold(project.markers);
 			hold(project.automation);
+			for (const auto& [id, track] : project.trackById)
+				if (track.versions.size() > 1) // its other versions hold events or parts, or will
+					holding.insert(id);
 			std::set<ObjectId> gone;
 			size_t before = 0;
 			do
@@ -1892,6 +1937,27 @@ namespace gnubase::engine
 				const auto number = given.get<int64_t>();
 				requireRange(number, 0, 127, key);
 				*value = static_cast<int>(number);
+			}
+			for (const auto& [key, value, maximum] : {std::tuple{"program", &changed.program, int64_t{127}},
+					 std::tuple{"bank", &changed.bank, int64_t{g_maxBank}}})
+			{
+				if (!parameters.contains(key))
+					continue;
+				require(type == TrackType::Midi, std::string("only MIDI channels have ") + key);
+				const Json& given = parameters.at(key);
+				if (given.is_null())
+				{
+					value->reset();
+					continue;
+				}
+				const auto number = given.get<int64_t>();
+				requireRange(number, 0, maximum, key);
+				*value = static_cast<int>(number);
+			}
+			if (parameters.contains("device"))
+			{
+				require(type == TrackType::Midi, "only MIDI channels have device");
+				changed.device = parameters.at("device").get<std::string>();
 			}
 			for (const auto& [key, value] :
 				{std::pair{"monitor", &changed.monitor}, std::pair{"recordEnable", &changed.recordEnable}})
@@ -2596,8 +2662,8 @@ namespace gnubase::engine
 		{
 			const ObjectId id = context.parameters().at("clip").get<ObjectId>();
 			find(project.clips, id, "clip");
-			for (const auto& [eventId, event] : project.audioEvents)
-				require(event.clip != id, "clip " + idText(id) + " is used by audio event " + idText(eventId));
+			forEveryAudioEvent(project, [id](const AudioEvent& event)
+				{ require(event.clip != id, "clip " + idText(id) + " is used by audio event " + idText(event.id)); });
 			project.clips.erase(id);
 			context.emit("clip.removed", {{"clip", id}});
 			return Json::object();
@@ -3895,8 +3961,13 @@ namespace gnubase::engine
 				"overrides them while it plays; changes glide over 5 ms. MIDI channels have no audio: midiVolume "
 				"and midiPan (0 to 127, 64 is the center pan, null for none, the default) are sent to the "
 				"instrument as MIDI volume (CC 7) and pan (CC 10) on MIDI channel 1, whenever they change and when "
-				"playback starts or jumps; automation of those controllers overrides them. monitor and recordEnable "
-				"are an audio track's buttons: monitor hears the input bus, recordEnable arms the track for recording "
+				"playback starts or jumps; automation of those controllers overrides them. program (0 to 127) and bank "
+				"(0 to 16383, null for none, the default) are a MIDI channel's patch: the program change, after bank "
+				"select MSB (CC 0) and LSB (CC 32) if bank is set, goes to the instrument on MIDI channel 1 whenever "
+				"they change and when playback starts or jumps; without a program nothing is sent. device names the "
+				"installed MIDI device (midiDevice.install) whose patches choose them, or is empty. monitor and "
+				"recordEnable are an audio track's buttons: monitor hears the input bus, recordEnable arms the track "
+				"for recording "
 				"and, by the user setting audio.autoMonitoring, monitors too: manual never, whileRecordEnabled always, "
 				"whileRecording while the transport records, tapeMachine while it stands or records (the default). "
 				"Monitoring glides in and out over one audio block. MIDI and instrument tracks have them too: "
@@ -3949,12 +4020,14 @@ namespace gnubase::engine
 						{"panner", enumSchema({"balance", "combined"})}, {"panLeft", numberSchema},
 						{"panRight", numberSchema}, {"panBypass", booleanSchema},
 						{"midiVolume", {{"type", {"integer", "null"}}}}, {"midiPan", {{"type", {"integer", "null"}}}},
-						{"volume", numberSchema}, {"pan", numberSchema}, {"monitor", booleanSchema},
-						{"recordEnable", booleanSchema}, {"midiInput", enumSchema({"all", "none"})},
-						{"mute", booleanSchema}, {"solo", booleanSchema}, {"exclusive", booleanSchema},
-						{"soloDefeat", booleanSchema}, {"listen", booleanSchema}, {"notes", stringSchema},
-						{"linked", booleanSchema}, {"pre", {{"type", "object"}}}, {"eq", {{"type", "object"}}},
-						{"strip", {{"type", "object"}}}, {"modifiers", {{"type", "object"}}},
+						{"program", {{"type", {"integer", "null"}}}}, {"bank", {{"type", {"integer", "null"}}}},
+						{"device", stringSchema}, {"volume", numberSchema}, {"pan", numberSchema},
+						{"monitor", booleanSchema}, {"recordEnable", booleanSchema},
+						{"midiInput", enumSchema({"all", "none"})}, {"mute", booleanSchema}, {"solo", booleanSchema},
+						{"exclusive", booleanSchema}, {"soloDefeat", booleanSchema}, {"listen", booleanSchema},
+						{"notes", stringSchema}, {"linked", booleanSchema}, {"pre", {{"type", "object"}}},
+						{"eq", {{"type", "object"}}}, {"strip", {{"type", "object"}}},
+						{"modifiers", {{"type", "object"}}},
 						{"sends",
 							arraySchema(
 								objectSchema({{"send", integerSchema}, {"destination", idSchema}, {"on", booleanSchema},
@@ -4202,6 +4275,7 @@ namespace gnubase::engine
 		registerSnapCommands(*this, engine);
 		registerMixerCommands(*this, engine);
 		registerLinkGroupCommands(*this, engine);
+		registerTrackVersionCommands(*this, engine);
 		midi::registerDrumMapCommands(*this, engine);
 		registerChannelSettingsCommands(*this, engine);
 		registerEditorCommands(*this, engine);

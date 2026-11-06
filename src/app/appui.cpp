@@ -201,7 +201,7 @@ namespace gnubase::app
 		}
 
 		// The track list's commands (ui::TrackList::actions, docs/features/track-list.md) and their keys.
-		constexpr std::array<ProjectCommand, 28> g_trackCommands{{
+		constexpr std::array<ProjectCommand, 33> g_trackCommands{{
 			{"track.selectPrevious",
 				"Selects the track above the selected one, and its first event while an event is selected (unless "
 				"ui.upDownSelectsTracksOnly).",
@@ -252,6 +252,13 @@ namespace gnubase::app
 			// Lanes (docs/features/comping.md).
 			{"track.toggleLanesSelected",
 				"Shows the lanes of the selected tracks, or hides them if every one shows them.", nullptr},
+			// Track versions (docs/features/track-versions.md).
+			{"track.newVersion", "Gives the selected tracks a new, empty version.", nullptr},
+			{"track.duplicateVersion", "Gives the selected tracks a copy of their active version.", nullptr},
+			{"track.deleteVersion", "Deletes the active version of the selected tracks.", nullptr},
+			{"track.selectSameVersionId",
+				"Selects the tracks with a version of the ID of the first selected track's active version.", nullptr},
+			{"track.assignCommonVersionId", "Gives the active versions of the selected tracks a common ID.", nullptr},
 		}};
 	}
 
@@ -445,6 +452,10 @@ namespace gnubase::app
 			[this](ui::Window& window, Rml::Element* /*zone*/) { chooseMissingFolder(window); }});
 		m_keys.add({"window.studioSetup", "Opens the studio setup dialog for the audio and MIDI devices.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { openStudioSetup(window); }});
+		m_keys.add({"window.midiDeviceManager",
+			"Opens the MIDI device manager, which installs and removes MIDI devices and shows their patch banks.",
+			[this](ui::Window& window, Rml::Element* /*zone*/)
+			{ openOnce(window, "midi-devices.rml", m_midiDevices); }});
 		m_keys.add({"window.projectSetup",
 			"Opens the project setup dialog for the project's sample rate, record format, frame rate, start time, "
 			"length, time display, pan law and maximum volume.",

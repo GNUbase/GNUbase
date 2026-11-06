@@ -321,6 +321,22 @@
 		<menuitem command="track.removeEmpty">Remove Empty Tracks</menuitem>
 		<menuitem command="track.duplicateSelected">Duplicate Tracks</menuitem>
 		<menuseparator/>
+		<!-- Track versions of the selected tracks (reference manual pp. 230-237, docs/features/track-versions.md);
+		     ui::TrackList fills the list with the first one's versions, which a click activates. -->
+		<menuitem id="track-versions-submenu">Track Versions
+			<menu>
+				<menuitem command="track.newVersion">New Version</menuitem>
+				<menuitem command="track.duplicateVersion">Duplicate Version</menuitem>
+				<menuitem command="track.deleteVersion">Delete Version</menuitem>
+				<menuseparator/>
+				<menuitem command="track.selectSameVersionId">Select Tracks with Same Version ID</menuitem>
+				<menuitem command="track.assignCommonVersionId">Assign Common Version ID</menuitem>
+				<menuseparator/>
+				<menuitem id="track-versions-list-submenu">Activate Version
+					<menu id="track-versions-list"/>
+				</menuitem>
+			</menu>
+		</menuitem>
 		<menuitem id="track-folding-submenu">Track Folding
 			<menu>
 				<menuitem command="track.toggleFolding">Toggle Selected Track</menuitem>
@@ -498,6 +514,11 @@
 		<menuitem command="window.mixer4">Mixer 4</menuitem>
 		<menuseparator/>
 		<menuitem command="window.onScreenKeyboard">On-Screen Keyboard</menuitem>
+		<menuitem id="studio-more-options">More Options
+			<menu>
+				<menuitem command="window.midiDeviceManager">MIDI Device Manager</menuitem>
+			</menu>
+		</menuitem>
 		<menuitem command="window.studioSetup">Studio Setup...</menuitem>
 	</menu>
 
