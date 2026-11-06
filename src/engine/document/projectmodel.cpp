@@ -1134,7 +1134,10 @@ namespace gnubase::engine
 
 		// Group Track to Selected Tracks and Effect Track to Selected Tracks (reference manual pp. 546, 554): the
 		// tracks play into a new group channel, or send to a new effect channel with the given send, or else their
-		// first send without a destination, at the user setting audio.defaultSendLevel.
+		// first send without a destination, at the user setting audio.defaultSendLevel. Those that can't be routed
+		// are left out: tracks without an audio channel (MIDI, marker and ruler tracks, folders without a group
+		// channel, whose tracks are meant only when they are selected themselves) and, without send, tracks with no
+		// free send.
 		void routeTo(Project& project, const Channel& added, const Json& parameters, CommandContext& context)
 		{
 			const TrackType type = project.trackById.at(added.track).type;
@@ -1155,8 +1158,8 @@ namespace gnubase::engine
 				require(seen.insert(id).second, "tracks lists track " + idText(id) + " twice");
 				const Track& track = find(project.trackById, id, "track");
 				const auto source = project.channels.find(track.channel);
-				require(source != project.channels.end() && source->second.format != ChannelFormat::None,
-					"track " + idText(id) + " has no audio channel");
+				if (source == project.channels.end() || source->second.format == ChannelFormat::None)
+					continue;
 				Channel& channel = source->second;
 				if (type == TrackType::Group)
 				{
@@ -1174,7 +1177,8 @@ namespace gnubase::engine
 							send = &candidate;
 						}
 					}
-					require(send != nullptr, "track " + idText(id) + " has no free send");
+					if (send == nullptr)
+						continue;
 					require(!routingLoops(project, channel.id, added.id),
 						"sending channel " + idText(channel.id) + " to " + idText(added.id) + " would make a loop");
 					*send = {added.id, true, level, false};
@@ -1307,7 +1311,9 @@ namespace gnubase::engine
 				routeTo(project, *channel, parameters, context);
 				return result;
 			}
-			require(!parameters.contains("send"), "only effect tracks take a send");
+			require(!parameters.contains("send"),
+				type == TrackType::Effect ? "send needs tracks: the tracks that send to the new effect track"
+										  : "only effect tracks take a send");
 			// Move Selected Tracks to New Folder (p. 223).
 			if (parameters.contains("tracks"))
 			{
@@ -3867,7 +3873,9 @@ namespace gnubase::engine
 				"Tracks to New Folder); for a group track, their channels play into its channel (Group Track to "
 				"Selected Tracks), and for an effect track, they send to its channel with send (1 to 8), or else "
 				"their first send without a destination, switched on, after the fader and at the user setting "
-				"audio.defaultSendLevel (Effect Track to Selected Tracks, Add Effect Track to Send). projectFolder "
+				"audio.defaultSendLevel (Effect Track to Selected Tracks, Add Effect Track to Send); tracks without "
+				"an audio channel, such as MIDI tracks and folders without a group channel, and without send those "
+				"with no free send, are left out. projectFolder "
 				"puts a group or effect track into the project's Group or FX folder, the first folder of that name "
 				"at the top level, added at the end if there is none. With the user setting editing.applyFolderColor, "
 				"a track added to a folder "
