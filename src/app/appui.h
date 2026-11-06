@@ -29,6 +29,7 @@
 #include "ui/tempotrack.h"
 #include "ui/themes.h"
 #include "ui/tracklist.h"
+#include "ui/trackvisibility.h"
 #include "ui/transport.h"
 #include "ui/transposetrack.h"
 #include "ui/uisettings.h"
@@ -304,11 +305,12 @@ namespace gnubase::app
 		std::unique_ptr<ui::TransportControls> m_transportBar;
 		TransportWindow m_transportPanel;
 		TransportWindow m_timeDisplay;
-		std::unique_ptr<ui::StatusLine> m_statusLine;         // too
-		std::unique_ptr<ui::TrackList> m_trackList;           // and before the display
-		std::unique_ptr<ui::ColorMenu> m_colorMenu;           // before the track list
-		std::unique_ptr<ui::InfoLine> m_infoLine;             // and this too
-		std::unique_ptr<ui::QuantizePanel> m_toolbarQuantize; // the toolbar's quantize section
+		std::unique_ptr<ui::StatusLine> m_statusLine;           // too
+		std::unique_ptr<ui::TrackList> m_trackList;             // and before the display
+		std::unique_ptr<ui::ColorMenu> m_colorMenu;             // before the track list
+		std::unique_ptr<ui::TrackVisibility> m_trackVisibility; // the project window's (#166)
+		std::unique_ptr<ui::InfoLine> m_infoLine;               // and this too
+		std::unique_ptr<ui::QuantizePanel> m_toolbarQuantize;   // the toolbar's quantize section
 		// What the undo history can undo and redo now, for the Edit menu's Undo and Redo.
 		bool m_canUndo = false;
 		bool m_canRedo = false;

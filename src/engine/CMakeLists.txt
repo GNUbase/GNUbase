@@ -151,6 +151,7 @@ add_library(gnubase-engine STATIC
 	document/stripparameters.cpp document/stripparameters.h
 	document/tempo.cpp
 	document/trackversions.cpp document/trackversions.h
+	document/trackvisibility.cpp document/trackvisibility.h
 	document/transpose.cpp
 	document/volumecurves.cpp document/volumecurves.h
 	dsp/biquad.cpp dsp/biquad.h

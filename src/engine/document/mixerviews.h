@@ -2,6 +2,7 @@
 #pragma once
 
 #include "engine/document/document.h"
+#include "engine/schema.h"
 
 #include <string>
 
@@ -16,6 +17,9 @@ namespace gnubase::engine
 	// folder's group channel is a group channel. Empty for an id that is neither a channel nor a bus.
 	std::string mixerChannelType(const Project& project, ObjectId id);
 
-	// mixer.get and mixer.set.
+	// A mixer's view as mixer.get returns it: {mixer, hidden, hiddenTypes}, without the channels that are gone.
+	Json mixerViewJson(const Project& project, const std::string& mixer);
+
+	// mixer.get and mixer.set, and the track visibility's commands (trackvisibility.h).
 	void registerMixerCommands(ProjectModel& model, Engine& engine);
 }

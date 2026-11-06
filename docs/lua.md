@@ -4852,6 +4852,41 @@ Returns:
 
 - `tracks`: array of object, required
 
+### trackVisibility
+
+#### `gnubase.trackVisibility.get`
+
+What the project window hides (reference manual pp. 58, 80-82). hidden: the tracks (by id) the project window's track list and event display don't show (a folder's tracks hide with it there). sync: the mixer window (window1 to window4) whose channel visibility follows the tracks', and back (Sync Visibility of Project and Mixer), or empty; the lower zone's mixer always follows, so a hidden track's channel is hidden in it, and a channel hidden there hides its track. configurations: the track visibility configurations, each a name and its hidden tracks; configuration: the active one's name, or empty; modified: whether the hidden tracks differ from the active configuration's. Tracks that are gone are left out.
+
+Only reads; changes nothing.
+
+Returns:
+
+- `configuration`: string, required
+- `configurations`: array of object, required
+- `hidden`: array of integer, required
+- `modified`: boolean, required
+- `sync`: one of "" | "window1" | "window2" | "window3" | "window4", required
+
+#### `gnubase.trackVisibility.set`
+
+Changes what the project window hides; what isn't given stays. hidden: the tracks (by id) the project window's track list and event display don't show (a folder's tracks hide with it there). sync: the mixer window (window1 to window4) whose channel visibility follows the tracks', and back (Sync Visibility of Project and Mixer), or empty; the lower zone's mixer always follows, so a hidden track's channel is hidden in it, and a channel hidden there hides its track. configurations: the track visibility configurations, each a name and its hidden tracks; configuration: the active one's name, or empty; modified: whether the hidden tracks differ from the active configuration's. Tracks that are gone are left out. configurations replaces the list; names are unique and not empty. Without the active one in it, none is active. configuration makes one active and, without hidden, hides its tracks. A setting, not an undo step, saved with the project. Emits trackVisibility.changed, and mixer.changed for the mixers that follow.
+
+Parameters:
+
+- `configuration`: string
+- `configurations`: array of object
+- `hidden`: array of integer
+- `sync`: one of "" | "window1" | "window2" | "window3" | "window4"
+
+Returns:
+
+- `configuration`: string, required
+- `configurations`: array of object, required
+- `hidden`: array of integer, required
+- `modified`: boolean, required
+- `sync`: one of "" | "window1" | "window2" | "window3" | "window4", required
+
 ### transport
 
 #### `gnubase.transport.exchangeLocators`

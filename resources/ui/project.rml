@@ -19,6 +19,8 @@
      #select-color with #color-menu, which ui::ColorMenu fills with the project's colors (docs/features/colors.md).
      ui::StatusLine fills #record-format, #record-time and #lost-device (docs/features/status-line.md). ui::InfoLine fills
      #info-line; #inspector-setup is the inspector's Set up Sections pane (docs/features/inspector.md).
+     ui::TrackVisibility drives #track-visibility-configurations and its menu, with visibility-configuration.rml
+     (docs/features/track-visibility.md).
      The focus zone "project" has the project window's key commands, such as zooming with H and G. -->
 <rml>
 <head>
@@ -120,6 +122,7 @@
 		     ui::QuantizePanel fills (docs/features/quantize.md) -->
 		<div id="toolbar-quantize" class="toolbar-quantize"/>
 		<button id="select-color" class="icon-only" menu="color-menu" title="Select Color for Selected Tracks or Events"><svg class="icon" src="../icons/general-color.svg"/></button>
+		<button id="track-visibility-configurations" class="track-visibility-configurations" menu="track-visibility-configurations-menu" title="Track Visibility Configurations">Configurations</button>
 		<!-- The Project Root Key (reference manual p. 414, docs/features/transpose.md), which the display shows -->
 		<button id="root-key" class="toolbar-root-key" menu="root-key-menu" title="Project Root Key">-</button>
 		<div class="spacer"/>
@@ -660,5 +663,6 @@
 		<menuseparator/>
 		<menuitem id="suspend-auto-scroll">Suspend Auto-Scroll when Editing</menuitem>
 	</menu>
+	<menu id="track-visibility-configurations-menu"/>
 </body>
 </rml>

@@ -970,6 +970,27 @@ namespace gnubase::engine
 		return {{"hidden", view.hidden}, {"hiddenTypes", view.hiddenTypes}};
 	}
 
+	Json toJson(const TrackVisibility& visibility)
+	{
+		Json configurations = Json::array();
+		for (const VisibilityConfiguration& configuration : visibility.configurations)
+			configurations.push_back({{"name", configuration.name}, {"hidden", configuration.hidden}});
+		return {{"hidden", visibility.hidden}, {"sync", visibility.sync}, {"configurations", configurations},
+			{"configuration", visibility.configuration}};
+	}
+
+	TrackVisibility trackVisibilityFromJson(const Json& json)
+	{
+		TrackVisibility visibility;
+		visibility.hidden = json.value("hidden", std::vector<ObjectId>());
+		visibility.sync = json.value("sync", std::string());
+		for (const Json& configuration : json.value("configurations", Json::array()))
+			visibility.configurations.push_back(
+				{configuration.value("name", std::string()), configuration.value("hidden", std::vector<ObjectId>())});
+		visibility.configuration = json.value("configuration", std::string());
+		return visibility;
+	}
+
 	namespace
 	{
 		Json mixersJson(const std::map<std::string, MixerView>& mixers)
@@ -1026,7 +1047,7 @@ namespace gnubase::engine
 			{"quantize", midi::toJson(project.quantize)}, {"autoQuantize", project.autoQuantize},
 			{"quantizePreset", project.quantizePreset}, {"activeMarkerTrack", project.activeMarkerTrack},
 			{"snap", toJson(project.snap)}, {"mixers", mixersJson(project.mixers)},
-			{"metronome", metronome::toJson(project.metronome)}};
+			{"trackVisibility", toJson(project.trackVisibility)}, {"metronome", metronome::toJson(project.metronome)}};
 		json.update(toJson(project.setup));
 		// What the inactive track versions hold (#165).
 		Json versionContents = Json::array();
@@ -2185,6 +2206,8 @@ namespace gnubase::engine
 		for (const auto& [name, view] : mixers.items())
 			project.mixers[name] = {
 				view.value("hidden", std::vector<ObjectId>()), view.value("hiddenTypes", std::vector<std::string>())};
+		// Files from before #166 have none.
+		project.trackVisibility = trackVisibilityFromJson(json.value("trackVisibility", Json::object()));
 		// Files from before the metronome have none; values that aren't valid keep their defaults.
 		if (const auto found = json.find("metronome"); found != json.end())
 			metronome::apply(project.metronome, *found, false);

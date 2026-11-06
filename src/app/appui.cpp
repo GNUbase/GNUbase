@@ -390,12 +390,14 @@ namespace gnubase::app
 					m_inspector = inspector;
 					return std::shared_ptr<void>(inspector);
 				};
-			// The lower zone's editor (reference manual pp. 1132-1156) and, in the Visibility tab, its visibility.
+			// The lower zone's editor (reference manual pp. 1132-1156) and, on the Visibility tab's Editor page, its
+			// visibility; the Track page has the track visibility (#166).
 			else if (added.id == "editor" || added.id == "visibility")
 				added.create = [this, editor = added.id == "editor"](Rml::Element& element)
 				{
+					Rml::Element& page = editor || !m_trackVisibility ? element : m_trackVisibility->showPanel(element);
 					auto shown = std::make_shared<ui::MidiEditor>(
-						m_binding, element, "lower", editor ? ui::EditorPart::Editor : ui::EditorPart::Visibility);
+						m_binding, page, "lower", editor ? ui::EditorPart::Editor : ui::EditorPart::Visibility);
 					if (editor)
 						m_lowerEditor = shown;
 					return std::shared_ptr<void>(shown);
@@ -927,6 +929,8 @@ namespace gnubase::app
 		m_transportBar.reset();
 		if (Rml::Element* bar = document->GetElementById("transport-bar"))
 			m_transportBar = transportControls(*bar, m_main, true);
+		// Before the docking system fills the Visibility tab with it.
+		m_trackVisibility = std::make_unique<ui::TrackVisibility>(m_binding, *document);
 		m_docking.attach("project", *document);
 		m_colorMenu.reset();
 		m_trackList.reset();

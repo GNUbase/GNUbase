@@ -159,6 +159,8 @@ add_executable(gnubase-tests
 	tracklist_tests.cpp
 	trackversions_tests.cpp
 	trackversions_ui_tests.cpp
+	trackvisibility_tests.cpp
+	trackvisibility_ui_tests.cpp
 	transport_tests.cpp
 	transportbar_tests.cpp
 	transpose_tests.cpp

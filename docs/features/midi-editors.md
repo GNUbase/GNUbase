@@ -66,7 +66,8 @@ sends `editor.*` commands.
 - **Windows and zones** (`app::AppUi`). The editor window (`resources/ui/editor.rml`, docking window `editorWindow`)
   opens and closes as the view `window` does, whichever client opens it; its left zone has the Visibility tab
   (`editorVisibility`) and the Inspector with the Global Tracks section (`editorInspector`). The view `lower` shows the
-  project window's Editor panel in the lower zone, and the project window's Visibility tab is the lower zone editor's.
+  project window's Editor panel in the lower zone, and the project window's Visibility tab has the lower zone editor's
+  on its Editor page ([track-visibility.md](track-visibility.md)).
   Closing the editor window, or hiding the lower zone while the Editor panel is docked there, closes the view, so Keep
   Editor Contents goes off (p. 1153); another tab of the lower zone in front of it doesn't. A new project closes both.
 - **Following the selection** (p. 1153): when the project window's selection changes, its MIDI parts, or else its
@@ -86,7 +87,7 @@ Visibility tab's checks with the check box skins.
 Event colors, the Part Editing Mode's effect on a
 selection rectangle and Show Part Borders, Independent Track Loop, the global tracks' events and editing them, Find
 Tracks, track visibility configurations and agents, the Track Display and its settings, selecting tracks in the
-Visibility tab, the Project/Editor switch of the project window's Visibility tab, the preference Editor Content Follows
+Visibility tab, the preference Editor Content Follows
 Event Selection and where editors open by default, double-clicking a part to open it, and saving the global track
 setup with the project.
 

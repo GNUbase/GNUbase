@@ -5372,6 +5372,43 @@ Result:
 
 - `tracks`: array of object, required
 
+### trackVisibility
+
+#### `trackVisibility_get`
+
+Engine command `trackVisibility.get`. Read-only.
+
+What the project window hides (reference manual pp. 58, 80-82). hidden: the tracks (by id) the project window's track list and event display don't show (a folder's tracks hide with it there). sync: the mixer window (window1 to window4) whose channel visibility follows the tracks', and back (Sync Visibility of Project and Mixer), or empty; the lower zone's mixer always follows, so a hidden track's channel is hidden in it, and a channel hidden there hides its track. configurations: the track visibility configurations, each a name and its hidden tracks; configuration: the active one's name, or empty; modified: whether the hidden tracks differ from the active configuration's. Tracks that are gone are left out.
+
+Result:
+
+- `configuration`: string, required
+- `configurations`: array of object, required
+- `hidden`: array of integer, required
+- `modified`: boolean, required
+- `sync`: one of "" | "window1" | "window2" | "window3" | "window4", required
+
+#### `trackVisibility_set`
+
+Engine command `trackVisibility.set`.
+
+Changes what the project window hides; what isn't given stays. hidden: the tracks (by id) the project window's track list and event display don't show (a folder's tracks hide with it there). sync: the mixer window (window1 to window4) whose channel visibility follows the tracks', and back (Sync Visibility of Project and Mixer), or empty; the lower zone's mixer always follows, so a hidden track's channel is hidden in it, and a channel hidden there hides its track. configurations: the track visibility configurations, each a name and its hidden tracks; configuration: the active one's name, or empty; modified: whether the hidden tracks differ from the active configuration's. Tracks that are gone are left out. configurations replaces the list; names are unique and not empty. Without the active one in it, none is active. configuration makes one active and, without hidden, hides its tracks. A setting, not an undo step, saved with the project. Emits trackVisibility.changed, and mixer.changed for the mixers that follow.
+
+Arguments:
+
+- `configuration`: string
+- `configurations`: array of object
+- `hidden`: array of integer
+- `sync`: one of "" | "window1" | "window2" | "window3" | "window4"
+
+Result:
+
+- `configuration`: string, required
+- `configurations`: array of object, required
+- `hidden`: array of integer, required
+- `modified`: boolean, required
+- `sync`: one of "" | "window1" | "window2" | "window3" | "window4", required
+
 ### track
 
 #### `track_add`
@@ -6159,6 +6196,7 @@ Queries without required arguments can also be read as resources:
 - `gnubase://sampleEditor.get`: What the sample editor shows. The view: open; event, the audio event it shows, with its clip, track and media file (0 while it shows none, or its event is gone: an undo brings it back); length, the clip's length in sample frames; offset and eventLength, the section of the clip the event plays (clip frames); clipStart, the project sample where the clip's frame 0 would play, and ratio, project samples per clip frame, so frame f plays at clipStart + f * ratio; selectionStart and selectionEnd, the selection range in clip frames, none while they are the same. View state: no undo steps, not saved, and a new or loaded project closes it.
 - `gnubase://settings.list`: Every user setting with its key, description, JSON schema, default and value; the settings file, null when settings are kept in memory only; its version; and what happened when it was loaded: the status (inMemory, missing, loaded, migrated, reset or newer), the version the file had, the problems found, where the original file was kept, and whether the file is read-only for this session, so that changes apply but aren't saved (a newer GNUbase's file, or one that couldn't be backed up or locked).
 - `gnubase://snap.get`: The project's snap settings. on: whether snap is on. type: grid (the nearest grid line), gridRelative (moves in grid steps, keeping the distance to the grid), events (the starts and ends of other events, audio events' snap points and markers, when near), shuffle (events trade places with their neighbours, see event.shuffle), cursor (the project cursor, when near), or the combinations gridCursor, eventsCursor and eventsGridCursor. format: the time format the grid follows, the project window's ruler: barsBeats, seconds, timecode, samples or userFrames. grid: the grid type in use, the format's: for barsBeats bar, beat, quantize (the project's quantize grid) or adaptToZoom (a note value that the view chooses); for seconds 1ms, 10ms, 100ms, 1000ms; for timecode and userFrames subframe, quarterFrame, halfFrame, frame, twoFrames, second; for samples 1sample, 10samples, 100samples, 44100samples. A grid type without a format switches to its format (the frames to timecode unless userFrames is in use). grids: the grid type each format keeps, by default bar, 100ms, frame, 100samples and frame. zeroCrossing: splitting and resizing audio events in the project window cut where the audio crosses zero.
+- `gnubase://trackVisibility.get`: What the project window hides (reference manual pp. 58, 80-82). hidden: the tracks (by id) the project window's track list and event display don't show (a folder's tracks hide with it there). sync: the mixer window (window1 to window4) whose channel visibility follows the tracks', and back (Sync Visibility of Project and Mixer), or empty; the lower zone's mixer always follows, so a hidden track's channel is hidden in it, and a channel hidden there hides its track. configurations: the track visibility configurations, each a name and its hidden tracks; configuration: the active one's name, or empty; modified: whether the hidden tracks differ from the active configuration's. Tracks that are gone are left out.
 - `gnubase://transport.get`: Whether playback and recording run, the project cursor in samples, where the last playback started (start, in samples, without the pre-roll), the locators and the modes. After a locate the cursor is where it goes, even before the audio thread has applied it. countingIn: the metronome counts in before a recording from stop (see transport.record); meanwhile playing is true, and recording is whether recording starts where playback starts.
 - `gnubase://transpose.get`: The transpose track: its id (0 for none), its events in timeline order (id, position in the track's time base, start in samples, value in semitones), mute, keepInOctave and lock.
 

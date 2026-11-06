@@ -3,6 +3,7 @@
 
 #include "engine/document/projectmodel.h"
 #include "engine/document/serialize.h"
+#include "engine/document/trackvisibility.h"
 #include "engine/engine.h"
 
 #include <algorithm>
@@ -34,6 +35,11 @@ namespace gnubase::engine
 			json["mixer"] = mixer;
 			return json;
 		}
+	}
+
+	Json mixerViewJson(const Project& project, const std::string& mixer)
+	{
+		return viewJson(project, mixer);
 	}
 
 	std::string mixerChannelType(const Project& project, ObjectId id)
@@ -126,9 +132,11 @@ namespace gnubase::engine
 						if (std::find(given.begin(), given.end(), type) != given.end())
 							view.hiddenTypes.emplace_back(type);
 				}
+				followMixer(project, mixer, context); // the lower zone's and the synced window's tracks follow (#166)
 				Json result = viewJson(project, mixer);
 				context.emit("mixer.changed", result);
 				return result;
 			});
+		registerTrackVisibilityCommands(model, engine);
 	}
 }
