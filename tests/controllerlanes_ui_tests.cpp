@@ -7,6 +7,7 @@
 #include "ui/automation.h"
 #include "uiapp.h"
 
+#include <RmlUi/Core/Context.h>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
@@ -14,6 +15,7 @@
 #include <chrono>
 #include <cmath>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -110,6 +112,22 @@ namespace
 			return {"", 0, ui::Point{static_cast<int>(std::lround(x)), static_cast<int>(std::lround(y))}};
 		}
 
+		// Whether the lane shows the part's controller events as the engine has them. A paint replaces the events the
+		// lane shows, by id: a test that paints over events the engine changed waits for this first, since the
+		// project reaches the lanes after the command's result reaches the test.
+		bool shows(int lane)
+		{
+			std::vector<std::string> shown;
+			for (const Json& step : elements(area(lane) + " .controller-step"))
+				shown.push_back(step.at("attributes").at("controller").get<std::string>());
+			std::vector<std::string> events;
+			for (const Json& event : controllers())
+				events.push_back(std::to_string(event.at("id").get<uint64_t>()));
+			std::sort(shown.begin(), shown.end());
+			std::sort(events.begin(), events.end());
+			return shown == events;
+		}
+
 		void click(const ui::Target& target, const std::vector<std::string>& modifiers = {})
 		{
 			app.ui().click(window, target, ui::MouseButton::Left, 1, modifiers);
@@ -128,12 +146,50 @@ namespace
 			REQUIRE(app.waitUntil([&] { return view().is_object(); }));
 		}
 
+		// Whether the element shows: menus are in the document also while they're closed.
+		bool visible(const std::string& selector)
+		{
+			const Json found = elements(selector);
+			return !found.empty() && found.at(0).at("visible") == true;
+		}
+
 		// Opens a menu with its button and clicks the item.
 		void choose(const std::string& button, const std::string& item)
 		{
 			click(of(button));
-			REQUIRE(app.waitUntil([&] { return !elements(item).empty(); }));
+			REQUIRE(app.waitUntil([&] { return visible(item); }));
 			click(of(item));
+		}
+
+		size_t steps() { return app.call("history.get").at("steps").size(); }
+
+		// The editor window's context: through it a test presses a button and keeps it down, as a mouseup lost
+		// outside the window leaves it, where RmlUi has no element to send the mouseup to.
+		Rml::Context& context()
+		{
+			const ui::Window* shown = app.shell().find(app.appUi().editorWindowId());
+			if (shown == nullptr)
+				throw std::logic_error("the editor window doesn't show");
+			return shown->context();
+		}
+
+		void press(const ui::Target& target)
+		{
+			const ui::Point point = target.point.value_or(ui::Point{});
+			context().ProcessMouseMove(point.x, point.y, 0);
+			context().ProcessMouseButtonDown(0, 0);
+			app.shell().step(std::chrono::milliseconds(0));
+		}
+
+		// The right end of the editor window's toolbar's empty space, where a click does nothing.
+		ui::Target spare()
+		{
+			const Json shown = box(".midi-editor-toolbar .spacer");
+			return {"", 0,
+				ui::Point{
+					static_cast<int>(std::lround(shown.at("x").get<double>() + shown.at("width").get<double>() - 5)),
+					static_cast<int>(
+						std::lround(shown.at("y").get<double>() + (shown.at("height").get<double>() / 2)))}};
 		}
 
 		std::vector<Json> lanes() { return view().at("lanes").get<std::vector<Json>>(); }
@@ -244,10 +300,12 @@ TEST_CASE("the line tool's modes draw lines, parabolas and periodic curves on a 
 	CHECK(f.controllers()[4].at("value").get<double>() == Approx(0.5).margin(0.05));
 	REQUIRE(f.app.waitUntil([&] { return f.elements(Fixture::area(0) + " .controller-step").size() == 9; }));
 
-	// A second click on the line tool opens its modes. Square goes from the start value to the end value and back
-	// every period, the quantize grid; the length quantize sets the density of the events.
+	// A second click on the line tool opens its modes, whose menu is in the document but closed until then. Square
+	// goes from the start value to the end value and back every period, the quantize grid; the length quantize sets
+	// the density of the events.
 	f.app.call("editor.set", {{"editor", "window"}, {"lengthQuantize", "1/8"}});
 	REQUIRE(f.app.waitUntil([&] { return f.elements("#key-length-quantize").at(0).at("text") == "1/8"; }));
+	CHECK(!f.visible("#key-line-menu menuitem[line-mode=square]"));
 	f.choose(".key-tool[key-tool=line]", "#key-line-menu menuitem[line-mode=square]");
 	f.drag(f.at(0, 0, 0.0), f.at(0, 8, 1.0));
 	REQUIRE(f.app.waitUntil([&] { return f.controllers().size() == 5; })); // every eighth
@@ -255,6 +313,51 @@ TEST_CASE("the line tool's modes draw lines, parabolas and periodic curves on a 
 	for (const Json& each : f.controllers())
 		values.push_back(std::round(each.at("value").get<double>()));
 	CHECK(values == std::vector<double>{0.0, 1.0, 0.0, 1.0, 0.0});
+
+	// Parabola, sine and triangle with an event every 1/32 (half a sixteenth): the values at a thirty-second, a
+	// sixteenth and a quarter tell them apart.
+	f.app.call("editor.set", {{"editor", "window"}, {"lengthQuantize", "1/32"}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements("#key-length-quantize").at(0).at("text") == "1/32"; }));
+	const auto valueAt = [&](int64_t position)
+	{
+		for (const Json& each : f.controllers())
+			if (each.at("position") == position)
+				return each.at("value").get<double>();
+		return -1.0;
+	};
+	// Draws in the mode and waits until the value at the position shows that the line arrived.
+	const auto mode = [&](const std::string& name, int64_t position, double expected)
+	{
+		f.choose(".key-tool[key-tool=line]", "#key-line-menu menuitem[line-mode=" + name + "]");
+		f.drag(f.at(0, 0, 0.0), f.at(0, 8, 1.0));
+		REQUIRE(f.app.waitUntil([&] { return std::abs(valueAt(position) - expected) < 0.01; }));
+		CHECK(f.controllers().size() == 17);
+	};
+	mode("parabola", 4 * g_sixteenth, 0.25); // slowly first: a quarter of the way at half the time
+	CHECK(valueAt(g_sixteenth) == Approx(1.0 / 64.0).margin(0.01));
+	mode("sine", g_sixteenth / 2, 0.146); // up and back down once a quarter
+	CHECK(valueAt(2 * g_sixteenth) == Approx(1.0).margin(0.01));
+	CHECK(valueAt(4 * g_sixteenth) == Approx(0.0).margin(0.01));
+	mode("triangle", g_sixteenth / 2, 0.25);
+	CHECK(valueAt(g_sixteenth) == Approx(0.5).margin(0.01));
+	CHECK(valueAt(2 * g_sixteenth) == Approx(1.0).margin(0.01));
+
+	// Paint paints like the draw tool: an event every length quantize step, replacing those there.
+	REQUIRE(f.app.waitUntil([&] { return f.shows(0); }));
+	const std::vector<Json> triangle = f.controllers();
+	f.choose(".key-tool[key-tool=line]", "#key-line-menu menuitem[line-mode=paint]");
+	f.drag(f.at(0, 0.25, 0.75), f.at(0, 4.75, 0.75));
+	REQUIRE(f.app.waitUntil([&] { return std::abs(valueAt(g_sixteenth) - 0.75) < 0.03; }));
+	CHECK(f.controllers().size() == 17);
+	const std::vector<Json> painted = f.controllers();
+	for (size_t i = 0; i < painted.size() && i < triangle.size(); ++i)
+	{
+		const auto position = painted[i].at("position").get<int64_t>();
+		INFO("position " << position);
+		CHECK(position == triangle[i].at("position"));
+		const double expected = position <= 9 * (g_sixteenth / 2) ? 0.75 : triangle[i].at("value").get<double>();
+		CHECK(painted[i].at("value").get<double>() == Approx(expected).margin(0.03));
+	}
 }
 
 TEST_CASE("the lane menus change and remove lanes, select their events and apply play probability", "[ui]")
@@ -400,4 +503,265 @@ TEST_CASE("controller events drawn on a lane play back", "[ui]")
 	}
 	CHECK(volumes == std::vector<int>{127, 0});
 	f.app.call("transport.stop");
+}
+
+TEST_CASE(
+	"a poly pressure lane takes the pitch of the first selected note, a program change lane draws programs", "[ui]")
+{
+	Fixture f;
+	f.add({0});
+	const Json added = f.app.call("note.add",
+		{{"part", f.part},
+			{"notes", {{{"position", g_quarter}, {"length", g_sixteenth}, {"pitch", 64}, {"velocity", 0.5}}}}});
+	const uint64_t high = added.at("notes").at(0).at("id").get<uint64_t>();
+	f.app.call("editor.set", {{"editor", "window"}, {"selection", {{{"part", f.part}, {"note", high}}}}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note.selected").size() == 1; }));
+	f.choose("#controller-lane-create", R"(#controller-create-menu menuitem[lane-type="polyPressure"])");
+	REQUIRE(f.app.waitUntil([&] { return f.lanes().size() == 2; }));
+	CHECK(f.lanes()[1] == Json{{"type", "polyPressure"}, {"number", 64}});
+	// Its events are poly pressure of that pitch.
+	REQUIRE(f.app.waitUntil([&] { return f.elements(Fixture::area(1)).size() == 1; }));
+	f.tool("draw");
+	f.click(f.at(1, 4.5, 0.5));
+	REQUIRE(f.app.waitUntil([&] { return f.controllers().size() == 1; }));
+	CHECK(f.controllers()[0].at("type") == "polyPressure");
+	CHECK(f.controllers()[0].at("number") == 64);
+	CHECK(f.controllers()[0].at("value").get<double>() == Approx(0.5).margin(0.03));
+
+	// On a program change lane the value is the program, 0 at the bottom, 127 at the top.
+	f.app.call("editor.set", {{"editor", "window"}, {"lanes", {{{"type", "program"}}}}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".controller-lane-type").at(0).at("text") == "Program Change"; }));
+	const auto programs = [&]
+	{
+		std::vector<int> found;
+		for (const Json& each : f.controllers())
+			if (each.at("type") == "program")
+				found.push_back(each.at("number").get<int>());
+		return found;
+	};
+	// Just below the top row of pixels, which the note display above takes.
+	f.click(f.at(0, 8.5, 0.99));
+	REQUIRE(f.app.waitUntil([&] { return programs().size() == 1; }));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(Fixture::area(0) + " .controller-step").size() == 1; }));
+	f.click(f.at(0, 12.5, 0.5));
+	REQUIRE(f.app.waitUntil([&] { return programs().size() == 2; }));
+	CHECK(programs()[0] >= 124);
+	CHECK(std::abs(programs()[1] - 64) <= 2);
+	REQUIRE(f.app.waitUntil([&] { return f.elements(Fixture::area(0) + " .controller-step").size() == 2; }));
+}
+
+TEST_CASE("Ctrl and the draw tool paint controller events only where the mouse went", "[ui]")
+{
+	Fixture f;
+	f.app.call("editor.set", {{"editor", "window"}, {"lanes", {{{"type", "controller"}, {"number", 1}}}}});
+	REQUIRE(
+		f.app.waitUntil([&] { return f.elements(".controller-lane-type").at(0).at("text") == "Modulation (CC 1)"; }));
+	f.tool("draw");
+	// Without Ctrl an event every length quantize step, a sixteenth: three from the first sixteenth to the third.
+	f.drag(f.at(0, 0.5, 0.5), f.at(0, 2.5, 0.5));
+	REQUIRE(f.app.waitUntil([&] { return f.controllers().size() == 3; }));
+	// The lanes show them, so that the next paint replaces them.
+	REQUIRE(f.app.waitUntil([&] { return f.elements(Fixture::area(0) + " .controller-step").size() == 3; }));
+	// With Ctrl one where the mouse was pressed and one at each of the drag's moves, off the grid, more than the two
+	// steps there; those there go, the one at the start stays.
+	f.app.ui().drag(f.window, f.at(0, 0.5, 0.25), f.at(0, 2.5, 0.25), {"ctrl"});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.controllers().size() > 4; }));
+	const std::vector<Json> events = f.controllers();
+	CHECK(events[0].at("position") == 0);
+	CHECK(events[0].at("value").get<double>() == Approx(0.5).margin(0.03));
+	CHECK(events[1].at("position").get<int64_t>() % g_sixteenth != 0);
+	for (size_t i = 1; i < events.size(); ++i)
+		CHECK(events[i].at("value").get<double>() == Approx(0.25).margin(0.03));
+}
+
+TEST_CASE("Remove Preset removes a controller lane preset", "[ui]")
+{
+	Fixture f;
+	f.app.call("settings.set",
+		{{"key", "ui.controllerLanePresets"},
+			{"value", Json::parse(R"([{"name": "Expressive", "lanes": [{"type": "pitchBend"}]},
+				{"name": "Plain", "lanes": [{"type": "velocity"}]}])")}});
+	REQUIRE(f.app.waitUntil([&] { return !f.elements("#controller-remove-preset").empty(); }));
+	f.click(of("#controller-lane-setup"));
+	REQUIRE(f.app.waitUntil([&] { return f.visible("#controller-remove-preset"); }));
+	f.app.ui().move(f.window, of("#controller-remove-preset"));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const std::string expressive = "#controller-setup-menu menuitem[remove-preset=Expressive]";
+	REQUIRE(f.app.waitUntil([&] { return f.visible(expressive); }));
+	f.click(of(expressive));
+	const auto presets = [&] { return f.app.call("settings.get", {{"key", "ui.controllerLanePresets"}}).at("value"); };
+	REQUIRE(f.app.waitUntil([&] { return presets().size() == 1; }));
+	CHECK(presets().at(0).at("name") == "Plain");
+	// The menu lists what's left.
+	REQUIRE(
+		f.app.waitUntil([&] { return f.elements("#controller-setup-menu menuitem[lane-preset=Expressive]").empty(); }));
+	CHECK(f.elements("#controller-setup-menu menuitem[lane-preset=Plain]").size() == 1);
+}
+
+TEST_CASE("Apply and Reset MIDI Velocity Variance change the notes of every part as one undo step", "[ui]")
+{
+	Fixture f;
+	const std::vector<uint64_t> ids = f.add({0, 4});
+	const uint64_t second = f.app.call("midiPart.add", {{"track", f.track}, {"position", g_bar}, {"length", g_bar}})
+								.at("part")
+								.at("id")
+								.get<uint64_t>();
+	const uint64_t third =
+		f.app
+			.call("note.add",
+				{{"part", second},
+					{"notes", {{{"position", 0}, {"length", g_sixteenth}, {"pitch", 60}, {"velocity", 0.5}}}}})
+			.at("notes")
+			.at(0)
+			.at("id")
+			.get<uint64_t>();
+	f.app.call("note.set",
+		{{"part", f.part},
+			{"notes", {{{"id", ids[0]}, {"velocityVariance", 0.5}}, {{"id", ids[1]}, {"velocityVariance", 0.5}}}}});
+	f.app.call("note.set", {{"part", second}, {"notes", {{{"id", third}, {"velocityVariance", 0.5}}}}});
+	f.app.call("editor.open", {{"editor", "window"}, {"parts", {f.part, second}}});
+	f.app.call(
+		"editor.set", {{"editor", "window"}, {"lanes", {{{"type", "velocity"}}, {{"type", "velocityVariance"}}}}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(Fixture::area(1) + " .controller-bar").size() == 3; }));
+	// The notes of both parts that have a velocity variance, and their velocities.
+	const auto varied = [&]
+	{
+		size_t count = 0;
+		const Json project = f.app.call("project.get");
+		for (const Json& each : project.at("midiParts"))
+			for (const Json& note : each.at("notes"))
+				count += note.contains("velocityVariance") ? 1 : 0;
+		return count;
+	};
+	const auto velocities = [&]
+	{
+		std::vector<double> found;
+		const Json project = f.app.call("project.get");
+		for (const Json& each : project.at("midiParts"))
+			for (const Json& note : each.at("notes"))
+				found.push_back(note.at("velocity").get<double>());
+		return found;
+	};
+	REQUIRE(varied() == 3);
+
+	// Apply gives the notes of both parts the velocity they play with, in one history.transaction: one undo step.
+	f.choose(R"(.controller-lane-type[lane-menu="1"])", "#controller-lane-menu menuitem[lane-action=applyVariance]");
+	REQUIRE(f.app.waitUntil([&] { return varied() == 0; }));
+	for (const double velocity : velocities())
+		CHECK(velocity >= 0.5 - 1e-4);
+	const std::vector<double> applied = velocities();
+	CHECK(*std::max_element(applied.begin(), applied.end()) > 0.51); // varied up, not only reset
+	f.app.call("history.undo");
+	CHECK(varied() == 3);
+	for (const double velocity : velocities())
+		CHECK(velocity == Approx(0.5).margin(1e-4));
+
+	// Reset sets the variance back to 0 and keeps the velocities, also one undo step.
+	REQUIRE(f.app.waitUntil([&] { return f.elements(Fixture::area(1) + " .controller-bar").size() == 3; }));
+	f.choose(R"(.controller-lane-type[lane-menu="1"])", "#controller-lane-menu menuitem[lane-action=resetVariance]");
+	REQUIRE(f.app.waitUntil([&] { return varied() == 0; }));
+	for (const double velocity : velocities())
+		CHECK(velocity == Approx(0.5).margin(1e-4));
+	f.app.call("history.undo");
+	CHECK(varied() == 3);
+}
+
+TEST_CASE("the line tool and painting replace the events of every channel and keep the lane's channel", "[ui]")
+{
+	Fixture f;
+	const auto event = [](int64_t position, int channel)
+	{ return Json{{"position", position}, {"number", 1}, {"value", 0.5}, {"channel", channel}}; };
+	f.app.call("controller.add",
+		{{"part", f.part},
+			{"controllers",
+				{event(0, 2), event(2 * g_sixteenth, 2), event(4 * g_sixteenth, 2), event(6 * g_sixteenth, 3),
+					event(12 * g_sixteenth, 2)}}});
+	f.app.call("editor.set", {{"editor", "window"}, {"lanes", {{{"type", "controller"}, {"number", 1}}}}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(Fixture::area(0) + " .controller-step").size() == 5; }));
+	const auto channels = [&]
+	{
+		std::vector<int> found;
+		for (const Json& each : f.controllers())
+			found.push_back(each.at("channel").get<int>());
+		return found;
+	};
+
+	// A line over the first half bar: an event every sixteenth on the channel of the events there, and none of
+	// another channel left in between.
+	f.tool("line");
+	f.drag(f.at(0, 0, 0.0), f.at(0, 8, 1.0));
+	REQUIRE(f.app.waitUntil([&] { return f.controllers().size() == 10; }));
+	CHECK(channels() == std::vector<int>(10, 2));
+	CHECK(f.controllers()[4].at("value").get<double>() == Approx(0.5).margin(0.03));
+	// One undo step brings the events back.
+	f.app.call("history.undo");
+	CHECK(channels() == std::vector<int>({2, 2, 2, 3, 2}));
+
+	// Painting where the lane has no events takes the channel of its first event in the part.
+	REQUIRE(f.app.waitUntil([&] { return f.elements(Fixture::area(0) + " .controller-step").size() == 5; }));
+	f.tool("draw");
+	f.click(f.at(0, 14.5, 0.5));
+	REQUIRE(f.app.waitUntil([&] { return f.controllers().size() == 6; }));
+	CHECK(f.controllers().back().at("channel") == 2);
+	CHECK(f.controllers().back().at("position") == 14 * g_sixteenth);
+}
+
+TEST_CASE("a drag on a lane released outside the lanes ends there, and one whose mouseup never came at the next press",
+	"[ui]")
+{
+	Fixture f;
+	f.app.call("editor.set", {{"editor", "window"}, {"lanes", {{{"type", "controller"}, {"number", 1}}}}});
+	f.app.call("controller.add",
+		{{"part", f.part}, {"controllers", {{{"position", 4 * g_sixteenth}, {"number", 1}, {"value", 0.25}}}}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(Fixture::area(0) + " .controller-step").size() == 1; }));
+	const auto value = [&] { return f.controllers().at(0).at("value").get<double>(); };
+	// Waits until the lanes' commands so far have arrived: a lane added from the menu comes after them.
+	size_t lanes = 1;
+	const auto settle = [&]
+	{
+		f.choose("#controller-lane-create", R"(#controller-create-menu menuitem[lane-type="pitchBend"])");
+		++lanes;
+		REQUIRE(f.app.waitUntil([&] { return f.lanes().size() == lanes; }));
+	};
+
+	// A value drag released above the lanes, over the window's toolbar, sets the value there: the top.
+	f.drag(f.at(0, 4.5, 0.1), f.spare());
+	REQUIRE(f.app.waitUntil([&] { return value() > 0.95; }));
+	const size_t before = f.steps();
+	// It has ended: a press outside the lanes and a release over them change nothing.
+	f.drag(f.spare(), f.at(0, 4.5, 0.5));
+	settle();
+	CHECK(value() > 0.95);
+	CHECK(f.steps() == before);
+
+	// A paint whose mouseup never came (released outside the window) ends without its effect at the next press.
+	f.tool("draw");
+	f.press(f.at(0, 10.5, 0.5));
+	f.click(f.spare());
+	settle();
+	CHECK(f.controllers().size() == 1);
+	CHECK(f.steps() == before);
+	// The draw tool paints again after it.
+	f.click(f.at(0, 10.5, 0.5));
+	REQUIRE(f.app.waitUntil([&] { return f.controllers().size() == 2; }));
+}
+
+TEST_CASE("a paint on a controller lane goes into the part where it was pressed, wherever it is released", "[ui]")
+{
+	Fixture f;
+	f.app.call("editor.set", {{"editor", "window"}, {"lanes", {{{"type", "controller"}, {"number", 1}}}}});
+	REQUIRE(
+		f.app.waitUntil([&] { return f.elements(".controller-lane-type").at(0).at("text") == "Modulation (CC 1)"; }));
+	f.tool("draw");
+	// Pressed at 4.5 sixteenths and released left of the lane area, over the lane's header, before the part's start:
+	// an event every length quantize step, a sixteenth, from the part's start to the pressed one.
+	const Json header = f.box(".controller-lane-header");
+	const ui::Target left{"", 0,
+		ui::Point{static_cast<int>(std::lround(header.at("x").get<double>() + (header.at("width").get<double>() / 2))),
+			f.at(0, 4.5, 0.5).point.value_or(ui::Point{}).y}};
+	f.drag(f.at(0, 4.5, 0.5), left);
+	REQUIRE(f.app.waitUntil([&] { return f.controllers().size() == 5; }));
+	for (size_t i = 0; i < 5; ++i)
+		CHECK(f.controllers()[i].at("position") == static_cast<int64_t>(i) * g_sixteenth);
 }
