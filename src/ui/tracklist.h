@@ -58,6 +58,9 @@ namespace gnubase::ui
 		// Whether a selected folder has a group channel (withGroupChannel) or has none: when Disable or Enable Group
 		// Channel has something to do.
 		bool selectsFolder(bool withGroupChannel) const;
+		// Whether a selected track has a type, as track.add names them: e.g. when Set Root Key for Unassigned Events
+		// is in the context menu of the transpose track.
+		bool selectsType(const std::string& type) const;
 
 		// Folding (reference manual p. 225): the tracks inside a folded folder are hidden, in the event display too.
 		bool folded(uint64_t folder) const { return m_folded.count(folder) != 0; }

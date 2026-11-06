@@ -111,6 +111,8 @@ add_library(gnubase-ui STATIC
 	trackvisibility.h
 	transport.cpp
 	transport.h
+	transposetrack.cpp
+	transposetrack.h
 	ui.cpp
 	ui.h
 	uisettings.cpp

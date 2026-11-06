@@ -43,6 +43,7 @@ namespace gnubase::engine
 			{TrackType::Tempo, "tempo"},
 			{TrackType::Signature, "signature"},
 			{TrackType::Arranger, "arranger"},
+			{TrackType::Transpose, "transpose"},
 			{TrackType::Vca, "vca"},
 		};
 
@@ -717,7 +718,8 @@ namespace gnubase::engine
 		return {{"id", part.id}, {"track", part.track}, {"name", part.name}, {"position", part.position.value},
 			{"length", part.length}, {"mute", part.mute}, {"lock", part.lock}, {"shared", part.shared},
 			{"color", colorJson(part.color)}, {"lane", part.lane}, {"transpose", part.transpose},
-			{"velocity", part.velocity}, {"notes", toJsonArray(part.notes)},
+			{"velocity", part.velocity}, {"rootKey", rootKeyName(part.rootKey)},
+			{"globalTranspose", part.independent ? "independent" : "follow"}, {"notes", toJsonArray(part.notes)},
 			{"controllers", toJsonArray(part.controllers)}};
 	}
 
@@ -758,6 +760,19 @@ namespace gnubase::engine
 		return {{"track", track == project.trackById.end() ? ObjectId{0} : track->first}, {"events", events},
 			{"chains", chains}, {"chain", active == nullptr ? ObjectId{0} : active->id}, {"mode", project.arrangerMode},
 			{"jumpMode", g_arrangerJumpModes.at(static_cast<size_t>(project.arrangerJump))}};
+	}
+
+	Json transposeJson(const Project& project)
+	{
+		const auto track = std::find_if(project.trackById.begin(), project.trackById.end(),
+			[](const auto& entry) { return entry.second.type == TrackType::Transpose; });
+		Json events = Json::array();
+		for (const TransposeEvent& event : project.transpose.events)
+			events.push_back({{"id", event.id}, {"position", event.position.value},
+				{"start", time::toSamples(event.position, project.tempo, project.sampleRate)}, {"value", event.value}});
+		const TransposeTrack& transpose = project.transpose;
+		return {{"track", track == project.trackById.end() ? ObjectId{0} : track->first}, {"events", events},
+			{"mute", transpose.mute}, {"keepInOctave", transpose.keepInOctave}, {"lock", transpose.lock}};
 	}
 
 	Json toJson(const LinkGroup& group)
@@ -1027,6 +1042,7 @@ namespace gnubase::engine
 			{"audioParts", toJsonArray(project.audioParts)}, {"midiParts", toJsonArray(project.midiParts)},
 			{"markers", toJsonArray(project.markers)}, {"automation", toJsonArray(project.automation)},
 			{"linkGroups", toJsonArray(project.linkGroups)}, {"arranger", arrangerJson(project)},
+			{"rootKey", rootKeyName(project.rootKey)}, {"transpose", transposeJson(project)},
 			{"drumMaps", toJsonArray(project.drumMaps)}, {"virginTerritory", project.virginTerritory},
 			{"quantize", midi::toJson(project.quantize)}, {"autoQuantize", project.autoQuantize},
 			{"quantizePreset", project.quantizePreset}, {"activeMarkerTrack", project.activeMarkerTrack},
@@ -1388,6 +1404,25 @@ namespace gnubase::engine
 			project.arrangerMode = json.value("mode", false);
 			project.arrangerJump = static_cast<ArrangerJump>(
 				indexOf(g_arrangerJumpModes, json.value("jumpMode", std::string("none"))).value_or(0));
+		}
+
+		// The transpose track as transposeJson writes it, in the transpose track's time base, in timeline order.
+		void transposeFromJson(Project& project, const Json& json)
+		{
+			const auto track = std::find_if(project.trackById.begin(), project.trackById.end(),
+				[](const auto& entry) { return entry.second.type == TrackType::Transpose; });
+			if (track == project.trackById.end())
+				return;
+			const time::TimeBase base = track->second.timeBase;
+			TransposeTrack& transpose = project.transpose;
+			for (const Json& item : json.value("events", Json::array()))
+				transpose.events.push_back({item.at("id").get<ObjectId>(), {base, item.at("position").get<int64_t>()},
+					std::clamp(item.value("value", 0), -24, 24)});
+			std::stable_sort(transpose.events.begin(), transpose.events.end(),
+				[](const TransposeEvent& a, const TransposeEvent& b) { return a.position.value < b.position.value; });
+			transpose.mute = json.value("mute", false);
+			transpose.keepInOctave = json.value("keepInOctave", false);
+			transpose.lock = json.value("lock", false);
 		}
 
 		const std::array<const char*, 5> g_eqBandTypes = {"bell", "lowShelf", "highShelf", "lowCut", "highCut"};
@@ -2013,6 +2048,9 @@ namespace gnubase::engine
 				"MIDI part " + std::to_string(part.id) + " transpose"));
 			part.velocity = static_cast<int>(checkedNumber(
 				item.value("velocity", Json(0)), -127.0, 127.0, "MIDI part " + std::to_string(part.id) + " velocity"));
+			// Files from before #168 have neither.
+			part.rootKey = rootKeyFromName(item.value("rootKey", std::string())).value_or(-1);
+			part.independent = item.value("globalTranspose", std::string("follow")) == "independent";
 			for (const Json& n : item.at("notes"))
 			{
 				Note note;
@@ -2111,6 +2149,8 @@ namespace gnubase::engine
 		}
 		project.activeMarkerTrack = json.value("activeMarkerTrack", ObjectId{0});
 		arrangerFromJson(project, json.value("arranger", Json::object())); // files from before #167 have none
+		project.rootKey = rootKeyFromName(json.value("rootKey", std::string())).value_or(-1); // and before #168
+		transposeFromJson(project, json.value("transpose", Json::object()));
 		for (const Json& item : json.value("automation", Json::array()))
 		{
 			AutomationLane lane = automationLaneFromJson(project, item);
@@ -2240,6 +2280,8 @@ namespace gnubase::engine
 			see(event.id);
 		for (const ArrangerChain& chain : project.arranger.chains)
 			see(chain.id);
+		for (const TransposeEvent& event : project.transpose.events)
+			see(event.id);
 		project.nextId = std::max(json.value("nextId", ObjectId{0}), highest + 1);
 		for (ArrangerChain& chain : project.arranger.chains)
 			if (chain.id == 0)

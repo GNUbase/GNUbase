@@ -8,7 +8,8 @@
      (docs/features/event-display.md): the ruler's arrow button .ruler-format, #ruler-format-menu, #zoom-presets-menu,
      #auto-scroll and #auto-scroll-menu, and the snap controls #snap, #snap-type, #snap-type-menu, #grid-type,
      #grid-type-menu (which the display fills with the ruler format's grid types) and #snap-zero-crossing
-     (docs/features/snap.md). Its dialogs are zoom-preset.rml, zoom-presets.rml and repeat-events.rml, next to this
+     (docs/features/snap.md), and the Project Root Key #root-key with #root-key-menu (docs/features/transpose.md). Its
+     dialogs are zoom-preset.rml, zoom-presets.rml and repeat-events.rml, next to this
      file. ui::TrackList fills #track-list under its global track controls (docs/features/track-list.md): #add-track
      opens the add track dialog (add-track.rml), #track-controls-settings the track controls settings dialog
      (track-controls.rml); #track-list-menu is its context menu.
@@ -122,6 +123,8 @@
 		<div id="toolbar-quantize" class="toolbar-quantize"/>
 		<button id="select-color" class="icon-only" menu="color-menu" title="Select Color for Selected Tracks or Events"><svg class="icon" src="../icons/general-color.svg"/></button>
 		<button id="track-visibility-configurations" class="track-visibility-configurations" menu="track-visibility-configurations-menu" title="Track Visibility Configurations">Configurations</button>
+		<!-- The Project Root Key (reference manual p. 414, docs/features/transpose.md), which the display shows -->
+		<button id="root-key" class="toolbar-root-key" menu="root-key-menu" title="Project Root Key">-</button>
 		<div class="spacer"/>
 		<button id="show-channel-zone" type="toggle" toggle="channel" class="icon-only" title="Show/Hide Channel"><svg class="icon" src="../icons/layout-channel-zone.svg"/></button>
 		<button id="show-left-zone" type="toggle" toggle="left" class="icon-only" title="Show/Hide Left Zone"><svg class="icon" src="../icons/layout-left-zone.svg"/></button>
@@ -453,6 +456,8 @@
 				<menuitem command="settings.set" parameters='{"key": "ui.folderData", "value": "hideWhenExpanded"}'>Hide Data When Expanded</menuitem>
 			</menu>
 		</menuitem>
+		<!-- The transpose track (reference manual p. 416, docs/features/transpose.md) -->
+		<menuitem command="transpose.assignRootKey">Set Root Key for Unassigned Events</menuitem>
 		<menuseparator/>
 		<menuitem command="track.autoFades">Auto Fades Settings...</menuitem>
 		<menuitem command="track.controlsSettings">Track Controls Settings...</menuitem>
@@ -553,6 +558,21 @@
 		<menuseparator/>
 		<menuitem id="zoom-preset-add">Add...</menuitem>
 		<menuitem id="zoom-presets-organize">Organize...</menuitem>
+	</menu>
+	<menu id="root-key-menu">
+		<menuitem root-key="">-</menuitem>
+		<menuitem root-key="C">C</menuitem>
+		<menuitem root-key="C#">C#</menuitem>
+		<menuitem root-key="D">D</menuitem>
+		<menuitem root-key="D#">D#</menuitem>
+		<menuitem root-key="E">E</menuitem>
+		<menuitem root-key="F">F</menuitem>
+		<menuitem root-key="F#">F#</menuitem>
+		<menuitem root-key="G">G</menuitem>
+		<menuitem root-key="G#">G#</menuitem>
+		<menuitem root-key="A">A</menuitem>
+		<menuitem root-key="A#">A#</menuitem>
+		<menuitem root-key="B">B</menuitem>
 	</menu>
 	<menu id="snap-type-menu">
 		<menuitem snap-type="grid">Grid</menuitem>

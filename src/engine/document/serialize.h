@@ -121,6 +121,11 @@ namespace gnubase::engine
 	// and end in samples; the chains with their steps, the active chain (chain), mode and jumpMode.
 	Json arrangerJson(const Project& project);
 
+	// The transpose track (#168) as transpose.get describes it, transpose.changed announces it and the project file
+	// keeps it: the transpose track (0 for none); its events in timeline order, positions in the track's time base and
+	// start in samples, with their values; mute, keepInOctave and lock.
+	Json transposeJson(const Project& project);
+
 	// The whole project, with the tracks from top to bottom. The id counter is left out: undo doesn't restore it,
 	// so that ids stay unique.
 	Json toJson(const Project& project);

@@ -162,6 +162,8 @@ add_executable(gnubase-tests
 	trackvisibility_ui_tests.cpp
 	transport_tests.cpp
 	transportbar_tests.cpp
+	transpose_tests.cpp
+	transpose_ui_tests.cpp
 	uiapp.cpp
 	uiapp.h
 	uiapp_tests.cpp
