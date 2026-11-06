@@ -7,6 +7,7 @@
 #include "engine/document/document.h"
 #include "engine/document/projectmodel.h"
 #include "engine/document/serialize.h"
+#include "engine/document/warp.h"
 #include "engine/engine.h"
 
 #include <algorithm>
@@ -409,8 +410,22 @@ namespace gnubase::engine
 		EventSpan result;
 		result.ratio = project.sampleRate / project.media.at(project.clips.at(event.clip).media).sampleRate;
 		result.start = time::toSamples(event.position, project.tempo, project.sampleRate);
-		result.end = result.start + std::llround(static_cast<double>(event.length) * result.ratio);
+		result.end = result.start + std::llround(eventSamples(project, event, static_cast<double>(event.length)));
 		return result;
+	}
+
+	double eventSamples(const Project& project, const AudioEvent& event, double frames)
+	{
+		if (warped(project.clips.at(event.clip)))
+			return warpedOffset(project, event, static_cast<double>(event.offset) + frames);
+		return frames * project.sampleRate / project.media.at(project.clips.at(event.clip).media).sampleRate;
+	}
+
+	double eventFrames(const Project& project, const AudioEvent& event, double samples)
+	{
+		if (warped(project.clips.at(event.clip)))
+			return warpedFrameAt(project, event, samples) - static_cast<double>(event.offset);
+		return samples * project.media.at(project.clips.at(event.clip).media).sampleRate / project.sampleRate;
 	}
 
 	bool crossfadeApplies(const Project& project, const AudioEvent& to)

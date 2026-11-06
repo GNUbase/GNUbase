@@ -4,6 +4,7 @@
 #include "engine/audio/automation.h"
 #include "engine/audio/fades.h"
 #include "engine/document/stripparameters.h"
+#include "engine/document/warp.h"
 #include "engine/dsp/dsp.h"
 #include "engine/midi/controllerlanes.h"
 #include "engine/midi/drummaps.h"
@@ -113,6 +114,34 @@ namespace gnubase::engine
 			return event.length > 0;
 		}
 
+		// An event of a warped clip plays a media file of its own (RenderMedia::warp), whose frames start at the
+		// event's start: its clip fades only where it reaches the clip's ends, its volume curve where its audio plays.
+		// ponytail: its fades keep their length in clip frames, whatever the stretch there.
+		void warpEvent(
+			const Project& project, const AudioEvent& event, RenderSnapshot& snapshot, RenderAudioEvent& render)
+		{
+			const Clip& clip = project.clips.at(event.clip);
+			const MediaFile& file = project.media.at(clip.media);
+			RenderMedia media{event.id, file.path, file.sampleRate, file.channels, 0, warpMap(project, event),
+				dsp::stretchPresetFromString(clip.warp.preset).value_or(dsp::StretchPreset::Quality)};
+			media.length = std::llround(media.warp.back().target);
+			const auto moved = [&media](time::Samples frame)
+			{
+				return static_cast<time::Samples>(
+					std::llround(dsp::warpTarget(media.warp, static_cast<double>(frame))));
+			};
+			for (GainPoint& point : render.volumeCurve)
+				point.position = moved(point.position);
+			if (event.offset > 0)
+				render.clipFadeIn = Fade();
+			if (event.offset + event.length < file.length)
+				render.clipFadeOut = Fade();
+			render.media = static_cast<int>(snapshot.media.size());
+			render.offset = 0;
+			render.length = media.length;
+			snapshot.media.push_back(std::move(media));
+		}
+
 		// What still plays on a frozen track: the fader, pan and mute, and the strip's sections after the plugin slots;
 		// its freeze file has the rest.
 		bool afterFreeze(const AutomationTarget& target)
@@ -153,7 +182,8 @@ namespace gnubase::engine
 			event.media = static_cast<int>(snapshot.media.size());
 			event.length = frozen.length;
 			channel.audioEvents.push_back(std::move(event));
-			snapshot.media.push_back({channel.id, frozen.path, frozen.sampleRate, frozen.channels, frozen.length});
+			snapshot.media.push_back({channel.id, frozen.path, frozen.sampleRate, frozen.channels, frozen.length, {},
+				dsp::StretchPreset::Quality});
 		}
 
 		// Mute, solo and disabled tracks: with a channel soloed, only soloed channels, those they play into and those
@@ -401,7 +431,8 @@ namespace gnubase::engine
 		for (const auto& [id, media] : project.media)
 		{
 			mediaIndex[id] = static_cast<int>(snapshot->media.size());
-			snapshot->media.push_back({id, media.path, media.sampleRate, media.channels, media.length});
+			snapshot->media.push_back(
+				{id, media.path, media.sampleRate, media.channels, media.length, {}, dsp::StretchPreset::Quality});
 		}
 
 		std::map<ObjectId, int> channelIndex;
@@ -500,6 +531,8 @@ namespace gnubase::engine
 				event.fadeOut, clip.fadeIn, clip.fadeOut,
 				crossfadeApplies(project, event) ? event.crossfade : Crossfade(), gainPoints(event.volumeCurve),
 				frontOf(event)};
+			if (warped(clip))
+				warpEvent(project, event, *snapshot, render);
 			if (const auto part = project.audioParts.find(event.part); part != project.audioParts.end() &&
 				!inPart(project, part->second, project.sampleRate / project.media.at(clip.media).sampleRate, render))
 				continue;

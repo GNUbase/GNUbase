@@ -1591,6 +1591,59 @@ Result:
 - `clip`: integer, required
 - `region`: object, required
 
+#### `clip_addWarpMarker`
+
+Engine command `clip.addWarpMarker`.
+
+Inserts a free warp marker into a clip at position (a clip frame) that plays it at target, default position (Free Warp, reference manual pp. 654-655). Markers can't pass each other. A clip's warp has musical (musical mode: its beats follow the project's tempo), its definition: tempo (BPM of quarter notes, 0 until one is set), beatsPerBar, gridStart (the clip frame of beat 0) and beats (the beats, counted in quarters from the grid start, that Auto Adjust or Manual Adjust put elsewhere than the tempo would, each at a clip frame), its free warp markers (each plays the audio at its position where the clip frame target would play without it) and preset, the time stretch algorithm of real-time warping. Emits clip.changed. Returns the clip's id and its warp.
+
+Arguments:
+
+- `clip`: integer, required
+- `position`: integer, required
+- `target`: integer
+
+Result:
+
+- `clip`: integer, required
+- `warp`: object, required
+
+#### `clip_adjustGrid`
+
+Engine command `clip.adjustGrid`.
+
+Corrects a clip's definition grid by hand (Manual Adjust, reference manual pp. 652-654), moving a line of the grid to the clip frame frame. mode start: the grid start, and the beats edited with it (Set Grid Start); stretch: makes beat beat (default the second bar's first) be at frame by changing the tempo, dropping the beats edited, so that every bar is as long (Stretch Grid); bar: puts beat beat at frame and the beats edited after it with it (Set Bar Position, Move Following Bars); beat: puts beat beat at frame alone (Set Beat Position); remove: drops the edit of beat beat (Remove Beat Edit). A clip without a tempo gets the project's first. A clip's warp has musical (musical mode: its beats follow the project's tempo), its definition: tempo (BPM of quarter notes, 0 until one is set), beatsPerBar, gridStart (the clip frame of beat 0) and beats (the beats, counted in quarters from the grid start, that Auto Adjust or Manual Adjust put elsewhere than the tempo would, each at a clip frame), its free warp markers (each plays the audio at its position where the clip frame target would play without it) and preset, the time stretch algorithm of real-time warping. Emits clip.changed. Returns the clip's id and its warp.
+
+Arguments:
+
+- `beat`: integer
+- `clip`: integer, required
+- `frame`: integer
+- `mode`: one of "start" | "stretch" | "bar" | "beat" | "remove", required
+
+Result:
+
+- `clip`: integer, required
+- `warp`: object, required
+
+#### `clip_autoAdjust`
+
+Engine command `clip.autoAdjust`.
+
+Extracts a clip's definition grid from its hitpoints (Auto Adjust, reference manual pp. 651-652): the section from start to end (clip frames; default the whole clip) is taken to start and end at a barline and to be bars bars long (default: the whole bars nearest its length at the clip's tempo, or the project's without one). That makes the clip's tempo and grid start; every beat with a hitpoint that counts within a quarter beat of it is then edited to be at that hitpoint. Fails without such hitpoints. A clip's warp has musical (musical mode: its beats follow the project's tempo), its definition: tempo (BPM of quarter notes, 0 until one is set), beatsPerBar, gridStart (the clip frame of beat 0) and beats (the beats, counted in quarters from the grid start, that Auto Adjust or Manual Adjust put elsewhere than the tempo would, each at a clip frame), its free warp markers (each plays the audio at its position where the clip frame target would play without it) and preset, the time stretch algorithm of real-time warping. Emits clip.changed. Returns the clip's id and its warp.
+
+Arguments:
+
+- `bars`: integer
+- `clip`: integer, required
+- `end`: integer
+- `start`: integer
+
+Result:
+
+- `clip`: integer, required
+- `warp`: object, required
+
 #### `clip_detectHitpoints`
 
 Engine command `clip.detectHitpoints`.
@@ -1667,6 +1720,22 @@ Arguments:
 Result:
 
 - `clip`: integer, required
+
+#### `clip_removeWarpMarkers`
+
+Engine command `clip.removeWarpMarkers`.
+
+Removes the free warp markers of a clip at positions (Deleting Warp Markers, reference manual p. 656), or without positions all of them, which resets the free warp edits and leaves musical mode and the definition as they are (Reset, p. 656). A clip's warp has musical (musical mode: its beats follow the project's tempo), its definition: tempo (BPM of quarter notes, 0 until one is set), beatsPerBar, gridStart (the clip frame of beat 0) and beats (the beats, counted in quarters from the grid start, that Auto Adjust or Manual Adjust put elsewhere than the tempo would, each at a clip frame), its free warp markers (each plays the audio at its position where the clip frame target would play without it) and preset, the time stretch algorithm of real-time warping. Emits clip.changed. Returns the clip's id and its warp.
+
+Arguments:
+
+- `clip`: integer, required
+- `positions`: array of integer
+
+Result:
+
+- `clip`: integer, required
+- `warp`: object, required
 
 #### `clip_set`
 
@@ -1773,6 +1842,45 @@ Result:
 
 - `clip`: integer, required
 - `region`: object, required
+
+#### `clip_setWarp`
+
+Engine command `clip.setWarp`.
+
+Changes a clip's musical mode and definition (the Definition and Warp sections of the sample editor, the pool's Musical Mode column, reference manual pp. 616, 648-650): musical turns musical mode on or off, which in a clip without a tempo takes the project's at the start of its first event so that nothing changes until the tempo does; tempo (1-999 BPM); bars and beats, its length from the grid start to its end in bars and quarters, which sets the tempo that makes it that long; beatsPerBar (1-64); gridStart (a clip frame; the edited beats move with it); preset (the algorithm preset of real-time warping). What isn't given stays. A clip's warp has musical (musical mode: its beats follow the project's tempo), its definition: tempo (BPM of quarter notes, 0 until one is set), beatsPerBar, gridStart (the clip frame of beat 0) and beats (the beats, counted in quarters from the grid start, that Auto Adjust or Manual Adjust put elsewhere than the tempo would, each at a clip frame), its free warp markers (each plays the audio at its position where the clip frame target would play without it) and preset, the time stretch algorithm of real-time warping. Emits clip.changed. Returns the clip's id and its warp.
+
+Arguments:
+
+- `bars`: integer
+- `beats`: integer
+- `beatsPerBar`: integer
+- `clip`: integer, required
+- `gridStart`: integer
+- `musical`: boolean
+- `preset`: one of "quality" | "efficient" | "drums" | "plucked" | "pads" | "vocals" | "mix" | "solo"
+- `tempo`: number
+
+Result:
+
+- `clip`: integer, required
+- `warp`: object, required
+
+#### `clip_setWarpMarker`
+
+Engine command `clip.setWarpMarker`.
+
+Moves the free warp marker of a clip at position so that it plays at target, a clip frame (Correcting Warp Marker Positions, reference manual p. 656). Markers can't pass each other. A clip's warp has musical (musical mode: its beats follow the project's tempo), its definition: tempo (BPM of quarter notes, 0 until one is set), beatsPerBar, gridStart (the clip frame of beat 0) and beats (the beats, counted in quarters from the grid start, that Auto Adjust or Manual Adjust put elsewhere than the tempo would, each at a clip frame), its free warp markers (each plays the audio at its position where the clip frame target would play without it) and preset, the time stretch algorithm of real-time warping. Emits clip.changed. Returns the clip's id and its warp.
+
+Arguments:
+
+- `clip`: integer, required
+- `position`: integer, required
+- `target`: integer, required
+
+Result:
+
+- `clip`: integer, required
+- `warp`: object, required
 
 #### `clip_spectrum`
 
@@ -2317,6 +2425,23 @@ Result:
 
 - `events`: array of integer, required
 
+#### `event_flatten`
+
+Engine command `event.flatten`.
+
+Flattens the real-time processing of audio events (Flatten Real Time Processing, reference manual p. 657): renders what each event of a warped clip plays, as it plays it now, into a 32-bit float WAV file in the project's media folder (for a project without a file, the folder its recordings go to) with the algorithm preset (default the clip's), named after the clip with Flattened, and makes the event play a new clip of it from its start, with its volume curve and snap point where its audio is. It then no longer follows tempo changes or warp edits. Events of clips that aren't warped stay; fails if none is. Emits media.added, clip.added and audioEvent.changed. Returns the events flattened and their new media files and clips.
+
+Arguments:
+
+- `events`: array of integer, required
+- `preset`: one of "quality" | "efficient" | "drums" | "plucked" | "pads" | "vocals" | "mix" | "solo"
+
+Result:
+
+- `clips`: array of integer, required
+- `events`: array of integer, required
+- `media`: array of integer, required
+
 #### `event_fromHitpoints`
 
 Engine command `event.fromHitpoints`.
@@ -2600,6 +2725,20 @@ Arguments:
 Result:
 
 - `events`: array of integer, required
+
+#### `event_unstretch`
+
+Engine command `event.unstretch`.
+
+Removes all real-time stretching from the clips of audio events (Unstretch Audio, reference manual pp. 657-658): turns musical mode off and removes their free warp markers, keeping their definitions. Every event of those clips plays its audio unstretched again. Emits clip.changed for each clip that changes. Returns the clips changed.
+
+Arguments:
+
+- `events`: array of integer, required
+
+Result:
+
+- `clips`: array of integer, required
 
 ### events
 
