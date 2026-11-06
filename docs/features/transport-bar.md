@@ -19,7 +19,7 @@ are by attributes, which `TransportControls` follows:
 | Punch Points | Punch In, Punch Out | `transport.toggle` `punchIn`, `punchOut` |
 | Transport Controls | Go to Previous Marker/Zero, Go to Next Marker/Project End, Rewind, Forward, Cycle, Stop, Start, Record | `locate.previousMarker`, `locate.nextMarker`, `wind.rewind`, `wind.forward`, `transport.toggle` `cycle`, `transport.stop`, `transport.play`, `transport.toggle` `record` |
 | Time Displays | primary and secondary time format menus and displays, Exchange Time Formats | the project cursor; `transport.locate`; `time.exchangeFormats` |
-| Tempo & Time Signature | Activate Tempo Track, tempo, Tap Tempo, time signature | `project.set` `tempoTrackActive`, `tempo`, `signature`; `tempo.tap` ([tempo-track.md](tempo-track.md)) |
+| Tempo & Time Signature | Activate Tempo Track, tempo, Tap Tempo, Tap Tempo Mode, time signature | `project.set` `tempoTrackActive`, `tempo`, `signature`; `tempo.set`; `tempo.tap`, `transport.tapTempoMode` ([tempo-track.md](tempo-track.md)) |
 | Click | Activate Metronome Click | `transport.toggle` `metronome` |
 
 The sections keep the width of their controls. A window too narrow for all of them, such as the transport bar of a
@@ -56,8 +56,11 @@ each other.
 - **The locator range** shows the length from the left to the right locator: in bars and beats counted from zero,
   "1.1.0.0" for a bar and a beat, in the other formats as a time (`ui::formatLength`). A length typed moves the right
   locator.
-- **Tempo and signature** show the project's first tempo and time signature and set them with `project.set`, one undo
-  step each; later tempo and signature changes stay. The tempo field is a `<valuefield>`: a drag on it, or wheel turns
+- **Tempo and signature** show the tempo and the first time signature. The tempo is Current Tempo
+  (`ui::currentTempo`, reference manual p. 1446): the fixed tempo, set with `project.set`, or in tempo track mode the
+  tempo at the project cursor, also while playing, which changes the tempo event at or before the cursor (`tempo.set`;
+  the first one in a project without tempo changes). The signature is set with `project.set`, and later signature
+  changes stay. Each change is one undo step. The tempo field is a `<valuefield>`: a drag on it, or wheel turns
   without a pause of 0.4 seconds, set the tempo once, at the gesture's end, so that the gesture is one undo step;
   meanwhile the field shows where the gesture took it. It shows three decimals: editing it without typing leaves a tempo
   with more, such as 130.0001 BPM from a MIDI file, as it is. A signature is typed as "3/4"; the engine refuses
@@ -72,9 +75,10 @@ each other.
 The transport bar's sections are the docking system's set of sections `transport` ([docking.md](docking.md)):
 Locators, Locator Range Duration, Punch Points, Transport Controls, Time Displays, Tempo & Time Signature and Click.
 A right click on the transport bar opens its setup pane (the reference's Set up Transport Bar, p. 306), a toggle
-button per section that shows or hides it, and Show All. The transport panel is a docking window of its own,
-`transportPanel`, with the same pane for its own sections (Set up Transport Panel, p. 295). Both are kept in
-`ui.layout`, under `windows`, `project` and `transportPanel`, `sections`, `transport`.
+button per section that shows or hides it, and Show All; on Tap Tempo it opens the Tap Tempo Mode menu instead. The
+transport panel is a docking window of its own, `transportPanel`, with the same pane for its own sections (Set up
+Transport Panel, p. 295). Both are kept in `ui.layout`, under `windows`, `project` and `transportPanel`, `sections`,
+`transport`.
 
 ## Windows
 

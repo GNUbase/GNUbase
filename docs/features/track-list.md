@@ -58,11 +58,12 @@ sends engine commands, so whatever another client changes shows at once.
   and any client changes it with `settings.set`. A double click on the divider leaves it alone. A window too narrow for
   both takes the room from the track list once the event display is at its minimum.
 - **Name and controls widths** (p. 191). The user setting `ui.trackWidths` has the track name's width for every track
-  type (`name`, 20 to 400 dp) and each type's controls area width (`controls`, 0 to 800 dp), 120 dp each by default
-  and where it has none. The name and the controls area are as wide as that, and the controls go onto more lines when
-  they don't fit, as many as the track's height shows. In a row too narrow for both, such as deep in folders or in a
-  narrow track list, the name gives way; what still doesn't fit is hidden at the row's right. The dialog keeps what
-  the setting has that it doesn't know, such as another type's width from a later GNUbase.
+  type (`name`, 20 to 400 dp) and each type's controls area width (`controls`, 0 to 800 dp), 120 dp each by default (the
+  tempo track's 144 dp, so its three controls fit on one line) and where it has none. The name and the controls area are
+  as wide as that, and the controls go onto more lines when they don't fit, as many as the track's height shows. In a
+  row too narrow for both, such as deep in folders or in a narrow track list, the name gives way; what still doesn't fit
+  is hidden at the row's right. The dialog keeps what the setting has that it doesn't know, such as another type's width
+  from a later GNUbase.
 - **Rows and lanes.** The event display has a lane per track that isn't hidden, each as high as its track
   (`EventDisplay::trackHeight`, `g_trackHeight` (40 dp) until set, 20 to 400 dp, times vertical zoom), and tells the
   track list when its lanes or view change (`onLayout`). The list sets each row's height from its lane and moves the
@@ -72,19 +73,21 @@ sends engine commands, so whatever another client changes shows at once.
   `mute` (M) and `solo` (S), which tracks with a channel always show, `record` and `monitor` (audio tracks), `read`
   (every automation lane of the track reads, or with a click none does; disabled without lanes) and `timeBase`
   (musical or linear, `.checked` when linear). A click sends `channel.set`, `automationLane.set` in one transaction,
-  or `track.set`. Folders without a group channel, marker and signature tracks show none. The tempo track's only control
-  is `tempoTrack`, Activate Tempo Track (`project.set` `tempoTrackActive`, [tempo-track.md](tempo-track.md)); ruler
-  tracks have `timeFormat`, `timeOffsetOn`, `timeOffset` and `setTimeOffset` ([ruler-tracks.md](ruler-tracks.md)). The
-  defaults: mute, solo, record, monitor and read on audio tracks; mute, solo and read on the others with a channel;
-  tempoTrack on the tempo track; all four on ruler tracks.
-- **Selection** (pp. 218–219) is the list view's: a click selects a track, Ctrl-click adds or removes one,
-  Shift-click selects a range, and Shift-click on a selected track deselects it (the list view's `shiftdeselects`,
-  [widgets.md](widgets.md)). Up and Down step through the shown tracks, in the list and wherever the project window
-  has the focus (`track.selectPrevious`, `track.selectNext`), and scroll the selected track into view; in the list,
-  Shift+Up and Shift+Down extend the selection. While an event or part is selected, they also select the first one on
-  the new track, by position ([parts-and-events.md](parts-and-events.md)), unless the user setting
-  `ui.upDownSelectsTracksOnly` (Use Up/Down Navigation Commands for Selecting Tracks Only, off by default) says they
-  only select tracks. A right click on a track that isn't selected selects it for the context menu. The selection is the UI's, not the
+  or `track.set`. Folders without a group channel, marker and signature tracks show none. The tempo track's controls are
+  `tempoTrack`, Activate Tempo Track (`project.set` `tempoTrackActive`), `currentTempo`, Current Tempo, a text field
+  with the tempo at the project cursor that takes a tempo typed with Enter, and `tempoType`, Type of New Tempo Points,
+  a drop-down list for `editing.tempoType` ([tempo-track.md](tempo-track.md)); ruler tracks have `timeFormat`,
+  `timeOffsetOn`, `timeOffset` and `setTimeOffset` ([ruler-tracks.md](ruler-tracks.md)). The defaults: mute, solo,
+  record, monitor and read on audio tracks; mute, solo and read on the others with a channel; all three on the tempo
+  track; all four on ruler tracks.
+- **Selection** (pp. 218–219) is the list view's: a click selects a track, Ctrl-click adds or removes one,
+  Shift-click selects a range, and Shift-click on a selected track deselects it (the list view's `shiftdeselects`,
+  [widgets.md](widgets.md)). Up and Down step through the shown tracks, in the list and wherever the project window
+  has the focus (`track.selectPrevious`, `track.selectNext`), and scroll the selected track into view; in the list,
+  Shift+Up and Shift+Down extend the selection. While an event or part is selected, they also select the first one on
+  the new track, by position ([parts-and-events.md](parts-and-events.md)), unless the user setting
+  `ui.upDownSelectsTracksOnly` (Use Up/Down Navigation Commands for Selecting Tracks Only, off by default) says they
+  only select tracks. A right click on a track that isn't selected selects it for the context menu. The selection is the UI's, not the
   project's (`TrackList::selection`), like the event display's.
 - **Renaming** (p. 214): a double click on a name, or `track.rename` (Alt+F2) for the first selected track, shows a
   text field with the name selected; Enter or leaving it sends `track.set` `name`, Escape keeps the name.
@@ -137,7 +140,8 @@ sends engine commands, so whatever another client changes shows at once.
 ## Track controls settings
 
 `resources/ui/track-controls.rml` (pp. 189–191), opened by `#track-controls-settings`, the context menu or the UI
-command `track.controlsSettings`: the track types on the left, the hidden and the visible controls of the selected
+command `track.controlsSettings`: the track types with controls on the left (audio, instrument, MIDI, group, effect,
+folder and tempo), the hidden and the visible controls of the selected
 type, Add, Remove (not for mute and solo), Move Up, Move Down and Reset (the type's controls and controls area width,
 from `settings.list`), and below them Controls Area Width (`#controls-area-width`, the selected type's) and Track Name
 Width (`#track-name-width`, global), held at the setting's limits. OK saves every type with `settings.set`

@@ -1299,6 +1299,24 @@ meter .meter-peak
 	height: 14dp;
 }
 
+/* The tempo track's Current Tempo and Type of New Tempo Points (docs/features/tempo-track.md). */
+.track-list .track-controls input.current-tempo, .track-list .track-controls select.tempo-type
+{
+	height: 18dp;
+	margin-left: 2dp;
+	padding: 0 2dp;
+}
+
+.track-list .track-controls input.current-tempo
+{
+	width: 56dp;
+}
+
+.track-list .track-controls select.tempo-type
+{
+	width: 60dp;
+}
+
 .track-list .drop-line
 {
 	position: absolute;
