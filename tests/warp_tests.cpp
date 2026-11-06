@@ -301,6 +301,27 @@ TEST_CASE("splitting and resizing a warped event leaves its audio where it plays
 		run(client, "event.setSnapPoint", {{"events", {loop.event}}, {"position", 49000 - 30000}});
 		CHECK(eventOf(client, loop.event).at("snapPoint") == std::llround((49000.0 - 30000.0) * 52000.0 / 49000.0));
 	}
+
+	SECTION("a start resized past the clip's start")
+	{
+		// Clip frame 60000 plays at 96000, so frame 0 plays where the warp puts it before 60000: at 38454.5.
+		const Loop loop = addLoop(client, dir, clicks({1000, 25000, 52000, 73000}, 4 * g_quarter), "linear");
+		run(client, "clip.addWarpMarker", {{"clip", loop.clip}, {"position", 52000}, {"target", 49000}});
+		run(client, "event.remove", {{"events", {loop.event}}});
+		const auto event = run(client, "audioEvent.add",
+			{{"track", loop.track}, {"clip", loop.clip}, {"position", 96000}, {"offset", 60000}, {"length", 36000}})
+							   .at("event")
+							   .at("id")
+							   .get<ObjectId>();
+		const double frame0 = 96000.0 - (49000.0 + (8000.0 * 47000.0 / 44000.0));
+		checkClicks(render(client, 5 * g_quarter), {frame0 + 49000.0 + (21000.0 * 47000.0 / 44000.0)});
+		run(client, "event.resize", {{"events", {event}}, {"edge", "start"}, {"delta", -96000}});
+		CHECK(eventOf(client, event).at("offset") == 0);
+		CHECK(std::abs(eventOf(client, event).at("position").get<double>() - frame0) <= 1.0);
+		checkClicks(render(client, 5 * g_quarter),
+			{frame0 + (1000.0 * 49000.0 / 52000.0), frame0 + (25000.0 * 49000.0 / 52000.0), frame0 + 49000.0,
+				frame0 + 49000.0 + (21000.0 * 47000.0 / 44000.0)});
+	}
 }
 
 TEST_CASE("bars and beats, Auto Adjust and Manual Adjust define a clip's grid", "[integration]")

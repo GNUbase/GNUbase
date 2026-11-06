@@ -417,15 +417,16 @@ namespace gnubase::engine
 				frames = std::max(frames, moveContents ? event.length - (media - event.offset) : -event.offset);
 				frames = std::max(frames,
 					static_cast<int64_t>(std::ceil(eventFrames(project, event, -static_cast<double>(span.start)))));
-				if (!moveContents)
-					event.offset += frames;
-				event.length -= frames;
+				// Measured through the warp from the offset as it was, before it moves.
 				event.position = frames == wanted
 					? rebased(project, start, event.position.base)
 					: rebased(project,
 						  {time::TimeBase::Linear,
 							  span.start + std::llround(eventSamples(project, event, static_cast<double>(frames)))},
 						  event.position.base);
+				if (!moveContents)
+					event.offset += frames;
+				event.length -= frames;
 				return;
 			}
 			MidiPart& part = *item.part;
