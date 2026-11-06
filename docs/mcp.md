@@ -4315,7 +4315,7 @@ Result:
 
 Engine command `project.get`. Read-only.
 
-The whole project: busses, tracks in order, channels, media, clips, events and parts.
+The whole project: busses, tracks in order, channels, media, clips, events and parts. Each MIDI part has rootKeyTranspose too, the semitones that the project root key transposes it by (-5 to 6; 0 for an independent part and unless both have a root key).
 
 #### `project_load`
 
@@ -6108,7 +6108,7 @@ Queries without required arguments can also be read as resources:
 - `gnubase://pool.get`: The pool (reference manual pp. 739-744): its folders, and every clip with the folder it is in, the number of audio events that use it (used), its media file's path, sample rate, channel count and length in sample frames, whether the file is missing and whether it is external, outside the project folder (every file of a project that has no file yet). The totals of the info line: audioFiles, usedFiles (media files that an event plays), missingFiles, externalFiles and totalSize, the bytes of the files on disk.
 - `gnubase://processor.list`: Every built-in processor: its id, name, description, whether it is an instrument, and its parameters with their ids, ranges, defaults and units. A stepped parameter takes whole numbers only; its options, if any, name its values from the minimum on.
 - `gnubase://project.factoryColors`: The factory color set, which new projects have: each color's name and color (#rrggbb). The project colors setup dialog resets colors to it.
-- `gnubase://project.get`: The whole project: busses, tracks in order, channels, media, clips, events and parts.
+- `gnubase://project.get`: The whole project: busses, tracks in order, channels, media, clips, events and parts. Each MIDI part has rootKeyTranspose too, the semitones that the project root key transposes it by (-5 to 6; 0 for an independent part and unless both have a root key).
 - `gnubase://project.location`: Where the project is: its project file (set by project.save and project.load), the folder of that file, and the media folder in it where media.add with copy and media.prepareArchive put audio files. All null for a project that has no file yet.
 - `gnubase://project.recent`: The recent projects: the project files saved (not auto saved) or opened last, the newest first, at most 10, kept in the user settings' folder. exists says whether the file is still there.
 - `gnubase://project.revision`: A number that grows with every change of the project: every edit, undo and redo, and loading or starting a project. project.load with revision loads only if it hasn't changed. modified says whether the project changed since it was last saved, loaded or started; undoing back to the saved state still counts as a change. project identifies the open project: the revision at which it was loaded or started, so it changes only when another project is opened.

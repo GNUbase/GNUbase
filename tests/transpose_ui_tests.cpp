@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <optional>
 #include <string>
 #include <utility>
@@ -100,9 +101,52 @@ TEST_CASE("the toolbar sets the project root key, the info line a part's root ke
 	window.app.ui().key(std::nullopt, "Down");
 	window.click("#info-line select[field=rootKey]");
 	REQUIRE(window.app.waitUntil([&] { return window.part(part).at("rootKey") == "C"; }));
+	// The Transpose field shows what the project root key adds (p. 420): a part in C in a project in D, +2.
+	const auto step = [&window]
+	{ return window.element("#info-line [field=rootKeyTranspose]").value("text", std::string()); };
+	window.call("project.set", {{"rootKey", "D"}});
+	REQUIRE(window.app.waitUntil([&] { return window.part(part).at("rootKeyTranspose") == 2; }));
+	CHECK(window.app.waitUntil([&] { return step() == "(+2)"; }));
+	// Independent parts show a mark in their upper right corner (p. 421), and nothing that the root key adds.
+	const std::string mark = ".part-mark.independent[part=" + std::to_string(part) + "]";
+	CHECK(window.app.ui().dom(std::nullopt, mark, 0).at("elements").empty());
 	window.click("#info-line button[field=globalTranspose]");
 	REQUIRE(window.app.waitUntil([&] { return window.part(part).at("globalTranspose") == "independent"; }));
 	CHECK(window.app.waitUntil([&] { return window.hasClass("#info-line button[field=globalTranspose]", "checked"); }));
+	CHECK(window.app.waitUntil([&] { return step().empty(); }));
+	REQUIRE(
+		window.app.waitUntil([&] { return window.app.ui().dom(std::nullopt, mark, 0).at("elements").size() == 1; }));
+	CHECK(window.element(mark).at("visible") == true);
+	window.click("#info-line button[field=globalTranspose]");
+	CHECK(window.app.waitUntil([&] { return window.app.ui().dom(std::nullopt, mark, 0).at("elements").empty(); }));
+}
+
+TEST_CASE("the transpose track's context menu sets the root key for unassigned events", "[ui]")
+{
+	Window window;
+	const auto transpose = window.call("track.add", {{"type", "transpose"}}).at("track").at("id").get<uint64_t>();
+	const auto midi = window.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+	const auto part = window.call("midiPart.add", {{"track", midi}, {"position", 0}, {"length", 4 * g_quarter}})
+						  .at("part")
+						  .at("id")
+						  .get<uint64_t>();
+	window.call("project.set", {{"rootKey", "E"}});
+	const std::string item = R"(#track-list-menu > [command="transpose.assignRootKey"])";
+	const auto menu = [&window, &item](uint64_t track)
+	{
+		window.app.ui().click(std::nullopt,
+			{"#track-list listitem[value=\"" + std::to_string(track) + "\"] .track-name", 0, std::nullopt},
+			ui::MouseButton::Right, 1, {});
+		window.app.shell().step(std::chrono::milliseconds(0));
+		REQUIRE(window.element("#track-list-menu").at("visible") == true);
+		return !window.element(item).at("attributes").contains("disabled");
+	};
+	// Only for the transpose track.
+	REQUIRE(window.app.waitUntil([&] { return window.display.laneTracks().size() == 2; }));
+	CHECK_FALSE(menu(midi));
+	REQUIRE(menu(transpose));
+	window.click(item);
+	CHECK(window.app.waitUntil([&] { return window.part(part).at("rootKey") == "E"; }));
 }
 
 TEST_CASE("the transpose track's lane draws, edits and erases transpose events", "[ui]")
@@ -140,4 +184,47 @@ TEST_CASE("the transpose track's lane draws, edits and erases transpose events",
 	window.display.setTool(ui::Tool::Erase);
 	window.click(".transpose-event");
 	CHECK(window.app.waitUntil([&] { return events().empty(); }));
+}
+
+namespace
+{
+	// A transpose track with an event at the project start, with the pointer tool.
+	uint64_t addEvent(Window& window)
+	{
+		window.call("track.add", {{"type", "transpose"}});
+		const auto event = window.call("transpose.add", {{"position", 0}, {"value", 3}}).at("event").at("id");
+		REQUIRE(window.app.waitUntil(
+			[&] { return window.app.ui().dom(std::nullopt, ".transpose-event", 0).at("elements").size() == 1; }));
+		window.display.setTool(ui::Tool::ObjectSelection);
+		return event.get<uint64_t>();
+	}
+}
+
+TEST_CASE("dragging a transpose event moves it to the nearest bar", "[ui]")
+{
+	Window window;
+	addEvent(window);
+	// Three fifths of a bar (2 seconds at 120 BPM) to the right: onto the second bar's line.
+	const Json box = window.element(".transpose-event").at("box");
+	const double x = box.at("x").get<double>() + (box.at("width").get<double>() / 2.0);
+	const double y = box.at("y").get<double>() + (box.at("height").get<double>() / 2.0);
+	const double across = 1.2 / window.display.view().scale * 0.5; // pixels, at a dp ratio of 0.5
+	window.app.ui().drag(std::nullopt, {".transpose-event", 0, std::nullopt},
+		{"", 0, ui::Point{static_cast<int>(std::lround(x + across)), static_cast<int>(std::lround(y))}});
+	CHECK(window.app.waitUntil(
+		[&] { return window.call("transpose.get").at("events").at(0).at("position") == 4 * g_quarter; }));
+}
+
+TEST_CASE("a double click on a transpose event opens its value for typing", "[ui]")
+{
+	Window window;
+	addEvent(window);
+	window.app.ui().click(std::nullopt, {".transpose-event", 0, std::nullopt}, ui::MouseButton::Left, 2, {});
+	window.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(window.app.waitUntil([&] { return window.hasClass(".transpose-field", "shown"); }));
+	window.app.ui().key(std::nullopt, "Ctrl+A");
+	window.app.ui().text(std::nullopt, "-7");
+	window.app.ui().key(std::nullopt, "Enter");
+	CHECK(window.app.waitUntil([&] { return window.call("transpose.get").at("events").at(0).at("value") == -7; }));
+	CHECK(window.call("transpose.get").at("events").at(0).at("position") == 0);
 }

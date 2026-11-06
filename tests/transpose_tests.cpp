@@ -101,10 +101,13 @@ TEST_CASE("the project root key transposes parts with a root key of their own to
 	run(song.client, "project.set", {{"rootKey", "D"}});
 	CHECK(song.pitches() == std::vector<int>{60, 60, 60, 60});
 	// A part in C in a project in D plays a whole tone higher; in G, a fourth lower, the nearer way.
+	CHECK(song.partJson().at("rootKeyTranspose") == 0);
 	run(song.client, "midiPart.set", {{"part", song.part}, {"rootKey", "C"}});
 	CHECK(song.pitches() == std::vector<int>{62, 62, 62, 62});
+	CHECK(song.partJson().at("rootKeyTranspose") == 2); // as the info line's Transpose field shows it (p. 420)
 	run(song.client, "project.set", {{"rootKey", "G"}});
 	CHECK(song.pitches() == std::vector<int>{55, 55, 55, 55});
+	CHECK(song.partJson().at("rootKeyTranspose") == -5);
 	run(song.client, "project.set", {{"rootKey", "F#"}});
 	CHECK(song.pitches() == std::vector<int>{66, 66, 66, 66});
 	// The part's own transpose adds to it.
@@ -114,6 +117,7 @@ TEST_CASE("the project root key transposes parts with a root key of their own to
 	run(song.client, "midiPart.set", {{"part", song.part}, {"globalTranspose", "independent"}});
 	CHECK(song.pitches() == std::vector<int>{59, 59, 59, 59});
 	CHECK(song.partJson().at("globalTranspose") == "independent");
+	CHECK(song.partJson().at("rootKeyTranspose") == 0);
 	// Undo brings back what the part followed; the root key is an undo step too.
 	run(song.client, "history.undo");
 	CHECK(song.pitches() == std::vector<int>{65, 65, 65, 65});

@@ -1030,6 +1030,10 @@ namespace gnubase::engine
 	std::string rootKeyName(int key);
 	std::optional<int> rootKeyFromName(const std::string& name);
 
+	// The step from a part's root key to the project root key, the nearer way (-5 to 6 semitones): 0 for an
+	// Independent part and unless both have a root key. project.get gives it as each part's rootKeyTranspose.
+	int rootKeyTranspose(const Project& project, const MidiPart& part);
+
 	// The semitones that global transposition adds to a part's notes at a position (project samples): nothing for an
 	// Independent part; otherwise the step from the part's root key to the project root key, the nearer way (-5 to
 	// 6; nothing unless both have one), plus the value of the transpose event playing there unless the transpose track

@@ -516,6 +516,13 @@ namespace gnubase::ui
 			});
 	}
 
+	bool TrackList::selectsType(const std::string& type) const
+	{
+		const std::vector<uint64_t> tracks = selection();
+		return std::any_of(tracks.begin(), tracks.end(),
+			[this, &type](uint64_t track) { return m_tracks[m_index.at(track)].type == type; });
+	}
+
 	void TrackList::select(const std::vector<uint64_t>& tracks)
 	{
 		if (!alive())

@@ -239,17 +239,19 @@ namespace gnubase::engine
 		return static_cast<int>(found - names.begin()) - 1;
 	}
 
+	int rootKeyTranspose(const Project& project, const MidiPart& part)
+	{
+		if (part.independent || project.rootKey < 0 || part.rootKey < 0)
+			return 0;
+		const int semitones = (((project.rootKey - part.rootKey) % 12) + 12) % 12; // 0 to 11 up
+		return semitones > 6 ? semitones - 12 : semitones;
+	}
+
 	int globalTranspose(const Project& project, const MidiPart& part, time::Samples at)
 	{
 		if (part.independent)
 			return 0;
-		int semitones = 0;
-		if (project.rootKey >= 0 && part.rootKey >= 0)
-		{
-			semitones = (((project.rootKey - part.rootKey) % 12) + 12) % 12; // 0 to 11 up
-			if (semitones > 6)
-				semitones -= 12;
-		}
+		int semitones = rootKeyTranspose(project, part);
 		const TransposeTrack& track = project.transpose;
 		if (track.mute)
 			return semitones;

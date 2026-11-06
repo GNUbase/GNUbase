@@ -3774,7 +3774,7 @@ Returns:
 
 #### `gnubase.project.get`
 
-The whole project: busses, tracks in order, channels, media, clips, events and parts.
+The whole project: busses, tracks in order, channels, media, clips, events and parts. Each MIDI part has rootKeyTranspose too, the semitones that the project root key transposes it by (-5 to 6; 0 for an independent part and unless both have a root key).
 
 Only reads; changes nothing.
 

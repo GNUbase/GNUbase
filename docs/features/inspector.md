@@ -21,6 +21,7 @@ Layout and Mod+I show and hide ([docking.md](docking.md)). It follows the event 
     valuefield[field=volume]  audio events, in dB; .hidden for parts
     button[field=mute], button[field=lock]                  toggle buttons
     valuefield[field=transpose], [field=velocity]           MIDI parts, -127 to 127; .hidden for others
+    span[field=rootKeyTranspose]                            what the project root key adds, "(+2)", empty for 0
     select[field=rootKey], button[field=globalTranspose]    MIDI parts' root key and Global Transpose; .hidden for others
 ```
 

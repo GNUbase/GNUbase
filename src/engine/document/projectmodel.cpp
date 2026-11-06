@@ -3551,9 +3551,21 @@ namespace gnubase::engine
 		const Json color = {{"type", {"string", "null"}}};
 
 		add(engine,
-			{"project.get", 1, "The whole project: busses, tracks in order, channels, media, clips, events and parts.",
+			{"project.get", 1,
+				"The whole project: busses, tracks in order, channels, media, clips, events and parts. Each MIDI part "
+				"has rootKeyTranspose too, the semitones that the project root key transposes it by (-5 to 6; 0 for "
+				"an independent part and unless both have a root key).",
 				objectSchema({}), {{"type", "object"}}, true},
-			[](Project& project, CommandContext&) { return toJson(project); });
+			[](Project& project, CommandContext&)
+			{
+				Json json = toJson(project);
+				// Derived, so not in the project file.
+				for (Json& part : json.at("midiParts"))
+					if (const auto found = project.midiParts.find(part.at("id").get<ObjectId>());
+						found != project.midiParts.end())
+						part["rootKeyTranspose"] = rootKeyTranspose(project, found->second);
+				return json;
+			});
 		add(engine,
 			{"graph.get", 1,
 				"The project's audio processing graph: its nodes (busses, then channels in track order, then for each "

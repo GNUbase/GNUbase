@@ -616,6 +616,7 @@ namespace gnubase::ui
 		void reload();              // the lanes again, from the project as it was last read
 		void showAutomationLanes(); // the curves, after the lanes changed
 		void placeAutomation();     // where they are, after the view changed
+		void placePartMarks();      // the marks of parts excluded from global transpose, after the view changed
 		// The automation lane of a display lane, or null for a track's own lane.
 		const AutomationView* automationAt(size_t lane) const;
 		double automationValue(size_t lane, double y) const; // y dp in the event lanes, as a display value
@@ -689,10 +690,15 @@ namespace gnubase::ui
 		std::vector<bool> m_laneLinear;       // and whether its time base is linear
 		std::vector<Shown> m_events;
 		std::vector<uint64_t> m_selection;
-		EventLanes* m_mutedLanes = nullptr;     // muted events over the others
-		EventLanes* m_selectedLanes = nullptr;  // selected events over those
-		EventLanes* m_folderLanes = nullptr;    // folders' data blocks, under the events
-		FadeLines* m_fadeLines = nullptr;       // over the waveforms
+		EventLanes* m_mutedLanes = nullptr;    // muted events over the others
+		EventLanes* m_selectedLanes = nullptr; // selected events over those
+		EventLanes* m_folderLanes = nullptr;   // folders' data blocks, under the events
+		FadeLines* m_fadeLines = nullptr;      // over the waveforms
+		// A .part-mark.independent (attribute part, its id) at the upper right corner of each MIDI part shown that is
+		// excluded from global transpose (#168, reference manual p. 421).
+		Rml::Element* m_partMarks = nullptr;
+		std::set<uint64_t> m_independent;
+		std::string m_partMarksRml;             // what m_partMarks holds
 		std::map<uint64_t, AudioFades> m_fades; // by audio event
 		std::vector<EventLanes::Lane> m_folderData;
 		std::string m_folderMode = "always"; // ui.folderData

@@ -954,6 +954,33 @@ meter .meter-peak
 	width: 48dp;
 }
 
+/* MIDI parts excluded from global transpose (reference manual p. 421): code puts a .part-mark.independent at the
+   upper right corner of each, its left at the part's end, with the icon inside the part. */
+.event-display .part-marks
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	bottom: 0;
+	pointer-events: none;
+}
+
+.event-display .part-mark
+{
+	position: absolute;
+	margin-left: -14dp;
+	margin-top: 2dp;
+	width: 12dp;
+	height: 12dp;
+}
+
+.event-display .part-mark svg.icon
+{
+	width: 12dp;
+	height: 12dp;
+}
+
 /* The toolbar's Project Root Key, in project windows wide enough for it next to the quantize section. */
 .toolbar-root-key
 {
@@ -1681,6 +1708,11 @@ splitter.column .splitter-grip-horizontal
 .info-label
 {
 	margin-right: 4dp;
+}
+
+.info-root-transpose
+{
+	margin-left: 4dp;
 }
 
 .info-line textdisplay[field=name]

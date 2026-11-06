@@ -453,6 +453,8 @@
 				<menuitem command="settings.set" parameters='{"key": "ui.folderData", "value": "hideWhenExpanded"}'>Hide Data When Expanded</menuitem>
 			</menu>
 		</menuitem>
+		<!-- The transpose track (reference manual p. 416, docs/features/transpose.md) -->
+		<menuitem command="transpose.assignRootKey">Set Root Key for Unassigned Events</menuitem>
 		<menuseparator/>
 		<menuitem command="track.autoFades">Auto Fades Settings...</menuitem>
 		<menuitem command="track.controlsSettings">Track Controls Settings...</menuitem>

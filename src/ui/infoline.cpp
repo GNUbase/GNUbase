@@ -47,7 +47,9 @@ namespace gnubase::ui
 			R"( title="Lock">Lock</button></div>)"
 			// A MIDI part's transpose and velocity (p. 1107), added to the track's MIDI modifiers.
 			R"(<div class="info-field" info-field="transpose"><span class="info-label">Transpose</span>)"
-			R"(<valuefield field="transpose" min="-127" max="127" default="0" step="1" decimals="0"/></div>)"
+			R"(<valuefield field="transpose" min="-127" max="127" default="0" step="1" decimals="0"/>)"
+			// What the project root key adds (p. 420), in brackets: the engine's rootKeyTranspose.
+			R"(<span class="info-root-transpose" field="rootKeyTranspose"/></div>)"
 			R"(<div class="info-field" info-field="velocity"><span class="info-label">Velocity</span>)"
 			R"(<valuefield field="velocity" min="-127" max="127" default="0" step="1" decimals="0"/></div>)"
 			// A MIDI part's root key and Global Transpose (pp. 417, 421, #168).
@@ -288,6 +290,15 @@ namespace gnubase::ui
 				setClass(*shown, "hidden", part == nullptr);
 		if (part == nullptr)
 			return;
+		if (Rml::Element* step = root.QuerySelector("[field=rootKeyTranspose]"))
+		{
+			const int semitones = part->value("rootKeyTranspose", 0);
+			const std::string text = semitones == 0
+				? std::string()
+				: "(" + std::string(semitones > 0 ? "+" : "") + std::to_string(semitones) + ")";
+			if (step->GetInnerRML() != text)
+				step->SetInnerRML(text);
+		}
 		if (Rml::Element* key = root.QuerySelector("select[field=rootKey]"))
 			widgets::fill(*key, rootKeys(), part->value("rootKey", std::string()));
 		if (Rml::Element* button = root.QuerySelector("button[field=globalTranspose]"))

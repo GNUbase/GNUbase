@@ -681,6 +681,10 @@ namespace gnubase::app
 				m_keys.bind({command.keys, command.id, engine::Json::object(), "project"});
 		}
 
+		// Set Root Key for Unassigned Events in the context menu of the transpose track (reference manual p. 416).
+		m_keys.enableWhen("transpose.assignRootKey", [this](ui::Window&, Rml::Element*)
+			{ return m_trackList != nullptr && m_trackList->selectsType("transpose"); });
+
 		// Undo and Redo in the menus while the history has a step to undo or redo.
 		m_keys.enableWhen("history.undo", [this](ui::Window&, Rml::Element*) { return m_canUndo; });
 		m_keys.enableWhen("history.redo", [this](ui::Window&, Rml::Element*) { return m_canRedo; });
