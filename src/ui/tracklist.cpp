@@ -107,8 +107,9 @@ namespace gnubase::ui
 				return control == "timeBase" && type != "folder" && type != "ruler" && type != "signature";
 			if (control == "record" || control == "monitor")
 				return type == "audio" || type == "instrument" || type == "midi";
+			// Switch Time Base (reference manual pp. 179-180, 229).
 			if (control == "timeBase")
-				return type == "audio" || type == "instrument" || type == "midi";
+				return type == "audio" || type == "instrument" || type == "midi" || type == "group" || type == "effect";
 			return true;
 		}
 

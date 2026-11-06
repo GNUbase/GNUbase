@@ -87,8 +87,8 @@
 			audio = {"mute", "solo", "record", "monitor", "read", "timeBase"},
 			instrument = {"mute", "solo", "record", "monitor", "read", "timeBase"},
 			midi = {"mute", "solo", "record", "monitor", "read", "timeBase"},
-			group = {"mute", "solo", "read"},
-			effect = {"mute", "solo", "read"},
+			group = {"mute", "solo", "read", "timeBase"},
+			effect = {"mute", "solo", "read", "timeBase"},
 			folder = {"mute", "solo", "read"},
 			ruler = {"timeFormat", "timeOffsetOn", "timeOffset", "setTimeOffset"}, -- reference manual p. 159
 		}
