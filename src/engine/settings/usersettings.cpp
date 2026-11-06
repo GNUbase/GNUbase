@@ -156,8 +156,10 @@ namespace gnubase::engine::settings
 					require(!preset.empty(), "name must not be empty");
 					const Json& values = context.parameters().at("values");
 					const auto& definitions = store.format().definitions;
-					for (const auto& [setting, value] : values.items())
+					for (const auto& item : values.items())
 					{
+						const std::string& setting = item.key();
+						const Json& value = item.value();
 						const auto found = std::find_if(definitions.begin(), definitions.end(),
 							[&setting](const Definition& definition) { return definition.key == setting; });
 						require(found != definitions.end() && setting != "preferences.presets",
