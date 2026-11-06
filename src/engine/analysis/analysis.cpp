@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <complex>
+#include <cstddef>
 #include <cstdint>
 
 namespace gnubase::engine::analysis
@@ -18,26 +19,6 @@ namespace gnubase::engine::analysis
 		constexpr double g_gate = -70.0;        // LUFS, BS.1770's absolute gate
 		constexpr double g_relativeGate = 10.0; // LU below the loudness of the blocks above the absolute gate
 		constexpr double g_loudnessOffset = -0.691; // makes a 1 kHz sine in one channel read like its RMS level
-
-		// Transposed direct form II, which keeps rounding low for the K-weighting's low corner frequency.
-		class Filter
-		{
-		public:
-			explicit Filter(const Biquad& coefficients) : m_c(coefficients) {}
-
-			double process(double x)
-			{
-				const double y = (m_c.b0 * x) + m_z1;
-				m_z1 = (m_c.b1 * x) - (m_c.a1 * y) + m_z2;
-				m_z2 = (m_c.b2 * x) - (m_c.a2 * y);
-				return y;
-			}
-
-		private:
-			Biquad m_c;
-			double m_z1 = 0.0;
-			double m_z2 = 0.0;
-		};
 
 		double toLoudness(double meanSquare)
 		{
@@ -103,49 +84,6 @@ namespace gnubase::engine::analysis
 			std::vector<std::complex<double>> m_twiddles;
 		};
 
-		// The one-sided power spectrum, averaged over windows and scaled so that its bins add up to the mean square.
-		// Returns the bins; size is the FFT size.
-		std::vector<double> powerSpectrum(const std::vector<float>& samples, size_t& size)
-		{
-			const size_t count = samples.size();
-			size = g_fftSize;
-			size_t length = g_fftSize;
-			if (count < g_fftSize)
-			{
-				size = g_minFftSize;
-				while (size < count)
-					size <<= 1;
-				length = count;
-			}
-			std::vector<double> power((size / 2) + 1, 0.0);
-			if (count == 0)
-				return power;
-
-			const std::vector<double> window = blackmanHarris(length);
-			double windowPower = 0.0;
-			for (const double w : window)
-				windowPower += w * w;
-			const Fft fft(size);
-			std::vector<std::complex<double>> data(size);
-			size_t windows = 0;
-			for (size_t start = 0; start + length <= count; start += length / 2)
-			{
-				std::fill(data.begin(), data.end(), std::complex<double>());
-				for (size_t i = 0; i < length; ++i)
-					data[i] = window[i] * static_cast<double>(samples[start + i]);
-				fft.transform(data);
-				for (size_t k = 0; k < power.size(); ++k)
-					power[k] += std::norm(data[k]) * (k == 0 || k == size / 2 ? 1.0 : 2.0);
-				++windows;
-				if (length == count)
-					break; // one zero-padded window
-			}
-			const double scale = 1.0 / (static_cast<double>(size) * windowPower * static_cast<double>(windows));
-			for (double& bin : power)
-				bin *= scale;
-			return power;
-		}
-
 		double powerDecibels(double power)
 		{
 			return 10.0 * std::log10(power);
@@ -207,6 +145,13 @@ namespace gnubase::engine::analysis
 		return {shelf, highPass};
 	}
 
+	std::optional<double> loudness(double meanSquare)
+	{
+		if (!(meanSquare > 0.0))
+			return std::nullopt;
+		return toLoudness(meanSquare);
+	}
+
 	std::optional<double> integratedLoudness(const std::vector<std::vector<float>>& channels, double sampleRate)
 	{
 		// A block is four steps of 100 ms; the sum of the K-weighted squares of every channel per step.
@@ -217,23 +162,27 @@ namespace gnubase::engine::analysis
 		for (const std::vector<float>& channel : channels)
 			frames = std::min(frames, channel.size());
 		const size_t steps = frames / step;
-		if (steps < 4)
-			return std::nullopt;
 
 		std::vector<double> stepSquares(steps, 0.0);
 		const auto [shelfCoefficients, highPassCoefficients] = kWeighting(sampleRate);
 		for (const std::vector<float>& channel : channels)
 		{
-			Filter shelf(shelfCoefficients);
-			Filter highPass(highPassCoefficients);
+			BiquadFilter shelf(shelfCoefficients);
+			BiquadFilter highPass(highPassCoefficients);
 			for (size_t i = 0; i < steps * step; ++i)
 			{
 				const double y = highPass.process(shelf.process(channel[i]));
 				stepSquares[i / step] += y * y;
 			}
 		}
+		return integratedLoudness(stepSquares, static_cast<int64_t>(step));
+	}
 
-		const size_t blocks = steps - 3;
+	std::optional<double> integratedLoudness(const std::vector<double>& stepSquares, int64_t step)
+	{
+		if (stepSquares.size() < 4 || step <= 0)
+			return std::nullopt;
+		const size_t blocks = stepSquares.size() - 3;
 		const double blockLength = 4.0 * static_cast<double>(step);
 		std::vector<double> meanSquares(blocks);
 		for (size_t j = 0; j < blocks; ++j)
@@ -266,10 +215,117 @@ namespace gnubase::engine::analysis
 		return toLoudness(*aboveRelativeGate);
 	}
 
+	void PowerSpectrum::feed(const float* samples, size_t count, size_t stride)
+	{
+		for (size_t i = 0; i < count; ++i)
+		{
+			m_pending.push_back(samples[i * stride]);
+			if (m_pending.size() == g_fftSize)
+			{
+				transformWindow(g_fftSize, g_fftSize);
+				m_pending.erase(m_pending.begin(), m_pending.begin() + (g_fftSize / 2));
+			}
+		}
+	}
+
+	void PowerSpectrum::transformWindow(size_t length, size_t size)
+	{
+		static const Fft fullFft(g_fftSize);
+		static const std::vector<double> fullWindow = blackmanHarris(g_fftSize);
+		const bool full = size == g_fftSize && length == g_fftSize;
+		const std::vector<double> window = full ? std::vector<double>() : blackmanHarris(length);
+		const std::vector<double>& w = full ? fullWindow : window;
+		m_windowPower = 0.0;
+		for (const double value : w)
+			m_windowPower += value * value;
+
+		std::vector<std::complex<double>> data(size);
+		for (size_t i = 0; i < length; ++i)
+			data[i] = w[i] * static_cast<double>(m_pending[i]);
+		if (full)
+			fullFft.transform(data);
+		else
+			Fft(size).transform(data);
+		m_power.resize((size / 2) + 1, 0.0);
+		for (size_t k = 0; k < m_power.size(); ++k)
+			m_power[k] += std::norm(data[k]) * (k == 0 || k == size / 2 ? 1.0 : 2.0);
+		++m_windows;
+	}
+
+	PowerBins PowerSpectrum::finish()
+	{
+		PowerBins bins;
+		bins.size = g_fftSize;
+		size_t length = g_fftSize;
+		if (m_windows == 0) // shorter than a window: one zero-padded window
+		{
+			length = m_pending.size();
+			bins.size = g_minFftSize;
+			while (bins.size < length)
+				bins.size <<= 1;
+			if (length > 0)
+				transformWindow(length, bins.size);
+		}
+		bins.power = m_power;
+		bins.power.resize((bins.size / 2) + 1, 0.0);
+		if (m_windows == 0)
+			return bins;
+		const double scale = 1.0 / (static_cast<double>(bins.size) * m_windowPower * static_cast<double>(m_windows));
+		for (double& bin : bins.power)
+			bin *= scale;
+		double sum = 0.0;
+		for (const double w : blackmanHarris(length))
+			sum += w;
+		bins.noiseBandwidth = static_cast<double>(length) * m_windowPower / (sum * sum);
+		return bins;
+	}
+
 	Spectrum spectrum(const std::vector<float>& samples, double sampleRate, size_t maxPeaks)
 	{
-		size_t size = 0;
-		const std::vector<double> power = powerSpectrum(samples, size);
+		PowerSpectrum power;
+		power.feed(samples.data(), samples.size());
+		return summarize(power.finish(), sampleRate, maxPeaks);
+	}
+
+	SpectrumCurve spectrumCurve(const PowerBins& bins, double sampleRate)
+	{
+		const std::vector<double>& power = bins.power;
+		const double binWidth = sampleRate / static_cast<double>(bins.size);
+		const double scale = 2.0 * bins.noiseBandwidth;
+		const double halfStep = std::pow(2.0, 1.0 / 48.0);
+		SpectrumCurve curve;
+		for (int i = 0;; ++i)
+		{
+			const double frequency = 20.0 * std::pow(2.0, i / 24.0);
+			if (frequency > sampleRate / 2.0)
+				break;
+			const auto low = static_cast<size_t>(std::ceil(frequency / halfStep / binWidth));
+			const size_t high =
+				std::min(power.size() - 1, static_cast<size_t>(std::floor(frequency * halfStep / binWidth)));
+			double level = 0.0;
+			if (low <= high)
+			{
+				level = *std::max_element(power.begin() + static_cast<std::ptrdiff_t>(low),
+					power.begin() + static_cast<std::ptrdiff_t>(high) + 1);
+			}
+			else
+			{
+				const double at = frequency / binWidth;
+				const auto below = std::min(power.size() - 1, static_cast<size_t>(at));
+				const size_t above = std::min(power.size() - 1, below + 1);
+				const double fraction = at - static_cast<double>(below);
+				level = (power[below] * (1.0 - fraction)) + (power[above] * fraction);
+			}
+			curve.frequencies.push_back(frequency);
+			curve.levels.push_back(level > 0.0 ? std::optional<double>(powerDecibels(level * scale)) : std::nullopt);
+		}
+		return curve;
+	}
+
+	Spectrum summarize(const PowerBins& bins, double sampleRate, size_t maxPeaks)
+	{
+		const std::vector<double>& power = bins.power;
+		const size_t size = bins.size;
 		const double binWidth = sampleRate / static_cast<double>(size);
 		Spectrum result;
 

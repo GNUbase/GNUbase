@@ -857,6 +857,19 @@ meter .meter-peak
 	margin-top: -3.5dp;
 }
 
+/* Ruler tracks (docs/features/ruler-tracks.md): a ruler over each ruler track's lane; code places it on its lane. */
+.event-display ruler.ruler-lane
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+}
+
+.event-display ruler.ruler-lane.hidden
+{
+	display: none;
+}
+
 /* The signature track (docs/features/signature-track.md): the time signature events over the signature track's lane,
    or filling the tempo track editor's time signature display, and the field that edits one. Code places the row on
    its lane, the events at their bars and the field over the event it edits. */
@@ -897,6 +910,89 @@ meter .meter-peak
 	position: absolute;
 	top: 0;
 	width: 48dp;
+}
+
+/* The transpose track (docs/features/transpose.md): the transpose events over the transpose track's lane and the
+   field that edits one's value. Code places the row on its lane, the events at their positions and the field over the
+   event it edits. */
+.transpose-row
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	height: 100%;
+}
+
+.transpose-row.hidden, .transpose-row .transpose-field
+{
+	display: none;
+}
+
+.transpose-row .transpose-events
+{
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 100%;
+	height: 100%;
+}
+
+.transpose-row .transpose-event
+{
+	position: absolute;
+	top: 0;
+	padding: 2dp 3dp;
+	white-space: nowrap;
+}
+
+.transpose-row .transpose-field.shown
+{
+	display: block;
+	position: absolute;
+	top: 0;
+	width: 48dp;
+}
+
+/* MIDI parts excluded from global transpose (reference manual p. 421): code puts a .part-mark.independent at the
+   upper right corner of each, its left at the part's end, with the icon inside the part. */
+.event-display .part-marks
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	bottom: 0;
+	pointer-events: none;
+}
+
+.event-display .part-mark
+{
+	position: absolute;
+	margin-left: -14dp;
+	margin-top: 2dp;
+	width: 12dp;
+	height: 12dp;
+}
+
+.event-display .part-mark svg.icon
+{
+	width: 12dp;
+	height: 12dp;
+}
+
+/* The toolbar's Project Root Key, in project windows wide enough for it next to the quantize section. */
+.toolbar-root-key
+{
+	display: none;
+}
+
+@media (min-width: 1100dp)
+{
+	.toolbar-root-key
+	{
+		display: inline-block;
+	}
 }
 
 /* The tools (docs/features/tools.md): the selection range, at least a line wide, and the rectangle a tool drags. Code
@@ -1050,6 +1146,86 @@ meter .meter-peak
 	position: relative;
 }
 
+/* A track that the track visibility hides (#166). */
+.track-list listitem.filtered
+{
+	display: none;
+}
+
+/* The toolbar's Track Visibility Configurations, in windows at least 1100 dp wide: in narrower ones the toolbar has no
+   room for it next to the quantize section (docs/features/track-visibility.md). */
+.track-visibility-configurations
+{
+	display: none;
+}
+
+@media (min-width: 1100dp)
+{
+	.track-visibility-configurations
+	{
+		display: inline-block;
+	}
+}
+
+/* The project window's Visibility tab (docs/features/track-visibility.md): the Track and Editor pages above the
+   tabs at its bottom, the Track page with a check per track, indented by its level in folders. */
+.visibility-page
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	bottom: 28dp;
+	overflow-y: auto;
+}
+
+.visibility-tabs
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	height: 28dp;
+	display: flex;
+	flex-direction: row;
+	padding: 2dp 4dp;
+}
+
+.visibility-tab
+{
+	flex: 1 1 0;
+	margin-right: 2dp;
+}
+
+.track-visibility-list
+{
+	display: flex;
+	flex-direction: column;
+	padding: 4dp;
+}
+
+.track-visibility-item
+{
+	display: block;
+	margin-bottom: 2dp;
+	text-align: left;
+}
+
+.track-visibility-item[level="1"]
+{
+	margin-left: 12dp;
+}
+
+.track-visibility-item[level="2"]
+{
+	margin-left: 24dp;
+}
+
+.track-visibility-item[level="3"]
+{
+	margin-left: 36dp;
+}
+
 /* The track's color (#94), which code gives it as user data; without one it shows nothing. */
 .track-list .track-color
 {
@@ -1093,11 +1269,28 @@ meter .meter-peak
 
 .track-list .track-controls button
 {
+	min-width: 0;
 	width: 22dp;
 	height: 18dp;
 	margin-left: 2dp;
 	padding: 0;
 	text-align: center;
+}
+
+/* Ruler tracks' time format and time offset (docs/features/ruler-tracks.md): each with a button beside it fits the
+   ruler tracks' default controls area of 140dp, on two lines. */
+.track-list .track-controls select,
+.track-list .track-controls textdisplay
+{
+	width: 110dp;
+	height: 18dp;
+	margin-left: 2dp;
+}
+
+.track-list .track-controls textdisplay
+{
+	min-width: 0;
+	padding: 1dp 4dp;
 }
 
 .track-list .track-controls svg.icon
@@ -1595,6 +1788,11 @@ splitter.column .splitter-grip-horizontal
 .info-label
 {
 	margin-right: 4dp;
+}
+
+.info-root-transpose
+{
+	margin-left: 4dp;
 }
 
 .info-line textdisplay[field=name]

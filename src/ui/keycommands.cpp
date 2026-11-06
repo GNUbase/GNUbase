@@ -2,6 +2,7 @@
 #include "ui/keycommands.h"
 
 #include "engine/schema.h"
+#include "platform/log.h"
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
@@ -162,6 +163,21 @@ namespace gnubase::ui
 		return name + keyText(keys.key);
 	}
 
+	std::string keySetting(const KeyPress& keys, Platform platform)
+	{
+		const int command = platform == Platform::Mac ? KM_META : KM_CTRL;
+		const std::array<std::pair<int, const char*>, 5> modifiers = {{{command, "Mod"}, {KM_CTRL & ~command, "Ctrl"},
+			{KM_ALT, "Alt"}, {KM_SHIFT, "Shift"}, {KM_META & ~command, "Meta"}}};
+		std::string name;
+		for (const auto& [flag, text] : modifiers)
+			if (flag != 0 && (keys.modifiers & flag) != 0 && (flag != KM_ALT || keys.key != KI_LMENU))
+			{
+				name += text;
+				name += '+';
+			}
+		return name + keyText(keys.key);
+	}
+
 	std::vector<KeyBinding> defaultKeyMap()
 	{
 		std::vector<KeyBinding> keys = {
@@ -206,7 +222,7 @@ namespace gnubase::ui
 		: m_binding(binding), m_platform(platform)
 	{
 		for (const engine::CommandInfo& info : engine.commands())
-			m_engineCommands.emplace(info.name, info.parameters);
+			m_engineCommands.emplace(info.name, info);
 		for (const KeyBinding& keys : defaultKeyMap())
 			bind(keys);
 	}
@@ -214,7 +230,7 @@ namespace gnubase::ui
 	void KeyCommands::add(UiCommand command)
 	{
 		std::string id = command.id;
-		if (m_engineCommands.count(id) != 0 || m_uiCommands.count(id) != 0)
+		if (m_engineCommands.count(id) != 0 || m_uiCommands.count(id) != 0 || id.rfind("macro.", 0) == 0)
 			throw std::invalid_argument("there is a command " + id + " already");
 		m_uiCommands.emplace(std::move(id), std::move(command));
 	}
@@ -225,10 +241,10 @@ namespace gnubase::ui
 			throw std::invalid_argument(command + ": the parameters must be a JSON object, not " + parameters.dump());
 		if (const auto schema = m_engineCommands.find(command); schema != m_engineCommands.end())
 		{
-			if (const std::string error = engine::validate(parameters, schema->second); !error.empty())
+			if (const std::string error = engine::validate(parameters, schema->second.parameters); !error.empty())
 				throw std::invalid_argument(command + ": " + error);
 		}
-		else if (m_uiCommands.count(command) == 0)
+		else if (m_uiCommands.count(command) == 0 && !isMacro(command))
 		{
 			throw std::invalid_argument("there is no command " + command);
 		}
@@ -248,12 +264,118 @@ namespace gnubase::ui
 			*same = std::move(bound);
 		else
 			m_bindings.push_back(std::move(bound));
+		rebuild();
+	}
+
+	bool KeyCommands::isMacro(const std::string& command) const
+	{
+		return m_macros.count(command) != 0;
+	}
+
+	void KeyCommands::customize(const Json& keyCommands, const Json& macros)
+	{
+		m_macros.clear();
+		for (const Json& macro : macros.is_array() ? macros : Json::array())
+		{
+			auto& commands = m_macros["macro." + macro.value("name", std::string())];
+			for (const Json& command : macro.value("commands", Json::array()))
+				commands.emplace_back(
+					command.value("command", std::string()), command.value("parameters", Json::object()));
+		}
+		m_custom.clear();
+		for (const Json& entry : keyCommands.is_array() ? keyCommands : Json::array())
+		{
+			Customized customized{entry.value("command", std::string()), entry.value("parameters", Json::object()), {}};
+			try
+			{
+				check(customized.command, customized.parameters);
+				for (const Json& keys : entry.value("keys", Json::array()))
+					customized.keys.push_back(parseKeys(keys.get<std::string>(), m_platform));
+			}
+			catch (const std::exception& error)
+			{
+				logging::warning("A key command of the user settings is left out: {}", error.what());
+				continue;
+			}
+			m_custom.push_back(std::move(customized));
+		}
+		rebuild();
+	}
+
+	void KeyCommands::rebuild()
+	{
+		const auto customized = [this](const std::string& command, const Json& parameters)
+		{
+			return std::any_of(m_custom.begin(), m_custom.end(),
+				[&](const Customized& custom) { return custom.command == command && custom.parameters == parameters; });
+		};
+		m_effective.clear();
+		for (const Bound& bound : m_bindings)
+			if (!customized(bound.command, bound.parameters))
+				m_effective.push_back(bound);
+		for (const Customized& custom : m_custom)
+		{
+			const auto first = std::find_if(m_bindings.begin(), m_bindings.end(), [&custom](const Bound& bound)
+				{ return bound.command == custom.command && bound.parameters == custom.parameters; });
+			const std::string zone = first != m_bindings.end() ? first->zone : std::string();
+			for (const KeyPress& keys : custom.keys)
+			{
+				Bound bound{zone, keys, custom.command, custom.parameters};
+				const auto same = std::find_if(m_effective.begin(), m_effective.end(),
+					[&bound](const Bound& other) { return other.zone == bound.zone && other.keys == bound.keys; });
+				if (same != m_effective.end())
+					*same = std::move(bound);
+				else
+					m_effective.push_back(std::move(bound));
+			}
+		}
+	}
+
+	Json KeyCommands::commands() const
+	{
+		Json found = Json::array();
+		const auto add = [this, &found](const std::string& command, const Json& parameters, const std::string& about)
+		{
+			for (const Json& listed : found)
+				if (listed.at("command") == command && listed.at("parameters") == parameters)
+					return;
+			Json keys = Json::array();
+			std::string zone;
+			for (const Bound& binding : m_bindings)
+				if (binding.command == command && binding.parameters == parameters)
+				{
+					if (keys.empty())
+						zone = binding.zone;
+					keys.push_back(keySetting(binding.keys, m_platform));
+				}
+			found.push_back({{"command", command}, {"parameters", parameters}, {"description", about}, {"zone", zone},
+				{"keys", keys}});
+		};
+		for (const auto& [id, command] : m_uiCommands)
+			add(id, Json::object(), command.description);
+		for (const auto& [name, info] : m_engineCommands)
+			if (!info.query && engine::validate(Json::object(), info.parameters).empty())
+				add(name, Json::object(), info.description);
+		for (const Bound& binding : m_bindings)
+		{
+			const auto engineCommand = m_engineCommands.find(binding.command);
+			const auto ui = m_uiCommands.find(binding.command);
+			std::string about;
+			if (engineCommand != m_engineCommands.end())
+				about = engineCommand->second.description;
+			else if (ui != m_uiCommands.end())
+				about = ui->second.description;
+			add(binding.command, binding.parameters, about);
+		}
+		std::stable_sort(found.begin(), found.end(), [](const Json& a, const Json& b)
+			{ return a.at("command").get<std::string>() < b.at("command").get<std::string>(); });
+		return found;
 	}
 
 	std::vector<std::string> KeyCommands::keysFor(const std::string& command, const Json& parameters) const
 	{
 		std::vector<std::string> names;
-		for (const Bound& bound : m_bindings)
+		for (const Bound& bound : m_effective)
 			if (bound.command == command && bound.parameters == parameters)
 				names.push_back(keyName(bound.keys, m_platform));
 		return names;
@@ -272,7 +394,7 @@ namespace gnubase::ui
 		// A copy of the binding, since a UI command may bind keys.
 		const auto bound = [this, &pressed](const std::string& zone) -> std::optional<Bound>
 		{
-			for (const Bound& binding : m_bindings)
+			for (const Bound& binding : m_effective)
 				if (binding.zone == zone && binding.keys == pressed)
 					return binding;
 			return std::nullopt;
@@ -329,6 +451,27 @@ namespace gnubase::ui
 
 	void KeyCommands::run(const std::string& command, const Json& parameters, Window& window, Rml::Element* zone)
 	{
+		if (const auto macro = m_macros.find(command); macro != m_macros.end())
+		{
+			// A copy, since a command may change the macros.
+			const std::vector<std::pair<std::string, Json>> commands = macro->second;
+			for (const auto& [each, eachParameters] : commands)
+			{
+				if (isMacro(each))
+					continue;
+				try
+				{
+					check(each, eachParameters);
+				}
+				catch (const std::invalid_argument& error)
+				{
+					logging::warning("The macro {} skips a command: {}", command, error.what());
+					continue;
+				}
+				run(each, eachParameters, window, zone);
+			}
+			return;
+		}
 		if (const auto ui = m_uiCommands.find(command); ui != m_uiCommands.end())
 		{
 			if (ui->second.run)
@@ -349,7 +492,7 @@ namespace gnubase::ui
 	bool KeyCommands::canRun(const std::string& command, Window& window, Rml::Element* zone) const
 	{
 		if (m_engineCommands.count(command) == 0 && m_uiCommands.count(command) == 0)
-			return false;
+			return isMacro(command);
 		const auto enabled = m_enabled.find(command);
 		return enabled == m_enabled.end() || !enabled->second || enabled->second(window, zone);
 	}

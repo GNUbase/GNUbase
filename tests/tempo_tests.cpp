@@ -110,7 +110,9 @@ namespace
 		for (const Json& part : reported)
 		{
 			parts.push_back(part.at("id").get<ObjectId>());
-			CHECK(part == midiPartJson(client, parts.back()));
+			Json current = midiPartJson(client, parts.back());
+			current.erase("rootKeyTranspose"); // derived by project.get, not in the events
+			CHECK(part == current);
 		}
 		return parts;
 	}

@@ -1,0 +1,283 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The arranger editor (docs/features/arranger.md, reference manual pp. 405-411), in a window of its own: the UI
+     command window.arranger opens it. Its script follows the arranger through the engine API (arranger.get,
+     arranger.changed, transport.changed) and changes it with the arranger commands. -->
+<rml>
+<head>
+	<title>Arranger</title>
+	<style>
+		body
+		{
+			position: absolute;
+			left: 0;
+			top: 0;
+			right: 0;
+			bottom: 0;
+		}
+
+		#toolbar
+		{
+			position: absolute;
+			left: 0;
+			top: 0;
+			right: 0;
+			height: 32dp;
+			box-sizing: border-box;
+			padding: 4dp;
+			display: flex;
+		}
+
+		#toolbar button, #toolbar select
+		{
+			margin-right: 4dp;
+		}
+
+		#arranger-chain, #jump-mode
+		{
+			width: 110dp;
+		}
+
+		#arranger-lists
+		{
+			position: absolute;
+			left: 0;
+			top: 32dp;
+			right: 0;
+			bottom: 0;
+			display: flex;
+		}
+
+		.arranger-list
+		{
+			flex: 1;
+			overflow-y: auto;
+			padding: 4dp;
+		}
+
+		.arranger-row
+		{
+			display: flex;
+			align-items: center;
+			height: 24dp;
+		}
+
+		.arranger-row .name
+		{
+			flex: 1;
+			margin: 0 6dp;
+		}
+
+		.arranger-row .repeats
+		{
+			width: 28dp;
+			text-align: right;
+			margin-right: 4dp;
+		}
+
+		.arranger-row button, .arranger-row select
+		{
+			margin-left: 4dp;
+		}
+
+		.arranger-row .mode
+		{
+			width: 120dp;
+		}
+
+		.locate-arrow
+		{
+			visibility: hidden;
+		}
+
+		.arranger-row.current .locate-arrow
+		{
+			visibility: visible;
+		}
+	</style>
+	<script>
+		ArrangerEditor = ArrangerEditor or {}
+		local editor = ArrangerEditor
+
+		local modeNames = {normal = "Normal", repeatForever = "Repeat Forever", pauseAfterRepeats = "Pause After Repeats"}
+		local modes = {"normal", "repeatForever", "pauseAfterRepeats"}
+		local jumpNames = {none = "None", ["4bars"] = "4 Bars", ["2bars"] = "2 Bars", ["1bar"] = "1 Bar",
+			["1beat"] = "1 Beat", ["end"] = "End"}
+		local jumps = {"none", "4bars", "2bars", "1bar", "1beat", "end"}
+
+		local function escape(text)
+			return (tostring(text):gsub('[&<>"]', {["&"] = "&amp;", ["<"] = "&lt;", [">"] = "&gt;", ['"'] = "&quot;"}))
+		end
+
+		local function options(values, names, selected)
+			local rml = {}
+			for _, value in ipairs(values) do
+				rml[#rml + 1] = '<option value="' .. escape(value) .. '"' .. (value == selected and " selected" or "") ..
+					">" .. escape(names[value]) .. "</option>"
+			end
+			return table.concat(rml)
+		end
+
+		-- The active chain of an arranger.get result.
+		local function activeChain(arranger)
+			for _, chain in ipairs(arranger.chains) do
+				if chain.id == arranger.chain then return chain end
+			end
+		end
+
+		-- The steps as arranger.setChain takes them.
+		local function copySteps(chain)
+			local steps = {}
+			for _, step in ipairs(chain.steps) do
+				steps[#steps + 1] = {event = step.event, repeats = step.repeats, mode = step.mode}
+			end
+			return steps
+		end
+
+		local function setSteps(steps)
+			gnubase.arranger.setChain{steps = steps}
+		end
+
+		function editor.refresh()
+			local document = editor.document
+			if document == nil then return end
+			local arranger = gnubase.arranger.get()
+			local playing = gnubase.transport.get().arranger
+			editor.arranger = arranger
+			document:GetElementById("arranger-mode"):SetClass("checked", arranger.mode)
+			local chains = {}
+			local chainNames = {}
+			for _, chain in ipairs(arranger.chains) do
+				chains[#chains + 1] = tostring(chain.id)
+				chainNames[tostring(chain.id)] = chain.name
+			end
+			document:GetElementById("arranger-chain").inner_rml = options(chains, chainNames, tostring(arranger.chain))
+			document:GetElementById("jump-mode").inner_rml = options(jumps, jumpNames, arranger.jumpMode)
+
+			local names = {}
+			local rows = {}
+			for _, event in ipairs(arranger.events) do
+				names[event.id] = event.name
+				rows[#rows + 1] = '<div class="arranger-row' .. (playing.event == event.id and " current" or "") ..
+					'" id="event-' .. event.id .. '"><button class="trigger" title="Trigger" onclick="ArrangerEditor.trigger(' ..
+					event.id .. ')">&gt;</button><span class="name">' .. escape(event.name) ..
+					'</span><button class="append" onclick="ArrangerEditor.append(' .. event.id ..
+					')">Append</button></div>'
+			end
+			document:GetElementById("arranger-events").inner_rml = table.concat(rows)
+
+			rows = {}
+			local chain = activeChain(arranger)
+			for index, step in ipairs(chain and chain.steps or {}) do
+				local s = index - 1
+				rows[#rows + 1] = '<div class="arranger-row' .. (playing.step == s and " current" or "") .. '" id="step-' ..
+					s .. '"><button class="locate" title="Go to step" onclick="ArrangerEditor.goTo(' .. s ..
+					')"><span class="locate-arrow">&gt;</span></button><span class="name">' ..
+					escape(names[step.event] or "") .. '</span><span class="repeats">' .. step.repeats ..
+					'</span><button class="fewer" onclick="ArrangerEditor.repeats(' .. index ..
+					', -1)">-</button><button class="more" onclick="ArrangerEditor.repeats(' .. index ..
+					', 1)">+</button><select class="mode" onchange="ArrangerEditor.mode(' .. index ..
+					", element:GetAttribute('value'))\">" .. options(modes, modeNames, step.mode) ..
+					'</select><button class="remove" onclick="ArrangerEditor.removeStep(' .. index ..
+					')">Remove</button></div>'
+			end
+			document:GetElementById("chain-steps").inner_rml = table.concat(rows)
+		end
+
+		local function chainSteps()
+			return copySteps(activeChain(editor.arranger))
+		end
+
+		function editor.append(event)
+			local steps = chainSteps()
+			steps[#steps + 1] = {event = event}
+			setSteps(steps)
+		end
+
+		function editor.removeStep(index)
+			gnubase.arranger.setChain{removeSteps = {index - 1}}
+		end
+
+		function editor.repeats(index, by)
+			local steps = chainSteps()
+			steps[index].repeats = math.max(1, math.min(999, steps[index].repeats + by))
+			setSteps(steps)
+		end
+
+		function editor.mode(index, mode)
+			local steps = chainSteps()
+			if steps[index].mode == mode then return end
+			steps[index].mode = mode
+			setSteps(steps)
+		end
+
+		function editor.goTo(step, repeat_)
+			gnubase.arranger.goToStep{step = step, ["repeat"] = repeat_ or 0}
+		end
+
+		function editor.trigger(event)
+			gnubase.arranger.trigger{event = event}
+		end
+
+		-- Previous and Next Chain Step, First and Last Repeat of Current Chain Step (p. 406).
+		function editor.stepBy(by)
+			local chain = activeChain(editor.arranger)
+			local playing = gnubase.transport.get().arranger
+			if chain == nil or #chain.steps == 0 then return end
+			local step = math.max(0, math.min(#chain.steps - 1, math.max(playing.step, 0) + by))
+			editor.goTo(step)
+		end
+
+		function editor.repeatOf(last)
+			local chain = activeChain(editor.arranger)
+			local playing = gnubase.transport.get().arranger
+			if chain == nil or playing.step < 0 then return end
+			editor.goTo(playing.step, last and chain.steps[playing.step + 1].repeats - 1 or 0)
+		end
+
+		function editor.toggleMode()
+			gnubase.arranger.setMode{mode = not editor.arranger.mode}
+		end
+
+		function editor.setChain(value)
+			local chain = math.tointeger(tonumber(value))
+			if chain ~= nil and chain ~= editor.arranger.chain then gnubase.arranger.setMode{chain = chain} end
+		end
+
+		function editor.setJumpMode(value)
+			if value ~= editor.arranger.jumpMode then gnubase.arranger.setMode{jumpMode = value} end
+		end
+
+		function editor.load(document)
+			editor.document = document
+			if not editor.subscribed then
+				editor.subscribed = true
+				local refresh = function() editor.refresh() end
+				gnubase.on("arranger.changed", refresh)
+				gnubase.on("transport.changed", refresh)
+				gnubase.on("project.reset", refresh)
+			end
+			editor.refresh()
+		end
+	</script>
+</head>
+<body onload="ArrangerEditor.load(document)" onunload="ArrangerEditor.document = nil">
+	<div id="toolbar" class="toolbar">
+		<button id="arranger-mode" class="toggle" title="Activate Arranger Mode" onclick="ArrangerEditor.toggleMode()">Arranger Mode</button>
+		<button id="first-step" title="First Chain Step" onclick="ArrangerEditor.stepBy(-1000000)">|&lt;</button>
+		<button id="previous-step" title="Previous Chain Step" onclick="ArrangerEditor.stepBy(-1)">&lt;</button>
+		<button id="next-step" title="Next Chain Step" onclick="ArrangerEditor.stepBy(1)">&gt;</button>
+		<button id="first-repeat" title="First Repeat of Current Chain Step" onclick="ArrangerEditor.repeatOf(false)">First Repeat</button>
+		<button id="last-repeat" title="Last Repeat of Current Chain Step" onclick="ArrangerEditor.repeatOf(true)">Last Repeat</button>
+		<select id="arranger-chain" title="Select Active Chain" onchange="ArrangerEditor.setChain(element:GetAttribute('value'))"/>
+		<button id="new-chain" title="Create New Chain" onclick="gnubase.arranger.addChain{}">New</button>
+		<button id="duplicate-chain" title="Duplicate Current Chain" onclick="gnubase.arranger.addChain{duplicate = true}">Duplicate</button>
+		<button id="remove-chain" title="Remove Current Chain" onclick="gnubase.arranger.removeChain{}">Remove</button>
+		<select id="jump-mode" title="Jump Mode" onchange="ArrangerEditor.setJumpMode(element:GetAttribute('value'))"/>
+		<button id="flatten-chain" title="Flatten Chain" onclick="gnubase.arranger.flatten{}">Flatten</button>
+	</div>
+	<div id="arranger-lists">
+		<div id="chain-steps" class="arranger-list"/>
+		<div id="arranger-events" class="arranger-list"/>
+	</div>
+</body>
+</rml>

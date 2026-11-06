@@ -798,10 +798,14 @@ TEST_CASE("horizontal zoom presets are user settings for every project", "[unit]
 	CHECK(fixture.display.applyZoomPreset("Overview"));
 	CHECK(fixture.display.visibleLength() == Approx(120.0));
 
+	// The display shows each change at once, and then the settings echo of each: the rename's shows two presets
+	// again until the removal's arrives. The engine has the removal once its echo is on its way (#893).
 	fixture.display.renameZoomPreset("Overview", "Song");
 	fixture.display.removeZoomPreset("Detail");
-	REQUIRE(fixture.waitUntil([&fixture] { return fixture.display.zoomPresets().size() == 1; }));
-	CHECK(fixture.display.zoomPresets()[0].at("name") == "Song");
+	const Json song = Json::array({{{"name", "Song"}, {"seconds", 120.0}}});
+	REQUIRE(fixture.waitUntil(
+		[&fixture, &song] { return fixture.call("settings.get", {{"key", "ui.zoomPresets"}}).at("value") == song; }));
+	CHECK(fixture.display.zoomPresets() == song);
 }
 
 TEST_CASE("the cross-hair cursor follows the mouse over the event lanes", "[unit]")
