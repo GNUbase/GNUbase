@@ -266,10 +266,14 @@ namespace
 		std::vector<plugin::Event> events;
 	};
 
-	// Sends a raw block without waiting for its answer.
+	// Sends a raw block without waiting for its answer. The host answers a block before it hands the block's slot
+	// back, so the slot of a block whose answer is in can still be taken for a moment: wait for a free one.
 	void sendRaw(ipc::Connection& audio, uint64_t sequence, const RawBlock& raw)
 	{
 		ipc::AudioBlock block;
+		const auto deadline = std::chrono::steady_clock::now() + 5s;
+		while (!audio.beginBlock(block) && std::chrono::steady_clock::now() < deadline)
+			std::this_thread::yield();
 		REQUIRE(audio.beginBlock(block));
 		plugin::remote::ProcessInfo info;
 		info.flags = raw.flags;
