@@ -455,6 +455,28 @@ TEST_CASE("retrospective recording inserts what a track's input played while it 
 	CHECK_THAT(reject(client, "midi.insertRetrospective", {{"track", setup.track}}), ContainsSubstring("nothing"));
 }
 
+TEST_CASE("the retrospective buffer keeps the last midi.retrospectiveEvents events, none with 0", "[integration]")
+{
+	const int64_t size = GENERATE(0, 2);
+	Setup setup;
+	Client& client = setup.client;
+	run(client, "settings.set", {{"key", "midi.snapPartsToBars"}, {"value", false}});
+	run(client, "settings.set", {{"key", "midi.retrospectiveEvents"}, {"value", size}});
+	run(client, "channel.set", {{"channel", setup.channel}, {"recordEnable", false}});
+	setup.inject({message(1000, {0x90, 60, 100}), message(1000 + g_beat, {0x80, 60, 0}),
+		message(1000 + g_beat, {0x90, 62, 100}), message(1000 + (2 * g_beat), {0x80, 62, 0})});
+	run(client, "audio.render", {{"frames", 1000 + (3 * g_beat)}});
+	if (size == 0)
+	{
+		CHECK_THAT(reject(client, "midi.insertRetrospective", {{"track", setup.track}}), ContainsSubstring("nothing"));
+		return;
+	}
+	run(client, "midi.insertRetrospective", {{"track", setup.track}});
+	const std::vector<Json> parts = setup.parts();
+	REQUIRE(parts.size() == 1);
+	CHECK(notesOf(parts[0]) == std::vector<std::vector<int64_t>>{{0, g_beatTicks, 62}}); // the second note only
+}
+
 TEST_CASE("MIDI and instrument tracks play all MIDI inputs while they monitor or are record-enabled", "[integration]")
 {
 	auto dummy = std::make_unique<gnubase::midi::DummyBackend>();
