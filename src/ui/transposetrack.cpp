@@ -90,7 +90,9 @@ namespace gnubase::ui
 	{
 		Event result{event.at("id").get<uint64_t>(), event.at("start").get<int64_t>(), {}, {}};
 		if (m_kind == LaneKind::Chord)
+		{
 			result.text = result.value = event.at("chord").get<std::string>();
+		}
 		else
 		{
 			const int value = event.at("value").get<int>();

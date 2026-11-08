@@ -28,11 +28,11 @@ namespace gnubase::engine::midi
 	// "6", "7" (the minor seventh), "maj7", "b9", "9", "#9", "11", "#11", "b13" and "13".
 	const std::vector<std::string>& chordTensions();
 
-	// The chord a text names, as the chord editor's text input takes it: a root (C to B with # or b), a type (m or min,
-	// maj, dim, aug or +, sus2, sus4 or sus), tensions (6, 7, maj7, 9, 11 and 13, of which 9, 11 and 13 add the
+	// The chord the input names, as the chord editor's text input takes it: a root (C to B with # or b), a type (m or
+	// min, maj, dim, aug or +, sus2, sus4 or sus), tensions (6, 7, maj7, 9, 11 and 13, of which 9, 11 and 13 add the
 	// seventh unless after add, maj or a sixth or seventh; b9, #9, #11, b13; m7b5 is dim with the seventh), and a bass
 	// note after a slash, such as "Cmaj7", "Dm7(9)", "G7(b9,b13)" or "C/E". "X" and "" are an undefined chord.
-	std::optional<ChordSymbol> parseChord(const std::string& text);
+	std::optional<ChordSymbol> parseChord(const std::string& input);
 	// Its name, which parseChord takes back: such as "Cmaj7", "Dm7(9)", "Cadd(9)", "C/E", or "X" when undefined.
 	std::string chordName(const ChordSymbol& chord);
 

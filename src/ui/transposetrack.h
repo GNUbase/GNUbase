@@ -29,7 +29,7 @@ namespace gnubase::ui
 {
 	// Which track's events a lane shows: the transpose track's (class names transpose-*) or the chord track's
 	// (chord-*).
-	enum class LaneKind
+	enum class LaneKind : uint8_t
 	{
 		Transpose,
 		Chord,

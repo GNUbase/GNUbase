@@ -170,6 +170,7 @@ namespace gnubase::engine
 		std::vector<ChordSource> chordTrackSource(const Project& project)
 		{
 			std::vector<ChordSource> source;
+			source.reserve(project.chords.events.size());
 			for (const ChordEvent& event : project.chords.events)
 				source.push_back({ticksOf(project, event.position), event.text});
 			return source;
@@ -483,9 +484,13 @@ namespace gnubase::engine
 					follow.source = {{0, midi::chordName(chordFrom(parameters.at("chord").get<std::string>()))}};
 				}
 				else if (sync == "analyze")
+				{
 					follow.source = detectChords(notesOf(project, partsOf(project, track), 0), true, true);
+				}
 				else if (sync == "direct" || follow.source.empty())
+				{
 					follow.source = chordTrackSource(project);
+				}
 				follow.mode = mode;
 				context.emit("chord.changed", chordJson(project));
 				return followJson(track, follow);

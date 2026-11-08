@@ -20,8 +20,8 @@ using namespace gnubase::engine;
 namespace
 {
 	constexpr int64_t g_beatTicks = 1720320;
-	constexpr int64_t g_bar = 4 * g_beatTicks;  // 4/4
-	constexpr int64_t g_barSamples = 4 * 24000; // at 120 BPM and 48 kHz
+	constexpr int64_t g_bar = 4 * g_beatTicks;           // 4/4
+	constexpr int64_t g_barSamples = int64_t{4} * 24000; // at 120 BPM and 48 kHz
 
 	Json run(Client& client, const std::string& command, Json parameters = Json::object())
 	{
@@ -110,7 +110,10 @@ namespace
 	}
 
 	// The I-vi-IV-V progression's triads in C, in root position from C3.
-	const Bars g_triads = {{60, 64, 67}, {57, 60, 64}, {65, 69, 72}, {55, 59, 62}};
+	Bars triads()
+	{
+		return {{60, 64, 67}, {57, 60, 64}, {65, 69, 72}, {55, 59, 62}};
+	}
 }
 
 TEST_CASE("the chord track holds chord events and scale events", "[integration]")
@@ -177,7 +180,7 @@ TEST_CASE("Chords to MIDI makes a part of the voicings that follows the chord tr
 	CHECK(reject(client, "chord.toMidi", {{"track", run(client, "chord.get").at("track")}}).find("MIDI") !=
 		std::string::npos);
 	const Json made = run(client, "chord.toMidi", {{"track", song.track}});
-	const Json part = made.at("part");
+	const Json& part = made.at("part");
 	CHECK(part.at("position") == 0);
 	CHECK(part.at("length") == 4 * g_bar); // the last chord lasts a bar
 	CHECK(part.at("notes").size() == 16);
@@ -228,10 +231,10 @@ TEST_CASE("MIDI tracks follow the chord track over reference progressions", "[in
 	}
 	SECTION("Follow Directly: I-vi-IV-V in C moves to D with the chord events")
 	{
-		song.play(g_triads);
+		song.play(triads());
 		song.chords({"C", "Am", "F", "G"});
 		run(client, "chord.follow", {{"track", song.track}, {"mode", "chords"}});
-		CHECK(song.pitches() == g_triads); // the notes already match the chord track
+		CHECK(song.pitches() == triads()); // the notes already match the chord track
 		const Json events = run(client, "chord.get").at("events");
 		const std::vector<std::string> inD = {"D", "Bm", "G", "A"};
 		Json changes = Json::array();
@@ -245,7 +248,7 @@ TEST_CASE("MIDI tracks follow the chord track over reference progressions", "[in
 	}
 	SECTION("Analyze Chords: the part's own chords follow I-vi-IV-V in D")
 	{
-		song.play(g_triads);
+		song.play(triads());
 		song.chords({"D", "Bm", "G", "A"});
 		run(client, "chord.follow", {{"track", song.track}, {"mode", "chords"}, {"sync", "analyze"}});
 		CHECK(song.pitches() == Bars{{62, 66, 69}, {59, 62, 66}, {67, 71, 74}, {57, 61, 64}});
@@ -304,7 +307,7 @@ TEST_CASE("the chord track is saved with the project", "[integration]")
 	Bars played;
 	{
 		Song song;
-		song.play(g_triads);
+		song.play(triads());
 		run(song.client, "track.add", {{"type", "chord"}, {"timeBase", "linear"}});
 		song.chords({"C", "Am", "F", "G"});
 		run(song.client, "chord.add", {{"position", g_bar}, {"scale", "A harmonicMinor"}});

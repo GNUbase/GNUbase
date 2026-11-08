@@ -158,7 +158,9 @@ namespace gnubase::engine::midi
 		}
 		else if (startsWith(text, at, "maj") &&
 			(at + 3 >= text.size() || std::isdigit(static_cast<unsigned char>(text[at + 3])) == 0))
+		{
 			at += 3; // a major chord; maj7 and the like are tensions
+		}
 		else if (startsWith(text, at, "m") && !startsWith(text, at, "maj"))
 		{
 			chord.type = "min";
@@ -223,7 +225,9 @@ namespace gnubase::engine::midi
 			tensions.erase(std::find(tensions.begin(), tensions.end(), "7"));
 		}
 		else if (type != nullptr)
+		{
 			name += type->suffix;
+		}
 		if (!tensions.empty())
 		{
 			const std::string& first = tensions.front();
@@ -235,7 +239,9 @@ namespace gnubase::engine::midi
 					name += "(" + joined(tensions) + ")";
 			}
 			else
+			{
 				name += "add" + (tensions.size() == 1 ? tensions.front() : "(" + joined(tensions) + ")");
+			}
 		}
 		if (chord.bass >= 0 && chord.bass != chord.root)
 			name += std::string("/") + g_names.at(static_cast<size_t>(pitchClass(chord.bass)));
