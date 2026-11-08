@@ -65,6 +65,11 @@ namespace gnubase::ui
 			R"(<select control="program" title="Program Selector"/></div>)"
 			R"(</div></div>)"
 			R"(<div class="inspector-section" section="modifiers" label="MIDI Modifiers"/>)"
+			R"(<div class="inspector-section" section="chords" label="Chords">)"
+			R"(<button class="section-header">Chords</button><div class="section-body">)"
+			R"(<div class="inspector-row" row="followChords"><span class="inspector-label">Follow</span>)"
+			R"(<select control="followChords" title="Follow Chord Track"/></div>)"
+			R"(</div></div>)"
 			R"(<div class="inspector-section" section="inserts" label="Inserts">)"
 			R"(<button class="section-header">Inserts</button><div class="section-body inserts"/></div>)"
 			R"(<div class="inspector-section" section="notepad" label="Notepad">)"
@@ -427,6 +432,20 @@ namespace gnubase::ui
 			else
 				button->RemoveAttribute("checked");
 		}
+		// Follow Chord Track (reference manual pp. 1338-1340), while the project has a chord track.
+		const Json chords = m_project->value("chords", Json::object());
+		available("[section=chords]", noteTrack && chords.value("track", 0) != 0);
+		if (Rml::Element* follow = element("select[control=followChords]"); follow != nullptr && noteTrack)
+		{
+			std::string mode = "off";
+			for (const Json& each : chords.value("follow", Json::array()))
+				if (each.at("track") == m_track)
+					mode = each.at("mode").get<std::string>();
+			widgets::fill(*follow,
+				{{"off", "Off"}, {"chordsAndScales", "Chords & Scales"}, {"chords", "Chords"}, {"scales", "Scales"},
+					{"rootNotes", "Root Notes"}, {"voicings", "Voicings"}},
+				mode);
+		}
 		available(".inspector-edit", channel != nullptr && m_editChannel);
 		const bool records = type == "audio" || type == "instrument" || type == "midi" || vca;
 		available("button[control=record]", records);
@@ -634,6 +653,12 @@ namespace gnubase::ui
 			if (track != nullptr && (track->at("timeBase") == "linear") != linear)
 				m_binding.send(
 					"track.set", {{"track", m_track}, {"timeBase", linear ? "linear" : "musical"}}, whenRefused());
+			return;
+		}
+		if (name == "followChords")
+		{
+			m_binding.send("chord.follow",
+				{{"track", m_track}, {"mode", event.GetParameter<Rml::String>("value", "off")}}, whenRefused());
 			return;
 		}
 		if (!m_channel.is_object())

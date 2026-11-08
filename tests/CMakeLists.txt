@@ -44,6 +44,8 @@ add_executable(gnubase-tests
 	channelformat_tests.cpp
 	channelsettings_tests.cpp
 	channelstrip_tests.cpp
+	chordtrack_tests.cpp
+	chordtrack_ui_tests.cpp
 	clock_tests.cpp
 	color_tests.cpp
 	comping_tests.cpp
@@ -70,6 +72,7 @@ add_executable(gnubase-tests
 	fileimport_tests.cpp
 	fonts_tests.cpp
 	graph_tests.cpp
+	harmony_tests.cpp
 	history_tests.cpp
 	historypanel_tests.cpp
 	hitpoints_tests.cpp
@@ -102,6 +105,7 @@ add_executable(gnubase-tests
 	mididevices_ui_tests.cpp
 	midiedit_tests.cpp
 	midieditor_tests.cpp
+	midieffects_tests.cpp
 	midifile_tests.cpp
 	midifunctions_tests.cpp
 	midifunctions_ui_tests.cpp
@@ -141,6 +145,7 @@ add_executable(gnubase-tests
 	sampleeditor_tests.cpp
 	sampleeditor_ui_tests.cpp
 	scripting_tests.cpp
+	scripts_ui_tests.cpp
 	sequencing_tests.cpp
 	settings_tests.cpp
 	shell_tests.cpp

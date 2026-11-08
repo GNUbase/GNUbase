@@ -209,6 +209,8 @@
 		<menuitem command="pool.findMissing">Find Missing Files...</menuitem>
 		<menuitem command="media.removeMissing">Remove Missing Files</menuitem>
 		<menuitem command="media.conform">Conform Files</menuitem>
+		<menuseparator/>
+		<menuitem command="media.prepareArchive">Prepare Archive</menuitem>
 	</menu>
 	<menu id="edit-menu">
 		<menuitem command="history.undo">Undo</menuitem>
@@ -309,6 +311,12 @@
 			</menu>
 		</menuitem>
 		<menuitem command="window.keyCommands">Key Commands...</menuitem>
+		<!-- docs/features/scripts.md: the user scripts, which app::AppUi fills in -->
+		<menuitem id="scripts-submenu">Scripts
+			<menu id="scripts-menu">
+				<menuitem command="window.scriptConsole">Script Console</menuitem>
+			</menu>
+		</menuitem>
 		<!-- docs/features/preferences.md -->
 		<menuitem command="window.preferences">Preferences...</menuitem>
 	</menu>
@@ -331,6 +339,13 @@
 				<!-- docs/features/time-warp.md -->
 				<menuitem command="tempo.openProcessTempo">Process Tempo...</menuitem>
 				<menuitem command="tempo.openProcessBars">Process Bars...</menuitem>
+			</menu>
+		</menuitem>
+		<!-- The chord track (reference manual pp. 1336, 1342, docs/features/chord-track.md) -->
+		<menuitem id="chord-track-submenu">Chord Track
+			<menu>
+				<menuitem command="track.chordsToMidiSelected">Chords to MIDI</menuitem>
+				<menuitem command="track.createChordEventsSelected">Create Chord Events</menuitem>
 			</menu>
 		</menuitem>
 		<menuseparator/>

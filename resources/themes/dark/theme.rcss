@@ -559,6 +559,13 @@
 		border-left-width: 1dp;
 		border-left-color: #5ea7b3;
 	}
+	.chord-row .chord-event
+	{
+		color: #f3f4f5;
+		font-size: 11dp;
+		border-left-width: 1dp;
+		border-left-color: #7896bd;
+	}
 	.event-display .range-selection
 	{
 		border-width: 1dp;
