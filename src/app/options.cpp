@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/options.h"
 
+#include "engine/settings/profiles.h"
 #include "platform/audio/device.h"
 #include "platform/files.h"
+#include "platform/log.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <memory>
+#include <system_error>
 
 #ifdef _WIN32
 #define NOMINMAX
@@ -145,6 +148,21 @@ namespace gnubase::app
 			{
 				options.settings = value();
 			}
+			else if (arg == "--safe-mode")
+			{
+				options.safeMode = true;
+			}
+			else if (arg == "--no-third-party-plugins")
+			{
+				options.noThirdPartyPlugins = true;
+			}
+			else if (arg == "--factory-settings" || arg == "--delete-settings")
+			{
+				const SafeSettings mode = arg == "--factory-settings" ? SafeSettings::Disable : SafeSettings::Delete;
+				if (options.settingsMode != SafeSettings::Use && options.settingsMode != mode)
+					throw UsageError("--factory-settings and --delete-settings are one or the other");
+				options.settingsMode = mode;
+			}
 			else
 			{
 				throw UsageError("unknown option " + arg);
@@ -163,6 +181,31 @@ namespace gnubase::app
 		if (!options.settings.empty())
 			return std::filesystem::u8path(options.settings);
 		return files::settingsDirectory();
+	}
+
+	std::filesystem::path safeSettingsDirectory(const Options& options)
+	{
+		const std::filesystem::path folder = std::filesystem::u8path(options.settings);
+		if (options.settingsMode == SafeSettings::Disable)
+			return {};
+		if (options.settingsMode == SafeSettings::Delete && !folder.empty())
+			for (const char* file : engine::settings::g_profileFiles)
+			{
+				std::error_code error;
+				if (std::filesystem::remove(folder / file, error))
+					logging::info("Safe start mode: deleted {}", (folder / file).u8string());
+			}
+		return folder;
+	}
+
+	bool safeModeKeysHeld()
+	{
+#ifdef _WIN32
+		const auto held = [](int key) { return (GetAsyncKeyState(key) & 0x8000) != 0; };
+		return held(VK_CONTROL) && held(VK_SHIFT) && held(VK_MENU);
+#else
+		return false;
+#endif
 	}
 
 	std::string usage()
@@ -187,6 +230,11 @@ Opens GNUbase's main window, or with --headless runs without UI.
   --block-size FRAMES   frames per audio block (default: the driver's choice; the dummy device's is 256)
   --settings DIR        keep the user settings in DIR, e.g. for a portable install; by default the folder in
                         GNUBASE_SETTINGS_DIR or the user's settings folder
+  --safe-mode           ask for the safe start options below before the main window opens (holding Ctrl+Shift+Alt
+                        while GNUbase starts does too, on Windows)
+  --no-third-party-plugins  deactivate the plugins that run in plugin host processes, for this run
+  --factory-settings    start with the factory settings, kept in memory: the user settings stay as they are
+  --delete-settings     delete the user settings (and the quantize presets), then start with the factory settings
   --version             print the version
   -h, --help            print this help
 

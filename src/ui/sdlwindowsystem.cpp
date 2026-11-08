@@ -253,6 +253,19 @@ namespace gnubase::ui
 		return name != nullptr ? name : "";
 	}
 
+	int SdlWindowSystem::ask(
+		const std::string& title, const std::string& message, const std::vector<std::string>& buttons)
+	{
+		std::vector<SDL_MessageBoxButtonData> data;
+		for (size_t i = 0; i < buttons.size(); ++i)
+			data.push_back(
+				{i == 0 ? SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT : 0, static_cast<int>(i), buttons[i].c_str()});
+		const SDL_MessageBoxData box{SDL_MESSAGEBOX_INFORMATION, nullptr, title.c_str(), message.c_str(),
+			static_cast<int>(data.size()), data.data(), nullptr};
+		int chosen = -1;
+		return SDL_ShowMessageBox(&box, &chosen) ? chosen : -1;
+	}
+
 	std::vector<Display> SdlWindowSystem::displays() const
 	{
 		std::vector<Display> result;
