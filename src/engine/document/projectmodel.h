@@ -194,6 +194,7 @@ namespace gnubase::engine
 		void record(std::string action, const Project& before, CommandContext& context, std::string merge = {});
 		Json undoOrRedo(CommandContext& context, Direction direction);
 		Json transaction(Project& project, CommandContext& context);
+		Json join(CommandContext& context);
 		void announceHistory(CommandContext& context) const;
 		void publish();
 

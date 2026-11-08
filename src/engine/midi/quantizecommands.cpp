@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/midi/quantizecommands.h"
 
+#include "engine/document/audioquantize.h"
 #include "engine/document/projectmodel.h"
 #include "engine/document/serialize.h"
 #include "engine/engine.h"
@@ -357,9 +358,15 @@ namespace gnubase::engine::midi
 		std::vector<Target> targets(Project& project, const Json& parameters)
 		{
 			const bool onePart = parameters.contains("part");
-			require(onePart != parameters.contains("parts"), "give part or parts, not both; notes picks notes of part");
+			const bool audio = parameters.contains("events") || parameters.contains("audioParts");
+			require(
+				onePart || parameters.contains("parts") || audio, "give part or parts, or audio events or audioParts");
+			require(
+				!onePart || !parameters.contains("parts"), "give part or parts, not both; notes picks notes of part");
 			require(onePart || !parameters.contains("notes"), "notes needs part");
 			std::vector<Target> targets;
+			if (!onePart && !parameters.contains("parts"))
+				return targets;
 			const std::vector<ObjectId> parts = onePart ? std::vector<ObjectId>{parameters.at("part").get<ObjectId>()}
 														: parameters.at("parts").get<std::vector<ObjectId>>();
 			for (const ObjectId id : parts)
@@ -380,6 +387,87 @@ namespace gnubase::engine::midi
 				targets.push_back(std::move(target));
 			}
 			return targets;
+		}
+
+		// The audio events a command works on (#145): events, then those of audioParts.
+		std::vector<ObjectId> audioTargets(const Project& project, const Json& parameters)
+		{
+			std::vector<ObjectId> events;
+			const auto add = [&events](ObjectId id)
+			{
+				if (std::find(events.begin(), events.end(), id) == events.end())
+					events.push_back(id);
+			};
+			for (const Json& id : parameters.value("events", Json::array()))
+			{
+				const auto event = id.get<ObjectId>();
+				require(project.audioEvents.count(event) != 0, "no audio event " + std::to_string(event));
+				add(event);
+			}
+			for (const Json& id : parameters.value("audioParts", Json::array()))
+			{
+				const auto part = id.get<ObjectId>();
+				require(project.audioParts.count(part) != 0, "no audio part " + std::to_string(part));
+				for (const auto& [event, each] : project.audioEvents)
+					if (each.part == part)
+						add(event);
+			}
+			return events;
+		}
+
+		// Quantizes the target audio events' starts, or with warp quantizing their clips' warp markers, and adds them
+		// to the result.
+		void quantizeAudio(Project& project, CommandContext& context, const QuantizeGrid& grid, Json& result)
+		{
+			const std::vector<ObjectId> events = audioTargets(project, context.parameters());
+			Json moved = Json::array();
+			Json clips = Json::array();
+			if (grid.settings().warpQuantize)
+			{
+				for (const ObjectId clip : warpQuantize(project, events, grid))
+				{
+					clips.push_back(clip);
+					context.emit("clip.changed", {{"clip", toJson(project.clips.at(clip))}});
+				}
+			}
+			else
+			{
+				for (const ObjectId id : events)
+				{
+					AudioEvent& event = project.audioEvents.at(id);
+					if (!quantizeEventStart(project, event, grid))
+						continue;
+					moved.push_back(id);
+					context.emit("audioEvent.changed", {{"event", toJson(event)}});
+				}
+			}
+			result["events"] = std::move(moved);
+			result["clips"] = std::move(clips);
+		}
+
+		// Puts the target audio events back, and their clips' warp markers.
+		void resetAudio(Project& project, CommandContext& context, Json& result)
+		{
+			const std::vector<ObjectId> events = audioTargets(project, context.parameters());
+			Json moved = Json::array();
+			Json clips = Json::array();
+			for (const ObjectId id : events)
+			{
+				AudioEvent& event = project.audioEvents.at(id);
+				if (resetEventQuantize(event))
+				{
+					moved.push_back(id);
+					context.emit("audioEvent.changed", {{"event", toJson(event)}});
+				}
+				Clip& clip = project.clips.at(event.clip);
+				if (resetWarpQuantize(clip))
+				{
+					clips.push_back(clip.id);
+					context.emit("clip.changed", {{"clip", toJson(clip)}});
+				}
+			}
+			result["events"] = std::move(moved);
+			result["clips"] = std::move(clips);
 		}
 
 		using NoteFunction = std::function<bool(Note& note, const PartSpan& part)>;
@@ -478,8 +566,27 @@ namespace gnubase::engine::midi
 		const Json targetProperties = {
 			{"part", idSchema}, {"notes", arraySchema(idSchema)}, {"parts", arraySchema(idSchema)}};
 		Json withSettings = targetProperties;
+		Json audioProperties = targetProperties;
+		audioProperties["events"] = arraySchema(idSchema);
+		audioProperties["audioParts"] = arraySchema(idSchema);
+		const Json audioResult = {{"type", "object"},
+			{"properties",
+				{{"notes", {{"type", "array"}}}, {"events", arraySchema(idSchema)}, {"clips", arraySchema(idSchema)}}},
+			{"required", {"notes", "events", "clips"}}};
+		const std::string audioText =
+			" Audio events (events, and every event of the audio parts in audioParts) move so that their snap points, "
+			"or without one their starts, move toward the grid in the same way (reference manual p. 369); with "
+			"settings.warpQuantize, their audio is quantized by time stretch instead (warp quantizing, p. 370): the "
+			"warp "
+			"markers inside each event (made of its clip's hitpoints that count if it has none there) move to the "
+			"grid, the one nearest to each grid position onto it and the others keeping their places relative to "
+			"those. Locked events stay. They too start from their original positions or markers unless soft. Returns "
+			"the notes and audio events that changed and the clips whose warp markers did.";
 		withSettings["preset"] = stringSchema;
 		withSettings["settings"] = settingsSchema;
+		Json audioSettings = withSettings;
+		audioSettings["events"] = arraySchema(idSchema);
+		audioSettings["audioParts"] = arraySchema(idSchema);
 		Json withLength = withSettings;
 		withLength["length"] = {{"type", {"string", "integer"}}};
 
@@ -498,14 +605,17 @@ namespace gnubase::engine::midi
 				"their lengths. " +
 					targetText + " " + originText +
 					" Grids are in project time and start again at every bar; notes don't move before their part's "
-					"start or to or past its end.",
-				objectSchema(withSettings), notesResult, false},
+					"start or to or past its end." +
+					audioText,
+				objectSchema(audioSettings), audioResult, false},
 			"Quantize",
 			[presets](Project& project, CommandContext& context)
 			{
 				const QuantizeGrid grid(settingsFor(project, *presets, context.parameters()), project.signatures);
-				return forNotes(project, context,
+				Json result = forNotes(project, context,
 					[&grid](Note& note, const PartSpan& part) { return quantizeStart(note, part, grid); });
+				quantizeAudio(project, context, grid, result);
+				return result;
 			});
 		model.addEdit(engine,
 			{"quantize.ends", 1,
@@ -540,10 +650,19 @@ namespace gnubase::engine::midi
 				"Puts quantized notes back to their timing before quantizing: starts, lengths and velocities. Notes "
 				"moved by other means since keep their timing, and velocities and lengths changed by other means stay. "
 				"Takes the notes of part (only notes, if given) or of "
-				"every part in parts and returns the notes that changed.",
-				objectSchema(targetProperties), notesResult, false},
-			"Reset quantize", [](Project& project, CommandContext& context)
-			{ return forNotes(project, context, [](Note& note, const PartSpan&) { return resetQuantize(note); }); });
+				"every part in parts and returns the notes that changed. Audio events (events, and those of the audio "
+				"parts in audioParts) go back to their positions before quantizing, and their clips to their warp "
+				"markers before warp quantizing, unless they were changed by other means since; returns those "
+				"events and clips too.",
+				objectSchema(audioProperties), audioResult, false},
+			"Reset quantize",
+			[](Project& project, CommandContext& context)
+			{
+				Json result =
+					forNotes(project, context, [](Note& note, const PartSpan&) { return resetQuantize(note); });
+				resetAudio(project, context, result);
+				return result;
+			});
 		model.addEdit(engine,
 			{"quantize.freeze", 1,
 				"Makes quantized notes' timing permanent: quantizing starts from it from now on, and quantize.reset no "

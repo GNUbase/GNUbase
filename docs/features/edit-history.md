@@ -52,12 +52,18 @@ shows it in a dialog from Edit > History; GNUbase shows it as the panel History 
   widget's `change`, [widgets.md](widgets.md)): a drag of the mixer's faders, of the inspector's volume and pan and of
   the info line's volume ([inspector.md](inspector.md)), wheel turns until the mouse leaves, an arrow key until it is
   released. The steps of a gesture still go to the engine one by one, so that it is heard while it lasts.
+- **Joining steps.** Each step has an id in `history.get`, growing with each new step. `history.join` with `after`, an
+  id, and `action` joins the done steps whose id is greater into one step named action, so that a client's several
+  commands are undone and redone at once: a user script is one undo step this way ([scripts.md](scripts.md)). Steps
+  that end where they started leave none, and steps that can be redone stay.
 - **Through the engine.** Everything the panel does goes through these engine commands, so MCP and Lua clients jump with
   `history.undo` and `history.redo` by the difference between the position they want and `history.get`'s.
 - **Not yet:** the maximum number of undo steps in the preferences (p. 112), which `history.set` already sets; and a
   wider default for the panel, whose zone the user sizes with its splitter.
 - **Tests:** `tests/history_tests.cpp` checks merged transactions: one undo step per key, none after another step or an
-  undo, and none for a gesture that ends where it started. `tests/historypanel_tests.cpp` opens the panel through its UI
+  undo, and none for a gesture that ends where it started; and joined steps: one undo and one redo for three steps,
+  none for steps that end where they started, undone steps kept, and the steps found by id after the oldest were
+  dropped. `tests/historypanel_tests.cpp` opens the panel through its UI
   command in the app's project window and drives it with `ui::Automation`: it lists the steps with their action, time
   and state with the separator after the done ones, clicks undo several steps, undo everything and redo some again,
   typing details reaches the engine without moving the position, undo, redo and details from another client show, and a

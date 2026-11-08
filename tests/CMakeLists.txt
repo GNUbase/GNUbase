@@ -34,6 +34,8 @@ add_executable(gnubase-tests
 	audiopart_tests.cpp
 	audioparteditor_tests.cpp
 	audioparteditor_ui_tests.cpp
+	audioquantize_tests.cpp
+	audioquantize_ui_tests.cpp
 	automation_tests.cpp
 	automationtracks_tests.cpp
 	backup_tests.cpp
@@ -140,6 +142,7 @@ add_executable(gnubase-tests
 	sampleeditor_tests.cpp
 	sampleeditor_ui_tests.cpp
 	scripting_tests.cpp
+	scripts_ui_tests.cpp
 	sequencing_tests.cpp
 	settings_tests.cpp
 	shell_tests.cpp
@@ -160,6 +163,8 @@ add_executable(gnubase-tests
 	time_tests.cpp
 	timeformat_tests.cpp
 	timestretch_tests.cpp
+	timewarp_tests.cpp
+	timewarp_ui_tests.cpp
 	tracklist_tests.cpp
 	trackversions_tests.cpp
 	trackversions_ui_tests.cpp

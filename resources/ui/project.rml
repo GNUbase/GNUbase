@@ -309,6 +309,12 @@
 			</menu>
 		</menuitem>
 		<menuitem command="window.keyCommands">Key Commands...</menuitem>
+		<!-- docs/features/scripts.md: the user scripts, which app::AppUi fills in -->
+		<menuitem id="scripts-submenu">Scripts
+			<menu id="scripts-menu">
+				<menuitem command="window.scriptConsole">Script Console</menuitem>
+			</menu>
+		</menuitem>
 		<!-- docs/features/preferences.md -->
 		<menuitem command="window.preferences">Preferences...</menuitem>
 	</menu>
@@ -327,6 +333,10 @@
 				<menuseparator/>
 				<!-- docs/features/tempo-detection.md -->
 				<menuitem command="tempo.detection">Tempo Detection...</menuitem>
+				<menuseparator/>
+				<!-- docs/features/time-warp.md -->
+				<menuitem command="tempo.openProcessTempo">Process Tempo...</menuitem>
+				<menuitem command="tempo.openProcessBars">Process Bars...</menuitem>
 			</menu>
 		</menuitem>
 		<!-- The chord track (reference manual pp. 1336, 1342, docs/features/chord-track.md) -->
@@ -402,6 +412,11 @@
 		<menuitem id="audio-advanced-submenu">Advanced
 			<menu>
 				<menuitem command="audio.detectSilence">Detect Silence...</menuitem>
+				<menuseparator/>
+				<!-- docs/features/time-warp.md -->
+				<menuitem command="audio.setDefinitionFromTempo">Set Definition from Tempo...</menuitem>
+				<menuitem command="audio.copyWarpMarkers">Copy Warp Markers from Selected Event</menuitem>
+				<menuitem command="audio.pasteWarpMarkers">Paste Warp Markers to Selected Events</menuitem>
 			</menu>
 		</menuitem>
 		<menuitem command="audio.spectrumAnalyzer">Spectrum Analyzer</menuitem>
@@ -640,6 +655,7 @@
 		<menuitem tool="zoom" title="Zoom"><svg class="icon" src="../icons/tool-zoom.svg"/></menuitem>
 		<menuitem tool="line" title="Line"><svg class="icon" src="../icons/tool-line.svg"/></menuitem>
 		<menuitem tool="play" title="Play"><svg class="icon" src="../icons/tool-audition.svg"/></menuitem>
+		<menuitem tool="timeWarp" title="Time Warp"><svg class="icon" src="../icons/tool-timewarp.svg"/></menuitem>
 	</menu>
 	<menu id="event-display-menu">
 		<menuitem id="tools-submenu">Tools
@@ -655,6 +671,16 @@
 				<menuitem tool="zoom">Zoom</menuitem>
 				<menuitem tool="line">Line</menuitem>
 				<menuitem tool="play">Play</menuitem>
+				<menuitem tool="timeWarp">Time Warp</menuitem>
+				<!-- The time warp tool's modes (reference manual p. 1465, docs/features/time-warp.md), here rather than
+				     behind a toolbar button, which the toolbar has no room for at 1024 pixels -->
+				<menuitem id="time-warp-submenu">Time Warp Mode
+					<menu id="time-warp-menu">
+						<menuitem warp-mode="warpGrid">Warp Grid</menuitem>
+						<menuitem warp-mode="warpGridFollow">Warp Grid (musical events follow)</menuitem>
+						<menuitem warp-mode="freeWarp">Free Warp</menuitem>
+					</menu>
+				</menuitem>
 			</menu>
 		</menuitem>
 		<menuseparator/>

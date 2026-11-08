@@ -60,6 +60,11 @@ namespace gnubase::engine::midi
 		time::Ticks end = 0;
 	};
 
+	// Where quantizing moves a position in project ticks, as quantizeStart moves a note's start: toward the nearest
+	// grid or groove position by the strength, randomized by key (the same key moves the same way); nothing if it
+	// stays, outside the catch range or inside the safe range. For audio (#145).
+	std::optional<time::Ticks> quantizedPosition(const QuantizeGrid& grid, time::Ticks tick, uint64_t key);
+
 	// Each function quantizes one note of part and returns whether the note changed. Note starts stay within the
 	// part: a note doesn't move before its start, or to or past its end.
 	//
