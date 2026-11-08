@@ -314,17 +314,20 @@ if(GNUBASE_SANITIZERS)
 	target_compile_definitions(gnubase-tests PRIVATE GNUBASE_SANITIZED)
 endif()
 
-# Every TEST_CASE becomes a ctest test; its tags ([unit], [integration], [ui], [slow]) become ctest labels.
-# PRE_TEST discovery lets cross-compiled builds (e.g. Windows ARM64 on x64) configure and build.
+# Every TEST_CASE becomes a ctest test; its tags ([unit], [integration], [ui], [slow], [realtime], [jack]) become ctest
+# labels. PRE_TEST discovery lets cross-compiled builds (e.g. Windows ARM64 on x64) configure and build.
 include(Catch)
-# A test that hangs fails after five minutes instead of blocking the run.
+# A test that hangs fails after five minutes instead of blocking the run. Tests tagged [realtime] must keep real-time
+# deadlines on the wall clock, and the [jack] tests share one jackd and check its cycle times, so both run alone when
+# ctest runs tests in parallel (CI does).
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 	# The PipeWire tests share one daemon, whose graph some of them change: they never run at the same time (#423).
-	catch_discover_tests(gnubase-tests TEST_SPEC "~[pipewire]" DISCOVERY_MODE PRE_TEST ADD_TAGS_AS_LABELS PROPERTIES TIMEOUT 300 ENVIRONMENT "${settingsEnvironment}")
+	catch_discover_tests(gnubase-tests TEST_SPEC "~[pipewire]~[realtime]~[jack]" DISCOVERY_MODE PRE_TEST ADD_TAGS_AS_LABELS PROPERTIES TIMEOUT 300 ENVIRONMENT "${settingsEnvironment}")
 	catch_discover_tests(gnubase-tests TEST_SPEC "[pipewire]" DISCOVERY_MODE PRE_TEST ADD_TAGS_AS_LABELS PROPERTIES TIMEOUT 300 RESOURCE_LOCK pipewire ENVIRONMENT "${settingsEnvironment}")
 else()
-	catch_discover_tests(gnubase-tests DISCOVERY_MODE PRE_TEST ADD_TAGS_AS_LABELS PROPERTIES TIMEOUT 300 ENVIRONMENT "${settingsEnvironment}")
+	catch_discover_tests(gnubase-tests TEST_SPEC "~[realtime]~[jack]" DISCOVERY_MODE PRE_TEST ADD_TAGS_AS_LABELS PROPERTIES TIMEOUT 300 ENVIRONMENT "${settingsEnvironment}")
 endif()
+catch_discover_tests(gnubase-tests TEST_SPEC "[realtime],[jack]" DISCOVERY_MODE PRE_TEST ADD_TAGS_AS_LABELS PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE ENVIRONMENT "${settingsEnvironment}")
 
 # Shell tests for the scripts in tools/. They use the sh next to Git, which on Windows is the one Git runs hooks with
 # (Git/bin, found from Git/cmd or Git/mingw64/bin).
