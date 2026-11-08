@@ -1233,7 +1233,9 @@ TEST_CASE("File > Open and Revert ask before unsaved changes are discarded", "[u
 	fileMenu(app, "file.save");
 	CHECK(answer(app, {}).kind == gnubase::ui::FileDialogKind::Save);
 	CHECK(location(app).is_null());
-	CHECK(fs::last_write_time(autoSave) == autoSaved);
+	// Compared into a bool: Catch2 can't print a file time where libc++ counts it in __int128 (macOS).
+	const bool autoSaveUntouched = fs::last_write_time(autoSave) == autoSaved;
+	CHECK(autoSaveUntouched);
 }
 
 TEST_CASE("closing the main window or quitting through the OS asks before unsaved changes are discarded", "[ui]")
