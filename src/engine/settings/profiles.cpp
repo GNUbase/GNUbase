@@ -99,6 +99,22 @@ namespace gnubase::engine::settings
 			return std::find(names.begin(), names.end(), name) != names.end();
 		}
 
+		// Whether a profile other than except has a name that differs from name at most in case: the profiles'
+		// folders aren't case-sensitive on Windows and macOS. ASCII case only, as the folders' names are UTF-8.
+		bool taken(const fs::path& directory, const State& state, const std::string& name,
+			const std::string& except = std::string())
+		{
+			const auto lower = [](std::string text)
+			{
+				std::transform(text.begin(), text.end(), text.begin(),
+					[](char c) { return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c; });
+				return text;
+			};
+			const std::vector<std::string> names = profiles(directory, state);
+			return std::any_of(names.begin(), names.end(),
+				[&](const std::string& other) { return other != except && lower(other) == lower(name); });
+		}
+
 		// The folder with a profile's files: the settings folder for the active one.
 		fs::path filesOf(const fs::path& directory, const State& state, const std::string& name)
 		{
@@ -220,7 +236,7 @@ namespace gnubase::engine::settings
 			{
 				const auto added = parameters.at("name").get<std::string>();
 				checkName(added);
-				require(!exists(directory, state, added), "there is a profile " + added);
+				require(!taken(directory, state, added), "there is a profile " + added);
 				fs::create_directories(folderOf(directory, added));
 			});
 		command("profile.duplicate", "Adds a profile with the settings of another one." + list,
@@ -231,7 +247,7 @@ namespace gnubase::engine::settings
 				const auto added = parameters.at("newName").get<std::string>();
 				require(exists(directory, state, from), "no profile " + from);
 				checkName(added);
-				require(!exists(directory, state, added), "there is a profile " + added);
+				require(!taken(directory, state, added), "there is a profile " + added);
 				const fs::path to = folderOf(directory, added);
 				fs::create_directories(to);
 				for (const char* file : g_profileFiles)
@@ -248,7 +264,7 @@ namespace gnubase::engine::settings
 				checkName(to);
 				if (to == from)
 					return;
-				require(!exists(directory, state, to), "there is a profile " + to);
+				require(!taken(directory, state, to, from), "there is a profile " + to);
 				if (from == state.active)
 					state.active = to;
 				else
@@ -328,7 +344,7 @@ namespace gnubase::engine::settings
 				const std::string imported = parameters.contains("name") ? parameters.at("name").get<std::string>()
 																		 : json.value("name", std::string());
 				checkName(imported);
-				require(!exists(directory, state, imported), "there is a profile " + imported);
+				require(!taken(directory, state, imported), "there is a profile " + imported);
 				const fs::path to = folderOf(directory, imported);
 				for (const char* file : g_profileFiles)
 					if (const auto found = json.at("files").find(file); found != json.at("files").end())

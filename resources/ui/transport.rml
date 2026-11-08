@@ -45,7 +45,10 @@
 	<button id="metronome" class="icon-only" command="transport.toggle" parameters='{"setting": "metronome"}' state="metronome" title="Activate Metronome Click"><svg class="icon" src="../icons/transport-metronome.svg"/></button>
 </div>
 <menu id="transport-setup" class="setup-pane">
+	<div setup-presets="transport"/>
+	<button setup-preset-save="transport">Save Preset</button>
 	<button setup-all="transport">Show All</button>
+	<button setup-reset="transport">Reset All</button>
 	<div setup="transport"/>
 </menu>
 <menu id="primary-format-menu">

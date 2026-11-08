@@ -1,0 +1,46 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Names a setup pane preset (docs/features/docking.md, reference manual p. 1575): the docking system opens it from
+     a setup pane's Save Preset button, and saves the set's order and hidden sections under the name in
+     #setup-preset-name when it closes with OK. -->
+<rml>
+<head>
+	<title>Save Preset</title>
+	<style>
+		dialog
+		{
+			width: 300dp;
+		}
+
+		.row
+		{
+			display: flex;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		#setup-preset-name
+		{
+			flex: 1;
+		}
+
+		.buttons
+		{
+			justify-content: flex-end;
+		}
+
+		.buttons button
+		{
+			margin-left: 6dp;
+		}
+	</style>
+</head>
+<body>
+	<dialog id="setup-preset-dialog">
+		<div class="dialog-titlebar">Save Preset</div>
+		<div class="row"><input type="text" id="setup-preset-name" autofocus="autofocus"/></div>
+		<div class="row buttons">
+			<button result="cancel">Cancel</button>
+			<button class="primary" id="setup-preset-ok" result="ok">OK</button>
+		</div>
+	</dialog>
+</body>
+</rml>

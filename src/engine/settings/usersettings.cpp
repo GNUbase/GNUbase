@@ -716,6 +716,21 @@ namespace gnubase::engine::settings
 																		{"maximum", 127}}}}}}}}}}},
 								{"required", Json::array({"name", "lanes"})}}}},
 					Json::array()},
+				{"ui.setupPresets",
+					"The setup panes' presets (reference manual p. 1575, docs/features/docking.md), by set of "
+					"sections (transport, inspector, channel): each a name, the order of the set's sections and those "
+					"hidden.",
+					Json{{"type", "object"},
+						{"additionalProperties",
+							{{"type", "array"},
+								{"items",
+									{{"type", "object"}, {"additionalProperties", false},
+										{"required", Json::array({"name", "order", "hidden"})},
+										{"properties",
+											{{"name", {{"type", "string"}, {"minLength", 1}}},
+												{"order", {{"type", "array"}, {"items", {{"type", "string"}}}}},
+												{"hidden", {{"type", "array"}, {"items", {{"type", "string"}}}}}}}}}}}},
+					Json::object()},
 				{"ui.workspaces",
 					"The global workspaces, for every project (workspace.* commands, docs/features/workspaces.md): "
 					"each a name and its layout, a copy of ui.layout.",

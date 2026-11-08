@@ -380,7 +380,9 @@ namespace gnubase::ui
 				"</menuitem>";
 		std::string layout =
 			m_kind == MixerKind::Window ? R"(<button type="toggle" toggle="left">Left Zone</button>)" : "";
-		layout += R"(<div setup="channel"/>)";
+		layout += R"(<div setup-presets="channel"/><button setup-preset-save="channel">Save Preset</button>)"
+				  R"(<button setup-all="channel">Show All</button><button setup-reset="channel">Reset All</button>)"
+				  R"(<div setup="channel"/>)";
 		// The channel settings window has the Functions menu (pp. 461, 503) instead of the filter and the agents.
 		std::vector<std::pair<std::string, std::string>> menus = {
 			{R"(<menu id="mixer-filter-menu">)", filter},

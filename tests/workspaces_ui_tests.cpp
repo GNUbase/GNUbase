@@ -41,10 +41,12 @@ namespace
 	}
 
 	// The docking system on the fake window system with two monitors, the main window as "project" and a tool window
-	// that opens and closes as ui.layout says, at the bounds the docking system has for it.
+	// that opens and closes as ui.layout says, at the bounds the docking system has for it. layout is ui.layout from
+	// the last session, which the docking system starts on.
 	struct Fixture
 	{
-		Fixture()
+		explicit Fixture(const Json& layout = Json::object())
+			: laidOut(layout.empty() || client.call("settings.set", {{"key", "ui.layout"}, {"value", layout}}).ok())
 		{
 			docking.addWindow("project", [this] { return main; });
 			docking.addWindow(
@@ -90,6 +92,7 @@ namespace
 
 		engine::Engine engine;
 		engine::Client client{engine};
+		bool laidOut;
 		test::FakeUi ui{{leftMonitor(), rightMonitor()}};
 		ui::WindowId main = ui.shell.open({}).id();
 		ui::WindowId tool = 0;
@@ -157,6 +160,17 @@ TEST_CASE("a workspace keeps the open windows with their bounds and monitors, an
 		// The project window was on the right monitor, which is gone: it comes onto the left one, fully visible.
 		CHECK(inside(f.ui.shell.bounds(f.main), leftMonitor().usable));
 	}
+}
+
+TEST_CASE(
+	"a window that ui.layout has open from the last session but is closed now isn't open in a new workspace", "[unit]")
+{
+	Fixture f({{"windows", {{"tool", {{"open", true}}}}}});
+	REQUIRE(f.laidOut);
+	CHECK(f.tool == 0);
+	REQUIRE(f.waitUntil([&f] { return f.saved().at("windows").at("tool").at("open") == false; }));
+	f.call("workspace.add", {{"name", "Now"}, {"type", "global"}});
+	CHECK(f.call("workspace.get").at("global").at(0).at("layout").at("windows").at("tool").at("open") == false);
 }
 
 namespace

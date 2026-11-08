@@ -143,3 +143,26 @@ TEST_CASE("without a settings folder there are no profiles", "[unit]")
 	CHECK(!result.ok());
 	CHECK_THAT(result.error, ContainsSubstring("in memory only"));
 }
+
+TEST_CASE("profile names that differ only in case are taken, as the folders aren't case-sensitive everywhere", "[unit]")
+{
+	const Fixture f;
+	f.call("profile.add", {{"name", "Studio"}});
+	CHECK_THAT(f.fails("profile.add", {{"name", "default"}}), ContainsSubstring("there is a profile"));
+	CHECK_THAT(f.fails("profile.add", {{"name", "STUDIO"}}), ContainsSubstring("there is a profile"));
+	CHECK_THAT(f.fails("profile.duplicate", {{"name", "Default"}, {"newName", "studio"}}),
+		ContainsSubstring("there is a profile"));
+	CHECK_THAT(f.fails("profile.rename", {{"name", "Studio"}, {"newName", "DEFAULT"}}),
+		ContainsSubstring("there is a profile"));
+	const test::TempDir other;
+	const std::string file = (other.path() / "studio.json").u8string();
+	f.call("profile.export", {{"name", "Default"}, {"file", file}});
+	CHECK_THAT(
+		f.fails("profile.import", {{"file", file}, {"name", "studio"}}), ContainsSubstring("there is a profile"));
+	CHECK(f.names() == std::vector<std::string>{"Default", "Studio"});
+
+	// A profile renamed to itself in another case keeps its settings.
+	f.call("profile.rename", {{"name", "Studio"}, {"newName", "studio"}});
+	f.call("profile.rename", {{"name", "Default"}, {"newName", "DEFAULT"}});
+	CHECK(f.names() == std::vector<std::string>{"DEFAULT", "studio"});
+}

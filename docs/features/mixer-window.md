@@ -65,7 +65,8 @@ engine commands, so whichever client changes the project or the view, the mixer 
   window's track visibility, and a window does with Sync Visibility of Project and Mixer
   ([track-visibility.md](track-visibility.md)).
 - **Set up Window Layout** (p. 439): the setup pane ([docking.md](docking.md)) shows and hides the left zone (in a
-  window) and the strips' sections Pictures, Pre, Equalizer, Strip, Sends, Notepad and Fader, and reorders them; the layout is the user setting
+  window) and the strips' sections Pictures, Pre, Equalizer, Strip, Sends, Notepad and Fader, and reorders them, with
+  Show All, Reset All and presets ([docking.md](docking.md)); the layout is the user setting
   `ui.layout`, per window (`mixer1` to `mixer4`, and `project` for the lower zone's).
 - **Order** (p. 496). A channel's name dragged onto another channel takes its place: its track moves into that
   track's folder with `track.move`, after it when it came from the left, before it otherwise, so the track list

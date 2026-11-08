@@ -19,7 +19,8 @@ track presets and templates (p. 1579).
   engine starts, before it reads any setting (`settings::switchProfile`), the active profile's files go into its
   folder and the chosen profile's come into the settings folder. A profile without a file has that file's defaults.
 - **Names** are folder names on every OS: 1 to 100 characters, none of `< > : " / \ | ? *`, not ending with a dot or a
-  space.
+  space. Since the folders aren't case-sensitive on Windows and macOS, a name that differs from another profile's
+  only in case is taken (ASCII letters); a profile can be renamed to its own name in another case.
 
 | Command | What it does |
 |---|---|
@@ -65,7 +66,8 @@ on macOS and Linux.
 
 - `tests/profiles_tests.cpp`: profiles added with the factory settings, duplicated with the settings, names checked,
   activated at the next start while the others keep theirs, renamed, also the active one, which can't be deleted;
-  exported and imported on another settings folder, under the file's name or another; none without a settings folder.
+  exported and imported on another settings folder, under the file's name or another; none without a settings folder;
+  add, duplicate, rename and import refusing a name that differs from another profile's only in case.
 - `tests/profiles_ui_tests.cpp`: the Profile Manager from the Edit menu, adding, duplicating, renaming and deleting
   profiles through its name field and buttons, a taken name's error, and Activate Profile saying that the profile
   becomes active at the next start.

@@ -109,7 +109,8 @@ one it has the class `empty` and says "No Track Selected".
 - **Set up Sections** (p. 167): a right click on an empty area of the inspector (not on a control, the inserts or the
   notepad, which have an empty `contextmenu`) opens the setup pane `#inspector-setup`, which the
   docking system fills with a toggle per section: it shows and hides sections, and dragging one onto another reorders
-  them. The choice is the user setting `ui.layout`, under the set `inspector` ([docking.md](docking.md)).
+  them, with Show All, Reset All and presets. The choice is the user setting `ui.layout`, under the set `inspector`,
+  the presets `ui.setupPresets` ([docking.md](docking.md)).
 
 ## In the engine
 
@@ -122,7 +123,7 @@ The info line's other fields (offset, fades, snap point; audio events' global tr
 context menu, and its own modifier setting (Preferences, Editing - Tool Modifiers); the inspector's other sections
 (track versions, chords, articulations, MIDI inserts, equalizer, fader, cue sends, remote controls),
 sends (#108), the MIDI tracks' MIDI volume and pan, the folder track inspector's list of the tracks inside, the
-editor tab and the tempo, signature and marker track inspectors, Show All, Reset All and presets in Set up Sections,
+editor tab and the tempo, signature and marker track inspectors,
 Expand Sections Exclusively, and the Channel zone's channel strip (#107). Record and monitor on instrument and MIDI
 tracks (pp. 173–176) wait for #97. Set up Sections for the inspector in a window of its own, where `#inspector-setup`,
 which is in the project window's document, doesn't open, waits for #517.

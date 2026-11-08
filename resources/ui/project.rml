@@ -575,6 +575,10 @@
 	</menu>
 	<!-- The inspector's Set up Sections pane (reference manual p. 167), its context menu -->
 	<menu id="inspector-setup" class="setup-pane">
+		<div setup-presets="inspector"/>
+		<button setup-preset-save="inspector">Save Preset</button>
+		<button setup-all="inspector">Show All</button>
+		<button setup-reset="inspector">Reset All</button>
 		<div setup="inspector"/>
 	</menu>
 	<menu id="ruler-format-menu">

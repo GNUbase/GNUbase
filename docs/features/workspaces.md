@@ -2,8 +2,8 @@
 
 Named window layouts (#163, reference manual pp. 1576–1579): which windows are open, where they are and on which
 monitor, and how their zones, tabs, strips and sections are set up. Global workspaces are for every project, project
-workspaces are saved with the project. The setup panes (p. 1575) are in [docking.md](docking.md), profiles and the
-safe start mode in [profiles.md](profiles.md).
+workspaces are saved with the project. The setup panes (p. 1575), with their presets, Show All and Reset All, are in
+[docking.md](docking.md), profiles and the safe start mode in [profiles.md](profiles.md).
 
 ## The layout
 
@@ -27,6 +27,8 @@ now also keeps the app's top-level windows under `windows`, by name, next to the
   `bounds` and `monitor`. A window's entry gets its bounds and its monitor's name (the monitor it overlaps most) once
   it opens, moves or resizes, checked twice a second and at once when a window opens or closes through its command,
   and `open` when that changes. A window that never moved adds nothing, so the layout keeps only what the user did.
+  When GNUbase starts, a window that `ui.layout` from the last session has open but that is closed gets `open: false`
+  at once (and the other way round), so that a workspace added then has the windows as they are.
   Panels in windows of their own keep their monitor too.
 - **Opening.** Each window opens where its entry says, and the main window goes there when GNUbase starts. A window
   whose monitor, by name, is connected goes where it was (moved onto a monitor if it can't be reached, as for every
@@ -79,7 +81,8 @@ Key commands for the workspaces (the Workspace category of the key commands dial
 dragging workspaces in the organizer and renaming with a double click; locking workspaces; Open Projects in Last Used
 View (p. 1609) and the view of external projects, which come with the preferences' General page; the editors'
 windows opening from a workspace, which follow what the engine's editor views show; and the Windows dialog's Cascaded
-mode, which acts on a window's associated windows, and Reset Layout.
+mode, which acts on a window's associated windows, and Reset Layout. The toolbar's and the info line's setup panes
+(p. 1575) come later (#942).
 
 ## Checks
 
@@ -87,6 +90,7 @@ mode, which acts on a window's associated windows, and Reset Layout.
   updated, No Workspace, renamed, moved and deleted with the active one following; project workspaces saved and loaded
   with the active one, global ones in `ui.workspaces` for every project, neither an undo step.
 - `tests/workspaces_ui_tests.cpp`: on the fake window system with two monitors, windows that never moved add nothing,
+  a window that the last session's layout has open but that is closed at the start not open in a new workspace,
   the main window's and a tool window's bounds and monitors kept, the tool window opened and closed by a workspace,
   and recalled where they were with both monitors, or without the right one fully visible on the left; in the app, the
   Workspaces menu with No Workspace and Update Workspace disabled, workspaces added through the New Workspace dialog,

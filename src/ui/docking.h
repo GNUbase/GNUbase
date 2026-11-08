@@ -20,6 +20,7 @@
 
 namespace Rml
 {
+	class Context;
 	class ElementDocument;
 }
 
@@ -66,6 +67,11 @@ namespace gnubase::ui
 	//                                 toggle button per section (setup-section="eq"); a button dragged onto another
 	//                                 moves its section there
 	//   setup-all="channel"           a button that shows every section of the set (Show All)
+	//   setup-reset="channel"         a button that gives the set its default order and hidden sections (Reset All)
+	//   setup-presets="channel"       the set's presets from the user setting ui.setupPresets, which the docking system
+	//                                 fills with a button per preset (setup-preset="name") that recalls it
+	//   setup-preset-save="channel"   a button that names the set's order and hidden sections as a preset in a dialog
+	//                                 (setup-preset.rml next to the panel window's document) and saves it
 	//
 	// Zones get the state class .hidden when hidden and .focused while the keyboard focus is in them; strips get
 	// .hidden. A tab is dragged onto another to move it there; a right click on the tabs opens the zone's tab menu,
@@ -116,6 +122,12 @@ namespace gnubase::ui
 			const std::string& window, const std::string& set, const std::string& id, const std::string& before);
 		void setSectionHidden(const std::string& window, const std::string& set, const std::string& id, bool hidden);
 		std::vector<std::string> sections(const std::string& window, const std::string& set) const; // in order
+		// Reset All: the set's default order and hidden sections.
+		void resetSections(const std::string& window, const std::string& set);
+		// The set's presets in ui.setupPresets, which all windows share: saving one replaces that of the same name;
+		// recalling one that isn't there does nothing. Sections a preset lacks keep their defaults' order after its.
+		void savePreset(const std::string& window, const std::string& set, const std::string& name);
+		void recallPreset(const std::string& window, const std::string& set, const std::string& name);
 		// Arranges containers of sections added or rebuilt after attach, such as a new mixer channel: element, and the
 		// containers and setup panes in it, get the user's order and hidden sections. A set the window doesn't know yet
 		// is learned from its first container there, which fills the set's setup panes. Call it once element is in a
@@ -221,6 +233,9 @@ namespace gnubase::ui
 		void save();
 		// Opens, closes and places the app's windows as ui.layout says.
 		void applyWindows();
+		// Save Preset's dialog for the set, in the context of the setup pane's document; its close event saves it.
+		void openPresetDialog(Rml::Context& context, const std::string& window, const std::string& set);
+		void presetDialogClosed(Rml::Event& event);
 
 		EngineBinding& m_binding;
 		Shell& m_shell;
@@ -228,8 +243,13 @@ namespace gnubase::ui
 		bool m_hiddenWindows = false;
 		Rml::String
 			m_reloadEvent; // g_documentReloadEvent, made once: the destructor removes listeners without allocating
+		Rml::String m_closeEvent;            // g_dialogCloseEvent, made once, as m_reloadEvent
 		std::set<engine::RequestId> m_saves; // layouts sent to the engine that it hasn't answered yet
 		engine::Json m_layout = engine::Json::object();
+		engine::Json m_presets = engine::Json::object(); // ui.setupPresets
+		Rml::ObserverPtr<Rml::Element> m_presetDialog;   // Save Preset's, while it is open
+		std::string m_presetWindow;                      // and the window and set it saves
+		std::string m_presetSet;
 		std::vector<Panel> m_panels;
 		std::map<std::string, Attached> m_windows;
 		std::map<std::string, Shown> m_shown; // by panel
