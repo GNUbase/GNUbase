@@ -71,6 +71,7 @@ namespace gnubase::ui
 		Zoom,
 		Line,
 		Play,
+		TimeWarp, // #159
 	};
 	// The tool's name, as the display's attribute tool and the toolbar's buttons name it: objectSelection, split, ...
 	const char* toolName(Tool tool);
@@ -93,6 +94,15 @@ namespace gnubase::ui
 	{
 		Play,
 		Scrub,
+	};
+
+	// The time warp tool's modes (reference manual p. 1465): the grid with musical tracks keeping their time, the
+	// grid with them following, or warp markers on audio events.
+	enum class WarpMode : uint8_t
+	{
+		Grid,
+		GridFollow,
+		Free,
 	};
 
 	// A selection range (reference manual p. 285): from start to end in project samples, on these tracks (by id, in
@@ -233,14 +243,16 @@ namespace gnubase::ui
 		// setting ui.toolModifiers. The document's toolbar may have a button per tool, button[tool=<name>], whose
 		// attribute tool-menu names a menu of its modes that a second click opens (#object-selection-menu with the
 		// sizing modes, #line-menu with the line modes, #play-menu with the play modes), and a toggle button
-		// #combine-selection-tools. Menu items with a tool attribute choose it too: the toolbox #toolbox and the
-		// context menu #event-display-menu, which a right click in the event lanes opens, the toolbox with the user
-		// setting ui.toolboxOnRightClick and the context menu with a modifier key, or the other way round while it is
-		// off. A tool chosen with its command (actions()) shows its name in the notification #tool-notification,
-		// unless the user setting ui.toolSwitchNotification is off. Over the lanes, the attribute pointer of the
-		// event area names the mouse pointer for the style sheets: the tool's name, the range selection tool's in a
-		// lane's upper half with the selection tools combined, or resize at an event's edge that a drag resizes; with
-		// the modifier keys held, what a press with them does, such as split with the tool modifier Split Event.
+		// #combine-selection-tools. Menu items with a tool attribute choose it too, and those of #time-warp-menu, the
+		// context menu's time warp modes, choose the time warp tool and the mode:
+		// the toolbox #toolbox and the context menu #event-display-menu, which a right click in the event lanes opens,
+		// the toolbox with the user setting ui.toolboxOnRightClick and the context menu with a modifier key, or the
+		// other way round while it is off. A tool chosen with its command (actions()) shows its name in the
+		// notification #tool-notification, unless the user setting ui.toolSwitchNotification is off. Over the lanes,
+		// the attribute pointer of the event area names the mouse pointer for the style sheets: the tool's name, the
+		// range selection tool's in a lane's upper half with the selection tools combined, or resize at an event's edge
+		// that a drag resizes; with the modifier keys held, what a press with them does, such as split with the tool
+		// modifier Split Event.
 		void setTool(Tool tool);
 		Tool tool() const { return m_tool; }
 		void setCombineSelectionTools(bool on);
@@ -249,6 +261,8 @@ namespace gnubase::ui
 		LineMode lineMode() const { return m_lineMode; }
 		void setPlayMode(PlayMode mode);
 		PlayMode playMode() const { return m_playMode; }
+		void setWarpMode(WarpMode mode);
+		WarpMode warpMode() const { return m_warpMode; }
 		// The selection range, also in the root's attributes range ("start end") and range-tracks (ids); none
 		// without the range selection tool. Choosing another tool selects the events in the range instead.
 		const std::optional<RangeSelection>& range() const { return m_range; }
@@ -360,6 +374,7 @@ namespace gnubase::ui
 			Volume,        // its event volume handle
 			VolumePoint,   // a point of its volume curve, with the draw tool
 			Automation,    // on an automation track (automationtracks.cpp)
+			TimeWarp,      // the time warp tool's, on release (eventtimewarp.cpp)
 		};
 
 		// An automation lane of the project as the display shows it: points in seconds, values from 0 (bottom) to 1.
@@ -545,6 +560,7 @@ namespace gnubase::ui
 			engine::Fade out;
 			engine::Crossfade crossfade;
 			int64_t offset = 0;
+			uint64_t clip = 0;
 			double volume = 0.0; // dB
 			std::vector<engine::VolumePoint> curve;
 		};
@@ -585,6 +601,12 @@ namespace gnubase::ui
 		std::optional<size_t> curvePointAt(const Shown& shown, double x, double y) const;
 		bool eraseCurvePoint(const Shown& shown, double x, double y);     // the erase tool, on a point
 		void showVolume(FadeLines::Lane& lane, const Shown& shown) const; // its line and volume handle
+
+		// The time warp tool, Process Tempo, Process Bars, Set Definition from Tempo and copying warp markers
+		// (eventtimewarp.cpp, #159).
+		void addTimeWarpActions();
+		bool timeWarpDown();
+		void timeWarpUp(double x);
 
 		// The tools (eventtools.cpp).
 		void addToolActions();
@@ -777,6 +799,8 @@ namespace gnubase::ui
 		Tool m_pressTool = Tool::ObjectSelection; // the tool of the press now, upper or lower half when combined
 		bool m_combine = false;
 		LineMode m_lineMode = LineMode::Line;
+		WarpMode m_warpMode = WarpMode::Grid;
+		uint64_t m_warpSource = 0; // the audio event Copy Warp Markers from Selected Event copied from
 		PlayMode m_playMode = PlayMode::Play;
 		uint64_t m_auditioned = 0; // the track the play tool auditions or scrubs while pressed
 		std::optional<RangeSelection> m_range;
@@ -792,6 +816,7 @@ namespace gnubase::ui
 		Rml::Element* m_combineButton = nullptr;
 		Rml::Element* m_objectMenu = nullptr;
 		Rml::Element* m_lineMenu = nullptr;
+		Rml::Element* m_timeWarpMenu = nullptr;
 		Rml::Element* m_playMenu = nullptr;
 		Rml::Element* m_toolbox = nullptr;
 		Rml::Element* m_contextMenu = nullptr;

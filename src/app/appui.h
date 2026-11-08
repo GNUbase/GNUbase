@@ -246,11 +246,17 @@ namespace gnubase::app
 		struct QuantizeTarget
 		{
 			std::vector<std::pair<uint64_t, std::vector<uint64_t>>> parts;
+			// The project window's selected audio events and parts (#145), for Quantize and Reset Quantize.
+			std::vector<uint64_t> events;
+			std::vector<uint64_t> audioParts;
 			std::string lengthQuantize;
 			double insertVelocity = 100.0 / 127.0; // the editor's, for Fixed Velocity
 		};
 		QuantizeTarget quantizeTarget(ui::Window& window, Rml::Element* zone) const;
 		void quantize(const std::string& command, const std::string& step, const QuantizeTarget& target);
+		// The quantize panel's commands for several audio tracks (#145): command with parameters on the project
+		// window's selected audio events and the events of its selected audio parts.
+		void quantizeAudioTracks(const std::string& command, engine::Json parameters);
 		// The MIDI menu (#133, docs/features/midi-functions.md, appmidifunctions.cpp): MIDI > Functions on what
 		// quantizeTarget gives, and the dialogs of Transpose Setup, Merge MIDI in Loop, Dissolve Part and Restrict
 		// Polyphony (resources/ui/midi-function.rml).
