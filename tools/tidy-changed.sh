@@ -166,30 +166,38 @@ status=$?
 result=$((status == 0 ? 0 : 1))
 
 # CI also builds with GCC 13 in Release, whose optimizer warns where Clang doesn't (-Werror=array-bounds, say), and
-# clang-tidy already reports what Clang can't compile. So on Linux the same files are compiled with GCC as CI builds
-# them, whole files rather than changed lines, from a second compile database in build/tidy-gcc.
-if [ "$(uname -s)" = Linux ] && [ -z "${CLANG_TIDY:-}" ]; then
+# clang-tidy already reports what Clang can't compile. So on Linux (CLANG_TIDY or not) the same files are compiled with
+# GCC as CI builds them, whole files rather than changed lines, from a second compile database in build/tidy-gcc.
+# Without LTO, as CI builds: with it, GCC's compile step stops before the optimizer and its warnings come at link time.
+if [ "$(uname -s)" = Linux ]; then
 	gcc=build/tidy-gcc
-	if [ ! -f "$gcc/compile_commands.json" ] || cmakeChanged "$gcc/compile_commands.json"; then
+	if [ ! -f "$gcc/compile_commands.json" ] || cmakeChanged "$gcc/compile_commands.json" ||
+		! grep -qs '^GNUBASE_LTO:BOOL=OFF$' "$gcc/CMakeCache.txt"; then
 		echo "Configuring $gcc for GCC's compile commands"
 		mkdir -p "$gcc" && cmake --preset linux-gcc -B "$gcc" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-			-DCMAKE_CONFIGURATION_TYPES=Release > "$gcc/configure.log" 2>&1 ||
+			-DCMAKE_CONFIGURATION_TYPES=Release -DGNUBASE_LTO=OFF > "$gcc/configure.log" 2>&1 ||
 			{ echo "Configuring failed, see $gcc/configure.log"; exit 2; }
 	fi
 	echo "GCC on the same file(s)"
-	# Each file's compile command, run in its folder with the object going nowhere.
-	python3 - "$gcc/compile_commands.json" "${files[@]}" <<'EOF' |
+	# Each file's compile command, to run in its folder with the object going nowhere.
+	commands=$gcc/commands
+	python3 - "$gcc/compile_commands.json" "${files[@]}" > "$commands" <<'EOF' || { echo "Reading $gcc's compile commands failed."; exit 2; }
 import json, shlex, sys
 entries = json.load(open(sys.argv[1]))
+missing = []
 for name in sys.argv[2:]:
-	for entry in entries:
-		if entry["file"].endswith("/" + name):
-			args = shlex.split(entry["command"])
-			args[args.index("-o") + 1] = "/dev/null"
-			sys.stdout.write("cd " + shlex.quote(entry["directory"]) + " && " + shlex.join(args) + "\0")
-			break
+	entry = next((e for e in entries if e["file"].endswith("/" + name)), None)
+	if entry is None:
+		missing.append(name)
+		continue
+	args = shlex.split(entry["command"])
+	args[args.index("-o") + 1] = "/dev/null"
+	sys.stdout.write("cd " + shlex.quote(entry["directory"]) + " && " + shlex.join(args) + "\0")
+if missing:
+	print("Not compiled with GCC, in no target of its build: " + " ".join(missing), file=sys.stderr)
 EOF
-		xargs -0 -P "$(nproc)" -n 1 bash -c 'out=$(eval "$0" 2>&1); s=$?; [ $s -ne 0 ] && printf "%s\n" "$out"; exit $s'
+	xargs -0 -P "$(nproc)" -n 1 bash -c 'out=$(eval "$0" 2>&1); s=$?; [ $s -ne 0 ] && printf "%s\n" "$out"; exit $s' \
+		< "$commands"
 	gccStatus=$?
 	[ $gccStatus -eq 0 ] && echo "GCC compiles them." || { echo "GCC failed (above)."; result=1; }
 fi
