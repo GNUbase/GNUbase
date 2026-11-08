@@ -123,6 +123,7 @@ add_library(gnubase-engine STATIC
 	document/arranger.cpp
 	document/audiofilecommands.cpp
 	document/audiofunctions.cpp document/audiofunctions.h
+	document/audioquantize.cpp document/audioquantize.h
 	document/channelformat.cpp document/channelformat.h
 	document/channelsettings.cpp document/channelsettings.h
 	document/document.cpp document/document.h
@@ -150,6 +151,7 @@ add_library(gnubase-engine STATIC
 	document/snap.cpp document/snap.h
 	document/stripparameters.cpp document/stripparameters.h
 	document/tempo.cpp
+	document/timewarp.cpp document/timewarp.h
 	document/trackversions.cpp document/trackversions.h
 	document/trackvisibility.cpp document/trackvisibility.h
 	document/transpose.cpp

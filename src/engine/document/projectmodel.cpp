@@ -5,6 +5,7 @@
 #include "engine/audiofile/resampler.h"
 #include "engine/dawproject/dawproject.h"
 #include "engine/document/audiofunctions.h"
+#include "engine/document/audioquantize.h"
 #include "engine/document/channelsettings.h"
 #include "engine/document/editors.h"
 #include "engine/document/hitpoints.h"
@@ -13,6 +14,7 @@
 #include "engine/document/sampleeditor.h"
 #include "engine/document/serialize.h"
 #include "engine/document/stripparameters.h"
+#include "engine/document/timewarp.h"
 #include "engine/document/trackversions.h"
 #include "engine/document/volumecurves.h"
 #include "engine/dsp/timestretch.h"
@@ -4294,6 +4296,7 @@ namespace gnubase::engine
 		registerParameterCommands(engine);
 		registerSlotCommands(engine);
 		midi::registerQuantizeCommands(*this, engine);
+		registerAudioQuantizeCommands(*this, engine);
 		midi::registerFunctionCommands(*this, engine);
 		metronome::registerMetronomeCommands(*this, engine);
 		midi::registerControllerLaneCommands(*this, engine);
@@ -4315,6 +4318,7 @@ namespace gnubase::engine
 		registerSampleEditorCommands(*this, engine);
 		registerHitpointCommands(*this, engine, jobs);
 		registerWarpCommands(engine);
+		registerTimeWarpCommands(*this, engine);
 		registerAudioFunctionCommands(*this, engine);
 		registerHistoryCommands(engine);
 		registerMediaFolderCommands(engine, jobs);

@@ -43,13 +43,18 @@ namespace gnubase::engine::midi
 
 		// A random offset from -randomize to randomize that depends only on the seed, the note and the edge, so
 		// quantizing the same notes with the same seed always gives the same result.
-		time::Ticks randomOffset(const QuantizeSettings& settings, ObjectId note, Edge edge)
+		time::Ticks randomBy(const QuantizeSettings& settings, uint64_t key)
 		{
 			if (settings.randomize <= 0)
 				return 0;
-			const uint64_t random = mix(settings.seed ^ mix((note * 2) + static_cast<uint64_t>(edge)));
+			const uint64_t random = mix(settings.seed ^ mix(key));
 			const auto span = (static_cast<uint64_t>(settings.randomize) * 2) + 1;
 			return static_cast<time::Ticks>(random % span) - settings.randomize;
+		}
+
+		time::Ticks randomOffset(const QuantizeSettings& settings, ObjectId note, Edge edge)
+		{
+			return randomBy(settings, (note * 2) + static_cast<uint64_t>(edge));
 		}
 
 		// Grid positions of one bar: a straight grid of step ticks from the bar's start, every second position
@@ -220,6 +225,14 @@ namespace gnubase::engine::midi
 		return nearestOf(
 			gridAround(m_signatures, tick, static_cast<double>(m_settings.preQuantize->ticks()), 0.0), tick)
 			.position;
+	}
+
+	std::optional<time::Ticks> quantizedPosition(const QuantizeGrid& grid, time::Ticks tick, uint64_t key)
+	{
+		const std::optional<GridPosition> moved = target(grid, tick);
+		if (!moved)
+			return std::nullopt;
+		return moved->position + randomBy(grid.settings(), key);
 	}
 
 	bool quantizeStart(Note& note, const PartSpan& part, const QuantizeGrid& grid)

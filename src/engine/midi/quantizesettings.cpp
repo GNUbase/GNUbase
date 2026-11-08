@@ -161,7 +161,8 @@ namespace gnubase::engine::midi
 			{"groove", settings.groove ? toJson(*settings.groove) : Json(nullptr)},
 			{"preQuantize", settings.preQuantize ? Json(toString(*settings.preQuantize)) : Json(nullptr)},
 			{"maxMove", settings.maxMove}, {"velocityStrength", settings.velocityStrength},
-			{"lengthStrength", settings.lengthStrength}, {"origin", settings.origin}};
+			{"lengthStrength", settings.lengthStrength}, {"origin", settings.origin},
+			{"warpQuantize", settings.warpQuantize}};
 	}
 
 	QuantizeSettings quantizeSettingsFromJson(const Json& json, QuantizeSettings base)
@@ -210,6 +211,8 @@ namespace gnubase::engine::midi
 			settings.lengthStrength = unit(json, "lengthStrength");
 		if (has("origin"))
 			settings.origin = distance(json, "origin");
+		if (has("warpQuantize"))
+			settings.warpQuantize = json.at("warpQuantize").get<bool>();
 		return settings;
 	}
 
@@ -230,8 +233,8 @@ namespace gnubase::engine::midi
 				{{"grid", {{"type", "string"}}}, {"tuplet", integer}, {"swing", number}, {"catchRange", integer},
 					{"safeRange", integer}, {"randomize", integer}, {"seed", integer}, {"soft", {{"type", "boolean"}}},
 					{"strength", number}, {"groove", groove}, {"preQuantize", {{"type", {"string", "null"}}}},
-					{"maxMove", integer}, {"velocityStrength", number}, {"lengthStrength", number},
-					{"origin", integer}}},
+					{"maxMove", integer}, {"velocityStrength", number}, {"lengthStrength", number}, {"origin", integer},
+					{"warpQuantize", {{"type", "boolean"}}}}},
 			{"additionalProperties", false}};
 	}
 
