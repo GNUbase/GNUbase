@@ -83,8 +83,8 @@ namespace gnubase::engine::midi
 	struct Harmony
 	{
 		ChordSymbol chord;
-		Scale scale;               // automaticScale(chord) or a scale event's
-		std::vector<int> voicing;  // voiceChord(chord, ...)
+		Scale scale;              // automaticScale(chord) or a scale event's
+		std::vector<int> voicing; // voiceChord(chord, ...)
 	};
 	int followPitch(int pitch, const std::string& mode, const Harmony& from, const Harmony& to);
 }

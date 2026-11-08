@@ -67,6 +67,7 @@ namespace gnubase::engine
 		Vca,       // a VCA fader (docs/features/link-groups.md): a channel without audio that controls a link group
 		Arranger,  // holds the arranger events (#167); has no channel, stays at the top level, at most one
 		Transpose, // holds the transpose events (#168); has no channel, stays at the top level, at most one
+		Chord,     // holds the chord and scale events (#173); has no channel, stays at the top level, at most one
 	};
 
 	// The time formats of ruler tracks, as the event display's ruler names them.
@@ -774,6 +775,43 @@ namespace gnubase::engine
 		bool lock = false;                  // the events can't be added, changed or removed
 	};
 
+	// A chord track event (#173, reference manual pp. 1320, 1330), in the chord track's time base: a chord event's text
+	// is its chord's name (midi::chordName, "X" for an undefined chord), a scale event's its scale's (midi::scaleName,
+	// such as "D dorian"). Each plays from its position to the next of its kind.
+	struct ChordEvent
+	{
+		ObjectId id = 0;
+		time::Position position;
+		std::string text;
+	};
+
+	// The harmony a track's notes were played in when it began to follow the chord track (reference manual p. 1341):
+	// chords by position in ticks, each until the next.
+	struct ChordSource
+	{
+		time::Ticks position = 0;
+		std::string chord;
+	};
+
+	// How a track follows the chord track (reference manual p. 1340): a mode of midi::followModeNames(), and the
+	// harmony its notes are mapped from.
+	struct ChordFollow
+	{
+		std::string mode = "off";
+		std::vector<ChordSource> source;
+	};
+
+	// The chord track's events and settings (reference manual pp. 1319-1345).
+	struct ChordTrack
+	{
+		std::vector<ChordEvent> events;         // chord events, in timeline order
+		std::vector<ChordEvent> scales;         // scale events, in timeline order
+		int octaveOffset = 0;                   // the basic voicings' Octave Offset from C3, -3 to 3
+		bool adaptiveVoicings = true;           // voicings that move the voices the least
+		bool automaticScales = true;            // each chord event's scale is its chord's, not the scale events'
+		std::map<ObjectId, ChordFollow> follow; // by MIDI or instrument track
+	};
+
 	// What an automation lane changes.
 	enum class AutomationTargetType : uint8_t
 	{
@@ -999,6 +1037,7 @@ namespace gnubase::engine
 		ObjectId arrangerChain = 0;
 		int rootKey = -1;                     // the Project Root Key (#168): -1 for none, 0 C to 11 B
 		TransposeTrack transpose;             // the transpose track's events and controls; reset when the track goes
+		ChordTrack chords;                    // the chord track's (#173); reset when the track goes
 		std::map<ObjectId, DrumMap> drumMaps; // a new project has the GM Map (#129)
 		// Virgin territory instead of initial values (reference manual p. 881): automation lanes have gaps before their
 		// first and after their last point too, where their parameters have their static values. A setting saved with
@@ -1302,6 +1341,27 @@ namespace gnubase::engine
 	inline bool operator==(const TransposeTrack& a, const TransposeTrack& b)
 	{
 		return std::tie(a.events, a.mute, a.keepInOctave, a.lock) == std::tie(b.events, b.mute, b.keepInOctave, b.lock);
+	}
+
+	inline bool operator==(const ChordEvent& a, const ChordEvent& b)
+	{
+		return std::tie(a.id, a.position, a.text) == std::tie(b.id, b.position, b.text);
+	}
+
+	inline bool operator==(const ChordSource& a, const ChordSource& b)
+	{
+		return std::tie(a.position, a.chord) == std::tie(b.position, b.chord);
+	}
+
+	inline bool operator==(const ChordFollow& a, const ChordFollow& b)
+	{
+		return std::tie(a.mode, a.source) == std::tie(b.mode, b.source);
+	}
+
+	inline bool operator==(const ChordTrack& a, const ChordTrack& b)
+	{
+		return std::tie(a.events, a.scales, a.octaveOffset, a.adaptiveVoicings, a.automaticScales, a.follow) ==
+			std::tie(b.events, b.scales, b.octaveOffset, b.adaptiveVoicings, b.automaticScales, b.follow);
 	}
 
 	inline bool operator==(const AutomationTarget& a, const AutomationTarget& b)

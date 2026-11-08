@@ -59,10 +59,8 @@ namespace gnubase::engine::midi
 			if (at >= text.size() || letters.find(text[at]) == std::string::npos || text[at] == ' ')
 				return -1;
 			int note = static_cast<int>(letters.find(text[at++]));
-			if (at < text.size() && text[at] == '#')
-				++note, ++at;
-			else if (at < text.size() && text[at] == 'b')
-				--note, ++at;
+			if (at < text.size() && (text[at] == '#' || text[at] == 'b'))
+				note += text[at++] == '#' ? 1 : -1;
 			return pitchClass(note);
 		}
 
@@ -146,26 +144,26 @@ namespace gnubase::engine::midi
 		if (chord.root < 0)
 			return std::nullopt;
 		std::vector<std::string> tensions;
-		if (startsWith(text, at, "m7b5"))
-			chord.type = "dim", tensions.emplace_back("7"), at += 4;
-		else if (startsWith(text, at, "min"))
-			chord.type = "min", at += 3;
-		else if (startsWith(text, at, "maj") && (at + 3 >= text.size() || std::isdigit(static_cast<unsigned char>(text[at + 3])) == 0))
-			at += 3;
+		// The type, if any, by its spelling; m7b5 is diminished with the seventh.
+		static const std::vector<std::pair<std::string, std::string>> types = {{"m7b5", "dim"}, {"min", "min"},
+			{"dim", "dim"}, {"aug", "aug"}, {"+", "aug"}, {"sus2", "sus2"}, {"sus4", "sus4"}, {"sus", "sus4"}};
+		const auto type = std::find_if(
+			types.begin(), types.end(), [&](const auto& entry) { return startsWith(text, at, entry.first); });
+		if (type != types.end())
+		{
+			chord.type = type->second;
+			if (type->first == "m7b5")
+				tensions.emplace_back("7");
+			at += type->first.size();
+		}
+		else if (startsWith(text, at, "maj") &&
+			(at + 3 >= text.size() || std::isdigit(static_cast<unsigned char>(text[at + 3])) == 0))
+			at += 3; // a major chord; maj7 and the like are tensions
 		else if (startsWith(text, at, "m") && !startsWith(text, at, "maj"))
-			chord.type = "min", at += 1;
-		else if (startsWith(text, at, "dim"))
-			chord.type = "dim", at += 3;
-		else if (startsWith(text, at, "aug"))
-			chord.type = "aug", at += 3;
-		else if (startsWith(text, at, "+"))
-			chord.type = "aug", at += 1;
-		else if (startsWith(text, at, "sus2"))
-			chord.type = "sus2", at += 4;
-		else if (startsWith(text, at, "sus4"))
-			chord.type = "sus4", at += 4;
-		else if (startsWith(text, at, "sus"))
-			chord.type = "sus4", at += 3;
+		{
+			chord.type = "min";
+			at += 1;
+		}
 		// Tensions, longest first; 9, 11 and 13 bring the seventh unless after add or a sixth or seventh.
 		static const std::vector<std::pair<std::string, std::vector<std::string>>> tokens = {{"maj13", {"maj7", "13"}},
 			{"maj11", {"maj7", "11"}}, {"maj9", {"maj7", "9"}}, {"maj7", {"maj7"}}, {"b13", {"b13"}}, {"#11", {"#11"}},
@@ -184,8 +182,8 @@ namespace gnubase::engine::midi
 				at += 3;
 				continue;
 			}
-			const auto token = std::find_if(tokens.begin(), tokens.end(),
-				[&](const auto& entry) { return startsWith(text, at, entry.first); });
+			const auto token = std::find_if(
+				tokens.begin(), tokens.end(), [&](const auto& entry) { return startsWith(text, at, entry.first); });
 			if (token == tokens.end())
 				return std::nullopt;
 			const bool extension = token->first == "9" || token->first == "11" || token->first == "13";
@@ -288,10 +286,12 @@ namespace gnubase::engine::midi
 			return std::nullopt;
 		const auto with = [&chord](const char* tension) { return hasTension(chord, tension); };
 		ScaleType type = ScaleType::Major;
-		if (chord.type == "min")
-			type = with("maj7")									 ? ScaleType::MelodicMinor
-				: with("6") || with("7") || with("13") ? ScaleType::Dorian
-													   : ScaleType::Minor;
+		if (chord.type == "min" && with("maj7"))
+			type = ScaleType::MelodicMinor;
+		else if (chord.type == "min" && (with("6") || with("7") || with("13")))
+			type = ScaleType::Dorian;
+		else if (chord.type == "min")
+			type = ScaleType::Minor;
 		else if (chord.type == "dim")
 			type = ScaleType::Locrian;
 		else if (chord.type == "aug")
@@ -351,7 +351,8 @@ namespace gnubase::engine::midi
 		return best;
 	}
 
-	std::vector<int> voiceChord(const ChordSymbol& chord, const VoicingSettings& settings, const std::vector<int>& previous)
+	std::vector<int> voiceChord(
+		const ChordSymbol& chord, const VoicingSettings& settings, const std::vector<int>& previous)
 	{
 		const std::vector<int> intervals = chordIntervals(chord);
 		if (intervals.empty())

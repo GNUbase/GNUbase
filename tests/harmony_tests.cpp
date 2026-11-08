@@ -47,8 +47,8 @@ namespace
 		return result;
 	}
 
-	std::vector<int> follow(const std::vector<int>& pitches, const std::string& mode, const Harmony& from,
-		const Harmony& to)
+	std::vector<int> follow(
+		const std::vector<int>& pitches, const std::string& mode, const Harmony& from, const Harmony& to)
 	{
 		std::vector<int> result;
 		result.reserve(pitches.size());
