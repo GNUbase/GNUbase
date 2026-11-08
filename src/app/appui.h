@@ -122,7 +122,9 @@ namespace gnubase::app
 		// The time signature events on the signature track's lane in the project window, null before showProject.
 		ui::SignatureLane* signatureLane() { return m_signatureLane.get(); }
 		// The transpose events on the transpose track's lane in the project window, null before showProject.
-		ui::TransposeLane* transposeLane() { return m_transposeLane.get(); }
+		ui::GlobalEventLane* transposeLane() { return m_transposeLane.get(); }
+		// The chord events on the chord track's lane, likewise.
+		ui::GlobalEventLane* chordLane() { return m_chordLane.get(); }
 
 		// The mixers (#106, docs/features/mixer-window.md): mixer window number 1 to 4 opens in a window of its own
 		// (resources/ui/mixer.rml), hidden like the main window, or closes if it is open: the UI commands window.mixer
@@ -291,12 +293,13 @@ namespace gnubase::app
 		ui::OnScreenKeyboard::Settings m_keyboardSettings; // kept while its window is closed
 		std::unique_ptr<ui::OnScreenKeyboard> m_keyboard;
 		ui::WindowId m_keyboardWindow = 0;
-		std::unique_ptr<ui::EventDisplay> m_eventDisplay;   // goes before the binding
-		std::unique_ptr<ui::MarkerLines> m_markerLines;     // and before the display
-		std::unique_ptr<ui::TempoLane> m_tempoLane;         // as well
-		std::unique_ptr<ui::SignatureLane> m_signatureLane; // as well
-		std::unique_ptr<ui::TransposeLane> m_transposeLane; // as well
-		std::unique_ptr<ui::RulerLanes> m_rulerLanes;       // as well
+		std::unique_ptr<ui::EventDisplay> m_eventDisplay;     // goes before the binding
+		std::unique_ptr<ui::MarkerLines> m_markerLines;       // and before the display
+		std::unique_ptr<ui::TempoLane> m_tempoLane;           // as well
+		std::unique_ptr<ui::SignatureLane> m_signatureLane;   // as well
+		std::unique_ptr<ui::GlobalEventLane> m_transposeLane; // as well
+		std::unique_ptr<ui::GlobalEventLane> m_chordLane;     // as well
+		std::unique_ptr<ui::RulerLanes> m_rulerLanes;         // as well
 		std::unique_ptr<ui::TempoEditor> m_tempoEditor;
 		ui::WindowId m_tempoWindow = 0;
 		ui::WindowId m_arrangerWindow = 0;

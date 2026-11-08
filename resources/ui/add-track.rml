@@ -89,6 +89,7 @@
 			signature = {}, -- one per project (reference manual p. 163)
 			arranger = {}, -- one per project (reference manual p. 164)
 			transpose = {}, -- one per project (reference manual p. 165)
+			chord = {}, -- one per project (reference manual p. 1319)
 			vca = {"name", "count"}, -- reference manual p. 154
 		}
 
@@ -366,6 +367,7 @@
 				<listitem id="type-signature" value="signature">Signature</listitem>
 				<listitem id="type-arranger" value="arranger">Arranger</listitem>
 				<listitem id="type-transpose" value="transpose">Transpose</listitem>
+				<listitem id="type-chord" value="chord">Chord</listitem>
 				<listitem id="type-vca" value="vca">VCA</listitem>
 			</listview>
 			<div id="track-fields"/>

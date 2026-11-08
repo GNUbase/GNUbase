@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// The transpose events on the transpose track's lane (ui/transposetrack.h).
+// The transpose events on the transpose track's lane and the chord events on the chord track's (ui/transposetrack.h).
 #include "ui/transposetrack.h"
 
 #include "ui/widgetutils.h"
@@ -35,24 +35,26 @@ namespace gnubase::ui
 			return value > 0 ? "+" + std::to_string(value) : std::to_string(value);
 		}
 
-		// The id of the .transpose-event an element is in or is.
-		std::optional<uint64_t> eventId(const Rml::Element* element)
+		// The id of the event (an element with the class name) an element is in or is.
+		std::optional<uint64_t> eventId(const Rml::Element* element, const std::string& name)
 		{
 			for (; element != nullptr; element = element->GetParentNode())
-				if (element->IsClassSet("transpose-event"))
+				if (element->IsClassSet(name))
 					return element->GetAttribute<uint64_t>("event", 0);
 			return std::nullopt;
 		}
 	}
 
-	TransposeLane::TransposeLane(EventDisplay& display, EngineBinding& binding) : m_display(display), m_binding(binding)
+	GlobalEventLane::GlobalEventLane(EventDisplay& display, EngineBinding& binding, LaneKind kind)
+		: m_display(display), m_binding(binding), m_kind(kind)
 	{
 		Rml::Element& parent = display.eventArea();
 		Rml::ElementPtr element = parent.GetOwnerDocument()->CreateElement("div");
-		element->SetClassNames("transpose-row");
+		element->SetClassNames(named("-row"));
 		m_element = parent.AppendChild(std::move(element))->GetObserverPtr();
 		// The events are rebuilt when they change; the field stays, so that it never goes while it handles an event.
-		m_element->SetInnerRML(R"(<div class="transpose-events"/><input type="text" class="transpose-field"/>)");
+		m_element->SetInnerRML(
+			R"(<div class=")" + named("-events") + R"("/><input type="text" class=")" + named("-field") + R"("/>)");
 		m_events = m_element->GetChild(0);
 		m_field = dynamic_cast<Rml::ElementFormControl*>(m_element->GetChild(1));
 		for (const Rml::EventId id : {Rml::EventId::Mousedown, Rml::EventId::Change, Rml::EventId::Blur})
@@ -63,12 +65,13 @@ namespace gnubase::ui
 				if (!alive.expired())
 					place();
 			});
-		for (const char* event : {"history.changed", "project.reset", "transpose.changed"})
+		for (const std::string& event :
+			{std::string("history.changed"), std::string("project.reset"), named(".changed")})
 			m_subscriptions.push_back(m_binding.on(event, [this](const engine::Event&) { requestProject(); }));
 		requestProject();
 	}
 
-	TransposeLane::~TransposeLane()
+	GlobalEventLane::~GlobalEventLane()
 	{
 		if (!alive())
 			return;
@@ -78,8 +81,27 @@ namespace gnubase::ui
 			document->RemoveEventListener(Rml::EventId::Mouseup, this);
 	}
 
+	std::string GlobalEventLane::named(const char* suffix) const
+	{
+		return (m_kind == LaneKind::Chord ? "chord" : "transpose") + std::string(suffix);
+	}
+
+	GlobalEventLane::Event GlobalEventLane::eventFrom(const Json& event) const
+	{
+		Event result{event.at("id").get<uint64_t>(), event.at("start").get<int64_t>(), {}, {}};
+		if (m_kind == LaneKind::Chord)
+			result.text = result.value = event.at("chord").get<std::string>();
+		else
+		{
+			const int value = event.at("value").get<int>();
+			result.text = valueText(value);
+			result.value = std::to_string(value);
+		}
+		return result;
+	}
+
 	// ponytail: reads the whole project after every change, as the signature lane does.
-	void TransposeLane::requestProject()
+	void GlobalEventLane::requestProject()
 	{
 		if (m_loading)
 		{
@@ -96,7 +118,7 @@ namespace gnubase::ui
 				if (result.ok())
 				{
 					m_time = projectTime(result.value);
-					const Json& transpose = result.value.at("transpose");
+					const Json& transpose = result.value.at(m_kind == LaneKind::Chord ? "chords" : "transpose");
 					m_track = transpose.at("track").get<uint64_t>();
 					m_linear = false;
 					for (const Json& track : result.value.at("tracks"))
@@ -104,8 +126,7 @@ namespace gnubase::ui
 							m_linear = track.at("timeBase") == "linear";
 					m_list.clear();
 					for (const Json& event : transpose.at("events"))
-						m_list.push_back({event.at("id").get<uint64_t>(), event.at("start").get<int64_t>(),
-							event.at("value").get<int>()});
+						m_list.push_back(eventFrom(event));
 					if (m_editing &&
 						std::none_of(m_list.begin(), m_list.end(),
 							[this](const Event& event) { return event.id == *m_editing; }))
@@ -117,19 +138,19 @@ namespace gnubase::ui
 			});
 	}
 
-	void TransposeLane::edit(uint64_t event)
+	void GlobalEventLane::edit(uint64_t event)
 	{
 		const auto found =
 			std::find_if(m_list.begin(), m_list.end(), [event](const Event& each) { return each.id == event; });
 		if (!alive() || m_field == nullptr || found == m_list.end())
 			return;
 		m_editing = event;
-		m_field->SetValue(std::to_string(found->value));
+		m_field->SetValue(found->value == "X" ? std::string() : found->value);
 		show();
 		m_field->Focus();
 	}
 
-	int64_t TransposeLane::nearestBar(double seconds) const
+	int64_t GlobalEventLane::nearestBar(double seconds) const
 	{
 		const time::Ticks ticks = m_time.tempo.toTicks(std::max(0.0, seconds));
 		int64_t bar = m_time.signatures.toBarsBeats(ticks).bar;
@@ -141,15 +162,15 @@ namespace gnubase::ui
 		return m_linear ? std::llround(m_time.tempo.toSeconds(at) * m_time.sampleRate) : at;
 	}
 
-	void TransposeLane::show()
+	void GlobalEventLane::show()
 	{
 		if (!alive())
 			return;
 		// The same events keep their elements, so that a click still ends on the one it pressed.
 		std::string rml;
 		for (const Event& event : m_list)
-			rml += R"(<div class="transpose-event" event=")" + std::to_string(event.id) + R"(">)" +
-				valueText(event.value) + "</div>";
+			rml += R"(<div class=")" + named("-event") + R"(" event=")" + std::to_string(event.id) + R"(">)" +
+				event.text + "</div>";
 		if (m_events->GetAttribute<Rml::String>("events", "") != rml)
 		{
 			m_events->SetAttribute("events", rml);
@@ -159,7 +180,7 @@ namespace gnubase::ui
 		place();
 	}
 
-	void TransposeLane::place()
+	void GlobalEventLane::place()
 	{
 		if (!alive())
 			return;
@@ -193,7 +214,7 @@ namespace gnubase::ui
 			context->RequestNextUpdate(0);
 	}
 
-	void TransposeLane::ProcessEvent(Rml::Event& event)
+	void GlobalEventLane::ProcessEvent(Rml::Event& event)
 	{
 		if (!alive())
 			return;
@@ -213,7 +234,9 @@ namespace gnubase::ui
 		{
 			const std::optional<float> value = widgets::parse(m_field->GetValue());
 			const std::optional<uint64_t> id = std::exchange(m_editing, std::nullopt);
-			if (value && id)
+			if (m_kind == LaneKind::Chord && id)
+				m_binding.send("chord.set", {{"events", {{{"event", *id}, {"chord", m_field->GetValue()}}}}});
+			else if (value && id)
 				m_binding.send("transpose.set",
 					{{"events",
 						{{{"event", *id}, {"value", std::clamp(static_cast<int>(std::lround(*value)), -24, 24)}}}}});
@@ -226,7 +249,7 @@ namespace gnubase::ui
 		}
 	}
 
-	void TransposeLane::press(Rml::Event& event)
+	void GlobalEventLane::press(Rml::Event& event)
 	{
 		// A press elsewhere in the row closes the field.
 		if (m_editing)
@@ -236,11 +259,11 @@ namespace gnubase::ui
 			show();
 		}
 		const Tool tool = m_display.tool();
-		const std::optional<uint64_t> on = eventId(event.GetTargetElement());
+		const std::optional<uint64_t> on = eventId(event.GetTargetElement(), named("-event"));
 		if (tool == Tool::Erase)
 		{
 			if (on)
-				m_binding.send("transpose.remove", {{"events", {*on}}});
+				m_binding.send(named(".remove"), {{"events", {*on}}});
 			return;
 		}
 		if (on)
@@ -267,7 +290,7 @@ namespace gnubase::ui
 		const float ratio = context == nullptr ? 1.0F : context->GetDensityIndependentPixelRatio();
 		const double x = (event.GetParameter<float>("mouse_x", 0.0F) - m_element->GetAbsoluteLeft()) / ratio;
 		const TimelineView& view = m_display.view();
-		m_binding.send("transpose.add", {{"position", nearestBar(view.start + (x * view.scale))}},
+		m_binding.send(named(".add"), {{"position", nearestBar(view.start + (x * view.scale))}},
 			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
 				if (alive.expired() || !result.ok())
@@ -275,13 +298,13 @@ namespace gnubase::ui
 				const Json& added = result.value.at("event");
 				const auto id = added.at("id").get<uint64_t>();
 				if (std::none_of(m_list.begin(), m_list.end(), [id](const Event& each) { return each.id == id; }))
-					m_list.push_back({id, added.at("start").get<int64_t>(), added.at("value").get<int>()});
+					m_list.push_back(eventFrom(added));
 				show();
 				edit(id); // before the project with the new event comes
 			});
 	}
 
-	void TransposeLane::release(Rml::Event& event)
+	void GlobalEventLane::release(Rml::Event& event)
 	{
 		if (Rml::ElementDocument* document = m_element->GetOwnerDocument())
 			document->RemoveEventListener(Rml::EventId::Mouseup, this);
@@ -296,6 +319,6 @@ namespace gnubase::ui
 		if (std::abs(dx) < g_dragStart || found == m_list.end())
 			return;
 		const double to = seconds(found->start) + (dx * m_display.view().scale);
-		m_binding.send("transpose.set", {{"events", {{{"event", found->id}, {"position", nearestBar(to)}}}}});
+		m_binding.send(named(".set"), {{"events", {{{"event", found->id}, {"position", nearestBar(to)}}}}});
 	}
 }
