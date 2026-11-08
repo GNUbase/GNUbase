@@ -235,6 +235,20 @@ namespace gnubase::ui
 		m_uiCommands.emplace(std::move(id), std::move(command));
 	}
 
+	void KeyCommands::remove(const std::string& id)
+	{
+		if (m_uiCommands.erase(id) == 0)
+			return;
+		m_enabled.erase(id);
+		m_bindings.erase(std::remove_if(m_bindings.begin(), m_bindings.end(),
+							 [&id](const Bound& bound) { return bound.command == id; }),
+			m_bindings.end());
+		m_custom.erase(std::remove_if(m_custom.begin(), m_custom.end(),
+						   [&id](const Customized& custom) { return custom.command == id; }),
+			m_custom.end());
+		rebuild();
+	}
+
 	void KeyCommands::check(const std::string& command, const Json& parameters) const
 	{
 		if (!parameters.is_object())

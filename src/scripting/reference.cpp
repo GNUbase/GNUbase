@@ -43,6 +43,9 @@ An event is a table with `name`, `data` (what changed) and `request` (the comman
 - The UI runs its documents' Lua on a trusted runtime of its own, with RmlUi's Lua plugin (the global `rmlui`) and the
   MCP UI tools as functions: `gnubase.ui.click{selector = "#ok"}` for `ui_click`, and so on, with the same arguments
   and results ([features/ui-lua.md](features/ui-lua.md)).
+- User scripts, the `.lua` files in the folder `scripts` of the settings folder, run on that runtime as the key
+  commands `script.<name>`, which keys, menus and macros run, each as one undo step; the script console runs them and
+  the Lua typed into it ([features/scripts.md](features/scripts.md)).
 
 ## Tests
 

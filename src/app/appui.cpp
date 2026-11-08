@@ -15,6 +15,7 @@
 #include <RmlUi/Core/Input.h>
 #include <RmlUi/Core/StringUtilities.h>
 #include <RmlUi/Lua.h>
+#include <lauxlib.h>
 #include <lua.h>
 
 #include <algorithm>
@@ -269,7 +270,8 @@ namespace gnubase::app
 
 	AppUi::AppUi(engine::Engine& engine, const std::filesystem::path& resources, const ui::WindowSpec& main,
 		std::ostream& output, int msaaSamples)
-		: m_renderer(m_windows, msaaSamples), m_lua(engine, scripting::Trust::Trusted, output), m_rmlui(m_windows),
+		: m_scriptOutput(output), m_renderer(m_windows, msaaSamples),
+		  m_lua(engine, scripting::Trust::Trusted, m_luaOutput), m_rmlui(m_windows),
 		  m_themes(fontsAndThemes(resources)), m_shell(m_windows, m_renderer), m_settings(engine, m_shell, m_themes),
 		  m_binding(
 			  engine, [this] { m_shell.wake(); }, [this] { m_shell.requestRender(); }),
@@ -288,9 +290,14 @@ namespace gnubase::app
 		ui::registerWidgets(m_rmlui);
 		m_rmlui.loadCursors(resources / "cursors");
 		lua_State* state = m_lua.state();
+		// GNUbase's print, instead of the plugin's, which writes into RmlUi's log. Kept in the registry: the plugin
+		// changes the stack.
 		lua_getglobal(state, "print");
-		Rml::Lua::Initialise(state);   // until Rml::Shutdown
-		lua_setglobal(state, "print"); // GNUbase's, instead of the plugin's, which writes into RmlUi's log
+		const int print = luaL_ref(state, LUA_REGISTRYINDEX);
+		Rml::Lua::Initialise(state); // until Rml::Shutdown
+		lua_rawgeti(state, LUA_REGISTRYINDEX, print);
+		luaL_unref(state, LUA_REGISTRYINDEX, print);
+		lua_setglobal(state, "print");
 		addUiFunctions(m_lua, m_shell);
 		m_shell.eachStep(
 			[this]
@@ -816,6 +823,7 @@ namespace gnubase::app
 				[this, field = std::string(command.field)](ui::Window&, Rml::Element*) { enter(field); }});
 			m_keys.bind({command.keys, command.id});
 		}
+		addScripts();
 		addKeyCommandsDialog();
 	}
 
@@ -929,6 +937,17 @@ namespace gnubase::app
 		if (!items.empty())
 			items += "<menuseparator/>";
 		menu->SetInnerRML(items + "<menuitem command=\"window.keyCommands\">Key Commands...</menuitem>");
+		// Edit > Scripts: the user scripts, and the script console (docs/features/scripts.md).
+		if (Rml::Element* scripts = document->GetElementById("scripts-menu"))
+		{
+			items.clear();
+			for (const auto& [name, file] : m_scripts)
+				items += "<menuitem command=\"script." + Rml::StringUtilities::EncodeRml(name) + "\">" +
+					Rml::StringUtilities::EncodeRml(name) + "</menuitem>";
+			if (!items.empty())
+				items += "<menuseparator/>";
+			scripts->SetInnerRML(items + "<menuitem command=\"window.scriptConsole\">Script Console</menuitem>");
+		}
 		m_menu.reset(); // its items are gone
 		m_menu = std::make_unique<ui::MainMenu>(m_keys, m_main, *document);
 	}
