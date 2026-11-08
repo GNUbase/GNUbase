@@ -5,7 +5,7 @@
 # findings on the lines the branch changed, since the rest passed CI already (and Windows' headers bring a few findings
 # that CI's don't). It needs a compile database, not a build: it configures one in build/tidy, again when a changed
 # file isn't in it yet. CI checks more (every line of every file that includes a changed header), so CI has the last
-# word.
+# word. On Linux, and so in WSL, it also compiles those files with GCC as CI's linux-x64-gcc job does (build/tidy-gcc).
 # Usage: tools/tidy-changed.sh [base]    base: where the branch starts from (default origin/main)
 # Linux uses a clang-tidy 22 on the PATH (CONTRIBUTING.md). CI's clang-tidy runs on Linux, where libstdc++ and the
 # non-Windows #ifdef branches bring findings that Windows doesn't see (bugprone-unchecked-optional-access never fires
@@ -115,7 +115,7 @@ inDatabase() { grep -qF "/$1\"" "$build/compile_commands.json"; }
 cmakeChanged()
 {
 	[ -n "$(find . \( -path ./build -o -path ./ext \) -prune -o \( -name CMakeLists.txt -o -name '*.cmake' \) \
-		-newer "$build/compile_commands.json" -print -quit)" ]
+		-newer "${1:-$build/compile_commands.json}" -print -quit)" ]
 }
 for file in "${candidates[@]}"; do
 	inDatabase "$file" || { cmakeChanged && reconfigure; break; }
@@ -160,6 +160,37 @@ printf '%s\n' "${files[@]}" | xargs -P "$(nproc)" -I{} bash -c \
 	'out=$("$0" -p "$1" --quiet --warnings-as-errors="*" --line-filter="[$2]" "$3" 2>&1); status=$?
 	[ $status -ne 0 ] && printf "%s\n" "$out"; exit $status' "$tidy" "$build" "$filter" {}
 status=$?
-[ $status -eq 0 ] && echo "No findings." && exit 0
-[ $status -eq 123 ] && echo "clang-tidy found problems (above)." && exit 1
-exit 2
+[ $status -eq 0 ] && echo "No findings."
+[ $status -eq 123 ] && echo "clang-tidy found problems (above)."
+[ $status -ne 0 ] && [ $status -ne 123 ] && exit 2
+result=$((status == 0 ? 0 : 1))
+
+# CI also builds with GCC 13 in Release, whose optimizer warns where Clang doesn't (-Werror=array-bounds, say), and
+# clang-tidy already reports what Clang can't compile. So on Linux the same files are compiled with GCC as CI builds
+# them, whole files rather than changed lines, from a second compile database in build/tidy-gcc.
+if [ "$(uname -s)" = Linux ] && [ -z "${CLANG_TIDY:-}" ]; then
+	gcc=build/tidy-gcc
+	if [ ! -f "$gcc/compile_commands.json" ] || cmakeChanged "$gcc/compile_commands.json"; then
+		echo "Configuring $gcc for GCC's compile commands"
+		mkdir -p "$gcc" && cmake --preset linux-gcc -B "$gcc" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+			-DCMAKE_CONFIGURATION_TYPES=Release > "$gcc/configure.log" 2>&1 ||
+			{ echo "Configuring failed, see $gcc/configure.log"; exit 2; }
+	fi
+	echo "GCC on the same file(s)"
+	# Each file's compile command, run in its folder with the object going nowhere.
+	python3 - "$gcc/compile_commands.json" "${files[@]}" <<'EOF' |
+import json, shlex, sys
+entries = json.load(open(sys.argv[1]))
+for name in sys.argv[2:]:
+	for entry in entries:
+		if entry["file"].endswith("/" + name):
+			args = shlex.split(entry["command"])
+			args[args.index("-o") + 1] = "/dev/null"
+			sys.stdout.write("cd " + shlex.quote(entry["directory"]) + " && " + shlex.join(args) + "\0")
+			break
+EOF
+		xargs -0 -P "$(nproc)" -n 1 bash -c 'out=$(eval "$0" 2>&1); s=$?; [ $s -ne 0 ] && printf "%s\n" "$out"; exit $s'
+	gccStatus=$?
+	[ $gccStatus -eq 0 ] && echo "GCC compiles them." || { echo "GCC failed (above)."; result=1; }
+fi
+exit $result
