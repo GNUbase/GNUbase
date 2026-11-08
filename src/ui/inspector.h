@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <set>
 #include <string>
 
 namespace Rml
@@ -76,6 +77,8 @@ namespace gnubase::ui
 		Subscription m_reset;          // project.reset
 		Subscription m_devicesChanged; // settings.changed with midi.devices
 		bool m_devicesKnown = false;   // settings.changed came before settings.get's answer
+		std::set<uint64_t> m_inPlace;  // the tracks whose in-place editors are open (#131)
+		Subscription m_inPlaceChanged; // editor.changed of in-place editors
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
 	};
 }

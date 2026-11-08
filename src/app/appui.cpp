@@ -331,6 +331,8 @@ namespace gnubase::app
 				}
 				if (m_infoLine)
 					m_infoLine->update();
+				if (m_inPlace)
+					m_inPlace->update();
 				followSelection();
 				// The inspector shows the first selected track.
 				if (const std::shared_ptr<ui::Inspector> inspector = m_inspector.lock(); inspector && m_eventDisplay)
@@ -1045,6 +1047,7 @@ namespace gnubase::app
 		m_signatureLane.reset();
 		m_transposeLane.reset();
 		m_rulerLanes.reset();
+		m_inPlace.reset();
 		// The transport bar's sections are there when the docking system reads them.
 		m_transportBar.reset();
 		if (Rml::Element* bar = document->GetElementById("transport-bar"))
@@ -1076,6 +1079,7 @@ namespace gnubase::app
 		m_signatureLane = std::make_unique<ui::SignatureLane>(*m_eventDisplay, m_binding);
 		m_transposeLane = std::make_unique<ui::TransposeLane>(*m_eventDisplay, m_binding);
 		m_rulerLanes = std::make_unique<ui::RulerLanes>(*m_eventDisplay);
+		m_inPlace = std::make_unique<ui::InPlaceEditors>(*m_eventDisplay, m_binding);
 		if (m_infoLine)
 			m_infoLine->followMarkers(
 				[this] { return m_markerLines != nullptr ? m_markerLines->selection() : std::vector<uint64_t>(); });
@@ -1429,6 +1433,34 @@ namespace gnubase::app
 				if (!parts.empty())
 					m_binding.send("editor.open", {{"editor", "window"}, {"parts", parts}, {"content", "drum"}});
 			}});
+		// Edit In-Place (Mod+Shift+I, reference manual p. 1261) opens or closes the in-place editors of the selected
+		// MIDI and instrument tracks, MIDI > Open In-Place Editor opens them (p. 1259).
+		for (const auto& [id, open, description] :
+			{std::tuple{"editor.editInPlace", false,
+				 "Opens or closes the in-place editors of the selected MIDI and instrument tracks."},
+				std::tuple{"editor.openInPlace", true,
+					"Opens the in-place editors of the selected MIDI and instrument tracks."}})
+		{
+			m_keys.add({id, description, [this, opens = open](ui::Window&, Rml::Element*)
+				{
+					if (!m_trackList || !m_eventDisplay || !m_eventDisplay->project().is_object())
+						return;
+					const std::vector<uint64_t> selection = m_trackList->selection();
+					engine::Json tracks = engine::Json::array();
+					for (const engine::Json& track : m_eventDisplay->project().at("tracks"))
+						if ((track.at("type") == "midi" || track.at("type") == "instrument") &&
+							std::find(selection.begin(), selection.end(), track.at("id").get<uint64_t>()) !=
+								selection.end())
+							tracks.push_back(track.at("id"));
+					if (tracks.empty())
+						return;
+					engine::Json parameters = {{"tracks", tracks}};
+					if (opens)
+						parameters["open"] = true;
+					m_binding.send("editor.inPlace", parameters);
+				}});
+		}
+		m_keys.bind({"Mod+Shift+I", "editor.editInPlace", engine::Json::object(), "project"});
 		// The Drum Map Setup's Load and Save (p. 1236): a drum map file into the project, and the drum map of the
 		// editor window's active track into a file.
 		m_keys.add({"drumMap.load", "Loads a drum map file into the project.", [this](ui::Window& window, Rml::Element*)
@@ -1516,6 +1548,8 @@ namespace gnubase::app
 	void AppUi::followEditor(const engine::Json& view)
 	{
 		const std::string editor = view.at("editor").get<std::string>();
+		if (editor != "lower" && editor != "window")
+			return; // an in-place editor (ui/inplaceeditor.h)
 		const bool open = view.at("open").get<bool>();
 		const bool wasOpen = m_editorViews.value(editor, engine::Json::object()).value("open", false);
 		m_editorViews[editor] = view;

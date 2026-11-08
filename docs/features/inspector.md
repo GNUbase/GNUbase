@@ -64,8 +64,8 @@ one it has the class `empty` and says "No Track Selected".
 .inspector                         contextmenu #inspector-setup
   textdisplay.inspector-name       the track's name: a double click renames it (track.set name)
   .inspector-sections[sections=inspector]
-    [section=basics]               mute, solo, record, monitor, timeBase (button[control]); volume (dB), pan
-                                   (-100 to 100)
+    [section=basics]               mute, solo, record, monitor, timeBase, editInPlace (button[control]); volume
+                                   (dB), pan (-100 to 100)
     [section=routing]              select[control=input] (audio tracks), select[control=output]; MIDI tracks:
                                    select[control=device], textdisplay[control=bank], select[control=program]
     [section=modifiers]            MIDI and instrument tracks: button[control=modifiers-bypass], valuefields and the
@@ -81,6 +81,8 @@ one it has the class `empty` and says "No Track Selected".
 - **Basics** (pp. 170–182): the channel's switches, fader and panner, sent with `channel.set` (`mute`, `solo`,
   `recordEnable`, `monitor`, `volume`, `pan`), and Switch Time Base (pp. 179–181, 229) on audio, instrument, MIDI,
   group, effect and VCA fader tracks, checked when linear (`track.set` `timeBase`, [time-base.md](time-base.md)).
+  Edit In-Place (p. 1259) on MIDI and instrument tracks opens and closes the track's in-place editor, checked while it
+  is open (`editor.inPlace`, [in-place-editor.md](in-place-editor.md)).
   The volume goes up to the project's `maxVolume` (`project.set`). A drag, wheel turns or a held arrow key on the
   volume or the pan are one undo step ([edit-history.md](edit-history.md), gestures), sent step by step so that they
   are heard, one at a time; while they are on their way the fields keep their own values rather than the engine's

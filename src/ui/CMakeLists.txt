@@ -54,6 +54,8 @@ add_library(gnubase-ui STATIC
 	image.cpp
 	infoline.cpp
 	infoline.h
+	inplaceeditor.cpp
+	inplaceeditor.h
 	inspector.cpp
 	inspector.h
 	keycommands.cpp

@@ -42,6 +42,8 @@ namespace gnubase::ui
 			R"(<button type="toggle" class="toggle monitor" control="monitor" title="Monitor">)"
 			R"(<svg class="icon" src="../icons/track-monitor.svg"/></button>)"
 			R"(<button type="toggle" class="toggle timeBase" control="timeBase" title="Switch Time Base">L</button>)"
+			R"(<button type="toggle" class="toggle editInPlace" control="editInPlace" title="Edit In-Place">)"
+			R"(<svg class="icon" src="../icons/tool-draw.svg"/></button>)"
 			R"(</div>)"
 			R"(<div class="inspector-row" row="volume"><span class="inspector-label">Volume</span>)"
 			R"(<valuefield control="volume" min="-144" max="6" default="0" step="0.5" decimals="1" unit="dB"/></div>)"
@@ -274,6 +276,20 @@ namespace gnubase::ui
 					  m_devicesKnown = true;
 					  m_stale = true;
 				  }
+			  })),
+		  m_inPlaceChanged(binding.on("editor.changed",
+			  [this](const engine::Event& event)
+			  {
+				  const std::string editor = event.data.at("editor").get<std::string>();
+				  const std::string prefix = "inPlace:";
+				  if (editor.rfind(prefix, 0) != 0)
+					  return;
+				  const uint64_t track = std::stoull(editor.substr(prefix.size()));
+				  if (event.data.at("open").get<bool>())
+					  m_inPlace.insert(track);
+				  else
+					  m_inPlace.erase(track);
+				  m_stale = true;
 			  }))
 	{
 		root.SetClass("inspector", true);
@@ -291,6 +307,16 @@ namespace gnubase::ui
 		root.AddEventListener(Rml::EventId::Blur, this, true);    // blur doesn't bubble
 		root.AddEventListener(Rml::EventId::Keydown, this, true); // Escape leaves the notepad
 
+		// The in-place editors open already (reference manual p. 1259).
+		m_binding.send("editor.inPlace", Json::object(),
+			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (alive.expired() || !result.ok())
+					return;
+				for (const Json& track : result.value.at("tracks"))
+					m_inPlace.insert(track.get<uint64_t>());
+				m_stale = true;
+			});
 		// The MIDI devices are a user setting (reference manual p. 1109); the next update shows them.
 		m_binding.send("settings.get", {{"key", "midi.devices"}},
 			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
@@ -372,6 +398,15 @@ namespace gnubase::ui
 		available("[section=inserts]", audio);
 		const bool noteTrack = channel != nullptr && (type == "midi" || type == "instrument");
 		available("[section=modifiers]", noteTrack);
+		// Edit In-Place (p. 1259), checked while the track's in-place editor is open.
+		available("button[control=editInPlace]", noteTrack);
+		if (Rml::Element* button = element("button[control=editInPlace]"))
+		{
+			if (m_inPlace.count(m_track) != 0)
+				button->SetAttribute("checked", "");
+			else
+				button->RemoveAttribute("checked");
+		}
 		available(".inspector-edit", channel != nullptr && m_editChannel);
 		const bool records = type == "audio" || type == "instrument" || type == "midi" || vca;
 		available("button[control=record]", records);
@@ -564,6 +599,12 @@ namespace gnubase::ui
 		if (name == "name")
 		{
 			m_binding.send("track.set", {{"track", m_track}, {"name", event.GetParameter<Rml::String>("value", "")}});
+			return;
+		}
+		if (name == "editInPlace")
+		{
+			m_binding.send("editor.inPlace",
+				{{"tracks", {m_track}}, {"open", event.GetParameter<bool>("value", false)}}, whenRefused());
 			return;
 		}
 		if (name == "timeBase")
