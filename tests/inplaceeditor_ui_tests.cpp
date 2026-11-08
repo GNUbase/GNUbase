@@ -26,6 +26,8 @@ namespace
 {
 	constexpr int64_t g_quarter = time::g_ticksPerQuarter;
 	constexpr int64_t g_bar = 4 * g_quarter;
+	// The quantize grid, a sixteenth: a click in the middle of one stays in it whichever pixel the click rounds to.
+	constexpr int64_t g_sixteenth = g_quarter / 4;
 
 	// A MIDI track, selected, with a one-bar part "Keys" in the second bar and two notes, C3 on its first beat and
 	// E3 on its second, each a quarter long, and an audio track below it, in the project window at a dp ratio of 1.
@@ -224,7 +226,7 @@ TEST_CASE("the in-place editor edits notes as the key editor does, and the event
 	CHECK(f.display.selection().empty());
 
 	// A double click on the empty grid inserts a note there, not a part on the lane.
-	f.click(f.at(g_bar + (2 * g_quarter) + 10, 62), 2);
+	f.click(f.at(g_bar + (2 * g_quarter) + (g_sixteenth / 2), 62), 2);
 	f.settle(3);
 	const Json project = f.app.call("project.get");
 	CHECK(project.at("midiParts").size() == 1);
@@ -237,7 +239,7 @@ TEST_CASE("the in-place editor edits notes as the key editor does, and the event
 	f.click(f.editor() + " .key-tool[key-tool=draw]");
 	REQUIRE(f.has(f.editor() + " .key-tool[key-tool=draw]", "checked"));
 	f.scroll(62);
-	f.click(f.at(g_bar + (3 * g_quarter) + 10, 62));
+	f.click(f.at(g_bar + (3 * g_quarter) + (g_sixteenth / 2), 62));
 	f.settle(4);
 	// A part added to the track shows in the row of parts; a click on it activates it.
 	const uint64_t later =
