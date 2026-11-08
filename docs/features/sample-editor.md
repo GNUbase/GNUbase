@@ -84,6 +84,8 @@ Waveforms come from `media.peaks` ([peaks.md](peaks.md)), one question for each 
 - **Process section** (p. 620): Event or Range as Region.
 - **Hitpoints section** (pp. 636-647): detecting, filtering and editing hitpoints and making slices and more of them,
   in [hitpoints.md](hitpoints.md).
+- **Warp section** (pp. 648-656): Musical Mode, the audio tempo, Auto Adjust, Free Warp and Reset, and Flatten
+  in the Process section, in [warp.md](warp.md).
 - **Regions list** (pp. 624-626): Add Region makes one of the selection range or else of the event, Remove Region
   removes the one selected in the list, Select Region selects its section and zooms to it, Play Region auditions it
   (`audition.start` up to its end). A click on a region selects it in the list and shows it in the display, scrolled
@@ -103,8 +105,8 @@ zoom tool and the overview; the Zoom submenu; Solo Editor, Audition, auto-scroll
 toolbar's context menu; positions in the project's time format, and typing them; the Draw tool's volume curve and
 sample editing; moving regions' edges with the mouse and dragging regions into the project window; the clip's snap
 point when opened from the pool; the Process section's Cut, Copy, Paste, Delete and Insert Silence (pp. 619-620);
-the clip's fades in what the play and scrub tools play. Hooks for other tickets: offline processing (#141), the
-Definition, warping, musical mode and the Time Warp tool (#144), and making a sampler track of the range.
+the clip's fades in what the play and scrub tools play. Hooks for other tickets: offline processing (#141) and
+making a sampler track of the range; what warping doesn't have yet is in [warp.md](warp.md).
 
 ## Checks
 

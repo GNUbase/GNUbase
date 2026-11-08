@@ -80,14 +80,14 @@ sends engine commands, so whatever another client changes shows at once.
   `timeOffsetOn`, `timeOffset` and `setTimeOffset` ([ruler-tracks.md](ruler-tracks.md)). The defaults: mute, solo,
   record, monitor and read on audio tracks; mute, solo and read on the others with a channel; all three on the tempo
   track; all four on ruler tracks.
-- **Selection** (pp. 218–219) is the list view's: a click selects a track, Ctrl-click adds or removes one,
-  Shift-click selects a range, and Shift-click on a selected track deselects it (the list view's `shiftdeselects`,
-  [widgets.md](widgets.md)). Up and Down step through the shown tracks, in the list and wherever the project window
-  has the focus (`track.selectPrevious`, `track.selectNext`), and scroll the selected track into view; in the list,
-  Shift+Up and Shift+Down extend the selection. While an event or part is selected, they also select the first one on
-  the new track, by position ([parts-and-events.md](parts-and-events.md)), unless the user setting
-  `ui.upDownSelectsTracksOnly` (Use Up/Down Navigation Commands for Selecting Tracks Only, off by default) says they
-  only select tracks. A right click on a track that isn't selected selects it for the context menu. The selection is the UI's, not the
+- **Selection** (pp. 218–219) is the list view's: a click selects a track, Ctrl-click adds or removes one,
+  Shift-click selects a range, and Shift-click on a selected track deselects it (the list view's `shiftdeselects`,
+  [widgets.md](widgets.md)). Up and Down step through the shown tracks, in the list and wherever the project window
+  has the focus (`track.selectPrevious`, `track.selectNext`), and scroll the selected track into view; in the list,
+  Shift+Up and Shift+Down extend the selection. While an event or part is selected, they also select the first one on
+  the new track, by position ([parts-and-events.md](parts-and-events.md)), unless the user setting
+  `ui.upDownSelectsTracksOnly` (Use Up/Down Navigation Commands for Selecting Tracks Only, off by default) says they
+  only select tracks. A right click on a track that isn't selected selects it for the context menu. The selection is the UI's, not the
   project's (`TrackList::selection`), like the event display's.
 - **Renaming** (p. 214): a double click on a name, or `track.rename` (Alt+F2) for the first selected track, shows a
   text field with the name selected; Enter or leaving it sends `track.set` `name`, Escape keeps the name.
@@ -117,6 +117,9 @@ sends engine commands, so whatever another client changes shows at once.
   takes the tracks inside along, and returns every track removed. Plugins in a channel's slots and an instrument
   track's instrument don't keep a track. It removes the active marker track last, so the marker track that becomes
   active is one that stays (#797).
+- **Group Track and Effect Track to Selected Tracks** (pp. 546, 554): the context menu's commands
+  `track.addGroupToSelected` and `track.addEffectToSelected` open the add track dialog for a group or effect track
+  that the selected tracks play or send into ([add-track.md](add-track.md), [routing.md](routing.md)).
   Remove Selected Tracks asks first when a track it removes holds something (`resources/ui/remove-tracks.rml`): the
   list decides from its copy of the project, by content alone, so a track with events, parts, markers or automation,
   or a folder with such a track inside, warns, whatever plays into it. Remove removes them, Cancel or Escape keeps

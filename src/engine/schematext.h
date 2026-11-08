@@ -6,7 +6,8 @@
 #include <iosfwd>
 #include <string>
 
-// JSON schemas in words, for the references generated from the command registry: docs/lua.md and docs/mcp.md.
+// JSON schemas in words, for the references generated from the command registry: the Lua API reference and the MCP tool
+// catalogue (docs/api-reference.md).
 namespace gnubase::engine
 {
 	// The schema's type: "integer", "string or null", "one of "a" | "b"", "array of integer", or "any".

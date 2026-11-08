@@ -573,6 +573,13 @@
 		border-left-width: 1dp;
 		border-left-color: #0969da;
 	}
+	.chord-row .chord-event
+	{
+		color: #17202d;
+		font-size: 11dp;
+		border-left-width: 1dp;
+		border-left-color: #6554c0;
+	}
 	.event-display .range-selection
 	{
 		border-width: 1dp;
@@ -869,6 +876,10 @@
 	.se-hitpoint.disabled .se-hitpoint-line, .se-hitpoint.disabled .se-hitpoint-handle
 	{
 		background-color: #56627366;
+	}
+	.se-warp-marker-line, .se-warp-marker-handle
+	{
+		background-color: #6554c0;
 	}
 	.ds-display, .sa-graph
 	{

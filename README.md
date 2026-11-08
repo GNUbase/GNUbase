@@ -75,7 +75,7 @@ cmake --build --preset linux-gcc --config Release
 ctest --preset linux-gcc -C Release
 ```
 
-The programs end up in `build/<preset>/bin/<configuration>/`. Add `-L unit` to the `ctest` command to run only the unit tests; the other labels are `integration`, `ui`, `slow` and `lua` (the Lua tests in `tests/lua`, see [docs/lua.md](docs/lua.md#tests)). The `ui` tests open hidden windows and draw them through SDL_GPU (Metal, Direct3D 12 or Vulkan); on Linux they use SDL's offscreen video driver, so they need no display. A machine without SDL_GPU skips them.
+The programs end up in `build/<preset>/bin/<configuration>/`. Add `-L unit` to the `ctest` command to run only the unit tests; the other labels are `integration`, `ui`, `slow` and `lua` (the Lua tests in `tests/lua`, see [docs/api-reference.md](docs/api-reference.md)). The `ui` tests open hidden windows and draw them through SDL_GPU (Metal, Direct3D 12 or Vulkan); on Linux they use SDL's offscreen video driver, so they need no display. A machine without SDL_GPU skips them.
 
 `gnubase` opens the main window, which stays empty until the UI takes shape in milestone M04.
 
@@ -87,9 +87,9 @@ The programs end up in `build/<preset>/bin/<configuration>/`. Add `-L unit` to t
 claude mcp add gnubase -- /path/to/gnubase --headless
 ```
 
-`--mcp-http` serves MCP over HTTP on 127.0.0.1 instead and prints the URL and the access token. `--script file.lua` runs a Lua script instead of serving MCP, with every engine command as a function, e.g. `gnubase.track.add{type = "audio"}` (reference: [docs/lua.md](docs/lua.md)); a script that raises an error, or whose test cases fail (`gnubase.test`), ends with exit code 4. MCP clients run scripts with the tool `script_run`. `--project FILE` loads a DAWproject file first, and `--sample-rate` and `--block-size` set up the audio device, which is the dummy device (no hardware) for now. `gnubase --help` lists everything. Exit codes: 0 done, 1 unexpected error, 2 invalid command line, 3 the audio device or the project could not be set up.
+`--mcp-http` serves MCP over HTTP on 127.0.0.1 instead and prints the URL and the access token. `--script file.lua` runs a Lua script instead of serving MCP, with every engine command as a function, e.g. `gnubase.track.add{type = "audio"}` (reference: [docs/api-reference.md](docs/api-reference.md)); a script that raises an error, or whose test cases fail (`gnubase.test`), ends with exit code 4. MCP clients run scripts with the tool `script_run`. `--project FILE` loads a DAWproject file first, and `--sample-rate` and `--block-size` set up the audio device, which is the dummy device (no hardware) for now. `gnubase --help` lists everything. Exit codes: 0 done, 1 unexpected error, 2 invalid command line, 3 the audio device or the project could not be set up.
 
-[docs/mcp.md](docs/mcp.md) explains how to connect Claude Code and other MCP clients, shows example sessions and the security model, and lists every tool.
+[docs/mcp.md](docs/mcp.md) explains how to connect Claude Code and other MCP clients, shows example sessions and the security model; [docs/api-reference.md](docs/api-reference.md) says where to find the generated tool catalogue.
 
 ## Contributing
 

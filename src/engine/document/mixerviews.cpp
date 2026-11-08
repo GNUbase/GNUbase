@@ -70,6 +70,7 @@ namespace gnubase::engine
 		case TrackType::Signature:
 		case TrackType::Arranger:
 		case TrackType::Transpose:
+		case TrackType::Chord:
 			break;
 		}
 		return "group";

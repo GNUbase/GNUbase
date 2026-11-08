@@ -297,6 +297,32 @@ TEST_CASE("the pool panel shows what the Conform Files job did once it is done",
 	CHECK(app.call("pool.get").at("clips").at(0).at("sampleRate") == 48000.0);
 }
 
+TEST_CASE(
+	"Prepare Archive from the Media menu copies the media into the project folder and says so in the pool", "[ui]")
+{
+	const test::TempDir dir;
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	addClip(app, writeAudio(dir.path() / "library" / "take.wav", 480));
+	addMissing(app, dir.path() / "library" / "gone.wav");
+
+	// Unsaved, the project has no folder to copy into.
+	click(app, "#menu-bar button[menu=media-menu]");
+	click(app, "#media-menu menuitem[command=\"media.prepareArchive\"]");
+	REQUIRE(app.waitUntil([&app] { return !message(app).empty(); }));
+	CHECK(message(app).find("Prepare Archive failed: save the project first") == 0);
+
+	std::filesystem::create_directories(dir.path() / "project");
+	app.call(
+		"project.save", {{"path", (dir.path() / "project" / "Song.dawproject").u8string()}, {"embedMedia", false}});
+	click(app, "#menu-bar button[menu=media-menu]");
+	click(app, "#media-menu menuitem[command=\"media.prepareArchive\"]");
+	REQUIRE(app.waitUntil([&app]
+		{ return message(app) == "Copied 1 file into the project folder; 1 missing file wasn't copied."; },
+		std::chrono::seconds(30)));
+	CHECK(std::filesystem::exists(dir.path() / "project" / "Audio" / "take.wav"));
+}
+
 TEST_CASE("the pool panel shows the Conform Files job's progress and that it was cancelled", "[ui]")
 {
 	const test::TempDir dir;

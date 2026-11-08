@@ -7,8 +7,8 @@
 
 namespace gnubase::mcp
 {
-	// The tool catalogue of docs/mcp.md in Markdown, from what the server lists (tools/list, resources/list): every
-	// tool by area, with its engine command, whether it only reads, its description, arguments and result; then the
-	// resources.
+	// The MCP tool catalogue in Markdown (docs/api-reference.md), from what the server lists (tools/list,
+	// resources/list): every tool by area, with its engine command, whether it only reads, its description, arguments
+	// and result; then the resources.
 	std::string catalogue(Server& server);
 }

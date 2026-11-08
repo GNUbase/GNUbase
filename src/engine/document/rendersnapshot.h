@@ -3,6 +3,7 @@
 
 #include "engine/audio/fades.h"
 #include "engine/document/document.h"
+#include "engine/dsp/warp.h"
 
 #include <cstdint>
 #include <map>
@@ -31,6 +32,10 @@ namespace gnubase::engine
 		double sampleRate = 48000.0;
 		int channels = 2;
 		time::Samples length = 0;
+		// An audio event of a warped clip plays a media file of its own, the event's id: path played through this
+		// warp map (dsp::WarpReader) with the preset, from the event's start. Empty for a plain file.
+		std::vector<dsp::WarpPoint> warp;
+		dsp::StretchPreset preset = dsp::StretchPreset::Quality;
 	};
 
 	// Where a channel's output goes: an index into RenderSnapshot::busses or RenderSnapshot::channels.
@@ -159,8 +164,10 @@ namespace gnubase::engine
 		std::optional<int> midiPan;
 		std::optional<int> program; // MIDI channels: the program change to send, with bank select if bank is set
 		std::optional<int> bank;
-		midi::Modifiers modifiers; // MIDI and instrument channels: notes has them applied, live notes get them
-		bool monitor = false;      // the monitor and record enable buttons
+		midi::Modifiers modifiers;    // MIDI and instrument channels: notes has them applied, live notes get them
+		midi::EffectRack midiInserts; // MIDI and instrument channels: the effects their sequencer runs
+		midi::EffectRack midiSends;
+		bool monitor = false; // the monitor and record enable buttons
 		bool recordEnable = false;
 		// MIDI and instrument tracks: they play what comes from all MIDI inputs (MIDI thru), since they monitor or
 		// are record-enabled and their MIDI input is all MIDI inputs.

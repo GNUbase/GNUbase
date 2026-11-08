@@ -5,6 +5,7 @@
 #include "engine/document/channelformat.h"
 #include "engine/document/snap.h"
 #include "engine/metronome/metronomesettings.h"
+#include "engine/midi/effects.h"
 #include "engine/midi/modifiers.h"
 #include "engine/midi/quantizesettings.h"
 #include "engine/time/signaturemap.h"
@@ -67,6 +68,7 @@ namespace gnubase::engine
 		Vca,       // a VCA fader (docs/features/link-groups.md): a channel without audio that controls a link group
 		Arranger,  // holds the arranger events (#167); has no channel, stays at the top level, at most one
 		Transpose, // holds the transpose events (#168); has no channel, stays at the top level, at most one
+		Chord,     // holds the chord and scale events (#173); has no channel, stays at the top level, at most one
 	};
 
 	// The time formats of ruler tracks, as the event display's ruler names them.
@@ -234,6 +236,12 @@ namespace gnubase::engine
 		// (docs/features/midi-modifiers.md).
 		// NOLINTNEXTLINE(readability-redundant-member-init): see instrumentParameters
 		midi::Modifiers modifiers = {};
+		// MIDI and instrument tracks: the MIDI inserts and sends, the built-in MIDI effects that play the track's
+		// events (docs/features/midi-effects.md). NOLINTNEXTLINE(readability-redundant-member-init): see
+		// instrumentParameters
+		midi::EffectRack midiInserts = {};
+		// NOLINTNEXTLINE(readability-redundant-member-init): see instrumentParameters
+		midi::EffectRack midiSends = {};
 		// The values set for the instrument's parameters (parameter.set), by parameter id; the others are at their
 		// defaults. A new instrument starts with none.
 		// The initializer lets Channel{...} leave it out without GCC's and Clang's -Wmissing-field-initializers, like
@@ -399,6 +407,47 @@ namespace gnubase::engine
 		time::Samples minimumLength = 0;
 	};
 
+	// A beat of a clip's definition grid that isn't where the clip's tempo puts it (#144, Auto Adjust and Manual
+	// Adjust, reference manual pp. 651-654): the clip frame it is at. Beats count in quarter notes from the grid start.
+	struct BeatEdit
+	{
+		int64_t beat = 0;
+		time::Samples frame = 0;
+	};
+
+	// A free warp marker (#144, reference manual pp. 654-656): the audio at the clip frame position plays where the
+	// clip frame target would without it. The audio between markers, and between them and the clip's ends, is
+	// stretched to fit.
+	struct WarpMarker
+	{
+		time::Samples position = 0;
+		time::Samples target = 0;
+	};
+
+	// How a clip's audio is warped in real time (#144, docs/features/warp.md). Its definition is its tempo (BPM of
+	// quarter notes; 0 until one is set or musical mode is turned on), beats per bar, the clip frame of its first beat
+	// and the beats edited from there. In musical mode its beats follow the project's tempo. Its warp markers move
+	// sections of its audio in time. preset is the time stretch algorithm (dsp::stretchPresetNames()).
+	// The warp markers a clip had before warp quantizing (#145) first changed them, and what it made of them.
+	// While the clip still has those, quantizing starts from the original ones and resetting puts them back.
+	struct WarpQuantizeOrigin
+	{
+		std::vector<WarpMarker> original;
+		std::vector<WarpMarker> quantized;
+	};
+
+	struct ClipWarp
+	{
+		bool musical = false;
+		double tempo = 0.0;
+		int beatsPerBar = 4;
+		time::Samples gridStart = 0;
+		std::vector<BeatEdit> beats;     // by beat, frames increasing
+		std::vector<WarpMarker> markers; // by position, targets increasing
+		std::string preset = "quality";
+		std::optional<WarpQuantizeOrigin> quantizeOrigin;
+	};
+
 	// What audio events play: for now, a whole media file. Its fades apply to every event that plays it, at the
 	// file's start and end.
 	struct Clip
@@ -412,6 +461,7 @@ namespace gnubase::engine
 		std::vector<ClipRegion> regions; // by start, then id
 		std::vector<Hitpoint> hitpoints; // by position, one at most at each
 		HitpointFilter hitpointFilter;
+		ClipWarp warp;
 	};
 
 	// Which of a clip's hitpoints count, as its filters leave them (hitpoints.cpp): one for each of them.
@@ -438,6 +488,12 @@ namespace gnubase::engine
 	};
 
 	// Plays a section of a clip on an audio track.
+	struct EventQuantizeOrigin
+	{
+		time::Position original;
+		time::Position quantized;
+	};
+
 	struct AudioEvent
 	{
 		ObjectId id = 0;
@@ -466,6 +522,10 @@ namespace gnubase::engine
 		// Where it is in the stack of its track's events (#99): where events overlap, the one whose frontOf is highest
 		// plays. 0 orders it by its id, so an event added later is in front; event.toFront gives it a new id here.
 		ObjectId front = 0;
+		// Where it was before quantizing (#145) first moved it, and where quantizing put it. While it is there,
+		// quantizing starts from the original position and resetting puts it back; moved by other means, it is
+		// where it is.
+		std::optional<EventQuantizeOrigin> quantizeOrigin;
 	};
 
 	inline ObjectId frontOf(const AudioEvent& event)
@@ -741,6 +801,43 @@ namespace gnubase::engine
 		bool lock = false;                  // the events can't be added, changed or removed
 	};
 
+	// A chord track event (#173, reference manual pp. 1320, 1330), in the chord track's time base: a chord event's text
+	// is its chord's name (midi::chordName, "X" for an undefined chord), a scale event's its scale's (midi::scaleName,
+	// such as "D dorian"). Each plays from its position to the next of its kind.
+	struct ChordEvent
+	{
+		ObjectId id = 0;
+		time::Position position;
+		std::string text;
+	};
+
+	// The harmony a track's notes were played in when it began to follow the chord track (reference manual p. 1341):
+	// chords by position in ticks, each until the next.
+	struct ChordSource
+	{
+		time::Ticks position = 0;
+		std::string chord;
+	};
+
+	// How a track follows the chord track (reference manual p. 1340): a mode of midi::followModeNames(), and the
+	// harmony its notes are mapped from.
+	struct ChordFollow
+	{
+		std::string mode = "off";
+		std::vector<ChordSource> source;
+	};
+
+	// The chord track's events and settings (reference manual pp. 1319-1345).
+	struct ChordTrack
+	{
+		std::vector<ChordEvent> events;         // chord events, in timeline order
+		std::vector<ChordEvent> scales;         // scale events, in timeline order
+		int octaveOffset = 0;                   // the basic voicings' Octave Offset from C3, -3 to 3
+		bool adaptiveVoicings = true;           // voicings that move the voices the least
+		bool automaticScales = true;            // each chord event's scale is its chord's, not the scale events'
+		std::map<ObjectId, ChordFollow> follow; // by MIDI or instrument track
+	};
+
 	// What an automation lane changes.
 	enum class AutomationTargetType : uint8_t
 	{
@@ -966,6 +1063,7 @@ namespace gnubase::engine
 		ObjectId arrangerChain = 0;
 		int rootKey = -1;                     // the Project Root Key (#168): -1 for none, 0 C to 11 B
 		TransposeTrack transpose;             // the transpose track's events and controls; reset when the track goes
+		ChordTrack chords;                    // the chord track's (#173); reset when the track goes
 		std::map<ObjectId, DrumMap> drumMaps; // a new project has the GM Map (#129)
 		// Virgin territory instead of initial values (reference manual p. 881): automation lanes have gaps before their
 		// first and after their last point too, where their parameters have their static values. A setting saved with
@@ -1091,12 +1189,12 @@ namespace gnubase::engine
 	{
 		return std::tie(a.id, a.track, a.format, a.input, a.output, a.instrument, a.volume, a.pan, a.panner, a.panLeft,
 				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.program, a.bank, a.device, a.modifiers,
-				   a.instrumentParameters, a.monitor, a.recordEnable, a.midiInput, a.mute, a.solo, a.soloDefeat,
-				   a.listen, a.slots, a.notes, a.sections, a.sends) ==
+				   a.midiInserts, a.midiSends, a.instrumentParameters, a.monitor, a.recordEnable, a.midiInput, a.mute,
+				   a.solo, a.soloDefeat, a.listen, a.slots, a.notes, a.sections, a.sends) ==
 			std::tie(b.id, b.track, b.format, b.input, b.output, b.instrument, b.volume, b.pan, b.panner, b.panLeft,
 				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.program, b.bank, b.device, b.modifiers,
-				b.instrumentParameters, b.monitor, b.recordEnable, b.midiInput, b.mute, b.solo, b.soloDefeat, b.listen,
-				b.slots, b.notes, b.sections, b.sends);
+				b.midiInserts, b.midiSends, b.instrumentParameters, b.monitor, b.recordEnable, b.midiInput, b.mute,
+				b.solo, b.soloDefeat, b.listen, b.slots, b.notes, b.sections, b.sends);
 	}
 
 	inline bool operator==(const Slot& a, const Slot& b)
@@ -1149,11 +1247,34 @@ namespace gnubase::engine
 			std::tie(b.threshold, b.intensity, b.minimumLength);
 	}
 
-	inline bool operator==(const Clip& a, const Clip& b)
+	inline bool operator==(const BeatEdit& a, const BeatEdit& b)
+	{
+		return a.beat == b.beat && a.frame == b.frame;
+	}
+
+	inline bool operator==(const WarpMarker& a, const WarpMarker& b)
+	{
+		return a.position == b.position && a.target == b.target;
+	}
+
+	inline bool operator==(const WarpQuantizeOrigin& a, const WarpQuantizeOrigin& b)
+	{
+		return a.original == b.original && a.quantized == b.quantized;
+	}
+
+	inline bool operator==(const ClipWarp& a, const ClipWarp& b)
 	{
 		return std::tie(
-				   a.id, a.name, a.media, a.fadeIn, a.fadeOut, a.folder, a.regions, a.hitpoints, a.hitpointFilter) ==
-			std::tie(b.id, b.name, b.media, b.fadeIn, b.fadeOut, b.folder, b.regions, b.hitpoints, b.hitpointFilter);
+				   a.musical, a.tempo, a.beatsPerBar, a.gridStart, a.beats, a.markers, a.preset, a.quantizeOrigin) ==
+			std::tie(b.musical, b.tempo, b.beatsPerBar, b.gridStart, b.beats, b.markers, b.preset, b.quantizeOrigin);
+	}
+
+	inline bool operator==(const Clip& a, const Clip& b)
+	{
+		return std::tie(a.id, a.name, a.media, a.fadeIn, a.fadeOut, a.folder, a.regions, a.hitpoints, a.hitpointFilter,
+				   a.warp) ==
+			std::tie(
+				b.id, b.name, b.media, b.fadeIn, b.fadeOut, b.folder, b.regions, b.hitpoints, b.hitpointFilter, b.warp);
 	}
 
 	inline bool operator==(const PoolFolder& a, const PoolFolder& b)
@@ -1166,12 +1287,18 @@ namespace gnubase::engine
 		return std::tie(a.position, a.volume, a.curve) == std::tie(b.position, b.volume, b.curve);
 	}
 
+	inline bool operator==(const EventQuantizeOrigin& a, const EventQuantizeOrigin& b)
+	{
+		return a.original == b.original && a.quantized == b.quantized;
+	}
+
 	inline bool operator==(const AudioEvent& a, const AudioEvent& b)
 	{
 		return std::tie(a.id, a.track, a.position, a.clip, a.offset, a.length, a.volume, a.mute, a.lock, a.fadeIn,
-				   a.fadeOut, a.crossfade, a.snapPoint, a.color, a.part, a.lane, a.volumeCurve, a.front) ==
+				   a.fadeOut, a.crossfade, a.snapPoint, a.color, a.part, a.lane, a.volumeCurve, a.front,
+				   a.quantizeOrigin) ==
 			std::tie(b.id, b.track, b.position, b.clip, b.offset, b.length, b.volume, b.mute, b.lock, b.fadeIn,
-				b.fadeOut, b.crossfade, b.snapPoint, b.color, b.part, b.lane, b.volumeCurve, b.front);
+				b.fadeOut, b.crossfade, b.snapPoint, b.color, b.part, b.lane, b.volumeCurve, b.front, b.quantizeOrigin);
 	}
 
 	inline bool operator==(const AudioPart& a, const AudioPart& b)
@@ -1254,6 +1381,27 @@ namespace gnubase::engine
 		return std::tie(a.events, a.mute, a.keepInOctave, a.lock) == std::tie(b.events, b.mute, b.keepInOctave, b.lock);
 	}
 
+	inline bool operator==(const ChordEvent& a, const ChordEvent& b)
+	{
+		return std::tie(a.id, a.position, a.text) == std::tie(b.id, b.position, b.text);
+	}
+
+	inline bool operator==(const ChordSource& a, const ChordSource& b)
+	{
+		return std::tie(a.position, a.chord) == std::tie(b.position, b.chord);
+	}
+
+	inline bool operator==(const ChordFollow& a, const ChordFollow& b)
+	{
+		return std::tie(a.mode, a.source) == std::tie(b.mode, b.source);
+	}
+
+	inline bool operator==(const ChordTrack& a, const ChordTrack& b)
+	{
+		return std::tie(a.events, a.scales, a.octaveOffset, a.adaptiveVoicings, a.automaticScales, a.follow) ==
+			std::tie(b.events, b.scales, b.octaveOffset, b.adaptiveVoicings, b.automaticScales, b.follow);
+	}
+
 	inline bool operator==(const AutomationTarget& a, const AutomationTarget& b)
 	{
 		return std::tie(a.type, a.parameter, a.slot, a.number, a.channel) ==
@@ -1290,6 +1438,11 @@ namespace gnubase::engine
 	};
 
 	EventSpan eventSpan(const Project& project, const AudioEvent& event);
+
+	// How many project samples after an audio event's start the clip frames frames after its offset play, and the
+	// other way round: through the clip's warp when it plays warped (warp.h), else at the ratio of the sample rates.
+	double eventSamples(const Project& project, const AudioEvent& event, double frames);
+	double eventFrames(const Project& project, const AudioEvent& event, double samples);
 
 	// Whether an event's crossfade plays: the event it comes from is on the same track, neither is muted, and this
 	// one starts inside it and ends after it. Otherwise the crossfade rests, and both play their own fades at those

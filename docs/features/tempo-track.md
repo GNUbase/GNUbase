@@ -104,8 +104,8 @@ The tempo track, its tempo events and ramps, the project tempo modes and tap tem
 
 The tempo event editor's smart controls for tilting, compressing and scaling a selection of events (p. 1450), drawing
 several events in one drag with the draw tool, snapping new and moved events to the grid, the editor's zoom and
-auto-scroll, visible tempo limits of the user's own, Lock, tempo recording (p. 1453) and the Process Tempo and Process
-Bars dialogs (pp. 1463-1464), reading the reference's own tempo track files and time warp. Tempo detection and tempo from MIDI are
+auto-scroll, visible tempo limits of the user's own, Lock, tempo recording (p. 1453) and reading the reference's own tempo
+track files. Process Tempo, Process Bars and time warp are [time-warp.md](time-warp.md)'s. Tempo detection and tempo from MIDI are
 [tempo-detection.md](tempo-detection.md)'s. The
 selected events on the tempo track's lane are removed with the erase tool, not with Backspace, which deletes the
 selected events and parts. The key command for Tap Tempo (Shift and Space) is not bound. Current Tempo on the tempo
