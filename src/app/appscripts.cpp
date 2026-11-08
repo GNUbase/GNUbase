@@ -27,7 +27,7 @@ namespace gnubase::app
 {
 	namespace
 	{
-		constexpr size_t g_maxOutput = 64 * 1024;
+		constexpr size_t g_maxOutput = size_t{64} * 1024;
 
 		// A file URL for SDL_OpenURL, e.g. file:///C:/Users/Me/My%20Scripts on Windows.
 		std::string fileUrl(const std::filesystem::path& path)
@@ -231,7 +231,7 @@ namespace gnubase::app
 				after = history.value.at("steps").at(position - 1).at("id").get<int64_t>();
 		}
 		if (const std::optional<std::string> error = run())
-			m_luaOutput << *error << std::endl;
+			m_luaOutput << *error << '\n' << std::flush;
 		if (const engine::Result joined = client.call("history.join", {{"after", after}, {"action", action}});
 			!joined.ok())
 			logging::warning("The undo steps of {} stay apart: {}", action, joined.error);

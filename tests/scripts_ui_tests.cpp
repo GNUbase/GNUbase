@@ -44,13 +44,13 @@ TEST_CASE("the Edit menu runs the user scripts, and the script console opens the
 		app.waitUntil([&app, window] { return !app.ui().dom(window, "#script-1 .edit", 0).at("elements").empty(); }));
 
 	// Edit opens the script, Open Folder its folder, Lua API Reference the reference written for this GNUbase.
-	app.ui().click(window, {"#script-1 .edit"}, ui::MouseButton::Left, 1, {});
+	app.ui().click(window, {"#script-1 .edit", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
 	REQUIRE(opened.size() == 1);
 	CHECK(opened[0] == folder / "add-audio-tracks.lua");
-	app.ui().click(window, {"#script-folder"}, ui::MouseButton::Left, 1, {});
+	app.ui().click(window, {"#script-folder", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
 	REQUIRE(opened.size() == 2);
 	CHECK(opened[1] == folder);
-	app.ui().click(window, {"#script-reference"}, ui::MouseButton::Left, 1, {});
+	app.ui().click(window, {"#script-reference", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
 	REQUIRE(opened.size() == 3);
 	CHECK(opened[2] == folder / "lua-api.md");
 	std::ifstream file(opened[2]);
