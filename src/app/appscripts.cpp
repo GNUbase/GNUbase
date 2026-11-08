@@ -116,8 +116,10 @@ namespace gnubase::app
 		m_lua.addFunction("ui.scripts",
 			[this](const engine::Json&)
 			{
+				// Keys and macros for scripts that are new, and Edit > Scripts: in the next step, since a script or the
+				// menu item that runs it may be what calls this.
 				if (scanScripts())
-					applyKeySettings(); // keys and macros for scripts that are new, and Edit > Scripts
+					m_shell.post([this] { applyKeySettings(); });
 				engine::Json scripts = engine::Json::array();
 				for (const auto& [name, file] : m_scripts)
 					scripts.push_back({{"name", name}, {"command", "script." + name}, {"file", file.u8string()}});

@@ -153,3 +153,29 @@ test.case("a script that fails is one undo step too, and its error shows in the 
 	local window = openConsole()
 	ui.wait{window = window, selector = "#script-output", text = "stopped here"}
 end)
+
+-- tests/scripts_ui_tests.cpp runs the same from Edit > Scripts.
+test.case("a script that writes a script and finds the scripts again keeps its undo step", function()
+	local path = folder .. "/written.lua"
+	test.cleanup(function()
+		os.remove(path)
+		ui.scripts()
+	end)
+	-- Finding the scripts again replaces every script command, the running one too.
+	write("writer", string.format([[
+gnubase.track.add{type = "audio"}
+local file = assert(io.open(%q, "w"))
+file:write('gnubase.track.add{type = "midi"}')
+file:close()
+gnubase.ui.scripts()
+]], path))
+	gnubase.settings.set{key = "ui.keyCommands", value = {{command = "script.writer", keys = {"Mod+Shift+K"}}}}
+	test.cleanup(function() gnubase.settings.reset{key = "ui.keyCommands"} end)
+	step()
+
+	ui.key{keys = "Mod+Shift+K"}
+	local history = gnubase.history.get()
+	test.equal(history.steps[#history.steps].action, "writer")
+	ui.command{command = "script.written"}
+	test.equal(trackCount(), 2)
+end)

@@ -50,11 +50,12 @@ without `print`, and scripts that come with a project, which need the user's con
 
 ## Checks
 
-`tests/lua/ui/scripts.lua` runs in the app's UI: the folder starts with the examples, each a key command, and one
-Undo takes back what an example did; a script bound to a key with `ui.keyCommands` runs on the key, adds one undo step
+`tests/lua/ui/scripts.lua` runs in the app's UI: the folder starts with the examples, each a key command, and one Undo
+takes back what an example did; a script bound to a key with `ui.keyCommands` runs on the key, adds one undo step
 named after it, which undo and redo take back and do again; a macro runs a script twice; the console lists, runs and
 reloads scripts, shows what they print, runs prompt lines as one step with their globals kept, shows errors and
-clears; a script that fails is one step too and shows its error. `tests/scripts_ui_tests.cpp` checks Edit > Scripts
-and the console's Edit, Open Folder and Lua API Reference, with the OS's opening caught (`AppUi::openExternallyWith`).
-`tests/history_tests.cpp` checks `history.join`, and `tests/scripting_tests.cpp` that a run inside a run leaves the
-test cases to the outermost one.
+clears; a script that fails is one step too and shows its error; a script that writes a script and finds the scripts
+again, which replaces its own command, keeps its undo step from a key and from Edit > Scripts, and the new script
+runs. `tests/scripts_ui_tests.cpp` checks Edit > Scripts and the console's Edit, Open Folder and Lua API Reference,
+with the OS's opening caught (`AppUi::openExternallyWith`). `tests/history_tests.cpp` checks `history.join`, and
+`tests/scripting_tests.cpp` that a run inside a run leaves the test cases to the outermost one.

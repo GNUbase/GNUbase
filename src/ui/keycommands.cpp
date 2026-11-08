@@ -488,8 +488,10 @@ namespace gnubase::ui
 		}
 		if (const auto ui = m_uiCommands.find(command); ui != m_uiCommands.end())
 		{
-			if (ui->second.run)
-				ui->second.run(window, zone);
+			// A copy, since a command may remove itself, e.g. a script that finds the scripts again.
+			const auto runCommand = ui->second.run;
+			if (runCommand)
+				runCommand(window, zone);
 			return;
 		}
 		m_binding.send(command, parameters);
