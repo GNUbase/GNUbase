@@ -407,6 +407,29 @@ TEST_CASE(
 	app.ui().click(
 		window, {control(guitar.channel, "sends.2.level"), 0, std::nullopt}, ui::MouseButton::Left, 1, {"ctrl"});
 	REQUIRE(app.waitUntil([&] { return send().at("level") == -12.0; }));
+	// The knob reaches every default send level that track.add gives a send: up to the project's maximum volume and
+	// below the knob's usual -60 dB.
+	app.call("project.set", {{"maxVolume", 12.0}});
+	app.call("settings.set", {{"key", "audio.defaultSendLevel"}, {"value", 10.0}});
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			return element(app, window, control(guitar.channel, "sends.2.level")).at("attributes").value("max", "") ==
+				"12";
+		}));
+	app.ui().click(
+		window, {control(guitar.channel, "sends.2.level"), 0, std::nullopt}, ui::MouseButton::Left, 1, {"ctrl"});
+	REQUIRE(app.waitUntil([&] { return send().at("level") == 10.0; }));
+	app.call("settings.set", {{"key", "audio.defaultSendLevel"}, {"value", -80.0}});
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			return element(app, window, control(guitar.channel, "sends.2.level")).at("attributes").value("min", "") ==
+				"-80";
+		}));
+	app.ui().click(
+		window, {control(guitar.channel, "sends.2.level"), 0, std::nullopt}, ui::MouseButton::Left, 1, {"ctrl"});
+	REQUIRE(app.waitUntil([&] { return send().at("level") == -80.0; }));
 
 	// What another client changes shows.
 	app.call(

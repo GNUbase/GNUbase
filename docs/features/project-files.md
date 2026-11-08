@@ -90,7 +90,7 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
 | Open... | `file.open` | Mod+O | an open dialog for a DAWproject file, then `project.load` |
 | Save | `file.save` | Mod+S | `project.save`, or Save As for a project without a file |
 | Save As... | `file.saveAs` | Mod+Shift+S | a save dialog, then `project.save` with the path (`.dawproject` added unless the name ends with it, in any case: `Song v1.2` is saved as `Song v1.2.dawproject`, `Mix.DAWPROJECT` as it is; dots and spaces at the end of the name go first, as Windows drops them and the dialogs of Linux return a name as typed: `Song.` and `Song.dawproject.` as `Song.dawproject`). A name that Windows keeps for a device, such as `NUL`, is saved as the user chose it: with the extension it is a file like any other on Linux, macOS and Windows 11 |
-| Back up Project... | `file.backup` | | a folder dialog, then `project.backup` into it |
+| Back up Project... | `file.backup` | | a folder dialog, then the Back up Project Options dialog, then `project.backup` into it ([backup.md](backup.md)) |
 | Save as Template... | `file.saveTemplate` | | the Save as Template dialog (`save-template.rml`) for the name, then `project.saveTemplate` |
 | Save New Version | `file.saveNewVersion` | Mod+Alt+S | `project.saveNewVersion`, or Save As for a project without a file |
 | Revert | `file.revert` | | `project.revert`; disabled while the project has no file |

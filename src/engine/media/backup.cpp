@@ -292,7 +292,9 @@ namespace gnubase::engine
 				std::error_code ignored;
 				for (const fs::path& file : m_files)
 					fs::remove(file, ignored);
-				fs::remove(m_audio, ignored); // only if it's empty
+				for (auto made = m_folders.rbegin(); made != m_folders.rend(); ++made)
+					fs::remove(*made, ignored); // the innermost first
+				fs::remove(m_audio, ignored);   // only if it's empty
 				fs::remove(m_folder / "Freeze", ignored);
 				if (m_createdFolder)
 					fs::remove(m_folder, ignored);
@@ -304,11 +306,27 @@ namespace gnubase::engine
 			void add(fs::path file) { m_files.push_back(std::move(file)); }
 			void done() { m_done = true; }
 
+			// Creates the folder and those it is in that don't exist yet, which go again if the backup doesn't
+			// complete. Throws std::runtime_error.
+			void createFolders(const fs::path& folder)
+			{
+				std::error_code error;
+				if (fs::is_directory(folder, error))
+					return;
+				if (folder.has_relative_path())
+					createFolders(folder.parent_path());
+				fs::create_directory(folder, error);
+				if (error)
+					throw std::runtime_error("can't create " + folder.u8string() + ": " + error.message());
+				m_folders.push_back(folder);
+			}
+
 		private:
 			fs::path m_folder;
 			fs::path m_audio;
 			bool m_createdFolder = false;
 			std::vector<fs::path> m_files;
+			std::vector<fs::path> m_folders; // that it made, outermost first
 			bool m_done = false;
 		};
 	}
@@ -597,6 +615,35 @@ namespace gnubase::engine
 				total += freezes[track.frozen->path] = error ? 0 : size;
 			}
 
+		// The files in the project's Mixdown folder as they are now, without the backup's own folder.
+		struct Mixdown
+		{
+			fs::path relative;
+			std::uintmax_t bytes = 0;
+		};
+		std::vector<Mixdown> mixdowns;
+		const fs::path mixdownFolder = options.mixdownFolder.empty() ? fs::path() : pathOf(options.mixdownFolder);
+		if (!mixdownFolder.empty() && fs::is_directory(mixdownFolder, error))
+		{
+			for (auto entry = fs::recursive_directory_iterator(mixdownFolder, error);
+				!error && entry != fs::recursive_directory_iterator(); entry.increment(error))
+			{
+				std::error_code ignored;
+				if (isInside(entry->path().u8string(), folder) || fs::equivalent(entry->path(), folder, ignored))
+				{
+					entry.disable_recursion_pending();
+					continue;
+				}
+				if (!entry->is_regular_file(ignored))
+					continue;
+				const std::uintmax_t bytes = entry->file_size(ignored);
+				mixdowns.push_back({entry->path().lexically_relative(mixdownFolder), ignored ? 0 : bytes});
+				total += mixdowns.back().bytes;
+			}
+			if (error)
+				throw std::runtime_error("can't read " + mixdownFolder.u8string() + ": " + error.message());
+		}
+
 		std::uintmax_t done = 0;
 		std::string detail;
 		const auto advance = [&](size_t bytes)
@@ -718,6 +765,16 @@ namespace gnubase::engine
 				track.frozen->path = copy->second;
 			else
 				missing.push_back({{"track", id}, {"path", track.frozen->path}});
+		}
+
+		for (const Mixdown& mixdown : mixdowns)
+		{
+			job.checkCancelled();
+			detail = mixdown.relative.filename().u8string();
+			const fs::path target = folder / "Mixdown" / mixdown.relative;
+			cleanup.createFolders(target.parent_path());
+			cleanup.add(target);
+			copyFile(mixdownFolder / mixdown.relative, target, advance);
 		}
 
 		job.checkCancelled();

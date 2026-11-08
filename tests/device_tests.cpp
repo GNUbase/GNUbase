@@ -1279,7 +1279,8 @@ namespace
 
 // The tests that add and remove physical ports run in the contract's test case, so that the contract never meets
 // ports that come and go when ctest runs tests in parallel.
-TEST_CASE("the JACK backend keeps the device contract and plays a project over a loopback with jackd", "[integration]")
+TEST_CASE(
+	"the JACK backend keeps the device contract and plays a project over a loopback with jackd", "[integration][jack]")
 {
 	std::unique_ptr<Backend> backend = jackOrSkip("libjack.so.0", "GNUBASE_REQUIRE_JACK");
 	if (!backend)
@@ -1326,7 +1327,8 @@ TEST_CASE("the JACK backend keeps the device contract and plays a project over a
 	checkJackRoundTrip(std::move(backend), library);
 }
 
-TEST_CASE("the JACK backend lists the server's physical ports and refuses what the server doesn't do", "[integration]")
+TEST_CASE(
+	"the JACK backend lists the server's physical ports and refuses what the server doesn't do", "[integration][jack]")
 {
 	const std::unique_ptr<Backend> backend = jackOrSkip("libjack.so.0", "GNUBASE_REQUIRE_JACK");
 	if (!backend)

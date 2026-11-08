@@ -5,7 +5,9 @@
 #include "engine/audiofile/resampler.h"
 #include "engine/dawproject/dawproject.h"
 #include "engine/document/audiofunctions.h"
+#include "engine/document/audioquantize.h"
 #include "engine/document/channelsettings.h"
+#include "engine/document/chordtrack.h"
 #include "engine/document/editors.h"
 #include "engine/document/hitpoints.h"
 #include "engine/document/linkgroups.h"
@@ -14,6 +16,7 @@
 #include "engine/document/sampleeditor.h"
 #include "engine/document/serialize.h"
 #include "engine/document/stripparameters.h"
+#include "engine/document/timewarp.h"
 #include "engine/document/trackversions.h"
 #include "engine/document/volumecurves.h"
 #include "engine/dsp/timestretch.h"
@@ -76,6 +79,7 @@ namespace gnubase::engine
 			{TrackType::Vca, "vca", "VCA"},
 			{TrackType::Arranger, "arranger", "Arranger"},
 			{TrackType::Transpose, "transpose", "Transpose"},
+			{TrackType::Chord, "chord", "Chord"},
 		};
 
 		const TrackTypeName& trackTypeEntry(TrackType type)
@@ -382,6 +386,7 @@ namespace gnubase::engine
 			require(track.type != TrackType::Signature || parent == 0, "the signature track can't be inside a folder");
 			require(track.type != TrackType::Arranger || parent == 0, "the arranger track can't be inside a folder");
 			require(track.type != TrackType::Transpose || parent == 0, "the transpose track can't be inside a folder");
+			require(track.type != TrackType::Chord || parent == 0, "the chord track can't be inside a folder");
 			const std::vector<ObjectId> moved = subtree(project, id);
 			require(std::find(moved.begin(), moved.end(), parent) == moved.end(),
 				"can't move a folder into itself or a folder inside it");
@@ -523,6 +528,13 @@ namespace gnubase::engine
 					event.position = time::rebase(event.position, base, project.tempo, project.sampleRate);
 				context.emit("transpose.changed", transposeJson(project));
 			}
+			if (track.type == TrackType::Chord)
+			{
+				for (std::vector<ChordEvent>* events : {&project.chords.events, &project.chords.scales})
+					for (ChordEvent& event : *events)
+						event.position = time::rebase(event.position, base, project.tempo, project.sampleRate);
+				context.emit("chord.changed", chordJson(project));
+			}
 			for (auto& [id, lane] : project.automation)
 				if (lane.track == track.id && !lane.points.empty())
 				{
@@ -650,6 +662,16 @@ namespace gnubase::engine
 				}
 			if (transposed)
 				context.emit("transpose.changed", transposeJson(project));
+			bool chorded = false;
+			for (std::vector<ChordEvent>* events : {&project.chords.events, &project.chords.scales})
+				for (ChordEvent& event : *events)
+					if (event.position.base == time::TimeBase::Linear)
+					{
+						event.position.value = rescale(event.position.value, factor);
+						chorded = true;
+					}
+			if (chorded)
+				context.emit("chord.changed", chordJson(project));
 		}
 
 		int64_t countTracks(const Project& project, TrackType type)
@@ -672,6 +694,8 @@ namespace gnubase::engine
 				return "Arranger";
 			if (type == TrackType::Transpose)
 				return "Transpose";
+			if (type == TrackType::Chord)
+				return "Chord";
 			const std::string number = std::to_string(type == TrackType::Marker ? count : count + 1);
 			return trackTypeEntry(type).defaultName + std::string(number.size() < 2 ? " 0" : " ") + number;
 		}
@@ -1135,7 +1159,10 @@ namespace gnubase::engine
 
 		// Group Track to Selected Tracks and Effect Track to Selected Tracks (reference manual pp. 546, 554): the
 		// tracks play into a new group channel, or send to a new effect channel with the given send, or else their
-		// first send without a destination, at the user setting audio.defaultSendLevel.
+		// first send without a destination, at the user setting audio.defaultSendLevel. Those that can't be routed
+		// are left out: tracks without an audio channel (MIDI, marker and ruler tracks, folders without a group
+		// channel, whose tracks are meant only when they are selected themselves) and, without send, tracks with no
+		// free send.
 		void routeTo(Project& project, const Channel& added, const Json& parameters, CommandContext& context)
 		{
 			const TrackType type = project.trackById.at(added.track).type;
@@ -1156,8 +1183,8 @@ namespace gnubase::engine
 				require(seen.insert(id).second, "tracks lists track " + idText(id) + " twice");
 				const Track& track = find(project.trackById, id, "track");
 				const auto source = project.channels.find(track.channel);
-				require(source != project.channels.end() && source->second.format != ChannelFormat::None,
-					"track " + idText(id) + " has no audio channel");
+				if (source == project.channels.end() || source->second.format == ChannelFormat::None)
+					continue;
 				Channel& channel = source->second;
 				if (type == TrackType::Group)
 				{
@@ -1175,7 +1202,8 @@ namespace gnubase::engine
 							send = &candidate;
 						}
 					}
-					require(send != nullptr, "track " + idText(id) + " has no free send");
+					if (send == nullptr)
+						continue;
 					require(!routingLoops(project, channel.id, added.id),
 						"sending channel " + idText(channel.id) + " to " + idText(added.id) + " would make a loop");
 					*send = {added.id, true, level, false};
@@ -1225,10 +1253,15 @@ namespace gnubase::engine
 				require(parent == 0, "the transpose track can't be inside a folder");
 				require(countTracks(project, TrackType::Transpose) == 0, "a project has one transpose track at most");
 			}
+			if (type == TrackType::Chord)
+			{
+				require(parent == 0, "the chord track can't be inside a folder");
+				require(countTracks(project, TrackType::Chord) == 0, "a project has one chord track at most");
+			}
 			const bool hasChannel =
 				(type != TrackType::Folder && type != TrackType::Marker && type != TrackType::Ruler &&
 					type != TrackType::Tempo && type != TrackType::Signature && type != TrackType::Arranger &&
-					type != TrackType::Transpose) ||
+					type != TrackType::Transpose && type != TrackType::Chord) ||
 				groupChannel;
 			const bool hasAudio = hasChannel && type != TrackType::Midi && type != TrackType::Vca;
 			require(type != TrackType::Vca ||
@@ -1308,7 +1341,9 @@ namespace gnubase::engine
 				routeTo(project, *channel, parameters, context);
 				return result;
 			}
-			require(!parameters.contains("send"), "only effect tracks take a send");
+			require(!parameters.contains("send"),
+				type == TrackType::Effect ? "send needs tracks: the tracks that send to the new effect track"
+										  : "only effect tracks take a send");
 			// Move Selected Tracks to New Folder (p. 223).
 			if (parameters.contains("tracks"))
 			{
@@ -1567,6 +1602,7 @@ namespace gnubase::engine
 			require(track.type != TrackType::Signature, "a project has one signature track at most");
 			require(track.type != TrackType::Arranger, "a project has one arranger track at most");
 			require(track.type != TrackType::Transpose, "a project has one transpose track at most");
+			require(track.type != TrackType::Chord, "a project has one chord track at most");
 			const ObjectId parent = track.parent;
 			std::map<ObjectId, ObjectId> channels;
 			std::vector<std::pair<std::string, Json>> added;
@@ -1632,6 +1668,11 @@ namespace gnubase::engine
 				{
 					project.transpose = TransposeTrack();
 					context.emit("transpose.changed", transposeJson(project));
+				}
+				if (gone.type == TrackType::Chord)
+				{
+					project.chords = ChordTrack();
+					context.emit("chord.changed", chordJson(project));
 				}
 				if (gone.channel != 0)
 					for (const ObjectId slot : project.channels.at(gone.channel).slots)
@@ -2017,6 +2058,23 @@ namespace gnubase::engine
 				try
 				{
 					changed.modifiers = modifiersFromJson(parameters.at("modifiers"), changed.modifiers);
+				}
+				catch (const std::invalid_argument& error)
+				{
+					throw CommandError(error.what());
+				}
+			}
+			for (const char* section : {"midiInserts", "midiSends"})
+			{
+				if (!parameters.contains(section))
+					continue;
+				require(type == TrackType::Midi || type == TrackType::Instrument,
+					"only MIDI and instrument tracks have MIDI inserts and sends");
+				const bool sends = section == std::string("midiSends");
+				midi::EffectRack& rack = sends ? changed.midiSends : changed.midiInserts;
+				try
+				{
+					rack = effectRackFromJson(parameters.at(section), rack, sends);
 				}
 				catch (const std::invalid_argument& error)
 				{
@@ -3178,6 +3236,13 @@ namespace gnubase::engine
 			{"transpose.remove", "Remove transpose events"},
 			{"transpose.setTrack", "Change transpose track"},
 			{"transpose.assignRootKey", "Set root key for unassigned events"},
+			{"chord.add", "Add chord track event"},
+			{"chord.set", "Change chord track events"},
+			{"chord.remove", "Remove chord track events"},
+			{"chord.setTrack", "Change chord track"},
+			{"chord.follow", "Follow chord track"},
+			{"chord.toMidi", "Chords to MIDI"},
+			{"chord.fromMidi", "Create chord events"},
 			{"automationLane.add", "Add automation lane"},
 			{"automationLane.set", "Change automation lane"},
 			{"automationLane.remove", "Remove automation lane"},
@@ -3480,6 +3545,30 @@ namespace gnubase::engine
 		return {{"results", results}};
 	}
 
+	Json ProjectModel::join(CommandContext& context)
+	{
+		const auto after = context.parameters().at("after").get<int64_t>();
+		const std::vector<HistoryStep>& steps = m_history.steps();
+		const size_t position = m_history.position();
+		size_t first = position;
+		while (first > 0 && static_cast<int64_t>(steps[first - 1].id) > after)
+			--first;
+		if (first == position)
+			return {{"steps", 0}};
+		// What changed since before the first of them.
+		Project start = m_project;
+		for (size_t i = position; i > first; --i)
+			apply(start, steps[i - 1].change, Direction::Undo);
+		ProjectChange change = difference(start, m_project);
+		std::optional<HistoryStep> joined;
+		if (!change.empty())
+			joined =
+				HistoryStep{context.parameters().at("action").get<std::string>(), now(), {}, std::move(change), {}};
+		m_history.join(first, std::move(joined));
+		announceHistory(context);
+		return {{"steps", position - first}};
+	}
+
 	void ProjectModel::registerHistoryCommands(Engine& engine)
 	{
 		const Json stepsSchema = {
@@ -3489,14 +3578,16 @@ namespace gnubase::engine
 
 		addControl(engine,
 			{"history.get", 1,
-				"The undo history: every step with its action, time (UTC) and details, the position (steps before it "
-				"are done, the ones after it can be redone) and the maximum number of steps (0: no limit).",
+				"The undo history: every step with its id (growing with each new step), action, time (UTC) and "
+				"details, the position (steps before it are done, the ones after it can be redone) and the maximum "
+				"number of steps (0: no limit).",
 				objectSchema({}), {{"type", "object"}}, true},
 			[this](CommandContext&)
 			{
 				Json steps = Json::array();
 				for (const HistoryStep& step : m_history.steps())
-					steps.push_back({{"action", step.action}, {"time", step.time}, {"details", step.details}});
+					steps.push_back(
+						{{"id", step.id}, {"action", step.action}, {"time", step.time}, {"details", step.details}});
 				return Json{{"position", m_history.position()}, {"maxSteps", m_history.maxSteps()}, {"steps", steps}};
 			});
 		addControl(engine,
@@ -3534,6 +3625,16 @@ namespace gnubase::engine
 				return Json::object();
 			});
 
+		addControl(engine,
+			{"history.join", 1,
+				"Joins the done steps whose id is greater than after (an id from history.get) into one undo step named "
+				"action, so that a client's several commands, such as a user script's, are undone and redone at once. "
+				"Steps that end where they started leave none. Returns how many steps were joined.",
+				objectSchema({{"after", {{"type", "integer"}}}, {"action", {{"type", "string"}}}}, {"after", "action"}),
+				{{"type", "object"}, {"properties", {{"steps", {{"type", "integer"}}}}}, {"required", {"steps"}}},
+				false},
+			[this](CommandContext& context) { return join(context); });
+
 		const Json command =
 			objectSchema({{"command", {{"type", "string"}}}, {"parameters", {{"type", "object"}}}}, {"command"});
 		add(engine,
@@ -3561,7 +3662,7 @@ namespace gnubase::engine
 		const Json positionSchema = {{"type", {"integer", "string"}}}; // ticks or samples, or "cursor"
 		const Json noResult = Json::object();
 		const Json trackTypes = enumSchema({"audio", "instrument", "midi", "folder", "group", "effect", "marker",
-			"ruler", "tempo", "signature", "vca", "arranger", "transpose"});
+			"ruler", "tempo", "signature", "vca", "arranger", "transpose", "chord"});
 		const Json timeBases = enumSchema({"musical", "linear"});
 		const Json timeFormats =
 			enumSchema(std::vector<std::string>(g_rulerTimeFormats.begin(), g_rulerTimeFormats.end()));
@@ -3876,7 +3977,9 @@ namespace gnubase::engine
 				"Tracks to New Folder); for a group track, their channels play into its channel (Group Track to "
 				"Selected Tracks), and for an effect track, they send to its channel with send (1 to 8), or else "
 				"their first send without a destination, switched on, after the fader and at the user setting "
-				"audio.defaultSendLevel (Effect Track to Selected Tracks, Add Effect Track to Send). projectFolder "
+				"audio.defaultSendLevel (Effect Track to Selected Tracks, Add Effect Track to Send); tracks without "
+				"an audio channel, such as MIDI tracks and folders without a group channel, and without send those "
+				"with no free send, are left out. projectFolder "
 				"puts a group or effect track into the project's Group or FX folder, the first folder of that name "
 				"at the top level, added at the end if there is none. With the user setting editing.applyFolderColor, "
 				"a track added to a folder "
@@ -3889,7 +3992,8 @@ namespace gnubase::engine
 				"and "
 				"edits the project's tempo (tempo.*), the signature track its time signatures (signature.*), the "
 				"arranger track its arranger events (arranger.*), the transpose track its transpose events "
-				"(transpose.*): a project has one of each at most, without a channel, at the top level. "
+				"(transpose.*), the chord track its chord and scale events (chord.*): a project has one of each at "
+				"most, without a channel, at the top level. "
 
 				"A VCA track's channel is a VCA fader (reference manual p. 153): no audio, input or output, a fader "
 				"that controls a link group (linkGroup.add).",
@@ -4027,7 +4131,14 @@ namespace gnubase::engine
 				"127; live notes get pitch and velocity only) and range (two, [{target (off, velocityLimit, "
 				"velocityFilter, noteLimit or noteFilter), minimum, maximum (0 to 127)}], in order after the others: "
 				"the limits move velocities to the nearest end and pitches by octaves into the range, the filters "
-				"leave out the notes outside it). The channel strip's sections (audio channels only; "
+				"leave out the notes outside it). midiInserts and midiSends (MIDI and instrument tracks; each changes "
+				"only what it has, as project.get shows them) are the track's four MIDI insert and four MIDI send "
+				"slots, which run GNUbase's built-in MIDI effects (midiEffect.list) on the track's own events after "
+				"the modifiers: {bypass (all slots of the section), pre (sends only: they get the events before the "
+				"inserts), slots: [{effect (an id, or empty for none; another effect starts from its defaults), on, "
+				"parameters {key: value, a number or an option's name}}]}. The inserts play in order, each on what "
+				"the one before it played; each send plays its effect's events beside them. Changing which effects "
+				"play ends the notes the track sounds. The channel strip's sections (audio channels only; "
 				"each object changes only what it has, as project.get shows them) run before the fader: pre "
 				"{gain (dB, -24 to 24), phase (inverts the polarity), lowCut and highCut {on, frequency (Hz, 20 or "
 				"for the high cut 50 to 20000), slope (6, 12, 24, 36 or 48 dB per octave)}} before the plugin slots; "
@@ -4062,7 +4173,8 @@ namespace gnubase::engine
 						{"exclusive", booleanSchema}, {"soloDefeat", booleanSchema}, {"listen", booleanSchema},
 						{"notes", stringSchema}, {"linked", booleanSchema}, {"pre", {{"type", "object"}}},
 						{"eq", {{"type", "object"}}}, {"strip", {{"type", "object"}}},
-						{"modifiers", {{"type", "object"}}},
+						{"modifiers", {{"type", "object"}}}, {"midiInserts", {{"type", "object"}}},
+						{"midiSends", {{"type", "object"}}},
 						{"sends",
 							arraySchema(
 								objectSchema({{"send", integerSchema}, {"destination", idSchema}, {"on", booleanSchema},
@@ -4292,12 +4404,14 @@ namespace gnubase::engine
 		registerMarkerCommands(engine);
 		registerArrangerCommands(engine);
 		registerTransposeCommands(engine);
+		registerChordCommands(engine);
 		registerTempoCommands(engine);
 		registerSignatureCommands(engine);
 		registerAutomationCommands(engine);
 		registerParameterCommands(engine);
 		registerSlotCommands(engine);
 		midi::registerQuantizeCommands(*this, engine);
+		registerAudioQuantizeCommands(*this, engine);
 		midi::registerFunctionCommands(*this, engine);
 		metronome::registerMetronomeCommands(*this, engine);
 		midi::registerControllerLaneCommands(*this, engine);
@@ -4319,6 +4433,7 @@ namespace gnubase::engine
 		registerSampleEditorCommands(*this, engine);
 		registerHitpointCommands(*this, engine, jobs);
 		registerWarpCommands(engine);
+		registerTimeWarpCommands(*this, engine);
 		registerAudioFunctionCommands(*this, engine);
 		registerHistoryCommands(engine);
 		registerMediaFolderCommands(engine, jobs);
@@ -4526,8 +4641,10 @@ namespace gnubase::engine
 				"Backs the project up as it is now into folder, which must be empty or new: the project file, named "
 				"name (by default after the project file, or else the project), and copies of its media in the "
 				"folder Audio, and of its frozen tracks' freeze files in the folder Freeze, which the project file "
-				"refers to relative to itself, so that the folder opens on another machine. The project itself stays "
-				"as it is. minimize keeps only the ranges of audio files "
+				"refers to relative to itself, so that the folder opens on another machine. The files in the Mixdown "
+				"folder of the project's folder, where File > Export > "
+				"Audio Mixdown puts mixdowns, go along into the folder Mixdown, unless skipMixdown is true. The "
+				"project itself stays as it is. minimize keeps only the ranges of audio files "
 				"that audio events play, with handles seconds (default 1) before and after; removeUnused leaves out "
 				"clips that no audio event uses and media that no clip uses. currentVersionsOnly and skipVideo have "
 				"no effect until clips have versions and projects have video. activate opens the backup once it is "
@@ -4541,7 +4658,7 @@ namespace gnubase::engine
 				objectSchema({{"folder", stringSchema}, {"name", stringSchema}, {"minimize", booleanSchema},
 								 {"handles", numberSchema}, {"removeUnused", booleanSchema},
 								 {"currentVersionsOnly", booleanSchema}, {"skipVideo", booleanSchema},
-								 {"activate", booleanSchema}},
+								 {"skipMixdown", booleanSchema}, {"activate", booleanSchema}},
 					{"folder"}),
 				objectSchema({{"job", Jobs::schema()}}, {"job"}), false},
 			[this, &jobs](CommandContext& context)
@@ -4579,6 +4696,8 @@ namespace gnubase::engine
 				options.removeUnused = parameters.value("removeUnused", false);
 				options.currentVersionsOnly = parameters.value("currentVersionsOnly", false);
 				options.skipVideo = parameters.value("skipVideo", false);
+				if (!m_file.empty() && !parameters.value("skipMixdown", false))
+					options.mixdownFolder = (std::filesystem::u8path(m_file).parent_path() / "Mixdown").u8string();
 				const bool activate = parameters.value("activate", false);
 
 				// Opening the backup replaces the project, so only if it is still as it was backed up.

@@ -1,0 +1,169 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The script console (docs/features/scripts.md, #209), in a window of its own: the UI command window.scriptConsole
+     opens it. Its script lists the user scripts (gnubase.ui.scripts), runs them as their key commands, opens them with
+     the OS, and runs what is typed into the prompt (gnubase.ui.runLua). app::AppUi writes what the UI's Lua prints and
+     the scripts' errors into #script-output. -->
+<rml>
+<head>
+	<title>Script Console</title>
+	<style>
+		body
+		{
+			position: absolute;
+			left: 0;
+			top: 0;
+			right: 0;
+			bottom: 0;
+		}
+
+		#toolbar
+		{
+			position: absolute;
+			left: 0;
+			top: 0;
+			right: 0;
+			height: 32dp;
+			box-sizing: border-box;
+			padding: 4dp;
+			display: flex;
+		}
+
+		#toolbar button
+		{
+			margin-right: 4dp;
+		}
+
+		#script-list
+		{
+			position: absolute;
+			left: 0;
+			top: 32dp;
+			bottom: 0;
+			width: 220dp;
+			overflow-y: auto;
+			padding: 4dp;
+			box-sizing: border-box;
+		}
+
+		.script-row
+		{
+			display: flex;
+			align-items: center;
+			height: 24dp;
+		}
+
+		.script-row .name
+		{
+			flex: 1;
+			margin-right: 4dp;
+		}
+
+		.script-row button
+		{
+			margin-left: 4dp;
+		}
+
+		#script-output
+		{
+			position: absolute;
+			left: 220dp;
+			top: 32dp;
+			right: 0;
+			bottom: 32dp;
+			overflow-y: auto;
+			padding: 4dp;
+			box-sizing: border-box;
+			white-space: pre-wrap;
+		}
+
+		#script-prompt-row
+		{
+			position: absolute;
+			left: 220dp;
+			right: 0;
+			bottom: 0;
+			height: 32dp;
+			box-sizing: border-box;
+			padding: 4dp;
+			display: flex;
+		}
+
+		#script-prompt
+		{
+			flex: 1;
+			margin-right: 4dp;
+		}
+	</style>
+	<script>
+		ScriptConsole = ScriptConsole or {}
+		local console = ScriptConsole
+
+		local function escape(text)
+			return (tostring(text):gsub('[&<>"]', {["&"] = "&amp;", ["<"] = "&lt;", [">"] = "&gt;", ['"'] = "&quot;"}))
+		end
+
+		-- Reload: the scripts in the folder now.
+		function console.refresh()
+			local document = console.document
+			if document == nil then return end
+			local scripts = gnubase.ui.scripts()
+			console.folder = scripts.folder
+			console.scripts = scripts.scripts
+			local rows = {}
+			for index, script in ipairs(scripts.scripts) do
+				rows[#rows + 1] = '<div class="script-row" id="script-' .. index .. '"><span class="name">' ..
+					escape(script.name) .. '</span><button class="run" title="Run" onclick="ScriptConsole.run(' ..
+					index .. ')">Run</button><button class="edit" title="Open in Editor" onclick="ScriptConsole.edit(' ..
+					index .. ')">Edit</button></div>'
+			end
+			if #rows == 0 then
+				rows[1] = '<div class="script-row">' ..
+					(scripts.folder == "" and "No script folder" or "No scripts") .. "</div>"
+			end
+			document:GetElementById("script-list").inner_rml = table.concat(rows)
+		end
+
+		function console.run(index)
+			gnubase.ui.command{command = console.scripts[index].command}
+		end
+
+		function console.edit(index)
+			gnubase.ui.openExternally{path = console.scripts[index].file}
+		end
+
+		function console.openFolder()
+			if console.folder ~= "" then gnubase.ui.openExternally{path = console.folder} end
+		end
+
+		function console.reference()
+			gnubase.ui.openExternally{path = gnubase.ui.luaReference().file}
+		end
+
+		-- Enter in the prompt runs what it has.
+		function console.prompt(element, event)
+			if not event.parameters.linebreak then return end
+			local code = element:GetAttribute("value") or ""
+			element:SetAttribute("value", "")
+			if code:find("%S") then gnubase.ui.runLua{code = code} end
+		end
+
+		function console.load(document)
+			console.document = document
+			console.refresh()
+		end
+	</script>
+</head>
+<body onload="ScriptConsole.load(document)" onunload="ScriptConsole.document = nil">
+	<div id="toolbar" class="toolbar">
+		<button id="script-reload" title="Find the scripts in the folder again" onclick="ScriptConsole.refresh()">Reload</button>
+		<button id="script-folder" title="Open the script folder" onclick="ScriptConsole.openFolder()">Open Folder</button>
+		<button id="script-reference" title="Open the Lua API reference" onclick="ScriptConsole.reference()">Lua API Reference</button>
+		<button id="script-clear" title="Clear the output" onclick="gnubase.ui.clearScriptOutput()">Clear</button>
+	</div>
+	<div id="script-list"/>
+	<div id="script-output"/>
+	<div id="script-prompt-row">
+		<input type="text" id="script-prompt" onchange="ScriptConsole.prompt(element, event)"/>
+	</div>
+</body>
+</rml>

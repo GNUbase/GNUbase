@@ -96,13 +96,14 @@ namespace gnubase::engine
 		bool removeUnused = false;        // leave out clips that no audio event uses, and media that no clip uses
 		bool currentVersionsOnly = false; // no effect until clips have offline processing (#141) or versions (#165)
 		bool skipVideo = false;           // no effect until projects have video (#198)
+		std::string mixdownFolder;        // the project's Mixdown folder, copied into <folder>/Mixdown; empty for none
 	};
 
-	// Writes <folder>/<name>.dawproject and copies the media into <folder>/Audio and the frozen tracks' freeze files
-	// into <folder>/Freeze, where the project file refers to them relative to itself, so the folder opens anywhere. A
-	// media or freeze file that can't be read is reported and keeps its path. Reports progress to the job and stops
-	// when it is cancelled. If it doesn't complete, it removes what it wrote. Returns {file, files, missing: [{media,
-	// path} or {track, path}]}. Throws JobCancelled, DawProjectError, AudioFileError or std::runtime_error.
+	// Writes <folder>/<name>.dawproject, media into Audio, freeze files into Freeze, and files from mixdownFolder
+	// into Mixdown, leaving out the backup's own folder. The project refers to media and freeze files relatively.
+	// Unreadable media or freeze files are reported and keep their paths. Reports progress and stops on cancellation;
+	// if incomplete, removes what it wrote. Returns {file, files, missing: [{media, path} or {track, path}]}.
+	// Throws JobCancelled, DawProjectError, AudioFileError or std::runtime_error.
 	//
 	// Minimized files start their ranges on the resampling grid of their sample rate in the project's, so that
 	// they play sample for sample as the originals do. They keep every sample: files whose samples GNUbase can't

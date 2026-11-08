@@ -15,6 +15,7 @@
 #include <RmlUi/Core/Input.h>
 #include <RmlUi/Core/StringUtilities.h>
 #include <RmlUi/Lua.h>
+#include <lauxlib.h>
 #include <lua.h>
 
 #include <algorithm>
@@ -65,7 +66,7 @@ namespace gnubase::app
 			const char* keys;
 		};
 
-		constexpr std::array<ProjectCommand, 84> g_projectCommands{{
+		constexpr std::array<ProjectCommand, 90> g_projectCommands{{
 			{"zoom.in", "Zooms the project window in.", "H"},
 			{"zoom.out", "Zooms the project window out.", "G"},
 			{"zoom.inVertically", "Makes the project window's tracks taller.", "Shift+H"},
@@ -94,6 +95,13 @@ namespace gnubase::app
 			{"tempo.detection", "Opens the Tempo Detection dialog for the selected audio event or MIDI part.", nullptr},
 			{"midi.calculateTempo", "Opens the Calculate Tempo from MIDI Events dialog for the selected MIDI parts.",
 				nullptr},
+			// Process Tempo, Process Bars and warp markers (docs/features/time-warp.md).
+			{"tempo.openProcessTempo", "Opens the Process Tempo dialog for the locator range.", nullptr},
+			{"tempo.openProcessBars", "Opens the Process Bars dialog.", nullptr},
+			{"audio.setDefinitionFromTempo",
+				"Opens the Set Definition from Tempo dialog for the selected audio events.", nullptr},
+			{"audio.copyWarpMarkers", "Copies the warp markers of the first selected audio event.", nullptr},
+			{"audio.pasteWarpMarkers", "Pastes the copied warp markers into the selected audio events.", nullptr},
 			// Fades and crossfades (docs/features/fades.md), with the reference's key for Crossfade (manual p. 388).
 			{"audio.fadeInToRange", "Fades the audio events in the selection range in up to the range's start.",
 				nullptr},
@@ -168,6 +176,7 @@ namespace gnubase::app
 			{"tool.play", "Chooses the play tool in the project window.", "9"},
 			{"tool.line", "Chooses the line tool in the project window.", nullptr},
 			{"tool.comp", "Chooses the comp tool in the project window.", nullptr},
+			{"tool.timeWarp", "Chooses the time warp tool in the project window.", nullptr},
 			{"tool.previous", "Chooses the project window's previous tool.", "F9"},
 			{"tool.next", "Chooses the project window's next tool.", "F10"},
 			{"tool.combineSelectionTools", "Switches combining the selection tools on or off.", "Alt+Shift+1"},
@@ -206,7 +215,7 @@ namespace gnubase::app
 		}
 
 		// The track list's commands (ui::TrackList::actions, docs/features/track-list.md) and their keys.
-		constexpr std::array<ProjectCommand, 33> g_trackCommands{{
+		constexpr std::array<ProjectCommand, 35> g_trackCommands{{
 			{"track.selectPrevious",
 				"Selects the track above the selected one, and its first event while an event is selected (unless "
 				"ui.upDownSelectsTracksOnly).",
@@ -224,6 +233,14 @@ namespace gnubase::app
 			{"track.freezeSelected",
 				"Freezes the selected audio and instrument tracks, or unfreezes them if every one is frozen.", nullptr},
 			{"track.renderSelected", "Renders the selected audio and instrument tracks in place.", nullptr},
+			// The chord track (docs/features/chord-track.md).
+			{"track.chordsToMidiSelected",
+				"Chords to MIDI: a MIDI part of the chord events on the first selected MIDI or instrument track, which "
+				"then follows the chord track.",
+				nullptr},
+			{"track.createChordEventsSelected",
+				"Create Chord Events: chord events from the MIDI notes of the selected MIDI and instrument tracks.",
+				nullptr},
 			{"track.toggleFolding", "Folds or unfolds the selected folders.", nullptr},
 			{"track.foldAll", "Folds every folder.", nullptr},
 			{"track.unfoldAll", "Unfolds every folder.", nullptr},
@@ -269,7 +286,8 @@ namespace gnubase::app
 
 	AppUi::AppUi(engine::Engine& engine, const std::filesystem::path& resources, const ui::WindowSpec& main,
 		std::ostream& output, int msaaSamples)
-		: m_renderer(m_windows, msaaSamples), m_lua(engine, scripting::Trust::Trusted, output), m_rmlui(m_windows),
+		: m_scriptOutput(output), m_renderer(m_windows, msaaSamples),
+		  m_lua(engine, scripting::Trust::Trusted, m_luaOutput), m_rmlui(m_windows),
 		  m_themes(fontsAndThemes(resources)), m_shell(m_windows, m_renderer), m_settings(engine, m_shell, m_themes),
 		  m_binding(
 			  engine, [this] { m_shell.wake(); }, [this] { m_shell.requestRender(); }),
@@ -288,9 +306,14 @@ namespace gnubase::app
 		ui::registerWidgets(m_rmlui);
 		m_rmlui.loadCursors(resources / "cursors");
 		lua_State* state = m_lua.state();
+		// GNUbase's print, instead of the plugin's, which writes into RmlUi's log. Kept in the registry: the plugin
+		// changes the stack.
 		lua_getglobal(state, "print");
-		Rml::Lua::Initialise(state);   // until Rml::Shutdown
-		lua_setglobal(state, "print"); // GNUbase's, instead of the plugin's, which writes into RmlUi's log
+		const int print = luaL_ref(state, LUA_REGISTRYINDEX);
+		Rml::Lua::Initialise(state); // until Rml::Shutdown
+		lua_rawgeti(state, LUA_REGISTRYINDEX, print);
+		luaL_unref(state, LUA_REGISTRYINDEX, print);
+		lua_setglobal(state, "print");
 		addUiFunctions(m_lua, m_shell);
 		m_shell.eachStep(
 			[this]
@@ -434,7 +457,8 @@ namespace gnubase::app
 		m_docking.addKeyCommands(m_keys);
 		// What the pool's commands did, sent from its toolbar, the Media menu or Find Missing Files, shows in the
 		// pool, which opens for it: its window comes to the front if it is in one of its own.
-		for (const char* command : {"pool.removeUnused", "media.locate", "media.removeMissing", "media.conform"})
+		for (const char* command :
+			{"pool.removeUnused", "media.locate", "media.removeMissing", "media.conform", "media.prepareArchive"})
 			m_poolResults.push_back(m_binding.onResult(command,
 				[this, command](const engine::Result& result)
 				{
@@ -816,6 +840,7 @@ namespace gnubase::app
 				[this, field = std::string(command.field)](ui::Window&, Rml::Element*) { enter(field); }});
 			m_keys.bind({command.keys, command.id});
 		}
+		addScripts();
 		addKeyCommandsDialog();
 	}
 
@@ -929,6 +954,17 @@ namespace gnubase::app
 		if (!items.empty())
 			items += "<menuseparator/>";
 		menu->SetInnerRML(items + "<menuitem command=\"window.keyCommands\">Key Commands...</menuitem>");
+		// Edit > Scripts: the user scripts, and the script console (docs/features/scripts.md).
+		if (Rml::Element* scripts = document->GetElementById("scripts-menu"))
+		{
+			items.clear();
+			for (const auto& [name, file] : m_scripts)
+				items += "<menuitem command=\"script." + Rml::StringUtilities::EncodeRml(name) + "\">" +
+					Rml::StringUtilities::EncodeRml(name) + "</menuitem>";
+			if (!items.empty())
+				items += "<menuseparator/>";
+			scripts->SetInnerRML(items + "<menuitem command=\"window.scriptConsole\">Script Console</menuitem>");
+		}
 		m_menu.reset(); // its items are gone
 		m_menu = std::make_unique<ui::MainMenu>(m_keys, m_main, *document);
 	}
@@ -1044,6 +1080,7 @@ namespace gnubase::app
 		m_tempoLane.reset();
 		m_signatureLane.reset();
 		m_transposeLane.reset();
+		m_chordLane.reset();
 		m_rulerLanes.reset();
 		// The transport bar's sections are there when the docking system reads them.
 		m_transportBar.reset();
@@ -1074,7 +1111,8 @@ namespace gnubase::app
 		m_markerLines = std::make_unique<ui::MarkerLines>(*m_eventDisplay, m_binding);
 		m_tempoLane = std::make_unique<ui::TempoLane>(*m_eventDisplay, m_binding);
 		m_signatureLane = std::make_unique<ui::SignatureLane>(*m_eventDisplay, m_binding);
-		m_transposeLane = std::make_unique<ui::TransposeLane>(*m_eventDisplay, m_binding);
+		m_transposeLane = std::make_unique<ui::GlobalEventLane>(*m_eventDisplay, m_binding);
+		m_chordLane = std::make_unique<ui::GlobalEventLane>(*m_eventDisplay, m_binding, ui::LaneKind::Chord);
 		m_rulerLanes = std::make_unique<ui::RulerLanes>(*m_eventDisplay);
 		if (m_infoLine)
 			m_infoLine->followMarkers(

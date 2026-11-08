@@ -79,6 +79,9 @@ namespace gnubase::engine::midi
 		double velocityStrength = 0.0;        // grooves: how far velocities move toward the groove's
 		double lengthStrength = 0.0;          // grooves: how far lengths move toward the groove's
 		time::Ticks origin = 0;               // grooves: where the groove starts repeating, in project ticks
+		// Audio events: quantizes their audio by time stretch, moving their clips' warp markers to the grid (warp
+		// quantizing, #145), instead of moving the events.
+		bool warpQuantize = false;
 	};
 
 	Json toJson(const QuantizeSettings& settings);
