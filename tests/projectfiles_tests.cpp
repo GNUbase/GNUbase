@@ -894,6 +894,28 @@ TEST_CASE("a save or backup that fails shows its error", "[ui]")
 	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
 	click(app, "#project-error-dialog button[result=ok]");
 	REQUIRE(app.waitUntil([&app] { return !shown(app, "#project-error-dialog"); }));
+
+	// A backup that is to be opened isn't if the project changed while the job ran, and says so.
+	test::writeWav(dir.path() / "take.wav", {std::vector<float>(5760000, 0.25f), 2, 48000}); // 1 min
+	app.call("media.add", {{"path", utf8(dir.path() / "take.wav")}});
+	app.call("project.save", Json::object());
+	const Json song = location(app);
+	fileMenu(app, "file.backup");
+	answer(app, {dir.path() / "Opened"});
+	click(app, "#backup-keep-active");
+	// Without click's step, so that the edit is queued right after project.backup, before the job can ask to open
+	// the backup.
+	app.ui().click(std::nullopt, {"#backup-project-dialog button.primary", 0, std::nullopt},
+		gnubase::ui::MouseButton::Left, 1, {});
+	app.call("project.set", {{"name", "Edited"}});
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }, std::chrono::seconds(30)));
+	CHECK_THAT(elements(app, "#project-error-message").at(0).at("text").get<std::string>(),
+		ContainsSubstring("wasn't opened"));
+	CHECK(fs::exists(dir.path() / "Opened" / "Song.dawproject"));
+	CHECK(location(app) == song);
+	CHECK(app.call("project.get").at("name") == "Edited");
+	click(app, "#project-error-dialog button[result=ok]");
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#project-error-dialog"); }));
 }
 
 namespace

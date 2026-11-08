@@ -106,10 +106,16 @@ namespace gnubase::ui
 		  m_jobFinished(binding.on("job.finished",
 			  [this](const engine::Event& event)
 			  {
-				  // A backup runs as a job, so most of its failures come after project.backup returned.
+				  // A backup runs as a job, so most of its failures come after project.backup returned. So does the
+				  // reason why a backup that was to be opened wasn't, such as an edit while the job ran.
 				  const Json& job = event.data.at("job");
-				  if (m_backupWindow && job.at("kind") == "project.backup" && job.at("state") == "failed")
+				  if (!m_backupWindow || job.at("kind") != "project.backup")
+					  return;
+				  if (job.at("state") == "failed")
 					  showError(*m_backupWindow, job.at("error").get<std::string>());
+				  else if (const Json& result = job.at("result"); job.at("state") == "done" && result.is_object() &&
+					  result.value("activationError", Json()).is_string())
+					  showError(*m_backupWindow, result.at("activationError").get<std::string>());
 			  })),
 		  m_autoSaveFailed(
 			  binding.on("project.autoSaveFailed", [this](const engine::Event& event) { autoSaveFailed(event.data); })),
