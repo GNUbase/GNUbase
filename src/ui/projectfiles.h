@@ -29,7 +29,8 @@ namespace gnubase::ui
 	// The File menu's project commands as UI commands with the reference's keys: file.new (the start screen),
 	// file.open, file.save, file.saveAs, file.saveNewVersion, file.saveTemplate, file.backup and file.revert, plus
 	// file.quit. They ask through the OS's file dialogs (Shell::showFileDialog) and GNUbase's own (the documents
-	// start-screen.rml, save-template.rml, discard-changes.rml and project-error.rml in folder), and do everything with
+	// start-screen.rml, save-template.rml, backup-project.rml, discard-changes.rml and project-error.rml in
+	// folder), and do everything with
 	// engine commands. Opening another project, reverting and quitting ask first if the project has unsaved changes,
 	// and a command that fails shows its error, as does an auto save that fails. Quitting asks however it is asked for:
 	// File > Quit, the main window's close button or the OS (Shell::onQuitRequest). Use it on the UI thread; the key
@@ -100,6 +101,8 @@ namespace gnubase::ui
 		void quit(Window& window);
 		void open(Window& window);
 		void saveAs(Window& window);
+		// Asks for the backup's options in the window (backup-project.rml) and backs the project up into folder.
+		void backup(Window& window, const std::string& folder);
 		void showStartScreen(Rml::ElementDocument& dialog, const engine::Json& templates, const engine::Json& recent);
 
 		EngineBinding& m_binding;

@@ -890,6 +890,7 @@ TEST_CASE("a save or backup that fails shows its error", "[ui]")
 	app.call("project.save", {{"path", utf8(dir.path() / "Song.dawproject")}});
 	fileMenu(app, "file.backup");
 	answer(app, {notFolder / "Backup"});
+	click(app, "#backup-project-dialog button.primary");
 	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
 	click(app, "#project-error-dialog button[result=ok]");
 	REQUIRE(app.waitUntil([&app] { return !shown(app, "#project-error-dialog"); }));
@@ -1447,8 +1448,42 @@ TEST_CASE("File > Save as Template and Back up Project", "[ui]")
 	REQUIRE(app.waitUntil([&app] { return app.call("project.templates").at("templates").size() == 1; }));
 	CHECK(app.call("project.templates").at("templates")[0].at("name") == "Drums");
 
-	app.call("project.save", {{"path", utf8(dir.path() / "Song.dawproject")}});
+	const std::string song = utf8(dir.path() / "Song.dawproject");
+	app.call("project.save", {{"path", song}});
+	test::writeWav(dir.path() / "Mixdown" / "Song.wav", {std::vector<float>(480, 0.25f), 1, 48000});
+
+	// Back up Project asks for the folder, then shows its options: the project file's name, and the project stays.
 	fileMenu(app, "file.backup");
 	CHECK(answer(app, {dir.path() / "Backup"}).kind == gnubase::ui::FileDialogKind::Folder);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#backup-project-dialog"); }));
+	CHECK(elements(app, "#backup-name").at(0).at("attributes").at("value") == "Song");
+	CHECK(elements(app, "#backup-keep-active").at(0).at("attributes").contains("checked"));
+	for (const char* option :
+		{"#backup-minimize", "#backup-offline", "#backup-remove-unused", "#backup-skip-video", "#backup-skip-mixdown"})
+		CHECK(!elements(app, option).at(0).at("attributes").contains("checked"));
+	click(app, "#backup-project-dialog button.primary");
 	REQUIRE(app.waitUntil([&dir] { return fs::exists(dir.path() / "Backup" / "Song.dawproject"); }));
+	CHECK(fs::exists(dir.path() / "Backup" / "Mixdown" / "Song.wav"));
+	CHECK(location(app) == song);
+
+	// Cancelled, it backs nothing up.
+	fileMenu(app, "file.backup");
+	answer(app, {dir.path() / "Cancelled"});
+	click(app, "#backup-project-dialog button[result=cancel]");
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#backup-project-dialog"); }));
+	CHECK(!fs::exists(dir.path() / "Cancelled"));
+
+	// Another name, without the Mixdown folder, and the backup goes on as the project.
+	fileMenu(app, "file.backup");
+	answer(app, {dir.path() / "Final"});
+	click(app, "#backup-name");
+	app.ui().key(std::nullopt, "Ctrl+A");
+	app.ui().text(std::nullopt, "Final Mix");
+	click(app, "#backup-keep-active");
+	click(app, "#backup-skip-mixdown");
+	click(app, "#backup-project-dialog button.primary");
+	const std::string renamed = utf8(dir.path() / "Final" / "Final Mix.dawproject");
+	REQUIRE(app.waitUntil([&app, &renamed] { return location(app) == renamed; }, std::chrono::seconds(30)));
+	CHECK(!fs::exists(dir.path() / "Final" / "Mixdown"));
+	CHECK(app.call("project.get").at("name") == "Final Mix");
 }
