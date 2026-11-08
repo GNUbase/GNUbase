@@ -71,6 +71,12 @@ namespace gnubase::engine
 	// std::invalid_argument for values out of range.
 	Json toJson(const midi::Modifiers& modifiers);
 	midi::Modifiers modifiersFromJson(const Json& json, const midi::Modifiers& fallback = {});
+	// A MIDI or instrument channel's MIDI inserts or, with sends, its MIDI sends, and back: effectRackFromJson changes
+	// what the JSON has, each slot in what it has (a slot that gets another effect starts from its defaults), and
+	// throws std::invalid_argument for unknown effects and values out of range. Parameters go by their keys
+	// (processors::parameterKey).
+	Json toJson(const midi::EffectRack& rack, bool sends);
+	midi::EffectRack effectRackFromJson(const Json& json, const midi::EffectRack& fallback, bool sends);
 	Json toJson(const Slot& slot); // its state as base64
 	Json toJson(const MediaFile& media);
 	Json toJson(const ClipRegion& region);
