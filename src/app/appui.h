@@ -40,8 +40,12 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
-#include <iosfwd>
+#include <functional>
+#include <map>
 #include <memory>
+#include <optional>
+#include <ostream>
+#include <streambuf>
 #include <string>
 #include <utility>
 #include <vector>
@@ -54,6 +58,28 @@ namespace Rml
 
 namespace gnubase::app
 {
+	// What the UI's Lua prints: to the app's output, and the last 64 KiB of it for the script console (#209).
+	class ScriptOutput : public std::streambuf
+	{
+	public:
+		explicit ScriptOutput(std::ostream& output) : m_output(output) {}
+
+		const std::string& text() const { return m_text; }
+		// Grows with every change of the text.
+		uint64_t version() const { return m_version; }
+		void clear();
+
+	protected:
+		int_type overflow(int_type character) override;
+		std::streamsize xsputn(const char* text, std::streamsize count) override;
+		int sync() override;
+
+	private:
+		std::ostream& m_output;
+		std::string m_text;
+		uint64_t m_version = 0;
+	};
+
 	// GNUbase's UI for an engine: SDL3 windows drawn through SDL_GPU, RmlUi with GNUbase's fonts, themes and widgets,
 	// and the shell, which follows the user settings and the engine's events and runs key commands, with the main
 	// window open. runWindowed
@@ -186,6 +212,19 @@ namespace gnubase::app
 		ui::Window* transportPanel() { return m_transportPanel.shown(m_shell); }
 		ui::Window* timeDisplay() { return m_timeDisplay.shown(m_shell); }
 
+		// User scripts (#209, docs/features/scripts.md, appscripts.cpp): each Lua file in the user's script folder
+		// (scripts in the settings folder, which starts with the examples of resources/scripts) is the UI command
+		// script.<name>, which runs it in the UI's Lua as one undo step. The script console
+		// (resources/ui/script-console.rml) opens in a window of its own, or closes: the UI command
+		// window.scriptConsole.
+		ui::WindowId scriptConsoleWindow() const { return m_scriptConsoleWindow; }
+		// What opens files and folders with the OS for the console, such as a script in the user's editor: tests catch
+		// them instead.
+		void openExternallyWith(std::function<void(const std::filesystem::path&)> open)
+		{
+			m_openExternally = std::move(open);
+		}
+
 		ui::Shell& shell() { return m_shell; }
 		ui::Window& mainWindow() { return m_main; }
 		ui::RmlUi& rmlui() { return m_rmlui; }
@@ -245,11 +284,17 @@ namespace gnubase::app
 		struct QuantizeTarget
 		{
 			std::vector<std::pair<uint64_t, std::vector<uint64_t>>> parts;
+			// The project window's selected audio events and parts (#145), for Quantize and Reset Quantize.
+			std::vector<uint64_t> events;
+			std::vector<uint64_t> audioParts;
 			std::string lengthQuantize;
 			double insertVelocity = 100.0 / 127.0; // the editor's, for Fixed Velocity
 		};
 		QuantizeTarget quantizeTarget(ui::Window& window, Rml::Element* zone) const;
 		void quantize(const std::string& command, const std::string& step, const QuantizeTarget& target);
+		// The quantize panel's commands for several audio tracks (#145): command with parameters on the project
+		// window's selected audio events and the events of its selected audio parts.
+		void quantizeAudioTracks(const std::string& command, engine::Json parameters);
 		// The MIDI menu (#133, docs/features/midi-functions.md, appmidifunctions.cpp): MIDI > Functions on what
 		// quantizeTarget gives, and the dialogs of Transpose Setup, Merge MIDI in Loop, Dissolve Part and Restrict
 		// Polyphony (resources/ui/midi-function.rml).
@@ -274,6 +319,8 @@ namespace gnubase::app
 		// Made in this order and destroyed in the reverse: RmlUi releases its resources through the renderer and
 		// its Lua plugin's in Lua, the shell's windows need all of them, the settings and the binding tell the shell,
 		// key commands send through the binding, and the docking system follows the binding and opens windows.
+		ScriptOutput m_scriptOutput;               // the Lua's print goes through it
+		std::ostream m_luaOutput{&m_scriptOutput}; // so too
 		ui::SdlWindowSystem m_windows;
 		ui::GpuRenderer m_renderer;
 		scripting::Runtime m_lua;
@@ -368,5 +415,18 @@ namespace gnubase::app
 		Rml::ObserverPtr<Rml::Element> m_workspaces;          // the open workspaces organizer's document
 		Rml::ObserverPtr<Rml::Element> m_profiles;            // the open profile manager's document
 		Rml::ObserverPtr<Rml::Element> m_windowsDialog;       // the open Windows dialog's document
+		// User scripts (#209).
+		void addScripts();
+		// Finds the scripts in the folder and makes their commands; returns whether they changed.
+		bool scanScripts();
+		std::filesystem::path scriptFolder() const;
+		// Runs run, which runs Lua, as one undo step named action (history.join); prints its error.
+		void runAsOneStep(const std::string& action, const std::function<std::optional<std::string>()>& run);
+		void toggleScriptConsole();
+		std::map<std::string, std::filesystem::path> m_scripts; // by name
+		ui::WindowId m_scriptConsoleWindow = 0;
+		Rml::ObserverPtr<Rml::Element> m_scriptConsole; // its document
+		uint64_t m_shownOutput = 0;                     // the output's version it shows
+		std::function<void(const std::filesystem::path&)> m_openExternally;
 	};
 }

@@ -15,6 +15,7 @@
 #include <RmlUi/Core/Input.h>
 #include <RmlUi/Core/StringUtilities.h>
 #include <RmlUi/Lua.h>
+#include <lauxlib.h>
 #include <lua.h>
 
 #include <algorithm>
@@ -65,7 +66,7 @@ namespace gnubase::app
 			const char* keys;
 		};
 
-		constexpr std::array<ProjectCommand, 84> g_projectCommands{{
+		constexpr std::array<ProjectCommand, 90> g_projectCommands{{
 			{"zoom.in", "Zooms the project window in.", "H"},
 			{"zoom.out", "Zooms the project window out.", "G"},
 			{"zoom.inVertically", "Makes the project window's tracks taller.", "Shift+H"},
@@ -94,6 +95,13 @@ namespace gnubase::app
 			{"tempo.detection", "Opens the Tempo Detection dialog for the selected audio event or MIDI part.", nullptr},
 			{"midi.calculateTempo", "Opens the Calculate Tempo from MIDI Events dialog for the selected MIDI parts.",
 				nullptr},
+			// Process Tempo, Process Bars and warp markers (docs/features/time-warp.md).
+			{"tempo.openProcessTempo", "Opens the Process Tempo dialog for the locator range.", nullptr},
+			{"tempo.openProcessBars", "Opens the Process Bars dialog.", nullptr},
+			{"audio.setDefinitionFromTempo",
+				"Opens the Set Definition from Tempo dialog for the selected audio events.", nullptr},
+			{"audio.copyWarpMarkers", "Copies the warp markers of the first selected audio event.", nullptr},
+			{"audio.pasteWarpMarkers", "Pastes the copied warp markers into the selected audio events.", nullptr},
 			// Fades and crossfades (docs/features/fades.md), with the reference's key for Crossfade (manual p. 388).
 			{"audio.fadeInToRange", "Fades the audio events in the selection range in up to the range's start.",
 				nullptr},
@@ -168,6 +176,7 @@ namespace gnubase::app
 			{"tool.play", "Chooses the play tool in the project window.", "9"},
 			{"tool.line", "Chooses the line tool in the project window.", nullptr},
 			{"tool.comp", "Chooses the comp tool in the project window.", nullptr},
+			{"tool.timeWarp", "Chooses the time warp tool in the project window.", nullptr},
 			{"tool.previous", "Chooses the project window's previous tool.", "F9"},
 			{"tool.next", "Chooses the project window's next tool.", "F10"},
 			{"tool.combineSelectionTools", "Switches combining the selection tools on or off.", "Alt+Shift+1"},
@@ -269,7 +278,8 @@ namespace gnubase::app
 
 	AppUi::AppUi(engine::Engine& engine, const std::filesystem::path& resources, const ui::WindowSpec& main,
 		std::ostream& output, int msaaSamples)
-		: m_renderer(m_windows, msaaSamples), m_lua(engine, scripting::Trust::Trusted, output), m_rmlui(m_windows),
+		: m_scriptOutput(output), m_renderer(m_windows, msaaSamples),
+		  m_lua(engine, scripting::Trust::Trusted, m_luaOutput), m_rmlui(m_windows),
 		  m_themes(fontsAndThemes(resources)), m_shell(m_windows, m_renderer), m_settings(engine, m_shell, m_themes),
 		  m_binding(
 			  engine, [this] { m_shell.wake(); }, [this] { m_shell.requestRender(); }),
@@ -288,9 +298,14 @@ namespace gnubase::app
 		ui::registerWidgets(m_rmlui);
 		m_rmlui.loadCursors(resources / "cursors");
 		lua_State* state = m_lua.state();
+		// GNUbase's print, instead of the plugin's, which writes into RmlUi's log. Kept in the registry: the plugin
+		// changes the stack.
 		lua_getglobal(state, "print");
-		Rml::Lua::Initialise(state);   // until Rml::Shutdown
-		lua_setglobal(state, "print"); // GNUbase's, instead of the plugin's, which writes into RmlUi's log
+		const int print = luaL_ref(state, LUA_REGISTRYINDEX);
+		Rml::Lua::Initialise(state); // until Rml::Shutdown
+		lua_rawgeti(state, LUA_REGISTRYINDEX, print);
+		luaL_unref(state, LUA_REGISTRYINDEX, print);
+		lua_setglobal(state, "print");
 		addUiFunctions(m_lua, m_shell);
 		m_shell.eachStep(
 			[this]
@@ -816,6 +831,7 @@ namespace gnubase::app
 				[this, field = std::string(command.field)](ui::Window&, Rml::Element*) { enter(field); }});
 			m_keys.bind({command.keys, command.id});
 		}
+		addScripts();
 		addKeyCommandsDialog();
 		addWorkspaces();
 	}
@@ -930,6 +946,17 @@ namespace gnubase::app
 		if (!items.empty())
 			items += "<menuseparator/>";
 		menu->SetInnerRML(items + "<menuitem command=\"window.keyCommands\">Key Commands...</menuitem>");
+		// Edit > Scripts: the user scripts, and the script console (docs/features/scripts.md).
+		if (Rml::Element* scripts = document->GetElementById("scripts-menu"))
+		{
+			items.clear();
+			for (const auto& [name, file] : m_scripts)
+				items += "<menuitem command=\"script." + Rml::StringUtilities::EncodeRml(name) + "\">" +
+					Rml::StringUtilities::EncodeRml(name) + "</menuitem>";
+			if (!items.empty())
+				items += "<menuseparator/>";
+			scripts->SetInnerRML(items + "<menuitem command=\"window.scriptConsole\">Script Console</menuitem>");
+		}
 		m_menu.reset(); // its items are gone
 		m_menu = std::make_unique<ui::MainMenu>(m_keys, m_main, *document);
 	}

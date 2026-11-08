@@ -164,8 +164,10 @@ namespace gnubase::engine
 		std::optional<int> midiPan;
 		std::optional<int> program; // MIDI channels: the program change to send, with bank select if bank is set
 		std::optional<int> bank;
-		midi::Modifiers modifiers; // MIDI and instrument channels: notes has them applied, live notes get them
-		bool monitor = false;      // the monitor and record enable buttons
+		midi::Modifiers modifiers;    // MIDI and instrument channels: notes has them applied, live notes get them
+		midi::EffectRack midiInserts; // MIDI and instrument channels: the effects their sequencer runs
+		midi::EffectRack midiSends;
+		bool monitor = false; // the monitor and record enable buttons
 		bool recordEnable = false;
 		// MIDI and instrument tracks: they play what comes from all MIDI inputs (MIDI thru), since they monitor or
 		// are record-enabled and their MIDI input is all MIDI inputs.

@@ -5,6 +5,7 @@
 #include "engine/audiofile/resampler.h"
 #include "engine/dawproject/dawproject.h"
 #include "engine/document/audiofunctions.h"
+#include "engine/document/audioquantize.h"
 #include "engine/document/channelsettings.h"
 #include "engine/document/editors.h"
 #include "engine/document/hitpoints.h"
@@ -13,6 +14,7 @@
 #include "engine/document/sampleeditor.h"
 #include "engine/document/serialize.h"
 #include "engine/document/stripparameters.h"
+#include "engine/document/timewarp.h"
 #include "engine/document/trackversions.h"
 #include "engine/document/volumecurves.h"
 #include "engine/document/workspaces.h"
@@ -2022,6 +2024,23 @@ namespace gnubase::engine
 					throw CommandError(error.what());
 				}
 			}
+			for (const char* section : {"midiInserts", "midiSends"})
+			{
+				if (!parameters.contains(section))
+					continue;
+				require(type == TrackType::Midi || type == TrackType::Instrument,
+					"only MIDI and instrument tracks have MIDI inserts and sends");
+				const bool sends = section == std::string("midiSends");
+				midi::EffectRack& rack = sends ? changed.midiSends : changed.midiInserts;
+				try
+				{
+					rack = effectRackFromJson(parameters.at(section), rack, sends);
+				}
+				catch (const std::invalid_argument& error)
+				{
+					throw CommandError(error.what());
+				}
+			}
 			if (parameters.contains("sends"))
 				setSends(project, changed, parameters.at("sends"));
 			const Channel before = channel;
@@ -3479,6 +3498,30 @@ namespace gnubase::engine
 		return {{"results", results}};
 	}
 
+	Json ProjectModel::join(CommandContext& context)
+	{
+		const auto after = context.parameters().at("after").get<int64_t>();
+		const std::vector<HistoryStep>& steps = m_history.steps();
+		const size_t position = m_history.position();
+		size_t first = position;
+		while (first > 0 && static_cast<int64_t>(steps[first - 1].id) > after)
+			--first;
+		if (first == position)
+			return {{"steps", 0}};
+		// What changed since before the first of them.
+		Project start = m_project;
+		for (size_t i = position; i > first; --i)
+			apply(start, steps[i - 1].change, Direction::Undo);
+		ProjectChange change = difference(start, m_project);
+		std::optional<HistoryStep> joined;
+		if (!change.empty())
+			joined =
+				HistoryStep{context.parameters().at("action").get<std::string>(), now(), {}, std::move(change), {}};
+		m_history.join(first, std::move(joined));
+		announceHistory(context);
+		return {{"steps", position - first}};
+	}
+
 	void ProjectModel::registerHistoryCommands(Engine& engine)
 	{
 		const Json stepsSchema = {
@@ -3488,14 +3531,16 @@ namespace gnubase::engine
 
 		addControl(engine,
 			{"history.get", 1,
-				"The undo history: every step with its action, time (UTC) and details, the position (steps before it "
-				"are done, the ones after it can be redone) and the maximum number of steps (0: no limit).",
+				"The undo history: every step with its id (growing with each new step), action, time (UTC) and "
+				"details, the position (steps before it are done, the ones after it can be redone) and the maximum "
+				"number of steps (0: no limit).",
 				objectSchema({}), {{"type", "object"}}, true},
 			[this](CommandContext&)
 			{
 				Json steps = Json::array();
 				for (const HistoryStep& step : m_history.steps())
-					steps.push_back({{"action", step.action}, {"time", step.time}, {"details", step.details}});
+					steps.push_back(
+						{{"id", step.id}, {"action", step.action}, {"time", step.time}, {"details", step.details}});
 				return Json{{"position", m_history.position()}, {"maxSteps", m_history.maxSteps()}, {"steps", steps}};
 			});
 		addControl(engine,
@@ -3532,6 +3577,16 @@ namespace gnubase::engine
 				announceHistory(context);
 				return Json::object();
 			});
+
+		addControl(engine,
+			{"history.join", 1,
+				"Joins the done steps whose id is greater than after (an id from history.get) into one undo step named "
+				"action, so that a client's several commands, such as a user script's, are undone and redone at once. "
+				"Steps that end where they started leave none. Returns how many steps were joined.",
+				objectSchema({{"after", {{"type", "integer"}}}, {"action", {{"type", "string"}}}}, {"after", "action"}),
+				{{"type", "object"}, {"properties", {{"steps", {{"type", "integer"}}}}}, {"required", {"steps"}}},
+				false},
+			[this](CommandContext& context) { return join(context); });
 
 		const Json command =
 			objectSchema({{"command", {{"type", "string"}}}, {"parameters", {{"type", "object"}}}}, {"command"});
@@ -4024,7 +4079,14 @@ namespace gnubase::engine
 				"127; live notes get pitch and velocity only) and range (two, [{target (off, velocityLimit, "
 				"velocityFilter, noteLimit or noteFilter), minimum, maximum (0 to 127)}], in order after the others: "
 				"the limits move velocities to the nearest end and pitches by octaves into the range, the filters "
-				"leave out the notes outside it). The channel strip's sections (audio channels only; "
+				"leave out the notes outside it). midiInserts and midiSends (MIDI and instrument tracks; each changes "
+				"only what it has, as project.get shows them) are the track's four MIDI insert and four MIDI send "
+				"slots, which run GNUbase's built-in MIDI effects (midiEffect.list) on the track's own events after "
+				"the modifiers: {bypass (all slots of the section), pre (sends only: they get the events before the "
+				"inserts), slots: [{effect (an id, or empty for none; another effect starts from its defaults), on, "
+				"parameters {key: value, a number or an option's name}}]}. The inserts play in order, each on what "
+				"the one before it played; each send plays its effect's events beside them. Changing which effects "
+				"play ends the notes the track sounds. The channel strip's sections (audio channels only; "
 				"each object changes only what it has, as project.get shows them) run before the fader: pre "
 				"{gain (dB, -24 to 24), phase (inverts the polarity), lowCut and highCut {on, frequency (Hz, 20 or "
 				"for the high cut 50 to 20000), slope (6, 12, 24, 36 or 48 dB per octave)}} before the plugin slots; "
@@ -4059,7 +4121,8 @@ namespace gnubase::engine
 						{"exclusive", booleanSchema}, {"soloDefeat", booleanSchema}, {"listen", booleanSchema},
 						{"notes", stringSchema}, {"linked", booleanSchema}, {"pre", {{"type", "object"}}},
 						{"eq", {{"type", "object"}}}, {"strip", {{"type", "object"}}},
-						{"modifiers", {{"type", "object"}}},
+						{"modifiers", {{"type", "object"}}}, {"midiInserts", {{"type", "object"}}},
+						{"midiSends", {{"type", "object"}}},
 						{"sends",
 							arraySchema(
 								objectSchema({{"send", integerSchema}, {"destination", idSchema}, {"on", booleanSchema},
@@ -4295,6 +4358,7 @@ namespace gnubase::engine
 		registerParameterCommands(engine);
 		registerSlotCommands(engine);
 		midi::registerQuantizeCommands(*this, engine);
+		registerAudioQuantizeCommands(*this, engine);
 		midi::registerFunctionCommands(*this, engine);
 		metronome::registerMetronomeCommands(*this, engine);
 		midi::registerControllerLaneCommands(*this, engine);
@@ -4317,6 +4381,7 @@ namespace gnubase::engine
 		registerSampleEditorCommands(*this, engine);
 		registerHitpointCommands(*this, engine, jobs);
 		registerWarpCommands(engine);
+		registerTimeWarpCommands(*this, engine);
 		registerAudioFunctionCommands(*this, engine);
 		registerHistoryCommands(engine);
 		registerMediaFolderCommands(engine, jobs);

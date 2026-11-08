@@ -5,6 +5,7 @@
 #include "engine/document/linkgroups.h"
 #include "engine/midi/drummaps.h"
 #include "engine/processors/builtin.h"
+#include "engine/processors/midieffects.h"
 
 #include <algorithm>
 #include <array>
@@ -569,7 +570,8 @@ namespace gnubase::engine
 			{"monitor", channel.monitor}, {"recordEnable", channel.recordEnable}, {"midiInput", channel.midiInput},
 			{"mute", channel.mute}, {"solo", channel.solo}, {"soloDefeat", channel.soloDefeat},
 			{"listen", channel.listen}, {"slots", channel.slots}, {"notes", channel.notes},
-			{"modifiers", toJson(channel.modifiers)}};
+			{"modifiers", toJson(channel.modifiers)}, {"midiInserts", toJson(channel.midiInserts, false)},
+			{"midiSends", toJson(channel.midiSends, true)}};
 		json.update(toJson(channel.sections));
 		Json sends = Json::array();
 		if (channel.format != ChannelFormat::None)
@@ -628,17 +630,46 @@ namespace gnubase::engine
 			{"warp", toJson(clip.warp)}};
 	}
 
+	namespace
+	{
+		Json markersJson(const std::vector<WarpMarker>& markers)
+		{
+			Json json = Json::array();
+			for (const WarpMarker& marker : markers)
+				json.push_back({{"position", marker.position}, {"target", marker.target}});
+			return json;
+		}
+
+		// Markers out of order are left out, as the commands never make them.
+		std::vector<WarpMarker> markersFrom(const Json& json)
+		{
+			std::vector<WarpMarker> markers;
+			for (const Json& marker : json)
+			{
+				const WarpMarker read{
+					marker.at("position").get<time::Samples>(), marker.at("target").get<time::Samples>()};
+				if (read.position > 0 && read.target > 0 &&
+					(markers.empty() ||
+						(read.position > markers.back().position && read.target > markers.back().target)))
+					markers.push_back(read);
+			}
+			return markers;
+		}
+	}
+
 	Json toJson(const ClipWarp& warp)
 	{
 		Json beats = Json::array();
 		for (const BeatEdit& beat : warp.beats)
 			beats.push_back({{"beat", beat.beat}, {"frame", beat.frame}});
-		Json markers = Json::array();
-		for (const WarpMarker& marker : warp.markers)
-			markers.push_back({{"position", marker.position}, {"target", marker.target}});
-		return {{"musical", warp.musical}, {"tempo", warp.tempo}, {"beatsPerBar", warp.beatsPerBar},
+		Json markers = markersJson(warp.markers);
+		Json json = {{"musical", warp.musical}, {"tempo", warp.tempo}, {"beatsPerBar", warp.beatsPerBar},
 			{"gridStart", warp.gridStart}, {"beats", std::move(beats)}, {"markers", std::move(markers)},
 			{"preset", warp.preset}};
+		if (warp.quantizeOrigin)
+			json["quantizeOrigin"] = {{"original", markersJson(warp.quantizeOrigin->original)},
+				{"quantized", markersJson(warp.quantizeOrigin->quantized)}};
+		return json;
 	}
 
 	ClipWarp clipWarpFromJson(const Json& json)
@@ -656,14 +687,10 @@ namespace gnubase::engine
 			if (warp.beats.empty() || (read.beat > warp.beats.back().beat && read.frame > warp.beats.back().frame))
 				warp.beats.push_back(read);
 		}
-		for (const Json& marker : json.value("markers", Json::array()))
-		{
-			const WarpMarker read{marker.at("position").get<time::Samples>(), marker.at("target").get<time::Samples>()};
-			if (read.position > 0 && read.target > 0 &&
-				(warp.markers.empty() ||
-					(read.position > warp.markers.back().position && read.target > warp.markers.back().target)))
-				warp.markers.push_back(read);
-		}
+		warp.markers = markersFrom(json.value("markers", Json::array()));
+		if (const auto origin = json.find("quantizeOrigin"); origin != json.end()) // files from before #145
+			warp.quantizeOrigin =
+				WarpQuantizeOrigin{markersFrom(origin->at("original")), markersFrom(origin->at("quantized"))};
 		return warp;
 	}
 
@@ -674,12 +701,18 @@ namespace gnubase::engine
 
 	Json toJson(const AudioEvent& event)
 	{
-		return {{"id", event.id}, {"track", event.track}, {"clip", event.clip}, {"position", event.position.value},
+		Json json = {{"id", event.id}, {"track", event.track}, {"clip", event.clip}, {"position", event.position.value},
 			{"offset", event.offset}, {"length", event.length}, {"volume", event.volume}, {"mute", event.mute},
 			{"lock", event.lock}, {"fadeIn", toJson(event.fadeIn)}, {"fadeOut", toJson(event.fadeOut)},
 			{"crossfade", toJson(event.crossfade)}, {"snapPoint", event.snapPoint ? Json(*event.snapPoint) : Json()},
 			{"color", colorJson(event.color)}, {"part", event.part}, {"lane", event.lane},
 			{"volumeCurve", toJson(event.volumeCurve)}, {"front", event.front}};
+		// Only an origin in the event's time base still counts (#145): one from before the track's time base changed
+		// is gone, as the event isn't where quantizing put it.
+		if (const auto& origin = event.quantizeOrigin;
+			origin && origin->original.base == event.position.base && origin->quantized.base == event.position.base)
+			json["quantizeOrigin"] = {{"original", origin->original.value}, {"quantized", origin->quantized.value}};
+		return json;
 	}
 
 	Json toJson(const AudioPart& part)
@@ -1766,6 +1799,142 @@ namespace gnubase::engine
 		return modifiers;
 	}
 
+	Json toJson(const midi::EffectRack& rack, bool sends)
+	{
+		Json slots = Json::array();
+		for (const midi::EffectSlot& slot : rack.slots)
+		{
+			Json parameters = Json::object();
+			if (const processors::BuiltinInfo* info = processors::findMidiEffect(slot.effect))
+				for (size_t i = 0; i < info->parameters.size() && i < slot.parameters.size(); ++i)
+				{
+					const processors::ParameterInfo& parameter = info->parameters[i];
+					parameters[processors::parameterKey(parameter)] = parameter.stepped
+						? Json(static_cast<int64_t>(std::llround(slot.parameters[i])))
+						: Json(slot.parameters[i]);
+				}
+			slots.push_back({{"effect", slot.effect}, {"on", slot.on}, {"parameters", std::move(parameters)}});
+		}
+		Json json = {{"bypass", rack.bypass}, {"slots", std::move(slots)}};
+		if (sends)
+			json["pre"] = rack.pre;
+		return json;
+	}
+
+	midi::EffectRack effectRackFromJson(const Json& json, const midi::EffectRack& fallback, bool sends)
+	{
+		const std::string section = sends ? "midiSends" : "midiInserts";
+		if (!json.is_object())
+			throw std::invalid_argument(section + " must be an object");
+		midi::EffectRack rack = fallback;
+		read(json, "bypass", rack.bypass, section);
+		if (!sends && json.contains("pre"))
+			throw std::invalid_argument(section + ".pre: only the MIDI sends play before the inserts");
+		read(json, "pre", rack.pre, section);
+		if (!json.contains("slots"))
+			return rack;
+		const Json& slots = json.at("slots");
+		if (!slots.is_array() || slots.size() > midi::g_effectSlots)
+			throw std::invalid_argument(
+				section + ".slots must be an array of at most " + std::to_string(midi::g_effectSlots) + " objects");
+		const auto number = [](double value)
+		{
+			std::ostringstream text;
+			text << value;
+			return text.str();
+		};
+		for (size_t s = 0; s < slots.size(); ++s)
+		{
+			const Json& given = slots[s];
+			const std::string name = section + ".slots[" + std::to_string(s) + "]";
+			if (!given.is_object())
+				throw std::invalid_argument(name + " must be an object");
+			midi::EffectSlot& slot = rack.slots[s];
+			read(given, "on", slot.on, name);
+			if (given.contains("effect"))
+			{
+				const Json& effect = given.at("effect");
+				const std::string id = effect.is_string() ? effect.get<std::string>() : std::string("?");
+				const processors::BuiltinInfo* info = processors::findMidiEffect(id);
+				if (!id.empty() && info == nullptr)
+					throw std::invalid_argument(name +
+						".effect must be a built-in MIDI effect (midiEffect.list) or empty, not " + effect.dump());
+				if (id != slot.effect) // another effect starts from its defaults
+				{
+					slot.effect = id;
+					slot.parameters.clear();
+					if (info != nullptr)
+						for (const processors::ParameterInfo& parameter : info->parameters)
+							slot.parameters.push_back(parameter.defaultValue);
+				}
+			}
+			if (!given.contains("parameters"))
+				continue;
+			const Json& parameters = given.at("parameters");
+			const processors::BuiltinInfo* info = processors::findMidiEffect(slot.effect);
+			if (!parameters.is_object())
+				throw std::invalid_argument(name + ".parameters must be an object");
+			if (parameters.empty())
+				continue;
+			if (info == nullptr)
+				throw std::invalid_argument(name + " has no effect, so no parameters");
+			for (const auto& [key, value] : parameters.items())
+			{
+				const std::string& wanted = key;
+				const auto parameter = std::find_if(info->parameters.begin(), info->parameters.end(),
+					[&wanted](const processors::ParameterInfo& p) { return processors::parameterKey(p) == wanted; });
+				if (parameter == info->parameters.end())
+				{
+					std::string message = name;
+					message += ": ";
+					message += slot.effect;
+					message += " has no parameter ";
+					message += key;
+					throw std::invalid_argument(message);
+				}
+				std::optional<double> chosen;
+				if (value.is_string())
+				{
+					const std::string text = value.get<std::string>();
+					// Options by their names; other parameters as numbers with their units.
+					if (parameter->options.empty() ||
+						std::find(parameter->options.begin(), parameter->options.end(), text) !=
+							parameter->options.end())
+						chosen = processors::textToValue(*parameter, text);
+				}
+				else if (value.is_number())
+				{
+					const double amount = value.get<double>();
+					if (amount >= parameter->minimum && amount <= parameter->maximum &&
+						(!parameter->stepped || amount == std::round(amount)))
+						chosen = amount;
+				}
+				if (!chosen)
+				{
+					std::string names;
+					for (const std::string& option : parameter->options)
+						names += (names.empty() ? "" : ", ") + option;
+					std::string message = name;
+					message += ".parameters.";
+					message += key;
+					message += " must be ";
+					message += parameter->stepped ? "a whole number from " : "from ";
+					message += number(parameter->minimum);
+					message += " to ";
+					message += number(parameter->maximum);
+					if (!names.empty())
+					{
+						message += " or one of ";
+						message += names;
+					}
+					throw std::invalid_argument(message);
+				}
+				slot.parameters[parameter->id] = *chosen;
+			}
+		}
+		return rack;
+	}
+
 	Project projectFromJson(const Json& json)
 	{
 		Project project;
@@ -1930,6 +2099,11 @@ namespace gnubase::engine
 			// Files from before #134 have no modifiers, nor do tracks other than MIDI and instrument tracks.
 			if (midi && item.contains("modifiers"))
 				channel.modifiers = modifiersFromJson(item.at("modifiers"));
+			// Files from before #135 have no MIDI inserts and sends.
+			if (midi && item.contains("midiInserts"))
+				channel.midiInserts = effectRackFromJson(item.at("midiInserts"), {}, false);
+			if (midi && item.contains("midiSends"))
+				channel.midiSends = effectRackFromJson(item.at("midiSends"), {}, true);
 			// Files from before #108 have no sends; destinations are checked once every channel is there.
 			const Json sends =
 				channel.format != ChannelFormat::None ? item.value("sends", Json::array()) : Json::array();
@@ -2078,6 +2252,9 @@ namespace gnubase::engine
 			event.part = item.value("part", ObjectId{0});    // files from before #471 have no audio parts
 			event.lane = std::max(0, item.value("lane", 0)); // files from before #98 have no lanes
 			event.front = item.value("front", ObjectId{0});  // nor from before #99 a stack order
+			if (const auto origin = item.find("quantizeOrigin"); origin != item.end()) // files from before #145
+				event.quantizeOrigin = EventQuantizeOrigin{{event.position.base, origin->at("original").get<int64_t>()},
+					{event.position.base, origin->at("quantized").get<int64_t>()}};
 			return event;
 		};
 		for (const Json& item : json.at("audioEvents"))

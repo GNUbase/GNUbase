@@ -471,6 +471,8 @@ namespace gnubase::engine
 			render.program = channel.program;
 			render.bank = channel.bank;
 			render.modifiers = channel.modifiers;
+			render.midiInserts = channel.midiInserts;
+			render.midiSends = channel.midiSends;
 			render.monitor = channel.monitor;
 			render.recordEnable = channel.recordEnable;
 			render.listen = channel.listen;

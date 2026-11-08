@@ -18,12 +18,13 @@ gnubase_target_defaults(gnubase-app)
 add_library(gnubase-app-ui STATIC
 	appmidifunctions.cpp
 	appquantize.cpp
+	appscripts.cpp
 	appui.cpp
 	appui.h
 	appworkspaces.cpp
 	uitools.cpp
 	uitools.h)
-target_link_libraries(gnubase-app-ui PUBLIC gnubase-mcp gnubase-scripting gnubase-ui)
+target_link_libraries(gnubase-app-ui PUBLIC gnubase-mcp gnubase-scripting gnubase-ui PRIVATE SDL3::SDL3)
 gnubase_target_defaults(gnubase-app-ui)
 
 # The executable adds the UI, which the library leaves out.
