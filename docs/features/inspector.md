@@ -98,6 +98,8 @@ one it has the class `empty` and says "No Track Selected".
   480 to a quarter note, up to 480 either way; the other values as `channel.set` takes them. A drag, wheel turns or a
   held arrow key on a value are one undo step, and a value the engine refuses, such as a minimum above the maximum,
   shows as it is again.
+- **Chords** (pp. 1338-1340, [chord-track.md](chord-track.md)): MIDI and instrument tracks' Follow Chord Track
+  (`chord.follow` `mode`), while the project has a chord track.
 - **Inserts**: an overview of the channel's plugin slots by name, top to bottom (`plugin.*` changes them).
 - **Notepad** (p. 168): the channel's notes. What is typed goes to the engine when the field loses the focus, also
   with Escape (`channel.set` `notes`, one undo step). When another track shows while the notepad or the name is being

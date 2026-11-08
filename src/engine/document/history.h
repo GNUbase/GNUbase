@@ -65,6 +65,7 @@ namespace gnubase::engine
 		Arranger arranger;
 		int rootKey = -1;
 		TransposeTrack transpose;
+		ChordTrack chords;
 	};
 
 	// How a project changed, object by object. The id counter is left out on purpose: undoing an addition doesn't

@@ -44,6 +44,8 @@ add_executable(gnubase-tests
 	channelformat_tests.cpp
 	channelsettings_tests.cpp
 	channelstrip_tests.cpp
+	chordtrack_tests.cpp
+	chordtrack_ui_tests.cpp
 	clock_tests.cpp
 	color_tests.cpp
 	comping_tests.cpp
@@ -70,6 +72,7 @@ add_executable(gnubase-tests
 	fileimport_tests.cpp
 	fonts_tests.cpp
 	graph_tests.cpp
+	harmony_tests.cpp
 	history_tests.cpp
 	historypanel_tests.cpp
 	hitpoints_tests.cpp

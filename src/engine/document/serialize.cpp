@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/document/serialize.h"
+
+#include "engine/document/chordtrack.h"
 #include "engine/document/stripparameters.h"
 
 #include "engine/document/linkgroups.h"
@@ -45,6 +47,7 @@ namespace gnubase::engine
 			{TrackType::Signature, "signature"},
 			{TrackType::Arranger, "arranger"},
 			{TrackType::Transpose, "transpose"},
+			{TrackType::Chord, "chord"},
 			{TrackType::Vca, "vca"},
 		};
 
@@ -1153,12 +1156,12 @@ namespace gnubase::engine
 			{"markers", toJsonArray(project.markers)}, {"automation", toJsonArray(project.automation)},
 			{"linkGroups", toJsonArray(project.linkGroups)}, {"arranger", arrangerJson(project)},
 			{"rootKey", rootKeyName(project.rootKey)}, {"transpose", transposeJson(project)},
-			{"drumMaps", toJsonArray(project.drumMaps)}, {"virginTerritory", project.virginTerritory},
-			{"quantize", midi::toJson(project.quantize)}, {"autoQuantize", project.autoQuantize},
-			{"quantizePreset", project.quantizePreset}, {"activeMarkerTrack", project.activeMarkerTrack},
-			{"snap", toJson(project.snap)}, {"mixers", mixersJson(project.mixers)},
-			{"trackVisibility", toJson(project.trackVisibility)}, {"metronome", metronome::toJson(project.metronome)},
-			{"workspaces", toJson(project.workspaces)}};
+			{"chords", chordJson(project)}, {"drumMaps", toJsonArray(project.drumMaps)},
+			{"virginTerritory", project.virginTerritory}, {"quantize", midi::toJson(project.quantize)},
+			{"autoQuantize", project.autoQuantize}, {"quantizePreset", project.quantizePreset},
+			{"activeMarkerTrack", project.activeMarkerTrack}, {"snap", toJson(project.snap)},
+			{"mixers", mixersJson(project.mixers)}, {"trackVisibility", toJson(project.trackVisibility)},
+			{"metronome", metronome::toJson(project.metronome)}, {"workspaces", toJson(project.workspaces)}};
 		json.update(toJson(project.setup));
 		// What the inactive track versions hold (#165).
 		Json versionContents = Json::array();
@@ -2407,6 +2410,7 @@ namespace gnubase::engine
 		arrangerFromJson(project, json.value("arranger", Json::object())); // files from before #167 have none
 		project.rootKey = rootKeyFromName(json.value("rootKey", std::string())).value_or(-1); // and before #168
 		transposeFromJson(project, json.value("transpose", Json::object()));
+		chordFromJson(project, json.value("chords", Json::object())); // files from before #173 have none
 		for (const Json& item : json.value("automation", Json::array()))
 		{
 			AutomationLane lane = automationLaneFromJson(project, item);
@@ -2539,6 +2543,9 @@ namespace gnubase::engine
 			see(chain.id);
 		for (const TransposeEvent& event : project.transpose.events)
 			see(event.id);
+		for (const std::vector<ChordEvent>* events : {&project.chords.events, &project.chords.scales})
+			for (const ChordEvent& event : *events)
+				see(event.id);
 		project.nextId = std::max(json.value("nextId", ObjectId{0}), highest + 1);
 		for (ArrangerChain& chain : project.arranger.chains)
 			if (chain.id == 0)

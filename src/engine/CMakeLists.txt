@@ -126,6 +126,7 @@ add_library(gnubase-engine STATIC
 	document/audioquantize.cpp document/audioquantize.h
 	document/channelformat.cpp document/channelformat.h
 	document/channelsettings.cpp document/channelsettings.h
+	document/chordtrack.cpp document/chordtrack.h
 	document/document.cpp document/document.h
 	document/editors.cpp document/editors.h
 	document/eventedits.cpp
@@ -184,6 +185,7 @@ add_library(gnubase-engine STATIC
 	midi/effects.h
 	midi/functioncommands.cpp midi/functioncommands.h
 	midi/functions.cpp midi/functions.h
+	midi/harmony.cpp midi/harmony.h
 	midi/midivalues.cpp midi/midivalues.h
 	midi/modifiers.cpp midi/modifiers.h
 	midi/quantize.cpp midi/quantize.h

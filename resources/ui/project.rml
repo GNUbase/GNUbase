@@ -345,6 +345,13 @@
 				<menuitem command="tempo.openProcessBars">Process Bars...</menuitem>
 			</menu>
 		</menuitem>
+		<!-- The chord track (reference manual pp. 1336, 1342, docs/features/chord-track.md) -->
+		<menuitem id="chord-track-submenu">Chord Track
+			<menu>
+				<menuitem command="track.chordsToMidiSelected">Chords to MIDI</menuitem>
+				<menuitem command="track.createChordEventsSelected">Create Chord Events</menuitem>
+			</menu>
+		</menuitem>
 		<menuseparator/>
 		<menuitem command="track.removeSelected">Remove Selected Tracks</menuitem>
 		<menuitem command="track.removeEmpty">Remove Empty Tracks</menuitem>
