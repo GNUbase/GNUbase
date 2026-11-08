@@ -14,6 +14,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -128,6 +129,21 @@ namespace gnubase::ui
 		// The window a panel shows in on its own, or null while it is docked.
 		Window* windowOf(const std::string& panel);
 
+		// A top-level window of the app that ui.layout keeps under windows, by name (#163): whether it is open (open,
+		// closed by default), its bounds and its monitor's name. current gives its window, 0 or one that is gone while
+		// it is closed; setOpen opens or closes it, and is empty for the main window, which is always open and takes
+		// its bounds from ui.layout at once. ui.layout gets a window's bounds once it opens, moves or resizes, and
+		// whether it is open when that changes. Another client's ui.layout, such as a workspace's
+		// (workspace.activate), opens, closes and places the windows as it says.
+		void addWindow(
+			const std::string& name, std::function<WindowId()> current, std::function<void(bool open)> setOpen = {});
+		// Where the window should open: its bounds in ui.layout, on a connected monitor (restore in ui/displays.h);
+		// none if ui.layout has none.
+		std::optional<Rect> bounds(const std::string& name) const;
+		// Puts into ui.layout now, rather than at the next check twice a second, which windows are open and where they
+		// and the panels in windows of their own are, e.g. right after a window opened or closed.
+		void saveWindows();
+
 		// Whether a panel shows: in a window of its own, or as its zone's active tab while the zone shows. What create
 		// returned stays while the panel's tab is hidden behind another one or its zone is, e.g. to refresh it only
 		// once it shows again.
@@ -203,7 +219,8 @@ namespace gnubase::ui
 		// window it was.
 		void reload(Rml::ElementDocument& old, Rml::ElementDocument& loaded);
 		void save();
-		void saveBounds();
+		// Opens, closes and places the app's windows as ui.layout says.
+		void applyWindows();
 
 		EngineBinding& m_binding;
 		Shell& m_shell;
@@ -211,12 +228,22 @@ namespace gnubase::ui
 		bool m_hiddenWindows = false;
 		Rml::String
 			m_reloadEvent; // g_documentReloadEvent, made once: the destructor removes listeners without allocating
-		int m_saving = 0;  // layouts sent to the engine that it hasn't answered yet
+		std::set<engine::RequestId> m_saves; // layouts sent to the engine that it hasn't answered yet
 		engine::Json m_layout = engine::Json::object();
 		std::vector<Panel> m_panels;
 		std::map<std::string, Attached> m_windows;
 		std::map<std::string, Shown> m_shown; // by panel
-		std::string m_contextTab;             // the tab last right-clicked
+		// The app's windows that ui.layout keeps, with whether each was open and where, as saveWindows last saw it.
+		struct AppWindow
+		{
+			std::string name;
+			std::function<WindowId()> current;
+			std::function<void(bool open)> setOpen;
+			bool open = false;
+			Rect bounds;
+		};
+		std::vector<AppWindow> m_appWindows;
+		std::string m_contextTab; // the tab last right-clicked
 		std::vector<Subscription> m_subscriptions;
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for the shell's tasks
 	};

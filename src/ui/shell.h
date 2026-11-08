@@ -96,6 +96,8 @@ namespace gnubase::ui
 		// Where the window is on the desktop, and moving it there (onto a connected monitor if it isn't on one).
 		Rect bounds(WindowId id) const { return m_windows.bounds(id); }
 		void setBounds(WindowId id, const Rect& bounds);
+		// The connected monitors, the primary one first.
+		std::vector<Display> displays() const { return m_windows.displays(); }
 
 		// Brings the window in front of the others with the keyboard focus, restoring it if it is minimized
 		// (WindowSystem::raise).

@@ -123,6 +123,7 @@ add_executable(gnubase-tests
 	pool_tests.cpp
 	poolpanel_tests.cpp
 	preferences_tests.cpp
+	profiles_tests.cpp
 	processor_tests.cpp
 	projectfiles_tests.cpp
 	projectsetup_tests.cpp
@@ -134,6 +135,7 @@ add_executable(gnubase-tests
 	routing_tests.cpp
 	rt_tests.cpp
 	rulertracks_tests.cpp
+	safemode_tests.cpp
 	sampleeditor_tests.cpp
 	sampleeditor_ui_tests.cpp
 	scripting_tests.cpp
@@ -176,7 +178,9 @@ add_executable(gnubase-tests
 	volumecurve_tests.cpp
 	warp_tests.cpp
 	widgets_tests.cpp
-	window_tests.cpp)
+	window_tests.cpp
+	workspaces_tests.cpp
+	workspaces_ui_tests.cpp)
 target_link_libraries(gnubase-tests PRIVATE
 	Catch2::Catch2WithMain
 	cpp-httplib

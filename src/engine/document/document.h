@@ -938,6 +938,22 @@ namespace gnubase::engine
 		std::string configuration; // the active configuration's name, or empty
 	};
 
+	// A workspace (#163, docs/features/workspaces.md, reference manual pp. 1576-1578): a name for a window layout, the
+	// user setting ui.layout as JSON text, with the windows that are open and where they are.
+	struct Workspace
+	{
+		std::string name;
+		std::string layout;
+	};
+
+	// The project's workspaces and the workspace the project was last shown in.
+	struct ProjectWorkspaces
+	{
+		std::vector<Workspace> workspaces; // the project workspaces, in the user's order
+		std::string activeType;            // global or project; empty for none
+		std::string active;                // the active workspace's name
+	};
+
 	// The record file types and bit depths of the project setup (reference manual pp. 129-130), as the engine API
 	// names them. Recording (#96) writes its files in them.
 	inline constexpr std::array<const char*, 4> g_recordFileTypes = {"wav", "broadcastWav", "aiff", "flac"};
@@ -1022,6 +1038,8 @@ namespace gnubase::engine
 		std::map<std::string, MixerView> mixers;
 		// What the track list hides (#166). A setting, not part of undo.
 		TrackVisibility trackVisibility;
+		// The project workspaces and the active workspace (#163). Settings, not part of undo.
+		ProjectWorkspaces workspaces;
 
 		// The metronome and count-in (#101). Settings, not part of undo.
 		metronome::MetronomeSettings metronome;

@@ -817,6 +817,7 @@ namespace gnubase::app
 			m_keys.bind({command.keys, command.id});
 		}
 		addKeyCommandsDialog();
+		addWorkspaces();
 	}
 
 	void AppUi::addKeyCommandsDialog()
@@ -952,7 +953,7 @@ namespace gnubase::app
 		return controls;
 	}
 
-	void AppUi::toggle(TransportWindow& shown, const char* file, const char* title, ui::Size size)
+	void AppUi::toggle(TransportWindow& shown, const char* name, const char* file, const char* title, ui::Size size)
 	{
 		if (const ui::Window* window = shown.shown(m_shell))
 		{
@@ -965,6 +966,7 @@ namespace gnubase::app
 		ui::WindowSpec spec;
 		spec.title = title;
 		spec.size = size;
+		spec.bounds = m_docking.bounds(name);
 		spec.hidden = m_hidden;
 		ui::Window& window = m_shell.open(spec);
 		const std::filesystem::path path = m_resources / "ui" / file;
@@ -1010,12 +1012,14 @@ namespace gnubase::app
 
 	void AppUi::toggleTransportPanel()
 	{
-		toggle(m_transportPanel, "transport-panel.rml", "Transport", g_transportPanelSize);
+		toggle(m_transportPanel, "transportPanel", "transport-panel.rml", "Transport", g_transportPanelSize);
+		m_docking.saveWindows();
 	}
 
 	void AppUi::toggleTimeDisplay()
 	{
-		toggle(m_timeDisplay, "time-display.rml", "Time Display", g_timeDisplaySizes.at(1));
+		toggle(m_timeDisplay, "timeDisplay", "time-display.rml", "Time Display", g_timeDisplaySizes.at(1));
+		m_docking.saveWindows();
 	}
 
 	void AppUi::enter(const std::string& field)
@@ -1071,6 +1075,9 @@ namespace gnubase::app
 		m_menuDocument = document->GetObserverPtr();
 		m_menu = std::make_unique<ui::MainMenu>(m_keys, m_main, *document);
 		applyKeySettings(); // Edit > Macros
+		m_workspacesMenu.reset();
+		if (Rml::Element* workspaces = document->GetElementById("workspaces-menu"))
+			m_workspacesMenu = std::make_unique<ui::WorkspacesMenu>(m_binding, *workspaces);
 		m_markerLines = std::make_unique<ui::MarkerLines>(*m_eventDisplay, m_binding);
 		m_tempoLane = std::make_unique<ui::TempoLane>(*m_eventDisplay, m_binding);
 		m_signatureLane = std::make_unique<ui::SignatureLane>(*m_eventDisplay, m_binding);
@@ -1095,11 +1102,13 @@ namespace gnubase::app
 		if (open)
 		{
 			m_shell.close(m_markersWindow);
+			m_docking.saveWindows();
 			return nullptr;
 		}
 		ui::WindowSpec spec;
 		spec.title = "Markers";
 		spec.size = {720, 360};
+		spec.bounds = m_docking.bounds("markers");
 		spec.hidden = m_hidden;
 		const ui::Window& window = m_shell.open(spec);
 		m_markersWindow = window.id();
@@ -1121,6 +1130,7 @@ namespace gnubase::app
 			});
 		m_markers->syncFrom(
 			[this] { return m_markerLines != nullptr ? m_markerLines->selection() : std::vector<uint64_t>(); });
+		m_docking.saveWindows();
 		return m_markers.get();
 	}
 
@@ -1131,11 +1141,13 @@ namespace gnubase::app
 		if (open)
 		{
 			m_shell.close(m_keyboardWindow);
+			m_docking.saveWindows();
 			return nullptr;
 		}
 		ui::WindowSpec spec;
 		spec.title = "On-Screen Keyboard";
 		spec.size = {640, 200};
+		spec.bounds = m_docking.bounds("onScreenKeyboard");
 		spec.hidden = m_hidden;
 		const ui::Window& window = m_shell.open(spec);
 		m_keyboardWindow = window.id();
@@ -1148,6 +1160,7 @@ namespace gnubase::app
 		}
 		document->Show();
 		m_keyboard = std::make_unique<ui::OnScreenKeyboard>(m_binding, *document, m_keyboardSettings);
+		m_docking.saveWindows();
 		return m_keyboard.get();
 	}
 
@@ -1158,11 +1171,13 @@ namespace gnubase::app
 		if (open)
 		{
 			m_shell.close(m_tempoWindow);
+			m_docking.saveWindows();
 			return nullptr;
 		}
 		ui::WindowSpec spec;
 		spec.title = "Tempo Track";
 		spec.size = {800, 400};
+		spec.bounds = m_docking.bounds("tempoTrack");
 		spec.hidden = m_hidden;
 		const ui::Window& window = m_shell.open(spec);
 		m_tempoWindow = window.id();
@@ -1175,6 +1190,7 @@ namespace gnubase::app
 		}
 		document->Show();
 		m_tempoEditor = std::make_unique<ui::TempoEditor>(m_binding, *document);
+		m_docking.saveWindows();
 		return m_tempoEditor.get();
 	}
 
@@ -1183,11 +1199,13 @@ namespace gnubase::app
 		if (m_shell.find(m_arrangerWindow) != nullptr)
 		{
 			m_shell.close(m_arrangerWindow);
+			m_docking.saveWindows();
 			return;
 		}
 		ui::WindowSpec spec;
 		spec.title = "Arranger";
 		spec.size = {640, 360};
+		spec.bounds = m_docking.bounds("arranger");
 		spec.hidden = m_hidden;
 		const ui::Window& window = m_shell.open(spec);
 		m_arrangerWindow = window.id();
@@ -1199,6 +1217,7 @@ namespace gnubase::app
 			throw std::runtime_error("cannot load the arranger editor from " + file.u8string());
 		}
 		document->Show();
+		m_docking.saveWindows();
 	}
 
 	void AppUi::chooseImport(
@@ -1316,6 +1335,7 @@ namespace gnubase::app
 			ui::WindowSpec spec;
 			spec.title = "Channel Settings";
 			spec.size = {1000, 560};
+			spec.bounds = m_docking.bounds("channelSettings");
 			spec.hidden = m_hidden;
 			const ui::Window& window = m_shell.open(spec);
 			m_channelSettings.window = window.id();
@@ -1496,6 +1516,7 @@ namespace gnubase::app
 		ui::WindowSpec spec;
 		spec.title = "Sample Editor";
 		spec.size = {1000, 600};
+		spec.bounds = m_docking.bounds("sampleEditor");
 		spec.hidden = m_hidden;
 		const ui::Window& window = m_shell.open(spec);
 		m_sampleEditor.window = window.id();
@@ -1540,6 +1561,7 @@ namespace gnubase::app
 		ui::WindowSpec spec;
 		spec.title = "Editor";
 		spec.size = {1000, 600};
+		spec.bounds = m_docking.bounds("editor");
 		spec.hidden = m_hidden;
 		const ui::Window& window = m_shell.open(spec);
 		m_editor.window = window.id();
@@ -1605,11 +1627,13 @@ namespace gnubase::app
 		{
 			m_shell.close(shown.window);
 			shown.window = 0;
+			m_docking.saveWindows();
 			return nullptr;
 		}
 		ui::WindowSpec spec;
 		spec.title = number == 1 ? std::string("Mixer") : "Mixer " + std::to_string(number);
 		spec.size = {1000, 560};
+		spec.bounds = m_docking.bounds("mixer" + std::to_string(number));
 		spec.hidden = m_hidden;
 		const ui::Window& window = m_shell.open(spec);
 		shown.window = window.id();
@@ -1626,6 +1650,7 @@ namespace gnubase::app
 		shown.mixer = std::make_unique<ui::Mixer>(
 			m_binding, m_docking, *root, "window" + std::to_string(number), ui::MixerKind::Window, mixerActions());
 		m_docking.attach("mixer" + std::to_string(number), *document);
+		m_docking.saveWindows();
 		return shown.mixer.get();
 	}
 

@@ -173,6 +173,7 @@ namespace
 			"ui.timeFormats",                // the transport bar's displays
 			"ui.trackControls",              // the track controls settings dialog
 			"ui.trackWidths",                // the track list's splitters
+			"ui.workspaces",                 // the workspaces
 			"ui.zoomPresets",                // the zoom presets
 		};
 		return keys;

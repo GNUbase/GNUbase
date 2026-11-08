@@ -2,6 +2,7 @@
 #include "ui/docking.h"
 
 #include "platform/log.h"
+#include "ui/displays.h"
 #include "ui/keycommands.h"
 #include "ui/livereload.h"
 
@@ -136,6 +137,35 @@ namespace gnubase::ui
 		{
 			return {{"x", bounds.x}, {"y", bounds.y}, {"width", bounds.width}, {"height", bounds.height}};
 		}
+
+		// The bounds in a window's or a panel's entry of ui.layout, on a connected monitor, or none.
+		std::optional<Rect> savedBounds(const Json* entry, Size size, const std::vector<Display>& displays)
+		{
+			const Json* bounds = entry != nullptr ? find(*entry, {"bounds"}) : nullptr;
+			if (bounds == nullptr || !bounds->is_object())
+				return std::nullopt;
+			const Json* monitor = find(*entry, {"monitor"});
+			const Rect rect{bounds->value("x", 0), bounds->value("y", 0), bounds->value("width", size.width),
+				bounds->value("height", size.height)};
+			return restore(rect,
+				monitor != nullptr && monitor->is_string() ? monitor->get<std::string>() : std::string(), displays);
+		}
+
+		// Puts the bounds and their monitor's name into a window's or a panel's entry of ui.layout; whether that
+		// changed it.
+		bool keepBounds(Json& entry, const Rect& bounds, const std::vector<Display>& displays)
+		{
+			if (!entry.is_object())
+				entry = Json::object();
+			const Display* display = displayOf(bounds, displays);
+			const Json monitor = display != nullptr ? display->name : std::string();
+			const Json rect = boundsJson(bounds);
+			if (entry.value("bounds", Json()) == rect && entry.value("monitor", Json()) == monitor)
+				return false;
+			entry["bounds"] = rect;
+			entry["monitor"] = monitor;
+			return true;
+		}
 	}
 
 	Docking::Docking(engine::Engine& engine, EngineBinding& binding, Shell& shell, std::filesystem::path panelWindow,
@@ -147,20 +177,29 @@ namespace gnubase::ui
 		if (layout.ok() && layout.value.at("value").is_object())
 			m_layout = layout.value.at("value");
 
-		// Another client's change; the UI's own come back the same, or while it waits for its own, which win.
+		// Another client's change, or a workspace's (workspace.activate); the docking system's own come back as they
+		// were sent.
 		m_subscriptions.push_back(m_binding.on("settings.changed",
 			[this](const engine::Event& event)
 			{
 				const Json& values = event.data.at("values");
 				const auto layout = values.find("ui.layout");
-				if (layout == values.end() || !layout->is_object() || m_saving > 0 || *layout == m_layout)
+				if (layout == values.end() || !layout->is_object() || m_saves.count(event.request) != 0)
 					return;
-				m_layout = *layout;
-				apply();
+				if (*layout != m_layout)
+				{
+					m_layout = *layout;
+					apply();
+				}
+				applyWindows(); // also a workspace's layout that is the same, whose windows the user closed since
+				// A layout of its own that is on its way may reach the engine after this one: this one comes last.
+				if (!m_saves.empty())
+					save();
 			}));
 		m_shell.onCloseRequest(
 			[this](Window& window)
 			{
+				later([this] { saveWindows(); }); // once the shell closed it
 				for (auto& [id, shown] : m_shown)
 					if (shown.window == window.id())
 					{
@@ -168,12 +207,12 @@ namespace gnubase::ui
 						return;
 					}
 			});
-		// Windows the user moved or resized: kept for when the panel opens in a window again.
+		// Windows the user moved, resized, opened or closed: kept for when they open again, and for workspaces.
 		m_shell.every(std::chrono::milliseconds(500),
 			[this, alive = std::weak_ptr<bool>(m_alive)]
 			{
 				if (!alive.expired())
-					saveBounds();
+					saveWindows();
 			});
 	}
 
@@ -570,7 +609,7 @@ namespace gnubase::ui
 			json = Json::object();
 		json["floating"] = floating;
 		if (const Shown& shown = m_shown[id]; shown.window != 0 && !floating)
-			json["bounds"] = boundsJson(m_shell.bounds(shown.window));
+			keepBounds(json, m_shell.bounds(shown.window), m_shell.displays());
 		save();
 		apply();
 	}
@@ -683,35 +722,90 @@ namespace gnubase::ui
 
 	void Docking::save()
 	{
-		++m_saving;
-		m_binding.send("settings.set", {{"key", "ui.layout"}, {"value", m_layout}},
+		m_saves.insert(m_binding.send("settings.set", {{"key", "ui.layout"}, {"value", m_layout}},
 			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
 				if (alive.expired())
 					return;
-				--m_saving;
+				m_saves.erase(result.request);
 				if (!result.ok())
 					logging::warning("The window layout couldn't be saved: {}", result.error);
-			});
+			}));
 	}
 
-	void Docking::saveBounds()
+	void Docking::saveWindows()
 	{
+		const std::vector<Display> displays = m_shell.displays();
 		bool changed = false;
 		for (const auto& [id, shown] : m_shown)
+			if (shown.window != 0 && m_shell.find(shown.window) != nullptr)
+				changed = keepBounds(m_layout["panels"][id], m_shell.bounds(shown.window), displays) || changed;
+		for (AppWindow& window : m_appWindows)
 		{
-			if (shown.window == 0 || m_shell.find(shown.window) == nullptr)
+			const WindowId id = window.current();
+			const bool open = id != 0 && m_shell.find(id) != nullptr;
+			const Rect bounds = open ? m_shell.bounds(id) : window.bounds;
+			const bool opened = open != window.open;
+			const bool moved = open && !(bounds == window.bounds);
+			window.open = open;
+			window.bounds = bounds;
+			if (!opened && !moved)
 				continue;
-			const Json bounds = boundsJson(m_shell.bounds(shown.window));
-			Json& json = m_layout["panels"][id];
-			if (json.value("bounds", Json()) != bounds)
+			Json& entry = m_layout["windows"][window.name];
+			if (!entry.is_object())
+				entry = Json::object();
+			if (window.setOpen && entry.value("open", false) != open)
 			{
-				json["bounds"] = bounds;
+				entry["open"] = open;
 				changed = true;
 			}
+			if (open)
+				changed = keepBounds(entry, bounds, displays) || changed;
 		}
 		if (changed)
 			save();
+	}
+
+	void Docking::addWindow(
+		const std::string& name, std::function<WindowId()> current, std::function<void(bool open)> setOpen)
+	{
+		AppWindow window{name, std::move(current), std::move(setOpen), false, {}};
+		const WindowId id = window.current();
+		window.open = id != 0 && m_shell.find(id) != nullptr;
+		if (window.open)
+		{
+			if (!window.setOpen) // the main window, where it was
+				if (const std::optional<Rect> saved = bounds(name))
+					m_shell.setBounds(id, *saved);
+			window.bounds = m_shell.bounds(id);
+		}
+		m_appWindows.push_back(std::move(window));
+	}
+
+	std::optional<Rect> Docking::bounds(const std::string& name) const
+	{
+		return savedBounds(find(m_layout, {"windows", name}), g_panelWindowSize, m_shell.displays());
+	}
+
+	void Docking::applyWindows()
+	{
+		for (AppWindow& window : m_appWindows)
+		{
+			const WindowId id = window.current();
+			const bool open = id != 0 && m_shell.find(id) != nullptr;
+			const Json* wanted = find(m_layout, {"windows", window.name, "open"});
+			const bool opens = wanted != nullptr && wanted->is_boolean() && wanted->get<bool>();
+			if (window.setOpen && open != opens)
+			{
+				window.setOpen(opens); // which opens it at its bounds from ui.layout
+				continue;
+			}
+			if (const std::optional<Rect> saved = bounds(window.name); open && saved)
+			{
+				m_shell.setBounds(id, *saved);
+				window.bounds = m_shell.bounds(id);
+			}
+		}
 	}
 
 	void Docking::applySize(Rml::Element& element, const Json* saved)
@@ -920,10 +1014,7 @@ namespace gnubase::ui
 				spec.title = panel.title;
 				spec.size = g_panelWindowSize;
 				spec.hidden = m_hiddenWindows;
-				if (const Json* bounds = find(m_layout, {"panels", panel.id, "bounds"}); bounds != nullptr)
-					spec.bounds = Rect{bounds->value("x", 0), bounds->value("y", 0),
-						bounds->value("width", g_panelWindowSize.width),
-						bounds->value("height", g_panelWindowSize.height)};
+				spec.bounds = savedBounds(find(m_layout, {"panels", panel.id}), g_panelWindowSize, m_shell.displays());
 				try
 				{
 					const Window& window = m_shell.open(spec);
