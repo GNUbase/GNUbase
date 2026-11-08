@@ -449,7 +449,8 @@ namespace gnubase::app
 		m_docking.addKeyCommands(m_keys);
 		// What the pool's commands did, sent from its toolbar, the Media menu or Find Missing Files, shows in the
 		// pool, which opens for it: its window comes to the front if it is in one of its own.
-		for (const char* command : {"pool.removeUnused", "media.locate", "media.removeMissing", "media.conform"})
+		for (const char* command :
+			{"pool.removeUnused", "media.locate", "media.removeMissing", "media.conform", "media.prepareArchive"})
 			m_poolResults.push_back(m_binding.onResult(command,
 				[this, command](const engine::Result& result)
 				{
