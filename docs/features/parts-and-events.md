@@ -18,6 +18,7 @@ nothing if it fails.
 | `event.duplicate` | `count` copies one after the other from the end of the last event; `shared` as above | pp. 270–272 |
 | `event.fillLoop` | Copies on the grid of the events' length from `start` to `end` (default the locators), the last cut | p. 272 |
 | `event.resize` | Moves the `edge` (start or end) by `delta` or `ticks`; `mode` normal or moveContents | pp. 264–268 |
+| `event.previewResize` | What `event.resize` with the same parameters would make of the events, changing nothing | p. 265 |
 | `event.split` | Splits at `positions` (project samples): the events, or every unlocked event a position cuts | pp. 268–269 |
 | `event.glue` | Glues events of one track into the first | p. 269 |
 | `event.set` | Mutes or unmutes, locks or unlocks | pp. 276–277 |
@@ -79,8 +80,8 @@ modifiers, which change the keys below):
 | Alt and a drag; with Shift too | Copies the selection; shared copies of MIDI parts | pp. 270–271 |
 | Ctrl (Cmd) while dragging | Keeps a move or copy across or up and down, whichever the mouse went further | pp. 256, 271 |
 | Left, Right | Selects the event before or after the selected one on its track | p. 253 |
-| Up, Down | Selects the event on the nearest track above or below that has events; tracks while no event is selected | p. 253 |
-| Drag within 6 dp of an event's left or right edge | Resizes the selection: normal sizing, or sizing moves contents (`setSizingMovesContents`) | p. 265 |
+| Up, Down | Selects the track above or below, and its first event; an empty track keeps the selected events | pp. 218, 253 |
+| Drag within 6 dp of an event's left or right edge | Resizes the selection: normal sizing, or sizing moves contents (`setSizingMovesContents`); Escape cancels the drag | p. 265 |
 | Alt and a click | Splits the event there | p. 268 |
 | Double click on an empty MIDI or instrument lane | Adds a one-bar part at the bar, or one between the locators when the click is between them | p. 251 |
 | Double click on an empty audio lane between the locators | Adds an audio part from one locator to the other | p. 250 |
@@ -116,12 +117,22 @@ at the cursor, Mod and the arrows nudge, and so on.
   on audio tracks, MIDI parts on MIDI and instrument tracks); otherwise it only moves in time. A selection on
   several tracks moves or copies with an `event.move` or `event.copy` per track in one `history.transaction`, one
   undo step.
+- **Resizing shows the new size while the edge is dragged** (#732). Every step of the drag asks the engine
+  `event.previewResize` with the parameters the release would send, one question on its way at a time (the latest
+  one is asked when the answer is in), and the display draws the project with the answer's events in place of the
+  selected ones: their boxes, waveforms (the part of the clip the new size plays), fades and volume lines, exactly
+  as the release leaves them, at the clip's limits and the snap included. The release sends one `event.resize`, one
+  undo step; the preview stays until the project shows the resize. The preview is asked again when the modifier keys
+  change (Disable Snapping) or the project changes during the drag, e.g. by another client. A release after the
+  pressed event went sends nothing. Escape cancels the drag: the events show their size again and the release sends
+  nothing. The project window doesn't draw notes in parts or an info tip during
+  drags yet, so a part's preview is its box.
 - **The arrow keys** (pp. 218, 253): Left and Right (`edit.selectPrevious`, `edit.selectNext`) select the event
   before the first selected one or after the last on its track; at the first or last event, or with no event
   selected, they do nothing. Up and Down always step the track selection (`track.selectPrevious`,
   `track.selectNext`, [track-list.md](track-list.md)); while an event is selected, they also select the first event
   on the newly selected track. On a track without events the selected events stay selected, so the next Up or Down
-  goes on selecting events.
+  goes on selecting events. With the user setting `ui.upDownSelectsTracksOnly` they only select tracks.
 
 Not yet: the info line (#89, which `event.get` feeds), a lock and a shared copy icon on events, and scrolling an event
 that the arrow keys select into view.
@@ -132,7 +143,9 @@ that the arrow keys select into view.
   the errors; real and shared copies, edits reaching every shared copy and undone together, real copies and the last
   copy; transactions in which parts become or stop being shared, edit parts that aren't shared, and undo and redo as
   one step; only shared parts copied for the comparison; resizing both edges in both modes and its limits; splitting
-  at the cursor and the locators, with and without splitting notes; gluing; filling the locators; `event.get`.
+  at the cursor and the locators, with and without splitting notes; gluing; filling the locators; `event.get`;
+  `event.previewResize` agreeing with `event.resize` at the clip's limits, in both modes, for parts and audio parts,
+  and changing, announcing and recording nothing.
 - `tests/eventediting_tests.cpp` (fake window system, real engine): selecting with clicks and Ctrl, moving and copying
   with drags, shared copies with Alt and Shift, onto another track; drags restricted with Ctrl, across and down, moving
   and copying, and Ctrl and a click still deselecting; the drag delay (a drag released at once is a click, one held
@@ -141,7 +154,11 @@ that the arrow keys select into view.
   parts with a double click at a bar and between the locators; the edit commands on the selection (delete, mute,
   lock, nudging, duplicating, moving to the cursor, splitting at the cursor and the locators, gluing, filling the
   locators with the last copy cut, converting a shared copy to a real one), the select submenu, muted events shown
-  greyed out and locked ones kept.
+  greyed out and locked ones kept; a drag of an audio event's end and start showing, at every step, the box, waveform,
+  fades and volume line the release leaves: both edges in both sizing modes, snapped and with Disable Snapping
+  pressed and released mid-drag, while another client moves the event; an audio event and a MIDI part selected
+  together, and a second drag pressed before the display has the first one's project; a locked event staying as
+  it is; Escape cancelling it.
 - `tests/uiapp_tests.cpp` presses the default keys in the app's project window: select all, duplicate, mute, nudge
   and Backspace; Left and Right selecting parts, Up and Down stepping the tracks and selecting their first parts, also across a track
   without parts, and only the track with no part selected; and Mod+K,

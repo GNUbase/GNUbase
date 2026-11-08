@@ -1,7 +1,15 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # The single-file decoders in ext/, compiled once as third-party code: without GNUbase's warnings or clang-tidy.
+# Their configuration is part of the interface, so that every file that includes their headers sees the same
+# declarations: dr_libs without its stdio functions (see decoders.c), so a call to one of them fails to compile, and
+# stb_vorbis without its push data API.
 add_library(gnubase-decoders STATIC audiofile/decoders.c)
 target_include_directories(gnubase-decoders SYSTEM PUBLIC ${PROJECT_SOURCE_DIR}/ext/dr_libs ${PROJECT_SOURCE_DIR}/ext/stb)
+target_compile_definitions(gnubase-decoders PUBLIC
+	DR_FLAC_NO_STDIO
+	DR_MP3_NO_STDIO
+	DR_WAV_NO_STDIO
+	STB_VORBIS_NO_PUSHDATA_API)
 
 find_package(Threads REQUIRED)
 
@@ -85,7 +93,10 @@ endif()
 add_library(gnubase-engine STATIC
 	analysis/analysis.cpp analysis/analysis.h
 	analysis/onsets.cpp analysis/onsets.h
+	analysis/statistics.cpp analysis/statistics.h
+	analysis/tempodetect.cpp analysis/tempodetect.h
 	audio/analysiscommands.cpp
+	audio/arranger.cpp audio/arranger.h
 	audio/audioengine.cpp audio/audioengine.h
 	audio/audition.cpp audio/audition.h
 	audio/automation.cpp audio/automation.h
@@ -109,9 +120,13 @@ add_library(gnubase-engine STATIC
 	audiofile/writer.cpp
 	clock.cpp clock.h
 	dawproject/dawproject.cpp dawproject/dawproject.h
+	document/arranger.cpp
 	document/audiofilecommands.cpp
+	document/audiofunctions.cpp document/audiofunctions.h
+	document/audioquantize.cpp document/audioquantize.h
 	document/channelformat.cpp document/channelformat.h
 	document/channelsettings.cpp document/channelsettings.h
+	document/chordtrack.cpp document/chordtrack.h
 	document/document.cpp document/document.h
 	document/editors.cpp document/editors.h
 	document/eventedits.cpp
@@ -135,8 +150,14 @@ add_library(gnubase-engine STATIC
 	document/serialize.cpp document/serialize.h
 	document/signature.cpp
 	document/snap.cpp document/snap.h
+	document/stripparameters.cpp document/stripparameters.h
 	document/tempo.cpp
+	document/timewarp.cpp document/timewarp.h
+	document/trackversions.cpp document/trackversions.h
+	document/trackvisibility.cpp document/trackvisibility.h
+	document/transpose.cpp
 	document/volumecurves.cpp document/volumecurves.h
+	document/warp.cpp document/warp.h
 	dsp/biquad.cpp dsp/biquad.h
 	dsp/delay.cpp dsp/delay.h
 	dsp/dither.cpp dsp/dither.h
@@ -145,16 +166,25 @@ add_library(gnubase-engine STATIC
 	dsp/equalizer.cpp dsp/equalizer.h
 	dsp/reverb.cpp dsp/reverb.h
 	dsp/timestretch.cpp dsp/timestretch.h
+	dsp/warp.cpp dsp/warp.h
 	engine.cpp engine.h
 	graph/events.h
 	graph/graph.cpp graph/graph.h
 	graph/processor.h
 	jobs/jobs.cpp jobs/jobs.h
 	media/backup.cpp media/backup.h
+	metronome/clicks.h
+	metronome/metronome.cpp metronome/metronome.h
+	metronome/metronomecommands.cpp metronome/metronomecommands.h
+	metronome/metronomesettings.cpp metronome/metronomesettings.h
 	midi/chords.cpp midi/chords.h
 	midi/controllerlanes.cpp midi/controllerlanes.h
+	midi/devices.cpp midi/devices.h
+	midi/drummaps.cpp midi/drummaps.h
+	midi/effects.h
 	midi/functioncommands.cpp midi/functioncommands.h
 	midi/functions.cpp midi/functions.h
+	midi/harmony.cpp midi/harmony.h
 	midi/midivalues.cpp midi/midivalues.h
 	midi/modifiers.cpp midi/modifiers.h
 	midi/quantize.cpp midi/quantize.h
@@ -172,6 +202,7 @@ add_library(gnubase-engine STATIC
 	processors/effects.h
 	processors/gainpan.cpp processors/gainpan.h
 	processors/generators.cpp processors/generators.h
+	processors/midieffects.cpp processors/midieffects.h
 	processors/testsynth.cpp processors/testsynth.h
 	schema.cpp schema.h
 	schematext.cpp schematext.h

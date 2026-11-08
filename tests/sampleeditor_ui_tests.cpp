@@ -131,6 +131,25 @@ namespace
 
 		static bool near(double a, double b, double tolerance = 1.5) { return std::abs(a - b) <= tolerance; }
 
+		// The parameters the last time the command ran, or null.
+		Json lastParameters(const std::string& command)
+		{
+			Json found;
+			const Json log = app.call("engine.commandLog");
+			for (const Json& each : log.at("commands"))
+				if (each.at("command") == command)
+					found = each.at("parameters");
+			return found;
+		}
+
+		void doubleClick(const ui::Target& target)
+		{
+			app.ui().click(window, target, ui::MouseButton::Left, 2, {});
+			app.shell().step(std::chrono::milliseconds(0));
+		}
+
+		std::string row(size_t index) { return ".se-region[region=\"" + regions().at(index).at("id").dump() + "\"]"; }
+
 		test::UiApp app{{1200, 800}};
 		ui::EventDisplay& display;
 		test::TempDir dir;
@@ -183,6 +202,8 @@ TEST_CASE("the sample editor opens an audio event with its info line, overview a
 TEST_CASE("the range selection tool and the Range section select ranges of the clip", "[ui]")
 {
 	Fixture f;
+	f.app.call("audio.setDevice", {{"blockSize", 256}}); // the dummy device, for Loop Selection
+	f.app.call("audio.start");
 	f.open();
 	// A drag selects a range (p. 635), shown in the display, the overview and the info line.
 	f.drag(f.at(2000), f.at(3000));
@@ -210,6 +231,9 @@ TEST_CASE("the range selection tool and the Range section select ranges of the c
 	f.click(of(".se-select[select=event]"));
 	REQUIRE(f.app.waitUntil([&] { return f.view().at("selectionStart") == 1000; }));
 	CHECK(f.view().at("selectionEnd") == 5000);
+	// The buttons take the selection the editor shows, which follows the engine's (#894).
+	REQUIRE(f.app.waitUntil([&] { return f.text(".se-info [field=selectionEnd]") == "5000"; }));
+	CHECK(f.text(".se-info [field=selectionStart]") == "1000");
 	// Set Locators to Selection Range and Locate Selection, in the project's samples.
 	f.click(of("#se-set-locators"));
 	REQUIRE(f.app.waitUntil([&] { return f.app.call("transport.get").at("left") == g_second; }));
@@ -218,8 +242,25 @@ TEST_CASE("the range selection tool and the Range section select ranges of the c
 	REQUIRE(f.app.waitUntil([&] { return f.has(".se-selection", "off"); }));
 	f.click(of(".se-select[select=loop]"));
 	REQUIRE(f.app.waitUntil([&] { return f.view().at("selectionStart") == 1000; }));
+	// Locate Selection goes to the start of the selection, and from there to its end (p. 619).
 	f.click(of("#se-locate"));
 	REQUIRE(f.app.waitUntil([&] { return f.app.call("transport.get").at("position") == g_second; }));
+	f.click(of("#se-locate"));
+	REQUIRE(f.app.waitUntil([&] { return f.app.call("transport.get").at("position") == g_second + 4000; }));
+	f.click(of("#se-locate"));
+	REQUIRE(f.app.waitUntil([&] { return f.app.call("transport.get").at("position") == g_second; }));
+
+	// Loop Selection sets the locators to it and cycles playback from its start (p. 619).
+	f.app.call("sampleEditor.set", {{"selectionStart", 2000}, {"selectionEnd", 3000}});
+	REQUIRE(f.app.waitUntil([&] { return f.text(".se-info [field=selectionStart]") == "2000"; }));
+	f.click(of("#se-loop"));
+	REQUIRE(f.app.waitUntil([&] { return f.app.call("transport.get").at("playing") == true; }));
+	const Json transport = f.app.call("transport.get");
+	CHECK(transport.at("left") == g_second + 1000);
+	CHECK(transport.at("right") == g_second + 2000);
+	CHECK(transport.at("cycle") == true);
+	CHECK(transport.at("start") == g_second + 1000);
+	f.app.call("transport.stop");
 }
 
 TEST_CASE("regions are added from the selection, listed, selected and removed", "[ui]")
@@ -260,22 +301,108 @@ TEST_CASE("regions are added from the selection, listed, selected and removed", 
 	REQUIRE(f.app.waitUntil([&] { return f.elements(".se-region").size() == 2; }));
 }
 
-TEST_CASE("double-clicking a region that isn't selected selects its section and zooms to it", "[ui]")
+TEST_CASE("a click on a region shows it in the display", "[ui]")
+{
+	Fixture f;
+	f.open();
+	f.app.call("clip.addRegion", {{"clip", f.clip}, {"start", 7000}, {"end", 8000}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".se-region").size() == 1; }));
+	// Zoomed in at the clip's start, the region is outside what the display shows.
+	f.tool("zoom");
+	f.click(f.at(100));
+	f.click(f.at(100));
+	const double scale = f.editor().scale();
+	const double width = f.box(".se-display").at("width").get<double>() / f.dpRatio();
+	REQUIRE(f.editor().start() + (width * scale) < 7000);
+	// A click on it in the list scrolls the display to it, at the same zoom (p. 625).
+	f.click(of(f.row(0)));
+	CHECK(f.has(f.row(0), "selected"));
+	CHECK(f.editor().scale() == scale);
+	CHECK(f.editor().start() <= 7000);
+	CHECK(f.editor().start() + (width * scale) >= 8000);
+	CHECK(f.view().at("selectionStart") == f.view().at("selectionEnd")); // without selecting it
+}
+
+TEST_CASE("double-clicking a region's name, start or end in the list types a new one", "[ui]")
 {
 	Fixture f;
 	f.open();
 	f.app.call("clip.addRegion", {{"clip", f.clip}, {"start", 200}, {"end", 800}});
 	f.app.call("clip.addRegion", {{"clip", f.clip}, {"start", 1000}, {"end", 5000}});
 	REQUIRE(f.app.waitUntil([&] { return f.elements(".se-region").size() == 2; }));
-	const std::string other = ".se-region[region=\"" + f.regions()[1].at("id").dump() + "\"]";
-	REQUIRE_FALSE(f.has(other, "selected"));
-	// The first click selects the row; the second one lands on the same row, so the double click selects it.
-	f.app.ui().click(f.window, of(other), ui::MouseButton::Left, 2, {});
-	f.app.shell().step(std::chrono::milliseconds(0));
-	REQUIRE(f.app.waitUntil([&] { return f.view().at("selectionStart") == 1000; }));
-	CHECK(f.view().at("selectionEnd") == 5000);
-	CHECK(f.has(other, "selected"));
-	CHECK(f.app.waitUntil([&] { return std::abs(f.editor().start() - 1000) < 1; }));
+	const std::string second = f.row(1);
+
+	// The name (p. 625): Enter takes what was typed, as one undo step.
+	f.doubleClick(of(second + " .se-region-name"));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(second + " .se-region-field").size() == 1; }));
+	CHECK(f.view().at("selectionStart") == f.view().at("selectionEnd")); // it doesn't select the region
+	f.app.ui().text(f.window, "Verse");
+	f.app.ui().key(f.window, "Enter");
+	REQUIRE(f.app.waitUntil([&] { return f.regions().at(1).at("name") == "Verse"; }));
+	CHECK(f.app.call("history.get").at("steps").back().at("action") == "Change region");
+	REQUIRE(f.app.waitUntil([&] { return f.text(second + " .se-region-name") == "Verse"; }));
+	CHECK(f.elements(".se-region-field").empty());
+
+	// The start and the end, in sample frames.
+	f.doubleClick(of(second + " .se-region-start"));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(second + " .se-region-field").size() == 1; }));
+	f.app.ui().text(f.window, "1500");
+	f.app.ui().key(f.window, "Enter");
+	REQUIRE(f.app.waitUntil([&] { return f.regions().at(1).at("start") == 1500; }));
+	// Once the list shows it: until then, the new start would build the rows again under the double click.
+	REQUIRE(f.app.waitUntil([&] { return f.text(f.row(1) + " .se-region-start") == "1500"; }));
+	REQUIRE(f.elements(".se-region-field").empty());
+	f.doubleClick(of(f.row(1) + " .se-region-end"));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".se-region-field").size() == 1; }));
+	f.app.ui().text(f.window, "6000");
+	f.app.ui().key(f.window, "Enter");
+	REQUIRE(f.app.waitUntil([&] { return f.regions().at(1).at("end") == 6000; }));
+	REQUIRE(f.app.waitUntil([&] { return f.text(f.row(1) + " .se-region-end") == "6000"; }));
+
+	// Escape keeps what was there, and so does what isn't a number or a section of the clip.
+	for (const std::string& typed : {std::string("100"), std::string("abc"), std::string("9601")})
+	{
+		REQUIRE(f.app.waitUntil([&] { return f.elements(".se-region-field").empty(); }));
+		f.doubleClick(of(f.row(1) + " .se-region-end"));
+		REQUIRE(f.app.waitUntil([&] { return f.elements(".se-region-field").size() == 1; }));
+		f.app.ui().text(f.window, typed);
+		f.app.ui().key(f.window, typed == "100" ? "Escape" : "Enter");
+		REQUIRE(f.app.waitUntil([&] { return f.elements(".se-region-field").empty(); }));
+		f.app.call("project.get"); // after whatever Enter sent
+		CHECK(f.regions().at(1).at("end") == 6000);
+		CHECK(f.text(f.row(1) + " .se-region-end") == "6000");
+	}
+
+	// Leaving the field takes what was typed, as a click on the other region does.
+	f.doubleClick(of(f.row(1) + " .se-region-name"));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".se-region-field").size() == 1; }));
+	f.app.ui().text(f.window, "Chorus");
+	f.click(of(f.row(0)));
+	REQUIRE(f.app.waitUntil([&] { return f.regions().at(1).at("name") == "Chorus"; }));
+	REQUIRE(f.app.waitUntil(
+		[&] { return f.text(f.row(1) + " .se-region-name") == "Chorus" && f.elements(".se-region-field").empty(); }));
+
+	// The same number written another way is no undo step.
+	const size_t steps = f.app.call("history.get").at("steps").size();
+	f.doubleClick(of(f.row(1) + " .se-region-start"));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".se-region-field").size() == 1; }));
+	f.app.ui().text(f.window, "01500");
+	f.app.ui().key(f.window, "Enter");
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".se-region-field").empty(); }));
+	f.app.call("project.get"); // after whatever Enter sent
+	CHECK(f.app.call("history.get").at("steps").size() == steps);
+
+	// What is being typed while the regions change elsewhere, such as by MCP, goes instead of into the region.
+	f.doubleClick(of(f.row(1) + " .se-region-name"));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".se-region-field").size() == 1; }));
+	f.app.ui().text(f.window, "Ver");
+	f.app.call("clip.setRegion", {{"clip", f.clip}, {"region", f.regions().at(0).at("id")}, {"name", "Intro"}});
+	REQUIRE(f.app.waitUntil([&] { return f.text(f.row(0) + " .se-region-name") == "Intro"; }));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".se-region-field").empty(); }));
+	f.app.call("project.get");
+	CHECK(f.regions().at(1).at("name") == "Chorus");
+	CHECK(f.app.call("history.get").at("steps").size() == steps + 1);
+	CHECK(f.text(f.row(1) + " .se-region-name") == "Chorus");
 }
 
 TEST_CASE("the snap point, the zoom, play and scrub tools, the overview and the window layout", "[ui]")
@@ -319,6 +446,8 @@ TEST_CASE("the snap point, the zoom, play and scrub tools, the overview and the 
 	std::vector<std::string> modes;
 	const ui::Subscription subscription = binding.on("audition.changed",
 		[&modes](const engine::Event& event) { modes.push_back(event.data.at("mode").get<std::string>()); });
+	// Both play the clip (p. 630), also past the event's end at frame 5000; scrubbing moves the project cursor to
+	// where the frame plays (p. 634).
 	f.tool("play");
 	f.click(f.at(6000));
 	REQUIRE(f.app.waitUntil(
@@ -327,6 +456,11 @@ TEST_CASE("the snap point, the zoom, play and scrub tools, the overview and the 
 			binding.update();
 			return modes == std::vector<std::string>{"play", "off"};
 		}));
+	const Json media = f.view().at("media");
+	Json played = f.lastParameters("audition.start");
+	CHECK(played.at("media") == media);
+	CHECK(!played.contains("track"));
+	CHECK(std::abs(played.at("position").get<int64_t>() - 6000) <= 10);
 	f.tool("scrub");
 	f.drag(f.at(6000), f.at(6500));
 	REQUIRE(f.app.waitUntil(
@@ -335,6 +469,25 @@ TEST_CASE("the snap point, the zoom, play and scrub tools, the overview and the 
 			binding.update();
 			return modes.size() >= 4 && modes[2] == "scrub" && modes.back() == "off";
 		}));
+	const Json scrubbed = f.lastParameters("audition.scrub");
+	CHECK(scrubbed.at("media") == media);
+	CHECK(std::abs(scrubbed.at("position").get<int64_t>() - 6500) <= 10);
+	CHECK(std::abs(f.app.call("transport.get").at("position").get<int64_t>() - (g_second - 1000 + 6500)) <= 10);
+
+	// Play Region plays the region selected in the list (p. 624).
+	f.app.call("clip.addRegion", {{"clip", f.clip}, {"start", 7000}, {"end", 8000}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".se-region").size() == 1; }));
+	f.click(of(f.row(0)));
+	f.click(of("#se-play-region"));
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			binding.update();
+			return modes.back() == "play";
+		}));
+	played = f.lastParameters("audition.start");
+	CHECK(played == Json{{"media", media}, {"position", 7000}, {"end", 8000}});
+	f.app.call("audition.stop");
 
 	// Set up Window Layout's switches hide and show the info line, the overview and the regions (p. 614).
 	for (const char* part : {"info", "overview", "regions"})
@@ -356,4 +509,68 @@ TEST_CASE("Open/Close Editor without an audio event selected closes the sample e
 	f.app.keys().run("editor.openClose", Json::object(), f.app.main(), nullptr);
 	REQUIRE(f.app.waitUntil([&] { return f.view().at("open") == false; }));
 	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().sampleEditorWindow() == nullptr; }));
+}
+
+// Tempo matching and warping (#144, docs/features/warp.md): the Warp section, Free Warp's gestures, Flatten and
+// the Audio menu's Realtime Processing.
+TEST_CASE("the Warp section, Free Warp and Flatten warp the clip", "[ui]")
+{
+	Fixture f;
+	f.open();
+	const auto warp = [&f]
+	{
+		const Json project = f.app.call("project.get");
+		Json found = Json::object();
+		for (const Json& each : project.at("clips"))
+			if (each.at("id") == f.clip)
+				found = each.at("warp");
+		return found;
+	};
+	f.click(of("#se-musical"));
+	REQUIRE(f.app.waitUntil([&] { return warp().at("musical") == true && f.has("#se-musical", "checked"); }));
+	CHECK(warp().at("tempo") == 120.0);
+	// Auto Adjust over the event without a selection: the event is one bar of one quarter at 720 BPM.
+	f.app.call("clip.setWarp", {{"clip", f.clip}, {"beatsPerBar", 1}, {"tempo", 720.0}});
+	f.app.call("clip.setHitpoints",
+		{{"clip", f.clip}, {"hitpoints", {{{"position", 3000}, {"peak", -6.0}, {"intensity", 1.0}}}}});
+	f.click(of("#se-auto-adjust"));
+	REQUIRE(f.app.waitUntil([&] { return warp().at("gridStart") == 1000; }));
+	CHECK(f.lastParameters("clip.autoAdjust") == Json{{"clip", f.clip}, {"start", 1000}, {"end", 5000}});
+
+	// Free Warp: a drag inserts a marker and moves it; a modifier and a click removes it; Reset removes them all.
+	f.click(of("#se-free-warp"));
+	REQUIRE(f.has("#se-free-warp", "checked"));
+	REQUIRE(f.has(".sample-editor", "free-warp"));
+	f.drag(f.at(3000), f.at(3400));
+	REQUIRE(f.app.waitUntil([&] { return warp().at("markers").size() == 1; }));
+	const Json marker = warp().at("markers").at(0);
+	CHECK(f.near(marker.at("position").get<double>(), 3000, 2 * f.editor().scale()));
+	CHECK(f.near(marker.at("target").get<double>(), 3400, 2 * f.editor().scale()));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".se-warp-marker").size() == 1; }));
+	CHECK(f.near(
+		f.box(".se-warp-marker").at("x").get<double>() + (3 * f.dpRatio()), f.x(marker.at("target").get<double>()), 2));
+	const auto target = marker.at("target").get<double>();
+	f.drag(f.at(target), f.at(target + 200));
+	REQUIRE(f.app.waitUntil([&] { return warp().at("markers").at(0).at("target").get<double>() > target + 100; }));
+	const double moved = warp().at("markers").at(0).at("target").get<double>();
+	REQUIRE(f.app.waitUntil(
+		[&] { return f.near(f.box(".se-warp-marker").at("x").get<double>() + (3 * f.dpRatio()), f.x(moved), 2); }));
+	f.click(f.at(moved), {"alt"});
+	REQUIRE(f.app.waitUntil([&] { return warp().at("markers").empty(); }));
+	f.drag(f.at(3000), f.at(3400));
+	REQUIRE(f.app.waitUntil([&] { return warp().at("markers").size() == 1; }));
+	f.click(of("#se-warp-reset"));
+	REQUIRE(f.app.waitUntil([&] { return warp().at("markers").empty(); }));
+
+	// Unstretch Audio in the Audio menu turns musical mode off.
+	f.app.keys().run("audio.unstretch", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil([&] { return warp().at("musical") == false && !f.has("#se-musical", "checked"); }));
+
+	// Flatten makes the event play a new clip.
+	f.click(of("#se-musical"));
+	REQUIRE(f.app.waitUntil([&] { return warp().at("musical") == true; }));
+	f.click(of("#se-flatten"));
+	REQUIRE(f.app.waitUntil([&] { return f.lastParameters("event.flatten").is_object(); }));
+	CHECK(f.lastParameters("event.flatten").at("events") == Json::array({f.event}));
+	REQUIRE(f.app.waitUntil([&] { return f.app.call("project.get").at("audioEvents").at(0).at("clip") != f.clip; }));
 }

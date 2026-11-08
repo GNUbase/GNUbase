@@ -44,7 +44,27 @@ namespace gnubase::ui
 			R"(<div class="info-field" info-field="mute"><button type="toggle" field="mute")"
 			R"( title="Mute">Mute</button></div>)"
 			R"(<div class="info-field" info-field="lock"><button type="toggle" field="lock")"
-			R"( title="Lock">Lock</button></div>)";
+			R"( title="Lock">Lock</button></div>)"
+			// A MIDI part's transpose and velocity (p. 1107), added to the track's MIDI modifiers.
+			R"(<div class="info-field" info-field="transpose"><span class="info-label">Transpose</span>)"
+			R"(<valuefield field="transpose" min="-127" max="127" default="0" step="1" decimals="0"/>)"
+			// What the project root key adds (p. 420), in brackets: the engine's rootKeyTranspose.
+			R"(<span class="info-root-transpose" field="rootKeyTranspose"/></div>)"
+			R"(<div class="info-field" info-field="velocity"><span class="info-label">Velocity</span>)"
+			R"(<valuefield field="velocity" min="-127" max="127" default="0" step="1" decimals="0"/></div>)"
+			// A MIDI part's root key and Global Transpose (pp. 417, 421, #168).
+			R"(<div class="info-field" info-field="rootKey"><span class="info-label">Root Key</span>)"
+			R"(<select field="rootKey" title="Root Key"/></div>)"
+			R"(<div class="info-field" info-field="globalTranspose"><button type="toggle" field="globalTranspose")"
+			R"( title="Global Transpose: Independent">Independent</button></div>)";
+
+		// The root keys, as midiPart.set takes them.
+		const widgets::Options& rootKeys()
+		{
+			static const widgets::Options keys = {{"", "-"}, {"C", "C"}, {"C#", "C#"}, {"D", "D"}, {"D#", "D#"},
+				{"E", "E"}, {"F", "F"}, {"F#", "F#"}, {"G", "G"}, {"G#", "G#"}, {"A", "A"}, {"A#", "A#"}, {"B", "B"}};
+			return keys;
+		}
 
 		void setClass(Rml::Element& element, const char* name, bool set)
 		{
@@ -122,7 +142,8 @@ namespace gnubase::ui
 			const auto [field, text] = *m_absoluteTake;
 			m_absoluteTake.reset();
 			const std::optional<float> number = widgets::parse(text);
-			if (shows() && (field != "volume" || number))
+			const bool numeric = field == "volume" || field == "transpose" || field == "velocity";
+			if (shows() && (!numeric || number))
 			{
 				m_absolute = true;
 				if (m_showsMarkers)
@@ -189,6 +210,28 @@ namespace gnubase::ui
 		return 0.0;
 	}
 
+	int InfoLine::partValue(uint64_t part, const char* key) const
+	{
+		const Json& project = m_display.project();
+		if (!project.is_object())
+			return 0;
+		for (const Json& midi : project.at("midiParts"))
+			if (midi.at("id") == part)
+				return midi.value(key, 0);
+		return 0;
+	}
+
+	const engine::Json* InfoLine::partOf(uint64_t part) const
+	{
+		const Json& project = m_display.project();
+		if (!project.is_object())
+			return nullptr;
+		for (const Json& midi : project.at("midiParts"))
+			if (midi.at("id") == part)
+				return &midi;
+		return nullptr;
+	}
+
 	void InfoLine::show()
 	{
 		if (!m_root)
@@ -231,6 +274,35 @@ namespace gnubase::ui
 		for (const char* field : {"mute", "lock"})
 			if (Rml::Element* button = root.QuerySelector("button[field=" + std::string(field) + "]"))
 				setFlag(*button, "checked", first.at(field).get<bool>());
+		// A MIDI part's transpose and velocity.
+		const bool midi = first.at("kind") == "midi";
+		for (const char* field : {"transpose", "velocity"})
+		{
+			if (Rml::Element* shown = root.QuerySelector("[info-field=" + std::string(field) + "]"))
+				setClass(*shown, "hidden", !midi);
+			if (Rml::Element* value = root.QuerySelector("valuefield[field=" + std::string(field) + "]");
+				value != nullptr && midi && !m_binding.ahead(stepKey(m_stepOwner, field), m_display.read()))
+				setValue(*value, widgets::format(static_cast<float>(partValue(first.at("id").get<uint64_t>(), field))));
+		}
+		const Json* part = midi ? partOf(first.at("id").get<uint64_t>()) : nullptr;
+		for (const char* field : {"rootKey", "globalTranspose"})
+			if (Rml::Element* shown = root.QuerySelector("[info-field=" + std::string(field) + "]"))
+				setClass(*shown, "hidden", part == nullptr);
+		if (part == nullptr)
+			return;
+		if (Rml::Element* step = root.QuerySelector("[field=rootKeyTranspose]"))
+		{
+			const int semitones = part->value("rootKeyTranspose", 0);
+			const std::string text = semitones == 0
+				? std::string()
+				: "(" + std::string(semitones > 0 ? "+" : "") + std::to_string(semitones) + ")";
+			if (step->GetInnerRML() != text)
+				step->SetInnerRML(text);
+		}
+		if (Rml::Element* key = root.QuerySelector("select[field=rootKey]"))
+			widgets::fill(*key, rootKeys(), part->value("rootKey", std::string()));
+		if (Rml::Element* button = root.QuerySelector("button[field=globalTranspose]"))
+			setFlag(*button, "checked", part->value("globalTranspose", std::string()) == "independent");
 	}
 
 	void InfoLine::ProcessEvent(Rml::Event& event)
@@ -292,7 +364,7 @@ namespace gnubase::ui
 		for (const char* field : {"end", "length"})
 			if (Rml::Element* shown = root.QuerySelector("[info-field=" + std::string(field) + "]"))
 				setClass(*shown, "hidden", !first.cycle);
-		for (const char* field : {"volume", "mute", "lock"})
+		for (const char* field : {"volume", "mute", "lock", "transpose", "velocity", "rootKey", "globalTranspose"})
 			if (Rml::Element* shown = root.QuerySelector("[info-field=" + std::string(field) + "]"))
 				setClass(*shown, "hidden", true);
 	}
@@ -447,6 +519,34 @@ namespace gnubase::ui
 						{"parameters", {{"event", id}, {"volume", std::clamp(volume, g_minVolume, g_maxVolume)}}}});
 				}
 		}
+		else if (field == "transpose" || field == "velocity")
+		{
+			// Relative to the first part's value, or with Ctrl+Enter the same for all; each from -127 to 127.
+			const auto typed = static_cast<int>(std::lround(number));
+			const int change = typed - partValue(first.at("id").get<uint64_t>(), field.c_str());
+			for (const Json& event : m_events)
+				if (event.at("kind") == "midi")
+				{
+					const uint64_t id = event.at("id").get<uint64_t>();
+					const int own = partValue(id, field.c_str());
+					const int value = std::clamp(m_absolute ? typed : own + change, -127, 127);
+					// During a gesture the project may not have its earlier steps yet: a drag back to where it
+					// started still sends that value.
+					if (value != own || gesture != 0)
+						commands.push_back(
+							{{"command", "midiPart.set"}, {"parameters", {{"part", id}, {field, value}}}});
+				}
+		}
+		else if (field == "rootKey" || field == "globalTranspose")
+		{
+			const std::string value =
+				field == "rootKey" ? text : std::string(number != 0.0F ? "independent" : "follow");
+			for (const Json& event : m_events)
+				if (const Json* part = event.at("kind") == "midi" ? partOf(event.at("id").get<uint64_t>()) : nullptr;
+					part != nullptr && part->value(field, std::string()) != value)
+					commands.push_back(
+						{{"command", "midiPart.set"}, {"parameters", {{"part", event.at("id")}, {field, value}}}});
+		}
 		else if (field == "mute" || field == "lock")
 		{
 			commands.push_back({{"command", "event.set"}, {"parameters", {{"events", ids}, {field, number != 0.0F}}}});
@@ -456,7 +556,9 @@ namespace gnubase::ui
 			show(); // the value that holds
 			return;
 		}
-		std::string label = field;
+		const std::map<std::string, std::string> labels = {
+			{"rootKey", "Root Key"}, {"globalTranspose", "Global Transpose"}};
+		std::string label = labels.count(field) != 0 ? labels.at(field) : field;
 		label.front() = static_cast<char>(std::toupper(static_cast<unsigned char>(label.front())));
 		// A drag, wheel turns or a held arrow key on the volume: one undo step.
 		m_binding.sendStep(gesture, stepKey(m_stepOwner, field), "Change " + label, std::move(commands),

@@ -176,9 +176,10 @@ jobs:
       - name: Test
         # The window tests need SDL_GPU. Every runner has it except the macOS Intel one, whose virtual GPU doesn't meet
         # SDL_GPU's requirements (docs/render-backend.md): there they are skipped, everywhere else a missing GPU fails.
+        # Four tests at a time, one per core of the hosted runners; [realtime] tests still run alone (tests/CMakeLists.txt).
         env:
           GNUBASE_REQUIRE_GPU: ${{ runner.os != 'macOS' && '1' || '0' }}
-        run: ctest --preset ${{ matrix.preset }} -C Release
+        run: ctest --preset ${{ matrix.preset }} -C Release --parallel 4
 
       # What failing tests wrote for a look, such as a screenshot that differs from its golden image.
       - name: Upload test output
@@ -189,6 +190,16 @@ jobs:
           path: build/${{ matrix.preset }}/tests/output/
           if-no-files-found: ignore
           retention-days: 14
+
+      # The generated Lua API reference and MCP tool catalogue, which the unit tests wrote (docs/api-reference.md).
+      - name: Upload API references
+        if: always() && matrix.name == 'linux-x64-gcc'
+        uses: actions/upload-artifact@v7
+        with:
+          name: api-reference
+          path: build/${{ matrix.preset }}/docs/
+          if-no-files-found: ignore
+          retention-days: 90
 
       # Non-blocking (#24): shared runners vary too much to fail on numbers, so the results are only kept.
       - name: Benchmarks
@@ -214,15 +225,17 @@ jobs:
           retention-days: 14
 
   sanitizers:
-    timeout-minutes: 60
+    timeout-minutes: 90 # asan-ubsan took up to 59 min on main on slow runners in Nov 2026
     name: ${{ matrix.name }}
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { name: asan-ubsan, sanitizers: "address,undefined", cache: 1300M }
-          - { name: tsan, sanitizers: thread, cache: 1G }
+          # tests: how many tests run at a time. At four, sanitized exports, freezes and analyses kept the engine busy
+          # past its client's 10 s reply limit on slow runners; at two, tsan's tests took 19 min instead of about 40.
+          - { name: asan-ubsan, sanitizers: "address,undefined", cache: 1300M, tests: 2 }
+          - { name: tsan, sanitizers: thread, cache: 1G, tests: 2 }
     env:
       CCACHE_MAXSIZE: ${{ matrix.cache }}
       ASAN_OPTIONS: detect_leaks=1
@@ -271,10 +284,10 @@ jobs:
       - name: Test
         env:
           GNUBASE_REQUIRE_GPU: 1
-        run: ctest --preset linux-clang
+        run: ctest --preset linux-clang --parallel ${{ matrix.tests }}
 
   clang-tidy:
-    timeout-minutes: 60
+    timeout-minutes: 90 # main took up to 51 min in Nov 2026; a PR that changes a widely included header takes longer
     runs-on: ubuntu-24.04
     env:
       CCACHE_MAXSIZE: 400M

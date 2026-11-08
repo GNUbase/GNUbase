@@ -5,6 +5,7 @@
 #include "ui/rmlui.h"
 #include "ui/widgetutils.h"
 
+#include <RmlUi/Core/ComputedValues.h>
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
@@ -99,9 +100,10 @@ namespace gnubase::ui
 		// whose contextmenu attribute names the menu by id, or under a button whose menu attribute names it. A menu
 		// inside an item is its submenu, shown while the mouse is over the item or once Right opened it; its item
 		// shows a .menu-arrow part. A click on an item without a submenu closes the menu, as do Escape and a click
-		// outside it. Up and Down move the focus between the items, Enter clicks the focused one, Right opens the
-		// focused item's submenu and Left closes a submenu; in a menu of a <menubar>'s title, Right and Left otherwise
-		// open the next and previous title's menu. An open menu has the state class .open.
+		// outside it. Up and Down move the focus between the shown items, and Tab and Shift+Tab also to its other
+		// controls, such as a search field, round the ends without leaving the menu; Enter clicks the focused item,
+		// Right opens the focused item's submenu and Left closes a submenu; in a menu of a <menubar>'s title, Right and
+		// Left otherwise open the next and previous title's menu. An open menu has the state class .open.
 		class Menu final : public Rml::Element
 		{
 		public:
@@ -172,6 +174,8 @@ namespace gnubase::ui
 					const auto key = event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN);
 					if (key == Rml::Input::KI_DOWN || key == Rml::Input::KI_UP)
 						moveFocus(key == Rml::Input::KI_DOWN ? 1 : -1);
+					else if (key == Rml::Input::KI_TAB) // instead of the document's, which leaves the menu (#524)
+						moveFocus(event.GetParameter("shift_key", false) ? -1 : 1, true);
 					else if (key == Rml::Input::KI_RIGHT)
 						right();
 					else if (key == Rml::Input::KI_LEFT)
@@ -295,13 +299,37 @@ namespace gnubase::ui
 				}
 			}
 
-			// Focuses the next or previous item that isn't disabled; false if there is none.
-			bool moveFocus(int direction)
+			// Adds the parent's items that are shown and not disabled, in order; with controls, also the other shown
+			// controls that Tab can focus, such as a search field, at any depth outside items and submenus.
+			static void addStops(Rml::Element& parent, bool controls, std::vector<Rml::Element*>& stops)
+			{
+				for (int i = 0; i < parent.GetNumChildren(); ++i)
+				{
+					Rml::Element* child = parent.GetChild(i);
+					if (!child->IsVisible() || child->HasAttribute("disabled"))
+						continue;
+					if (child->GetTagName() == "menuitem")
+					{
+						stops.push_back(child);
+						continue;
+					}
+					if (!controls || child->GetTagName() == "menu")
+						continue;
+					const Rml::ComputedValues& style = child->GetComputedValues();
+					if (style.tab_index() == Rml::Style::TabIndex::Auto && style.focus() != Rml::Style::Focus::None)
+						stops.push_back(child);
+					else
+						addStops(*child, controls, stops);
+				}
+			}
+
+			// Focuses the next or previous item that is shown and not disabled, or with controls (for Tab) the next or
+			// previous of those and the menu's other controls; false if there is none. Hidden items, e.g. those a
+			// search leaves out, are skipped.
+			bool moveFocus(int direction, bool controls = false)
 			{
 				std::vector<Rml::Element*> items;
-				for (int i = 0; i < GetNumChildren(); ++i)
-					if (GetChild(i)->GetTagName() == "menuitem" && !GetChild(i)->HasAttribute("disabled"))
-						items.push_back(GetChild(i));
+				addStops(*this, controls, items);
 				if (items.empty())
 					return false;
 				const auto focused = std::find(items.begin(), items.end(), GetContext()->GetFocusElement());

@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <optional>
 #include <string>
 #include <utility>
@@ -38,7 +39,7 @@ namespace
 	// A MIDI track with a one-bar part at the project start, open in the editor window.
 	struct Fixture
 	{
-		Fixture()
+		explicit Fixture(ui::Size size = {1200, 800}) : app(size)
 		{
 			track = app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
 			part = app.call("midiPart.add", {{"track", track}, {"position", 0}, {"length", g_bar}, {"name", "Keys"}})
@@ -180,7 +181,7 @@ namespace
 			REQUIRE(has(".key-tool[key-tool=" + name + "]", "checked"));
 		}
 
-		test::UiApp app{{1200, 800}};
+		test::UiApp app;
 		std::optional<ui::WindowId> window;
 		uint64_t track = 0;
 		uint64_t part = 0;
@@ -200,14 +201,120 @@ TEST_CASE("the key editor shows its part's notes on a grid of pitches beside a k
 	const double width = grid.at("width").get<double>();
 	CHECK(std::abs(second.at("x").get<double>() - grid.at("x").get<double>() - (width / 4)) <= 1);
 	CHECK(std::abs(second.at("width").get<double>() - (width / 2)) <= 1);
-	const Json key = f.box(".key-editor-key[pitch=\"64\"]");
-	CHECK(std::abs(second.at("y").get<double>() - key.at("y").get<double>()) <= 1);
+	const double row = grid.at("height").get<double>() / 128;
+	CHECK(std::abs(second.at("y").get<double>() - grid.at("y").get<double>() - ((127 - 64) * row)) <= 1);
+	CHECK(std::abs(second.at("height").get<double>() - row) <= 1);
 	// The parts by track above the notes; the keys of selected notes are lit.
 	CHECK(f.elements(".editor-part-row").size() == 1);
 	f.click(of(noteSelector(ids[1])));
 	REQUIRE(f.app.waitUntil([&] { return f.has(".key-editor-key[pitch=\"64\"]", "selected"); }));
 	CHECK(f.has(noteSelector(ids[1]), "selected"));
 	CHECK_FALSE(f.has(".key-editor-key[pitch=\"60\"]", "selected"));
+}
+
+TEST_CASE("the key editor's keyboard is a piano keyboard aligned with the grid's rows", "[ui]")
+{
+	Fixture f({1024, 600});
+	f.app.setDpRatio(1.0F);
+	f.scroll(60);
+	const Json keyboard = f.box(".key-editor-keys");
+	const Json grid = f.box(".key-editor-grid");
+	const auto top = grid.at("y").get<double>();
+	const double row = grid.at("height").get<double>() / 128;
+	const auto x = keyboard.at("x").get<int>();
+	const auto width = keyboard.at("width").get<int>();
+	CHECK(std::abs(keyboard.at("y").get<double>() - top) <= 1);
+	CHECK(std::abs(keyboard.at("height").get<double>() - grid.at("height").get<double>()) <= 1);
+	const auto blackKey = [](int pitch)
+	{
+		const int key = pitch % 12;
+		return key == 1 || key == 3 || key == 6 || key == 8 || key == 10;
+	};
+	for (int pitch = 0; pitch < 128; ++pitch)
+	{
+		INFO("pitch " << pitch);
+		const Json key = f.box(".key-editor-key[pitch=\"" + std::to_string(pitch) + "\"]");
+		CHECK(key.at("x").get<int>() == x);
+		if (blackKey(pitch))
+		{
+			// Narrower than the white keys, drawn at the left, exactly as high as the pitch's row.
+			CHECK(key.at("width").get<int>() < width * 3 / 4);
+			CHECK(key.at("width").get<int>() > width / 2);
+			CHECK(std::abs(key.at("y").get<double>() - top - ((127 - pitch) * row)) <= 1);
+			CHECK(std::abs(key.at("height").get<double>() - row) <= 1);
+		}
+		else if (pitch < 120)
+		{
+			// The white keys of a whole octave share its 12 rows equally and span the keyboard's width.
+			CHECK(key.at("width").get<int>() == width);
+			CHECK(std::abs(key.at("height").get<double>() - (row * 12 / 7)) <= 1);
+			const int octave = pitch / 12;
+			int white = 0;
+			for (int each = octave * 12; each < pitch; ++each)
+				white += blackKey(each) ? 0 : 1;
+			const double bottom = top + ((128 - (octave * 12)) * row) - (white * row * 12 / 7);
+			CHECK(std::abs(key.at("y").get<double>() + key.at("height").get<double>() - bottom) <= 1);
+		}
+	}
+	// The top octave ends with the keyboard at G8 (127): its white keys are as high as the others, the last one cut.
+	CHECK(std::abs(f.box(".key-editor-key[pitch=\"124\"]").at("height").get<double>() - (row * 12 / 7)) <= 1);
+	CHECK(std::abs(f.box(".key-editor-key[pitch=\"127\"]").at("y").get<double>() - top) <= 1);
+	CHECK(f.elements(".key-editor-key[pitch=\"48\"]").at(0).at("text") == "C2");
+
+	// The mouse over a black key's row: at the left on the black key, at the right on the white key next to it,
+	// whichever's share of the octave that is. C3's octave starts at the bottom of row 60.
+	const double octaveBottom = top + ((128 - 60) * row);
+	const auto pitchAt = [&](int at, double rows)
+	{
+		const Json under = f.app.ui().move(
+			f.window, {"", 0, ui::Point{at, static_cast<int>(std::lround(octaveBottom - (rows * row)))}});
+		const Json& element = under.at("element");
+		return element.is_null() ? -1 : std::stoi(element.at("attributes").value("pitch", std::string("-1")));
+	};
+	const int left = x + 2;
+	const int right = x + width - 2;
+	CHECK(pitchAt(left, 1.3) == 61);   // C#3
+	CHECK(pitchAt(right, 1.3) == 60);  // C3, up to 12/7 rows
+	CHECK(pitchAt(right, 1.9) == 62);  // D3
+	CHECK(pitchAt(left, 3.5) == 63);   // D#3
+	CHECK(pitchAt(right, 3.2) == 62);  // D3, up to 24/7 rows
+	CHECK(pitchAt(right, 3.7) == 64);  // E3
+	CHECK(pitchAt(left, 10.5) == 70);  // A#3
+	CHECK(pitchAt(right, 10.1) == 69); // A3, up to 72/7 rows
+	CHECK(pitchAt(right, 10.5) == 71); // B3
+
+	// The keyboard as it looks in the default theme, a black and a white key lit for selected notes: the two octaves
+	// from C2 to B3.
+	const std::vector<uint64_t> ids = f.add({{0, 61, g_quarter}, {g_quarter, 64, g_quarter}});
+	// Selected through the engine: a click would leave the focus, and its ring, in the note display.
+	f.app.call("editor.set",
+		{{"editor", "window"},
+			{"selection", Json::array({{{"part", f.part}, {"note", ids[0]}}, {{"part", f.part}, {"note", ids[1]}}})}});
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			return f.has(".key-editor-key[pitch=\"61\"]", "selected") &&
+				f.has(".key-editor-key[pitch=\"64\"]", "selected");
+		}));
+	f.scroll(60);
+	const Json body = f.box(".key-editor-body");
+	// The inspector's sections change with the selection, which could move the note display.
+	const auto shownTop = f.box(".key-editor-grid").at("y").get<double>();
+	const auto shownX = f.box(".key-editor-keys").at("x").get<int>();
+	const auto from = static_cast<int>(std::lround(shownTop + ((127 - 71) * row)));
+	const auto to = static_cast<int>(std::lround(shownTop + ((128 - 48) * row)));
+	REQUIRE(from >= body.at("y").get<int>());
+	REQUIRE(to <= body.at("y").get<int>() + body.at("height").get<int>());
+	const ui::Image shown = f.app.ui().screenshot(f.window, {});
+	REQUIRE(shownX >= 0);
+	REQUIRE(shownX + width <= shown.width);
+	ui::Image keys{width, to - from, {}};
+	for (int y = from; y < to; ++y)
+	{
+		const auto begin = shown.pixels.begin() + (((static_cast<ptrdiff_t>(y) * shown.width) + shownX) * 4);
+		keys.pixels.insert(keys.pixels.end(), begin, begin + (static_cast<ptrdiff_t>(width) * 4));
+	}
+	test::UiApp::checkGolden("key-editor-keyboard", keys);
 }
 
 TEST_CASE("the object selection tool selects, moves, resizes, inserts and deletes notes", "[ui]")

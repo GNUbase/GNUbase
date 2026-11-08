@@ -11,6 +11,7 @@
 #include <limits>
 #include <map>
 #include <optional>
+#include <stdexcept>
 #include <thread>
 #include <tuple>
 #include <utility>
@@ -530,18 +531,28 @@ namespace gnubase::engine
 
 	Playback::~Playback() = default;
 
-	void Playback::setTracks(std::vector<Track> tracks, std::map<ObjectId, std::string> mediaPaths, double sampleRate)
+	void Playback::setTracks(std::vector<Track> tracks, std::map<ObjectId, std::string> mediaPaths, double sampleRate,
+		std::map<ObjectId, Warp> warps)
 	{
 		const std::scoped_lock lock(m_mutex);
 		// Streams convert to one sample rate, so a new rate opens new ones. So does media whose file changed, as a
-		// frozen channel's freeze file does when undo brings back an earlier freeze.
+		// frozen channel's freeze file does when undo brings back an earlier freeze, or whose warp changed, as a
+		// tempo change changes that of musical mode.
+		const auto warpOf = [](const std::map<ObjectId, Warp>& all, ObjectId media)
+		{
+			const auto found = all.find(media);
+			return found != all.end() ? &found->second : nullptr;
+		};
 		const auto kept = std::stable_partition(m_voices.begin(), m_voices.end(),
-			[this, &mediaPaths, sampleRate](const std::shared_ptr<Voice>& voice)
+			[this, &mediaPaths, &warps, &warpOf, sampleRate](const std::shared_ptr<Voice>& voice)
 			{
 				const auto before = m_mediaPaths.find(voice->media);
 				const auto after = mediaPaths.find(voice->media);
+				const Warp* warpBefore = warpOf(m_warps, voice->media);
+				const Warp* warpAfter = warpOf(warps, voice->media);
 				return sampleRate == m_sampleRate && before != m_mediaPaths.end() && after != mediaPaths.end() &&
-					before->second == after->second;
+					before->second == after->second && (warpBefore == nullptr) == (warpAfter == nullptr) &&
+					(warpBefore == nullptr || *warpBefore == *warpAfter);
 			});
 		if (kept != m_voices.end())
 		{
@@ -554,26 +565,63 @@ namespace gnubase::engine
 		}
 		m_tracks = std::move(tracks);
 		m_mediaPaths = std::move(mediaPaths);
+		m_warps = std::move(warps);
 		m_unreadable.clear();
 		m_sampleRate = sampleRate;
+	}
+
+	namespace
+	{
+		// A path through arranger turns or cycle jumps ends after this many, however short they are.
+		constexpr int g_maxTurns = 1000;
+
+		// The next jump on the playback path: playback that reaches at goes on at to (or stops there), in arranger
+		// state next; at is -1 if playback goes on.
+		struct PathJump
+		{
+			time::Samples at = -1;
+			time::Samples to = 0;
+			bool stops = false;
+			ArrangerState next;
+		};
+
+		PathJump nextJump(const Playback::Cue& cue, const ArrangerState& state, time::Samples position)
+		{
+			if (cue.arranger != nullptr && cue.arranger->plays())
+			{
+				const ArrangerTurn turn = arrangerNext(*cue.arranger, state, position);
+				return {turn.at, turn.to, turn.stops, turn.next};
+			}
+			const TransportSettings& settings = cue.settings;
+			if (settings.cycle && settings.left != settings.right && position < settings.right)
+				return {settings.right, settings.left, false, state};
+			return {};
+		}
+
+		ArrangerState startState(const Playback::Cue& cue)
+		{
+			return cue.arranger != nullptr && cue.arrangerState.entering
+				? arrangerEnter(*cue.arranger, cue.arrangerState, cue.enter >= 0 ? cue.enter : cue.position)
+				: cue.arrangerState;
+		}
 	}
 
 	std::vector<Playback::Point> Playback::points(const Playlist& playlist, const Cue& cue) const
 	{
 		std::vector<Point> result;
-		const TransportSettings& settings = cue.settings;
-		const bool cycles = settings.cycle && settings.left != settings.right;
 		time::Samples position = cue.position;
 		time::Samples remaining = cue.window;
+		ArrangerState state = startState(cue);
 		bool jumped = false;
-		bool lapped = false; // past a cycle jump, where entries behind the cursor play again
-		while (remaining > 0 && result.size() < m_voicesPerTrack)
+		bool lapped = false; // past a jump back, where entries behind the cursor play again
+		for (int turns = 0; remaining > 0 && result.size() < m_voicesPerTrack && turns < g_maxTurns; ++turns)
 		{
-			const bool bounded = cycles && position < settings.right;
-			const time::Samples end = bounded ? std::min(settings.right, position + remaining) : position + remaining;
-			// After a cycle jump playback enters wherever the left locator is. Otherwise reaching an entry's start
-			// plays it from a new voice, unless an entry ends there whose clip it continues: then that voice reads on,
-			// for one entry. The entries at the cursor are cue()'s.
+			const PathJump jump = nextJump(cue, state, position);
+			const bool bounded = jump.at >= 0;
+			const time::Samples end = bounded ? std::min(jump.at, position + remaining) : position + remaining;
+			// After a jump playback enters wherever it lands. Otherwise reaching an entry's start plays it from a new
+			// voice, unless an entry ends there whose clip it continues: then that voice reads on, for one entry. The
+			// entries at the cursor are cue()'s.
 			std::vector<const PlaylistEntry*> starting;
 			for (const PlaylistLayer& layer : playlist.layers)
 			{
@@ -599,9 +647,14 @@ namespace gnubase::engine
 					result.push_back({entry->media, entry->frame});
 			}
 			remaining -= end - position;
-			jumped = bounded && end == settings.right;
+			const bool reached = bounded && end == jump.at;
+			jumped = reached && jump.to != end; // a turn that goes on where it is doesn't jump
 			lapped = lapped || jumped;
-			position = jumped ? settings.left : end;
+			position = reached ? jump.to : end;
+			if (reached)
+				state = jump.next;
+			if (reached && jump.stops)
+				break;
 		}
 		if (result.size() > m_voicesPerTrack)
 			result.resize(m_voicesPerTrack);
@@ -610,20 +663,18 @@ namespace gnubase::engine
 
 	time::Samples Playback::ahead(const Cue& cue, time::Samples frames)
 	{
-		const TransportSettings& settings = cue.settings;
-		const bool cycles = settings.cycle && settings.left != settings.right;
 		time::Samples position = cue.position;
-		while (frames > 0)
+		ArrangerState state = startState(cue);
+		for (int turns = 0; turns < g_maxTurns; ++turns)
 		{
-			if (cycles && position < settings.right && settings.right - position <= frames)
-			{
-				frames -= settings.right - position;
-				position = settings.left;
-				if (settings.right - settings.left <= 0)
-					return position + frames; // the range is skipped: from the left locator on, no more jumps
-				continue;
-			}
-			return position + frames;
+			const PathJump jump = nextJump(cue, state, position);
+			if (jump.at < 0 || jump.at - position > frames)
+				return position + frames;
+			frames -= jump.at - position;
+			if (jump.stops)
+				return jump.to;
+			position = jump.to;
+			state = jump.next;
 		}
 		return position;
 	}
@@ -649,10 +700,17 @@ namespace gnubase::engine
 		try
 		{
 			reader = AudioFileReader::open(path->second);
+			if (const auto warp = m_warps.find(media); warp != m_warps.end())
+				reader = std::make_unique<dsp::WarpReader>(std::move(reader), warp->second.map, warp->second.preset);
 		}
 		catch (const AudioFileError&)
 		{
 			m_unreadable.insert(media); // plays as silence
+			return nullptr;
+		}
+		catch (const std::invalid_argument&) // a file the stretcher can't take
+		{
+			m_unreadable.insert(media);
 			return nullptr;
 		}
 		if (!m_streamer)

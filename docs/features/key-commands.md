@@ -78,6 +78,8 @@ The reference's defaults for the commands GNUbase has so far (`ui::defaultKeyMap
 | Mod+Z | `history.undo` | Undo |
 | Mod+Shift+Z | `history.redo` | Redo |
 
+The user's own keys go over these ([below](#the-users-key-commands-and-macros)).
+
 UI commands are added after the key map, so their keys are bound where the app adds them. The project window's
 (`app::AppUi`, [event-display.md](event-display.md)), in the zone `project`:
 
@@ -101,7 +103,8 @@ UI commands are added after the key map, so their keys are bound where the app a
 | Mod+A, Mod+Shift+A | `edit.selectAll`, `edit.selectNone` | Select All, Select None |
 | Mod+Alt+I | `edit.invertSelection` | Invert Selection |
 | Left, Right | `edit.selectPrevious`, `edit.selectNext` | Navigate Left, Right |
-| Up, Down | `track.selectPrevious`, `track.selectNext`, and the first event on the track while an event is selected | Navigate Up, Down |
+| Up, Down | `track.selectPrevious`, `track.selectNext`, and the first event on the track while an event is selected, unless `ui.upDownSelectsTracksOnly` ([track-list.md](track-list.md)) | Navigate Up, Down |
+| Alt+F2 | `track.rename` | Rename Track |
 | Mod+X, Mod+C, Mod+V | `edit.cut`, `edit.copy`, `edit.paste` | Cut, Copy, Paste ([range-editing.md](range-editing.md)) |
 | Mod+Shift+X, Shift+Backspace, Mod+Shift+V | `edit.cutTime`, `edit.deleteTime`, `edit.pasteTime` | Cut Time, Delete Time, Paste Time |
 | Mod+Shift+E | `edit.insertSilence` | Insert Silence |
@@ -131,6 +134,69 @@ event queue runs its command; and text fields, also their arrow keys at the ends
 a modal dialog keep their keys, while Space after a click on a toolbar or transport button starts and stops playback
 (`tests/transportbar_tests.cpp`).
 
-Not yet: the key commands editor, presets and macros, which will keep the key map in the user settings, so that MCP
-and Lua reach it too; exporting the assignments; keys in tooltips; a frame around the focused zone. While the on-screen
-keyboard shows, it takes most keys ([onscreen-keyboard.md](onscreen-keyboard.md)).
+`tests/keycommandsdialog_tests.cpp` checks the user's key commands and macros, their presets and files, and the
+dialog below.
+
+## The user's key commands and macros
+
+The user changes keys and sets up macros in the key commands dialog (#161, reference manual pp. 1554-1559); both are
+user settings ([settings.md](settings.md)), so MCP and Lua change them with `settings.set` like the dialog does.
+
+- **`ui.keyCommands`** lists the commands whose keys the user changed: each a command, the parameters it runs with
+  (left out for none) and all its keys (left out for none), which replace its default keys. Keys are written as in the
+  default key map, with `Mod` for Ctrl (Cmd on macOS), so a file from Windows works on macOS: `ui::keySetting` writes
+  them, modifiers in the order Mod, Ctrl, Alt, Shift, Meta. `KeyCommands::customize` puts them over the default
+  bindings (those `bind` made, which stay as they are): a command's keys go into the zone of its first default
+  binding, everywhere if it has none, and win over another command's same keys there. An entry whose command doesn't
+  exist (a macro deleted, a command of another GNUbase) or whose keys can't be read is left out and logged, and stays
+  in the setting.
+- **`ui.macros`** lists the macros: each a name and the commands it runs one after the other, with their parameters.
+  A macro is the command `macro.<name>`, which keys, menus and `gnubase.ui.command` run like any other
+  (`KeyCommands::run`); a macro in a macro doesn't run, nor does a command that `check` refuses. Edit > Macros lists
+  the macros, after them Key Commands... (`app::AppUi` fills the submenu when the setting changes).
+- **User scripts** are commands too, `script.<name>`, which get keys and go into macros like any other
+  ([scripts.md](scripts.md)); Edit > Scripts lists them.
+- **Presets** are the setting `ui.keyCommandPresets`: by name, the key commands and macros (p. 1559).
+  `keyCommands.savePreset {name}` saves those of the settings, or the `keyCommands` and `macros` it gets;
+  `keyCommands.removePreset {name}` removes one. Loading one is `settings.set` with `ui.keyCommands` and `ui.macros`
+  from it, which replaces both.
+- **Files.** `keyCommands.export {path}` writes the settings' key commands and macros into a JSON file
+  (`"format": "gnubase.keyCommands"`, version 1), and `keyCommands.import {path, name}` makes a preset of one, to take
+  them to another computer. The UI commands `keyCommands.exportFile` and `keyCommands.importFile` ask for the file
+  with the OS's file dialog; an imported preset is named after the file.
+- The app reads both settings when it starts and follows `settings.changed`.
+
+## The dialog
+
+The UI command `window.keyCommands` opens `resources/ui/key-commands.rml`, modal (Edit > Key Commands...). Its Lua gets
+the commands with their default keys from `gnubase.ui.keyCommands()` (`KeyCommands::commands`: the UI's commands, the
+engine's that change something and run without parameters, and the default bindings' commands with their parameters)
+and writes keys with `gnubase.ui.keyName`, which takes `keys` as the settings write them, or a key event's `key` with
+`ctrl`, `alt`, `shift` and `meta`, and returns `keys` and the `name` the platform shows (none for a modifier on its
+own).
+
+- **The list.** The commands by category, their area (`transport`, `edit`, `macro`, ...), with their keys. Expand All
+  and Collapse All open and close the categories; a search or a filter opens them all.
+- **Searching.** Text typed into the search field shows the commands whose name, parameters or description contain it;
+  with Press Key on, a key pressed into the key field shows the commands it runs. Reset Search clears both. The filter
+  shows All, Assigned (with keys), Customized (whose keys differ from their defaults) or Unassigned commands.
+- **Keys.** The selected command's keys and description. A key pressed into the key field ("Click here and press a
+  key") is added to them, as Assign Additional Key does; if another command has it in the same zone, that command
+  loses it, and the message says which. Escape still closes the dialog. Remove Key Command removes the key selected in
+  the keys list; Reset Key Command gives the command its default keys back, taking them from any command that has
+  them now. Defaults resets every command, Clear All removes every key.
+- **Macros.** Macros shows the macros section: New Macro, Duplicate Macro, Delete Macro, and Rename Macro with the
+  name in the field (the reference renames by double-clicking). Add Command adds the command selected in the list after
+  the selected command of the macro, or at its end; Remove Command, Move Up and Move Down change the macro's commands.
+  Macros are in the list under `macro`, so they get keys like any command. Run Macro runs the selected macro's
+  commands as the dialog shows them.
+- **Apply, OK, Cancel.** Apply sends what the dialog shows, in one `settings.set` with `ui.keyCommands` and
+  `ui.macros`, or `settings.reset` for one that the dialog leaves empty (an empty Lua table would reach the engine as
+  an object); OK does the same and closes; Cancel and Escape drop it.
+- **Presets.** The presets list, a name field, Save (applies what the dialog shows, then `keyCommands.savePreset`),
+  Delete, and Import... and Export... (the file dialogs; Export applies first). Choosing a preset puts its key commands
+  and macros into the dialog, for Apply or OK.
+
+Not yet: File > Export > Key Command Assignments, the HTML list of every key; the confirmations before Remove and
+Defaults (Cancel undoes either); keys in tooltips; a frame around the focused zone. While the on-screen keyboard shows,
+it takes most keys ([onscreen-keyboard.md](onscreen-keyboard.md)).

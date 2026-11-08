@@ -2,6 +2,7 @@
 #include "engine/audio/audioengine.h"
 
 #include "engine/document/rendersnapshot.h"
+#include "engine/document/stripparameters.h"
 #include "engine/engine.h"
 #include "engine/plugins/slotinstances.h"
 #include "engine/processors/builtin.h"
@@ -15,6 +16,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <exception>
 #include <functional>
 #include <map>
 #include <set>
@@ -61,9 +63,12 @@ namespace gnubase::engine
 				"lost": {"type": ["object", "null"], "properties": {"backend": {"type": "string"},
 					"device": {"type": "string"}, "name": {"type": "string"}, "reason": {"type": "string"},
 					"restart": {"type": "boolean"}},
-					"required": ["backend", "device", "name", "reason", "restart"]}},
+					"required": ["backend", "device", "name", "reason", "restart"]},
+				"failed": {"type": ["object", "null"], "properties": {"backend": {"type": "string"},
+					"device": {"type": "string"}, "reason": {"type": "string"}},
+					"required": ["backend", "device", "reason"]}},
 			"required": ["device", "running", "position", "projectSampleRate", "recordBitDepth", "capturedFrames",
-				"droppedFrames", "playbackDropouts", "processing", "lost"]})");
+				"droppedFrames", "playbackDropouts", "processing", "lost", "failed"]})");
 		}
 
 		bool supports(const audio::DeviceInfo& info, double sampleRate)
@@ -75,7 +80,7 @@ namespace gnubase::engine
 		{
 			return Json::parse(R"({"type": "object",
 			"properties": {"playing": {"type": "boolean"}, "recording": {"type": "boolean"},
-				"position": {"type": "integer"}, "start": {"type": "integer"},
+				"countingIn": {"type": "boolean"}, "position": {"type": "integer"}, "start": {"type": "integer"},
 				"left": {"type": "integer"}, "right": {"type": "integer"}, "cycle": {"type": "boolean"},
 				"startMode": {"type": "string", "enum": ["cursor", "cycleStart"]},
 				"returnToStart": {"type": "boolean"}, "punchIn": {"type": "boolean"},
@@ -86,10 +91,12 @@ namespace gnubase::engine
 				"midiRecordMode": {"type": "string", "enum": ["newParts", "merge", "replace"]},
 				"midiCycleRecordMode": {"type": "string",
 					"enum": ["mix", "overwrite", "keepLast", "stacked", "mixStacked"]},
-				"lockRecord": {"type": "boolean"}},
-			"required": ["playing", "recording", "position", "start", "left", "right", "cycle", "startMode",
+				"lockRecord": {"type": "boolean"},
+				"arranger": {"type": "object", "properties": {"step": {"type": "integer"},
+					"repeat": {"type": "integer"}, "event": {"type": "integer"}}}},
+			"required": ["playing", "recording", "countingIn", "position", "start", "left", "right", "cycle", "startMode",
 				"returnToStart", "punchIn", "punchOut", "preRoll", "preRollAmount", "postRoll", "postRollAmount",
-				"metronome", "audioRecordMode", "midiRecordMode", "midiCycleRecordMode", "lockRecord"]})");
+				"metronome", "audioRecordMode", "midiRecordMode", "midiCycleRecordMode", "lockRecord", "arranger"]})");
 		}
 
 		Json noParameters()
@@ -239,13 +246,17 @@ namespace gnubase::engine
 		stopCueing();
 	}
 
-	void AudioEngine::cue(time::Samples position, bool playing, time::Samples window, bool wait)
+	void AudioEngine::cue(time::Samples position, bool playing, time::Samples window, bool wait, time::Samples enter)
 	{
 		Playback::Cue cue;
 		cue.position = position;
 		cue.playing = playing;
 		cue.settings = m_transport.settings();
 		cue.window = window;
+		const std::shared_ptr<const ArrangerPlan> plan = m_snapshots.latest().arranger;
+		cue.arranger = plan.get();
+		cue.arrangerState = m_transport.arranger();
+		cue.enter = enter;
 		m_playback.cue(cue);
 		if (wait)
 			m_playback.waitUntilBuffered(g_startWait);
@@ -267,12 +278,19 @@ namespace gnubase::engine
 						m_engine->post("transport.update");
 					}
 					Playback::Cue cue;
+					std::shared_ptr<const ArrangerPlan> plan;
 					{
 						const std::scoped_lock lock(m_cueMutex);
 						cue.playing = m_cueState.playing;
 						cue.settings = m_cueState.settings;
+						plan = m_cueState.arranger;
 					}
-					cue.position = m_transport.position();
+					cue.arranger = plan.get();
+					cue.arrangerState = m_transport.arranger();
+					// While counting in, where playback will start, as for a stopped transport.
+					const time::Samples countInStart = m_transport.countInStart();
+					cue.position = countInStart >= 0 ? countInStart : m_transport.position();
+					cue.playing = cue.playing && countInStart < 0;
 					cue.window = static_cast<time::Samples>(g_cueSeconds * m_device->format().sampleRate);
 					m_playback.cue(cue);
 					m_audition.cue(cue.window, true);
@@ -322,7 +340,8 @@ namespace gnubase::engine
 		for (uint64_t done = 0; done < frames;)
 		{
 			const auto block = static_cast<uint32_t>(std::min<uint64_t>(format.blockSize, frames - done));
-			cue(m_transport.position(), false, block, false);
+			const time::Samples countInStart = m_transport.countInStart(); // playback starts there after it
+			cue(countInStart >= 0 ? countInStart : m_transport.position(), false, block, false);
 			m_audition.cue(block, false);
 			m_playback.waitUntilBuffered(g_offlineWait);
 			m_audition.waitUntilBuffered(g_offlineWait);
@@ -468,8 +487,13 @@ namespace gnubase::engine
 		// Audio tracks play their playlists.
 		std::vector<Playback::Track> tracks;
 		std::map<ObjectId, std::string> paths;
+		std::map<ObjectId, Playback::Warp> warps;
 		for (const RenderMedia& media : snapshot.media)
+		{
 			paths[media.id] = media.path;
+			if (!media.warp.empty())
+				warps[media.id] = {media.warp, media.preset};
+		}
 		m_mediaPaths = paths;
 		m_auditionTracks.clear();
 		for (const RenderChannel& channel : snapshot.channels)
@@ -484,7 +508,7 @@ namespace gnubase::engine
 			m_auditionTracks[channel.track] = {channel.id, playlist};
 			tracks.push_back({channel.id, std::move(playlist)});
 		}
-		m_playback.setTracks(std::move(tracks), std::move(paths), snapshot.sampleRate);
+		m_playback.setTracks(std::move(tracks), std::move(paths), snapshot.sampleRate, std::move(warps));
 		const uint64_t generation = ++m_generation;
 		attachMidi(snapshot, desc, generation);
 		attachSlots(snapshot, desc);
@@ -492,9 +516,15 @@ namespace gnubase::engine
 		std::vector<std::vector<int>> ports = devicePorts(snapshot.busses, m_inputPorts, m_outputPorts);
 		if (m_directMonitoring)
 			monitorDirectly(snapshot, desc, ports);
+		attachMetronome(snapshot, desc);
 
 		auto program = std::make_unique<Program>(desc, format.sampleRate, format.blockSize);
 		program->tempo = snapshot.tempo;
+		program->arranger = snapshot.arranger;
+		{
+			const std::scoped_lock lock(m_cueMutex);
+			m_cueState.arranger = snapshot.arranger;
+		}
 		program->sampleRate = snapshot.sampleRate;
 		program->generation = generation;
 		program->releases = releases();
@@ -621,6 +651,8 @@ namespace gnubase::engine
 			sequence->notes = channel.notes;
 			sequence->controllers = channel.controllers;
 			sequence->modifiers = channel.modifiers;
+			sequence->inserts = channel.midiInserts;
+			sequence->sends = channel.midiSends;
 			// An instrument chases the controller events of the MIDI tracks routed to it with its own, so the latest of
 			// each kind wins, whichever track it is on.
 			if (routed.count(channel.id) == 0)
@@ -688,17 +720,25 @@ namespace gnubase::engine
 			std::unique_ptr<ChannelAutomation> automation = channelAutomation(channel, snapshot.maxVolume);
 			if (kept != m_channelStates.end())
 			{
-				// A fader set to another value glides there.
+				// A fader or pre gain set to another value glides there.
 				for (PlayedLane& lane : automation->lanes)
 					for (const PlayedLane& old : state->automation.latest().lanes)
 						lane.smooth = lane.smooth ||
-							(lane.kind == PlayedLane::Kind::Fader && lane.target == old.target && lane.points.empty() &&
-								old.points.empty() && lane.staticValue != old.staticValue);
+							(lane.glides() && lane.target == old.target && lane.points.empty() && old.points.empty() &&
+								lane.staticValue != old.staticValue);
 			}
 			if (kept == m_channelStates.end() || !automation->sameContent(state->automation.latest()))
 				state->automation.setAutomation(std::move(automation));
 			states[channel.id] = state;
 			const Panning panning{channel.panner, channel.stereoPanner, channel.panBypass, snapshot.panLaw};
+			// The limiter's look-ahead counts while it is on or its automation could turn it on.
+			const bool lookAhead = channel.sections.limiter.on ||
+				std::any_of(channel.automation.begin(), channel.automation.end(),
+					[](const RenderAutomationLane& lane)
+					{
+						return lane.target ==
+							AutomationTarget{AutomationTargetType::Strip, StripParameter::LimiterOn, 0, 0, 0};
+					});
 			std::optional<Monitoring> monitoring;
 			if (channel.input >= 0)
 				monitoring = Monitoring{channel.monitor, channel.recordEnable, m_autoMonitoring};
@@ -709,7 +749,7 @@ namespace gnubase::engine
 			if (source == firstChannel + i)
 			{
 				fader = std::make_shared<ChannelStrip>(
-					state, node.processor, panning, monitoring, channel.silent, StripPart::Whole, channel.sections);
+					state, node.processor, panning, monitoring, channel.silent, StripPart::Whole, lookAhead);
 				sourceStrip = fader;
 			}
 			else
@@ -729,10 +769,10 @@ namespace gnubase::engine
 				}
 				graph::NodeDesc& sourceDesc = desc.nodes[source];
 				sourceStrip = std::make_shared<ChannelStrip>(state, sourceDesc.processor, panning, monitoring,
-					channel.silent, StripPart::Source, channel.sections, std::move(plugins), std::move(slotIds));
+					channel.silent, StripPart::Source, false, std::move(plugins), std::move(slotIds));
 				sourceDesc.processor = sourceStrip;
 				fader = std::make_shared<ChannelStrip>(
-					state, nullptr, panning, std::nullopt, channel.silent, StripPart::Fader, channel.sections);
+					state, nullptr, panning, std::nullopt, channel.silent, StripPart::Fader, lookAhead);
 			}
 			node.processor = fader;
 			if (const auto tap = m_renderTaps.find(channel.id); tap != m_renderTaps.end())
@@ -746,17 +786,70 @@ namespace gnubase::engine
 				if (send.preFader && !tap)
 				{
 					tap = std::make_shared<PreFaderTap>(channelCount(channel.format));
-					fader->tapPreFader(tap);
+					fader->tapPreFader(tap, m_mutePreSends);
 				}
 				while (desc.nodes[sendNode].kind != graph::NodeKind::Send)
 					++sendNode;
-				// Mute Pre-Send when Mute (reference manual p. 1623): the mute button mutes pre-fader sends too.
+				// Mute Pre-Send when Mute (reference manual p. 1623): the mute button mutes pre-fader sends too, and
+				// mute automation through the tap.
 				const float gain = send.preFader && channel.muted && m_mutePreSends ? 0.0f : send.gain;
 				desc.nodes[sendNode++].processor =
 					std::make_shared<SendStrip>(state, send.number, gain, send.preFader ? tap : nullptr);
 			}
 		}
 		m_channelStates = std::move(states);
+	}
+
+	void AudioEngine::attachMetronome(const RenderSnapshot& snapshot, graph::GraphDesc& desc)
+	{
+		// Always there, so the metronome switch (transport.set metronome) clicks without a rebuild.
+		const metronome::MetronomeSettings& settings = snapshot.metronome;
+		const double deviceRate = m_device->format().sampleRate;
+		std::array<metronome::SoundLibrary::Stamp, metronome::g_accents> samples;
+		if (settings.sounds == metronome::Sounds::Samples)
+			for (size_t accent = 0; accent < samples.size(); ++accent)
+				if (!settings.samples[accent].path.empty())
+					samples[accent] = metronome::SoundLibrary::stamp(settings.samples[accent].path);
+		const bool same = m_clickSource && m_clickSource->settings == settings &&
+			m_clickSource->tempo == snapshot.tempo && m_clickSource->signatures == snapshot.signatures &&
+			m_clickSource->projectRate == snapshot.sampleRate && m_clickSource->deviceRate == deviceRate &&
+			m_clickSource->samples == samples;
+		if (!same)
+		{
+			m_metronome->setConfig(metronome::compile(
+				settings, snapshot.tempo, snapshot.signatures, snapshot.sampleRate, deviceRate, m_clickSounds));
+			m_clickSource =
+				ClickSource{settings, snapshot.tempo, snapshot.signatures, snapshot.sampleRate, deviceRate, samples};
+		}
+
+		// After every other node, so busses add the click last. Outputs and destinations that are gone are left out.
+		const int node = static_cast<int>(desc.nodes.size());
+		std::vector<int> outputs;
+		int destination = -1;
+		for (size_t i = 0; i < desc.nodes.size(); ++i)
+		{
+			const graph::NodeDesc& other = desc.nodes[i];
+			if (other.kind == graph::NodeKind::OutputBus &&
+				std::find(settings.outputs.begin(), settings.outputs.end(), other.object) != settings.outputs.end())
+			{
+				outputs.push_back(static_cast<int>(i));
+			}
+			else if (other.kind == graph::NodeKind::Channel && settings.destination != 0 &&
+				other.object == settings.destination && m_instruments.count(other.object) != 0)
+			{
+				destination = static_cast<int>(i);
+			}
+		}
+		graph::NodeDesc click;
+		click.kind = graph::NodeKind::Builtin;
+		click.format = ChannelFormat::Mono;
+		click.processor = m_metronome;
+		desc.nodes.push_back(std::move(click));
+		if (settings.audio)
+			for (const int output : outputs)
+				desc.audio.push_back({node, output});
+		if (settings.midi && destination >= 0)
+			desc.events.push_back({node, destination});
 	}
 
 	namespace
@@ -888,7 +981,7 @@ namespace gnubase::engine
 			}
 		}
 		m_playback.beginBlock();
-		graph::TransportBlock transport = m_transport.advance(block.frames);
+		graph::TransportBlock transport = m_transport.advance(block.frames, program.arranger.get());
 		m_played.add(block.position, block.frames, transport);
 		captureInput(block);
 		m_tap.deliver(block.position, block.frames, program.sequencers);
@@ -1022,6 +1115,82 @@ namespace gnubase::engine
 		m_tap.clear(); // the next device starts at position 0
 		m_lost.reset();
 		m_waitingForDevice = false;
+	}
+
+	void AudioEngine::replaceDevice(CommandContext& context)
+	{
+		Json parameters = context.parameters();
+		const bool remember = parameters.value("remember", false);
+		const bool fallBack = parameters.value("fallBackToDummy", false);
+		const bool running = m_device ? m_device->running() : m_lost && m_lost->restart;
+		const bool start = parameters.value("start", running || m_startAfterFailure);
+		// What the command does with the device, not what audio.reset opens it again with.
+		for (const char* key : {"remember", "fallBackToDummy", "start"})
+			parameters.erase(key);
+		const std::string chosen = parameters.value("backend", std::string("dummy")); // as remember saves it
+		if (chosen.empty())
+		{
+			const std::string platform = audio::defaultBackend();
+			const bool has = std::any_of(m_backends.begin(), m_backends.end(),
+				[&platform](const std::unique_ptr<audio::Backend>& backend) { return backend->name() == platform; });
+			parameters["backend"] = has || m_backends.empty() ? platform : m_backends.front()->name();
+		}
+		const std::string backend = parameters.value("backend", std::string("dummy"));
+		const std::string device = parameters.value("device", std::string());
+		const uint64_t closed = m_closed;
+		// A failure leaves no device, or one that doesn't run: the next device runs if this one was to, so that a
+		// driver that failed in Studio Setup doesn't stop playback for good. And failed only describes the dummy
+		// device that plays instead while it does.
+		const auto failing = [this, start, closed]
+		{
+			m_startAfterFailure = start && !(m_device && m_device->running());
+			if (m_closed != closed)
+				m_failed = nullptr;
+		};
+		try
+		{
+			setDevice(parameters);
+			if (start)
+				startDevice();
+		}
+		catch (const std::exception& error)
+		{
+			if (!fallBack || backend == "dummy")
+			{
+				failing();
+				throw;
+			}
+			const std::exception_ptr failure = std::current_exception();
+			logging::warning("Cannot use the audio device ({} {}), playing on the dummy device instead: {}", backend,
+				device, error.what());
+			Json failed = {{"backend", backend}, {"device", device}, {"reason", error.what()}};
+			closeDevice(); // one that opened but didn't start
+			// The dummy device without capture memory, at the sample rate and block size asked for.
+			Json dummy = {{"backend", "dummy"}, {"captureSeconds", 0}};
+			if (parameters.contains("sampleRate"))
+				dummy["sampleRate"] = parameters.at("sampleRate");
+			if (parameters.value("blockSize", int64_t{0}) > 0)
+				dummy["blockSize"] = parameters.at("blockSize");
+			try
+			{
+				setDevice(dummy);
+				if (start)
+					startDevice();
+			}
+			catch (const std::exception& fallbackError)
+			{
+				logging::warning("Cannot play on the dummy device either: {}", fallbackError.what());
+				failing();
+				std::rethrow_exception(failure);
+			}
+			m_failed = std::move(failed);
+			m_startAfterFailure = false;
+			return;
+		}
+		m_failed = nullptr;
+		m_startAfterFailure = false;
+		if (remember)
+			m_engine->setSettings(context, {{"audio.backend", chosen}, {"audio.device", device}});
 	}
 
 	void AudioEngine::setDevice(const Json& parameters)
@@ -1619,7 +1788,8 @@ namespace gnubase::engine
 		{
 			return {{"device", nullptr}, {"running", false}, {"position", 0}, {"projectSampleRate", projectRate},
 				{"recordBitDepth", recordBitDepth}, {"capturedFrames", 0}, {"droppedFrames", 0},
-				{"playbackDropouts", m_playback.dropouts()}, {"processing", processing}, {"lost", std::move(lost)}};
+				{"playbackDropouts", m_playback.dropouts()}, {"processing", processing}, {"lost", std::move(lost)},
+				{"failed", m_failed}};
 		}
 		const audio::DeviceFormat& format = m_device->format();
 		const audio::DeviceLatency latency = m_device->latency();
@@ -1633,7 +1803,8 @@ namespace gnubase::engine
 			{"projectSampleRate", projectRate}, {"recordBitDepth", recordBitDepth},
 			{"capturedFrames", m_dummy != nullptr ? m_dummy->capturedFrames() : 0},
 			{"droppedFrames", m_dummy != nullptr ? m_dummy->droppedFrames() : 0},
-			{"playbackDropouts", m_playback.dropouts()}, {"processing", processing}, {"lost", std::move(lost)}};
+			{"playbackDropouts", m_playback.dropouts()}, {"processing", processing}, {"lost", std::move(lost)},
+			{"failed", m_failed}};
 	}
 
 	void AudioEngine::publishPerformance(const PerformanceData& data)
@@ -1740,16 +1911,28 @@ namespace gnubase::engine
 					"captureSeconds": {"type": "number"}, "inputLatency": {"type": "integer"},
 					"outputLatency": {"type": "integer"}, "loopback": {"type": "boolean"},
 					"input": {"type": "object", "additionalProperties": false, "required": ["processor"],
-						"properties": {"processor": {"type": "string"}, "parameters": {"type": "object"}}}}})");
+						"properties": {"processor": {"type": "string"}, "parameters": {"type": "object"}}},
+					"start": {"type": "boolean"}, "fallBackToDummy": {"type": "boolean"},
+					"remember": {"type": "boolean"}}})");
 		engine.registerCommand(
 			{"audio.setDevice", 1,
-				"Replaces the audio device. backend: one from audio.devices, by default \"dummy\". device: its id, by "
-				"default the backend's default device. sampleRate: by default the project's if the device supports "
-				"it, otherwise the driver's current rate; when the project's sample rate changes, the device follows "
-				"it where it can. blockSize: by default the driver's preferred size. clockSource: a name from the "
-				"device's clockSources. The device starts "
-				"stopped at position 0. Another backend's device is closed before the new one opens, since drivers "
-				"often allow only one; if opening fails, there is no device.\n"
+				"Replaces the audio device. backend: one from audio.devices, by default \"dummy\"; empty for the "
+				"platform's default backend, whose default device the OS plays on (wasapi, coreaudio or pipewire), or "
+				"the preferred one if this build lacks it. device: its id, by default the backend's default device. "
+				"sampleRate: by default the project's if the device supports it, otherwise the driver's current rate; "
+				"when the project's sample rate changes, the device follows it where it can. blockSize: by default "
+				"the driver's preferred size. clockSource: a name from the device's clockSources. The device starts "
+				"at position 0, running if start says so, by default if the device it replaces ran (or, lost, was to "
+				"start again), or if the last audio.setDevice failed to run one it was to start. Another backend's "
+				"device is closed before the new one opens, since drivers often allow only one; if opening fails, "
+				"there is no device, and if starting fails, the device stays open and stopped. With fallBackToDummy, "
+				"a device that can't be opened or started is replaced by the dummy device without capture memory, at "
+				"the sampleRate and blockSize asked for, started if start says so, and failed in audio.get says what "
+				"failed and why, until another device replaces that dummy device; the windowed app opens its device "
+				"like that. remember: "
+				"once the device runs as asked (not the fallback), saves backend and device as given as the user "
+				"settings audio.backend and audio.device, which the windowed app opens when it starts, and sends "
+				"settings.changed.\n"
 				"Recorded input goes where the transport played the device's input + output latency before it "
 				"arrived, so what is played along to or looped back lines up with what played (recordOffset in "
 				"audio.get). recordShift (frames, -65536 to 65536) moves recordings that much later, for drivers that "
@@ -1773,20 +1956,21 @@ namespace gnubase::engine
 				deviceSchema, statusSchema(), false},
 			[this, announcingFailure](CommandContext& context)
 			{
-				announcingFailure([this, &context] { setDevice(context.parameters()); });
+				announcingFailure([this, &context] { replaceDevice(context); });
 				Json result = status();
 				context.emit("audio.changed", result);
 				announceSlots(&context);
 				return result;
 			});
 		Json settingsSchema = deviceSchema;
-		settingsSchema.at("properties").erase("backend");
-		settingsSchema.at("properties").erase("device");
+		for (const char* key : {"backend", "device", "start", "fallBackToDummy", "remember"})
+			settingsSchema.at("properties").erase(key);
 		engine.registerCommand(
 			{"audio.set", 1,
 				"Changes the audio device's settings and keeps the others: the parameters of audio.setDevice except "
-				"backend and device, e.g. sampleRate, blockSize, clockSource, recordShift or directMonitoring. The "
-				"device opens again with them, as for audio.reset, and runs on if it ran. If it can't open with them, "
+				"backend, device, start, fallBackToDummy and remember, e.g. sampleRate, blockSize, clockSource, "
+				"recordShift or directMonitoring. The device opens again with them, as for audio.reset, and runs on if "
+				"it ran. If it can't open with them, "
 				"it opens again with the settings it had and the command fails; if those fail too, there is no device. "
 				"Fails while a fallback plays for a lost device (see audio.reset). "
 				"Sends audio.changed, also when it fails after the device closed: with the device opened again with "
@@ -2074,6 +2258,7 @@ namespace gnubase::engine
 				noParameters(), statusSchema(), false},
 			[this](CommandContext& context)
 			{
+				m_startAfterFailure = false;
 				if (m_lost && !m_device)
 				{
 					if (!m_lost->restart)
@@ -2099,6 +2284,7 @@ namespace gnubase::engine
 				noParameters(), statusSchema(), false},
 			[this](CommandContext& context)
 			{
+				m_startAfterFailure = false;
 				if (m_device && m_device->running())
 				{
 					stopDevice();
@@ -2174,6 +2360,7 @@ namespace gnubase::engine
 		registerMixdownCommands(engine);
 		registerMeterCommands(engine);
 		registerTransportCommands(engine);
+		registerArrangerCommands(engine);
 		m_midi.registerCommands(engine);
 		registerMidiTapCommands(engine);
 		registerAuditionCommands(engine);
@@ -2192,8 +2379,11 @@ namespace gnubase::engine
 
 	bool AudioEngine::syncTransport()
 	{
+		const ArrangerState arranger = m_transport.arranger(); // a new step or repeat is announced too
+		const bool moved = !samePlace(arranger, m_announcedArranger);
+		m_announcedArranger = arranger;
 		if (!m_transport.sync())
-			return false;
+			return moved;
 		{
 			const std::scoped_lock lock(m_cueMutex);
 			m_cueState.playing = m_transport.playing();
@@ -2205,24 +2395,96 @@ namespace gnubase::engine
 
 	void AudioEngine::play()
 	{
+		// In arranger mode playback outside the chain's events starts at the chain's start.
+		const ArrangerPlan& plan = *m_snapshots.latest().arranger;
+		if (plan.plays() && !m_transport.playing())
+		{
+			const time::Samples at = m_transport.position();
+			const bool inside = std::any_of(plan.steps.begin(), plan.steps.end(),
+				[&](const ArrangerPlanStep& step)
+				{
+					const ArrangerSection& section = plan.sections.at(static_cast<size_t>(step.section));
+					return section.start <= at && at < section.end;
+				});
+			if (!inside)
+			{
+				ArrangerState first;
+				first.step = 0;
+				arrange(first);
+			}
+		}
 		if (m_device && !m_transport.playing())
-			cue(m_transport.startPosition(), false, m_device->format().blockSize, true);
+			cue(m_transport.startPosition(), false, m_device->format().blockSize, true, m_transport.playStart());
 		sent(m_transport.play());
+	}
+
+	graph::CountIn AudioEngine::countInFrom(time::Samples start, time::Samples recordStart) const
+	{
+		const RenderSnapshot& snapshot = m_snapshots.latest();
+		const metronome::MetronomeSettings& settings = snapshot.metronome;
+		graph::CountIn countIn;
+		if (!settings.countIn)
+			return countIn;
+		const double rate = snapshot.sampleRate;
+		const time::Ticks tick = snapshot.tempo.toTicks(start, rate);
+		const time::Ticks at =
+			snapshot.tempo.toTicks(recordStart, rate); // the signature and tempo where recording starts
+		if (settings.countInSignature == metronome::CountInSignature::Project)
+		{
+			// From the start of the bar countInBars before the one playback starts in. A start that rounds to just
+			// before a bar line is in the bar that starts there.
+			int64_t bar = snapshot.signatures.toBarsBeats(tick).bar;
+			if (snapshot.tempo.toSamples(snapshot.signatures.barStart(bar + 1), rate) <= start)
+				++bar;
+			countIn.projectTime = true;
+			countIn.origin = snapshot.tempo.toSamples(snapshot.signatures.barStart(bar - settings.countInBars), rate);
+			countIn.length = start - countIn.origin;
+			return countIn;
+		}
+		const time::TimeSignature signature = settings.countInSignature == metronome::CountInSignature::Custom
+			? settings.customSignature
+			: snapshot.signatures.signatureAt(at);
+		countIn.bpm = snapshot.tempo.bpmAt(at);
+		countIn.numerator = signature.numerator;
+		countIn.denominator = signature.denominator;
+		const metronome::ConstantTimeline timeline{countIn.bpm, signature, rate};
+		countIn.length = timeline.toSamples(timeline.barStart(settings.countInBars));
+		return countIn;
+	}
+
+	graph::CountIn AudioEngine::cueCountIn()
+	{
+		const time::Samples from = m_transport.startPosition();
+		if (m_device)
+			cue(from, false, m_device->format().blockSize, true);
+		const TransportSettings& settings = m_transport.settings();
+		const time::Samples start =
+			settings.startMode == StartMode::CycleStart ? settings.left : m_transport.position();
+		return countInFrom(from, Transport::recordStart(settings, start, from));
 	}
 
 	void AudioEngine::record(bool on)
 	{
-		if (on && m_device && !m_transport.playing())
-			cue(m_transport.startPosition(), false, m_device->format().blockSize, true);
-		sent(m_transport.record(on));
+		if (on && m_transport.countingIn())
+			return; // already on its way
+		sent(m_transport.record(on, on && !m_transport.playing() ? cueCountIn() : graph::CountIn{}));
+	}
+
+	void AudioEngine::setTransportSettings(const TransportSettings& settings)
+	{
+		const time::Samples before = m_transport.startPosition();
+		sent(m_transport.set(settings));
+		if (m_transport.countingIn() && m_transport.startPosition() != before)
+			sent(m_transport.record(true, cueCountIn()));
 	}
 
 	Json AudioEngine::transportStatus() const
 	{
 		const TransportSettings& settings = m_transport.settings();
 		return {{"playing", m_transport.playing()}, {"recording", m_transport.recording()},
-			{"position", m_transport.position()}, {"start", m_transport.playbackStart()}, {"left", settings.left},
-			{"right", settings.right}, {"cycle", settings.cycle},
+			{"countingIn", m_transport.countingIn()}, {"position", m_transport.position()},
+			{"start", m_transport.playbackStart()}, {"left", settings.left}, {"right", settings.right},
+			{"cycle", settings.cycle},
 			{"startMode", settings.startMode == StartMode::CycleStart ? "cycleStart" : "cursor"},
 			{"returnToStart", settings.returnToStart}, {"punchIn", settings.punchIn}, {"punchOut", settings.punchOut},
 			{"preRoll", settings.preRoll}, {"preRollAmount", settings.preRollAmount}, {"postRoll", settings.postRoll},
@@ -2230,7 +2492,89 @@ namespace gnubase::engine
 			{"audioRecordMode", g_audioRecordModes.at(static_cast<size_t>(settings.audioRecordMode))},
 			{"midiRecordMode", g_midiRecordModes.at(static_cast<size_t>(settings.midiRecordMode))},
 			{"midiCycleRecordMode", g_midiCycleRecordModes.at(static_cast<size_t>(settings.midiCycleRecordMode))},
-			{"lockRecord", settings.lockRecord}};
+			{"lockRecord", settings.lockRecord}, {"arranger", arrangerStatus()}};
+	}
+
+	Json AudioEngine::arrangerStatus() const
+	{
+		const ArrangerPlan& plan = *m_snapshots.latest().arranger;
+		const ArrangerState state = m_transport.arranger();
+		const auto step = static_cast<size_t>(state.step);
+		const int32_t section = state.step >= 0 && step < plan.steps.size() ? plan.steps[step].section : state.section;
+		const auto event = section >= 0 && static_cast<size_t>(section) < plan.sections.size()
+			? plan.sections[static_cast<size_t>(section)].event
+			: uint64_t{0};
+		return {{"step", state.step}, {"repeat", state.repeat}, {"event", event}};
+	}
+
+	void AudioEngine::arrange(const ArrangerState& state)
+	{
+		const ArrangerPlan& plan = *m_snapshots.latest().arranger;
+		const int32_t section =
+			state.step >= 0 ? plan.steps.at(static_cast<size_t>(state.step)).section : state.section;
+		if (m_transport.playing() && plan.jump != ArrangerJump::None)
+		{
+			sent(m_transport.arrange(state, true));
+			return;
+		}
+		locate({{"position", plan.sections.at(static_cast<size_t>(section)).start}});
+		sent(m_transport.arrange(state, false));
+	}
+
+	void AudioEngine::registerArrangerCommands(Engine& engine)
+	{
+		const auto command = [this, &engine](const char* name, const char* description, const char* parameters,
+								 std::function<void(const Json&)> handle)
+		{
+			engine.registerCommand({name, 1, description, Json::parse(parameters), transportSchema(), false},
+				[this, handle = std::move(handle)](CommandContext& context)
+				{
+					handle(context.parameters());
+					m_announcedArranger = m_transport.arranger();
+					Json result = transportStatus();
+					context.emit("transport.changed", result);
+					return result;
+				});
+		};
+		command("arranger.goToStep",
+			"Arranger mode: plays the active chain from a step (0 for the first) and repeat (default 0): at once while "
+			"stopped (the cursor goes to the step's event) or with the jump mode none, otherwise at the next jump "
+			"point of the event playing (arranger.setMode jumpMode). Previous and Next Chain Step, First and Last "
+			"Repeat, and a click in the chain list do this. Returns the transport's state.",
+			R"({"type": "object", "additionalProperties": false, "required": ["step"],
+				"properties": {"step": {"type": "integer"}, "repeat": {"type": "integer"}}})",
+			[this](const Json& parameters)
+			{
+				const ArrangerPlan& plan = *m_snapshots.latest().arranger;
+				require(plan.plays(), "arranger mode is off or the active chain is empty");
+				ArrangerState state;
+				state.step = parameters.at("step").get<int32_t>();
+				state.repeat = parameters.value("repeat", 0);
+				require(state.step >= 0 && static_cast<size_t>(state.step) < plan.steps.size(),
+					"the active chain has no step " + std::to_string(state.step));
+				const ArrangerPlanStep& step = plan.steps.at(static_cast<size_t>(state.step));
+				require(state.repeat >= 0 && (step.mode == ArrangerRepeat::Forever || state.repeat < step.repeats),
+					"step " + std::to_string(state.step) + " has " + std::to_string(step.repeats) + " repeats");
+				arrange(state);
+			});
+		command("arranger.trigger",
+			"Arranger mode, Jump Mode: plays an arranger event (event, its id) in a loop until another one is "
+			"triggered or a step is chosen with arranger.goToStep: at once while stopped or with the jump mode none, "
+			"otherwise at the next jump point of the event playing. Returns the transport's state.",
+			R"({"type": "object", "additionalProperties": false, "required": ["event"],
+				"properties": {"event": {"type": "integer"}}})",
+			[this](const Json& parameters)
+			{
+				const ArrangerPlan& plan = *m_snapshots.latest().arranger;
+				require(plan.plays(), "arranger mode is off or the active chain is empty");
+				const auto id = parameters.at("event").get<uint64_t>();
+				const auto found = std::find_if(plan.sections.begin(), plan.sections.end(),
+					[id](const ArrangerSection& section) { return section.event == id; });
+				require(found != plan.sections.end(), "no arranger event " + std::to_string(id));
+				ArrangerState state;
+				state.section = static_cast<int32_t>(found - plan.sections.begin());
+				arrange(state);
+			});
 	}
 
 	void AudioEngine::portSettingsChanged(CommandContext& context, bool audioPorts, bool midiPorts)
@@ -2320,6 +2664,8 @@ namespace gnubase::engine
 		if (m_device)
 			cue(position, false, m_device->format().blockSize, true); // exactly there, like a start
 		sent(m_transport.locate(position));
+		if (m_transport.countingIn()) // again, so that it ends on the bar line where playback now starts
+			sent(m_transport.record(true, cueCountIn()));
 	}
 
 	void AudioEngine::setTransport(const Json& parameters)
@@ -2391,7 +2737,7 @@ namespace gnubase::engine
 				"midiCycleRecordMode must be mix, overwrite, keepLast, stacked or mixStacked");
 			settings.midiCycleRecordMode = static_cast<MidiCycleRecordMode>(index);
 		}
-		sent(m_transport.set(settings));
+		setTransportSettings(settings);
 	}
 
 	void AudioEngine::registerTransportCommands(Engine& engine)
@@ -2423,7 +2769,8 @@ namespace gnubase::engine
 		// Lock Record: a recording doesn't stop or punch out by these commands, only by a confirmed stop.
 		const auto unlocked = [this]
 		{
-			require(!m_transport.settings().lockRecord || !m_transport.recording(),
+			// A count-in hasn't recorded anything yet.
+			require(!m_transport.settings().lockRecord || !m_transport.recording() || m_transport.countingIn(),
 				"recording is locked: stop it with transport.stop confirmed, or unlock it with transport.set "
 				"lockRecord false first");
 		};
@@ -2441,7 +2788,9 @@ namespace gnubase::engine
 		command("transport.record",
 			"Starts recording (record true, the default): playback starts as with transport.play if it stood, and "
 			"recording where playback would start without the pre-roll; or recording punches in where it plays. With "
-			"punchIn before the left locator, recording starts at the left locator instead. record false punches out "
+			"punchIn before the left locator, recording starts at the left locator instead. From stop, with the "
+			"metronome's count-in on (metronome.set countIn), the metronome counts in first and playback starts at "
+			"the exact sample where the count-in ends; transport.stop ends a count-in. record false punches out "
 			"and playback goes on, refused while lockRecord is on. Record-enabled tracks may monitor their input "
 			"meanwhile, by the user setting audio.autoMonitoring (see channel.set).",
 			R"({"type": "object", "additionalProperties": false, "properties": {"record": {"type": "boolean"}}})",
@@ -2463,9 +2812,10 @@ namespace gnubase::engine
 				const std::string setting = parameters.value("setting", "");
 				if (setting == "record")
 				{
-					if (m_transport.recording())
+					const bool on = m_transport.recording() || m_transport.countingIn();
+					if (on)
 						unlocked();
-					record(!m_transport.recording());
+					record(!on);
 					return;
 				}
 				if (!setting.empty())
@@ -2483,7 +2833,7 @@ namespace gnubase::engine
 					else if (setting == "postRoll")
 						value = &settings.postRoll;
 					*value = !*value;
-					sent(m_transport.set(settings));
+					setTransportSettings(settings);
 					return;
 				}
 				if (m_transport.playing())
@@ -2515,7 +2865,8 @@ namespace gnubase::engine
 			"and postRollAmount (the same): after an automatic punch out with audio.stopAfterPunchOut, playback goes "
 			"on that much longer before it stops. Recording that "
 			"punches in or out and playback that stops on their own announce transport.changed. metronome is the "
-			"transport bar's switch; the click comes with the metronome. audioRecordMode: what a recording does to the "
+			"transport bar's switch for the metronome click (metronome.set). audioRecordMode: what a recording does to "
+			"the "
 			"events it overlaps on its track (see "
 			"recording.add): keepHistory (the default), cycleHistoryReplace or replace. midiRecordMode: what a MIDI "
 			"recording does to the MIDI parts it overlaps (see recording.add): newParts (the default), merge or "
@@ -2564,7 +2915,9 @@ namespace gnubase::engine
 			{"transport.get", 1,
 				"Whether playback and recording run, the project cursor in samples, where the last playback started "
 				"(start, in samples, without the pre-roll), the locators and the modes. "
-				"After a locate the cursor is where it goes, even before the audio thread has applied it.",
+				"After a locate the cursor is where it goes, even before the audio thread has applied it. countingIn: "
+				"the metronome counts in before a recording from stop (see transport.record); meanwhile playing is "
+				"true, and recording is whether recording starts where playback starts.",
 				noParameters(), transportSchema(), true},
 			[this](CommandContext&) { return transportStatus(); });
 	}

@@ -442,6 +442,23 @@ TEST_CASE("the engine auto saves a changed project on its own once the interval 
 	CHECK(events.names(client).size() == 1);
 }
 
+TEST_CASE("project.autoSaveInterval sets how long the engine waits before it auto saves", "[integration]")
+{
+	const test::TempDir dir;
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	AutoSaveEvents events(engine);
+	run(client, "settings.set", {{"key", "project.autoSaveInterval"}, {"value", 5}});
+	run(client, "project.save", {{"path", utf8(dir.path() / "Song.dawproject")}});
+	run(client, "track.add", {{"type", "audio"}});
+
+	engine.advanceClock(std::chrono::minutes(4));
+	CHECK(events.names(client).empty());
+	engine.advanceClock(std::chrono::minutes(1) + std::chrono::seconds(1));
+	CHECK(events.names(client) == std::vector<std::string>{"project.autoSaved"});
+	CHECK(fs::is_regular_file(dir.path() / "Auto Saves" / "Song-01.bak"));
+}
+
 TEST_CASE("a failing auto save waits for the next interval, is logged once and announces each failure", "[integration]")
 {
 	const test::TempDir dir;
@@ -873,7 +890,30 @@ TEST_CASE("a save or backup that fails shows its error", "[ui]")
 	app.call("project.save", {{"path", utf8(dir.path() / "Song.dawproject")}});
 	fileMenu(app, "file.backup");
 	answer(app, {notFolder / "Backup"});
+	click(app, "#backup-project-dialog button.primary");
 	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
+	click(app, "#project-error-dialog button[result=ok]");
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#project-error-dialog"); }));
+
+	// A backup that is to be opened isn't if the project changed while the job ran, and says so.
+	test::writeWav(dir.path() / "take.wav", {std::vector<float>(5760000, 0.25f), 2, 48000}); // 1 min
+	app.call("media.add", {{"path", utf8(dir.path() / "take.wav")}});
+	app.call("project.save", Json::object());
+	const Json song = location(app);
+	fileMenu(app, "file.backup");
+	answer(app, {dir.path() / "Opened"});
+	click(app, "#backup-keep-active");
+	// Without click's step, so that the edit is queued right after project.backup, before the job can ask to open
+	// the backup.
+	app.ui().click(std::nullopt, {"#backup-project-dialog button.primary", 0, std::nullopt},
+		gnubase::ui::MouseButton::Left, 1, {});
+	app.call("project.set", {{"name", "Edited"}});
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }, std::chrono::seconds(30)));
+	CHECK_THAT(elements(app, "#project-error-message").at(0).at("text").get<std::string>(),
+		ContainsSubstring("wasn't opened"));
+	CHECK(fs::exists(dir.path() / "Opened" / "Song.dawproject"));
+	CHECK(location(app) == song);
+	CHECK(app.call("project.get").at("name") == "Edited");
 	click(app, "#project-error-dialog button[result=ok]");
 	REQUIRE(app.waitUntil([&app] { return !shown(app, "#project-error-dialog"); }));
 }
@@ -1014,7 +1054,7 @@ TEST_CASE("a failed auto save's error makes way for the error of a newer one and
 	closeError(app);
 }
 
-TEST_CASE("a failed auto save's error doesn't open over another modal dialog, and shows at the next failure", "[ui]")
+TEST_CASE("a failed auto save's error waits while other modal dialogs are open, and shows once they closed", "[ui]")
 {
 	test::UiApp app({900, 640});
 	app.appUi().showProject();
@@ -1026,19 +1066,145 @@ TEST_CASE("a failed auto save's error doesn't open over another modal dialog, an
 
 	REQUIRE(app.waitUntil([&app] { return elements(app, "#track-list .track-name").size() == 1; }));
 
-	// The auto fades dialog is a modal dialog of the main window that isn't a project dialog.
+	// The auto fades dialog and the studio setup over it are modal dialogs of the main window that aren't project
+	// dialogs.
 	app.keys().run("project.autoFades", Json::object(), app.main(), nullptr);
 	REQUIRE(app.waitUntil([&app] { return shown(app, "#auto-fades"); }));
+	app.keys().run("window.studioSetup", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#studio-setup"); }));
 	app.engine().advanceClock(g_pastInterval);
 	handleEarlierEvents(app);
 	CHECK(elements(app, "#project-error-dialog").empty());
 	CHECK(shown(app, "#auto-fades"));
 
+	// The studio setup closes, the auto fades dialog is still open: the error waits for it.
+	click(app, "#studio-setup #cancel");
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#studio-setup"); }));
+	handleEarlierEvents(app);
+	CHECK(elements(app, "#project-error-dialog").empty());
+
+	// Cancel closes the last one, and the error shows without another failure.
 	click(app, "#auto-fades-cancel");
 	REQUIRE(app.waitUntil([&app] { return elements(app, "#auto-fades").empty(); }));
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
+	CHECK_THAT(errorMessage(app), ContainsSubstring("auto saved"));
+	closeError(app);
+
+	// Once per reason: an auto save that fails for the same reason while a dialog is open doesn't show it again.
+	app.keys().run("project.autoFades", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#auto-fades"); }));
+	app.engine().advanceClock(g_pastInterval);
+	handleEarlierEvents(app);
+	click(app, "#auto-fades-cancel");
+	REQUIRE(app.waitUntil([&app] { return elements(app, "#auto-fades").empty(); }));
+	handleEarlierEvents(app);
+	CHECK(elements(app, "#project-error-dialog").empty());
+}
+
+TEST_CASE("a failed auto save's error that waits for a dialog is dropped once auto save works or the project was saved "
+		  "or opened",
+	"[ui]")
+{
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	Client client(app.engine());
+	AutoSaveEvents events(app.engine());
+	const test::TempDir dir;
+	const fs::path autoSaves = dir.path() / "Auto Saves";
+	app.call("project.save", {{"path", utf8(dir.path() / "Song.dawproject")}});
+	app.call("track.add", {{"type", "audio"}});
+	std::ofstream(autoSaves) << "not a folder";
+	REQUIRE(app.waitUntil([&app] { return elements(app, "#track-list .track-name").size() == 1; }));
+
+	const auto lastEvent = [&events, &client]
+	{
+		const std::vector<std::string> names = events.names(client);
+		return names.empty() ? std::string() : names.back();
+	};
+	const auto openAutoFades = [&app]
+	{
+		app.keys().run("project.autoFades", Json::object(), app.main(), nullptr);
+		REQUIRE(app.waitUntil([&app] { return shown(app, "#auto-fades"); }));
+	};
+	const auto failWhileOpen = [&app, &openAutoFades, &lastEvent]
+	{
+		openAutoFades();
+		app.engine().advanceClock(g_pastInterval);
+		CHECK(lastEvent() == "project.autoSaveFailed");
+		handleEarlierEvents(app);
+		CHECK(elements(app, "#project-error-dialog").empty());
+	};
+	const auto closeAndCheck = [&app]
+	{
+		click(app, "#auto-fades-cancel");
+		REQUIRE(app.waitUntil([&app] { return elements(app, "#auto-fades").empty(); }));
+		handleEarlierEvents(app);
+		CHECK(elements(app, "#project-error-dialog").empty());
+	};
+
+	// The next auto save succeeds while the dialog is open: the error is out of date when it closes.
+	failWhileOpen();
+	fs::remove(autoSaves);
+	app.engine().advanceClock(g_pastInterval);
+	CHECK(lastEvent() == "project.autoSaved");
+	handleEarlierEvents(app);
+	closeAndCheck();
+
+	// The project is saved while the dialog is open.
+	blockSaving(autoSaves / "Song-02.bak");
+	failWhileOpen();
+	const size_t saved = elements(app, "#track-list .track-name").size();
+	app.call("project.save");
+	handleEarlierEvents(app);
+	closeAndCheck();
+
+	// An auto save fails and the next succeeds before the UI hears of either.
+	openAutoFades();
+	CHECK(!client.call("project.autoSave").ok());
+	fs::remove_all(fs::u8path((autoSaves / "Song-02.bak").u8string() + ".saving"));
+	CHECK(client.call("project.autoSave").ok());
+	handleEarlierEvents(app);
+	CHECK(elements(app, "#project-error-dialog").empty());
+	closeAndCheck();
+
+	// The project is opened again while the dialog is open: File > Revert.
+	blockSaving(autoSaves / "Song-03.bak");
+	failWhileOpen();
+	app.call("project.revert");
+	REQUIRE(app.waitUntil([&app, saved] { return elements(app, "#track-list .track-name").size() == saved; }));
+	closeAndCheck();
+}
+
+TEST_CASE("a modal dialog in a panel's own window doesn't keep a failed auto save's error away", "[ui]")
+{
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	const test::TempDir dir;
+	const fs::path autoSaves = dir.path() / "Auto Saves";
+	app.call("project.save", {{"path", utf8(dir.path() / "Song.dawproject")}});
+	app.call("track.add", {{"type", "audio"}});
+	std::ofstream(autoSaves) << "not a folder";
+	REQUIRE(app.waitUntil([&app] { return elements(app, "#track-list .track-name").size() == 1; }));
+
+	app.appUi().docking().setFloating("history", true);
+	const gnubase::ui::Window* floating = app.appUi().docking().windowOf("history");
+	REQUIRE(floating != nullptr);
+	const gnubase::ui::WindowId panel = floating->id();
+	gnubase::ui::Window* window = app.shell().find(panel);
+	REQUIRE(window != nullptr);
+	app.keys().run("project.autoFades", Json::object(), *window, nullptr);
+	const auto autoFadesInPanel = [&app, panel]
+	{
+		const Json found = app.ui().dom(panel, "#auto-fades", 0).at("elements");
+		return found.size() == 1 && found[0].at("visible").get<bool>();
+	};
+	REQUIRE(app.waitUntil(autoFadesInPanel));
+
+	// The error opens in the main window, whose documents have no other modal dialog.
 	app.engine().advanceClock(g_pastInterval);
 	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
 	CHECK_THAT(errorMessage(app), ContainsSubstring("auto saved"));
+	CHECK(autoFadesInPanel());
 	closeError(app);
 }
 
@@ -1090,7 +1256,9 @@ TEST_CASE("File > Open and Revert ask before unsaved changes are discarded", "[u
 	fileMenu(app, "file.save");
 	CHECK(answer(app, {}).kind == gnubase::ui::FileDialogKind::Save);
 	CHECK(location(app).is_null());
-	CHECK(fs::last_write_time(autoSave) == autoSaved);
+	// Compared into a bool: Catch2 can't print a file time where libc++ counts it in __int128 (macOS).
+	const bool autoSaveUntouched = fs::last_write_time(autoSave) == autoSaved;
+	CHECK(autoSaveUntouched);
 }
 
 TEST_CASE("closing the main window or quitting through the OS asks before unsaved changes are discarded", "[ui]")
@@ -1302,8 +1470,42 @@ TEST_CASE("File > Save as Template and Back up Project", "[ui]")
 	REQUIRE(app.waitUntil([&app] { return app.call("project.templates").at("templates").size() == 1; }));
 	CHECK(app.call("project.templates").at("templates")[0].at("name") == "Drums");
 
-	app.call("project.save", {{"path", utf8(dir.path() / "Song.dawproject")}});
+	const std::string song = utf8(dir.path() / "Song.dawproject");
+	app.call("project.save", {{"path", song}});
+	test::writeWav(dir.path() / "Mixdown" / "Song.wav", {std::vector<float>(480, 0.25f), 1, 48000});
+
+	// Back up Project asks for the folder, then shows its options: the project file's name, and the project stays.
 	fileMenu(app, "file.backup");
 	CHECK(answer(app, {dir.path() / "Backup"}).kind == gnubase::ui::FileDialogKind::Folder);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#backup-project-dialog"); }));
+	CHECK(elements(app, "#backup-name").at(0).at("attributes").at("value") == "Song");
+	CHECK(elements(app, "#backup-keep-active").at(0).at("attributes").contains("checked"));
+	for (const char* option :
+		{"#backup-minimize", "#backup-offline", "#backup-remove-unused", "#backup-skip-video", "#backup-skip-mixdown"})
+		CHECK(!elements(app, option).at(0).at("attributes").contains("checked"));
+	click(app, "#backup-project-dialog button.primary");
 	REQUIRE(app.waitUntil([&dir] { return fs::exists(dir.path() / "Backup" / "Song.dawproject"); }));
+	CHECK(fs::exists(dir.path() / "Backup" / "Mixdown" / "Song.wav"));
+	CHECK(location(app) == song);
+
+	// Cancelled, it backs nothing up.
+	fileMenu(app, "file.backup");
+	answer(app, {dir.path() / "Cancelled"});
+	click(app, "#backup-project-dialog button[result=cancel]");
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#backup-project-dialog"); }));
+	CHECK(!fs::exists(dir.path() / "Cancelled"));
+
+	// Another name, without the Mixdown folder, and the backup goes on as the project.
+	fileMenu(app, "file.backup");
+	answer(app, {dir.path() / "Final"});
+	click(app, "#backup-name");
+	app.ui().key(std::nullopt, "Ctrl+A");
+	app.ui().text(std::nullopt, "Final Mix");
+	click(app, "#backup-keep-active");
+	click(app, "#backup-skip-mixdown");
+	click(app, "#backup-project-dialog button.primary");
+	const std::string renamed = utf8(dir.path() / "Final" / "Final Mix.dawproject");
+	REQUIRE(app.waitUntil([&app, &renamed] { return location(app) == renamed; }, std::chrono::seconds(30)));
+	CHECK(!fs::exists(dir.path() / "Final" / "Mixdown"));
+	CHECK(app.call("project.get").at("name") == "Final Mix");
 }

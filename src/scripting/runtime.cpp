@@ -344,7 +344,11 @@ namespace gnubase::scripting
 		rt::assertNotRealtime("scripting::Runtime::run");
 		lua_State* state = m_state.get();
 		const int top = lua_gettop(state);
-		if (m_timeLimit.count() > 0)
+		// A run inside a run, such as a user script that a script runs through the UI (#209), shares the outer run's
+		// time limit and test cases.
+		const bool outermost = m_depth == 0;
+		++m_depth;
+		if (outermost && m_timeLimit.count() > 0)
 		{
 			m_deadline = std::chrono::steady_clock::now() + m_timeLimit;
 			lua_sethook(state, &Runtime::stopWhenLate, LUA_MASKCOUNT, 10000);
@@ -362,6 +366,11 @@ namespace gnubase::scripting
 		if (status != LUA_OK)
 			error = message();
 		lua_settop(state, top);
+		if (!outermost)
+		{
+			--m_depth;
+			return error;
+		}
 
 		// The test cases the script registered run now, or are dropped if it failed. They print their report as they
 		// run, so the error only sums it up, without a traceback.
@@ -370,6 +379,7 @@ namespace gnubase::scripting
 		if (lua_pcall(state, 1, 0, 0) != LUA_OK && !error)
 			error = message();
 		lua_settop(state, top);
+		--m_depth; // only now: the test cases run code too
 		return error;
 	}
 

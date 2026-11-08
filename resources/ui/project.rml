@@ -8,7 +8,8 @@
      (docs/features/event-display.md): the ruler's arrow button .ruler-format, #ruler-format-menu, #zoom-presets-menu,
      #auto-scroll and #auto-scroll-menu, and the snap controls #snap, #snap-type, #snap-type-menu, #grid-type,
      #grid-type-menu (which the display fills with the ruler format's grid types) and #snap-zero-crossing
-     (docs/features/snap.md). Its dialogs are zoom-preset.rml, zoom-presets.rml and repeat-events.rml, next to this
+     (docs/features/snap.md), and the Project Root Key #root-key with #root-key-menu (docs/features/transpose.md). Its
+     dialogs are zoom-preset.rml, zoom-presets.rml and repeat-events.rml, next to this
      file. ui::TrackList fills #track-list under its global track controls (docs/features/track-list.md): #add-track
      opens the add track dialog (add-track.rml), #track-controls-settings the track controls settings dialog
      (track-controls.rml); #track-list-menu is its context menu.
@@ -18,6 +19,8 @@
      #select-color with #color-menu, which ui::ColorMenu fills with the project's colors (docs/features/colors.md).
      ui::StatusLine fills #record-format, #record-time and #lost-device (docs/features/status-line.md). ui::InfoLine fills
      #info-line; #inspector-setup is the inspector's Set up Sections pane (docs/features/inspector.md).
+     ui::TrackVisibility drives #track-visibility-configurations and its menu, with visibility-configuration.rml
+     (docs/features/track-visibility.md).
      The focus zone "project" has the project window's key commands, such as zooming with H and G. -->
 <rml>
 <head>
@@ -119,6 +122,9 @@
 		     ui::QuantizePanel fills (docs/features/quantize.md) -->
 		<div id="toolbar-quantize" class="toolbar-quantize"/>
 		<button id="select-color" class="icon-only" menu="color-menu" title="Select Color for Selected Tracks or Events"><svg class="icon" src="../icons/general-color.svg"/></button>
+		<button id="track-visibility-configurations" class="track-visibility-configurations" menu="track-visibility-configurations-menu" title="Track Visibility Configurations">Configurations</button>
+		<!-- The Project Root Key (reference manual p. 414, docs/features/transpose.md), which the display shows -->
+		<button id="root-key" class="toolbar-root-key" menu="root-key-menu" title="Project Root Key">-</button>
 		<div class="spacer"/>
 		<button id="show-channel-zone" type="toggle" toggle="channel" class="icon-only" title="Show/Hide Channel"><svg class="icon" src="../icons/layout-channel-zone.svg"/></button>
 		<button id="show-left-zone" type="toggle" toggle="left" class="icon-only" title="Show/Hide Left Zone"><svg class="icon" src="../icons/layout-left-zone.svg"/></button>
@@ -203,6 +209,8 @@
 		<menuitem command="pool.findMissing">Find Missing Files...</menuitem>
 		<menuitem command="media.removeMissing">Remove Missing Files</menuitem>
 		<menuitem command="media.conform">Conform Files</menuitem>
+		<menuseparator/>
+		<menuitem command="media.prepareArchive">Prepare Archive</menuitem>
 	</menu>
 	<menu id="edit-menu">
 		<menuitem command="history.undo">Undo</menuitem>
@@ -291,6 +299,26 @@
 		<menuitem command="editor.openClose">Open/Close Editor</menuitem>
 		<menuitem command="window.lowerZoneEditor">Open Editor in Lower Zone</menuitem>
 		<menuitem command="editor.openList">Open List Editor</menuitem>
+		<menuitem command="editor.openDrum">Open Drum Editor</menuitem>
+		<!-- Drum maps (docs/features/drum-editor.md) -->
+		<menuitem command="drumMap.load">Load Drum Map...</menuitem>
+		<menuitem command="drumMap.save">Save Drum Map...</menuitem>
+		<menuseparator/>
+		<!-- docs/features/key-commands.md: the macros, which app::AppUi fills in -->
+		<menuitem id="macros-submenu">Macros
+			<menu id="macros-menu">
+				<menuitem command="window.keyCommands">Key Commands...</menuitem>
+			</menu>
+		</menuitem>
+		<menuitem command="window.keyCommands">Key Commands...</menuitem>
+		<!-- docs/features/scripts.md: the user scripts, which app::AppUi fills in -->
+		<menuitem id="scripts-submenu">Scripts
+			<menu id="scripts-menu">
+				<menuitem command="window.scriptConsole">Script Console</menuitem>
+			</menu>
+		</menuitem>
+		<!-- docs/features/preferences.md -->
+		<menuitem command="window.preferences">Preferences...</menuitem>
 	</menu>
 	<!-- Track handling (reference manual pp. 213-225) -->
 	<menu id="color-menu"/>
@@ -304,6 +332,20 @@
 			<menu>
 				<menuitem command="window.tempoTrack">Open Tempo Track Editor</menuitem>
 				<menuitem command="tempo.toggleTrack">Activate Tempo Track</menuitem>
+				<menuseparator/>
+				<!-- docs/features/tempo-detection.md -->
+				<menuitem command="tempo.detection">Tempo Detection...</menuitem>
+				<menuseparator/>
+				<!-- docs/features/time-warp.md -->
+				<menuitem command="tempo.openProcessTempo">Process Tempo...</menuitem>
+				<menuitem command="tempo.openProcessBars">Process Bars...</menuitem>
+			</menu>
+		</menuitem>
+		<!-- The chord track (reference manual pp. 1336, 1342, docs/features/chord-track.md) -->
+		<menuitem id="chord-track-submenu">Chord Track
+			<menu>
+				<menuitem command="track.chordsToMidiSelected">Chords to MIDI</menuitem>
+				<menuitem command="track.createChordEventsSelected">Create Chord Events</menuitem>
 			</menu>
 		</menuitem>
 		<menuseparator/>
@@ -311,6 +353,22 @@
 		<menuitem command="track.removeEmpty">Remove Empty Tracks</menuitem>
 		<menuitem command="track.duplicateSelected">Duplicate Tracks</menuitem>
 		<menuseparator/>
+		<!-- Track versions of the selected tracks (reference manual pp. 230-237, docs/features/track-versions.md);
+		     ui::TrackList fills the list with the first one's versions, which a click activates. -->
+		<menuitem id="track-versions-submenu">Track Versions
+			<menu>
+				<menuitem command="track.newVersion">New Version</menuitem>
+				<menuitem command="track.duplicateVersion">Duplicate Version</menuitem>
+				<menuitem command="track.deleteVersion">Delete Version</menuitem>
+				<menuseparator/>
+				<menuitem command="track.selectSameVersionId">Select Tracks with Same Version ID</menuitem>
+				<menuitem command="track.assignCommonVersionId">Assign Common Version ID</menuitem>
+				<menuseparator/>
+				<menuitem id="track-versions-list-submenu">Activate Version
+					<menu id="track-versions-list"/>
+				</menuitem>
+			</menu>
+		</menuitem>
 		<menuitem id="track-folding-submenu">Track Folding
 			<menu>
 				<menuitem command="track.toggleFolding">Toggle Selected Track</menuitem>
@@ -351,6 +409,27 @@
 		</menuitem>
 		<!-- Volume curves (reference manual p. 401, docs/features/volume-curves.md) -->
 		<menuitem command="audio.removeVolumeCurve">Remove Volume Curve</menuitem>
+		<menuseparator/>
+		<!-- The audio functions (reference manual pp. 603-609, docs/features/audio-functions.md) -->
+		<menuitem id="audio-advanced-submenu">Advanced
+			<menu>
+				<menuitem command="audio.detectSilence">Detect Silence...</menuitem>
+				<menuseparator/>
+				<!-- docs/features/time-warp.md -->
+				<menuitem command="audio.setDefinitionFromTempo">Set Definition from Tempo...</menuitem>
+				<menuitem command="audio.copyWarpMarkers">Copy Warp Markers from Selected Event</menuitem>
+				<menuitem command="audio.pasteWarpMarkers">Paste Warp Markers to Selected Events</menuitem>
+			</menu>
+		</menuitem>
+		<menuitem command="audio.spectrumAnalyzer">Spectrum Analyzer</menuitem>
+		<menuitem command="audio.statistics">Statistics</menuitem>
+		<!-- Warping (reference manual pp. 657-658, docs/features/warp.md) -->
+		<menuitem id="audio-realtime-submenu">Realtime Processing
+			<menu>
+				<menuitem command="audio.flatten">Flatten Realtime Processing</menuitem>
+				<menuitem command="audio.unstretch">Unstretch Audio</menuitem>
+			</menu>
+		</menuitem>
 	</menu>
 	<!-- MIDI functions (reference manual pp. 1118-1131, docs/features/midi-functions.md) -->
 	<menu id="midi-menu">
@@ -377,6 +456,8 @@
 				<menuseparator/>
 				<menuitem command="midi.functionsReverse">Reverse</menuitem>
 				<menuitem command="midi.functionsMirror">Mirror</menuitem>
+				<menuseparator/>
+				<menuitem command="midi.calculateTempo">Calculate Tempo from MIDI Events...</menuitem>
 			</menu>
 		</menuitem>
 	</menu>
@@ -416,6 +497,8 @@
 				<menuitem command="settings.set" parameters='{"key": "ui.folderData", "value": "hideWhenExpanded"}'>Hide Data When Expanded</menuitem>
 			</menu>
 		</menuitem>
+		<!-- The transpose track (reference manual p. 416, docs/features/transpose.md) -->
+		<menuitem command="transpose.assignRootKey">Set Root Key for Unassigned Events</menuitem>
 		<menuseparator/>
 		<menuitem command="track.autoFades">Auto Fades Settings...</menuitem>
 		<menuitem command="track.controlsSettings">Track Controls Settings...</menuitem>
@@ -477,6 +560,11 @@
 		<menuitem command="window.mixer4">Mixer 4</menuitem>
 		<menuseparator/>
 		<menuitem command="window.onScreenKeyboard">On-Screen Keyboard</menuitem>
+		<menuitem id="studio-more-options">More Options
+			<menu>
+				<menuitem command="window.midiDeviceManager">MIDI Device Manager</menuitem>
+			</menu>
+		</menuitem>
 		<menuitem command="window.studioSetup">Studio Setup...</menuitem>
 	</menu>
 
@@ -511,6 +599,21 @@
 		<menuseparator/>
 		<menuitem id="zoom-preset-add">Add...</menuitem>
 		<menuitem id="zoom-presets-organize">Organize...</menuitem>
+	</menu>
+	<menu id="root-key-menu">
+		<menuitem root-key="">-</menuitem>
+		<menuitem root-key="C">C</menuitem>
+		<menuitem root-key="C#">C#</menuitem>
+		<menuitem root-key="D">D</menuitem>
+		<menuitem root-key="D#">D#</menuitem>
+		<menuitem root-key="E">E</menuitem>
+		<menuitem root-key="F">F</menuitem>
+		<menuitem root-key="F#">F#</menuitem>
+		<menuitem root-key="G">G</menuitem>
+		<menuitem root-key="G#">G#</menuitem>
+		<menuitem root-key="A">A</menuitem>
+		<menuitem root-key="A#">A#</menuitem>
+		<menuitem root-key="B">B</menuitem>
 	</menu>
 	<menu id="snap-type-menu">
 		<menuitem snap-type="grid">Grid</menuitem>
@@ -554,6 +657,7 @@
 		<menuitem tool="zoom" title="Zoom"><svg class="icon" src="../icons/tool-zoom.svg"/></menuitem>
 		<menuitem tool="line" title="Line"><svg class="icon" src="../icons/tool-line.svg"/></menuitem>
 		<menuitem tool="play" title="Play"><svg class="icon" src="../icons/tool-audition.svg"/></menuitem>
+		<menuitem tool="timeWarp" title="Time Warp"><svg class="icon" src="../icons/tool-timewarp.svg"/></menuitem>
 	</menu>
 	<menu id="event-display-menu">
 		<menuitem id="tools-submenu">Tools
@@ -569,6 +673,16 @@
 				<menuitem tool="zoom">Zoom</menuitem>
 				<menuitem tool="line">Line</menuitem>
 				<menuitem tool="play">Play</menuitem>
+				<menuitem tool="timeWarp">Time Warp</menuitem>
+				<!-- The time warp tool's modes (reference manual p. 1465, docs/features/time-warp.md), here rather than
+				     behind a toolbar button, which the toolbar has no room for at 1024 pixels -->
+				<menuitem id="time-warp-submenu">Time Warp Mode
+					<menu id="time-warp-menu">
+						<menuitem warp-mode="warpGrid">Warp Grid</menuitem>
+						<menuitem warp-mode="warpGridFollow">Warp Grid (musical events follow)</menuitem>
+						<menuitem warp-mode="freeWarp">Free Warp</menuitem>
+					</menu>
+				</menuitem>
 			</menu>
 		</menuitem>
 		<menuseparator/>
@@ -598,5 +712,6 @@
 		<menuseparator/>
 		<menuitem id="suspend-auto-scroll">Suspend Auto-Scroll when Editing</menuitem>
 	</menu>
+	<menu id="track-visibility-configurations-menu"/>
 </body>
 </rml>

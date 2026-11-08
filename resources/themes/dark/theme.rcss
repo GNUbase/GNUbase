@@ -552,6 +552,20 @@
 		color: #151617;
 		background-color: #7896bd;
 	}
+	.transpose-row .transpose-event
+	{
+		color: #f3f4f5;
+		font-size: 11dp;
+		border-left-width: 1dp;
+		border-left-color: #5ea7b3;
+	}
+	.chord-row .chord-event
+	{
+		color: #f3f4f5;
+		font-size: 11dp;
+		border-left-width: 1dp;
+		border-left-color: #7896bd;
+	}
 	.event-display .range-selection
 	{
 		border-width: 1dp;
@@ -668,10 +682,15 @@
 	{
 		background-color: #151617;
 		color: #f3f4f5;
+		border-bottom-color: #151617;
 	}
 	.key-editor-key.selected
 	{
 		background-color: #5ea7b3;
+	}
+	.key-editor-key.black.selected
+	{
+		border-bottom-color: #5ea7b3;
 	}
 	.key-editor-grid
 	{
@@ -710,6 +729,16 @@
 	{
 		background-color: #5ea7b3;
 	}
+	.key-editor-key.drum-sound
+	{
+		background-color: #292c2f;
+		color: #f3f4f5;
+	}
+	.key-editor-key.drum-sound.selected
+	{
+		background-color: #5ea7b3;
+		color: #151617;
+	}
 	.controller-lane-area
 	{
 		background-color: #1e2022;
@@ -727,6 +756,21 @@
 	.controller-bar.inactive, .controller-step.inactive
 	{
 		background-color: #4c4e51;
+	}
+	.controller-lane[lane-kind=probability] .controller-bar, .controller-lane[lane-kind=velocityVariance] .controller-bar
+	{
+		background-color: transparent;
+		decorator: repeating-linear-gradient(to top, #49767e 0dp, #49767e 3dp, #49767e00 3dp, #49767e00 5dp);
+	}
+	.controller-lane[lane-kind=probability] .controller-bar.selected, .controller-lane[lane-kind=velocityVariance] .controller-bar.selected
+	{
+		background-color: transparent;
+		decorator: repeating-linear-gradient(to top, #7896bd 0dp, #7896bd 3dp, #7896bd00 3dp, #7896bd00 5dp);
+	}
+	.controller-lane[lane-kind=probability] .controller-bar.inactive, .controller-lane[lane-kind=velocityVariance] .controller-bar.inactive
+	{
+		background-color: transparent;
+		decorator: repeating-linear-gradient(to top, #4c4e51 0dp, #4c4e51 3dp, #4c4e5100 3dp, #4c4e5100 5dp);
 	}
 	.ape-display
 	{
@@ -814,6 +858,30 @@
 	.se-hitpoint.disabled .se-hitpoint-line, .se-hitpoint.disabled .se-hitpoint-handle
 	{
 		background-color: #b7bbc066;
+	}
+	.se-warp-marker-line, .se-warp-marker-handle
+	{
+		background-color: #7896bd;
+	}
+	.ds-display, .sa-graph
+	{
+		background-color: #1e2022;
+	}
+	.ds-section
+	{
+		background-color: #49767e;
+	}
+	.sa-bar
+	{
+		background-color: #5ea7b3;
+	}
+	.sa-bar.reference
+	{
+		background-color: #7896bd;
+	}
+	.st-header, .st-name
+	{
+		color: #b7bbc0;
 	}
 	.list-editor-header
 	{

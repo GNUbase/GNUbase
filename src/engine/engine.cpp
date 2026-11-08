@@ -6,6 +6,7 @@
 #include "engine/document/projectmodel.h"
 #include "engine/jobs/jobs.h"
 #include "engine/media/backup.h"
+#include "engine/midi/devices.h"
 #include "engine/peaks/peakcache.h"
 #include "engine/plugins/hostmanager.h"
 #include "engine/processors/builtin.h"
@@ -142,6 +143,7 @@ namespace gnubase::engine
 		m_audio = std::make_unique<AudioEngine>(
 			m_project->snapshots(), *m_settings, std::move(backends), std::move(midiBackends));
 		m_audio->registerCommands(*this);
+		midi::registerDeviceCommands(*this);
 		m_project->setSlotStatus([this](ObjectId slot) { return m_audio->slotStatus(slot); });
 		m_audio->setSlotDescriber(
 			[this](ObjectId slot) { return m_project->describeSlot(m_project->project(), slot); });
@@ -261,6 +263,19 @@ namespace gnubase::engine
 		return value;
 	}
 
+	void Engine::setSettings(CommandContext& context, const Json& values)
+	{
+		rt::assertNotRealtime("engine::Engine::setSettings");
+		const std::vector<std::string> keys = m_settings->set(values);
+		if (keys.empty())
+			return;
+		Json changed = Json::object();
+		for (const std::string& key : keys)
+			changed[key] = m_settings->value(key);
+		context.emit("settings.changed", {{"values", std::move(changed)}});
+		settingsChanged(context, keys);
+	}
+
 	void Engine::registerCommand(CommandInfo info, CommandHandler handler)
 	{
 		rt::assertNotRealtime("engine::Engine::registerCommand");
@@ -319,11 +334,6 @@ namespace gnubase::engine
 	plugins::HostManager& Engine::pluginHosts()
 	{
 		return *m_plugins;
-	}
-
-	Jobs& Engine::jobs()
-	{
-		return *m_jobs;
 	}
 
 	int64_t Engine::playbackPosition() const

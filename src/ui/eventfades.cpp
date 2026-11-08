@@ -61,6 +61,7 @@ namespace gnubase::ui
 			fades.crossfade.outLength = crossfade.at("outLength").get<int64_t>();
 		}
 		fades.offset = event.at("offset").get<int64_t>();
+		fades.clip = event.at("clip").get<uint64_t>();
 		fades.volume = event.at("volume").get<double>();
 		fades.curve = engine::volumeCurveFromJson(event.at("volumeCurve"));
 		m_fades[event.at("id").get<uint64_t>()] = fades;
@@ -73,6 +74,16 @@ namespace gnubase::ui
 			if (m_fades.count(id) != 0)
 				events.push_back(id);
 		return events;
+	}
+
+	std::vector<uint64_t> EventDisplay::selectedMidi() const
+	{
+		std::vector<uint64_t> parts;
+		for (const Shown& shown : m_events)
+			if ((m_laneTypes[shown.lane] == "midi" || m_laneTypes[shown.lane] == "instrument") &&
+				std::binary_search(m_selection.begin(), m_selection.end(), shown.id))
+				parts.push_back(shown.id);
+		return parts;
 	}
 
 	double EventDisplay::draggedFade(uint64_t event, bool in) const
@@ -270,6 +281,39 @@ namespace gnubase::ui
 				{
 					if (const std::vector<uint64_t> events = selectedAudio(); !events.empty())
 						openFadeDialog("fade-editor.rml", {{"events", ids(events)}});
+				}},
+			// The audio functions (#147, docs/features/audio-functions.md), whose dialogs work on the selected audio
+			// events as the fade dialog does.
+			{"audio.detectSilence",
+				[this]
+				{
+					if (const std::vector<uint64_t> events = selectedAudio(); !events.empty())
+						openFadeDialog("detect-silence.rml", {{"events", ids(events)}});
+				}},
+			{"audio.spectrumAnalyzer",
+				[this]
+				{
+					if (const std::vector<uint64_t> events = selectedAudio(); !events.empty())
+						openFadeDialog("spectrum-analyzer.rml", {{"events", ids(events)}});
+				}},
+			{"audio.statistics",
+				[this]
+				{
+					if (const std::vector<uint64_t> events = selectedAudio(); !events.empty())
+						openFadeDialog("statistics.rml", {{"events", ids(events)}});
+				}},
+			// Realtime Processing (#144, docs/features/warp.md): of the selected audio events.
+			{"audio.flatten",
+				[this]
+				{
+					if (const std::vector<uint64_t> events = selectedAudio(); !events.empty())
+						edit("event.flatten", {{"events", events}});
+				}},
+			{"audio.unstretch",
+				[this]
+				{
+					if (const std::vector<uint64_t> events = selectedAudio(); !events.empty())
+						edit("event.unstretch", {{"events", events}});
 				}},
 			// Crossfade (reference manual pp. 388-389): crossfades the selected events, or opens the crossfade editor
 			// for the crossfade that one of them has.

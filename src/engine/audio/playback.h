@@ -5,6 +5,7 @@
 #include "engine/audio/transport.h"
 #include "engine/audiofile/diskstream.h"
 #include "engine/document/document.h"
+#include "engine/dsp/warp.h"
 #include "engine/graph/processor.h"
 #include "platform/rt/snapshotpublisher.h"
 
@@ -90,6 +91,10 @@ namespace gnubase::engine
 			bool playing = false; // the audio thread reads the voices meanwhile; else they are cued exactly
 			TransportSettings settings;
 			time::Samples window = 0; // how far ahead along the playback path to cue
+			// Arranger mode (#167): the plan the transport plays and where it is in it; none plays no chain.
+			const ArrangerPlan* arranger = nullptr;
+			ArrangerState arrangerState;
+			time::Samples enter = -1; // where an entering arrangerState enters, if not at position: past the pre-roll
 		};
 
 		struct Track
@@ -104,8 +109,19 @@ namespace gnubase::engine
 		Playback(const Playback&) = delete;
 		Playback& operator=(const Playback&) = delete;
 
-		// Command thread: the tracks to play and their clips' files, streamed at the project's sample rate.
-		void setTracks(std::vector<Track> tracks, std::map<ObjectId, std::string> mediaPaths, double sampleRate);
+		// Media whose file plays warped (RenderMedia::warp).
+		struct Warp
+		{
+			std::vector<dsp::WarpPoint> map;
+			dsp::StretchPreset preset = dsp::StretchPreset::Quality;
+
+			bool operator==(const Warp& other) const { return map == other.map && preset == other.preset; }
+		};
+
+		// Command thread: the tracks to play and their clips' files, streamed at the project's sample rate, those in
+		// warps through dsp::WarpReader.
+		void setTracks(std::vector<Track> tracks, std::map<ObjectId, std::string> mediaPaths, double sampleRate,
+			std::map<ObjectId, Warp> warps = {});
 
 		// Any thread but the audio thread: positions voices for the playback path from cue.position on. Call it when
 		// playback is about to start, after a locate, and regularly while playing.
@@ -187,6 +203,7 @@ namespace gnubase::engine
 		mutable std::mutex m_mutex;
 		std::vector<Track> m_tracks;
 		std::map<ObjectId, std::string> m_mediaPaths;
+		std::map<ObjectId, Warp> m_warps;
 		std::set<ObjectId> m_unreadable; // media that failed to open, not retried until the tracks change
 		double m_sampleRate = 48000.0;
 		std::unique_ptr<DiskStreamer> m_streamer; // started with the first voice

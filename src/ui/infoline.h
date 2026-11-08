@@ -28,13 +28,14 @@ namespace gnubase::ui
 {
 	// Fills an element with the info line of the event display's selected events and parts: the first one's name,
 	// start, end and length in the ruler's time format (<textdisplay field="start">), an audio event's volume
-	// (<valuefield field="volume">) and mute and lock (toggle buttons), from event.get. The element has the class empty
-	// without a selection and multiple with more than one selected. Edits go to every selected event or part as one
-	// undo step (history.transaction): relative to each one's value, or with Ctrl (Cmd) held when Enter takes the
-	// value, the same value for all. With followMarkers it shows the markers selected on the marker tracks too, when
-	// their selection changed last (class markers): the first one's description, position and, for a cycle marker,
-	// end and length, which marker.set edits the same way. Use it on the UI thread; the display and the binding must
-	// outlive it.
+	// (<valuefield field="volume">) and mute and lock (toggle buttons), a MIDI part's transpose (with what the project
+	// root key adds, rootKeyTranspose, in brackets) and velocity, its root key (<select field="rootKey">) and Global
+	// Transpose (a toggle button, checked for Independent), from event.get. The element has the class empty without a
+	// selection and multiple with more than one selected. Edits go to every selected event or part as one undo step
+	// (history.transaction): relative to each one's value, or with Ctrl (Cmd) held when Enter takes the value, the same
+	// value for all. With followMarkers it shows the markers selected on the marker tracks too, when their selection
+	// changed last (class markers): the first one's description, position and, for a cycle marker, end and length,
+	// which marker.set edits the same way. Use it on the UI thread; the display and the binding must outlive it.
 	class InfoLine final : private Rml::EventListener
 	{
 	public:
@@ -60,6 +61,10 @@ namespace gnubase::ui
 		bool shows() const { return m_showsMarkers ? !m_markers.empty() : !m_events.empty(); }
 		// The selected event's volume in dB, from the display's project.
 		double volumeOf(uint64_t event) const;
+		// A MIDI part's transpose or velocity (key), from the display's project.
+		int partValue(uint64_t part, const char* key) const;
+		// A MIDI part as the display's project has it, or null.
+		const engine::Json* partOf(uint64_t part) const;
 
 		EventDisplay& m_display;
 		EngineBinding& m_binding;

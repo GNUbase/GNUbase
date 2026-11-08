@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/midi/quantizecommands.h"
 
+#include "engine/document/audioquantize.h"
 #include "engine/document/projectmodel.h"
 #include "engine/document/serialize.h"
 #include "engine/engine.h"
@@ -78,6 +79,27 @@ namespace gnubase::engine::midi
 					for (const QuantizePreset& preset : *list)
 						if (preset.name == name)
 							return &preset;
+				return nullptr;
+			}
+
+			// Whether the preset of that name has these settings.
+			bool has(const std::string& name, const QuantizeSettings& settings) const
+			{
+				const QuantizePreset* preset = find(name);
+				return preset != nullptr && midi::toJson(preset->settings) == midi::toJson(settings);
+			}
+
+			// The preset these settings are, for every client the same: preferred if it has them, else the first of
+			// the user's presets with them, else the factory preset; null for none.
+			Json shown(const QuantizeSettings& settings, const std::string& preferred) const
+			{
+				if (has(preferred, settings))
+					return preferred;
+				const Json json = midi::toJson(settings);
+				for (const auto* list : {&m_user, &factoryQuantizePresets()})
+					for (const QuantizePreset& preset : *list)
+						if (midi::toJson(preset.settings) == json)
+							return preset.name;
 				return nullptr;
 			}
 
@@ -336,9 +358,15 @@ namespace gnubase::engine::midi
 		std::vector<Target> targets(Project& project, const Json& parameters)
 		{
 			const bool onePart = parameters.contains("part");
-			require(onePart != parameters.contains("parts"), "give part or parts, not both; notes picks notes of part");
+			const bool audio = parameters.contains("events") || parameters.contains("audioParts");
+			require(
+				onePart || parameters.contains("parts") || audio, "give part or parts, or audio events or audioParts");
+			require(
+				!onePart || !parameters.contains("parts"), "give part or parts, not both; notes picks notes of part");
 			require(onePart || !parameters.contains("notes"), "notes needs part");
 			std::vector<Target> targets;
+			if (!onePart && !parameters.contains("parts"))
+				return targets;
 			const std::vector<ObjectId> parts = onePart ? std::vector<ObjectId>{parameters.at("part").get<ObjectId>()}
 														: parameters.at("parts").get<std::vector<ObjectId>>();
 			for (const ObjectId id : parts)
@@ -359,6 +387,87 @@ namespace gnubase::engine::midi
 				targets.push_back(std::move(target));
 			}
 			return targets;
+		}
+
+		// The audio events a command works on (#145): events, then those of audioParts.
+		std::vector<ObjectId> audioTargets(const Project& project, const Json& parameters)
+		{
+			std::vector<ObjectId> events;
+			const auto add = [&events](ObjectId id)
+			{
+				if (std::find(events.begin(), events.end(), id) == events.end())
+					events.push_back(id);
+			};
+			for (const Json& id : parameters.value("events", Json::array()))
+			{
+				const auto event = id.get<ObjectId>();
+				require(project.audioEvents.count(event) != 0, "no audio event " + std::to_string(event));
+				add(event);
+			}
+			for (const Json& id : parameters.value("audioParts", Json::array()))
+			{
+				const auto part = id.get<ObjectId>();
+				require(project.audioParts.count(part) != 0, "no audio part " + std::to_string(part));
+				for (const auto& [event, each] : project.audioEvents)
+					if (each.part == part)
+						add(event);
+			}
+			return events;
+		}
+
+		// Quantizes the target audio events' starts, or with warp quantizing their clips' warp markers, and adds them
+		// to the result.
+		void quantizeAudio(Project& project, CommandContext& context, const QuantizeGrid& grid, Json& result)
+		{
+			const std::vector<ObjectId> events = audioTargets(project, context.parameters());
+			Json moved = Json::array();
+			Json clips = Json::array();
+			if (grid.settings().warpQuantize)
+			{
+				for (const ObjectId clip : warpQuantize(project, events, grid))
+				{
+					clips.push_back(clip);
+					context.emit("clip.changed", {{"clip", toJson(project.clips.at(clip))}});
+				}
+			}
+			else
+			{
+				for (const ObjectId id : events)
+				{
+					AudioEvent& event = project.audioEvents.at(id);
+					if (!quantizeEventStart(project, event, grid))
+						continue;
+					moved.push_back(id);
+					context.emit("audioEvent.changed", {{"event", toJson(event)}});
+				}
+			}
+			result["events"] = std::move(moved);
+			result["clips"] = std::move(clips);
+		}
+
+		// Puts the target audio events back, and their clips' warp markers.
+		void resetAudio(Project& project, CommandContext& context, Json& result)
+		{
+			const std::vector<ObjectId> events = audioTargets(project, context.parameters());
+			Json moved = Json::array();
+			Json clips = Json::array();
+			for (const ObjectId id : events)
+			{
+				AudioEvent& event = project.audioEvents.at(id);
+				if (resetEventQuantize(event))
+				{
+					moved.push_back(id);
+					context.emit("audioEvent.changed", {{"event", toJson(event)}});
+				}
+				Clip& clip = project.clips.at(event.clip);
+				if (resetWarpQuantize(clip))
+				{
+					clips.push_back(clip.id);
+					context.emit("clip.changed", {{"clip", toJson(clip)}});
+				}
+			}
+			result["events"] = std::move(moved);
+			result["clips"] = std::move(clips);
 		}
 
 		using NoteFunction = std::function<bool(Note& note, const PartSpan& part)>;
@@ -404,9 +513,30 @@ namespace gnubase::engine::midi
 			return length.get<time::Ticks>();
 		}
 
-		Json settingsResult(const Project& project)
+		Json settingsResult(const Project& project, const PresetLibrary& presets)
 		{
-			return {{"settings", toJson(project.quantize)}, {"autoQuantize", project.autoQuantize}};
+			return {{"settings", toJson(project.quantize)},
+				{"preset", presets.shown(project.quantize, project.quantizePreset)},
+				{"autoQuantize", project.autoQuantize}};
+		}
+
+		// After a preset command changed presets, which can change the preset shown without changing the settings:
+		// forgets the preset remembered if it no longer has the project's settings, remembers the preset named
+		// remember if it has them and isn't the one shown anyway, and announces quantize.changed if the preset shown
+		// changed from before's. So the project, which saves the name, changes only when the preset shown does.
+		void presetsChanged(ProjectModel& model, const PresetLibrary& presets, const Json& before,
+			CommandContext& context, const std::string& remember = {})
+		{
+			const Project& project = model.project();
+			std::string name =
+				presets.has(project.quantizePreset, project.quantize) ? project.quantizePreset : std::string();
+			if (!remember.empty() && presets.has(remember, project.quantize) &&
+				presets.shown(project.quantize, name) != remember)
+				name = remember;
+			model.setQuantizePreset(std::move(name));
+			Json result = settingsResult(project, presets);
+			if (result != before)
+				context.emit("quantize.changed", std::move(result));
 		}
 	}
 
@@ -428,14 +558,35 @@ namespace gnubase::engine::midi
 		const Json presetResult = {
 			{"type", "object"}, {"properties", {{"preset", {{"type", "object"}}}}}, {"required", {"preset"}}};
 		const Json settingsResultSchema = {{"type", "object"},
-			{"properties", {{"settings", {{"type", "object"}}}, {"autoQuantize", {{"type", "boolean"}}}}},
-			{"required", {"settings", "autoQuantize"}}};
+			{"properties",
+				{{"settings", {{"type", "object"}}}, {"preset", {{"type", {"string", "null"}}}},
+					{"autoQuantize", {{"type", "boolean"}}}}},
+			{"required", {"settings", "preset", "autoQuantize"}}};
 
 		const Json targetProperties = {
 			{"part", idSchema}, {"notes", arraySchema(idSchema)}, {"parts", arraySchema(idSchema)}};
 		Json withSettings = targetProperties;
+		Json audioProperties = targetProperties;
+		audioProperties["events"] = arraySchema(idSchema);
+		audioProperties["audioParts"] = arraySchema(idSchema);
+		const Json audioResult = {{"type", "object"},
+			{"properties",
+				{{"notes", {{"type", "array"}}}, {"events", arraySchema(idSchema)}, {"clips", arraySchema(idSchema)}}},
+			{"required", {"notes", "events", "clips"}}};
+		const std::string audioText =
+			" Audio events (events, and every event of the audio parts in audioParts) move so that their snap points, "
+			"or without one their starts, move toward the grid in the same way (reference manual p. 369); with "
+			"settings.warpQuantize, their audio is quantized by time stretch instead (warp quantizing, p. 370): the "
+			"warp "
+			"markers inside each event (made of its clip's hitpoints that count if it has none there) move to the "
+			"grid, the one nearest to each grid position onto it and the others keeping their places relative to "
+			"those. Locked events stay. They too start from their original positions or markers unless soft. Returns "
+			"the notes and audio events that changed and the clips whose warp markers did.";
 		withSettings["preset"] = stringSchema;
 		withSettings["settings"] = settingsSchema;
+		Json audioSettings = withSettings;
+		audioSettings["events"] = arraySchema(idSchema);
+		audioSettings["audioParts"] = arraySchema(idSchema);
 		Json withLength = withSettings;
 		withLength["length"] = {{"type", {"string", "integer"}}};
 
@@ -454,14 +605,17 @@ namespace gnubase::engine::midi
 				"their lengths. " +
 					targetText + " " + originText +
 					" Grids are in project time and start again at every bar; notes don't move before their part's "
-					"start or to or past its end.",
-				objectSchema(withSettings), notesResult, false},
+					"start or to or past its end." +
+					audioText,
+				objectSchema(audioSettings), audioResult, false},
 			"Quantize",
 			[presets](Project& project, CommandContext& context)
 			{
 				const QuantizeGrid grid(settingsFor(project, *presets, context.parameters()), project.signatures);
-				return forNotes(project, context,
+				Json result = forNotes(project, context,
 					[&grid](Note& note, const PartSpan& part) { return quantizeStart(note, part, grid); });
+				quantizeAudio(project, context, grid, result);
+				return result;
 			});
 		model.addEdit(engine,
 			{"quantize.ends", 1,
@@ -496,10 +650,19 @@ namespace gnubase::engine::midi
 				"Puts quantized notes back to their timing before quantizing: starts, lengths and velocities. Notes "
 				"moved by other means since keep their timing, and velocities and lengths changed by other means stay. "
 				"Takes the notes of part (only notes, if given) or of "
-				"every part in parts and returns the notes that changed.",
-				objectSchema(targetProperties), notesResult, false},
-			"Reset quantize", [](Project& project, CommandContext& context)
-			{ return forNotes(project, context, [](Note& note, const PartSpan&) { return resetQuantize(note); }); });
+				"every part in parts and returns the notes that changed. Audio events (events, and those of the audio "
+				"parts in audioParts) go back to their positions before quantizing, and their clips to their warp "
+				"markers before warp quantizing, unless they were changed by other means since; returns those "
+				"events and clips too.",
+				objectSchema(audioProperties), audioResult, false},
+			"Reset quantize",
+			[](Project& project, CommandContext& context)
+			{
+				Json result =
+					forNotes(project, context, [](Note& note, const PartSpan&) { return resetQuantize(note); });
+				resetAudio(project, context, result);
+				return result;
+			});
 		model.addEdit(engine,
 			{"quantize.freeze", 1,
 				"Makes quantized notes' timing permanent: quantizing starts from it from now on, and quantize.reset no "
@@ -512,9 +675,13 @@ namespace gnubase::engine::midi
 
 		engine.registerCommand(
 			{"quantize.get", 1,
-				"The project's quantize settings and whether auto quantize is on (see quantize.set for the settings).",
+				"The project's quantize settings (see quantize.set), the preset they are and whether auto quantize is "
+				"on. Among presets with equal settings, preset is the one last chosen with quantize.set, saved or "
+				"renamed while the settings are its own, else the first of the user's, else the factory preset; null "
+				"if no preset has the settings. quantize.changed announces the same whenever it changes. The project "
+				"saves it, so a preset command that changes it changes the project (see project.revision).",
 				objectSchema({}), settingsResultSchema, true},
-			[&model](CommandContext&) { return settingsResult(model.project()); });
+			[&model, presets](CommandContext&) { return settingsResult(model.project(), *presets); });
 		model.addEdit(engine,
 			{"quantize.set", 1,
 				"Changes the project's quantize settings: to preset's, if given, then changed by settings. Settings: "
@@ -529,7 +696,8 @@ namespace gnubase::engine::midi
 				"{length, points: [{position, velocity 0-1, length}]} quantizes to a groove instead of the grid, with "
 				"preQuantize (a note value), maxMove (ticks), velocityStrength, lengthStrength and origin (where it "
 				"starts repeating, in project ticks). autoQuantize is whether recording quantizes. Settings are not "
-				"undo steps; they are saved with the project.",
+				"undo steps; they are saved with the project, and so is the preset they are (see quantize.get). "
+				"Announces quantize.changed with the result.",
 				objectSchema(
 					{{"preset", stringSchema}, {"settings", settingsSchema}, {"autoQuantize", {{"type", "boolean"}}}}),
 				settingsResultSchema, false},
@@ -539,7 +707,12 @@ namespace gnubase::engine::midi
 				const Json& parameters = context.parameters();
 				project.quantize = settingsFor(project, *presets, parameters);
 				project.autoQuantize = parameters.value("autoQuantize", project.autoQuantize);
-				Json result = settingsResult(project);
+				// The preset chosen, as long as the settings are its own, shows among presets with equal settings.
+				if (parameters.contains("preset"))
+					project.quantizePreset = parameters.at("preset").get<std::string>();
+				if (!presets->has(project.quantizePreset, project.quantize))
+					project.quantizePreset.clear();
+				Json result = settingsResult(project, *presets);
 				context.emit("quantize.changed", result);
 				return result;
 			});
@@ -569,36 +742,46 @@ namespace gnubase::engine::midi
 			{"quantize.savePreset", 1,
 				"Saves the project's quantize settings, changed by settings, as a preset, replacing the user's preset "
 				"of that name. Factory presets can't be replaced. Presets belong to the user, not to the project: they "
-				"are saved in the settings folder.",
+				"are saved in the settings folder. A preset with the project's settings is the preset they are from "
+				"now on (see quantize.get); quantize.changed announces when that changes.",
 				objectSchema({{"name", stringSchema}, {"settings", settingsSchema}}, {"name"}), presetResult, false},
 			[presets, &model](CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
 				const QuantizePreset preset{parameters.at("name").get<std::string>(),
 					changedSettings(parameters.value("settings", Json::object()), model.project().quantize)};
+				const Json before = settingsResult(model.project(), *presets);
 				presets->save(preset);
 				presets->announce(context);
+				presetsChanged(model, *presets, before, context, preset.name);
 				return Json{{"preset", PresetLibrary::presetJson(preset, false)}};
 			});
 		engine.registerCommand(
-			{"quantize.renamePreset", 1, "Renames one of the user's quantize presets.",
+			{"quantize.renamePreset", 1,
+				"Renames one of the user's quantize presets. A preset with the project's settings is the preset they "
+				"are from now on (see quantize.get); quantize.changed announces when that changes.",
 				objectSchema({{"name", stringSchema}, {"newName", stringSchema}}, {"name", "newName"}), Json::object(),
 				false},
-			[presets](CommandContext& context)
+			[presets, &model](CommandContext& context)
 			{
-				presets->rename(context.parameters().at("name").get<std::string>(),
-					context.parameters().at("newName").get<std::string>());
+				const std::string newName = context.parameters().at("newName").get<std::string>();
+				const Json before = settingsResult(model.project(), *presets);
+				presets->rename(context.parameters().at("name").get<std::string>(), newName);
 				presets->announce(context);
+				presetsChanged(model, *presets, before, context, newName);
 				return Json::object();
 			});
 		engine.registerCommand({"quantize.removePreset", 1,
 								   "Removes one of the user's quantize presets, and the presets of that name "
-								   "that this GNUbase can't read (see quantize.presets).",
+								   "that this GNUbase can't read (see quantize.presets). quantize.changed announces "
+								   "when another preset is the one the project's settings are (see quantize.get).",
 								   objectSchema({{"name", stringSchema}}, {"name"}), Json::object(), false},
-			[presets](CommandContext& context)
+			[presets, &model](CommandContext& context)
 			{
+				const Json before = settingsResult(model.project(), *presets);
 				presets->remove(context.parameters().at("name").get<std::string>());
 				presets->announce(context);
+				presetsChanged(model, *presets, before, context);
 				return Json::object();
 			});
 		engine.registerCommand(
@@ -606,7 +789,9 @@ namespace gnubase::engine::midi
 				"Makes a groove preset from a MIDI part's rhythm: a groove position at every note start, with the "
 				"highest velocity and the longest length of the notes there. The groove is length ticks long, by "
 				"default the part's length, and the preset is named name, by default after the part. The groove's "
-				"origin is the part's start, so it repeats in phase with the part.",
+				"origin is the part's start, so it repeats in phase with the part. Like quantize.savePreset, it "
+				"replaces the user's preset of that name, and quantize.changed announces when another preset is the "
+				"one the project's settings are (see quantize.get).",
 				objectSchema({{"part", idSchema}, {"name", stringSchema}, {"length", idSchema}}, {"part"}),
 				presetResult, false},
 			[presets, &model](CommandContext& context)
@@ -626,8 +811,10 @@ namespace gnubase::engine::midi
 				preset.settings.origin = span.start;
 				require(!preset.settings.groove->points.empty(),
 					"MIDI part " + std::to_string(id) + " has no notes to make a groove from");
+				const Json before = settingsResult(project, *presets);
 				presets->save(preset);
 				presets->announce(context);
+				presetsChanged(model, *presets, before, context, preset.name);
 				return Json{{"preset", PresetLibrary::presetJson(preset, false)}};
 			});
 	}
