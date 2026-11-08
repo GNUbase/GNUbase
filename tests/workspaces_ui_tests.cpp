@@ -24,8 +24,15 @@ using engine::Json;
 
 namespace
 {
-	const ui::Display g_left{1, "Left", {0, 0, 1920, 1080}, {0, 0, 1920, 1040}, 1.0F};
-	const ui::Display g_right{2, "Right", {1920, 0, 2560, 1440}, {1920, 0, 2560, 1400}, 1.0F};
+	ui::Display leftMonitor()
+	{
+		return {1, "Left", {0, 0, 1920, 1080}, {0, 0, 1920, 1040}, 1.0F};
+	}
+
+	ui::Display rightMonitor()
+	{
+		return {2, "Right", {1920, 0, 2560, 1440}, {1920, 0, 2560, 1400}, 1.0F};
+	}
 
 	bool inside(const ui::Rect& window, const ui::Rect& area)
 	{
@@ -83,7 +90,7 @@ namespace
 
 		engine::Engine engine;
 		engine::Client client{engine};
-		test::FakeUi ui{{g_left, g_right}};
+		test::FakeUi ui{{leftMonitor(), rightMonitor()}};
 		ui::WindowId main = ui.shell.open({}).id();
 		ui::WindowId tool = 0;
 		ui::EngineBinding binding{engine, [this] { ui.shell.wake(); }};
@@ -132,23 +139,23 @@ TEST_CASE("a workspace keeps the open windows with their bounds and monitors, an
 	}
 	SECTION("without the right monitor, the tool window opens on the left one, fully visible")
 	{
-		f.ui.windows.setDisplays({g_left});
+		f.ui.windows.setDisplays({leftMonitor()});
 		f.call("workspace.activate", {{"type", "global"}, {"name", "Two Monitors"}});
 		REQUIRE(f.waitUntil([&f] { return f.tool != 0 && f.ui.shell.find(f.tool) != nullptr; }));
-		CHECK(inside(f.ui.shell.bounds(f.tool), g_left.usable));
+		CHECK(inside(f.ui.shell.bounds(f.tool), leftMonitor().usable));
 		CHECK(f.ui.shell.bounds(f.tool).size() == ui::Size{900, 700});
 		CHECK(f.ui.shell.bounds(f.main) == ui::Rect{100, 50, 1200, 800});
 	}
 	SECTION("a window that is open closes when the workspace doesn't have it open")
 	{
-		f.ui.windows.setDisplays({g_left});
+		f.ui.windows.setDisplays({leftMonitor()});
 		f.call("workspace.add", {{"name", "Closed"}, {"type", "project"}});
 		f.call("workspace.activate", {{"type", "global"}, {"name", "Two Monitors"}});
 		REQUIRE(f.waitUntil([&f] { return f.tool != 0; }));
 		f.call("workspace.activate", {{"type", "project"}, {"name", "Closed"}});
 		REQUIRE(f.waitUntil([&f] { return f.tool == 0; }));
 		// The project window was on the right monitor, which is gone: it comes onto the left one, fully visible.
-		CHECK(inside(f.ui.shell.bounds(f.main), g_left.usable));
+		CHECK(inside(f.ui.shell.bounds(f.main), leftMonitor().usable));
 	}
 }
 
@@ -187,10 +194,13 @@ namespace
 		{
 			const Json& attributes = item.at("attributes");
 			const std::string type = attributes.at("workspace-type").get<std::string>();
-			result.push_back((type.empty()              ? std::string("-")
-									 : type == "global" ? "G "
-														: "P ") +
-				attributes.at("workspace").get<std::string>() + (attributes.contains("checked") ? "*" : ""));
+			std::string text = "-";
+			if (type == "global")
+				text = "G ";
+			else if (type == "project")
+				text = "P ";
+			result.push_back(
+				text + attributes.at("workspace").get<std::string>() + (attributes.contains("checked") ? "*" : ""));
 		}
 		return result;
 	}
@@ -289,4 +299,50 @@ TEST_CASE("the Workspaces menu adds, updates and recalls workspaces, and the org
 	click(app, "#workspaces-delete");
 	REQUIRE(app.waitUntil([&] { return names("project").empty(); }));
 	click(app, "#workspaces-close");
+}
+
+TEST_CASE("the Windows dialog lists the open windows, activates and closes them", "[ui]")
+{
+	test::UiApp app({1000, 700});
+	app.appUi().showProject();
+	REQUIRE(app.appUi().toggleMarkers() != nullptr);
+	REQUIRE(app.appUi().toggleTempoEditor() != nullptr);
+	const ui::WindowId markers = app.appUi().markersWindow();
+	// In the project window, also after another window came to the front.
+	const auto press = [&app](const std::string& selector)
+	{
+		app.ui().click(app.main().id(), {selector, 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+		app.shell().step(std::chrono::milliseconds(0));
+	};
+
+	// Window > Windows
+	click(app, "#menu-bar button[menu=window-menu]");
+	click(app, "#window-menu menuitem[command=window.windows]");
+	REQUIRE(app.waitUntil([&app] { return elements(app, "#windows-list listitem", app.main().id()).size() == 3; }));
+	std::vector<std::string> titles;
+	for (const Json& item : elements(app, "#windows-list listitem", app.main().id()))
+		titles.push_back(item.at("text").get<std::string>());
+	CHECK(titles == std::vector<std::string>{"Project", "Markers", "Tempo Track"});
+
+	// The selected window: activated, then closed.
+	press("#windows-list listitem[window=\"" + std::to_string(markers) + "\"]");
+	press("#windows-activate");
+	press("#windows-close");
+	REQUIRE(app.waitUntil([&app] { return app.appUi().markers() == nullptr; }));
+	CHECK(app.appUi().tempoEditor() != nullptr);
+	REQUIRE(app.waitUntil([&app] { return elements(app, "#windows-list listitem", app.main().id()).size() == 2; }));
+
+	// All closes every window but the project window.
+	press("#windows-mode"); // its options aren't in the DOM that the UI tools see
+	app.ui().key(app.main().id(), "Down");
+	press("#windows-mode");
+	REQUIRE(app.waitUntil(
+		[&app]
+		{
+			return elements(app, "#windows-mode", app.main().id()).at(0).at("attributes").value("value", "") == "all";
+		}));
+	press("#windows-close");
+	REQUIRE(app.waitUntil([&app] { return app.appUi().tempoEditor() == nullptr; }));
+	CHECK(app.shell().windows().size() == 1);
+	press("#windows-ok");
 }

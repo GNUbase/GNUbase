@@ -42,8 +42,9 @@ project window.
 | MIDI | Transpose Setup...; Merge MIDI in Loop..., Dissolve Part..., Bounce MIDI; Functions (Legato, Fixed Lengths, Fixed Velocity, Pedals to Note Length; Delete Overlaps (mono), Delete Overlaps (poly), Delete Doubles, Delete Controllers, Delete Continuous Controllers, Restrict Polyphony..., Thin Out Data; Reverse, Mirror, [midi-functions.md](midi-functions.md); Calculate Tempo from MIDI Events... `midi.calculateTempo`, [tempo-detection.md](tempo-detection.md)) |
 | Studio | Mixer, Mixer in Project Window, Mixer 2, 3 and 4 (`window.mixer`, `window.lowerZoneMixer`, `window.mixer2` to `window.mixer4`, [mixer-window.md](mixer-window.md)), On-Screen Keyboard (`window.onScreenKeyboard`, Alt+K, [onscreen-keyboard.md](onscreen-keyboard.md)), More Options > MIDI Device Manager (`window.midiDeviceManager`, [midi-devices.md](midi-devices.md)), Studio Setup... (`window.studioSetup`, [studio-setup.md](studio-setup.md)) |
 | Workspaces | Add Workspace... (`window.addWorkspace`), Update Workspace (`workspace.update`), Organize... (`window.workspaces`), No Workspace and the workspaces ([workspaces.md](workspaces.md)) |
+| Window | Windows... (`window.windows`, [workspaces.md](workspaces.md)) |
 
-The other menus of the reference (Window, Help) and their items come with the
+The other menus of the reference (Help) and their items come with the
 features they run. Quitting waits for the shell's next step, since it closes every window.
 
 ## Not yet

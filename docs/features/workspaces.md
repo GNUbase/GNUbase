@@ -66,14 +66,20 @@ returns.
 - **Workspaces Organizer** (`resources/ui/workspaces.rml`, p. 1578): the global and the project workspaces in two
   lists; the name field renames the selected one with Return, Add opens the New Workspace dialog, Delete, Move Up and
   Move Down. It follows `workspace.changed`.
+- **Windows dialog** (Window > Windows..., `window.windows`, `resources/ui/windows.rml`, pp. 1583–1584): GNUbase's
+  open windows by their documents' titles; Mode chooses the selected window or all of them, and Activate (the selected
+  one), Minimize, Restore and Close Windows act on them through the UI tools (`ui_window`, `ui_close`; Lua
+  `gnubase.ui.window`, `gnubase.ui.close`), which MCP clients use the same way. Close Windows with All closes every
+  window but the project window. `ui_window` minimizes and restores through the window system
+  (`WindowSystem::minimize`, `restore`).
 
 ## Not yet
 
 Key commands for the workspaces (the Workspace category of the key commands dialog, and the organizer's key column);
 dragging workspaces in the organizer and renaming with a double click; locking workspaces; Open Projects in Last Used
 View (p. 1609) and the view of external projects, which come with the preferences' General page; the editors'
-windows opening from a workspace, which follow what the engine's editor views show; and the Windows dialog (p. 1583),
-which needs minimizing and restoring windows in the window system.
+windows opening from a workspace, which follow what the engine's editor views show; and the Windows dialog's Cascaded
+mode, which acts on a window's associated windows, and Reset Layout.
 
 ## Checks
 
@@ -85,4 +91,6 @@ which needs minimizing and restoring windows in the window system.
   and recalled where they were with both monitors, or without the right one fully visible on the left; in the app, the
   Workspaces menu with No Workspace and Update Workspace disabled, workspaces added through the New Workspace dialog,
   the mixer window and the lower zone recalled from the menu with the active one checked, Update Workspace, and the
-  organizer renaming with Return, moving and deleting.
+  organizer renaming with Return, moving and deleting; the Windows dialog listing the project, markers and tempo track
+  windows, activating and closing the selected one, and closing all but the project window.
+- `tests/uitools_tests.cpp`: `ui_window` minimizing, restoring and activating a window, on the fake window system.

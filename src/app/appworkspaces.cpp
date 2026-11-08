@@ -69,6 +69,10 @@ namespace gnubase::app
 		m_keys.add({"window.workspaces",
 			"Opens the workspaces organizer, which renames, deletes and reorders the workspaces.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { openOnce(window, "workspaces.rml", m_workspaces); }});
+		// Window > Windows: the open windows, activated, minimized, restored or closed through the UI tools.
+		m_keys.add({"window.windows",
+			"Opens the Windows dialog, which activates, minimizes, restores and closes windows.",
+			[this](ui::Window& window, Rml::Element* /*zone*/) { openOnce(window, "windows.rml", m_windowsDialog); }});
 		// Edit > Profile Manager (docs/features/profiles.md), whose Import and Export ask the OS for the file.
 		m_keys.add({"window.profiles",
 			"Opens the profile manager, which adds, duplicates, renames, deletes, imports, exports and activates "

@@ -185,7 +185,7 @@ namespace gnubase::app
 
 	std::filesystem::path safeSettingsDirectory(const Options& options)
 	{
-		const std::filesystem::path folder = std::filesystem::u8path(options.settings);
+		std::filesystem::path folder = std::filesystem::u8path(options.settings);
 		if (options.settingsMode == SafeSettings::Disable)
 			return {};
 		if (options.settingsMode == SafeSettings::Delete && !folder.empty())

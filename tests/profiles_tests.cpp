@@ -32,7 +32,7 @@ namespace
 			client = std::make_unique<engine::Client>(*engine);
 		}
 
-		Json call(const std::string& command, Json parameters = Json::object())
+		Json call(const std::string& command, Json parameters = Json::object()) const
 		{
 			const engine::Result result = client->call(command, std::move(parameters));
 			INFO(command << " failed: " << result.error);
@@ -40,7 +40,7 @@ namespace
 			return result.value;
 		}
 
-		std::string fails(const std::string& command, Json parameters)
+		std::string fails(const std::string& command, Json parameters) const
 		{
 			const engine::Result result = client->call(command, std::move(parameters));
 			REQUIRE(!result.ok());

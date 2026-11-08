@@ -98,6 +98,7 @@
 		<button menu="transport-menu">Transport</button>
 		<button menu="studio-menu">Studio</button>
 		<button menu="workspaces-menu">Workspaces</button>
+		<button menu="window-menu">Window</button>
 	</menubar>
 	<div id="toolbar" class="toolbar" strip="toolbar">
 		<button id="combine-selection-tools" type="toggle" class="icon-only" title="Combine Selection Tools"><svg class="icon" src="../icons/tool-pointer.svg"/></button>
@@ -552,6 +553,10 @@
 		<menuitem command="window.addWorkspace">Add Workspace...</menuitem>
 		<menuitem command="workspace.update">Update Workspace</menuitem>
 		<menuitem command="window.workspaces">Organize...</menuitem>
+	</menu>
+
+	<menu id="window-menu">
+		<menuitem command="window.windows">Windows...</menuitem>
 	</menu>
 
 	<!-- Set up Window Layout (reference manual p. 65), and Show Menu Bar (p. 55) -->

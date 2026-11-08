@@ -66,6 +66,9 @@ on macOS and Linux.
 - `tests/profiles_tests.cpp`: profiles added with the factory settings, duplicated with the settings, names checked,
   activated at the next start while the others keep theirs, renamed, also the active one, which can't be deleted;
   exported and imported on another settings folder, under the file's name or another; none without a settings folder.
+- `tests/profiles_ui_tests.cpp`: the Profile Manager from the Edit menu, adding, duplicating, renaming and deleting
+  profiles through its name field and buttons, a taken name's error, and Activate Profile saying that the profile
+  becomes active at the next start.
 - `tests/safemode_tests.cpp`: the command line's options; the settings folder as it is, disabled into memory with the
   files left alone, or deleted, without the recent projects; third-party plugins deactivated, as `pluginhost.get`
   says, failing to load.

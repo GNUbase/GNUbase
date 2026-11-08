@@ -179,7 +179,7 @@ namespace gnubase::engine::settings
 			"the same.";
 		// Runs a change on the profiles in the folder, then reports them.
 		const auto command = [&engine, &listSchema, directory](const char* id, std::string description, Json parameters,
-								 std::function<void(const Json& parameters, State& state)> change)
+								 const std::function<void(const Json& parameters, State& state)>& change)
 		{
 			engine.registerCommand({id, 1, std::move(description), std::move(parameters), listSchema, false},
 				[directory, change](CommandContext& context)

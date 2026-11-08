@@ -59,10 +59,17 @@ namespace
 		return {{"type", type}, {"name", name}};
 	}
 
-	const Json g_mixing = {{"windows",
-		{{"project", {{"bounds", {{"x", 10}, {"y", 20}, {"width", 800}, {"height", 600}}}, {"monitor", "Left"}}},
-			{"mixer1", {{"open", true}, {"bounds", {{"x", 1930}, {"y", 0}, {"width", 900}, {"height", 500}}}}}}}};
-	const Json g_editing = {{"windows", {{"project", {{"zones", {{"lower", {{"visible", true}}}}}}}}}};
+	Json mixingLayout()
+	{
+		return {{"windows",
+			{{"project", {{"bounds", {{"x", 10}, {"y", 20}, {"width", 800}, {"height", 600}}}, {"monitor", "Left"}}},
+				{"mixer1", {{"open", true}, {"bounds", {{"x", 1930}, {"y", 0}, {"width", 900}, {"height", 500}}}}}}}};
+	}
+
+	Json editingLayout()
+	{
+		return {{"windows", {{"project", {{"zones", {{"lower", {{"visible", true}}}}}}}}}};
+	}
 }
 
 TEST_CASE("workspaces keep window layouts, global ones in ui.workspaces and project ones in the project", "[unit]")
@@ -81,19 +88,19 @@ TEST_CASE("workspaces keep window layouts, global ones in ui.workspaces and proj
 		Json{{"global", Json::array()}, {"project", Json::array()}, {"active", activeIs("", "")}});
 
 	// Add Workspace takes the layout as it is now and makes the workspace the active one.
-	f.setLayout(g_mixing);
+	f.setLayout(mixingLayout());
 	const Json added = f.call("workspace.add", {{"name", "Mixing"}, {"type", "global"}});
-	CHECK(added.at("global") == Json{{{"name", "Mixing"}, {"layout", g_mixing}}});
+	CHECK(added.at("global") == Json{{{"name", "Mixing"}, {"layout", mixingLayout()}}});
 	CHECK(added.at("active") == activeIs("global", "Mixing"));
 	CHECK(f.call("settings.get", {{"key", "ui.workspaces"}}).at("value") == added.at("global"));
-	f.setLayout(g_editing);
+	f.setLayout(editingLayout());
 	f.call("workspace.add", {{"name", "Editing"}, {"type", "project"}});
 	CHECK(f.names("project") == std::vector<std::string>{"Editing"});
 	CHECK(f.active() == activeIs("project", "Editing"));
 	{
 		const std::scoped_lock lock(mutex);
 		REQUIRE(changes.size() == 2);
-		CHECK(changes[1].at("project").at(0).at("layout") == g_editing);
+		CHECK(changes[1].at("project").at(0).at("layout") == editingLayout());
 	}
 	// Names are unique within a type, not across them.
 	CHECK_THAT(f.fails("workspace.add", {{"name", "Mixing"}, {"type", "global"}}), ContainsSubstring("there is"));
@@ -103,10 +110,10 @@ TEST_CASE("workspaces keep window layouts, global ones in ui.workspaces and proj
 
 	// Activating one sets ui.layout to its layout.
 	f.call("workspace.activate", {{"type", "global"}, {"name", "Mixing"}});
-	CHECK(f.layout() == g_mixing);
+	CHECK(f.layout() == mixingLayout());
 	CHECK(f.active() == activeIs("global", "Mixing"));
 	f.call("workspace.activate", {{"type", "project"}, {"name", "Editing"}});
-	CHECK(f.layout() == g_editing);
+	CHECK(f.layout() == editingLayout());
 	CHECK_THAT(f.fails("workspace.activate", {{"type", "project"}, {"name", "Nope"}}), ContainsSubstring("no project"));
 	CHECK(f.active() == activeIs("project", "Editing"));
 
@@ -147,7 +154,7 @@ TEST_CASE("project workspaces are saved with the project, but aren't undo steps"
 {
 	Fixture f;
 	f.call("track.add", {{"type", "audio"}});
-	f.setLayout(g_mixing);
+	f.setLayout(mixingLayout());
 	f.call("workspace.add", {{"name", "Mixing"}, {"type", "project"}});
 	f.call("workspace.add", {{"name", "Global"}, {"type", "global"}});
 
@@ -165,6 +172,6 @@ TEST_CASE("project workspaces are saved with the project, but aren't undo steps"
 	CHECK(f.active() == activeIs("", ""));
 	CHECK(f.names("global") == std::vector<std::string>{"Global"}); // for every project
 	f.call("project.load", {{"path", file}});
-	CHECK(f.call("workspace.get").at("project") == Json{{{"name", "Mixing"}, {"layout", g_mixing}}});
+	CHECK(f.call("workspace.get").at("project") == Json{{{"name", "Mixing"}, {"layout", mixingLayout()}}});
 	CHECK(f.active() == activeIs("project", "Mixing"));
 }

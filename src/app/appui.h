@@ -367,5 +367,6 @@ namespace gnubase::app
 		std::unique_ptr<ui::WorkspacesMenu> m_workspacesMenu; // the project window's Workspaces menu
 		Rml::ObserverPtr<Rml::Element> m_workspaces;          // the open workspaces organizer's document
 		Rml::ObserverPtr<Rml::Element> m_profiles;            // the open profile manager's document
+		Rml::ObserverPtr<Rml::Element> m_windowsDialog;       // the open Windows dialog's document
 	};
 }

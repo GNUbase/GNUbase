@@ -102,6 +102,9 @@ namespace gnubase::ui
 		// Brings the window in front of the others with the keyboard focus, restoring it if it is minimized
 		// (WindowSystem::raise).
 		void raise(WindowId id);
+		// Minimizes the window, and restores it if it is minimized (WindowSystem::minimize, restore).
+		void minimize(WindowId id);
+		void restore(WindowId id);
 
 		// Runs handler when the user asks to close a window other than the main window, before the shell closes it,
 		// e.g. to dock the panel it shows again (ui/docking.h). The handler may close the window itself.

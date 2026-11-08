@@ -1036,7 +1036,7 @@ namespace gnubase::engine
 		Json list = Json::array();
 		for (const Workspace& workspace : workspaces.workspaces)
 		{
-			Json layout = Json::parse(workspace.layout, nullptr, false);
+			const Json layout = Json::parse(workspace.layout, nullptr, false);
 			list.push_back({{"name", workspace.name}, {"layout", layout.is_object() ? layout : Json::object()}});
 		}
 		return {{"workspaces", list}, {"active", {{"type", workspaces.activeType}, {"name", workspaces.active}}}};
