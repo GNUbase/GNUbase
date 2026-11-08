@@ -3,6 +3,8 @@
 
 #include "engine/document/rendersnapshot.h"
 #include "engine/graph/processor.h"
+#include "engine/midi/effects.h"
+#include "engine/processors/midieffects.h"
 #include "platform/rt/snapshotpublisher.h"
 
 #include <array>
@@ -10,6 +12,7 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace gnubase::engine
@@ -47,6 +50,14 @@ namespace gnubase::engine
 	// part in parts) and MIDI parts (sorted by start).
 	ChaseTrack makeChaseTrack(const std::vector<RenderController>& controllers, const std::vector<RenderPart>& parts);
 
+	// A MIDI effect a track's sequencer runs (MidiSequence::effects).
+	struct RunningEffect
+	{
+		std::shared_ptr<processors::MidiEffect> effect;
+		std::vector<double> parameters; // by id; the effect gets them when the sequence comes in
+		uint64_t serial = 0;            // the instance's: another instance has another one
+	};
+
 	// What a MIDI or instrument track plays, in the project's samples.
 	struct MidiSequence
 	{
@@ -59,6 +70,12 @@ namespace gnubase::engine
 										  // start
 		std::vector<ChaseLane> noteLanes; // filled in by setSequence: runs of noteOrder, by channel and pitch
 		midi::Modifiers modifiers;        // for the notes played into the track (input); notes has them applied
+		midi::EffectRack inserts;         // the track's MIDI inserts and sends (docs/features/midi-effects.md)
+		midi::EffectRack sends;
+		// Filled in by setSequence: the inserts that play, in order, then the sends that play.
+		std::vector<RunningEffect> effects;
+		size_t insertCount = 0;
+		uint64_t serial = 0; // filled in by setSequence: counts the sequences it was given
 	};
 
 	// Which events a jump chases (the midi.chase* user settings): the controller events in effect where playback
@@ -88,6 +105,12 @@ namespace gnubase::engine
 	// controller events alone, up to and including those at the cursor. A chase takes a binary search per kind of
 	// event.
 	//
+	// The track's own events, those of its input and of its parts, go through its MIDI inserts in order, each effect
+	// playing what the one before it played, and each MIDI send plays its effect on them beside that, before or after
+	// the inserts. When the effects that play change (one added, removed, replaced, switched off or bypassed), it ends
+	// the notes it sounds at the next block, those the effects played too, so that none hangs: the effects that leave
+	// can't end theirs, and those that arrive didn't see the note-ons.
+	//
 	// When the block's event buffer is full, the sequencer skips the rest of the segment: notes that should have
 	// ended in it end at the start of the next block that has room, notes that should have started don't play, and
 	// the rest of a chase follows in the next blocks, the notes that sound at their position.
@@ -100,7 +123,8 @@ namespace gnubase::engine
 
 		MidiSequencer();
 
-		// Command thread: what to play from the next block on. Indexes the notes for chasing.
+		// Command thread: what to play from the next block on. Indexes the notes for chasing, and makes the MIDI
+		// effects its slots hold, keeping those that play in the same slot as before.
 		void setSequence(std::unique_ptr<MidiSequence> sequence);
 
 		// Any thread: what jumps chase from the next block on. Nothing until set.
@@ -115,9 +139,12 @@ namespace gnubase::engine
 		const uint16_t* soundingBegin() const noexcept { return m_sounding.data(); }
 		const uint16_t* soundingEnd() const noexcept { return m_sounding.data() + m_soundingCount; }
 
-		// Audio thread: whether the note sounds, from the track's parts or held through its input (a note-on came in
-		// and no note-off yet; a stop ends those too).
-		bool holds(uint16_t index) const noexcept { return m_inputHeld[index] || sounds(index); }
+		// Audio thread: whether the note sounds, from the track's parts, held through its input (a note-on came in
+		// and no note-off yet; a stop ends those too) or played by its MIDI effects.
+		bool holds(uint16_t index) const noexcept
+		{
+			return m_inputHeld[index] || m_effectsHeld[index] || sounds(index);
+		}
 
 		// Audio thread: forgets the notes it holds without ending them, after the instrument they sounded on ended
 		// them (InstrumentChannel::releaseNotesOf).
@@ -125,6 +152,7 @@ namespace gnubase::engine
 		{
 			m_soundingCount = 0;
 			m_inputHeld.fill(false);
+			m_effectsHeld.fill(false);
 		}
 
 		// Audio thread, before the first block of a graph, after its releases: the serial of the instrument channel its
@@ -137,6 +165,7 @@ namespace gnubase::engine
 			if (instrument == m_instrument)
 				return;
 			m_inputHeld.fill(false);
+			m_effectsHeld.fill(false);
 			m_instrument = instrument;
 		}
 
@@ -149,7 +178,19 @@ namespace gnubase::engine
 		// after the modifiers changed. The audio engine fills them before the graph processes a block.
 		graph::EventBuffer& input() noexcept { return m_input; }
 
+	protected:
+		void prepare(double sampleRate, uint32_t maxFrames) override;
+
 	private:
+		// The track's own events: its input's and, by the transport, its parts'.
+		void playOwn(
+			const MidiSequence& sequence, const graph::ProcessContext& context, graph::EventBuffer& out) noexcept;
+		// Runs the effects on the events in m_own and adds what they play to out.
+		void runEffects(
+			const MidiSequence& sequence, const graph::ProcessContext& context, graph::EventBuffer& out) noexcept;
+		// When the sequence is new: gives the effects their parameters and, if other effects play, ends every note it
+		// sounds.
+		void takeEffects(const MidiSequence& sequence, graph::EventBuffer& out) noexcept;
 		// An event of its input as the modifiers play it; false if left out. A second note-on for a held key whose
 		// note goes elsewhere this time sets ends to where the first one went, which still sounds: that note ends
 		// first, so that no note hangs.
@@ -205,6 +246,27 @@ namespace gnubase::engine
 		std::array<bool, g_notes> m_inputDown{}; // the keys of its input, as channel * 128 + pitch, that are held
 		uint64_t m_random = 0;                   // the random modifiers' seed for the next note of its input
 		uint64_t m_instrument = 0;               // playOn: where its notes went in the graph that runs
+
+		// Command thread: the effect in each slot, the inserts' then the sends', while it plays.
+		struct SlotEffect
+		{
+			std::string id;
+			std::shared_ptr<processors::MidiEffect> effect;
+			uint64_t serial = 0;
+		};
+		std::array<SlotEffect, 2 * midi::g_effectSlots> m_slots;
+		uint64_t m_effectSerial = 0;   // the last RunningEffect::serial given
+		uint64_t m_sequenceSerial = 0; // the last MidiSequence::serial given
+		double m_sampleRate = 0.0;     // prepare's, for new effects; 0: not prepared yet
+		uint32_t m_maxFrames = 0;
+		// Audio thread: allocated by setSequence before the first sequence with effects.
+		graph::EventBuffer m_own;    // the track's own events, for the effects
+		graph::EventBuffer m_chainA; // what the effects play, in turns
+		graph::EventBuffer m_chainB;
+		uint64_t m_serial = 0;                                   // the sequence it took last
+		std::array<uint64_t, 2 * midi::g_effectSlots> m_chain{}; // the serials of the effects that played
+		size_t m_chainCount = 0;                                 // how many
+		std::array<bool, g_notes> m_effectsHeld{}; // notes the effects played a note-on for and no note-off since
 	};
 
 	// An instrument track's channel: its own parts' events and those of the MIDI tracks routed to it, played by its

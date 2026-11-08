@@ -481,8 +481,13 @@ namespace gnubase::engine
 		// Audio tracks play their playlists.
 		std::vector<Playback::Track> tracks;
 		std::map<ObjectId, std::string> paths;
+		std::map<ObjectId, Playback::Warp> warps;
 		for (const RenderMedia& media : snapshot.media)
+		{
 			paths[media.id] = media.path;
+			if (!media.warp.empty())
+				warps[media.id] = {media.warp, media.preset};
+		}
 		m_mediaPaths = paths;
 		m_auditionTracks.clear();
 		for (const RenderChannel& channel : snapshot.channels)
@@ -497,7 +502,7 @@ namespace gnubase::engine
 			m_auditionTracks[channel.track] = {channel.id, playlist};
 			tracks.push_back({channel.id, std::move(playlist)});
 		}
-		m_playback.setTracks(std::move(tracks), std::move(paths), snapshot.sampleRate);
+		m_playback.setTracks(std::move(tracks), std::move(paths), snapshot.sampleRate, std::move(warps));
 		const uint64_t generation = ++m_generation;
 		attachMidi(snapshot, desc, generation);
 		attachSlots(snapshot, desc);
@@ -630,6 +635,8 @@ namespace gnubase::engine
 			sequence->notes = channel.notes;
 			sequence->controllers = channel.controllers;
 			sequence->modifiers = channel.modifiers;
+			sequence->inserts = channel.midiInserts;
+			sequence->sends = channel.midiSends;
 			// An instrument chases the controller events of the MIDI tracks routed to it with its own, so the latest of
 			// each kind wins, whichever track it is on.
 			if (routed.count(channel.id) == 0)
@@ -763,11 +770,12 @@ namespace gnubase::engine
 				if (send.preFader && !tap)
 				{
 					tap = std::make_shared<PreFaderTap>(channelCount(channel.format));
-					fader->tapPreFader(tap);
+					fader->tapPreFader(tap, m_mutePreSends);
 				}
 				while (desc.nodes[sendNode].kind != graph::NodeKind::Send)
 					++sendNode;
-				// Mute Pre-Send when Mute (reference manual p. 1623): the mute button mutes pre-fader sends too.
+				// Mute Pre-Send when Mute (reference manual p. 1623): the mute button mutes pre-fader sends too, and
+				// mute automation through the tap.
 				const float gain = send.preFader && channel.muted && m_mutePreSends ? 0.0f : send.gain;
 				desc.nodes[sendNode++].processor =
 					std::make_shared<SendStrip>(state, send.number, gain, send.preFader ? tap : nullptr);

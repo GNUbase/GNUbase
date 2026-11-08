@@ -257,4 +257,24 @@ TEST_CASE("Group and Effect Track to Selected Tracks route the selected tracks i
 	project = app.call("project.get");
 	CHECK(channel(first).at("output") == project.at("tracks").back().at("channel"));
 	CHECK(channel(second).at("output") == project.at("tracks").back().at("channel"));
+
+	// Count 2: the tracks play into the first of the new groups, and with Keep Dialog Open the next Add Track routes
+	// nothing either.
+	const size_t before = project.at("tracks").size();
+	app.keys().run("track.addGroupToSelected", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return open(app); }));
+	setCount(app, 2);
+	click(app, "#keep-open");
+	click(app, "#add-track-confirm");
+	REQUIRE(app.waitUntil([&] { return app.call("project.get").at("tracks").size() == before + 2; }));
+	const Json grouped = app.call("project.get").at("tracks").at(before).at("channel");
+	CHECK(channel(first).at("output") == grouped);
+	CHECK(channel(second).at("output") == grouped);
+	click(app, "#add-track-confirm");
+	REQUIRE(app.waitUntil([&] { return app.call("project.get").at("tracks").size() == before + 3; }));
+	CHECK(channel(first).at("output") == grouped);
+	CHECK(channel(second).at("output") == grouped);
+	CHECK(elements(app, "#add-track-message").at(0).value("text", "").empty());
+	click(app, "#add-track-cancel");
+	REQUIRE(app.waitUntil([&app] { return !open(app); }));
 }

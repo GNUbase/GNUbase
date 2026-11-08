@@ -7,6 +7,7 @@
 #include "engine/plugins/pluginslot.h"
 #include "engine/processors/builtin.h"
 #include "engine/processors/builtinplugin.h"
+#include "engine/processors/midieffects.h"
 #include "ipc/connection.h"
 #include "platform/log.h"
 #include "platform/rt/realtime.h"
@@ -641,6 +642,97 @@ TEST_CASE("MIDI injected into tracks and captured from instruments passes the RT
 	const RecordViolations record;
 	run("audio.render", {{"frames", 2400}});
 	run("track.add", {{"type", "midi"}}); // a new graph, swapped in between blocks
+	run("audio.render", {{"frames", 2400}});
+	run("midi.capture", Json::object());
+	CHECK(g_violations == 0);
+}
+
+TEST_CASE("every built-in MIDI effect processes notes, parameter changes and resets without allocating", "[unit]")
+{
+	using namespace gnubase::engine::graph;
+	using namespace gnubase::engine::processors;
+	constexpr uint32_t frames = 256;
+	EventBuffer eventsIn(256);
+	EventBuffer eventsOut(1024);
+	TransportBlock transport;
+	transport.tempo = 400.0; // a step every 3600 frames at 1/4, every 450 at 1/32
+
+	const RecordViolations record;
+	for (const BuiltinInfo& info : midiEffects())
+	{
+		const std::shared_ptr<MidiEffect> effect = createMidiEffect(info.id);
+		effect->prepareFor(48000.0, frames);
+		for (int block = 0; block < 40; ++block)
+		{
+			eventsIn.clear();
+			eventsOut.clear();
+			for (const ParameterInfo& parameter : info.parameters)
+			{
+				ProcessEvent event;
+				event.type = ProcessEvent::Type::Parameter;
+				event.offset = 5;
+				event.parameter = parameter.id;
+				event.parameterValue = block % 2 == 0 ? parameter.maximum : parameter.minimum;
+				eventsIn.add(event);
+			}
+			for (uint8_t key = 0; key < 24; ++key)
+			{
+				ProcessEvent note;
+				note.type = block % 4 < 2 ? ProcessEvent::Type::NoteOn : ProcessEvent::Type::NoteOff;
+				note.offset = 10U + key;
+				note.key = static_cast<uint8_t>(100 + key);
+				note.velocity = 0x8000;
+				eventsIn.add(note);
+			}
+			const ScopedRealtimeContext realtime;
+			effect->process({nullptr, 0, frames, eventsIn, eventsOut, transport});
+			if (block == 30)
+				(*effect).reset();
+		}
+	}
+	CHECK(g_violations == 0);
+}
+
+TEST_CASE("MIDI inserts and sends on tracks, and changing them while they play, pass the RT checker", "[unit]")
+{
+	using gnubase::engine::Json;
+	gnubase::engine::Engine engine;
+	gnubase::engine::Client client(engine);
+	const auto run = [&client](const std::string& command, const Json& parameters)
+	{
+		const gnubase::engine::Result result = client.call(command, parameters);
+		INFO(command << ": " << result.error);
+		REQUIRE(result.ok());
+		return result.value;
+	};
+	run("audio.setDevice", {{"blockSize", 64}, {"inputChannels", 0}, {"captureSeconds", 1}});
+	const Json instrument = run("track.add", {{"type", "instrument"}}).at("channel").at("id");
+	const Json midi = run("track.add", {{"type", "midi"}}).at("channel").at("id");
+	run("channel.set", {{"channel", instrument}, {"instrument", "testSynth"}});
+	run("channel.set", {{"channel", midi}, {"output", instrument}});
+	const Json effects = {{"slots",
+		{{{"effect", "chordGenerator"}}, {{"effect", "arpeggiator"}, {"parameters", {{"rate", "1/32"}}}},
+			{{"effect", "transformer"}, {"parameters", {{"value", 5}}}}}}};
+	for (const Json& channel : {instrument, midi})
+	{
+		run("channel.set", {{"channel", channel}, {"midiInserts", effects}});
+		run("channel.set", {{"channel", channel}, {"midiSends", effects}});
+	}
+	Json messages = Json::array();
+	for (int i = 0; i < 32; ++i)
+	{
+		messages.push_back({{"position", i * 70}, {"bytes", {0x90, 48 + i, 100}}});
+		messages.push_back({{"position", (i * 70) + 1500}, {"bytes", {0x80, 48 + i, 0}}});
+	}
+	run("midi.inject", {{"channel", instrument}, {"messages", messages}});
+	run("midi.inject", {{"channel", midi}, {"messages", messages}});
+
+	const RecordViolations record;
+	run("audio.render", {{"frames", 1200}});
+	// Other parameters, then other effects, swapped in between blocks.
+	run("channel.set", {{"channel", midi}, {"midiInserts", {{"slots", {{{"parameters", {{"chord", 3}}}}}}}}});
+	run("audio.render", {{"frames", 600}});
+	run("channel.set", {{"channel", instrument}, {"midiInserts", {{"slots", {{{"effect", ""}}}}}}});
 	run("audio.render", {{"frames", 2400}});
 	run("midi.capture", Json::object());
 	CHECK(g_violations == 0);

@@ -913,10 +913,10 @@ TEST_CASE("the tools are chosen by command, and the display names the one chosen
 	CHECK(f.display.tool() == ui::Tool::Erase);
 	f.run("tool.objectSelection");
 	f.run("tool.previous"); // around to the last
-	CHECK(f.display.tool() == ui::Tool::Play);
+	CHECK(f.display.tool() == ui::Tool::TimeWarp);
 	for (const char* id : {"tool.objectSelection", "tool.rangeSelection", "tool.split", "tool.glue", "tool.erase",
-			 "tool.zoom", "tool.mute", "tool.draw", "tool.line", "tool.play", "tool.next", "tool.previous",
-			 "tool.combineSelectionTools"})
+			 "tool.zoom", "tool.mute", "tool.draw", "tool.line", "tool.play", "tool.timeWarp", "tool.next",
+			 "tool.previous", "tool.combineSelectionTools"})
 		CHECK(f.display.actions().count(id) == 1);
 	f.run("tool.combineSelectionTools");
 	CHECK(f.display.combineSelectionTools());

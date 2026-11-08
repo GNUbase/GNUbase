@@ -26,13 +26,16 @@ project or undo.
 | Zoom (`zoom`) | Zooms in by 2 around the click; Alt zooms out | A rectangle whose stretch of time it zooms to | Undoes the zoom before it | pp. 101-103 |
 | Line (`line`) | | | | p. 873 |
 | Play (`play`) | Auditions the audio track from there until the mouse is released | Scrub mode: scrubs the track along | | pp. 252-253 |
+| Time Warp (`timeWarp`) | Free Warp: a warp marker on the audio event there | Warp Grid: the musical position pressed plays where it is released; Free Warp: a warp marker moved there ([time-warp.md](time-warp.md)) | | pp. 1465-1467 |
 
 - **Modes.** The object selection tool sizes normally or with sizing moves contents (`setSizingMovesContents`);
   sizing applies time stretch waits for time stretching (M11). The line tool has the modes line, parabola, sine,
   triangle and square (`setLineMode`, the root's attribute `line-mode`); it draws on automation tracks
   ([automation-tracks.md](automation-tracks.md)), as do the object selection, draw and erase tools there, and does
   nothing on parts and events. The play tool has the modes play and
-  scrub (`setPlayMode`, the root's attribute `play-mode`).
+  scrub (`setPlayMode`, the root's attribute `play-mode`). The time warp tool has the modes Warp Grid, Warp Grid
+  (musical events follow) and Free Warp (`setWarpMode`, the root's attribute `warp-mode`: `warpGrid`,
+  `warpGridFollow`, `freeWarp`).
 - **Draw** makes MIDI parts on MIDI and instrument tracks and audio parts on audio tracks
   ([audio-parts.md](audio-parts.md)). A drag's ends snap.
 - **Play** auditions the pressed audio track from where it presses until the mouse is released, past its channel
@@ -78,11 +81,13 @@ the info line).
 `resources/ui/project.rml` has a button per tool, `button[tool=<name>]`, checked for the tool chosen, and the toggle
 `#combine-selection-tools`. A button with `tool-menu` gets that menu as its `menu` once its tool is chosen, so the
 first click chooses the tool and the next opens its modes (p. 265): `#object-selection-menu` with the sizing modes and
-`#line-menu` with the line modes and `#play-menu` with the play modes, each with the mode checked.
+`#line-menu` with the line modes and `#play-menu` with the play modes, each with the mode checked. The time warp tool
+has no button, which the toolbar has no room for at 1024 pixels: the toolbox and the context menu's Tools choose it,
+and the Tools' Time Warp Mode, `#time-warp-menu`, chooses it with a mode.
 
 The commands are in `EventDisplay::actions()`, and `app::AppUi` binds the reference's keys (p. 1569) in the project
 window: `tool.objectSelection` 1, `tool.rangeSelection` 2, `tool.split` 3, `tool.glue` 4, `tool.erase` 5, `tool.zoom`
-6, `tool.mute` 7, `tool.draw` 8, `tool.play` 9, `tool.line` and `tool.comp` (no key), `tool.previous` F9, `tool.next` F10 (along the
+6, `tool.mute` 7, `tool.draw` 8, `tool.play` 9, `tool.line`, `tool.comp` and `tool.timeWarp` (no key), `tool.previous` F9, `tool.next` F10 (along the
 toolbar, around at the ends) and `tool.combineSelectionTools` Alt+Shift+1.
 
 A tool chosen with one of these commands, by its key or from Lua's `gnubase.ui.command`, shows its name for a

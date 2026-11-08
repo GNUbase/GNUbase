@@ -3,7 +3,7 @@
    the inspector beside the waveform display and the regions list. Code places the event's edges, the selection, the
    snap point and the region shown in dp from the display's left, and the overview's in percent of the clip. The root
    gets .empty without an event, .no-info, .no-overview and .no-regions for the parts the window layout hides, and
-   .edit-hitpoints while Edit Hitpoints is on; the tools and switches get .checked, regions in the list .selected,
+   .edit-hitpoints while Edit Hitpoints is on, .free-warp while Free Warp is; the tools and switches get .checked, regions in the list .selected,
    and what isn't there .off. The themes color
    them. */
 .sample-editor
@@ -155,6 +155,51 @@
 	top: 0;
 	width: 7dp;
 	height: 7dp;
+}
+
+/* The warp markers (docs/features/warp.md): a line each where its audio plays, with a handle at the bottom, like the
+   hitpoints. Code places each at its target frame. Presses between them reach the hitpoints and the display. */
+.se-warp-markers
+{
+	pointer-events: none;
+	position: absolute;
+	left: 0;
+	top: 0;
+	right: 0;
+	bottom: 0;
+}
+
+.se-warp-marker
+{
+	pointer-events: auto;
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	width: 7dp;
+	margin-left: -3dp;
+}
+
+.se-warp-marker-line
+{
+	position: absolute;
+	left: 3dp;
+	top: 0;
+	bottom: 0;
+	width: 1dp;
+}
+
+.se-warp-marker-handle
+{
+	position: absolute;
+	left: 0;
+	bottom: 0;
+	width: 7dp;
+	height: 7dp;
+}
+
+.sample-editor.free-warp .se-display
+{
+	cursor: resize;
 }
 
 .sample-editor.edit-hitpoints .se-display

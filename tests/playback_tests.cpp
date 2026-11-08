@@ -363,7 +363,7 @@ TEST_CASE("clips at another sample rate play converted to the project's rate", "
 		REQUIRE(output[i] == 0.0f);
 }
 
-TEST_CASE("real-time playback renders the same as offline", "[integration]")
+TEST_CASE("real-time playback renders the same as offline", "[integration][realtime]")
 {
 	const gnubase::test::TempDir dir;
 	const std::string path = writeRamp(dir, "stereo", 2, 48000);

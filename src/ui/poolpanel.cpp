@@ -114,6 +114,8 @@ namespace gnubase::ui
 		{
 			if (command == "media.locate")
 				return "Find Missing Files";
+			if (command == "media.prepareArchive")
+				return "Prepare Archive";
 			for (const Button& button : g_buttons)
 				if (command == button.command)
 					return button.label;
@@ -297,6 +299,14 @@ namespace gnubase::ui
 		else if (command == "media.conform")
 		{
 			text = "Conformed " + counted(value.at("media").size(), "file") + " to the project's sample rate.";
+		}
+		else if (command == "media.prepareArchive")
+		{
+			const size_t missing = value.at("missing").size();
+			text = "Copied " + counted(value.at("copied").size(), "file") + " into the project folder";
+			if (missing > 0)
+				text += "; " + counted(missing, "missing file") + (missing == 1 ? " wasn't" : " weren't") + " copied";
+			text += ".";
 		}
 		showMessage(text, false);
 	}

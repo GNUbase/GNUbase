@@ -511,8 +511,8 @@ TEST_CASE("Every item of MIDI > Functions runs its engine function with its sett
 	for (const Json& item : f.elements("#midi-functions-submenu menuitem"))
 		if (item.contains("attributes") && item.at("attributes").contains("command"))
 			listed.push_back(item.at("attributes").at("command").get<std::string>());
-	std::vector<std::string> expected = {
-		"midi.functionsVelocity", "midi.functionsDeleteNotes", "midi.functionsRestrictPolyphony"};
+	std::vector<std::string> expected = {"midi.functionsVelocity", "midi.functionsDeleteNotes",
+		"midi.functionsRestrictPolyphony", "midi.calculateTempo"};
 	for (const Item& item : items)
 		expected.emplace_back(item.command);
 	std::sort(listed.begin(), listed.end());
