@@ -176,9 +176,10 @@ jobs:
       - name: Test
         # The window tests need SDL_GPU. Every runner has it except the macOS Intel one, whose virtual GPU doesn't meet
         # SDL_GPU's requirements (docs/render-backend.md): there they are skipped, everywhere else a missing GPU fails.
+        # Four tests at a time, one per core of the hosted runners; [realtime] tests still run alone (tests/CMakeLists.txt).
         env:
           GNUBASE_REQUIRE_GPU: ${{ runner.os != 'macOS' && '1' || '0' }}
-        run: ctest --preset ${{ matrix.preset }} -C Release
+        run: ctest --preset ${{ matrix.preset }} -C Release --parallel 4
 
       # What failing tests wrote for a look, such as a screenshot that differs from its golden image.
       - name: Upload test output
@@ -281,7 +282,7 @@ jobs:
       - name: Test
         env:
           GNUBASE_REQUIRE_GPU: 1
-        run: ctest --preset linux-clang
+        run: ctest --preset linux-clang --parallel 4 # as in the build job
 
   clang-tidy:
     timeout-minutes: 90 # main took up to 51 min in Nov 2026; a PR that changes a widely included header takes longer
