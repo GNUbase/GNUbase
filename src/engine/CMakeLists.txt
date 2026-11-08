@@ -180,6 +180,7 @@ add_library(gnubase-engine STATIC
 	midi/controllerlanes.cpp midi/controllerlanes.h
 	midi/devices.cpp midi/devices.h
 	midi/drummaps.cpp midi/drummaps.h
+	midi/effects.h
 	midi/functioncommands.cpp midi/functioncommands.h
 	midi/functions.cpp midi/functions.h
 	midi/midivalues.cpp midi/midivalues.h
@@ -199,6 +200,7 @@ add_library(gnubase-engine STATIC
 	processors/effects.h
 	processors/gainpan.cpp processors/gainpan.h
 	processors/generators.cpp processors/generators.h
+	processors/midieffects.cpp processors/midieffects.h
 	processors/testsynth.cpp processors/testsynth.h
 	schema.cpp schema.h
 	schematext.cpp schematext.h

@@ -79,3 +79,6 @@
 # Shell scripts and Git hooks keep LF line endings on every platform, because sh fails on CRLF.
 *.sh text eol=lf
 tools/git-hooks/* text eol=lf
+
+# Golden text files compare line by line
+tests/golden/*.txt text eol=lf

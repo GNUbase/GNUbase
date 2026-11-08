@@ -5,6 +5,7 @@
 #include "engine/document/channelformat.h"
 #include "engine/document/snap.h"
 #include "engine/metronome/metronomesettings.h"
+#include "engine/midi/effects.h"
 #include "engine/midi/modifiers.h"
 #include "engine/midi/quantizesettings.h"
 #include "engine/time/signaturemap.h"
@@ -234,6 +235,12 @@ namespace gnubase::engine
 		// (docs/features/midi-modifiers.md).
 		// NOLINTNEXTLINE(readability-redundant-member-init): see instrumentParameters
 		midi::Modifiers modifiers = {};
+		// MIDI and instrument tracks: the MIDI inserts and sends, the built-in MIDI effects that play the track's
+		// events (docs/features/midi-effects.md). NOLINTNEXTLINE(readability-redundant-member-init): see
+		// instrumentParameters
+		midi::EffectRack midiInserts = {};
+		// NOLINTNEXTLINE(readability-redundant-member-init): see instrumentParameters
+		midi::EffectRack midiSends = {};
 		// The values set for the instrument's parameters (parameter.set), by parameter id; the others are at their
 		// defaults. A new instrument starts with none.
 		// The initializer lets Channel{...} leave it out without GCC's and Clang's -Wmissing-field-initializers, like
@@ -1143,12 +1150,12 @@ namespace gnubase::engine
 	{
 		return std::tie(a.id, a.track, a.format, a.input, a.output, a.instrument, a.volume, a.pan, a.panner, a.panLeft,
 				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.program, a.bank, a.device, a.modifiers,
-				   a.instrumentParameters, a.monitor, a.recordEnable, a.midiInput, a.mute, a.solo, a.soloDefeat,
-				   a.listen, a.slots, a.notes, a.sections, a.sends) ==
+				   a.midiInserts, a.midiSends, a.instrumentParameters, a.monitor, a.recordEnable, a.midiInput, a.mute,
+				   a.solo, a.soloDefeat, a.listen, a.slots, a.notes, a.sections, a.sends) ==
 			std::tie(b.id, b.track, b.format, b.input, b.output, b.instrument, b.volume, b.pan, b.panner, b.panLeft,
 				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.program, b.bank, b.device, b.modifiers,
-				b.instrumentParameters, b.monitor, b.recordEnable, b.midiInput, b.mute, b.solo, b.soloDefeat, b.listen,
-				b.slots, b.notes, b.sections, b.sends);
+				b.midiInserts, b.midiSends, b.instrumentParameters, b.monitor, b.recordEnable, b.midiInput, b.mute,
+				b.solo, b.soloDefeat, b.listen, b.slots, b.notes, b.sections, b.sends);
 	}
 
 	inline bool operator==(const Slot& a, const Slot& b)

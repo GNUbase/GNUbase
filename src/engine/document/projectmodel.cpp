@@ -2023,6 +2023,23 @@ namespace gnubase::engine
 					throw CommandError(error.what());
 				}
 			}
+			for (const char* section : {"midiInserts", "midiSends"})
+			{
+				if (!parameters.contains(section))
+					continue;
+				require(type == TrackType::Midi || type == TrackType::Instrument,
+					"only MIDI and instrument tracks have MIDI inserts and sends");
+				const bool sends = section == std::string("midiSends");
+				midi::EffectRack& rack = sends ? changed.midiSends : changed.midiInserts;
+				try
+				{
+					rack = effectRackFromJson(parameters.at(section), rack, sends);
+				}
+				catch (const std::invalid_argument& error)
+				{
+					throw CommandError(error.what());
+				}
+			}
 			if (parameters.contains("sends"))
 				setSends(project, changed, parameters.at("sends"));
 			const Channel before = channel;
@@ -4061,7 +4078,14 @@ namespace gnubase::engine
 				"127; live notes get pitch and velocity only) and range (two, [{target (off, velocityLimit, "
 				"velocityFilter, noteLimit or noteFilter), minimum, maximum (0 to 127)}], in order after the others: "
 				"the limits move velocities to the nearest end and pitches by octaves into the range, the filters "
-				"leave out the notes outside it). The channel strip's sections (audio channels only; "
+				"leave out the notes outside it). midiInserts and midiSends (MIDI and instrument tracks; each changes "
+				"only what it has, as project.get shows them) are the track's four MIDI insert and four MIDI send "
+				"slots, which run GNUbase's built-in MIDI effects (midiEffect.list) on the track's own events after "
+				"the modifiers: {bypass (all slots of the section), pre (sends only: they get the events before the "
+				"inserts), slots: [{effect (an id, or empty for none; another effect starts from its defaults), on, "
+				"parameters {key: value, a number or an option's name}}]}. The inserts play in order, each on what "
+				"the one before it played; each send plays its effect's events beside them. Changing which effects "
+				"play ends the notes the track sounds. The channel strip's sections (audio channels only; "
 				"each object changes only what it has, as project.get shows them) run before the fader: pre "
 				"{gain (dB, -24 to 24), phase (inverts the polarity), lowCut and highCut {on, frequency (Hz, 20 or "
 				"for the high cut 50 to 20000), slope (6, 12, 24, 36 or 48 dB per octave)}} before the plugin slots; "
@@ -4096,7 +4120,8 @@ namespace gnubase::engine
 						{"exclusive", booleanSchema}, {"soloDefeat", booleanSchema}, {"listen", booleanSchema},
 						{"notes", stringSchema}, {"linked", booleanSchema}, {"pre", {{"type", "object"}}},
 						{"eq", {{"type", "object"}}}, {"strip", {{"type", "object"}}},
-						{"modifiers", {{"type", "object"}}},
+						{"modifiers", {{"type", "object"}}}, {"midiInserts", {{"type", "object"}}},
+						{"midiSends", {{"type", "object"}}},
 						{"sends",
 							arraySchema(
 								objectSchema({{"send", integerSchema}, {"destination", idSchema}, {"on", booleanSchema},

@@ -195,7 +195,48 @@ namespace gnubase::engine
 			sequence->notes, [](const RenderNote& note)
 			{ return note.end > note.start ? ((note.channel % 16) * 128) + (note.pitch % 128) : -1; },
 			sequence->noteOrder, sequence->noteLanes);
+
+		// An effect that stops playing loses its state: one that plays again starts afresh.
+		for (size_t index = 0; index < m_slots.size(); ++index)
+		{
+			const bool sends = index >= midi::g_effectSlots;
+			const midi::EffectRack& rack = sends ? sequence->sends : sequence->inserts;
+			const midi::EffectSlot& slot = rack.slots[index % midi::g_effectSlots];
+			SlotEffect& kept = m_slots[index];
+			if (rack.bypass || !slot.on || slot.effect.empty() || processors::findMidiEffect(slot.effect) == nullptr)
+			{
+				kept = SlotEffect();
+				continue;
+			}
+			if (!kept.effect || kept.id != slot.effect)
+			{
+				kept.effect = processors::createMidiEffect(slot.effect);
+				kept.id = slot.effect;
+				kept.serial = ++m_effectSerial;
+				if (m_sampleRate > 0.0)
+					kept.effect->prepareFor(m_sampleRate, m_maxFrames);
+			}
+			sequence->effects.push_back({kept.effect, slot.parameters, kept.serial});
+			if (!sends)
+				++sequence->insertCount;
+		}
+		if (!sequence->effects.empty() && m_own.capacity() == 0)
+		{
+			m_own = graph::EventBuffer(graph::g_maxEventsPerBlock);
+			m_chainA = graph::EventBuffer(graph::g_maxEventsPerBlock);
+			m_chainB = graph::EventBuffer(graph::g_maxEventsPerBlock);
+		}
+		sequence->serial = ++m_sequenceSerial;
 		m_sequence.publish(std::move(sequence));
+	}
+
+	void MidiSequencer::prepare(double sampleRate, uint32_t maxFrames)
+	{
+		m_sampleRate = sampleRate;
+		m_maxFrames = maxFrames;
+		for (const SlotEffect& slot : m_slots)
+			if (slot.effect)
+				slot.effect->prepareFor(sampleRate, maxFrames);
 	}
 
 	void MidiSequencer::setChase(const MidiChase& chase) noexcept
@@ -214,6 +255,75 @@ namespace gnubase::engine
 		for (const graph::ProcessEvent& event : context.eventsIn)
 			context.eventsOut.add(event);
 		context.eventsOut.nextSource();
+		if (sequence.serial != m_serial)
+			takeEffects(sequence, context.eventsOut);
+		if (sequence.effects.empty())
+		{
+			playOwn(sequence, context, context.eventsOut);
+			return;
+		}
+		m_own.clear();
+		playOwn(sequence, context, m_own);
+		runEffects(sequence, context, context.eventsOut);
+	}
+
+	void MidiSequencer::takeEffects(const MidiSequence& sequence, graph::EventBuffer& out) noexcept
+	{
+		m_serial = sequence.serial;
+		for (const RunningEffect& running : sequence.effects)
+			for (size_t id = 0; id < running.parameters.size(); ++id)
+				running.effect->setParameter(static_cast<uint32_t>(id), running.parameters[id]);
+		const bool same = sequence.effects.size() == m_chainCount &&
+			std::equal(sequence.effects.begin(), sequence.effects.end(), m_chain.begin(),
+				[](const RunningEffect& running, uint64_t serial) { return running.serial == serial; });
+		if (same)
+			return;
+		m_chainCount = std::min(sequence.effects.size(), m_chain.size());
+		for (size_t i = 0; i < m_chainCount; ++i)
+			m_chain[i] = sequence.effects[i].serial;
+		// The notes stay where they are in m_sounding and m_inputHeld: their note-offs follow as usual.
+		for (uint16_t index = 0; index < g_notes; ++index)
+			if (m_effectsHeld[index] || sounds(index) || m_inputHeld[index])
+				out.add(noteEvent(graph::ProcessEvent::Type::NoteOff, index, 0));
+		m_effectsHeld.fill(false);
+		out.nextSource();
+	}
+
+	void MidiSequencer::runEffects(
+		const MidiSequence& sequence, const graph::ProcessContext& context, graph::EventBuffer& out) noexcept
+	{
+		const auto run = [&context](const RunningEffect& running, const graph::EventBuffer& in, graph::EventBuffer& to)
+		{
+			to.clear();
+			running.effect->process({nullptr, 0, context.frames, in, to, context.transport});
+		};
+		const auto play = [this, &out](const graph::EventBuffer& events)
+		{
+			for (const graph::ProcessEvent& event : events)
+				if (event.type == graph::ProcessEvent::Type::NoteOn || event.type == graph::ProcessEvent::Type::NoteOff)
+					m_effectsHeld[((event.channel % 16) * 128) + (event.key % 128)] =
+						event.type == graph::ProcessEvent::Type::NoteOn;
+			out.merge(events);
+		};
+		const graph::EventBuffer* played = &m_own;
+		for (size_t i = 0; i < sequence.insertCount; ++i)
+		{
+			graph::EventBuffer& to = played == &m_chainA ? m_chainB : m_chainA;
+			run(sequence.effects[i], *played, to);
+			played = &to;
+		}
+		play(*played);
+		graph::EventBuffer& sent = played == &m_chainA ? m_chainB : m_chainA;
+		for (size_t i = sequence.insertCount; i < sequence.effects.size(); ++i)
+		{
+			run(sequence.effects[i], sequence.sends.pre ? m_own : *played, sent);
+			play(sent);
+		}
+	}
+
+	void MidiSequencer::playOwn(
+		const MidiSequence& sequence, const graph::ProcessContext& context, graph::EventBuffer& out) noexcept
+	{
 		const graph::TransportBlock& transport = context.transport;
 		if (!transport.playing && m_next >= 0) // a stop: the instrument ends what the input held
 			m_inputHeld.fill(false);
@@ -222,23 +332,22 @@ namespace gnubase::engine
 			auto ends = static_cast<uint16_t>(g_notes);
 			const bool plays = modifyInput(sequence.modifiers, event, ends);
 			// Still held if the buffer was full: then a stop ends it.
-			if (ends != g_notes &&
-				context.eventsOut.add(noteEvent(graph::ProcessEvent::Type::NoteOff, ends, event.offset)))
+			if (ends != g_notes && out.add(noteEvent(graph::ProcessEvent::Type::NoteOff, ends, event.offset)))
 				m_inputHeld[ends] = false;
 			if (!plays)
 				continue;
-			context.eventsOut.add(event);
+			out.add(event);
 			if (event.type != graph::ProcessEvent::Type::NoteOn && event.type != graph::ProcessEvent::Type::NoteOff)
 				continue;
 			const size_t index = ((event.channel % 16) * 128) + (event.key % 128);
 			m_inputHeld[index] = event.type == graph::ProcessEvent::Type::NoteOn;
 		}
-		context.eventsOut.nextSource();
+		out.nextSource();
 
 		const uint8_t chase = m_chase.load(std::memory_order_relaxed);
 		if (!transport.playing)
 		{
-			endAll(0, context.eventsOut);
+			endAll(0, out);
 			m_chaseNotes = false;
 			if (m_next >= 0)
 				m_cursor = m_next; // where playback stopped
@@ -246,7 +355,7 @@ namespace gnubase::engine
 			if (m_cursor >= 0 && transport.position != m_cursor) // a locate while stopped
 				findChased(sequence, transport.position, chase, true);
 			m_cursor = transport.position;
-			sendChased(0, context.eventsOut);
+			sendChased(0, out);
 			return;
 		}
 		for (size_t s = 0; s < transport.segmentCount; ++s)
@@ -254,11 +363,11 @@ namespace gnubase::engine
 			const graph::TransportSegment& segment = transport.segments[s];
 			if (segment.position != m_next) // a start, a locate or a cycle jump
 			{
-				endAll(segment.offset, context.eventsOut);
+				endAll(segment.offset, out);
 				findChased(sequence, segment.position, chase, false);
 				m_chaseNotes = (chase & g_chaseNotes) != 0;
 			}
-			play(sequence, segment, context.eventsOut);
+			play(sequence, segment, out);
 			m_next = segment.position + segment.frames;
 		}
 	}
