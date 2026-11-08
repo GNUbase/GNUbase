@@ -209,6 +209,8 @@
 		<menuitem command="pool.findMissing">Find Missing Files...</menuitem>
 		<menuitem command="media.removeMissing">Remove Missing Files</menuitem>
 		<menuitem command="media.conform">Conform Files</menuitem>
+		<menuseparator/>
+		<menuitem command="media.prepareArchive">Prepare Archive</menuitem>
 	</menu>
 	<menu id="edit-menu">
 		<menuitem command="history.undo">Undo</menuitem>

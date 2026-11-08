@@ -4587,7 +4587,9 @@ namespace gnubase::engine
 				"Backs the project up as it is now into folder, which must be empty or new: the project file, named "
 				"name (by default after the project file, or else the project), and copies of its media in the "
 				"folder Audio, which the project file refers to relative to itself, so that the folder opens on "
-				"another machine. The project itself stays as it is. minimize keeps only the ranges of audio files "
+				"another machine. The files in the Mixdown folder of the project's folder, where File > Export > "
+				"Audio Mixdown puts mixdowns, go along into the folder Mixdown, unless skipMixdown is true. The "
+				"project itself stays as it is. minimize keeps only the ranges of audio files "
 				"that audio events play, with handles seconds (default 1) before and after; removeUnused leaves out "
 				"clips that no audio event uses and media that no clip uses. currentVersionsOnly and skipVideo have "
 				"no effect until clips have versions and projects have video. activate opens the backup once it is "
@@ -4600,7 +4602,7 @@ namespace gnubase::engine
 				objectSchema({{"folder", stringSchema}, {"name", stringSchema}, {"minimize", booleanSchema},
 								 {"handles", numberSchema}, {"removeUnused", booleanSchema},
 								 {"currentVersionsOnly", booleanSchema}, {"skipVideo", booleanSchema},
-								 {"activate", booleanSchema}},
+								 {"skipMixdown", booleanSchema}, {"activate", booleanSchema}},
 					{"folder"}),
 				objectSchema({{"job", Jobs::schema()}}, {"job"}), false},
 			[this, &jobs](CommandContext& context)
@@ -4638,6 +4640,8 @@ namespace gnubase::engine
 				options.removeUnused = parameters.value("removeUnused", false);
 				options.currentVersionsOnly = parameters.value("currentVersionsOnly", false);
 				options.skipVideo = parameters.value("skipVideo", false);
+				if (!m_file.empty() && !parameters.value("skipMixdown", false))
+					options.mixdownFolder = (std::filesystem::u8path(m_file).parent_path() / "Mixdown").u8string();
 				const bool activate = parameters.value("activate", false);
 
 				// Opening the backup replaces the project, so only if it is still as it was backed up.

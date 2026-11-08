@@ -97,7 +97,8 @@ the pool and conforming files to the project's sample rate. The engine commands 
 - **Messages.** `#pool-message` says what the last pool command did: how many missing files Find Missing Files found,
   what Remove Unused Media and Remove Missing Files removed, how many files Conform Files converted, or why one
   failed, with the state class `.error`, which the themes color as danger. The app hears the results of
-  `pool.removeUnused`, `media.locate`, `media.removeMissing` and `media.conform` from the toolbar, the Media menu and
+  `pool.removeUnused`, `media.locate`, `media.removeMissing`, `media.conform` and `media.prepareArchive` (Media >
+  Prepare Archive, [backup.md](backup.md)) from the toolbar, the Media menu and
   the folder dialog alike (`EngineBinding::onResult`, [ui-engine-binding.md](ui-engine-binding.md)) and opens the
   pool to show them, bringing its window to the front if it is in one of its own, so Conform Files on a project that
   was never saved says to save it first. For Find Missing Files and Conform Files the result is a job: the line
