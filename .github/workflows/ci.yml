@@ -232,9 +232,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # tests: how many tests run at a time. TSan slows code down several times more than ASan; at four at a time,
-          # heavy commands (exports, analysis) missed the engine client's 10 s reply limit.
-          - { name: asan-ubsan, sanitizers: "address,undefined", cache: 1300M, tests: 4 }
+          # tests: how many tests run at a time. At four, sanitized exports, freezes and analyses kept the engine busy
+          # past its client's 10 s reply limit on slow runners; at two, tsan's tests took 19 min instead of about 40.
+          - { name: asan-ubsan, sanitizers: "address,undefined", cache: 1300M, tests: 2 }
           - { name: tsan, sanitizers: thread, cache: 1G, tests: 2 }
     env:
       CCACHE_MAXSIZE: ${{ matrix.cache }}
