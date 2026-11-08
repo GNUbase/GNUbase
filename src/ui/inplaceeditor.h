@@ -61,6 +61,7 @@ namespace gnubase::ui
 
 		void ProcessEvent(Rml::Event& event) override;
 		void follow(const engine::Json& view); // an editor.changed of an in-place editor
+		void reconcile();                      // shows the editors editor.inPlace lists, closes the others
 		void requestView(uint64_t track);
 		void close(uint64_t track);
 		void place(uint64_t track, Editor& editor);

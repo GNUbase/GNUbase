@@ -265,7 +265,14 @@ namespace gnubase::ui
 		: m_binding(binding), m_stepOwner(binding.stepOwner("inspector")), m_root(root.GetObserverPtr()),
 		  m_editChannel(std::move(editChannel)),
 		  // Another project replaces the edits in progress: the ids they were for may be the new project's too.
-		  m_reset(binding.on("project.reset", [this](const engine::Event&) { dropEdits(); })),
+		  m_reset(binding.on("project.reset",
+			  [this](const engine::Event&)
+			  {
+				  dropEdits();
+				  // The in-place editors closed without an editor.changed, and the new project's ids start again.
+				  m_inPlace.clear();
+				  readInPlace();
+			  })),
 		  m_devicesChanged(binding.on("settings.changed",
 			  [this](const engine::Event& event)
 			  {
@@ -290,7 +297,9 @@ namespace gnubase::ui
 				  else
 					  m_inPlace.erase(track);
 				  m_stale = true;
-			  }))
+			  })),
+		  // An undo or redo brings back or removes tracks with their open in-place editors, without an editor.changed.
+		  m_historyChanged(binding.on("history.changed", [this](const engine::Event&) { readInPlace(); }))
 	{
 		root.SetClass("inspector", true);
 		// Set up Sections from an empty area (p. 167), in the project window's document; the controls have none.
@@ -307,16 +316,7 @@ namespace gnubase::ui
 		root.AddEventListener(Rml::EventId::Blur, this, true);    // blur doesn't bubble
 		root.AddEventListener(Rml::EventId::Keydown, this, true); // Escape leaves the notepad
 
-		// The in-place editors open already (reference manual p. 1259).
-		m_binding.send("editor.inPlace", Json::object(),
-			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
-			{
-				if (alive.expired() || !result.ok())
-					return;
-				for (const Json& track : result.value.at("tracks"))
-					m_inPlace.insert(track.get<uint64_t>());
-				m_stale = true;
-			});
+		readInPlace(); // the in-place editors open already (reference manual p. 1259)
 		// The MIDI devices are a user setting (reference manual p. 1109); the next update shows them.
 		m_binding.send("settings.get", {{"key", "midi.devices"}},
 			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
@@ -366,6 +366,20 @@ namespace gnubase::ui
 		focus->Blur();
 		m_dropping = false;
 		m_stale = true; // the fields show the channel's values again
+	}
+
+	void Inspector::readInPlace()
+	{
+		m_binding.send("editor.inPlace", Json::object(),
+			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (alive.expired() || !result.ok())
+					return;
+				m_inPlace.clear();
+				for (const Json& track : result.value.at("tracks"))
+					m_inPlace.insert(track.get<uint64_t>());
+				m_stale = true;
+			});
 	}
 
 	void Inspector::show()

@@ -55,16 +55,6 @@ namespace gnubase::ui
 			added->AddEventListener(id, this);
 		m_subscriptions.push_back(
 			m_binding.on("editor.changed", [this](const engine::Event& event) { follow(event.data); }));
-		// The editors that are open already, such as ones an MCP client opened.
-		m_binding.send("editor.inPlace", Json::object(),
-			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
-			{
-				if (alive.expired() || !result.ok())
-					return;
-				for (const Json& track : result.value.at("tracks"))
-					if (m_editors.count(track.get<uint64_t>()) == 0)
-						requestView(track.get<uint64_t>());
-			});
 	}
 
 	InPlaceEditors::~InPlaceEditors()
@@ -107,6 +97,24 @@ namespace gnubase::ui
 					follow(result.value);
 				else
 					close(track); // its track is gone, such as with another project
+			});
+	}
+
+	void InPlaceEditors::reconcile()
+	{
+		m_binding.send("editor.inPlace", Json::object(),
+			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (alive.expired() || !result.ok())
+					return;
+				std::set<uint64_t> open;
+				for (const Json& track : result.value.at("tracks"))
+					open.insert(track.get<uint64_t>());
+				for (const uint64_t track : tracks())
+					if (open.count(track) == 0)
+						close(track);
+				for (const uint64_t track : open)
+					requestView(track);
 			});
 	}
 
@@ -159,12 +167,13 @@ namespace gnubase::ui
 	{
 		if (!m_area)
 			return;
-		// Another project, or a change to this one: the views' parts and selections may have changed with it.
+		// The project as the display read it first, another project, or a change to this one: the open editors, such
+		// as ones an MCP client opened or one whose track an undo brought back, and their views' parts and selections
+		// may have changed with it, without an editor.changed.
 		if (m_display.loads() != m_loads)
 		{
 			m_loads = m_display.loads();
-			for (const auto& [track, editor] : m_editors)
-				requestView(track);
+			reconcile();
 		}
 		for (auto& [track, editor] : m_editors)
 			place(track, editor);

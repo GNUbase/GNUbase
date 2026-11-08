@@ -273,3 +273,65 @@ TEST_CASE("the inspector's Edit In-Place opens and closes the selected track's i
 	f.app.appUi().trackList()->select({f.audio});
 	REQUIRE(f.app.waitUntil([&] { return f.has(button, "unavailable"); }));
 }
+
+TEST_CASE("the in-place editor of a removed track shows again when an undo brings the track back", "[ui]")
+{
+	Fixture f;
+	f.app.keys().run("editor.openInPlace", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil([&] { return f.elements(f.editor() + " .key-note").size() == 2; }));
+	f.app.call("track.remove", {{"track", f.track}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(f.editor()).empty(); }));
+	f.app.call("history.undo");
+	REQUIRE(f.app.waitUntil([&] { return f.elements(f.editor() + " .key-note").size() == 2; }));
+	REQUIRE(f.app.waitUntil([&] { return f.display.trackHeight(f.track) == ui::g_inPlaceHeight; }));
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			const Json shown = f.box(f.editor());
+			const std::vector<double>& tops = f.display.laneTops();
+			return std::abs(shown.at("y").get<double>() - f.box(".event-area").at("y").get<double>() - tops[0]) <= 1 &&
+				std::abs(shown.at("height").get<double>() - (tops[1] - tops[0])) <= 1;
+		}));
+	f.settle(2);
+	// Edit In-Place closes the editor shown.
+	f.app.keys().run("editor.editInPlace", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil([&] { return f.elements(f.editor()).empty(); }));
+	CHECK(f.app.call("editor.inPlace").at("tracks").empty());
+}
+
+TEST_CASE("the inspector's Edit In-Place starts unchecked in another project", "[ui]")
+{
+	Fixture f;
+	f.app.appUi().docking().open("inspector");
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const std::string button = "button[control=editInPlace]";
+	const auto checked = [&]
+	{
+		const Json found = f.elements(button);
+		return !found.empty() && found.at(0).value("attributes", Json::object()).contains("checked");
+	};
+	REQUIRE(f.app.waitUntil([&] { return !f.has(button, "unavailable") && !f.elements(button).empty(); }));
+	f.click(button);
+	REQUIRE(f.app.waitUntil(checked));
+
+	// The new project's ids start again: its first MIDI track may have the id of the track whose editor was open.
+	f.app.call("project.new");
+	const uint64_t track = f.app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			const Json& project = f.display.project();
+			if (!project.is_object())
+				return false;
+			const Json& tracks = project.at("tracks");
+			return std::any_of(tracks.begin(), tracks.end(), [&](const Json& each) { return each.at("id") == track; });
+		}));
+	f.app.appUi().trackList()->select({track});
+	REQUIRE(f.app.waitUntil([&] { return !f.has(button, "unavailable") && !f.elements(button).empty(); }));
+	for (int i = 0; i < 5; ++i)
+		f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK_FALSE(checked());
+	f.click(button);
+	REQUIRE(f.app.waitUntil([&] { return f.app.call("editor.inPlace").at("tracks") == Json::array({track}); }));
+	CHECK(f.app.waitUntil(checked));
+}
