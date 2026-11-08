@@ -139,9 +139,12 @@ namespace gnubase::engine
 		const uint16_t* soundingBegin() const noexcept { return m_sounding.data(); }
 		const uint16_t* soundingEnd() const noexcept { return m_sounding.data() + m_soundingCount; }
 
-		// Audio thread: whether the note sounds, from the track's parts or held through its input (a note-on came in
-		// and no note-off yet; a stop ends those too).
-		bool holds(uint16_t index) const noexcept { return m_inputHeld[index] || sounds(index); }
+		// Audio thread: whether the note sounds, from the track's parts, held through its input (a note-on came in
+		// and no note-off yet; a stop ends those too) or played by its MIDI effects.
+		bool holds(uint16_t index) const noexcept
+		{
+			return m_inputHeld[index] || m_effectsHeld[index] || sounds(index);
+		}
 
 		// Audio thread: forgets the notes it holds without ending them, after the instrument they sounded on ended
 		// them (InstrumentChannel::releaseNotesOf).
@@ -149,6 +152,7 @@ namespace gnubase::engine
 		{
 			m_soundingCount = 0;
 			m_inputHeld.fill(false);
+			m_effectsHeld.fill(false);
 		}
 
 		// Audio thread, before the first block of a graph, after its releases: the serial of the instrument channel its
@@ -161,6 +165,7 @@ namespace gnubase::engine
 			if (instrument == m_instrument)
 				return;
 			m_inputHeld.fill(false);
+			m_effectsHeld.fill(false);
 			m_instrument = instrument;
 		}
 

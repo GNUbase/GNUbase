@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -290,6 +291,56 @@ TEST_CASE("a MIDI track's effects apply to its events, the instrument track's on
 	track.inject({message(20, {0x90, 60, 100})});
 	track.render(64);
 	CHECK(track.captured() == "10 90 3d 64\n20 90 48 64\n");
+}
+
+TEST_CASE("a MIDI track routed away from an instrument ends the notes its effects played there", "[integration]")
+{
+	EffectTrack track;
+	const ObjectId midi = run(track.client, "track.add", {{"type", "midi"}}).at("channel").at("id").get<ObjectId>();
+	run(track.client, "channel.set", {{"channel", midi}, {"output", track.channel}});
+	track.set("midiInserts", {{"slots", {slot("chordGenerator", {{"chord", "Major"}})}}}, midi);
+	run(track.client, "midi.inject", {{"channel", midi}, {"messages", {message(10, {0x90, 60, 100})}}});
+	track.render(64);
+	run(track.client, "channel.set", {{"channel", midi}, {"output", 0}});
+	track.render(64);
+	CHECK(track.captured() == "10 90 3c 64\n10 90 40 64\n10 90 43 64\n64 80 3c 00\n64 80 40 00\n64 80 43 00\n");
+}
+
+TEST_CASE("the arpeggiator returns when its output is full, and ends its note once there is room", "[unit]")
+{
+	using namespace gnubase::engine::graph;
+	EventBuffer in(4);
+	EventBuffer out(1);
+	TransportBlock transport;
+	transport.tempo = 120.0;
+	const std::shared_ptr<processors::MidiEffect> arpeggiator = processors::createMidiEffect("arpeggiator");
+	arpeggiator->prepareFor(48000.0, 48000);
+	for (const int key : {60, 64})
+	{
+		ProcessEvent note;
+		note.type = ProcessEvent::Type::NoteOn;
+		note.key = static_cast<uint8_t>(key);
+		note.velocity = 0x8000;
+		in.add(note);
+	}
+	// A sixteenth is 6000 frames: a block of a second holds eight steps, each with a note-on and a note-off.
+	arpeggiator->process({nullptr, 0, 48000, in, out, transport});
+	REQUIRE(out.size() == 1);
+	CHECK(out.begin()->type == ProcessEvent::Type::NoteOn);
+	CHECK(out.begin()->key == 60);
+	in.clear();
+	out.clear();
+	arpeggiator->process({nullptr, 0, 48000, in, out, transport});
+	REQUIRE(out.size() == 1);
+	CHECK(out.begin()->type == ProcessEvent::Type::NoteOff);
+	CHECK(out.begin()->key == 60);
+	CHECK(out.begin()->offset == 0);
+	for (int block = 0; block < 4; ++block)
+	{
+		out.clear();
+		arpeggiator->process({nullptr, 0, 48000, in, out, transport});
+		CHECK(out.size() == 1);
+	}
 }
 
 TEST_CASE(

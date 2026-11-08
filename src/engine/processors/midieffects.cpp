@@ -257,16 +257,19 @@ namespace gnubase::engine::processors
 			const int64_t endAt = m_sounding ? m_end : never;
 			if (std::min(stepAt, endAt) >= until)
 				return;
-			if (endAt <= stepAt)
-				end(static_cast<uint32_t>(std::max(endAt, m_time) - m_time), context.eventsOut);
-			else
-				step(static_cast<uint32_t>(std::max(stepAt, m_time) - m_time), frames, context.eventsOut);
+			// With the output full, an end that can't be added is tried again on the next call or in the next block.
+			const bool added = endAt <= stepAt
+				? end(static_cast<uint32_t>(std::max(endAt, m_time) - m_time), context.eventsOut)
+				: step(static_cast<uint32_t>(std::max(stepAt, m_time) - m_time), frames, context.eventsOut);
+			if (!added)
+				return;
 		}
 	}
 
-	void Arpeggiator::step(uint32_t offset, double frames, graph::EventBuffer& out) noexcept
+	bool Arpeggiator::step(uint32_t offset, double frames, graph::EventBuffer& out) noexcept
 	{
-		end(offset, out);
+		if (!end(offset, out))
+			return false;
 		std::array<Note, g_held> notes = m_held;
 		if (m_mode != AsPlayed)
 			std::sort(notes.data(), notes.data() + m_heldCount,
@@ -284,7 +287,7 @@ namespace gnubase::engine::processors
 		m_next += frames;
 		const uint64_t number = m_step++;
 		if (count == 0)
-			return;
+			return true;
 		size_t index = 0;
 		if (m_mode == UpDown && count > 1)
 		{
@@ -299,18 +302,20 @@ namespace gnubase::engine::processors
 		const Note& note = pattern[index];
 		if (!out.add(
 				noteEvent(Type::NoteOn, static_cast<uint16_t>((note.channel * 128) + note.key), note.velocity, offset)))
-			return;
+			return true; // the step is left out
 		m_sounding = true;
 		m_playing = note;
 		m_end = std::max(m_time + offset + 1, static_cast<int64_t>(std::ceil(start + (frames * m_gate / 100.0))));
+		return true;
 	}
 
-	void Arpeggiator::end(uint32_t offset, graph::EventBuffer& out) noexcept
+	bool Arpeggiator::end(uint32_t offset, graph::EventBuffer& out) noexcept
 	{
 		if (m_sounding &&
 			out.add(
 				noteEvent(Type::NoteOff, static_cast<uint16_t>((m_playing.channel * 128) + m_playing.key), 0, offset)))
 			m_sounding = false;
+		return !m_sounding;
 	}
 
 	ChordGenerator::ChordGenerator() : MidiEffect("chordGenerator")

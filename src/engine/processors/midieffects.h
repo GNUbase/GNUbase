@@ -87,8 +87,10 @@ namespace gnubase::engine::processors
 			uint16_t velocity = 0;
 		};
 
-		void step(uint32_t offset, double frames, graph::EventBuffer& out) noexcept;
-		void end(uint32_t offset, graph::EventBuffer& out) noexcept;
+		// Both return false when the output is full and they must be called again; a step whose note-on doesn't fit
+		// is left out.
+		bool step(uint32_t offset, double frames, graph::EventBuffer& out) noexcept;
+		bool end(uint32_t offset, graph::EventBuffer& out) noexcept;
 
 		double m_sampleRate = 48000.0;
 		uint8_t m_mode = Up;
