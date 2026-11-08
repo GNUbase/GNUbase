@@ -60,6 +60,8 @@ namespace gnubase::engine::midi
 	const char* scaleTypeName(ScaleType type);
 	std::optional<ScaleType> scaleTypeFromName(const std::string& name);
 	std::vector<std::string> scaleTypeNames();
+	// A scale type's notes as intervals from its root, from the lowest up.
+	std::vector<int> scaleSteps(ScaleType type);
 
 	struct Scale
 	{

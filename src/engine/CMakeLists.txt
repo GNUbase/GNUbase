@@ -180,6 +180,7 @@ add_library(gnubase-engine STATIC
 	midi/drummaps.cpp midi/drummaps.h
 	midi/functioncommands.cpp midi/functioncommands.h
 	midi/functions.cpp midi/functions.h
+	midi/harmony.cpp midi/harmony.h
 	midi/midivalues.cpp midi/midivalues.h
 	midi/modifiers.cpp midi/modifiers.h
 	midi/quantize.cpp midi/quantize.h

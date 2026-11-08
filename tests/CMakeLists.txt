@@ -68,6 +68,7 @@ add_executable(gnubase-tests
 	fileimport_tests.cpp
 	fonts_tests.cpp
 	graph_tests.cpp
+	harmony_tests.cpp
 	history_tests.cpp
 	historypanel_tests.cpp
 	hitpoints_tests.cpp
