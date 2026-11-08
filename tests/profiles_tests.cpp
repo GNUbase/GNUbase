@@ -115,7 +115,7 @@ TEST_CASE("profiles keep sets of the user settings and become active when GNUbas
 
 TEST_CASE("profiles are exported to a file and imported on another computer", "[unit]")
 {
-	Fixture f;
+	const Fixture f;
 	f.setScale(1.25);
 	const test::TempDir other;
 	const std::string file = (other.path() / "studio.json").u8string();
