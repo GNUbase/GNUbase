@@ -9,13 +9,13 @@
 #include "scripting/reference.h"
 #include "scripting/runtime.h"
 #include "testutils/fakeui.h"
+#include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
-#include <cstdlib>
+#include <filesystem>
 #include <fstream>
-#include <iterator>
 #include <sstream>
 #include <string>
 
@@ -49,26 +49,15 @@ TEST_CASE("every engine command is reachable through MCP and Lua, with a schema 
 	}
 }
 
-TEST_CASE("docs/lua.md is the reference generated from the command registry", "[unit]")
-{
-	Engine engine;
-	const std::string generated = gnubase::scripting::reference(engine);
-	const std::string path = std::string(GNUBASE_DOCS_DIR) + "/lua.md";
-	if (const char* update = std::getenv("GNUBASE_UPDATE_DOCS"); update != nullptr && std::string(update) == "1")
-		std::ofstream(path, std::ios::binary) << generated;
-
-	std::ifstream in(path, std::ios::binary);
-	std::string written{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
-	written.erase(std::remove(written.begin(), written.end(), '\r'), written.end()); // a Windows checkout has CRLF
-	INFO("docs/lua.md is out of date: run the tests with GNUBASE_UPDATE_DOCS=1 and commit the file");
-	CHECK(written == generated);
-}
-
 namespace
 {
-	constexpr const char* g_catalogueBegin =
-		"<!-- Generated from the MCP server's tools/list: run the tests with GNUBASE_UPDATE_DOCS=1 to update it. -->\n";
-	constexpr const char* g_catalogueEnd = "<!-- End of the generated tool catalogue -->\n";
+	// The generated references go to the build folder, where CI picks them up (docs/api-reference.md).
+	void writeGenerated(const char* name, const std::string& text)
+	{
+		const std::filesystem::path folder = GNUBASE_GENERATED_DOCS_DIR;
+		std::filesystem::create_directories(folder);
+		std::ofstream(folder / name, std::ios::binary) << text;
+	}
 
 	std::string catalogue()
 	{
@@ -95,25 +84,36 @@ TEST_CASE("the MCP tool catalogue lists every tool with its arguments, and the r
 	CHECK(text.find("gnubase://track.add") == std::string::npos); // not a query
 }
 
-TEST_CASE("docs/mcp.md has the tool catalogue generated from the MCP server", "[unit]")
+TEST_CASE("the MCP tool catalogue is generated from the MCP server", "[unit]")
 {
-	const std::string path = std::string(GNUBASE_DOCS_DIR) + "/mcp.md";
-	std::ifstream in(path, std::ios::binary);
-	std::string written{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
-	in.close();
-	written.erase(std::remove(written.begin(), written.end(), '\r'), written.end()); // a Windows checkout has CRLF
-	const size_t begin = written.find(g_catalogueBegin);
-	const size_t end = written.find(g_catalogueEnd);
-	REQUIRE(begin != std::string::npos);
-	REQUIRE(end != std::string::npos);
-	REQUIRE(begin < end);
-	const std::string generated = written.substr(0, begin + std::string(g_catalogueBegin).size()) + "\n" + catalogue() +
-		"\n" + written.substr(end);
-	if (const char* update = std::getenv("GNUBASE_UPDATE_DOCS"); update != nullptr && std::string(update) == "1")
+	const std::string text = catalogue();
+	CHECK(text.find("### track\n\n#### `track_add`") != std::string::npos);
+	writeGenerated("mcp-tools.md",
+		"# MCP tool catalogue\n\nGenerated from what the MCP server lists, with `script_run`: every tool by area, its "
+		"engine command, whether it only reads, its arguments and its result.\n\n" +
+			text);
+}
+
+TEST_CASE("the Lua API reference is generated from the command registry", "[unit]")
+{
+	Engine engine;
+	const std::string generated = gnubase::scripting::reference(engine);
+	CHECK(generated.rfind("# Lua API\n", 0) == 0);
+	for (const CommandInfo& info : engine.commands())
 	{
-		std::ofstream(path, std::ios::binary) << generated;
-		written = generated;
+		CAPTURE(info.name);
+		CHECK(generated.find("#### `gnubase." + info.name + "`") != std::string::npos);
 	}
-	INFO("docs/mcp.md's tool catalogue is out of date: run the tests with GNUBASE_UPDATE_DOCS=1 and commit the file");
-	CHECK(written == generated);
+	writeGenerated("lua.md", generated);
+}
+
+TEST_CASE("the generated API references stay out of the repository", "[unit]")
+{
+	// A branch made before they left that keeps its side of the conflict would bring back a stale copy.
+	const std::filesystem::path docs = std::filesystem::path(GNUBASE_RESOURCES_DIR).parent_path() / "docs";
+	REQUIRE(std::filesystem::exists(docs / "api-reference.md"));
+	CHECK_FALSE(std::filesystem::exists(docs / "lua.md"));
+	CHECK_FALSE(std::filesystem::exists(docs / "mcp-tools.md"));
+	// The catalogue's entries begin with their engine command; the guide in mcp.md has none.
+	CHECK(gnubase::test::readText(docs / "mcp.md").find("Engine command `") == std::string::npos);
 }

@@ -154,6 +154,8 @@ user settings ([settings.md](settings.md)), so MCP and Lua change them with `set
   A macro is the command `macro.<name>`, which keys, menus and `gnubase.ui.command` run like any other
   (`KeyCommands::run`); a macro in a macro doesn't run, nor does a command that `check` refuses. Edit > Macros lists
   the macros, after them Key Commands... (`app::AppUi` fills the submenu when the setting changes).
+- **User scripts** are commands too, `script.<name>`, which get keys and go into macros like any other
+  ([scripts.md](scripts.md)); Edit > Scripts lists them.
 - **Presets** are the setting `ui.keyCommandPresets`: by name, the key commands and macros (p. 1559).
   `keyCommands.savePreset {name}` saves those of the settings, or the `keyCommands` and `macros` it gets;
   `keyCommands.removePreset {name}` removes one. Loading one is `settings.set` with `ui.keyCommands` and `ui.macros`

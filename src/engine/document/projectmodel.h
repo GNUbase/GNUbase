@@ -158,6 +158,7 @@ namespace gnubase::engine
 		void registerMarkerCommands(Engine& engine);                  // markers.cpp: marker.*
 		void registerArrangerCommands(Engine& engine);                // arranger.cpp: arranger.* (#167)
 		void registerTransposeCommands(Engine& engine);               // transpose.cpp: transpose.* (#168)
+		void registerChordCommands(Engine& engine);                   // chordtrack.cpp: chord.* (#173)
 		void registerTempoCommands(Engine& engine);                   // tempo.cpp: tempo.*
 		Json detectTempo(Project& project, CommandContext& context);  // tempo.cpp: tempo.detect
 		void registerSignatureCommands(Engine& engine);               // signature.cpp: signature.*
@@ -170,6 +171,7 @@ namespace gnubase::engine
 		Json addRecording(Project& project, CommandContext& context);
 		void registerPoolCommands(Engine& engine, Jobs& jobs); // pool.cpp: pool.*, poolFolder.*, clip.set, media (#93)
 		void registerFadeCommands(Engine& engine);             // fadeedits.cpp: fades, crossfades and auto fades
+		void registerWarpCommands(Engine& engine);      // warp.cpp: musical mode, definition grid, warp markers (#144)
 		void registerParameterCommands(Engine& engine); // parameters.cpp: parameter.list, parameter.get, parameter.set
 		void registerSlotCommands(Engine& engine);      // slotcommands.cpp: plugin.*
 		void registerEventEditCommands(Engine& engine); // eventedits.cpp: event.*, parts and events (#85)
@@ -192,6 +194,7 @@ namespace gnubase::engine
 		void record(std::string action, const Project& before, CommandContext& context, std::string merge = {});
 		Json undoOrRedo(CommandContext& context, Direction direction);
 		Json transaction(Project& project, CommandContext& context);
+		Json join(CommandContext& context);
 		void announceHistory(CommandContext& context) const;
 		void publish();
 

@@ -912,10 +912,10 @@ meter .meter-peak
 	width: 48dp;
 }
 
-/* The transpose track (docs/features/transpose.md): the transpose events over the transpose track's lane and the
-   field that edits one's value. Code places the row on its lane, the events at their positions and the field over the
-   event it edits. */
-.transpose-row
+/* The transpose track (docs/features/transpose.md) and the chord track (chord-track.md): their events over their
+   lanes and the field that edits one's value or chord. Code places the row on its lane, the events at their positions
+   and the field over the event it edits. */
+.transpose-row, .chord-row
 {
 	position: absolute;
 	left: 0;
@@ -924,12 +924,12 @@ meter .meter-peak
 	height: 100%;
 }
 
-.transpose-row.hidden, .transpose-row .transpose-field
+.transpose-row.hidden, .transpose-row .transpose-field, .chord-row.hidden, .chord-row .chord-field
 {
 	display: none;
 }
 
-.transpose-row .transpose-events
+.transpose-row .transpose-events, .chord-row .chord-events
 {
 	position: absolute;
 	left: 0;
@@ -938,7 +938,7 @@ meter .meter-peak
 	height: 100%;
 }
 
-.transpose-row .transpose-event
+.transpose-row .transpose-event, .chord-row .chord-event
 {
 	position: absolute;
 	top: 0;
@@ -946,7 +946,7 @@ meter .meter-peak
 	white-space: nowrap;
 }
 
-.transpose-row .transpose-field.shown
+.transpose-row .transpose-field.shown, .chord-row .chord-field.shown
 {
 	display: block;
 	position: absolute;

@@ -5,6 +5,7 @@
 #include "engine/processors/effects.h"
 #include "engine/processors/gainpan.h"
 #include "engine/processors/generators.h"
+#include "engine/processors/midieffects.h"
 #include "engine/processors/testsynth.h"
 
 #include <algorithm>
@@ -349,6 +350,28 @@ namespace gnubase::engine::processors
 				for (const BuiltinInfo& info : builtins())
 					list.push_back(toJson(info));
 				return Json{{"processors", std::move(list)}};
+			});
+		engine.registerCommand(
+			{"midiEffect.list", 1,
+				"Every built-in MIDI effect for the MIDI insert and send slots of MIDI and instrument tracks "
+				"(channel.set midiInserts and midiSends): its id, name, description and parameters, as processor.list "
+				"has them, each with the key it goes by in a slot's parameters.",
+				CommandInfo{}.parameters,
+				Json::parse(R"({"type": "object", "properties": {"effects": {"type": "array"}},
+					"required": ["effects"]})"),
+				true},
+			[](CommandContext&)
+			{
+				Json list = Json::array();
+				for (const BuiltinInfo& info : midiEffects())
+				{
+					Json effect = toJson(info);
+					effect.erase("instrument");
+					for (size_t i = 0; i < info.parameters.size(); ++i)
+						effect["parameters"][i]["key"] = parameterKey(info.parameters[i]);
+					list.push_back(std::move(effect));
+				}
+				return Json{{"effects", std::move(list)}};
 			});
 	}
 }

@@ -363,6 +363,12 @@ namespace gnubase::engine::midi
 		return names;
 	}
 
+	std::vector<int> scaleSteps(ScaleType type)
+	{
+		const ScaleEntry& entry = scaleEntry(type);
+		return {entry.steps.begin(), entry.steps.begin() + entry.size};
+	}
+
 	int transposePitch(int pitch, const TransposeSettings& settings)
 	{
 		int result = pitch + settings.semitones;

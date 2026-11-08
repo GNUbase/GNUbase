@@ -115,6 +115,7 @@ namespace gnubase::ui
 		addFadeActions();
 		addVolumeActions();
 		addToolActions();
+		addTimeWarpActions();
 		addAutomationActions();
 		setToolModifiers(Json::object());
 
@@ -1237,6 +1238,7 @@ namespace gnubase::ui
 		case Drag::Automation:
 		case Drag::Volume:
 		case Drag::VolumePoint:
+		case Drag::TimeWarp:
 			areaMove(event, dx, dy);
 			return;
 		case Drag::None:

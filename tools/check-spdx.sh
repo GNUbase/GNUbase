@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Checks that every tracked file has the GNUbase license header in its first three lines, which leaves room for a
 # shebang or an XML declaration: SPDX-License-Identifier: GPL-3.0-or-later (CLAUDE.md, "Code conventions").
-# Exempt: submodules, Git LFS files, Markdown, JSON (no comments), .gitmodules (written by Git) and license texts.
+# Exempt: submodules, Git LFS files, Markdown, JSON (no comments), golden text files (compared as they are),
+# .gitmodules (written by Git) and license texts.
 # Usage: tools/check-spdx.sh
 # Prints the files without the header. Exit status: 0 every file has it, 1 some don't, 2 error.
 set -u
@@ -20,7 +21,7 @@ sed -n 's/: filter: lfs$//p' "$tmp/filters" > "$tmp/lfs"
 awk -v lfs="$tmp/lfs" 'BEGIN { while ((getline line < lfs) > 0) skip[line] } !($0 in skip)' "$tmp/files" |
 	while IFS= read -r file; do
 		case "$file" in
-		*.md | *.json | .gitmodules) continue ;;
+		*.md | *.json | tests/golden/*.txt | .gitmodules) continue ;;
 		LICENSE | LICENSE.* | */LICENSE | */LICENSE.* | LICENSES/* | */LICENSES/*) continue ;;
 		COPYING | COPYING.* | */COPYING | */COPYING.* | OFL.txt | */OFL.txt) continue ;;
 		esac

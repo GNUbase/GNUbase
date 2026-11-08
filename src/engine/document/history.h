@@ -65,6 +65,7 @@ namespace gnubase::engine
 		Arranger arranger;
 		int rootKey = -1;
 		TransposeTrack transpose;
+		ChordTrack chords;
 	};
 
 	// How a project changed, object by object. The id counter is left out on purpose: undoing an addition doesn't
@@ -107,6 +108,7 @@ namespace gnubase::engine
 		std::string details; // notes the user can add
 		ProjectChange change;
 		std::string merge; // a transaction's merge key: later transactions with the same key join this step
+		uint64_t id = 0;   // given by History::record, growing with each step
 	};
 
 	// The steps before position() are done; the ones after it were undone and can be redone.
@@ -127,6 +129,10 @@ namespace gnubase::engine
 		// Removes the last step. Requires that it is done: position() == steps().size() > 0.
 		void removeLast();
 
+		// Replaces the done steps from first to the position with step, or removes them without one. The steps after
+		// the position stay. Requires first <= position().
+		void join(size_t first, std::optional<HistoryStep> step);
+
 		// 0 means no limit. Drops the oldest steps beyond a new limit.
 		void setMaxSteps(size_t maxSteps);
 		size_t maxSteps() const { return m_maxSteps; }
@@ -141,5 +147,6 @@ namespace gnubase::engine
 		std::vector<HistoryStep> m_steps;
 		size_t m_position = 0;
 		size_t m_maxSteps = 0;
+		uint64_t m_lastId = 0;
 	};
 }

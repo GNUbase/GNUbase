@@ -95,6 +95,9 @@ namespace gnubase::ui
 
 		// Adds a command of the UI's own. Throws std::invalid_argument if a command has its id.
 		void add(UiCommand command);
+		// Removes a command of the UI's own with its keys, e.g. a user script that is gone. Does nothing for a command
+		// it doesn't have.
+		void remove(const std::string& id);
 
 		// Checks that a key, a menu item or a button can run the command with these parameters: throws
 		// std::invalid_argument, naming the command, for a command it doesn't know, parameters that the engine's

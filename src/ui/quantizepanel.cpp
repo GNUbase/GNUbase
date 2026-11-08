@@ -161,17 +161,26 @@ namespace gnubase::ui
 				std::to_string(max) + R"(" step="1" decimals="0" unit=")" + unit + R"(" title=")" + title + R"("/>)";
 		}
 
+		// A value field of the panel's own, not a quantize setting: milliseconds for the audio tracks' commands.
+		std::string milliseconds(const char* id, int min, int max, int value, const char* title)
+		{
+			return std::string(R"(<valuefield id=")") + id + R"(" min=")" + std::to_string(min) + R"(" max=")" +
+				std::to_string(max) + R"(" value=")" + std::to_string(value) +
+				R"(" step="1" decimals="0" unit="ms" title=")" + title + R"("/>)";
+		}
+
 		std::string menuButton(const char* id, const char* title)
 		{
 			return std::string(R"(<button id=")") + id + R"(" menu=")" + id + R"(-menu" title=")" + title + R"("/>)";
 		}
 	}
 
-	QuantizePanel::QuantizePanel(
-		EngineBinding& binding, Rml::Element& element, Layout layout, std::function<void(const std::string&)> run)
+	QuantizePanel::QuantizePanel(EngineBinding& binding, Rml::Element& element, Layout layout,
+		std::function<void(const std::string&)> run, std::function<void(const std::string&, engine::Json)> audio)
 		: m_binding(binding), m_root(element.GetObserverPtr()), m_layout(layout),
 		  m_prefix(layout == Layout::Panel ? "quantize" : "toolbar-quantize"),
-		  m_presetAttribute(layout == Layout::Panel ? "preset" : "toolbar-preset"), m_run(std::move(run))
+		  m_presetAttribute(layout == Layout::Panel ? "preset" : "toolbar-preset"), m_run(std::move(run)),
+		  m_audio(std::move(audio))
 	{
 		std::string menus = "<menu id=\"" + m_prefix + "-presets-menu\"/>";
 		if (layout == Layout::Toolbar)
@@ -180,7 +189,9 @@ namespace gnubase::ui
 				R"(<button id="toolbar-quantize-apply" class="icon-only" action="apply" title="Apply Quantize">)"
 				R"(Q</button><button id="toolbar-quantize-presets" menu="toolbar-quantize-presets-menu" )"
 				R"(title="Quantize Presets"/><button id="toolbar-quantize-soft" type="toggle" action="soft" )"
-				R"(title="Soft Quantize On/Off">Soft</button><button id="toolbar-quantize-panel" class="icon-only" )"
+				R"(title="Soft Quantize On/Off">Soft</button><button id="toolbar-quantize-warp" type="toggle" )"
+				R"(action="warp" title="Warp Quantize On/Off">Warp</button>)"
+				R"(<button id="toolbar-quantize-panel" class="icon-only" )"
 				R"(action="panel" title="Open Quantize Panel">...</button>)");
 		}
 		else
@@ -198,6 +209,7 @@ namespace gnubase::ui
 				R"(<div class="quantize-row"><button id="quantize-soft" type="toggle" action="soft" )"
 				R"(title="Soft Quantize">Soft Quantize</button>)" +
 				number("quantize-strength", "strength", 100, "%", "Quantize Strength") +
+				R"(<button id="quantize-warp" type="toggle" action="warp" title="Warp Quantize On/Off">Warp</button>)"
 				R"(</div><div id="quantize-grid-settings" class="quantize-settings">)" +
 				field("Grid Type", menuButton("quantize-grid", "Grid Type")) +
 				field("Quantize Tuplet", menuButton("quantize-tuplet", "Quantize Tuplet")) +
@@ -217,7 +229,19 @@ namespace gnubase::ui
 				R"(Auto Apply</button><div class="quantize-spacer"/>)"
 				R"(<button id="quantize-reset" action="reset" title="Reset Quantize">Reset</button>)"
 				R"(<button id="quantize-apply" class="primary" action="apply" title="Apply Quantize">Apply</button>)"
-				R"(</div></div>)");
+				// Several audio tracks (pp. 370-372, 378-380): Slice Rules, or with warp quantizing Warp Marker
+				// Creation Rules, and Crossfades.
+				R"(</div><div id="quantize-tracks" class="quantize-settings">)" +
+				field("Range", milliseconds("quantize-range", 0, 1000, 20, "Range")) +
+				field("Offset", milliseconds("quantize-offset", 0, 1000, 0, "Offset")) +
+				R"(<div class="quantize-row"><div class="quantize-spacer"/>)"
+				R"(<button id="quantize-slice" action="slice" title="Slice">Slice</button>)"
+				R"(<button id="quantize-create-markers" action="createWarpMarkers" title="Create">Create</button>)"
+				R"(</div>)" +
+				field("Crossfade Length", milliseconds("quantize-crossfade-length", 1, 500, 10, "Length")) +
+				R"(<div class="quantize-row"><div class="quantize-spacer"/>)"
+				R"(<button id="quantize-crossfade" action="crossfade" title="Crossfade">Crossfade</button>)"
+				R"(</div></div></div>)");
 			menus += R"(<menu id="quantize-grid-menu">)" + menuItems("grid", noteValues(false), "") +
 				R"(</menu><menu id="quantize-tuplet-menu">)" + menuItems("tuplet", tuplets(), "") +
 				R"(</menu><menu id="quantize-pre-quantize-menu">)" +
@@ -334,6 +358,15 @@ namespace gnubase::ui
 				m_run("window.quantizePanel");
 			else if (action == "soft") // the toggle's state before this click: m_settings may not have caught up yet
 				set({{"settings", {{"soft", !button->HasAttribute("checked")}}}});
+			else if (action == "warp")
+				set({{"settings", {{"warpQuantize", !button->HasAttribute("checked")}}}});
+			else if (m_audio && action == "slice")
+				m_audio("quantize.slice",
+					{{"range", fieldValue("quantize-range")}, {"offset", fieldValue("quantize-offset")}});
+			else if (m_audio && action == "createWarpMarkers")
+				m_audio("quantize.createWarpMarkers", {{"range", fieldValue("quantize-range")}});
+			else if (m_audio && action == "crossfade")
+				m_audio("quantize.crossfade", {{"length", fieldValue("quantize-crossfade-length")}});
 			else if (action == "save" || action == "rename")
 				savePreset(action == "rename");
 			else if (action == "remove" && isUserPreset(currentPreset()))
@@ -359,6 +392,12 @@ namespace gnubase::ui
 			m_binding.send("quantize.savePreset", {{"name", name}});
 		else if (isUserPreset(currentPreset()))
 			m_binding.send("quantize.renamePreset", {{"name", currentPreset()}, {"newName", name}});
+	}
+
+	double QuantizePanel::fieldValue(const std::string& id) const
+	{
+		const Rml::Element* field = find(id);
+		return field != nullptr ? field->GetAttribute<double>("value", 0.0) : 0.0;
 	}
 
 	std::string QuantizePanel::presetName() const
@@ -418,8 +457,13 @@ namespace gnubase::ui
 			setInner(m_menus.front().get(), presetsMenu());
 		const bool soft = m_settings.value("soft", false);
 		setFlag(find(m_prefix + "-soft"), "checked", soft);
+		const bool warp = m_settings.value("warpQuantize", false);
+		setFlag(find(m_prefix + "-warp"), "checked", warp);
 		if (m_layout == Layout::Toolbar)
 			return;
+		// Warp quantizing several tracks creates warp markers instead of slicing them (p. 378).
+		setClass(find("quantize-slice"), "hidden", warp);
+		setClass(find("quantize-create-markers"), "hidden", !warp);
 
 		const bool groove = m_settings.at("groove").is_object();
 		setClass(find("quantize-grid-settings"), "hidden", groove);
