@@ -121,20 +121,19 @@ namespace
 					const Json shown = elements(editor() + " .key-note");
 					if (shown.size() != count)
 						return false;
-					const Json project = app.call("project.get");
-					for (const Json& each : project.at("midiParts").at(0).at("notes"))
-					{
-						const Json found = elements(note(each.at("id").get<uint64_t>()));
-						if (found.empty())
-							return false;
-						const int64_t start = g_bar + each.at("position").get<int64_t>();
-						const double x = found.at(0).at("box").at("x").get<double>();
-						const double width = found.at(0).at("box").at("width").get<double>();
-						if (std::abs(x - timelineX(start)) > 1.5 ||
-							std::abs(x + width - timelineX(start + each.at("length").get<int64_t>())) > 1.5)
-							return false;
-					}
-					return true;
+					const Json notes = app.call("project.get").at("midiParts").at(0).at("notes");
+					return std::all_of(notes.begin(), notes.end(),
+						[&](const Json& each)
+						{
+							const Json found = elements(note(each.at("id").get<uint64_t>()));
+							if (found.empty())
+								return false;
+							const int64_t start = g_bar + each.at("position").get<int64_t>();
+							const double x = found.at(0).at("box").at("x").get<double>();
+							const double width = found.at(0).at("box").at("width").get<double>();
+							return std::abs(x - timelineX(start)) <= 1.5 &&
+								std::abs(x + width - timelineX(start + each.at("length").get<int64_t>())) <= 1.5;
+						});
 				}));
 		}
 

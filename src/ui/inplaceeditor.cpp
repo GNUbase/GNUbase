@@ -224,8 +224,8 @@ namespace gnubase::ui
 		if (event.GetId() != Rml::EventId::Click)
 			return;
 		Rml::Element* editor = nullptr;
-		Rml::Element* part = nullptr;
-		Rml::Element* toggle = nullptr;
+		const Rml::Element* part = nullptr;
+		const Rml::Element* toggle = nullptr;
 		for (Rml::Element* up = event.GetTargetElement(); up != nullptr && up != m_area.get(); up = up->GetParentNode())
 		{
 			if (up->IsClassSet("in-place-toolbar-toggle"))
