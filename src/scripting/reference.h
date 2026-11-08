@@ -7,6 +7,6 @@
 
 namespace gnubase::scripting
 {
-	// The Lua API reference in Markdown, generated from the engine's command registry: docs/lua.md.
+	// The Lua API reference in Markdown, generated from the engine's command registry (docs/api-reference.md).
 	std::string reference(const engine::Engine& engine);
 }

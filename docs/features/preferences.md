@@ -30,7 +30,9 @@ scripts can do all it does. Its presets keep complete or partial sets of prefere
     (`editing.defaultTimeBase`), Use Up/Down Navigation Commands for Selecting Tracks only
     (`ui.upDownSelectsTracksOnly`). MIDI: Legato Overlap (`editing.legatoOverlap`). Tool Modifiers: each action's
     modifier keys (`ui.toolModifiers`, over the defaults that `ui::EventDisplay::defaultToolModifiers` has; the
-    dialog keeps only those that differ). Tools: Show Toolbox on Right-Click (`ui.toolboxOnRightClick`), Show
+    dialog keeps only those that differ), chosen from a list or, as in the reference (p. 1574), by holding the keys
+    and clicking the action's Assign (Ctrl or Cmd, Alt, Shift); another action of the same category with those keys
+    is then left without any. Tools: Show Toolbox on Right-Click (`ui.toolboxOnRightClick`), Show
     Notification when Switching Tool Mode with Key Command (`ui.toolSwitchNotification`).
   - Event Display - Folders: Show Data on Folder Tracks (`ui.folderData`), Apply Color of Folder Track Automatically
     (`editing.applyFolderColor`). Markers: Show Marker Lines (`ui.markerLines`).
@@ -64,4 +66,3 @@ scripts can do all it does. Its presets keep complete or partial sets of prefere
 ## Not yet
 
 - The reference's other preferences: each comes with the feature it belongs to, and goes onto its page then.
-- Assigning tool modifiers by holding the keys and clicking Assign; the dialog chooses them from a list.

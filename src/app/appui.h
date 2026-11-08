@@ -358,5 +358,12 @@ namespace gnubase::app
 		engine::Json m_editorViews = engine::Json::object(); // the engine's, by editor
 		std::vector<uint64_t> m_followed;                    // the selection the editors last followed
 		std::vector<ui::Subscription> m_editorSubscriptions;
+		// The key commands dialog (#161) and the user's key commands and macros, ui.keyCommands and ui.macros.
+		void addKeyCommandsDialog();
+		void applyKeySettings();
+		Rml::ObserverPtr<Rml::Element> m_keyDialog;    // the open key commands dialog's document
+		Rml::ObserverPtr<Rml::Element> m_menuDocument; // the project window's, with the main menu
+		engine::Json m_keySettings;
+		std::vector<ui::Subscription> m_keySettingsChanged; // settings.changed
 	};
 }

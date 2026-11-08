@@ -363,13 +363,46 @@
 			local rows = {}
 			for _, action in ipairs(actions) do
 				local names = modifierActions[action] or {"", escape(action)}
+				local id = action:gsub("%.", "-")
 				rows[#rows + 1] = "<tr><td>" .. names[1] .. "</td><td>" .. names[2] .. "</td><td>" ..
-					dropDown(attributes("pref-tool-" .. action:gsub("%.", "-"), "ui.toolModifiers") ..
+					dropDown(attributes("pref-tool-" .. id, "ui.toolModifiers") ..
 						' action="' .. action .. '"', modifierChoices, set[action] or prefs.toolDefaults[action]) ..
-					"</td></tr>"
+					'</td><td><button id="pref-tool-assign-' .. id .. '" action="' .. action ..
+					'" onclick="Preferences.assignModifiers(document, event, element)">Assign</button></td></tr>'
 			end
-			return '<table class="modifiers"><thead><tr><td>Categories</td><td>Action</td><td>Modifiers</td></tr>' ..
+			return '<table class="modifiers"><thead><tr><td>Categories</td><td>Action</td><td>Modifiers</td><td/></tr>' ..
 				"</thead><tbody>" .. table.concat(rows) .. "</tbody></table>"
+		end
+
+		-- Assign (p. 1574): the modifier keys held while clicking it, for its action. Another action of the category
+		-- with the same modifiers is left without any.
+		function prefs.assignModifiers(document, event, button)
+			local function held(name)
+				local state = event.parameters[name]
+				return state == true or state == 1
+			end
+			local keys = {}
+			if held("ctrl_key") or held("meta_key") then
+				keys[#keys + 1] = "ctrl"
+			end
+			if held("alt_key") then
+				keys[#keys + 1] = "alt"
+			end
+			if held("shift_key") then
+				keys[#keys + 1] = "shift"
+			end
+			local assigned = table.concat(keys, "+")
+			local action = tostring(button:GetAttribute("action"))
+			local category = (modifierActions[action] or {action})[1]
+			for _, control in ipairs(document:QuerySelectorAll("select.preference[action]")) do
+				local other = tostring(control:GetAttribute("action"))
+				if other == action then
+					control:SetAttribute("value", assigned)
+				elseif assigned ~= "" and (modifierActions[other] or {other})[1] == category and
+					tostring(control:GetAttribute("value") or "") == assigned then
+					control:SetAttribute("value", "")
+				end
+			end
 		end
 
 		local function controllerItems(controllers)

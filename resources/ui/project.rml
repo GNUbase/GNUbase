@@ -302,6 +302,13 @@
 		<menuitem command="drumMap.load">Load Drum Map...</menuitem>
 		<menuitem command="drumMap.save">Save Drum Map...</menuitem>
 		<menuseparator/>
+		<!-- docs/features/key-commands.md: the macros, which app::AppUi fills in -->
+		<menuitem id="macros-submenu">Macros
+			<menu id="macros-menu">
+				<menuitem command="window.keyCommands">Key Commands...</menuitem>
+			</menu>
+		</menuitem>
+		<menuitem command="window.keyCommands">Key Commands...</menuitem>
 		<!-- docs/features/preferences.md -->
 		<menuitem command="window.preferences">Preferences...</menuitem>
 	</menu>
