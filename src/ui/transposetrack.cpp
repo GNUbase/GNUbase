@@ -10,6 +10,7 @@
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Elements/ElementFormControl.h>
 #include <RmlUi/Core/Event.h>
+#include <RmlUi/Core/StringUtilities.h>
 #include <RmlUi/Core/SystemInterface.h>
 
 #include <algorithm>
@@ -172,7 +173,7 @@ namespace gnubase::ui
 		std::string rml;
 		for (const Event& event : m_list)
 			rml += R"(<div class=")" + named("-event") + R"(" event=")" + std::to_string(event.id) + R"(">)" +
-				event.text + "</div>";
+				Rml::StringUtilities::EncodeRml(event.text) + "</div>";
 		if (m_events->GetAttribute<Rml::String>("events", "") != rml)
 		{
 			m_events->SetAttribute("events", rml);

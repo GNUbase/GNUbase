@@ -144,9 +144,10 @@ namespace gnubase::engine::midi
 		if (chord.root < 0)
 			return std::nullopt;
 		std::vector<std::string> tensions;
-		// The type, if any, by its spelling; m7b5 is diminished with the seventh.
+		// The type, if any, by its spelling; m7b5 is diminished with the seventh, dim7 with the diminished seventh (6).
 		static const std::vector<std::pair<std::string, std::string>> types = {{"m7b5", "dim"}, {"min", "min"},
-			{"dim", "dim"}, {"aug", "aug"}, {"+", "aug"}, {"sus2", "sus2"}, {"sus4", "sus4"}, {"sus", "sus4"}};
+			{"dim7", "dim"}, {"dim", "dim"}, {"aug", "aug"}, {"+", "aug"}, {"sus2", "sus2"}, {"sus4", "sus4"},
+			{"sus", "sus4"}};
 		const auto type = std::find_if(
 			types.begin(), types.end(), [&](const auto& entry) { return startsWith(text, at, entry.first); });
 		if (type != types.end())
@@ -154,6 +155,8 @@ namespace gnubase::engine::midi
 			chord.type = type->second;
 			if (type->first == "m7b5")
 				tensions.emplace_back("7");
+			if (type->first == "dim7")
+				tensions.emplace_back("6");
 			at += type->first.size();
 		}
 		else if (startsWith(text, at, "maj") &&
@@ -223,6 +226,11 @@ namespace gnubase::engine::midi
 		{
 			name += "m7b5";
 			tensions.erase(std::find(tensions.begin(), tensions.end(), "7"));
+		}
+		else if (chord.type == "dim" && hasTension(chord, "6"))
+		{
+			name += "dim7";
+			tensions.erase(std::find(tensions.begin(), tensions.end(), "6"));
 		}
 		else if (type != nullptr)
 		{
@@ -459,8 +467,11 @@ namespace gnubase::engine::midi
 			const int tone = indexOf(pitch, from.chord.root, fromChord);
 			if (tone >= 0 && static_cast<size_t>(tone) < toChord.size())
 				return clampPitch(moved + toChord[static_cast<size_t>(tone)] - fromChord[static_cast<size_t>(tone)]);
-			// The transpose function's scale correction: the same degree of the new scale.
-			return transposePitch(pitch, {0, from.scale, to.scale, false, 0, 127});
+			// The transpose function's scale correction, the same degree of the new scale, after the same root step
+			// as the chord notes: a tritone moves them all up, not some down.
+			const int step = rootStep(from.chord.root, to.chord.root);
+			const Scale stepped{pitchClass(from.scale.root + step), from.scale.type};
+			return transposePitch(pitch, {step, stepped, to.scale, false, 0, 127});
 		}
 		return clampPitch(nearestOf(moved, to.chord.root, toChord));
 	}

@@ -290,21 +290,31 @@ namespace gnubase::engine
 			return;
 		const time::TimeBase base = track->timeBase;
 		ChordTrack& chords = project.chords;
-		const auto read = [base](const Json& item, const char* text)
+		const auto read = [base](const Json& item, std::string text)
 		{
 			ChordEvent event;
 			event.id = item.at("id").get<ObjectId>();
 			event.position = {base, item.at("position").get<int64_t>()};
-			event.text = item.value(text, std::string());
+			event.text = std::move(text);
 			return event;
 		};
+		// The text as chord.add would take it: unknown chords are undefined (X), unknown scales are left out.
+		const auto chordText = [](const std::string& text)
+		{ return midi::chordName(midi::parseChord(text).value_or(midi::ChordSymbol())); };
 		for (const Json& item : json.value("events", Json::array()))
-			chords.events.push_back(read(item, "chord"));
+			chords.events.push_back(read(item, chordText(item.value("chord", std::string()))));
 		for (const Json& item : json.value("scales", Json::array()))
-			chords.scales.push_back(read(item, "scale"));
+			if (const std::optional<midi::Scale> scale = midi::parseScale(item.value("scale", std::string())))
+				chords.scales.push_back(read(item, midi::scaleName(*scale)));
+		// In timeline order, and one event of a kind at a position, the first, as chord.add refuses a second.
 		for (std::vector<ChordEvent>* events : {&chords.events, &chords.scales})
+		{
 			std::stable_sort(events->begin(), events->end(),
 				[](const ChordEvent& a, const ChordEvent& b) { return a.position.value < b.position.value; });
+			events->erase(std::unique(events->begin(), events->end(), [](const ChordEvent& a, const ChordEvent& b)
+							  { return a.position.value == b.position.value; }),
+				events->end());
+		}
 		chords.octaveOffset = std::clamp(json.value("octaveOffset", 0), -3, 3);
 		chords.adaptiveVoicings = json.value("adaptiveVoicings", true);
 		chords.automaticScales = json.value("automaticScales", true);
@@ -313,7 +323,8 @@ namespace gnubase::engine
 			ChordFollow follow;
 			follow.mode = item.value("mode", std::string("off"));
 			for (const Json& chord : item.value("source", Json::array()))
-				follow.source.push_back({chord.at("position").get<time::Ticks>(), chord.value("chord", "X")});
+				follow.source.push_back(
+					{chord.at("position").get<time::Ticks>(), chordText(chord.value("chord", std::string("X")))});
 			chords.follow[item.at("track").get<ObjectId>()] = follow;
 		}
 	}

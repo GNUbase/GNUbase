@@ -78,6 +78,9 @@ TEST_CASE("chord symbols: the chord editor's text input and the names of chord e
 	CHECK(chordName(chord("C+")) == "Caug");
 	CHECK(chordName(chord("Cm7b5")) == "Cm7b5");
 	CHECK(chord("Cm7b5").type == "dim");
+	// dim7 is the diminished seventh chord, the diminished triad with the sixth, not m7b5.
+	CHECK(chordName(chord("Cdim7")) == "Cdim7");
+	CHECK(chordIntervals(chord("Cdim7")) == std::vector<int>{0, 3, 6, 9});
 	CHECK(chord("C/E").bass == 4);
 	CHECK(chordName(chord("C/C")) == "C");
 	CHECK(chord("X").root == -1);
@@ -88,7 +91,7 @@ TEST_CASE("chord symbols: the chord editor's text input and the names of chord e
 	CHECK(!parseChord("C/").has_value());
 	// Every name reads back as itself.
 	for (const std::string name : {"C", "C#m", "Dm7", "Ebmaj7", "Fdim", "Gaug", "Asus2", "Bsus4", "C6", "Cm6", "C7(b9)",
-			 "C7(9,13)", "Cadd9", "Cadd(9,#11)", "Am7/G", "Cm7b5", "Cmmaj7"})
+			 "C7(9,13)", "Cadd9", "Cadd(9,#11)", "Am7/G", "Cm7b5", "Cdim7", "Cmmaj7"})
 	{
 		INFO(name);
 		CHECK(chordName(chord(chordName(chord(name)))) == chordName(chord(name)));
@@ -131,6 +134,7 @@ TEST_CASE("recognizing the chords of MIDI notes", "[unit]")
 	CHECK(recognized({62, 65, 69, 72, 76}) == "Dm7(9)");
 	CHECK(recognized({55, 59, 62, 65}) == "G7");
 	CHECK(recognized({59, 62, 65}) == "Bdim");
+	CHECK(recognized({60, 63, 66, 69}) == "Cdim7");
 	CHECK(recognized({60, 62}) == "none");
 	CHECK(recognized({60, 61, 62}) == "none");
 	CHECK(recognized({}) == "none");
@@ -182,6 +186,8 @@ TEST_CASE("Follow Chord Track modes map a C major chord through the I-vi-IV-V pr
 		CHECK(follow({60, 64, 67, 62, 65}, "chordsAndScales", c, am) == std::vector<int>{57, 60, 64, 59, 62});
 		// Over C minor the third is minor and the sixth degree a minor sixth; Chords takes the nearest chord note.
 		CHECK(follow({64, 69}, "chordsAndScales", c, harmony("Cm")) == std::vector<int>{63, 68});
+		// A tritone moves chord notes and the others the same way, up, so the melody stays in one octave.
+		CHECK(follow({60, 62, 64}, "chordsAndScales", c, harmony("F#")) == std::vector<int>{66, 68, 70});
 	}
 	SECTION("Voicings plays the same voices of the new chord's voicing")
 	{
