@@ -294,6 +294,26 @@ namespace gnubase::ui
 			if (const std::vector<uint64_t> tracks = renderable(); !tracks.empty())
 				m_binding.send("track.renderInPlace", {{"tracks", tracks}});
 		};
+		// The chord track (docs/features/chord-track.md, reference manual pp. 1336, 1342): Chords to MIDI onto the
+		// first selected MIDI or instrument track, Create Chord Events from the selected ones.
+		const auto noteTracks = [this]
+		{
+			std::vector<uint64_t> tracks;
+			for (const uint64_t track : selection())
+				if (const std::string& type = m_tracks[m_index.at(track)].type; type == "midi" || type == "instrument")
+					tracks.push_back(track);
+			return tracks;
+		};
+		m_actions["track.chordsToMidiSelected"] = [this, noteTracks]
+		{
+			if (const std::vector<uint64_t> tracks = noteTracks(); !tracks.empty())
+				m_binding.send("chord.toMidi", {{"track", tracks.front()}});
+		};
+		m_actions["track.createChordEventsSelected"] = [this, noteTracks]
+		{
+			if (const std::vector<uint64_t> tracks = noteTracks(); !tracks.empty())
+				m_binding.send("chord.fromMidi", {{"tracks", tracks}});
+		};
 		for (const bool enabled : {false, true})
 			m_actions[enabled ? "track.enableSelected" : "track.disableSelected"] = [this, enabled]
 			{

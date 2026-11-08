@@ -555,7 +555,8 @@ namespace gnubase::engine
 				// GNUbase's entry.
 				if (track.type == TrackType::Marker || track.type == TrackType::Ruler ||
 					track.type == TrackType::Tempo || track.type == TrackType::Signature ||
-					track.type == TrackType::Arranger || track.type == TrackType::Transpose)
+					track.type == TrackType::Arranger || track.type == TrackType::Transpose ||
+					track.type == TrackType::Chord)
 					return;
 				pugi::xml_node node = parent.append_child("Track");
 				node.append_attribute("id") = xmlId("t", track.id).c_str();
@@ -1643,7 +1644,8 @@ namespace gnubase::engine
 				}
 				media.channels = std::clamp(media.channels, 1, g_maxAudioChannels);
 				m_project.media[media.id] = media;
-				const Clip clip{m_project.newId(), pathOf(xmlPath).stem().u8string(), media.id, {}, {}, 0, {}, {}, {}};
+				const Clip clip{
+					m_project.newId(), pathOf(xmlPath).stem().u8string(), media.id, {}, {}, 0, {}, {}, {}, {}};
 				m_project.clips[clip.id] = clip;
 				return m_clips[xmlPath] = clip.id;
 			}

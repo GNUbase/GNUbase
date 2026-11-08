@@ -495,7 +495,7 @@ TEST_CASE("an edit during the pre-roll keeps the chain playing", "[integration]"
 	checkOutput(song, path({{1700, 2500}, {1000, 1600}}, 1428));
 }
 
-TEST_CASE("chain playback in real time renders the same as offline", "[integration]")
+TEST_CASE("chain playback in real time renders the same as offline", "[integration][realtime]")
 {
 	const gnubase::test::TempDir dir;
 	const auto build = [&dir](Song& song, const std::string& name)
