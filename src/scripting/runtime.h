@@ -48,7 +48,8 @@ namespace gnubase::scripting
 		Runtime& operator=(const Runtime&) = delete;
 
 		// Runs Lua code. Returns nothing on success, otherwise the error with a traceback. chunkName appears in
-		// error messages, e.g. "check.lua:3: too quiet".
+		// error messages, e.g. "check.lua:3: too quiet". A function that Lua calls may run more code: that run keeps
+		// the outer one's time limit, and the test cases it registers run when the outermost run ends.
 		std::optional<std::string> run(std::string_view code, const std::string& chunkName);
 
 		// Runs a Lua file. A first line starting with # (e.g. #!/usr/bin/env ...) is ignored.
@@ -101,6 +102,7 @@ namespace gnubase::scripting
 		std::vector<std::unique_ptr<Function>> m_functions; // added with addFunction; Lua holds pointers to them
 		std::chrono::milliseconds m_timeLimit{0};
 		std::chrono::steady_clock::time_point m_deadline;
+		int m_depth = 0;                                // runs going on: a function that Lua calls may run more code
 		std::unique_ptr<lua_State, CloseState> m_state; // closed first: its functions use the members above
 	};
 }

@@ -1,0 +1,33 @@
+# velocity below 64 up an octave
+10 90 48 32
+20 91 3e 78
+30 a0 48 28
+40 b0 01 63
+50 80 48 40
+60 81 3e 40
+# pitch from 62 deleted
+10 90 3c 32
+30 a0 3c 28
+40 b0 01 63
+50 80 3c 40
+# all set to velocity 30
+10 90 3c 1e
+20 91 3e 1e
+30 a0 3c 28
+40 b0 01 63
+50 80 3c 40
+60 81 3e 40
+# all 20 louder
+10 90 3c 46
+20 91 3e 7f
+30 a0 3c 28
+40 b0 01 63
+50 80 3c 40
+60 81 3e 40
+# channel 1 to channel 3
+10 92 3c 32
+20 91 3e 78
+30 a2 3c 28
+40 b0 01 63
+50 82 3c 40
+60 81 3e 40

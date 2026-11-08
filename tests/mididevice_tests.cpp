@@ -580,7 +580,7 @@ TEST_CASE("the ALSA sequencer backend keeps the port contract and notices ports 
 
 // Against jackd; skipped where no JACK server runs, unless GNUBASE_REQUIRE_JACK=1 (CI starts jackd with its dummy
 // driver, tools/start-jack.sh).
-TEST_CASE("the JACK MIDI backend keeps the port contract and notices ports coming and going", "[integration]")
+TEST_CASE("the JACK MIDI backend keeps the port contract and notices ports coming and going", "[integration][jack]")
 {
 	std::unique_ptr<JackLoopback> loopback = JackLoopback::start();
 	if (!loopback)
@@ -609,7 +609,7 @@ TEST_CASE("the JACK MIDI backend keeps the port contract and notices ports comin
 
 // Where libjack is PipeWire's, a server always answers, and its MIDI ports are the ALSA backend's too: JACK MIDI is on
 // only while a JACK audio device is open.
-TEST_CASE("the JACK MIDI backend has ports only while a JACK audio device is open", "[integration]")
+TEST_CASE("the JACK MIDI backend has ports only while a JACK audio device is open", "[integration][jack]")
 {
 	const std::unique_ptr<JackLoopback> loopback = JackLoopback::start();
 	if (!loopback)
@@ -656,7 +656,7 @@ TEST_CASE("the JACK MIDI backend has ports only while a JACK audio device is ope
 }
 
 // Input is stamped from the server's filtered cycle times, not from when the process callback happens to run (#402).
-TEST_CASE("the JACK MIDI backend stamps input with the server's cycle times", "[integration]")
+TEST_CASE("the JACK MIDI backend stamps input with the server's cycle times", "[integration][jack]")
 {
 	const std::unique_ptr<JackLoopback> loopback = JackLoopback::start();
 	if (!loopback)

@@ -1,0 +1,124 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The Process Tempo dialog (#159, docs/features/time-warp.md, reference manual pp. 1463-1464): ui::EventDisplay
+     opens it (tempo.openProcessTempo). It shows the locator range in seconds; a New End Position or New Length typed
+     changes the other and the Equivalent Tempo Scaling, and Process sends tempo.process with the new length. -->
+<rml>
+<head>
+	<title>Process Tempo</title>
+	<style>
+		dialog
+		{
+			width: 320dp;
+		}
+
+		.field
+		{
+			display: flex;
+			align-items: center;
+			height: 28dp;
+			margin: 0 12dp;
+		}
+
+		.field .label
+		{
+			flex: 1;
+		}
+
+		.field valuefield
+		{
+			width: 100dp;
+		}
+
+		.section
+		{
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.row
+		{
+			display: flex;
+			align-items: center;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		#pt-message
+		{
+			flex: 1;
+		}
+
+		.row button
+		{
+			margin-left: 6dp;
+		}
+	</style>
+	<script>
+		ProcessTempo = {}
+		local dialog = ProcessTempo
+		local function text(document, id, value)
+			document:GetElementById(id).inner_rml = string.format("%.3f", value)
+		end
+		local function numberOf(document, id)
+			return tonumber(tostring(document:GetElementById(id):GetAttribute("value") or "")) or 0
+		end
+		-- The locator range, and the new range as long as it.
+		function dialog.load(document)
+			local transport = gnubase.transport.get()
+			local rate = gnubase.project.get().sampleRate
+			dialog.start = transport.left / rate
+			dialog.finish = transport.right / rate
+			text(document, "pt-start", dialog.start)
+			text(document, "pt-finish", dialog.finish)
+			dialog.length = dialog.finish - dialog.start
+			dialog.show(document)
+		end
+		function dialog.show(document)
+			dialog.showing = true
+			document:GetElementById("pt-new-end"):SetAttribute("value", string.format("%.3f", dialog.start + dialog.length))
+			document:GetElementById("pt-new-length"):SetAttribute("value", string.format("%.3f", dialog.length))
+			local scaling = dialog.length > 0 and (dialog.finish - dialog.start) / dialog.length or 0
+			text(document, "pt-scaling", scaling)
+			dialog.showing = false
+		end
+		function dialog.changed(document, element)
+			if dialog.showing then
+				return
+			end
+			if element.id == "pt-new-end" then
+				dialog.length = numberOf(document, "pt-new-end") - dialog.start
+			elseif element.id == "pt-new-length" then
+				dialog.length = numberOf(document, "pt-new-length")
+			end
+			dialog.show(document)
+		end
+		function dialog.process(document)
+			local ok, failure = pcall(gnubase.tempo.process, {newLength = dialog.length})
+			if not ok then
+				document:GetElementById("pt-message").inner_rml = tostring(failure):gsub("[&<>]", "")
+				return
+			end
+			document:Close()
+		end
+	</script>
+</head>
+<body onshow="ProcessTempo.load(document)">
+	<dialog id="process-tempo-dialog">
+		<div class="dialog-titlebar">Process Tempo</div>
+		<div class="section">Locator Range (seconds)</div>
+		<div class="field"><span class="label">Start at Position</span><span id="pt-start"/></div>
+		<div class="field"><span class="label">Finish at Position</span><span id="pt-finish"/></div>
+		<div class="section">New Range</div>
+		<div onchange="ProcessTempo.changed(document, event.target_element)">
+			<div class="field"><span class="label">New End Position</span>
+				<valuefield id="pt-new-end" value="0" min="0" max="100000" step="0.1" decimals="3"/></div>
+			<div class="field"><span class="label">New Length</span>
+				<valuefield id="pt-new-length" value="0" min="0" max="100000" step="0.1" decimals="3"/></div>
+		</div>
+		<div class="field"><span class="label">Equivalent Tempo Scaling</span><span id="pt-scaling"/></div>
+		<div class="row">
+			<div id="pt-message"/>
+			<button result="cancel">Cancel</button>
+			<button id="pt-process" class="primary" onclick="ProcessTempo.process(document)">Process</button>
+		</div>
+	</dialog>
+</body>
+</rml>

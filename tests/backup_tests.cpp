@@ -524,6 +524,18 @@ TEST_CASE("a backup reports its progress and can be cancelled", "[integration][s
 	CHECK(cancelled.at("state") == "cancelled");
 	CHECK(!fs::exists(folder));
 	CHECK(run(song.client, "job.list").at("jobs").size() == 2);
+
+	// So does one cancelled while it copies the project's Mixdown folder, with the folders it made in there.
+	Song saved;
+	fs::create_directories(dir.path() / "project" / "Mixdown" / "Stems");
+	fs::copy_file(big, dir.path() / "project" / "Mixdown" / "Stems" / "big.wav");
+	run(saved.client, "project.save", {{"path", utf8(dir.path() / "project" / "Song.dawproject")}});
+	const fs::path mixdowns = dir.path() / "cancelled mixdowns";
+	const uint64_t copying =
+		run(saved.client, "project.backup", {{"folder", utf8(mixdowns)}}).at("job").at("id").get<uint64_t>();
+	run(saved.client, "job.cancel", {{"job", copying}});
+	CHECK(waitForJob(saved.client, copying).at("state") == "cancelled");
+	CHECK(!fs::exists(mixdowns));
 }
 
 TEST_CASE("a backup goes into an empty folder", "[integration]")
@@ -550,6 +562,36 @@ TEST_CASE("a backup goes into an empty folder", "[integration]")
 	fs::create_directories(dir.path() / "empty");
 	backup(song.client, {{"folder", utf8(dir.path() / "empty")}});
 	CHECK(fs::exists(dir.path() / "empty" / "Untitled.dawproject"));
+}
+
+TEST_CASE("a backup takes the project's Mixdown folder along, unless asked not to", "[integration]")
+{
+	const test::TempDir dir;
+	const fs::path project = dir.path() / "Song";
+	fs::create_directories(project);
+	Song song;
+	run(song.client, "project.save", {{"path", utf8(project / "Song.dawproject")}});
+
+	// A project without a Mixdown folder backs up without one.
+	backup(song.client, {{"folder", utf8(dir.path() / "none")}});
+	CHECK(filesIn(dir.path() / "none") == std::set<std::string>{"Song.dawproject"});
+
+	// The folder that File > Export > Audio Mixdown suggests, with what is in it, folders too.
+	writeNoise(project / "Mixdown" / "Song.wav", 4800, 2, 1);
+	writeNoise(project / "Mixdown" / "Stems" / "Drums.wav", 4800, 2, 2);
+	const std::set<std::string> withMixdown{"Song.dawproject", "Mixdown/Song.wav", "Mixdown/Stems/Drums.wav"};
+	backup(song.client, {{"folder", utf8(dir.path() / "with")}});
+	CHECK(filesIn(dir.path() / "with") == withMixdown);
+	CHECK(sameFiles(
+		dir.path() / "with" / "Mixdown" / "Stems" / "Drums.wav", project / "Mixdown" / "Stems" / "Drums.wav"));
+
+	backup(song.client, {{"folder", utf8(dir.path() / "without")}, {"skipMixdown", true}});
+	CHECK(filesIn(dir.path() / "without") == std::set<std::string>{"Song.dawproject"});
+
+	// A backup into the Mixdown folder doesn't back itself up.
+	const fs::path inside = project / "Mixdown" / "Backup";
+	backup(song.client, {{"folder", utf8(inside)}});
+	CHECK(filesIn(inside) == withMixdown);
 }
 
 TEST_CASE("media can be copied into the project folder when they are added", "[integration]")

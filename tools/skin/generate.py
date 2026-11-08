@@ -518,6 +518,10 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".transpose-row .transpose-event", {"color": c["text"], "font-size": f"{sizes['small']}dp",
                                              "border-left-width": f"{widths['hairline']}dp",
                                              "border-left-color": c["accent"]}),
+        # The chord track (docs/features/chord-track.md): a chord event's chord from its position on
+        (".chord-row .chord-event", {"color": c["text"], "font-size": f"{sizes['small']}dp",
+                                     "border-left-width": f"{widths['hairline']}dp",
+                                     "border-left-color": c["accent2"]}),
         # The tools (docs/features/tools.md): the selection range and the rectangle a tool drags
         (".event-display .range-selection", {"border-width": f"{widths['hairline']}dp", "border-color": c["text"],
                                              "background-color": c["text"] + "33"}),
@@ -634,6 +638,8 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".se-hitpoint.locked .se-hitpoint-handle", {"background-color": c["accent2"]}),
         (".se-hitpoint.disabled .se-hitpoint-line, .se-hitpoint.disabled .se-hitpoint-handle",
          {"background-color": c["textMuted"] + "66"}),
+        # Its warp markers (docs/features/warp.md)
+        (".se-warp-marker-line, .se-warp-marker-handle", {"background-color": c["accent2"]}),
         # The audio functions (docs/features/audio-functions.md): Detect Silence's sections along the event, the
         # Spectrum Analyzer's bars with the one D is measured from in the second accent, the Statistics' headings
         (".ds-display, .sa-graph", {"background-color": c["surface"]}),

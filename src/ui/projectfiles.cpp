@@ -106,10 +106,16 @@ namespace gnubase::ui
 		  m_jobFinished(binding.on("job.finished",
 			  [this](const engine::Event& event)
 			  {
-				  // A backup runs as a job, so most of its failures come after project.backup returned.
+				  // A backup runs as a job, so most of its failures come after project.backup returned. So does the
+				  // reason why a backup that was to be opened wasn't, such as an edit while the job ran.
 				  const Json& job = event.data.at("job");
-				  if (m_backupWindow && job.at("kind") == "project.backup" && job.at("state") == "failed")
+				  if (!m_backupWindow || job.at("kind") != "project.backup")
+					  return;
+				  if (job.at("state") == "failed")
 					  showError(*m_backupWindow, job.at("error").get<std::string>());
+				  else if (const Json& result = job.at("result"); job.at("state") == "done" && result.is_object() &&
+					  result.value("activationError", Json()).is_string())
+					  showError(*m_backupWindow, result.at("activationError").get<std::string>());
 			  })),
 		  m_autoSaveFailed(
 			  binding.on("project.autoSaveFailed", [this](const engine::Event& event) { autoSaveFailed(event.data); })),
@@ -150,7 +156,8 @@ namespace gnubase::ui
 							m_binding.send("project.saveTemplate", {{"name", name->GetValue()}}, done);
 					});
 			}});
-		keys.add({"file.backup", "Backs the project up into a folder chosen in a file dialog.",
+		keys.add({"file.backup",
+			"Backs the project up into a folder chosen in a file dialog, with the options of a dialog that follows.",
 			[this](Window& window, Rml::Element*)
 			{
 				FileDialog dialog;
@@ -158,12 +165,10 @@ namespace gnubase::ui
 				dialog.title = "Back up Project";
 				dialog.parent = window.id();
 				m_shell.showFileDialog(dialog,
-					[this, id = window.id(), done = reportFailure(window)](const FileDialogResult& chosen)
+					[this, id = window.id()](const FileDialogResult& chosen)
 					{
-						if (chosen.files.empty())
-							return;
-						m_backupWindow = id;
-						m_binding.send("project.backup", {{"folder", chosen.files.front().u8string()}}, done);
+						if (Window* asked = m_shell.find(id); asked != nullptr && !chosen.files.empty())
+							backup(*asked, chosen.files.front().u8string());
 					});
 			}});
 		keys.add({"file.revert", "Goes back to the project as it was last saved.", [this](Window& window, Rml::Element*)
@@ -261,6 +266,37 @@ namespace gnubase::ui
 			}
 		if (Rml::Element* list = dialog.GetElementById("start-recent"))
 			list->SetInnerRML(listItems(names, m_recent));
+	}
+
+	void ProjectFiles::backup(Window& window, const std::string& folder)
+	{
+		// The name starts as the project file's; left as it is, or empty, the engine names the backup on its own.
+		const std::string name = m_file.empty() ? std::string() : std::filesystem::u8path(m_file).stem().u8string();
+		Rml::ElementDocument* dialog = openDialog(window, "backup-project.rml",
+			[this, id = window.id(), folder, name, done = reportFailure(window)](
+				Rml::ElementDocument& options, const std::string& result)
+			{
+				if (result != "ok")
+					return;
+				const auto checked = [&options](const char* option)
+				{
+					const Rml::Element* element = options.GetElementById(option);
+					return element != nullptr && element->HasAttribute("checked");
+				};
+				Json parameters = {{"folder", folder}, {"activate", !checked("backup-keep-active")},
+					{"minimize", checked("backup-minimize")}, {"currentVersionsOnly", checked("backup-offline")},
+					{"removeUnused", checked("backup-remove-unused")}, {"skipVideo", checked("backup-skip-video")},
+					{"skipMixdown", checked("backup-skip-mixdown")}};
+				if (auto* field = dynamic_cast<Rml::ElementFormControl*>(options.GetElementById("backup-name")))
+					if (const Rml::String typed = field->GetValue(); !typed.empty() && typed != name)
+						parameters["name"] = typed;
+				m_backupWindow = id;
+				m_binding.send("project.backup", parameters, done);
+			});
+		if (auto* field = dialog != nullptr
+				? dynamic_cast<Rml::ElementFormControl*>(dialog->GetElementById("backup-name"))
+				: nullptr)
+			field->SetValue(name);
 	}
 
 	Rml::ElementDocument* ProjectFiles::openDialog(Window& window, const char* file, Closed closed)

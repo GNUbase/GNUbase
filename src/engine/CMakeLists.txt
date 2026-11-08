@@ -123,8 +123,10 @@ add_library(gnubase-engine STATIC
 	document/arranger.cpp
 	document/audiofilecommands.cpp
 	document/audiofunctions.cpp document/audiofunctions.h
+	document/audioquantize.cpp document/audioquantize.h
 	document/channelformat.cpp document/channelformat.h
 	document/channelsettings.cpp document/channelsettings.h
+	document/chordtrack.cpp document/chordtrack.h
 	document/document.cpp document/document.h
 	document/editors.cpp document/editors.h
 	document/eventedits.cpp
@@ -150,10 +152,12 @@ add_library(gnubase-engine STATIC
 	document/snap.cpp document/snap.h
 	document/stripparameters.cpp document/stripparameters.h
 	document/tempo.cpp
+	document/timewarp.cpp document/timewarp.h
 	document/trackversions.cpp document/trackversions.h
 	document/trackvisibility.cpp document/trackvisibility.h
 	document/transpose.cpp
 	document/volumecurves.cpp document/volumecurves.h
+	document/warp.cpp document/warp.h
 	dsp/biquad.cpp dsp/biquad.h
 	dsp/delay.cpp dsp/delay.h
 	dsp/dither.cpp dsp/dither.h
@@ -162,6 +166,7 @@ add_library(gnubase-engine STATIC
 	dsp/equalizer.cpp dsp/equalizer.h
 	dsp/reverb.cpp dsp/reverb.h
 	dsp/timestretch.cpp dsp/timestretch.h
+	dsp/warp.cpp dsp/warp.h
 	engine.cpp engine.h
 	graph/events.h
 	graph/graph.cpp graph/graph.h
@@ -176,8 +181,10 @@ add_library(gnubase-engine STATIC
 	midi/controllerlanes.cpp midi/controllerlanes.h
 	midi/devices.cpp midi/devices.h
 	midi/drummaps.cpp midi/drummaps.h
+	midi/effects.h
 	midi/functioncommands.cpp midi/functioncommands.h
 	midi/functions.cpp midi/functions.h
+	midi/harmony.cpp midi/harmony.h
 	midi/midivalues.cpp midi/midivalues.h
 	midi/modifiers.cpp midi/modifiers.h
 	midi/quantize.cpp midi/quantize.h
@@ -195,6 +202,7 @@ add_library(gnubase-engine STATIC
 	processors/effects.h
 	processors/gainpan.cpp processors/gainpan.h
 	processors/generators.cpp processors/generators.h
+	processors/midieffects.cpp processors/midieffects.h
 	processors/testsynth.cpp processors/testsynth.h
 	schema.cpp schema.h
 	schematext.cpp schematext.h

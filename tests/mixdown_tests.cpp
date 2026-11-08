@@ -30,7 +30,9 @@ namespace
 
 	Json run(Client& client, const std::string& command, Json parameters = Json::object())
 	{
-		const Result result = client.call(command, std::move(parameters));
+		// An export renders the whole project before it answers, which under sanitizers on a busy runner takes longer
+		// than the client's default 10 s.
+		const Result result = client.call(command, std::move(parameters), std::chrono::seconds(60));
 		INFO(command << " failed: " << result.error);
 		REQUIRE(result.ok());
 		return result.value;
