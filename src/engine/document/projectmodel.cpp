@@ -7,6 +7,7 @@
 #include "engine/document/audiofunctions.h"
 #include "engine/document/audioquantize.h"
 #include "engine/document/channelsettings.h"
+#include "engine/document/chordtrack.h"
 #include "engine/document/editors.h"
 #include "engine/document/hitpoints.h"
 #include "engine/document/linkgroups.h"
@@ -77,6 +78,7 @@ namespace gnubase::engine
 			{TrackType::Vca, "vca", "VCA"},
 			{TrackType::Arranger, "arranger", "Arranger"},
 			{TrackType::Transpose, "transpose", "Transpose"},
+			{TrackType::Chord, "chord", "Chord"},
 		};
 
 		const TrackTypeName& trackTypeEntry(TrackType type)
@@ -383,6 +385,7 @@ namespace gnubase::engine
 			require(track.type != TrackType::Signature || parent == 0, "the signature track can't be inside a folder");
 			require(track.type != TrackType::Arranger || parent == 0, "the arranger track can't be inside a folder");
 			require(track.type != TrackType::Transpose || parent == 0, "the transpose track can't be inside a folder");
+			require(track.type != TrackType::Chord || parent == 0, "the chord track can't be inside a folder");
 			const std::vector<ObjectId> moved = subtree(project, id);
 			require(std::find(moved.begin(), moved.end(), parent) == moved.end(),
 				"can't move a folder into itself or a folder inside it");
@@ -524,6 +527,13 @@ namespace gnubase::engine
 					event.position = time::rebase(event.position, base, project.tempo, project.sampleRate);
 				context.emit("transpose.changed", transposeJson(project));
 			}
+			if (track.type == TrackType::Chord)
+			{
+				for (std::vector<ChordEvent>* events : {&project.chords.events, &project.chords.scales})
+					for (ChordEvent& event : *events)
+						event.position = time::rebase(event.position, base, project.tempo, project.sampleRate);
+				context.emit("chord.changed", chordJson(project));
+			}
 			for (auto& [id, lane] : project.automation)
 				if (lane.track == track.id && !lane.points.empty())
 				{
@@ -651,6 +661,16 @@ namespace gnubase::engine
 				}
 			if (transposed)
 				context.emit("transpose.changed", transposeJson(project));
+			bool chorded = false;
+			for (std::vector<ChordEvent>* events : {&project.chords.events, &project.chords.scales})
+				for (ChordEvent& event : *events)
+					if (event.position.base == time::TimeBase::Linear)
+					{
+						event.position.value = rescale(event.position.value, factor);
+						chorded = true;
+					}
+			if (chorded)
+				context.emit("chord.changed", chordJson(project));
 		}
 
 		int64_t countTracks(const Project& project, TrackType type)
@@ -673,6 +693,8 @@ namespace gnubase::engine
 				return "Arranger";
 			if (type == TrackType::Transpose)
 				return "Transpose";
+			if (type == TrackType::Chord)
+				return "Chord";
 			const std::string number = std::to_string(type == TrackType::Marker ? count : count + 1);
 			return trackTypeEntry(type).defaultName + std::string(number.size() < 2 ? " 0" : " ") + number;
 		}
@@ -1230,10 +1252,15 @@ namespace gnubase::engine
 				require(parent == 0, "the transpose track can't be inside a folder");
 				require(countTracks(project, TrackType::Transpose) == 0, "a project has one transpose track at most");
 			}
+			if (type == TrackType::Chord)
+			{
+				require(parent == 0, "the chord track can't be inside a folder");
+				require(countTracks(project, TrackType::Chord) == 0, "a project has one chord track at most");
+			}
 			const bool hasChannel =
 				(type != TrackType::Folder && type != TrackType::Marker && type != TrackType::Ruler &&
 					type != TrackType::Tempo && type != TrackType::Signature && type != TrackType::Arranger &&
-					type != TrackType::Transpose) ||
+					type != TrackType::Transpose && type != TrackType::Chord) ||
 				groupChannel;
 			const bool hasAudio = hasChannel && type != TrackType::Midi && type != TrackType::Vca;
 			require(type != TrackType::Vca ||
@@ -1574,6 +1601,7 @@ namespace gnubase::engine
 			require(track.type != TrackType::Signature, "a project has one signature track at most");
 			require(track.type != TrackType::Arranger, "a project has one arranger track at most");
 			require(track.type != TrackType::Transpose, "a project has one transpose track at most");
+			require(track.type != TrackType::Chord, "a project has one chord track at most");
 			const ObjectId parent = track.parent;
 			std::map<ObjectId, ObjectId> channels;
 			std::vector<std::pair<std::string, Json>> added;
@@ -1639,6 +1667,11 @@ namespace gnubase::engine
 				{
 					project.transpose = TransposeTrack();
 					context.emit("transpose.changed", transposeJson(project));
+				}
+				if (gone.type == TrackType::Chord)
+				{
+					project.chords = ChordTrack();
+					context.emit("chord.changed", chordJson(project));
 				}
 				if (gone.channel != 0)
 					for (const ObjectId slot : project.channels.at(gone.channel).slots)
@@ -3195,6 +3228,13 @@ namespace gnubase::engine
 			{"transpose.remove", "Remove transpose events"},
 			{"transpose.setTrack", "Change transpose track"},
 			{"transpose.assignRootKey", "Set root key for unassigned events"},
+			{"chord.add", "Add chord track event"},
+			{"chord.set", "Change chord track events"},
+			{"chord.remove", "Remove chord track events"},
+			{"chord.setTrack", "Change chord track"},
+			{"chord.follow", "Follow chord track"},
+			{"chord.toMidi", "Chords to MIDI"},
+			{"chord.fromMidi", "Create chord events"},
 			{"automationLane.add", "Add automation lane"},
 			{"automationLane.set", "Change automation lane"},
 			{"automationLane.remove", "Remove automation lane"},
@@ -3614,7 +3654,7 @@ namespace gnubase::engine
 		const Json positionSchema = {{"type", {"integer", "string"}}}; // ticks or samples, or "cursor"
 		const Json noResult = Json::object();
 		const Json trackTypes = enumSchema({"audio", "instrument", "midi", "folder", "group", "effect", "marker",
-			"ruler", "tempo", "signature", "vca", "arranger", "transpose"});
+			"ruler", "tempo", "signature", "vca", "arranger", "transpose", "chord"});
 		const Json timeBases = enumSchema({"musical", "linear"});
 		const Json timeFormats =
 			enumSchema(std::vector<std::string>(g_rulerTimeFormats.begin(), g_rulerTimeFormats.end()));
@@ -3943,7 +3983,8 @@ namespace gnubase::engine
 				"and "
 				"edits the project's tempo (tempo.*), the signature track its time signatures (signature.*), the "
 				"arranger track its arranger events (arranger.*), the transpose track its transpose events "
-				"(transpose.*): a project has one of each at most, without a channel, at the top level. "
+				"(transpose.*), the chord track its chord and scale events (chord.*): a project has one of each at "
+				"most, without a channel, at the top level. "
 
 				"A VCA track's channel is a VCA fader (reference manual p. 153): no audio, input or output, a fader "
 				"that controls a link group (linkGroup.add).",
@@ -4351,6 +4392,7 @@ namespace gnubase::engine
 		registerMarkerCommands(engine);
 		registerArrangerCommands(engine);
 		registerTransposeCommands(engine);
+		registerChordCommands(engine);
 		registerTempoCommands(engine);
 		registerSignatureCommands(engine);
 		registerAutomationCommands(engine);

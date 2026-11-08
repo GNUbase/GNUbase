@@ -518,6 +518,10 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".transpose-row .transpose-event", {"color": c["text"], "font-size": f"{sizes['small']}dp",
                                              "border-left-width": f"{widths['hairline']}dp",
                                              "border-left-color": c["accent"]}),
+        # The chord track (docs/features/chord-track.md): a chord event's chord from its position on
+        (".chord-row .chord-event", {"color": c["text"], "font-size": f"{sizes['small']}dp",
+                                     "border-left-width": f"{widths['hairline']}dp",
+                                     "border-left-color": c["accent2"]}),
         # The tools (docs/features/tools.md): the selection range and the rectangle a tool drags
         (".event-display .range-selection", {"border-width": f"{widths['hairline']}dp", "border-color": c["text"],
                                              "background-color": c["text"] + "33"}),
