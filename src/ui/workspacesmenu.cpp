@@ -91,7 +91,7 @@ namespace gnubase::ui
 
 	void WorkspacesMenu::ProcessEvent(Rml::Event& event)
 	{
-		for (Rml::Element* element = event.GetTargetElement(); element != nullptr && element != m_menu.get();
+		for (const Rml::Element* element = event.GetTargetElement(); element != nullptr && element != m_menu.get();
 			element = element->GetParentNode())
 			if (element->HasAttribute("workspace-type"))
 			{

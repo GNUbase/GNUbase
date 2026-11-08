@@ -261,7 +261,7 @@ namespace gnubase::engine
 					{
 						const size_t index = indexOf(list, name);
 						require(index < list.size(), "no " + type + " workspace " + name);
-						Json moved = list.at(index);
+						const Json moved = list.at(index);
 						list.erase(list.begin() + static_cast<std::ptrdiff_t>(index));
 						list.insert(list.begin() + static_cast<std::ptrdiff_t>(std::min(to, list.size())), moved);
 					});

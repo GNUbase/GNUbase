@@ -47,10 +47,10 @@ namespace
 			return result.error;
 		}
 
-		double scale() { return call("settings.get", {{"key", "ui.scale"}}).at("value").get<double>(); }
-		void setScale(double scale) { call("settings.set", {{"key", "ui.scale"}, {"value", scale}}); }
+		double scale() const { return call("settings.get", {{"key", "ui.scale"}}).at("value").get<double>(); }
+		void setScale(double scale) const { call("settings.set", {{"key", "ui.scale"}, {"value", scale}}); }
 
-		std::vector<std::string> names()
+		std::vector<std::string> names() const
 		{
 			std::vector<std::string> result;
 			const Json list = call("profile.list");
