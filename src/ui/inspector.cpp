@@ -16,6 +16,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -375,10 +376,15 @@ namespace gnubase::ui
 			{
 				if (alive.expired() || !result.ok())
 					return;
-				m_inPlace.clear();
+				std::set<uint64_t> open;
 				for (const Json& track : result.value.at("tracks"))
-					m_inPlace.insert(track.get<uint64_t>());
-				m_stale = true;
+					open.insert(track.get<uint64_t>());
+				// Only a change shows again: showing in between would put back fields with edits under way.
+				if (open != m_inPlace)
+				{
+					m_inPlace = std::move(open);
+					m_stale = true;
+				}
 			});
 	}
 
