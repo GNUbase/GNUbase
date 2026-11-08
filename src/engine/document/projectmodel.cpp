@@ -3480,6 +3480,30 @@ namespace gnubase::engine
 		return {{"results", results}};
 	}
 
+	Json ProjectModel::join(CommandContext& context)
+	{
+		const auto after = context.parameters().at("after").get<int64_t>();
+		const std::vector<HistoryStep>& steps = m_history.steps();
+		const size_t position = m_history.position();
+		size_t first = position;
+		while (first > 0 && static_cast<int64_t>(steps[first - 1].id) > after)
+			--first;
+		if (first == position)
+			return {{"steps", 0}};
+		// What changed since before the first of them.
+		Project start = m_project;
+		for (size_t i = position; i > first; --i)
+			apply(start, steps[i - 1].change, Direction::Undo);
+		ProjectChange change = difference(start, m_project);
+		std::optional<HistoryStep> joined;
+		if (!change.empty())
+			joined =
+				HistoryStep{context.parameters().at("action").get<std::string>(), now(), {}, std::move(change), {}};
+		m_history.join(first, std::move(joined));
+		announceHistory(context);
+		return {{"steps", position - first}};
+	}
+
 	void ProjectModel::registerHistoryCommands(Engine& engine)
 	{
 		const Json stepsSchema = {
@@ -3489,14 +3513,16 @@ namespace gnubase::engine
 
 		addControl(engine,
 			{"history.get", 1,
-				"The undo history: every step with its action, time (UTC) and details, the position (steps before it "
-				"are done, the ones after it can be redone) and the maximum number of steps (0: no limit).",
+				"The undo history: every step with its id (growing with each new step), action, time (UTC) and "
+				"details, the position (steps before it are done, the ones after it can be redone) and the maximum "
+				"number of steps (0: no limit).",
 				objectSchema({}), {{"type", "object"}}, true},
 			[this](CommandContext&)
 			{
 				Json steps = Json::array();
 				for (const HistoryStep& step : m_history.steps())
-					steps.push_back({{"action", step.action}, {"time", step.time}, {"details", step.details}});
+					steps.push_back(
+						{{"id", step.id}, {"action", step.action}, {"time", step.time}, {"details", step.details}});
 				return Json{{"position", m_history.position()}, {"maxSteps", m_history.maxSteps()}, {"steps", steps}};
 			});
 		addControl(engine,
@@ -3533,6 +3559,16 @@ namespace gnubase::engine
 				announceHistory(context);
 				return Json::object();
 			});
+
+		addControl(engine,
+			{"history.join", 1,
+				"Joins the done steps whose id is greater than after (an id from history.get) into one undo step named "
+				"action, so that a client's several commands, such as a user script's, are undone and redone at once. "
+				"Steps that end where they started leave none. Returns how many steps were joined.",
+				objectSchema({{"after", {{"type", "integer"}}}, {"action", {{"type", "string"}}}}, {"after", "action"}),
+				{{"type", "object"}, {"properties", {{"steps", {{"type", "integer"}}}}}, {"required", {"steps"}}},
+				false},
+			[this](CommandContext& context) { return join(context); });
 
 		const Json command =
 			objectSchema({{"command", {{"type", "string"}}}, {"parameters", {{"type", "object"}}}}, {"command"});

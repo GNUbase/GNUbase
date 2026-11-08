@@ -309,6 +309,12 @@
 			</menu>
 		</menuitem>
 		<menuitem command="window.keyCommands">Key Commands...</menuitem>
+		<!-- docs/features/scripts.md: the user scripts, which app::AppUi fills in -->
+		<menuitem id="scripts-submenu">Scripts
+			<menu id="scripts-menu">
+				<menuitem command="window.scriptConsole">Script Console</menuitem>
+			</menu>
+		</menuitem>
 		<!-- docs/features/preferences.md -->
 		<menuitem command="window.preferences">Preferences...</menuitem>
 	</menu>

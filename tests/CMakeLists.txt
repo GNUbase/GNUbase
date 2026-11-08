@@ -139,6 +139,7 @@ add_executable(gnubase-tests
 	sampleeditor_tests.cpp
 	sampleeditor_ui_tests.cpp
 	scripting_tests.cpp
+	scripts_ui_tests.cpp
 	sequencing_tests.cpp
 	settings_tests.cpp
 	shell_tests.cpp
