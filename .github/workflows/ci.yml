@@ -232,8 +232,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: asan-ubsan, sanitizers: "address,undefined", cache: 1300M }
-          - { name: tsan, sanitizers: thread, cache: 1G }
+          # tests: how many tests run at a time. TSan slows code down several times more than ASan; at four at a time,
+          # heavy commands (exports, analysis) missed the engine client's 10 s reply limit.
+          - { name: asan-ubsan, sanitizers: "address,undefined", cache: 1300M, tests: 4 }
+          - { name: tsan, sanitizers: thread, cache: 1G, tests: 2 }
     env:
       CCACHE_MAXSIZE: ${{ matrix.cache }}
       ASAN_OPTIONS: detect_leaks=1
@@ -282,7 +284,7 @@ jobs:
       - name: Test
         env:
           GNUBASE_REQUIRE_GPU: 1
-        run: ctest --preset linux-clang --parallel 4 # as in the build job
+        run: ctest --preset linux-clang --parallel ${{ matrix.tests }}
 
   clang-tidy:
     timeout-minutes: 90 # main took up to 51 min in Nov 2026; a PR that changes a widely included header takes longer
