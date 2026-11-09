@@ -528,6 +528,12 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".chord-row .chord-event", {"color": c["text"], "font-size": f"{sizes['small']}dp",
                                      "border-left-width": f"{widths['hairline']}dp",
                                      "border-left-color": c["accent2"]}),
+        # Chord events made from audio have a mark on their right (reference manual p. 1343); scale events
+        (".chord-row .chord-event.detected", {"border-right-width": f"{widths['hairline'] * 3}dp",
+                                              "border-right-color": c["warning"]}),
+        (".scale-row .scale-event", {"color": c["textMuted"], "font-size": f"{sizes['small']}dp",
+                                     "border-left-width": f"{widths['hairline']}dp",
+                                     "border-left-color": c["accent"]}),
         # The chord pads (docs/features/chord-pads.md): pads with their chord, degree and remote key, the selected,
         # triggered and reference pads, and the chord assistant's suggestions by how well they fit
         (".chord-pad", {"color": c["text"], "background-color": c["surfaceRaised"],

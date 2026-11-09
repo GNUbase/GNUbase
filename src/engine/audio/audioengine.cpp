@@ -641,6 +641,7 @@ namespace gnubase::engine
 			sequence->notes = channel.notes;
 			sequence->controllers = channel.controllers;
 			sequence->modifiers = channel.modifiers;
+			sequence->liveInput = channel.liveInput;
 			sequence->inserts = channel.midiInserts;
 			sequence->sends = channel.midiSends;
 			// An instrument chases the controller events of the MIDI tracks routed to it with its own, so the latest of
@@ -991,6 +992,7 @@ namespace gnubase::engine
 				transform.processor->process(program.sequencers[i].second->input(), transform.rules);
 		m_recorder.process(block, m_played, m_recordOffset.load(std::memory_order_relaxed), program.sequencers);
 		transport.tempo = program.tempo.bpmAt(program.tempo.toTicks(transport.position, program.sampleRate));
+		transport.tempoMap = &program.tempo;
 		program.graph.process(block.frames, transport, m_workers.get());
 		m_tap.capture(block.position, program.instruments);
 		m_playback.endBlock();

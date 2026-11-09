@@ -139,5 +139,6 @@ namespace gnubase::engine
 				return result;
 			});
 		registerTrackVisibilityCommands(model, engine);
+		registerTrackLayoutCommands(model, engine);
 	}
 }

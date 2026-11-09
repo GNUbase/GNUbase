@@ -166,6 +166,9 @@ namespace gnubase::ui
 		double trackHeight(uint64_t track) const;
 		void setTrackHeight(uint64_t track, double height);
 		void setTrackHeights(double height); // every track's
+		// The heights tracks have of their own, by track, and replacing them all (the project's, trackLayout.get).
+		const std::map<uint64_t, double>& ownTrackHeights() const { return m_heights; }
+		void setOwnTrackHeights(std::map<uint64_t, double> heights);
 		void setHiddenTracks(std::set<uint64_t> tracks);
 		// The tracks whose in-place editors are open (#131, ui/inplaceeditor.h): they are at least g_inPlaceHeight
 		// high, for the editor over their lane.
@@ -181,6 +184,9 @@ namespace gnubase::ui
 		const std::vector<EventLanes::Lane>& folderData() const { return m_folderData; }
 		// Called after the lanes or the view changed.
 		void onLayout(std::function<void()> listener) { m_layoutListener = std::move(listener); }
+		// Called for a double click below the tracks instead of adding a MIDI track, e.g. by the track list, which
+		// adds a track like the selected one (docs/features/add-track.md).
+		void onAddTrack(std::function<void()> listener) { m_addTrack = std::move(listener); }
 
 		// Auto-scroll (reference manual pp. 316-317). Suspended when editing: a click in the event display while
 		// playing suspends it until playback stops or auto-scroll is switched on again.
@@ -211,7 +217,7 @@ namespace gnubase::ui
 		// for the drag delay, Alt and a drag copies (with Shift too, shared copies), Ctrl (Cmd) while dragging keeps
 		// a move or copy across or up and down, a drag at an event's left or right edge resizes it, Alt and a click
 		// splits there, and a double click on an empty MIDI or instrument lane adds a one-bar part, or one between
-		// the locators when the click is between them; one below the tracks adds a MIDI track.
+		// the locators when the click is between them; one below the tracks adds a MIDI track (see onAddTrack).
 		const std::vector<uint64_t>& selection() const { return m_selection; }
 		void select(std::vector<uint64_t> events);
 		// Where the selection starts, in ticks: the selection range's start, else the first selected event's; none
@@ -741,6 +747,7 @@ namespace gnubase::ui
 		uint64_t m_loads = 0;
 		uint64_t m_read = 0;
 		std::function<void()> m_layoutListener;
+		std::function<void()> m_addTrack;     // onAddTrack
 		std::vector<std::string> m_laneTypes; // and its type
 		std::vector<bool> m_laneLinear;       // and whether its time base is linear
 		std::vector<Shown> m_events;

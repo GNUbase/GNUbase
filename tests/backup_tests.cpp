@@ -9,8 +9,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
-#include <miniz.h>
-
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
@@ -30,6 +28,7 @@ using namespace gnubase::engine;
 namespace test = gnubase::test;
 namespace fs = std::filesystem;
 using Catch::Matchers::ContainsSubstring;
+using gnubase::test::readZip;
 
 namespace
 {
@@ -113,24 +112,6 @@ namespace
 	int64_t framesOf(const std::string& path)
 	{
 		return AudioFileReader::open(path)->info().frames;
-	}
-
-	std::map<std::string, std::string> readZip(const std::string& path)
-	{
-		mz_zip_archive zip{};
-		REQUIRE(mz_zip_reader_init_file(&zip, path.c_str(), 0) != MZ_FALSE);
-		std::map<std::string, std::string> entries;
-		for (mz_uint i = 0; i < mz_zip_reader_get_num_files(&zip); ++i)
-		{
-			char name[512];
-			mz_zip_reader_get_filename(&zip, i, name, sizeof name);
-			size_t size = 0;
-			void* data = mz_zip_reader_extract_to_heap(&zip, i, &size, 0);
-			entries[name] = std::string(static_cast<const char*>(data), size);
-			mz_free(data);
-		}
-		mz_zip_reader_end(&zip);
-		return entries;
 	}
 
 	// Waits for the job's job.finished event and returns the job. Progress events go to progress, if given.

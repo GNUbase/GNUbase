@@ -1086,6 +1086,31 @@ namespace gnubase::engine
 		return visibility;
 	}
 
+	Json toJson(const TrackLayout& layout)
+	{
+		Json heights = Json::array();
+		for (const auto& [track, height] : layout.heights)
+			heights.push_back({{"track", track}, {"height", height}});
+		return {{"heights", heights}, {"folded", layout.folded}};
+	}
+
+	TrackLayout trackLayoutFromJson(const Json& json)
+	{
+		TrackLayout layout;
+		if (const auto heights = json.find("heights"); heights != json.end() && heights->is_array())
+			for (const Json& item : *heights)
+				if (item.is_object() && item.value("track", Json()).is_number_unsigned() &&
+					item.value("height", Json()).is_number())
+					layout.heights[item.at("track").get<ObjectId>()] = item.at("height").get<double>();
+		if (const auto folded = json.find("folded"); folded != json.end() && folded->is_array())
+			for (const Json& id : *folded)
+				if (id.is_number_unsigned())
+					layout.folded.push_back(id.get<ObjectId>());
+		std::sort(layout.folded.begin(), layout.folded.end());
+		layout.folded.erase(std::unique(layout.folded.begin(), layout.folded.end()), layout.folded.end());
+		return layout;
+	}
+
 	Json toJson(const ProjectWorkspaces& workspaces)
 	{
 		Json list = Json::array();
@@ -1181,8 +1206,8 @@ namespace gnubase::engine
 			{"quantize", midi::toJson(project.quantize)}, {"autoQuantize", project.autoQuantize},
 			{"quantizePreset", project.quantizePreset}, {"activeMarkerTrack", project.activeMarkerTrack},
 			{"snap", toJson(project.snap)}, {"mixers", mixersJson(project.mixers)},
-			{"trackVisibility", toJson(project.trackVisibility)}, {"metronome", metronome::toJson(project.metronome)},
-			{"workspaces", toJson(project.workspaces)}};
+			{"trackVisibility", toJson(project.trackVisibility)}, {"trackLayout", toJson(project.trackLayout)},
+			{"metronome", metronome::toJson(project.metronome)}, {"workspaces", toJson(project.workspaces)}};
 		json.update(toJson(project.setup));
 		// What the inactive track versions hold (#165).
 		Json versionContents = Json::array();
@@ -2517,7 +2542,8 @@ namespace gnubase::engine
 				view.value("hidden", std::vector<ObjectId>()), view.value("hiddenTypes", std::vector<std::string>())};
 		// Files from before #166 have none.
 		project.trackVisibility = trackVisibilityFromJson(json.value("trackVisibility", Json::object()));
-		project.workspaces = workspacesFromJson(json.value("workspaces", Json::object())); // before #163: none
+		project.trackLayout = trackLayoutFromJson(json.value("trackLayout", Json::object())); // before #491: none
+		project.workspaces = workspacesFromJson(json.value("workspaces", Json::object()));    // before #163: none
 		// Files from before the metronome have none; values that aren't valid keep their defaults.
 		if (const auto found = json.find("metronome"); found != json.end())
 			metronome::apply(project.metronome, *found, false);
