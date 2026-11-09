@@ -157,6 +157,12 @@ namespace
 		return keys;
 	}
 
+	// A key as this platform shows it: "Mod+Z" is Ctrl+Z on Windows and Linux and Cmd+Z on macOS, Alt is Opt there.
+	std::string shown(const std::string& keys)
+	{
+		return ui::keyName(ui::parseKeys(keys));
+	}
+
 	// Presses keys into the dialog's key field, which assigns them to the selected command.
 	void assign(test::UiApp& app, const std::string& keys)
 	{
@@ -351,11 +357,11 @@ TEST_CASE("the key commands dialog finds, assigns, removes and resets keys", "[u
 	// A key pressed into the key field is added to the selected command's keys.
 	select(app, "transport.stop");
 	CHECK(shownKeys(app) == Strings{"Num0"});
-	assign(app, "Ctrl+Shift+F12");
-	CHECK(shownKeys(app) == Strings{"Num0", "Ctrl+Shift+F12"});
+	assign(app, "Mod+Shift+F12");
+	CHECK(shownKeys(app) == Strings{"Num0", shown("Mod+Shift+F12")});
 	// A key another command has moves to this one.
 	select(app, "history.redo");
-	assign(app, "Ctrl+Z");
+	assign(app, "Mod+Z");
 	CHECK_THAT(text(app, "#keycommands-message"), ContainsSubstring("history.undo"));
 	ok(app);
 	CHECK(app.call("settings.get", {{"key", "ui.keyCommands"}}).at("value") ==
@@ -368,7 +374,7 @@ TEST_CASE("the key commands dialog finds, assigns, removes and resets keys", "[u
 	openDialog(app);
 	click(app, "#keycommands-press-key");
 	click(app, "#keycommands-key-search");
-	press(app, "Ctrl+Shift+F12");
+	press(app, "Mod+Shift+F12");
 	CHECK(shownCommands(app) == Strings{"transport.stop"});
 	click(app, "#keycommands-press-key");
 
@@ -391,10 +397,10 @@ TEST_CASE("the key commands dialog finds, assigns, removes and resets keys", "[u
 	CHECK(shownKeys(app) == Strings{"Num0"});
 	select(app, "history.undo");
 	click(app, "#keycommands-reset");
-	CHECK(shownKeys(app) == Strings{"Ctrl+Z"});
+	CHECK(shownKeys(app) == Strings{shown("Mod+Z")});
 	ok(app);
 	REQUIRE(app.waitUntil([&app] { return app.keys().keysFor("transport.stop") == Strings{"Num0"}; }));
-	CHECK(app.keys().keysFor("history.undo") == Strings{"Ctrl+Z"});
+	CHECK(app.keys().keysFor("history.undo") == Strings{shown("Mod+Z")});
 
 	// Clear All removes every key, Defaults brings them all back; Cancel drops what changed.
 	openDialog(app);
@@ -408,7 +414,7 @@ TEST_CASE("the key commands dialog finds, assigns, removes and resets keys", "[u
 	click(app, "#keycommands-defaults");
 	ok(app);
 	CHECK(app.call("settings.get", {{"key", "ui.keyCommands"}}).at("value") == Json::array());
-	CHECK(app.waitUntil([&app] { return app.keys().keysFor("history.redo") == Strings{"Ctrl+Shift+Z"}; }));
+	CHECK(app.waitUntil([&app] { return app.keys().keysFor("history.redo") == Strings{shown("Mod+Shift+Z")}; }));
 }
 
 TEST_CASE("the key commands dialog sets up macros", "[ui]")
@@ -435,7 +441,7 @@ TEST_CASE("the key commands dialog sets up macros", "[ui]")
 	click(app, "#keycommands-remove-command");
 	// The macro is a command in the list, and gets keys.
 	select(app, "macro.Restart");
-	assign(app, "Ctrl+Alt+R");
+	assign(app, "Mod+Alt+R");
 	click(app, "#keycommands-duplicate-macro");
 	click(app, "#keycommands-delete-macro");
 	ok(app);
@@ -445,7 +451,7 @@ TEST_CASE("the key commands dialog sets up macros", "[ui]")
 	CHECK(macros[0].at("commands") ==
 		Json::array({{{"command", "transport.stop"}},
 			{{"command", "transport.locate"}, {"parameters", {{"target", "leftLocator"}}}}}));
-	REQUIRE(app.waitUntil([&app] { return app.keys().keysFor("macro.Restart") == Strings{"Ctrl+Alt+R"}; }));
+	REQUIRE(app.waitUntil([&app] { return app.keys().keysFor("macro.Restart") == Strings{shown("Mod+Alt+R")}; }));
 
 	// Run Macro runs what the dialog shows; Edit > Macros has it.
 	app.call("transport.play");
@@ -462,14 +468,14 @@ TEST_CASE("the key commands dialog sets up macros", "[ui]")
 	click(app, "#keycommands-show-macros");
 	click(app, "#keycommands-new-macro");
 	select(app, "macro.Macro 1");
-	assign(app, "Ctrl+Alt+M");
+	assign(app, "Mod+Alt+M");
 	click(app, "#keycommands-delete-macro");
 	click(app, "#keycommands-new-macro");
 	select(app, "macro.Macro 1");
 	CHECK(shownKeys(app).empty());
-	assign(app, "Ctrl+Alt+M");
+	assign(app, "Mod+Alt+M");
 	ok(app);
-	REQUIRE(app.waitUntil([&app] { return app.keys().keysFor("macro.Macro 1") == Strings{"Ctrl+Alt+M"}; }));
+	REQUIRE(app.waitUntil([&app] { return app.keys().keysFor("macro.Macro 1") == Strings{shown("Mod+Alt+M")}; }));
 	openDialog(app);
 	click(app, "#keycommands-show-macros");
 	click(app, "#keycommands-macros listitem:last-child");
