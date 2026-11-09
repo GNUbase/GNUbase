@@ -27,6 +27,8 @@ playback see where it really ends. Every conversion between timeline positions a
 `eventSamples` and `eventFrames` (`fadeedits.cpp`), which follow the warp: splitting, sizing (sizing that moves the
 contents keeps the edge that stays put, searching for the offset that ends the event there), snap points and snapping
 to them and to zero crossings, fades to the range, drawn volume curves, hitpoint slicing and the audio functions.
+An event's own fades play in frames at the clip's sample rate from its edges, so together they fit into what it plays
+for at that rate (`fadeRoom`), which `audioEvent.setFades` and the fades to the range both check.
 
 ## Engine commands
 

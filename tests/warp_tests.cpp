@@ -695,6 +695,30 @@ TEST_CASE("fades to a range on a warped event play to the range", "[integration]
 	CHECK(std::abs((level(played, 71900) / steady) - 0.5) < 0.015);
 }
 
+TEST_CASE("an event's fades fit into what a stretched warped event plays", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	// Four quarters at 120 BPM in musical mode, then the project goes to 60 BPM: the event plays twice its length.
+	const Loop loop = addLoop(client, dir, sine(4 * g_quarter));
+	run(client, "project.set", {{"tempo", 120.0}});
+	run(client, "clip.setWarp", {{"clip", loop.clip}, {"musical", true}});
+	run(client, "project.set", {{"tempo", 60.0}});
+
+	// Adjust Fades to Range inside it: both fades together take more than the event's length.
+	run(client, "range.fades", {{"start", 90000}, {"end", 100000}, {"tracks", {loop.track}}, {"fade", "adjust"}});
+	CHECK(eventOf(client, loop.event).at("fadeIn").at("length") == 90000);
+	CHECK(eventOf(client, loop.event).at("fadeOut").at("length") == (8 * g_quarter) - 100000);
+
+	// audioEvent.setFades checks them against the same length: a shape change keeps both.
+	run(client, "audioEvent.setFades", {{"event", loop.event}, {"fadeIn", {{"shape", "sCurve"}}}});
+	CHECK(eventOf(client, loop.event).at("fadeIn").at("shape") == "sCurve");
+	CHECK(eventOf(client, loop.event).at("fadeIn").at("length") == 90000);
+	CHECK_THAT(reject(client, "audioEvent.setFades", {{"event", loop.event}, {"fadeIn", {{"length", 100001}}}}),
+		ContainsSubstring("192000 sample frames"));
+}
+
 TEST_CASE("resizing a warped event with its contents keeps the edge that stays put", "[integration]")
 {
 	const test::TempDir dir;

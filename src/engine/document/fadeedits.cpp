@@ -75,13 +75,23 @@ namespace gnubase::engine
 					" sample frames)");
 		}
 
+		// The sample frames an event's fades may take together: its length, or on a warped event the frames at the
+		// clip's sample rate that it plays for, which is where its own fades play (playback.cpp, warpEvent).
+		time::Samples fadeRoom(const Project& project, const AudioEvent& event)
+		{
+			if (!warped(project.clips.at(event.clip)))
+				return event.length;
+			const EventSpan span = eventSpan(project, event);
+			return std::max<time::Samples>(std::llround(static_cast<double>(span.end - span.start) / span.ratio), 0);
+		}
+
 		Json setEventFades(Project& project, CommandContext& context)
 		{
 			const Json& parameters = context.parameters();
 			AudioEvent& event = find(project.audioEvents, parameters, "event", "audio event");
 			const Fade in = fade(parameters, "fadeIn", event.fadeIn);
 			const Fade out = fade(parameters, "fadeOut", event.fadeOut);
-			checkFades(in, out, event.length, "event");
+			checkFades(in, out, fadeRoom(project, event), "event");
 			event.fadeIn = in;
 			event.fadeOut = out;
 			Json result = {{"event", toJson(event)}};
@@ -244,9 +254,7 @@ namespace gnubase::engine
 				// a warped event (playback.cpp, warpEvent), so a distance from an edge becomes frames at that ratio.
 				const auto frames = [ratio = span.ratio](time::Samples samples)
 				{ return std::max<time::Samples>(std::llround(static_cast<double>(samples) / ratio), 0); };
-				// The frames it plays: its length, or on a warped event what the warp makes of it.
-				const time::Samples length =
-					warped(project.clips.at(event.clip)) ? frames(span.end - span.start) : event.length;
+				const time::Samples length = fadeRoom(project, event);
 				Fade in = event.fadeIn;
 				Fade out = event.fadeOut;
 				// Adjust sets only the fades at the edges the range crosses, both when it is inside the event.
@@ -467,7 +475,8 @@ namespace gnubase::engine
 			{"audioEvent.setFades", 1,
 				"Changes an audio event's fade in (from its start) or fade out (up to its end): length in the clip's "
 				"sample frames (0: none) and shape: linear, exponential (slow, then fast), logarithmic (fast, then "
-				"slow), sCurve (half a cosine) or equalPower (a quarter sine). Together they fit into the event. A "
+				"slow), sCurve (half a cosine) or equalPower (a quarter sine). Together they fit into the event (on a "
+				"warped event, into the sample frames it plays for at the clip's sample rate). A "
 				"crossfade replaces the fades at the ends it joins while it plays.",
 				object({{"event", id}, {"fadeIn", fade}, {"fadeOut", fade}}, {"event"}), result("event"), false},
 			setEventFades);
