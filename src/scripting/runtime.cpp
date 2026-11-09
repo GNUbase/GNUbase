@@ -435,10 +435,12 @@ namespace gnubase::scripting
 	{
 		Runtime& runtime = self(state);
 		const Function& function = *static_cast<const Function*>(lua_touserdata(state, lua_upvalueindex(2)));
+		lua_State* const outer = std::exchange(runtime.m_caller, state);
 		std::string error;
 		try
 		{
 			const Json result = function(lua_isnoneornil(state, 1) ? Json::object() : toJson(state, 1, 0));
+			runtime.m_caller = outer;
 			runtime.takeEvents(state);
 			push(state, result);
 			return 1;
@@ -447,6 +449,7 @@ namespace gnubase::scripting
 		{
 			error = exception.what();
 		}
+		runtime.m_caller = outer;
 		runtime.takeEvents(state);
 		return luaL_error(state, "%s", error.c_str());
 	}

@@ -7,14 +7,20 @@
 #include "engine/time/tempomap.h"
 #include "mcp/server.h"
 #include "ui/automation.h"
+#include "ui/shell.h"
+#include "ui/tracklist.h"
 
+#include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/ElementDocument.h>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <optional>
 #include <string>
+#include <vector>
 
 using namespace gnubase;
 using Catch::Matchers::ContainsSubstring;
@@ -66,6 +72,41 @@ namespace
 	{
 		click(app, "#track-name");
 		app.ui().text(std::nullopt, name);
+	}
+
+	uint64_t idOf(const Json& added)
+	{
+		return added.at("track").at("id").get<uint64_t>();
+	}
+
+	std::vector<std::string> names(test::UiApp& app)
+	{
+		std::vector<std::string> result;
+		const Json project = app.call("project.get");
+		for (const Json& track : project.at("tracks"))
+			result.push_back(track.at("name").get<std::string>());
+		return result;
+	}
+
+	// Selects the tracks once the track list shows them.
+	void select(test::UiApp& app, const std::vector<uint64_t>& tracks)
+	{
+		REQUIRE(app.waitUntil(
+			[&]
+			{
+				app.appUi().trackList()->select(tracks);
+				return app.appUi().trackList()->selection() == tracks;
+			}));
+	}
+
+	// A double click near the bottom of the element, below the tracks.
+	void doubleClickBelow(test::UiApp& app, const std::string& selector)
+	{
+		const Json box = elements(app, selector).at(0).at("box");
+		const auto x = static_cast<int>(box.at("x").get<double>() + (box.at("width").get<double>() / 2));
+		const auto y = static_cast<int>(box.at("y").get<double>() + box.at("height").get<double>() - 60);
+		app.ui().click(std::nullopt, {"", 0, ui::Point{x, y}}, ui::MouseButton::Left, 2, {});
+		app.shell().step(std::chrono::milliseconds(0));
 	}
 
 	// Tracks added with MCP's tools, as a client of an in-process server, through JSON text.
@@ -249,14 +290,15 @@ TEST_CASE("Group and Effect Track to Selected Tracks route the selected tracks i
 		if (track.at("id") == effect.at("parent"))
 			CHECK(track.at("name") == "FX");
 
-	// Group Track to Selected Tracks: they play into the new group.
+	// Group Track to Selected Tracks: they play into the new group, below the lower one.
 	app.keys().run("track.addGroupToSelected", Json::object(), app.main(), nullptr);
 	REQUIRE(app.waitUntil([&app] { return open(app); }));
 	click(app, "#add-track-confirm");
 	REQUIRE(app.waitUntil([&app] { return !open(app); }));
 	project = app.call("project.get");
-	CHECK(channel(first).at("output") == project.at("tracks").back().at("channel"));
-	CHECK(channel(second).at("output") == project.at("tracks").back().at("channel"));
+	CHECK(project.at("tracks").at(2).at("type") == "group");
+	CHECK(channel(first).at("output") == project.at("tracks").at(2).at("channel"));
+	CHECK(channel(second).at("output") == project.at("tracks").at(2).at("channel"));
 
 	// Count 2: the tracks play into the first of the new groups, and with Keep Dialog Open the next Add Track routes
 	// nothing either.
@@ -267,7 +309,7 @@ TEST_CASE("Group and Effect Track to Selected Tracks route the selected tracks i
 	click(app, "#keep-open");
 	click(app, "#add-track-confirm");
 	REQUIRE(app.waitUntil([&] { return app.call("project.get").at("tracks").size() == before + 2; }));
-	const Json grouped = app.call("project.get").at("tracks").at(before).at("channel");
+	const Json grouped = app.call("project.get").at("tracks").at(2).at("channel");
 	CHECK(channel(first).at("output") == grouped);
 	CHECK(channel(second).at("output") == grouped);
 	click(app, "#add-track-confirm");
@@ -277,4 +319,110 @@ TEST_CASE("Group and Effect Track to Selected Tracks route the selected tracks i
 	CHECK(elements(app, "#add-track-message").at(0).value("text", "").empty());
 	click(app, "#add-track-cancel");
 	REQUIRE(app.waitUntil([&app] { return !open(app); }));
+}
+
+TEST_CASE("the add track dialog adds below the selected track, in its folder or below it", "[ui]")
+{
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	const uint64_t folder = idOf(app.call("track.add", {{"type", "folder"}}));
+	const uint64_t inside = idOf(app.call("track.add", {{"type", "audio"}, {"parent", folder}}));
+	app.call("track.add", {{"type", "audio"}, {"parent", folder}});
+	app.call("track.add", {{"type", "audio"}});
+	select(app, {inside});
+
+	// Two MIDI tracks below the selected track, in its folder, in the order they were added.
+	click(app, "#add-track");
+	REQUIRE(app.waitUntil([&app] { return open(app); }));
+	page(app, "midi");
+	setCount(app, 2);
+	click(app, "#keep-open");
+	click(app, "#add-track-confirm");
+	REQUIRE(app.waitUntil([&app] { return names(app).size() == 6; }));
+	CHECK(
+		names(app) == std::vector<std::string>{"Folder 01", "Audio 01", "MIDI 01", "MIDI 02", "Audio 02", "Audio 03"});
+	// With Keep Dialog Open the next tracks go below those, and a marker track, which stays at the top level, below
+	// the folder.
+	page(app, "audio");
+	click(app, "#add-track-confirm");
+	REQUIRE(app.waitUntil([&app] { return names(app).size() == 7; }));
+	page(app, "marker");
+	click(app, "#add-track-confirm");
+	REQUIRE(app.waitUntil([&app] { return names(app).size() == 8; }));
+	CHECK(names(app) ==
+		std::vector<std::string>{
+			"Folder 01", "Audio 01", "MIDI 01", "MIDI 02", "Audio 04", "Audio 02", "Markers", "Audio 03"});
+	const Json tracks = app.call("project.get").at("tracks");
+	CHECK(tracks[4].at("parent") == folder);
+	CHECK(tracks[6].at("parent") == 0);
+	click(app, "#add-track-cancel");
+	REQUIRE(app.waitUntil([&app] { return !open(app); }));
+}
+
+TEST_CASE("a double click in the empty area adds a track like the selected one below it, or a MIDI track", "[ui]")
+{
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	const Json group = app.call("track.add", {{"type", "group"}}).at("track").at("channel");
+	const Json synth = app.call("track.add", {{"type", "instrument"}}).at("track").at("channel");
+	const uint64_t audio = idOf(app.call("track.add", {{"type", "audio"}, {"input", 0}, {"output", group}}));
+	const uint64_t midi = idOf(app.call("track.add", {{"type", "midi"}, {"output", synth}}));
+	app.call("track.add", {{"type", "audio"}});
+	const auto channel = [&app](const Json& track)
+	{
+		const Json channels = app.call("project.get").at("channels");
+		const auto found = std::find_if(channels.begin(), channels.end(),
+			[&track](const Json& item) { return item.at("id") == track.at("channel"); });
+		REQUIRE(found != channels.end());
+		return *found;
+	};
+
+	// A selected audio track: an audio track with its input (none) and output (the group) below it, from the track
+	// list's empty area.
+	select(app, {audio});
+	doubleClickBelow(app, "#track-list");
+	REQUIRE(app.waitUntil([&app] { return names(app).size() == 6; }));
+	Json tracks = app.call("project.get").at("tracks");
+	CHECK(tracks[3].at("type") == "audio");
+	CHECK(channel(tracks[3]).at("input") == 0);
+	CHECK(channel(tracks[3]).at("output") == group);
+
+	// A selected MIDI track: a MIDI track into the same instrument below it, from the event display's.
+	select(app, {midi});
+	doubleClickBelow(app, "#event-display");
+	REQUIRE(app.waitUntil([&app] { return names(app).size() == 7; }));
+	tracks = app.call("project.get").at("tracks");
+	CHECK(tracks[5].at("type") == "midi");
+	CHECK(channel(tracks[5]).at("output") == synth);
+
+	// None: a MIDI track at the end.
+	select(app, {});
+	doubleClickBelow(app, "#track-list");
+	REQUIRE(app.waitUntil([&app] { return names(app).size() == 8; }));
+	CHECK(names(app).back() == "MIDI 03");
+}
+
+TEST_CASE("gnubase.ui.command runs in the window of the document that called it", "[ui]")
+{
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	ui::WindowSpec spec;
+	spec.size = {400, 300};
+	spec.hidden = true;
+	const ui::WindowId second = app.shell().open(spec).id();
+	Rml::ElementDocument* document = app.shell().find(second)->context().LoadDocumentFromMemory(
+		R"(<rml><head><style>body { position: absolute; left: 0; top: 0; right: 0; bottom: 0; font-family: Inter; }
+		button { display: block; width: 100dp; height: 30dp; }</style></head>
+		<body><button id="call" onclick="gnubase.ui.command{command = 'project.addTrack'}">Add</button></body></rml>)");
+	REQUIRE(document != nullptr);
+	document->Show();
+	app.shell().step(std::chrono::milliseconds(0));
+	app.ui().click(second, {"#call", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+	app.shell().step(std::chrono::milliseconds(0));
+	const auto there = [&app, second] { return !app.ui().dom(second, "#add-track-dialog", 0).at("elements").empty(); };
+	REQUIRE(app.waitUntil(there));
+	CHECK_FALSE(open(app)); // not in the main window
+	app.ui().click(second, {"#add-track-cancel", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil([&there] { return !there(); }));
+	app.shell().close(second);
 }

@@ -312,6 +312,9 @@ namespace gnubase::app
 		// and drumMap.export.
 		void saveDrumMap(ui::WindowId parent, const std::string& editor = "window");
 		void chooseDrumMapFile(ui::WindowId parent, uint64_t map);
+		// The window of the document whose Lua called the function that runs now (gnubase.ui.command), else the main
+		// window.
+		ui::Window& callingWindow();
 		// Opens resources/ui/<name> in the window, modal. Throws std::runtime_error if it can't be loaded.
 		// attributes go on the document before it shows, for its Lua.
 		Rml::ElementDocument& openDialog(ui::Window& window, const char* name,
