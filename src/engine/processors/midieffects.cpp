@@ -537,7 +537,9 @@ namespace gnubase::engine::processors
 
 	bool LogicalStage::release(uint16_t note) noexcept
 	{
-		return m_sounding[note] == 0 || --m_sounding[note] == 0;
+		if (m_sounding[note] > 0)
+			--m_sounding[note];
+		return m_sounding[note] == 0;
 	}
 
 	void LogicalStage::handle(
@@ -554,9 +556,8 @@ namespace gnubase::engine::processors
 		if (event.type == Type::NoteOff || (event.type == Type::PolyPressure && held.down && !found))
 		{
 			const bool off = event.type == Type::NoteOff;
-			if (!held.down) // a note from before the rules
-				put(out, event);
-			else if (held.passed && (!off || release(index)))
+			// A note from before the rules, or one that passed.
+			if (!held.down || (held.passed && (!off || release(index))))
 				put(out, event);
 			if (held.down && held.to != g_none && (!held.passed || held.to != index) && (!off || release(held.to)))
 				put(out, movedTo(event, held.to));

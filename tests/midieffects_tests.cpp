@@ -427,7 +427,7 @@ TEST_CASE("an arpeggio follows a tempo ramp step by step, the same for every blo
 TEST_CASE("the chord generator and the transformer give note-offs room in a full output", "[unit]")
 {
 	EventBuffer in(4);
-	graph::TransportBlock transport;
+	const graph::TransportBlock transport;
 	SECTION("chord generator")
 	{
 		// Three note-ons fill all but one place; the note-offs take the places of note-ons and the controller.
