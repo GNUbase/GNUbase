@@ -144,7 +144,7 @@ add_library(gnubase-engine STATIC
 	document/slotcommands.cpp
 	document/projectmodel.cpp document/projectmodel.h
 	document/recording.cpp
-	document/renderinplace.cpp
+	document/renderinplace.cpp document/renderinplace.h
 	document/rendersnapshot.cpp document/rendersnapshot.h
 	document/sampleeditor.cpp document/sampleeditor.h
 	document/serialize.cpp document/serialize.h
@@ -158,6 +158,7 @@ add_library(gnubase-engine STATIC
 	document/transpose.cpp
 	document/volumecurves.cpp document/volumecurves.h
 	document/warp.cpp document/warp.h
+	document/workspaces.cpp document/workspaces.h
 	dsp/biquad.cpp dsp/biquad.h
 	dsp/delay.cpp dsp/delay.h
 	dsp/dither.cpp dsp/dither.h
@@ -208,6 +209,7 @@ add_library(gnubase-engine STATIC
 	processors/testsynth.cpp processors/testsynth.h
 	schema.cpp schema.h
 	schematext.cpp schematext.h
+	settings/profiles.cpp settings/profiles.h
 	settings/store.cpp settings/store.h
 	settings/usersettings.cpp settings/usersettings.h
 	time/signaturemap.cpp time/signaturemap.h

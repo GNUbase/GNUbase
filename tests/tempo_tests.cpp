@@ -68,6 +68,54 @@ namespace
 		REQUIRE(found != snapshot.channels.end());
 		return *found;
 	}
+
+	// A MIDI part at position, four quarters long in the track's unit at 120 BPM, with a note from its first to its
+	// second quarter and a controller at its second.
+	ObjectId addPartWithNote(Client& client, ObjectId track, int64_t position)
+	{
+		const ObjectId part =
+			run(client, "midiPart.add", {{"track", track}, {"position", position}, {"length", 4 * g_quarterSamples}})
+				.at("part")
+				.at("id")
+				.get<ObjectId>();
+		run(client, "note.add",
+			{{"part", part},
+				{"notes",
+					{{{"position", g_ticksPerQuarter}, {"length", g_ticksPerQuarter}, {"pitch", 60},
+						{"velocity", 1.0}}}}});
+		run(client, "controller.add",
+			{{"part", part}, {"controllers", {{{"position", 2 * g_ticksPerQuarter}, {"number", 7}, {"value", 1.0}}}}});
+		return part;
+	}
+
+	Json midiPartJson(Client& client, ObjectId id)
+	{
+		const Json parts = run(client, "project.get").at("midiParts");
+		const auto found =
+			std::find_if(parts.begin(), parts.end(), [id](const Json& candidate) { return candidate.at("id") == id; });
+		REQUIRE(found != parts.end());
+		return *found;
+	}
+
+	// The parts of the midiPart.changed events since the last call, in order. Each event's part must be the part as
+	// project.get has it, so that a client that follows the events holds no stale part.
+	std::vector<ObjectId> changedParts(Client& client)
+	{
+		std::vector<Json> reported;
+		while (const auto message = client.poll())
+			if (const auto* event = std::get_if<Event>(&*message);
+				event != nullptr && event->name == "midiPart.changed")
+				reported.push_back(event->data.at("part"));
+		std::vector<ObjectId> parts;
+		for (const Json& part : reported)
+		{
+			parts.push_back(part.at("id").get<ObjectId>());
+			Json current = midiPartJson(client, parts.back());
+			current.erase("rootKeyTranspose"); // derived by project.get, not in the events
+			CHECK(part == current);
+		}
+		return parts;
+	}
 }
 
 TEST_CASE("a project has one tempo track at most, without a channel, at the top level", "[unit]")
@@ -296,10 +344,13 @@ TEST_CASE(
 	const std::vector<int64_t> linearBefore{
 		g_quarterSamples, 2 * g_quarterSamples, 9 * g_quarterSamples, 10 * g_quarterSamples};
 	REQUIRE(near(notes(linear), linearBefore));
+	changedParts(client);
 
 	// Half the tempo from the sixth quarter: the copy after it retimes its notes, the first part and the musical copy
-	// don't, so the group can't share notes any more. Every copy keeps its notes where they were.
+	// don't, so the group can't share notes any more. Every copy keeps its notes where they were. Only the copy that
+	// leaves the group changes.
 	run(client, "tempo.add", point(6, 60.0));
+	CHECK(changedParts(client) == std::vector<ObjectId>{later});
 	CHECK(near(notes(linear), linearBefore));
 	CHECK(notes(musical) == std::vector<int64_t>{g_quarterSamples, 2 * g_quarterSamples});
 	CHECK(midiPart(later).at("shared") == 0);
@@ -309,8 +360,10 @@ TEST_CASE(
 	CHECK(first.at("notes") == midiPart(other).at("notes"));
 	CHECK(midiPart(later).at("notes").at(0).at("id") != first.at("notes").at(0).at("id"));
 
-	// A tempo change before them all retimes the linear part but not its musical copy: no copy is left shared.
+	// A tempo change before them all retimes the linear part but not its musical copy: no copy is left shared. Both
+	// change: the musical copy's notes stay where they are, but get new ids outside the group.
 	run(client, "project.set", {{"tempo", 90.0}});
+	CHECK(changedParts(client) == std::vector<ObjectId>{part, other});
 	CHECK(near(notes(linear), linearBefore));
 	CHECK(midiPart(part).at("shared") == 0);
 	CHECK(midiPart(other).at("shared") == 0);
@@ -320,6 +373,285 @@ TEST_CASE(
 	run(client, "history.undo");
 	CHECK(midiPart(later).at("shared") == midiPart(part).at("shared"));
 	CHECK(midiPart(later).at("notes") == midiPart(part).at("notes"));
+}
+
+TEST_CASE("shared copies that still hold the same notes after a tempo change stay shared with each other", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	run(client, "project.set", {{"tempoTrackActive", true}});
+	const ObjectId linear = addTrack(client, {{"type", "midi"}, {"timeBase", "linear"}});
+	const ObjectId musical = addTrack(client, {{"type", "midi"}});
+	const ObjectId part = addPartWithNote(client, linear, 0);
+	const auto copy = [&client, part](Json parameters)
+	{
+		parameters["events"] = {part};
+		parameters["shared"] = true;
+		return run(client, "event.copy", parameters).at("events").at(0).get<ObjectId>();
+	};
+	// Two linear copies after the tempo event below, and a musical copy.
+	const ObjectId later = copy({{"delta", 8 * g_quarterSamples}});
+	const ObjectId latest = copy({{"delta", 12 * g_quarterSamples}});
+	const ObjectId other = copy({{"ticks", 0}, {"track", musical}});
+	const Json group = midiPartJson(client, part).at("shared");
+	REQUIRE(group != 0);
+	for (const ObjectId id : {later, latest, other})
+		REQUIRE(midiPartJson(client, id).at("shared") == group);
+
+	// Half the tempo from the sixth quarter retimes both later copies the same way: they share their new notes in a
+	// group of their own, and the first part keeps its group with the musical copy.
+	run(client, "tempo.add", point(6, 60.0));
+	const Json first = midiPartJson(client, part);
+	const Json second = midiPartJson(client, later);
+	const Json third = midiPartJson(client, latest);
+	CHECK(first.at("shared") == group);
+	CHECK(midiPartJson(client, other).at("shared") == group);
+	CHECK(second.at("shared") != 0);
+	CHECK(second.at("shared") != group);
+	CHECK(third.at("shared") == second.at("shared"));
+	CHECK(third.at("notes") == second.at("notes"));
+	CHECK(second.at("notes").at(0).at("id") != first.at("notes").at(0).at("id"));
+	// An edit of one of them reaches the other, not the first group.
+	const auto noteId = second.at("notes").at(0).at("id").get<ObjectId>();
+	run(client, "note.set", {{"part", later}, {"notes", {{{"id", noteId}, {"pitch", 64}}}}});
+	CHECK(midiPartJson(client, latest).at("notes").at(0).at("pitch") == 64);
+	CHECK(midiPartJson(client, part).at("notes").at(0).at("pitch") == 60);
+
+	// Undo shares all four again, and redo splits them again.
+	run(client, "history.undo");
+	run(client, "history.undo");
+	for (const ObjectId id : {later, latest, other})
+		CHECK(midiPartJson(client, id).at("shared") == group);
+	run(client, "history.redo");
+	CHECK(midiPartJson(client, later).at("shared") == second.at("shared"));
+	CHECK(midiPartJson(client, latest).at("shared") == second.at("shared"));
+	CHECK(midiPartJson(client, latest).at("notes") == second.at("notes"));
+	CHECK(midiPartJson(client, other).at("shared") == group);
+}
+
+TEST_CASE("the largest set of shared copies that still match keeps their group when a tempo change splits it", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId linear = addTrack(client, {{"type", "midi"}, {"timeBase", "linear"}});
+	const ObjectId musical = addTrack(client, {{"type", "midi"}});
+	const ObjectId part = addPartWithNote(client, linear, 0);
+	const auto copy = [&client, part, musical](int64_t ticks)
+	{
+		return run(client, "event.copy", {{"events", {part}}, {"shared", true}, {"ticks", ticks}, {"track", musical}})
+			.at("events")
+			.at(0)
+			.get<ObjectId>();
+	};
+	const ObjectId one = copy(0);
+	const ObjectId two = copy(8 * g_ticksPerQuarter);
+	const Json group = midiPartJson(client, part).at("shared");
+	const Json notes = midiPartJson(client, one).at("notes");
+	REQUIRE(group != 0);
+	REQUIRE(midiPartJson(client, two).at("shared") == group);
+	changedParts(client);
+
+	// A new project tempo retimes the linear part, not the two musical copies: they keep the group and their notes'
+	// ids, and the linear part, the group's first, becomes a real copy. Only it changes.
+	run(client, "project.set", {{"tempo", 90.0}});
+	CHECK(changedParts(client) == std::vector<ObjectId>{part});
+	CHECK(midiPartJson(client, one).at("shared") == group);
+	CHECK(midiPartJson(client, two).at("shared") == group);
+	CHECK(midiPartJson(client, one).at("notes") == notes);
+	const Json first = midiPartJson(client, part);
+	CHECK(first.at("shared") == 0);
+	CHECK(first.at("notes").at(0).at("id") != notes.at(0).at("id"));
+	// An edit of one musical copy reaches the other, not the linear part.
+	const auto noteId = notes.at(0).at("id").get<ObjectId>();
+	run(client, "note.set", {{"part", one}, {"notes", {{{"id", noteId}, {"pitch", 64}}}}});
+	CHECK(midiPartJson(client, two).at("notes").at(0).at("pitch") == 64);
+	CHECK(midiPartJson(client, part).at("notes").at(0).at("pitch") == 60);
+
+	// Undo shares all three again, redo splits them again.
+	run(client, "history.undo");
+	run(client, "history.undo");
+	CHECK(midiPartJson(client, part).at("shared") == group);
+	CHECK(midiPartJson(client, part).at("notes") == notes);
+	run(client, "history.redo");
+	CHECK(midiPartJson(client, part).at("shared") == 0);
+	CHECK(midiPartJson(client, two).at("shared") == group);
+}
+
+TEST_CASE("a tempo change reports the copies of a set that gets a group of its own, also if their notes stay", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId linear = addTrack(client, {{"type", "midi"}, {"timeBase", "linear"}});
+	const ObjectId musical = addTrack(client, {{"type", "midi"}});
+	const ObjectId part = addPartWithNote(client, linear, 0);
+	const auto copy = [&client, part](Json parameters)
+	{
+		parameters["events"] = {part};
+		parameters["shared"] = true;
+		return run(client, "event.copy", parameters).at("events").at(0).get<ObjectId>();
+	};
+	const ObjectId linearOne = copy({{"delta", 8 * g_quarterSamples}});
+	const ObjectId linearTwo = copy({{"delta", 16 * g_quarterSamples}});
+	const ObjectId musicalOne = copy({{"ticks", 0}, {"track", musical}});
+	const ObjectId musicalTwo = copy({{"ticks", 8 * g_ticksPerQuarter}, {"track", musical}});
+	const Json group = midiPartJson(client, part).at("shared");
+	const Json notes = midiPartJson(client, musicalOne).at("notes");
+	REQUIRE(group != 0);
+	for (const ObjectId id : {linearOne, linearTwo, musicalOne, musicalTwo})
+		REQUIRE(midiPartJson(client, id).at("shared") == group);
+	changedParts(client);
+
+	// A new tempo retimes the three linear parts alike, and they keep the group. The two musical copies don't move,
+	// but get a group of their own with new ids: every part changes.
+	run(client, "project.set", {{"tempo", 90.0}});
+	CHECK(changedParts(client) == std::vector<ObjectId>{part, linearOne, linearTwo, musicalOne, musicalTwo});
+	for (const ObjectId id : {linearOne, linearTwo})
+		CHECK(midiPartJson(client, id).at("shared") == group);
+	const Json one = midiPartJson(client, musicalOne);
+	const Json two = midiPartJson(client, musicalTwo);
+	CHECK(midiPartJson(client, part).at("shared") == group);
+	CHECK(one.at("shared") != 0);
+	CHECK(one.at("shared") != group);
+	CHECK(two.at("shared") == one.at("shared"));
+	CHECK(two.at("notes") == one.at("notes"));
+	CHECK(one.at("notes").at(0).at("id") != notes.at(0).at("id"));
+	CHECK(one.at("notes").at(0).at("position") == notes.at(0).at("position"));
+	CHECK(one.at("notes").at(0).at("length") == notes.at(0).at("length"));
+}
+
+TEST_CASE("a tempo change reports only the linear parts whose notes or controllers it retimes", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	run(client, "project.set", {{"tempoTrackActive", true}});
+	const ObjectId linear = addTrack(client, {{"type", "midi"}, {"timeBase", "linear"}});
+	const ObjectId early = addPartWithNote(client, linear, 0);
+	const ObjectId late = addPartWithNote(client, linear, 8 * g_quarterSamples);
+	changedParts(client);
+
+	// A tempo event between the parts retimes the later one's notes only.
+	run(client, "tempo.add", point(6, 60.0));
+	CHECK(changedParts(client) == std::vector<ObjectId>{late});
+	// One after both changes neither.
+	run(client, "tempo.add", point(40, 90.0));
+	CHECK(changedParts(client).empty());
+	// The project tempo, the first tempo event's, retimes the earlier part; the later one lies after the 60 BPM event,
+	// where the tempo stays, so its notes keep their ticks from its start.
+	run(client, "project.set", {{"tempo", 100.0}});
+	CHECK(changedParts(client) == std::vector<ObjectId>{early});
+	// Removing the 60 BPM event retimes the later part only.
+	run(client, "tempo.remove", {{"positions", {6 * g_ticksPerQuarter}}});
+	CHECK(changedParts(client) == std::vector<ObjectId>{late});
+
+	// A part whose note ends before a tempo event and whose controller comes after it: only the controller moves, and
+	// the part is reported.
+	const ObjectId controllers = run(client, "midiPart.add",
+		{{"track", linear}, {"position", 20 * g_quarterSamples}, {"length", 4 * g_quarterSamples}})
+									 .at("part")
+									 .at("id")
+									 .get<ObjectId>();
+	run(client, "note.add",
+		{{"part", controllers},
+			{"notes", {{{"position", 0}, {"length", g_ticksPerQuarter}, {"pitch", 60}, {"velocity", 1.0}}}}});
+	run(client, "controller.add",
+		{{"part", controllers},
+			{"controllers", {{{"position", 3 * g_ticksPerQuarter}, {"number", 7}, {"value", 1.0}}}}});
+	const Json before = midiPartJson(client, controllers);
+	changedParts(client);
+	// The part starts at ten seconds, 50/3 quarters at 100 BPM: the tempo event comes two quarters into it.
+	run(client, "tempo.add", {{"position", (50 * g_ticksPerQuarter / 3) + (2 * g_ticksPerQuarter)}, {"bpm", 50.0}});
+	CHECK(changedParts(client) == std::vector<ObjectId>{controllers});
+	const Json after = midiPartJson(client, controllers);
+	CHECK(after.at("notes") == before.at("notes"));
+	CHECK(after.at("controllers") != before.at("controllers"));
+}
+
+TEST_CASE("a tempo change that splits a group whose first part is musical reports both parts", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	run(client, "project.set", {{"tempoTrackActive", true}});
+	const ObjectId linear = addTrack(client, {{"type", "midi"}, {"timeBase", "linear"}});
+	const ObjectId musical = addTrack(client, {{"type", "midi"}});
+	const ObjectId first =
+		run(client, "midiPart.add", {{"track", musical}, {"position", 0}, {"length", 4 * g_ticksPerQuarter}})
+			.at("part")
+			.at("id")
+			.get<ObjectId>();
+	run(client, "note.add",
+		{{"part", first},
+			{"notes",
+				{{{"position", g_ticksPerQuarter}, {"length", g_ticksPerQuarter}, {"pitch", 60}, {"velocity", 1.0}}}}});
+	const ObjectId copy = run(client, "event.copy",
+		{{"events", {first}}, {"shared", true}, {"ticks", 8 * g_ticksPerQuarter}, {"track", linear}})
+							  .at("events")
+							  .at(0)
+							  .get<ObjectId>();
+	const Json notes = midiPartJson(client, first).at("notes");
+	REQUIRE(midiPartJson(client, copy).at("shared") == midiPartJson(client, first).at("shared"));
+	REQUIRE(midiPartJson(client, copy).at("shared") != 0);
+	changedParts(client);
+
+	// Half the tempo from the second quarter retimes the linear copy's notes, not the musical part's: the musical
+	// part keeps its notes but is no longer shared, and the copy becomes a real copy. Both change.
+	run(client, "tempo.add", point(2, 60.0));
+	CHECK(changedParts(client) == std::vector<ObjectId>{first, copy});
+	CHECK(midiPartJson(client, first).at("shared") == 0);
+	CHECK(midiPartJson(client, first).at("notes") == notes);
+	CHECK(midiPartJson(client, copy).at("shared") == 0);
+}
+
+TEST_CASE("tapping the project tempo and importing a MIDI file's tempo keep linear parts' notes at their time",
+	"[integration]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId linear = addTrack(client, {{"type", "midi"}, {"timeBase", "linear"}});
+	addPartWithNote(client, linear, 8 * g_quarterSamples);
+	const auto times = [&engine, linear]
+	{
+		const RenderChannel& channel = renderChannel(engine.renderSnapshots().acquire(), linear);
+		REQUIRE(channel.notes.size() == 1);
+		REQUIRE(channel.controllers.size() == 1);
+		return std::vector<int64_t>{
+			channel.notes.at(0).start, channel.notes.at(0).end, channel.controllers.at(0).position};
+	};
+	const std::vector<int64_t> before{9 * g_quarterSamples, 10 * g_quarterSamples, 10 * g_quarterSamples};
+	REQUIRE(times() == before);
+	const auto near = [&times, &before]
+	{
+		const std::vector<int64_t> now = times();
+		return std::equal(now.begin(), now.end(), before.begin(), before.end(),
+			[](int64_t x, int64_t y) { return std::abs(x - y) <= 1; });
+	};
+
+	// The tapped tempo is the project tempo, in fixed tempo mode and then in tempo track mode, where it is the first
+	// tempo event's, which the part is in.
+	REQUIRE(run(client, "tempo.tap", {{"bpm", 93.0}, {"mode", "project"}}).at("applied") == "project");
+	CHECK(near());
+	run(client, "project.set", {{"tempoTrackActive", true}});
+	run(client, "tempo.add", point(20, 140.0));
+	REQUIRE(run(client, "tempo.tap", {{"bpm", 75.0}, {"mode", "project"}}).at("applied") == "project");
+	CHECK(near());
+
+	// A MIDI file from another project whose tempo changes before the part and inside its note: 50 BPM from 1.5 s,
+	// 170 BPM from 4.8 s.
+	const gnubase::test::TempDir dir;
+	const std::string path = (dir.path() / "tempo.mid").string();
+	{
+		Engine source;
+		Client sourceClient(source);
+		run(sourceClient, "project.set", {{"tempoTrackActive", true}});
+		addTrack(sourceClient, {{"type", "midi"}});
+		run(sourceClient, "tempo.add", point(3, 50.0));
+		run(sourceClient, "tempo.add", {{"position", 23 * g_ticksPerQuarter / 4}, {"bpm", 170.0}});
+		run(sourceClient, "midiFile.export", {{"path", path}});
+	}
+	run(client, "midiFile.import", {{"path", path}, {"markers", false}});
+	REQUIRE(run(client, "project.get").at("tempo").size() == 3);
+	CHECK(near());
+	run(client, "history.undo");
+	CHECK(near());
 }
 
 TEST_CASE("a track's events, parts, markers and automation keep their time when its time base switches, and then "
@@ -395,6 +727,15 @@ TEST_CASE("new tracks get the time base of the user setting editing.defaultTimeB
 	CHECK(timeBase("audio") == "musical");
 
 	run(client, "settings.set", {{"key", "editing.defaultTimeBase"}, {"value", "linear"}});
+	// marker.add without a marker track adds one with the setting's time base: its position is in that track's unit,
+	// which project.get reports for the track the marker names.
+	const Json marker = run(client, "marker.add", {{"position", g_quarterSamples}}).at("marker");
+	const Json tracks = run(client, "project.get").at("tracks");
+	const auto markerTrack = std::find_if(
+		tracks.begin(), tracks.end(), [&marker](const Json& track) { return track.at("id") == marker.at("track"); });
+	REQUIRE(markerTrack != tracks.end());
+	CHECK(markerTrack->at("timeBase") == "linear");
+	CHECK(marker.at("position") == g_quarterSamples);
 	for (const char* type : {"audio", "instrument", "midi", "group", "effect", "vca", "marker"})
 	{
 		INFO(type);

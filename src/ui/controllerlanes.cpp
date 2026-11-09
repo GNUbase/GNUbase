@@ -4,6 +4,7 @@
 #include "engine/midi/chords.h"
 #include "engine/midi/quantizesettings.h"
 #include "platform/log.h"
+#include "ui/keyeditor.h"
 #include "ui/timeformat.h"
 
 #include <RmlUi/Core/Context.h>
@@ -157,13 +158,14 @@ namespace gnubase::ui
 	}
 
 	ControllerLanes::ControllerLanes(EngineBinding& binding, Rml::Element& root, std::string view)
-		: m_binding(binding), m_root(root.GetObserverPtr()), m_name(std::move(view))
+		: m_binding(binding), m_root(root.GetObserverPtr()), m_name(std::move(view)), m_menuSuffix(menuIdSuffix(m_name))
 	{
 		root.SetInnerRML(R"(<div class="controller-lane-list"/><div class="controller-lanes-footer">)"
-						 R"(<button id="controller-lane-create" menu="controller-create-menu")"
-						 R"( title="Create Controller Lane">+</button>)"
-						 R"(<button id="controller-lane-setup" menu="controller-setup-menu")"
-						 R"( title="Controller Lane Setup">Setup</button></div>)");
+						 R"(<button id="controller-lane-create" menu="controller-create-menu)" +
+			m_menuSuffix +
+			R"(" title="Create Controller Lane">+</button>)"
+			R"(<button id="controller-lane-setup" menu="controller-setup-menu)" +
+			m_menuSuffix + R"(" title="Controller Lane Setup">Setup</button></div>)");
 		Rml::ElementDocument* document = root.GetOwnerDocument();
 		const std::array<std::pair<const char*, std::string>, 3> menus = {{
 			{"controller-lane-menu",
@@ -182,7 +184,7 @@ namespace gnubase::ui
 		for (const auto& [id, items] : menus)
 		{
 			const Rml::ElementPtr holder = document->CreateElement("div");
-			holder->SetInnerRML(std::string(R"(<menu id=")") + id + R"(">)" + items + "</menu>");
+			holder->SetInnerRML(std::string(R"(<menu id=")") + id + m_menuSuffix + R"(">)" + items + "</menu>");
 			Rml::Element* menu = document->AppendChild(holder->RemoveChild(holder->GetFirstChild()));
 			menu->AddEventListener(Rml::EventId::Click, this);
 			m_menus.push_back(menu->GetObserverPtr());
@@ -366,7 +368,9 @@ namespace gnubase::ui
 			rml += lane.type;
 			rml += R"("><div class="controller-lane-header"><button class="controller-lane-type" lane-menu=")";
 			rml += index;
-			rml += R"(" menu="controller-lane-menu">)";
+			rml += R"(" menu="controller-lane-menu)";
+			rml += m_menuSuffix;
+			rml += R"(">)";
 			rml += Rml::StringUtilities::EncodeRml(laneName(lane.type, lane.number));
 			rml += R"(</button></div><div class="controller-lane-area" lane=")";
 			rml += index;

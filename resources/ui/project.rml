@@ -98,6 +98,8 @@
 		<button menu="midi-menu">MIDI</button>
 		<button menu="transport-menu">Transport</button>
 		<button menu="studio-menu">Studio</button>
+		<button menu="workspaces-menu">Workspaces</button>
+		<button menu="window-menu">Window</button>
 	</menubar>
 	<div id="toolbar" class="toolbar" strip="toolbar">
 		<button id="combine-selection-tools" type="toggle" class="icon-only" title="Combine Selection Tools"><svg class="icon" src="../icons/tool-pointer.svg"/></button>
@@ -313,6 +315,8 @@
 			</menu>
 		</menuitem>
 		<menuitem command="window.keyCommands">Key Commands...</menuitem>
+		<!-- docs/features/profiles.md -->
+		<menuitem command="window.profiles">Profile Manager...</menuitem>
 		<!-- docs/features/scripts.md: the user scripts, which app::AppUi fills in -->
 		<menuitem id="scripts-submenu">Scripts
 			<menu id="scripts-menu">
@@ -437,6 +441,8 @@
 	</menu>
 	<!-- MIDI functions (reference manual pp. 1118-1131, docs/features/midi-functions.md) -->
 	<menu id="midi-menu">
+		<menuitem command="editor.openInPlace">Open In-Place Editor</menuitem>
+		<menuseparator/>
 		<menuitem command="midi.transposeSetup">Transpose Setup...</menuitem>
 		<menuseparator/>
 		<!-- docs/features/midi-rules.md -->
@@ -578,6 +584,17 @@
 		<menuitem command="window.studioSetup">Studio Setup...</menuitem>
 	</menu>
 
+	<!-- docs/features/workspaces.md: ui::WorkspacesMenu adds No Workspace and the workspaces after these -->
+	<menu id="workspaces-menu">
+		<menuitem command="window.addWorkspace">Add Workspace...</menuitem>
+		<menuitem command="workspace.update">Update Workspace</menuitem>
+		<menuitem command="window.workspaces">Organize...</menuitem>
+	</menu>
+
+	<menu id="window-menu">
+		<menuitem command="window.windows">Windows...</menuitem>
+	</menu>
+
 	<!-- Set up Window Layout (reference manual p. 65), and Show Menu Bar (p. 55) -->
 	<menu id="window-layout-menu">
 		<menuitem type="toggle" toggle="menuBar">Menu Bar</menuitem>
@@ -594,6 +611,10 @@
 	</menu>
 	<!-- The inspector's Set up Sections pane (reference manual p. 167), its context menu -->
 	<menu id="inspector-setup" class="setup-pane">
+		<div setup-presets="inspector"/>
+		<button setup-preset-save="inspector">Save Preset</button>
+		<button setup-all="inspector">Show All</button>
+		<button setup-reset="inspector">Reset All</button>
 		<div setup="inspector"/>
 	</menu>
 	<menu id="ruler-format-menu">

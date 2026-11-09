@@ -96,10 +96,15 @@ namespace gnubase::ui
 		// Where the window is on the desktop, and moving it there (onto a connected monitor if it isn't on one).
 		Rect bounds(WindowId id) const { return m_windows.bounds(id); }
 		void setBounds(WindowId id, const Rect& bounds);
+		// The connected monitors, the primary one first.
+		std::vector<Display> displays() const { return m_windows.displays(); }
 
 		// Brings the window in front of the others with the keyboard focus, restoring it if it is minimized
 		// (WindowSystem::raise).
 		void raise(WindowId id);
+		// Minimizes the window, and restores it if it is minimized (WindowSystem::minimize, restore).
+		void minimize(WindowId id);
+		void restore(WindowId id);
 
 		// Runs handler when the user asks to close a window other than the main window, before the shell closes it,
 		// e.g. to dock the panel it shows again (ui/docking.h). The handler may close the window itself.

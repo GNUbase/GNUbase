@@ -1,0 +1,174 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The Workspaces Organizer (#163, docs/features/workspaces.md, reference manual pp. 1578-1579): app::AppUi opens it
+     with Workspaces > Organize (the UI command window.workspaces). #workspaces-global and #workspaces-project list the
+     global and the project workspaces; a click selects one, whose name #workspace-name renames with Return
+     (workspace.rename).
+     Add opens the New Workspace dialog, Delete deletes the selected workspace (workspace.remove), Move Up and Move
+     Down move it within its list (workspace.move). It follows workspace.changed, whichever client changed them. -->
+<rml>
+<head>
+	<title>Workspaces</title>
+	<style>
+		dialog
+		{
+			width: 420dp;
+		}
+
+		.row
+		{
+			display: flex;
+			align-items: center;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.row button
+		{
+			margin-right: 6dp;
+		}
+
+		.row .spacer
+		{
+			flex: 1;
+		}
+
+		.lists
+		{
+			display: flex;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.lists > div
+		{
+			flex: 1;
+			margin-right: 8dp;
+		}
+
+		.lists listview
+		{
+			height: 160dp;
+		}
+
+		#workspace-name
+		{
+			flex: 1;
+		}
+	</style>
+	<script>
+		WorkspacesOrganizer = {}
+		local dialog = WorkspacesOrganizer
+
+		local workspaces = {global = {}, project = {}}
+		local selected = {type = "global", index = 1}
+
+		local function escape(text)
+			return (text:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"):gsub('"', "&quot;"))
+		end
+
+		local function current()
+			return workspaces[selected.type][selected.index]
+		end
+
+		function dialog.show()
+			local document = dialog.document
+			if document == nil then
+				return
+			end
+			for _, type in ipairs({"global", "project"}) do
+				local rml = {}
+				for index, workspace in ipairs(workspaces[type]) do
+					rml[#rml + 1] = '<listitem value="' .. index .. '">' .. escape(workspace.name) .. "</listitem>"
+				end
+				local list = document:GetElementById("workspaces-" .. type)
+				list.inner_rml = table.concat(rml)
+				list:SetAttribute("value", type == selected.type and tostring(selected.index) or "")
+			end
+			local workspace = current()
+			document:GetElementById("workspace-name"):SetAttribute("value", workspace and workspace.name or "")
+		end
+
+		function dialog.refresh()
+			local all = gnubase.workspace.get()
+			workspaces = {global = all.global, project = all.project}
+			if #workspaces[selected.type] == 0 and #workspaces.project > 0 then
+				selected.type = "project"
+			end
+			selected.index = math.max(1, math.min(selected.index, #workspaces[selected.type]))
+			dialog.show()
+		end
+
+		function dialog.select(type)
+			local document = dialog.document
+			local value = tonumber(tostring(document:GetElementById("workspaces-" .. type):GetAttribute("value") or ""))
+			if value ~= nil and workspaces[type][value] ~= nil and (type ~= selected.type or value ~= selected.index) then
+				selected = {type = type, index = value}
+				dialog.show()
+			end
+		end
+
+		function dialog.rename(event)
+			local workspace = current()
+			local name = tostring(event.parameters.value or "")
+			if workspace ~= nil and event.parameters.linebreak and name ~= "" and name ~= workspace.name then
+				pcall(gnubase.workspace.rename, {type = selected.type, name = workspace.name, newName = name})
+			end
+		end
+
+		function dialog.delete()
+			local workspace = current()
+			if workspace ~= nil then
+				gnubase.workspace.remove{type = selected.type, name = workspace.name}
+			end
+		end
+
+		function dialog.move(by)
+			local workspace = current()
+			local to = selected.index + by
+			if workspace ~= nil and to >= 1 and to <= #workspaces[selected.type] then
+				selected.index = to
+				gnubase.workspace.move{type = selected.type, name = workspace.name, index = to - 1}
+			end
+		end
+
+		function dialog.load(document)
+			dialog.document = document
+			if not dialog.subscribed then
+				dialog.subscribed = true
+				local refresh = function()
+					if dialog.document ~= nil then
+						dialog.refresh()
+					end
+				end
+				gnubase.on("workspace.changed", refresh)
+				gnubase.on("project.reset", refresh)
+			end
+			dialog.refresh()
+		end
+	</script>
+</head>
+<body onload="WorkspacesOrganizer.load(document)" onunload="WorkspacesOrganizer.document = nil">
+	<dialog id="workspaces-dialog">
+		<div class="dialog-titlebar">Workspaces</div>
+		<div class="lists">
+			<div>
+				<div>Global Workspaces</div>
+				<listview id="workspaces-global" onchange="WorkspacesOrganizer.select('global')"/>
+			</div>
+			<div>
+				<div>Project Workspaces</div>
+				<listview id="workspaces-project" onchange="WorkspacesOrganizer.select('project')"/>
+			</div>
+		</div>
+		<div class="row">
+			<input type="text" id="workspace-name" onchange="WorkspacesOrganizer.rename(event)"/>
+		</div>
+		<div class="row">
+			<button id="workspaces-add" onclick="gnubase.ui.command{command = 'window.addWorkspace'}">Add</button>
+			<button id="workspaces-delete" onclick="WorkspacesOrganizer.delete()">Delete</button>
+			<button id="workspaces-up" onclick="WorkspacesOrganizer.move(-1)">Move Up</button>
+			<button id="workspaces-down" onclick="WorkspacesOrganizer.move(1)">Move Down</button>
+			<div class="spacer"/>
+			<button id="workspaces-close" result="ok">Close</button>
+		</div>
+	</dialog>
+</body>
+</rml>

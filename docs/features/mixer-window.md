@@ -65,7 +65,8 @@ engine commands, so whichever client changes the project or the view, the mixer 
   window's track visibility, and a window does with Sync Visibility of Project and Mixer
   ([track-visibility.md](track-visibility.md)).
 - **Set up Window Layout** (p. 439): the setup pane ([docking.md](docking.md)) shows and hides the left zone (in a
-  window) and the strips' sections Pictures, Pre, Equalizer, Strip, Sends, Notepad and Fader, and reorders them; the layout is the user setting
+  window) and the strips' sections Pictures, Pre, Equalizer, Strip, Sends, Notepad and Fader, and reorders them, with
+  Show All, Reset All and presets ([docking.md](docking.md)); the layout is the user setting
   `ui.layout`, per window (`mixer1` to `mixer4`, and `project` for the lower zone's).
 - **Order** (p. 496). A channel's name dragged onto another channel takes its place: its track moves into that
   track's folder with `track.move`, after it when it came from the left, before it otherwise, so the track list
@@ -92,8 +93,8 @@ engine commands, so whichever client changes the project or the view, the mixer 
 Channel selection and the agents and Move Selected Channels commands that work on it, dragging several channels at
 once and the green drop line; the Zones tab (locking channels to the left and right), the History and Snapshots tabs and
 the right zone; the channel overview, the meter bridge, Channel Latency, the routing and inserts sections (#113) and the
-channel meters; Find Track/Channel, channel visibility configurations, Undo Visibility Change, linking mixers ([link-groups.md](link-groups.md) links channels), the zoom palette and the transport buttons of the toolbar (the state buttons: solo-mute-listen.md); the track pictures browser and pictures in the track list; faders of busses; and the
-windows' places, which workspaces will keep (#163).
+channel meters; Find Track/Channel, channel visibility configurations, Undo Visibility Change, linking mixers ([link-groups.md](link-groups.md) links channels), the zoom palette and the transport buttons of the toolbar (the state buttons: solo-mute-listen.md); the track pictures browser and pictures in the track list; and faders of busses. The
+windows' places are kept in `ui.layout` and workspaces ([workspaces.md](workspaces.md)).
 
 ## Checks
 

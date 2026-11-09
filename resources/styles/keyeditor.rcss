@@ -256,3 +256,56 @@
 {
 	margin: 0 2dp 2dp 0;
 }
+
+/* The in-place editor (#131, ui/inplaceeditor.h, docs/features/in-place-editor.md): a key editor over its track's
+   lane in the event display, which code places. The editors' container has no height, so that the lanes beside them
+   still take presses. The toolbar and the info line show while .toolbar-shown, which the toggle at the top right
+   switches; .hidden while a folded folder hides the track. */
+.in-place-editors
+{
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 100%;
+	height: 0;
+}
+
+.in-place-editor
+{
+	position: absolute;
+	left: 0;
+	width: 100%;
+	display: flex;
+	flex-direction: column;
+	box-sizing: border-box;
+}
+
+.in-place-editor.hidden,
+.in-place-editor .key-editor-toolbar,
+.in-place-editor .key-editor-info
+{
+	display: none;
+}
+
+.in-place-editor.toolbar-shown .key-editor-toolbar,
+.in-place-editor.toolbar-shown .key-editor-info
+{
+	display: flex;
+}
+
+/* The parts' row as wide as the grid, which the note display's scroll bar (base.rcss) narrows: the parts lie on the
+   timeline too. */
+.in-place-editor .editor-parts
+{
+	margin-right: 10dp;
+}
+
+.in-place-toolbar-toggle
+{
+	position: absolute;
+	top: 0;
+	right: 0;
+	width: 22dp;
+	height: 18dp;
+	padding: 0;
+}

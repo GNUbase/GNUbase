@@ -69,6 +69,15 @@ namespace gnubase::ui
 			return false;
 		}
 
+		// A press in an in-place editor (#131, ui/inplaceeditor.h) is the editor's, not the lanes' under it.
+		bool inInPlaceEditor(const Rml::Element* element)
+		{
+			for (; element != nullptr; element = element->GetParentNode())
+				if (element->IsClassSet("in-place-editor"))
+					return true;
+			return false;
+		}
+
 		Rml::Property dp(double value)
 		{
 			return {static_cast<float>(value), Rml::Unit::DP};
@@ -857,7 +866,17 @@ namespace gnubase::ui
 	double EventDisplay::trackHeight(uint64_t track) const
 	{
 		const auto height = m_heights.find(track);
-		return height == m_heights.end() ? g_trackHeight : height->second;
+		const double own = height == m_heights.end() ? g_trackHeight : height->second;
+		return m_inPlace.count(track) != 0 ? std::max(own, g_inPlaceHeight) : own;
+	}
+
+	void EventDisplay::setInPlaceTracks(std::set<uint64_t> tracks)
+	{
+		if (tracks == m_inPlace)
+			return;
+		m_inPlace = std::move(tracks);
+		setLanes();
+		setView(m_view);
 	}
 
 	void EventDisplay::setTrackHeight(uint64_t track, double height)
@@ -1037,6 +1056,8 @@ namespace gnubase::ui
 		switch (event.GetId())
 		{
 		case Rml::EventId::Mousedown:
+			if (inInPlaceEditor(target))
+				break; // the editor's (ui/inplaceeditor.h)
 			if (target != nullptr && event.GetParameter<int>("button", 0) == 0)
 				mouseDown(event, *target);
 			else if (event.GetParameter<int>("button", 0) == 1 && inside(target, m_area))
