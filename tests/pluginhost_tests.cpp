@@ -65,6 +65,16 @@ namespace
 		return options;
 	}
 
+	// For tests of what reaches a plugin, not of deadlines: a real-time block waits as long as an offline one, so a
+	// host process that a loaded machine doesn't run for a few milliseconds is never late (#950).
+	plugins::HostManager::Options patientOptions()
+	{
+		plugins::HostManager::Options options = testOptions();
+		options.deadlines.realtimeMinimum = options.deadlines.offline;
+		options.deadlines.realtimeMaximum = options.deadlines.offline;
+		return options;
+	}
+
 	plugins::PluginRef gain(const std::string& vendor = "GNUbase")
 	{
 		return {"test:gain", "", vendor};
@@ -670,9 +680,9 @@ TEST_CASE("the host process hands a block's slot back only once the block's answ
 	CHECK(!host->exited());
 }
 
-TEST_CASE("starting and stopping a remote plugin takes effect at once", "[integration][realtime]")
+TEST_CASE("starting and stopping a remote plugin takes effect at once", "[integration]")
 {
-	plugins::HostManager manager(testOptions());
+	plugins::HostManager manager(patientOptions());
 	const std::unique_ptr<plugin::remote::RemotePlugin> remote = createRemote(manager);
 	LocalHost host;
 	const std::unique_ptr<plugin::Plugin> local = localPlugin("test:gain", host);
@@ -1164,10 +1174,16 @@ TEST_CASE("the first block after a start its host can't take yet keeps its param
 	CHECK(savedValue(plugin, "test:stall", g_resets) == settled);
 }
 
-TEST_CASE("a parameter flush on the audio thread before the first block after a start reaches the plugin",
-	"[integration][realtime]")
+TEST_CASE(
+	"a parameter flush on the audio thread before the first block after a start reaches the plugin", "[integration]")
 {
-	plugins::HostManager manager(testOptions());
+	// The host is still busy with a long block when processing stops and starts again, so the Start doesn't fit and
+	// goes with the next block. The block takes far longer than its deadline, so this holds on a loaded machine too.
+	plugins::HostManager::Options options = testOptions();
+	options.deadlines.realtimeMinimum = 100ms;
+	options.deadlines.realtimeMaximum = 100ms;
+	options.deadlines.hang = 10s;
+	plugins::HostManager manager(options);
 	std::unique_ptr<plugin::remote::RemotePlugin> remote = createRemote(manager, {"test:stall", "", "GNUbase"});
 	plugin::remote::RemotePlugin& plugin = *remote;
 	SlotGraph stalling(std::move(remote), plugin::ProcessMode::Realtime);
@@ -1175,13 +1191,20 @@ TEST_CASE("a parameter flush on the audio thread before the first block after a 
 	SlotGraph reference(localPlugin("test:stall", host), plugin::ProcessMode::Realtime);
 	Noise noise;
 	const std::vector<float> input = noise.block(128);
-	REQUIRE(stalling.render(input) == reference.render(input));
+	const auto inTime = [&]
+	{
+		std::this_thread::sleep_for(5ms);
+		return stalling.render(input) == reference.render(input);
+	};
+	REQUIRE(eventually(inTime));
 
-	// The Start goes with the next block: a flush before it keeps its change for that block.
+	// A flush before the first block keeps its change for that block.
+	CHECK(silent(stalling.render(input, {parameter(0, g_stall, 1000.0)})));
 	plugin.stopProcessing();
 	CHECK(plugin.startProcessing());
 	flush(plugin, {paramEvent(g_value, 0.75)});
-	CHECK(stalling.render(input) == reference.render(input));
+	CHECK(eventually(inTime));
+	CHECK(plugin.failure() == plugin::remote::Failure::None);
 	CHECK(savedValue(plugin, "test:stall", g_value) == 0.75);
 }
 
