@@ -1952,7 +1952,9 @@ namespace gnubase::engine
 				"outputLatency (frames, 0 to 65536, default 0); with loopback its inputs carry its outputs back that "
 				"much later, as a cable from each output to the input of the same number would, which needs at least "
 				"a block. It monitors directly by adding inputs to its outputs.\n"
-				"Sends audio.changed, also when it fails after closing the old device.",
+				"Sends audio.changed, and plugin.changed for the slots whose plugin's status changed, e.g. to "
+				"noDevice, also "
+				"when it fails after closing the old device.",
 				deviceSchema, statusSchema(), false},
 			[this, announcingFailure](CommandContext& context)
 			{
@@ -1973,7 +1975,9 @@ namespace gnubase::engine
 				"it ran. If it can't open with them, "
 				"it opens again with the settings it had and the command fails; if those fail too, there is no device. "
 				"Fails while a fallback plays for a lost device (see audio.reset). "
-				"Sends audio.changed, also when it fails after the device closed: with the device opened again with "
+				"Sends audio.changed, and plugin.changed for the slots whose plugin's status changed, also when it "
+				"fails "
+				"after the device closed: with the device opened again with "
 				"its old settings, at position 0, or with none.",
 				settingsSchema, statusSchema(), false},
 			[this, announcingFailure](CommandContext& context)
@@ -2112,7 +2116,9 @@ namespace gnubase::engine
 				"fails. audio.setDevice ends the wait. The "
 				"performance measurement goes on across a reset, which itself counts nothing: a driver that resets "
 				"because of a dropout reports the dropout (see audio.performance). A reset that loses the device ends "
-				"the measurement. Sends audio.changed when the device closes, opens or is lost, also when it fails "
+				"the measurement. Sends audio.changed when the device closes, opens or is lost, and plugin.changed for "
+				"the "
+				"slots whose plugin's status changed, also when it fails "
 				"after the device opened again.",
 				noParameters(), statusSchema(), false},
 			[this, announcingFailure](CommandContext& context)
@@ -2132,7 +2138,8 @@ namespace gnubase::engine
 				"try at a time. While a fallback device plays, it tries only once the backend lists the lost device "
 				"as available again, so that the fallback isn't interrupted, or every few seconds if the backend "
 				"learns only by opening it whether it is there (ASIO). Tries that find the device still gone "
-				"change nothing and are left out of engine.commandLog. Sends audio.changed when the device opens.",
+				"change nothing and are left out of engine.commandLog. Sends audio.changed when the device opens, and "
+				"plugin.changed for the slots whose plugin's status changed.",
 				noParameters(), statusSchema(), false},
 			[this, announcingFailure](CommandContext& context)
 			{
