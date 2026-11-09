@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/poolpanel.h"
 
+#include "platform/log.h"
 #include "ui/widgets.h"
 
 #include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/StringUtilities.h>
 
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <iomanip>
 #include <iterator>
@@ -173,6 +176,8 @@ namespace gnubase::ui
 
 	PoolPanel::~PoolPanel()
 	{
+		if (m_question)
+			m_question->RemoveEventListener(g_dialogCloseEvent, this);
 		if (!m_root)
 			return;
 		for (const Rml::EventId id :
@@ -182,8 +187,67 @@ namespace gnubase::ui
 		m_root->RemoveEventListener(g_treeToggleEvent, this);
 	}
 
+	void PoolPanel::prepareArchive()
+	{
+		// The reference asks before it copies files from outside the project folder (reference manual p. 135). A
+		// project without a file has no folder to copy into: the engine says so.
+		m_binding.send("project.location", Json::object(),
+			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& location)
+			{
+				if (alive.expired())
+					return;
+				if (!location.ok() || location.value.at("file").is_null())
+				{
+					m_binding.send("media.prepareArchive");
+					return;
+				}
+				m_binding.send("pool.get", Json::object(),
+					[this, alive](const engine::Result& pool)
+					{
+						if (alive.expired() || !pool.ok())
+							return;
+						const auto external = pool.value.at("externalFiles").get<int>();
+						if (external == 0)
+							m_binding.send("media.prepareArchive");
+						else
+							askPrepareArchive(external);
+					});
+			});
+	}
+
+	void PoolPanel::askPrepareArchive(int external)
+	{
+		if (m_question || !m_root)
+			return; // asking already
+		// From the folder of the panel's document, modal, in the panel's window.
+		const std::string path = std::filesystem::u8path(m_root->GetOwnerDocument()->GetSourceURL())
+									 .replace_filename("prepare-archive.rml")
+									 .generic_u8string();
+		Rml::ElementDocument* dialog = m_root->GetContext()->LoadDocument(path);
+		if (dialog == nullptr)
+		{
+			logging::warning("The pool can't open the dialog {}", path);
+			return;
+		}
+		if (Rml::Element* message = dialog->GetElementById("prepare-archive-message"))
+			message->SetInnerRML(counted(static_cast<size_t>(external), "file") +
+				(external == 1 ? " of the project is" : " of the project are") +
+				" outside the project folder. Copy them into its Audio folder?");
+		m_question = dialog->GetObserverPtr();
+		dialog->AddEventListener(g_dialogCloseEvent, this);
+		dialog->Show(Rml::ModalFlag::Modal);
+	}
+
 	void PoolPanel::ProcessEvent(Rml::Event& event)
 	{
+		if (event.GetType() == g_dialogCloseEvent && m_question && event.GetCurrentElement() == m_question.get())
+		{
+			m_question->RemoveEventListener(g_dialogCloseEvent, this);
+			m_question.reset();
+			if (event.GetParameter<Rml::String>("result", "") == "ok")
+				m_binding.send("media.prepareArchive");
+			return;
+		}
 		Rml::Element* target = event.GetTargetElement();
 		if (target == nullptr)
 			return;
@@ -303,9 +367,14 @@ namespace gnubase::ui
 		else if (command == "media.prepareArchive")
 		{
 			const size_t missing = value.at("missing").size();
+			const size_t changed = value.at("changed").size();
 			text = "Copied " + counted(value.at("copied").size(), "file") + " into the project folder";
 			if (missing > 0)
 				text += "; " + counted(missing, "missing file") + (missing == 1 ? " wasn't" : " weren't") + " copied";
+			if (changed > 0)
+				text += "; " + counted(changed, "file") +
+					(changed == 1 ? " changed meanwhile and was left as it is"
+								  : " changed meanwhile and were left as they are");
 			text += ".";
 		}
 		showMessage(text, false);

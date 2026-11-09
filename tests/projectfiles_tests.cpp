@@ -17,6 +17,7 @@
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -1487,6 +1488,9 @@ TEST_CASE("File > Save as Template and Back up Project", "[ui]")
 	REQUIRE(app.waitUntil([&dir] { return fs::exists(dir.path() / "Backup" / "Song.dawproject"); }));
 	CHECK(fs::exists(dir.path() / "Backup" / "Mixdown" / "Song.wav"));
 	CHECK(location(app) == song);
+	// Its progress dialog closes once it's done.
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#backup-progress-dialog"); }));
+	CHECK(!shown(app, "#project-error-dialog"));
 
 	// Cancelled, it backs nothing up.
 	fileMenu(app, "file.backup");
@@ -1508,4 +1512,103 @@ TEST_CASE("File > Save as Template and Back up Project", "[ui]")
 	REQUIRE(app.waitUntil([&app, &renamed] { return location(app) == renamed; }, std::chrono::seconds(30)));
 	CHECK(!fs::exists(dir.path() / "Final" / "Mixdown"));
 	CHECK(app.call("project.get").at("name") == "Final Mix");
+}
+
+namespace
+{
+	// The parameters of the last project.backup that ran.
+	Json lastBackup(test::UiApp& app)
+	{
+		Json parameters;
+		const Json log = app.call("engine.commandLog");
+		for (const Json& entry : log.at("commands"))
+			if (entry.at("command") == "project.backup")
+				parameters = entry.at("parameters");
+		return parameters;
+	}
+
+	// Waits until no job runs, and returns the last one.
+	Json lastJob(test::UiApp& app)
+	{
+		Json jobs;
+		REQUIRE(app.waitUntil(
+			[&app, &jobs]
+			{
+				jobs = app.call("job.list").at("jobs");
+				return std::none_of(
+					jobs.begin(), jobs.end(), [](const Json& job) { return job.at("state") == "running"; });
+			},
+			std::chrono::seconds(60)));
+		REQUIRE(!jobs.empty());
+		return jobs.back();
+	}
+}
+
+TEST_CASE("Back up Project shows its own backups' progress and outcome, and Cancel stops them", "[ui][slow]")
+{
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	const test::TempDir dir;
+
+	// A project without a file: the name starts as the project's, after which the engine names the backup. Options
+	// that have no effect yet can't be chosen; Minimize Audio Files and Remove Unused Files reach the engine.
+	app.call("project.set", {{"name", "My Song"}});
+	fileMenu(app, "file.backup");
+	answer(app, {dir.path() / "Unsaved"});
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#backup-project-dialog"); }));
+	CHECK(elements(app, "#backup-name").at(0).at("attributes").at("value") == "My Song");
+	CHECK(disabled(app, "#backup-offline"));
+	CHECK(disabled(app, "#backup-skip-video"));
+	CHECK(!disabled(app, "#backup-minimize"));
+	click(app, "#backup-minimize");
+	click(app, "#backup-remove-unused");
+	click(app, "#backup-project-dialog button.primary");
+	REQUIRE(app.waitUntil([&dir] { return fs::exists(dir.path() / "Unsaved" / "My Song.dawproject"); }));
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#backup-progress-dialog"); }));
+	const Json parameters = lastBackup(app);
+	CHECK(parameters.at("minimize") == true);
+	CHECK(parameters.at("removeUnused") == true);
+	CHECK(!parameters.contains("name"));
+	CHECK(!shown(app, "#project-error-dialog"));
+
+	// Done, a backup with files that couldn't be read says which.
+	app.call("media.add",
+		{{"path", utf8(dir.path() / "gone.wav")}, {"sampleRate", 48000.0}, {"channels", 2}, {"length", 48000}});
+	fileMenu(app, "file.backup");
+	answer(app, {dir.path() / "Missing"});
+	click(app, "#backup-project-dialog button.primary");
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
+	CHECK_THAT(errorMessage(app), ContainsSubstring("gone.wav"));
+	CHECK(!shown(app, "#backup-progress-dialog"));
+	closeError(app);
+	CHECK(fs::exists(dir.path() / "Missing" / "My Song.dawproject"));
+
+	// A long one shows its progress, and Cancel in there stops it: it leaves nothing behind and says nothing more.
+	const fs::path take = dir.path() / "take.wav";
+	test::writeWav(take, {std::vector<float>(size_t{48000} * 60 * 2, 0.25f), 2, 48000}); // 1 min, 23 MB
+	for (int i = 0; i < 10; ++i)
+		app.call("media.add", {{"path", utf8(take)}});
+	fileMenu(app, "file.backup");
+	answer(app, {dir.path() / "Cancelled"});
+	click(app, "#backup-project-dialog button.primary");
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#backup-progress-dialog"); }));
+	CHECK(elements(app, "#backup-progress").size() == 1);
+	click(app, "#backup-progress-dialog button[result=cancel]");
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#backup-progress-dialog"); }));
+	const Json cancelled = lastJob(app);
+	CHECK(cancelled.at("kind") == "project.backup");
+	CHECK(cancelled.at("state") == "cancelled");
+	CHECK(!fs::exists(dir.path() / "Cancelled"));
+	handleEarlierEvents(app);
+	CHECK(!shown(app, "#project-error-dialog"));
+
+	// A backup that another client starts, such as an MCP client or a Lua script, shows nothing here, also when it
+	// fails (#944).
+	const fs::path notFolder = dir.path() / "file";
+	std::ofstream(notFolder) << "not a folder";
+	app.call("project.backup", {{"folder", utf8(notFolder / "Backup")}});
+	CHECK(lastJob(app).at("state") == "failed");
+	handleEarlierEvents(app);
+	CHECK(!shown(app, "#project-error-dialog"));
+	CHECK(!shown(app, "#backup-progress-dialog"));
 }

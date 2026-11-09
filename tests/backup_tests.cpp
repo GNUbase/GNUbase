@@ -325,14 +325,18 @@ TEST_CASE("a backup names its project and file", "[integration]")
 	run(song.client, "project.set", {{"name", "My Song"}});
 	song.addEvent(song.addClip(song.addMedia(dir.path() / "take.wav")), 0, 0, 4800);
 
-	// Without a name, the backup is named after the project.
+	// Without a name, the backup is named after the project, as project.location says, where the UI takes it from.
+	CHECK(run(song.client, "project.location").at("name") == "My Song");
 	const Json result = backup(song.client, {{"folder", utf8(dir.path() / "a")}});
 	CHECK(result.at("file") == utf8(dir.path() / "a" / "My Song.dawproject"));
 
-	// Once the project has a file, after that file.
+	// Once the project has a file, after that file, also when it doesn't end in .dawproject.
 	run(song.client, "project.save", {{"path", utf8(dir.path() / "Session 3.dawproject")}});
+	CHECK(run(song.client, "project.location").at("name") == "Session 3");
 	CHECK(backup(song.client, {{"folder", utf8(dir.path() / "b")}}).at("file") ==
 		utf8(dir.path() / "b" / "Session 3.dawproject"));
+	run(song.client, "project.save", {{"path", utf8(dir.path() / "Session 4.song")}});
+	CHECK(run(song.client, "project.location").at("name") == "Session 4.song");
 
 	// A new name is the backup project's name too.
 	backup(song.client, {{"folder", utf8(dir.path() / "c")}, {"name", "Final"}});
@@ -525,17 +529,29 @@ TEST_CASE("a backup reports its progress and can be cancelled", "[integration][s
 	CHECK(!fs::exists(folder));
 	CHECK(run(song.client, "job.list").at("jobs").size() == 2);
 
-	// So does one cancelled while it copies the project's Mixdown folder, with the folders it made in there.
+	// So does one cancelled while it copies the project's Mixdown folder, with the folders it made in there. A project
+	// without media starts copying the Mixdown folder at once, and its first progress event comes once the folders
+	// for the first file are made: it is cancelled then. Into a folder that was there, which stays, empty.
 	Song saved;
 	fs::create_directories(dir.path() / "project" / "Mixdown" / "Stems");
-	fs::copy_file(big, dir.path() / "project" / "Mixdown" / "Stems" / "big.wav");
+	for (const char* name : {"a.wav", "b.wav", "c.wav", "d.wav"})
+		fs::copy_file(big, dir.path() / "project" / "Mixdown" / "Stems" / name);
 	run(saved.client, "project.save", {{"path", utf8(dir.path() / "project" / "Song.dawproject")}});
 	const fs::path mixdowns = dir.path() / "cancelled mixdowns";
+	fs::create_directories(mixdowns);
 	const uint64_t copying =
 		run(saved.client, "project.backup", {{"folder", utf8(mixdowns)}}).at("job").at("id").get<uint64_t>();
+	bool progressed = false;
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+	while (!progressed && std::chrono::steady_clock::now() < deadline)
+		if (const std::optional<Message> message = saved.client.wait(std::chrono::milliseconds(100)))
+			if (const auto* event = std::get_if<Event>(&*message))
+				progressed = event->name == "job.progress" && event->data.at("job") == copying;
+	REQUIRE(progressed);
 	run(saved.client, "job.cancel", {{"job", copying}});
 	CHECK(waitForJob(saved.client, copying).at("state") == "cancelled");
-	CHECK(!fs::exists(mixdowns));
+	CHECK(fs::is_directory(mixdowns));
+	CHECK(fs::is_empty(mixdowns));
 }
 
 TEST_CASE("a backup goes into an empty folder", "[integration]")
@@ -594,6 +610,48 @@ TEST_CASE("a backup takes the project's Mixdown folder along, unless asked not t
 	CHECK(filesIn(inside) == withMixdown);
 }
 
+TEST_CASE("a backup takes every file of the Mixdown folder along and reports those it can't read", "[integration]")
+{
+	const test::TempDir dir;
+	const fs::path project = dir.path() / "Song";
+	Song song;
+	fs::create_directories(project);
+	run(song.client, "project.save", {{"path", utf8(project / "Song.dawproject")}});
+	const fs::path mixdown = project / "Mixdown";
+	writeNoise(mixdown / "Song.wav", 4800, 2, 1);
+	writeNoise(mixdown / "Locked.wav", 4800, 2, 2);
+	fs::create_directories(mixdown / "Empty" / "Inner");
+
+	// Names that differ only in case, where the file system has them (not on Windows and macOS): both go along, each
+	// under a name of its own, which no backup drive takes for the same.
+	writeNoise(mixdown / "Stems" / "Drums.wav", 4800, 2, 3);
+	writeNoise(mixdown / "Stems" / "drums.wav", 4800, 2, 4);
+	const bool caseSensitive = !sameFiles(mixdown / "Stems" / "Drums.wav", mixdown / "Stems" / "drums.wav");
+
+	// A file that another program locks, or that may not be read, is reported as missing, and the rest is backed up.
+	test::Unreadable locked(mixdown / "Locked.wav");
+	const Json result = backup(song.client, {{"folder", utf8(dir.path() / "Backup")}});
+	std::set<std::string> expected{"Song.dawproject", "Mixdown/Song.wav", "Mixdown/Stems/Drums.wav"};
+	if (caseSensitive)
+		expected.insert("Mixdown/Stems/drums-2.wav");
+	if (locked.active())
+	{
+		REQUIRE(result.at("missing").size() == 1);
+		CHECK(result.at("missing")[0] == Json{{"path", utf8(mixdown / "Locked.wav")}});
+	}
+	else
+	{
+		expected.insert("Mixdown/Locked.wav");
+		CHECK(result.at("missing").empty());
+	}
+	CHECK(filesIn(dir.path() / "Backup") == expected);
+	CHECK(sameFiles(dir.path() / "Backup" / "Mixdown" / "Stems" / "Drums.wav", mixdown / "Stems" / "Drums.wav"));
+	if (caseSensitive)
+		CHECK(sameFiles(dir.path() / "Backup" / "Mixdown" / "Stems" / "drums-2.wav", mixdown / "Stems" / "drums.wav"));
+	// Empty folders go along too.
+	CHECK(fs::is_directory(dir.path() / "Backup" / "Mixdown" / "Empty" / "Inner"));
+}
+
 TEST_CASE("media can be copied into the project folder when they are added", "[integration]")
 {
 	const test::TempDir dir;
@@ -608,7 +666,7 @@ TEST_CASE("media can be copied into the project folder when they are added", "[i
 	const std::string file = utf8(project / "Song.dawproject");
 	run(song.client, "project.save", {{"path", file}, {"embedMedia", false}});
 	CHECK(run(song.client, "project.location") ==
-		Json{{"file", file}, {"folder", utf8(project)}, {"mediaFolder", utf8(project / "Audio")}});
+		Json{{"file", file}, {"folder", utf8(project)}, {"mediaFolder", utf8(project / "Audio")}, {"name", "Song"}});
 	// The file is added at once where it is, and copied by a job, which then points the media file at the copy.
 	const Json added = run(song.client, "media.add", {{"path", utf8(elsewhere / "take.wav")}, {"copy", true}});
 	const ObjectId media = idOf(added, "media");
@@ -650,8 +708,8 @@ TEST_CASE("media can be copied into the project folder when they are added", "[i
 	CHECK(!fs::exists(project / "Audio" / "broken.wav"));
 
 	run(song.client, "project.new");
-	CHECK(
-		run(song.client, "project.location") == Json{{"file", nullptr}, {"folder", nullptr}, {"mediaFolder", nullptr}});
+	CHECK(run(song.client, "project.location") ==
+		Json{{"file", nullptr}, {"folder", nullptr}, {"mediaFolder", nullptr}, {"name", "Untitled"}});
 }
 
 TEST_CASE("preparing an archive gathers the media in the project folder", "[integration]")

@@ -10,6 +10,7 @@
 #include <RmlUi/Core/StringUtilities.h>
 
 #include <filesystem>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -22,6 +23,8 @@ namespace gnubase::ui
 	{
 		// The result of a dialog that closed to make way for another one.
 		constexpr const char* g_replaced = "replaced";
+		// The result with which a backup's progress dialog closes once the backup ended.
+		constexpr const char* g_backupDone = "done";
 
 		const std::vector<FileFilter>& projectFilters()
 		{
@@ -103,20 +106,19 @@ namespace gnubase::ui
 				  autoSaveWorks();
 				  readLocation();
 			  })),
-		  m_jobFinished(binding.on("job.finished",
+		  m_jobProgress(binding.on("job.progress",
 			  [this](const engine::Event& event)
 			  {
-				  // A backup runs as a job, so most of its failures come after project.backup returned. So does the
-				  // reason why a backup that was to be opened wasn't, such as an edit while the job ran.
-				  const Json& job = event.data.at("job");
-				  if (!m_backupWindow || job.at("kind") != "project.backup")
+				  Rml::ElementDocument* dialog = progressDialog();
+				  if (dialog == nullptr || event.data.at("job") != m_progressJob)
 					  return;
-				  if (job.at("state") == "failed")
-					  showError(*m_backupWindow, job.at("error").get<std::string>());
-				  else if (const Json& result = job.at("result"); job.at("state") == "done" && result.is_object() &&
-					  result.value("activationError", Json()).is_string())
-					  showError(*m_backupWindow, result.at("activationError").get<std::string>());
+				  if (Rml::Element* bar = dialog->GetElementById("backup-progress"))
+					  bar->SetAttribute("value", event.data.at("progress").get<double>());
+				  if (Rml::Element* file = dialog->GetElementById("backup-progress-file"))
+					  file->SetInnerRML(Rml::StringUtilities::EncodeRml(event.data.at("detail").get<std::string>()));
 			  })),
+		  m_jobFinished(
+			  binding.on("job.finished", [this](const engine::Event& event) { backupEnded(event.data.at("job")); })),
 		  m_autoSaveFailed(
 			  binding.on("project.autoSaveFailed", [this](const engine::Event& event) { autoSaveFailed(event.data); })),
 		  m_autoSaved(binding.on("project.autoSaved", [this](const engine::Event&) { autoSaveWorks(); }))
@@ -270,11 +272,20 @@ namespace gnubase::ui
 
 	void ProjectFiles::backup(Window& window, const std::string& folder)
 	{
-		// The name starts as the project file's; left as it is, or empty, the engine names the backup on its own.
-		const std::string name = m_file.empty() ? std::string() : std::filesystem::u8path(m_file).stem().u8string();
+		// The name starts as the engine's default name for the backup (project.location); left as it is, or empty,
+		// the engine names the backup on its own.
+		m_binding.send("project.location", Json::object(),
+			[this, id = window.id(), folder](const engine::Result& location)
+			{
+				if (Window* asked = m_shell.find(id); asked != nullptr && location.ok())
+					askBackupOptions(*asked, folder, location.value.at("name").get<std::string>());
+			});
+	}
+
+	void ProjectFiles::askBackupOptions(Window& window, const std::string& folder, const std::string& name)
+	{
 		Rml::ElementDocument* dialog = openDialog(window, "backup-project.rml",
-			[this, id = window.id(), folder, name, done = reportFailure(window)](
-				Rml::ElementDocument& options, const std::string& result)
+			[this, id = window.id(), folder, name](Rml::ElementDocument& options, const std::string& result)
 			{
 				if (result != "ok")
 					return;
@@ -290,13 +301,102 @@ namespace gnubase::ui
 				if (auto* field = dynamic_cast<Rml::ElementFormControl*>(options.GetElementById("backup-name")))
 					if (const Rml::String typed = field->GetValue(); !typed.empty() && typed != name)
 						parameters["name"] = typed;
-				m_backupWindow = id;
-				m_binding.send("project.backup", parameters, done);
+				m_binding.send("project.backup", parameters,
+					[this, id](const engine::Result& started) { backupStarted(id, started); });
 			});
 		if (auto* field = dialog != nullptr
 				? dynamic_cast<Rml::ElementFormControl*>(dialog->GetElementById("backup-name"))
 				: nullptr)
 			field->SetValue(name);
+	}
+
+	void ProjectFiles::backupStarted(WindowId window, const engine::Result& result)
+	{
+		if (!result.ok())
+		{
+			showError(window, result.error);
+			return;
+		}
+		const Json& job = result.value.at("job");
+		const auto id = job.at("id").get<uint64_t>();
+		m_backups[id] = window;
+		// Closed before the backup ended, by Cancel or otherwise, the dialog stops it; it may end before job.cancel
+		// comes.
+		Window* showing = m_shell.find(window);
+		Rml::ElementDocument* dialog = showing != nullptr
+			? openDialog(*showing, "backup-progress.rml",
+				  [this, id](Rml::ElementDocument&, const std::string& closed)
+				  {
+					  m_progressJob = 0;
+					  if (closed != g_backupDone && m_backups.count(id) != 0)
+						  m_binding.send("job.cancel", {{"job", id}}, [](const engine::Result&) {});
+				  })
+			: nullptr;
+		if (dialog != nullptr)
+		{
+			m_progressJob = id;
+			if (Rml::Element* bar = dialog->GetElementById("backup-progress"))
+				bar->SetAttribute("value", job.at("progress").get<double>());
+		}
+		// The job may have ended before its command's result came: job.get tells.
+		m_binding.send("job.get", {{"job", id}},
+			[this](const engine::Result& state)
+			{
+				if (state.ok() && state.value.at("job").at("state") != "running")
+					backupEnded(state.value.at("job"));
+			});
+	}
+
+	void ProjectFiles::backupEnded(const Json& job)
+	{
+		const auto id = job.at("id").get<uint64_t>();
+		const auto found = m_backups.find(id);
+		if (found == m_backups.end())
+			return; // another client's, or reported already
+		const WindowId window = found->second;
+		m_backups.erase(found);
+		if (id == m_progressJob)
+		{
+			if (progressDialog() != nullptr)
+				closeDialog(g_backupDone);
+			m_progressJob = 0;
+		}
+		// A backup runs as a job, so most of its failures come after project.backup returned. So do the files it
+		// couldn't read, and the reason why a backup that was to be opened wasn't, such as an edit while the job ran.
+		const Json& state = job.at("state");
+		if (state == "failed")
+		{
+			showError(window, job.at("error").get<std::string>());
+			return;
+		}
+		if (state != "done")
+			return; // cancelled: as the user asked
+		const Json& result = job.at("result");
+		std::string problems;
+		if (const Json& missing = result.at("missing"); !missing.empty())
+		{
+			// A freeze file that several tracks play is listed once for each.
+			std::set<std::string> names;
+			for (const Json& file : missing)
+				names.insert(std::filesystem::u8path(file.at("path").get<std::string>()).filename().u8string());
+			std::string list;
+			for (const std::string& name : names)
+				list += (list.empty() ? "" : ", ") + name;
+			problems = "The project was backed up without " + std::to_string(names.size()) +
+				(names.size() == 1 ? " file that couldn't be read: " : " files that couldn't be read: ") + list + ".";
+		}
+		if (const Json& activation = result.value("activationError", Json()); activation.is_string())
+			problems += (problems.empty() ? "" : " ") + activation.get<std::string>();
+		if (!problems.empty())
+			showError(window, problems);
+	}
+
+	Rml::ElementDocument* ProjectFiles::progressDialog() const
+	{
+		auto* dialog = dynamic_cast<Rml::ElementDocument*>(m_dialog.get());
+		return m_progressJob != 0 && dialog != nullptr && dialog->GetElementById("backup-progress-dialog") != nullptr
+			? dialog
+			: nullptr;
 	}
 
 	Rml::ElementDocument* ProjectFiles::openDialog(Window& window, const char* file, Closed closed)

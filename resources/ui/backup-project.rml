@@ -1,7 +1,9 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- The options of a backup (docs/features/backup.md, reference manual pp. 135-137): ui::ProjectFiles opens it with
      File > Back up Project once the folder is chosen and, when it closes with OK, backs the project up into that
-     folder with project.backup and these options. #backup-name starts as the project file's name. -->
+     folder with project.backup and these options. #backup-name starts as the name the engine gives the backup by
+     default (project.location). Make Offline Processing Permanent and Do Not Back up Video are disabled until clips
+     have offline processing and versions (#141, #165) and projects have video (#198). -->
 <rml>
 <head>
 	<title>Back up Project Options</title>
@@ -56,7 +58,7 @@
 		</div>
 		<div class="row">
 			<label for="backup-offline">Make Offline Processing Permanent</label>
-			<input type="checkbox" id="backup-offline"/>
+			<input type="checkbox" id="backup-offline" disabled="disabled"/>
 		</div>
 		<div class="row">
 			<label for="backup-remove-unused">Remove Unused Files</label>
@@ -64,7 +66,7 @@
 		</div>
 		<div class="row">
 			<label for="backup-skip-video">Do Not Back up Video</label>
-			<input type="checkbox" id="backup-skip-video"/>
+			<input type="checkbox" id="backup-skip-video" disabled="disabled"/>
 		</div>
 		<div class="row">
 			<label for="backup-skip-mixdown">Do Not Back up Mixdown Folder</label>

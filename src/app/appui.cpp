@@ -520,6 +520,14 @@ namespace gnubase::app
 			}});
 		m_keys.add({"pool.findMissing", "Chooses a folder to look for the pool's missing files in.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { chooseMissingFolder(window); }});
+		m_keys.add({"pool.prepareArchive",
+			"Copies the media from outside the project folder into it, after asking in the pool, which opens for it.",
+			[this](ui::Window& /*window*/, Rml::Element* /*zone*/)
+			{
+				m_docking.open("pool");
+				if (const std::shared_ptr<ui::PoolPanel> pool = m_pool.lock())
+					pool->prepareArchive();
+			}});
 		m_keys.add({"window.studioSetup", "Opens the studio setup dialog for the audio and MIDI devices.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { openStudioSetup(window); }});
 		m_keys.add({"window.midiDeviceManager",

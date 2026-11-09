@@ -276,6 +276,43 @@ namespace gnubase::engine
 			return found;
 		}
 
+		// A file or folder in the project's Mixdown folder (BackupOptions::mixdownFolder).
+		struct Mixdown
+		{
+			fs::path relative;
+			bool folder = false;
+			std::uintmax_t bytes = 0;
+		};
+
+		// Lists what is in folder, a folder in the Mixdown folder root, into mixdowns, with the folders in it and what
+		// they hold, but not backup, the backup's own folder. A file or folder that can't be read goes into missing as
+		// {path}.
+		void listMixdowns(const fs::path& root, const fs::path& folder, const fs::path& backup,
+			std::vector<Mixdown>& mixdowns, Json& missing)
+		{
+			std::error_code error;
+			for (auto entry = fs::directory_iterator(folder, error); !error && entry != fs::directory_iterator();
+				entry.increment(error))
+			{
+				const fs::path& path = entry->path();
+				std::error_code ignored;
+				if (isInside(path.u8string(), backup) || fs::equivalent(path, backup, ignored))
+					continue;
+				if (entry->is_directory(ignored))
+				{
+					mixdowns.push_back({path.lexically_relative(root), true, 0});
+					listMixdowns(root, path, backup, mixdowns, missing);
+				}
+				else if (entry->is_regular_file(ignored))
+				{
+					const std::uintmax_t bytes = entry->file_size(ignored);
+					mixdowns.push_back({path.lexically_relative(root), false, ignored ? 0 : bytes});
+				}
+			}
+			if (error)
+				missing.push_back({{"path", folder.u8string()}});
+		}
+
 		// Removes what a backup wrote if it doesn't complete.
 		class Cleanup
 		{
@@ -615,34 +652,15 @@ namespace gnubase::engine
 				total += freezes[track.frozen->path] = error ? 0 : size;
 			}
 
-		// The files in the project's Mixdown folder as they are now, without the backup's own folder.
-		struct Mixdown
-		{
-			fs::path relative;
-			std::uintmax_t bytes = 0;
-		};
+		// The files and folders in the project's Mixdown folder as they are now, without the backup's own folder.
+		// Files and folders that can't be read are reported as missing, as media are, and the backup goes on.
+		Json missing = Json::array();
 		std::vector<Mixdown> mixdowns;
 		const fs::path mixdownFolder = options.mixdownFolder.empty() ? fs::path() : pathOf(options.mixdownFolder);
 		if (!mixdownFolder.empty() && fs::is_directory(mixdownFolder, error))
-		{
-			for (auto entry = fs::recursive_directory_iterator(mixdownFolder, error);
-				!error && entry != fs::recursive_directory_iterator(); entry.increment(error))
-			{
-				std::error_code ignored;
-				if (isInside(entry->path().u8string(), folder) || fs::equivalent(entry->path(), folder, ignored))
-				{
-					entry.disable_recursion_pending();
-					continue;
-				}
-				if (!entry->is_regular_file(ignored))
-					continue;
-				const std::uintmax_t bytes = entry->file_size(ignored);
-				mixdowns.push_back({entry->path().lexically_relative(mixdownFolder), ignored ? 0 : bytes});
-				total += mixdowns.back().bytes;
-			}
-			if (error)
-				throw std::runtime_error("can't read " + mixdownFolder.u8string() + ": " + error.message());
-		}
+			listMixdowns(mixdownFolder, mixdownFolder, folder, mixdowns, missing);
+		for (const Mixdown& mixdown : mixdowns)
+			total += mixdown.bytes;
 
 		std::uintmax_t done = 0;
 		std::string detail;
@@ -654,7 +672,6 @@ namespace gnubase::engine
 		};
 
 		std::set<std::string> taken;
-		Json missing = Json::array();
 		int files = 0;
 		for (const Plan& plan : plans)
 		{
@@ -767,14 +784,34 @@ namespace gnubase::engine
 				missing.push_back({{"track", id}, {"path", track.frozen->path}});
 		}
 
+		// Under free names, as media: names that differ only in case, from a file system that tells them apart, don't
+		// overwrite each other on one that doesn't.
+		std::map<std::string, std::set<std::string>> takenMixdowns; // folded folder -> folded names in it
 		for (const Mixdown& mixdown : mixdowns)
 		{
 			job.checkCancelled();
-			detail = mixdown.relative.filename().u8string();
 			const fs::path target = folder / "Mixdown" / mixdown.relative;
+			if (mixdown.folder)
+			{
+				cleanup.createFolders(target);
+				continue;
+			}
+			const fs::path source = mixdownFolder / mixdown.relative;
+			std::ifstream readable(source, std::ios::binary);
+			if (!readable)
+			{
+				missing.push_back({{"path", source.u8string()}});
+				done += mixdown.bytes;
+				continue;
+			}
+			readable.close();
 			cleanup.createFolders(target.parent_path());
-			cleanup.add(target);
-			copyFile(mixdownFolder / mixdown.relative, target, advance);
+			detail = mixdown.relative.filename().u8string();
+			job.progress(static_cast<double>(done) / static_cast<double>(total), detail);
+			const fs::path copy = createFreeFile(
+				target.parent_path(), target.filename(), takenMixdowns[foldedName(target.parent_path())]);
+			cleanup.add(copy);
+			copyFile(source, copy, advance);
 		}
 
 		job.checkCancelled();
