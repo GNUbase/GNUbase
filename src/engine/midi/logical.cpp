@@ -96,97 +96,6 @@ namespace gnubase::engine::midi
 			return false;
 		}
 
-		// Reads the filter lines as tokens: each line's open brackets, the line, its close brackets and its join.
-		class Expression
-		{
-		public:
-			Expression(const FilterLine* lines, size_t count, const LogicalEvent& event) noexcept
-				: m_lines(lines), m_count(count), m_event(event), m_open(count > 0 ? lines[0].open : 0)
-			{
-			}
-
-			// expression := term (or term)*
-			bool expression() noexcept
-			{
-				bool result = term();
-				while (m_line < m_count && m_phase == Phase::Join && m_lines[m_line].join == LogicalBool::Or)
-				{
-					next();
-					result = term() || result; // every line is read, also when the result is known
-				}
-				return result;
-			}
-
-		private:
-			enum class Phase : uint8_t
-			{
-				Open,  // m_open brackets before the line
-				Close, // m_close brackets after it
-				Join,  // its join to the next line
-			};
-
-			// term := factor (and factor)*
-			bool term() noexcept
-			{
-				bool result = factor();
-				while (m_line < m_count && m_phase == Phase::Join && m_lines[m_line].join == LogicalBool::And)
-				{
-					next();
-					result = factor() && result;
-				}
-				return result;
-			}
-
-			// factor := ( expression ) | line
-			bool factor() noexcept
-			{
-				if (m_line >= m_count)
-					return false;
-				if (m_phase == Phase::Open && m_open > 0)
-				{
-					--m_open;
-					const bool result = expression();
-					if (m_phase == Phase::Close && m_close > 0)
-						--m_close;
-					afterClose();
-					return result;
-				}
-				if (m_phase != Phase::Open)
-					return false; // not reached for matching brackets
-				const bool result = test(m_lines[m_line], m_event);
-				m_phase = Phase::Close;
-				m_close = m_lines[m_line].close;
-				afterClose();
-				return result;
-			}
-
-			void afterClose() noexcept
-			{
-				if (m_phase == Phase::Close && m_close == 0)
-				{
-					if (m_line + 1 < m_count)
-						m_phase = Phase::Join;
-					else
-						m_line = m_count;
-				}
-			}
-
-			void next() noexcept
-			{
-				++m_line;
-				m_phase = Phase::Open;
-				m_open = m_lines[m_line].open;
-			}
-
-			const FilterLine* m_lines;
-			size_t m_count;
-			const LogicalEvent& m_event;
-			size_t m_line = 0;
-			Phase m_phase = Phase::Open;
-			int m_open;
-			int m_close = 0;
-		};
-
 		double apply(const ActionLine& action, const LogicalEvent& event, double value, LogicalRandom& random) noexcept
 		{
 			const double p1 = action.parameter1;
@@ -444,9 +353,7 @@ namespace gnubase::engine::midi
 
 	bool matches(const FilterLine* lines, size_t count, const LogicalEvent& event) noexcept
 	{
-		if (count == 0)
-			return true;
-		return Expression(lines, count, event).expression();
+		return evaluateLines(lines, count, [&event](const FilterLine& line) { return test(line, event); });
 	}
 
 	int LogicalRandom::between(int low, int high) noexcept

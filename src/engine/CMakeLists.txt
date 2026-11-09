@@ -143,6 +143,7 @@ add_library(gnubase-engine STATIC
 	document/projectfiles.cpp
 	document/slotcommands.cpp
 	document/projectmodel.cpp document/projectmodel.h
+	document/projectrules.cpp document/projectrules.h
 	document/recording.cpp
 	document/renderinplace.cpp document/renderinplace.h
 	document/rendersnapshot.cpp document/rendersnapshot.h
@@ -208,6 +209,7 @@ add_library(gnubase-engine STATIC
 	processors/generators.cpp processors/generators.h
 	processors/midieffects.cpp processors/midieffects.h
 	processors/testsynth.cpp processors/testsynth.h
+	rulepresets.h
 	schema.cpp schema.h
 	schematext.cpp schematext.h
 	settings/profiles.cpp settings/profiles.h
