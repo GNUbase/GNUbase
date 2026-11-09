@@ -529,13 +529,30 @@ TEST_CASE("the Warp section, Free Warp and Flatten warp the clip", "[ui]")
 	f.click(of("#se-musical"));
 	REQUIRE(f.app.waitUntil([&] { return warp().at("musical") == true && f.has("#se-musical", "checked"); }));
 	CHECK(warp().at("tempo") == 120.0);
+	// The Audio Tempo field shows the clip's tempo and sets it.
+	const auto tempoShown = [&f]
+	{
+		const std::string shown = f.elements("#se-audio-tempo").at(0).at("attributes").value("value", "");
+		return shown.empty() ? 0.0 : std::stod(shown);
+	};
+	REQUIRE(f.app.waitUntil([&] { return tempoShown() == 120.0; }));
+	f.app.ui().click(f.window, of("#se-audio-tempo"), ui::MouseButton::Left, 2, {});
+	f.app.ui().key(f.window, "Ctrl+A");
+	f.app.ui().text(f.window, "90");
+	f.app.ui().key(f.window, "Enter");
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return warp().at("tempo") == 90.0; }));
+	f.app.call("clip.setWarp", {{"clip", f.clip}, {"tempo", 100.0}});
+	REQUIRE(f.app.waitUntil([&] { return tempoShown() == 100.0; }));
 	// Auto Adjust over the event without a selection: the event is one bar of one quarter at 720 BPM.
 	f.app.call("clip.setWarp", {{"clip", f.clip}, {"beatsPerBar", 1}, {"tempo", 720.0}});
 	f.app.call("clip.setHitpoints",
 		{{"clip", f.clip}, {"hitpoints", {{{"position", 3000}, {"peak", -6.0}, {"intensity", 1.0}}}}});
 	f.click(of("#se-auto-adjust"));
 	REQUIRE(f.app.waitUntil([&] { return warp().at("gridStart") == 1000; }));
-	CHECK(f.lastParameters("clip.autoAdjust") == Json{{"clip", f.clip}, {"start", 1000}, {"end", 5000}});
+	CHECK(f.lastParameters("clip.autoAdjust") ==
+		Json{{"clip", f.clip}, {"event", f.event}, {"start", 1000}, {"end", 5000}});
+	CHECK(f.app.call("project.get").at("audioEvents").at(0).at("snapPoint") == 1000);
 
 	// Free Warp: a drag inserts a marker and moves it; a modifier and a click removes it; Reset removes them all.
 	f.click(of("#se-free-warp"));

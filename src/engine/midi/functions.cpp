@@ -369,6 +369,11 @@ namespace gnubase::engine::midi
 		return {entry.steps.begin(), entry.steps.begin() + entry.size};
 	}
 
+	int nearestInScale(int pitch, const Scale& scale) noexcept
+	{
+		return closestInScale(pitch, scale);
+	}
+
 	int transposePitch(int pitch, const TransposeSettings& settings)
 	{
 		int result = pitch + settings.semitones;

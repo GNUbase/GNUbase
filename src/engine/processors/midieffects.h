@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "engine/midi/logical.h"
 #include "engine/processors/builtin.h"
 
 #include <array>
@@ -91,6 +92,8 @@ namespace gnubase::engine::processors
 		// is left out.
 		bool step(uint32_t offset, double frames, graph::EventBuffer& out) noexcept;
 		bool end(uint32_t offset, graph::EventBuffer& out) noexcept;
+		// The frames of a step that starts at offset in the block, at the tempo there.
+		double stepFrames(uint32_t offset, const graph::TransportBlock& transport) const noexcept;
 
 		double m_sampleRate = 48000.0;
 		uint8_t m_mode = Up;
@@ -135,10 +138,55 @@ namespace gnubase::engine::processors
 		std::array<uint16_t, g_notes> m_sounding{}; // per note out, how many chords hold it
 	};
 
+	// Rules to apply to events (midi/logical.h), as views of their lines, so that they can be made on the audio thread.
+	struct LogicalRulesView
+	{
+		const midi::FilterLine* filters = nullptr;
+		size_t filterCount = 0;
+		midi::LogicalFunction function = midi::LogicalFunction::Transform;
+		const midi::ActionLine* actions = nullptr;
+		size_t actionCount = 0;
+	};
+
+	// Applies rules to events one at a time, as the transformer effect and each module of an input transformer do. A
+	// note-off goes where the note-on went, so a note changed by the rules ends where it sounds, and so does the poly
+	// pressure of a held note unless the rules find it; a note-on that became another type of event loses its note-off.
+	// Where two held notes play one note, it plays once and ends with the last of them. In a full output, note-offs
+	// take the places of other events.
+	// Velocities stay from 1 to 127, and a controller turned into a note plays a note-on for values above 0 and a
+	// note-off for 0. SysEx passes.
+	class LogicalStage
+	{
+	public:
+		LogicalStage();
+		void reset() noexcept;
+		// Audio thread: adds what event becomes to out.
+		void handle(const graph::ProcessEvent& event, const LogicalRulesView& rules, graph::EventBuffer& out) noexcept;
+
+	private:
+		static constexpr uint16_t g_none = 0xFFFF;
+
+		struct Held
+		{
+			uint16_t to = g_none; // where the note-on went, as channel * 128 + pitch, besides itself if it passed
+			bool passed = false;  // the note-on itself passed
+			bool down = false;    // a note-on came and no note-off yet
+		};
+
+		// Whether held, a note-on of source, plays note; source's note-on itself counts if it passed.
+		static bool uses(const Held& held, uint16_t source, uint16_t note) noexcept;
+		// Counts a note-on of note less; true when none is left and the note ends.
+		bool release(uint16_t note) noexcept;
+
+		std::array<Held, MidiEffect::g_notes> m_held{};
+		std::array<uint16_t, MidiEffect::g_notes> m_sounding{}; // per note out, how many held notes play it
+		midi::LogicalRandom m_random;
+	};
+
 	// A transformer-style effect: the notes that meet its condition (all, or those with a pitch, velocity or MIDI
 	// channel from 1 to 16 from the minimum to the maximum) are transposed, get a velocity set or added, move to
-	// another channel, or are deleted, by the value. A note-off and poly pressure go where their note-on went.
-	// Notes transposed beyond 0 to 127 are deleted. Other events pass.
+	// another channel, or are deleted, by the value. It is a rule of the rule editor's kind with a fixed shape and
+	// plays like an input transformer module (LogicalStage). Other events pass.
 	class Transformer final : public MidiEffect
 	{
 	public:
@@ -176,16 +224,37 @@ namespace gnubase::engine::processors
 		void handle(const graph::ProcessEvent& event, const graph::ProcessContext& context) noexcept override;
 
 	private:
-		// Where a note-on goes, as channel * 128 + pitch, with its velocity; g_notes: deleted.
-		uint16_t transform(const graph::ProcessEvent& event, uint16_t& velocity) const noexcept;
+		// Makes the rule of the parameters.
+		void update() noexcept;
 
 		uint8_t m_condition = AllNotes;
 		int m_minimum = 0;
 		int m_maximum = 127;
 		uint8_t m_action = Transpose;
 		int m_value = 0;
-		std::array<uint16_t, g_notes> m_to{}; // per note played, where its note-on went
-		std::array<bool, g_notes> m_down{};   // the notes played that had a note-on and no note-off yet
+		std::array<midi::FilterLine, 2> m_filters{};
+		midi::ActionLine m_change;
+		LogicalRulesView m_rules;
+		LogicalStage m_stage;
+	};
+
+	// A MIDI or instrument track's input transformer (midi::InputTransformer): applies the rules of its modules that
+	// are on, in order, to what the track's MIDI input plays, before the track plays and records it. It stays with the
+	// track while the rules change, so the notes they changed end where they sound.
+	class InputTransformerProcessor
+	{
+	public:
+		// Off the audio thread: capacity is that of the track's input.
+		explicit InputTransformerProcessor(size_t capacity);
+
+		// Audio thread: changes the events in place. Stages without rules pass events on and still end the notes
+		// they changed.
+		void process(graph::EventBuffer& events, const std::vector<midi::LogicalRules>& modules) noexcept;
+
+	private:
+		std::array<LogicalStage, midi::g_inputTransformerModules> m_stages;
+		graph::EventBuffer m_first;
+		graph::EventBuffer m_second;
 	};
 
 	// Every built-in MIDI effect, sorted by id. Their parameter ids count from 0.

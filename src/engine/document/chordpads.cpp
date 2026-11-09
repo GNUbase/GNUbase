@@ -1,0 +1,898 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// The chord pads and the chord assistant (#174, reference manual pp. 1346-1391): pads with chords, the root key, the
+// basic player's voicings, playing and recording pads, step input, presets, the List and Circle of Fifths assistants
+// and the pads' remote keys. chordPads.set, chordPads.assign, chordPads.modify, chordPads.setPad, chordPads.move,
+// chordPads.fromChordTrack, chordPads.loadPreset, chordPads.step and chordPads.toTrack change the project, so each is
+// one undo step and changes nothing if it fails (ProjectModel::add); chordPads.get, chordPads.trigger and
+// chordPads.assistant are queries. The render snapshot carries the remote keys to the audio thread (chordPadKeys).
+#include "engine/document/chordpads.h"
+
+#include "engine/document/projectmodel.h"
+#include "engine/document/serialize.h"
+#include "engine/engine.h"
+
+#include <algorithm>
+#include <array>
+#include <cstdlib>
+#include <map>
+#include <memory>
+#include <optional>
+#include <set>
+#include <string>
+#include <tuple>
+#include <utility>
+#include <vector>
+
+namespace gnubase::engine
+{
+	namespace
+	{
+		void require(bool condition, const std::string& message)
+		{
+			if (!condition)
+				throw CommandError(message);
+		}
+
+		Json objectSchema(Json properties, const std::vector<std::string>& required = {})
+		{
+			return {{"type", "object"}, {"properties", std::move(properties)}, {"required", required},
+				{"additionalProperties", false}};
+		}
+
+		int pitchClass(int pitch)
+		{
+			return ((pitch % 12) + 12) % 12;
+		}
+
+		constexpr std::array<const char*, 7> g_numerals = {"I", "II", "III", "IV", "V", "VI", "VII"};
+		constexpr int g_maxPads = 32;
+		constexpr std::array<int, 7> g_majorSteps = {0, 2, 4, 5, 7, 9, 11};
+		constexpr std::array<int, 7> g_minorSteps = {0, 2, 3, 5, 7, 8, 10};
+
+		midi::ChordSymbol chordOf(const std::string& text)
+		{
+			return midi::parseChord(text).value_or(midi::ChordSymbol());
+		}
+
+		midi::ChordSymbol chordFrom(const std::string& text)
+		{
+			const std::optional<midi::ChordSymbol> chord = midi::parseChord(text);
+			require(chord.has_value() && chord->root >= 0, "unknown chord " + text);
+			return chord.value_or(midi::ChordSymbol());
+		}
+
+		std::vector<int> classesOf(const midi::ChordSymbol& chord)
+		{
+			std::vector<int> classes;
+			for (const int interval : midi::chordIntervals(chord))
+				classes.push_back(pitchClass(chord.root + interval));
+			return classes;
+		}
+
+		// The distance of two roots on the circle of fifths, 0 to 6.
+		int fifthsDistance(int a, int b)
+		{
+			const int distance = std::abs(pitchClass(a * 7) - pitchClass(b * 7));
+			return std::min(distance, 12 - distance);
+		}
+
+		void sortTensions(std::vector<std::string>& tensions)
+		{
+			const std::vector<std::string>& order = midi::chordTensions();
+			std::sort(tensions.begin(), tensions.end(), [&order](const std::string& a, const std::string& b)
+				{ return std::find(order.begin(), order.end(), a) < std::find(order.begin(), order.end(), b); });
+		}
+
+		ChordPad& padAt(ChordPads& pads, const Json& index)
+		{
+			const int pad = index.get<int>();
+			require(pad >= 0 && pad < static_cast<int>(pads.pads.size()), "no chord pad " + std::to_string(pad));
+			return pads.pads[static_cast<size_t>(pad)];
+		}
+
+		// The inversion of a pad's basic voicing that its current voicing is, for a pad with adaptive voicing whose
+		// voicing changes by hand.
+		int inversionOf(const midi::ChordSymbol& chord, int octaveOffset, const std::vector<int>& voicing)
+		{
+			const std::vector<int> basic = midi::voiceChord(chord, {octaveOffset, false});
+			const auto upper = static_cast<int>(basic.size()) - 1;
+			for (int steps = -2 * upper; steps <= 2 * upper; ++steps)
+				if (chordpads::inverted(basic, steps) == voicing)
+					return steps;
+			return 0;
+		}
+
+		// The pitches a chord's voicing plays as note-ons or note-offs, the highest voice (soprano) on MIDI channel 1,
+		// the next on channel 2 and so on, as recorded pad chords are (reference manual p. 1368).
+		Json noteMessages(const std::vector<int>& pitches, bool on, int velocity)
+		{
+			Json messages = Json::array();
+			const auto voices = static_cast<int>(pitches.size());
+			for (int i = 0; i < voices; ++i)
+			{
+				const int channel = std::min(voices - 1 - i, 15);
+				messages.push_back({{"bytes",
+					{(on ? 0x90 : 0x80) | channel, std::clamp(pitches[static_cast<size_t>(i)], 0, 127),
+						on ? velocity : 0}}});
+			}
+			return messages;
+		}
+	}
+
+	namespace chordpads
+	{
+		const std::vector<std::string>& presetNames()
+		{
+			static const std::vector<std::string> names = {
+				"major", "minor", "dorian", "phrygian", "lydian", "mixolydian", "locrian"};
+			return names;
+		}
+
+		std::vector<midi::ChordSymbol> presetChords(const std::string& preset, int root)
+		{
+			const std::vector<std::string>& names = presetNames();
+			const std::optional<midi::ScaleType> type = midi::scaleTypeFromName(preset);
+			if (std::find(names.begin(), names.end(), preset) == names.end() || !type.has_value())
+				return {};
+			const std::vector<int> steps = midi::scaleSteps(*type);
+			std::vector<midi::ChordSymbol> chords;
+			for (size_t degree = 0; degree < steps.size(); ++degree)
+			{
+				const int third = pitchClass(steps[(degree + 2) % steps.size()] - steps[degree]);
+				const int fifth = pitchClass(steps[(degree + 4) % steps.size()] - steps[degree]);
+				midi::ChordSymbol chord;
+				chord.root = pitchClass(root + steps[degree]);
+				if (third == 4)
+					chord.type = fifth == 8 ? "aug" : "maj";
+				else
+					chord.type = fifth == 6 ? "dim" : "min";
+				chords.push_back(chord);
+			}
+			return chords;
+		}
+
+		std::string degreeName(const midi::ChordSymbol& chord, int key, bool minor)
+		{
+			if (chord.root < 0)
+				return {};
+			const std::array<int, 7>& steps = minor ? g_minorSteps : g_majorSteps;
+			const int interval = pitchClass(chord.root - key);
+			// The degree of a pitch class in the scale, or -1.
+			const auto degreeOf = [&steps](int pitch)
+			{
+				for (size_t i = 0; i < steps.size(); ++i)
+					if (steps.at(i) == pitchClass(pitch))
+						return static_cast<int>(i);
+				return -1;
+			};
+			std::string accidental;
+			int degree = degreeOf(interval);
+			if (degree < 0)
+			{
+				accidental = "b";
+				degree = degreeOf(interval + 1);
+			}
+			if (degree < 0)
+			{
+				accidental = "#";
+				degree = degreeOf(interval - 1);
+			}
+			std::string numeral = g_numerals.at(static_cast<size_t>(degree));
+			if (chord.type == "min" || chord.type == "dim")
+				std::transform(numeral.begin(), numeral.end(), numeral.begin(),
+					[](char letter) { return static_cast<char>(letter - 'A' + 'a'); });
+			if (chord.type == "dim")
+				numeral += "\xC2\xB0"; // the degree sign
+			else if (chord.type == "aug")
+				numeral += "+";
+			return accidental + numeral;
+		}
+
+		midi::ChordSymbol withTensions(const midi::ChordSymbol& chord, int steps, int key)
+		{
+			midi::ChordSymbol result = chord;
+			if (chord.root < 0)
+				return result;
+			std::vector<std::string> ladder = {"7"};
+			const bool dominant = pitchClass(chord.root - key) == 7 ||
+				std::find(chord.tensions.begin(), chord.tensions.end(), "7") != chord.tensions.end();
+			if (chord.type == "maj")
+				ladder = {dominant ? "7" : "maj7", "9", "13"};
+			else if (chord.type == "min")
+				ladder = {"7", "9", "11"};
+			for (; steps > 0; --steps)
+				for (const std::string& tension : ladder)
+					if (std::find(result.tensions.begin(), result.tensions.end(), tension) == result.tensions.end())
+					{
+						result.tensions.push_back(tension);
+						break;
+					}
+			sortTensions(result.tensions);
+			for (; steps < 0 && !result.tensions.empty(); ++steps)
+				result.tensions.pop_back();
+			return result;
+		}
+
+		midi::ChordSymbol transposed(const midi::ChordSymbol& chord, int semitones)
+		{
+			midi::ChordSymbol result = chord;
+			if (result.root >= 0)
+				result.root = pitchClass(result.root + semitones);
+			if (result.bass >= 0)
+				result.bass = pitchClass(result.bass + semitones);
+			return result;
+		}
+
+		std::vector<int> inverted(std::vector<int> voicing, int steps)
+		{
+			if (voicing.size() < 2)
+				return voicing;
+			const auto upper = voicing.begin() + 1;
+			for (; steps > 0; --steps)
+			{
+				std::rotate(upper, upper + 1, voicing.end());
+				voicing.back() += 12;
+			}
+			for (; steps < 0; ++steps)
+			{
+				std::rotate(upper, voicing.end() - 1, voicing.end());
+				*upper -= 12;
+			}
+			return voicing;
+		}
+
+		std::vector<Suggestion> suggestions(
+			const midi::ChordSymbol& reference, int key, const std::string& algorithm, int commonNotes)
+		{
+			const std::vector<int> referenceClasses = classesOf(reference);
+			// How strongly a root step follows: a fifth down, a fifth up, the relative chords, a second, a third.
+			const auto rank = [](int step)
+			{
+				static const std::map<int, int> ranks = {
+					{5, 0}, {7, 1}, {9, 2}, {3, 2}, {2, 3}, {10, 3}, {8, 4}, {4, 4}};
+				const auto found = ranks.find(step);
+				return found == ranks.end() ? 5 : found->second;
+			};
+			struct Candidate
+			{
+				std::tuple<int, int, int, int, int> order;
+				Suggestion suggestion;
+			};
+			std::vector<Candidate> candidates;
+			const std::array<std::pair<const char*, const char*>, 6> types = {
+				{{"maj", ""}, {"min", ""}, {"dim", ""}, {"maj", "7"}, {"maj", "maj7"}, {"min", "7"}}};
+			for (int root = 0; root < 12; ++root)
+				for (size_t type = 0; type < types.size(); ++type)
+				{
+					midi::ChordSymbol chord;
+					chord.root = root;
+					chord.type = types.at(type).first;
+					if (*types.at(type).second != '\0')
+						chord.tensions = {types.at(type).second};
+					if (chord == reference)
+						continue;
+					const std::vector<int> classes = classesOf(chord);
+					const auto outside = static_cast<int>(std::count_if(classes.begin(), classes.end(),
+						[key](int note)
+						{
+							return std::find(g_majorSteps.begin(), g_majorSteps.end(), pitchClass(note - key)) ==
+								g_majorSteps.end();
+						}));
+					const auto shared = static_cast<int>(std::count_if(classes.begin(), classes.end(),
+						[&referenceClasses](int note)
+						{
+							return std::find(referenceClasses.begin(), referenceClasses.end(), note) !=
+								referenceClasses.end();
+						}));
+					if (algorithm == "commonNotes" && shared != commonNotes)
+						continue;
+					const int level = std::min(outside, 2);
+					const int step = reference.root < 0 ? 0 : pitchClass(root - reference.root);
+					const int distance =
+						reference.root < 0 ? fifthsDistance(root, key) : fifthsDistance(root, reference.root);
+					const int strength = algorithm == "commonNotes" ? 0 : rank(step);
+					candidates.push_back(
+						{{level, strength, distance, static_cast<int>(type), root}, {std::move(chord), level}});
+				}
+			std::stable_sort(candidates.begin(), candidates.end(),
+				[](const Candidate& a, const Candidate& b) { return a.order < b.order; });
+			std::vector<Suggestion> result;
+			for (size_t i = 0; i < candidates.size() && i < 24; ++i)
+				result.push_back(candidates[i].suggestion);
+			return result;
+		}
+	}
+
+	std::vector<std::vector<int>> chordPadVoicings(const ChordPads& pads)
+	{
+		const auto basic = [&pads](const ChordPad& pad)
+		{ return chordpads::inverted(midi::voiceChord(chordOf(pad.chord), {pads.octaveOffset, false}), pad.voicing); };
+		const bool referenced = pads.reference >= 0 && pads.reference < static_cast<int>(pads.pads.size()) &&
+			!pads.pads[static_cast<size_t>(pads.reference)].chord.empty();
+		const std::vector<int> reference =
+			referenced ? basic(pads.pads[static_cast<size_t>(pads.reference)]) : std::vector<int>();
+		std::vector<std::vector<int>> voicings;
+		voicings.reserve(pads.pads.size());
+		for (size_t i = 0; i < pads.pads.size(); ++i)
+		{
+			const ChordPad& pad = pads.pads[i];
+			if (pad.chord.empty())
+				voicings.emplace_back();
+			else if (referenced && pad.adaptive && static_cast<int>(i) != pads.reference)
+				voicings.push_back(midi::voiceChord(chordOf(pad.chord), {pads.octaveOffset, true}, reference));
+			else
+				voicings.push_back(basic(pad));
+		}
+		return voicings;
+	}
+
+	ChordPadKeys chordPadKeys(const ChordPads& pads)
+	{
+		ChordPadKeys keys;
+		keys.active = pads.remote;
+		const std::vector<std::vector<int>> voicings = chordPadVoicings(pads);
+		for (int key = std::max(pads.remoteStart, 0); key <= std::min(pads.remoteEnd, 127); ++key)
+		{
+			const auto pad = static_cast<size_t>(key - pads.remoteStart);
+			if (pad >= voicings.size())
+				break;
+			const std::vector<int>& voicing = voicings[pad];
+			const size_t count = std::min(voicing.size(), ChordPadKeys::g_maxPitches);
+			auto& pitches = keys.pitches.at(static_cast<size_t>(key));
+			for (size_t i = 0; i < count; ++i)
+				pitches.at(i) = static_cast<uint8_t>(std::clamp(voicing[i], 0, 127));
+			keys.counts.at(static_cast<size_t>(key)) = static_cast<uint8_t>(count);
+		}
+		return keys;
+	}
+
+	Json chordPadsJson(const Project& project)
+	{
+		const ChordPads& pads = project.chordPads;
+		const std::vector<std::vector<int>> voicings = chordPadVoicings(pads);
+		Json list = Json::array();
+		for (size_t i = 0; i < pads.pads.size(); ++i)
+		{
+			const ChordPad& pad = pads.pads[i];
+			const int key = pads.remoteStart + static_cast<int>(i);
+			list.push_back({{"chord", pad.chord},
+				{"degree", pad.chord.empty() ? std::string() : chordpads::degreeName(chordOf(pad.chord), pads.rootKey)},
+				{"pitches", voicings[i]}, {"voicing", pad.voicing}, {"adaptive", pad.adaptive}, {"locked", pad.locked},
+				{"key", key <= pads.remoteEnd && key <= 127 ? Json(key) : Json(nullptr)}});
+		}
+		return {{"pads", list}, {"rootKey", pads.rootKey}, {"reference", pads.reference},
+			{"octaveOffset", pads.octaveOffset}, {"velocity", pads.velocity}, {"remote", pads.remote},
+			{"remoteStart", pads.remoteStart}, {"remoteEnd", pads.remoteEnd}, {"preset", pads.preset},
+			{"stepInput", pads.stepInput}, {"moveInsert", pads.moveInsert}, {"stepPosition", pads.stepPosition}};
+	}
+
+	void chordPadsFromJson(Project& project, const Json& json)
+	{
+		if (!json.is_object())
+			return;
+		ChordPads& pads = project.chordPads;
+		if (json.contains("pads"))
+		{
+			pads.pads.clear();
+			for (const Json& item : json.at("pads"))
+			{
+				if (pads.pads.size() == g_maxPads)
+					break;
+				ChordPad pad;
+				const midi::ChordSymbol chord = chordOf(item.value("chord", std::string()));
+				pad.chord = chord.root < 0 ? std::string() : midi::chordName(chord);
+				pad.voicing = std::clamp(item.value("voicing", 0), -12, 12);
+				pad.adaptive = item.value("adaptive", true);
+				pad.locked = item.value("locked", false);
+				pads.pads.push_back(pad);
+			}
+		}
+		pads.rootKey = pitchClass(json.value("rootKey", 0));
+		pads.reference = json.value("reference", -1);
+		if (pads.reference >= static_cast<int>(pads.pads.size()))
+			pads.reference = -1;
+		pads.octaveOffset = std::clamp(json.value("octaveOffset", 0), -3, 3);
+		pads.velocity = std::clamp(json.value("velocity", 100), 1, 127);
+		pads.remote = json.value("remote", false);
+		pads.remoteStart = std::clamp(json.value("remoteStart", 36), 0, 127);
+		pads.remoteEnd = std::clamp(json.value("remoteEnd", 47), pads.remoteStart, 127);
+		pads.preset = json.value("preset", std::string("major"));
+		pads.stepInput = json.value("stepInput", false);
+		pads.moveInsert = json.value("moveInsert", false);
+		pads.stepPosition = std::max(json.value("stepPosition", time::Ticks{0}), time::Ticks{0});
+	}
+
+	void ProjectModel::registerChordPadCommands(Engine& engine)
+	{
+		const Json integerSchema = {{"type", "integer"}};
+		const Json booleanSchema = {{"type", "boolean"}};
+		const Json stringSchema = {{"type", "string"}};
+		const Json padsSchema = {{"type", "array"}, {"items", integerSchema}};
+		const Json padsResult = {{"type", "object"},
+			{"properties",
+				{{"pads", {{"type", "array"}}}, {"rootKey", integerSchema}, {"reference", integerSchema},
+					{"octaveOffset", integerSchema}, {"velocity", integerSchema}, {"remote", booleanSchema},
+					{"remoteStart", integerSchema}, {"remoteEnd", integerSchema}, {"preset", stringSchema},
+					{"stepInput", booleanSchema}, {"moveInsert", booleanSchema}, {"stepPosition", integerSchema}}},
+			{"required",
+				{"pads", "rootKey", "reference", "octaveOffset", "velocity", "remote", "remoteStart", "remoteEnd",
+					"preset", "stepInput", "moveInsert", "stepPosition"}}};
+		// Each command that changes the pads announces them.
+		const auto changed = [](Project& project, CommandContext& context)
+		{
+			Json result = chordPadsJson(project);
+			context.emit("chordPads.changed", result);
+			return result;
+		};
+
+		add(engine,
+			{"chordPads.get", 1,
+				"The chord pads (reference manual pp. 1346-1391): pads, each with its chord (\"\" while unassigned), "
+				"degree (its scale degree in the root key as a roman numeral), pitches (the voicing it plays, from "
+				"the lowest up), voicing (the inversion of its basic voicing), adaptive (adaptive voicing), locked "
+				"and key (the remote key that triggers it, or null); rootKey (0 C to 11 B); reference (the adaptive "
+				"voicing reference pad, or -1); octaveOffset (the basic player's); velocity (of pads triggered with "
+				"the mouse); remote, remoteStart and remoteEnd (the pads' remote keys); preset (the last loaded); "
+				"stepInput, moveInsert and stepPosition (ticks).",
+				objectSchema({}), padsResult, true},
+			[](Project& project, CommandContext&) { return chordPadsJson(project); });
+		add(engine,
+			{"chordPads.set", 1,
+				"Changes the chord pads' settings: rootKey (0 C to 11 B; with transposePads the assigned unlocked pads "
+				"move with it, the nearer way, reference manual p. 1365, without only their degrees change, p. 1364); "
+				"padCount (1 to 32, the number of pads; pads beyond it go); octaveOffset (-3 to 3, the basic "
+				"player's Octave Offset, p. 1377); velocity (1 to 127, Velocity on Mouse Click); remote (Pad Remote "
+				"Control: notes from MIDI inputs on the remote keys trigger the pads instead of playing, p. 1386), "
+				"remoteStart and remoteEnd (Pads Remote Range Start and End, MIDI notes: the first key triggers the "
+				"first pad and so on); stepInput, moveInsert and stepPosition (ticks) for chordPads.step "
+				"(p. 1369).",
+				objectSchema({{"rootKey", integerSchema}, {"transposePads", booleanSchema}, {"padCount", integerSchema},
+					{"octaveOffset", integerSchema}, {"velocity", integerSchema}, {"remote", booleanSchema},
+					{"remoteStart", integerSchema}, {"remoteEnd", integerSchema}, {"stepInput", booleanSchema},
+					{"moveInsert", booleanSchema}, {"stepPosition", integerSchema}}),
+				padsResult, false},
+			[changed](Project& project, CommandContext& context)
+			{
+				const Json& parameters = context.parameters();
+				ChordPads& pads = project.chordPads;
+				if (parameters.contains("rootKey"))
+				{
+					const int key = parameters.at("rootKey").get<int>();
+					require(key >= 0 && key < 12, "rootKey must be 0 to 11");
+					if (parameters.value("transposePads", false))
+					{
+						int step = pitchClass(key - pads.rootKey);
+						step = step > 6 ? step - 12 : step;
+						for (ChordPad& pad : pads.pads)
+							if (!pad.chord.empty() && !pad.locked)
+								pad.chord = midi::chordName(chordpads::transposed(chordOf(pad.chord), step));
+					}
+					pads.rootKey = key;
+				}
+				if (parameters.contains("padCount"))
+				{
+					const int count = parameters.at("padCount").get<int>();
+					require(count >= 1 && count <= g_maxPads, "padCount must be 1 to 32");
+					pads.pads.resize(static_cast<size_t>(count));
+					if (pads.reference >= count)
+						pads.reference = -1;
+				}
+				pads.octaveOffset = parameters.value("octaveOffset", pads.octaveOffset);
+				require(pads.octaveOffset >= -3 && pads.octaveOffset <= 3, "octaveOffset must be -3 to 3");
+				pads.velocity = parameters.value("velocity", pads.velocity);
+				require(pads.velocity >= 1 && pads.velocity <= 127, "velocity must be 1 to 127");
+				pads.remote = parameters.value("remote", pads.remote);
+				pads.remoteStart = parameters.value("remoteStart", pads.remoteStart);
+				pads.remoteEnd = parameters.value("remoteEnd", pads.remoteEnd);
+				require(pads.remoteStart >= 0 && pads.remoteEnd <= 127 && pads.remoteStart <= pads.remoteEnd,
+					"the remote keys must be MIDI notes, remoteStart up to remoteEnd");
+				pads.stepInput = parameters.value("stepInput", pads.stepInput);
+				pads.moveInsert = parameters.value("moveInsert", pads.moveInsert);
+				pads.stepPosition = parameters.value("stepPosition", pads.stepPosition);
+				require(pads.stepPosition >= 0, "stepPosition must not be before the project start");
+				return changed(project, context);
+			});
+		add(engine,
+			{"chordPads.assign", 1,
+				"Assigns chords to chord pads (reference manual pp. 1356-1362): each of assignments has a pad and a "
+				"chord as the chord editor's text input takes it (such as Cmaj7, Dm7(9) or C/E; \"\" removes the "
+				"assignment), or pitches (MIDI notes, Assign from MIDI Input: the chord they make). The pad's voicing "
+				"goes back to its basic voicing with adaptive voicing. Locked pads are refused.",
+				objectSchema(
+					{{"assignments",
+						{{"type", "array"},
+							{"items",
+								objectSchema({{"pad", integerSchema}, {"chord", stringSchema}, {"pitches", padsSchema}},
+									{"pad"})}}}},
+					{"assignments"}),
+				padsResult, false},
+			[changed](Project& project, CommandContext& context)
+			{
+				for (const Json& item : context.parameters().at("assignments"))
+				{
+					ChordPad& pad = padAt(project.chordPads, item.at("pad"));
+					require(!pad.locked, "chord pad " + std::to_string(item.at("pad").get<int>()) + " is locked");
+					require(item.contains("chord") != item.contains("pitches"), "give a chord or pitches");
+					if (item.contains("pitches"))
+					{
+						const std::optional<midi::ChordSymbol> chord =
+							midi::recognizeChordSymbol(item.at("pitches").get<std::vector<int>>(), true, true);
+						require(chord.has_value(), "the pitches make no chord");
+						pad.chord = midi::chordName(chord.value_or(midi::ChordSymbol()));
+					}
+					else
+					{
+						const auto text = item.at("chord").get<std::string>();
+						pad.chord = text.empty() ? std::string() : midi::chordName(chordFrom(text));
+					}
+					pad.voicing = 0;
+					pad.adaptive = true;
+				}
+				return changed(project, context);
+			});
+		add(engine,
+			{"chordPads.modify", 1,
+				"The pad modifiers (reference manual pp. 1351-1352) on the assigned, unlocked pads of pads: transpose "
+				"moves their chords by semitones, tensions adds (more) or takes away (fewer) as many tensions, voicing "
+				"steps through their voicings (inversions), which turns their adaptive voicing off.",
+				objectSchema({{"pads", padsSchema}, {"transpose", integerSchema}, {"tensions", integerSchema},
+								 {"voicing", integerSchema}},
+					{"pads"}),
+				padsResult, false},
+			[changed](Project& project, CommandContext& context)
+			{
+				const Json& parameters = context.parameters();
+				ChordPads& pads = project.chordPads;
+				const std::vector<std::vector<int>> voicings = chordPadVoicings(pads);
+				for (const Json& index : parameters.at("pads"))
+				{
+					ChordPad& pad = padAt(pads, index);
+					if (pad.chord.empty() || pad.locked)
+						continue;
+					midi::ChordSymbol chord = chordOf(pad.chord);
+					chord = chordpads::transposed(chord, parameters.value("transpose", 0));
+					chord = chordpads::withTensions(chord, parameters.value("tensions", 0), pads.rootKey);
+					if (parameters.contains("voicing"))
+					{
+						if (pad.adaptive)
+							pad.voicing = inversionOf(chord, pads.octaveOffset, voicings[index.get<size_t>()]);
+						pad.voicing = std::clamp(pad.voicing + parameters.at("voicing").get<int>(), -12, 12);
+						pad.adaptive = false;
+					}
+					pad.chord = midi::chordName(chord);
+				}
+				return changed(project, context);
+			});
+		add(engine,
+			{"chordPads.setPad", 1,
+				"Changes a chord pad's state (reference manual p. 1351): locked (Lock: its chord and voicing can't "
+				"change; locking turns adaptive voicing off), adaptive (Adaptive Voicing: it takes the voicing nearest "
+				"to the reference pad's) and reference (Adaptive Voicing Reference: true makes it the reference, "
+				"false leaves no pad the reference).",
+				objectSchema({{"pad", integerSchema}, {"locked", booleanSchema}, {"adaptive", booleanSchema},
+								 {"reference", booleanSchema}},
+					{"pad"}),
+				padsResult, false},
+			[changed](Project& project, CommandContext& context)
+			{
+				const Json& parameters = context.parameters();
+				ChordPads& pads = project.chordPads;
+				ChordPad& pad = padAt(pads, parameters.at("pad"));
+				const int index = parameters.at("pad").get<int>();
+				if (parameters.contains("locked"))
+				{
+					pad.locked = parameters.at("locked").get<bool>();
+					if (pad.locked)
+						pad.adaptive = false;
+				}
+				if (parameters.contains("adaptive"))
+				{
+					require(!pad.locked || !parameters.at("adaptive").get<bool>(), "the pad is locked");
+					pad.adaptive = parameters.at("adaptive").get<bool>();
+				}
+				if (parameters.contains("reference") && parameters.at("reference").get<bool>())
+					pads.reference = index;
+				else if (parameters.contains("reference") && pads.reference == index)
+					pads.reference = -1;
+				return changed(project, context);
+			});
+		add(engine,
+			{"chordPads.move", 1,
+				"Swaps the chord assignments of two pads with their settings, or with copy copies from's to to "
+				"(reference manual p. 1361). The adaptive voicing reference stays on its pad. A locked to is refused.",
+				objectSchema({{"from", integerSchema}, {"to", integerSchema}, {"copy", booleanSchema}}, {"from", "to"}),
+				padsResult, false},
+			[changed](Project& project, CommandContext& context)
+			{
+				const Json& parameters = context.parameters();
+				ChordPads& pads = project.chordPads;
+				ChordPad& from = padAt(pads, parameters.at("from"));
+				ChordPad& to = padAt(pads, parameters.at("to"));
+				require(!to.locked, "chord pad " + std::to_string(parameters.at("to").get<int>()) + " is locked");
+				if (parameters.value("copy", false))
+				{
+					to = from;
+				}
+				else
+				{
+					require(
+						!from.locked, "chord pad " + std::to_string(parameters.at("from").get<int>()) + " is locked");
+					std::swap(from, to);
+				}
+				return changed(project, context);
+			});
+		add(engine,
+			{"chordPads.fromChordTrack", 1,
+				"Assign from Chord Track (reference manual p. 1361): the chord track's chords, in their order and each "
+				"once, onto the pads from the first; the other unlocked pads become unassigned. Undefined chords are "
+				"left out.",
+				objectSchema({}), padsResult, false},
+			[changed](Project& project, CommandContext& context)
+			{
+				std::vector<std::string> chords;
+				for (const ChordEvent& event : project.chords.events)
+					if (event.text != "X" && std::find(chords.begin(), chords.end(), event.text) == chords.end())
+						chords.push_back(event.text);
+				require(!chords.empty(), "the chord track has no chords");
+				size_t next = 0;
+				for (ChordPad& pad : project.chordPads.pads)
+				{
+					if (pad.locked)
+						continue;
+					pad = ChordPad();
+					if (next < chords.size())
+						pad.chord = chords[next++];
+				}
+				return changed(project, context);
+			});
+		add(engine,
+			{"chordPads.loadPreset", 1,
+				"Loads a scale-based chord pads preset (reference manual pp. 1370-1371): major, minor, dorian, "
+				"phrygian, lydian, mixolydian or locrian, the triads on the seven degrees of the scale on root (0 C to "
+				"11 B, default the root key), which becomes the root key. load: chordsAndPlayers (the default), chords "
+				"(the chords, onto the pads from the first, the other unlocked pads unassigned) or players (the "
+				"basic player with no octave offset).",
+				objectSchema(
+					{{"preset", {{"type", "string"}, {"enum", chordpads::presetNames()}}}, {"root", integerSchema},
+						{"load", {{"type", "string"}, {"enum", {"chordsAndPlayers", "chords", "players"}}}}},
+					{"preset"}),
+				padsResult, false},
+			[changed](Project& project, CommandContext& context)
+			{
+				const Json& parameters = context.parameters();
+				ChordPads& pads = project.chordPads;
+				const auto preset = parameters.at("preset").get<std::string>();
+				const int root = parameters.value("root", pads.rootKey);
+				require(root >= 0 && root < 12, "root must be 0 to 11");
+				const std::vector<midi::ChordSymbol> chords = chordpads::presetChords(preset, root);
+				require(!chords.empty(), "no chord pads preset " + preset);
+				const std::string load = parameters.value("load", std::string("chordsAndPlayers"));
+				if (load != "players")
+				{
+					size_t next = 0;
+					for (ChordPad& pad : pads.pads)
+					{
+						if (pad.locked)
+							continue;
+						pad = ChordPad();
+						if (next < chords.size())
+							pad.chord = midi::chordName(chords[next++]);
+					}
+					pads.rootKey = root;
+					pads.preset = preset;
+				}
+				if (load != "chords")
+					pads.octaveOffset = 0;
+				return changed(project, context);
+			});
+		add(engine,
+			{"chordPads.step", 1,
+				"Step input from the chord pads (reference manual p. 1369): the pad's chord becomes a chord event at "
+				"the step input position (ticks, chordPads.set stepPosition) on the chord track, which is added if "
+				"there is none, and the position moves to the next bar. With moveInsert the chord events from the "
+				"position on move a bar later first. Needs stepInput.",
+				objectSchema({{"pad", integerSchema}}, {"pad"}), padsResult, false},
+			[this, changed](Project& project, CommandContext& context)
+			{
+				ChordPads& pads = project.chordPads;
+				require(pads.stepInput, "step input is off");
+				const ChordPad& pad = padAt(pads, context.parameters().at("pad"));
+				require(!pad.chord.empty(), "the chord pad has no chord");
+				const std::string chord = pad.chord;
+				const time::Ticks at = pads.stepPosition;
+				const time::Ticks next = project.signatures.barStart(project.signatures.toBarsBeats(at).bar + 1);
+				if (std::none_of(project.trackById.begin(), project.trackById.end(),
+						[](const auto& entry) { return entry.second.type == TrackType::Chord; }))
+					runEdit("track.add", project, {{"type", "chord"}}, context);
+				time::TimeBase base = time::TimeBase::Musical;
+				for (const auto& [id, track] : project.trackById)
+					if (track.type == TrackType::Chord)
+						base = track.timeBase;
+				const auto inBase = [&project, base](time::Ticks tick)
+				{
+					return time::rebase({time::TimeBase::Musical, tick}, base, project.tempo, project.sampleRate).value;
+				};
+				if (pads.moveInsert)
+				{
+					Json moved = Json::array();
+					for (const ChordEvent& event : project.chords.events)
+						if (time::toTicks(event.position, project.tempo, project.sampleRate) >= at)
+							moved.push_back({{"event", event.id},
+								{"position",
+									inBase(time::toTicks(event.position, project.tempo, project.sampleRate) + next -
+										at)}});
+					if (!moved.empty())
+						runEdit("chord.set", project, {{"events", moved}}, context);
+				}
+				runEdit("chord.add", project, {{"position", inBase(at)}, {"chord", chord}}, context);
+				project.chordPads.stepPosition = next;
+				return changed(project, context);
+			});
+		add(engine,
+			{"chordPads.toTrack", 1,
+				"A chord pad dragged onto a track (reference manual p. 1370): onto the chord track, its chord as a "
+				"chord event at position (ticks, default the cursor); onto a MIDI or instrument track, a MIDI part a "
+				"bar long there with its voicing.",
+				objectSchema(
+					{{"pad", integerSchema}, {"track", integerSchema}, {"position", integerSchema}}, {"pad", "track"}),
+				{{"type", "object"}}, false},
+			[this](Project& project, CommandContext& context)
+			{
+				const Json& parameters = context.parameters();
+				const auto index = parameters.at("pad").get<int>();
+				const ChordPad& pad = padAt(project.chordPads, parameters.at("pad"));
+				require(!pad.chord.empty(), "the chord pad has no chord");
+				const auto id = parameters.at("track").get<ObjectId>();
+				const auto found = project.trackById.find(id);
+				require(found != project.trackById.end(), "no track " + std::to_string(id));
+				const Track& track = found->second;
+				const time::Ticks at = parameters.contains("position")
+					? parameters.at("position").get<time::Ticks>()
+					: time::toTicks(
+						  {time::TimeBase::Linear, context.call("transport.get").at("position").get<int64_t>()},
+						  project.tempo, project.sampleRate);
+				require(at >= 0, "position must not be before the project start");
+				const auto inBase = [&project, &track](time::Ticks tick)
+				{
+					return time::rebase(
+						{time::TimeBase::Musical, tick}, track.timeBase, project.tempo, project.sampleRate)
+						.value;
+				};
+				if (track.type == TrackType::Chord)
+					return runEdit("chord.add", project, {{"position", inBase(at)}, {"chord", pad.chord}}, context);
+				require(track.type == TrackType::Midi || track.type == TrackType::Instrument,
+					"chord pads go onto the chord track or a MIDI or instrument track");
+				const std::vector<int> pitches = chordPadVoicings(project.chordPads).at(static_cast<size_t>(index));
+				const time::Ticks end = project.signatures.barStart(project.signatures.toBarsBeats(at).bar + 1);
+				const time::Ticks length =
+					std::max<time::Ticks>(end - at, project.signatures.barStart(1) - project.signatures.barStart(0));
+				const Json added = runEdit("midiPart.add", project,
+					{{"track", id}, {"position", inBase(at)}, {"length", inBase(at + length) - inBase(at)}}, context);
+				const auto part = added.at("part").at("id").get<ObjectId>();
+				Json notes = Json::array();
+				for (const int pitch : pitches)
+					notes.push_back({{"position", 0}, {"length", length}, {"pitch", pitch}, {"velocity", 0.75}});
+				runEdit("note.add", project, {{"part", part}, {"notes", notes}}, context);
+				return Json{{"part", toJson(project.midiParts.at(part))}};
+			});
+
+		// The chords that sound, by what triggered them ("pad 3" or "chord Am"), with the pitches they play.
+		auto sounding = std::make_shared<std::map<std::string, std::vector<int>>>();
+		addControl(engine,
+			{"chordPads.trigger", 1,
+				"Triggers a chord pad, or auditions a chord (an assistant's suggestion), as a click does (reference "
+				"manual p. 1366): on (the default) plays its voicing, off ends it. The notes play into all MIDI inputs "
+				"as the on-screen keyboard's do (midi.keyboard), the highest voice on MIDI channel 1, the next on "
+				"channel 2 and so on: MIDI and instrument tracks set to all MIDI inputs play them while they monitor "
+				"or are record-enabled, and record them. velocity: 1 to 127, default the pads' velocity. Emits "
+				"chordPads.triggered with the pad (-1 for a chord), the chord, on and the pitches.",
+				objectSchema({{"pad", integerSchema}, {"chord", stringSchema}, {"on", booleanSchema},
+					{"velocity", integerSchema}}),
+				objectSchema({{"pitches", padsSchema}}, {"pitches"}), false},
+			[this, sounding](CommandContext& context)
+			{
+				const Json& parameters = context.parameters();
+				const ChordPads& pads = m_project.chordPads;
+				require(parameters.contains("pad") != parameters.contains("chord"), "give a pad or a chord");
+				const bool on = parameters.value("on", true);
+				const int velocity = parameters.value("velocity", pads.velocity);
+				require(velocity >= 1 && velocity <= 127, "velocity must be 1 to 127");
+				int index = -1;
+				std::string chord;
+				std::string key;
+				std::vector<int> pitches;
+				if (parameters.contains("pad"))
+				{
+					index = parameters.at("pad").get<int>();
+					require(index >= 0 && index < static_cast<int>(pads.pads.size()),
+						"no chord pad " + std::to_string(index));
+					chord = pads.pads[static_cast<size_t>(index)].chord;
+					key = "pad " + std::to_string(index);
+					if (on)
+						pitches = chordPadVoicings(pads).at(static_cast<size_t>(index));
+				}
+				else
+				{
+					const midi::ChordSymbol symbol = chordFrom(parameters.at("chord").get<std::string>());
+					chord = midi::chordName(symbol);
+					key = "chord " + chord;
+					if (on)
+						pitches = midi::voiceChord(symbol, {pads.octaveOffset, false});
+				}
+				// What sounds ends first: an off ends what the on played, whatever changed since.
+				if (const auto found = sounding->find(key); found != sounding->end())
+				{
+					context.call("midi.keyboard", {{"messages", noteMessages(found->second, false, 0)}});
+					if (!on)
+						pitches = found->second;
+					sounding->erase(found);
+				}
+				if (on && !pitches.empty())
+				{
+					context.call("midi.keyboard", {{"messages", noteMessages(pitches, true, velocity)}});
+					(*sounding)[key] = pitches;
+				}
+				context.emit(
+					"chordPads.triggered", {{"pad", index}, {"chord", chord}, {"on", on}, {"pitches", pitches}});
+				return Json{{"pitches", pitches}};
+			});
+		add(engine,
+			{"chordPads.assistant", 1,
+				"The chord assistant (reference manual pp. 1372-1375). kind list (the List assistant): suggestions for "
+				"the chord after chord (the reference, such as the selected pad's), at most 24, each with its chord, "
+				"its degree in the root key and its level: 0 common (green), 1 adventurous (orange), 2 far (red), "
+				"by how many of its notes are outside the root key's major scale; algorithm cadence (the default: "
+				"those that follow most strongly first) or commonNotes (those that share commonNotes notes, default "
+				"2, with it). kind circle (the Circle of Fifths assistant): outer, the twelve major chords from the "
+				"root key's in fifths (minor: from its relative major's), and inner, their relative minor chords, "
+				"each with its degree in the key, empty for chords outside it.",
+				objectSchema({{"kind", {{"type", "string"}, {"enum", {"list", "circle"}}}}, {"chord", stringSchema},
+								 {"algorithm", {{"type", "string"}, {"enum", {"cadence", "commonNotes"}}}},
+								 {"commonNotes", integerSchema}, {"minor", booleanSchema}},
+					{"kind"}),
+				{{"type", "object"}}, true},
+			[](Project& project, CommandContext& context)
+			{
+				const Json& parameters = context.parameters();
+				const int key = project.chordPads.rootKey;
+				// A chord's degree in the key, empty for a chord with notes outside the key's scale.
+				const auto entry = [key](const midi::ChordSymbol& chord, bool minor)
+				{
+					const std::array<int, 7>& steps = minor ? g_minorSteps : g_majorSteps;
+					const std::vector<int> classes = classesOf(chord);
+					const bool inKey = std::all_of(classes.begin(), classes.end(), [&steps, key](int note)
+						{ return std::find(steps.begin(), steps.end(), pitchClass(note - key)) != steps.end(); });
+					return Json{{"chord", midi::chordName(chord)},
+						{"degree", inKey ? chordpads::degreeName(chord, key, minor) : std::string()}};
+				};
+				if (parameters.at("kind") == "circle")
+				{
+					const bool minor = parameters.value("minor", false);
+					Json outer = Json::array();
+					Json inner = Json::array();
+					for (int i = 0; i < 12; ++i)
+					{
+						midi::ChordSymbol major;
+						major.root = pitchClass(key + (minor ? 3 : 0) + (7 * i));
+						midi::ChordSymbol relative;
+						relative.root = pitchClass(major.root + 9);
+						relative.type = "min";
+						outer.push_back(entry(major, minor));
+						inner.push_back(entry(relative, minor));
+					}
+					return Json{{"outer", outer}, {"inner", inner}};
+				}
+				const midi::ChordSymbol reference = chordFrom(parameters.value("chord", std::string()));
+				Json suggestions = Json::array();
+				for (const chordpads::Suggestion& suggestion : chordpads::suggestions(reference, key,
+						 parameters.value("algorithm", std::string("cadence")), parameters.value("commonNotes", 2)))
+				{
+					Json item = entry(suggestion.chord, false);
+					item["degree"] = chordpads::degreeName(suggestion.chord, key);
+					item["level"] = suggestion.level;
+					suggestions.push_back(item);
+				}
+				return Json{{"suggestions", suggestions}};
+			});
+	}
+}

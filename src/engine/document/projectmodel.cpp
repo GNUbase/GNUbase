@@ -12,11 +12,13 @@
 #include "engine/document/hitpoints.h"
 #include "engine/document/linkgroups.h"
 #include "engine/document/mixerviews.h"
+#include "engine/document/projectrules.h"
 #include "engine/document/renderinplace.h"
 #include "engine/document/sampleeditor.h"
 #include "engine/document/serialize.h"
 #include "engine/document/stripparameters.h"
 #include "engine/document/timewarp.h"
+#include "engine/document/trackpresets.h"
 #include "engine/document/trackversions.h"
 #include "engine/document/volumecurves.h"
 #include "engine/document/workspaces.h"
@@ -28,6 +30,7 @@
 #include "engine/midi/controllerlanes.h"
 #include "engine/midi/drummaps.h"
 #include "engine/midi/functioncommands.h"
+#include "engine/midi/logicalcommands.h"
 #include "engine/midi/quantizecommands.h"
 #include "engine/processors/builtin.h"
 #include "platform/log.h"
@@ -566,115 +569,117 @@ namespace gnubase::engine
 			}
 			track.timeBase = base;
 		}
+	}
 
-		// Linear positions are in samples, so they keep their time when the sample rate changes.
-		void changeSampleRate(Project& project, double sampleRate, CommandContext& context)
-		{
-			const double factor = sampleRate / project.sampleRate;
-			for (auto& [id, event] : project.audioEvents)
-				if (event.position.base == time::TimeBase::Linear)
-				{
-					event.position.value = rescale(event.position.value, factor);
-					context.emit("audioEvent.changed", {{"event", toJson(event)}});
-				}
-			for (auto& [id, part] : project.midiParts)
-				if (part.position.base == time::TimeBase::Linear)
-				{
-					part.position.value = rescale(part.position.value, factor);
-					part.length = rescale(part.length, factor);
-					context.emit("midiPart.changed", {{"part", toJson(part)}});
-				}
-			for (auto& [id, part] : project.audioParts)
-				if (part.position.base == time::TimeBase::Linear)
-				{
-					part.position.value = rescale(part.position.value, factor);
-					part.length = rescale(part.length, factor);
-					context.emit("audioPart.changed", {{"part", toJson(part)}});
-				}
-			for (auto& [id, track] : project.trackById)
-				for (TrackVersion& version : track.versions)
-				{
-					for (AudioEvent& event : version.audioEvents)
-						if (event.position.base == time::TimeBase::Linear)
-							event.position.value = rescale(event.position.value, factor);
-					for (AudioPart& part : version.audioParts)
-						if (part.position.base == time::TimeBase::Linear)
-						{
-							part.position.value = rescale(part.position.value, factor);
-							part.length = rescale(part.length, factor);
-						}
-					for (MidiPart& part : version.midiParts)
-						if (part.position.base == time::TimeBase::Linear)
-						{
-							part.position.value = rescale(part.position.value, factor);
-							part.length = rescale(part.length, factor);
-						}
-				}
-			for (auto& [id, lane] : project.automation)
+	void changeSampleRate(Project& project, double sampleRate, CommandContext& context)
+	{
+		const double factor = sampleRate / project.sampleRate;
+		for (auto& [id, event] : project.audioEvents)
+			if (event.position.base == time::TimeBase::Linear)
 			{
-				bool changed = false;
-				for (auto& [pointId, point] : lane.points)
-					if (point.position.base == time::TimeBase::Linear)
-					{
-						point.position.value = rescale(point.position.value, factor);
-						changed = true;
-					}
-				if (changed)
-					context.emit("automationLane.changed", {{"lane", toJson(lane)}});
+				event.position.value = rescale(event.position.value, factor);
+				context.emit("audioEvent.changed", {{"event", toJson(event)}});
 			}
-			for (auto& [id, track] : project.trackById)
-				if (track.type == TrackType::Ruler && track.timeBase == time::TimeBase::Linear)
-				{
-					track.timeOffset = rescale(track.timeOffset, factor);
-					context.emit("track.changed", {{"track", toJson(track)}});
-				}
-			project.sampleRate = sampleRate;
-			// At a lower rate, a short cycle marker may become shorter than a sample, in either time base.
-			for (auto& [id, marker] : project.markers)
+		for (auto& [id, part] : project.midiParts)
+			if (part.position.base == time::TimeBase::Linear)
 			{
-				const bool linear = marker.position.base == time::TimeBase::Linear;
-				if (linear)
-				{
-					marker.position.value = rescale(marker.position.value, factor);
-					marker.end.value = rescale(marker.end.value, factor);
-				}
-				if (keepMinimumLength(project, marker) || linear)
-					context.emit("marker.changed", {{"marker", toJson(marker)}});
+				part.position.value = rescale(part.position.value, factor);
+				part.length = rescale(part.length, factor);
+				context.emit("midiPart.changed", {{"part", toJson(part)}});
 			}
-			bool arranged = false;
-			for (ArrangerEvent& event : project.arranger.events)
+		for (auto& [id, part] : project.audioParts)
+			if (part.position.base == time::TimeBase::Linear)
 			{
-				if (event.position.base == time::TimeBase::Linear)
-				{
-					event.position.value = rescale(event.position.value, factor);
-					event.end.value = rescale(event.end.value, factor);
-					arranged = true;
-				}
-				arranged = keepMinimumLength(project, event) || arranged;
+				part.position.value = rescale(part.position.value, factor);
+				part.length = rescale(part.length, factor);
+				context.emit("audioPart.changed", {{"part", toJson(part)}});
 			}
-			if (arranged)
-				context.emit("arranger.changed", arrangerJson(project));
-			bool transposed = false;
-			for (TransposeEvent& event : project.transpose.events)
-				if (event.position.base == time::TimeBase::Linear)
-				{
-					event.position.value = rescale(event.position.value, factor);
-					transposed = true;
-				}
-			if (transposed)
-				context.emit("transpose.changed", transposeJson(project));
-			bool chorded = false;
-			for (std::vector<ChordEvent>* events : {&project.chords.events, &project.chords.scales})
-				for (ChordEvent& event : *events)
+		for (auto& [id, track] : project.trackById)
+			for (TrackVersion& version : track.versions)
+			{
+				for (AudioEvent& event : version.audioEvents)
 					if (event.position.base == time::TimeBase::Linear)
-					{
 						event.position.value = rescale(event.position.value, factor);
-						chorded = true;
+				for (AudioPart& part : version.audioParts)
+					if (part.position.base == time::TimeBase::Linear)
+					{
+						part.position.value = rescale(part.position.value, factor);
+						part.length = rescale(part.length, factor);
 					}
-			if (chorded)
-				context.emit("chord.changed", chordJson(project));
+				for (MidiPart& part : version.midiParts)
+					if (part.position.base == time::TimeBase::Linear)
+					{
+						part.position.value = rescale(part.position.value, factor);
+						part.length = rescale(part.length, factor);
+					}
+			}
+		for (auto& [id, lane] : project.automation)
+		{
+			bool changed = false;
+			for (auto& [pointId, point] : lane.points)
+				if (point.position.base == time::TimeBase::Linear)
+				{
+					point.position.value = rescale(point.position.value, factor);
+					changed = true;
+				}
+			if (changed)
+				context.emit("automationLane.changed", {{"lane", toJson(lane)}});
 		}
+		for (auto& [id, track] : project.trackById)
+			if (track.type == TrackType::Ruler && track.timeBase == time::TimeBase::Linear)
+			{
+				track.timeOffset = rescale(track.timeOffset, factor);
+				context.emit("track.changed", {{"track", toJson(track)}});
+			}
+		project.sampleRate = sampleRate;
+		// At a lower rate, a short cycle marker may become shorter than a sample, in either time base.
+		for (auto& [id, marker] : project.markers)
+		{
+			const bool linear = marker.position.base == time::TimeBase::Linear;
+			if (linear)
+			{
+				marker.position.value = rescale(marker.position.value, factor);
+				marker.end.value = rescale(marker.end.value, factor);
+			}
+			if (keepMinimumLength(project, marker) || linear)
+				context.emit("marker.changed", {{"marker", toJson(marker)}});
+		}
+		bool arranged = false;
+		for (ArrangerEvent& event : project.arranger.events)
+		{
+			if (event.position.base == time::TimeBase::Linear)
+			{
+				event.position.value = rescale(event.position.value, factor);
+				event.end.value = rescale(event.end.value, factor);
+				arranged = true;
+			}
+			arranged = keepMinimumLength(project, event) || arranged;
+		}
+		if (arranged)
+			context.emit("arranger.changed", arrangerJson(project));
+		bool transposed = false;
+		for (TransposeEvent& event : project.transpose.events)
+			if (event.position.base == time::TimeBase::Linear)
+			{
+				event.position.value = rescale(event.position.value, factor);
+				transposed = true;
+			}
+		if (transposed)
+			context.emit("transpose.changed", transposeJson(project));
+		bool chorded = false;
+		for (std::vector<ChordEvent>* events : {&project.chords.events, &project.chords.scales})
+			for (ChordEvent& event : *events)
+				if (event.position.base == time::TimeBase::Linear)
+				{
+					event.position.value = rescale(event.position.value, factor);
+					chorded = true;
+				}
+		if (chorded)
+			context.emit("chord.changed", chordJson(project));
+	}
 
+	namespace
+	{
 		int64_t countTracks(const Project& project, TrackType type)
 		{
 			return std::count_if(project.trackById.begin(), project.trackById.end(),
@@ -753,8 +758,8 @@ namespace gnubase::engine
 				break;
 			case AutomationTargetType::Mute:
 				only({});
-				// ponytail: a MIDI track's mute would have to silence its notes as they play.
-				require(channel.format != ChannelFormat::None, "a MIDI track's mute isn't automated yet");
+				require(channel.format != ChannelFormat::None || track.type == TrackType::Midi,
+					"a VCA track's mute isn't automated");
 				break;
 			case AutomationTargetType::Instrument:
 			{
@@ -2065,6 +2070,20 @@ namespace gnubase::engine
 					throw CommandError(error.what());
 				}
 			}
+			if (parameters.contains("inputTransformer"))
+			{
+				require(type == TrackType::Midi || type == TrackType::Instrument,
+					"only MIDI and instrument tracks have an input transformer");
+				try
+				{
+					changed.inputTransformer =
+						midi::inputTransformerFromJson(parameters.at("inputTransformer"), changed.inputTransformer);
+				}
+				catch (const std::invalid_argument& error)
+				{
+					throw CommandError(error.what());
+				}
+			}
 			for (const char* section : {"midiInserts", "midiSends"})
 			{
 				if (!parameters.contains(section))
@@ -3153,6 +3172,11 @@ namespace gnubase::engine
 		followEvent(project, track, from, end, to, context);
 	}
 
+	bool hasStepCurve(const Project& project, const AutomationLane& lane)
+	{
+		return stepCurve(project, lane);
+	}
+
 	namespace
 	{
 		// The undo step each command records, as shown in the history.
@@ -3244,6 +3268,15 @@ namespace gnubase::engine
 			{"chord.follow", "Follow chord track"},
 			{"chord.toMidi", "Chords to MIDI"},
 			{"chord.fromMidi", "Create chord events"},
+			{"chordPads.set", "Change chord pads"},
+			{"chordPads.assign", "Assign chords to pads"},
+			{"chordPads.modify", "Modify chord pads"},
+			{"chordPads.setPad", "Change chord pad"},
+			{"chordPads.move", "Move chord pad"},
+			{"chordPads.fromChordTrack", "Assign pads from chord track"},
+			{"chordPads.loadPreset", "Load chord pads preset"},
+			{"chordPads.step", "Insert chord from pad"},
+			{"chordPads.toTrack", "Chord pad to track"},
 			{"automationLane.add", "Add automation lane"},
 			{"automationLane.set", "Change automation lane"},
 			{"automationLane.remove", "Remove automation lane"},
@@ -4109,7 +4142,10 @@ namespace gnubase::engine
 				"whileRecording while the transport records, tapeMachine while it stands or records (the default). "
 				"Monitoring glides in and out over one audio block. MIDI and instrument tracks have them too: "
 				"recordEnable arms the track for MIDI recording, and while either is on, the track plays what comes "
-				"from its MIDI input, midiInput: all (all MIDI inputs, the default) or none. monitor and "
+				"from its MIDI input, midiInput: all (all MIDI inputs, the default) or none. inputTransformer (MIDI "
+				"and instrument tracks): {mode, modules}, mode off, track (its own modules) or project (those of "
+				"midi.setInputTransformer), modules as midi.setInputTransformer takes them; the modules that are on "
+				"change what the track's MIDI input plays, before it plays and records it. monitor and "
 				"recordEnable stay off on a frozen track and on a MIDI track that plays a frozen instrument track "
 				"(track.freeze): they can't be turned on, nor such a track routed to one with them on, and linked "
 				"channels and VCA faders don't pass them on to it. mute silences a channel; "
@@ -4175,7 +4211,7 @@ namespace gnubase::engine
 						{"notes", stringSchema}, {"linked", booleanSchema}, {"pre", {{"type", "object"}}},
 						{"eq", {{"type", "object"}}}, {"strip", {{"type", "object"}}},
 						{"modifiers", {{"type", "object"}}}, {"midiInserts", {{"type", "object"}}},
-						{"midiSends", {{"type", "object"}}},
+						{"midiSends", {{"type", "object"}}}, {"inputTransformer", {{"type", "object"}}},
 						{"sends",
 							arraySchema(
 								objectSchema({{"send", integerSchema}, {"destination", idSchema}, {"on", booleanSchema},
@@ -4406,6 +4442,7 @@ namespace gnubase::engine
 		registerArrangerCommands(engine);
 		registerTransposeCommands(engine);
 		registerChordCommands(engine);
+		registerChordPadCommands(engine);
 		registerTempoCommands(engine);
 		registerSignatureCommands(engine);
 		registerAutomationCommands(engine);
@@ -4414,6 +4451,8 @@ namespace gnubase::engine
 		midi::registerQuantizeCommands(*this, engine);
 		registerAudioQuantizeCommands(*this, engine);
 		midi::registerFunctionCommands(*this, engine);
+		midi::registerLogicalCommands(*this, engine);
+		registerProjectRuleCommands(*this, engine);
 		metronome::registerMetronomeCommands(*this, engine);
 		midi::registerControllerLaneCommands(*this, engine);
 		registerMidiFileCommands(engine);
@@ -4431,6 +4470,7 @@ namespace gnubase::engine
 		registerTrackVersionCommands(*this, engine);
 		midi::registerDrumMapCommands(*this, engine);
 		registerChannelSettingsCommands(*this, engine);
+		registerTrackPresetCommands(*this, engine);
 		registerEditorCommands(*this, engine);
 		registerSampleEditorCommands(*this, engine);
 		registerHitpointCommands(*this, engine, jobs);
@@ -4461,8 +4501,9 @@ namespace gnubase::engine
 		add(engine,
 			{"automationLane.add", 1,
 				"Adds an automation lane to a track: the curve of one parameter. target.type says which: volume (the "
-				"channel's fader, in dB), pan, panLeft and panRight (-1 to 1, see channel.set) and mute (0 off, 1 on; "
-				"a lane that plays overrides the mute button) on tracks with audio channels; instrument, a parameter "
+				"channel's fader, in dB), pan, panLeft and panRight (-1 to 1, see channel.set) on tracks with audio "
+				"channels; mute (0 off, 1 on; a lane that plays overrides the mute button) on those and on MIDI "
+				"tracks, whose notes and controllers it silences, ending the notes that sound; instrument, a parameter "
 				"of an instrument track's built-in instrument (target.parameter, an id from processor.list, in its "
 				"range); plugin, a parameter of the built-in plugin in one of the track's slots (target.slot and "
 				"target.parameter, as parameter.list gives them, in its range; the lane goes when the plugin is "

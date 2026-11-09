@@ -13,6 +13,7 @@
 #include "engine/audio/transport.h"
 #include "engine/graph/graph.h"
 #include "engine/metronome/metronome.h"
+#include "engine/processors/midieffects.h"
 #include "engine/schema.h"
 #include "platform/audio/device.h"
 #include "platform/audio/dummydevice.h"
@@ -158,6 +159,13 @@ namespace gnubase::engine
 		// block, then each sequencer's instrument channel (MidiSequencer::playOn). A program carries the releases of
 		// the programs before it until the audio thread started one of them, as it may skip programs that follow each
 		// other quickly.
+		// A track's input transformer and the rules it applies; no processor for none.
+		struct InputTransform
+		{
+			std::shared_ptr<processors::InputTransformerProcessor> processor;
+			std::vector<midi::LogicalRules> rules;
+		};
+
 		struct Program
 		{
 			Program(const graph::GraphDesc& desc, double sampleRate, uint32_t maxFrames)
@@ -176,10 +184,13 @@ namespace gnubase::engine
 			MidiTap::Sequencers sequencers;     // of the MIDI and instrument channels, for midi.inject
 			std::vector<uint64_t> destinations; // per sequencer, where it plays (MidiSequencer::playOn)
 			std::vector<uint8_t> thru;          // per sequencer, 1 if it plays all MIDI inputs (MidiTap::thru)
-			MidiTap::Instruments instruments;   // for midi.capture
-			std::vector<int> mainPorts;         // the main mix's device channels, for auditioning and listening
-			int mainOutput = -1;                // the main mix's index in outputs, or -1
-			int listenNode = -1;                // the listen bus (graph::NodeKind::ListenBus), or -1
+			ChordPadKeys chordPadKeys;          // what MIDI inputs' notes on the chord pads' remote keys play
+			// Per sequencer, its input transformer, which changes its input after the MIDI thru.
+			std::vector<InputTransform> inputTransformers;
+			MidiTap::Instruments instruments; // for midi.capture
+			std::vector<int> mainPorts;       // the main mix's device channels, for auditioning and listening
+			int mainOutput = -1;              // the main mix's index in outputs, or -1
+			int listenNode = -1;              // the listen bus (graph::NodeKind::ListenBus), or -1
 			ListenGains listen;
 		};
 
@@ -396,7 +407,9 @@ namespace gnubase::engine
 			std::set<ObjectId> sources; // the MIDI channels routed to it
 			std::shared_ptr<InstrumentChannel> channel;
 		};
-		std::map<ObjectId, std::shared_ptr<MidiSequencer>> m_sequencers;   // per MIDI and instrument channel
+		std::map<ObjectId, std::shared_ptr<MidiSequencer>> m_sequencers; // per MIDI and instrument channel
+		// Per MIDI and instrument channel with an input transformer.
+		std::map<ObjectId, std::shared_ptr<processors::InputTransformerProcessor>> m_inputTransformers;
 		MidiChase m_chase;                                                 // what they chase
 		std::map<ObjectId, Instrument> m_instruments;                      // per instrument channel
 		std::map<ObjectId, std::shared_ptr<ChannelState>> m_channelStates; // per channel

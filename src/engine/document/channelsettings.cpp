@@ -64,30 +64,36 @@ namespace gnubase::engine
 					(project.channels.count(send.destination) == 0 || !isSendDestination(project, send.destination) ||
 						routingLoops(project, id, send.destination)))
 					send.destination = 0;
-			for (const ObjectId slot : channel.slots)
-			{
-				project.slots.erase(slot);
-				for (auto lane = project.automation.begin(); lane != project.automation.end();)
-				{
-					const bool gone =
-						lane->second.target.type == AutomationTargetType::Plugin && lane->second.target.slot == slot;
-					if (gone)
-						context.emit("automationLane.removed", {{"lane", lane->first}});
-					lane = gone ? project.automation.erase(lane) : std::next(lane);
-				}
-				context.emit("plugin.removed", {{"slot", slot}});
-			}
-			channel.slots.clear();
-			for (Slot slot : clipboard.slots)
-			{
-				slot.id = project.newId();
-				slot.channel = id;
-				channel.slots.push_back(slot.id);
-				project.slots[slot.id] = std::move(slot);
-			}
+			replaceSlots(project, context, id, clipboard.slots);
 			context.emit("channel.changed", {{"channel", toJson(channel)}});
 			for (const ObjectId slot : channel.slots)
 				context.emit("plugin.added", {{"slot", model.describeSlot(project, slot)}});
+		}
+	}
+
+	void replaceSlots(Project& project, CommandContext& context, ObjectId id, const std::vector<Slot>& slots)
+	{
+		Channel& channel = project.channels.at(id);
+		for (const ObjectId slot : channel.slots)
+		{
+			project.slots.erase(slot);
+			for (auto lane = project.automation.begin(); lane != project.automation.end();)
+			{
+				const bool gone =
+					lane->second.target.type == AutomationTargetType::Plugin && lane->second.target.slot == slot;
+				if (gone)
+					context.emit("automationLane.removed", {{"lane", lane->first}});
+				lane = gone ? project.automation.erase(lane) : std::next(lane);
+			}
+			context.emit("plugin.removed", {{"slot", slot}});
+		}
+		channel.slots.clear();
+		for (Slot slot : slots)
+		{
+			slot.id = project.newId();
+			slot.channel = id;
+			channel.slots.push_back(slot.id);
+			project.slots[slot.id] = std::move(slot);
 		}
 	}
 

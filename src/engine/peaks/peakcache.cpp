@@ -213,7 +213,8 @@ namespace gnubase::engine::peaks
 		const std::scoped_lock lock(m_mutex);
 		std::map<ObjectId, Media> next;
 		for (const RenderMedia& file : media)
-			next[file.id] = {file.path, static_cast<uint64_t>(std::max<int64_t>(file.length, 0))};
+			if (file.warp.empty()) // a warped event's own entry, whose file has its own one too
+				next[file.id] = {file.path, static_cast<uint64_t>(std::max<int64_t>(file.length, 0))};
 		const bool same =
 			std::equal(next.begin(), next.end(), m_media.begin(), m_media.end(), [](const auto& a, const auto& b)
 				{ return a.first == b.first && a.second.path == b.second.path && a.second.length == b.second.length; });

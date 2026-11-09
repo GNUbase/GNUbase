@@ -313,13 +313,13 @@ TEST_CASE("the time displays show the cursor in their formats and take positions
 	type(app, "#primary-time", "1.4.1.0");
 	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 72000; }));
 
-	// The format menus, saved in ui.timeFormats.
+	// The format menus: the primary format is the project's time format (reference manual p. 317), the secondary one
+	// is saved in ui.timeFormats.
 	click(app, "#primary-format");
 	click(app, "menuitem[slot=primary][format=seconds]");
 	REQUIRE(app.waitUntil([&app] { return shows(app, "#primary-time") == "0:00:01.500"; }));
 	CHECK(element(app, "menuitem[slot=primary][format=seconds]").at("attributes").contains("checked"));
-	REQUIRE(app.waitUntil([&app]
-		{ return app.call("settings.get", {{"key", "ui.timeFormats"}}).at("value").at("primary") == "seconds"; }));
+	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("timeFormat") == "seconds"; }));
 	CHECK(shows(app, "#left-locator") == "0:00:00.000"); // the locators show the primary format
 
 	// Exchange Time Formats, with its button and its key.
@@ -339,11 +339,19 @@ TEST_CASE("the time displays show the cursor in their formats and take positions
 		{ return app.call("settings.get", {{"key", "ui.timeFormats"}}).at("value").at("secondary") == "barsBeats"; }));
 	CHECK(shows(app, "#primary-time") == "0:00:01.500");
 
-	// Another client's change of the setting.
+	// Another client's change of the setting and of the project's time format; a primary format in the setting, as
+	// before #537, is the project's.
 	app.call("settings.set",
 		{{"key", "ui.timeFormats"},
-			{"value", {{"primary", "barsBeats"}, {"secondary", "samples"}, {"timeDisplay", "barsBeats"}}}});
+			{"value", {{"primary", "timecode"}, {"secondary", "samples"}, {"timeDisplay", "barsBeats"}}}});
 	REQUIRE(app.waitUntil([&app] { return shows(app, "#secondary-time") == "72000"; }));
+	CHECK(shows(app, "#primary-time") == "0:00:01.500");
+	app.call("project.set", {{"timeFormat", "barsBeats"}});
+	REQUIRE(app.waitUntil([&app] { return shows(app, "#primary-time") == "1.4.1.0"; }));
+	app.call("history.undo"); // the project's time format is a project setting, undone as one
+	REQUIRE(app.waitUntil([&app] { return shows(app, "#primary-time") == "0:00:01.500"; }));
+	app.call("history.redo");
+	REQUIRE(app.waitUntil([&app] { return shows(app, "#primary-time") == "1.4.1.0"; }));
 
 	// Positions typed in the display's format.
 	type(app, "#primary-time", "3");
@@ -393,8 +401,9 @@ TEST_CASE("the transport bar and the transport panel show the same time formats"
 	CHECK_FALSE(element(app, "menuitem[slot=primary][format=timecode]", panel).at("attributes").contains("checked"));
 	CHECK(shows(app, "#primary-time") == "0:00:01.500");
 	CHECK(shows(app, "#secondary-time") == "00:00:01:12");
+	CHECK(app.call("project.get").at("timeFormat") == "seconds");
 	const Json formats = app.call("settings.get", {{"key", "ui.timeFormats"}}).at("value");
-	CHECK(formats.at("primary") == "seconds");
+	CHECK(!formats.contains("primary"));
 	CHECK(formats.at("secondary") == "timecode");
 }
 
@@ -693,9 +702,7 @@ TEST_CASE("the mouse wheel changes a display's value", "[ui]")
 	// By a frame in timecode (25 fps), a second in seconds; never before the project start.
 	app.ui().wheel(std::nullopt, at("#secondary-time"), 0, -1);
 	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 49920; }));
-	app.call("settings.set",
-		{{"key", "ui.timeFormats"},
-			{"value", {{"primary", "seconds"}, {"secondary", "timecode"}, {"timeDisplay", "barsBeats"}}}});
+	app.call("project.set", {{"timeFormat", "seconds"}});
 	REQUIRE(app.waitUntil([&app] { return shows(app, "#left-locator") == "0:00:01.000"; }));
 	app.ui().wheel(std::nullopt, at("#primary-time"), 0, 3);
 	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 0; }));
@@ -713,11 +720,13 @@ TEST_CASE("positions typed or wheeled past the largest project position stop the
 {
 	test::UiApp app({1024, 700});
 	showBar(app);
+	app.call("project.set", {{"timeFormat", "seconds"}});
 	app.call("settings.set",
-		{{"key", "ui.timeFormats"},
-			{"value", {{"primary", "seconds"}, {"secondary", "samples"}, {"timeDisplay", "barsBeats"}}}});
+		{{"key", "ui.timeFormats"}, {"value", {{"secondary", "samples"}, {"timeDisplay", "barsBeats"}}}});
 	app.call("transport.locate", {{"position", 48000}});
 	REQUIRE(app.waitUntil([&app] { return shows(app, "#secondary-time") == "48000"; }));
+	// The project's time format comes with its own reply, maybe after the setting's.
+	REQUIRE(app.waitUntil([&app] { return shows(app, "#primary-time") == "0:00:01.000"; }));
 	const std::string maximum = std::to_string(time::g_maxPosition);
 
 	// Fifteen digits of seconds are more samples than 64 bits hold: the cursor goes to the largest position.
@@ -760,9 +769,7 @@ TEST_CASE("positions typed or wheeled past the largest project position stop the
 	REQUIRE(waitFor(app, [](const Json& state) { return state.at("right") == time::g_maxPosition; }));
 
 	// A billion beats in bars and beats: 500 million seconds at 120 BPM.
-	app.call("settings.set",
-		{{"key", "ui.timeFormats"},
-			{"value", {{"primary", "barsBeats"}, {"secondary", "samples"}, {"timeDisplay", "barsBeats"}}}});
+	app.call("project.set", {{"timeFormat", "barsBeats"}});
 	app.call("transport.locate", {{"position", 0}});
 	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 0; }));
 	REQUIRE(app.waitUntil([&app] { return shows(app, "#primary-time") == "1.1.1.0"; }));

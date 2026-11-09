@@ -11,6 +11,7 @@
 #include <RmlUi/Core/ObserverPtr.h>
 
 #include <cstdint>
+#include <deque>
 #include <filesystem>
 #include <functional>
 #include <optional>
@@ -32,9 +33,10 @@ namespace gnubase::ui
 	// start-screen.rml, save-template.rml, backup-project.rml, discard-changes.rml and project-error.rml in
 	// folder), and do everything with
 	// engine commands. Opening another project, reverting and quitting ask first if the project has unsaved changes,
-	// and a command that fails shows its error, as does an auto save that fails. Quitting asks however it is asked for:
-	// File > Quit, the main window's close button or the OS (Shell::onQuitRequest). Use it on the UI thread; the key
-	// commands, the binding and the shell must outlive it.
+	// and a command that fails shows its error, as does an auto save that fails. A dialog that comes while another is
+	// open, such as the unsaved changes question or an error, waits for it instead of being dropped. Quitting asks
+	// however it is asked for: File > Quit, the main window's close button or the OS (Shell::onQuitRequest). Use it on
+	// the UI thread; the key commands, the binding and the shell must outlive it.
 	class ProjectFiles final : private Rml::EventListener
 	{
 	public:
@@ -51,16 +53,28 @@ namespace gnubase::ui
 
 	private:
 		using Closed = std::function<void(Rml::ElementDocument& dialog, const std::string& result)>;
+		using Shown = std::function<void(Rml::ElementDocument* dialog)>;
 		struct WaitingError
 		{
 			WindowId window = 0;
 			std::string error;
 		};
+		struct WaitingDialog
+		{
+			WindowId window = 0;
+			const char* file = nullptr;
+			Shown shown;
+			Closed closed;
+		};
 
 		void ProcessEvent(Rml::Event& event) override;
-		// Opens one of the dialogs in the window, modal; closed runs when it closes, with its result. One at a time:
-		// returns null while another one is open, unless that is a failed auto save's error, which makes way.
-		Rml::ElementDocument* openDialog(Window& window, const char* file, Closed closed);
+		// Opens one of the dialogs in the window, modal: shown runs with its document once it opened, or with null if
+		// it can't, and closed when it closes, with its result. One at a time: while another one is open it waits until
+		// that closed or went with its window (openWaiting), unless that is a failed auto save's error, which makes
+		// way; with wait false it doesn't open then.
+		void openDialog(WindowId window, const char* file, Shown shown, Closed closed, bool wait = true);
+		// Opens the dialogs that wait, in order, once no dialog is open; those whose window is gone don't open.
+		void openWaiting();
 		// Closes the open dialog, if any, with the result.
 		void closeDialog(const std::string& result);
 		// Asks the engine for the project's file (project.location).
@@ -119,6 +133,7 @@ namespace gnubase::ui
 		std::optional<WindowId> m_backupWindow;  // where the last backup was asked for, which shows if it fails
 		Rml::ObserverPtr<Rml::Element> m_dialog; // the open dialog's document
 		Closed m_closed;
+		std::deque<WaitingDialog> m_waitingDialogs;    // the dialogs that wait for it, oldest first
 		bool m_quitting = false;                       // a quit request waits for the engine to say whether to ask
 		Rml::ObserverPtr<Rml::Element> m_quitQuestion; // and then for the question, while it is m_dialog
 		std::vector<std::string> m_templates;          // the start screen's templates, by name

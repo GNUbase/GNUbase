@@ -126,6 +126,7 @@ add_library(gnubase-engine STATIC
 	document/audioquantize.cpp document/audioquantize.h
 	document/channelformat.cpp document/channelformat.h
 	document/channelsettings.cpp document/channelsettings.h
+	document/chordpads.cpp document/chordpads.h
 	document/chordtrack.cpp document/chordtrack.h
 	document/document.cpp document/document.h
 	document/editors.cpp document/editors.h
@@ -143,6 +144,7 @@ add_library(gnubase-engine STATIC
 	document/projectfiles.cpp
 	document/slotcommands.cpp
 	document/projectmodel.cpp document/projectmodel.h
+	document/projectrules.cpp document/projectrules.h
 	document/recording.cpp
 	document/renderinplace.cpp document/renderinplace.h
 	document/rendersnapshot.cpp document/rendersnapshot.h
@@ -153,6 +155,7 @@ add_library(gnubase-engine STATIC
 	document/stripparameters.cpp document/stripparameters.h
 	document/tempo.cpp
 	document/timewarp.cpp document/timewarp.h
+	document/trackpresets.cpp document/trackpresets.h
 	document/trackversions.cpp document/trackversions.h
 	document/trackvisibility.cpp document/trackvisibility.h
 	document/transpose.cpp
@@ -186,6 +189,8 @@ add_library(gnubase-engine STATIC
 	midi/functioncommands.cpp midi/functioncommands.h
 	midi/functions.cpp midi/functions.h
 	midi/harmony.cpp midi/harmony.h
+	midi/logical.cpp midi/logical.h
+	midi/logicalcommands.cpp midi/logicalcommands.h
 	midi/midivalues.cpp midi/midivalues.h
 	midi/modifiers.cpp midi/modifiers.h
 	midi/quantize.cpp midi/quantize.h
@@ -205,6 +210,7 @@ add_library(gnubase-engine STATIC
 	processors/generators.cpp processors/generators.h
 	processors/midieffects.cpp processors/midieffects.h
 	processors/testsynth.cpp processors/testsynth.h
+	rulepresets.h
 	schema.cpp schema.h
 	schematext.cpp schematext.h
 	settings/profiles.cpp settings/profiles.h

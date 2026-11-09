@@ -131,9 +131,15 @@ namespace gnubase::engine
 
 		time::Samples nearestSample(GridType grid, const SnapGrid& at, time::Samples position)
 		{
+			// The linear grids count from the start time, as the ruler's marks do (#537); the first line is the first
+			// after the project start.
 			if (const double step = stepSeconds(grid, at); step > 0.0)
-				return std::llround(
-					std::round(static_cast<double>(position) / at.sampleRate / step) * step * at.sampleRate);
+			{
+				const double first = std::ceil((at.startTime / step) - 1e-6); // a start time on a line is that line
+				const double line = std::max(
+					first, std::round(((static_cast<double>(position) / at.sampleRate) + at.startTime) / step));
+				return std::llround(((line * step) - at.startTime) * at.sampleRate);
+			}
 			const int64_t step = stepSamples(grid);
 			return std::llround(std::round(static_cast<double>(position) / static_cast<double>(step))) * step;
 		}
@@ -445,6 +451,7 @@ namespace gnubase::engine
 		grid.quantize = project.quantize;
 		grid.frameRate = format == GridFormat::UserFrames ? time::FrameRate{time::g_userFramesPerSecond, false, false}
 														  : project.setup.frameRate;
+		grid.startTime = project.setup.startTime;
 		return grid;
 	}
 
@@ -491,12 +498,13 @@ namespace gnubase::engine
 	{
 		const MediaFile& media = project.media.at(project.clips.at(event.clip).media);
 		const EventSpan span = eventSpan(project, event);
-		const int64_t frame = event.offset + std::llround(static_cast<double>(at - span.start) / span.ratio);
+		const int64_t frame =
+			event.offset + std::llround(eventFrames(project, event, static_cast<double>(at - span.start)));
 		const int64_t found = zeroCrossingFrame(
 			media, frame, inside ? event.offset + 1 : 0, inside ? event.offset + event.length - 1 : media.length - 1);
 		if (found == frame)
 			return at;
-		return span.start + std::llround(static_cast<double>(found - event.offset) * span.ratio);
+		return span.start + std::llround(eventSamples(project, event, static_cast<double>(found - event.offset)));
 	}
 
 	void registerSnapCommands(ProjectModel& model, Engine& engine)
@@ -562,7 +570,8 @@ namespace gnubase::engine
 				"range is how near (project samples, default a tenth of a second) events, markers and the cursor "
 				"attract; zoomStep is adaptToZoom's note value in ticks (default: bars); framesPerSecond the frame "
 				"grids' rate (default: the project's frameRate, see project.set, and for userFrames 30, as in the "
-				"project window). Returns position in project samples, and ticks, which are exact when "
+				"project window). The seconds and frame grids count from the project's startTime, as the ruler "
+				"does. Returns position in project samples, and ticks, which are exact when "
 				"musical, that is when a bar, beat, quantize or zoom grid line put it there.",
 				{{"type", "object"},
 					{"properties",
@@ -607,7 +616,8 @@ namespace gnubase::engine
 					if (event.snapPoint && *event.snapPoint >= event.offset &&
 						*event.snapPoint < event.offset + event.length)
 						target.magnets.push_back(span.start +
-							std::llround(static_cast<double>(*event.snapPoint - event.offset) * span.ratio));
+							std::llround(
+								eventSamples(project, event, static_cast<double>(*event.snapPoint - event.offset))));
 				}
 				const auto partEdges = [&](ObjectId id, const time::Position& position, int64_t length)
 				{

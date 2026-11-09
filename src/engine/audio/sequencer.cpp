@@ -305,7 +305,7 @@ namespace gnubase::engine
 						event.type == graph::ProcessEvent::Type::NoteOn;
 			out.merge(events);
 		};
-		const graph::EventBuffer* played = &m_own;
+		graph::EventBuffer* played = &m_own;
 		for (size_t i = 0; i < sequence.insertCount; ++i)
 		{
 			graph::EventBuffer& to = played == &m_chainA ? m_chainB : m_chainA;
@@ -313,10 +313,22 @@ namespace gnubase::engine
 			played = &to;
 		}
 		play(*played);
+		if (sequence.insertCount == sequence.effects.size())
+			return;
+		// The sends get the notes only, so the track's other events reach the output once. What they take is played
+		// already, so it can change.
+		graph::EventBuffer& source = sequence.sends.pre ? m_own : *played;
+		source.removeIf(
+			[](const graph::ProcessEvent& event)
+			{
+				return event.type != graph::ProcessEvent::Type::NoteOn &&
+					event.type != graph::ProcessEvent::Type::NoteOff &&
+					event.type != graph::ProcessEvent::Type::PolyPressure;
+			});
 		graph::EventBuffer& sent = played == &m_chainA ? m_chainB : m_chainA;
 		for (size_t i = sequence.insertCount; i < sequence.effects.size(); ++i)
 		{
-			run(sequence.effects[i], sequence.sends.pre ? m_own : *played, sent);
+			run(sequence.effects[i], source, sent);
 			play(sent);
 		}
 	}

@@ -28,4 +28,17 @@ namespace gnubase::engine
 	// at the clip's sample rate from the event's start, a point every 4096 clip frames and at every warp marker and
 	// edited beat.
 	std::vector<dsp::WarpPoint> warpMap(const Project& project, const AudioEvent& event);
+
+	// Where an event that plays by a warp map plays its clip's start and end and the inner ends of the clip's fades,
+	// in frames from the event's start at the clip's sample rate: through the map, and beyond it with the slope of its
+	// end segments. Playback fades the clip in and out there, and flattening renders those fades.
+	// ponytail: before and after the event the map's end slopes stand in for the warp, which may differ there.
+	struct WarpedClipEdges
+	{
+		time::Samples start = 0;
+		time::Samples fadeInEnd = 0;
+		time::Samples fadeOutStart = 0;
+		time::Samples end = 0;
+	};
+	WarpedClipEdges warpedClipEdges(const Clip& clip, time::Samples length, const std::vector<dsp::WarpPoint>& map);
 }

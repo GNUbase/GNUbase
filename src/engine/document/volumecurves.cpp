@@ -101,10 +101,10 @@ namespace gnubase::engine
 				const EventSpan span = eventSpan(project, event);
 				if (end <= span.start || start >= span.end)
 					continue;
-				const auto frame = [&span, &event](time::Samples sample)
+				const auto frame = [&project, &span, &event](time::Samples sample)
 				{
-					const auto into = std::llround(
-						static_cast<double>(std::clamp(sample, span.start, span.end) - span.start) / span.ratio);
+					const auto into = std::llround(eventFrames(
+						project, event, static_cast<double>(std::clamp(sample, span.start, span.end) - span.start)));
 					return event.offset + std::clamp<time::Samples>(into, 0, event.length);
 				};
 				const time::Samples from = frame(start);

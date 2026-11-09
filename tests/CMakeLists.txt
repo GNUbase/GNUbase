@@ -44,6 +44,8 @@ add_executable(gnubase-tests
 	channelformat_tests.cpp
 	channelsettings_tests.cpp
 	channelstrip_tests.cpp
+	chordpads_tests.cpp
+	chordpads_ui_tests.cpp
 	chordtrack_tests.cpp
 	chordtrack_ui_tests.cpp
 	clock_tests.cpp
@@ -92,6 +94,7 @@ add_executable(gnubase-tests
 	listeditor_ui_tests.cpp
 	lockrecord_tests.cpp
 	log_tests.cpp
+	logical_tests.cpp
 	mainmenu_tests.cpp
 	marker_tests.cpp
 	markers_ui_tests.cpp
@@ -112,6 +115,7 @@ add_executable(gnubase-tests
 	midimodifiers_tests.cpp
 	midipatches_tests.cpp
 	midirecording_tests.cpp
+	midirules_ui_tests.cpp
 	miditap_tests.cpp
 	mixdown_tests.cpp
 	mixdown_ui_tests.cpp
@@ -135,6 +139,8 @@ add_executable(gnubase-tests
 	profiles_ui_tests.cpp
 	processor_tests.cpp
 	projectfiles_tests.cpp
+	projectrules_tests.cpp
+	projectrules_ui_tests.cpp
 	projectsetup_tests.cpp
 	quantize_tests.cpp
 	quantize_ui_tests.cpp
@@ -173,6 +179,7 @@ add_executable(gnubase-tests
 	timewarp_tests.cpp
 	timewarp_ui_tests.cpp
 	tracklist_tests.cpp
+	trackpresets_tests.cpp
 	trackversions_tests.cpp
 	trackversions_ui_tests.cpp
 	trackvisibility_tests.cpp

@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/document/serialize.h"
 
+#include "engine/document/chordpads.h"
 #include "engine/document/chordtrack.h"
 #include "engine/document/stripparameters.h"
 
 #include "engine/document/linkgroups.h"
+#include "engine/document/projectmodel.h"
 #include "engine/midi/drummaps.h"
 #include "engine/processors/builtin.h"
 #include "engine/processors/midieffects.h"
@@ -470,16 +472,14 @@ namespace gnubase::engine
 		setup.length = json.value("length", setup.length);
 		setup.barOffset = json.value("barOffset", setup.barOffset);
 
-		// What recording can write (AudioFileWriter): AIFF in integers, FLAC in 16 and 24 bits, 64-bit float in WAV.
+		// What recording can write (AudioFileWriter): AIFF in integers, FLAC in 16 and 24 bits, Wave in every bit
+		// depth, 64-bit float among them.
 		const std::string& type = setup.recordFileType;
 		const std::string& depth = setup.recordBitDepth;
-		const bool wav = type == "wav" || type == "broadcastWav";
 		if (type == "aiff" && depth.rfind("int", 0) != 0)
 			throw std::invalid_argument("AIFF files record 16, 24 or 32 bit, not " + depth);
 		if (type == "flac" && depth != "int16" && depth != "int24")
 			throw std::invalid_argument("FLAC files record 16 or 24 bit, not " + depth);
-		if (!wav && depth == "float64")
-			throw std::invalid_argument("only Wave files record 64 bit float");
 		if (!std::isfinite(setup.startTime) || setup.startTime < 0.0 || setup.startTime >= 86400.0)
 			throw std::invalid_argument("startTime must be from 0 to less than 24 hours (86400 seconds)");
 		if (!std::isfinite(setup.length) || setup.length <= 0.0 || setup.length > 86400.0)
@@ -574,7 +574,8 @@ namespace gnubase::engine
 			{"mute", channel.mute}, {"solo", channel.solo}, {"soloDefeat", channel.soloDefeat},
 			{"listen", channel.listen}, {"slots", channel.slots}, {"notes", channel.notes},
 			{"modifiers", toJson(channel.modifiers)}, {"midiInserts", toJson(channel.midiInserts, false)},
-			{"midiSends", toJson(channel.midiSends, true)}};
+			{"midiSends", toJson(channel.midiSends, true)},
+			{"inputTransformer", midi::toJson(channel.inputTransformer)}};
 		json.update(toJson(channel.sections));
 		Json sends = Json::array();
 		if (channel.format != ChannelFormat::None)
@@ -1156,7 +1157,8 @@ namespace gnubase::engine
 			{"markers", toJsonArray(project.markers)}, {"automation", toJsonArray(project.automation)},
 			{"linkGroups", toJsonArray(project.linkGroups)}, {"arranger", arrangerJson(project)},
 			{"rootKey", rootKeyName(project.rootKey)}, {"transpose", transposeJson(project)},
-			{"chords", chordJson(project)}, {"drumMaps", toJsonArray(project.drumMaps)},
+			{"chords", chordJson(project)}, {"chordPads", chordPadsJson(project)},
+			{"drumMaps", toJsonArray(project.drumMaps)}, {"inputTransformer", midi::toJson(project.inputTransformer)},
 			{"virginTerritory", project.virginTerritory}, {"quantize", midi::toJson(project.quantize)},
 			{"autoQuantize", project.autoQuantize}, {"quantizePreset", project.quantizePreset},
 			{"activeMarkerTrack", project.activeMarkerTrack}, {"snap", toJson(project.snap)},
@@ -1408,7 +1410,8 @@ namespace gnubase::engine
 				maximum = lane.target.type == AutomationTargetType::Volume ? project.maxVolume : 1.0;
 				break;
 			case AutomationTargetType::Mute:
-				fits = project.channels.at(track.channel).format != ChannelFormat::None;
+				fits =
+					project.channels.at(track.channel).format != ChannelFormat::None || track.type == TrackType::Midi;
 				maximum = 1.0;
 				break;
 			case AutomationTargetType::Strip:
@@ -1957,6 +1960,9 @@ namespace gnubase::engine
 		project.signatures = time::SignatureMap(signatures);
 		// Files from before fades have none of them.
 		project.autoFades = autoFadesFromJson(json.value("autoFades", Json::object()));
+		// Files from before #178 have no project input transformer.
+		if (json.contains("inputTransformer"))
+			project.inputTransformer = midi::inputTransformerModulesFromJson(json.at("inputTransformer"), {});
 		// Files from before pan laws and maximum volumes have the defaults.
 		const std::string panLaw = json.value("panLaw", panLawName(PanLaw::Minus3));
 		if (const std::optional<PanLaw> law = panLawFromName(panLaw))
@@ -2107,6 +2113,9 @@ namespace gnubase::engine
 				channel.midiInserts = effectRackFromJson(item.at("midiInserts"), {}, false);
 			if (midi && item.contains("midiSends"))
 				channel.midiSends = effectRackFromJson(item.at("midiSends"), {}, true);
+			// Files from before #178 have no input transformers.
+			if (midi && item.contains("inputTransformer"))
+				channel.inputTransformer = midi::inputTransformerFromJson(item.at("inputTransformer"), {});
 			// Files from before #108 have no sends; destinations are checked once every channel is there.
 			const Json sends =
 				channel.format != ChannelFormat::None ? item.value("sends", Json::array()) : Json::array();
@@ -2410,10 +2419,20 @@ namespace gnubase::engine
 		arrangerFromJson(project, json.value("arranger", Json::object())); // files from before #167 have none
 		project.rootKey = rootKeyFromName(json.value("rootKey", std::string())).value_or(-1); // and before #168
 		transposeFromJson(project, json.value("transpose", Json::object()));
-		chordFromJson(project, json.value("chords", Json::object())); // files from before #173 have none
+		chordFromJson(project, json.value("chords", Json::object()));        // files from before #173 have none
+		chordPadsFromJson(project, json.value("chordPads", Json::object())); // and before #174
 		for (const Json& item : json.value("automation", Json::array()))
 		{
 			AutomationLane lane = automationLaneFromJson(project, item);
+			// Step curves have steps with whole values, as automationPoint.add makes them; files from before #621 and
+			// other applications' may have ramps there.
+			if (hasStepCurve(project, lane))
+				for (auto& [pointId, point] : lane.points)
+				{
+					point.shape = AutomationShape::Step;
+					point.value = std::round(point.value);
+					point.curve = 0.0;
+				}
 			const ObjectId id = lane.id;
 			project.automation[id] = std::move(lane);
 		}

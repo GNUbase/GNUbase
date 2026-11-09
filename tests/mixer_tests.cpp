@@ -309,7 +309,7 @@ TEST_CASE("pan law, maximum volume, panner settings and MIDI volume and pan are 
 	CHECK(run(mixer.client, "project.get") == before);
 }
 
-TEST_CASE("muted channels and channels silenced by another's solo are silent, gliding over a block", "[integration]")
+TEST_CASE("muted channels and channels silenced by another's solo are silent, gliding over 5 ms", "[integration]")
 {
 	// Two tracks play the sine: twice the sine at the output.
 	const auto twoTracks = [](Mixer& mixer)
@@ -331,26 +331,35 @@ TEST_CASE("muted channels and channels silenced by another's solo are silent, gl
 	run(soloed.client, "audio.render", {{"frames", 1000}});
 	checkGain(soloed.output(0, 1000), 1.0);
 
-	// Muting while playing glides to silence over one block of 64 frames, unmuting back.
+	// Muting while playing glides the fader's mute to silence over 5 ms (240 frames) from the next block on, as mute
+	// automation does, and unmuting back.
 	Mixer gliding;
 	run(gliding.client, "audio.render", {{"frames", 128}});
 	gliding.set({{"mute", true}});
-	run(gliding.client, "audio.render", {{"frames", 128}});
+	run(gliding.client, "audio.render", {{"frames", 384}});
 	gliding.set({{"mute", false}});
-	run(gliding.client, "audio.render", {{"frames", 128}});
-	checkGain(gliding.output(0, 384),
+	run(gliding.client, "audio.render", {{"frames", 384}});
+	checkGain(gliding.output(0, 896),
 		[](size_t i)
 		{
 			if (i < 128)
 				return 1.0;
-			if (i < 192)
-				return 1.0 - (static_cast<double>(i - 127) / 64.0);
-			if (i < 256)
+			if (i < 368)
+				return 1.0 - (static_cast<double>(i - 128) / 240.0);
+			if (i < 512)
 				return 0.0;
-			if (i < 320)
-				return static_cast<double>(i - 255) / 64.0;
+			if (i < 752)
+				return static_cast<double>(i - 512) / 240.0;
 			return 1.0;
 		});
+	// Soloing another channel still glides over a block.
+	Mixer soloGlide;
+	const ObjectId soloist = twoTracks(soloGlide);
+	run(soloGlide.client, "audio.render", {{"frames", 128}});
+	run(soloGlide.client, "channel.set", {{"channel", soloist}, {"solo", true}});
+	run(soloGlide.client, "audio.render", {{"frames", 128}});
+	checkGain(soloGlide.output(0, 256),
+		[](size_t i) { return i < 128 ? 2.0 : 1.0 + (i < 192 ? 1.0 - (static_cast<double>(i - 127) / 64.0) : 0.0); });
 }
 
 TEST_CASE("listening channels play on the main mix after their fader, the rest of the mix turned down to the listen "

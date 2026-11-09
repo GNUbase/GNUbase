@@ -14,10 +14,13 @@ In the engine: mute and solo, disabled tracks and `track.duplicate`.
   is silent. While any channel is soloed, only the soloed channels are heard, with the channels they play through
   (their groups and folders' group channels, a MIDI track's instrument) and the channels that play into them (the
   tracks of a soloed group, the MIDI tracks of a soloed instrument track); a muted channel stays silent, soloed or
-  not. The render snapshot marks the others `silent` (`markSilent` in `src/engine/document/rendersnapshot.cpp`), and
-  each silent channel's strip (`ChannelStrip`) glides its output to silence over one audio block, and back, so
-  switching doesn't click. A silent MIDI track's notes and controllers are left out of the snapshot, as a muted part's
-  are, so they don't reach its instrument. Silent channels don't monitor their input directly either.
+  not. A mute automation lane that reads and has points overrides the mute button while it plays, also in its gaps
+  where the button's state plays ([automation.md](automation.md)). The render snapshot marks the others `silent`
+  (`markSilent` in `src/engine/document/rendersnapshot.cpp`), and each silent channel's strip (`ChannelStrip`) glides
+  its output to silence over one audio block, and back, so switching doesn't click; the mute button mutes through
+  the fader's mute instead, gliding over 5 ms like mute automation, so that switching between the two is seamless. A
+  silent MIDI track's notes and controllers are left out of the snapshot, as a muted part's are, so they don't reach
+  its instrument, and its mute ends the notes that sound. Silent channels don't monitor their input directly either.
 - **Disabled tracks** (p. 219): `track.set` `enabled` false disables an audio, instrument or MIDI track. It keeps its
   events, parts and channel settings, but the snapshot leaves its events and parts out (no disk streaming) and its
   channel is silent. Other track types refuse it.
@@ -125,7 +128,10 @@ sends engine commands, so whatever another client changes shows at once.
   or a folder with such a track inside, warns, whatever plays into it. Remove removes them, Cancel or Escape keeps
   them, and Remove with "Don't show this warning again" checked also turns the user setting `ui.removeTracksWarning`
   (Display Warning before Deleting Non-Empty Tracks, on by default) off, which any client can turn on again with
-  `settings.set`.
+  `settings.set`. Remove Selected Tracks also removes the active marker track last, as Remove Empty Tracks does, so
+  clients only hear of a marker track that stays becoming active (#820).
+- **Track presets** (pp. 199, 238-243): the context menu's Add Track from Preset, Save Track Preset and Load Track
+  Preset open the track preset dialog for the selected tracks ([track-presets.md](track-presets.md)).
 - **Freeze and render in place** (pp. 219-220, 1471-1477): the context menu's Freeze/Unfreeze Selected Tracks
   (`track.freezeSelected`) freezes the selected audio and instrument tracks that aren't frozen, or unfreezes them when
   every one is; a frozen track's row has `.frozen`, which the themes show like a disabled one. Edit > Render in Place
