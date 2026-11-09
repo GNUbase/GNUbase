@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/peaks/peaks.h"
 
+#include "engine/audiofile/file.h"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -462,12 +464,13 @@ namespace gnubase::engine::peaks
 		const std::optional<SourceStamp> found = sizeAndTime(file);
 		if (!found)
 			return std::nullopt;
-		std::ifstream in(file, std::ios::binary);
+		// Opened as the readers open files, so that others can delete it meanwhile, on Windows too: the peak worker
+		// reads the header of a file that was just made, such as a freeze file, while it may be deleted (#951).
+		const detail::File in = detail::openFile(file.u8string(), "rb");
 		if (!in)
 			return std::nullopt;
 		std::string header(static_cast<size_t>(std::min<uint64_t>(found->size, g_headerBytes)), '\0');
-		in.read(header.data(), static_cast<std::streamsize>(header.size()));
-		if (static_cast<size_t>(in.gcount()) != header.size())
+		if (std::fread(header.data(), 1, header.size(), in.get()) != header.size())
 			return std::nullopt;
 		SourceStamp stamp = *found;
 		stamp.headerHash = fnv1a(reinterpret_cast<const unsigned char*>(header.data()), header.size());

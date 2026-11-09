@@ -377,7 +377,7 @@ TEST_CASE("value fields are dragged like knobs, and a double click edits them as
 	const auto type = [&app](const std::string& typed, const std::string& key)
 	{
 		app.ui().click(std::nullopt, at("#gain"), ui::MouseButton::Left, 2, {});
-		app.ui().key(std::nullopt, "Ctrl+A");
+		app.ui().key(std::nullopt, "Mod+A");
 		app.ui().text(std::nullopt, typed);
 		if (!key.empty())
 			app.ui().key(std::nullopt, key);
@@ -422,7 +422,7 @@ TEST_CASE("text displays show their value, and a double click edits it as text",
 	{
 		app.ui().click(std::nullopt, at("#position"), ui::MouseButton::Left, 2, {});
 		CHECK(has(element(app, "#position"), "classes", "editing"));
-		app.ui().key(std::nullopt, "Ctrl+A");
+		app.ui().key(std::nullopt, "Mod+A");
 		app.ui().text(std::nullopt, typed);
 		app.ui().key(std::nullopt, key);
 		CHECK_FALSE(has(element(app, "#position"), "classes", "editing"));
@@ -503,7 +503,7 @@ TEST_CASE("value fields change when a number is typed, also the one they show, a
 
 	// Typing the number it shows takes that number.
 	app.ui().click(std::nullopt, at("#gain"), ui::MouseButton::Left, 2, {});
-	app.ui().key(std::nullopt, "Ctrl+A");
+	app.ui().key(std::nullopt, "Mod+A");
 	app.ui().text(std::nullopt, "1.2");
 	app.ui().key(std::nullopt, "Enter");
 	CHECK(changes() == 1);
@@ -1795,7 +1795,7 @@ TEST_CASE(
 
 	// The numbers: red to 255.
 	app.ui().click(std::nullopt, at(colorField(4)), ui::MouseButton::Left, 2, {});
-	app.ui().key(std::nullopt, "Ctrl+A");
+	app.ui().key(std::nullopt, "Mod+A");
 	app.ui().text(std::nullopt, "255");
 	app.ui().key(std::nullopt, "Enter");
 	CHECK(color == "#ff8080");
