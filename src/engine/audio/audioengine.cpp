@@ -540,6 +540,7 @@ namespace gnubase::engine
 				{transformer != m_inputTransformers.end() ? transformer->second : nullptr,
 					found != snapshot.channels.end() ? found->inputTransformer : std::vector<midi::LogicalRules>()});
 		}
+		program->chordPadKeys = snapshot.chordPadKeys;
 		// Bus nodes come first, in bus order (graph::describe); child busses reach the device through their parent.
 		for (size_t b = 0; b < snapshot.busses.size(); ++b)
 			if (snapshot.busses[b].mainMix)
@@ -965,7 +966,7 @@ namespace gnubase::engine
 		}
 		const audio::DeviceFormat& format = m_device->format();
 		m_midiInput.clear();
-		m_midi.take(block, format.sampleRate, m_midiInput);
+		m_midi.take(block, format.sampleRate, m_midiInput, program.chordPadKeys);
 		const size_t bytes = block.frames * sizeof(float);
 		for (const BusLink& link : program.inputs)
 		{
@@ -990,6 +991,7 @@ namespace gnubase::engine
 				transform.processor->process(program.sequencers[i].second->input(), transform.rules);
 		m_recorder.process(block, m_played, m_recordOffset.load(std::memory_order_relaxed), program.sequencers);
 		transport.tempo = program.tempo.bpmAt(program.tempo.toTicks(transport.position, program.sampleRate));
+		transport.tempoMap = &program.tempo;
 		program.graph.process(block.frames, transport, m_workers.get());
 		m_tap.capture(block.position, program.instruments);
 		m_playback.endBlock();

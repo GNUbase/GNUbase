@@ -3,6 +3,7 @@
 
 #include "app/uitools.h"
 #include "platform/log.h"
+#include "ui/chordpads.h"
 #include "ui/fonts.h"
 #include "ui/historypanel.h"
 #include "ui/inspector.h"
@@ -493,6 +494,9 @@ namespace gnubase::app
 				m_pool = pool;
 				return pool;
 			}});
+		// The chord pads (reference manual pp. 1346-1391, docs/features/chord-pads.md) in the lower zone.
+		m_docking.add({"chordPads", "Chord Pads", "project", "lower",
+			[this](Rml::Element& element) { return std::make_shared<ui::ChordPadsPanel>(m_binding, element); }});
 		m_docking.addKeyCommands(m_keys);
 		// What the pool's commands did, sent from its toolbar, the Media menu or Find Missing Files, shows in the
 		// pool, which opens for it: its window comes to the front if it is in one of its own.
@@ -507,6 +511,14 @@ namespace gnubase::app
 						pool->report(command, result);
 				}));
 
+		m_keys.add({"window.chordPads", "Shows or hides the chord pads in the lower zone.",
+			[this](ui::Window& /*window*/, Rml::Element* /*zone*/)
+			{
+				if (m_docking.showing("chordPads") && m_docking.windowOf("chordPads") == nullptr)
+					m_docking.setVisible("project", "lower", false);
+				else
+					m_docking.open("chordPads");
+			}});
 		m_keys.add({"window.history", "Shows the edit history, where steps are undone and redone.",
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_docking.open("history"); }});
 		m_keys.add({"window.pool", "Shows the pool, the project's clips and media files.",
@@ -709,6 +721,34 @@ namespace gnubase::app
 		// Project > Project Colors Setup (docs/features/colors.md).
 		m_keys.add({"project.colorsSetup", "Opens the project colors setup dialog, which edits the project's colors.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { openDialog(window, "project-colors.rml"); }});
+		// Project > Project Rule Editor (#179, docs/features/project-rules.md): the rule editor's document on the
+		// project's tracks, parts and events, which reads and sets the project window's selection with these.
+		m_keys.add({"project.ruleEditor",
+			"Opens the project rule editor, which finds tracks, parts and events and changes, deletes or selects them.",
+			[this](ui::Window& window, Rml::Element* /*zone*/)
+			{ openDialog(window, "rule-editor.rml", {{"target", "projectRules"}}); }});
+		m_lua.addFunction("ui.projectSelection",
+			[this](const engine::Json& /*parameters*/)
+			{
+				return engine::Json{{"tracks", m_trackList ? m_trackList->selection() : std::vector<uint64_t>{}},
+					{"events", m_eventDisplay ? m_eventDisplay->selection() : std::vector<uint64_t>{}}};
+			});
+		m_lua.addFunction("ui.selectInProject",
+			[this](const engine::Json& parameters)
+			{
+				// An empty Lua table comes as an object.
+				const auto ids = [&parameters](const char* key)
+				{
+					const auto found = parameters.is_object() ? parameters.find(key) : parameters.end();
+					return found != parameters.end() && found->is_array() ? found->get<std::vector<uint64_t>>()
+																		  : std::vector<uint64_t>{};
+				};
+				if (m_trackList)
+					m_trackList->select(ids("tracks"));
+				if (m_eventDisplay)
+					m_eventDisplay->select(ids("events"));
+				return engine::Json::object();
+			});
 		// For documents' buttons and menu items: gnubase.ui.command{command = "project.addTrack"} runs a key command
 		// in the main window, as its keys would. A command that doesn't exist or parameters it doesn't take are a Lua
 		// error at the call (KeyCommands::check), in users' scripts too, instead of an engine error later or parameters

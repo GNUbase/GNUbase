@@ -6,6 +6,11 @@
 #include <cstddef>
 #include <cstdint>
 
+namespace gnubase::time
+{
+	class TempoMap;
+}
+
 namespace gnubase::engine::graph
 {
 	// Frames of a block that play consecutive project positions.
@@ -46,6 +51,8 @@ namespace gnubase::engine::graph
 		uint32_t countInFrames = 0;
 		int64_t countInPosition = 0;
 		CountIn countIn{};
+		// The project's tempo map, for the tempo anywhere in the segments, or none: then tempo holds for the block.
+		const gnubase::time::TempoMap* tempoMap = nullptr;
 	};
 
 	// What a processor gets for one block.

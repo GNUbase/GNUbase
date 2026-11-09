@@ -3,6 +3,7 @@
 
 #include "engine/audio/automation.h"
 #include "engine/audio/fades.h"
+#include "engine/document/chordpads.h"
 #include "engine/document/chordtrack.h"
 #include "engine/document/stripparameters.h"
 #include "engine/document/warp.h"
@@ -420,6 +421,7 @@ namespace gnubase::engine
 			outputs.end());
 		if (outputs.empty() && mainMix(project) != 0)
 			outputs.push_back(mainMix(project)); // the default output, also when the chosen busses are gone
+		snapshot->chordPadKeys = chordPadKeys(project.chordPads);
 		snapshot->panLaw = project.panLaw;
 		snapshot->maxVolume = project.maxVolume;
 		snapshot->recordBitDepth = project.setup.recordBitDepth;

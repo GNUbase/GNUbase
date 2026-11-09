@@ -12,6 +12,7 @@
 #include "engine/document/hitpoints.h"
 #include "engine/document/linkgroups.h"
 #include "engine/document/mixerviews.h"
+#include "engine/document/projectrules.h"
 #include "engine/document/renderinplace.h"
 #include "engine/document/sampleeditor.h"
 #include "engine/document/serialize.h"
@@ -3267,6 +3268,15 @@ namespace gnubase::engine
 			{"chord.follow", "Follow chord track"},
 			{"chord.toMidi", "Chords to MIDI"},
 			{"chord.fromMidi", "Create chord events"},
+			{"chordPads.set", "Change chord pads"},
+			{"chordPads.assign", "Assign chords to pads"},
+			{"chordPads.modify", "Modify chord pads"},
+			{"chordPads.setPad", "Change chord pad"},
+			{"chordPads.move", "Move chord pad"},
+			{"chordPads.fromChordTrack", "Assign pads from chord track"},
+			{"chordPads.loadPreset", "Load chord pads preset"},
+			{"chordPads.step", "Insert chord from pad"},
+			{"chordPads.toTrack", "Chord pad to track"},
 			{"automationLane.add", "Add automation lane"},
 			{"automationLane.set", "Change automation lane"},
 			{"automationLane.remove", "Remove automation lane"},
@@ -4432,6 +4442,7 @@ namespace gnubase::engine
 		registerArrangerCommands(engine);
 		registerTransposeCommands(engine);
 		registerChordCommands(engine);
+		registerChordPadCommands(engine);
 		registerTempoCommands(engine);
 		registerSignatureCommands(engine);
 		registerAutomationCommands(engine);
@@ -4441,6 +4452,7 @@ namespace gnubase::engine
 		registerAudioQuantizeCommands(*this, engine);
 		midi::registerFunctionCommands(*this, engine);
 		midi::registerLogicalCommands(*this, engine);
+		registerProjectRuleCommands(*this, engine);
 		metronome::registerMetronomeCommands(*this, engine);
 		midi::registerControllerLaneCommands(*this, engine);
 		registerMidiFileCommands(engine);

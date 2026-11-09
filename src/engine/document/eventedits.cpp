@@ -1146,8 +1146,14 @@ namespace gnubase::engine
 				? parameters.at("color").get<std::string>()
 				: std::string();
 			require(color.empty() || isColor(color), "color must be #rrggbb");
+			const bool rename = parameters.contains("name");
+			for (const Item& item : items)
+				require(!rename || item.audio == nullptr, "audio events have their clip's name; name renames parts");
 			for (const Item& item : items)
 			{
+				if (rename)
+					(item.part != nullptr ? item.part->name : item.audioPart->name) =
+						parameters.at("name").get<std::string>();
 				item.mute() = parameters.value("mute", item.mute());
 				item.lock() = parameters.value("lock", item.lock());
 				item.lane() = parameters.value("lane", item.lane());
@@ -2534,11 +2540,12 @@ namespace gnubase::engine
 
 		addEdit(engine,
 			{"event.set", 1,
-				"Mutes or unmutes, locks or unlocks and colors audio events and MIDI parts. Muted ones don't play; "
+				"Mutes or unmutes, locks or unlocks, colors and renames (parts only: name) audio events and parts. "
+				"Muted ones don't play; "
 				"locked ones can't be moved, resized, split, glued or removed by the event commands. color (#rrggbb) "
 				"is a color of their own; null makes them follow their track's color again. lane puts them on that "
 				"lane of their track, from 0, as cycle recordings put their takes (recording.add). Returns the events.",
-				schema({{"events", events()}, {"mute", boolean()}, {"lock", boolean()},
+				schema({{"events", events()}, {"mute", boolean()}, {"lock", boolean()}, {"name", {{"type", "string"}}},
 						   {"color", {{"type", {"string", "null"}}}},
 						   {"lane", {{"type", "integer"}, {"minimum", 0}, {"maximum", 1000}}}},
 					{"events"}),
