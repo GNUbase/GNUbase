@@ -144,7 +144,10 @@ namespace gnubase::engine
 				const int fifth = pitchClass(steps[(degree + 4) % steps.size()] - steps[degree]);
 				midi::ChordSymbol chord;
 				chord.root = pitchClass(root + steps[degree]);
-				chord.type = third == 4 ? (fifth == 8 ? "aug" : "maj") : (fifth == 6 ? "dim" : "min");
+				if (third == 4)
+					chord.type = fifth == 8 ? "aug" : "maj";
+				else
+					chord.type = fifth == 6 ? "dim" : "min";
 				chords.push_back(chord);
 			}
 			return chords;
@@ -156,19 +159,27 @@ namespace gnubase::engine
 				return {};
 			const std::array<int, 7>& steps = minor ? g_minorSteps : g_majorSteps;
 			const int interval = pitchClass(chord.root - key);
+			// The degree of a pitch class in the scale, or -1.
+			const auto degreeOf = [&steps](int pitch)
+			{
+				for (size_t i = 0; i < steps.size(); ++i)
+					if (steps.at(i) == pitchClass(pitch))
+						return static_cast<int>(i);
+				return -1;
+			};
 			std::string accidental;
-			auto found = std::find(steps.begin(), steps.end(), interval);
-			if (found == steps.end())
+			int degree = degreeOf(interval);
+			if (degree < 0)
 			{
 				accidental = "b";
-				found = std::find(steps.begin(), steps.end(), pitchClass(interval + 1));
+				degree = degreeOf(interval + 1);
 			}
-			if (found == steps.end())
+			if (degree < 0)
 			{
 				accidental = "#";
-				found = std::find(steps.begin(), steps.end(), pitchClass(interval - 1));
+				degree = degreeOf(interval - 1);
 			}
-			std::string numeral = g_numerals.at(static_cast<size_t>(found - steps.begin()));
+			std::string numeral = g_numerals.at(static_cast<size_t>(degree));
 			if (chord.type == "min" || chord.type == "dim")
 				std::transform(numeral.begin(), numeral.end(), numeral.begin(),
 					[](char letter) { return static_cast<char>(letter - 'A' + 'a'); });
@@ -581,10 +592,10 @@ namespace gnubase::engine
 					require(!pad.locked || !parameters.at("adaptive").get<bool>(), "the pad is locked");
 					pad.adaptive = parameters.at("adaptive").get<bool>();
 				}
-				if (parameters.contains("reference"))
-					pads.reference = parameters.at("reference").get<bool>() ? index
-						: pads.reference == index                           ? -1
-																			: pads.reference;
+				if (parameters.contains("reference") && parameters.at("reference").get<bool>())
+					pads.reference = index;
+				else if (parameters.contains("reference") && pads.reference == index)
+					pads.reference = -1;
 				return changed(project, context);
 			});
 		add(engine,
@@ -601,7 +612,9 @@ namespace gnubase::engine
 				ChordPad& to = padAt(pads, parameters.at("to"));
 				require(!to.locked, "chord pad " + std::to_string(parameters.at("to").get<int>()) + " is locked");
 				if (parameters.value("copy", false))
+				{
 					to = from;
+				}
 				else
 				{
 					require(

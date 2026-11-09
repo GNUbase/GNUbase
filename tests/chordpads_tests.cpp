@@ -49,6 +49,7 @@ namespace
 	std::vector<std::string> names(const std::vector<midi::ChordSymbol>& chords)
 	{
 		std::vector<std::string> result;
+		result.reserve(chords.size());
 		for (const midi::ChordSymbol& chord : chords)
 			result.push_back(midi::chordName(chord));
 		return result;
@@ -174,6 +175,7 @@ TEST_CASE("scale-based presets, degrees, tensions, inversions and the assistant'
 	// Common notes: chords that share exactly two notes with C, such as Am and Em.
 	const std::vector<Suggestion> common = suggestions(chord("C"), 0, "commonNotes", 2);
 	std::vector<std::string> commonNames;
+	commonNames.reserve(common.size());
 	for (const Suggestion& suggestion : common)
 		commonNames.push_back(midi::chordName(suggestion.chord));
 	CHECK(std::find(commonNames.begin(), commonNames.end(), "Am") != commonNames.end());
@@ -201,7 +203,7 @@ TEST_CASE("chord pads hold chords with voicings and change with the pad modifier
 			{{{"pad", 7}, {"chord", "Am7"}}, {{"pad", 8}, {"pitches", {64, 67, 72}}}, {{"pad", 1}, {"chord", ""}}}}});
 	CHECK(pad(client, 7).at("chord") == "Am7");
 	CHECK(pad(client, 8).at("chord") == "C/E");
-	CHECK(pad(client, 1).at("chord") == "");
+	CHECK(pad(client, 1).at("chord").get<std::string>().empty());
 	CHECK_THAT(reject(client, "chordPads.assign", {{"assignments", {{{"pad", 12}, {"chord", "C"}}}}}),
 		ContainsSubstring("no chord pad 12"));
 	CHECK_THAT(reject(client, "chordPads.assign", {{"assignments", {{{"pad", 0}, {"chord", "H"}}}}}),

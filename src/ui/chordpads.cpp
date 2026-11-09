@@ -67,7 +67,7 @@ namespace gnubase::ui
 		}
 
 		// The element or its nearest ancestor with the attribute.
-		Rml::Element* withAttribute(Rml::Element* element, const char* name)
+		const Rml::Element* withAttribute(const Rml::Element* element, const char* name)
 		{
 			for (; element != nullptr; element = element->GetParentNode())
 				if (element->HasAttribute(name))
@@ -96,13 +96,32 @@ namespace gnubase::ui
 			return options;
 		}
 
-		const widgets::Options g_presets = {{"major", "Major (Ionian)"}, {"minor", "Natural Minor (Aeolian)"},
-			{"dorian", "Dorian"}, {"phrygian", "Phrygian"}, {"lydian", "Lydian"}, {"mixolydian", "Mixolydian"},
-			{"locrian", "Locrian"}};
-		const widgets::Options g_loads = {{"chordsAndPlayers", "Load Chords & Players"}, {"chords", "Load Chords Only"},
-			{"players", "Load Players Only"}};
-		const widgets::Options g_algorithms = {{"cadence", "Cadence"}, {"commonNotes", "Common Notes"}};
-		const widgets::Options g_modes = {{"major", "Major"}, {"minor", "Minor"}};
+		const widgets::Options& presets()
+		{
+			static const widgets::Options options = {{"major", "Major (Ionian)"}, {"minor", "Natural Minor (Aeolian)"},
+				{"dorian", "Dorian"}, {"phrygian", "Phrygian"}, {"lydian", "Lydian"}, {"mixolydian", "Mixolydian"},
+				{"locrian", "Locrian"}};
+			return options;
+		}
+
+		const widgets::Options& loads()
+		{
+			static const widgets::Options options = {{"chordsAndPlayers", "Load Chords & Players"},
+				{"chords", "Load Chords Only"}, {"players", "Load Players Only"}};
+			return options;
+		}
+
+		const widgets::Options& algorithms()
+		{
+			static const widgets::Options options = {{"cadence", "Cadence"}, {"commonNotes", "Common Notes"}};
+			return options;
+		}
+
+		const widgets::Options& modes()
+		{
+			static const widgets::Options options = {{"major", "Major"}, {"minor", "Minor"}};
+			return options;
+		}
 
 		std::string chordButton(const Json& entry, const std::string& extraClass)
 		{
@@ -146,10 +165,10 @@ namespace gnubase::ui
 			R"(<select id="chord-pads-mode" title="Major/Minor"/></div>)"
 			R"(<div id="chord-pads-suggestions" class="chord-pads-suggestions"/></div></div></div>)");
 		widgets::fill(*find("chord-pads-root"), rootKeys(), "0");
-		widgets::fill(*find("chord-pads-preset"), g_presets, "major");
-		widgets::fill(*find("chord-pads-load"), g_loads, "chordsAndPlayers");
-		widgets::fill(*find("chord-pads-algorithm"), g_algorithms, "cadence");
-		widgets::fill(*find("chord-pads-mode"), g_modes, "major");
+		widgets::fill(*find("chord-pads-preset"), presets(), "major");
+		widgets::fill(*find("chord-pads-load"), loads(), "chordsAndPlayers");
+		widgets::fill(*find("chord-pads-algorithm"), algorithms(), "cadence");
+		widgets::fill(*find("chord-pads-mode"), modes(), "major");
 		for (const Rml::EventId id : g_events)
 			element.AddEventListener(id, this);
 		if (Rml::ElementDocument* document = element.GetOwnerDocument(); document != nullptr)
@@ -163,7 +182,7 @@ namespace gnubase::ui
 			[this](const engine::Event& event)
 			{
 				const int pad = event.data.value("pad", -1);
-				if (Rml::Element* pads = find("chord-pads-pads");
+				if (const Rml::Element* pads = find("chord-pads-pads");
 					pads != nullptr && pad >= 0 && pad < pads->GetNumChildren())
 					setClass(pads->GetChild(pad), "triggered", event.data.value("on", false));
 			}));
@@ -240,7 +259,7 @@ namespace gnubase::ui
 		for (const char* setting : {"velocity", "remoteStart", "remoteEnd", "octaveOffset"})
 			setValue(find(std::string("chord-pads-") + setting), pads.at(setting).get<int>());
 		widgets::fill(*find("chord-pads-root"), rootKeys(), std::to_string(pads.at("rootKey").get<int>()));
-		widgets::fill(*find("chord-pads-preset"), g_presets, pads.at("preset").get<std::string>());
+		widgets::fill(*find("chord-pads-preset"), presets(), pads.at("preset").get<std::string>());
 		showSelection();
 		if (Rml::Context* context = list->GetContext())
 			context->RequestNextUpdate(0);
@@ -248,7 +267,7 @@ namespace gnubase::ui
 
 	void ChordPadsPanel::showSelection()
 	{
-		Rml::Element* list = find("chord-pads-pads");
+		const Rml::Element* list = find("chord-pads-pads");
 		if (list == nullptr || !m_pads.contains("pads"))
 			return;
 		for (int i = 0; i < list->GetNumChildren(); ++i)
@@ -266,7 +285,7 @@ namespace gnubase::ui
 
 	void ChordPadsPanel::showAssistant()
 	{
-		Rml::Element* assistant = find("chord-pads-assistant-pane");
+		const Rml::Element* assistant = find("chord-pads-assistant-pane");
 		if (assistant == nullptr || assistant->IsClassSet("hidden"))
 			return;
 		setChecked(find("chord-pads-page-list"), m_page == "list");
@@ -333,15 +352,17 @@ namespace gnubase::ui
 		Rml::Element* target = event.GetTargetElement();
 		if (target == nullptr || !m_pads.contains("pads"))
 			return;
-		Rml::Element* pad = withAttribute(target, "pad");
-		Rml::Element* suggestion = withAttribute(target, "chord");
+		const Rml::Element* pad = withAttribute(target, "pad");
+		const Rml::Element* suggestion = withAttribute(target, "chord");
 		switch (event.GetId())
 		{
 		case Rml::EventId::Mousedown:
 			if (event.GetParameter("button", 0) != 0)
 				return;
 			if (pad != nullptr)
+			{
 				press(pad->GetAttribute<int>("pad", -1), event);
+			}
 			else if (suggestion != nullptr)
 			{
 				m_auditioned = suggestion->GetAttribute<Rml::String>("chord", "");
@@ -368,13 +389,15 @@ namespace gnubase::ui
 			change(*target, event);
 			return;
 		case Rml::EventId::Click:
-			if (Rml::Element* page = withAttribute(target, "page"))
+			if (const Rml::Element* page = withAttribute(target, "page"))
 			{
 				m_page = page->GetAttribute<Rml::String>("page", "list");
 				showAssistant();
 			}
-			else if (Rml::Element* actor = withAttribute(target, "action"))
+			else if (const Rml::Element* actor = withAttribute(target, "action"))
+			{
 				action(actor->GetAttribute<Rml::String>("action", ""));
+			}
 			return;
 		default:
 			return;
@@ -415,9 +438,9 @@ namespace gnubase::ui
 		m_pressed = -1;
 		send("chordPads.trigger", {{"pad", from}, {"on", false}});
 		// Released over another pad of the panel: swapped, or with Alt copied.
-		Rml::Element* over = withAttribute(target, "pad");
+		const Rml::Element* over = withAttribute(target, "pad");
 		bool inPanel = false;
-		for (Rml::Element* parent = over; parent != nullptr && !inPanel; parent = parent->GetParentNode())
+		for (const Rml::Element* parent = over; parent != nullptr && !inPanel; parent = parent->GetParentNode())
 			inPanel = parent == m_root.get();
 		const int to = over == nullptr || !inPanel ? -1 : over->GetAttribute<int>("pad", -1);
 		if (to >= 0 && to != from)
@@ -432,7 +455,7 @@ namespace gnubase::ui
 	{
 		if (pad < 0)
 			return;
-		const float delta = event.GetParameter<float>("wheel_delta_y", 0.0F);
+		const auto delta = event.GetParameter<float>("wheel_delta_y", 0.0F);
 		if (delta == 0.0F)
 			return;
 		const int up = delta < 0.0F ? 1 : -1; // the wheel turned away from the user
@@ -450,57 +473,73 @@ namespace gnubase::ui
 	{
 		const std::vector<int> pads = selected();
 		const int first = pads.empty() ? -1 : pads.front();
+		const Json& items = m_pads.at("pads");
 		if (name == "stepInput" || name == "moveInsert" || name == "remote")
+		{
 			send("chordPads.set", {{name, !m_pads.at(name).get<bool>()}});
+		}
 		else if (name == "loadPreset")
+		{
 			send("chordPads.loadPreset",
 				{{"preset", find("chord-pads-preset")->GetAttribute<Rml::String>("value", "major")},
 					{"load", find("chord-pads-load")->GetAttribute<Rml::String>("value", "chordsAndPlayers")}});
+		}
 		else if (name == "fromChordTrack")
+		{
 			send("chordPads.fromChordTrack", Json::object());
+		}
 		else if (name == "assistant")
 		{
 			Rml::Element* pane = find("chord-pads-assistant-pane");
-			const bool shown = pane->IsClassSet("hidden");
-			setClass(pane, "hidden", !shown); // the toggle turns itself on or off
+			setClass(pane, "hidden", !pane->IsClassSet("hidden")); // the toggle turns itself on or off
 			showAssistant();
 		}
 		else if (name == "selectAll")
 		{
-			for (int i = 0; i < static_cast<int>(m_pads.at("pads").size()); ++i)
+			for (int i = 0; i < static_cast<int>(items.size()); ++i)
 				m_selection.insert(i);
 			showSelection();
 		}
 		else if (name == "edit" && first >= 0)
+		{
 			openField(first);
+		}
 		else if (name == "remove" && !pads.empty())
 		{
 			Json assignments = Json::array();
 			for (const int pad : pads)
-				if (!m_pads.at("pads")[static_cast<size_t>(pad)].at("locked").get<bool>())
+				if (!items[static_cast<size_t>(pad)].at("locked").get<bool>())
 					assignments.push_back({{"pad", pad}, {"chord", ""}});
 			send("chordPads.assign", {{"assignments", assignments}});
 		}
 		else if (!pads.empty() && (name == "transposeDown" || name == "transposeUp"))
+		{
 			send("chordPads.modify", {{"pads", pads}, {"transpose", name == "transposeUp" ? 1 : -1}});
+		}
 		else if (!pads.empty() && (name == "fewerTensions" || name == "moreTensions"))
+		{
 			send("chordPads.modify", {{"pads", pads}, {"tensions", name == "moreTensions" ? 1 : -1}});
+		}
 		else if (!pads.empty() && (name == "previousVoicing" || name == "nextVoicing"))
+		{
 			send("chordPads.modify", {{"pads", pads}, {"voicing", name == "nextVoicing" ? 1 : -1}});
+		}
 		else if (first >= 0 && (name == "lock" || name == "adaptive"))
 		{
-			const bool on =
-				!m_pads.at("pads")[static_cast<size_t>(first)].at(name == "lock" ? "locked" : "adaptive").get<bool>();
+			const char* state = name == "lock" ? "locked" : "adaptive";
+			const bool on = !items[static_cast<size_t>(first)].at(state).get<bool>();
 			for (const int pad : pads)
-				send("chordPads.setPad", {{"pad", pad}, {name == "lock" ? "locked" : "adaptive", on}});
+				send("chordPads.setPad", {{"pad", pad}, {state, on}});
 		}
 		else if (first >= 0 && name == "reference")
+		{
 			send("chordPads.setPad", {{"pad", first}, {"reference", m_pads.at("reference") != first}});
+		}
 	}
 
 	void ChordPadsPanel::change(Rml::Element& target, const Rml::Event& event)
 	{
-		const std::string id = target.GetId();
+		const std::string& id = target.GetId();
 		if (id == "chord-pads-field")
 		{
 			if (event.GetParameter<bool>("linebreak", false))
@@ -510,19 +549,21 @@ namespace gnubase::ui
 		if (target.GetTagName() == "valuefield" && target.HasAttribute("setting"))
 		{
 			const auto value = static_cast<int>(event.GetParameter<float>("value", 0.0F));
-			const std::string setting = target.GetAttribute<Rml::String>("setting", "");
+			const auto setting = target.GetAttribute<Rml::String>("setting", "");
 			if (m_pads.contains(setting) && m_pads.at(setting) != value)
 				send("chordPads.set", {{setting, value}});
 			return;
 		}
-		const std::string value = event.GetParameter<Rml::String>("value", "");
+		const auto value = event.GetParameter<Rml::String>("value", "");
 		if (id == "chord-pads-root" && !value.empty() && std::to_string(m_pads.at("rootKey").get<int>()) != value)
 		{
 			const bool transpose = find("chord-pads-transposePads")->HasAttribute("checked");
 			send("chordPads.set", {{"rootKey", std::stoi(value)}, {"transposePads", transpose}});
 		}
 		else if (id == "chord-pads-algorithm" || id == "chord-pads-mode")
+		{
 			showAssistant();
+		}
 	}
 
 	void ChordPadsPanel::openField(int pad)

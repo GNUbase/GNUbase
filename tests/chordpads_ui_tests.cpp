@@ -170,7 +170,7 @@ TEST_CASE("pads are typed, swapped, changed with the toolbars and the wheel, and
 	// Select All and Remove Assignment: the locked pad stays.
 	window.click("#chord-pads-selectAll");
 	window.click("#chord-pads-remove");
-	REQUIRE(window.app.waitUntil([&] { return window.pads()[0].at("chord") == ""; }));
+	REQUIRE(window.app.waitUntil([&] { return window.pads()[0].at("chord").get<std::string>().empty(); }));
 	CHECK(window.pads()[1].at("chord") == "C#maj7");
 
 	// A preset with what to load, and the root key with Transpose Pads.
