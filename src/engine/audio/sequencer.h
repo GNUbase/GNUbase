@@ -102,7 +102,8 @@ namespace gnubase::engine
 	// controller event of each kind before the position (MidiSequence::chase), in time order, unless one of its kind is
 	// at the position itself, on any of the tracks chased, and plays there; then the controller events at the position;
 	// then the notes that sound there as they would have if playback had run up to it: of each pitch the last one that
-	// started, with its velocity, until its end; then the notes that start there. A locate while stopped chases the
+	// started, with its velocity, until its end, or for a sample if it is an articulation map's key switch that ended
+	// (RenderNote::keySwitch); then the notes that start there. A locate while stopped chases the
 	// controller events alone, up to and including those at the cursor. A chase takes a binary search per kind of
 	// event.
 	//

@@ -89,6 +89,7 @@ namespace gnubase::engine
 		std::vector<AutomationLaneChange> automation;
 		std::vector<ObjectChange<LinkGroup>> linkGroups;
 		std::vector<ObjectChange<DrumMap>> drumMaps;
+		std::vector<ObjectChange<ArticulationMap>> articulationMaps;
 
 		bool empty() const;
 	};

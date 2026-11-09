@@ -463,8 +463,10 @@ namespace gnubase::app
 			if (added.id == "inspector")
 				added.create = [this](Rml::Element& element)
 				{
-					auto inspector = std::make_shared<ui::Inspector>(m_binding, element,
-						[this](uint64_t track) { m_shell.post([this, track] { openChannelSettings(track); }); });
+					auto inspector = std::make_shared<ui::Inspector>(
+						m_binding, element, [this](uint64_t track)
+						{ m_shell.post([this, track] { openChannelSettings(track); }); }, [this](uint64_t track)
+						{ m_shell.post([this, track] { openArticulationMaps(m_main, track); }); });
 					m_inspector = inspector;
 					return std::shared_ptr<void>(inspector);
 				};

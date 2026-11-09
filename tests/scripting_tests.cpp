@@ -107,6 +107,28 @@ TEST_CASE("values travel between Lua tables and JSON", "[unit]")
 		lua.run("gnubase.fake.echo{f = print}", "function.lua").value_or(""), ContainsSubstring("can't be sent"));
 }
 
+TEST_CASE("an empty Lua table is an empty list where a command takes a list", "[unit]")
+{
+	Engine engine;
+	const Json list = {
+		{"type", "array"}, {"items", {{"type", "object"}, {"properties", {{"tags", {{"type", "array"}}}}}}}};
+	Json seen;
+	engine.registerCommand({"fake.lists", 1, "Takes lists.",
+							   {{"type", "object"}, {"properties", {{"items", list}, {"other", {{"type", "object"}}}}}},
+							   Json::object(), true},
+		[&seen](CommandContext& context)
+		{
+			seen = context.parameters();
+			return Json::object();
+		});
+	std::ostringstream output;
+	Runtime lua(engine, Trust::Trusted, output);
+	run(lua, "gnubase.fake.lists{items = {{tags = {}}, {}}, other = {}}");
+	CHECK(seen == Json{{"items", {{{"tags", Json::array()}}, Json::object()}}, {"other", Json::object()}});
+	run(lua, "gnubase.fake.lists{items = {}}");
+	CHECK(seen == Json{{"items", Json::array()}});
+}
+
 TEST_CASE("Lua handles engine events and waits for them", "[unit]")
 {
 	Engine engine;

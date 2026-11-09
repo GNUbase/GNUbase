@@ -7,6 +7,7 @@
 
 #include "engine/document/linkgroups.h"
 #include "engine/document/projectmodel.h"
+#include "engine/midi/articulationmaps.h"
 #include "engine/midi/drummaps.h"
 #include "engine/processors/builtin.h"
 #include "engine/processors/midieffects.h"
@@ -64,6 +65,7 @@ namespace gnubase::engine
 			{ControllerType::PolyPressure, "polyPressure"},
 			{ControllerType::Program, "program"},
 			{ControllerType::SysEx, "sysEx"},
+			{ControllerType::Articulation, "articulation"},
 		};
 
 		constexpr struct
@@ -533,7 +535,8 @@ namespace gnubase::engine
 		Json json = {{"id", track.id}, {"type", trackTypeName(track.type)}, {"name", track.name},
 			{"color", colorJson(track.color)}, {"timeBase", timeBaseName(track.timeBase)}, {"parent", track.parent},
 			{"channel", track.channel}, {"autoFades", track.autoFades ? toJson(*track.autoFades) : Json(nullptr)},
-			{"enabled", track.enabled}, {"picture", track.picture}, {"frozen", nullptr}, {"drumMap", track.drumMap}};
+			{"enabled", track.enabled}, {"picture", track.picture}, {"frozen", nullptr}, {"drumMap", track.drumMap},
+			{"articulationMap", track.articulationMap}};
 		if (track.frozen)
 			json["frozen"] = {{"path", track.frozen->path}, {"sampleRate", track.frozen->sampleRate},
 				{"channels", track.frozen->channels}, {"length", track.frozen->length}};
@@ -738,6 +741,8 @@ namespace gnubase::engine
 			json["probability"] = note.probability;
 		if (note.velocityVariance != 0.0)
 			json["velocityVariance"] = note.velocityVariance;
+		if (!note.articulations.empty())
+			json["articulations"] = note.articulations;
 		return json;
 	}
 
@@ -764,6 +769,10 @@ namespace gnubase::engine
 		case ControllerType::SysEx:
 			json["data"] = controller.data;
 			return json;
+		case ControllerType::Articulation:
+			json["articulation"] = controller.articulation;
+			json["reset"] = controller.value != 0;
+			return json;
 		}
 		json["channel"] = controller.channel;
 		return json;
@@ -778,13 +787,22 @@ namespace gnubase::engine
 		const ControllerType type = controller.type;
 		if (type == ControllerType::Control || type == ControllerType::PolyPressure || type == ControllerType::Program)
 			controller.number = json.value("number", uint8_t{0});
-		if (type != ControllerType::SysEx)
+		if (type != ControllerType::SysEx && type != ControllerType::Articulation)
 			controller.channel = json.value("channel", uint8_t{0});
-		if (type == ControllerType::Program)
+		if (type == ControllerType::Articulation)
+		{
+			controller.articulation = json.value("articulation", std::string());
+			controller.value = json.value("reset", false) ? 1 : 0;
+		}
+		else if (type == ControllerType::Program)
+		{
 			controller.value = json.value("bank", g_noBank);
+		}
 		else if (type != ControllerType::SysEx && json.contains("value"))
+		{
 			controller.value =
 				static_cast<uint32_t>(std::llround(json.at("value").get<double>() * g_maxControllerValue));
+		}
 		if (type == ControllerType::SysEx)
 			controller.data = json.at("data").get<std::vector<uint8_t>>();
 		return controller;
@@ -1183,13 +1201,13 @@ namespace gnubase::engine
 			{"linkGroups", toJsonArray(project.linkGroups)}, {"arranger", arrangerJson(project)},
 			{"rootKey", rootKeyName(project.rootKey)}, {"transpose", transposeJson(project)},
 			{"chords", chordJson(project)}, {"chordPads", chordPadsJson(project)},
-			{"drumMaps", toJsonArray(project.drumMaps)}, {"inputTransformer", midi::toJson(project.inputTransformer)},
-			{"virginTerritory", project.virginTerritory}, {"quantize", midi::toJson(project.quantize)},
-			{"autoQuantize", project.autoQuantize}, {"quantizePreset", project.quantizePreset},
-			{"activeMarkerTrack", project.activeMarkerTrack}, {"snap", toJson(project.snap)},
-			{"mixers", mixersJson(project.mixers)}, {"trackVisibility", toJson(project.trackVisibility)},
-			{"trackLayout", toJson(project.trackLayout)}, {"metronome", metronome::toJson(project.metronome)},
-			{"workspaces", toJson(project.workspaces)}};
+			{"drumMaps", toJsonArray(project.drumMaps)}, {"articulationMaps", toJsonArray(project.articulationMaps)},
+			{"inputTransformer", midi::toJson(project.inputTransformer)}, {"virginTerritory", project.virginTerritory},
+			{"quantize", midi::toJson(project.quantize)}, {"autoQuantize", project.autoQuantize},
+			{"quantizePreset", project.quantizePreset}, {"activeMarkerTrack", project.activeMarkerTrack},
+			{"snap", toJson(project.snap)}, {"mixers", mixersJson(project.mixers)},
+			{"trackVisibility", toJson(project.trackVisibility)}, {"trackLayout", toJson(project.trackLayout)},
+			{"metronome", metronome::toJson(project.metronome)}, {"workspaces", toJson(project.workspaces)}};
 		json.update(toJson(project.setup));
 		// What the inactive track versions hold (#165).
 		Json versionContents = Json::array();
@@ -2033,6 +2051,7 @@ namespace gnubase::engine
 			track.enabled = !canDisable(track.type) || item.value("enabled", true);
 			track.picture = item.value("picture", std::string());                    // files from before #106 have none
 			track.drumMap = item.value("drumMap", ObjectId{0});                      // and before #129 none
+			track.articulationMap = item.value("articulationMap", ObjectId{0});      // and before #175 none
 			if (const Json frozen = item.value("frozen", Json()); !frozen.is_null()) // and before #116 none
 			{
 				track.frozen = Freeze{frozen.at("path").get<std::string>(), frozen.at("sampleRate").get<double>(),
@@ -2362,6 +2381,7 @@ namespace gnubase::engine
 						timingFrom(n.at("origin").at("original")), timingFrom(n.at("origin").at("quantized"))};
 				note.probability = std::clamp(n.value("probability", 1.0), 0.0, 1.0);
 				note.velocityVariance = std::clamp(n.value("velocityVariance", 0.0), -1.0, 1.0);
+				note.articulations = n.value("articulations", std::vector<std::string>()); // before #175 none
 				part.notes[note.id] = note;
 			}
 			for (const Json& c : item.at("controllers"))
@@ -2498,6 +2518,15 @@ namespace gnubase::engine
 			if (project.drumMaps.count(track.drumMap) == 0 ||
 				(track.type != TrackType::Midi && track.type != TrackType::Instrument))
 				track.drumMap = 0;
+		for (const Json& item : json.value("articulationMaps", Json::array())) // files from before #175 have none
+		{
+			const ArticulationMap map = midi::articulationMapFromJson(item, midi::newArticulationMap());
+			project.articulationMaps[map.id] = map;
+		}
+		for (auto& [id, track] : project.trackById)
+			if (project.articulationMaps.count(track.articulationMap) == 0 ||
+				(track.type != TrackType::Midi && track.type != TrackType::Instrument))
+				track.articulationMap = 0;
 		project.virginTerritory = json.value("virginTerritory", false); // files from before #124 have none
 		// Files from before quantizing have neither.
 		if (json.contains("quantize"))
@@ -2576,6 +2605,8 @@ namespace gnubase::engine
 		for (const auto& [id, group] : project.linkGroups)
 			see(id);
 		for (const auto& [id, map] : project.drumMaps)
+			see(id);
+		for (const auto& [id, map] : project.articulationMaps)
 			see(id);
 		for (const auto& [id, lane] : project.automation)
 		{

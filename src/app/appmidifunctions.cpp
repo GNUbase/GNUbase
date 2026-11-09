@@ -7,11 +7,14 @@
 
 #include "engine/midi/quantizesettings.h"
 #include "engine/time/tempomap.h"
+#include "platform/log.h"
 
 #include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/StringUtilities.h>
 
 #include <algorithm>
 #include <array>
+#include <filesystem>
 #include <functional>
 #include <map>
 #include <optional>
@@ -70,6 +73,26 @@ namespace gnubase::app
 				text.append(text.empty() ? "" : ",").append(std::to_string(id));
 			return text;
 		}
+	}
+
+	void AppUi::openArticulationMaps(ui::Window& window, uint64_t track)
+	{
+		const Json project = m_eventDisplay ? m_eventDisplay->project() : Json();
+		std::map<uint64_t, std::string> types;
+		if (project.is_object())
+			for (const Json& each : project.value("tracks", Json::array()))
+				types[each.at("id").get<uint64_t>()] = each.value("type", std::string());
+		if (track == 0)
+			for (const uint64_t selected : m_trackList ? m_trackList->selection() : std::vector<uint64_t>())
+				if (types[selected] == "midi" || types[selected] == "instrument")
+				{
+					track = selected;
+					break;
+				}
+		std::vector<std::pair<std::string, std::string>> attributes;
+		if (track != 0)
+			attributes.emplace_back("track", std::to_string(track));
+		m_articulationMaps = openDialog(window, "articulation-maps.rml", attributes).GetObserverPtr();
 	}
 
 	void AppUi::addMidiFunctions()
@@ -194,6 +217,65 @@ namespace gnubase::app
 				openDialog(window, "rule-editor.rml", attributes);
 			}});
 		m_keys.enableWhen("midi.ruleEditor", hasTarget);
+		// The articulation map setup (#175, pp. 1264-1283, docs/features/articulation-maps.md), and the file dialogs of
+		// its Import Map and Export Map.
+		m_keys.add({"midi.articulationMapSetup",
+			"Opens the articulation map setup, for the selected MIDI or instrument track if there is one.",
+			[this](ui::Window& window, Rml::Element* /*zone*/) { openArticulationMaps(window, 0); }});
+		m_lua.addFunction("ui.importArticulationMap",
+			[this](const Json& /*parameters*/)
+			{
+				ui::FileDialog dialog;
+				dialog.title = "Import Articulation Map";
+				dialog.filters = {{"Articulation maps", "articulationmap"}, {"All files", "*"}};
+				dialog.parent = m_main.id();
+				m_shell.showFileDialog(dialog,
+					[this](const ui::FileDialogResult& result)
+					{
+						if (!result.error.empty())
+							logging::warning("The file dialog failed: {}", result.error);
+						if (result.files.empty())
+							return;
+						// The setup shows the imported map as it follows articulationMap.added, and why an import
+						// failed in its message.
+						m_binding.send("articulationMap.import", {{"path", result.files.front().u8string()}},
+							[this](const engine::Result& imported)
+							{
+								Rml::Element* document = m_articulationMaps.get();
+								Rml::Element* message = document != nullptr && document->GetParentNode() != nullptr
+									? document->GetElementById("articulation-maps-message")
+									: nullptr;
+								if (!imported.ok() && message != nullptr)
+									message->SetInnerRML(Rml::StringUtilities::EncodeRml(imported.error));
+							});
+					});
+				return Json::object();
+			});
+		m_lua.addFunction("ui.exportArticulationMap",
+			[this](const Json& parameters)
+			{
+				const uint64_t map = parameters.value("map", uint64_t{0});
+				ui::FileDialog dialog;
+				dialog.kind = ui::FileDialogKind::Save;
+				dialog.title = "Export Articulation Map";
+				dialog.filters = {{"Articulation maps", "articulationmap"}};
+				dialog.location =
+					std::filesystem::u8path(parameters.value("name", std::string("Map")) + ".articulationmap");
+				dialog.parent = m_main.id();
+				m_shell.showFileDialog(dialog,
+					[this, map](const ui::FileDialogResult& result)
+					{
+						if (!result.error.empty())
+							logging::warning("The file dialog failed: {}", result.error);
+						if (result.files.empty())
+							return;
+						std::filesystem::path file = result.files.front();
+						if (file.extension() != ".articulationmap")
+							file += ".articulationmap";
+						m_binding.send("articulationMap.export", {{"map", map}, {"path", file.u8string()}});
+					});
+				return Json::object();
+			});
 		m_keys.add({"project.inputTransformer",
 			"Opens the project input transformer, which changes what MIDI input plays on the tracks that use it.",
 			[this](ui::Window& window, Rml::Element* /*zone*/)

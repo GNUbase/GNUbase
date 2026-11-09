@@ -27,6 +27,7 @@
 #include "engine/jobs/jobs.h"
 #include "engine/media/backup.h"
 #include "engine/metronome/metronomecommands.h"
+#include "engine/midi/articulationmaps.h"
 #include "engine/midi/controllerlanes.h"
 #include "engine/midi/drummaps.h"
 #include "engine/midi/functioncommands.h"
@@ -1445,6 +1446,15 @@ namespace gnubase::engine
 					"only MIDI and instrument tracks have a drum map");
 				require(track.drumMap == 0 || project.drumMaps.count(track.drumMap) != 0,
 					"no drum map " + std::to_string(track.drumMap));
+			}
+			if (parameters.contains("articulationMap"))
+			{
+				track.articulationMap = parameters.at("articulationMap").get<ObjectId>();
+				require(
+					track.articulationMap == 0 || track.type == TrackType::Midi || track.type == TrackType::Instrument,
+					"only MIDI and instrument tracks have an articulation map");
+				require(track.articulationMap == 0 || project.articulationMaps.count(track.articulationMap) != 0,
+					"no articulation map " + std::to_string(track.articulationMap));
 			}
 			if (parameters.contains("enabled"))
 			{
@@ -2982,6 +2992,7 @@ namespace gnubase::engine
 					note.probability = unitValue(item, "probability", name);
 				note.velocityVariance = item.value("velocityVariance", 0.0);
 				require(std::abs(note.velocityVariance) <= 1.0, name + ".velocityVariance must be -1 to 1");
+				note.articulations = item.value("articulations", std::vector<std::string>());
 				notes.push_back(note);
 			}
 			Json added = Json::array();
@@ -3001,8 +3012,8 @@ namespace gnubase::engine
 		const std::optional<ControllerType> parsed =
 			controllerTypeFromName(item.value("type", std::string("controller")));
 		if (!parsed.has_value())
-			throw CommandError(
-				name + ".type must be controller, pitchBend, channelPressure, polyPressure, program or sysEx");
+			throw CommandError(name +
+				".type must be controller, pitchBend, channelPressure, polyPressure, program, sysEx or articulation");
 		const ControllerType type = *parsed;
 		const auto needs = [&](const char* key) { require(item.contains(key), name + "." + key + " is required"); };
 		const bool numbered =
@@ -3012,7 +3023,12 @@ namespace gnubase::engine
 			needs("number");
 			requireRange(item.at("number").get<int64_t>(), 0, 127, name + ".number");
 		}
-		if (type != ControllerType::Program && type != ControllerType::SysEx)
+		if (type == ControllerType::Articulation)
+		{
+			needs("articulation");
+			require(!item.at("articulation").get<std::string>().empty(), name + ".articulation must not be empty");
+		}
+		else if (type != ControllerType::Program && type != ControllerType::SysEx)
 		{
 			needs("value");
 			unitValue(item, "value", name);
@@ -3393,6 +3409,7 @@ namespace gnubase::engine
 			announceObjects(change.markers, direction, "marker", "marker", context);
 			announceObjects(change.linkGroups, direction, "linkGroup", "group", context);
 			announceObjects(change.drumMaps, direction, "drumMap", "map", context);
+			announceObjects(change.articulationMaps, direction, "articulationMap", "map", context);
 			// Slots as plugin.insert, plugin.remove and the other plugin.* commands announce them. Those of a channel
 			// that came or went are in its events.
 			std::set<ObjectId> channels; // that came or went
@@ -4086,11 +4103,13 @@ namespace gnubase::engine
 				"disconnected keep their routing. With the user setting editing.applyFolderColor, a folder's new "
 				"color goes to the tracks inside it. picture is an image file (PNG, JPEG or SVG) that the mixer shows "
 				"on the track's channel, or empty for none. drumMap is the drum map (drumMap.add) a MIDI or instrument "
-				"track's notes play through, or 0 for none.",
-				objectSchema({{"track", idSchema}, {"name", stringSchema}, {"color", color}, {"timeBase", timeBases},
-								 {"timeFormat", timeFormats}, {"timeOffset", positionSchema},
-								 {"timeOffsetOn", booleanSchema}, {"enabled", booleanSchema},
-								 {"groupChannel", booleanSchema}, {"picture", stringSchema}, {"drumMap", idSchema}},
+				"track's notes play through, or 0 for none; articulationMap its articulation map "
+				"(articulationMap.add), or 0 for none.",
+				objectSchema(
+					{{"track", idSchema}, {"name", stringSchema}, {"color", color}, {"timeBase", timeBases},
+						{"timeFormat", timeFormats}, {"timeOffset", positionSchema}, {"timeOffsetOn", booleanSchema},
+						{"enabled", booleanSchema}, {"groupChannel", booleanSchema}, {"picture", stringSchema},
+						{"drumMap", idSchema}, {"articulationMap", idSchema}},
 					{"track"}),
 				resultSchema({"track"}), false},
 			setTrack);
@@ -4418,14 +4437,17 @@ namespace gnubase::engine
 		const Json note =
 			objectSchema({{"position", integerSchema}, {"length", integerSchema}, {"pitch", integerSchema},
 							 {"velocity", numberSchema}, {"releaseVelocity", numberSchema}, {"channel", integerSchema},
-							 {"probability", numberSchema}, {"velocityVariance", numberSchema}},
+							 {"probability", numberSchema}, {"velocityVariance", numberSchema},
+							 {"articulations", arraySchema(stringSchema)}},
 				{"position", "length", "pitch", "velocity"});
 		add(engine,
 			{"note.add", 1,
 				"Adds notes to a MIDI part: position from the part's start and length in ticks, pitch 0-127, velocity "
 				"0-1, release (note-off) velocity 0-1 (default 0.5), MIDI channel 0-15 (default 0), play probability "
 				"0-1, the chance that the note plays (default 1), and velocity variance -1 to 1, the share by which "
-				"playback raises (positive) or lowers (negative) its velocity at most (default 0).",
+				"playback raises (positive) or lowers (negative) its velocity at most (default 0). articulations are "
+				"the "
+				"attributes of the track's articulation map (articulationMap.add) that the note has, by name.",
 				objectSchema({{"part", idSchema}, {"notes", arraySchema(note)}}, {"part", "notes"}),
 				{{"type", "object"}, {"properties", {{"notes", {{"type", "array"}}}}}, {"required", {"notes"}}}, false},
 			addNotes);
@@ -4439,9 +4461,10 @@ namespace gnubase::engine
 		const Json controller = objectSchema(
 			{{"position", integerSchema},
 				{"type",
-					enumSchema({"controller", "pitchBend", "channelPressure", "polyPressure", "program", "sysEx"})},
+					enumSchema({"controller", "pitchBend", "channelPressure", "polyPressure", "program", "sysEx",
+						"articulation"})},
 				{"number", integerSchema}, {"value", numberSchema}, {"channel", integerSchema}, {"bank", integerSchema},
-				{"data", arraySchema(integerSchema)}},
+				{"data", arraySchema(integerSchema)}, {"articulation", stringSchema}, {"reset", booleanSchema}},
 			{"position"});
 		add(engine,
 			{"controller.add", 1,
@@ -4449,7 +4472,9 @@ namespace gnubase::engine
 				"(default 0). type (default controller) says what else an event has: controller: number 0-127 and "
 				"value 0-1; pitchBend: value 0-1, 0.5 is no bend; channelPressure: value; polyPressure: number (the "
 				"pitch) and value; program: number (the program) and optionally bank 0-16383; sysEx: data, the "
-				"message's bytes from 0xF0 to 0xF7.",
+				"message's bytes from 0xF0 to 0xF7; articulation: a direction of the track's articulation map "
+				"(articulationMap.add), articulation its name and reset (default false) whether it ends the "
+				"directions of its group instead; it plays nothing itself.",
 				objectSchema({{"part", idSchema}, {"controllers", arraySchema(controller)}}, {"part", "controllers"}),
 				{{"type", "object"}, {"properties", {{"controllers", {{"type", "array"}}}}},
 					{"required", {"controllers"}}},
@@ -4494,6 +4519,7 @@ namespace gnubase::engine
 		registerLinkGroupCommands(*this, engine);
 		registerTrackVersionCommands(*this, engine);
 		midi::registerDrumMapCommands(*this, engine);
+		midi::registerArticulationMapCommands(*this, engine);
 		registerChannelSettingsCommands(*this, engine);
 		registerTrackPresetCommands(*this, engine);
 		registerEditorCommands(*this, engine);

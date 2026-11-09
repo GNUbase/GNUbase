@@ -8,6 +8,7 @@
 #include "engine/document/document.h"
 #include "engine/document/projectmodel.h"
 #include "engine/engine.h"
+#include "engine/midi/articulationmaps.h"
 #include "engine/midi/drummaps.h"
 #include "engine/time/signaturemap.h"
 #include "engine/time/tempomap.h"
@@ -312,8 +313,14 @@ namespace gnubase::engine
 					(takes[index].*into).push_back(std::move(item));
 				}
 			};
-			distribute(entry.value("notes", Json::array()), &MidiTake::notes);
-			distribute(entry.value("controllers", Json::array()), &MidiTake::controllers);
+			// Remote triggers select sound slots of the track's articulation map instead of playing (#175, reference
+			// manual p. 1263): they become directions and the notes' attributes.
+			Json played = entry.value("notes", Json::array());
+			Json playedControllers = entry.value("controllers", Json::array());
+			if (const ArticulationMap* map = midi::articulationMapOf(project, track.id))
+				midi::applyRemoteTriggers(*map, played, playedControllers);
+			distribute(played, &MidiTake::notes);
+			distribute(playedControllers, &MidiTake::controllers);
 
 			if ((cycleMode == "stacked" || cycleMode == "mixStacked") && takes.size() > 1)
 			{

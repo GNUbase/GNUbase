@@ -713,7 +713,7 @@ namespace gnubase::engine::midi
 					controllers.push_back(copy);
 				}
 				else if (sampleOf(at) < settings.start && settings.includeChase &&
-					controller.type != ControllerType::SysEx)
+					controller.type != ControllerType::SysEx && controller.type != ControllerType::Articulation)
 				{
 					const LaneKey key = controller.type == ControllerType::Program
 						? LaneKey{ControllerType::Program, controller.channel, 0}
@@ -804,7 +804,9 @@ namespace gnubase::engine::midi
 		const auto controllerKey = [by](const Controller& controller) -> int
 		{
 			if (by == DissolveBy::Channel)
-				return controller.type == ControllerType::SysEx ? -1 : controller.channel;
+				return controller.type == ControllerType::SysEx || controller.type == ControllerType::Articulation
+					? -1
+					: controller.channel;
 			return controller.type == ControllerType::PolyPressure ? controller.number : -1;
 		};
 

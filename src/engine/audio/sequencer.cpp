@@ -56,6 +56,7 @@ namespace gnubase::engine
 			case ControllerType::ChannelPressure:
 			case ControllerType::PolyPressure:
 			case ControllerType::SysEx:
+			case ControllerType::Articulation:
 				return -1;
 			}
 			return -1;
@@ -155,6 +156,7 @@ namespace gnubase::engine
 				event.type = Type::Program;
 				break;
 			case ControllerType::SysEx:
+			case ControllerType::Articulation: // never rendered: directions play through the slots' output events
 				event.type = Type::SysEx;
 				event.channel = 0;
 				event.key = 0;
@@ -550,19 +552,22 @@ namespace gnubase::engine
 	bool MidiSequencer::chaseNotes(
 		const MidiSequence& sequence, int64_t position, uint32_t offset, graph::EventBuffer& out) noexcept
 	{
-		// Of each pitch the last note that started before the position, if it still sounds there, in their order.
+		// Of each pitch the last note that started before the position, if it still sounds there or is a key switch
+		// (#175), in their order: the instrument gets the articulation it would have had, then the notes. A key switch
+		// that ended plays for a sample.
 		size_t count = 0;
 		for (const ChaseLane& lane : sequence.noteLanes)
 		{
 			const RenderNote* note = lastBefore(
 				sequence.notes, sequence.noteOrder, lane, position, [](const RenderNote& n) { return n.start; });
-			if (note != nullptr && note->end > position)
+			if (note != nullptr && (note->end > position || note->keySwitch))
 				m_chasedNotes[count++] = static_cast<uint32_t>(note - sequence.notes.data());
 		}
 		std::sort(m_chasedNotes.begin(), m_chasedNotes.begin() + static_cast<std::ptrdiff_t>(count));
 		for (size_t i = 0; i < count; ++i)
 		{
-			const RenderNote& note = sequence.notes[m_chasedNotes[i]];
+			RenderNote note = sequence.notes[m_chasedNotes[i]];
+			note.end = std::max(note.end, position + 1);
 			const auto index = static_cast<uint16_t>(((note.channel % 16) * 128) + (note.pitch % 128));
 			if (!sounds(index) && !noteOn(note, offset, out)) // sounds: chased in an earlier block
 				return false;

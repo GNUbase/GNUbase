@@ -455,6 +455,8 @@
 		<menuseparator/>
 		<!-- docs/features/midi-rules.md -->
 		<menuitem command="midi.ruleEditor">Rule Editor...</menuitem>
+		<!-- docs/features/articulation-maps.md -->
+		<menuitem command="midi.articulationMapSetup">Articulation Map Setup...</menuitem>
 		<menuseparator/>
 		<menuitem command="midi.mergeInLoop">Merge MIDI in Loop...</menuitem>
 		<menuitem command="midi.dissolvePart">Dissolve Part...</menuitem>

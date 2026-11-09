@@ -83,6 +83,8 @@ namespace gnubase::engine
 		uint8_t pitch = 60;
 		uint16_t velocity = 0;
 		uint8_t channel = 0;
+		// An articulation map's key switch (#175): a jump sends the last one of its pitch before it, sounding or not.
+		bool keySwitch = false;
 	};
 
 	struct RenderController

@@ -152,6 +152,7 @@ namespace gnubase::engine::midi
 				return true;
 			}
 			case ControllerType::SysEx:
+			case ControllerType::Articulation:
 				return false;
 			}
 			return false;
