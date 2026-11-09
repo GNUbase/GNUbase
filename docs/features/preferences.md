@@ -28,7 +28,7 @@ scripts can do all it does. Its presets keep complete or partial sets of prefere
   check box, a drop-down list or a number field, from its setting's schema, labelled as in the manual:
   - Editing: Display Warning before Deleting Non-Empty Tracks (`ui.removeTracksWarning`), Default Track Time Type
     (`editing.defaultTimeBase`), Use Up/Down Navigation Commands for Selecting Tracks only
-    (`ui.upDownSelectsTracksOnly`). MIDI: Legato Overlap (`editing.legatoOverlap`). Tool Modifiers: each action's
+    (`ui.upDownSelectsTracksOnly`). MIDI: Legato Overlap (`editing.legatoOverlap`), Legato Mode: Between Selected Notes Only (`editing.legatoBetweenSelected`). Tool Modifiers: each action's
     modifier keys (`ui.toolModifiers`, over the defaults that `ui::EventDisplay::defaultToolModifiers` has; the
     dialog keeps only those that differ), chosen from a list or, as in the reference (p. 1574), by holding the keys
     and clicking the action's Assign (Ctrl or Cmd, Alt, Shift); another action of the same category with those keys
