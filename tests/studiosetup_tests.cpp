@@ -116,7 +116,7 @@ namespace
 	void type(test::UiApp& app, const std::string& selector, int index, const std::string& text)
 	{
 		click(app, selector, index);
-		app.ui().key(std::nullopt, "Ctrl+A");
+		app.ui().key(std::nullopt, "Mod+A");
 		app.ui().text(std::nullopt, text);
 	}
 

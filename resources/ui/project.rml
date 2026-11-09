@@ -190,6 +190,7 @@
 				<menuitem command="file.importMidi">MIDI File...</menuitem>
 				<menuitem command="file.importTempo">Tempo Track...</menuitem>
 				<menuitem command="file.importMarkers">Markers...</menuitem>
+				<menuitem command="file.importTracks">Tracks from Project or Track Archive...</menuitem>
 			</menu>
 		</menuitem>
 		<menuitem id="export-submenu">Export
@@ -198,6 +199,7 @@
 				<menuitem command="file.quickExport">Quick Audio Export...</menuitem>
 				<menuitem command="file.exportTempo">Tempo Track...</menuitem>
 				<menuitem command="file.exportMarkers">Markers...</menuitem>
+				<menuitem command="file.exportTracks">Selected Tracks...</menuitem>
 			</menu>
 		</menuitem>
 		<menuseparator/>
@@ -332,6 +334,8 @@
 		<menuitem command="project.addTrack">Add Track...</menuitem>
 		<menuseparator/>
 		<menuitem command="project.colorsSetup">Project Colors Setup...</menuitem>
+		<!-- docs/features/midi-rules.md -->
+		<menuitem command="project.inputTransformer">Project Input Transformer...</menuitem>
 		<menuseparator/>
 		<!-- The tempo track (reference manual pp. 1447, 1451, docs/features/tempo-track.md) -->
 		<menuitem id="tempo-track-submenu">Tempo Track
@@ -443,6 +447,9 @@
 		<menuseparator/>
 		<menuitem command="midi.transposeSetup">Transpose Setup...</menuitem>
 		<menuseparator/>
+		<!-- docs/features/midi-rules.md -->
+		<menuitem command="midi.ruleEditor">Rule Editor...</menuitem>
+		<menuseparator/>
 		<menuitem command="midi.mergeInLoop">Merge MIDI in Loop...</menuitem>
 		<menuitem command="midi.dissolvePart">Dissolve Part...</menuitem>
 		<menuitem command="midi.bounceMidi">Bounce MIDI</menuitem>
@@ -474,6 +481,10 @@
 	</menu>
 	<menu id="track-list-menu">
 		<menuitem command="project.addTrack">Add Track...</menuitem>
+		<!-- Track presets (reference manual pp. 199, 238-243, docs/features/track-presets.md) -->
+		<menuitem command="project.addTrackFromPreset">Add Track from Preset...</menuitem>
+		<menuitem command="track.saveTrackPreset">Save Track Preset...</menuitem>
+		<menuitem command="track.loadTrackPreset">Load Track Preset...</menuitem>
 		<!-- Routing (reference manual pp. 546, 554, docs/features/routing.md) -->
 		<menuitem command="track.addGroupToSelected">Group Track to Selected Tracks...</menuitem>
 		<menuitem command="track.addEffectToSelected">Effect Track to Selected Tracks...</menuitem>

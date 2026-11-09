@@ -277,7 +277,7 @@ TEST_CASE("the tempo track editor switches the tempo mode and edits the tempo ev
 
 	// The current tempo in tempo track mode is the tempo at the cursor, and changes the event before it.
 	app.ui().click(window, {"#current-tempo", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
-	app.ui().key(window, "Ctrl+A");
+	app.ui().key(window, "Mod+A");
 	app.ui().text(window, "130");
 	app.ui().key(window, "Enter");
 	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("tempo")[0].at("bpm") == 130.0; }));
@@ -290,7 +290,7 @@ TEST_CASE("the tempo track editor switches the tempo mode and edits the tempo ev
 	REQUIRE(app.waitUntil([&document] { return !document.GetElementById("tempo-info")->IsClassSet("hidden"); }));
 	CHECK(document.GetElementById("tempo-position")->GetInnerRML() == "3.1.1.0");
 	app.ui().click(window, {"#tempo-value", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
-	app.ui().key(window, "Ctrl+A");
+	app.ui().key(window, "Mod+A");
 	app.ui().text(window, "95.5");
 	app.ui().key(window, "Enter");
 	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("tempo")[1].at("bpm") == 95.5; }));

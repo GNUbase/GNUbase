@@ -167,6 +167,9 @@ namespace gnubase::engine
 		midi::Modifiers modifiers;    // MIDI and instrument channels: notes has them applied, live notes get them
 		midi::EffectRack midiInserts; // MIDI and instrument channels: the effects their sequencer runs
 		midi::EffectRack midiSends;
+		// MIDI and instrument channels: the rules of their input transformer's modules that are on, the track's or
+		// the project's, in order; empty for none.
+		std::vector<midi::LogicalRules> inputTransformer;
 		bool monitor = false; // the monitor and record enable buttons
 		bool recordEnable = false;
 		// MIDI and instrument tracks: they play what comes from all MIDI inputs (MIDI thru), since they monitor or

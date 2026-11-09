@@ -17,6 +17,7 @@
 #include "engine/document/serialize.h"
 #include "engine/document/stripparameters.h"
 #include "engine/document/timewarp.h"
+#include "engine/document/trackpresets.h"
 #include "engine/document/trackversions.h"
 #include "engine/document/volumecurves.h"
 #include "engine/document/workspaces.h"
@@ -28,6 +29,7 @@
 #include "engine/midi/controllerlanes.h"
 #include "engine/midi/drummaps.h"
 #include "engine/midi/functioncommands.h"
+#include "engine/midi/logicalcommands.h"
 #include "engine/midi/quantizecommands.h"
 #include "engine/processors/builtin.h"
 #include "platform/log.h"
@@ -566,115 +568,117 @@ namespace gnubase::engine
 			}
 			track.timeBase = base;
 		}
+	}
 
-		// Linear positions are in samples, so they keep their time when the sample rate changes.
-		void changeSampleRate(Project& project, double sampleRate, CommandContext& context)
-		{
-			const double factor = sampleRate / project.sampleRate;
-			for (auto& [id, event] : project.audioEvents)
-				if (event.position.base == time::TimeBase::Linear)
-				{
-					event.position.value = rescale(event.position.value, factor);
-					context.emit("audioEvent.changed", {{"event", toJson(event)}});
-				}
-			for (auto& [id, part] : project.midiParts)
-				if (part.position.base == time::TimeBase::Linear)
-				{
-					part.position.value = rescale(part.position.value, factor);
-					part.length = rescale(part.length, factor);
-					context.emit("midiPart.changed", {{"part", toJson(part)}});
-				}
-			for (auto& [id, part] : project.audioParts)
-				if (part.position.base == time::TimeBase::Linear)
-				{
-					part.position.value = rescale(part.position.value, factor);
-					part.length = rescale(part.length, factor);
-					context.emit("audioPart.changed", {{"part", toJson(part)}});
-				}
-			for (auto& [id, track] : project.trackById)
-				for (TrackVersion& version : track.versions)
-				{
-					for (AudioEvent& event : version.audioEvents)
-						if (event.position.base == time::TimeBase::Linear)
-							event.position.value = rescale(event.position.value, factor);
-					for (AudioPart& part : version.audioParts)
-						if (part.position.base == time::TimeBase::Linear)
-						{
-							part.position.value = rescale(part.position.value, factor);
-							part.length = rescale(part.length, factor);
-						}
-					for (MidiPart& part : version.midiParts)
-						if (part.position.base == time::TimeBase::Linear)
-						{
-							part.position.value = rescale(part.position.value, factor);
-							part.length = rescale(part.length, factor);
-						}
-				}
-			for (auto& [id, lane] : project.automation)
+	void changeSampleRate(Project& project, double sampleRate, CommandContext& context)
+	{
+		const double factor = sampleRate / project.sampleRate;
+		for (auto& [id, event] : project.audioEvents)
+			if (event.position.base == time::TimeBase::Linear)
 			{
-				bool changed = false;
-				for (auto& [pointId, point] : lane.points)
-					if (point.position.base == time::TimeBase::Linear)
-					{
-						point.position.value = rescale(point.position.value, factor);
-						changed = true;
-					}
-				if (changed)
-					context.emit("automationLane.changed", {{"lane", toJson(lane)}});
+				event.position.value = rescale(event.position.value, factor);
+				context.emit("audioEvent.changed", {{"event", toJson(event)}});
 			}
-			for (auto& [id, track] : project.trackById)
-				if (track.type == TrackType::Ruler && track.timeBase == time::TimeBase::Linear)
-				{
-					track.timeOffset = rescale(track.timeOffset, factor);
-					context.emit("track.changed", {{"track", toJson(track)}});
-				}
-			project.sampleRate = sampleRate;
-			// At a lower rate, a short cycle marker may become shorter than a sample, in either time base.
-			for (auto& [id, marker] : project.markers)
+		for (auto& [id, part] : project.midiParts)
+			if (part.position.base == time::TimeBase::Linear)
 			{
-				const bool linear = marker.position.base == time::TimeBase::Linear;
-				if (linear)
-				{
-					marker.position.value = rescale(marker.position.value, factor);
-					marker.end.value = rescale(marker.end.value, factor);
-				}
-				if (keepMinimumLength(project, marker) || linear)
-					context.emit("marker.changed", {{"marker", toJson(marker)}});
+				part.position.value = rescale(part.position.value, factor);
+				part.length = rescale(part.length, factor);
+				context.emit("midiPart.changed", {{"part", toJson(part)}});
 			}
-			bool arranged = false;
-			for (ArrangerEvent& event : project.arranger.events)
+		for (auto& [id, part] : project.audioParts)
+			if (part.position.base == time::TimeBase::Linear)
 			{
-				if (event.position.base == time::TimeBase::Linear)
-				{
-					event.position.value = rescale(event.position.value, factor);
-					event.end.value = rescale(event.end.value, factor);
-					arranged = true;
-				}
-				arranged = keepMinimumLength(project, event) || arranged;
+				part.position.value = rescale(part.position.value, factor);
+				part.length = rescale(part.length, factor);
+				context.emit("audioPart.changed", {{"part", toJson(part)}});
 			}
-			if (arranged)
-				context.emit("arranger.changed", arrangerJson(project));
-			bool transposed = false;
-			for (TransposeEvent& event : project.transpose.events)
-				if (event.position.base == time::TimeBase::Linear)
-				{
-					event.position.value = rescale(event.position.value, factor);
-					transposed = true;
-				}
-			if (transposed)
-				context.emit("transpose.changed", transposeJson(project));
-			bool chorded = false;
-			for (std::vector<ChordEvent>* events : {&project.chords.events, &project.chords.scales})
-				for (ChordEvent& event : *events)
+		for (auto& [id, track] : project.trackById)
+			for (TrackVersion& version : track.versions)
+			{
+				for (AudioEvent& event : version.audioEvents)
 					if (event.position.base == time::TimeBase::Linear)
-					{
 						event.position.value = rescale(event.position.value, factor);
-						chorded = true;
+				for (AudioPart& part : version.audioParts)
+					if (part.position.base == time::TimeBase::Linear)
+					{
+						part.position.value = rescale(part.position.value, factor);
+						part.length = rescale(part.length, factor);
 					}
-			if (chorded)
-				context.emit("chord.changed", chordJson(project));
+				for (MidiPart& part : version.midiParts)
+					if (part.position.base == time::TimeBase::Linear)
+					{
+						part.position.value = rescale(part.position.value, factor);
+						part.length = rescale(part.length, factor);
+					}
+			}
+		for (auto& [id, lane] : project.automation)
+		{
+			bool changed = false;
+			for (auto& [pointId, point] : lane.points)
+				if (point.position.base == time::TimeBase::Linear)
+				{
+					point.position.value = rescale(point.position.value, factor);
+					changed = true;
+				}
+			if (changed)
+				context.emit("automationLane.changed", {{"lane", toJson(lane)}});
 		}
+		for (auto& [id, track] : project.trackById)
+			if (track.type == TrackType::Ruler && track.timeBase == time::TimeBase::Linear)
+			{
+				track.timeOffset = rescale(track.timeOffset, factor);
+				context.emit("track.changed", {{"track", toJson(track)}});
+			}
+		project.sampleRate = sampleRate;
+		// At a lower rate, a short cycle marker may become shorter than a sample, in either time base.
+		for (auto& [id, marker] : project.markers)
+		{
+			const bool linear = marker.position.base == time::TimeBase::Linear;
+			if (linear)
+			{
+				marker.position.value = rescale(marker.position.value, factor);
+				marker.end.value = rescale(marker.end.value, factor);
+			}
+			if (keepMinimumLength(project, marker) || linear)
+				context.emit("marker.changed", {{"marker", toJson(marker)}});
+		}
+		bool arranged = false;
+		for (ArrangerEvent& event : project.arranger.events)
+		{
+			if (event.position.base == time::TimeBase::Linear)
+			{
+				event.position.value = rescale(event.position.value, factor);
+				event.end.value = rescale(event.end.value, factor);
+				arranged = true;
+			}
+			arranged = keepMinimumLength(project, event) || arranged;
+		}
+		if (arranged)
+			context.emit("arranger.changed", arrangerJson(project));
+		bool transposed = false;
+		for (TransposeEvent& event : project.transpose.events)
+			if (event.position.base == time::TimeBase::Linear)
+			{
+				event.position.value = rescale(event.position.value, factor);
+				transposed = true;
+			}
+		if (transposed)
+			context.emit("transpose.changed", transposeJson(project));
+		bool chorded = false;
+		for (std::vector<ChordEvent>* events : {&project.chords.events, &project.chords.scales})
+			for (ChordEvent& event : *events)
+				if (event.position.base == time::TimeBase::Linear)
+				{
+					event.position.value = rescale(event.position.value, factor);
+					chorded = true;
+				}
+		if (chorded)
+			context.emit("chord.changed", chordJson(project));
+	}
 
+	namespace
+	{
 		int64_t countTracks(const Project& project, TrackType type)
 		{
 			return std::count_if(project.trackById.begin(), project.trackById.end(),
@@ -2059,6 +2063,20 @@ namespace gnubase::engine
 				try
 				{
 					changed.modifiers = modifiersFromJson(parameters.at("modifiers"), changed.modifiers);
+				}
+				catch (const std::invalid_argument& error)
+				{
+					throw CommandError(error.what());
+				}
+			}
+			if (parameters.contains("inputTransformer"))
+			{
+				require(type == TrackType::Midi || type == TrackType::Instrument,
+					"only MIDI and instrument tracks have an input transformer");
+				try
+				{
+					changed.inputTransformer =
+						midi::inputTransformerFromJson(parameters.at("inputTransformer"), changed.inputTransformer);
 				}
 				catch (const std::invalid_argument& error)
 				{
@@ -4109,7 +4127,10 @@ namespace gnubase::engine
 				"whileRecording while the transport records, tapeMachine while it stands or records (the default). "
 				"Monitoring glides in and out over one audio block. MIDI and instrument tracks have them too: "
 				"recordEnable arms the track for MIDI recording, and while either is on, the track plays what comes "
-				"from its MIDI input, midiInput: all (all MIDI inputs, the default) or none. monitor and "
+				"from its MIDI input, midiInput: all (all MIDI inputs, the default) or none. inputTransformer (MIDI "
+				"and instrument tracks): {mode, modules}, mode off, track (its own modules) or project (those of "
+				"midi.setInputTransformer), modules as midi.setInputTransformer takes them; the modules that are on "
+				"change what the track's MIDI input plays, before it plays and records it. monitor and "
 				"recordEnable stay off on a frozen track and on a MIDI track that plays a frozen instrument track "
 				"(track.freeze): they can't be turned on, nor such a track routed to one with them on, and linked "
 				"channels and VCA faders don't pass them on to it. mute silences a channel; "
@@ -4175,7 +4196,7 @@ namespace gnubase::engine
 						{"notes", stringSchema}, {"linked", booleanSchema}, {"pre", {{"type", "object"}}},
 						{"eq", {{"type", "object"}}}, {"strip", {{"type", "object"}}},
 						{"modifiers", {{"type", "object"}}}, {"midiInserts", {{"type", "object"}}},
-						{"midiSends", {{"type", "object"}}},
+						{"midiSends", {{"type", "object"}}}, {"inputTransformer", {{"type", "object"}}},
 						{"sends",
 							arraySchema(
 								objectSchema({{"send", integerSchema}, {"destination", idSchema}, {"on", booleanSchema},
@@ -4414,6 +4435,7 @@ namespace gnubase::engine
 		midi::registerQuantizeCommands(*this, engine);
 		registerAudioQuantizeCommands(*this, engine);
 		midi::registerFunctionCommands(*this, engine);
+		midi::registerLogicalCommands(*this, engine);
 		metronome::registerMetronomeCommands(*this, engine);
 		midi::registerControllerLaneCommands(*this, engine);
 		registerMidiFileCommands(engine);
@@ -4431,6 +4453,7 @@ namespace gnubase::engine
 		registerTrackVersionCommands(*this, engine);
 		midi::registerDrumMapCommands(*this, engine);
 		registerChannelSettingsCommands(*this, engine);
+		registerTrackPresetCommands(*this, engine);
 		registerEditorCommands(*this, engine);
 		registerSampleEditorCommands(*this, engine);
 		registerHitpointCommands(*this, engine, jobs);

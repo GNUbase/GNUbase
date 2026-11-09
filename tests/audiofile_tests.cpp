@@ -307,6 +307,25 @@ TEST_CASE("the format is recognized from the content, not the file name", "[inte
 	CHECK(AudioFileReader::open(path)->info().format == AudioFormat::Flac);
 }
 
+TEST_CASE("a file being read can be deleted, and reads on", "[integration]")
+{
+	// As on the other platforms, so that a file the engine plays, such as a frozen track's freeze file, can be removed
+	// meanwhile (#951).
+	const test::TempDir dir;
+	const std::string path = utf8(dir.path() / "open.wav");
+	const test::Audio audio = testSignal(1, 48000, 1000);
+	writeFile(path, audio, {});
+	const auto reader = AudioFileReader::open(path);
+	std::vector<float> buffer(1000);
+	REQUIRE(reader->read(buffer.data(), 500) == 500);
+	std::error_code error;
+	CHECK(std::filesystem::remove(std::filesystem::u8path(path), error));
+	CHECK_FALSE(error);
+	CHECK_FALSE(std::filesystem::exists(std::filesystem::u8path(path)));
+	CHECK(reader->read(buffer.data() + 500, 500) == 500);
+	CHECK(std::abs(buffer[999] - audio.samples[999]) < 1e-4f);
+}
+
 TEST_CASE("the decoders leave the files that the readers hand them open", "[integration]")
 {
 	// The decoders close a file at the end if their read callback is the one for files they open themselves, which

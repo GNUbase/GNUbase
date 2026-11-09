@@ -6,6 +6,7 @@
 #include "engine/document/snap.h"
 #include "engine/metronome/metronomesettings.h"
 #include "engine/midi/effects.h"
+#include "engine/midi/logical.h"
 #include "engine/midi/modifiers.h"
 #include "engine/midi/quantizesettings.h"
 #include "engine/time/signaturemap.h"
@@ -242,6 +243,10 @@ namespace gnubase::engine
 		midi::EffectRack midiInserts = {};
 		// NOLINTNEXTLINE(readability-redundant-member-init): see instrumentParameters
 		midi::EffectRack midiSends = {};
+		// MIDI and instrument tracks: the input transformer, which changes what their MIDI input plays
+		// (docs/features/midi-rules.md). NOLINTNEXTLINE(readability-redundant-member-init): see
+		// instrumentParameters
+		midi::InputTransformer inputTransformer = {};
 		// The values set for the instrument's parameters (parameter.set), by parameter id; the others are at their
 		// defaults. A new instrument starts with none.
 		// The initializer lets Channel{...} leave it out without GCC's and Clang's -Wmissing-field-initializers, like
@@ -1081,6 +1086,9 @@ namespace gnubase::engine
 		TransposeTrack transpose;             // the transpose track's events and controls; reset when the track goes
 		ChordTrack chords;                    // the chord track's (#173); reset when the track goes
 		std::map<ObjectId, DrumMap> drumMaps; // a new project has the GM Map (#129)
+		// The project input transformer's modules, which the MIDI and instrument tracks whose input transformer is in
+		// project mode share (#178).
+		midi::InputTransformerModules inputTransformer;
 		// Virgin territory instead of initial values (reference manual p. 881): automation lanes have gaps before their
 		// first and after their last point too, where their parameters have their static values. A setting saved with
 		// the project, not part of undo.
@@ -1207,12 +1215,12 @@ namespace gnubase::engine
 	{
 		return std::tie(a.id, a.track, a.format, a.input, a.output, a.instrument, a.volume, a.pan, a.panner, a.panLeft,
 				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.program, a.bank, a.device, a.modifiers,
-				   a.midiInserts, a.midiSends, a.instrumentParameters, a.monitor, a.recordEnable, a.midiInput, a.mute,
-				   a.solo, a.soloDefeat, a.listen, a.slots, a.notes, a.sections, a.sends) ==
+				   a.midiInserts, a.midiSends, a.inputTransformer, a.instrumentParameters, a.monitor, a.recordEnable,
+				   a.midiInput, a.mute, a.solo, a.soloDefeat, a.listen, a.slots, a.notes, a.sections, a.sends) ==
 			std::tie(b.id, b.track, b.format, b.input, b.output, b.instrument, b.volume, b.pan, b.panner, b.panLeft,
 				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.program, b.bank, b.device, b.modifiers,
-				b.midiInserts, b.midiSends, b.instrumentParameters, b.monitor, b.recordEnable, b.midiInput, b.mute,
-				b.solo, b.soloDefeat, b.listen, b.slots, b.notes, b.sections, b.sends);
+				b.midiInserts, b.midiSends, b.inputTransformer, b.instrumentParameters, b.monitor, b.recordEnable,
+				b.midiInput, b.mute, b.solo, b.soloDefeat, b.listen, b.slots, b.notes, b.sections, b.sends);
 	}
 
 	inline bool operator==(const Slot& a, const Slot& b)
