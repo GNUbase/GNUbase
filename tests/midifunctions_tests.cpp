@@ -1211,6 +1211,28 @@ TEST_CASE("merge plays the parts' transpose and velocity and, with includeInsert
 	}
 }
 
+TEST_CASE("merge with includeInserts starts a note that a random position moves before its part at the part's start",
+	"[unit]")
+{
+	Project project = newProject();
+	const ObjectId piano = addTrack(project, TrackType::Instrument, "Piano");
+	addPart(project, piano, 4 * g_quarter, 4 * g_quarter,
+		PartBuilder().note(1, 0, 10, 60).note(2, g_quarter, 10, 62).part);
+	project.channels.at(project.trackById.at(piano).channel).modifiers.random[0] = {
+		RandomTarget::Position, -g_quarter / 4, -g_quarter / 4};
+	MergeSettings settings;
+	settings.start = project.tempo.toSamples(4 * g_quarter, project.sampleRate); // the left locator on the part's start
+	settings.end = project.tempo.toSamples(8 * g_quarter, project.sampleRate);
+	settings.tracks = {piano};
+	settings.includeInserts = true;
+	const PartChanges changes = merge(project, settings);
+	REQUIRE(changes.addedParts.size() == 1);
+	const MidiPart& part = project.midiParts.at(changes.addedParts[0]);
+	CHECK(part.position.value == 4 * g_quarter);
+	// As playback plays them: the first stays at the part's start with its length, the other moves.
+	CHECK(notesOf(part) == std::vector<std::vector<int64_t>>{{0, 60, 10, 0}, {g_quarter - (g_quarter / 4), 62, 10, 0}});
+}
+
 TEST_CASE("merge leaves out muted parts and, by default, the tracks that don't play", "[unit]")
 {
 	Project project = newProject();
