@@ -11,6 +11,7 @@
 #include "engine/document/stripparameters.h"
 #include "engine/engine.h"
 #include "engine/processors/builtin.h"
+#include "engine/processors/builtinplugin.h"
 
 #include <algorithm>
 #include <cmath>
@@ -161,9 +162,8 @@ namespace gnubase::engine
 		{
 			if (parameter.target.type == AutomationTargetType::Plugin)
 			{
-				const std::map<uint32_t, double>& values = project.slots.at(parameter.target.slot).parameters;
-				const auto set = values.find(parameter.target.parameter);
-				return set != values.end() ? set->second : parameter.info.defaultValue;
+				const Slot& slot = project.slots.at(parameter.target.slot);
+				return processors::BuiltinPlugin::staticValue(parameter.info, slot.parameters, slot.state.get());
 			}
 			switch (parameter.target.type)
 			{

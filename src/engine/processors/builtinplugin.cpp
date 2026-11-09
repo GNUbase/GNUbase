@@ -228,6 +228,20 @@ namespace gnubase::engine::processors
 		return values;
 	}
 
+	double BuiltinPlugin::staticValue(
+		const ParameterInfo& parameter, const std::map<uint32_t, double>& set, const std::vector<uint8_t>* state)
+	{
+		if (const auto value = set.find(parameter.id); value != set.end())
+			return value->second;
+		if (state != nullptr)
+		{
+			const std::map<uint32_t, double> values = stateValues(*state);
+			if (const auto saved = values.find(parameter.id); saved != values.end())
+				return saved->second;
+		}
+		return parameter.defaultValue;
+	}
+
 	bool BuiltinPlugin::loadState(const uint8_t* data, size_t size, plugin::StateContext /*context*/)
 	{
 		if (size % g_stateEntry != 0)

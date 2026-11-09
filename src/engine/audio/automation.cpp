@@ -11,7 +11,6 @@
 #include <cmath>
 #include <cstddef>
 #include <cstring>
-#include <map>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -375,18 +374,10 @@ namespace gnubase::engine
 			if (info == nullptr)
 				continue;
 			// The values set apply on top of the plugin's state (Slot::parameters).
-			const std::map<uint32_t, double> state =
-				slot.state ? processors::BuiltinPlugin::stateValues(*slot.state) : std::map<uint32_t, double>();
 			for (const processors::ParameterInfo& parameter : info->parameters)
-			{
-				double value = parameter.defaultValue;
-				if (const auto set = slot.parameters.find(parameter.id); set != slot.parameters.end())
-					value = set->second;
-				else if (const auto saved = state.find(parameter.id); saved != state.end())
-					value = saved->second;
 				lanes.push_back({{AutomationTargetType::Plugin, parameter.id, 0, 0, slot.id}, Kind::Plugin,
-					parameter.id, value, parameter.minimum, parameter.maximum, {}});
-			}
+					parameter.id, processors::BuiltinPlugin::staticValue(parameter, slot.parameters, slot.state.get()),
+					parameter.minimum, parameter.maximum, {}});
 		}
 		const bool midi = channel.type == TrackType::Midi || channel.type == TrackType::Instrument;
 		for (const RenderAutomationLane& lane : channel.automation)

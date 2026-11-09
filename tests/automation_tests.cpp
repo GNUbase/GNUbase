@@ -1882,6 +1882,46 @@ TEST_CASE("switching between the mute button and mute automation lets no audio t
 	}
 }
 
+TEST_CASE("switching between the mute button and mute automation on a channel another's solo silences lets no audio "
+		  "through",
+	"[integration]")
+{
+	const int blockSize = GENERATE(64, 512);
+	INFO("block size " << blockSize);
+	Mixer mixer(blockSize);
+	// Another track, which doesn't monitor and so plays nothing, is soloed.
+	const ObjectId soloist =
+		channelOf(mixer.client, idOf(run(mixer.client, "track.add", {{"type", "audio"}}), "track"));
+	run(mixer.client, "channel.set", {{"channel", soloist}, {"solo", true}});
+	run(mixer.client, "transport.play");
+	run(mixer.client, "audio.render", {{"frames", 2048}});
+	// Muting and unmuting.
+	run(mixer.client, "channel.set", {{"channel", mixer.channel}, {"mute", true}});
+	run(mixer.client, "audio.render", {{"frames", 2048}});
+	run(mixer.client, "channel.set", {{"channel", mixer.channel}, {"mute", false}});
+	run(mixer.client, "audio.render", {{"frames", 2048}});
+	// Adding and removing a mute lane's first point while the button is on.
+	run(mixer.client, "channel.set", {{"channel", mixer.channel}, {"mute", true}});
+	run(mixer.client, "audio.render", {{"frames", 2048}});
+	const ObjectId lane = mixer.lane({{"type", "mute"}});
+	const Json point =
+		run(mixer.client, "automationPoint.add", {{"lane", lane}, {"points", {{{"position", 0}, {"value", 0.0}}}}})
+			.at("points")
+			.at(0);
+	run(mixer.client, "audio.render", {{"frames", 2048}});
+	run(mixer.client, "automationPoint.remove", {{"lane", lane}, {"points", {point.at("id")}}});
+	run(mixer.client, "audio.render", {{"frames", 2048}});
+	for (int channel = 0; channel < 2; ++channel)
+	{
+		const std::vector<float> output = mixer.capture(channel, int64_t{7} * 2048);
+		float loudest = 0.0F;
+		for (const float sample : output)
+			loudest = std::max(loudest, std::abs(sample));
+		INFO("channel " << channel);
+		CHECK(loudest == 0.0F);
+	}
+}
+
 TEST_CASE("points of mute and stepped parameters' lanes load from files as steps with whole values", "[unit]")
 {
 	Engine engine;

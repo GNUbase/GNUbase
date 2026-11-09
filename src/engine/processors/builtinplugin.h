@@ -63,6 +63,10 @@ namespace gnubase::engine::processors
 		bool loadState(const uint8_t* data, size_t size, plugin::StateContext context) override;
 		// The parameter values a state holds, by id, the last of an id winning; none if it isn't one of these states.
 		static std::map<uint32_t, double> stateValues(const std::vector<uint8_t>& state);
+		// A slot's static value for one of its parameters: the value set for it (Slot::parameters), else its state's
+		// (Slot::state, none if null), else its default. Playback and parameter.get both take it.
+		static double staticValue(
+			const ParameterInfo& parameter, const std::map<uint32_t, double>& set, const std::vector<uint8_t>* state);
 
 		// Latency and Tail, from activate on.
 		uint32_t latency() const override;

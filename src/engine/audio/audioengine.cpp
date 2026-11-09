@@ -729,8 +729,8 @@ namespace gnubase::engine
 			graph::NodeDesc& node = desc.nodes[firstChannel + i];
 			const auto source = static_cast<size_t>(sourceNode(channel.id));
 			// The mute button mutes through the fader's mute (channelAutomation), which mute automation takes over in
-			// the same change, without a gap.
-			const bool silent = channel.silent && !channel.muted;
+			// the same change, without a gap; the strips' silence is the rest (RenderChannel::quiet).
+			const bool silent = channel.quiet;
 			std::shared_ptr<ChannelStrip> fader;
 			std::shared_ptr<ChannelStrip> sourceStrip; // the strip that runs the source
 			if (source == firstChannel + i)
