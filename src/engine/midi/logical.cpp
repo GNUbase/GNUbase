@@ -367,7 +367,9 @@ namespace gnubase::engine::midi
 				action.parameter2 = static_cast<double>(*scale);
 			}
 			else
+			{
 				action.parameter2 = number(item, "parameter2", name);
+			}
 			return action;
 		}
 
@@ -613,7 +615,12 @@ namespace gnubase::engine::midi
 			requireObject(item, name);
 			for (const auto& [key, value] : item.items())
 				if (key != "on" && key != "rules")
-					throw std::invalid_argument(name + " has no " + key);
+				{
+					std::string message = name;
+					message += " has no ";
+					message += key;
+					throw std::invalid_argument(message);
+				}
 			InputTransformerModule& module = base[i];
 			if (item.contains("on"))
 			{

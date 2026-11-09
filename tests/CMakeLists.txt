@@ -111,6 +111,7 @@ add_executable(gnubase-tests
 	midimodifiers_tests.cpp
 	midipatches_tests.cpp
 	midirecording_tests.cpp
+	midirules_ui_tests.cpp
 	miditap_tests.cpp
 	mixdown_tests.cpp
 	mixdown_ui_tests.cpp

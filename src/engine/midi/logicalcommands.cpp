@@ -60,6 +60,16 @@ namespace gnubase::engine::midi
 			return {{"name", preset.name}, {"factory", factory}, {"rules", toJson(preset.rules)}};
 		}
 
+		// Whether an item of the presets file has that name.
+		auto named(std::string name)
+		{
+			return [name = std::move(name)](const Json& item)
+			{
+				const auto found = item.find("name"); // end() unless it is an object
+				return found != item.end() && *found == name;
+			};
+		}
+
 		// The user's presets after the factory ones, names unique among both. They are user settings: every change
 		// starts from the presets in the file, so that none drops what another GNUbase process saved meanwhile.
 		// Presets this GNUbase can't read are skipped and stay in the file.
@@ -135,15 +145,6 @@ namespace gnubase::engine::midi
 			}
 
 		private:
-			static auto named(std::string name)
-			{
-				return [name = std::move(name)](const Json& item)
-				{
-					const auto found = item.find("name"); // end() unless it is an object
-					return found != item.end() && *found == name;
-				};
-			}
-
 			// A preset of the file, or nothing and why this GNUbase can't read it.
 			static std::optional<LogicalPreset> readPreset(const Json& item, std::string& problem)
 			{
@@ -329,8 +330,8 @@ namespace gnubase::engine::midi
 			{
 				const uint16_t bend = pitchBendToMidi1(controller.value);
 				event.type = LogicalType::PitchBend;
-				event.subtype = bend & 0x7FU;
-				event.mainValue = bend >> 7U;
+				event.subtype = static_cast<int>(bend & 0x7FU);
+				event.mainValue = static_cast<int>(bend >> 7U);
 				return true;
 			}
 			case ControllerType::SysEx:

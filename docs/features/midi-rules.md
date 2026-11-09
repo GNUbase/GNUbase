@@ -63,13 +63,16 @@ input plays (the input transformers). A preset library holds named rules for bot
 
 ## In the UI
 
-MIDI > Rule Editor... (`midi.applyRulesor`) opens the rule editor (`resources/ui/rule-editor.rml`) for what
-the MIDI functions work on ([midi-functions.md](midi-functions.md)): an editor's selected notes, or the selected MIDI
-parts. Project > Project Input Transformer... (`project.inputTransformer`) opens the same document for the project's
-modules. It shows the presets, the filter lines (brackets, target, condition, parameters, and/or), the function and the
-action lines, each line with Insert and Remove; Save Preset saves what it shows under a name. Apply runs
-`midi.applyRules` (select shows how many events `midi.findByRules` found), or, for the input transformer, sets the
-module shown with `midi.setInputTransformer`.
+MIDI > Rule Editor... (`midi.ruleEditor`) opens the rule editor (`resources/ui/rule-editor.rml`) for what the MIDI
+functions work on ([midi-functions.md](midi-functions.md)): an editor's selected notes, or the selected MIDI parts.
+Project > Project Input Transformer... (`project.inputTransformer`) opens the same document for the project's
+modules, with a Module list (1 to 4) and its On switch. The document shows the presets (choosing one shows its rules
+and puts its name into the name field), the filter lines (brackets, target, condition, parameters, and/or), the
+function (Filter instead of Delete for the input transformer, which has no Select) and the action lines. Insert adds a
+line, Remove removes the lines whose check box is on, or the last one; a type or scale parameter is a drop-down list.
+Save Preset saves what it shows under the name. Apply runs `midi.applyRules`, or for select shows how many events
+`midi.findByRules` found; the input transformer's OK sets the module shown with `midi.setInputTransformer`. A value that
+isn't a number, or rules the engine refuses, keep the dialog open with the message.
 
 ## Not yet
 
@@ -91,4 +94,6 @@ removing, the file in the settings folder, a preset that can't be read); input t
 through `midi.inject` and `midi.capture` (note-offs following their note-ons while the rules change, modules in order,
 filter, insert, insert exclusive, a sustain pedal playing a bass drum), undo, saving and loading, and what
 `channel.set` refuses. `tests/midieffects_tests.cpp`'s golden files check that the transformer effect plays as before.
-`tests/rtcheck_tests.cpp` runs input transformers without allocating.
+`tests/rtcheck_tests.cpp` runs input transformers without allocating. `tests/midirules_ui_tests.cpp` drives MIDI > Rule
+Editor (a factory preset, lines put together, Remove, select, a value that isn't a number, Save Preset) and Project >
+Project Input Transformer in the app with `ui::Automation`.

@@ -122,7 +122,7 @@ TEST_CASE("filter lines: conditions, and before or, and brackets", "[unit]")
 	CHECK(!found(rules({filter("subtype", "noteIsEqualTo", 0)}, "transform"), note(85)));
 
 	// note and C3 or channel 2: (note and C3) or channel 2, so a controller on channel 2 is found.
-	Json first = isNote;
+	const Json first = isNote;
 	Json pitch = filter("subtype", "equal", 60);
 	pitch["join"] = "or";
 	const Json channel2 = filter("channel", "equal", 2);

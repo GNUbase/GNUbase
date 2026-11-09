@@ -419,8 +419,8 @@ namespace gnubase::engine::processors
 			{
 				const uint16_t bend = midi::pitchBendToMidi1(event.value);
 				out.type = LogicalType::PitchBend;
-				out.subtype = bend & 0x7FU;
-				out.mainValue = bend >> 7U;
+				out.subtype = static_cast<int>(bend & 0x7FU);
+				out.mainValue = static_cast<int>(bend >> 7U);
 				return true;
 			}
 			default:
@@ -511,7 +511,7 @@ namespace gnubase::engine::processors
 			}
 			if (held.passed)
 				out.add(event);
-			if (held.to != g_none && !(held.passed && held.to == index))
+			if (held.to != g_none && (!held.passed || held.to != index))
 				out.add(movedTo(event, held.to));
 			if (event.type == Type::NoteOff)
 				held.down = false;
@@ -543,7 +543,7 @@ namespace gnubase::engine::processors
 			const uint16_t to = emit && changed.type == Type::NoteOn ? indexOf(changed) : g_none;
 			if (held.down) // played again before its note-off: ends what the earlier one started and this one doesn't
 			{
-				if (held.to != g_none && held.to != to && !(pass && held.to == index))
+				if (held.to != g_none && held.to != to && (!pass || held.to != index))
 					out.add(noteEvent(Type::NoteOff, held.to, 0, event.offset));
 				if (held.passed && !pass && to != index)
 					out.add(noteEvent(Type::NoteOff, index, 0, event.offset));

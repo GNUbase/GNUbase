@@ -1,0 +1,467 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The rule editor and the project input transformer (#178, docs/features/midi-rules.md, reference manual pp.
+     1392-1423). app::AppUi opens it with the document's attributes parts and notes (ids separated by commas) for the
+     rule editor, or target="project" for the project input transformer. Its Lua shows the presets, the filter lines,
+     the function and the action lines, and runs the engine's commands: Apply runs midi.applyRules (select:
+     midi.findByRules, which shows how many events it found) or, for the input transformer, sets the module shown with
+     midi.setInputTransformer; Save Preset runs midiRules.savePreset. A command the engine refuses keeps the dialog open
+     with its message; Cancel closes it. -->
+<rml>
+<head>
+	<title>Rule Editor</title>
+	<style>
+		dialog
+		{
+			width: 760dp;
+		}
+
+		.rule-row
+		{
+			display: flex;
+			align-items: center;
+			margin: 6dp 12dp 0 12dp;
+		}
+
+		.rule-row .label
+		{
+			width: 90dp;
+		}
+
+		.rule-row select, .rule-row input.text
+		{
+			width: 110dp;
+			margin-right: 4dp;
+		}
+
+		.rule-row select.bracket
+		{
+			width: 50dp;
+		}
+
+		.rule-row select.join
+		{
+			width: 60dp;
+		}
+
+		.rule-row input.text.number
+		{
+			width: 70dp;
+		}
+
+		.rule-heading
+		{
+			margin: 10dp 12dp 0 12dp;
+		}
+
+		#rule-editor-message
+		{
+			flex: 1;
+		}
+
+		.rule-row button
+		{
+			margin-left: 6dp;
+		}
+	</style>
+	<script>
+		-- The dialog's state, in the UI's Lua.
+		RuleEditor = {}
+		local editor = RuleEditor
+
+		local targets = {{"position", "Position"}, {"length", "Length"}, {"subtype", "Subtype"},
+			{"mainValue", "Main Value"}, {"channel", "Channel"}, {"type", "Type"}, {"secondaryValue", "Secondary Value"}}
+		local conditions = {{"equal", "Equal"}, {"unequal", "Unequal"}, {"bigger", "Bigger"},
+			{"biggerOrEqual", "Bigger or Equal"}, {"less", "Less"}, {"lessOrEqual", "Less or Equal"},
+			{"insideRange", "Inside Range"}, {"outsideRange", "Outside Range"}, {"noteIsEqualTo", "Note is Equal to"}}
+		local types = {{"note", "Note"}, {"polyPressure", "Poly Pressure"}, {"controller", "Controller"},
+			{"program", "Program Change"}, {"aftertouch", "Aftertouch"}, {"pitchBend", "Pitchbend"}}
+		local operations = {{"add", "Add"}, {"subtract", "Subtract"}, {"multiplyBy", "Multiply by"},
+			{"divideBy", "Divide by"}, {"roundBy", "Round by"}, {"setRandom", "Set Random Values Between"},
+			{"setFixed", "Set to Fixed Value"}, {"setRelativeRandom", "Set Relative Random Values Between"},
+			{"useSubtype", "Use Subtype"}, {"useMainValue", "Use Main Value"}, {"mirror", "Mirror"},
+			{"transposeToScale", "Transpose to Scale"}, {"addLength", "Add Length"}}
+		local scales = {{"major", "Major"}, {"minor", "Minor"}, {"harmonicMinor", "Harmonic Minor"},
+			{"melodicMinor", "Melodic Minor"}, {"dorian", "Dorian"}, {"phrygian", "Phrygian"}, {"lydian", "Lydian"},
+			{"mixolydian", "Mixolydian"}, {"locrian", "Locrian"}, {"majorPentatonic", "Major Pentatonic"},
+			{"minorPentatonic", "Minor Pentatonic"}, {"blues", "Blues"}, {"wholeTone", "Whole Tone"}}
+		local opens = {{"0", ""}, {"1", "("}, {"2", "(("}, {"3", "((("}}
+		local closes = {{"0", ""}, {"1", ")"}, {"2", "))"}, {"3", ")))"}}
+		local joins = {{"and", "And"}, {"or", "Or"}}
+
+		local function escape(text)
+			return (tostring(text):gsub('[&<>"]', {["&"] = "&amp;", ["<"] = "&lt;", [">"] = "&gt;", ['"'] = "&quot;"}))
+		end
+
+		local function dropDown(id, choices, value, class, onchange)
+			local options = {}
+			for index, choice in ipairs(choices) do
+				local on = tostring(value) == choice[1] or (value == nil and index == 1)
+				options[#options + 1] = '<option value="' .. escape(choice[1]) .. '"' .. (on and " selected" or "") ..
+					">" .. escape(choice[2]) .. "</option>"
+			end
+			return '<select id="rule-editor-' .. id .. '"' .. (class and (' class="' .. class .. '"') or "") ..
+				(onchange and (' onchange="' .. onchange .. '"') or "") .. ">" .. table.concat(options) ..
+				"</select>"
+		end
+
+		local function text(id, value)
+			return '<input type="text" class="text number" id="rule-editor-' .. id .. '" value="' ..
+				escape(value or 0) .. '"/>'
+		end
+
+		local function element(document, id)
+			return document:GetElementById("rule-editor-" .. id)
+		end
+
+		local function valueOf(document, id)
+			local found = element(document, id)
+			local value = found and found:GetAttribute("value")
+			return value ~= nil and tostring(value) or ""
+		end
+
+		-- A number from a text field; with strict, an error naming it if it isn't one, else 0.
+		local function number(document, id, name, strict)
+			local value = tonumber(valueOf(document, id))
+			if value == nil then
+				if strict then
+					error(name .. " must be a number", 0)
+				end
+				return 0
+			end
+			return math.tointeger(value) or value
+		end
+
+		local function ids(text)
+			local list = {}
+			for id in tostring(text or ""):gmatch("%d+") do
+				list[#list + 1] = math.tointeger(tonumber(id))
+			end
+			return list
+		end
+
+		local function functionsFor()
+			if editor.input then
+				return {{"delete", "Filter"}, {"transform", "Transform"}, {"insert", "Insert"},
+					{"insertExclusive", "Insert Exclusive"}}
+			end
+			return {{"delete", "Delete"}, {"transform", "Transform"}, {"insert", "Insert"},
+				{"insertExclusive", "Insert Exclusive"}, {"select", "Select"}}
+		end
+
+		local function isOneOf(value, choices)
+			for _, choice in ipairs(choices) do
+				if choice[1] == value then
+					return true
+				end
+			end
+			return false
+		end
+
+		-- A line's parameters, whose fields depend on its target and operation.
+		local function filterValues(prefix, line)
+			if line.target == "type" then
+				return dropDown(prefix .. "p1", types, line.parameter1) .. text(prefix .. "p2", 0)
+			end
+			return text(prefix .. "p1", line.parameter1) .. text(prefix .. "p2", line.parameter2)
+		end
+
+		local function actionValues(prefix, line)
+			local p1 = line.target == "type" and dropDown(prefix .. "p1", types, line.parameter1) or
+				text(prefix .. "p1", line.parameter1)
+			local p2 = line.operation == "transposeToScale" and dropDown(prefix .. "p2", scales, line.parameter2) or
+				text(prefix .. "p2", line.parameter2)
+			return p1 .. p2
+		end
+
+		-- A line starts with a check box that picks it for Remove. A change of target or operation makes its
+		-- parameters' fields anew (RuleEditor.retarget), leaving the drop-down list that announced it in place.
+		local function filterRow(index, line)
+			local prefix = "filter-" .. index .. "-"
+			local retarget = "RuleEditor.retarget(document, 'filter', " .. index .. ")"
+			return '<div class="rule-row"><input type="checkbox" id="rule-editor-' .. prefix .. 'pick"/>' ..
+				dropDown(prefix .. "open", opens, line.open or 0, "bracket") ..
+				dropDown(prefix .. "target", targets, line.target, nil, retarget) ..
+				dropDown(prefix .. "condition", conditions, line.condition) .. '<span id="rule-editor-' .. prefix ..
+				'values">' .. filterValues(prefix, line) .. "</span>" ..
+				dropDown(prefix .. "close", closes, line.close or 0, "bracket") ..
+				dropDown(prefix .. "join", joins, line.join or "and", "join") .. "</div>"
+		end
+
+		local function actionRow(index, line)
+			local prefix = "action-" .. index .. "-"
+			local retarget = "RuleEditor.retarget(document, 'action', " .. index .. ")"
+			return '<div class="rule-row"><input type="checkbox" id="rule-editor-' .. prefix .. 'pick"/>' ..
+				dropDown(prefix .. "target", targets, line.target, nil, retarget) ..
+				dropDown(prefix .. "operation", operations, line.operation, nil, retarget) .. '<span id="rule-editor-' ..
+				prefix .. 'values">' .. actionValues(prefix, line) .. "</span></div>"
+		end
+
+		-- Fields are made anew from the rules; drop-down lists announce a change while they are made, which the
+		-- handlers ignore (building).
+		local function render(document)
+			editor.building = true
+			local rows = {}
+			for index, line in ipairs(editor.rules.filters) do
+				rows[#rows + 1] = filterRow(index, line)
+			end
+			element(document, "filters").inner_rml = table.concat(rows)
+			rows = {}
+			for index, line in ipairs(editor.rules.actions) do
+				rows[#rows + 1] = actionRow(index, line)
+			end
+			element(document, "actions").inner_rml = table.concat(rows)
+			element(document, "function-field").inner_rml =
+				dropDown("function", functionsFor(), editor.rules["function"])
+			editor.building = false
+		end
+
+		-- A line's parameter as its field has it: with choices, a name from its drop-down list (fallback if the
+		-- field is a text field still), else a number.
+		local function parameter(document, id, name, choices, fallback, strict)
+			local value = valueOf(document, id)
+			if choices ~= nil then
+				return isOneOf(value, choices) and value or fallback
+			end
+			if isOneOf(value, types) or isOneOf(value, scales) then
+				return 0
+			end
+			return number(document, id, name, strict)
+		end
+
+		-- The rules the dialog shows; with strict, an error for a value that isn't a number.
+		local function read(document, strict)
+			local rules = {filters = {}, actions = {}, ["function"] = valueOf(document, "function")}
+			for index = 1, #editor.rules.filters do
+				local prefix = "filter-" .. index .. "-"
+				local name = "Filter line " .. index
+				local line = {open = number(document, prefix .. "open", name, false),
+					target = valueOf(document, prefix .. "target"),
+					condition = valueOf(document, prefix .. "condition"),
+					close = number(document, prefix .. "close", name, false), join = valueOf(document, prefix .. "join")}
+				local isType = line.target == "type"
+				line.parameter1 = parameter(document, prefix .. "p1", name .. ": Parameter 1", isType and types or nil,
+					"note", strict)
+				line.parameter2 = parameter(document, prefix .. "p2", name .. ": Parameter 2", nil, 0,
+					strict and not isType)
+				rules.filters[index] = line
+			end
+			for index = 1, #editor.rules.actions do
+				local prefix = "action-" .. index .. "-"
+				local name = "Action line " .. index
+				local line = {target = valueOf(document, prefix .. "target"),
+					operation = valueOf(document, prefix .. "operation")}
+				if line.target == "type" then
+					line.operation = "setFixed"
+				end
+				line.parameter1 = parameter(document, prefix .. "p1", name .. ": Parameter 1",
+					line.target == "type" and types or nil, "note", strict)
+				line.parameter2 = parameter(document, prefix .. "p2", name .. ": Parameter 2",
+					line.operation == "transposeToScale" and scales or nil, "major", strict)
+				rules.actions[index] = line
+			end
+			return rules
+		end
+
+		-- The rules as the engine takes them: an empty Lua table would be an object, so empty lists are left out.
+		local function engineRules(rules)
+			return {filters = #rules.filters > 0 and rules.filters or nil,
+				actions = #rules.actions > 0 and rules.actions or nil, ["function"] = rules["function"]}
+		end
+
+		local function copy(rules)
+			local result = {filters = {}, actions = {}, ["function"] = rules["function"] or "transform"}
+			for index, line in ipairs(rules.filters or {}) do
+				result.filters[index] = line
+			end
+			for index, line in ipairs(rules.actions or {}) do
+				result.actions[index] = line
+			end
+			return result
+		end
+
+		local function showPresets(document, chosen)
+			editor.presets = gnubase.midiRules.presets().presets
+			local choices = {{"", ""}}
+			for _, preset in ipairs(editor.presets) do
+				choices[#choices + 1] = {preset.name, preset.name}
+			end
+			editor.building = true
+			element(document, "preset-field").inner_rml =
+				dropDown("preset", choices, chosen, nil, "RuleEditor.choose(document)")
+			editor.building = false
+		end
+
+		local function showModule(document)
+			local modules = gnubase.project.get().inputTransformer
+			local module = modules[editor.module] or {}
+			editor.rules = copy(module.rules or {})
+			element(document, "on-field").inner_rml = '<input type="checkbox" id="rule-editor-on"' ..
+				(module.on and " checked" or "") .. '/><span class="label">On</span>'
+			render(document)
+		end
+
+		function editor.load(document)
+			editor.parts = ids(document:GetAttribute("parts"))
+			editor.notes = ids(document:GetAttribute("notes"))
+			editor.input = tostring(document:GetAttribute("target") or "") == "project"
+			editor.rules = copy({})
+			element(document, "title").inner_rml = editor.input and "Project Input Transformer" or "Rule Editor"
+			element(document, "apply").inner_rml = editor.input and "OK" or "Apply"
+			showPresets(document, nil)
+			if editor.input then
+				editor.module = 1
+				editor.building = true
+				element(document, "module-field").inner_rml = '<span class="label">Module</span>' ..
+					dropDown("module", {{"1", "1"}, {"2", "2"}, {"3", "3"}, {"4", "4"}}, "1", nil,
+						"RuleEditor.chooseModule(document)") .. '<span id="rule-editor-on-field"/>'
+				editor.building = false
+				showModule(document)
+			else
+				render(document)
+			end
+		end
+
+		-- Makes a line's parameters' fields anew for its target and operation.
+		function editor.retarget(document, kind, index)
+			if editor.building then
+				return
+			end
+			local prefix = kind .. "-" .. index .. "-"
+			local rules = read(document, false)
+			local line = (kind == "filter" and rules.filters or rules.actions)[index]
+			element(document, prefix .. "values").inner_rml =
+				kind == "filter" and filterValues(prefix, line) or actionValues(prefix, line)
+		end
+
+		function editor.insert(document, list)
+			editor.rules = read(document, false)
+			local line = list == "filters" and {open = 0, target = "type", condition = "equal", parameter1 = "note",
+				parameter2 = 0, close = 0, join = "and"} or {target = "subtype", operation = "add", parameter1 = 0,
+				parameter2 = 0}
+			table.insert(editor.rules[list], line)
+			render(document)
+		end
+
+		-- Removes the lines picked, or the last one if none is.
+		function editor.remove(document, list)
+			editor.rules = read(document, false)
+			local kind = list == "filters" and "filter-" or "action-"
+			local kept = {}
+			for index, line in ipairs(editor.rules[list]) do
+				if not element(document, kind .. index .. "-pick"):HasAttribute("checked") then
+					kept[#kept + 1] = line
+				end
+			end
+			if #kept == #editor.rules[list] then
+				table.remove(kept)
+			end
+			editor.rules[list] = kept
+			render(document)
+		end
+
+		function editor.choose(document)
+			if editor.building then
+				return
+			end
+			local name = valueOf(document, "preset")
+			for _, preset in ipairs(editor.presets) do
+				if preset.name == name then
+					editor.rules = copy(preset.rules)
+					element(document, "name"):SetAttribute("value", name)
+					render(document)
+					return
+				end
+			end
+		end
+
+		function editor.chooseModule(document)
+			if editor.building then
+				return
+			end
+			editor.module = math.tointeger(tonumber(valueOf(document, "module"))) or 1
+			showModule(document)
+		end
+
+		local function message(document, text)
+			element(document, "message").inner_rml = escape(text)
+		end
+
+		function editor.save(document)
+			local ok, failure = pcall(function()
+				local name = valueOf(document, "name")
+				gnubase.midiRules.savePreset({name = name, rules = engineRules(read(document, true))})
+				showPresets(document, name)
+			end)
+			message(document, ok and "Preset saved" or failure)
+		end
+
+		local function apply(document)
+			local rules = engineRules(read(document, true))
+			if editor.input then
+				local current = gnubase.project.get().inputTransformer
+				local modules = {}
+				for index = 1, editor.module - 1 do
+					modules[index] = {on = current[index].on}
+				end
+				modules[editor.module] = {on = element(document, "on"):HasAttribute("checked"), rules = rules}
+				gnubase.midi.setInputTransformer({modules = modules})
+				return true
+			end
+			local parameters = {parts = editor.parts, rules = rules}
+			if #editor.notes > 0 then
+				parameters.notes = editor.notes
+			end
+			if rules["function"] == "select" then
+				local found = gnubase.midi.findByRules(parameters)
+				message(document, (#found.notes + #found.controllers) .. " events found")
+				return false
+			end
+			gnubase.midi.applyRules(parameters)
+			return true
+		end
+
+		-- Apply (OK for the input transformer): runs the rules and closes, unless the engine refuses them.
+		function editor.apply(document)
+			local ok, result = pcall(apply, document)
+			if not ok then
+				message(document, result)
+			elseif result then
+				document:Close()
+			end
+		end
+	</script>
+</head>
+<body onshow="RuleEditor.load(document)">
+	<dialog id="rule-editor">
+		<div class="dialog-titlebar" id="rule-editor-title">Rule Editor</div>
+		<div class="rule-row" id="rule-editor-module-field"/>
+		<div class="rule-row">
+			<span class="label">Preset</span>
+			<span id="rule-editor-preset-field"/>
+			<input type="text" class="text" id="rule-editor-name" value=""/>
+			<button id="rule-editor-save" onclick="RuleEditor.save(document)">Save Preset</button>
+		</div>
+		<div class="rule-heading">Event Target Filters</div>
+		<div id="rule-editor-filters"/>
+		<div class="rule-row">
+			<button id="rule-editor-insert-filter" onclick="RuleEditor.insert(document, 'filters')">Insert</button>
+			<button id="rule-editor-remove-filter" onclick="RuleEditor.remove(document, 'filters')">Remove</button>
+		</div>
+		<div class="rule-row">
+			<span class="label">Function</span>
+			<span id="rule-editor-function-field"/>
+		</div>
+		<div class="rule-heading">Event Transform Actions</div>
+		<div id="rule-editor-actions"/>
+		<div class="rule-row">
+			<button id="rule-editor-insert-action" onclick="RuleEditor.insert(document, 'actions')">Insert</button>
+			<button id="rule-editor-remove-action" onclick="RuleEditor.remove(document, 'actions')">Remove</button>
+		</div>
+		<div class="rule-row">
+			<div id="rule-editor-message"/>
+			<button id="rule-editor-cancel" result="cancel">Cancel</button>
+			<button id="rule-editor-apply" class="primary" onclick="RuleEditor.apply(document)">Apply</button>
+		</div>
+	</dialog>
+</body>
+</rml>
