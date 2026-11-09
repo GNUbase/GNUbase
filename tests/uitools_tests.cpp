@@ -208,8 +208,8 @@ TEST_CASE("the UI tools are listed, those that only read marked read-only", "[un
 		readOnly[tool.at("name").get<std::string>()] = tool.at("annotations").at("readOnlyHint");
 	for (const char* name : {"ui_windows", "ui_dom", "ui_screenshot", "ui_wait"})
 		CHECK(readOnly.value(name, false));
-	for (const char* name :
-		{"ui_move", "ui_click", "ui_drag", "ui_drop", "ui_wheel", "ui_key", "ui_text", "ui_close", "ui_file_dialog"})
+	for (const char* name : {"ui_move", "ui_click", "ui_drag", "ui_drop", "ui_wheel", "ui_key", "ui_text", "ui_close",
+			 "ui_window", "ui_file_dialog"})
 		CHECK(readOnly.value(name, true) == false);
 }
 
@@ -482,6 +482,25 @@ TEST_CASE("a UI tool fails at once when the UI quits before running it", "[unit]
 	const Json result = Json::parse(answer.get().value_or("{}")).at("result");
 	CHECK(result.at("isError") == true);
 	CHECK_THAT(result.at("content")[0].at("text").get<std::string>(), ContainsSubstring("closed"));
+}
+
+TEST_CASE("ui_window activates, minimizes and restores a window, as the Windows dialog does", "[unit]")
+{
+	Fixture fixture;
+	const ui::WindowId main = fixture.window->id();
+	const ui::WindowId other = fixture.open({800, 100, 400, 300}, "boxes.rml")->id();
+	fixture.call("ui_window", {{"window", other}, {"action", "minimize"}});
+	CHECK(fixture.ui.windows.minimized(other));
+	fixture.call("ui_window", {{"window", other}, {"action", "restore"}});
+	CHECK(!fixture.ui.windows.minimized(other));
+	fixture.call("ui_window", {{"window", other}, {"action", "minimize"}});
+	fixture.call("ui_window", {{"window", main}, {"action", "activate"}});
+	CHECK(fixture.ui.windows.front() == main);
+	fixture.call("ui_window", {{"window", other}, {"action", "activate"}});
+	CHECK(!fixture.ui.windows.minimized(other));
+	CHECK(fixture.ui.windows.front() == other);
+	CHECK_THAT(fixture.fail("ui_window", {{"window", other}, {"action", "maximize"}}), ContainsSubstring("action"));
+	CHECK_THAT(fixture.fail("ui_window", {{"window", 99}, {"action", "restore"}}), ContainsSubstring("no window 99"));
 }
 
 TEST_CASE("ui_close asks to close a window, or to quit, as the OS does, in the UI's next step", "[unit]")

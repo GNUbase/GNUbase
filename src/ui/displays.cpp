@@ -67,4 +67,14 @@ namespace gnubase::ui
 			return window;
 		return centred(window.size(), displays.front());
 	}
+
+	Rect restore(const Rect& window, const std::string& monitor, const std::vector<Display>& displays)
+	{
+		const bool connected = monitor.empty() ||
+			std::any_of(displays.begin(), displays.end(),
+				[&monitor](const Display& display) { return display.name == monitor; });
+		if (displays.empty() || connected)
+			return place(window, displays);
+		return centred(window.size(), displays.front());
+	}
 }

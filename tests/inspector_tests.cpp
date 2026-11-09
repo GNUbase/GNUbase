@@ -589,6 +589,11 @@ TEST_CASE("the inspector shows the selected track, and its controls change the t
 	window.click("#inspector-setup [setup-section=notepad]");
 	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, ".inspector [section=notepad]", "hidden"); }));
 	CHECK(window.call("settings.get", {{"key", "ui.layout"}}).dump().find("notepad") != std::string::npos);
+	// Show All shows it again (p. 167).
+	if (!hasClass(window.app, "#inspector-setup", "open"))
+		window.click(".inspector [row=volume] .inspector-label", ui::MouseButton::Right);
+	window.click("#inspector-setup [setup-all]");
+	REQUIRE(window.app.waitUntil([&] { return !hasClass(window.app, ".inspector [section=notepad]", "hidden"); }));
 
 	// Another track: the group has no input or record buttons, but switches its time base (pp. 179-180); a marker
 	// track has no channel to show.

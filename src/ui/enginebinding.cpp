@@ -54,11 +54,11 @@ namespace gnubase::ui
 				m_queries.insert(info.name);
 	}
 
-	void EngineBinding::send(
+	engine::RequestId EngineBinding::send(
 		std::string command, engine::Json parameters, std::function<void(const engine::Result&)> done)
 	{
 		sendWaitingSteps(command);
-		transmit(std::move(command), std::move(parameters), std::move(done), false);
+		return transmit(std::move(command), std::move(parameters), std::move(done), false);
 	}
 
 	void EngineBinding::sendQuietly(
@@ -78,12 +78,13 @@ namespace gnubase::ui
 					sendNextStep(what);
 	}
 
-	void EngineBinding::transmit(
+	engine::RequestId EngineBinding::transmit(
 		std::string command, engine::Json parameters, std::function<void(const engine::Result&)> done, bool quiet)
 	{
 		std::string name = command;
 		const engine::RequestId id = m_client.send(std::move(command), std::move(parameters));
 		m_waiting.emplace(id, Waiting{std::move(name), std::move(done), quiet});
+		return id;
 	}
 
 	void EngineBinding::sendStep(int gesture, const std::string& what, std::string description, engine::Json commands,

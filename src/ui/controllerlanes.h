@@ -130,6 +130,7 @@ namespace gnubase::ui
 		EngineBinding& m_binding;
 		Rml::ObserverPtr<Rml::Element> m_root;
 		std::string m_name;
+		std::string m_menuSuffix; // menuIdSuffix's (ui/keyeditor.h)
 		std::string m_tool = "objectSelection";
 		std::string m_lineMode = "line";
 		engine::Json m_view = engine::Json::object();

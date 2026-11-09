@@ -109,6 +109,9 @@ namespace gnubase::engine
 	// JSON.
 	Json toJson(const TrackVisibility& visibility);
 	TrackVisibility trackVisibilityFromJson(const Json& json);
+	// {workspaces: [{name, layout}], active: {type, name}}; workspacesFromJson takes what is valid.
+	Json toJson(const ProjectWorkspaces& workspaces);
+	ProjectWorkspaces workspacesFromJson(const Json& json);
 	// {id, name, channels, volume, pan, mute, record, vca}; linkGroupFromJson leaves what the JSON doesn't have.
 	Json toJson(const LinkGroup& group);
 	LinkGroup linkGroupFromJson(const Json& json, const LinkGroup& fallback = {});
