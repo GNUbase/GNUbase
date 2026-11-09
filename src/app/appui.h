@@ -356,6 +356,7 @@ namespace gnubase::app
 		std::unique_ptr<ui::SignatureLane> m_signatureLane;   // as well
 		std::unique_ptr<ui::GlobalEventLane> m_transposeLane; // as well
 		std::unique_ptr<ui::GlobalEventLane> m_chordLane;     // as well
+		std::unique_ptr<ui::GlobalEventLane> m_scaleLane;     // as well
 		std::unique_ptr<ui::RulerLanes> m_rulerLanes;         // as well
 		std::unique_ptr<ui::InPlaceEditors> m_inPlace;        // as well
 		std::unique_ptr<ui::TempoEditor> m_tempoEditor;

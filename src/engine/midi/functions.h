@@ -55,6 +55,14 @@ namespace gnubase::engine::midi
 		MinorPentatonic,
 		Blues,
 		WholeTone,
+		// The scales of altered chords (#939): dominant sevenths with #11, b13, b9 and b13, altered tensions, b9 or
+		// #9, and the diminished seventh chord.
+		LydianDominant,
+		MixolydianFlat6,
+		PhrygianDominant,
+		Altered,
+		HalfWholeDiminished, // half step first, the dominant diminished scale
+		WholeHalfDiminished, // whole step first
 	};
 
 	const char* scaleTypeName(ScaleType type);

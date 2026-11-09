@@ -4,6 +4,7 @@
 // record modes to the events and parts the takes overlap. The engine runs it when a recording ends (Recorder in
 // src/engine/audio/recorder.h).
 #include "engine/audio/transport.h"
+#include "engine/document/chordtrack.h"
 #include "engine/document/document.h"
 #include "engine/document/projectmodel.h"
 #include "engine/engine.h"
@@ -550,6 +551,33 @@ namespace gnubase::engine
 					run("event.set", {{"events", Json::array({event})}, {"lane", (*lane)++}});
 				events.push_back(event);
 			}
+		}
+		// Recording chord events (#933, reference manual p. 1345): with the chord track record-enabled, the chords
+		// that the recorded notes make replace the chord events over the takes.
+		if (project.chords.recordEnable)
+		{
+			std::vector<ChordNote> notes;
+			time::Samples from = std::numeric_limits<time::Samples>::max();
+			time::Samples to = std::numeric_limits<time::Samples>::min();
+			const auto ticks = [&project](time::Samples samples)
+			{ return project.tempo.toTicks(samples, project.sampleRate); };
+			for (const Json& entry : parameters.at("tracks"))
+			{
+				for (const Json& item : entry.at("takes"))
+				{
+					const auto position = item.at("position").get<time::Samples>();
+					from = std::min(from, position);
+					to = std::max(to, position + item.at("length").get<time::Samples>());
+				}
+				for (const Json& note : entry.value("notes", Json::array()))
+				{
+					const auto position = note.at("position").get<time::Samples>();
+					notes.push_back({ticks(position), ticks(position + note.at("length").get<time::Samples>()),
+						note.at("pitch").get<int>()});
+				}
+			}
+			if (!notes.empty())
+				recordChordEvents(project, notes, ticks(from), ticks(to), context);
 		}
 		Json result = {{"media", media}, {"clips", clips}, {"events", events}, {"parts", parts}};
 		context.emit("recording.added", result);

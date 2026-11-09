@@ -913,9 +913,10 @@ meter .meter-peak
 }
 
 /* The transpose track (docs/features/transpose.md) and the chord track (chord-track.md): their events over their
-   lanes and the field that edits one's value or chord. Code places the row on its lane, the events at their positions
-   and the field over the event it edits. */
-.transpose-row, .chord-row
+   lanes and the field that edits one's value, chord or scale. Code places the row on its lane (the chord track's chord
+   and scale rows on its halves while Show Scales is on), the events at their positions and the field over the event
+   it edits. */
+.transpose-row, .chord-row, .scale-row
 {
 	position: absolute;
 	left: 0;
@@ -924,12 +925,13 @@ meter .meter-peak
 	height: 100%;
 }
 
-.transpose-row.hidden, .transpose-row .transpose-field, .chord-row.hidden, .chord-row .chord-field
+.transpose-row.hidden, .transpose-row .transpose-field, .chord-row.hidden, .chord-row .chord-field, .scale-row.hidden,
+.scale-row .scale-field
 {
 	display: none;
 }
 
-.transpose-row .transpose-events, .chord-row .chord-events
+.transpose-row .transpose-events, .chord-row .chord-events, .scale-row .scale-events
 {
 	position: absolute;
 	left: 0;
@@ -938,7 +940,7 @@ meter .meter-peak
 	height: 100%;
 }
 
-.transpose-row .transpose-event, .chord-row .chord-event
+.transpose-row .transpose-event, .chord-row .chord-event, .scale-row .scale-event
 {
 	position: absolute;
 	top: 0;
@@ -946,7 +948,7 @@ meter .meter-peak
 	white-space: nowrap;
 }
 
-.transpose-row .transpose-field.shown, .chord-row .chord-field.shown
+.transpose-row .transpose-field.shown, .chord-row .chord-field.shown, .scale-row .scale-field.shown
 {
 	display: block;
 	position: absolute;
@@ -1415,6 +1417,15 @@ meter .meter-peak
 .track-list .track-controls select.tempo-type
 {
 	width: 60dp;
+}
+
+/* The chord track's Select Track for Auditioning (docs/features/chord-track.md). */
+.track-list .track-controls select.chord-audition
+{
+	width: 64dp;
+	height: 18dp;
+	margin-left: 2dp;
+	padding: 0 2dp;
 }
 
 .track-list .drop-line

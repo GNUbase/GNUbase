@@ -70,7 +70,8 @@ namespace gnubase::engine
 										  // start
 		std::vector<ChaseLane> noteLanes; // filled in by setSequence: runs of noteOrder, by channel and pitch
 		midi::Modifiers modifiers;        // for the notes played into the track (input); notes has them applied
-		midi::EffectRack inserts;         // the track's MIDI inserts and sends (docs/features/midi-effects.md)
+		std::vector<LiveHarmony> liveInput; // Live Input: what the notes played into the track move to, by position
+		midi::EffectRack inserts;           // the track's MIDI inserts and sends (docs/features/midi-effects.md)
 		midi::EffectRack sends;
 		// Filled in by setSequence: the inserts that play, in order, then the sends that play.
 		std::vector<RunningEffect> effects;
@@ -194,7 +195,8 @@ namespace gnubase::engine
 		// An event of its input as the modifiers play it; false if left out. A second note-on for a held key whose
 		// note goes elsewhere this time sets ends to where the first one went, which still sounds: that note ends
 		// first, so that no note hangs.
-		bool modifyInput(const midi::Modifiers& modifiers, graph::ProcessEvent& event, uint16_t& ends) noexcept;
+		bool modifyInput(
+			const MidiSequence& sequence, int64_t position, graph::ProcessEvent& event, uint16_t& ends) noexcept;
 		void play(
 			const MidiSequence& sequence, const graph::TransportSegment& segment, graph::EventBuffer& out) noexcept;
 		// Each returns false if the event buffer was full; then the note didn't start or end (though noteOn may have

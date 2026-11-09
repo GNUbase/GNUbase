@@ -1477,6 +1477,13 @@ namespace gnubase::engine
 			Track copy = project.trackById.at(id);
 			copy.id = project.newId();
 			copy.parent = parent;
+			// A copy follows the chord track as its original does.
+			if (const auto follow = project.chords.follow.find(id); follow != project.chords.follow.end())
+			{
+				ChordFollow settings = follow->second;
+				project.chords.follow[copy.id] = std::move(settings);
+				added.emplace_back("chord.changed", Json());
+			}
 			copy.children.clear();
 			for (TrackVersion& version : copy.versions)
 				version = copyVersion(project, version, copy.id);
@@ -1629,6 +1636,8 @@ namespace gnubase::engine
 			{
 				if (name == "track.added" && data.at("track").at("channel") != 0)
 					data["channel"] = toJson(project.channels.at(data.at("track").at("channel").get<ObjectId>()));
+				if (name == "chord.changed")
+					data = chordJson(project);
 				context.emit(name, data);
 			}
 			return {{"track", toJson(project.trackById.at(copy))}};
@@ -1680,6 +1689,19 @@ namespace gnubase::engine
 					project.chords = ChordTrack();
 					context.emit("chord.changed", chordJson(project));
 				}
+				// Its Follow Chord Track settings go with it, and so does its place as an audition track or master.
+				ChordTrack& chords = project.chords;
+				bool chordsChanged = chords.follow.erase(removed) != 0 || chords.audition == removed;
+				if (chords.audition == removed)
+					chords.audition = 0;
+				for (auto& [follower, follow] : chords.follow)
+					if (follow.master == removed)
+					{
+						follow.master = 0;
+						chordsChanged = true;
+					}
+				if (chordsChanged)
+					context.emit("chord.changed", chordJson(project));
 				if (gone.channel != 0)
 					for (const ObjectId slot : project.channels.at(gone.channel).slots)
 						project.slots.erase(slot);
@@ -3268,6 +3290,9 @@ namespace gnubase::engine
 			{"chord.follow", "Follow chord track"},
 			{"chord.toMidi", "Chords to MIDI"},
 			{"chord.fromMidi", "Create chord events"},
+			{"chord.fromAudio", "Create chord events from audio"},
+			{"chord.map", "Map to chord track"},
+			{"chord.assignVoices", "Assign voices to notes"},
 			{"chordPads.set", "Change chord pads"},
 			{"chordPads.assign", "Assign chords to pads"},
 			{"chordPads.modify", "Modify chord pads"},

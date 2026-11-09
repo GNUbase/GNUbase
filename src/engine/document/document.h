@@ -814,6 +814,10 @@ namespace gnubase::engine
 		ObjectId id = 0;
 		time::Position position;
 		std::string text;
+		// A chord event made from an audio event (reference manual pp. 1327, 1343-1344): the audio event, and the
+		// chords detected there, the most likely first; none for other events.
+		ObjectId audioEvent = 0;
+		std::vector<std::string> detected;
 	};
 
 	// The harmony a track's notes were played in when it began to follow the chord track (reference manual p. 1341):
@@ -830,6 +834,27 @@ namespace gnubase::engine
 	{
 		std::string mode = "off";
 		std::vector<ChordSource> source;
+		// This Track's Voicings (p. 1338): "chordTrack" (the chord track's voicings) or a library, "basic", "piano"
+		// or "guitar"; the voice of Single Voice, 0 soprano to 3 bass; and the track whose voicings a Single Voice
+		// track takes as its master, 0 for its own.
+		std::string voicings = "chordTrack";
+		int voice = 0;
+		ObjectId master = 0;
+		// Live Input (p. 1338): "off", "chords" or "scales", what the notes played into the track move to.
+		std::string liveInput = "off";
+	};
+
+	// The chord track's voicing library (reference manual pp. 1333-1335), as midi::VoicingStyle has it.
+	struct ChordVoicing
+	{
+		std::string library = "basic";
+		std::string style;
+		bool addRoot = true;
+		bool duplicateRoot = false;
+		bool fattenUp = false;
+		int lowestRoot = 36;
+		int lowest = 52;
+		int highest = 84;
 	};
 
 	// The chord track's events and settings (reference manual pp. 1319-1345).
@@ -841,6 +866,13 @@ namespace gnubase::engine
 		bool adaptiveVoicings = true;           // voicings that move the voices the least
 		bool automaticScales = true;            // each chord event's scale is its chord's, not the scale events'
 		std::map<ObjectId, ChordFollow> follow; // by MIDI or instrument track
+		ChordVoicing voicing;                   // the voicing library; basic uses octaveOffset only
+		time::Ticks shiftChords = 0;            // Shift Chords: where the chord events take effect, from them
+		bool mute = false;                      // Mute Chord Track: no track follows it and nothing auditions
+		bool showScales = false;                // Show Scales: the scale lane shows
+		bool recordEnable = false;              // recorded MIDI notes become chord events
+		ObjectId audition = 0;                  // Select Track for Auditioning: a MIDI or instrument track, or 0
+		bool acousticFeedback = false;          // the chord events play on the audition track
 	};
 
 	// A chord pad (#174, reference manual pp. 1352-1353): its chord's name (midi::chordName), empty while unassigned;
@@ -1451,7 +1483,8 @@ namespace gnubase::engine
 
 	inline bool operator==(const ChordEvent& a, const ChordEvent& b)
 	{
-		return std::tie(a.id, a.position, a.text) == std::tie(b.id, b.position, b.text);
+		return std::tie(a.id, a.position, a.text, a.audioEvent, a.detected) ==
+			std::tie(b.id, b.position, b.text, b.audioEvent, b.detected);
 	}
 
 	inline bool operator==(const ChordSource& a, const ChordSource& b)
@@ -1461,13 +1494,23 @@ namespace gnubase::engine
 
 	inline bool operator==(const ChordFollow& a, const ChordFollow& b)
 	{
-		return std::tie(a.mode, a.source) == std::tie(b.mode, b.source);
+		return std::tie(a.mode, a.source, a.voicings, a.voice, a.master, a.liveInput) ==
+			std::tie(b.mode, b.source, b.voicings, b.voice, b.master, b.liveInput);
+	}
+
+	inline bool operator==(const ChordVoicing& a, const ChordVoicing& b)
+	{
+		return std::tie(
+				   a.library, a.style, a.addRoot, a.duplicateRoot, a.fattenUp, a.lowestRoot, a.lowest, a.highest) ==
+			std::tie(b.library, b.style, b.addRoot, b.duplicateRoot, b.fattenUp, b.lowestRoot, b.lowest, b.highest);
 	}
 
 	inline bool operator==(const ChordTrack& a, const ChordTrack& b)
 	{
-		return std::tie(a.events, a.scales, a.octaveOffset, a.adaptiveVoicings, a.automaticScales, a.follow) ==
-			std::tie(b.events, b.scales, b.octaveOffset, b.adaptiveVoicings, b.automaticScales, b.follow);
+		return std::tie(a.events, a.scales, a.octaveOffset, a.adaptiveVoicings, a.automaticScales, a.follow, a.voicing,
+				   a.shiftChords, a.mute, a.showScales, a.recordEnable, a.audition, a.acousticFeedback) ==
+			std::tie(b.events, b.scales, b.octaveOffset, b.adaptiveVoicings, b.automaticScales, b.follow, b.voicing,
+				b.shiftChords, b.mute, b.showScales, b.recordEnable, b.audition, b.acousticFeedback);
 	}
 
 	inline bool operator==(const ChordPad& a, const ChordPad& b)

@@ -4,7 +4,9 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cstddef>
 #include <cstdlib>
+#include <functional>
 #include <limits>
 #include <set>
 #include <tuple>
@@ -187,6 +189,13 @@ namespace gnubase::engine::midi
 				at += 3;
 				continue;
 			}
+			// A sus after the seventh, as in C7sus4, the common spelling of Csus47.
+			if (chord.type == "maj" && startsWith(text, at, "sus"))
+			{
+				chord.type = startsWith(text, at, "sus2") ? "sus2" : "sus4";
+				at += startsWith(text, at, "sus2") || startsWith(text, at, "sus4") ? 4 : 3;
+				continue;
+			}
 			const auto token = std::find_if(
 				tokens.begin(), tokens.end(), [&](const auto& entry) { return startsWith(text, at, entry.first); });
 			if (token == tokens.end())
@@ -241,7 +250,9 @@ namespace gnubase::engine::midi
 			const std::string& first = tensions.front();
 			if (first == "6" || first == "7" || first == "maj7")
 			{
-				name += first;
+				// A sus chord's seventh comes before the sus: C7sus4.
+				const bool sus = chord.type == "sus2" || chord.type == "sus4";
+				name.insert(sus ? name.size() - 4 : name.size(), first);
 				tensions.erase(tensions.begin());
 				if (!tensions.empty())
 					name += "(" + joined(tensions) + ")";
@@ -299,6 +310,30 @@ namespace gnubase::engine::midi
 		if (chord.root < 0)
 			return std::nullopt;
 		const auto with = [&chord](const char* tension) { return hasTension(chord, tension); };
+		// The scale by the chord's family, then, if that doesn't hold all of its notes, the family's scale that holds
+		// the most of them, the first of those.
+		const bool dominant = with("7") && chord.type != "min" && chord.type != "dim";
+		std::vector<ScaleType> candidates;
+		if (dominant)
+			candidates = {ScaleType::Mixolydian, ScaleType::LydianDominant, ScaleType::MixolydianFlat6,
+				ScaleType::PhrygianDominant, ScaleType::HalfWholeDiminished, ScaleType::Altered};
+		else if (chord.type == "min")
+			candidates = {ScaleType::Dorian, ScaleType::Minor, ScaleType::Phrygian, ScaleType::MelodicMinor,
+				ScaleType::HarmonicMinor};
+		else if (chord.type == "dim")
+			candidates = {ScaleType::Locrian, ScaleType::WholeHalfDiminished, ScaleType::HalfWholeDiminished};
+		else if (chord.type == "aug")
+			candidates = {ScaleType::WholeTone, ScaleType::Altered};
+		else
+			candidates = {ScaleType::Major, ScaleType::Lydian, ScaleType::Mixolydian, ScaleType::LydianDominant,
+				ScaleType::HarmonicMinor};
+		const std::vector<int> intervals = chordIntervals(chord);
+		const auto held = [&intervals](ScaleType candidate)
+		{
+			const std::vector<int> steps = scaleSteps(candidate);
+			return std::count_if(intervals.begin(), intervals.end(),
+				[&steps](int interval) { return std::find(steps.begin(), steps.end(), interval) != steps.end(); });
+		};
 		ScaleType type = ScaleType::Major;
 		if (chord.type == "min" && with("maj7"))
 			type = ScaleType::MelodicMinor;
@@ -306,6 +341,8 @@ namespace gnubase::engine::midi
 			type = ScaleType::Dorian;
 		else if (chord.type == "min")
 			type = ScaleType::Minor;
+		else if (chord.type == "dim" && with("6"))
+			type = ScaleType::WholeHalfDiminished;
 		else if (chord.type == "dim")
 			type = ScaleType::Locrian;
 		else if (chord.type == "aug")
@@ -314,6 +351,10 @@ namespace gnubase::engine::midi
 			type = ScaleType::Lydian;
 		else if (with("7"))
 			type = ScaleType::Mixolydian;
+		if (held(type) < static_cast<std::ptrdiff_t>(intervals.size()))
+			for (const ScaleType candidate : candidates)
+				if (held(candidate) > held(type))
+					type = candidate;
 		return Scale{chord.root, type};
 	}
 
@@ -428,17 +469,282 @@ namespace gnubase::engine::midi
 		return voicing;
 	}
 
-	const std::vector<std::string>& followModeNames()
+	const std::vector<std::string>& voicingLibraries()
 	{
-		static const std::vector<std::string> names = {
-			"off", "chordsAndScales", "chords", "scales", "rootNotes", "voicings"};
+		static const std::vector<std::string> names = {"basic", "piano", "guitar"};
 		return names;
 	}
 
-	int followPitch(int pitch, const std::string& mode, const Harmony& from, const Harmony& to)
+	const std::vector<std::string>& voicingStyles(const std::string& library)
+	{
+		static const std::vector<std::string> none;
+		static const std::vector<std::string> piano = {
+			"triads", "triadsMaj9", "triadsMaj9Min9", "fourNote", "fourNoteOpen", "fiveNote"};
+		static const std::vector<std::string> guitar = {"triads", "fourNote", "threeString", "modernJazz"};
+		if (library == "piano")
+			return piano;
+		return library == "guitar" ? guitar : none;
+	}
+
+	namespace
+	{
+		// The intervals from the root of a piano style's upper notes.
+		std::vector<int> pianoNotes(const ChordSymbol& chord, const std::string& style)
+		{
+			std::vector<int> notes = chordIntervals(chord);
+			const auto add = [&notes](int interval)
+			{
+				if (std::find(notes.begin(), notes.end(), interval) == notes.end())
+					notes.push_back(interval);
+			};
+			const auto without = [&notes](int interval)
+			{ notes.erase(std::remove(notes.begin(), notes.end(), interval), notes.end()); };
+			const size_t size = notes.size();
+			if ((style == "triadsMaj9" || style == "triadsMaj9Min9") && size == 3)
+			{
+				add(style == "triadsMaj9Min9" && chord.type == "dim" ? 1 : 2);
+				without(0);
+			}
+			else if (style == "fourNote" && size >= 3)
+			{
+				without(0);
+				for (const int extra : {2, 7, 9})
+					if (notes.size() < 4)
+						add(extra);
+				notes.resize(std::min<size_t>(notes.size(), 4));
+			}
+			else if (style == "fourNoteOpen" && size >= 3)
+			{
+				without(0);
+				without(7);
+				for (const int extra : {2, 9, 7})
+					if (notes.size() < 4)
+						add(extra);
+				notes.resize(std::min<size_t>(notes.size(), 4));
+			}
+			else if (style == "fiveNote" && size >= 4)
+			{
+				add(2);
+				notes.resize(std::min<size_t>(notes.size(), 5));
+			}
+			return notes;
+		}
+
+		int voicingDistance(const std::vector<int>& from, const std::vector<int>& to)
+		{
+			int sum = 0;
+			for (const int pitch : from)
+			{
+				int nearest = 128;
+				for (const int other : to)
+					nearest = std::min(nearest, std::abs(pitch - other));
+				sum += nearest;
+			}
+			return sum;
+		}
+
+		// The inversion of upper (close position, from the lowest up) within [low, high] nearest to previous, or
+		// without previous the one nearest to upper itself; upper if none fits.
+		std::vector<int> nearestInversion(
+			const std::vector<int>& upper, const std::vector<int>& previous, int low, int high)
+		{
+			std::vector<int> best = upper;
+			int bestCost = std::numeric_limits<int>::max();
+			for (const int shift : {-24, -12, 0, 12})
+			{
+				std::vector<int> candidate = upper;
+				for (int& pitch : candidate)
+					pitch += shift;
+				for (size_t inversion = 0; inversion < candidate.size(); ++inversion)
+				{
+					if (inversion > 0)
+					{
+						candidate.push_back(candidate.front() + 12);
+						candidate.erase(candidate.begin());
+					}
+					if (candidate.front() < low || candidate.back() > high)
+						continue;
+					const int cost = previous.empty()
+						? std::abs(candidate.front() - upper.front())
+						: voicingDistance(candidate, previous) + voicingDistance(previous, candidate);
+					if (cost < bestCost)
+					{
+						bestCost = cost;
+						best = candidate;
+					}
+				}
+			}
+			return best;
+		}
+
+		std::vector<int> pianoVoicing(const ChordSymbol& chord, const VoicingSettings& settings,
+			const std::vector<int>& previous, const VoicingStyle& style)
+		{
+			const int offset = 12 * settings.octaveOffset;
+			std::vector<int> upper;
+			for (const int interval : pianoNotes(chord, style.style))
+				upper.push_back(60 + offset + pitchClass(chord.root + interval));
+			std::sort(upper.begin(), upper.end());
+			std::vector<int> before;
+			if (settings.adaptive)
+				for (const int pitch : previous)
+					if (pitch >= style.lowest + offset)
+						before.push_back(pitch);
+			upper = nearestInversion(upper, before, style.lowest + offset, style.highest + offset);
+			std::vector<int> voicing;
+			const int bass = pitchClass(chord.bass >= 0 ? chord.bass : chord.root);
+			const int root = style.lowestRoot + offset + pitchClass(bass - style.lowestRoot);
+			if (style.addRoot)
+				voicing.push_back(root);
+			if (style.addRoot && style.duplicateRoot)
+				voicing.push_back(root + 12);
+			if (style.fattenUp && !upper.empty())
+				upper.push_back(upper.front() + 12);
+			voicing.insert(voicing.end(), upper.begin(), upper.end());
+			std::sort(voicing.begin(), voicing.end());
+			voicing.erase(std::unique(voicing.begin(), voicing.end()), voicing.end());
+			return voicing;
+		}
+
+		// A guitar in standard tuning, from the low E.
+		constexpr std::array<int, 6> g_strings = {40, 45, 50, 55, 59, 64};
+
+		std::vector<int> guitarVoicing(const ChordSymbol& chord, const VoicingSettings& settings,
+			const std::vector<int>& previous, const VoicingStyle& style)
+		{
+			const std::vector<std::string>& styles = voicingStyles("guitar");
+			const std::string name =
+				std::find(styles.begin(), styles.end(), style.style) == styles.end() ? styles.front() : style.style;
+			const std::vector<int> intervals = chordIntervals(chord);
+			std::set<int> required; // pitch classes
+			std::set<int> allowed;
+			const auto add = [&chord](std::set<int>& to, int interval)
+			{ to.insert(pitchClass(chord.root + interval)); };
+			const bool jazz = name == "modernJazz";
+			const bool three = name == "threeString";
+			if (jazz)
+			{
+				for (const int interval : intervals)
+				{
+					add(allowed, interval);
+					if (interval != 0 && interval != 7)
+						add(required, interval);
+				}
+			}
+			else
+			{
+				// The triad, with fourNote its sixth or seventh.
+				std::vector<int> notes(intervals.begin(),
+					intervals.begin() + static_cast<std::ptrdiff_t>(std::min<size_t>(3, intervals.size())));
+				if (name == "fourNote")
+					for (const int interval : intervals)
+						if ((interval == 9 || interval == 10 || interval == 11) && notes.size() < 4 &&
+							std::find(notes.begin(), notes.end(), interval) == notes.end())
+							notes.push_back(interval);
+				for (const int interval : notes)
+				{
+					add(allowed, interval);
+					add(required, interval);
+				}
+			}
+			const int bass = pitchClass(chord.bass >= 0 ? chord.bass : chord.root);
+			if (!jazz && !three)
+			{
+				allowed.insert(bass);
+				required.insert(bass);
+			}
+			const size_t fewest = three ? 3 : 4;
+			const bool adaptive = settings.adaptive && !previous.empty();
+
+			std::vector<int> best;
+			std::tuple<int, int, int> bestScore{std::numeric_limits<int>::max(), 0, 0};
+			std::vector<int> pitches;
+			for (int window = 0; window <= 9; ++window)
+				for (size_t low = 0; low + fewest <= g_strings.size(); ++low)
+				{
+					const size_t high = three ? low + 3 : g_strings.size();
+					// Every string from low to high plays an allowed class at a fret of the window, or open.
+					const std::function<void(size_t)> search = [&](size_t string)
+					{
+						if (string == high)
+						{
+							std::set<int> classes;
+							for (const int pitch : pitches)
+								classes.insert(pitchClass(pitch));
+							if (!std::includes(classes.begin(), classes.end(), required.begin(), required.end()) ||
+								(!jazz && !three && pitchClass(pitches.front()) != bass))
+								return;
+							std::vector<int> sorted = pitches;
+							std::sort(sorted.begin(), sorted.end());
+							const std::tuple<int, int, int> score{adaptive
+									? voicingDistance(sorted, previous) + voicingDistance(previous, sorted)
+									: window,
+								-static_cast<int>(sorted.size()), window};
+							if (score < bestScore)
+							{
+								bestScore = score;
+								best = sorted;
+							}
+							return;
+						}
+						for (int fret = 0; fret <= window + 3; ++fret)
+						{
+							const int pitch = g_strings.at(string) + fret;
+							if ((fret != 0 && fret < std::max(window, 1)) || allowed.count(pitchClass(pitch)) == 0)
+								continue;
+							pitches.push_back(pitch);
+							search(string + 1);
+							pitches.pop_back();
+						}
+					};
+					search(low);
+				}
+			for (int& pitch : best)
+				pitch += 12 * settings.octaveOffset;
+			return best;
+		}
+	}
+
+	std::vector<int> voiceChord(const ChordSymbol& chord, const VoicingSettings& settings,
+		const std::vector<int>& previous, const VoicingStyle& style)
+	{
+		if (chordIntervals(chord).empty())
+			return {};
+		std::vector<int> voicing;
+		if (style.library == "piano")
+			voicing = pianoVoicing(chord, settings, previous, style);
+		else if (style.library == "guitar")
+			voicing = guitarVoicing(chord, settings, previous, style);
+		else
+			return voiceChord(chord, settings, previous);
+		for (int& pitch : voicing)
+			pitch = clampPitch(pitch);
+		return voicing;
+	}
+
+	const std::vector<std::string>& followModeNames()
+	{
+		static const std::vector<std::string> names = {
+			"off", "chordsAndScales", "chords", "scales", "rootNotes", "voicings", "singleVoice"};
+		return names;
+	}
+
+	const std::vector<std::string>& voiceNames()
+	{
+		static const std::vector<std::string> names = {"soprano", "alto", "tenor", "bass"};
+		return names;
+	}
+
+	int followPitch(int pitch, const std::string& mode, const Harmony& from, const Harmony& to, int single)
 	{
 		if (mode == "off" || from.chord.root < 0 || to.chord.root < 0)
 			return pitch;
+		if (mode == "singleVoice" && !to.voicing.empty())
+		{
+			const int count = static_cast<int>(to.voicing.size());
+			const int index = single >= 3 ? 0 : std::max(0, count - 1 - single);
+			return to.voicing[static_cast<size_t>(index)];
+		}
 		const std::vector<int> toChord = chordIntervals(to.chord);
 		if (mode == "voicings" && !from.voicing.empty() && !to.voicing.empty())
 		{

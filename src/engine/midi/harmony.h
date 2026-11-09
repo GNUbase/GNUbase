@@ -69,8 +69,40 @@ namespace gnubase::engine::midi
 	std::vector<int> voiceChord(
 		const ChordSymbol& chord, const VoicingSettings& settings, const std::vector<int>& previous = {});
 
+	// The voicing libraries (reference manual pp. 1333-1335): basic (as above), piano or guitar, with a style (the
+	// voicing library subset) and the Custom Voicing panel's options.
+	//
+	// Piano styles: triads (chords of more than three notes as they are), triadsMaj9 (triads with the major ninth
+	// instead of the root), triadsMaj9Min9 (the same, a diminished triad with the minor ninth), fourNote (four notes
+	// without the root: the chord's, then the ninth, the fifth, the sixth), fourNoteOpen (also without the fifth where
+	// the chord has four notes: the ninth and the 13 make up four) and fiveNote (chords of four notes and more with the
+	// ninth, at most five notes). The upper notes go in close position from C3 (60), with adaptive the inversion
+	// nearest to the chord before, all from lowest to highest. addRoot puts the bass note (or root) in the octave from
+	// lowestRoot, duplicateRoot adds it an octave higher and fattenUp doubles the lowest upper note an octave higher.
+	//
+	// Guitar styles, shapes on a guitar in standard tuning (E2 to E4) within four frets and open strings, on strings
+	// next to each other: triads and fourNote (the chord's triad, or its four-note chord without tensions, on four to
+	// six strings up to the high E, the bass note lowest), threeString (the triad on three strings) and modernJazz
+	// (four to six notes with the third, the seventh and the tensions, the root and fifth where they fit). The lowest
+	// position with the most strings, with adaptive the shape nearest to the chord before.
+	struct VoicingStyle
+	{
+		std::string library = "basic"; // "basic", "piano" or "guitar"
+		std::string style;             // of the library; empty or unknown: its first
+		bool addRoot = true;
+		bool duplicateRoot = false;
+		bool fattenUp = false;
+		int lowestRoot = 36; // C1
+		int lowest = 52;     // E2
+		int highest = 84;    // C5
+	};
+	const std::vector<std::string>& voicingLibraries();
+	const std::vector<std::string>& voicingStyles(const std::string& library);
+	std::vector<int> voiceChord(const ChordSymbol& chord, const VoicingSettings& settings,
+		const std::vector<int>& previous, const VoicingStyle& style);
+
 	// How a track follows the chord track (reference manual p. 1340): "off", "chordsAndScales", "chords", "scales",
-	// "rootNotes" or "voicings".
+	// "rootNotes", "voicings" or "singleVoice".
 	const std::vector<std::string>& followModeNames();
 
 	// What a pitch played over one chord (from) plays over another (to), as the mode maps it. Every mode but voicings
@@ -79,12 +111,14 @@ namespace gnubase::engine::midi
 	// chordsAndScales keeps the notes of the old chord the same notes of the new one (root, third and so on) and the
 	// others the same degree of the new scale. voicings plays the voice of the new chord's voicing that the pitch is in
 	// the old one's, in the same octave (a voice beyond the new voicing's plays its highest); a pitch outside the
-	// voicing maps as chords does. Unchanged when either chord is undefined.
+	// voicing maps as chords does. singleVoice plays one voice of the new chord's voicing, single counted from the top:
+	// 0 soprano, 1 alto, 2 tenor, 3 bass, which is always the lowest. Unchanged when either chord is undefined.
 	struct Harmony
 	{
 		ChordSymbol chord;
 		Scale scale;              // automaticScale(chord) or a scale event's
 		std::vector<int> voicing; // voiceChord(chord, ...)
 	};
-	int followPitch(int pitch, const std::string& mode, const Harmony& from, const Harmony& to);
+	int followPitch(int pitch, const std::string& mode, const Harmony& from, const Harmony& to, int single = 0);
+	const std::vector<std::string>& voiceNames(); // "soprano", "alto", "tenor", "bass"
 }
