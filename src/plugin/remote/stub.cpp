@@ -166,7 +166,7 @@ namespace gnubase::plugin::remote
 			// The audio thread flushes while the plugin processes (Params::flushParams); never both at once.
 			if (m_processing.load(std::memory_order_acquire))
 			{
-				error = "the plugin is processing";
+				error = g_processingError;
 				return false;
 			}
 			auto* params = gnubase::plugin::extension<Params>(plugin);

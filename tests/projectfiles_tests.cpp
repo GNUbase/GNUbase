@@ -1499,7 +1499,7 @@ TEST_CASE("File > Save as Template and Back up Project", "[ui]")
 	fileMenu(app, "file.backup");
 	answer(app, {dir.path() / "Final"});
 	click(app, "#backup-name");
-	app.ui().key(std::nullopt, "Ctrl+A");
+	app.ui().key(std::nullopt, "Mod+A");
 	app.ui().text(std::nullopt, "Final Mix");
 	click(app, "#backup-keep-active");
 	click(app, "#backup-skip-mixdown");

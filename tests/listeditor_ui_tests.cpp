@@ -136,7 +136,7 @@ namespace
 		void type(const std::string& selector, const std::string& text, const std::string& enter = "Enter")
 		{
 			click(of(selector), 2);
-			app.ui().key(window, "Ctrl+A");
+			app.ui().key(window, "Mod+A");
 			app.ui().text(window, text);
 			app.ui().key(window, enter);
 			app.shell().step(std::chrono::milliseconds(0));
