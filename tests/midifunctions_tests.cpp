@@ -1216,8 +1216,8 @@ TEST_CASE("merge with includeInserts starts a note that a random position moves 
 {
 	Project project = newProject();
 	const ObjectId piano = addTrack(project, TrackType::Instrument, "Piano");
-	addPart(project, piano, 4 * g_quarter, 4 * g_quarter,
-		PartBuilder().note(1, 0, 10, 60).note(2, g_quarter, 10, 62).part);
+	addPart(
+		project, piano, 4 * g_quarter, 4 * g_quarter, PartBuilder().note(1, 0, 10, 60).note(2, g_quarter, 10, 62).part);
 	project.channels.at(project.trackById.at(piano).channel).modifiers.random[0] = {
 		RandomTarget::Position, -g_quarter / 4, -g_quarter / 4};
 	MergeSettings settings;

@@ -763,8 +763,9 @@ namespace gnubase::engine::midi
 				Note copy = note;
 				if (!modifyNote(modifiers, seed, copy.pitch, copy.velocity))
 					continue;
-				const Ticks at = partFrom +
-					std::max(note.position + randomOffset(modifiers, RandomTarget::Position, seed), -partFrom);
+				// A note moved before its part's start, or the project's, starts there, with its length.
+				const Ticks moved = note.position + randomOffset(modifiers, RandomTarget::Position, seed);
+				const Ticks at = partFrom + std::max({moved, Ticks{0}, -partFrom});
 				if (at >= partTo || !inRange(at))
 					continue;
 				const Ticks length = note.length > 0 ? modifyLength(modifiers, seed, note.length) : 0;
