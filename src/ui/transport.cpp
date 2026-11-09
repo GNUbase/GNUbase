@@ -242,20 +242,30 @@ namespace gnubase::ui
 		return found == m_formats.end() ? TimeFormat::BarsBeats : found->second;
 	}
 
+	// The primary format is the project's time format (reference manual p. 317), the others the user setting.
 	void TransportControls::setFormat(const std::string& slot, TimeFormat format)
 	{
-		m_formats[slot] = format;
-		Json formats = Json::object();
-		for (const auto& [name, value] : m_formats)
-			formats[name] = timeFormatName(value);
-		m_binding.send("settings.set", {{"key", g_formatsKey}, {"value", formats}});
+		const bool changed = std::exchange(m_formats[slot], format) != format;
+		if (slot == "primary")
+		{
+			if (changed)
+				m_binding.send("project.set", {{"timeFormat", timeFormatName(format)}});
+		}
+		else
+		{
+			Json formats = Json::object();
+			for (const auto& [name, value] : m_formats)
+				if (name != "primary")
+					formats[name] = timeFormatName(value);
+			m_binding.send("settings.set", {{"key", g_formatsKey}, {"value", formats}});
+		}
 		show();
 	}
 
 	void TransportControls::exchangeFormats()
 	{
 		const TimeFormat primary = format("primary");
-		m_formats["primary"] = format("secondary");
+		setFormat("primary", format("secondary"));
 		setFormat("secondary", primary);
 	}
 
@@ -298,7 +308,7 @@ namespace gnubase::ui
 		if (!formats.is_object())
 			return;
 		for (const auto& [slot, name] : formats.items())
-			if (name.is_string())
+			if (slot != "primary" && name.is_string()) // the project's, before #537 a user setting
 				if (const std::optional<TimeFormat> format = timeFormatFromName(name.get<std::string>()))
 					m_formats[slot] = *format;
 		show();
@@ -321,7 +331,12 @@ namespace gnubase::ui
 				if (result.ok() && !readTimeContext(result.value, m_time))
 					logging::warning("The transport controls can't read the project's tempo or signatures");
 				if (result.ok())
+				{
 					m_tempoTrackActive = result.value.value("tempoTrackActive", false);
+					if (const std::optional<TimeFormat> format =
+							timeFormatFromName(result.value.value("timeFormat", std::string("barsBeats"))))
+						m_formats["primary"] = *format;
+				}
 				if (std::exchange(m_stale, false))
 					requestProject();
 				else

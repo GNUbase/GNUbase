@@ -814,6 +814,10 @@ namespace gnubase::engine
 		ObjectId id = 0;
 		time::Position position;
 		std::string text;
+		// A chord event made from an audio event (reference manual pp. 1327, 1343-1344): the audio event, and the
+		// chords detected there, the most likely first; none for other events.
+		ObjectId audioEvent = 0;
+		std::vector<std::string> detected;
 	};
 
 	// The harmony a track's notes were played in when it began to follow the chord track (reference manual p. 1341):
@@ -830,6 +834,27 @@ namespace gnubase::engine
 	{
 		std::string mode = "off";
 		std::vector<ChordSource> source;
+		// This Track's Voicings (p. 1338): "chordTrack" (the chord track's voicings) or a library, "basic", "piano"
+		// or "guitar"; the voice of Single Voice, 0 soprano to 3 bass; and the track whose voicings a Single Voice
+		// track takes as its master, 0 for its own.
+		std::string voicings = "chordTrack";
+		int voice = 0;
+		ObjectId master = 0;
+		// Live Input (p. 1338): "off", "chords" or "scales", what the notes played into the track move to.
+		std::string liveInput = "off";
+	};
+
+	// The chord track's voicing library (reference manual pp. 1333-1335), as midi::VoicingStyle has it.
+	struct ChordVoicing
+	{
+		std::string library = "basic";
+		std::string style;
+		bool addRoot = true;
+		bool duplicateRoot = false;
+		bool fattenUp = false;
+		int lowestRoot = 36;
+		int lowest = 52;
+		int highest = 84;
 	};
 
 	// The chord track's events and settings (reference manual pp. 1319-1345).
@@ -841,6 +866,44 @@ namespace gnubase::engine
 		bool adaptiveVoicings = true;           // voicings that move the voices the least
 		bool automaticScales = true;            // each chord event's scale is its chord's, not the scale events'
 		std::map<ObjectId, ChordFollow> follow; // by MIDI or instrument track
+		ChordVoicing voicing;                   // the voicing library; basic uses octaveOffset only
+		time::Ticks shiftChords = 0;            // Shift Chords: where the chord events take effect, from them
+		bool mute = false;                      // Mute Chord Track: no track follows it and nothing auditions
+		bool showScales = false;                // Show Scales: the scale lane shows
+		bool recordEnable = false;              // recorded MIDI notes become chord events
+		ObjectId audition = 0;                  // Select Track for Auditioning: a MIDI or instrument track, or 0
+		bool acousticFeedback = false;          // the chord events play on the audition track
+	};
+
+	// A chord pad (#174, reference manual pp. 1352-1353): its chord's name (midi::chordName), empty while unassigned;
+	// its voicing, the inversion of its basic voicing it plays; adaptive voicing; and whether it is locked.
+	struct ChordPad
+	{
+		std::string chord;
+		int voicing = 0; // -12 to 12
+		bool adaptive = true;
+		bool locked = false;
+	};
+
+	// The chord pads (#174, reference manual pp. 1346-1391), saved with the project. A new project has twelve pads with
+	// the major preset on C.
+	struct ChordPads
+	{
+		std::vector<ChordPad> pads = {{"C", 0, true, false}, {"Dm", 0, true, false}, {"Em", 0, true, false},
+			{"F", 0, true, false}, {"G", 0, true, false}, {"Am", 0, true, false}, {"Bdim", 0, true, false},
+			{"", 0, true, false}, {"", 0, true, false}, {"", 0, true, false}, {"", 0, true, false},
+			{"", 0, true, false}};
+		int rootKey = 0;              // 0 C to 11 B
+		int reference = -1;           // the adaptive voicing reference pad, or -1
+		int octaveOffset = 0;         // the basic player's Octave Offset, -3 to 3
+		int velocity = 100;           // of pads triggered with the mouse
+		bool remote = false;          // notes from MIDI inputs on the remote keys trigger the pads
+		int remoteStart = 36;         // C1: the first pad's remote key
+		int remoteEnd = 47;           // B1: the last remote key
+		std::string preset = "major"; // the preset loaded last
+		bool stepInput = false;       // triggered pads become chord events (chordPads.step)
+		bool moveInsert = false;
+		time::Ticks stepPosition = 0;
 	};
 
 	// What an automation lane changes.
@@ -1007,6 +1070,14 @@ namespace gnubase::engine
 		std::string configuration; // the active configuration's name, or empty
 	};
 
+	// The track list's track heights and folded folders (#491, docs/features/track-list.md, reference manual pp. 217,
+	// 225), saved with the project.
+	struct TrackLayout
+	{
+		std::map<ObjectId, double> heights; // in dp, before vertical zoom; tracks without one have the default
+		std::vector<ObjectId> folded;       // folder tracks, sorted
+	};
+
 	// A workspace (#163, docs/features/workspaces.md, reference manual pp. 1576-1578): a name for a window layout, the
 	// user setting ui.layout as JSON text, with the windows that are open and where they are.
 	struct Workspace
@@ -1085,6 +1156,7 @@ namespace gnubase::engine
 		int rootKey = -1;                     // the Project Root Key (#168): -1 for none, 0 C to 11 B
 		TransposeTrack transpose;             // the transpose track's events and controls; reset when the track goes
 		ChordTrack chords;                    // the chord track's (#173); reset when the track goes
+		ChordPads chordPads;                  // the chord pads (#174)
 		std::map<ObjectId, DrumMap> drumMaps; // a new project has the GM Map (#129)
 		// The project input transformer's modules, which the MIDI and instrument tracks whose input transformer is in
 		// project mode share (#178).
@@ -1111,6 +1183,8 @@ namespace gnubase::engine
 		std::map<std::string, MixerView> mixers;
 		// What the track list hides (#166). A setting, not part of undo.
 		TrackVisibility trackVisibility;
+		// The track heights and folded folders (#491). Settings, not part of undo.
+		TrackLayout trackLayout;
 		// The project workspaces and the active workspace (#163). Settings, not part of undo.
 		ProjectWorkspaces workspaces;
 
@@ -1409,7 +1483,8 @@ namespace gnubase::engine
 
 	inline bool operator==(const ChordEvent& a, const ChordEvent& b)
 	{
-		return std::tie(a.id, a.position, a.text) == std::tie(b.id, b.position, b.text);
+		return std::tie(a.id, a.position, a.text, a.audioEvent, a.detected) ==
+			std::tie(b.id, b.position, b.text, b.audioEvent, b.detected);
 	}
 
 	inline bool operator==(const ChordSource& a, const ChordSource& b)
@@ -1419,13 +1494,36 @@ namespace gnubase::engine
 
 	inline bool operator==(const ChordFollow& a, const ChordFollow& b)
 	{
-		return std::tie(a.mode, a.source) == std::tie(b.mode, b.source);
+		return std::tie(a.mode, a.source, a.voicings, a.voice, a.master, a.liveInput) ==
+			std::tie(b.mode, b.source, b.voicings, b.voice, b.master, b.liveInput);
+	}
+
+	inline bool operator==(const ChordVoicing& a, const ChordVoicing& b)
+	{
+		return std::tie(
+				   a.library, a.style, a.addRoot, a.duplicateRoot, a.fattenUp, a.lowestRoot, a.lowest, a.highest) ==
+			std::tie(b.library, b.style, b.addRoot, b.duplicateRoot, b.fattenUp, b.lowestRoot, b.lowest, b.highest);
 	}
 
 	inline bool operator==(const ChordTrack& a, const ChordTrack& b)
 	{
-		return std::tie(a.events, a.scales, a.octaveOffset, a.adaptiveVoicings, a.automaticScales, a.follow) ==
-			std::tie(b.events, b.scales, b.octaveOffset, b.adaptiveVoicings, b.automaticScales, b.follow);
+		return std::tie(a.events, a.scales, a.octaveOffset, a.adaptiveVoicings, a.automaticScales, a.follow, a.voicing,
+				   a.shiftChords, a.mute, a.showScales, a.recordEnable, a.audition, a.acousticFeedback) ==
+			std::tie(b.events, b.scales, b.octaveOffset, b.adaptiveVoicings, b.automaticScales, b.follow, b.voicing,
+				b.shiftChords, b.mute, b.showScales, b.recordEnable, b.audition, b.acousticFeedback);
+	}
+
+	inline bool operator==(const ChordPad& a, const ChordPad& b)
+	{
+		return std::tie(a.chord, a.voicing, a.adaptive, a.locked) == std::tie(b.chord, b.voicing, b.adaptive, b.locked);
+	}
+
+	inline bool operator==(const ChordPads& a, const ChordPads& b)
+	{
+		return std::tie(a.pads, a.rootKey, a.reference, a.octaveOffset, a.velocity, a.remote, a.remoteStart,
+				   a.remoteEnd, a.preset, a.stepInput, a.moveInsert, a.stepPosition) ==
+			std::tie(b.pads, b.rootKey, b.reference, b.octaveOffset, b.velocity, b.remote, b.remoteStart, b.remoteEnd,
+				b.preset, b.stepInput, b.moveInsert, b.stepPosition);
 	}
 
 	inline bool operator==(const AutomationTarget& a, const AutomationTarget& b)

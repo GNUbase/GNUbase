@@ -37,7 +37,16 @@ so MCP and Lua scripts can do all it does.
   the `TimeContext`: timecode runs at the project's frame rate, `formatTime` and `parseTime` add the start time to
   seconds, timecode and user frames and the bar offset to bars, and the ruler's marks do the same
   (`src/ui/timeformat.h`). Lengths (`formatLength`, `parseLength`) count from zero. A typed position before the
-  project start is no position. Samples count from the project start.
+  project start is no position. In bars and beats a minus before the bar number types a bar before bar 1, which a
+  negative bar offset shows: "-3.1.1.0" with a bar offset of -4 is the project start; lengths take no minus. Samples
+  count from the project start. `readTimeContext` changes the context only once it has read all of it.
+- **The primary time format** (p. 317) is the project's `timeFormat`: the transport's primary display and the
+  markers window show it, and the transport's primary format menu and Exchange Time Formats set it with `project.set`
+  ([transport-bar.md](transport-bar.md)). A format picked in the event display's ruler menu with Ctrl (Cmd on macOS)
+  held sets it too, for all windows (p. 69); without, the ruler picks one of its own. Ruler tracks keep theirs
+  ([ruler-tracks.md](ruler-tracks.md)).
+- **The snap grid** counts its seconds and frame lines from the start time, as the ruler's marks do, so they stay on
+  the ruler's seconds and frames whatever the start time ([snap.md](snap.md)).
 - **The event display's ruler** follows the project's time format when it changes: `project.set` (and undo and
   redo of it) makes a new time format the snap settings' format, and emits `snap.changed`; the ruler's menu picks one
   of its own meanwhile. The ruler's format is the snap settings' `format`, so a project opens with the one it was saved with
@@ -80,8 +89,6 @@ so MCP and Lua scripts can do all it does.
 - The reference's Get Frame Rate From Video, Time Offset for the other formats, Author and Company, Hermode tuning,
   the project location with Show in Explorer, the "Run Setup on Create New Project" preference, and sample rates the
   audio device doesn't support shown in another color.
-- The transport's primary time display still keeps its format in the user setting `ui.timeFormats`; that it and the
-  project's time format set each other (p. 69) is a follow-up.
 
 ## Tests
 
@@ -92,4 +99,13 @@ frame rate, start, length, bar offset, pan law and maximum volume as one undo st
 unreadable length keeps it open with the message; a new sample rate keeps the dialog open on an unsaved project
 with media, and conforms a saved project's audio file with the pool's job, which the pool shows, undone in one step,
 and doesn't with Conform Audio Files off; an unsaved project whose only file at another rate is missing, the others at the new rate, takes the new rate without asking for a save; the status line shows a new record bit depth, follows undo and opens
-the dialog with a click. `tests/eventdisplay_tests.cpp` checks Zoom Full and the overview line with the project's length.
+the dialog with a click; Project > Project Setup... opens it, and Escape closes it without a change.
+`tests/timeformat_tests.cpp`: the ruler's marks counting from the start time and bar offset, the negative-bar round
+trip, and `readTimeContext` leaving the context as it was for a project it can't read. `tests/markers_ui_tests.cpp`:
+cycle marker lengths with a start time, and the markers window in the project's time format.
+`tests/eventdisplay_tests.cpp`: the ruler following the project's time format, and opening a project with the ruler
+format it was saved with; Zoom Full and the overview line with the project's length. `tests/snap_tests.cpp`: the
+seconds and frame grids counting from the start time, also through `snap.position`. `tests/transportbar_tests.cpp`:
+the primary format menu and Exchange Time Formats setting the project's time format, and the displays following it,
+also by undo and redo. `tests/uiapp_tests.cpp`: a format picked in the ruler's menu with Ctrl sets the project's time
+format, without it doesn't.

@@ -54,7 +54,9 @@ namespace gnubase::ui
 
 	// A position typed in the format, in seconds, or nothing for text that isn't one or is before the project start.
 	// Numbers may be separated by any other characters; those left out count from the start: "3.2" is bar 3, beat 2,
-	// "1:30" a minute and a half, and for timecode "5:12" five seconds and twelve frames.
+	// "1:30" a minute and a half, and for timecode "5:12" five seconds and twelve frames. In bars and beats a minus
+	// before the bar number types a bar before bar 1, which a negative bar offset shows: "-3.1.1.0" with a bar offset
+	// of -4 (lengths take no minus).
 	std::optional<double> parseTime(TimeFormat format, const std::string& text, const TimeContext& context);
 
 	// A length from one position to another, in seconds: bars, beats, sixteenths and display ticks counted from zero,

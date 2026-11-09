@@ -35,6 +35,10 @@ namespace gnubase::engine
 	void followAutomation(Project& project, ObjectId track, const time::Position& from, const time::Position& end,
 		const time::Position& to, CommandContext& context);
 
+	// Whether an automation lane has a step curve (reference manual p. 870): mute and the stepped parameters of
+	// instruments, plugins and the channel strip, whose points are steps with whole values (projectmodel.cpp).
+	bool hasStepCurve(const Project& project, const AutomationLane& lane);
+
 	// Changes the project's sample rate (projectmodel.cpp). Linear positions are in samples, so they are rescaled to
 	// keep their time.
 	void changeSampleRate(Project& project, double sampleRate, CommandContext& context);
@@ -158,14 +162,17 @@ namespace gnubase::engine
 		void registerAutomationCommands(Engine& engine);
 		void registerHistoryCommands(Engine& engine);
 		void registerMediaFolderCommands(Engine& engine, Jobs& jobs); // project.backup, media.prepareArchive and more
-		void registerMidiEditCommands(Engine& engine);                // midiedits.cpp: note.set and controller.set
-		void registerMarkerCommands(Engine& engine);                  // markers.cpp: marker.*
-		void registerArrangerCommands(Engine& engine);                // arranger.cpp: arranger.* (#167)
-		void registerTransposeCommands(Engine& engine);               // transpose.cpp: transpose.* (#168)
-		void registerChordCommands(Engine& engine);                   // chordtrack.cpp: chord.* (#173)
-		void registerTempoCommands(Engine& engine);                   // tempo.cpp: tempo.*
-		Json detectTempo(Project& project, CommandContext& context);  // tempo.cpp: tempo.detect
-		void registerSignatureCommands(Engine& engine);               // signature.cpp: signature.*
+		// What project.backup names the backup by default: after the project file, or else the project.
+		std::string backupName() const;
+		void registerMidiEditCommands(Engine& engine);               // midiedits.cpp: note.set and controller.set
+		void registerMarkerCommands(Engine& engine);                 // markers.cpp: marker.*
+		void registerArrangerCommands(Engine& engine);               // arranger.cpp: arranger.* (#167)
+		void registerTransposeCommands(Engine& engine);              // transpose.cpp: transpose.* (#168)
+		void registerChordCommands(Engine& engine);                  // chordtrack.cpp: chord.* (#173)
+		void registerChordPadCommands(Engine& engine);               // chordpads.cpp: chordPads.* (#174)
+		void registerTempoCommands(Engine& engine);                  // tempo.cpp: tempo.*
+		Json detectTempo(Project& project, CommandContext& context); // tempo.cpp: tempo.detect
+		void registerSignatureCommands(Engine& engine);              // signature.cpp: signature.*
 		void registerMidiFileCommands(Engine& engine); // midifilecommands.cpp: midiFile.export and midiFile.import
 		Json importMidiFile(Project& project, CommandContext& context);
 		void registerAudioFileCommands(Engine& engine, Jobs& jobs); // audiofilecommands.cpp: audioFile.import

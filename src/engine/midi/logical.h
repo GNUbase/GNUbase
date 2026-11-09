@@ -138,6 +138,111 @@ namespace gnubase::engine::midi
 		return !(a == b);
 	}
 
+	namespace detail
+	{
+		// Reads filter lines as tokens: each line's open brackets, the line, its close brackets and its join.
+		template <typename Line, typename Test> class LineExpression
+		{
+		public:
+			LineExpression(const Line* lines, size_t count, const Test& test) noexcept
+				: m_lines(lines), m_count(count), m_test(test), m_open(count > 0 ? lines[0].open : 0)
+			{
+			}
+
+			// expression := term (or term)*
+			bool expression() noexcept
+			{
+				bool result = term();
+				while (m_line < m_count && m_phase == Phase::Join && m_lines[m_line].join == LogicalBool::Or)
+				{
+					next();
+					result = term() || result; // every line is read, also when the result is known
+				}
+				return result;
+			}
+
+		private:
+			enum class Phase : uint8_t
+			{
+				Open,  // m_open brackets before the line
+				Close, // m_close brackets after it
+				Join,  // its join to the next line
+			};
+
+			// term := factor (and factor)*
+			bool term() noexcept
+			{
+				bool result = factor();
+				while (m_line < m_count && m_phase == Phase::Join && m_lines[m_line].join == LogicalBool::And)
+				{
+					next();
+					result = factor() && result;
+				}
+				return result;
+			}
+
+			// factor := ( expression ) | line
+			bool factor() noexcept
+			{
+				if (m_line >= m_count)
+					return false;
+				if (m_phase == Phase::Open && m_open > 0)
+				{
+					--m_open;
+					const bool result = expression();
+					if (m_phase == Phase::Close && m_close > 0)
+						--m_close;
+					afterClose();
+					return result;
+				}
+				if (m_phase != Phase::Open)
+					return false; // not reached for matching brackets
+				const bool result = m_test(m_lines[m_line]);
+				m_phase = Phase::Close;
+				m_close = m_lines[m_line].close;
+				afterClose();
+				return result;
+			}
+
+			void afterClose() noexcept
+			{
+				if (m_phase == Phase::Close && m_close == 0)
+				{
+					if (m_line + 1 < m_count)
+						m_phase = Phase::Join;
+					else
+						m_line = m_count;
+				}
+			}
+
+			void next() noexcept
+			{
+				++m_line;
+				m_phase = Phase::Open;
+				m_open = m_lines[m_line].open;
+			}
+
+			const Line* m_lines;
+			size_t m_count;
+			const Test& m_test;
+			size_t m_line = 0;
+			Phase m_phase = Phase::Open;
+			int m_open;
+			int m_close = 0;
+		};
+	}
+
+	// Whether filter lines, with their open and close brackets and their joins (and binding more tightly than or),
+	// hold, test saying whether each line does; no lines hold. The rule editor's lines and the project rules' lines
+	// (document/projectrules.h) are read alike. Real-time safe if test is.
+	template <typename Line, typename Test>
+	bool evaluateLines(const Line* lines, size_t count, const Test& test) noexcept
+	{
+		if (count == 0)
+			return true;
+		return detail::LineExpression<Line, Test>(lines, count, test).expression();
+	}
+
 	// Whether the filter lines find the event. Real-time safe.
 	bool matches(const FilterLine* lines, size_t count, const LogicalEvent& event) noexcept;
 

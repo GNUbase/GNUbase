@@ -325,8 +325,10 @@ TEST_CASE("the inspector's Edit In-Place starts unchecked in another project", "
 			const Json& project = f.display.project();
 			if (!project.is_object())
 				return false;
+			// The new project's one track, not the old project's track with the same id: the list has had the
+			// project.reset that clears its selection.
 			const Json& tracks = project.at("tracks");
-			return std::any_of(tracks.begin(), tracks.end(), [&](const Json& each) { return each.at("id") == track; });
+			return tracks.size() == 1 && tracks.at(0).at("id") == track;
 		}));
 	f.app.appUi().trackList()->select({track});
 	REQUIRE(f.app.waitUntil([&] { return !f.has(button, "unavailable") && !f.elements(button).empty(); }));

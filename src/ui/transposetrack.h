@@ -22,17 +22,20 @@ namespace Rml
 	class ElementFormControl;
 }
 
-// The transpose track and the chord track in the UI (#168, reference manual pp. 165, 418; #173, pp. 1320-1322): the
-// transpose events on the transpose track's lane and the chord events on the chord track's lane in the event display.
-// The events are the engine's (transpose.*, chord.*); docs/features/transpose.md and chord-track.md describe them.
+// The transpose track and the chord track in the UI (#168, reference manual pp. 165, 418; #173, #933, pp. 1320-1331):
+// the transpose events on the transpose track's lane, and the chord events and the scale events (the scale lane, while
+// Show Scales is on) on the chord track's lane in the event display. The events are the engine's (transpose.*,
+// chord.*); docs/features/transpose.md and chord-track.md describe them.
 namespace gnubase::ui
 {
-	// Which track's events a lane shows: the transpose track's (class names transpose-*) or the chord track's
-	// (chord-*).
+	// Which track's events a lane shows: the transpose track's (class names transpose-*), the chord track's chord
+	// events (chord-*) or its scale events (scale-*), which show in the lower half of its lane while Show Scales is on,
+	// with the chord events in the upper half.
 	enum class LaneKind : uint8_t
 	{
 		Transpose,
 		Chord,
+		Scale,
 	};
 
 	// A global track's events on its lane, in an element of its own (<div class="transpose-row">, or "chord-row")
@@ -41,8 +44,10 @@ namespace gnubase::ui
 	// (transpose.add, chord.add: an undefined chord) and opens it for editing, the erase tool removes the event
 	// clicked, and with the other tools a drag moves an event to the nearest bar (transpose.set) and a double click
 	// opens it for editing: the row's <input class="transpose-field">, .shown over it, where Enter sets the value (the
-	// chord) typed. The row follows the project and the display's view. Use it on the UI thread; the display and the
-	// binding must outlive it.
+	// chord, the scale such as "D dorian") typed. A chord event made from audio is .detected. With the chord track's
+	// Acoustic Feedback and a track for auditioning, a press on a chord or scale event auditions it until the button
+	// goes up (chord.audition). The row follows the project and the display's view. Use it on the UI thread; the
+	// display and the binding must outlive it.
 	class GlobalEventLane final : private Rml::EventListener
 	{
 	public:
@@ -64,6 +69,7 @@ namespace gnubase::ui
 			int64_t start = 0; // samples
 			std::string text;  // as the event shows it
 			std::string value; // as the field edits it
+			bool detected = false;
 		};
 
 		void ProcessEvent(Rml::Event& event) override;
@@ -77,8 +83,9 @@ namespace gnubase::ui
 		int64_t nearestBar(double seconds) const;
 		double seconds(int64_t samples) const { return static_cast<double>(samples) / m_time.sampleRate; }
 
-		// A class name or command of the lane's kind, such as "transpose-event" or "chord.add".
+		// A class name of the lane's kind, such as "transpose-event", and a command or event, such as "chord.add".
 		std::string named(const char* suffix) const;
+		std::string command(const char* suffix) const;
 		Event eventFrom(const engine::Json& event) const;
 
 		EventDisplay& m_display;
@@ -91,6 +98,9 @@ namespace gnubase::ui
 		TimeContext m_time;
 		uint64_t m_track = 0; // the transpose or chord track, 0 without one
 		bool m_linear = false;
+		bool m_showScales = false; // the chord track's Show Scales
+		bool m_audition = false;   // a press auditions the event
+		bool m_auditioning = false;
 		std::vector<Event> m_list;
 		std::optional<std::pair<uint64_t, float>> m_drag;       // the event pressed and where, in pixels
 		std::optional<uint64_t> m_editing;                      // the event the field edits

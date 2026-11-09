@@ -12,6 +12,7 @@
 #include "engine/document/hitpoints.h"
 #include "engine/document/linkgroups.h"
 #include "engine/document/mixerviews.h"
+#include "engine/document/projectrules.h"
 #include "engine/document/renderinplace.h"
 #include "engine/document/sampleeditor.h"
 #include "engine/document/serialize.h"
@@ -757,8 +758,8 @@ namespace gnubase::engine
 				break;
 			case AutomationTargetType::Mute:
 				only({});
-				// ponytail: a MIDI track's mute would have to silence its notes as they play.
-				require(channel.format != ChannelFormat::None, "a MIDI track's mute isn't automated yet");
+				require(channel.format != ChannelFormat::None || track.type == TrackType::Midi,
+					"a VCA track's mute isn't automated");
 				break;
 			case AutomationTargetType::Instrument:
 			{
@@ -1476,6 +1477,13 @@ namespace gnubase::engine
 			Track copy = project.trackById.at(id);
 			copy.id = project.newId();
 			copy.parent = parent;
+			// A copy follows the chord track as its original does.
+			if (const auto follow = project.chords.follow.find(id); follow != project.chords.follow.end())
+			{
+				ChordFollow settings = follow->second;
+				project.chords.follow[copy.id] = std::move(settings);
+				added.emplace_back("chord.changed", Json());
+			}
 			copy.children.clear();
 			for (TrackVersion& version : copy.versions)
 				version = copyVersion(project, version, copy.id);
@@ -1628,6 +1636,8 @@ namespace gnubase::engine
 			{
 				if (name == "track.added" && data.at("track").at("channel") != 0)
 					data["channel"] = toJson(project.channels.at(data.at("track").at("channel").get<ObjectId>()));
+				if (name == "chord.changed")
+					data = chordJson(project);
 				context.emit(name, data);
 			}
 			return {{"track", toJson(project.trackById.at(copy))}};
@@ -1679,6 +1689,19 @@ namespace gnubase::engine
 					project.chords = ChordTrack();
 					context.emit("chord.changed", chordJson(project));
 				}
+				// Its Follow Chord Track settings go with it, and so does its place as an audition track or master.
+				ChordTrack& chords = project.chords;
+				bool chordsChanged = chords.follow.erase(removed) != 0 || chords.audition == removed;
+				if (chords.audition == removed)
+					chords.audition = 0;
+				for (auto& [follower, follow] : chords.follow)
+					if (follow.master == removed)
+					{
+						follow.master = 0;
+						chordsChanged = true;
+					}
+				if (chordsChanged)
+					context.emit("chord.changed", chordJson(project));
 				if (gone.channel != 0)
 					for (const ObjectId slot : project.channels.at(gone.channel).slots)
 						project.slots.erase(slot);
@@ -3171,6 +3194,11 @@ namespace gnubase::engine
 		followEvent(project, track, from, end, to, context);
 	}
 
+	bool hasStepCurve(const Project& project, const AutomationLane& lane)
+	{
+		return stepCurve(project, lane);
+	}
+
 	namespace
 	{
 		// The undo step each command records, as shown in the history.
@@ -3262,6 +3290,18 @@ namespace gnubase::engine
 			{"chord.follow", "Follow chord track"},
 			{"chord.toMidi", "Chords to MIDI"},
 			{"chord.fromMidi", "Create chord events"},
+			{"chord.fromAudio", "Create chord events from audio"},
+			{"chord.map", "Map to chord track"},
+			{"chord.assignVoices", "Assign voices to notes"},
+			{"chordPads.set", "Change chord pads"},
+			{"chordPads.assign", "Assign chords to pads"},
+			{"chordPads.modify", "Modify chord pads"},
+			{"chordPads.setPad", "Change chord pad"},
+			{"chordPads.move", "Move chord pad"},
+			{"chordPads.fromChordTrack", "Assign pads from chord track"},
+			{"chordPads.loadPreset", "Load chord pads preset"},
+			{"chordPads.step", "Insert chord from pad"},
+			{"chordPads.toTrack", "Chord pad to track"},
 			{"automationLane.add", "Add automation lane"},
 			{"automationLane.set", "Change automation lane"},
 			{"automationLane.remove", "Remove automation lane"},
@@ -4427,6 +4467,7 @@ namespace gnubase::engine
 		registerArrangerCommands(engine);
 		registerTransposeCommands(engine);
 		registerChordCommands(engine);
+		registerChordPadCommands(engine);
 		registerTempoCommands(engine);
 		registerSignatureCommands(engine);
 		registerAutomationCommands(engine);
@@ -4436,6 +4477,7 @@ namespace gnubase::engine
 		registerAudioQuantizeCommands(*this, engine);
 		midi::registerFunctionCommands(*this, engine);
 		midi::registerLogicalCommands(*this, engine);
+		registerProjectRuleCommands(*this, engine);
 		metronome::registerMetronomeCommands(*this, engine);
 		midi::registerControllerLaneCommands(*this, engine);
 		registerMidiFileCommands(engine);
@@ -4484,8 +4526,9 @@ namespace gnubase::engine
 		add(engine,
 			{"automationLane.add", 1,
 				"Adds an automation lane to a track: the curve of one parameter. target.type says which: volume (the "
-				"channel's fader, in dB), pan, panLeft and panRight (-1 to 1, see channel.set) and mute (0 off, 1 on; "
-				"a lane that plays overrides the mute button) on tracks with audio channels; instrument, a parameter "
+				"channel's fader, in dB), pan, panLeft and panRight (-1 to 1, see channel.set) on tracks with audio "
+				"channels; mute (0 off, 1 on; a lane that plays overrides the mute button) on those and on MIDI "
+				"tracks, whose notes and controllers it silences, ending the notes that sound; instrument, a parameter "
 				"of an instrument track's built-in instrument (target.parameter, an id from processor.list, in its "
 				"range); plugin, a parameter of the built-in plugin in one of the track's slots (target.slot and "
 				"target.parameter, as parameter.list gives them, in its range; the lane goes when the plugin is "
@@ -4592,6 +4635,11 @@ namespace gnubase::engine
 			});
 	}
 
+	std::string ProjectModel::backupName() const
+	{
+		return safeFileName(m_file.empty() ? m_project.name : projectFileStem(std::filesystem::u8path(m_file)));
+	}
+
 	void ProjectModel::registerMediaFolderCommands(Engine& engine, Jobs& jobs)
 	{
 		const Json stringSchema = {{"type", "string"}};
@@ -4602,19 +4650,23 @@ namespace gnubase::engine
 		add(engine,
 			{"project.location", 1,
 				"Where the project is: its project file (set by project.save and project.load), the folder of that "
-				"file, and the media folder in it where media.add with copy and media.prepareArchive put audio files. "
-				"All null for a project that has no file yet.",
+				"file, and the media folder in it where media.add with copy and media.prepareArchive put audio files, "
+				"all null for a project that has no file yet; and name, which project.backup names the backup by "
+				"default: the project file's name without the .dawproject extension, or else the project's name, "
+				"either made a name that files can have on every platform.",
 				objectSchema(Json::object()),
-				objectSchema({{"file", nullableString}, {"folder", nullableString}, {"mediaFolder", nullableString}},
-					{"file", "folder", "mediaFolder"}),
+				objectSchema({{"file", nullableString}, {"folder", nullableString}, {"mediaFolder", nullableString},
+								 {"name", stringSchema}},
+					{"file", "folder", "mediaFolder", "name"}),
 				true},
 			[this](Project&, CommandContext&)
 			{
 				if (m_file.empty())
-					return Json{{"file", nullptr}, {"folder", nullptr}, {"mediaFolder", nullptr}};
+					return Json{
+						{"file", nullptr}, {"folder", nullptr}, {"mediaFolder", nullptr}, {"name", backupName()}};
 				const std::filesystem::path file = std::filesystem::u8path(m_file);
 				return Json{{"file", m_file}, {"folder", file.parent_path().u8string()},
-					{"mediaFolder", mediaFolderFor(file).u8string()}};
+					{"mediaFolder", mediaFolderFor(file).u8string()}, {"name", backupName()}};
 			});
 
 		const Json integerSchema = {{"type", "integer"}};
@@ -4677,9 +4729,9 @@ namespace gnubase::engine
 				"job.progress and job.finished events follow, and job.cancel stops it and removes what it wrote. A "
 				"folder that a running job writes into can't be used. The job's result is {file, files, missing, "
 				"activated, activationError}: missing lists the media files ({media, path}) and freeze files ({track, "
-				"path}) that couldn't be read and keep their old paths; activated says whether the backup was opened, "
-				"and activationError why not, if it was asked "
-				"to be.",
+				"path}) that couldn't be read and keep their old paths, and the files and folders of the Mixdown "
+				"folder ({path}) that couldn't be read and were left out; activated says whether the backup was "
+				"opened, and activationError why not, if it was asked to be.",
 				objectSchema({{"folder", stringSchema}, {"name", stringSchema}, {"minimize", booleanSchema},
 								 {"handles", numberSchema}, {"removeUnused", booleanSchema},
 								 {"currentVersionsOnly", booleanSchema}, {"skipVideo", booleanSchema},
@@ -4712,8 +4764,7 @@ namespace gnubase::engine
 				}
 				else
 				{
-					options.name = safeFileName(
-						m_file.empty() ? m_project.name : projectFileStem(std::filesystem::u8path(m_file)));
+					options.name = backupName();
 				}
 				options.minimize = parameters.value("minimize", false);
 				options.handles = parameters.value("handles", 1.0);

@@ -913,9 +913,10 @@ meter .meter-peak
 }
 
 /* The transpose track (docs/features/transpose.md) and the chord track (chord-track.md): their events over their
-   lanes and the field that edits one's value or chord. Code places the row on its lane, the events at their positions
-   and the field over the event it edits. */
-.transpose-row, .chord-row
+   lanes and the field that edits one's value, chord or scale. Code places the row on its lane (the chord track's chord
+   and scale rows on its halves while Show Scales is on), the events at their positions and the field over the event
+   it edits. */
+.transpose-row, .chord-row, .scale-row
 {
 	position: absolute;
 	left: 0;
@@ -924,12 +925,13 @@ meter .meter-peak
 	height: 100%;
 }
 
-.transpose-row.hidden, .transpose-row .transpose-field, .chord-row.hidden, .chord-row .chord-field
+.transpose-row.hidden, .transpose-row .transpose-field, .chord-row.hidden, .chord-row .chord-field, .scale-row.hidden,
+.scale-row .scale-field
 {
 	display: none;
 }
 
-.transpose-row .transpose-events, .chord-row .chord-events
+.transpose-row .transpose-events, .chord-row .chord-events, .scale-row .scale-events
 {
 	position: absolute;
 	left: 0;
@@ -938,7 +940,7 @@ meter .meter-peak
 	height: 100%;
 }
 
-.transpose-row .transpose-event, .chord-row .chord-event
+.transpose-row .transpose-event, .chord-row .chord-event, .scale-row .scale-event
 {
 	position: absolute;
 	top: 0;
@@ -946,12 +948,112 @@ meter .meter-peak
 	white-space: nowrap;
 }
 
-.transpose-row .transpose-field.shown, .chord-row .chord-field.shown
+.transpose-row .transpose-field.shown, .chord-row .chord-field.shown, .scale-row .scale-field.shown
 {
 	display: block;
 	position: absolute;
 	top: 0;
 	width: 48dp;
+}
+
+/* The chord pads zone (docs/features/chord-pads.md): its toolbars above the pads, which wrap, and the chord
+   assistant to their right while it shows; the chord field shows while a pad's chord is typed. */
+.chord-pads
+{
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+}
+
+.chord-pads-toolbar
+{
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4dp;
+	padding: 2dp 4dp;
+}
+
+.chord-pads-toolbar select
+{
+	width: 96dp;
+}
+
+.chord-pads-toolbar valuefield
+{
+	width: 48dp;
+}
+
+.chord-pads-field, .chord-pads .hidden
+{
+	display: none;
+}
+
+.chord-pads-field.shown
+{
+	display: block;
+	width: 96dp;
+}
+
+.chord-pads-body
+{
+	display: flex;
+	flex: 1 1 0;
+	min-height: 0;
+}
+
+.chord-pads-pads
+{
+	display: flex;
+	flex-wrap: wrap;
+	align-content: flex-start;
+	flex: 1 1 0;
+	gap: 4dp;
+	padding: 4dp;
+	overflow: auto;
+}
+
+.chord-pad
+{
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	width: 64dp;
+	height: 52dp;
+}
+
+.chord-pads-assistant
+{
+	display: flex;
+	flex-direction: column;
+	width: 280dp;
+	overflow: auto;
+}
+
+.chord-pads-suggestions
+{
+	display: flex;
+	flex-wrap: wrap;
+	gap: 3dp;
+	padding: 4dp;
+}
+
+.chord-pads-suggestions .chord-circle-outer, .chord-pads-suggestions .chord-circle-inner
+{
+	display: flex;
+	flex-wrap: wrap;
+	gap: 3dp;
+	width: 100%;
+}
+
+.chord-suggestion
+{
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	width: 52dp;
+	padding: 2dp;
 }
 
 /* MIDI parts excluded from global transpose (reference manual p. 421): code puts a .part-mark.independent at the
@@ -1315,6 +1417,15 @@ meter .meter-peak
 .track-list .track-controls select.tempo-type
 {
 	width: 60dp;
+}
+
+/* The chord track's Select Track for Auditioning (docs/features/chord-track.md). */
+.track-list .track-controls select.chord-audition
+{
+	width: 64dp;
+	height: 18dp;
+	margin-left: 2dp;
+	padding: 0 2dp;
 }
 
 .track-list .drop-line

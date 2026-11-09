@@ -11,8 +11,10 @@
 #include <RmlUi/Core/ObserverPtr.h>
 
 #include <cstdint>
+#include <deque>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -29,12 +31,14 @@ namespace gnubase::ui
 	// The File menu's project commands as UI commands with the reference's keys: file.new (the start screen),
 	// file.open, file.save, file.saveAs, file.saveNewVersion, file.saveTemplate, file.backup and file.revert, plus
 	// file.quit. They ask through the OS's file dialogs (Shell::showFileDialog) and GNUbase's own (the documents
-	// start-screen.rml, save-template.rml, backup-project.rml, discard-changes.rml and project-error.rml in
-	// folder), and do everything with
-	// engine commands. Opening another project, reverting and quitting ask first if the project has unsaved changes,
-	// and a command that fails shows its error, as does an auto save that fails. Quitting asks however it is asked for:
-	// File > Quit, the main window's close button or the OS (Shell::onQuitRequest). Use it on the UI thread; the key
-	// commands, the binding and the shell must outlive it.
+	// start-screen.rml, save-template.rml, backup-project.rml, backup-progress.rml, discard-changes.rml and
+	// project-error.rml in folder), and do everything with engine commands. Opening another project, reverting and
+	// quitting ask first if the project has unsaved changes, and a command that fails shows its error, as does an auto
+	// save that fails. A dialog that comes while another is open, such as the unsaved changes question or an error,
+	// waits for it instead of being dropped. A backup shows its progress, which Cancel stops, and whether it couldn't
+	// read files or open the backup. Quitting asks however it is asked for: File > Quit, the main window's close button
+	// or the OS (Shell::onQuitRequest). Use it on the UI thread; the key commands, the binding and the shell must
+	// outlive it.
 	class ProjectFiles final : private Rml::EventListener
 	{
 	public:
@@ -51,16 +55,28 @@ namespace gnubase::ui
 
 	private:
 		using Closed = std::function<void(Rml::ElementDocument& dialog, const std::string& result)>;
+		using Shown = std::function<void(Rml::ElementDocument* dialog)>;
 		struct WaitingError
 		{
 			WindowId window = 0;
 			std::string error;
 		};
+		struct WaitingDialog
+		{
+			WindowId window = 0;
+			const char* file = nullptr;
+			Shown shown;
+			Closed closed;
+		};
 
 		void ProcessEvent(Rml::Event& event) override;
-		// Opens one of the dialogs in the window, modal; closed runs when it closes, with its result. One at a time:
-		// returns null while another one is open, unless that is a failed auto save's error, which makes way.
-		Rml::ElementDocument* openDialog(Window& window, const char* file, Closed closed);
+		// Opens one of the dialogs in the window, modal: shown runs with its document once it opened, or with null if
+		// it can't, and closed when it closes, with its result. One at a time: while another one is open it waits until
+		// that closed or went with its window (openWaiting), unless that is a failed auto save's error, which makes
+		// way; with wait false it doesn't open then.
+		void openDialog(WindowId window, const char* file, Shown shown, Closed closed, bool wait = true);
+		// Opens the dialogs that wait, in order, once no dialog is open; those whose window is gone don't open.
+		void openWaiting();
 		// Closes the open dialog, if any, with the result.
 		void closeDialog(const std::string& result);
 		// Asks the engine for the project's file (project.location).
@@ -103,6 +119,17 @@ namespace gnubase::ui
 		void saveAs(Window& window);
 		// Asks for the backup's options in the window (backup-project.rml) and backs the project up into folder.
 		void backup(Window& window, const std::string& folder);
+		// Shows backup-project.rml in the window, with name as the Project Name, and backs up with its options on OK.
+		void askBackupOptions(Window& window, const std::string& folder, const std::string& name);
+		// project.backup, asked for in the window, returned: shows its error, or the job's progress in a dialog
+		// (backup-progress.rml) whose Cancel stops it.
+		void backupStarted(WindowId window, const engine::Result& result);
+		// A backup's job ended (job.finished, or job.get for one that ended before backupStarted heard of it): if it is
+		// one of those this UI started, closes its progress and shows in its window why it failed, which files it
+		// couldn't read and why the backup wasn't opened, if it was to be. Other clients' backups show nothing (#944).
+		void backupEnded(const engine::Json& job);
+		// The open dialog if it is a backup's progress, or null.
+		Rml::ElementDocument* progressDialog() const;
 		void showStartScreen(Rml::ElementDocument& dialog, const engine::Json& templates, const engine::Json& recent);
 
 		EngineBinding& m_binding;
@@ -111,14 +138,18 @@ namespace gnubase::ui
 		std::string m_file; // the project's file (project.location), empty for none
 		Subscription m_saved;
 		Subscription m_reset;
+		Subscription m_jobProgress;
 		Subscription m_jobFinished;
 		Subscription m_autoSaveFailed;
 		Subscription m_autoSaved;
-		bool m_autoSaveFailureShown = false;     // since the last auto save that failed for a new reason
-		bool m_autoSaveErrorOpen = false;        // the open dialog is a failed auto save's error
-		std::optional<WindowId> m_backupWindow;  // where the last backup was asked for, which shows if it fails
+		bool m_autoSaveFailureShown = false; // since the last auto save that failed for a new reason
+		bool m_autoSaveErrorOpen = false;    // the open dialog is a failed auto save's error
+		std::map<uint64_t, WindowId>
+			m_backups;              // the running backups it started, by job, with where they were asked for
+		uint64_t m_progressJob = 0; // the backup whose progress the open dialog shows, if any
 		Rml::ObserverPtr<Rml::Element> m_dialog; // the open dialog's document
 		Closed m_closed;
+		std::deque<WaitingDialog> m_waitingDialogs;    // the dialogs that wait for it, oldest first
 		bool m_quitting = false;                       // a quit request waits for the engine to say whether to ask
 		Rml::ObserverPtr<Rml::Element> m_quitQuestion; // and then for the question, while it is m_dialog
 		std::vector<std::string> m_templates;          // the start screen's templates, by name

@@ -3,6 +3,7 @@
 
 #include "app/uitools.h"
 #include "platform/log.h"
+#include "ui/chordpads.h"
 #include "ui/fonts.h"
 #include "ui/historypanel.h"
 #include "ui/inspector.h"
@@ -26,6 +27,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -215,7 +217,7 @@ namespace gnubase::app
 		}
 
 		// The track list's commands (ui::TrackList::actions, docs/features/track-list.md) and their keys.
-		constexpr std::array<ProjectCommand, 35> g_trackCommands{{
+		constexpr std::array<ProjectCommand, 37> g_trackCommands{{
 			{"track.selectPrevious",
 				"Selects the track above the selected one, and its first event while an event is selected (unless "
 				"ui.upDownSelectsTracksOnly).",
@@ -239,7 +241,16 @@ namespace gnubase::app
 				"then follows the chord track.",
 				nullptr},
 			{"track.createChordEventsSelected",
-				"Create Chord Events: chord events from the MIDI notes of the selected MIDI and instrument tracks.",
+				"Create Chord Events: chord events from the selected audio tracks' events, and from the MIDI notes of "
+				"the selected MIDI and instrument tracks with the Create Chord Events dialog's options.",
+				nullptr},
+			{"track.mapToChordTrackSelected",
+				"Map to Chord Track: moves the notes of the selected MIDI and instrument tracks to the chord track's "
+				"chords, by the Map to Chord Track dialog's mapping mode.",
+				nullptr},
+			{"track.assignVoicesSelected",
+				"Assign Voices to Notes: moves the notes of the selected MIDI and instrument tracks to the voices of "
+				"the chord track's voicings.",
 				nullptr},
 			{"track.toggleFolding", "Folds or unfolds the selected folders.", nullptr},
 			{"track.foldAll", "Folds every folder.", nullptr},
@@ -493,6 +504,9 @@ namespace gnubase::app
 				m_pool = pool;
 				return pool;
 			}});
+		// The chord pads (reference manual pp. 1346-1391, docs/features/chord-pads.md) in the lower zone.
+		m_docking.add({"chordPads", "Chord Pads", "project", "lower",
+			[this](Rml::Element& element) { return std::make_shared<ui::ChordPadsPanel>(m_binding, element); }});
 		m_docking.addKeyCommands(m_keys);
 		// What the pool's commands did, sent from its toolbar, the Media menu or Find Missing Files, shows in the
 		// pool, which opens for it: its window comes to the front if it is in one of its own.
@@ -507,6 +521,14 @@ namespace gnubase::app
 						pool->report(command, result);
 				}));
 
+		m_keys.add({"window.chordPads", "Shows or hides the chord pads in the lower zone.",
+			[this](ui::Window& /*window*/, Rml::Element* /*zone*/)
+			{
+				if (m_docking.showing("chordPads") && m_docking.windowOf("chordPads") == nullptr)
+					m_docking.setVisible("project", "lower", false);
+				else
+					m_docking.open("chordPads");
+			}});
 		m_keys.add({"window.history", "Shows the edit history, where steps are undone and redone.",
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_docking.open("history"); }});
 		m_keys.add({"window.pool", "Shows the pool, the project's clips and media files.",
@@ -520,6 +542,14 @@ namespace gnubase::app
 			}});
 		m_keys.add({"pool.findMissing", "Chooses a folder to look for the pool's missing files in.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { chooseMissingFolder(window); }});
+		m_keys.add({"pool.prepareArchive",
+			"Copies the media from outside the project folder into it, after asking in the pool, which opens for it.",
+			[this](ui::Window& /*window*/, Rml::Element* /*zone*/)
+			{
+				m_docking.open("pool");
+				if (const std::shared_ptr<ui::PoolPanel> pool = m_pool.lock())
+					pool->prepareArchive();
+			}});
 		m_keys.add({"window.studioSetup", "Opens the studio setup dialog for the audio and MIDI devices.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { openStudioSetup(window); }});
 		m_keys.add({"window.midiDeviceManager",
@@ -678,8 +708,17 @@ namespace gnubase::app
 			}});
 		m_keys.enableWhen("track.autoFades",
 			[this](ui::Window&, Rml::Element*) { return m_trackList != nullptr && !m_trackList->selection().empty(); });
+		// New tracks go below the lowest selected track (reference manual p. 198).
+		const auto below = [this]
+		{
+			std::vector<std::pair<std::string, std::string>> attributes;
+			if (m_trackList && !m_trackList->selection().empty())
+				attributes.emplace_back("below", std::to_string(m_trackList->selection().back()));
+			return attributes;
+		};
 		m_keys.add({"project.addTrack", "Opens the add track dialog.",
-			[this](ui::Window& window, Rml::Element* /*zone*/) { openDialog(window, "add-track.rml"); }});
+			[this, below](ui::Window& window, Rml::Element* /*zone*/)
+			{ openDialog(window, "add-track.rml", below()); }});
 		// Group Track to Selected Tracks and Effect Track to Selected Tracks (reference manual pp. 546, 554): the add
 		// track dialog's page for the new track, which the selected tracks play or send into.
 		for (const auto& [id, type, description] :
@@ -688,23 +727,55 @@ namespace gnubase::app
 				std::tuple{"track.addEffectToSelected", "effect",
 					"Opens the add track dialog for an effect track that the selected tracks send to."}})
 		{
-			m_keys.add({id, description, [this, type = std::string(type)](ui::Window& window, Rml::Element* /*zone*/)
-				{
-					std::string tracks;
-					for (const uint64_t track : m_trackList ? m_trackList->selection() : std::vector<uint64_t>())
-						tracks += (tracks.empty() ? "" : ",") + std::to_string(track);
-					openDialog(window, "add-track.rml", {{"type", type}, {"tracks", tracks}});
-				}});
+			m_keys.add(
+				{id, description, [this, below, type = std::string(type)](ui::Window& window, Rml::Element* /*zone*/)
+					{
+						std::string tracks;
+						for (const uint64_t track : m_trackList ? m_trackList->selection() : std::vector<uint64_t>())
+							tracks += (tracks.empty() ? "" : ",") + std::to_string(track);
+						std::vector<std::pair<std::string, std::string>> attributes = below();
+						attributes.emplace_back("type", type);
+						attributes.emplace_back("tracks", tracks);
+						openDialog(window, "add-track.rml", attributes);
+					}});
 			m_keys.enableWhen(id, [this](ui::Window&, Rml::Element*)
 				{ return m_trackList != nullptr && !m_trackList->selection().empty(); });
 		}
 		// Project > Project Colors Setup (docs/features/colors.md).
 		m_keys.add({"project.colorsSetup", "Opens the project colors setup dialog, which edits the project's colors.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { openDialog(window, "project-colors.rml"); }});
+		// Project > Project Rule Editor (#179, docs/features/project-rules.md): the rule editor's document on the
+		// project's tracks, parts and events, which reads and sets the project window's selection with these.
+		m_keys.add({"project.ruleEditor",
+			"Opens the project rule editor, which finds tracks, parts and events and changes, deletes or selects them.",
+			[this](ui::Window& window, Rml::Element* /*zone*/)
+			{ openDialog(window, "rule-editor.rml", {{"target", "projectRules"}}); }});
+		m_lua.addFunction("ui.projectSelection",
+			[this](const engine::Json& /*parameters*/)
+			{
+				return engine::Json{{"tracks", m_trackList ? m_trackList->selection() : std::vector<uint64_t>{}},
+					{"events", m_eventDisplay ? m_eventDisplay->selection() : std::vector<uint64_t>{}}};
+			});
+		m_lua.addFunction("ui.selectInProject",
+			[this](const engine::Json& parameters)
+			{
+				// An empty Lua table comes as an object.
+				const auto ids = [&parameters](const char* key)
+				{
+					const auto found = parameters.is_object() ? parameters.find(key) : parameters.end();
+					return found != parameters.end() && found->is_array() ? found->get<std::vector<uint64_t>>()
+																		  : std::vector<uint64_t>{};
+				};
+				if (m_trackList)
+					m_trackList->select(ids("tracks"));
+				if (m_eventDisplay)
+					m_eventDisplay->select(ids("events"));
+				return engine::Json::object();
+			});
 		// For documents' buttons and menu items: gnubase.ui.command{command = "project.addTrack"} runs a key command
-		// in the main window, as its keys would. A command that doesn't exist or parameters it doesn't take are a Lua
-		// error at the call (KeyCommands::check), in users' scripts too, instead of an engine error later or parameters
-		// a UI command drops (#669).
+		// as its keys would, in the window of the document that called it (callingWindow), else the main window. A
+		// command that doesn't exist or parameters it doesn't take are a Lua error at the call (KeyCommands::check), in
+		// users' scripts too, instead of an engine error later or parameters a UI command drops (#669).
 		m_lua.addFunction("ui.command",
 			[this](const engine::Json& parameters)
 			{
@@ -716,7 +787,7 @@ namespace gnubase::app
 						throw std::invalid_argument("ui.command takes a command and its parameters, not " + item.key());
 				const engine::Json commandParameters = parameters.value("parameters", engine::Json::object());
 				m_keys.check(command->get<std::string>(), commandParameters);
-				m_keys.run(command->get<std::string>(), commandParameters, m_main, nullptr);
+				m_keys.run(command->get<std::string>(), commandParameters, callingWindow(), nullptr);
 				return engine::Json::object();
 			});
 		for (const ProjectCommand& command : g_projectCommands)
@@ -1126,6 +1197,7 @@ namespace gnubase::app
 		m_signatureLane.reset();
 		m_transposeLane.reset();
 		m_chordLane.reset();
+		m_scaleLane.reset();
 		m_rulerLanes.reset();
 		m_inPlace.reset();
 		// The transport bar's sections are there when the docking system reads them.
@@ -1162,6 +1234,7 @@ namespace gnubase::app
 		m_signatureLane = std::make_unique<ui::SignatureLane>(*m_eventDisplay, m_binding);
 		m_transposeLane = std::make_unique<ui::GlobalEventLane>(*m_eventDisplay, m_binding);
 		m_chordLane = std::make_unique<ui::GlobalEventLane>(*m_eventDisplay, m_binding, ui::LaneKind::Chord);
+		m_scaleLane = std::make_unique<ui::GlobalEventLane>(*m_eventDisplay, m_binding, ui::LaneKind::Scale);
 		m_rulerLanes = std::make_unique<ui::RulerLanes>(*m_eventDisplay);
 		m_inPlace = std::make_unique<ui::InPlaceEditors>(*m_eventDisplay, m_binding);
 		if (m_infoLine)
@@ -1966,6 +2039,35 @@ namespace gnubase::app
 		if (track != 0)
 			document->SetAttribute("track", std::to_string(track));
 		document->Show(Rml::ModalFlag::Modal);
+	}
+
+	ui::Window& AppUi::callingWindow()
+	{
+		// The nearest local "document" up the stack of the Lua that called, if it is one of RmlUi's documents: event
+		// handlers (onclick, onshow) have one, and functions they call with it. Only in the current run: Lua that a
+		// gnubase function runs, such as the script console's prompt (ui.runLua) or a script (ui.command), runs on
+		// the same stack above the handler that started it, but runs in the main window.
+		lua_State* state = m_lua.caller();
+		lua_Debug frame{};
+		for (int level = 1; state != nullptr && lua_getstack(state, level, &frame) != 0 &&
+			!scripting::Runtime::isGnubaseCall(state, frame);
+			++level)
+			for (int local = 1;; ++local)
+			{
+				const char* name = lua_getlocal(state, &frame, local);
+				if (name == nullptr)
+					break;
+				auto* const* document = std::string_view(name) == "document"
+					? static_cast<Rml::ElementDocument**>(luaL_testudata(state, -1, "Document"))
+					: nullptr;
+				lua_pop(state, 1);
+				if (document == nullptr || *document == nullptr)
+					continue;
+				for (ui::Window* window : m_shell.windows())
+					if (&window->context() == (*document)->GetContext())
+						return *window;
+			}
+		return m_main;
 	}
 
 	Rml::ElementDocument& AppUi::openDialog(

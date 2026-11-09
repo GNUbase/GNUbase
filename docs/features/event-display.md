@@ -73,7 +73,8 @@ document) and a right click anywhere in the ruler open it, with Bars+Beats, Seco
 the ruler's format is checked. The ruler's time formats follow the reference's (p. 69). The ruler's format is the
 snap settings' `format`, which the project keeps, so a project opens with it ([snap.md](snap.md)); when the project
 setup's time format changes, the engine makes it the snap format and the ruler follows, and the menu picks one of
-the ruler's own meanwhile. Timecode
+the ruler's own meanwhile. A format picked with Ctrl (Cmd on macOS) held is the primary time format too
+(`project.set {timeFormat}`), for the transport's primary display and the markers window as well (p. 69). Timecode
 runs at the project's frame rate, seconds and timecode count from its start time and bars from its bar offset
 ([project-setup.md](project-setup.md)). Its mode "bars and beats linear" (p. 70), which keeps bars evenly spaced across
 tempo changes, comes with the tempo track (#155).

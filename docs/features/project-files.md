@@ -129,6 +129,11 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
   of those dialogs closed, unless an auto save succeeded or the project was saved or opened meanwhile, which makes it
   out of date. Modal dialogs in other windows, such as a panel's own window, don't keep it away. If another project
   dialog, such as the start screen, is open, the error shows at the next failure instead.
+- **One dialog at a time.** The project dialogs open one at a time, and one that comes while another is open waits
+  for it and opens once it closed or went with its window, in the order they came (#485): the unsaved changes question
+  of a project opened through File > Open's key in a panel's own window, MCP or Lua while the start screen or Save as
+  Template is open, and the error of a save or backup that fails meanwhile. Only a failed auto save's error doesn't
+  wait, as above.
 - The UI knows the project's file from `project.saved` and, after `project.reset`, from `project.location`.
 
 ## Not yet
@@ -168,7 +173,8 @@ open error when the reason changes, at the next failure if another project dialo
 auto fades dialog and the studio setup over it closed, without another failure, but not after an auto save succeeded
 or the project was saved or reverted meanwhile, nor when a success follows the failure before the UI heard of either,
 not kept away by a modal dialog in a panel's own window, again after the unsaved changes question or a failed save's
-error took its place, and with the quit
+error took its place, the unsaved changes question and a failed save's error waiting for the start screen and Save
+as Template, and with the quit
 question: the error makes way for it, an auto save failing while it is open leaves it open, and the error shows at the
 next failure after Cancel. `tests/uitools_tests.cpp` checks `ui_file_dialog` and `ui_close`, `tests/lua/ui/dialog.lua`
 the unsaved changes question through `gnubase.ui.close`, and `tests/widgets_tests.cpp` `ui::closeDialog`.

@@ -5,6 +5,9 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
+#include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -90,8 +93,9 @@ TEST_CASE("chord symbols: the chord editor's text input and the names of chord e
 	CHECK(!parseChord("Cxyz").has_value());
 	CHECK(!parseChord("C/").has_value());
 	// Every name reads back as itself.
-	for (const std::string name : {"C", "C#m", "Dm7", "Ebmaj7", "Fdim", "Gaug", "Asus2", "Bsus4", "C6", "Cm6", "C7(b9)",
-			 "C7(9,13)", "Cadd9", "Cadd(9,#11)", "Am7/G", "Cm7b5", "Cdim7", "Cmmaj7"})
+	for (const std::string name :
+		{"C", "C#m", "Dm7", "Ebmaj7", "Fdim", "Gaug", "Asus2", "Bsus4", "C6", "Cm6", "C7(b9)", "C7(9,13)", "Cadd9",
+			"Cadd(9,#11)", "Am7/G", "Cm7b5", "Cdim7", "Cmmaj7", "C7sus4", "G7sus4(9)", "D7sus2/A"})
 	{
 		INFO(name);
 		CHECK(chordName(chord(chordName(chord(name)))) == chordName(chord(name)));
@@ -101,6 +105,16 @@ TEST_CASE("chord symbols: the chord editor's text input and the names of chord e
 	CHECK(chordIntervals(chord("C13")) == std::vector<int>{0, 4, 7, 10, 9});
 	CHECK(chordIntervals(chord("Dm/F")) == std::vector<int>{0, 3, 7});
 	CHECK(chordIntervals(chord("X")).empty());
+	// A sus chord with a seventh: the tension before sus, as commonly spelled, or after it; named C7sus4 (#933).
+	CHECK(chordName(chord("C7sus4")) == "C7sus4");
+	CHECK(chordName(chord("Csus47")) == "C7sus4");
+	CHECK(chord("C7sus4").type == "sus4");
+	CHECK(chord("C7sus4").tensions == std::vector<std::string>{"7"});
+	CHECK(chordName(chord("G7sus")) == "G7sus4");
+	CHECK(chordName(chord("D7sus2")) == "D7sus2");
+	CHECK(chordName(chord("G7sus4(9)")) == "G7sus4(9)");
+	CHECK(chordName(chord("C7sus4/E")) == "C7sus4/E");
+	CHECK(!parseChord("Cm7sus4").has_value());
 }
 
 TEST_CASE("scales: their names and the automatic scales of chords", "[unit]")
@@ -120,6 +134,37 @@ TEST_CASE("scales: their names and the automatic scales of chords", "[unit]")
 	CHECK(automatic("Caug") == "C wholeTone");
 	CHECK(automatic("Dsus4") == "D major");
 	CHECK(automatic("X") == "none");
+}
+
+TEST_CASE("automatic scales hold every note of their chord, also altered ones", "[unit]")
+{
+	// #939: the diminished seventh chord, dominant sevenths with altered tensions.
+	CHECK(automatic("Cdim7") == "C wholeHalfDiminished");
+	CHECK(automatic("C7(#11)") == "C lydianDominant");
+	CHECK(automatic("G7(b13)") == "G mixolydianFlat6");
+	CHECK(automatic("E7(b9)") == "E phrygianDominant");
+	CHECK(automatic("E7(b9,b13)") == "E phrygianDominant");
+	CHECK(automatic("G7(#9)") == "G halfWholeDiminished");
+	CHECK(automatic("G7(b9,13)") == "G halfWholeDiminished");
+	CHECK(automatic("Dm7(b9)") == "D phrygian");
+	CHECK(automatic("C7sus4") == "C mixolydian");
+	for (const std::string name : {"C", "Cmaj7(#11)", "G7(9,13)", "E7(b9)", "G7(#9)", "C7(#11)", "G7(b13)", "Dm7(9)",
+			 "Dm7(b9)", "Cmmaj7", "Bm7b5", "Cdim7", "Caug", "C7sus4", "Am6", "Fadd9"})
+	{
+		INFO(name);
+		const std::optional<Scale> scale = automaticScale(chord(name));
+		REQUIRE(scale.has_value());
+		const std::vector<int> steps = scaleSteps(scale.value_or(Scale()).type);
+		for (const int interval : chordIntervals(chord(name)))
+		{
+			INFO(interval);
+			CHECK(std::find(steps.begin(), steps.end(), interval) != steps.end());
+		}
+	}
+	// Scales mode keeps a chord's notes where the chord doesn't change: an A over Cdim7 stays an A.
+	const Harmony cdim7 = harmony("Cdim7");
+	CHECK(followPitch(69, "scales", cdim7, cdim7) == 69);
+	CHECK(followPitch(70, "scales", harmony("C7(#11)"), harmony("C7(#11)")) == 70);
 }
 
 TEST_CASE("recognizing the chords of MIDI notes", "[unit]")
@@ -152,6 +197,67 @@ TEST_CASE("basic voicings: close position from C3, the bass note an octave lower
 	CHECK(voiceChord(chord("G"), {0, false}, c) == std::vector<int>{55, 67, 71, 74});
 	CHECK(voiceChord(chord("F"), {0, true}, c) == std::vector<int>{53, 60, 65, 69});
 	CHECK(voiceChord(chord("X"), {}).empty());
+}
+
+TEST_CASE("piano voicings: the styles, the options and the range", "[unit]")
+{
+	const auto piano = [](const std::string& style)
+	{
+		VoicingStyle result;
+		result.library = "piano";
+		result.style = style;
+		return result;
+	};
+	const VoicingSettings fixed{0, false};
+	CHECK(voiceChord(chord("C"), fixed, {}, piano("triads")) == std::vector<int>{36, 60, 64, 67});
+	CHECK(voiceChord(chord("C"), fixed, {}, piano("triadsMaj9")) == std::vector<int>{36, 62, 64, 67});
+	CHECK(voiceChord(chord("Bdim"), fixed, {}, piano("triadsMaj9Min9")) == std::vector<int>{47, 60, 62, 65});
+	CHECK(voiceChord(chord("C7"), fixed, {}, piano("fourNote")) == std::vector<int>{36, 62, 64, 67, 70});
+	CHECK(voiceChord(chord("C7"), fixed, {}, piano("fourNoteOpen")) == std::vector<int>{36, 62, 64, 69, 70});
+	CHECK(voiceChord(chord("Cmaj7"), fixed, {}, piano("fiveNote")) == std::vector<int>{36, 60, 62, 64, 67, 71});
+	// Chords of more notes than a style takes stay as they are.
+	CHECK(voiceChord(chord("C7"), fixed, {}, piano("triads")) == std::vector<int>{36, 60, 64, 67, 70});
+	VoicingStyle options = piano("triads");
+	options.duplicateRoot = true;
+	options.fattenUp = true;
+	CHECK(voiceChord(chord("C"), fixed, {}, options) == std::vector<int>{36, 48, 60, 64, 67, 72});
+	options = piano("triads");
+	options.addRoot = false;
+	options.lowest = 64;
+	CHECK(voiceChord(chord("C"), fixed, {}, options) == std::vector<int>{64, 67, 72});
+	// Adaptive: G after C takes the inversion nearest to it.
+	const std::vector<int> c = voiceChord(chord("C"), fixed, {}, piano("triads"));
+	CHECK(voiceChord(chord("G"), {0, true}, c, piano("triads")) == std::vector<int>{43, 59, 62, 67});
+}
+
+TEST_CASE("guitar voicings: shapes in standard tuning", "[unit]")
+{
+	const auto guitar = [](const std::string& style)
+	{
+		VoicingStyle result;
+		result.library = "guitar";
+		result.style = style;
+		return result;
+	};
+	const VoicingSettings fixed{0, false};
+	CHECK(voiceChord(chord("C"), fixed, {}, guitar("triads")) == std::vector<int>{48, 52, 55, 60, 64}); // open C
+	CHECK(voiceChord(chord("G"), fixed, {}, guitar("triads")) == std::vector<int>{43, 47, 50, 55, 59, 67});
+	CHECK(voiceChord(chord("C"), fixed, {}, guitar("threeString")) == std::vector<int>{43, 48, 52});
+	const std::vector<int> jazz = voiceChord(chord("C7(9)"), fixed, {}, guitar("modernJazz"));
+	CHECK(jazz.size() >= 4);
+	std::set<int> classes;
+	for (const int pitch : jazz)
+		classes.insert(pitch % 12);
+	CHECK(classes.count(4) == 1);  // the third
+	CHECK(classes.count(10) == 1); // the seventh
+	CHECK(classes.count(2) == 1);  // the ninth
+	// Four-note chords have their seventh, without tensions; the bass note is lowest.
+	const std::vector<int> g7 = voiceChord(chord("G7(9)"), fixed, {}, guitar("fourNote"));
+	REQUIRE(!g7.empty());
+	CHECK(g7.front() % 12 == 7);
+	CHECK(std::any_of(g7.begin(), g7.end(), [](int pitch) { return pitch % 12 == 5; }));
+	CHECK(std::none_of(g7.begin(), g7.end(), [](int pitch) { return pitch % 12 == 9; }));
+	CHECK(voiceChord(chord("X"), fixed, {}, guitar("triads")).empty());
 }
 
 TEST_CASE("Follow Chord Track modes map a C major chord through the I-vi-IV-V progression", "[unit]")
@@ -195,6 +301,13 @@ TEST_CASE("Follow Chord Track modes map a C major chord through the I-vi-IV-V pr
 		CHECK(follow({48, 60, 64, 67, 72}, "voicings", c, gAfterC) == std::vector<int>{55, 59, 62, 67, 71});
 		CHECK(follow({48, 60, 64, 67}, "voicings", c, harmony("Cmaj7")) == std::vector<int>{48, 60, 64, 67});
 		CHECK(follow({48, 60, 64, 67, 71}, "voicings", harmony("Cmaj7"), c) == std::vector<int>{48, 60, 64, 67, 67});
+	}
+	SECTION("Single Voice plays one voice of the new chord's voicing")
+	{
+		CHECK(followPitch(60, "singleVoice", c, g, 0) == g.voicing.back());                // soprano
+		CHECK(followPitch(60, "singleVoice", c, g, 1) == g.voicing[g.voicing.size() - 2]); // alto
+		CHECK(followPitch(60, "singleVoice", c, g, 2) == g.voicing[g.voicing.size() - 3]); // tenor
+		CHECK(followPitch(72, "singleVoice", c, g, 3) == g.voicing.front());               // bass
 	}
 	SECTION("nothing moves over an undefined chord or with Off")
 	{

@@ -44,6 +44,17 @@ namespace gnubase::engine
 			return ids;
 		}
 
+		// As trackLayout.get returns it: without the tracks that are gone.
+		Json layoutJson(const Project& project)
+		{
+			TrackLayout layout;
+			for (const auto& [track, height] : project.trackLayout.heights)
+				if (project.trackById.count(track) != 0)
+					layout.heights[track] = height;
+			layout.folded = existing(project, project.trackLayout.folded);
+			return toJson(layout);
+		}
+
 		const VisibilityConfiguration* active(const TrackVisibility& visibility)
 		{
 			for (const VisibilityConfiguration& configuration : visibility.configurations)
@@ -190,6 +201,64 @@ namespace gnubase::engine
 				syncMixers(project, context);
 				Json result = visibilityJson(project);
 				context.emit("trackVisibility.changed", result);
+				return result;
+			});
+	}
+
+	void registerTrackLayoutCommands(ProjectModel& model, Engine& engine)
+	{
+		const Json heightsSchema = {{"type", "array"},
+			{"items",
+				{{"type", "object"},
+					{"properties",
+						{{"track", {{"type", "integer"}}},
+							{"height", {{"type", "number"}, {"minimum", 20}, {"maximum", 400}}}}},
+					{"required", {"track", "height"}}, {"additionalProperties", false}}}};
+		const Json foldedSchema = {{"type", "array"}, {"items", {{"type", "integer"}}}};
+		const Json resultSchema = {{"type", "object"},
+			{"properties", {{"heights", heightsSchema}, {"folded", foldedSchema}}},
+			{"required", {"heights", "folded"}}};
+		const std::string text =
+			"heights: the tracks' heights in the track list and event display, in dp before vertical zoom (20 to 400), "
+			"by track id, sorted; tracks without one are 40 dp high. folded: the folded folder tracks, sorted, whose "
+			"tracks the track list and event display don't show. Tracks that are gone are left out.";
+
+		engine.registerCommand(
+			{"trackLayout.get", 1,
+				"The track list's track heights and folded folders (reference manual pp. 217, 225). " + text,
+				{{"type", "object"}, {"additionalProperties", false}}, resultSchema, true},
+			[&model](CommandContext&) { return layoutJson(model.project()); });
+
+		model.addEdit(engine,
+			{"trackLayout.set", 1,
+				"Changes the track list's track heights and folded folders; what isn't given stays. " + text +
+					" heights sets the given tracks' heights, the others keep theirs; folded replaces the folded "
+					"folders. Settings, not an undo step, saved with the project. Emits trackLayout.changed.",
+				{{"type", "object"}, {"properties", {{"heights", heightsSchema}, {"folded", foldedSchema}}},
+					{"additionalProperties", false}},
+				resultSchema, false},
+			"Change track layout",
+			[](Project& project, CommandContext& context)
+			{
+				const Json& parameters = context.parameters();
+				TrackLayout& layout = project.trackLayout;
+				if (parameters.contains("heights"))
+					for (const Json& item : parameters.at("heights"))
+					{
+						const auto track = item.at("track").get<ObjectId>();
+						require(project.trackById.count(track) != 0,
+							"no track " + std::to_string(track) + " in the project");
+						layout.heights[track] = item.at("height").get<double>();
+					}
+				if (parameters.contains("folded"))
+				{
+					layout.folded = tracksFrom(project, parameters.at("folded"));
+					for (const ObjectId id : layout.folded)
+						require(project.trackById.at(id).type == TrackType::Folder,
+							"track " + std::to_string(id) + " is not a folder");
+				}
+				Json result = layoutJson(project);
+				context.emit("trackLayout.changed", result);
 				return result;
 			});
 	}

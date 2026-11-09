@@ -5,6 +5,8 @@
 #include "engine/document/document.h"
 #include "engine/dsp/warp.h"
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -157,6 +159,14 @@ namespace gnubase::engine
 	};
 
 	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
+	// A chord or scale of the chord track from start (samples) on, until the next: its pitch classes, bit n for
+	// pitch class n (C is 0).
+	struct LiveHarmony
+	{
+		time::Samples start = 0;
+		uint16_t classes = 0;
+	};
+
 	struct RenderChannel
 	{
 		ObjectId id = 0;
@@ -184,6 +194,10 @@ namespace gnubase::engine
 		// MIDI and instrument channels: the rules of their input transformer's modules that are on, the track's or
 		// the project's, in order; empty for none.
 		std::vector<midi::LogicalRules> inputTransformer;
+		// MIDI and instrument channels: Live Input (#933, reference manual p. 1338), the chord track's chords or
+		// scales that the notes played into the track move to, the nearest note of the one playing at the transport
+		// position; empty for none.
+		std::vector<LiveHarmony> liveInput;
 		bool monitor = false; // the monitor and record enable buttons
 		bool recordEnable = false;
 		// MIDI and instrument tracks: they play what comes from all MIDI inputs (MIDI thru), since they monitor or
@@ -192,7 +206,11 @@ namespace gnubase::engine
 		// Muted, silenced by another channel's solo, or on a disabled track: outputs silence. A silent MIDI channel
 		// has no notes or controllers, and a disabled track no events or parts.
 		bool silent = false;
-		// Its mute button mutes it (no mute automation plays): pre-fader sends follow it with the user setting
+		// Silenced by another channel's solo or on a disabled track: silent but for the mute button. Its strips output
+		// silence (ChannelStrip), which stays on through every switch between the mute button and mute automation.
+		bool quiet = false;
+		// Its mute button mutes it (no mute automation plays): it is the static value of the channel's mute lane
+		// (channelAutomation), so the fader mutes it, and pre-fader sends follow it with the user setting
 		// audio.mutePreSends.
 		bool muted = false;
 		bool listen = false; // also plays on the monitoring bus, after its fader (graph::NodeKind::ListenBus)
@@ -209,6 +227,16 @@ namespace gnubase::engine
 
 	// A channel volume in dB as a linear gain; the fader's bottom, g_minChannelVolume, is silence.
 	double volumeGain(double decibels);
+
+	// The chord pads' remote keys (#174, reference manual p. 1386): per MIDI note, the pitches that a MIDI input's note
+	// there plays instead while the pad remote control is active; keys with none play themselves.
+	struct ChordPadKeys
+	{
+		static constexpr size_t g_maxPitches = 8;
+		bool active = false;
+		std::array<uint8_t, 128> counts{};
+		std::array<std::array<uint8_t, g_maxPitches>, 128> pitches{};
+	};
 
 	// What the audio thread needs from the project, compiled by the command thread after every change and handed
 	// over with rt::SnapshotPublisher. Objects refer to each other by index and every position is in the project's
@@ -229,6 +257,7 @@ namespace gnubase::engine
 		std::vector<RenderChannel> channels; // in track order
 		// What arranger mode plays (#167); shared with the cue thread.
 		std::shared_ptr<const ArrangerPlan> arranger = std::make_shared<const ArrangerPlan>();
+		ChordPadKeys chordPadKeys;
 	};
 
 	// previous is the snapshot published before: its arranger plan stays if the new one plays the same, since the

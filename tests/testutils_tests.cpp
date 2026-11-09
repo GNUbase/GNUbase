@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <map>
 #include <optional>
 #include <string>
 
@@ -49,6 +50,16 @@ TEST_CASE("TempDir creates a folder and deletes it with its contents", "[unit]")
 		std::ofstream(path / "file.txt") << "content";
 	}
 	REQUIRE_FALSE(std::filesystem::exists(path));
+}
+
+TEST_CASE("writeZip and readZip write and read a zip archive's entries", "[unit]")
+{
+	const TempDir dir;
+	const std::string file = (dir.path() / "entries.zip").string();
+	const std::map<std::string, std::string> entries{{"a.txt", "first"}, {"folder/b.bin", std::string("\0\1", 2)}};
+	writeZip(file, entries);
+	CHECK(readZip(file) == entries);
+	CHECK_THROWS(readZip((dir.path() / "missing.zip").string()));
 }
 
 TEST_CASE("compareAudio accepts differences within the tolerance", "[unit]")
