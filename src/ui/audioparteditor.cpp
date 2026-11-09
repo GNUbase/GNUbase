@@ -2,6 +2,7 @@
 #include "ui/audioparteditor.h"
 
 #include "engine/midi/quantizesettings.h"
+#include "platform/log.h"
 #include "ui/timeformat.h"
 #include "ui/widgetutils.h"
 
@@ -188,7 +189,11 @@ namespace gnubase::ui
 		m_events.clear();
 		m_parts.clear();
 		m_waves.clear();
-		m_selection.clear();
+		// A view that comes while select()'s editor.set is unanswered may be older than the selection it sent (results
+		// and events come in order, and that command's editor.changed after its result), so the selection stays.
+		const bool selectionIsCurrent = m_selecting == 0;
+		if (selectionIsCurrent)
+			m_selection.clear();
 		if (!m_project.contains("tracks") || !m_view.contains("parts"))
 			return;
 		const TimeContext time = projectTime(m_project);
@@ -257,8 +262,9 @@ namespace gnubase::ui
 				audio.at("offset").get<int64_t>() + static_cast<int64_t>(std::llround((from - start) * rate))});
 		}
 		m_to = std::max(m_to, m_from + 0.001);
-		for (const Json& id : m_view.value("eventSelection", Json::array()))
-			m_selection.push_back(id.get<uint64_t>());
+		if (selectionIsCurrent)
+			for (const Json& id : m_view.value("eventSelection", Json::array()))
+				m_selection.push_back(id.get<uint64_t>());
 		if (m_waveforms)
 			m_waveforms->setEvents(m_waves);
 		// The display needs its width for the waveforms' scale: lay it out once if it hasn't been yet.
@@ -502,7 +508,15 @@ namespace gnubase::ui
 	{
 		m_selection = std::move(events);
 		render(); // at once; editor.changed confirms it
-		m_binding.send("editor.set", {{"editor", m_name}, {"eventSelection", m_selection}});
+		++m_selecting;
+		m_binding.send("editor.set", {{"editor", m_name}, {"eventSelection", m_selection}},
+			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (!result.ok())
+					logging::warning("editor.set from the audio part editor failed: {}", result.error);
+				if (!alive.expired())
+					--m_selecting;
+			});
 	}
 
 	void AudioPartEditor::edit(const std::string& description, Json commands)

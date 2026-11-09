@@ -65,7 +65,8 @@ The gesture's mouseup in the editor's whole document or the drag element's drage
 button goes up, also outside the window, with its effect there. A press anywhere in the document while one goes on,
 whose end never came, ends it without its effect: a move moves nothing, an audition stops, and the events show where
 they are again. While a move drags, the events it moves show where it takes them, also after the editor shows the
-project again, as when the selection of the press comes back.
+project again, as when the selection of the press comes back. A click shows its selection at once, and a view that
+comes before the engine has answered it, which may be older than it, leaves that selection as it is.
 
 | Tool | Gesture | Reference |
 |---|---|---|

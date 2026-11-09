@@ -144,7 +144,9 @@ namespace gnubase::ui
 		std::map<uint64_t, Part> m_parts; // by id
 		std::vector<EventWaveforms::Event> m_waves;
 		std::vector<uint64_t> m_selection;
-		double m_from = 0.0; // the time axis, seconds
+		int m_selecting = 0; // editor.set commands of select() that the engine hasn't answered
+		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers that come after it's gone
+		double m_from = 0.0;                                          // the time axis, seconds
 		double m_to = 1.0;
 		std::string m_eventsRml; // the events' elements as last set
 		std::unique_ptr<EventWaveforms> m_waveforms;
