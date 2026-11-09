@@ -122,21 +122,20 @@ TEST_CASE("filter lines: conditions, and before or, and brackets", "[unit]")
 	CHECK(!found(rules({filter("subtype", "noteIsEqualTo", 0)}, "transform"), note(85)));
 
 	// note and C3 or channel 2: (note and C3) or channel 2, so a controller on channel 2 is found.
-	const Json first = isNote;
 	Json pitch = filter("subtype", "equal", 60);
 	pitch["join"] = "or";
 	const Json channel2 = filter("channel", "equal", 2);
-	CHECK(found(rules({first, pitch, channel2}, "transform"), cc(60, 0, 2)));
-	CHECK(!found(rules({first, pitch, channel2}, "transform"), cc(60, 0, 1)));
+	CHECK(found(rules({isNote, pitch, channel2}, "transform"), cc(60, 0, 2)));
+	CHECK(!found(rules({isNote, pitch, channel2}, "transform"), cc(60, 0, 1)));
 	// note and (C3 or channel 2): only notes.
 	Json bracketed = pitch;
 	bracketed["open"] = 1;
 	Json closing = channel2;
 	closing["close"] = 1;
-	CHECK(!found(rules({first, bracketed, closing}, "transform"), cc(60, 0, 2)));
-	CHECK(found(rules({first, bracketed, closing}, "transform"), note(61, 100, 2)));
-	CHECK(found(rules({first, bracketed, closing}, "transform"), note(60, 100, 1)));
-	CHECK(!found(rules({first, bracketed, closing}, "transform"), note(61, 100, 1)));
+	CHECK(!found(rules({isNote, bracketed, closing}, "transform"), cc(60, 0, 2)));
+	CHECK(found(rules({isNote, bracketed, closing}, "transform"), note(61, 100, 2)));
+	CHECK(found(rules({isNote, bracketed, closing}, "transform"), note(60, 100, 1)));
+	CHECK(!found(rules({isNote, bracketed, closing}, "transform"), note(61, 100, 1)));
 	// Nested: ((C3 or D3) and channel 1) or channel 3.
 	Json c = filter("subtype", "equal", 60);
 	c["open"] = 2;
