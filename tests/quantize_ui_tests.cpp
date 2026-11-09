@@ -98,6 +98,15 @@ namespace
 			app.shell().step(std::chrono::milliseconds(0));
 		}
 
+		// Clicks a button once it is enabled. The panel shows the preset chosen with quantize.changed, and whether it
+		// is a user preset, which Rename and Remove need, once its preset list is in, an answer later (#951).
+		void clickEnabled(const std::string& selector)
+		{
+			INFO(selector);
+			REQUIRE(app.waitUntil([&] { return shown(selector) && !hasAttribute(selector, "disabled"); }));
+			click(selector);
+		}
+
 		// Edit > item, or Edit > submenu > item.
 		void menu(const std::string& command, const char* submenu = nullptr)
 		{
@@ -337,10 +346,10 @@ TEST_CASE("the quantize panel shows and changes the project's quantize settings"
 	CHECK(f.app.waitUntil([&] { return f.hasPreset("Mine"); }));
 	CHECK(f.app.waitUntil([&] { return f.text("#quantize-presets") == "Mine"; }));
 	f.write("#quantize-preset-name", "Yours");
-	f.click("#quantize-rename-preset");
+	f.clickEnabled("#quantize-rename-preset");
 	CHECK(f.app.waitUntil([&] { return f.hasPreset("Yours") && !f.hasPreset("Mine"); }));
 	CHECK(f.app.waitUntil([&] { return f.text("#quantize-presets") == "Yours"; }));
-	f.click("#quantize-remove-preset");
+	f.clickEnabled("#quantize-remove-preset");
 	CHECK(f.app.waitUntil([&] { return !f.hasPreset("Yours"); }));
 	CHECK(f.app.waitUntil([&] { return f.text("#quantize-presets") == "No Preset"; }));
 
@@ -352,7 +361,7 @@ TEST_CASE("the quantize panel shows and changes the project's quantize settings"
 	f.click("#quantize-save-preset");
 	CHECK(f.app.waitUntil([&] { return f.hasPreset("Sixteenths"); }));
 	CHECK(f.app.waitUntil([&] { return f.text("#quantize-presets") == "Sixteenths"; }));
-	CHECK(!f.hasAttribute("#quantize-rename-preset", "disabled"));
+	CHECK(f.app.waitUntil([&] { return !f.hasAttribute("#quantize-rename-preset", "disabled"); }));
 	f.click("#quantize-presets");
 	f.click("menuitem[preset=\"1/16\"]");
 	CHECK(f.app.waitUntil([&] { return f.text("#quantize-presets") == "1/16"; }));
@@ -361,10 +370,10 @@ TEST_CASE("the quantize panel shows and changes the project's quantize settings"
 	f.click("menuitem[preset=\"Sixteenths\"]");
 	CHECK(f.app.waitUntil([&] { return f.text("#quantize-presets") == "Sixteenths"; }));
 	f.write("#quantize-preset-name", "Semiquavers");
-	f.click("#quantize-rename-preset");
+	f.clickEnabled("#quantize-rename-preset");
 	CHECK(f.app.waitUntil([&] { return f.hasPreset("Semiquavers") && !f.hasPreset("Sixteenths"); }));
 	CHECK(f.app.waitUntil([&] { return f.text("#quantize-presets") == "Semiquavers"; }));
-	f.click("#quantize-remove-preset");
+	f.clickEnabled("#quantize-remove-preset");
 	CHECK(f.app.waitUntil([&] { return !f.hasPreset("Semiquavers"); }));
 	CHECK(f.app.waitUntil([&] { return f.text("#quantize-presets") == "1/16"; }));
 }
@@ -441,7 +450,7 @@ TEST_CASE("the panel, the toolbar and MCP show the same one of presets with equa
 	f.click("menuitem[preset=\"Sixteenths\"]");
 	CHECK(showing("Sixteenths"));
 	f.write("#quantize-preset-name", "Semiquavers");
-	f.click("#quantize-rename-preset");
+	f.clickEnabled("#quantize-rename-preset");
 	CHECK(showing("Semiquavers"));
 }
 
