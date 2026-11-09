@@ -8,6 +8,7 @@
 #include "engine/plugins/pluginslot.h"
 #include "engine/plugins/slotinstances.h"
 #include "engine/processors/builtinplugin.h"
+#include "platform/rt/workerpool.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -791,6 +792,32 @@ TEST_CASE("slots close while a plugin waits for the audio thread to leave its gr
 
 namespace
 {
+	// Holds the plugin job thread until open or the end of its scope, so that what a command queues there waits and the
+	// command's events show the status before. Goes before the engine.
+	class JobGate
+	{
+	public:
+		explicit JobGate(Engine& engine)
+		{
+			static_cast<void>(engine.pluginHosts().run([gate = m_gate] { gate->wait(); }));
+		}
+		~JobGate() { open(); }
+		JobGate(const JobGate&) = delete;
+		JobGate& operator=(const JobGate&) = delete;
+		JobGate(JobGate&&) = delete;
+		JobGate& operator=(JobGate&&) = delete;
+
+		void open() noexcept
+		{
+			if (!std::exchange(m_opened, true))
+				m_gate->release();
+		}
+
+	private:
+		std::shared_ptr<gnubase::rt::Semaphore> m_gate = std::make_shared<gnubase::rt::Semaphore>();
+		bool m_opened = false;
+	};
+
 	// Waits for an event that matches, and returns the events that came until then, the one that matched last; empty
 	// if none did within 10 s.
 	template <typename Match> std::vector<Event> eventsUntil(Client& client, const std::string& name, Match match)
@@ -856,34 +883,57 @@ TEST_CASE("plugin.changed announces the slots whose status changes when the devi
 	CHECK(added.at("status") == "noDevice");
 	const Json& gain = added.at("id");
 
-	// It returns, with the same format: the plugins are as they were, and the new one is made.
-	run(client, "audio.simulateDeviceLoss", {{"connected", true}});
-	received = eventsUntil(client, "audio.changed",
-		[](const Json& data) { return data.at("lost").is_null() && !data.at("device").is_null(); });
-	REQUIRE(!received.empty());
-	statuses = announcedStatuses(client, received);
-	CHECK(statuses[eq.get<ObjectId>()] == std::vector<std::string>{"active"});
-	CHECK(statuses[limiter.get<ObjectId>()] == std::vector<std::string>{"inactive"});
-	const std::vector<std::string>& made = statuses[gain.get<ObjectId>()];
-	REQUIRE(!made.empty());
-	CHECK((made.front() == "loading" || made.front() == "active"));
+	// It returns, with the same format: the plugins are as they were, and the new one is made, from noDevice to
+	// loading in the events of the command that opened the device.
+	{
+		JobGate gate(engine);
+		run(client, "audio.simulateDeviceLoss", {{"connected", true}});
+		received = eventsUntil(client, "audio.changed",
+			[](const Json& data) { return data.at("lost").is_null() && !data.at("device").is_null(); });
+		REQUIRE(!received.empty());
+		statuses = announcedStatuses(client, received);
+		CHECK(statuses[eq.get<ObjectId>()] == std::vector<std::string>{"active"});
+		CHECK(statuses[limiter.get<ObjectId>()] == std::vector<std::string>{"inactive"});
+		CHECK(statuses[gain.get<ObjectId>()] == std::vector<std::string>{"loading"});
+	}
 	waitFor(client, gain, "active");
 	events(client);
 	run(client, "audio.updatePlugins");
 	CHECK(events(client)["plugin.changed"].empty());
 
-	// Another sample rate activates the active plugin again: loading, then active, unless it was active again before
-	// the command ended. So does a new project sample rate, which the device follows.
+	// Another sample rate activates the active plugin again: loading until its job ran, then active. So does a new
+	// project sample rate, which the device follows.
 	for (const auto& [command, parameters] : std::vector<std::pair<std::string, Json>>{
 			 {"audio.set", {{"sampleRate", 44100.0}}}, {"project.set", {{"sampleRate", 96000.0}}}})
 	{
 		INFO(command);
+		JobGate gate(engine);
 		run(client, command, parameters);
+		statuses = announcedStatuses(client, {});
+		CHECK(statuses[eq.get<ObjectId>()] == std::vector<std::string>{"loading"});
+		CHECK(statuses.count(limiter.get<ObjectId>()) == 0);
+		gate.open();
 		waitFor(client, eq, "active");
 		statuses = announcedStatuses(client, {});
-		const std::vector<std::string>& reactivated = statuses[eq.get<ObjectId>()];
-		CHECK((reactivated.empty() || reactivated == std::vector<std::string>{"loading", "active"}));
-		CHECK(statuses.count(limiter.get<ObjectId>()) == 0);
+		CHECK(statuses[eq.get<ObjectId>()] == std::vector<std::string>{"active"});
 	}
 	CHECK(run(client, "audio.get").at("device").at("sampleRate") == 96000.0);
+}
+
+TEST_CASE("a plugin leaving the graph goes when the device stops before it starts the new graph", "[integration]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId channel = run(client, "track.add", {{"type", "audio"}}).at("channel").at("id").get<ObjectId>();
+	// Blocks of about a second: the audio thread doesn't get to the new graph before the device stops.
+	run(client, "audio.setDevice", {{"sampleRate", 8000.0}, {"blockSize", 8192}});
+	const Json slot = insert(client, channel, "builtin:gainPan");
+	waitFor(client, slot, "active");
+	run(client, "audio.start");
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+	while (run(client, "audio.get").at("position").get<int64_t>() == 0 && std::chrono::steady_clock::now() < deadline)
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	run(client, "plugin.set", {{"slot", slot}, {"active", false}});
+	run(client, "audio.stop");
+	waitFor(client, slot, "inactive"); // nothing else wakes the retirer
 }
