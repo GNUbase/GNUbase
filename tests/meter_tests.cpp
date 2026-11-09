@@ -12,10 +12,13 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <random>
 #include <string>
+#include <thread>
 #include <tuple>
 #include <type_traits>
 #include <utility>
@@ -129,6 +132,52 @@ namespace
 		REQUIRE(!result.ok());
 		return result.error;
 	}
+
+	// Waits until the audio device is lost, or isn't any more.
+	bool waitForLost(Client& client, bool lost)
+	{
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+		while (std::chrono::steady_clock::now() < deadline)
+		{
+			if (run(client, "audio.get").at("lost").is_null() != lost)
+				return true;
+			std::this_thread::sleep_for(std::chrono::milliseconds(10));
+		}
+		return false;
+	}
+
+	// A sine on the dummy device's input, monitored by a record-enabled audio track, with the transport playing, so
+	// that audio.render adds to the loudness measurement. Returns the channel.
+	ObjectId measuring(Client& client)
+	{
+		run(client, "audio.setDevice",
+			{{"blockSize", 64},
+				{"input", {{"processor", "sine"}, {"parameters", {{"Frequency", 1000.0}, {"Level", 0.5}}}}}});
+		const auto channel = run(client, "track.add", {{"type", "audio"}}).at("channel").at("id").get<ObjectId>();
+		run(client, "settings.set", {{"key", "audio.autoMonitoring"}, {"value", "whileRecordEnabled"}}); // playing too
+		run(client, "channel.set", {{"channel", channel}, {"recordEnable", true}});
+		run(client, "transport.play");
+		return channel;
+	}
+
+	// Ends a thread that runs until done, also when a test leaves with a failed REQUIRE.
+	class StopAndJoin
+	{
+	public:
+		StopAndJoin(std::atomic<bool>& done, std::thread& thread) : m_done(done), m_thread(thread) {}
+		~StopAndJoin()
+		{
+			m_done = true;
+			if (m_thread.joinable())
+				m_thread.join();
+		}
+		StopAndJoin(const StopAndJoin&) = delete;
+		StopAndJoin& operator=(const StopAndJoin&) = delete;
+
+	private:
+		std::atomic<bool>& m_done;
+		std::thread& m_thread;
+	};
 }
 
 TEST_CASE("a level meter reads a sine's peak and RMS level and keeps their maxima", "[unit]")
@@ -512,8 +561,9 @@ TEST_CASE("the true peak of sines between the samples is within EBU Tech 3341's 
 	// Sines at a quarter, a sixth and an eighth of the sample rate, with phases that put their peaks as far between
 	// the samples as they get, at -6 dBTP and, with samples up to 0 dBFS, at +3 dBTP: within +0.2 and -0.4 dB.
 	const double rate = GENERATE(44100.0, 48000.0, 96000.0);
-	const auto [divisor, phase, level] = GENERATE(std::tuple{4.0, g_pi / 4.0, -6.0}, std::tuple{6.0, g_pi / 6.0, -6.0},
-		std::tuple{8.0, g_pi / 8.0, -6.0}, std::tuple{4.0, g_pi / 4.0, 3.01});
+	const auto [divisor, phase, level, samples] = GENERATE(std::tuple{4.0, g_pi / 4.0, -6.0, -9.01},
+		std::tuple{6.0, g_pi / 6.0, -6.0, -7.25}, std::tuple{8.0, g_pi / 8.0, -6.0, -6.69},
+		std::tuple{4.0, g_pi / 4.0, 3.01, 0.0});
 	INFO(rate << " Hz, a sine at 1/" << divisor << " of it, " << level << " dBTP");
 	LoudnessMeter meter;
 	meter.prepare(rate);
@@ -526,6 +576,10 @@ TEST_CASE("the true peak of sines between the samples is within EBU Tech 3341's 
 	const double measured = decibels(meter.read().truePeakMax[0]);
 	CHECK(measured <= level + 0.2);
 	CHECK(measured >= level - 0.4);
+	// The samples themselves stay below it: only the interpolator finds that peak.
+	LevelMeter samplePeak;
+	signal.play(samplePeak);
+	CHECK(decibels(samplePeak.read().peakMax[0]) == Approx(samples).margin(0.02));
 }
 
 TEST_CASE("the master meter's RMS level follows its resolution and AES17", "[unit]")
@@ -757,4 +811,138 @@ TEST_CASE("Engine::readMeters reads every meter at once without a command", "[in
 	frame.channels.clear();
 	engine.readMeters(frame);
 	CHECK(frame.levels.empty());
+}
+
+TEST_CASE("the RMS level averages its resolution at other sample rates too", "[unit]")
+{
+	const double rate = GENERATE(44100.0, 96000.0);
+	Signal signal(rate);
+	signal.silence(1.0);
+	signal.sine(0.1, -6.0);
+	signal.silence(0.02);
+	const double sineRms = -6.0 - 3.0103;
+
+	LevelMeter slow;
+	slow.setRms(1000, false);
+	signal.play(slow);
+	CHECK(decibels(slow.read().rms[0]) == Approx(sineRms - 10.0).margin(0.05));
+
+	LevelMeter fast;
+	fast.setRms(10, false);
+	signal.play(fast);
+	CHECK(fast.read().rms[0] == 0.0f);
+	CHECK(decibels(fast.read().rmsMax[0]) == Approx(sineRms).margin(0.05));
+}
+
+TEST_CASE("a frame's peak is never above its maximum, whatever the audio thread does meanwhile", "[unit]")
+{
+	// The audio thread raises the level with every block of a frame, as fast as it can, while a frame reads.
+	LevelMeter meter;
+	std::atomic<bool> done{false};
+	std::atomic<int> above{0};
+	std::thread reader(
+		[&]
+		{
+			do
+			{
+				const LevelReading frame = meter.readFrame();
+				if (frame.peak[0] > frame.peakMax[0])
+					++above;
+			} while (!done);
+		});
+	const StopAndJoin stop(done, reader);
+	constexpr int blocks = 500000;
+	for (int block = 1; block <= blocks; ++block)
+	{
+		const float sample = static_cast<float>(block) / blocks;
+		const float* const channel = &sample;
+		meter.process(&channel, 1, 1, g_rate);
+	}
+	done = true;
+	reader.join();
+	CHECK(above == 0);
+}
+
+TEST_CASE("Engine::readMeters gives a channel listed twice the same peak both times", "[integration]")
+{
+	// The inspector and the mixer can show one channel at once.
+	Engine engine;
+	Client client(engine);
+	const ObjectId channel = measuring(client);
+	run(client, "audio.render", {{"frames", 9600}});
+	MeterFrame frame;
+	frame.channels = {channel, 999, channel};
+	engine.readMeters(frame);
+	REQUIRE(frame.levels.size() == 3);
+	REQUIRE(frame.levels[2].channels == 2);
+	CHECK(decibels(frame.levels[0].peak[0]) == Approx(-6.02).margin(0.05));
+	CHECK(frame.levels[2].peak[0] == frame.levels[0].peak[0]);
+	CHECK(frame.levels[2].rms[1] == frame.levels[0].rms[1]);
+	CHECK(frame.levels[1].channels == 0);
+}
+
+TEST_CASE("Engine::readMeters runs on a thread of its own while the device runs and the graph is rebuilt",
+	"[integration]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId channel = measuring(client);
+	run(client, "audio.start");
+	std::atomic<bool> done{false};
+	std::atomic<bool> complete{true};
+	std::atomic<int> reads{0};
+	std::thread reader(
+		[&]
+		{
+			MeterFrame frame;
+			frame.channels = {channel, 999};
+			do
+			{
+				engine.readMeters(frame);
+				if (frame.levels.size() != 2)
+					complete = false;
+				++reads;
+			} while (!done);
+		});
+	const StopAndJoin stop(done, reader);
+	for (int round = 0; round < 20; ++round)
+	{
+		const Json added = run(client, "track.add", {{"type", "audio"}});
+		run(client, "track.remove", {{"track", added.at("track").at("id")}});
+	}
+	done = true;
+	reader.join();
+	run(client, "audio.stop");
+	CHECK(complete);
+	CHECK(reads > 0);
+}
+
+TEST_CASE("the loudness measurement goes on when a lost device returns, and starts over on a fallback",
+	"[integration]")
+{
+	Engine engine;
+	Client client(engine);
+	const bool fallback = GENERATE(false, true);
+	INFO((fallback ? "with" : "without") << " a fallback device");
+	if (fallback)
+		run(client, "settings.set", {{"key", "audio.fallbackDevice"}, {"value", "dummy"}});
+	measuring(client);
+	run(client, "audio.render", {{"frames", 48000}});
+	REQUIRE(run(client, "meter.get").at("loudness").at("seconds").get<double>() == Approx(1.0).margin(0.1));
+
+	run(client, "audio.simulateDeviceLoss", {{"connected", false}});
+	REQUIRE(waitForLost(client, true));
+	run(client, "audio.simulateDeviceLoss", {{"connected", true}});
+	REQUIRE(waitForLost(client, false));
+	const Json loudness = run(client, "meter.get").at("loudness");
+	if (fallback)
+	{
+		CHECK(loudness.at("seconds") == 0.0);
+		CHECK(loudness.at("integrated").is_null());
+	}
+	else
+	{
+		CHECK(loudness.at("seconds").get<double>() == Approx(1.0).margin(0.1));
+		CHECK(loudness.at("integrated").get<double>() == Approx(-6.02).margin(0.1));
+	}
 }
