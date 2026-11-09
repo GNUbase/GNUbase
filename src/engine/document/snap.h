@@ -133,6 +133,7 @@ namespace gnubase::engine
 		midi::QuantizeSettings quantize;
 		time::Ticks zoomStep = 0; // AdaptToZoom: ticks from each bar's start; 0 or a bar or more: bars
 		time::FrameRate frameRate = time::g_fps25;
+		double startTime = 0.0; // seconds the seconds and frame grids count from at the project start, as the ruler
 	};
 
 	// The grid line nearest to position (project samples): ticks for the musical grids, samples for the others.
@@ -156,8 +157,8 @@ namespace gnubase::engine
 	// magnetic types without anything near leave it where it is.
 	time::Position snap(const SnapSettings& settings, const SnapGrid& grid, const SnapTarget& target);
 
-	// The project's grid, with its tempo, signatures, quantize settings and the frame rate of format: the project's
-	// (project setup, #78), or the user's for user frames.
+	// The project's grid, with its tempo, signatures, quantize settings, start time and the frame rate of format: the
+	// project's (project setup, #78), or the user's for user frames.
 	SnapGrid snapGrid(const Project& project, GridFormat format);
 
 	// The position nearest to at (project samples) where an audio event's audio crosses zero, within 50 ms and the

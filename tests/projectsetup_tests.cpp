@@ -255,6 +255,22 @@ TEST_CASE("the project setup dialog shows the project's settings and changes the
 	CHECK_THAT(text(app, "#project-setup-message"), ContainsSubstring("Length"));
 }
 
+TEST_CASE("Project > Project Setup... opens the dialog, and Escape closes it as Cancel does", "[ui]")
+{
+	test::UiApp app({1000, 700});
+	app.appUi().showProject();
+	app.shell().step(std::chrono::milliseconds(0));
+	click(app, "#menu-bar button[menu=project-menu]");
+	click(app, "#project-menu menuitem[command=window.projectSetup]");
+	REQUIRE(app.waitUntil([&app] { return open(app); }));
+	app.shell().step(std::chrono::milliseconds(0));
+	type(app, "#setup-bar-offset", "7");
+	app.ui().key(std::nullopt, "Escape");
+	CHECK(closed(app));
+	CHECK(app.call("project.get").at("barOffset") == 0);
+	CHECK(app.call("history.get").at("steps").empty());
+}
+
 TEST_CASE("the project setup dialog conforms the audio files to a new sample rate", "[ui]")
 {
 	// Reference manual p. 128: audio files must be converted to a new project sample rate to play back properly.

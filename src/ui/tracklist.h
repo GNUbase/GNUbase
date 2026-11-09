@@ -174,7 +174,7 @@ namespace gnubase::ui
 		// track like the lowest selected audio or MIDI track, with its input and output, below it; a MIDI track below
 		// another selected track; without one, a MIDI track at the end.
 		void addTrack();
-		void removeTracks(const std::vector<uint64_t>& tracks);
+		void removeTracks(std::vector<uint64_t> tracks);
 		void closedRemoveDialog(Rml::Event& event);
 		// Runs the commands as one undo step.
 		void transaction(const std::string& description, engine::Json commands);

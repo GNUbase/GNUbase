@@ -96,11 +96,16 @@ namespace gnubase::engine
 			entry.event = placed.event->id;
 			addRamp(entry, placed.fadeIn);
 			addRamp(entry, placed.fadeOut);
-			const time::Samples clipStart = placed.start - placed.frame;
+			const time::Samples mediaStart = placed.start - placed.frame;
 			entry.curve.reserve(placed.event->volumeCurve.size());
 			for (const GainPoint& point : placed.event->volumeCurve)
-				entry.curve.push_back({clipStart + scaled(point.position, placed.ratio), point.gain, point.curve});
-			const time::Samples clipEnd = clipStart + scaled(placed.media->length, placed.ratio);
+				entry.curve.push_back({mediaStart + scaled(point.position, placed.ratio), point.gain, point.curve});
+			// A warped clip's ends are where the event plays them (RenderAudioEvent::clipStart).
+			const bool warped = !placed.media->warp.empty();
+			const time::Samples clipStart =
+				warped ? mediaStart + scaled(placed.event->clipStart, placed.ratio) : mediaStart;
+			const time::Samples clipEnd = warped ? mediaStart + scaled(placed.event->clipEnd, placed.ratio)
+												 : mediaStart + scaled(placed.media->length, placed.ratio);
 			if (const time::Samples length = scaled(placed.event->clipFadeIn.length, placed.ratio);
 				length > 0 && clipStart + length > placed.start)
 				addRamp(entry, GainRamp{clipStart, clipStart + length, placed.event->clipFadeIn.shape, false});

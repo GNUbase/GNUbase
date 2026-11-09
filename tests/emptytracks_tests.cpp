@@ -249,6 +249,14 @@ TEST_CASE("track.removeEmpty leaves a marker track with markers active and a lin
 	CHECK(activatedMarkerTracks(listener) == std::vector<ObjectId>{first});
 	linkGroup = withId(project.at("linkGroups"), group);
 	CHECK(linkGroup.at("channels") == Json(channels));
+
+	// Redo removes them again, and only the marker track that stays is announced as active.
+	run(client, "history.redo");
+	project = run(client, "project.get");
+	CHECK(project.at("activeMarkerTrack") == markers);
+	CHECK(activatedMarkerTracks(listener) == std::vector<ObjectId>{markers});
+	linkGroup = withId(project.at("linkGroups"), group);
+	CHECK(linkGroup.at("channels") == Json{channels[0], channels[1]});
 }
 
 TEST_CASE("track.removeEmpty removing every marker track announces once that none is active", "[unit]")

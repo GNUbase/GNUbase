@@ -593,7 +593,7 @@ namespace
 		app.call("track.add", {{"type", "marker"}});
 		app.call("project.set", {{"startTime", 3600.0}});
 		app.call("marker.add", {{"type", "cycle"}, {"position", 4 * g_quarter}, {"end", 8 * g_quarter}}); // 2 seconds
-		app.call("settings.set", {{"key", "ui.timeFormats"}, {"value", {{"primary", "seconds"}}}});
+		app.call("project.set", {{"timeFormat", "seconds"}});
 
 		openMarkers(app, 1);
 		Rml::ElementDocument& document = markersDocument(app);
@@ -671,8 +671,8 @@ TEST_CASE("the markers window edits positions, ends and lengths in the time form
 	CHECK(markerField(app, 1, "end") == 19 * g_quarter);
 	CHECK(markers.markers().size() == 2);
 
-	// The transport's primary time format changes them all.
-	app.call("settings.set", {{"key", "ui.timeFormats"}, {"value", {{"primary", "seconds"}}}});
+	// The primary time format, the project's (reference manual p. 317), changes them all.
+	app.call("project.set", {{"timeFormat", "seconds"}});
 	REQUIRE(app.waitUntil([&document, &context]
 		{ return field(document, 0, "position") == ui::formatTime(ui::TimeFormat::Seconds, 2.0, context); }));
 	CHECK(field(document, 1, "length") == ui::formatLength(ui::TimeFormat::Seconds, 8.0, 9.5, context));

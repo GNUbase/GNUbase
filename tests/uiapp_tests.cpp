@@ -375,6 +375,18 @@ TEST_CASE("the ruler's time format menu opens from its arrow button and with a r
 		click(app, menuItem(app, "#ruler-format-menu", text));
 		CHECK(window.display.rulerFormat() == format);
 	}
+	CHECK(app.call("project.get").at("timeFormat") == "barsBeats");
+
+	// With Ctrl (Cmd), a format is the primary time format too, for all windows (reference manual p. 69).
+	click(app, selector(".ruler-format"));
+	app.ui().click(std::nullopt, menuItem(app, "#ruler-format-menu", "Timecode"), ui::MouseButton::Left, 1, {"ctrl"});
+	CHECK(window.display.rulerFormat() == ui::TimeFormat::Timecode);
+	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("timeFormat") == "timecode"; }));
+	click(app, selector(".ruler-format"));
+	click(app, menuItem(app, "#ruler-format-menu", "Samples"));
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(window.display.rulerFormat() == ui::TimeFormat::Samples);
+	CHECK(app.call("project.get").at("timeFormat") == "timecode");
 }
 
 TEST_CASE("the zoom presets menu adds, applies and organizes presets, and zooms full and to cycle markers", "[ui]")

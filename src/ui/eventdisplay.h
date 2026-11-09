@@ -469,7 +469,7 @@ namespace gnubase::ui
 		void findControls();
 		void requestMarkers();
 		void readMarkerMagnets(const engine::Json& project); // m_markers, from a project.get answer
-		void click(Rml::Element* target);
+		void click(Rml::Element* target, bool control);      // control: with Ctrl (Cmd on macOS) held
 		void dialogEvent(Rml::Event& event);
 		void openDialog(const char* file);
 		void showFormat();

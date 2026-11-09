@@ -583,7 +583,7 @@ namespace gnubase::ui
 	}
 
 	// The Warp section's switches and the audio tempo, and the clip's warp markers in the display: a line each
-	// where its audio plays, with a handle at the top. The markers are rebuilt only when they change.
+	// where its audio plays, with a handle at the bottom. The markers are rebuilt only when they change.
 	void SampleEditor::renderWarp()
 	{
 		Rml::Element* root = m_root.get();
@@ -638,7 +638,8 @@ namespace gnubase::ui
 		else if (id == "se-auto-adjust")
 		{
 			const auto [from, to] = rangeOrEvent();
-			m_binding.send("clip.autoAdjust", {{"clip", m_view.at("clip")}, {"start", from}, {"end", to}});
+			m_binding.send(
+				"clip.autoAdjust", {{"clip", m_view.at("clip")}, {"event", m_event}, {"start", from}, {"end", to}});
 		}
 		else if (id == "se-free-warp")
 		{

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "engine/document/rendersnapshot.h"
 #include "engine/schema.h"
 #include "platform/audio/device.h"
 #include "platform/hosttime.h"
@@ -55,8 +56,11 @@ namespace gnubase::engine
 		void applySettings(CommandContext& context);
 
 		// Audio thread, once per block: the messages that arrived for this block go into allInputs if their port
-		// belongs to all MIDI inputs, and to the monitor (midi.monitor) at their frame position.
-		void take(const audio::DeviceBlock& block, double sampleRate, audio::MidiBuffer& allInputs) noexcept;
+		// belongs to all MIDI inputs, and to the monitor (midi.monitor) at their frame position. While the chord pads'
+		// remote is active, a port's note on a remote key plays the pad's pitches instead (#174), the highest on MIDI
+		// channel 1, the next on channel 2 and so on; its note-off ends the pitches its note-on played.
+		void take(const audio::DeviceBlock& block, double sampleRate, audio::MidiBuffer& allInputs,
+			const ChordPadKeys& padKeys) noexcept;
 
 		// Any thread but an audio thread: a message from the on-screen keyboard (midi.keyboard), which belongs to all
 		// MIDI inputs and arrives now, as a port's would. False if the input queue is full.
@@ -87,6 +91,9 @@ namespace gnubase::engine
 			audio::MidiMessage message;
 		};
 
+		// A port's message on a chord pad's remote key goes into allInputs as the pad's notes; false for others.
+		bool playPad(
+			const audio::MidiMessage& message, const ChordPadKeys& keys, audio::MidiBuffer& allInputs) noexcept;
 		void open(Port& port);
 		void listOnce();
 		bool listHardware();   // adds new ports, marks the others present or not; true if that changed any
@@ -108,6 +115,9 @@ namespace gnubase::engine
 		gnubase::midi::InputQueue m_queue;
 		std::array<std::atomic<bool>, g_maxInputs> m_allInputs{};
 		rt::SpscQueue<Received> m_monitor;
+		// Audio thread: the pitches each remote key's note-on played, until its note-off.
+		std::array<uint8_t, 128> m_padCounts{};
+		std::array<std::array<uint8_t, ChordPadKeys::g_maxPitches>, 128> m_padPitches{};
 		std::atomic<size_t> m_monitorDropped{0};
 	};
 }

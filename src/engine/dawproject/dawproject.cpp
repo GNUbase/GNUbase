@@ -71,13 +71,13 @@ namespace gnubase::engine
 			return false;
 		}
 
-		// Automation lanes DAWproject can describe: the fader and MIDI controllers. Instrument, plugin and channel
-		// strip parameters and mute stay in GNUbase's entry until plugin slots are written as devices (#72).
+		// Automation lanes DAWproject can describe: the fader, mute and MIDI controllers. Instrument, plugin and
+		// channel strip parameters stay in GNUbase's entry until plugin slots are written as devices (#72).
 		bool exportable(const AutomationTarget& target)
 		{
 			return target.type != AutomationTargetType::Instrument && target.type != AutomationTargetType::Plugin &&
 				target.type != AutomationTargetType::Strip && target.type != AutomationTargetType::PanLeft &&
-				target.type != AutomationTargetType::PanRight && target.type != AutomationTargetType::Mute;
+				target.type != AutomationTargetType::PanRight;
 		}
 
 		// The built-in effect a slot's plugin id names, or nullptr.
@@ -729,16 +729,19 @@ namespace gnubase::engine
 					writeAutomation(trackLanes, track, *lane);
 			}
 
-			// A lane's points in the lane's time unit and the parameter's unit; curves as straight pieces.
+			// A lane's points in the lane's time unit and the parameter's unit; curves as straight pieces. Mute, the
+			// channel's BoolParameter, has BoolPoints.
 			void writeAutomation(pugi::xml_node trackLanes, const Track& track, const AutomationLane& lane) const
 			{
 				const AutomationTarget& target = lane.target;
+				const bool mute = target.type == AutomationTargetType::Mute;
 				pugi::xml_node points = trackLanes.append_child("Points");
 				points.append_attribute("id") = xmlId("al", lane.id).c_str();
 				const char* unit = "normalized";
 				if (target.type == AutomationTargetType::Volume)
 					unit = "linear";
-				points.append_attribute("unit") = unit;
+				if (!mute)
+					points.append_attribute("unit") = unit;
 				pugi::xml_node element = points.append_child("Target");
 				const ObjectId channel = track.channel;
 				switch (target.type)
@@ -748,6 +751,9 @@ namespace gnubase::engine
 					break;
 				case AutomationTargetType::Pan:
 					element.append_attribute("parameter") = xmlId("cp", channel).c_str();
+					break;
+				case AutomationTargetType::Mute:
+					element.append_attribute("parameter") = xmlId("cm", channel).c_str();
 					break;
 				case AutomationTargetType::Controller:
 					element.append_attribute("expression") = "channelController";
@@ -767,7 +773,6 @@ namespace gnubase::engine
 				case AutomationTargetType::Strip:
 				case AutomationTargetType::PanLeft:
 				case AutomationTargetType::PanRight:
-				case AutomationTargetType::Mute:
 					break;
 				}
 				const auto value = [&target](double v)
@@ -779,6 +784,13 @@ namespace gnubase::engine
 				// Values in DAWproject's units, which curves bend in like playback does (volume as gain).
 				const auto write = [&](int64_t position, double v, bool hold)
 				{
+					if (mute)
+					{
+						pugi::xml_node point = points.append_child("BoolPoint");
+						point.append_attribute("time") = laneTime(track, position);
+						point.append_attribute("value") = v >= 0.5;
+						return;
+					}
 					pugi::xml_node point = points.append_child("RealPoint");
 					point.append_attribute("time") = laneTime(track, position); // in the track's time base
 					point.append_attribute("value") = v;
@@ -1228,7 +1240,10 @@ namespace gnubase::engine
 							m_parameters[pan.attribute("id").as_string()] = {track.id, AutomationTargetType::Pan};
 						}
 					}
-					channel.mute = channelNode.child("Mute").attribute("value").as_bool(false);
+					const pugi::xml_node mute = channelNode.child("Mute");
+					channel.mute = mute.attribute("value").as_bool(false);
+					if (const pugi::xml_attribute id = mute.attribute("id"); !id.empty() && !vca)
+						m_parameters[id.as_string()] = {track.id, AutomationTargetType::Mute};
 					channel.solo = channelNode.attribute("solo").as_bool(false);
 					channel.notes = channelNode.attribute("comment").as_string();
 					if (audio)
@@ -1367,7 +1382,7 @@ namespace gnubase::engine
 				}
 			}
 
-			// A lane of automation points on a track: the fader's volume or pan, or a MIDI controller.
+			// A lane of automation points on a track: the fader's volume or pan, mute, or a MIDI controller.
 			void readAutomation(const pugi::xml_node& points, const Context& context)
 			{
 				const pugi::xml_node target = points.child("Target");
@@ -1413,6 +1428,19 @@ namespace gnubase::engine
 					lane = &(m_project.automation[added.id] = added);
 				}
 				const std::string unit = points.attribute("unit").as_string("");
+				// Mute's BoolPoints are steps to off or on.
+				for (const pugi::xml_node element : points.children("BoolPoint"))
+				{
+					const double at = element.attribute("time").as_double(0.0);
+					if (automated.type != AutomationTargetType::Mute || !std::isfinite(at))
+						continue;
+					AutomationPoint point;
+					point.id = m_project.newId();
+					point.position = {time::TimeBase::Musical, toTicks(at, context.seconds)};
+					point.value = element.attribute("value").as_bool(false) ? 1.0 : 0.0;
+					point.shape = AutomationShape::Step;
+					lane->points[point.id] = point;
+				}
 				for (const pugi::xml_node element : points.children("RealPoint"))
 				{
 					// Points without a finite time and value are left out: NaN would reach the audio.
@@ -1447,6 +1475,11 @@ namespace gnubase::engine
 					point.shape = std::string(element.attribute("interpolation").as_string("linear")) == "hold"
 						? AutomationShape::Step
 						: AutomationShape::Linear;
+					if (automated.type == AutomationTargetType::Mute) // a step curve
+					{
+						point.shape = AutomationShape::Step;
+						point.value = std::round(point.value);
+					}
 					lane->points[point.id] = point;
 				}
 			}
