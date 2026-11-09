@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The MIDI menu in the app (#133, docs/features/midi-functions.md, reference manual pp. 1118-1131): MIDI > Functions
 // on an editor's selected notes or the project window's selected MIDI parts, as quantizing takes them, Bounce MIDI, and
-// the dialogs of Transpose Setup, Merge MIDI in Loop, Dissolve Part and Restrict Polyphony.
+// the dialogs of Transpose Setup, Merge MIDI in Loop, Dissolve Part and Restrict Polyphony, and the rule editor and
+// project input transformer (#178).
 #include "app/appui.h"
 
 #include "engine/midi/quantizesettings.h"
@@ -177,6 +178,26 @@ namespace gnubase::app
 					openFunction(window, "restrictPolyphony", parameters);
 			}});
 		m_keys.enableWhen("midi.functionsRestrictPolyphony", hasTarget);
+
+		// The rule editor (#178, pp. 1405-1423) on what the functions take, and the project input transformer
+		// (pp. 1392-1404), one document (docs/features/midi-rules.md).
+		m_keys.add({"midi.ruleEditor", "Opens the rule editor for the selected MIDI notes or parts.",
+			[this, targetOf](ui::Window& window, Rml::Element* zone)
+			{
+				const auto [target, parameters] = targetOf(window, zone, true);
+				if (target.parts.empty())
+					return;
+				std::vector<std::pair<std::string, std::string>> attributes;
+				for (const char* key : {"parts", "notes"})
+					if (parameters.contains(key))
+						attributes.emplace_back(key, listOf(parameters.at(key).get<std::vector<uint64_t>>()));
+				openDialog(window, "rule-editor.rml", attributes);
+			}});
+		m_keys.enableWhen("midi.ruleEditor", hasTarget);
+		m_keys.add({"project.inputTransformer",
+			"Opens the project input transformer, which changes what MIDI input plays on the tracks that use it.",
+			[this](ui::Window& window, Rml::Element* /*zone*/)
+			{ openDialog(window, "rule-editor.rml", {{"target", "project"}}); }});
 
 		// Merge MIDI in Loop (pp. 1119-1120): onto the first selected MIDI or instrument track, or a new one.
 		m_keys.add({"midi.mergeInLoop",

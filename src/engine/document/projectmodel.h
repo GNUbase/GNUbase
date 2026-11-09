@@ -39,6 +39,10 @@ namespace gnubase::engine
 	// instruments, plugins and the channel strip, whose points are steps with whole values (projectmodel.cpp).
 	bool hasStepCurve(const Project& project, const AutomationLane& lane);
 
+	// Changes the project's sample rate (projectmodel.cpp). Linear positions are in samples, so they are rescaled to
+	// keep their time.
+	void changeSampleRate(Project& project, double sampleRate, CommandContext& context);
+
 	// The project's tempo as project.get and the tempo.changed event report it (tempo.cpp): the tempo it plays, whether
 	// the tempo track is active, the tempo track's events and the fixed tempo.
 	Json tempoJson(const Project& project);

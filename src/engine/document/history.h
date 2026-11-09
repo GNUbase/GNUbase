@@ -66,6 +66,7 @@ namespace gnubase::engine
 		int rootKey = -1;
 		TransposeTrack transpose;
 		ChordTrack chords;
+		midi::InputTransformerModules inputTransformer;
 	};
 
 	// How a project changed, object by object. The id counter is left out on purpose: undoing an addition doesn't

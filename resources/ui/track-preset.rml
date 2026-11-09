@@ -1,0 +1,127 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Track presets (#164, docs/features/track-presets.md, reference manual pp. 199, 238-243): app::AppUi opens it with
+     the document's mode and tracks. Save names a preset of the selected tracks (track.savePreset); Load applies the
+     preset chosen to them (track.loadPreset), listing only the presets of their types; Add adds the tracks of the
+     preset chosen below the first of them, or at the bottom (track.addFromPreset). The engine's message shows when it
+     refuses. -->
+<rml>
+<head>
+	<title>Track Preset</title>
+	<style>
+		dialog
+		{
+			width: 340dp;
+		}
+
+		.row
+		{
+			display: flex;
+			align-items: center;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.row label
+		{
+			margin-right: 8dp;
+		}
+
+		#preset-name, #preset-list
+		{
+			flex: 1;
+		}
+
+		.buttons
+		{
+			justify-content: flex-end;
+		}
+
+		.buttons button
+		{
+			margin-left: 6dp;
+		}
+	</style>
+	<script>
+		TrackPreset = {}
+		local dialog = TrackPreset
+
+		local function escape(text)
+			return (tostring(text):gsub('[&<>"]', {["&"] = "&amp;", ["<"] = "&lt;", [">"] = "&gt;", ['"'] = "&quot;"}))
+		end
+
+		local function value(document, id)
+			local element = document:GetElementById(id)
+			local result = element and element:GetAttribute("value")
+			return result ~= nil and tostring(result) or ""
+		end
+
+		function dialog.load(document)
+			dialog.mode = document:GetAttribute("mode") or "save"
+			dialog.tracks = {}
+			for id in (document:GetAttribute("tracks") or ""):gmatch("%d+") do
+				dialog.tracks[#dialog.tracks + 1] = math.tointeger(tonumber(id))
+			end
+			local titles = {save = "Save Track Preset", load = "Load Track Preset", add = "Add Track from Preset"}
+			document:GetElementById("preset-title").inner_rml = titles[dialog.mode]
+			if dialog.mode == "save" then
+				document:GetElementById("preset-row").inner_rml =
+					'<label for="preset-name">Preset Name</label><input type="text" id="preset-name"/>'
+				document:GetElementById("preset-name"):Focus()
+				return
+			end
+			-- Load lists the presets for the selected tracks' types, in their order (reference manual p. 241).
+			local types = {}
+			if dialog.mode == "load" then
+				local byId = {}
+				for _, track in ipairs(gnubase.project.get().tracks) do
+					byId[track.id] = track.type
+				end
+				for index, id in ipairs(dialog.tracks) do
+					types[index] = byId[id]
+				end
+			end
+			local options = {}
+			for _, preset in ipairs(gnubase.track.presets().presets) do
+				if dialog.mode == "add" or table.concat(preset.tracks, ",") == table.concat(types, ",") then
+					options[#options + 1] = '<option value="' .. escape(preset.name) .. '">' .. escape(preset.name) ..
+						"</option>"
+				end
+			end
+			document:GetElementById("preset-row").inner_rml =
+				'<label for="preset-list">Preset</label><select id="preset-list">' .. table.concat(options) .. "</select>"
+		end
+
+		function dialog.confirm(document)
+			local ok, problem
+			if dialog.mode == "save" then
+				ok, problem = pcall(gnubase.track.savePreset, {tracks = dialog.tracks, name = value(document, "preset-name")})
+			elseif value(document, "preset-list") == "" then
+				ok, problem = false, "There is no track preset to choose."
+			elseif dialog.mode == "load" then
+				ok, problem = pcall(gnubase.track.loadPreset, {tracks = dialog.tracks, name = value(document, "preset-list")})
+			else
+				local parameters = {name = value(document, "preset-list")}
+				if #dialog.tracks > 0 then
+					parameters.track = dialog.tracks[1]
+				end
+				ok, problem = pcall(gnubase.track.addFromPreset, parameters)
+			end
+			if ok then
+				document:Close()
+			else
+				document:GetElementById("preset-message").inner_rml = escape(problem)
+			end
+		end
+	</script>
+</head>
+<body onshow="TrackPreset.load(document)">
+	<dialog id="track-preset-dialog">
+		<div class="dialog-titlebar" id="preset-title">Track Preset</div>
+		<div class="row" id="preset-row"/>
+		<div class="row" id="preset-message"/>
+		<div class="row buttons">
+			<button result="cancel">Cancel</button>
+			<button id="preset-confirm" class="primary" onclick="TrackPreset.confirm(document)">OK</button>
+		</div>
+	</dialog>
+</body>
+</rml>

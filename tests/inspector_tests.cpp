@@ -111,7 +111,7 @@ namespace
 		void type(const std::string& selector, const std::string& text, const std::string& enter = "Enter")
 		{
 			click(selector, ui::MouseButton::Left, 2);
-			app.ui().key(std::nullopt, "Ctrl+A");
+			app.ui().key(std::nullopt, "Mod+A");
 			app.ui().text(std::nullopt, text);
 			app.ui().key(std::nullopt, enter);
 			app.shell().step(std::chrono::milliseconds(0));
@@ -215,7 +215,7 @@ TEST_CASE("Ctrl+Enter in the info line takes the first part's own value for all,
 
 	// The next edit, taken by leaving the field, is relative again: both move by as much.
 	window.click("#info-line textdisplay[field=start]", ui::MouseButton::Left, 2);
-	window.app.ui().key(std::nullopt, "Ctrl+A");
+	window.app.ui().key(std::nullopt, "Mod+A");
 	window.app.ui().text(std::nullopt, "3.1.1.0");
 	window.click("#info-line [info-field=name] .info-label");
 	REQUIRE(window.app.waitUntil([&] { return window.part(first).at("position") == 8 * g_quarter; }));
@@ -333,6 +333,9 @@ TEST_CASE(
 	window.type("#info-line textdisplay[field=length]", "1.0.0.0");
 	REQUIRE(window.app.waitUntil([&] { return marker(verse).at("end") == 12 * g_quarter; }));
 	CHECK(window.call("history.get").at("steps").size() == steps + 4);
+	// The info line edits from the markers it shows, which follow the engine's a step or more later: the next edit
+	// must start from this end (#929).
+	REQUIRE(window.shows("#info-line textdisplay[field=end]", "4.1.1.0"));
 
 	// With several selected the first one shows, a position marker without end and length, and an edit changes all
 	// of them, relative to the first one's value, in one undo step.
@@ -634,7 +637,7 @@ TEST_CASE("an edit in the inspector goes to the track it started on when another
 
 	// The same for a name being typed.
 	window.click(".inspector textdisplay.inspector-name", ui::MouseButton::Left, 2);
-	window.app.ui().key(std::nullopt, "Ctrl+A");
+	window.app.ui().key(std::nullopt, "Mod+A");
 	window.app.ui().text(std::nullopt, "Low End");
 	window.list.select({vox});
 	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Vox"));
@@ -799,11 +802,13 @@ TEST_CASE("the inspector shows the channel as it is when a change is refused", "
 	window.click(".inspector select[control=output]");
 	window.app.ui().key(std::nullopt, "Down");
 	window.click(".inspector select[control=output]");
+	// Anywhere in the log, not just last: the project window's editor.inPlace after each project answer can follow it.
 	REQUIRE(window.app.waitUntil(
 		[&]
 		{
-			const Json last = window.call("engine.commandLog").at("commands").back();
-			return last.at("command") == "channel.set" && last.contains("error");
+			const Json commands = window.call("engine.commandLog").at("commands");
+			return std::any_of(commands.begin(), commands.end(), [](const Json& command)
+				{ return command.at("command") == "channel.set" && command.contains("error"); });
 		}));
 	CHECK(window.shows(".inspector select[control=output]", output));
 	CHECK(std::to_string(window.channel(bus).at("output").get<uint64_t>()) == output);
@@ -861,7 +866,7 @@ TEST_CASE("another project drops the inspector's edits in progress, and text fie
 
 	// The same for a name being typed.
 	window.click(".inspector textdisplay.inspector-name", ui::MouseButton::Left, 2);
-	window.app.ui().key(std::nullopt, "Ctrl+A");
+	window.app.ui().key(std::nullopt, "Mod+A");
 	window.app.ui().text(std::nullopt, "Low End");
 	window.app.ui().key(std::nullopt, "Up");
 	window.app.shell().step(std::chrono::milliseconds(0));

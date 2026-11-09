@@ -479,6 +479,13 @@ namespace gnubase::engine
 			render.modifiers = channel.modifiers;
 			render.midiInserts = channel.midiInserts;
 			render.midiSends = channel.midiSends;
+			if (channel.inputTransformer.mode != midi::InputTransformerMode::Off)
+				for (const midi::InputTransformerModule& module :
+					channel.inputTransformer.mode == midi::InputTransformerMode::Project
+						? project.inputTransformer
+						: channel.inputTransformer.modules)
+					if (module.on)
+						render.inputTransformer.push_back(module.rules);
 			render.monitor = channel.monitor;
 			render.recordEnable = channel.recordEnable;
 			render.listen = channel.listen;
