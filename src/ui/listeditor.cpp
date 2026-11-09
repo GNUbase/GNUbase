@@ -873,13 +873,16 @@ namespace gnubase::ui
 	{
 		// The document's mousedown in the capture phase (ProcessEvent) has ended a gesture whose end never came.
 		begin(event);
-		if (m_gesture != Gesture::None)
-			listen(true);
+		if (m_gesture == Gesture::None)
+			return;
+		listen(true);
+		dragBody(true);
 	}
 
 	bool ListEditor::cancel()
 	{
 		listen(false);
+		dragBody(false);
 		m_gesture = Gesture::None;
 		const bool shown = !m_values.empty();
 		m_values.clear();
@@ -894,19 +897,25 @@ namespace gnubase::ui
 			listened->RemoveEventListener(Rml::EventId::Mousedown, this, true);
 		}
 		m_document.reset();
+		if (const Rml::Element* root = m_root.get(); document && root != nullptr)
+			if (Rml::ElementDocument* owner = root->GetOwnerDocument())
+			{
+				owner->AddEventListener(Rml::EventId::Mouseup, this);
+				// In the capture phase: before the press reaches the root or anything else in the document.
+				owner->AddEventListener(Rml::EventId::Mousedown, this, true);
+				m_document = owner->GetObserverPtr();
+			}
+	}
+
+	void ListEditor::dragBody(bool on)
+	{
 		Rml::Element* root = m_root.get();
-		if (root == nullptr)
+		Rml::Element* body = root == nullptr ? nullptr : root->QuerySelector(".list-editor-body");
+		if (body == nullptr)
 			return;
-		if (Rml::Element* body = root->QuerySelector(".list-editor-body"))
-			body->SetClass("in-gesture", document);
-		if (Rml::ElementDocument* owner = root->GetOwnerDocument(); document && owner != nullptr)
-		{
-			owner->AddEventListener(Rml::EventId::Mouseup, this);
-			// In the capture phase: before the press reaches the root or anything else in the document.
-			owner->AddEventListener(Rml::EventId::Mousedown, this, true);
-			m_document = owner->GetObserverPtr();
+		body->SetClass("in-gesture", on);
+		if (Rml::ElementDocument* owner = root->GetOwnerDocument(); on && owner != nullptr)
 			owner->UpdateDocument(); // RmlUi looks for the drag element right after this press's mousedown
-		}
 	}
 
 	void ListEditor::begin(Rml::Event& event)
@@ -995,6 +1004,7 @@ namespace gnubase::ui
 	void ListEditor::release(Rml::Event& event)
 	{
 		listen(false);
+		dragBody(false);
 		const Gesture gesture = std::exchange(m_gesture, Gesture::None);
 		const Rml::Element* root = m_root.get();
 		if (gesture == Gesture::Draw)
