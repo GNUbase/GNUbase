@@ -1259,6 +1259,11 @@ TEST_CASE("merge leaves out muted parts and, by default, the tracks that don't p
 		channel(vocals).solo = true;
 		CHECK(playingTracks(project).empty());
 	}
+	SECTION("a soloed MIDI track and the instrument it plays through")
+	{
+		channel(strings).solo = true;
+		CHECK(playingTracks(project) == std::vector<ObjectId>{organ, strings});
+	}
 	SECTION("a muted group channel that a track plays into")
 	{
 		channel(piano).output = channel(group).id;
@@ -1357,6 +1362,7 @@ TEST_CASE("extract MIDI automation moves continuous controllers into automation 
 		point.shape = AutomationShape::Step;
 		existing.points[point.id] = point;
 	}
+	existing.read = false; // the extracted controllers have to play
 	project.automation[existing.id] = existing;
 
 	const AutomationChanges changes = extractAutomation(project, {part, muted});
@@ -1379,6 +1385,7 @@ TEST_CASE("extract MIDI automation moves continuous controllers into automation 
 	CHECK(pointsOf(existing.id) ==
 		std::vector<std::pair<int64_t, double>>{
 			{0, 0.25}, {4 * g_quarter, 0.0}, {5 * g_quarter, 1.0}, {8 * g_quarter, 0.25}});
+	CHECK(project.automation.at(existing.id).read);
 	const AutomationLane& modulation = project.automation.at(changes.addedLanes[0]);
 	CHECK(modulation.track == track);
 	CHECK(modulation.target.type == AutomationTargetType::Controller);
@@ -1661,6 +1668,94 @@ TEST_CASE("merge, dissolve and bounce commands return and announce the parts and
 				pitches.push_back(note.at("pitch").get<int>());
 	std::sort(pitches.begin(), pitches.end());
 	CHECK(pitches == std::vector<int>{72, 76, 76});
+}
+
+TEST_CASE(
+	"Extract MIDI Automation takes a shared copy out of its copies, which keep their controllers", "[integration]")
+{
+	Fixture fixture;
+	Client& client = fixture.client;
+	const auto copyAt = [&](Ticks ticks)
+	{
+		return run(client, "event.copy", {{"events", {fixture.part}}, {"ticks", ticks}, {"shared", true}})
+			.at("events")
+			.at(0)
+			.get<ObjectId>();
+	};
+	const ObjectId second = copyAt(8 * g_quarter);
+	const ObjectId third = copyAt(16 * g_quarter);
+	const auto partOf = [&client](ObjectId id)
+	{
+		const Json parts = run(client, "project.get").at("midiParts");
+		const auto found =
+			std::find_if(parts.begin(), parts.end(), [id](const Json& part) { return part.at("id") == id; });
+		REQUIRE(found != parts.end());
+		return *found;
+	};
+	const Json before = partOf(second);
+	REQUIRE(before.at("shared") != 0);
+
+	CHECK(run(client, "midi.extractAutomation", {{"parts", {second}}}).at("parts") == Json{second});
+
+	// Its own controllers went into points in its own range only.
+	const Json extracted = partOf(second);
+	CHECK(extracted.at("shared") == 0);
+	CHECK(extracted.at("controllers").size() == 2); // the sustain pedal stays
+	CHECK(extracted.at("notes").size() == before.at("notes").size());
+	std::vector<int64_t> positions;
+	const Json lanes = run(client, "automationLane.list", {{"track", fixture.track}}).at("lanes");
+	for (const Json& lane : lanes)
+	{
+		CHECK(lane.at("target").at("number") == 7);
+		for (const Json& point : lane.at("points"))
+			positions.push_back(point.at("position").get<int64_t>());
+	}
+	std::sort(positions.begin(), positions.end());
+	CHECK(positions == std::vector<int64_t>{8 * g_quarter, (8 * g_quarter) + 5, (8 * g_quarter) + 10});
+
+	// The other copies play as before, and are still copies of each other.
+	for (const ObjectId other : {fixture.part, third})
+	{
+		const Json part = partOf(other);
+		CHECK(part.at("controllers") == before.at("controllers"));
+		CHECK(part.at("shared") == before.at("shared"));
+	}
+
+	run(client, "history.undo");
+	CHECK(partOf(second) == before);
+	CHECK(run(client, "automationLane.list", {{"track", fixture.track}}).at("lanes").empty());
+}
+
+TEST_CASE("Bounce MIDI keeps the events of shared copies, which have the same ids", "[integration]")
+{
+	Fixture fixture;
+	Client& client = fixture.client;
+	const auto copy =
+		run(client, "event.copy", {{"events", {fixture.part}}, {"ticks", 8 * g_quarter}, {"shared", true}})
+			.at("events")
+			.at(0)
+			.get<ObjectId>();
+	const Json bounced = run(client, "midi.bounce", {{"parts", {fixture.part, copy}}});
+	REQUIRE(bounced.at("parts").size() == 1);
+	const Json project = run(client, "project.get");
+	REQUIRE(project.at("midiParts").size() == 1);
+	const Json& part = project.at("midiParts")[0];
+	CHECK(part.at("shared") == 0);
+	std::vector<std::pair<int64_t, int>> notes;
+	for (const Json& note : part.at("notes"))
+		notes.emplace_back(note.at("position").get<int64_t>(), note.at("pitch").get<int>());
+	std::sort(notes.begin(), notes.end());
+	const int64_t second = 8 * g_quarter;
+	CHECK(notes ==
+		std::vector<std::pair<int64_t, int>>{{0, 60}, {g_quarter, 64}, {g_quarter, 64}, {second, 60},
+			{second + g_quarter, 64}, {second + g_quarter, 64}});
+	std::vector<std::pair<int64_t, int>> controllers;
+	for (const Json& controller : part.at("controllers"))
+		controllers.emplace_back(controller.at("position").get<int64_t>(), controller.at("number").get<int>());
+	std::sort(controllers.begin(), controllers.end());
+	CHECK(controllers ==
+		std::vector<std::pair<int64_t, int>>{{0, 7}, {0, 64}, {5, 7}, {10, 7}, {2 * g_quarter, 64}, {second, 7},
+			{second, 64}, {second + 5, 7}, {second + 10, 7}, {second + (2 * g_quarter), 64}});
 }
 
 TEST_CASE("merge refuses when no MIDI track plays; extract MIDI automation announces lanes and parts", "[integration]")

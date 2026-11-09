@@ -63,7 +63,8 @@ namespace
 						: Json::array();
 					return std::any_of(
 						parts.begin(), parts.end(), [added](const Json& p) { return p.at("id") == added; });
-				}));
+				},
+				std::chrono::seconds(30))); // the app's first steps can take long on a busy machine
 			return added;
 		}
 
@@ -629,6 +630,35 @@ TEST_CASE("MIDI > Functions > Velocity and Delete Notes change the selected note
 	CHECK(f.app.waitUntil([&] { return !f.shown("#midi-function"); }));
 	CHECK(velocities(63));
 
+	// Compress/Expand with a ratio in percent, Variance within its range, and Fixed To.
+	const auto velocityDialog = [&f](int type)
+	{
+		f.menu("midi.functionsVelocity", true);
+		REQUIRE(f.app.waitUntil([&] { return f.shown("#midi-function"); }));
+		f.app.shell().step(std::chrono::milliseconds(0));
+		f.choose("#midi-function-type", type);
+	};
+	velocityDialog(1);
+	f.write("#midi-function-ratio", "50");
+	f.ok();
+	CHECK(velocities(31));
+	velocityDialog(4);
+	f.write("#midi-function-variance", "50");
+	f.ok();
+	CHECK(f.app.waitUntil(
+		[&]
+		{
+			const std::vector<Json> notes = f.notesOf(f.part);
+			return std::all_of(notes.begin(), notes.end(),
+					   [](const Json& note) { return note.at("velocity").get<double>() <= 31.5 / 127.0; }) &&
+				std::any_of(notes.begin(), notes.end(),
+					[](const Json& note) { return note.at("velocity").get<double>() < 15872.0 / 65535.0; });
+		}));
+	velocityDialog(3);
+	f.write("#midi-function-amount", "63");
+	f.ok();
+	CHECK(velocities(63));
+
 	// Limit: only its fields are on.
 	f.menu("midi.functionsVelocity", true);
 	REQUIRE(f.app.waitUntil([&] { return f.shown("#midi-function"); }));
@@ -678,12 +708,12 @@ TEST_CASE("The MIDI menu's dialogs open one at a time", "[ui]")
 	Fixture f;
 	f.display.select({f.part});
 	f.dialog("midi.transposeSetup", "Transpose Setup");
-	// Another one, from MCP or another window, brings the open one to the front as it is.
+	// Another one, from MCP or another window, brings the open one to the front as it is, with what was typed.
+	f.write("#midi-function-semitones", "1");
 	f.app.keys().run("midi.dissolvePart", Json::object(), f.app.main(), nullptr);
 	f.app.shell().step(std::chrono::milliseconds(0));
 	CHECK(f.elements("#midi-function").size() == 1);
 	CHECK(f.text("#midi-function-title") == "Transpose Setup");
-	f.write("#midi-function-semitones", "1");
 	f.ok();
 	CHECK(f.are("pitch", {61, 65, 68}));
 
