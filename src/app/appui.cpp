@@ -1985,10 +1985,14 @@ namespace gnubase::app
 	ui::Window& AppUi::callingWindow()
 	{
 		// The nearest local "document" up the stack of the Lua that called, if it is one of RmlUi's documents: event
-		// handlers (onclick, onshow) have one, and functions they call with it.
+		// handlers (onclick, onshow) have one, and functions they call with it. Only in the current run: Lua that a
+		// gnubase function runs, such as the script console's prompt (ui.runLua) or a script (ui.command), runs on
+		// the same stack above the handler that started it, but runs in the main window.
 		lua_State* state = m_lua.caller();
 		lua_Debug frame{};
-		for (int level = 1; state != nullptr && lua_getstack(state, level, &frame) != 0; ++level)
+		for (int level = 1; state != nullptr && lua_getstack(state, level, &frame) != 0 &&
+			!scripting::Runtime::isGnubaseCall(state, frame);
+			++level)
 			for (int local = 1;; ++local)
 			{
 				const char* name = lua_getlocal(state, &frame, local);

@@ -413,7 +413,9 @@ TEST_CASE("gnubase.ui.command runs in the window of the document that called it"
 	Rml::ElementDocument* document = app.shell().find(second)->context().LoadDocumentFromMemory(
 		R"(<rml><head><style>body { position: absolute; left: 0; top: 0; right: 0; bottom: 0; font-family: Inter; }
 		button { display: block; width: 100dp; height: 30dp; }</style></head>
-		<body><button id="call" onclick="gnubase.ui.command{command = 'project.addTrack'}">Add</button></body></rml>)");
+		<body><button id="call" onclick="gnubase.ui.command{command = 'project.addTrack'}">Add</button>
+		<button id="nested" onclick="gnubase.ui.runLua{code = [[gnubase.ui.command{command = 'project.addTrack'}]]}">
+		Run</button></body></rml>)");
 	REQUIRE(document != nullptr);
 	document->Show();
 	app.shell().step(std::chrono::milliseconds(0));
@@ -424,5 +426,13 @@ TEST_CASE("gnubase.ui.command runs in the window of the document that called it"
 	CHECK_FALSE(open(app)); // not in the main window
 	app.ui().click(second, {"#add-track-cancel", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
 	REQUIRE(app.waitUntil([&there] { return !there(); }));
+
+	// Lua that the document runs, as the script console runs what is typed into it, runs in the main window.
+	app.ui().click(second, {"#nested", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+	app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(app.waitUntil([&app] { return open(app); }));
+	CHECK_FALSE(there());
+	click(app, "#add-track-cancel");
+	REQUIRE(app.waitUntil([&app] { return !open(app); }));
 	app.shell().close(second);
 }

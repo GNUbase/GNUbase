@@ -28,7 +28,7 @@ Lua reaches the engine only through the engine API, like every other client.
   (`gnubase.ui.command{command = "project.addTrack"}`). It runs in the window of the document that called it, so a
   dialog that a document in a window of its own opens shows in that window (#448): the nearest Lua local `document` up
   the caller's stack that is one of RmlUi's documents, as event handlers such as `onclick` and `onshow` have, names it
-  (`scripting::Runtime::caller`). Without one, as in a script, it runs in the main window. It checks the command first, as `KeyCommands::check` does for
+  (`scripting::Runtime::caller`). The walk stops at the call of a gnubase function, so Lua that one runs, such as the script console's prompt (`gnubase.ui.runLua`) or a script that `gnubase.ui.command` starts, doesn't see the console's `document`; without one, as in a script, it runs in the main window. It checks the command first, as `KeyCommands::check` does for
   keys, menu items and buttons (#669): a command that doesn't exist, parameters that aren't a table with keys (a list
   such as `{1, 2}`, or a string), parameters an engine command doesn't take or has of the wrong type, parameters for a
   UI command, and anything but `command` and `parameters` in its table raise a Lua error at the call, in users'

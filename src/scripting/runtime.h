@@ -76,6 +76,9 @@ namespace gnubase::scripting
 		// While a function added with addFunction runs: the Lua thread that called it, e.g. to look at its caller's
 		// locals; null otherwise.
 		lua_State* caller() const { return m_caller; }
+		// Whether the frame of state's stack is a call of an engine command or a function added with addFunction. Lua
+		// below it, e.g. gnubase.ui.runLua's or a script's that gnubase.ui.command starts, belongs to an outer run.
+		static bool isGnubaseCall(lua_State* state, lua_Debug& frame);
 
 	private:
 		struct CloseState

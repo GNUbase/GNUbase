@@ -406,6 +406,15 @@ namespace gnubase::scripting
 		return *static_cast<Runtime*>(lua_touserdata(state, lua_upvalueindex(1)));
 	}
 
+	bool Runtime::isGnubaseCall(lua_State* state, lua_Debug& frame)
+	{
+		if (lua_getinfo(state, "f", &frame) == 0)
+			return false;
+		const lua_CFunction function = lua_tocfunction(state, -1);
+		lua_pop(state, 1);
+		return function == &Runtime::callCommand || function == &Runtime::callFunction;
+	}
+
 	int Runtime::callCommand(lua_State* state)
 	{
 		Runtime& runtime = self(state);
