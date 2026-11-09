@@ -58,7 +58,8 @@ namespace gnubase::ui
 
 		// Sends a command. done runs in update() with its result; without done, a failure is logged. A command that
 		// isn't a query sends the steps that wait (sendStep) first, so that it comes after them, as the user did them.
-		void send(std::string command, engine::Json parameters = engine::Json::object(),
+		// Returns its request id, which its events carry.
+		engine::RequestId send(std::string command, engine::Json parameters = engine::Json::object(),
 			std::function<void(const engine::Result&)> done = {});
 
 		// Sends a command, like send, for a view that asks again and again, e.g. once a second: done's run doesn't
@@ -188,7 +189,7 @@ namespace gnubase::ui
 		// Draws the element's window in the shell's step (Rml::Context::RequestNextUpdate).
 		static void redraw(Rml::Element* shows);
 		void sendWaitingSteps(const std::string& before);
-		void transmit(
+		engine::RequestId transmit(
 			std::string command, engine::Json parameters, std::function<void(const engine::Result&)> done, bool quiet);
 		void sendNextStep(const std::string& what);
 		void answerStep(const std::string& what, const engine::Result& result);

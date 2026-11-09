@@ -253,6 +253,20 @@ namespace gnubase::ui
 		return name != nullptr ? name : "";
 	}
 
+	int SdlWindowSystem::ask(
+		const std::string& title, const std::string& message, const std::vector<std::string>& buttons)
+	{
+		std::vector<SDL_MessageBoxButtonData> data;
+		data.reserve(buttons.size());
+		for (size_t i = 0; i < buttons.size(); ++i)
+			data.push_back(
+				{i == 0 ? SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT : 0, static_cast<int>(i), buttons[i].c_str()});
+		const SDL_MessageBoxData box{SDL_MESSAGEBOX_INFORMATION, nullptr, title.c_str(), message.c_str(),
+			static_cast<int>(data.size()), data.data(), nullptr};
+		int chosen = -1;
+		return SDL_ShowMessageBox(&box, &chosen) ? chosen : -1;
+	}
+
 	std::vector<Display> SdlWindowSystem::displays() const
 	{
 		std::vector<Display> result;
@@ -265,8 +279,10 @@ namespace gnubase::ui
 		{
 			Display display;
 			display.id = ids[i];
+			// SDL names a display the OS gives no name, e.g. the offscreen driver's, after its ID, which changes from
+			// one start to the next: such a display has no name that a saved layout could find it by again (#163).
 			const char* name = SDL_GetDisplayName(ids[i]);
-			display.name = name != nullptr ? name : "";
+			display.name = name != nullptr && std::to_string(ids[i]) != name ? name : "";
 			SDL_Rect rect;
 			if (SDL_GetDisplayBounds(ids[i], &rect))
 				display.bounds = toRect(rect);
@@ -331,6 +347,19 @@ namespace gnubase::ui
 		SDL_Window* sdl = sdlWindow(window);
 		SDL_SetWindowPosition(sdl, bounds.x, bounds.y);
 		SDL_SetWindowSize(sdl, bounds.width, bounds.height);
+	}
+
+	void SdlWindowSystem::minimize(WindowId window)
+	{
+		if (SDL_Window* sdl = sdlWindow(window); sdl != nullptr && !SDL_MinimizeWindow(sdl))
+			logging::warning("SDL cannot minimize a window: {}", SDL_GetError());
+	}
+
+	void SdlWindowSystem::restore(WindowId window)
+	{
+		SDL_Window* sdl = sdlWindow(window);
+		if (sdl != nullptr && (SDL_GetWindowFlags(sdl) & SDL_WINDOW_MINIMIZED) != 0 && !SDL_RestoreWindow(sdl))
+			logging::warning("SDL cannot restore a window: {}", SDL_GetError());
 	}
 
 	void SdlWindowSystem::raise(WindowId window)

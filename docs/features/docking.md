@@ -23,6 +23,9 @@ strips above and below a row of zones, where the main zone takes what the others
 | `sections="channel"` | A container of the set of sections `channel`, such as each of the mixer's channels. Its children with `section="eq"` are the sections, with a `label` for the setup pane and `default="hidden"` to hide one by default. |
 | `setup="channel"` | A setup pane's list of that set's sections, which the docking system fills. |
 | `setup-all="channel"` | A button that shows every section of that set (Show All). |
+| `setup-reset="channel"` | A button that gives that set its default order and hidden sections (Reset All). |
+| `setup-presets="channel"` | A setup pane's list of that set's presets, which the docking system fills with a button per preset (`setup-preset="name"`). |
+| `setup-preset-save="channel"` | A button that saves that set's order and hidden sections as a preset, under the name its dialog asks for. |
 
 The project window (`resources/ui/project.rml`) has the menu bar ([main-menu.md](main-menu.md)), the toolbar, the info
 line, the Channel zone, the left zone, the main zone with the track list and the event display, the lower and right
@@ -81,7 +84,16 @@ sections such as routing, inserts, EQ, sends and the fader). The pane is a `<men
 opens; its items are toggle buttons, so it stays open while they are clicked. Toggle buttons with a `toggle` attribute
 show and hide zones and strips as elsewhere, and an element with `setup="channel"` gets a toggle button per section of
 the set `channel` (`setup-section="eq"`, with the section's label), in the user's order. A button with
-`setup-all="channel"` shows them all.
+`setup-all="channel"` shows them all (Show All), one with `setup-reset="channel"` gives the set its default order
+and hidden sections (Reset All, p. 1576), and the presets (p. 1575) save and recall them.
+
+- **Presets.** A button with `setup-preset-save="channel"` opens the dialog Save Preset (`resources/ui/setup-preset.rml`,
+  next to the panel window's document), and OK saves the set's order and hidden sections under the name typed,
+  replacing a preset of that name. An element with `setup-presets="channel"` gets a button per preset of the set
+  (`setup-preset="name"`), which recalls it. The presets are the user setting `ui.setupPresets`, by set, each a name,
+  the order and the hidden sections, so every window with that set has them, and profiles carry them
+  ([profiles.md](profiles.md)). The transport bar and panel, the inspector and the mixer have them, Show All and Reset
+  All in their setup panes.
 
 - **Show and hide.** A section's button shows or hides that section in every container of its set; hidden sections
   get the state class `.hidden`.
@@ -142,7 +154,8 @@ The setting has only what the user changed; what it leaves out has its default f
 panels' order. A set's `order` puts the sections it names first, the others follow in the document's order; once a set
 has `hidden`, it lists every hidden section, so the defaults no longer count. Panels, zones and sections it names that
 don't exist are ignored, so a layout from a newer GNUbase still loads.
-Workspaces (#163) will store such layouts by name, with the main windows' bounds.
+The app's top-level windows are in it too, with whether they are open, their bounds and monitors, and workspaces
+keep copies of it by name ([workspaces.md](workspaces.md)).
 
 ## Key commands
 
@@ -176,7 +189,7 @@ and a panel in a window of its own, whose document has no zones. Ctrl+Tab, Alt+T
 
 ## Not yet
 
-Sections in a panel that shows in a window of its own keep the document's order; the Channel zone's contents (p. 73)
+The toolbar's and the info line's setup panes (p. 1575, #942); removing and renaming setup pane presets. Sections in a panel that shows in a window of its own keep the document's order; the Channel zone's contents (p. 73)
 with the channel strip (#107), shown as its zone's one tab until then; a theme look for tabs at the bottom, whose
 active tab has its marker on the side away from the panels; dragging a tab out of its zone to open it in a window; the
 editor in the lower zone taking the focus when it opens (p. 100), once editors open there; and after live reload, what
@@ -213,3 +226,5 @@ refused in the wrong shape and resets to the defaults; and the order and visibil
 channel added or rebuilt after `attach` takes the user's order and hidden sections at once and follows later changes,
 and a window that starts without channels fills its setup pane from the first one that comes, with the user's layout,
 or from a channel in a docked panel's content; a setup pane added later gets its buttons in the user's order.
+`tests/transportbar_tests.cpp` saves a setup pane preset through the Save Preset dialog into `ui.setupPresets`, resets
+the pane with Reset All, recalls the preset and follows another client's presets.

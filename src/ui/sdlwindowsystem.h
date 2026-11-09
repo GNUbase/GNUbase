@@ -36,6 +36,8 @@ namespace gnubase::ui
 		Rect bounds(WindowId window) const override;
 		void setBounds(WindowId window, const Rect& bounds) override;
 		void raise(WindowId window) override;
+		void minimize(WindowId window) override;
+		void restore(WindowId window) override;
 		Size pixelSize(WindowId window) const override;
 		float scale(WindowId window) const override;
 		void setInputTarget(WindowId window, Rml::Context* context) override;
@@ -52,6 +54,11 @@ namespace gnubase::ui
 
 		// SDL's video driver, e.g. "x11", "wayland", "windows", "cocoa" or "offscreen".
 		static const char* driver();
+
+		// Shows one of the OS's message boxes with the buttons, the first the default, and waits for the user; works
+		// before any window opens, e.g. for the safe start mode (#163). The index of the button chosen, or -1 if it
+		// couldn't be shown.
+		static int ask(const std::string& title, const std::string& message, const std::vector<std::string>& buttons);
 
 	private:
 		// Files being dropped on a window: SDL reports one event per file, then the drop's end.

@@ -1,0 +1,80 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The New Workspace dialog (#163, docs/features/workspaces.md, reference manual p. 1577): app::AppUi opens it with
+     Workspaces > Add Workspace and the organizer's Add (the UI command window.addWorkspace). OK adds a workspace with
+     the window layout as it is now under the name in #workspace-name, a global one or a project one as
+     #workspace-global and #workspace-project say (workspace.add); a name that is taken shows the engine's error in
+     #workspace-error and keeps the dialog open. -->
+<rml>
+<head>
+	<title>New Workspace</title>
+	<style>
+		dialog
+		{
+			width: 320dp;
+		}
+
+		.row
+		{
+			display: flex;
+			align-items: center;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.row label
+		{
+			margin-right: 8dp;
+		}
+
+		#workspace-name
+		{
+			flex: 1;
+		}
+
+		.buttons
+		{
+			justify-content: flex-end;
+		}
+
+		.buttons button
+		{
+			margin-left: 6dp;
+		}
+	</style>
+	<script>
+		AddWorkspace = {}
+
+		function AddWorkspace.ok(document)
+			local name = tostring(document:GetElementById("workspace-name"):GetAttribute("value") or "")
+			local type = document:GetElementById("workspace-project"):HasAttribute("checked") and "project" or "global"
+			local ok, problem = pcall(gnubase.workspace.add, {name = name, type = type})
+			if ok then
+				document:Close()
+			else
+				document:GetElementById("workspace-error").inner_rml = tostring(problem):gsub("&", "&amp;"):gsub("<", "&lt;")
+			end
+		end
+	</script>
+</head>
+<body>
+	<dialog id="add-workspace-dialog">
+		<div class="dialog-titlebar">New Workspace</div>
+		<div class="row">
+			<label for="workspace-name">Name</label>
+			<input type="text" id="workspace-name" autofocus="autofocus"/>
+		</div>
+		<div class="row">
+			<input type="radio" id="workspace-global" name="workspace-type" value="global" checked=""/>
+			<label for="workspace-global">Global Workspace</label>
+		</div>
+		<div class="row">
+			<input type="radio" id="workspace-project" name="workspace-type" value="project"/>
+			<label for="workspace-project">Project Workspace</label>
+		</div>
+		<div class="row" id="workspace-error"/>
+		<div class="row buttons">
+			<button result="cancel">Cancel</button>
+			<button id="workspace-ok" class="primary" onclick="AddWorkspace.ok(document)">OK</button>
+		</div>
+	</dialog>
+</body>
+</rml>
