@@ -553,6 +553,7 @@ namespace gnubase::engine
 			if (channel.format != ChannelFormat::None)
 			{
 				std::vector<Slot> slots;
+				slots.reserve(sound.slots.size());
 				for (const ObjectId slot : sound.slots)
 					slots.push_back(preset.slots.at(slot));
 				replaceSlots(project, context, channel.id, slots);

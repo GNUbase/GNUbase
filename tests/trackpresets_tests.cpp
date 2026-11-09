@@ -5,11 +5,16 @@
 #include "engine/document/document.h"
 #include "engine/engine.h"
 #include "testutils/testutils.h"
+#include "ui/automation.h"
+#include "ui/tracklist.h"
+#include "uiapp.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <chrono>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -107,6 +112,36 @@ namespace
 			{"eq", channel.at("eq")}, {"strip", channel.at("strip")}};
 	}
 
+	bool shown(test::UiApp& app, const std::string& selector)
+	{
+		const Json found = app.ui().dom(std::nullopt, selector, 0).at("elements");
+		return found.size() == 1 && found[0].at("visible").get<bool>();
+	}
+
+	void click(test::UiApp& app, const std::string& selector)
+	{
+		REQUIRE(app.waitUntil([&app, &selector] { return shown(app, selector); }));
+		app.ui().click(std::nullopt, {selector, 0, std::nullopt}, gnubase::ui::MouseButton::Left, 1, {});
+		app.shell().step(std::chrono::milliseconds(0));
+	}
+
+	void select(test::UiApp& app, const std::vector<ObjectId>& tracks)
+	{
+		// The track list shows new tracks once their events came.
+		REQUIRE(app.waitUntil(
+			[&app, &tracks]
+			{
+				app.appUi().trackList()->select(tracks);
+				return app.appUi().trackList()->selection() == tracks;
+			}));
+	}
+
+	void answer(test::UiApp& app, const fs::path& file)
+	{
+		REQUIRE(app.waitUntil([&app] { return app.shell().fileDialogs().size() == 1; }));
+		CHECK(app.shell().answerFileDialog(app.shell().fileDialogs().begin()->first, {file}));
+	}
+
 	size_t count(const Json& project, const std::string& kind, ObjectId track)
 	{
 		size_t result = 0;
@@ -199,11 +234,11 @@ TEST_CASE("track.addFromPreset adds the preset's tracks below a track, with thei
 	add(client, {{"type", "audio"}, {"name", "Bottom"}});
 	const Json added = run(client, "track.addFromPreset", {{"name", "Drums"}, {"track", top.track}});
 	REQUIRE(added.at("tracks").size() == 2);
-	Json project = run(client, "project.get");
+	const Json project = run(client, "project.get");
 	CHECK(outline(project) == std::vector<std::string>{"Top:audio", "Kick:audio", "Snare:audio", "Bottom:audio"});
 	CHECK(channelOf(project, "Snare").at("volume") == -3.0);
 	CHECK(channelOf(project, "Snare").at("channels") == 1);
-	CHECK(channelOf(project, "Snare").at("output") == run(client, "project.get").at("busses")[1].at("id"));
+	CHECK(channelOf(project, "Snare").at("output") == project.at("busses")[1].at("id"));
 	// Presets keep no routing to other tracks: the send has no destination.
 	CHECK(channelOf(project, "Snare").at("sends")[1].at("destination") == 0);
 
@@ -348,4 +383,79 @@ TEST_CASE("track.import takes tracks from a project file", "[integration]")
 	// Marker tracks stay at the top level.
 	run(client, "track.import", {{"path", song.u8string()}, {"tracks", {sources[0].at("id")}}});
 	CHECK(outline(run(client, "project.get")).back() == "Cues:marker");
+}
+
+TEST_CASE("File > Export > Selected Tracks and File > Import > Tracks go through a track archive", "[ui]")
+{
+	test::UiApp app{{1000, 700}};
+	const test::TempDir dir;
+	app.appUi().showProject();
+	for (const char* command : {"file.exportTracks", "file.importTracks"})
+		CHECK(app.ui()
+				  .dom(std::nullopt, std::string("#file-menu menuitem[command=\"") + command + "\"]", 0)
+				  .at("elements")
+				  .size() == 1);
+	CHECK(!app.keys().canRun("file.exportTracks", app.main(), nullptr)); // nothing selected
+	const ObjectId vocals =
+		app.call("track.add", {{"type", "audio"}, {"name", "Vocals"}}).at("track").at("id").get<ObjectId>();
+	app.call("track.add", {{"type", "audio"}, {"name", "Other"}});
+	select(app, {vocals});
+	CHECK(app.keys().canRun("file.exportTracks", app.main(), nullptr));
+
+	// The file chosen gets the extension .dawproject if it has none.
+	app.keys().run("file.exportTracks", Json::object(), app.main(), nullptr);
+	answer(app, dir.path() / "stems");
+	REQUIRE(app.waitUntil([&dir] { return fs::exists(dir.path() / "stems.dawproject"); }));
+
+	app.call("project.new");
+	const ObjectId top =
+		app.call("track.add", {{"type", "audio"}, {"name", "Top"}}).at("track").at("id").get<ObjectId>();
+	app.call("track.add", {{"type", "audio"}, {"name", "Bottom"}});
+	select(app, {top});
+	app.keys().run("file.importTracks", Json::object(), app.main(), nullptr);
+	answer(app, dir.path() / "stems.dawproject");
+	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("tracks").size() == 3; }));
+	CHECK(outline(app.call("project.get")) == std::vector<std::string>{"Top:audio", "Vocals:audio", "Bottom:audio"});
+}
+
+TEST_CASE("the track preset dialog saves, loads and adds track presets", "[ui]")
+{
+	test::UiApp app{{1000, 700}};
+	app.appUi().showProject();
+	for (const char* command : {"project.addTrackFromPreset", "track.saveTrackPreset", "track.loadTrackPreset"})
+		CHECK(app.ui()
+				  .dom(std::nullopt, std::string("#track-list-menu menuitem[command=\"") + command + "\"]", 0)
+				  .at("elements")
+				  .size() == 1);
+	const Json vocals = app.call("track.add", {{"type", "audio"}, {"name", "Vocals"}});
+	app.call("channel.set", {{"channel", vocals.at("channel").at("id")}, {"volume", -6.0}});
+	select(app, {vocals.at("track").at("id").get<ObjectId>()});
+	app.keys().run("track.saveTrackPreset", Json::object(), app.main(), nullptr);
+	click(app, "#preset-name");
+	app.ui().text(std::nullopt, "Vox");
+	click(app, "#preset-confirm");
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#track-preset-dialog"); }));
+	const Json presets = app.call("track.presets").at("presets");
+	REQUIRE(presets.size() == 1);
+	CHECK(presets[0].at("name") == "Vox");
+
+	// Load lists the presets of the selected tracks' types: none for a MIDI track.
+	const Json midi = app.call("track.add", {{"type", "midi"}, {"name", "Keys"}});
+	select(app, {midi.at("track").at("id").get<ObjectId>()});
+	app.keys().run("track.loadTrackPreset", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#track-preset-dialog"); }));
+	CHECK(app.ui().dom(std::nullopt, "#preset-list option", 0).at("elements").empty());
+	click(app, "#track-preset-dialog button[result=cancel]");
+
+	const Json other = app.call("track.add", {{"type", "audio"}, {"name", "Other"}});
+	select(app, {other.at("track").at("id").get<ObjectId>()});
+	app.keys().run("track.loadTrackPreset", Json::object(), app.main(), nullptr);
+	click(app, "#preset-confirm");
+	REQUIRE(app.waitUntil([&app] { return channelOf(app.call("project.get"), "Other").at("volume") == -6.0; }));
+
+	app.keys().run("project.addTrackFromPreset", Json::object(), app.main(), nullptr);
+	click(app, "#preset-confirm");
+	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("tracks").size() == 4; }));
+	CHECK(outline(app.call("project.get")) ==
+		std::vector<std::string>{"Vocals:audio", "Keys:midi", "Other:audio", "Vocals:audio"});
 }
