@@ -618,13 +618,15 @@ namespace gnubase::plugin::remote
 	{
 		m_busy.store(true);
 		// A Start that came too late may still have started it.
+		bool sent = false;
 		if (Binding* live = m_live.load();
 			live != nullptr && (live->started || m_processing.load(std::memory_order_relaxed)))
 		{
 			if (failure() == Failure::None)
-				exchange(*live, nullptr, Stop, m_noEvents, nullptr);
+				sent = exchange(*live, nullptr, Stop, m_noEvents, nullptr).sent;
 			live->started = false;
 		}
+		m_stopSent.store(sent, std::memory_order_relaxed);
 		idle();
 		m_processing.store(false, std::memory_order_release);
 	}
@@ -689,7 +691,24 @@ namespace gnubase::plugin::remote
 			Writer writer;
 			write(writer, in);
 			const std::shared_ptr<Binding> current = binding();
-			const HostConnection::Reply reply = call(*current, Message::FlushParams, writer.data(), m_deadlines.query);
+			// The host refuses it until its audio thread handled a Stop that came too late: the flush waits for that,
+			// within its deadline. A change the host never takes goes with the next block, after a start.
+			const auto deadline = std::chrono::steady_clock::now() + m_deadlines.query;
+			HostConnection::Reply reply = call(*current, Message::FlushParams, writer.data(), m_deadlines.query);
+			while (!reply.ok && reply.error == g_processingError)
+			{
+				const auto remaining =
+					std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+				if (m_processing.load(std::memory_order_acquire) || !m_stopSent.load(std::memory_order_relaxed) ||
+					remaining <= std::chrono::milliseconds(1))
+				{
+					const std::scoped_lock lock(m_mutex);
+					keep(*current, in);
+					return;
+				}
+				std::this_thread::sleep_for(std::chrono::milliseconds(1));
+				reply = call(*current, Message::FlushParams, writer.data(), remaining);
+			}
 			Reader reader(reply.body);
 			const size_t before = out.size();
 			if (reply.ok && read(reader, out))

@@ -51,6 +51,9 @@ namespace gnubase::plugin::remote
 		Fragment = 200,
 	};
 
+	// The error of a FlushParams the host refuses because its audio thread hasn't handled a Stop yet, or started.
+	inline constexpr std::string_view g_processingError = "the plugin is processing";
+
 	// What a plugin asks of the engine, from its host process: its calls of Host::requestRestart and of the host
 	// extensions. A Notify message carries one with a detail, the flags of the rescan where there are any.
 	enum class Notification : uint8_t
