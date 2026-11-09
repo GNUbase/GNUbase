@@ -148,6 +148,21 @@
 				{"insertExclusive", "Insert Exclusive"}, {"select", "Select"}}
 		end
 
+		-- Live events have no position or length, so the input transformer leaves them out, unless a preset's line
+		-- has them: then the engine says why it refuses the rules.
+		local function targetsFor(current)
+			if not editor.input then
+				return targets
+			end
+			local list = {}
+			for _, target in ipairs(targets) do
+				if (target[1] ~= "position" and target[1] ~= "length") or target[1] == current then
+					list[#list + 1] = target
+				end
+			end
+			return list
+		end
+
 		local function isOneOf(value, choices)
 			for _, choice in ipairs(choices) do
 				if choice[1] == value then
@@ -180,7 +195,7 @@
 			local retarget = "RuleEditor.retarget(document, 'filter', " .. index .. ")"
 			return '<div class="rule-row"><input type="checkbox" id="rule-editor-' .. prefix .. 'pick"/>' ..
 				dropDown(prefix .. "open", opens, line.open or 0, "bracket") ..
-				dropDown(prefix .. "target", targets, line.target, nil, retarget) ..
+				dropDown(prefix .. "target", targetsFor(line.target), line.target, nil, retarget) ..
 				dropDown(prefix .. "condition", conditions, line.condition) .. '<span id="rule-editor-' .. prefix ..
 				'values">' .. filterValues(prefix, line) .. "</span>" ..
 				dropDown(prefix .. "close", closes, line.close or 0, "bracket") ..
@@ -191,7 +206,7 @@
 			local prefix = "action-" .. index .. "-"
 			local retarget = "RuleEditor.retarget(document, 'action', " .. index .. ")"
 			return '<div class="rule-row"><input type="checkbox" id="rule-editor-' .. prefix .. 'pick"/>' ..
-				dropDown(prefix .. "target", targets, line.target, nil, retarget) ..
+				dropDown(prefix .. "target", targetsFor(line.target), line.target, nil, retarget) ..
 				dropDown(prefix .. "operation", operations, line.operation, nil, retarget) .. '<span id="rule-editor-' ..
 				prefix .. 'values">' .. actionValues(prefix, line) .. "</span></div>"
 		end

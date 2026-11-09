@@ -45,8 +45,8 @@ input plays (the input transformers). A preset library holds named rules for bot
   them on the audio thread (`processors::InputTransformerProcessor`, made on the command thread when a track first
   has rules and kept with the track from then on, while the rules come with each render snapshot), on buffers
   allocated beforehand.
-  - **Live events** (`processors::LogicalStage`): rules see note-ons; a note-off, and the poly pressure of a held note,
-    go where its note-on went, so a note ends where it sounds even when the rules changed in between or insert played it
+  - **Live events** (`processors::LogicalStage`): rules see note-ons; a note-off, and the poly pressure of a held note
+    that the rules don't find, go where its note-on went, so a note ends where it sounds even when the rules changed in between or insert played it
     twice. A note-on that became another kind of event loses its note-off. A controller or other event turned into a
     note plays a note-on for a main value above 0 and a note-off for 0, so a sustain pedal can play a bass drum.
   - **The transformer MIDI effect** (#135, [midi-effects.md](midi-effects.md)) is a rule of this kind with a fixed shape
@@ -59,7 +59,8 @@ input plays (the input transformers). A preset library holds named rules for bot
   and removed with `midiRules.removePreset`; factory names can't be taken. Each change starts from the file as it is then,
   so GNUbase processes on one settings folder keep each other's presets. A preset this GNUbase can't read is skipped
   with a problem in `midiRules.presets` and stays in the file. One library serves the rule editor and the input
-  transformers; input transformers refuse select.
+  transformers; input transformers refuse select, and position and length in filters and actions, since live
+  events have neither.
 
 ## In the UI
 

@@ -502,7 +502,11 @@ namespace gnubase::engine::processors
 		using midi::LogicalFunction;
 		const uint16_t index = indexOf(event);
 		Held& held = m_held[index];
-		if (event.type == Type::NoteOff || (event.type == Type::PolyPressure && held.down))
+		LogicalEvent original;
+		const bool logical = toLogical(event, original);
+		const bool found = logical && midi::matches(rules.filters, rules.filterCount, original);
+		// The pressure of a held note the rules don't find follows its note-on.
+		if (event.type == Type::NoteOff || (event.type == Type::PolyPressure && held.down && !found))
 		{
 			if (!held.down) // a note from before the rules
 			{
@@ -517,13 +521,11 @@ namespace gnubase::engine::processors
 				held.down = false;
 			return;
 		}
-		LogicalEvent original;
-		if (!toLogical(event, original))
+		if (!logical)
 		{
 			out.add(event);
 			return;
 		}
-		const bool found = midi::matches(rules.filters, rules.filterCount, original);
 		const LogicalFunction function = rules.function;
 		const bool pass = function == LogicalFunction::Insert || function == LogicalFunction::Select ||
 			(!found && function != LogicalFunction::InsertExclusive);

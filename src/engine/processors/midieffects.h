@@ -147,9 +147,10 @@ namespace gnubase::engine::processors
 	};
 
 	// Applies rules to events one at a time, as the transformer effect and each module of an input transformer do. A
-	// note-off and the poly pressure of a held note go where the note-on went, so a note changed by the rules ends
-	// where it sounds; a note-on that became another type of event loses its note-off. Velocities stay from 1 to 127,
-	// and a controller turned into a note plays a note-on for values above 0 and a note-off for 0. SysEx passes.
+	// note-off goes where the note-on went, so a note changed by the rules ends where it sounds, and so does the poly
+	// pressure of a held note unless the rules find it; a note-on that became another type of event loses its note-off.
+	// Velocities stay from 1 to 127, and a controller turned into a note plays a note-on for values above 0 and a
+	// note-off for 0. SysEx passes.
 	class LogicalStage
 	{
 	public:

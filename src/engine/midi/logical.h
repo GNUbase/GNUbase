@@ -207,7 +207,8 @@ namespace gnubase::engine::midi
 
 	Json toJson(const InputTransformerModules& modules);
 	// base with what json changes: an array of at most four modules, each {on, rules} with either left out. Throws
-	// std::invalid_argument for what doesn't fit, or rules whose function input transformers don't have (select).
+	// std::invalid_argument for what doesn't fit, or rules input transformers don't have: the select
+	// function, or position or length in a filter or an action.
 	InputTransformerModules inputTransformerModulesFromJson(const Json& json, InputTransformerModules base);
 
 	Json toJson(const InputTransformer& transformer);

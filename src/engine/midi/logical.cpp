@@ -563,7 +563,7 @@ namespace gnubase::engine::midi
 			{"Delete/Short notes", {{is(Y::Note), where(T::Length, C::Less, 60)}, F::Delete, {}}},
 			{"Delete/Soft notes", {{is(Y::Note), where(T::MainValue, C::Less, 20)}, F::Delete, {}}},
 			{"Delete/Controllers", {{is(Y::Controller)}, F::Delete, {}}},
-			{"Delete/Aftertouch", {{is(Y::Aftertouch), is(Y::PolyPressure)}, F::Delete, {}}},
+			{"Delete/Aftertouch", {{is(Y::Aftertouch, LogicalBool::Or), is(Y::PolyPressure)}, F::Delete, {}}},
 			{"Delete/Pitch bend", {{is(Y::PitchBend)}, F::Delete, {}}},
 			{"Delete/Program changes", {{is(Y::Program)}, F::Delete, {}}},
 			{"Transform/Octave up", {{is(Y::Note)}, F::Transform, {change(T::Subtype, O::Add, 12)}}},
@@ -633,6 +633,14 @@ namespace gnubase::engine::midi
 				LogicalRules rules = logicalRulesFromJson(item.at("rules"));
 				if (rules.function == LogicalFunction::Select)
 					throw std::invalid_argument(name + ": input transformers don't select");
+				// Live events have no position or length.
+				const auto timed = [](LogicalTarget target)
+				{ return target == LogicalTarget::Position || target == LogicalTarget::Length; };
+				if (std::any_of(rules.filters.begin(), rules.filters.end(),
+						[&timed](const FilterLine& line) { return timed(line.target); }) ||
+					std::any_of(rules.actions.begin(), rules.actions.end(),
+						[&timed](const ActionLine& line) { return timed(line.target); }))
+					throw std::invalid_argument(name + ": input transformers have no position or length");
 				module.rules = std::move(rules);
 			}
 		}

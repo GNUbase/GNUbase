@@ -7,6 +7,10 @@
 #include "ui/keycommands.h"
 #include "uiapp.h"
 
+#include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
@@ -58,6 +62,20 @@ namespace
 		{
 			const Json found = elements(selector);
 			return found.empty() ? std::string() : found[0].value("text", std::string());
+		}
+
+		// Whether a drop-down list offers an option, whose options aren't in the DOM that the UI tools see.
+		bool offers(const std::string& selector, const std::string& value)
+		{
+			Rml::Element* element = nullptr;
+			for (int i = 0; element == nullptr && i < app.main().context().GetNumDocuments(); ++i)
+				element = app.main().context().GetDocument(i)->QuerySelector(selector);
+			auto* select = dynamic_cast<Rml::ElementFormControlSelect*>(element);
+			REQUIRE(select != nullptr);
+			for (int i = 0; i < select->GetNumOptions(); ++i)
+				if (select->GetOption(i)->GetAttribute<Rml::String>("value", "") == value)
+					return true;
+			return false;
 		}
 
 		void click(const std::string& selector)
@@ -152,6 +170,7 @@ TEST_CASE("MIDI > Rule Editor applies presets and lines to the selected parts", 
 	f.open("midi-menu", "midi.ruleEditor", "Rule Editor");
 	f.click("#rule-editor-insert-filter");
 	f.click("#rule-editor-insert-filter");
+	CHECK(f.offers("#rule-editor-filter-2-target", "position"));
 	f.choose("#rule-editor-filter-2-target", -3);   // subtype
 	f.choose("#rule-editor-filter-2-condition", 2); // bigger
 	f.write("#rule-editor-filter-2-p1", "72");
@@ -191,6 +210,13 @@ TEST_CASE("Project > Project Input Transformer sets the project's modules", "[ui
 	f.choose("#rule-editor-module", 1); // module 2
 	f.click("#rule-editor-on");
 	f.click("#rule-editor-insert-action");
+	// Live events have no position or length.
+	CHECK(f.offers("#rule-editor-action-1-target", "subtype"));
+	CHECK(!f.offers("#rule-editor-action-1-target", "position"));
+	CHECK(!f.offers("#rule-editor-action-1-target", "length"));
+	f.click("#rule-editor-insert-filter");
+	CHECK(!f.offers("#rule-editor-filter-1-target", "position"));
+	f.click("#rule-editor-remove-filter");
 	f.write("#rule-editor-action-1-p1", "12");
 	f.apply();
 	const Json modules = f.app.call("project.get").at("inputTransformer");

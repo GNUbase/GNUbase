@@ -633,7 +633,7 @@ namespace gnubase::engine::midi
 				"plays: modules, an array of at most four, each {on, rules} with what changes (the first given "
 				"changes module 1, and so on). The modules that are on apply in order, before the track plays and "
 				"records; their functions are delete (which filters events out), transform, insert and "
-				"insertExclusive." +
+				"insertExclusive. Live events have no position or length, so rules for those are refused." +
 					rulesText.substr(0, rulesText.find(" preset names")) +
 					" Returns the modules, as project.get has them in inputTransformer.",
 				objectSchema({{"modules", {{"type", "array"}}}}, {"modules"}),

@@ -240,6 +240,50 @@ TEST_CASE("rules as JSON: every factory preset round-trips, and wrong rules are 
 	refused(Json{{"filters", Json::array()}, {"extra", 1}}, "extra");
 }
 
+TEST_CASE("factory presets find the events they are meant for", "[unit]")
+{
+	const auto event = [](LogicalType type, int subtype = 0, int mainValue = 0, double length = 0.0)
+	{
+		LogicalEvent e;
+		e.type = type;
+		e.subtype = subtype;
+		e.mainValue = mainValue;
+		e.length = length;
+		return e;
+	};
+	const auto finds = [](const std::string& name, const LogicalEvent& e)
+	{
+		for (const LogicalPreset& preset : factoryLogicalPresets())
+			if (preset.name == name)
+				return matches(preset.rules.filters.data(), preset.rules.filters.size(), e);
+		INFO("no factory preset " << name);
+		CHECK(false);
+		return false;
+	};
+	using Y = LogicalType;
+	CHECK(finds("Delete/Short notes", event(Y::Note, 60, 100, 30)));
+	CHECK(!finds("Delete/Short notes", event(Y::Note, 60, 100, 60)));
+	CHECK(finds("Delete/Soft notes", event(Y::Note, 60, 10)));
+	CHECK(!finds("Delete/Soft notes", event(Y::Note, 60, 20)));
+	CHECK(finds("Delete/Controllers", event(Y::Controller, 7, 100)));
+	CHECK(finds("Delete/Aftertouch", event(Y::Aftertouch, 50)));
+	CHECK(finds("Delete/Aftertouch", event(Y::PolyPressure, 60, 50)));
+	CHECK(!finds("Delete/Aftertouch", event(Y::Controller, 1, 50)));
+	CHECK(finds("Delete/Pitch bend", event(Y::PitchBend, 0, 64)));
+	CHECK(finds("Delete/Program changes", event(Y::Program, 5)));
+	CHECK(finds("Transform/Octave up", event(Y::Note, 60, 100)));
+	CHECK(!finds("Transform/Octave up", event(Y::Controller, 60, 100)));
+	CHECK(finds("Transform/Aftertouch to modulation", event(Y::Aftertouch, 50)));
+	CHECK(finds("Transform/Modulation to aftertouch", event(Y::Controller, 1, 50)));
+	CHECK(!finds("Transform/Modulation to aftertouch", event(Y::Controller, 7, 50)));
+	CHECK(finds("Select/Notes above C3", event(Y::Note, 61, 100)));
+	CHECK(!finds("Select/Notes above C3", event(Y::Note, 60, 100)));
+	CHECK(finds("Input/Split below C3 to channel 2", event(Y::Note, 59, 100)));
+	CHECK(!finds("Input/Split below C3 to channel 2", event(Y::Note, 60, 100)));
+	CHECK(finds("Input/Sustain pedal to bass drum", event(Y::Controller, 64, 127)));
+	CHECK(!finds("Input/Sustain pedal to bass drum", event(Y::Controller, 1, 127)));
+}
+
 namespace
 {
 	// An instrument track with a part of four beats from 0, its instrument the note probe.
@@ -420,6 +464,23 @@ TEST_CASE("midi.applyRules changes controllers, pressure and pitch bend, and the
 	CHECK(f.partJson().at("controllers")[0].at("value").get<double>() > 0.5); // the bend went up a step
 }
 
+TEST_CASE("midi.applyRules: Delete/Aftertouch removes channel pressure and poly pressure", "[integration]")
+{
+	Fixture f;
+	run(f.client, "controller.add",
+		{{"part", f.part},
+			{"controllers",
+				{{{"position", 0}, {"type", "channelPressure"}, {"value", 0.5}},
+					{{"position", 0}, {"type", "polyPressure"}, {"number", 60}, {"value", 0.5}},
+					{{"position", 0}, {"type", "controller"}, {"number", 7}, {"value", 1.0}}}}});
+	const Json result =
+		run(f.client, "midi.applyRules", {{"parts", Json::array({f.part})}, {"preset", "Delete/Aftertouch"}});
+	CHECK(result.at("found") == 2);
+	const Json controllers = f.partJson().at("controllers");
+	REQUIRE(controllers.size() == 1);
+	CHECK(controllers[0].at("type") == "controller");
+}
+
 TEST_CASE("MIDI rule presets: factory presets, and the user's kept in the settings folder", "[integration]")
 {
 	const gnubase::test::TempDir dir;
@@ -560,6 +621,16 @@ TEST_CASE("input transformers change what a track's MIDI input plays", "[integra
 			Json::array({module(rules({isNote}, "insertExclusive", {action("mainValue", "setFixed", 1)}))})}});
 		CHECK(f.play({{0x90, 60, 100}, {0xB0, 1, 5}}, {{0x80, 60, 0}}) == "90 3c 01\n80 3c 00\n");
 	}
+	SECTION("the rules filter the poly pressure of a held note, which otherwise follows its note-on")
+	{
+		f.transformer({{"mode", "track"},
+			{"modules", Json::array({module(rules({filter("type", "equal", "polyPressure")}, "delete"))})}});
+		CHECK(f.play({{0x90, 60, 100}}, {{0xA0, 60, 50}}) == "90 3c 64\n");
+		CHECK(f.play({{0xA0, 60, 50}}, {{0x80, 60, 0}}) == "80 3c 00\n");
+		f.transformer({{"modules", Json::array({module(up)})}});
+		CHECK(f.play({{0x90, 60, 100}}, {{0xA0, 60, 50}}) == "90 48 64\na0 48 32\n");
+		CHECK(f.play({}, {{0x80, 60, 0}}) == "80 48 00\n");
+	}
 	SECTION("presets turn events into others: a sustain pedal plays a bass drum, aftertouch modulation")
 	{
 		const Json presets = run(f.client, "midiRules.presets").at("presets");
@@ -592,6 +663,20 @@ TEST_CASE("input transformers change what a track's MIDI input plays", "[integra
 		CHECK_THAT(reject(f.client, "midi.setInputTransformer",
 					   {{"modules", Json::array({module(up), module(up), module(up), module(up), module(up)})}}),
 			ContainsSubstring("at most 4"));
+		// Live events have no position or length.
+		for (const Json& timed :
+			{rules({filter("length", "less", 60)}, "delete"), rules({filter("position", "bigger", 0)}, "delete"),
+				rules({}, "transform", {action("position", "roundBy", 120)}),
+				rules({}, "transform", {action("length", "setFixed", 60)})})
+		{
+			INFO(timed.dump());
+			CHECK_THAT(reject(f.client, "midi.setInputTransformer", {{"modules", Json::array({module(timed)})}}),
+				ContainsSubstring("no position or length"));
+			CHECK_THAT(reject(f.client, "channel.set",
+						   {{"channel", f.channel},
+							   {"inputTransformer", {{"mode", "track"}, {"modules", Json::array({module(timed)})}}}}),
+				ContainsSubstring("no position or length"));
+		}
 	}
 	SECTION("saved with the project")
 	{
