@@ -359,12 +359,12 @@ namespace gnubase::ui
 			void hover(Rml::Element* element, Rml::Vector2f at)
 			{
 				Rml::Element* titled = closestWith(element, "title");
-				if (titled == m_titled)
+				if (titled == m_titled.get())
 					return;
 				hide();
-				m_titled = titled;
 				if (titled == nullptr)
 					return;
+				m_titled = titled->GetObserverPtr();
 				m_at = at + Rml::Vector2f(0.0F, g_tooltipOffset * GetContext()->GetDensityIndependentPixelRatio());
 				m_due = now() + g_tooltipDelay;
 				GetContext()->RequestNextUpdate(g_tooltipDelay);
@@ -372,7 +372,7 @@ namespace gnubase::ui
 
 			void hide()
 			{
-				m_titled = nullptr;
+				m_titled.reset();
 				SetClass("shown", false);
 			}
 
@@ -380,14 +380,22 @@ namespace gnubase::ui
 			void OnUpdate() override
 			{
 				Rml::Element::OnUpdate();
-				if (m_titled == nullptr || IsClassSet("shown"))
+				const Rml::Element* titled = m_titled.get();
+				if (titled == nullptr)
+				{
+					// The element may have gone from under the mouse, when a list is rendered anew.
+					if (IsClassSet("shown"))
+						SetClass("shown", false);
+					return;
+				}
+				if (IsClassSet("shown"))
 					return;
 				if (const double wait = m_due - now(); wait > 0.0)
 				{
 					GetContext()->RequestNextUpdate(wait);
 					return;
 				}
-				SetInnerRML(Rml::StringUtilities::EncodeRml(m_titled->GetAttribute<Rml::String>("title", "")));
+				SetInnerRML(Rml::StringUtilities::EncodeRml(titled->GetAttribute<Rml::String>("title", "")));
 				SetClass("shown", true);
 				moveTo(*this, m_at);
 			}
@@ -402,7 +410,7 @@ namespace gnubase::ui
 			}
 
 		private:
-			Rml::Element* m_titled = nullptr; // whose title is shown, or waits to be
+			Rml::ObserverPtr<Rml::Element> m_titled; // whose title is shown, or waits to be
 			Rml::Vector2f m_at;
 			double m_due = 0.0;
 		};
