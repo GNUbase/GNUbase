@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <thread>
@@ -638,9 +639,9 @@ TEST_CASE("auditioning a media file plays its frames, also outside the events th
 	CHECK_THAT(song.client.call("audition.start", {{"media", media}, {"position", 4001}}).error,
 		ContainsSubstring("position must be 0 to 4000"));
 	CHECK_THAT(song.client.call("audition.scrub", {{"media", media}, {"track", track.id}, {"position", 0}}).error,
-		ContainsSubstring("a track or a media file"));
-	CHECK_THAT(
-		song.client.call("audition.start", {{"position", 0}}).error, ContainsSubstring("a track or a media file"));
+		ContainsSubstring("a track, a media file or a clip"));
+	CHECK_THAT(song.client.call("audition.start", {{"position", 0}}).error,
+		ContainsSubstring("a track, a media file or a clip"));
 
 	// Positions are the file's frames: the last 500 frames of a file at half the project's rate play for 1000
 	// samples.
@@ -685,6 +686,103 @@ TEST_CASE("scrubbing a media file plays its frames and leaves the cursor alone",
 		}
 		CHECK(wrong == 0);
 	}
+}
+
+TEST_CASE("scrubbing a media file goes by its frames at its own sample rate", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	Song song(64);
+	song.addTrack(2);
+	const ObjectId slow =
+		idOf(run(song.client, "media.add", {{"path", writeRamp(dir, "slow", 1, 1000, 24000)}}), "media");
+
+	// 240 frames back at half the project's rate, in 0.01 seconds: 480 samples at normal speed, each frame twice.
+	run(song.client, "audition.scrub", {{"media", slow}, {"position", 500}});
+	run(song.client, "audition.scrub", {{"media", slow}, {"position", 260}, {"seconds", 0.01}});
+	run(song.client, "audio.render", {{"frames", 600}});
+	run(song.client, "audition.stop");
+	const std::vector<float> output = song.capture(0, 600);
+	size_t wrong = 0;
+	for (size_t i = 0; i < 600; ++i)
+	{
+		const float expected = i < 480 ? ramp((1000 - static_cast<int64_t>(i)) / 2, 0) : 0.0f;
+		if (output[i] != expected && wrong++ == 0)
+			UNSCOPED_INFO("frame " << i << ": " << output[i] << " instead of " << expected);
+	}
+	CHECK(wrong == 0);
+}
+
+TEST_CASE("auditioning a clip plays its media file with the clip's fades", "[integration]")
+{
+	// The sample editor's play and scrub tools play its clip (reference manual p. 630), with its fades.
+	const gnubase::test::TempDir dir;
+	Song song(64);
+	song.addTrack(2);
+	const ObjectId media = idOf(run(song.client, "media.add", {{"path", writeRamp(dir, "stereo", 2, 4000)}}), "media");
+	const ObjectId clip = idOf(run(song.client, "clip.add", {{"media", media}}), "clip");
+	run(song.client, "clip.setFades",
+		{{"clip", clip}, {"fadeIn", {{"length", 1000}, {"shape", "linear"}}},
+			{"fadeOut", {{"length", 500}, {"shape", "linear"}}}});
+	const auto gain = [](int64_t frame)
+	{
+		if (frame < 1000)
+			return static_cast<float>(frame) / 1000.0f;
+		return frame >= 3500 ? static_cast<float>(4000 - frame) / 500.0f : 1.0f;
+	};
+
+	// Played from its start to its end; the result names the clip's media file.
+	CHECK(run(song.client, "audition.start", {{"clip", clip}, {"position", 0}}) ==
+		Json{{"track", 0}, {"media", media}, {"mode", "play"}});
+	run(song.client, "audio.render", {{"frames", 4000}});
+	// Scrubbed 480 frames back from frame 1000, at normal speed, in the fade in.
+	CHECK(run(song.client, "audition.scrub", {{"clip", clip}, {"position", 1000}}) ==
+		Json{{"track", 0}, {"media", media}, {"mode", "scrub"}});
+	run(song.client, "audition.scrub", {{"clip", clip}, {"position", 520}, {"seconds", 0.01}});
+	run(song.client, "audio.render", {{"frames", 600}});
+	run(song.client, "audition.stop");
+	for (int channel = 0; channel < 2; ++channel)
+	{
+		const std::vector<float> output = song.capture(channel, 4600);
+		size_t wrong = 0;
+		for (int64_t i = 0; i < 4600; ++i)
+		{
+			float expected = 0.0f;
+			if (i < 4000)
+				expected = ramp(i, channel) * gain(i);
+			else if (i < 4480)
+				expected = ramp(1000 - (i - 4000), channel) * gain(1000 - (i - 4000));
+			if (std::abs(output[static_cast<size_t>(i)] - expected) > 1e-7f && wrong++ == 0)
+				UNSCOPED_INFO("channel " << channel << ", frame " << i << ": " << output[static_cast<size_t>(i)]
+										 << " instead of " << expected);
+		}
+		CHECK(wrong == 0);
+	}
+
+	// Its errors: a clip that isn't there, a clip and a media file.
+	CHECK(song.client.call("audition.start", {{"clip", 999}, {"position", 0}}).error == "no clip 999");
+	CHECK_THAT(song.client.call("audition.scrub", {{"clip", clip}, {"media", media}, {"position", 0}}).error,
+		ContainsSubstring("a track, a media file or a clip"));
+}
+
+TEST_CASE("auditioning a media file needs its sample rate and length", "[integration]")
+{
+	// A hand-edited project's media file without them, which loads as it is.
+	const char* property = GENERATE("sampleRate", "length");
+	INFO(property);
+	const gnubase::test::TempDir dir;
+	Song song(64);
+	const ObjectId media = idOf(run(song.client, "media.add", {{"path", writeRamp(dir, "mono", 1, 1000)}}), "media");
+	const std::string file = (dir.path() / "edited.dawproject").u8string();
+	run(song.client, "project.save", {{"path", file}, {"embedMedia", false}});
+	std::map<std::string, std::string> entries = gnubase::test::readZip(file);
+	Json gnubase = Json::parse(entries.at("gnubase.json"));
+	gnubase.at("project").at("media").at(0)[property] = std::string(property) == "length" ? -1 : 0;
+	entries["gnubase.json"] = gnubase.dump();
+	gnubase::test::writeZip(file, entries);
+	run(song.client, "project.load", {{"path", file}});
+
+	CHECK(song.client.call("audition.start", {{"media", media}, {"position", 0}}).error ==
+		"media file " + std::to_string(media) + " has no sample rate or length");
 }
 
 TEST_CASE("auditioning needs a device and an audio track", "[integration]")

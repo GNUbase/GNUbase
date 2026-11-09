@@ -38,6 +38,16 @@ namespace gnubase::engine
 		dsp::StretchPreset preset = dsp::StretchPreset::Quality;
 	};
 
+	// A clip of the project: its media file (an id of RenderSnapshot::media) and its fades, for auditioning it on its
+	// own (audition.start). Not read on the audio thread.
+	struct RenderClip
+	{
+		ObjectId id = 0;
+		ObjectId media = 0;
+		Fade fadeIn;
+		Fade fadeOut;
+	};
+
 	// Where a channel's output goes: an index into RenderSnapshot::busses or RenderSnapshot::channels.
 	struct RenderTarget
 	{
@@ -215,6 +225,7 @@ namespace gnubase::engine
 		std::string recordBitDepth = "int24"; // the project's, for audio.get; not read on the audio thread
 		std::vector<RenderBus> busses;
 		std::vector<RenderMedia> media;
+		std::vector<RenderClip> clips;
 		std::vector<RenderChannel> channels; // in track order
 		// What arranger mode plays (#167); shared with the cue thread.
 		std::shared_ptr<const ArrangerPlan> arranger = std::make_shared<const ArrangerPlan>();
