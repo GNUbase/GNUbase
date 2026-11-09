@@ -629,7 +629,7 @@ TEST_CASE("a backup takes every file of the Mixdown folder along and reports tho
 	const bool caseSensitive = !sameFiles(mixdown / "Stems" / "Drums.wav", mixdown / "Stems" / "drums.wav");
 
 	// A file that another program locks, or that may not be read, is reported as missing, and the rest is backed up.
-	test::Unreadable locked(mixdown / "Locked.wav");
+	const test::Unreadable locked(mixdown / "Locked.wav");
 	const Json result = backup(song.client, {{"folder", utf8(dir.path() / "Backup")}});
 	std::set<std::string> expected{"Song.dawproject", "Mixdown/Song.wav", "Mixdown/Stems/Drums.wav"};
 	if (caseSensitive)

@@ -284,24 +284,24 @@ namespace gnubase::engine
 			std::uintmax_t bytes = 0;
 		};
 
-		// Lists what is in folder, a folder in the Mixdown folder root, into mixdowns, with the folders in it and what
-		// they hold, but not backup, the backup's own folder. A file or folder that can't be read goes into missing as
+		// Lists what is in listed, a folder in the Mixdown folder root, into mixdowns, with the folders in it and what
+		// they hold, but not skipped, the backup's own folder. A file or folder that can't be read goes into missing as
 		// {path}.
-		void listMixdowns(const fs::path& root, const fs::path& folder, const fs::path& backup,
+		void listMixdowns(const fs::path& root, const fs::path& listed, const fs::path& skipped,
 			std::vector<Mixdown>& mixdowns, Json& missing)
 		{
 			std::error_code error;
-			for (auto entry = fs::directory_iterator(folder, error); !error && entry != fs::directory_iterator();
+			for (auto entry = fs::directory_iterator(listed, error); !error && entry != fs::directory_iterator();
 				entry.increment(error))
 			{
 				const fs::path& path = entry->path();
 				std::error_code ignored;
-				if (isInside(path.u8string(), backup) || fs::equivalent(path, backup, ignored))
+				if (isInside(path.u8string(), skipped) || fs::equivalent(path, skipped, ignored))
 					continue;
 				if (entry->is_directory(ignored))
 				{
 					mixdowns.push_back({path.lexically_relative(root), true, 0});
-					listMixdowns(root, path, backup, mixdowns, missing);
+					listMixdowns(root, path, skipped, mixdowns, missing);
 				}
 				else if (entry->is_regular_file(ignored))
 				{
@@ -310,7 +310,7 @@ namespace gnubase::engine
 				}
 			}
 			if (error)
-				missing.push_back({{"path", folder.u8string()}});
+				missing.push_back({{"path", listed.u8string()}});
 		}
 
 		// Removes what a backup wrote if it doesn't complete.
