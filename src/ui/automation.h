@@ -123,6 +123,11 @@ namespace gnubase::ui
 		// object.
 		engine::Json close(std::optional<WindowId> window, bool quit);
 
+		// What the Windows dialog does to a window (#163): action "activate" brings it to the front with the focus,
+		// restored (Shell::raise), "minimize" minimizes it, "restore" restores it. Returns an empty object; throws
+		// std::invalid_argument for another action.
+		engine::Json arrange(std::optional<WindowId> window, const std::string& action);
+
 	private:
 		// The window, or the main window.
 		Window& resolve(std::optional<WindowId> window);

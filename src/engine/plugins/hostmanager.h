@@ -5,6 +5,7 @@
 #include "plugin/remote/hostconnection.h"
 #include "plugin/remote/proxy.h"
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -102,6 +103,11 @@ namespace gnubase::engine::plugins
 		// program. Tests use one with test plugins.
 		void setExecutable(std::filesystem::path executable);
 
+		// [any] Whether third-party plugins are deactivated, as the safe start mode does (#163, reference manual p.
+		// 1586): load then fails for every plugin, which stays bypassed where a project has it.
+		void setDeactivated(bool deactivated) { m_deactivated = deactivated; }
+		bool deactivated() const { return m_deactivated; }
+
 		// [any] Runs `job` on the job thread after the jobs before it. The future reports its exception, if any.
 		std::future<void> run(std::function<void()> job);
 
@@ -163,6 +169,7 @@ namespace gnubase::engine::plugins
 		void registerCommands(Engine& engine);
 
 	private:
+		std::atomic<bool> m_deactivated{false};
 		struct Instance
 		{
 			plugin::remote::RemotePlugin* plugin = nullptr;

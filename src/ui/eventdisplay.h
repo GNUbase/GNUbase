@@ -35,6 +35,8 @@ namespace gnubase::ui
 	inline constexpr double g_trackHeight = 40.0;
 	inline constexpr double g_minTrackHeight = 20.0;
 	inline constexpr double g_maxTrackHeight = 400.0;
+	// The least height of a track whose in-place editor is open (#131), before vertical zoom, in dp.
+	inline constexpr double g_inPlaceHeight = 240.0;
 	// The project setup's length until the project is read, in seconds (#78).
 	inline constexpr double g_defaultProjectLength = 600.0;
 
@@ -165,6 +167,9 @@ namespace gnubase::ui
 		void setTrackHeight(uint64_t track, double height);
 		void setTrackHeights(double height); // every track's
 		void setHiddenTracks(std::set<uint64_t> tracks);
+		// The tracks whose in-place editors are open (#131, ui/inplaceeditor.h): they are at least g_inPlaceHeight
+		// high, for the editor over their lane.
+		void setInPlaceTracks(std::set<uint64_t> tracks);
 		// The project as project.get last returned it, or null before the first answer; loads() counts the answers,
 		// and read() is when the binding handed the last one on (EngineBinding::handed).
 		const engine::Json& project() const { return m_project; }
@@ -728,6 +733,7 @@ namespace gnubase::ui
 		TimeContext m_time;
 		std::vector<EventLanes::Lane> m_tracks; // events in seconds, heights before zoom
 		std::vector<uint64_t> m_laneTracks;     // the track of each lane
+		std::set<uint64_t> m_inPlace;           // setInPlaceTracks'
 		std::vector<double> m_laneTops = {0.0};
 		std::map<uint64_t, double> m_heights; // set by setTrackHeight, before zoom
 		std::set<uint64_t> m_hidden;

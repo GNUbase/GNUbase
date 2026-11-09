@@ -7,6 +7,7 @@
 #include "app/scripttool.h"
 #include "app/uitools.h"
 #include "engine/engine.h"
+#include "engine/plugins/hostmanager.h"
 #include "mcp/server.h"
 #include "mcp/transport.h"
 #include "platform/log.h"
@@ -34,6 +35,27 @@ namespace gnubase::app
 		constexpr bool g_liveReload = false;
 #endif
 
+		// The safe start mode's dialog (#163, reference manual pp. 1584-1586), as the OS's message boxes, since it
+		// comes before the engine and the UI: the plugins, then the preferences.
+		void askSafeMode(Options& options)
+		{
+			logging::info("Safe start mode");
+			const std::string title = "GNUbase Safe Start Mode";
+			if (ui::SdlWindowSystem::ask(title,
+					"Deactivate all third-party plug-ins for this run? Only GNUbase's own processors are available "
+					"then.",
+					{"Keep Plug-ins", "Deactivate Plug-ins"}) == 1)
+				options.noThirdPartyPlugins = true;
+			const int preferences = ui::SdlWindowSystem::ask(title,
+				"Preferences: use the current preferences, disable them for this run and start with the factory "
+				"settings, or delete them and start with the factory settings. Deleting can't be undone.",
+				{"Use Current", "Disable", "Delete"});
+			if (preferences == 1)
+				options.settingsMode = SafeSettings::Disable;
+			else if (preferences == 2)
+				options.settingsMode = SafeSettings::Delete;
+		}
+
 		// The UI couldn't be shown: says why, for the exit code g_exitSetup.
 		int cannotShow(std::ostream& err, const std::exception& error)
 		{
@@ -45,7 +67,11 @@ namespace gnubase::app
 
 	int runWindowed(const Options& options, std::ostream& out, std::ostream& err)
 	{
-		engine::Engine engine(audio::makeBackends(), std::filesystem::u8path(options.settings));
+		Options start = options;
+		if (options.safeMode || safeModeKeysHeld())
+			askSafeMode(start);
+		engine::Engine engine(audio::makeBackends(), safeSettingsDirectory(start));
+		engine.pluginHosts().setDeactivated(start.noThirdPartyPlugins);
 		if (!setUpWindowedEngine(engine, options, err))
 			return g_exitSetup;
 		const std::optional<std::filesystem::path> resources = findResources();

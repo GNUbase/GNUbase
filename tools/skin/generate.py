@@ -584,11 +584,12 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".mixer-channel", {"border-right-width": f"{widths['hairline']}dp", "border-right-color": c["border"]}),
         # The MIDI editors (docs/features/midi-editors.md): parts outside the part editing mode dimmed, the active part
         # and track lit, and the Visibility tab's checks: a check mark, or a rectangle while some parts show
-        (".midi-editor .editor-part", {"color": c["textMuted"], "border-width": f"{widths['hairline']}dp",
-                                       "border-color": c["border"],
-                                       "background-color": mix(c["surface"], c["surfaceRaised"], .5)}),
-        (".midi-editor .editor-part.editable", {"color": c["text"]}),
-        (".midi-editor .editor-part.active, .editor-visibility-track.active", {"color": c["accent"]}),
+        (".midi-editor .editor-part, .in-place-editor .editor-part",
+         {"color": c["textMuted"], "border-width": f"{widths['hairline']}dp", "border-color": c["border"],
+          "background-color": mix(c["surface"], c["surfaceRaised"], .5)}),
+        (".midi-editor .editor-part.editable, .in-place-editor .editor-part.editable", {"color": c["text"]}),
+        (".midi-editor .editor-part.active, .in-place-editor .editor-part.active, .editor-visibility-track.active",
+         {"color": c["accent"]}),
         (".editor-visibility-check", {"decorator": skin("checkbox-off")}),
         (".editor-visibility-check.checked", {"decorator": skin("checkbox-on")}),
         (".editor-visibility-check.partial", {"decorator": skin("checkbox-mixed")}),
@@ -613,6 +614,9 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
                                 "border-color": c["textMuted"]}),
         (".key-note.drawing", {"background-color": c["accent"] + "66"}),
         (".key-editor-step-cursor", {"background-color": c["accent"]}),
+        # The in-place editor (docs/features/in-place-editor.md): opaque over its track's events, a line below it
+        (".in-place-editor", {"background-color": c["background"], "border-bottom-width": f"{widths['hairline']}px",
+                              "border-bottom-color": c["border"]}),
         # The drum editor's sound list (docs/features/drum-editor.md): rows like a list, the sounds of selected
         # notes lit
         (".key-editor-key.drum-sound", {"background-color": c["surfaceRaised"], "color": c["text"]}),

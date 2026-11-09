@@ -69,6 +69,10 @@ namespace gnubase::ui
 		bool drum() const { return m_drum; }
 		void setTool(KeyTool tool);
 
+		// The notes' time axis, project ticks across the grid, instead of the parts' range: the in-place editor's
+		// (#131, ui/inplaceeditor.h) is the project window's timeline. Without one it fits the parts' range.
+		void setTimeRange(std::optional<std::pair<int64_t, int64_t>> range);
+
 		// Scrolls the note display so that the pitch is in the middle; false before the display has its size. The
 		// display scrolls to the middle of its notes, or to middle C, when it first has a size, unless it was
 		// scrolled to a pitch before.
@@ -157,6 +161,7 @@ namespace gnubase::ui
 		EngineBinding& m_binding;
 		Rml::ObserverPtr<Rml::Element> m_root;
 		std::string m_name;
+		std::string m_menuSuffix; // menuIdSuffix's
 		bool m_drum = false;
 		KeyTool m_tool = KeyTool::ObjectSelection;
 		std::vector<int> m_order; // the pitches of the rows, from the top
@@ -170,6 +175,7 @@ namespace gnubase::ui
 		std::vector<std::pair<uint64_t, uint64_t>> m_selection;
 		int64_t m_from = 0; // the notes' time axis, project ticks
 		int64_t m_to = 1;
+		std::optional<std::pair<int64_t, int64_t>> m_range; // setTimeRange's
 		bool m_scrolled = false;
 		std::string m_notesRml; // the notes' elements as last set
 
@@ -190,4 +196,8 @@ namespace gnubase::ui
 
 	const char* keyToolName(KeyTool tool);
 	std::optional<KeyTool> keyToolFromName(const std::string& name);
+	// What the ids of an editor view's menus end with, so that several editors share a document: nothing for lower
+	// and window, -inPlace-<track> for an in-place editor (#131), whose menus are in the project window's document
+	// with the lower zone's and each other's.
+	std::string menuIdSuffix(const std::string& view);
 }

@@ -196,9 +196,16 @@ for name in sys.argv[2:]:
 if missing:
 	print("Not compiled with GCC, in no target of its build: " + " ".join(missing), file=sys.stderr)
 EOF
-	xargs -0 -P "$(nproc)" -n 1 bash -c 'out=$(eval "$0" 2>&1); s=$?; [ $s -ne 0 ] && printf "%s\n" "$out"; exit $s' \
-		< "$commands"
-	gccStatus=$?
-	[ $gccStatus -eq 0 ] && echo "GCC compiles them." || { echo "GCC failed (above)."; result=1; }
+	# GCC at -O3 takes up to about 2 GB for one of the larger files: no more compiles at once than WSL's free memory
+	# holds, so that many changed files don't run it out of memory.
+	jobs=$(awk -v cores="$(nproc)" '/^MemAvailable:/ { n = int($2 / 2097152); print (n < 1 ? 1 : n > cores ? cores : n) }' \
+		/proc/meminfo)
+	compiled=$(tr -cd '\0' < "$commands" | wc -c)
+	[ "$compiled" -lt ${#files[@]} ] && them="the others" || them="them"
+	if [ "$compiled" -gt 0 ]; then
+		xargs -0 -P "${jobs:-1}" -n 1 bash -c \
+			'out=$(eval "$0" 2>&1); s=$?; [ $s -ne 0 ] && printf "%s\n" "$out"; exit $s' < "$commands" &&
+			echo "GCC compiles $them." || { echo "GCC failed (above)."; result=1; }
+	fi
 fi
 exit $result

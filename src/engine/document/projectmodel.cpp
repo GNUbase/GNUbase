@@ -12,12 +12,14 @@
 #include "engine/document/hitpoints.h"
 #include "engine/document/linkgroups.h"
 #include "engine/document/mixerviews.h"
+#include "engine/document/renderinplace.h"
 #include "engine/document/sampleeditor.h"
 #include "engine/document/serialize.h"
 #include "engine/document/stripparameters.h"
 #include "engine/document/timewarp.h"
 #include "engine/document/trackversions.h"
 #include "engine/document/volumecurves.h"
+#include "engine/document/workspaces.h"
 #include "engine/dsp/timestretch.h"
 #include "engine/graph/graph.h"
 #include "engine/jobs/jobs.h"
@@ -1915,6 +1917,9 @@ namespace gnubase::engine
 					if ((name == "monitor" || name == "recordEnable") && type != TrackType::Audio &&
 						type != TrackType::Midi && type != TrackType::Instrument && type != TrackType::Vca)
 						continue;
+					// The buttons a freeze locks stay off (track.freeze).
+					if ((name == "monitor" || name == "recordEnable") && channel.*member && lockedByFreeze(project, to))
+						continue;
 					to.*member = channel.*member;
 					if (name == "solo")
 						soloed.insert(other);
@@ -2017,6 +2022,10 @@ namespace gnubase::engine
 					std::string("only audio, MIDI and instrument tracks and VCA faders have ") + key);
 				*value = parameters.at(key).get<bool>();
 			}
+			// Nor does it play into a frozen instrument track with them on.
+			require(!(changed.monitor || changed.recordEnable) || !lockedByFreeze(project, changed),
+				project.trackById.at(channel.track).name +
+					" is frozen or plays a frozen track: unfreeze it to monitor or record");
 			if (parameters.contains("midiInput"))
 			{
 				require(type == TrackType::Midi || type == TrackType::Instrument,
@@ -3699,8 +3708,9 @@ namespace gnubase::engine
 		addControl(engine,
 			{"project.save", 1,
 				"Saves the project as a DAWproject file: as path, which is then the project's file (save as), or "
-				"without path to the project's file (save). Media files are copied into it unless embedMedia is "
-				"false; then the file refers to them where they are. The file becomes the first of the recent "
+				"without path to the project's file (save). Media files and frozen tracks' freeze files are copied "
+				"into it unless embedMedia is false; then the file refers to them where they are, relative to itself "
+				"if they are in its folder. The file becomes the first of the recent "
 				"projects (project.recent).",
 				objectSchema({{"path", stringSchema}, {"embedMedia", booleanSchema}}), noResult, false},
 			[this](CommandContext& context)
@@ -4108,7 +4118,10 @@ namespace gnubase::engine
 				"whileRecording while the transport records, tapeMachine while it stands or records (the default). "
 				"Monitoring glides in and out over one audio block. MIDI and instrument tracks have them too: "
 				"recordEnable arms the track for MIDI recording, and while either is on, the track plays what comes "
-				"from its MIDI input, midiInput: all (all MIDI inputs, the default) or none. mute silences a channel; "
+				"from its MIDI input, midiInput: all (all MIDI inputs, the default) or none. monitor and "
+				"recordEnable stay off on a frozen track and on a MIDI track that plays a frozen instrument track "
+				"(track.freeze): they can't be turned on, nor such a track routed to one with them on, and linked "
+				"channels and VCA faders don't pass them on to it. mute silences a channel; "
 				"while any channel is "
 				"soloed (solo), only the soloed ones, the channels they play through (groups, instruments) and the "
 				"channels that play into them are heard; exclusive (with solo) turns every other channel's solo off; "
@@ -4423,6 +4436,7 @@ namespace gnubase::engine
 		registerEventEditCommands(engine);
 		registerSnapCommands(*this, engine);
 		registerMixerCommands(*this, engine);
+		registerWorkspaceCommands(*this, engine);
 		registerLinkGroupCommands(*this, engine);
 		registerTrackVersionCommands(*this, engine);
 		midi::registerDrumMapCommands(*this, engine);
@@ -4638,8 +4652,9 @@ namespace gnubase::engine
 			{"project.backup", 1,
 				"Backs the project up as it is now into folder, which must be empty or new: the project file, named "
 				"name (by default after the project file, or else the project), and copies of its media in the "
-				"folder Audio, which the project file refers to relative to itself, so that the folder opens on "
-				"another machine. The files in the Mixdown folder of the project's folder, where File > Export > "
+				"folder Audio, and of its frozen tracks' freeze files in the folder Freeze, which the project file "
+				"refers to relative to itself, so that the folder opens on another machine. The files in the Mixdown "
+				"folder of the project's folder, where File > Export > "
 				"Audio Mixdown puts mixdowns, go along into the folder Mixdown, unless skipMixdown is true. The "
 				"project itself stays as it is. minimize keeps only the ranges of audio files "
 				"that audio events play, with handles seconds (default 1) before and after; removeUnused leaves out "
@@ -4648,8 +4663,9 @@ namespace gnubase::engine
 				"done, unless the project changed meanwhile. The backup runs as a job: this returns at once, "
 				"job.progress and job.finished events follow, and job.cancel stops it and removes what it wrote. A "
 				"folder that a running job writes into can't be used. The job's result is {file, files, missing, "
-				"activated, activationError}: missing lists the media files that couldn't be read and keep their old "
-				"paths; activated says whether the backup was opened, and activationError why not, if it was asked "
+				"activated, activationError}: missing lists the media files ({media, path}) and freeze files ({track, "
+				"path}) that couldn't be read and keep their old paths; activated says whether the backup was opened, "
+				"and activationError why not, if it was asked "
 				"to be.",
 				objectSchema({{"folder", stringSchema}, {"name", stringSchema}, {"minimize", booleanSchema},
 								 {"handles", numberSchema}, {"removeUnused", booleanSchema},
