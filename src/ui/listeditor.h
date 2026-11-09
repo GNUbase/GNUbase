@@ -87,6 +87,8 @@ namespace gnubase::ui
 		// Hears the mouseup and, in the capture phase, the mousedown in the root's document while a gesture goes on,
 		// or stops hearing them.
 		void listen(bool document);
+		// Makes the body a drag element while a gesture goes on, or stops doing so.
+		void dragBody(bool on);
 		void drag(Rml::Event& event);
 		void release(Rml::Event& event);
 		void click(Rml::Element& target, bool ctrl);
@@ -110,7 +112,8 @@ namespace gnubase::ui
 		int64_t lengthQuantize() const;
 		const Part* partAt(int64_t ticks) const;
 
-		void select(std::set<std::pair<uint64_t, uint64_t>> rows);
+		// show: whether the rows show the selection at once, or when editor.changed confirms it.
+		void select(std::set<std::pair<uint64_t, uint64_t>> rows, bool show = true);
 		void setView(engine::Json parameters);
 		void edit(const std::string& description, std::map<std::pair<uint64_t, std::string>, engine::Json> changes);
 		void editField(const Row& edited, const std::string& field, const std::string& typed);
