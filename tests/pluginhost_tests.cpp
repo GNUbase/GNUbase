@@ -1208,6 +1208,36 @@ TEST_CASE(
 	CHECK(savedValue(plugin, "test:stall", g_value) == 0.75);
 }
 
+TEST_CASE("a parameter flush after a late stop reaches the plugin once its host handled the stop", "[integration]")
+{
+	plugins::HostManager::Options options = testOptions();
+	options.deadlines.realtimeMinimum = 20ms;
+	options.deadlines.realtimeMaximum = 20ms;
+	options.deadlines.hang = 10s;
+	plugins::HostManager manager(options);
+	std::unique_ptr<plugin::remote::RemotePlugin> remote = createRemote(manager, {"test:stall", "", "GNUbase"});
+	plugin::remote::RemotePlugin& plugin = *remote;
+	SlotGraph stalling(std::move(remote), plugin::ProcessMode::Realtime);
+	LocalHost host;
+	SlotGraph reference(localPlugin("test:stall", host), plugin::ProcessMode::Realtime);
+	Noise noise;
+	const std::vector<float> input = noise.block(128);
+	REQUIRE(eventually(
+		[&]
+		{
+			std::this_thread::sleep_for(5ms);
+			return stalling.render(input) == reference.render(input);
+		}));
+
+	// The plugin takes 300 ms, so the Stop is late and the host still processes when the flush comes.
+	CHECK(silent(stalling.render(input, {parameter(0, g_stall, 300.0)})));
+	plugin.stopProcessing();
+	flush(plugin, {paramEvent(g_value, 0.75)});
+	CHECK(valueOf(plugin, g_value) == 0.75);
+	CHECK(eventually([&] { return savedValue(plugin, "test:stall", g_value) == 0.75; }));
+	CHECK(plugin.failure() == plugin::remote::Failure::None);
+}
+
 TEST_CASE("late blocks before a pause or a new start don't count towards the hang timeout", "[integration]")
 {
 	plugins::HostManager::Options options = testOptions();
