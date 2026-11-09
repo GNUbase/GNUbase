@@ -330,6 +330,45 @@ TEST_CASE("project.applyRules transforms and deletes in one undo step", "[integr
 		run(f.client, "project.applyRules", move);
 		CHECK(f.object("midiParts", f.full).at("position") == first);
 	}
+	SECTION("audio events in a part that moves keep their place in it")
+	{
+		const Json media = run(
+			f.client, "media.add", {{"path", "take.wav"}, {"sampleRate", 48000}, {"channels", 1}, {"length", 480000}})
+							   .at("media");
+		const ObjectId clip =
+			run(f.client, "clip.add", {{"media", media.at("id")}}).at("clip").at("id").get<ObjectId>();
+		const auto audio = [&](int beat)
+		{
+			return run(f.client, "audioEvent.add",
+				{{"track", f.vocals}, {"clip", clip}, {"position", beat * g_beatTicks}, {"length", 24000}})
+				.at("event")
+				.at("id")
+				.get<ObjectId>();
+		};
+		const ObjectId first = audio(2);
+		const ObjectId second = audio(3);
+		const ObjectId part =
+			run(f.client, "event.toPart", {{"events", {first, second}}}).at("events").at(0).get<ObjectId>();
+		// Where an event is in the part, in ticks.
+		const auto inPart = [&](ObjectId event)
+		{
+			const Json json = f.object("audioEvents", event);
+			CHECK(json.at("part") == part);
+			return json.at("position").get<int64_t>() - f.object("audioParts", part).at("position").get<int64_t>();
+		};
+		REQUIRE(inPart(first) == 0);
+		REQUIRE(inPart(second) == g_beatTicks);
+		for (const Json& move :
+			{action("position", "add", 480), action("position", "multiplyBy", 2), action("position", "setFixed", 0)})
+		{
+			const int64_t before = f.object("audioParts", part).at("position").get<int64_t>();
+			run(f.client, "project.applyRules",
+				{{"rules", rules({filter("mediaType", "equal", "audio")}, "transform", {move})}});
+			CHECK(f.object("audioParts", part).at("position") != before);
+			CHECK(inPart(first) == 0);
+			CHECK(inPart(second) == g_beatTicks);
+		}
+	}
 }
 
 TEST_CASE("event.set renames parts, not audio events", "[integration]")

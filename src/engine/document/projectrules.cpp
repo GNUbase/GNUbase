@@ -741,6 +741,11 @@ namespace gnubase::engine
 			counters.reserve(rules.actions.size());
 			for (const ProjectActionLine& action : rules.actions)
 				counters.push_back(std::llround(action.parameter2));
+			// An audio event in a part that moves too goes with it (place in eventedits.cpp) and keeps its place in it.
+			std::set<ObjectId> parts;
+			for (const Element* element : found.elements)
+				if (element->kind == Kind::AudioPart && !element->locked)
+					parts.insert(element->id);
 			Commands commands;
 			for (const Element* element : found.elements)
 			{
@@ -841,7 +846,9 @@ namespace gnubase::engine
 					}
 					const auto ticks = [](double logical)
 					{ return std::llround(std::max(logical, 0.0) * g_logicalTick); };
-					if (const int64_t delta = ticks(position) - ticks(element->position); delta != 0)
+					const bool withPart =
+						element->kind == Kind::AudioEvent && parts.count(project.audioEvents.at(element->id).part) != 0;
+					if (const int64_t delta = ticks(position) - ticks(element->position); delta != 0 && !withPart)
 						commands.emplace_back("event.move", Json{{"events", events}, {"ticks", delta}});
 					if (const int64_t delta = ticks(std::max(length, 1.0)) - ticks(element->length); delta != 0)
 						commands.emplace_back(
