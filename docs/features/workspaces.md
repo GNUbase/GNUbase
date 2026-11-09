@@ -33,7 +33,9 @@ now also keeps the app's top-level windows under `windows`, by name, next to the
 - **Opening.** Each window opens where its entry says, and the main window goes there when GNUbase starts. A window
   whose monitor, by name, is connected goes where it was (moved onto a monitor if it can't be reached, as for every
   window, architecture.md, "UI shell"); one whose monitor isn't connected goes onto the primary monitor, centred and
-  fully visible, shrunk to fit (`ui::restore` in `src/ui/displays.h`).
+  fully visible, shrunk to fit (`ui::restore` in `src/ui/displays.h`). A monitor the OS gives no name, such as the
+  offscreen video driver's, is saved without one, since SDL would name it after an ID that changes at every start,
+  and its windows are only placed.
 - **Another client's layout**, such as a workspace's, applies at once: windows open or close as `open` says (missing
   is closed), and open windows move to their bounds as above. The docking system tells its own saves of `ui.layout`
   by their request ids; a layout from anyone else wins, and if one of its own saves was still on its way, it saves

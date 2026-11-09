@@ -279,8 +279,10 @@ namespace gnubase::ui
 		{
 			Display display;
 			display.id = ids[i];
+			// SDL names a display the OS gives no name, e.g. the offscreen driver's, after its ID, which changes from
+			// one start to the next: such a display has no name that a saved layout could find it by again (#163).
 			const char* name = SDL_GetDisplayName(ids[i]);
-			display.name = name != nullptr ? name : "";
+			display.name = name != nullptr && std::to_string(ids[i]) != name ? name : "";
 			SDL_Rect rect;
 			if (SDL_GetDisplayBounds(ids[i], &rect))
 				display.bounds = toRect(rect);
