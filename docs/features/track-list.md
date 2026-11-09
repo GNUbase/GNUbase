@@ -125,7 +125,8 @@ sends engine commands, so whatever another client changes shows at once.
   or a folder with such a track inside, warns, whatever plays into it. Remove removes them, Cancel or Escape keeps
   them, and Remove with "Don't show this warning again" checked also turns the user setting `ui.removeTracksWarning`
   (Display Warning before Deleting Non-Empty Tracks, on by default) off, which any client can turn on again with
-  `settings.set`.
+  `settings.set`. Remove Selected Tracks also removes the active marker track last, as Remove Empty Tracks does, so
+  clients only hear of a marker track that stays becoming active (#820).
 - **Track presets** (pp. 199, 238-243): the context menu's Add Track from Preset, Save Track Preset and Load Track
   Preset open the track preset dialog for the selected tracks ([track-presets.md](track-presets.md)).
 - **Freeze and render in place** (pp. 219-220, 1471-1477): the context menu's Freeze/Unfreeze Selected Tracks
