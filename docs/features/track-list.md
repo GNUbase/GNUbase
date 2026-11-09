@@ -126,6 +126,8 @@ sends engine commands, so whatever another client changes shows at once.
   them, and Remove with "Don't show this warning again" checked also turns the user setting `ui.removeTracksWarning`
   (Display Warning before Deleting Non-Empty Tracks, on by default) off, which any client can turn on again with
   `settings.set`.
+- **Track presets** (pp. 199, 238-243): the context menu's Add Track from Preset, Save Track Preset and Load Track
+  Preset open the track preset dialog for the selected tracks ([track-presets.md](track-presets.md)).
 - **Freeze and render in place** (pp. 219-220, 1471-1477): the context menu's Freeze/Unfreeze Selected Tracks
   (`track.freezeSelected`) freezes the selected audio and instrument tracks that aren't frozen, or unfreezes them when
   every one is; a frozen track's row has `.frozen`, which the themes show like a disabled one. Edit > Render in Place

@@ -190,6 +190,7 @@
 				<menuitem command="file.importMidi">MIDI File...</menuitem>
 				<menuitem command="file.importTempo">Tempo Track...</menuitem>
 				<menuitem command="file.importMarkers">Markers...</menuitem>
+				<menuitem command="file.importTracks">Tracks from Project or Track Archive...</menuitem>
 			</menu>
 		</menuitem>
 		<menuitem id="export-submenu">Export
@@ -198,6 +199,7 @@
 				<menuitem command="file.quickExport">Quick Audio Export...</menuitem>
 				<menuitem command="file.exportTempo">Tempo Track...</menuitem>
 				<menuitem command="file.exportMarkers">Markers...</menuitem>
+				<menuitem command="file.exportTracks">Selected Tracks...</menuitem>
 			</menu>
 		</menuitem>
 		<menuseparator/>
@@ -471,6 +473,10 @@
 	</menu>
 	<menu id="track-list-menu">
 		<menuitem command="project.addTrack">Add Track...</menuitem>
+		<!-- Track presets (reference manual pp. 199, 238-243, docs/features/track-presets.md) -->
+		<menuitem command="project.addTrackFromPreset">Add Track from Preset...</menuitem>
+		<menuitem command="track.saveTrackPreset">Save Track Preset...</menuitem>
+		<menuitem command="track.loadTrackPreset">Load Track Preset...</menuitem>
 		<!-- Routing (reference manual pp. 546, 554, docs/features/routing.md) -->
 		<menuitem command="track.addGroupToSelected">Group Track to Selected Tracks...</menuitem>
 		<menuitem command="track.addEffectToSelected">Effect Track to Selected Tracks...</menuitem>

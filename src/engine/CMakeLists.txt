@@ -153,6 +153,7 @@ add_library(gnubase-engine STATIC
 	document/stripparameters.cpp document/stripparameters.h
 	document/tempo.cpp
 	document/timewarp.cpp document/timewarp.h
+	document/trackpresets.cpp document/trackpresets.h
 	document/trackversions.cpp document/trackversions.h
 	document/trackvisibility.cpp document/trackvisibility.h
 	document/transpose.cpp

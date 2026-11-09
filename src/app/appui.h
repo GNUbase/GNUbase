@@ -304,6 +304,8 @@ namespace gnubase::app
 		// quantizeTarget gives, and the dialogs of Transpose Setup, Merge MIDI in Loop, Dissolve Part and Restrict
 		// Polyphony (resources/ui/midi-function.rml).
 		void addMidiFunctions();
+		// File > Import > Tracks, File > Export > Selected Tracks and the track preset commands (#164).
+		void addTrackFileCommands();
 		// The OS's file dialog for a track's picture in the mixer, then track.set.
 		void choosePicture(uint64_t track);
 		// The drum map of the active track of an editor (window, else lower), then the OS's file dialog to save it in
