@@ -725,6 +725,8 @@ TEST_CASE("positions typed or wheeled past the largest project position stop the
 		{{"key", "ui.timeFormats"}, {"value", {{"secondary", "samples"}, {"timeDisplay", "barsBeats"}}}});
 	app.call("transport.locate", {{"position", 48000}});
 	REQUIRE(app.waitUntil([&app] { return shows(app, "#secondary-time") == "48000"; }));
+	// The project's time format comes with its own reply, maybe after the setting's.
+	REQUIRE(app.waitUntil([&app] { return shows(app, "#primary-time") == "0:00:01.000"; }));
 	const std::string maximum = std::to_string(time::g_maxPosition);
 
 	// Fifteen digits of seconds are more samples than 64 bits hold: the cursor goes to the largest position.
