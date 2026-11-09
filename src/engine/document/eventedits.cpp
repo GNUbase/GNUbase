@@ -10,6 +10,7 @@
 #include "engine/document/projectmodel.h"
 #include "engine/document/rendersnapshot.h"
 #include "engine/document/serialize.h"
+#include "engine/document/warp.h"
 #include "engine/engine.h"
 #include "engine/midi/midivalues.h"
 
@@ -445,6 +446,17 @@ namespace gnubase::engine
 				AudioEvent& event = *item.audio;
 				const EventSpan span = eventSpan(project, event);
 				const time::Samples media = project.media.at(project.clips.at(event.clip).media).length;
+				if (moveContents && warped(project.clips.at(event.clip)))
+				{
+					// The end stays where it is: the length from the new start, through the warp there (#890).
+					const time::Samples to = std::clamp<time::Samples>(samples(project, start), 0, span.end - 1);
+					event.position = rebased(project, {time::TimeBase::Linear, to}, event.position.base);
+					event.length =
+						std::clamp<int64_t>(std::llround(eventFrames(project, event,
+												static_cast<double>(span.end - eventSpan(project, event).start))),
+							1, media - event.offset);
+					return;
+				}
 				const int64_t wanted = std::llround(
 					eventFrames(project, event, static_cast<double>(samples(project, start) - span.start)));
 				int64_t frames = std::min(wanted, event.length - 1);
@@ -476,6 +488,34 @@ namespace gnubase::engine
 			part.length = end - value;
 		}
 
+		// The offset at which an audio event, keeping its position and its last clip frame, ends distance project
+		// samples after its start: the warp may play the frames before the last one at any speed, so it is searched
+		// for. The nearest within the clip and the event's last frame.
+		time::Samples offsetEndingAt(const Project& project, AudioEvent event, double distance)
+		{
+			const time::Samples last = event.offset + event.length;
+			const auto plays = [&project, &event, last](time::Samples offset)
+			{
+				event.offset = offset;
+				event.length = last - offset;
+				return eventSamples(project, event, static_cast<double>(event.length));
+			};
+			// plays falls as the offset grows: the first offset that plays within distance.
+			time::Samples low = 0;
+			time::Samples high = last - 1;
+			while (low < high)
+			{
+				const time::Samples middle = low + ((high - low) / 2);
+				if (plays(middle) > distance)
+					low = middle + 1;
+				else
+					high = middle;
+			}
+			if (low > 0 && plays(low - 1) - distance < distance - plays(low))
+				--low;
+			return low;
+		}
+
 		void setEnd(Project& project, const Item& item, const time::Position& end, bool moveContents)
 		{
 			if (item.audioPart != nullptr)
@@ -494,7 +534,15 @@ namespace gnubase::engine
 				const EventSpan span = eventSpan(project, event);
 				const time::Samples media = project.media.at(project.clips.at(event.clip).media).length;
 				const time::Samples to = samples(project, end);
-				if (moveContents)
+				const time::Samples last = event.offset + event.length;
+				if (moveContents && warped(project.clips.at(event.clip)))
+				{
+					// The last clip frame stays at the end: the offset that plays it there, as the warp from that
+					// offset has it (#890).
+					event.offset = offsetEndingAt(project, event, static_cast<double>(to - span.start));
+					event.length = last - event.offset;
+				}
+				else if (moveContents)
 				{
 					int64_t frames = std::llround(eventFrames(project, event, static_cast<double>(to - span.start)) -
 						eventFrames(project, event, static_cast<double>(span.end - span.start)));
@@ -1098,8 +1146,14 @@ namespace gnubase::engine
 				? parameters.at("color").get<std::string>()
 				: std::string();
 			require(color.empty() || isColor(color), "color must be #rrggbb");
+			const bool rename = parameters.contains("name");
+			for (const Item& item : items)
+				require(!rename || item.audio == nullptr, "audio events have their clip's name; name renames parts");
 			for (const Item& item : items)
 			{
+				if (rename)
+					(item.part != nullptr ? item.part->name : item.audioPart->name) =
+						parameters.at("name").get<std::string>();
 				item.mute() = parameters.value("mute", item.mute());
 				item.lock() = parameters.value("lock", item.lock());
 				item.lane() = parameters.value("lane", item.lane());
@@ -2486,11 +2540,12 @@ namespace gnubase::engine
 
 		addEdit(engine,
 			{"event.set", 1,
-				"Mutes or unmutes, locks or unlocks and colors audio events and MIDI parts. Muted ones don't play; "
+				"Mutes or unmutes, locks or unlocks, colors and renames (parts only: name) audio events and parts. "
+				"Muted ones don't play; "
 				"locked ones can't be moved, resized, split, glued or removed by the event commands. color (#rrggbb) "
 				"is a color of their own; null makes them follow their track's color again. lane puts them on that "
 				"lane of their track, from 0, as cycle recordings put their takes (recording.add). Returns the events.",
-				schema({{"events", events()}, {"mute", boolean()}, {"lock", boolean()},
+				schema({{"events", events()}, {"mute", boolean()}, {"lock", boolean()}, {"name", {{"type", "string"}}},
 						   {"color", {{"type", {"string", "null"}}}},
 						   {"lane", {{"type", "integer"}, {"minimum", 0}, {"maximum", 1000}}}},
 					{"events"}),

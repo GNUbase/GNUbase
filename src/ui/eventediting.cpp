@@ -143,6 +143,7 @@ namespace gnubase::ui
 		grid.quantize = m_quantize;
 		grid.frameRate = m_format == TimeFormat::UserFrames ? time::FrameRate{m_time.userFramesPerSecond, false, false}
 															: m_time.frameRate;
+		grid.startTime = m_time.startTime;
 		// Adapt to zoom (reference manual p. 107): the finest note value, down to a 64th, at least g_minGridWidth wide
 		// at the tempo at the left edge; zoomed out, bars.
 		const double quarter = 60.0 / m_time.tempo.bpmAt(m_time.tempo.toTicks(m_view.start)); // seconds
@@ -1151,10 +1152,13 @@ namespace gnubase::ui
 		if (y + m_view.top < 0.0)
 			return;
 		const std::optional<size_t> found = visibleLaneAt(y);
-		// Below the tracks, a new MIDI track (reference manual p. 198, the track list's empty area, #80).
+		// Below the tracks, a new MIDI track, or what onAddTrack's listener adds (reference manual p. 198).
 		if (!found)
 		{
-			m_binding.send("track.add", {{"type", "midi"}});
+			if (m_addTrack)
+				m_addTrack();
+			else
+				m_binding.send("track.add", {{"type", "midi"}});
 			return;
 		}
 		const size_t lane = *found;

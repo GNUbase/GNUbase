@@ -5,7 +5,8 @@ row per track beside the event display's lanes, with the track's name and contro
 reordering, heights, folding, duplicating, disabling and removing tracks, and the track controls settings dialog. The
 divider beside the event display sizes the track list, and the track name and controls area widths size its rows
 (#493).
-In the engine: mute and solo, disabled tracks and `track.duplicate`.
+In the engine: mute and solo, disabled tracks, `track.duplicate` and the track heights and folded folders saved with
+the project (#491).
 
 ## In the engine
 
@@ -14,10 +15,17 @@ In the engine: mute and solo, disabled tracks and `track.duplicate`.
   is silent. While any channel is soloed, only the soloed channels are heard, with the channels they play through
   (their groups and folders' group channels, a MIDI track's instrument) and the channels that play into them (the
   tracks of a soloed group, the MIDI tracks of a soloed instrument track); a muted channel stays silent, soloed or
-  not. The render snapshot marks the others `silent` (`markSilent` in `src/engine/document/rendersnapshot.cpp`), and
-  each silent channel's strip (`ChannelStrip`) glides its output to silence over one audio block, and back, so
-  switching doesn't click. A silent MIDI track's notes and controllers are left out of the snapshot, as a muted part's
-  are, so they don't reach its instrument. Silent channels don't monitor their input directly either.
+  not. A mute automation lane that reads and has points overrides the mute button while it plays, also in its gaps
+  where the button's state plays ([automation.md](automation.md)). The render snapshot marks the others `silent`
+  (`markSilent` in `src/engine/document/rendersnapshot.cpp`), and each silent channel's strip (`ChannelStrip`) glides
+  its output to silence over one audio block, and back, so switching doesn't click; the mute button mutes through
+  the fader's mute instead, gliding over 5 ms like mute automation, so that switching between the two is seamless. A
+  silent MIDI track's notes and controllers are left out of the snapshot, as a muted part's are, so they don't reach
+  its instrument, and its mute ends the notes that sound. Nor do its controller, pitch bend and channel pressure
+  automation, its MIDI volume and pan (CC 7 and CC 10) and its program: `channelAutomation` in
+  `src/engine/audio/automation.cpp` leaves them out of what its strip plays, so a muted or disabled MIDI track doesn't
+  change the instrument that other tracks play. Once it is heard again, it sends them at once. Silent channels don't
+  monitor their input directly either.
 - **Disabled tracks** (p. 219): `track.set` `enabled` false disables an audio, instrument or MIDI track. It keeps its
   events, parts and channel settings, but the snapshot leaves its events and parts out (no disk streaming) and its
   channel is silent. Other track types refuse it.
@@ -27,6 +35,13 @@ In the engine: mute and solo, disabled tracks and `track.duplicate`.
   the tracks inside it, whose channels play through the copies of the group channels they played through. It
   announces each copy (`track.added`, `audioEvent.added` and so on) and returns the copy of the track; a marker track
   beyond the project's ten is refused.
+- **Track heights and folded folders** (pp. 217, 225, #491): `trackLayout.get` and `trackLayout.set`
+  (`src/engine/document/trackvisibility.cpp`) keep `Project::trackLayout`: `heights`, each track's height in dp before
+  vertical zoom (20 to 400), by track, and `folded`, the folded folder tracks. `heights` sets the given tracks' and
+  leaves the others; `folded` replaces the list, and refuses tracks that aren't folders. Like the track visibility they
+  are settings, not undo steps, and saved with the project in GNUbase's extra entry (`trackLayout` in `project.get`),
+  empty for files from before; tracks that are gone are left out of what `trackLayout.get` returns. Every change
+  emits `trackLayout.changed`.
 - **DAWproject:** a channel's mute is its `Mute` parameter, solo its `solo` attribute, and a disabled track has
   `loaded="false"`; all three come back from `project.xml` without GNUbase's entry.
 
@@ -91,16 +106,23 @@ sends engine commands, so whatever another client changes shows at once.
   project's (`TrackList::selection`), like the event display's.
 - **Renaming** (p. 214): a double click on a name, or `track.rename` (Alt+F2) for the first selected track, shows a
   text field with the name selected; Enter or leaving it sends `track.set` `name`, Escape keeps the name.
+- **Adding tracks** (p. 198): a double click in the empty part of the list, below the last track, adds a track like
+  the selected one below it, or a MIDI track ([add-track.md](add-track.md#double-click)).
 - **Moving** (pp. 213–214): dragging a row moves the selected tracks (or the dragged one, if it isn't selected) to
   where the line shows: before the track in the upper half of a row, after it in the lower half, and into a folder,
   last, on the middle of the folder's row. The moves are `track.move` commands in one `history.transaction`, "Move
   Tracks", so one undo restores the order.
 - **Heights** (p. 217): dragging a row's lower edge (its last 4 dp) sets its track's height, with Ctrl (Cmd) every
-  track's. Heights are view state, like zoom: not in the project or its undo history.
+  track's; releasing the mouse sends them with `trackLayout.set`. Heights are the project's, saved with it, but not in
+  its undo history.
 - **Folding** (p. 225): a folder's toggle, or Right and Left on the selected folder, folds and unfolds it; the tracks
   inside a folded folder leave the list and the event display (`EventDisplay::setHiddenTracks`) and still play.
   Project > Track Folding: Toggle Selected Track, Fold Tracks, Unfold Tracks and Flip Fold States
-  (`track.toggleFolding`, `track.foldAll`, `track.unfoldAll`, `track.flipFolding`). Folding is view state too.
+  (`track.toggleFolding`, `track.foldAll`, `track.unfoldAll`, `track.flipFolding`). Each sends the folded folders
+  with `trackLayout.set`: they are the project's, like the heights.
+- **Another project** (#491): the list follows `trackLayout.changed` and, on `project.reset` (`project.new`,
+  `project.load`), takes the new project's heights and folded folders from `trackLayout.get` and drops the old ones,
+  and the selection: the new project's tracks can have the old ones' ids.
 - **Track handling** (pp. 213, 219): Project > Remove Selected Tracks, Remove Empty Tracks, Duplicate Tracks, and in
   the context menu also Disable and Enable Selected Tracks (`track.removeSelected`, `track.removeEmpty`,
   `track.duplicateSelected`, `track.disableSelected`, `track.enableSelected`), each one undo step: Remove Empty
@@ -125,7 +147,8 @@ sends engine commands, so whatever another client changes shows at once.
   or a folder with such a track inside, warns, whatever plays into it. Remove removes them, Cancel or Escape keeps
   them, and Remove with "Don't show this warning again" checked also turns the user setting `ui.removeTracksWarning`
   (Display Warning before Deleting Non-Empty Tracks, on by default) off, which any client can turn on again with
-  `settings.set`.
+  `settings.set`. Remove Selected Tracks also removes the active marker track last, as Remove Empty Tracks does, so
+  clients only hear of a marker track that stays becoming active (#820).
 - **Track presets** (pp. 199, 238-243): the context menu's Add Track from Preset, Save Track Preset and Load Track
   Preset open the track preset dialog for the selected tracks ([track-presets.md](track-presets.md)).
 - **Freeze and render in place** (pp. 219-220, 1471-1477): the context menu's Freeze/Unfreeze Selected Tracks
@@ -169,8 +192,12 @@ New Folder are in [folder-tracks.md](folder-tracks.md).
   instruments, with undo; disabled tracks in the snapshot and which types refuse it; `track.duplicate` with a
   channel, events, automation, MIDI notes, a folder with its routing, undo and the marker track limit.
 - `tests/mixer_tests.cpp` renders muted and soloed tracks and the glide; `tests/sequencing_tests.cpp` plays a muted, a
-  disabled and a soloed MIDI track into an instrument; `tests/dawproject_tests.cpp` saves and loads mute, solo and
+  disabled and a soloed MIDI track into an instrument, and checks that muted, soloed-out and disabled ones send it no
+  automation, MIDI volume, pan or program; `tests/dawproject_tests.cpp` saves and loads mute, solo and
   disabled tracks, also from `project.xml` alone.
+- `tests/tracklayout_tests.cpp`: `trackLayout.set` setting heights and replacing the folded folders, refusing unknown
+  tracks, folded tracks that aren't folders and heights out of range, not an undo step, without tracks that are gone,
+  and saved and loaded with the project; a new project starts without.
 - `tests/tracklist_tests.cpp` drives the app's project window with `ui::Automation`: rows level with the lanes and
   each type's controls; every control's button and the engine's state both ways; selection with clicks, modifiers,
   Shift-click deselecting, the arrow keys and the key commands; Up, Down and Alt+F2 pressed with the focus in the
@@ -187,4 +214,6 @@ New Folder are in [folder-tracks.md](folder-tracks.md).
   main zone, a larger UI scale and the dragged width after a restart; and the track name and each type's controls area
   width from the dialog, its limits, Ctrl-click to the default and Reset, from another client and with defaults for
   what the setting leaves out, the setting's unknown keys kept, the controls on more lines in a narrow controls area at
-  any track list width, and the name giving way deep in folders and in a narrow track list.
+  any track list width, and the name giving way deep in folders and in a narrow track list; heights, folded folders and
+  the selection not taken into a new project's tracks with the same ids, and heights and folded folders back after
+  saving and loading the project.

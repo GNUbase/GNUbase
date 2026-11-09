@@ -1414,6 +1414,46 @@ TEST_CASE("a failed auto save's error makes way for the quit question, and waits
 	REQUIRE(app.waitUntil([&app] { return !app.shell().running(); }));
 }
 
+TEST_CASE("the unsaved changes question and a failed command's error wait while another project dialog is open", "[ui]")
+{
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	const test::TempDir dir;
+	const fs::path file = dir.path() / "Song.dawproject";
+	app.call("project.save", {{"path", utf8(file)}});
+	app.call("track.add", {{"type", "audio"}});
+
+	// File > Open through its key in another window, or MCP, while the start screen is open: the question waits for
+	// it instead of being dropped with the project that was to open.
+	app.appUi().openStartScreen();
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#start-screen"); }));
+	app.keys().run("file.open", Json::object(), app.main(), nullptr);
+	answer(app, {file});
+	app.call("project.revision"); // after the engine answered what Open asked
+	for (int i = 0; i < 5; ++i)
+		app.shell().step(std::chrono::milliseconds(0));
+	CHECK(elements(app, "#discard-changes-dialog").empty());
+	click(app, "#start-screen button[result=cancel]");
+	click(app, "#discard-changes");
+	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("tracks").empty(); }));
+
+	// A save that fails while Save as Template is open shows its error once the dialog closed.
+	const fs::path notFolder = dir.path() / "file";
+	std::ofstream(notFolder) << "not a folder";
+	fileMenu(app, "file.saveTemplate");
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#save-template-dialog"); }));
+	app.keys().run("file.saveAs", Json::object(), app.main(), nullptr);
+	answer(app, {notFolder / "Other.dawproject"});
+	app.call("project.revision");
+	for (int i = 0; i < 5; ++i)
+		app.shell().step(std::chrono::milliseconds(0));
+	CHECK(elements(app, "#project-error-dialog").empty());
+	click(app, "#save-template-dialog button[result=cancel]");
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
+	closeError(app);
+	CHECK(location(app) == utf8(fs::absolute(file)));
+}
+
 TEST_CASE("the start screen creates projects, from templates too, and opens recent ones", "[ui]")
 {
 	test::UiApp app({900, 640});

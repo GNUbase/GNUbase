@@ -239,6 +239,9 @@
 			-- Add Effect Track to Send: the send of the track that goes to the new effect track.
 			local send = tonumber(document:GetAttribute("send") or "")
 			dialog.send = send and math.tointeger(send)
+			-- The selected track (the lowest one), which new tracks go below (reference manual p. 198).
+			local below = tonumber(document:GetAttribute("below") or "")
+			dialog.below = below and math.tointeger(below)
 			local type = dialog.forType or "audio"
 			document:GetElementById("track-types"):SetAttribute("value", type)
 			dialog.show(document, type)
@@ -316,31 +319,70 @@
 			return result
 		end
 
-		-- Add Track: Count tracks in one undo step. The dialog stays open with Keep Dialog Open, and when the engine
-		-- refuses, with its message. The selected tracks go to the first new track only, once: each new group would
-		-- take them from the one before, each new effect track another send of every one of them.
+		-- The tracks that stay at the top level, which go below the top-level folder of the selected track.
+		local topLevel = {marker = true, tempo = true, signature = true, arranger = true, transpose = true,
+			chord = true}
+
+		-- Where new tracks go: below dialog.below, among the tracks of its folder, as track.add's parent and index;
+		-- nothing (the end of the project) without it, or into the project's Group or FX folder.
+		local function placement(track)
+			if dialog.below == nil or track.projectFolder then
+				return nil
+			end
+			local tracks = gnubase.project.get().tracks
+			local byId = {}
+			for _, item in ipairs(tracks) do
+				byId[item.id] = item
+			end
+			local below = byId[dialog.below]
+			while below ~= nil and topLevel[track.type] and below.parent ~= 0 do
+				below = byId[below.parent]
+			end
+			if below == nil then
+				return nil -- removed since
+			end
+			local index = 0
+			for _, item in ipairs(tracks) do
+				if item.id == below.id then
+					return below.parent, index + 1
+				elseif item.parent == below.parent then
+					index = index + 1
+				end
+			end
+		end
+
+		-- Add Track: Count tracks in one undo step, below the selected track in the order they were added. The dialog
+		-- stays open with Keep Dialog Open, its next tracks below these, and when the engine refuses, with its message.
+		-- The selected tracks go to the first new track only, once: each new group would take them from the one
+		-- before, each new effect track another send of every one of them.
 		function dialog.add(document)
 			local track, problem = parameters(document)
 			if track == nil then
 				document:GetElementById("add-track-message").inner_rml = escape(problem)
 				return
 			end
+			local parent, index = placement(track)
+			track.parent = parent
 			local count = math.floor((tonumber(valueOf(document, "track-count")) or 1) + 0.5)
 			count = math.max(1, math.min(maxCount, count))
-			local others = {}
-			for key, value in pairs(track) do
-				if key ~= "tracks" and key ~= "send" then
-					others[key] = value
-				end
-			end
 			local commands = {}
-			for index = 1, count do
-				commands[index] = {command = "track.add", parameters = index == 1 and track or others}
+			for i = 1, count do
+				local each = {}
+				for key, value in pairs(track) do
+					if i == 1 or (key ~= "tracks" and key ~= "send") then
+						each[key] = value
+					end
+				end
+				each.index = index and index + i - 1
+				commands[i] = {command = "track.add", parameters = each}
 			end
-			local ok, problem = pcall(gnubase.history.transaction, {description = "Add Track", commands = commands})
+			local ok, result = pcall(gnubase.history.transaction, {description = "Add Track", commands = commands})
 			if not ok then
-				document:GetElementById("add-track-message").inner_rml = escape(problem)
+				document:GetElementById("add-track-message").inner_rml = escape(result)
 			elseif document:GetElementById("keep-open"):HasAttribute("checked") then
+				if dialog.below ~= nil then
+					dialog.below = result.results[count].track.id
+				end
 				dialog.tracks = {}
 				dialog.send = nil
 				dialog.show(document, dialog.type) -- new group and instrument channels are outputs now

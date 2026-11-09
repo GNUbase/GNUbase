@@ -36,9 +36,9 @@ namespace gnubase::ui
 	//
 	// The list view selects tracks (click, Ctrl-click, Shift-click, which deselects a selected track, the arrow keys)
 	// and folds folders. A double click
-	// on a name renames the track; a drag of a row moves the selected tracks there, into a folder when dropped on the
-	// middle of a folder's row; a drag of a row's lower edge sets its track's height, with Ctrl every track's; the
-	// wheel scrolls the display.
+	// on a name renames the track, one in the empty area below the tracks adds a track (addTrack); a drag of a row
+	// moves the selected tracks there, into a folder when dropped on the middle of a folder's row; a drag of a row's
+	// lower edge sets its track's height, with Ctrl every track's; the wheel scrolls the display.
 	class TrackList final : private Rml::EventListener
 	{
 	public:
@@ -63,6 +63,8 @@ namespace gnubase::ui
 		bool selectsType(const std::string& type) const;
 
 		// Folding (reference manual p. 225): the tracks inside a folded folder are hidden, in the event display too.
+		// The heights and the folded folders are the project's (trackLayout.get, trackLayout.set), saved with it;
+		// another project replaces them, and clears the selection.
 		bool folded(uint64_t folder) const { return m_folded.count(folder) != 0; }
 		void setFolded(uint64_t folder, bool folded);
 
@@ -127,6 +129,9 @@ namespace gnubase::ui
 		void showTempo(); // the tempo track's Current Tempo and Type of New Tempo Points
 		void place();     // heights and scrolling, from the display's lanes
 		void hide();      // tells the display which tracks folded folders and the track visibility hide
+		void fold(std::set<uint64_t> folders); // folds those folders, unfolds the others, and tells the engine
+		// The heights and folded folders from trackLayout.get or trackLayout.changed; replace drops the other heights.
+		void loadLayout(const engine::Json& layout, bool replace);
 		void loadControls(const engine::Json& value);
 		// A tempo typed into the tempo track's Current Tempo, or the type chosen in Type of New Tempo Points.
 		void tempoChanged(Rml::Element& field, const Rml::Event& event);
@@ -170,7 +175,11 @@ namespace gnubase::ui
 		std::vector<uint64_t> topSelection() const;
 		// Remove Selected Tracks: removes the tracks, after asking if they, or tracks inside them, hold anything.
 		void removeSelected();
-		void removeTracks(const std::vector<uint64_t>& tracks);
+		// A double click in the list's empty area or below the event display's tracks (reference manual p. 198): a
+		// track like the lowest selected audio or MIDI track, with its input and output, below it; a MIDI track below
+		// another selected track; without one, a MIDI track at the end.
+		void addTrack();
+		void removeTracks(std::vector<uint64_t> tracks);
 		void closedRemoveDialog(Rml::Event& event);
 		// Runs the commands as one undo step.
 		void transaction(const std::string& description, engine::Json commands);

@@ -62,14 +62,38 @@ namespace gnubase::engine::graph
 		// The events added from now on come from another source.
 		void nextSource() noexcept { m_after = 0; }
 
+		// Adds a note-off as add does; in a full buffer it takes the place of the last event that isn't one, so that no
+		// note hangs. Returns false and drops it only if the buffer holds note-offs only.
+		bool addNoteOff(const ProcessEvent& event) noexcept
+		{
+			if (m_size == m_events.size() && !dropLastNotNoteOff())
+				return false;
+			insert(event);
+			return true;
+		}
+
 		// Adds the events of another source. In a full buffer a note-off takes the place of the last event that isn't
 		// one, so that no note hangs; other events are dropped.
 		void merge(const EventBuffer& source) noexcept
 		{
 			nextSource();
 			for (const ProcessEvent& event : source)
-				if (m_size < m_events.size() || (event.type == ProcessEvent::Type::NoteOff && dropLastNotNoteOff()))
-					insert(event);
+				if (event.type == ProcessEvent::Type::NoteOff)
+					addNoteOff(event);
+				else
+					add(event);
+		}
+
+		// Removes the events that remove returns true for, keeping the order of the others. The events added next come
+		// from another source.
+		template <typename Predicate> void removeIf(Predicate remove) noexcept
+		{
+			size_t kept = 0;
+			for (size_t i = 0; i < m_size; ++i)
+				if (!remove(m_events[i]))
+					m_events[kept++] = m_events[i];
+			m_size = kept;
+			m_after = 0;
 		}
 
 		void clear() noexcept

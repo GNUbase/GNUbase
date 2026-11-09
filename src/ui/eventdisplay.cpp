@@ -894,6 +894,17 @@ namespace gnubase::ui
 		setView(m_view);
 	}
 
+	void EventDisplay::setOwnTrackHeights(std::map<uint64_t, double> heights)
+	{
+		for (auto& [track, height] : heights)
+			height = std::clamp(height, g_minTrackHeight, g_maxTrackHeight);
+		if (heights == m_heights)
+			return;
+		m_heights = std::move(heights);
+		setLanes();
+		setView(m_view);
+	}
+
 	void EventDisplay::setHiddenTracks(std::set<uint64_t> tracks)
 	{
 		if (tracks == m_hidden)
@@ -1119,7 +1130,7 @@ namespace gnubase::ui
 			setView(m_view);
 			break;
 		case Rml::EventId::Click:
-			click(target);
+			click(target, event.GetParameter<int>("ctrl_key", 0) != 0 || event.GetParameter<int>("meta_key", 0) != 0);
 			break;
 		case Rml::EventId::Change:
 			// A click on the auto-scroll button switches it off, or on again while it's suspended.

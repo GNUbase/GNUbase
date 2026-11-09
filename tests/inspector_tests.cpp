@@ -859,6 +859,9 @@ TEST_CASE("another project drops the inspector's edits in progress, and text fie
 	const uint64_t loads = window.display.loads();
 	window.call("project.load", {{"path", file}});
 	REQUIRE(window.app.waitUntil([&] { return window.display.loads() > loads; }));
+	CHECK(window.list.selection().empty()); // another project starts without a selection (#491)
+	window.list.select({bass});
+	window.app.shell().step(std::chrono::milliseconds(0));
 	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Bass"));
 	window.click(".inspector [row=volume] .inspector-label");
 	CHECK_FALSE(window.app.waitUntil(
@@ -874,6 +877,9 @@ TEST_CASE("another project drops the inspector's edits in progress, and text fie
 	const uint64_t reloads = window.display.loads();
 	window.call("project.load", {{"path", file}});
 	REQUIRE(window.app.waitUntil([&] { return window.display.loads() > reloads; }));
+	window.list.select({bass});
+	window.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Bass"));
 	window.click(".inspector [row=volume] .inspector-label");
 	CHECK_FALSE(window.app.waitUntil(
 		[&] { return window.find("tracks", bass).at("name") != "Bass"; }, std::chrono::milliseconds(300)));

@@ -64,11 +64,13 @@ namespace gnubase::engine
 	};
 
 	// What a channel's automation plays, compiled by the command thread: a lane for the fader's volume, pan and mute
-	// (whose static value is off: a channel's mute button makes it silent, see ChannelStrip), for each of the
-	// instrument's parameters, for each parameter of the strip's sections (the pre gain as a linear gain) and for each
-	// parameter of the built-in plugins in its slots, with or without points, so
-	// that they return to their static values when their automation goes; and a lane for each MIDI controller with
-	// points.
+	// (whose static value is the mute button, so that switching between the button and mute automation is one change
+	// of the fader's mute; on MIDI tracks the mute lane alone, which mutes the track's events, see ChannelStrip), for
+	// each of the instrument's parameters, for each parameter of the strip's sections (the pre gain as a linear gain)
+	// and for each parameter of the built-in plugins in its slots (their static values are those set, else those of
+	// the plugin's state, else the defaults; these lanes are the only way static values reach built-in plugins), with
+	// or without points, so that they return to their static values when their automation goes; and a lane for each
+	// MIDI controller with points.
 	struct ChannelAutomation
 	{
 		uint64_t revision = 0; // set by AutomationPlayer::setAutomation
@@ -183,6 +185,9 @@ namespace gnubase::engine
 		Ramp m_audible; // 1 - mute
 	};
 
+	// A note per MIDI channel and pitch, as channel * 128 + pitch.
+	inline constexpr size_t g_midiNotes = size_t{16} * 128;
+
 	// What a channel keeps across graph rebuilds: its automation, its strip's sections and its fader.
 	struct ChannelState
 	{
@@ -198,6 +203,10 @@ namespace gnubase::engine
 		// slot nodes (SlotStrip), keyed by the slot's index in the program that plays.
 		graph::EventBuffer pluginEvents{graph::g_maxEventsPerBlock};
 		LevelMeter meter; // the channel's output after the fader, the panner and muting
+		// Audio thread, MIDI tracks: whether mute (automation or the button) mutes the track's events, and the notes it
+		// let through that haven't ended, which a mute ends.
+		bool midiMuted = false;
+		std::array<bool, g_midiNotes> midiHeld{};
 		// Audio thread: each send's gain after the last block (SendStrip), -1 before the first.
 		std::array<float, g_maxSends> sendGains = []
 		{
@@ -270,8 +279,10 @@ namespace gnubase::engine
 	// nothing for a group or effect channel) with the automation events added to its input, the strip's sections
 	// (the pre section after the source, the others before the fader), then the fader and its panner. A new strip is
 	// made for every graph, around the source and the state that the channel keeps. With monitoring, the input reaches
-	// the source only while the track monitors it, gliding in and out over a block. A silent strip (mute, solo, a
-	// disabled track) glides its output to silence over a block, and back.
+	// the source only while the track monitors it, gliding in and out over a block. A silent strip (solo, a disabled
+	// track) glides its output to silence over a block, and back; the mute button mutes through the fader. On a channel
+	// without audio, a MIDI track, the fader's mute events mute the source's events from their sample on: no notes,
+	// controllers or other events pass, and the notes that sound end there.
 	class ChannelStrip : public graph::Processor
 	{
 	public:
@@ -315,7 +326,8 @@ namespace gnubase::engine
 		void render(RenderPoint point, const graph::ProcessContext& context) noexcept;
 		// The fader and its panner with the block's fader events, then muting.
 		void fade(const graph::ProcessContext& context, const graph::EventBuffer& events) noexcept;
-
+		// A MIDI track's mute: the block's events in out, muted as the fader's mute events say.
+		void muteMidi(graph::EventBuffer& out) noexcept;
 		std::shared_ptr<ChannelState> m_state;
 		std::shared_ptr<graph::Processor> m_source;
 		Panning m_panning;

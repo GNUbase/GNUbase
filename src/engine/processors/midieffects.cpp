@@ -2,6 +2,7 @@
 #include "engine/processors/midieffects.h"
 
 #include "engine/midi/midivalues.h"
+#include "engine/time/tempomap.h"
 
 #include <algorithm>
 #include <cctype>
@@ -243,11 +244,33 @@ namespace gnubase::engine::processors
 		}
 	}
 
-	void Arpeggiator::advance(uint32_t to, const graph::ProcessContext& context) noexcept
+	double Arpeggiator::stepFrames(uint32_t offset, const graph::TransportBlock& transport) const noexcept
 	{
 		static constexpr std::array<double, 4> quarters = {1.0, 0.5, 0.25, 0.125};
-		const double tempo = context.transport.tempo > 0.0 ? context.transport.tempo : 120.0;
-		const double frames = m_sampleRate * 60.0 / tempo * quarters[std::min<size_t>(m_rate, quarters.size() - 1)];
+		double tempo = transport.tempo;
+		for (size_t s = 0; transport.tempoMap != nullptr && s < transport.segmentCount; ++s)
+		{
+			const graph::TransportSegment& segment = transport.segments[s];
+			if (offset >= segment.offset && offset - segment.offset < segment.frames)
+			{
+				const int64_t position = segment.position + (offset - segment.offset);
+				tempo = transport.tempoMap->bpmAt(transport.tempoMap->toTicks(position, m_sampleRate));
+				break;
+			}
+		}
+		if (!(tempo > 0.0))
+			tempo = 120.0;
+		return m_sampleRate * 60.0 / tempo * quarters[std::min<size_t>(m_rate, quarters.size() - 1)];
+	}
+
+	void Arpeggiator::advance(uint32_t to, const graph::ProcessContext& context) noexcept
+	{
+		// Steps missed in an earlier block, whose note-ons found no room, are left out rather than played late.
+		while (m_running && static_cast<int64_t>(std::ceil(m_next)) < m_time)
+		{
+			m_next += stepFrames(0, context.transport);
+			++m_step;
+		}
 		const int64_t until = m_time + to;
 		constexpr int64_t never = std::numeric_limits<int64_t>::max();
 		for (;;)
@@ -257,9 +280,9 @@ namespace gnubase::engine::processors
 			if (std::min(stepAt, endAt) >= until)
 				return;
 			// With the output full, an end that can't be added is tried again on the next call or in the next block.
-			const bool added = endAt <= stepAt
-				? end(static_cast<uint32_t>(std::max(endAt, m_time) - m_time), context.eventsOut)
-				: step(static_cast<uint32_t>(std::max(stepAt, m_time) - m_time), frames, context.eventsOut);
+			const auto offset = static_cast<uint32_t>(std::max(std::min(stepAt, endAt), m_time) - m_time);
+			const bool added = endAt <= stepAt ? end(offset, context.eventsOut)
+											   : step(offset, stepFrames(offset, context.transport), context.eventsOut);
 			if (!added)
 				return;
 		}
@@ -340,7 +363,7 @@ namespace gnubase::engine::processors
 		if (event.type == Type::NoteOff)
 		{
 			if (m_chordOf[index] == g_none)
-				context.eventsOut.add(event); // a note from before the effect
+				context.eventsOut.addNoteOff(event); // a note from before the effect
 			else
 				release(index, event, context.eventsOut);
 			return;
@@ -378,7 +401,8 @@ namespace gnubase::engine::processors
 				continue;
 			--m_sounding[note];
 			if (m_sounding[note] == 0)
-				out.add(noteEvent(Type::NoteOff, note, event.type == Type::NoteOff ? event.velocity : 0, event.offset));
+				out.addNoteOff(
+					noteEvent(Type::NoteOff, note, event.type == Type::NoteOff ? event.velocity : 0, event.offset));
 		}
 		m_chordOf[index] = g_none;
 	}
@@ -480,6 +504,15 @@ namespace gnubase::engine::processors
 			return out;
 		}
 
+		// Adds a note-off before the other events in a full buffer, any other event as it fits.
+		void put(graph::EventBuffer& out, const graph::ProcessEvent& event) noexcept
+		{
+			if (event.type == Type::NoteOff)
+				out.addNoteOff(event);
+			else
+				out.add(event);
+		}
+
 		graph::ProcessEvent movedTo(graph::ProcessEvent event, uint16_t index) noexcept
 		{
 			event.channel = static_cast<uint8_t>(index / 128);
@@ -493,7 +526,20 @@ namespace gnubase::engine::processors
 	void LogicalStage::reset() noexcept
 	{
 		m_held.fill(Held{});
+		m_sounding.fill(0);
 		m_random = {};
+	}
+
+	bool LogicalStage::uses(const Held& held, uint16_t source, uint16_t note) noexcept
+	{
+		return held.down && ((held.passed && note == source) || (held.to != g_none && held.to == note));
+	}
+
+	bool LogicalStage::release(uint16_t note) noexcept
+	{
+		if (m_sounding[note] > 0)
+			--m_sounding[note];
+		return m_sounding[note] == 0;
 	}
 
 	void LogicalStage::handle(
@@ -505,19 +551,17 @@ namespace gnubase::engine::processors
 		LogicalEvent original;
 		const bool logical = toLogical(event, original);
 		const bool found = logical && midi::matches(rules.filters, rules.filterCount, original);
-		// The pressure of a held note the rules don't find follows its note-on.
+		// The pressure of a held note the rules don't find follows its note-on. Where two notes went to one note, the
+		// note-off of the last of them ends it.
 		if (event.type == Type::NoteOff || (event.type == Type::PolyPressure && held.down && !found))
 		{
-			if (!held.down) // a note from before the rules
-			{
-				out.add(event);
-				return;
-			}
-			if (held.passed)
-				out.add(event);
-			if (held.to != g_none && (!held.passed || held.to != index))
-				out.add(movedTo(event, held.to));
-			if (event.type == Type::NoteOff)
+			const bool off = event.type == Type::NoteOff;
+			// A note from before the rules, or one that passed.
+			if (!held.down || (held.passed && (!off || release(index))))
+				put(out, event);
+			if (held.down && held.to != g_none && (!held.passed || held.to != index) && (!off || release(held.to)))
+				put(out, movedTo(event, held.to));
+			if (off)
 				held.down = false;
 			return;
 		}
@@ -540,21 +584,34 @@ namespace gnubase::engine::processors
 			if (emit)
 				changed = fromLogical(result, original, event);
 		}
-		if (event.type == Type::NoteOn)
+		if (event.type != Type::NoteOn)
 		{
-			const uint16_t to = emit && changed.type == Type::NoteOn ? indexOf(changed) : g_none;
-			if (held.down) // played again before its note-off: ends what the earlier one started and this one doesn't
-			{
-				if (held.to != g_none && held.to != to && (!pass || held.to != index))
-					out.add(noteEvent(Type::NoteOff, held.to, 0, event.offset));
-				if (held.passed && !pass && to != index)
-					out.add(noteEvent(Type::NoteOff, index, 0, event.offset));
-			}
-			held = {to, pass, true};
+			if (pass)
+				out.add(event);
+			if (emit)
+				out.add(changed);
+			return;
 		}
-		if (pass)
+		const uint16_t to = emit && changed.type == Type::NoteOn ? indexOf(changed) : g_none;
+		const Held previous = held;
+		held = {to, pass, true};
+		// Played again before its note-off: ends what the earlier one started and this one doesn't, and plays again
+		// what both do.
+		for (const uint16_t note : {index, previous.to != index ? previous.to : g_none})
+		{
+			if (note == g_none || !uses(previous, index, note))
+				continue;
+			if (uses(held, index, note))
+				--m_sounding[note]; // counted again below
+			else if (release(note))
+				put(out, noteEvent(Type::NoteOff, note, 0, event.offset));
+		}
+		// A note another note already plays sounds once.
+		const auto start = [&](uint16_t note) { return m_sounding[note]++ == 0 || uses(previous, index, note); };
+		const bool playItself = pass && start(index);
+		if (playItself)
 			out.add(event);
-		if (emit)
+		if (emit && (to == g_none || (pass && to == index ? playItself : start(to))))
 			out.add(changed);
 	}
 

@@ -4,6 +4,7 @@
 // disk threads (dsp::WarpReader); flattening renders the same into a new file on the command thread.
 #include "engine/document/warp.h"
 
+#include "engine/audio/playback.h"
 #include "engine/audiofile/audiofile.h"
 #include "engine/document/projectmodel.h"
 #include "engine/document/serialize.h"
@@ -205,6 +206,19 @@ namespace gnubase::engine
 				[](const BeatEdit& a, const BeatEdit& b) { return a.beat < b.beat; });
 		}
 
+		// Real-time warping stretches audio up to 4 times and squeezes it to a quarter (dsp::WarpReader): no section
+		// between two markers, or a marker and the clip's end, may go beyond.
+		void checkRatio(const WarpMarker& from, const WarpMarker& to)
+		{
+			const double ratio =
+				static_cast<double>(to.target - from.target) / static_cast<double>(to.position - from.position);
+			require(ratio >= dsp::g_minRealtimeRatio && ratio <= dsp::g_maxRealtimeRatio,
+				"warp markers can stretch the audio up to 4 times as long and squeeze it to a quarter: the audio "
+				"from " +
+					std::to_string(from.position) + " to " + std::to_string(to.position) + " would play " +
+					std::to_string(ratio) + " times as long");
+		}
+
 		void checkMarkers(ClipWarp& warp, time::Samples length)
 		{
 			std::sort(warp.markers.begin(), warp.markers.end(),
@@ -218,8 +232,10 @@ namespace gnubase::engine
 				require(marker.position > before.position && marker.target > before.target,
 					"warp markers can't pass each other: the marker at " + std::to_string(marker.position) +
 						" must go after " + std::to_string(before.target));
+				checkRatio(before, marker);
 				before = marker;
 			}
+			checkRatio(before, {length, length});
 		}
 
 		WarpMarker& markerAt(ClipWarp& warp, time::Samples position)
@@ -253,10 +269,14 @@ namespace gnubase::engine
 			return path;
 		}
 
-		// Renders what the event plays of its clip, warped as it plays, into a 32-bit float WAV file.
-		AudioFileInfo renderWarped(
-			const MediaFile& media, std::vector<dsp::WarpPoint> map, dsp::StretchPreset preset, const fs::path& path)
+		// Renders what the event plays of its clip, warped as it plays and with the clip's fades where playback puts
+		// them (warpedClipEdges), into a 32-bit float WAV file.
+		AudioFileInfo renderWarped(const MediaFile& media, const Clip& clip, std::vector<dsp::WarpPoint> map,
+			dsp::StretchPreset preset, const fs::path& path)
 		{
+			const WarpedClipEdges edges = warpedClipEdges(clip, media.length, map);
+			const GainRamp fadeIn{edges.start, edges.fadeInEnd, clip.fadeIn.shape, false};
+			const GainRamp fadeOut{edges.fadeOutStart, edges.end, clip.fadeOut.shape, true};
 			dsp::WarpReader reader(AudioFileReader::open(media.path), std::move(map), preset);
 			const AudioFileInfo& info = reader.info();
 			fs::create_directories(path.parent_path());
@@ -267,12 +287,25 @@ namespace gnubase::engine
 			const std::unique_ptr<AudioFileWriter> writer = AudioFileWriter::create(path.u8string(), options);
 			constexpr size_t block = 4096;
 			std::vector<float> buffer(block * static_cast<size_t>(info.channels));
+			const auto channels = static_cast<size_t>(info.channels);
 			time::Samples left = info.frames;
 			while (left > 0)
 			{
 				const size_t got = reader.read(buffer.data(), std::min<size_t>(block, static_cast<size_t>(left)));
 				if (got == 0)
 					break;
+				const time::Samples at = info.frames - left;
+				for (size_t f = 0; f < got; ++f)
+				{
+					const time::Samples frame = at + static_cast<time::Samples>(f);
+					double gain = 1.0;
+					if (edges.fadeInEnd > edges.start)
+						gain *= fadeIn.gainAt(frame);
+					if (edges.end > edges.fadeOutStart)
+						gain *= fadeOut.gainAt(frame);
+					for (size_t c = 0; c < channels; ++c)
+						buffer[(f * channels) + c] *= static_cast<float>(gain);
+				}
 				writer->write(buffer.data(), got);
 				left -= static_cast<time::Samples>(got);
 			}
@@ -359,6 +392,13 @@ namespace gnubase::engine
 		if (map.size() < 2) // an event without length
 			map.push_back({end + 1.0, 1.0});
 		return map;
+	}
+
+	WarpedClipEdges warpedClipEdges(const Clip& clip, time::Samples length, const std::vector<dsp::WarpPoint>& map)
+	{
+		const auto at = [&map](time::Samples frame)
+		{ return static_cast<time::Samples>(std::llround(dsp::warpTarget(map, static_cast<double>(frame)))); };
+		return {at(0), at(clip.fadeIn.length), at(length - clip.fadeOut.length), at(length)};
 	}
 
 	void ProjectModel::registerWarpCommands(Engine& engine)
@@ -448,10 +488,14 @@ namespace gnubase::engine
 				"the section from start to end (clip frames; default the whole clip) is taken to start and end at a "
 				"barline and to be bars bars long (default: the whole bars nearest its length at the clip's tempo, or "
 				"the project's without one). That makes the clip's tempo and grid start; every beat with a hitpoint "
-				"that counts within a quarter beat of it is then edited to be at that hitpoint. Fails without such "
-				"hitpoints. " +
+				"that counts within a quarter beat of it is then edited to be at that hitpoint. The snap point of "
+				"event, "
+				"an audio event of the clip such as the one the sample editor shows, moves to the start of the "
+				"section (emitting audioEvent.changed). Fails without such hitpoints. " +
 					warpText,
-				objectSchema({{"clip", integer}, {"start", integer}, {"end", integer}, {"bars", integer}}, {"clip"}),
+				objectSchema(
+					{{"clip", integer}, {"event", integer}, {"start", integer}, {"end", integer}, {"bars", integer}},
+					{"clip"}),
 				resultSchema, false},
 			"Auto adjust",
 			[](Project& project, CommandContext& context)
@@ -499,6 +543,15 @@ namespace gnubase::engine
 						warp.beats.push_back({beat, *nearest});
 				}
 				checkBeats(warp, media.length);
+				if (parameters.contains("event"))
+				{
+					const auto id = parameters.at("event").get<ObjectId>();
+					const auto event = project.audioEvents.find(id);
+					require(event != project.audioEvents.end() && event->second.clip == clip.id,
+						"no audio event " + std::to_string(id) + " of clip " + std::to_string(clip.id));
+					event->second.snapPoint = start;
+					context.emit("audioEvent.changed", {{"event", toJson(event->second)}});
+				}
 				return warpResult(clip, context);
 			});
 
@@ -689,6 +742,17 @@ namespace gnubase::engine
 				Json flattened = Json::array();
 				Json media = Json::array();
 				Json clips = Json::array();
+				// A failure undoes the command: the files rendered before it go too.
+				std::vector<fs::path> written;
+				const auto fail = [&written](const char* message)
+				{
+					for (const fs::path& each : written)
+					{
+						std::error_code error;
+						fs::remove(each, error);
+					}
+					throw CommandError(message);
+				};
 				for (const ObjectId id : events)
 				{
 					AudioEvent& event = project.audioEvents.at(id);
@@ -699,22 +763,23 @@ namespace gnubase::engine
 							.value_or(dsp::StretchPreset::Quality);
 					const fs::path path = newFile(folder, source.name + " Flattened");
 					MediaFile file;
+					written.push_back(path);
 					try
 					{
-						const AudioFileInfo info = renderWarped(mediaOf(project, source), map, algorithm, path);
+						const AudioFileInfo info = renderWarped(mediaOf(project, source), source, map, algorithm, path);
 						file = {project.newId(), path.u8string(), info.sampleRate, info.channels, info.frames};
 					}
 					catch (const AudioFileError& error)
 					{
-						throw CommandError(error.what());
+						fail(error.what());
 					}
 					catch (const std::invalid_argument& error)
 					{
-						throw CommandError(error.what());
+						fail(error.what());
 					}
 					catch (const fs::filesystem_error& error)
 					{
-						throw CommandError(error.what());
+						fail(error.what());
 					}
 					project.media[file.id] = file;
 					context.emit("media.added", {{"media", toJson(file)}});
@@ -729,12 +794,10 @@ namespace gnubase::engine
 						point.position = moved(point.position);
 					if (event.snapPoint)
 						event.snapPoint = moved(*event.snapPoint);
-					// The fades keep their share of the event.
-					const double scale =
-						event.length > 0 ? static_cast<double>(file.length) / static_cast<double>(event.length) : 1.0;
-					event.fadeIn.length = std::llround(static_cast<double>(event.fadeIn.length) * scale);
-					event.fadeOut.length = std::min(file.length - event.fadeIn.length,
-						static_cast<time::Samples>(std::llround(static_cast<double>(event.fadeOut.length) * scale)));
+					// The event's fades play as long as they did, in frames of what it played (warpEvent); the clip's
+					// are in the file.
+					event.fadeIn.length = std::min(event.fadeIn.length, file.length);
+					event.fadeOut.length = std::min(event.fadeOut.length, file.length - event.fadeIn.length);
 					event.clip = clip.id;
 					event.offset = 0;
 					event.length = file.length;

@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdlib>
 #include <filesystem>
 #include <iterator>
@@ -254,17 +255,13 @@ namespace gnubase::ui
 			{"track.foldAll",
 				[this]
 				{
+					std::set<uint64_t> folded;
 					for (const Row& row : m_tracks)
 						if (row.type == "folder")
-							m_folded.insert(row.id);
-					hide();
+							folded.insert(row.id);
+					fold(std::move(folded));
 				}},
-			{"track.unfoldAll",
-				[this]
-				{
-					m_folded.clear();
-					hide();
-				}},
+			{"track.unfoldAll", [this] { fold({}); }},
 			{"track.flipFolding",
 				[this]
 				{
@@ -272,8 +269,7 @@ namespace gnubase::ui
 					for (const Row& row : m_tracks)
 						if (row.type == "folder" && !folded(row.id))
 							flipped.insert(row.id);
-					m_folded = std::move(flipped);
-					hide();
+					fold(std::move(flipped));
 				}},
 		};
 		// Freeze and render in place (docs/features/render-in-place.md), with the settings the commands default to.
@@ -519,16 +515,38 @@ namespace gnubase::ui
 		};
 		m_subscriptions.push_back(
 			m_binding.on("trackVisibility.changed", [filter](const engine::Event& event) { filter(event.data); }));
+		// Track heights and folded folders (#491): the project's, saved with it. Another project starts with its own
+		// and without a selection.
+		const auto readLayout = [this](bool replace)
+		{
+			m_binding.send("trackLayout.get", Json::object(),
+				[this, replace, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+				{
+					if (!alive.expired() && result.ok())
+						loadLayout(result.value, replace);
+				});
+		};
 		m_subscriptions.push_back(
-			m_binding.on("project.reset", [readVisibility](const engine::Event&) { readVisibility(); }));
+			m_binding.on("trackLayout.changed", [this](const engine::Event& event) { loadLayout(event.data, false); }));
+		m_subscriptions.push_back(m_binding.on("project.reset",
+			[this, readVisibility, readLayout](const engine::Event&)
+			{
+				select({});
+				m_selectedLanes.clear();
+				readVisibility();
+				readLayout(true);
+			}));
 		readVisibility();
+		readLayout(false);
 		m_display.onLayout([this] { layout(); });
+		m_display.onAddTrack([this] { addTrack(); });
 		layout();
 	}
 
 	TrackList::~TrackList()
 	{
 		m_display.onLayout({});
+		m_display.onAddTrack({});
 		if (auto* dialog = dynamic_cast<Rml::ElementDocument*>(m_removeDialog.get()))
 		{
 			// Nothing removes the tracks any more: the dialog goes too.
@@ -603,11 +621,40 @@ namespace gnubase::ui
 
 	void TrackList::setFolded(uint64_t folder, bool folded)
 	{
+		std::set<uint64_t> folders = m_folded;
 		if (folded)
-			m_folded.insert(folder);
+			folders.insert(folder);
 		else
-			m_folded.erase(folder);
+			folders.erase(folder);
+		fold(std::move(folders));
+	}
+
+	void TrackList::fold(std::set<uint64_t> folders)
+	{
+		m_folded = std::move(folders);
 		hide();
+		// The engine keeps them with the project (trackLayout.set): the folders that are still there.
+		Json folded = Json::array();
+		for (const uint64_t folder : m_folded)
+			if (const auto row = m_index.find(folder); row != m_index.end() && m_tracks[row->second].type == "folder")
+				folded.push_back(folder);
+		m_binding.send("trackLayout.set", {{"folded", folded}});
+	}
+
+	void TrackList::loadLayout(const Json& layout, bool replace)
+	{
+		std::map<uint64_t, double> heights;
+		if (!replace)
+			heights = m_display.ownTrackHeights();
+		for (const Json& item : layout.at("heights"))
+			heights[item.at("track").get<uint64_t>()] = item.at("height").get<double>();
+		m_display.setOwnTrackHeights(std::move(heights));
+		const auto folded = layout.at("folded").get<std::set<uint64_t>>();
+		if (folded != m_folded)
+		{
+			m_folded = folded;
+			hide();
+		}
 	}
 
 	void TrackList::loadControls(const Json& value)
@@ -1213,6 +1260,8 @@ namespace gnubase::ui
 				}
 			break;
 		case Rml::EventId::Dblclick:
+			if (target == m_root.get() || target == m_rows || target == m_view)
+				addTrack(); // the empty area below the tracks
 			for (Rml::Element* element = target; element != nullptr && element != m_view;
 				element = element->GetParentNode())
 				if (element->IsClassSet("track-name"))
@@ -1472,11 +1521,17 @@ namespace gnubase::ui
 		std::vector<uint64_t> still;
 		std::copy_if(tracks.begin(), tracks.end(), std::back_inserter(still),
 			[this](uint64_t track) { return m_index.count(track) != 0; });
-		removeTracks(still);
+		removeTracks(std::move(still));
 	}
 
-	void TrackList::removeTracks(const std::vector<uint64_t>& tracks)
+	void TrackList::removeTracks(std::vector<uint64_t> tracks)
 	{
+		// The active marker track goes last, as in track.removeEmpty, so that track.remove activates a marker track
+		// that stays rather than one that goes next.
+		const Json& project = m_display.project();
+		const uint64_t active = project.is_object() ? project.value("activeMarkerTrack", uint64_t{0}) : 0;
+		if (const auto found = std::find(tracks.begin(), tracks.end(), active); found != tracks.end())
+			std::rotate(found, std::next(found), tracks.end());
 		Json commands = Json::array();
 		for (const uint64_t track : tracks)
 			commands.push_back({{"command", "track.remove"}, {"parameters", {{"track", track}}}});
@@ -1623,6 +1678,34 @@ namespace gnubase::ui
 			setClass(*row, "selected", m_selectedLanes.count(laneAt(row)) != 0);
 	}
 
+	void TrackList::addTrack()
+	{
+		const std::vector<uint64_t> tracks = selection();
+		Json parameters = {{"type", "midi"}};
+		if (const auto found = tracks.empty() ? m_index.end() : m_index.find(tracks.back()); found != m_index.end())
+		{
+			const Row& below = m_tracks[found->second];
+			if (below.type == "audio" || below.type == "midi")
+			{
+				parameters["type"] = below.type;
+				for (const Json& channel : m_display.project().at("channels"))
+					if (channel.at("id") == below.channel)
+					{
+						if (below.type == "audio")
+							parameters["input"] = channel.at("input");
+						parameters["output"] = channel.at("output");
+					}
+			}
+			// Below it, in its folder.
+			const auto before =
+				std::count_if(m_tracks.begin(), m_tracks.begin() + static_cast<std::ptrdiff_t>(found->second),
+					[&below](const Row& row) { return row.parent == below.parent; });
+			parameters["parent"] = below.parent;
+			parameters["index"] = before + 1;
+		}
+		m_binding.send("track.add", parameters);
+	}
+
 	void TrackList::mouseDown(Rml::Event& event)
 	{
 		Rml::Element* target = event.GetTargetElement();
@@ -1720,6 +1803,15 @@ namespace gnubase::ui
 			setClass(*m_dropLine, "shown", false);
 		if (drag == Drag::Move)
 			move(m_dropParent, m_dropBefore);
+		if (drag == Drag::Height)
+		{
+			// The engine keeps the heights with the project (trackLayout.set): those of the tracks still there.
+			Json heights = Json::array();
+			for (const auto& [track, height] : m_display.ownTrackHeights())
+				if (m_index.count(track) != 0)
+					heights.push_back({{"track", track}, {"height", height}});
+			m_binding.send("trackLayout.set", {{"heights", heights}});
+		}
 	}
 
 	std::pair<uint64_t, uint64_t> TrackList::dropAt(float y) const

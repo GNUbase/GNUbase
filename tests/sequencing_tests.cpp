@@ -333,6 +333,81 @@ TEST_CASE("a muted or disabled MIDI track's notes don't reach its instrument; a 
 	soloed.check(positions(0, 700));
 }
 
+TEST_CASE("muted, soloed-out and disabled MIDI tracks send their instrument no automation, MIDI volume, pan or program",
+	"[integration]")
+{
+	Song song(64);
+	const auto [mutedPart, muted] = song.addMidiTrack();
+	const auto [disabledPart, disabled] = song.addMidiTrack();
+	song.add(1, {100, 400, 60});
+	song.add(mutedPart, {200, 500, 64});
+	song.add(disabledPart, {300, 600, 67});
+	// A CC 7 lane on each MIDI track: 64 on the one that plays, 32 on the muted one and 95 on the disabled one, which
+	// have a MIDI pan of 20 and a program too.
+	for (const auto& [track, value] : {std::pair{song.midi, 0.5}, std::pair{muted, 0.25}, std::pair{disabled, 0.75}})
+		run(song.client, "automationPoint.add",
+			{{"lane",
+				 idOf(run(song.client, "automationLane.add",
+						  {{"track", track}, {"target", {{"type", "controller"}, {"number", 7}}}}),
+					 "lane")},
+				{"points", {{{"position", 0}, {"value", value}}}}});
+	for (const ObjectId track : {muted, disabled})
+		run(song.client, "channel.set", {{"channel", channelOf(song.client, track)}, {"midiPan", 20}, {"program", 5}});
+	run(song.client, "channel.set", {{"channel", channelOf(song.client, muted)}, {"mute", true}});
+	run(song.client, "track.set", {{"track", disabled}, {"enabled", false}});
+	run(song.client, "midi.capture", {{"start", true}});
+	using Played = std::set<std::vector<int>>;
+	// The controllers and programs the instrument got in the next block.
+	const auto played = [&song]
+	{
+		run(song.client, "audio.render", {{"frames", 64}});
+		Played bytes;
+		const Json capture = run(song.client, "midi.capture");
+		for (const Json& captured : capture.at("captured"))
+			if (const auto message = captured.at("bytes").get<std::vector<int>>(); message[0] >= 0xB0)
+				bytes.insert(message);
+		return bytes;
+	};
+	run(song.client, "transport.play");
+	CHECK(played() == Played{{0xB0, 7, 64}});
+
+	// Soloing the track that plays silences the muted one even unmuted.
+	run(song.client, "channel.set", {{"channel", channelOf(song.client, song.midi)}, {"solo", true}});
+	run(song.client, "channel.set", {{"channel", channelOf(song.client, muted)}, {"mute", false}});
+	CHECK(played().empty());
+
+	// Heard or enabled again, a track sends them.
+	run(song.client, "channel.set", {{"channel", channelOf(song.client, song.midi)}, {"solo", false}});
+	CHECK(played() == Played{{0xC0, 5}, {0xB0, 7, 32}, {0xB0, 10, 20}});
+	run(song.client, "track.set", {{"track", disabled}, {"enabled", true}});
+	CHECK(played() == Played{{0xC0, 5}, {0xB0, 7, 95}, {0xB0, 10, 20}});
+}
+
+TEST_CASE("a MIDI track's mute automation silences its notes from the point's sample and ends those that sound",
+	"[integration]")
+{
+	const int blockSize = GENERATE(64, 333);
+	const bool button = GENERATE(false, true); // the lane overrides the mute button
+	INFO("block size " << blockSize << (button ? ", mute button on" : ""));
+	Song song(blockSize);
+	song.add(0, {100, 1800, 60});  // the instrument track's own note plays on
+	song.add(1, {200, 1500, 64});  // sounds where the mute starts
+	song.add(1, {1200, 1400, 65}); // starts while muted
+	song.add(1, {1700, 1900, 67}); // after the mute
+	run(song.client, "channel.set", {{"channel", channelOf(song.client, song.midi)}, {"mute", button}});
+	const ObjectId lane =
+		idOf(run(song.client, "automationLane.add", {{"track", song.midi}, {"target", {{"type", "mute"}}}}), "lane");
+	run(song.client, "automationPoint.add",
+		{{"lane", lane},
+			{"points",
+				{{{"position", 0}, {"value", 0.0}}, {{"position", ticks(1000)}, {"value", 1.0}},
+					{{"position", ticks(1600)}, {"value", 0.0}}}}});
+	song.notes = {{100, 1800, 60}, {200, 1000, 64}, {1700, 1900, 67}};
+	run(song.client, "transport.play");
+	run(song.client, "audio.render", {{"frames", 2000}});
+	song.check(positions(0, 2000));
+}
+
 TEST_CASE("a note that starts where another track's note of the same pitch ends sounds", "[integration]")
 {
 	const int blockSize = GENERATE(1, 64, 333);

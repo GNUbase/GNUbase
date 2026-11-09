@@ -81,7 +81,7 @@ namespace gnubase::engine
 			AudioEvent& event = find(project.audioEvents, parameters, "event", "audio event");
 			const Fade in = fade(parameters, "fadeIn", event.fadeIn);
 			const Fade out = fade(parameters, "fadeOut", event.fadeOut);
-			checkFades(in, out, event.length, "event");
+			checkFades(in, out, fadeRoom(project, event), "event");
 			event.fadeIn = in;
 			event.fadeOut = out;
 			Json result = {{"event", toJson(event)}};
@@ -240,8 +240,11 @@ namespace gnubase::engine
 				const bool coversEnd = end >= span.end;
 				if (end <= span.start || start >= span.end || (coversStart && coversEnd))
 					continue;
-				const auto frames = [ratio = span.ratio, length = event.length](time::Samples samples)
-				{ return std::clamp<time::Samples>(std::llround(static_cast<double>(samples) / ratio), 0, length); };
+				// An event's own fades play their length in frames at the clip's sample rate from its edges, also on
+				// a warped event (playback.cpp, warpEvent), so a distance from an edge becomes frames at that ratio.
+				const auto frames = [ratio = span.ratio](time::Samples samples)
+				{ return std::max<time::Samples>(std::llround(static_cast<double>(samples) / ratio), 0); };
+				const time::Samples length = fadeRoom(project, event);
 				Fade in = event.fadeIn;
 				Fade out = event.fadeOut;
 				// Adjust sets only the fades at the edges the range crosses, both when it is inside the event.
@@ -250,16 +253,16 @@ namespace gnubase::engine
 				if (!inSet && !outSet)
 					continue;
 				if (inSet)
-					in.length = frames(coversStart ? end - span.start : start - span.start);
+					in.length = std::min(frames(coversStart ? end - span.start : start - span.start), length);
 				if (outSet)
-					out.length = frames(coversEnd ? span.end - start : span.end - end);
+					out.length = std::min(frames(coversEnd ? span.end - start : span.end - end), length);
 				// A fade that no longer fits next to the one set gets shorter.
-				if (in.length + out.length > event.length)
+				if (in.length + out.length > length)
 				{
 					if (inSet)
-						out.length = event.length - in.length;
+						out.length = length - in.length;
 					else
-						in.length = event.length - out.length;
+						in.length = length - out.length;
 				}
 				event.fadeIn = in;
 				event.fadeOut = out;
@@ -414,6 +417,14 @@ namespace gnubase::engine
 		return result;
 	}
 
+	time::Samples fadeRoom(const Project& project, const AudioEvent& event)
+	{
+		if (!warped(project.clips.at(event.clip)))
+			return event.length;
+		const EventSpan span = eventSpan(project, event);
+		return std::max<time::Samples>(std::llround(static_cast<double>(span.end - span.start) / span.ratio), 0);
+	}
+
 	double eventSamples(const Project& project, const AudioEvent& event, double frames)
 	{
 		if (warped(project.clips.at(event.clip)))
@@ -462,7 +473,8 @@ namespace gnubase::engine
 			{"audioEvent.setFades", 1,
 				"Changes an audio event's fade in (from its start) or fade out (up to its end): length in the clip's "
 				"sample frames (0: none) and shape: linear, exponential (slow, then fast), logarithmic (fast, then "
-				"slow), sCurve (half a cosine) or equalPower (a quarter sine). Together they fit into the event. A "
+				"slow), sCurve (half a cosine) or equalPower (a quarter sine). Together they fit into the event (on a "
+				"warped event, into the sample frames it plays for at the clip's sample rate). A "
 				"crossfade replaces the fades at the ends it joins while it plays.",
 				object({{"event", id}, {"fadeIn", fade}, {"fadeOut", fade}}, {"event"}), result("event"), false},
 			setEventFades);

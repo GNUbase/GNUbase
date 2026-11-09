@@ -195,6 +195,30 @@ TEST_CASE("seconds, frames and samples grids are linear", "[unit]")
 	CHECK(engine::gridStep(GridType::Samples100, grid, 0) == samples(100));
 }
 
+TEST_CASE("the seconds and frame grids count from the start time, as the ruler's marks do", "[unit]")
+{
+	// A start time of half a frame at 25 fps (20 ms): the frame lines are where the timecode shows whole frames.
+	engine::SnapGrid grid = slowingDown();
+	grid.startTime = 0.02;
+	CHECK(engine::nearestGridLine(GridType::Frame, grid, 2900) == samples(2880)); // 0.06 s shows frame 2
+	CHECK(engine::nearestGridLine(GridType::Ms100, grid, 7000) == samples(8640)); // 0.18 s shows 0.2 s
+	CHECK(engine::nearestGridLine(GridType::Second, grid, 70000) == samples(47040));
+	// Nearer the line before the project start, it is the first line after it.
+	CHECK(engine::nearestGridLine(GridType::Ms1000, grid, 0) == samples(47040));
+	// Samples count from the project start; steps keep their length.
+	CHECK(engine::nearestGridLine(GridType::Samples100, grid, 12345) == samples(12300));
+	CHECK(engine::gridStep(GridType::Frame, grid, 0) == samples(1920));
+	// The project's grid has its start time; so does snap.position.
+	engine::Project project;
+	project.setup.startTime = 0.02;
+	CHECK(engine::snapGrid(project, engine::GridFormat::Timecode).startTime == 0.02);
+	Fixture f;
+	f.call("project.set", {{"startTime", 0.02}});
+	CHECK(f.call("snap.position",
+			   {{"position", 2900}, {"settings", {{"on", true}, {"format", "timecode"}, {"grid", "frame"}}}})
+			  .at("position") == 2880);
+}
+
 TEST_CASE("every snap type", "[unit]")
 {
 	const engine::SnapGrid grid = slowingDown();

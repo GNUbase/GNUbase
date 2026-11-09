@@ -6,7 +6,8 @@
 #include <string>
 
 // What the project window's track list hides (#166, docs/features/track-visibility.md, reference manual pp. 80-82):
-// hidden tracks, the visibility configurations, and the mixers whose channel visibility follows the tracks'.
+// hidden tracks, the visibility configurations, and the mixers whose channel visibility follows the tracks'; and its
+// track heights and folded folders (#491, docs/features/track-list.md, pp. 217, 225).
 namespace gnubase::engine
 {
 	class CommandContext;
@@ -20,4 +21,6 @@ namespace gnubase::engine
 
 	// trackVisibility.get and trackVisibility.set.
 	void registerTrackVisibilityCommands(ProjectModel& model, Engine& engine);
+	// trackLayout.get and trackLayout.set: the track list's track heights and folded folders (#491).
+	void registerTrackLayoutCommands(ProjectModel& model, Engine& engine);
 }
