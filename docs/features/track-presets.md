@@ -80,8 +80,8 @@ and tempo tracks, VCA tracks and link groups; the Export Selected Tracks dialog 
 engine's `copyMedia` false); routing of exported tracks to tracks that weren't exported; frozen tracks keep their
 freeze file only in their own project, so they import unfrozen; shared copies of MIDI parts import as parts of their
 own. Presets: the media browser with attributes, previews, the type subfolders, renaming and removing presets, factory
-presets, instrument plugin presets and extracting the sound of an instrument (p. 241), loading only the inserts or the equalizer of a
-preset (p. 243), drum maps and Input Transformer settings in presets, sampler track presets, pattern banks, quick
+presets, instrument plugin presets and extracting the sound of an instrument (p. 241), loading only the inserts or the
+equalizer of a preset (p. 243), drum maps and Input Transformer settings in presets, sampler track presets, pattern banks, quick
 control presets (pp. 243-244), dragging presets onto tracks, and the inspector's Load Track Preset button.
 
 ## Checks
