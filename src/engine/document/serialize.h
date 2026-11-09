@@ -71,10 +71,18 @@ namespace gnubase::engine
 	// std::invalid_argument for values out of range.
 	Json toJson(const midi::Modifiers& modifiers);
 	midi::Modifiers modifiersFromJson(const Json& json, const midi::Modifiers& fallback = {});
+	// A MIDI or instrument channel's MIDI inserts or, with sends, its MIDI sends, and back: effectRackFromJson changes
+	// what the JSON has, each slot in what it has (a slot that gets another effect starts from its defaults), and
+	// throws std::invalid_argument for unknown effects and values out of range. Parameters go by their keys
+	// (processors::parameterKey).
+	Json toJson(const midi::EffectRack& rack, bool sends);
+	midi::EffectRack effectRackFromJson(const Json& json, const midi::EffectRack& fallback, bool sends);
 	Json toJson(const Slot& slot); // its state as base64
 	Json toJson(const MediaFile& media);
 	Json toJson(const ClipRegion& region);
 	Json toJson(const Clip& clip);
+	Json toJson(const ClipWarp& warp);
+	ClipWarp clipWarpFromJson(const Json& json); // as saved: values out of range clamped, edits out of order left out
 	Json toJson(const PoolFolder& folder);
 	Json toJson(const AudioEvent& event);
 	Json toJson(const AudioPart& part);
@@ -97,13 +105,34 @@ namespace gnubase::engine
 	Json toJson(const AutomationPoint& point);
 	Json toJson(const AutomationLane& lane); // with its points, sorted by position
 	Json toJson(const MixerView& view);      // {"hidden": [ids], "hiddenTypes": [types]}
+	// {hidden, sync, configurations: [{name, hidden}], configuration}; trackVisibilityFromJson takes what is valid
+	// JSON.
+	Json toJson(const TrackVisibility& visibility);
+	TrackVisibility trackVisibilityFromJson(const Json& json);
 	// {id, name, channels, volume, pan, mute, record, vca}; linkGroupFromJson leaves what the JSON doesn't have.
 	Json toJson(const LinkGroup& group);
 	LinkGroup linkGroupFromJson(const Json& json, const LinkGroup& fallback = {});
+	// {id, name, sounds: [{pitch, name, snap, mute, iNote, oNote, channel (null: Any), output}], order}. The sound's
+	// pitch is its index. drumSoundFromJson leaves what the JSON doesn't have and throws std::invalid_argument, naming
+	// the field, for a value a sound can't have; drumMapFromJson does too, also for an order that isn't each pitch
+	// once.
+	Json toJson(const DrumMap& map);
+	DrumSound drumSoundFromJson(const Json& json, DrumSound sound);
+	DrumMap drumMapFromJson(const Json& json, DrumMap map);
 	// [{"position": ticks, "bpm": ..., "ramp": ...}], and back; tempoFromJson throws std::invalid_argument for points a
 	// tempo map can't have.
 	Json toJson(const time::TempoMap& tempo);
 	time::TempoMap tempoFromJson(const Json& points);
+
+	// The arranger (#167) as arranger.get describes it, arranger.changed announces it and the project file keeps it:
+	// the arranger track (0 for none); its events in timeline order, positions in the track's time base and start
+	// and end in samples; the chains with their steps, the active chain (chain), mode and jumpMode.
+	Json arrangerJson(const Project& project);
+
+	// The transpose track (#168) as transpose.get describes it, transpose.changed announces it and the project file
+	// keeps it: the transpose track (0 for none); its events in timeline order, positions in the track's time base and
+	// start in samples, with their values; mute, keepInOctave and lock.
+	Json transposeJson(const Project& project);
 
 	// The whole project, with the tracks from top to bottom. The id counter is left out: undo doesn't restore it,
 	// so that ids stay unique.

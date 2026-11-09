@@ -15,16 +15,19 @@ namespace gnubase::engine
 		bool operator==(const ProjectSettings& a, const ProjectSettings& b)
 		{
 			return std::tie(a.name, a.sampleRate, a.tempo, a.tempoTrackActive, a.otherTempo, a.signatures, a.autoFades,
-					   a.panLaw, a.maxVolume, a.colors, a.setup, a.busses, a.tracks, a.activeMarkerTrack) ==
+					   a.panLaw, a.maxVolume, a.colors, a.setup, a.busses, a.tracks, a.activeMarkerTrack, a.arranger,
+					   a.rootKey, a.transpose, a.chords) ==
 				std::tie(b.name, b.sampleRate, b.tempo, b.tempoTrackActive, b.otherTempo, b.signatures, b.autoFades,
-					b.panLaw, b.maxVolume, b.colors, b.setup, b.busses, b.tracks, b.activeMarkerTrack);
+					b.panLaw, b.maxVolume, b.colors, b.setup, b.busses, b.tracks, b.activeMarkerTrack, b.arranger,
+					b.rootKey, b.transpose, b.chords);
 		}
 
 		ProjectSettings settings(const Project& project)
 		{
 			return {project.name, project.sampleRate, project.tempo, project.tempoTrackActive, project.otherTempo,
 				project.signatures, project.autoFades, project.panLaw, project.maxVolume, project.colors, project.setup,
-				project.busses, project.tracks, project.activeMarkerTrack};
+				project.busses, project.tracks, project.activeMarkerTrack, project.arranger, project.rootKey,
+				project.transpose, project.chords};
 		}
 
 		// Walks two maps in id order and calls visit(id, before, after) with nullptr for a missing object.
@@ -103,6 +106,8 @@ namespace gnubase::engine
 			copy.lane = part->lane;
 			copy.transpose = part->transpose;
 			copy.velocity = part->velocity;
+			copy.rootKey = part->rootKey;
+			copy.independent = part->independent;
 			return copy;
 		}
 
@@ -124,7 +129,7 @@ namespace gnubase::engine
 	{
 		return !settingsBefore && tracks.empty() && channels.empty() && slots.empty() && media.empty() &&
 			clips.empty() && poolFolders.empty() && audioEvents.empty() && audioParts.empty() && midiParts.empty() &&
-			markers.empty() && automation.empty() && linkGroups.empty();
+			markers.empty() && automation.empty() && linkGroups.empty() && drumMaps.empty();
 	}
 
 	ProjectChange difference(const Project& before, const Project& after)
@@ -147,6 +152,7 @@ namespace gnubase::engine
 		change.audioParts = differences(before.audioParts, after.audioParts);
 		change.markers = differences(before.markers, after.markers);
 		change.linkGroups = differences(before.linkGroups, after.linkGroups);
+		change.drumMaps = differences(before.drumMaps, after.drumMaps);
 
 		const MidiPart empty;
 		compare(before.midiParts, after.midiParts,
@@ -194,6 +200,10 @@ namespace gnubase::engine
 			project.busses = target.busses;
 			project.tracks = target.tracks;
 			project.activeMarkerTrack = target.activeMarkerTrack;
+			project.arranger = target.arranger;
+			project.rootKey = target.rootKey;
+			project.transpose = target.transpose;
+			project.chords = target.chords;
 		}
 		applyObjects(project.trackById, change.tracks, direction);
 		applyObjects(project.channels, change.channels, direction);
@@ -205,6 +215,7 @@ namespace gnubase::engine
 		applyObjects(project.audioParts, change.audioParts, direction);
 		applyObjects(project.markers, change.markers, direction);
 		applyObjects(project.linkGroups, change.linkGroups, direction);
+		applyObjects(project.drumMaps, change.drumMaps, direction);
 		for (const MidiPartChange& partChange : change.midiParts)
 		{
 			const std::optional<MidiPart>& target = direction == Direction::Redo ? partChange.after : partChange.before;
@@ -226,6 +237,8 @@ namespace gnubase::engine
 			part.lane = target->lane;
 			part.transpose = target->transpose;
 			part.velocity = target->velocity;
+			part.rootKey = target->rootKey;
+			part.independent = target->independent;
 			applyObjects(part.notes, partChange.notes, direction);
 			applyObjects(part.controllers, partChange.controllers, direction);
 		}
@@ -250,6 +263,7 @@ namespace gnubase::engine
 	void History::record(HistoryStep step)
 	{
 		m_steps.erase(m_steps.begin() + static_cast<std::ptrdiff_t>(m_position), m_steps.end());
+		step.id = ++m_lastId;
 		m_steps.push_back(std::move(step));
 		m_position = m_steps.size();
 		trim();
@@ -273,6 +287,22 @@ namespace gnubase::engine
 		GNUBASE_ASSERT(m_position == m_steps.size());
 		m_steps.pop_back();
 		m_position = m_steps.size();
+	}
+
+	void History::join(size_t first, std::optional<HistoryStep> step)
+	{
+		GNUBASE_ASSERT(first <= m_position);
+		const auto begin = m_steps.begin() + static_cast<std::ptrdiff_t>(first);
+		const auto end = m_steps.begin() + static_cast<std::ptrdiff_t>(m_position);
+		if (step)
+			step->id = first < m_position ? std::prev(end)->id : ++m_lastId;
+		m_steps.erase(begin, end);
+		m_position = first;
+		if (step)
+		{
+			m_steps.insert(m_steps.begin() + static_cast<std::ptrdiff_t>(first), std::move(*step));
+			++m_position;
+		}
 	}
 
 	void History::clear()

@@ -15,6 +15,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace gnubase::engine
@@ -117,6 +118,16 @@ namespace gnubase::engine
 
 		// The project, for commands defined in other files that read it. Only on the command thread.
 		const Project& project() const { return m_project; }
+		// Sets Project::quantizePreset, for the quantize preset commands, which change presets, not the project's
+		// content, so they aren't edits. The project file saves the name, though: a new one advances the revision, so
+		// that the project counts as modified and is auto saved. Only on the command thread.
+		void setQuantizePreset(std::string name)
+		{
+			if (name == m_project.quantizePreset)
+				return;
+			m_project.quantizePreset = std::move(name);
+			publish();
+		}
 		// The project file it was last saved as or loaded from, absolute; empty for none. Only on the command thread.
 		const std::string& file() const { return m_file; }
 		// Identifies the open project: the revision at which it was loaded or started (project.revision's project).
@@ -145,7 +156,11 @@ namespace gnubase::engine
 		void registerMediaFolderCommands(Engine& engine, Jobs& jobs); // project.backup, media.prepareArchive and more
 		void registerMidiEditCommands(Engine& engine);                // midiedits.cpp: note.set and controller.set
 		void registerMarkerCommands(Engine& engine);                  // markers.cpp: marker.*
+		void registerArrangerCommands(Engine& engine);                // arranger.cpp: arranger.* (#167)
+		void registerTransposeCommands(Engine& engine);               // transpose.cpp: transpose.* (#168)
+		void registerChordCommands(Engine& engine);                   // chordtrack.cpp: chord.* (#173)
 		void registerTempoCommands(Engine& engine);                   // tempo.cpp: tempo.*
+		Json detectTempo(Project& project, CommandContext& context);  // tempo.cpp: tempo.detect
 		void registerSignatureCommands(Engine& engine);               // signature.cpp: signature.*
 		void registerMidiFileCommands(Engine& engine); // midifilecommands.cpp: midiFile.export and midiFile.import
 		Json importMidiFile(Project& project, CommandContext& context);
@@ -154,8 +169,9 @@ namespace gnubase::engine
 		void registerRecordingCommands(Engine& engine); // recording.cpp: recording.add
 		void registerRenderCommands(Engine& engine);    // renderinplace.cpp: track.freeze, track.renderInPlace
 		Json addRecording(Project& project, CommandContext& context);
-		void registerPoolCommands(Engine& engine); // pool.cpp: pool.*, poolFolder.*, clip.set, media management (#93)
-		void registerFadeCommands(Engine& engine); // fadeedits.cpp: fades, crossfades and auto fades
+		void registerPoolCommands(Engine& engine, Jobs& jobs); // pool.cpp: pool.*, poolFolder.*, clip.set, media (#93)
+		void registerFadeCommands(Engine& engine);             // fadeedits.cpp: fades, crossfades and auto fades
+		void registerWarpCommands(Engine& engine);      // warp.cpp: musical mode, definition grid, warp markers (#144)
 		void registerParameterCommands(Engine& engine); // parameters.cpp: parameter.list, parameter.get, parameter.set
 		void registerSlotCommands(Engine& engine);      // slotcommands.cpp: plugin.*
 		void registerEventEditCommands(Engine& engine); // eventedits.cpp: event.*, parts and events (#85)
@@ -178,6 +194,7 @@ namespace gnubase::engine
 		void record(std::string action, const Project& before, CommandContext& context, std::string merge = {});
 		Json undoOrRedo(CommandContext& context, Direction direction);
 		Json transaction(Project& project, CommandContext& context);
+		Json join(CommandContext& context);
 		void announceHistory(CommandContext& context) const;
 		void publish();
 

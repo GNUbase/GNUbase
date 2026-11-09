@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <functional>
 #include <optional>
 #include <string>
 #include <tuple>
@@ -867,4 +868,175 @@ TEST_CASE("another project drops the inspector's edits in progress, and text fie
 	CHECK_FALSE(window.app.waitUntil(
 		[&] { return window.find("tracks", bass).at("name") != "Bass"; }, std::chrono::milliseconds(300)));
 	CHECK(window.find("tracks", vox).at("name") == "Vox");
+}
+
+TEST_CASE("the info line edits the selected MIDI parts' transpose and velocity, relatively or for all", "[ui]")
+{
+	Window window;
+	const uint64_t midi = window.addTrack({{"type", "midi"}});
+	const uint64_t first = window.addPart(midi, 4 * g_quarter, 4 * g_quarter, "Intro");
+	const uint64_t second = window.addPart(midi, 12 * g_quarter, 8 * g_quarter, "Verse");
+	window.call("midiPart.set", {{"part", second}, {"transpose", 2}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("midiParts").size() == 2; }));
+	window.display.select({second, first});
+	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, "#info-line", "multiple"); }));
+	for (const char* field : {"transpose", "velocity"})
+		CHECK_FALSE(hasClass(window.app, "#info-line [info-field=" + std::string(field) + "]", "hidden"));
+	REQUIRE(window.shows("#info-line valuefield[field=transpose]", "0"));
+
+	// Relative to the first part's value: both by as much, as one undo step.
+	const int64_t before = window.historyPosition();
+	window.type("#info-line valuefield[field=transpose]", "3");
+	REQUIRE(window.app.waitUntil([&] { return window.part(second).at("transpose") == 5; }));
+	CHECK(window.part(first).at("transpose") == 3);
+	CHECK(window.historyPosition() == before + 1);
+	// With Ctrl the same for all, kept from -127 to 127 when relative.
+	window.type("#info-line valuefield[field=velocity]", "-20", "Ctrl+Enter");
+	REQUIRE(window.app.waitUntil([&] { return window.part(second).at("velocity") == -20; }));
+	CHECK(window.part(first).at("velocity") == -20);
+	window.call("midiPart.set", {{"part", second}, {"velocity", -120}});
+	// The display has the other client's change before the edit, which is relative to it.
+	REQUIRE(window.app.waitUntil(
+		[&]
+		{
+			return window.display.project().at("midiParts")[1].at("velocity") == -120 ||
+				window.display.project().at("midiParts")[0].at("velocity") == -120;
+		}));
+	REQUIRE(window.shows("#info-line valuefield[field=velocity]", "-20"));
+	window.type("#info-line valuefield[field=velocity]", "-30");
+	REQUIRE(window.app.waitUntil([&] { return window.part(first).at("velocity") == -30; }));
+	CHECK(window.part(second).at("velocity") == -127);
+	window.call("history.undo");
+	REQUIRE(window.app.waitUntil([&] { return window.part(first).at("velocity") == -20; }));
+	CHECK(window.part(second).at("velocity") == -120);
+
+	// Changes from another client show; markers and audio events have no transpose.
+	window.call("midiPart.set", {{"part", first}, {"transpose", -7}});
+	CHECK(window.shows("#info-line valuefield[field=transpose]", "-7"));
+	const uint64_t audio = window.addTrack({{"type", "audio"}});
+	const Json media =
+		window.call("media.add", {{"path", "take.wav"}, {"sampleRate", 48000}, {"channels", 1}, {"length", 48000}})
+			.at("media");
+	const Json clip = window.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	const uint64_t event =
+		window.call("audioEvent.add", {{"track", audio}, {"clip", clip.at("id")}, {"position", 0}, {"length", 24000}})
+			.at("event")
+			.at("id")
+			.get<uint64_t>();
+	// The display drops ids it doesn't show yet from the selection, so it waits for the event first.
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("audioEvents").size() == 1; }));
+	window.display.select({event});
+	REQUIRE(window.shows("#info-line textdisplay[field=name]", "take"));
+	CHECK(hasClass(window.app, "#info-line [info-field=transpose]", "hidden"));
+	CHECK(hasClass(window.app, "#info-line [info-field=velocity]", "hidden"));
+}
+
+TEST_CASE("the inspector's MIDI Modifiers section shows and changes the track's modifiers", "[ui]")
+{
+	Window window;
+	const uint64_t keys = window.addTrack({{"type", "instrument"}, {"name", "Keys"}});
+	const uint64_t vox = window.addTrack({{"type", "audio"}, {"name", "Vox"}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("tracks").size() == 2; }));
+	window.list.select({keys});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Keys"));
+	CHECK_FALSE(hasClass(window.app, ".inspector [section=modifiers]", "unavailable"));
+	// The sections above it closed, so that its controls are in view.
+	for (const char* section : {"basics", "routing"})
+		window.click(".inspector [section=" + std::string(section) + "] .section-header");
+	const auto modifiers = [&] { return window.channel(keys).at("modifiers"); };
+
+	window.click(".inspector button[control=modifiers-bypass]");
+	REQUIRE(window.app.waitUntil([&] { return modifiers().at("bypass") == true; }));
+	REQUIRE(window.app.waitUntil(
+		[&] { return hasClass(window.app, ".inspector button[control=modifiers-bypass]", "checked"); }));
+	window.type(".inspector valuefield[control=modifiers-transpose]", "5");
+	REQUIRE(window.app.waitUntil([&] { return modifiers().at("transpose") == 5; }));
+	window.type(".inspector valuefield[control=modifiers-velocityShift]", "-12");
+	REQUIRE(window.app.waitUntil([&] { return modifiers().at("velocityShift") == -12; }));
+	// A fraction's numerator keeps its denominator.
+	window.type(".inspector valuefield[control=modifiers-lengthCompression-1]", "4");
+	REQUIRE(window.app.waitUntil([&] { return modifiers().at("lengthCompression") == Json{1, 4}; }));
+	window.type(".inspector valuefield[control=modifiers-velocityCompression-0]", "3");
+	REQUIRE(window.app.waitUntil([&] { return modifiers().at("velocityCompression") == Json{3, 1}; }));
+
+	// The first generator's target is the choice after Off; positions show in ticks of 480 to a quarter note.
+	window.click(".inspector select[control=modifiers-random-0-target]");
+	window.app.ui().key(std::nullopt, "Down");
+	window.click(".inspector select[control=modifiers-random-0-target]");
+	REQUIRE(window.app.waitUntil([&] { return modifiers().at("random")[0].at("target") == "position"; }));
+	REQUIRE(window.app.waitUntil(
+		[&] { return attribute(window.app, ".inspector [control=modifiers-random-0-minimum]", "min") == "-480"; }));
+	window.type(".inspector valuefield[control=modifiers-random-0-minimum]", "-120");
+	REQUIRE(window.app.waitUntil(
+		[&] { return modifiers().at("random")[0].at("minimum") == -120 * (time::g_ticksPerQuarter / 480); }));
+	// A range: what channel.set refuses, a minimum above the maximum, shows as it is again.
+	window.click(".inspector select[control=modifiers-range-1-target]");
+	window.app.ui().key(std::nullopt, "Down");
+	window.click(".inspector select[control=modifiers-range-1-target]");
+	REQUIRE(window.app.waitUntil([&] { return modifiers().at("range")[1].at("target") == "velocityLimit"; }));
+	window.type(".inspector valuefield[control=modifiers-range-1-maximum]", "100");
+	REQUIRE(window.app.waitUntil([&] { return modifiers().at("range")[1].at("maximum") == 100; }));
+	window.type(".inspector valuefield[control=modifiers-range-1-minimum]", "110");
+	CHECK(window.shows(".inspector valuefield[control=modifiers-range-1-minimum]", "0"));
+	CHECK(modifiers().at("range")[1].at("minimum") == 0);
+
+	// Changes from another client show, and undo restores each change.
+	window.call("channel.set", {{"channel", window.channel(keys).at("id")}, {"modifiers", {{"transpose", -3}}}});
+	CHECK(window.shows(".inspector valuefield[control=modifiers-transpose]", "-3"));
+	window.call("history.undo");
+	REQUIRE(window.shows(".inspector valuefield[control=modifiers-transpose]", "5"));
+	window.call("history.undo");
+	CHECK(window.app.waitUntil([&] { return modifiers().at("range")[1].at("maximum") == 127; }));
+
+	// Tracks without notes don't have it.
+	window.list.select({vox});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Vox"));
+	CHECK(hasClass(window.app, ".inspector [section=modifiers]", "unavailable"));
+}
+
+TEST_CASE("a MIDI modifier or a part's transpose dragged back to where it started while the engine answers late ends "
+		  "there",
+	"[ui]")
+{
+	Window window;
+	const uint64_t keys = window.addTrack({{"type", "instrument"}, {"name", "Keys"}});
+	const uint64_t part = window.addPart(keys, 0, 4 * g_quarter, "Intro");
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("midiParts").size() == 1; }));
+	window.list.select({keys});
+	window.display.select({part});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Keys"));
+	REQUIRE(window.shows("#info-line valuefield[field=transpose]", "0"));
+	for (const char* section : {"basics", "routing"})
+		window.click(".inspector [section=" + std::string(section) + "] .section-header");
+
+	const auto dragBack = [&](const std::string& field, const std::function<int64_t()>& engineValue)
+	{
+		INFO(field);
+		const int64_t position = window.historyPosition();
+		// Down and back up to where it started before the UI hands on any answer: the project it shows still has the
+		// value the drag ends at, while a step of the way is in flight and another waits.
+		Rml::Context& context = window.app.main().context();
+		const Json box = element(window.app, field).at("box");
+		const int x = box.at("x").get<int>() + (box.at("width").get<int>() / 2);
+		const int y = box.at("y").get<int>() + (box.at("height").get<int>() / 2);
+		context.ProcessMouseMove(x, y, 0);
+		context.ProcessMouseButtonDown(0, 0);
+		for (int moved = 2; moved <= 12; moved += 2)
+			context.ProcessMouseMove(x, y + moved, 0);
+		CHECK(test::controlValue(window.app, std::nullopt, field) < 0.0);
+		context.ProcessMouseMove(x, y, 0);
+		context.ProcessMouseButtonUp(0, 0);
+		CHECK(test::controlValue(window.app, std::nullopt, field) == 0.0);
+		// The engine ends where the field does, not at a step of the way, and stays there: the gesture changed nothing
+		// in the end, so it leaves at most one undo step.
+		REQUIRE(window.app.waitUntil([&] { return engineValue() == 0; }));
+		CHECK_FALSE(window.app.waitUntil([&] { return engineValue() != 0; }, std::chrono::milliseconds(300)));
+		CHECK(window.historyPosition() - position <= 1);
+		window.app.shell().step(std::chrono::milliseconds(0));
+		CHECK(test::controlValue(window.app, std::nullopt, field) == 0.0);
+	};
+	dragBack(".inspector valuefield[control=modifiers-transpose]",
+		[&] { return window.channel(keys).at("modifiers").at("transpose").get<int64_t>(); });
+	dragBack(
+		"#info-line valuefield[field=transpose]", [&] { return window.part(part).at("transpose").get<int64_t>(); });
 }

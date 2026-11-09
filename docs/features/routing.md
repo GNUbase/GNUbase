@@ -21,15 +21,18 @@ in [busses.md](busses.md) and [folder-tracks.md](folder-tracks.md), the fader in
 - **Group Track and Effect Track to Selected Tracks** (pp. 546, 554). `track.add` with `tracks` for a group track
   routes those tracks' outputs to the new group channel; for an effect track, each of them sends to the new effect
   channel with the send given by `send` (Add Effect Track to Send, p. 553), or else its first send without a
-  destination, switched on, after the fader, at the user setting `audio.defaultSendLevel`. All in one undo step, and
-  refused for tracks without audio channels and routing that would close a loop.
+  destination, switched on, after the fader, at the user setting `audio.defaultSendLevel`. All in one undo step.
+  Tracks that can't be routed are left out, as the reference routes those that can: tracks without an audio channel
+  (MIDI, marker and ruler tracks, VCA tracks, folders without a group channel) and, without `send`, tracks whose eight
+  sends all have a destination. A selected folder stands for its group channel, not for the tracks inside it, which
+  are routed only when they are selected themselves. Routing that would close a loop refuses the whole command.
 - **The project's Group and FX folders** (pp. 150-152). `track.add` `projectFolder` puts a group or effect track into
   the first folder at the top level named Group or FX, which it adds at the end of the project if there is none, in
   the same undo step. The folder is found by its name, so after it is renamed the next such track gets a new one.
 - **Default send level** (p. 552). The user setting `audio.defaultSendLevel` (0 dB) is the level of the sends that
-  `track.add` makes, and the level Ctrl-click gives a send's knob in the mixer.
-- **Mute Pre-Send when Mute** (p. 1623). With the user setting `audio.mutePreSends` (off by default), a channel's mute
-  button also mutes its pre-fader sends; mute automation still leaves them playing.
+  `track.add` makes, up to the project's maximum volume, and the level Ctrl-click gives a send's knob in the mixer.
+- **Mute Pre-Send when Mute** (p. 1623). With the user setting `audio.mutePreSends` (off by default), muting a
+  channel also mutes its pre-fader sends, with its mute button or its mute automation.
 - **Feedback prevention.** Neither an output nor a send may lead back to its channel through other outputs and
   sends, on or off (`routingLoops` in `document.h`): `channel.set` refuses them with "would make a loop", so the
   processing graph never has a cycle, however groups nest and effect channels send on to others. Projects read from
@@ -57,7 +60,10 @@ in [busses.md](busses.md) and [folder-tracks.md](folder-tracks.md), the fader in
   from the gain of the last block over one block, so switching a send on or changing its level doesn't click; the
   channel's state keeps the gain across graph rebuilds. A pre-fader send doesn't follow the mute button, as with the
   reference's default (Mute Pre-Send when Mute off), unless `audio.mutePreSends` is on, but it is silent while its
-  channel isn't heard because another is soloed or its track is disabled.
+  channel isn't heard because another is soloed or its track is disabled. With the setting, the mute button sets the
+  send's gain to 0 when the graph is built, and the setting changing rebuilds it; mute automation, which plays on the
+  audio thread, mutes the tap itself: the fader scales it by its mute, frame by frame, so the pre-fader sends glide
+  out and in with the channel from the automation's sample on.
 - **Wider sends.** A send in a wider format than its destination is converted while the destination sums its inputs,
   like an output ([channel-formats.md](channel-formats.md)): a stereo channel's send into a mono effect channel merges
   L and R at -3.01 dB each.
@@ -69,7 +75,9 @@ The mixer's strips have a Sends section (`.mixer-sends`, docking set `channel`, 
 up Window Layout), with a row per send: its on switch, its destination (a drop-down list of No Destination and the
 other group and effect channels), Pre for a pre-fader send and a knob for its level, whose drag is one undo step
 (#716). They send `channel.set` and show the engine's values after every undo step, as the strip's other sections do
-([channel-strip.md](channel-strip.md)). Ctrl-click on a send's knob sets the default send level. The destination list
+([channel-strip.md](channel-strip.md)). Ctrl-click on a send's knob sets the default send level. The knob goes from
+-60 dB, or the default send level if that is lower, to the project's maximum volume, as the fader does, so Ctrl-click
+gives a send the level `track.add` gives it. The destination list
 ends with Add Effect Track to Send (p. 554), which opens the add track dialog's effect page for that send, as in the
 channel settings window ([channel-settings.md](channel-settings.md)). Output lists in the inspector and the add track
 dialog offer effect channels too.
@@ -92,8 +100,14 @@ context menu, where the reference has it.
   groups and effect channels never close a loop; removing a destination and duplicating a folder; the send nodes of
   `graph.get`; rendered through the dummy device, post-fader sends follow the fader, pre-fader ones don't and play
   while the channel is muted, sends glide over a block when they come on or change level, and solo keeps the effect
-  channels a soloed track sends to; outputs into effect channels; Mute Pre-Send when Mute; a stereo send into a mono
-  effect channel; `track.add`'s `tracks` and `send` for group and effect tracks, and `projectFolder`.
-- `tests/dawproject_tests.cpp` saves and loads sends, and reads them from `project.xml` alone.
+  channels a soloed track sends to; outputs into effect channels; Mute Pre-Send when Mute with the mute button, with
+  mute automation at two block sizes, and switched while the channel is muted; a stereo send into a mono effect
+  channel; `track.add`'s `tracks` and `send` for group and effect tracks, the tracks it leaves out, its undo, and
+  `projectFolder`.
+- `tests/dawproject_tests.cpp` saves and loads sends, and reads them and outputs into effect channels from
+  `project.xml` alone.
 - `tests/mixerwindow_tests.cpp`: the Sends section picks a destination, switches a send on and before the fader,
-  turns its level with the wheel and shows another client's change.
+  turns its level with the wheel, gives it the default send level with Ctrl-click, above +6 dB and below -60 dB too,
+  and shows another client's change.
+- `tests/addtrack_tests.cpp`: Group and Effect Track to Selected Tracks through the dialog, and Group Track to
+  Selected Tracks with a Count of 2 and Keep Dialog Open.

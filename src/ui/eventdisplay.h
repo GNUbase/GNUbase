@@ -69,6 +69,7 @@ namespace gnubase::ui
 		Zoom,
 		Line,
 		Play,
+		TimeWarp, // #159
 	};
 	// The tool's name, as the display's attribute tool and the toolbar's buttons name it: objectSelection, split, ...
 	const char* toolName(Tool tool);
@@ -91,6 +92,15 @@ namespace gnubase::ui
 	{
 		Play,
 		Scrub,
+	};
+
+	// The time warp tool's modes (reference manual p. 1465): the grid with musical tracks keeping their time, the
+	// grid with them following, or warp markers on audio events.
+	enum class WarpMode : uint8_t
+	{
+		Grid,
+		GridFollow,
+		Free,
 	};
 
 	// A selection range (reference manual p. 285): from start to end in project samples, on these tracks (by id, in
@@ -217,6 +227,10 @@ namespace gnubase::ui
 		// whose buttons #snap-type and #grid-type show the choice, and a toggle button #snap-zero-crossing.
 		const engine::SnapSettings& snap() const { return m_snap; }
 
+		// The default tool modifiers (reference manual p. 1601) of the tools that GNUbase has, by action, which the
+		// user setting ui.toolModifiers overrides one by one.
+		static const std::map<std::string, std::string>& defaultToolModifiers();
+
 		// The tools (#86, eventtools.cpp, docs/features/tools.md), also in the root's attribute tool. The object
 		// selection tool edits as above; the others send the same event.* commands (split, glue, erase, mute), zoom,
 		// draw MIDI parts, audition or scrub the pressed audio track, or select a range. With the selection tools
@@ -224,14 +238,16 @@ namespace gnubase::ui
 		// setting ui.toolModifiers. The document's toolbar may have a button per tool, button[tool=<name>], whose
 		// attribute tool-menu names a menu of its modes that a second click opens (#object-selection-menu with the
 		// sizing modes, #line-menu with the line modes, #play-menu with the play modes), and a toggle button
-		// #combine-selection-tools. Menu items with a tool attribute choose it too: the toolbox #toolbox and the
-		// context menu #event-display-menu, which a right click in the event lanes opens, the toolbox with the user
-		// setting ui.toolboxOnRightClick and the context menu with a modifier key, or the other way round while it is
-		// off. A tool chosen with its command (actions()) shows its name in the notification #tool-notification,
-		// unless the user setting ui.toolSwitchNotification is off. Over the lanes, the attribute pointer of the
-		// event area names the mouse pointer for the style sheets: the tool's name, the range selection tool's in a
-		// lane's upper half with the selection tools combined, or resize at an event's edge that a drag resizes; with
-		// the modifier keys held, what a press with them does, such as split with the tool modifier Split Event.
+		// #combine-selection-tools. Menu items with a tool attribute choose it too, and those of #time-warp-menu, the
+		// context menu's time warp modes, choose the time warp tool and the mode:
+		// the toolbox #toolbox and the context menu #event-display-menu, which a right click in the event lanes opens,
+		// the toolbox with the user setting ui.toolboxOnRightClick and the context menu with a modifier key, or the
+		// other way round while it is off. A tool chosen with its command (actions()) shows its name in the
+		// notification #tool-notification, unless the user setting ui.toolSwitchNotification is off. Over the lanes,
+		// the attribute pointer of the event area names the mouse pointer for the style sheets: the tool's name, the
+		// range selection tool's in a lane's upper half with the selection tools combined, or resize at an event's edge
+		// that a drag resizes; with the modifier keys held, what a press with them does, such as split with the tool
+		// modifier Split Event.
 		void setTool(Tool tool);
 		Tool tool() const { return m_tool; }
 		void setCombineSelectionTools(bool on);
@@ -240,6 +256,8 @@ namespace gnubase::ui
 		LineMode lineMode() const { return m_lineMode; }
 		void setPlayMode(PlayMode mode);
 		PlayMode playMode() const { return m_playMode; }
+		void setWarpMode(WarpMode mode);
+		WarpMode warpMode() const { return m_warpMode; }
 		// The selection range, also in the root's attributes range ("start end") and range-tracks (ids); none
 		// without the range selection tool. Choosing another tool selects the events in the range instead.
 		const std::optional<RangeSelection>& range() const { return m_range; }
@@ -271,6 +289,8 @@ namespace gnubase::ui
 		// audio.fadeOutFromRange and audio.adjustFadesToRange on the selection range, audio.crossfade (crossfades the
 		// selected audio events, or opens the crossfade editor for a crossfade they have), audio.removeFadeIn,
 		// audio.removeFadeOut, audio.removeFades and audio.fadeEditor (the fade dialog) on the selected audio events.
+		// audio.detectSilence, audio.spectrumAnalyzer and audio.statistics (#147, docs/features/audio-functions.md)
+		// open the Detect Silence dialog, the Spectrum Analyzer and the Statistics window for them.
 		// audio.removeVolumeCurve (#139, docs/features/volume-curves.md) resets the volume curves in the selection
 		// range, else removes the selected audio events'.
 		// With the range selection tool,
@@ -349,6 +369,7 @@ namespace gnubase::ui
 			Volume,        // its event volume handle
 			VolumePoint,   // a point of its volume curve, with the draw tool
 			Automation,    // on an automation track (automationtracks.cpp)
+			TimeWarp,      // the time warp tool's, on release (eventtimewarp.cpp)
 		};
 
 		// An automation lane of the project as the display shows it: points in seconds, values from 0 (bottom) to 1.
@@ -392,6 +413,9 @@ namespace gnubase::ui
 			double end = 0.0;
 			bool mute = false;
 			std::optional<double> snapPoint; // audio events, inside them, in seconds
+			// An audio event's entry on its track's lane, which shows it only where none in front covers it (#99): if
+			// it is muted, m_mutedPieces has what shows.
+			bool onTrackLane = false;
 		};
 
 		void ProcessEvent(Rml::Event& event) override;
@@ -409,6 +433,8 @@ namespace gnubase::ui
 		double dpFrom(Rml::Element& element, float x) const;
 
 		void requestProject();
+		// Shows m_project, with event.previewResize's answer over it while an edge is dragged.
+		void showProject();
 		void loadProject(const engine::Json& project);
 		void setFolderMode(const std::string& mode); // ui.folderData
 		void setLanes();
@@ -444,6 +470,7 @@ namespace gnubase::ui
 		void showPresets();
 		void showAutoScroll();
 		void showSnap();
+		void showRootKey(const engine::Json& project);
 		void setSnap(const engine::Json& settings); // sends snap.set; one with a format counts in m_formatsSent
 
 		// Importing files (fileimport.cpp).
@@ -454,6 +481,7 @@ namespace gnubase::ui
 			int64_t sample = 0;
 			bool clipsOnly = false;
 			bool selected = false; // track is the selected one, which takes the first file, not all of them
+			int lane = 0;          // the lane of track the files go on
 		};
 		void startImport(const std::vector<std::string>& files, Import import);
 		void dropFiles(Rml::Event& event);
@@ -467,7 +495,7 @@ namespace gnubase::ui
 		void areaDown(Rml::Event& event, double x, double y);
 		// A right click that opens the context menu selects the event there, unless it's selected already.
 		void areaRightDown(Rml::Event& event, double x, double y);
-		void areaMove(double dx, double dy, bool constrained); // constrained: restricts() says so
+		void areaMove(Rml::Event& event, double dx, double dy);
 		// Whether the keys are exactly the tool modifier of Copy or Shared Copy.
 		bool copyKeys(const std::string& keys) const;
 		// Whether the keys held restrict a drag of events: Ctrl (Cmd), unless they are a copy's tool modifier.
@@ -478,6 +506,17 @@ namespace gnubase::ui
 		// How many lanes a drag dy dp down moves the selection: none unless every selected event lands on a lane of
 		// a track of its type.
 		int laneShift(double dy) const;
+		// Resizing the selection (#732): event.resize's parameters for a drag of the pressed event's edge dx dp across;
+		// the preview of them that the display shows while the edge is dragged; the release, which sends them; and
+		// Escape, which cancels the drag if it is one of edges.
+		engine::Json resizeParameters(double dx, Drag drag) const;
+		void previewResize(engine::Json parameters);
+		void askResizePreview();
+		void endResize(); // drops the preview and the answers still on their way
+		void resizeUp(engine::Json parameters);
+		bool cancelResize();
+		void resizeProjectChanged(); // a project.get answer came in
+		void resizeKeysChanged();    // the modifier keys held changed
 		// Sends the move or copy of the selection: the shift's parameters (event.move's delta or ticks), lanes down.
 		void moveSelection(engine::Json shift, int lanes, bool copy, bool shared);
 		void doubleClick(Rml::Event& event);
@@ -516,6 +555,7 @@ namespace gnubase::ui
 			engine::Fade out;
 			engine::Crossfade crossfade;
 			int64_t offset = 0;
+			uint64_t clip = 0;
 			double volume = 0.0; // dB
 			std::vector<engine::VolumePoint> curve;
 		};
@@ -533,6 +573,10 @@ namespace gnubase::ui
 		bool openCrossfadeAt(const Shown& shown, double seconds); // whether there is one
 		// The selected audio events, by id.
 		std::vector<uint64_t> selectedAudio() const;
+		// The selected MIDI parts, by id.
+		std::vector<uint64_t> selectedMidi() const;
+		// A click on one of the Tempo Detection dialog's buttons: tempo.detect with what they say.
+		void detectTempo(const std::string& button);
 		// Opens a dialog of the display's document folder whose Lua reads the attributes when it shows.
 		void openFadeDialog(const char* file, const std::vector<std::pair<std::string, std::string>>& attributes);
 
@@ -552,6 +596,12 @@ namespace gnubase::ui
 		std::optional<size_t> curvePointAt(const Shown& shown, double x, double y) const;
 		bool eraseCurvePoint(const Shown& shown, double x, double y);     // the erase tool, on a point
 		void showVolume(FadeLines::Lane& lane, const Shown& shown) const; // its line and volume handle
+
+		// The time warp tool, Process Tempo, Process Bars, Set Definition from Tempo and copying warp markers
+		// (eventtimewarp.cpp, #159).
+		void addTimeWarpActions();
+		bool timeWarpDown();
+		void timeWarpUp(double x);
 
 		// The tools (eventtools.cpp).
 		void addToolActions();
@@ -596,6 +646,7 @@ namespace gnubase::ui
 		void reload();              // the lanes again, from the project as it was last read
 		void showAutomationLanes(); // the curves, after the lanes changed
 		void placeAutomation();     // where they are, after the view changed
+		void placePartMarks();      // the marks of parts excluded from global transpose, after the view changed
 		// The automation lane of a display lane, or null for a track's own lane.
 		const AutomationView* automationAt(size_t lane) const;
 		double automationValue(size_t lane, double y) const; // y dp in the event lanes, as a display value
@@ -668,18 +719,34 @@ namespace gnubase::ui
 		std::vector<std::string> m_laneTypes; // and its type
 		std::vector<bool> m_laneLinear;       // and whether its time base is linear
 		std::vector<Shown> m_events;
+		std::vector<std::pair<size_t, TimeSpan>> m_mutedPieces; // by lane: what shows of covered muted events
 		std::vector<uint64_t> m_selection;
-		EventLanes* m_mutedLanes = nullptr;     // muted events over the others
-		EventLanes* m_selectedLanes = nullptr;  // selected events over those
-		EventLanes* m_folderLanes = nullptr;    // folders' data blocks, under the events
-		FadeLines* m_fadeLines = nullptr;       // over the waveforms
+		EventLanes* m_mutedLanes = nullptr;    // muted events over the others
+		EventLanes* m_selectedLanes = nullptr; // selected events over those
+		EventLanes* m_folderLanes = nullptr;   // folders' data blocks, under the events
+		FadeLines* m_fadeLines = nullptr;      // over the waveforms
+		// A .part-mark.independent (attribute part, its id) at the upper right corner of each MIDI part shown that is
+		// excluded from global transpose (#168, reference manual p. 421).
+		Rml::Element* m_partMarks = nullptr;
+		std::set<uint64_t> m_independent;
+		std::string m_partMarksRml;             // what m_partMarks holds
 		std::map<uint64_t, AudioFades> m_fades; // by audio event
 		std::vector<EventLanes::Lane> m_folderData;
 		std::string m_folderMode = "always"; // ui.folderData
 		int64_t m_left = 0;                  // the locators, in samples
 		int64_t m_right = 0;
 		bool m_sizingMovesContents = false;
-		uint64_t m_dragEvent = 0; // pressed on
+		double m_resizeFrom = 0.0;      // the pressed event's edge when a drag of edges started, in seconds
+		engine::Json m_resizeWanted;    // event.previewResize's parameters for where the edge is now, null for none
+		engine::Json m_resizeAsked;     // those of the last one sent
+		bool m_resizeAsking = false;    // its answer is on its way
+		engine::Json m_resizePreview;   // the answer shown, null for none
+		double m_resizeDx = 0.0;        // dp the edge was dragged
+		engine::Json m_releasedPreview; // the last release's, until the project shows its resize
+		uint64_t m_resizeReleases = 0;  // counts releases, so that only the last one's answer counts
+		bool m_resizeLanded = false;    // the last release's event.resize is done; the next project shows it
+		uint64_t m_resizeGesture = 0;   // counts drags of edges, so that late answers are dropped
+		uint64_t m_dragEvent = 0;       // pressed on
 		bool m_dragMoved = false;
 		double m_dragDy = 0.0;             // dp, dragging the event volume or a curve point
 		std::optional<size_t> m_dragPoint; // the curve point dragged, none for a new one
@@ -726,6 +793,8 @@ namespace gnubase::ui
 		Tool m_pressTool = Tool::ObjectSelection; // the tool of the press now, upper or lower half when combined
 		bool m_combine = false;
 		LineMode m_lineMode = LineMode::Line;
+		WarpMode m_warpMode = WarpMode::Grid;
+		uint64_t m_warpSource = 0; // the audio event Copy Warp Markers from Selected Event copied from
 		PlayMode m_playMode = PlayMode::Play;
 		uint64_t m_auditioned = 0; // the track the play tool auditions or scrubs while pressed
 		std::optional<RangeSelection> m_range;
@@ -741,6 +810,7 @@ namespace gnubase::ui
 		Rml::Element* m_combineButton = nullptr;
 		Rml::Element* m_objectMenu = nullptr;
 		Rml::Element* m_lineMenu = nullptr;
+		Rml::Element* m_timeWarpMenu = nullptr;
 		Rml::Element* m_playMenu = nullptr;
 		Rml::Element* m_toolbox = nullptr;
 		Rml::Element* m_contextMenu = nullptr;
@@ -763,8 +833,19 @@ namespace gnubase::ui
 		Rml::Element* m_gridTypeButton = nullptr;
 		Rml::Element* m_gridTypeMenu = nullptr;
 		Rml::Element* m_zeroCrossingButton = nullptr;
+		Rml::Element* m_rootKeyButton = nullptr; // the Project Root Key (#168)
+		Rml::Element* m_rootKeyMenu = nullptr;
 		Rml::ObserverPtr<Rml::Element> m_dialog; // the dialog document open now
-		engine::Json m_organized;                // the presets that the organize dialog lists, by index
+		// What the Tempo Detection dialog analyzes, and how its buttons changed the result.
+		struct TempoDetection
+		{
+			uint64_t event = 0; // an audio event or a MIDI part
+			double factor = 1.0;
+			bool offbeat = false;
+			bool smooth = false;
+		};
+		TempoDetection m_detection;
+		engine::Json m_organized; // the presets that the organize dialog lists, by index
 		Import m_import;
 		bool m_importCopy = true; // the import options chosen last
 		bool m_importConvert = true;

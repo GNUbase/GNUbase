@@ -1,12 +1,13 @@
 # Lua in the UI
 
 The UI has a Lua runtime of its own (#208): GNUbase's documents script themselves with it, and UI tests written in Lua
-drive the UI with it. It is the same `scripting::Runtime` as headless scripts use ([lua.md](../lua.md)), so the UI's
+drive the UI with it. It is the same `scripting::Runtime` as headless scripts use ([Lua API reference](../api-reference.md)), so the UI's
 Lua reaches the engine only through the engine API, like every other client.
 
 - **Where it lives.** `app::AppUi` (`src/app/appui.h`) makes a trusted runtime (every standard library except
   `os.exit`) before RmlUi starts and closes it after RmlUi shut down, as RmlUi's Lua plugin needs. It runs on the UI
-  thread; `print` writes to the app's standard output.
+  thread; `print` writes to the app's standard output and the script console ([scripts.md](scripts.md)), which also
+  runs the user's scripts on this runtime.
 - **RmlUi's Lua plugin.** RmlUi's Lua bindings, built on GNUbase's Lua (compiled as C++, `RMLUI_LUA_BINDINGS_LIBRARY`
   `lua_as_cxx` in `CMakeLists.txt`), run on that runtime: a document's `<script>` runs when the document loads, and
   event attributes such as `onclick="..."` are Lua with `event`, `element` and `document`. Lua reads and changes the
@@ -30,7 +31,8 @@ Lua reaches the engine only through the engine API, like every other client.
   UI command, and anything but `command` and `parameters` in its table raise a Lua error at the call, in users'
   scripts too, and nothing runs. The app also adds `gnubase.ui.formatTimecode` and
   `gnubase.ui.parseTimecode`, which the project setup dialog converts timecodes with
-  ([project-setup.md](project-setup.md)). On the UI thread the functions run at once;
+  ([project-setup.md](project-setup.md)), and `gnubase.ui.parseTime`, which the add track dialog reads a ruler track's
+  time offset with ([ruler-tracks.md](ruler-tracks.md)). On the UI thread the functions run at once;
   `gnubase.ui.wait` steps the shell between its checks. A step can't run inside a step (`Shell::step` throws), so
   waiting fails inside the UI's own event handlers, instead of handling events within one.
 - **Lua UI tests.** Every `tests/lua/ui/*.lua` is a ctest test with the labels `ui` and `lua`. It runs in

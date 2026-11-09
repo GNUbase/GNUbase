@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <map>
+#include <mutex>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -421,6 +422,80 @@ TEST_CASE("event.resize moves the start or the end, revealing content or moving 
 	CHECK(midi.at("notes")[0].at("position") == g_quarter);
 }
 
+TEST_CASE("event.previewResize tells what event.resize would make of the events and changes nothing", "[unit]")
+{
+	Fixture f;
+	const int64_t audioTrack = f.track("audio", "linear");
+	const int64_t event = f.audioEvent(audioTrack);
+	const int64_t part = f.part(f.track("midi"));
+	const int64_t inPart = f.audioEvent(audioTrack);
+	f.call("event.move", {{"events", {inPart}}, {"delta", 4 * g_second}}); // from 5 to 7 seconds
+	const int64_t audioPart = f.call("event.toPart", {{"events", {inPart}}}).at("events").at(0).get<int64_t>();
+	std::mutex mutex;
+	std::vector<std::string> announced;
+	const gnubase::engine::Listener listener(f.engine,
+		[&](const gnubase::engine::Event& change)
+		{
+			const std::scoped_lock lock(mutex);
+			announced.push_back(change.name);
+		});
+
+	// What event.resize makes of each event, as project.get lists it; the preview first, then the resize itself.
+	const auto agrees = [&f](const Json& resize)
+	{
+		const Json preview = f.call("event.previewResize", resize);
+		f.call("event.resize", resize);
+		const Json now = f.call("project.get");
+		size_t count = 0;
+		for (const char* kind : {"audioEvents", "audioParts", "midiParts"})
+			for (const Json& item : preview.at(kind))
+			{
+				++count;
+				const auto found = std::find_if(now.at(kind).begin(), now.at(kind).end(),
+					[&item](const Json& other) { return other.at("id") == item.at("id"); });
+				REQUIRE(found != now.at(kind).end());
+				CHECK(*found == item);
+			}
+		f.call("history.undo");
+		return count;
+	};
+	// The end past the clip's stops at it, the start before it at its beginning, as event.resize does.
+	CHECK(agrees({{"events", {event}}, {"edge", "end"}, {"delta", 100 * g_second}}) == 1);
+	CHECK(agrees({{"events", {event}}, {"edge", "start"}, {"delta", -100 * g_second}}) == 1);
+	CHECK(
+		agrees({{"events", {event, part}}, {"edge", "start"}, {"delta", g_second / 2}, {"mode", "moveContents"}}) == 2);
+	CHECK(agrees({{"events", {part}}, {"edge", "start"}, {"ticks", g_quarter}}) == 1);
+	// An audio part comes with its events.
+	CHECK(agrees({{"events", {audioPart}}, {"edge", "end"}, {"delta", -g_second}}) == 2);
+
+	// The preview itself changed nothing, announced nothing and left no undo step.
+	const Json project = f.call("project.get");
+	const Json history = f.call("history.get");
+	{
+		const std::scoped_lock lock(mutex);
+		announced.clear();
+	}
+	const Json preview =
+		f.call("event.previewResize", {{"events", {event}}, {"edge", "end"}, {"delta", -g_second / 2}});
+	REQUIRE(preview.at("audioEvents").size() == 1);
+	CHECK(preview.at("audioEvents")[0].at("length") == (2 * g_second) - (g_second / 2));
+	CHECK(preview.at("audioParts").empty());
+	CHECK(preview.at("midiParts").empty());
+	CHECK(f.call("project.get") == project);
+	CHECK(f.call("history.get").at("position") == history.at("position"));
+	{
+		const std::scoped_lock lock(mutex);
+		CHECK(announced.empty());
+	}
+
+	// It fails where event.resize does: unknown and locked events.
+	CHECK_THAT(f.fails("event.previewResize", {{"events", {12345}}, {"edge", "end"}, {"delta", 1}}),
+		ContainsSubstring("12345"));
+	f.call("event.set", {{"events", {part}}, {"lock", true}});
+	CHECK_THAT(f.fails("event.previewResize", {{"events", {part}}, {"edge", "end"}, {"delta", 1}}),
+		ContainsSubstring("locked"));
+}
+
 TEST_CASE("event.split splits events and parts at positions", "[unit]")
 {
 	Fixture f;
@@ -727,9 +802,11 @@ TEST_CASE("range.delete removes what is in the range, and with time closes the g
 	CHECK(f.spans(f.audioTrack) == Spans{{g_second, g_start}});
 	CHECK(f.spans(f.midiTrack) == Spans{{2 * g_second, g_start}, {g_end, 4 * g_second}});
 	// The automation outside the range keeps its curve: the value at the start holds until the end, where the curve
-	// goes on from its value there. The modulation has no point in the range: nothing to delete there.
+	// goes on from its value there. The modulation has no point in the range, but its ramp goes across it, which is
+	// automation too (#724): its value holds there as well.
 	f.checkPoints(f.pan, {{0, -1.0}, {g_start, 0.25}, {g_end, 0.75}, {4 * g_second, 1.0}});
-	f.checkPoints(f.modulation, {{0, 0.0}, {2 * g_bar, 1.0}});
+	f.checkPoints(
+		f.modulation, {{0, 0.0}, {g_bar + g_quarter, 0.625}, {g_bar + (3 * g_quarter), 0.875}, {2 * g_bar, 1.0}});
 	f.call("history.undo");
 	CHECK(f.spans(f.midiTrack) == Spans{{2 * g_second, 4 * g_second}});
 
@@ -906,6 +983,63 @@ TEST_CASE(
 		closed["time"] = true;
 		f.call("range.delete", closed);
 		CHECK(points() == GapPoints{{0, -1.0, false}, {500, -0.5, false}, {500, 0.5, false}, {1000, 1.0, false}});
+	}
+	SECTION("a range on a segment of the curve, without points in it")
+	{
+		// A ramp from -1 at 1000 to 1 at 3000 with a terminator at 4000 and a gap to the last point at 5000. A range in
+		// the ramp is automation data too (#724): it gets its edge points like a range with points in it.
+		f.call("automationPoint.add",
+			{{"lane", lane},
+				{"points",
+					{{{"position", 1000}, {"value", -1.0}}, {{"position", 3000}, {"value", 1.0}},
+						{{"position", 4000}, {"value", 1.0}, {"terminator", true}},
+						{{"position", 5000}, {"value", 0.0}}}}});
+		const GapPoints before = points();
+		const GapPoints held{{1000, -1.0, false}, {1500, -0.5, false}, {2500, 0.5, false}, {3000, 1.0, false},
+			{4000, 1.0, true}, {5000, 0.0, false}};
+		// With initial values the value at the range's start holds up to its end, where the ramp goes on.
+		f.call("range.delete", range(1500, 2500));
+		CHECK(points() == held);
+		CHECK(f.call("automationLane.list").at("lanes")[0].at("points")[1].at("shape") == "step");
+		f.call("history.undo");
+		CHECK(points() == before);
+		// Up to the point at the ramp's end: the value holds up to it.
+		f.call("range.delete", range(1500, 3000));
+		CHECK(points() ==
+			GapPoints{
+				{1000, -1.0, false}, {1500, -0.5, false}, {3000, 1.0, false}, {4000, 1.0, true}, {5000, 0.0, false}});
+		f.call("history.undo");
+		// range.cut takes the piece of the ramp and leaves what range.delete leaves.
+		CHECK(f.call("range.cut", range(1500, 2500)).at("lanes") == 1);
+		CHECK(points() == held);
+		f.call("history.undo");
+		// A range in a gap, or before the first or after the last point, has none: nothing changes.
+		const std::vector<std::pair<int64_t, int64_t>> empty{{200, 800}, {4200, 4800}, {5500, 6000}};
+		for (const auto& [start, end] : empty)
+		{
+			const size_t steps = f.call("history.get").at("steps").size();
+			f.call("range.delete", range(start, end));
+			CHECK(points() == before);
+			CHECK(f.call("history.get").at("steps").size() == steps);
+		}
+
+		// With virgin territory it becomes a gap: the ramp ends at a terminator at its start and goes on at its end.
+		f.call("automation.set", {{"virginTerritory", true}});
+		f.call("range.delete", range(1500, 2500));
+		CHECK(points() ==
+			GapPoints{{1000, -1.0, false}, {1500, -0.5, true}, {2500, 0.5, false}, {3000, 1.0, false},
+				{4000, 1.0, true}, {5000, 0.0, false}});
+		f.call("history.undo");
+		f.call("range.delete", range(1500, 3000));
+		CHECK(points() ==
+			GapPoints{
+				{1000, -1.0, false}, {1500, -0.5, true}, {3000, 1.0, false}, {4000, 1.0, true}, {5000, 0.0, false}});
+		f.call("history.undo");
+		for (const auto& [start, end] : empty)
+		{
+			f.call("range.delete", range(start, end));
+			CHECK(points() == before);
+		}
 	}
 }
 

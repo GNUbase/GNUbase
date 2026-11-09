@@ -165,7 +165,9 @@ namespace
 		run(client, "marker.add", {{"track", linear}, {"position", 44100}, {"name", "Take"}}); // 2 beats
 		run(client, "marker.activateTrack", {{"track", markers}});
 		// A ruler track, which only GNUbase's entry keeps.
-		run(client, "track.add", {{"type", "ruler"}, {"timeFormat", "timecode"}});
+		run(client, "track.add",
+			{{"type", "ruler"}, {"timeFormat", "timecode"}, {"timeOffset", 2 * g_ticksPerQuarter},
+				{"timeOffsetOn", true}});
 		// Channel volume and pan, and automation of each kind.
 		run(client, "channel.set", {{"channel", vocals.at("channel").at("id")}, {"volume", -4.5}});
 		run(client, "channel.set", {{"channel", piano.at("channel").at("id")}, {"volume", 3.0}, {"pan", -0.25}});
@@ -726,6 +728,153 @@ TEST_CASE("markers from before marker tracks load onto a new marker track", "[in
 	CHECK(next == highestId(after) + 1);
 }
 
+TEST_CASE("VCA faders that would control themselves are left out when a project loads", "[integration]")
+{
+	const test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	const auto add = [&client](const char* type)
+	{ return idOf(run(client, "track.add", {{"type", type}}), "channel"); };
+	const ObjectId first = add("vca");
+	const ObjectId second = add("vca");
+	const ObjectId third = add("vca");
+	const ObjectId a = add("audio");
+	const ObjectId b = add("audio");
+	const ObjectId c = add("audio");
+	run(client, "linkGroup.add", {{"channels", {a}}, {"vca", first}});
+	run(client, "linkGroup.add", {{"channels", {first}}, {"vca", second}});
+	run(client, "linkGroup.add", {{"channels", {b}}, {"vca", third}});
+	const std::string file = utf8(dir.path() / "song.dawproject");
+	run(client, "project.save", {{"path", file}});
+
+	// A hand-edited entry: the first VCA fader controls the second through the first group, which controls it back,
+	// and the third one is in the group it controls.
+	std::map<std::string, std::string> entries = readZip(file);
+	Json extension = Json::parse(entries.at("gnubase.json"));
+	Json& groups = extension.at("project").at("linkGroups");
+	REQUIRE(groups.size() == 3);
+	groups[0]["channels"] = {a, second};
+	groups[2]["channels"] = {b, third};
+	entries["gnubase.json"] = extension.dump();
+	writeZip(file, entries);
+
+	run(client, "project.new");
+	run(client, "project.load", {{"path", file}});
+	const Json loaded = run(client, "project.get").at("linkGroups");
+	REQUIRE(loaded.size() == 3);
+	CHECK(loaded[0].at("channels") == Json({a, second}));
+	CHECK(loaded[0].at("vca") == 0);       // the first group in the loop loses its VCA fader, which ends the loop
+	CHECK(loaded[0].at("volume") == true); // and links the volume again
+	CHECK(loaded[1].at("vca") == second);
+	CHECK(loaded[2].at("channels") == Json({b, third}));
+	CHECK(loaded[2].at("vca") == 0);
+	CHECK(loaded[2].at("volume") == true);
+	// Link groups can be changed again.
+	run(client, "linkGroup.add", {{"channels", {c}}});
+	run(client, "linkGroup.set", {{"group", loaded[2].at("id")}, {"channels", {b}}, {"vca", third}});
+}
+
+TEST_CASE(
+	"link groups without channels, which older builds left behind, are left out when a project loads", "[integration]")
+{
+	const test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	const ObjectId vca = idOf(run(client, "track.add", {{"type", "vca"}}), "channel");
+	const ObjectId a = idOf(run(client, "track.add", {{"type", "audio"}}), "channel");
+	const ObjectId b = idOf(run(client, "track.add", {{"type", "audio"}}), "channel");
+	const ObjectId c = idOf(run(client, "track.add", {{"type", "audio"}}), "channel");
+	run(client, "linkGroup.add", {{"channels", {a}}, {"vca", vca}});
+	run(client, "linkGroup.add", {{"channels", {c}}});
+	const ObjectId kept = idOf(run(client, "linkGroup.add", {{"channels", {b}}}), "group");
+	const std::string file = utf8(dir.path() / "song.dawproject");
+	run(client, "project.save", {{"path", file}});
+
+	// The first two groups lost their channels, the first one still with its VCA fader, which the third one has too.
+	std::map<std::string, std::string> entries = readZip(file);
+	Json extension = Json::parse(entries.at("gnubase.json"));
+	Json& groups = extension.at("project").at("linkGroups");
+	REQUIRE(groups.size() == 3);
+	groups[0]["channels"] = Json::array();
+	groups[1]["channels"] = {999999};
+	groups[2]["vca"] = vca;
+	groups[2]["volume"] = false;
+	entries["gnubase.json"] = extension.dump();
+	writeZip(file, entries);
+
+	run(client, "project.new");
+	run(client, "project.load", {{"path", file}});
+	const Json loaded = run(client, "project.get").at("linkGroups");
+	REQUIRE(loaded.size() == 1);
+	CHECK(loaded[0].at("id") == kept);
+	CHECK(loaded[0].at("vca") == vca); // the empty group before it doesn't take it
+	CHECK(loaded[0].at("volume") == false);
+	run(client, "linkGroup.add", {{"channels", {a, c}}});
+}
+
+TEST_CASE("a VCA channel from another application gets no pan, sends or routing", "[integration]")
+{
+	const char* const xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<Project version="1.0">
+  <Application name="Test" version="1"/>
+  <Transport><Tempo unit="bpm" value="120" id="tempo"/></Transport>
+  <Structure>
+    <Track id="vca" name="Strings" contentType="automation">
+      <Channel id="vcaChannel" role="vca" audioChannels="2" destination="fxChannel" solo="true">
+        <Mute id="vcaMute" value="true"/>
+        <Volume id="vcaVolume" unit="linear" value="0.5"/>
+        <Pan id="vcaPan" unit="normalized" value="0.25"/>
+        <Sends>
+          <Send id="vcaSend" destination="fxChannel" type="post"><Volume id="vcaSendLevel" unit="linear" value="1"/></Send>
+        </Sends>
+      </Channel>
+    </Track>
+    <Track id="fx" name="Reverb" contentType="audio">
+      <Channel id="fxChannel" role="effect" audioChannels="2" destination="master"/>
+    </Track>
+    <Track id="main" name="Main" contentType="audio">
+      <Channel id="master" role="master" audioChannels="2"/>
+    </Track>
+  </Structure>
+  <Arrangement id="arrangement">
+    <Lanes timeUnit="beats" id="lanes">
+      <Lanes track="vca" id="vcaLanes">
+        <Points id="vcaVolumePoints" unit="linear"><Target parameter="vcaVolume"/><RealPoint time="0" value="1"/></Points>
+        <Points id="vcaPanPoints" unit="normalized"><Target parameter="vcaPan"/><RealPoint time="0" value="1"/></Points>
+      </Lanes>
+    </Lanes>
+  </Arrangement>
+</Project>
+)";
+	const test::TempDir dir;
+	const std::string file = utf8(dir.path() / "vca.dawproject");
+	writeZip(file, {{"project.xml", xml}});
+	Engine engine;
+	Client client(engine);
+	run(client, "project.load", {{"path", file}});
+	const Json project = run(client, "project.get");
+
+	const Json track = withId(project.at("tracks"), "name", "Strings");
+	CHECK(track.at("type") == "vca");
+	const Json channel = withId(project.at("channels"), "id", track.at("channel"));
+	CHECK(channel.at("format") == "none");
+	CHECK(channel.at("output") == 0);
+	CHECK(channel.at("pan") == 0.0);
+	for (const Json& send : channel.at("sends"))
+		CHECK(send.at("destination") == 0);
+	// What a VCA channel has stays: the fader, mute and solo, and the volume's automation.
+	CHECK(std::abs(channel.at("volume").get<double>() - (20.0 * std::log10(0.5))) < 1e-9);
+	CHECK(channel.at("mute") == true);
+	CHECK(channel.at("solo") == true);
+	REQUIRE(project.at("automation").size() == 1);
+	CHECK(project.at("automation")[0].at("target") == Json({{"type", "volume"}}));
+	CHECK(project.at("automation")[0].at("track") == track.at("id"));
+	// It saves and loads as GNUbase's own VCA tracks do.
+	run(client, "project.save", {{"path", file}});
+	run(client, "project.load", {{"path", file}});
+	CHECK(run(client, "project.get").at("channels") == project.at("channels"));
+}
+
 TEST_CASE("a project.xml changed by another application wins over GNUbase's entry", "[integration]")
 {
 	const test::TempDir dir;
@@ -1207,6 +1356,36 @@ TEST_CASE("sends are saved, with their destination, type, level and on also in p
 	CHECK(loadedSends[1].at("level") == -144.0);
 	CHECK(loadedSends[1].at("preFader") == true);
 	CHECK(loadedSends[2].at("destination") == 0);
+}
+
+TEST_CASE("outputs into effect channels load from project.xml alone", "[integration]")
+{
+	const test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	const ObjectId audio = idOf(run(client, "track.add", {{"type", "audio"}, {"name", "Audio"}}), "channel");
+	const ObjectId reverb = idOf(run(client, "track.add", {{"type", "effect"}, {"name", "Reverb"}}), "channel");
+	const ObjectId delay = idOf(run(client, "track.add", {{"type", "effect"}, {"name", "Delay"}}), "channel");
+	run(client, "channel.set", {{"channel", audio}, {"output", reverb}});
+	run(client, "channel.set", {{"channel", reverb}, {"output", delay}});
+	const std::string file = utf8(dir.path() / "song.dawproject");
+	run(client, "project.save", {{"path", file}});
+	std::map<std::string, std::string> entries = readZip(file);
+	REQUIRE(entries.erase("gnubase.json") == 1);
+	const std::string other = utf8(dir.path() / "other.dawproject");
+	writeZip(other, entries);
+
+	// An audio channel plays into an effect channel, which plays into another one.
+	run(client, "project.load", {{"path", other}});
+	const Json project = run(client, "project.get");
+	const auto channel = [&project](const std::string& name)
+	{
+		const Json track = withId(project.at("tracks"), "name", name);
+		return withId(project.at("channels"), "id", track.at("channel"));
+	};
+	CHECK(channel("Audio").at("output") == channel("Reverb").at("id"));
+	CHECK(channel("Reverb").at("output") == channel("Delay").at("id"));
+	CHECK(withId(project.at("busses"), "id", channel("Delay").at("output")).at("direction") == "output");
 }
 
 TEST_CASE(

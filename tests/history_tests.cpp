@@ -516,3 +516,81 @@ TEST_CASE("transactions with the same merge key join one undo step, like a fader
 	volume(-8.0, "");
 	CHECK(position(client) == start + 6);
 }
+
+TEST_CASE("joining the steps after a step makes them one undo step, like a user script", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	addTrack(client);
+	Json steps = run(client, "history.get").at("steps");
+	const auto before = steps[0].at("id").get<int64_t>();
+	CHECK(before > 0);
+
+	// A script's three steps, then the join.
+	const ObjectId track = addTrack(client);
+	run(client, "track.set", {{"track", track}, {"name", "Bass"}});
+	addTrack(client, "midi");
+	steps = run(client, "history.get").at("steps");
+	REQUIRE(steps.size() == 4);
+	CHECK(steps[1].at("id").get<int64_t>() > before); // ids grow with each step
+	eventNames(client);
+	CHECK(run(client, "history.join", {{"after", before}, {"action", "Add bass"}}).at("steps") == 3);
+	CHECK(contains(eventNames(client), "history.changed"));
+	Json history = run(client, "history.get");
+	CHECK(history.at("position") == 2);
+	REQUIRE(history.at("steps").size() == 2);
+	CHECK(history.at("steps")[1].at("action") == "Add bass");
+	CHECK(run(client, "project.get").at("tracks").size() == 3);
+
+	// One undo takes back all three, one redo does all three again.
+	run(client, "history.undo");
+	CHECK(run(client, "project.get").at("tracks").size() == 1);
+	run(client, "history.redo");
+	const Json project = run(client, "project.get");
+	REQUIRE(project.at("tracks").size() == 3);
+	CHECK(project.at("tracks")[1].at("name") == "Bass");
+
+	// Nothing after the last step: nothing to join.
+	const auto last = run(client, "history.get").at("steps")[1].at("id").get<int64_t>();
+	CHECK(run(client, "history.join", {{"after", last}, {"action", "Nothing"}}).at("steps") == 0);
+	CHECK(run(client, "history.get").at("steps").size() == 2);
+}
+
+TEST_CASE("joined steps that end where they started leave no undo step, and undone steps stay", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	addTrack(client);
+	addTrack(client);
+	run(client, "history.undo"); // the second track's step can be redone
+	const auto before = run(client, "history.get").at("steps")[0].at("id").get<int64_t>();
+
+	// Not done steps aren't joined: the undone step stays after the position until a change discards it.
+	CHECK(run(client, "history.join", {{"after", before}, {"action", "Nothing"}}).at("steps") == 0);
+	CHECK(run(client, "history.get").at("steps").size() == 2);
+
+	const ObjectId track = addTrack(client, "midi");
+	run(client, "track.remove", {{"track", track}});
+	CHECK(run(client, "history.join", {{"after", before}, {"action", "Add and remove"}}).at("steps") == 2);
+	const Json history = run(client, "history.get");
+	CHECK(history.at("position") == 1);
+	CHECK(history.at("steps").size() == 1);
+}
+
+TEST_CASE("joining finds the steps by id when the oldest ones were dropped", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	run(client, "history.set", {{"maxSteps", 3}});
+	for (int i = 0; i < 3; ++i)
+		addTrack(client);
+	const auto before = run(client, "history.get").at("steps")[2].at("id").get<int64_t>();
+	for (int i = 0; i < 3; ++i)
+		addTrack(client); // the step with the id before is gone now
+	CHECK(run(client, "history.join", {{"after", before}, {"action", "Three tracks"}}).at("steps") == 3);
+	const Json history = run(client, "history.get");
+	REQUIRE(history.at("steps").size() == 1);
+	CHECK(history.at("steps")[0].at("action") == "Three tracks");
+	run(client, "history.undo");
+	CHECK(run(client, "project.get").at("tracks").size() == 3);
+}

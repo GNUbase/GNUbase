@@ -21,12 +21,12 @@ Each emits `sampleEditor.changed` with the view. Positions in the editor are cli
 from the clip's start (p. 626).
 
 **Regions** (pp. 624-626) are in the project: a clip's `regions`, each with an id, a name and its start and end in
-clip frames, by start. They are saved in `gnubase.json`; DAWproject has no place for them. Each command is one undo
-step and emits `clip.changed`.
+clip frames, by start. They are saved in `gnubase.json`; DAWproject has no place for them, and loading leaves out regions that
+aren't sections of the clip's media file. Each command is one undo step and emits `clip.changed`.
 
 | Command | What it does | Reference |
 |---|---|---|
-| `clip.addRegion` | A region from `start` to `end`, named `name` or Region and its number | pp. 620, 624-625 |
+| `clip.addRegion` | A region from `start` to `end`, named `name` or Region and a number no other region of the clip has | pp. 620, 624-625 |
 | `clip.setRegion` | Renames it or moves its start or end | p. 625 |
 | `clip.removeRegion` | Removes it | p. 626 |
 
@@ -51,13 +51,14 @@ first of them. Without either selected, Open/Close Editor closes it.
   .se-overview                    waveform.se-overview-wave of the whole clip, .se-overview-event,
                                   .se-overview-selection, .se-overview-snap and .se-overview-view (what the display shows)
   .se-body
-    .se-inspector                 Range: button.se-select[select], #se-set-locators, #se-locate;
+    .se-inspector                 Range: button.se-select[select], #se-set-locators, #se-locate, #se-loop;
                                   Process: #se-range-region
     .se-main
       .se-display                 waveform.se-wave, .se-outside (.se-before, .se-after the event), .se-region-shown,
                                   .se-selection (.off without one), .se-snap-point
-      .se-regions                 #se-add-region, #se-remove-region, #se-select-region and .se-region-list with a
-                                  .se-region[region] per region (.se-region-name, -start, -end; .selected)
+      .se-regions                 #se-add-region, #se-remove-region, #se-select-region, #se-play-region and
+                                  .se-region-list with a .se-region[region] per region (.selected): .se-region-name,
+                                  -start and -end [field], and input.se-region-field while one is typed in
 ```
 
 The display's time axis is the clip's frames: `start` and `scale` (frames per dp) on the waveform, as for every canvas
@@ -68,8 +69,8 @@ Waveforms come from `media.peaks` ([peaks.md](peaks.md)), one question for each 
 |---|---|---|
 | Range Selection | A drag selects a range, with Snap to Zero Crossing at zero crossings; Shift and a click moves its nearer end; a click deselects | p. 635 |
 | Zoom | A click zooms in around the frame clicked, with Alt out, at most to the whole clip | p. 630 |
-| Play | Auditions the event's track from the frame pressed until the release (`audition.start`, [audition.md](audition.md)) | p. 630 |
-| Scrub | A drag scrubs the track (`audition.scrub`) | p. 634 |
+| Play | Auditions the clip from the frame pressed until the release, also outside the event and past its end (`audition.start` with the clip's `media`, [audition.md](audition.md)) | p. 630 |
+| Scrub | A drag scrubs the clip (`audition.scrub` with its `media`) and moves the project cursor to where the frame plays | p. 634 |
 
 - **Snap point** (pp. 626-628): a line at the event's snap point, at its start without one of its own; a drag with any
   tool sets it within the event (`event.setSnapPoint`).
@@ -77,13 +78,21 @@ Waveforms come from `media.peaks` ([peaks.md](peaks.md)), one question for each 
   per pixel. Positions are sample frames from the clip's start.
 - **Overview** (p. 615): a click or drag shows that part of the clip in the display.
 - **Range section** (pp. 618-619): Select All, Select None, Select in Loop and Select Event; Set Locators to Selection
-  Range and Locate Selection, of the selection range or else of the event.
+  Range, Locate Selection and Loop Selection, of the selection range or else of the event. Locate Selection goes to
+  its start, and from there to its end; Loop Selection sets the locators to it, turns cycle on and plays from its
+  start.
 - **Process section** (p. 620): Event or Range as Region.
 - **Hitpoints section** (pp. 636-647): detecting, filtering and editing hitpoints and making slices and more of them,
   in [hitpoints.md](hitpoints.md).
+- **Warp section** (pp. 648-656): Musical Mode, the audio tempo, Auto Adjust, Free Warp and Reset, and Flatten
+  in the Process section, in [warp.md](warp.md).
 - **Regions list** (pp. 624-626): Add Region makes one of the selection range or else of the event, Remove Region
-  removes the one selected in the list, Select Region (or a double click on it) selects its section and zooms to it;
-  the display shows the selected region.
+  removes the one selected in the list, Select Region selects its section and zooms to it, Play Region auditions it
+  (`audition.start` up to its end). A click on a region selects it in the list and shows it in the display, scrolled
+  to it at the same zoom; the display marks it. A double click on its name, start or end types a new one in a field:
+  Enter or leaving the field takes it (`clip.setRegion`), Escape doesn't, and what isn't a whole number or a section
+  of the clip changes nothing, nor does the number shown written another way. When the regions change meanwhile,
+  such as by an undo, what was typed goes.
 
 `resources/styles/sampleeditor.rcss` lays it out; the themes color it (`tools/skin/generate.py`).
 
@@ -94,21 +103,26 @@ window's selection; several events at once (Clip Editing Mode, Clip Display Mode
 ruler, the grid and snapping to it, the level scale and vertical zoom, and horizontal scrolling and zoom other than the
 zoom tool and the overview; the Zoom submenu; Solo Editor, Audition, auto-scroll, the independent track loop and the
 toolbar's context menu; positions in the project's time format, and typing them; the Draw tool's volume curve and
-sample editing; renaming regions and moving their edges with the mouse, Play Region and dragging regions into the
-project window; the clip's snap point when opened from the pool. Hooks for other tickets: the Process section's Cut,
-Copy, Paste, Delete, Insert Silence and offline processing (#141), the Definition,
-warping, musical mode and the Time Warp tool (#144), and making a sampler track of the range.
+sample editing; moving regions' edges with the mouse and dragging regions into the project window; the clip's snap
+point when opened from the pool; the Process section's Cut, Copy, Paste, Delete and Insert Silence (pp. 619-620);
+the clip's fades in what the play and scrub tools play. Hooks for other tickets: offline processing (#141) and
+making a sampler track of the range; what warping doesn't have yet is in [warp.md](warp.md).
 
 ## Checks
 
 - `tests/sampleeditor_tests.cpp`: the view as view state with its event and selection, Select All, None, Event and in
-  Loop, a range of its own and its errors, an event that goes and comes back with undo, opening and closing, a new
-  project closing it; zero crossings of a sine; regions added, sorted, changed and removed with undo, their errors,
-  and saved with the project.
+  Loop, a range of its own and its errors, an event that goes and comes back with undo, opening and closing, another
+  event dropping the selection, a new project closing it; zero crossings of a sine; regions added, sorted, changed
+  and removed with undo, their errors, names that stay unique after a removal, saved with the project, and those of
+  a hand-edited file that aren't sections of the clip left out on load.
 - `tests/sampleeditor_ui_tests.cpp` drives the app with `ui::Automation`: Open/Close Editor opening the selected event,
   the info line, the event's edges in the display and the overview, both waveforms' columns, closing the window; the
   range tool's drag, Shift and a click, Snap to Zero Crossing, the Select menu, Set Locators to Selection Range and
-  Locate Selection; Event or Range as Region, Add Region, the list, Select Region and Remove Region with undo; dragging
-  the snap point, the zoom tool in and out, a click in the overview, the play and scrub tools auditioning the track and
-  the window layout's switches; Open/Close Editor without a selection closing it.
+  Locate Selection to the start and the end, Loop Selection; Event or Range as Region, Add Region, the list, Select
+  Region and Remove Region with undo, a click on a region scrolling the display to it, typing a region's name, start
+  and end, by Enter and by leaving the field, and Escape, wrong and unchanged values and regions changing meanwhile;
+  dragging the snap point, the zoom tool in and out, a click in the overview, the play and scrub tools auditioning
+  the clip past the event's end, the cursor following the scrub, Play Region and the window layout's switches;
+  Open/Close Editor without a selection closing it.
+- `tests/playback_tests.cpp`: auditioning and scrubbing a media file ([audition.md](audition.md)).
 - `tests/eventediting_tests.cpp`: a double click on an audio event opens it in the sample editor.

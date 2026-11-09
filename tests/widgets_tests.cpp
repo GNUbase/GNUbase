@@ -770,6 +770,64 @@ TEST_CASE("items with a submenu show an arrow, and Right and Left open and close
 	app.ui().key(std::nullopt, "Escape");
 }
 
+TEST_CASE("Tab and Shift+Tab move between an open menu's items and don't leave the menu", "[ui]")
+{
+	test::UiApp app;
+	const Events events(app.show("popups.rml"));
+
+	// The document has buttons before and after the menu that Tab would otherwise reach (#524).
+	const Json track = element(app, "#track").at("box");
+	app.ui().click(std::nullopt, point(track.at("x").get<int>() + 10, track.at("y").get<int>() + 10),
+		ui::MouseButton::Right, 1, {});
+	REQUIRE(visible(app, "#track-menu"));
+	moveAway(app);
+
+	// Tab steps forwards over the disabled item and from the last shown item round to the first, past the hidden
+	// one, as Down does.
+	app.ui().key(std::nullopt, "Tab");
+	CHECK(focused(app, "#rename"));
+	app.ui().key(std::nullopt, "Tab");
+	CHECK(focused(app, "#color"));
+	app.ui().key(std::nullopt, "Tab");
+	CHECK(focused(app, "#lock"));
+	app.ui().key(std::nullopt, "Tab");
+	CHECK(focused(app, "#rename"));
+
+	// Shift+Tab steps backwards, from the first item round to the last shown one, as Up does.
+	app.ui().key(std::nullopt, "Shift+Tab");
+	CHECK(focused(app, "#lock"));
+	app.ui().key(std::nullopt, "Down");
+	CHECK(focused(app, "#rename"));
+	app.ui().key(std::nullopt, "Up");
+	CHECK(focused(app, "#lock"));
+
+	// With a modifier too, round the ends.
+	app.ui().key(std::nullopt, "Ctrl+Tab");
+	CHECK(focused(app, "#rename"));
+	app.ui().key(std::nullopt, "Alt+Shift+Tab");
+	CHECK(focused(app, "#lock"));
+	app.ui().key(std::nullopt, "Shift+Tab");
+	CHECK(focused(app, "#color"));
+
+	// In a submenu that keys opened, they step through the submenu's items.
+	app.ui().key(std::nullopt, "Right");
+	REQUIRE(focused(app, "#red"));
+	app.ui().key(std::nullopt, "Tab");
+	CHECK(focused(app, "#blue"));
+	app.ui().key(std::nullopt, "Tab");
+	CHECK(focused(app, "#red"));
+	app.ui().key(std::nullopt, "Shift+Tab");
+	CHECK(focused(app, "#blue"));
+	CHECK(visible(app, "#colors"));
+	CHECK(visible(app, "#track-menu"));
+
+	// The menu still has its keys.
+	app.ui().key(std::nullopt, "Left");
+	CHECK(focused(app, "#color"));
+	app.ui().key(std::nullopt, "Escape");
+	CHECK(!visible(app, "#track-menu"));
+}
+
 TEST_CASE("in a menu bar the mouse and Left and Right move between the open menus", "[ui]")
 {
 	test::UiApp app;
@@ -1563,6 +1621,31 @@ TEST_CASE("multiple list views extend the selection from rows rebuilt before a k
 	REQUIRE(tracksValue(page) == "3,4");
 	app.ui().key(std::nullopt, "Up"); // the automation updates the context first
 	CHECK(tracksValue(page) == "3");
+}
+
+TEST_CASE("multiple list views with shiftdeselects deselect a selected row with Shift-click", "[ui]")
+{
+	test::UiApp app;
+	const ViewsPage page(app);
+	Rml::Element& tracks = byId(page, "tracks");
+	click(app, "#drums");
+	clickNow(byId(page, "keys"), "shift_key");
+	REQUIRE(tracksValue(page) == "1,2,3");
+
+	// Without the attribute, Shift-click on a selected row selects the range to it.
+	clickNow(byId(page, "bass"), "shift_key");
+	CHECK(tracksValue(page) == "1,2");
+
+	// With it, Shift-click on a selected row deselects it and leaves the others selected, and on a row that isn't
+	// selected still selects the range from the last one clicked.
+	tracks.SetAttribute("shiftdeselects", "");
+	clickNow(byId(page, "keys"), "shift_key");
+	REQUIRE(tracksValue(page) == "1,2,3");
+	clickNow(byId(page, "bass"), "shift_key");
+	CHECK(tracksValue(page) == "1,3");
+	CHECK(!byId(page, "bass").IsClassSet("selected"));
+	clickNow(byId(page, "vocals"), "shift_key");
+	CHECK(tracksValue(page) == "1,2,3,4");
 }
 
 TEST_CASE("list views move from a value that code set before a key or a click", "[ui]")

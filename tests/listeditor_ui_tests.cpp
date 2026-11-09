@@ -508,6 +508,8 @@ TEST_CASE("a move, draw or value display drag released outside the list editor e
 	f.app.shell().step(std::chrono::milliseconds(0));
 	const auto value = [&] { return f.event("controllers", f.events[0]).at("value").get<double>(); };
 	REQUIRE(f.app.waitUntil([&] { return std::abs(value() - 0.5) < 0.02; }));
+	// The bar shows the engine's value a step or more after the engine has it (#892).
+	REQUIRE(f.app.waitUntil([&] { return std::abs(f.bar(volume) - 0.5) < 0.05; }));
 	f.app.ui().move(f.window, Fixture::point(f.xAt(values, 0.9), f.middle(values)));
 	f.app.shell().step(std::chrono::milliseconds(0));
 	CHECK(std::abs(f.bar(volume) - 0.5) < 0.05);

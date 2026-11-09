@@ -270,6 +270,23 @@
 				table.concat(rows) .. "</tbody></table>"
 		end
 
+		-- Why the device chosen last can't be used while the dummy device plays instead (failed in audio.get), or nil.
+		local function failure(status)
+			local failed = status.failed
+			if failed == nil then
+				return nil
+			end
+			return "Cannot use " .. failed.backend .. (failed.device ~= "" and " - " .. failed.device or "") .. ": " ..
+				failed.reason .. "; the dummy device plays instead"
+		end
+
+		-- Shows the errors of commands that failed, and why the device chosen last can't be used.
+		local function report(document, errors)
+			local messages = {table.unpack(errors)}
+			messages[#messages + 1] = failure(setup.status)
+			document:GetElementById("studio-setup-message").inner_rml = escape(table.concat(messages, "; "))
+		end
+
 		-- Reads everything from the engine and fills the pages.
 		function setup.load(document)
 			local devices = gnubase.audio.devices()
@@ -281,6 +298,7 @@
 			document:GetElementById("page-system").inner_rml = audioSystemPage(devices, setup.status)
 			document:GetElementById("page-device").inner_rml = audioDevicePage(setup.status, setup.audioPorts)
 			document:GetElementById("page-midi").inner_rml = midiPage(setup.midiPorts)
+			report(document, {})
 		end
 
 		-- Shows the page that the devices list selects.
@@ -361,8 +379,9 @@
 			local device = setup.status.device
 			local driver = setup.drivers[tonumber(valueOf(document:GetElementById("driver")))]
 			if driver ~= nil and (device == nil or driver.backend ~= device.backend or driver.device ~= device.id) then
-				-- Another driver: the pages showed the old device, whose settings don't apply to the new one.
-				call(errors, gnubase.audio.setDevice, {backend = driver.backend, device = driver.device})
+				-- Another driver: the pages showed the old device, whose settings don't apply to the new one. It runs if
+				-- the old one ran, and the app opens it again when it starts.
+				call(errors, gnubase.audio.setDevice, {backend = driver.backend, device = driver.device, remember = true})
 			elseif device ~= nil then
 				applyAudioDevice(document, errors, device)
 			end
@@ -394,10 +413,6 @@
 				end
 			end
 			return errors
-		end
-
-		local function report(document, errors)
-			document:GetElementById("studio-setup-message").inner_rml = escape(table.concat(errors, "; "))
 		end
 
 		-- Apply: sends the changes and shows what the engine made of them.

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "testutils/testutils.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -229,6 +230,30 @@ namespace gnubase::test
 		const char* update = std::getenv("GNUBASE_UPDATE_GOLDEN");
 		return compareWithGolden(GNUBASE_GOLDEN_DIR, GNUBASE_TEST_OUTPUT_DIR, name, actual, tolerance,
 			update != nullptr && std::string(update) == "1");
+	}
+
+	std::string compareTextWithGolden(const std::string& name, const std::string& actual)
+	{
+		const auto withoutReturns = [](std::string text)
+		{
+			text.erase(std::remove(text.begin(), text.end(), '\r'), text.end());
+			return text;
+		};
+		const std::filesystem::path golden = std::filesystem::path(GNUBASE_GOLDEN_DIR) / (name + ".txt");
+		const char* update = std::getenv("GNUBASE_UPDATE_GOLDEN");
+		if (update != nullptr && std::string(update) == "1")
+		{
+			std::ofstream(golden, std::ios::binary) << withoutReturns(actual);
+			return {};
+		}
+		if (std::filesystem::exists(golden) && withoutReturns(readText(golden)) == withoutReturns(actual))
+			return {};
+		const std::filesystem::path actualFile =
+			std::filesystem::path(GNUBASE_TEST_OUTPUT_DIR) / (name + ".actual.txt");
+		std::ofstream(actualFile, std::ios::binary) << actual;
+		return "the text differs from the golden file " + golden.string() +
+			" or it doesn't exist; actual text written to " + actualFile.string() +
+			". Run with GNUBASE_UPDATE_GOLDEN=1 to accept it.";
 	}
 
 	std::string readText(const std::filesystem::path& file)

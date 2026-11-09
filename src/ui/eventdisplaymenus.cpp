@@ -80,7 +80,7 @@ namespace gnubase::ui
 			bool crossHair; // whether the tool uses the cross-hair cursor (reference manual p. 110)
 		};
 
-		constexpr std::array<ToolInfo, 11> g_tools{{
+		constexpr std::array<ToolInfo, 12> g_tools{{
 			{Tool::ObjectSelection, "objectSelection", "Object Selection", true},
 			{Tool::RangeSelection, "rangeSelection", "Range Selection", true},
 			{Tool::Comp, "comp", "Comp", false},
@@ -92,10 +92,12 @@ namespace gnubase::ui
 			{Tool::Zoom, "zoom", "Zoom", false},
 			{Tool::Line, "line", "Line", true},
 			{Tool::Play, "play", "Play", false},
+			{Tool::TimeWarp, "timeWarp", "Time Warp", false},
 		}};
 
 		constexpr std::array<const char*, 5> g_lineModes = {"line", "parabola", "sine", "triangle", "square"};
 		constexpr std::array<const char*, 2> g_playModes = {"play", "scrub"};
+		constexpr std::array<const char*, 3> g_warpModes = {"warpGrid", "warpGridFollow", "freeWarp"};
 	}
 
 	const char* toolName(Tool tool)
@@ -128,6 +130,8 @@ namespace gnubase::ui
 		m_gridTypeButton = m_document->GetElementById("grid-type");
 		m_gridTypeMenu = m_document->GetElementById("grid-type-menu");
 		m_zeroCrossingButton = m_document->GetElementById("snap-zero-crossing");
+		m_rootKeyButton = m_document->GetElementById("root-key");
+		m_rootKeyMenu = m_document->GetElementById("root-key-menu");
 		Rml::ElementList buttons;
 		m_document->QuerySelectorAll(buttons, "button[tool], menuitem[tool]");
 		m_toolButtons.assign(buttons.begin(), buttons.end());
@@ -135,6 +139,7 @@ namespace gnubase::ui
 		m_objectMenu = m_document->GetElementById("object-selection-menu");
 		m_lineMenu = m_document->GetElementById("line-menu");
 		m_playMenu = m_document->GetElementById("play-menu");
+		m_timeWarpMenu = m_document->GetElementById("time-warp-menu");
 		m_toolbox = m_document->GetElementById("toolbox");
 		m_contextMenu = m_document->GetElementById("event-display-menu");
 		m_notification = m_document->GetElementById("tool-notification");
@@ -229,6 +234,10 @@ namespace gnubase::ui
 			else if (id == "zoom-presets-organize")
 				openDialog("zoom-presets.rml");
 		}
+		else if (menu == m_rootKeyMenu)
+		{
+			m_binding.send("project.set", {{"rootKey", item->GetAttribute<Rml::String>("root-key", "")}});
+		}
 		else if (menu == m_snapTypeMenu)
 		{
 			setSnap({{"type", item->GetAttribute<Rml::String>("snap-type", "")}});
@@ -253,6 +262,16 @@ namespace gnubase::ui
 		else if (menu == m_playMenu)
 		{
 			setPlayMode(item->GetAttribute<Rml::String>("play-mode", "") == "scrub" ? PlayMode::Scrub : PlayMode::Play);
+		}
+		else if (menu == m_timeWarpMenu)
+		{
+			const auto mode = item->GetAttribute<Rml::String>("warp-mode", "");
+			for (size_t i = 0; i < g_warpModes.size(); ++i)
+				if (mode == g_warpModes[i])
+				{
+					setTool(Tool::TimeWarp);
+					setWarpMode(static_cast<WarpMode>(i));
+				}
 		}
 		else if (menu == m_autoScrollMenu)
 		{
@@ -301,6 +320,12 @@ namespace gnubase::ui
 	{
 		Rml::Element* dialog = event.GetCurrentElement();
 		Rml::Element* target = event.GetTargetElement();
+		if (dialog->GetElementById("tempo-detection-dialog") != nullptr)
+		{
+			if (const Rml::Element* button = closest(target, "button"); button != nullptr && !button->GetId().empty())
+				detectTempo(button->GetId());
+			return;
+		}
 		if (resultOf(target) != "ok")
 		{
 			// A row's Delete button marks the row deleted, for the dialog's style sheet to hide it.
@@ -314,6 +339,15 @@ namespace gnubase::ui
 			const Rml::Element* shared = dialog->GetElementById("repeat-shared");
 			repeat(static_cast<int>(std::lround(count->GetAttribute<float>("value", 1.0F))),
 				shared != nullptr && shared->HasAttribute("checked"));
+		}
+		else if (Rml::Element* distance = dialog->GetElementById("calculate-tempo-distance"))
+		{
+			const Rml::Element* barStart = dialog->GetElementById("calculate-tempo-bar-start");
+			const std::vector<uint64_t> parts = selectedMidi();
+			if (!parts.empty())
+				edit("tempo.fromMidi",
+					{{"parts", parts}, {"distance", std::stoll(valueOf(distance))},
+						{"beginAtBarStart", barStart != nullptr && barStart->HasAttribute("checked")}});
 		}
 		else if (dialog->GetElementById("import-copy") != nullptr)
 		{
@@ -343,6 +377,41 @@ namespace gnubase::ui
 			m_presets = std::move(presets);
 			savePresets();
 		}
+	}
+
+	// The Tempo Detection dialog's buttons (reference manual pp. 1460-1461): Analyze detects the tempo afresh, the
+	// factors, Offbeat Correction and Smooth Tempo detect it again with them, Reset removes what it made.
+	void EventDisplay::detectTempo(const std::string& button)
+	{
+		TempoDetection& detection = m_detection;
+		Json parameters = {{"event", detection.event}};
+		if (button == "tempo-detection-reset")
+		{
+			detection = TempoDetection{detection.event};
+			parameters["reset"] = true;
+			edit("tempo.detect", std::move(parameters));
+			return;
+		}
+		if (button == "tempo-detection-analyze")
+			detection = TempoDetection{detection.event};
+		else if (button == "tempo-detection-double")
+			detection.factor *= 2.0;
+		else if (button == "tempo-detection-halve")
+			detection.factor /= 2.0;
+		else if (button == "tempo-detection-four-thirds")
+			detection.factor *= 4.0 / 3.0;
+		else if (button == "tempo-detection-three-quarters")
+			detection.factor *= 3.0 / 4.0;
+		else if (button == "tempo-detection-offbeat")
+			detection.offbeat = !detection.offbeat;
+		else if (button == "tempo-detection-smooth")
+			detection.smooth = true;
+		else
+			return;
+		parameters["factor"] = detection.factor;
+		parameters["offbeat"] = detection.offbeat;
+		parameters["smooth"] = detection.smooth;
+		edit("tempo.detect", std::move(parameters));
 	}
 
 	void EventDisplay::showFormat()
@@ -454,6 +523,22 @@ namespace gnubase::ui
 			});
 	}
 
+	// The Project Root Key button shows the project's, its menu checks it.
+	void EventDisplay::showRootKey(const Json& project)
+	{
+		if (m_rootKeyMenu == nullptr)
+			return;
+		const std::string key = project.value("rootKey", std::string());
+		for (int i = 0; i < m_rootKeyMenu->GetNumChildren(); ++i)
+		{
+			Rml::Element* item = m_rootKeyMenu->GetChild(i);
+			const bool chosen = item->GetAttribute<Rml::String>("root-key", "") == key;
+			check(*item, chosen);
+			if (chosen && m_rootKeyButton != nullptr && m_rootKeyButton->GetInnerRML() != item->GetInnerRML())
+				m_rootKeyButton->SetInnerRML(item->GetInnerRML());
+		}
+	}
+
 	// The buttons show the settings, the snap type menu checks the type, the grid type menu has the format's grid
 	// types with the grid checked.
 	void EventDisplay::showSnap()
@@ -497,6 +582,7 @@ namespace gnubase::ui
 		m_root->SetAttribute("tool", toolName(m_tool));
 		m_root->SetAttribute("line-mode", g_lineModes.at(static_cast<size_t>(m_lineMode)));
 		m_root->SetAttribute("play-mode", g_playModes.at(static_cast<size_t>(m_playMode)));
+		m_root->SetAttribute("warp-mode", g_warpModes.at(static_cast<size_t>(m_warpMode)));
 		m_root->SetClass("cross-hair", m_crossHair && g_tools.at(static_cast<size_t>(m_tool)).crossHair);
 		for (Rml::Element* button : m_toolButtons)
 		{
@@ -527,6 +613,12 @@ namespace gnubase::ui
 					check(*item,
 						item->GetAttribute<Rml::String>("play-mode", "") ==
 							g_playModes.at(static_cast<size_t>(m_playMode)));
+		if (m_timeWarpMenu != nullptr)
+			for (int i = 0; i < m_timeWarpMenu->GetNumChildren(); ++i)
+				if (Rml::Element* item = m_timeWarpMenu->GetChild(i); item->HasAttribute("warp-mode"))
+					check(*item,
+						item->GetAttribute<Rml::String>("warp-mode", "") ==
+							g_warpModes.at(static_cast<size_t>(m_warpMode)));
 	}
 
 	void EventDisplay::showAutoScroll()

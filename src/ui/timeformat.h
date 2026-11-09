@@ -38,8 +38,9 @@ namespace gnubase::ui
 		time::SignatureMap signatures;
 		double sampleRate = 48000.0;
 		time::FrameRate frameRate = time::g_fps25;
-		double startTime = 0.0; // what seconds, timecode and user frames show at the project start
-		int barOffset = 0;      // added to the bars shown
+		double startTime = 0.0;   // what seconds, timecode and user frames show at the project start
+		double sampleStart = 0.0; // what samples show at the project start, in seconds: ruler tracks' time offset
+		int barOffset = 0;        // added to the bars shown
 		int userFramesPerSecond = time::g_userFramesPerSecond;
 	};
 

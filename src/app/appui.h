@@ -20,6 +20,7 @@
 #include "ui/projectfiles.h"
 #include "ui/quantizepanel.h"
 #include "ui/rmlui.h"
+#include "ui/rulertracks.h"
 #include "ui/sampleeditor.h"
 #include "ui/sdlwindowsystem.h"
 #include "ui/shell.h"
@@ -28,7 +29,9 @@
 #include "ui/tempotrack.h"
 #include "ui/themes.h"
 #include "ui/tracklist.h"
+#include "ui/trackvisibility.h"
 #include "ui/transport.h"
+#include "ui/transposetrack.h"
 #include "ui/uisettings.h"
 
 #include <RmlUi/Core/ObserverPtr.h>
@@ -36,8 +39,12 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
-#include <iosfwd>
+#include <functional>
+#include <map>
 #include <memory>
+#include <optional>
+#include <ostream>
+#include <streambuf>
 #include <string>
 #include <utility>
 #include <vector>
@@ -50,6 +57,28 @@ namespace Rml
 
 namespace gnubase::app
 {
+	// What the UI's Lua prints: to the app's output, and the last 64 KiB of it for the script console (#209).
+	class ScriptOutput : public std::streambuf
+	{
+	public:
+		explicit ScriptOutput(std::ostream& output) : m_output(output) {}
+
+		const std::string& text() const { return m_text; }
+		// Grows with every change of the text.
+		uint64_t version() const { return m_version; }
+		void clear();
+
+	protected:
+		int_type overflow(int_type character) override;
+		std::streamsize xsputn(const char* text, std::streamsize count) override;
+		int sync() override;
+
+	private:
+		std::ostream& m_output;
+		std::string m_text;
+		uint64_t m_version = 0;
+	};
+
 	// GNUbase's UI for an engine: SDL3 windows drawn through SDL_GPU, RmlUi with GNUbase's fonts, themes and widgets,
 	// and the shell, which follows the user settings and the engine's events and runs key commands, with the main
 	// window open. runWindowed
@@ -109,10 +138,19 @@ namespace gnubase::app
 			return m_shell.find(m_tempoWindow) != nullptr ? m_tempoEditor.get() : nullptr;
 		}
 		ui::WindowId tempoWindow() const { return m_tempoWindow; }
+		// Opens the arranger editor in a window of its own (resources/ui/arranger-editor.rml,
+		// docs/features/arranger.md), or closes it if it is open: the UI command window.arranger. Its script follows
+		// the engine on its own. Throws std::runtime_error if the document can't be loaded.
+		void toggleArranger();
+		ui::WindowId arrangerWindow() const { return m_arrangerWindow; }
 		// The tempo curve on the tempo track's lane in the project window, null before showProject.
 		ui::TempoLane* tempoLane() { return m_tempoLane.get(); }
 		// The time signature events on the signature track's lane in the project window, null before showProject.
 		ui::SignatureLane* signatureLane() { return m_signatureLane.get(); }
+		// The transpose events on the transpose track's lane in the project window, null before showProject.
+		ui::GlobalEventLane* transposeLane() { return m_transposeLane.get(); }
+		// The chord events on the chord track's lane, likewise.
+		ui::GlobalEventLane* chordLane() { return m_chordLane.get(); }
 
 		// The mixers (#106, docs/features/mixer-window.md): mixer window number 1 to 4 opens in a window of its own
 		// (resources/ui/mixer.rml), hidden like the main window, or closes if it is open: the UI commands window.mixer
@@ -158,6 +196,9 @@ namespace gnubase::app
 		// Opens the project setup dialog (resources/ui/project-setup.rml, #78) the same way: the UI command
 		// window.projectSetup, which Project > Project Setup and a click on the status line's record format run.
 		Rml::ElementDocument& openProjectSetup(ui::Window& window);
+		// Opens the preferences dialog (resources/ui/preferences.rml, #162) the same way: the UI command
+		// window.preferences, which Edit > Preferences runs.
+		Rml::ElementDocument& openPreferences(ui::Window& window);
 
 		// Opens the start screen in the main window (ui/projectfiles.h, #77), as the app does when it starts without
 		// a project.
@@ -171,6 +212,19 @@ namespace gnubase::app
 		void toggleTimeDisplay();
 		ui::Window* transportPanel() { return m_transportPanel.shown(m_shell); }
 		ui::Window* timeDisplay() { return m_timeDisplay.shown(m_shell); }
+
+		// User scripts (#209, docs/features/scripts.md, appscripts.cpp): each Lua file in the user's script folder
+		// (scripts in the settings folder, which starts with the examples of resources/scripts) is the UI command
+		// script.<name>, which runs it in the UI's Lua as one undo step. The script console
+		// (resources/ui/script-console.rml) opens in a window of its own, or closes: the UI command
+		// window.scriptConsole.
+		ui::WindowId scriptConsoleWindow() const { return m_scriptConsoleWindow; }
+		// What opens files and folders with the OS for the console, such as a script in the user's editor: tests catch
+		// them instead.
+		void openExternallyWith(std::function<void(const std::filesystem::path&)> open)
+		{
+			m_openExternally = std::move(open);
+		}
 
 		ui::Shell& shell() { return m_shell; }
 		ui::Window& mainWindow() { return m_main; }
@@ -230,17 +284,27 @@ namespace gnubase::app
 		struct QuantizeTarget
 		{
 			std::vector<std::pair<uint64_t, std::vector<uint64_t>>> parts;
+			// The project window's selected audio events and parts (#145), for Quantize and Reset Quantize.
+			std::vector<uint64_t> events;
+			std::vector<uint64_t> audioParts;
 			std::string lengthQuantize;
 			double insertVelocity = 100.0 / 127.0; // the editor's, for Fixed Velocity
 		};
 		QuantizeTarget quantizeTarget(ui::Window& window, Rml::Element* zone) const;
 		void quantize(const std::string& command, const std::string& step, const QuantizeTarget& target);
+		// The quantize panel's commands for several audio tracks (#145): command with parameters on the project
+		// window's selected audio events and the events of its selected audio parts.
+		void quantizeAudioTracks(const std::string& command, engine::Json parameters);
 		// The MIDI menu (#133, docs/features/midi-functions.md, appmidifunctions.cpp): MIDI > Functions on what
 		// quantizeTarget gives, and the dialogs of Transpose Setup, Merge MIDI in Loop, Dissolve Part and Restrict
 		// Polyphony (resources/ui/midi-function.rml).
 		void addMidiFunctions();
 		// The OS's file dialog for a track's picture in the mixer, then track.set.
 		void choosePicture(uint64_t track);
+		// The drum map of the active track of an editor (window, else lower), then the OS's file dialog to save it in
+		// and drumMap.export.
+		void saveDrumMap(ui::WindowId parent, const std::string& editor = "window");
+		void chooseDrumMapFile(ui::WindowId parent, uint64_t map);
 		// Opens resources/ui/<name> in the window, modal. Throws std::runtime_error if it can't be loaded.
 		// attributes go on the document before it shows, for its Lua.
 		Rml::ElementDocument& openDialog(ui::Window& window, const char* name,
@@ -255,6 +319,8 @@ namespace gnubase::app
 		// Made in this order and destroyed in the reverse: RmlUi releases its resources through the renderer and
 		// its Lua plugin's in Lua, the shell's windows need all of them, the settings and the binding tell the shell,
 		// key commands send through the binding, and the docking system follows the binding and opens windows.
+		ScriptOutput m_scriptOutput;               // the Lua's print goes through it
+		std::ostream m_luaOutput{&m_scriptOutput}; // so too
 		ui::SdlWindowSystem m_windows;
 		ui::GpuRenderer m_renderer;
 		scripting::Runtime m_lua;
@@ -274,22 +340,27 @@ namespace gnubase::app
 		ui::OnScreenKeyboard::Settings m_keyboardSettings; // kept while its window is closed
 		std::unique_ptr<ui::OnScreenKeyboard> m_keyboard;
 		ui::WindowId m_keyboardWindow = 0;
-		std::unique_ptr<ui::EventDisplay> m_eventDisplay;   // goes before the binding
-		std::unique_ptr<ui::MarkerLines> m_markerLines;     // and before the display
-		std::unique_ptr<ui::TempoLane> m_tempoLane;         // as well
-		std::unique_ptr<ui::SignatureLane> m_signatureLane; // as well
+		std::unique_ptr<ui::EventDisplay> m_eventDisplay;     // goes before the binding
+		std::unique_ptr<ui::MarkerLines> m_markerLines;       // and before the display
+		std::unique_ptr<ui::TempoLane> m_tempoLane;           // as well
+		std::unique_ptr<ui::SignatureLane> m_signatureLane;   // as well
+		std::unique_ptr<ui::GlobalEventLane> m_transposeLane; // as well
+		std::unique_ptr<ui::GlobalEventLane> m_chordLane;     // as well
+		std::unique_ptr<ui::RulerLanes> m_rulerLanes;         // as well
 		std::unique_ptr<ui::TempoEditor> m_tempoEditor;
 		ui::WindowId m_tempoWindow = 0;
+		ui::WindowId m_arrangerWindow = 0;
 		std::vector<uint64_t> m_eventSelection; // the display's, as the last step saw it
 		ui::Winding m_winding{m_binding};       // Rewind and Forward held, which the transport controls end
 		std::unique_ptr<ui::TransportControls> m_transportBar;
 		TransportWindow m_transportPanel;
 		TransportWindow m_timeDisplay;
-		std::unique_ptr<ui::StatusLine> m_statusLine;         // too
-		std::unique_ptr<ui::TrackList> m_trackList;           // and before the display
-		std::unique_ptr<ui::ColorMenu> m_colorMenu;           // before the track list
-		std::unique_ptr<ui::InfoLine> m_infoLine;             // and this too
-		std::unique_ptr<ui::QuantizePanel> m_toolbarQuantize; // the toolbar's quantize section
+		std::unique_ptr<ui::StatusLine> m_statusLine;           // too
+		std::unique_ptr<ui::TrackList> m_trackList;             // and before the display
+		std::unique_ptr<ui::ColorMenu> m_colorMenu;             // before the track list
+		std::unique_ptr<ui::TrackVisibility> m_trackVisibility; // the project window's (#166)
+		std::unique_ptr<ui::InfoLine> m_infoLine;               // and this too
+		std::unique_ptr<ui::QuantizePanel> m_toolbarQuantize;   // the toolbar's quantize section
 		// What the undo history can undo and redo now, for the Edit menu's Undo and Redo.
 		bool m_canUndo = false;
 		bool m_canRedo = false;
@@ -297,7 +368,9 @@ namespace gnubase::app
 		ui::ProjectFiles m_files;                          // the File menu's project commands
 		std::unique_ptr<ui::MainMenu> m_menu;              // the project window's
 		Rml::ObserverPtr<Rml::Element> m_studioSetup;      // the open studio setup dialog's document
+		Rml::ObserverPtr<Rml::Element> m_midiDevices;      // the open MIDI device manager's document
 		Rml::ObserverPtr<Rml::Element> m_projectSetup;     // the open project setup dialog's document
+		Rml::ObserverPtr<Rml::Element> m_preferences;      // the open preferences dialog's document
 		std::weak_ptr<ui::PoolPanel> m_pool;               // the docking system owns it while it is there
 		std::weak_ptr<ui::Inspector> m_inspector;          // so too
 		std::vector<ui::Subscription> m_poolResults;       // what the pool commands did, for the pool
@@ -329,5 +402,25 @@ namespace gnubase::app
 		engine::Json m_editorViews = engine::Json::object(); // the engine's, by editor
 		std::vector<uint64_t> m_followed;                    // the selection the editors last followed
 		std::vector<ui::Subscription> m_editorSubscriptions;
+		// The key commands dialog (#161) and the user's key commands and macros, ui.keyCommands and ui.macros.
+		void addKeyCommandsDialog();
+		void applyKeySettings();
+		Rml::ObserverPtr<Rml::Element> m_keyDialog;    // the open key commands dialog's document
+		Rml::ObserverPtr<Rml::Element> m_menuDocument; // the project window's, with the main menu
+		engine::Json m_keySettings;
+		std::vector<ui::Subscription> m_keySettingsChanged; // settings.changed
+		// User scripts (#209).
+		void addScripts();
+		// Finds the scripts in the folder and makes their commands; returns whether they changed.
+		bool scanScripts();
+		std::filesystem::path scriptFolder() const;
+		// Runs run, which runs Lua, as one undo step named action (history.join); prints its error.
+		void runAsOneStep(const std::string& action, const std::function<std::optional<std::string>()>& run);
+		void toggleScriptConsole();
+		std::map<std::string, std::filesystem::path> m_scripts; // by name
+		ui::WindowId m_scriptConsoleWindow = 0;
+		Rml::ObserverPtr<Rml::Element> m_scriptConsole; // its document
+		uint64_t m_shownOutput = 0;                     // the output's version it shows
+		std::function<void(const std::filesystem::path&)> m_openExternally;
 	};
 }

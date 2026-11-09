@@ -41,12 +41,14 @@ namespace gnubase::engine
 			Fader,      // parameter events for the channel's fader, which glides along ramps
 			Instrument, // parameter events for the channel's instrument, which jumps to each value
 			Plugin,     // parameter events for the plugin in one of the channel's slots, which jumps to each value
+			Strip,      // parameter events for the strip's sections (g_stripEvents), with the fader's events
 			Midi,       // MIDI controller events for the channel's source
+			Program, // a MIDI channel's program change (parameter) for its source; its static value is the bank or -1
 		};
 
 		AutomationTarget target;
 		Kind kind = Kind::Fader;
-		uint32_t parameter = 0;   // Fader, Instrument and Plugin: the parameter id
+		uint32_t parameter = 0;   // Fader, Instrument, Plugin and Strip: the events' parameter id
 		double staticValue = 0.0; // the value without points
 		double minimum = 0.0;     // values are kept in this range
 		double maximum = 1.0;
@@ -56,16 +58,23 @@ namespace gnubase::engine
 		bool smooth = false;
 
 		bool operator==(const PlayedLane& other) const;
+		// Whether its target glides along ramps, frame by frame: the fader's parameters and the pre gain. The others
+		// get the value of every g_automationInterval frame.
+		bool glides() const;
 	};
 
 	// What a channel's automation plays, compiled by the command thread: a lane for the fader's volume, pan and mute
 	// (whose static value is off: a channel's mute button makes it silent, see ChannelStrip), for each of the
-	// instrument's parameters and for each parameter of the built-in plugins in its slots, with or without points, so
+	// instrument's parameters, for each parameter of the strip's sections (the pre gain as a linear gain) and for each
+	// parameter of the built-in plugins in its slots, with or without points, so
 	// that they return to their static values when their automation goes; and a lane for each MIDI controller with
 	// points.
 	struct ChannelAutomation
 	{
-		uint64_t revision = 0;  // set by AutomationPlayer::setAutomation
+		uint64_t revision = 0; // set by AutomationPlayer::setAutomation
+		// The revision whose program lane (or its absence) this one has, set by AutomationPlayer::setAutomation: other
+		// new automation doesn't send the program again, which would override a part's own program change.
+		uint64_t programRevision = 0;
 		std::string instrument; // a new instrument gets every value again
 		std::vector<PlayedLane> lanes;
 
@@ -76,8 +85,9 @@ namespace gnubase::engine
 	};
 
 	// What a channel's automation plays: the fader's, the instrument's and the slots' built-in plugins' parameters
-	// with their static values or curves, a MIDI channel's volume and pan as controllers 7 and 10 on MIDI channel 1
-	// when it has them, and the MIDI controllers that have curves. maxVolume is the project's, in dB.
+	// with their static values or curves, a MIDI channel's program (with its bank) and volume and pan as controllers 7
+	// and 10 on MIDI channel 1 when it has them, and the MIDI controllers that have curves. maxVolume is the project's,
+	// in dB.
 	std::unique_ptr<ChannelAutomation> channelAutomation(const RenderChannel& channel, double maxVolume);
 
 	// The value of a curve at a project position (see AutomationLane): before the first point its value, after the
@@ -134,6 +144,8 @@ namespace gnubase::engine
 		PanLaw law = PanLaw::Minus3;
 	};
 
+	class PreFaderTap;
+
 	// A channel's fader: a linear gain, then its panner. A mono channel on a stereo destination is placed with the
 	// pan law and becomes stereo; a stereo channel has a balance as in the built-in gainPan (the side panned away from
 	// is lowered, the center is unity gain) or the combined panner, which places its left and its right channel each
@@ -154,24 +166,15 @@ namespace gnubase::engine
 		ChannelFader();
 
 		// Audio thread. The context has the channel's own channels; a mono panner writes the second one of its
-		// stereo output after them.
-		void process(const graph::ProcessContext& context, const Panning& panning) noexcept;
+		// stereo output after them. muted, if any, is scaled by the mute alone, frame by frame as the channel is.
+		void process(
+			const graph::ProcessContext& context, const Panning& panning, PreFaderTap* muted = nullptr) noexcept;
 
 	private:
-		struct Ramp
-		{
-			double value = 0.0; // the value of the next frame
-			double start = 0.0;
-			double target = 0.0;
-			uint32_t length = 0; // frames of the ramp, 0 while it doesn't move
-			uint32_t done = 0;
+		using Ramp = ParameterRamp;
 
-			void set(double newValue, uint32_t ramp) noexcept;
-			double next() noexcept; // the value for this frame; moves on by one frame
-		};
-
-		void render(
-			const graph::ProcessContext& context, const Panning& panning, uint32_t begin, uint32_t end) noexcept;
+		void render(const graph::ProcessContext& context, const Panning& panning, PreFaderTap* muted, uint32_t begin,
+			uint32_t end) noexcept;
 
 		Ramp m_volume;
 		Ramp m_pan;
@@ -272,19 +275,26 @@ namespace gnubase::engine
 	class ChannelStrip : public graph::Processor
 	{
 	public:
-		// slots: the processors of the channel's slot nodes, top to bottom, none while a plugin isn't ready; only
-		// compared, so that new plugins get every automation value. slotIds: the slots' ids in the same order, those
-		// of this strip's program, whose SlotStrips have their index in it.
+		// lookAhead: the strip's limiter is on or its automation plays, so its look-ahead counts in the latency (see
+		// StripSections). slots: the processors of the channel's slot nodes, top to bottom, none while a plugin isn't
+		// ready; only compared, so that new plugins get every automation value. slotIds: the slots' ids in the same
+		// order, those of this strip's program, whose SlotStrips have their index in it.
 		ChannelStrip(std::shared_ptr<ChannelState> state, std::shared_ptr<graph::Processor> source,
 			Panning panning = {}, std::optional<Monitoring> monitoring = std::nullopt, bool silent = false,
-			StripPart part = StripPart::Whole, const ChannelSections& sections = {},
-			std::vector<const void*> slots = {}, std::vector<ObjectId> slotIds = {});
+			StripPart part = StripPart::Whole, bool lookAhead = false, std::vector<const void*> slots = {},
+			std::vector<ObjectId> slotIds = {});
 
 		void process(const graph::ProcessContext& context) noexcept override;
 		uint32_t latency() const override;
 
-		// Command thread, before the graph compiles: where the strip leaves its audio before the fader in every block.
-		void tapPreFader(std::shared_ptr<PreFaderTap> tap) { m_tap = std::move(tap); }
+		// Command thread, before the graph compiles: where the strip leaves its audio before the fader in every block;
+		// with followMute (Mute Pre-Send when Mute), muted as the fader mutes the channel, so that mute automation
+		// mutes the pre-fader sends too, from its sample on.
+		void tapPreFader(std::shared_ptr<PreFaderTap> tap, bool followMute)
+		{
+			m_tap = std::move(tap);
+			m_tapFollowsMute = followMute;
+		}
 		// Command thread, before the graph compiles: where the strip leaves its audio at point in every block, for an
 		// offline render. Source is for the strip that runs the source, the others for the one with the fader.
 		void tapRender(std::shared_ptr<PreFaderTap> tap, RenderPoint point)
@@ -312,7 +322,7 @@ namespace gnubase::engine
 		std::optional<Monitoring> m_monitoring;
 		bool m_silent = false;
 		StripPart m_part = StripPart::Whole;
-		ChannelSections m_sections;
+		bool m_lookAhead = false;
 		std::vector<const void*> m_processors; // the source and the slots' plugins
 		std::vector<ObjectId> m_slots;         // the slots' ids
 		uint32_t m_smoothing = 0;              // g_faderSmoothing in frames
@@ -321,6 +331,7 @@ namespace gnubase::engine
 		graph::EventBuffer m_faderEvents;
 		graph::EventBuffer m_faderOut;
 		std::shared_ptr<PreFaderTap> m_tap;    // or none, without pre-fader sends
+		bool m_tapFollowsMute = false;         // the fader's mute applies to m_tap
 		std::shared_ptr<PreFaderTap> m_render; // or none, while nothing renders from the channel
 		RenderPoint m_renderPoint = RenderPoint::Strip;
 	};

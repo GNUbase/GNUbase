@@ -10,6 +10,7 @@
 #include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/ObserverPtr.h>
 
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <optional>
@@ -18,6 +19,7 @@
 
 namespace Rml
 {
+	class Context;
 	class ElementDocument;
 }
 
@@ -27,7 +29,8 @@ namespace gnubase::ui
 	// The File menu's project commands as UI commands with the reference's keys: file.new (the start screen),
 	// file.open, file.save, file.saveAs, file.saveNewVersion, file.saveTemplate, file.backup and file.revert, plus
 	// file.quit. They ask through the OS's file dialogs (Shell::showFileDialog) and GNUbase's own (the documents
-	// start-screen.rml, save-template.rml, discard-changes.rml and project-error.rml in folder), and do everything with
+	// start-screen.rml, save-template.rml, backup-project.rml, discard-changes.rml and project-error.rml in
+	// folder), and do everything with
 	// engine commands. Opening another project, reverting and quitting ask first if the project has unsaved changes,
 	// and a command that fails shows its error, as does an auto save that fails. Quitting asks however it is asked for:
 	// File > Quit, the main window's close button or the OS (Shell::onQuitRequest). Use it on the UI thread; the key
@@ -48,6 +51,11 @@ namespace gnubase::ui
 
 	private:
 		using Closed = std::function<void(Rml::ElementDocument& dialog, const std::string& result)>;
+		struct WaitingError
+		{
+			WindowId window = 0;
+			std::string error;
+		};
 
 		void ProcessEvent(Rml::Event& event) override;
 		// Opens one of the dialogs in the window, modal; closed runs when it closes, with its result. One at a time:
@@ -64,8 +72,21 @@ namespace gnubase::ui
 		void showError(WindowId window, const std::string& error);
 		// Shows the error in project-error.rml in the window once the event that asked is done. A failed auto save's
 		// error (autoSave) takes the place of an earlier one's but doesn't open over any other modal dialog in the
-		// window, and counts as shown only once it opened and while no other dialog took its place.
+		// window: it waits for them to close (waitForDialogs). It counts as shown only once it opened and while no
+		// other dialog took its place.
 		void openError(WindowId window, const std::string& error, bool autoSave);
+		// Keeps a failed auto save's error for the window until the modal dialogs in the context other than m_dialog,
+		// which keep it from opening, closed: they tell ProcessEvent when one hides or unloads. It replaces the error
+		// that waited before.
+		void waitForDialogs(Rml::Context& context, WindowId window, const std::string& error);
+		// Opens the error that waited, if any, once the dialog that closed is gone; it waits again for dialogs that
+		// are still open.
+		void showWaitingError();
+		// Forgets the error that waited and stops watching the dialogs.
+		void dropWaitingError();
+		// An auto save succeeded or the project was saved or opened: a failed auto save's error that waits, or that
+		// openError is still to open, is out of date.
+		void autoSaveWorks();
 		// Tells the user in the main window that the project can't be auto saved (project.autoSaveFailed): once, not
 		// at every interval, until it fails for another reason or after an auto save succeeded or the project was
 		// saved or opened, as the engine says with repeated.
@@ -80,6 +101,8 @@ namespace gnubase::ui
 		void quit(Window& window);
 		void open(Window& window);
 		void saveAs(Window& window);
+		// Asks for the backup's options in the window (backup-project.rml) and backs the project up into folder.
+		void backup(Window& window, const std::string& folder);
 		void showStartScreen(Rml::ElementDocument& dialog, const engine::Json& templates, const engine::Json& recent);
 
 		EngineBinding& m_binding;
@@ -90,6 +113,7 @@ namespace gnubase::ui
 		Subscription m_reset;
 		Subscription m_jobFinished;
 		Subscription m_autoSaveFailed;
+		Subscription m_autoSaved;
 		bool m_autoSaveFailureShown = false;     // since the last auto save that failed for a new reason
 		bool m_autoSaveErrorOpen = false;        // the open dialog is a failed auto save's error
 		std::optional<WindowId> m_backupWindow;  // where the last backup was asked for, which shows if it fails
@@ -99,5 +123,10 @@ namespace gnubase::ui
 		Rml::ObserverPtr<Rml::Element> m_quitQuestion; // and then for the question, while it is m_dialog
 		std::vector<std::string> m_templates;          // the start screen's templates, by name
 		std::vector<std::string> m_recent;             // and its recent projects, by file
+
+		// A failed auto save's error that modal dialogs keep away, and those dialogs, which ProcessEvent hears close.
+		std::optional<WaitingError> m_waitingError;
+		std::vector<Rml::ObserverPtr<Rml::Element>> m_keptAwayBy;
+		uint64_t m_autoSaveWorked = 0; // how often autoSaveWorks ran, so that openError knows an error is out of date
 	};
 }

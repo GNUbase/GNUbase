@@ -26,24 +26,6 @@ namespace gnubase::ui
 	{
 		using engine::Json;
 
-		// The default tool modifiers (reference manual p. 1601) of the tools that GNUbase has, which the user setting
-		// ui.toolModifiers overrides one by one.
-		const std::map<std::string, std::string>& defaultModifiers()
-		{
-			static const std::map<std::string, std::string> modifiers = {
-				{"dragDrop.copy", "alt"},
-				{"dragDrop.sharedCopy", "alt+shift"},
-				{"erase.deleteLaterEvents", "alt"},
-				{"glue.glueAllFollowing", "alt"},
-				{"range.selectFullVertical", "alt+shift"},
-				{"select.setCursorPosition", "alt+shift"},
-				{"select.splitEvent", "alt"},
-				{"sizeObjects.disableSnapping", "ctrl"},
-				{"split.splitRepeated", "alt"},
-			};
-			return modifiers;
-		}
-
 		Rml::Property dp(double value)
 		{
 			return {static_cast<float>(value), Rml::Unit::DP};
@@ -75,9 +57,25 @@ namespace gnubase::ui
 		}
 	}
 
+	const std::map<std::string, std::string>& EventDisplay::defaultToolModifiers()
+	{
+		static const std::map<std::string, std::string> modifiers = {
+			{"dragDrop.copy", "alt"},
+			{"dragDrop.sharedCopy", "alt+shift"},
+			{"erase.deleteLaterEvents", "alt"},
+			{"glue.glueAllFollowing", "alt"},
+			{"range.selectFullVertical", "alt+shift"},
+			{"select.setCursorPosition", "alt+shift"},
+			{"select.splitEvent", "alt"},
+			{"sizeObjects.disableSnapping", "ctrl"},
+			{"split.splitRepeated", "alt"},
+		};
+		return modifiers;
+	}
+
 	void EventDisplay::setToolModifiers(const Json& value)
 	{
-		m_toolModifiers = defaultModifiers();
+		m_toolModifiers = defaultToolModifiers();
 		if (value.is_object())
 			for (const auto& [action, keys] : value.items())
 				if (keys.is_string())
@@ -92,7 +90,7 @@ namespace gnubase::ui
 
 	void EventDisplay::addToolActions()
 	{
-		constexpr int count = static_cast<int>(Tool::Play) + 1;
+		constexpr int count = static_cast<int>(Tool::TimeWarp) + 1;
 		for (int i = 0; i < count; ++i)
 		{
 			const auto tool = static_cast<Tool>(i);
@@ -155,6 +153,12 @@ namespace gnubase::ui
 	void EventDisplay::setPlayMode(PlayMode mode)
 	{
 		m_playMode = mode;
+		showTools();
+	}
+
+	void EventDisplay::setWarpMode(WarpMode mode)
+	{
+		m_warpMode = mode;
 		showTools();
 	}
 
@@ -270,6 +274,8 @@ namespace gnubase::ui
 			return true;
 		case Tool::Line:
 			return true; // it draws on automation tracks, which the event display shows with #121
+		case Tool::TimeWarp:
+			return timeWarpDown();
 		}
 		return false;
 	}
@@ -438,6 +444,9 @@ namespace gnubase::ui
 		}
 		case Drag::VolumePoint:
 			curveUp();
+			break;
+		case Drag::TimeWarp:
+			timeWarpUp(x);
 			break;
 		case Drag::Click:
 		{

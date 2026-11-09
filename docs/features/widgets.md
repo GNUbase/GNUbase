@@ -103,11 +103,14 @@ attributes, through a data model or directly.
   `menuitem:hover > menu`); a click on that item keeps the menu open. The menu gives such an item a `.menu-arrow`
   part when it opens, first in the item so that it floats right; the themes draw it with their dropdown arrow, turned
   to point right.
-- Keys: Down and Up move the focus between the items that aren't disabled, Enter clicks the focused one. Right opens
-  the focused item's submenu (with the state class `.open`) and focuses its first item, unless all its items are
-  disabled; Left closes the submenu and goes back to its item. A submenu that keys opened closes when the mouse goes
-  to another item of its menu, and with its menu. Escape closes every open menu. A menu that closes with the focus
-  in it gives the focus to its item, if it is a submenu, or else to its document.
+- Keys: Down and Up move the focus between the items that are shown and not disabled, round the ends, skipping items
+  hidden with `display: none` such as those a search leaves out. Tab and Shift+Tab (with Ctrl, Alt or Cmd too) do the
+  same and also reach the menu's other controls, such as a search field, so that the focus doesn't leave an open menu
+  for a control outside it while the menu stays open (#524). Enter clicks the focused item. Right opens the focused
+  item's submenu (with the state class `.open`) and focuses its first item, unless all its items are disabled; Left
+  closes the submenu and goes back to its item. A submenu that keys opened closes when the mouse goes to another item of
+  its menu, and with its menu. Escape closes every open menu. A menu that closes with the focus in it gives the focus to
+  its item, if it is a submenu, or else to its document.
 - `<menubar>` holds the titles of menus: elements with a `menu` attribute, usually buttons. While one title's menu is
   open, the mouse over another title opens that one's menu instead; in a title's menu (and its submenus) Right and
   Left open the next and previous title's menu where they don't go into or out of a submenu, with its first item
@@ -162,7 +165,8 @@ as the edit history's done and undone steps with a separator between them ([edit
 rows are in the document's order. Each row has a `value` attribute (without commas).
 
 - **Selection.** A click selects a row. With the `multiple` attribute, Ctrl-click (Cmd-click on macOS) adds or removes
-  a row and Shift-click selects the rows from the last one clicked. Up and Down move the selection, Shift extends it,
+  a row and Shift-click selects the rows from the last one clicked; with `shiftdeselects` too, Shift-click on a
+  selected row deselects it, as in the track list ([track-list.md](track-list.md)). Up and Down move the selection, Shift extends it,
   Page Up and Page Down move it by one row less than the view shows, Home and End go to the first and last row.
   Selected rows have the state class `.selected`. The view's `value` attribute is the selected rows' values separated
   by commas, and `change` sends it, so `data-value` binds the selection both ways, also when `data-for` makes the rows.
@@ -218,8 +222,12 @@ decimals than they show when nothing was typed. Text displays send the text type
 started with, and nothing with Escape or when nothing was typed. Meters show their level and peak at the right heights.
 Menus open under their button and at the mouse, inside the window, show submenus on hover, close on an item, a click
 elsewhere and Escape, skip disabled items, and work with the keys; items with a submenu show an arrow, and Right and
-Left go into and out of the submenu, but not into one with nothing to focus. In a menu bar the mouse and Right and
-Left move between the open menus, also from a submenu, skipping a disabled title, and Alt alone opens the first menu,
+Left go into and out of the submenu, but not into one with nothing to focus; Tab and Shift+Tab, also with Ctrl or Alt,
+step through a menu's and a submenu's items and round their ends without leaving the open menu, also in the project
+window's menu bar (`tests/docking_tests.cpp`), and with Down and Up skip a hidden item, also those that the parameter
+selector's search hides, where Tab reaches its search field too (`tests/automationtracks_tests.cpp`). In a menu bar the
+mouse and Right and Left move between the open menus, also from a submenu, skipping a disabled title, and Alt alone
+opens the first menu,
 closing a context menu, and closes it, leaving the focus out of the closed menu (not on macOS, nor with another key,
 a click, a mouse button going up or the wheel, nor when SDL releases Alt as the window loses the keyboard or
 presses it as the window gets it, nor behind a modal dialog). A right click with each modifier key opens the
@@ -233,6 +241,6 @@ collapse by click and keys, with indents by level; tables select body rows only,
 in the document's order. Rows rebuilt by code keep the selection given by the view's `value`: all rows rebuilt twice
 between two updates, a single row replaced, and rows rebuilt or a `value` set just before a key or a click, after which
 Down skips a collapsed parent's children, Right and Left expand and collapse, and Shift+Down, Shift-click and
-Ctrl-click extend the rebuilt selection; a drag held past a view's edge scrolls it with `dragscroll` only; splitters
+Ctrl-click extend the rebuilt selection; Shift-click with `shiftdeselects` deselects a selected row; a drag held past a view's edge scrolls it with `dragscroll` only; splitters
 move the boundary in a row and in a column, never below nothing. The color picker picks from its field, its hue strip
 and its numbers, draws the old and the new color, and follows its data.

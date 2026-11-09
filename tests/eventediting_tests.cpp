@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -247,6 +248,246 @@ TEST_CASE("a drag at an edge resizes, Alt and a click splits, a double click add
 		[&f] { return f.display.selection() == std::vector<uint64_t>{f.audioParts()[0].at("id").get<uint64_t>()}; }));
 	CHECK(f.audioEvents().size() == 1);
 	CHECK(f.parts().size() == 4);
+}
+
+namespace
+{
+	// Whether the display draws the audio event (lane 0) from start to end seconds, playing its clip from offset: its
+	// box among the events and the selected events, its waveform, its fade in from its start, its fade out up to its
+	// end and its volume line.
+	bool drawsAudioEvent(Fixture& f, double start, double end, int64_t offset)
+	{
+		const auto near = [](double a, double b) { return std::abs(a - b) < 1e-6; };
+		const auto boxed = [&f, &near, start, end](const char* kind)
+		{
+			const std::vector<ui::EventLanes::Lane>& lanes = f.lanes(kind);
+			return !lanes.empty() && lanes[0].events.size() == 1 && near(lanes[0].events[0].start, start) &&
+				near(lanes[0].events[0].end(), end);
+		};
+		Rml::ElementList waves;
+		f.document.QuerySelectorAll(waves, ".waveforms waveform");
+		const auto* wave = waves.size() == 1 ? dynamic_cast<ui::Waveform*>(waves[0]) : nullptr;
+		const auto* fadeLines = dynamic_cast<ui::FadeLines*>(f.document.QuerySelector("fade-lines"));
+		if (!boxed("events") || !boxed("selected-events") || wave == nullptr || fadeLines == nullptr ||
+			fadeLines->lanes().empty())
+			return false;
+		const ui::FadeLines::Lane& lane = fadeLines->lanes()[0];
+		const bool fadesIn = std::any_of(lane.fades.begin(), lane.fades.end(),
+			[&near, start](const ui::FadeLine& fade) { return fade.in && near(fade.start, start); });
+		const bool fadesOut = std::any_of(lane.fades.begin(), lane.fades.end(),
+			[&near, end](const ui::FadeLine& fade) { return !fade.in && near(fade.start + fade.length, end); });
+		return near(wave->span().start, start) && near(wave->span().end(), end) && fadesIn && fadesOut &&
+			lane.volumes.size() == 1 && near(lane.volumes[0].start, start) && near(lane.volumes[0].end, end) &&
+			lane.volumes[0].offset == offset;
+	}
+}
+
+TEST_CASE("a drag of an event's edge shows the size the release gives it at every step, Escape cancels it", "[unit]")
+{
+	Fixture f;
+	Rml::Context& context = f.window.context();
+	Rml::Element* lanes = f.document.QuerySelector("event-lanes.events");
+	REQUIRE(lanes != nullptr);
+	const auto move = [&context, lanes](double x, double y)
+	{
+		context.ProcessMouseMove(
+			static_cast<int>(lanes->GetAbsoluteLeft() + x), static_cast<int>(lanes->GetAbsoluteTop() + y), 0);
+	};
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	clock->freeze(true); // RmlUi's time stands still but for advance()
+	const std::shared_ptr<void> thaw(nullptr, [clock](void*) { clock->freeze(false); });
+	const auto press = [&context, &move, clock](double x, double y)
+	{
+		clock->advance(1.0); // no double click with the press before
+		move(x, y);
+		context.ProcessMouseButtonDown(0, 0);
+	};
+	// The audio event (2 to 2.5 seconds) with fades and a volume, so that its fades and volume line show.
+	f.call(
+		"audioEvent.setFades", {{"event", f.event}, {"fadeIn", {{"length", 2400}}}, {"fadeOut", {{"length", 4800}}}});
+	f.call("audioEvent.set", {{"event", f.event}, {"volume", -6.0}});
+	f.display.select({f.event});
+	REQUIRE(f.waitUntil([&f] { return drawsAudioEvent(f, 2.0, 2.5, 0); }));
+	// After a release: the display has the project as the engine has it, and no preview is on its way.
+	const auto settled = [&f]
+	{
+		return f.waitUntil(
+			[&f]
+			{
+				return f.binding.waiting("event.previewResize") == 0 && f.binding.waiting("project.get") == 0 &&
+					f.display.project().at("audioEvents") == f.audioEvents() &&
+					f.display.project().at("midiParts") == f.parts();
+			});
+	};
+
+	// Its end, low in the lane where no fade handle is, in steps without letting go: each one shows the new end at
+	// once, its fade out and volume line with it.
+	press(248, 35);
+	for (const double x : {268.0, 300.0, 210.0, 278.0})
+	{
+		move(x, 35);
+		f.step();
+		INFO("end at " << x);
+		REQUIRE(f.waitUntil([&f, x] { return drawsAudioEvent(f, 2.0, (x + 2.0) / 100.0, 0); }));
+	}
+	CHECK(f.audioEvents()[0].at("length") == 24000); // nothing changed yet
+	context.ProcessMouseButtonUp(0, 0);
+	f.step();
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("length") == 38400; })); // to 2.8 seconds
+	CHECK(f.audioEvents()[0].at("position") == 96000);
+	CHECK(drawsAudioEvent(f, 2.0, 2.8, 0));
+	REQUIRE(settled());
+	CHECK(drawsAudioEvent(f, 2.0, 2.8, 0));
+	const auto steps = [&f] { return f.call("history.get").at("steps").size(); };
+	const size_t resized = steps();
+
+	// Its start: later reveals less of the clip, earlier stops at the clip's start, where the event starts already,
+	// as the release would.
+	press(202, 35);
+	move(222, 35);
+	f.step();
+	REQUIRE(f.waitUntil([&f] { return drawsAudioEvent(f, 2.2, 2.8, 9600); }));
+	move(150, 35);
+	f.step();
+	REQUIRE(f.waitUntil([&f] { return drawsAudioEvent(f, 2.0, 2.8, 0); }));
+	move(212, 35);
+	f.step();
+	REQUIRE(f.waitUntil([&f] { return drawsAudioEvent(f, 2.1, 2.8, 4800); }));
+	// Escape cancels the drag: the event shows its size again, and the release changes nothing.
+	f.automation.key(std::nullopt, "Escape");
+	REQUIRE(f.waitUntil([&f] { return drawsAudioEvent(f, 2.0, 2.8, 0); }));
+	move(230, 35);
+	REQUIRE(settled());
+	CHECK(drawsAudioEvent(f, 2.0, 2.8, 0));
+	context.ProcessMouseButtonUp(0, 0);
+	REQUIRE(settled());
+	CHECK(steps() == resized);
+	CHECK(f.audioEvents()[0].at("position") == 96000);
+	CHECK(f.audioEvents()[0].at("offset") == 0);
+
+	// Sizing moves contents: the clip moves with the start, earlier as well.
+	f.display.setSizingMovesContents(true);
+	press(202, 35);
+	move(232, 35);
+	f.step();
+	REQUIRE(f.waitUntil([&f] { return drawsAudioEvent(f, 2.3, 2.8, 0); }));
+	move(152, 35);
+	f.step();
+	REQUIRE(f.waitUntil([&f] { return drawsAudioEvent(f, 1.5, 2.8, 0); }));
+	context.ProcessMouseButtonUp(0, 0);
+	f.step();
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("position") == 72000; }));
+	CHECK(f.audioEvents()[0].at("length") == 62400);
+	CHECK(f.audioEvents()[0].at("offset") == 0);
+	CHECK(steps() == resized + 1);
+	REQUIRE(settled());
+	// Its end (2.8 seconds) with the contents: earlier, the clip moves with it; later, it stops where the clip's start
+	// reaches the event's.
+	struct Step
+	{
+		double x = 0.0;
+		double end = 0.0;
+		int64_t offset = 0;
+	};
+	press(278, 35);
+	for (const Step& step :
+		{Step{258.0, 2.6, 9600}, Step{298.0, 2.8, 0}, Step{238.0, 2.4, 19200}, Step{258.0, 2.6, 9600}})
+	{
+		move(step.x, 35);
+		f.step();
+		INFO("end at " << step.x);
+		REQUIRE(f.waitUntil([&f, &step] { return drawsAudioEvent(f, 1.5, step.end, step.offset); }));
+	}
+	context.ProcessMouseButtonUp(0, 0);
+	f.step();
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("length") == 52800; })); // 1.5 to 2.6 seconds
+	CHECK(f.audioEvents()[0].at("position") == 72000);
+	CHECK(f.audioEvents()[0].at("offset") == 9600);
+	REQUIRE(settled());
+	CHECK(drawsAudioEvent(f, 1.5, 2.6, 9600));
+	f.call("history.undo");
+	REQUIRE(settled());
+	REQUIRE(drawsAudioEvent(f, 1.5, 2.8, 0));
+	f.display.setSizingMovesContents(false);
+
+	// Snapped to beats, the end (1.5 to 2.8 seconds) at 3.03 seconds goes to 3; Ctrl (Disable Snapping) pressed and
+	// released without moving the mouse unsnaps and snaps it again.
+	f.call("snap.set", {{"on", true}, {"grid", "beat"}});
+	REQUIRE(f.waitUntil([&f] { return f.display.snap().on; }));
+	press(278, 35);
+	move(301, 35);
+	f.step();
+	REQUIRE(f.waitUntil([&f] { return drawsAudioEvent(f, 1.5, 3.0, 0); }));
+	context.ProcessKeyDown(Rml::Input::KI_LCONTROL, Rml::Input::KM_CTRL);
+	f.step();
+	REQUIRE(f.waitUntil([&f] { return drawsAudioEvent(f, 1.5, 3.03, 0); }));
+	// The event changes meanwhile (another client moves it half a second later): the preview follows, the edge as
+	// far from where it was as the drag went.
+	f.call("event.move", {{"events", {f.event}}, {"delta", 24000}});
+	REQUIRE(f.waitUntil([&f] { return drawsAudioEvent(f, 2.0, 3.53, 0); }));
+	context.ProcessKeyUp(Rml::Input::KI_LCONTROL, 0);
+	f.step();
+	REQUIRE(f.waitUntil([&f] { return drawsAudioEvent(f, 2.0, 3.5, 0); }));
+	context.ProcessMouseButtonUp(0, 0);
+	f.step();
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("length") == 72000; })); // 2 to 3.5 seconds
+	CHECK(f.audioEvents()[0].at("position") == 96000);
+	REQUIRE(settled());
+	CHECK(drawsAudioEvent(f, 2.0, 3.5, 0));
+	f.call("snap.set", {{"on", false}});
+	REQUIRE(f.waitUntil([&f] { return !f.display.snap().on; }));
+
+	// A locked event: the preview fails as the release does, and the event stays as it is.
+	f.call("event.set", {{"events", {f.event}}, {"lock", true}});
+	REQUIRE(settled());
+	press(348, 35);
+	move(368, 35);
+	REQUIRE(settled());
+	CHECK(drawsAudioEvent(f, 2.0, 3.5, 0));
+	context.ProcessMouseButtonUp(0, 0);
+	REQUIRE(settled());
+	CHECK(f.audioEvents()[0].at("length") == 72000);
+	CHECK(drawsAudioEvent(f, 2.0, 3.5, 0));
+
+	// Two events selected, the audio event (2 to 3.5 seconds) and the MIDI part (1 to 3 seconds) on its musical track:
+	// a drag of the part's end moves both ends as far, at every step.
+	f.call("event.set", {{"events", {f.event}}, {"lock", false}});
+	REQUIRE(settled());
+	f.display.select({f.event, f.part});
+	const auto partEnd = [&f](const char* kind) { return f.lanes(kind)[1].events.at(0).end(); };
+	const auto bothEnds = [&f, &partEnd](double end, double audioEnd)
+	{
+		return std::abs(partEnd("selected-events") - end) < 1e-6 && std::abs(partEnd("events") - end) < 1e-6 &&
+			drawsAudioEvent(f, 2.0, audioEnd, 0);
+	};
+	press(298, 60);
+	for (const double x : {318.0, 368.0, 348.0})
+	{
+		move(x, 60);
+		f.step();
+		INFO("part's end at " << x);
+		const double shift = (x - 298.0) / 100.0;
+		REQUIRE(f.waitUntil([&bothEnds, shift] { return bothEnds(3.0 + shift, 3.5 + shift); }));
+	}
+	context.ProcessMouseButtonUp(0, 0);
+	// Pressed again at once, before the display has the project with the resize: the drag starts from the ends the
+	// release left, and the release's answer doesn't take the new drag's preview away.
+	press(348, 60);
+	CHECK(std::abs(partEnd("events") - 3.5) < 1e-6);
+	move(368, 60);
+	f.step();
+	REQUIRE(f.waitUntil([&bothEnds] { return bothEnds(3.7, 4.2); }));
+	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("length") == 5 * g_quarter; })); // the first release's
+	CHECK(f.audioEvents()[0].at("length") == 96000);
+	REQUIRE(settled());
+	CHECK(bothEnds(3.7, 4.2));
+	context.ProcessMouseButtonUp(0, 0);
+	f.step();
+	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("length") == (27 * g_quarter) / 5; })); // 1 to 3.7 seconds
+	CHECK(f.audioEvents()[0].at("length") == 105600);                                         // 2 to 4.2 seconds
+	REQUIRE(settled());
+	CHECK(bothEnds(3.7, 4.2));
 }
 
 TEST_CASE("the object selection tool's modifiers act on events whatever keys they are set to", "[unit]")
@@ -672,10 +913,10 @@ TEST_CASE("the tools are chosen by command, and the display names the one chosen
 	CHECK(f.display.tool() == ui::Tool::Erase);
 	f.run("tool.objectSelection");
 	f.run("tool.previous"); // around to the last
-	CHECK(f.display.tool() == ui::Tool::Play);
+	CHECK(f.display.tool() == ui::Tool::TimeWarp);
 	for (const char* id : {"tool.objectSelection", "tool.rangeSelection", "tool.split", "tool.glue", "tool.erase",
-			 "tool.zoom", "tool.mute", "tool.draw", "tool.line", "tool.play", "tool.next", "tool.previous",
-			 "tool.combineSelectionTools"})
+			 "tool.zoom", "tool.mute", "tool.draw", "tool.line", "tool.play", "tool.timeWarp", "tool.next",
+			 "tool.previous", "tool.combineSelectionTools"})
 		CHECK(f.display.actions().count(id) == 1);
 	f.run("tool.combineSelectionTools");
 	CHECK(f.display.combineSelectionTools());
@@ -1708,6 +1949,70 @@ TEST_CASE("the draw tool's click near a curve point leaves it, a drag moves it b
 	CHECK(f.audioEvents()[0].at("volumeCurve")[0].at("volume") == 0.0);
 }
 
+TEST_CASE("the draw tool moves a curve point drawn clipped at the lane's top from its own volume", "[unit]")
+{
+	Fixture f;
+	// Waits until the display shows the event at +3 dB with one point at volume dB, 0.2 seconds in.
+	const auto shows = [&f](double volume)
+	{
+		return f.waitUntil(
+			[&f, volume]
+			{
+				const std::vector<ui::FadeLines::Lane>& lanes = fadeLines(f).lanes();
+				if (lanes.empty() || lanes[0].volumes.size() != 1)
+					return false;
+				const ui::VolumeLine& line = lanes[0].volumes[0];
+				return std::abs(line.gain - std::pow(10.0, 3.0 / 20.0)) < 1e-9 && line.points.size() == 1 &&
+					line.points[0].position == 9600 &&
+					std::abs(line.points[0].gain - std::pow(10.0, volume / 20.0)) < 1e-6;
+			});
+	};
+	const auto pointVolume = [&f] { return f.audioEvents()[0].at("volumeCurve")[0].at("volume").get<double>(); };
+	// Event volume +3 dB and a point at +6 dB: +9 dB, above the line's top (+6 dB), so the point is drawn at the top
+	// of the lane, though the line would reach it 1.41 times the lane's height up.
+	f.call("audioEvent.set", {{"event", f.event}, {"volume", 3.0}});
+	f.call("audioEvent.setVolumeCurve", {{"event", f.event}, {"points", {{{"position", 9600}, {"volume", 6.0}}}}});
+	REQUIRE(shows(6.0));
+	f.display.setTool(ui::Tool::Draw);
+	// A drag up leaves the point as it is and makes no undo step.
+	f.drag(220, 4, 220, 0);
+	// 4 dp down a 40 dp lane takes a tenth of the lane off its real height: +8.36 dB in all, the point +5.36 dB, not
+	// a tenth below the top (+2.1 dB).
+	f.drag(220, 1, 220, 5);
+	REQUIRE(f.waitUntil([&] { return pointVolume() != 6.0; }));
+	CHECK(std::abs(pointVolume() - 5.36) < 0.05);
+	CHECK(f.audioEvents()[0].at("volumeCurve")[0].at("position") == 9600);
+	// The display has the change before the undo, so the next drag starts from the point as the undo leaves it.
+	REQUIRE(shows(pointVolume()));
+	f.call("history.undo");
+	REQUIRE(shows(6.0));
+	CHECK(pointVolume() == 6.0);
+	// The next undo step is the curve the test set: the drag up made none.
+	f.call("history.undo");
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("volumeCurve").empty(); }));
+	REQUIRE(f.waitUntil(
+		[&f]
+		{
+			const std::vector<ui::FadeLines::Lane>& lanes = fadeLines(f).lanes();
+			return !lanes.empty() && lanes[0].volumes.size() == 1 && lanes[0].volumes[0].points.empty();
+		}));
+	f.call("history.redo");
+	REQUIRE(shows(6.0));
+	// 20 dp down: half the lane off 1.41, +5.2 dB in all, the point +2.2 dB.
+	f.drag(220, 1, 220, 21);
+	REQUIRE(f.waitUntil([&] { return pointVolume() != 6.0; }));
+	CHECK(std::abs(pointVolume() - 2.2) < 0.05);
+
+	// A point drawn below the top still goes no higher than the top: a press 5 dp below one at -3 dB (0 dB in all,
+	// half way up) dragged 25 dp up to the top takes it to +6 dB in all, the point to +3 dB.
+	f.call("audioEvent.setVolumeCurve", {{"event", f.event}, {"points", {{{"position", 9600}, {"volume", -3.0}}}}});
+	REQUIRE(shows(-3.0));
+	f.drag(220, 25, 220, 0);
+	REQUIRE(f.waitUntil([&] { return pointVolume() != -3.0; }));
+	CHECK(std::abs(pointVolume() - 3.0) < 0.05);
+	CHECK(f.audioEvents()[0].at("volumeCurve").size() == 1);
+}
+
 TEST_CASE("Remove Volume Curve removes the selected events' curves, or resets them in the selection range", "[unit]")
 {
 	Fixture f;
@@ -1795,4 +2100,68 @@ TEST_CASE("lanes show below their track, which shows the take in front; the comp
 	f.display.showLanes(audioTrack, false);
 	f.step();
 	CHECK(f.display.laneTakes() == std::vector<int>{-1, -1});
+}
+
+TEST_CASE("a muted take covers nothing on its track's lane, which shows what plays", "[unit]")
+{
+	Fixture f;
+	const auto audioTrack = f.call("project.get").at("tracks").at(0).at("id").get<uint64_t>();
+	// A second take from 2.1 to 2.3 seconds on lane 1, in front of the first but muted: the first plays all through.
+	const auto second = f.call("audioEvent.add",
+							 {{"track", audioTrack}, {"clip", f.audioEvents()[0].at("clip")}, {"position", 100800},
+								 {"length", 9600}, {"lane", 1}, {"mute", true}})
+							.at("event")
+							.at("id")
+							.get<uint64_t>();
+	REQUIRE(f.waitUntil([&f] { return f.display.project().at("audioEvents").size() == 2; }));
+	REQUIRE(f.lanes("events")[0].events.size() == 1);
+	CHECK(std::abs(f.lanes("events")[0].events[0].start - 2.0) < 1e-6);
+	CHECK(std::abs(f.lanes("events")[0].events[0].end() - 2.5) < 1e-6);
+	CHECK(f.lanes("muted-events")[0].events.empty());
+	// A click there finds the take that plays.
+	f.click(220, 20);
+	CHECK(f.display.selection() == std::vector<uint64_t>{f.event});
+
+	// The first take muted, the second unmuted: the track's lane shows the second where it plays, and the muted one
+	// around it, muted only there.
+	f.call("event.set", {{"events", {f.event}}, {"mute", true}});
+	f.call("event.set", {{"events", {second}}, {"mute", false}});
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events")[0].events.size() == 3; }));
+	const std::vector<ui::TimeSpan>& muted = f.lanes("muted-events")[0].events;
+	REQUIRE(muted.size() == 2);
+	CHECK(std::abs(muted[0].end() - 2.1) < 1e-6);
+	CHECK(std::abs(muted[1].start - 2.3) < 1e-6);
+	f.click(220, 20);
+	CHECK(f.display.selection() == std::vector<uint64_t>{second});
+	f.click(205, 20);
+	CHECK(f.display.selection() == std::vector<uint64_t>{f.event});
+}
+
+TEST_CASE("the draw tool draws parts on the lane it draws on", "[unit]")
+{
+	Fixture f;
+	const Json tracks = f.call("project.get").at("tracks");
+	const auto audioTrack = tracks.at(0).at("id").get<uint64_t>();
+	const auto midiTrack = tracks.at(1).at("id").get<uint64_t>();
+	// Both tracks with something on lane 1 show lanes 0 and 1 below them: the audio track's from 40 to 120 dp, the
+	// MIDI track's from 160 to 240 dp.
+	f.call("event.set", {{"events", {f.event, f.part}}, {"lane", 1}});
+	f.display.showLanes(audioTrack, true);
+	f.display.showLanes(midiTrack, true);
+	REQUIRE(f.waitUntil([&f] { return f.display.laneTakes() == std::vector<int>{-1, 0, 1, -1, 0, 1}; }));
+
+	f.display.setTool(ui::Tool::Draw);
+	// A click on the MIDI track's lane 1 at 5 seconds draws the bar there on lane 1, one on its lane 0 on lane 0.
+	f.click(500, 220);
+	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 2; }));
+	CHECK(f.parts()[1].at("position") == 8 * g_quarter);
+	CHECK(f.parts()[1].at("lane") == 1);
+	f.click(700, 180);
+	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 3; }));
+	CHECK(f.parts()[2].at("lane") == 0);
+	// A drag on the audio track's lane 1 draws an audio part there.
+	f.drag(400, 100, 550, 100);
+	REQUIRE(f.waitUntil([&f] { return f.audioParts().size() == 1; }));
+	CHECK(f.audioParts()[0].at("lane") == 1);
+	CHECK(f.audioParts()[0].at("track") == audioTrack);
 }

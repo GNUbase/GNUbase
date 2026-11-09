@@ -48,11 +48,17 @@ namespace gnubase::engine
 	void copyMedia(std::vector<MediaCopy>& files, const std::filesystem::path& folder, JobContext& job);
 
 	// Copies media files into the media folder as a job, then points the media at their copies with one
-	// command, a transaction named action, so that it is one undo step. Media whose path changed while the job
-	// copied, or that were removed, keep their path, and their copies are removed. The job's result is
-	// {copied: [{media, from, to}], missing: [{media, path}], changed: [media]}. Returns the job.
-	Json startMediaCopy(
-		Jobs& jobs, std::string kind, std::vector<MediaCopy> files, std::filesystem::path folder, std::string action);
+	// command, a transaction named action, so that it is one undo step of project, the project open when it started
+	// (ProjectModel::openedRevision). Media whose path changed while the job copied, or that were removed, keep their
+	// path, and their copies are removed; so are all of them if another project was opened meanwhile. The job's result
+	// is {copied: [{media, from, to}], missing: [{media, path}], changed: [media]}. Returns the job.
+	Json startMediaCopy(Jobs& jobs, std::string kind, std::vector<MediaCopy> files, std::filesystem::path folder,
+		std::string action, uint64_t project);
+
+	// Whether project (ProjectModel::openedRevision) is still the open one, for a job to ask before its final command:
+	// one opened meanwhile isn't sent the command, which would skip every entry but still count as a change of it
+	// (project.revision). The command checks it again, for a project opened right after this. Throws CommandError.
+	bool projectStillOpen(JobContext& job, uint64_t project);
 
 	// Removes files, ignoring errors, e.g. copies that a job made and doesn't need.
 	void removeFiles(const std::vector<std::string>& files);
@@ -86,13 +92,15 @@ namespace gnubase::engine
 		bool removeUnused = false;        // leave out clips that no audio event uses, and media that no clip uses
 		bool currentVersionsOnly = false; // no effect until clips have offline processing (#141) or versions (#165)
 		bool skipVideo = false;           // no effect until projects have video (#198)
+		std::string mixdownFolder;        // the project's Mixdown folder, copied into <folder>/Mixdown; empty for none
 	};
 
 	// Writes <folder>/<name>.dawproject and copies the media into <folder>/Audio, where the project file refers to
-	// them relative to itself, so the folder opens anywhere. A media file that can't be read is reported and keeps its
-	// path. Reports progress to the job and stops when it is cancelled. If it doesn't complete, it removes what it
-	// wrote. Returns {file, files, missing: [{media, path}]}. Throws JobCancelled, DawProjectError, AudioFileError or
-	// std::runtime_error.
+	// them relative to itself, so the folder opens anywhere, and the files in mixdownFolder, if it exists, into
+	// <folder>/Mixdown, leaving out the backup's own folder if it is in there. A media file that can't be read is
+	// reported and keeps its path. Reports progress to the job and stops when it is cancelled. If it doesn't complete,
+	// it removes what it wrote. Returns {file, files, missing: [{media, path}]}. Throws JobCancelled, DawProjectError,
+	// AudioFileError or std::runtime_error.
 	//
 	// Minimized files start their ranges on the resampling grid of their sample rate in the project's, so that
 	// they play sample for sample as the originals do. They keep every sample: files whose samples GNUbase can't

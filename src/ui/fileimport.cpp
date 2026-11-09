@@ -119,11 +119,15 @@ namespace gnubase::ui
 			importFiles(files);
 			return;
 		}
-		std::optional<uint64_t> track;
-		const auto lane = static_cast<size_t>((y + m_view.top) / (g_trackHeight * m_view.trackZoom));
-		if (lane < m_laneTypes.size() && m_laneTypes[lane] == "audio")
-			track = m_laneTracks[lane];
-		importFiles(files, track, samples(m_view.start + (x * m_view.scale)));
+		Import import;
+		import.sample = std::max<int64_t>(samples(m_view.start + (x * m_view.scale)), 0);
+		// On a lane of a track whose lanes show, on that lane (#99).
+		if (const size_t lane = laneAt(y + m_view.top); lane < m_laneTypes.size() && m_laneTypes[lane] == "audio")
+		{
+			import.track = m_laneTracks[lane];
+			import.lane = std::max(m_laneTakes[lane], 0);
+		}
+		startImport(files, std::move(import));
 	}
 
 	void EventDisplay::openImportOptions(bool saved)
@@ -164,7 +168,10 @@ namespace gnubase::ui
 			// Files dropped on a track all go on it; the selected track takes the first file, or all of them with
 			// Import Files on One Track. Files that are split go on new tracks either way.
 			if (m_import.track)
+			{
 				parameters["track"] = *m_import.track;
+				parameters["lane"] = m_import.lane;
+			}
 			if (oneTrack || (m_import.track && !m_import.selected))
 				parameters["oneTrack"] = true;
 		}

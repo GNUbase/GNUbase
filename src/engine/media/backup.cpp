@@ -155,16 +155,23 @@ namespace gnubase::engine
 			const Project& project, ObjectId media, time::Samples frames, time::Samples handle, time::Samples step)
 		{
 			std::vector<Range> ranges;
-			for (const auto& [id, event] : project.audioEvents)
-			{
-				if (project.clips.at(event.clip).media != media)
-					continue;
-				if (event.offset >= frames)
-					return {};
-				const time::Samples start = std::max<time::Samples>(0, event.offset - handle);
-				const time::Samples end = event.offset + event.length + handle;
-				ranges.push_back({start - (start % step), std::min(frames, (end + step - 1) / step * step), 0});
-			}
+			bool unmapped = false;
+			forEveryAudioEvent(project,
+				[&](const AudioEvent& event)
+				{
+					if (unmapped || project.clips.at(event.clip).media != media)
+						return;
+					if (event.offset >= frames)
+					{
+						unmapped = true;
+						return;
+					}
+					const time::Samples start = std::max<time::Samples>(0, event.offset - handle);
+					const time::Samples end = event.offset + event.length + handle;
+					ranges.push_back({start - (start % step), std::min(frames, (end + step - 1) / step * step), 0});
+				});
+			if (unmapped)
+				return {};
 			std::sort(ranges.begin(), ranges.end(), [](const Range& a, const Range& b) { return a.start < b.start; });
 			std::vector<Range> merged;
 			for (const Range& range : ranges)
@@ -249,8 +256,7 @@ namespace gnubase::engine
 		void removeUnused(Project& project)
 		{
 			std::set<ObjectId> usedClips;
-			for (const auto& [id, event] : project.audioEvents)
-				usedClips.insert(event.clip);
+			forEveryAudioEvent(project, [&usedClips](const AudioEvent& event) { usedClips.insert(event.clip); });
 			std::set<ObjectId> usedMedia;
 			for (auto clip = project.clips.begin(); clip != project.clips.end();)
 			{
@@ -271,8 +277,10 @@ namespace gnubase::engine
 
 		bool hasEvents(const Project& project, ObjectId media)
 		{
-			return std::any_of(project.audioEvents.begin(), project.audioEvents.end(),
-				[&](const auto& entry) { return project.clips.at(entry.second.clip).media == media; });
+			bool found = false;
+			forEveryAudioEvent(project,
+				[&](const AudioEvent& event) { found = found || project.clips.at(event.clip).media == media; });
+			return found;
 		}
 
 		// Removes what a backup wrote if it doesn't complete.
@@ -291,7 +299,9 @@ namespace gnubase::engine
 				std::error_code ignored;
 				for (const fs::path& file : m_files)
 					fs::remove(file, ignored);
-				fs::remove(m_audio, ignored); // only if it's empty
+				for (auto made = m_folders.rbegin(); made != m_folders.rend(); ++made)
+					fs::remove(*made, ignored); // the innermost first
+				fs::remove(m_audio, ignored);   // only if it's empty
 				if (m_createdFolder)
 					fs::remove(m_folder, ignored);
 			}
@@ -302,11 +312,27 @@ namespace gnubase::engine
 			void add(fs::path file) { m_files.push_back(std::move(file)); }
 			void done() { m_done = true; }
 
+			// Creates the folder and those it is in that don't exist yet, which go again if the backup doesn't
+			// complete. Throws std::runtime_error.
+			void createFolders(const fs::path& folder)
+			{
+				std::error_code error;
+				if (fs::is_directory(folder, error))
+					return;
+				if (folder.has_relative_path())
+					createFolders(folder.parent_path());
+				fs::create_directory(folder, error);
+				if (error)
+					throw std::runtime_error("can't create " + folder.u8string() + ": " + error.message());
+				m_folders.push_back(folder);
+			}
+
 		private:
 			fs::path m_folder;
 			fs::path m_audio;
 			bool m_createdFolder = false;
 			std::vector<fs::path> m_files;
+			std::vector<fs::path> m_folders; // that it made, outermost first
 			bool m_done = false;
 		};
 	}
@@ -408,11 +434,12 @@ namespace gnubase::engine
 		}
 	}
 
-	Json startMediaCopy(
-		Jobs& jobs, std::string kind, std::vector<MediaCopy> files, std::filesystem::path folder, std::string action)
+	Json startMediaCopy(Jobs& jobs, std::string kind, std::vector<MediaCopy> files, std::filesystem::path folder,
+		std::string action, uint64_t project)
 	{
 		return jobs.start(std::move(kind),
-			[files = std::move(files), folder = std::move(folder), action = std::move(action)](JobContext& job) mutable
+			[files = std::move(files), folder = std::move(folder), action = std::move(action), project](
+				JobContext& job) mutable
 			{
 				copyMedia(files, folder, job);
 				Json relink = Json::array();
@@ -433,9 +460,15 @@ namespace gnubase::engine
 				try
 				{
 					job.checkCancelled();
-					if (!relink.empty())
+					if (!relink.empty() && !projectStillOpen(job, project))
 					{
-						const Json command = {{"command", "media.relink"}, {"parameters", {{"files", relink}}}};
+						for (const Json& entry : relink)
+							skipped.insert(entry.at("media").get<ObjectId>());
+					}
+					else if (!relink.empty())
+					{
+						const Json command = {
+							{"command", "media.relink"}, {"parameters", {{"files", relink}, {"project", project}}}};
 						const Json result = job.command(
 							"history.transaction", {{"description", action}, {"commands", Json::array({command})}});
 						for (const Json& media : result.at("results").at(0).at("skipped"))
@@ -467,6 +500,11 @@ namespace gnubase::engine
 				return Json{
 					{"copied", std::move(copied)}, {"missing", std::move(missing)}, {"changed", std::move(changed)}};
 			});
+	}
+
+	bool projectStillOpen(JobContext& job, uint64_t project)
+	{
+		return job.command("project.revision", Json::object()).at("project").get<uint64_t>() == project;
 	}
 
 	std::string fileNameProblem(const std::string& name)
@@ -566,6 +604,35 @@ namespace gnubase::engine
 			plans.push_back(plan);
 		}
 
+		// The files in the project's Mixdown folder as they are now, without the backup's own folder.
+		struct Mixdown
+		{
+			fs::path relative;
+			std::uintmax_t bytes = 0;
+		};
+		std::vector<Mixdown> mixdowns;
+		const fs::path mixdownFolder = options.mixdownFolder.empty() ? fs::path() : pathOf(options.mixdownFolder);
+		if (!mixdownFolder.empty() && fs::is_directory(mixdownFolder, error))
+		{
+			for (auto entry = fs::recursive_directory_iterator(mixdownFolder, error);
+				!error && entry != fs::recursive_directory_iterator(); entry.increment(error))
+			{
+				std::error_code ignored;
+				if (isInside(entry->path().u8string(), folder) || fs::equivalent(entry->path(), folder, ignored))
+				{
+					entry.disable_recursion_pending();
+					continue;
+				}
+				if (!entry->is_regular_file(ignored))
+					continue;
+				const std::uintmax_t bytes = entry->file_size(ignored);
+				mixdowns.push_back({entry->path().lexically_relative(mixdownFolder), ignored ? 0 : bytes});
+				total += mixdowns.back().bytes;
+			}
+			if (error)
+				throw std::runtime_error("can't read " + mixdownFolder.u8string() + ": " + error.message());
+		}
+
 		std::uintmax_t done = 0;
 		std::string detail;
 		const auto advance = [&](size_t bytes)
@@ -630,17 +697,17 @@ namespace gnubase::engine
 				const fs::path target = createFreeFile(audio, minimizedName(source, reader->info(), format), taken);
 				cleanup.add(target);
 				writeRanges(*reader, ranges, target, format, advance);
-				for (auto& entry : project.audioEvents)
-				{
-					AudioEvent& event = entry.second;
-					if (project.clips.at(event.clip).media != media.id)
-						continue;
-					const time::Samples offset = event.offset;
-					const auto range = std::find_if(ranges.cbegin(), ranges.cend(),
-						[offset](const Range& r) { return offset >= r.start && offset < r.end; });
-					if (range != ranges.cend())
-						event.offset = event.offset - range->start + range->target;
-				}
+				forEveryAudioEvent(project,
+					[&](AudioEvent& event)
+					{
+						if (project.clips.at(event.clip).media != media.id)
+							return;
+						const time::Samples offset = event.offset;
+						const auto range = std::find_if(ranges.cbegin(), ranges.cend(),
+							[offset](const Range& r) { return offset >= r.start && offset < r.end; });
+						if (range != ranges.cend())
+							event.offset = event.offset - range->start + range->target;
+					});
 				media.length = ranges.back().target + (ranges.back().end - ranges.back().start);
 				media.path = target.u8string();
 			}
@@ -652,6 +719,16 @@ namespace gnubase::engine
 				media.path = target.u8string();
 			}
 			++files;
+		}
+
+		for (const Mixdown& mixdown : mixdowns)
+		{
+			job.checkCancelled();
+			detail = mixdown.relative.filename().u8string();
+			const fs::path target = folder / "Mixdown" / mixdown.relative;
+			cleanup.createFolders(target.parent_path());
+			cleanup.add(target);
+			copyFile(mixdownFolder / mixdown.relative, target, advance);
 		}
 
 		job.checkCancelled();

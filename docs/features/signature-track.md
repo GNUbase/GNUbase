@@ -37,14 +37,15 @@ signature map itself, which converts between ticks and bars and beats, is the ti
   Delete remove the selected events.
 - Lengths in bars and beats, such as the info line's, count the bars from their start: two bars from the third beat
   of a 4/4 bar before a 3/4 bar end on the third beat of the bar after it.
-- Project > Add Track has a Signature page. The track list leaves the signature track out of Remove Empty Tracks,
-  Duplicate Tracks, Move Selected Tracks to New Folder and drags into folders, and shows no controls for it.
+- Project > Add Track has a Signature page. The track list leaves the signature track out of Duplicate Tracks, Move
+  Selected Tracks to New Folder and drags into folders, and shows no controls for it. Remove Empty Tracks, the engine
+  command `track.removeEmpty`, never removes it.
 
 ## Not yet
 
 Click patterns and the click itself (the metronome, #101, whose golden test covers signature changes), the signature
 track's Lock and options, its Inspector list (p. 183), the Insert Time Signature Event key command and dialog, the bars
-in the signature track's background, ruler tracks (#447) and signature events in the middle of a bar.
+in the signature track's background and signature events in the middle of a bar.
 
 ## Tests
 

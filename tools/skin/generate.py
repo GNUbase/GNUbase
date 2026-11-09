@@ -514,6 +514,14 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
                                              "border-left-width": f"{widths['hairline']}dp",
                                              "border-left-color": c["accent2"]}),
         (".signature-row .signature-event.selected", {"color": c["background"], "background-color": c["accent2"]}),
+        # The transpose track (docs/features/transpose.md): a transpose event's value from its position on
+        (".transpose-row .transpose-event", {"color": c["text"], "font-size": f"{sizes['small']}dp",
+                                             "border-left-width": f"{widths['hairline']}dp",
+                                             "border-left-color": c["accent"]}),
+        # The chord track (docs/features/chord-track.md): a chord event's chord from its position on
+        (".chord-row .chord-event", {"color": c["text"], "font-size": f"{sizes['small']}dp",
+                                     "border-left-width": f"{widths['hairline']}dp",
+                                     "border-left-color": c["accent2"]}),
         # The tools (docs/features/tools.md): the selection range and the rectangle a tool drags
         (".event-display .range-selection", {"border-width": f"{widths['hairline']}dp", "border-color": c["text"],
                                              "background-color": c["text"] + "33"}),
@@ -562,8 +570,10 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".key-editor-key", {"background-color": mix(c["surfaceRaised"], c["text"], .8), "color": c["background"],
                              "border-bottom-width": f"{widths['hairline']}px",
                              "border-bottom-color": c["textMuted"]}),
-        (".key-editor-key.black", {"background-color": c["background"], "color": c["text"]}),
+        (".key-editor-key.black", {"background-color": c["background"], "color": c["text"],
+                                   "border-bottom-color": c["background"]}),
         (".key-editor-key.selected", {"background-color": c["accent"]}),
+        (".key-editor-key.black.selected", {"border-bottom-color": c["accent"]}),
         (".key-editor-grid", {"background-color": c["surface"]}),
         (".key-editor-row", {"border-bottom-width": f"{widths['hairline']}px",
                              "border-bottom-color": mix(c["surface"], c["border"], .5)}),
@@ -575,6 +585,10 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
                                 "border-color": c["textMuted"]}),
         (".key-note.drawing", {"background-color": c["accent"] + "66"}),
         (".key-editor-step-cursor", {"background-color": c["accent"]}),
+        # The drum editor's sound list (docs/features/drum-editor.md): rows like a list, the sounds of selected
+        # notes lit
+        (".key-editor-key.drum-sound", {"background-color": c["surfaceRaised"], "color": c["text"]}),
+        (".key-editor-key.drum-sound.selected", {"background-color": c["accent"], "color": c["background"]}),
         # The controller lanes (docs/features/controller-lanes.md): the lanes' areas like the note display, a line
         # between lanes, the bars and steps in the notes' colors, selected ones in the second accent, those outside
         # the part editing mode dimmed
@@ -584,6 +598,13 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".controller-bar.selected, .controller-step.selected", {"background-color": c["accent2"]}),
         (".controller-bar.inactive, .controller-step.inactive",
          {"background-color": mix(c["surface"], c["textMuted"], .3)}),
+        # Play probability and velocity variance bars are dashed (reference manual pp. 1169, 1171), in the same colors
+        *[(", ".join(f".controller-lane[lane-kind={kind}] .controller-bar{state}"
+                     for kind in ("probability", "velocityVariance")),
+           {"background-color": "transparent",
+            "decorator": f"repeating-linear-gradient(to top, {color} 0dp, {color} 3dp, {color}00 3dp, {color}00 5dp)"})
+          for state, color in (("", mix(c["surfaceRaised"], c["accent"], .6)), (".selected", c["accent2"]),
+                               (".inactive", mix(c["surface"], c["textMuted"], .3)))],
         # The audio part editor (docs/features/audio-part-editor.md): lines between the lanes, the events, selected
         # ones in the second accent, muted ones and those outside the part editing mode dimmed
         (".ape-display", {"background-color": c["surface"]}),
@@ -617,6 +638,15 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".se-hitpoint.locked .se-hitpoint-handle", {"background-color": c["accent2"]}),
         (".se-hitpoint.disabled .se-hitpoint-line, .se-hitpoint.disabled .se-hitpoint-handle",
          {"background-color": c["textMuted"] + "66"}),
+        # Its warp markers (docs/features/warp.md)
+        (".se-warp-marker-line, .se-warp-marker-handle", {"background-color": c["accent2"]}),
+        # The audio functions (docs/features/audio-functions.md): Detect Silence's sections along the event, the
+        # Spectrum Analyzer's bars with the one D is measured from in the second accent, the Statistics' headings
+        (".ds-display, .sa-graph", {"background-color": c["surface"]}),
+        (".ds-section", {"background-color": mix(c["surfaceRaised"], c["accent"], .6)}),
+        (".sa-bar", {"background-color": c["accent"]}),
+        (".sa-bar.reference", {"background-color": c["accent2"]}),
+        (".st-header, .st-name", {"color": c["textMuted"]}),
         # The list editor (docs/features/list-editor.md): lines between the rows, the selected rows lit, those
         # outside the part editing mode dimmed, the events in the event display and the bars of the value display
         (".list-editor-header", {"color": c["textMuted"], "border-bottom-width": f"{widths['hairline']}px",

@@ -39,6 +39,7 @@ namespace gnubase::ui
 		}};
 
 		constexpr double g_silence = -144.0;       // engine::g_minChannelVolume
+		constexpr double g_sendKnobMin = -60.0;    // a send level knob's lowest level, as the fader's
 		constexpr int g_sends = 8;                 // engine::g_maxSends
 		constexpr const char* g_addEffect = "add"; // a send destination list's Add Effect Track to Send
 
@@ -225,7 +226,7 @@ namespace gnubase::ui
 				std::string controls = toggle(path + "on", "Send on/off", std::to_string(send));
 				controls += R"(<select param=")" + path + R"(destination" title="Send Destination"/>)";
 				controls += toggle(path + "preFader", "Pre-Fader", "Pre");
-				controls += knob(path + "level", "Send Level", -60.0, 6.0, 0.0);
+				controls += knob(path + "level", "Send Level", g_sendKnobMin, 6.0, 0.0);
 				sends += row(controls);
 			}
 			return section("pre", "Pre",
@@ -445,6 +446,21 @@ namespace gnubase::ui
 				if (!alive.expired() && result.ok())
 					sendLevel(result.value.at("value"));
 			});
+		// Whether its channel visibility follows the track visibility (#166).
+		const auto sync = [this](const Json& visibility)
+		{
+			m_syncs = visibility.at("sync") == m_view;
+			showVisibilityList();
+		};
+		m_subscriptions.push_back(
+			m_binding.on("trackVisibility.changed", [sync](const engine::Event& event) { sync(event.data); }));
+		if (m_kind == MixerKind::Window)
+			m_binding.send("trackVisibility.get", Json::object(),
+				[sync, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+				{
+					if (!alive.expired() && result.ok())
+						sync(result.value);
+				});
 		if (!settings)
 			requestView();
 		requestProject();
@@ -459,7 +475,10 @@ namespace gnubase::ui
 			root->RemoveEventListener(Rml::EventId::Blur, this, true);
 		}
 		if (Rml::Element* visibility = m_visibility.get())
+		{
 			visibility->RemoveEventListener(Rml::EventId::Change, this);
+			visibility->RemoveEventListener(Rml::EventId::Click, this);
+		}
 		for (const Rml::ObserverPtr<Rml::Element>& menu : m_menus)
 			if (Rml::Element* element = menu.get())
 			{
@@ -473,10 +492,16 @@ namespace gnubase::ui
 	void Mixer::showVisibility(Rml::Element& element)
 	{
 		if (Rml::Element* old = m_visibility.get())
+		{
 			old->RemoveEventListener(Rml::EventId::Change, this);
+			old->RemoveEventListener(Rml::EventId::Click, this);
+		}
 		m_visibility = element.GetObserverPtr();
-		element.SetInnerRML(R"(<div class="mixer-visibility"/>)");
+		element.SetInnerRML(R"(<div class="toolbar mixer-visibility-toolbar"><button id="mixer-visibility-sync" )"
+							R"(title="Sync Visibility of Project and Mixer: On/Off">=</button></div>)"
+							R"(<div class="mixer-visibility"/>)");
 		element.AddEventListener(Rml::EventId::Change, this);
+		element.AddEventListener(Rml::EventId::Click, this);
 		showVisibilityList();
 	}
 
@@ -682,13 +707,20 @@ namespace gnubase::ui
 		Rml::ElementList controls;
 		strip.QuerySelectorAll(controls, "[param]");
 		m_updating = true; // filling a drop-down list sends a change
+		// A send level's Ctrl-click value follows the default send level, also while its knob is ahead. The knob goes
+		// up to the project's maximum volume, as the fader does, and down to the default send level below its usual
+		// -60 dB, so that it gives a send the level track.add gives it.
+		const std::string level = widgets::format(static_cast<float>(m_defaultSendLevel));
+		const std::string lowest = widgets::format(static_cast<float>(std::min(m_defaultSendLevel, g_sendKnobMin)));
+		const std::string highest = widgets::format(m_project.value("maxVolume", 6.0F));
 		for (Rml::Element* control : controls)
 		{
 			const std::string param = attribute(*control, "param");
-			// A send level's Ctrl-click value follows the default send level, also while its knob is ahead.
-			const std::string level = widgets::format(static_cast<float>(m_defaultSendLevel));
-			if (param.rfind("sends.", 0) == 0 && endsWith(param, ".level") && attribute(*control, "default") != level)
-				control->SetAttribute("default", level);
+			if (param.rfind("sends.", 0) == 0 && endsWith(param, ".level"))
+				for (const auto& [name, value] :
+					{std::pair{"default", &level}, std::pair{"min", &lowest}, std::pair{"max", &highest}})
+					if (attribute(*control, name) != *value)
+						control->SetAttribute(name, *value);
 			if (control->HasAttribute("value") && m_binding.sending(stepKey(m_stepOwner, channel.id, param)))
 				continue; // the control is ahead of the engine
 			const Json value = paramValue(json, param);
@@ -802,6 +834,8 @@ namespace gnubase::ui
 				"</button>";
 		if (list->GetInnerRML() != rml)
 			list->SetInnerRML(rml);
+		if (Rml::Element* sync = element->QuerySelector("#mixer-visibility-sync"))
+			sync->SetClass("checked", m_syncs);
 	}
 
 	void Mixer::setHidden(uint64_t id, bool hidden)
@@ -959,7 +993,14 @@ namespace gnubase::ui
 			}
 			break;
 		case Rml::EventId::Click:
-			if (attribute(*target, "agent") == "showAll")
+			if (m_visibility && event.GetCurrentElement() == m_visibility.get())
+			{
+				// Sync Visibility of Project and Mixer (reference manual p. 442): one window at a time.
+				for (const Rml::Element* up = target; up != nullptr; up = up->GetParentNode())
+					if (up->GetId() == "mixer-visibility-sync")
+						m_binding.send("trackVisibility.set", {{"sync", m_syncs ? std::string() : m_view}});
+			}
+			else if (attribute(*target, "agent") == "showAll")
 			{
 				sendView({{"hidden", Json::array()}});
 			}

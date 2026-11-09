@@ -61,7 +61,9 @@ engine commands, so whichever client changes the project or the view, the mixer 
 - **Visibility and filter** (pp. 442, 454–456). The channel type filter's menu has a check item per type; the agents'
   menu has Show All Channels, which shows every hidden channel again. In a window, the left zone's Visibility tab
   (`Mixer::showVisibility`) has a toggle button per channel (`button.mixer-visibility-item[visibility=<id>]`), checked
-  while the mixer shows it. Each sends `mixer.set` for its own mixer.
+  while the mixer shows it. Each sends `mixer.set` for its own mixer. The lower zone's mixer follows the project
+  window's track visibility, and a window does with Sync Visibility of Project and Mixer
+  ([track-visibility.md](track-visibility.md)).
 - **Set up Window Layout** (p. 439): the setup pane ([docking.md](docking.md)) shows and hides the left zone (in a
   window) and the strips' sections Pictures, Pre, Equalizer, Strip, Sends, Notepad and Fader, and reorders them; the layout is the user setting
   `ui.layout`, per window (`mixer1` to `mixer4`, and `project` for the lower zone's).
@@ -90,8 +92,7 @@ engine commands, so whichever client changes the project or the view, the mixer 
 Channel selection and the agents and Move Selected Channels commands that work on it, dragging several channels at
 once and the green drop line; the Zones tab (locking channels to the left and right), the History and Snapshots tabs and
 the right zone; the channel overview, the meter bridge, Channel Latency, the routing and inserts sections (#113) and the
-channel meters; Find Track/Channel, channel visibility configurations, Undo Visibility Change, syncing the visibility
-with the project window's track visibility, linking mixers ([link-groups.md](link-groups.md) links channels), the zoom palette and the transport buttons of the toolbar (the state buttons: solo-mute-listen.md); the track pictures browser and pictures in the track list; faders of busses; and the
+channel meters; Find Track/Channel, channel visibility configurations, Undo Visibility Change, linking mixers ([link-groups.md](link-groups.md) links channels), the zoom palette and the transport buttons of the toolbar (the state buttons: solo-mute-listen.md); the track pictures browser and pictures in the track list; faders of busses; and the
 windows' places, which workspaces will keep (#163).
 
 ## Checks

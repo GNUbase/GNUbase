@@ -46,6 +46,10 @@ namespace gnubase::ui
 	// "Shift+Cmd+Z" on macOS.
 	std::string keyName(const KeyPress& keys, Platform platform = buildPlatform());
 
+	// The keys as the user settings write them (ui.keyCommands), the same on every platform: Mod for the platform's
+	// command key, modifiers first in the order Mod, Ctrl, Alt, Shift, Meta, e.g. "Mod+Shift+K"; parseKeys reads it.
+	std::string keySetting(const KeyPress& keys, Platform platform = buildPlatform());
+
 	// A command of the UI's own, such as zooming or opening a window. run gets the window the key went to and the
 	// focus zone (see KeyCommands::press), or null.
 	struct UiCommand
@@ -91,6 +95,9 @@ namespace gnubase::ui
 
 		// Adds a command of the UI's own. Throws std::invalid_argument if a command has its id.
 		void add(UiCommand command);
+		// Removes a command of the UI's own with its keys, e.g. a user script that is gone. Does nothing for a command
+		// it doesn't have.
+		void remove(const std::string& id);
 
 		// Checks that a key, a menu item or a button can run the command with these parameters: throws
 		// std::invalid_argument, naming the command, for a command it doesn't know, parameters that the engine's
@@ -123,6 +130,20 @@ namespace gnubase::ui
 		// Ends a command that runs while held, as its key going up would, e.g. for a button released.
 		void release(const std::string& command);
 
+		// The user's key commands and macros, as the user settings ui.keyCommands and ui.macros have them: each entry
+		// of keyCommands gives a command, with its parameters, all its keys, which replace its default keys in the zone
+		// of its first default binding (everywhere if it has none) and win over other commands' keys there. A macro
+		// runs its commands one after the other as the command "macro.<name>"; macros in macros don't run. Replaces
+		// what an earlier call gave. Entries with a command check refuses or keys parseKeys can't read are left out
+		// and logged, so that settings from another GNUbase version never stop the UI.
+		void customize(const engine::Json& keyCommands, const engine::Json& macros);
+
+		// Every command a key can run, for the key commands dialog, by area: the UI's commands, the engine's that
+		// change something and run without parameters, and each command with the parameters of a default binding.
+		// Each is {command, parameters, description, zone, keys}, keys being the default keys as keySetting writes
+		// them; macros aren't in it.
+		engine::Json commands() const;
+
 		// Says when the command can run, for menu items (ui/mainmenu.h): enabled gets the window and the zone it
 		// would run in. Throws std::invalid_argument for a command it doesn't know.
 		void enableWhen(const std::string& command, std::function<bool(Window& window, Rml::Element* zone)> enabled);
@@ -142,12 +163,26 @@ namespace gnubase::ui
 			engine::Json parameters;
 		};
 
+		struct Customized
+		{
+			std::string command;
+			engine::Json parameters;
+			std::vector<KeyPress> keys;
+		};
+
+		// The default bindings with the user's key commands over them, into m_effective.
+		void rebuild();
+		bool isMacro(const std::string& command) const;
+
 		EngineBinding& m_binding;
 		Platform m_platform;
-		std::map<std::string, engine::Json> m_engineCommands; // their parameter schemas, by name
+		std::map<std::string, engine::CommandInfo> m_engineCommands; // by name
 		std::map<std::string, UiCommand> m_uiCommands;
 		std::map<std::string, std::function<bool(Window&, Rml::Element*)>> m_enabled; // by command
-		std::vector<Bound> m_bindings;                                                // in the order they were bound
+		std::vector<Bound> m_bindings;    // the defaults, in the order they were bound
+		std::vector<Customized> m_custom; // the user's key commands
+		std::map<std::string, std::vector<std::pair<std::string, engine::Json>>> m_macros; // by command id
+		std::vector<Bound> m_effective;                  // what the keys run: the defaults with the user's key commands
 		std::vector<std::pair<int, std::string>> m_held; // the keys down with the commands they run while held
 	};
 }
