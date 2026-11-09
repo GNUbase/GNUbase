@@ -138,6 +138,10 @@ namespace gnubase::ui
 		// Brings the window in front of the others with the keyboard focus, restoring it first if it is minimized. The
 		// OS may refuse the focus, e.g. to an application that isn't active. A hidden window stays hidden.
 		virtual void raise(WindowId window) = 0;
+		// Minimizes the window, and restores it if it is minimized, for the Windows dialog (#163). A hidden window
+		// stays hidden.
+		virtual void minimize(WindowId window) = 0;
+		virtual void restore(WindowId window) = 0;
 
 		// The size of what the window shows, in pixels.
 		virtual Size pixelSize(WindowId window) const = 0;

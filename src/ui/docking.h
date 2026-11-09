@@ -14,11 +14,13 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
 namespace Rml
 {
+	class Context;
 	class ElementDocument;
 }
 
@@ -65,6 +67,11 @@ namespace gnubase::ui
 	//                                 toggle button per section (setup-section="eq"); a button dragged onto another
 	//                                 moves its section there
 	//   setup-all="channel"           a button that shows every section of the set (Show All)
+	//   setup-reset="channel"         a button that gives the set its default order and hidden sections (Reset All)
+	//   setup-presets="channel"       the set's presets from the user setting ui.setupPresets, which the docking system
+	//                                 fills with a button per preset (setup-preset="name") that recalls it
+	//   setup-preset-save="channel"   a button that names the set's order and hidden sections as a preset in a dialog
+	//                                 (setup-preset.rml next to the panel window's document) and saves it
 	//
 	// Zones get the state class .hidden when hidden and .focused while the keyboard focus is in them; strips get
 	// .hidden. A tab is dragged onto another to move it there; a right click on the tabs opens the zone's tab menu,
@@ -115,6 +122,12 @@ namespace gnubase::ui
 			const std::string& window, const std::string& set, const std::string& id, const std::string& before);
 		void setSectionHidden(const std::string& window, const std::string& set, const std::string& id, bool hidden);
 		std::vector<std::string> sections(const std::string& window, const std::string& set) const; // in order
+		// Reset All: the set's default order and hidden sections.
+		void resetSections(const std::string& window, const std::string& set);
+		// The set's presets in ui.setupPresets, which all windows share: saving one replaces that of the same name;
+		// recalling one that isn't there does nothing. Sections a preset lacks keep their defaults' order after its.
+		void savePreset(const std::string& window, const std::string& set, const std::string& name);
+		void recallPreset(const std::string& window, const std::string& set, const std::string& name);
 		// Arranges containers of sections added or rebuilt after attach, such as a new mixer channel: element, and the
 		// containers and setup panes in it, get the user's order and hidden sections. A set the window doesn't know yet
 		// is learned from its first container there, which fills the set's setup panes. Call it once element is in a
@@ -127,6 +140,21 @@ namespace gnubase::ui
 
 		// The window a panel shows in on its own, or null while it is docked.
 		Window* windowOf(const std::string& panel);
+
+		// A top-level window of the app that ui.layout keeps under windows, by name (#163): whether it is open (open,
+		// closed by default), its bounds and its monitor's name. current gives its window, 0 or one that is gone while
+		// it is closed; setOpen opens or closes it, and is empty for the main window, which is always open and takes
+		// its bounds from ui.layout at once. ui.layout gets a window's bounds once it opens, moves or resizes, and
+		// whether it is open when that changes. Another client's ui.layout, such as a workspace's
+		// (workspace.activate), opens, closes and places the windows as it says.
+		void addWindow(
+			const std::string& name, std::function<WindowId()> current, std::function<void(bool open)> setOpen = {});
+		// Where the window should open: its bounds in ui.layout, on a connected monitor (restore in ui/displays.h);
+		// none if ui.layout has none.
+		std::optional<Rect> bounds(const std::string& name) const;
+		// Puts into ui.layout now, rather than at the next check twice a second, which windows are open and where they
+		// and the panels in windows of their own are, e.g. right after a window opened or closed.
+		void saveWindows();
 
 		// Whether a panel shows: in a window of its own, or as its zone's active tab while the zone shows. What create
 		// returned stays while the panel's tab is hidden behind another one or its zone is, e.g. to refresh it only
@@ -203,7 +231,11 @@ namespace gnubase::ui
 		// window it was.
 		void reload(Rml::ElementDocument& old, Rml::ElementDocument& loaded);
 		void save();
-		void saveBounds();
+		// Opens, closes and places the app's windows as ui.layout says.
+		void applyWindows();
+		// Save Preset's dialog for the set, in the context of the setup pane's document; its close event saves it.
+		void openPresetDialog(Rml::Context& context, const std::string& window, const std::string& set);
+		void presetDialogClosed(Rml::Event& event);
 
 		EngineBinding& m_binding;
 		Shell& m_shell;
@@ -211,12 +243,27 @@ namespace gnubase::ui
 		bool m_hiddenWindows = false;
 		Rml::String
 			m_reloadEvent; // g_documentReloadEvent, made once: the destructor removes listeners without allocating
-		int m_saving = 0;  // layouts sent to the engine that it hasn't answered yet
+		Rml::String m_closeEvent;            // g_dialogCloseEvent, made once, as m_reloadEvent
+		std::set<engine::RequestId> m_saves; // layouts sent to the engine that it hasn't answered yet
 		engine::Json m_layout = engine::Json::object();
+		engine::Json m_presets = engine::Json::object(); // ui.setupPresets
+		Rml::ObserverPtr<Rml::Element> m_presetDialog;   // Save Preset's, while it is open
+		std::string m_presetWindow;                      // and the window and set it saves
+		std::string m_presetSet;
 		std::vector<Panel> m_panels;
 		std::map<std::string, Attached> m_windows;
 		std::map<std::string, Shown> m_shown; // by panel
-		std::string m_contextTab;             // the tab last right-clicked
+		// The app's windows that ui.layout keeps, with whether each was open and where, as saveWindows last saw it.
+		struct AppWindow
+		{
+			std::string name;
+			std::function<WindowId()> current;
+			std::function<void(bool open)> setOpen;
+			bool open = false;
+			Rect bounds;
+		};
+		std::vector<AppWindow> m_appWindows;
+		std::string m_contextTab; // the tab last right-clicked
 		std::vector<Subscription> m_subscriptions;
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for the shell's tasks
 	};

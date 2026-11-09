@@ -1,0 +1,158 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The Windows dialog (#163, docs/features/workspaces.md, reference manual pp. 1583-1584): app::AppUi opens it with
+     Window > Windows (the UI command window.windows). #windows-list lists GNUbase's open windows from ui.windows, a
+     listitem[window=<id>] each with its document's title; a click selects one. #windows-mode chooses whether the
+     buttons act on the selected window or on all of them: Activate brings the selected one to the front, Minimize,
+     Restore (ui.window) and Close Windows (ui.close; with All every window but the project window) act as the mode
+     says. OK closes the dialog. -->
+<rml>
+<head>
+	<title>Windows</title>
+	<style>
+		dialog
+		{
+			width: 420dp;
+		}
+
+		.content
+		{
+			display: flex;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		#windows-list
+		{
+			flex: 1;
+			height: 180dp;
+			margin-right: 8dp;
+		}
+
+		.actions button, .actions select
+		{
+			display: block;
+			margin-bottom: 4dp;
+		}
+
+		.row
+		{
+			display: flex;
+			justify-content: flex-end;
+			margin: 8dp 12dp 0 12dp;
+		}
+	</style>
+	<script>
+		WindowsDialog = {}
+		local dialog = WindowsDialog
+
+		local windows = {}
+		local selected = nil
+
+		local function escape(text)
+			return (tostring(text):gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"))
+		end
+
+		-- A window's name: the title of its first document that shows and isn't a dialog.
+		local function title(window)
+			for _, document in ipairs(window.documents) do
+				if document.visible and not document.modal and document.title ~= "" then
+					return document.title
+				end
+			end
+			return window.main and "Project" or "Window " .. window.id
+		end
+
+		function dialog.show()
+			local document = dialog.document
+			if document == nil then
+				return
+			end
+			local rml = {}
+			local value = ""
+			for index, window in ipairs(windows) do
+				if window.id == selected then
+					value = tostring(index)
+				end
+				rml[#rml + 1] = '<listitem value="' .. index .. '" window="' .. window.id .. '">' .. escape(title(window))
+					.. "</listitem>"
+			end
+			local list = document:GetElementById("windows-list")
+			list.inner_rml = table.concat(rml)
+			list:SetAttribute("value", value)
+		end
+
+		function dialog.select()
+			local value = tonumber(tostring(dialog.document:GetElementById("windows-list"):GetAttribute("value") or ""))
+			local window = value and windows[value]
+			if window ~= nil then
+				selected = window.id
+			end
+		end
+
+		-- The windows the buttons act on: the selected one, or with All every one.
+		local function targets()
+			if dialog.document:GetElementById("windows-mode"):GetAttribute("value") == "all" then
+				return windows
+			end
+			for _, window in ipairs(windows) do
+				if window.id == selected then
+					return {window}
+				end
+			end
+			return {}
+		end
+
+		function dialog.arrange(action)
+			for _, window in ipairs(action == "activate" and {targets()[1]} or targets()) do
+				gnubase.ui.window{window = window.id, action = action}
+			end
+		end
+
+		-- Closing happens in the UI's next step: the list leaves the windows out at once.
+		function dialog.close()
+			local closed = {}
+			for _, window in ipairs(targets()) do
+				if not window.main then
+					gnubase.ui.close{window = window.id}
+					closed[window.id] = true
+				end
+			end
+			local open = {}
+			for _, window in ipairs(windows) do
+				if not closed[window.id] then
+					open[#open + 1] = window
+				end
+			end
+			windows = open
+			dialog.show()
+		end
+
+		function dialog.load(document)
+			dialog.document = document
+			selected = nil
+			windows = gnubase.ui.windows().windows
+			dialog.show()
+		end
+	</script>
+</head>
+<body onload="WindowsDialog.load(document)" onunload="WindowsDialog.document = nil">
+	<dialog id="windows-dialog">
+		<div class="dialog-titlebar">Windows</div>
+		<div class="content">
+			<listview id="windows-list" onchange="WindowsDialog.select()"/>
+			<div class="actions">
+				<select id="windows-mode">
+					<option value="selected" selected="">Selected</option>
+					<option value="all">All</option>
+				</select>
+				<button id="windows-activate" onclick="WindowsDialog.arrange('activate')">Activate</button>
+				<button id="windows-minimize" onclick="WindowsDialog.arrange('minimize')">Minimize</button>
+				<button id="windows-restore" onclick="WindowsDialog.arrange('restore')">Restore</button>
+				<button id="windows-close" onclick="WindowsDialog.close()">Close Windows</button>
+			</div>
+		</div>
+		<div class="row">
+			<button id="windows-ok" class="primary" result="ok">OK</button>
+		</div>
+	</dialog>
+</body>
+</rml>

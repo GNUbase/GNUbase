@@ -19,6 +19,7 @@
 #include "engine/document/timewarp.h"
 #include "engine/document/trackversions.h"
 #include "engine/document/volumecurves.h"
+#include "engine/document/workspaces.h"
 #include "engine/dsp/timestretch.h"
 #include "engine/graph/graph.h"
 #include "engine/jobs/jobs.h"
@@ -4425,6 +4426,7 @@ namespace gnubase::engine
 		registerEventEditCommands(engine);
 		registerSnapCommands(*this, engine);
 		registerMixerCommands(*this, engine);
+		registerWorkspaceCommands(*this, engine);
 		registerLinkGroupCommands(*this, engine);
 		registerTrackVersionCommands(*this, engine);
 		midi::registerDrumMapCommands(*this, engine);

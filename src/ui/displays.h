@@ -68,4 +68,9 @@ namespace gnubase::ui
 
 	// A window of the given size, centred in the display's usable area and shrunk to fit.
 	Rect centred(Size size, const Display& display);
+
+	// Where a window from a saved layout goes, such as a workspace's (#163): where it was if its monitor, by name, is
+	// connected (and it is reachable there, as place has it), otherwise fully visible on the primary monitor, centred
+	// and shrunk to fit. An empty monitor name only places it.
+	Rect restore(const Rect& window, const std::string& monitor, const std::vector<Display>& displays);
 }

@@ -51,20 +51,21 @@ namespace gnubase::engine::settings
 					{{"visible", {{"type", "boolean"}}}, {"size", {{"type", "number"}, {"minimum", 0}}},
 						{"active", {{"type", "string"}}}, {"tabs", strings}, {"hidden", strings}}}};
 			const Json sections = {{"type", "object"}, {"properties", {{"order", strings}, {"hidden", strings}}}};
-			const Json window = {{"type", "object"},
-				{"properties",
-					{{"zones", {{"type", "object"}, {"additionalProperties", zone}}},
-						{"strips", {{"type", "object"}, {"additionalProperties", {{"type", "boolean"}}}}},
-						{"sections", {{"type", "object"}, {"additionalProperties", sections}}},
-						{"sizes",
-							{{"type", "object"}, {"additionalProperties", {{"type", "number"}, {"minimum", 0}}}}}}}};
 			const Json integer = {{"type", "integer"}};
 			const Json size = {{"type", "integer"}, {"minimum", 1}};
 			const Json bounds = {{"type", "object"},
 				{"properties", {{"x", integer}, {"y", integer}, {"width", size}, {"height", size}}},
 				{"required", Json::array({"x", "y", "width", "height"})}};
-			const Json panel = {
-				{"type", "object"}, {"properties", {{"floating", {{"type", "boolean"}}}, {"bounds", bounds}}}};
+			const Json text = {{"type", "string"}};
+			const Json window = {{"type", "object"},
+				{"properties",
+					{{"zones", {{"type", "object"}, {"additionalProperties", zone}}},
+						{"strips", {{"type", "object"}, {"additionalProperties", {{"type", "boolean"}}}}},
+						{"sections", {{"type", "object"}, {"additionalProperties", sections}}},
+						{"sizes", {{"type", "object"}, {"additionalProperties", {{"type", "number"}, {"minimum", 0}}}}},
+						{"open", {{"type", "boolean"}}}, {"bounds", bounds}, {"monitor", text}}}};
+			const Json panel = {{"type", "object"},
+				{"properties", {{"floating", {{"type", "boolean"}}}, {"bounds", bounds}, {"monitor", text}}}};
 			return {{"type", "object"},
 				{"properties",
 					{{"windows", {{"type", "object"}, {"additionalProperties", window}}},
@@ -603,8 +604,12 @@ namespace gnubase::engine::settings
 					"hidden and the active one, and its strips (toolbar, infoLine, overviewLine, statusLine, "
 					"transportBar) with whether each is shown, and its sets of sections (such as a mixer channel's) "
 					"with the order of their sections and those hidden, and the sizes in dp of other elements that "
-					"splitters size (trackList: the track list's width); under panels, by panel, whether it is in a "
-					"window of its own and that window's bounds. What it leaves out has its default.",
+					"splitters size (trackList: the track list's width), and for the app's windows (project, mixer1 "
+					"to mixer4, markers, onScreenKeyboard, tempoTrack, arranger, transportPanel, timeDisplay) whether "
+					"it is open, its bounds and the name of its monitor; under panels, by panel, whether it is in a "
+					"window of its own and that window's bounds and monitor. What it leaves out has its default: a "
+					"window is closed. A window whose monitor isn't connected goes onto the primary one, fully "
+					"visible.",
 					layoutSchema(), Json::object()},
 				{"ui.markerLines",
 					"Which markers the event display shows as lines across every track: the active marker track's "
@@ -739,6 +744,31 @@ namespace gnubase::engine::settings
 																	{{"type", "integer"}, {"minimum", 0},
 																		{"maximum", 127}}}}}}}}}}},
 								{"required", Json::array({"name", "lanes"})}}}},
+					Json::array()},
+				{"ui.setupPresets",
+					"The setup panes' presets (reference manual p. 1575, docs/features/docking.md), by set of "
+					"sections (transport, inspector, channel): each a name, the order of the set's sections and those "
+					"hidden.",
+					Json{{"type", "object"},
+						{"additionalProperties",
+							{{"type", "array"},
+								{"items",
+									{{"type", "object"}, {"additionalProperties", false},
+										{"required", Json::array({"name", "order", "hidden"})},
+										{"properties",
+											{{"name", {{"type", "string"}, {"minLength", 1}}},
+												{"order", {{"type", "array"}, {"items", {{"type", "string"}}}}},
+												{"hidden", {{"type", "array"}, {"items", {{"type", "string"}}}}}}}}}}}},
+					Json::object()},
+				{"ui.workspaces",
+					"The global workspaces, for every project (workspace.* commands, docs/features/workspaces.md): "
+					"each a name and its layout, a copy of ui.layout.",
+					Json{{"type", "array"},
+						{"items",
+							{{"type", "object"},
+								{"properties",
+									{{"name", {{"type", "string"}, {"minLength", 1}}}, {"layout", layoutSchema()}}},
+								{"required", Json::array({"name", "layout"})}}}},
 					Json::array()},
 				{"ui.zoomPresets",
 					"The horizontal zoom presets of the event display, for every project: each a name and the "
