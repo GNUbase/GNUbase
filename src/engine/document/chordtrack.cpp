@@ -329,7 +329,7 @@ namespace gnubase::engine
 				return classes;
 			const int root = scale ? harmony.scale.root : harmony.chord.root;
 			for (const int step : scale ? midi::scaleSteps(harmony.scale.type) : midi::chordIntervals(harmony.chord))
-				classes |= static_cast<uint16_t>(1U << static_cast<unsigned>(((root + step) % 12 + 12) % 12));
+				classes |= static_cast<uint16_t>(1U << static_cast<unsigned>((((root + step) % 12) + 12) % 12));
 			return classes;
 		}
 
@@ -631,7 +631,7 @@ namespace gnubase::engine
 		chords.adaptiveVoicings = json.value("adaptiveVoicings", true);
 		chords.automaticScales = json.value("automaticScales", true);
 		// Unknown settings are their defaults.
-		const auto known = [](const std::vector<std::string>& names, std::string name, const char* fallback)
+		const auto known = [](const std::vector<std::string>& names, const std::string& name, const char* fallback)
 		{ return among(names, name) ? name : std::string(fallback); };
 		const Json voicing = json.value("voicing", Json::object());
 		chords.voicing.library = known(midi::voicingLibraries(), voicing.value("library", std::string()), "basic");
@@ -697,9 +697,13 @@ namespace gnubase::engine
 			{"properties",
 				{{"track", integerSchema}, {"events", {{"type", "array"}}}, {"scales", {{"type", "array"}}},
 					{"octaveOffset", integerSchema}, {"adaptiveVoicings", booleanSchema},
-					{"automaticScales", booleanSchema}, {"follow", {{"type", "array"}}}}},
+					{"automaticScales", booleanSchema}, {"follow", {{"type", "array"}}},
+					{"voicing", {{"type", "object"}}}, {"shiftChords", integerSchema}, {"mute", booleanSchema},
+					{"showScales", booleanSchema}, {"recordEnable", booleanSchema}, {"audition", integerSchema},
+					{"acousticFeedback", booleanSchema}}},
 			{"required",
-				{"track", "events", "scales", "octaveOffset", "adaptiveVoicings", "automaticScales", "follow"}}};
+				{"track", "events", "scales", "octaveOffset", "adaptiveVoicings", "automaticScales", "follow",
+					"voicing", "shiftChords", "mute", "showScales", "recordEnable", "audition", "acousticFeedback"}}};
 		const Json eventSchema = objectSchema(
 			{{"event", idSchema}, {"position", integerSchema}, {"chord", stringSchema}, {"scale", stringSchema}},
 			{"event"});
@@ -1289,9 +1293,10 @@ namespace gnubase::engine
 			{"chord.get", 1,
 				"The chord track: its id (0 for none); its chord events in timeline order (id, position in the "
 				"track's time base, start in samples, chord, scale and pitches, the chord's voicing from the lowest "
-				"up); its scale events (id, position, start, scale); octaveOffset, adaptiveVoicings and "
-				"automaticScales; and follow, the tracks that follow it with their mode and source, the chords their "
-				"notes were played over (position in ticks, chord).",
+				"up; for events made from audio, audioEvent and detected, the chords that fit best, else 0 and "
+				"none); its scale events (id, position, start, scale); its settings as chord.setTrack takes them; "
+				"and follow, the tracks that follow it with their mode, voice, voicings, master, liveInput and "
+				"source, the chords their notes were played over (position in ticks, chord).",
 				objectSchema({}), chordResult, true},
 			[](Project& project, CommandContext&) { return chordJson(project); });
 	}

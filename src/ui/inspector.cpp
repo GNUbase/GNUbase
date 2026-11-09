@@ -785,8 +785,10 @@ namespace gnubase::ui
 				parameters["master"] = std::strtoull(value.c_str(), nullptr, 10);
 			else if (name == "liveInput")
 				parameters["liveInput"] = value;
+			else if (name == "followChords")
+				parameters["mode"] = value;
 			else
-				parameters[name == "followChords" ? "mode" : name == "followVoice" ? "voice" : "voicings"] = value;
+				parameters[name == "followVoice" ? "voice" : "voicings"] = value;
 			m_binding.send("chord.follow", parameters, whenRefused());
 			return;
 		}

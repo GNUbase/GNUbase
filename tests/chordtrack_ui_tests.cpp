@@ -114,7 +114,7 @@ TEST_CASE("Add Track adds the chord track once", "[ui]")
 	app.shell().step(std::chrono::milliseconds(0));
 	REQUIRE(elements("#track-types").at(0).at("attributes").at("value") == "chord");
 	click("#add-track-confirm");
-	CHECK(app.waitUntil([&] { return elements("#add-track-message").at(0).value("text", std::string()) != ""; }));
+	CHECK(app.waitUntil([&] { return !elements("#add-track-message").at(0).value("text", std::string()).empty(); }));
 	INFO(elements("#add-track-message").dump());
 	CHECK(chordTracks() == 1);
 }

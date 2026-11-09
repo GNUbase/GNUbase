@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cstddef>
 #include <cstdlib>
 #include <functional>
 #include <limits>
@@ -633,7 +634,8 @@ namespace gnubase::engine::midi
 			else
 			{
 				// The triad, with fourNote its sixth or seventh.
-				std::vector<int> notes(intervals.begin(), intervals.begin() + std::min<size_t>(3, intervals.size()));
+				std::vector<int> notes(intervals.begin(),
+					intervals.begin() + static_cast<std::ptrdiff_t>(std::min<size_t>(3, intervals.size())));
 				if (name == "fourNote")
 					for (const int interval : intervals)
 						if ((interval == 9 || interval == 10 || interval == 11) && notes.size() < 4 &&
