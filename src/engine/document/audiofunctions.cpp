@@ -169,7 +169,7 @@ namespace gnubase::engine
 		time::Samples sampleOf(const Project& project, const AudioEvent& event, time::Samples frame)
 		{
 			const EventSpan span = eventSpan(project, event);
-			return span.start + std::llround(static_cast<double>(frame - event.offset) * span.ratio);
+			return span.start + std::llround(eventSamples(project, event, static_cast<double>(frame - event.offset)));
 		}
 
 		const char* const g_settingsText =

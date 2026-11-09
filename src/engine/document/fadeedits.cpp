@@ -240,8 +240,13 @@ namespace gnubase::engine
 				const bool coversEnd = end >= span.end;
 				if (end <= span.start || start >= span.end || (coversStart && coversEnd))
 					continue;
-				const auto frames = [ratio = span.ratio, length = event.length](time::Samples samples)
-				{ return std::clamp<time::Samples>(std::llround(static_cast<double>(samples) / ratio), 0, length); };
+				// The clip frames from the event's start to a position, through its warp.
+				const auto frames = [&project, &span, &event](time::Samples position)
+				{
+					return std::clamp<time::Samples>(
+						std::llround(eventFrames(project, event, static_cast<double>(position - span.start))), 0,
+						event.length);
+				};
 				Fade in = event.fadeIn;
 				Fade out = event.fadeOut;
 				// Adjust sets only the fades at the edges the range crosses, both when it is inside the event.
@@ -250,9 +255,9 @@ namespace gnubase::engine
 				if (!inSet && !outSet)
 					continue;
 				if (inSet)
-					in.length = frames(coversStart ? end - span.start : start - span.start);
+					in.length = frames(coversStart ? end : start);
 				if (outSet)
-					out.length = frames(coversEnd ? span.end - start : span.end - end);
+					out.length = event.length - frames(coversEnd ? start : end);
 				// A fade that no longer fits next to the one set gets shorter.
 				if (in.length + out.length > event.length)
 				{
