@@ -7,6 +7,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <memory>
@@ -340,6 +341,154 @@ TEST_CASE("the arpeggiator returns when its output is full, and ends its note on
 		out.clear();
 		arpeggiator->process({nullptr, 0, 48000, in, out, transport});
 		CHECK(out.size() == 1);
+	}
+}
+
+namespace
+{
+	using graph::EventBuffer;
+	using graph::ProcessEvent;
+
+	ProcessEvent noteAt(ProcessEvent::Type type, uint32_t offset, int key, uint8_t channel = 0)
+	{
+		ProcessEvent note;
+		note.offset = offset;
+		note.type = type;
+		note.channel = channel;
+		note.key = static_cast<uint8_t>(key);
+		note.velocity = 0x8000;
+		return note;
+	}
+
+	// The notes out still holds after its events, as channel * 128 + pitch.
+	std::vector<int> hanging(const EventBuffer& out)
+	{
+		std::vector<int> held;
+		for (const ProcessEvent& e : out)
+		{
+			const int index = (e.channel * 128) + e.key;
+			if (e.type == ProcessEvent::Type::NoteOn)
+				held.push_back(index);
+			else if (e.type == ProcessEvent::Type::NoteOff)
+				held.erase(std::remove(held.begin(), held.end(), index), held.end());
+		}
+		return held;
+	}
+}
+
+TEST_CASE("the arpeggiator skips the steps it missed with its output full instead of playing them at once", "[unit]")
+{
+	EventBuffer in(4);
+	EventBuffer full(1);
+	EventBuffer out(64);
+	graph::TransportBlock transport;
+	transport.tempo = 120.0;
+	const std::shared_ptr<processors::MidiEffect> arpeggiator = processors::createMidiEffect("arpeggiator");
+	arpeggiator->prepareFor(48000.0, 48000);
+	in.add(noteAt(ProcessEvent::Type::NoteOn, 0, 60));
+	in.add(noteAt(ProcessEvent::Type::NoteOn, 0, 64));
+	// Eight steps of a sixteenth in a second; only the first note-on fits.
+	arpeggiator->process({nullptr, 0, 48000, in, full, transport});
+	in.clear();
+	arpeggiator->process({nullptr, 0, 48000, in, out, transport});
+	// The first note ends at once; the steps of the first block are gone, those of this one play on time.
+	REQUIRE(out.size() == 17);
+	CHECK(out[0].type == ProcessEvent::Type::NoteOff);
+	CHECK(out[0].offset == 0);
+	for (size_t i = 1; i < out.size(); i += 2)
+	{
+		CHECK(out[i].type == ProcessEvent::Type::NoteOn);
+		CHECK(out[i].offset == (i / 2) * 6000);
+		CHECK(out[i + 1].type == ProcessEvent::Type::NoteOff);
+		CHECK(out[i + 1].offset == ((i / 2) * 6000) + 3000);
+	}
+}
+
+TEST_CASE("an arpeggio follows a tempo ramp step by step, the same for every block size", "[integration]")
+{
+	std::string first;
+	for (const int blockSize : {64, 999})
+	{
+		EffectTrack track(blockSize);
+		run(track.client, "project.set", {{"tempoTrackActive", true}});
+		run(track.client, "tempo.add", {{"position", 4 * g_beatTicks}, {"bpm", 240.0}, {"ramp", true}});
+		track.add({{0, 4, 60, 100}, {0, 4, 64, 100}});
+		track.set("midiInserts", {{"slots", {slot("arpeggiator", {{"rate", "1/32"}})}}});
+		run(track.client, "transport.play");
+		track.render(3 * g_beat);
+		const std::string text = track.captured();
+		if (first.empty())
+			first = text;
+		CHECK(text == first);
+	}
+	CHECK(!first.empty());
+}
+
+TEST_CASE("the chord generator and the transformer give note-offs room in a full output", "[unit]")
+{
+	EventBuffer in(4);
+	const graph::TransportBlock transport;
+	SECTION("chord generator")
+	{
+		// Three note-ons fill all but one place; the note-offs take the places of note-ons and the controller.
+		EventBuffer out(4);
+		const std::shared_ptr<processors::MidiEffect> chords = processors::createMidiEffect("chordGenerator");
+		in.add(noteAt(ProcessEvent::Type::NoteOn, 0, 60));
+		in.add(noteAt(ProcessEvent::Type::Controller, 5, 1));
+		in.add(noteAt(ProcessEvent::Type::NoteOff, 10, 60));
+		chords->process({nullptr, 0, 64, in, out, transport});
+		CHECK(hanging(out).empty());
+		CHECK(out[out.size() - 1].type == ProcessEvent::Type::NoteOff);
+	}
+	SECTION("transformer")
+	{
+		EventBuffer out(2);
+		const std::shared_ptr<processors::MidiEffect> transformer = processors::createMidiEffect("transformer");
+		transformer->setParameter(processors::Transformer::Value, 12);
+		in.add(noteAt(ProcessEvent::Type::NoteOn, 0, 60));
+		in.add(noteAt(ProcessEvent::Type::Controller, 5, 1));
+		in.add(noteAt(ProcessEvent::Type::NoteOff, 10, 60));
+		transformer->process({nullptr, 0, 64, in, out, transport});
+		REQUIRE(out.size() == 2);
+		CHECK(out[0].type == ProcessEvent::Type::NoteOn);
+		CHECK(out[1].type == ProcessEvent::Type::NoteOff);
+		CHECK(out[1].key == 72);
+	}
+}
+
+TEST_CASE("the transformer ends a note two notes share when the last of them ends", "[integration]")
+{
+	// Set channel: C4 on channels 1 and 2 both play on channel 3, once, until both are released.
+	EffectTrack track;
+	track.set("midiInserts", {{"slots", {slot("transformer", {{"action", "Set channel"}, {"value", 3}})}}});
+	track.inject({message(10, {0x90, 60, 100}), message(20, {0x91, 60, 90}), message(30, {0x80, 60, 64}),
+		message(40, {0x81, 60, 64})});
+	track.render(64);
+	CHECK(track.captured() == "10 92 3c 64\n40 82 3c 40\n");
+	// Transpose by pitch: C4 up an octave meets the C5 that passes.
+	EffectTrack transpose;
+	transpose.set(
+		"midiInserts", {{"slots", {slot("transformer", {{"condition", "Pitch"}, {"maximum", 60}, {"value", 12}})}}});
+	transpose.inject({message(10, {0x90, 72, 100}), message(20, {0x90, 60, 90}), message(30, {0x80, 72, 64}),
+		message(40, {0x80, 60, 64})});
+	transpose.render(64);
+	CHECK(transpose.captured() == "10 90 48 64\n40 80 48 40\n");
+}
+
+TEST_CASE("sends play the notes their effects make, the track's other events reach the output once", "[integration]")
+{
+	for (const bool pre : {false, true})
+	{
+		EffectTrack track;
+		track.set("midiSends",
+			{{"pre", pre}, {"slots", {slot("transformer", {{"value", 12}}), slot("transformer", {{"value", 24}})}}});
+		track.inject({message(10, {0x90, 60, 100}), message(20, {0xB0, 1, 99}), message(25, {0xE0, 0, 80}),
+			message(30, {0xA0, 60, 40}), message(40, {0x80, 60, 64})});
+		track.render(64);
+		INFO("pre " << pre);
+		CHECK(track.captured() ==
+			"10 90 3c 64\n10 90 48 64\n10 90 54 64\n20 b0 01 63\n25 e0 00 50\n30 a0 3c 28\n30 a0 48 28\n"
+			"30 a0 54 28\n40 80 3c 40\n40 80 48 40\n40 80 54 40\n");
 	}
 }
 
