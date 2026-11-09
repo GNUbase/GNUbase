@@ -169,7 +169,7 @@ namespace gnubase::engine
 		time::Samples sampleOf(const Project& project, const AudioEvent& event, time::Samples frame)
 		{
 			const EventSpan span = eventSpan(project, event);
-			return span.start + std::llround(static_cast<double>(frame - event.offset) * span.ratio);
+			return span.start + std::llround(eventSamples(project, event, static_cast<double>(frame - event.offset)));
 		}
 
 		const char* const g_settingsText =
@@ -232,9 +232,9 @@ namespace gnubase::engine
 					"silent parts between them; regions (Add as Regions) adds a region of the clip for each section, "
 					"named regionName (default Region) and a number from autoNumberStart (default 1) up, across the "
 					"events; fades (Apply Fades, ms) gives the events that remain a fade in and a fade out of that "
-					"length, at most half their length each. An event that strip would remove completely, or that is "
-					"locked, is an error. Returns the events that remain and the regions, and the number of "
-					"sections.",
+					"length, at most half of what each plays for in frames at the clip's sample rate (its length, "
+					"unless it plays warped). An event that strip would remove completely, or that is locked, is an "
+					"error. Returns the events that remain and the regions, and the number of sections.",
 				objectSchema(stripProperties, {"events"}),
 				objectSchema(
 					{{"events", ids}, {"regions", ids}, {"sections", integer}}, {"events", "regions", "sections"}),
@@ -314,7 +314,7 @@ namespace gnubase::engine
 						{
 							const AudioEvent& part = project.audioEvents.at(piece);
 							const time::Samples length = std::min<time::Samples>(
-								std::llround(fades / 1000.0 * media.sampleRate), part.length / 2);
+								std::llround(fades / 1000.0 * media.sampleRate), fadeRoom(project, part) / 2);
 							run("audioEvent.setFades",
 								{{"event", piece}, {"fadeIn", {{"length", length}}},
 									{"fadeOut", {{"length", length}}}});

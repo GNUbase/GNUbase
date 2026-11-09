@@ -1465,6 +1465,10 @@ namespace gnubase::engine
 
 	EventSpan eventSpan(const Project& project, const AudioEvent& event);
 
+	// The sample frames an event's fades may take together: its length, or on a warped event the frames at the
+	// clip's sample rate that it plays for, which is where its own fades play (playback.cpp, warpEvent).
+	time::Samples fadeRoom(const Project& project, const AudioEvent& event);
+
 	// How many project samples after an audio event's start the clip frames frames after its offset play, and the
 	// other way round: through the clip's warp when it plays warped (warp.h), else at the ratio of the sample rates.
 	double eventSamples(const Project& project, const AudioEvent& event, double frames);
