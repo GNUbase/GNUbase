@@ -1,0 +1,81 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Insert Tempo Event at Cursor (docs/features/tempo-track.md, reference manual pp. 1452-1453): app::AppUi opens it
+     with the UI command tempo.insertAtCursor and the tempo at the project cursor in the document's attribute bpm. OK
+     adds a tempo event with the tempo in #insert-tempo-value at the cursor (tempo.add), or changes the one there. -->
+<rml>
+<head>
+	<title>Insert Tempo Event at Cursor</title>
+	<style>
+		dialog
+		{
+			width: 280dp;
+		}
+
+		.row
+		{
+			display: flex;
+			align-items: center;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.row label
+		{
+			flex: 1;
+		}
+
+		#insert-tempo-message
+		{
+			flex: 1;
+		}
+
+		.buttons
+		{
+			justify-content: flex-end;
+		}
+
+		.buttons button
+		{
+			margin-left: 6dp;
+		}
+	</style>
+	<script>
+		InsertTempo = {}
+		local dialog = InsertTempo
+
+		function dialog.load(document)
+			local bpm = document:GetAttribute("bpm")
+			if bpm ~= nil then
+				document:GetElementById("insert-tempo-value"):SetAttribute("value", tostring(bpm))
+			end
+		end
+
+		function dialog.ok(document)
+			local bpm = tonumber(document:GetElementById("insert-tempo-value"):GetAttribute("value"))
+			local ok, failure = false, "The tempo must be a number of BPM"
+			if bpm ~= nil then
+				ok, failure = pcall(gnubase.tempo.add, {position = "cursor", bpm = bpm})
+			end
+			if ok then
+				document:Close()
+			else
+				document:GetElementById("insert-tempo-message").inner_rml =
+					(tostring(failure):gsub('[&<>"]', {["&"] = "&amp;", ["<"] = "&lt;", [">"] = "&gt;", ['"'] = "&quot;"}))
+			end
+		end
+	</script>
+</head>
+<body onshow="InsertTempo.load(document)">
+	<dialog id="insert-tempo-dialog">
+		<div class="dialog-titlebar">Insert Tempo Event at Cursor</div>
+		<div class="row">
+			<label for="insert-tempo-value">Tempo (BPM)</label>
+			<valuefield id="insert-tempo-value" value="120" min="1" max="999" step="1" decimals="3" autofocus="autofocus"/>
+		</div>
+		<div class="row buttons">
+			<div id="insert-tempo-message"/>
+			<button result="cancel">Cancel</button>
+			<button id="insert-tempo-ok" class="primary" onclick="InsertTempo.ok(document)">OK</button>
+		</div>
+	</dialog>
+</body>
+</rml>

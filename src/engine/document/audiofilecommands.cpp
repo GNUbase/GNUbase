@@ -53,10 +53,23 @@ namespace gnubase::engine
 			return speakerName(speakers(defaultFormat(channels)).at(static_cast<size_t>(channel)));
 		}
 
+		// What goes between a file's name and its channel's when it is split, by nameFormat (#477).
+		std::string separatorOf(const std::string& nameFormat)
+		{
+			if (nameFormat == "underscore")
+				return "_";
+			if (nameFormat == "dot")
+				return ".";
+			if (nameFormat == "space")
+				return " ";
+			return "-";
+		}
+
 		// Writes the files that path becomes in the media folder: a WAV file at the project's sample rate, or with
-		// split a mono WAV file per channel. Returns their paths and adds them to written.
+		// split a mono WAV file per channel, named after path and the channel with separator between them. Returns
+		// their paths and adds them to written.
 		std::vector<std::string> convertInto(const fs::path& folder, const std::string& path, const AudioFileInfo& info,
-			double sampleRate, bool split, std::vector<std::string>& written)
+			double sampleRate, bool split, const std::string& separator, std::vector<std::string>& written)
 		{
 			require(!folder.empty(), "there is no folder to convert " + path + " into: save the project first");
 			std::error_code error;
@@ -68,7 +81,7 @@ namespace gnubase::engine
 			{
 				for (int channel = 0; channel < (split ? info.channels : 1); ++channel)
 				{
-					const std::string name = split ? stem + "-" + channelName(info.channels, channel) : stem;
+					const std::string name = split ? stem + separator + channelName(info.channels, channel) : stem;
 					outputs.push_back(createFreeFile(folder, fs::u8path(name + ".wav")).u8string());
 					written.push_back(outputs.back());
 				}
@@ -105,8 +118,10 @@ namespace gnubase::engine
 				"writes files at another sample rate than the project's into the media folder as 32-bit float WAV "
 				"files at the project's sample rate, MP3 and Ogg Vorbis files included. splitChannels writes each "
 				"channel of a file with several into the media folder as a mono WAV file, named after the file and "
-				"its speaker (such as take-L.wav), on a new mono track of its own at position; track and oneTrack "
-				"only place the files that aren't split. copy, convert and splitChannels "
+				"its speaker (numbered beyond 8 channels) as nameFormat says: dash (take-L.wav, the default), "
+				"underscore (take_L.wav), dot (take.L.wav) or space (take L.wav); each goes on a new mono track of "
+				"its own at position, and track and oneTrack only place the files that aren't split. copy, convert "
+				"and splitChannels "
 				"need a saved project. clipsOnly adds the media files and clips to the pool without tracks or events "
 				"(the pool's Import Medium). One undo step. Returns the new tracks, and per file (per channel when "
 				"split) the media files and events, in the order of files.",
@@ -114,7 +129,9 @@ namespace gnubase::engine
 					{"properties",
 						{{"files", {{"type", "array"}, {"items", {{"type", "string"}}}}}, {"track", integer},
 							{"position", integer}, {"oneTrack", boolean}, {"copy", boolean}, {"convert", boolean},
-							{"splitChannels", boolean}, {"clipsOnly", boolean},
+							{"splitChannels", boolean},
+							{"nameFormat", {{"type", "string"}, {"enum", {"dash", "underscore", "dot", "space"}}}},
+							{"clipsOnly", boolean},
 							{"lane", {{"type", "integer"}, {"minimum", 0}, {"maximum", 1000}}}}},
 					{"required", {"files"}}},
 				{{"type", "object"}, {"properties", {{"tracks", ids}, {"media", ids}, {"events", ids}, {"job", job}}},
@@ -132,6 +149,7 @@ namespace gnubase::engine
 		const bool copy = parameters.value("copy", false);
 		const bool convert = parameters.value("convert", false);
 		const bool split = parameters.value("splitChannels", false);
+		const std::string separator = separatorOf(parameters.value("nameFormat", std::string("dash")));
 		const bool oneTrack = parameters.value("oneTrack", false);
 		const bool clipsOnly = parameters.value("clipsOnly", false);
 		ObjectId target = parameters.value("track", ObjectId{0});
@@ -175,8 +193,8 @@ namespace gnubase::engine
 				const bool compressed = info.format == AudioFormat::Mp3 || info.format == AudioFormat::OggVorbis;
 				std::vector<std::string> paths{path};
 				if (converts || splits || compressed)
-					paths = convertInto(
-						writeFolder, path, info, converts ? project.sampleRate : info.sampleRate, splits, written);
+					paths = convertInto(writeFolder, path, info, converts ? project.sampleRate : info.sampleRate,
+						splits, separator, written);
 
 				time::Samples length = 0;
 				for (const std::string& file : paths)
