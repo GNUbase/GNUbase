@@ -540,6 +540,7 @@ namespace gnubase::engine
 				{transformer != m_inputTransformers.end() ? transformer->second : nullptr,
 					found != snapshot.channels.end() ? found->inputTransformer : std::vector<midi::LogicalRules>()});
 		}
+		program->chordPadKeys = snapshot.chordPadKeys;
 		// Bus nodes come first, in bus order (graph::describe); child busses reach the device through their parent.
 		for (size_t b = 0; b < snapshot.busses.size(); ++b)
 			if (snapshot.busses[b].mainMix)
@@ -740,12 +741,15 @@ namespace gnubase::engine
 				monitoring = Monitoring{channel.monitor, channel.recordEnable, m_autoMonitoring};
 			graph::NodeDesc& node = desc.nodes[firstChannel + i];
 			const auto source = static_cast<size_t>(sourceNode(channel.id));
+			// The mute button mutes through the fader's mute (channelAutomation), which mute automation takes over in
+			// the same change, without a gap; the strips' silence is the rest (RenderChannel::quiet).
+			const bool silent = channel.quiet;
 			std::shared_ptr<ChannelStrip> fader;
 			std::shared_ptr<ChannelStrip> sourceStrip; // the strip that runs the source
 			if (source == firstChannel + i)
 			{
 				fader = std::make_shared<ChannelStrip>(
-					state, node.processor, panning, monitoring, channel.silent, StripPart::Whole, lookAhead);
+					state, node.processor, panning, monitoring, silent, StripPart::Whole, lookAhead);
 				sourceStrip = fader;
 			}
 			else
@@ -764,11 +768,11 @@ namespace gnubase::engine
 							std::make_shared<SlotStrip>(state, slot.processor, static_cast<uint8_t>(index));
 				}
 				graph::NodeDesc& sourceDesc = desc.nodes[source];
-				sourceStrip = std::make_shared<ChannelStrip>(state, sourceDesc.processor, panning, monitoring,
-					channel.silent, StripPart::Source, false, std::move(plugins), std::move(slotIds));
+				sourceStrip = std::make_shared<ChannelStrip>(state, sourceDesc.processor, panning, monitoring, silent,
+					StripPart::Source, false, std::move(plugins), std::move(slotIds));
 				sourceDesc.processor = sourceStrip;
 				fader = std::make_shared<ChannelStrip>(
-					state, nullptr, panning, std::nullopt, channel.silent, StripPart::Fader, lookAhead);
+					state, nullptr, panning, std::nullopt, silent, StripPart::Fader, lookAhead);
 			}
 			node.processor = fader;
 			if (const auto tap = m_renderTaps.find(channel.id); tap != m_renderTaps.end())
@@ -851,11 +855,13 @@ namespace gnubase::engine
 	namespace
 	{
 		// The tracks that direct monitoring is for: groups aren't on the device, so what plays into one is
-		// monitored through the graph.
+		// monitored through the graph, and so is a track with mute automation, which the device can't follow.
 		bool monitoredDirectly(const RenderChannel& channel)
 		{
 			return channel.type == TrackType::Audio && channel.input >= 0 &&
-				channel.output.kind == RenderTarget::Kind::Bus;
+				channel.output.kind == RenderTarget::Kind::Bus &&
+				std::none_of(channel.automation.begin(), channel.automation.end(),
+					[](const RenderAutomationLane& lane) { return lane.target.type == AutomationTargetType::Mute; });
 		}
 	}
 
@@ -960,7 +966,7 @@ namespace gnubase::engine
 		}
 		const audio::DeviceFormat& format = m_device->format();
 		m_midiInput.clear();
-		m_midi.take(block, format.sampleRate, m_midiInput);
+		m_midi.take(block, format.sampleRate, m_midiInput, program.chordPadKeys);
 		const size_t bytes = block.frames * sizeof(float);
 		for (const BusLink& link : program.inputs)
 		{

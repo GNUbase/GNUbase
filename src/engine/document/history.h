@@ -66,6 +66,7 @@ namespace gnubase::engine
 		int rootKey = -1;
 		TransposeTrack transpose;
 		ChordTrack chords;
+		ChordPads chordPads;
 		midi::InputTransformerModules inputTransformer;
 	};
 

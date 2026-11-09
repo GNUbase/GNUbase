@@ -170,7 +170,7 @@ namespace gnubase::ui
 		std::vector<uint64_t> topSelection() const;
 		// Remove Selected Tracks: removes the tracks, after asking if they, or tracks inside them, hold anything.
 		void removeSelected();
-		void removeTracks(const std::vector<uint64_t>& tracks);
+		void removeTracks(std::vector<uint64_t> tracks);
 		void closedRemoveDialog(Rml::Event& event);
 		// Runs the commands as one undo step.
 		void transaction(const std::string& description, engine::Json commands);

@@ -84,7 +84,7 @@ The reference's defaults (`ui::defaultKeyMap`, [key-commands.md](key-commands.md
   where a click locates to the marker; then the id number, the type, the position, the end and length (cycle markers)
   and the description. All but the type are text fields, which Enter or leaving the field changes (`marker.set`; a
   number that is taken, text that isn't a number or a time, or an end before the position shows the old value
-  again). Times are in the transport's primary time format (`ui.timeFormats`), lengths as lengths ("0.2.0.0" for two
+  again). Times are in the primary time format, the project setup's (`project.set {timeFormat}`, p. 317), lengths as lengths ("0.2.0.0" for two
   beats in bars and beats); a new position moves a cycle marker as a whole, a new length moves its end. Rows select
   with clicks, Ctrl, Shift, the arrow keys, Page Up and Page Down, Home and End (p. 428); Enter locates to the
   selected marker.

@@ -320,4 +320,14 @@ TEST_CASE("the time context comes from the project as project.get returns it", "
 	CHECK(!ui::readTimeContext(
 		{{"sampleRate", 48000.0}, {"tempo", engine::Json::array()}, {"signatures", engine::Json::array()}}, context));
 	CHECK(context.sampleRate == 44100.0); // unchanged
+	// Without a sample rate, the frame rate, start time and bar offset stay as they were too (#537).
+	engine::Json noRate = project;
+	noRate.erase("sampleRate");
+	noRate["frameRate"] = "30";
+	noRate["startTime"] = 10.0;
+	noRate["barOffset"] = 2;
+	CHECK(!ui::readTimeContext(noRate, context));
+	CHECK(context.frameRate.framesPerSecond == 25);
+	CHECK(context.startTime == 0.0);
+	CHECK(context.barOffset == 0);
 }

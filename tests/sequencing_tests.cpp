@@ -334,6 +334,31 @@ TEST_CASE("a muted or disabled MIDI track's notes don't reach its instrument; a 
 	soloed.check(positions(0, 700));
 }
 
+TEST_CASE("a MIDI track's mute automation silences its notes from the point's sample and ends those that sound",
+	"[integration]")
+{
+	const int blockSize = GENERATE(64, 333);
+	const bool button = GENERATE(false, true); // the lane overrides the mute button
+	INFO("block size " << blockSize << (button ? ", mute button on" : ""));
+	Song song(blockSize);
+	song.add(0, {100, 1800, 60});  // the instrument track's own note plays on
+	song.add(1, {200, 1500, 64});  // sounds where the mute starts
+	song.add(1, {1200, 1400, 65}); // starts while muted
+	song.add(1, {1700, 1900, 67}); // after the mute
+	run(song.client, "channel.set", {{"channel", channelOf(song.client, song.midi)}, {"mute", button}});
+	const ObjectId lane =
+		idOf(run(song.client, "automationLane.add", {{"track", song.midi}, {"target", {{"type", "mute"}}}}), "lane");
+	run(song.client, "automationPoint.add",
+		{{"lane", lane},
+			{"points",
+				{{{"position", 0}, {"value", 0.0}}, {{"position", ticks(1000)}, {"value", 1.0}},
+					{{"position", ticks(1600)}, {"value", 0.0}}}}});
+	song.notes = {{100, 1800, 60}, {200, 1000, 64}, {1700, 1900, 67}};
+	run(song.client, "transport.play");
+	run(song.client, "audio.render", {{"frames", 2000}});
+	song.check(positions(0, 2000));
+}
+
 TEST_CASE("a note that starts where another track's note of the same pitch ends sounds", "[integration]")
 {
 	const int blockSize = GENERATE(1, 64, 333);

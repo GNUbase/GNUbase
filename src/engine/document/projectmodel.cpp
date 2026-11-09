@@ -12,6 +12,7 @@
 #include "engine/document/hitpoints.h"
 #include "engine/document/linkgroups.h"
 #include "engine/document/mixerviews.h"
+#include "engine/document/projectrules.h"
 #include "engine/document/renderinplace.h"
 #include "engine/document/sampleeditor.h"
 #include "engine/document/serialize.h"
@@ -758,8 +759,8 @@ namespace gnubase::engine
 				break;
 			case AutomationTargetType::Mute:
 				only({});
-				// ponytail: a MIDI track's mute would have to silence its notes as they play.
-				require(channel.format != ChannelFormat::None, "a MIDI track's mute isn't automated yet");
+				require(channel.format != ChannelFormat::None || track.type == TrackType::Midi,
+					"a VCA track's mute isn't automated");
 				break;
 			case AutomationTargetType::Instrument:
 			{
@@ -3187,6 +3188,11 @@ namespace gnubase::engine
 		followEvent(project, track, from, end, to, context);
 	}
 
+	bool hasStepCurve(const Project& project, const AutomationLane& lane)
+	{
+		return stepCurve(project, lane);
+	}
+
 	namespace
 	{
 		// The undo step each command records, as shown in the history.
@@ -3278,6 +3284,15 @@ namespace gnubase::engine
 			{"chord.follow", "Follow chord track"},
 			{"chord.toMidi", "Chords to MIDI"},
 			{"chord.fromMidi", "Create chord events"},
+			{"chordPads.set", "Change chord pads"},
+			{"chordPads.assign", "Assign chords to pads"},
+			{"chordPads.modify", "Modify chord pads"},
+			{"chordPads.setPad", "Change chord pad"},
+			{"chordPads.move", "Move chord pad"},
+			{"chordPads.fromChordTrack", "Assign pads from chord track"},
+			{"chordPads.loadPreset", "Load chord pads preset"},
+			{"chordPads.step", "Insert chord from pad"},
+			{"chordPads.toTrack", "Chord pad to track"},
 			{"automationLane.add", "Add automation lane"},
 			{"automationLane.set", "Change automation lane"},
 			{"automationLane.remove", "Remove automation lane"},
@@ -4452,6 +4467,7 @@ namespace gnubase::engine
 		registerArrangerCommands(engine);
 		registerTransposeCommands(engine);
 		registerChordCommands(engine);
+		registerChordPadCommands(engine);
 		registerTempoCommands(engine);
 		registerSignatureCommands(engine);
 		registerAutomationCommands(engine);
@@ -4461,6 +4477,7 @@ namespace gnubase::engine
 		registerAudioQuantizeCommands(*this, engine);
 		midi::registerFunctionCommands(*this, engine);
 		midi::registerLogicalCommands(*this, engine);
+		registerProjectRuleCommands(*this, engine);
 		metronome::registerMetronomeCommands(*this, engine);
 		midi::registerControllerLaneCommands(*this, engine);
 		registerMidiFileCommands(engine);
@@ -4510,8 +4527,9 @@ namespace gnubase::engine
 		add(engine,
 			{"automationLane.add", 1,
 				"Adds an automation lane to a track: the curve of one parameter. target.type says which: volume (the "
-				"channel's fader, in dB), pan, panLeft and panRight (-1 to 1, see channel.set) and mute (0 off, 1 on; "
-				"a lane that plays overrides the mute button) on tracks with audio channels; instrument, a parameter "
+				"channel's fader, in dB), pan, panLeft and panRight (-1 to 1, see channel.set) on tracks with audio "
+				"channels; mute (0 off, 1 on; a lane that plays overrides the mute button) on those and on MIDI "
+				"tracks, whose notes and controllers it silences, ending the notes that sound; instrument, a parameter "
 				"of an instrument track's built-in instrument (target.parameter, an id from processor.list, in its "
 				"range); plugin, a parameter of the built-in plugin in one of the track's slots (target.slot and "
 				"target.parameter, as parameter.list gives them, in its range; the lane goes when the plugin is "

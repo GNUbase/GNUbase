@@ -30,12 +30,16 @@ new time format in the project setup (`project.set {timeFormat}`, #78, p. 69), w
 format in the same command, and again on undo and redo of it, emitting `snap.changed`; the ruler follows. So the
 project setup's time format sets the ruler, the ruler can choose its own afterwards (pp. 69, 317), and the grid types
 are always the ruler's format's (pp. 105, 109); snapping is the same with and without a UI, and a `snap.set {format}`
-right after it stays. The transport's time displays have formats of their own (`ui.timeFormats`), so the ruler and
-the primary time display can differ.
+right after it stays. The transport's primary time display shows the project setup's time format (p. 317), so the
+ruler and the primary time display can differ; picking a format in the ruler's menu with Ctrl (Cmd on macOS) held
+sets both (`project.set {timeFormat}` as well, p. 69).
 
 The frame grids have the project's frame rate (project setup, `project.set {frameRate}`, #78), with its pull-down;
 `userFrames` has the user's, 30 fps until that is a setting of its own (`time::g_userFramesPerSecond`), in the event
-display and in `snap.position` alike.
+display and in `snap.position` alike. The seconds and frame grids count from the project's start time
+(`project.set {startTime}`), as the ruler's seconds and timecode marks do (`SnapGrid::startTime`, #537): with a start
+time that isn't a whole frame, the frame lines stay on the ruler's frames, and the first line is the first one after
+the project start. The sample grids count from the project start, as the samples ruler does.
 
 | Snap type | A position goes to | Reference |
 |---|---|---|

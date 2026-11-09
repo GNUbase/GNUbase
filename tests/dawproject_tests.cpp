@@ -1302,6 +1302,79 @@ TEST_CASE("mute, solo, solo defeat, listen, notes and disabled tracks are saved,
 	CHECK(loaded.at("tracks")[0].at("enabled") == true);
 }
 
+TEST_CASE(
+	"mute lanes are saved, also as BoolPoints in project.xml; plugin lanes only in GNUbase's entry", "[integration]")
+{
+	const test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	const Json audio = run(client, "track.add", {{"type", "audio"}, {"name", "Audio"}});
+	const Json midi = run(client, "track.add", {{"type", "midi"}, {"name", "MIDI"}});
+	const ObjectId gain = idOf(
+		run(client, "plugin.insert", {{"channel", idOf(audio, "channel")}, {"plugin", "builtin:gainPan"}}), "slot");
+	const auto lane = [&client](const Json& track, const Json& target, const Json& points)
+	{
+		run(client, "automationPoint.add",
+			{{"lane",
+				 idOf(
+					 run(client, "automationLane.add", {{"track", idOf(track, "track")}, {"target", target}}), "lane")},
+				{"points", points}});
+	};
+	// 0, 1 and 2 beats.
+	lane(audio, {{"type", "mute"}},
+		{{{"position", 0}, {"value", 0.0}}, {{"position", 960}, {"value", 1.0}}, {{"position", 1920}, {"value", 0.0}}});
+	lane(midi, {{"type", "mute"}}, {{{"position", 960}, {"value", 1.0}}});
+	lane(audio, {{"type", "plugin"}, {"slot", gain}, {"parameter", 0}},
+		{{{"position", 0}, {"value", -6.0}}, {{"position", 960}, {"value", 0.0}}});
+	const Json before = run(client, "project.get");
+	const std::string file = utf8(dir.path() / "song.dawproject");
+	run(client, "project.save", {{"path", file}});
+	run(client, "project.load", {{"path", file}});
+	CHECK(run(client, "project.get").at("automation") == before.at("automation"));
+
+	std::map<std::string, std::string> entries = readZip(file);
+	pugi::xml_document xml;
+	REQUIRE(xml.load_string(entries.at("project.xml").c_str()));
+	size_t lanes = 0;
+	size_t boolPoints = 0;
+	for (const pugi::xpath_node& points : xml.select_nodes("//Points"))
+	{
+		++lanes;
+		const std::string parameter = points.node().child("Target").attribute("parameter").as_string();
+		const pugi::xml_node mute = xml.select_node(("//Mute[@id='" + parameter + "']").c_str()).node();
+		CHECK(!mute.empty()); // the plugin's lane isn't there
+		CHECK(points.node().child("RealPoint").empty());
+		for (const pugi::xml_node point : points.node().children("BoolPoint"))
+		{
+			CHECK(!point.attribute("value").empty());
+			++boolPoints;
+		}
+	}
+	CHECK(lanes == 2);
+	CHECK(boolPoints == 4);
+
+	// From project.xml alone: the mute lanes, as steps.
+	REQUIRE(entries.erase("gnubase.json") == 1);
+	const std::string other = utf8(dir.path() / "other.dawproject");
+	writeZip(other, entries);
+	run(client, "project.load", {{"path", other}});
+	const Json loaded = run(client, "project.get");
+	REQUIRE(loaded.at("automation").size() == 2);
+	std::vector<std::vector<double>> values;
+	for (const Json& read : loaded.at("automation"))
+	{
+		CHECK(read.at("target") == Json{{"type", "mute"}});
+		values.emplace_back();
+		for (const Json& point : read.at("points"))
+		{
+			CHECK(point.at("shape") == "step");
+			values.back().push_back(point.at("value").get<double>());
+		}
+	}
+	std::sort(values.begin(), values.end());
+	CHECK(values == std::vector<std::vector<double>>{{0.0, 1.0, 0.0}, {1.0}});
+}
+
 TEST_CASE("sends are saved, with their destination, type, level and on also in project.xml", "[integration]")
 {
 	const test::TempDir dir;

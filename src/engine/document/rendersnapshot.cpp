@@ -3,6 +3,7 @@
 
 #include "engine/audio/automation.h"
 #include "engine/audio/fades.h"
+#include "engine/document/chordpads.h"
 #include "engine/document/chordtrack.h"
 #include "engine/document/stripparameters.h"
 #include "engine/document/warp.h"
@@ -327,6 +328,7 @@ namespace gnubase::engine
 				const bool muted = project.channels.at(channel.id).mute && automated.count(channel.track) == 0;
 				const bool quiet = !heard[i] || !project.trackById.at(channel.track).enabled;
 				channel.silent = quiet || muted;
+				channel.quiet = quiet;
 				channel.muted = muted;
 				for (RenderSend& send : channel.sends)
 					if (quiet && send.preFader)
@@ -500,6 +502,7 @@ namespace gnubase::engine
 			outputs.end());
 		if (outputs.empty() && mainMix(project) != 0)
 			outputs.push_back(mainMix(project)); // the default output, also when the chosen busses are gone
+		snapshot->chordPadKeys = chordPadKeys(project.chordPads);
 		snapshot->panLaw = project.panLaw;
 		snapshot->maxVolume = project.maxVolume;
 		snapshot->recordBitDepth = project.setup.recordBitDepth;
