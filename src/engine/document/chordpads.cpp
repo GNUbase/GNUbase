@@ -44,8 +44,6 @@ namespace gnubase::engine
 			return ((pitch % 12) + 12) % 12;
 		}
 
-		constexpr std::array<const char*, 12> g_noteNames = {
-			"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
 		constexpr std::array<const char*, 7> g_numerals = {"I", "II", "III", "IV", "V", "VI", "VII"};
 		constexpr int g_maxPads = 32;
 		constexpr std::array<int, 7> g_majorSteps = {0, 2, 4, 5, 7, 9, 11};
