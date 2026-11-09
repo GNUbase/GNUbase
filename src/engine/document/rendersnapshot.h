@@ -5,6 +5,8 @@
 #include "engine/document/document.h"
 #include "engine/dsp/warp.h"
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -204,6 +206,16 @@ namespace gnubase::engine
 	// A channel volume in dB as a linear gain; the fader's bottom, g_minChannelVolume, is silence.
 	double volumeGain(double decibels);
 
+	// The chord pads' remote keys (#174, reference manual p. 1386): per MIDI note, the pitches that a MIDI input's note
+	// there plays instead while the pad remote control is active; keys with none play themselves.
+	struct ChordPadKeys
+	{
+		static constexpr size_t g_maxPitches = 8;
+		bool active = false;
+		std::array<uint8_t, 128> counts{};
+		std::array<std::array<uint8_t, g_maxPitches>, 128> pitches{};
+	};
+
 	// What the audio thread needs from the project, compiled by the command thread after every change and handed
 	// over with rt::SnapshotPublisher. Objects refer to each other by index and every position is in the project's
 	// samples, so the audio thread never looks anything up. Immutable once published.
@@ -222,6 +234,7 @@ namespace gnubase::engine
 		std::vector<RenderChannel> channels; // in track order
 		// What arranger mode plays (#167); shared with the cue thread.
 		std::shared_ptr<const ArrangerPlan> arranger = std::make_shared<const ArrangerPlan>();
+		ChordPadKeys chordPadKeys;
 	};
 
 	// previous is the snapshot published before: its arranger plan stays if the new one plays the same, since the

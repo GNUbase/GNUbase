@@ -44,6 +44,8 @@ add_executable(gnubase-tests
 	channelformat_tests.cpp
 	channelsettings_tests.cpp
 	channelstrip_tests.cpp
+	chordpads_tests.cpp
+	chordpads_ui_tests.cpp
 	chordtrack_tests.cpp
 	chordtrack_ui_tests.cpp
 	clock_tests.cpp

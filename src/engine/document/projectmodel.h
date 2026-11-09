@@ -167,6 +167,7 @@ namespace gnubase::engine
 		void registerArrangerCommands(Engine& engine);                // arranger.cpp: arranger.* (#167)
 		void registerTransposeCommands(Engine& engine);               // transpose.cpp: transpose.* (#168)
 		void registerChordCommands(Engine& engine);                   // chordtrack.cpp: chord.* (#173)
+		void registerChordPadCommands(Engine& engine);                // chordpads.cpp: chordPads.* (#174)
 		void registerTempoCommands(Engine& engine);                   // tempo.cpp: tempo.*
 		Json detectTempo(Project& project, CommandContext& context);  // tempo.cpp: tempo.detect
 		void registerSignatureCommands(Engine& engine);               // signature.cpp: signature.*

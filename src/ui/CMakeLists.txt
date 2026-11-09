@@ -20,6 +20,8 @@ add_library(gnubase-ui STATIC
 	automationtracks.cpp
 	canvas.cpp
 	canvas.h
+	chordpads.cpp
+	chordpads.h
 	colormenu.cpp
 	colormenu.h
 	colorwidgets.cpp
