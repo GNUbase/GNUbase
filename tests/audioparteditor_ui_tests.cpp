@@ -132,10 +132,16 @@ namespace
 			return nullptr;
 		}
 
-		// Waits until the display shows the part's events as the engine has them, each at its time and lane, and one
-		// lane more than they are on. A drag already shows the events where it moves them before the engine has them;
-		// the lane that it adds shows only with the engine's. The display shows the part, and events after its end
-		// that it hides entirely up to theirs.
+		const ui::AudioPartEditor* audioPartEditor()
+		{
+			ui::MidiEditor* shown = app.appUi().editorWindow();
+			return shown != nullptr ? shown->audioPartEditor() : nullptr;
+		}
+
+		// Waits until the editor has the part's events as the engine has them and the display shows them so, each at
+		// its time and lane, and one lane more than they are on. A drag already shows the events where it moves them
+		// before the editor has the engine's project, and any render until then puts them back. The display shows the
+		// part, and events after its end that it hides entirely up to theirs.
 		void settle()
 		{
 			REQUIRE(app.waitUntil(
@@ -143,6 +149,13 @@ namespace
 				{
 					const Json shown = box(".ape-display");
 					const Json all = events();
+					const ui::AudioPartEditor* editor = audioPartEditor();
+					if (editor == nullptr || !editor->project().contains("audioEvents"))
+						return false;
+					const Json& known = editor->project().at("audioEvents");
+					if (!std::all_of(all.begin(), all.end(), [&](const Json& each)
+							{ return std::find(known.begin(), known.end(), each) != known.end(); }))
+						return false;
 					if (elements(".ape-event").size() != all.size())
 						return false;
 					int lanes = 1;
@@ -238,8 +251,7 @@ namespace
 			REQUIRE(app.waitUntil(
 				[&]
 				{
-					ui::MidiEditor* shown = app.appUi().editorWindow();
-					const ui::AudioPartEditor* editor = shown != nullptr ? shown->audioPartEditor() : nullptr;
+					const ui::AudioPartEditor* editor = audioPartEditor();
 					return editor != nullptr && editor->project().contains("snap") &&
 						editor->project().at("snap").at("on") == false;
 				}));
