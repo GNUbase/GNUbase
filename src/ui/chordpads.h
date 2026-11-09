@@ -1,0 +1,79 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#pragma once
+
+#include "engine/engine.h"
+#include "ui/enginebinding.h"
+
+#include <RmlUi/Core/EventListener.h>
+#include <RmlUi/Core/ObserverPtr.h>
+
+#include <memory>
+#include <set>
+#include <string>
+#include <vector>
+
+namespace Rml
+{
+	class Element;
+}
+
+namespace gnubase::ui
+{
+	// The chord pads zone (#174, reference manual pp. 1346-1391, docs/features/chord-pads.md), a panel of the lower
+	// zone: its toolbar (step input and Move Insert Mode, the root key with Transpose Pads, the presets with what to
+	// load, Assign from Chord Track, the velocity of mouse clicks, the pad remote control with its range, the basic
+	// player's octave offset and Show/Hide Editor/Assistant), its extended toolbar (Select All, Open Chord Editor,
+	// Remove Assignment and the pad modifiers and pad state modifiers on the selected pads), the pads, each with its
+	// chord, its degree in the root key and its remote key, and the chord assistant with its List and Circle of Fifths
+	// pages. It shows chordPads.get, whichever client changes the pads, and changes them with the chordPads.* commands.
+	//
+	// A press on a pad selects it (Ctrl toggles it) and triggers it until the button goes up (chordPads.trigger), or
+	// with step input on inserts its chord (chordPads.step); released over another pad it swaps the two, with Alt it
+	// copies onto it (chordPads.move). A double click, or Open Chord Editor, opens the chord field, where Enter assigns
+	// the chord typed. The wheel over a pad steps through its voicings, with Shift transposes it, with Alt changes its
+	// tensions. An assistant's chord plays while it is pressed; a double click assigns it to the first unassigned pad.
+	// Use it on the UI thread; the binding must outlive it.
+	class ChordPadsPanel final : private Rml::EventListener
+	{
+	public:
+		ChordPadsPanel(EngineBinding& binding, Rml::Element& element);
+		~ChordPadsPanel() override;
+		ChordPadsPanel(const ChordPadsPanel&) = delete;
+		ChordPadsPanel& operator=(const ChordPadsPanel&) = delete;
+		ChordPadsPanel(ChordPadsPanel&&) = delete;
+		ChordPadsPanel& operator=(ChordPadsPanel&&) = delete;
+
+		// The selected pads, in order.
+		const std::set<int>& selection() const { return m_selection; }
+
+	private:
+		void ProcessEvent(Rml::Event& event) override;
+		void request();
+		void show(const engine::Json& pads);
+		void showSelection();
+		void showAssistant();
+		void press(int pad, const Rml::Event& event);
+		void release(Rml::Element* target, const Rml::Event& event);
+		void action(const std::string& name);
+		void change(Rml::Element& target, const Rml::Event& event);
+		void wheel(int pad, const Rml::Event& event);
+		void openField(int pad);
+		void assignTyped();
+		void assignFirstFree(const std::string& chord);
+		std::vector<int> selected() const;
+		void send(const std::string& command, engine::Json parameters);
+		Rml::Element* find(const std::string& id) const;
+
+		EngineBinding& m_binding;
+		Rml::ObserverPtr<Rml::Element> m_root;
+		Rml::ObserverPtr<Rml::Element> m_document; // for the mouse button going up outside the panel
+		engine::Json m_pads = engine::Json::object();
+		std::set<int> m_selection;
+		int m_pressed = -1;          // the pad the mouse button went down on, until it goes up
+		std::string m_auditioned;    // the assistant's chord that plays while pressed
+		int m_editing = -1;          // the pad whose chord the field types
+		std::string m_page = "list"; // the assistant's page: list or circle
+		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers that come after it went
+		std::vector<Subscription> m_subscriptions;
+	};
+}

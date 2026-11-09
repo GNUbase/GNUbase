@@ -838,6 +838,37 @@ namespace gnubase::engine
 		std::map<ObjectId, ChordFollow> follow; // by MIDI or instrument track
 	};
 
+	// A chord pad (#174, reference manual pp. 1352-1353): its chord's name (midi::chordName), empty while unassigned;
+	// its voicing, the inversion of its basic voicing it plays; adaptive voicing; and whether it is locked.
+	struct ChordPad
+	{
+		std::string chord;
+		int voicing = 0; // -12 to 12
+		bool adaptive = true;
+		bool locked = false;
+	};
+
+	// The chord pads (#174, reference manual pp. 1346-1391), saved with the project. A new project has twelve pads with
+	// the major preset on C.
+	struct ChordPads
+	{
+		std::vector<ChordPad> pads = {{"C", 0, true, false}, {"Dm", 0, true, false}, {"Em", 0, true, false},
+			{"F", 0, true, false}, {"G", 0, true, false}, {"Am", 0, true, false}, {"Bdim", 0, true, false},
+			{"", 0, true, false}, {"", 0, true, false}, {"", 0, true, false}, {"", 0, true, false},
+			{"", 0, true, false}};
+		int rootKey = 0;              // 0 C to 11 B
+		int reference = -1;           // the adaptive voicing reference pad, or -1
+		int octaveOffset = 0;         // the basic player's Octave Offset, -3 to 3
+		int velocity = 100;           // of pads triggered with the mouse
+		bool remote = false;          // notes from MIDI inputs on the remote keys trigger the pads
+		int remoteStart = 36;         // C1: the first pad's remote key
+		int remoteEnd = 47;           // B1: the last remote key
+		std::string preset = "major"; // the preset loaded last
+		bool stepInput = false;       // triggered pads become chord events (chordPads.step)
+		bool moveInsert = false;
+		time::Ticks stepPosition = 0;
+	};
+
 	// What an automation lane changes.
 	enum class AutomationTargetType : uint8_t
 	{
@@ -1064,6 +1095,7 @@ namespace gnubase::engine
 		int rootKey = -1;                     // the Project Root Key (#168): -1 for none, 0 C to 11 B
 		TransposeTrack transpose;             // the transpose track's events and controls; reset when the track goes
 		ChordTrack chords;                    // the chord track's (#173); reset when the track goes
+		ChordPads chordPads;                  // the chord pads (#174)
 		std::map<ObjectId, DrumMap> drumMaps; // a new project has the GM Map (#129)
 		// Virgin territory instead of initial values (reference manual p. 881): automation lanes have gaps before their
 		// first and after their last point too, where their parameters have their static values. A setting saved with
@@ -1400,6 +1432,19 @@ namespace gnubase::engine
 	{
 		return std::tie(a.events, a.scales, a.octaveOffset, a.adaptiveVoicings, a.automaticScales, a.follow) ==
 			std::tie(b.events, b.scales, b.octaveOffset, b.adaptiveVoicings, b.automaticScales, b.follow);
+	}
+
+	inline bool operator==(const ChordPad& a, const ChordPad& b)
+	{
+		return std::tie(a.chord, a.voicing, a.adaptive, a.locked) == std::tie(b.chord, b.voicing, b.adaptive, b.locked);
+	}
+
+	inline bool operator==(const ChordPads& a, const ChordPads& b)
+	{
+		return std::tie(a.pads, a.rootKey, a.reference, a.octaveOffset, a.velocity, a.remote, a.remoteStart,
+				   a.remoteEnd, a.preset, a.stepInput, a.moveInsert, a.stepPosition) ==
+			std::tie(b.pads, b.rootKey, b.reference, b.octaveOffset, b.velocity, b.remote, b.remoteStart, b.remoteEnd,
+				b.preset, b.stepInput, b.moveInsert, b.stepPosition);
 	}
 
 	inline bool operator==(const AutomationTarget& a, const AutomationTarget& b)

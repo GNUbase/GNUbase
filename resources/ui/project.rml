@@ -350,6 +350,8 @@
 				<menuitem command="track.createChordEventsSelected">Create Chord Events</menuitem>
 			</menu>
 		</menuitem>
+		<!-- The chord pads (reference manual p. 1346, docs/features/chord-pads.md) -->
+		<menuitem command="window.chordPads">Show/Hide Chord Pads</menuitem>
 		<menuseparator/>
 		<menuitem command="track.removeSelected">Remove Selected Tracks</menuitem>
 		<menuitem command="track.removeEmpty">Remove Empty Tracks</menuitem>

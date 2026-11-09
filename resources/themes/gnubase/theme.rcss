@@ -580,6 +580,67 @@
 		border-left-width: 1dp;
 		border-left-color: #e12ad8;
 	}
+	.chord-pad
+	{
+		color: #f1f4ff;
+		background-color: #171c32;
+		border-width: 1dp;
+		border-color: #303754;
+		border-radius: 3dp;
+	}
+	.chord-pad.unassigned
+	{
+		color: #aeb7d0;
+		background-color: #101426;
+	}
+	.chord-pad .chord-pad-degree, .chord-pad .chord-pad-key
+	{
+		color: #aeb7d0;
+		font-size: 11dp;
+	}
+	.chord-pad.reference
+	{
+		border-color: #ffc44d;
+	}
+	.chord-pad.selected
+	{
+		border-color: #f1f4ff;
+	}
+	.chord-pad.locked .chord-pad-key
+	{
+		color: #e12ad8;
+	}
+	.chord-pad.triggered
+	{
+		background-color: #147488;
+	}
+	.chord-suggestion
+	{
+		color: #f1f4ff;
+		border-left-width: 2dp;
+		border-left-color: #303754;
+	}
+	.chord-suggestion.level-0
+	{
+		border-left-color: #39ddb2;
+	}
+	.chord-suggestion.level-1
+	{
+		border-left-color: #ffc44d;
+	}
+	.chord-suggestion.level-2
+	{
+		border-left-color: #ff5270;
+	}
+	.chord-suggestion.in-key
+	{
+		border-left-color: #10dff2;
+	}
+	.chord-suggestion .chord-suggestion-degree, .chord-pads-hint
+	{
+		color: #aeb7d0;
+		font-size: 11dp;
+	}
 	.event-display .range-selection
 	{
 		border-width: 1dp;

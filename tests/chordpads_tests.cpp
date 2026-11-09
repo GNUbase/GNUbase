@@ -1,0 +1,453 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// The chord pads and the chord assistant (#174, reference manual pp. 1346-1391): the music theory of presets, degrees,
+// tensions, inversions and suggestions, the chordPads.* commands with undo and the project file, pads that play and
+// record, step input, pads dragged onto tracks and the pads' remote keys on a MIDI input.
+#include "engine/document/chordpads.h"
+#include "engine/engine.h"
+#include "platform/audio/device.h"
+#include "platform/hosttime.h"
+#include "platform/midi/dummyport.h"
+#include "testutils/testutils.h"
+
+#include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
+
+#include <algorithm>
+#include <chrono>
+#include <cstdint>
+#include <memory>
+#include <optional>
+#include <string>
+#include <utility>
+#include <variant>
+#include <vector>
+
+using namespace gnubase::engine;
+using Catch::Matchers::ContainsSubstring;
+
+namespace
+{
+	constexpr int64_t g_beatTicks = 1720320;
+	constexpr int64_t g_bar = 4 * g_beatTicks; // 4/4
+
+	Json run(Client& client, const std::string& command, Json parameters = Json::object())
+	{
+		const Result result = client.call(command, std::move(parameters));
+		INFO(command << " failed: " << result.error);
+		REQUIRE(result.ok());
+		return result.value;
+	}
+
+	std::string reject(Client& client, const std::string& command, Json parameters = Json::object())
+	{
+		const Result result = client.call(command, std::move(parameters));
+		INFO(command << " succeeded: " << result.value.dump());
+		REQUIRE(!result.ok());
+		return result.error;
+	}
+
+	std::vector<std::string> names(const std::vector<midi::ChordSymbol>& chords)
+	{
+		std::vector<std::string> result;
+		for (const midi::ChordSymbol& chord : chords)
+			result.push_back(midi::chordName(chord));
+		return result;
+	}
+
+	midi::ChordSymbol chord(const std::string& text)
+	{
+		const std::optional<midi::ChordSymbol> parsed = midi::parseChord(text);
+		REQUIRE(parsed.has_value());
+		return parsed.value_or(midi::ChordSymbol());
+	}
+
+	std::vector<std::string> padChords(Client& client)
+	{
+		std::vector<std::string> result;
+		const Json pads = run(client, "chordPads.get");
+		for (const Json& pad : pads.at("pads"))
+			result.push_back(pad.at("chord").get<std::string>());
+		return result;
+	}
+
+	Json pad(Client& client, int index)
+	{
+		return run(client, "chordPads.get").at("pads").at(static_cast<size_t>(index));
+	}
+
+	// The note-ons and note-offs the instruments played, as [status with channel, pitch, velocity].
+	std::vector<std::vector<int>> notesPlayed(const Json& capture)
+	{
+		std::vector<std::vector<int>> notes;
+		for (const Json& captured : capture.at("captured"))
+		{
+			const Json& bytes = captured.at("bytes");
+			const int status = bytes.at(0).get<int>() & 0xF0;
+			if (status == 0x90 || status == 0x80)
+				notes.push_back({bytes.at(0).get<int>(), bytes.at(1).get<int>(), bytes.at(2).get<int>()});
+		}
+		return notes;
+	}
+
+	Json waitFor(Client& client, const std::string& name)
+	{
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+		while (std::chrono::steady_clock::now() < deadline)
+		{
+			const std::optional<Message> next = client.wait(std::chrono::milliseconds(50));
+			const auto* event = next ? std::get_if<Event>(&*next) : nullptr;
+			if (event != nullptr && event->name == name)
+				return event->data;
+		}
+		return nullptr;
+	}
+
+	// An instrument track playing the note probe that monitors, on the dummy device.
+	struct Rig
+	{
+		explicit Rig(std::vector<std::unique_ptr<gnubase::midi::Backend>> midi = {})
+			: engine(gnubase::audio::makeBackends(), {}, std::move(midi))
+		{
+			run(client, "audio.setDevice", {{"blockSize", 64}, {"inputChannels", 0}});
+			const Json added = run(client, "track.add", {{"type", "instrument"}});
+			track = added.at("track").at("id").get<ObjectId>();
+			channel = added.at("channel").at("id").get<ObjectId>();
+			run(client, "channel.set", {{"channel", channel}, {"instrument", "noteProbe"}, {"monitor", true}});
+			run(client, "audio.render", {{"frames", 64}}); // the new graph
+			run(client, "midi.capture", {{"start", true}});
+		}
+
+		std::vector<std::vector<int>> played()
+		{
+			run(client, "audio.render", {{"frames", 64}});
+			return notesPlayed(run(client, "midi.capture"));
+		}
+
+		Engine engine;
+		Client client{engine};
+		ObjectId track = 0;
+		ObjectId channel = 0;
+	};
+}
+
+TEST_CASE("scale-based presets, degrees, tensions, inversions and the assistant's suggestions", "[unit]")
+{
+	using namespace gnubase::engine::chordpads;
+	CHECK(names(presetChords("major", 0)) == std::vector<std::string>{"C", "Dm", "Em", "F", "G", "Am", "Bdim"});
+	CHECK(names(presetChords("dorian", 2)) == std::vector<std::string>{"Dm", "Em", "F", "G", "Am", "Bdim", "C"});
+	CHECK(names(presetChords("minor", 9)) == std::vector<std::string>{"Am", "Bdim", "C", "Dm", "Em", "F", "G"});
+	CHECK(presetChords("blues", 0).empty());
+
+	CHECK(degreeName(chord("C"), 0) == "I");
+	CHECK(degreeName(chord("G7"), 0) == "V");
+	CHECK(degreeName(chord("Dm"), 0) == "ii");
+	CHECK(degreeName(chord("Bdim"), 0) == "vii\xC2\xB0");
+	CHECK(degreeName(chord("A#"), 0) == "bVII");
+	CHECK(degreeName(chord("Am"), 9, true) == "i");
+	CHECK(degreeName(chord("G"), 9, true) == "VII");
+	CHECK(degreeName(chord("Caug"), 0) == "I+");
+
+	// More tensions follow the type's ladder; on the key's fifth degree a major chord gets the dominant seventh.
+	CHECK(midi::chordName(withTensions(chord("C"), 1, 0)) == "Cmaj7");
+	CHECK(midi::chordName(withTensions(chord("C"), 2, 0)) == "Cmaj7(9)");
+	CHECK(midi::chordName(withTensions(chord("G"), 1, 0)) == "G7");
+	CHECK(midi::chordName(withTensions(chord("Dm"), 3, 0)) == "Dm7(9,11)");
+	CHECK(midi::chordName(withTensions(chord("Bdim"), 1, 0)) == "Bm7b5");
+	CHECK(midi::chordName(withTensions(chord("Cmaj7(9)"), -1, 0)) == "Cmaj7");
+	CHECK(midi::chordName(withTensions(chord("C"), -1, 0)) == "C");
+	CHECK(midi::chordName(transposed(chord("C/E"), 2)) == "D/F#");
+	CHECK(midi::chordName(transposed(chord("C"), -1)) == "B");
+
+	CHECK(inverted({48, 60, 64, 67}, 1) == std::vector<int>{48, 64, 67, 72});
+	CHECK(inverted({48, 60, 64, 67}, 2) == std::vector<int>{48, 67, 72, 76});
+	CHECK(inverted({48, 60, 64, 67}, -1) == std::vector<int>{48, 55, 60, 64});
+
+	// After C in C major, the chord a fifth down comes first; all of the key's chords before those outside it.
+	const std::vector<Suggestion> cadence = suggestions(chord("C"), 0, "cadence", 2);
+	REQUIRE(cadence.size() == 24);
+	CHECK(midi::chordName(cadence[0].chord) == "F");
+	CHECK(cadence[0].level == 0);
+	CHECK(std::is_sorted(
+		cadence.begin(), cadence.end(), [](const Suggestion& a, const Suggestion& b) { return a.level < b.level; }));
+	CHECK(std::none_of(
+		cadence.begin(), cadence.end(), [](const Suggestion& s) { return midi::chordName(s.chord) == "C"; }));
+	// Common notes: chords that share exactly two notes with C, such as Am and Em.
+	const std::vector<Suggestion> common = suggestions(chord("C"), 0, "commonNotes", 2);
+	std::vector<std::string> commonNames;
+	for (const Suggestion& suggestion : common)
+		commonNames.push_back(midi::chordName(suggestion.chord));
+	CHECK(std::find(commonNames.begin(), commonNames.end(), "Am") != commonNames.end());
+	CHECK(std::find(commonNames.begin(), commonNames.end(), "Em") != commonNames.end());
+	CHECK(std::find(commonNames.begin(), commonNames.end(), "F") == commonNames.end());
+}
+
+TEST_CASE("chord pads hold chords with voicings and change with the pad modifiers", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	// A new project has twelve pads with the major preset on C and the remote keys C1 to B1.
+	const Json pads = run(client, "chordPads.get");
+	REQUIRE(pads.at("pads").size() == 12);
+	CHECK(padChords(client) == std::vector<std::string>{"C", "Dm", "Em", "F", "G", "Am", "Bdim", "", "", "", "", ""});
+	CHECK(pads.at("pads")[0].at("pitches") == std::vector<int>{48, 60, 64, 67});
+	CHECK(pads.at("pads")[4].at("degree") == "V");
+	CHECK(pads.at("pads")[0].at("key") == 36);
+	CHECK(pads.at("pads")[7].at("pitches").empty());
+	CHECK(pads.at("remote") == false);
+
+	// Assigning: by name, by the pitches of a chord, and removing.
+	run(client, "chordPads.assign",
+		{{"assignments",
+			{{{"pad", 7}, {"chord", "Am7"}}, {{"pad", 8}, {"pitches", {64, 67, 72}}}, {{"pad", 1}, {"chord", ""}}}}});
+	CHECK(pad(client, 7).at("chord") == "Am7");
+	CHECK(pad(client, 8).at("chord") == "C/E");
+	CHECK(pad(client, 1).at("chord") == "");
+	CHECK_THAT(reject(client, "chordPads.assign", {{"assignments", {{{"pad", 12}, {"chord", "C"}}}}}),
+		ContainsSubstring("no chord pad 12"));
+	CHECK_THAT(reject(client, "chordPads.assign", {{"assignments", {{{"pad", 0}, {"chord", "H"}}}}}),
+		ContainsSubstring("unknown chord"));
+
+	// The modifiers on several pads: unassigned pads stay as they are.
+	run(client, "chordPads.modify", {{"pads", {0, 1, 4}}, {"transpose", 2}});
+	CHECK(padChords(client)[0] == "D");
+	CHECK(padChords(client)[1] == "");
+	CHECK(padChords(client)[4] == "A");
+	run(client, "chordPads.modify", {{"pads", {0}}, {"tensions", 1}});
+	CHECK(pad(client, 0).at("chord") == "Dmaj7");
+	run(client, "chordPads.modify", {{"pads", {0}}, {"tensions", -1}, {"transpose", -2}});
+	CHECK(pad(client, 0).at("chord") == "C");
+	run(client, "chordPads.modify", {{"pads", {0}}, {"voicing", 1}});
+	CHECK(pad(client, 0).at("pitches") == std::vector<int>{48, 64, 67, 72});
+	CHECK(pad(client, 0).at("adaptive") == false);
+
+	// Locked pads don't change.
+	run(client, "chordPads.setPad", {{"pad", 0}, {"locked", true}});
+	run(client, "chordPads.modify", {{"pads", {0}}, {"transpose", 1}});
+	CHECK(pad(client, 0).at("chord") == "C");
+	CHECK_THAT(reject(client, "chordPads.assign", {{"assignments", {{{"pad", 0}, {"chord", "F"}}}}}),
+		ContainsSubstring("locked"));
+	run(client, "chordPads.setPad", {{"pad", 0}, {"locked", false}, {"adaptive", true}});
+
+	// Adaptive voicing: with C in its first inversion as the reference, Am takes the inversion nearest to it.
+	run(client, "chordPads.setPad", {{"pad", 0}, {"reference", true}});
+	CHECK(run(client, "chordPads.get").at("reference") == 0);
+	CHECK(pad(client, 5).at("pitches") == std::vector<int>{57, 64, 69, 72});
+	run(client, "chordPads.setPad", {{"pad", 5}, {"adaptive", false}});
+	CHECK(pad(client, 5).at("pitches") == std::vector<int>{57, 69, 72, 76});
+
+	// Swapping and copying keep the reference on its pad.
+	run(client, "chordPads.move", {{"from", 0}, {"to", 2}});
+	CHECK(padChords(client)[0] == "Em");
+	CHECK(padChords(client)[2] == "C");
+	CHECK(run(client, "chordPads.get").at("reference") == 0);
+	run(client, "chordPads.move", {{"from", 2}, {"to", 3}, {"copy", true}});
+	CHECK(padChords(client)[3] == "C");
+	CHECK(padChords(client)[2] == "C");
+
+	// Each change is an undo step.
+	run(client, "history.undo");
+	CHECK(padChords(client)[3] == "F");
+}
+
+TEST_CASE("the root key, presets and the chord track's chords fill the pads", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	// The root key without transposing changes the degrees only; with Transpose Pads the chords move, the nearer way.
+	run(client, "chordPads.set", {{"rootKey", 7}});
+	CHECK(pad(client, 0).at("chord") == "C");
+	CHECK(pad(client, 0).at("degree") == "IV");
+	run(client, "chordPads.set", {{"rootKey", 9}, {"transposePads", true}});
+	CHECK(pad(client, 0).at("chord") == "D");
+	CHECK(pad(client, 0).at("degree") == "IV");
+
+	run(client, "chordPads.loadPreset", {{"preset", "dorian"}, {"root", 2}});
+	CHECK(padChords(client) == std::vector<std::string>{"Dm", "Em", "F", "G", "Am", "Bdim", "C", "", "", "", "", ""});
+	const Json pads = run(client, "chordPads.get");
+	CHECK(pads.at("rootKey") == 2);
+	CHECK(pads.at("preset") == "dorian");
+	// Players only keeps the chords; the basic player has no octave offset.
+	run(client, "chordPads.set", {{"octaveOffset", 1}});
+	run(client, "chordPads.loadPreset", {{"preset", "major"}, {"load", "players"}});
+	CHECK(padChords(client)[0] == "Dm");
+	CHECK(run(client, "chordPads.get").at("octaveOffset") == 0);
+	CHECK_THAT(reject(client, "chordPads.loadPreset", {{"preset", "blues"}}), ContainsSubstring("preset"));
+
+	// Assign from Chord Track: each chord once, in the track's order.
+	CHECK_THAT(reject(client, "chordPads.fromChordTrack"), ContainsSubstring("no chords"));
+	for (const auto& [position, name] : std::vector<std::pair<int64_t, std::string>>{
+			 {0, "C"}, {g_bar, "Am"}, {2 * g_bar, "C"}, {3 * g_bar, "X"}, {4 * g_bar, "G7"}})
+		run(client, "chord.add", {{"position", position}, {"chord", name}});
+	run(client, "chordPads.fromChordTrack");
+	CHECK(padChords(client) == std::vector<std::string>{"C", "Am", "G7", "", "", "", "", "", "", "", "", ""});
+
+	run(client, "chordPads.set", {{"padCount", 16}, {"remoteStart", 48}, {"remoteEnd", 50}});
+	const Json more = run(client, "chordPads.get");
+	CHECK(more.at("pads").size() == 16);
+	CHECK(more.at("pads")[2].at("key") == 50);
+	CHECK(more.at("pads")[3].at("key").is_null());
+	CHECK_THAT(reject(client, "chordPads.set", {{"padCount", 33}}), ContainsSubstring("padCount"));
+	CHECK_THAT(reject(client, "chordPads.set", {{"remoteStart", 60}, {"remoteEnd", 50}}), ContainsSubstring("remote"));
+}
+
+TEST_CASE("the chord assistant suggests chords after a pad's and shows the circle of fifths", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const Json list = run(client, "chordPads.assistant", {{"kind", "list"}, {"chord", "C"}});
+	REQUIRE(list.at("suggestions").size() == 24);
+	CHECK(list.at("suggestions")[0] == Json{{"chord", "F"}, {"degree", "IV"}, {"level", 0}});
+	const Json common =
+		run(client, "chordPads.assistant", {{"kind", "list"}, {"chord", "C"}, {"algorithm", "commonNotes"}});
+	CHECK(!common.at("suggestions").empty());
+
+	const Json circle = run(client, "chordPads.assistant", {{"kind", "circle"}});
+	REQUIRE(circle.at("outer").size() == 12);
+	CHECK(circle.at("outer")[0] == Json{{"chord", "C"}, {"degree", "I"}});
+	CHECK(circle.at("outer")[1] == Json{{"chord", "G"}, {"degree", "V"}});
+	CHECK(circle.at("outer")[11] == Json{{"chord", "F"}, {"degree", "IV"}});
+	CHECK(circle.at("outer")[2] == Json{{"chord", "D"}, {"degree", ""}});
+	CHECK(circle.at("inner")[0] == Json{{"chord", "Am"}, {"degree", "vi"}});
+	// In A minor the relative major is first, and the degrees are the minor key's.
+	run(client, "chordPads.set", {{"rootKey", 9}});
+	const Json minor = run(client, "chordPads.assistant", {{"kind", "circle"}, {"minor", true}});
+	CHECK(minor.at("outer")[0] == Json{{"chord", "C"}, {"degree", "III"}});
+	CHECK(minor.at("inner")[0] == Json{{"chord", "Am"}, {"degree", "i"}});
+}
+
+TEST_CASE("triggered pads play into all MIDI inputs, one channel per voice, and are recorded", "[integration]")
+{
+	Rig rig;
+	Client& client = rig.client;
+	const Json triggered = run(client, "chordPads.trigger", {{"pad", 0}, {"velocity", 90}});
+	CHECK(triggered.at("pitches") == std::vector<int>{48, 60, 64, 67});
+	CHECK(
+		rig.played() == std::vector<std::vector<int>>{{0x93, 48, 90}, {0x92, 60, 90}, {0x91, 64, 90}, {0x90, 67, 90}});
+	// The off ends what the on played, even after the pad changed.
+	run(client, "chordPads.assign", {{"assignments", {{{"pad", 0}, {"chord", "F"}}}}});
+	run(client, "chordPads.trigger", {{"pad", 0}, {"on", false}});
+	CHECK(rig.played() == std::vector<std::vector<int>>{{0x83, 48, 0}, {0x82, 60, 0}, {0x81, 64, 0}, {0x80, 67, 0}});
+	// An assistant's chord auditions at the pads' velocity.
+	run(client, "chordPads.trigger", {{"chord", "Am"}});
+	run(client, "chordPads.trigger", {{"chord", "Am"}, {"on", false}});
+	CHECK(rig.played().size() == 8);
+	CHECK_THAT(reject(client, "chordPads.trigger", {{"pad", 20}}), ContainsSubstring("no chord pad"));
+
+	// A record-enabled track records the pad's chord.
+	run(client, "channel.set", {{"channel", rig.channel}, {"monitor", false}, {"recordEnable", true}});
+	run(client, "transport.record");
+	run(client, "chordPads.trigger", {{"pad", 5}, {"velocity", 127}});
+	run(client, "audio.render", {{"frames", 640}});
+	run(client, "chordPads.trigger", {{"pad", 5}, {"on", false}});
+	run(client, "audio.render", {{"frames", 640}});
+	run(client, "transport.stop");
+	run(client, "audio.render", {{"frames", 640}});
+	REQUIRE(waitFor(client, "recording.added").is_object());
+	std::vector<int> recorded;
+	const Json project = run(client, "project.get");
+	for (const Json& part : project.at("midiParts"))
+		for (const Json& note : part.at("notes"))
+			recorded.push_back(note.at("pitch").get<int>());
+	std::sort(recorded.begin(), recorded.end());
+	CHECK(recorded == std::vector<int>{57, 69, 72, 76});
+}
+
+TEST_CASE("a MIDI input's notes on the remote keys trigger the pads while the remote is on", "[integration]")
+{
+	auto dummy = std::make_unique<gnubase::midi::DummyBackend>();
+	gnubase::midi::DummyBackend& backend = *dummy;
+	backend.addLoopback("Keys");
+	std::vector<std::unique_ptr<gnubase::midi::Backend>> midi;
+	midi.push_back(std::move(dummy));
+	Rig rig(std::move(midi));
+	Client& client = rig.client;
+	run(client, "midi.ports"); // opens the inputs
+	const auto keys = backend.openOutput("Keys");
+	constexpr gnubase::HostTime second = 1000000000;
+	const auto send = [&](uint8_t status, uint8_t pitch, uint8_t velocity)
+	{
+		gnubase::audio::MidiMessage message;
+		message.size = 3;
+		message.bytes = {status, pitch, velocity};
+		keys->send(message, gnubase::hostTime() - second);
+		return rig.played();
+	};
+	// Off by default: C1 plays itself.
+	CHECK(send(0x90, 36, 100) == std::vector<std::vector<int>>{{0x90, 36, 100}});
+	CHECK(send(0x80, 36, 0) == std::vector<std::vector<int>>{{0x80, 36, 0}});
+
+	run(client, "chordPads.set", {{"remote", true}});
+	run(client, "audio.render", {{"frames", 64}}); // the new graph
+	CHECK(send(0x90, 36, 80) ==
+		std::vector<std::vector<int>>{{0x93, 48, 80}, {0x92, 60, 80}, {0x91, 64, 80}, {0x90, 67, 80}});
+	// The note-off ends the chord the note-on played, also when it comes as a note-on without velocity.
+	run(client, "chordPads.assign", {{"assignments", {{{"pad", 0}, {"chord", "F"}}}}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(
+		send(0x90, 36, 0) == std::vector<std::vector<int>>{{0x83, 48, 0}, {0x82, 60, 0}, {0x81, 64, 0}, {0x80, 67, 0}});
+	// A key of an unassigned pad, and keys outside the range, play themselves.
+	CHECK(send(0x90, 47, 100) == std::vector<std::vector<int>>{{0x90, 47, 100}});
+	CHECK(send(0x90, 60, 100) == std::vector<std::vector<int>>{{0x90, 60, 100}});
+	// D1 plays Dm.
+	CHECK(send(0x90, 38, 70).size() == 4);
+}
+
+TEST_CASE("step input and pads dragged onto tracks make chord events and MIDI parts", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	CHECK_THAT(reject(client, "chordPads.step", {{"pad", 0}}), ContainsSubstring("step input is off"));
+	run(client, "chordPads.set", {{"stepInput", true}, {"stepPosition", g_bar}});
+	run(client, "chordPads.step", {{"pad", 0}});
+	run(client, "chordPads.step", {{"pad", 5}});
+	Json chords = run(client, "chord.get");
+	REQUIRE(chords.at("events").size() == 2);
+	CHECK(chords.at("events")[0].at("chord") == "C");
+	CHECK(chords.at("events")[0].at("position") == g_bar);
+	CHECK(chords.at("events")[1].at("chord") == "Am");
+	CHECK(chords.at("events")[1].at("position") == 2 * g_bar);
+	CHECK(run(client, "chordPads.get").at("stepPosition") == 3 * g_bar);
+	// Move Insert: the events from the position on move a bar later.
+	run(client, "chordPads.set", {{"moveInsert", true}, {"stepPosition", g_bar}});
+	run(client, "chordPads.step", {{"pad", 4}});
+	chords = run(client, "chord.get");
+	REQUIRE(chords.at("events").size() == 3);
+	CHECK(chords.at("events")[0].at("chord") == "G");
+	CHECK(chords.at("events")[1].at("position") == 2 * g_bar);
+	CHECK(chords.at("events")[2].at("position") == 3 * g_bar);
+
+	// Onto the chord track a chord event, onto a MIDI track a part a bar long with the pad's voicing.
+	const auto chordTrack = chords.at("track").get<ObjectId>();
+	run(client, "chordPads.toTrack", {{"pad", 3}, {"track", chordTrack}, {"position", 5 * g_bar}});
+	CHECK(run(client, "chord.get").at("events").back().at("chord") == "F");
+	const auto midiTrack = run(client, "track.add", {{"type", "midi"}}).at("track").at("id").get<ObjectId>();
+	const Json part = run(client, "chordPads.toTrack", {{"pad", 0}, {"track", midiTrack}, {"position", 0}}).at("part");
+	CHECK(part.at("length") == g_bar);
+	std::vector<int> pitches;
+	for (const Json& note : part.at("notes"))
+		pitches.push_back(note.at("pitch").get<int>());
+	std::sort(pitches.begin(), pitches.end());
+	CHECK(pitches == std::vector<int>{48, 60, 64, 67});
+}
+
+TEST_CASE("the chord pads are saved with the project", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	const std::string path = (dir.path() / "Pads.dawproject").u8string();
+	Json saved;
+	{
+		Engine engine;
+		Client client(engine);
+		run(client, "chordPads.loadPreset", {{"preset", "lydian"}, {"root", 5}});
+		run(client, "chordPads.set", {{"remote", true}, {"velocity", 64}, {"octaveOffset", -1}, {"padCount", 9}});
+		run(client, "chordPads.modify", {{"pads", {1}}, {"voicing", -1}, {"tensions", 1}});
+		run(client, "chordPads.setPad", {{"pad", 2}, {"locked", true}});
+		run(client, "chordPads.setPad", {{"pad", 0}, {"reference", true}});
+		saved = run(client, "chordPads.get");
+		run(client, "project.save", {{"path", path}});
+	}
+	Engine engine;
+	Client client(engine);
+	run(client, "project.load", {{"path", path}});
+	CHECK(run(client, "chordPads.get") == saved);
+}

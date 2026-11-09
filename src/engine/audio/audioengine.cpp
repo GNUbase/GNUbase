@@ -536,6 +536,7 @@ namespace gnubase::engine
 				[channel = channel](const RenderChannel& candidate) { return candidate.id == channel; });
 			program->thru.push_back(static_cast<uint8_t>(found != snapshot.channels.end() && found->midiThru));
 		}
+		program->chordPadKeys = snapshot.chordPadKeys;
 		// Bus nodes come first, in bus order (graph::describe); child busses reach the device through their parent.
 		for (size_t b = 0; b < snapshot.busses.size(); ++b)
 			if (snapshot.busses[b].mainMix)
@@ -948,7 +949,7 @@ namespace gnubase::engine
 		}
 		const audio::DeviceFormat& format = m_device->format();
 		m_midiInput.clear();
-		m_midi.take(block, format.sampleRate, m_midiInput);
+		m_midi.take(block, format.sampleRate, m_midiInput, program.chordPadKeys);
 		const size_t bytes = block.frames * sizeof(float);
 		for (const BusLink& link : program.inputs)
 		{

@@ -176,6 +176,7 @@ namespace gnubase::engine
 			MidiTap::Sequencers sequencers;     // of the MIDI and instrument channels, for midi.inject
 			std::vector<uint64_t> destinations; // per sequencer, where it plays (MidiSequencer::playOn)
 			std::vector<uint8_t> thru;          // per sequencer, 1 if it plays all MIDI inputs (MidiTap::thru)
+			ChordPadKeys chordPadKeys;          // what MIDI inputs' notes on the chord pads' remote keys play
 			MidiTap::Instruments instruments;   // for midi.capture
 			std::vector<int> mainPorts;         // the main mix's device channels, for auditioning and listening
 			int mainOutput = -1;                // the main mix's index in outputs, or -1

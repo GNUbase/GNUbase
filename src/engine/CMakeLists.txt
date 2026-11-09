@@ -126,6 +126,7 @@ add_library(gnubase-engine STATIC
 	document/audioquantize.cpp document/audioquantize.h
 	document/channelformat.cpp document/channelformat.h
 	document/channelsettings.cpp document/channelsettings.h
+	document/chordpads.cpp document/chordpads.h
 	document/chordtrack.cpp document/chordtrack.h
 	document/document.cpp document/document.h
 	document/editors.cpp document/editors.h
