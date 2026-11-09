@@ -1,0 +1,79 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The options of a backup (docs/features/backup.md, reference manual pp. 135-137): ui::ProjectFiles opens it with
+     File > Back up Project once the folder is chosen and, when it closes with OK, backs the project up into that
+     folder with project.backup and these options. #backup-name starts as the project file's name. -->
+<rml>
+<head>
+	<title>Back up Project Options</title>
+	<style>
+		dialog
+		{
+			width: 340dp;
+		}
+
+		.row
+		{
+			display: flex;
+			align-items: center;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.row label
+		{
+			flex: 1;
+		}
+
+		#backup-name
+		{
+			flex: 2;
+		}
+
+		.buttons
+		{
+			justify-content: flex-end;
+		}
+
+		.buttons button
+		{
+			margin-left: 6dp;
+		}
+	</style>
+</head>
+<body>
+	<dialog id="backup-project-dialog">
+		<div class="dialog-titlebar">Back up Project Options</div>
+		<div class="row">
+			<label for="backup-name">Project Name</label>
+			<input type="text" id="backup-name" autofocus="autofocus"/>
+		</div>
+		<div class="row">
+			<label for="backup-keep-active">Keep Current Project Active</label>
+			<input type="checkbox" id="backup-keep-active" checked="checked"/>
+		</div>
+		<div class="row">
+			<label for="backup-minimize">Minimize Audio Files</label>
+			<input type="checkbox" id="backup-minimize"/>
+		</div>
+		<div class="row">
+			<label for="backup-offline">Make Offline Processing Permanent</label>
+			<input type="checkbox" id="backup-offline"/>
+		</div>
+		<div class="row">
+			<label for="backup-remove-unused">Remove Unused Files</label>
+			<input type="checkbox" id="backup-remove-unused"/>
+		</div>
+		<div class="row">
+			<label for="backup-skip-video">Do Not Back up Video</label>
+			<input type="checkbox" id="backup-skip-video"/>
+		</div>
+		<div class="row">
+			<label for="backup-skip-mixdown">Do Not Back up Mixdown Folder</label>
+			<input type="checkbox" id="backup-skip-mixdown"/>
+		</div>
+		<div class="row buttons">
+			<button result="cancel">Cancel</button>
+			<button class="primary" result="ok">OK</button>
+		</div>
+	</dialog>
+</body>
+</rml>

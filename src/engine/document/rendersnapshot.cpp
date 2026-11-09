@@ -3,6 +3,7 @@
 
 #include "engine/audio/automation.h"
 #include "engine/audio/fades.h"
+#include "engine/document/chordtrack.h"
 #include "engine/document/stripparameters.h"
 #include "engine/document/warp.h"
 #include "engine/dsp/dsp.h"
@@ -33,8 +34,9 @@ namespace gnubase::engine
 			return project.tempo.toSamples(tick, project.sampleRate);
 		}
 
-		// Adds a part's notes and controllers, cut at the part's end, the notes as the channel's MIDI modifiers, the
-		// part's transpose and velocity and global transposition (#168) at their start play them.
+		// Adds a part's notes and controllers, cut at the part's end, the notes as the chord track maps them if the
+		// track follows it (#173), then as the channel's MIDI modifiers, the part's transpose and velocity and global
+		// transposition (#168) at their start play them.
 		void compilePart(const Project& project, ObjectId partId, const MidiPart& part, RenderChannel& channel)
 		{
 			const time::Ticks start = time::toTicks(part.position, project.tempo, project.sampleRate);
@@ -49,6 +51,7 @@ namespace gnubase::engine
 			// The track's drum map plays each note's sound: its O-note, on its channel unless that is Any, and not
 			// at all if it is muted (#129). The modifiers then apply to the O-note.
 			const DrumMap* map = midi::drumMapOf(project, part.track);
+			const ChordFollower follower(project, part.track);
 			for (const auto& [id, note] : part.notes)
 			{
 				// Notes the part hides beyond its end don't play, wherever a random position would move them.
@@ -59,6 +62,8 @@ namespace gnubase::engine
 					continue;
 				const uint64_t seed = midi::noteSeed(partId, id);
 				uint8_t pitch = sound != nullptr ? sound->oNote : note.pitch;
+				if (sound == nullptr && follower.active())
+					pitch = static_cast<uint8_t>(follower.pitch(pitch, start + note.position));
 				uint16_t velocity = midi::playedVelocity(note, part.id);
 				midi::Modifiers transposed = modifiers;
 				transposed.transpose += globalTranspose(project, part, toSamples(project, start + note.position));
@@ -471,6 +476,8 @@ namespace gnubase::engine
 			render.program = channel.program;
 			render.bank = channel.bank;
 			render.modifiers = channel.modifiers;
+			render.midiInserts = channel.midiInserts;
+			render.midiSends = channel.midiSends;
 			render.monitor = channel.monitor;
 			render.recordEnable = channel.recordEnable;
 			render.listen = channel.listen;

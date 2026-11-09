@@ -35,6 +35,11 @@ namespace gnubase::ui
 	// Apply and Reset run the UI commands edit.quantize and edit.resetQuantize through run, as the Edit menu does, so
 	// they quantize what it quantizes; with Auto Apply on, every change of the settings runs edit.quantize too. Open
 	// Quantize Panel runs window.quantizePanel. Use it on the UI thread; the binding must outlive it.
+	//
+	// Audio (#145, docs/features/audio-quantize.md): Warp Quantize On/Off (settings.warpQuantize) in both, and in the
+	// panel the section for several audio tracks: Range and Offset with Slice (quantize.slice), or with warp quantizing
+	// on Create (quantize.createWarpMarkers), and Crossfade Length with Crossfade (quantize.crossfade). Those send the
+	// engine command with the panel's values through audio, which adds the audio events to quantize.
 	class QuantizePanel final : private Rml::EventListener
 	{
 	public:
@@ -44,8 +49,9 @@ namespace gnubase::ui
 			Toolbar,
 		};
 
-		QuantizePanel(
-			EngineBinding& binding, Rml::Element& element, Layout layout, std::function<void(const std::string&)> run);
+		QuantizePanel(EngineBinding& binding, Rml::Element& element, Layout layout,
+			std::function<void(const std::string&)> run,
+			std::function<void(const std::string&, engine::Json)> audio = {});
 		~QuantizePanel() override;
 		QuantizePanel(const QuantizePanel&) = delete;
 		QuantizePanel& operator=(const QuantizePanel&) = delete;
@@ -66,6 +72,8 @@ namespace gnubase::ui
 		void set(engine::Json parameters);
 		void savePreset(bool rename);
 		std::string presetName() const;
+		// The value of one of the panel's own value fields.
+		double fieldValue(const std::string& id) const;
 		Rml::Element* find(const std::string& id) const;
 
 		EngineBinding& m_binding;
@@ -75,6 +83,7 @@ namespace gnubase::ui
 		std::string m_prefix;          // of the ids: quantize or toolbar-quantize
 		std::string m_presetAttribute; // of the presets menu's items: preset or toolbar-preset
 		std::function<void(const std::string&)> m_run;
+		std::function<void(const std::string&, engine::Json)> m_audio;
 		engine::Json m_settings = engine::Json::object();
 		engine::Json m_presets = engine::Json::array();
 		std::string m_preset; // the preset the settings are (quantize.get), the same in every client

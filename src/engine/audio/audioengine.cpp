@@ -635,6 +635,8 @@ namespace gnubase::engine
 			sequence->notes = channel.notes;
 			sequence->controllers = channel.controllers;
 			sequence->modifiers = channel.modifiers;
+			sequence->inserts = channel.midiInserts;
+			sequence->sends = channel.midiSends;
 			// An instrument chases the controller events of the MIDI tracks routed to it with its own, so the latest of
 			// each kind wins, whichever track it is on.
 			if (routed.count(channel.id) == 0)
@@ -768,11 +770,12 @@ namespace gnubase::engine
 				if (send.preFader && !tap)
 				{
 					tap = std::make_shared<PreFaderTap>(channelCount(channel.format));
-					fader->tapPreFader(tap);
+					fader->tapPreFader(tap, m_mutePreSends);
 				}
 				while (desc.nodes[sendNode].kind != graph::NodeKind::Send)
 					++sendNode;
-				// Mute Pre-Send when Mute (reference manual p. 1623): the mute button mutes pre-fader sends too.
+				// Mute Pre-Send when Mute (reference manual p. 1623): the mute button mutes pre-fader sends too, and
+				// mute automation through the tap.
 				const float gain = send.preFader && channel.muted && m_mutePreSends ? 0.0f : send.gain;
 				desc.nodes[sendNode++].processor =
 					std::make_shared<SendStrip>(state, send.number, gain, send.preFader ? tap : nullptr);

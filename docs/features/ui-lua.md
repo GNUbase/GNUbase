@@ -6,7 +6,8 @@ Lua reaches the engine only through the engine API, like every other client.
 
 - **Where it lives.** `app::AppUi` (`src/app/appui.h`) makes a trusted runtime (every standard library except
   `os.exit`) before RmlUi starts and closes it after RmlUi shut down, as RmlUi's Lua plugin needs. It runs on the UI
-  thread; `print` writes to the app's standard output.
+  thread; `print` writes to the app's standard output and the script console ([scripts.md](scripts.md)), which also
+  runs the user's scripts on this runtime.
 - **RmlUi's Lua plugin.** RmlUi's Lua bindings, built on GNUbase's Lua (compiled as C++, `RMLUI_LUA_BINDINGS_LIBRARY`
   `lua_as_cxx` in `CMakeLists.txt`), run on that runtime: a document's `<script>` runs when the document loads, and
   event attributes such as `onclick="..."` are Lua with `event`, `element` and `document`. Lua reads and changes the

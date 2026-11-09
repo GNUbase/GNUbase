@@ -9,6 +9,7 @@
 #include "scripting/reference.h"
 #include "scripting/runtime.h"
 #include "testutils/fakeui.h"
+#include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -104,4 +105,15 @@ TEST_CASE("the Lua API reference is generated from the command registry", "[unit
 		CHECK(generated.find("#### `gnubase." + info.name + "`") != std::string::npos);
 	}
 	writeGenerated("lua.md", generated);
+}
+
+TEST_CASE("the generated API references stay out of the repository", "[unit]")
+{
+	// A branch made before they left that keeps its side of the conflict would bring back a stale copy.
+	const std::filesystem::path docs = std::filesystem::path(GNUBASE_RESOURCES_DIR).parent_path() / "docs";
+	REQUIRE(std::filesystem::exists(docs / "api-reference.md"));
+	CHECK_FALSE(std::filesystem::exists(docs / "lua.md"));
+	CHECK_FALSE(std::filesystem::exists(docs / "mcp-tools.md"));
+	// The catalogue's entries begin with their engine command; the guide in mcp.md has none.
+	CHECK(gnubase::test::readText(docs / "mcp.md").find("Engine command `") == std::string::npos);
 }

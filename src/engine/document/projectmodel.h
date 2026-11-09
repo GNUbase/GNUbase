@@ -158,6 +158,7 @@ namespace gnubase::engine
 		void registerMarkerCommands(Engine& engine);                  // markers.cpp: marker.*
 		void registerArrangerCommands(Engine& engine);                // arranger.cpp: arranger.* (#167)
 		void registerTransposeCommands(Engine& engine);               // transpose.cpp: transpose.* (#168)
+		void registerChordCommands(Engine& engine);                   // chordtrack.cpp: chord.* (#173)
 		void registerTempoCommands(Engine& engine);                   // tempo.cpp: tempo.*
 		Json detectTempo(Project& project, CommandContext& context);  // tempo.cpp: tempo.detect
 		void registerSignatureCommands(Engine& engine);               // signature.cpp: signature.*
@@ -193,6 +194,7 @@ namespace gnubase::engine
 		void record(std::string action, const Project& before, CommandContext& context, std::string merge = {});
 		Json undoOrRedo(CommandContext& context, Direction direction);
 		Json transaction(Project& project, CommandContext& context);
+		Json join(CommandContext& context);
 		void announceHistory(CommandContext& context) const;
 		void publish();
 

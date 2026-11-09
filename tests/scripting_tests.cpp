@@ -202,3 +202,27 @@ TEST_CASE("Lua calls functions that C++ adds next to the commands, and takes eve
 	CHECK_THAT(lua.dispatchEvents(&handled).value_or(""), ContainsSubstring("broken handler"));
 	CHECK(handled);
 }
+
+TEST_CASE("a run inside a run leaves the test cases to the outermost one", "[unit]")
+{
+	// As when a Lua UI test runs a user script, which the UI runs in the same runtime (#209).
+	Engine engine;
+	std::ostringstream output;
+	Runtime lua(engine, Trust::Trusted, output);
+	lua.addFunction("fake.run",
+		[&lua](const Json& parameters)
+		{
+			const std::optional<std::string> error = lua.run(parameters.at("code").get<std::string>(), "inner");
+			return Json{{"error", error.value_or("")}};
+		});
+	run(lua, R"lua(
+		local test = gnubase.test
+		test.case("runs code inside a test case", function()
+			test.equal(gnubase.fake.run{code = "inner = 1"}.error, "")
+			test.equal(inner, 1)
+			test.ok(gnubase.fake.run{code = "error('inside')"}.error:find("inside", 1, true))
+		end)
+		assert(gnubase.fake.run{code = "outer = 1"}.error == "")
+	)lua");
+	CHECK_THAT(output.str(), ContainsSubstring("1..1\nok 1 - runs code inside a test case"));
+}
