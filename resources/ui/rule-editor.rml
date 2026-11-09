@@ -1,7 +1,10 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- The rule editor and the project input transformer (#178, docs/features/midi-rules.md, reference manual pp.
-     1392-1423). app::AppUi opens it with the document's attributes parts and notes (ids separated by commas) for the
-     rule editor, or target="project" for the project input transformer. Its Lua shows the presets, the filter lines,
+     1392-1423), and the project rule editor (#179, docs/features/project-rules.md, pp. 1424-1445). app::AppUi opens
+     it with the document's attributes parts and notes (ids separated by commas) for the rule editor, target="project"
+     for the project input transformer, or target="projectRules" for the project rule editor, which runs
+     project.applyRules or project.findByRules on the project window's selection (gnubase.ui.projectSelection and
+     gnubase.ui.selectInProject) between its pre and post commands (gnubase.ui.command). Its Lua shows the presets, the filter lines,
      the function and the action lines, and runs the engine's commands: Apply runs midi.applyRules (select:
      midi.findByRules, which shows how many events it found) or, for the input transformer, sets the module shown with
      midi.setInputTransformer; Save Preset runs midiRules.savePreset. A command the engine refuses keeps the dialog open
@@ -87,6 +90,35 @@
 		local opens = {{"0", ""}, {"1", "("}, {"2", "(("}, {"3", "((("}}
 		local closes = {{"0", ""}, {"1", ")"}, {"2", "))"}, {"3", ")))"}}
 		local joins = {{"and", "And"}, {"or", "Or"}}
+		-- The project rule editor's.
+		local projectTargets = {{"mediaType", "Media Type"}, {"containerType", "Container Type"}, {"name", "Name"},
+			{"position", "Position"}, {"length", "Length"}, {"colorName", "Color Name"}, {"property", "Property"}}
+		local projectConditions = {{"equal", "Equal"}, {"unequal", "Unequal"}, {"bigger", "Bigger"},
+			{"biggerOrEqual", "Bigger or Equal"}, {"less", "Less"}, {"lessOrEqual", "Less or Equal"},
+			{"insideRange", "Inside Range"}, {"outsideRange", "Outside Range"}, {"allTypes", "All Types"},
+			{"propertyIsSet", "Property is Set"}, {"propertyIsNotSet", "Property is Not Set"},
+			{"contains", "Contains"}, {"containsNot", "Contains Not"}}
+		local mediaTypes = {{"audio", "Audio"}, {"midi", "MIDI"}, {"marker", "Marker"}, {"tempo", "Tempo"},
+			{"signature", "Signature"}, {"arranger", "Arranger"}, {"transpose", "Transpose"}, {"chord", "Chord"},
+			{"group", "Group"}, {"effect", "Effect"}, {"vca", "VCA"}}
+		local containerTypes = {{"folder", "Folder Track"}, {"track", "Track"}, {"part", "Part"}, {"event", "Event"}}
+		local properties = {{"isMuted", "Is Muted"}, {"isSelected", "Is Selected"}, {"isEmpty", "Is Empty"},
+			{"isHidden", "Is Hidden"}, {"hasTrackVersion", "Has Track Version"},
+			{"followsChordTrack", "Follows Chord Track"}, {"isDisabled", "Is Disabled"},
+			{"parentIsSelected", "Parent Object Is Selected"}}
+		local actionTargets = {{"position", "Position"}, {"length", "Length"},
+			{"trackOperation", "Track Operation"}, {"name", "Name"}, {"color", "Set Color"}}
+		local projectOperations = {{"add", "Add"}, {"subtract", "Subtract"}, {"multiplyBy", "Multiply by"},
+			{"divideBy", "Divide by"}, {"roundBy", "Round by"}, {"setRandom", "Set Random Values Between"},
+			{"setRelativeRandom", "Set Relative Random Values Between"}, {"setFixed", "Set to Fixed Value"},
+			{"replace", "Replace"}, {"append", "Append"}, {"prepend", "Prepend"}, {"generateName", "Generate Name"},
+			{"replaceSearchString", "Replace Search String"}, {"eraseBefore", "Erase Before"},
+			{"eraseAfter", "Erase After"}, {"eraseFrontCharacter", "Erase Front Character"},
+			{"eraseEndCharacter", "Erase End Character"}, {"mute", "Mute"}, {"solo", "Solo"}, {"record", "Record"},
+			{"monitor", "Monitor"}, {"timeDomain", "Time Domain"}, {"increment", "Increment"},
+			{"decrement", "Decrement"}}
+		local switches = {{"on", "On"}, {"off", "Off"}, {"toggle", "Toggle"}}
+		local timeDomains = {{"musical", "Musical"}, {"linear", "Linear"}, {"toggle", "Toggle"}}
 
 		local function escape(text)
 			return (tostring(text):gsub('[&<>"]', {["&"] = "&amp;", ["<"] = "&lt;", [">"] = "&gt;", ['"'] = "&quot;"}))
@@ -107,6 +139,11 @@
 		local function text(id, value)
 			return '<input type="text" class="text number" id="rule-editor-' .. id .. '" value="' ..
 				escape(value or 0) .. '"/>'
+		end
+
+		local function textField(id, value)
+			return '<input type="text" class="text" id="rule-editor-' .. id .. '" value="' .. escape(value or "") ..
+				'"/>'
 		end
 
 		local function element(document, id)
@@ -140,6 +177,10 @@
 		end
 
 		local function functionsFor()
+			if editor.project then
+				return {{"delete", "Delete"}, {"transform", "Transform"}, {"select", "Select"},
+					{"deselect", "Deselect"}}
+			end
 			if editor.input then
 				return {{"delete", "Filter"}, {"transform", "Transform"}, {"insert", "Insert"},
 					{"insertExclusive", "Insert Exclusive"}}
@@ -151,6 +192,9 @@
 		-- Live events have no position or length, so the input transformer leaves them out, unless a preset's line
 		-- has them: then the engine says why it refuses the rules.
 		local function targetsFor(current)
+			if editor.project then
+				return projectTargets
+			end
 			if not editor.input then
 				return targets
 			end
@@ -172,8 +216,48 @@
 			return false
 		end
 
+		-- The project rule editor's choices for a filter line's parameter 1, or nil for a text or number field.
+		local function filterChoices(target)
+			return ({mediaType = mediaTypes, containerType = containerTypes, property = properties})[target]
+		end
+
+		local function isTextTarget(target)
+			return target ~= "position" and target ~= "length"
+		end
+
+		local function projectFilterValues(prefix, line)
+			local choices = filterChoices(line.target)
+			if choices then
+				return dropDown(prefix .. "p1", choices, line.parameter1)
+			elseif isTextTarget(line.target) then
+				return textField(prefix .. "p1", type(line.parameter1) == "string" and line.parameter1 or "")
+			end
+			return text(prefix .. "p1", tonumber(line.parameter1) or 0) .. text(prefix .. "p2", line.parameter2)
+		end
+
+		local function projectActionValues(prefix, line)
+			local p1 = type(line.parameter1) == "string" and line.parameter1 or ""
+			if line.target == "position" or line.target == "length" then
+				return text(prefix .. "p1", tonumber(line.parameter1) or 0) .. text(prefix .. "p2", line.parameter2)
+			elseif line.target == "trackOperation" then
+				return dropDown(prefix .. "p1", line.operation == "timeDomain" and timeDomains or switches, p1)
+			elseif line.target == "name" then
+				local p2 = ""
+				if line.operation == "replaceSearchString" then
+					p2 = textField(prefix .. "p2", type(line.parameter2) == "string" and line.parameter2 or "")
+				elseif line.operation == "generateName" then
+					p2 = text(prefix .. "p2", tonumber(line.parameter2) or 1)
+				end
+				return textField(prefix .. "p1", p1) .. p2
+			end
+			return line.operation == "setFixed" and textField(prefix .. "p1", p1) or ""
+		end
+
 		-- A line's parameters, whose fields depend on its target and operation.
 		local function filterValues(prefix, line)
+			if editor.project then
+				return projectFilterValues(prefix, line)
+			end
 			if line.target == "type" then
 				return dropDown(prefix .. "p1", types, line.parameter1) .. text(prefix .. "p2", 0)
 			end
@@ -181,6 +265,9 @@
 		end
 
 		local function actionValues(prefix, line)
+			if editor.project then
+				return projectActionValues(prefix, line)
+			end
 			local p1 = line.target == "type" and dropDown(prefix .. "p1", types, line.parameter1) or
 				text(prefix .. "p1", line.parameter1)
 			local p2 = line.operation == "transposeToScale" and dropDown(prefix .. "p2", scales, line.parameter2) or
@@ -196,7 +283,7 @@
 			return '<div class="rule-row"><input type="checkbox" id="rule-editor-' .. prefix .. 'pick"/>' ..
 				dropDown(prefix .. "open", opens, line.open or 0, "bracket") ..
 				dropDown(prefix .. "target", targetsFor(line.target), line.target, nil, retarget) ..
-				dropDown(prefix .. "condition", conditions, line.condition) .. '<span id="rule-editor-' .. prefix ..
+				dropDown(prefix .. "condition", editor.project and projectConditions or conditions, line.condition) .. '<span id="rule-editor-' .. prefix ..
 				'values">' .. filterValues(prefix, line) .. "</span>" ..
 				dropDown(prefix .. "close", closes, line.close or 0, "bracket") ..
 				dropDown(prefix .. "join", joins, line.join or "and", "join") .. "</div>"
@@ -206,8 +293,10 @@
 			local prefix = "action-" .. index .. "-"
 			local retarget = "RuleEditor.retarget(document, 'action', " .. index .. ")"
 			return '<div class="rule-row"><input type="checkbox" id="rule-editor-' .. prefix .. 'pick"/>' ..
-				dropDown(prefix .. "target", targetsFor(line.target), line.target, nil, retarget) ..
-				dropDown(prefix .. "operation", operations, line.operation, nil, retarget) .. '<span id="rule-editor-' ..
+				dropDown(prefix .. "target", editor.project and actionTargets or targetsFor(line.target), line.target,
+					nil, retarget) ..
+				dropDown(prefix .. "operation", editor.project and projectOperations or operations, line.operation, nil,
+					retarget) .. '<span id="rule-editor-' ..
 				prefix .. 'values">' .. actionValues(prefix, line) .. "</span></div>"
 		end
 
@@ -227,6 +316,18 @@
 			element(document, "actions").inner_rml = table.concat(rows)
 			element(document, "function-field").inner_rml =
 				dropDown("function", functionsFor(), editor.rules["function"])
+			if editor.project then
+				rows = {}
+				for _, list in ipairs({"pre", "post"}) do
+					local fields = {'<span class="label">' .. (list == "pre" and "Pre" or "Post") .. "</span>"}
+					for index = 1, 4 do
+						local command = (editor.rules[list] or {})[index]
+						fields[#fields + 1] = textField(list .. "-" .. index, command and command.command or "")
+					end
+					rows[#rows + 1] = '<div class="rule-row">' .. table.concat(fields) .. "</div>"
+				end
+				element(document, "commands").inner_rml = table.concat(rows)
+			end
 			editor.building = false
 		end
 
@@ -243,8 +344,69 @@
 			return number(document, id, name, strict)
 		end
 
+		-- A key command list as the fields show it: a command keeps its parameters while its name stays.
+		local function readCommands(document, list)
+			local commands = {}
+			for index = 1, 4 do
+				local name = valueOf(document, list .. "-" .. index)
+				if name ~= "" then
+					local before = (editor.rules[list] or {})[index]
+					commands[#commands + 1] = {command = name,
+						parameters = before and before.command == name and before.parameters or nil}
+				end
+			end
+			return commands
+		end
+
+		local function readProject(document, strict)
+			local rules = {filters = {}, actions = {}, ["function"] = valueOf(document, "function"),
+				pre = readCommands(document, "pre"), post = readCommands(document, "post")}
+			for index = 1, #editor.rules.filters do
+				local prefix = "filter-" .. index .. "-"
+				local name = "Filter line " .. index
+				local line = {open = number(document, prefix .. "open", name, false),
+					target = valueOf(document, prefix .. "target"),
+					condition = valueOf(document, prefix .. "condition"),
+					close = number(document, prefix .. "close", name, false), join = valueOf(document, prefix .. "join"),
+					parameter2 = 0}
+				local choices = filterChoices(line.target)
+				if choices then
+					local value = valueOf(document, prefix .. "p1")
+					line.parameter1 = isOneOf(value, choices) and value or choices[1][1]
+				elseif isTextTarget(line.target) then
+					line.parameter1 = valueOf(document, prefix .. "p1")
+				else
+					line.parameter1 = number(document, prefix .. "p1", name .. ": Parameter 1", strict)
+					line.parameter2 = number(document, prefix .. "p2", name .. ": Parameter 2", strict)
+				end
+				rules.filters[index] = line
+			end
+			for index = 1, #editor.rules.actions do
+				local prefix = "action-" .. index .. "-"
+				local name = "Action line " .. index
+				local line = {target = valueOf(document, prefix .. "target"),
+					operation = valueOf(document, prefix .. "operation"), parameter1 = "", parameter2 = 0}
+				if line.target == "position" or line.target == "length" then
+					line.parameter1 = number(document, prefix .. "p1", name .. ": Parameter 1", strict)
+					line.parameter2 = number(document, prefix .. "p2", name .. ": Parameter 2", strict)
+				else
+					line.parameter1 = valueOf(document, prefix .. "p1")
+					if line.operation == "replaceSearchString" then
+						line.parameter2 = valueOf(document, prefix .. "p2")
+					elseif line.operation == "generateName" then
+						line.parameter2 = number(document, prefix .. "p2", name .. ": Parameter 2", strict)
+					end
+				end
+				rules.actions[index] = line
+			end
+			return rules
+		end
+
 		-- The rules the dialog shows; with strict, an error for a value that isn't a number.
 		local function read(document, strict)
+			if editor.project then
+				return readProject(document, strict)
+			end
 			local rules = {filters = {}, actions = {}, ["function"] = valueOf(document, "function")}
 			for index = 1, #editor.rules.filters do
 				local prefix = "filter-" .. index .. "-"
@@ -279,12 +441,16 @@
 
 		-- The rules as the engine takes them: an empty Lua table would be an object, so empty lists are left out.
 		local function engineRules(rules)
-			return {filters = #rules.filters > 0 and rules.filters or nil,
-				actions = #rules.actions > 0 and rules.actions or nil, ["function"] = rules["function"]}
+			local function list(items)
+				return items and #items > 0 and items or nil
+			end
+			return {filters = list(rules.filters), actions = list(rules.actions), ["function"] = rules["function"],
+				pre = list(rules.pre), post = list(rules.post)}
 		end
 
 		local function copy(rules)
-			local result = {filters = {}, actions = {}, ["function"] = rules["function"] or "transform"}
+			local result = {filters = {}, actions = {}, ["function"] = rules["function"] or "transform",
+				pre = rules.pre or {}, post = rules.post or {}}
 			for index, line in ipairs(rules.filters or {}) do
 				result.filters[index] = line
 			end
@@ -295,7 +461,7 @@
 		end
 
 		local function showPresets(document, chosen)
-			editor.presets = gnubase.midiRules.presets().presets
+			editor.presets = (editor.project and gnubase.projectRules or gnubase.midiRules).presets().presets
 			local choices = {{"", ""}}
 			for _, preset in ipairs(editor.presets) do
 				choices[#choices + 1] = {preset.name, preset.name}
@@ -319,8 +485,10 @@
 			editor.parts = ids(document:GetAttribute("parts"))
 			editor.notes = ids(document:GetAttribute("notes"))
 			editor.input = tostring(document:GetAttribute("target") or "") == "project"
+			editor.project = tostring(document:GetAttribute("target") or "") == "projectRules"
 			editor.rules = copy({})
-			element(document, "title").inner_rml = editor.input and "Project Input Transformer" or "Rule Editor"
+			element(document, "title").inner_rml = editor.input and "Project Input Transformer" or
+				(editor.project and "Project Rule Editor" or "Rule Editor")
 			element(document, "apply").inner_rml = editor.input and "OK" or "Apply"
 			showPresets(document, nil)
 			if editor.input then
@@ -353,6 +521,11 @@
 			local line = list == "filters" and {open = 0, target = "type", condition = "equal", parameter1 = "note",
 				parameter2 = 0, close = 0, join = "and"} or {target = "subtype", operation = "add", parameter1 = 0,
 				parameter2 = 0}
+			if editor.project then
+				line = list == "filters" and {open = 0, target = "containerType", condition = "equal",
+					parameter1 = "part", parameter2 = 0, close = 0, join = "and"} or {target = "position",
+					operation = "add", parameter1 = 0, parameter2 = 0}
+			end
 			table.insert(editor.rules[list], line)
 			render(document)
 		end
@@ -404,14 +577,58 @@
 		function editor.save(document)
 			local ok, failure = pcall(function()
 				local name = valueOf(document, "name")
-				gnubase.midiRules.savePreset({name = name, rules = engineRules(read(document, true))})
+				local presets = editor.project and gnubase.projectRules or gnubase.midiRules
+				presets.savePreset({name = name, rules = engineRules(read(document, true))})
 				showPresets(document, name)
 			end)
 			message(document, ok and "Preset saved" or failure)
 		end
 
+		-- Key commands in order: an engine command through its Lua function, which returns once it ran, a UI command
+		-- as its keys would run it.
+		local function runCommands(commands)
+			for _, command in ipairs(commands or {}) do
+				local area, action = command.command:match("^([^.]+)%.(.+)$")
+				local engine = area and area ~= "ui" and type(gnubase[area]) == "table" and gnubase[area][action]
+				if type(engine) == "function" then
+					engine(command.parameters or {})
+				else
+					gnubase.ui.command({command = command.command, parameters = command.parameters})
+				end
+			end
+		end
+
+		-- The pre commands, the rules on the project window's selection as it is then, and the post commands.
+		local function applyProject(rules)
+			runCommands(rules.pre)
+			local parameters = {rules = rules}
+			local selection = gnubase.ui.projectSelection()
+			local selected = {}
+			for _, list in ipairs({selection.tracks or {}, selection.events or {}}) do
+				for _, id in ipairs(list) do
+					selected[#selected + 1] = id
+				end
+			end
+			if #selected > 0 then
+				parameters.selected = selected
+			end
+			if rules["function"] == "deselect" then
+				gnubase.ui.selectInProject({})
+			elseif rules["function"] == "select" then
+				local found = gnubase.project.findByRules(parameters)
+				gnubase.ui.selectInProject({tracks = found.tracks, events = found.events})
+			else
+				gnubase.project.applyRules(parameters)
+			end
+			runCommands(rules.post)
+			return true
+		end
+
 		local function apply(document)
 			local rules = engineRules(read(document, true))
+			if editor.project then
+				return applyProject(rules)
+			end
 			if editor.input then
 				local current = gnubase.project.get().inputTransformer
 				local modules = {}
@@ -472,6 +689,7 @@
 			<button id="rule-editor-insert-action" onclick="RuleEditor.insert(document, 'actions')">Insert</button>
 			<button id="rule-editor-remove-action" onclick="RuleEditor.remove(document, 'actions')">Remove</button>
 		</div>
+		<div id="rule-editor-commands"/>
 		<div class="rule-row">
 			<div id="rule-editor-message"/>
 			<button id="rule-editor-cancel" result="cancel">Cancel</button>

@@ -139,6 +139,8 @@ add_executable(gnubase-tests
 	profiles_ui_tests.cpp
 	processor_tests.cpp
 	projectfiles_tests.cpp
+	projectrules_tests.cpp
+	projectrules_ui_tests.cpp
 	projectsetup_tests.cpp
 	quantize_tests.cpp
 	quantize_ui_tests.cpp

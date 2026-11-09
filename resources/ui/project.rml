@@ -336,6 +336,8 @@
 		<menuitem command="project.colorsSetup">Project Colors Setup...</menuitem>
 		<!-- docs/features/midi-rules.md -->
 		<menuitem command="project.inputTransformer">Project Input Transformer...</menuitem>
+		<!-- docs/features/project-rules.md -->
+		<menuitem command="project.ruleEditor">Project Rule Editor...</menuitem>
 		<menuseparator/>
 		<!-- The tempo track (reference manual pp. 1447, 1451, docs/features/tempo-track.md) -->
 		<menuitem id="tempo-track-submenu">Tempo Track

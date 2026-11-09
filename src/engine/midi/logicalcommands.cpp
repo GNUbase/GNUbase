@@ -5,16 +5,13 @@
 #include "engine/document/serialize.h"
 #include "engine/engine.h"
 #include "engine/midi/midivalues.h"
+#include "engine/rulepresets.h"
 #include "engine/schema.h"
 #include "engine/settings/store.h"
-#include "platform/log.h"
 
 #include <algorithm>
 #include <cmath>
-#include <filesystem>
-#include <functional>
 #include <memory>
-#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -48,184 +45,7 @@ namespace gnubase::engine::midi
 			return {{"type", "array"}, {"items", std::move(items)}};
 		}
 
-		bool isFactory(const std::string& name)
-		{
-			const auto& factory = factoryLogicalPresets();
-			return std::any_of(
-				factory.begin(), factory.end(), [&name](const LogicalPreset& preset) { return preset.name == name; });
-		}
-
-		Json presetJson(const LogicalPreset& preset, bool factory)
-		{
-			return {{"name", preset.name}, {"factory", factory}, {"rules", toJson(preset.rules)}};
-		}
-
-		// Whether an item of the presets file has that name.
-		auto named(std::string name)
-		{
-			return [name = std::move(name)](const Json& item)
-			{
-				const auto found = item.find("name"); // end() unless it is an object
-				return found != item.end() && *found == name;
-			};
-		}
-
-		// The user's presets after the factory ones, names unique among both. They are user settings: every change
-		// starts from the presets in the file, so that none drops what another GNUbase process saved meanwhile.
-		// Presets this GNUbase can't read are skipped and stay in the file.
-		class PresetLibrary
-		{
-		public:
-			explicit PresetLibrary(const std::filesystem::path& settingsDirectory)
-				: m_store(logicalPresetsFormat(), settingsDirectory)
-			{
-				m_user = read(m_store.value(g_presetsKey), &m_skipped);
-			}
-
-			const LogicalPreset* find(const std::string& name) const
-			{
-				for (const auto* list : {&factoryLogicalPresets(), &m_user})
-					for (const LogicalPreset& preset : *list)
-						if (preset.name == name)
-							return &preset;
-				return nullptr;
-			}
-
-			void save(const LogicalPreset& preset)
-			{
-				require(!preset.name.empty(), "name must not be empty");
-				require(!isFactory(preset.name), preset.name + " is a factory preset");
-				const Json item = {{"name", preset.name}, {"rules", midi::toJson(preset.rules)}};
-				change(
-					[&preset, &item](Json& list)
-					{
-						const auto mine = std::find_if(list.begin(), list.end(), named(preset.name));
-						if (mine != list.end())
-							*mine = item;
-						else
-							list.push_back(item);
-					});
-			}
-
-			void remove(const std::string& name)
-			{
-				require(!isFactory(name), "factory presets can't be removed");
-				change(
-					[&name](Json& list)
-					{
-						const auto end = std::remove_if(list.begin(), list.end(), named(name));
-						if (end == list.end())
-							throw CommandError("no MIDI rule preset " + name);
-						list.erase(end, list.end());
-					});
-			}
-
-			Json toJson() const
-			{
-				const settings::LoadReport& load = m_store.loadReport();
-				Json problems = load.problems;
-				for (const std::string& problem : m_skipped)
-					problems.push_back(problem);
-				Json presets = Json::array();
-				for (const LogicalPreset& preset : factoryLogicalPresets())
-					presets.push_back(presetJson(preset, true));
-				for (const LogicalPreset& preset : m_user)
-					presets.push_back(presetJson(preset, false));
-				return {{"presets", std::move(presets)},
-					{"file", m_store.file().empty() ? Json(nullptr) : Json(m_store.file().u8string())},
-					{"readOnly", load.readOnly}, {"problems", std::move(problems)}};
-			}
-
-			void announce(CommandContext& context) const
-			{
-				Json names = Json::array();
-				for (const LogicalPreset& preset : m_user)
-					names.push_back(preset.name);
-				context.emit("midiRules.presetsChanged", {{"presets", std::move(names)}});
-			}
-
-		private:
-			// A preset of the file, or nothing and why this GNUbase can't read it.
-			static std::optional<LogicalPreset> readPreset(const Json& item, std::string& problem)
-			{
-				if (!item.is_object() || !item.contains("name") || !item.at("name").is_string() ||
-					!item.contains("rules"))
-				{
-					problem = "it isn't an object with a name and rules";
-					return std::nullopt;
-				}
-				LogicalPreset preset{item.at("name").get<std::string>(), {}};
-				if (preset.name.empty())
-					problem = "it has no name";
-				else if (isFactory(preset.name))
-					problem = "a factory preset has its name";
-				if (!problem.empty())
-					return std::nullopt;
-				try
-				{
-					preset.rules = logicalRulesFromJson(item.at("rules"));
-				}
-				catch (const std::invalid_argument& error)
-				{
-					problem = error.what();
-					return std::nullopt;
-				}
-				return preset;
-			}
-
-			// Changes the list in the file as it is now, then uses what the file has, also when the change fails.
-			void change(const std::function<void(Json& list)>& edit)
-			{
-				Json list;
-				try
-				{
-					list = m_store.modify(g_presetsKey,
-						[&edit](const Json& value)
-						{
-							Json changed = value;
-							edit(changed);
-							return changed;
-						});
-				}
-				catch (const settings::SettingsError& error)
-				{
-					throw CommandError(std::string("cannot save the MIDI rule presets: ") + error.what());
-				}
-				m_user = read(list);
-			}
-
-			std::vector<LogicalPreset> read(const Json& list, std::vector<std::string>* skipped = nullptr) const
-			{
-				std::vector<LogicalPreset> presets;
-				for (size_t i = 0; i < list.size(); ++i)
-				{
-					std::string problem;
-					std::optional<LogicalPreset> preset = readPreset(list[i], problem);
-					if (preset &&
-						std::any_of(presets.begin(), presets.end(),
-							[&preset](const LogicalPreset& p) { return p.name == preset->name; }))
-					{
-						problem = "an earlier preset has its name";
-						preset.reset();
-					}
-					if (preset)
-					{
-						presets.push_back(std::move(*preset));
-						continue;
-					}
-					if (skipped == nullptr)
-						continue;
-					skipped->push_back(m_store.file().u8string() + ": skipped preset " + std::to_string(i + 1) + ": " +
-						problem + "; it stays in the file");
-					logging::warning("MIDI rule presets: {}", skipped->back());
-				}
-				return presets;
-			}
-
-			settings::Store m_store;
-			std::vector<std::string> m_skipped;
-			std::vector<LogicalPreset> m_user;
-		};
+		using PresetLibrary = RulePresets<LogicalPreset>;
 
 		// The rules given, or a preset's.
 		LogicalRules rulesOf(const PresetLibrary& presets, const Json& parameters)
@@ -233,10 +53,7 @@ namespace gnubase::engine::midi
 			require(parameters.contains("rules") != parameters.contains("preset"), "give either rules or preset");
 			if (parameters.contains("preset"))
 			{
-				const std::string name = parameters.at("preset").get<std::string>();
-				const LogicalPreset* preset = presets.find(name);
-				require(preset != nullptr, "no MIDI rule preset " + name);
-				return preset->rules;
+				return presets.rulesOf(parameters.at("preset").get<std::string>());
 			}
 			try
 			{
@@ -530,7 +347,11 @@ namespace gnubase::engine::midi
 
 	void registerLogicalCommands(ProjectModel& model, Engine& engine)
 	{
-		const auto presets = std::make_shared<PresetLibrary>(engine.settingsDirectory());
+		const auto presets = std::make_shared<PresetLibrary>(
+			RulePresetKind<LogicalPreset>{std::string(g_presetsKey), &logicalPresetsFormat(), "MIDI rule preset",
+				"midiRules.presetsChanged", &factoryLogicalPresets(),
+				[](const LogicalRules& rules) { return toJson(rules); }, logicalRulesFromJson},
+			engine.settingsDirectory());
 		const Json idSchema = {{"type", "integer"}};
 		const Json stringSchema = {{"type", "string"}};
 		const Json ids = arraySchema(idSchema);
@@ -695,7 +516,7 @@ namespace gnubase::engine::midi
 				}
 				presets->save(preset);
 				presets->announce(context);
-				return Json{{"preset", presetJson(preset, false)}};
+				return Json{{"preset", presets->presetJson(preset, false)}};
 			});
 		engine.registerCommand({"midiRules.removePreset", 1,
 								   "Removes one of the user's MIDI rule presets, and the presets of that name that "
