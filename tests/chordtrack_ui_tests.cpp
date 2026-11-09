@@ -62,7 +62,7 @@ namespace
 
 		void type(const std::string& text)
 		{
-			app.ui().key(std::nullopt, "Ctrl+A");
+			app.ui().key(std::nullopt, "Mod+A");
 			app.ui().text(std::nullopt, text);
 			app.ui().key(std::nullopt, "Enter");
 		}

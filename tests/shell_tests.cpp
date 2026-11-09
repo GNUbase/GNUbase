@@ -3,6 +3,7 @@
 // drawing only when something changed. tests/window_tests.cpp runs real windows through SDL_GPU.
 #include "testutils/fakeui.h"
 #include "ui/displays.h"
+#include "ui/keycommands.h"
 #include "ui/rmlui.h"
 #include "ui/shell.h"
 
@@ -486,15 +487,23 @@ TEST_CASE("text fields copy to and paste from the system clipboard", "[unit]")
 	Rml::ElementFormControlInput& name = field(document, "name");
 	name.Focus();
 	Rml::Context& context = window.context();
+	// With the platform's shortcut key: Cmd on macOS, Ctrl elsewhere (#953).
+	const int mod = ui::parseModifier("Mod");
 
-	context.ProcessKeyDown(Rml::Input::KI_A, Rml::Input::KM_CTRL);
-	context.ProcessKeyDown(Rml::Input::KI_C, Rml::Input::KM_CTRL);
+	context.ProcessKeyDown(Rml::Input::KI_A, mod);
+	context.ProcessKeyDown(Rml::Input::KI_C, mod);
 	CHECK(ui.windows.clipboardText() == "hello");
 
 	ui.windows.setClipboardText("world");
-	context.ProcessKeyDown(Rml::Input::KI_A, Rml::Input::KM_CTRL);
-	context.ProcessKeyDown(Rml::Input::KI_V, Rml::Input::KM_CTRL);
+	context.ProcessKeyDown(Rml::Input::KI_A, mod);
+	context.ProcessKeyDown(Rml::Input::KI_V, mod);
 	CHECK(name.GetValue() == "world");
+
+	ui.windows.setClipboardText("");
+	context.ProcessKeyDown(Rml::Input::KI_A, mod);
+	context.ProcessKeyDown(Rml::Input::KI_X, mod);
+	CHECK(ui.windows.clipboardText() == "world");
+	CHECK(name.GetValue().empty());
 }
 
 TEST_CASE("file dialogs answer on the UI thread with what the user chose", "[unit]")

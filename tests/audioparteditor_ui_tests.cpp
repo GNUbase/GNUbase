@@ -114,6 +114,30 @@ namespace
 
 		std::vector<uint64_t> selection() { return view().at("eventSelection").get<std::vector<uint64_t>>(); }
 
+		// Waits until the engine has these events selected and the editor shows them selected. A click with Shift or
+		// Ctrl starts from the selection the editor shows, which follows the engine's a step or more later: an
+		// answer to an earlier editor.get can show the older selection until then (#951).
+		void selects(std::vector<uint64_t> events)
+		{
+			std::sort(events.begin(), events.end());
+			REQUIRE(app.waitUntil(
+				[&]
+				{
+					std::vector<uint64_t> engine = selection();
+					std::sort(engine.begin(), engine.end());
+					return engine == events;
+				}));
+			REQUIRE(app.waitUntil(
+				[&]
+				{
+					std::vector<uint64_t> shown;
+					for (const Json& each : elements(".ape-event.selected"))
+						shown.push_back(std::stoull(each.at("attributes").at("event").get<std::string>()));
+					std::sort(shown.begin(), shown.end());
+					return shown == events;
+				}));
+		}
+
 		Json events()
 		{
 			Json found = Json::array();
@@ -409,17 +433,16 @@ TEST_CASE("the object selection tool selects events and moves them in time and a
 	f.open();
 	// A click selects, Shift and a click adds, a click in the empty display deselects; the info line shows the first.
 	f.click(f.at(0.25, 0));
-	REQUIRE(f.app.waitUntil([&] { return f.selection() == std::vector<uint64_t>{f.first}; }));
+	f.selects({f.first});
 	REQUIRE(f.app.waitUntil([&] { return !f.has(".ape-info", "empty"); }));
 	CHECK(f.value("start") == "1.1.1.0");
 	CHECK(f.value("end") == "1.2.1.0"); // half a second at 120 BPM is a beat
 	CHECK(f.value("length") == "0.1.0.0");
-	CHECK(f.has(eventSelector(f.first), "selected"));
 	f.click(f.at(1.25, 0), 1, {"shift"});
-	REQUIRE(f.app.waitUntil([&] { return f.selection().size() == 2; }));
+	f.selects({f.first, f.second});
 	REQUIRE(f.app.waitUntil([&] { return f.has(".ape-info", "multiple"); }));
 	f.click(f.at(1.75, 0));
-	REQUIRE(f.app.waitUntil([&] { return f.selection().empty(); }));
+	f.selects({});
 
 	// A drag moves the event, snapped to the quantize grid.
 	f.drag(f.at(0.25, 0), f.at(0.52, 0));
@@ -448,15 +471,16 @@ TEST_CASE("the object selection tool selects events and moves them in time and a
 			takes.push_back(f.display.laneTakes()[i]);
 	CHECK(takes == std::vector<int>{-1, 0});
 	f.display.showLanes(f.track, false);
+	f.selects({f.second});
 	// With Ctrl a drag moves across lanes only, and a click adds to the selection.
 	f.drag(f.at(0.5, 0), f.at(0.9, 1), {"ctrl"});
 	REQUIRE(f.app.waitUntil([&] { return f.event(f.first).at("lane") == 1; }));
 	f.settle();
 	CHECK(f.event(f.first).at("position") == g_second / 4);
 	f.click(f.at(1.25, 1));
-	REQUIRE(f.app.waitUntil([&] { return f.selection() == std::vector<uint64_t>{f.second}; }));
+	f.selects({f.second});
 	f.click(f.at(0.5, 1), 1, {"ctrl"});
-	REQUIRE(f.app.waitUntil([&] { return f.selection().size() == 2; }));
+	f.selects({f.first, f.second});
 
 	// A double click on an event opens it in the sample editor.
 	f.click(f.at(1.25, 1), 2);
@@ -471,10 +495,10 @@ TEST_CASE("a click with the object selection tool selects an event off the grid 
 	f.app.call("event.move", {{"events", {f.first}}, {"delta", offGrid}});
 	f.open();
 	f.click(f.at(0.4, 0));
-	REQUIRE(f.app.waitUntil([&] { return f.selection() == std::vector<uint64_t>{f.first}; }));
+	f.selects({f.first});
 	// Commands from the click's release come before this one.
 	f.click(f.at(1.25, 0), 1, {"shift"});
-	REQUIRE(f.app.waitUntil([&] { return f.selection().size() == 2; }));
+	f.selects({f.first, f.second});
 	CHECK(f.event(f.first).at("position") == offGrid);
 }
 
@@ -599,13 +623,13 @@ TEST_CASE("the info line edits the selected events", "[ui]")
 	REQUIRE(f.app.waitUntil([&] { return f.value("start") == "1.3.1.0"; }));
 	// Typing a start moves the event, a volume sets it.
 	f.click(of(".ape-info textdisplay[field=start]"), 2);
-	f.app.ui().key(f.window, "Ctrl+A");
+	f.app.ui().key(f.window, "Mod+A");
 	f.app.ui().text(f.window, "1.4.1.0");
 	f.app.ui().key(f.window, "Enter");
 	REQUIRE(f.app.waitUntil([&] { return f.event(f.second).at("position") == 3 * g_second / 2; }));
 	f.settle();
 	f.click(of(".ape-info textdisplay[field=volume]"), 2);
-	f.app.ui().key(f.window, "Ctrl+A");
+	f.app.ui().key(f.window, "Mod+A");
 	f.app.ui().text(f.window, "-6");
 	f.app.ui().key(f.window, "Enter");
 	REQUIRE(f.app.waitUntil([&] { return f.event(f.second).at("volume") == -6.0; }));
