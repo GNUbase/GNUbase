@@ -1227,8 +1227,8 @@ TEST_CASE("media.added reaches clients before the media file's media.peaksReady"
 	}
 }
 
-TEST_CASE(
-	"the waveform of a one-hour file is answered in milliseconds once its peak file exists", "[integration][slow]")
+TEST_CASE("the waveform of a one-hour file is answered in milliseconds once its peak file exists",
+	"[integration][slow][realtime]")
 {
 #ifdef GNUBASE_SANITIZED
 	SKIP("sanitizer builds are too slow to measure this");
