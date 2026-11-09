@@ -1873,7 +1873,7 @@ TEST_CASE("switching between the mute button and mute automation lets no audio t
 	run(mixer.client, "audio.render", {{"frames", 2048}});
 	for (int channel = 0; channel < 2; ++channel)
 	{
-		const std::vector<float> output = mixer.capture(channel, 6 * 2048);
+		const std::vector<float> output = mixer.capture(channel, int64_t{6} * 2048);
 		float loudest = 0.0F;
 		for (const float sample : output)
 			loudest = std::max(loudest, std::abs(sample));
