@@ -15,6 +15,21 @@ namespace gnubase::engine
 {
 	namespace
 	{
+		// Live Input (#933): the pitch class set playing at position, the nearest pitch of it, down on a tie.
+		int liveInputPitch(const std::vector<LiveHarmony>& harmonies, int64_t position, int pitch) noexcept
+		{
+			const auto after = std::upper_bound(harmonies.begin(), harmonies.end(), position,
+				[](int64_t at, const LiveHarmony& harmony) { return at < harmony.start; });
+			if (after == harmonies.begin() || std::prev(after)->classes == 0)
+				return pitch;
+			const uint16_t classes = std::prev(after)->classes;
+			for (int distance = 0; distance < 12; ++distance)
+				for (const int candidate : {pitch - distance, pitch + distance})
+					if (candidate >= 0 && candidate <= 127 && ((classes >> (candidate % 12)) & 1U) != 0)
+						return candidate;
+			return pitch;
+		}
+
 		constexpr int64_t g_never = std::numeric_limits<int64_t>::max();
 		constexpr int64_t g_now = std::numeric_limits<int64_t>::min(); // the end of a note to end at once
 
@@ -330,7 +345,7 @@ namespace gnubase::engine
 		for (graph::ProcessEvent event : m_input)
 		{
 			auto ends = static_cast<uint16_t>(g_notes);
-			const bool plays = modifyInput(sequence.modifiers, event, ends);
+			const bool plays = modifyInput(sequence, transport.position + event.offset, event, ends);
 			// Still held if the buffer was full: then a stop ends it.
 			if (ends != g_notes && out.add(noteEvent(graph::ProcessEvent::Type::NoteOff, ends, event.offset)))
 				m_inputHeld[ends] = false;
@@ -544,8 +559,9 @@ namespace gnubase::engine
 	}
 
 	bool MidiSequencer::modifyInput(
-		const midi::Modifiers& modifiers, graph::ProcessEvent& event, uint16_t& ends) noexcept
+		const MidiSequence& sequence, int64_t position, graph::ProcessEvent& event, uint16_t& ends) noexcept
 	{
+		const midi::Modifiers& modifiers = sequence.modifiers;
 		using Type = graph::ProcessEvent::Type;
 		if (event.type != Type::NoteOn && event.type != Type::NoteOff && event.type != Type::PolyPressure)
 			return true;
@@ -553,7 +569,7 @@ namespace gnubase::engine
 		if (event.type == Type::NoteOn)
 		{
 			const uint16_t before = m_inputTo[from];
-			auto pitch = static_cast<uint8_t>(event.key % 128);
+			auto pitch = static_cast<uint8_t>(liveInputPitch(sequence.liveInput, position, event.key % 128));
 			m_inputTo[from] = midi::modifyNote(modifiers, midi::noteSeed(0, ++m_random), pitch, event.velocity)
 				? static_cast<uint16_t>(((event.channel % 16) * 128) + pitch)
 				: static_cast<uint16_t>(g_notes);

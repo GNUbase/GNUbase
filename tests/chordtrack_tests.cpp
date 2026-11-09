@@ -5,6 +5,8 @@
 #include "engine/document/document.h"
 #include "engine/document/rendersnapshot.h"
 #include "engine/engine.h"
+#include "platform/audio/device.h"
+#include "platform/midi/dummyport.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -12,8 +14,10 @@
 #include <miniz.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -339,9 +343,13 @@ TEST_CASE("the chord track is saved with the project", "[integration]")
 	{
 		Song song;
 		song.play(triads());
+		// A linear chord track: its positions are samples.
 		run(song.client, "track.add", {{"type", "chord"}, {"timeBase", "linear"}});
-		song.chords({"C", "Am", "F", "G"});
-		run(song.client, "chord.add", {{"position", g_bar}, {"scale", "A harmonicMinor"}});
+		const std::vector<std::string> names = {"C", "Am", "F", "G"};
+		for (size_t bar = 0; bar < names.size(); ++bar)
+			run(song.client, "chord.add",
+				{{"position", static_cast<int64_t>(bar) * g_barSamples}, {"chord", names[bar]}});
+		run(song.client, "chord.add", {{"position", g_barSamples}, {"scale", "A harmonicMinor"}});
 		run(song.client, "chord.setTrack",
 			{{"octaveOffset", 1}, {"adaptiveVoicings", false}, {"automaticScales", false}});
 		run(song.client, "chord.follow",
@@ -350,7 +358,8 @@ TEST_CASE("the chord track is saved with the project", "[integration]")
 		played = song.pitches();
 		run(song.client, "project.save", {{"path", path}});
 	}
-	CHECK(played[0] == std::vector<int>{58, 62, 65}); // D to C: a whole tone down
+	// From D to C, A, F and G by their roots, the nearer way.
+	CHECK(played == Bars{{58, 62, 65}, {52, 55, 59}, {68, 72, 75}, {60, 64, 67}});
 	Song song;
 	run(song.client, "project.load", {{"path", path}});
 	CHECK(run(song.client, "chord.get") == saved);
@@ -367,9 +376,11 @@ TEST_CASE("a project file's chord track is read as the chord commands would make
 		run(song.client, "track.add", {{"type", "chord"}});
 		song.chords({"C", "Am"});
 		run(song.client, "chord.add", {{"position", g_bar}, {"scale", "A minor"}});
+		run(song.client, "chord.follow", {{"track", song.track}, {"mode", "chords"}});
 		run(song.client, "project.save", {{"path", path}});
 	}
-	// Text no command takes, markup among it, and a second event where one is.
+	// Text no command takes, markup among it, a second event where one is, events before the project start and
+	// settings no command takes (#939).
 	std::map<std::string, std::string> entries = readZip(path);
 	Json extension = Json::parse(entries.at("gnubase.json"));
 	Json& chords = extension.at("project").at("chords");
@@ -379,6 +390,19 @@ TEST_CASE("a project file's chord track is read as the chord commands would make
 	second["chord"] = "F";
 	chords.at("events").push_back(second);
 	chords.at("scales")[0]["scale"] = "<b>A minor</b>";
+	Json early = chords.at("events")[1];
+	early["id"] = early.at("id").get<ObjectId>() + 2000;
+	early["position"] = -g_beatTicks;
+	chords.at("events").push_back(early);
+	Json earlyScale = early;
+	earlyScale.erase("chord");
+	earlyScale["scale"] = "C major";
+	earlyScale["id"] = early.at("id").get<ObjectId>() + 1;
+	chords.at("scales").push_back(earlyScale);
+	chords.at("follow")[0]["mode"] = "sideways";
+	chords.at("follow")[0]["voicings"] = "harp";
+	chords.at("follow")[0]["liveInput"] = "everything";
+	chords["voicing"] = {{"library", "banjo"}, {"lowest", 300}};
 	entries["gnubase.json"] = extension.dump();
 	writeZip(path, entries);
 
@@ -387,8 +411,383 @@ TEST_CASE("a project file's chord track is read as the chord commands would make
 	CHECK(chordNames(song.client) == std::vector<std::string>{"X", "Am"});
 	const Json chord = run(song.client, "chord.get");
 	CHECK(chord.at("scales").empty());
+	REQUIRE(chord.at("follow").size() == 1);
+	CHECK(chord.at("follow")[0].at("mode") == "off"); // not chords, as an unknown mode played
+	CHECK(chord.at("follow")[0].at("voicings") == "chordTrack");
+	CHECK(chord.at("follow")[0].at("liveInput") == "off");
+	CHECK(chord.at("voicing").at("library") == "basic");
+	CHECK(chord.at("voicing").at("lowest") == 52);
 	// The commands still take the events.
 	run(song.client, "chord.add", {{"position", 2 * g_bar}, {"chord", "F"}});
 	run(song.client, "chord.set", {{"events", {{{"event", chord.at("events")[0].at("id")}, {"chord", "G"}}}}});
 	CHECK(chordNames(song.client) == std::vector<std::string>{"G", "Am", "F"});
+}
+
+TEST_CASE("Mute Chord Track: nothing follows it while it is muted", "[integration]")
+{
+	Song song;
+	Client& client = song.client;
+	song.play(triads());
+	song.chords({"D", "Bm", "G", "A"});
+	run(client, "chord.follow", {{"track", song.track}, {"mode", "chords"}, {"sync", "analyze"}});
+	const Bars inD = {{62, 66, 69}, {59, 62, 66}, {67, 71, 74}, {57, 61, 64}};
+	CHECK(song.pitches() == inD);
+	const Json muted = run(client, "chord.setTrack", {{"mute", true}});
+	CHECK(muted.at("mute") == true);
+	CHECK(song.pitches() == triads());
+	run(client, "history.undo");
+	CHECK(song.pitches() == inD);
+}
+
+TEST_CASE("a track's Follow Chord Track settings go with it and come with its copy", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	const std::string path = (dir.path() / "Song.dawproject").u8string();
+	Song song;
+	Client& client = song.client;
+	song.chords({"C"});
+	run(client, "chord.follow", {{"track", song.track}, {"mode", "scales"}});
+	// A copy follows as its original does.
+	const auto copy = run(client, "track.duplicate", {{"track", song.track}}).at("track").at("id").get<ObjectId>();
+	Json follow = run(client, "chord.get").at("follow");
+	REQUIRE(follow.size() == 2);
+	CHECK(follow[1].at("track") == copy);
+	CHECK(follow[1].at("mode") == "scales");
+	CHECK(follow[1].at("source") == follow[0].at("source"));
+	// Removing a track removes them, also from the project file; undo brings them back.
+	run(client, "track.remove", {{"track", song.track}});
+	follow = run(client, "chord.get").at("follow");
+	REQUIRE(follow.size() == 1);
+	CHECK(follow[0].at("track") == copy);
+	run(client, "project.save", {{"path", path}});
+	const Json saved = Json::parse(readZip(path).at("gnubase.json")).at("project").at("chords").at("follow");
+	REQUIRE(saved.size() == 1);
+	CHECK(saved[0].at("track") == copy);
+	run(client, "history.undo");
+	CHECK(run(client, "chord.get").at("follow").size() == 2);
+}
+
+TEST_CASE("drum-mapped tracks don't follow the chord track", "[integration]")
+{
+	Song song;
+	Client& client = song.client;
+	song.play(Bars(4, {36, 38, 42}));
+	song.chords({"C", "D", "E", "F"});
+	run(client, "chord.follow", {{"track", song.track}, {"mode", "chords"}, {"sync", "known"}, {"chord", "C"}});
+	CHECK(song.pitches() != Bars(4, {36, 38, 42}));
+	const Json maps = run(client, "project.get").at("drumMaps");
+	REQUIRE(!maps.empty());
+	run(client, "track.set", {{"track", song.track}, {"drumMap", maps[0].at("id")}});
+	CHECK(song.pitches() == Bars(4, {36, 38, 42})); // the GM map plays each note as itself
+}
+
+TEST_CASE("Chords to MIDI: the last chord lasts a bar, also off the bar line", "[integration]")
+{
+	Song song;
+	Client& client = song.client;
+	run(client, "chord.add", {{"position", 0}, {"chord", "C"}});
+	run(client, "chord.add", {{"position", g_bar + (2 * g_beatTicks)}, {"chord", "G"}});
+	const Json part = run(client, "chord.toMidi", {{"track", song.track}}).at("part");
+	CHECK(part.at("length") == (2 * g_bar) + (2 * g_beatTicks));
+	for (const Json& note : part.at("notes"))
+		if (note.at("position") != 0)
+			CHECK(note.at("length") == g_bar);
+}
+
+TEST_CASE("Shift Chords: chord events take notes played early", "[integration]")
+{
+	Song song;
+	Client& client = song.client;
+	// C in the first bar, then a C a sixteenth before the second bar, over C and D.
+	song.chords({"C", "D"});
+	run(client, "note.add",
+		{{"part", song.part},
+			{"notes",
+				{{{"position", g_bar - (g_beatTicks / 4)}, {"length", g_beatTicks}, {"pitch", 60},
+					{"velocity", 0.75}}}}});
+	run(client, "chord.follow", {{"track", song.track}, {"mode", "rootNotes"}, {"sync", "known"}, {"chord", "C"}});
+	CHECK(song.pitches()[0] == std::vector<int>{60});
+	run(client, "chord.setTrack", {{"shiftChords", -g_beatTicks / 2}});
+	CHECK(song.pitches()[0] == std::vector<int>{62});
+	CHECK(run(client, "chord.get").at("shiftChords") == -g_beatTicks / 2);
+	CHECK(
+		reject(client, "chord.setTrack", {{"shiftChords", 2 * g_beatTicks}}).find("shiftChords") != std::string::npos);
+}
+
+TEST_CASE("voicing libraries, This Track's Voicings and Single Voice with a master", "[integration]")
+{
+	Song song;
+	Client& client = song.client;
+	song.chords({"C", "Am", "F", "G"});
+	run(client, "chord.setTrack",
+		{{"adaptiveVoicings", false}, {"voicing", {{"library", "piano"}, {"style", "triads"}}}});
+	Json chord = run(client, "chord.get");
+	CHECK(chord.at("voicing").at("library") == "piano");
+	CHECK(chord.at("events")[0].at("pitches") == Json{36, 60, 64, 67});
+	CHECK(reject(client, "chord.setTrack", {{"voicing", {{"style", "polka"}}}}).find("polka") != std::string::npos);
+	CHECK(reject(client, "chord.setTrack", {{"voicing", {{"lowest", 80}, {"highest", 84}}}}).find("octave") !=
+		std::string::npos);
+	run(client, "chord.setTrack", {{"voicing", {{"library", "guitar"}}}});
+	CHECK(run(client, "chord.get").at("events")[0].at("pitches") == Json{48, 52, 55, 60, 64}); // the open C
+	run(client, "chord.setTrack", {{"voicing", {{"library", "basic"}}}});
+
+	// Single Voice: the soprano of each chord's voicing; with the guitar's voicings as This Track's Voicings.
+	song.play(Bars(4, {60}));
+	run(client, "chord.follow", {{"track", song.track}, {"mode", "singleVoice"}, {"voice", "soprano"}});
+	CHECK(song.pitches() == Bars{{67}, {76}, {72}, {74}}); // the basic voicings, not adaptive
+	run(client, "chord.follow", {{"track", song.track}, {"voice", "bass"}});
+	CHECK(song.pitches() == Bars{{48}, {57}, {53}, {55}});
+	run(client, "chord.follow", {{"track", song.track}, {"voicings", "guitar"}});
+	CHECK(song.pitches()[0] == std::vector<int>{48});
+	// A track with a master takes the master's voicings.
+	const Json other = run(client, "track.add", {{"type", "midi"}});
+	const auto otherTrack = other.at("track").at("id").get<ObjectId>();
+	run(client, "chord.follow", {{"track", song.track}, {"voicings", "chordTrack"}, {"master", otherTrack}});
+	run(client, "chord.follow", {{"track", otherTrack}, {"mode", "off"}, {"voicings", "guitar"}});
+	CHECK(song.pitches()[0] == std::vector<int>{48});
+	run(client, "chord.follow", {{"track", otherTrack}, {"voicings", "piano"}});
+	CHECK(song.pitches()[0] == std::vector<int>{36});
+	CHECK(reject(client, "chord.follow", {{"track", song.track}, {"master", song.track}}).find("master") !=
+		std::string::npos);
+	chord = run(client, "chord.get");
+	CHECK(chord.at("follow")[0].at("master") == otherTrack);
+	CHECK(chord.at("follow")[0].at("voice") == "bass");
+	// The master's settings go with it.
+	run(client, "track.remove", {{"track", otherTrack}});
+	CHECK(run(client, "chord.get").at("follow")[0].at("master") == 0);
+}
+
+TEST_CASE("Create Chord Events with Detect Arpeggios and Interpret Sustain Pedal", "[integration]")
+{
+	Song song;
+	Client& client = song.client;
+	SECTION("arpeggios: C, Am, F and G a note a beat")
+	{
+		song.play({{60, 64, 67, 72}, {57, 60, 64, 69}, {53, 57, 60, 65}, {55, 59, 62, 67}}, true);
+		run(client, "chord.fromMidi", {{"parts", {song.part}}});
+		CHECK(chordNames(client).empty()); // one note at a time makes no chord
+		run(client, "chord.fromMidi", {{"parts", {song.part}}, {"detectArpeggios", true}});
+		CHECK(chordNames(client) == std::vector<std::string>{"C", "Am", "F", "G"});
+		std::vector<int64_t> positions;
+		const Json chord = run(client, "chord.get");
+		for (const Json& event : chord.at("events"))
+			positions.push_back(event.at("position").get<int64_t>());
+		CHECK(positions == std::vector<int64_t>{0, g_bar, 2 * g_bar, 3 * g_bar});
+	}
+	SECTION("the sustain pedal holds a beat-long C, E and G")
+	{
+		run(client, "note.add",
+			{{"part", song.part},
+				{"notes",
+					{{{"position", 0}, {"length", g_beatTicks / 2}, {"pitch", 60}, {"velocity", 0.75}},
+						{{"position", g_beatTicks}, {"length", g_beatTicks / 2}, {"pitch", 64}, {"velocity", 0.75}},
+						{{"position", 2 * g_beatTicks}, {"length", g_beatTicks / 2}, {"pitch", 67},
+							{"velocity", 0.75}}}}});
+		run(client, "controller.add",
+			{{"part", song.part},
+				{"controllers",
+					{{{"position", 0}, {"number", 64}, {"value", 1.0}},
+						{{"position", g_bar}, {"number", 64}, {"value", 0.0}}}}});
+		run(client, "chord.fromMidi", {{"parts", {song.part}}});
+		CHECK(chordNames(client).empty());
+		run(client, "chord.fromMidi", {{"parts", {song.part}}, {"sustainPedal", true}});
+		CHECK(chordNames(client) == std::vector<std::string>{"C"});
+		CHECK(run(client, "chord.get").at("events")[0].at("position") == 2 * g_beatTicks);
+	}
+}
+
+TEST_CASE("Map to Chord Track and Assign Voices to Notes change the notes", "[integration]")
+{
+	Song song;
+	Client& client = song.client;
+	song.play(triads());
+	song.chords({"D", "Bm", "G", "A"});
+	CHECK(reject(client, "chord.map", {{"parts", {12345}}}).find("12345") != std::string::npos);
+	const Json mapped = run(client, "chord.map", {{"parts", {song.part}}, {"mode", "chords"}});
+	CHECK(mapped.at("notes").size() == 12);
+	const Bars inD = {{62, 66, 69}, {59, 62, 66}, {67, 71, 74}, {57, 61, 64}};
+	CHECK(song.pitches() == inD);
+	run(client, "history.undo");
+	CHECK(song.pitches() == triads());
+	// Assign Voices: each note to the nearest pitch of the chord's voicing.
+	run(client, "chord.setTrack", {{"adaptiveVoicings", false}});
+	run(client, "chord.assignVoices", {{"parts", {song.part}}});
+	const Bars voiced = song.pitches();
+	const Json events = run(client, "chord.get").at("events");
+	for (size_t bar = 0; bar < voiced.size(); ++bar)
+		for (const int pitch : voiced[bar])
+		{
+			const Json& voicing = events[bar].at("pitches");
+			CHECK(std::find(voicing.begin(), voicing.end(), pitch) != voicing.end());
+		}
+}
+
+TEST_CASE("chord events from audio events", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	Song song;
+	Client& client = song.client;
+	// Two bars at 120 BPM: C major (C4 E4 G4), then A minor (A3 C4 E4), sines, then a bar of silence.
+	gnubase::test::Audio audio;
+	const int rate = 48000;
+	const auto frames = static_cast<size_t>(3 * g_barSamples);
+	audio.samples.resize(frames);
+	const std::vector<std::vector<double>> bars = {{261.63, 329.63, 392.0}, {220.0, 261.63, 329.63}};
+	for (size_t i = 0; i < frames; ++i)
+	{
+		const size_t bar = i / static_cast<size_t>(g_barSamples);
+		if (bar >= bars.size())
+			continue;
+		for (const double frequency : bars[bar])
+			audio.samples[i] +=
+				static_cast<float>(0.2 * std::sin(2.0 * 3.14159265358979 * frequency * static_cast<double>(i) / rate));
+	}
+	const auto file = dir.path() / "chords.wav";
+	gnubase::test::writeWav(file, audio);
+	const auto audioTrack = run(client, "track.add", {{"type", "audio"}}).at("track").at("id").get<ObjectId>();
+	const Json media = run(client, "media.add", {{"path", file.u8string()}}).at("media");
+	const Json clip = run(client, "clip.add", {{"media", media.at("id")}}).at("clip");
+	const Json event = run(client, "audioEvent.add",
+		{{"track", audioTrack}, {"clip", clip.at("id")}, {"position", 0},
+			{"length",
+				frames}}).at("event");
+	run(client, "chord.add", {{"position", g_bar}, {"chord", "F"}});     // replaced
+	run(client, "chord.add", {{"position", 4 * g_bar}, {"chord", "G"}}); // after the event, kept
+	const Json made = run(client, "chord.fromAudio", {{"events", {event.at("id")}}});
+	CHECK(made.at("events").size() == 2);
+	CHECK(chordNames(client) == std::vector<std::string>{"C", "Am", "G"});
+	const Json events = run(client, "chord.get").at("events");
+	CHECK(events[0].at("position") == 0);
+	CHECK(events[1].at("position") == g_bar);
+	CHECK(events[0].at("audioEvent") == event.at("id"));
+	REQUIRE(!events[0].at("detected").empty());
+	CHECK(events[0].at("detected")[0] == "C");
+	CHECK(events[1].at("detected")[0] == "Am");
+	CHECK(events[2].at("audioEvent") == 0);
+	CHECK(reject(client, "chord.fromAudio", {{"events", {12345}}}).find("12345") != std::string::npos);
+}
+
+TEST_CASE("recording chord events from the notes a MIDI track records", "[integration]")
+{
+	Song song;
+	Client& client = song.client;
+	run(client, "track.add", {{"type", "chord"}});
+	run(client, "chord.add", {{"position", 3 * g_bar}, {"chord", "E"}}); // outside the take, kept
+	const auto note = [](int64_t bar, int pitch)
+	{ return Json{{"position", bar * g_barSamples}, {"length", g_barSamples}, {"pitch", pitch}, {"velocity", 0.8}}; };
+	const Json recorded = {{"tracks",
+		{{{"track", song.track}, {"takes", {{{"position", 0}, {"length", 2 * g_barSamples}}}},
+			{"notes", {note(0, 60), note(0, 64), note(0, 67), note(1, 62), note(1, 65), note(1, 69)}}}}}};
+	run(client, "recording.add", recorded);
+	CHECK(chordNames(client) == std::vector<std::string>{"E"}); // the chord track wasn't record-enabled
+	run(client, "history.undo");
+	run(client, "chord.setTrack", {{"recordEnable", true}});
+	run(client, "recording.add", recorded);
+	CHECK(chordNames(client) == std::vector<std::string>{"C", "Dm", "E"});
+}
+
+namespace
+{
+	std::vector<std::vector<int>> notesPlayed(const Json& capture)
+	{
+		std::vector<std::vector<int>> notes;
+		for (const Json& captured : capture.at("captured"))
+		{
+			const Json& bytes = captured.at("bytes");
+			const int status = bytes.at(0).get<int>() & 0xF0;
+			if (status == 0x90 || status == 0x80)
+				notes.push_back({status, bytes.at(1).get<int>()});
+		}
+		return notes;
+	}
+
+	// An instrument track playing the note probe that monitors, on the dummy device, and a chord track with C.
+	struct Rig
+	{
+		Rig() : engine(gnubase::audio::makeBackends(), {}, std::vector<std::unique_ptr<gnubase::midi::Backend>>())
+		{
+			run(client, "audio.setDevice", {{"blockSize", 64}, {"inputChannels", 0}});
+			const Json added = run(client, "track.add", {{"type", "instrument"}});
+			track = added.at("track").at("id").get<ObjectId>();
+			channel = added.at("channel").at("id").get<ObjectId>();
+			run(client, "channel.set", {{"channel", channel}, {"instrument", "noteProbe"}, {"monitor", true}});
+			run(client, "chord.add", {{"position", 0}, {"chord", "C"}});
+			run(client, "audio.render", {{"frames", 64}}); // the new graph
+			run(client, "midi.capture", {{"start", true}});
+		}
+
+		std::vector<std::vector<int>> play(int pitch)
+		{
+			run(client, "midi.inject",
+				{{"channel", channel},
+					{"messages",
+						{{{"position", 0}, {"bytes", {0x90, pitch, 100}}},
+							{{"position", 0}, {"bytes", {0x80, pitch, 0}}}}}});
+			run(client, "audio.render", {{"frames", 64}});
+			return notesPlayed(run(client, "midi.capture"));
+		}
+
+		Engine engine;
+		Client client{engine};
+		ObjectId track = 0;
+		ObjectId channel = 0;
+	};
+}
+
+TEST_CASE("Live Input moves the notes played into a track to the chord track's chords or scales", "[integration]")
+{
+	Rig rig;
+	Client& client = rig.client;
+	CHECK(rig.play(63) == std::vector<std::vector<int>>{{0x90, 63}, {0x80, 63}});
+	run(client, "chord.follow", {{"track", rig.track}, {"liveInput", "chords"}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(run(client, "chord.get").at("follow")[0].at("mode") == "off");
+	CHECK(rig.play(63) == std::vector<std::vector<int>>{{0x90, 64}, {0x80, 64}}); // D# to E
+	run(client, "chord.follow", {{"track", rig.track}, {"liveInput", "scales"}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(rig.play(63) == std::vector<std::vector<int>>{{0x90, 62}, {0x80, 62}}); // C major: D, down on a tie
+	CHECK(reject(client, "chord.follow", {{"track", rig.track}, {"liveInput", "loud"}}).find("liveInput") !=
+		std::string::npos);
+	// Not while the chord track is muted.
+	run(client, "chord.setTrack", {{"mute", true}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(rig.play(63) == std::vector<std::vector<int>>{{0x90, 63}, {0x80, 63}});
+}
+
+TEST_CASE("auditioning chord events on the audition track, and Acoustic Feedback", "[integration]")
+{
+	Rig rig;
+	Client& client = rig.client;
+	const Json events = run(client, "chord.get").at("events");
+	CHECK(reject(client, "chord.audition", {{"event", events[0].at("id")}}).find("auditioning") != std::string::npos);
+	CHECK(reject(client, "chord.setTrack", {{"audition", 12345}}).find("MIDI") != std::string::npos);
+	run(client, "chord.setTrack", {{"audition", rig.track}});
+	const Json played = run(client, "chord.audition", {{"event", events[0].at("id")}});
+	CHECK(played.at("pitches") == Json{48, 60, 64, 67});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(notesPlayed(run(client, "midi.capture")) ==
+		std::vector<std::vector<int>>{{0x90, 48}, {0x90, 60}, {0x90, 64}, {0x90, 67}});
+	run(client, "chord.audition", {{"on", false}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(notesPlayed(run(client, "midi.capture")) ==
+		std::vector<std::vector<int>>{{0x80, 48}, {0x80, 60}, {0x80, 64}, {0x80, 67}});
+	// A scale event plays its notes.
+	const Json scale = run(client, "chord.add", {{"position", 0}, {"scale", "D dorian"}}).at("event");
+	CHECK(run(client, "chord.audition", {{"event", scale.at("id")}}).at("pitches") ==
+		Json{62, 64, 65, 67, 69, 71, 72, 74});
+	run(client, "chord.audition", {{"on", false}});
+	// Acoustic Feedback: the chord events play on the audition track, a bar for the last.
+	run(client, "chord.setTrack", {{"acousticFeedback", true}});
+	std::vector<int> pitches;
+	for (const RenderChannel& render : rig.engine.renderSnapshots().acquire().channels)
+		if (render.id == rig.channel)
+			for (const RenderNote& note : render.notes)
+			{
+				pitches.push_back(note.pitch);
+				CHECK(note.start == 0);
+				CHECK(note.end == g_barSamples);
+			}
+	CHECK(pitches == std::vector<int>{48, 60, 64, 67});
+	run(client, "chord.setTrack", {{"mute", true}});
+	CHECK(reject(client, "chord.audition", {{"chord", "C"}}).find("muted") != std::string::npos);
 }

@@ -611,6 +611,7 @@ namespace gnubase::engine
 		}
 		applyVcaFaders(project, vcaCurves, *snapshot);
 
+		renderChordTrack(project, *snapshot);
 		for (RenderChannel& channel : snapshot->channels)
 		{
 			std::stable_sort(channel.audioEvents.begin(), channel.audioEvents.end(),
