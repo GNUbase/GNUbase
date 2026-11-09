@@ -27,6 +27,7 @@
 #include "engine/jobs/jobs.h"
 #include "engine/media/backup.h"
 #include "engine/metronome/metronomecommands.h"
+#include "engine/midi/articulationmaps.h"
 #include "engine/midi/controllerlanes.h"
 #include "engine/midi/drummaps.h"
 #include "engine/midi/functioncommands.h"
@@ -1446,6 +1447,15 @@ namespace gnubase::engine
 				require(track.drumMap == 0 || project.drumMaps.count(track.drumMap) != 0,
 					"no drum map " + std::to_string(track.drumMap));
 			}
+			if (parameters.contains("articulationMap"))
+			{
+				track.articulationMap = parameters.at("articulationMap").get<ObjectId>();
+				require(
+					track.articulationMap == 0 || track.type == TrackType::Midi || track.type == TrackType::Instrument,
+					"only MIDI and instrument tracks have an articulation map");
+				require(track.articulationMap == 0 || project.articulationMaps.count(track.articulationMap) != 0,
+					"no articulation map " + std::to_string(track.articulationMap));
+			}
 			if (parameters.contains("enabled"))
 			{
 				const bool enabled = parameters.at("enabled").get<bool>();
@@ -1477,6 +1487,13 @@ namespace gnubase::engine
 			Track copy = project.trackById.at(id);
 			copy.id = project.newId();
 			copy.parent = parent;
+			// A copy follows the chord track as its original does.
+			if (const auto follow = project.chords.follow.find(id); follow != project.chords.follow.end())
+			{
+				ChordFollow settings = follow->second;
+				project.chords.follow[copy.id] = std::move(settings);
+				added.emplace_back("chord.changed", Json());
+			}
 			copy.children.clear();
 			for (TrackVersion& version : copy.versions)
 				version = copyVersion(project, version, copy.id);
@@ -1629,6 +1646,8 @@ namespace gnubase::engine
 			{
 				if (name == "track.added" && data.at("track").at("channel") != 0)
 					data["channel"] = toJson(project.channels.at(data.at("track").at("channel").get<ObjectId>()));
+				if (name == "chord.changed")
+					data = chordJson(project);
 				context.emit(name, data);
 			}
 			return {{"track", toJson(project.trackById.at(copy))}};
@@ -1680,6 +1699,19 @@ namespace gnubase::engine
 					project.chords = ChordTrack();
 					context.emit("chord.changed", chordJson(project));
 				}
+				// Its Follow Chord Track settings go with it, and so does its place as an audition track or master.
+				ChordTrack& chords = project.chords;
+				bool chordsChanged = chords.follow.erase(removed) != 0 || chords.audition == removed;
+				if (chords.audition == removed)
+					chords.audition = 0;
+				for (auto& [follower, follow] : chords.follow)
+					if (follow.master == removed)
+					{
+						follow.master = 0;
+						chordsChanged = true;
+					}
+				if (chordsChanged)
+					context.emit("chord.changed", chordJson(project));
 				if (gone.channel != 0)
 					for (const ObjectId slot : project.channels.at(gone.channel).slots)
 						project.slots.erase(slot);
@@ -2960,6 +2992,7 @@ namespace gnubase::engine
 					note.probability = unitValue(item, "probability", name);
 				note.velocityVariance = item.value("velocityVariance", 0.0);
 				require(std::abs(note.velocityVariance) <= 1.0, name + ".velocityVariance must be -1 to 1");
+				note.articulations = item.value("articulations", std::vector<std::string>());
 				notes.push_back(note);
 			}
 			Json added = Json::array();
@@ -2979,8 +3012,8 @@ namespace gnubase::engine
 		const std::optional<ControllerType> parsed =
 			controllerTypeFromName(item.value("type", std::string("controller")));
 		if (!parsed.has_value())
-			throw CommandError(
-				name + ".type must be controller, pitchBend, channelPressure, polyPressure, program or sysEx");
+			throw CommandError(name +
+				".type must be controller, pitchBend, channelPressure, polyPressure, program, sysEx or articulation");
 		const ControllerType type = *parsed;
 		const auto needs = [&](const char* key) { require(item.contains(key), name + "." + key + " is required"); };
 		const bool numbered =
@@ -2990,7 +3023,12 @@ namespace gnubase::engine
 			needs("number");
 			requireRange(item.at("number").get<int64_t>(), 0, 127, name + ".number");
 		}
-		if (type != ControllerType::Program && type != ControllerType::SysEx)
+		if (type == ControllerType::Articulation)
+		{
+			needs("articulation");
+			require(!item.at("articulation").get<std::string>().empty(), name + ".articulation must not be empty");
+		}
+		else if (type != ControllerType::Program && type != ControllerType::SysEx)
 		{
 			needs("value");
 			unitValue(item, "value", name);
@@ -3268,6 +3306,9 @@ namespace gnubase::engine
 			{"chord.follow", "Follow chord track"},
 			{"chord.toMidi", "Chords to MIDI"},
 			{"chord.fromMidi", "Create chord events"},
+			{"chord.fromAudio", "Create chord events from audio"},
+			{"chord.map", "Map to chord track"},
+			{"chord.assignVoices", "Assign voices to notes"},
 			{"chordPads.set", "Change chord pads"},
 			{"chordPads.assign", "Assign chords to pads"},
 			{"chordPads.modify", "Modify chord pads"},
@@ -3368,6 +3409,7 @@ namespace gnubase::engine
 			announceObjects(change.markers, direction, "marker", "marker", context);
 			announceObjects(change.linkGroups, direction, "linkGroup", "group", context);
 			announceObjects(change.drumMaps, direction, "drumMap", "map", context);
+			announceObjects(change.articulationMaps, direction, "articulationMap", "map", context);
 			// Slots as plugin.insert, plugin.remove and the other plugin.* commands announce them. Those of a channel
 			// that came or went are in its events.
 			std::set<ObjectId> channels; // that came or went
@@ -4061,11 +4103,13 @@ namespace gnubase::engine
 				"disconnected keep their routing. With the user setting editing.applyFolderColor, a folder's new "
 				"color goes to the tracks inside it. picture is an image file (PNG, JPEG or SVG) that the mixer shows "
 				"on the track's channel, or empty for none. drumMap is the drum map (drumMap.add) a MIDI or instrument "
-				"track's notes play through, or 0 for none.",
-				objectSchema({{"track", idSchema}, {"name", stringSchema}, {"color", color}, {"timeBase", timeBases},
-								 {"timeFormat", timeFormats}, {"timeOffset", positionSchema},
-								 {"timeOffsetOn", booleanSchema}, {"enabled", booleanSchema},
-								 {"groupChannel", booleanSchema}, {"picture", stringSchema}, {"drumMap", idSchema}},
+				"track's notes play through, or 0 for none; articulationMap its articulation map "
+				"(articulationMap.add), or 0 for none.",
+				objectSchema(
+					{{"track", idSchema}, {"name", stringSchema}, {"color", color}, {"timeBase", timeBases},
+						{"timeFormat", timeFormats}, {"timeOffset", positionSchema}, {"timeOffsetOn", booleanSchema},
+						{"enabled", booleanSchema}, {"groupChannel", booleanSchema}, {"picture", stringSchema},
+						{"drumMap", idSchema}, {"articulationMap", idSchema}},
 					{"track"}),
 				resultSchema({"track"}), false},
 			setTrack);
@@ -4393,14 +4437,17 @@ namespace gnubase::engine
 		const Json note =
 			objectSchema({{"position", integerSchema}, {"length", integerSchema}, {"pitch", integerSchema},
 							 {"velocity", numberSchema}, {"releaseVelocity", numberSchema}, {"channel", integerSchema},
-							 {"probability", numberSchema}, {"velocityVariance", numberSchema}},
+							 {"probability", numberSchema}, {"velocityVariance", numberSchema},
+							 {"articulations", arraySchema(stringSchema)}},
 				{"position", "length", "pitch", "velocity"});
 		add(engine,
 			{"note.add", 1,
 				"Adds notes to a MIDI part: position from the part's start and length in ticks, pitch 0-127, velocity "
 				"0-1, release (note-off) velocity 0-1 (default 0.5), MIDI channel 0-15 (default 0), play probability "
 				"0-1, the chance that the note plays (default 1), and velocity variance -1 to 1, the share by which "
-				"playback raises (positive) or lowers (negative) its velocity at most (default 0).",
+				"playback raises (positive) or lowers (negative) its velocity at most (default 0). articulations are "
+				"the "
+				"attributes of the track's articulation map (articulationMap.add) that the note has, by name.",
 				objectSchema({{"part", idSchema}, {"notes", arraySchema(note)}}, {"part", "notes"}),
 				{{"type", "object"}, {"properties", {{"notes", {{"type", "array"}}}}}, {"required", {"notes"}}}, false},
 			addNotes);
@@ -4414,9 +4461,10 @@ namespace gnubase::engine
 		const Json controller = objectSchema(
 			{{"position", integerSchema},
 				{"type",
-					enumSchema({"controller", "pitchBend", "channelPressure", "polyPressure", "program", "sysEx"})},
+					enumSchema({"controller", "pitchBend", "channelPressure", "polyPressure", "program", "sysEx",
+						"articulation"})},
 				{"number", integerSchema}, {"value", numberSchema}, {"channel", integerSchema}, {"bank", integerSchema},
-				{"data", arraySchema(integerSchema)}},
+				{"data", arraySchema(integerSchema)}, {"articulation", stringSchema}, {"reset", booleanSchema}},
 			{"position"});
 		add(engine,
 			{"controller.add", 1,
@@ -4424,7 +4472,9 @@ namespace gnubase::engine
 				"(default 0). type (default controller) says what else an event has: controller: number 0-127 and "
 				"value 0-1; pitchBend: value 0-1, 0.5 is no bend; channelPressure: value; polyPressure: number (the "
 				"pitch) and value; program: number (the program) and optionally bank 0-16383; sysEx: data, the "
-				"message's bytes from 0xF0 to 0xF7.",
+				"message's bytes from 0xF0 to 0xF7; articulation: a direction of the track's articulation map "
+				"(articulationMap.add), articulation its name and reset (default false) whether it ends the "
+				"directions of its group instead; it plays nothing itself.",
 				objectSchema({{"part", idSchema}, {"controllers", arraySchema(controller)}}, {"part", "controllers"}),
 				{{"type", "object"}, {"properties", {{"controllers", {{"type", "array"}}}}},
 					{"required", {"controllers"}}},
@@ -4469,6 +4519,7 @@ namespace gnubase::engine
 		registerLinkGroupCommands(*this, engine);
 		registerTrackVersionCommands(*this, engine);
 		midi::registerDrumMapCommands(*this, engine);
+		midi::registerArticulationMapCommands(*this, engine);
 		registerChannelSettingsCommands(*this, engine);
 		registerTrackPresetCommands(*this, engine);
 		registerEditorCommands(*this, engine);
@@ -4610,6 +4661,11 @@ namespace gnubase::engine
 			});
 	}
 
+	std::string ProjectModel::backupName() const
+	{
+		return safeFileName(m_file.empty() ? m_project.name : projectFileStem(std::filesystem::u8path(m_file)));
+	}
+
 	void ProjectModel::registerMediaFolderCommands(Engine& engine, Jobs& jobs)
 	{
 		const Json stringSchema = {{"type", "string"}};
@@ -4620,19 +4676,23 @@ namespace gnubase::engine
 		add(engine,
 			{"project.location", 1,
 				"Where the project is: its project file (set by project.save and project.load), the folder of that "
-				"file, and the media folder in it where media.add with copy and media.prepareArchive put audio files. "
-				"All null for a project that has no file yet.",
+				"file, and the media folder in it where media.add with copy and media.prepareArchive put audio files, "
+				"all null for a project that has no file yet; and name, which project.backup names the backup by "
+				"default: the project file's name without the .dawproject extension, or else the project's name, "
+				"either made a name that files can have on every platform.",
 				objectSchema(Json::object()),
-				objectSchema({{"file", nullableString}, {"folder", nullableString}, {"mediaFolder", nullableString}},
-					{"file", "folder", "mediaFolder"}),
+				objectSchema({{"file", nullableString}, {"folder", nullableString}, {"mediaFolder", nullableString},
+								 {"name", stringSchema}},
+					{"file", "folder", "mediaFolder", "name"}),
 				true},
 			[this](Project&, CommandContext&)
 			{
 				if (m_file.empty())
-					return Json{{"file", nullptr}, {"folder", nullptr}, {"mediaFolder", nullptr}};
+					return Json{
+						{"file", nullptr}, {"folder", nullptr}, {"mediaFolder", nullptr}, {"name", backupName()}};
 				const std::filesystem::path file = std::filesystem::u8path(m_file);
 				return Json{{"file", m_file}, {"folder", file.parent_path().u8string()},
-					{"mediaFolder", mediaFolderFor(file).u8string()}};
+					{"mediaFolder", mediaFolderFor(file).u8string()}, {"name", backupName()}};
 			});
 
 		const Json integerSchema = {{"type", "integer"}};
@@ -4695,9 +4755,9 @@ namespace gnubase::engine
 				"job.progress and job.finished events follow, and job.cancel stops it and removes what it wrote. A "
 				"folder that a running job writes into can't be used. The job's result is {file, files, missing, "
 				"activated, activationError}: missing lists the media files ({media, path}) and freeze files ({track, "
-				"path}) that couldn't be read and keep their old paths; activated says whether the backup was opened, "
-				"and activationError why not, if it was asked "
-				"to be.",
+				"path}) that couldn't be read and keep their old paths, and the files and folders of the Mixdown "
+				"folder ({path}) that couldn't be read and were left out; activated says whether the backup was "
+				"opened, and activationError why not, if it was asked to be.",
 				objectSchema({{"folder", stringSchema}, {"name", stringSchema}, {"minimize", booleanSchema},
 								 {"handles", numberSchema}, {"removeUnused", booleanSchema},
 								 {"currentVersionsOnly", booleanSchema}, {"skipVideo", booleanSchema},
@@ -4730,8 +4790,7 @@ namespace gnubase::engine
 				}
 				else
 				{
-					options.name = safeFileName(
-						m_file.empty() ? m_project.name : projectFileStem(std::filesystem::u8path(m_file)));
+					options.name = backupName();
 				}
 				options.minimize = parameters.value("minimize", false);
 				options.handles = parameters.value("handles", 1.0);

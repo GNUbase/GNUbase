@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "testutils/testutils.h"
 
+#include <miniz.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -10,6 +12,15 @@
 #include <random>
 #include <sstream>
 #include <stdexcept>
+#include <utility>
+
+#ifdef _WIN32
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <sys/stat.h>
+#endif
 
 namespace gnubase::test
 {
@@ -264,8 +275,78 @@ namespace gnubase::test
 		return text.str();
 	}
 
+	Unreadable::Unreadable(std::filesystem::path file) : m_file(std::move(file))
+	{
+#ifdef _WIN32
+		HANDLE handle =
+			CreateFileW(m_file.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+		m_active = handle != INVALID_HANDLE_VALUE;
+		m_handle = handle;
+#else
+		m_active = ::chmod(m_file.c_str(), 0) == 0;
+		if (m_active && std::ifstream(m_file).good())
+			release(); // root reads anything
+#endif
+	}
+
+	Unreadable::~Unreadable()
+	{
+		release();
+	}
+
+	void Unreadable::release()
+	{
+		if (!m_active)
+			return;
+		m_active = false;
+#ifdef _WIN32
+		CloseHandle(m_handle);
+#else
+		::chmod(m_file.c_str(), S_IRUSR | S_IWUSR);
+#endif
+	}
+
 	std::filesystem::path outputDirectory()
 	{
 		return GNUBASE_TEST_OUTPUT_DIR;
+	}
+
+	std::map<std::string, std::string> readZip(const std::string& path)
+	{
+		mz_zip_archive zip{};
+		if (mz_zip_reader_init_file(&zip, path.c_str(), 0) == MZ_FALSE)
+			throw std::runtime_error(path + " is not a zip archive");
+		std::map<std::string, std::string> entries;
+		for (mz_uint i = 0; i < mz_zip_reader_get_num_files(&zip); ++i)
+		{
+			char name[512];
+			mz_zip_reader_get_filename(&zip, i, name, sizeof name);
+			size_t size = 0;
+			void* data = mz_zip_reader_extract_to_heap(&zip, i, &size, 0);
+			if (data == nullptr)
+			{
+				mz_zip_reader_end(&zip);
+				throw std::runtime_error(path + ": cannot read " + name);
+			}
+			entries[name] = std::string(static_cast<const char*>(data), size);
+			mz_free(data);
+		}
+		mz_zip_reader_end(&zip);
+		return entries;
+	}
+
+	void writeZip(const std::string& path, const std::map<std::string, std::string>& entries)
+	{
+		mz_zip_archive zip{};
+		if (mz_zip_writer_init_file(&zip, path.c_str(), 0) == MZ_FALSE)
+			throw std::runtime_error("cannot write " + path);
+		bool written = true;
+		for (const auto& [name, data] : entries)
+			written = written &&
+				mz_zip_writer_add_mem(&zip, name.c_str(), data.data(), data.size(), MZ_DEFAULT_LEVEL) != MZ_FALSE;
+		written = written && mz_zip_writer_finalize_archive(&zip) != MZ_FALSE;
+		mz_zip_writer_end(&zip);
+		if (!written)
+			throw std::runtime_error("cannot write " + path);
 	}
 }

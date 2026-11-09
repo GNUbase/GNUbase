@@ -1,0 +1,56 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The Map to Chord Track dialog (docs/features/chord-track.md, reference manual p. 1341): ui::TrackList opens it with
+     Project > Chord Track > Map to Chord Track for the selected MIDI and instrument tracks, and on OK moves the notes
+     of their parts to the chord track's chords with chord.map in the mapping mode chosen. -->
+<rml>
+<head>
+	<title>Map to Chord Track</title>
+	<style>
+		dialog
+		{
+			width: 300dp;
+		}
+
+		.row
+		{
+			display: flex;
+			align-items: center;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.row label
+		{
+			flex: 1;
+		}
+
+		.buttons
+		{
+			justify-content: flex-end;
+		}
+
+		.buttons button
+		{
+			margin-left: 6dp;
+		}
+	</style>
+</head>
+<body>
+	<dialog id="map-to-chord-track-dialog">
+		<div class="dialog-titlebar">Map to Chord Track</div>
+		<div class="row">
+			<label for="map-chord-mode">Mapping Mode</label>
+			<select id="map-chord-mode">
+				<option value="chordsAndScales" selected="">Chords &amp; Scales</option>
+				<option value="chords">Chords</option>
+				<option value="scales">Scales</option>
+				<option value="rootNotes">Root Notes</option>
+				<option value="voicings">Voicings</option>
+			</select>
+		</div>
+		<div class="row buttons">
+			<button result="cancel">Cancel</button>
+			<button id="map-to-chord-track" class="primary" result="ok">OK</button>
+		</div>
+	</dialog>
+</body>
+</rml>

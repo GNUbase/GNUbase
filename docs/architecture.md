@@ -87,6 +87,7 @@ flowchart TD
 | Plugin control | Reads the replies and notifications of one host process and watches the process; main-thread calls to its plugins (loading, state, presets, editors, [plugin-api.md](plugin-api.md#threading-rules)) wait for their replies with a timeout | One per host process connection |
 | Plugin jobs | Everything that waits for a plugin host: starting host processes, creating, activating and moving plugins, states, fetching what plugins' notifications changed (`HostManager::run`) | One, so jobs run in order; host processes are started only here, since on Linux a host ends with the thread that started it |
 | Plugin monitor | Notices remote plugins that failed and has the engine report them | Low priority, every 20 ms |
+| Plugin retirer | Waits until the audio thread runs a graph without the slots' plugins that left it, then queues their deactivation, reactivation or destruction as plugin jobs (`SlotInstances`, [plugin slots](features/plugin-slots.md)) | Sleeps on a semaphore that the audio thread releases when it starts a newer graph; never polls |
 | Background threads | Peak files (the peak cache's worker), analysis, saving projects, plugin scan coordination | Low priority |
 | Job threads | Background jobs such as backups, one thread each (`src/engine/jobs`) | Normal priority, never wait for the command thread |
 | Log writer | Writes what audio threads logged, every 10 ms (#8) | Low priority |
@@ -97,7 +98,8 @@ Data moves between threads only through:
 
 - lock-free queues: commands to the engine, events to clients, messages to the audio thread (#14);
 - immutable render snapshots, published with an atomic pointer swap; the command thread frees an old snapshot once the audio thread no longer uses it;
-- triple buffers for continuous values such as meters and the playback position, read by the UI once per frame;
+- triple buffers for continuous values read as a whole, such as the performance data;
+- atomics per value for the meters, each peak held until the reader takes it (`engine/audio/meters.h`), which the UI reads once per frame, so one reading can hold values from different blocks;
 - sequence locks (`rt::SeqLockPair`) for values that several threads must read together, such as the transport cursor and the locate still waiting for the audio thread, which the command and cue threads read: the writer never waits, a reader retries while a store is under way.
 
 ## Logging and crash reports

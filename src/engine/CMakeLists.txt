@@ -181,6 +181,7 @@ add_library(gnubase-engine STATIC
 	metronome/metronome.cpp metronome/metronome.h
 	metronome/metronomecommands.cpp metronome/metronomecommands.h
 	metronome/metronomesettings.cpp metronome/metronomesettings.h
+	midi/articulationmaps.cpp midi/articulationmaps.h
 	midi/chords.cpp midi/chords.h
 	midi/controllerlanes.cpp midi/controllerlanes.h
 	midi/devices.cpp midi/devices.h

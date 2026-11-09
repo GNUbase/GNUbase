@@ -70,6 +70,9 @@ one it has the class `empty` and says "No Track Selected".
                                    select[control=device], textdisplay[control=bank], select[control=program]
     [section=modifiers]            MIDI and instrument tracks: button[control=modifiers-bypass], valuefields and the
                                    random generators' and ranges' select[control=modifiers-random-0-target] etc.
+    [section=chords]               MIDI and instrument tracks with a chord track: select[control=followChords]
+    [section=articulations]        MIDI and instrument tracks: select[control=articulationMap],
+                                   button.inspector-articulation-setup
     [section=inserts]              .insert per plugin slot, .bypassed and .inactive
     [section=notepad]              textarea.notepad
 ```
@@ -101,7 +104,13 @@ one it has the class `empty` and says "No Track Selected".
   held arrow key on a value are one undo step, and a value the engine refuses, such as a minimum above the maximum,
   shows as it is again.
 - **Chords** (pp. 1338-1340, [chord-track.md](chord-track.md)): MIDI and instrument tracks' Follow Chord Track
-  (`chord.follow` `mode`), while the project has a chord track.
+  (`chord.follow` `mode`), with Single Voice its voice and master, This Track's Voicings and Live Input, while the
+  project has a chord track.
+- **Chord Track** (pp. 1329, 1333-1335): the chord track's Adaptive Voicings, Automatic Scales, Acoustic Feedback,
+  voicing library and subset, Octave Offset, the piano's Custom Voicing options and range, and Shift Chords
+  (`chord.setTrack`).
+- **Articulation Map** (pp. 1263, 1286, [articulation-maps.md](articulation-maps.md)): MIDI and instrument tracks'
+  map, or No Map (`track.set` `articulationMap`), and Setup..., which opens the articulation map setup for the track.
 - **Inserts**: an overview of the channel's plugin slots by name, top to bottom (`plugin.*` changes them).
 - **Notepad** (p. 168): the channel's notes. What is typed goes to the engine when the field loses the focus, also
   with Escape (`channel.set` `notes`, one undo step). When another track shows while the notepad or the name is being

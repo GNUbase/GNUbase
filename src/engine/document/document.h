@@ -589,6 +589,8 @@ namespace gnubase::engine
 		std::optional<QuantizeOrigin> origin;                // set while the note is quantized
 		double probability = 1.0;                            // 0-1, the chance that it plays (#128)
 		double velocityVariance = 0.0; // -1 to 1, how far playback varies the velocity, up or down (#128)
+		// The attributes of the track's articulation map that the note has, by name (#175)
+		std::vector<std::string> articulations;
 	};
 
 	// The MIDI events besides notes, all held as controller events.
@@ -600,6 +602,9 @@ namespace gnubase::engine
 		PolyPressure,    // number is the pitch; value
 		Program,         // number is the program; value is the bank, or g_noBank
 		SysEx,           // data is the whole message, from 0xF0 to 0xF7
+		// A direction of the track's articulation map (#175): articulation is its name; value 1 makes it a reset
+		// event, which ends the directions of its group. Plays nothing itself.
+		Articulation,
 	};
 
 	inline constexpr uint32_t g_noBank = 0xFFFFFFFFU;
@@ -614,6 +619,7 @@ namespace gnubase::engine
 		uint32_t value = 0;        // 0-4294967295
 		uint8_t channel = 0;       // 0-15
 		std::vector<uint8_t> data; // SysEx
+		std::string articulation;  // Articulation
 	};
 
 	// Holds notes and controllers on an instrument or MIDI track. Notes and controllers outside it are not played.
@@ -700,7 +706,8 @@ namespace gnubase::engine
 		// Audio and instrument tracks: what plays while the track is frozen, or none. Initialized like picture.
 		// NOLINTNEXTLINE(readability-redundant-member-init): see above
 		std::optional<Freeze> frozen = {};
-		ObjectId drumMap = 0; // MIDI and instrument tracks: the drum map their notes play through, or 0 (#129)
+		ObjectId drumMap = 0;         // MIDI and instrument tracks: the drum map their notes play through, or 0 (#129)
+		ObjectId articulationMap = 0; // MIDI and instrument tracks: their articulation map, or 0 (#175)
 		// Audio, instrument and MIDI tracks: their versions in the order they were made; none for a track that has
 		// only its first one, v1 with ID 1 (versionsOf). Initialized like picture.
 		// NOLINTNEXTLINE(readability-redundant-member-init): see above
@@ -814,6 +821,10 @@ namespace gnubase::engine
 		ObjectId id = 0;
 		time::Position position;
 		std::string text;
+		// A chord event made from an audio event (reference manual pp. 1327, 1343-1344): the audio event, and the
+		// chords detected there, the most likely first; none for other events.
+		ObjectId audioEvent = 0;
+		std::vector<std::string> detected;
 	};
 
 	// The harmony a track's notes were played in when it began to follow the chord track (reference manual p. 1341):
@@ -830,6 +841,27 @@ namespace gnubase::engine
 	{
 		std::string mode = "off";
 		std::vector<ChordSource> source;
+		// This Track's Voicings (p. 1338): "chordTrack" (the chord track's voicings) or a library, "basic", "piano"
+		// or "guitar"; the voice of Single Voice, 0 soprano to 3 bass; and the track whose voicings a Single Voice
+		// track takes as its master, 0 for its own.
+		std::string voicings = "chordTrack";
+		int voice = 0;
+		ObjectId master = 0;
+		// Live Input (p. 1338): "off", "chords" or "scales", what the notes played into the track move to.
+		std::string liveInput = "off";
+	};
+
+	// The chord track's voicing library (reference manual pp. 1333-1335), as midi::VoicingStyle has it.
+	struct ChordVoicing
+	{
+		std::string library = "basic";
+		std::string style;
+		bool addRoot = true;
+		bool duplicateRoot = false;
+		bool fattenUp = false;
+		int lowestRoot = 36;
+		int lowest = 52;
+		int highest = 84;
 	};
 
 	// The chord track's events and settings (reference manual pp. 1319-1345).
@@ -841,6 +873,13 @@ namespace gnubase::engine
 		bool adaptiveVoicings = true;           // voicings that move the voices the least
 		bool automaticScales = true;            // each chord event's scale is its chord's, not the scale events'
 		std::map<ObjectId, ChordFollow> follow; // by MIDI or instrument track
+		ChordVoicing voicing;                   // the voicing library; basic uses octaveOffset only
+		time::Ticks shiftChords = 0;            // Shift Chords: where the chord events take effect, from them
+		bool mute = false;                      // Mute Chord Track: no track follows it and nothing auditions
+		bool showScales = false;                // Show Scales: the scale lane shows
+		bool recordEnable = false;              // recorded MIDI notes become chord events
+		ObjectId audition = 0;                  // Select Track for Auditioning: a MIDI or instrument track, or 0
+		bool acousticFeedback = false;          // the chord events play on the audition track
 	};
 
 	// A chord pad (#174, reference manual pp. 1352-1353): its chord's name (midi::chordName), empty while unassigned;
@@ -995,6 +1034,86 @@ namespace gnubase::engine
 		return std::tie(a.id, a.name, a.sounds, a.order) == std::tie(b.id, b.name, b.sounds, b.order);
 	}
 
+	// Articulation maps (#175, reference manual pp. 1262-1292, docs/features/articulation-maps.md).
+	enum class ArticulationType : uint8_t
+	{
+		Attribute, // valid for single notes: notes have them
+		Direction, // valid from its position to the next direction of its group: articulation controller events
+	};
+
+	struct Articulation
+	{
+		std::string name; // unique in its map
+		ArticulationType type = ArticulationType::Direction;
+		int group = 0; // its mutual exclusion group: an index into the map's groups
+	};
+
+	inline bool operator==(const Articulation& a, const Articulation& b)
+	{
+		return std::tie(a.name, a.type, a.group) == std::tie(b.name, b.type, b.group);
+	}
+
+	// What an output mapping sends: a note (a key switch), a control change or a program change.
+	enum class OutputStatus : uint8_t
+	{
+		Note,
+		Controller,
+		Program,
+	};
+
+	struct OutputEvent
+	{
+		OutputStatus status = OutputStatus::Note;
+		uint8_t data1 = 0; // the pitch, the controller number or the program
+		uint8_t data2 = 0; // the velocity or the controller value
+		bool off = false;  // sent when the slot ends instead of when it starts
+	};
+
+	inline bool operator==(const OutputEvent& a, const OutputEvent& b)
+	{
+		return std::tie(a.status, a.data1, a.data2, a.off) == std::tie(b.status, b.data1, b.data2, b.off);
+	}
+
+	// A sound slot: the sound that notes with its articulations play, the output events that switch the instrument
+	// to it and the MIDI modifiers it applies to the notes.
+	struct SoundSlot
+	{
+		std::string name;
+		std::string color;                      // "#rrggbb", or empty
+		std::vector<std::string> articulations; // by name, at most one of each group
+		int trigger = -1;                       // the remote trigger: a key or a program, 0-127; -1 for none
+		std::vector<OutputEvent> outputs;
+		int channel = -1;   // 0-15, the channel the notes play on; -1: their own
+		int length = 100;   // percent of the notes' length
+		int velocity = 100; // percent of the notes' velocity
+		int transpose = 0;  // semitones
+	};
+
+	inline bool operator==(const SoundSlot& a, const SoundSlot& b)
+	{
+		return std::tie(a.name, a.color, a.articulations, a.trigger, a.outputs, a.channel, a.length, a.velocity,
+				   a.transpose) ==
+			std::tie(
+				b.name, b.color, b.articulations, b.trigger, b.outputs, b.channel, b.length, b.velocity, b.transpose);
+	}
+
+	struct ArticulationMap
+	{
+		ObjectId id = 0;
+		std::string name;
+		std::vector<std::string> groups; // the mutual exclusion groups, the first the most important; at least one
+		std::vector<Articulation> articulations;
+		std::vector<SoundSlot> slots; // the first is the default slot
+		bool programTriggers = false; // remote triggers are program changes instead of key switches
+		bool latch = true;            // a key switch's slot stays after its key's release
+	};
+
+	inline bool operator==(const ArticulationMap& a, const ArticulationMap& b)
+	{
+		return std::tie(a.id, a.name, a.groups, a.articulations, a.slots, a.programTriggers, a.latch) ==
+			std::tie(b.id, b.name, b.groups, b.articulations, b.slots, b.programTriggers, b.latch);
+	}
+
 	// A color of the project's color set (reference manual pp. 115-118), which colors are picked from.
 	struct ProjectColor
 	{
@@ -1126,6 +1245,7 @@ namespace gnubase::engine
 		ChordTrack chords;                    // the chord track's (#173); reset when the track goes
 		ChordPads chordPads;                  // the chord pads (#174)
 		std::map<ObjectId, DrumMap> drumMaps; // a new project has the GM Map (#129)
+		std::map<ObjectId, ArticulationMap> articulationMaps; // (#175)
 		// The project input transformer's modules, which the MIDI and instrument tracks whose input transformer is in
 		// project mode share (#178).
 		midi::InputTransformerModules inputTransformer;
@@ -1388,15 +1508,15 @@ namespace gnubase::engine
 	inline bool operator==(const Note& a, const Note& b)
 	{
 		return std::tie(a.id, a.position, a.length, a.pitch, a.velocity, a.channel, a.releaseVelocity, a.origin,
-				   a.probability, a.velocityVariance) ==
+				   a.probability, a.velocityVariance, a.articulations) ==
 			std::tie(b.id, b.position, b.length, b.pitch, b.velocity, b.channel, b.releaseVelocity, b.origin,
-				b.probability, b.velocityVariance);
+				b.probability, b.velocityVariance, b.articulations);
 	}
 
 	inline bool operator==(const Controller& a, const Controller& b)
 	{
-		return std::tie(a.id, a.position, a.type, a.number, a.value, a.channel, a.data) ==
-			std::tie(b.id, b.position, b.type, b.number, b.value, b.channel, b.data);
+		return std::tie(a.id, a.position, a.type, a.number, a.value, a.channel, a.data, a.articulation) ==
+			std::tie(b.id, b.position, b.type, b.number, b.value, b.channel, b.data, b.articulation);
 	}
 
 	// A MIDI part's own properties, without its notes and controllers.
@@ -1451,7 +1571,8 @@ namespace gnubase::engine
 
 	inline bool operator==(const ChordEvent& a, const ChordEvent& b)
 	{
-		return std::tie(a.id, a.position, a.text) == std::tie(b.id, b.position, b.text);
+		return std::tie(a.id, a.position, a.text, a.audioEvent, a.detected) ==
+			std::tie(b.id, b.position, b.text, b.audioEvent, b.detected);
 	}
 
 	inline bool operator==(const ChordSource& a, const ChordSource& b)
@@ -1461,13 +1582,23 @@ namespace gnubase::engine
 
 	inline bool operator==(const ChordFollow& a, const ChordFollow& b)
 	{
-		return std::tie(a.mode, a.source) == std::tie(b.mode, b.source);
+		return std::tie(a.mode, a.source, a.voicings, a.voice, a.master, a.liveInput) ==
+			std::tie(b.mode, b.source, b.voicings, b.voice, b.master, b.liveInput);
+	}
+
+	inline bool operator==(const ChordVoicing& a, const ChordVoicing& b)
+	{
+		return std::tie(
+				   a.library, a.style, a.addRoot, a.duplicateRoot, a.fattenUp, a.lowestRoot, a.lowest, a.highest) ==
+			std::tie(b.library, b.style, b.addRoot, b.duplicateRoot, b.fattenUp, b.lowestRoot, b.lowest, b.highest);
 	}
 
 	inline bool operator==(const ChordTrack& a, const ChordTrack& b)
 	{
-		return std::tie(a.events, a.scales, a.octaveOffset, a.adaptiveVoicings, a.automaticScales, a.follow) ==
-			std::tie(b.events, b.scales, b.octaveOffset, b.adaptiveVoicings, b.automaticScales, b.follow);
+		return std::tie(a.events, a.scales, a.octaveOffset, a.adaptiveVoicings, a.automaticScales, a.follow, a.voicing,
+				   a.shiftChords, a.mute, a.showScales, a.recordEnable, a.audition, a.acousticFeedback) ==
+			std::tie(b.events, b.scales, b.octaveOffset, b.adaptiveVoicings, b.automaticScales, b.follow, b.voicing,
+				b.shiftChords, b.mute, b.showScales, b.recordEnable, b.audition, b.acousticFeedback);
 	}
 
 	inline bool operator==(const ChordPad& a, const ChordPad& b)
@@ -1504,11 +1635,11 @@ namespace gnubase::engine
 	inline bool operator==(const Track& a, const Track& b)
 	{
 		return std::tie(a.id, a.type, a.name, a.color, a.timeBase, a.parent, a.channel, a.children, a.autoFades,
-				   a.timeFormat, a.enabled, a.picture, a.timeOffset, a.timeOffsetOn, a.frozen, a.drumMap, a.versions,
-				   a.activeVersion) ==
+				   a.timeFormat, a.enabled, a.picture, a.timeOffset, a.timeOffsetOn, a.frozen, a.drumMap,
+				   a.articulationMap, a.versions, a.activeVersion) ==
 			std::tie(b.id, b.type, b.name, b.color, b.timeBase, b.parent, b.channel, b.children, b.autoFades,
-				b.timeFormat, b.enabled, b.picture, b.timeOffset, b.timeOffsetOn, b.frozen, b.drumMap, b.versions,
-				b.activeVersion);
+				b.timeFormat, b.enabled, b.picture, b.timeOffset, b.timeOffsetOn, b.frozen, b.drumMap,
+				b.articulationMap, b.versions, b.activeVersion);
 	}
 	// Where an audio event plays, in the project's samples (fadeedits.cpp).
 	struct EventSpan

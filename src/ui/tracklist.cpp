@@ -64,6 +64,21 @@ namespace gnubase::ui
 			return control == "transposeMute" || control == "keepInOctave" || control == "transposeLock";
 		}
 
+		// The chord track's controls (reference manual pp. 165-166), besides Switch Time Base.
+		bool chordControl(const std::string& control)
+		{
+			return control == "chordRecord" || control == "chordMute" || control == "chordAudition" ||
+				control == "showScales";
+		}
+
+		// What chord.setTrack calls a chord track button.
+		std::string chordKey(const std::string& control)
+		{
+			if (control == "chordRecord")
+				return "recordEnable";
+			return control == "chordMute" ? "mute" : "showScales";
+		}
+
 		// What transpose.setTrack calls a transpose track control.
 		std::string transposeKey(const std::string& control)
 		{
@@ -108,6 +123,8 @@ namespace gnubase::ui
 				return type == "tempo" && tempoControl;
 			if (type == "transpose" || transposeControl(control))
 				return type == "transpose" && (transposeControl(control) || control == "timeBase");
+			if (type == "chord" || chordControl(control))
+				return type == "chord" && (chordControl(control) || control == "timeBase");
 			if (!hasChannel)
 				return control == "timeBase" && type != "folder" && type != "ruler" && type != "signature";
 			if (control == "record" || control == "monitor")
@@ -129,6 +146,8 @@ namespace gnubase::ui
 					   R"(<option value="auto">Auto</option></select>)";
 			if (control == "timeFormat")
 				return R"(<select class="time-format" control="timeFormat" title="Time Format"/>)";
+			if (control == "chordAudition")
+				return R"(<select class="chord-audition" control="chordAudition" title="Select Track for Auditioning"/>)";
 			if (control == "timeOffset")
 				return R"(<textdisplay class="display time-offset" control="timeOffset" title="Time Offset"/>)";
 			if (control == "setTimeOffset")
@@ -141,7 +160,9 @@ namespace gnubase::ui
 				{"read", {"Read Automation", R"(<svg class="icon" src="../icons/track-read-automation.svg"/>)"}},
 				{"timeBase", {"Switch Time Base", "L"}}, {"tempoTrack", {"Activate Tempo Track", "T"}},
 				{"timeOffsetOn", {"Time Offset On/Off", "O"}}, {"transposeMute", {"Mute Transpose Events", "M"}},
-				{"keepInOctave", {"Keep Transpose in Octave Range", "O"}}, {"transposeLock", {"Lock", "L"}}};
+				{"keepInOctave", {"Keep Transpose in Octave Range", "O"}}, {"transposeLock", {"Lock", "L"}},
+				{"chordRecord", {"Record Enable", R"(<svg class="icon" src="../icons/track-record-arm.svg"/>)"}},
+				{"chordMute", {"Mute Chord Track", "M"}}, {"showScales", {"Show Scales", "S"}}};
 			const auto& [title, content] = looks.at(control);
 			return R"(<button class="toggle )" + control + R"(" control=")" + control + R"(" title=")" + title +
 				R"(">)" + content + "</button>";
@@ -315,10 +336,37 @@ namespace gnubase::ui
 			if (const std::vector<uint64_t> tracks = noteTracks(); !tracks.empty())
 				m_binding.send("chord.toMidi", {{"track", tracks.front()}});
 		};
+		// Create Chord Events: from MIDI with the Create Chord Events dialog's options, from the selected audio tracks'
+		// events at once (pp. 1342-1343); Map to Chord Track with its dialog's mode; Assign Voices to Notes (p. 1342).
 		m_actions["track.createChordEventsSelected"] = [this, noteTracks]
 		{
-			if (const std::vector<uint64_t> tracks = noteTracks(); !tracks.empty())
-				m_binding.send("chord.fromMidi", {{"tracks", tracks}});
+			Json events = Json::array();
+			const Json& project = m_display.project();
+			for (const uint64_t track : selection())
+				if (m_tracks[m_index.at(track)].type == "audio" && project.is_object())
+					for (const Json& event : project.at("audioEvents"))
+						if (event.at("track") == track)
+							events.push_back(event.at("id"));
+			if (!events.empty())
+				m_binding.send("chord.fromAudio", {{"events", events}});
+			if (std::vector<uint64_t> tracks = noteTracks(); !tracks.empty())
+				openChordDialog("create-chord-events.rml", std::move(tracks));
+		};
+		m_actions["track.mapToChordTrackSelected"] = [this, noteTracks]
+		{
+			if (std::vector<uint64_t> tracks = noteTracks(); !tracks.empty())
+				openChordDialog("map-to-chord-track.rml", std::move(tracks));
+		};
+		m_actions["track.assignVoicesSelected"] = [this, noteTracks]
+		{
+			Json parts = Json::array();
+			const Json& project = m_display.project();
+			for (const uint64_t track : noteTracks())
+				for (const Json& part : project.at("midiParts"))
+					if (part.at("track") == track)
+						parts.push_back(part.at("id"));
+			if (!parts.empty())
+				m_binding.send("chord.assignVoices", {{"parts", parts}});
 		};
 		for (const bool enabled : {false, true})
 			m_actions[enabled ? "track.enableSelected" : "track.disableSelected"] = [this, enabled]
@@ -550,6 +598,11 @@ namespace gnubase::ui
 		if (auto* dialog = dynamic_cast<Rml::ElementDocument*>(m_removeDialog.get()))
 		{
 			// Nothing removes the tracks any more: the dialog goes too.
+			dialog->RemoveEventListener(g_dialogCloseEvent, this);
+			closeDialog(*dialog, "cancel");
+		}
+		if (auto* dialog = dynamic_cast<Rml::ElementDocument*>(m_chordDialog.get()))
+		{
 			dialog->RemoveEventListener(g_dialogCloseEvent, this);
 			closeDialog(*dialog, "cancel");
 		}
@@ -860,6 +913,18 @@ namespace gnubase::ui
 				}
 				if (name == "setTimeOffset")
 					continue;
+				if (name == "chordAudition")
+				{
+					// Select Track for Auditioning: the MIDI and instrument tracks.
+					widgets::Options options = {{"0", "No Track"}};
+					for (const Json& each : tracks)
+						if (each.at("type") == "midi" || each.at("type") == "instrument")
+							options.emplace_back(
+								std::to_string(each.at("id").get<uint64_t>()), each.at("name").get<std::string>());
+					widgets::fill(
+						*button, options, std::to_string(project.at("chords").value("audition", uint64_t{0})));
+					continue;
+				}
 				bool on = false;
 				if (name == "record")
 					on = channel != nullptr && channel->at("recordEnable").get<bool>();
@@ -871,6 +936,8 @@ namespace gnubase::ui
 					on = track.value("timeOffsetOn", false);
 				else if (transposeControl(name))
 					on = project.at("transpose").value(transposeKey(name), false);
+				else if (chordControl(name))
+					on = project.at("chords").value(chordKey(name), false);
 				else if (name == "read")
 					on = !lanes.empty() && std::all_of(lanes.begin(), lanes.end(), [](bool read) { return read; });
 				else
@@ -1191,6 +1258,11 @@ namespace gnubase::ui
 			closedRemoveDialog(event);
 			return;
 		}
+		if (m_chordDialog && event.GetCurrentElement() == m_chordDialog.get())
+		{
+			closedChordDialog(event);
+			return;
+		}
 		if (!alive())
 			return;
 		if (m_parameterMenu != nullptr && event.GetCurrentElement() == m_parameterMenu)
@@ -1310,6 +1382,13 @@ namespace gnubase::ui
 				if (!m_showingTempo)
 					tempoChanged(*target, event);
 				rulerChange(*target, event.GetParameter<Rml::String>("value", ""));
+				// Select Track for Auditioning.
+				const Json& project = m_display.project();
+				const auto audition = static_cast<uint64_t>(
+					std::strtoull(event.GetParameter<Rml::String>("value", "0").c_str(), nullptr, 10));
+				if (target->GetAttribute<Rml::String>("control", "") == "chordAudition" && project.is_object() &&
+					project.at("chords").value("audition", uint64_t{0}) != audition)
+					m_binding.send("chord.setTrack", {{"audition", audition}});
 			}
 			else if (m_renaming != 0 && target != nullptr && target->GetTagName() == "input" &&
 				event.GetParameter<bool>("linebreak", false))
@@ -1396,6 +1475,12 @@ namespace gnubase::ui
 		{
 			const std::string key = transposeKey(name);
 			m_binding.send("transpose.setTrack", {{key, !project.at("transpose").value(key, false)}});
+			return;
+		}
+		if (chordControl(name) && name != "chordAudition")
+		{
+			const std::string key = chordKey(name);
+			m_binding.send("chord.setTrack", {{key, !project.at("chords").value(key, false)}});
 			return;
 		}
 		if (name == "timeOffsetOn")
@@ -1522,6 +1607,64 @@ namespace gnubase::ui
 		std::copy_if(tracks.begin(), tracks.end(), std::back_inserter(still),
 			[this](uint64_t track) { return m_index.count(track) != 0; });
 		removeTracks(std::move(still));
+	}
+
+	void TrackList::openChordDialog(const char* file, std::vector<uint64_t> tracks)
+	{
+		if (m_chordDialog)
+			return;
+		const std::string path = std::filesystem::u8path(m_root->GetOwnerDocument()->GetSourceURL())
+									 .replace_filename(file)
+									 .generic_u8string();
+		Rml::ElementDocument* dialog = m_root->GetContext()->LoadDocument(path);
+		if (dialog == nullptr)
+		{
+			logging::warning("The track list can't open the dialog {}", path);
+			return;
+		}
+		m_chordTracks = std::move(tracks);
+		m_chordDialog = dialog->GetObserverPtr();
+		dialog->AddEventListener(g_dialogCloseEvent, this);
+		dialog->Show(Rml::ModalFlag::Modal);
+	}
+
+	void TrackList::closedChordDialog(Rml::Event& event)
+	{
+		if (event.GetType() != g_dialogCloseEvent)
+			return;
+		Rml::Element* dialog = m_chordDialog.get();
+		dialog->RemoveEventListener(g_dialogCloseEvent, this);
+		m_chordDialog.reset();
+		const std::vector<uint64_t> tracks = std::exchange(m_chordTracks, {});
+		if (event.GetParameter<Rml::String>("result", "") != "ok" || !alive())
+			return;
+		const auto checked = [dialog](const char* id)
+		{
+			const Rml::Element* box = dialog->GetElementById(id);
+			return box != nullptr && box->HasAttribute("checked");
+		};
+		if (const Rml::Element* length = dialog->GetElementById("chord-events-min-length"))
+		{
+			// Ticks of 480 to a quarter note, as the dialog shows them.
+			const auto shown = static_cast<int64_t>(std::lround(length->GetAttribute<float>("value", 0.0F)));
+			m_binding.send("chord.fromMidi",
+				{{"tracks", tracks}, {"includeBass", checked("chord-events-bass")},
+					{"includeTensions", checked("chord-events-tensions")},
+					{"detectArpeggios", checked("chord-events-arpeggios")},
+					{"sustainPedal", checked("chord-events-sustain")},
+					{"minLength", shown * (time::g_ticksPerQuarter / 480)}});
+		}
+		else if (const auto* mode = dynamic_cast<Rml::ElementFormControl*>(dialog->GetElementById("map-chord-mode")))
+		{
+			Json parts = Json::array();
+			const Json& project = m_display.project();
+			for (const uint64_t track : tracks)
+				for (const Json& part : project.at("midiParts"))
+					if (part.at("track") == track)
+						parts.push_back(part.at("id"));
+			if (!parts.empty())
+				m_binding.send("chord.map", {{"parts", parts}, {"mode", mode->GetValue()}});
+		}
 	}
 
 	void TrackList::removeTracks(std::vector<uint64_t> tracks)

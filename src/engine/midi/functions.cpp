@@ -43,23 +43,29 @@ namespace gnubase::engine::midi
 			ScaleType type;
 			const char* name;
 			int size;
-			std::array<int, 7> steps; // semitones above the root
+			std::array<int, 8> steps; // semitones above the root
 		};
 
 		constexpr ScaleEntry g_scales[] = {
-			{ScaleType::Major, "major", 7, {0, 2, 4, 5, 7, 9, 11}},
-			{ScaleType::Minor, "minor", 7, {0, 2, 3, 5, 7, 8, 10}},
-			{ScaleType::HarmonicMinor, "harmonicMinor", 7, {0, 2, 3, 5, 7, 8, 11}},
-			{ScaleType::MelodicMinor, "melodicMinor", 7, {0, 2, 3, 5, 7, 9, 11}},
-			{ScaleType::Dorian, "dorian", 7, {0, 2, 3, 5, 7, 9, 10}},
-			{ScaleType::Phrygian, "phrygian", 7, {0, 1, 3, 5, 7, 8, 10}},
-			{ScaleType::Lydian, "lydian", 7, {0, 2, 4, 6, 7, 9, 11}},
-			{ScaleType::Mixolydian, "mixolydian", 7, {0, 2, 4, 5, 7, 9, 10}},
-			{ScaleType::Locrian, "locrian", 7, {0, 1, 3, 5, 6, 8, 10}},
-			{ScaleType::MajorPentatonic, "majorPentatonic", 5, {0, 2, 4, 7, 9, 0, 0}},
-			{ScaleType::MinorPentatonic, "minorPentatonic", 5, {0, 3, 5, 7, 10, 0, 0}},
-			{ScaleType::Blues, "blues", 6, {0, 3, 5, 6, 7, 10, 0}},
-			{ScaleType::WholeTone, "wholeTone", 6, {0, 2, 4, 6, 8, 10, 0}},
+			{ScaleType::Major, "major", 7, {0, 2, 4, 5, 7, 9, 11, 0}},
+			{ScaleType::Minor, "minor", 7, {0, 2, 3, 5, 7, 8, 10, 0}},
+			{ScaleType::HarmonicMinor, "harmonicMinor", 7, {0, 2, 3, 5, 7, 8, 11, 0}},
+			{ScaleType::MelodicMinor, "melodicMinor", 7, {0, 2, 3, 5, 7, 9, 11, 0}},
+			{ScaleType::Dorian, "dorian", 7, {0, 2, 3, 5, 7, 9, 10, 0}},
+			{ScaleType::Phrygian, "phrygian", 7, {0, 1, 3, 5, 7, 8, 10, 0}},
+			{ScaleType::Lydian, "lydian", 7, {0, 2, 4, 6, 7, 9, 11, 0}},
+			{ScaleType::Mixolydian, "mixolydian", 7, {0, 2, 4, 5, 7, 9, 10, 0}},
+			{ScaleType::Locrian, "locrian", 7, {0, 1, 3, 5, 6, 8, 10, 0}},
+			{ScaleType::MajorPentatonic, "majorPentatonic", 5, {0, 2, 4, 7, 9, 0, 0, 0}},
+			{ScaleType::MinorPentatonic, "minorPentatonic", 5, {0, 3, 5, 7, 10, 0, 0, 0}},
+			{ScaleType::Blues, "blues", 6, {0, 3, 5, 6, 7, 10, 0, 0}},
+			{ScaleType::WholeTone, "wholeTone", 6, {0, 2, 4, 6, 8, 10, 0, 0}},
+			{ScaleType::LydianDominant, "lydianDominant", 7, {0, 2, 4, 6, 7, 9, 10, 0}},
+			{ScaleType::MixolydianFlat6, "mixolydianFlat6", 7, {0, 2, 4, 5, 7, 8, 10, 0}},
+			{ScaleType::PhrygianDominant, "phrygianDominant", 7, {0, 1, 4, 5, 7, 8, 10, 0}},
+			{ScaleType::Altered, "altered", 7, {0, 1, 3, 4, 6, 8, 10, 0}},
+			{ScaleType::HalfWholeDiminished, "halfWholeDiminished", 8, {0, 1, 3, 4, 6, 7, 9, 10}},
+			{ScaleType::WholeHalfDiminished, "wholeHalfDiminished", 8, {0, 2, 3, 5, 6, 8, 9, 11}},
 		};
 
 		const ScaleEntry& scaleEntry(ScaleType type)
@@ -790,7 +796,7 @@ namespace gnubase::engine::midi
 					controllers.push_back(copy);
 				}
 				else if (sampleOf(at) < settings.start && settings.includeChase &&
-					controller.type != ControllerType::SysEx)
+					controller.type != ControllerType::SysEx && controller.type != ControllerType::Articulation)
 				{
 					const LaneKey key = controller.type == ControllerType::Program
 						? LaneKey{ControllerType::Program, controller.channel, 0}
@@ -882,7 +888,9 @@ namespace gnubase::engine::midi
 		const auto controllerKey = [by](const Controller& controller) -> int
 		{
 			if (by == DissolveBy::Channel)
-				return controller.type == ControllerType::SysEx ? -1 : controller.channel;
+				return controller.type == ControllerType::SysEx || controller.type == ControllerType::Articulation
+					? -1
+					: controller.channel;
 			return controller.type == ControllerType::PolyPressure ? controller.number : -1;
 		};
 		const auto suffixOf = [by](int key)

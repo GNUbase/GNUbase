@@ -93,6 +93,7 @@ namespace gnubase::engine
 				require(note.probability >= 0.0 && note.probability <= 1.0, name + ".probability must be 0 to 1");
 				note.velocityVariance = item.value("velocityVariance", note.velocityVariance);
 				require(std::abs(note.velocityVariance) <= 1.0, name + ".velocityVariance must be -1 to 1");
+				note.articulations = item.value("articulations", note.articulations);
 				notes.push_back(note);
 			}
 			// Changed only once every item is valid. ProjectModel::add would restore the project anyway.
@@ -191,6 +192,8 @@ namespace gnubase::engine
 				return key == "number" || key == "bank" || key == "channel";
 			case ControllerType::SysEx:
 				return key == "data";
+			case ControllerType::Articulation:
+				return key == "articulation" || key == "reset";
 			}
 			return false;
 		}
@@ -256,18 +259,21 @@ namespace gnubase::engine
 			{"note.set", 1,
 				"Changes notes of a MIDI part: each change names a note by id and gives what changes, position and "
 				"length in ticks, pitch 0-127, velocity 0-1, release velocity 0-1, MIDI channel 0-15, play probability "
-				"0-1 or velocity variance -1 to 1 (see note.add). Returns the changed notes.",
+				"0-1, velocity variance -1 to 1 or articulations, the attributes it has (see note.add). Returns the "
+				"changed notes.",
 				changesSchema("notes",
 					{{"position", integer}, {"length", integer}, {"pitch", integer}, {"velocity", number},
 						{"releaseVelocity", number}, {"channel", integer}, {"probability", number},
-						{"velocityVariance", number}}),
+						{"velocityVariance", number},
+						{"articulations", {{"type", "array"}, {"items", {{"type", "string"}}}}}}),
 				resultSchema("notes"), false},
 			setNotes);
 		add(engine,
 			{"controller.set", 1,
 				"Changes controller events of a MIDI part: each change names a controller event by id and gives what "
 				"changes: position in ticks, type, and the fields of the type as controller.add takes them (number, "
-				"value, channel, bank, data). A field the type doesn't have is an error, such as value on a program "
+				"value, channel, bank, data, articulation, reset). A field the type doesn't have is an error, such as "
+				"value on a program "
 				"change; a null bank removes it. A new type keeps the fields it shares with the old one and needs the "
 				"others. Returns the changed controller events.",
 				changesSchema("controllers",
@@ -275,10 +281,11 @@ namespace gnubase::engine
 						{"type",
 							{{"type", "string"},
 								{"enum",
-									{"controller", "pitchBend", "channelPressure", "polyPressure", "program",
-										"sysEx"}}}},
+									{"controller", "pitchBend", "channelPressure", "polyPressure", "program", "sysEx",
+										"articulation"}}}},
 						{"number", integer}, {"value", number}, {"channel", integer},
-						{"bank", {{"type", {"integer", "null"}}}}, {"data", {{"type", "array"}, {"items", integer}}}}),
+						{"bank", {{"type", {"integer", "null"}}}}, {"data", {{"type", "array"}, {"items", integer}}},
+						{"articulation", {{"type", "string"}}}, {"reset", {{"type", "boolean"}}}}),
 				resultSchema("controllers"), false},
 			setControllers);
 

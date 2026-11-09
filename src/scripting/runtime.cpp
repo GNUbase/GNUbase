@@ -87,6 +87,35 @@ namespace gnubase::scripting
 			}
 		}
 
+		// An empty table becomes an object: where a command's parameters take a list instead, an empty list (#175).
+		void fitToSchema(Json& value, const Json& schema)
+		{
+			if (!schema.is_object())
+				return;
+			if (value.is_object() && value.empty())
+			{
+				const Json type = schema.value("type", Json());
+				const auto is = [&type](const char* name)
+				{
+					return type == name || (type.is_array() && std::find(type.begin(), type.end(), name) != type.end());
+				};
+				if (is("array") && !is("object"))
+					value = Json::array();
+				return;
+			}
+			if (value.is_array())
+			{
+				for (Json& item : value)
+					fitToSchema(item, schema.value("items", Json()));
+				return;
+			}
+			if (!value.is_object())
+				return;
+			const Json properties = schema.value("properties", Json::object());
+			for (auto item = value.begin(); item != value.end(); ++item)
+				fitToSchema(*item, properties.value(item.key(), Json()));
+		}
+
 		// A sequence 1..n and nothing else is an array; any other table is an object with string keys.
 		Json toJson(lua_State* state, int index, int depth)
 		{
@@ -283,6 +312,7 @@ namespace gnubase::scripting
 		}
 		for (const engine::CommandInfo& info : engine.commands())
 		{
+			m_parameters[info.name] = info.parameters;
 			// "track.add" becomes gnubase.track.add; a name without area sits in gnubase itself.
 			const std::string field = pushArea(state, info.name);
 			lua_pushlightuserdata(state, this);
@@ -422,7 +452,8 @@ namespace gnubase::scripting
 		std::string error;
 		try
 		{
-			const Json parameters = lua_isnoneornil(state, 1) ? Json::object() : toJson(state, 1, 0);
+			Json parameters = lua_isnoneornil(state, 1) ? Json::object() : toJson(state, 1, 0);
+			fitToSchema(parameters, runtime.m_parameters[command]);
 			const engine::Result result = runtime.m_client.call(command, parameters, g_callTimeout);
 			if (result.ok())
 			{

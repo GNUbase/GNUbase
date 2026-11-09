@@ -54,6 +54,7 @@ namespace gnubase::engine
 				return "polyPressure";
 			case ControllerType::Program:
 			case ControllerType::SysEx:
+			case ControllerType::Articulation:
 				return nullptr;
 			}
 			return nullptr;

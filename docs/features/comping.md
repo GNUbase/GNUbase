@@ -36,12 +36,13 @@ pasted or brought to the front together, and `lane` on the commands that add eve
 - **Show Lanes.** `EventDisplay::showLanes` (the track list's context menu: Show Lanes, the UI command
   `track.toggleLanesSelected`) shows an audio, instrument or MIDI track's lanes: a display lane per lane from 0 to the
   highest one its events and parts are on, below the track's own lane and above its automation tracks, as high as
-  the track. Each shows the events and parts on that lane; `laneTakes()` names the lane each display lane shows (-1
-  for a track's own and automation lanes), and the lanes have the track's id in `laneTracks()`. A part drawn with the
-  draw tool or a file dropped on a lane goes on that lane (`lane` of `midiPart.add`, `audioPart.add`,
-  `audioEvent.add` and `audioFile.import`). Which tracks show
-  their lanes is view state, like folding. The track list's row reaches over its lanes, with its automation rows
-  below them.
+  the track. The audio events in an audio part don't count: their lanes are the part's, which the audio part editor
+  shows ([audio-part-editor.md](audio-part-editor.md)); cycle recordings don't count them either. Each shows the
+  events and parts on that lane; `laneTakes()` names the lane each display lane shows (-1 for a track's own and
+  automation lanes), and the lanes have the track's id in `laneTracks()`. A part drawn with the draw tool or a file
+  dropped on a lane goes on that lane (`lane` of `midiPart.add`, `audioPart.add`, `audioEvent.add` and
+  `audioFile.import`). Which tracks show their lanes is view state, like folding. The track list's row reaches over
+  its lanes, with its automation rows below them.
 - **The comp result.** A track's own lane shows its audio events where none in front of them covers them, with
   their waveforms there, so it shows what plays; clicks there find the event in front. A muted event plays nothing
   and covers no event that plays, as in `makePlaylist`: it shows, muted, where no other covers it. `EventWaveforms`

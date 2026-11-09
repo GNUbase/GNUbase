@@ -5,6 +5,7 @@ add_library(gnubase-testutils STATIC
 	testutils/testutils.cpp testutils/testutils.h)
 target_include_directories(gnubase-testutils PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(gnubase-testutils PUBLIC gnubase-ui)
+target_link_libraries(gnubase-testutils PRIVATE miniz)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 	target_sources(gnubase-testutils PRIVATE
 		testutils/fakertkit.cpp testutils/fakertkit.h)
@@ -26,6 +27,8 @@ add_executable(gnubase-tests
 	analysis_tests.cpp
 	app_tests.cpp
 	arranger_tests.cpp
+	articulationmaps_tests.cpp
+	articulationmaps_ui_tests.cpp
 	audio_tests.cpp
 	audiofile_tests.cpp
 	audiofunctions_tests.cpp

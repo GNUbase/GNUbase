@@ -368,7 +368,9 @@ TEST_CASE("the lane menus change and remove lanes, select their events and apply
 		{{"part", f.part},
 			{"controllers",
 				{{{"position", 0}, {"number", 7}, {"value", 0.5}},
-					{{"position", g_quarter}, {"type", "channelPressure"}, {"value", 0.5}}}}});
+					{{"position", g_quarter}, {"type", "channelPressure"}, {"value", 0.5}},
+					// A direction (#175) has no controller lane.
+					{{"position", g_quarter}, {"type", "articulation"}, {"articulation", "Pizzicato"}}}}});
 	f.app.call(
 		"editor.set", {{"editor", "window"}, {"lanes", {{{"type", "velocity"}}, {{"type", "channelPressure"}}}}});
 	REQUIRE(f.app.waitUntil([&] { return f.elements(Fixture::area(1) + " .controller-step").size() == 1; }));

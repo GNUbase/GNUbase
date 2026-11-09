@@ -620,6 +620,17 @@ TEST_CASE("recording.add applies the audio record modes to the events a take ove
 		run(client, "history.undo");
 		CHECK(lanes() == Lanes{{0, 0}});
 	}
+	SECTION("the lanes of the events in an audio part are the part's: the takes go after the part's lane")
+	{
+		run(client, "event.toPart", {{"events", {existing}}});
+		run(client, "event.set", {{"events", {existing}}, {"lane", 2}}); // a lane in the part (audio part editor)
+		add("keepHistory", two);
+		std::vector<std::pair<int64_t, int64_t>> lanes;
+		for (const Json& event : eventsOn(client, track))
+			lanes.emplace_back(event.at("position").get<int64_t>(), event.at("lane").get<int64_t>());
+		std::sort(lanes.begin(), lanes.end());
+		CHECK(lanes == std::vector<std::pair<int64_t, int64_t>>{{0, 2}, {400, 1}, {500, 2}});
+	}
 	SECTION("a recording of one take stays on the first lane")
 	{
 		add("keepHistory", one);

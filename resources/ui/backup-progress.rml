@@ -1,0 +1,43 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- A backup's progress (docs/features/backup.md): ui::ProjectFiles opens it once File > Back up Project started the
+     backup's job, sets #backup-progress's value and #backup-progress-file from job.progress, and closes it when the
+     job ended. Cancel, or closing it otherwise, cancels the job. -->
+<rml>
+<head>
+	<title>Back up Project</title>
+	<style>
+		dialog
+		{
+			width: 360dp;
+		}
+
+		.row
+		{
+			display: flex;
+			align-items: center;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		#backup-progress
+		{
+			flex: 1;
+		}
+
+		.buttons
+		{
+			justify-content: flex-end;
+		}
+	</style>
+</head>
+<body>
+	<dialog id="backup-progress-dialog">
+		<div class="dialog-titlebar">Back up Project</div>
+		<div class="row">Backing up the project...</div>
+		<div class="row"><progress id="backup-progress" value="0"/></div>
+		<div class="row" id="backup-progress-file"></div>
+		<div class="row buttons">
+			<button result="cancel">Cancel</button>
+		</div>
+	</dialog>
+</body>
+</rml>

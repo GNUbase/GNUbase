@@ -31,6 +31,8 @@ namespace gnubase::engine::settings
 	inline constexpr Key<bool> g_audioStopAfterPunchOut{"audio.stopAfterPunchOut"};
 	inline constexpr Key<bool> g_audioMutePreSends{"audio.mutePreSends"};
 	inline constexpr Key<bool> g_meterResetOnStart{"meter.resetOnStart"};
+	inline constexpr Key<bool> g_meterRmsAes17{"meter.rmsAes17"};
+	inline constexpr Key<int64_t> g_meterRmsResolution{"meter.rmsResolution"};
 	inline constexpr Key<int64_t> g_audioBlockSize{"audio.blockSize"};
 	inline constexpr Key<bool> g_midiChaseNotes{"midi.chaseNotes"};
 	inline constexpr Key<bool> g_midiChaseControllers{"midi.chaseControllers"};

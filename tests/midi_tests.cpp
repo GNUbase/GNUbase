@@ -645,6 +645,50 @@ TEST_CASE("a pitch that started again sounds after a jump only while the later n
 	CHECK(player.heard == std::vector<Heard>{on(0, 60), off(50, 60)});
 }
 
+TEST_CASE(
+	"a jump sends the last key switch of each pitch before it for a sample, in their order, then the notes", "[unit]")
+{
+	const uint32_t blockSize = GENERATE(1U, 16U, 64U);
+	INFO("block size " << blockSize);
+	// Key switches (#175) C0 at 9, C#0 on channel 3 at 99 and C0 again at 199, each a sample before its note; a real
+	// C#0 on channel 3 at 300.
+	const auto keySwitch = [](int64_t start, int pitch, int channel)
+	{
+		RenderNote result = note(start, start + 1, pitch, channel);
+		result.keySwitch = true;
+		return result;
+	};
+	const std::vector<RenderNote> notes = {keySwitch(9, 24, 0), note(10, 50, 60), keySwitch(99, 25, 2),
+		note(100, 150, 62, 2), note(150, 180, 63, 2), keySwitch(199, 24, 0), note(200, 250, 64), note(300, 310, 25, 2)};
+	SECTION("between the notes of a slot")
+	{
+		// C#0 again before 63, and C0 before it, as they came; nothing of C0's slot sounds.
+		Player player(chasing(chaseAll(), notes), blockSize);
+		player.locate(150);
+		player.play(40);
+		const std::vector<Heard> expected = {
+			on(0, 24), on(0, 25, 2), on(0, 63, 2), off(1, 24), off(1, 25, 2), off(30, 63, 2)};
+		CHECK(player.heard == expected);
+	}
+	SECTION("after a real note of a key switch's pitch")
+	{
+		// The note at 300 isn't a key switch and has ended: only C0 is sent again.
+		Player player(chasing(chaseAll(), notes), blockSize);
+		player.locate(320);
+		player.play(8);
+		CHECK(player.heard == std::vector<Heard>{on(0, 24), off(1, 24)});
+	}
+	SECTION("without note chasing")
+	{
+		MidiChase chase = chaseAll();
+		chase.notes = false;
+		Player player(chasing(chase, notes), blockSize);
+		player.locate(160);
+		player.play(8);
+		CHECK(player.heard.empty());
+	}
+}
+
 TEST_CASE("a jump sends each chased controller's last value before it, in their order, then the notes", "[unit]")
 {
 	const uint32_t blockSize = GENERATE(1U, 16U, 64U);

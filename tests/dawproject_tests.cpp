@@ -8,13 +8,14 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
-#include <miniz.h>
 #include <pugixml.hpp>
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
 #include <map>
+#include <set>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -23,6 +24,8 @@
 using namespace gnubase::engine;
 namespace test = gnubase::test;
 using Catch::Matchers::ContainsSubstring;
+using gnubase::test::readZip;
+using gnubase::test::writeZip;
 using gnubase::time::g_ticksPerQuarter;
 
 namespace
@@ -64,34 +67,6 @@ namespace
 			samples[i] = static_cast<float>(std::sin(static_cast<double>(i) * 0.01) * 0.5);
 		writer->write(samples.data(), frames);
 		writer->close();
-	}
-
-	std::map<std::string, std::string> readZip(const std::string& path)
-	{
-		mz_zip_archive zip{};
-		REQUIRE(mz_zip_reader_init_file(&zip, path.c_str(), 0) != MZ_FALSE);
-		std::map<std::string, std::string> entries;
-		for (mz_uint i = 0; i < mz_zip_reader_get_num_files(&zip); ++i)
-		{
-			char name[512];
-			mz_zip_reader_get_filename(&zip, i, name, sizeof name);
-			size_t size = 0;
-			void* data = mz_zip_reader_extract_to_heap(&zip, i, &size, 0);
-			entries[name] = std::string(static_cast<const char*>(data), size);
-			mz_free(data);
-		}
-		mz_zip_reader_end(&zip);
-		return entries;
-	}
-
-	void writeZip(const std::string& path, const std::map<std::string, std::string>& entries)
-	{
-		mz_zip_archive zip{};
-		REQUIRE(mz_zip_writer_init_file(&zip, path.c_str(), 0) != MZ_FALSE);
-		for (const auto& [name, data] : entries)
-			REQUIRE(mz_zip_writer_add_mem(&zip, name.c_str(), data.data(), data.size(), MZ_DEFAULT_LEVEL) != MZ_FALSE);
-		REQUIRE(mz_zip_writer_finalize_archive(&zip) != MZ_FALSE);
-		mz_zip_writer_end(&zip);
 	}
 
 	std::string fileText(const std::string& path)
@@ -1741,4 +1716,98 @@ TEST_CASE("built-in plugins in slots are devices in project.xml, and come back f
 	CHECK(slots[1].at("plugin") == "builtin:eq");
 	CHECK(slots[1].at("active") == false);
 	CHECK(slots[2].at("parameters") == Json::array({{{"parameter", 0}, {"value", 12.0}}}));
+}
+
+TEST_CASE("every built-in plugin parameter is saved with a unit DAWproject allows, and comes back", "[integration]")
+{
+	// The values of the Unit type in DAWproject's schema, and the one each unit of a built-in parameter becomes.
+	const std::set<std::string> allowed = {
+		"linear", "normalized", "percent", "decibel", "hertz", "semitones", "seconds", "beats", "bpm"};
+	const std::map<std::string, std::string> expected = {
+		{"dB", "decibel"}, {"Hz", "hertz"}, {"s", "seconds"}, {"%", "percent"}, {"ms", "linear"}, {"", "linear"}};
+
+	const test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	// Every parameter of every built-in effect set away from its default: a slot saves only the values set on it.
+	std::map<std::string, std::map<uint32_t, double>> set; // by plugin
+	std::map<std::string, std::map<uint32_t, std::string>> units;
+	const Json processors = run(client, "processor.list").at("processors");
+	for (const Json& processor : processors)
+	{
+		if (processor.at("instrument").get<bool>())
+			continue;
+		const std::string plugin = "builtin:" + processor.at("id").get<std::string>();
+		const ObjectId channel = idOf(run(client, "track.add", {{"type", "audio"}, {"name", plugin}}), "channel");
+		const ObjectId slot = idOf(run(client, "plugin.insert", {{"channel", channel}, {"plugin", plugin}}), "slot");
+		set[plugin] = {}; // also without parameters
+		for (const Json& parameter : processor.at("parameters"))
+		{
+			const auto id = parameter.at("id").get<uint32_t>();
+			const auto maximum = parameter.at("maximum").get<double>();
+			const double value =
+				parameter.at("default").get<double>() != maximum ? maximum : parameter.at("minimum").get<double>();
+			run(client, "parameter.set",
+				{{"channel", channel}, {"target", {{"type", "plugin"}, {"slot", slot}, {"parameter", id}}},
+					{"value", value}});
+			set[plugin][id] = value;
+			units[plugin][id] = parameter.at("unit").get<std::string>();
+		}
+	}
+	const std::string file = utf8(dir.path() / "units.dawproject");
+	run(client, "project.save", {{"path", file}});
+
+	std::map<std::string, std::string> entries = readZip(file);
+	pugi::xml_document xml;
+	REQUIRE(xml.load_string(entries.at("project.xml").c_str()));
+	std::set<std::string> written;
+	size_t parameters = 0;
+	for (const pugi::xml_node track : xml.child("Project").child("Structure").children("Track"))
+		for (const pugi::xml_node device : track.child("Channel").child("Devices").children("BuiltinDevice"))
+		{
+			const std::string plugin = device.attribute("deviceID").as_string();
+			INFO(plugin);
+			REQUIRE(set.count(plugin) == 1);
+			for (const pugi::xml_node real : device.child("Parameters").children("RealParameter"))
+			{
+				const auto id = real.attribute("parameterID").as_uint();
+				const std::string unit = real.attribute("unit").as_string();
+				INFO("parameter " << id << ": " << units[plugin][id] << " as " << unit);
+				CHECK(allowed.count(unit) == 1);
+				REQUIRE(expected.count(units[plugin][id]) == 1); // a new unit needs its DAWproject unit
+				CHECK(unit == expected.at(units[plugin][id]));
+				CHECK(real.attribute("value").as_double() == set[plugin][id]);
+				written.insert(unit);
+				++parameters;
+			}
+		}
+	size_t count = 0;
+	for (const auto& [plugin, values] : set)
+		count += values.size();
+	CHECK(parameters == count);
+	for (const char* unit : {"decibel", "hertz", "seconds", "percent", "linear"})
+		CHECK(written.count(unit) == 1);
+
+	// From project.xml alone, as another application's file: every value comes back.
+	REQUIRE(entries.erase("gnubase.json") == 1);
+	const std::string other = utf8(dir.path() / "other.dawproject");
+	writeZip(other, entries);
+	run(client, "project.load", {{"path", other}});
+	size_t slots = 0;
+	const Json channels = run(client, "project.get").at("channels");
+	for (const Json& channel : channels)
+	{
+		const Json list = run(client, "plugin.list", {{"channel", channel.at("id")}}).at("slots");
+		for (const Json& slot : list)
+		{
+			const std::string plugin = slot.at("plugin").get<std::string>();
+			INFO(plugin);
+			std::map<uint32_t, double> loaded;
+			for (const Json& parameter : slot.at("parameters"))
+				loaded[parameter.at("parameter").get<uint32_t>()] = parameter.at("value").get<double>();
+			CHECK(loaded == set[plugin]);
+			++slots;
+		}
+	}
+	CHECK(slots == set.size());
 }

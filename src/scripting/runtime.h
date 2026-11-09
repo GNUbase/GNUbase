@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <functional>
 #include <iosfwd>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -106,6 +107,7 @@ namespace gnubase::scripting
 		std::deque<engine::Event> m_events;                 // arrived, not taken yet
 		bool m_handledEvents = false;                       // a gnubase.on handler ran in dispatchEvents
 		std::vector<std::unique_ptr<Function>> m_functions; // added with addFunction; Lua holds pointers to them
+		std::map<std::string, engine::Json> m_parameters;   // the commands' parameter schemas, by name
 		std::chrono::milliseconds m_timeLimit{0};
 		std::chrono::steady_clock::time_point m_deadline;
 		int m_depth = 0;                                // runs going on: a function that Lua calls may run more code

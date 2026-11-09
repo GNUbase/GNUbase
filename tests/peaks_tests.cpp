@@ -31,8 +31,6 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <winioctl.h>
-#else
-#include <sys/stat.h>
 #endif
 
 using namespace gnubase::engine;
@@ -303,51 +301,6 @@ namespace
 		REQUIRE(result.ok());
 		return result.value;
 	}
-
-	// Keeps a file from being read while it exists, as another program that locks it (Windows) or a missing read
-	// permission (elsewhere) would. Its size and time stay readable.
-	class Unreadable
-	{
-	public:
-		explicit Unreadable(std::filesystem::path file) : m_file(std::move(file))
-		{
-#ifdef _WIN32
-			m_handle =
-				CreateFileW(m_file.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-			m_active = m_handle != INVALID_HANDLE_VALUE;
-#else
-			m_active = ::chmod(m_file.c_str(), 0) == 0;
-			if (m_active && std::ifstream(m_file).good())
-				release(); // root reads anything
-#endif
-		}
-		~Unreadable() { release(); }
-		Unreadable(const Unreadable&) = delete;
-		Unreadable& operator=(const Unreadable&) = delete;
-		Unreadable(Unreadable&&) = delete;
-		Unreadable& operator=(Unreadable&&) = delete;
-
-		bool active() const { return m_active; }
-
-		void release()
-		{
-			if (!m_active)
-				return;
-			m_active = false;
-#ifdef _WIN32
-			CloseHandle(m_handle);
-#else
-			::chmod(m_file.c_str(), S_IRUSR | S_IWUSR);
-#endif
-		}
-
-	private:
-		std::filesystem::path m_file;
-		bool m_active = false;
-#ifdef _WIN32
-		HANDLE m_handle = INVALID_HANDLE_VALUE;
-#endif
-	};
 
 	// Makes a file size bytes long without writing them: a sparse file, where the file system supports it.
 	bool makeSparse(const std::filesystem::path& file, uint64_t size)
@@ -840,7 +793,7 @@ TEST_CASE("an audio file that exists but can't be read is tried again only once 
 	const test::TempDir dir;
 	const std::filesystem::path file = dir.path() / "locked.wav";
 	writeAudio(file, testSignal(1, 1000), 1);
-	Unreadable lock(file);
+	test::Unreadable lock(file);
 	if (!lock.active())
 		SKIP("can't keep this file from being read");
 	peaks::CacheSettings settings;

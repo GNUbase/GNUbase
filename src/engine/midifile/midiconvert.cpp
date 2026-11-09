@@ -426,6 +426,8 @@ namespace gnubase::engine::midifile
 						events.push_back({Rank::Other, std::move(event)});
 					}
 					break;
+				case ControllerType::Articulation: // MIDI files have no articulations
+					break;
 				}
 			}
 

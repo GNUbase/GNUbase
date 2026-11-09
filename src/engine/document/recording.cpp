@@ -4,9 +4,11 @@
 // record modes to the events and parts the takes overlap. The engine runs it when a recording ends (Recorder in
 // src/engine/audio/recorder.h).
 #include "engine/audio/transport.h"
+#include "engine/document/chordtrack.h"
 #include "engine/document/document.h"
 #include "engine/document/projectmodel.h"
 #include "engine/engine.h"
+#include "engine/midi/articulationmaps.h"
 #include "engine/midi/drummaps.h"
 #include "engine/time/signaturemap.h"
 #include "engine/time/tempomap.h"
@@ -47,8 +49,9 @@ namespace gnubase::engine
 			return up && start < tick ? bars.barStart(bar + 1) : start;
 		}
 
-		// A part's start and end in the project's samples.
-		std::pair<time::Samples, time::Samples> partSpan(const Project& project, const MidiPart& part)
+		// A MIDI or audio part's start and end in the project's samples.
+		template <typename Part>
+		std::pair<time::Samples, time::Samples> partSpan(const Project& project, const Part& part)
 		{
 			const time::Position end{part.position.base, part.position.value + part.length};
 			return {time::toSamples(part.position, project.tempo, project.sampleRate),
@@ -68,22 +71,28 @@ namespace gnubase::engine
 		};
 
 		// The lane after the highest one that the track's events or parts in [start, end) are on, or 0 if there are
-		// none: where a cycle recording's takes go.
+		// none: where a cycle recording's takes go. The lane of an audio event in an audio part is one of the part's,
+		// not of the track: the part's lane counts instead.
 		int firstFreeLane(const Project& project, ObjectId track, time::Samples start, time::Samples end)
 		{
 			int lane = 0;
 			for (const auto& [id, event] : project.audioEvents)
 			{
 				const EventSpan span = eventSpan(project, event);
-				if (event.track == track && span.start < end && span.end > start)
+				if (event.track == track && event.part == 0 && span.start < end && span.end > start)
 					lane = std::max(lane, event.lane + 1);
 			}
-			for (const auto& [id, part] : project.midiParts)
+			const auto partLanes = [&](const auto& parts)
 			{
-				const auto [partStart, partEnd] = partSpan(project, part);
-				if (part.track == track && partStart < end && partEnd > start)
-					lane = std::max(lane, part.lane + 1);
-			}
+				for (const auto& [id, part] : parts)
+				{
+					const auto [partStart, partEnd] = partSpan(project, part);
+					if (part.track == track && partStart < end && partEnd > start)
+						lane = std::max(lane, part.lane + 1);
+				}
+			};
+			partLanes(project.midiParts);
+			partLanes(project.audioParts);
 			return lane;
 		}
 
@@ -311,8 +320,14 @@ namespace gnubase::engine
 					(takes[index].*into).push_back(std::move(item));
 				}
 			};
-			distribute(entry.value("notes", Json::array()), &MidiTake::notes);
-			distribute(entry.value("controllers", Json::array()), &MidiTake::controllers);
+			// Remote triggers select sound slots of the track's articulation map instead of playing (#175, reference
+			// manual p. 1263): they become directions and the notes' attributes.
+			Json played = entry.value("notes", Json::array());
+			Json playedControllers = entry.value("controllers", Json::array());
+			if (const ArticulationMap* map = midi::articulationMapOf(project, track.id))
+				midi::applyRemoteTriggers(*map, played, playedControllers);
+			distribute(played, &MidiTake::notes);
+			distribute(playedControllers, &MidiTake::controllers);
 
 			if ((cycleMode == "stacked" || cycleMode == "mixStacked") && takes.size() > 1)
 			{
@@ -550,6 +565,33 @@ namespace gnubase::engine
 					run("event.set", {{"events", Json::array({event})}, {"lane", (*lane)++}});
 				events.push_back(event);
 			}
+		}
+		// Recording chord events (#933, reference manual p. 1345): with the chord track record-enabled, the chords
+		// that the recorded notes make replace the chord events over the takes.
+		if (project.chords.recordEnable)
+		{
+			std::vector<ChordNote> notes;
+			time::Samples from = std::numeric_limits<time::Samples>::max();
+			time::Samples to = std::numeric_limits<time::Samples>::min();
+			const auto ticks = [&project](time::Samples samples)
+			{ return project.tempo.toTicks(samples, project.sampleRate); };
+			for (const Json& entry : parameters.at("tracks"))
+			{
+				for (const Json& item : entry.at("takes"))
+				{
+					const auto position = item.at("position").get<time::Samples>();
+					from = std::min(from, position);
+					to = std::max(to, position + item.at("length").get<time::Samples>());
+				}
+				for (const Json& note : entry.value("notes", Json::array()))
+				{
+					const auto position = note.at("position").get<time::Samples>();
+					notes.push_back({ticks(position), ticks(position + note.at("length").get<time::Samples>()),
+						note.at("pitch").get<int>()});
+				}
+			}
+			if (!notes.empty())
+				recordChordEvents(project, notes, ticks(from), ticks(to), context);
 		}
 		Json result = {{"media", media}, {"clips", clips}, {"events", events}, {"parts", parts}};
 		context.emit("recording.added", result);

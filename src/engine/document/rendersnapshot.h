@@ -83,6 +83,8 @@ namespace gnubase::engine
 		uint8_t pitch = 60;
 		uint16_t velocity = 0;
 		uint8_t channel = 0;
+		// An articulation map's key switch (#175): a jump sends the last one of its pitch before it, sounding or not.
+		bool keySwitch = false;
 	};
 
 	struct RenderController
@@ -149,6 +151,14 @@ namespace gnubase::engine
 	};
 
 	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
+	// A chord or scale of the chord track from start (samples) on, until the next: its pitch classes, bit n for
+	// pitch class n (C is 0).
+	struct LiveHarmony
+	{
+		time::Samples start = 0;
+		uint16_t classes = 0;
+	};
+
 	struct RenderChannel
 	{
 		ObjectId id = 0;
@@ -176,6 +186,10 @@ namespace gnubase::engine
 		// MIDI and instrument channels: the rules of their input transformer's modules that are on, the track's or
 		// the project's, in order; empty for none.
 		std::vector<midi::LogicalRules> inputTransformer;
+		// MIDI and instrument channels: Live Input (#933, reference manual p. 1338), the chord track's chords or
+		// scales that the notes played into the track move to, the nearest note of the one playing at the transport
+		// position; empty for none.
+		std::vector<LiveHarmony> liveInput;
 		bool monitor = false; // the monitor and record enable buttons
 		bool recordEnable = false;
 		// MIDI and instrument tracks: they play what comes from all MIDI inputs (MIDI thru), since they monitor or

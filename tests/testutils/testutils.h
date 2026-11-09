@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -21,6 +22,30 @@ namespace gnubase::test
 
 	private:
 		std::filesystem::path m_path;
+	};
+
+	// Keeps a file from being read while it exists, as another program that locks it (Windows) or a missing read
+	// permission (elsewhere) would. Its size and time stay readable. Not active where it can't be done, e.g. for root,
+	// who reads anything.
+	class Unreadable
+	{
+	public:
+		explicit Unreadable(std::filesystem::path file);
+		~Unreadable();
+		Unreadable(const Unreadable&) = delete;
+		Unreadable& operator=(const Unreadable&) = delete;
+		Unreadable(Unreadable&&) = delete;
+		Unreadable& operator=(Unreadable&&) = delete;
+
+		bool active() const { return m_active; }
+		void release();
+
+	private:
+		std::filesystem::path m_file;
+		bool m_active = false;
+#ifdef _WIN32
+		void* m_handle = nullptr; // the file's HANDLE
+#endif
 	};
 
 	// Interleaved float audio.
@@ -67,4 +92,10 @@ namespace gnubase::test
 
 	// The build's test output folder, for files a test writes to look at, such as screenshots.
 	std::filesystem::path outputDirectory();
+
+	// A zip archive's entries, such as a project file's, by name. Throws if the file isn't a zip archive.
+	std::map<std::string, std::string> readZip(const std::string& path);
+
+	// Writes the entries as a zip archive, replacing the file. Throws if it can't be written.
+	void writeZip(const std::string& path, const std::map<std::string, std::string>& entries);
 }

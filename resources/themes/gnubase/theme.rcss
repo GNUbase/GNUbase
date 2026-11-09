@@ -580,6 +580,18 @@
 		border-left-width: 1dp;
 		border-left-color: #e12ad8;
 	}
+	.chord-row .chord-event.detected
+	{
+		border-right-width: 3dp;
+		border-right-color: #ffc44d;
+	}
+	.scale-row .scale-event
+	{
+		color: #aeb7d0;
+		font-size: 11dp;
+		border-left-width: 1dp;
+		border-left-color: #10dff2;
+	}
 	.chord-pad
 	{
 		color: #f1f4ff;

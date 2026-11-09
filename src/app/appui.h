@@ -321,6 +321,9 @@ namespace gnubase::app
 			const std::vector<std::pair<std::string, std::string>>& attributes = {}) const;
 		// The Auto Fades dialog (resources/ui/auto-fades.rml) for the project, or for a track (not 0).
 		void openAutoFades(ui::Window& window, uint64_t track);
+		// The articulation map setup (resources/ui/articulation-maps.rml, #175) for a MIDI or instrument track, or with
+		// 0 for the first one selected in the track list, if any.
+		void openArticulationMaps(ui::Window& window, uint64_t track);
 		// openDialog for a dialog whose Lua keeps its state in a global table, so that there is only one: while open
 		// is open, brings it to the front instead, as it is, and the attributes go unused.
 		Rml::ElementDocument& openOnce(ui::Window& window, const char* name, Rml::ObserverPtr<Rml::Element>& open,
@@ -356,6 +359,7 @@ namespace gnubase::app
 		std::unique_ptr<ui::SignatureLane> m_signatureLane;   // as well
 		std::unique_ptr<ui::GlobalEventLane> m_transposeLane; // as well
 		std::unique_ptr<ui::GlobalEventLane> m_chordLane;     // as well
+		std::unique_ptr<ui::GlobalEventLane> m_scaleLane;     // as well
 		std::unique_ptr<ui::RulerLanes> m_rulerLanes;         // as well
 		std::unique_ptr<ui::InPlaceEditors> m_inPlace;        // as well
 		std::unique_ptr<ui::TempoEditor> m_tempoEditor;
@@ -390,6 +394,7 @@ namespace gnubase::app
 		Rml::ObserverPtr<Rml::Element> m_autoFades;        // the open auto fades dialog's document
 		Rml::ObserverPtr<Rml::Element> m_addTrack;         // the open add track dialog's document
 		Rml::ObserverPtr<Rml::Element> m_midiFunction;     // the open dialog of the MIDI menu's
+		Rml::ObserverPtr<Rml::Element> m_articulationMaps; // the articulation map setup's last document
 		// A mixer window: open while the shell has it; the app lets go of the mixer once the user closed the window.
 		struct MixerWindow
 		{

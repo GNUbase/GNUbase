@@ -486,6 +486,14 @@ namespace gnubase::engine::settings
 					"Reset on Start: the loudness meter, and the main mix's peak and RMS maxima, start over when "
 					"playback starts (see meter.get).",
 					Json{{"type", "boolean"}}, false},
+				{"meter.rmsAes17",
+					"AES 17 (reference manual p. 540): the master meter's RMS level is 3 dB higher, so that a sine's "
+					"RMS level is its peak level (see meter.get).",
+					Json{{"type", "boolean"}}, false},
+				{"meter.rmsResolution",
+					"Resolution (reference manual p. 540): how much of the signal the master meter's RMS level "
+					"averages, 1 to 1000 ms (see meter.get).",
+					Json{{"type", "integer"}, {"minimum", 1}, {"maximum", 1000}}, 300},
 				{"midi.chaseBeyondParts",
 					"Chases controller events from the whole track; off, only from the MIDI parts under the "
 					"position, so none outside parts.",
@@ -673,13 +681,15 @@ namespace gnubase::engine::settings
 					Json{{"type", "boolean"}}, false},
 				{"ui.trackControls",
 					"The controls the track list shows, by track type (audio, instrument, midi, group, effect, "
-					"folder, marker, ruler, tempo, transpose), in order: mute, solo, record, monitor (audio, "
+					"folder, marker, ruler, tempo, transpose, chord), in order: mute, solo, record, monitor (audio, "
 					"instrument "
 					"and MIDI tracks), read (automation), timeBase, on the tempo track tempoTrack (Activate Tempo "
 					"Track), currentTempo (Current Tempo) and tempoType (Type of New Tempo Points), for ruler tracks "
 					"timeFormat, timeOffsetOn, timeOffset and setTimeOffset (Set Time Offset "
 					"to Project Cursor Position), and for the transpose track transposeMute (Mute Transpose Events), "
-					"keepInOctave (Keep Transpose in Octave Range) and transposeLock (Lock). "
+					"keepInOctave (Keep Transpose in Octave Range) and transposeLock (Lock), for the chord track "
+					"chordRecord (Record Enable), chordMute (Mute Chord Track), chordAudition (Select Track for "
+					"Auditioning) and showScales (Show Scales). "
 					"Mute and solo always show on tracks with a channel; a type left out shows none.",
 					Json{{"type", "object"},
 						{"additionalProperties",
@@ -689,8 +699,8 @@ namespace gnubase::engine::settings
 										{"enum",
 											{"mute", "solo", "record", "monitor", "read", "timeBase", "tempoTrack",
 												"currentTempo", "tempoType", "timeFormat", "timeOffsetOn", "timeOffset",
-												"setTimeOffset", "transposeMute", "keepInOctave",
-												"transposeLock"}}}}}}},
+												"setTimeOffset", "transposeMute", "keepInOctave", "transposeLock",
+												"chordRecord", "chordMute", "chordAudition", "showScales"}}}}}}},
 					Json{{"audio", {"mute", "solo", "record", "monitor", "read"}},
 						{"instrument", {"mute", "solo", "record", "monitor", "read"}},
 						{"midi", {"mute", "solo", "record", "monitor", "read"}}, {"group", {"mute", "solo", "read"}},
@@ -698,11 +708,14 @@ namespace gnubase::engine::settings
 						{"marker", Json::array()},
 						{"ruler", {"timeFormat", "timeOffsetOn", "timeOffset", "setTimeOffset"}},
 						{"tempo", {"tempoTrack", "currentTempo", "tempoType"}}, {"signature", Json::array()},
-						{"transpose", {"transposeMute", "keepInOctave", "timeBase", "transposeLock"}}}},
+						{"transpose", {"transposeMute", "keepInOctave", "timeBase", "transposeLock"}},
+						{"chord", {"chordRecord", "chordMute", "showScales", "timeBase", "chordAudition"}}}},
 				{"ui.trackWidths",
 					"The widths in the track list's rows, in dp: name, the track name's for every track type (20 to "
 					"400), and controls, by track type, the width of its controls area (0 to 800), whose controls go "
-					"onto more lines when they don't fit. A width left out is 120; ruler tracks' default is 140.",
+					"onto more lines when they don't fit. A width left out is 120; ruler tracks' default is 140, the "
+					"chord "
+					"track's 160.",
 					Json{{"type", "object"},
 						{"properties",
 							{{"name", {{"type", "number"}, {"minimum", 20}, {"maximum", 400}}},
@@ -713,8 +726,8 @@ namespace gnubase::engine::settings
 					Json{{"name", 120},
 						{"controls",
 							{{"audio", 120}, {"instrument", 120}, {"midi", 120}, {"group", 120}, {"effect", 120},
-								{"folder", 120}, {"marker", 120}, {"ruler", 140}, {"tempo", 144},
-								{"signature", 120}}}}},
+								{"folder", 120}, {"marker", 120}, {"ruler", 140}, {"tempo", 144}, {"signature", 120},
+								{"chord", 160}}}}},
 				{"ui.upDownSelectsTracksOnly",
 					"Whether Up and Down (track.selectPrevious, track.selectNext) only select tracks; when off, while "
 					"an event or part is selected they also select the first one on the newly selected track "

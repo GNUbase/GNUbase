@@ -1,0 +1,460 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Articulation maps in the engine (#175, docs/features/articulation-maps.md): articulationMap.add, set, remove,
+// export and import, a track's map, directions and attributes in MIDI parts, playback through the sound slots'
+// output events and MIDI modifiers, and remote triggers in recordings.
+#include "engine/document/rendersnapshot.h"
+#include "engine/engine.h"
+#include "engine/midi/midivalues.h"
+#include "engine/time/tempomap.h"
+#include "testutils/testutils.h"
+
+#include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
+
+#include <algorithm>
+#include <fstream>
+#include <string>
+#include <utility>
+#include <vector>
+
+using Catch::Matchers::ContainsSubstring;
+using namespace gnubase;
+using engine::Json;
+
+namespace
+{
+	constexpr int64_t g_quarter = time::g_ticksPerQuarter;
+	constexpr int64_t g_bar = 4 * g_quarter;
+
+	// Strings: Arco and Pizzicato are directions of the group Technique, Staccato an attribute of the group Length.
+	// Arco, the default slot, switches with the key C0 (24), Pizzicato with C#0 on channel 3, Staccato with
+	// controller 32 at 64 (and back to 0 when it ends), at half the length and more velocity, and Pizzicato Staccato
+	// with program 5, an octave up.
+	Json stringsSettings()
+	{
+		return {{"name", "Strings"}, {"groups", {"Technique", "Length"}},
+			{"articulations",
+				{{{"name", "Arco"}, {"type", "direction"}, {"group", 0}},
+					{{"name", "Pizzicato"}, {"type", "direction"}, {"group", 0}},
+					{{"name", "Staccato"}, {"type", "attribute"}, {"group", 1}}}},
+			{"slots",
+				{{{"name", "Arco"}, {"trigger", 36},
+					 {"outputs", {{{"status", "note"}, {"data1", 24}, {"data2", 100}}}}},
+					{{"name", "Pizzicato"}, {"articulations", {"Pizzicato"}}, {"trigger", 37}, {"channel", 2},
+						{"outputs", {{{"status", "note"}, {"data1", 25}, {"data2", 100}}}}},
+					{{"name", "Staccato"}, {"articulations", {"Staccato"}}, {"trigger", 38}, {"length", 50},
+						{"velocity", 150},
+						{"outputs",
+							{{{"status", "controller"}, {"data1", 32}, {"data2", 64}},
+								{{"status", "controller"}, {"data1", 32}, {"data2", 0}, {"off", true}}}}},
+					{{"name", "Pizzicato Staccato"}, {"articulations", {"Pizzicato", "Staccato"}}, {"transpose", 12},
+						{"outputs", {{{"status", "program"}, {"data1", 5}}}}}}}};
+	}
+
+	struct Fixture
+	{
+		Fixture()
+		{
+			track = call("track.add", {{"type", "instrument"}}).at("track").at("id").get<uint64_t>();
+			part = call("midiPart.add", {{"track", track}, {"position", 0}, {"length", g_bar}})
+					   .at("part")
+					   .at("id")
+					   .get<uint64_t>();
+		}
+
+		Json call(const std::string& command, Json parameters = Json::object())
+		{
+			const engine::Result result = client.call(command, std::move(parameters));
+			INFO(command << " failed: " << result.error);
+			REQUIRE(result.ok());
+			return result.value;
+		}
+
+		std::string fails(const std::string& command, Json parameters)
+		{
+			const engine::Result result = client.call(command, std::move(parameters));
+			INFO(command << " succeeded: " << result.value.dump());
+			REQUIRE(!result.ok());
+			return result.error;
+		}
+
+		Json maps() { return call("project.get").at("articulationMaps"); }
+
+		uint64_t strings()
+		{
+			const uint64_t id = call("articulationMap.add", stringsSettings()).at("map").at("id").get<uint64_t>();
+			call("track.set", {{"track", track}, {"articulationMap", id}});
+			return id;
+		}
+
+		Json trackJson()
+		{
+			const Json project = call("project.get");
+			for (const Json& each : project.at("tracks"))
+				if (each.at("id") == track)
+					return each;
+			return nullptr;
+		}
+
+		Json partJson(size_t index = 0) { return call("project.get").at("midiParts").at(index); }
+
+		engine::RenderChannel rendered() { return engine.renderSnapshots().acquire().channels.at(0); }
+
+		engine::Engine engine;
+		engine::Client client{engine};
+		uint64_t track = 0;
+		uint64_t part = 0;
+	};
+
+	const engine::RenderNote& notePlaying(const engine::RenderChannel& channel, int pitch)
+	{
+		const auto found = std::find_if(channel.notes.begin(), channel.notes.end(),
+			[pitch](const engine::RenderNote& note) { return note.pitch == pitch; });
+		REQUIRE(found != channel.notes.end());
+		return *found;
+	}
+}
+
+TEST_CASE("articulation maps are added, copied, changed and removed", "[unit]")
+{
+	Fixture f;
+	CHECK(f.maps().empty());
+
+	// Add Map (p. 1280): a new map has one group and neither articulations nor sound slots.
+	const Json added = f.call("articulationMap.add", {{"name", "Brass"}}).at("map");
+	CHECK(added.at("name") == "Brass");
+	CHECK(added.at("groups") == Json{"Group 1"});
+	CHECK(added.at("articulations").empty());
+	CHECK(added.at("slots").empty());
+	CHECK(added.at("remoteTrigger") == "keySwitch");
+	CHECK(added.at("latch") == true);
+
+	const Json strings = f.call("articulationMap.add", stringsSettings()).at("map");
+	REQUIRE(strings.at("slots").size() == 4);
+	CHECK(strings.at("slots").at(1) ==
+		Json{{"name", "Pizzicato"}, {"color", ""}, {"articulations", {"Pizzicato"}}, {"trigger", 37},
+			{"outputs", {{{"status", "note"}, {"data1", 25}, {"data2", 100}, {"off", false}}}}, {"channel", 2},
+			{"length", 100}, {"velocity", 100}, {"transpose", 0}});
+	CHECK(strings.at("slots").at(3).at("trigger").is_null());
+	CHECK(strings.at("slots").at(3).at("channel").is_null());
+
+	// Duplicate Map (p. 1267).
+	const Json copy = f.call("articulationMap.add", {{"copy", strings.at("id")}}).at("map");
+	CHECK(copy.at("name") == "Strings Copy");
+	CHECK(copy.at("slots") == strings.at("slots"));
+	CHECK(f.maps().size() == 3);
+
+	const auto id = strings.at("id").get<uint64_t>();
+	const Json changed =
+		f.call("articulationMap.set", {{"map", id}, {"remoteTrigger", "programChange"}, {"latch", false}}).at("map");
+	CHECK(changed.at("remoteTrigger") == "programChange");
+	CHECK(changed.at("latch") == false);
+	CHECK(changed.at("slots") == strings.at("slots"));
+	f.call("history.undo");
+	CHECK(f.maps().at(1) == strings);
+
+	// What a map can't have.
+	CHECK_THAT(f.fails("articulationMap.set", {{"map", id}, {"groups", Json::array()}}),
+		ContainsSubstring("at least one group"));
+	CHECK_THAT(
+		f.fails("articulationMap.set",
+			{{"map", id}, {"articulations", {{{"name", "Arco"}}, {{"name", "Arco"}}}}, {"slots", Json::array()}}),
+		ContainsSubstring("Arco"));
+	CHECK_THAT(f.fails("articulationMap.set",
+				   {{"map", id}, {"articulations", {{{"name", "Arco"}, {"group", 2}}}}, {"slots", Json::array()}}),
+		ContainsSubstring("group"));
+	CHECK_THAT(f.fails("articulationMap.set", {{"map", id}, {"slots", {{{"name", "X"}, {"articulations", {"Col"}}}}}}),
+		ContainsSubstring("Col"));
+	// Mutually exclusive: Arco and Pizzicato are both of the group Technique.
+	CHECK_THAT(f.fails("articulationMap.set",
+				   {{"map", id}, {"slots", {{{"name", "X"}, {"articulations", {"Arco", "Pizzicato"}}}}}}),
+		ContainsSubstring("one articulation of each group"));
+	CHECK_THAT(f.fails("articulationMap.set", {{"map", id}, {"slots", {{{"name", "X"}, {"trigger", 128}}}}}),
+		ContainsSubstring("trigger"));
+	CHECK_THAT(f.fails("articulationMap.set",
+				   {{"map", id}, {"slots", {{{"name", "X"}, {"outputs", {{{"status", "note"}, {"data1", 200}}}}}}}}),
+		ContainsSubstring("data1"));
+	CHECK_THAT(f.fails("articulationMap.set", {{"map", 999}}), ContainsSubstring("no articulation map 999"));
+	// An articulation the slots use stays.
+	CHECK_THAT(f.fails("articulationMap.set", {{"map", id}, {"articulations", {{{"name", "Arco"}}}}}),
+		ContainsSubstring("Pizzicato"));
+
+	// A track uses a map; removing the map takes it from the track.
+	f.call("track.set", {{"track", f.track}, {"articulationMap", id}});
+	CHECK(f.trackJson().at("articulationMap") == id);
+	f.call("articulationMap.remove", {{"map", id}});
+	CHECK(f.maps().size() == 2);
+	CHECK(f.trackJson().at("articulationMap") == 0);
+	f.call("history.undo");
+	CHECK(f.trackJson().at("articulationMap") == id);
+
+	const auto audio = f.call("track.add", {{"type", "audio"}}).at("track").at("id");
+	CHECK_THAT(f.fails("track.set", {{"track", audio}, {"articulationMap", id}}), ContainsSubstring("MIDI"));
+	CHECK_THAT(f.fails("track.set", {{"track", f.track}, {"articulationMap", 999}}),
+		ContainsSubstring("no articulation map 999"));
+}
+
+TEST_CASE("directions are articulation controller events and attributes are the notes' articulations", "[unit]")
+{
+	Fixture f;
+	f.strings();
+	const Json direction =
+		f.call("controller.add",
+			 {{"part", f.part},
+				 {"controllers", {{{"position", g_quarter}, {"type", "articulation"}, {"articulation", "Pizzicato"}}}}})
+			.at("controllers")
+			.at(0);
+	CHECK(direction.at("type") == "articulation");
+	CHECK(direction.at("articulation") == "Pizzicato");
+	CHECK(direction.at("reset") == false);
+	const Json changed =
+		f.call("controller.set", {{"part", f.part}, {"controllers", {{{"id", direction.at("id")}, {"reset", true}}}}})
+			.at("controllers")
+			.at(0);
+	CHECK(changed.at("reset") == true);
+	CHECK_THAT(
+		f.fails("controller.add", {{"part", f.part}, {"controllers", {{{"position", 0}, {"type", "articulation"}}}}}),
+		ContainsSubstring("articulation"));
+
+	const Json note = f.call("note.add",
+						   {{"part", f.part},
+							   {"notes",
+								   {{{"position", 0}, {"length", 60}, {"pitch", 60}, {"velocity", 0.5},
+									   {"articulations", {"Staccato"}}}}}})
+						  .at("notes")
+						  .at(0);
+	CHECK(note.at("articulations") == Json{"Staccato"});
+	const Json cleared =
+		f.call("note.set", {{"part", f.part}, {"notes", {{{"id", note.at("id")}, {"articulations", Json::array()}}}}})
+			.at("notes")
+			.at(0);
+	CHECK(!cleared.contains("articulations"));
+	// Directions play nothing themselves.
+	CHECK(f.rendered().controllers.empty());
+}
+
+TEST_CASE("articulations play the sound slots' output events and MIDI modifiers", "[unit]")
+{
+	Fixture f;
+	f.call("controller.add",
+		{{"part", f.part},
+			{"controllers", {{{"position", 2 * g_quarter}, {"type", "articulation"}, {"articulation", "Pizzicato"}}}}});
+	const auto note = [&f](int64_t position, int pitch, Json articulations)
+	{
+		f.call("note.add",
+			{{"part", f.part},
+				{"notes",
+					{{{"position", position}, {"length", g_quarter / 2}, {"pitch", pitch}, {"velocity", 0.5},
+						{"articulations", std::move(articulations)}}}}});
+	};
+	note(0, 60, Json::array());                                 // Arco, the default slot
+	note(g_quarter, 61, {"Staccato"});                          // Staccato
+	note(2 * g_quarter, 62, Json::array());                     // Pizzicato from the direction
+	note((2 * g_quarter) + (g_quarter / 2), 63, Json::array()); // still Pizzicato: no output events
+	note(3 * g_quarter, 64, {"Staccato"});                      // Pizzicato Staccato
+
+	// Without a map the notes play as they are.
+	REQUIRE(f.rendered().notes.size() == 5);
+	CHECK(f.rendered().controllers.empty());
+
+	f.strings();
+	const engine::RenderChannel channel = f.rendered();
+	REQUIRE(channel.notes.size() == 7); // and the key switches C0 and C#0
+	const engine::RenderNote& arco = notePlaying(channel, 60);
+	const engine::RenderNote& c0 = notePlaying(channel, 24);
+	CHECK(c0.start == 0);
+	CHECK(c0.end == 1);
+	CHECK(c0.channel == 0);
+	CHECK(c0.keySwitch); // a jump sends it again
+	CHECK(arco.start == 0);
+	CHECK_FALSE(arco.keySwitch);
+
+	// Staccato: half the length, one and a half times the velocity, controller 32 at 64 where it starts.
+	const engine::RenderNote& staccato = notePlaying(channel, 61);
+	CHECK((staccato.end - staccato.start) * 2 == (arco.end - arco.start));
+	CHECK(staccato.velocity > arco.velocity);
+	REQUIRE(channel.controllers.size() == 3);
+	CHECK(channel.controllers[0].position == staccato.start);
+	CHECK(channel.controllers[0].type == engine::ControllerType::Control);
+	CHECK(channel.controllers[0].number == 32);
+	CHECK(channel.controllers[0].value == engine::midi::controllerFromMidi1(64));
+
+	// Pizzicato: the key switch C#0 just before the note, both on channel 3; Staccato's off event where it ends.
+	const engine::RenderNote& pizzicato = notePlaying(channel, 62);
+	const engine::RenderNote& cSharp0 = notePlaying(channel, 25);
+	CHECK(cSharp0.start == pizzicato.start - 1);
+	CHECK(cSharp0.end == pizzicato.start);
+	CHECK(cSharp0.channel == 2);
+	CHECK(pizzicato.channel == 2);
+	CHECK(notePlaying(channel, 63).channel == 2);
+	CHECK(channel.controllers[1].position == pizzicato.start);
+	CHECK(channel.controllers[1].number == 32);
+	CHECK(channel.controllers[1].value == 0);
+
+	// Pizzicato Staccato: an octave up, after program 5.
+	const engine::RenderNote& both = notePlaying(channel, 76);
+	CHECK(channel.controllers[2].position == both.start);
+	CHECK(channel.controllers[2].type == engine::ControllerType::Program);
+	CHECK(channel.controllers[2].number == 5);
+
+	// A reset ends Pizzicato: the last notes play Arco and Staccato again.
+	const auto direction = f.partJson().at("controllers").at(0).at("id");
+	f.call("controller.set", {{"part", f.part}, {"controllers", {{{"id", direction}, {"reset", true}}}}});
+	const engine::RenderChannel reset = f.rendered();
+	CHECK(notePlaying(reset, 62).channel == 0);
+	CHECK(notePlaying(reset, 64).end - notePlaying(reset, 64).start ==
+		notePlaying(reset, 61).end - notePlaying(reset, 61).start);
+}
+
+TEST_CASE("the closest sound slot plays notes whose articulations no slot has", "[unit]")
+{
+	Fixture f;
+	Json settings = stringsSettings();
+	settings["articulations"].push_back({{"name", "Tremolo"}, {"type", "direction"}, {"group", 0}});
+	settings["articulations"].push_back({{"name", "Accent"}, {"type", "attribute"}, {"group", 1}});
+	const auto id = f.call("articulationMap.add", settings).at("map").at("id");
+	f.call("track.set", {{"track", f.track}, {"articulationMap", id}});
+	// Pizzicato with an accent: no slot has both, Pizzicato matches the most important group. Tremolo: no slot
+	// matches, the default slot plays.
+	f.call("controller.add",
+		{{"part", f.part},
+			{"controllers",
+				{{{"position", 0}, {"type", "articulation"}, {"articulation", "Pizzicato"}},
+					{{"position", g_quarter}, {"type", "articulation"}, {"articulation", "Tremolo"}}}}});
+	f.call("note.add",
+		{{"part", f.part},
+			{"notes",
+				{{{"position", 0}, {"length", 60}, {"pitch", 60}, {"velocity", 0.5}, {"articulations", {"Accent"}}},
+					{{"position", g_quarter}, {"length", 60}, {"pitch", 61}, {"velocity", 0.5}}}}});
+	const engine::RenderChannel channel = f.rendered();
+	CHECK(notePlaying(channel, 60).channel == 2);
+	CHECK(notePlaying(channel, 25).start == 0); // C#0
+	CHECK(notePlaying(channel, 61).channel == 0);
+	CHECK(notePlaying(channel, 24).start == notePlaying(channel, 61).start - 1); // C0
+}
+
+TEST_CASE("articulation maps export to a file and import from it unchanged", "[integration]")
+{
+	Fixture f;
+	const test::TempDir dir;
+	const std::string file = (dir.path() / "strings.articulationmap").u8string();
+	const auto id = f.strings();
+	Json before;
+	for (const Json& map : f.maps())
+		if (map.at("id") == id)
+			before = map;
+	f.call("articulationMap.export", {{"map", id}, {"path", file}});
+
+	const Json imported = f.call("articulationMap.import", {{"path", file}}).at("map");
+	CHECK(imported.at("id") != id);
+	Json expected = before;
+	expected["id"] = imported.at("id");
+	CHECK(imported == expected);
+	CHECK(f.maps().size() == 2);
+	f.call("history.undo"); // one undo step
+	CHECK(f.maps().size() == 1);
+
+	CHECK_THAT(f.fails("articulationMap.import", {{"path", (dir.path() / "missing.articulationmap").u8string()}}),
+		ContainsSubstring("missing.articulationmap"));
+	{
+		std::ofstream bad(dir.path() / "bad.articulationmap");
+		bad << "{\"something\": 1}";
+	}
+	CHECK_THAT(f.fails("articulationMap.import", {{"path", (dir.path() / "bad.articulationmap").u8string()}}),
+		ContainsSubstring("isn't an articulation map"));
+	CHECK_THAT(f.fails("articulationMap.export", {{"map", 999}, {"path", file}}),
+		ContainsSubstring("no articulation map 999"));
+}
+
+TEST_CASE("articulation maps, the tracks' maps and the articulations are saved and loaded", "[integration]")
+{
+	Fixture f;
+	const test::TempDir dir;
+	const std::string file = (dir.path() / "articulations.dawproject").u8string();
+	const auto id = f.strings();
+	f.call("controller.add",
+		{{"part", f.part},
+			{"controllers",
+				{{{"position", 0}, {"type", "articulation"}, {"articulation", "Pizzicato"}},
+					{{"position", g_quarter}, {"type", "articulation"}, {"articulation", "Arco"}, {"reset", true}}}}});
+	f.call("note.add",
+		{{"part", f.part},
+			{"notes",
+				{{{"position", 0}, {"length", 60}, {"pitch", 60}, {"velocity", 0.5},
+					{"articulations", {"Staccato"}}}}}});
+	const Json before = f.call("project.get");
+	f.call("project.save", {{"path", file}});
+	f.call("project.new");
+	f.call("project.load", {{"path", file}});
+	const Json after = f.call("project.get");
+	CHECK(after.at("articulationMaps") == before.at("articulationMaps"));
+	CHECK(after.at("midiParts") == before.at("midiParts"));
+	CHECK(f.trackJson().at("articulationMap") == id);
+}
+
+TEST_CASE("remote triggers in a recording select sound slots", "[unit]")
+{
+	Fixture f;
+	const auto id = f.strings();
+	const auto record = [&f](Json notes, Json controllers)
+	{
+		f.call("recording.add",
+			{{"tracks",
+				{{{"track", f.track}, {"takes", {{{"position", 0}, {"length", 48000}}}}, {"notes", std::move(notes)},
+					{"controllers", std::move(controllers)}}}}});
+		const Json parts = f.call("project.get").at("midiParts");
+		REQUIRE(parts.size() == 2);
+		return parts.at(1);
+	};
+	const auto key = [](int64_t position, int64_t length, int pitch)
+	{ return Json{{"position", position}, {"length", length}, {"pitch", pitch}, {"velocity", 0.5}}; };
+	const auto directions = [](const Json& part)
+	{
+		std::vector<std::pair<std::string, bool>> found;
+		for (const Json& controller : part.at("controllers"))
+			if (controller.at("type") == "articulation")
+				found.emplace_back(
+					controller.at("articulation").get<std::string>(), controller.at("reset").get<bool>());
+		return found;
+	};
+	using Directions = std::vector<std::pair<std::string, bool>>;
+
+	SECTION("key switches with latch: the slot stays until the next key switch")
+	{
+		// 37 selects Pizzicato, 38 Staccato, 36 Arco, the default slot.
+		const Json part = record(Json::array({key(0, 100, 37), key(1000, 500, 60), key(20000, 100, 38),
+									 key(24000, 500, 62), key(30000, 100, 36), key(40000, 500, 64)}),
+			Json::array());
+		const Json& notes = part.at("notes");
+		REQUIRE(notes.size() == 3); // the key switches aren't recorded as notes
+		CHECK(notes.at(0).at("pitch") == 60);
+		CHECK(!notes.at(0).contains("articulations"));
+		CHECK(notes.at(1).at("articulations") == Json{"Staccato"});
+		CHECK(!notes.at(2).contains("articulations"));
+		// Pizzicato, then a reset of its group for Staccato and Arco, which don't have one of its directions.
+		CHECK(directions(part) == Directions{{"Pizzicato", false}, {"Arco", true}, {"Arco", true}});
+	}
+	SECTION("key switches without latch: the default slot is back when the key is released")
+	{
+		f.call("articulationMap.set", {{"map", id}, {"latch", false}});
+		const Json part =
+			record(Json::array({key(0, 5000, 37), key(1000, 500, 60), key(6000, 500, 62)}), Json::array());
+		CHECK(part.at("notes").size() == 2);
+		CHECK(directions(part) == Directions{{"Pizzicato", false}, {"Arco", true}});
+		CHECK(part.at("controllers").at(1).at("position").get<int64_t>() > 0);
+	}
+	SECTION("program changes")
+	{
+		f.call("articulationMap.set",
+			{{"map", id}, {"remoteTrigger", "programChange"},
+				{"slots",
+					{{{"name", "Arco"}, {"trigger", 0}},
+						{{"name", "Pizzicato"}, {"articulations", {"Pizzicato"}}, {"trigger", 1}}}}});
+		const Json part = record(Json::array({key(1000, 500, 37)}),
+			Json::array({{{"position", 0}, {"type", "program"}, {"number", 1}},
+				{{"position", 10}, {"type", "program"}, {"number", 9}}}));
+		CHECK(part.at("notes").size() == 1); // without key switches, notes stay notes
+		CHECK(directions(part) == Directions{{"Pizzicato", false}});
+		CHECK(part.at("controllers").size() == 2); // program 9 triggers nothing
+	}
+}

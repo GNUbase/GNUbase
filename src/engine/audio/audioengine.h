@@ -100,6 +100,10 @@ namespace gnubase::engine
 		void setStopAfterPunchOut(bool stop);
 		// The user setting meter.resetOnStart.
 		void setMeterResetOnStart(bool reset) { m_meterResetOnStart.store(reset, std::memory_order_relaxed); }
+		// The user settings meter.rmsResolution and meter.rmsAes17, for the master meter.
+		void setMeterRms(int milliseconds, bool aes17) { m_mainMeter.setRms(milliseconds, aes17); }
+		// The one reader that reads all meters once a frame (Engine::readMeters); not the audio thread.
+		void readMeters(MeterFrame& frame); // metercommands.cpp
 		// Command thread: what the MIDI and instrument tracks chase when playback jumps (MidiSequencer).
 		void setChase(const MidiChase& chase);
 
@@ -117,8 +121,8 @@ namespace gnubase::engine
 
 		// Command thread: the status of a slot's plugin, as the plugin.* commands report it.
 		std::string slotStatus(ObjectId slot) const;
-		// Command thread: describes a slot for the plugin.changed that audio.updatePlugins emits when the status of its
-		// plugin changed (ProjectModel::describeSlot).
+		// Command thread: describes a slot for the plugin.changed that audio.updatePlugins and the device commands emit
+		// when the status of its plugin changed (ProjectModel::describeSlot).
 		void setSlotDescriber(std::function<Json(ObjectId slot)> describe) { m_describeSlot = std::move(describe); }
 		// Command thread: where a recording that starts writes, in which format, and which tracks it records, from
 		// the project; the audio engine adds the device inputs of each track's input bus and the transport's audio
@@ -208,7 +212,8 @@ namespace gnubase::engine
 		// audio.setDevice: opens the device, starts it if asked or if the one it replaces ran, falls back to the dummy
 		// device and saves the choice as the user's if asked (start, fallBackToDummy, remember).
 		void replaceDevice(CommandContext& context);
-		void setDevice(const Json& parameters);
+		// keepMeasurement: a reset, which keeps the loudness measurement if the sample rate stays.
+		void setDevice(const Json& parameters, bool keepMeasurement = false);
 		void openDummy(const Json& parameters);
 		void closeDevice();
 		// audio.reset; a device that can't be opened is lost. While one is, opens the lost device instead of the
@@ -307,8 +312,10 @@ namespace gnubase::engine
 		void attachMetronome(const RenderSnapshot& snapshot, graph::GraphDesc& desc);
 		// Brings the slots' plugins in line with the snapshot and gives the slot nodes those that are ready.
 		void attachSlots(const RenderSnapshot& snapshot, graph::GraphDesc& desc);
-		// Emits plugin.changed for the slots whose plugin's status changed since the last call.
-		void announceSlots(CommandContext& context);
+		// Emits plugin.changed for the slots whose plugin's status changed since the last call, e.g. to or from
+		// noDevice when the device closed or opened. Without a context, as for a failed command, every client gets it
+		// at once.
+		void announceSlots(CommandContext* context);
 		// The node that plays what a channel plays in the graph rebuild describes: its source node if it has plugin
 		// slots (graph::describe), else its own; -1 for none.
 		int sourceNode(ObjectId channel) const;
@@ -413,6 +420,7 @@ namespace gnubase::engine
 		MidiChase m_chase;                                                 // what they chase
 		std::map<ObjectId, Instrument> m_instruments;                      // per instrument channel
 		std::map<ObjectId, std::shared_ptr<ChannelState>> m_channelStates; // per channel
+		std::mutex m_channelStatesMutex; // the command thread changes m_channelStates with it, readMeters reads with it
 		// The channels that mixdown.export renders from a point inside their strip while it renders, and where their
 		// audio goes; attachStrips taps their strips.
 		struct RenderTap
@@ -449,6 +457,7 @@ namespace gnubase::engine
 		std::atomic<bool> m_updatingPlugins{false}; // an audio.updatePlugins it posted hasn't run yet
 		std::function<Json(ObjectId)> m_describeSlot;
 		std::map<ObjectId, std::string> m_slotStatuses; // as announced last
+		bool m_slotsHadDevice = false;                  // whether a device was open when they were announced last
 		std::map<ObjectId, int> m_sourceNodes;          // rebuild: per channel
 		Transport m_transport;                          // advanced by the audio thread
 		MidiPorts m_midi;

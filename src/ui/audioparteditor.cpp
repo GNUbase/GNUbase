@@ -2,6 +2,7 @@
 #include "ui/audioparteditor.h"
 
 #include "engine/midi/quantizesettings.h"
+#include "platform/log.h"
 #include "ui/timeformat.h"
 #include "ui/widgetutils.h"
 
@@ -41,8 +42,12 @@ namespace gnubase::ui
 		constexpr std::array<const char*, 7> g_toolLabels = {
 			"Select", "Erase", "Split", "Glue", "Mute", "Play", "Scrub"};
 
-		constexpr std::array<Rml::EventId, 5> g_events = {Rml::EventId::Mousedown, Rml::EventId::Mousemove,
-			Rml::EventId::Mouseup, Rml::EventId::Click, Rml::EventId::Dblclick};
+		// The root's. What a press that starts a gesture hits is an RmlUi drag element (drag: drag in the style sheet,
+		// by tool): a gesture's mouse moves come as its drag events, and its dragend comes wherever the button goes up,
+		// also outside the window, where no element gets a mouseup. A gesture's mouseup in the window comes from the
+		// document (listen()), also for a press that didn't move, which makes no drag.
+		constexpr std::array<Rml::EventId, 5> g_events = {Rml::EventId::Mousedown, Rml::EventId::Click,
+			Rml::EventId::Dblclick, Rml::EventId::Drag, Rml::EventId::Dragend};
 
 		std::string attribute(const Rml::Element& element, const char* name)
 		{
@@ -143,6 +148,7 @@ namespace gnubase::ui
 
 	AudioPartEditor::~AudioPartEditor()
 	{
+		listen(false);
 		if (Rml::Element* root = m_root.get())
 		{
 			for (const Rml::EventId event : g_events)
@@ -181,8 +187,13 @@ namespace gnubase::ui
 		m_project = project;
 		m_view = view;
 		m_events.clear();
+		m_parts.clear();
 		m_waves.clear();
-		m_selection.clear();
+		// A view that comes while select()'s editor.set is unanswered may be older than the selection it sent (results
+		// and events come in order, and that command's editor.changed after its result), so the selection stays.
+		const bool selectionIsCurrent = m_selecting == 0;
+		if (selectionIsCurrent)
+			m_selection.clear();
 		if (!m_project.contains("tracks") || !m_view.contains("parts"))
 			return;
 		const TimeContext time = projectTime(m_project);
@@ -197,8 +208,7 @@ namespace gnubase::ui
 		std::map<uint64_t, uint64_t> clipMedia;
 		for (const Json& clip : m_project.at("clips"))
 			clipMedia[clip.at("id").get<uint64_t>()] = clip.at("media").get<uint64_t>();
-		// The shown parts, in the view's order: their time and whether the editing mode reaches them.
-		std::map<uint64_t, std::tuple<double, double, bool>> parts;
+		// The shown parts: their time and whether the editing mode reaches them.
 		const Json& editable = m_view.at("editable");
 		m_from = 0.0;
 		m_to = 1.0;
@@ -212,37 +222,49 @@ namespace gnubase::ui
 			const auto position = part.at("position").get<int64_t>();
 			const double start = seconds(position, track);
 			const double end = seconds(position + part.at("length").get<int64_t>(), track);
-			parts[part.at("id").get<uint64_t>()] = {
-				start, end, std::find(editable.begin(), editable.end(), part.at("id")) != editable.end()};
+			m_parts[part.at("id").get<uint64_t>()] = {
+				start, end, track, std::find(editable.begin(), editable.end(), part.at("id")) != editable.end()};
 			m_from = first ? start : std::min(m_from, start);
 			m_to = first ? end : std::max(m_to, end);
 			first = false;
 		}
-		m_to = std::max(m_to, m_from + 0.001);
 		for (const Json& audio : m_project.value("audioEvents", Json::array()))
 		{
-			const auto part = parts.find(audio.value("part", uint64_t{0}));
-			if (part == parts.end())
+			const auto part = m_parts.find(audio.value("part", uint64_t{0}));
+			if (part == m_parts.end())
 				continue;
 			const auto track = audio.at("track").get<uint64_t>();
 			const auto file = media.find(clipMedia[audio.at("clip").get<uint64_t>()]);
 			const double rate = file == media.end() ? 0.0 : file->second->at("sampleRate").get<double>();
 			const double start = seconds(audio.at("position").get<int64_t>(), track);
 			const double length = rate > 0.0 ? audio.at("length").get<double>() / rate : 0.0;
-			const auto [partStart, partEnd, reached] = part->second;
-			const double from = std::max(start, partStart);
-			const double to = std::min(start + length, partEnd);
-			if (!(to > from))
-				continue; // the part hides it entirely
+			if (!(length > 0.0))
+				continue;
+			// What the part lets play of it; all of it where the part hides it entirely, so that it can be selected
+			// and moved back.
+			double from = std::max(start, part->second.start);
+			double to = std::min(start + length, part->second.end);
+			const bool outside = !(to > from);
+			if (outside)
+			{
+				from = start;
+				to = start + length;
+				m_from = std::min(m_from, from);
+				m_to = std::max(m_to, to);
+			}
 			const Event event{audio.at("id").get<uint64_t>(), part->first, track, start, start + length, from, to,
-				std::max(audio.value("lane", 0), 0), audio.value("volume", 0.0), audio.value("mute", false), reached};
+				std::max(audio.value("lane", 0), 0), audio.value("volume", 0.0), audio.value("mute", false),
+				part->second.editable, outside, audio.at("clip").get<uint64_t>(), audio.at("offset").get<int64_t>(),
+				audio.at("length").get<int64_t>()};
 			m_events.push_back(event);
 			m_waves.push_back({event.id, static_cast<size_t>(event.lane), {from, to - from}, file->first, rate,
 				file->second->at("channels").get<int>(),
 				audio.at("offset").get<int64_t>() + static_cast<int64_t>(std::llround((from - start) * rate))});
 		}
-		for (const Json& id : m_view.value("eventSelection", Json::array()))
-			m_selection.push_back(id.get<uint64_t>());
+		m_to = std::max(m_to, m_from + 0.001);
+		if (selectionIsCurrent)
+			for (const Json& id : m_view.value("eventSelection", Json::array()))
+				m_selection.push_back(id.get<uint64_t>());
 		if (m_waveforms)
 			m_waveforms->setEvents(m_waves);
 		// The display needs its width for the waveforms' scale: lay it out once if it hasn't been yet.
@@ -368,7 +390,9 @@ namespace gnubase::ui
 					place(*events->GetChild(i), found->shownStart, found->shownEnd, found->lane);
 					setClass(events->GetChild(i), "selected", selected(*found));
 					setClass(events->GetChild(i), "muted", found->mute);
+					setClass(events->GetChild(i), "outside", found->outside);
 				}
+		preview(); // a render while a move drags, as when the selection comes back, keeps showing it
 		if (m_waveforms && display != nullptr)
 		{
 			const double width = display->GetClientWidth() / dpRatio();
@@ -425,6 +449,12 @@ namespace gnubase::ui
 		return std::find(m_selection.begin(), m_selection.end(), event.id) != m_selection.end();
 	}
 
+	bool AudioPartEditor::continues(const Event& event, const Event& next) const
+	{
+		return next.id != event.id && next.part == event.part && next.clip == event.clip &&
+			next.offset == event.offset + event.length && std::abs(samples(next.start) - samples(event.end)) <= 1;
+	}
+
 	std::vector<const AudioPartEditor::Event*> AudioPartEditor::selectedEvents() const
 	{
 		std::vector<const Event*> events;
@@ -448,9 +478,11 @@ namespace gnubase::ui
 		return {m_from + (x * (m_to - m_from)), std::max(0, static_cast<int>(std::floor(y / g_laneHeight)))};
 	}
 
-	// The project's quantize grid (quantize.set), from the project start.
+	// To the project's quantize grid (quantize.set), from the project start, while the project's snap is on.
 	double AudioPartEditor::snap(double seconds) const
 	{
+		if (!m_project.value("snap", Json::object()).value("on", false))
+			return seconds;
 		const TimeContext time = projectTime(m_project);
 		const std::string grid = m_project.value("quantize", Json::object()).value("grid", std::string("1/16"));
 		const auto step =
@@ -476,7 +508,15 @@ namespace gnubase::ui
 	{
 		m_selection = std::move(events);
 		render(); // at once; editor.changed confirms it
-		m_binding.send("editor.set", {{"editor", m_name}, {"eventSelection", m_selection}});
+		++m_selecting;
+		m_binding.send("editor.set", {{"editor", m_name}, {"eventSelection", m_selection}},
+			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (!result.ok())
+					logging::warning("editor.set from the audio part editor failed: {}", result.error);
+				if (!alive.expired())
+					--m_selecting;
+			});
 	}
 
 	void AudioPartEditor::edit(const std::string& description, Json commands)
@@ -546,14 +586,30 @@ namespace gnubase::ui
 		switch (event.GetId())
 		{
 		case Rml::EventId::Mousedown:
-			if (event.GetParameter("button", 0) == 0)
-				press(event);
+			if (event.GetParameter("button", 0) != 0)
+				break;
+			if (event.GetCurrentElement() == m_listened.get())
+			{
+				// A left press anywhere in the document while a gesture goes on: the gesture's mouseup never came, as
+				// when the mouse went up outside the window. It ends without its effect before anything hears the
+				// press; the events go back where they are.
+				if (cancel())
+					render();
+				break;
+			}
+			press(event);
 			break;
-		case Rml::EventId::Mousemove:
+		case Rml::EventId::Drag:
 			drag(event);
 			break;
+		case Rml::EventId::Dragend:
+			// After the button went up outside the window; in it, the mouseup has ended the gesture already.
+			if (m_gesture != Gesture::None)
+				release(event);
+			break;
 		case Rml::EventId::Mouseup:
-			release(event);
+			if (event.GetParameter("button", 0) == 0)
+				release(event);
 			break;
 		case Rml::EventId::Dblclick:
 			doubleClick(event);
@@ -577,6 +633,42 @@ namespace gnubase::ui
 
 	void AudioPartEditor::press(Rml::Event& event)
 	{
+		// The document's mousedown (ProcessEvent) has ended a gesture whose mouseup never came already.
+		m_gesture = Gesture::None;
+		begin(event);
+		if (m_gesture != Gesture::None)
+			listen(true);
+	}
+
+	bool AudioPartEditor::cancel()
+	{
+		listen(false);
+		const Gesture gesture = std::exchange(m_gesture, Gesture::None);
+		if (gesture == Gesture::Audition)
+			m_binding.send("audition.stop");
+		return gesture == Gesture::Move || gesture == Gesture::MoveVertical;
+	}
+
+	void AudioPartEditor::listen(bool document)
+	{
+		if (Rml::Element* listened = m_listened.get())
+		{
+			listened->RemoveEventListener(Rml::EventId::Mouseup, this);
+			listened->RemoveEventListener(Rml::EventId::Mousedown, this, true);
+		}
+		m_listened.reset();
+		if (const Rml::Element* root = m_root.get(); document && root != nullptr)
+			if (Rml::ElementDocument* owner = root->GetOwnerDocument())
+			{
+				owner->AddEventListener(Rml::EventId::Mouseup, this);
+				// In the capture phase: before the press reaches the root or anything else in the document.
+				owner->AddEventListener(Rml::EventId::Mousedown, this, true);
+				m_listened = owner->GetObserverPtr();
+			}
+	}
+
+	void AudioPartEditor::begin(Rml::Event& event)
+	{
 		Rml::Element* root = m_root.get();
 		Rml::Element* target = event.GetTargetElement();
 		if (!inside(target, root->QuerySelector(".ape-display")))
@@ -586,7 +678,6 @@ namespace gnubase::ui
 		m_pressedAt = at(event);
 		m_pressedMouse = {event.GetParameter("mouse_x", 0.0F), event.GetParameter("mouse_y", 0.0F)};
 		m_dragged = false;
-		m_gesture = Gesture::None;
 		const Event* pressed = eventOf(target);
 		if (pressed != nullptr && !pressed->editable)
 			pressed = nullptr;
@@ -645,15 +736,13 @@ namespace gnubase::ui
 		}
 		case AudioPartTool::Glue:
 		{
-			// Glues the event to the next one on its lane in its part.
+			// Glues the event to the one on its lane that continues it in the clip, as after a split; the engine glues
+			// no other audio events in a part, so a click on one that nothing continues does nothing.
 			if (pressed == nullptr)
 				return;
-			const Event* next = nullptr;
-			for (const Event& each : m_events)
-				if (each.part == pressed->part && each.lane == pressed->lane && each.start > pressed->start &&
-					(next == nullptr || each.start < next->start))
-					next = &each;
-			if (next != nullptr)
+			const auto next = std::find_if(m_events.begin(), m_events.end(),
+				[&](const Event& each) { return each.lane == pressed->lane && continues(*pressed, each); });
+			if (next != m_events.end())
 				edit("Glue",
 					Json::array({{{"command", "event.glue"}, {"parameters", {{"events", {pressed->id, next->id}}}}}}));
 			return;
@@ -667,18 +756,24 @@ namespace gnubase::ui
 		case AudioPartTool::Play:
 		case AudioPartTool::Scrub:
 		{
-			// Auditions the track of the event or part pressed from the mouse until the release (pp. 700-701).
-			uint64_t track = pressed != nullptr ? pressed->track : 0;
-			if (track == 0)
-				for (const Json& part : m_project.value("audioParts", Json::array()))
-					if (part.at("id") == m_view.at("activePart"))
-						track = part.at("track").get<uint64_t>();
-			if (track == 0)
+			// Auditions the track of the event pressed, or of the active part, from the mouse until the release
+			// (pp. 700-701); the play tool up to the end of that part.
+			const auto part =
+				m_parts.find(pressed != nullptr ? pressed->part : m_view.value("activePart", uint64_t{0}));
+			if (part == m_parts.end())
 				return;
-			m_auditioned = track;
+			const int64_t position = std::max<int64_t>(0, samples(seconds));
+			Json parameters = {{"track", part->second.track}, {"position", position}};
+			if (m_tool == AudioPartTool::Play)
+			{
+				const int64_t end = samples(part->second.end);
+				if (end <= position)
+					return; // after the part's end
+				parameters["end"] = end;
+			}
+			m_auditioned = part->second.track;
 			m_gesture = Gesture::Audition;
-			m_binding.send(m_tool == AudioPartTool::Play ? "audition.start" : "audition.scrub",
-				{{"track", track}, {"position", std::max<int64_t>(0, samples(seconds))}});
+			m_binding.send(m_tool == AudioPartTool::Play ? "audition.start" : "audition.scrub", std::move(parameters));
 			return;
 		}
 		}
@@ -698,23 +793,34 @@ namespace gnubase::ui
 		}
 		if (!dragged(event) || !m_pressed)
 			return; // a click only selects
-		const double dt =
-			m_gesture == Gesture::Move ? snap(m_pressed->start + seconds - m_pressedAt.first) - m_pressed->start : 0.0;
-		const int dl = lane - m_pressedAt.second;
+		m_moved = {
+			m_gesture == Gesture::Move ? snap(m_pressed->start + seconds - m_pressedAt.first) - m_pressed->start : 0.0,
+			lane - m_pressedAt.second};
+		preview();
+	}
+
+	void AudioPartEditor::preview()
+	{
+		if ((m_gesture != Gesture::Move && m_gesture != Gesture::MoveVertical) || !m_dragged || !m_pressed)
+			return;
+		const auto [dt, dl] = m_moved;
 		const Rml::Element* events = m_root.get()->QuerySelector(".ape-events");
 		if (events == nullptr)
 			return;
+		// What release() moves: the selected events, or with Ctrl the pressed one if it isn't selected.
+		const bool alone = m_gesture == Gesture::MoveVertical && !selected(*m_pressed);
 		for (int i = 0; i < events->GetNumChildren(); ++i)
 		{
 			Rml::Element* element = events->GetChild(i);
 			const Event* shown = eventOf(element);
-			if (shown != nullptr && (selected(*shown) || shown->id == m_pressed->id))
+			if (shown != nullptr && (alone ? shown->id == m_pressed->id : selected(*shown)))
 				place(*element, shown->shownStart + dt, shown->shownEnd + dt, std::max(shown->lane + dl, 0));
 		}
 	}
 
 	void AudioPartEditor::release(Rml::Event& event)
 	{
+		listen(false);
 		const Gesture gesture = std::exchange(m_gesture, Gesture::None);
 		if (gesture == Gesture::None)
 			return;
@@ -770,7 +876,7 @@ namespace gnubase::ui
 	{
 		if (m_tool != AudioPartTool::ObjectSelection)
 			return;
-		m_gesture = Gesture::None;
+		cancel(); // the second press's move
 		if (const Event* pressed = eventOf(event.GetTargetElement()); pressed != nullptr)
 			m_binding.send("sampleEditor.open", {{"event", pressed->id}});
 	}

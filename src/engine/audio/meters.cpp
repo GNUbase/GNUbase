@@ -36,6 +36,19 @@ namespace gnubase::engine
 			}
 			return sum;
 		}
+
+		// Raises a held value for the one writer, against the reader that takes it (exchange): lock-free, and no
+		// value goes unseen. What the writer stored before is visible to the reader that takes this value.
+		void raise(std::atomic<float>& held, float value) noexcept
+		{
+			float current = held.load(std::memory_order_relaxed);
+			while (value > current &&
+				!held.compare_exchange_weak(current, value, std::memory_order_release, std::memory_order_relaxed))
+			{
+			}
+		}
+
+		constexpr float g_aes17 = 1.41421356f; // AES17's +3.01 dB on the RMS level
 	}
 
 	void LevelMeter::process(const float* const* audio, int channels, uint32_t frames, double sampleRate) noexcept
@@ -52,67 +65,138 @@ namespace gnubase::engine
 		{
 			const auto index = static_cast<size_t>(c);
 			m_windowPeak[index] = 0.0f;
-			m_windowSquares[index] = 0.0;
+			m_sliceSquares[index] = 0.0;
 			m_squares[index] = {};
 			m_peakMax[index] = 0.0f;
 			m_rmsMax[index] = 0.0f;
 			m_peak[index].store(0.0f, std::memory_order_relaxed);
+			m_framePeak[index].store(0.0f, std::memory_order_relaxed);
 			m_rms[index].store(0.0f, std::memory_order_relaxed);
 			m_publishedPeakMax[index].store(0.0f, std::memory_order_relaxed);
 			m_publishedRmsMax[index].store(0.0f, std::memory_order_relaxed);
 		}
 		m_channels.store(channels, std::memory_order_relaxed);
-		for (int c = 0; c < channels; ++c)
+		// The RMS window follows its resolution and the sample rate: a new one starts empty.
+		if (const int resolution = m_rmsResolution.load(std::memory_order_relaxed);
+			resolution != m_resolution || sampleRate != m_sampleRate)
 		{
-			const auto index = static_cast<size_t>(c);
-			float peak = m_windowPeak[index];
-			double squares = m_windowSquares[index];
-			for (uint32_t i = 0; i < frames; ++i)
-			{
-				const float x = audio[c][i];
-				peak = std::max(peak, std::abs(x));
-				squares += static_cast<double>(x) * x;
-			}
-			m_windowPeak[index] = peak;
-			m_windowSquares[index] = squares;
+			m_resolution = resolution;
+			m_sampleRate = sampleRate;
+			m_rmsFrames = static_cast<uint32_t>(std::max(1L, std::lround(resolution * sampleRate / 1000.0)));
+			m_slices = static_cast<int>(std::min<uint32_t>(g_slices, m_rmsFrames));
+			m_squares = {};
+			m_sliceSquares = {};
+			m_sliceLengths = {};
+			m_sliceIndex = 0;
+			m_sliceFrames = 0;
+			m_squaresFrames = 0;
+			m_windowLength = static_cast<uint32_t>(std::max(1L, std::lround(g_publishSeconds * sampleRate)));
+			m_windowFrames = std::min(m_windowFrames, m_windowLength - 1);
 		}
-		m_windowFrames += frames;
-		if (static_cast<double>(m_windowFrames) < g_publishSeconds * sampleRate)
-			return;
-		// The window ends: it replaces the oldest of the three that the RMS level averages.
-		const auto slot = static_cast<size_t>(m_squaresIndex);
-		m_squaresFrames += m_windowFrames - m_windowLengths[slot];
-		m_windowLengths[slot] = m_windowFrames;
-		m_squaresIndex = (m_squaresIndex + 1) % 3;
+		std::array<float, g_maxMeterChannels> blockPeak{};
+		for (uint32_t done = 0; done < frames;)
+		{
+			// Up to where the current slice or the 100 ms peak window ends. The slices share the window's frames out
+			// evenly, so that the ring holds exactly the window once it is full.
+			const auto slice = static_cast<uint64_t>(m_sliceIndex);
+			const auto sliceLength =
+				static_cast<uint32_t>((((slice + 1) * m_rmsFrames) / static_cast<uint64_t>(m_slices)) -
+					((slice * m_rmsFrames) / static_cast<uint64_t>(m_slices)));
+			const uint32_t count =
+				std::min({frames - done, sliceLength - m_sliceFrames, m_windowLength - m_windowFrames});
+			for (size_t c = 0; c < static_cast<size_t>(channels); ++c)
+			{
+				float peak = 0.0f; // of this part only, which lies in one 100 ms window
+				double squares = m_sliceSquares[c];
+				for (uint32_t i = done; i < done + count; ++i)
+				{
+					const float x = audio[c][i];
+					peak = std::max(peak, std::abs(x));
+					squares += static_cast<double>(x) * x;
+				}
+				blockPeak[c] = std::max(blockPeak[c], peak);
+				m_windowPeak[c] = std::max(m_windowPeak[c], peak);
+				m_sliceSquares[c] = squares;
+			}
+			done += count;
+			m_sliceFrames += count;
+			m_windowFrames += count;
+			if (m_sliceFrames == sliceLength)
+				endSlice(channels);
+			if (m_windowFrames == m_windowLength)
+				endWindow(channels);
+		}
+		for (size_t c = 0; c < static_cast<size_t>(channels); ++c)
+		{
+			m_peakMax[c] = std::max(m_peakMax[c], blockPeak[c]);
+			m_publishedPeakMax[c].store(m_peakMax[c], std::memory_order_relaxed);
+			raise(m_framePeak[c], blockPeak[c]);
+		}
+	}
+
+	void LevelMeter::endSlice(int channels) noexcept
+	{
+		// The slice replaces the oldest in the ring, which the RMS level averages.
+		const auto slot = static_cast<size_t>(m_sliceIndex);
+		m_squaresFrames += m_sliceFrames - m_sliceLengths[slot];
+		m_sliceLengths[slot] = m_sliceFrames;
+		m_sliceIndex = (m_sliceIndex + 1) % m_slices;
+		m_sliceFrames = 0;
+		for (size_t c = 0; c < static_cast<size_t>(channels); ++c)
+		{
+			m_squares[c][slot] = m_sliceSquares[c];
+			m_sliceSquares[c] = 0.0;
+			double sum = 0.0;
+			for (size_t s = 0; s < static_cast<size_t>(m_slices); ++s)
+				sum += m_squares[c][s];
+			const auto rms = static_cast<float>(std::sqrt(sum / std::max<uint32_t>(m_squaresFrames, 1)));
+			m_rmsMax[c] = std::max(m_rmsMax[c], rms);
+			m_rms[c].store(rms, std::memory_order_relaxed);
+			m_publishedRmsMax[c].store(m_rmsMax[c], std::memory_order_relaxed);
+		}
+	}
+
+	void LevelMeter::endWindow(int channels) noexcept
+	{
 		m_windowFrames = 0;
 		for (size_t c = 0; c < static_cast<size_t>(channels); ++c)
 		{
-			m_squares[c][slot] = m_windowSquares[c];
-			m_windowSquares[c] = 0.0;
-			const double sum = m_squares[c][0] + m_squares[c][1] + m_squares[c][2];
-			const auto rms = static_cast<float>(std::sqrt(sum / std::max<uint32_t>(m_squaresFrames, 1)));
-			m_peakMax[c] = std::max(m_peakMax[c], m_windowPeak[c]);
-			m_rmsMax[c] = std::max(m_rmsMax[c], rms);
 			m_peak[c].store(m_windowPeak[c], std::memory_order_relaxed);
-			m_rms[c].store(rms, std::memory_order_relaxed);
-			m_publishedPeakMax[c].store(m_peakMax[c], std::memory_order_relaxed);
-			m_publishedRmsMax[c].store(m_rmsMax[c], std::memory_order_relaxed);
 			m_windowPeak[c] = 0.0f;
 		}
 	}
 
 	LevelReading LevelMeter::read() const noexcept
 	{
+		const float rmsGain = m_aes17.load(std::memory_order_relaxed) ? g_aes17 : 1.0f;
 		LevelReading reading;
 		reading.channels = m_channels.load(std::memory_order_relaxed);
 		for (size_t c = 0; c < static_cast<size_t>(reading.channels); ++c)
 		{
 			reading.peak[c] = m_peak[c].load(std::memory_order_relaxed);
-			reading.rms[c] = m_rms[c].load(std::memory_order_relaxed);
+			reading.rms[c] = m_rms[c].load(std::memory_order_relaxed) * rmsGain;
 			reading.peakMax[c] = m_publishedPeakMax[c].load(std::memory_order_relaxed);
-			reading.rmsMax[c] = m_publishedRmsMax[c].load(std::memory_order_relaxed);
+			reading.rmsMax[c] = m_publishedRmsMax[c].load(std::memory_order_relaxed) * rmsGain;
 		}
 		return reading;
+	}
+
+	LevelReading LevelMeter::readFrame() noexcept
+	{
+		// The peaks first: the audio thread publishes a block's maximum before it raises the held peak, so the maximum
+		// read after them is never below them.
+		std::array<float, g_maxMeterChannels> peaks{};
+		for (size_t c = 0; c < peaks.size(); ++c)
+			peaks[c] = m_framePeak[c].exchange(0.0f, std::memory_order_acquire);
+		LevelReading reading = read();
+		reading.peak = peaks;
+		return reading;
+	}
+
+	void LevelMeter::setRms(int milliseconds, bool aes17) noexcept
+	{
+		m_rmsResolution.store(std::clamp(milliseconds, 1, 1000), std::memory_order_relaxed);
+		m_aes17.store(aes17, std::memory_order_relaxed);
 	}
 
 	void LevelMeter::reset() noexcept
@@ -183,8 +267,10 @@ namespace gnubase::engine
 		prepare(48000.0);
 	}
 
-	void LoudnessMeter::prepare(double sampleRate)
+	void LoudnessMeter::prepare(double sampleRate, bool keepMeasurement)
 	{
+		const bool keep = keepMeasurement && sampleRate == m_sampleRate;
+		m_sampleRate = sampleRate;
 		m_filters = analysis::kWeighting(sampleRate);
 		m_stepLength = static_cast<uint32_t>(std::max(1L, std::lround(g_publishSeconds * sampleRate)));
 		m_filterState = {};
@@ -196,7 +282,14 @@ namespace gnubase::engine
 		m_windowTruePeak.fill(0.0f);
 		m_momentary.store(g_nothing);
 		m_shortTerm.store(g_nothing);
-		clear();
+		// Blocks start again where playback goes on, so none spans the restart.
+		m_playingSteps = 0;
+		m_wasMeasuring = false;
+		m_freshSamples = 0;
+		for (std::atomic<float>& peak : m_frameTruePeak)
+			peak.store(0.0f, std::memory_order_relaxed);
+		if (!keep)
+			clear();
 		publish();
 	}
 
@@ -227,6 +320,7 @@ namespace gnubase::engine
 				m_windowTruePeak[c] = 0.0f;
 				m_truePeakMax[c] = 0.0f;
 				m_truePeak[c].store(0.0f, std::memory_order_relaxed);
+				m_frameTruePeak[c].store(0.0f, std::memory_order_relaxed);
 				m_publishedTruePeakMax[c].store(0.0f, std::memory_order_relaxed);
 			}
 			m_channels = channels;
@@ -243,6 +337,7 @@ namespace gnubase::engine
 			m_freshSamples = g_taps / 4;
 		}
 		m_wasMeasuring = measuring;
+		std::array<float, g_maxMeterChannels> blockTruePeak{}; // for the frame's reading
 		const analysis::Biquad& shelf = m_filters[0];
 		const analysis::Biquad& highPass = m_filters[1];
 		constexpr int length = g_taps / 4;
@@ -267,7 +362,7 @@ namespace gnubase::engine
 				std::array<float, g_taps / 2>& history = m_history[c];
 				history[static_cast<size_t>(m_historyIndex)] = sample;
 				history[static_cast<size_t>(m_historyIndex) + static_cast<size_t>(length)] = sample;
-				float peak = std::max(m_windowTruePeak[c], std::abs(sample));
+				float peak = std::abs(sample);
 				const float* newest = history.data() + m_historyIndex + length; // newest[-k] is k samples ago
 				// Right after playback starts, the points between the samples would still read audio from before.
 				for (int phase = 0; phase < 4 && m_freshSamples == 0; ++phase)
@@ -278,7 +373,8 @@ namespace gnubase::engine
 							m_interpolator[static_cast<size_t>(phase) + (4 * static_cast<size_t>(k))] * newest[-k];
 					peak = std::max(peak, static_cast<float>(std::abs(interpolated)));
 				}
-				m_windowTruePeak[c] = peak;
+				m_windowTruePeak[c] = std::max(m_windowTruePeak[c], peak);
+				blockTruePeak[c] = std::max(blockTruePeak[c], peak);
 			}
 			m_historyIndex = (m_historyIndex + 1) % length;
 			if (m_freshSamples > 0)
@@ -287,6 +383,8 @@ namespace gnubase::engine
 			if (++m_stepFrames == m_stepLength)
 				step(measuring);
 		}
+		for (size_t c = 0; c < static_cast<size_t>(channels); ++c)
+			raise(m_frameTruePeak[c], blockTruePeak[c]);
 	}
 
 	void LoudnessMeter::step(bool measuring) noexcept
@@ -396,6 +494,14 @@ namespace gnubase::engine
 			reading.truePeak[c] = m_truePeak[c].load(std::memory_order_relaxed);
 			reading.truePeakMax[c] = m_publishedTruePeakMax[c].load(std::memory_order_relaxed);
 		}
+		return reading;
+	}
+
+	LoudnessReading LoudnessMeter::readFrame() noexcept
+	{
+		LoudnessReading reading = read();
+		for (size_t c = 0; c < static_cast<size_t>(reading.channels); ++c)
+			reading.truePeak[c] = m_frameTruePeak[c].exchange(0.0f, std::memory_order_acquire);
 		return reading;
 	}
 
