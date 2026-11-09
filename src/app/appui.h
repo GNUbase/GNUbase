@@ -318,6 +318,9 @@ namespace gnubase::app
 			const std::vector<std::pair<std::string, std::string>>& attributes = {}) const;
 		// The Auto Fades dialog (resources/ui/auto-fades.rml) for the project, or for a track (not 0).
 		void openAutoFades(ui::Window& window, uint64_t track) const;
+		// The articulation map setup (resources/ui/articulation-maps.rml, #175) for a MIDI or instrument track, or with
+		// 0 for the first one selected in the track list, if any.
+		void openArticulationMaps(ui::Window& window, uint64_t track);
 		// openDialog for a dialog whose Lua keeps its state in a global table, so that there is only one: while open
 		// is open, brings it to the front instead.
 		Rml::ElementDocument& openOnce(

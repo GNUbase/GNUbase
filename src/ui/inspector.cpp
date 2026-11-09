@@ -70,6 +70,13 @@ namespace gnubase::ui
 			R"(<div class="inspector-row" row="followChords"><span class="inspector-label">Follow</span>)"
 			R"(<select control="followChords" title="Follow Chord Track"/></div>)"
 			R"(</div></div>)"
+			R"(<div class="inspector-section" section="articulations" label="Articulation Map">)"
+			R"(<button class="section-header">Articulation Map</button><div class="section-body">)"
+			R"(<div class="inspector-row" row="articulationMap"><span class="inspector-label">Map</span>)"
+			R"(<select control="articulationMap" title="Active Articulation Map"/></div>)"
+			R"(<div class="inspector-buttons"><button class="inspector-articulation-setup")"
+			R"( title="Articulation Map Setup">Setup...</button></div>)"
+			R"(</div></div>)"
 			R"(<div class="inspector-section" section="inserts" label="Inserts">)"
 			R"(<button class="section-header">Inserts</button><div class="section-body inserts"/></div>)"
 			R"(<div class="inspector-section" section="notepad" label="Notepad">)"
@@ -267,9 +274,10 @@ namespace gnubase::ui
 		}
 	}
 
-	Inspector::Inspector(EngineBinding& binding, Rml::Element& root, std::function<void(uint64_t track)> editChannel)
+	Inspector::Inspector(EngineBinding& binding, Rml::Element& root, std::function<void(uint64_t track)> editChannel,
+		std::function<void(uint64_t track)> setupArticulations)
 		: m_binding(binding), m_stepOwner(binding.stepOwner("inspector")), m_root(root.GetObserverPtr()),
-		  m_editChannel(std::move(editChannel)),
+		  m_editChannel(std::move(editChannel)), m_setupArticulations(std::move(setupArticulations)),
 		  // Another project replaces the edits in progress: the ids they were for may be the new project's too.
 		  m_reset(binding.on("project.reset",
 			  [this](const engine::Event&)
@@ -446,6 +454,16 @@ namespace gnubase::ui
 					{"rootNotes", "Root Notes"}, {"voicings", "Voicings"}},
 				mode);
 		}
+		// The track's articulation map (#175, reference manual pp. 1263, 1286), and the setup for the maps.
+		available("[section=articulations]", noteTrack);
+		if (Rml::Element* maps = element("select[control=articulationMap]"); maps != nullptr && noteTrack)
+		{
+			Options options = {{"0", "No Map"}};
+			for (const Json& map : m_project->value("articulationMaps", Json::array()))
+				options.emplace_back(std::to_string(map.at("id").get<uint64_t>()), map.at("name").get<std::string>());
+			widgets::fill(*maps, options, std::to_string(track->value("articulationMap", uint64_t{0})));
+		}
+		available(".inspector-articulation-setup", noteTrack && m_setupArticulations);
 		available(".inspector-edit", channel != nullptr && m_editChannel);
 		const bool records = type == "audio" || type == "instrument" || type == "midi" || vca;
 		available("button[control=record]", records);
@@ -602,6 +620,8 @@ namespace gnubase::ui
 		case Rml::EventId::Click:
 			if (target->IsClassSet("inspector-edit") && m_editChannel && m_track != 0)
 				m_editChannel(m_track); // Edit Channel Settings (reference manual p. 500)
+			if (target->IsClassSet("inspector-articulation-setup") && m_setupArticulations && m_track != 0)
+				m_setupArticulations(m_track);
 			// A section's header opens and closes it.
 			for (const Rml::Element* up = target; up != nullptr && up != m_root.get(); up = up->GetParentNode())
 				if (up->IsClassSet("section-header") && up->GetParentNode() != nullptr)
@@ -653,6 +673,12 @@ namespace gnubase::ui
 			if (track != nullptr && (track->at("timeBase") == "linear") != linear)
 				m_binding.send(
 					"track.set", {{"track", m_track}, {"timeBase", linear ? "linear" : "musical"}}, whenRefused());
+			return;
+		}
+		if (name == "articulationMap")
+		{
+			const uint64_t map = std::strtoull(event.GetParameter<Rml::String>("value", "0").c_str(), nullptr, 10);
+			m_binding.send("track.set", {{"track", m_track}, {"articulationMap", map}}, whenRefused());
 			return;
 		}
 		if (name == "followChords")

@@ -1,0 +1,629 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The articulation map setup (#175, docs/features/articulation-maps.md, reference manual pp. 1264-1283). app::AppUi
+     opens it (MIDI > Articulation Map Setup..., the UI command midi.articulationMapSetup, and the inspector's
+     Articulation Map section) with the attribute track, the selected MIDI or instrument track, or none. Its Lua shows
+     the project's maps from project.get and changes them right away, each change one undo step: Add Map, Duplicate
+     Map and Remove Map run articulationMap.add and articulationMap.remove; Import Map and Export Map choose a file
+     (gnubase.ui.importArticulationMap and exportArticulationMap); Assign to Track runs track.set articulationMap. The
+     selected map's name, remote trigger mode, latch, groups, articulations and sound slots, and the selected slot's
+     output mapping and MIDI modifiers, go to articulationMap.set as they change, text fields with Enter or when they
+     lose the focus. A change the engine refuses shows its message and the field as it was. The buttons are outside
+     the rows that the Lua writes again, since an element must not go while its own event runs: Remove Articulation,
+     Remove Sound Slot and Remove Output Mapping remove the row picked with its radio button. -->
+<rml>
+<head>
+	<title>Articulation Map Setup</title>
+	<style>
+		dialog
+		{
+			width: 900dp;
+		}
+
+		.content
+		{
+			display: flex;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.maps
+		{
+			width: 200dp;
+			margin-right: 12dp;
+		}
+
+		#articulation-maps
+		{
+			height: 360dp;
+		}
+
+		.map
+		{
+			flex: 1;
+		}
+
+		.map-row
+		{
+			display: flex;
+			align-items: center;
+			margin-bottom: 4dp;
+		}
+
+		.map-row input.text, .map-row select
+		{
+			margin-right: 4dp;
+		}
+
+		.map-row .label
+		{
+			width: 110dp;
+		}
+
+		.map-row .name
+		{
+			width: 160dp;
+		}
+
+		.map-row .number
+		{
+			width: 50dp;
+		}
+
+		.map-row .wide
+		{
+			width: 220dp;
+		}
+
+		.map-heading
+		{
+			margin: 8dp 0 4dp 0;
+		}
+
+		.row
+		{
+			display: flex;
+			align-items: center;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.row button
+		{
+			margin-right: 6dp;
+		}
+
+		.row .spacer
+		{
+			flex: 1;
+		}
+
+		/* Without a map, or a track to assign it to. */
+		#articulation-map.unavailable, #articulation-map-assign.unavailable
+		{
+			display: none;
+		}
+	</style>
+	<script>
+		ArticulationMaps = {}
+		local dialog = ArticulationMaps
+
+		local maps = {}
+		local selected = 1 -- the map
+		local picked = {articulation = 1, slot = 1, output = 1} -- the rows picked with the radio buttons
+		local track = nil
+
+		local function escape(text)
+			return (tostring(text):gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"):gsub('"', "&quot;"))
+		end
+
+		local function field(kind, index, key, value, class)
+			return '<input type="text" class="text ' .. (class or "name") .. '" kind="' .. kind .. '" index="' ..
+				index .. '" key="' .. key .. '" value="' .. escape(value) ..
+				'" onchange="ArticulationMaps.change(document, event)"' ..
+				' onblur="ArticulationMaps.change(document, event)"/>'
+		end
+
+		local function dropDown(kind, index, key, choices, value)
+			local options = {}
+			for _, choice in ipairs(choices) do
+				options[#options + 1] = '<option value="' .. escape(choice[1]) .. '"' ..
+					(tostring(value) == tostring(choice[1]) and " selected" or "") .. ">" .. escape(choice[2]) ..
+					"</option>"
+			end
+			return '<select kind="' .. kind .. '" index="' .. index .. '" key="' .. key ..
+				'" onchange="ArticulationMaps.change(document, event)">' .. table.concat(options) .. "</select>"
+		end
+
+		local function pick(kind, index)
+			return '<input type="radio" name="articulation-pick-' .. kind .. '" kind="' .. kind .. '" index="' ..
+				index .. '"' .. (picked[kind] == index and " checked" or "") ..
+				' onchange="ArticulationMaps.pick(document, event)"/>'
+		end
+
+		local function message(document, text)
+			document:GetElementById("articulation-maps-message").inner_rml = escape(text or "")
+		end
+
+		local function current()
+			return maps[selected]
+		end
+
+		-- The slots as articulationMap.set takes them: lists without items left out, as Lua can't tell an empty list
+		-- from an empty table.
+		local function slotsOf(map)
+			local result = {}
+			for index, each in ipairs(map.slots) do
+				local copy = {}
+				for key, value in pairs(each) do
+					if type(value) ~= "table" or #value > 0 then
+						copy[key] = value
+					end
+				end
+				copy.outputs = copy.outputs or {}
+				copy.articulations = copy.articulations or {}
+				result[index] = copy
+			end
+			return result
+		end
+
+		-- What a field or drop-down shows of the map.
+		local function shown(map, kind, index, key)
+			local value
+			if kind == "map" then
+				value = map[key]
+			elseif kind == "group" then
+				value = map.groups[index]
+			elseif kind == "articulation" then
+				value = (map.articulations[index] or {})[key]
+			elseif kind == "slot" then
+				value = (map.slots[index] or {})[key]
+				if key == "articulations" and value ~= nil then
+					value = table.concat(value, ", ")
+				end
+			elseif kind == "output" then
+				value = (((map.slots[picked.slot] or {}).outputs or {})[index] or {})[key]
+			elseif kind == "modifier" then
+				value = (map.slots[index] or {})[key]
+				if key == "channel" and value ~= nil then
+					value = value + 1 -- shown 1-16
+				end
+			end
+			return value == nil and "" or tostring(value)
+		end
+
+		-- While rows are written, their checked radio buttons and drop-downs announce changes that aren't the user's.
+		local filling = false
+
+		local function fill(document, id, rml)
+			filling = true
+			document:GetElementById(id).inner_rml = table.concat(rml)
+			filling = false
+		end
+
+		local function showSettings(document, map)
+			fill(document, "articulation-map-settings", {
+				'<div class="map-row"><span class="label">Name</span>', field("map", 0, "name", map.name, "wide"),
+				'</div><div class="map-row"><span class="label">Remote Trigger</span>',
+				dropDown("map", 0, "remoteTrigger", {{"keySwitch", "Key Switch"}, {"programChange", "Program Change"}},
+					map.remoteTrigger),
+				dropDown("map", 0, "latch", {{"true", "Latch On"}, {"false", "Latch Off"}}, map.latch), "</div>"})
+		end
+
+		local function showGroups(document, map)
+			local rml = {}
+			for index, name in ipairs(map.groups) do
+				rml[#rml + 1] = field("group", index, "name", name)
+			end
+			fill(document, "articulation-groups", rml)
+		end
+
+		local function showArticulations(document, map)
+			local groups = {}
+			for index, name in ipairs(map.groups) do
+				groups[index] = {index - 1, name}
+			end
+			local rml = {}
+			for index, articulation in ipairs(map.articulations) do
+				rml[#rml + 1] = '<div class="map-row">' .. pick("articulation", index) ..
+					field("articulation", index, "name", articulation.name) ..
+					dropDown("articulation", index, "type", {{"direction", "Direction"}, {"attribute", "Attribute"}},
+						articulation.type) ..
+					dropDown("articulation", index, "group", groups, articulation.group) .. "</div>"
+			end
+			fill(document, "articulation-list", rml)
+		end
+
+		local function showSlots(document, map)
+			local rml = {}
+			for index, each in ipairs(map.slots) do
+				rml[#rml + 1] = '<div class="map-row">' .. pick("slot", index) ..
+					field("slot", index, "name", each.name) ..
+					field("slot", index, "articulations", table.concat(each.articulations, ", "), "wide") ..
+					field("slot", index, "trigger", each.trigger or "", "number") .. "</div>"
+			end
+			fill(document, "articulation-slots", rml)
+		end
+
+		-- The picked slot's output mapping and MIDI modifiers.
+		local function showSlot(document, map)
+			local slot = map.slots[picked.slot]
+			local outputs, modifiers = {}, {}
+			if slot ~= nil then
+				for index, output in ipairs(slot.outputs) do
+					outputs[#outputs + 1] = '<div class="map-row">' .. pick("output", index) ..
+						dropDown("output", index, "status",
+							{{"note", "Note"}, {"controller", "Controller"}, {"program", "Program Change"}},
+							output.status) ..
+						field("output", index, "data1", output.data1, "number") ..
+						field("output", index, "data2", output.data2, "number") ..
+						dropDown("output", index, "off", {{"false", "On Events"}, {"true", "Off Events"}}, output.off) ..
+						"</div>"
+				end
+				modifiers[1] = '<div class="map-row">' ..
+					field("modifier", picked.slot, "channel", slot.channel and (slot.channel + 1) or "", "number") ..
+					field("modifier", picked.slot, "length", slot.length, "number") ..
+					field("modifier", picked.slot, "velocity", slot.velocity, "number") ..
+					field("modifier", picked.slot, "transpose", slot.transpose, "number") .. "</div>"
+			end
+			fill(document, "articulation-outputs", outputs)
+			fill(document, "articulation-modifiers", modifiers)
+		end
+
+		function dialog.show(document)
+			local list = {}
+			for index, map in ipairs(maps) do
+				list[#list + 1] = '<listitem value="' .. index .. '">' .. escape(map.name) .. "</listitem>"
+			end
+			local view = document:GetElementById("articulation-maps")
+			view.inner_rml = table.concat(list)
+			view:SetAttribute("value", tostring(selected))
+			local map = current()
+			document:GetElementById("articulation-map"):SetClass("unavailable", map == nil)
+			if map == nil then
+				return
+			end
+			for kind, count in pairs({articulation = #map.articulations, slot = #map.slots}) do
+				picked[kind] = math.max(1, math.min(picked[kind], count))
+			end
+			picked.output = math.max(1, math.min(picked.output, #((map.slots[picked.slot] or {}).outputs or {})))
+			showSettings(document, map)
+			showGroups(document, map)
+			showArticulations(document, map)
+			showSlots(document, map)
+			showSlot(document, map)
+		end
+
+		local function reload()
+			maps = gnubase.project.get().articulationMaps or {}
+			selected = math.max(1, math.min(selected, #maps))
+		end
+
+		-- Runs an engine command; a refusal shows its message. Returns whether it ran.
+		local function run(document, call)
+			local ok, failure = pcall(call)
+			message(document, ok and "" or failure)
+			reload()
+			return ok
+		end
+
+		local function set(document, changes)
+			changes.map = current().id
+			return run(document, function() gnubase.articulationMap.set(changes) end)
+		end
+
+		function dialog.open(document)
+			track = tonumber(document:GetAttribute("track") or "")
+			reload()
+			-- The track's map first.
+			for _, each in ipairs(gnubase.project.get().tracks) do
+				if each.id == track then
+					for index, map in ipairs(maps) do
+						if map.id == each.articulationMap then
+							selected = index
+						end
+					end
+				end
+			end
+			document:GetElementById("articulation-map-assign"):SetClass("unavailable", track == nil)
+			dialog.show(document)
+		end
+
+		function dialog.select(document)
+			local value = tonumber(tostring(document:GetElementById("articulation-maps"):GetAttribute("value") or ""))
+			if value ~= nil and value ~= selected and maps[value] ~= nil then
+				selected = value
+				picked = {articulation = 1, slot = 1, output = 1}
+				dialog.show(document)
+			end
+		end
+
+		-- A radio button picked a row; a slot shows its output mapping and MIDI modifiers.
+		function dialog.pick(document, event)
+			if filling then
+				return
+			end
+			local kind = event.target_element:GetAttribute("kind")
+			picked[kind] = tonumber(event.target_element:GetAttribute("index")) or 1
+			if kind == "slot" and current() ~= nil then
+				picked.output = 1
+				showSlot(document, current())
+			end
+		end
+
+		local function integerOrNil(text)
+			if text == "" then
+				return nil
+			end
+			return math.tointeger(tonumber(text)) or -1 -- the engine refuses what isn't a number in range
+		end
+
+		-- The map with a field's or drop-down's change: its kind, index and key say which part of the map.
+		local function changed(map, kind, index, key, value)
+			if kind == "map" then
+				if key == "latch" then
+					return {latch = value == "true"}
+				end
+				return {[key] = value}
+			elseif kind == "group" then
+				local groups = map.groups
+				groups[index] = value
+				return {groups = groups}
+			elseif kind == "articulation" then
+				local articulations = map.articulations
+				local slots = slotsOf(map)
+				local item = articulations[index]
+				if key == "group" then
+					item.group = tonumber(value) or 0
+				elseif key == "name" then
+					-- The slots keep the articulation under its new name.
+					for _, each in ipairs(slots) do
+						for position, name in ipairs(each.articulations) do
+							if name == item.name then
+								each.articulations[position] = value
+							end
+						end
+					end
+					item.name = value
+				else
+					item[key] = value
+				end
+				return {articulations = articulations, slots = slots}
+			end
+			local slots = slotsOf(map)
+			if kind == "slot" then
+				local item = slots[index]
+				if key == "articulations" then
+					item.articulations = {}
+					for name in value:gmatch("[^,]+") do
+						local trimmed = name:match("^%s*(.-)%s*$")
+						if trimmed ~= "" then
+							item.articulations[#item.articulations + 1] = trimmed
+						end
+					end
+				elseif key == "trigger" then
+					item.trigger = integerOrNil(value)
+				else
+					item[key] = value
+				end
+			elseif kind == "output" then
+				local output = slots[picked.slot].outputs[index]
+				if key == "status" then
+					output.status = value
+				elseif key == "off" then
+					output.off = value == "true"
+				else
+					output[key] = integerOrNil(value) or 0
+				end
+			elseif kind == "modifier" then
+				local number = integerOrNil(value)
+				if key == "channel" then
+					slots[index].channel = number and number - 1 or nil
+				else
+					slots[index][key] = number or 0
+				end
+			end
+			return {slots = slots}
+		end
+
+		-- A field or drop-down changed; text fields change with Enter or when they lose the focus. Only other rows
+		-- show again: the ones that show what changed with it.
+		function dialog.change(document, event)
+			if filling then
+				return
+			end
+			local element = event.target_element
+			local kind = element:GetAttribute("kind")
+			local index = tonumber(element:GetAttribute("index")) or 0
+			local key = element:GetAttribute("key")
+			local map = current()
+			if map == nil or kind == nil or key == nil then
+				return
+			end
+			local text = element.tag_name == "input"
+			if text and event.type == "change" and not event.parameters.linebreak then
+				return
+			end
+			local value = tostring((text and element:GetAttribute("value")) or event.parameters.value or "")
+			if value == shown(map, kind, index, key) then
+				return
+			end
+			if not set(document, changed(map, kind, index, key, value)) then
+				element:SetAttribute("value", shown(current(), kind, index, key))
+			elseif kind == "group" then
+				showArticulations(document, current())
+			elseif kind == "articulation" then
+				showSlots(document, current())
+			end
+		end
+
+		-- The buttons below: each changes the map, then shows it again.
+		local function edit(document, change)
+			local map = current()
+			if map ~= nil then
+				change(map)
+				dialog.show(document)
+			end
+		end
+
+		function dialog.add(document, copy)
+			local parameters = {}
+			if copy and current() ~= nil then
+				parameters.copy = current().id
+			end
+			if run(document, function() gnubase.articulationMap.add(parameters) end) then
+				selected = #maps
+			end
+			dialog.show(document)
+		end
+
+		function dialog.remove(document)
+			edit(document, function(map) run(document, function() gnubase.articulationMap.remove{map = map.id} end) end)
+		end
+
+		function dialog.import(document)
+			gnubase.ui.importArticulationMap{}
+		end
+
+		function dialog.export(document)
+			if current() ~= nil then
+				gnubase.ui.exportArticulationMap{map = current().id, name = current().name}
+			end
+		end
+
+		function dialog.assign(document)
+			if current() ~= nil and track ~= nil then
+				run(document, function() gnubase.track.set{track = track, articulationMap = current().id} end)
+			end
+		end
+
+		function dialog.addGroup(document)
+			edit(document, function(map)
+				local groups = map.groups
+				groups[#groups + 1] = "Group " .. (#groups + 1)
+				set(document, {groups = groups})
+			end)
+		end
+
+		function dialog.removeGroup(document)
+			edit(document, function(map)
+				local groups = map.groups
+				groups[#groups] = nil
+				set(document, {groups = groups})
+			end)
+		end
+
+		function dialog.addArticulation(document)
+			edit(document, function(map)
+				local articulations = map.articulations
+				articulations[#articulations + 1] =
+					{name = "Articulation " .. (#articulations + 1), type = "direction", group = 0}
+				picked.articulation = #articulations
+				set(document, {articulations = articulations})
+			end)
+		end
+
+		function dialog.removeArticulation(document)
+			edit(document, function(map)
+				local articulations = map.articulations
+				table.remove(articulations, picked.articulation)
+				set(document, {articulations = articulations})
+			end)
+		end
+
+		function dialog.addSlot(document)
+			edit(document, function(map)
+				local slots = slotsOf(map)
+				slots[#slots + 1] = {name = "Slot " .. (#slots + 1)}
+				picked.slot = #slots
+				set(document, {slots = slots})
+			end)
+		end
+
+		function dialog.removeSlot(document)
+			edit(document, function(map)
+				local slots = slotsOf(map)
+				table.remove(slots, picked.slot)
+				set(document, {slots = slots})
+			end)
+		end
+
+		function dialog.addOutput(document)
+			edit(document, function(map)
+				local slots = slotsOf(map)
+				if slots[picked.slot] ~= nil then
+					local outputs = slots[picked.slot].outputs
+					outputs[#outputs + 1] = {status = "note", data1 = 0, data2 = 100}
+					picked.output = #outputs
+					set(document, {slots = slots})
+				end
+			end)
+		end
+
+		function dialog.removeOutput(document)
+			edit(document, function(map)
+				local slots = slotsOf(map)
+				if slots[picked.slot] ~= nil then
+					table.remove(slots[picked.slot].outputs, picked.output)
+					set(document, {slots = slots})
+				end
+			end)
+		end
+	</script>
+</head>
+<body onshow="ArticulationMaps.open(document)">
+	<dialog id="articulation-maps-dialog">
+		<div class="dialog-titlebar">Articulation Map Setup</div>
+		<div class="content">
+			<div class="maps">
+				<listview id="articulation-maps" onchange="ArticulationMaps.select(document)"/>
+			</div>
+			<div class="map" id="articulation-map">
+				<div id="articulation-map-settings"/>
+				<div class="map-row">
+					<button id="articulation-map-assign" onclick="ArticulationMaps.assign(document)">
+						Assign to Track</button>
+				</div>
+				<div class="map-heading">Groups</div>
+				<div class="map-row" id="articulation-groups"/>
+				<div class="map-row">
+					<button id="articulation-group-add" onclick="ArticulationMaps.addGroup(document)">Add Group</button>
+					<button id="articulation-group-remove" onclick="ArticulationMaps.removeGroup(document)">
+						Remove Group</button>
+				</div>
+				<div class="map-heading">Articulations: Name, Type, Group</div>
+				<div id="articulation-list"/>
+				<div class="map-row">
+					<button id="articulation-add" onclick="ArticulationMaps.addArticulation(document)">
+						Add Articulation</button>
+					<button id="articulation-remove" onclick="ArticulationMaps.removeArticulation(document)">
+						Remove Articulation</button>
+				</div>
+				<div class="map-heading">Sound Slots: Name, Articulations, Remote Trigger</div>
+				<div id="articulation-slots"/>
+				<div class="map-row">
+					<button id="articulation-slot-add" onclick="ArticulationMaps.addSlot(document)">Add Sound Slot</button>
+					<button id="articulation-slot-remove" onclick="ArticulationMaps.removeSlot(document)">
+						Remove Sound Slot</button>
+				</div>
+				<div class="map-heading">Output Mapping: Status, Data 1, Data 2, Event Mode</div>
+				<div id="articulation-outputs"/>
+				<div class="map-row">
+					<button id="articulation-output-add" onclick="ArticulationMaps.addOutput(document)">
+						Add Output Mapping</button>
+					<button id="articulation-output-remove" onclick="ArticulationMaps.removeOutput(document)">
+						Remove Output Mapping</button>
+				</div>
+				<div class="map-heading">MIDI Modifiers: Channel, Length %, Velocity %, Transpose</div>
+				<div id="articulation-modifiers"/>
+			</div>
+		</div>
+		<div class="row">
+			<button id="articulation-map-add" onclick="ArticulationMaps.add(document, false)">Add Map</button>
+			<button id="articulation-map-duplicate" onclick="ArticulationMaps.add(document, true)">Duplicate Map</button>
+			<button id="articulation-map-remove" onclick="ArticulationMaps.remove(document)">Remove Map</button>
+			<button id="articulation-map-import" onclick="ArticulationMaps.import(document)">Import Map</button>
+			<button id="articulation-map-export" onclick="ArticulationMaps.export(document)">Export Map</button>
+			<div class="spacer" id="articulation-maps-message"/>
+			<button id="articulation-maps-close" result="cancel">Close</button>
+		</div>
+	</dialog>
+</body>
+</rml>
