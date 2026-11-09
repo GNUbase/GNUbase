@@ -5,6 +5,7 @@
 #include "engine/document/stripparameters.h"
 
 #include "engine/document/linkgroups.h"
+#include "engine/document/projectmodel.h"
 #include "engine/midi/drummaps.h"
 #include "engine/processors/builtin.h"
 #include "engine/processors/midieffects.h"
@@ -1410,7 +1411,8 @@ namespace gnubase::engine
 				maximum = lane.target.type == AutomationTargetType::Volume ? project.maxVolume : 1.0;
 				break;
 			case AutomationTargetType::Mute:
-				fits = project.channels.at(track.channel).format != ChannelFormat::None;
+				fits =
+					project.channels.at(track.channel).format != ChannelFormat::None || track.type == TrackType::Midi;
 				maximum = 1.0;
 				break;
 			case AutomationTargetType::Strip:
@@ -2422,6 +2424,15 @@ namespace gnubase::engine
 		for (const Json& item : json.value("automation", Json::array()))
 		{
 			AutomationLane lane = automationLaneFromJson(project, item);
+			// Step curves have steps with whole values, as automationPoint.add makes them; files from before #621 and
+			// other applications' may have ramps there.
+			if (hasStepCurve(project, lane))
+				for (auto& [pointId, point] : lane.points)
+				{
+					point.shape = AutomationShape::Step;
+					point.value = std::round(point.value);
+					point.curve = 0.0;
+				}
 			const ObjectId id = lane.id;
 			project.automation[id] = std::move(lane);
 		}

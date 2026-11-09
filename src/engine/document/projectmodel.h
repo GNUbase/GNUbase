@@ -35,6 +35,10 @@ namespace gnubase::engine
 	void followAutomation(Project& project, ObjectId track, const time::Position& from, const time::Position& end,
 		const time::Position& to, CommandContext& context);
 
+	// Whether an automation lane has a step curve (reference manual p. 870): mute and the stepped parameters of
+	// instruments, plugins and the channel strip, whose points are steps with whole values (projectmodel.cpp).
+	bool hasStepCurve(const Project& project, const AutomationLane& lane);
+
 	// Changes the project's sample rate (projectmodel.cpp). Linear positions are in samples, so they are rescaled to
 	// keep their time.
 	void changeSampleRate(Project& project, double sampleRate, CommandContext& context);
