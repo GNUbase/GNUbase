@@ -13,6 +13,7 @@
 #include <RmlUi/Core/StringUtilities.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -69,6 +70,49 @@ namespace gnubase::ui
 			R"(<button class="section-header">Chords</button><div class="section-body">)"
 			R"(<div class="inspector-row" row="followChords"><span class="inspector-label">Follow</span>)"
 			R"(<select control="followChords" title="Follow Chord Track"/></div>)"
+			R"(<div class="inspector-row" row="followVoice"><span class="inspector-label">Voice</span>)"
+			R"(<select control="followVoice" title="Single Voice"/></div>)"
+			R"(<div class="inspector-row" row="followVoicings"><span class="inspector-label">Voicings</span>)"
+			R"(<select control="followVoicings" title="This Track's Voicings"/></div>)"
+			R"(<div class="inspector-row" row="followMaster"><span class="inspector-label">Master</span>)"
+			R"(<select control="followMaster" title="Voicing Master Track"/></div>)"
+			R"(<div class="inspector-row" row="liveInput"><span class="inspector-label">Live Input</span>)"
+			R"(<select control="liveInput" title="Live Input"/></div>)"
+			R"(</div></div>)"
+			// The chord track's own settings (reference manual pp. 1329, 1333-1335).
+			R"(<div class="inspector-section" section="chordTrack" label="Chord Track">)"
+			R"(<button class="section-header">Chord Track</button><div class="section-body">)"
+			R"(<div class="inspector-buttons">)"
+			R"(<button type="toggle" class="toggle" control="chordAdaptiveVoicings" title="Adaptive Voicings">)"
+			R"(Adaptive</button>)"
+			R"(<button type="toggle" class="toggle" control="chordAutomaticScales" title="Automatic Scales">)"
+			R"(Scales</button>)"
+			R"(<button type="toggle" class="toggle" control="chordAcousticFeedback" title="Acoustic Feedback">)"
+			R"(Feedback</button></div>)"
+			R"(<div class="inspector-row" row="chordVoicingLibrary"><span class="inspector-label">Voicings</span>)"
+			R"(<select control="chordVoicingLibrary" title="Voicing Library"/></div>)"
+			R"(<div class="inspector-row" row="chordVoicingStyle"><span class="inspector-label">Subset</span>)"
+			R"(<select control="chordVoicingStyle" title="Voicing Library Subset"/></div>)"
+			R"(<div class="inspector-row" row="chordOctaveOffset"><span class="inspector-label">Octave</span>)"
+			R"(<valuefield control="chordOctaveOffset" min="-3" max="3" default="0" step="1" decimals="0")"
+			R"( title="Octave Offset"/></div>)"
+			// The Custom Voicing panel's piano options and range (p. 1335).
+			R"(<div class="inspector-buttons" row="chordPianoOptions">)"
+			R"(<button type="toggle" class="toggle" control="chordAddRoot" title="Add Root Note">Root</button>)"
+			R"(<button type="toggle" class="toggle" control="chordDuplicateRoot" title="Duplicate Root">2x</button>)"
+			R"(<button type="toggle" class="toggle" control="chordFattenUp" title="Fatten Up">Fat</button></div>)"
+			R"(<div class="inspector-row" row="chordLowestRoot"><span class="inspector-label">Lowest Root</span>)"
+			R"(<valuefield control="chordLowestRoot" min="0" max="127" default="36" step="1" decimals="0")"
+			R"( title="Lowest Root Note"/></div>)"
+			R"(<div class="inspector-row" row="chordLowest"><span class="inspector-label">Lowest</span>)"
+			R"(<valuefield control="chordLowest" min="0" max="115" default="52" step="1" decimals="0")"
+			R"( title="Lowest Note"/></div>)"
+			R"(<div class="inspector-row" row="chordHighest"><span class="inspector-label">Highest</span>)"
+			R"(<valuefield control="chordHighest" min="12" max="127" default="84" step="1" decimals="0")"
+			R"( title="Highest Note"/></div>)"
+			R"(<div class="inspector-row" row="chordShift"><span class="inspector-label">Shift</span>)"
+			R"(<valuefield control="chordShift" min="-480" max="480" default="0" step="1" decimals="0")"
+			R"( title="Shift Chords in Ticks"/></div>)"
 			R"(</div></div>)"
 			R"(<div class="inspector-section" section="inserts" label="Inserts">)"
 			R"(<button class="section-header">Inserts</button><div class="section-body inserts"/></div>)"
@@ -168,6 +212,15 @@ namespace gnubase::ui
 		{
 			if (element.GetAttribute<Rml::String>(name, "") != value)
 				element.SetAttribute(name, value);
+		}
+
+		// A toggle button's state.
+		void checked(Rml::Element& button, bool on)
+		{
+			if (on)
+				button.SetAttribute("checked", "");
+			else
+				button.RemoveAttribute("checked");
 		}
 
 		void setClass(Rml::Element& element, const char* name, bool set)
@@ -435,16 +488,84 @@ namespace gnubase::ui
 		// Follow Chord Track (reference manual pp. 1338-1340), while the project has a chord track.
 		const Json chords = m_project->value("chords", Json::object());
 		available("[section=chords]", noteTrack && chords.value("track", 0) != 0);
-		if (Rml::Element* follow = element("select[control=followChords]"); follow != nullptr && noteTrack)
+		if (noteTrack)
 		{
-			std::string mode = "off";
+			Json follow = {
+				{"mode", "off"}, {"voice", "soprano"}, {"voicings", "chordTrack"}, {"master", 0}, {"liveInput", "off"}};
 			for (const Json& each : chords.value("follow", Json::array()))
 				if (each.at("track") == m_track)
-					mode = each.at("mode").get<std::string>();
-			widgets::fill(*follow,
+					follow = each;
+			const std::string mode = follow.at("mode").get<std::string>();
+			const auto fill = [&element](const char* control, const Options& options, const std::string& value)
+			{
+				if (Rml::Element* select = element("select[control=" + std::string(control) + "]"))
+					widgets::fill(*select, options, value);
+			};
+			fill("followChords",
 				{{"off", "Off"}, {"chordsAndScales", "Chords & Scales"}, {"chords", "Chords"}, {"scales", "Scales"},
-					{"rootNotes", "Root Notes"}, {"voicings", "Voicings"}},
+					{"rootNotes", "Root Notes"}, {"voicings", "Voicings"}, {"singleVoice", "Single Voice"}},
 				mode);
+			fill("followVoice", {{"soprano", "Soprano"}, {"alto", "Alto"}, {"tenor", "Tenor"}, {"bass", "Bass"}},
+				follow.at("voice").get<std::string>());
+			fill("followVoicings",
+				{{"chordTrack", "Chord Track"}, {"basic", "Basic"}, {"piano", "Piano"}, {"guitar", "Guitar"}},
+				follow.at("voicings").get<std::string>());
+			Options masters = {{"0", "None"}};
+			for (const Json& each : m_project->at("tracks"))
+				if ((each.at("type") == "midi" || each.at("type") == "instrument") && each.at("id") != m_track)
+					masters.emplace_back(
+						std::to_string(each.at("id").get<uint64_t>()), each.at("name").get<std::string>());
+			fill("followMaster", masters, std::to_string(follow.at("master").get<uint64_t>()));
+			fill("liveInput", {{"off", "Off"}, {"chords", "Chords"}, {"scales", "Scales"}},
+				follow.at("liveInput").get<std::string>());
+			available("[row=followVoice]", mode == "singleVoice");
+			available("[row=followMaster]", mode == "singleVoice");
+			available("[row=followVoicings]", mode == "voicings" || mode == "singleVoice");
+		}
+		// The chord track's settings.
+		available("[section=chordTrack]", type == "chord");
+		if (type == "chord")
+		{
+			const Json voicing = chords.value("voicing", Json::object());
+			const std::string library = voicing.value("library", std::string("basic"));
+			if (Rml::Element* select = element("select[control=chordVoicingLibrary]"))
+				widgets::fill(*select, {{"basic", "Basic"}, {"piano", "Piano"}, {"guitar", "Guitar"}}, library);
+			Options styles;
+			for (const auto& [value, label] : std::vector<std::pair<const char*, const char*>>{{"triads", "Triads"},
+					 {"triadsMaj9", "Triads with maj9"}, {"triadsMaj9Min9", "Triads with maj9 and min9"},
+					 {"fourNote", "4-Note Chords"}, {"fourNoteOpen", "4-Note Chords (Open Jazz)"},
+					 {"fiveNote", "5-Note Chords"}})
+				if (library == "piano")
+					styles.emplace_back(value, label);
+			if (library == "guitar")
+				styles = {{"triads", "Triads"}, {"fourNote", "4-Note Chords"}, {"threeString", "3-String Triads"},
+					{"modernJazz", "Modern Jazz"}};
+			std::string style = voicing.value("style", std::string());
+			if (style.empty() && !styles.empty())
+				style = styles.front().first;
+			if (Rml::Element* select = element("select[control=chordVoicingStyle]"))
+				widgets::fill(*select, styles, style);
+			available("[row=chordVoicingStyle]", library != "basic");
+			available("[row=chordOctaveOffset]", library == "basic");
+			for (const char* row : {"chordPianoOptions", "chordLowestRoot", "chordLowest", "chordHighest"})
+				available("[row=" + std::string(row) + "]", library == "piano");
+			for (const auto& [control, key] : {std::pair{"chordAdaptiveVoicings", "adaptiveVoicings"},
+					 std::pair{"chordAutomaticScales", "automaticScales"},
+					 std::pair{"chordAcousticFeedback", "acousticFeedback"}})
+				if (Rml::Element* button = element("button[control=" + std::string(control) + "]"))
+					checked(*button, chords.value(key, false));
+			for (const auto& [control, key] : {std::pair{"chordAddRoot", "addRoot"},
+					 std::pair{"chordDuplicateRoot", "duplicateRoot"}, std::pair{"chordFattenUp", "fattenUp"}})
+				if (Rml::Element* button = element("button[control=" + std::string(control) + "]"))
+					checked(*button, voicing.value(key, false));
+			for (const auto& [control, value] : {std::pair{"chordOctaveOffset", chords.value("octaveOffset", 0)},
+					 std::pair{"chordLowestRoot", voicing.value("lowestRoot", 36)},
+					 std::pair{"chordLowest", voicing.value("lowest", 52)},
+					 std::pair{"chordHighest", voicing.value("highest", 84)},
+					 std::pair{"chordShift",
+						 static_cast<int>(chords.value("shiftChords", int64_t{0}) / g_ticksPerShownTick)}})
+				if (Rml::Element* field = element("valuefield[control=" + std::string(control) + "]"))
+					field->SetAttribute("value", std::to_string(value));
 		}
 		available(".inspector-edit", channel != nullptr && m_editChannel);
 		const bool records = type == "audio" || type == "instrument" || type == "midi" || vca;
@@ -655,10 +776,60 @@ namespace gnubase::ui
 					"track.set", {{"track", m_track}, {"timeBase", linear ? "linear" : "musical"}}, whenRefused());
 			return;
 		}
-		if (name == "followChords")
+		if (name == "followChords" || name == "followVoice" || name == "followVoicings" || name == "followMaster" ||
+			name == "liveInput")
 		{
-			m_binding.send("chord.follow",
-				{{"track", m_track}, {"mode", event.GetParameter<Rml::String>("value", "off")}}, whenRefused());
+			const auto value = event.GetParameter<Rml::String>("value", "");
+			Json parameters = {{"track", m_track}};
+			if (name == "followMaster")
+				parameters["master"] = std::strtoull(value.c_str(), nullptr, 10);
+			else if (name == "liveInput")
+				parameters["liveInput"] = value;
+			else
+				parameters[name == "followChords" ? "mode" : name == "followVoice" ? "voice" : "voicings"] = value;
+			m_binding.send("chord.follow", parameters, whenRefused());
+			return;
+		}
+		// The chord track's settings (chord.setTrack).
+		if (name.rfind("chord", 0) == 0)
+		{
+			Json parameters;
+			if (name == "chordAdaptiveVoicings" || name == "chordAutomaticScales" || name == "chordAcousticFeedback")
+			{
+				std::string key = name.substr(5);
+				key[0] = static_cast<char>(std::tolower(static_cast<unsigned char>(key[0])));
+				parameters[key] = event.GetParameter<bool>("value", false);
+			}
+			else if (name == "chordAddRoot" || name == "chordDuplicateRoot" || name == "chordFattenUp")
+			{
+				std::string key = name.substr(5);
+				key[0] = static_cast<char>(std::tolower(static_cast<unsigned char>(key[0])));
+				parameters["voicing"] = {{key, event.GetParameter<bool>("value", false)}};
+			}
+			else if (name == "chordVoicingLibrary")
+			{
+				parameters["voicing"] = {{"library", event.GetParameter<Rml::String>("value", "basic")}};
+			}
+			else if (name == "chordVoicingStyle")
+			{
+				parameters["voicing"] = {{"style", event.GetParameter<Rml::String>("value", "")}};
+			}
+			else
+			{
+				const auto number = static_cast<int>(std::lround(event.GetParameter<float>("value", 0.0F)));
+				if (name == "chordOctaveOffset")
+					parameters["octaveOffset"] = number;
+				else if (name == "chordShift")
+					parameters["shiftChords"] = static_cast<int64_t>(number) * g_ticksPerShownTick;
+				else if (name == "chordLowestRoot")
+					parameters["voicing"] = {{"lowestRoot", number}};
+				else if (name == "chordLowest")
+					parameters["voicing"] = {{"lowest", number}};
+				else if (name == "chordHighest")
+					parameters["voicing"] = {{"highest", number}};
+			}
+			if (!parameters.is_null())
+				m_binding.send("chord.setTrack", parameters, whenRefused());
 			return;
 		}
 		if (!m_channel.is_object())

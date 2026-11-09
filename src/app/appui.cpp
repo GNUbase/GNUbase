@@ -216,7 +216,7 @@ namespace gnubase::app
 		}
 
 		// The track list's commands (ui::TrackList::actions, docs/features/track-list.md) and their keys.
-		constexpr std::array<ProjectCommand, 35> g_trackCommands{{
+		constexpr std::array<ProjectCommand, 37> g_trackCommands{{
 			{"track.selectPrevious",
 				"Selects the track above the selected one, and its first event while an event is selected (unless "
 				"ui.upDownSelectsTracksOnly).",
@@ -240,7 +240,16 @@ namespace gnubase::app
 				"then follows the chord track.",
 				nullptr},
 			{"track.createChordEventsSelected",
-				"Create Chord Events: chord events from the MIDI notes of the selected MIDI and instrument tracks.",
+				"Create Chord Events: chord events from the selected audio tracks' events, and from the MIDI notes of "
+				"the selected MIDI and instrument tracks with the Create Chord Events dialog's options.",
+				nullptr},
+			{"track.mapToChordTrackSelected",
+				"Map to Chord Track: moves the notes of the selected MIDI and instrument tracks to the chord track's "
+				"chords, by the Map to Chord Track dialog's mapping mode.",
+				nullptr},
+			{"track.assignVoicesSelected",
+				"Assign Voices to Notes: moves the notes of the selected MIDI and instrument tracks to the voices of "
+				"the chord track's voicings.",
 				nullptr},
 			{"track.toggleFolding", "Folds or unfolds the selected folders.", nullptr},
 			{"track.foldAll", "Folds every folder.", nullptr},
@@ -1138,6 +1147,7 @@ namespace gnubase::app
 		m_signatureLane.reset();
 		m_transposeLane.reset();
 		m_chordLane.reset();
+		m_scaleLane.reset();
 		m_rulerLanes.reset();
 		m_inPlace.reset();
 		// The transport bar's sections are there when the docking system reads them.
@@ -1174,6 +1184,7 @@ namespace gnubase::app
 		m_signatureLane = std::make_unique<ui::SignatureLane>(*m_eventDisplay, m_binding);
 		m_transposeLane = std::make_unique<ui::GlobalEventLane>(*m_eventDisplay, m_binding);
 		m_chordLane = std::make_unique<ui::GlobalEventLane>(*m_eventDisplay, m_binding, ui::LaneKind::Chord);
+		m_scaleLane = std::make_unique<ui::GlobalEventLane>(*m_eventDisplay, m_binding, ui::LaneKind::Scale);
 		m_rulerLanes = std::make_unique<ui::RulerLanes>(*m_eventDisplay);
 		m_inPlace = std::make_unique<ui::InPlaceEditors>(*m_eventDisplay, m_binding);
 		if (m_infoLine)

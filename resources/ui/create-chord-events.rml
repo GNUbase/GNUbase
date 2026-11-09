@@ -1,0 +1,67 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The Create Chord Events dialog (docs/features/chord-track.md, reference manual p. 1343): ui::TrackList opens it
+     with Project > Chord Track > Create Chord Events for the selected MIDI and instrument tracks, and on OK makes chord
+     events from their notes with chord.fromMidi and these options. Ignore Notes Shorter Than is in ticks of 480 to a
+     quarter note. -->
+<rml>
+<head>
+	<title>Create Chord Events</title>
+	<style>
+		dialog
+		{
+			width: 300dp;
+		}
+
+		.row
+		{
+			display: flex;
+			align-items: center;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.row label
+		{
+			flex: 1;
+		}
+
+		.buttons
+		{
+			justify-content: flex-end;
+		}
+
+		.buttons button
+		{
+			margin-left: 6dp;
+		}
+	</style>
+</head>
+<body>
+	<dialog id="create-chord-events-dialog">
+		<div class="dialog-titlebar">Create Chord Events</div>
+		<div class="row">
+			<label for="chord-events-bass">Include Bass Notes</label>
+			<input type="checkbox" id="chord-events-bass" checked=""/>
+		</div>
+		<div class="row">
+			<label for="chord-events-tensions">Include Tensions</label>
+			<input type="checkbox" id="chord-events-tensions" checked=""/>
+		</div>
+		<div class="row">
+			<label for="chord-events-arpeggios">Detect Arpeggios</label>
+			<input type="checkbox" id="chord-events-arpeggios"/>
+		</div>
+		<div class="row">
+			<label for="chord-events-sustain">Interpret Sustain Pedal</label>
+			<input type="checkbox" id="chord-events-sustain"/>
+		</div>
+		<div class="row">
+			<label for="chord-events-min-length">Ignore Notes Shorter Than</label>
+			<valuefield id="chord-events-min-length" value="0" min="0" max="1920" step="10" decimals="0"/>
+		</div>
+		<div class="row buttons">
+			<button result="cancel">Cancel</button>
+			<button id="create-chord-events" class="primary" result="ok">OK</button>
+		</div>
+	</dialog>
+</body>
+</rml>
