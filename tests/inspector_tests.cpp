@@ -802,11 +802,13 @@ TEST_CASE("the inspector shows the channel as it is when a change is refused", "
 	window.click(".inspector select[control=output]");
 	window.app.ui().key(std::nullopt, "Down");
 	window.click(".inspector select[control=output]");
+	// Anywhere in the log, not just last: the project window's editor.inPlace after each project answer can follow it.
 	REQUIRE(window.app.waitUntil(
 		[&]
 		{
-			const Json last = window.call("engine.commandLog").at("commands").back();
-			return last.at("command") == "channel.set" && last.contains("error");
+			const Json commands = window.call("engine.commandLog").at("commands");
+			return std::any_of(commands.begin(), commands.end(), [](const Json& command)
+				{ return command.at("command") == "channel.set" && command.contains("error"); });
 		}));
 	CHECK(window.shows(".inspector select[control=output]", output));
 	CHECK(std::to_string(window.channel(bus).at("output").get<uint64_t>()) == output);
