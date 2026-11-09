@@ -103,7 +103,7 @@ TEST_CASE("the inspector chooses a MIDI track's patch by bank and program, or fr
 	REQUIRE(app.waitUntil([&] { return channel(app).at("program") == 4; }));
 	CHECK(channel(app).at("bank").is_null());
 	click(app, ".inspector textdisplay[control=bank]", 2);
-	app.ui().key(std::nullopt, "Ctrl+A");
+	app.ui().key(std::nullopt, "Mod+A");
 	app.ui().text(std::nullopt, "301");
 	app.ui().key(std::nullopt, "Enter");
 	REQUIRE(app.waitUntil([&] { return channel(app).at("bank") == 300; }));
@@ -147,7 +147,7 @@ TEST_CASE("the MIDI device manager installs, shows and removes MIDI devices", "[
 	const auto install = [&](const std::string& name)
 	{
 		click(app, "#device-name");
-		app.ui().key(std::nullopt, "Ctrl+A");
+		app.ui().key(std::nullopt, "Mod+A");
 		app.ui().text(std::nullopt, name);
 		click(app, "#install-device");
 	};

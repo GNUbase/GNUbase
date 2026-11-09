@@ -114,7 +114,7 @@ namespace
 		void type(const std::string& selector, const std::string& value)
 		{
 			click(selector, 2);
-			app.ui().key(std::nullopt, "Ctrl+A");
+			app.ui().key(std::nullopt, "Mod+A");
 			app.ui().text(std::nullopt, value);
 			app.ui().key(std::nullopt, "Enter");
 			app.shell().step(std::chrono::milliseconds(0));
@@ -124,7 +124,7 @@ namespace
 		void write(const std::string& selector, const std::string& value)
 		{
 			click(selector);
-			app.ui().key(std::nullopt, "Ctrl+A");
+			app.ui().key(std::nullopt, "Mod+A");
 			app.ui().text(std::nullopt, value);
 			app.shell().step(std::chrono::milliseconds(0));
 		}

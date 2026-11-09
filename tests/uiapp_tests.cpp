@@ -155,7 +155,7 @@ TEST_CASE("UI tests click through GNUbase's UI and read it back, as MCP's UI too
 	CHECK(dialog()[0].at("text") == "Enter a new name for Audio 01.");
 
 	app.ui().click(std::nullopt, selector("#name"), ui::MouseButton::Left, 1, {});
-	app.ui().key(std::nullopt, "Ctrl+A");
+	app.ui().key(std::nullopt, "Mod+A");
 	app.ui().text(std::nullopt, "Bass");
 	CHECK(app.ui().dom(std::nullopt, "#name", 0).at("elements")[0].at("value") == "Bass");
 	const ui::Image field = app.ui().screenshot(std::nullopt, selector("#name"));
@@ -438,7 +438,7 @@ TEST_CASE("the zoom presets menu adds, applies and organizes presets, and zooms 
 
 	organize();
 	click(app, {"#zoom-presets-dialog .preset input", 0, std::nullopt});
-	app.ui().key(std::nullopt, "Ctrl+A");
+	app.ui().key(std::nullopt, "Mod+A");
 	app.ui().text(std::nullopt, "Close-up");
 	click(app, {"#zoom-presets-dialog .preset button", 1, std::nullopt}); // deletes Overview
 	click(app, selector("#zoom-presets-dialog button.primary"));

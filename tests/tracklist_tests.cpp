@@ -934,7 +934,7 @@ TEST_CASE("the track name width and each track type's controls area width come f
 	const auto type = [&tracks](const std::string& selector, const std::string& text)
 	{
 		tracks.click(selector, {}, 2);
-		tracks.app.ui().key(std::nullopt, "Ctrl+A");
+		tracks.app.ui().key(std::nullopt, "Mod+A");
 		tracks.app.ui().text(std::nullopt, text);
 		tracks.app.ui().key(std::nullopt, "Enter");
 		tracks.app.shell().step(std::chrono::milliseconds(0));

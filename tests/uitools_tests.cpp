@@ -299,7 +299,7 @@ TEST_CASE("an MCP client opens a dialog by clicking and reads its contents back"
 
 	// The dialog takes typing: select the name and type a new one.
 	CHECK(fixture.call("ui_click", {{"selector", "#name"}}).at("element").at("id") == "name");
-	fixture.call("ui_key", {{"keys", "Ctrl+A"}});
+	fixture.call("ui_key", {{"keys", "Mod+A"}});
 	CHECK(fixture.call("ui_text", {{"text", "Bass"}}).at("focus").at("id") == "name");
 	CHECK(fixture.call("ui_dom", {{"selector", "#name"}}).at("elements")[0].at("value") == "Bass");
 }

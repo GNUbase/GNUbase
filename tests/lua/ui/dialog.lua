@@ -38,7 +38,7 @@ test.case("a dialog renames a track: simulated input, the dialog's Lua and the e
 	test.equal(field.value, "Audio 01") -- the dialog's data model has the name from the engine
 
 	ui.click{selector = "#name"}
-	ui.key{keys = "Ctrl+A"}
+	ui.key{keys = "Mod+A"}
 	ui.text{text = "Bass"}
 	ui.click{selector = "#ok"}
 	ui.wait{selector = "#name", visible = false}

@@ -111,7 +111,7 @@ namespace
 		void type(const std::string& selector, const std::string& text, const std::string& enter = "Enter")
 		{
 			click(selector, ui::MouseButton::Left, 2);
-			app.ui().key(std::nullopt, "Ctrl+A");
+			app.ui().key(std::nullopt, "Mod+A");
 			app.ui().text(std::nullopt, text);
 			app.ui().key(std::nullopt, enter);
 			app.shell().step(std::chrono::milliseconds(0));
@@ -215,7 +215,7 @@ TEST_CASE("Ctrl+Enter in the info line takes the first part's own value for all,
 
 	// The next edit, taken by leaving the field, is relative again: both move by as much.
 	window.click("#info-line textdisplay[field=start]", ui::MouseButton::Left, 2);
-	window.app.ui().key(std::nullopt, "Ctrl+A");
+	window.app.ui().key(std::nullopt, "Mod+A");
 	window.app.ui().text(std::nullopt, "3.1.1.0");
 	window.click("#info-line [info-field=name] .info-label");
 	REQUIRE(window.app.waitUntil([&] { return window.part(first).at("position") == 8 * g_quarter; }));
@@ -629,7 +629,7 @@ TEST_CASE("an edit in the inspector goes to the track it started on when another
 
 	// The same for a name being typed.
 	window.click(".inspector textdisplay.inspector-name", ui::MouseButton::Left, 2);
-	window.app.ui().key(std::nullopt, "Ctrl+A");
+	window.app.ui().key(std::nullopt, "Mod+A");
 	window.app.ui().text(std::nullopt, "Low End");
 	window.list.select({vox});
 	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Vox"));
@@ -856,7 +856,7 @@ TEST_CASE("another project drops the inspector's edits in progress, and text fie
 
 	// The same for a name being typed.
 	window.click(".inspector textdisplay.inspector-name", ui::MouseButton::Left, 2);
-	window.app.ui().key(std::nullopt, "Ctrl+A");
+	window.app.ui().key(std::nullopt, "Mod+A");
 	window.app.ui().text(std::nullopt, "Low End");
 	window.app.ui().key(std::nullopt, "Up");
 	window.app.shell().step(std::chrono::milliseconds(0));

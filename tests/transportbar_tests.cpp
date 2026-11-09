@@ -97,7 +97,7 @@ namespace
 		std::optional<ui::WindowId> window = std::nullopt)
 	{
 		app.ui().click(window, at(selector), ui::MouseButton::Left, 2, {});
-		app.ui().key(window, "Ctrl+A");
+		app.ui().key(window, "Mod+A");
 		app.ui().text(window, text);
 		app.ui().key(window, "Enter");
 	}
@@ -454,7 +454,7 @@ TEST_CASE("the transport's key commands", "[ui]")
 	// The enter commands edit the displays of the transport bar.
 	app.ui().key(std::nullopt, "Shift+L");
 	CHECK(element(app, "#left-locator").value("classes", Json::array()).dump().find("editing") != std::string::npos);
-	app.ui().key(std::nullopt, "Ctrl+A");
+	app.ui().key(std::nullopt, "Mod+A");
 	app.ui().text(std::nullopt, "3");
 	app.ui().key(std::nullopt, "Enter");
 	REQUIRE(waitFor(app, [](const Json& state) { return state.at("left") == 192000; }));
@@ -489,7 +489,7 @@ TEST_CASE("the transport panel and the time display window", "[ui]")
 	app.ui().key(std::nullopt, "Shift+P");
 	panel = app.appUi().transportPanel();
 	REQUIRE(panel != nullptr);
-	app.ui().key(panel->id(), "Ctrl+A");
+	app.ui().key(panel->id(), "Mod+A");
 	app.ui().text(panel->id(), "1");
 	app.ui().key(panel->id(), "Enter");
 	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 0; }));
@@ -843,7 +843,7 @@ TEST_CASE("typing the position the primary time display showed during playback j
 	const std::string shown = element(app, "#primary-time input").at("value").get<std::string>();
 	const int64_t from = position(app);
 	REQUIRE(waitFor(app, [from](const Json& state) { return state.at("position") > from + 24000; })); // a beat on
-	app.ui().key(std::nullopt, "Ctrl+A");
+	app.ui().key(std::nullopt, "Mod+A");
 	app.ui().text(std::nullopt, shown);
 	const int64_t typed = position(app);
 	app.ui().key(std::nullopt, "Enter");

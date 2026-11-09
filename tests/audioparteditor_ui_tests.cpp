@@ -379,13 +379,13 @@ TEST_CASE("the info line edits the selected events", "[ui]")
 	REQUIRE(f.app.waitUntil([&] { return f.value("start") == "1.3.1.0"; }));
 	// Typing a start moves the event, a volume sets it.
 	f.click(of(".ape-info textdisplay[field=start]"), 2);
-	f.app.ui().key(f.window, "Ctrl+A");
+	f.app.ui().key(f.window, "Mod+A");
 	f.app.ui().text(f.window, "1.4.1.0");
 	f.app.ui().key(f.window, "Enter");
 	REQUIRE(f.app.waitUntil([&] { return f.event(f.second).at("position") == 3 * g_second / 2; }));
 	f.settle();
 	f.click(of(".ape-info textdisplay[field=volume]"), 2);
-	f.app.ui().key(f.window, "Ctrl+A");
+	f.app.ui().key(f.window, "Mod+A");
 	f.app.ui().text(f.window, "-6");
 	f.app.ui().key(f.window, "Enter");
 	REQUIRE(f.app.waitUntil([&] { return f.event(f.second).at("volume") == -6.0; }));
