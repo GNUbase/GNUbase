@@ -127,7 +127,8 @@ TEST_CASE("the inspector chooses a MIDI track's patch by bank and program, or fr
 	CHECK(selected(app, ".inspector select[control=program]") == "Piano / Acoustic Grand Piano");
 	choose(app, ".inspector select[control=program]", 4);
 	REQUIRE(app.waitUntil([&] { return channel(app).at("program") == 4; }));
-	CHECK(selected(app, ".inspector select[control=program]") == "Piano / Electric Piano 1");
+	CHECK(app.waitUntil(
+		[&] { return selected(app, ".inspector select[control=program]") == "Piano / Electric Piano 1"; }));
 
 	// A device that is removed shows as not installed.
 	app.call("midiDevice.remove", {{"name", "Sound Module"}});

@@ -435,6 +435,8 @@
 	</menu>
 	<!-- MIDI functions (reference manual pp. 1118-1131, docs/features/midi-functions.md) -->
 	<menu id="midi-menu">
+		<menuitem command="editor.openInPlace">Open In-Place Editor</menuitem>
+		<menuseparator/>
 		<menuitem command="midi.transposeSetup">Transpose Setup...</menuitem>
 		<menuseparator/>
 		<menuitem command="midi.mergeInLoop">Merge MIDI in Loop...</menuitem>
