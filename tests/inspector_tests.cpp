@@ -333,6 +333,9 @@ TEST_CASE(
 	window.type("#info-line textdisplay[field=length]", "1.0.0.0");
 	REQUIRE(window.app.waitUntil([&] { return marker(verse).at("end") == 12 * g_quarter; }));
 	CHECK(window.call("history.get").at("steps").size() == steps + 4);
+	// The info line edits from the markers it shows, which follow the engine's a step or more later: the next edit
+	// must start from this end (#929).
+	REQUIRE(window.shows("#info-line textdisplay[field=end]", "4.1.1.0"));
 
 	// With several selected the first one shows, a position marker without end and length, and an edit changes all
 	// of them, relative to the first one's value, in one undo step.
