@@ -1119,7 +1119,7 @@ namespace gnubase::ui
 			setView(m_view);
 			break;
 		case Rml::EventId::Click:
-			click(target);
+			click(target, event.GetParameter<int>("ctrl_key", 0) != 0 || event.GetParameter<int>("meta_key", 0) != 0);
 			break;
 		case Rml::EventId::Change:
 			// A click on the auto-scroll button switches it off, or on again while it's suspended.

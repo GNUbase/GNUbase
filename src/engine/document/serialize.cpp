@@ -471,16 +471,14 @@ namespace gnubase::engine
 		setup.length = json.value("length", setup.length);
 		setup.barOffset = json.value("barOffset", setup.barOffset);
 
-		// What recording can write (AudioFileWriter): AIFF in integers, FLAC in 16 and 24 bits, 64-bit float in WAV.
+		// What recording can write (AudioFileWriter): AIFF in integers, FLAC in 16 and 24 bits, Wave in every bit
+		// depth, 64-bit float among them.
 		const std::string& type = setup.recordFileType;
 		const std::string& depth = setup.recordBitDepth;
-		const bool wav = type == "wav" || type == "broadcastWav";
 		if (type == "aiff" && depth.rfind("int", 0) != 0)
 			throw std::invalid_argument("AIFF files record 16, 24 or 32 bit, not " + depth);
 		if (type == "flac" && depth != "int16" && depth != "int24")
 			throw std::invalid_argument("FLAC files record 16 or 24 bit, not " + depth);
-		if (!wav && depth == "float64")
-			throw std::invalid_argument("only Wave files record 64 bit float");
 		if (!std::isfinite(setup.startTime) || setup.startTime < 0.0 || setup.startTime >= 86400.0)
 			throw std::invalid_argument("startTime must be from 0 to less than 24 hours (86400 seconds)");
 		if (!std::isfinite(setup.length) || setup.length <= 0.0 || setup.length > 86400.0)

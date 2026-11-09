@@ -35,7 +35,7 @@ namespace gnubase::ui
 		constexpr std::array<const char*, 6> g_headers = {"ID", "Type", "Position", "End", "Length", "Description"};
 
 		// The user settings the window follows.
-		constexpr std::array<const char*, 6> g_settings = {"ui.timeFormats", "ui.markerColumns", "ui.markersAutoScroll",
+		constexpr std::array<const char*, 5> g_settings = {"ui.markerColumns", "ui.markersAutoScroll",
 			"ui.markersSyncSelection", "ui.markerIds", "transport.cycleFollowsMarkers"};
 
 		// The menu's and toolbar's toggles, by the setting they turn on and off.
@@ -264,16 +264,6 @@ namespace gnubase::ui
 
 	void MarkersWindow::applySetting(const std::string& key, const Json& value)
 	{
-		if (key == "ui.timeFormats")
-		{
-			const auto primary = value.is_object() ? value.find("primary") : value.end();
-			const std::optional<TimeFormat> format = primary != value.end() && primary->is_string()
-				? timeFormatFromName(primary->get<std::string>())
-				: std::nullopt;
-			m_format = format.value_or(TimeFormat::BarsBeats);
-			show();
-			return;
-		}
 		if (key == "ui.markerColumns")
 		{
 			Columns columns = Columns::read(value);
@@ -317,6 +307,9 @@ namespace gnubase::ui
 				if (result.ok())
 				{
 					m_markers = readMarkers(result.value);
+					// The primary time format (reference manual p. 317).
+					m_format = timeFormatFromName(result.value.value("timeFormat", std::string("barsBeats")))
+								   .value_or(TimeFormat::BarsBeats);
 					show();
 					if (!std::exchange(m_loaded, true))
 						resync();

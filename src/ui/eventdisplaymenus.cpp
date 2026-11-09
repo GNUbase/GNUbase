@@ -193,7 +193,7 @@ namespace gnubase::ui
 		}
 	}
 
-	void EventDisplay::click(Rml::Element* target)
+	void EventDisplay::click(Rml::Element* target, bool control)
 	{
 		// A tool button chooses its tool; once it has, a second click opens its menu (showTools). So do the tools in
 		// the toolbox and the context menu.
@@ -216,8 +216,13 @@ namespace gnubase::ui
 		const std::string& id = item->GetId();
 		if (menu == m_formatMenu)
 		{
+			// With Ctrl/Cmd, the format is the primary time format too, for all windows (reference manual p. 69).
 			if (const auto format = timeFormatFromName(item->GetAttribute<Rml::String>("format", "")))
+			{
 				setRulerFormat(*format);
+				if (control)
+					m_binding.send("project.set", {{"timeFormat", timeFormatName(*format)}});
+			}
 		}
 		else if (menu == m_presetsMenu)
 		{
