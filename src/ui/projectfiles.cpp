@@ -433,7 +433,7 @@ namespace gnubase::ui
 			{
 				if (autoSave && worked != m_autoSaveWorked)
 					return; // an auto save succeeded or the project was saved or opened since it failed
-				Window* showing = m_shell.find(window);
+				const Window* showing = m_shell.find(window);
 				// A failed auto save's error doesn't open over another modal dialog, such as the fade editor, which the
 				// user works in: it waits until that closed. The project dialog that is open (m_dialog) is left to
 				// openDialog, where an auto save's error makes way or else shows at the next failure.
