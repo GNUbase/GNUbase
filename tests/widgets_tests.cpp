@@ -1042,6 +1042,28 @@ TEST_CASE("tooltips show an element's title once the mouse rests on it", "[ui]")
 	CHECK_FALSE(visible(app, "tooltip"));
 }
 
+TEST_CASE("a tooltip doesn't outlive the element it belongs to", "[ui]")
+{
+	test::UiApp app;
+	Rml::ElementDocument& document = app.show("popups.rml");
+	const auto remove = [&document](const char* id)
+	{
+		Rml::Element* element = document.GetElementById(id);
+		element->GetParentNode()->RemoveChild(element);
+	};
+
+	// Removed while the mouse rests on it, as when a list under the mouse is rendered anew: no tooltip comes.
+	app.ui().move(std::nullopt, at("#track"));
+	remove("track");
+	CHECK_FALSE(app.waitUntil([&app] { return visible(app, "tooltip"); }, std::chrono::seconds(1)));
+
+	// Removed while its tooltip shows: the tooltip goes with it.
+	app.ui().move(std::nullopt, at("#corner"));
+	REQUIRE(app.waitUntil([&app] { return visible(app, "tooltip"); }));
+	remove("corner");
+	CHECK(app.waitUntil([&app] { return !visible(app, "tooltip"); }));
+}
+
 namespace
 {
 	// The results of the close events of dialogs.
