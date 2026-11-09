@@ -155,6 +155,8 @@ namespace
 			"audio.sampleRate",              // Studio Setup
 			"editing.tempoType",             // the tempo track's and tempo editor's type of new tempo events
 			"meter.resetOnStart",            // the loudness meter's own setting
+			"meter.rmsAes17",                // the master meter's own settings
+			"meter.rmsResolution",           // the master meter's own settings
 			"midi.devices",                  // the MIDI device manager
 			"midi.portSettings",             // Studio Setup
 			"preferences.presets",           // the dialog's presets themselves
