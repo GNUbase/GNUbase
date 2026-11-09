@@ -16,6 +16,7 @@
 #include "engine/document/serialize.h"
 #include "engine/document/stripparameters.h"
 #include "engine/document/timewarp.h"
+#include "engine/document/trackpresets.h"
 #include "engine/document/trackversions.h"
 #include "engine/document/volumecurves.h"
 #include "engine/dsp/timestretch.h"
@@ -4417,6 +4418,7 @@ namespace gnubase::engine
 		registerTrackVersionCommands(*this, engine);
 		midi::registerDrumMapCommands(*this, engine);
 		registerChannelSettingsCommands(*this, engine);
+		registerTrackPresetCommands(*this, engine);
 		registerEditorCommands(*this, engine);
 		registerSampleEditorCommands(*this, engine);
 		registerHitpointCommands(*this, engine, jobs);
