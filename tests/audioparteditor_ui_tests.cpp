@@ -13,6 +13,7 @@
 #include <RmlUi/Core/Input.h>
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -228,6 +229,20 @@ namespace
 		{
 			context().ProcessMouseButtonUp(0, modifiers);
 			app.shell().step(std::chrono::milliseconds(0));
+		}
+
+		// Turns snap off and waits until the audio part editor has shown the project that says so.
+		void snapOff()
+		{
+			app.call("snap.set", {{"on", false}});
+			REQUIRE(app.waitUntil(
+				[&]
+				{
+					ui::MidiEditor* shown = app.appUi().editorWindow();
+					const ui::AudioPartEditor* editor = shown != nullptr ? shown->audioPartEditor() : nullptr;
+					return editor != nullptr && editor->project().contains("snap") &&
+						editor->project().at("snap").at("on") == false;
+				}));
 		}
 
 		// A point on the editor window's toolbar, above the audio part editor, at the x of a point of the display.
@@ -679,6 +694,45 @@ TEST_CASE("a gesture of the audio part editor ends when the button goes up outsi
 	CHECK(modes.back() == "off");
 }
 
+TEST_CASE("a finger pan over an empty spot of the audio part editor scrolls its lanes", "[ui]")
+{
+	// Tools whose press there starts no gesture. The split tool doesn't render on it either, so that the element
+	// under the finger stays the press's.
+	const std::string tool = GENERATE("objectSelection", "split");
+	CAPTURE(tool);
+	Fixture f;
+	// An event far down: the lanes don't fit, and the display scrolls.
+	f.app.call("event.set", {{"events", {f.second}}, {"lane", 30}});
+	f.open();
+	f.tool(tool);
+	const double top = f.box(".ape-lane[lane=\"0\"]").at("y").get<double>();
+	const ui::Point start = pointOf(f.at(1.75, 1));
+	const auto touch = [&](int up)
+	{
+		return Rml::TouchList{
+			Rml::Touch{1, Rml::Vector2f(static_cast<float>(start.x), static_cast<float>(start.y - up))}};
+	};
+	f.context().ProcessTouchStart(touch(0), 0);
+	for (int up = 20; up <= 80; up += 20)
+		f.context().ProcessTouchMove(touch(up), 0);
+	f.context().ProcessTouchEnd(touch(80), 0);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.box(".ape-lane[lane=\"0\"]").at("y").get<double>() <= top - 60.0; }));
+}
+
+TEST_CASE("the audio part editor keeps showing a move while it renders during the drag", "[ui]")
+{
+	Fixture f;
+	f.open();
+	f.press(f.at(0.25, 0));
+	f.moveTo(f.at(0.77, 0));
+	// The project shown again, whenever the press's selection came back.
+	f.snapOff();
+	CHECK(std::abs(f.box(eventSelector(f.first)).at("x").get<double>() - pointOf(f.at(0.5, 0)).x) <= 2.0);
+	f.release();
+	REQUIRE(f.app.waitUntil([&] { return f.event(f.first).at("position") != 0; }));
+}
+
 TEST_CASE("a press in the window ends a gesture of the audio part editor whose mouseup never came", "[ui]")
 {
 	Fixture f;
@@ -747,15 +801,7 @@ TEST_CASE("with snap off the audio part editor moves and splits events where the
 	Fixture f;
 	f.open();
 	// Turned off while the editor is open.
-	f.app.call("snap.set", {{"on", false}});
-	REQUIRE(f.app.waitUntil(
-		[&]
-		{
-			ui::MidiEditor* window = f.app.appUi().editorWindow();
-			const ui::AudioPartEditor* editor = window != nullptr ? window->audioPartEditor() : nullptr;
-			return editor != nullptr && editor->project().contains("snap") &&
-				editor->project().at("snap").at("on") == false;
-		}));
+	f.snapOff();
 	// 0.27 seconds is off the grid of eighths of a second; a pixel of the display is under 2 ms.
 	f.drag(f.at(0.25, 0), f.at(0.52, 0));
 	REQUIRE(f.app.waitUntil([&] { return f.event(f.first).at("position") != 0; }));
