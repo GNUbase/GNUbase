@@ -54,15 +54,6 @@ namespace gnubase::engine
 			return format;
 		}
 
-		// Folded to lower case, as the file systems of Windows and macOS don't tell names apart by case.
-		std::string folded(const fs::path& name)
-		{
-			std::string text = name.u8string();
-			std::transform(text.begin(), text.end(), text.begin(),
-				[](char c) { return static_cast<char>(std::tolower(static_cast<unsigned char>(c))); });
-			return text;
-		}
-
 		// A number with at least two digits, as versions and auto saves are numbered: 01, 02, ... 100.
 		std::string numbered(const std::string& name, int number)
 		{
@@ -74,9 +65,9 @@ namespace gnubase::engine
 		// one of that name in its folder and its own, "Song-01.dawproject" for "Song.dawproject" and
 		// "Song.dawproject.", and "Song v2.1-01.dawproject" for a file "Song v2.1" that project.save saved as named.
 		// Versions count whatever case their name and extension are in, so that the next one doesn't overwrite one of
-		// them where case doesn't tell files apart. As folded only knows ASCII letters, a number whose file the file
-		// system says is there all the same is skipped: on Windows and macOS "Übung-01" is "übung-01", which the scan
-		// doesn't count for "Übung".
+		// them where case doesn't tell files apart. As foldedName only knows ASCII letters, a number whose file the
+		// file system says is there all the same is skipped: on Windows and macOS "Übung-01" is "übung-01", which the
+		// scan doesn't count for "Übung".
 		fs::path nextVersion(const fs::path& file)
 		{
 			static const std::regex version(R"((.*)-(\d{1,9}))"); // longer numbers aren't versions
@@ -88,13 +79,13 @@ namespace gnubase::engine
 				highest = std::stoi(match[2].str());
 				name = match[1].str();
 			}
-			const std::string key = folded(fs::u8path(name));
+			const std::string key = foldedName(fs::u8path(name));
 			std::error_code error;
 			for (const fs::directory_entry& entry : fs::directory_iterator(file.parent_path(), error))
 			{
 				const std::string other = entry.path().stem().u8string();
-				if (folded(entry.path().extension()) == g_extension && std::regex_match(other, match, version) &&
-					folded(fs::u8path(match[1].str())) == key)
+				if (foldedName(entry.path().extension()) == g_extension && std::regex_match(other, match, version) &&
+					foldedName(fs::u8path(match[1].str())) == key)
 					highest = std::max(highest, std::stoi(match[2].str()));
 			}
 			for (int number = highest + 1;; ++number)
@@ -131,8 +122,8 @@ namespace gnubase::engine
 		bool isAutoSave(const fs::path& file)
 		{
 			const fs::path path = file.lexically_normal();
-			return folded(path.extension()) == ".bak" &&
-				folded(path.parent_path().filename()) == folded(fs::u8path(g_autoSaves));
+			return foldedName(path.extension()) == ".bak" &&
+				foldedName(path.parent_path().filename()) == foldedName(fs::u8path(g_autoSaves));
 		}
 
 		// Why an auto save to file failed, whichever file it went to: the error without the file, which the errors of
