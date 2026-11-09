@@ -5,23 +5,19 @@
 #include "engine/processors/builtinplugin.h"
 #include "platform/log.h"
 #include "platform/rt/realtime.h"
+#include "platform/rt/workerpool.h"
 
-#include <chrono>
 #include <exception>
 #include <future>
 #include <map>
 #include <set>
 #include <string_view>
-#include <thread>
 #include <utility>
 
 namespace gnubase::engine::plugins
 {
 	namespace
 	{
-		// How often a job checks whether the audio thread left the graphs that still have a plugin.
-		constexpr auto g_retirePoll = std::chrono::milliseconds(1);
-
 		enum class Action : uint8_t
 		{
 			Deactivate,
@@ -83,7 +79,16 @@ namespace gnubase::engine::plugins
 		std::function<bool(uint64_t)> retired;
 		Factory factory;
 		std::atomic<bool> closing{false};
-		std::atomic<int> retiring{0}; // whenRetired jobs that haven't run their work
+
+		// What retire leaves to the retirer thread, by generation, oldest first.
+		struct Retirement
+		{
+			uint64_t generation = 0;
+			std::function<void()> work;
+		};
+		std::mutex retireMutex;
+		std::vector<Retirement> retirements;
+		rt::Semaphore wakes; // released by wake and by retire, so the retirer thread checks the retirements again
 
 		Shared(
 			HostManager& manager, std::function<void()> onChange, std::function<bool(uint64_t)> isRetired, Factory make)
@@ -190,15 +195,18 @@ namespace gnubase::engine::plugins
 
 	SlotInstances::SlotInstances(HostManager& jobs, std::function<void()> changed,
 		std::function<bool(uint64_t generation)> retired, Factory factory)
-		: m_shared(std::make_shared<Shared>(jobs, std::move(changed), std::move(retired), std::move(factory)))
+		: m_shared(std::make_shared<Shared>(jobs, std::move(changed), std::move(retired), std::move(factory))),
+		  m_retirer([shared = m_shared] { retireWhenDue(*shared); })
 	{
 	}
 
 	SlotInstances::~SlotInstances()
 	{
 		m_shared->closing = true;
+		wake();
 		try
 		{
+			m_retirer.join(); // it queued the work of the retirements left, which runs before the jobs below
 			std::vector<std::shared_ptr<Instance>> instances = m_leaving;
 			for (const auto& [slot, instance] : m_instances)
 				instances.push_back(instance);
@@ -210,10 +218,8 @@ namespace gnubase::engine::plugins
 						if (processor)
 							processor->destroy();
 					});
-			// Done once the jobs before an empty one are, and the retiring ones that queued themselves again.
-			do
-				m_shared->jobs.run([] {}).get();
-			while (m_shared->retiring > 0);
+			// Done once the jobs before an empty one are.
+			m_shared->jobs.run([] {}).get();
 		}
 		catch (const std::exception& error)
 		{
@@ -360,22 +366,40 @@ namespace gnubase::engine::plugins
 		return found->second->status;
 	}
 
-	void SlotInstances::whenRetired(
-		const std::shared_ptr<Shared>& shared, uint64_t generation, std::function<void()> work)
+	void SlotInstances::wake() const noexcept
 	{
-		static_cast<void>(shared->jobs.run(
-			[shared, generation, work = std::move(work)]() mutable
+		m_shared->wakes.release();
+	}
+
+	void SlotInstances::retireWhenDue(Shared& shared)
+	{
+		for (;;)
+		{
+			const bool closing = shared.closing;
+			try
 			{
-				if (shared->closing || shared->retired(generation))
+				std::vector<std::function<void()>> due;
 				{
-					work();
-					--shared->retiring;
-					return;
+					const std::scoped_lock lock(shared.retireMutex);
+					// A graph that retires a generation retires those before it, too.
+					auto retirement = shared.retirements.begin();
+					for (;
+						retirement != shared.retirements.end() && (closing || shared.retired(retirement->generation));
+						++retirement)
+						due.push_back(std::move(retirement->work));
+					shared.retirements.erase(shared.retirements.begin(), retirement);
 				}
-				// Later, after the jobs queued meanwhile.
-				std::this_thread::sleep_for(g_retirePoll);
-				whenRetired(shared, generation, std::move(work));
-			}));
+				for (std::function<void()>& work : due)
+					static_cast<void>(shared.jobs.run(std::move(work))); // a job reports through its instances
+			}
+			catch (const std::exception& error)
+			{
+				logging::warning("Plugin slots: retiring their plugins failed: {}", error.what());
+			}
+			if (closing)
+				return;
+			shared.wakes.wait();
+		}
 	}
 
 	void SlotInstances::retire(uint64_t generation)
@@ -401,15 +425,17 @@ namespace gnubase::engine::plugins
 		const std::shared_ptr<Shared> shared = m_shared;
 		const double sampleRate = m_sampleRate;
 		const uint32_t maxFrames = m_maxFrames;
-		++shared->retiring;
-		whenRetired(shared, generation,
-			[shared, leaving = std::move(leaving), sampleRate, maxFrames]
-			{
-				for (const Leaving& item : leaving)
-					item.instance->apply(item.action, sampleRate, maxFrames);
-				if (!shared->closing)
-					shared->changed();
-			});
+		{
+			const std::scoped_lock lock(shared->retireMutex);
+			shared->retirements.push_back({generation, [shared, leaving = std::move(leaving), sampleRate, maxFrames]
+				{
+					for (const Leaving& item : leaving)
+						item.instance->apply(item.action, sampleRate, maxFrames);
+					if (!shared->closing)
+						shared->changed();
+				}});
+		}
+		wake(); // the audio thread may have started the graph already, or no device runs
 	}
 
 }

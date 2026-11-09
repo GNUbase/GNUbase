@@ -18,6 +18,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -34,6 +35,7 @@ using gnubase::engine::Engine;
 using gnubase::engine::Event;
 using gnubase::engine::Json;
 using gnubase::engine::Message;
+using gnubase::engine::RequestId;
 using gnubase::engine::Result;
 
 namespace
@@ -639,6 +641,74 @@ TEST_CASE("a failed audio.set or audio.setDevice still announces the device it r
 	run(client, "audio.setDevice");
 	reject(client, "audio.setDevice", {{"backend", "fake"}});
 	CHECK(waitForEvent(client, "audio.changed", [](const Json& data) { return data.at("device").is_null(); }));
+}
+
+TEST_CASE("the device commands announce the slots whose status they changed, also when they fail", "[integration]")
+{
+	const auto driver = std::make_shared<FakeDriver>();
+	Engine engine(fakeBackends(driver));
+	Client client(engine);
+	const Json fake = {{"backend", "fake"}, {"sampleRate", 48000}};
+	run(client, "audio.setDevice", fake);
+	const Json channel = run(client, "track.add", {{"type", "audio"}}).at("channel").at("id");
+	const Json eq = run(client, "plugin.insert", {{"channel", channel}, {"plugin", "builtin:eq"}}).at("slot").at("id");
+	const Json limiter =
+		run(client, "plugin.insert", {{"channel", channel}, {"plugin", "builtin:limiter"}}).at("slot").at("id");
+	run(client, "plugin.set", {{"slot", limiter}, {"active", false}});
+	const auto statusIs = [&client](const Json& slot, const char* wanted)
+	{ return run(client, "plugin.get", {{"slot", slot}}).at("slot").at("status") == wanted; };
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+	while (!(statusIs(eq, "active") && statusIs(limiter, "inactive")) && std::chrono::steady_clock::now() < deadline)
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	REQUIRE(statusIs(eq, "active"));
+	REQUIRE(statusIs(limiter, "inactive"));
+	run(client, "audio.updatePlugins"); // the statuses are announced now
+	run(client, "audio.get");           // after whatever the plugins' jobs posted
+	while (client.poll())
+		;
+
+	using Statuses = std::map<Json, std::vector<std::string>>;
+	// The statuses that plugin.changed announced since the last call, by slot, among the events of that request; 0 is
+	// a broadcast, the only way a failed command's events get out.
+	const auto announced = [&client](RequestId request)
+	{
+		Statuses statuses;
+		while (const auto message = client.poll())
+			if (const auto* event = std::get_if<Event>(&*message);
+				event != nullptr && event->name == "plugin.changed" && event->request == request)
+				statuses[event->data.at("slot").at("id")].push_back(
+					event->data.at("slot").at("status").get<std::string>());
+		return statuses;
+	};
+	const Statuses noDevice = {{eq, {"noDevice"}}, {limiter, {"noDevice"}}};
+
+	// A failed audio.set closes the device, and neither the new settings nor the old ones open it.
+	driver->connected = false;
+	reject(client, "audio.set", {{"blockSize", 128}});
+	CHECK(run(client, "audio.get").at("device").is_null());
+	CHECK(announced(0) == noDevice);
+
+	// audio.setDevice opens it, with the format the plugins are active for: they are as they were.
+	driver->connected = true;
+	Result opened = client.call("audio.setDevice", fake);
+	REQUIRE(opened.ok());
+	CHECK(announced(opened.request) == Statuses{{eq, {"active"}}, {limiter, {"inactive"}}});
+
+	// A failed audio.setDevice closes the device too, and a later one opens it again.
+	driver->connected = false;
+	reject(client, "audio.setDevice", fake);
+	CHECK(announced(0) == noDevice);
+	driver->connected = true;
+	opened = client.call("audio.setDevice", fake);
+	REQUIRE(opened.ok());
+	CHECK(announced(opened.request) == Statuses{{eq, {"active"}}, {limiter, {"inactive"}}});
+
+	// A new project sample rate that the device follows, which it can't open with: it is lost.
+	driver->connected = false;
+	run(client, "project.set", {{"sampleRate", 44100.0}});
+	CHECK(run(client, "audio.get").at("device").is_null());
+	CHECK(!run(client, "audio.get").at("lost").is_null());
+	CHECK(announced(0) == noDevice);
 }
 
 TEST_CASE("a reset or a returning device that opens but fails to start still announces the device", "[integration]")
