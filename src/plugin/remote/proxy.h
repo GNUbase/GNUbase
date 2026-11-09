@@ -262,6 +262,7 @@ namespace gnubase::plugin::remote
 		std::chrono::steady_clock::time_point m_lateSince; // when the first block of that run of late ones was sent
 		std::chrono::steady_clock::time_point m_lastSent;  // when the last block was sent
 		std::atomic<bool> m_processing{false};             // between startProcessing and stopProcessing
+		std::atomic<bool> m_stopSent{false};               // the last stop's block reached the host, maybe late
 		std::vector<std::byte> m_message;                  // one audio message, sent or read back
 		const EventList m_noEvents;                        // the events of blocks without frames
 

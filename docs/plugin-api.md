@@ -259,7 +259,7 @@ What the proxy does with each call, and what crosses the process boundary:
 | `setProcessMode`, `activate`, `deactivate` | control connection | `activate` first fetches the ports as they are (`Describe`), sizes the new audio connection for them, names it in the request and returns latency and tail |
 | `paramValue` | none | from the engine's mirror |
 | `paramValueToText`, `paramTextToValue` | control connection | cached by the proxy |
-| `flushParams` while inactive | control connection | |
+| `flushParams` while inactive | control connection | the host refuses it until its audio thread has handled the last Stop: after a late Stop the flush waits for that within the query deadline, and a change the host still refuses goes with the next block |
 | ports, note ports and parameter infos after a rescan | control connection | fetched again (`Describe`) when the plugin asks for a rescan, by `RemotePlugin::refresh` as a job; the cache is replaced: parameter infos when their ids stay the same or the plugin is inactive, ports while inactive |
 | `saveState`, `loadState`, presets, context menus | control connection | jobs on the host manager's job thread; a message larger than a ring message goes in parts, up to 256 MiB |
 | `gui*` | control connection | the windows live in the host process |
