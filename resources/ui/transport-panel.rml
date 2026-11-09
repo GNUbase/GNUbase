@@ -1,7 +1,8 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- The transport panel (reference manual p. 295), a window of its own that F2 shows and hides: app::AppUi fills
      #transport with the transport controls (transport.rml) and ui::TransportControls drives them. The panel is a
-     docking window of its own, transportPanel, for its sections. -->
+     docking window of its own, transportPanel, for its sections. #tap-tempo-message shows where Tap Tempo puts the
+     tempo, over the panel's right end. -->
 <rml>
 <head>
 	<title>Transport</title>
@@ -14,9 +15,19 @@
 			right: 0;
 			bottom: 0;
 		}
+
+		#tap-tempo-message
+		{
+			position: absolute;
+			z-index: 10;
+			right: 8dp;
+			top: 8dp;
+			white-space: nowrap;
+		}
 	</style>
 </head>
 <body>
 	<div id="transport" class="transport toolbar" sections="transport" contextmenu="transport-setup"/>
+	<notification id="tap-tempo-message" class="tap-tempo-message tooltip" duration="2"/>
 </body>
 </rml>

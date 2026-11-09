@@ -5,6 +5,7 @@
 #include "ui/eventdisplay.h"
 
 #include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 #include <RmlUi/Core/Event.h>
 
 #include <algorithm>
@@ -86,17 +87,29 @@ namespace gnubase::ui
 			else
 				audio.push_back(file);
 		}
-		if (audio.empty() || !alive() || m_dialog)
+		if (audio.empty() || !alive())
 			return;
 		import.files = std::move(audio);
-		m_import = std::move(import);
 		// The copy, convert and splitChannels options write into the project folder, which a project has once it is
-		// saved.
+		// saved. The settings say whether the dialog opens, and with which options.
+		const std::weak_ptr<bool> alive = m_alive;
 		m_binding.send("project.location", Json::object(),
-			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			[this, alive, import = std::move(import)](const engine::Result& location) mutable
 			{
-				if (!alive.expired() && result.ok())
-					openImportOptions(!result.value.at("file").is_null());
+				if (alive.expired() || !location.ok())
+					return;
+				const bool saved = !location.value.at("file").is_null();
+				m_binding.send("settings.list", Json::object(),
+					[this, alive, saved, import = std::move(import)](const engine::Result& list)
+					{
+						if (alive.expired() || !list.ok())
+							return;
+						const ImportOptions options = importSettings(list.value);
+						if (usesSettings(list.value))
+							sendImport(import, options, saved);
+						else
+							openImportOptions(import, options, saved);
+					});
 			});
 	}
 
@@ -130,36 +143,109 @@ namespace gnubase::ui
 		startImport(files, std::move(import));
 	}
 
-	void EventDisplay::openImportOptions(bool saved)
+	void EventDisplay::openImportOptions(Import import, const ImportOptions& options, bool saved)
 	{
+		if (m_dialog)
+			return; // another import's dialog is open
 		openDialog("import-options.rml");
 		if (!m_dialog)
 			return;
-		setOption(m_dialog->GetElementById("import-copy"), saved && m_importCopy, !saved);
-		setOption(m_dialog->GetElementById("import-convert"), saved && m_importConvert, !saved);
-		setOption(m_dialog->GetElementById("import-split"), saved && m_importSplit, !saved);
-		setOption(m_dialog->GetElementById("import-one-track"), m_importOneTrack,
-			m_import.files.size() < 2 || (m_import.track && !m_import.selected) || m_import.clipsOnly);
+		m_import = std::move(import);
+		m_importOptions = options;
+		m_importSaved = saved;
+		setOption(m_dialog->GetElementById("import-copy"), saved && options.copy, !saved);
+		setOption(m_dialog->GetElementById("import-convert"), saved && options.convert, !saved);
+		setOption(m_dialog->GetElementById("import-split"), saved && options.split, !saved);
+		setOption(m_dialog->GetElementById("import-one-track"), options.oneTrack, !oneTrackApplies(m_import));
+		Rml::Element* format = m_dialog->GetElementById("import-name-format");
+		if (auto* select = dynamic_cast<Rml::ElementFormControlSelect*>(format))
+			select->SetValue(options.nameFormat);
+		setOption(format, false, !saved);
+		setOption(m_dialog->GetElementById("import-do-not-ask"), false, false);
 	}
 
 	void EventDisplay::importAudio(Rml::Element& dialog)
 	{
-		// The options that could be chosen are remembered for the next import.
-		const auto option = [&dialog](const char* id, bool& remembered)
+		// The options that could be chosen; the others stay as they were.
+		ImportOptions options = m_importOptions;
+		const auto option = [&dialog](const char* id, bool& value)
 		{
 			const Rml::Element* element = dialog.GetElementById(id);
-			if (element == nullptr || element->HasAttribute("disabled"))
-				return false;
-			remembered = element->HasAttribute("checked");
-			return remembered;
+			if (element != nullptr && !element->HasAttribute("disabled"))
+				value = element->HasAttribute("checked");
 		};
-		const bool copy = option("import-copy", m_importCopy);
-		const bool convert = option("import-convert", m_importConvert);
-		const bool split = option("import-split", m_importSplit);
-		const bool oneTrack = option("import-one-track", m_importOneTrack);
-		Json parameters = {{"files", m_import.files}, {"position", m_import.sample}, {"copy", copy},
-			{"convert", convert}, {"splitChannels", split}};
-		if (m_import.clipsOnly)
+		option("import-copy", options.copy);
+		option("import-convert", options.convert);
+		option("import-split", options.split);
+		option("import-one-track", options.oneTrack);
+		if (const auto* select =
+				dynamic_cast<Rml::ElementFormControlSelect*>(dialog.GetElementById("import-name-format"));
+			select != nullptr && !select->HasAttribute("disabled"))
+			options.nameFormat = select->GetValue();
+		bool doNotAsk = false;
+		option("import-do-not-ask", doNotAsk);
+
+		// The settings keep the choices for the next import, and Do not ask again imports with them from then on.
+		const auto store = [this](const char* key, const Json& value, const Json& before)
+		{
+			if (value != before)
+				m_binding.send("settings.set", {{"key", key}, {"value", value}});
+		};
+		store("editing.importAudioCopy", options.copy, m_importOptions.copy);
+		store("editing.importAudioConvert", options.convert, m_importOptions.convert);
+		store("editing.importAudioSplitChannels", options.split, m_importOptions.split);
+		store("editing.importAudioOneTrack", options.oneTrack, m_importOptions.oneTrack);
+		store("editing.importAudioNameFormat", options.nameFormat, m_importOptions.nameFormat);
+		if (doNotAsk)
+			m_binding.send("settings.set", {{"key", "editing.onImportAudio"}, {"value", "useSettings"}});
+		sendImport(m_import, options, m_importSaved);
+	}
+
+	bool EventDisplay::oneTrackApplies(const Import& import)
+	{
+		const bool droppedOnTrack = import.track && !import.selected;
+		return import.files.size() > 1 && !droppedOnTrack && !import.clipsOnly;
+	}
+
+	EventDisplay::ImportOptions EventDisplay::importSettings(const Json& list)
+	{
+		ImportOptions options;
+		for (const Json& setting : list.at("settings"))
+		{
+			const std::string key = setting.at("key").get<std::string>();
+			const Json& value = setting.at("value");
+			if (key == "editing.importAudioCopy")
+				options.copy = value.get<bool>();
+			else if (key == "editing.importAudioConvert")
+				options.convert = value.get<bool>();
+			else if (key == "editing.importAudioSplitChannels")
+				options.split = value.get<bool>();
+			else if (key == "editing.importAudioOneTrack")
+				options.oneTrack = value.get<bool>();
+			else if (key == "editing.importAudioNameFormat")
+				options.nameFormat = value.get<std::string>();
+		}
+		return options;
+	}
+
+	bool EventDisplay::usesSettings(const Json& list)
+	{
+		for (const Json& setting : list.at("settings"))
+			if (setting.at("key") == "editing.onImportAudio")
+				return setting.at("value") == "useSettings";
+		return false;
+	}
+
+	void EventDisplay::sendImport(const Import& import, const ImportOptions& options, bool saved)
+	{
+		// Copy, Convert and Split Channels need the project's folder; Import Files on One Track needs several files
+		// that may go on one track.
+		const bool split = saved && options.split;
+		Json parameters = {{"files", import.files}, {"position", import.sample}, {"copy", saved && options.copy},
+			{"convert", saved && options.convert}, {"splitChannels", split}};
+		if (split)
+			parameters["nameFormat"] = options.nameFormat;
+		if (import.clipsOnly)
 		{
 			parameters["clipsOnly"] = true;
 		}
@@ -167,12 +253,12 @@ namespace gnubase::ui
 		{
 			// Files dropped on a track all go on it; the selected track takes the first file, or all of them with
 			// Import Files on One Track. Files that are split go on new tracks either way.
-			if (m_import.track)
+			if (import.track)
 			{
-				parameters["track"] = *m_import.track;
-				parameters["lane"] = m_import.lane;
+				parameters["track"] = *import.track;
+				parameters["lane"] = import.lane;
 			}
-			if (oneTrack || (m_import.track && !m_import.selected))
+			if ((options.oneTrack && oneTrackApplies(import)) || (import.track && !import.selected))
 				parameters["oneTrack"] = true;
 		}
 		m_binding.send("audioFile.import", parameters);

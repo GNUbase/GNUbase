@@ -3,7 +3,8 @@
      but what app::AppUi fills into the project window's transport bar and the transport panel, one per document, where
      ui::TransportControls drives the controls by their command, state, time and field attributes. The sections come
      in the transport bar's order; the element they go into is a container of the set of sections "transport", whose
-     context menu is the setup pane #transport-setup (docs/features/docking.md). -->
+     context menu is the setup pane #transport-setup (docs/features/docking.md). Tap Tempo's own context menu is the
+     Tap Tempo Mode menu #tap-tempo-mode-menu (docs/features/tempo-track.md). -->
 <div class="transport-section" section="locators" label="Locators" title="Locators">
 	<button id="go-to-left" command="transport.locate" parameters='{"target": "leftLocator"}' title="Go to Left Locator Position">L</button>
 	<textdisplay id="left-locator" class="display" time="left" title="Left Locator Position"/>
@@ -38,7 +39,7 @@
 <div class="transport-section" section="tempoSignature" label="Tempo &amp; Time Signature" title="Tempo &amp; Time Signature">
 	<button id="tempo-track" class="icon-only" field="tempoTrack" title="Activate Tempo Track"><svg class="icon" src="../icons/transport-tempo-track.svg"/></button>
 	<valuefield id="tempo" field="tempo" min="1" max="999" step="1" decimals="3" title="Tempo"/>
-	<button id="tap-tempo" class="icon-only" field="tap" title="Tap Tempo"><svg class="icon" src="../icons/transport-tap-tempo.svg"/></button>
+	<button id="tap-tempo" class="icon-only" field="tap" contextmenu="tap-tempo-mode-menu" title="Tap Tempo"><svg class="icon" src="../icons/transport-tap-tempo.svg"/></button>
 	<textdisplay id="signature" class="display" field="signature" title="Time Signature"/>
 </div>
 <div class="transport-section" section="click" label="Click" title="Click">
@@ -50,6 +51,15 @@
 	<button setup-all="transport">Show All</button>
 	<button setup-reset="transport">Reset All</button>
 	<div setup="transport"/>
+</menu>
+<!-- Where the tempo that Tap Tempo beats goes (reference manual p. 1458) -->
+<menu id="tap-tempo-mode-menu">
+	<menuitem tap-mode="auto">Automatic</menuitem>
+	<menuitem tap-mode="selection">Insert Tempo Event at Selection Start</menuitem>
+	<menuitem tap-mode="playbackStart">Insert Tempo Event at Last Playback Start Position</menuitem>
+	<menuitem tap-mode="cursor">Insert Tempo Event at Cursor Position</menuitem>
+	<menuitem tap-mode="project">Set Project Tempo</menuitem>
+	<menuitem tap-mode="display">Display Only</menuitem>
 </menu>
 <menu id="primary-format-menu">
 	<menuitem slot="primary" format="barsBeats">Bars+Beats</menuitem>
