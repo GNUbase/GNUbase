@@ -477,6 +477,48 @@ TEST_CASE("the largest set of shared copies that still match keeps their group w
 	CHECK(midiPartJson(client, two).at("shared") == group);
 }
 
+TEST_CASE("a tempo change reports the copies of a set that gets a group of its own, also if their notes stay", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId linear = addTrack(client, {{"type", "midi"}, {"timeBase", "linear"}});
+	const ObjectId musical = addTrack(client, {{"type", "midi"}});
+	const ObjectId part = addPartWithNote(client, linear, 0);
+	const auto copy = [&client, part](Json parameters)
+	{
+		parameters["events"] = {part};
+		parameters["shared"] = true;
+		return run(client, "event.copy", parameters).at("events").at(0).get<ObjectId>();
+	};
+	const ObjectId linearOne = copy({{"delta", 8 * g_quarterSamples}});
+	const ObjectId linearTwo = copy({{"delta", 16 * g_quarterSamples}});
+	const ObjectId musicalOne = copy({{"ticks", 0}, {"track", musical}});
+	const ObjectId musicalTwo = copy({{"ticks", 8 * g_ticksPerQuarter}, {"track", musical}});
+	const Json group = midiPartJson(client, part).at("shared");
+	const Json notes = midiPartJson(client, musicalOne).at("notes");
+	REQUIRE(group != 0);
+	for (const ObjectId id : {linearOne, linearTwo, musicalOne, musicalTwo})
+		REQUIRE(midiPartJson(client, id).at("shared") == group);
+	changedParts(client);
+
+	// A new tempo retimes the three linear parts alike, and they keep the group. The two musical copies don't move,
+	// but get a group of their own with new ids: every part changes.
+	run(client, "project.set", {{"tempo", 90.0}});
+	CHECK(changedParts(client) == std::vector<ObjectId>{part, linearOne, linearTwo, musicalOne, musicalTwo});
+	for (const ObjectId id : {linearOne, linearTwo})
+		CHECK(midiPartJson(client, id).at("shared") == group);
+	const Json one = midiPartJson(client, musicalOne);
+	const Json two = midiPartJson(client, musicalTwo);
+	CHECK(midiPartJson(client, part).at("shared") == group);
+	CHECK(one.at("shared") != 0);
+	CHECK(one.at("shared") != group);
+	CHECK(two.at("shared") == one.at("shared"));
+	CHECK(two.at("notes") == one.at("notes"));
+	CHECK(one.at("notes").at(0).at("id") != notes.at(0).at("id"));
+	CHECK(one.at("notes").at(0).at("position") == notes.at(0).at("position"));
+	CHECK(one.at("notes").at(0).at("length") == notes.at(0).at("length"));
+}
+
 TEST_CASE("a tempo change reports only the linear parts whose notes or controllers it retimes", "[unit]")
 {
 	Engine engine;
