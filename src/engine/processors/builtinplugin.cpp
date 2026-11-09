@@ -207,19 +207,33 @@ namespace gnubase::engine::processors
 		return true;
 	}
 
-	bool BuiltinPlugin::loadState(const uint8_t* data, size_t size, plugin::StateContext /*context*/)
+	namespace
 	{
-		constexpr size_t entry = sizeof(uint32_t) + sizeof(double);
-		if (size % entry != 0)
-			return false;
-		for (size_t at = 0; at < size; at += entry)
+		constexpr size_t g_stateEntry = sizeof(uint32_t) + sizeof(double);
+	}
+
+	std::map<uint32_t, double> BuiltinPlugin::stateValues(const std::vector<uint8_t>& state)
+	{
+		std::map<uint32_t, double> values;
+		if (state.size() % g_stateEntry != 0)
+			return values;
+		for (size_t at = 0; at < state.size(); at += g_stateEntry)
 		{
 			uint32_t id = 0;
 			double value = 0.0;
-			std::memcpy(&id, data + at, sizeof(id));
-			std::memcpy(&value, data + at + sizeof(id), sizeof(value));
-			setValue(id, value);
+			std::memcpy(&id, state.data() + at, sizeof(id));
+			std::memcpy(&value, state.data() + at + sizeof(id), sizeof(value));
+			values[id] = value;
 		}
+		return values;
+	}
+
+	bool BuiltinPlugin::loadState(const uint8_t* data, size_t size, plugin::StateContext /*context*/)
+	{
+		if (size % g_stateEntry != 0)
+			return false;
+		for (const auto& [id, value] : stateValues(std::vector<uint8_t>(data, data + size)))
+			setValue(id, value);
 		if (auto* hostParams = plugin::extension<plugin::HostParams>(m_host))
 			hostParams->rescanParams(plugin::HostParams::Values);
 		return true;

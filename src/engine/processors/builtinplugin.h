@@ -11,6 +11,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -60,6 +61,8 @@ namespace gnubase::engine::processors
 		// State: the parameter values, as pairs of id and value.
 		bool saveState(std::vector<uint8_t>& data, plugin::StateContext context) override;
 		bool loadState(const uint8_t* data, size_t size, plugin::StateContext context) override;
+		// The parameter values a state holds, by id, the last of an id winning; none if it isn't one of these states.
+		static std::map<uint32_t, double> stateValues(const std::vector<uint8_t>& state);
 
 		// Latency and Tail, from activate on.
 		uint32_t latency() const override;

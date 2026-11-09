@@ -14,10 +14,13 @@ In the engine: mute and solo, disabled tracks and `track.duplicate`.
   is silent. While any channel is soloed, only the soloed channels are heard, with the channels they play through
   (their groups and folders' group channels, a MIDI track's instrument) and the channels that play into them (the
   tracks of a soloed group, the MIDI tracks of a soloed instrument track); a muted channel stays silent, soloed or
-  not. The render snapshot marks the others `silent` (`markSilent` in `src/engine/document/rendersnapshot.cpp`), and
-  each silent channel's strip (`ChannelStrip`) glides its output to silence over one audio block, and back, so
-  switching doesn't click. A silent MIDI track's notes and controllers are left out of the snapshot, as a muted part's
-  are, so they don't reach its instrument. Silent channels don't monitor their input directly either.
+  not. A mute automation lane that reads and has points overrides the mute button while it plays, also in its gaps
+  where the button's state plays ([automation.md](automation.md)). The render snapshot marks the others `silent`
+  (`markSilent` in `src/engine/document/rendersnapshot.cpp`), and each silent channel's strip (`ChannelStrip`) glides
+  its output to silence over one audio block, and back, so switching doesn't click; the mute button mutes through
+  the fader's mute instead, gliding over 5 ms like mute automation, so that switching between the two is seamless. A
+  silent MIDI track's notes and controllers are left out of the snapshot, as a muted part's are, so they don't reach
+  its instrument, and its mute ends the notes that sound. Silent channels don't monitor their input directly either.
 - **Disabled tracks** (p. 219): `track.set` `enabled` false disables an audio, instrument or MIDI track. It keeps its
   events, parts and channel settings, but the snapshot leaves its events and parts out (no disk streaming) and its
   channel is silent. Other track types refuse it.

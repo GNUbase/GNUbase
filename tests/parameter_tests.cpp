@@ -146,9 +146,16 @@ TEST_CASE("parameter.list returns a channel's parameters with their ranges, valu
 	CHECK(synthParameters.at(6).at("unit") == "s");
 	run(client, "automationLane.add", {{"track", synth.track}, {"target", level.at("target")}});
 
-	// MIDI channels have none: their volume and pan are MIDI controllers (channel.set).
+	// MIDI channels have only mute: their volume and pan are MIDI controllers (channel.set).
 	const TestTrack midi = addTrack(client, "midi");
-	CHECK(run(client, "parameter.list", {{"channel", midi.channel}}).at("parameters").empty());
+	const Json midiParameters = run(client, "parameter.list", {{"channel", midi.channel}}).at("parameters");
+	REQUIRE(midiParameters.size() == 1);
+	CHECK(midiParameters[0].at("target") == Json{{"type", "mute"}});
+	CHECK(midiParameters[0].at("stepped") == true);
+	run(client, "parameter.set", {{"channel", midi.channel}, {"target", {{"type", "mute"}}}, {"text", "On"}});
+	CHECK(run(client, "parameter.get", {{"channel", midi.channel}, {"target", {{"type", "mute"}}}})
+			  .at("parameter")
+			  .at("value") == 1.0);
 	CHECK_THAT(reject(client, "parameter.list", {{"channel", 9999}}), ContainsSubstring("9999"));
 }
 
@@ -443,22 +450,26 @@ TEST_CASE("automationLane.targets lists what a track's automation tracks can sho
 	CHECK(targets.back().at("target").at("slot") == gain);
 	CHECK(targets.back().at("group") == processors::findBuiltinPlugin("builtin:gainPan")->name);
 
-	// MIDI and instrument tracks also have pitch bend, channel pressure and the 128 controllers, from 0 to 1.
+	// MIDI and instrument tracks also have pitch bend, channel pressure and the 128 controllers, from 0 to 1; a MIDI
+	// track has its mute first.
 	const TestTrack midi = addTrack(client, "midi");
 	const Json midiTargets = run(client, "automationLane.targets", {{"track", midi.track}}).at("targets");
-	REQUIRE(midiTargets.size() == 130);
-	CHECK(midiTargets[0].at("target").at("type") == "pitchBend");
-	CHECK(midiTargets[0].at("value") == 0.5);
-	CHECK(midiTargets[1].at("target").at("type") == "channelPressure");
-	CHECK(midiTargets[9].at("target").at("type") == "controller");
-	CHECK(midiTargets[9].at("target").at("number") == 7);
-	CHECK(midiTargets[9].at("name") == "Controller 7");
-	CHECK(midiTargets[9].at("group") == "MIDI");
-	CHECK(midiTargets[9].at("maximum") == 1.0);
-	CHECK(midiTargets[9].at("stepped") == false);
+	REQUIRE(midiTargets.size() == 131);
+	CHECK(midiTargets[0].at("target").at("type") == "mute");
+	CHECK(midiTargets[0].at("group") == "Channel");
+	CHECK(midiTargets[1].at("target").at("type") == "pitchBend");
+	CHECK(midiTargets[1].at("value") == 0.5);
+	CHECK(midiTargets[2].at("target").at("type") == "channelPressure");
+	CHECK(midiTargets[10].at("target").at("type") == "controller");
+	CHECK(midiTargets[10].at("target").at("number") == 7);
+	CHECK(midiTargets[10].at("name") == "Controller 7");
+	CHECK(midiTargets[10].at("group") == "MIDI");
+	CHECK(midiTargets[10].at("maximum") == 1.0);
+	CHECK(midiTargets[10].at("stepped") == false);
 	// The targets are the ones automationLane.add takes.
-	run(client, "automationLane.add", {{"track", midi.track}, {"target", midiTargets[9].at("target")}});
-	CHECK(run(client, "automationLane.targets", {{"track", midi.track}}).at("targets")[9].at("lane") != 0);
+	run(client, "automationLane.add", {{"track", midi.track}, {"target", midiTargets[0].at("target")}});
+	run(client, "automationLane.add", {{"track", midi.track}, {"target", midiTargets[10].at("target")}});
+	CHECK(run(client, "automationLane.targets", {{"track", midi.track}}).at("targets")[10].at("lane") != 0);
 	const TestTrack synth = addSynth(client);
 	CHECK(run(client, "automationLane.targets", {{"track", synth.track}}).at("targets").size() ==
 		8 + g_stripParameterCount + 130);

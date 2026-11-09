@@ -35,6 +35,10 @@ namespace gnubase::engine
 	void followAutomation(Project& project, ObjectId track, const time::Position& from, const time::Position& end,
 		const time::Position& to, CommandContext& context);
 
+	// Whether an automation lane has a step curve (reference manual p. 870): mute and the stepped parameters of
+	// instruments, plugins and the channel strip, whose points are steps with whole values (projectmodel.cpp).
+	bool hasStepCurve(const Project& project, const AutomationLane& lane);
+
 	// The project's tempo as project.get and the tempo.changed event report it (tempo.cpp): the tempo it plays, whether
 	// the tempo track is active, the tempo track's events and the fixed tempo.
 	Json tempoJson(const Project& project);

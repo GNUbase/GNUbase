@@ -59,6 +59,8 @@ namespace gnubase::engine
 		std::vector<ChannelParameter> channelParameters(const Project& project, const Channel& channel)
 		{
 			std::vector<ChannelParameter> parameters;
+			const ChannelParameter mute{
+				{AutomationTargetType::Mute, 0, 0, 0, 0}, {0, "Mute", 0.0, 1.0, 0.0, {}, true, {"Off", "On"}}};
 			if (channel.format != ChannelFormat::None)
 			{
 				const auto pan = [](const char* name, double defaultValue)
@@ -68,13 +70,16 @@ namespace gnubase::engine
 				parameters.push_back({{AutomationTargetType::Pan, 0, 0, 0, 0}, pan("Pan", 0.0)});
 				parameters.push_back({{AutomationTargetType::PanLeft, 0, 0, 0, 0}, pan("Pan left", -1.0)});
 				parameters.push_back({{AutomationTargetType::PanRight, 0, 0, 0, 0}, pan("Pan right", 1.0)});
-				parameters.push_back(
-					{{AutomationTargetType::Mute, 0, 0, 0, 0}, {0, "Mute", 0.0, 1.0, 0.0, {}, true, {"Off", "On"}}});
+				parameters.push_back(mute);
 			}
 			else if (project.trackById.at(channel.track).type == TrackType::Vca) // a VCA fader: its fader only
 			{
 				parameters.push_back({{AutomationTargetType::Volume, 0, 0, 0, 0},
 					{0, "Volume", g_minChannelVolume, project.maxVolume, 0.0, "dB", false, {}}});
+			}
+			else // a MIDI track: its mute, which silences its notes and controllers
+			{
+				parameters.push_back(mute);
 			}
 			if (const processors::BuiltinInfo* instrument = processors::findBuiltin(channel.instrument))
 				for (const processors::ParameterInfo& parameter : instrument->parameters)
@@ -361,8 +366,8 @@ namespace gnubase::engine
 				"has its target, as automationLane.add takes it, its name, minimum, maximum, default, unit, whether "
 				"it is stepped (whole numbers only), options (the names of a stepped parameter's values from the "
 				"minimum on, if it has any), its static value and text, the value as it is displayed. Automation "
-				"overrides the static value while it plays. MIDI channels have none: their volume and pan are MIDI "
-				"controllers (channel.set midiVolume and midiPan).",
+				"overrides the static value while it plays. MIDI channels have only mute, which silences their notes "
+				"and controllers: their volume and pan are MIDI controllers (channel.set midiVolume and midiPan).",
 				objectSchema({{"channel", idSchema}}, {"channel"}),
 				{{"type", "object"}, {"properties", {{"parameters", {{"type", "array"}}}}},
 					{"required", {"parameters"}}},

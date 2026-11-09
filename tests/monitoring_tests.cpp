@@ -227,3 +227,30 @@ TEST_CASE("monitor and record enable are track settings saved with the project",
 	CHECK(loadedMidi->at("monitor") == false);
 	CHECK(loadedMidi->at("midiInput") == "none");
 }
+
+TEST_CASE("a directly monitored track whose mute automation mutes it is silent", "[integration]")
+{
+	Setup setup(true);
+	Client& client = setup.client;
+	run(client, "channel.set", {{"channel", setup.channel}, {"monitor", true}});
+	CHECK(setup.hears());
+	const ObjectId track = run(client, "project.get").at("tracks").at(0).at("id").get<ObjectId>();
+	const auto lane = run(client, "automationLane.add", {{"track", track}, {"target", {{"type", "mute"}}}})
+						  .at("lane")
+						  .at("id")
+						  .get<ObjectId>();
+	const Json point =
+		run(client, "automationPoint.add", {{"lane", lane}, {"points", {{{"position", 0}, {"value", 1.0}}}}})
+			.at("points")
+			.at(0);
+	setup.render(); // the mute glides in over 5 ms
+	CHECK(!setup.hears());
+	run(client, "transport.play");
+	CHECK(!setup.hears());
+	run(client, "transport.stop");
+	// The device can't follow the automation, so the track is monitored through the graph while it has some.
+	run(client, "automationPoint.set", {{"lane", lane}, {"points", {{{"id", point.at("id")}, {"value", 0.0}}}}});
+	CHECK(setup.hears());
+	run(client, "automationLane.remove", {{"lane", lane}});
+	CHECK(setup.hears());
+}

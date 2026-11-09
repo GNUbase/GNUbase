@@ -175,7 +175,8 @@ namespace gnubase::engine
 		// Muted, silenced by another channel's solo, or on a disabled track: outputs silence. A silent MIDI channel
 		// has no notes or controllers, and a disabled track no events or parts.
 		bool silent = false;
-		// Its mute button mutes it (no mute automation plays): pre-fader sends follow it with the user setting
+		// Its mute button mutes it (no mute automation plays): it is the static value of the channel's mute lane
+		// (channelAutomation), so the fader mutes it, and pre-fader sends follow it with the user setting
 		// audio.mutePreSends.
 		bool muted = false;
 		bool listen = false; // also plays on the monitoring bus, after its fader (graph::NodeKind::ListenBus)
