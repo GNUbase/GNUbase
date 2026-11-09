@@ -645,9 +645,10 @@ TEST_CASE("timeline positions within a warped event go through its warp", "[inte
 
 	// Fade In to Range Start, and Fade Out from Range End.
 	run(client, "range.fades", {{"start", 0}, {"end", 49000}, {"tracks", {loop.track}}, {"fade", "in"}});
-	CHECK(eventOf(client, loop.event).at("fadeIn").at("length") == 52000);
+	// The event's own fades play from its edges in frames at the clip's sample rate (where they play: below).
+	CHECK(eventOf(client, loop.event).at("fadeIn").at("length") == 49000);
 	run(client, "range.fades", {{"start", 49000}, {"end", 96000}, {"tracks", {loop.track}}, {"fade", "out"}});
-	CHECK(eventOf(client, loop.event).at("fadeOut").at("length") == (4 * g_quarter) - 52000);
+	CHECK(eventOf(client, loop.event).at("fadeOut").at("length") == (4 * g_quarter) - 49000);
 
 	// A volume curve drawn from 49000 starts at clip frame 52000.
 	run(client, "range.volumeCurve", {{"start", 49000}, {"end", 70000}, {"tracks", {loop.track}}, {"volume", -6.0}});
@@ -665,6 +666,33 @@ TEST_CASE("timeline positions within a warped event go through its warp", "[inte
 	const Json piece = eventOf(client, events.at(1).get<ObjectId>());
 	CHECK(piece.at("offset") == 52000);
 	CHECK(std::abs(piece.at("position").get<int64_t>() - 49000) <= 1);
+}
+
+TEST_CASE("fades to a range on a warped event play to the range", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	// Clip frame 52000 plays at 49000.
+	const Loop loop = addLoop(client, dir, sine(4 * g_quarter), "linear");
+	run(client, "clip.addWarpMarker", {{"clip", loop.clip}, {"position", 52000}, {"target", 49000}});
+
+	// Fade In to Range Start over 0 to 49000: full gain at 49000, half of it halfway there.
+	run(client, "range.fades", {{"start", 0}, {"end", 49000}, {"tracks", {loop.track}}, {"fade", "in"}});
+	std::vector<float> played = render(client, 4 * g_quarter);
+	double steady = level(played, 70000);
+	REQUIRE(steady > 0.2);
+	CHECK(std::abs((level(played, 23900) / steady) - 0.5) < 0.015);
+	CHECK(level(played, 49000) / steady > 0.98);
+
+	// Fade Out from Range End at 49000: it starts falling there, half of it halfway to the event's end at 96000.
+	run(client, "audioEvent.setFades", {{"event", loop.event}, {"fadeIn", {{"length", 0}}}});
+	run(client, "range.fades", {{"start", 49000}, {"end", 96000}, {"tracks", {loop.track}}, {"fade", "out"}});
+	played = render(client, 4 * g_quarter);
+	steady = level(played, 20000);
+	REQUIRE(steady > 0.2);
+	CHECK(level(played, 47800) / steady > 0.98);
+	CHECK(std::abs((level(played, 71900) / steady) - 0.5) < 0.015);
 }
 
 TEST_CASE("resizing a warped event with its contents keeps the edge that stays put", "[integration]")
@@ -715,5 +743,7 @@ TEST_CASE("the warped events' own media entries are no media files", "[integrati
 	const Loop loop = addLoop(client, dir, clicks({1000, 25000, 49000, 73000}, 4 * g_quarter));
 	run(client, "clip.setWarp", {{"clip", loop.clip}, {"musical", true}});
 	reject(client, "media.peaks", {{"media", loop.event}, {"pixels", 10}});
-	reject(client, "audition.start", {{"media", loop.event}, {"position", 0}});
+	run(client, "audio.setDevice", {{"blockSize", 256}, {"inputChannels", 0}});
+	CHECK_THAT(
+		reject(client, "audition.start", {{"media", loop.event}, {"position", 0}}), ContainsSubstring("no media file"));
 }

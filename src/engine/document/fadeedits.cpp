@@ -240,13 +240,13 @@ namespace gnubase::engine
 				const bool coversEnd = end >= span.end;
 				if (end <= span.start || start >= span.end || (coversStart && coversEnd))
 					continue;
-				// The clip frames from the event's start to a position, through its warp.
-				const auto frames = [&project, &span, &event](time::Samples position)
-				{
-					return std::clamp<time::Samples>(
-						std::llround(eventFrames(project, event, static_cast<double>(position - span.start))), 0,
-						event.length);
-				};
+				// An event's own fades play their length in frames at the clip's sample rate from its edges, also on
+				// a warped event (playback.cpp, warpEvent), so a distance from an edge becomes frames at that ratio.
+				const auto frames = [ratio = span.ratio](time::Samples samples)
+				{ return std::max<time::Samples>(std::llround(static_cast<double>(samples) / ratio), 0); };
+				// The frames it plays: its length, or on a warped event what the warp makes of it.
+				const time::Samples length =
+					warped(project.clips.at(event.clip)) ? frames(span.end - span.start) : event.length;
 				Fade in = event.fadeIn;
 				Fade out = event.fadeOut;
 				// Adjust sets only the fades at the edges the range crosses, both when it is inside the event.
@@ -255,16 +255,16 @@ namespace gnubase::engine
 				if (!inSet && !outSet)
 					continue;
 				if (inSet)
-					in.length = frames(coversStart ? end : start);
+					in.length = std::min(frames(coversStart ? end - span.start : start - span.start), length);
 				if (outSet)
-					out.length = event.length - frames(coversEnd ? start : end);
+					out.length = std::min(frames(coversEnd ? span.end - start : span.end - end), length);
 				// A fade that no longer fits next to the one set gets shorter.
-				if (in.length + out.length > event.length)
+				if (in.length + out.length > length)
 				{
 					if (inSet)
-						out.length = event.length - in.length;
+						out.length = length - in.length;
 					else
-						in.length = event.length - out.length;
+						in.length = length - out.length;
 				}
 				event.fadeIn = in;
 				event.fadeOut = out;
