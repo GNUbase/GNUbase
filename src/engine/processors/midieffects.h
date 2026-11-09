@@ -92,6 +92,8 @@ namespace gnubase::engine::processors
 		// is left out.
 		bool step(uint32_t offset, double frames, graph::EventBuffer& out) noexcept;
 		bool end(uint32_t offset, graph::EventBuffer& out) noexcept;
+		// The frames of a step that starts at offset in the block, at the tempo there.
+		double stepFrames(uint32_t offset, const graph::TransportBlock& transport) const noexcept;
 
 		double m_sampleRate = 48000.0;
 		uint8_t m_mode = Up;
@@ -149,6 +151,8 @@ namespace gnubase::engine::processors
 	// Applies rules to events one at a time, as the transformer effect and each module of an input transformer do. A
 	// note-off goes where the note-on went, so a note changed by the rules ends where it sounds, and so does the poly
 	// pressure of a held note unless the rules find it; a note-on that became another type of event loses its note-off.
+	// Where two held notes play one note, it plays once and ends with the last of them. In a full output, note-offs
+	// take the places of other events.
 	// Velocities stay from 1 to 127, and a controller turned into a note plays a note-on for values above 0 and a
 	// note-off for 0. SysEx passes.
 	class LogicalStage
@@ -169,7 +173,13 @@ namespace gnubase::engine::processors
 			bool down = false;    // a note-on came and no note-off yet
 		};
 
+		// Whether held, a note-on of source, plays note; source's note-on itself counts if it passed.
+		static bool uses(const Held& held, uint16_t source, uint16_t note) noexcept;
+		// Counts a note-on of note less; true when none is left and the note ends.
+		bool release(uint16_t note) noexcept;
+
 		std::array<Held, MidiEffect::g_notes> m_held{};
+		std::array<uint16_t, MidiEffect::g_notes> m_sounding{}; // per note out, how many held notes play it
 		midi::LogicalRandom m_random;
 	};
 
