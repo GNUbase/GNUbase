@@ -218,7 +218,7 @@ TEST_CASE("project.findByRules finds tracks, parts and events", "[integration]")
 	first["join"] = "or";
 	Json bracketed = first;
 	bracketed["open"] = 1;
-	Json second = filter("containerType", "equal", "part");
+	const Json second = filter("containerType", "equal", "part");
 	Json closed = second;
 	closed["close"] = 1;
 	const Json muted = filter("property", "propertyIsSet", "isMuted");
@@ -250,13 +250,13 @@ TEST_CASE("project.applyRules transforms and deletes in one undo step", "[integr
 					{action("position", "add", 240), action("length", "multiplyBy", 2), action("name", "append", "!"),
 						action("color", "setFixed", "Red")})}});
 		CHECK(result.at("events") == Json{f.full, f.empty});
-		CHECK(f.object("midiParts", f.full).at("position") == g_beatTicks + 240 * g_tick);
+		CHECK(f.object("midiParts", f.full).at("position") == g_beatTicks + (240 * g_tick));
 		CHECK(f.object("midiParts", f.full).at("length") == 2 * g_beatTicks);
 		CHECK(f.object("midiParts", f.full).at("name") == "Chords!");
 		CHECK(f.object("midiParts", f.full).at("color") == "#d0453e");
 		const Json marker = run(f.client, "marker.list", {{"track", f.markers}}).at("markers").at(0);
-		CHECK(marker.at("position") == g_beatTicks + 240 * g_tick);
-		CHECK(marker.at("end") == 3 * g_beatTicks + 240 * g_tick);
+		CHECK(marker.at("position") == g_beatTicks + (240 * g_tick));
+		CHECK(marker.at("end") == (3 * g_beatTicks) + (240 * g_tick));
 		CHECK(marker.at("name") == "Verse!");
 		CHECK(history() == steps + 1);
 		run(f.client, "history.undo");

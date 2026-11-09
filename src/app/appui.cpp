@@ -701,6 +701,34 @@ namespace gnubase::app
 		// Project > Project Colors Setup (docs/features/colors.md).
 		m_keys.add({"project.colorsSetup", "Opens the project colors setup dialog, which edits the project's colors.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { openDialog(window, "project-colors.rml"); }});
+		// Project > Project Rule Editor (#179, docs/features/project-rules.md): the rule editor's document on the
+		// project's tracks, parts and events, which reads and sets the project window's selection with these.
+		m_keys.add({"project.ruleEditor",
+			"Opens the project rule editor, which finds tracks, parts and events and changes, deletes or selects them.",
+			[this](ui::Window& window, Rml::Element* /*zone*/)
+			{ openDialog(window, "rule-editor.rml", {{"target", "projectRules"}}); }});
+		m_lua.addFunction("ui.projectSelection",
+			[this](const engine::Json& /*parameters*/)
+			{
+				return engine::Json{{"tracks", m_trackList ? m_trackList->selection() : std::vector<uint64_t>{}},
+					{"events", m_eventDisplay ? m_eventDisplay->selection() : std::vector<uint64_t>{}}};
+			});
+		m_lua.addFunction("ui.selectInProject",
+			[this](const engine::Json& parameters)
+			{
+				// An empty Lua table comes as an object.
+				const auto ids = [&parameters](const char* key)
+				{
+					const auto found = parameters.is_object() ? parameters.find(key) : parameters.end();
+					return found != parameters.end() && found->is_array() ? found->get<std::vector<uint64_t>>()
+																		  : std::vector<uint64_t>{};
+				};
+				if (m_trackList)
+					m_trackList->select(ids("tracks"));
+				if (m_eventDisplay)
+					m_eventDisplay->select(ids("events"));
+				return engine::Json::object();
+			});
 		// For documents' buttons and menu items: gnubase.ui.command{command = "project.addTrack"} runs a key command
 		// in the main window, as its keys would. A command that doesn't exist or parameters it doesn't take are a Lua
 		// error at the call (KeyCommands::check), in users' scripts too, instead of an engine error later or parameters

@@ -7,6 +7,7 @@
 #include "engine/settings/store.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <initializer_list>
 #include <memory>
@@ -120,7 +121,9 @@ namespace gnubase::engine
 						" has no condition " + g_conditions[static_cast<size_t>(line.condition)]);
 			};
 			if (isTextTarget(line.target))
+			{
 				line.text = text(item, "parameter1", name);
+			}
 			else
 			{
 				line.parameter1 = number(item, "parameter1", name);
@@ -453,7 +456,7 @@ namespace gnubase::engine
 				element.position =
 					static_cast<double>(project.tempo.toTicks(span.start, project.sampleRate)) / g_logicalTick;
 				element.length =
-					static_cast<double>(project.tempo.toTicks(span.end, project.sampleRate)) / g_logicalTick -
+					(static_cast<double>(project.tempo.toTicks(span.end, project.sampleRate)) / g_logicalTick) -
 					element.position;
 				element.locked = event.lock;
 				if (event.mute)
@@ -653,10 +656,14 @@ namespace gnubase::engine
 				Json events = Json::array();
 				Json markers = Json::array();
 				for (const Element* element : elements)
-					(element->kind == Kind::Track           ? tracks
-							: element->kind == Kind::Marker ? markers
-															: events)
-						.push_back(element->id);
+				{
+					if (element->kind == Kind::Track)
+						tracks.push_back(element->id);
+					else if (element->kind == Kind::Marker)
+						markers.push_back(element->id);
+					else
+						events.push_back(element->id);
+				}
 				return {{"tracks", std::move(tracks)}, {"events", std::move(events)}, {"markers", std::move(markers)}};
 			}
 		};
@@ -731,6 +738,7 @@ namespace gnubase::engine
 			using T = ProjectActionTarget;
 			midi::LogicalRandom random{seed};
 			std::vector<int64_t> counters;
+			counters.reserve(rules.actions.size());
 			for (const ProjectActionLine& action : rules.actions)
 				counters.push_back(std::llround(action.parameter2));
 			Commands commands;
@@ -783,15 +791,12 @@ namespace gnubase::engine
 								!hasEvents(element->track->type)))
 							break;
 						{
-							const char* key = action.operation == O::Mute ? "mute"
-								: action.operation == O::Solo             ? "solo"
-								: action.operation == O::Record           ? "recordEnable"
-																		  : "monitor";
-							const bool now = channel.contains(key) ? channel.at(key).get<bool>()
-								: action.operation == O::Mute      ? own->mute
-								: action.operation == O::Solo      ? own->solo
-								: action.operation == O::Record    ? own->recordEnable
-																   : own->monitor;
+							// The channel's button and its key in channel.set.
+							const std::array<std::pair<const char*, bool>, 4> buttons{{{"mute", own->mute},
+								{"solo", own->solo}, {"recordEnable", own->recordEnable}, {"monitor", own->monitor}}};
+							const auto& [key, current] =
+								buttons[static_cast<size_t>(action.operation) - static_cast<size_t>(O::Mute)];
+							const bool now = channel.contains(key) ? channel.at(key).get<bool>() : current;
 							channel[key] = switched(action.text, now);
 						}
 						break;
@@ -983,21 +988,21 @@ namespace gnubase::engine
 		using F = ProjectFunction;
 		using O = ProjectOperation;
 		using T = ProjectTarget;
-		constexpr auto Or = midi::LogicalBool::Or;
+		constexpr auto either = midi::LogicalBool::Or;
 		const auto mediaIs = [](const char* type) { return where(T::MediaType, C::Equal, type); };
 		static const std::vector<ProjectRulePreset> presets = {
 			{"Init", {}},
 			{"Delete/Empty parts", {{is("part"), has("isEmpty")}, F::Delete, {}, {}, {}}},
 			{"Delete/Muted parts and events",
-				{{is("part", Or, 1), is("event", midi::LogicalBool::And, 0, 1), has("isMuted")}, F::Delete, {}, {},
+				{{is("part", either, 1), is("event", midi::LogicalBool::And, 0, 1), has("isMuted")}, F::Delete, {}, {},
 					{}}},
 			{"Delete/Empty tracks",
-				{{is("track", Or, 1), is("folder", midi::LogicalBool::And, 0, 1), has("isEmpty")}, F::Delete, {}, {},
-					{}}},
+				{{is("track", either, 1), is("folder", midi::LogicalBool::And, 0, 1), has("isEmpty")}, F::Delete, {},
+					{}, {}}},
 			{"Select/MIDI parts", {{mediaIs("midi"), is("part")}, F::Select, {}, {}, {}}},
 			{"Select/Audio events", {{mediaIs("audio"), is("event")}, F::Select, {}, {}, {}}},
 			{"Select/Muted parts and events",
-				{{is("part", Or, 1), is("event", midi::LogicalBool::And, 0, 1), has("isMuted")}, F::Select, {}, {},
+				{{is("part", either, 1), is("event", midi::LogicalBool::And, 0, 1), has("isMuted")}, F::Select, {}, {},
 					{}}},
 			{"Select/Tracks named Vocals",
 				{{is("track"), where(T::Name, C::Contains, "Vocals")}, F::Select, {}, {}, {}}},
