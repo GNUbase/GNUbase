@@ -42,11 +42,16 @@ namespace gnubase::ui
 		void update();
 
 		// Shows in the message line (#pool-message, with the class error for a failure) what a pool command did:
-		// pool.removeUnused, media.locate, media.removeMissing or media.conform, wherever in the UI it was sent.
-		// media.locate and media.conform start jobs: the line follows the job's progress and shows its result once it
-		// is done. While one runs, the line's row (.pool-status) has the class running, which shows Stop (#pool-stop),
-		// and Stop cancels it (reference manual p. 751).
+		// pool.removeUnused, media.locate, media.removeMissing, media.conform or media.prepareArchive, wherever in the
+		// UI it was sent. media.locate, media.conform and media.prepareArchive start jobs: the line follows the job's
+		// progress and shows its result once it is done. While one runs, the line's row (.pool-status) has the class
+		// running, which shows Stop (#pool-stop), and Stop cancels it (reference manual p. 751).
 		void report(const std::string& command, const engine::Result& result);
+
+		// Media > Prepare Archive (pool.prepareArchive): asks in the panel's window before media.prepareArchive copies
+		// files from outside the project folder into it (prepare-archive.rml, reference manual p. 135), and sends it
+		// at once if there are none, or if the project has no file, which the engine refuses.
+		void prepareArchive();
 
 	private:
 		void ProcessEvent(Rml::Event& event) override;
@@ -59,6 +64,8 @@ namespace gnubase::ui
 		// Sends a command of the panel's own; a failure shows in the message line as the action's.
 		void send(const char* action, const std::string& command, const engine::Json& parameters);
 		void showMessage(const std::string& text, bool error);
+		// Opens prepare-archive.rml, which asks whether to copy the external files, as many as external.
+		void askPrepareArchive(int external);
 		// A job of a pool command ended (job.finished, or job.get for one that ended before report heard of it).
 		void jobEnded(const engine::Json& job);
 		// Cancels the jobs of pool commands that run.
@@ -73,11 +80,12 @@ namespace gnubase::ui
 		Rml::ObserverPtr<Rml::Element> m_root;
 		Rml::ObserverPtr<Rml::Element> m_view; // the <listview>
 		engine::Json m_pool = engine::Json::object();
-		bool m_stale = true;                      // the pool changed since it was last read
-		std::vector<std::string> m_values;        // the rows' values as shown
-		std::set<std::string> m_collapsed;        // folders the user closed
-		std::vector<std::string> m_dragged;       // clips a mouse button went down on, until it goes up
-		Rml::ObserverPtr<Rml::Element> m_pressed; // what it went down on
+		bool m_stale = true;                       // the pool changed since it was last read
+		std::vector<std::string> m_values;         // the rows' values as shown
+		std::set<std::string> m_collapsed;         // folders the user closed
+		std::vector<std::string> m_dragged;        // clips a mouse button went down on, until it goes up
+		Rml::ObserverPtr<Rml::Element> m_pressed;  // what it went down on
+		Rml::ObserverPtr<Rml::Element> m_question; // prepare-archive.rml while it asks
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers that come after it went
 		std::map<uint64_t, std::string> m_jobs; // the running jobs of pool commands it reports, with their commands
 		Subscription m_changed;

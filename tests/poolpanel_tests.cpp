@@ -307,20 +307,55 @@ TEST_CASE(
 	addMissing(app, dir.path() / "library" / "gone.wav");
 
 	// Unsaved, the project has no folder to copy into.
-	click(app, "#menu-bar button[menu=media-menu]");
-	click(app, "#media-menu menuitem[command=\"media.prepareArchive\"]");
+	const auto prepareArchive = [&app]
+	{
+		click(app, "#menu-bar button[menu=media-menu]");
+		click(app, "#media-menu menuitem[command=\"pool.prepareArchive\"]");
+	};
+	prepareArchive();
 	REQUIRE(app.waitUntil([&app] { return !message(app).empty(); }));
 	CHECK(message(app).find("Prepare Archive failed: save the project first") == 0);
 
+	// Saved, it asks before it copies files from outside the project folder (reference manual p. 135), and Cancel
+	// copies nothing.
 	std::filesystem::create_directories(dir.path() / "project");
 	app.call(
 		"project.save", {{"path", (dir.path() / "project" / "Song.dawproject").u8string()}, {"embedMedia", false}});
-	click(app, "#menu-bar button[menu=media-menu]");
-	click(app, "#media-menu menuitem[command=\"media.prepareArchive\"]");
+	const std::string before = message(app);
+	prepareArchive();
+	REQUIRE(app.waitUntil([&app] { return !elements(app, "#prepare-archive-dialog").empty(); }));
+	CHECK(elements(app, "#prepare-archive-message").at(0).value("text", "").find("2 files") != std::string::npos);
+	click(app, "#prepare-archive-dialog button[result=cancel]");
+	REQUIRE(app.waitUntil([&app] { return elements(app, "#prepare-archive-dialog").empty(); }));
+	CHECK(message(app) == before);
+	CHECK(!std::filesystem::exists(dir.path() / "project" / "Audio"));
+
+	// Proceed copies them.
+	prepareArchive();
+	REQUIRE(app.waitUntil([&app] { return !elements(app, "#prepare-archive-dialog").empty(); }));
+	click(app, "#prepare-archive-dialog button.primary");
 	REQUIRE(app.waitUntil([&app]
 		{ return message(app) == "Copied 1 file into the project folder; 1 missing file wasn't copied."; },
 		std::chrono::seconds(30)));
 	CHECK(std::filesystem::exists(dir.path() / "project" / "Audio" / "take.wav"));
+
+	// Without files from outside, it asks nothing.
+	app.call("media.removeMissing");
+	prepareArchive();
+	REQUIRE(app.waitUntil([&app] { return message(app) == "Copied 0 files into the project folder."; }));
+	CHECK(elements(app, "#prepare-archive-dialog").empty());
+}
+
+TEST_CASE("the pool panel says which media Prepare Archive left alone because they changed meanwhile", "[ui]")
+{
+	test::UiApp app({640, 480});
+	ui::EngineBinding binding{app.engine()};
+	Rml::ElementDocument& document = app.show("other.rml");
+	ui::PoolPanel panel(binding, *document.GetElementById("box"), [](const std::string&) {}, [] { return true; });
+	panel.report("media.prepareArchive",
+		{0, {{"copied", Json::array({1})}, {"missing", Json::array()}, {"changed", Json::array({2, 3})}}, {}});
+	CHECK(document.GetElementById("pool-message")->GetInnerRML() ==
+		"Copied 1 file into the project folder; 2 files changed meanwhile and were left as they are.");
 }
 
 TEST_CASE("the pool panel shows the Conform Files job's progress and that it was cancelled", "[ui]")

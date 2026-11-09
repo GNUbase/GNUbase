@@ -12,6 +12,15 @@
 #include <random>
 #include <sstream>
 #include <stdexcept>
+#include <utility>
+
+#ifdef _WIN32
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <sys/stat.h>
+#endif
 
 namespace gnubase::test
 {
@@ -264,6 +273,37 @@ namespace gnubase::test
 		std::ostringstream text;
 		text << in.rdbuf();
 		return text.str();
+	}
+
+	Unreadable::Unreadable(std::filesystem::path file) : m_file(std::move(file))
+	{
+#ifdef _WIN32
+		HANDLE handle =
+			CreateFileW(m_file.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+		m_active = handle != INVALID_HANDLE_VALUE;
+		m_handle = handle;
+#else
+		m_active = ::chmod(m_file.c_str(), 0) == 0;
+		if (m_active && std::ifstream(m_file).good())
+			release(); // root reads anything
+#endif
+	}
+
+	Unreadable::~Unreadable()
+	{
+		release();
+	}
+
+	void Unreadable::release()
+	{
+		if (!m_active)
+			return;
+		m_active = false;
+#ifdef _WIN32
+		CloseHandle(m_handle);
+#else
+		::chmod(m_file.c_str(), S_IRUSR | S_IWUSR);
+#endif
 	}
 
 	std::filesystem::path outputDirectory()

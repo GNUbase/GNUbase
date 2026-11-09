@@ -4635,6 +4635,11 @@ namespace gnubase::engine
 			});
 	}
 
+	std::string ProjectModel::backupName() const
+	{
+		return safeFileName(m_file.empty() ? m_project.name : projectFileStem(std::filesystem::u8path(m_file)));
+	}
+
 	void ProjectModel::registerMediaFolderCommands(Engine& engine, Jobs& jobs)
 	{
 		const Json stringSchema = {{"type", "string"}};
@@ -4645,19 +4650,23 @@ namespace gnubase::engine
 		add(engine,
 			{"project.location", 1,
 				"Where the project is: its project file (set by project.save and project.load), the folder of that "
-				"file, and the media folder in it where media.add with copy and media.prepareArchive put audio files. "
-				"All null for a project that has no file yet.",
+				"file, and the media folder in it where media.add with copy and media.prepareArchive put audio files, "
+				"all null for a project that has no file yet; and name, which project.backup names the backup by "
+				"default: the project file's name without the .dawproject extension, or else the project's name, "
+				"either made a name that files can have on every platform.",
 				objectSchema(Json::object()),
-				objectSchema({{"file", nullableString}, {"folder", nullableString}, {"mediaFolder", nullableString}},
-					{"file", "folder", "mediaFolder"}),
+				objectSchema({{"file", nullableString}, {"folder", nullableString}, {"mediaFolder", nullableString},
+								 {"name", stringSchema}},
+					{"file", "folder", "mediaFolder", "name"}),
 				true},
 			[this](Project&, CommandContext&)
 			{
 				if (m_file.empty())
-					return Json{{"file", nullptr}, {"folder", nullptr}, {"mediaFolder", nullptr}};
+					return Json{
+						{"file", nullptr}, {"folder", nullptr}, {"mediaFolder", nullptr}, {"name", backupName()}};
 				const std::filesystem::path file = std::filesystem::u8path(m_file);
 				return Json{{"file", m_file}, {"folder", file.parent_path().u8string()},
-					{"mediaFolder", mediaFolderFor(file).u8string()}};
+					{"mediaFolder", mediaFolderFor(file).u8string()}, {"name", backupName()}};
 			});
 
 		const Json integerSchema = {{"type", "integer"}};
@@ -4720,9 +4729,9 @@ namespace gnubase::engine
 				"job.progress and job.finished events follow, and job.cancel stops it and removes what it wrote. A "
 				"folder that a running job writes into can't be used. The job's result is {file, files, missing, "
 				"activated, activationError}: missing lists the media files ({media, path}) and freeze files ({track, "
-				"path}) that couldn't be read and keep their old paths; activated says whether the backup was opened, "
-				"and activationError why not, if it was asked "
-				"to be.",
+				"path}) that couldn't be read and keep their old paths, and the files and folders of the Mixdown "
+				"folder ({path}) that couldn't be read and were left out; activated says whether the backup was "
+				"opened, and activationError why not, if it was asked to be.",
 				objectSchema({{"folder", stringSchema}, {"name", stringSchema}, {"minimize", booleanSchema},
 								 {"handles", numberSchema}, {"removeUnused", booleanSchema},
 								 {"currentVersionsOnly", booleanSchema}, {"skipVideo", booleanSchema},
@@ -4755,8 +4764,7 @@ namespace gnubase::engine
 				}
 				else
 				{
-					options.name = safeFileName(
-						m_file.empty() ? m_project.name : projectFileStem(std::filesystem::u8path(m_file)));
+					options.name = backupName();
 				}
 				options.minimize = parameters.value("minimize", false);
 				options.handles = parameters.value("handles", 1.0);

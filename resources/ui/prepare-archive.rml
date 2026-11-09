@@ -1,0 +1,41 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Asks before Media > Prepare Archive copies files from outside the project folder into it (docs/features/backup.md,
+     the reference manual p. 135): ui::PoolPanel opens it with how many there are in #prepare-archive-message and sends
+     media.prepareArchive only if it closes with Proceed (the result ok). -->
+<rml>
+<head>
+	<title>Prepare Archive</title>
+	<style>
+		dialog
+		{
+			width: 360dp;
+		}
+
+		.row
+		{
+			display: flex;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.buttons
+		{
+			justify-content: flex-end;
+		}
+
+		.buttons button
+		{
+			margin-left: 6dp;
+		}
+	</style>
+</head>
+<body>
+	<dialog id="prepare-archive-dialog">
+		<div class="dialog-titlebar">Prepare Archive</div>
+		<div class="row" id="prepare-archive-message"></div>
+		<div class="row buttons">
+			<button result="cancel">Cancel</button>
+			<button class="primary" result="ok">Proceed</button>
+		</div>
+	</dialog>
+</body>
+</rml>

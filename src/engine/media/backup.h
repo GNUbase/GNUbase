@@ -99,11 +99,13 @@ namespace gnubase::engine
 		std::string mixdownFolder;        // the project's Mixdown folder, copied into <folder>/Mixdown; empty for none
 	};
 
-	// Writes <folder>/<name>.dawproject, media into Audio, freeze files into Freeze, and files from mixdownFolder
-	// into Mixdown, leaving out the backup's own folder. The project refers to media and freeze files relatively.
-	// Unreadable media or freeze files are reported and keep their paths. Reports progress and stops on cancellation;
-	// if incomplete, removes what it wrote. Returns {file, files, missing: [{media, path} or {track, path}]}.
-	// Throws JobCancelled, DawProjectError, AudioFileError or std::runtime_error.
+	// Writes <folder>/<name>.dawproject, media into Audio, freeze files into Freeze, and the files and folders from
+	// mixdownFolder into Mixdown, leaving out the backup's own folder. Media, freeze files and Mixdown files get free
+	// names (createFreeFile). The project refers to media and freeze files relatively. Unreadable media or freeze files
+	// are reported and keep their paths; unreadable files and folders of mixdownFolder are reported and left out.
+	// Reports progress and stops on cancellation; if incomplete, removes what it wrote. Returns {file, files, missing:
+	// [{media, path}, {track, path} or {path}]}. Throws JobCancelled, DawProjectError, AudioFileError or
+	// std::runtime_error.
 	//
 	// Minimized files start their ranges on the resampling grid of their sample rate in the project's, so that
 	// they play sample for sample as the originals do. They keep every sample: files whose samples GNUbase can't
