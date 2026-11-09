@@ -27,7 +27,7 @@ namespace
 		Fixture() : display(app.appUi().showProject())
 		{
 			const uint64_t track = app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
-			for (const int bar : {0, 1})
+			for (const int64_t bar : {int64_t{0}, int64_t{1}})
 				parts.push_back(
 					app.call("midiPart.add",
 						   {{"track", track}, {"position", bar * 4 * g_quarter}, {"length", 4 * g_quarter}})
@@ -150,7 +150,7 @@ TEST_CASE("Project > Project Rule Editor selects, changes and deletes parts", "[
 	CHECK(f.app.waitUntil([&] { return f.presetIndex("Moved and back") > 0; }));
 	f.apply();
 	CHECK(f.part(f.parts[0]).at("position") == 0); // moved, then undone
-	CHECK(f.app.call("history.get").value("position", 0) + 1 == f.app.call("history.get").at("steps").size());
+	CHECK(f.app.call("history.get").value("position", size_t{0}) + 1 == f.app.call("history.get").at("steps").size());
 	const Json presets = f.app.call("projectRules.presets").at("presets");
 	CHECK(presets.back().at("rules").at("post").at(0).at("command") == "history.undo");
 
