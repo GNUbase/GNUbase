@@ -45,7 +45,7 @@ hands them on and sends `event.*`, `audioEvent.set`, `audition.*` and `editor.se
                                     without, .multiple with several selected
   .editor-parts                     an .editor-part-row[track] per track, its .editor-part[part] at their time
   .ape-body                         scrolls vertically
-    .ape-display                    an RmlUi drag element (drag: drag), for the gestures
+    .ape-display
       .ape-lanes                    an .ape-lane[lane] per lane the events are on, and one more below
       .ape-events                   an .ape-event[part][event] per event (.selected, .muted, .inactive outside the
                                     part editing mode, .outside where its part hides it entirely)
@@ -58,12 +58,14 @@ that it can be selected and moved back. Code places the parts and the events in 
 events at their lane, 48 dp each. While the project's snap is on (`snap.set`), moves and splits snap to the project's
 quantize grid; with it off they go where the mouse is.
 
-A gesture (a move or an audition) follows the display's drag events, and its mouseup in the editor's whole document
-or the display's dragend ends it, so it ends wherever the button goes up, also outside the window, with its effect
-there. A press anywhere in the document while one goes on, whose end never came, ends it without its effect: a move
-moves nothing, an audition stops, and the events show where they are again. While a move drags, the events it moves
-show where it takes them, also after the editor shows the project again, as when the selection of the press comes
-back.
+A gesture (a move or an audition) follows the drag events of an RmlUi drag element: the editable events with the
+object selection tool and the whole display with the play and scrub tools (`drag: drag` in the style sheet, by the
+`tool` attribute). Nothing else in the display is one, so that a finger pan scrolls it where a press starts no gesture.
+The gesture's mouseup in the editor's whole document or the drag element's dragend ends it, so it ends wherever the
+button goes up, also outside the window, with its effect there. A press anywhere in the document while one goes on,
+whose end never came, ends it without its effect: a move moves nothing, an audition stops, and the events show where
+they are again. While a move drags, the events it moves show where it takes them, also after the editor shows the
+project again, as when the selection of the press comes back.
 
 | Tool | Gesture | Reference |
 |---|---|---|
@@ -114,5 +116,6 @@ of the window's size, not yet one of the lower zone's.
   glue (nothing for an event that nothing continues), mute and erase tools with undo; the play tool auditioning up to
   the part's end and the scrub tool; typing a start and a volume on the info line; a move and an audition released
   over the window's toolbar and outside the window, and a press ending a gesture whose mouseup never came; the play
-  tool from an empty spot and after a part's end; an event out of its part shown, selected and moved back.
+  tool from an empty spot and after a part's end; an event out of its part shown, selected and moved back; a finger
+  pan over an empty spot scrolling the lanes; a render during a move keeping it shown.
 - `tests/eventediting_tests.cpp`: a double click on an audio part opens it in the audio part editor.

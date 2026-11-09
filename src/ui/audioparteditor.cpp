@@ -41,10 +41,10 @@ namespace gnubase::ui
 		constexpr std::array<const char*, 7> g_toolLabels = {
 			"Select", "Erase", "Split", "Glue", "Mute", "Play", "Scrub"};
 
-		// The root's. The part display is an RmlUi drag element (drag: drag): a gesture's mouse moves come as its
-		// drag events, and its dragend comes wherever the button goes up, also outside the window, where no element
-		// gets a mouseup. A gesture's mouseup in the window comes from the document (listen()), also for a press that
-		// didn't move, which makes no drag.
+		// The root's. What a press that starts a gesture hits is an RmlUi drag element (drag: drag in the style sheet,
+		// by tool): a gesture's mouse moves come as its drag events, and its dragend comes wherever the button goes up,
+		// also outside the window, where no element gets a mouseup. A gesture's mouseup in the window comes from the
+		// document (listen()), also for a press that didn't move, which makes no drag.
 		constexpr std::array<Rml::EventId, 5> g_events = {Rml::EventId::Mousedown, Rml::EventId::Click,
 			Rml::EventId::Dblclick, Rml::EventId::Drag, Rml::EventId::Dragend};
 
