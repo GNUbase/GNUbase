@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -67,4 +68,10 @@ namespace gnubase::test
 
 	// The build's test output folder, for files a test writes to look at, such as screenshots.
 	std::filesystem::path outputDirectory();
+
+	// A zip archive's entries, such as a project file's, by name. Throws if the file isn't a zip archive.
+	std::map<std::string, std::string> readZip(const std::string& path);
+
+	// Writes the entries as a zip archive, replacing the file. Throws if it can't be written.
+	void writeZip(const std::string& path, const std::map<std::string, std::string>& entries);
 }

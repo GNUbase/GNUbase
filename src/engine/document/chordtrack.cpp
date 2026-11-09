@@ -13,6 +13,7 @@
 #include "engine/document/rendersnapshot.h"
 #include "engine/document/serialize.h"
 #include "engine/engine.h"
+#include "platform/log.h"
 
 #include <algorithm>
 #include <array>
@@ -1279,8 +1280,17 @@ namespace gnubase::engine
 					if (channel != 0 && !messages.empty())
 						context.call("midi.inject", {{"channel", channel}, {"messages", messages}});
 				};
-				send(auditioned->first, auditioned->second, false);
-				*auditioned = {};
+				// The held chord is let go even if its channel no longer takes the note-offs (its track was removed or
+				// another project loaded), so that a gone channel never blocks the next audition.
+				const auto held = std::exchange(*auditioned, {});
+				try
+				{
+					send(held.first, held.second, false);
+				}
+				catch (const CommandError& error)
+				{
+					logging::info("Chord track: the auditioned chord's note-offs weren't sent: {}", error.what());
+				}
 				if (on)
 				{
 					const ObjectId channel = project.trackById.at(project.chords.audition).channel;
