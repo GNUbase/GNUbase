@@ -12,8 +12,8 @@ they are.
 - **Saving a preset.** `track.savePreset` `{tracks, name}` saves the sound of tracks as `Track Presets/<name>.dawproject`
   in the settings folder: of one track, or of several as a multi-track preset (p. 241). Audio, instrument, MIDI, group
   and effect tracks have presets; other types are refused. The file has the tracks with their channels and inserts,
-  without events or automation, and the project's busses, tempo and time signatures. It isn't an undo step. A preset
-  name must be a file name, as a template's must.
+  without events or automation, and the project's busses, tempo, time signatures and fader top. It isn't an undo step.
+  A preset name must be a file name, as a template's must.
 - **Listing them.** `track.presets` lists the presets by name with their file and the types of their tracks, top to
   bottom. A file that isn't a readable DAWproject file is left out.
 - **Loading a preset** (pp. 239-243). `track.loadPreset` `{tracks, name}` gives tracks the preset's sound, in one undo
@@ -27,10 +27,11 @@ they are.
   busses with the same names, or the main output.
 - **Exporting tracks** (pp. 205-206). `track.export` `{tracks, path, copyMedia}` writes a track archive: a DAWproject
   file with the tracks, a folder with the tracks inside it, their channels, inserts, events, parts, markers, track
-  versions and automation, and the project's busses, tempo and time signatures, so that positions and routing mean the
-  same there. `copyMedia` (default true, the reference's Copy Media Files) embeds the media files in the archive;
-  false refers to them where they are (Reference Media Files). The archive is a DAWproject file rather than the
-  reference's XML, as the project format is DAWproject. Routing to tracks that weren't exported doesn't go along.
+  versions and automation, and the project's sample rate, busses, tempo, time signatures and fader top, so that
+  positions, volumes and routing mean the same there. `copyMedia` (default true, the reference's Copy Media Files)
+  embeds the media files in the archive; false refers to them where they are (Reference Media Files). The archive is a
+  DAWproject file rather than the reference's XML, as the project format is DAWproject. Routing to tracks that weren't
+  exported doesn't go along.
 - **The tracks of a file.** `track.importSources` `{path}` lists the tracks of an archive or a project file, with their
   ids in the file, names, types and folders, for choosing what to import.
 - **Importing tracks** (pp. 200-205). `track.import` `{path, tracks, track, events, settings, automation}` copies tracks
@@ -44,7 +45,9 @@ they are.
   project's tracks with the same name and type, outputs to busses to its busses with the same name, or else the main
   output (p. 200). Clips come with the events, in the pool's top folder, and media files the project has already are
   shared; drum maps the project has with the same name and sounds too. Media files embedded in the file are extracted
-  next to it, into `<name> media`, as `project.load` does.
+  next to it, into `<name> media`, as `project.load` does. Linear positions from a file at another sample rate are
+  rescaled to keep their time, as `project.set` does; faders, send levels and volume automation above the project's
+  fader top come down to it, from presets too.
 - Tempo, signature, arranger, transpose and chord tracks, which a project has one of, and VCA tracks with their link
   groups can't be exported or imported yet.
 
