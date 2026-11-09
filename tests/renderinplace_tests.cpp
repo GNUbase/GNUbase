@@ -163,6 +163,29 @@ namespace
 		}
 
 		// The main mix from 0 to 40000 as a 32-bit float file's samples.
+		// Waits until the plugin slots of these channels have their plugins active, and the graph has them. An
+		// unfreeze makes the plugins of the track's slots again, on the plugin job thread: until they are active, the
+		// slots pass their audio on unchanged (#951).
+		void activate(const std::vector<ObjectId>& channels)
+		{
+			const auto active = [&]
+			{
+				for (const ObjectId channel : channels)
+				{
+					const Json slots = run(client, "plugin.list", {{"channel", channel}}).at("slots");
+					if (!std::all_of(
+							slots.begin(), slots.end(), [](const Json& slot) { return slot.at("status") == "active"; }))
+						return false;
+				}
+				return true;
+			};
+			const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+			while (!active() && std::chrono::steady_clock::now() < deadline)
+				std::this_thread::sleep_for(std::chrono::milliseconds(1));
+			REQUIRE(active());
+			run(client, "audio.updatePlugins");
+		}
+
 		std::vector<float> mainMix()
 		{
 			const Json result = run(client, "mixdown.export",
@@ -282,6 +305,7 @@ TEST_CASE("a frozen track null-tests against the live render", "[integration]")
 	run(project.client, "track.unfreeze", {{"tracks", {audio.track, synth.track}}});
 	CHECK(project.track(audio.track).at("frozen").is_null());
 	CHECK(project.slotNodes() == 2);
+	project.activate({audio.channel, synth.channel});
 	CHECK(nullTest(project.mainMix(), live) < 1e-20f);
 	run(project.client, "history.undo");
 	CHECK(project.track(synth.track).at("frozen") == frozen.at("tracks").at(1).at("frozen"));

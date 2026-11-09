@@ -219,7 +219,7 @@ TEST_CASE("the signature lane shows the time signature events, where clicks add,
 	REQUIRE(field != nullptr);
 	REQUIRE(fixture.waitUntil([field] { return field->IsClassSet("shown"); }));
 	CHECK(field->GetValue() == "3/4");
-	fixture.automation.key(std::nullopt, "Ctrl+A");
+	fixture.automation.key(std::nullopt, "Mod+A");
 	fixture.automation.text(std::nullopt, "5/8");
 	fixture.automation.key(std::nullopt, "Enter");
 	REQUIRE(fixture.waitUntil([&fixture] { return fixture.signatures()[2] == change(4, 5, 8); }));
@@ -232,7 +232,7 @@ TEST_CASE("the signature lane shows the time signature events, where clicks add,
 	fixture.step();
 	REQUIRE(fixture.waitUntil([field] { return field->IsClassSet("shown"); }));
 	CHECK(field->GetValue() == "3/4");
-	fixture.automation.key(std::nullopt, "Ctrl+A");
+	fixture.automation.key(std::nullopt, "Mod+A");
 	fixture.automation.text(std::nullopt, "6/8");
 	fixture.automation.key(std::nullopt, "Enter");
 	REQUIRE(fixture.waitUntil([&fixture] { return fixture.signatures()[1] == change(2, 6, 8); }));
@@ -282,7 +282,7 @@ TEST_CASE("the tempo track editor's time signature display adds and edits time s
 	REQUIRE(app.waitUntil([&document] { return !document.GetElementById("signature-info")->IsClassSet("hidden"); }));
 	CHECK(document.GetElementById("signature-position")->GetInnerRML() == "3");
 	app.ui().click(window, {"#signature-value", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
-	app.ui().key(window, "Ctrl+A");
+	app.ui().key(window, "Mod+A");
 	app.ui().text(window, "7/8");
 	app.ui().key(window, "Enter");
 	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("signatures")[1] == change(2, 7, 8); }));
