@@ -75,10 +75,10 @@ each other.
 The transport bar's sections are the docking system's set of sections `transport` ([docking.md](docking.md)):
 Locators, Locator Range Duration, Punch Points, Transport Controls, Time Displays, Tempo & Time Signature and Click.
 A right click on the transport bar opens its setup pane (the reference's Set up Transport Bar, p. 306), a toggle
-button per section that shows or hides it, and Show All; on Tap Tempo it opens the Tap Tempo Mode menu instead. The
-transport panel is a docking window of its own, `transportPanel`, with the same pane for its own sections (Set up
-Transport Panel, p. 295). Both are kept in `ui.layout`, under `windows`, `project` and `transportPanel`, `sections`,
-`transport`.
+button per section that shows or hides it, Show All, Reset All and presets ([docking.md](docking.md)); on Tap Tempo
+it opens the Tap Tempo Mode menu instead. The transport panel is a docking window of its own, `transportPanel`, with
+the same pane for its own sections (Set up Transport Panel, p. 295). Both are kept in `ui.layout`, under `windows`,
+`project` and `transportPanel`, `sections`, `transport`.
 
 ## Windows
 

@@ -91,7 +91,7 @@ namespace
 	void type(test::UiApp& app, const std::string& selector, const std::string& text)
 	{
 		click(app, selector);
-		app.ui().key(std::nullopt, "Ctrl+A");
+		app.ui().key(std::nullopt, "Mod+A");
 		app.ui().text(std::nullopt, text);
 	}
 
@@ -177,10 +177,12 @@ namespace
 			"ui.markerIds",                  // the marker track
 			"ui.markersAutoScroll",          // the markers window
 			"ui.markersSyncSelection",       // the markers window
+			"ui.setupPresets",               // the setup panes' presets
 			"ui.timeDisplay",                // the time display window
 			"ui.timeFormats",                // the transport bar's displays
 			"ui.trackControls",              // the track controls settings dialog
 			"ui.trackWidths",                // the track list's splitters
+			"ui.workspaces",                 // the workspaces
 			"ui.zoomPresets",                // the zoom presets
 		};
 		return keys;

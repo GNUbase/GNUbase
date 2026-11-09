@@ -1,0 +1,204 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The Profile Manager (#163, docs/features/profiles.md, reference manual pp. 1579-1583): app::AppUi opens it with
+     Edit > Profile Manager (the UI command window.profiles). #profiles-list lists the profiles from profile.list, a
+     listitem[profile=<name>] each, the active one with the class .active; a click selects one. New, Duplicate and
+     Rename take the name in #profile-name (profile.add, profile.duplicate, profile.rename), Delete deletes the selected
+     profile (profile.remove), Import and Export ask the OS for a file (ui.importProfile, ui.exportProfile, which then
+     run profile.import and profile.export), Activate Profile makes the selected one active at the next start
+     (profile.activate). #profile-message says which profile becomes active then, or what failed. -->
+<rml>
+<head>
+	<title>Profile Manager</title>
+	<style>
+		dialog
+		{
+			width: 420dp;
+		}
+
+		.content
+		{
+			display: flex;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		#profiles-list
+		{
+			flex: 1;
+			height: 180dp;
+			margin-right: 8dp;
+		}
+
+		.actions button
+		{
+			display: block;
+			margin-bottom: 4dp;
+		}
+
+		.row
+		{
+			display: flex;
+			align-items: center;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.row label
+		{
+			margin-right: 8dp;
+		}
+
+		#profile-name
+		{
+			flex: 1;
+		}
+
+		.row .spacer
+		{
+			flex: 1;
+		}
+	</style>
+	<script>
+		ProfileManager = {}
+		local dialog = ProfileManager
+
+		local profiles = {}
+		local selected = nil
+		local message = ""
+
+		local function escape(text)
+			return (tostring(text):gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"):gsub('"', "&quot;"))
+		end
+
+		function dialog.show()
+			local document = dialog.document
+			if document == nil then
+				return
+			end
+			local rml = {}
+			local value = ""
+			for index, profile in ipairs(profiles.profiles or {}) do
+				if profile.name == selected then
+					value = tostring(index)
+				end
+				rml[#rml + 1] = '<listitem value="' .. index .. '" profile="' .. escape(profile.name) .. '"'
+					.. (profile.active and ' class="active"' or "") .. ">" .. escape(profile.name)
+					.. (profile.active and " (active)" or "") .. "</listitem>"
+			end
+			local list = document:GetElementById("profiles-list")
+			list.inner_rml = table.concat(rml)
+			list:SetAttribute("value", value)
+			local text = message
+			if text == "" and (profiles.next or "") ~= "" then
+				text = "The profile " .. profiles.next .. " becomes active when GNUbase starts again."
+			end
+			document:GetElementById("profile-message").inner_rml = escape(text)
+		end
+
+		function dialog.refresh()
+			local ok, list = pcall(gnubase.profile.list)
+			profiles = ok and list or {}
+			message = ok and "" or tostring(list)
+			if selected == nil then
+				selected = profiles.active
+			end
+			dialog.show()
+		end
+
+		function dialog.select()
+			local document = dialog.document
+			local value = tonumber(tostring(document:GetElementById("profiles-list"):GetAttribute("value") or ""))
+			local profile = value and (profiles.profiles or {})[value]
+			if profile ~= nil and profile.name ~= selected then
+				selected = profile.name
+				dialog.show()
+			end
+		end
+
+		-- Runs a profile command with the parameters; shows what failed.
+		function dialog.run(command, parameters, select)
+			local ok, problem = pcall(gnubase.profile[command], parameters)
+			if ok and select ~= nil then
+				selected = select
+			end
+			dialog.refresh()
+			if not ok then
+				message = tostring(problem)
+				dialog.show()
+			end
+		end
+
+		local function typed()
+			return tostring(dialog.document:GetElementById("profile-name"):GetAttribute("value") or "")
+		end
+
+		function dialog.add()
+			dialog.run("add", {name = typed()}, typed())
+		end
+
+		function dialog.duplicate()
+			dialog.run("duplicate", {name = selected or "", newName = typed()}, typed())
+		end
+
+		function dialog.rename()
+			dialog.run("rename", {name = selected or "", newName = typed()}, typed())
+		end
+
+		function dialog.delete()
+			dialog.run("remove", {name = selected or ""}, profiles.active)
+		end
+
+		function dialog.activate()
+			dialog.run("activate", {name = selected or ""})
+		end
+
+		function dialog.import()
+			gnubase.ui.importProfile()
+		end
+
+		function dialog.export()
+			if selected ~= nil then
+				gnubase.ui.exportProfile{name = selected}
+			end
+		end
+
+		function dialog.load(document)
+			dialog.document = document
+			selected = nil
+			if not dialog.subscribed then
+				dialog.subscribed = true
+				gnubase.on("profile.changed", function()
+					if dialog.document ~= nil then
+						dialog.refresh()
+					end
+				end)
+			end
+			dialog.refresh()
+		end
+	</script>
+</head>
+<body onload="ProfileManager.load(document)" onunload="ProfileManager.document = nil">
+	<dialog id="profiles-dialog">
+		<div class="dialog-titlebar">Profile Manager</div>
+		<div class="content">
+			<listview id="profiles-list" onchange="ProfileManager.select()"/>
+			<div class="actions">
+				<button id="profile-new" onclick="ProfileManager.add()">New</button>
+				<button id="profile-duplicate" onclick="ProfileManager.duplicate()">Duplicate</button>
+				<button id="profile-rename" onclick="ProfileManager.rename()">Rename</button>
+				<button id="profile-delete" onclick="ProfileManager.delete()">Delete</button>
+				<button id="profile-import" onclick="ProfileManager.import()">Import</button>
+				<button id="profile-export" onclick="ProfileManager.export()">Export</button>
+			</div>
+		</div>
+		<div class="row">
+			<label for="profile-name">Name</label>
+			<input type="text" id="profile-name"/>
+		</div>
+		<div class="row" id="profile-message"/>
+		<div class="row">
+			<button id="profile-activate" onclick="ProfileManager.activate()">Activate Profile</button>
+			<div class="spacer"/>
+			<button id="profile-close" result="ok">Close</button>
+		</div>
+	</dialog>
+</body>
+</rml>

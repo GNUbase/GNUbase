@@ -154,7 +154,7 @@ TEST_CASE("the add track dialog adds every track type as MCP's track_add does", 
 	click(app, "#add-track-confirm");
 	CHECK_THAT(elements(app, "#add-track-message").at(0).value("text", ""), ContainsSubstring("time offset"));
 	click(app, "#track-time-offset");
-	app.ui().key(std::nullopt, "Ctrl+A");
+	app.ui().key(std::nullopt, "Mod+A");
 	app.ui().text(std::nullopt, "00:00:01:00");
 	click(app, "#add-track-confirm");
 	CHECK(open(app));

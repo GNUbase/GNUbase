@@ -1067,6 +1067,43 @@ namespace gnubase::engine
 		return visibility;
 	}
 
+	Json toJson(const ProjectWorkspaces& workspaces)
+	{
+		Json list = Json::array();
+		for (const Workspace& workspace : workspaces.workspaces)
+		{
+			const Json layout = Json::parse(workspace.layout, nullptr, false);
+			list.push_back({{"name", workspace.name}, {"layout", layout.is_object() ? layout : Json::object()}});
+		}
+		return {{"workspaces", list}, {"active", {{"type", workspaces.activeType}, {"name", workspaces.active}}}};
+	}
+
+	ProjectWorkspaces workspacesFromJson(const Json& json)
+	{
+		ProjectWorkspaces workspaces;
+		if (!json.is_object())
+			return workspaces;
+		for (const Json& workspace : json.value("workspaces", Json::array()))
+		{
+			if (!workspace.is_object())
+				continue;
+			const auto name = workspace.value("name", std::string());
+			const Json layout = workspace.value("layout", Json());
+			const bool taken = std::any_of(workspaces.workspaces.begin(), workspaces.workspaces.end(),
+				[&name](const Workspace& other) { return other.name == name; });
+			if (!name.empty() && layout.is_object() && !taken)
+				workspaces.workspaces.push_back({name, layout.dump()});
+		}
+		const Json active = json.value("active", Json::object());
+		const auto type = active.is_object() ? active.value("type", std::string()) : std::string();
+		if (type == "global" || type == "project")
+		{
+			workspaces.activeType = type;
+			workspaces.active = active.value("name", std::string());
+		}
+		return workspaces;
+	}
+
 	namespace
 	{
 		Json mixersJson(const std::map<std::string, MixerView>& mixers)
@@ -1124,7 +1161,7 @@ namespace gnubase::engine
 			{"autoQuantize", project.autoQuantize}, {"quantizePreset", project.quantizePreset},
 			{"activeMarkerTrack", project.activeMarkerTrack}, {"snap", toJson(project.snap)},
 			{"mixers", mixersJson(project.mixers)}, {"trackVisibility", toJson(project.trackVisibility)},
-			{"metronome", metronome::toJson(project.metronome)}};
+			{"metronome", metronome::toJson(project.metronome)}, {"workspaces", toJson(project.workspaces)}};
 		json.update(toJson(project.setup));
 		// What the inactive track versions hold (#165).
 		Json versionContents = Json::array();
@@ -2431,6 +2468,7 @@ namespace gnubase::engine
 				view.value("hidden", std::vector<ObjectId>()), view.value("hiddenTypes", std::vector<std::string>())};
 		// Files from before #166 have none.
 		project.trackVisibility = trackVisibilityFromJson(json.value("trackVisibility", Json::object()));
+		project.workspaces = workspacesFromJson(json.value("workspaces", Json::object())); // before #163: none
 		// Files from before the metronome have none; values that aren't valid keep their defaults.
 		if (const auto found = json.find("metronome"); found != json.end())
 			metronome::apply(project.metronome, *found, false);

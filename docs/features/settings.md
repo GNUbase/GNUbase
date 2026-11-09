@@ -2,7 +2,7 @@
 
 GNUbase keeps two kinds of settings apart (#51):
 
-- **User settings** belong to the user and apply to every project: the UI scale and theme, the audio device, the key commands and macros ([key-commands.md](key-commands.md)), and later workspaces and profiles (#163); the preferences dialog shows those that are preferences ([preferences.md](preferences.md)). They are files in the user's settings folder, changed with `settings.*` commands, and not part of undo.
+- **User settings** belong to the user and apply to every project: the UI scale and theme, the audio device, the key commands and macros ([key-commands.md](key-commands.md)), the global workspaces ([workspaces.md](workspaces.md)); profiles switch between sets of them ([profiles.md](profiles.md)); the preferences dialog shows those that are preferences ([preferences.md](preferences.md)). They are files in the user's settings folder, changed with `settings.*` commands, and not part of undo.
 - **Project settings** belong to one project: sample rate, tempo, tracks, channels and everything else `project.*` and the other document commands change. They live in the document, so they are saved in the `.dawproject` file and undone like any other change.
 
 A setting is one or the other, never both: no user setting is saved in a project, and no project setting in the settings folder. Where a feature needs a user's preference as a project's starting point (say, the sample rate of new projects), the user setting is copied into the project when the project is made, and from then on the project's own value counts.

@@ -10,6 +10,7 @@
 #include "engine/peaks/peakcache.h"
 #include "engine/plugins/hostmanager.h"
 #include "engine/processors/builtin.h"
+#include "engine/settings/profiles.h"
 #include "engine/settings/usersettings.h"
 #include "platform/log.h"
 #include "platform/rt/realtime.h"
@@ -97,6 +98,7 @@ namespace gnubase::engine
 		std::vector<std::unique_ptr<gnubase::midi::Backend>> midiBackends)
 		: m_settingsDirectory(settingsDirectory)
 	{
+		settings::switchProfile(settingsDirectory); // before any of the settings are read
 		registerCommand({"engine.version", 1, "The GNUbase version.", CommandInfo{}.parameters,
 							Json::parse(R"({"type": "object", "properties": {"version": {"type": "string"}},
 								"required": ["version"]})"),
@@ -140,6 +142,7 @@ namespace gnubase::engine
 		m_settings = std::make_unique<settings::Store>(settings::userFormat(), settingsDirectory);
 		settings::registerCommands(*this, *m_settings,
 			[this](CommandContext& context, const std::vector<std::string>& keys) { settingsChanged(context, keys); });
+		settings::registerProfileCommands(*this, settingsDirectory);
 		m_audio = std::make_unique<AudioEngine>(
 			m_project->snapshots(), *m_settings, std::move(backends), std::move(midiBackends));
 		m_audio->registerCommands(*this);
