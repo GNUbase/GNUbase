@@ -90,6 +90,7 @@ add_executable(gnubase-tests
 	listeditor_ui_tests.cpp
 	lockrecord_tests.cpp
 	log_tests.cpp
+	logical_tests.cpp
 	mainmenu_tests.cpp
 	marker_tests.cpp
 	markers_ui_tests.cpp
