@@ -334,6 +334,8 @@
 		<menuitem command="project.addTrack">Add Track...</menuitem>
 		<menuseparator/>
 		<menuitem command="project.colorsSetup">Project Colors Setup...</menuitem>
+		<!-- docs/features/midi-rules.md -->
+		<menuitem command="project.inputTransformer">Project Input Transformer...</menuitem>
 		<menuseparator/>
 		<!-- The tempo track (reference manual pp. 1447, 1451, docs/features/tempo-track.md) -->
 		<menuitem id="tempo-track-submenu">Tempo Track
@@ -444,6 +446,9 @@
 		<menuitem command="editor.openInPlace">Open In-Place Editor</menuitem>
 		<menuseparator/>
 		<menuitem command="midi.transposeSetup">Transpose Setup...</menuitem>
+		<menuseparator/>
+		<!-- docs/features/midi-rules.md -->
+		<menuitem command="midi.ruleEditor">Rule Editor...</menuitem>
 		<menuseparator/>
 		<menuitem command="midi.mergeInLoop">Merge MIDI in Loop...</menuitem>
 		<menuitem command="midi.dissolvePart">Dissolve Part...</menuitem>

@@ -693,7 +693,9 @@ TEST_CASE("every built-in MIDI effect processes notes, parameter changes and res
 	CHECK(g_violations == 0);
 }
 
-TEST_CASE("MIDI inserts and sends on tracks, and changing them while they play, pass the RT checker", "[unit]")
+TEST_CASE("MIDI inserts, sends and input transformers on tracks, and changing them while they play, pass the RT "
+		  "checker",
+	"[unit]")
 {
 	using gnubase::engine::Json;
 	gnubase::engine::Engine engine;
@@ -718,6 +720,15 @@ TEST_CASE("MIDI inserts and sends on tracks, and changing them while they play, 
 		run("channel.set", {{"channel", channel}, {"midiInserts", effects}});
 		run("channel.set", {{"channel", channel}, {"midiSends", effects}});
 	}
+	// Input transformers, the track's and the project's, run before the effects.
+	const Json rules = {
+		{"filters", Json::array({{{"target", "type"}, {"condition", "equal"}, {"parameter1", "note"}}})},
+		{"function", "insert"},
+		{"actions", Json::array({{{"target", "subtype"}, {"operation", "add"}, {"parameter1", 7}}})}};
+	const Json modules = {{{"on", true}, {"rules", rules}}, {{"on", true}, {"rules", rules}}};
+	run("midi.setInputTransformer", {{"modules", modules}});
+	run("channel.set", {{"channel", instrument}, {"inputTransformer", {{"mode", "track"}, {"modules", modules}}}});
+	run("channel.set", {{"channel", midi}, {"inputTransformer", {{"mode", "project"}}}});
 	Json messages = Json::array();
 	for (int i = 0; i < 32; ++i)
 	{
@@ -733,6 +744,7 @@ TEST_CASE("MIDI inserts and sends on tracks, and changing them while they play, 
 	run("channel.set", {{"channel", midi}, {"midiInserts", {{"slots", {{{"parameters", {{"chord", 3}}}}}}}}});
 	run("audio.render", {{"frames", 600}});
 	run("channel.set", {{"channel", instrument}, {"midiInserts", {{"slots", {{{"effect", ""}}}}}}});
+	run("channel.set", {{"channel", instrument}, {"inputTransformer", {{"modules", Json::array({{{"on", false}}})}}}});
 	run("audio.render", {{"frames", 2400}});
 	run("midi.capture", Json::object());
 	CHECK(g_violations == 0);

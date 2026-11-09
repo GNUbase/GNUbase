@@ -574,7 +574,8 @@ namespace gnubase::engine
 			{"mute", channel.mute}, {"solo", channel.solo}, {"soloDefeat", channel.soloDefeat},
 			{"listen", channel.listen}, {"slots", channel.slots}, {"notes", channel.notes},
 			{"modifiers", toJson(channel.modifiers)}, {"midiInserts", toJson(channel.midiInserts, false)},
-			{"midiSends", toJson(channel.midiSends, true)}};
+			{"midiSends", toJson(channel.midiSends, true)},
+			{"inputTransformer", midi::toJson(channel.inputTransformer)}};
 		json.update(toJson(channel.sections));
 		Json sends = Json::array();
 		if (channel.format != ChannelFormat::None)
@@ -1157,11 +1158,12 @@ namespace gnubase::engine
 			{"linkGroups", toJsonArray(project.linkGroups)}, {"arranger", arrangerJson(project)},
 			{"rootKey", rootKeyName(project.rootKey)}, {"transpose", transposeJson(project)},
 			{"chords", chordJson(project)}, {"drumMaps", toJsonArray(project.drumMaps)},
-			{"virginTerritory", project.virginTerritory}, {"quantize", midi::toJson(project.quantize)},
-			{"autoQuantize", project.autoQuantize}, {"quantizePreset", project.quantizePreset},
-			{"activeMarkerTrack", project.activeMarkerTrack}, {"snap", toJson(project.snap)},
-			{"mixers", mixersJson(project.mixers)}, {"trackVisibility", toJson(project.trackVisibility)},
-			{"metronome", metronome::toJson(project.metronome)}, {"workspaces", toJson(project.workspaces)}};
+			{"inputTransformer", midi::toJson(project.inputTransformer)}, {"virginTerritory", project.virginTerritory},
+			{"quantize", midi::toJson(project.quantize)}, {"autoQuantize", project.autoQuantize},
+			{"quantizePreset", project.quantizePreset}, {"activeMarkerTrack", project.activeMarkerTrack},
+			{"snap", toJson(project.snap)}, {"mixers", mixersJson(project.mixers)},
+			{"trackVisibility", toJson(project.trackVisibility)}, {"metronome", metronome::toJson(project.metronome)},
+			{"workspaces", toJson(project.workspaces)}};
 		json.update(toJson(project.setup));
 		// What the inactive track versions hold (#165).
 		Json versionContents = Json::array();
@@ -1957,6 +1959,9 @@ namespace gnubase::engine
 		project.signatures = time::SignatureMap(signatures);
 		// Files from before fades have none of them.
 		project.autoFades = autoFadesFromJson(json.value("autoFades", Json::object()));
+		// Files from before #178 have no project input transformer.
+		if (json.contains("inputTransformer"))
+			project.inputTransformer = midi::inputTransformerModulesFromJson(json.at("inputTransformer"), {});
 		// Files from before pan laws and maximum volumes have the defaults.
 		const std::string panLaw = json.value("panLaw", panLawName(PanLaw::Minus3));
 		if (const std::optional<PanLaw> law = panLawFromName(panLaw))
@@ -2107,6 +2112,9 @@ namespace gnubase::engine
 				channel.midiInserts = effectRackFromJson(item.at("midiInserts"), {}, false);
 			if (midi && item.contains("midiSends"))
 				channel.midiSends = effectRackFromJson(item.at("midiSends"), {}, true);
+			// Files from before #178 have no input transformers.
+			if (midi && item.contains("inputTransformer"))
+				channel.inputTransformer = midi::inputTransformerFromJson(item.at("inputTransformer"), {});
 			// Files from before #108 have no sends; destinations are checked once every channel is there.
 			const Json sends =
 				channel.format != ChannelFormat::None ? item.value("sends", Json::array()) : Json::array();

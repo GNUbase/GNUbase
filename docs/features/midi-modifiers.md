@@ -12,7 +12,7 @@ Settings of a MIDI or instrument track that change how its notes play, not the n
 
 ## Not yet
 
-Hermode tuning (pp. 1101–1103), Freeze MIDI Modifiers (pp. 1103–1104), the track input transformer (pp. 1097–1099), note names (C-2 to G8) in the ranges' fields for pitches (p. 1102), and link groups passing the modifiers on. Bounce MIDI taking the parts' transpose and velocity into account (p. 1123), Dissolve Part keeping them, and Merge MIDI in Loop applying the modifiers (pp. 1096, 1120) come with the MIDI functions' follow-ups (#838), which change the same functions.
+Hermode tuning (pp. 1101–1103), Freeze MIDI Modifiers (pp. 1103–1104), the track input transformer's panel (pp. 1097–1099; the input transformer itself is in [midi-rules.md](midi-rules.md)), note names (C-2 to G8) in the ranges' fields for pitches (p. 1102), and link groups passing the modifiers on. Bounce MIDI taking the parts' transpose and velocity into account (p. 1123), Dissolve Part keeping them, and Merge MIDI in Loop applying the modifiers (pp. 1096, 1120) come with the MIDI functions' follow-ups (#838), which change the same functions.
 
 ## Checks
 
