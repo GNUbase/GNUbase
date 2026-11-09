@@ -106,6 +106,8 @@ sends engine commands, so whatever another client changes shows at once.
   project's (`TrackList::selection`), like the event display's.
 - **Renaming** (p. 214): a double click on a name, or `track.rename` (Alt+F2) for the first selected track, shows a
   text field with the name selected; Enter or leaving it sends `track.set` `name`, Escape keeps the name.
+- **Adding tracks** (p. 198): a double click in the empty part of the list, below the last track, adds a track like
+  the selected one below it, or a MIDI track ([add-track.md](add-track.md#double-click)).
 - **Moving** (pp. 213–214): dragging a row moves the selected tracks (or the dragged one, if it isn't selected) to
   where the line shows: before the track in the upper half of a row, after it in the lower half, and into a folder,
   last, on the middle of the folder's row. The moves are `track.move` commands in one `history.transaction`, "Move

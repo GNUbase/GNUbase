@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdlib>
 #include <filesystem>
 #include <iterator>
@@ -538,12 +539,14 @@ namespace gnubase::ui
 		readVisibility();
 		readLayout(false);
 		m_display.onLayout([this] { layout(); });
+		m_display.onAddTrack([this] { addTrack(); });
 		layout();
 	}
 
 	TrackList::~TrackList()
 	{
 		m_display.onLayout({});
+		m_display.onAddTrack({});
 		if (auto* dialog = dynamic_cast<Rml::ElementDocument*>(m_removeDialog.get()))
 		{
 			// Nothing removes the tracks any more: the dialog goes too.
@@ -1257,6 +1260,8 @@ namespace gnubase::ui
 				}
 			break;
 		case Rml::EventId::Dblclick:
+			if (target == m_root.get() || target == m_rows || target == m_view)
+				addTrack(); // the empty area below the tracks
 			for (Rml::Element* element = target; element != nullptr && element != m_view;
 				element = element->GetParentNode())
 				if (element->IsClassSet("track-name"))
@@ -1671,6 +1676,34 @@ namespace gnubase::ui
 		m_view->QuerySelectorAll(rows, ".automation-row");
 		for (Rml::Element* row : rows)
 			setClass(*row, "selected", m_selectedLanes.count(laneAt(row)) != 0);
+	}
+
+	void TrackList::addTrack()
+	{
+		const std::vector<uint64_t> tracks = selection();
+		Json parameters = {{"type", "midi"}};
+		if (const auto found = tracks.empty() ? m_index.end() : m_index.find(tracks.back()); found != m_index.end())
+		{
+			const Row& below = m_tracks[found->second];
+			if (below.type == "audio" || below.type == "midi")
+			{
+				parameters["type"] = below.type;
+				for (const Json& channel : m_display.project().at("channels"))
+					if (channel.at("id") == below.channel)
+					{
+						if (below.type == "audio")
+							parameters["input"] = channel.at("input");
+						parameters["output"] = channel.at("output");
+					}
+			}
+			// Below it, in its folder.
+			const auto before =
+				std::count_if(m_tracks.begin(), m_tracks.begin() + static_cast<std::ptrdiff_t>(found->second),
+					[&below](const Row& row) { return row.parent == below.parent; });
+			parameters["parent"] = below.parent;
+			parameters["index"] = before + 1;
+		}
+		m_binding.send("track.add", parameters);
 	}
 
 	void TrackList::mouseDown(Rml::Event& event)

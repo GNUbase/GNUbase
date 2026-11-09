@@ -1152,10 +1152,13 @@ namespace gnubase::ui
 		if (y + m_view.top < 0.0)
 			return;
 		const std::optional<size_t> found = visibleLaneAt(y);
-		// Below the tracks, a new MIDI track (reference manual p. 198, the track list's empty area, #80).
+		// Below the tracks, a new MIDI track, or what onAddTrack's listener adds (reference manual p. 198).
 		if (!found)
 		{
-			m_binding.send("track.add", {{"type", "midi"}});
+			if (m_addTrack)
+				m_addTrack();
+			else
+				m_binding.send("track.add", {{"type", "midi"}});
 			return;
 		}
 		const size_t lane = *found;

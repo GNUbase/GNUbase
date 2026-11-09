@@ -27,6 +27,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -690,8 +691,17 @@ namespace gnubase::app
 			}});
 		m_keys.enableWhen("track.autoFades",
 			[this](ui::Window&, Rml::Element*) { return m_trackList != nullptr && !m_trackList->selection().empty(); });
+		// New tracks go below the lowest selected track (reference manual p. 198).
+		const auto below = [this]
+		{
+			std::vector<std::pair<std::string, std::string>> attributes;
+			if (m_trackList && !m_trackList->selection().empty())
+				attributes.emplace_back("below", std::to_string(m_trackList->selection().back()));
+			return attributes;
+		};
 		m_keys.add({"project.addTrack", "Opens the add track dialog.",
-			[this](ui::Window& window, Rml::Element* /*zone*/) { openDialog(window, "add-track.rml"); }});
+			[this, below](ui::Window& window, Rml::Element* /*zone*/)
+			{ openDialog(window, "add-track.rml", below()); }});
 		// Group Track to Selected Tracks and Effect Track to Selected Tracks (reference manual pp. 546, 554): the add
 		// track dialog's page for the new track, which the selected tracks play or send into.
 		for (const auto& [id, type, description] :
@@ -700,13 +710,17 @@ namespace gnubase::app
 				std::tuple{"track.addEffectToSelected", "effect",
 					"Opens the add track dialog for an effect track that the selected tracks send to."}})
 		{
-			m_keys.add({id, description, [this, type = std::string(type)](ui::Window& window, Rml::Element* /*zone*/)
-				{
-					std::string tracks;
-					for (const uint64_t track : m_trackList ? m_trackList->selection() : std::vector<uint64_t>())
-						tracks += (tracks.empty() ? "" : ",") + std::to_string(track);
-					openDialog(window, "add-track.rml", {{"type", type}, {"tracks", tracks}});
-				}});
+			m_keys.add(
+				{id, description, [this, below, type = std::string(type)](ui::Window& window, Rml::Element* /*zone*/)
+					{
+						std::string tracks;
+						for (const uint64_t track : m_trackList ? m_trackList->selection() : std::vector<uint64_t>())
+							tracks += (tracks.empty() ? "" : ",") + std::to_string(track);
+						std::vector<std::pair<std::string, std::string>> attributes = below();
+						attributes.emplace_back("type", type);
+						attributes.emplace_back("tracks", tracks);
+						openDialog(window, "add-track.rml", attributes);
+					}});
 			m_keys.enableWhen(id, [this](ui::Window&, Rml::Element*)
 				{ return m_trackList != nullptr && !m_trackList->selection().empty(); });
 		}
@@ -742,9 +756,9 @@ namespace gnubase::app
 				return engine::Json::object();
 			});
 		// For documents' buttons and menu items: gnubase.ui.command{command = "project.addTrack"} runs a key command
-		// in the main window, as its keys would. A command that doesn't exist or parameters it doesn't take are a Lua
-		// error at the call (KeyCommands::check), in users' scripts too, instead of an engine error later or parameters
-		// a UI command drops (#669).
+		// as its keys would, in the window of the document that called it (callingWindow), else the main window. A
+		// command that doesn't exist or parameters it doesn't take are a Lua error at the call (KeyCommands::check), in
+		// users' scripts too, instead of an engine error later or parameters a UI command drops (#669).
 		m_lua.addFunction("ui.command",
 			[this](const engine::Json& parameters)
 			{
@@ -756,7 +770,7 @@ namespace gnubase::app
 						throw std::invalid_argument("ui.command takes a command and its parameters, not " + item.key());
 				const engine::Json commandParameters = parameters.value("parameters", engine::Json::object());
 				m_keys.check(command->get<std::string>(), commandParameters);
-				m_keys.run(command->get<std::string>(), commandParameters, m_main, nullptr);
+				m_keys.run(command->get<std::string>(), commandParameters, callingWindow(), nullptr);
 				return engine::Json::object();
 			});
 		for (const ProjectCommand& command : g_projectCommands)
@@ -2006,6 +2020,35 @@ namespace gnubase::app
 		if (track != 0)
 			document->SetAttribute("track", std::to_string(track));
 		document->Show(Rml::ModalFlag::Modal);
+	}
+
+	ui::Window& AppUi::callingWindow()
+	{
+		// The nearest local "document" up the stack of the Lua that called, if it is one of RmlUi's documents: event
+		// handlers (onclick, onshow) have one, and functions they call with it. Only in the current run: Lua that a
+		// gnubase function runs, such as the script console's prompt (ui.runLua) or a script (ui.command), runs on
+		// the same stack above the handler that started it, but runs in the main window.
+		lua_State* state = m_lua.caller();
+		lua_Debug frame{};
+		for (int level = 1; state != nullptr && lua_getstack(state, level, &frame) != 0 &&
+			!scripting::Runtime::isGnubaseCall(state, frame);
+			++level)
+			for (int local = 1;; ++local)
+			{
+				const char* name = lua_getlocal(state, &frame, local);
+				if (name == nullptr)
+					break;
+				auto* const* document = std::string_view(name) == "document"
+					? static_cast<Rml::ElementDocument**>(luaL_testudata(state, -1, "Document"))
+					: nullptr;
+				lua_pop(state, 1);
+				if (document == nullptr || *document == nullptr)
+					continue;
+				for (ui::Window* window : m_shell.windows())
+					if (&window->context() == (*document)->GetContext())
+						return *window;
+			}
+		return m_main;
 	}
 
 	Rml::ElementDocument& AppUi::openDialog(

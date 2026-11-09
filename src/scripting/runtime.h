@@ -73,6 +73,12 @@ namespace gnubase::scripting
 
 		// The Lua state, for libraries that add to it, such as RmlUi's Lua plugin.
 		lua_State* state() { return m_state.get(); }
+		// While a function added with addFunction runs: the Lua thread that called it, e.g. to look at its caller's
+		// locals; null otherwise.
+		lua_State* caller() const { return m_caller; }
+		// Whether the frame of state's stack is a call of an engine command or a function added with addFunction. Lua
+		// below it, e.g. gnubase.ui.runLua's or a script's that gnubase.ui.command starts, belongs to an outer run.
+		static bool isGnubaseCall(lua_State* state, lua_Debug& frame);
 
 	private:
 		struct CloseState
@@ -103,6 +109,7 @@ namespace gnubase::scripting
 		std::chrono::milliseconds m_timeLimit{0};
 		std::chrono::steady_clock::time_point m_deadline;
 		int m_depth = 0;                                // runs going on: a function that Lua calls may run more code
+		lua_State* m_caller = nullptr;                  // caller()
 		std::unique_ptr<lua_State, CloseState> m_state; // closed first: its functions use the members above
 	};
 }

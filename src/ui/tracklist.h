@@ -36,9 +36,9 @@ namespace gnubase::ui
 	//
 	// The list view selects tracks (click, Ctrl-click, Shift-click, which deselects a selected track, the arrow keys)
 	// and folds folders. A double click
-	// on a name renames the track; a drag of a row moves the selected tracks there, into a folder when dropped on the
-	// middle of a folder's row; a drag of a row's lower edge sets its track's height, with Ctrl every track's; the
-	// wheel scrolls the display.
+	// on a name renames the track, one in the empty area below the tracks adds a track (addTrack); a drag of a row
+	// moves the selected tracks there, into a folder when dropped on the middle of a folder's row; a drag of a row's
+	// lower edge sets its track's height, with Ctrl every track's; the wheel scrolls the display.
 	class TrackList final : private Rml::EventListener
 	{
 	public:
@@ -175,6 +175,10 @@ namespace gnubase::ui
 		std::vector<uint64_t> topSelection() const;
 		// Remove Selected Tracks: removes the tracks, after asking if they, or tracks inside them, hold anything.
 		void removeSelected();
+		// A double click in the list's empty area or below the event display's tracks (reference manual p. 198): a
+		// track like the lowest selected audio or MIDI track, with its input and output, below it; a MIDI track below
+		// another selected track; without one, a MIDI track at the end.
+		void addTrack();
 		void removeTracks(std::vector<uint64_t> tracks);
 		void closedRemoveDialog(Rml::Event& event);
 		// Runs the commands as one undo step.
