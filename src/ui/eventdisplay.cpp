@@ -894,6 +894,17 @@ namespace gnubase::ui
 		setView(m_view);
 	}
 
+	void EventDisplay::setOwnTrackHeights(std::map<uint64_t, double> heights)
+	{
+		for (auto& [track, height] : heights)
+			height = std::clamp(height, g_minTrackHeight, g_maxTrackHeight);
+		if (heights == m_heights)
+			return;
+		m_heights = std::move(heights);
+		setLanes();
+		setView(m_view);
+	}
+
 	void EventDisplay::setHiddenTracks(std::set<uint64_t> tracks)
 	{
 		if (tracks == m_hidden)

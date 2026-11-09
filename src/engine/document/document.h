@@ -1038,6 +1038,14 @@ namespace gnubase::engine
 		std::string configuration; // the active configuration's name, or empty
 	};
 
+	// The track list's track heights and folded folders (#491, docs/features/track-list.md, reference manual pp. 217,
+	// 225), saved with the project.
+	struct TrackLayout
+	{
+		std::map<ObjectId, double> heights; // in dp, before vertical zoom; tracks without one have the default
+		std::vector<ObjectId> folded;       // folder tracks, sorted
+	};
+
 	// A workspace (#163, docs/features/workspaces.md, reference manual pp. 1576-1578): a name for a window layout, the
 	// user setting ui.layout as JSON text, with the windows that are open and where they are.
 	struct Workspace
@@ -1143,6 +1151,8 @@ namespace gnubase::engine
 		std::map<std::string, MixerView> mixers;
 		// What the track list hides (#166). A setting, not part of undo.
 		TrackVisibility trackVisibility;
+		// The track heights and folded folders (#491). Settings, not part of undo.
+		TrackLayout trackLayout;
 		// The project workspaces and the active workspace (#163). Settings, not part of undo.
 		ProjectWorkspaces workspaces;
 
