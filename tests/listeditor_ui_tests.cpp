@@ -573,6 +573,68 @@ TEST_CASE("a move, draw or value display drag released outside the window ends t
 	CHECK(std::abs(value() - 0.25) < 0.02);
 }
 
+// RmlUi doesn't scroll on a touch move while there is a drag element: only a press that starts a gesture makes one.
+TEST_CASE("a touch pan over the type column scrolls the list", "[ui]")
+{
+	Fixture f;
+	// More rows than the editor shows.
+	Json controllers = Json::array();
+	for (int i = 0; i < 60; ++i)
+		controllers.push_back({{"position", i + 1}, {"number", 1}, {"value", controller(i)}});
+	f.app.call("controller.add", {{"part", f.part}, {"controllers", controllers}});
+	REQUIRE(f.app.waitUntil([&] { return f.types().size() == 68; }));
+
+	const std::string first = row("note", f.low);
+	const Json type = f.box(first + " .list-type");
+	const auto x = static_cast<float>(type.at("x").get<double>() + (type.at("width").get<double>() / 2));
+	const auto y = static_cast<float>(f.middle(first) + 200);
+	const double before = f.box(first).at("y").get<double>();
+	const auto touch = [x](float at) { return Rml::TouchList{Rml::Touch{1, Rml::Vector2f(x, at)}}; };
+	Rml::Context& context = f.context();
+	context.ProcessTouchStart(touch(y), 0);
+	for (const float moved : {30.0F, 60.0F, 90.0F})
+		context.ProcessTouchMove(touch(y - moved), 0);
+	context.ProcessTouchEnd(touch(y - 90.0F), 0);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.box(first).at("y").get<double>() < before - 50.0);
+}
+
+TEST_CASE("a draw dragged in the event display is a multiple of the length quantize's length", "[ui]")
+{
+	Fixture f;
+	f.tool("draw");
+	const std::string filler = ".list-filler .list-event-lane";
+	const int y = f.middle(filler);
+	f.app.ui().drag(f.window, Fixture::point(f.xAt(filler, 0.26), y), Fixture::point(f.xAt(filler, 0.74), y));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.notes() == 3; }));
+	const Json project = f.app.call("project.get");
+	for (const Json& each : project.at("midiParts").at(0).at("notes"))
+		if (each.at("id") != f.low && each.at("id") != f.high)
+		{
+			CHECK(each.at("position") == g_quarter);
+			CHECK(each.at("length") == 2 * g_quarter);
+		}
+}
+
+// The press selects the event, and the Focus filter then rebuilds the rows: RmlUi starts no drag if that happens under
+// the press itself.
+TEST_CASE("a move of an unselected event with a Focus filter on released outside the window ends there", "[ui]")
+{
+	Fixture f;
+	f.click(of("#list-focus"));
+	f.click(of("#list-focus-menu menuitem[focus=type]"));
+	REQUIRE(f.types().size() == 8);
+	const ui::Point grip = f.grip(f.low);
+	const int half = f.halfway(f.low);
+	const int below = f.context().GetDimensions().y + 40;
+	f.app.ui().drag(f.window, Fixture::point(grip.x, grip.y), Fixture::point(half, below));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.event("notes", f.low).at("position") == 2 * g_quarter; }));
+	REQUIRE(f.app.waitUntil([&] { return f.types() == std::vector<std::string>{"note", "note"}; }));
+	CHECK(f.has(row("note", f.low), "selected"));
+}
+
 // The next tests lose a mouseup, as when the mouse goes up outside the window: they press through the editor window's
 // context and never release the button.
 TEST_CASE("a press anywhere in the window ends a gesture whose mouseup never came, without its effect", "[ui]")
