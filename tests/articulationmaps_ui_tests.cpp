@@ -2,6 +2,7 @@
 // The articulation map setup and the inspector's Articulation Map section in the app (#175,
 // docs/features/articulation-maps.md), driven with ui::Automation as MCP's UI tools drive them.
 // tests/articulationmaps_tests.cpp checks the maps in the engine.
+#include "testutils/testutils.h"
 #include "ui/automation.h"
 #include "ui/eventdisplay.h"
 #include "ui/tracklist.h"
@@ -11,7 +12,10 @@
 
 #include <chrono>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <string>
+#include <vector>
 
 using namespace gnubase;
 using engine::Json;
@@ -61,6 +65,28 @@ namespace
 		}
 
 		Json maps() { return app.call("project.get").at("articulationMaps"); }
+
+		// The names the setup's list shows.
+		std::vector<std::string> listed()
+		{
+			std::vector<std::string> names;
+			for (const Json& item : elements("#articulation-maps listitem"))
+				names.push_back(item.value("text", std::string()));
+			return names;
+		}
+
+		// Answers the OS's file dialog that is open with a file.
+		void answer(const std::filesystem::path& file)
+		{
+			REQUIRE(app.waitUntil([this] { return app.shell().fileDialogs().size() == 1; }));
+			app.shell().answerFileDialog(app.shell().fileDialogs().begin()->first, {file});
+		}
+
+		std::string message()
+		{
+			const Json found = elements("#articulation-maps-message");
+			return found.empty() ? std::string() : found[0].value("text", std::string());
+		}
 
 		uint64_t trackMap()
 		{
@@ -143,4 +169,49 @@ TEST_CASE("the articulation map setup adds and edits maps, and the inspector ass
 	f.app.shell().step(std::chrono::milliseconds(0));
 	f.click("#articulation-map-remove");
 	REQUIRE(f.app.waitUntil([&f] { return f.maps().empty(); }));
+}
+
+TEST_CASE("the articulation map setup shows changes from elsewhere, and imports and exports maps", "[ui]")
+{
+	Fixture f;
+	f.click("#menu-bar button[menu=midi-menu]");
+	f.click("menuitem[command=\"midi.articulationMapSetup\"]");
+	REQUIRE(f.app.waitUntil([&f] { return f.shown("#articulation-maps-dialog"); }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+
+	// A map added and renamed through the engine API shows; an edit after that keeps the new name.
+	const auto id = f.app.call("articulationMap.add", {{"name", "Brass"}}).at("map").at("id").get<uint64_t>();
+	REQUIRE(f.app.waitUntil([&f] { return f.listed() == std::vector<std::string>{"Brass"}; }));
+	f.app.call("articulationMap.set", {{"map", id}, {"name", "Horns"}});
+	REQUIRE(f.app.waitUntil([&f] { return f.listed() == std::vector<std::string>{"Horns"}; }));
+	f.click("#articulation-add");
+	REQUIRE(f.app.waitUntil([&f] { return f.maps().at(0).at("articulations").size() == 1; }));
+	CHECK(f.maps().at(0).at("name") == "Horns");
+
+	// Export Map writes the file the user chose; Import Map adds it as a new map, which the setup selects.
+	const test::TempDir dir;
+	f.click("#articulation-map-export");
+	f.answer(dir.path() / "Horns");
+	const std::filesystem::path file = dir.path() / "Horns.articulationmap";
+	REQUIRE(f.app.waitUntil([&file] { return std::filesystem::exists(file); }));
+	f.app.call("articulationMap.set", {{"map", id}, {"name", "Strings"}});
+	f.click("#articulation-map-import");
+	f.answer(file);
+	REQUIRE(f.app.waitUntil([&f] { return f.listed() == std::vector<std::string>{"Strings", "Horns"}; }));
+	CHECK(f.maps().at(1).at("articulations").size() == 1);
+	REQUIRE(f.app.waitUntil(
+		[&f]
+		{
+			const Json selected = f.elements("#articulation-maps listitem.selected");
+			return selected.size() == 1 && selected[0].value("text", std::string()) == "Horns";
+		}));
+
+	// An undo shows too; an import that fails shows why.
+	f.app.call("history.undo");
+	REQUIRE(f.app.waitUntil([&f] { return f.listed() == std::vector<std::string>{"Strings"}; }));
+	std::ofstream(dir.path() / "Broken.articulationmap") << "not a map";
+	f.click("#articulation-map-import");
+	f.answer(dir.path() / "Broken.articulationmap");
+	REQUIRE(f.app.waitUntil([&f] { return !f.message().empty(); }));
+	CHECK(f.listed() == std::vector<std::string>{"Strings"});
 }

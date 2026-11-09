@@ -387,6 +387,7 @@ namespace gnubase::app
 		std::vector<ui::Subscription> m_poolResults;       // what the pool commands did, for the pool
 		std::vector<ui::Subscription> m_lockRecord;        // stops refused while recording is locked
 		Rml::ObserverPtr<Rml::Element> m_lockRecordDialog; // the open lock record dialog's document
+		Rml::ObserverPtr<Rml::Element> m_articulationMaps; // the articulation map setup's last document
 		// A mixer window: open while the shell has it; the app lets go of the mixer once the user closed the window.
 		struct MixerWindow
 		{

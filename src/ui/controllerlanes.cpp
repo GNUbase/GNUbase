@@ -658,12 +658,13 @@ namespace gnubase::ui
 		}
 		else if (action == "showUsed")
 		{
-			// Every lane that has controller events, after the lanes shown (p. 1162).
+			// Every lane that has controller events, after the lanes shown (p. 1162). SysEx and directions (#175)
+			// have no controller lane.
 			for (const Part& part : m_parts)
 				for (const Json& event : part.json.at("controllers"))
 				{
 					const std::string type = event.at("type").get<std::string>();
-					if (type == "sysEx")
+					if (type == "sysEx" || type == "articulation")
 						continue;
 					const Lane lane{
 						type, type == "controller" || type == "polyPressure" ? event.value("number", 0) : 0};

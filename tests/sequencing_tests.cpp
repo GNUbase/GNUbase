@@ -98,14 +98,15 @@ namespace
 			return {static_cast<int>(m_parts.size()) - 1, track};
 		}
 
-		// Adds a note to the instrument track's part (0), the MIDI track's (1) or another MIDI track's.
-		void add(int part, const TestNote& note)
+		// Adds a note to the instrument track's part (0), the MIDI track's (1) or another MIDI track's, with the
+		// articulations of its track's articulation map (#175).
+		void add(int part, const TestNote& note, const Json& articulations = Json::array())
 		{
 			run(client, "note.add",
 				{{"part", m_parts[static_cast<size_t>(part)]},
 					{"notes",
 						{{{"position", ticks(note.start)}, {"length", ticks(note.end - note.start)},
-							{"pitch", note.pitch}, {"velocity", 0.8}}}}});
+							{"pitch", note.pitch}, {"velocity", 0.8}, {"articulations", articulations}}}}});
 			notes.push_back(note);
 		}
 
@@ -454,6 +455,30 @@ TEST_CASE("locating into held notes chases them, unless the user setting turns i
 	for (const int64_t position : positions(4500, 600))
 		played.push_back(position);
 	song.check(played, chase);
+}
+
+TEST_CASE("playback that starts after a sound slot's key switch sends it again before the notes", "[integration]")
+{
+	// Arco, the default slot, switches with C0 (24), Pizzicato with C#0 (25), for a sample before its first note.
+	Song song(64);
+	const Json map = run(song.client, "articulationMap.add",
+		{{"name", "Strings"}, {"articulations", {{{"name", "Pizzicato"}, {"type", "attribute"}, {"group", 0}}}},
+			{"slots",
+				{{{"name", "Arco"}, {"outputs", {{{"status", "note"}, {"data1", 24}, {"data2", 100}}}}},
+					{{"name", "Pizzicato"}, {"articulations", {"Pizzicato"}},
+						{"outputs", {{{"status", "note"}, {"data1", 25}, {"data2", 100}}}}}}}});
+	run(song.client, "track.set", {{"track", song.instrument}, {"articulationMap", map.at("map").at("id")}});
+	song.add(0, {1000, 1200, 62}, {"Pizzicato"});
+	song.add(0, {2000, 2200, 63}, {"Pizzicato"});
+
+	// From between the two Pizzicato notes, and from the second one: C#0 for a sample, before 63 where it starts.
+	run(song.client, "transport.locate", {{"position", 1500}});
+	run(song.client, "transport.play");
+	run(song.client, "audio.render", {{"frames", 4}});
+	run(song.client, "transport.locate", {{"position", 2000}});
+	run(song.client, "audio.render", {{"frames", 4}});
+	CHECK(song.capture(0, 8) == std::vector<float>{1, 0, 0, 0, 2, 1, 1, 1});
+	CHECK(song.capture(1, 8) == std::vector<float>{25, 0, 0, 0, 88, 63, 63, 63});
 }
 
 TEST_CASE("the chase settings are user settings", "[integration]")

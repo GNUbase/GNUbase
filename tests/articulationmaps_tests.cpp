@@ -265,7 +265,9 @@ TEST_CASE("articulations play the sound slots' output events and MIDI modifiers"
 	CHECK(c0.start == 0);
 	CHECK(c0.end == 1);
 	CHECK(c0.channel == 0);
+	CHECK(c0.keySwitch); // a jump sends it again
 	CHECK(arco.start == 0);
+	CHECK_FALSE(arco.keySwitch);
 
 	// Staccato: half the length, one and a half times the velocity, controller 32 at 64 where it starts.
 	const engine::RenderNote& staccato = notePlaying(channel, 61);

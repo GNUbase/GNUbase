@@ -10,6 +10,7 @@
 #include "platform/log.h"
 
 #include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/StringUtilities.h>
 
 #include <algorithm>
 #include <array>
@@ -91,7 +92,7 @@ namespace gnubase::app
 		std::vector<std::pair<std::string, std::string>> attributes;
 		if (track != 0)
 			attributes.emplace_back("track", std::to_string(track));
-		openDialog(window, "articulation-maps.rml", attributes);
+		m_articulationMaps = openDialog(window, "articulation-maps.rml", attributes).GetObserverPtr();
 	}
 
 	void AppUi::addMidiFunctions()
@@ -233,8 +234,20 @@ namespace gnubase::app
 					{
 						if (!result.error.empty())
 							logging::warning("The file dialog failed: {}", result.error);
-						if (!result.files.empty())
-							m_binding.send("articulationMap.import", {{"path", result.files.front().u8string()}});
+						if (result.files.empty())
+							return;
+						// The setup shows the imported map as it follows articulationMap.added, and why an import
+						// failed in its message.
+						m_binding.send("articulationMap.import", {{"path", result.files.front().u8string()}},
+							[this](const engine::Result& imported)
+							{
+								Rml::Element* document = m_articulationMaps.get();
+								Rml::Element* message = document != nullptr && document->GetParentNode() != nullptr
+									? document->GetElementById("articulation-maps-message")
+									: nullptr;
+								if (!imported.ok() && message != nullptr)
+									message->SetInnerRML(Rml::StringUtilities::EncodeRml(imported.error));
+							});
 					});
 				return Json::object();
 			});

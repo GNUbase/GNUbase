@@ -51,8 +51,10 @@ removed).
   exactly those articulations, else the slot that has those of the more important groups, then the fewest others,
   then the first: with no match the default slot (pp. 1262, 1278). Where the slot changes from one note to the next in
   a part (and at its first note), the previous slot's off events and the new slot's on events play: controller and
-  program changes where the note starts, key switches for one sample just before it. The slot's channel, transpose,
-  velocity and length apply to the note before the track's MIDI modifiers.
+  program changes where the note starts, key switches for one sample just before it. Where playback starts or jumps,
+  the controller and program changes are chased like any others, and with note chasing (`midi.chaseNotes`) the last
+  key switch of each pitch before the position plays again there for a sample, in their order, before the notes. The
+  slot's channel, transpose, velocity and length apply to the note before the track's MIDI modifiers.
 - **Remote triggers** (pp. 1263, 1268, 1282). In what a recording brings to a track with a map (`recording.add`), the
   notes whose pitch is a slot's trigger (Key Switch), or the program changes whose program is one (Program Change),
   aren't recorded; they select their slot instead: a direction for each group that has directions, the slot's own or

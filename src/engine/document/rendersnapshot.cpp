@@ -50,7 +50,7 @@ namespace gnubase::engine
 		// The output events of a part's sound slots (#175, reference manual p. 1270), in the order of the notes'
 		// starts: where the slot changes, the off events of the one before, on the channel its notes played on, and
 		// the on events of the new one, on the channel of the note. Key switches play for a sample, ending where the
-		// note starts.
+		// note starts; a jump after them sends them again (MidiSequencer::chaseNotes).
 		void addOutputEvents(const Project& project, const MidiPart& part, time::Ticks start, time::Ticks end,
 			int32_t index, const ArticulationMap& map, const std::map<ObjectId, size_t>& slots, RenderChannel& channel)
 		{
@@ -76,7 +76,7 @@ namespace gnubase::engine
 							continue;
 						if (output.status == OutputStatus::Note)
 							channel.notes.push_back({std::max<time::Samples>(at - 1, 0), std::max<time::Samples>(at, 1),
-								output.data1, midi::velocityFromMidi1(output.data2), on});
+								output.data1, midi::velocityFromMidi1(output.data2), on, true});
 						else if (output.status == OutputStatus::Controller)
 							channel.controllers.push_back({at, ControllerType::Control, output.data1,
 								midi::controllerFromMidi1(output.data2), on, {}, index});
@@ -161,7 +161,7 @@ namespace gnubase::engine
 				const time::Ticks length = note.length > 0 ? midi::modifyLength(modifiers, seed, slotLength) : 0;
 				const time::Ticks noteEnd = std::min(start + position + length, end);
 				channel.notes.push_back({toSamples(project, start + position), toSamples(project, noteEnd), pitch,
-					velocity, playedChannel(note, sound, slot)});
+					velocity, playedChannel(note, sound, slot), false});
 			}
 			for (const auto& [id, controller] : part.controllers)
 				if (controller.position < end - start && controller.type != ControllerType::Articulation)

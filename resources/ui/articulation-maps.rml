@@ -7,7 +7,10 @@
      (gnubase.ui.importArticulationMap and exportArticulationMap); Assign to Track runs track.set articulationMap. The
      selected map's name, remote trigger mode, latch, groups, articulations and sound slots, and the selected slot's
      output mapping and MIDI modifiers, go to articulationMap.set as they change, text fields with Enter or when they
-     lose the focus. A change the engine refuses shows its message and the field as it was. The buttons are outside
+     lose the focus. A change the engine refuses shows its message and the field as it was, and an import that fails
+     its reason (app::AppUi). It follows articulationMap.added, changed and removed and project.reset, so that it shows
+     the maps as they are after an import, an undo or a change through MCP or Lua; it selects a map that comes. The
+     buttons are outside
      the rows that the Lua writes again, since an element must not go while its own event runs: Remove Articulation,
      Remove Sound Slot and Remove Output Mapping remove the row picked with its radio button. -->
 <rml>
@@ -291,17 +294,51 @@
 			showSlot(document, map)
 		end
 
+		-- While it runs a command, the events of its changes come in: it shows them itself after the command.
+		local busy = false
+
+		-- Reads the maps; the selected one stays selected. Returns the project.
 		local function reload()
-			maps = gnubase.project.get().articulationMaps or {}
+			local id = (maps[selected] or {}).id
+			busy = true
+			local ok, project = pcall(gnubase.project.get)
+			busy = false
+			project = ok and project or {}
+			maps = project.articulationMaps or {}
+			for index, map in ipairs(maps) do
+				if map.id == id then
+					selected = index
+				end
+			end
 			selected = math.max(1, math.min(selected, #maps))
+			return project
 		end
 
 		-- Runs an engine command; a refusal shows its message. Returns whether it ran.
 		local function run(document, call)
+			busy = true
 			local ok, failure = pcall(call)
+			busy = false
 			message(document, ok and "" or failure)
 			reload()
 			return ok
+		end
+
+		-- A change from elsewhere: an import, an undo, MCP or Lua. A map that comes is selected.
+		local function follow(event)
+			local document = dialog.document
+			if busy or document == nil then
+				return
+			end
+			local added = event.name == "articulationMap.added" and type(event.data.map) == "table"
+			reload()
+			for index, map in ipairs(maps) do
+				if added and map.id == event.data.map.id then
+					selected = index
+					picked = {articulation = 1, slot = 1, output = 1}
+				end
+			end
+			dialog.show(document)
 		end
 
 		local function set(document, changes)
@@ -310,10 +347,17 @@
 		end
 
 		function dialog.open(document)
+			dialog.document = document
+			if not dialog.subscribed then
+				dialog.subscribed = true
+				for _, name in ipairs({"articulationMap.added", "articulationMap.changed", "articulationMap.removed",
+					"project.reset"}) do
+					gnubase.on(name, follow)
+				end
+			end
 			track = tonumber(document:GetAttribute("track") or "")
-			reload()
 			-- The track's map first.
-			for _, each in ipairs(gnubase.project.get().tracks) do
+			for _, each in ipairs(reload().tracks or {}) do
 				if each.id == track then
 					for index, map in ipairs(maps) do
 						if map.id == each.articulationMap then
@@ -568,7 +612,7 @@
 		end
 	</script>
 </head>
-<body onshow="ArticulationMaps.open(document)">
+<body onshow="ArticulationMaps.open(document)" onunload="ArticulationMaps.document = nil">
 	<dialog id="articulation-maps-dialog">
 		<div class="dialog-titlebar">Articulation Map Setup</div>
 		<div class="content">
