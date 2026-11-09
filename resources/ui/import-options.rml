@@ -1,8 +1,10 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- Import options for audio files (docs/features/file-import.md, reference manual pp. 357-359): ui::EventDisplay
      opens it for audio files chosen with File > Import > Audio File or dropped on it, and on OK imports them with
-     audioFile.import and these options. Copy, Convert and Split Channels are disabled until the project is saved;
-     #import-one-track is disabled for a single file and for files dropped on a track. -->
+     audioFile.import and these options. Copy, Convert, Split Channels and its Name Format are disabled until the
+     project is saved; #import-one-track is disabled for a single file and for files dropped on a track. The dialog
+     starts from the user settings editing.importAudio* and keeps its choices in them; Do not ask again imports with
+     them without the dialog from then on (editing.onImportAudio, #477). -->
 <rml>
 <head>
 	<title>Import Options</title>
@@ -51,8 +53,21 @@
 			<input type="checkbox" id="import-split"/>
 		</div>
 		<div class="row">
+			<label for="import-name-format">Name Format</label>
+			<select id="import-name-format">
+				<option value="dash">Name-L</option>
+				<option value="underscore">Name_L</option>
+				<option value="dot">Name.L</option>
+				<option value="space">Name L</option>
+			</select>
+		</div>
+		<div class="row">
 			<label for="import-one-track">Import Files on One Track</label>
 			<input type="checkbox" id="import-one-track"/>
+		</div>
+		<div class="row">
+			<label for="import-do-not-ask">Do not ask again</label>
+			<input type="checkbox" id="import-do-not-ask"/>
 		</div>
 		<div class="row buttons">
 			<button result="cancel">Cancel</button>

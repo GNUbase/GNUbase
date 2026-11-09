@@ -124,9 +124,12 @@ namespace gnubase::ui
 		void layout();
 		void build();     // the rows, from the project
 		void showState(); // names, controls and state classes
+		void showTempo(); // the tempo track's Current Tempo and Type of New Tempo Points
 		void place();     // heights and scrolling, from the display's lanes
 		void hide();      // tells the display which tracks folded folders and the track visibility hide
 		void loadControls(const engine::Json& value);
+		// A tempo typed into the tempo track's Current Tempo, or the type chosen in Type of New Tempo Points.
+		void tempoChanged(Rml::Element& field, const Rml::Event& event);
 		void loadWidths(const engine::Json& value);
 
 		const Row* rowOf(Rml::Element* element) const;
@@ -195,6 +198,8 @@ namespace gnubase::ui
 		std::set<uint64_t> m_filtered;                    // what the track visibility hides (#166)
 		engine::Json m_controls = engine::Json::object(); // ui.trackControls
 		engine::Json m_widths = engine::Json::object();   // ui.trackWidths
+		std::string m_tempoType = "auto";                 // editing.tempoType
+		bool m_showingTempo = false;                      // the tempo controls' change events aren't the user's
 		uint64_t m_loads = 0;                             // the display's, when the rows were last built
 		bool m_layingOut = false;
 		uint64_t m_renaming = 0;
