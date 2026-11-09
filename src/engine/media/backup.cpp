@@ -285,8 +285,8 @@ namespace gnubase::engine
 		};
 
 		// Lists what is in listed, a folder in the Mixdown folder root, into mixdowns, with the folders in it and what
-		// they hold, but not skipped, the backup's own folder. A file or folder that can't be read goes into missing as
-		// {path}.
+		// they hold, but not skipped, the backup's own folder, nor links to folders. A file or folder that can't be
+		// read goes into missing as {path}.
 		void listMixdowns(const fs::path& root, const fs::path& listed, const fs::path& skipped,
 			std::vector<Mixdown>& mixdowns, Json& missing)
 		{
@@ -300,6 +300,9 @@ namespace gnubase::engine
 					continue;
 				if (entry->is_directory(ignored))
 				{
+					// A link to a folder isn't followed: one to a folder above it would copy that again and again.
+					if (!fs::is_directory(entry->symlink_status(ignored)))
+						continue;
 					mixdowns.push_back({path.lexically_relative(root), true, 0});
 					listMixdowns(root, path, skipped, mixdowns, missing);
 				}

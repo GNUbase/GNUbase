@@ -652,6 +652,24 @@ TEST_CASE("a backup takes every file of the Mixdown folder along and reports tho
 	CHECK(fs::is_directory(dir.path() / "Backup" / "Mixdown" / "Empty" / "Inner"));
 }
 
+TEST_CASE("a backup doesn't follow links to folders in the Mixdown folder", "[integration]")
+{
+	const test::TempDir dir;
+	const fs::path project = dir.path() / "Song";
+	fs::create_directories(project);
+	Song song;
+	run(song.client, "project.save", {{"path", utf8(project / "Song.dawproject")}});
+	writeNoise(project / "Mixdown" / "Song.wav", 4800, 2, 1);
+	// A link to the project folder, which holds the Mixdown folder and so the link again.
+	std::error_code error;
+	fs::create_directory_symlink(project, project / "Mixdown" / "Project", error);
+	if (error)
+		SKIP("links can't be made here: " + error.message());
+
+	backup(song.client, {{"folder", utf8(dir.path() / "Backup")}});
+	CHECK(filesIn(dir.path() / "Backup") == std::set<std::string>{"Song.dawproject", "Mixdown/Song.wav"});
+}
+
 TEST_CASE("media can be copied into the project folder when they are added", "[integration]")
 {
 	const test::TempDir dir;
