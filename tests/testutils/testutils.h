@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -64,6 +65,11 @@ namespace gnubase::test
 
 	// The whole file, or an empty string if it cannot be read.
 	std::string readText(const std::filesystem::path& file);
+
+	// The entries of a zip file, such as a DAWproject container, by name, and a zip file of such entries, for tests
+	// that look into or hand-edit project files. Both throw std::runtime_error if the file can't be read or written.
+	std::map<std::string, std::string> readZip(const std::string& path);
+	void writeZip(const std::string& path, const std::map<std::string, std::string>& entries);
 
 	// The build's test output folder, for files a test writes to look at, such as screenshots.
 	std::filesystem::path outputDirectory();

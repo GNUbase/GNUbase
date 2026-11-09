@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "testutils/testutils.h"
 
+#include <miniz.h>
+
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -262,6 +265,40 @@ namespace gnubase::test
 		std::ostringstream text;
 		text << in.rdbuf();
 		return text.str();
+	}
+
+	std::map<std::string, std::string> readZip(const std::string& path)
+	{
+		mz_zip_archive zip{};
+		if (mz_zip_reader_init_file(&zip, path.c_str(), 0) == MZ_FALSE)
+			throw std::runtime_error("can't read the zip file " + path);
+		std::map<std::string, std::string> entries;
+		for (mz_uint i = 0; i < mz_zip_reader_get_num_files(&zip); ++i)
+		{
+			std::array<char, 512> name{};
+			mz_zip_reader_get_filename(&zip, i, name.data(), static_cast<mz_uint>(name.size()));
+			size_t size = 0;
+			void* data = mz_zip_reader_extract_to_heap(&zip, i, &size, 0);
+			entries[name.data()] = std::string(static_cast<const char*>(data), size);
+			mz_free(data);
+		}
+		mz_zip_reader_end(&zip);
+		return entries;
+	}
+
+	void writeZip(const std::string& path, const std::map<std::string, std::string>& entries)
+	{
+		mz_zip_archive zip{};
+		if (mz_zip_writer_init_file(&zip, path.c_str(), 0) == MZ_FALSE)
+			throw std::runtime_error("can't write the zip file " + path);
+		bool written = true;
+		for (const auto& [name, data] : entries)
+			written = written &&
+				mz_zip_writer_add_mem(&zip, name.c_str(), data.data(), data.size(), MZ_DEFAULT_LEVEL) != MZ_FALSE;
+		written = written && mz_zip_writer_finalize_archive(&zip) != MZ_FALSE;
+		mz_zip_writer_end(&zip);
+		if (!written)
+			throw std::runtime_error("can't write the zip file " + path);
 	}
 
 	std::filesystem::path outputDirectory()
