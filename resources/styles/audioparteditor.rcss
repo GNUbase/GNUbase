@@ -55,6 +55,15 @@
 	width: 100%;
 }
 
+/* A drag element where a press starts a gesture, whose drag then ends wherever the button goes up, also outside the
+   window. Only there: a finger pan doesn't scroll while the press has a drag element. */
+.audio-part-editor[tool=objectSelection] .ape-event:not(.inactive),
+.audio-part-editor[tool=play] .ape-display,
+.audio-part-editor[tool=scrub] .ape-display
+{
+	drag: drag;
+}
+
 .ape-lane, .ape-event
 {
 	position: absolute;

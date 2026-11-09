@@ -142,8 +142,9 @@ namespace gnubase::ui
 		for (const Rml::EventId event : g_events)
 			root.AddEventListener(event, this);
 
-		// quantize.set makes no undo step, so the grid comes with quantize.changed.
-		for (const char* event : {"history.changed", "project.reset", "quantize.changed"})
+		// quantize.set and snap.set make no undo step, so the grid comes with quantize.changed and whether the audio
+		// part editor snaps with snap.changed.
+		for (const char* event : {"history.changed", "project.reset", "quantize.changed", "snap.changed"})
 			m_subscriptions.push_back(m_binding.on(event,
 				[this, reset = std::string(event) == "project.reset"](const engine::Event&)
 				{
