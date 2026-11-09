@@ -114,9 +114,11 @@ namespace gnubase::engine::midi
 		{
 			OutputEvent output;
 			const auto status = json.value("status", std::string("note"));
-			const auto found = std::find(g_statusNames.begin(), g_statusNames.end(), status);
-			check(found != g_statusNames.end(), name + "status must be note, controller or program");
-			output.status = static_cast<OutputStatus>(found - g_statusNames.begin());
+			size_t index = 0;
+			while (index < g_statusNames.size() && status != g_statusNames.at(index))
+				++index;
+			check(index < g_statusNames.size(), name + "status must be note, controller or program");
+			output.status = static_cast<OutputStatus>(index);
 			output.data1 = static_cast<uint8_t>(integer(json, "data1", 0, 0, 127, name));
 			output.data2 = static_cast<uint8_t>(
 				integer(json, "data2", output.status == OutputStatus::Note ? 100 : 0, 0, 127, name));
@@ -175,7 +177,14 @@ namespace gnubase::engine::midi
 				{
 					const Articulation* found = findArticulation(map, articulation);
 					const std::string name = "slots[" + std::to_string(i) + "]";
-					check(found != nullptr, name + " has " + articulation + ", which isn't an articulation of the map");
+					if (found == nullptr)
+					{
+						std::string message = name;
+						message += " has ";
+						message += articulation;
+						message += ", which isn't an articulation of the map";
+						throw std::invalid_argument(message);
+					}
 					check(!groups.at(static_cast<size_t>(found->group)),
 						name + " may have only one articulation of each group");
 					groups.at(static_cast<size_t>(found->group)) = true;

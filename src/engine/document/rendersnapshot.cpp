@@ -120,9 +120,10 @@ namespace gnubase::engine
 			const auto slotOf = [&](ObjectId note) -> const SoundSlot*
 			{
 				const auto found = slots.find(note);
-				return found != slots.end() ? &articulations->slots.at(found->second) : nullptr;
+				return articulations != nullptr && found != slots.end() ? &articulations->slots.at(found->second)
+																		: nullptr;
 			};
-			if (!slots.empty())
+			if (articulations != nullptr && !slots.empty())
 				addOutputEvents(project, part, start, end, index, *articulations, slots, channel);
 			for (const auto& [id, note] : part.notes)
 			{

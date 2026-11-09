@@ -795,10 +795,14 @@ namespace gnubase::engine
 			controller.value = json.value("reset", false) ? 1 : 0;
 		}
 		else if (type == ControllerType::Program)
+		{
 			controller.value = json.value("bank", g_noBank);
+		}
 		else if (type != ControllerType::SysEx && json.contains("value"))
+		{
 			controller.value =
 				static_cast<uint32_t>(std::llround(json.at("value").get<double>() * g_maxControllerValue));
+		}
 		if (type == ControllerType::SysEx)
 			controller.data = json.at("data").get<std::vector<uint8_t>>();
 		return controller;
