@@ -166,6 +166,9 @@ namespace gnubase::ui
 		double trackHeight(uint64_t track) const;
 		void setTrackHeight(uint64_t track, double height);
 		void setTrackHeights(double height); // every track's
+		// The heights tracks have of their own, by track, and replacing them all (the project's, trackLayout.get).
+		const std::map<uint64_t, double>& ownTrackHeights() const { return m_heights; }
+		void setOwnTrackHeights(std::map<uint64_t, double> heights);
 		void setHiddenTracks(std::set<uint64_t> tracks);
 		// The tracks whose in-place editors are open (#131, ui/inplaceeditor.h): they are at least g_inPlaceHeight
 		// high, for the editor over their lane.

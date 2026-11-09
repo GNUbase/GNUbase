@@ -529,6 +529,60 @@ TEST_CASE("folders fold in the list and the event display; the menus duplicate, 
 	tracks.rows(2);
 }
 
+TEST_CASE("track heights and folded folders are the project's: saved with it, not taken into another one", "[ui]")
+{
+	Tracks tracks;
+	const auto addTracks = [&tracks]
+	{
+		const uint64_t folder = tracks.add({{"type", "folder"}});
+		return std::vector<uint64_t>{
+			folder, tracks.add({{"type", "audio"}, {"parent", folder}}), tracks.add({{"type", "audio"}})};
+	};
+	const std::vector<uint64_t> ids = addTracks();
+	const uint64_t folder = ids[0];
+	const uint64_t audio = ids[2];
+	tracks.rows(3);
+
+	// A drag of the audio track's lower edge, the folder's toggle and a click on the audio track's name.
+	const Json box = tracks.box(row(audio));
+	const int bottom = box.at("y").get<int>() + box.at("height").get<int>() - 2;
+	const int x = box.at("x").get<int>() + 40;
+	tracks.app.ui().drag(std::nullopt, {"", 0, ui::Point{x, bottom}}, {"", 0, ui::Point{x, bottom + 20}});
+	tracks.click(row(folder) + " .tree-toggle");
+	tracks.click(row(audio) + " .track-name");
+	const Json saved = {{"heights", {{{"track", audio}, {"height", ui::g_trackHeight + 20.0}}}}, {"folded", {folder}}};
+	REQUIRE(tracks.app.waitUntil([&] { return tracks.app.call("trackLayout.get") == saved; }));
+	const test::TempDir dir;
+	const std::string file = (dir.path() / "layout.dawproject").u8string();
+	tracks.app.call("project.save", {{"path", file}});
+
+	// A new project's tracks with the same ids start with the default height, unfolded and not selected.
+	const auto fresh = [&tracks, folder, audio]
+	{
+		return tracks.display.trackHeight(audio) == Approx(ui::g_trackHeight) && !tracks.list.folded(folder) &&
+			tracks.list.selection().empty() && tracks.display.laneTracks().size() == 3;
+	};
+	tracks.app.call("project.new");
+	tracks.rows(0);
+	REQUIRE(addTracks() == ids);
+	tracks.rows(3);
+	REQUIRE(tracks.app.waitUntil(fresh));
+
+	// Loading the project brings its heights and folded folders back, but not a selection.
+	tracks.click(row(audio) + " .track-name");
+	REQUIRE(tracks.list.selection() == std::vector<uint64_t>{audio});
+	tracks.app.call("project.load", {{"path", file}});
+	REQUIRE(tracks.app.waitUntil(
+		[&]
+		{
+			return tracks.display.trackHeight(audio) == Approx(ui::g_trackHeight + 20.0) &&
+				tracks.list.folded(folder) && tracks.list.selection().empty() &&
+				tracks.display.laneTracks() == std::vector<uint64_t>{folder, audio};
+		}));
+	tracks.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(tracks.box(row(audio)).at("height").get<int>() == static_cast<int>(ui::g_trackHeight) + 20);
+}
+
 TEST_CASE("Remove Empty Tracks keeps an instrument track without parts that a MIDI track plays", "[ui]")
 {
 	Tracks tracks;

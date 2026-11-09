@@ -109,6 +109,9 @@ namespace gnubase::engine
 	// JSON.
 	Json toJson(const TrackVisibility& visibility);
 	TrackVisibility trackVisibilityFromJson(const Json& json);
+	// {heights: [{track, height}], folded}; trackLayoutFromJson takes what is valid and leaves out the rest.
+	Json toJson(const TrackLayout& layout);
+	TrackLayout trackLayoutFromJson(const Json& json);
 	// {workspaces: [{name, layout}], active: {type, name}}; workspacesFromJson takes what is valid.
 	Json toJson(const ProjectWorkspaces& workspaces);
 	ProjectWorkspaces workspacesFromJson(const Json& json);

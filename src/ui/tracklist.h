@@ -63,6 +63,8 @@ namespace gnubase::ui
 		bool selectsType(const std::string& type) const;
 
 		// Folding (reference manual p. 225): the tracks inside a folded folder are hidden, in the event display too.
+		// The heights and the folded folders are the project's (trackLayout.get, trackLayout.set), saved with it;
+		// another project replaces them, and clears the selection.
 		bool folded(uint64_t folder) const { return m_folded.count(folder) != 0; }
 		void setFolded(uint64_t folder, bool folded);
 
@@ -127,6 +129,9 @@ namespace gnubase::ui
 		void showTempo(); // the tempo track's Current Tempo and Type of New Tempo Points
 		void place();     // heights and scrolling, from the display's lanes
 		void hide();      // tells the display which tracks folded folders and the track visibility hide
+		void fold(std::set<uint64_t> folders); // folds those folders, unfolds the others, and tells the engine
+		// The heights and folded folders from trackLayout.get or trackLayout.changed; replace drops the other heights.
+		void loadLayout(const engine::Json& layout, bool replace);
 		void loadControls(const engine::Json& value);
 		// A tempo typed into the tempo track's Current Tempo, or the type chosen in Type of New Tempo Points.
 		void tempoChanged(Rml::Element& field, const Rml::Event& event);
