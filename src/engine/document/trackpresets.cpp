@@ -13,6 +13,7 @@
 #include "engine/document/trackversions.h"
 #include "engine/engine.h"
 #include "engine/media/backup.h"
+#include "engine/midi/articulationmaps.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -102,6 +103,8 @@ namespace gnubase::engine
 				track.frozen.reset();
 				if (track.drumMap != 0)
 					track.drumMap = drumMap(track.drumMap);
+				if (track.articulationMap != 0)
+					track.articulationMap = articulationMap(track.articulationMap);
 				if (!m_options.events)
 				{
 					track.versions.clear();
@@ -351,6 +354,26 @@ namespace gnubase::engine
 				const ObjectId result = copy.id;
 				m_resources.emplace_back("drumMap.added", Json{{"map", toJson(copy)}});
 				m_to.drumMaps[result] = std::move(copy);
+				return result;
+			}
+
+			// The project's articulation map that is the same but for its id, or else a copy (#175).
+			ObjectId articulationMap(ObjectId id)
+			{
+				const auto original = m_from.articulationMaps.find(id);
+				if (original == m_from.articulationMaps.end())
+					return 0;
+				ArticulationMap copy = original->second;
+				for (const auto& [mine, other] : m_to.articulationMaps)
+				{
+					copy.id = mine;
+					if (other == copy)
+						return mine;
+				}
+				copy.id = m_to.newId();
+				const ObjectId result = copy.id;
+				m_resources.emplace_back("articulationMap.added", Json{{"map", toJson(copy)}});
+				m_to.articulationMaps[result] = std::move(copy);
 				return result;
 			}
 

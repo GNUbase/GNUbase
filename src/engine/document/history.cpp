@@ -129,7 +129,7 @@ namespace gnubase::engine
 	{
 		return !settingsBefore && tracks.empty() && channels.empty() && slots.empty() && media.empty() &&
 			clips.empty() && poolFolders.empty() && audioEvents.empty() && audioParts.empty() && midiParts.empty() &&
-			markers.empty() && automation.empty() && linkGroups.empty() && drumMaps.empty();
+			markers.empty() && automation.empty() && linkGroups.empty() && drumMaps.empty() && articulationMaps.empty();
 	}
 
 	ProjectChange difference(const Project& before, const Project& after)
@@ -153,6 +153,7 @@ namespace gnubase::engine
 		change.markers = differences(before.markers, after.markers);
 		change.linkGroups = differences(before.linkGroups, after.linkGroups);
 		change.drumMaps = differences(before.drumMaps, after.drumMaps);
+		change.articulationMaps = differences(before.articulationMaps, after.articulationMaps);
 
 		const MidiPart empty;
 		compare(before.midiParts, after.midiParts,
@@ -217,6 +218,7 @@ namespace gnubase::engine
 		applyObjects(project.markers, change.markers, direction);
 		applyObjects(project.linkGroups, change.linkGroups, direction);
 		applyObjects(project.drumMaps, change.drumMaps, direction);
+		applyObjects(project.articulationMaps, change.articulationMaps, direction);
 		for (const MidiPartChange& partChange : change.midiParts)
 		{
 			const std::optional<MidiPart>& target = direction == Direction::Redo ? partChange.after : partChange.before;

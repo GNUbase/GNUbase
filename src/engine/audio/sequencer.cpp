@@ -41,6 +41,7 @@ namespace gnubase::engine
 			case ControllerType::ChannelPressure:
 			case ControllerType::PolyPressure:
 			case ControllerType::SysEx:
+			case ControllerType::Articulation:
 				return -1;
 			}
 			return -1;
@@ -140,6 +141,7 @@ namespace gnubase::engine
 				event.type = Type::Program;
 				break;
 			case ControllerType::SysEx:
+			case ControllerType::Articulation: // never rendered: directions play through the slots' output events
 				event.type = Type::SysEx;
 				event.channel = 0;
 				event.key = 0;
