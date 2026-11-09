@@ -385,6 +385,83 @@ TEST_CASE("track.import takes tracks from a project file", "[integration]")
 	CHECK(outline(run(client, "project.get")).back() == "Cues:marker");
 }
 
+TEST_CASE("track.import keeps the time of linear positions from a file at another sample rate", "[integration]")
+{
+	const test::TempDir dir;
+	const fs::path wav = dir.path() / "take.wav";
+	test::writeWav(wav, {std::vector<float>(4410, 0.25f), 1, 44100});
+	const fs::path archive = dir.path() / "Linear.dawproject";
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	run(client, "project.set", {{"sampleRate", 44100.0}});
+	const Added take = add(client, {{"type", "audio"}, {"name", "Take"}, {"timeBase", "linear"}});
+	const ObjectId media = run(client, "media.add", {{"path", wav.u8string()}}).at("media").at("id").get<ObjectId>();
+	const ObjectId clip = run(client, "clip.add", {{"media", media}}).at("clip").at("id").get<ObjectId>();
+	run(client, "audioEvent.add",
+		{{"track", take.track}, {"clip", clip}, {"position", 44100}, {"offset", 0}, {"length", 4410}});
+	const ObjectId lane = run(client, "automationLane.add", {{"track", take.track}, {"target", {{"type", "volume"}}}})
+							  .at("lane")
+							  .at("id")
+							  .get<ObjectId>();
+	run(client, "automationPoint.add", {{"lane", lane}, {"points", {{{"position", 88200}, {"value", -12.0}}}}});
+	const Added cues = add(client, {{"type", "marker"}, {"name", "Cues"}, {"timeBase", "linear"}});
+	run(client, "marker.add", {{"track", cues.track}, {"position", 22050}, {"name", "Hit"}});
+	run(client, "track.export", {{"tracks", {take.track, cues.track}}, {"path", archive.u8string()}});
+
+	run(client, "project.new"); // at 48 kHz
+	run(client, "track.import", {{"path", archive.u8string()}});
+	const Json project = run(client, "project.get");
+	REQUIRE(project.at("audioEvents").size() == 1);
+	CHECK(project.at("audioEvents")[0].at("position") == 48000);
+	REQUIRE(project.at("automation").size() == 1);
+	CHECK(project.at("automation")[0].at("points")[0].at("position") == 96000);
+	REQUIRE(project.at("markers").size() == 1);
+	CHECK(project.at("markers")[0].at("position") == 24000);
+}
+
+TEST_CASE("track archives and presets keep the fader top, and volumes come down to a lower one", "[integration]")
+{
+	const test::TempDir dir;
+	const fs::path archive = dir.path() / "Loud.dawproject";
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	run(client, "project.set", {{"maxVolume", 12.0}});
+	const Added loud = add(client, {{"type", "audio"}, {"name", "Loud"}});
+	const Added fx = add(client, {{"type", "effect"}, {"name", "FX"}});
+	run(client, "channel.set",
+		{{"channel", loud.channel}, {"volume", 10.0}, {"pre", {{"gain", 4.0}}},
+			{"sends", {{{"send", 1}, {"destination", fx.channel}, {"on", true}, {"level", 10.0}}}}});
+	const ObjectId lane = run(client, "automationLane.add", {{"track", loud.track}, {"target", {{"type", "volume"}}}})
+							  .at("lane")
+							  .at("id")
+							  .get<ObjectId>();
+	run(client, "automationPoint.add", {{"lane", lane}, {"points", {{{"position", 0}, {"value", 10.0}}}}});
+	run(client, "track.export", {{"tracks", {loud.track, fx.track}}, {"path", archive.u8string()}});
+	run(client, "track.savePreset", {{"tracks", {loud.track}}, {"name", "Loud"}});
+
+	for (const double top : {12.0, 6.0})
+	{
+		INFO("fader top " << top);
+		run(client, "project.new");
+		run(client, "project.set", {{"maxVolume", top}});
+		const double expected = top == 12.0 ? 10.0 : 6.0;
+		run(client, "track.import", {{"path", archive.u8string()}});
+		Json project = run(client, "project.get");
+		const Json channel = channelOf(project, "Loud");
+		CHECK(channel.at("volume") == expected);
+		CHECK(channel.at("pre").at("gain") == 4.0); // read from GNUbase's own data, not project.xml
+		CHECK(channel.at("sends")[0].at("level") == expected);
+		REQUIRE(project.at("automation").size() == 1);
+		CHECK(project.at("automation")[0].at("points")[0].at("value") == expected);
+		run(client, "history.undo");
+
+		run(client, "track.addFromPreset", {{"name", "Loud"}});
+		project = run(client, "project.get");
+		CHECK(channelOf(project, "Loud").at("volume") == expected);
+		CHECK(channelOf(project, "Loud").at("pre").at("gain") == 4.0);
+	}
+}
+
 TEST_CASE("File > Export > Selected Tracks and File > Import > Tracks go through a track archive", "[ui]")
 {
 	test::UiApp app{{1000, 700}};

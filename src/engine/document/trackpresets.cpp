@@ -181,6 +181,10 @@ namespace gnubase::engine
 				channel.output = original.output;
 				channel.id = m_to.newId();
 				channel.track = track;
+				// The fader top may be lower here (as project.set brings volumes down to it).
+				channel.volume = std::min(channel.volume, m_to.maxVolume);
+				for (Send& send : channel.sends)
+					send.level = std::min(send.level, m_to.maxVolume);
 				channel.monitor = false;
 				channel.recordEnable = false;
 				channel.mute = false;
@@ -279,6 +283,8 @@ namespace gnubase::engine
 					{
 						AutomationPoint renumbered = point;
 						renumbered.id = m_to.newId();
+						if (lane.target.type == AutomationTargetType::Volume)
+							renumbered.value = std::min(renumbered.value, m_to.maxVolume);
 						points[renumbered.id] = renumbered;
 					}
 					lane.points = std::move(points);
@@ -435,8 +441,8 @@ namespace gnubase::engine
 		}
 
 		// A file with the given tracks of the project as a project of its own, for track presets and archives: the
-		// project's sample rate, tempo, time signatures and busses, so that the tracks' positions and routing mean the
-		// same there.
+		// project's sample rate, tempo, time signatures, fader top and busses, so that the tracks' positions, volumes
+		// and routing mean the same there.
 		Project tracksFile(const Project& project, const std::vector<ObjectId>& tracks, CopyOptions options)
 		{
 			Project file;
@@ -446,6 +452,7 @@ namespace gnubase::engine
 			file.tempoTrackActive = project.tempoTrackActive;
 			file.otherTempo = project.otherTempo;
 			file.signatures = project.signatures;
+			file.maxVolume = project.maxVolume;
 			file.busses = project.busses;
 			file.nextId = project.nextId;
 			copyTracks(project, file, tracks, options, 0, 0, nullptr);
@@ -759,7 +766,13 @@ namespace gnubase::engine
 			[](Project& project, CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
-				const Project file = load(fs::u8path(parameters.at("path").get<std::string>()));
+				Project file = load(fs::u8path(parameters.at("path").get<std::string>()));
+				if (file.sampleRate != project.sampleRate) // linear positions are in samples: keep their time
+				{
+					const Json none = Json::object();
+					CommandContext ignored(none);
+					changeSampleRate(file, project.sampleRate, ignored);
+				}
 				std::vector<ObjectId> tracks;
 				if (parameters.contains("tracks"))
 					tracks = ids(parameters.at("tracks"));
