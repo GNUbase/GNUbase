@@ -700,6 +700,88 @@ TEST_CASE("the track controls settings dialog chooses and orders each track type
 	REQUIRE(tracks.app.waitUntil([&] { return tracks.track(audio).at("timeBase") == "linear"; }));
 }
 
+TEST_CASE("group and effect tracks can show Switch Time Base in the track list", "[ui]")
+{
+	Tracks tracks;
+	const uint64_t group = tracks.add({{"type", "group"}});
+	const uint64_t effect = tracks.add({{"type", "effect"}});
+	tracks.rows(2);
+
+	// The track controls settings dialog offers it for both types (reference manual pp. 179-180).
+	const auto open = [&tracks] { return !elements(tracks.app, "#track-controls-dialog").empty(); };
+	tracks.click("#track-controls-settings");
+	REQUIRE(tracks.app.waitUntil(open));
+	for (const char* type : {"group", "effect"})
+	{
+		INFO(type);
+		tracks.click(std::string("#controls-types > [value=") + type + "]");
+		tracks.click("#hidden-controls > [value=timeBase]");
+		tracks.click("#controls-add");
+		CHECK(elements(tracks.app, "#visible-controls > [value=timeBase]").size() == 1);
+	}
+	tracks.click("#controls-ok");
+	REQUIRE(tracks.app.waitUntil([&] { return !open(); }));
+
+	for (const uint64_t track : {group, effect})
+	{
+		INFO(tracks.track(track).at("type"));
+		REQUIRE(
+			tracks.app.waitUntil([&] { return elements(tracks.app, row(track) + " button.timeBase").size() == 1; }));
+		tracks.click(row(track) + " button.timeBase");
+		REQUIRE(tracks.app.waitUntil([&] { return tracks.track(track).at("timeBase") == "linear"; }));
+		REQUIRE(tracks.app.waitUntil(
+			[&] { return !elements(tracks.app, row(track) + " button.timeBase.checked").empty(); }));
+	}
+}
+
+TEST_CASE("the track controls settings dialog keeps the tempo track's controls and chooses them", "[ui]")
+{
+	Tracks tracks;
+	const uint64_t tempo = tracks.add({{"type", "tempo"}});
+	tracks.rows(1);
+	const auto controls = [&tracks](uint64_t track)
+	{
+		std::vector<std::string> names;
+		for (const Json& control : elements(tracks.app, row(track) + " [control]"))
+			names.push_back(control.at("attributes").at("control").get<std::string>());
+		return names;
+	};
+	const auto setting = [&tracks]
+	{ return tracks.app.call("settings.get", {{"key", "ui.trackControls"}}).at("value").value("tempo", Json()); };
+	const std::vector<std::string> all{"tempoTrack", "currentTempo", "tempoType"};
+	REQUIRE(tracks.app.waitUntil([&] { return controls(tempo) == all; }));
+	// By default the three fit on one line of the tempo track's controls area (reference manual p. 162).
+	const Json button = tracks.box(row(tempo) + " [control=tempoTrack]");
+	const Json type = tracks.box(row(tempo) + " select.tempo-type");
+	CHECK(type.at("y").get<int>() < button.at("y").get<int>() + button.at("height").get<int>());
+
+	const auto open = [&tracks] { return !elements(tracks.app, "#track-controls-dialog").empty(); };
+	// OK without touching the tempo track keeps its controls.
+	tracks.click("#track-controls-settings");
+	REQUIRE(tracks.app.waitUntil(open));
+	tracks.click("#controls-ok");
+	REQUIRE(tracks.app.waitUntil([&] { return !open(); }));
+	CHECK(setting() == Json(all));
+	tracks.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(controls(tempo) == all);
+
+	// Its type lists its own controls, without Mute or Solo; hiding Type of New Tempo Points takes it off the row.
+	tracks.click("#track-controls-settings");
+	REQUIRE(tracks.app.waitUntil(open));
+	tracks.click("#controls-types > [value=tempo]");
+	std::vector<std::string> visible;
+	for (const Json& item : elements(tracks.app, "#visible-controls > listitem"))
+		visible.push_back(item.at("attributes").at("value").get<std::string>());
+	CHECK(visible == all);
+	tracks.click("#visible-controls > [value=tempoType]");
+	tracks.click("#controls-remove");
+	tracks.click("#controls-ok");
+	REQUIRE(tracks.app.waitUntil([&] { return !open(); }));
+	CHECK(setting() == Json{"tempoTrack", "currentTempo"});
+	REQUIRE(tracks.app.waitUntil([&] { return elements(tracks.app, row(tempo) + " select.tempo-type").empty(); }));
+	CHECK(controls(tempo) == std::vector<std::string>{"tempoTrack", "currentTempo"});
+}
+
 TEST_CASE("the divider beside the track list sizes it, and the width comes back after a restart", "[ui]")
 {
 	test::UiApp app({1000, 500});

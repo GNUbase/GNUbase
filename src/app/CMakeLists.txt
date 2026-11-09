@@ -21,6 +21,7 @@ add_library(gnubase-app-ui STATIC
 	appscripts.cpp
 	appui.cpp
 	appui.h
+	appworkspaces.cpp
 	uitools.cpp
 	uitools.h)
 target_link_libraries(gnubase-app-ui PUBLIC gnubase-mcp gnubase-scripting gnubase-ui PRIVATE SDL3::SDL3)

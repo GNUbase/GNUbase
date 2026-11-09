@@ -14,7 +14,8 @@ and keyboard input. [mcp.md](../mcp.md#ui-tools) is the guide for agents.
   and whoever waits for it gets an error at once.
 - **MCP tools.** `app::addUiTools` adds `ui_windows`, `ui_dom`, `ui_screenshot`, `ui_wait`, `ui_move`, `ui_click`,
   `ui_drag`, `ui_drop`, `ui_wheel`, `ui_key`, `ui_text`, `ui_close`, which asks to close a window or to quit as the
-  OS does, and `ui_file_dialog`, which answers file dialogs (`Shell::answerFileDialog`), to the MCP server; the windowed app serves them with `--mcp-http`, next
+  OS does, `ui_window`, which activates, minimizes or restores a window as the Windows dialog does
+  ([workspaces.md](workspaces.md)), and `ui_file_dialog`, which answers file dialogs (`Shell::answerFileDialog`), to the MCP server; the windowed app serves them with `--mcp-http`, next
   to the engine's tools and `script_run`. Headless GNUbase has no UI and no UI tools. A screenshot comes back as MCP
   image content, a PNG: a tool returns the PNG as `Json::binary`, which `mcp::Server` sends as an image. PNG encoding
   runs on the server's thread. `app::addUiFunctions` adds the same tools to the UI's Lua as `gnubase.ui.click` and so

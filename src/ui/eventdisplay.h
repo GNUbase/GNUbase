@@ -35,6 +35,8 @@ namespace gnubase::ui
 	inline constexpr double g_trackHeight = 40.0;
 	inline constexpr double g_minTrackHeight = 20.0;
 	inline constexpr double g_maxTrackHeight = 400.0;
+	// The least height of a track whose in-place editor is open (#131), before vertical zoom, in dp.
+	inline constexpr double g_inPlaceHeight = 240.0;
 	// The project setup's length until the project is read, in seconds (#78).
 	inline constexpr double g_defaultProjectLength = 600.0;
 
@@ -165,6 +167,9 @@ namespace gnubase::ui
 		void setTrackHeight(uint64_t track, double height);
 		void setTrackHeights(double height); // every track's
 		void setHiddenTracks(std::set<uint64_t> tracks);
+		// The tracks whose in-place editors are open (#131, ui/inplaceeditor.h): they are at least g_inPlaceHeight
+		// high, for the editor over their lane.
+		void setInPlaceTracks(std::set<uint64_t> tracks);
 		// The project as project.get last returned it, or null before the first answer; loads() counts the answers,
 		// and read() is when the binding handed the last one on (EngineBinding::handed).
 		const engine::Json& project() const { return m_project; }
@@ -264,7 +269,8 @@ namespace gnubase::ui
 		void setRange(std::optional<RangeSelection> range);
 		// Importing files (#92, fileimport.cpp, docs/features/file-import.md). MIDI files (.mid, .midi, .smf) are
 		// imported with midiFile.import. Audio files open the Import Options dialog (import-options.rml next to the
-		// document), which imports them with audioFile.import at sample (default: the project cursor), one after
+		// document), or with the user setting editing.onImportAudio at useSettings are imported at once with the
+		// options in the settings (#477), with audioFile.import at sample (default: the project cursor), one after
 		// another onto track if it is an audio track, else onto new tracks. Files dropped on the display go to the
 		// track of the lane under the mouse, at the time there. With clipsOnly, audio files only go into the pool
 		// (#93), without tracks or events.
@@ -483,10 +489,28 @@ namespace gnubase::ui
 			bool selected = false; // track is the selected one, which takes the first file, not all of them
 			int lane = 0;          // the lane of track the files go on
 		};
+		// The import options (#477): the Import Options dialog's, and the user settings editing.importAudio* that it
+		// starts from and keeps its choices in.
+		struct ImportOptions
+		{
+			bool copy = true;
+			bool convert = true;
+			bool split = false;
+			bool oneTrack = false;
+			std::string nameFormat = "dash";
+		};
 		void startImport(const std::vector<std::string>& files, Import import);
 		void dropFiles(Rml::Event& event);
-		void openImportOptions(bool saved);
+		void openImportOptions(Import import, const ImportOptions& options, bool saved);
 		void importAudio(Rml::Element& dialog);
+		void sendImport(const Import& import, const ImportOptions& options, bool saved);
+		// Import Files on One Track: for several files, unless they only go into the pool or were dropped on a track,
+		// which takes them all.
+		static bool oneTrackApplies(const Import& import);
+		// From settings.list's result: the options in the user settings, and whether editing.onImportAudio says to
+		// import with them without the dialog.
+		static ImportOptions importSettings(const engine::Json& list);
+		static bool usesSettings(const engine::Json& list);
 
 		// Editing parts and events (eventediting.cpp).
 		void addEditActions();
@@ -709,6 +733,7 @@ namespace gnubase::ui
 		TimeContext m_time;
 		std::vector<EventLanes::Lane> m_tracks; // events in seconds, heights before zoom
 		std::vector<uint64_t> m_laneTracks;     // the track of each lane
+		std::set<uint64_t> m_inPlace;           // setInPlaceTracks'
 		std::vector<double> m_laneTops = {0.0};
 		std::map<uint64_t, double> m_heights; // set by setTrackHeight, before zoom
 		std::set<uint64_t> m_hidden;
@@ -845,12 +870,10 @@ namespace gnubase::ui
 			bool smooth = false;
 		};
 		TempoDetection m_detection;
-		engine::Json m_organized; // the presets that the organize dialog lists, by index
-		Import m_import;
-		bool m_importCopy = true; // the import options chosen last
-		bool m_importConvert = true;
-		bool m_importSplit = false;
-		bool m_importOneTrack = false;
+		engine::Json m_organized;      // the presets that the organize dialog lists, by index
+		Import m_import;               // the files the Import Options dialog imports
+		ImportOptions m_importOptions; // the options it showed when it opened
+		bool m_importSaved = false;    // the project had a file then
 
 		std::map<uint64_t, std::vector<uint64_t>> m_openAutomation; // the lanes each track shows, in order
 		std::map<uint64_t, AutomationView> m_automation;            // every lane of the project

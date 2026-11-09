@@ -392,6 +392,8 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         ("button:active", {"decorator": skin("button-pressed")}),
         ("button.checked", {"decorator": skin("button-checked")}),
         ("button.suspended", {"decorator": skin("button-normal"), "color": c["warning"]}),
+        # Tap Tempo while taps go on (docs/features/tempo-track.md)
+        ("button.tapping", {"decorator": skin("button-pressed")}),
         ("button:disabled", {"decorator": skin("button-disabled"), "color": c["textMuted"]}),
         ("button.primary", {"decorator": skin("button-primary-normal"), "color": on_accent}),
         ("button.primary:hover", {"decorator": skin("button-primary-hover")}),
@@ -502,13 +504,17 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".event-display .marker-label", {"color": c["textMuted"], "font-size": f"{sizes['small']}dp"}),
         (".event-display .marker-label.active", {"color": c["text"]}),
         (".event-display .marker-label.selected", {"color": c["background"], "background-color": c["accent2"]}),
-        # The tempo track (docs/features/tempo-track.md): the tempo curve, muted in fixed tempo mode, and its points
+        # The tempo track (docs/features/tempo-track.md): the tempo curve, muted in fixed tempo mode under the line of
+        # the fixed tempo, its points and the rectangle that selects them in the tempo track editor
         (".tempo-curve .tempo-line", {"stroke-color": c["accent"], "stroke-width": f"{widths['focus']}dp"}),
         (".tempo-curve.inactive .tempo-line", {"stroke-color": c["textMuted"]}),
+        (".tempo-curve .tempo-line.fixed-tempo", {"stroke-color": c["accent"]}),
         (".tempo-curve .tempo-point", {"background-color": c["accent"]}),
         (".tempo-curve.inactive .tempo-point", {"background-color": c["textMuted"]}),
         (".tempo-curve .tempo-point.selected", {"background-color": c["text"]}),
         (".tempo-editor .tempo-scale-label", {"color": c["textMuted"], "font-size": f"{sizes['small']}dp"}),
+        (".tempo-editor .tool-rectangle", {"border-width": f"{widths['hairline']}dp", "border-color": c["accent"],
+                                           "background-color": c["accent"] + "1a"}),
         # The signature track (docs/features/signature-track.md): a time signature event at the start of its bar
         (".signature-row .signature-event", {"color": c["text"], "font-size": f"{sizes['small']}dp",
                                              "border-left-width": f"{widths['hairline']}dp",
@@ -535,6 +541,8 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".track-list listitem.disabled", {"color": c["textMuted"]}),
         (".track-list listitem.frozen", {"color": c["textMuted"]}),
         (".track-list .drop-line", {"background-color": c["accent"]}),
+        (".track-list .track-controls input.current-tempo, .track-list .track-controls select.tempo-type",
+         {"font-size": f"{sizes['small']}dp"}),
         # Automation tracks (docs/features/automation-tracks.md): their rows and lanes below their track's, the
         # curve with its points, grayed out while it doesn't read, the static value line and the automation event
         # editor around selected points
@@ -556,11 +564,12 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".mixer-channel", {"border-right-width": f"{widths['hairline']}dp", "border-right-color": c["border"]}),
         # The MIDI editors (docs/features/midi-editors.md): parts outside the part editing mode dimmed, the active part
         # and track lit, and the Visibility tab's checks: a check mark, or a rectangle while some parts show
-        (".midi-editor .editor-part", {"color": c["textMuted"], "border-width": f"{widths['hairline']}dp",
-                                       "border-color": c["border"],
-                                       "background-color": mix(c["surface"], c["surfaceRaised"], .5)}),
-        (".midi-editor .editor-part.editable", {"color": c["text"]}),
-        (".midi-editor .editor-part.active, .editor-visibility-track.active", {"color": c["accent"]}),
+        (".midi-editor .editor-part, .in-place-editor .editor-part",
+         {"color": c["textMuted"], "border-width": f"{widths['hairline']}dp", "border-color": c["border"],
+          "background-color": mix(c["surface"], c["surfaceRaised"], .5)}),
+        (".midi-editor .editor-part.editable, .in-place-editor .editor-part.editable", {"color": c["text"]}),
+        (".midi-editor .editor-part.active, .in-place-editor .editor-part.active, .editor-visibility-track.active",
+         {"color": c["accent"]}),
         (".editor-visibility-check", {"decorator": skin("checkbox-off")}),
         (".editor-visibility-check.checked", {"decorator": skin("checkbox-on")}),
         (".editor-visibility-check.partial", {"decorator": skin("checkbox-mixed")}),
@@ -585,6 +594,9 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
                                 "border-color": c["textMuted"]}),
         (".key-note.drawing", {"background-color": c["accent"] + "66"}),
         (".key-editor-step-cursor", {"background-color": c["accent"]}),
+        # The in-place editor (docs/features/in-place-editor.md): opaque over its track's events, a line below it
+        (".in-place-editor", {"background-color": c["background"], "border-bottom-width": f"{widths['hairline']}px",
+                              "border-bottom-color": c["border"]}),
         # The drum editor's sound list (docs/features/drum-editor.md): rows like a list, the sounds of selected
         # notes lit
         (".key-editor-key.drum-sound", {"background-color": c["surfaceRaised"], "color": c["text"]}),

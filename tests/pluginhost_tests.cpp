@@ -670,7 +670,7 @@ TEST_CASE("the host process hands a block's slot back only once the block's answ
 	CHECK(!host->exited());
 }
 
-TEST_CASE("starting and stopping a remote plugin takes effect at once", "[integration]")
+TEST_CASE("starting and stopping a remote plugin takes effect at once", "[integration][realtime]")
 {
 	plugins::HostManager manager(testOptions());
 	const std::unique_ptr<plugin::remote::RemotePlugin> remote = createRemote(manager);
@@ -1164,8 +1164,8 @@ TEST_CASE("the first block after a start its host can't take yet keeps its param
 	CHECK(savedValue(plugin, "test:stall", g_resets) == settled);
 }
 
-TEST_CASE(
-	"a parameter flush on the audio thread before the first block after a start reaches the plugin", "[integration]")
+TEST_CASE("a parameter flush on the audio thread before the first block after a start reaches the plugin",
+	"[integration][realtime]")
 {
 	plugins::HostManager manager(testOptions());
 	std::unique_ptr<plugin::remote::RemotePlugin> remote = createRemote(manager, {"test:stall", "", "GNUbase"});
