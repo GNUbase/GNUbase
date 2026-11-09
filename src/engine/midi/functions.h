@@ -199,7 +199,8 @@ namespace gnubase::engine::midi
 	// that play in the parts into automation lanes of their tracks, a lane per controller and channel. Each event
 	// becomes a step point where it plays, with its value scaled to 0 to 1. A lane the track already has for the
 	// controller loses its points in the part's range first, but not those an earlier part of the same call added, so
-	// overlapping parts keep each other's; otherwise a lane is added. Pitch bend, pressure,
+	// overlapping parts keep each other's, and reads from then on; otherwise a lane is added. A shared copy leaves its
+	// copies, which keep their controllers. Pitch bend, pressure,
 	// switches such as the sustain pedal, events past a part's end and the events of muted parts stay, as none of
 	// them would play the same as automation.
 	AutomationChanges extractAutomation(Project& project, const std::vector<ObjectId>& parts);

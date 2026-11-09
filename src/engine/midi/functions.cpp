@@ -1159,6 +1159,7 @@ namespace gnubase::engine::midi
 						point =
 							before && at >= rangeStart && at < rangeEnd ? lane->points.erase(point) : std::next(point);
 					}
+					lane->read = true; // what was moved has to play
 					addUnique(changes.changedLanes, lane->id);
 				}
 				for (const Controller* event : events)
@@ -1174,6 +1175,13 @@ namespace gnubase::engine::midi
 				}
 			}
 			eraseControllers(part, [&moved](const Controller& controller) { return moved.count(controller.id) != 0; });
+			// Points play at this part's place only, so a shared copy leaves its copies, which keep their controllers:
+			// syncSharedParts would give them this part's.
+			if (part.shared != 0)
+			{
+				part.shared = 0;
+				renumber(project, part);
+			}
 			changes.changedParts.push_back(id);
 		}
 		// A lane added for one part and changed for a later one was added.

@@ -538,8 +538,9 @@ namespace gnubase::engine::midi
 				"instrument; to lanes on a new lane of the track, below the lanes its parts are on, named after the "
 				"part and the channel or pitch. Events of no channel or pitch (SysEx by channel, everything but notes "
 				"and poly pressure by pitch) go with the first new part of their part; a part with nothing to "
-				"separate stays as it is. New parts keep the part's mute, transpose and velocity. optimize (to tracks "
-				"only) shortens the new parts to the bars their events play in." +
+				"separate stays as it is. New parts keep the part's mute, transpose and velocity; their events get new "
+				"ids, so play probability and velocity variance draw anew. optimize (to tracks only) shortens the new "
+				"parts to the bars their events play in." +
 					returns,
 				objectSchema({{"parts", ids}, {"by", enumSchema({"channel", "pitch"})}, {"optimize", booleanSchema},
 								 {"to", enumSchema({"tracks", "lanes"})}},
@@ -561,7 +562,8 @@ namespace gnubase::engine::midi
 				"Moves the continuous controllers of MIDI parts (as midi.deleteContinuousControllers takes them) into "
 				"controller automation lanes of their tracks, one per controller and MIDI channel: each event becomes "
 				"a step point where it plays, its value 0 to 1. A lane the track already has loses its points in the "
-				"part's range first, except those an earlier part of the call added. Pitch bend, pressure, switches "
+				"part's range first, except those an earlier part of the call added, and reads from then on. A shared "
+				"copy leaves its copies, which keep their controllers. Pitch bend, pressure, switches "
 				"such as the sustain pedal, events past a part's "
 				"end and muted parts stay. Returns the parts it changed, the lanes it added (lanes) and the lanes it "
 				"changed.",

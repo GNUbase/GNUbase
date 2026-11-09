@@ -1776,8 +1776,7 @@ namespace gnubase::app
 		auto* document = dynamic_cast<Rml::ElementDocument*>(open.get());
 		if (document != nullptr && document->GetParentNode() != nullptr)
 		{
-			document->Show(Rml::ModalFlag::Modal, Rml::FocusFlag::Keep);
-			document->PullToFront();
+			document->PullToFront(); // no Show: its show event would load the dialog again, over what was typed
 			return *document;
 		}
 		Rml::ElementDocument& opened = openDialog(window, name, attributes);
