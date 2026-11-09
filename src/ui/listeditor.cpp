@@ -256,8 +256,8 @@ namespace gnubase::ui
 			m_menus.push_back(menu->GetObserverPtr());
 		}
 		// The mouseup that ends a gesture goes to the document (listen), so that it ends wherever the mouse goes up in
-		// it. Past the window's edge RmlUi has no element to send the mouseup to; the body is a drag element (drag:
-		// drag), whose dragend comes wherever the button goes up.
+		// it. Past the window's edge RmlUi has no element to send the mouseup to; during a gesture the body is a drag
+		// element (in-gesture), whose dragend comes wherever the button goes up.
 		for (const Rml::EventId event : g_events)
 			root.AddEventListener(event, this);
 		// Before a text display takes Enter: Ctrl (Cmd) with it sets every selected event to the value (p. 1255).
@@ -635,7 +635,7 @@ namespace gnubase::ui
 		return found;
 	}
 
-	void ListEditor::select(std::set<std::pair<uint64_t, uint64_t>> rows)
+	void ListEditor::select(std::set<std::pair<uint64_t, uint64_t>> rows, bool show)
 	{
 		m_selection = std::move(rows);
 		Json notes = Json::array();
@@ -648,7 +648,8 @@ namespace gnubase::ui
 				else
 					controllers.push_back({{"part", row.part}, {"controller", row.id}});
 			}
-		render(); // at once; editor.changed confirms it
+		if (show)
+			render(); // at once; editor.changed confirms it
 		setView({{"selection", notes}, {"controllerSelection", controllers}});
 	}
 
@@ -893,14 +894,19 @@ namespace gnubase::ui
 			listened->RemoveEventListener(Rml::EventId::Mousedown, this, true);
 		}
 		m_document.reset();
-		if (const Rml::Element* root = m_root.get(); document && root != nullptr)
-			if (Rml::ElementDocument* owner = root->GetOwnerDocument())
-			{
-				owner->AddEventListener(Rml::EventId::Mouseup, this);
-				// In the capture phase: before the press reaches the root or anything else in the document.
-				owner->AddEventListener(Rml::EventId::Mousedown, this, true);
-				m_document = owner->GetObserverPtr();
-			}
+		Rml::Element* root = m_root.get();
+		if (root == nullptr)
+			return;
+		if (Rml::Element* body = root->QuerySelector(".list-editor-body"))
+			body->SetClass("in-gesture", document);
+		if (Rml::ElementDocument* owner = root->GetOwnerDocument(); document && owner != nullptr)
+		{
+			owner->AddEventListener(Rml::EventId::Mouseup, this);
+			// In the capture phase: before the press reaches the root or anything else in the document.
+			owner->AddEventListener(Rml::EventId::Mousedown, this, true);
+			m_document = owner->GetObserverPtr();
+			owner->UpdateDocument(); // RmlUi looks for the drag element right after this press's mousedown
+		}
 	}
 
 	void ListEditor::begin(Rml::Event& event)
@@ -965,8 +971,10 @@ namespace gnubase::ui
 			m_laneWidth = std::max(lane->GetBox().GetSize(Rml::BoxArea::Border).x, 1.0F);
 			m_pressedAt = ticksAt(event, m_laneLeft, m_laneWidth);
 		}
+		// With a Focus filter a move's rows wait for editor.changed: rebuilt under the press, they would take the
+		// pressed element from under the mouse, and RmlUi would start no drag, so no dragend past the window's edge.
 		if (!selected(*row))
-			select({row->key()});
+			select({row->key()}, m_gesture != Gesture::Move || m_focus == "none");
 	}
 
 	void ListEditor::drag(Rml::Event& event)

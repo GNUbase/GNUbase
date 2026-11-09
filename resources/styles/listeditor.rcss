@@ -38,8 +38,13 @@
 	flex-direction: column;
 	overflow-y: auto;
 	min-height: 0;
-	/* A move, draw or value display drag is an RmlUi drag: its end comes when the button goes up, also outside the
-	   window, where the document gets no mouseup. */
+}
+
+/* While a move, draw or value display drag goes on, it is an RmlUi drag: its end comes when the button goes up, also
+   outside the window, where the document gets no mouseup. Only then: RmlUi doesn't scroll on a touch move during a
+   drag, and a pan over the rows has to scroll. */
+.list-editor-body.in-gesture
+{
 	drag: drag;
 }
 

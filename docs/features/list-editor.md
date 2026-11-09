@@ -78,8 +78,10 @@ Start, end and length are in bars and beats; end and length only for notes. The 
   place in the bar, in one undo step.
 - **Gestures** (#722, #835). A move, a draw or a value display drag ends where the left button goes up, also outside
   the list editor: the editor hears the mouseup in its whole document while the gesture goes on. Past the window's
-  edge RmlUi has no element to send the mouseup to, but the editor's body is an RmlUi drag element (`drag: drag`),
-  and a drag's end comes wherever the button goes up: a gesture dragged out of the window ends there, with its effect.
+  edge RmlUi has no element to send the mouseup to, but while a gesture goes on the editor's body is an RmlUi drag
+  element (`drag: drag`, the class `in-gesture`), and a drag's end comes wherever the button goes up: a gesture dragged
+  out of the window ends there, with its effect. Only then, since RmlUi doesn't scroll on a touch move during a drag:
+  a finger pan from where a press starts no gesture, such as the type column, scrolls the list.
   A draw released outside the event display draws where it was pressed. One whose end never comes ends without its
   effect at the next left press anywhere in that document, which the editor hears in the capture phase, before
   anything else; the value display shows the events' values again at once. Other buttons don't end a gesture.
@@ -110,5 +112,6 @@ status line, nudging, snap and quantize on the toolbar; editing a program change
   again, a pitch bend and a SysEx message typed in hexadecimal; the filters hiding a type, Ctrl showing one type and
   all again, and the Focus menu's subtype and channel; the draw tool drawing a controller event and a note, the erase
   tool, moving a note in the event display and a drag in the value display; a move, a draw and a value display drag
-  released outside the list editor and past the window's edge, each with its effect, and ones whose mouseup never
-  comes, ended by the next press without it.
+  released outside the list editor and past the window's edge, each with its effect, also a move with a Focus filter
+  on, and ones whose mouseup never comes, ended by the next press without it; a touch pan over the type column
+  scrolling the list; a draw dragged in the event display being a multiple of the length quantize's length.
