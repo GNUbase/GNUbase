@@ -20,7 +20,11 @@ In the engine: mute and solo, disabled tracks and `track.duplicate`.
   its output to silence over one audio block, and back, so switching doesn't click; the mute button mutes through
   the fader's mute instead, gliding over 5 ms like mute automation, so that switching between the two is seamless. A
   silent MIDI track's notes and controllers are left out of the snapshot, as a muted part's are, so they don't reach
-  its instrument, and its mute ends the notes that sound. Silent channels don't monitor their input directly either.
+  its instrument, and its mute ends the notes that sound. Nor do its controller, pitch bend and channel pressure
+  automation, its MIDI volume and pan (CC 7 and CC 10) and its program: `channelAutomation` in
+  `src/engine/audio/automation.cpp` leaves them out of what its strip plays, so a muted or disabled MIDI track doesn't
+  change the instrument that other tracks play. Once it is heard again, it sends them at once. Silent channels don't
+  monitor their input directly either.
 - **Disabled tracks** (p. 219): `track.set` `enabled` false disables an audio, instrument or MIDI track. It keeps its
   events, parts and channel settings, but the snapshot leaves its events and parts out (no disk streaming) and its
   channel is silent. Other track types refuse it.
@@ -173,7 +177,8 @@ New Folder are in [folder-tracks.md](folder-tracks.md).
   instruments, with undo; disabled tracks in the snapshot and which types refuse it; `track.duplicate` with a
   channel, events, automation, MIDI notes, a folder with its routing, undo and the marker track limit.
 - `tests/mixer_tests.cpp` renders muted and soloed tracks and the glide; `tests/sequencing_tests.cpp` plays a muted, a
-  disabled and a soloed MIDI track into an instrument; `tests/dawproject_tests.cpp` saves and loads mute, solo and
+  disabled and a soloed MIDI track into an instrument, and checks that muted, soloed-out and disabled ones send it no
+  automation, MIDI volume, pan or program; `tests/dawproject_tests.cpp` saves and loads mute, solo and
   disabled tracks, also from `project.xml` alone.
 - `tests/tracklist_tests.cpp` drives the app's project window with `ui::Automation`: rows level with the lanes and
   each type's controls; every control's button and the engine's state both ways; selection with clicks, modifiers,
