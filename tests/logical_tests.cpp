@@ -442,7 +442,8 @@ TEST_CASE("MIDI rule presets: factory presets, and the user's kept in the settin
 		CHECK_THAT(
 			reject(f.client, "midiRules.savePreset", {{"name", ""}, {"rules", octave}}), ContainsSubstring("empty"));
 		CHECK_THAT(reject(f.client, "midiRules.removePreset", {{"name", "Init"}}), ContainsSubstring("factory"));
-		CHECK_THAT(reject(f.client, "midiRules.removePreset", {{"name", "Gone"}}), ContainsSubstring("no logical"));
+		CHECK_THAT(
+			reject(f.client, "midiRules.removePreset", {{"name", "Gone"}}), ContainsSubstring("no MIDI rule preset"));
 		CHECK_THAT(reject(f.client, "midiRules.savePreset",
 					   {{"name", "Bad"}, {"rules", rules({filter("type", "less", "note")}, "delete")}}),
 			ContainsSubstring("equal or unequal"));
