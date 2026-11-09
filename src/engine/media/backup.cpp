@@ -658,7 +658,12 @@ namespace gnubase::engine
 		std::vector<Mixdown> mixdowns;
 		const fs::path mixdownFolder = options.mixdownFolder.empty() ? fs::path() : pathOf(options.mixdownFolder);
 		if (!mixdownFolder.empty() && fs::is_directory(mixdownFolder, error))
+		{
 			listMixdowns(mixdownFolder, mixdownFolder, folder, mixdowns, missing);
+			// In the order of their names, so that of two names that differ only in case the same one keeps it.
+			std::sort(mixdowns.begin(), mixdowns.end(),
+				[](const Mixdown& a, const Mixdown& b) { return a.relative < b.relative; });
+		}
 		for (const Mixdown& mixdown : mixdowns)
 			total += mixdown.bytes;
 
