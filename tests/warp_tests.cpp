@@ -719,6 +719,24 @@ TEST_CASE("an event's fades fit into what a stretched warped event plays", "[int
 		ContainsSubstring("192000 sample frames"));
 }
 
+TEST_CASE("Apply Fades of Strip Silence fit into what a squeezed warped event plays", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	// Four quarters at 120 BPM in musical mode, then the project goes to 240 BPM: the event plays half its length.
+	const Loop loop = addLoop(client, dir, sine(4 * g_quarter));
+	run(client, "project.set", {{"tempo", 120.0}});
+	run(client, "clip.setWarp", {{"clip", loop.clip}, {"musical", true}});
+	run(client, "project.set", {{"tempo", 240.0}});
+
+	// A second each asks for 48000 frames, half the event's length: each gets half of the 48000 it plays.
+	run(client, "event.stripSilence", {{"events", {loop.event}}, {"strip", false}, {"fades", 1000}});
+	const Json event = eventOf(client, loop.event);
+	CHECK(event.at("fadeIn").at("length") == 24000);
+	CHECK(event.at("fadeOut").at("length") == 24000);
+}
+
 TEST_CASE("resizing a warped event with its contents keeps the edge that stays put", "[integration]")
 {
 	const test::TempDir dir;

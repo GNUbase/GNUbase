@@ -75,16 +75,6 @@ namespace gnubase::engine
 					" sample frames)");
 		}
 
-		// The sample frames an event's fades may take together: its length, or on a warped event the frames at the
-		// clip's sample rate that it plays for, which is where its own fades play (playback.cpp, warpEvent).
-		time::Samples fadeRoom(const Project& project, const AudioEvent& event)
-		{
-			if (!warped(project.clips.at(event.clip)))
-				return event.length;
-			const EventSpan span = eventSpan(project, event);
-			return std::max<time::Samples>(std::llround(static_cast<double>(span.end - span.start) / span.ratio), 0);
-		}
-
 		Json setEventFades(Project& project, CommandContext& context)
 		{
 			const Json& parameters = context.parameters();
@@ -425,6 +415,14 @@ namespace gnubase::engine
 		result.start = time::toSamples(event.position, project.tempo, project.sampleRate);
 		result.end = result.start + std::llround(eventSamples(project, event, static_cast<double>(event.length)));
 		return result;
+	}
+
+	time::Samples fadeRoom(const Project& project, const AudioEvent& event)
+	{
+		if (!warped(project.clips.at(event.clip)))
+			return event.length;
+		const EventSpan span = eventSpan(project, event);
+		return std::max<time::Samples>(std::llround(static_cast<double>(span.end - span.start) / span.ratio), 0);
 	}
 
 	double eventSamples(const Project& project, const AudioEvent& event, double frames)
