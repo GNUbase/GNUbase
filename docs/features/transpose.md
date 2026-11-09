@@ -42,9 +42,9 @@ transpose at the note's start, with the part's own transpose and the track's mod
   for a part in C in a project in D, from `rootKeyTranspose`.
 - **Independent parts** show an icon (`part-independent.svg`) in their upper right corner in the event display
   (p. 421): a `.part-mark.independent` with attribute `part` in the display's `.part-marks`.
-- **The transpose track's lane** (`ui::TransposeLane`, `src/ui/transposetrack.h`) shows each event's value from its
-  position: the draw tool adds an event at the nearest bar and opens its value for typing, a double click opens it
-  too, a drag moves it to the nearest bar and the erase tool removes it.
+- **The transpose track's lane** (`ui::GlobalEventLane`, `src/ui/transposetrack.h`, shared with the chord track's
+  lanes) shows each event's value from its position: the draw tool adds an event at the nearest bar and opens its
+  value for typing, a double click opens it too, a drag moves it to the nearest bar and the erase tool removes it.
 - **The track list** has the transpose track's controls by default (`ui.trackControls` `transpose`): Mute Transpose
   Events (`transposeMute`), Keep Transpose in Octave Range (`keepInOctave`), Switch Time Base and Lock
   (`transposeLock`).
