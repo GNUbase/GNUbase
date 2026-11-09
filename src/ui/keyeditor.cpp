@@ -199,8 +199,18 @@ namespace gnubase::ui
 		return std::nullopt;
 	}
 
+	std::string menuIdSuffix(const std::string& view)
+	{
+		if (view == "lower" || view == "window")
+			return {};
+		std::string suffix = "-" + view;
+		std::replace(suffix.begin(), suffix.end(), ':', '-');
+		return suffix;
+	}
+
 	KeyEditor::KeyEditor(EngineBinding& binding, Rml::Element& root, std::string view, bool drum)
-		: m_binding(binding), m_root(root.GetObserverPtr()), m_name(std::move(view)), m_drum(drum)
+		: m_binding(binding), m_root(root.GetObserverPtr()), m_name(std::move(view)),
+		  m_menuSuffix(menuIdSuffix(m_name)), m_drum(drum)
 	{
 		// The tools' buttons and the toolbox's items.
 		const auto toolsRml = [drum](const char* tag, const char* attributes)
@@ -252,10 +262,13 @@ namespace gnubase::ui
 		updateOrder();
 		root.SetInnerRML(R"(<div class="toolbar key-editor-toolbar">)" + tools + R"(<span class="separator"/>)" +
 			transpose + R"(<span class="separator"/>)" + inputs +
-			R"(<button id="key-length-quantize" menu="key-length-menu" title="Length Quantize"/>)"
+			R"(<button id="key-length-quantize" menu="key-length-menu)" + m_menuSuffix +
+			R"(" title="Length Quantize"/>)"
 			R"(<valuefield id="key-insert-velocity" min="1" max="127" default="100" step="1" decimals="0")"
 			R"( title="Insert Velocity"/>)" +
-			(drum ? R"(<span class="separator"/><button id="drum-map" menu="drum-map-menu" title="Drum Map"/>)" : "") +
+			(drum ? R"(<span class="separator"/><button id="drum-map" menu="drum-map-menu)" + m_menuSuffix +
+						R"(" title="Drum Map"/>)"
+				  : "") +
 			R"(</div>)"
 			R"(<div class="info-line key-editor-info empty"><span class="info-empty">No Object Selected</span>)" +
 			info + R"(</div><div class="editor-parts"/><div class="key-editor-body"><div class="key-editor-keys">)" +
@@ -283,9 +296,10 @@ namespace gnubase::ui
 			modes += std::string(R"(<menuitem type="toggle" line-mode=")") + mode + R"(">)" + label + "</menuitem>";
 		// The toolbox: the toolbar's tools, as its buttons show them.
 		const std::string toolbox = toolsRml("menuitem", "");
-		holder->SetInnerRML(R"(<menu id="key-length-menu">)" + items + R"(</menu><menu id="key-line-menu">)" + modes +
-			R"(</menu><menu id="key-editor-toolbox" class="toolbox">)" + toolbox + "</menu>" +
-			(drum ? R"(<menu id="drum-map-menu"/>)" : ""));
+		holder->SetInnerRML(R"(<menu id="key-length-menu)" + m_menuSuffix + R"(">)" + items +
+			R"(</menu><menu id="key-line-menu)" + m_menuSuffix + R"(">)" + modes +
+			R"(</menu><menu id="key-editor-toolbox)" + m_menuSuffix + R"(" class="toolbox">)" + toolbox + "</menu>" +
+			(drum ? R"(<menu id="drum-map-menu)" + m_menuSuffix + R"("/>)" : std::string()));
 		while (holder->HasChildNodes())
 		{
 			Rml::Element* menu = document->AppendChild(holder->RemoveChild(holder->GetFirstChild()));
@@ -327,8 +341,9 @@ namespace gnubase::ui
 			return;
 		// Where the context menu would be, an empty attribute: no menu, nor one of the elements around the grid
 		// (docs/features/widgets.md).
-		grid->SetAttribute("contextmenu", m_toolboxOnRightClick ? "key-editor-toolbox" : "");
-		grid->SetAttribute("modifiercontextmenu", m_toolboxOnRightClick ? "" : "key-editor-toolbox");
+		const std::string toolbox = "key-editor-toolbox" + m_menuSuffix;
+		grid->SetAttribute("contextmenu", m_toolboxOnRightClick ? toolbox : "");
+		grid->SetAttribute("modifiercontextmenu", m_toolboxOnRightClick ? "" : toolbox);
 	}
 
 	KeyEditor::~KeyEditor()
@@ -360,7 +375,7 @@ namespace gnubase::ui
 			setClass(button, "checked", chosen);
 			// The chosen line tool's button opens the menu of its modes (p. 1186).
 			if (chosen && tool == KeyTool::Line)
-				button->SetAttribute("menu", "key-line-menu");
+				button->SetAttribute("menu", "key-line-menu" + m_menuSuffix);
 			else if (button->HasAttribute("menu"))
 				button->RemoveAttribute("menu");
 		}
@@ -437,9 +452,22 @@ namespace gnubase::ui
 			}
 			m_to = std::max(m_to, m_from + 1);
 		}
+		if (m_range)
+		{
+			m_from = m_range->first;
+			m_to = std::max(m_range->second, m_from + 1);
+		}
 		updateOrder();
 		render();
 		m_lanes->show(m_project, m_view, m_from, m_to);
+	}
+
+	void KeyEditor::setTimeRange(std::optional<std::pair<int64_t, int64_t>> range)
+	{
+		if (range == m_range)
+			return;
+		m_range = range;
+		show(Json(m_project), Json(m_view));
 	}
 
 	bool KeyEditor::scrollToPitch(int pitch)
