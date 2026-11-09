@@ -138,7 +138,7 @@ namespace gnubase::engine
 				const double first = std::ceil((at.startTime / step) - 1e-6); // a start time on a line is that line
 				const double line = std::max(
 					first, std::round(((static_cast<double>(position) / at.sampleRate) + at.startTime) / step));
-				return std::llround((line * step - at.startTime) * at.sampleRate);
+				return std::llround(((line * step) - at.startTime) * at.sampleRate);
 			}
 			const int64_t step = stepSamples(grid);
 			return std::llround(std::round(static_cast<double>(position) / static_cast<double>(step))) * step;
