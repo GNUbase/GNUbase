@@ -14,6 +14,7 @@
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include <chrono>
 #include <cmath>
@@ -53,9 +54,9 @@ namespace
 		return elements(app, "#import-options-dialog").size() == 1;
 	}
 
-	std::string writeAudio(const std::filesystem::path& path, size_t frames, int channels = 1)
+	std::string writeAudio(const std::filesystem::path& path, size_t frames, int channels = 1, int sampleRate = 48000)
 	{
-		test::writeWav(path, {std::vector<float>(frames * static_cast<size_t>(channels), 0.25f), channels, 48000});
+		test::writeWav(path, {std::vector<float>(frames * static_cast<size_t>(channels), 0.25f), channels, sampleRate});
 		return path.u8string();
 	}
 
@@ -363,4 +364,222 @@ TEST_CASE("File > Import > Audio File puts the files on the selected audio track
 	importAudio(app, {kick});
 	REQUIRE(app.waitUntil([&events] { return events().size() == 1; }));
 	CHECK(events()[0].at("track") == violin);
+}
+
+TEST_CASE("Use Settings imports audio files without the Import Options dialog, with the stored options", "[ui]")
+{
+	const test::TempDir dir;
+	const std::string kick = writeAudio(dir.path() / "kick.wav", 4800);
+	const std::string snare = writeAudio(dir.path() / "snare.wav", 4800);
+	test::UiApp app({900, 640});
+	ui::EventDisplay& display = app.appUi().showProject();
+	const auto set = [&app](const char* key, const Json& value)
+	{ app.call("settings.set", {{"key", key}, {"value", value}}); };
+	set("editing.onImportAudio", "useSettings");
+	set("editing.importAudioOneTrack", true);
+	const auto events = [&app] { return app.call("project.get").at("audioEvents"); };
+
+	// Both files one after another on one track, without a dialog. The project has no folder yet, so the copy and
+	// convert settings (on by default) don't apply.
+	display.importFiles({kick, snare});
+	REQUIRE(app.waitUntil([&events] { return events().size() == 2; }));
+	CHECK(!dialogShown(app));
+	Json project = app.call("project.get");
+	REQUIRE(project.at("tracks").size() == 1);
+	CHECK(project.at("audioEvents")[1].at("track") == project.at("tracks")[0].at("id"));
+	CHECK(project.at("media")[0].at("path") == kick);
+
+	// Saved: a stereo file split into files named as editing.importAudioNameFormat says, and copied.
+	const std::filesystem::path folder = dir.path() / "project";
+	std::filesystem::create_directories(folder);
+	app.call("project.save", {{"path", (folder / "Song.dawproject").u8string()}, {"embedMedia", false}});
+	set("editing.importAudioSplitChannels", true);
+	set("editing.importAudioNameFormat", "dot");
+	display.importFiles({writeAudio(dir.path() / "take.wav", 4800, 2), snare});
+	REQUIRE(app.waitUntil([&events] { return events().size() == 5; }));
+	CHECK(!dialogShown(app));
+	project = app.call("project.get");
+	REQUIRE(project.at("media").size() == 5);
+	CHECK(project.at("media")[2].at("path") == (folder / "Audio" / "take.L.wav").u8string());
+	CHECK(project.at("media")[3].at("path") == (folder / "Audio" / "take.R.wav").u8string());
+	REQUIRE(app.waitUntil( // the mono file is copied by a job
+		[&app, &folder]
+		{ return app.call("project.get").at("media")[4].at("path") == (folder / "Audio" / "snare.wav").u8string(); }));
+
+	// Copy and Convert off: a 44.1 kHz file from outside the project stays where it is, and no copy job starts.
+	set("editing.importAudioSplitChannels", false);
+	set("editing.importAudioCopy", false);
+	set("editing.importAudioConvert", false);
+	const std::string slow = writeAudio(dir.path() / "slow.wav", 4410, 1, 44100);
+	const size_t jobs = app.call("job.list").at("jobs").size();
+	display.importFiles({slow});
+	REQUIRE(app.waitUntil([&events] { return events().size() == 6; }));
+	Json media = app.call("project.get").at("media")[5];
+	CHECK(media.at("path") == slow);
+	CHECK(media.at("sampleRate") == 44100.0);
+	CHECK(app.call("job.list").at("jobs").size() == jobs);
+
+	// Convert on, Copy still off: converted into the project's Audio folder at its sample rate.
+	set("editing.importAudioConvert", true);
+	display.importFiles({slow});
+	REQUIRE(app.waitUntil([&events] { return events().size() == 7; }));
+	media = app.call("project.get").at("media")[6];
+	CHECK(media.at("path") == (folder / "Audio" / "slow.wav").u8string());
+	CHECK(media.at("sampleRate") == 48000.0);
+	CHECK(app.call("job.list").at("jobs").size() == jobs);
+
+	// The pool's Import Medium (clips only) and the selected track use the settings too.
+	display.importFiles({kick}, std::nullopt, std::nullopt, true);
+	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("clips").size() == 8; }));
+	CHECK(!dialogShown(app));
+	CHECK(events().size() == 7);
+	const uint64_t selected = project.at("tracks")[0].at("id").get<uint64_t>();
+	display.importToSelection({kick, snare}, {selected});
+	REQUIRE(app.waitUntil([&events] { return events().size() == 9; }));
+	CHECK(!dialogShown(app));
+	const Json all = events();
+	CHECK(all[7].at("track") == selected); // one after another on it, as editing.importAudioOneTrack says
+	CHECK(all[8].at("track") == selected);
+
+	// Back to the dialog.
+	set("editing.onImportAudio", "openOptionsDialog");
+	display.importFiles({kick});
+	REQUIRE(app.waitUntil([&app] { return dialogShown(app); }));
+}
+
+TEST_CASE("Do not ask again in the Import Options dialog switches to Use Settings with its choices", "[ui]")
+{
+	const test::TempDir dir;
+	const std::string kick = writeAudio(dir.path() / "kick.wav", 4800);
+	const std::string snare = writeAudio(dir.path() / "snare.wav", 4800);
+	test::UiApp app({900, 640});
+	ui::EventDisplay* display = &app.appUi().showProject();
+	const auto setting = [&app](const char* key) { return app.call("settings.get", {{"key", key}}).at("value"); };
+	const auto events = [&app] { return app.call("project.get").at("audioEvents"); };
+	CHECK(setting("editing.onImportAudio") == "openOptionsDialog");
+
+	// The dialog starts from the settings, and OK keeps the options it could choose in them; Do not ask again
+	// starts unchecked.
+	app.call("settings.set", {{"key", "editing.importAudioOneTrack"}, {"value", true}});
+	display->importFiles({kick, snare});
+	REQUIRE(app.waitUntil([&app] { return dialogShown(app); }));
+	CHECK(checked(app, "#import-one-track"));
+	CHECK(!checked(app, "#import-do-not-ask"));
+	CHECK(disabled(app, "#import-name-format")); // no project folder to split into
+	click(app, "#import-one-track");
+	click(app, "#import-options-dialog button.primary");
+	REQUIRE(app.waitUntil([&events] { return events().size() == 2; }));
+	CHECK(setting("editing.importAudioOneTrack") == false);
+	CHECK(setting("editing.importAudioCopy") == true); // disabled: as it was
+	CHECK(setting("editing.onImportAudio") == "openOptionsDialog");
+	CHECK(app.call("project.get").at("tracks").size() == 2);
+
+	// Do not ask again: Use Settings with the dialog's choices, so the next import shows no dialog, also after a
+	// restart.
+	display->importFiles({kick, snare});
+	REQUIRE(app.waitUntil([&app] { return dialogShown(app); }));
+	click(app, "#import-one-track");
+	click(app, "#import-do-not-ask");
+	click(app, "#import-options-dialog button.primary");
+	REQUIRE(app.waitUntil([&events] { return events().size() == 4; }));
+	CHECK(setting("editing.onImportAudio") == "useSettings");
+	CHECK(setting("editing.importAudioOneTrack") == true);
+	app.restart();
+	display = &app.appUi().showProject();
+	display->importFiles({kick, snare});
+	REQUIRE(app.waitUntil([&events] { return events().size() == 2; }));
+	CHECK(!dialogShown(app));
+	CHECK(app.call("project.get").at("tracks").size() == 1);
+
+	// Resetting the setting brings the dialog back.
+	app.call("settings.reset", {{"key", "editing.onImportAudio"}});
+	display->importFiles({kick});
+	REQUIRE(app.waitUntil([&app] { return dialogShown(app); }));
+}
+
+TEST_CASE("The Import Options dialog shows and keeps Copy, Convert and Split Channels in the settings", "[ui]")
+{
+	const test::TempDir dir;
+	const std::string slow = writeAudio(dir.path() / "slow.wav", 4410, 2, 44100);
+	test::UiApp app({900, 640});
+	ui::EventDisplay& display = app.appUi().showProject();
+	const std::filesystem::path folder = dir.path() / "project";
+	std::filesystem::create_directories(folder);
+	app.call("project.save", {{"path", (folder / "Song.dawproject").u8string()}, {"embedMedia", false}});
+	const auto set = [&app](const char* key, const Json& value)
+	{ app.call("settings.set", {{"key", key}, {"value", value}}); };
+	const auto setting = [&app](const char* key) { return app.call("settings.get", {{"key", key}}).at("value"); };
+	const auto events = [&app] { return app.call("project.get").at("audioEvents"); };
+	set("editing.importAudioCopy", false);
+	set("editing.importAudioConvert", false);
+	set("editing.importAudioSplitChannels", true);
+
+	// The dialog opens with the stored options; the user turns each one around and checks Do not ask again.
+	display.importFiles({slow});
+	REQUIRE(app.waitUntil([&app] { return dialogShown(app); }));
+	CHECK(!checked(app, "#import-copy"));
+	CHECK(!checked(app, "#import-convert"));
+	CHECK(checked(app, "#import-split"));
+	click(app, "#import-copy");
+	click(app, "#import-convert");
+	click(app, "#import-split");
+	click(app, "#import-do-not-ask");
+	click(app, "#import-options-dialog button.primary");
+	REQUIRE(app.waitUntil([&events] { return events().size() == 1; }));
+	CHECK(setting("editing.importAudioCopy") == true);
+	CHECK(setting("editing.importAudioConvert") == true);
+	CHECK(setting("editing.importAudioSplitChannels") == false);
+	CHECK(setting("editing.onImportAudio") == "useSettings");
+
+	// The next import runs without the dialog with them: converted, not split.
+	display.importFiles({slow});
+	REQUIRE(app.waitUntil([&events] { return events().size() == 2; }));
+	CHECK(!dialogShown(app));
+	const Json project = app.call("project.get");
+	REQUIRE(project.at("media").size() == 2);
+	CHECK(project.at("media")[1].at("channels") == 2);
+	CHECK(project.at("media")[1].at("sampleRate") == 48000.0);
+	CHECK(project.at("media")[1].at("path") == (folder / "Audio" / "slow-2.wav").u8string());
+}
+
+TEST_CASE("The Import Options dialog's Name Format names the files Split Channels writes", "[ui]")
+{
+	struct Format
+	{
+		const char* value;
+		int down; // presses of Down from the first option
+		const char* left;
+	};
+	const Format format = GENERATE(Format{"dash", 0, "take-L.wav"}, Format{"underscore", 1, "take_L.wav"},
+		Format{"dot", 2, "take.L.wav"}, Format{"space", 3, "take L.wav"});
+	INFO(format.value);
+	const test::TempDir dir;
+	const std::string take = writeAudio(dir.path() / "take.wav", 4800, 2);
+	test::UiApp app({900, 640});
+	ui::EventDisplay& display = app.appUi().showProject();
+	const std::filesystem::path folder = dir.path() / "project";
+	std::filesystem::create_directories(folder);
+	app.call("project.save", {{"path", (folder / "Song.dawproject").u8string()}, {"embedMedia", false}});
+
+	display.importFiles({take});
+	REQUIRE(app.waitUntil([&app] { return dialogShown(app); }));
+	CHECK(!disabled(app, "#import-name-format"));
+	if (!checked(app, "#import-split"))
+		click(app, "#import-split");
+	click(app, "#import-name-format");
+	for (int i = 0; i < format.down; ++i)
+		app.ui().key(std::nullopt, "Down");
+	click(app, "#import-name-format");
+	click(app, "#import-options-dialog button.primary");
+	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("audioEvents").size() == 2; }));
+	const Json project = app.call("project.get");
+	CHECK(project.at("media")[0].at("path") == (folder / "Audio" / format.left).u8string());
+	CHECK(app.call("settings.get", {{"key", "editing.importAudioNameFormat"}}).at("value") == format.value);
+
+	// The dialog shows it the next time.
+	display.importFiles({take});
+	REQUIRE(app.waitUntil([&app] { return dialogShown(app); }));
+	const Json select = elements(app, "#import-name-format");
+	REQUIRE(select.size() == 1);
+	CHECK(select[0].value("attributes", Json::object()).value("value", "") == format.value);
 }

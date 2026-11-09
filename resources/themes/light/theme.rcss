@@ -182,6 +182,10 @@
 		decorator: svg-ninepatch(button-normal.svg, 6 6 6 6);
 		color: #9a6500;
 	}
+	button.tapping
+	{
+		decorator: svg-ninepatch(button-pressed.svg, 6 6 6 6);
+	}
 	button:disabled
 	{
 		decorator: svg-ninepatch(button-disabled.svg, 6 6 6 6);
@@ -523,6 +527,10 @@
 	{
 		stroke-color: #566273;
 	}
+	.tempo-curve .tempo-line.fixed-tempo
+	{
+		stroke-color: #0969da;
+	}
 	.tempo-curve .tempo-point
 	{
 		background-color: #0969da;
@@ -539,6 +547,12 @@
 	{
 		color: #566273;
 		font-size: 11dp;
+	}
+	.tempo-editor .tool-rectangle
+	{
+		border-width: 1dp;
+		border-color: #0969da;
+		background-color: #0969da1a;
 	}
 	.signature-row .signature-event
 	{
@@ -599,6 +613,10 @@
 	{
 		background-color: #0969da;
 	}
+	.track-list .track-controls input.current-tempo, .track-list .track-controls select.tempo-type
+	{
+		font-size: 11dp;
+	}
 	.track-list .automation-rows
 	{
 		background-color: #f6f8fa;
@@ -644,18 +662,18 @@
 		border-right-width: 1dp;
 		border-right-color: #b9c1cc;
 	}
-	.midi-editor .editor-part
+	.midi-editor .editor-part, .in-place-editor .editor-part
 	{
 		color: #566273;
 		border-width: 1dp;
 		border-color: #b9c1cc;
 		background-color: #fbfcfe;
 	}
-	.midi-editor .editor-part.editable
+	.midi-editor .editor-part.editable, .in-place-editor .editor-part.editable
 	{
 		color: #17202d;
 	}
-	.midi-editor .editor-part.active, .editor-visibility-track.active
+	.midi-editor .editor-part.active, .in-place-editor .editor-part.active, .editor-visibility-track.active
 	{
 		color: #0969da;
 	}
@@ -728,6 +746,12 @@
 	.key-editor-step-cursor
 	{
 		background-color: #0969da;
+	}
+	.in-place-editor
+	{
+		background-color: #eef1f5;
+		border-bottom-width: 1px;
+		border-bottom-color: #b9c1cc;
 	}
 	.key-editor-key.drum-sound
 	{
@@ -1068,6 +1092,10 @@
 	button.suspended:focus-visible
 	{
 		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(button-normal.svg, 6 6 6 6);
+	}
+	button.tapping:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(button-pressed.svg, 6 6 6 6);
 	}
 	button.primary:focus-visible
 	{

@@ -27,6 +27,10 @@ namespace gnubase::engine
 	// links.
 	bool isInside(const std::string& file, const std::filesystem::path& folder);
 
+	// name folded to lower case, so that names that differ only in case count as the same, as on the file systems of
+	// Windows and macOS. Only ASCII letters fold.
+	std::string foldedName(const std::filesystem::path& name);
+
 	// Creates an empty file in folder, which must exist, and returns its path: name, or if a file of that name is
 	// there, "<stem>-2<extension>", "<stem>-3<extension>" and so on. Creating fails if the file is there, even if
 	// another job or program creates it at the same moment, so two writers never get the same file. Throws
@@ -95,12 +99,11 @@ namespace gnubase::engine
 		std::string mixdownFolder;        // the project's Mixdown folder, copied into <folder>/Mixdown; empty for none
 	};
 
-	// Writes <folder>/<name>.dawproject and copies the media into <folder>/Audio, where the project file refers to
-	// them relative to itself, so the folder opens anywhere, and the files in mixdownFolder, if it exists, into
-	// <folder>/Mixdown, leaving out the backup's own folder if it is in there. A media file that can't be read is
-	// reported and keeps its path. Reports progress to the job and stops when it is cancelled. If it doesn't complete,
-	// it removes what it wrote. Returns {file, files, missing: [{media, path}]}. Throws JobCancelled, DawProjectError,
-	// AudioFileError or std::runtime_error.
+	// Writes <folder>/<name>.dawproject, media into Audio, freeze files into Freeze, and files from mixdownFolder
+	// into Mixdown, leaving out the backup's own folder. The project refers to media and freeze files relatively.
+	// Unreadable media or freeze files are reported and keep their paths. Reports progress and stops on cancellation;
+	// if incomplete, removes what it wrote. Returns {file, files, missing: [{media, path} or {track, path}]}.
+	// Throws JobCancelled, DawProjectError, AudioFileError or std::runtime_error.
 	//
 	// Minimized files start their ranges on the resampling grid of their sample rate in the project's, so that
 	// they play sample for sample as the originals do. They keep every sample: files whose samples GNUbase can't

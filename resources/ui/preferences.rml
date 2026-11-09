@@ -217,6 +217,9 @@
 					{"followTimeFormat", "Follow Transport Main Display"}}},
 				{key = "ui.upDownSelectsTracksOnly",
 					label = "Use Up/Down Navigation Commands for Selecting Tracks only"}}},
+			{id = "editing-audio", parent = "Editing", name = "Audio", items = {
+				{key = "editing.onImportAudio", label = "On Import Audio Files", choices = {
+					{"openOptionsDialog", "Open Options Dialog"}, {"useSettings", "Use Settings"}}}}},
 			{id = "editing-midi", parent = "Editing", name = "MIDI", items = {
 				{key = "editing.legatoOverlap", label = "Legato Overlap", unit = "Ticks"}}},
 			{id = "editing-tool-modifiers", parent = "Editing", name = "Tool Modifiers", custom = "toolModifiers",

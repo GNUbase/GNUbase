@@ -354,6 +354,8 @@ namespace gnubase::app
 				}
 				if (m_infoLine)
 					m_infoLine->update();
+				if (m_inPlace)
+					m_inPlace->update();
 				followSelection();
 				// The inspector shows the first selected track.
 				if (const std::shared_ptr<ui::Inspector> inspector = m_inspector.lock(); inspector && m_eventDisplay)
@@ -404,6 +406,43 @@ namespace gnubase::app
 								"project.set", {{"tempoTrackActive", !result.value.value("tempoTrackActive", false)}});
 					});
 			}});
+		// Insert Tempo Event at Cursor (reference manual pp. 1452-1453): a key command without a key, whose dialog
+		// starts at the tempo at the cursor and adds the tempo typed there (tempo.add).
+		m_keys.add({"tempo.insertAtCursor", "Asks for a tempo and adds a tempo event with it at the project cursor.",
+			[this](ui::Window& window, Rml::Element* /*zone*/)
+			{
+				m_binding.send("project.get", engine::Json::object(),
+					[this, id = window.id()](const engine::Result& project)
+					{
+						if (!project.ok())
+							return;
+						m_binding.send("transport.get", engine::Json::object(),
+							[this, id, context = ui::projectTime(project.value)](const engine::Result& transport)
+							{
+								ui::Window* found = m_shell.find(id);
+								if (found == nullptr || !transport.ok())
+									return;
+								const auto cursor = transport.value.at("position").get<int64_t>();
+								openDialog(*found, "insert-tempo.rml",
+									{{"bpm", ui::tempoText(ui::currentTempo(context, cursor))}});
+							});
+					});
+			}});
+		// Select All Events in the tempo track's context menu (p. 1450): every tempo event on its lane.
+		m_keys.add({"tempo.selectAll", "Selects every tempo event on the tempo track.",
+			[this](ui::Window& /*window*/, Rml::Element* /*zone*/)
+			{
+				if (m_tempoLane)
+					m_tempoLane->curve().selectAll();
+			}});
+		m_keys.enableWhen("tempo.selectAll",
+			[this](ui::Window& /*window*/, Rml::Element* /*zone*/)
+			{
+				if (!m_trackList || !m_tempoLane || m_tempoLane->curve().tempo().track == 0)
+					return false;
+				const std::vector<uint64_t> tracks = m_trackList->selection();
+				return std::find(tracks.begin(), tracks.end(), m_tempoLane->curve().tempo().track) != tracks.end();
+			});
 
 		// The project window's panels (reference manual pp. 54, 73, 75-98), which their tickets fill: the inspector
 		// (docs/features/inspector.md) shows the selected track, the Channel zone's will show its channel strip (#107).
@@ -1082,6 +1121,7 @@ namespace gnubase::app
 		m_transposeLane.reset();
 		m_chordLane.reset();
 		m_rulerLanes.reset();
+		m_inPlace.reset();
 		// The transport bar's sections are there when the docking system reads them.
 		m_transportBar.reset();
 		if (Rml::Element* bar = document->GetElementById("transport-bar"))
@@ -1114,6 +1154,7 @@ namespace gnubase::app
 		m_transposeLane = std::make_unique<ui::GlobalEventLane>(*m_eventDisplay, m_binding);
 		m_chordLane = std::make_unique<ui::GlobalEventLane>(*m_eventDisplay, m_binding, ui::LaneKind::Chord);
 		m_rulerLanes = std::make_unique<ui::RulerLanes>(*m_eventDisplay);
+		m_inPlace = std::make_unique<ui::InPlaceEditors>(*m_eventDisplay, m_binding);
 		if (m_infoLine)
 			m_infoLine->followMarkers(
 				[this] { return m_markerLines != nullptr ? m_markerLines->selection() : std::vector<uint64_t>(); });
@@ -1467,6 +1508,34 @@ namespace gnubase::app
 				if (!parts.empty())
 					m_binding.send("editor.open", {{"editor", "window"}, {"parts", parts}, {"content", "drum"}});
 			}});
+		// Edit In-Place (Mod+Shift+I, reference manual p. 1261) opens or closes the in-place editors of the selected
+		// MIDI and instrument tracks, MIDI > Open In-Place Editor opens them (p. 1259).
+		for (const auto& [id, open, description] :
+			{std::tuple{"editor.editInPlace", false,
+				 "Opens or closes the in-place editors of the selected MIDI and instrument tracks."},
+				std::tuple{"editor.openInPlace", true,
+					"Opens the in-place editors of the selected MIDI and instrument tracks."}})
+		{
+			m_keys.add({id, description, [this, opens = open](ui::Window&, Rml::Element*)
+				{
+					if (!m_trackList || !m_eventDisplay || !m_eventDisplay->project().is_object())
+						return;
+					const std::vector<uint64_t> selection = m_trackList->selection();
+					engine::Json tracks = engine::Json::array();
+					for (const engine::Json& track : m_eventDisplay->project().at("tracks"))
+						if ((track.at("type") == "midi" || track.at("type") == "instrument") &&
+							std::find(selection.begin(), selection.end(), track.at("id").get<uint64_t>()) !=
+								selection.end())
+							tracks.push_back(track.at("id"));
+					if (tracks.empty())
+						return;
+					engine::Json parameters = {{"tracks", tracks}};
+					if (opens)
+						parameters["open"] = true;
+					m_binding.send("editor.inPlace", parameters);
+				}});
+		}
+		m_keys.bind({"Mod+Shift+I", "editor.editInPlace", engine::Json::object(), "project"});
 		// The Drum Map Setup's Load and Save (p. 1236): a drum map file into the project, and the drum map of the
 		// editor window's active track into a file.
 		m_keys.add({"drumMap.load", "Loads a drum map file into the project.", [this](ui::Window& window, Rml::Element*)
@@ -1554,6 +1623,8 @@ namespace gnubase::app
 	void AppUi::followEditor(const engine::Json& view)
 	{
 		const std::string editor = view.at("editor").get<std::string>();
+		if (editor != "lower" && editor != "window")
+			return; // an in-place editor (ui/inplaceeditor.h)
 		const bool open = view.at("open").get<bool>();
 		const bool wasOpen = m_editorViews.value(editor, engine::Json::object()).value("open", false);
 		m_editorViews[editor] = view;

@@ -13,7 +13,8 @@
      file. ui::TrackList fills #track-list under its global track controls (docs/features/track-list.md): #add-track
      opens the add track dialog (add-track.rml), #track-controls-settings the track controls settings dialog
      (track-controls.rml); #track-list-menu is its context menu.
-     app::AppUi fills the transport bar with the transport controls (transport.rml).
+     app::AppUi fills the transport bar with the transport controls (transport.rml), which show where Tap Tempo puts
+     the tempo in #tap-tempo-message, over the event display.
      The toolbar also has button[tool] controls and #combine-selection-tools (docs/features/tools.md), which the
      display drives too, with the toolbox #toolbox, the context menu #event-display-menu and #tool-notification, and
      #select-color with #color-menu, which ui::ColorMenu fills with the project's colors (docs/features/colors.md).
@@ -151,6 +152,7 @@
 				<div id="event-display" class="event-display">
 					<button class="ruler-format icon-only" menu="ruler-format-menu" title="Ruler Time Format"><svg class="icon" src="../icons/general-arrow-down.svg"/></button>
 					<notification id="tool-notification" class="tool-notification tooltip"/>
+					<notification id="tap-tempo-message" class="tap-tempo-message tool-notification tooltip" duration="2"/>
 				</div>
 			</div>
 			<splitter for="lower" resize="next"/>
@@ -433,6 +435,8 @@
 	</menu>
 	<!-- MIDI functions (reference manual pp. 1118-1131, docs/features/midi-functions.md) -->
 	<menu id="midi-menu">
+		<menuitem command="editor.openInPlace">Open In-Place Editor</menuitem>
+		<menuseparator/>
 		<menuitem command="midi.transposeSetup">Transpose Setup...</menuitem>
 		<menuseparator/>
 		<menuitem command="midi.mergeInLoop">Merge MIDI in Loop...</menuitem>
@@ -473,6 +477,9 @@
 		<menuitem command="track.disableSelected">Disable Selected Tracks</menuitem>
 		<menuitem command="track.enableSelected">Enable Selected Tracks</menuitem>
 		<menuitem command="track.freezeSelected">Freeze/Unfreeze Selected Tracks</menuitem>
+		<menuseparator/>
+		<!-- The tempo track (reference manual p. 1450) -->
+		<menuitem command="tempo.selectAll">Select All Events</menuitem>
 		<menuseparator/>
 		<!-- Automation tracks (reference manual p. 880) -->
 		<menuitem command="track.toggleAutomationSelected">Show/Hide Automation</menuitem>

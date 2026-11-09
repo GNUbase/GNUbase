@@ -77,6 +77,8 @@ add_executable(gnubase-tests
 	historypanel_tests.cpp
 	hitpoints_tests.cpp
 	hitpoints_ui_tests.cpp
+	inplaceeditor_tests.cpp
+	inplaceeditor_ui_tests.cpp
 	inspector_tests.cpp
 	ipc_process_tests.cpp
 	ipc_tests.cpp
@@ -156,6 +158,7 @@ add_executable(gnubase-tests
 	stylerules_tests.cpp
 	svg_tests.cpp
 	tempo_tests.cpp
+	tempocontrols_ui_tests.cpp
 	tempodetection_tests.cpp
 	tempotrack_ui_tests.cpp
 	testing_tests.cpp

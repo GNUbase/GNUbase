@@ -10,7 +10,7 @@ editor ([list-editor.md](list-editor.md), #130) are the editors' contents for MI
 ## In the engine
 
 `src/engine/document/editors.cpp` keeps a view per editor: `lower`, the lower zone's, and `window`, the editor
-window's. Views are view state like the event display's selection: they are no undo steps, don't make the project
+window's, and the in-place editors' `inPlace:<track>` ([in-place-editor.md](in-place-editor.md), #131). Views are view state like the event display's selection: they are no undo steps, don't make the project
 modified and aren't saved, and a new or loaded project closes the editors.
 
 | Command | What it does | Reference |
