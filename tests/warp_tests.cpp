@@ -14,6 +14,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <utility>
@@ -91,6 +92,25 @@ namespace
 			CAPTURE(at, offset);
 			CHECK(std::abs(offset) <= 480.0);
 		}
+	}
+
+	// A steady 750 Hz sine at half scale, mono at 48 kHz.
+	test::Audio sine(int64_t frames)
+	{
+		test::Audio audio;
+		for (int64_t i = 0; i < frames; ++i)
+			audio.samples.push_back(
+				static_cast<float>(0.5 * std::sin(2.0 * g_pi * 750.0 * static_cast<double>(i) / 48000.0)));
+		return audio;
+	}
+
+	// The RMS level of 1200 samples from a frame.
+	double level(const std::vector<float>& samples, int64_t from)
+	{
+		double sum = 0.0;
+		for (int64_t i = from; i < from + 1200; ++i)
+			sum += static_cast<double>(samples[static_cast<size_t>(i)]) * samples[static_cast<size_t>(i)];
+		return std::sqrt(sum / 1200.0);
 	}
 
 	// The loop as a clip, and an event of it at the project start on a new audio track.
@@ -350,8 +370,14 @@ TEST_CASE("bars and beats, Auto Adjust and Manual Adjust define a clip's grid", 
 	for (const int64_t click : at)
 		hitpoints.push_back({{"position", click - 120}, {"peak", -2.0}, {"intensity", 1.0}});
 	run(client, "clip.setHitpoints", {{"clip", loop.clip}, {"hitpoints", hitpoints}});
-	// From the first click to the end, two bars: the late click's beat is edited onto it.
-	warp = run(client, "clip.autoAdjust", {{"clip", loop.clip}, {"start", 380}, {"end", (8 * beat) + 380}}).at("warp");
+	// From the first click to the end, two bars: the late click's beat is edited onto it, and the event's snap point
+	// moves to the start of the section.
+	CHECK_THAT(
+		reject(client, "clip.autoAdjust", {{"clip", loop.clip}, {"event", 999}}), ContainsSubstring("no audio event"));
+	warp = run(client, "clip.autoAdjust",
+		{{"clip", loop.clip}, {"event", loop.event}, {"start", 380}, {"end", (8 * beat) + 380}})
+			   .at("warp");
+	CHECK(eventOf(client, loop.event).at("snapPoint") == 380);
 	CHECK(run(client, "history.get").at("steps").back().at("action") == "Auto adjust");
 	CHECK(std::abs(warp.at("tempo").get<double>() - 100.0) < 1e-9);
 	CHECK(warp.at("gridStart") == 380);
@@ -511,4 +537,183 @@ TEST_CASE("a clip's warp is saved with the project", "[integration]")
 	CHECK(warp.at("preset") == "drums");
 	CHECK(warp.at("beats").size() == 1);
 	CHECK(warp.at("markers").size() == 1);
+}
+
+// Follow-ups of #884 (#887, #890).
+TEST_CASE("warp markers that stretch or squeeze beyond the real-time range are refused", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	const Loop loop = addLoop(client, dir, clicks({1000, 25000, 52000, 73000}, 4 * g_quarter), "linear");
+	// 1:8 both ways: the first 8000 frames eight times as long, or 64000 frames in 8000.
+	CHECK_THAT(reject(client, "clip.addWarpMarker", {{"clip", loop.clip}, {"position", 8000}, {"target", 64000}}),
+		ContainsSubstring("4 times"));
+	CHECK_THAT(reject(client, "clip.addWarpMarker", {{"clip", loop.clip}, {"position", 64000}, {"target", 8000}}),
+		ContainsSubstring("4 times"));
+	// The segment up to the clip's end counts too: 6000 frames in 1000.
+	CHECK_THAT(reject(client, "clip.addWarpMarker", {{"clip", loop.clip}, {"position", 90000}, {"target", 95000}}),
+		ContainsSubstring("4 times"));
+	// 1:4 is within it; moving the marker beyond is refused.
+	run(client, "clip.addWarpMarker", {{"clip", loop.clip}, {"position", 16000}, {"target", 64000}});
+	CHECK_THAT(reject(client, "clip.setWarpMarker", {{"clip", loop.clip}, {"position", 16000}, {"target", 80000}}),
+		ContainsSubstring("4 times"));
+	CHECK(warpOf(client, loop.clip).at("markers") == Json::array({{{"position", 16000}, {"target", 64000}}}));
+}
+
+TEST_CASE("a warped event plays its clip fades where they play, also from inside them", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	const Loop loop = addLoop(client, dir, sine(4 * g_quarter), "linear");
+	run(client, "clip.setFades",
+		{{"clip", loop.clip}, {"fadeIn", {{"length", 24000}, {"shape", "linear"}}},
+			{"fadeOut", {{"length", 24000}, {"shape", "linear"}}}});
+	// Clip frames 0 to 48000 play in 24000 samples, the rest one and a half times as long.
+	run(client, "clip.addWarpMarker", {{"clip", loop.clip}, {"position", 48000}, {"target", 24000}});
+	// The event plays clip frames 12000 to 84000: it starts halfway into the fade in, which plays from 6000 samples
+	// before its start to 6000 after it, and ends halfway into the fade out, from 54000 to 90000.
+	run(client, "audioEvent.set", {{"event", loop.event}, {"offset", 12000}, {"length", 72000}});
+	const std::vector<float> played = render(client, 72000);
+	const double steady = level(played, 30000);
+	REQUIRE(steady > 0.2);
+	CHECK(std::abs((level(played, 600) / steady) - 0.6) < 0.08);
+	CHECK(std::abs((level(played, 70200) / steady) - (19200.0 / 36000.0)) < 0.08);
+}
+
+TEST_CASE("flattening renders the clip fades and keeps the event fades as they played", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	const Loop loop = addLoop(client, dir, sine(4 * g_quarter), "linear");
+	run(client, "clip.setFades",
+		{{"clip", loop.clip}, {"fadeIn", {{"length", 24000}, {"shape", "linear"}}},
+			{"fadeOut", {{"length", 24000}, {"shape", "sCurve"}}}});
+	run(client, "clip.addWarpMarker", {{"clip", loop.clip}, {"position", 48000}, {"target", 24000}});
+	run(client, "audioEvent.set", {{"event", loop.event}, {"offset", 12000}, {"length", 72000}});
+	run(client, "audioEvent.setFades",
+		{{"event", loop.event}, {"fadeIn", {{"length", 4800}}}, {"fadeOut", {{"length", 9600}}}});
+	const std::vector<float> warped = render(client, 80000);
+	run(client, "event.flatten", {{"events", {loop.event}}});
+	const Json event = eventOf(client, loop.event);
+	CHECK(event.at("fadeIn").at("length") == 4800);
+	CHECK(event.at("fadeOut").at("length") == 9600);
+	const std::vector<float> flat = render(client, 80000);
+	double difference = 0.0;
+	for (size_t i = 0; i < flat.size(); ++i)
+		difference = std::max(difference, static_cast<double>(std::abs(flat[i] - warped[i])));
+	CHECK(difference < 1e-5);
+}
+
+TEST_CASE("a failed flatten leaves no files behind", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	const Loop loop = addLoop(client, dir, clicks({1000, 25000, 49000, 73000}, 4 * g_quarter));
+	run(client, "clip.setWarp", {{"clip", loop.clip}, {"musical", true}});
+	// A second warped clip whose file is gone: flattening its event fails after the first one's file is written.
+	const std::string other = (dir.path() / "other.wav").u8string();
+	test::writeWav(other, clicks({1000}, g_quarter));
+	const Json media = run(client, "media.add", {{"path", other}}).at("media");
+	const auto clip = run(client, "clip.add", {{"media", media.at("id")}}).at("clip").at("id").get<ObjectId>();
+	run(client, "clip.setWarp", {{"clip", clip}, {"musical", true}});
+	const auto second = run(client, "audioEvent.add",
+		{{"track", loop.track}, {"clip", clip}, {"position", 8 * g_quarter}, {"offset", 0}, {"length", g_quarter}})
+							.at("event")
+							.at("id")
+							.get<ObjectId>();
+	const std::string file = (dir.path() / "flatten.dawproject").u8string();
+	run(client, "project.save", {{"path", file}, {"embedMedia", false}});
+	std::filesystem::remove(std::filesystem::u8path(other));
+	reject(client, "event.flatten", {{"events", {loop.event, second}}});
+	for (const auto& entry : std::filesystem::recursive_directory_iterator(dir.path()))
+		CHECK(entry.path().filename().u8string().find("Flattened") == std::string::npos);
+	CHECK(eventOf(client, loop.event).at("clip") == loop.clip);
+}
+
+TEST_CASE("timeline positions within a warped event go through its warp", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	// Clip frame 52000 plays at 49000.
+	const Loop loop = addLoop(client, dir, clicks({1000, 25000, 52000, 73000}, 4 * g_quarter), "linear");
+	run(client, "clip.addWarpMarker", {{"clip", loop.clip}, {"position", 52000}, {"target", 49000}});
+
+	// Fade In to Range Start, and Fade Out from Range End.
+	run(client, "range.fades", {{"start", 0}, {"end", 49000}, {"tracks", {loop.track}}, {"fade", "in"}});
+	CHECK(eventOf(client, loop.event).at("fadeIn").at("length") == 52000);
+	run(client, "range.fades", {{"start", 49000}, {"end", 96000}, {"tracks", {loop.track}}, {"fade", "out"}});
+	CHECK(eventOf(client, loop.event).at("fadeOut").at("length") == (4 * g_quarter) - 52000);
+
+	// A volume curve drawn from 49000 starts at clip frame 52000.
+	run(client, "range.volumeCurve", {{"start", 49000}, {"end", 70000}, {"tracks", {loop.track}}, {"volume", -6.0}});
+	bool found = false;
+	const Json curve = eventOf(client, loop.event).at("volumeCurve");
+	for (const Json& point : curve)
+		found = found || (point.at("position") == 52000 && point.at("volume") == -6.0);
+	CHECK(found);
+
+	// Cut at the hitpoint at clip frame 52000: the piece after it starts at 49000.
+	run(client, "clip.setHitpoints",
+		{{"clip", loop.clip}, {"hitpoints", {{{"position", 52000}, {"peak", -2.0}, {"intensity", 1.0}}}}});
+	const Json events = run(client, "event.fromHitpoints", {{"event", loop.event}, {"create", "events"}}).at("events");
+	REQUIRE(events.size() == 2);
+	const Json piece = eventOf(client, events.at(1).get<ObjectId>());
+	CHECK(piece.at("offset") == 52000);
+	CHECK(std::abs(piece.at("position").get<int64_t>() - 49000) <= 1);
+}
+
+TEST_CASE("resizing a warped event with its contents keeps the edge that stays put", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	const Loop loop = addLoop(client, dir, clicks({1000, 25000, 52000, 73000}, 4 * g_quarter), "linear");
+	run(client, "clip.addWarpMarker", {{"clip", loop.clip}, {"position", 52000}, {"target", 49000}});
+	// Where the event ends: clip frames play where the marker puts them, from the event's position.
+	const std::vector<engine::dsp::WarpPoint> map{{0.0, 0.0}, {52000.0, 49000.0}, {96000.0, 96000.0}};
+	const auto end = [&client, &loop, &map]
+	{
+		const Json event = eventOf(client, loop.event);
+		const auto offset = event.at("offset").get<double>();
+		return event.at("position").get<double>() +
+			engine::dsp::warpTarget(map, offset + event.at("length").get<double>()) -
+			engine::dsp::warpTarget(map, offset);
+	};
+
+	SECTION("the end")
+	{
+		// The clip's last frame stays at the end, now at 76000.
+		run(client, "event.resize",
+			{{"events", {loop.event}}, {"edge", "end"}, {"delta", -20000}, {"mode", "moveContents"}});
+		const Json event = eventOf(client, loop.event);
+		CHECK(event.at("position") == 0);
+		CHECK(event.at("offset").get<int64_t>() + event.at("length").get<int64_t>() == 4 * g_quarter);
+		CHECK(std::abs(end() - 76000.0) <= 1.5);
+	}
+	SECTION("the start")
+	{
+		// The start goes to 20000 with the clip's first frame; the end stays at 96000.
+		run(client, "event.resize",
+			{{"events", {loop.event}}, {"edge", "start"}, {"delta", 20000}, {"mode", "moveContents"}});
+		const Json event = eventOf(client, loop.event);
+		CHECK(event.at("position") == 20000);
+		CHECK(event.at("offset") == 0);
+		CHECK(std::abs(end() - 96000.0) <= 1.5);
+	}
+}
+
+TEST_CASE("the warped events' own media entries are no media files", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	const Loop loop = addLoop(client, dir, clicks({1000, 25000, 49000, 73000}, 4 * g_quarter));
+	run(client, "clip.setWarp", {{"clip", loop.clip}, {"musical", true}});
+	reject(client, "media.peaks", {{"media", loop.event}, {"pixels", 10}});
+	reject(client, "audition.start", {{"media", loop.event}, {"position", 0}});
 }
