@@ -65,7 +65,7 @@ namespace gnubase::engine::plugins
 						"required": ["process", "group", "state", "log", "instances"], "properties": {
 							"process": {"type": "integer"}, "group": {"type": "string"}, "state": {"type": "string"},
 							"log": {"type": "string"}, "instances": {"type": "array"}}}},
-					"errors": {"type": "array", "items": {"type": "string"}}}})");
+					"errors": {"type": "array", "items": {"type": "string"}}, "deactivated": {"type": "boolean"}}})");
 		}
 	}
 
@@ -412,6 +412,8 @@ namespace gnubase::engine::plugins
 			{
 				try
 				{
+					if (m_deactivated)
+						throw std::runtime_error("third-party plugins are deactivated: GNUbase started in safe mode");
 					std::unique_ptr<RemotePlugin> remote = make(*ref, engineHost);
 					if (!remote->init())
 						throw std::runtime_error("cannot create the plugin " + ref->id);
@@ -730,7 +732,7 @@ namespace gnubase::engine::plugins
 					{"log", host.log}, {"instances", std::move(instances)}});
 			}
 			Json result = {{"mode", toString(mode())}, {"defaultMode", toString(g_defaultHostingMode)},
-				{"overrides", std::move(overrides)}, {"hosts", std::move(hostList)}};
+				{"overrides", std::move(overrides)}, {"hosts", std::move(hostList)}, {"deactivated", deactivated()}};
 			if (!errors.empty())
 				result["errors"] = errors;
 			return result;
@@ -743,7 +745,8 @@ namespace gnubase::engine::plugins
 				"defaultMode: the mode GNUbase starts with; overrides: plugin ids with a mode of their own. hosts: "
 				"each process with its id (process), its group (\"shared\", \"vendor:<vendor>\", \"plugin:<id>\" or "
 				"\"instance:<instance>\"), its state (\"running\", \"hung\" or \"exited\"), its log file's name in "
-				"the log folder (log) and its plugin instances, whether they failed.",
+				"the log folder (log) and its plugin instances, whether they failed. deactivated: whether third-party "
+				"plugins are deactivated, as GNUbase started in safe mode (--no-third-party-plugins): none loads.",
 				Json{{"type", "object"}, {"additionalProperties", false}}, statusSchema(), true},
 			[status](CommandContext&) { return status({}); });
 		engine.registerCommand(

@@ -945,6 +945,63 @@ TEST_CASE("setup panes show and hide the transport bar's and the transport panel
 	CHECK(!visible(app, "[section=click]", app.appUi().transportPanel()->id()));
 }
 
+TEST_CASE("setup panes save and recall presets and reset their sections to the defaults", "[ui]")
+{
+	test::UiApp app({1024, 700});
+	showBar(app);
+	const auto openPane = [&app]
+	{
+		if (!visible(app, "#transport-setup"))
+			app.ui().click(std::nullopt, at("#transport-bar [section=click]"), ui::MouseButton::Right, 1, {});
+		REQUIRE(visible(app, "#transport-setup"));
+	};
+	const auto exists = [&app](const std::string& selector)
+	{ return !app.ui().dom(std::nullopt, selector, 0).at("elements").empty(); };
+	const auto presets = [&app] { return app.call("settings.get", {{"key", "ui.setupPresets"}}).at("value"); };
+	openPane();
+	click(app, "#transport-setup [setup-section=locators]");
+	app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(!visible(app, "#transport-bar [section=locators]"));
+
+	// Save Preset names the sections as they are, in the user setting ui.setupPresets, which profiles carry.
+	openPane();
+	click(app, "#transport-setup [setup-preset-save]");
+	REQUIRE(app.waitUntil([&exists] { return exists("#setup-preset-name"); }));
+	click(app, "#setup-preset-name");
+	app.ui().text(std::nullopt, "Compact");
+	click(app, "#setup-preset-ok");
+	REQUIRE(app.waitUntil([&presets] { return presets().contains("transport"); }));
+	const Json saved = presets().at("transport");
+	REQUIRE(saved.size() == 1);
+	CHECK(saved.at(0).at("name") == "Compact");
+	CHECK(saved.at(0).at("hidden") == Json::array({"locators"}));
+	CHECK(saved.at(0).at("order").at(0) == "locators");
+	REQUIRE(app.waitUntil([&exists] { return exists("#transport-setup [setup-preset=Compact]"); }));
+
+	// Reset All: the default order and sections.
+	openPane();
+	click(app, "#transport-setup [setup-reset]");
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(visible(app, "#transport-bar [section=locators]"));
+	REQUIRE(app.waitUntil(
+		[&app]
+		{
+			const Json layout = app.call("settings.get", {{"key", "ui.layout"}}).at("value");
+			return !layout.at("windows").at("project").value("sections", Json::object()).contains("transport");
+		}));
+
+	// The preset brings its sections back.
+	openPane();
+	click(app, "#transport-setup [setup-preset=Compact]");
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(!visible(app, "#transport-bar [section=locators]"));
+	CHECK(visible(app, "#transport-bar [section=punchPoints]"));
+
+	// Another client's presets fill the pane too.
+	app.call("settings.set", {{"key", "ui.setupPresets"}, {"value", {{"transport", Json::array()}}}});
+	REQUIRE(app.waitUntil([&exists] { return !exists("#transport-setup [setup-preset=Compact]"); }));
+}
+
 TEST_CASE("the transport controls refuse buttons and menu items with a command that doesn't exist or parameters it "
 		  "doesn't take (#446)",
 	"[unit]")

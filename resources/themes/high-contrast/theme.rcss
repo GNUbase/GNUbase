@@ -662,18 +662,18 @@
 		border-right-width: 1dp;
 		border-right-color: #ffffff;
 	}
-	.midi-editor .editor-part
+	.midi-editor .editor-part, .in-place-editor .editor-part
 	{
 		color: #c8c8c8;
 		border-width: 1dp;
 		border-color: #ffffff;
 		background-color: #060606;
 	}
-	.midi-editor .editor-part.editable
+	.midi-editor .editor-part.editable, .in-place-editor .editor-part.editable
 	{
 		color: #ffffff;
 	}
-	.midi-editor .editor-part.active, .editor-visibility-track.active
+	.midi-editor .editor-part.active, .in-place-editor .editor-part.active, .editor-visibility-track.active
 	{
 		color: #ffff00;
 	}
@@ -746,6 +746,12 @@
 	.key-editor-step-cursor
 	{
 		background-color: #ffff00;
+	}
+	.in-place-editor
+	{
+		background-color: #000000;
+		border-bottom-width: 1px;
+		border-bottom-color: #ffffff;
 	}
 	.key-editor-key.drum-sound
 	{
