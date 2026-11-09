@@ -350,7 +350,9 @@ namespace gnubase::engine
 					result.subject.media = clip->media;
 				}
 				else
+				{
 					result.subject.media = given.at("media").get<ObjectId>();
+				}
 				// The project's media files: not a warped event's, nor a frozen channel's freeze file, which has the
 				// channel's id.
 				const auto found = std::find_if(snapshot.media.begin(), snapshot.media.end(),

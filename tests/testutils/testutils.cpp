@@ -291,11 +291,13 @@ namespace gnubase::test
 		mz_zip_archive zip{};
 		if (mz_zip_writer_init_file(&zip, path.c_str(), 0) == MZ_FALSE)
 			throw std::runtime_error("can't write the zip file " + path);
-		bool written = true;
-		for (const auto& [name, data] : entries)
-			written = written &&
-				mz_zip_writer_add_mem(&zip, name.c_str(), data.data(), data.size(), MZ_DEFAULT_LEVEL) != MZ_FALSE;
-		written = written && mz_zip_writer_finalize_archive(&zip) != MZ_FALSE;
+		const bool written = std::all_of(entries.begin(), entries.end(),
+								 [&zip](const auto& entry)
+								 {
+									 return mz_zip_writer_add_mem(&zip, entry.first.c_str(), entry.second.data(),
+												entry.second.size(), MZ_DEFAULT_LEVEL) != MZ_FALSE;
+								 }) &&
+			mz_zip_writer_finalize_archive(&zip) != MZ_FALSE;
 		mz_zip_writer_end(&zip);
 		if (!written)
 			throw std::runtime_error("can't write the zip file " + path);

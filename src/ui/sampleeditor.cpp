@@ -740,10 +740,15 @@ namespace gnubase::ui
 						std::to_string(each.at("start").get<int64_t>()),
 						std::to_string(each.at("end").get<int64_t>())});
 					const auto& [id, name, start, end] = rows.back();
-					rml += R"(<div class="se-region" region=")" + id +
-						R"("><span class="se-region-name" field="name">)" + name +
-						R"(</span><span class="se-region-start" field="start">)" + start +
-						R"(</span><span class="se-region-end" field="end">)" + end + "</span></div>";
+					rml.append(R"(<div class="se-region" region=")")
+						.append(id)
+						.append(R"("><span class="se-region-name" field="name">)")
+						.append(name)
+						.append(R"(</span><span class="se-region-start" field="start">)")
+						.append(start)
+						.append(R"(</span><span class="se-region-end" field="end">)")
+						.append(end)
+						.append("</span></div>");
 				}
 		if (rml != m_regionRows)
 		{
