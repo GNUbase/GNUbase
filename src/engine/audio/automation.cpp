@@ -343,9 +343,13 @@ namespace gnubase::engine
 		{
 			lanes.push_back(mute);
 		}
+		// A silent MIDI track sends its instrument nothing: the snapshot leaves its notes and controllers out, and its
+		// MIDI volume and pan, program and MIDI automation stay out here, so it doesn't change what other tracks play
+		// there. Its mute lane stays, so its mute still ends the notes that sound.
+		const bool sends = channel.type != TrackType::Midi || !channel.silent;
 		for (const auto& [number, value] :
 			{std::pair{uint8_t{7}, channel.midiVolume}, std::pair{uint8_t{10}, channel.midiPan}})
-			if (value)
+			if (value && sends)
 				lanes.push_back({{AutomationTargetType::Controller, 0, number, 0, 0}, Kind::Midi, 0,
 					static_cast<double>(midi::controllerFromMidi1(static_cast<uint8_t>(*value))) / 4294967295.0, 0.0,
 					1.0, {}});
@@ -388,7 +392,7 @@ namespace gnubase::engine
 			PlayedLane* played = nullptr;
 			if (hasStatic)
 				played = &*match;
-			else if (midi &&
+			else if (midi && sends &&
 				(lane.target.type == AutomationTargetType::Controller ||
 					lane.target.type == AutomationTargetType::PitchBend ||
 					lane.target.type == AutomationTargetType::ChannelPressure))
@@ -410,7 +414,7 @@ namespace gnubase::engine
 					}
 		}
 		// The program first, so the instrument has the patch before the controllers. No automation lane targets it.
-		if (channel.program)
+		if (channel.program && sends)
 			lanes.insert(lanes.begin(),
 				PlayedLane{{AutomationTargetType::Controller, 0, 0, 0, 0}, Kind::Program,
 					static_cast<uint32_t>(*channel.program), channel.bank ? static_cast<double>(*channel.bank) : -1.0,
