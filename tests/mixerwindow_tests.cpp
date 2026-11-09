@@ -2,6 +2,7 @@
 // The mixer windows and the lower zone's mixer (#106, docs/features/mixer-window.md) in the app, driven with
 // ui::Automation as MCP's UI tools drive them. tests/mixerviews_tests.cpp checks what the engine keeps.
 #include "ui/automation.h"
+#include "ui/keycommands.h"
 #include "ui/renderer.h"
 #include "ui/shell.h"
 #include "ui/tracklist.h"
@@ -222,7 +223,9 @@ TEST_CASE("each mixer window and the lower zone's mixer hide channels of their o
 	// The lower zone's mixer (pp. 434-436): Alt+F3 and Studio > Mixer in Project Window show it, with a view of its
 	// own; again hides the zone.
 	CHECK(elements(app, std::nullopt, "#studio-menu menuitem[command=\"window.lowerZoneMixer\"]").size() == 1);
-	CHECK(app.keys().keysFor("window.lowerZoneMixer") == std::vector<std::string>{"Alt+F3"});
+	// Opt+F3 on macOS.
+	CHECK(
+		app.keys().keysFor("window.lowerZoneMixer") == std::vector<std::string>{ui::keyName(ui::parseKeys("Alt+F3"))});
 	app.ui().key(std::nullopt, "Alt+F3");
 	REQUIRE(app.waitUntil([&] { return app.appUi().docking().showing("mixer"); }));
 	REQUIRE(app.appUi().lowerZoneMixer() != nullptr);

@@ -1618,7 +1618,7 @@ TEST_CASE("VST3 class ids are written as other hosts write them and compared wit
 }
 
 TEST_CASE("a VST3 plugin in a plugin host process tells the engine about edits, rescans, latency, its state and buses",
-	"[integration]")
+	"[integration][realtime]")
 {
 	RecordingHost engineHost;
 	engine::plugins::HostManager manager(hostOptions());

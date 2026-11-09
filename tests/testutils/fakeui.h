@@ -38,7 +38,8 @@ namespace gnubase::test
 		void push(const ui::WindowEvent& event);
 
 		// Minimizes a window as the user would; the focus goes to the frontmost window that isn't minimized.
-		void minimize(ui::WindowId window);
+		void minimize(ui::WindowId window) override;
+		void restore(ui::WindowId window) override { m_windows.at(window).minimized = false; }
 		bool minimized(ui::WindowId window) const { return m_windows.at(window).minimized; }
 
 		// The window in front of all others, minimized or not, and the one with the keyboard focus; 0 for none. A

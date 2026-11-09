@@ -30,7 +30,8 @@ namespace gnubase::engine
 {
 	namespace
 	{
-		constexpr std::array<const char*, 2> g_editors = {"lower", "window"};
+		// The in-place editors' names (#131): inPlace:<track>, one per MIDI or instrument track.
+		constexpr const char* g_inPlace = "inPlace:";
 		// The part editing modes (p. 1143): what selecting and editing reach.
 		constexpr std::array<const char*, 3> g_editingModes = {"allParts", "activePart", "activeTrack"};
 		// What an editor shows its parts in: MIDI parts the key editor (#127), the list editor (#130) or the drum
@@ -178,7 +179,57 @@ namespace gnubase::engine
 				view.eventSelection.end());
 		}
 
-		// The editor's view now: closed and empty once another project is open, without what is gone since.
+		bool isNoteTrack(const Project& project, ObjectId id)
+		{
+			const auto found = project.trackById.find(id);
+			return found != project.trackById.end() &&
+				(found->second.type == TrackType::Midi || found->second.type == TrackType::Instrument);
+		}
+
+		void requireNoteTrack(const Project& project, ObjectId track)
+		{
+			require(project.trackById.count(track) != 0, "no track " + std::to_string(track));
+			require(
+				isNoteTrack(project, track), "track " + std::to_string(track) + " isn't a MIDI or instrument track");
+		}
+
+		// The track of an in-place editor's name; 0 for the lower zone's editor and the editor window.
+		ObjectId inPlaceTrack(const std::string& editor)
+		{
+			const std::string prefix = g_inPlace;
+			return editor.rfind(prefix, 0) == 0 ? std::stoull(editor.substr(prefix.size())) : 0;
+		}
+
+		std::string inPlaceName(ObjectId track)
+		{
+			return g_inPlace + std::to_string(track);
+		}
+
+		// lower, window, or inPlace: and a MIDI or instrument track's id.
+		void requireEditor(const Project& project, const std::string& editor)
+		{
+			if (editor == "lower" || editor == "window")
+				return;
+			const std::string prefix = g_inPlace;
+			const std::string digits = editor.substr(std::min(editor.size(), prefix.size()));
+			require(editor.rfind(prefix, 0) == 0 && !digits.empty() && digits.size() < 20 &&
+					std::all_of(digits.begin(), digits.end(), [](char c) { return c >= '0' && c <= '9'; }),
+				"editor must be lower, window or inPlace:<track>, not " + editor);
+			requireNoteTrack(project, inPlaceTrack(editor));
+		}
+
+		// Every MIDI part of a track, in order.
+		std::vector<ObjectId> midiPartsOf(const Project& project, ObjectId track)
+		{
+			std::vector<ObjectId> parts;
+			for (const auto& [id, part] : project.midiParts)
+				if (part.track == track)
+					parts.push_back(id);
+			return ordered(project, parts);
+		}
+
+		// The editor's view now: closed and empty once another project is open, without what is gone since. An open
+		// in-place editor shows every MIDI part of its track, and closes with its track.
 		EditorView current(const Views& views, const ProjectModel& model, const std::string& editor)
 		{
 			const auto found = views.find(editor);
@@ -186,6 +237,13 @@ namespace gnubase::engine
 			if (view.project != model.openedRevision())
 				view = EditorView();
 			const Project& project = model.project();
+			if (const ObjectId track = inPlaceTrack(editor); track != 0 && view.open)
+			{
+				if (isNoteTrack(project, track))
+					view.parts = midiPartsOf(project, track);
+				else
+					view = EditorView();
+			}
 			view.parts = ordered(project, view.parts);
 			if (std::find(view.parts.begin(), view.parts.end(), view.activePart) == view.parts.end())
 				view.activePart = view.parts.empty() ? 0 : view.parts.front();
@@ -264,6 +322,30 @@ namespace gnubase::engine
 			require(
 				!parts.empty(), "track " + std::to_string(track) + " has no " + (audio ? "audio" : "MIDI") + " parts");
 			return ordered(project, parts);
+		}
+
+		// The view closed: no parts, Keep Editor Contents off (p. 1153).
+		EditorView closed(EditorView view)
+		{
+			view.open = false;
+			view.parts.clear();
+			view.activePart = 0;
+			view.keepContents = false;
+			view.selection.clear();
+			view.controllerSelection.clear();
+			view.eventSelection.clear();
+			view.content = "key";
+			return view;
+		}
+
+		// The tracks whose in-place editors are open, in the track list's order.
+		Json openInPlace(const Views& views, const ProjectModel& model)
+		{
+			Json tracks = Json::array();
+			for (const ObjectId track : model.project().trackOrder())
+				if (views.count(inPlaceName(track)) != 0 && current(views, model, inPlaceName(track)).open)
+					tracks.push_back(track);
+			return tracks;
 		}
 
 		std::vector<ObjectId> ids(const Json& parameters, const char* name)
@@ -376,8 +458,7 @@ namespace gnubase::engine
 	void registerEditorCommands(ProjectModel& model, Engine& engine)
 	{
 		auto views = std::make_shared<Views>();
-		const Json editorSchema = {
-			{"type", "string"}, {"enum", std::vector<std::string>(g_editors.begin(), g_editors.end())}};
+		const Json editorSchema = {{"type", "string"}};
 		const Json modeSchema = {
 			{"type", "string"}, {"enum", std::vector<std::string>(g_editingModes.begin(), g_editingModes.end())}};
 		const Json idsSchema = {{"type", "array"}, {"items", {{"type", "integer"}}}};
@@ -421,7 +502,9 @@ namespace gnubase::engine
 					"eventSelection"}}};
 		viewSchema["properties"].update(keyEditorSchema);
 		const std::string viewText =
-			"editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: "
+			"editor: lower (the editor in the project window's lower zone), window (the editor window) or "
+			"inPlace:<track>, the in-place editor of a MIDI or instrument track (editor.inPlace), which shows every "
+			"MIDI part of its track in the key editor. The view: "
 			"open; parts, the MIDI parts or audio parts it shows, in the track list's order and by position; "
 			"activePart, the part "
 			"active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing "
@@ -467,6 +550,7 @@ namespace gnubase::engine
 			[views, &model](CommandContext& context)
 			{
 				const std::string editor = context.parameters().at("editor").get<std::string>();
+				requireEditor(model.project(), editor);
 				return viewJson(model.project(), editor, current(*views, model, editor));
 			});
 
@@ -487,8 +571,10 @@ namespace gnubase::engine
 			{
 				const Json& parameters = context.parameters();
 				const std::string editor = parameters.at("editor").get<std::string>();
-				EditorView view = current(*views, model, editor);
 				const Project& project = model.project();
+				requireEditor(project, editor);
+				require(inPlaceTrack(editor) == 0, "in-place editors open with editor.inPlace");
+				EditorView view = current(*views, model, editor);
 				view.parts = checkedParts(project, ids(parameters, "parts"));
 				require(!view.parts.empty(), "parts must name at least one part");
 				view.activePart = parameters.value("activePart", view.parts.front());
@@ -541,6 +627,13 @@ namespace gnubase::engine
 				const Json& parameters = context.parameters();
 				const Project& project = model.project();
 				const std::string editor = parameters.at("editor").get<std::string>();
+				requireEditor(project, editor);
+				require(inPlaceTrack(editor) == 0 ||
+						(!parameters.contains("parts") && !parameters.contains("exclusive") &&
+							!parameters.contains("showTracks") && !parameters.contains("hideTracks")),
+					"the in-place editor shows its track's parts");
+				require(inPlaceTrack(editor) == 0 || parameters.value("content", std::string("key")) == "key",
+					"the in-place editor shows the key editor");
 				EditorView view = current(*views, model, editor);
 				const bool changesParts = parameters.contains("parts") || parameters.contains("exclusive") ||
 					parameters.contains("showTracks") || parameters.contains("hideTracks") ||
@@ -697,16 +790,55 @@ namespace gnubase::engine
 			[views, &model, store](CommandContext& context)
 			{
 				const std::string editor = context.parameters().at("editor").get<std::string>();
-				EditorView view = current(*views, model, editor);
-				view.open = false;
-				view.parts.clear();
-				view.activePart = 0;
-				view.keepContents = false;
-				view.selection.clear();
-				view.controllerSelection.clear();
-				view.eventSelection.clear();
-				view.content = "key";
-				return store(editor, view, context);
+				requireEditor(model.project(), editor);
+				return store(editor, closed(current(*views, model, editor)), context);
+			});
+
+		engine.registerCommand(
+			{"editor.inPlace", 1,
+				"Opens or closes the in-place editors of MIDI and instrument tracks (reference manual pp. "
+				"1259-1261): with open true it opens them, false closes them, and without it each one toggles, as "
+				"Edit In-Place does. An in-place editor is the editor inPlace:<track> of editor.get, editor.set, "
+				"editor.input and editor.close: the key editor inside the track in the project window, showing every "
+				"MIDI part of the track, the first one active; its parts follow the track's and can't be set, and it "
+				"closes with its track. View state like the other editors: no undo steps, not saved, and a new or "
+				"loaded project closes them. Emits editor.changed for each editor that opens or closes. Without "
+				"tracks it changes nothing. Returns tracks, the tracks whose in-place editors are open, in the track "
+				"list's order.",
+				{{"type", "object"}, {"additionalProperties", false},
+					{"properties", {{"tracks", idsSchema}, {"open", boolean}}}},
+				{{"type", "object"}, {"required", {"tracks"}}, {"properties", {{"tracks", idsSchema}}}}, false},
+			[views, &model, store](CommandContext& context)
+			{
+				const Json& parameters = context.parameters();
+				const Project& project = model.project();
+				std::vector<ObjectId> tracks;
+				for (const ObjectId track : ids(parameters, "tracks"))
+				{
+					requireNoteTrack(project, track);
+					if (!contains(tracks, track))
+						tracks.push_back(track);
+				}
+				for (const ObjectId track : tracks)
+				{
+					const std::string editor = inPlaceName(track);
+					EditorView view = current(*views, model, editor);
+					if (parameters.value("open", !view.open) == view.open)
+						continue;
+					if (view.open)
+					{
+						view = closed(view);
+					}
+					else
+					{
+						view.open = true;
+						view.content = "key";
+						view.parts = midiPartsOf(project, track);
+						view.activePart = view.parts.empty() ? 0 : view.parts.front();
+					}
+					store(editor, view, context);
+				}
+				return Json{{"tracks", openInPlace(*views, model)}};
 			});
 
 		Json inputSchema = editorOnly({{"notes",
@@ -740,6 +872,7 @@ namespace gnubase::engine
 			{
 				const Json& parameters = context.parameters();
 				const std::string editor = parameters.at("editor").get<std::string>();
+				requireEditor(project, editor);
 				EditorView view = current(*views, model, editor);
 				require(view.open, "the " + editor + " editor isn't open");
 				require(!showsAudio(view), "the audio part editor takes no notes");

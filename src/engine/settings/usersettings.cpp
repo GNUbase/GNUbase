@@ -51,20 +51,21 @@ namespace gnubase::engine::settings
 					{{"visible", {{"type", "boolean"}}}, {"size", {{"type", "number"}, {"minimum", 0}}},
 						{"active", {{"type", "string"}}}, {"tabs", strings}, {"hidden", strings}}}};
 			const Json sections = {{"type", "object"}, {"properties", {{"order", strings}, {"hidden", strings}}}};
-			const Json window = {{"type", "object"},
-				{"properties",
-					{{"zones", {{"type", "object"}, {"additionalProperties", zone}}},
-						{"strips", {{"type", "object"}, {"additionalProperties", {{"type", "boolean"}}}}},
-						{"sections", {{"type", "object"}, {"additionalProperties", sections}}},
-						{"sizes",
-							{{"type", "object"}, {"additionalProperties", {{"type", "number"}, {"minimum", 0}}}}}}}};
 			const Json integer = {{"type", "integer"}};
 			const Json size = {{"type", "integer"}, {"minimum", 1}};
 			const Json bounds = {{"type", "object"},
 				{"properties", {{"x", integer}, {"y", integer}, {"width", size}, {"height", size}}},
 				{"required", Json::array({"x", "y", "width", "height"})}};
-			const Json panel = {
-				{"type", "object"}, {"properties", {{"floating", {{"type", "boolean"}}}, {"bounds", bounds}}}};
+			const Json text = {{"type", "string"}};
+			const Json window = {{"type", "object"},
+				{"properties",
+					{{"zones", {{"type", "object"}, {"additionalProperties", zone}}},
+						{"strips", {{"type", "object"}, {"additionalProperties", {{"type", "boolean"}}}}},
+						{"sections", {{"type", "object"}, {"additionalProperties", sections}}},
+						{"sizes", {{"type", "object"}, {"additionalProperties", {{"type", "number"}, {"minimum", 0}}}}},
+						{"open", {{"type", "boolean"}}}, {"bounds", bounds}, {"monitor", text}}}};
+			const Json panel = {{"type", "object"},
+				{"properties", {{"floating", {{"type", "boolean"}}}, {"bounds", bounds}, {"monitor", text}}}};
 			return {{"type", "object"},
 				{"properties",
 					{{"windows", {{"type", "object"}, {"additionalProperties", window}}},
@@ -445,11 +446,34 @@ namespace gnubase::engine::settings
 					"timeFormat) is barsBeats, linear with any other. Folder, ruler, tempo and signature tracks, "
 					"which hold no events of their own, are musical.",
 					Json{{"type", "string"}, {"enum", {"musical", "linear", "followTimeFormat"}}}, "musical"},
+				{"editing.importAudioConvert",
+					"Use Settings imports audio files with Convert to Project Sample Rate (audioFile.import convert; "
+					"see editing.onImportAudio).",
+					Json{{"type", "boolean"}}, true},
+				{"editing.importAudioCopy",
+					"Use Settings imports audio files with Copy Files to Project Folder (audioFile.import copy).",
+					Json{{"type", "boolean"}}, true},
+				{"editing.importAudioNameFormat",
+					"The names of the files Split Channels writes (audioFile.import nameFormat): dash (take-L.wav), "
+					"underscore (take_L.wav), dot (take.L.wav) or space (take L.wav).",
+					Json{{"type", "string"}, {"enum", {"dash", "underscore", "dot", "space"}}}, "dash"},
+				{"editing.importAudioOneTrack",
+					"Use Settings imports several audio files one after another on one track (audioFile.import "
+					"oneTrack).",
+					Json{{"type", "boolean"}}, false},
+				{"editing.importAudioSplitChannels",
+					"Use Settings imports audio files with Split Channels (audioFile.import splitChannels).",
+					Json{{"type", "boolean"}}, false},
 				{"editing.legatoOverlap",
 					"Legato Overlap (reference manual p. 1124): how far MIDI > Functions > Legato extends notes past "
 					"the start of the next note, in ticks of 480 per quarter note, -1920 to 1920; negative values "
 					"leave a gap.",
 					Json{{"type", "integer"}, {"minimum", -1920}, {"maximum", 1920}}, 0},
+				{"editing.onImportAudio",
+					"What importing audio files in the project window does (reference manual p. 357): "
+					"openOptionsDialog opens the Import Options dialog, useSettings imports at once with the "
+					"editing.importAudio* settings. The dialog's Do not ask again switches to useSettings.",
+					Json{{"type", "string"}, {"enum", {"openOptionsDialog", "useSettings"}}}, "openOptionsDialog"},
 				{"editing.tempoType",
 					"The type of new tempo events (reference manual p. 1448): ramp changes the tempo gradually from "
 					"the event before, step jumps, auto takes the type of the event before (tempo.add, tempo.tap).",
@@ -576,8 +600,12 @@ namespace gnubase::engine::settings
 					"hidden and the active one, and its strips (toolbar, infoLine, overviewLine, statusLine, "
 					"transportBar) with whether each is shown, and its sets of sections (such as a mixer channel's) "
 					"with the order of their sections and those hidden, and the sizes in dp of other elements that "
-					"splitters size (trackList: the track list's width); under panels, by panel, whether it is in a "
-					"window of its own and that window's bounds. What it leaves out has its default.",
+					"splitters size (trackList: the track list's width), and for the app's windows (project, mixer1 "
+					"to mixer4, markers, onScreenKeyboard, tempoTrack, arranger, transportPanel, timeDisplay) whether "
+					"it is open, its bounds and the name of its monitor; under panels, by panel, whether it is in a "
+					"window of its own and that window's bounds and monitor. What it leaves out has its default: a "
+					"window is closed. A window whose monitor isn't connected goes onto the primary one, fully "
+					"visible.",
 					layoutSchema(), Json::object()},
 				{"ui.markerLines",
 					"Which markers the event display shows as lines across every track: the active marker track's "
@@ -643,8 +671,9 @@ namespace gnubase::engine::settings
 					"The controls the track list shows, by track type (audio, instrument, midi, group, effect, "
 					"folder, marker, ruler, tempo, transpose), in order: mute, solo, record, monitor (audio, "
 					"instrument "
-					"and MIDI tracks), read (automation), timeBase, tempoTrack (the tempo track's Activate Tempo "
-					"Track), for ruler tracks timeFormat, timeOffsetOn, timeOffset and setTimeOffset (Set Time Offset "
+					"and MIDI tracks), read (automation), timeBase, on the tempo track tempoTrack (Activate Tempo "
+					"Track), currentTempo (Current Tempo) and tempoType (Type of New Tempo Points), for ruler tracks "
+					"timeFormat, timeOffsetOn, timeOffset and setTimeOffset (Set Time Offset "
 					"to Project Cursor Position), and for the transpose track transposeMute (Mute Transpose Events), "
 					"keepInOctave (Keep Transpose in Octave Range) and transposeLock (Lock). "
 					"Mute and solo always show on tracks with a channel; a type left out shows none.",
@@ -655,15 +684,16 @@ namespace gnubase::engine::settings
 									{{"type", "string"},
 										{"enum",
 											{"mute", "solo", "record", "monitor", "read", "timeBase", "tempoTrack",
-												"timeFormat", "timeOffsetOn", "timeOffset", "setTimeOffset",
-												"transposeMute", "keepInOctave", "transposeLock"}}}}}}},
+												"currentTempo", "tempoType", "timeFormat", "timeOffsetOn", "timeOffset",
+												"setTimeOffset", "transposeMute", "keepInOctave",
+												"transposeLock"}}}}}}},
 					Json{{"audio", {"mute", "solo", "record", "monitor", "read"}},
 						{"instrument", {"mute", "solo", "record", "monitor", "read"}},
 						{"midi", {"mute", "solo", "record", "monitor", "read"}}, {"group", {"mute", "solo", "read"}},
 						{"effect", {"mute", "solo", "read"}}, {"folder", {"mute", "solo", "read"}},
 						{"marker", Json::array()},
 						{"ruler", {"timeFormat", "timeOffsetOn", "timeOffset", "setTimeOffset"}},
-						{"tempo", {"tempoTrack"}}, {"signature", Json::array()},
+						{"tempo", {"tempoTrack", "currentTempo", "tempoType"}}, {"signature", Json::array()},
 						{"transpose", {"transposeMute", "keepInOctave", "timeBase", "transposeLock"}}}},
 				{"ui.trackWidths",
 					"The widths in the track list's rows, in dp: name, the track name's for every track type (20 to "
@@ -679,7 +709,7 @@ namespace gnubase::engine::settings
 					Json{{"name", 120},
 						{"controls",
 							{{"audio", 120}, {"instrument", 120}, {"midi", 120}, {"group", 120}, {"effect", 120},
-								{"folder", 120}, {"marker", 120}, {"ruler", 140}, {"tempo", 120},
+								{"folder", 120}, {"marker", 120}, {"ruler", 140}, {"tempo", 144},
 								{"signature", 120}}}}},
 				{"ui.upDownSelectsTracksOnly",
 					"Whether Up and Down (track.selectPrevious, track.selectNext) only select tracks; when off, while "
@@ -710,6 +740,31 @@ namespace gnubase::engine::settings
 																	{{"type", "integer"}, {"minimum", 0},
 																		{"maximum", 127}}}}}}}}}}},
 								{"required", Json::array({"name", "lanes"})}}}},
+					Json::array()},
+				{"ui.setupPresets",
+					"The setup panes' presets (reference manual p. 1575, docs/features/docking.md), by set of "
+					"sections (transport, inspector, channel): each a name, the order of the set's sections and those "
+					"hidden.",
+					Json{{"type", "object"},
+						{"additionalProperties",
+							{{"type", "array"},
+								{"items",
+									{{"type", "object"}, {"additionalProperties", false},
+										{"required", Json::array({"name", "order", "hidden"})},
+										{"properties",
+											{{"name", {{"type", "string"}, {"minLength", 1}}},
+												{"order", {{"type", "array"}, {"items", {{"type", "string"}}}}},
+												{"hidden", {{"type", "array"}, {"items", {{"type", "string"}}}}}}}}}}}},
+					Json::object()},
+				{"ui.workspaces",
+					"The global workspaces, for every project (workspace.* commands, docs/features/workspaces.md): "
+					"each a name and its layout, a copy of ui.layout.",
+					Json{{"type", "array"},
+						{"items",
+							{{"type", "object"},
+								{"properties",
+									{{"name", {{"type", "string"}, {"minLength", 1}}}, {"layout", layoutSchema()}}},
+								{"required", Json::array({"name", "layout"})}}}},
 					Json::array()},
 				{"ui.zoomPresets",
 					"The horizontal zoom presets of the event display, for every project: each a name and the "

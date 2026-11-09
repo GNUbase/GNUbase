@@ -17,6 +17,14 @@ namespace gnubase::app
 		Http,
 	};
 
+	// What the safe start mode does with the user settings (#163, reference manual pp. 1584-1586).
+	enum class SafeSettings : uint8_t
+	{
+		Use,     // the user's settings, as usual
+		Disable, // the factory settings, kept in memory only: the user's settings stay as they are
+		Delete,  // the user's settings files are deleted, so GNUbase starts with the factory settings
+	};
+
 	struct Options
 	{
 		bool help = false;
@@ -34,6 +42,12 @@ namespace gnubase::app
 		// The user settings folder (UTF-8). parseOptions leaves it empty unless --settings gives one; main then
 		// fills in settingsDirectory(options). runHeadless keeps the settings in memory if it is still empty.
 		std::string settings;
+		// The safe start mode (#163): --safe-mode asks for these options before the app starts (with the UI; holding
+		// Ctrl+Shift+Alt while it starts on Windows does too); --no-third-party-plugins deactivates the plugins that
+		// run in plugin host processes; --factory-settings and --delete-settings set settingsMode.
+		bool safeMode = false;
+		bool noThirdPartyPlugins = false;
+		SafeSettings settingsMode = SafeSettings::Use;
 	};
 
 	// Exit codes, for scripts and CI.
@@ -58,6 +72,14 @@ namespace gnubase::app
 
 	// The settings folder: --settings if given, otherwise the user's (GNUBASE_SETTINGS_DIR or the OS's folder).
 	std::filesystem::path settingsDirectory(const Options& options);
+
+	// The settings folder the engine uses as the safe start mode says (#163): options.settings, or none (in memory
+	// only) for SafeSettings::Disable; for SafeSettings::Delete, the profile files in it are deleted first.
+	std::filesystem::path safeSettingsDirectory(const Options& options);
+
+	// Whether the keys that open the safe start mode's dialog are held while GNUbase starts: Ctrl+Shift+Alt, which
+	// only Windows can tell before a window opens; false elsewhere.
+	bool safeModeKeysHeld();
 
 	// The text for --help.
 	std::string usage();

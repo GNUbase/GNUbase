@@ -510,6 +510,48 @@ TEST_CASE("audioFile.import splits channels into mono files on tracks of their o
 	CHECK(clap.at("position") == 4800);
 }
 
+TEST_CASE("audioFile.import names split files as nameFormat says", "[integration]")
+{
+	struct Format
+	{
+		const char* format;
+		const char* separator;
+	};
+	const Format format =
+		GENERATE(Format{"dash", "-"}, Format{"underscore", "_"}, Format{"dot", "."}, Format{"space", " "});
+	INFO(format.format);
+	SavedProject song;
+	writeFile(song.library / "room.wav", 1000, 2);
+	writeFile(song.library / "big.wav", 100, 10); // beyond 8 channels: numbered
+	const Json result = run(song.client, "audioFile.import",
+		{{"files", {utf8(song.library / "room.wav"), utf8(song.library / "big.wav")}}, {"splitChannels", true},
+			{"nameFormat", format.format}});
+	REQUIRE(result.at("media").size() == 12);
+	const Json project = run(song.client, "project.get");
+	const std::string separator = format.separator;
+	const std::vector<std::string> names{
+		"room" + separator + "L", "room" + separator + "R", "big" + separator + "1", "big" + separator + "10"};
+	const std::vector<size_t> indices{0, 1, 2, 11};
+	for (size_t i = 0; i < names.size(); ++i)
+	{
+		INFO(names[i]);
+		const Json media = byId(project.at("media"), result.at("media")[indices[i]]);
+		CHECK(media.at("path") == utf8(song.media / (names[i] + ".wav")));
+		CHECK(byId(project.at("tracks"), result.at("tracks")[indices[i]]).at("name") == names[i]);
+	}
+
+	// The default is dash; an unknown format is rejected.
+	writeFile(song.library / "hall.wav", 1000, 2);
+	const Json plain = run(song.client, "audioFile.import",
+		{{"files", {utf8(song.library / "hall.wav")}}, {"splitChannels", true}, {"clipsOnly", true}});
+	CHECK(byId(run(song.client, "project.get").at("media"), plain.at("media")[0]).at("path") ==
+		utf8(song.media / "hall-L.wav"));
+	const Json before = run(song.client, "project.get");
+	reject(song.client, "audioFile.import",
+		{{"files", {utf8(song.library / "room.wav")}}, {"splitChannels", true}, {"nameFormat", "slash"}});
+	CHECK(run(song.client, "project.get") == before);
+}
+
 TEST_CASE("audioFile.import splits and converts a file in one pass into mono files at the project's sample rate",
 	"[integration]")
 {
