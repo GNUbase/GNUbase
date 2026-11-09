@@ -94,6 +94,7 @@ add_executable(gnubase-tests
 	listeditor_ui_tests.cpp
 	lockrecord_tests.cpp
 	log_tests.cpp
+	logical_tests.cpp
 	mainmenu_tests.cpp
 	marker_tests.cpp
 	markers_ui_tests.cpp
@@ -114,6 +115,7 @@ add_executable(gnubase-tests
 	midimodifiers_tests.cpp
 	midipatches_tests.cpp
 	midirecording_tests.cpp
+	midirules_ui_tests.cpp
 	miditap_tests.cpp
 	mixdown_tests.cpp
 	mixdown_ui_tests.cpp
@@ -175,6 +177,7 @@ add_executable(gnubase-tests
 	timewarp_tests.cpp
 	timewarp_ui_tests.cpp
 	tracklist_tests.cpp
+	trackpresets_tests.cpp
 	trackversions_tests.cpp
 	trackversions_ui_tests.cpp
 	trackvisibility_tests.cpp

@@ -70,6 +70,10 @@ namespace gnubase::engine
 		Crossfade crossfade;                // only one that applies (crossfadeApplies)
 		std::vector<GainPoint> volumeCurve; // in the media file's sample frames
 		ObjectId front = 0;                 // frontOf: where events overlap, the highest plays
+		// An event of a warped clip (RenderMedia::warp): where its clip's start and end play, in its media file's
+		// frames, for the clip fades. Other events' clips start and end with their media files.
+		time::Samples clipStart = 0;
+		time::Samples clipEnd = 0;
 	};
 
 	struct RenderNote
@@ -169,6 +173,9 @@ namespace gnubase::engine
 		midi::Modifiers modifiers;    // MIDI and instrument channels: notes has them applied, live notes get them
 		midi::EffectRack midiInserts; // MIDI and instrument channels: the effects their sequencer runs
 		midi::EffectRack midiSends;
+		// MIDI and instrument channels: the rules of their input transformer's modules that are on, the track's or
+		// the project's, in order; empty for none.
+		std::vector<midi::LogicalRules> inputTransformer;
 		bool monitor = false; // the monitor and record enable buttons
 		bool recordEnable = false;
 		// MIDI and instrument tracks: they play what comes from all MIDI inputs (MIDI thru), since they monitor or

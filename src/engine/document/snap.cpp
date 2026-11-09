@@ -491,12 +491,13 @@ namespace gnubase::engine
 	{
 		const MediaFile& media = project.media.at(project.clips.at(event.clip).media);
 		const EventSpan span = eventSpan(project, event);
-		const int64_t frame = event.offset + std::llround(static_cast<double>(at - span.start) / span.ratio);
+		const int64_t frame =
+			event.offset + std::llround(eventFrames(project, event, static_cast<double>(at - span.start)));
 		const int64_t found = zeroCrossingFrame(
 			media, frame, inside ? event.offset + 1 : 0, inside ? event.offset + event.length - 1 : media.length - 1);
 		if (found == frame)
 			return at;
-		return span.start + std::llround(static_cast<double>(found - event.offset) * span.ratio);
+		return span.start + std::llround(eventSamples(project, event, static_cast<double>(found - event.offset)));
 	}
 
 	void registerSnapCommands(ProjectModel& model, Engine& engine)
@@ -607,7 +608,8 @@ namespace gnubase::engine
 					if (event.snapPoint && *event.snapPoint >= event.offset &&
 						*event.snapPoint < event.offset + event.length)
 						target.magnets.push_back(span.start +
-							std::llround(static_cast<double>(*event.snapPoint - event.offset) * span.ratio));
+							std::llround(
+								eventSamples(project, event, static_cast<double>(*event.snapPoint - event.offset))));
 				}
 				const auto partEdges = [&](ObjectId id, const time::Position& position, int64_t length)
 				{

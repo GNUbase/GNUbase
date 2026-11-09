@@ -677,6 +677,8 @@ namespace gnubase::app
 					}});
 			}
 		}
+		// Track import and export and track presets (docs/features/track-presets.md).
+		addTrackFileCommands();
 		// Auto fades (docs/features/fades.md): the project's, or the first selected track's.
 		m_keys.add({"project.autoFades", "Opens the auto fades dialog for the whole project.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { openAutoFades(window, 0); }});
@@ -1795,6 +1797,79 @@ namespace gnubase::app
 				if (!result.files.empty())
 					m_binding.send("track.set", {{"track", track}, {"picture", result.files.front().u8string()}});
 			});
+	}
+
+	void AppUi::addTrackFileCommands()
+	{
+		const auto selection = [this]
+		{ return m_trackList != nullptr ? m_trackList->selection() : std::vector<uint64_t>(); };
+		const auto hasSelection = [selection](ui::Window&, Rml::Element*) { return !selection().empty(); };
+		// File > Import > Tracks from Project or Track Archive (reference manual pp. 201-202): below the first
+		// selected track, or at the bottom.
+		m_keys.add({"file.importTracks",
+			"Imports the tracks of a project or track archive below the first selected track, or at the bottom.",
+			[this, selection](ui::Window& window, Rml::Element* /*zone*/)
+			{
+				ui::FileDialog dialog;
+				dialog.kind = ui::FileDialogKind::Open;
+				dialog.title = "Import Tracks";
+				dialog.filters = {{"DAWproject files", "dawproject"}, {"All files", "*"}};
+				dialog.parent = window.id();
+				m_shell.showFileDialog(dialog,
+					[this, below = selection()](const ui::FileDialogResult& chosen)
+					{
+						if (!chosen.error.empty())
+							logging::warning("The file dialog failed: {}", chosen.error);
+						if (chosen.files.empty())
+							return;
+						engine::Json parameters = {{"path", chosen.files.front().u8string()}};
+						if (!below.empty())
+							parameters["track"] = below.front();
+						m_binding.send("track.import", parameters);
+					});
+			}});
+		// File > Export > Selected Tracks (reference manual pp. 205-206): a track archive, with copies of the media.
+		m_keys.add({"file.exportTracks", "Exports the selected tracks as a track archive.",
+			[this, selection](ui::Window& window, Rml::Element* /*zone*/)
+			{
+				ui::FileDialog dialog;
+				dialog.kind = ui::FileDialogKind::Save;
+				dialog.title = "Export Selected Tracks";
+				dialog.filters = {{"DAWproject files", "dawproject"}};
+				dialog.location = "Tracks.dawproject";
+				dialog.parent = window.id();
+				m_shell.showFileDialog(dialog,
+					[this, tracks = selection()](const ui::FileDialogResult& chosen)
+					{
+						if (!chosen.error.empty())
+							logging::warning("The file dialog failed: {}", chosen.error);
+						if (chosen.files.empty())
+							return;
+						std::filesystem::path file = chosen.files.front();
+						if (file.extension().empty())
+							file += ".dawproject";
+						m_binding.send("track.export", {{"tracks", tracks}, {"path", file.u8string()}});
+					});
+			}});
+		m_keys.enableWhen("file.exportTracks", hasSelection);
+		// Track presets (reference manual pp. 199, 238-243): the dialog track-preset.rml for the selected tracks.
+		for (const auto& [id, mode, description] :
+			{std::tuple{"track.saveTrackPreset", "save", "Saves the sound of the selected tracks as a track preset."},
+				std::tuple{"track.loadTrackPreset", "load", "Gives the selected tracks the sound of a track preset."},
+				std::tuple{"project.addTrackFromPreset", "add",
+					"Adds the tracks of a track preset below the first selected track, or at the bottom."}})
+		{
+			m_keys.add({id, description,
+				[this, selection, mode = std::string(mode)](ui::Window& window, Rml::Element* /*zone*/)
+				{
+					std::string tracks;
+					for (const uint64_t track : selection())
+						tracks += (tracks.empty() ? "" : ",") + std::to_string(track);
+					openDialog(window, "track-preset.rml", {{"mode", mode}, {"tracks", tracks}});
+				}});
+			if (std::string(mode) != "add")
+				m_keys.enableWhen(id, hasSelection);
+		}
 	}
 
 	void AppUi::saveDrumMap(ui::WindowId parent, const std::string& editor)

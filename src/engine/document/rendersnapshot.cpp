@@ -121,8 +121,8 @@ namespace gnubase::engine
 		}
 
 		// An event of a warped clip plays a media file of its own (RenderMedia::warp), whose frames start at the
-		// event's start: its clip fades only where it reaches the clip's ends, its volume curve where its audio plays.
-		// ponytail: its fades keep their length in clip frames, whatever the stretch there.
+		// event's start: its clip fades and its volume curve where its audio plays.
+		// ponytail: its own fades keep their length in clip frames, whatever the stretch there.
 		void warpEvent(
 			const Project& project, const AudioEvent& event, RenderSnapshot& snapshot, RenderAudioEvent& render)
 		{
@@ -138,10 +138,11 @@ namespace gnubase::engine
 			};
 			for (GainPoint& point : render.volumeCurve)
 				point.position = moved(point.position);
-			if (event.offset > 0)
-				render.clipFadeIn = Fade();
-			if (event.offset + event.length < file.length)
-				render.clipFadeOut = Fade();
+			const WarpedClipEdges edges = warpedClipEdges(clip, file.length, media.warp);
+			render.clipStart = edges.start;
+			render.clipEnd = edges.end;
+			render.clipFadeIn.length = edges.fadeInEnd - edges.start;
+			render.clipFadeOut.length = edges.end - edges.fadeOutStart;
 			render.media = static_cast<int>(snapshot.media.size());
 			render.offset = 0;
 			render.length = media.length;
@@ -480,6 +481,13 @@ namespace gnubase::engine
 			render.modifiers = channel.modifiers;
 			render.midiInserts = channel.midiInserts;
 			render.midiSends = channel.midiSends;
+			if (channel.inputTransformer.mode != midi::InputTransformerMode::Off)
+				for (const midi::InputTransformerModule& module :
+					channel.inputTransformer.mode == midi::InputTransformerMode::Project
+						? project.inputTransformer
+						: channel.inputTransformer.modules)
+					if (module.on)
+						render.inputTransformer.push_back(module.rules);
 			render.monitor = channel.monitor;
 			render.recordEnable = channel.recordEnable;
 			render.listen = channel.listen;
@@ -539,7 +547,7 @@ namespace gnubase::engine
 				event.length, static_cast<float>(std::pow(10.0, event.volume / 20.0)), event.mute, event.fadeIn,
 				event.fadeOut, clip.fadeIn, clip.fadeOut,
 				crossfadeApplies(project, event) ? event.crossfade : Crossfade(), gainPoints(event.volumeCurve),
-				frontOf(event)};
+				frontOf(event), 0, 0};
 			if (warped(clip))
 				warpEvent(project, event, *snapshot, render);
 			if (const auto part = project.audioParts.find(event.part); part != project.audioParts.end() &&

@@ -154,6 +154,7 @@ add_library(gnubase-engine STATIC
 	document/stripparameters.cpp document/stripparameters.h
 	document/tempo.cpp
 	document/timewarp.cpp document/timewarp.h
+	document/trackpresets.cpp document/trackpresets.h
 	document/trackversions.cpp document/trackversions.h
 	document/trackvisibility.cpp document/trackvisibility.h
 	document/transpose.cpp
@@ -187,6 +188,8 @@ add_library(gnubase-engine STATIC
 	midi/functioncommands.cpp midi/functioncommands.h
 	midi/functions.cpp midi/functions.h
 	midi/harmony.cpp midi/harmony.h
+	midi/logical.cpp midi/logical.h
+	midi/logicalcommands.cpp midi/logicalcommands.h
 	midi/midivalues.cpp midi/midivalues.h
 	midi/modifiers.cpp midi/modifiers.h
 	midi/quantize.cpp midi/quantize.h

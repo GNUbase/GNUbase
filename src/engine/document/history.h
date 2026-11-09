@@ -67,6 +67,7 @@ namespace gnubase::engine
 		TransposeTrack transpose;
 		ChordTrack chords;
 		ChordPads chordPads;
+		midi::InputTransformerModules inputTransformer;
 	};
 
 	// How a project changed, object by object. The id counter is left out on purpose: undoing an addition doesn't

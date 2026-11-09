@@ -7,7 +7,6 @@
 #include <cctype>
 #include <cmath>
 #include <functional>
-#include <numeric>
 #include <stdexcept>
 #include <tuple>
 #include <utility>
@@ -384,9 +383,184 @@ namespace gnubase::engine::processors
 		m_chordOf[index] = g_none;
 	}
 
+	namespace
+	{
+		using midi::LogicalEvent;
+		using midi::LogicalType;
+
+		// An event as the rules see it; false for those they don't: note-offs, SysEx and parameter changes.
+		bool toLogical(const graph::ProcessEvent& event, LogicalEvent& out) noexcept
+		{
+			out = LogicalEvent{};
+			out.channel = (event.channel % 16) + 1;
+			out.subtype = event.key % 128;
+			switch (event.type)
+			{
+			case Type::NoteOn:
+				out.type = LogicalType::Note;
+				out.mainValue = midi::noteOnVelocityToMidi1(event.velocity);
+				return true;
+			case Type::PolyPressure:
+				out.type = LogicalType::PolyPressure;
+				out.mainValue = midi::controllerToMidi1(event.value);
+				return true;
+			case Type::Controller:
+				out.type = LogicalType::Controller;
+				out.mainValue = midi::controllerToMidi1(event.value);
+				return true;
+			case Type::Program:
+				out.type = LogicalType::Program;
+				return true;
+			case Type::ChannelPressure:
+				out.type = LogicalType::Aftertouch;
+				out.subtype = midi::controllerToMidi1(event.value);
+				return true;
+			case Type::PitchBend:
+			{
+				const uint16_t bend = midi::pitchBendToMidi1(event.value);
+				out.type = LogicalType::PitchBend;
+				out.subtype = static_cast<int>(bend & 0x7FU);
+				out.mainValue = static_cast<int>(bend >> 7U);
+				return true;
+			}
+			default:
+				return false;
+			}
+		}
+
+		// The event the rules made of source, which was original: values they didn't change keep their full
+		// resolution.
+		graph::ProcessEvent fromLogical(
+			const LogicalEvent& changed, const LogicalEvent& original, const graph::ProcessEvent& source) noexcept
+		{
+			graph::ProcessEvent out = source;
+			out.channel = static_cast<uint8_t>(changed.channel - 1);
+			const bool sameType = changed.type == original.type;
+			const bool subtypeSame = sameType && changed.subtype == original.subtype;
+			const bool mainSame = sameType && changed.mainValue == original.mainValue;
+			const auto main = static_cast<uint8_t>(changed.mainValue);
+			const auto subtype = static_cast<uint8_t>(changed.subtype);
+			switch (changed.type)
+			{
+			case LogicalType::Note:
+				out.key = subtype;
+				if (!sameType)
+					out.type = main > 0 ? Type::NoteOn : Type::NoteOff;
+				if (out.type == Type::NoteOff)
+					out.velocity = midi::velocityFromMidi1(64);
+				else if (!mainSame)
+					out.velocity = midi::velocityFromMidi1(std::max<uint8_t>(main, 1));
+				break;
+			case LogicalType::PolyPressure:
+			case LogicalType::Controller:
+				out.type = changed.type == LogicalType::Controller ? Type::Controller : Type::PolyPressure;
+				out.key = subtype;
+				if (!mainSame)
+					out.value = midi::controllerFromMidi1(main);
+				break;
+			case LogicalType::Program:
+				out.type = Type::Program;
+				out.key = subtype;
+				if (!sameType)
+					out.value = 0xFFFFFFFFU; // no bank
+				break;
+			case LogicalType::Aftertouch:
+				out.type = Type::ChannelPressure;
+				out.key = 0;
+				if (!subtypeSame)
+					out.value = midi::controllerFromMidi1(subtype);
+				break;
+			case LogicalType::PitchBend:
+				out.type = Type::PitchBend;
+				out.key = 0;
+				if (!subtypeSame || !mainSame)
+					out.value = midi::pitchBendFromMidi1(static_cast<uint16_t>((main << 7U) | subtype));
+				break;
+			}
+			return out;
+		}
+
+		graph::ProcessEvent movedTo(graph::ProcessEvent event, uint16_t index) noexcept
+		{
+			event.channel = static_cast<uint8_t>(index / 128);
+			event.key = static_cast<uint8_t>(index % 128);
+			return event;
+		}
+	}
+
+	LogicalStage::LogicalStage() = default;
+
+	void LogicalStage::reset() noexcept
+	{
+		m_held.fill(Held{});
+		m_random = {};
+	}
+
+	void LogicalStage::handle(
+		const graph::ProcessEvent& event, const LogicalRulesView& rules, graph::EventBuffer& out) noexcept
+	{
+		using midi::LogicalFunction;
+		const uint16_t index = indexOf(event);
+		Held& held = m_held[index];
+		LogicalEvent original;
+		const bool logical = toLogical(event, original);
+		const bool found = logical && midi::matches(rules.filters, rules.filterCount, original);
+		// The pressure of a held note the rules don't find follows its note-on.
+		if (event.type == Type::NoteOff || (event.type == Type::PolyPressure && held.down && !found))
+		{
+			if (!held.down) // a note from before the rules
+			{
+				out.add(event);
+				return;
+			}
+			if (held.passed)
+				out.add(event);
+			if (held.to != g_none && (!held.passed || held.to != index))
+				out.add(movedTo(event, held.to));
+			if (event.type == Type::NoteOff)
+				held.down = false;
+			return;
+		}
+		if (!logical)
+		{
+			out.add(event);
+			return;
+		}
+		const LogicalFunction function = rules.function;
+		const bool pass = function == LogicalFunction::Insert || function == LogicalFunction::Select ||
+			(!found && function != LogicalFunction::InsertExclusive);
+		bool emit = found &&
+			(function == LogicalFunction::Transform || function == LogicalFunction::Insert ||
+				function == LogicalFunction::InsertExclusive);
+		graph::ProcessEvent changed;
+		if (emit)
+		{
+			LogicalEvent result = original;
+			emit = midi::transform(rules.actions, rules.actionCount, result, m_random);
+			if (emit)
+				changed = fromLogical(result, original, event);
+		}
+		if (event.type == Type::NoteOn)
+		{
+			const uint16_t to = emit && changed.type == Type::NoteOn ? indexOf(changed) : g_none;
+			if (held.down) // played again before its note-off: ends what the earlier one started and this one doesn't
+			{
+				if (held.to != g_none && held.to != to && (!pass || held.to != index))
+					out.add(noteEvent(Type::NoteOff, held.to, 0, event.offset));
+				if (held.passed && !pass && to != index)
+					out.add(noteEvent(Type::NoteOff, index, 0, event.offset));
+			}
+			held = {to, pass, true};
+		}
+		if (pass)
+			out.add(event);
+		if (emit)
+			out.add(changed);
+	}
+
 	Transformer::Transformer() : MidiEffect("transformer")
 	{
-		std::iota(m_to.begin(), m_to.end(), uint16_t{0});
+		update();
 	}
 
 	void Transformer::setParameter(uint32_t id, double value) noexcept
@@ -412,77 +586,79 @@ namespace gnubase::engine::processors
 		default:
 			break;
 		}
+		update();
+	}
+
+	void Transformer::update() noexcept
+	{
+		using midi::LogicalCondition;
+		using midi::LogicalFunction;
+		using midi::LogicalOperation;
+		using midi::LogicalTarget;
+		m_filters[0] = {0, LogicalTarget::Type, LogicalCondition::Equal, static_cast<double>(LogicalType::Note), 0.0, 0,
+			midi::LogicalBool::And};
+		constexpr std::array<LogicalTarget, 4> tested = {
+			LogicalTarget::Subtype, LogicalTarget::Subtype, LogicalTarget::MainValue, LogicalTarget::Channel};
+		m_filters[1] = {0, tested[m_condition % 4U], LogicalCondition::InsideRange, static_cast<double>(m_minimum),
+			static_cast<double>(m_maximum), 0, midi::LogicalBool::And};
+		const auto value = static_cast<double>(m_value);
+		switch (m_action)
+		{
+		case Transpose:
+			m_change = {LogicalTarget::Subtype, LogicalOperation::Add, value, 0.0};
+			break;
+		case SetVelocity:
+			m_change = {LogicalTarget::MainValue, LogicalOperation::SetFixed, value, 0.0};
+			break;
+		case AddVelocity:
+			m_change = {LogicalTarget::MainValue, LogicalOperation::Add, value, 0.0};
+			break;
+		default: // SetChannel, and Delete, which has no action
+			m_change = {LogicalTarget::Channel, LogicalOperation::SetFixed, value, 0.0};
+			break;
+		}
+		const bool remove = m_action == Delete;
+		m_rules = {m_filters.data(), m_condition == AllNotes ? size_t{1} : size_t{2},
+			remove ? LogicalFunction::Delete : LogicalFunction::Transform, &m_change, remove ? size_t{0} : size_t{1}};
 	}
 
 	void Transformer::reset() noexcept
 	{
-		std::iota(m_to.begin(), m_to.end(), uint16_t{0});
-		m_down.fill(false);
-	}
-
-	uint16_t Transformer::transform(const graph::ProcessEvent& event, uint16_t& velocity) const noexcept
-	{
-		const int velocity1 = midi::velocityToMidi1(event.velocity);
-		int tested = event.key;
-		if (m_condition == Velocity)
-			tested = velocity1;
-		else if (m_condition == Channel)
-			tested = event.channel + 1;
-		velocity = event.velocity;
-		int channel = event.channel;
-		int key = event.key;
-		if (m_condition == AllNotes || (tested >= m_minimum && tested <= m_maximum))
-			switch (m_action)
-			{
-			case Transpose:
-				key += m_value;
-				break;
-			case SetVelocity:
-				velocity = midi::velocityFromMidi1(static_cast<uint8_t>(std::clamp(m_value, 1, 127)));
-				break;
-			case AddVelocity:
-				velocity = midi::velocityFromMidi1(static_cast<uint8_t>(std::clamp(velocity1 + m_value, 1, 127)));
-				break;
-			case SetChannel:
-				channel = std::clamp(m_value, 1, 16) - 1;
-				break;
-			default: // Delete
-				return static_cast<uint16_t>(g_notes);
-			}
-		if (key < 0 || key > 127)
-			return static_cast<uint16_t>(g_notes);
-		return static_cast<uint16_t>((channel * 128) + key);
+		m_stage.reset();
 	}
 
 	void Transformer::handle(const graph::ProcessEvent& event, const graph::ProcessContext& context) noexcept
 	{
-		const uint16_t index = indexOf(event);
-		graph::ProcessEvent out = event;
-		if (event.type == Type::NoteOn)
-		{
-			const uint16_t to = transform(event, out.velocity);
-			if (m_down[index] && m_to[index] != g_notes && m_to[index] != to)
-				context.eventsOut.add(noteEvent(Type::NoteOff, m_to[index], 0, event.offset));
-			m_down[index] = true;
-			m_to[index] = to;
-		}
-		else if (event.type == Type::NoteOff || event.type == Type::PolyPressure)
-		{
-			if (!m_down[index]) // a note from before the effect
-				m_to[index] = index;
-			if (event.type == Type::NoteOff)
-				m_down[index] = false;
-		}
-		else
-		{
-			context.eventsOut.add(event);
+		m_stage.handle(event, m_rules, context.eventsOut);
+	}
+
+	InputTransformerProcessor::InputTransformerProcessor(size_t capacity) : m_first(capacity), m_second(capacity)
+	{
+	}
+
+	void InputTransformerProcessor::process(
+		graph::EventBuffer& events, const std::vector<midi::LogicalRules>& modules) noexcept
+	{
+		if (events.empty())
 			return;
+		const graph::EventBuffer* in = &events;
+		for (size_t m = 0; m < m_stages.size(); ++m)
+		{
+			graph::EventBuffer& out = in == &m_first ? m_second : m_first;
+			out.clear();
+			LogicalRulesView view{nullptr, 0, midi::LogicalFunction::Select, nullptr, 0}; // passes events on
+			if (m < modules.size())
+			{
+				const midi::LogicalRules& rules = modules[m];
+				view = {rules.filters.data(), rules.filters.size(), rules.function, rules.actions.data(),
+					rules.actions.size()};
+			}
+			for (const graph::ProcessEvent& event : *in)
+				m_stages[m].handle(event, view, out);
+			in = &out;
 		}
-		const uint16_t to = m_to[index];
-		if (to == g_notes)
-			return;
-		out.channel = static_cast<uint8_t>(to / 128);
-		out.key = static_cast<uint8_t>(to % 128);
-		context.eventsOut.add(out);
+		events.clear();
+		for (const graph::ProcessEvent& event : *in)
+			events.add(event);
 	}
 }

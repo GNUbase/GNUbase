@@ -535,6 +535,10 @@ namespace gnubase::engine
 			const auto found = std::find_if(snapshot.channels.begin(), snapshot.channels.end(),
 				[channel = channel](const RenderChannel& candidate) { return candidate.id == channel; });
 			program->thru.push_back(static_cast<uint8_t>(found != snapshot.channels.end() && found->midiThru));
+			const auto transformer = m_inputTransformers.find(channel);
+			program->inputTransformers.push_back(
+				{transformer != m_inputTransformers.end() ? transformer->second : nullptr,
+					found != snapshot.channels.end() ? found->inputTransformer : std::vector<midi::LogicalRules>()});
 		}
 		program->chordPadKeys = snapshot.chordPadKeys;
 		// Bus nodes come first, in bus order (graph::describe); child busses reach the device through their parent.
@@ -624,6 +628,7 @@ namespace gnubase::engine
 			}
 
 		std::map<ObjectId, std::shared_ptr<MidiSequencer>> sequencers;
+		std::map<ObjectId, std::shared_ptr<processors::InputTransformerProcessor>> transformers;
 		std::map<ObjectId, Instrument> instruments;
 		for (const RenderChannel& channel : snapshot.channels)
 		{
@@ -649,6 +654,12 @@ namespace gnubase::engine
 			sequencer->setSequence(std::move(sequence));
 			sequencer->setChase(m_chase);
 			sequencers[channel.id] = sequencer;
+			// A track keeps its input transformer once it had rules, so the notes they changed end where they sound.
+			if (const auto old = m_inputTransformers.find(channel.id); old != m_inputTransformers.end())
+				transformers[channel.id] = old->second;
+			else if (!channel.inputTransformer.empty())
+				transformers[channel.id] =
+					std::make_shared<processors::InputTransformerProcessor>(sequencer->input().capacity());
 
 			std::shared_ptr<graph::Processor> processor = sequencer;
 			if (channel.type == TrackType::Instrument)
@@ -684,6 +695,7 @@ namespace gnubase::engine
 				desc.nodes[static_cast<size_t>(source)].processor = processor;
 		}
 		m_sequencers = std::move(sequencers);
+		m_inputTransformers = std::move(transformers);
 		m_instruments = std::move(instruments);
 	}
 
@@ -969,6 +981,9 @@ namespace gnubase::engine
 		captureInput(block);
 		m_tap.deliver(block.position, block.frames, program.sequencers);
 		MidiTap::thru(m_midiInput, program.sequencers, program.thru);
+		for (size_t i = 0; i < program.sequencers.size() && i < program.inputTransformers.size(); ++i)
+			if (const InputTransform& transform = program.inputTransformers[i]; transform.processor)
+				transform.processor->process(program.sequencers[i].second->input(), transform.rules);
 		m_recorder.process(block, m_played, m_recordOffset.load(std::memory_order_relaxed), program.sequencers);
 		transport.tempo = program.tempo.bpmAt(program.tempo.toTicks(transport.position, program.sampleRate));
 		program.graph.process(block.frames, transport, m_workers.get());

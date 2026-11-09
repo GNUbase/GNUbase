@@ -84,6 +84,9 @@ namespace gnubase::engine::midi
 		int highest = 127;
 	};
 
+	// The closest pitch of the scale, the lower one on a tie. Real-time safe.
+	int nearestInScale(int pitch, const Scale& scale) noexcept;
+
 	// The new pitch of a note, 0 to 127: notes that would leave MIDI's range move by octaves into it.
 	int transposePitch(int pitch, const TransposeSettings& settings);
 	// Transposes the selected notes; with every note selected, poly pressure events follow their pitch.
