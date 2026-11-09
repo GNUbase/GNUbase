@@ -338,8 +338,9 @@ namespace gnubase::engine
 			else
 			{
 				result.subject.media = given.at("media").get<ObjectId>();
-				const auto found = std::find_if(snapshot.media.begin(), snapshot.media.end(),
-					[&result](const RenderMedia& media) { return media.id == result.subject.media; });
+				const auto found =
+					std::find_if(snapshot.media.begin(), snapshot.media.end(), [&result](const RenderMedia& media)
+						{ return media.id == result.subject.media && media.warp.empty(); }); // not a warped event's
 				require(found != snapshot.media.end(), "no media file " + std::to_string(result.subject.media));
 				require(found->sampleRate > 0.0 && found->length >= 0, // a hand-edited project's, say
 					"media file " + std::to_string(found->id) + " has no sample rate or length");

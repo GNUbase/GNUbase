@@ -2,6 +2,7 @@
 #include "engine/audio/automation.h"
 #include "engine/document/stripparameters.h"
 #include "engine/processors/builtin.h"
+#include "engine/processors/builtinplugin.h"
 
 #include "engine/graph/graph.h"
 #include "engine/midi/midivalues.h"
@@ -323,6 +324,9 @@ namespace gnubase::engine
 		auto automation = std::make_unique<ChannelAutomation>();
 		automation->instrument = channel.instrument;
 		std::vector<PlayedLane>& lanes = automation->lanes;
+		// The mute button, while no mute automation plays (RenderChannel::muted): the gaps of a mute lane have it too.
+		const PlayedLane mute{{AutomationTargetType::Mute, 0, 0, 0, 0}, Kind::Fader, ChannelFader::Mute,
+			channel.muted ? 1.0 : 0.0, 0.0, 1.0, {}};
 		if (channel.format != ChannelFormat::None)
 		{
 			lanes.push_back({{AutomationTargetType::Volume, 0, 0, 0, 0}, Kind::Fader, ChannelFader::Volume,
@@ -333,8 +337,11 @@ namespace gnubase::engine
 				channel.panLeft, -1.0, 1.0, {}});
 			lanes.push_back({{AutomationTargetType::PanRight, 0, 0, 0, 0}, Kind::Fader, ChannelFader::PanRight,
 				channel.panRight, -1.0, 1.0, {}});
-			lanes.push_back(
-				{{AutomationTargetType::Mute, 0, 0, 0, 0}, Kind::Fader, ChannelFader::Mute, 0.0, 0.0, 1.0, {}});
+			lanes.push_back(mute);
+		}
+		else if (channel.type == TrackType::Midi)
+		{
+			lanes.push_back(mute);
 		}
 		for (const auto& [number, value] :
 			{std::pair{uint8_t{7}, channel.midiVolume}, std::pair{uint8_t{10}, channel.midiPan}})
@@ -363,14 +370,14 @@ namespace gnubase::engine
 		for (const RenderSlot& slot : channel.slots)
 		{
 			// Other plugins report their parameters once they run (#283).
-			if (const processors::BuiltinInfo* info = processors::findBuiltinPlugin(slot.plugin))
-				for (const processors::ParameterInfo& parameter : info->parameters)
-				{
-					const auto set = slot.parameters.find(parameter.id);
-					const double value = set != slot.parameters.end() ? set->second : parameter.defaultValue;
-					lanes.push_back({{AutomationTargetType::Plugin, parameter.id, 0, 0, slot.id}, Kind::Plugin,
-						parameter.id, value, parameter.minimum, parameter.maximum, {}});
-				}
+			const processors::BuiltinInfo* info = processors::findBuiltinPlugin(slot.plugin);
+			if (info == nullptr)
+				continue;
+			// The values set apply on top of the plugin's state (Slot::parameters).
+			for (const processors::ParameterInfo& parameter : info->parameters)
+				lanes.push_back({{AutomationTargetType::Plugin, parameter.id, 0, 0, slot.id}, Kind::Plugin,
+					parameter.id, processors::BuiltinPlugin::staticValue(parameter, slot.parameters, slot.state.get()),
+					parameter.minimum, parameter.maximum, {}});
 		}
 		const bool midi = channel.type == TrackType::Midi || channel.type == TrackType::Instrument;
 		for (const RenderAutomationLane& lane : channel.automation)
@@ -461,11 +468,13 @@ namespace gnubase::engine
 		graph::EventBuffer& plugins, uint32_t smoothing) noexcept
 	{
 		const ChannelAutomation& automation = m_automation.acquire();
+		// The first values of a new channel don't glide, not even mute's.
+		const uint32_t declick = m_played == 0 ? 0 : smoothing;
 		// Where a lane's events go: a plugin lane's are keyed by its slot's index in the program that plays, and go
 		// nowhere when that program doesn't have its slot (yet, or any more).
 		const auto outputs = [&](const PlayedLane& lane) noexcept -> std::optional<Outputs>
 		{
-			Outputs out{source, fader, plugins, smoothing};
+			Outputs out{source, fader, plugins, declick};
 			if (lane.kind != Kind::Plugin)
 				return out;
 			const auto slot = std::find(slots.begin(), slots.end(), lane.target.slot);
@@ -697,6 +706,8 @@ namespace gnubase::engine
 		else
 			for (const graph::ProcessEvent& event : m_sourceEvents)
 				context.eventsOut.add(event);
+		if (context.channels == 0)
+			muteMidi(context.eventsOut);
 		render(RenderPoint::Source, context);
 		m_state->sections.processPre(m_faderEvents, context.audio, context.channels, context.frames);
 
@@ -708,6 +719,72 @@ namespace gnubase::engine
 			return;
 		}
 		fade(context, m_faderEvents);
+	}
+
+	void ChannelStrip::muteMidi(graph::EventBuffer& out) noexcept
+	{
+		using Type = graph::ProcessEvent::Type;
+		ChannelState& state = *m_state;
+		const auto isMute = [](const graph::ProcessEvent& event) noexcept
+		{ return event.type == Type::Parameter && event.parameter == ChannelFader::Mute; };
+		const auto note = [](const graph::ProcessEvent& event) noexcept
+		{ return (size_t{event.channel & 15U} * 128) + (event.key & 127U); };
+		// Whether an event passes, keeping track of the notes that sound: a note-off of one that sounds always does.
+		const auto pass = [&state, &note](const graph::ProcessEvent& event) noexcept
+		{
+			if (event.type == Type::NoteOff && state.midiHeld[note(event)])
+			{
+				state.midiHeld[note(event)] = false;
+				return true;
+			}
+			if (state.midiMuted)
+				return false;
+			if (event.type == Type::NoteOn)
+				state.midiHeld[note(event)] = true;
+			return true;
+		};
+		if (!state.midiMuted && std::none_of(m_faderEvents.begin(), m_faderEvents.end(), isMute))
+		{
+			for (const graph::ProcessEvent& event : out)
+				pass(event);
+			return;
+		}
+		// The source's events are no longer needed: they hold the block's events while they are muted.
+		m_sourceEvents.clear();
+		for (const graph::ProcessEvent& event : out)
+			m_sourceEvents.add(event);
+		out.clear();
+		const graph::ProcessEvent* mute = m_faderEvents.begin();
+		// Mutes or unmutes at the mute events up to offset; a mute ends the notes that sound at its sample.
+		const auto muteUntil = [&](uint32_t offset) noexcept
+		{
+			for (; mute != m_faderEvents.end() && mute->offset <= offset; ++mute)
+			{
+				if (!isMute(*mute))
+					continue;
+				const bool muted = mute->parameterValue >= 0.5;
+				if (muted && !state.midiMuted)
+					for (size_t n = 0; n < g_midiNotes; ++n)
+						if (state.midiHeld[n])
+						{
+							graph::ProcessEvent end;
+							end.offset = mute->offset;
+							end.type = Type::NoteOff;
+							end.channel = static_cast<uint8_t>(n / 128);
+							end.key = static_cast<uint8_t>(n % 128);
+							out.add(end);
+							state.midiHeld[n] = false;
+						}
+				state.midiMuted = muted;
+			}
+		};
+		for (const graph::ProcessEvent& event : m_sourceEvents)
+		{
+			muteUntil(event.offset);
+			if (pass(event))
+				out.add(event);
+		}
+		muteUntil(UINT32_MAX);
 	}
 
 	void ChannelStrip::render(RenderPoint point, const graph::ProcessContext& context) noexcept

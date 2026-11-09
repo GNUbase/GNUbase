@@ -15,9 +15,11 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <functional>
 #include <initializer_list>
 #include <limits>
@@ -1196,9 +1198,9 @@ TEST_CASE("mute automation is a step curve that mutes from its sample and overri
 	INFO("block size " << blockSize);
 	Mixer mixer(blockSize);
 	CHECK_THAT(reject(mixer.client, "automationLane.add",
-				   {{"track", idOf(run(mixer.client, "track.add", {{"type", "midi"}}), "track")},
+				   {{"track", idOf(run(mixer.client, "track.add", {{"type", "vca"}}), "track")},
 					   {"target", {{"type", "mute"}}}}),
-		ContainsSubstring("MIDI"));
+		ContainsSubstring("VCA"));
 	run(mixer.client, "channel.set", {{"channel", mixer.channel}, {"mute", true}});
 	const ObjectId lane = mixer.lane({{"type", "mute"}});
 	const Json points = run(mixer.client, "automationPoint.add",
@@ -1844,4 +1846,188 @@ TEST_CASE("a lane of the limiter's switch plays it bypassed with its look-ahead,
 		CHECK(before > 0.49F);
 		CHECK(limited > 0.9 * threshold);
 	}
+}
+
+TEST_CASE("switching between the mute button and mute automation lets no audio through", "[integration]")
+{
+	const int blockSize = GENERATE(64, 512);
+	INFO("block size " << blockSize);
+	Mixer mixer(blockSize);
+	run(mixer.client, "channel.set", {{"channel", mixer.channel}, {"mute", true}});
+	run(mixer.client, "transport.play");
+	run(mixer.client, "audio.render", {{"frames", 2048}});
+	const ObjectId lane = mixer.lane({{"type", "mute"}});
+	run(mixer.client, "audio.render", {{"frames", 2048}});
+	// The lane's first point takes over from the button, and without points the button mutes again.
+	const Json point =
+		run(mixer.client, "automationPoint.add", {{"lane", lane}, {"points", {{{"position", 0}, {"value", 1.0}}}}})
+			.at("points")
+			.at(0);
+	run(mixer.client, "audio.render", {{"frames", 2048}});
+	run(mixer.client, "automationPoint.remove", {{"lane", lane}, {"points", {point.at("id")}}});
+	run(mixer.client, "audio.render", {{"frames", 2048}});
+	// Reading off and on again.
+	run(mixer.client, "automationPoint.add", {{"lane", lane}, {"points", {{{"position", 0}, {"value", 1.0}}}}});
+	run(mixer.client, "audio.render", {{"frames", 2048}});
+	run(mixer.client, "automationLane.set", {{"lane", lane}, {"read", false}});
+	run(mixer.client, "audio.render", {{"frames", 2048}});
+	for (int channel = 0; channel < 2; ++channel)
+	{
+		const std::vector<float> output = mixer.capture(channel, int64_t{6} * 2048);
+		float loudest = 0.0F;
+		for (const float sample : output)
+			loudest = std::max(loudest, std::abs(sample));
+		INFO("channel " << channel);
+		CHECK(loudest == 0.0F);
+	}
+}
+
+TEST_CASE("switching between the mute button and mute automation on a channel another's solo silences lets no audio "
+		  "through",
+	"[integration]")
+{
+	const int blockSize = GENERATE(64, 512);
+	INFO("block size " << blockSize);
+	Mixer mixer(blockSize);
+	// Another track, which doesn't monitor and so plays nothing, is soloed.
+	const ObjectId soloist =
+		channelOf(mixer.client, idOf(run(mixer.client, "track.add", {{"type", "audio"}}), "track"));
+	run(mixer.client, "channel.set", {{"channel", soloist}, {"solo", true}});
+	run(mixer.client, "transport.play");
+	run(mixer.client, "audio.render", {{"frames", 2048}});
+	// Muting and unmuting.
+	run(mixer.client, "channel.set", {{"channel", mixer.channel}, {"mute", true}});
+	run(mixer.client, "audio.render", {{"frames", 2048}});
+	run(mixer.client, "channel.set", {{"channel", mixer.channel}, {"mute", false}});
+	run(mixer.client, "audio.render", {{"frames", 2048}});
+	// Adding and removing a mute lane's first point while the button is on.
+	run(mixer.client, "channel.set", {{"channel", mixer.channel}, {"mute", true}});
+	run(mixer.client, "audio.render", {{"frames", 2048}});
+	const ObjectId lane = mixer.lane({{"type", "mute"}});
+	const Json point =
+		run(mixer.client, "automationPoint.add", {{"lane", lane}, {"points", {{{"position", 0}, {"value", 0.0}}}}})
+			.at("points")
+			.at(0);
+	run(mixer.client, "audio.render", {{"frames", 2048}});
+	run(mixer.client, "automationPoint.remove", {{"lane", lane}, {"points", {point.at("id")}}});
+	run(mixer.client, "audio.render", {{"frames", 2048}});
+	for (int channel = 0; channel < 2; ++channel)
+	{
+		const std::vector<float> output = mixer.capture(channel, int64_t{7} * 2048);
+		float loudest = 0.0F;
+		for (const float sample : output)
+			loudest = std::max(loudest, std::abs(sample));
+		INFO("channel " << channel);
+		CHECK(loudest == 0.0F);
+	}
+}
+
+TEST_CASE("points of mute and stepped parameters' lanes load from files as steps with whole values", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId audio = idOf(run(client, "track.add", {{"type", "audio"}}), "track");
+	const ObjectId midi = idOf(run(client, "track.add", {{"type", "midi"}}), "track");
+	const Json delay = insertPlugin(client, channelOf(client, audio), "builtin:delay");
+	for (const auto& [track, target] : {std::pair{audio, Json{{"type", "mute"}}},
+			 std::pair{midi, Json{{"type", "mute"}}}, std::pair{audio, pluginTarget(delay, 1)}, // Sync, a switch
+			 std::pair{audio, Json{{"type", "strip"}, {"parameter", 4}}}, // the low cut's slope, a stepped choice
+			 std::pair{audio, Json{{"type", "volume"}}}})
+		run(client, "automationPoint.add",
+			{{"lane", idOf(run(client, "automationLane.add", {{"track", track}, {"target", target}}), "lane")},
+				{"points", {{{"position", 0}, {"value", 0.0}}, {{"position", 960}, {"value", 0.0}}}}});
+
+	// A file with ramps and fractions there, as from a build before #621 or a changed file.
+	Json file = run(client, "project.get");
+	REQUIRE(file.at("automation").size() == 5);
+	for (Json& lane : file.at("automation"))
+		for (Json& point : lane.at("points"))
+		{
+			point["shape"] = "curve";
+			point["curve"] = 0.5;
+			point["value"] = lane.at("target").at("type") == "strip" ? 2.6 : 0.6;
+		}
+	const Project loaded = projectFromJson(file);
+	size_t stepped = 0;
+	for (const auto& [id, lane] : loaded.automation)
+		for (const auto& [pointId, point] : lane.points)
+		{
+			INFO("lane " << id << " of type " << automationTargetTypeName(lane.target.type));
+			if (lane.target.type == AutomationTargetType::Volume)
+			{
+				CHECK(point.shape == AutomationShape::Curve); // a ramp curve keeps its points
+				CHECK(point.value == 0.6);
+				continue;
+			}
+			CHECK(point.shape == AutomationShape::Step);
+			CHECK(point.curve == 0.0);
+			CHECK(point.value == (lane.target.type == AutomationTargetType::Strip ? 3.0 : 1.0));
+			++stepped;
+		}
+	CHECK(stepped == 8);
+}
+
+TEST_CASE("a built-in plugin with a state keeps its state's values for parameters not set, across jumps", "[unit]")
+{
+	RenderChannel channel;
+	RenderSlot slot;
+	slot.id = 5;
+	slot.plugin = "builtin:gainPan";
+	slot.parameters[1] = 0.5; // the pan, set on top of the state
+	std::vector<uint8_t> saved;
+	for (const auto& [id, value] : {std::pair{uint32_t{0}, -12.0}, std::pair{uint32_t{1}, -1.0}})
+	{
+		const size_t at = saved.size();
+		saved.resize(at + sizeof(id) + sizeof(value));
+		std::memcpy(saved.data() + at, &id, sizeof(id));
+		std::memcpy(saved.data() + at + sizeof(id), &value, sizeof(value));
+	}
+	slot.state = std::make_shared<const std::vector<uint8_t>>(saved);
+	channel.slots.push_back(slot);
+	// The pan's automation reads, the gain has none.
+	RenderAutomationLane lane;
+	lane.target = {AutomationTargetType::Plugin, 1, 0, 0, 5};
+	lane.points = {{0, 0.0, AutomationShape::Step, 0.0}, {1000, 1.0, AutomationShape::Step, 0.0}};
+	channel.automation.push_back(lane);
+
+	std::unique_ptr<ChannelAutomation> automation = channelAutomation(channel, 6.0);
+	const auto staticValue = [&automation](uint32_t parameter)
+	{
+		double value = -1000.0; // none
+		for (const PlayedLane& played : automation->lanes)
+			if (played.target == AutomationTarget{AutomationTargetType::Plugin, parameter, 0, 0, 5})
+				value = played.staticValue;
+		return value;
+	};
+	CHECK(staticValue(0) == -12.0); // the state's
+	CHECK(staticValue(1) == 0.5);   // the value set
+	auto state = std::make_shared<ChannelState>();
+	state->automation.setAutomation(std::move(automation));
+
+	auto plugin = std::make_shared<ParameterRecorder>();
+	ChannelStrip source(state, nullptr, {}, std::nullopt, false, StripPart::Source, {}, {plugin.get()}, {5});
+	SlotStrip strip(state, plugin, 0);
+	source.prepareFor(48000.0, 64);
+	strip.prepareFor(48000.0, 64);
+	const graph::EventBuffer in(graph::g_maxEventsPerBlock);
+	graph::EventBuffer out(graph::g_maxEventsPerBlock);
+	const auto block = [&](const graph::TransportBlock& transport)
+	{
+		source.process({nullptr, 0, 64, in, out, transport});
+		strip.process({nullptr, 0, 64, in, out, transport});
+	};
+	// Stopped, playing, a locate, a cycle jump in a block, stopped at another position.
+	block({false, 0, nullptr, 0});
+	const graph::TransportSegment start{0, 64, 0};
+	block({true, 0, &start, 1});
+	const graph::TransportSegment next{0, 64, 64};
+	block({true, 64, &next, 1});
+	const graph::TransportSegment located{0, 64, 5000};
+	block({true, 5000, &located, 1});
+	const std::array<graph::TransportSegment, 2> cycle{{{0, 32, 1968}, {32, 32, 0}}};
+	block({true, 1968, cycle.data(), 2});
+	block({false, 3000, nullptr, 0});
+	REQUIRE(!plugin->values.empty());
+	for (const double value : plugin->values)
+		CHECK(value == -12.0);
 }

@@ -18,6 +18,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <variant>
 #include <vector>
 
 using namespace gnubase;
@@ -425,6 +426,32 @@ TEST_CASE("Remove Selected Tracks warns for every kind of content, each on a tra
 		REQUIRE(tracks.app.waitUntil([&] { return warning().empty(); }));
 		CHECK(tracks.order() == all);
 	}
+}
+
+TEST_CASE("Remove Selected Tracks announces only a marker track that stays as the active one", "[ui]")
+{
+	Tracks tracks;
+	const uint64_t first = tracks.add({{"type", "marker"}});  // active, goes
+	const uint64_t second = tracks.add({{"type", "marker"}}); // would become active, goes too
+	const uint64_t kept = tracks.add({{"type", "marker"}});
+	tracks.app.call("marker.activateTrack", {{"track", first}});
+	tracks.rows(3);
+	REQUIRE(tracks.app.waitUntil(
+		[&] { return tracks.display.project().value("activeMarkerTrack", uint64_t{0}) == first; }));
+	engine::Client listener(tracks.app.engine());
+
+	tracks.click(row(first) + " .track-name");
+	tracks.click(row(second) + " .track-name", {"ctrl"});
+	tracks.app.keys().run("track.removeSelected", Json::object(), tracks.app.main(), nullptr);
+	tracks.app.shell().step(std::chrono::milliseconds(0));
+	tracks.rows(1); // empty: no warning
+	CHECK(tracks.app.call("project.get").at("activeMarkerTrack") == kept);
+	std::vector<uint64_t> announced;
+	while (const auto message = listener.poll())
+		if (const auto* event = std::get_if<engine::Event>(&*message))
+			if (event->name == "marker.trackActivated")
+				announced.push_back(event->data.at("track").get<uint64_t>());
+	CHECK(announced == std::vector<uint64_t>{kept});
 }
 
 TEST_CASE(
