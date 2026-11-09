@@ -4,6 +4,7 @@
 // record, step input, pads dragged onto tracks and the pads' remote keys on a MIDI input.
 #include "engine/document/chordpads.h"
 #include "engine/engine.h"
+#include "mcp/server.h"
 #include "platform/audio/device.h"
 #include "platform/hosttime.h"
 #include "platform/midi/dummyport.h"
@@ -352,6 +353,27 @@ TEST_CASE("triggered pads play into all MIDI inputs, one channel per voice, and 
 			recorded.push_back(note.at("pitch").get<int>());
 	std::sort(recorded.begin(), recorded.end());
 	CHECK(recorded == std::vector<int>{57, 69, 72, 76});
+}
+
+TEST_CASE("triggering a pad plays notes, so MCP neither calls it read-only nor lists it as a resource", "[unit]")
+{
+	Engine engine;
+	gnubase::mcp::Server server(engine);
+	const auto respond = [&server](const std::string& method)
+	{
+		const std::optional<Json> response =
+			server.handle(Json{{"jsonrpc", "2.0"}, {"id", 1}, {"method", method}, {"params", Json::object()}});
+		REQUIRE(response.has_value());
+		return response.value_or(Json()).at("result");
+	};
+	const Json tools = respond("tools/list").at("tools");
+	const auto trigger = std::find_if(
+		tools.begin(), tools.end(), [](const Json& tool) { return tool.at("name") == "chordPads_trigger"; });
+	REQUIRE(trigger != tools.end());
+	CHECK(trigger->at("annotations").at("readOnlyHint") == false);
+	const Json resources = respond("resources/list").at("resources");
+	CHECK(std::none_of(resources.begin(), resources.end(),
+		[](const Json& resource) { return resource.at("uri") == "gnubase://chordPads.trigger"; }));
 }
 
 TEST_CASE("a MIDI input's notes on the remote keys trigger the pads while the remote is on", "[integration]")

@@ -780,7 +780,7 @@ namespace gnubase::engine
 
 		// The chords that sound, by what triggered them ("pad 3" or "chord Am"), with the pitches they play.
 		auto sounding = std::make_shared<std::map<std::string, std::vector<int>>>();
-		add(engine,
+		addControl(engine,
 			{"chordPads.trigger", 1,
 				"Triggers a chord pad, or auditions a chord (an assistant's suggestion), as a click does (reference "
 				"manual p. 1366): on (the default) plays its voicing, off ends it. The notes play into all MIDI inputs "
@@ -790,11 +790,11 @@ namespace gnubase::engine
 				"chordPads.triggered with the pad (-1 for a chord), the chord, on and the pitches.",
 				objectSchema({{"pad", integerSchema}, {"chord", stringSchema}, {"on", booleanSchema},
 					{"velocity", integerSchema}}),
-				objectSchema({{"pitches", padsSchema}}, {"pitches"}), true},
-			[sounding](Project& project, CommandContext& context)
+				objectSchema({{"pitches", padsSchema}}, {"pitches"}), false},
+			[this, sounding](CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
-				const ChordPads& pads = project.chordPads;
+				const ChordPads& pads = m_project.chordPads;
 				require(parameters.contains("pad") != parameters.contains("chord"), "give a pad or a chord");
 				const bool on = parameters.value("on", true);
 				const int velocity = parameters.value("velocity", pads.velocity);
