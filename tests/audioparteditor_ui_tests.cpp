@@ -466,6 +466,22 @@ TEST_CASE("a click with the object selection tool selects an event off the grid 
 	CHECK(f.event(f.first).at("position") == offGrid);
 }
 
+TEST_CASE("a view the engine answered before a click leaves the click's selection in the audio part editor", "[ui]")
+{
+	Fixture f;
+	f.open();
+	// What a request sent before the click gets, e.g. the editor.get that follows a move's project.get.
+	const Json project = f.app.call("project.get");
+	const Json before = f.view();
+	// Without a step of the shell, so that the click's editor.set hasn't been answered when that view comes.
+	f.app.ui().click(f.window, f.at(1.25, 0), ui::MouseButton::Left, 1, {});
+	f.app.appUi().editorWindow()->audioPartEditor()->show(project, before);
+	CHECK(f.has(eventSelector(f.second), "selected"));
+	// Ctrl and a click adds to the selection the click made, not to the older one.
+	f.click(f.at(0.25, 0), 1, {"ctrl"});
+	REQUIRE(f.app.waitUntil([&] { return f.selection().size() == 2; }));
+}
+
 TEST_CASE("the split, glue, mute and erase tools edit the events in the part", "[ui]")
 {
 	Fixture f;
