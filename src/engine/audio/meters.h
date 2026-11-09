@@ -2,7 +2,6 @@
 #pragma once
 
 #include "engine/analysis/analysis.h"
-#include "engine/document/document.h"
 
 #include <array>
 #include <atomic>
@@ -192,7 +191,7 @@ namespace gnubase::engine
 	// readings come out, in vectors that keep their memory from frame to frame.
 	struct MeterFrame
 	{
-		std::vector<ObjectId> channels;   // set by the reader
+		std::vector<uint64_t> channels;   // set by the reader: their ObjectIds; one may be listed more than once
 		std::vector<LevelReading> levels; // one per channel; no channels for one without a meter (yet)
 		LevelReading main;                // the main mix
 		LoudnessReading loudness;

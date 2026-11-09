@@ -38,11 +38,12 @@ namespace gnubase::engine
 		}
 
 		// Raises a held value for the one writer, against the reader that takes it (exchange): lock-free, and no
-		// value goes unseen.
+		// value goes unseen. What the writer stored before is visible to the reader that takes this value.
 		void raise(std::atomic<float>& held, float value) noexcept
 		{
 			float current = held.load(std::memory_order_relaxed);
-			while (value > current && !held.compare_exchange_weak(current, value, std::memory_order_relaxed))
+			while (value > current &&
+				!held.compare_exchange_weak(current, value, std::memory_order_release, std::memory_order_relaxed))
 			{
 			}
 		}
@@ -182,9 +183,13 @@ namespace gnubase::engine
 
 	LevelReading LevelMeter::readFrame() noexcept
 	{
+		// The peaks first: the audio thread publishes a block's maximum before it raises the held peak, so the maximum
+		// read after them is never below them.
+		std::array<float, g_maxMeterChannels> peaks{};
+		for (size_t c = 0; c < peaks.size(); ++c)
+			peaks[c] = m_framePeak[c].exchange(0.0f, std::memory_order_acquire);
 		LevelReading reading = read();
-		for (size_t c = 0; c < static_cast<size_t>(reading.channels); ++c)
-			reading.peak[c] = m_framePeak[c].exchange(0.0f, std::memory_order_relaxed);
+		reading.peak = peaks;
 		return reading;
 	}
 
@@ -496,7 +501,7 @@ namespace gnubase::engine
 	{
 		LoudnessReading reading = read();
 		for (size_t c = 0; c < static_cast<size_t>(reading.channels); ++c)
-			reading.truePeak[c] = m_frameTruePeak[c].exchange(0.0f, std::memory_order_relaxed);
+			reading.truePeak[c] = m_frameTruePeak[c].exchange(0.0f, std::memory_order_acquire);
 		return reading;
 	}
 

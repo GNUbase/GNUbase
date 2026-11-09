@@ -63,6 +63,13 @@ namespace gnubase::engine
 			const std::scoped_lock lock(m_channelStatesMutex);
 			for (size_t i = 0; i < frame.channels.size(); ++i)
 			{
+				// A channel listed twice reads once: reading takes its held peak.
+				const auto first = std::find(frame.channels.begin(), frame.channels.end(), frame.channels[i]);
+				if (const auto index = static_cast<size_t>(first - frame.channels.begin()); index < i)
+				{
+					frame.levels[i] = frame.levels[index];
+					continue;
+				}
 				const auto state = m_channelStates.find(frame.channels[i]);
 				frame.levels[i] = state != m_channelStates.end() ? state->second->meter.readFrame() : LevelReading{};
 			}

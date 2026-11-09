@@ -561,9 +561,9 @@ TEST_CASE("the true peak of sines between the samples is within EBU Tech 3341's 
 	// Sines at a quarter, a sixth and an eighth of the sample rate, with phases that put their peaks as far between
 	// the samples as they get, at -6 dBTP and, with samples up to 0 dBFS, at +3 dBTP: within +0.2 and -0.4 dB.
 	const double rate = GENERATE(44100.0, 48000.0, 96000.0);
-	const auto [divisor, phase, level, samples] = GENERATE(std::tuple{4.0, g_pi / 4.0, -6.0, -9.01},
-		std::tuple{6.0, g_pi / 6.0, -6.0, -7.25}, std::tuple{8.0, g_pi / 8.0, -6.0, -6.69},
-		std::tuple{4.0, g_pi / 4.0, 3.01, 0.0});
+	const auto [divisor, phase, level, samples] =
+		GENERATE(std::tuple{4.0, g_pi / 4.0, -6.0, -9.01}, std::tuple{6.0, g_pi / 3.0, -6.0, -7.25},
+			std::tuple{8.0, g_pi / 8.0, -6.0, -6.69}, std::tuple{4.0, g_pi / 4.0, 3.01, 0.0});
 	INFO(rate << " Hz, a sine at 1/" << divisor << " of it, " << level << " dBTP");
 	LoudnessMeter meter;
 	meter.prepare(rate);
@@ -881,8 +881,8 @@ TEST_CASE("Engine::readMeters gives a channel listed twice the same peak both ti
 	CHECK(frame.levels[1].channels == 0);
 }
 
-TEST_CASE("Engine::readMeters runs on a thread of its own while the device runs and the graph is rebuilt",
-	"[integration]")
+TEST_CASE(
+	"Engine::readMeters runs on a thread of its own while the device runs and the graph is rebuilt", "[integration]")
 {
 	Engine engine;
 	Client client(engine);
@@ -917,8 +917,7 @@ TEST_CASE("Engine::readMeters runs on a thread of its own while the device runs 
 	CHECK(reads > 0);
 }
 
-TEST_CASE("the loudness measurement goes on when a lost device returns, and starts over on a fallback",
-	"[integration]")
+TEST_CASE("the loudness measurement goes on when a lost device returns, and starts over on a fallback", "[integration]")
 {
 	Engine engine;
 	Client client(engine);
