@@ -101,6 +101,30 @@ namespace
 
 		std::vector<uint64_t> selection() { return view().at("eventSelection").get<std::vector<uint64_t>>(); }
 
+		// Waits until the engine has these events selected and the editor shows them selected. A click with Shift or
+		// Ctrl starts from the selection the editor shows, which follows the engine's a step or more later: an
+		// answer to an earlier editor.get can show the older selection until then (#951).
+		void selects(std::vector<uint64_t> events)
+		{
+			std::sort(events.begin(), events.end());
+			REQUIRE(app.waitUntil(
+				[&]
+				{
+					std::vector<uint64_t> engine = selection();
+					std::sort(engine.begin(), engine.end());
+					return engine == events;
+				}));
+			REQUIRE(app.waitUntil(
+				[&]
+				{
+					std::vector<uint64_t> shown;
+					for (const Json& each : elements(".ape-event.selected"))
+						shown.push_back(std::stoull(each.at("attributes").at("event").get<std::string>()));
+					std::sort(shown.begin(), shown.end());
+					return shown == events;
+				}));
+		}
+
 		Json events()
 		{
 			Json found = Json::array();
@@ -259,15 +283,14 @@ TEST_CASE("the object selection tool selects events and moves them in time and a
 	f.open();
 	// A click selects, Shift and a click adds, a click in the empty display deselects; the info line shows the first.
 	f.click(f.at(0.25, 0));
-	REQUIRE(f.app.waitUntil([&] { return f.selection() == std::vector<uint64_t>{f.first}; }));
+	f.selects({f.first});
 	REQUIRE(f.app.waitUntil([&] { return !f.has(".ape-info", "empty"); }));
 	CHECK(f.value("start") == "1.1.1.0");
-	CHECK(f.has(eventSelector(f.first), "selected"));
 	f.click(f.at(1.25, 0), 1, {"shift"});
-	REQUIRE(f.app.waitUntil([&] { return f.selection().size() == 2; }));
+	f.selects({f.first, f.second});
 	REQUIRE(f.app.waitUntil([&] { return f.has(".ape-info", "multiple"); }));
 	f.click(f.at(1.75, 0));
-	REQUIRE(f.app.waitUntil([&] { return f.selection().empty(); }));
+	f.selects({});
 
 	// A drag moves the event, snapped to the quantize grid.
 	f.drag(f.at(0.25, 0), f.at(0.52, 0));
@@ -279,15 +302,16 @@ TEST_CASE("the object selection tool selects events and moves them in time and a
 	f.settle();
 	CHECK(f.event(f.second).at("position") == g_second);
 	CHECK(f.elements(".ape-lane").size() == 3);
+	f.selects({f.second});
 	// With Ctrl a drag moves across lanes only, and a click adds to the selection.
 	f.drag(f.at(0.5, 0), f.at(0.9, 1), {"ctrl"});
 	REQUIRE(f.app.waitUntil([&] { return f.event(f.first).at("lane") == 1; }));
 	f.settle();
 	CHECK(f.event(f.first).at("position") == g_second / 4);
 	f.click(f.at(1.25, 1));
-	REQUIRE(f.app.waitUntil([&] { return f.selection() == std::vector<uint64_t>{f.second}; }));
+	f.selects({f.second});
 	f.click(f.at(0.5, 1), 1, {"ctrl"});
-	REQUIRE(f.app.waitUntil([&] { return f.selection().size() == 2; }));
+	f.selects({f.first, f.second});
 
 	// A double click on an event opens it in the sample editor.
 	f.click(f.at(1.25, 1), 2);
@@ -302,10 +326,10 @@ TEST_CASE("a click with the object selection tool selects an event off the grid 
 	f.app.call("event.move", {{"events", {f.first}}, {"delta", offGrid}});
 	f.open();
 	f.click(f.at(0.4, 0));
-	REQUIRE(f.app.waitUntil([&] { return f.selection() == std::vector<uint64_t>{f.first}; }));
+	f.selects({f.first});
 	// Commands from the click's release come before this one.
 	f.click(f.at(1.25, 0), 1, {"shift"});
-	REQUIRE(f.app.waitUntil([&] { return f.selection().size() == 2; }));
+	f.selects({f.first, f.second});
 	CHECK(f.event(f.first).at("position") == offGrid);
 }
 
