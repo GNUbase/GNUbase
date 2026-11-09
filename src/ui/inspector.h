@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <set>
 #include <string>
 
 namespace Rml
@@ -59,6 +60,8 @@ namespace gnubase::ui
 		std::function<void(const engine::Result&)> whenRefused();
 		// Ends what is being edited without taking it, such as notes being typed.
 		void dropEdits();
+		// Reads the open in-place editors into m_inPlace (editor.inPlace).
+		void readInPlace();
 
 		EngineBinding& m_binding;
 		const std::string m_stepOwner; // begins the whats of its steps (EngineBinding::stepOwner)
@@ -76,6 +79,9 @@ namespace gnubase::ui
 		Subscription m_reset;          // project.reset
 		Subscription m_devicesChanged; // settings.changed with midi.devices
 		bool m_devicesKnown = false;   // settings.changed came before settings.get's answer
+		std::set<uint64_t> m_inPlace;  // the tracks whose in-place editors are open (#131)
+		Subscription m_inPlaceChanged; // editor.changed of in-place editors
+		Subscription m_historyChanged; // history.changed, for m_inPlace
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
 	};
 }

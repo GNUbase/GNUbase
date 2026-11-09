@@ -2,6 +2,7 @@
 // Render in place and freeze (#116, docs/features/render-in-place.md): track.renderInPlace, track.freeze and
 // track.unfreeze. Both render with mixdown.export, from a point inside the channel's strip, before they change the
 // project, so a render is bit-identical to an export of the same range; then they change it in one undo step.
+#include "engine/document/renderinplace.h"
 #include "engine/document/channelformat.h"
 #include "engine/document/document.h"
 #include "engine/document/projectmodel.h"
@@ -105,6 +106,22 @@ namespace gnubase::engine
 		}
 	}
 
+	bool lockedByFreeze(const Project& project, const Channel& channel)
+	{
+		const auto frozen = [&project](ObjectId track)
+		{
+			const auto found = project.trackById.find(track);
+			return found != project.trackById.end() && found->second.frozen.has_value();
+		};
+		if (frozen(channel.track))
+			return true;
+		const auto track = project.trackById.find(channel.track);
+		if (track == project.trackById.end() || track->second.type != TrackType::Midi)
+			return false;
+		const auto output = project.channels.find(channel.output);
+		return output != project.channels.end() && frozen(output->second.track);
+	}
+
 	void ProjectModel::registerRenderCommands(Engine& engine)
 	{
 		const Json integer = {{"type", "integer"}};
@@ -129,8 +146,10 @@ namespace gnubase::engine
 				"folder (for a project without a file, of the folder its recordings go to). The track then plays the "
 				"file from the project's start instead of its events, parts, instrument, pre section and slots, which "
 				"stay as they are; the strip's other sections, the fader, pan, mute and sends still play, with their "
-				"automation. Renders as mixdown.export does, and is refused when it is, for a frozen or disabled "
-				"track and for one with nothing to play. One undo step. Returns the tracks.",
+				"automation. Its monitor and record enable buttons go off, and those of the MIDI tracks that play it, "
+				"and can't be turned on while it is frozen (see channel.set). Renders as mixdown.export does, and is "
+				"refused when it is, for a frozen or disabled track and for one with nothing to play. One undo step. "
+				"Returns the tracks.",
 				{{"type", "object"}, {"additionalProperties", false}, {"properties", {{"tracks", ids}, {"tail", tail}}},
 					{"required", {"tracks"}}},
 				{{"type", "object"}, {"properties", {{"tracks", {{"type", "array"}}}}}, {"required", {"tracks"}}},
@@ -172,12 +191,19 @@ namespace gnubase::engine
 				for (size_t i = 0; i < tracks.size(); ++i)
 				{
 					Track& track = project.trackById.at(tracks[i]);
+					const Channel& channel = project.channels.at(track.channel);
 					track.frozen = Freeze{files[i].at("path").get<std::string>(), project.sampleRate,
-						channelCount(project.channels.at(track.channel).format),
-						files[i].at("frames").get<time::Samples>()};
+						channelCount(channel.format), files[i].at("frames").get<time::Samples>()};
 					result.push_back(toJson(track));
 					context.emit("track.changed", {{"track", result.back()}});
 				}
+				// The buttons the freezes lock (lockedByFreeze) go off.
+				for (auto& [id, channel] : project.channels)
+					if ((channel.monitor || channel.recordEnable) && lockedByFreeze(project, channel))
+					{
+						channel.monitor = channel.recordEnable = false;
+						context.emit("channel.changed", {{"channel", toJson(channel)}});
+					}
 				return Json{{"tracks", std::move(result)}};
 			});
 
@@ -224,8 +250,10 @@ namespace gnubase::engine
 				"default) renders after the slots and the strip, before the fader, and the new track gets the fader, "
 				"pan and sends; completeSignalPath renders after the fader and panner, in the output's format, and "
 				"the new track gets no settings. sourceTracks: keep (the default), mute, disable or remove the "
-				"tracks rendered. Renders as mixdown.export does, and is refused when it is. One undo step. Returns "
-				"the new tracks, media files and events, in the order of tracks.",
+				"tracks rendered. Renders as mixdown.export does, and is refused when it is, for a disabled track, "
+				"with dry for a frozen track (its freeze file is already through the slots that dry copies), and "
+				"with completeSignalPath for a silent track: muted, or silenced by another track's solo. One undo "
+				"step. Returns the new tracks, media files and events, in the order of tracks.",
 				{{"type", "object"}, {"additionalProperties", false},
 					{"properties",
 						{{"tracks", ids}, {"start", {{"type", "integer"}, {"minimum", 0}}},
@@ -255,9 +283,15 @@ namespace gnubase::engine
 				for (const ObjectId id : tracks)
 				{
 					const Track& track = renderable(project, id);
+					require(track.enabled, track.name + " is disabled");
 					// A freeze file is already through the pre section and the slots that dry copies onto the new
 					// track.
 					require(mode != "dry" || !track.frozen, track.name + " is frozen: unfreeze it to render it dry");
+					// The complete signal path ends after the mute, through which solo silences the other tracks.
+					const auto render = std::find_if(snapshot.channels.begin(), snapshot.channels.end(),
+						[&track](const RenderChannel& channel) { return channel.id == track.channel; });
+					require(mode != "completeSignalPath" || render == snapshot.channels.end() || !render->silent,
+						track.name + " is silent: unmute it, or solo it too, to render its complete signal path");
 					Span span = spanOf(snapshot, track.channel);
 					if (parameters.contains("start"))
 						span = {parameters.at("start").get<time::Samples>(), parameters.at("end").get<time::Samples>()};
@@ -349,22 +383,23 @@ namespace gnubase::engine
 						for (const ObjectId slot : slots)
 							context.emit("plugin.added", {{"slot", describeSlot(project, slot)}});
 					}
+
+					const std::string sources = parameters.value("sourceTracks", std::string("keep"));
+					for (const ObjectId id : tracks)
+					{
+						if (sources == "mute")
+							run("channel.set", {{"channel", project.trackById.at(id).channel}, {"mute", true}});
+						else if (sources == "disable")
+							run("track.set", {{"track", id}, {"enabled", false}});
+						else if (sources == "remove")
+							run("track.remove", {{"track", id}});
+					}
 				}
 				catch (...)
 				{
+					// The step doesn't happen, so its files go too.
 					removeFiles(written);
 					throw;
-				}
-
-				const std::string sources = parameters.value("sourceTracks", std::string("keep"));
-				for (const ObjectId id : tracks)
-				{
-					if (sources == "mute")
-						run("channel.set", {{"channel", project.trackById.at(id).channel}, {"mute", true}});
-					else if (sources == "disable")
-						run("track.set", {{"track", id}, {"enabled", false}});
-					else if (sources == "remove")
-						run("track.remove", {{"track", id}});
 				}
 				return Json{{"tracks", std::move(added)}, {"media", std::move(media)}, {"events", std::move(events)}};
 			});

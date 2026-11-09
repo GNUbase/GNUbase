@@ -77,6 +77,8 @@ add_executable(gnubase-tests
 	historypanel_tests.cpp
 	hitpoints_tests.cpp
 	hitpoints_ui_tests.cpp
+	inplaceeditor_tests.cpp
+	inplaceeditor_ui_tests.cpp
 	inspector_tests.cpp
 	ipc_process_tests.cpp
 	ipc_tests.cpp
