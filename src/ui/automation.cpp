@@ -411,6 +411,20 @@ namespace gnubase::ui
 		return {{"focus", nodeOrNull(context.GetFocusElement())}};
 	}
 
+	Json Automation::arrange(std::optional<WindowId> window, const std::string& action)
+	{
+		const WindowId id = resolve(window).id();
+		if (action == "activate")
+			m_shell.raise(id);
+		else if (action == "minimize")
+			m_shell.minimize(id);
+		else if (action == "restore")
+			m_shell.restore(id);
+		else
+			throw std::invalid_argument("action is activate, minimize or restore, not " + action);
+		return Json::object();
+	}
+
 	Json Automation::close(std::optional<WindowId> window, bool quit)
 	{
 		if (quit && window)

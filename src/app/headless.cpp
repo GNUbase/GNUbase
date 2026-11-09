@@ -4,6 +4,7 @@
 #include "app/scripttool.h"
 
 #include "engine/engine.h"
+#include "engine/plugins/hostmanager.h"
 #include "mcp/server.h"
 #include "mcp/transport.h"
 #include "platform/log.h"
@@ -103,7 +104,8 @@ namespace gnubase::app
 
 	int runHeadless(const Options& options, std::istream& in, std::ostream& out, std::ostream& err)
 	{
-		engine::Engine engine(audio::makeBackends(), std::filesystem::u8path(options.settings));
+		engine::Engine engine(audio::makeBackends(), safeSettingsDirectory(options));
+		engine.pluginHosts().setDeactivated(options.noThirdPartyPlugins);
 		if (!setUpEngine(engine, options, err))
 			return g_exitSetup;
 

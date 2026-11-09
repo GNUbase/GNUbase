@@ -34,6 +34,7 @@
 #include "ui/transport.h"
 #include "ui/transposetrack.h"
 #include "ui/uisettings.h"
+#include "ui/workspacesmenu.h"
 
 #include <RmlUi/Core/ObserverPtr.h>
 
@@ -250,7 +251,8 @@ namespace gnubase::app
 
 		// Fills an element with the transport controls (resources/ui/transport.rml) and drives them.
 		std::unique_ptr<ui::TransportControls> transportControls(Rml::Element& root, ui::Window& window, bool fill);
-		void toggle(TransportWindow& shown, const char* file, const char* title, ui::Size size);
+		// name is its window's in ui.layout (ui::Docking::addWindow).
+		void toggle(TransportWindow& shown, const char* name, const char* file, const char* title, ui::Size size);
 		// Edits a display of the transport bar, or of the transport panel, which opens if the bar doesn't show.
 		void enter(const std::string& field);
 		// File > Import: the OS's file dialog for the window, then the event display imports what the user chose;
@@ -413,6 +415,13 @@ namespace gnubase::app
 		Rml::ObserverPtr<Rml::Element> m_menuDocument; // the project window's, with the main menu
 		engine::Json m_keySettings;
 		std::vector<ui::Subscription> m_keySettingsChanged; // settings.changed
+		// Workspaces (#163, appworkspaces.cpp): the windows that ui.layout keeps, and the Workspaces menu's commands
+		// and dialogs.
+		void addWorkspaces();
+		std::unique_ptr<ui::WorkspacesMenu> m_workspacesMenu; // the project window's Workspaces menu
+		Rml::ObserverPtr<Rml::Element> m_workspaces;          // the open workspaces organizer's document
+		Rml::ObserverPtr<Rml::Element> m_profiles;            // the open profile manager's document
+		Rml::ObserverPtr<Rml::Element> m_windowsDialog;       // the open Windows dialog's document
 		// User scripts (#209).
 		void addScripts();
 		// Finds the scripts in the folder and makes their commands; returns whether they changed.

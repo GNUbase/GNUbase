@@ -366,6 +366,16 @@ namespace gnubase::app
 			run([](ui::Automation& ui, const Json& arguments)
 				{ return ui.close(windowOf(arguments), arguments.value("quit", false)); })});
 
+		tools.push_back({"ui_window",
+			"Does what the Windows dialog does to a window: activate brings it to the front with the keyboard focus, "
+			"restored if it is minimized; minimize minimizes it; restore restores it if it is minimized.",
+			object({{"window", windowProperty()},
+					   {"action", {{"type", "string"}, {"enum", {"activate", "minimize", "restore"}}}}},
+				{"action"}),
+			object(Json::object()), false,
+			run([](ui::Automation& ui, const Json& arguments)
+				{ return ui.arrange(windowOf(arguments), arguments.at("action").get<std::string>()); })});
+
 		tools.push_back({"ui_file_dialog",
 			"Lists the file dialogs that wait for an answer, e.g. after File > Open: each with its id, kind (open, "
 			"save or folder), title, filters and the location it starts in. With dialog, first answers that one as "

@@ -125,7 +125,9 @@ add_library(gnubase-ui STATIC
 	widgets.cpp
 	widgets.h
 	widgetutils.h
-	windowsystem.h)
+	windowsystem.h
+	workspacesmenu.cpp
+	workspacesmenu.h)
 target_link_libraries(gnubase-ui
 	PUBLIC gnubase-engine RmlUi::RmlUi
 	PRIVATE Freetype::Freetype gnubase-ui-thirdparty lunasvg::lunasvg SDL3::SDL3)

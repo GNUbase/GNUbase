@@ -508,7 +508,7 @@ TEST_CASE("the transpose palette and the info line edit the selected notes", "[u
 
 	// Typing a pitch moves every selected note by as much as the first one.
 	f.click(of(".key-editor-info textdisplay[field=pitch]"), 2);
-	f.app.ui().key(f.window, "Ctrl+A");
+	f.app.ui().key(f.window, "Mod+A");
 	f.app.ui().text(f.window, "C3");
 	f.app.ui().key(f.window, "Enter");
 	REQUIRE(f.app.waitUntil([&] { return f.note(ids[0]).at("pitch") == 60; }));

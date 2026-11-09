@@ -242,12 +242,12 @@ TEST_CASE("ruler tracks show their rulers in each time format and have their con
 	REQUIRE(app.waitUntil(
 		[&app] { return elements(app, "[control=timeOffset]").at(0).at("attributes").at("value") == "0:00:01.500"; }));
 	click(app, "[control=timeOffset]", 0, 2);
-	app.ui().key(std::nullopt, "Ctrl+A");
+	app.ui().key(std::nullopt, "Mod+A");
 	app.ui().text(std::nullopt, "1");
 	app.ui().key(std::nullopt, "Enter");
 	REQUIRE(app.waitUntil([&track] { return track().at("timeOffset") == 2 * time::g_ticksPerQuarter; }));
 	click(app, "[control=timeOffset]", 0, 2);
-	app.ui().key(std::nullopt, "Ctrl+A");
+	app.ui().key(std::nullopt, "Mod+A");
 	app.ui().text(std::nullopt, "x");
 	app.ui().key(std::nullopt, "Enter");
 	app.shell().step(milliseconds(0));

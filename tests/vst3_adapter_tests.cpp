@@ -1618,10 +1618,15 @@ TEST_CASE("VST3 class ids are written as other hosts write them and compared wit
 }
 
 TEST_CASE("a VST3 plugin in a plugin host process tells the engine about edits, rescans, latency, its state and buses",
-	"[integration][realtime]")
+	"[integration]")
 {
 	RecordingHost engineHost;
-	engine::plugins::HostManager manager(hostOptions());
+	// Real-time blocks wait as long as offline ones: the test is about what reaches the engine, not about deadlines,
+	// and a loaded machine may not run the host process for a few milliseconds (#950).
+	engine::plugins::HostManager::Options options = hostOptions();
+	options.deadlines.realtimeMinimum = options.deadlines.offline;
+	options.deadlines.realtimeMaximum = options.deadlines.offline;
+	engine::plugins::HostManager manager(options);
 	std::unique_ptr<plugin::remote::RemotePlugin> remote =
 		manager.create({pluginId(), GNUBASE_VST3_ADAPTERTEST, "GNUbase"}, &engineHost);
 	REQUIRE(remote->init());

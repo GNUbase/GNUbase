@@ -162,7 +162,7 @@ TEST_CASE("the transpose track's lane draws, edits and erases transpose events",
 	REQUIRE(window.app.waitUntil([&] { return events().size() == 1; }));
 	REQUIRE(window.app.waitUntil([&] { return window.hasClass(".transpose-field", "shown"); }));
 	CHECK(events()[0].at("position").get<int64_t>() % (4 * g_quarter) == 0);
-	window.app.ui().key(std::nullopt, "Ctrl+A");
+	window.app.ui().key(std::nullopt, "Mod+A");
 	window.app.ui().text(std::nullopt, "5");
 	window.app.ui().key(std::nullopt, "Enter");
 	REQUIRE(window.app.waitUntil([&] { return events()[0].at("value") == 5; }));
@@ -222,7 +222,7 @@ TEST_CASE("a double click on a transpose event opens its value for typing", "[ui
 	window.app.ui().click(std::nullopt, {".transpose-event", 0, std::nullopt}, ui::MouseButton::Left, 2, {});
 	window.app.shell().step(std::chrono::milliseconds(0));
 	REQUIRE(window.app.waitUntil([&] { return window.hasClass(".transpose-field", "shown"); }));
-	window.app.ui().key(std::nullopt, "Ctrl+A");
+	window.app.ui().key(std::nullopt, "Mod+A");
 	window.app.ui().text(std::nullopt, "-7");
 	window.app.ui().key(std::nullopt, "Enter");
 	CHECK(window.app.waitUntil([&] { return window.call("transpose.get").at("events").at(0).at("value") == -7; }));

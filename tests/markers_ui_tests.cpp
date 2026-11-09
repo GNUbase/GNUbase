@@ -409,7 +409,7 @@ namespace
 	{
 		const ui::WindowId window = app.appUi().markersWindow();
 		app.ui().click(window, at("#marker-rows ." + column + " input", index), ui::MouseButton::Left, 1, {});
-		app.ui().key(window, "Ctrl+A");
+		app.ui().key(window, "Mod+A");
 		app.ui().text(window, text);
 		app.ui().key(window, "Enter");
 	}
@@ -465,12 +465,12 @@ namespace
 
 		// Descriptions and id numbers are edited in place, Enter taking them.
 		app.ui().click(window, at("#marker-rows .description input", 0), ui::MouseButton::Left, 1, {});
-		app.ui().key(window, "Ctrl+A");
+		app.ui().key(window, "Mod+A");
 		app.ui().text(window, "Start");
 		app.ui().key(window, "Enter");
 		REQUIRE(app.waitUntil([&markers] { return markers.markers()[0].name == "Start"; })); // the rows again
 		app.ui().click(window, at("#marker-rows .number input", 1), ui::MouseButton::Left, 1, {});
-		app.ui().key(window, "Ctrl+A");
+		app.ui().key(window, "Mod+A");
 		app.ui().text(window, "4");
 		app.ui().key(window, "Enter");
 		REQUIRE(app.waitUntil([&markers] { return markers.markers()[1].number == 4; }));

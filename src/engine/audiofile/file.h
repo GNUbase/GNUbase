@@ -17,7 +17,8 @@ namespace gnubase::engine::detail
 
 	using File = std::unique_ptr<std::FILE, FileCloser>;
 
-	// mode as for fopen. Null if the file can't be opened; lastError() says why.
+	// mode as for fopen. Null if the file can't be opened; lastError() says why. A file opened with "rb" can be deleted
+	// or renamed while it is open, on Windows too.
 	File openFile(const std::string& path, const char* mode);
 
 	// origin is SEEK_SET, SEEK_CUR or SEEK_END.
