@@ -221,7 +221,8 @@ namespace
 		}
 
 		// The editor window's context: through it a test presses a button and keeps it down, as a mouseup lost
-		// outside the window leaves it, where RmlUi has no element to send the mouseup to.
+		// outside the window leaves it, where RmlUi has no element to send the mouseup to, or moves the mouse in
+		// steps of its own.
 		Rml::Context& context()
 		{
 			const ui::Window* shown = app.shell().find(app.appUi().editorWindowId());
@@ -517,6 +518,123 @@ TEST_CASE("a move, draw or value display drag released outside the list editor e
 	CHECK(std::abs(value() - 0.5) < 0.02);
 }
 
+// The mouse goes up past the window's edge, where RmlUi has no element to send the mouseup to: the gestures end with
+// their effect all the same, as the markers window's header drags do.
+TEST_CASE("a move, draw or value display drag released outside the window ends there", "[ui]")
+{
+	Fixture f;
+	const Rml::Vector2i size = f.context().GetDimensions();
+	const int below = size.y + 40;
+	const int header = f.middle(".list-editor-header");
+	const size_t before = f.steps();
+
+	// A move released below the window moves the events by as far as the mouse went, in one undo step.
+	const ui::Point grip = f.grip(f.low);
+	const int half = f.halfway(f.low);
+	f.app.ui().drag(f.window, Fixture::point(grip.x, grip.y), Fixture::point(half, below));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.event("notes", f.low).at("position") == 2 * g_quarter; }));
+	CHECK(f.event("notes", f.high).at("position") == g_quarter);
+	CHECK(f.steps() == before + 1);
+
+	// A draw released below the window draws the note where it was pressed.
+	f.tool("draw");
+	const std::string filler = ".list-filler .list-event-lane";
+	const int drawAt = f.xAt(filler, 0.26);
+	f.app.ui().drag(f.window, Fixture::point(drawAt, f.middle(filler)), Fixture::point(drawAt, below));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.notes() == 3; }));
+	const Json project = f.app.call("project.get");
+	for (const Json& each : project.at("midiParts").at(0).at("notes"))
+		if (each.at("id") != f.low && each.at("id") != f.high)
+			CHECK(each.at("position") == g_quarter);
+	f.tool("objectSelection");
+	f.settle(f.high);
+	CHECK(f.notes() == 3);
+
+	// A value display drag pulled past the window's right edge sets the value it last set there: through the context,
+	// so that it leaves the lane at a value the test knows. The bar then no longer follows the mouse over the value
+	// display, and a click on the header sets nothing.
+	const std::string volume = row("controller", f.events[0]);
+	const std::string values = volume + " .list-value-lane";
+	const int y = f.middle(values);
+	f.press(f.xAt(values, 0.5), y);
+	f.moveTo(f.xAt(values, 0.25), y);
+	f.moveTo(size.x + 40, y);
+	f.context().ProcessMouseButtonUp(0, 0);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const auto value = [&] { return f.event("controllers", f.events[0]).at("value").get<double>(); };
+	REQUIRE(f.app.waitUntil([&] { return std::abs(value() - 0.25) < 0.02; }));
+	f.app.ui().move(f.window, Fixture::point(f.xAt(values, 0.9), y));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(std::abs(f.bar(volume) - 0.25) < 0.05);
+	f.click(Fixture::point(f.xAt(values, 0.9), header));
+	f.settle(f.low);
+	CHECK(std::abs(value() - 0.25) < 0.02);
+}
+
+// RmlUi doesn't scroll on a touch move while there is a drag element: only a press that starts a gesture makes one.
+TEST_CASE("a touch pan over the type column scrolls the list", "[ui]")
+{
+	Fixture f;
+	// More rows than the editor shows.
+	Json controllers = Json::array();
+	for (int i = 0; i < 60; ++i)
+		controllers.push_back({{"position", i + 1}, {"number", 1}, {"value", controller(i)}});
+	f.app.call("controller.add", {{"part", f.part}, {"controllers", controllers}});
+	REQUIRE(f.app.waitUntil([&] { return f.types().size() == 68; }));
+
+	const std::string first = row("note", f.low);
+	const Json type = f.box(first + " .list-type");
+	const auto x = static_cast<float>(type.at("x").get<double>() + (type.at("width").get<double>() / 2));
+	const auto y = static_cast<float>(f.middle(first) + 200);
+	const double before = f.box(first).at("y").get<double>();
+	const auto touch = [x](float at) { return Rml::TouchList{Rml::Touch{1, Rml::Vector2f(x, at)}}; };
+	Rml::Context& context = f.context();
+	context.ProcessTouchStart(touch(y), 0);
+	for (const float moved : {30.0F, 60.0F, 90.0F})
+		context.ProcessTouchMove(touch(y - moved), 0);
+	context.ProcessTouchEnd(touch(y - 90.0F), 0);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.box(first).at("y").get<double>() < before - 50.0);
+}
+
+TEST_CASE("a draw dragged in the event display is a multiple of the length quantize's length", "[ui]")
+{
+	Fixture f;
+	f.tool("draw");
+	const std::string filler = ".list-filler .list-event-lane";
+	const int y = f.middle(filler);
+	f.app.ui().drag(f.window, Fixture::point(f.xAt(filler, 0.26), y), Fixture::point(f.xAt(filler, 0.74), y));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.notes() == 3; }));
+	const Json project = f.app.call("project.get");
+	for (const Json& each : project.at("midiParts").at(0).at("notes"))
+		if (each.at("id") != f.low && each.at("id") != f.high)
+		{
+			CHECK(each.at("position") == g_quarter);
+			CHECK(each.at("length") == 2 * g_quarter);
+		}
+}
+
+// The press selects the event, and the Focus filter then rebuilds the rows: RmlUi starts no drag if that happens under
+// the press itself.
+TEST_CASE("a move of an unselected event with a Focus filter on released outside the window ends there", "[ui]")
+{
+	Fixture f;
+	f.click(of("#list-focus"));
+	f.click(of("#list-focus-menu menuitem[focus=type]"));
+	REQUIRE(f.types().size() == 8);
+	const ui::Point grip = f.grip(f.low);
+	const int half = f.halfway(f.low);
+	const int below = f.context().GetDimensions().y + 40;
+	f.app.ui().drag(f.window, Fixture::point(grip.x, grip.y), Fixture::point(half, below));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.event("notes", f.low).at("position") == 2 * g_quarter; }));
+	REQUIRE(f.app.waitUntil([&] { return f.types() == std::vector<std::string>{"note", "note"}; }));
+	CHECK(f.has(row("note", f.low), "selected"));
+}
+
 // The next tests lose a mouseup, as when the mouse goes up outside the window: they press through the editor window's
 // context and never release the button.
 TEST_CASE("a press anywhere in the window ends a gesture whose mouseup never came, without its effect", "[ui]")
@@ -557,6 +675,7 @@ TEST_CASE("a press anywhere in the window ends a gesture whose mouseup never cam
 	f.moveTo(to, y);
 	REQUIRE(std::abs(f.bar(volume) - 0.25) < 0.05);
 	f.click(Fixture::point(spare, outside));
+	CHECK(std::abs(f.bar(volume) - controller(100)) < 0.05); // at once, not only once a click selects a note
 	f.settle(f.high);
 	CHECK(std::abs(f.event("controllers", f.events[0]).at("value").get<double>() - controller(100)) < 1e-9);
 	CHECK(std::abs(f.bar(volume) - controller(100)) < 0.05);
@@ -588,6 +707,7 @@ TEST_CASE("a press in the list editor ends a gesture whose mouseup never came, w
 	f.moveTo(to, y);
 	REQUIRE(std::abs(f.bar(volume) - 0.25) < 0.05);
 	f.click(Fixture::point(to, header));
+	CHECK(std::abs(f.bar(volume) - controller(100)) < 0.05); // at once, not only once a click selects a note
 	f.settle(f.low);
 	CHECK(std::abs(f.event("controllers", f.events[0]).at("value").get<double>() - controller(100)) < 1e-9);
 	CHECK(std::abs(f.bar(volume) - controller(100)) < 0.05);
