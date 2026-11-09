@@ -886,7 +886,7 @@ TEST_CASE("plugin.changed announces the slots whose status changes when the devi
 	// It returns, with the same format: the plugins are as they were, and the new one is made, from noDevice to
 	// loading in the events of the command that opened the device.
 	{
-		JobGate gate(engine);
+		const JobGate gate(engine);
 		run(client, "audio.simulateDeviceLoss", {{"connected", true}});
 		received = eventsUntil(client, "audio.changed",
 			[](const Json& data) { return data.at("lost").is_null() && !data.at("device").is_null(); });
