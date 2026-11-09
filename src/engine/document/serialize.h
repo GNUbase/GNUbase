@@ -52,8 +52,8 @@ namespace gnubase::engine
 	std::vector<ProjectColor> colorsFromJson(const Json& json);
 
 	// The project setup's settings, which project.get has at its top level. projectSetupFromJson changes those the
-	// JSON has, and throws std::invalid_argument for unknown names and values that don't go together (see
-	// projectSetupProblem).
+	// JSON has, and throws std::invalid_argument for unknown names, values out of range and a record file type and
+	// bit depth that recording can't write together.
 	Json toJson(const ProjectSetup& setup);
 	ProjectSetup projectSetupFromJson(const Json& json, const ProjectSetup& fallback = {});
 

@@ -222,15 +222,15 @@ TEST_CASE("a mixdown exports the locator range, and a file per channel", "[integ
 	const Read drumsFile = readFile(result.at("files").at(1).at("path").get<std::string>());
 	CHECK(bassFile.info.frames == 4000);
 
-	// A channel's file is what the main mix plays with the other channel muted. Mute glides over a block, so a
-	// block plays first.
+	// A channel's file is what the main mix plays with the other channel muted. Mute glides over 5 ms, so 512 frames
+	// play first.
 	run(project.client, "channel.set", {{"channel", drums}, {"mute", true}});
-	run(project.client, "audio.render", {{"frames", 64}});
+	run(project.client, "audio.render", {{"frames", 512}});
 	CHECK(firstDifference(readFile(project.exportedFile({{"name", "bass alone"}, {"sampleFormat", "float32"}})).samples,
 			  bassFile.samples) == -1);
 	run(project.client, "channel.set", {{"channel", drums}, {"mute", false}});
 	run(project.client, "channel.set", {{"channel", bass}, {"mute", true}});
-	run(project.client, "audio.render", {{"frames", 64}});
+	run(project.client, "audio.render", {{"frames", 512}});
 	CHECK(
 		firstDifference(readFile(project.exportedFile({{"name", "drums alone"}, {"sampleFormat", "float32"}})).samples,
 			drumsFile.samples) == -1);

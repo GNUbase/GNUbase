@@ -142,21 +142,63 @@ namespace gnubase::engine
 		return changed;
 	}
 
-	void MidiPorts::take(const audio::DeviceBlock& block, double sampleRate, audio::MidiBuffer& allInputs) noexcept
+	void MidiPorts::take(const audio::DeviceBlock& block, double sampleRate, audio::MidiBuffer& allInputs,
+		const ChordPadKeys& padKeys) noexcept
 	{
 		m_queue.take(block.time, sampleRate, block.frames,
-			[this, &block, &allInputs](int slot, const audio::MidiMessage& message)
+			[this, &block, &allInputs, &padKeys](int slot, const audio::MidiMessage& message)
 			{
 				if (slot == g_keyboardSlot)
 				{
 					allInputs.add(message); // not a port, so not for the monitor
 					return;
 				}
-				if (m_allInputs[static_cast<size_t>(slot)].load(std::memory_order_relaxed))
+				if (m_allInputs[static_cast<size_t>(slot)].load(std::memory_order_relaxed) &&
+					!playPad(message, padKeys, allInputs))
 					allInputs.add(message);
 				if (!m_monitor.tryPush(Received{slot, block.position + message.offset, message}))
 					m_monitorDropped.fetch_add(1, std::memory_order_relaxed);
 			});
+	}
+
+	bool MidiPorts::playPad(
+		const audio::MidiMessage& message, const ChordPadKeys& keys, audio::MidiBuffer& allInputs) noexcept
+	{
+		const int status = message.bytes[0] & 0xF0;
+		if (message.size != 3 || (status != 0x90 && status != 0x80))
+			return false;
+		const size_t key = message.bytes[1] & 0x7F;
+		auto& held = m_padPitches[key];
+		uint8_t& heldCount = m_padCounts[key];
+		const auto send = [&message, &allInputs](uint8_t status, uint8_t pitch, uint8_t velocity, size_t voice)
+		{
+			audio::MidiMessage note = message;
+			note.bytes[0] = static_cast<uint8_t>(status | std::min<size_t>(voice, 15));
+			note.bytes[1] = pitch;
+			note.bytes[2] = velocity;
+			allInputs.add(note);
+		};
+		if (status == 0x80 || message.bytes[2] == 0)
+		{
+			if (heldCount == 0)
+				return false;
+			for (size_t i = 0; i < heldCount; ++i)
+				send(0x80, held[i], 0, heldCount - 1 - i);
+			heldCount = 0;
+			return true;
+		}
+		const uint8_t count = keys.counts[key];
+		if (!keys.active || count == 0)
+			return false;
+		for (size_t i = 0; i < heldCount; ++i) // a second note-on before the note-off ends the first's pitches
+			send(0x80, held[i], 0, heldCount - 1 - i);
+		for (size_t i = 0; i < count; ++i)
+		{
+			held[i] = keys.pitches[key][i];
+			send(0x90, held[i], message.bytes[2], count - 1 - i);
+		}
+		heldCount = count;
+		return true;
 	}
 
 	std::string MidiPorts::key(const Port& port)

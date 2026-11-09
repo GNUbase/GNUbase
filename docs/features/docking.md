@@ -52,7 +52,8 @@ registers panels; the project window has the Inspector ([inspector.md](inspector
 Editor and Mixer in the lower zone, and Media and Meter on the right (pp. 75–98), the others empty until their tickets
 fill them (the Editor panel is the lower zone editor's, [midi-editors.md](midi-editors.md), the Visibility panel has
 the track visibility and the lower zone editor's, [track-visibility.md](track-visibility.md)), the Pool in the lower zone
-([pool.md](pool.md), `window.pool`, Mod+P) and the edit history on the right ([edit-history.md](edit-history.md)).
+([pool.md](pool.md), `window.pool`, Mod+P), the chord pads in the lower zone
+([chord-pads.md](chord-pads.md), `window.chordPads`) and the edit history on the right ([edit-history.md](edit-history.md)).
 `open` shows a panel as its zone's active tab, with the zone shown; a panel in a window of its own stays there, and
 its window comes to the front with the keyboard focus, restored if it is minimized, so commands such as
 `window.history` show it even when it is behind another window. The OS has the last word: it may refuse the focus to

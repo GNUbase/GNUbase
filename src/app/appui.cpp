@@ -3,6 +3,7 @@
 
 #include "app/uitools.h"
 #include "platform/log.h"
+#include "ui/chordpads.h"
 #include "ui/fonts.h"
 #include "ui/historypanel.h"
 #include "ui/inspector.h"
@@ -493,6 +494,9 @@ namespace gnubase::app
 				m_pool = pool;
 				return pool;
 			}});
+		// The chord pads (reference manual pp. 1346-1391, docs/features/chord-pads.md) in the lower zone.
+		m_docking.add({"chordPads", "Chord Pads", "project", "lower",
+			[this](Rml::Element& element) { return std::make_shared<ui::ChordPadsPanel>(m_binding, element); }});
 		m_docking.addKeyCommands(m_keys);
 		// What the pool's commands did, sent from its toolbar, the Media menu or Find Missing Files, shows in the
 		// pool, which opens for it: its window comes to the front if it is in one of its own.
@@ -507,6 +511,14 @@ namespace gnubase::app
 						pool->report(command, result);
 				}));
 
+		m_keys.add({"window.chordPads", "Shows or hides the chord pads in the lower zone.",
+			[this](ui::Window& /*window*/, Rml::Element* /*zone*/)
+			{
+				if (m_docking.showing("chordPads") && m_docking.windowOf("chordPads") == nullptr)
+					m_docking.setVisible("project", "lower", false);
+				else
+					m_docking.open("chordPads");
+			}});
 		m_keys.add({"window.history", "Shows the edit history, where steps are undone and redone.",
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_docking.open("history"); }});
 		m_keys.add({"window.pool", "Shows the pool, the project's clips and media files.",

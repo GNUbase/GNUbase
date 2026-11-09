@@ -9,6 +9,7 @@
 #include <chrono>
 #include <exception>
 #include <future>
+#include <map>
 #include <set>
 #include <string_view>
 #include <thread>
@@ -37,6 +38,15 @@ namespace gnubase::engine::plugins
 			std::string status;
 		};
 
+		// The values set for a slot's parameters that its plugin gets through PluginSlot::setParameters. A built-in
+		// plugin has an automation lane for every parameter, which sends the values set as its static values
+		// (channelAutomation), so they take that one way, in step with its automation.
+		const std::map<uint32_t, double>& setParameters(const RenderSlot& slot)
+		{
+			static const std::map<uint32_t, double> none;
+			return processors::findBuiltinPlugin(slot.plugin) != nullptr ? none : slot.parameters;
+		}
+
 		std::unique_ptr<plugin::Plugin> makeBuiltin(const std::string& plugin, uint32_t channels, plugin::Host& host)
 		{
 			return processors::BuiltinFactory(channels).create(plugin, host);
@@ -57,7 +67,7 @@ namespace gnubase::engine::plugins
 			auto processor = std::make_shared<PluginSlot>(std::move(plugin));
 			if (wanted.state && !processor->loadState(*wanted.state))
 				logging::warning("Plugin slot {}: {} doesn't take its saved state", wanted.id, wanted.plugin);
-			processor->setParameters(wanted.parameters);
+			processor->setParameters(setParameters(wanted));
 			processor->setBypass(wanted.bypass);
 			if (!wanted.active)
 				return {std::move(processor), "inactive"};
@@ -286,7 +296,7 @@ namespace gnubase::engine::plugins
 			}
 			if (status == "loading" || !processor)
 				continue; // a job is on it, or there is no plugin
-			processor->setParameters(slot.parameters);
+			processor->setParameters(setParameters(slot));
 			processor->setBypass(slot.bypass);
 			const bool restart = instance->restart->exchange(false);
 			const bool ready = status == "active" && processor->activeFor(sampleRate, maxFrames) && !restart;

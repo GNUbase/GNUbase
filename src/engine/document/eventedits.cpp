@@ -10,6 +10,7 @@
 #include "engine/document/projectmodel.h"
 #include "engine/document/rendersnapshot.h"
 #include "engine/document/serialize.h"
+#include "engine/document/warp.h"
 #include "engine/engine.h"
 #include "engine/midi/midivalues.h"
 
@@ -445,6 +446,17 @@ namespace gnubase::engine
 				AudioEvent& event = *item.audio;
 				const EventSpan span = eventSpan(project, event);
 				const time::Samples media = project.media.at(project.clips.at(event.clip).media).length;
+				if (moveContents && warped(project.clips.at(event.clip)))
+				{
+					// The end stays where it is: the length from the new start, through the warp there (#890).
+					const time::Samples to = std::clamp<time::Samples>(samples(project, start), 0, span.end - 1);
+					event.position = rebased(project, {time::TimeBase::Linear, to}, event.position.base);
+					event.length =
+						std::clamp<int64_t>(std::llround(eventFrames(project, event,
+												static_cast<double>(span.end - eventSpan(project, event).start))),
+							1, media - event.offset);
+					return;
+				}
 				const int64_t wanted = std::llround(
 					eventFrames(project, event, static_cast<double>(samples(project, start) - span.start)));
 				int64_t frames = std::min(wanted, event.length - 1);
@@ -476,6 +488,34 @@ namespace gnubase::engine
 			part.length = end - value;
 		}
 
+		// The offset at which an audio event, keeping its position and its last clip frame, ends distance project
+		// samples after its start: the warp may play the frames before the last one at any speed, so it is searched
+		// for. The nearest within the clip and the event's last frame.
+		time::Samples offsetEndingAt(const Project& project, AudioEvent event, double distance)
+		{
+			const time::Samples last = event.offset + event.length;
+			const auto plays = [&project, &event, last](time::Samples offset)
+			{
+				event.offset = offset;
+				event.length = last - offset;
+				return eventSamples(project, event, static_cast<double>(event.length));
+			};
+			// plays falls as the offset grows: the first offset that plays within distance.
+			time::Samples low = 0;
+			time::Samples high = last - 1;
+			while (low < high)
+			{
+				const time::Samples middle = low + ((high - low) / 2);
+				if (plays(middle) > distance)
+					low = middle + 1;
+				else
+					high = middle;
+			}
+			if (low > 0 && plays(low - 1) - distance < distance - plays(low))
+				--low;
+			return low;
+		}
+
 		void setEnd(Project& project, const Item& item, const time::Position& end, bool moveContents)
 		{
 			if (item.audioPart != nullptr)
@@ -494,7 +534,15 @@ namespace gnubase::engine
 				const EventSpan span = eventSpan(project, event);
 				const time::Samples media = project.media.at(project.clips.at(event.clip).media).length;
 				const time::Samples to = samples(project, end);
-				if (moveContents)
+				const time::Samples last = event.offset + event.length;
+				if (moveContents && warped(project.clips.at(event.clip)))
+				{
+					// The last clip frame stays at the end: the offset that plays it there, as the warp from that
+					// offset has it (#890).
+					event.offset = offsetEndingAt(project, event, static_cast<double>(to - span.start));
+					event.length = last - event.offset;
+				}
+				else if (moveContents)
 				{
 					int64_t frames = std::llround(eventFrames(project, event, static_cast<double>(to - span.start)) -
 						eventFrames(project, event, static_cast<double>(span.end - span.start)));

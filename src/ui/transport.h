@@ -70,7 +70,8 @@ namespace gnubase::ui
 	//                                context menu
 	//   option="beatCountOnly"       anywhere in the document: checked while ui.timeDisplay has it
 	//
-	// The time formats are the user setting ui.timeFormats, so every transport control shows the same. Use it on the UI
+	// The primary time format is the project's (project.set timeFormat, reference manual p. 317), the others are the
+	// user setting ui.timeFormats, so every transport control shows the same. Use it on the UI
 	// thread; the engine and the binding must outlive it. If the element goes, it shows nothing more.
 	// The tempo that taps at these times (seconds, in order) beat: the average of the times between them, 1 to 999
 	// BPM. None for fewer than two taps.
@@ -98,7 +99,8 @@ namespace gnubase::ui
 		// the primary one) or tempo or signature. False if the element has none that shows.
 		bool edit(const std::string& field);
 
-		// The time format of a slot (primary, secondary, timeDisplay), and changing it in ui.timeFormats.
+		// The time format of a slot (primary, secondary, timeDisplay), and changing it: the primary one in the
+		// project, the others in ui.timeFormats.
 		TimeFormat format(const std::string& slot) const;
 		void setFormat(const std::string& slot, TimeFormat format);
 		// Switches the primary and secondary formats.

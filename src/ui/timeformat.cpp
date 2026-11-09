@@ -531,10 +531,12 @@ namespace gnubase::ui
 					{change.at("numerator").get<int>(), change.at("denominator").get<int>()}});
 			time::TempoMap tempoMap(tempo);
 			time::SignatureMap signatureMap(signatures);
-			readSetup(project, context);
-			context.sampleRate = project.at("sampleRate").get<double>();
-			context.tempo = std::move(tempoMap);
-			context.signatures = std::move(signatureMap);
+			TimeContext read = context; // the context changes only once all of it is read
+			readSetup(project, read);
+			read.sampleRate = project.at("sampleRate").get<double>();
+			read.tempo = std::move(tempoMap);
+			read.signatures = std::move(signatureMap);
+			context = std::move(read);
 			return true;
 		}
 		catch (const std::exception&)
