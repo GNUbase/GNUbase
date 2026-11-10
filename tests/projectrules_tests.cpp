@@ -441,6 +441,16 @@ TEST_CASE("project.applyRules transforms and deletes in one undo step", "[integr
 		run(f.client, "history.undo");
 		CHECK(f.object("midiParts", f.full).at("position") == g_beatTicks);
 
+		// On a linear track the limit is in samples.
+		const ObjectId linear = f.add({{"type", "marker"}, {"timeBase", "linear"}});
+		run(f.client, "marker.add", {{"type", "position"}, {"track", linear}, {"position", 48000}});
+		run(f.client, "project.applyRules",
+			{{"rules", rules({later}, "transform", {action("position", "multiplyBy", 1e12)})}});
+		const int64_t samples =
+			run(f.client, "marker.list", {{"track", linear}}).at("markers").at(0).at("position").get<int64_t>();
+		CHECK(std::abs(samples - gnubase::time::g_maxPosition) <= 2);
+		run(f.client, "history.undo");
+
 		// Multiplied past what a double holds, then by zero: no infinity to make a NaN of.
 		std::vector<Json> actions(30, action("position", "multiplyBy", 1e12));
 		actions.push_back(action("position", "multiplyBy", 0));
@@ -471,6 +481,14 @@ TEST_CASE("project.applyRules transforms and deletes in one undo step", "[integr
 			CHECK(inPart(first) == 0);
 			CHECK(inPart(second) == g_beatTicks);
 		}
+		// A locked event in the part goes with it, as event.move takes it.
+		run(f.client, "event.set", {{"events", {first}}, {"lock", true}});
+		const Json before = f.object("audioEvents", first).at("position");
+		run(f.client, "project.applyRules",
+			{{"rules",
+				rules({filter("containerType", "equal", "part")}, "transform", {action("position", "add", 480)})}});
+		CHECK(f.object("audioEvents", first).at("position") != before);
+		CHECK(inPart(first) == 0);
 	}
 }
 
@@ -487,7 +505,7 @@ TEST_CASE("project.applyRules removes the active marker track after the other ma
 
 	SECTION("the marker track that stays takes over, whichever of the others was active")
 	{
-		const ObjectId active = GENERATE_COPY(first, second);
+		const ObjectId active = GENERATE(0, 1) == 0 ? first : second;
 		run(f.client, "marker.activateTrack", {{"track", active}});
 		activatedMarkerTracks(listener); // drops what adding the tracks announced
 		run(f.client, "project.applyRules", {{"preset", "Delete/Empty tracks"}});

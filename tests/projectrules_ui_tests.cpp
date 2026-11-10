@@ -173,7 +173,7 @@ TEST_CASE("Project > Project Rule Editor selects the markers it finds", "[ui]")
 	using Ids = std::vector<uint64_t>;
 	const uint64_t track =
 		f.app.call("track.add", {{"type", "marker"}, {"timeBase", "musical"}}).at("track").at("id").get<uint64_t>();
-	const auto addMarker = [&](int bar, const char* name)
+	const auto addMarker = [&](int64_t bar, const char* name)
 	{
 		return f.app
 			.call("marker.add",

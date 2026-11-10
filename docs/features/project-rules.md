@@ -14,9 +14,9 @@ holds named rules, as the MIDI rules have one ([midi-rules.md](midi-rules.md)).
     its track's) with equal, unequal, contains and contains not, case sensitive; the position and length with the
     numeric conditions of the MIDI rules (tracks have neither, so they never match); and a property with is set or is
     not set: is muted (a track's channel, a part, an event), is selected and parent is selected (by the ids the command
-    is given as `selected`: the project window's selection of tracks, parts, events and markers), is empty (tracks without events,
-    parts or markers, folders without tracks, parts without notes, controllers or events), is hidden (track
-    visibility), has track version, follows chord track and is disabled. Brackets and and/or work as in the MIDI rules,
+    is given as `selected`: the project window's selection of tracks, parts, events and markers), is empty (tracks
+    without events, parts or markers, folders without tracks, parts without notes, controllers or events), is hidden
+    (track visibility), has track version, follows chord track and is disabled. Brackets and and/or work as in the MIDI rules,
     through the same reader (`midi::evaluateLines`).
   - **Functions:** delete, transform, select and deselect. Select and deselect change nothing: the UI selects what was
     found, or deselects everything.
@@ -36,11 +36,12 @@ holds named rules, as the MIDI rules have one ([midi-rules.md](midi-rules.md)).
   make such changes (`event.move`, `event.resize`, `event.set`, `event.remove`, `track.set`, `track.remove`,
   `channel.set`, `marker.set`, `marker.remove`), so their checks and events are the same. A found folder takes its
   tracks with it; locked parts and events stay on the tracks that stay; an audio event inside a found audio part goes
-  with the part, and an audio part that holds a locked event stays, while the unlocked events found in it go. The
-  active marker track is removed after the other marker tracks, so that no marker track that goes is activated in
-  passing. `seed` makes random values repeatable. `project.findByRules` returns what the filters find (`tracks`, `events` for parts
-  and audio events, `markers`) and changes nothing; `project.applyRules` refuses select and deselect. `event.set`
-  renames parts (`name`) for the name actions.
+  with the part, and delete keeps an audio part that holds a locked event, while the unlocked events found in it go.
+  An audio part that moves takes its events along, locked ones too, as `event.move` does. The active marker track is
+  removed after the other marker tracks, so that no marker track that goes is activated in passing. `seed` makes
+  random values repeatable. `project.findByRules` returns what the filters find (`tracks`, `events` for parts and audio
+  events, `markers`) and changes nothing; `project.applyRules` refuses select and deselect. `event.set` renames parts
+  (`name`) for the name actions.
 - **Presets** belong to the user: `projectRules.presets` lists the factory presets (`Init`, `Delete/Empty parts`,
   `Select/MIDI parts`, `Transform/Number the selected tracks` and more) and the user's, kept in
   `project-rule-presets.json` in the settings folder; `projectRules.savePreset` and `projectRules.removePreset` change
@@ -59,7 +60,8 @@ to the rules as `selected`.
 
 ## Not yet
 
-Automation tracks and points, arranger, transpose, tempo, signature and chord events and video; the conditions that
+Selecting parts or audio events together with markers, as long as the project window selects one or the other;
+automation tracks and points, arranger, transpose, tempo, signature and chord events and video; the conditions that
 need the transport or a bar range (inside bar range, cursor, cycle, track loop, selected marker) and time bases other
 than ticks; the properties Inside NoteExp and Is valid VST 3; the actions Trim, Move to Cursor, Folder, Read, Write,
 EQ, inserts and sends bypass, insert and send slots, Lanes Active, Hide Track, Connect Input and Output and the volume

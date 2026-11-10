@@ -1085,8 +1085,7 @@ namespace gnubase::engine
 			"order: position or length (add, subtract, multiplyBy, divideBy, roundBy, setRandom, setRelativeRandom "
 			"or setFixed), name (replace, append, prepend with parameter1; generateName: parameter1 and a number from "
 			"parameter2, one up for each element renamed; replaceSearchString: parameter1 by parameter2; eraseBefore "
-			"and "
-			"eraseAfter parameter1; eraseFrontCharacter, eraseEndCharacter), trackOperation (mute, solo, record or "
+			"and eraseAfter parameter1; eraseFrontCharacter, eraseEndCharacter), trackOperation (mute, solo, record or "
 			"monitor with parameter1 on, off or toggle; timeDomain musical, linear or toggle) or color (setFixed: a "
 			"project color's name or #rrggbb; increment, decrement: the next or previous project color). pre and post: "
 			"up to 4 key commands each, {command, parameters}, that the UI runs before and after; the engine keeps "
@@ -1104,11 +1103,11 @@ namespace gnubase::engine
 				"Applies project rules to the project's tracks, audio and MIDI parts, audio events and markers, in one "
 				"undo step: delete removes what the filters find (a found folder takes its tracks with it), transform "
 				"changes it by the actions through the commands that make such changes (event.move, event.resize, "
-				"event.set, track.set, channel.set, marker.set). Locked parts and events stay as they are, and so does "
-				"an audio part that holds a locked event when it is deleted. Audio events keep their clip's name, "
-				"track "
-				"operations change tracks only. Positions and lengths stop at the longest project. seed makes the "
-				"random operations repeatable." +
+				"event.set, track.set, channel.set, marker.set). Locked parts and events stay as they are on tracks "
+				"that stay, except that a locked event moves with an audio part that moves; delete keeps an audio "
+				"part that holds a locked event. Audio events keep their clip's name, track operations change tracks "
+				"only. Positions and lengths stop at the longest project. seed makes the random operations "
+				"repeatable." +
 					rulesText + " Use project.findByRules for select and deselect. Returns what the filters found.",
 				objectSchema(properties), foundSchema, false},
 			"Project Rule Editor",
