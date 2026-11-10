@@ -1207,8 +1207,12 @@ TEST_CASE("Freeze/Unfreeze Selected Tracks freezes and unfreezes them, Render in
 	tracks.click(row(synth) + " .track-name");
 
 	tracks.app.keys().run("track.freezeSelected", Json::object(), tracks.app.main(), nullptr);
-	REQUIRE(tracks.app.waitUntil([&] { return !tracks.track(synth).at("frozen").is_null(); }));
-	REQUIRE(tracks.app.waitUntil([&] { return hasClass(elements(tracks.app, row(synth)).at(0), "frozen"); }));
+	// The freeze renders 30 s of tail on the engine's thread, and project.get would wait behind it until its own 10 s
+	// run out: the row asks the engine nothing, and shows the frozen track when the render is done, however long it
+	// takes on a busy machine.
+	REQUIRE(tracks.app.waitUntil(
+		[&] { return hasClass(elements(tracks.app, row(synth)).at(0), "frozen"); }, std::chrono::seconds(120)));
+	CHECK(!tracks.track(synth).at("frozen").is_null());
 	// Again, with every selected track frozen, it unfreezes them.
 	tracks.app.keys().run("track.freezeSelected", Json::object(), tracks.app.main(), nullptr);
 	REQUIRE(tracks.app.waitUntil([&] { return tracks.track(synth).at("frozen").is_null(); }));
