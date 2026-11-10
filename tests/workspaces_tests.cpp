@@ -126,10 +126,10 @@ TEST_CASE("workspaces keep window layouts, global ones in ui.workspaces and proj
 	f.call("workspace.activate", {{"type", "project"}, {"name", "Editing"}});
 	CHECK(f.layout() == changed);
 
-	// No Workspace leaves the layout as it is.
+	// No Workspace returns to the layout from before the first workspace became active.
 	f.call("workspace.activate", {{"type", ""}});
 	CHECK(f.active() == activeIs("", ""));
-	CHECK(f.layout() == changed);
+	CHECK(f.layout() == mixingLayout());
 	CHECK_THAT(f.fails("workspace.update", Json::object()), ContainsSubstring("no workspace is active"));
 
 	// The organizer's rename, move and delete, which keep the active one as it is.
@@ -174,4 +174,89 @@ TEST_CASE("project workspaces are saved with the project, but aren't undo steps"
 	f.call("project.load", {{"path", file}});
 	CHECK(f.call("workspace.get").at("project") == Json{{{"name", "Mixing"}, {"layout", mixingLayout()}}});
 	CHECK(f.active() == activeIs("project", "Mixing"));
+}
+
+TEST_CASE("only the project workspaces and the active workspace modify the project, and transactions don't run "
+		  "workspace commands",
+	"[unit]")
+{
+	Fixture f;
+	const test::TempDir dir;
+	f.call("project.save", {{"path", (dir.path() / "saved.dawproject").u8string()}});
+	const Json saved = f.call("project.revision");
+	REQUIRE(saved.at("modified") == false);
+
+	// Global workspaces are user settings: adding one makes it active, which the project saves, but organizing them
+	// changes only ui.workspaces.
+	f.setLayout(mixingLayout());
+	f.call("workspace.add", {{"name", "Mixing"}, {"type", "global"}});
+	f.call("workspace.add", {{"name", "Editing"}, {"type", "global"}});
+	f.call("project.save", {{"path", (dir.path() / "saved.dawproject").u8string()}});
+	const Json before = f.call("project.revision");
+	f.call("workspace.update");
+	f.call("workspace.rename", {{"type", "global"}, {"name", "Mixing"}, {"newName", "Mix"}});
+	f.call("workspace.move", {{"type", "global"}, {"name", "Mix"}, {"index", 1}});
+	f.call("workspace.remove", {{"type", "global"}, {"name", "Mix"}});
+	f.call("workspace.activate", {{"type", "global"}, {"name", "Editing"}}); // active already
+	CHECK(f.call("project.revision") == before);
+
+	// The active workspace and the project workspaces are the project's.
+	f.call("workspace.activate", {{"type", ""}});
+	CHECK(f.call("project.revision").at("modified") == true);
+	f.call("project.save", {{"path", (dir.path() / "saved.dawproject").u8string()}});
+	f.call("workspace.add", {{"name", "Project"}, {"type", "project"}});
+	CHECK(f.call("project.revision").at("modified") == true);
+
+	const engine::Result transaction = f.client.call("history.transaction",
+		{{"description", "Both"},
+			{"commands",
+				{{{"command", "track.add"}, {"parameters", {{"type", "audio"}}}},
+					{{"command", "workspace.add"}, {"parameters", {{"name", "In"}, {"type", "global"}}}}}}});
+	CHECK(!transaction.ok());
+	CHECK(f.names("global") == std::vector<std::string>{"Editing"});
+	CHECK(f.call("project.get").at("tracks").empty());
+}
+
+TEST_CASE("No Workspace returns to the layout as it was last without a workspace", "[unit]")
+{
+	Fixture f;
+	const Json own = {{"windows", {{"project", {{"zones", {{"right", {{"visible", true}}}}}}}}}};
+	f.setLayout(mixingLayout());
+	f.call("workspace.add", {{"name", "Mixing"}, {"type", "global"}});
+	f.call("workspace.activate", {{"type", ""}});
+	CHECK(f.layout() == mixingLayout()); // none was saved without a workspace yet
+
+	// The layout as it is when a workspace is chosen comes back with No Workspace.
+	f.setLayout(own);
+	f.call("workspace.activate", {{"type", "global"}, {"name", "Mixing"}});
+	CHECK(f.layout() == mixingLayout());
+	f.setLayout(editingLayout()); // changes the workspace's view, not the one without
+	f.call("workspace.activate", {{"type", ""}});
+	CHECK(f.layout() == own);
+	CHECK(f.active() == activeIs("", ""));
+
+	// No Workspace while none is active keeps the layout as it is.
+	f.setLayout(editingLayout());
+	f.call("workspace.activate", {{"type", ""}});
+	CHECK(f.layout() == editingLayout());
+}
+
+TEST_CASE("an active workspace that is gone, such as a global one another computer has, isn't active", "[unit]")
+{
+	Fixture f;
+	f.setLayout(mixingLayout());
+	f.call("workspace.add", {{"name", "Mixing"}, {"type", "global"}});
+	const test::TempDir dir;
+	const std::string file = (dir.path() / "elsewhere.dawproject").u8string();
+	f.call("project.save", {{"path", file}});
+
+	// On a computer without it.
+	f.call("settings.set", {{"key", "ui.workspaces"}, {"value", Json::array()}});
+	f.call("project.load", {{"path", file}});
+	CHECK(f.active() == activeIs("", ""));
+	CHECK_THAT(f.fails("workspace.update", Json::object()), ContainsSubstring("no workspace is active"));
+
+	// Once it is there again, it is active as the project says.
+	f.call("settings.set", {{"key", "ui.workspaces"}, {"value", {{{"name", "Mixing"}, {"layout", mixingLayout()}}}}});
+	CHECK(f.active() == activeIs("global", "Mixing"));
 }

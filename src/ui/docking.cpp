@@ -105,27 +105,33 @@ namespace gnubase::ui
 			return result;
 		}
 
-		// Puts the container's children whose attribute the order names into that order, where the last of them is.
+		// Puts the container's children whose attribute the order names into that order, in the places they take, so
+		// that the other children, such as a toolbar's spacer, stay where they are.
 		void arrange(Rml::Element& container, const char* name, const std::vector<std::string>& order)
 		{
-			std::vector<Rml::Element*> children; // in the document's order
+			std::vector<Rml::Element*> places; // in the document's order
 			for (int i = 0; i < container.GetNumChildren(); ++i)
 				if (contains(order, attribute(*container.GetChild(i), name)))
-					children.push_back(container.GetChild(i));
+					places.push_back(container.GetChild(i));
 			std::vector<Rml::Element*> sorted;
 			for (const std::string& id : order)
-				std::copy_if(children.begin(), children.end(), std::back_inserter(sorted),
+				std::copy_if(places.begin(), places.end(), std::back_inserter(sorted),
 					[&](const Rml::Element* child) { return attribute(*child, name) == id; });
-			if (sorted == children)
-				return;
-			Rml::Element* end = children.back()->GetNextSibling();
-			for (Rml::Element* child : sorted)
+			for (std::size_t i = 0; i < sorted.size(); ++i)
 			{
-				Rml::ElementPtr moved = container.RemoveChild(child);
-				if (end != nullptr)
-					container.InsertBefore(std::move(moved), end);
+				if (places[i] == sorted[i])
+					continue;
+				// Swaps the child in this place with the one that belongs here, which is in a later place.
+				const auto there =
+					std::find(places.begin() + static_cast<std::ptrdiff_t>(i) + 1, places.end(), sorted[i]);
+				Rml::Element* here = places[i];
+				Rml::Element* after = (*there)->GetNextSibling();
+				container.InsertBefore(container.RemoveChild(*there), here);
+				if (after != nullptr)
+					container.InsertBefore(container.RemoveChild(here), after);
 				else
-					container.AppendChild(std::move(moved));
+					container.AppendChild(container.RemoveChild(here));
+				std::swap(places[i], *there);
 			}
 		}
 
@@ -747,8 +753,13 @@ namespace gnubase::ui
 
 	void Docking::openPresetDialog(Rml::Context& context, const std::string& window, const std::string& set)
 	{
-		if (m_presetDialog)
-			return;
+		// Open for another pane, maybe in another window: it moves to this one.
+		if (Rml::Element* open = m_presetDialog.get())
+		{
+			open->RemoveEventListener(m_closeEvent, this);
+			m_presetDialog.reset();
+			open->GetOwnerDocument()->Close();
+		}
 		const std::string path =
 			std::filesystem::path(m_panelWindow).replace_filename("setup-preset.rml").generic_u8string();
 		Rml::ElementDocument* dialog = context.LoadDocument(path);
@@ -832,12 +843,24 @@ namespace gnubase::ui
 		{
 			const WindowId id = window.current();
 			const bool open = id != 0 && m_shell.find(id) != nullptr;
-			const Rect bounds = open ? m_shell.bounds(id) : window.bounds;
 			const bool opened = open != window.open;
+			bool maximized = open && m_shell.maximized(id);
+			// A maximized window keeps its normal bounds, unless it opened maximized.
+			const Rect bounds =
+				open && (!maximized || opened || window.bounds.width <= 0) ? m_shell.bounds(id) : window.bounds;
+			// A window that was maximized when it closed opens maximized again.
+			if (open && opened && !maximized && savedMaximized(window.name))
+			{
+				m_shell.setMaximized(id, true);
+				maximized = true;
+			}
 			const bool moved = open && !(bounds == window.bounds);
+			const bool zoomed = open && maximized != window.maximized;
 			window.open = open;
 			window.bounds = bounds;
-			if (!opened && !moved)
+			if (open)
+				window.maximized = maximized;
+			if (!opened && !moved && !zoomed)
 				continue;
 			Json& entry = m_layout["windows"][window.name];
 			if (!entry.is_object())
@@ -847,8 +870,17 @@ namespace gnubase::ui
 				entry["open"] = open;
 				changed = true;
 			}
-			if (open)
-				changed = keepBounds(entry, bounds, displays) || changed;
+			if (!open)
+				continue;
+			changed = keepBounds(entry, bounds, displays) || changed;
+			if (maximized != savedMaximized(window.name))
+			{
+				if (maximized)
+					entry["maximized"] = true;
+				else
+					entry.erase("maximized");
+				changed = true;
+			}
 		}
 		if (changed)
 			save();
@@ -857,7 +889,7 @@ namespace gnubase::ui
 	void Docking::addWindow(
 		const std::string& name, std::function<WindowId()> current, std::function<void(bool open)> setOpen)
 	{
-		AppWindow window{name, std::move(current), std::move(setOpen), false, {}};
+		AppWindow window{name, std::move(current), std::move(setOpen), false, {}, false};
 		const WindowId id = window.current();
 		window.open = id != 0 && m_shell.find(id) != nullptr;
 		if (window.open)
@@ -866,6 +898,9 @@ namespace gnubase::ui
 				if (const std::optional<Rect> saved = bounds(name))
 					m_shell.setBounds(id, *saved);
 			window.bounds = m_shell.bounds(id);
+			if (!window.setOpen && savedMaximized(name))
+				m_shell.setMaximized(id, true);
+			window.maximized = m_shell.maximized(id);
 		}
 		// ui.layout from the last session can have it open while it is closed now, or the other way round: corrected
 		// at once, so that a workspace added now has it as it is.
@@ -900,12 +935,24 @@ namespace gnubase::ui
 				window.setOpen(opens); // which opens it at its bounds from ui.layout
 				continue;
 			}
-			if (const std::optional<Rect> saved = bounds(window.name); open && saved)
+			if (!open)
+				continue;
+			const bool maximized = savedMaximized(window.name);
+			if (const std::optional<Rect> saved = bounds(window.name))
 			{
+				m_shell.setMaximized(id, false); // the saved bounds are the normal ones
 				m_shell.setBounds(id, *saved);
 				window.bounds = m_shell.bounds(id);
 			}
+			m_shell.setMaximized(id, maximized);
+			window.maximized = maximized;
 		}
+	}
+
+	bool Docking::savedMaximized(const std::string& name) const
+	{
+		const Json* maximized = find(m_layout, {"windows", name, "maximized"});
+		return maximized != nullptr && maximized->is_boolean() && maximized->get<bool>();
 	}
 
 	void Docking::applySize(Rml::Element& element, const Json* saved)
@@ -1005,6 +1052,15 @@ namespace gnubase::ui
 						item->SetAttribute("checked", "");
 				}
 			}
+		}
+		// Save Preset has nothing to save while the window doesn't know the set's sections, such as a mixer window
+		// without channels.
+		for (Rml::Element* save : elementsWith(root, "setup-preset-save", {}))
+		{
+			if (sections(window, attribute(*save, "setup-preset-save")).empty())
+				save->SetAttribute("disabled", "");
+			else
+				save->RemoveAttribute("disabled");
 		}
 		// The presets' buttons, made again only when the presets changed, since a button mustn't go while its click is
 		// handled.
@@ -1333,7 +1389,7 @@ namespace gnubase::ui
 							  name = attribute(*preset, "setup-preset")] { recallPreset(window, set, name); });
 			}
 			else if (const Rml::Element* saving = closestWith(target, "setup-preset-save");
-				saving != nullptr && !window.empty())
+				saving != nullptr && !window.empty() && !saving->HasAttribute("disabled"))
 			{
 				later(
 					[this, document = target->GetOwnerDocument()->GetObserverPtr(), window = std::move(window),

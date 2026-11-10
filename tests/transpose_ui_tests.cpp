@@ -95,7 +95,7 @@ TEST_CASE("the toolbar sets the project root key, the info line a part's root ke
 	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("midiParts").size() == 1; }));
 	window.display.select({part});
 	REQUIRE(window.app.waitUntil([&] { return !window.hasClass("#info-line", "empty"); }));
-	CHECK_FALSE(window.hasClass("#info-line [info-field=rootKey]", "hidden"));
+	CHECK_FALSE(window.hasClass("#info-line [info-field=rootKey]", "unavailable"));
 	// The drop-down list's next key after none is C.
 	window.click("#info-line select[field=rootKey]");
 	window.app.ui().key(std::nullopt, "Down");

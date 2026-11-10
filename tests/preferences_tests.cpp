@@ -172,6 +172,7 @@ namespace
 			"ui.markerIds",                  // the marker track
 			"ui.markersAutoScroll",          // the markers window
 			"ui.markersSyncSelection",       // the markers window
+			"ui.noWorkspaceLayout",          // the workspaces' No Workspace
 			"ui.setupPresets",               // the setup panes' presets
 			"ui.timeDisplay",                // the time display window
 			"ui.timeFormats",                // the transport bar's displays

@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- Names a setup pane preset (docs/features/docking.md, reference manual p. 1575): the docking system opens it from
      a setup pane's Save Preset button, and saves the set's order and hidden sections under the name in
-     #setup-preset-name when it closes with OK. -->
+     #setup-preset-name when it closes with OK, which is disabled while the name is empty. -->
 <rml>
 <head>
 	<title>Save Preset</title>
@@ -14,7 +14,13 @@
 		.row
 		{
 			display: flex;
+			align-items: center;
 			margin: 8dp 12dp 0 12dp;
+		}
+
+		.row label
+		{
+			margin-right: 8dp;
 		}
 
 		#setup-preset-name
@@ -32,14 +38,30 @@
 			margin-left: 6dp;
 		}
 	</style>
+	<script>
+		SetupPreset = {}
+
+		function SetupPreset.check(document)
+			local name = tostring(document:GetElementById("setup-preset-name"):GetAttribute("value") or "")
+			local ok = document:GetElementById("setup-preset-ok")
+			if name:match("%S") then
+				ok:RemoveAttribute("disabled")
+			else
+				ok:SetAttribute("disabled", "")
+			end
+		end
+	</script>
 </head>
 <body>
 	<dialog id="setup-preset-dialog">
 		<div class="dialog-titlebar">Save Preset</div>
-		<div class="row"><input type="text" id="setup-preset-name" autofocus="autofocus"/></div>
+		<div class="row">
+			<label for="setup-preset-name">Name</label>
+			<input type="text" id="setup-preset-name" autofocus="autofocus" onchange="SetupPreset.check(document)"/>
+		</div>
 		<div class="row buttons">
 			<button result="cancel">Cancel</button>
-			<button class="primary" id="setup-preset-ok" result="ok">OK</button>
+			<button class="primary" id="setup-preset-ok" result="ok" disabled="">OK</button>
 		</div>
 	</dialog>
 </body>

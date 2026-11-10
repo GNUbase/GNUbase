@@ -11,6 +11,7 @@
 #include "testutils/fakeui.h"
 #include "ui/automation.h"
 #include "ui/canvas.h"
+#include "ui/docking.h"
 #include "ui/enginebinding.h"
 #include "ui/eventdisplay.h"
 #include "ui/keycommands.h"
@@ -965,6 +966,8 @@ TEST_CASE("setup panes save and recall presets and reset their sections to the d
 	const auto exists = [&app](const std::string& selector)
 	{ return !app.ui().dom(std::nullopt, selector, 0).at("elements").empty(); };
 	const auto presets = [&app] { return app.call("settings.get", {{"key", "ui.setupPresets"}}).at("value"); };
+	const std::vector<std::string> defaults = app.appUi().docking().sections("project", "transport");
+	REQUIRE(defaults.size() > 1);
 	openPane();
 	click(app, "#transport-setup [setup-section=locators]");
 	app.shell().step(std::chrono::milliseconds(0));
@@ -985,11 +988,14 @@ TEST_CASE("setup panes save and recall presets and reset their sections to the d
 	CHECK(saved.at(0).at("order").at(0) == "locators");
 	REQUIRE(app.waitUntil([&exists] { return exists("#transport-setup [setup-preset=Compact]"); }));
 
-	// Reset All: the default order and sections.
+	// Reset All: the default order and sections, also after the sections were reordered.
+	app.appUi().docking().moveSection("project", "transport", defaults.back(), defaults.front());
+	REQUIRE(app.appUi().docking().sections("project", "transport").front() == defaults.back());
 	openPane();
 	click(app, "#transport-setup [setup-reset]");
 	app.shell().step(std::chrono::milliseconds(0));
 	CHECK(visible(app, "#transport-bar [section=locators]"));
+	CHECK(app.appUi().docking().sections("project", "transport") == defaults);
 	REQUIRE(app.waitUntil(
 		[&app]
 		{

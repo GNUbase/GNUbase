@@ -3524,6 +3524,14 @@ namespace gnubase::engine
 			});
 	}
 
+	void ProjectModel::setWorkspaces(ProjectWorkspaces workspaces)
+	{
+		if (toJson(workspaces) == toJson(m_project.workspaces))
+			return;
+		m_project.workspaces = std::move(workspaces);
+		publish();
+	}
+
 	Json ProjectModel::runEdit(
 		const std::string& command, Project& project, const Json& parameters, CommandContext& context)
 	{

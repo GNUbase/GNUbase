@@ -40,7 +40,8 @@ scripts plug into. The code is `src/app/appscripts.cpp` (`app::AppUi`), the cons
 ## The script console
 
 The UI command `window.scriptConsole` (Edit > Scripts > Script Console) opens the console in a window of its own, or
-closes it.
+closes it. The window is a workspace window, `scriptConsole` in `ui.layout` ([workspaces.md](workspaces.md)): it opens
+where it was, and workspaces open, close and place it.
 
 - **Scripts.** The list of user scripts, each with Run, which runs its key command, and Edit, which opens the file in
   an editor (`gnubase.ui.openExternally{path, edit = true}`), not with the application for `.lua` files, which may be

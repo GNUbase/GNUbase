@@ -89,12 +89,14 @@ the set `channel` (`setup-section="eq"`, with the section's label), in the user'
 and hidden sections (Reset All, p. 1576), and the presets (p. 1575) save and recall them.
 
 - **Presets.** A button with `setup-preset-save="channel"` opens the dialog Save Preset (`resources/ui/setup-preset.rml`,
-  next to the panel window's document), and OK saves the set's order and hidden sections under the name typed,
-  replacing a preset of that name. An element with `setup-presets="channel"` gets a button per preset of the set
+  next to the panel window's document), and OK, disabled while the name is empty, saves the set's order and hidden
+  sections under the name typed, replacing a preset of that name. Save Preset in another pane, also in another window,
+  moves the dialog there. Save Preset is disabled while the window doesn't know the set's sections, such as a mixer
+  window without channels, so that no preset has an empty order. An element with `setup-presets="channel"` gets a button per preset of the set
   (`setup-preset="name"`), which recalls it. The presets are the user setting `ui.setupPresets`, by set, each a name,
   the order and the hidden sections, so every window with that set has them, and profiles carry them
-  ([profiles.md](profiles.md)). The transport bar and panel, the inspector and the mixer have them, Show All and Reset
-  All in their setup panes.
+  ([profiles.md](profiles.md)). The transport bar and panel, the toolbar, the info line, the inspector and the mixer have
+  them, Show All and Reset All in their setup panes.
 
 - **Show and hide.** A section's button shows or hides that section in every container of its set; hidden sections
   get the state class `.hidden`.
@@ -111,7 +113,11 @@ and hidden sections (Reset All, p. 1576), and the presets (p. 1575) save and rec
   the document, and searching every document in each frame would cost time on a large mixer.
 
 The transport bar and the transport panel (a docking window `transportPanel` of its own) have the sections of the
-set `transport`, with a setup pane as their context menu ([transport-bar.md](transport-bar.md)). The mixer's channels
+set `transport`, with a setup pane as their context menu ([transport-bar.md](transport-bar.md)). The project window's toolbar has the
+sections of the set `toolbar` (`.toolbar-section`: Tool Buttons, Auto-Scroll, Zoom Presets, Snap, Grid Type, Quantize,
+Color Menu, Track Visibility Configurations, Project Root Key and Window Zone Controls, pp. 57–65) with the setup pane
+`#toolbar-setup` as its context menu (p. 57), and the info line has its fields as the sections of the set `infoLine`,
+with `#info-line-setup` ([inspector.md](inspector.md)). The mixer's channels
 are such containers ([mixer-window.md](mixer-window.md)); `tests/data/ui/sections.rml` is a test window with sections,
 and `tests/data/ui/sections-later.rml` one whose channels only come after `attach`.
 
@@ -190,7 +196,7 @@ and a panel in a window of its own, whose document has no zones. Ctrl+Tab, Alt+T
 
 ## Not yet
 
-The toolbar's and the info line's setup panes (p. 1575, #942); removing and renaming setup pane presets. Sections in a panel that shows in a window of its own keep the document's order; the Channel zone's contents (p. 73)
+Removing and renaming setup pane presets; the toolbar's Left and Right Divider (p. 65). Sections in a panel that shows in a window of its own keep the document's order; the Channel zone's contents (p. 73)
 with the channel strip (#107), shown as its zone's one tab until then; a theme look for tabs at the bottom, whose
 active tab has its marker on the side away from the panels; dragging a tab out of its zone to open it in a window; the
 editor in the lower zone taking the focus when it opens (p. 100), once editors open there; and after live reload, what
@@ -228,4 +234,6 @@ channel added or rebuilt after `attach` takes the user's order and hidden sectio
 and a window that starts without channels fills its setup pane from the first one that comes, with the user's layout,
 or from a channel in a docked panel's content; a setup pane added later gets its buttons in the user's order.
 `tests/transportbar_tests.cpp` saves a setup pane preset through the Save Preset dialog into `ui.setupPresets`, resets
-the pane with Reset All, recalls the preset and follows another client's presets.
+the pane with Reset All, also the order after a reorder, recalls the preset and follows another client's presets;
+`tests/inspector_tests.cpp` and `tests/mixerwindow_tests.cpp` do the same for the inspector's, the toolbar's, the info
+line's and the mixer's setup panes, with the dialog's OK disabled until a name is typed.

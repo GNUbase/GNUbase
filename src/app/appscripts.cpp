@@ -354,11 +354,13 @@ namespace gnubase::app
 		if (m_shell.find(m_scriptConsoleWindow) != nullptr)
 		{
 			m_shell.close(m_scriptConsoleWindow);
+			m_docking.saveWindows();
 			return;
 		}
 		ui::WindowSpec spec;
 		spec.title = "Script Console";
 		spec.size = {720, 400};
+		spec.bounds = m_docking.bounds("scriptConsole");
 		spec.hidden = m_hidden;
 		const ui::Window& window = m_shell.open(spec);
 		m_scriptConsoleWindow = window.id();
@@ -374,5 +376,6 @@ namespace gnubase::app
 		m_shownEnd = 0;
 		m_shownChunks.clear();
 		document->Show();
+		m_docking.saveWindows();
 	}
 }

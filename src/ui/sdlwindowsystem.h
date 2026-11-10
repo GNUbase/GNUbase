@@ -38,6 +38,8 @@ namespace gnubase::ui
 		void raise(WindowId window) override;
 		void minimize(WindowId window) override;
 		void restore(WindowId window) override;
+		bool maximized(WindowId window) const override;
+		void setMaximized(WindowId window, bool maximized) override;
 		Size pixelSize(WindowId window) const override;
 		float scale(WindowId window) const override;
 		void setInputTarget(WindowId window, Rml::Context* context) override;
