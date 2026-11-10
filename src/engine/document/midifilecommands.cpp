@@ -6,11 +6,14 @@
 #include "engine/document/projectmodel.h"
 #include "engine/document/serialize.h"
 #include "engine/engine.h"
+#include "engine/midi/midivalues.h"
 #include "engine/midifile/midiconvert.h"
 #include "engine/midifile/smf.h"
 
 #include <algorithm>
 #include <cstdint>
+#include <filesystem>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -75,6 +78,41 @@ namespace gnubase::engine
 			return result;
 		}
 
+		// The first program change, MIDI volume and pan on MIDI channel 1, which a MIDI track's settings play on,
+		// as those settings for channel.set (reference manual p. 364: Extract First Patch, Extract First
+		// Volume/Pan); they leave the controllers.
+		Json extractSettings(std::vector<Controller>& controllers, bool patch, bool volumePan)
+		{
+			Json settings = Json::object();
+			const auto extract = [&controllers](ControllerType type, int number)
+			{
+				const auto found = std::find_if(controllers.begin(), controllers.end(),
+					[type, number](const Controller& controller)
+					{
+						return controller.channel == 0 && controller.type == type &&
+							(number < 0 || controller.number == number);
+					});
+				std::optional<Controller> result;
+				if (found != controllers.end())
+				{
+					result = *found;
+					controllers.erase(found);
+				}
+				return result;
+			};
+			if (patch)
+				if (const std::optional<Controller> program = extract(ControllerType::Program, -1))
+				{
+					settings["program"] = program->number;
+					settings["bank"] = program->value != g_noBank ? Json(program->value) : Json(nullptr);
+				}
+			if (volumePan)
+				for (const auto& [number, key] : {std::pair{7, "midiVolume"}, std::pair{10, "midiPan"}})
+					if (const std::optional<Controller> controller = extract(ControllerType::Control, number))
+						settings[key] = midi::controllerToMidi1(controller->value);
+			return settings;
+		}
+
 		Json controllersJson(const std::vector<Controller>& controllers, time::Ticks partStart)
 		{
 			Json result = Json::array();
@@ -127,12 +165,22 @@ namespace gnubase::engine
 				"which becomes active); unless markers is false, its "
 				"markers are added to the active marker track (one is added if there is none), except that a type 1 "
 				"file's tracks of nothing but a name and markers, which midiFile.export writes for marker tracks, "
-				"become new marker tracks at the top while the project has room for them. One undo step. Returns "
-				"the new tracks and parts.",
+				"become new marker tracks at the top while the project has room for them. The options of the "
+				"reference's MIDI file import (#478): position (sample frames from the project start, default 0) "
+				"is where the file starts; the project's tempo and signatures before it stay. dissolve false keeps a "
+				"type 0 file in one track. singlePart puts the whole file into one part on one track: track, a "
+				"MIDI or instrument track of the project, or a new one named after the file. On MIDI tracks, "
+				"extractPatch makes each track's first program change (with its bank) and extractVolumePan its "
+				"first MIDI volume (CC 7) and pan (CC 10) on MIDI channel 1 the track's program, bank, midiVolume "
+				"and midiPan (channel.set) instead of events. automation moves the continuous controllers into "
+				"automation lanes, as midi.extractAutomation does. One undo step. Returns the new tracks and the "
+				"parts.",
 				{{"type", "object"}, {"additionalProperties", false},
 					{"properties",
 						{{"path", string}, {"trackType", {{"type", "string"}, {"enum", {"midi", "instrument"}}}},
-							{"tempo", boolean}, {"markers", boolean}}},
+							{"tempo", boolean}, {"markers", boolean}, {"position", integer}, {"dissolve", boolean},
+							{"singlePart", boolean}, {"track", integer}, {"extractPatch", boolean},
+							{"extractVolumePan", boolean}, {"automation", boolean}}},
 					{"required", {"path"}}},
 				{{"type", "object"}, {"properties", {{"tracks", {{"type", "array"}}}, {"parts", {{"type", "array"}}}}},
 					{"required", {"tracks", "parts"}}},
@@ -143,14 +191,46 @@ namespace gnubase::engine
 	Json ProjectModel::importMidiFile(Project& project, CommandContext& context)
 	{
 		const Json& parameters = context.parameters();
+		const auto position = parameters.value("position", int64_t{0});
+		require(position >= 0, "position must not be negative");
+		const bool singlePart = parameters.value("singlePart", false);
+		const ObjectId target = parameters.value("track", ObjectId{0});
+		require(target == 0 || singlePart, "track needs singlePart");
+		if (target != 0)
+		{
+			const auto found = project.trackById.find(target);
+			require(found != project.trackById.end(), "no track " + std::to_string(target));
+			require(found->second.type == TrackType::Midi || found->second.type == TrackType::Instrument,
+				"track must be a MIDI or instrument track");
+		}
+		const std::string path = parameters.at("path").get<std::string>();
+		midifile::ImportOptions options;
+		options.dissolve = parameters.value("dissolve", true);
+		options.start = project.tempo.toTicks(position, project.sampleRate);
+		options.tempo = project.tempo;
+		options.signatures = project.signatures;
 		midifile::Import imported;
 		try
 		{
-			imported = midifile::importFile(midifile::load(parameters.at("path").get<std::string>()));
+			imported = midifile::importFile(midifile::load(path), options);
 		}
 		catch (const std::exception& error)
 		{
 			throw CommandError(error.what());
+		}
+		if (singlePart && !imported.tracks.empty())
+		{
+			// One track with every event, named after the file.
+			midifile::ImportedTrack merged;
+			merged.name = std::filesystem::u8path(path).stem().u8string();
+			for (midifile::ImportedTrack& track : imported.tracks)
+			{
+				merged.notes.insert(merged.notes.end(), track.notes.begin(), track.notes.end());
+				merged.controllers.insert(merged.controllers.end(), track.controllers.begin(), track.controllers.end());
+			}
+			std::stable_sort(merged.controllers.begin(), merged.controllers.end(),
+				[](const Controller& a, const Controller& b) { return a.position < b.position; });
+			imported.tracks = {std::move(merged)};
 		}
 
 		// The new tracks, parts, events and markers come from the commands that make them.
@@ -210,14 +290,28 @@ namespace gnubase::engine
 		}
 		Json tracks = Json::array();
 		Json parts = Json::array();
-		for (const midifile::ImportedTrack& track : imported.tracks)
+		for (midifile::ImportedTrack& track : imported.tracks)
 		{
 			// The file's parts and notes are in ticks.
-			Json trackParameters = {{"type", newTrackType(parameters)}, {"timeBase", "musical"}};
-			if (!track.name.empty())
-				trackParameters["name"] = track.name;
-			const auto trackId = run("track.add", trackParameters).at("track").at("id").get<ObjectId>();
-			tracks.push_back(trackId);
+			ObjectId trackId = target;
+			if (trackId == 0)
+			{
+				Json trackParameters = {{"type", newTrackType(parameters)}, {"timeBase", "musical"}};
+				if (!track.name.empty())
+					trackParameters["name"] = track.name;
+				trackId = run("track.add", trackParameters).at("track").at("id").get<ObjectId>();
+				tracks.push_back(trackId);
+			}
+			if (const Track& added = project.trackById.at(trackId); added.type == TrackType::Midi)
+			{
+				Json settings = extractSettings(track.controllers, parameters.value("extractPatch", false),
+					parameters.value("extractVolumePan", false));
+				if (!settings.empty())
+				{
+					settings["channel"] = added.channel;
+					run("channel.set", settings);
+				}
+			}
 
 			const midifile::PartSpan span = midifile::partSpan(track, project.signatures);
 			const Json partParameters = {{"track", trackId}, {"position", span.position}, {"length", span.length}};
@@ -229,6 +323,8 @@ namespace gnubase::engine
 				run("controller.add",
 					{{"part", partId}, {"controllers", controllersJson(track.controllers, span.position)}});
 		}
+		if (parameters.value("automation", false) && !parts.empty())
+			run("midi.extractAutomation", {{"parts", parts}});
 		return {{"tracks", tracks}, {"parts", parts}};
 	}
 }

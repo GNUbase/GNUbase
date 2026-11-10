@@ -519,6 +519,47 @@ namespace gnubase::engine::settings
 					"select MSB and LSB) and an optional folder it is listed in. A MIDI track that names a device "
 					"(channel.set device) chooses its program and bank by patch.",
 					midi::devicesSchema(), Json::object()},
+				{"midi.importAutomation",
+					"Import Controller as Automation Tracks (reference manual p. 365): importing a MIDI file in the "
+					"project window moves its continuous controllers into automation lanes (midiFile.import "
+					"automation).",
+					Json{{"type", "boolean"}}, false},
+				{"midi.importDestination",
+					"Destination (reference manual p. 365): importing a MIDI file in the project window makes midi "
+					"or instrument tracks (midiFile.import trackType).",
+					Json{{"type", "string"}, {"enum", {"midi", "instrument"}}}, "midi"},
+				{"midi.importDissolveFormat0",
+					"Auto Dissolve Format 0 (reference manual p. 365): a type 0 MIDI file imported in the project "
+					"window gets a track per MIDI channel; off, one track (midiFile.import dissolve).",
+					Json{{"type", "boolean"}}, true},
+				{"midi.importExtractPatch",
+					"Extract First Patch (reference manual p. 364): a MIDI file imported in the project window gives "
+					"each MIDI track's first program change and bank select to the track's program and bank "
+					"(midiFile.import extractPatch).",
+					Json{{"type", "boolean"}}, true},
+				{"midi.importExtractVolumePan",
+					"Extract First Volume/Pan (reference manual p. 364): a MIDI file imported in the project window "
+					"gives each MIDI track's first MIDI volume and pan to the track's (midiFile.import "
+					"extractVolumePan).",
+					Json{{"type", "boolean"}}, true},
+				{"midi.importIgnoreTempo",
+					"Ignore Master Track Events on Merge (reference manual p. 365): a MIDI file imported into the "
+					"open project leaves its tempo and time signatures as they are (midiFile.import tempo false); a "
+					"MIDI file imported into a new project always brings its own.",
+					Json{{"type", "boolean"}}, false},
+				{"midi.importMarkers",
+					"Import Markers (reference manual p. 365): importing a MIDI file in the project window adds its "
+					"markers (midiFile.import markers).",
+					Json{{"type", "boolean"}}, true},
+				{"midi.importSinglePart",
+					"Import Dropped File as Single Part (reference manual p. 365): a MIDI file dropped on the project "
+					"window goes into one part, on the MIDI or instrument track it is dropped on or a new one "
+					"(midiFile.import singlePart).",
+					Json{{"type", "boolean"}}, false},
+				{"midi.importToLeftLocator",
+					"Import to Left Locator (reference manual p. 365): File > Import > MIDI File places the file at "
+					"the left locator instead of the project start (midiFile.import position).",
+					Json{{"type", "boolean"}}, false},
 				{"midi.portSettings",
 					"The MIDI ports' settings (midi.setPort), by backend/in or out/port id, also for ports that aren't "
 					"connected: the name shown (showAs), whether it is visible, and for inputs whether it belongs to "

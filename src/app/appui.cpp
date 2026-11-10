@@ -614,12 +614,17 @@ namespace gnubase::app
 				chooseImport(window, "Import Audio Files",
 					{{"Audio files", "wav;w64;rf64;bwf;aif;aiff;aifc;flac;ogg;mp3"}, {"All files", "*"}}, true, false);
 			}});
-		m_keys.add({"file.importMidi", "Imports a standard MIDI file into new tracks.",
-			[this](ui::Window& window, Rml::Element* /*zone*/)
+		// File > Import > MIDI File asks first whether to create a new project (reference manual p. 365, #478).
+		m_keys.add({"file.importMidi",
+			"Imports a standard MIDI file, into a new project or the open one, as the user chooses, with the options "
+			"of the user settings midi.import*.",
+			[this](ui::Window& window, Rml::Element* /*zone*/) { openDialog(window, "import-midi.rml"); }});
+		m_lua.addFunction("ui.importMidi",
+			[this](const engine::Json& parameters)
 			{
-				chooseImport(
-					window, "Import MIDI File", {{"MIDI files", "mid;midi;smf"}, {"All files", "*"}}, false, false);
-			}});
+				chooseMidiImport(callingWindow(), parameters.value("newProject", false));
+				return engine::Json::object();
+			});
 		for (const char* command : {"file.importAudio", "file.importMidi", "pool.import"})
 			m_keys.enableWhen(command, [this](ui::Window&, Rml::Element*) { return m_eventDisplay != nullptr; });
 		// File > Export (docs/features/mixdown.md): the Export Audio Mixdown dialog, and Quick Audio Export into a WAV
@@ -1401,6 +1406,35 @@ namespace gnubase::app
 				else
 					m_eventDisplay->importToSelection(
 						files, m_trackList ? m_trackList->selection() : std::vector<uint64_t>());
+			});
+	}
+
+	void AppUi::chooseMidiImport(ui::Window& window, bool newProject)
+	{
+		ui::FileDialog dialog;
+		dialog.title = "Import MIDI File";
+		dialog.filters = {{"MIDI files", "mid;midi;smf"}, {"All files", "*"}};
+		dialog.parent = window.id();
+		m_shell.showFileDialog(dialog,
+			[this, newProject, id = window.id()](const ui::FileDialogResult& result)
+			{
+				if (!result.error.empty())
+					logging::warning("The file dialog failed: {}", result.error);
+				ui::Window* found = m_shell.find(id);
+				if (result.files.empty() || !m_eventDisplay || found == nullptr)
+					return;
+				std::vector<std::string> files{result.files.front().u8string()};
+				if (!newProject)
+				{
+					m_eventDisplay->importMidi(files);
+					return;
+				}
+				m_files.newProject(*found,
+					[this, files]
+					{
+						if (m_eventDisplay)
+							m_eventDisplay->importMidi(files, true);
+					});
 			});
 	}
 

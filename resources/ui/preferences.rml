@@ -249,6 +249,18 @@
 				{key = "midi.chasePrograms", label = "Program Change"},
 				{key = "midi.chasePitchBend", label = "Pitchbend"},
 				{key = "midi.chaseBeyondParts", label = "Chase not limited to Part Boundaries"}}},
+			{id = "midi-midi-file", parent = "MIDI", name = "MIDI File", items = {
+				{section = "Import Options"},
+				{key = "midi.importExtractPatch", label = "Extract First Patch"},
+				{key = "midi.importExtractVolumePan", label = "Extract First Volume/Pan"},
+				{key = "midi.importAutomation", label = "Import Controller as Automation Tracks"},
+				{key = "midi.importToLeftLocator", label = "Import to Left Locator"},
+				{key = "midi.importMarkers", label = "Import Markers"},
+				{key = "midi.importSinglePart", label = "Import Dropped File as Single Part"},
+				{key = "midi.importIgnoreTempo", label = "Ignore Master Track Events on Merge"},
+				{key = "midi.importDissolveFormat0", label = "Auto Dissolve Format 0"},
+				{key = "midi.importDestination", label = "Destination", choices = {
+					{"midi", "MIDI Tracks"}, {"instrument", "Instrument Tracks"}}}}},
 			{id = "midi-filter", parent = "MIDI", name = "MIDI Filter", custom = "midiFilter",
 				keys = {"midi.recordFilter"}},
 			{id = "record", name = "Record", items = {
