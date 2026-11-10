@@ -779,7 +779,8 @@ namespace gnubase::app
 			[this](const engine::Json& /*parameters*/)
 			{
 				return engine::Json{{"tracks", m_trackList ? m_trackList->selection() : std::vector<uint64_t>{}},
-					{"events", m_eventDisplay ? m_eventDisplay->selection() : std::vector<uint64_t>{}}};
+					{"events", m_eventDisplay ? m_eventDisplay->selection() : std::vector<uint64_t>{}},
+					{"markers", m_markerLines ? m_markerLines->selection() : std::vector<uint64_t>{}}};
 			});
 		m_lua.addFunction("ui.selectInProject",
 			[this](const engine::Json& parameters)
@@ -793,8 +794,12 @@ namespace gnubase::app
 				};
 				if (m_trackList)
 					m_trackList->select(ids("tracks"));
+				const std::vector<uint64_t> events = ids("events");
 				if (m_eventDisplay)
-					m_eventDisplay->select(ids("events"));
+					m_eventDisplay->select(events);
+				// The project window selects events or markers: markers when no events are given.
+				if (m_markerLines)
+					m_markerLines->pick(events.empty() ? ids("markers") : std::vector<uint64_t>{});
 				return engine::Json::object();
 			});
 		// For documents' buttons and menu items: gnubase.ui.command{command = "project.addTrack"} runs a key command
