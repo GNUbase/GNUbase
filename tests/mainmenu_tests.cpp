@@ -112,7 +112,13 @@ TEST_CASE("main menu items show their keys and run engine commands with their pa
 	app.shell().step(std::chrono::milliseconds(0));
 	click(app, "#locate-right-locator");
 	REQUIRE(app.waitUntil([&app] { return app.call("transport.get").at("position") == 96000; }));
-	CHECK(app.call("engine.commandLog").at("commands").back().at("client") == "ui");
+	Json located;
+	const Json log = app.call("engine.commandLog");
+	for (const Json& entry : log.at("commands"))
+		if (entry.at("command") == "transport.locate")
+			located = entry;
+	REQUIRE(!located.is_null());
+	CHECK(located.at("client") == "ui");
 
 	// UI commands run in the window the menu is in: Edit > Select > All selects through the event display, in a
 	// submenu that shows while the mouse is over its item.
