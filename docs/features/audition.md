@@ -10,12 +10,16 @@ in the project window ([tools.md](tools.md)), and the commands behind them, whic
   `audition.stop`, as the play tool does while the mouse is pressed. With `end` (samples, after `position`) it plays
   up to there and then nothing, as the sample editor's Play back Slice does ([hitpoints.md](hitpoints.md)); its mode
   stays `play` until `audition.stop` or another audition.
-- `audition.scrub` with `track` and `position` plays the track from where its last scrub got to, to `position`,
-  forwards or backwards, in `seconds` (default: the time since that scrub, from 0.01 to 0.1 seconds). So speed and
-  pitch follow how fast new positions come, as the scrub tool sends them while the mouse drags. The first scrub of a
-  track only sets where the next one starts. Each scrub also moves the project cursor to `position`
-  (`transport.changed`), as the reference's scrubbing does.
-- `audition.stop` ends either.
+- `audition.scrub` with `track` and `position` plays the track from where the audio got to in its last scrub (where
+  that one starts if it hasn't played yet), to `position`, forwards or backwards, in `seconds` (default: the time
+  since that scrub, from 0.01 to 0.1 seconds). So speed and pitch follow how fast new positions come, as the scrub
+  tool sends them while the mouse drags, and scrubs that come faster than they play, or late behind a slow command,
+  carry on without gaps or jumps. The first scrub of a track only sets where the next one starts, and is the only
+  one of a drag in `engine.commandLog`, which the others would fill. Each scrub also moves the project cursor to
+  `position` (`transport.changed`), as the reference's scrubbing does, before it changes the audition, so that a
+  busy transport fails it without a change; while the transport plays, cued exactly as `transport.locate` does, so
+  that the other tracks play on without a dropout.
+- `audition.stop` ends either, and closes the files it played and frees their stream buffers.
 - **A media file on its own** (#730): `audition.start` and `audition.scrub` take `media` instead of `track`, as the
   sample editor's play and scrub tools play its clip (reference manual p. 630): `position` and `end` are then the
   file's sample frames, from 0 to its length, and it plays the file, also where no event plays it, without the
@@ -41,7 +45,7 @@ or a clip of the project.
 - **Playing** reuses the track's playlist ([playback.md](playback.md)) with a `TrackPlayer` on a `Playback` of its
   own: the command thread cues its disk streams at the position and waits for them before the audio thread starts,
   the cue thread keeps them ahead from where the audio thread got to (or offline rendering cues them before each
-  block), and the audio thread plays one block at a time from there, in the device's block size. What it plays is
+  block; a new audition holds the cue thread off until its own cue is in), and the audio thread plays one block at a time from there, in the device's block size. What it plays is
   bit for bit what the track's player gives during playback.
 - **Scrubbing** can't stream from disk, since it goes backwards and at any speed. The command thread reads the
   track's front layer between the two positions from its clips (each clip frame to the nearest, with the events'
@@ -58,7 +62,9 @@ or a clip of the project.
   and up to an end, for two block sizes, with its channel turned down and muted and another track silent, then
   nothing once stopped, and the transport unchanged; the errors without a device, for a MIDI track, a negative
   position and an end before the position; scrubbing back at normal speed and forwards at twice the speed, sample by
-  sample, and the cursor following; a media file played from frames outside its event, past its end and at half the
+  sample, and the cursor following; scrubs that come before the last one played out, or two before the audio thread
+  plays either, carrying on from where it got to, with and without `seconds`, and only the first in the command log;
+  stopping closing the streams; a media file played from frames outside its event, past its end and at half the
   project's sample rate, scrubbed without moving the cursor, also at half the project's sample rate, and its
   errors, also for a hand-edited project's file without a sample rate or length; a clip played and scrubbed with its
   fades.

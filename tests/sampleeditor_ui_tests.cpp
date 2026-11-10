@@ -485,9 +485,10 @@ TEST_CASE("the snap point, the zoom, play and scrub tools, the overview and the 
 			binding.update();
 			return modes.size() >= 4 && modes[2] == "scrub" && modes.back() == "off";
 		}));
+	// Only the drag's first scrub goes into the command log; the cursor shows where the last one went.
 	const Json scrubbed = f.lastParameters("audition.scrub");
 	CHECK(scrubbed.at("clip") == f.clip);
-	CHECK(std::abs(scrubbed.at("position").get<int64_t>() - 6500) <= 10);
+	CHECK(std::abs(scrubbed.at("position").get<int64_t>() - 6000) <= 10);
 	CHECK(std::abs(f.app.call("transport.get").at("position").get<int64_t>() - (g_second - 1000 + 6500)) <= 10);
 
 	// Play Region plays the region selected in the list (p. 624).
