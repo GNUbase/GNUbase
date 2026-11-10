@@ -1423,7 +1423,7 @@ namespace gnubase::app
 				ui::Window* found = m_shell.find(id);
 				if (result.files.empty() || !m_eventDisplay || found == nullptr)
 					return;
-				std::vector<std::string> files{result.files.front().u8string()};
+				const std::vector<std::string> files{result.files.front().u8string()};
 				if (!newProject)
 				{
 					m_eventDisplay->importMidi(files);
