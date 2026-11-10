@@ -69,8 +69,8 @@ Waveforms come from `media.peaks` ([peaks.md](peaks.md)), one question for each 
 |---|---|---|
 | Range Selection | A drag selects a range, with Snap to Zero Crossing at zero crossings; Shift and a click moves its nearer end; a click deselects | p. 635 |
 | Zoom | A click zooms in around the frame clicked, with Alt out, at most to the whole clip | p. 630 |
-| Play | Auditions the clip from the frame pressed until the release, also outside the event and past its end (`audition.start` with the clip's `media`, [audition.md](audition.md)) | p. 630 |
-| Scrub | A drag scrubs the clip (`audition.scrub` with its `media`) and moves the project cursor to where the frame plays | p. 634 |
+| Play | Auditions the clip with its fades from the frame pressed until the release, also outside the event and past its end (`audition.start` with the `clip`, [audition.md](audition.md)) | p. 630 |
+| Scrub | A drag scrubs the clip (`audition.scrub` with the `clip`) and moves the project cursor to where the frame plays | p. 634 |
 
 - **Snap point** (pp. 626-628): a line at the event's snap point, at its start without one of its own; a drag with any
   tool sets it within the event (`event.setSnapPoint`).
@@ -89,7 +89,9 @@ Waveforms come from `media.peaks` ([peaks.md](peaks.md)), one question for each 
 - **Regions list** (pp. 624-626): Add Region makes one of the selection range or else of the event, Remove Region
   removes the one selected in the list, Select Region selects its section and zooms to it, Play Region auditions it
   (`audition.start` up to its end). A click on a region selects it in the list and shows it in the display, scrolled
-  to it at the same zoom; the display marks it. A double click on its name, start or end types a new one in a field:
+  to it at the same zoom; the display marks it. The rows are built again only when other regions are listed or
+  their order changes, so a double click stays one when its first press takes what was typed in another row. A
+  double click on its name, start or end types a new one in a field:
   Enter or leaving the field takes it (`clip.setRegion`), Escape doesn't, and what isn't a whole number or a section
   of the clip changes nothing, nor does the number shown written another way. When the regions change meanwhile,
   such as by an undo, what was typed goes.
@@ -104,8 +106,8 @@ ruler, the grid and snapping to it, the level scale and vertical zoom, and horiz
 zoom tool and the overview; the Zoom submenu; Solo Editor, Audition, auto-scroll, the independent track loop and the
 toolbar's context menu; positions in the project's time format, and typing them; the Draw tool's volume curve and
 sample editing; moving regions' edges with the mouse and dragging regions into the project window; the clip's snap
-point when opened from the pool; the Process section's Cut, Copy, Paste, Delete and Insert Silence (pp. 619-620);
-the clip's fades in what the play and scrub tools play. Hooks for other tickets: offline processing (#141) and
+point when opened from the pool; the Process section's Cut, Copy, Paste, Delete and Insert Silence (pp. 619-620).
+Hooks for other tickets: offline processing (#141) and
 making a sampler track of the range; what warping doesn't have yet is in [warp.md](warp.md).
 
 ## Checks
@@ -120,9 +122,10 @@ making a sampler track of the range; what warping doesn't have yet is in [warp.m
   range tool's drag, Shift and a click, Snap to Zero Crossing, the Select menu, Set Locators to Selection Range and
   Locate Selection to the start and the end, Loop Selection; Event or Range as Region, Add Region, the list, Select
   Region and Remove Region with undo, a click on a region scrolling the display to it, typing a region's name, start
-  and end, by Enter and by leaving the field, and Escape, wrong and unchanged values and regions changing meanwhile;
-  dragging the snap point, the zoom tool in and out, a click in the overview, the play and scrub tools auditioning
-  the clip past the event's end, the cursor following the scrub, Play Region and the window layout's switches;
+  and end, by Enter and by leaving the field, and Escape, wrong and unchanged values and regions changing meanwhile,
+  a double click on another region right after typing; dragging the snap point, the zoom tool in and out, a click in
+  the overview, the play and scrub tools auditioning the clip past the event's end, the cursor following the scrub, Play Region and the window layout's switches;
   Open/Close Editor without a selection closing it.
-- `tests/playback_tests.cpp`: auditioning and scrubbing a media file ([audition.md](audition.md)).
+- `tests/playback_tests.cpp`: auditioning and scrubbing a media file and a clip with its fades
+  ([audition.md](audition.md)).
 - `tests/eventediting_tests.cpp`: a double click on an audio event opens it in the sample editor.
