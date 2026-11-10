@@ -4748,7 +4748,9 @@ namespace gnubase::engine
 		addControl(engine,
 			{"project.revision", 1,
 				"A number that grows with every change of the project: every edit, undo and redo, and loading or "
-				"starting a project. project.load with revision loads only if it hasn't changed. modified says "
+				"starting a project. quantize.savePreset, quantize.renamePreset, quantize.removePreset and "
+				"quantize.extractGroove also advance it when they change the quantize preset saved with the project, "
+				"without an undo step. project.load with revision loads only if it hasn't changed. modified says "
 				"whether the project changed since it was last saved, loaded or started; undoing back to the saved "
 				"state still counts as a change. project identifies the open project: the revision at which it was "
 				"loaded or started, so it changes only when another project is opened.",
