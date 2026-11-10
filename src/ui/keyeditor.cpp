@@ -478,7 +478,7 @@ namespace gnubase::ui
 		m_to = std::max(m_range->second, m_from + 1);
 		placeItems();
 		m_lanes->setRange(m_from, m_to);
-		if (Rml::Element* root = m_root.get(); root != nullptr && root->GetContext() != nullptr)
+		if (const Rml::Element* root = m_root.get(); root != nullptr && root->GetContext() != nullptr)
 			root->GetContext()->RequestNextUpdate(0);
 	}
 
@@ -639,7 +639,7 @@ namespace gnubase::ui
 				if (part.id == idAttribute(*element, "part"))
 					place(*element, part.start, part.end - part.start, -1);
 		// The notes' elements are in m_notes' order (render).
-		Rml::Element* notes = root->QuerySelector(".key-editor-notes");
+		const Rml::Element* notes = root->QuerySelector(".key-editor-notes");
 		if (notes != nullptr && static_cast<size_t>(notes->GetNumChildren()) == m_notes.size())
 			for (size_t i = 0; i < m_notes.size(); ++i)
 				place(*notes->GetChild(static_cast<int>(i)), m_notes[i].start, m_notes[i].length, m_notes[i].pitch);

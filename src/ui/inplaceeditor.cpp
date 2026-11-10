@@ -334,7 +334,7 @@ namespace gnubase::ui
 	void InPlaceEditors::ProcessEvent(Rml::Event& event)
 	{
 		// A menu of the multiple part controls: editor.set for its editor.
-		if (Rml::Element* menu = event.GetCurrentElement(); menu != nullptr && menu != m_area.get())
+		if (const Rml::Element* menu = event.GetCurrentElement(); menu != nullptr && menu != m_area.get())
 		{
 			const Rml::Element* item = event.GetTargetElement();
 			const std::string editor = viewName(std::stoull(menu->GetAttribute<Rml::String>("track", "0")));

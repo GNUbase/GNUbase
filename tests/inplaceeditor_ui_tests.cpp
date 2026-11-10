@@ -529,9 +529,9 @@ TEST_CASE("Open In-Place Editor and Edit In-Place wait for a MIDI or instrument 
 	{
 		INFO(command);
 		f.app.appUi().trackList()->select({});
-		CHECK_FALSE(f.app.keys().canRun(command, f.app.main(), nullptr));
+		CHECK(!f.app.keys().canRun(command, f.app.main(), nullptr));
 		f.app.appUi().trackList()->select({f.audio});
-		CHECK_FALSE(f.app.keys().canRun(command, f.app.main(), nullptr));
+		CHECK(!f.app.keys().canRun(command, f.app.main(), nullptr));
 		f.app.appUi().trackList()->select({f.audio, f.track});
 		CHECK(f.app.keys().canRun(command, f.app.main(), nullptr));
 	}
