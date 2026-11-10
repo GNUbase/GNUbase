@@ -45,6 +45,11 @@ namespace
 		return "#track-list listitem[value=\"" + std::to_string(track) + "\"]";
 	}
 
+	std::string menuItem(const std::string& command)
+	{
+		return "#track-list-menu > [command=\"" + command + "\"]";
+	}
+
 	// The project window with the track list, at a dp ratio of 1.
 	struct Tracks
 	{
@@ -92,6 +97,29 @@ namespace
 		{
 			app.ui().click(std::nullopt, {selector, 0, std::nullopt}, ui::MouseButton::Left, count, modifiers);
 			app.shell().step(std::chrono::milliseconds(0));
+		}
+
+		void rightClick(uint64_t track)
+		{
+			app.ui().click(std::nullopt, {row(track) + " .track-name", 0, std::nullopt}, ui::MouseButton::Right, 1, {});
+		}
+
+		// Waits until the track list's context menu shows.
+		void menuOpen()
+		{
+			REQUIRE(app.waitUntil([&] { return elements(app, "#track-list-menu").at(0).at("visible").get<bool>(); }));
+		}
+
+		bool itemDisabled(const std::string& command)
+		{
+			return elements(app, menuItem(command)).at(0).at("attributes").contains("disabled");
+		}
+
+		// Chooses the item of the open menu. Its items follow the selection when the shell steps.
+		void choose(const std::string& command)
+		{
+			REQUIRE(app.waitUntil([&] { return !itemDisabled(command); }));
+			click(menuItem(command));
 		}
 
 		Json box(const std::string& selector)
@@ -522,11 +550,9 @@ TEST_CASE("folders fold in the list and the event display; the menus duplicate, 
 	// The context menu, on a right click, works on the selected tracks.
 	const auto menu = [&tracks](uint64_t track, const char* command)
 	{
-		tracks.app.ui().click(
-			std::nullopt, {row(track) + " .track-name", 0, std::nullopt}, ui::MouseButton::Right, 1, {});
-		tracks.app.shell().step(std::chrono::milliseconds(0));
-		REQUIRE(elements(tracks.app, "#track-list-menu").at(0).at("visible").get<bool>());
-		tracks.click(std::string("#track-list-menu > [command=\"") + command + "\"]");
+		tracks.rightClick(track);
+		tracks.menuOpen();
+		tracks.choose(command);
 	};
 	menu(full, "track.duplicateSelected");
 	tracks.rows(4);
@@ -554,6 +580,74 @@ TEST_CASE("folders fold in the list and the event display; the menus duplicate, 
 	tracks.rows(0);
 	tracks.app.call("history.undo");
 	tracks.rows(2);
+}
+
+// The engine answers whenever it gets to it, which on a busy machine is many steps later (#702).
+TEST_CASE("the track list's context menu follows the selection and stands the rows changing behind it", "[ui]")
+{
+	Tracks tracks;
+	const uint64_t kept = tracks.add({{"type", "audio"}, {"name", "Kept"}});
+	const uint64_t gone = tracks.add({{"type", "audio"}, {"name", "Gone"}});
+	tracks.rows(2);
+	const std::string command = "track.duplicateSelected";
+	const auto duplicate = [&tracks, &command]
+	{ tracks.app.ui().click(std::nullopt, {menuItem(command), 0, std::nullopt}, ui::MouseButton::Left, 1, {}); };
+	const auto answered = [&tracks]
+	{
+		tracks.app.call("engine.version"); // after what the UI sent
+		tracks.app.shell().step(std::chrono::milliseconds(0));
+	};
+	const auto names = [&tracks]
+	{
+		std::vector<std::string> all;
+		const Json project = tracks.app.call("project.get");
+		for (const Json& track : project.at("tracks"))
+			all.push_back(track.at("name").get<std::string>());
+		return all;
+	};
+
+	// The menu opens with the right click, and its items follow the selection when the shell steps: before that, a
+	// click on an item that nothing was selected for does nothing.
+	tracks.rightClick(kept);
+	CHECK(elements(tracks.app, "#track-list-menu").at(0).at("visible").get<bool>());
+	CHECK(tracks.itemDisabled(command));
+	duplicate();
+	answered();
+	CHECK(names() == std::vector<std::string>{"Kept", "Gone"});
+	tracks.menuOpen();
+	tracks.choose(command);
+	tracks.rows(3);
+	CHECK(names() == std::vector<std::string>{"Kept", "Kept", "Gone"});
+
+	// The track goes while its menu is open and the list doesn't know yet: the engine refuses, and nothing changes.
+	tracks.rightClick(gone);
+	tracks.app.call("track.remove", {{"track", gone}});
+	REQUIRE(!tracks.itemDisabled(command));
+	duplicate();
+	tracks.rows(2);
+	CHECK(names() == std::vector<std::string>{"Kept", "Kept"});
+	CHECK(tracks.list.selection().empty());
+
+	// The rows are built again behind the open menu: the selection stays, and the command works on it.
+	tracks.rightClick(kept);
+	const uint64_t added = tracks.add({{"type", "midi"}, {"name", "Added"}});
+	tracks.rows(3);
+	tracks.menuOpen();
+	tracks.choose(command);
+	tracks.rows(4);
+	CHECK(names() == std::vector<std::string>{"Kept", "Kept", "Kept", "Added"});
+
+	// So too when they are built again without the selected track: the item goes grey, and its click does nothing.
+	tracks.rightClick(added);
+	tracks.app.call("track.remove", {{"track", added}});
+	tracks.rows(3);
+	tracks.menuOpen();
+	CHECK(tracks.list.selection().empty());
+	REQUIRE(tracks.app.waitUntil([&] { return tracks.itemDisabled(command); }));
+	duplicate();
+	answered();
+	CHECK(names() == std::vector<std::string>{"Kept", "Kept", "Kept"});
+	CHECK(elements(tracks.app, "#track-list listitem").size() == 3);
 }
 
 TEST_CASE("track heights and folded folders are the project's: saved with it, not taken into another one", "[ui]")
@@ -1163,17 +1257,12 @@ TEST_CASE("folder tracks: new folders for the selected tracks, group channels an
 
 	// The context menu turns the selected folders' group channels off and on (p. 224); the one that has nothing to do
 	// is disabled.
-	const auto item = [](const char* command)
-	{ return std::string("#track-list-menu > [command=\"") + command + "\"]"; };
-	const auto menu = [&tracks, &item](uint64_t track, const char* command, const char* greyed)
+	const auto menu = [&tracks](uint64_t track, const char* command, const char* greyed)
 	{
-		tracks.app.ui().click(
-			std::nullopt, {row(track) + " .track-name", 0, std::nullopt}, ui::MouseButton::Right, 1, {});
-		tracks.app.shell().step(std::chrono::milliseconds(0));
-		REQUIRE(elements(tracks.app, "#track-list-menu").at(0).at("visible").get<bool>());
-		CHECK(elements(tracks.app, item(greyed)).at(0).at("attributes").contains("disabled"));
-		CHECK_FALSE(elements(tracks.app, item(command)).at(0).at("attributes").contains("disabled"));
-		tracks.click(item(command));
+		tracks.rightClick(track);
+		tracks.menuOpen();
+		REQUIRE(tracks.app.waitUntil([&] { return tracks.itemDisabled(greyed) && !tracks.itemDisabled(command); }));
+		tracks.choose(command);
 	};
 	menu(folder, "track.disableSelectedGroupChannels", "track.enableSelectedGroupChannels");
 	REQUIRE(tracks.app.waitUntil([&] { return tracks.track(folder).at("channel") == 0; }));
@@ -1182,6 +1271,7 @@ TEST_CASE("folder tracks: new folders for the selected tracks, group channels an
 	menu(folder, "track.enableSelectedGroupChannels", "track.disableSelectedGroupChannels");
 	REQUIRE(tracks.app.waitUntil([&] { return tracks.track(folder).at("channel") != 0; }));
 	CHECK(tracks.channel(other).at("output") == tracks.track(folder).at("channel"));
+	REQUIRE(tracks.app.waitUntil([&] { return elements(tracks.app, row(folder) + " button.mute").size() == 1; }));
 
 	// Move Selected Tracks to New Folder puts one into a folder inside it, without a group channel.
 	tracks.click(row(other) + " .track-name");
