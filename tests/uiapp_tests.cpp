@@ -1260,7 +1260,7 @@ TEST_CASE("Mod+K, a count and Enter repeat the selected events", "[ui]")
 	}
 }
 
-TEST_CASE("event drags past the project start clamp the preview and the edit together", "[ui]")
+TEST_CASE("event drags past the project start clamp the preview and the edit together", "[ui][slow]")
 {
 	const bool copy = GENERATE(false, true);
 	const bool multiple = GENERATE(false, true);

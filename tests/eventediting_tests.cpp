@@ -253,6 +253,44 @@ TEST_CASE("nudging and moving to the cursor stop the selection at the project st
 	}
 }
 
+TEST_CASE("mixed selections keep musical nudge steps across tempo changes", "[unit]")
+{
+	Fixture f;
+	f.call("project.set", {{"tempoTrackActive", true}});
+	f.call("tempo.add", {{"position", 4 * g_quarter}, {"bpm", 60.0}});
+	f.call("audioEvent.set", {{"event", f.event}, {"position", 24000}});
+	f.call("midiPart.set", {{"part", f.part}, {"position", 8 * g_quarter}});
+	f.call("snap.set", {{"grid", "bar"}});
+	REQUIRE(f.waitUntil(
+		[&]
+		{
+			const Json& project = f.display.project();
+			return project.at("tempo").size() == 2 && project.at("audioEvents")[0].at("position") == 24000 &&
+				project.at("midiParts")[0].at("position") == 8 * g_quarter &&
+				f.display.snap().grid() == engine::GridType::Bar;
+		}));
+	f.display.select({f.event, f.part});
+	const Json before = f.call("project.get");
+	const size_t steps = f.call("history.get").at("steps").size();
+	SECTION("a right nudge moves every event by a full bar in ticks")
+	{
+		f.run("edit.nudgeRight");
+		REQUIRE(f.waitUntil([&] { return f.parts()[0].at("position") != 8 * g_quarter; }));
+		CHECK(f.parts()[0].at("position") == 12 * g_quarter);
+		CHECK(f.audioEvents()[0].at("position") == 144000);
+	}
+	SECTION("a left nudge clamps the tick step at the earliest event")
+	{
+		f.run("edit.nudgeLeft");
+		REQUIRE(f.waitUntil([&] { return f.parts()[0].at("position") != 8 * g_quarter; }));
+		CHECK(f.parts()[0].at("position") == 7 * g_quarter);
+		CHECK(f.audioEvents()[0].at("position") == 0);
+	}
+	CHECK(f.call("history.get").at("steps").size() == steps + 1);
+	f.call("history.undo");
+	CHECK(f.call("project.get") == before);
+}
+
 TEST_CASE("clamped musical previews apply the same tick offset across tempo changes", "[unit]")
 {
 	Fixture f;

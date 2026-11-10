@@ -314,13 +314,8 @@ namespace gnubase::ui
 				Json parameters = {{"events", m_selection},
 					{step.base == time::TimeBase::Musical ? "ticks" : "delta", direction * step.value}};
 				if (edgeName == nullptr)
-				{
-					const double from = edge(false).value_or(0.0);
-					const time::Position at = time::rebase(
-						{time::TimeBase::Linear, samples(from)}, step.base, m_time.tempo, m_time.sampleRate);
-					parameters = shiftTo({step.base, at.value + (direction * step.value)}, from, true).first;
-					parameters["events"] = m_selection;
-				}
+					parameters[step.base == time::TimeBase::Musical ? "ticks" : "delta"] =
+						clampMove(step.base, direction * step.value);
 				if (edgeName != nullptr)
 					parameters["edge"] = edgeName;
 				edit(edgeName == nullptr ? "event.move" : "event.resize", std::move(parameters));
