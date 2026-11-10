@@ -189,7 +189,7 @@ namespace gnubase::ui
 		// track like the lowest selected audio or MIDI track, with its input and output, below it; a MIDI track below
 		// another selected track; without one, a MIDI track at the end.
 		void addTrack();
-		void removeTracks(std::vector<uint64_t> tracks);
+		void removeTracks(const std::vector<uint64_t>& tracks);
 		void closedRemoveDialog(Rml::Event& event);
 		// The chord track's dialogs (docs/features/chord-track.md): Create Chord Events (create-chord-events.rml) and
 		// Map to Chord Track (map-to-chord-track.rml) for the selected MIDI and instrument tracks.
