@@ -3391,7 +3391,7 @@ namespace gnubase::engine
 					!(current.autoFades == previous.autoFades) || current.panLaw != previous.panLaw ||
 					current.maxVolume != previous.maxVolume || !(current.colors == previous.colors) ||
 					!(current.setup == previous.setup) || current.rootKey != previous.rootKey)
-					context.emit("project.changed", projectSettingsJson(current));
+					context.emit("project.changed", projectSettingsJson(project));
 				announceBusses(previous.busses, current.busses, context);
 				reordered = current.tracks != previous.tracks;
 				activated = current.activeMarkerTrack != previous.activeMarkerTrack;
@@ -3567,7 +3567,14 @@ namespace gnubase::engine
 		for (int64_t i = 0; i < steps; ++i)
 		{
 			const HistoryStep& step = undo ? m_history.undo() : m_history.redo();
+			// A transport format choice is saved in the project without an undo step. An unrelated step's
+			// settings snapshot must not bring back the format it had when that step was recorded.
+			const bool changesTimeFormat = step.change.settingsBefore && step.change.settingsAfter &&
+				step.change.settingsBefore->setup.timeFormat != step.change.settingsAfter->setup.timeFormat;
+			const std::string selectedFormat = m_project.setup.timeFormat;
 			apply(m_project, step.change, direction);
+			if (!changesTimeFormat)
+				m_project.setup.timeFormat = selectedFormat;
 			announce(*this, m_project, step.change, direction, context);
 		}
 		followTimeFormat(m_project, timeFormat, context);
@@ -3910,6 +3917,23 @@ namespace gnubase::engine
 					{"rootKey", enumSchema(rootKeyNames())}}),
 				noResult, false},
 			setProject);
+		addControl(engine,
+			{"project.setTimeFormat", 1,
+				"Selects the project's primary time format from a ruler or transport display. Saved with the project, "
+				"but a display choice is not an undo step. Project Setup changes made with project.set remain undoable. "
+				"The snap grid follows the format.",
+				objectSchema({{"timeFormat", timeFormats}}, {"timeFormat"}), noResult, false},
+			[this](CommandContext& context)
+			{
+				const std::string before = m_project.setup.timeFormat;
+				m_project.setup.timeFormat = context.parameters().at("timeFormat").get<std::string>();
+				if (m_project.setup.timeFormat == before)
+					return Json::object();
+				followTimeFormat(m_project, before, context);
+				context.emit("project.changed", projectSettingsJson(m_project));
+				publish();
+				return Json::object();
+			});
 		add(engine,
 			{"project.factoryColors", 1,
 				"The factory color set, which new projects have: each color's name and color (#rrggbb). The project "

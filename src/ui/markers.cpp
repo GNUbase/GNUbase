@@ -130,7 +130,7 @@ namespace gnubase::ui
 					place();
 			});
 
-		for (const char* event : {"history.changed", "project.reset"})
+		for (const char* event : {"history.changed", "project.changed", "project.reset"})
 			m_subscriptions.push_back(m_binding.on(event, [this](const engine::Event&) { requestProject(); }));
 		m_subscriptions.push_back(m_binding.on("settings.changed",
 			[this](const engine::Event& event)

@@ -67,11 +67,13 @@ each other.
   meanwhile the field shows where the gesture took it. It shows three decimals: editing it without typing leaves a tempo
   with more, such as 130.0001 BPM from a MIDI file, as it is. A signature is typed as "3/4"; the engine refuses
   denominators other than 1, 2, 4, 8 and 16.
-- **Time formats.** The primary one is the project's time format (`project.set {timeFormat}`, Bars+Beats by default),
-  as the project setup dialog's Time Format (reference manual p. 317): picking one in the primary menu, or Exchange
-  Time Formats, changes it as an undo step, and the displays follow the project's, also after undo and loading a
-  project. The others are the user setting `ui.timeFormats` (`secondary`, `timeDisplay`: `barsBeats`, `seconds`,
-  `timecode`, `samples` or `userFrames`; Timecode and Bars+Beats by default), kept after a restart; a `primary` in it,
+- **Time formats.** The primary one is the project's time format (Bars+Beats by default), as the project setup
+  dialog's Time Format (reference manual p. 317). Picking one in the primary menu (`project.setTimeFormat`) or
+  exchanging formats changes the display without adding an undo step; an exchange changes both displays together.
+  A format changed in Project Setup (`project.set {timeFormat}`) remains an undo step. The displays follow the
+  project's format after undo and loading a project. The others are the user setting `ui.timeFormats` (`secondary`,
+  `timeDisplay`: `barsBeats`, `seconds`, `timecode`, `samples` or `userFrames`; Timecode and Bars+Beats by default),
+  kept after a restart; a `primary` in it,
   from before #537, is ignored. So every transport control shows the same. The menus' items have `slot` and `format`,
   and the item of the slot's format is checked.
 
@@ -149,8 +151,9 @@ text, timecode hours past 2147483647, lengths in bars and beats across a tempo c
 [ui-tests.md](ui-tests.md)): every button of the transport bar, a window too narrow for the transport bar cutting off
 its last sections, the switches following another client's changes, the marker buttons with and without markers,
 Locators to Selection by button and key, the time format menus, Exchange Time Formats by button and key,
-`ui.timeFormats` and the project's time format from the engine, also by undo and redo, positions, locators and a length typed into the displays (also the position a display
-shows, from between its ticks), the tempo and signature fields with undo, every key command, the transport panel opened
+`ui.timeFormats` and the project's time format from the engine, also by undo and redo; positions, locators and a length
+typed into the displays (also the position a display shows, from between its ticks), the tempo and signature fields
+with undo, every key command, the transport panel opened
 by F2, by an enter command and again after its window was closed, and the time display window with its context menu;
 Rewind, Forward and Fast Forward winding while their key or button is held and stopping when it goes up, also after
 Shift; Nudge Cursor on bar, beat and second grids and at the project start; the wheel on the position, locator and range

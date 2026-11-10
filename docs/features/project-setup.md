@@ -41,15 +41,16 @@ so MCP and Lua scripts can do all it does.
   negative bar offset shows: "-3.1.1.0" with a bar offset of -4 is the project start; lengths take no minus. Samples
   count from the project start. `readTimeContext` changes the context only once it has read all of it.
 - **The primary time format** (p. 317) is the project's `timeFormat`: the transport's primary display and the
-  markers window show it, and the transport's primary format menu and Exchange Time Formats set it with `project.set`
-  ([transport-bar.md](transport-bar.md)). A format picked in the event display's ruler menu with Ctrl (Cmd on macOS)
-  held sets it too, for all windows (p. 69); without, the ruler picks one of its own. Ruler tracks keep theirs
+  markers window show it. The transport's primary format menu, Exchange Time Formats, and a ruler menu choice with
+  Ctrl (Cmd on macOS) held set it without an undo step (`project.setTimeFormat`; [transport-bar.md](transport-bar.md)).
+  A ruler choice without Ctrl sets the ruler's own format (p. 69). Ruler tracks keep theirs
   ([ruler-tracks.md](ruler-tracks.md)).
 - **The snap grid** counts its seconds and frame lines from the start time, as the ruler's marks do, so they stay on
   the ruler's seconds and frames whatever the start time ([snap.md](snap.md)).
-- **The event display's ruler** follows the project's time format when it changes: `project.set` (and undo and
-  redo of it) makes a new time format the snap settings' format, and emits `snap.changed`; the ruler's menu picks one
-  of its own meanwhile. The ruler's format is the snap settings' `format`, so a project opens with the one it was saved with
+- **The event display's ruler** follows the project's time format when it changes: `project.set`,
+  `project.setTimeFormat`, and undo and redo of `project.set` make a new time format the snap settings' format and
+  emit `snap.changed`; the ruler's menu picks one of its own meanwhile. The ruler's format is the snap settings'
+  `format`, so a project opens with the one it was saved with
   ([event-display.md](event-display.md), [snap.md](snap.md)). Zoom Full and the overview line show the project's
   length, or up to the end of the last event if that is later.
 - **The status line** shows the record format, e.g. "Record: 48 kHz - 24 bit", and a click on it opens the dialog.

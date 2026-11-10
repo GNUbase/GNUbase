@@ -128,8 +128,8 @@ namespace gnubase::ui
 		addAutomationActions();
 		setToolModifiers(Json::object());
 
-		// Every change to the project is an undo step or a new project; the display shows the project as it is then.
-		for (const char* event : {"history.changed", "project.reset"})
+		// A primary time format choice changes the project without an undo step.
+		for (const char* event : {"history.changed", "project.changed", "project.reset"})
 			m_subscriptions.push_back(m_binding.on(event,
 				[this](const engine::Event&)
 				{
