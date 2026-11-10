@@ -515,6 +515,28 @@ TEST_CASE("the object selection tool's modifiers act on events whatever keys the
 	CHECK(f.parts()[3].at("track") == midi.at("id"));
 }
 
+TEST_CASE("Ctrl and a click adds to the selection also where Ctrl is a drag's tool modifier", "[unit]")
+{
+	Fixture f;
+	f.click(150, 60);
+	REQUIRE(f.display.selection() == std::vector<uint64_t>{f.part});
+	// At the audio event's right edge, where Ctrl is Disable Snapping: a click adds it, another takes it out.
+	f.click(248, 20, {"ctrl"});
+	CHECK(f.display.selection() == std::vector<uint64_t>{f.event, f.part});
+	f.click(248, 20, {"ctrl"});
+	CHECK(f.display.selection() == std::vector<uint64_t>{f.part});
+	// With Ctrl as Copy, the same in the middle of it; a drag still copies only the event pressed.
+	f.call("settings.set", {{"key", "ui.toolModifiers"}, {"value", {{"dragDrop.copy", "ctrl"}}}});
+	f.step();
+	f.click(225, 20, {"ctrl"});
+	CHECK(f.display.selection() == std::vector<uint64_t>{f.event, f.part});
+	f.click(225, 20, {"ctrl"});
+	CHECK(f.display.selection() == std::vector<uint64_t>{f.part});
+	f.drag(225, 20, 425, 20, {"ctrl"});
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents().size() == 2; }));
+	CHECK(f.parts().size() == 1);
+}
+
 TEST_CASE("a double click on an audio event opens it in the sample editor, on an audio part in its editor", "[unit]")
 {
 	Fixture f;

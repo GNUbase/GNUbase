@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <condition_variable>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
@@ -1582,6 +1583,63 @@ namespace
 		REQUIRE(!jobs.empty());
 		return jobs.back();
 	}
+
+	// Whether command ran since the engine started; only commands that aren't queries count.
+	bool ran(test::UiApp& app, const std::string& command)
+	{
+		const Json log = app.call("engine.commandLog").at("commands");
+		return std::any_of(
+			log.begin(), log.end(), [&command](const Json& entry) { return entry.at("command") == command; });
+	}
+
+	// Holds a backup at its first job.progress until release, for a minute at most, so that it can't end before a
+	// job.cancel: a Listener runs on the thread that sends the event, here the job's. Meanwhile events wait for it,
+	// also a command's, so the test sends only queries until it releases the job.
+	class HeldBackup
+	{
+	public:
+		explicit HeldBackup(Engine& engine)
+			: m_listener(engine,
+				  [this](const Event& event)
+				  {
+					  if (event.name != "job.progress" || event.data.at("kind") != "project.backup")
+						  return;
+					  std::unique_lock lock(m_mutex);
+					  m_held = true;
+					  m_changed.wait_for(lock, std::chrono::minutes(1), [this] { return m_released; });
+				  })
+		{
+		}
+
+		~HeldBackup() { release(); }
+		HeldBackup(const HeldBackup&) = delete;
+		HeldBackup& operator=(const HeldBackup&) = delete;
+		HeldBackup(HeldBackup&&) = delete;
+		HeldBackup& operator=(HeldBackup&&) = delete;
+
+		// Whether the backup got to its first job.progress.
+		bool held()
+		{
+			const std::scoped_lock lock(m_mutex);
+			return m_held;
+		}
+
+		void release()
+		{
+			{
+				const std::scoped_lock lock(m_mutex);
+				m_released = true;
+			}
+			m_changed.notify_all();
+		}
+
+	private:
+		std::mutex m_mutex;
+		std::condition_variable m_changed;
+		bool m_held = false;
+		bool m_released = false;
+		Listener m_listener; // last, so that it stops before the rest goes
+	};
 }
 
 TEST_CASE("Back up Project shows its own backups' progress and outcome, and Cancel stops them", "[ui][slow]")
@@ -1623,17 +1681,22 @@ TEST_CASE("Back up Project shows its own backups' progress and outcome, and Canc
 	closeError(app);
 	CHECK(fs::exists(dir.path() / "Missing" / "My Song.dawproject"));
 
-	// A long one shows its progress, and Cancel in there stops it: it leaves nothing behind and says nothing more.
+	// A running one shows its progress, and Cancel in there stops it: it leaves nothing behind and says nothing more.
+	// It is held at its first progress until job.cancel ran, so that it can't end first (#1015). Had it ended, it would
+	// say that it couldn't read gone.wav, rightly: the backup is there.
 	const fs::path take = dir.path() / "take.wav";
-	test::writeWav(take, {std::vector<float>(size_t{48000} * 60 * 2, 0.25f), 2, 48000}); // 1 min, 23 MB
-	for (int i = 0; i < 10; ++i)
-		app.call("media.add", {{"path", utf8(take)}});
+	test::writeWav(take, {std::vector<float>(size_t{48000} * 10 * 2, 0.25f), 2, 48000}); // 10 s, 4 MB
+	app.call("media.add", {{"path", utf8(take)}});
+	HeldBackup held(app.engine());
 	fileMenu(app, "file.backup");
 	answer(app, {dir.path() / "Cancelled"});
 	click(app, "#backup-project-dialog button.primary");
+	REQUIRE(app.waitUntil([&held] { return held.held(); }, std::chrono::seconds(30)));
 	REQUIRE(app.waitUntil([&app] { return shown(app, "#backup-progress-dialog"); }));
 	CHECK(elements(app, "#backup-progress").size() == 1);
 	click(app, "#backup-progress-dialog button[result=cancel]");
+	REQUIRE(app.waitUntil([&app] { return ran(app, "job.cancel"); }));
+	held.release();
 	REQUIRE(app.waitUntil([&app] { return !shown(app, "#backup-progress-dialog"); }));
 	const Json cancelled = lastJob(app);
 	CHECK(cancelled.at("kind") == "project.backup");

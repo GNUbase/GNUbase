@@ -606,6 +606,7 @@ namespace gnubase::ui
 		m_dragMoved = false;
 		m_dragStarted = false;
 		m_dragToggles = false;
+		m_clickSelection.reset();
 		m_pressTime = now();
 		m_dragDx = 0.0;
 		m_dragLanes = 0;
@@ -644,8 +645,8 @@ namespace gnubase::ui
 		// The tool modifiers for a press on an event (Set Cursor Position, Split Event, Copy, Shared Copy, and Disable
 		// Snapping at an edge) act on it rather than adding it to the selection, whatever keys they are set to; so
 		// does a copy's with Ctrl, a restricted copy.
-		const bool toolModifier = modifiers("select.setCursorPosition") || modifiers("select.splitEvent") ||
-			copyKeys(m_pressed) || copyKeys(withoutCtrl(m_pressed)) ||
+		const bool clickModifier = modifiers("select.setCursorPosition") || modifiers("select.splitEvent");
+		const bool toolModifier = clickModifier || copyKeys(m_pressed) || copyKeys(withoutCtrl(m_pressed)) ||
 			((atStart || atEnd) && modifiers("sizeObjects.disableSnapping"));
 		// A fade handle (reference manual p. 383), or the event volume handle (p. 401).
 		if (!add && !toolModifier && (fadeDown(*shown, x, y) || volumeDown(*shown, x, y)))
@@ -666,6 +667,17 @@ namespace gnubase::ui
 			}
 			m_drag = Drag::Events;
 			return;
+		}
+		// Keys that are Ctrl or Shift and only a drag's tool modifier: released without a drag, the press adds the
+		// event to the selection or takes it out, as without them (#474).
+		if (add && !clickModifier)
+		{
+			std::vector<uint64_t> events = m_selection;
+			if (selected)
+				events.erase(std::remove(events.begin(), events.end(), shown->id), events.end());
+			else
+				events.push_back(shown->id);
+			m_clickSelection = std::move(events);
 		}
 		if (!selected)
 			select({shown->id});
@@ -854,6 +866,7 @@ namespace gnubase::ui
 		const bool moved = std::exchange(m_dragMoved, false);
 		const bool started = std::exchange(m_dragStarted, false) || now() - m_pressTime >= g_dragDelay;
 		const bool toggles = std::exchange(m_dragToggles, false);
+		std::optional<std::vector<uint64_t>> clicked = std::exchange(m_clickSelection, std::nullopt);
 		m_drag = Drag::None;
 		m_dragDx = 0.0;
 		m_dragLanes = 0;
@@ -864,6 +877,11 @@ namespace gnubase::ui
 			std::vector<uint64_t> events = m_selection;
 			events.erase(std::remove(events.begin(), events.end(), m_dragEvent), events.end());
 			select(std::move(events));
+			return;
+		}
+		if (clicked && (!moved || (drag == Drag::Events && !started)))
+		{
+			select(std::move(*clicked));
 			return;
 		}
 		if (!moved)
