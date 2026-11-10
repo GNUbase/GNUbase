@@ -828,6 +828,38 @@ TEST_CASE("Tab and Shift+Tab move between an open menu's items and don't leave t
 	CHECK(!visible(app, "#track-menu"));
 }
 
+TEST_CASE("menu Tab stops find nested controls and skip controls that cannot take Tab focus", "[ui]")
+{
+	test::UiApp app;
+	app.show("popups.rml");
+	click(app, "#controls-button");
+	REQUIRE(visible(app, "#controls-menu"));
+	CHECK_FALSE(visible(app, "#hidden-control"));
+	moveAway(app);
+	app.ui().key(std::nullopt, "Tab");
+	REQUIRE(focused(app, "#controls-first"));
+	// Disabled and hidden inputs are skipped; the button two containers deep is a stop.
+	app.ui().key(std::nullopt, "Tab");
+	CHECK(focused(app, "#nested-control"));
+	// Shown inputs with tab-index: none or focus: none are skipped too.
+	app.ui().key(std::nullopt, "Tab");
+	CHECK(focused(app, "#controls-last"));
+	app.ui().key(std::nullopt, "Tab");
+	CHECK(focused(app, "#controls-first"));
+	// The same stops in reverse, including wrapping, without leaving the menu.
+	for (const char* id : {"#controls-last", "#nested-control", "#controls-first"})
+	{
+		app.ui().key(std::nullopt, "Shift+Tab");
+		CHECK(focused(app, id));
+		CHECK(visible(app, "#controls-menu"));
+	}
+	// Arrow keys continue to visit only menu items, not the nested button.
+	app.ui().key(std::nullopt, "Down");
+	CHECK(focused(app, "#controls-last"));
+	app.ui().key(std::nullopt, "Up");
+	CHECK(focused(app, "#controls-first"));
+}
+
 TEST_CASE("in a menu bar the mouse and Left and Right move between the open menus", "[ui]")
 {
 	test::UiApp app;
