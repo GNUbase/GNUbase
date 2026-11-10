@@ -1,8 +1,9 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- Menus, context menus and tooltips of the widget library (#54) for tests/widgets_tests.cpp: a menu button, a track
      with a context menu that has submenus (one with only a disabled item), a disabled item and a hidden one (#524), an
-     element whose right click with a modifier key opens another menu, elements with tooltips, a notification, and a
-     menu bar whose File menu has a submenu and whose Tools title is disabled. -->
+     element whose right click with a modifier key opens another menu, elements with tooltips, a notification, a menu
+     with nested controls and controls that aren't Tab stops (#826), and a menu bar whose File menu has a submenu and
+     whose Tools title is disabled. -->
 <rml>
 <head>
 	<title>Popups</title>
@@ -17,6 +18,7 @@
 </head>
 <body>
 	<button id="edit-button" menu="edit">Edit</button>
+	<button id="controls-button" menu="controls-menu">Controls</button>
 	<div id="track" class="panel" contextmenu="track-menu" title="Audio 01">Audio 01</div>
 	<div id="plain" class="panel">No menu</div>
 	<div id="corner" contextmenu="track-menu" title="A long tooltip near the window's corner"/>
@@ -43,6 +45,15 @@
 			</menu>
 		</menuitem>
 		<menuitem id="gone" class="hidden">Gone</menuitem>
+	</menu>
+	<menu id="controls-menu">
+		<menuitem id="controls-first">First</menuitem>
+		<input id="disabled-control" type="text" disabled="disabled"/>
+		<input id="hidden-control" type="text" style="display: none;"/>
+		<div><div><button id="nested-control">Nested</button></div></div>
+		<input id="no-tab-control" type="text" style="tab-index: none;"/>
+		<input id="no-focus-control" type="text" style="focus: none;"/>
+		<menuitem id="controls-last">Last</menuitem>
 	</menu>
 	<menubar id="menubar">
 		<button id="file-title" menu="file">File</button>
