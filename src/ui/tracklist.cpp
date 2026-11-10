@@ -1704,7 +1704,7 @@ namespace gnubase::ui
 		std::vector<uint64_t> still;
 		std::copy_if(tracks.begin(), tracks.end(), std::back_inserter(still),
 			[this](uint64_t track) { return m_index.count(track) != 0; });
-		removeTracks(std::move(still));
+		removeTracks(still);
 	}
 
 	void TrackList::openChordDialog(const char* file, std::vector<uint64_t> tracks)
@@ -1765,7 +1765,7 @@ namespace gnubase::ui
 		}
 	}
 
-	void TrackList::removeTracks(std::vector<uint64_t> tracks)
+	void TrackList::removeTracks(const std::vector<uint64_t>& tracks)
 	{
 		Json commands = Json::array();
 		for (const uint64_t track : tracks)
