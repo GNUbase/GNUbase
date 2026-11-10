@@ -273,6 +273,10 @@ namespace gnubase::app
 		// with clipsOnly into the pool only (Media > Import Medium).
 		void chooseImport(
 			ui::Window& window, std::string title, std::vector<ui::FileFilter> filters, bool many, bool clipsOnly);
+		// File > Import > MIDI File, once asked whether to create a new project (import-midi.rml): the OS's file dialog
+		// for the window, then the event display imports the file, with newProject into a new project once the user
+		// agreed to drop the open one's unsaved changes.
+		void chooseMidiImport(ui::Window& window, bool newProject);
 		// Media > Find Missing Files: the OS's folder dialog, then media.locate looks for the missing files there.
 		void chooseMissingFolder(ui::Window& window);
 		// The lower zone's mixer panel, the mixer windows' Visibility tabs and their UI commands, and Edit Channel

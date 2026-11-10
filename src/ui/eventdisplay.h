@@ -290,6 +290,12 @@ namespace gnubase::ui
 		// with Import Files on One Track, and the others onto new tracks. Without one, onto new tracks; with Split
 		// Channels, every channel of a file with several onto a new track of its own.
 		void importToSelection(const std::vector<std::string>& files, const std::vector<uint64_t>& selection);
+		// File > Import > MIDI File (#478, reference manual pp. 364-365): imports MIDI files with the options of the
+		// user settings midi.import*, at the left locator with midi.importToLeftLocator, else at the project start.
+		// Into a new project (newProject), the file's tempo always replaces the project's. MIDI files dropped on the
+		// event lanes go where they are dropped instead, and with midi.importSinglePart into one part, on the MIDI or
+		// instrument track they are dropped on if any.
+		void importMidi(const std::vector<std::string>& files, bool newProject = false);
 
 		// The commands that key commands bind to, by id: zoom.in, zoom.out, zoom.inVertically, zoom.outVertically,
 		// zoom.full, zoom.undo, zoom.redo and view.autoScroll (on or off); locate.nudgeCursorLeft and
@@ -495,8 +501,10 @@ namespace gnubase::ui
 			std::optional<uint64_t> track;
 			int64_t sample = 0;
 			bool clipsOnly = false;
-			bool selected = false; // track is the selected one, which takes the first file, not all of them
-			int lane = 0;          // the lane of track the files go on
+			bool selected = false;             // track is the selected one, which takes the first file, not all of them
+			int lane = 0;                      // the lane of track the files go on
+			bool dropped = false;              // on the event lanes, at sample
+			std::optional<uint64_t> midiTrack; // the MIDI or instrument track they were dropped on
 		};
 		// The import options (#477): the Import Options dialog's, and the user settings editing.importAudio* that it
 		// starts from and keeps its choices in.
@@ -509,6 +517,7 @@ namespace gnubase::ui
 			std::string nameFormat = "dash";
 		};
 		void startImport(const std::vector<std::string>& files, Import import);
+		void sendMidiImport(const std::vector<std::string>& files, const Import& import, bool newProject);
 		void dropFiles(Rml::Event& event);
 		void openImportOptions(Import import, const ImportOptions& options, bool saved);
 		void importAudio(Rml::Element& dialog);

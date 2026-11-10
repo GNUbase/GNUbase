@@ -80,13 +80,11 @@ namespace gnubase::ui
 	void EventDisplay::startImport(const std::vector<std::string>& files, Import import)
 	{
 		std::vector<std::string> audio;
+		std::vector<std::string> midi;
 		for (const std::string& file : files)
-		{
-			if (isMidiFile(file) && !import.clipsOnly)
-				m_binding.send("midiFile.import", {{"path", file}});
-			else
-				audio.push_back(file);
-		}
+			(isMidiFile(file) && !import.clipsOnly ? midi : audio).push_back(file);
+		if (!midi.empty())
+			sendMidiImport(midi, import, false);
 		if (audio.empty() || !alive())
 			return;
 		import.files = std::move(audio);
@@ -134,11 +132,16 @@ namespace gnubase::ui
 		}
 		Import import;
 		import.sample = std::max<int64_t>(samples(m_view.start + (x * m_view.scale)), 0);
+		import.dropped = true;
 		// On a lane of a track whose lanes show, on that lane (#99).
 		if (const size_t lane = laneAt(y + m_view.top); lane < m_laneTypes.size() && m_laneTypes[lane] == "audio")
 		{
 			import.track = m_laneTracks[lane];
 			import.lane = std::max(m_laneTakes[lane], 0);
+		}
+		else if (lane < m_laneTypes.size() && (m_laneTypes[lane] == "midi" || m_laneTypes[lane] == "instrument"))
+		{
+			import.midiTrack = m_laneTracks[lane];
 		}
 		startImport(files, std::move(import));
 	}
@@ -262,5 +265,60 @@ namespace gnubase::ui
 				parameters["oneTrack"] = true;
 		}
 		m_binding.send("audioFile.import", parameters);
+	}
+
+	void EventDisplay::importMidi(const std::vector<std::string>& files, bool newProject)
+	{
+		sendMidiImport(files, Import(), newProject);
+	}
+
+	void EventDisplay::sendMidiImport(const std::vector<std::string>& files, const Import& import, bool newProject)
+	{
+		const std::weak_ptr<bool> alive = m_alive;
+		m_binding.send("settings.list", Json::object(),
+			[this, alive, files, import, newProject](const engine::Result& list)
+			{
+				if (alive.expired() || !list.ok())
+					return;
+				Json settings = Json::object();
+				for (const Json& setting : list.value.at("settings"))
+					settings[setting.at("key").get<std::string>()] = setting.at("value");
+				// The file's tempo replaces the project's unless it is merged into the open project with Ignore Master
+				// Track Events on Merge.
+				Json parameters = {{"trackType", settings.at("midi.importDestination")},
+					{"tempo", newProject || !settings.at("midi.importIgnoreTempo").get<bool>()},
+					{"markers", settings.at("midi.importMarkers")},
+					{"dissolve", settings.at("midi.importDissolveFormat0")},
+					{"extractPatch", settings.at("midi.importExtractPatch")},
+					{"extractVolumePan", settings.at("midi.importExtractVolumePan")},
+					{"automation", settings.at("midi.importAutomation")}};
+				if (import.dropped && settings.at("midi.importSinglePart").get<bool>())
+				{
+					parameters["singlePart"] = true;
+					if (import.midiTrack)
+						parameters["track"] = *import.midiTrack;
+				}
+				const auto send = [this, files, parameters](int64_t position)
+				{
+					for (const std::string& file : files)
+					{
+						Json fileParameters = parameters;
+						fileParameters["position"] = position;
+						fileParameters["path"] = file;
+						m_binding.send("midiFile.import", fileParameters);
+					}
+				};
+				if (import.dropped || !settings.at("midi.importToLeftLocator").get<bool>())
+				{
+					send(import.dropped ? import.sample : 0);
+					return;
+				}
+				m_binding.send("transport.get", Json::object(),
+					[alive, send](const engine::Result& transport)
+					{
+						if (!alive.expired() && transport.ok())
+							send(transport.value.at("left").get<int64_t>());
+					});
+			});
 	}
 }
