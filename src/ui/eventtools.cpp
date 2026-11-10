@@ -259,11 +259,30 @@ namespace gnubase::ui
 			// Auditions or scrubs the pressed audio track (reference manual pp. 252-253); auditioning MIDI waits.
 			if (lane && m_laneTypes[*lane] == "audio")
 			{
-				m_drag = Drag::Play;
 				m_auditioned = m_laneTracks[*lane];
-				m_binding.send(m_playMode == PlayMode::Scrub ? "audition.scrub" : "audition.start",
-					{{"track", m_auditioned},
-						{"position", std::max<int64_t>(0, samples(m_view.start + (x * m_view.scale)))}});
+				if (m_playMode == PlayMode::Play)
+				{
+					m_drag = Drag::Play;
+					m_binding.send("audition.start",
+						{{"track", m_auditioned},
+							{"position", std::max<int64_t>(0, samples(m_view.start + (x * m_view.scale)))}});
+					return true;
+				}
+				// At an audio event's edge it resizes the event as the object selection tool does, scrubbing along
+				// (reference manual p. 268).
+				if (const int edge = scrubEdgeAt(x, y); edge != 0 && shown != nullptr)
+				{
+					if (!std::binary_search(m_selection.begin(), m_selection.end(), shown->id))
+						select({shown->id});
+					m_drag = edge < 0 ? Drag::ResizeStart : Drag::ResizeEnd;
+					m_resizeFrom = edge < 0 ? shown->start : shown->end;
+					m_resizeScrubs = true;
+				}
+				else
+				{
+					m_drag = Drag::Play;
+				}
+				scrubAt(x);
 			}
 			return true;
 		case Tool::Split:
@@ -278,6 +297,22 @@ namespace gnubase::ui
 			return timeWarpDown();
 		}
 		return false;
+	}
+
+	int EventDisplay::scrubEdgeAt(double x, double y) const
+	{
+		const std::optional<size_t> lane = visibleLaneAt(y);
+		const Shown* shown = eventAt(x, y);
+		if (toolAt(y) != Tool::Play || m_playMode != PlayMode::Scrub || !lane || m_laneTypes[*lane] != "audio" ||
+			shown == nullptr)
+			return 0;
+		return edgeAt(*shown, x);
+	}
+
+	void EventDisplay::scrubAt(double x)
+	{
+		m_binding.send("audition.scrub",
+			{{"track", m_auditioned}, {"position", std::max<int64_t>(0, samples(m_view.start + (x * m_view.scale)))}});
 	}
 
 	void EventDisplay::toolMove(double x, double y)
@@ -317,9 +352,7 @@ namespace gnubase::ui
 			break;
 		case Drag::Play:
 			if (m_playMode == PlayMode::Scrub)
-				m_binding.send("audition.scrub",
-					{{"track", m_auditioned},
-						{"position", std::max<int64_t>(0, samples(m_view.start + (x * m_view.scale)))}});
+				scrubAt(x);
 			break;
 		default:
 			break;

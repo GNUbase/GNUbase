@@ -1012,6 +1012,18 @@ TEST_CASE(
 		CHECK(pointer() == ui::toolName(tool));
 		CHECK(shown() == cursor);
 	}
+	// In scrub mode the play tool resizes an audio event at its edge, scrubbing along (reference manual p. 268); not a
+	// MIDI part, which it doesn't scrub.
+	f.display.setPlayMode(ui::PlayMode::Scrub);
+	moveTo(248, 20);
+	CHECK(pointer() == "resize");
+	CHECK(shown() == "resize");
+	moveTo(102, 60);
+	CHECK(pointer() == ui::toolName(ui::Tool::Play));
+	f.display.setPlayMode(ui::PlayMode::Play);
+	moveTo(249, 20);
+	CHECK(pointer() == ui::toolName(ui::Tool::Play));
+	moveTo(102, 60);
 
 	// Over the ruler, the OS's arrow.
 	f.display.setTool(ui::Tool::ObjectSelection);
@@ -1434,6 +1446,16 @@ TEST_CASE("the play tool auditions the pressed audio track until it is released,
 	CHECK(f.call("transport.get").at("playing") == false);
 	CHECK(f.parts().size() == 1); // nothing edited
 	CHECK(f.audioEvents().size() == 1);
+
+	// At an audio event's edge it resizes the event and scrubs along (reference manual p. 268): the right edge 20 dp
+	// further makes it a fifth of a second longer, and the track is scrubbed to there.
+	auditions.clear();
+	f.drag(248, 10, 268, 10);
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("length") == 24000 + 9600; }));
+	REQUIRE(f.waitUntil([&modes] { return modes().size() >= 2 && modes().back() == "off"; }));
+	CHECK(modes()[0] == "scrub");
+	CHECK(f.call("transport.get").at("position") == 128640);
+	CHECK(f.display.selection() == std::vector<uint64_t>{f.event});
 }
 
 TEST_CASE("the range selection tool selects ranges, snapped, by dragging and double clicking", "[unit]")

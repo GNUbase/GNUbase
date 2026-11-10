@@ -41,7 +41,9 @@ project or undo.
 - **Play** auditions the pressed audio track from where it presses until the mouse is released, past its channel
   and without the transport (`audition.start`, `audition.stop`, [audition.md](audition.md)). In scrub mode the
   press and every move of the drag scrub the track to the mouse's position (`audition.scrub`), forwards or
-  backwards at the mouse's speed, and move the project cursor along. On other tracks it does nothing yet.
+  backwards at the mouse's speed, and move the project cursor along. At an audio event's edge, a drag in scrub mode
+  resizes the event as the object selection tool does (`event.resize`, the resize pointer there) and scrubs the
+  track along to the mouse (p. 268). On other tracks it does nothing yet.
 - **Cross-hair cursor.** It shows with the tools that use it (object selection, range selection, draw, split, line),
   not with the others (p. 110).
 - **Selection range.** `range()` is the range: start and end in project samples and the tracks it covers by id, also
@@ -148,8 +150,7 @@ with, also where it leaves the lanes: the event area has RCSS `drag: drag`, and 
 until the button is up. MCP's `ui_windows` reports the pointer shown, as `cursor`: empty for the OS's arrow, also where
 a pointer's picture didn't load or RmlUi names one the OS doesn't have, such as its autoscroll pointers.
 
-Not yet: the time warp and color tools, the drumstick tool, resizing an event's edge with the scrub tool,
-which scrubs as it resizes (p. 268), and pointers of their own for the sizing modes; the rest of the reference's context
+Not yet: the time warp and color tools, the drumstick tool, and pointers of their own for the sizing modes; the rest of the reference's context
 menu, with the Audio and MIDI menus' functions, follows with those menus. Cut and Copy of selected events without a
 range (the event clipboard) wait for a ticket of their own. On X11, SDL shows only a pointer's scale-1 picture. The
 audio editor gets its toolbox when it comes. The Preferences dialog's Editing - Tools page
@@ -163,7 +164,8 @@ audio editor gets its toolbox when it comes. The Preferences dialog's Editing - 
   `settings.set`; gluing to the next and to all following events; erasing one and all later events; muting and
   unmuting with clicks and a rectangle; zooming in, out, to a rectangle and back with a double click; drawing parts,
   snapped, by dragging and with a click, none on audio tracks or with the line tool; auditioning the audio lane's
-  track on the dummy device while the mouse is pressed, nothing on a MIDI lane, and scrubbing with a drag; ranges by dragging, clicking and double clicking on events and gaps, with Shift, snapped and on
+  track on the dummy device while the mouse is pressed, nothing on a MIDI lane, scrubbing with a drag, and resizing an
+  audio event at its edge in scrub mode, with its pointer there; ranges by dragging, clicking and double clicking on events and gaps, with Shift, snapped and on
   every track, and the events they select when another tool takes over; the combined selection tools; the pointer
   per tool, at events' edges and in a combined lane's upper half, also when a tool is chosen while the mouse rests;
   the pointer with tool modifiers held, also when Alt goes down and up while the mouse rests, with both Alt keys and
@@ -171,7 +173,7 @@ audio editor gets its toolbox when it comes. The Preferences dialog's Editing - 
   mouse has left the lanes; a right click selecting events only where a press selects them, and ending a range.
 - `tests/uiapp_tests.cpp`: the toolbar's tool buttons, the keys 1 to 9, F9, F10 and Alt+Shift+1 in the app's project
   window, the object selection tool's, the line tool's and the play tool's mode menus on a second click; scrubbing an
-  audio track with the mouse; the split tool and the range
+  audio track with the mouse, and the dummy device playing it while the button is held; the split tool and the range
   tool driven with the mouse as MCP's UI tools drive it; the toolbox and the context menu on right clicks with and
   without modifiers, with the setting on and off, a tool chosen from each, a right click selecting the event for the context menu; the context menu's range commands
   disabled without a range and cutting with one, after a right click that leaves the event unselected; the

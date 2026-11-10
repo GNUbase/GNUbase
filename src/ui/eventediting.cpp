@@ -696,6 +696,8 @@ namespace gnubase::ui
 		if (lane && automationAt(*lane) != nullptr) // a press edits points with the tool chosen, combined or not
 			return toolName(m_tool);
 		const Tool tool = toolAt(y);
+		if (scrubEdgeAt(x, y) != 0) // the play tool in scrub mode resizes there
+			return "resize";
 		if (tool != Tool::ObjectSelection)
 			return toolName(tool);
 		// What a press with the object selection tool and the keys does (areaDown, areaUp).
@@ -766,6 +768,8 @@ namespace gnubase::ui
 			m_pressed = modifiersOf(event);
 			m_resizeDx = dx;
 			previewResize(resizeParameters(dx, m_drag));
+			if (m_resizeScrubs)
+				scrubAt(m_pressX + dx);
 			return;
 		}
 		if (m_drag != Drag::Events)
@@ -832,6 +836,8 @@ namespace gnubase::ui
 		if (!alive())
 			return;
 		m_pressed = modifiersOf(event); // what is held now decides, e.g. whether a drag copies
+		if (std::exchange(m_resizeScrubs, false))
+			m_binding.send("audition.stop", Json::object());
 		if (drag == Drag::Automation)
 		{
 			automationUp(dpFrom(*m_lanes, event.GetParameter<float>("mouse_x", 0.0F)),
@@ -1063,6 +1069,8 @@ namespace gnubase::ui
 			return false;
 		m_drag = Drag::None;
 		m_dragMoved = false;
+		if (std::exchange(m_resizeScrubs, false))
+			m_binding.send("audition.stop", Json::object());
 		const bool shown = !m_resizePreview.is_null();
 		endResize();
 		if (shown)
