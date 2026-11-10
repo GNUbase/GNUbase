@@ -607,7 +607,8 @@ TEST_CASE("the track list's context menu follows the selection and stands the ro
 	};
 
 	// The menu opens with the right click, and its items follow the selection when the shell steps: before that, a
-	// click on an item that nothing was selected for does nothing.
+	// click on an item that nothing was selected for does nothing. If the items ever follow it when the menu opens,
+	// this part and the check below that the item is enabled are what changes.
 	tracks.rightClick(kept);
 	CHECK(elements(tracks.app, "#track-list-menu").at(0).at("visible").get<bool>());
 	CHECK(tracks.itemDisabled(command));
@@ -1271,6 +1272,7 @@ TEST_CASE("folder tracks: new folders for the selected tracks, group channels an
 	menu(folder, "track.enableSelectedGroupChannels", "track.disableSelectedGroupChannels");
 	REQUIRE(tracks.app.waitUntil([&] { return tracks.track(folder).at("channel") != 0; }));
 	CHECK(tracks.channel(other).at("output") == tracks.track(folder).at("channel"));
+	// The list shows the group channel too: its rows are built again for it, before the next click on one.
 	REQUIRE(tracks.app.waitUntil([&] { return elements(tracks.app, row(folder) + " button.mute").size() == 1; }));
 
 	// Move Selected Tracks to New Folder puts one into a folder inside it, without a group channel.
