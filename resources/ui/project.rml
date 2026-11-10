@@ -530,6 +530,14 @@
 				<menuitem command="settings.set" parameters='{"key": "ui.folderData", "value": "hideWhenExpanded"}'>Hide Data When Expanded</menuitem>
 			</menu>
 		</menuitem>
+		<!-- Marker tracks (reference manual p. 425, docs/features/markers.md) -->
+		<menuitem id="marker-lines-submenu">Show Marker Lines
+			<menu>
+				<menuitem id="marker-lines-active" command="settings.set" parameters='{"key": "ui.markerLines", "value": "active"}'>Active Marker Track</menuitem>
+				<menuitem id="marker-lines-all" command="settings.set" parameters='{"key": "ui.markerLines", "value": "all"}'>All Marker Tracks</menuitem>
+				<menuitem id="marker-lines-off" command="settings.set" parameters='{"key": "ui.markerLines", "value": "off"}'>Off</menuitem>
+			</menu>
+		</menuitem>
 		<!-- The transpose track (reference manual p. 416, docs/features/transpose.md) -->
 		<menuitem command="transpose.assignRootKey">Set Root Key for Unassigned Events</menuitem>
 		<menuseparator/>

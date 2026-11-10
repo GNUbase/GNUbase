@@ -365,8 +365,9 @@ namespace gnubase::app
 		std::unique_ptr<ui::TempoEditor> m_tempoEditor;
 		ui::WindowId m_tempoWindow = 0;
 		ui::WindowId m_arrangerWindow = 0;
-		std::vector<uint64_t> m_eventSelection; // the display's, as the last step saw it
-		ui::Winding m_winding{m_binding};       // Rewind and Forward held, which the transport controls end
+		std::vector<uint64_t> m_eventSelection;         // the display's, as the last step saw it
+		std::optional<ui::RangeSelection> m_eventRange; // as well
+		ui::Winding m_winding{m_binding};               // Rewind and Forward held, which the transport controls end
 		std::unique_ptr<ui::TransportControls> m_transportBar;
 		TransportWindow m_transportPanel;
 		TransportWindow m_timeDisplay;
