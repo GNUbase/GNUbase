@@ -7,6 +7,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -183,6 +184,43 @@ TEST_CASE("a time limit stops scripts that run too long", "[unit]")
 	CHECK_THAT(lua.run("coroutine.wrap(function() while true do end end)()", "coroutine.lua").value_or(""),
 		ContainsSubstring("ran longer than"));
 	run(lua, "assert(gnubase.engine.version())"); // each run gets the full time again
+}
+
+TEST_CASE("a time limit asks whether a late script keeps running, and ends with the run", "[unit]")
+{
+	Engine engine;
+	std::ostringstream output;
+	Runtime lua(engine, Trust::Trusted, output);
+	int asked = 0;
+	lua.setTimeLimit(std::chrono::milliseconds(20), [&asked] { return ++asked < 3; });
+	CHECK_THAT(lua.run("while true do end", "loop.lua").value_or(""), ContainsSubstring("ran longer than"));
+	CHECK(asked == 3);
+	CHECK(!lua.running());
+
+	// Without a limit, code that runs later isn't stopped, also in a coroutine that the limited run made.
+	run(lua, "late = coroutine.wrap(function() local t = os.clock() + 0.1 while os.clock() < t do end end)");
+	lua.setTimeLimit(std::chrono::milliseconds(0));
+	run(lua, "local t = os.clock() + 0.1 while os.clock() < t do end late()");
+	CHECK(asked == 3);
+}
+
+TEST_CASE("code runs in an environment of its own that reads the globals it doesn't have", "[unit]")
+{
+	Engine engine;
+	std::ostringstream output;
+	Runtime lua(engine, Trust::Trusted, output);
+	run(lua, "shared = 1");
+	const int environment = lua.newEnvironment();
+	const auto inside = [&lua, environment](const std::string& code)
+	{
+		const std::optional<std::string> error = lua.run(code, "inside", environment);
+		INFO(error.value_or(""));
+		CHECK(!error.has_value());
+	};
+	inside("shared = 2; own = 3; assert(gnubase.engine.version())");
+	inside("assert(shared == 2 and own == 3 and _G.shared == 1)"); // kept from run to run
+	run(lua, "assert(shared == 1 and own == nil)");
+	CHECK(lua.newEnvironment() != environment);
 }
 
 TEST_CASE("Lua calls functions that C++ adds next to the commands, and takes events when asked", "[unit]")
