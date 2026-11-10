@@ -7,6 +7,7 @@
 #include "engine/document/audiofunctions.h"
 #include "engine/document/audioquantize.h"
 #include "engine/document/channelsettings.h"
+#include "engine/document/chordpads.h"
 #include "engine/document/chordtrack.h"
 #include "engine/document/editors.h"
 #include "engine/document/hitpoints.h"
@@ -3392,6 +3393,8 @@ namespace gnubase::engine
 					current.maxVolume != previous.maxVolume || !(current.colors == previous.colors) ||
 					!(current.setup == previous.setup) || current.rootKey != previous.rootKey)
 					context.emit("project.changed", projectSettingsJson(current));
+				if (!(current.chordPads == previous.chordPads))
+					context.emit("chordPads.changed", chordPadsJson(project));
 				announceBusses(previous.busses, current.busses, context);
 				reordered = current.tracks != previous.tracks;
 				activated = current.activeMarkerTrack != previous.activeMarkerTrack;

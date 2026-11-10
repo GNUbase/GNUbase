@@ -170,7 +170,9 @@ user settings ([settings.md](settings.md)), so MCP and Lua change them with `set
 
 The UI command `window.keyCommands` opens `resources/ui/key-commands.rml`, modal (Edit > Key Commands...). Its Lua gets
 the commands with their default keys from `gnubase.ui.keyCommands()` (`KeyCommands::commands`: the UI's commands, the
-engine's that change something and run without parameters, and the default bindings' commands with their parameters)
+engine's that change something and run without parameters, and the default bindings' commands with their parameters;
+not those that need one of their parameters though none is required, such as `chordPads.trigger` and `marker.locate`,
+whose schema says so with `minProperties`, `engine::needsOne`)
 and writes keys with `gnubase.ui.keyName`, which takes `keys` as the settings write them, or a key event's `key` with
 `ctrl`, `alt`, `shift` and `meta`, and returns `keys` and the `name` the platform shows (none for a modifier on its
 own).

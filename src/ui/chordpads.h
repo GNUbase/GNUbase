@@ -31,8 +31,9 @@ namespace gnubase::ui
 	// with step input on inserts its chord (chordPads.step); released over another pad it swaps the two, with Alt it
 	// copies onto it (chordPads.move). A double click, or Open Chord Editor, opens the chord field, where Enter assigns
 	// the chord typed. The wheel over a pad steps through its voicings, with Shift transposes it, with Alt changes its
-	// tensions. An assistant's chord plays while it is pressed; a double click assigns it to the first unassigned pad.
-	// Use it on the UI thread; the binding must outlive it.
+	// tensions; over the root key it moves the key. With step input, Left and Right Arrow on a pad move the step
+	// position by a bar. An assistant's chord plays while it is pressed; a double click assigns it to the first
+	// unassigned pad. Use it on the UI thread; the binding must outlive it.
 	class ChordPadsPanel final : private Rml::EventListener
 	{
 	public:
@@ -57,6 +58,7 @@ namespace gnubase::ui
 		void action(const std::string& name);
 		void change(Rml::Element& target, const Rml::Event& event);
 		void wheel(int pad, const Rml::Event& event);
+		void wheelRootKey(const Rml::Event& event);
 		void openField(int pad);
 		void assignTyped();
 		void assignFirstFree(const std::string& chord);

@@ -622,6 +622,11 @@
 	{
 		color: #00ffff;
 	}
+	.chord-pad .chord-pad-adaptive
+	{
+		background-color: #ffff00;
+		border-radius: 999dp;
+	}
 	.chord-pad.triggered
 	{
 		background-color: #7a7a07;

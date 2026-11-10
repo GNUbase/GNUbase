@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/chordpads.h"
 
+#include "platform/log.h"
 #include "ui/widgetutils.h"
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Event.h>
+#include <RmlUi/Core/Input.h>
 #include <RmlUi/Core/StringUtilities.h>
 
 #include <algorithm>
@@ -19,8 +21,8 @@ namespace gnubase::ui
 
 	namespace
 	{
-		constexpr std::array<Rml::EventId, 5> g_events = {Rml::EventId::Mousedown, Rml::EventId::Click,
-			Rml::EventId::Dblclick, Rml::EventId::Change, Rml::EventId::Mousescroll};
+		constexpr std::array<Rml::EventId, 6> g_events = {Rml::EventId::Mousedown, Rml::EventId::Click,
+			Rml::EventId::Dblclick, Rml::EventId::Change, Rml::EventId::Mousescroll, Rml::EventId::Keydown};
 
 		constexpr std::array<const char*, 12> g_noteNames = {
 			"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
@@ -73,6 +75,15 @@ namespace gnubase::ui
 				if (element->HasAttribute(name))
 					return element;
 			return nullptr;
+		}
+
+		// Whether the element is the one with the id or inside it.
+		bool within(const Rml::Element* element, const std::string& id)
+		{
+			for (; element != nullptr; element = element->GetParentNode())
+				if (element->GetId() == id)
+					return true;
+			return false;
 		}
 
 		std::string button(const char* action, const char* title, const char* text, bool toggle = false)
@@ -186,8 +197,7 @@ namespace gnubase::ui
 					pads != nullptr && pad >= 0 && pad < pads->GetNumChildren())
 					setClass(pads->GetChild(pad), "triggered", event.data.value("on", false));
 			}));
-		for (const char* name : {"history.changed", "project.reset"})
-			m_subscriptions.push_back(m_binding.on(name, [this](const engine::Event&) { request(); }));
+		m_subscriptions.push_back(m_binding.on("project.reset", [this](const engine::Event&) { request(); }));
 		request();
 	}
 
@@ -208,7 +218,17 @@ namespace gnubase::ui
 
 	void ChordPadsPanel::send(const std::string& command, Json parameters)
 	{
-		m_binding.send(command, std::move(parameters));
+		// A change the engine refuses changes nothing: the toolbar shows the pads as they are again, not the value
+		// that was refused.
+		m_binding.send(command, std::move(parameters),
+			[this, command, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (result.ok())
+					return;
+				logging::warning("{} from the UI failed: {}", command, result.error);
+				if (!alive.expired())
+					request();
+			});
 	}
 
 	void ChordPadsPanel::request()
@@ -235,7 +255,8 @@ namespace gnubase::ui
 			for (int i = 0; i < count; ++i)
 				rml += R"(<div class="chord-pad" pad=")" + std::to_string(i) +
 					R"("><span class="chord-pad-chord"/><span class="chord-pad-degree"/>)"
-					R"(<span class="chord-pad-key"/></div>)";
+					R"(<span class="chord-pad-key"/><div class="chord-pad-adaptive" title="Adaptive Voicing"/>)"
+					R"(<svg class="icon chord-pad-lock" src="../icons/general-lock.svg"/></div>)";
 			list->SetInnerRML(rml);
 		}
 		for (auto it = m_selection.begin(); it != m_selection.end();)
@@ -384,7 +405,26 @@ namespace gnubase::ui
 				wheel(pad->GetAttribute<int>("pad", -1), event);
 				event.StopPropagation();
 			}
+			else if (within(target, "chord-pads-root"))
+			{
+				wheelRootKey(event);
+				event.StopPropagation();
+			}
 			return;
+		case Rml::EventId::Keydown:
+		{
+			// With step input, Left and Right Arrow on a pad move the step input cursor by a bar (reference manual
+			// p. 1369).
+			const auto key = event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN);
+			if (pad != nullptr && m_pads.at("stepInput").get<bool>() && event.GetParameter("ctrl_key", 0) == 0 &&
+				event.GetParameter("shift_key", 0) == 0 && event.GetParameter("alt_key", 0) == 0 &&
+				(key == Rml::Input::KI_LEFT || key == Rml::Input::KI_RIGHT))
+			{
+				send("chordPads.set", {{"stepBars", key == Rml::Input::KI_RIGHT ? 1 : -1}});
+				event.StopPropagation();
+			}
+			return;
+		}
 		case Rml::EventId::Change:
 			change(*target, event);
 			return;
@@ -469,6 +509,17 @@ namespace gnubase::ui
 		send("chordPads.modify", parameters);
 	}
 
+	void ChordPadsPanel::wheelRootKey(const Rml::Event& event)
+	{
+		const auto delta = event.GetParameter<float>("wheel_delta_y", 0.0F);
+		if (delta == 0.0F)
+			return;
+		const int key = (m_pads.at("rootKey").get<int>() + (delta > 0.0F ? 1 : 11)) % 12;
+		const Rml::Element* transpose = find("chord-pads-transposePads");
+		send("chordPads.set",
+			{{"rootKey", key}, {"transposePads", transpose != nullptr && transpose->HasAttribute("checked")}});
+	}
+
 	void ChordPadsPanel::action(const std::string& name)
 	{
 		const std::vector<int> pads = selected();
@@ -526,10 +577,13 @@ namespace gnubase::ui
 		}
 		else if (first >= 0 && (name == "lock" || name == "adaptive"))
 		{
+			// One undo step for all the selected pads.
 			const char* state = name == "lock" ? "locked" : "adaptive";
 			const bool on = !items[static_cast<size_t>(first)].at(state).get<bool>();
+			Json commands = Json::array();
 			for (const int pad : pads)
-				send("chordPads.setPad", {{"pad", pad}, {state, on}});
+				commands.push_back({{"command", "chordPads.setPad"}, {"parameters", {{"pad", pad}, {state, on}}}});
+			send("history.transaction", {{"description", "Change chord pads"}, {"commands", commands}});
 		}
 		else if (first >= 0 && name == "reference")
 		{
