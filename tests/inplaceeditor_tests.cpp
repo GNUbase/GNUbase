@@ -62,6 +62,22 @@ namespace
 	}
 }
 
+TEST_CASE("reading open in-place editors leaves the command log unchanged", "[unit]")
+{
+	Fixture f;
+	const Json initial = f.call("engine.commandLog");
+	CHECK(f.call("editor.inPlace").at("tracks").empty());
+	CHECK(f.call("engine.commandLog") == initial);
+	const uint64_t midi = f.track("midi");
+	f.call("editor.inPlace", {{"tracks", {midi}}, {"open", true}});
+	const Json changed = f.call("engine.commandLog");
+	CHECK(changed.at("commands").back().at("command") == "editor.inPlace");
+	CHECK(changed.at("commands").back().at("parameters").at("tracks") == Json::array({midi}));
+	CHECK(f.call("editor.inPlace").at("tracks") == Json::array({midi}));
+	CHECK(f.call("editor.inPlace", {{"open", false}}).at("tracks") == Json::array({midi}));
+	CHECK(f.call("engine.commandLog") == changed);
+}
+
 TEST_CASE("the in-place editor opens and closes on MIDI tracks and shows all of a track's parts", "[unit]")
 {
 	Fixture f;

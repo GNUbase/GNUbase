@@ -51,10 +51,15 @@ namespace
 		return app.call("transport.get").at("playing").get<bool>();
 	}
 
-	// The last command that changed something, as the engine's command log has it.
-	Json lastCommand(test::UiApp& app)
+	// The last matching command, even if a UI refresh command ran after it, or null if it hasn't run.
+	Json lastCommand(test::UiApp& app, const std::string& command)
 	{
-		return app.call("engine.commandLog").at("commands").back();
+		Json found;
+		const Json log = app.call("engine.commandLog");
+		for (const Json& entry : log.at("commands"))
+			if (entry.at("command") == command)
+				found = entry;
+		return found;
 	}
 
 	// UI commands that record where they ran: their id, and the id of the zone they got.
@@ -205,8 +210,9 @@ TEST_CASE("keys pressed in GNUbase's UI run the engine's commands from the defau
 	app.call("track.add", {{"type", "audio"}});
 	press(app, "Mod+Z");
 	REQUIRE(app.waitUntil([&app] { return app.call("history.get").at("position") == 0; }));
-	CHECK(lastCommand(app).at("command") == "history.undo");
-	CHECK(lastCommand(app).at("client") == "ui");
+	const Json undone = lastCommand(app, "history.undo");
+	REQUIRE(!undone.is_null());
+	CHECK(undone.at("client") == "ui");
 }
 
 TEST_CASE("the same keys run the command of the focus zone they're pressed in", "[ui]")
@@ -276,7 +282,7 @@ TEST_CASE("elements keep the keys they use, and a modal dialog keeps every key",
 	click(app, "#apply");
 	press(app, "Space");
 	press(app, "Num1"); // a later command, to wait for
-	REQUIRE(app.waitUntil([&app] { return lastCommand(app).at("command") == "transport.locate"; }));
+	REQUIRE(app.waitUntil([&app] { return !lastCommand(app, "transport.locate").is_null(); }));
 	CHECK_FALSE(playing(app));
 	CHECK(recorder.take().empty());
 

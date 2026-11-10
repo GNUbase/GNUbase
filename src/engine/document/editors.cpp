@@ -809,7 +809,8 @@ namespace gnubase::engine
 				"MIDI part of the track, the first one active; its parts follow the track's and can't be set, and it "
 				"closes with its track. View state like the other editors: no undo steps, not saved, and a new or "
 				"loaded project closes them. Emits editor.changed for each editor that opens or closes. Without "
-				"tracks it changes nothing. Returns tracks, the tracks whose in-place editors are open, in the track "
+				"tracks it changes nothing and stays out of engine.commandLog. Returns tracks, the tracks whose "
+				"in-place editors are open, in the track "
 				"list's order.",
 				{{"type", "object"}, {"additionalProperties", false},
 					{"properties", {{"tracks", idsSchema}, {"open", boolean}}}},
@@ -817,6 +818,8 @@ namespace gnubase::engine
 			[views, &model, store](CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
+				if (!parameters.contains("tracks"))
+					context.leaveOutOfLog();
 				const Project& project = model.project();
 				std::vector<ObjectId> tracks;
 				for (const ObjectId track : ids(parameters, "tracks"))

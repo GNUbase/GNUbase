@@ -16,6 +16,7 @@ project closes it.
 |---|---|---|
 | `editor.inPlace` | Opens (`open` true), closes (false) or toggles (without `open`) the in-place editors of `tracks`; returns `tracks`, those whose in-place editors are open, in the track list's order. Without `tracks` it only lists them | pp. 1259, 1261 |
 
+- Reading `editor.inPlace` without `tracks` leaves `engine.commandLog` unchanged; calls with `tracks` remain logged.
 - **Parts.** An open in-place editor shows every MIDI part of its track, in order, and parts added later; its parts
   can't be set (`parts`, `showTracks`, `hideTracks` and `exclusive` are refused), and it always shows the key editor.
   The first part is active; `activePart` activates another one. A removed track's editor closes, and comes back with

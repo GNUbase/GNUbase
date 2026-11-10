@@ -259,7 +259,7 @@ TEST_CASE("the studio setup dialog's Cancel drops the changes, Apply sends them 
 
 	// Reset opens the device again, through the engine.
 	click(app, "#reset-device");
-	CHECK(app.call("engine.commandLog").at("commands").back().at("command") == "audio.reset");
+	REQUIRE(app.waitUntil([&app] { return !lastRun(app, "audio.reset").is_null(); }));
 	app.ui().key(std::nullopt, "Escape");
 	CHECK(closed(app));
 	app.call("audio.stop");
