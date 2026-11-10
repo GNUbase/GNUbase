@@ -44,7 +44,8 @@ namespace gnubase::engine
 		void setRms(int milliseconds, bool aes17) noexcept;
 
 		// The one reader that reads once a frame, the UI (Engine::readMeters): the same as read, but each channel's
-		// peak is the largest sample since its last readFrame, so no peak between two frames goes unseen.
+		// peak is the largest sample since its last readFrame, so no peak between two frames goes unseen, and never
+		// above the reading's peakMax: a reset drops what the frame held from before it.
 		LevelReading readFrame() noexcept;
 
 	private:

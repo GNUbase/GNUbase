@@ -863,6 +863,101 @@ TEST_CASE("a frame's peak is never above its maximum, whatever the audio thread 
 	CHECK(above == 0);
 }
 
+TEST_CASE("a frame's peak is never above its maximum, also when the meter is reset meanwhile", "[unit]")
+{
+	// meter.reset comes from the command thread, at any point of the audio thread's blocks and of a frame's read.
+	LevelMeter meter;
+	std::atomic<bool> done{false};
+	std::atomic<int> above{0};
+	std::thread reader(
+		[&]
+		{
+			do
+			{
+				const LevelReading frame = meter.readFrame();
+				if (frame.peak[0] > frame.peakMax[0])
+					++above;
+			} while (!done);
+		});
+	const StopAndJoin stopReader(done, reader);
+	std::thread resetter(
+		[&]
+		{
+			do
+				meter.reset();
+			while (!done);
+		});
+	const StopAndJoin stopResetter(done, resetter);
+	constexpr int blocks = 500000;
+	for (int block = 1; block <= blocks; ++block)
+	{
+		const float sample = static_cast<float>(block) / blocks;
+		const float* const channel = &sample;
+		meter.process(&channel, 1, 1, g_rate);
+	}
+	done = true;
+	reader.join();
+	resetter.join();
+	CHECK(above == 0);
+}
+
+TEST_CASE("a frame's peak holds nothing from before a reset", "[unit]")
+{
+	Signal loud;
+	loud.impulse(0.9f);
+	Signal quiet;
+	quiet.impulse(0.2f);
+	LevelMeter meter;
+
+	// Nothing played since the reset: the held peak went with the maximum.
+	loud.play(meter);
+	meter.reset();
+	LevelReading frame = meter.readFrame();
+	REQUIRE(frame.channels == 2);
+	CHECK(frame.peak[0] == 0.0f);
+	CHECK(frame.peak[1] == 0.0f);
+	CHECK(frame.peakMax[0] == 0.0f);
+
+	// A quieter block since the reset, as when playback starts after a loud signal stopped: its peak is the frame's.
+	loud.play(meter);
+	meter.reset();
+	quiet.play(meter);
+	frame = meter.readFrame();
+	CHECK(frame.peak[0] == Approx(0.2f));
+	CHECK(frame.peakMax[0] == Approx(0.2f));
+
+	// What comes after a reset is held as ever, however loud, and read once.
+	meter.reset();
+	loud.play(meter);
+	quiet.play(meter);
+	frame = meter.readFrame();
+	CHECK(frame.peak[0] == Approx(0.9f));
+	CHECK(frame.peakMax[0] == Approx(0.9f));
+	frame = meter.readFrame();
+	CHECK(frame.peak[0] == 0.0f);
+	CHECK(frame.peakMax[0] == Approx(0.9f));
+}
+
+TEST_CASE("Reset on Start leaves a frame no peak from before playback started", "[integration]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId channel = measuring(client);
+	run(client, "settings.set", {{"key", "meter.resetOnStart"}, {"value", true}});
+	run(client, "audio.render", {{"frames", 9600}});
+	run(client, "transport.stop");
+	// The signal stops before playback starts, and nothing reads the frame's peak in between.
+	run(client, "channel.set", {{"channel", channel}, {"recordEnable", false}});
+	run(client, "audio.render", {{"frames", 9600}});
+	run(client, "transport.play");
+	run(client, "audio.render", {{"frames", 64}});
+	MeterFrame frame;
+	engine.readMeters(frame);
+	REQUIRE(frame.main.channels == 2);
+	CHECK(frame.main.peakMax[0] == 0.0f);
+	CHECK(frame.main.peak[0] == 0.0f);
+}
+
 TEST_CASE("Engine::readMeters gives a channel listed twice the same peak both times", "[integration]")
 {
 	// The inspector and the mixer can show one channel at once.
