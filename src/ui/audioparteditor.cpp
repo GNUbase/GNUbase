@@ -297,9 +297,13 @@ namespace gnubase::ui
 			cancel();
 			return;
 		}
+		// A move is measured from its event and from the time under the press. While those stay, it stays as the mouse
+		// last left it, even if the project shown is new.
+		const double pressedAt = at(m_pressedMouse).first;
+		const bool changed = found->start != m_pressed->start || pressedAt != m_pressedAt.first;
 		m_pressed = *found;
-		m_pressedAt.first = at(m_pressedMouse).first;
-		if (m_dragged)
+		m_pressedAt.first = pressedAt;
+		if (m_dragged && changed)
 			updateMoved();
 	}
 
