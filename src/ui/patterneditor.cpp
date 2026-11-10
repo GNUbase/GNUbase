@@ -311,7 +311,9 @@ namespace gnubase::ui
 		const Parameter& parameter = parameterOf(m_parameter);
 		double set = parameter.low + (std::clamp(value, 0.0, 1.0) * (parameter.high - parameter.low));
 		if (parameter.whole)
+		{
 			(*found)[parameter.name] = static_cast<int>(std::lround(set));
+		}
 		else
 		{
 			set = std::round(set * 100.0) / 100.0;
@@ -461,7 +463,7 @@ namespace gnubase::ui
 			if ((key == Rml::Input::KI_DELETE || key == Rml::Input::KI_BACK) && !m_selection.empty() &&
 				m_pattern.is_object())
 			{
-				for (const auto [pitch, index] : std::set<std::pair<int, int>>(m_selection))
+				for (const auto& [pitch, index] : std::set<std::pair<int, int>>(m_selection))
 					removeStep(pitch, index);
 				m_changed = false;
 				sendLanes("Delete steps");
@@ -515,7 +517,9 @@ namespace gnubase::ui
 						m_selection.clear();
 				}
 				else if (ctrl && m_selection.count(key) != 0)
+				{
 					m_selection.erase(key);
+				}
 				else
 				{
 					if (!shift && !ctrl)
@@ -547,7 +551,7 @@ namespace gnubase::ui
 				return;
 			const float top = cell->GetAbsoluteOffset(Rml::BoxArea::Border).y;
 			const float height = std::max(cell->GetBox().GetSize(Rml::BoxArea::Border).y, 1.0F);
-			const float y = event.GetParameter<float>("mouse_y", top);
+			const auto y = event.GetParameter<float>("mouse_y", top);
 			setValue(*index, 1.0 - ((y - top) / height));
 			refresh();
 			return;
@@ -598,7 +602,9 @@ namespace gnubase::ui
 		if (!m_pattern.is_object())
 			return;
 		if (target.HasAttribute("pattern-mode"))
+		{
 			set({{"mode", attribute(target, "pattern-mode")}});
+		}
 		else if (target.HasAttribute("pattern-tool"))
 		{
 			m_tool = attribute(target, "pattern-tool");
@@ -646,15 +652,21 @@ namespace gnubase::ui
 			sendLanes("Remove step lane");
 		}
 		else if (id == "pattern-tie" || id == "pattern-split")
+		{
 			tie(id == "pattern-split");
+		}
 		else if (id == "pattern-double-length" || id == "pattern-double-resolution")
+		{
 			doubleLength(id == "pattern-double-resolution");
+		}
 	}
 
 	void PatternEditor::choose(Rml::Element& item)
 	{
 		if (item.HasAttribute("pattern-id"))
+		{
 			m_binding.send("midiPart.set", {{"part", m_part}, {"pattern", std::stoull(attribute(item, "pattern-id"))}});
+		}
 		else if (item.HasAttribute("pattern-action"))
 		{
 			const std::string action = attribute(item, "pattern-action");
@@ -670,11 +682,17 @@ namespace gnubase::ui
 				m_binding.send("pattern.convert", {{"part", m_part}});
 		}
 		else if (item.HasAttribute("length"))
+		{
 			set({{"length", std::stoi(attribute(item, "length"))}});
+		}
 		else if (item.HasAttribute("resolution"))
+		{
 			set({{"resolution", attribute(item, "resolution")}});
+		}
 		else if (item.HasAttribute("direction"))
+		{
 			set({{"direction", attribute(item, "direction")}});
+		}
 	}
 
 	std::string PatternEditor::barsRml() const
@@ -722,7 +740,9 @@ namespace gnubase::ui
 		if (Rml::Element* bars = root->QuerySelector(".pattern-bars .pattern-lane-steps"))
 		{
 			if (m_gesture != Gesture::Values)
+			{
 				bars->SetInnerRML(barsRml());
+			}
 			else
 			{
 				Rml::ElementList found;
@@ -874,7 +894,7 @@ namespace gnubase::ui
 			}
 		}
 		if (Rml::ElementDocument* menuOwner = root->GetOwnerDocument())
-			if (Rml::Element* menu = menuOwner->GetElementById("pattern-menu");
+			if (const Rml::Element* menu = menuOwner->GetElementById("pattern-menu");
 				menu != nullptr && m_pattern.is_object())
 				for (int i = 0; i < menu->GetNumChildren(); ++i)
 					if (Rml::Element* item = menu->GetChild(i); item->HasAttribute("pattern-id"))

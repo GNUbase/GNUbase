@@ -337,7 +337,9 @@ namespace gnubase::engine::midi
 			for (const char* key : {"copy", "track", "part", "id"})
 				changes.erase(key);
 			if (parameters.contains("copy"))
+			{
 				change(pattern, changes);
+			}
 			else
 			{
 				changes.erase("mode"); // newPattern made it in that mode

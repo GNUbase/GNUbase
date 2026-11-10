@@ -92,9 +92,9 @@ namespace
 			return indexes;
 		}
 
-		void click(const ui::Target& target, int count = 1, std::vector<std::string> modifiers = {})
+		void click(const ui::Target& target, int count = 1, const std::vector<std::string>& modifiers = {})
 		{
-			app.ui().click(window, target, ui::MouseButton::Left, count, std::move(modifiers));
+			app.ui().click(window, target, ui::MouseButton::Left, count, modifiers);
 			app.shell().step(std::chrono::milliseconds(0));
 		}
 
