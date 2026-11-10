@@ -363,6 +363,22 @@ namespace gnubase::app
 					if (!m_eventSelection.empty())
 						m_markerLines->deselect();
 				}
+				// So does a range selected, e.g. between markers with the range tool: Delete deletes what was selected
+				// last.
+				if (m_eventDisplay && m_markerLines)
+				{
+					const std::optional<ui::RangeSelection>& range = m_eventDisplay->range();
+					const bool same = range.has_value() == m_eventRange.has_value() &&
+						(!range || !m_eventRange ||
+							(range->start == m_eventRange->start && range->end == m_eventRange->end &&
+								range->tracks == m_eventRange->tracks));
+					if (!same)
+					{
+						m_eventRange = range;
+						if (range)
+							m_markerLines->deselect();
+					}
+				}
 				if (m_infoLine)
 					m_infoLine->update();
 				if (m_inPlace)
@@ -797,6 +813,9 @@ namespace gnubase::app
 			m_keys.add(
 				{command.id, command.description, [this, id = std::string(command.id)](ui::Window&, Rml::Element*)
 					{
+						// Delete removes the selected markers, which the project window selects instead of events.
+						if (id == "edit.delete" && m_markerLines && m_markerLines->removeSelected())
+							return;
 						if (m_eventDisplay)
 							m_eventDisplay->actions().at(id)();
 					}});
@@ -1248,6 +1267,17 @@ namespace gnubase::app
 				if (ui::MarkersWindow* window = markers(); window != nullptr && window->syncsSelection())
 					window->setSelection(selection);
 			});
+		// The marker tracks' Locate menus select the marker, Shift-click on Add Cycle Marker names the new one.
+		if (m_trackList)
+			m_trackList->onMarker(
+				[this](uint64_t marker, bool rename)
+				{
+					if (m_markerLines == nullptr)
+						return;
+					m_markerLines->pick({marker});
+					if (rename)
+						m_markerLines->rename(marker);
+				});
 		return *m_eventDisplay;
 	}
 

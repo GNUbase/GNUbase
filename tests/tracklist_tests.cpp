@@ -121,13 +121,15 @@ TEST_CASE("the track list shows a row per track, and its controls change the tra
 	CHECK(first.at("height").get<int>() == static_cast<int>(ui::g_trackHeight));
 	CHECK(first.at("y") == elements(tracks.app, "event-lanes.events").at(0).at("box").at("y"));
 
-	// Each type's controls: audio and instrument tracks record and monitor, groups don't, marker tracks have none.
+	// Each type's controls: audio and instrument tracks record and monitor, groups don't, marker tracks have their
+	// own (markertrack_ui_tests.cpp).
 	CHECK(elements(tracks.app, row(audio) + " button[control]").size() == 5);
 	CHECK(elements(tracks.app, row(instrument) + " button[control]").size() == 5);
 	CHECK(elements(tracks.app, row(instrument) + " button.record").size() == 1);
 	CHECK(elements(tracks.app, row(group) + " button.mute").size() == 1);
 	CHECK(elements(tracks.app, row(group) + " button.record").empty());
-	CHECK(elements(tracks.app, row(marker) + " button[control]").empty());
+	CHECK(elements(tracks.app, row(marker) + " button[control]").size() == 3);
+	CHECK(elements(tracks.app, row(marker) + " button.mute").empty());
 
 	// Every button sets its channel's switch, and shows it.
 	for (const char* control : {"mute", "solo", "record", "monitor"})
@@ -1153,7 +1155,7 @@ TEST_CASE("folder tracks: new folders for the selected tracks, group channels an
 	const auto blocks = [&tracks] { return tracks.display.folderData().at(0).events.size(); };
 	REQUIRE(tracks.app.waitUntil([&] { return tracks.display.folderData().size() == 4 && blocks() == 1; }));
 	CHECK(tracks.display.folderData().at(2).events.empty());
-	CHECK(elements(tracks.app, "#track-list-menu [command=\"settings.set\"]").size() == 3);
+	CHECK(elements(tracks.app, "#folder-data-submenu [command=\"settings.set\"]").size() == 3);
 	tracks.app.keys().run(
 		"settings.set", {{"key", "ui.folderData"}, {"value", "hideWhenExpanded"}}, tracks.app.main(), nullptr);
 	REQUIRE(tracks.app.waitUntil([&] { return blocks() == 0; }));

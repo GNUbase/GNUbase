@@ -91,13 +91,18 @@
 			effect = {"mute", "solo", "read", "timeBase"},
 			folder = {"mute", "solo", "read"},
 			tempo = {"tempoTrack", "currentTempo", "tempoType"},
+			-- reference manual pp. 422-423
+			marker = {"addPositionMarker", "addCycleMarker", "activateMarkerTrack", "markerLocate", "markerCycle",
+				"markerZoom"},
 			ruler = {"timeFormat", "timeOffsetOn", "timeOffset", "setTimeOffset"}, -- reference manual p. 159
 		}
 		local names = {mute = "Mute", solo = "Solo", record = "Record Enable", monitor = "Monitor",
 			read = "Read Automation", timeBase = "Switch Time Base", tempoTrack = "Activate Tempo Track",
 			currentTempo = "Current Tempo", tempoType = "Type of New Tempo Points", timeFormat = "Time Format",
 			timeOffsetOn = "Time Offset On/Off", timeOffset = "Time Offset",
-			setTimeOffset = "Set Time Offset to Project Cursor Position"}
+			setTimeOffset = "Set Time Offset to Project Cursor Position", addPositionMarker = "Add Position Marker",
+			addCycleMarker = "Add Cycle Marker", activateMarkerTrack = "Activate Track", markerLocate = "Locate",
+			markerCycle = "Cycle", markerZoom = "Zoom"}
 		local always = {mute = true, solo = true} -- reference manual p. 190
 
 		local settings = {} -- the setting as the dialog edits it, by type
@@ -265,7 +270,8 @@
 		end
 
 		function dialog.apply(document)
-			-- Marker and ruler tracks show no controls, which leaving them out says.
+			-- The types the dialog doesn't list, such as the signature track, show no controls, which leaving them out
+			-- says.
 			local value = {}
 			for type in pairs(available) do
 				value[type] = visible(type)
@@ -291,6 +297,7 @@
 				<listitem value="effect">Effect</listitem>
 				<listitem value="folder">Folder</listitem>
 				<listitem value="tempo">Tempo</listitem>
+				<listitem value="marker">Marker</listitem>
 				<listitem value="ruler">Ruler</listitem>
 			</listview>
 			<div class="controls-list">

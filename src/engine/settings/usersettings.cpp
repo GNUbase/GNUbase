@@ -684,7 +684,10 @@ namespace gnubase::engine::settings
 					"folder, marker, ruler, tempo, transpose, chord), in order: mute, solo, record, monitor (audio, "
 					"instrument "
 					"and MIDI tracks), read (automation), timeBase, on the tempo track tempoTrack (Activate Tempo "
-					"Track), currentTempo (Current Tempo) and tempoType (Type of New Tempo Points), for ruler tracks "
+					"Track), currentTempo (Current Tempo) and tempoType (Type of New Tempo Points), for marker tracks "
+					"addPositionMarker (Add Position Marker), addCycleMarker (Add Cycle Marker), activateMarkerTrack "
+					"(Activate Track) and the menus markerLocate (Locate), markerCycle (Cycle) and markerZoom (Zoom), "
+					"for ruler tracks "
 					"timeFormat, timeOffsetOn, timeOffset and setTimeOffset (Set Time Offset "
 					"to Project Cursor Position), and for the transpose track transposeMute (Mute Transpose Events), "
 					"keepInOctave (Keep Transpose in Octave Range) and transposeLock (Lock), for the chord track "
@@ -700,12 +703,16 @@ namespace gnubase::engine::settings
 											{"mute", "solo", "record", "monitor", "read", "timeBase", "tempoTrack",
 												"currentTempo", "tempoType", "timeFormat", "timeOffsetOn", "timeOffset",
 												"setTimeOffset", "transposeMute", "keepInOctave", "transposeLock",
-												"chordRecord", "chordMute", "chordAudition", "showScales"}}}}}}},
+												"chordRecord", "chordMute", "chordAudition", "showScales",
+												"addPositionMarker", "addCycleMarker", "activateMarkerTrack",
+												"markerLocate", "markerCycle", "markerZoom"}}}}}}},
 					Json{{"audio", {"mute", "solo", "record", "monitor", "read"}},
 						{"instrument", {"mute", "solo", "record", "monitor", "read"}},
 						{"midi", {"mute", "solo", "record", "monitor", "read"}}, {"group", {"mute", "solo", "read"}},
 						{"effect", {"mute", "solo", "read"}}, {"folder", {"mute", "solo", "read"}},
-						{"marker", Json::array()},
+						{"marker",
+							{"addPositionMarker", "addCycleMarker", "activateMarkerTrack", "markerLocate",
+								"markerCycle", "markerZoom"}},
 						{"ruler", {"timeFormat", "timeOffsetOn", "timeOffset", "setTimeOffset"}},
 						{"tempo", {"tempoTrack", "currentTempo", "tempoType"}}, {"signature", Json::array()},
 						{"transpose", {"transposeMute", "keepInOctave", "timeBase", "transposeLock"}},
@@ -713,9 +720,8 @@ namespace gnubase::engine::settings
 				{"ui.trackWidths",
 					"The widths in the track list's rows, in dp: name, the track name's for every track type (20 to "
 					"400), and controls, by track type, the width of its controls area (0 to 800), whose controls go "
-					"onto more lines when they don't fit. A width left out is 120; ruler tracks' default is 140, the "
-					"chord "
-					"track's 160.",
+					"onto more lines when they don't fit. A width left out is 120; marker and ruler tracks' default is "
+					"140, the chord track's 160.",
 					Json{{"type", "object"},
 						{"properties",
 							{{"name", {{"type", "number"}, {"minimum", 20}, {"maximum", 400}}},
@@ -726,7 +732,7 @@ namespace gnubase::engine::settings
 					Json{{"name", 120},
 						{"controls",
 							{{"audio", 120}, {"instrument", 120}, {"midi", 120}, {"group", 120}, {"effect", 120},
-								{"folder", 120}, {"marker", 120}, {"ruler", 140}, {"tempo", 144}, {"signature", 120},
+								{"folder", 120}, {"marker", 140}, {"ruler", 140}, {"tempo", 144}, {"signature", 120},
 								{"chord", 160}}}}},
 				{"ui.upDownSelectsTracksOnly",
 					"Whether Up and Down (track.selectPrevious, track.selectNext) only select tracks; when off, while "
