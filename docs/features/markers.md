@@ -64,14 +64,49 @@ The reference's defaults (`ui::defaultKeyMap`, [key-commands.md](key-commands.md
   in brackets for cycle markers, and its name; labels of the active marker track's markers have `.active`. The themes
   color them; code places the labels. The user setting `ui.markerIds` (Show Marker IDs on Marker Track, on by
   default) leaves out the numbers when it is off.
-- **Mouse** on a marker track's lane: a click selects the marker under the mouse (its label, a position marker's line
-  within 4 dp, or the cycle marker it is in) and Ctrl-click adds or removes it, its label getting `.selected`, and the info line shows and edits the selected markers ([inspector.md](inspector.md), p. 430); selecting
-  a marker deselects the events and selecting an event the markers;
-  Alt-click adds a position marker there (but not on a cycle marker); a double click on a cycle marker sets the
-  locators to it (`marker.setLocators`), with Alt it zooms to it (p. 424). The event
-  display stops mouse downs, so RmlUi sends no `dblclick`: two clicks within half a second and 3 dp make one.
+- **Mouse** on a marker track's lane (pp. 424-425): a click selects the marker under the mouse (its label, a position
+  marker's line within 4 dp, a cycle marker's start or end within 4 dp, or the cycle marker it is in) and Ctrl-click
+  adds or removes it, its label getting `.selected`, and the info line shows and edits the selected markers
+  ([inspector.md](inspector.md), p. 430); selecting a marker deselects the events and selecting an event the markers.
+  With the object selection tool:
+  - **Moving.** A drag of a selected position marker, or of a cycle marker by its label or upper border (the top 8 dp
+    of the lane), moves the selected markers, shown where they go while dragging; dropped on another marker track's
+    lane, they go onto that track (`marker.set` `track`, where a marker whose number is taken gets the first free one),
+    also dragged straight there to keep their position.
+    One undo step, a `history.transaction` of `marker.set`s.
+  - **Resizing.** A drag at a cycle marker's start or end handle, below its upper border, moves that edge.
+  - **Adding.** Alt-click adds a position marker there (but not on a cycle marker); Ctrl and a drag on an empty spot
+    adds a cycle marker over the stretch dragged. With Shift (Shift+Alt-click, Shift+Ctrl and a drag) the new marker's
+    name opens in `.marker-name-field` over its label: Enter renames it (`marker.set`); leaving the field keeps the
+    name.
+  - Moving, resizing and adding snap as the event display's drags do ([snap.md](snap.md), `EventDisplay::snapped`); a
+    new cycle marker ends where the mouse is, measured from the press itself, not from its snapped time.
+  - A double click on a cycle marker sets the locators to it (`marker.setLocators`), with Alt it zooms to it (p. 424).
+    The event display stops mouse downs, so RmlUi sends no `dblclick`: two clicks within half a second and 3 dp make
+    one.
+
+  The **erase tool** removes the marker clicked, with Alt every marker on its track from it on (or from the click, off
+  a marker). With the **range selection tool** a double click selects the range between the markers around it
+  (`marker.range`) on every track (p. 431); its clicks and drags select ranges as on any lane. **Delete** (and
+  Backspace) removes the selected markers (`marker.remove`), which the project window selects instead of events; a
+  range selected deselects the markers, so that Delete deletes what was selected last.
 - The event display tells it about every change of the view (`EventDisplay::onViewChanged`); the marker elements are
   its own, in its event area, so the display's code doesn't know about markers.
+
+## Marker track controls
+
+The track list's controls for marker tracks (pp. 422-423, the user setting `ui.trackControls` for `marker`, all six
+by default in a controls area of 140 dp, [track-list.md](track-list.md)): `button[control=addPositionMarker]` (Add
+Position Marker, `marker.add` at the cursor), `button[control=addCycleMarker]` (Add Cycle Marker at the locators;
+Shift-click opens its name to type, p. 425), `button[control=activateMarkerTrack]` (Activate Track,
+`marker.activateTrack`, `.checked` on the active one) and the drop-down lists `select[control=markerLocate]` (Locate:
+the track's markers; choosing one locates to it with `marker.locate` and selects it), `select[control=markerCycle]`
+(Cycle: its cycle markers; `marker.setLocators`) and `select[control=markerZoom]` (Zoom: its cycle markers; the event
+display zooms to it). Each list's first item is its name, which it shows again after a choice. `app::AppUi` hands the
+track list's choices to `ui::MarkerLines` (`TrackList::onMarker`).
+
+The track list's context menu has **Show Marker Lines** (`#marker-lines-submenu`, p. 425): Active Marker Track, All
+Marker Tracks and Off set `ui.markerLines`.
 
 ## Markers window
 
@@ -123,14 +158,20 @@ refusing what isn't valid; sorting by a column with the position second, moving 
 setting's changes from MCP; Auto-Scroll on and off, Page Up and Page Down; changing the descriptions and lengths of
 several selected markers in one undo step; the marker settings: marker ids on the marker track, cycle follows and
 sync selection both ways, paused while recording; and the marker key commands locating, setting and recalling
-markers. `tests/marker_tests.cpp` covers `transport.cycleFollowsMarkers` for the three locate commands. Marker files:
+markers. `tests/marker_tests.cpp` covers `transport.cycleFollowsMarkers` for the three locate commands.
+`tests/markertrack_ui_tests.cpp`: on the fake window system, dragging a position marker, moving a cycle marker by its
+upper border, resizing it by its handles, a press inside it only selecting it, several selected markers moving in one
+undo step, snapping to bars and dropping on another marker track, also straight down; Ctrl-drag adding a cycle marker,
+also snapped from a press off the grid, Shift+Alt-click and Shift+Ctrl-drag adding and renaming; the erase tool with
+and without Alt; the range tool's double click between markers. In the app's UI: the marker track's controls adding
+markers (Shift-click renaming), activating the track and locating, cycling and zooming from the lists; Delete, also
+with a range selected after a marker; and the context menu's Show Marker Lines. Marker files:
 `tests/marker_tests.cpp` has the CSV round trip byte for byte with undo, also of marker tracks with the same name,
 a spreadsheet's file and files that change nothing, among them rows of one Track Number with different names;
 `tests/midifile_tests.cpp` the marker tracks in type 1 and type 0 files, the same file exported again and the limit
 of 10 marker tracks; `tests/markers_ui_tests.cpp` the File menu's items through the file dialog.
 
-Not yet: dragging markers and resizing cycle markers on the marker track, Ctrl-drag for a cycle marker and Shift to
-rename at once (with parts editing, #85); range selections by markers (the range tool, #86; `marker.range` gives the
-range); hiding columns; the track list's controls
-for marker tracks (add markers, activate, the Locate, Cycle and Zoom menus, #81); marker lines in the key editor;
-locking marker tracks; importing markers from wave files.
+Not yet: cutting a range in a cycle marker, dragging a range selected by markers by the marker track and Alt to copy
+it (p. 432, with moving a range's contents); the Zoom menu listing only the active track's cycle markers (each marker
+track's lists show its own); the erase tool's Alt as the tool modifier `erase.deleteLaterEvents`; hiding columns;
+marker lines in the key editor; locking marker tracks; importing markers from wave files.

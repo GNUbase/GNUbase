@@ -370,6 +370,13 @@ TEST_CASE("values are checked against their JSON schema", "[unit]")
 	CHECK(validate(Json::parse(R"({"name": "a", "level": 3})"), schema) == "parameters.level is not allowed");
 	CHECK(validate(Json::parse("[]"), schema, "result") == "result must be object");
 
+	// A pattern: strings that match it, not ones that only contain a match where it is anchored.
+	const Json named = Json::parse(R"({"type": "string", "pattern": "^(lower|inPlace:[0-9]+)$"})");
+	CHECK(validate("inPlace:12", named).empty());
+	CHECK(validate("lower", named).empty());
+	CHECK(validate("lowerZone", named) == "parameters must match ^(lower|inPlace:[0-9]+)$");
+	CHECK(validate(Json(3), Json::parse(R"({"pattern": "x"})")).empty()); // only strings
+
 	// additionalProperties as a schema: a map whose members all fit it.
 	const Json map = Json::parse(R"({"type": "object", "additionalProperties": {"type": "boolean"}})");
 	CHECK(validate(Json::parse(R"({"a": true, "b": false})"), map).empty());

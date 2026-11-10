@@ -780,3 +780,27 @@ TEST_CASE("splitting and resizing audio events snap to zero crossings", "[unit]"
 	CHECK(f.call("event.split", {{"positions", {(7 * g_second) - 5}}, {"zeroCrossing", true}}).at("events").empty());
 	CHECK(f.object("audioEvents", after).at("length") == 4800);
 }
+
+TEST_CASE(
+	"snap.zeroCrossings moves positions to zero crossings of the audio on the first track that plays there", "[unit]")
+{
+	// A sine that crosses zero every 100 frames.
+	const test::TempDir dir;
+	const std::filesystem::path file = dir.path() / "sine.wav";
+	test::Audio sine;
+	for (int frame = 0; frame < 9600; ++frame)
+		sine.samples.push_back(static_cast<float>(0.5 * std::sin(frame * 3.14159265358979323846 / 100.0)));
+	test::writeWav(file, sine);
+
+	Fixture f;
+	const int64_t midi = f.track("midi");
+	const int64_t empty = f.track("audio", "linear");
+	const int64_t audio = f.track("audio", "linear");
+	f.audioEvent(audio, file.u8string(), 9600, g_second, 0, 4800);
+	// Inside the event, to the crossing nearest; outside it, and on tracks without audio, where they are.
+	const Json moved = f.call("snap.zeroCrossings",
+		{{"positions", {g_second + 1030, g_second + 2960, 3 * g_second}}, {"tracks", {midi, empty, audio}}});
+	CHECK(moved.at("positions") == Json{g_second + 1000, g_second + 3000, 3 * g_second});
+	CHECK(f.call("snap.zeroCrossings", {{"positions", {g_second + 1030}}, {"tracks", {midi, empty}}}).at("positions") ==
+		Json::array({g_second + 1030}));
+}

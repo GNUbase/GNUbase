@@ -10,29 +10,42 @@ scripts plug into. The code is `src/app/appscripts.cpp` (`app::AppUi`), the cons
   Without a settings folder (settings in memory only) there are no user scripts.
 - **Scripts are key commands.** Each script is the UI command `script.<name>` (`KeyCommands::add`, area `script`), so
   the key commands dialog lists it, gives it keys (`ui.keyCommands`) and puts it into macros (`ui.macros`), the
-  Edit menu's Scripts submenu lists it, and `gnubase.ui.command{command = "script.<name>"}` runs it. The UI finds the
-  scripts when it starts and again on Reload; scripts that are gone lose their command (`KeyCommands::remove`), and the
-  key commands and macros are applied again for new ones.
+  Edit menu's Scripts submenu lists it, and   `gnubase.ui.command{command = "script.<name>"}` runs it. The UI finds the
+  scripts when it starts and again on Reload (`gnubase.ui.scripts()`): only scripts that are gone lose their command
+  and keys (`KeyCommands::remove`), and only new ones get a command, at once, so the others keep theirs, also in a
+  script that finds the scripts again (#934). The keys and macros of new scripts apply in the next step of the UI.
 - **Running.** A script runs in the UI's Lua (trusted, on the UI thread, [ui-lua.md](ui-lua.md)), with the whole
-  engine API, `gnubase.ui` and `rmlui`, never on an audio thread. Its globals stay for the scripts and console lines
-  after it. Commands run one after the other and wait for their results. `gnubase.ui.wait` fails in a script run from
-  a key or a button, since that runs inside a step of the UI.
+  engine API, `gnubase.ui` and `rmlui`, never on an audio thread. Scripts and the console's lines run in globals of
+  their own (`scripting::Runtime::newEnvironment`), which read those they don't have from the UI's global table: a
+  script that assigns `ScriptConsole` doesn't break the console's document. Their globals stay for the scripts and
+  console lines after them. Commands run one after the other and wait for their results. `gnubase.ui.wait` fails in a
+  script run from a key or a button, since that runs inside a step of the UI.
+- **Runaway scripts.** A script or console line that has run for 10 s (time in engine commands counts too) asks in a
+  message box whether to stop it or keep it running for another 10 s; stopping fails it with "the script ran longer
+  than 10000 ms", and its changes stay one undo step. Scripts that it runs share its time. With the windows hidden,
+  e.g. in tests, it stops without asking (`AppUi::keepScriptsRunningWith` answers in tests).
 - **One undo step.** Whatever a script changes is one undo step named after the script, also when it fails halfway:
   before it runs, the UI notes the id of the last done step (`history.get`), and afterwards `history.join` joins the
   done steps after it ([edit-history.md](edit-history.md)). Changes that end where they started leave no step. Ids grow
-  with each step, so this holds when the maximum number of undo steps drops the oldest ones meanwhile. Commands that a
-  script sends through `gnubase.ui.command` to the engine go through the UI's client without waiting, so they may come
-  after the join, as steps of their own.
+  with each step, so this holds when the maximum number of undo steps drops the oldest ones meanwhile. The UI's own
+  commands, which `gnubase.ui.command` sends without waiting, settle (`EngineBinding::settle`) before `history.get`
+  and before `history.join`: steps of a control that wait are sent and results handed on until no command that isn't
+  a query is out, including those that the results' handlers send. So what the user did before the script stays
+  apart, and what the script ran through the UI, such as engine key commands, is in its step.
 - **Output.** What the UI's Lua prints goes to GNUbase's standard output and into the console (`app::ScriptOutput`, the
-  last 64 KiB), and so do the scripts' errors with their traceback.
+  last 64 KiB), and so do the scripts' errors with their traceback. The console adds what is new in each UI step as a
+  text node at the end, and removes a node once the output dropped all of its text, so a script that prints in a loop
+  doesn't lay out the whole output again.
 
 ## The script console
 
 The UI command `window.scriptConsole` (Edit > Scripts > Script Console) opens the console in a window of its own, or
 closes it.
 
-- **Scripts.** The list of user scripts, each with Run, which runs its key command, and Edit, which opens the file with
-  the OS's application for `.lua` files, the user's editor. Reload finds the scripts in the folder again; Open Folder
+- **Scripts.** The list of user scripts, each with Run, which runs its key command, and Edit, which opens the file in
+  an editor (`gnubase.ui.openExternally{path, edit = true}`), not with the application for `.lua` files, which may be
+  a Lua interpreter that runs it: on Windows the file's edit action, else Notepad; on macOS the default text editor
+  (`open -t`); on Linux the desktop's application for Lua files (`xdg-open`), an editor. Reload finds the scripts in the folder again; Open Folder
   opens the folder with the OS.
 - **Output.** The output (`#script-output`), newest lines at the bottom; Clear empties it.
 - **Prompt.** Lua typed into the prompt runs with Enter (`gnubase.ui.runLua{code}`), echoed as `> code`, as one undo
@@ -42,7 +55,7 @@ closes it.
   it with the OS.
 
 The console's Lua uses `gnubase.ui.scripts()` (finds the scripts again and returns `folder` and `scripts`, each with
-`name`, `command` and `file`), `gnubase.ui.runLua`, `gnubase.ui.openExternally{path}`, `gnubase.ui.luaReference()`
+`name`, `command` and `file`), `gnubase.ui.runLua`, `gnubase.ui.openExternally{path, edit}`, `gnubase.ui.luaReference()`
 (returns `file`) and `gnubase.ui.clearScriptOutput()`; users' scripts can call them too.
 
 Not yet: scripts in subfolders, a history of the prompt's lines, values of expressions typed into the prompt shown
@@ -55,7 +68,11 @@ takes back what an example did; a script bound to a key with `ui.keyCommands` ru
 named after it, which undo and redo take back and do again; a macro runs a script twice; the console lists, runs and
 reloads scripts, shows what they print, runs prompt lines as one step with their globals kept, shows errors and
 clears; a script that fails is one step too and shows its error; a script that writes a script and finds the scripts
-again, which replaces its own command, keeps its undo step from a key and from Edit > Scripts, and the new script
-runs. `tests/scripts_ui_tests.cpp` checks Edit > Scripts and the console's Edit, Open Folder and Lua API Reference,
+again keeps its undo step from a key and from Edit > Scripts, and the new script runs; an engine key command that a
+script runs is in its step; scripts and console lines share globals apart from the documents'; a script that adds a
+script and finds the scripts again can still press another script's key. `tests/scripts_ui_tests.cpp` also checks a
+runaway script and console line asking and stopping, a script's undo step with the UI's steps it sent and without
+the user's before it, and the console adding to and dropping from its output. `tests/scripts_ui_tests.cpp` checks Edit > Scripts and the console's Edit, Open Folder and Lua API Reference,
 with the OS's opening caught (`AppUi::openExternallyWith`). `tests/history_tests.cpp` checks `history.join`, and
-`tests/scripting_tests.cpp` that a run inside a run leaves the test cases to the outermost one.
+`tests/scripting_tests.cpp` that a run inside a run leaves the test cases to the outermost one, the time limit that
+asks and environments; `tests/enginebinding_tests.cpp` settling.

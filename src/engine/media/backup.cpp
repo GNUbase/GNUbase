@@ -250,6 +250,7 @@ namespace gnubase::engine
 		{
 			std::set<ObjectId> usedClips;
 			forEveryAudioEvent(project, [&usedClips](const AudioEvent& event) { usedClips.insert(event.clip); });
+			forEverySamplerClip(project, [&usedClips](ObjectId clip) { usedClips.insert(clip); });
 			std::set<ObjectId> usedMedia;
 			for (auto clip = project.clips.begin(); clip != project.clips.end();)
 			{
@@ -268,12 +269,17 @@ namespace gnubase::engine
 					++media;
 		}
 
-		bool hasEvents(const Project& project, ObjectId media)
+		// Whether minimizing can cut a media file down to what its audio events play: they play some of it, and no
+		// sampler track does (#180), since a sampler's start, end and loop are shares of the whole file.
+		bool minimizable(const Project& project, ObjectId media)
 		{
-			bool found = false;
+			bool events = false;
 			forEveryAudioEvent(project,
-				[&](const AudioEvent& event) { found = found || project.clips.at(event.clip).media == media; });
-			return found;
+				[&](const AudioEvent& event) { events = events || project.clips.at(event.clip).media == media; });
+			bool sampled = false;
+			forEverySamplerClip(
+				project, [&](ObjectId clip) { sampled = sampled || project.clips.at(clip).media == media; });
+			return events && !sampled;
 		}
 
 		// A file or folder in the project's Mixdown folder (BackupOptions::mixdownFolder).
@@ -633,7 +639,7 @@ namespace gnubase::engine
 		std::uintmax_t total = 1;
 		for (const auto& [id, media] : project.media)
 		{
-			Plan plan{id, options.minimize && hasEvents(project, id), 0};
+			Plan plan{id, options.minimize && minimizable(project, id), 0};
 			if (plan.minimize)
 			{
 				const auto handle = static_cast<time::Samples>(std::llround(options.handles * media.sampleRate));

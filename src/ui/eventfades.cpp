@@ -161,8 +161,13 @@ namespace gnubase::ui
 			return;
 		std::vector<FadeLines::Lane> lanes;
 		lanes.reserve(m_laneTracks.size());
-		for (const uint64_t track : m_laneTracks)
-			lanes.push_back({static_cast<float>(trackHeight(track) * m_view.trackZoom), {}, {}, {}});
+		// As high as the event lanes: setLanes' lane tops, which give lanes (#99) and automation lanes their own
+		// heights.
+		for (size_t i = 0; i < m_laneTracks.size(); ++i)
+			lanes.push_back(
+				{static_cast<float>(i + 1 < m_laneTops.size() ? m_laneTops[i + 1] - m_laneTops[i]
+															  : trackHeight(m_laneTracks[i]) * m_view.trackZoom),
+					{}, {}, {}});
 		std::map<uint64_t, const Shown*> shown;
 		for (const Shown& event : m_events)
 			if (const auto fades = m_fades.find(event.id);
@@ -301,6 +306,13 @@ namespace gnubase::ui
 				{
 					if (const std::vector<uint64_t> events = selectedAudio(); !events.empty())
 						openFadeDialog("statistics.rml", {{"events", ids(events)}});
+				}},
+			// Create Sampler Track (#180, reference manual p. 711): from the first selected audio event's section.
+			{"audio.createSamplerTrack",
+				[this]
+				{
+					if (const std::vector<uint64_t> events = selectedAudio(); !events.empty())
+						edit("sampler.create", {{"event", events.front()}});
 				}},
 			// Realtime Processing (#144, docs/features/warp.md): of the selected audio events.
 			{"audio.flatten",

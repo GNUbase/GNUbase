@@ -101,6 +101,7 @@ add_executable(gnubase-tests
 	mainmenu_tests.cpp
 	marker_tests.cpp
 	markers_ui_tests.cpp
+	markertrack_ui_tests.cpp
 	mcp_tests.cpp
 	mcpevents_tests.cpp
 	mcptools_tests.cpp
@@ -113,6 +114,7 @@ add_executable(gnubase-tests
 	midieditor_tests.cpp
 	midieffects_tests.cpp
 	midifile_tests.cpp
+	midifileimport_tests.cpp
 	midifunctions_tests.cpp
 	midifunctions_ui_tests.cpp
 	midimodifiers_tests.cpp
@@ -156,6 +158,7 @@ add_executable(gnubase-tests
 	safemode_tests.cpp
 	sampleeditor_tests.cpp
 	sampleeditor_ui_tests.cpp
+	sampler_tests.cpp
 	scripting_tests.cpp
 	scripts_ui_tests.cpp
 	sequencing_tests.cpp
