@@ -15,6 +15,7 @@
 #include "engine/document/projectrules.h"
 #include "engine/document/renderinplace.h"
 #include "engine/document/sampleeditor.h"
+#include "engine/document/samplertrack.h"
 #include "engine/document/serialize.h"
 #include "engine/document/stripparameters.h"
 #include "engine/document/timewarp.h"
@@ -1128,7 +1129,10 @@ namespace gnubase::engine
 				}
 				// Another instrument starts with its parameters at their defaults.
 				if (changed.instrument != channel.instrument)
+				{
 					changed.instrumentParameters.clear();
+					changed.sample = 0; // only the sampler plays one
+				}
 			}
 		}
 
@@ -4524,6 +4528,7 @@ namespace gnubase::engine
 		registerTrackPresetCommands(*this, engine);
 		registerEditorCommands(*this, engine);
 		registerSampleEditorCommands(*this, engine);
+		registerSamplerCommands(*this, engine);
 		registerHitpointCommands(*this, engine, jobs);
 		registerWarpCommands(engine);
 		registerTimeWarpCommands(*this, engine);

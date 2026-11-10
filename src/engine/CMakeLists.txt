@@ -149,6 +149,7 @@ add_library(gnubase-engine STATIC
 	document/renderinplace.cpp document/renderinplace.h
 	document/rendersnapshot.cpp document/rendersnapshot.h
 	document/sampleeditor.cpp document/sampleeditor.h
+	document/samplertrack.cpp document/samplertrack.h
 	document/serialize.cpp document/serialize.h
 	document/signature.cpp
 	document/snap.cpp document/snap.h

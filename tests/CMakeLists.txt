@@ -156,6 +156,7 @@ add_executable(gnubase-tests
 	safemode_tests.cpp
 	sampleeditor_tests.cpp
 	sampleeditor_ui_tests.cpp
+	sampler_tests.cpp
 	scripting_tests.cpp
 	scripts_ui_tests.cpp
 	sequencing_tests.cpp
