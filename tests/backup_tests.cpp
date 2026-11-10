@@ -935,6 +935,17 @@ TEST_CASE("a folder that a running job writes into takes no other backup", "[int
 	CHECK_THAT(reject(song.client, "project.backup", {{"folder", utf8(dir.path())}}), ContainsSubstring("empty"));
 }
 
+TEST_CASE("a free file's name differs from the names in the folder in more than case", "[unit]")
+{
+	const test::TempDir dir;
+	std::ofstream(dir.path() / "A.wav") << "there";
+	std::ofstream(dir.path() / "a-3.WAV") << "there";
+	CHECK(createFreeFile(dir.path(), "a.wav").filename() == "a-2.wav");
+	CHECK(createFreeFile(dir.path(), "a.wav").filename() == "a-4.wav");
+	CHECK(bytesOf(dir.path() / "A.wav") == "there");
+	CHECK_THROWS_AS(createFreeFile(dir.path() / "missing", "a.wav"), std::runtime_error); // no listing, no file
+}
+
 TEST_CASE("files made at the same time get names of their own", "[integration]")
 {
 	const test::TempDir dir;
