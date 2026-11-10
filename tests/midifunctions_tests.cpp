@@ -1838,7 +1838,7 @@ namespace
 		return pitches;
 	}
 
-	constexpr Samples g_eightQuarters = 8 * 24000; // at 120 BPM and 48 kHz
+	constexpr Samples g_eightQuarters = Samples{8} * 24000; // at 120 BPM and 48 kHz
 }
 
 TEST_CASE("merge with Erase Destination takes a part out of its shared copies before erasing from it", "[integration]")
