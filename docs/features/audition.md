@@ -20,11 +20,15 @@ in the project window ([tools.md](tools.md)), and the commands behind them, whic
   sample editor's play and scrub tools play its clip (reference manual p. 630): `position` and `end` are then the
   file's sample frames, from 0 to its length, and it plays the file, also where no event plays it, without the
   events' volume, mute and fades. Scrubbing it leaves the project cursor alone; the sample editor moves the cursor
-  itself, to where the frame plays in the project.
+  itself, to where the frame plays in the project. Only the project's media files: not the files that warped events
+  and frozen tracks play, which take those events' and channels' ids.
+- **A clip** (#860): `clip` instead of `track` or `media` plays the clip's media file the same way, with the clip's
+  fades at its start and end, as the sample editor's play and scrub tools and its Play back Slice play it. The
+  result's `media` is the clip's media file.
 
 Each returns and announces `audition.changed`: the auditioned `track` or `media` (0 for none) and the `mode`, `off`,
-`play` or `scrub`. Starting one ends what ran before. They need an audio device, and an audio track or a media file
-of the project.
+`play` or `scrub`. Starting one ends what ran before. They need an audio device, and an audio track, a media file
+or a clip of the project.
 
 ## How it plays
 
@@ -55,6 +59,9 @@ of the project.
   nothing once stopped, and the transport unchanged; the errors without a device, for a MIDI track, a negative
   position and an end before the position; scrubbing back at normal speed and forwards at twice the speed, sample by
   sample, and the cursor following; a media file played from frames outside its event, past its end and at half the
-  project's sample rate, scrubbed without moving the cursor, and its errors.
+  project's sample rate, scrubbed without moving the cursor, also at half the project's sample rate, and its
+  errors, also for a hand-edited project's file without a sample rate or length; a clip played and scrubbed with its
+  fades.
+- `tests/renderinplace_tests.cpp`: a frozen channel's freeze file is no media file to audition.
 - `tests/eventediting_tests.cpp` and `tests/uiapp_tests.cpp`: the play tool on an audio lane, on a MIDI lane, and
   scrubbing ([tools.md](tools.md)).

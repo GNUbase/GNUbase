@@ -86,7 +86,7 @@ display's gestures edit hitpoints instead of the tool's (pp. 636, 639-640):
 | Ctrl (Cmd on macOS), Alt and a click on its line | Enable/Unlock Hitpoints: resets it |
 | A drag of its line | Move Hitpoint, which locks it |
 | Alt and a click elsewhere | Insert Hitpoint |
-| A click between two | Play back Slice: plays the slice, from the hitpoint that counts before to the one after |
+| A click between two | Play back Slice: plays the slice of the clip, as the play tool does (`audition.start` with the `clip`), from the hitpoint that counts before to the one after |
 
 `resources/styles/sampleeditor.rcss` lays them out; the themes color them (`tools/skin/generate.py`).
 
@@ -109,7 +109,7 @@ sound, bleed, flams) are yet to come.
   its file; filtering, locking, disabling, resetting, inserting and moving hitpoints with their errors, undo and the
   project file, inserted and moved ones measured where they go; `clip.setHitpoints` and its errors; slices, events,
   regions, markers, the groove and MIDI notes.
-- `tests/playback_tests.cpp`: auditioning up to an end, as Play back Slice does.
+- `tests/playback_tests.cpp`: auditioning a clip, and up to an end, as Play back Slice does.
 - `tests/hitpoints_ui_tests.cpp` drives the sample editor with `ui::Automation`: Edit Hitpoints showing the detected
   hitpoints at their frames, the threshold slider's drag as one undo step, Remove All; the handle, Shift, Ctrl and
   Alt, Alt and the drag, playing a slice without stopping on release; MIDI Notes with its options and Slices.
