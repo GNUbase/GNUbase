@@ -834,33 +834,48 @@ TEST_CASE("the RMS level averages its resolution at other sample rates too", "[u
 	CHECK(decibels(fast.read().rmsMax[0]) == Approx(sineRms).margin(0.05));
 }
 
-TEST_CASE("a frame's peak is never above its maximum, whatever the audio thread does meanwhile", "[unit]")
+TEST_CASE("a frame loses no peak to a block that ends while it reads", "[unit]")
 {
-	// The audio thread raises the level with every block of a frame, as fast as it can, while a frame reads.
+	// Without a reset the maximum read limits no peak, if the audio thread publishes it before it raises the held peak
+	// and the reader takes the peak before it reads the maximum. Each round one block, the loudest so far, races one
+	// frame's read; that frame or the next one has its peak.
+	constexpr int rounds = 50000;
+	const auto level = [](int round) { return static_cast<float>(round) / rounds; };
 	LevelMeter meter;
 	std::atomic<bool> done{false};
-	std::atomic<int> above{0};
+	std::atomic<int> started{0};
+	std::atomic<int> played{0};
+	std::atomic<int> checked{0};
+	std::atomic<int> lost{0};
 	std::thread reader(
 		[&]
 		{
-			do
+			for (int round = 1; round <= rounds; ++round)
 			{
-				const LevelReading frame = meter.readFrame();
-				if (frame.peak[0] > frame.peakMax[0])
-					++above;
-			} while (!done);
+				while (started < round && !done)
+					std::this_thread::yield();
+				const float racing = meter.readFrame().peak[0];
+				while (played < round && !done)
+					std::this_thread::yield();
+				const float after = meter.readFrame().peak[0];
+				if (std::max(racing, after) != level(round) && !done)
+					++lost;
+				checked = round;
+			}
 		});
 	const StopAndJoin stop(done, reader);
-	constexpr int blocks = 500000;
-	for (int block = 1; block <= blocks; ++block)
+	for (int round = 1; round <= rounds; ++round)
 	{
-		const float sample = static_cast<float>(block) / blocks;
+		const float sample = level(round);
 		const float* const channel = &sample;
+		started = round;
 		meter.process(&channel, 1, 1, g_rate);
+		played = round;
+		while (checked < round)
+			std::this_thread::yield();
 	}
-	done = true;
 	reader.join();
-	CHECK(above == 0);
+	CHECK(lost == 0);
 }
 
 TEST_CASE("a frame's peak is never above its maximum, also when the meter is reset meanwhile", "[unit]")
@@ -945,6 +960,7 @@ TEST_CASE("Reset on Start leaves a frame no peak from before playback started", 
 	const ObjectId channel = measuring(client);
 	run(client, "settings.set", {{"key", "meter.resetOnStart"}, {"value", true}});
 	run(client, "audio.render", {{"frames", 9600}});
+	REQUIRE(run(client, "meter.get").at("main").at("peakMax").at(0).get<double>() == Approx(-6.02).margin(0.05));
 	run(client, "transport.stop");
 	// The signal stops before playback starts, and nothing reads the frame's peak in between.
 	run(client, "channel.set", {{"channel", channel}, {"recordEnable", false}});
