@@ -451,12 +451,12 @@ namespace gnubase::ui
 			if (onTrackLane)
 				m_tracks[lanes[track]].events.push_back(span);
 			m_events.push_back({event.at("id").get<uint64_t>(), lanes[track], start, end, event.value("mute", false),
-				std::nullopt, !onTrackLane});
+				std::nullopt, !onTrackLane, !onTrackLane});
 			if (const std::optional<size_t> taken = takeLane(event))
 			{
 				m_tracks[*taken].events.push_back(span);
 				m_events.push_back({event.at("id").get<uint64_t>(), *taken, start, end, event.value("mute", false),
-					std::nullopt, false});
+					std::nullopt, false, !onTrackLane});
 			}
 			m_end = std::max(m_end, end);
 		};
@@ -631,7 +631,17 @@ namespace gnubase::ui
 			const auto lane = static_cast<int64_t>(shown.lane) + (m_drag == Drag::Events ? m_dragLanes : 0);
 			if (std::binary_search(m_selection.begin(), m_selection.end(), shown.id) && lane >= 0 &&
 				lane < static_cast<int64_t>(selected.size()))
-				selected[static_cast<size_t>(lane)].events.push_back({shown.start + shift, shown.end - shown.start});
+			{
+				double start = shown.start + shift;
+				double length = shown.end - shown.start;
+				if (m_drag == Drag::Events && m_dragMoved && m_dragTicks)
+				{
+					start = m_time.tempo.toSeconds(m_time.tempo.toTicks(shown.start) + *m_dragTicks);
+					if (!shown.audio)
+						length = m_time.tempo.toSeconds(m_time.tempo.toTicks(shown.end) + *m_dragTicks) - start;
+				}
+				selected[static_cast<size_t>(lane)].events.push_back({start, length});
+			}
 		}
 		for (std::vector<EventLanes::Lane>* overlay : {&muted, &selected})
 			for (EventLanes::Lane& lane : *overlay)

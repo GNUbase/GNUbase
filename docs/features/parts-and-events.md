@@ -88,6 +88,12 @@ modifiers, which change the keys below):
 | Alt and a drag or click on an empty lane | Draws a part, as the draw tool does ([tools.md](tools.md)) | p. 250 |
 | Double click below the tracks | Adds a MIDI track ([add-track.md](add-track.md)) | p. 198 |
 
+Moving or copying a selection past the project start limits its shared offset after snapping: the earliest event
+lands at zero, even when another event was pressed. Musical moves keep their tick distances; linear moves keep their
+sample distances. The drag preview uses that same offset, also across tempo changes and onto other tracks. Left
+nudges and moves to the cursor stop there too. Typed start positions in the info line and list editor reject times
+before the project start. Direct `event.move` and `event.copy` requests with impossible positions still fail.
+
 The edit commands are in `actions()`, for the key command system to bind (#57): `edit.delete`, `edit.mute`,
 `edit.unmute`, `edit.lock`, `edit.unlock`, `edit.splitAtCursor` and `edit.splitLoop` (the selection, or every event
 there), `edit.glue`, `edit.duplicate`, `edit.repeat`, `edit.fillLoop`, `edit.toRealCopy`, `edit.moveStartToCursor`,
@@ -164,5 +170,8 @@ that the arrow keys select into view.
   and Backspace; Left and Right selecting parts, Up and Down stepping the tracks and selecting their first parts, also across a track
   without parts, and only the track with no part selected; and Mod+K,
   whose Repeat Events dialog makes three shared copies, and real copies from just a number typed and Enter.
+- The project-start checks cover move and copy previews and release at 1024 by 600, single and multiple selections,
+  snapping on and off, musical and linear tracks, other tracks, and one-step undo. The fake-window checks cover left
+  nudges, moving to the cursor, and a musical preview across a tempo change.
 - `tests/lua/events.lua`: a muted part is silent and plays again after undo; duplicating, shared copies, splitting and
   gluing from Lua.

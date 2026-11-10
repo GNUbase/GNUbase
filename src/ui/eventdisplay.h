@@ -431,6 +431,7 @@ namespace gnubase::ui
 			// An audio event's entry on its track's lane, which shows it only where none in front covers it (#99): if
 			// it is muted, m_mutedPieces has what shows.
 			bool onTrackLane = false;
+			bool audio = false; // audio events keep their length in samples when moved by ticks
 		};
 
 		void ProcessEvent(Rml::Event& event) override;
@@ -564,7 +565,8 @@ namespace gnubase::ui
 		time::Position snapAt(double seconds, std::optional<double> from) const;
 		// The distance from seconds to a snapped position as event.move and event.resize take it: ticks when the grid
 		// is musical and every selected event is on a musical track, else samples. Also in seconds.
-		std::pair<engine::Json, double> shiftTo(const time::Position& to, double from) const;
+		std::pair<engine::Json, double> shiftTo(const time::Position& to, double from, bool moving = false) const;
+		int64_t clampMove(time::TimeBase base, int64_t shift) const;
 		std::pair<engine::Json, double> moveShift(double dx) const; // a drag of the selection, dx dp across
 		// Left and Right (reference manual p. 253): the event before (-1) or after (1) the selected ones on the lane.
 		void selectNeighbour(int direction);
@@ -783,12 +785,13 @@ namespace gnubase::ui
 		uint64_t m_resizeGesture = 0;   // counts drags of edges, so that late answers are dropped
 		uint64_t m_dragEvent = 0;       // pressed on
 		bool m_dragMoved = false;
-		double m_dragDy = 0.0;             // dp, dragging the event volume or a curve point
-		std::optional<size_t> m_dragPoint; // the curve point dragged, none for a new one
-		bool m_dragStarted = false;        // moving events, after the drag delay
-		bool m_dragToggles = false;        // a Ctrl/Shift click takes the pressed event or point out of the selection
-		double m_pressTime = 0.0;          // RmlUi's clock, in seconds
-		double m_dragDx = 0.0;             // dp, while moving, snapped
+		double m_dragDy = 0.0;              // dp, dragging the event volume or a curve point
+		std::optional<size_t> m_dragPoint;  // the curve point dragged, none for a new one
+		bool m_dragStarted = false;         // moving events, after the drag delay
+		bool m_dragToggles = false;         // a Ctrl/Shift click takes the pressed event or point out of the selection
+		double m_pressTime = 0.0;           // RmlUi's clock, in seconds
+		double m_dragDx = 0.0;              // dp, while moving, snapped
+		std::optional<int64_t> m_dragTicks; // a musical move's offset, for each event's preview
 		int m_dragLanes = 0;
 		// What a Ctrl/Shift click selects whose keys are also a drag's tool modifier, e.g. Copy (#474).
 		std::optional<std::vector<uint64_t>> m_clickSelection;

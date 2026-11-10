@@ -181,7 +181,19 @@ namespace gnubase::ui
 			m_time.sampleRate;
 	}
 
-	std::pair<Json, double> EventDisplay::shiftTo(const time::Position& to, double from) const
+	int64_t EventDisplay::clampMove(time::TimeBase base, int64_t shift) const
+	{
+		for (const Shown& shown : m_events)
+			if (std::binary_search(m_selection.begin(), m_selection.end(), shown.id))
+			{
+				const int64_t start =
+					base == time::TimeBase::Musical ? m_time.tempo.toTicks(shown.start) : samples(shown.start);
+				shift = std::max(shift, -start);
+			}
+		return shift;
+	}
+
+	std::pair<Json, double> EventDisplay::shiftTo(const time::Position& to, double from, bool moving) const
 	{
 		const bool musical = to.base == time::TimeBase::Musical &&
 			std::none_of(m_events.begin(), m_events.end(),
@@ -191,9 +203,15 @@ namespace gnubase::ui
 						std::binary_search(m_selection.begin(), m_selection.end(), shown.id);
 				});
 		if (musical)
-			return {{{"ticks", to.value - m_time.tempo.toTicks(from)}}, m_time.tempo.toSeconds(to.value) - from};
+		{
+			const int64_t origin = m_time.tempo.toTicks(from);
+			const int64_t shift = moving ? clampMove(time::TimeBase::Musical, to.value - origin) : to.value - origin;
+			return {{{"ticks", shift}}, m_time.tempo.toSeconds(origin + shift) - from};
+		}
 		const int64_t sample = time::toSamples(to, m_time.tempo, m_time.sampleRate);
-		return {{{"delta", sample - samples(from)}}, (static_cast<double>(sample) / m_time.sampleRate) - from};
+		const int64_t shift =
+			moving ? clampMove(time::TimeBase::Linear, sample - samples(from)) : sample - samples(from);
+		return {{{"delta", shift}}, static_cast<double>(shift) / m_time.sampleRate};
 	}
 
 	void EventDisplay::select(std::vector<uint64_t> events)
@@ -295,6 +313,14 @@ namespace gnubase::ui
 					engine::gridStep(m_snap.grid(), snapGrid(), samples(edge(false).value_or(0.0)));
 				Json parameters = {{"events", m_selection},
 					{step.base == time::TimeBase::Musical ? "ticks" : "delta", direction * step.value}};
+				if (edgeName == nullptr)
+				{
+					const double from = edge(false).value_or(0.0);
+					const time::Position at = time::rebase(
+						{time::TimeBase::Linear, samples(from)}, step.base, m_time.tempo, m_time.sampleRate);
+					parameters = shiftTo({step.base, at.value + direction * step.value}, from, true).first;
+					parameters["events"] = m_selection;
+				}
 				if (edgeName != nullptr)
 					parameters["edge"] = edgeName;
 				edit(edgeName == nullptr ? "event.move" : "event.resize", std::move(parameters));
@@ -452,13 +478,17 @@ namespace gnubase::ui
 				[this, edge]
 				{
 					if (const std::optional<double> at = edge(false))
-						edit("event.move", {{"events", m_selection}, {"delta", m_cursorSample - samples(*at)}});
+						edit("event.move",
+							{{"events", m_selection},
+								{"delta", clampMove(time::TimeBase::Linear, m_cursorSample - samples(*at))}});
 				}},
 			{"edit.moveEndToCursor",
 				[this, edge]
 				{
 					if (const std::optional<double> at = edge(true))
-						edit("event.move", {{"events", m_selection}, {"delta", m_cursorSample - samples(*at)}});
+						edit("event.move",
+							{{"events", m_selection},
+								{"delta", clampMove(time::TimeBase::Linear, m_cursorSample - samples(*at))}});
 				}},
 			// The select submenu (reference manual pp. 254-255); without track selection (#81), on every track.
 			{"edit.selectAll", [this] { selectWhere([](const Shown&) { return true; }); }},
@@ -784,7 +814,11 @@ namespace gnubase::ui
 			return;
 		m_dragStarted = true;
 		const std::pair<double, double> shift = restricted(dx, dy, constrained);
-		m_dragDx = constrained && shift.first == 0.0 ? 0.0 : moveShift(shift.first).second / m_view.scale;
+		const auto moved = moveShift(constrained && shift.first == 0.0 ? 0.0 : shift.first);
+		m_dragDx = constrained && shift.first == 0.0 ? 0.0 : moved.second / m_view.scale;
+		m_dragTicks = moved.first.contains("ticks") && !(constrained && shift.first == 0.0)
+			? std::optional<int64_t>(moved.first.at("ticks").get<int64_t>())
+			: std::nullopt;
 		m_dragLanes = laneShift(shift.second);
 		setLanes();
 	}
@@ -829,7 +863,7 @@ namespace gnubase::ui
 		const auto pressed = std::find_if(
 			m_events.begin(), m_events.end(), [this](const Shown& shown) { return shown.id == m_dragEvent; });
 		const double from = pressed == m_events.end() ? 0.0 : pressed->snapPoint.value_or(pressed->start);
-		return shiftTo(snapAt(from + (dx * m_view.scale), from), from);
+		return shiftTo(snapAt(from + (dx * m_view.scale), from), from, true);
 	}
 
 	void EventDisplay::areaUp(Rml::Event& event)
