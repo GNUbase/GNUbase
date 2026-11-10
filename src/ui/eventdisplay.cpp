@@ -128,7 +128,6 @@ namespace gnubase::ui
 		addAutomationActions();
 		setToolModifiers(Json::object());
 
-		// Every change to the project is an undo step or a new project; the display shows the project as it is then.
 		for (const char* event : {"history.changed", "project.reset"})
 			m_subscriptions.push_back(m_binding.on(event,
 				[this](const engine::Event&)
@@ -136,6 +135,14 @@ namespace gnubase::ui
 					requestProject();
 					requestMarkers();
 				}));
+		// The ruler follows snap.changed; keep the cached primary format without another project.get.
+		m_subscriptions.push_back(m_binding.on("project.changed",
+			[this](const engine::Event& event)
+			{
+				if (const auto format = event.data.find("timeFormat");
+					format != event.data.end() && m_project.is_object())
+					m_project["timeFormat"] = *format;
+			}));
 		m_subscriptions.push_back(
 			m_binding.on("transport.changed", [this](const engine::Event& event) { followTransport(event.data); }));
 		m_subscriptions.push_back(m_binding.on("snap.changed",
@@ -173,6 +180,11 @@ namespace gnubase::ui
 				{
 					m_notifies = notifies->get<bool>();
 					m_notifiesKnown = true;
+				}
+				if (const auto zoom = values.find("ui.zoomToolHorizontalOnly"); zoom != values.end())
+				{
+					m_zoomHorizontalOnly = zoom->get<bool>();
+					m_zoomHorizontalOnlyKnown = true;
 				}
 			}));
 		const std::weak_ptr<bool> alive = m_alive;
@@ -217,6 +229,12 @@ namespace gnubase::ui
 			{
 				if (!alive.expired() && result.ok() && !m_notifiesKnown)
 					m_notifies = result.value.at("value").get<bool>();
+			});
+		m_binding.send("settings.get", {{"key", "ui.zoomToolHorizontalOnly"}},
+			[this, alive](const engine::Result& result)
+			{
+				if (!alive.expired() && result.ok() && !m_zoomHorizontalOnlyKnown)
+					m_zoomHorizontalOnly = result.value.at("value").get<bool>();
 			});
 		requestMarkers();
 		showAutoScroll();
@@ -399,7 +417,7 @@ namespace gnubase::ui
 				for (int take = 0; take <= topLanes[id]; ++take)
 				{
 					takeLanes[{id, take}] = m_tracks.size();
-					m_tracks.push_back({static_cast<float>(trackHeight(id)), {}});
+					m_tracks.push_back({static_cast<float>(ownHeight(id)), {}});
 					m_laneTracks.push_back(id);
 					m_laneTypes.push_back(type);
 					m_laneLinear.push_back(linear[id]);
@@ -451,12 +469,12 @@ namespace gnubase::ui
 			if (onTrackLane)
 				m_tracks[lanes[track]].events.push_back(span);
 			m_events.push_back({event.at("id").get<uint64_t>(), lanes[track], start, end, event.value("mute", false),
-				std::nullopt, !onTrackLane});
+				std::nullopt, !onTrackLane, !onTrackLane});
 			if (const std::optional<size_t> taken = takeLane(event))
 			{
 				m_tracks[*taken].events.push_back(span);
 				m_events.push_back({event.at("id").get<uint64_t>(), *taken, start, end, event.value("mute", false),
-					std::nullopt, false});
+					std::nullopt, false, !onTrackLane});
 			}
 			m_end = std::max(m_end, end);
 		};
@@ -610,7 +628,10 @@ namespace gnubase::ui
 		std::vector<EventLanes::Lane> muted;
 		for (size_t i = 0; i < lanes.size(); ++i)
 		{
-			const double height = m_laneAutomation[i] != 0 ? g_trackHeight : trackHeight(m_laneTracks[i]);
+			// Only the track's own lane holds its in-place editor (#131), not its lanes (#99).
+			double height = m_laneAutomation[i] != 0 ? g_trackHeight : trackHeight(m_laneTracks[i]);
+			if (m_laneTakes[i] >= 0)
+				height = ownHeight(m_laneTracks[i]);
 			lanes[i].height = static_cast<float>(height * m_view.trackZoom);
 			m_laneTops.push_back(m_laneTops.back() + lanes[i].height);
 			muted.push_back({lanes[i].height, {}});
@@ -631,7 +652,17 @@ namespace gnubase::ui
 			const auto lane = static_cast<int64_t>(shown.lane) + (m_drag == Drag::Events ? m_dragLanes : 0);
 			if (std::binary_search(m_selection.begin(), m_selection.end(), shown.id) && lane >= 0 &&
 				lane < static_cast<int64_t>(selected.size()))
-				selected[static_cast<size_t>(lane)].events.push_back({shown.start + shift, shown.end - shown.start});
+			{
+				double start = shown.start + shift;
+				double length = shown.end - shown.start;
+				if (m_drag == Drag::Events && m_dragMoved && m_dragTicks)
+				{
+					start = m_time.tempo.toSeconds(m_time.tempo.toTicks(shown.start) + *m_dragTicks);
+					if (!shown.audio)
+						length = m_time.tempo.toSeconds(m_time.tempo.toTicks(shown.end) + *m_dragTicks) - start;
+				}
+				selected[static_cast<size_t>(lane)].events.push_back({start, length});
+			}
 		}
 		for (std::vector<EventLanes::Lane>* overlay : {&muted, &selected})
 			for (EventLanes::Lane& lane : *overlay)
@@ -866,10 +897,15 @@ namespace gnubase::ui
 			}
 	}
 
-	double EventDisplay::trackHeight(uint64_t track) const
+	double EventDisplay::ownHeight(uint64_t track) const
 	{
 		const auto height = m_heights.find(track);
-		const double own = height == m_heights.end() ? g_trackHeight : height->second;
+		return height == m_heights.end() ? g_trackHeight : height->second;
+	}
+
+	double EventDisplay::trackHeight(uint64_t track) const
+	{
+		const double own = ownHeight(track);
 		return m_inPlace.count(track) != 0 ? std::max(own, g_inPlaceHeight) : own;
 	}
 

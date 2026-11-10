@@ -160,6 +160,52 @@ TEST_CASE("the project setup's settings are set, announced, undone and saved", "
 	CHECK(setup(run(client, "project.get")) == changedSetup());
 }
 
+TEST_CASE("display format choices are announced and saved without an undo step", "[integration]")
+{
+	const test::TempDir dir;
+	const std::string file = (dir.path() / "format.dawproject").u8string();
+	engine::Engine engine;
+	engine::Client client(engine);
+	run(client, "project.save", {{"path", file}});
+	CHECK(!run(client, "project.revision").at("modified").get<bool>());
+	const Json history = run(client, "history.get");
+	while (client.poll())
+	{
+	}
+	run(client, "project.setTimeFormat", {{"timeFormat", "seconds"}});
+	CHECK(run(client, "history.get") == history);
+	CHECK(run(client, "project.get").at("timeFormat") == "seconds");
+	CHECK(run(client, "snap.get").at("format") == "seconds");
+	CHECK(run(client, "project.revision").at("modified").get<bool>());
+	std::vector<Json> projectChanges;
+	std::vector<Json> snapChanges;
+	while (const auto message = client.poll())
+		if (const auto* event = std::get_if<engine::Event>(&*message))
+		{
+			if (event->name == "project.changed")
+				projectChanges.push_back(event->data);
+			if (event->name == "snap.changed")
+				snapChanges.push_back(event->data);
+			CHECK(event->name != "history.changed");
+		}
+	REQUIRE(projectChanges.size() == 1);
+	CHECK(projectChanges[0].at("timeFormat") == "seconds");
+	REQUIRE(snapChanges.size() == 1);
+	CHECK(snapChanges[0].at("format") == "seconds");
+	const Json revision = run(client, "project.revision");
+	run(client, "project.setTimeFormat", {{"timeFormat", "seconds"}});
+	CHECK(run(client, "project.revision") == revision);
+	reject(client, "project.setTimeFormat", {{"timeFormat", "invalid"}});
+	CHECK(run(client, "project.get").at("timeFormat") == "seconds");
+	CHECK(run(client, "history.get") == history);
+	run(client, "project.save");
+	run(client, "project.new");
+	run(client, "project.load", {{"path", file}});
+	CHECK(run(client, "project.get").at("timeFormat") == "seconds");
+	CHECK(run(client, "snap.get").at("format") == "seconds");
+	CHECK(!run(client, "project.revision").at("modified").get<bool>());
+}
+
 TEST_CASE("project.set refuses project setup settings that don't go together", "[unit]")
 {
 	engine::Engine engine;

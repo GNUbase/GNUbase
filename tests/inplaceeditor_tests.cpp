@@ -62,6 +62,22 @@ namespace
 	}
 }
 
+TEST_CASE("reading open in-place editors leaves the command log unchanged", "[unit]")
+{
+	Fixture f;
+	const Json initial = f.call("engine.commandLog");
+	CHECK(f.call("editor.inPlace").at("tracks").empty());
+	CHECK(f.call("engine.commandLog") == initial);
+	const uint64_t midi = f.track("midi");
+	f.call("editor.inPlace", {{"tracks", {midi}}, {"open", true}});
+	const Json changed = f.call("engine.commandLog");
+	CHECK(changed.at("commands").back().at("command") == "editor.inPlace");
+	CHECK(changed.at("commands").back().at("parameters").at("tracks") == Json::array({midi}));
+	CHECK(f.call("editor.inPlace").at("tracks") == Json::array({midi}));
+	CHECK(f.call("editor.inPlace", {{"open", false}}).at("tracks") == Json::array({midi}));
+	CHECK(f.call("engine.commandLog") == changed);
+}
+
 TEST_CASE("the in-place editor opens and closes on MIDI tracks and shows all of a track's parts", "[unit]")
 {
 	Fixture f;
@@ -140,7 +156,13 @@ TEST_CASE("the in-place editor refuses tracks without notes and changing its par
 	CHECK(f.call("editor.inPlace").at("tracks") == Json::array()); // nothing opened
 	CHECK_THAT(f.fails("editor.get", {{"editor", "inPlace:" + std::to_string(audio)}}),
 		ContainsSubstring("MIDI or instrument track"));
-	CHECK_THAT(f.fails("editor.get", {{"editor", "lowerZone"}}), ContainsSubstring("lower, window or inPlace:"));
+	// The schema names them, for MCP clients and Lua.
+	for (const engine::CommandInfo& info : f.engine.commands())
+		if (info.name == "editor.get")
+			CHECK(info.parameters.at("properties").at("editor").at("pattern") == "^(lower|window|inPlace:[0-9]+)$");
+	CHECK_THAT(f.fails("editor.get", {{"editor", "lowerZone"}}), ContainsSubstring("lower|window|inPlace:"));
+	CHECK_THAT(f.fails("editor.get", {{"editor", "inPlace:" + std::string(20, '9')}}),
+		ContainsSubstring("lower, window or inPlace:"));
 	CHECK_THAT(f.fails("editor.open", {{"editor", Fixture::name(midi)}, {"parts", {part}}}),
 		ContainsSubstring("editor.inPlace"));
 

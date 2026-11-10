@@ -45,6 +45,11 @@ namespace
 		return "#track-list listitem[value=\"" + std::to_string(track) + "\"]";
 	}
 
+	std::string menuItem(const std::string& command)
+	{
+		return "#track-list-menu > [command=\"" + command + "\"]";
+	}
+
 	// The project window with the track list, at a dp ratio of 1.
 	struct Tracks
 	{
@@ -82,9 +87,9 @@ namespace
 		}
 
 		// Waits until the list shows that many rows.
-		void rows(size_t count)
+		void rows(size_t count, std::chrono::milliseconds timeout = std::chrono::seconds(5))
 		{
-			REQUIRE(app.waitUntil([&] { return elements(app, "#track-list listitem").size() == count; }));
+			REQUIRE(app.waitUntil([&] { return elements(app, "#track-list listitem").size() == count; }, timeout));
 			app.shell().step(std::chrono::milliseconds(0));
 		}
 
@@ -92,6 +97,29 @@ namespace
 		{
 			app.ui().click(std::nullopt, {selector, 0, std::nullopt}, ui::MouseButton::Left, count, modifiers);
 			app.shell().step(std::chrono::milliseconds(0));
+		}
+
+		void rightClick(uint64_t track)
+		{
+			app.ui().click(std::nullopt, {row(track) + " .track-name", 0, std::nullopt}, ui::MouseButton::Right, 1, {});
+		}
+
+		// Waits until the track list's context menu shows.
+		void menuOpen()
+		{
+			REQUIRE(app.waitUntil([&] { return elements(app, "#track-list-menu").at(0).at("visible").get<bool>(); }));
+		}
+
+		bool itemDisabled(const std::string& command)
+		{
+			return elements(app, menuItem(command)).at(0).at("attributes").contains("disabled");
+		}
+
+		// Chooses the item of the open menu. Its items follow the selection when the shell steps.
+		void choose(const std::string& command)
+		{
+			REQUIRE(app.waitUntil([&] { return !itemDisabled(command); }));
+			click(menuItem(command));
 		}
 
 		Json box(const std::string& selector)
@@ -524,11 +552,9 @@ TEST_CASE("folders fold in the list and the event display; the menus duplicate, 
 	// The context menu, on a right click, works on the selected tracks.
 	const auto menu = [&tracks](uint64_t track, const char* command)
 	{
-		tracks.app.ui().click(
-			std::nullopt, {row(track) + " .track-name", 0, std::nullopt}, ui::MouseButton::Right, 1, {});
-		tracks.app.shell().step(std::chrono::milliseconds(0));
-		REQUIRE(elements(tracks.app, "#track-list-menu").at(0).at("visible").get<bool>());
-		tracks.click(std::string("#track-list-menu > [command=\"") + command + "\"]");
+		tracks.rightClick(track);
+		tracks.menuOpen();
+		tracks.choose(command);
 	};
 	menu(full, "track.duplicateSelected");
 	tracks.rows(4);
@@ -556,6 +582,75 @@ TEST_CASE("folders fold in the list and the event display; the menus duplicate, 
 	tracks.rows(0);
 	tracks.app.call("history.undo");
 	tracks.rows(2);
+}
+
+// The engine answers whenever it gets to it, which on a busy machine is many steps later (#702).
+TEST_CASE("the track list's context menu follows the selection and stands the rows changing behind it", "[ui]")
+{
+	Tracks tracks;
+	const uint64_t kept = tracks.add({{"type", "audio"}, {"name", "Kept"}});
+	const uint64_t gone = tracks.add({{"type", "audio"}, {"name", "Gone"}});
+	tracks.rows(2);
+	const std::string command = "track.duplicateSelected";
+	const auto duplicate = [&tracks, &command]
+	{ tracks.app.ui().click(std::nullopt, {menuItem(command), 0, std::nullopt}, ui::MouseButton::Left, 1, {}); };
+	const auto answered = [&tracks]
+	{
+		tracks.app.call("engine.version"); // after what the UI sent
+		tracks.app.shell().step(std::chrono::milliseconds(0));
+	};
+	const auto names = [&tracks]
+	{
+		std::vector<std::string> all;
+		const Json project = tracks.app.call("project.get");
+		for (const Json& track : project.at("tracks"))
+			all.push_back(track.at("name").get<std::string>());
+		return all;
+	};
+
+	// The menu opens with the right click, and its items follow the selection when the shell steps: before that, a
+	// click on an item that nothing was selected for does nothing. If the items ever follow it when the menu opens,
+	// this part and the check below that the item is enabled are what changes.
+	tracks.rightClick(kept);
+	CHECK(elements(tracks.app, "#track-list-menu").at(0).at("visible").get<bool>());
+	CHECK(tracks.itemDisabled(command));
+	duplicate();
+	answered();
+	CHECK(names() == std::vector<std::string>{"Kept", "Gone"});
+	tracks.menuOpen();
+	tracks.choose(command);
+	tracks.rows(3);
+	CHECK(names() == std::vector<std::string>{"Kept", "Kept", "Gone"});
+
+	// The track goes while its menu is open and the list doesn't know yet: the engine refuses, and nothing changes.
+	tracks.rightClick(gone);
+	tracks.app.call("track.remove", {{"track", gone}});
+	REQUIRE(!tracks.itemDisabled(command));
+	duplicate();
+	tracks.rows(2);
+	CHECK(names() == std::vector<std::string>{"Kept", "Kept"});
+	CHECK(tracks.list.selection().empty());
+
+	// The rows are built again behind the open menu: the selection stays, and the command works on it.
+	tracks.rightClick(kept);
+	const uint64_t added = tracks.add({{"type", "midi"}, {"name", "Added"}});
+	tracks.rows(3);
+	tracks.menuOpen();
+	tracks.choose(command);
+	tracks.rows(4);
+	CHECK(names() == std::vector<std::string>{"Kept", "Kept", "Kept", "Added"});
+
+	// So too when they are built again without the selected track: the item goes grey, and its click does nothing.
+	tracks.rightClick(added);
+	tracks.app.call("track.remove", {{"track", added}});
+	tracks.rows(3);
+	tracks.menuOpen();
+	CHECK(tracks.list.selection().empty());
+	REQUIRE(tracks.app.waitUntil([&] { return tracks.itemDisabled(command); }));
+	duplicate();
+	answered();
+	CHECK(names() == std::vector<std::string>{"Kept", "Kept", "Kept"});
+	CHECK(elements(tracks.app, "#track-list listitem").size() == 3);
 }
 
 TEST_CASE("track heights and folded folders are the project's: saved with it, not taken into another one", "[ui]")
@@ -1113,6 +1208,38 @@ TEST_CASE("the track name width and each track type's controls area width come f
 	CHECK(lines(audio) == 1);
 }
 
+TEST_CASE("missing track widths use each type's default and keep tempo controls on one line", "[ui]")
+{
+	Tracks tracks;
+	tracks.app.call("settings.set", {{"key", "ui.trackWidths"}, {"value", {{"name", 90}}}});
+	const uint64_t tempo = tracks.add({{"type", "tempo"}});
+	const uint64_t marker = tracks.add({{"type", "marker"}});
+	const uint64_t chord = tracks.add({{"type", "chord"}});
+	tracks.rows(3);
+	CHECK(tracks.box(row(tempo) + " .track-controls").at("width") == 144);
+	CHECK(tracks.box(row(marker) + " .track-controls").at("width") == 140);
+	CHECK(tracks.box(row(chord) + " .track-controls").at("width") == 160);
+	const Json controls = elements(tracks.app, row(tempo) + " .track-controls > [control]");
+	REQUIRE(controls.size() == 3);
+	std::set<int> tops;
+	for (const Json& control : controls)
+		tops.insert(control.at("box").at("y").get<int>());
+	CHECK(tops.size() == 1);
+	tracks.click("#track-controls-settings");
+	REQUIRE(tracks.app.waitUntil([&] { return !elements(tracks.app, "#track-controls-dialog").empty(); }));
+	tracks.click("#controls-types > [value=tempo]");
+	CHECK(elements(tracks.app, "#controls-area-width").at(0).at("attributes").at("value") == "144");
+	tracks.click("#controls-reset");
+	CHECK(elements(tracks.app, "#controls-area-width").at(0).at("attributes").at("value") == "144");
+	tracks.click("#controls-ok");
+	REQUIRE(tracks.app.waitUntil([&] { return elements(tracks.app, "#track-controls-dialog").empty(); }));
+	CHECK(tracks.box(row(tempo) + " .track-controls").at("width") == 144);
+	// An explicit width still wins over the default, including zero.
+	tracks.app.call(
+		"settings.set", {{"key", "ui.trackWidths"}, {"value", {{"name", 90}, {"controls", {{"tempo", 0}}}}}});
+	REQUIRE(tracks.app.waitUntil([&] { return tracks.box(row(tempo) + " .track-controls").at("width") == 0; }));
+}
+
 TEST_CASE("folder tracks: new folders for the selected tracks, group channels and data blocks", "[ui]")
 {
 	Tracks tracks;
@@ -1165,17 +1292,12 @@ TEST_CASE("folder tracks: new folders for the selected tracks, group channels an
 
 	// The context menu turns the selected folders' group channels off and on (p. 224); the one that has nothing to do
 	// is disabled.
-	const auto item = [](const char* command)
-	{ return std::string("#track-list-menu > [command=\"") + command + "\"]"; };
-	const auto menu = [&tracks, &item](uint64_t track, const char* command, const char* greyed)
+	const auto menu = [&tracks](uint64_t track, const char* command, const char* greyed)
 	{
-		tracks.app.ui().click(
-			std::nullopt, {row(track) + " .track-name", 0, std::nullopt}, ui::MouseButton::Right, 1, {});
-		tracks.app.shell().step(std::chrono::milliseconds(0));
-		REQUIRE(elements(tracks.app, "#track-list-menu").at(0).at("visible").get<bool>());
-		CHECK(elements(tracks.app, item(greyed)).at(0).at("attributes").contains("disabled"));
-		CHECK_FALSE(elements(tracks.app, item(command)).at(0).at("attributes").contains("disabled"));
-		tracks.click(item(command));
+		tracks.rightClick(track);
+		tracks.menuOpen();
+		REQUIRE(tracks.app.waitUntil([&] { return tracks.itemDisabled(greyed) && !tracks.itemDisabled(command); }));
+		tracks.choose(command);
 	};
 	menu(folder, "track.disableSelectedGroupChannels", "track.enableSelectedGroupChannels");
 	REQUIRE(tracks.app.waitUntil([&] { return tracks.track(folder).at("channel") == 0; }));
@@ -1184,6 +1306,8 @@ TEST_CASE("folder tracks: new folders for the selected tracks, group channels an
 	menu(folder, "track.enableSelectedGroupChannels", "track.disableSelectedGroupChannels");
 	REQUIRE(tracks.app.waitUntil([&] { return tracks.track(folder).at("channel") != 0; }));
 	CHECK(tracks.channel(other).at("output") == tracks.track(folder).at("channel"));
+	// The list shows the group channel too: its rows are built again for it, before the next click on one.
+	REQUIRE(tracks.app.waitUntil([&] { return elements(tracks.app, row(folder) + " button.mute").size() == 1; }));
 
 	// Move Selected Tracks to New Folder puts one into a folder inside it, without a group channel.
 	tracks.click(row(other) + " .track-name");
@@ -1208,20 +1332,20 @@ TEST_CASE("Freeze/Unfreeze Selected Tracks freezes and unfreezes them, Render in
 	tracks.rows(1);
 	tracks.click(row(synth) + " .track-name");
 
+	// The engine answers nothing while it renders, on a busy machine for longer than a call to it waits: the list says
+	// when it's done.
+	const std::chrono::seconds rendering(60);
+	const auto frozen = [&tracks, synth] { return hasClass(elements(tracks.app, row(synth)).at(0), "frozen"); };
 	tracks.app.keys().run("track.freezeSelected", Json::object(), tracks.app.main(), nullptr);
-	// The freeze renders 30 s of tail on the engine's thread, and project.get would wait behind it until its own 10 s
-	// run out: the row asks the engine nothing, and shows the frozen track when the render is done, however long it
-	// takes on a busy machine.
-	REQUIRE(tracks.app.waitUntil(
-		[&] { return hasClass(elements(tracks.app, row(synth)).at(0), "frozen"); }, std::chrono::seconds(120)));
+	REQUIRE(tracks.app.waitUntil(frozen, rendering));
 	CHECK(!tracks.track(synth).at("frozen").is_null());
 	// Again, with every selected track frozen, it unfreezes them.
 	tracks.app.keys().run("track.freezeSelected", Json::object(), tracks.app.main(), nullptr);
-	REQUIRE(tracks.app.waitUntil([&] { return tracks.track(synth).at("frozen").is_null(); }));
-	REQUIRE(tracks.app.waitUntil([&] { return !hasClass(elements(tracks.app, row(synth)).at(0), "frozen"); }));
+	REQUIRE(tracks.app.waitUntil([&frozen] { return !frozen(); }, rendering));
+	CHECK(tracks.track(synth).at("frozen").is_null());
 
 	tracks.app.keys().run("track.renderSelected", Json::object(), tracks.app.main(), nullptr);
-	tracks.rows(2);
+	tracks.rows(2, rendering);
 	const std::vector<uint64_t> order = tracks.order();
 	REQUIRE(order.size() == 2);
 	CHECK(tracks.track(order[1]).at("name") == "Synth (Rendered)");

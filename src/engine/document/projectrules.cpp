@@ -689,12 +689,17 @@ namespace gnubase::engine
 		// folder found takes with it.
 		Commands deleting(const Project& project, const Found& found)
 		{
+			// An audio part goes with all its events, so one that holds a locked event stays.
+			std::set<ObjectId> holdingLocked;
+			for (const auto& [id, event] : project.audioEvents)
+				if (event.lock)
+					holdingLocked.insert(event.part);
 			std::set<ObjectId> tracks;
 			std::set<ObjectId> parts;
 			for (const Element* element : found.elements)
 				if (element->kind == Kind::Track)
 					tracks.insert(element->id);
-				else if (element->kind == Kind::AudioPart && !element->locked)
+				else if (element->kind == Kind::AudioPart && !element->locked && holdingLocked.count(element->id) == 0)
 					parts.insert(element->id);
 			const auto removed = [&](ObjectId track)
 			{
@@ -711,8 +716,9 @@ namespace gnubase::engine
 					continue;
 				if (element->kind == Kind::Marker)
 					markers.push_back(element->id);
-				else if (element->kind != Kind::AudioEvent ||
-					parts.count(project.audioEvents.at(element->id).part) == 0)
+				else if (element->kind == Kind::MidiPart ||
+					(element->kind == Kind::AudioPart && parts.count(element->id) != 0) ||
+					(element->kind == Kind::AudioEvent && parts.count(project.audioEvents.at(element->id).part) == 0))
 					events.push_back(element->id);
 			}
 			Commands commands;
@@ -720,9 +726,17 @@ namespace gnubase::engine
 				commands.emplace_back("event.remove", Json{{"events", std::move(events)}});
 			if (!markers.empty())
 				commands.emplace_back("marker.remove", Json{{"markers", std::move(markers)}});
+			std::vector<ObjectId> top;
 			for (const ObjectId track : tracks)
 				if (project.trackById.at(track).parent == 0 || !removed(project.trackById.at(track).parent))
-					commands.emplace_back("track.remove", Json{{"track", track}});
+					top.push_back(track);
+			// The active marker track goes last, as in track.removeEmpty, so that track.remove activates a marker track
+			// that stays rather than one that goes next.
+			const auto active = std::find(top.begin(), top.end(), project.activeMarkerTrack);
+			if (active != top.end())
+				std::rotate(active, std::next(active), top.end());
+			for (const ObjectId track : top)
+				commands.emplace_back("track.remove", Json{{"track", track}});
 			return commands;
 		}
 
@@ -746,12 +760,18 @@ namespace gnubase::engine
 			for (const Element* element : found.elements)
 				if (element->kind == Kind::AudioPart && !element->locked)
 					parts.insert(element->id);
+			// Each action's result stops at the longest project, so that values stay finite and fit the ticks they
+			// become. They may go below the project's start between two actions.
+			const double longest = logicalTicks(project, {time::TimeBase::Linear, time::g_maxPosition});
+			const auto bounded = [longest](double value) { return std::clamp(value, -longest, longest); };
 			Commands commands;
 			for (const Element* element : found.elements)
 			{
 				double position = element->position;
 				double length = element->length;
 				std::string name = element->name;
+				// Locked parts and events stay as they are, and audio events keep their clip's name.
+				const bool nameable = !element->locked && element->kind != Kind::AudioEvent;
 				std::string color = element->color;
 				Json channel = Json::object();
 				Json track = Json::object();
@@ -766,13 +786,14 @@ namespace gnubase::engine
 					switch (action.target)
 					{
 					case T::Position:
-						position = apply(action, position, random);
+						position = bounded(apply(action, position, random));
 						break;
 					case T::Length:
-						length = apply(action, length, random);
+						length = bounded(apply(action, length, random));
 						break;
 					case T::Name:
-						name = rename(action, name, counters[i]);
+						if (nameable)
+							name = rename(action, name, counters[i]);
 						break;
 					case T::Color:
 						color = recolor(project, action, color);
@@ -835,7 +856,7 @@ namespace gnubase::engine
 					if (element->locked)
 						break;
 					Json set = Json::object();
-					if (renamed && element->kind != Kind::AudioEvent)
+					if (renamed)
 						set["name"] = name;
 					if (recolored)
 						set["color"] = color;
@@ -1063,13 +1084,13 @@ namespace gnubase::engine
 			"delete, transform, select or deselect. actions, each {target, operation, parameter1, parameter2} in "
 			"order: position or length (add, subtract, multiplyBy, divideBy, roundBy, setRandom, setRelativeRandom "
 			"or setFixed), name (replace, append, prepend with parameter1; generateName: parameter1 and a number from "
-			"parameter2, one up for each element; replaceSearchString: parameter1 by parameter2; eraseBefore and "
-			"eraseAfter parameter1; eraseFrontCharacter, eraseEndCharacter), trackOperation (mute, solo, record or "
+			"parameter2, one up for each element renamed; replaceSearchString: parameter1 by parameter2; eraseBefore "
+			"and eraseAfter parameter1; eraseFrontCharacter, eraseEndCharacter), trackOperation (mute, solo, record or "
 			"monitor with parameter1 on, off or toggle; timeDomain musical, linear or toggle) or color (setFixed: a "
 			"project color's name or #rrggbb; increment, decrement: the next or previous project color). pre and post: "
 			"up to 4 key commands each, {command, parameters}, that the UI runs before and after; the engine keeps "
 			"them with the rules. Tracks are found from top to bottom, then parts, audio events and markers. preset "
-			"names a preset instead of rules. selected: the ids of the selected tracks, parts and events, for "
+			"names a preset instead of rules. selected: the ids of the selected tracks, parts, events and markers, for "
 			"isSelected and parentIsSelected.";
 		const Json properties = {
 			{"rules", rulesSchema}, {"preset", stringSchema}, {"selected", ids}, {"seed", {{"type", "integer"}}}};
@@ -1082,8 +1103,10 @@ namespace gnubase::engine
 				"Applies project rules to the project's tracks, audio and MIDI parts, audio events and markers, in one "
 				"undo step: delete removes what the filters find (a found folder takes its tracks with it), transform "
 				"changes it by the actions through the commands that make such changes (event.move, event.resize, "
-				"event.set, track.set, channel.set, marker.set). Locked parts and events stay as they are, audio "
-				"events keep their clip's name, track operations change tracks only. seed makes the random operations "
+				"event.set, track.set, channel.set, marker.set). Locked parts and events stay as they are on tracks "
+				"that stay, except that a locked event moves with an audio part that moves; delete keeps an audio "
+				"part that holds a locked event. Audio events keep their clip's name, track operations change tracks "
+				"only. Positions and lengths stop at the longest project. seed makes the random operations "
 				"repeatable." +
 					rulesText + " Use project.findByRules for select and deselect. Returns what the filters found.",
 				objectSchema(properties), foundSchema, false},

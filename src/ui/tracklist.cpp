@@ -40,7 +40,7 @@ namespace gnubase::ui
 
 		constexpr double g_edge = 4.0;          // dp above a row's lower edge that size its track
 		constexpr double g_dragThreshold = 4.0; // dp a press moves before it drags
-		constexpr double g_width = 120.0;       // dp of a name or controls area that ui.trackWidths leaves out
+		constexpr double g_width = 120.0;       // dp where neither ui.trackWidths nor its default has a width
 		constexpr double g_toggleSize = 16.0;   // dp of Show/Hide Automation, in a row's lower left corner
 
 		constexpr std::array<Rml::EventId, 5> g_rootEvents = {Rml::EventId::Mousedown, Rml::EventId::Dblclick,
@@ -247,10 +247,10 @@ namespace gnubase::ui
 		}
 
 		// A width of ui.trackWidths, under key in widths, or the default where it has none.
-		double widthOf(const Json& widths, const std::string& key)
+		double widthOf(const Json& widths, const std::string& key, double fallback = g_width)
 		{
 			const auto found = widths.find(key);
-			return found != widths.end() && found->is_number() ? found->get<double>() : g_width;
+			return found != widths.end() && found->is_number() ? found->get<double>() : fallback;
 		}
 	}
 
@@ -580,11 +580,18 @@ namespace gnubase::ui
 				if (!alive.expired() && result.ok())
 					loadControls(result.value.at("value"));
 			});
-		m_binding.send("settings.get", {{"key", "ui.trackWidths"}},
+		m_binding.send("settings.list", Json::object(),
 			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
-				if (!alive.expired() && result.ok())
-					loadWidths(result.value.at("value"));
+				if (alive.expired() || !result.ok())
+					return;
+				for (const Json& setting : result.value.at("settings"))
+					if (setting.at("key") == "ui.trackWidths")
+					{
+						m_defaultWidths = setting.at("default");
+						loadWidths(setting.at("value"));
+						break;
+					}
 			});
 		// Track visibility (#166, docs/features/track-visibility.md): the tracks the Visibility tab hides.
 		const auto filter = [this](const Json& visibility)
@@ -870,8 +877,9 @@ namespace gnubase::ui
 		TimeContext time;
 		readTimeContext(project, time);
 		const ProjectMarkers markers = readMarkers(project);
-		const double nameWidth = widthOf(m_widths, "name");
+		const double nameWidth = widthOf(m_widths, "name", widthOf(m_defaultWidths, "name"));
 		const Json controlsWidths = m_widths.value("controls", Json::object());
+		const Json defaultControls = m_defaultWidths.value("controls", Json::object());
 		for (int i = 0; i < m_view->GetNumChildren() && static_cast<size_t>(i) < m_tracks.size(); ++i)
 		{
 			Rml::Element* element = m_view->GetChild(i);
@@ -920,7 +928,7 @@ namespace gnubase::ui
 			Rml::Element* controls = element->QuerySelector(".track-controls");
 			if (controls == nullptr)
 				continue;
-			setWidth(controls, widthOf(controlsWidths, row.type));
+			setWidth(controls, widthOf(controlsWidths, row.type, widthOf(defaultControls, row.type)));
 			const std::vector<std::string> shown = controlsOf(row);
 			std::string rml;
 			for (const std::string& control : shown)
@@ -1704,7 +1712,7 @@ namespace gnubase::ui
 		std::vector<uint64_t> still;
 		std::copy_if(tracks.begin(), tracks.end(), std::back_inserter(still),
 			[this](uint64_t track) { return m_index.count(track) != 0; });
-		removeTracks(std::move(still));
+		removeTracks(still);
 	}
 
 	void TrackList::openChordDialog(const char* file, std::vector<uint64_t> tracks)
@@ -1765,14 +1773,8 @@ namespace gnubase::ui
 		}
 	}
 
-	void TrackList::removeTracks(std::vector<uint64_t> tracks)
+	void TrackList::removeTracks(const std::vector<uint64_t>& tracks)
 	{
-		// The active marker track goes last, as in track.removeEmpty, so that track.remove activates a marker track
-		// that stays rather than one that goes next.
-		const Json& project = m_display.project();
-		const uint64_t active = project.is_object() ? project.value("activeMarkerTrack", uint64_t{0}) : 0;
-		if (const auto found = std::find(tracks.begin(), tracks.end(), active); found != tracks.end())
-			std::rotate(found, std::next(found), tracks.end());
 		Json commands = Json::array();
 		for (const uint64_t track : tracks)
 			commands.push_back({{"command", "track.remove"}, {"parameters", {{"track", track}}}});

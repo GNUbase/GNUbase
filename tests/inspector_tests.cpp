@@ -9,6 +9,7 @@
 #include "engine/engine.h"
 #include "engine/time/tempomap.h"
 #include "ui/automation.h"
+#include "ui/docking.h"
 #include "ui/eventdisplay.h"
 #include "ui/markers.h"
 #include "ui/tracklist.h"
@@ -22,10 +23,12 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <functional>
 #include <optional>
 #include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 using namespace gnubase;
@@ -148,7 +151,7 @@ TEST_CASE("the info line shows the first selected part, and its edits change eve
 	CHECK(attribute(window.app, "#info-line textdisplay[field=end]", "value") == "3.1.1.0");
 	CHECK(attribute(window.app, "#info-line textdisplay[field=length]", "value") == "1.0.0.0");
 	// Parts have no volume.
-	CHECK(hasClass(window.app, "#info-line [info-field=volume]", "hidden"));
+	CHECK(hasClass(window.app, "#info-line [info-field=volume]", "unavailable"));
 
 	// Two selected: the first one shows, and a new start moves both by as much, as one undo step.
 	window.display.select({second, first});
@@ -240,7 +243,7 @@ TEST_CASE("the info line edits an audio event's volume", "[ui]")
 	window.display.select({event});
 	REQUIRE(window.shows("#info-line textdisplay[field=name]", "take"));
 	CHECK(element(window.app, "#info-line textdisplay[field=name]").at("attributes").contains("disabled"));
-	CHECK_FALSE(hasClass(window.app, "#info-line [info-field=volume]", "hidden"));
+	CHECK_FALSE(hasClass(window.app, "#info-line [info-field=volume]", "unavailable"));
 	window.type("#info-line valuefield[field=volume]", "-6");
 	REQUIRE(window.app.waitUntil([&] { return window.find("audioEvents", event).at("volume") == -6.0; }));
 	window.call("history.undo");
@@ -318,7 +321,7 @@ TEST_CASE(
 	CHECK(attribute(window.app, "#info-line textdisplay[field=end]", "value") == "3.1.1.0");
 	CHECK(attribute(window.app, "#info-line textdisplay[field=length]", "value") == "1.0.0.0");
 	for (const char* field : {"volume", "mute", "lock"})
-		CHECK(hasClass(window.app, std::string("#info-line [info-field=") + field + "]", "hidden"));
+		CHECK(hasClass(window.app, std::string("#info-line [info-field=") + field + "]", "unavailable"));
 
 	// Each field edits it with marker.set; a new position keeps a cycle marker's length.
 	window.type("#info-line textdisplay[field=name]", "Chorus");
@@ -342,8 +345,8 @@ TEST_CASE(
 	window.app.ui().click(std::nullopt, {".marker-label", 0, std::nullopt}, ui::MouseButton::Left, 1, {"ctrl"});
 	REQUIRE(window.shows("#info-line textdisplay[field=name]", "Intro"));
 	CHECK(hasClass(window.app, "#info-line", "multiple"));
-	CHECK(hasClass(window.app, "#info-line [info-field=end]", "hidden"));
-	CHECK(hasClass(window.app, "#info-line [info-field=length]", "hidden"));
+	CHECK(hasClass(window.app, "#info-line [info-field=end]", "unavailable"));
+	CHECK(hasClass(window.app, "#info-line [info-field=length]", "unavailable"));
 	window.type("#info-line textdisplay[field=start]", "1.3.1.0");
 	REQUIRE(window.app.waitUntil([&] { return marker(intro).at("position") == 2 * g_quarter; }));
 	CHECK(marker(verse).at("position") == 9 * g_quarter);
@@ -370,7 +373,7 @@ TEST_CASE(
 	window.display.select({part});
 	REQUIRE(window.shows("#info-line textdisplay[field=name]", "Part"));
 	CHECK_FALSE(hasClass(window.app, "#info-line", "markers"));
-	CHECK_FALSE(hasClass(window.app, "#info-line [info-field=mute]", "hidden"));
+	CHECK_FALSE(hasClass(window.app, "#info-line [info-field=mute]", "unavailable"));
 }
 
 TEST_CASE("the project window selects events or markers, and the info line shows the ones selected", "[ui]")
@@ -613,6 +616,209 @@ TEST_CASE("the inspector shows the selected track, and its controls change the t
 	window.list.select({marker});
 	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, ".inspector [section=basics]", "unavailable"); }));
 	CHECK(hasClass(window.app, ".inspector [section=notepad]", "unavailable"));
+}
+
+TEST_CASE("the inspector's setup pane saves and recalls presets, and Reset All brings the default order back", "[ui]")
+{
+	Window window;
+	const uint64_t audio = window.addTrack({{"type", "audio"}, {"name", "Vox"}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("tracks").size() == 1; }));
+	window.list.select({audio});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Vox"));
+	ui::Docking& docking = window.app.appUi().docking();
+	const std::vector<std::string> defaults = docking.sections("project", "inspector");
+	REQUIRE(defaults.size() > 1);
+	const auto openPane = [&window]
+	{
+		if (!hasClass(window.app, "#inspector-setup", "open"))
+			window.click(".inspector [row=volume] .inspector-label", ui::MouseButton::Right);
+		REQUIRE(hasClass(window.app, "#inspector-setup", "open"));
+	};
+	const auto notepadHidden = [&window] { return hasClass(window.app, ".inspector [section=notepad]", "hidden"); };
+
+	// The notepad hidden and the last section first.
+	openPane();
+	window.click("#inspector-setup [setup-section=notepad]");
+	REQUIRE(window.app.waitUntil(notepadHidden));
+	docking.moveSection("project", "inspector", defaults.back(), defaults.front());
+	const std::vector<std::string> moved = docking.sections("project", "inspector");
+	REQUIRE(moved.front() == defaults.back());
+
+	// Save Preset, whose OK waits for a name.
+	openPane();
+	window.click("#inspector-setup [setup-preset-save]");
+	REQUIRE(window.app.waitUntil([&window] { return !elements(window.app, "#setup-preset-name").empty(); }));
+	CHECK(elements(window.app, "#setup-preset-ok").at(0).at("attributes").contains("disabled"));
+	window.click("#setup-preset-name");
+	window.app.ui().text(std::nullopt, "Lean");
+	REQUIRE(window.app.waitUntil(
+		[&window] { return !elements(window.app, "#setup-preset-ok").at(0).at("attributes").contains("disabled"); }));
+	window.click("#setup-preset-ok");
+	REQUIRE(window.app.waitUntil([&window]
+		{ return window.call("settings.get", {{"key", "ui.setupPresets"}}).at("value").contains("inspector"); }));
+
+	// Reset All: the default order and sections.
+	openPane();
+	window.click("#inspector-setup [setup-reset]");
+	REQUIRE(window.app.waitUntil([&] { return !notepadHidden(); }));
+	CHECK(docking.sections("project", "inspector") == defaults);
+
+	// The preset brings its order and hidden sections back.
+	openPane();
+	window.click("#inspector-setup [setup-preset=Lean]");
+	REQUIRE(window.app.waitUntil(notepadHidden));
+	CHECK(docking.sections("project", "inspector") == moved);
+}
+
+TEST_CASE("the info line's setup pane shows, hides and orders its fields, with presets, Show All and Reset All", "[ui]")
+{
+	Window window;
+	const uint64_t midi = window.addTrack({{"type", "midi"}});
+	const uint64_t part = window.addPart(midi, 4 * g_quarter, 4 * g_quarter, "Intro");
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("midiParts").size() == 1; }));
+	window.display.select({part});
+	REQUIRE(window.shows("#info-line textdisplay[field=name]", "Intro"));
+	ui::Docking& docking = window.app.appUi().docking();
+	const std::vector<std::string> defaults = docking.sections("project", "infoLine");
+	CHECK(defaults ==
+		std::vector<std::string>{"name", "start", "end", "length", "volume", "mute", "lock", "transpose", "velocity",
+			"rootKey", "globalTranspose"});
+	const auto openPane = [&window]
+	{
+		if (!hasClass(window.app, "#info-line-setup", "open"))
+			window.click("#info-line [info-field=name] .info-label", ui::MouseButton::Right);
+		REQUIRE(hasClass(window.app, "#info-line-setup", "open"));
+	};
+	const auto muteHidden = [&window] { return hasClass(window.app, "#info-line [section=mute]", "hidden"); };
+
+	// Hidden, a field stays hidden when the info line shows the selection again, which makes it available.
+	openPane();
+	CHECK(elements(window.app, "#info-line-setup [setup-section]").size() == defaults.size());
+	window.click("#info-line-setup [setup-section=mute]");
+	REQUIRE(window.app.waitUntil(muteHidden));
+	CHECK_FALSE(element(window.app, "#info-line button[field=mute]").at("visible").get<bool>());
+	window.call("midiPart.set", {{"part", part}, {"name", "Verse"}});
+	REQUIRE(window.shows("#info-line textdisplay[field=name]", "Verse"));
+	CHECK(muteHidden());
+	CHECK_FALSE(hasClass(window.app, "#info-line [section=mute]", "unavailable"));
+	// A field the selection doesn't have stays unavailable when Show All shows every section.
+	openPane();
+	window.click("#info-line-setup [setup-all]");
+	REQUIRE(window.app.waitUntil([&] { return !muteHidden(); }));
+	CHECK(element(window.app, "#info-line button[field=mute]").at("visible").get<bool>());
+	CHECK_FALSE(element(window.app, "#info-line valuefield[field=volume]").at("visible").get<bool>());
+
+	// A preset with the mute hidden and the last field first.
+	openPane();
+	window.click("#info-line-setup [setup-section=mute]");
+	REQUIRE(window.app.waitUntil(muteHidden));
+	docking.moveSection("project", "infoLine", defaults.back(), defaults.front());
+	const std::vector<std::string> moved = docking.sections("project", "infoLine");
+	REQUIRE(moved.front() == defaults.back());
+	openPane();
+	window.click("#info-line-setup [setup-preset-save]");
+	REQUIRE(window.app.waitUntil([&window] { return !elements(window.app, "#setup-preset-name").empty(); }));
+	window.click("#setup-preset-name");
+	window.app.ui().text(std::nullopt, "Short");
+	REQUIRE(window.app.waitUntil(
+		[&window] { return !elements(window.app, "#setup-preset-ok").at(0).at("attributes").contains("disabled"); }));
+	window.click("#setup-preset-ok");
+	REQUIRE(window.app.waitUntil([&window]
+		{ return window.call("settings.get", {{"key", "ui.setupPresets"}}).at("value").contains("infoLine"); }));
+
+	// Reset All, then the preset.
+	openPane();
+	window.click("#info-line-setup [setup-reset]");
+	REQUIRE(window.app.waitUntil([&] { return !muteHidden(); }));
+	CHECK(docking.sections("project", "infoLine") == defaults);
+	openPane();
+	window.click("#info-line-setup [setup-preset=Short]");
+	REQUIRE(window.app.waitUntil(muteHidden));
+	CHECK(docking.sections("project", "infoLine") == moved);
+}
+
+TEST_CASE("the toolbar's setup pane shows, hides and orders its sections, with presets, Show All and Reset All", "[ui]")
+{
+	Window window;
+	ui::Docking& docking = window.app.appUi().docking();
+	const std::vector<std::string> defaults = docking.sections("project", "toolbar");
+	CHECK(defaults ==
+		std::vector<std::string>{"tools", "autoScroll", "zoomPresets", "snap", "gridType", "quantize", "color",
+			"trackVisibility", "rootKey", "zones"});
+	const auto openPane = [&window]
+	{
+		if (!hasClass(window.app, "#toolbar-setup", "open"))
+			window.click("#toolbar", ui::MouseButton::Right);
+		REQUIRE(hasClass(window.app, "#toolbar-setup", "open"));
+	};
+	const auto snapHidden = [&window] { return hasClass(window.app, "#toolbar [section=snap]", "hidden"); };
+	// How far the first section of an order starts from the toolbar's left and the last ends from its right.
+	const auto insets = [&window](const std::vector<std::string>& order)
+	{
+		window.app.shell().step(std::chrono::milliseconds(0));
+		const Json bar = element(window.app, "#toolbar").at("box");
+		const Json first = element(window.app, "#toolbar [section=" + order.front() + "]").at("box");
+		const Json last = element(window.app, "#toolbar [section=" + order.back() + "]").at("box");
+		return std::pair{first.at("x").get<double>() - bar.at("x").get<double>(),
+			bar.at("x").get<double>() + bar.at("width").get<double>() - last.at("x").get<double>() -
+				last.at("width").get<double>()};
+	};
+	const std::pair<double, double> edges = insets(defaults);
+	const auto atEdges = [&](const std::vector<std::string>& order)
+	{
+		const std::pair<double, double> now = insets(order);
+		CHECK(std::abs(now.first - edges.first) <= 1.0);
+		CHECK(std::abs(now.second - edges.second) <= 1.0);
+		// The spacer stays before the last place, also where a wide toolbar leaves it no room.
+		CHECK(element(window.app, "#toolbar .spacer + div").at("attributes").at("section") == order.back());
+	};
+
+	// Hiding a section hides its controls and keeps it in the user's layout; Show All shows it again.
+	openPane();
+	CHECK(elements(window.app, "#toolbar-setup [setup-section]").size() == defaults.size());
+	window.click("#toolbar-setup [setup-section=snap]");
+	REQUIRE(window.app.waitUntil(snapHidden));
+	CHECK_FALSE(element(window.app, "#snap").at("visible").get<bool>());
+	CHECK(window.call("settings.get", {{"key", "ui.layout"}})
+			.at("value")
+			.at("windows")
+			.at("project")
+			.contains("sections"));
+	openPane();
+	window.click("#toolbar-setup [setup-all]");
+	REQUIRE(window.app.waitUntil([&] { return !snapHidden(); }));
+	CHECK(element(window.app, "#snap").at("visible").get<bool>());
+
+	// A preset with the snap hidden and the tools last.
+	openPane();
+	window.click("#toolbar-setup [setup-section=snap]");
+	REQUIRE(window.app.waitUntil(snapHidden));
+	docking.moveSection("project", "toolbar", defaults.front(), defaults.back());
+	const std::vector<std::string> moved = docking.sections("project", "toolbar");
+	REQUIRE(moved.back() == defaults.front());
+	atEdges(moved); // the spacer stays in its place, so the sections still fill the toolbar from end to end
+	openPane();
+	window.click("#toolbar-setup [setup-preset-save]");
+	REQUIRE(window.app.waitUntil([&window] { return !elements(window.app, "#setup-preset-name").empty(); }));
+	window.click("#setup-preset-name");
+	window.app.ui().text(std::nullopt, "Editing");
+	REQUIRE(window.app.waitUntil(
+		[&window] { return !elements(window.app, "#setup-preset-ok").at(0).at("attributes").contains("disabled"); }));
+	window.click("#setup-preset-ok");
+	REQUIRE(window.app.waitUntil([&window]
+		{ return window.call("settings.get", {{"key", "ui.setupPresets"}}).at("value").contains("toolbar"); }));
+
+	// Reset All, then the preset.
+	openPane();
+	window.click("#toolbar-setup [setup-reset]");
+	REQUIRE(window.app.waitUntil([&] { return !snapHidden(); }));
+	CHECK(docking.sections("project", "toolbar") == defaults);
+	atEdges(defaults);
+	openPane();
+	window.click("#toolbar-setup [setup-preset=Editing]");
+	REQUIRE(window.app.waitUntil(snapHidden));
+	CHECK(docking.sections("project", "toolbar") == moved);
+	atEdges(moved);
 }
 
 TEST_CASE("an edit in the inspector goes to the track it started on when another track shows", "[ui]")
@@ -897,7 +1103,7 @@ TEST_CASE("the info line edits the selected MIDI parts' transpose and velocity, 
 	window.display.select({second, first});
 	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, "#info-line", "multiple"); }));
 	for (const char* field : {"transpose", "velocity"})
-		CHECK_FALSE(hasClass(window.app, "#info-line [info-field=" + std::string(field) + "]", "hidden"));
+		CHECK_FALSE(hasClass(window.app, "#info-line [info-field=" + std::string(field) + "]", "unavailable"));
 	REQUIRE(window.shows("#info-line valuefield[field=transpose]", "0"));
 
 	// Relative to the first part's value: both by as much, as one undo step.
@@ -943,8 +1149,8 @@ TEST_CASE("the info line edits the selected MIDI parts' transpose and velocity, 
 	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("audioEvents").size() == 1; }));
 	window.display.select({event});
 	REQUIRE(window.shows("#info-line textdisplay[field=name]", "take"));
-	CHECK(hasClass(window.app, "#info-line [info-field=transpose]", "hidden"));
-	CHECK(hasClass(window.app, "#info-line [info-field=velocity]", "hidden"));
+	CHECK(hasClass(window.app, "#info-line [info-field=transpose]", "unavailable"));
+	CHECK(hasClass(window.app, "#info-line [info-field=velocity]", "unavailable"));
 }
 
 TEST_CASE("the inspector's MIDI Modifiers section shows and changes the track's modifiers", "[ui]")

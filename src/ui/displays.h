@@ -46,6 +46,9 @@ namespace gnubase::ui
 	struct Display
 	{
 		DisplayId id = 0;
+		// The monitor's name, which saved layouts keep to find it again (restore); empty for a monitor that the OS
+		// gives no name, such as the offscreen video driver's, since SDL would name it after its ID, which changes at
+		// every start.
 		std::string name;
 		Rect bounds;        // the whole monitor
 		Rect usable;        // without task bars, docks and menu bars

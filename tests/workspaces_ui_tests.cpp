@@ -173,6 +173,52 @@ TEST_CASE(
 	CHECK(f.call("workspace.get").at("global").at(0).at("layout").at("windows").at("tool").at("open") == false);
 }
 
+TEST_CASE("maximized windows come back maximized, and ui.layout keeps their normal bounds", "[unit]")
+{
+	const Json right = {{"x", 2200}, {"y", 300}, {"width", 900}, {"height", 700}};
+	Fixture f({{"windows",
+		{{"project",
+			{{"maximized", true}, {"bounds", {{"x", 100}, {"y", 50}, {"width", 800}, {"height", 600}}},
+				{"monitor", "Left"}}}}}});
+	REQUIRE(f.laidOut);
+	// The main window as the last session left it.
+	CHECK(f.ui.windows.maximized(f.main));
+	Json layout = f.saved();
+	layout["windows"]["tool"] = {{"open", true}, {"bounds", right}, {"monitor", "Right"}}; // as a workspace opens it
+	f.call("settings.set", {{"key", "ui.layout"}, {"value", layout}});
+	REQUIRE(f.waitUntil([&f] { return f.tool != 0; }));
+	f.docking.saveWindows();
+
+	// The tool window maximized as the user would: its normal bounds stay in ui.layout.
+	f.ui.windows.setMaximized(f.tool, true);
+	f.docking.saveWindows();
+	REQUIRE(f.waitUntil([&f] { return f.saved() == f.docking.layout(); }));
+	CHECK(f.saved().at("windows").at("tool").value("maximized", false));
+	CHECK(f.saved().at("windows").at("tool").at("bounds") == right);
+	f.call("workspace.add", {{"name", "Big"}, {"type", "global"}});
+
+	// Its normal size again, and closed: the workspace opens it maximized again.
+	f.ui.windows.setMaximized(f.tool, false);
+	f.docking.saveWindows();
+	REQUIRE(f.waitUntil([&f] { return !f.saved().at("windows").at("tool").contains("maximized"); }));
+	f.ui.shell.close(f.tool);
+	f.docking.saveWindows();
+	f.call("workspace.activate", {{"type", "global"}, {"name", "Big"}});
+	REQUIRE(f.waitUntil([&f] { return f.tool != 0 && f.ui.shell.find(f.tool) != nullptr; }));
+	f.docking.saveWindows(); // as the app's windows do when they open
+	CHECK(f.ui.windows.maximized(f.tool));
+	f.ui.windows.setMaximized(f.tool, false);
+	CHECK(f.ui.shell.bounds(f.tool) == ui::Rect{2200, 300, 900, 700});
+
+	// A workspace applied to the open window maximizes it too.
+	f.docking.saveWindows();
+	REQUIRE(f.waitUntil([&f] { return !f.saved().at("windows").at("tool").contains("maximized"); }));
+	f.call("workspace.activate", {{"type", "global"}, {"name", "Big"}});
+	REQUIRE(f.waitUntil([&f] { return f.ui.windows.maximized(f.tool); }));
+	f.ui.windows.setMaximized(f.main, false);
+	CHECK(f.ui.shell.bounds(f.main) == ui::Rect{100, 50, 800, 600});
+}
+
 namespace
 {
 	using Window = std::optional<ui::WindowId>;
@@ -250,7 +296,7 @@ TEST_CASE("the Workspaces menu adds, updates and recalls workspaces, and the org
 	// Without workspaces the menu has No Workspace, checked, and Update Workspace is disabled.
 	openMenu(app);
 	REQUIRE(app.waitUntil([&app] { return menuItems(app) == std::vector<std::string>{"-*"}; }));
-	CHECK(elements(app, "menuitem[command=workspace.update]").at(0).at("attributes").contains("disabled"));
+	CHECK(elements(app, "menuitem[command=window.updateWorkspace]").at(0).at("attributes").contains("disabled"));
 	app.ui().key(std::nullopt, "Escape");
 
 	// A global workspace with the lower zone shown, then a project workspace with the mixer window open.
@@ -268,7 +314,7 @@ TEST_CASE("the Workspaces menu adds, updates and recalls workspaces, and the org
 	openMenu(app);
 	REQUIRE(
 		app.waitUntil([&app] { return menuItems(app) == std::vector<std::string>{"-", "G Editing", "P Mixing*"}; }));
-	CHECK(!elements(app, "menuitem[command=workspace.update]").at(0).at("attributes").contains("disabled"));
+	CHECK(!elements(app, "menuitem[command=window.updateWorkspace]").at(0).at("attributes").contains("disabled"));
 
 	// Choosing a workspace in the menu shows its windows: the mixer window closes, the lower zone shows.
 	click(app, "#workspaces-menu menuitem[workspace=Editing]");
@@ -285,7 +331,7 @@ TEST_CASE("the Workspaces menu adds, updates and recalls workspaces, and the org
 	app.appUi().toggleMixer(1);
 	REQUIRE(app.appUi().mixer(1) == nullptr);
 	openMenu(app);
-	click(app, "#workspaces-menu menuitem[command=workspace.update]");
+	click(app, "#workspaces-menu menuitem[command=window.updateWorkspace]");
 	REQUIRE(app.waitUntil(
 		[&app]
 		{
@@ -338,13 +384,24 @@ TEST_CASE("the Windows dialog lists the open windows, activates and closes them"
 		titles.push_back(item.at("text").get<std::string>());
 	CHECK(titles == std::vector<std::string>{"Project", "Markers", "Tempo Track"});
 
+	// The list follows a window that opens while the dialog is open.
+	REQUIRE(app.appUi().toggleKeyboard() != nullptr);
+	REQUIRE(app.waitUntil([&app] { return elements(app, "#windows-list listitem", app.main().id()).size() == 4; }));
+
+	// Close Windows has nothing to close with the project window selected.
+	const auto closeDisabled = [&app]
+	{ return elements(app, "#windows-close", app.main().id()).at(0).at("attributes").contains("disabled"); };
+	press("#windows-list listitem[window=\"" + std::to_string(app.main().id()) + "\"]");
+	REQUIRE(app.waitUntil(closeDisabled));
+
 	// The selected window: activated, then closed.
 	press("#windows-list listitem[window=\"" + std::to_string(markers) + "\"]");
+	REQUIRE(app.waitUntil([&] { return !closeDisabled(); }));
 	press("#windows-activate");
 	press("#windows-close");
 	REQUIRE(app.waitUntil([&app] { return app.appUi().markers() == nullptr; }));
 	CHECK(app.appUi().tempoEditor() != nullptr);
-	REQUIRE(app.waitUntil([&app] { return elements(app, "#windows-list listitem", app.main().id()).size() == 2; }));
+	REQUIRE(app.waitUntil([&app] { return elements(app, "#windows-list listitem", app.main().id()).size() == 3; }));
 
 	// All closes every window but the project window.
 	press("#windows-mode"); // its options aren't in the DOM that the UI tools see
@@ -357,6 +414,31 @@ TEST_CASE("the Windows dialog lists the open windows, activates and closes them"
 		}));
 	press("#windows-close");
 	REQUIRE(app.waitUntil([&app] { return app.appUi().tempoEditor() == nullptr; }));
+	CHECK(app.appUi().keyboard() == nullptr);
 	CHECK(app.shell().windows().size() == 1);
+	REQUIRE(app.waitUntil(closeDisabled));
 	press("#windows-ok");
+}
+
+TEST_CASE("the script console is a workspace window", "[ui]")
+{
+	test::UiApp app({1000, 700});
+	app.appUi().showProject();
+	app.call("workspace.add", {{"name", "Plain"}, {"type", "global"}});
+	const auto open = [&app] { return app.shell().find(app.appUi().scriptConsoleWindow()) != nullptr; };
+	app.keys().run("window.scriptConsole", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil(open));
+	REQUIRE(app.waitUntil(
+		[&app]
+		{
+			const Json layout = app.call("settings.get", {{"key", "ui.layout"}}).at("value");
+			const Json console = layout.value("windows", Json::object()).value("scriptConsole", Json::object());
+			return console.value("open", false) && console.contains("bounds");
+		}));
+	app.call("workspace.add", {{"name", "Scripting"}, {"type", "global"}});
+
+	app.call("workspace.activate", {{"type", "global"}, {"name", "Plain"}});
+	REQUIRE(app.waitUntil([&open] { return !open(); }));
+	app.call("workspace.activate", {{"type", "global"}, {"name", "Scripting"}});
+	REQUIRE(app.waitUntil(open));
 }

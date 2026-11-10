@@ -24,10 +24,14 @@ namespace gnubase::engine
 
 		ProjectSettings settings(const Project& project)
 		{
-			return {project.name, project.sampleRate, project.tempo, project.tempoTrackActive, project.otherTempo,
-				project.signatures, project.autoFades, project.panLaw, project.maxVolume, project.colors, project.setup,
-				project.busses, project.tracks, project.activeMarkerTrack, project.arranger, project.rootKey,
-				project.transpose, project.chords, project.chordPads, project.inputTransformer};
+			ProjectSettings result{project.name, project.sampleRate, project.tempo, project.tempoTrackActive,
+				project.otherTempo, project.signatures, project.autoFades, project.panLaw, project.maxVolume,
+				project.colors, project.setup, project.busses, project.tracks, project.activeMarkerTrack,
+				project.arranger, project.rootKey, project.transpose, project.chords, project.chordPads,
+				project.inputTransformer};
+			// A display choice must survive replaying other settings while merging or joining history steps.
+			result.setup.timeFormat.clear();
+			return result;
 		}
 
 		// Walks two maps in id order and calls visit(id, before, after) with nullptr for a missing object.
@@ -108,6 +112,7 @@ namespace gnubase::engine
 			copy.velocity = part->velocity;
 			copy.rootKey = part->rootKey;
 			copy.independent = part->independent;
+			copy.pattern = part->pattern;
 			return copy;
 		}
 
@@ -127,14 +132,20 @@ namespace gnubase::engine
 
 	bool ProjectChange::empty() const
 	{
-		return !settingsBefore && tracks.empty() && channels.empty() && slots.empty() && media.empty() &&
-			clips.empty() && poolFolders.empty() && audioEvents.empty() && audioParts.empty() && midiParts.empty() &&
-			markers.empty() && automation.empty() && linkGroups.empty() && drumMaps.empty() && articulationMaps.empty();
+		return !settingsBefore && !timeFormatBefore && tracks.empty() && channels.empty() && slots.empty() &&
+			media.empty() && clips.empty() && poolFolders.empty() && audioEvents.empty() && audioParts.empty() &&
+			midiParts.empty() && markers.empty() && automation.empty() && linkGroups.empty() && drumMaps.empty() &&
+			articulationMaps.empty() && patterns.empty();
 	}
 
 	ProjectChange difference(const Project& before, const Project& after)
 	{
 		ProjectChange change;
+		if (before.setup.timeFormat != after.setup.timeFormat)
+		{
+			change.timeFormatBefore = before.setup.timeFormat;
+			change.timeFormatAfter = after.setup.timeFormat;
+		}
 		ProjectSettings old = settings(before);
 		ProjectSettings now = settings(after);
 		if (!(old == now))
@@ -154,6 +165,7 @@ namespace gnubase::engine
 		change.linkGroups = differences(before.linkGroups, after.linkGroups);
 		change.drumMaps = differences(before.drumMaps, after.drumMaps);
 		change.articulationMaps = differences(before.articulationMaps, after.articulationMaps);
+		change.patterns = differences(before.patterns, after.patterns);
 
 		const MidiPart empty;
 		compare(before.midiParts, after.midiParts,
@@ -183,6 +195,9 @@ namespace gnubase::engine
 
 	void apply(Project& project, const ProjectChange& change, Direction direction)
 	{
+		if (change.timeFormatBefore && change.timeFormatAfter)
+			project.setup.timeFormat =
+				direction == Direction::Redo ? *change.timeFormatAfter : *change.timeFormatBefore;
 		if (change.settingsBefore && change.settingsAfter)
 		{
 			const ProjectSettings& target =
@@ -197,7 +212,9 @@ namespace gnubase::engine
 			project.panLaw = target.panLaw;
 			project.maxVolume = target.maxVolume;
 			project.colors = target.colors;
-			project.setup = target.setup;
+			ProjectSetup setup = target.setup;
+			setup.timeFormat = project.setup.timeFormat;
+			project.setup = std::move(setup);
 			project.busses = target.busses;
 			project.tracks = target.tracks;
 			project.activeMarkerTrack = target.activeMarkerTrack;
@@ -220,6 +237,7 @@ namespace gnubase::engine
 		applyObjects(project.linkGroups, change.linkGroups, direction);
 		applyObjects(project.drumMaps, change.drumMaps, direction);
 		applyObjects(project.articulationMaps, change.articulationMaps, direction);
+		applyObjects(project.patterns, change.patterns, direction);
 		for (const MidiPartChange& partChange : change.midiParts)
 		{
 			const std::optional<MidiPart>& target = direction == Direction::Redo ? partChange.after : partChange.before;
@@ -243,6 +261,7 @@ namespace gnubase::engine
 			part.velocity = target->velocity;
 			part.rootKey = target->rootKey;
 			part.independent = target->independent;
+			part.pattern = target->pattern;
 			applyObjects(part.notes, partChange.notes, direction);
 			applyObjects(part.controllers, partChange.controllers, direction);
 		}

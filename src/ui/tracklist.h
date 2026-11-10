@@ -189,7 +189,7 @@ namespace gnubase::ui
 		// track like the lowest selected audio or MIDI track, with its input and output, below it; a MIDI track below
 		// another selected track; without one, a MIDI track at the end.
 		void addTrack();
-		void removeTracks(std::vector<uint64_t> tracks);
+		void removeTracks(const std::vector<uint64_t>& tracks);
 		void closedRemoveDialog(Rml::Event& event);
 		// The chord track's dialogs (docs/features/chord-track.md): Create Chord Events (create-chord-events.rml) and
 		// Map to Chord Track (map-to-chord-track.rml) for the selected MIDI and instrument tracks.
@@ -218,12 +218,13 @@ namespace gnubase::ui
 		std::vector<Row> m_tracks;               // every track in the project's order
 		std::map<uint64_t, size_t> m_index;
 		std::set<uint64_t> m_folded;
-		std::set<uint64_t> m_filtered;                    // what the track visibility hides (#166)
-		engine::Json m_controls = engine::Json::object(); // ui.trackControls
-		engine::Json m_widths = engine::Json::object();   // ui.trackWidths
-		std::string m_tempoType = "auto";                 // editing.tempoType
-		bool m_showingTempo = false;                      // the tempo controls' change events aren't the user's
-		uint64_t m_loads = 0;                             // the display's, when the rows were last built
+		std::set<uint64_t> m_filtered;                         // what the track visibility hides (#166)
+		engine::Json m_controls = engine::Json::object();      // ui.trackControls
+		engine::Json m_widths = engine::Json::object();        // ui.trackWidths
+		engine::Json m_defaultWidths = engine::Json::object(); // ui.trackWidths defaults by type
+		std::string m_tempoType = "auto";                      // editing.tempoType
+		bool m_showingTempo = false;                           // the tempo controls' change events aren't the user's
+		uint64_t m_loads = 0;                                  // the display's, when the rows were last built
 		bool m_layingOut = false;
 		uint64_t m_renaming = 0;
 		std::string m_renamed;                         // the name before renaming

@@ -47,9 +47,10 @@ TEST_CASE("the safe start mode disables or deletes the user settings", "[unit]")
 	CHECK(app::safeSettingsDirectory(options) == dir.path());
 	CHECK(std::filesystem::exists(dir.path() / "settings.json"));
 
-	// Disabled: the settings are kept in memory, the files stay.
+	// Disabled: the engine keeps the profile's settings in memory, the files stay.
 	options.settingsMode = SafeSettings::Disable;
-	CHECK(app::safeSettingsDirectory(options).empty());
+	CHECK(app::safeSettingsDirectory(options) == dir.path());
+	CHECK(app::factorySettings(options));
 	CHECK(std::filesystem::exists(dir.path() / "settings.json"));
 
 	// Deleted: the files a profile has go, the recent projects stay.
@@ -58,6 +59,45 @@ TEST_CASE("the safe start mode disables or deletes the user settings", "[unit]")
 	CHECK(!std::filesystem::exists(dir.path() / "settings.json"));
 	CHECK(!std::filesystem::exists(dir.path() / "quantize-presets.json"));
 	CHECK(std::filesystem::exists(dir.path() / "recent-projects.json"));
+}
+
+TEST_CASE("the factory settings leave the profile's files alone and keep the recent projects and templates", "[unit]")
+{
+	const test::TempDir dir;
+	{
+		engine::Engine engine(audio::makeBackends(), dir.path());
+		engine::Client client(engine);
+		REQUIRE(client.call("settings.set", {{"key", "ui.scale"}, {"value", 1.5}}).ok());
+		REQUIRE(client.call("project.saveTemplate", {{"name", "Band"}}).ok());
+	}
+	const std::string settings = files::readFile(dir.path() / "settings.json").value_or("");
+
+	engine::Engine engine(audio::makeBackends(), dir.path(), midi::makeBackends(), true);
+	engine::Client client(engine);
+	CHECK(client.call("settings.get", {{"key", "ui.scale"}}).value.at("value") == 1.0);
+	CHECK(client.call("project.templates").value.dump().find("Band") != std::string::npos);
+	REQUIRE(client.call("settings.set", {{"key", "ui.scale"}, {"value", 2.0}}).ok());
+	CHECK(files::readFile(dir.path() / "settings.json").value_or("") == settings);
+	CHECK(!client.call("profile.list").ok());
+}
+
+TEST_CASE("deleting the settings in the safe start mode drops a profile switch, for the factory settings", "[unit]")
+{
+	const test::TempDir dir;
+	{
+		engine::Engine engine(audio::makeBackends(), dir.path());
+		engine::Client client(engine);
+		REQUIRE(client.call("settings.set", {{"key", "ui.scale"}, {"value", 1.5}}).ok());
+		REQUIRE(client.call("profile.duplicate", {{"name", "Default"}, {"newName", "Studio"}}).ok());
+		REQUIRE(client.call("profile.activate", {{"name", "Studio"}}).ok());
+	}
+	const app::Options options = app::parseOptions({"--settings", dir.path().u8string(), "--delete-settings"});
+	engine::Engine engine(audio::makeBackends(), app::safeSettingsDirectory(options));
+	engine::Client client(engine);
+	CHECK(client.call("settings.get", {{"key", "ui.scale"}}).value.at("value") == 1.0);
+	const engine::Json profiles = client.call("profile.list").value;
+	CHECK(profiles.at("active") == "Default");
+	CHECK(profiles.at("next") == "");
 }
 
 TEST_CASE("third-party plugins deactivated in the safe start mode don't load", "[unit]")

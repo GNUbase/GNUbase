@@ -51,14 +51,29 @@ namespace gnubase::scripting
 		// Runs Lua code. Returns nothing on success, otherwise the error with a traceback. chunkName appears in
 		// error messages, e.g. "check.lua:3: too quiet". A function that Lua calls may run more code: that run keeps
 		// the outer one's time limit, and the test cases it registers run when the outermost run ends.
-		std::optional<std::string> run(std::string_view code, const std::string& chunkName);
+		// The code's globals are those of environment (newEnvironment), or the global table with 0.
+		std::optional<std::string> run(std::string_view code, const std::string& chunkName, int environment = 0);
 
-		// Runs a Lua file. A first line starting with # (e.g. #!/usr/bin/env ...) is ignored.
-		std::optional<std::string> runFile(const std::filesystem::path& file);
+		// Runs a Lua file, like run. A first line starting with # (e.g. #!/usr/bin/env ...) is ignored.
+		std::optional<std::string> runFile(const std::filesystem::path& file, int environment = 0);
 
-		// Stops every later run with an error once its Lua code has run longer than the limit. Time spent in engine
-		// commands counts too, but only Lua code is interrupted. Zero, the default, means no limit.
-		void setTimeLimit(std::chrono::milliseconds limit) { m_timeLimit = limit; }
+		// A table for the globals of code that runs in it (run's environment), which reads those it doesn't have from
+		// the global table: e.g. users' scripts, which then can't break the globals of the UI's documents. It stays
+		// with the runtime; the number names it.
+		int newEnvironment();
+
+		// Stops every later outermost run with an error once its Lua code has run longer than the limit. Time spent in
+		// engine commands counts too, but only Lua code is interrupted. Zero, the default, means no limit. If given,
+		// keepRunning is asked first when a run is late, on the thread that runs it, and when it returns true the run
+		// goes on for another limit. It must not throw.
+		void setTimeLimit(std::chrono::milliseconds limit, std::function<bool()> keepRunning = {})
+		{
+			m_timeLimit = limit;
+			m_keepRunning = std::move(keepRunning);
+		}
+
+		// Whether code runs, e.g. from a function that Lua calls.
+		bool running() const { return m_depth > 0; }
 
 		// Adds the function as gnubase.<area>.<name>, e.g. "ui.click" as gnubase.ui.click. Lua calls it like a
 		// command: with a table of parameters, getting its result as a table, and binary JSON, such as a PNG file's
@@ -96,7 +111,7 @@ namespace gnubase::scripting
 		static int events(lua_State* state);
 		static void stopWhenLate(lua_State* state, lua_Debug* debug);
 
-		std::optional<std::string> execute(std::string_view code, const std::string& luaChunkName);
+		std::optional<std::string> execute(std::string_view code, const std::string& luaChunkName, int environment);
 		void openLibraries(Trust trust);
 		void bindCommands(const engine::Engine& engine);
 		void loadTestFramework();
@@ -109,6 +124,8 @@ namespace gnubase::scripting
 		std::vector<std::unique_ptr<Function>> m_functions; // added with addFunction; Lua holds pointers to them
 		std::map<std::string, engine::Json> m_parameters;   // the commands' parameter schemas, by name
 		std::chrono::milliseconds m_timeLimit{0};
+		std::function<bool()> m_keepRunning;
+		bool m_limited = false; // the outermost run that goes on has a deadline
 		std::chrono::steady_clock::time_point m_deadline;
 		int m_depth = 0;                                // runs going on: a function that Lua calls may run more code
 		lua_State* m_caller = nullptr;                  // caller()

@@ -6,6 +6,8 @@
 #include <RmlUi/Core/Context.h>
 
 #include <algorithm>
+#include <chrono>
+#include <optional>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -188,12 +190,7 @@ namespace gnubase::ui
 		m_woken = false; // before taking the messages, so one that arrives meanwhile wakes the UI again
 		bool handled = false;
 		while (std::optional<engine::Message> message = m_client.poll())
-		{
-			if (const auto* result = std::get_if<engine::Result>(&*message))
-				handled = answer(*result) || handled;
-			else
-				handled = dispatch(std::get<engine::Event>(*message)) || handled;
-		}
+			handled = take(*message) || handled;
 		if (handled && m_handled)
 			m_handled();
 		// Each function is taken out while it runs, since it may end its own subscription or others.
@@ -212,6 +209,33 @@ namespace gnubase::ui
 				found->second = std::move(read);
 		}
 		return !m_watches.empty();
+	}
+
+	bool EngineBinding::settle(std::chrono::milliseconds timeout)
+	{
+		const auto deadline = std::chrono::steady_clock::now() + timeout;
+		for (;;)
+		{
+			sendWaitingSteps({}); // as before a command that isn't a query
+			update();
+			if (std::all_of(m_waiting.begin(), m_waiting.end(),
+					[this](const auto& waiting) { return m_queries.count(waiting.second.command) != 0; }))
+				return true;
+			const auto left =
+				std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+			if (left.count() <= 0)
+				return false;
+			if (const std::optional<engine::Message> message = m_client.wait(left);
+				message && take(*message) && m_handled)
+				m_handled();
+		}
+	}
+
+	bool EngineBinding::take(const engine::Message& message)
+	{
+		if (const auto* result = std::get_if<engine::Result>(&message))
+			return answer(*result);
+		return dispatch(std::get<engine::Event>(message));
 	}
 
 	bool EngineBinding::answer(const engine::Result& result)

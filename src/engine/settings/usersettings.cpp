@@ -63,7 +63,8 @@ namespace gnubase::engine::settings
 						{"strips", {{"type", "object"}, {"additionalProperties", {{"type", "boolean"}}}}},
 						{"sections", {{"type", "object"}, {"additionalProperties", sections}}},
 						{"sizes", {{"type", "object"}, {"additionalProperties", {{"type", "number"}, {"minimum", 0}}}}},
-						{"open", {{"type", "boolean"}}}, {"bounds", bounds}, {"monitor", text}}}};
+						{"open", {{"type", "boolean"}}}, {"maximized", {{"type", "boolean"}}}, {"bounds", bounds},
+						{"monitor", text}}}};
 			const Json panel = {{"type", "object"},
 				{"properties", {{"floating", {{"type", "boolean"}}}, {"bounds", bounds}, {"monitor", text}}}};
 			return {{"type", "object"},
@@ -519,6 +520,47 @@ namespace gnubase::engine::settings
 					"select MSB and LSB) and an optional folder it is listed in. A MIDI track that names a device "
 					"(channel.set device) chooses its program and bank by patch.",
 					midi::devicesSchema(), Json::object()},
+				{"midi.importAutomation",
+					"Import Controller as Automation Tracks (reference manual p. 365): importing a MIDI file in the "
+					"project window moves its continuous controllers into automation lanes (midiFile.import "
+					"automation).",
+					Json{{"type", "boolean"}}, false},
+				{"midi.importDestination",
+					"Destination (reference manual p. 365): importing a MIDI file in the project window makes midi "
+					"or instrument tracks (midiFile.import trackType).",
+					Json{{"type", "string"}, {"enum", {"midi", "instrument"}}}, "midi"},
+				{"midi.importDissolveFormat0",
+					"Auto Dissolve Format 0 (reference manual p. 365): a type 0 MIDI file imported in the project "
+					"window gets a track per MIDI channel; off, one track (midiFile.import dissolve).",
+					Json{{"type", "boolean"}}, true},
+				{"midi.importExtractPatch",
+					"Extract First Patch (reference manual p. 364): a MIDI file imported in the project window gives "
+					"each MIDI track's first program change and bank select to the track's program and bank "
+					"(midiFile.import extractPatch).",
+					Json{{"type", "boolean"}}, true},
+				{"midi.importExtractVolumePan",
+					"Extract First Volume/Pan (reference manual p. 364): a MIDI file imported in the project window "
+					"gives each MIDI track's first MIDI volume and pan to the track's (midiFile.import "
+					"extractVolumePan).",
+					Json{{"type", "boolean"}}, true},
+				{"midi.importIgnoreTempo",
+					"Ignore Master Track Events on Merge (reference manual p. 365): a MIDI file imported into the "
+					"open project leaves its tempo and time signatures as they are (midiFile.import tempo false); a "
+					"MIDI file imported into a new project always brings its own.",
+					Json{{"type", "boolean"}}, false},
+				{"midi.importMarkers",
+					"Import Markers (reference manual p. 365): importing a MIDI file in the project window adds its "
+					"markers (midiFile.import markers).",
+					Json{{"type", "boolean"}}, true},
+				{"midi.importSinglePart",
+					"Import Dropped File as Single Part (reference manual p. 365): a MIDI file dropped on the project "
+					"window goes into one part, on the MIDI or instrument track it is dropped on or a new one "
+					"(midiFile.import singlePart).",
+					Json{{"type", "boolean"}}, false},
+				{"midi.importToLeftLocator",
+					"Import to Left Locator (reference manual p. 365): File > Import > MIDI File places the file at "
+					"the left locator instead of the project start (midiFile.import position).",
+					Json{{"type", "boolean"}}, false},
 				{"midi.portSettings",
 					"The MIDI ports' settings (midi.setPort), by backend/in or out/port id, also for ports that aren't "
 					"connected: the name shown (showAs), whether it is visible, and for inputs whether it belongs to "
@@ -613,8 +655,10 @@ namespace gnubase::engine::settings
 					"transportBar) with whether each is shown, and its sets of sections (such as a mixer channel's) "
 					"with the order of their sections and those hidden, and the sizes in dp of other elements that "
 					"splitters size (trackList: the track list's width), and for the app's windows (project, mixer1 "
-					"to mixer4, markers, onScreenKeyboard, tempoTrack, arranger, transportPanel, timeDisplay) whether "
-					"it is open, its bounds and the name of its monitor; under panels, by panel, whether it is in a "
+					"to mixer4, markers, onScreenKeyboard, tempoTrack, arranger, transportPanel, timeDisplay, "
+					"scriptConsole) whether "
+					"it is open, its bounds and the name of its monitor, and maximized if it is (its bounds the normal "
+					"ones); under panels, by panel, whether it is in a "
 					"window of its own and that window's bounds and monitor. What it leaves out has its default: a "
 					"window is closed. A window whose monitor isn't connected goes onto the primary one, fully "
 					"visible.",
@@ -638,6 +682,11 @@ namespace gnubase::engine::settings
 					"Whether the markers window and the project window select the same markers. It pauses while "
 					"recording.",
 					Json{{"type", "boolean"}}, true},
+				{"ui.noWorkspaceLayout",
+					"The window layout without a workspace (workspace.activate, docs/features/workspaces.md): a copy "
+					"of ui.layout as it was when a workspace last became active while none was, which No Workspace "
+					"brings back. Empty for none.",
+					layoutSchema(), Json::object()},
 				{"ui.removeTracksWarning",
 					"Whether Remove Selected Tracks asks before it removes tracks that aren't empty: that hold events, "
 					"parts, markers or automation, or are folders with such tracks inside (reference manual p. 213).",
@@ -720,8 +769,8 @@ namespace gnubase::engine::settings
 				{"ui.trackWidths",
 					"The widths in the track list's rows, in dp: name, the track name's for every track type (20 to "
 					"400), and controls, by track type, the width of its controls area (0 to 800), whose controls go "
-					"onto more lines when they don't fit. A width left out is 120; marker and ruler tracks' default is "
-					"140, the chord track's 160.",
+					"onto more lines when they don't fit. A width left out uses the type's default: 120, except marker "
+					"and ruler tracks' 140, the tempo track's 144 and the chord track's 160.",
 					Json{{"type", "object"},
 						{"properties",
 							{{"name", {{"type", "number"}, {"minimum", 20}, {"maximum", 400}}},
@@ -800,6 +849,10 @@ namespace gnubase::engine::settings
 										{"seconds", {{"type", "number"}, {"minimum", 0}}}}},
 								{"required", Json::array({"name", "seconds"})}}}},
 					Json::array()},
+				{"ui.zoomToolHorizontalOnly",
+					"Zoom Tool Standard Mode: Horizontal Zooming Only: whether the zoom tool's rectangle zooms the "
+					"event display across only; when off, it zooms the track heights too (docs/features/tools.md).",
+					Json{{"type", "boolean"}}, true},
 			};
 			return result;
 		}();

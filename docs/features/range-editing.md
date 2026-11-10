@@ -62,8 +62,7 @@ Time, Split, Crop and Insert Silence.
 
 Not yet: copying and pasting selected events without a range, Paste at Origin and Paste Relative to Cursor, moving and
 duplicating a range's contents by dragging it, nudging its edges, Range Tool Splits Partly Selected Events, the info
-line's range fields, the range in the editors (they come with their tickets), snapping to zero crossings at range edges,
-and the controller events at the edges of a range inside a part.
+line's range fields, the range in the editors (they come with their tickets), and the controller events at the edges of a range inside a part.
 
 ## Checks
 

@@ -25,6 +25,8 @@ namespace gnubase::engine
 		}
 		if (!type.is_string())
 			return "any";
+		if (const auto pattern = schema.find("pattern"); pattern != schema.end())
+			return type.get<std::string>() + " matching `" + pattern->get<std::string>() + "`";
 		if (type == "array" && schema.contains("items"))
 			return "array of " + schemaType(schema.at("items"));
 		return type.get<std::string>();

@@ -106,10 +106,15 @@ namespace gnubase::ui
 		void drag(Rml::Event& event);
 		// Shows the events a move moves m_moved further, also after a render during the drag.
 		void preview();
+		bool moving() const; // a press started a move that goes on
+		// The project or view shown changed: a move follows its event, or ends if that went.
+		void updateMove();
+		void updateMoved();
 		void release(Rml::Event& event);
 		void doubleClick(Rml::Event& event);
 
 		void render();
+		void renderEvents(Rml::Element& events);
 		void renderInfo();
 		std::string partsRml() const;
 		void place(Rml::Element& element, double start, double end, int lane) const;
@@ -118,6 +123,7 @@ namespace gnubase::ui
 
 		// The part display's point under the mouse: seconds and lane.
 		std::pair<double, int> at(const Rml::Event& event) const;
+		std::pair<double, int> at(Rml::Vector2f mouse) const;
 		// To the project's quantize grid.
 		double snap(double seconds) const;
 		// Whether the mouse has moved past the drag threshold since the press: until then a press is a click.
@@ -148,15 +154,16 @@ namespace gnubase::ui
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers that come after it's gone
 		double m_from = 0.0;                                          // the time axis, seconds
 		double m_to = 1.0;
-		std::string m_eventsRml; // the events' elements as last set
+		std::string m_shownEvents; // what the events' elements were last made from
 		std::unique_ptr<EventWaveforms> m_waveforms;
 
 		Gesture m_gesture = Gesture::None;
 		std::pair<double, int> m_pressedAt;
 		Rml::Vector2f m_pressedMouse; // px
 		bool m_dragged = false;
+		Rml::Vector2f m_draggedTo;                 // px, the mouse's last place in a dragged move
 		std::pair<double, int> m_moved;            // a dragged move's seconds and lanes
-		std::optional<Event> m_pressed;            // the event pressed, as it was
+		std::optional<Event> m_pressed;            // the event pressed, as the project shown has it
 		uint64_t m_auditioned = 0;                 // the track the play or scrub tool auditions
 		Rml::ObserverPtr<Rml::Element> m_document; // whose resize fits the waveforms to the display again
 		Rml::ObserverPtr<Rml::Element> m_listened; // the document listen() hears a gesture's mouse in

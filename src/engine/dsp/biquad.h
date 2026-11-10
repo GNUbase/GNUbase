@@ -24,6 +24,7 @@ namespace gnubase::engine::dsp
 		static Biquad highShelf(double sampleRate, double frequency, double q, double gainDb);
 		static Biquad highPass(double sampleRate, double frequency, double q);
 		static Biquad lowPass(double sampleRate, double frequency, double q);
+		static Biquad bandPass(double sampleRate, double frequency, double q); // 0 dB at frequency
 		// First-order Butterworth sections: s / (s + 1) and 1 / (s + 1), bilinear with prewarping.
 		static Biquad highPass1(double sampleRate, double frequency);
 		static Biquad lowPass1(double sampleRate, double frequency);

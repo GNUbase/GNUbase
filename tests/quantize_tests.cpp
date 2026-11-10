@@ -728,7 +728,16 @@ TEST_CASE("quantize commands take a part's notes, several parts or the project's
 	}
 	SECTION("invalid targets and settings fail with a reason")
 	{
-		CHECK_THAT(reject(f.client, "quantize.apply", Json::object()), ContainsSubstring("part or parts"));
+		CHECK_THAT(reject(f.client, "quantize.apply", Json::object()),
+			ContainsSubstring("part or parts, or audio events or audioParts"));
+		CHECK_THAT(reject(f.client, "quantize.reset", Json::object()),
+			ContainsSubstring("part or parts, or audio events or audioParts"));
+		for (const char* command : {"quantize.ends", "quantize.lengths", "quantize.freeze"})
+		{
+			const std::string error = reject(f.client, command, Json::object());
+			CHECK_THAT(error, ContainsSubstring("give part or parts"));
+			CHECK(error.find("audio") == std::string::npos);
+		}
 		CHECK_THAT(reject(f.client, "quantize.apply", {{"part", first}, {"parts", {second}}}),
 			ContainsSubstring("part or parts"));
 		CHECK_THAT(reject(f.client, "quantize.apply", {{"part", first}, {"notes", {notes[0] + 1000}}}),

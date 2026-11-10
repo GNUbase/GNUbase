@@ -60,36 +60,58 @@ namespace
 			track =
 				app.call("track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track").at("id").get<uint64_t>();
 			const Json media = app.call("media.add", {{"path", file.u8string()}}).at("media");
-			const auto clip = app.call("clip.add", {{"media", media.at("id")}}).at("clip").at("id").get<uint64_t>();
-			const auto add = [&](int64_t position)
-			{
-				return app
-					.call("audioEvent.add",
-						{{"track", track}, {"clip", clip}, {"position", position}, {"offset", position},
-							{"length", g_second / 2}})
-					.at("event")
-					.at("id")
-					.get<uint64_t>();
-			};
-			first = add(0);
-			second = add(g_second);
+			clip = app.call("clip.add", {{"media", media.at("id")}}).at("clip").at("id").get<uint64_t>();
+			first = addEvent(0, 0);
+			second = addEvent(g_second, g_second);
 			part = app.call("event.toPart", {{"events", {first, second}}}).at("events").at(0).get<uint64_t>();
 			app.call("event.resize", {{"events", {part}}, {"edge", "end"}, {"delta", g_second / 2}});
 			REQUIRE(app.waitUntil(
 				[&] { return display.project().is_object() && display.project().at("audioParts").size() == 1; }));
 		}
 
-		// Open/Close Editor with the part selected (p. 692).
+		// Half a second of the clip from offset on.
+		uint64_t addEvent(int64_t position, int64_t offset)
+		{
+			return app
+				.call("audioEvent.add",
+					{{"track", track}, {"clip", clip}, {"position", position}, {"offset", offset},
+						{"length", g_second / 2}})
+				.at("event")
+				.at("id")
+				.get<uint64_t>();
+		}
+
+		// A second audio part, from 3 to 3.5 seconds, with the event third.
+		void addOtherPart()
+		{
+			third = addEvent(3 * g_second, 0);
+			other = app.call("event.toPart", {{"events", {third}}}).at("events").at(0).get<uint64_t>();
+			REQUIRE(app.waitUntil([&] { return display.project().at("audioParts").size() == 2; }));
+		}
+
 		void open()
 		{
-			display.select({part});
+			openParts({part});
+			settle();
+		}
+
+		// Open/Close Editor with the parts selected (p. 692).
+		void openParts(const std::vector<uint64_t>& parts)
+		{
+			display.select(parts);
 			app.keys().run("editor.openClose", Json::object(), app.main(), nullptr);
 			// Opening a window takes several seconds in a Debug build on a busy machine.
 			REQUIRE(app.waitUntil([&]
 				{ return app.appUi().editorWindow() != nullptr && app.appUi().editorWindow()->audioPartEditor(); },
 				std::chrono::seconds(30)));
 			window = app.appUi().editorWindowId();
-			settle();
+		}
+
+		// Only the other part in the part editing mode; waits until the part's events show that.
+		void editOtherPartOnly()
+		{
+			app.call("editor.set", {{"editor", "window"}, {"activePart", other}, {"editingMode", "activePart"}});
+			REQUIRE(app.waitUntil([&] { return has(eventSelector(first), "inactive"); }));
 		}
 
 		Json elements(const std::string& selector) { return app.ui().dom(window, selector, 0).at("elements"); }
@@ -281,6 +303,39 @@ namespace
 				}));
 		}
 
+		// Past the window's right edge, level with the first lane.
+		ui::Target outside()
+		{
+			return {"", 0,
+				ui::Point{static_cast<int>(std::lround(context().GetDimensions().x + 40.0)), pointOf(at(0.25, 0)).y}};
+		}
+
+		double shownX(uint64_t id) { return box(eventSelector(id)).at("x").get<double>(); }
+
+		// The middle of what the selector finds.
+		ui::Point middle(const std::string& selector)
+		{
+			const Json found = box(selector);
+			return {
+				static_cast<int>(std::lround(found.at("x").get<double>() + (found.at("width").get<double>() / 2.0))),
+				static_cast<int>(std::lround(found.at("y").get<double>() + (found.at("height").get<double>() / 2.0)))};
+		}
+
+		// A finger from start up by 80 px, in steps, and off the screen.
+		void pan(ui::Point start)
+		{
+			const auto touch = [&](int up)
+			{
+				return Rml::TouchList{
+					Rml::Touch{1, Rml::Vector2f(static_cast<float>(start.x), static_cast<float>(start.y - up))}};
+			};
+			context().ProcessTouchStart(touch(0), 0);
+			for (int up = 20; up <= 80; up += 20)
+				context().ProcessTouchMove(touch(up), 0);
+			context().ProcessTouchEnd(touch(80), 0);
+			app.shell().step(std::chrono::milliseconds(0));
+		}
+
 		// A point on the editor window's toolbar, above the audio part editor, at the x of a point of the display.
 		ui::Target toolbar(const ui::Target& below)
 		{
@@ -319,9 +374,12 @@ namespace
 		std::filesystem::path file = dir.path() / "sine.wav";
 		ui::WindowId window = 0;
 		uint64_t track = 0;
+		uint64_t clip = 0;
 		uint64_t first = 0;
 		uint64_t second = 0;
+		uint64_t third = 0; // addOtherPart()'s
 		uint64_t part = 0;
+		uint64_t other = 0; // addOtherPart()'s
 	};
 }
 
@@ -518,6 +576,20 @@ TEST_CASE("a view the engine answered before a click leaves the click's selectio
 	REQUIRE(f.app.waitUntil([&] { return f.selection().size() == 2; }));
 }
 
+TEST_CASE("the audio part editor shows a selection from the engine once a click's selection is answered", "[ui]")
+{
+	Fixture f;
+	f.open();
+	f.click(f.at(0.25, 0));
+	f.selects({f.first});
+	// Comes after the answer to the click's editor.set: results and events arrive in order.
+	f.app.call("editor.set", {{"editor", "window"}, {"eventSelection", {f.second}}});
+	f.selects({f.second});
+	CHECK(!f.has(eventSelector(f.first), "selected"));
+	f.app.call("editor.set", {{"editor", "window"}, {"eventSelection", Json::array()}});
+	f.selects({});
+}
+
 TEST_CASE("the split, glue, mute and erase tools edit the events in the part", "[ui]")
 {
 	Fixture f;
@@ -696,9 +768,7 @@ TEST_CASE("a gesture of the audio part editor ends when the button goes up outsi
 	Fixture f;
 	f.open();
 	const Json shown = f.box(".ape-display");
-	// Past the window's right edge, level with the first lane.
-	const ui::Target outside{"", 0,
-		ui::Point{static_cast<int>(std::lround(f.context().GetDimensions().x + 40.0)), pointOf(f.at(0.25, 0)).y}};
+	const ui::Target outside = f.outside();
 	REQUIRE(pointOf(outside).x > shown.at("x").get<double>() + shown.at("width").get<double>());
 
 	// A move released there moves the event to the time there, on the grid of sixteenths (an eighth of a second at
@@ -758,18 +828,149 @@ TEST_CASE("a finger pan over an empty spot of the audio part editor scrolls its 
 	f.open();
 	f.tool(tool);
 	const double top = f.box(".ape-lane[lane=\"0\"]").at("y").get<double>();
-	const ui::Point start = pointOf(f.at(1.75, 1));
-	const auto touch = [&](int up)
-	{
-		return Rml::TouchList{
-			Rml::Touch{1, Rml::Vector2f(static_cast<float>(start.x), static_cast<float>(start.y - up))}};
-	};
-	f.context().ProcessTouchStart(touch(0), 0);
-	for (int up = 20; up <= 80; up += 20)
-		f.context().ProcessTouchMove(touch(up), 0);
-	f.context().ProcessTouchEnd(touch(80), 0);
-	f.app.shell().step(std::chrono::milliseconds(0));
+	f.pan(pointOf(f.at(1.75, 1)));
 	REQUIRE(f.app.waitUntil([&] { return f.box(".ape-lane[lane=\"0\"]").at("y").get<double>() <= top - 60.0; }));
+}
+
+TEST_CASE("a finger pan over an event outside the part editing mode scrolls the audio part editor's lanes", "[ui]")
+{
+	Fixture f;
+	f.addOtherPart();
+	// An event far down: the lanes don't fit, and the display scrolls.
+	f.app.call("event.set", {{"events", {f.third}}, {"lane", 30}});
+	f.openParts({f.part, f.other});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".ape-event").size() == 3; }));
+	f.editOtherPartOnly();
+	const double top = f.box(".ape-lane[lane=\"0\"]").at("y").get<double>();
+	// With the object selection tool, the press there deselects, which draws no event again: the element under the
+	// finger stays the press's, and it mustn't be a drag element.
+	f.pan(f.middle(eventSelector(f.first)));
+	REQUIRE(f.app.waitUntil([&] { return f.box(".ape-lane[lane=\"0\"]").at("y").get<double>() <= top - 60.0; }));
+}
+
+TEST_CASE("a move of the audio part editor goes on when a command adds an event to the part during the drag", "[ui]")
+{
+	Fixture f;
+	f.open();
+	const size_t before = f.steps();
+	f.press(f.at(0.25, 0));
+	f.moveTo(f.at(0.77, 0));
+	REQUIRE(std::abs(f.shownX(f.first) - pointOf(f.at(0.5, 0)).x) <= 2.0);
+	// From MCP or Lua, with the button held: the events' elements change.
+	f.app.call("event.split", {{"events", {f.second}}, {"positions", {(g_second * 5) / 4}}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".ape-event").size() == 3; }));
+	CHECK(std::abs(f.shownX(f.first) - pointOf(f.at(0.5, 0)).x) <= 2.0);
+	// The drag's events still come, as the pressed event's element stayed.
+	f.moveTo(f.at(1.27, 0));
+	CHECK(std::abs(f.shownX(f.first) - pointOf(f.at(1.0, 0)).x) <= 2.0);
+	// And its end, where no element gets a mouseup.
+	const Json shown = f.box(".ape-display");
+	const ui::Target outside = f.outside();
+	f.moveTo(outside);
+	f.release();
+	REQUIRE(f.app.waitUntil([&] { return f.event(f.first).at("position") != 0; }));
+	const double there = (pointOf(outside).x - shown.at("x").get<double>()) / shown.at("width").get<double>() * 2.0;
+	CHECK(std::abs(f.event(f.first).at("position").get<double>() - ((there - 0.25) * g_second)) <= g_second / 16.0);
+	f.settle();
+	CHECK(f.steps() == before + 2); // the split and the move
+}
+
+TEST_CASE("a move of the audio part editor goes by the mouse's way when the display's range changes during it", "[ui]")
+{
+	Fixture f;
+	f.open();
+	const ui::Target from = f.at(0.25, 0);
+	f.press(from);
+	f.moveTo(f.at(0.77, 0));
+	// The other event out of the part, up to 3.5 seconds: the display reaches it, and shows the same seconds narrower.
+	f.app.call("event.move", {{"events", {f.second}}, {"delta", 2 * g_second}});
+	REQUIRE(f.app.waitUntil([&] { return f.has(eventSelector(f.second), "outside"); }));
+	// The mouse hasn't moved, but its way is more seconds now: 0.91, on the grid 0.875, where a release would take it.
+	CHECK(std::abs(f.shownX(f.first) - pointOf(f.at(0.875, 0, 3.5)).x) <= 2.0);
+	const double width = f.box(".ape-display").at("width").get<double>();
+	f.moveTo({"", 0, ui::Point{pointOf(from).x + static_cast<int>(std::lround(width / 3.5)), pointOf(from).y}});
+	f.release();
+	REQUIRE(f.app.waitUntil([&] { return f.event(f.first).at("position") != 0; }));
+	CHECK(f.event(f.first).at("position") == g_second);
+}
+
+TEST_CASE("a Ctrl drag of the audio part editor keeps its element in order and goes on with its event as it is", "[ui]")
+{
+	Fixture f;
+	f.open();
+	const int ctrl = Rml::Input::KM_CTRL;
+	f.press(f.at(1.25, 0), ctrl);
+	f.moveTo(f.at(1.25, 1), ctrl);
+	// The events before the pressed one are made again, in the project's order around its element.
+	f.app.call("event.split", {{"events", {f.first}}, {"positions", {g_second / 4}}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".ape-event").size() == 3; }));
+	std::vector<std::string> shown;
+	for (const Json& each : f.elements(".ape-event"))
+		shown.push_back(each.at("attributes").at("event").get<std::string>());
+	std::vector<std::string> project;
+	for (const Json& each : f.events())
+		project.push_back(each.at("id").dump());
+	CHECK(shown == project);
+	// A command takes the pressed event a lane down: the drag's one lane more goes from there.
+	f.app.call("event.set", {{"events", {f.second}}, {"lane", 1}});
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			const ui::AudioPartEditor* editor = f.audioPartEditor();
+			if (editor == nullptr)
+				return false;
+			const Json known = editor->project().value("audioEvents", Json::array());
+			return std::any_of(known.begin(), known.end(),
+				[&](const Json& each) { return each.at("id") == f.second && each.at("lane") == 1; });
+		}));
+	f.release(ctrl);
+	REQUIRE(f.app.waitUntil([&] { return f.event(f.second).at("lane") == 2; }));
+	CHECK(f.event(f.second).at("position") == g_second);
+	f.settle();
+}
+
+TEST_CASE("a move of the audio part editor ends without its effect when its event goes during the drag", "[ui]")
+{
+	const std::string how = GENERATE("removed", "out of the part editing mode");
+	CAPTURE(how);
+	const bool removed = how == "removed";
+	Fixture f;
+	if (removed)
+	{
+		f.open();
+	}
+	else
+	{
+		f.addOtherPart();
+		f.openParts({f.part, f.other});
+		REQUIRE(f.app.waitUntil([&] { return f.elements(".ape-event").size() == 3; }));
+	}
+	const double range = removed ? 2.0 : 3.5;
+	f.click(f.at(0.25, 0, range));
+	f.selects({f.first});
+	f.click(f.at(1.25, 0, range), 1, {"shift"});
+	f.selects({f.first, f.second});
+	const size_t before = f.steps();
+	f.press(f.at(0.25, 0, range));
+	f.moveTo(f.at(0.77, 0, range));
+	REQUIRE(std::abs(f.shownX(f.second) - pointOf(f.at(1.5, 0, range)).x) <= 2.0);
+
+	if (removed)
+	{
+		f.app.call("event.remove", {{"events", {f.first}}});
+		REQUIRE(f.app.waitUntil([&] { return f.elements(".ape-event").size() == 1; }));
+	}
+	else
+	{
+		f.editOtherPartOnly();
+	}
+	// The other selected event goes back where it is, and the mouse no longer takes it along.
+	REQUIRE(f.app.waitUntil([&] { return std::abs(f.shownX(f.second) - pointOf(f.at(1.0, 0, range)).x) <= 2.0; }));
+	f.moveTo(f.at(1.27, 0, range));
+	f.release();
+	CHECK(f.event(f.second).at("position") == g_second); // commands from the release come before this one
+	CHECK(std::abs(f.shownX(f.second) - pointOf(f.at(1.0, 0, range)).x) <= 2.0);
+	CHECK(f.steps() == before + (removed ? 1 : 0));
 }
 
 TEST_CASE("the audio part editor keeps showing a move while it renders during the drag", "[ui]")

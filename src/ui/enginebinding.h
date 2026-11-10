@@ -6,6 +6,7 @@
 #include <RmlUi/Core/Element.h>
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <deque>
 #include <functional>
@@ -102,6 +103,12 @@ namespace gnubase::ui
 		// queries a view keeps open.
 		size_t waiting(const std::string& command) const;
 
+		// Sends the steps that wait (sendStep) and hands on results and events, as update() does, until no command that
+		// isn't a query is out, including those that the dones send: e.g. so that what a user script ran through the
+		// UI is in the script's undo step (docs/features/scripts.md). Returns false if they are still out after the
+		// timeout.
+		bool settle(std::chrono::milliseconds timeout);
+
 		// Calls handler in update() with every event of that name while the subscription exists.
 		[[nodiscard]] Subscription on(std::string event, std::function<void(const engine::Event&)> handler);
 
@@ -184,6 +191,7 @@ namespace gnubase::ui
 		Subscription follow(std::function<void()> read);
 		void end(uint64_t id) noexcept;
 		// Each returns whether handlers took the message.
+		bool take(const engine::Message& message);
 		bool answer(const engine::Result& result);
 		bool dispatch(const engine::Event& event);
 		// Draws the element's window in the shell's step (Rml::Context::RequestNextUpdate).
