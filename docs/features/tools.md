@@ -42,8 +42,11 @@ project or undo.
   and without the transport (`audition.start`, `audition.stop`, [audition.md](audition.md)). In scrub mode the
   press and every move of the drag scrub the track to the mouse's position (`audition.scrub`), forwards or
   backwards at the mouse's speed, and move the project cursor along. At an audio event's edge, a drag in scrub mode
-  resizes the event as the object selection tool does (`event.resize`, the resize pointer there) and scrubs the
-  track along to the mouse (p. 268). On other tracks it does nothing yet.
+  resizes the event as the object selection tool does (`event.resize`, the resize pointer there) and scrubs what the
+  event plays at the edge the release gives it, snapped: its clip at that clip frame (`audition.scrub` with `clip`,
+  from the drag's `event.previewResize`), also over audio the event hides yet, and without moving the cursor (p. 268).
+  A click there without a drag does nothing more: no tool modifier of the object selection tool's clicks. On other
+  tracks it does nothing yet.
 - **Cross-hair cursor.** It shows with the tools that use it (object selection, range selection, draw, split, line),
   not with the others (p. 110).
 - **Selection range.** `range()` is the range: start and end in project samples and the tracks it covers by id, also
@@ -165,7 +168,8 @@ audio editor gets its toolbox when it comes. The Preferences dialog's Editing - 
   unmuting with clicks and a rectangle; zooming in, out, to a rectangle and back with a double click; drawing parts,
   snapped, by dragging and with a click, none on audio tracks or with the line tool; auditioning the audio lane's
   track on the dummy device while the mouse is pressed, nothing on a MIDI lane, scrubbing with a drag, and resizing an
-  audio event at its edge in scrub mode, with its pointer there; ranges by dragging, clicking and double clicking on events and gaps, with Shift, snapped and on
+  audio event at its edge in scrub mode, with its pointer there, the dummy device playing the clip's hidden audio
+  that an edge dragged outwards reveals, and Alt and Alt+Shift clicks there neither splitting nor locating; ranges by dragging, clicking and double clicking on events and gaps, with Shift, snapped and on
   every track, and the events they select when another tool takes over; the combined selection tools; the pointer
   per tool, at events' edges and in a combined lane's upper half, also when a tool is chosen while the mouse rests;
   the pointer with tool modifiers held, also when Alt goes down and up while the mouse rests, with both Alt keys and

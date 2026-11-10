@@ -277,11 +277,11 @@ namespace gnubase::ui
 					m_drag = edge < 0 ? Drag::ResizeStart : Drag::ResizeEnd;
 					m_resizeFrom = edge < 0 ? shown->start : shown->end;
 					m_resizeScrubs = true;
+					const AudioFades& fades = m_fades.at(shown->id);
+					scrubEdge(fades.clip, fades.offset, fades.length);
+					return true;
 				}
-				else
-				{
-					m_drag = Drag::Play;
-				}
+				m_drag = Drag::Play;
 				scrubAt(x);
 			}
 			return true;
@@ -304,7 +304,7 @@ namespace gnubase::ui
 		const std::optional<size_t> lane = visibleLaneAt(y);
 		const Shown* shown = eventAt(x, y);
 		if (toolAt(y) != Tool::Play || m_playMode != PlayMode::Scrub || !lane || m_laneTypes[*lane] != "audio" ||
-			shown == nullptr)
+			shown == nullptr || m_fades.count(shown->id) == 0)
 			return 0;
 		return edgeAt(*shown, x);
 	}
@@ -313,6 +313,12 @@ namespace gnubase::ui
 	{
 		m_binding.send("audition.scrub",
 			{{"track", m_auditioned}, {"position", std::max<int64_t>(0, samples(m_view.start + (x * m_view.scale)))}});
+	}
+
+	void EventDisplay::scrubEdge(uint64_t clip, int64_t offset, int64_t length)
+	{
+		m_binding.send(
+			"audition.scrub", {{"clip", clip}, {"position", m_drag == Drag::ResizeStart ? offset : offset + length}});
 	}
 
 	void EventDisplay::toolMove(double x, double y)

@@ -768,8 +768,6 @@ namespace gnubase::ui
 			m_pressed = modifiersOf(event);
 			m_resizeDx = dx;
 			previewResize(resizeParameters(dx, m_drag));
-			if (m_resizeScrubs)
-				scrubAt(m_pressX + dx);
 			return;
 		}
 		if (m_drag != Drag::Events)
@@ -837,7 +835,16 @@ namespace gnubase::ui
 			return;
 		m_pressed = modifiersOf(event); // what is held now decides, e.g. whether a drag copies
 		if (std::exchange(m_resizeScrubs, false))
+		{
 			m_binding.send("audition.stop", Json::object());
+			// A click of the play tool: no tool modifier's click of the object selection tool (Split Event, Set
+			// Cursor Position).
+			if (!m_dragMoved)
+			{
+				m_drag = Drag::None;
+				return;
+			}
+		}
 		if (drag == Drag::Automation)
 		{
 			automationUp(dpFrom(*m_lanes, event.GetParameter<float>("mouse_x", 0.0F)),
@@ -998,6 +1005,13 @@ namespace gnubase::ui
 					// One that fails, e.g. for a locked event, shows the events as they are, as the release leaves
 					// them.
 					m_resizePreview = result.ok() ? result.value : Json();
+					// The play tool's resize in scrub mode scrubs what the event plays at the edge the release
+					// gives it (reference manual p. 268).
+					if (m_resizeScrubs && result.ok())
+						for (const Json& event : result.value.at("audioEvents"))
+							if (event.at("id") == m_dragEvent)
+								scrubEdge(event.at("clip").get<uint64_t>(), event.at("offset").get<int64_t>(),
+									event.at("length").get<int64_t>());
 					showProject();
 				}
 				askResizePreview();

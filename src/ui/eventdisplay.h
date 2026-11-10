@@ -579,6 +579,9 @@ namespace gnubase::ui
 		int scrubEdgeAt(double x, double y) const;
 		// Sends audition.scrub for the auditioned track at x dp across.
 		void scrubAt(double x);
+		// The play tool's resize in scrub mode: scrubs the clip to the frame the audio event, at offset and length
+		// clip frames, plays at the dragged edge.
+		void scrubEdge(uint64_t clip, int64_t offset, int64_t length);
 
 		// Fades and crossfades (eventfades.cpp): an audio event's fades and crossfade as project.get has them, its
 		// media file's sample rate, its offset and length in clip frames, and its volume and volume curve.
