@@ -829,6 +829,19 @@ meter .meter-peak
 	white-space: nowrap;
 }
 
+/* The field that renames a marker on the marker track, over its label. */
+.event-display .marker-name-field
+{
+	display: none;
+}
+
+.event-display .marker-name-field.shown
+{
+	display: block;
+	position: absolute;
+	width: 120dp;
+}
+
 /* The tempo track (docs/features/tempo-track.md): the tempo curve over the tempo track's lane, or filling the tempo
    track editor's curve area, with a point per tempo event. Code places the curve on its lane and the points where their
    events are. */
@@ -1424,6 +1437,14 @@ meter .meter-peak
 .track-list .track-controls select.tempo-type
 {
 	width: 60dp;
+}
+
+/* The marker track's Locate, Cycle and Zoom menus (docs/features/markers.md): three in the marker tracks' default
+   controls area of 140dp, under the buttons. */
+.track-list .track-controls select.marker-menu
+{
+	width: 44dp;
+	padding: 0 2dp;
 }
 
 /* The chord track's Select Track for Auditioning (docs/features/chord-track.md). */

@@ -464,10 +464,24 @@ namespace gnubase::ui
 
 	void KeyEditor::setTimeRange(std::optional<std::pair<int64_t, int64_t>> range)
 	{
+		// The in-place editor's first show() comes before its layout: its first scroll to the notes waits for one.
+		scrollToNotes();
 		if (range == m_range)
 			return;
 		m_range = range;
-		show(Json(m_project), Json(m_view));
+		if (!m_range)
+		{
+			show(Json(m_project), Json(m_view)); // the parts' range again
+			return;
+		}
+		// The in-place editor's range changes while the project window scrolls or zooms: the notes move, nothing is
+		// read or built again.
+		m_from = m_range->first;
+		m_to = std::max(m_range->second, m_from + 1);
+		placeItems();
+		m_lanes->setRange(m_from, m_to);
+		if (const Rml::Element* root = m_root.get(); root != nullptr && root->GetContext() != nullptr)
+			root->GetContext()->RequestNextUpdate(0);
 	}
 
 	bool KeyEditor::scrollToPitch(int pitch)
@@ -535,12 +549,6 @@ namespace gnubase::ui
 		if (root == nullptr)
 			return;
 		setInner(root->QuerySelector(".editor-parts"), partsRml());
-		Rml::ElementList shown;
-		root->QuerySelectorAll(shown, ".editor-part");
-		for (Rml::Element* element : shown)
-			for (const Part& part : m_parts)
-				if (part.id == idAttribute(*element, "part"))
-					place(*element, part.start, part.end - part.start, -1);
 
 		// The selection only changes classes, so that a press that selects keeps the element under the mouse.
 		std::string rml;
@@ -558,10 +566,8 @@ namespace gnubase::ui
 		if (notes != nullptr)
 			for (int i = 0; i < notes->GetNumChildren(); ++i)
 				if (const Note* found = noteOf(notes->GetChild(i)))
-				{
-					place(*notes->GetChild(i), found->start, found->length, found->pitch);
 					setClass(notes->GetChild(i), "selected", selected(*found));
-				}
+		placeItems();
 
 		if (m_drum)
 			renderDrumMap();
@@ -602,30 +608,50 @@ namespace gnubase::ui
 				velocity->SetAttribute("value", value);
 		}
 		if (Rml::Element* cursor = root->QuerySelector(".key-editor-step-cursor"))
-		{
-			const bool on = m_view.value("stepInput", false);
-			setClass(cursor, "off", !on);
-			if (on)
-				place(*cursor, m_view.value("stepPosition", int64_t{0}), 0, -1);
-		}
+			setClass(cursor, "off", !m_view.value("stepInput", false));
 		renderInfo();
-		if (!m_scrolled)
-		{
-			int low = 60;
-			int high = 60;
-			if (!m_notes.empty())
-			{
-				low = high = m_notes.front().pitch;
-				for (const Note& note : m_notes)
-				{
-					low = std::min(low, note.pitch);
-					high = std::max(high, note.pitch);
-				}
-			}
-			m_scrolled = scrollToPitch((low + high) / 2);
-		}
+		scrollToNotes();
 		if (Rml::Context* context = root->GetContext())
 			context->RequestNextUpdate(0);
+	}
+
+	void KeyEditor::scrollToNotes()
+	{
+		if (m_scrolled)
+			return;
+		int low = 60;
+		int high = 60;
+		if (!m_notes.empty())
+		{
+			low = high = m_notes.front().pitch;
+			for (const Note& note : m_notes)
+			{
+				low = std::min(low, note.pitch);
+				high = std::max(high, note.pitch);
+			}
+		}
+		m_scrolled = scrollToPitch((low + high) / 2);
+	}
+
+	void KeyEditor::placeItems()
+	{
+		Rml::Element* root = m_root.get();
+		if (root == nullptr)
+			return;
+		Rml::ElementList shown;
+		root->QuerySelectorAll(shown, ".editor-part");
+		for (Rml::Element* element : shown)
+			for (const Part& part : m_parts)
+				if (part.id == idAttribute(*element, "part"))
+					place(*element, part.start, part.end - part.start, -1);
+		// The notes' elements are in m_notes' order (render).
+		const Rml::Element* notes = root->QuerySelector(".key-editor-notes");
+		if (notes != nullptr && static_cast<size_t>(notes->GetNumChildren()) == m_notes.size())
+			for (size_t i = 0; i < m_notes.size(); ++i)
+				place(*notes->GetChild(static_cast<int>(i)), m_notes[i].start, m_notes[i].length, m_notes[i].pitch);
+		if (Rml::Element* cursor = root->QuerySelector(".key-editor-step-cursor");
+			cursor != nullptr && m_view.value("stepInput", false))
+			place(*cursor, m_view.value("stepPosition", int64_t{0}), 0, -1);
 	}
 
 	// The info line (p. 1199): the first selected note's start, end and length in bars and beats, pitch, velocities

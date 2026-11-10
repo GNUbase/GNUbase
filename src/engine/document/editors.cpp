@@ -34,9 +34,9 @@ namespace gnubase::engine
 		constexpr const char* g_inPlace = "inPlace:";
 		// The part editing modes (p. 1143): what selecting and editing reach.
 		constexpr std::array<const char*, 3> g_editingModes = {"allParts", "activePart", "activeTrack"};
-		// What an editor shows its parts in: MIDI parts the key editor (#127), the list editor (#130) or the drum
-		// editor (#129), audio parts the audio part editor (#146).
-		constexpr std::array<const char*, 4> g_contents = {"key", "list", "drum", "audioPart"};
+		// What an editor shows its parts in: MIDI parts the key editor (#127), the list editor (#130), the drum
+		// editor (#129) or the pattern editor (#181), audio parts the audio part editor (#146).
+		constexpr std::array<const char*, 5> g_contents = {"key", "list", "drum", "pattern", "audioPart"};
 
 		struct EditorView
 		{
@@ -458,7 +458,8 @@ namespace gnubase::engine
 	void registerEditorCommands(ProjectModel& model, Engine& engine)
 	{
 		auto views = std::make_shared<Views>();
-		const Json editorSchema = {{"type", "string"}};
+		// The names, so that MCP clients and Lua see them: lower, window or inPlace:<track> (#131).
+		const Json editorSchema = {{"type", "string"}, {"pattern", "^(lower|window|inPlace:[0-9]+)$"}};
 		const Json modeSchema = {
 			{"type", "string"}, {"enum", std::vector<std::string>(g_editingModes.begin(), g_editingModes.end())}};
 		const Json idsSchema = {{"type", "array"}, {"items", {{"type", "integer"}}}};
@@ -518,8 +519,9 @@ namespace gnubase::engine
 			"a note value such as 1/16, 1/8T or 1/4., link for the quantize grid's (quantize.set), or drumMap for the "
 			"snap of the note's sound in its track's drum map (drumMap.add), without one the quantize grid's; notes "
 			"played into a track with a drum map take the pitch of the sound whose iNote they are. content: what "
-			"shows the parts, key (the key editor), list (the list editor, pp. 1243-1258) or drum (the drum editor, "
-			"pp. 1221-1242); controllerSelection, the "
+			"shows the parts, key (the key editor), list (the list editor, pp. 1243-1258), drum (the drum editor, "
+			"pp. 1221-1242) or pattern (the pattern editor, pp. 895-937: the active part's pattern); "
+			"controllerSelection, the "
 			"list editor's selected controller events, each {part, controller}, of the editable parts. Audio parts "
 			"show in the audio part editor (content audioPart, pp. 692-702), whose eventSelection is the selected "
 			"audio events of the editable parts. The controller lanes' (pp. "
@@ -561,9 +563,10 @@ namespace gnubase::engine
 			{"editor.open", 1,
 				"Opens an editor with MIDI parts or audio parts, such as the ones selected in the project window, or "
 				"shows those parts in it if it is open. activePart becomes the part active for editing, by default "
-				"the first. content shows MIDI parts in the key editor, the list editor or the drum editor; an open "
-				"editor keeps its content unless it is given, a closed one opens with the drum editor if the first "
-				"part's track has a drum map, else with the key editor. Audio parts open in the audio "
+				"the first. content shows MIDI parts in the key editor, the list editor, the drum editor or the "
+				"pattern editor; an open editor keeps its content unless it is given, a closed one opens with the "
+				"pattern editor if the first part is a pattern event (midiPart.add pattern), else with the drum "
+				"editor if its track has a drum map, else with the key editor. Audio parts open in the audio "
 				"part editor (audioPart). Emits editor.changed. " +
 					viewText,
 				openSchema, viewSchema, false},
@@ -586,6 +589,9 @@ namespace gnubase::engine
 					view.content = parameters.at("content").get<std::string>();
 				else if (project.audioParts.count(view.parts.front()) != 0)
 					view.content = "audioPart";
+				else if (const auto first = project.midiParts.find(view.parts.front());
+					opens && first != project.midiParts.end() && first->second.pattern != 0)
+					view.content = "pattern";
 				else if (opens && midi::drumMapOf(project, trackOf(project, view.parts.front())) != nullptr)
 					view.content = "drum"; // Use Drum Editor when Drum Map is assigned (p. 1221)
 				else if (showsAudio(view))

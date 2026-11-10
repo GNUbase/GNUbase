@@ -179,3 +179,55 @@ gnubase.ui.scripts()
 	ui.command{command = "script.written"}
 	test.equal(trackCount(), 2)
 end)
+
+test.case("an engine command that a script runs as a key command is in the script's undo step", function()
+	write("engine-key", 'gnubase.ui.command{command = "track.add", parameters = {type = "audio"}}\n' ..
+		'gnubase.track.add{type = "midi"}')
+	local steps = #gnubase.history.get().steps
+	ui.command{command = "script.engine-key"}
+	test.equal(trackCount(), 2)
+	local history = gnubase.history.get()
+	test.equal(#history.steps, steps + 1)
+	test.equal(history.steps[#history.steps].action, "engine-key")
+end)
+
+test.case("scripts and console lines share globals of their own, apart from the documents'", function()
+	write("globals", "ScriptConsole = nil\nfromScript = 7")
+	ui.command{command = "script.globals"}
+	test.ok(ScriptConsole ~= nil)
+	test.equal(fromScript, nil)
+
+	local window = openConsole()
+	ui.click{window = window, selector = "#script-prompt"}
+	ui.text{window = window, text = 'print("from the script: " .. fromScript)'}
+	ui.key{window = window, keys = "Enter"}
+	ui.wait{window = window, selector = "#script-output", text = "from the script: 7"}
+	ui.click{window = window, selector = "#script-reload"} -- the console's own Lua still works
+	ui.wait{window = window, selector = row("globals"), text = "globals"}
+end)
+
+test.case("a script that adds a script and finds the scripts again keeps the other scripts' keys", function()
+	write("three-tracks", 'for _ = 1, 3 do gnubase.track.add{type = "audio"} end')
+	local path = folder .. "/added.lua"
+	test.cleanup(function()
+		os.remove(path)
+		ui.scripts()
+	end)
+	write("adder", string.format([[
+local file = assert(io.open(%q, "w"))
+file:write('gnubase.track.add{type = "midi"}')
+file:close()
+gnubase.ui.scripts()
+gnubase.ui.key{keys = "Mod+Shift+K"}
+]], path))
+	gnubase.settings.set{key = "ui.keyCommands", value = {{command = "script.three-tracks", keys = {"Mod+Shift+K"}}}}
+	test.cleanup(function() gnubase.settings.reset{key = "ui.keyCommands"} end)
+	step()
+
+	ui.command{command = "script.adder"}
+	test.equal(trackCount(), 3)
+	local history = gnubase.history.get()
+	test.equal(history.steps[#history.steps].action, "adder")
+	ui.command{command = "script.added"} -- the new script's command, at once
+	test.equal(trackCount(), 4)
+end)

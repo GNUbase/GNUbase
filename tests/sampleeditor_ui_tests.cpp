@@ -252,6 +252,12 @@ TEST_CASE("the range selection tool and the Range section select ranges of the c
 	f.click(of("#se-locate"));
 	REQUIRE(f.app.waitUntil([&] { return f.app.call("transport.get").at("position") == g_second; }));
 
+	// Create Sampler Track plays the selection range (p. 711).
+	f.click(of("#se-create-sampler"));
+	REQUIRE(f.app.waitUntil([&] { return f.lastParameters("sampler.create").is_object(); }));
+	CHECK(f.lastParameters("sampler.create") == Json{{"event", f.event}, {"start", 1000}, {"end", 5000}});
+	REQUIRE(f.app.waitUntil([&] { return f.app.call("project.get").at("tracks").size() == 2; }));
+
 	// Loop Selection sets the locators to it and cycles playback from its start (p. 619).
 	f.app.call("sampleEditor.set", {{"selectionStart", 2000}, {"selectionEnd", 3000}});
 	REQUIRE(f.app.waitUntil([&] { return f.text(".se-info [field=selectionStart]") == "2000"; }));

@@ -51,6 +51,27 @@ and the files the import wrote are removed. Undo leaves written files on disk, a
 ## MIDI files
 
 `midiFile.import` imports standard MIDI files of type 0, 1 and 2, with tempo and markers ([midi-files.md](midi-files.md)).
+The options of the reference's MIDI file import (reference manual pp. 364-365, #478) are its parameters:
+
+- **position** (sample frames from the project start, as for `audioFile.import`; default 0) is where the file starts.
+  The project's tempo and time signatures before it stay; from there on the file's replace them unless `tempo` is
+  false, starting at 120 BPM in 4/4 unless the file sets its own, and a time signature moves to the next bar start,
+  as every one does. Without `tempo` the file plays in the project's tempo from the position.
+- **dissolve** false keeps a type 0 file in one track with all its MIDI channels (Auto Dissolve Format 0 off).
+- **singlePart** puts the whole file into one part on one track (Import Dropped File as Single Part): **track**, a
+  MIDI or instrument track of the project, or a new track named after the file. On a linear track of the project
+  the part's start and length are in samples at the project's tempo, as on every linear track; its notes stay in ticks.
+- **extractPatch** and **extractVolumePan** (Extract First Patch, Extract First Volume/Pan) make each MIDI track's
+  first program change, with its bank, and its first MIDI volume (CC 7) and pan (CC 10) the track's `program`,
+  `bank`, `midiVolume` and `midiPan` (`channel.set`) instead of events in its part. Only those on MIDI channel 1: a
+  MIDI track's settings go out on channel 1, so an event of another channel stays in the part, where it plays on
+  its own channel. Instrument tracks have no such settings, so their events stay. A track that has nothing left
+  after that keeps its settings but gets no part.
+- **automation** (Import Controller as Automation Tracks) moves the continuous controllers into automation lanes of
+  their tracks with `midi.extractAutomation` ([midi-functions.md](midi-functions.md)), after the extraction above.
+- `trackType` (Destination: MIDI or instrument tracks) and `markers` (Import Markers) were there before.
+
+All of it is the one undo step of the import.
 
 ## In the project window
 
@@ -78,7 +99,9 @@ and the files the import wrote are removed. Undo leaves written files on disk, a
   under the mouse if it is an audio track, on a take lane of a track whose lanes show on that lane
   ([comping.md](comping.md)), else to new tracks, at the time under the mouse (dropped outside the lanes:
   at the project cursor). Agents and UI tests drop files with `ui_drop` (`ui::Automation::drop`).
-- MIDI files (`.mid`, `.midi`, `.smf`) are imported at once with `midiFile.import`'s defaults. Audio files open the
+- MIDI files (`.mid`, `.midi`, `.smf`) are imported at once, with the MIDI import preferences below, where they are
+  dropped; with Import Dropped File as Single Part into one part, on the MIDI or instrument track of the lane under
+  the mouse, or on a new track elsewhere. Audio files open the
   **Import Options** dialog (`resources/ui/import-options.rml`): Copy Files to Project Folder, Convert to Project
   Sample Rate, Split Channels and Import Files on One Track. The first three are disabled while the project has no
   file (`project.location`), the last for a single file and for files dropped on a track, which all go on it. Split
@@ -102,18 +125,43 @@ opens:
   dialog only remembered its choices while GNUbase ran.
 - **Do not ask again** in the dialog sets `editing.onImportAudio` to `useSettings` after keeping the dialog's
   choices, so the next imports run without it. `settings.set` or `settings.reset` of `editing.onImportAudio` brings
-  it back; the preferences dialog (#162) will show the settings on its Editing > Audio page.
+  it back, as does Open Options Dialog on the preferences' Editing > Audio page (below).
+- The preferences dialog's **Editing > Audio** page ([preferences.md](preferences.md)) shows On Import Audio Files
+  and, under On Import Audio Files Settings (p. 359), Copy Files to Project Folder, Convert to Project Sample Rate,
+  Split Channels and Name Format, labelled and listed as in the Import Options dialog. Import Files on One Track
+  isn't there, as it isn't among the manual's preferences; the dialog alone changes it.
 
 The event display reads the settings with `settings.list` for each import, so a change through MCP or Lua applies to
 the next import.
 
+## MIDI file import
+
+- **File > Import > MIDI File...** (`file.importMidi`) asks first whether to create a new project for the file
+  (`resources/ui/import-midi.rml`, reference manual p. 365): Yes and No open the OS's file dialog
+  (`gnubase.ui.importMidi` with `newProject`, `app::AppUi::chooseMidiImport`); Cancel imports nothing. Yes then
+  starts a new empty project, after the unsaved changes question if the project has changes
+  (`ui::ProjectFiles::newProject`, [project-files.md](project-files.md)), and imports the file into it with its
+  tempo; No imports it into the open project. The file goes to the project start, or with Import to Left Locator to
+  the left locator, and onto new tracks: the selected track takes no MIDI file.
+- **The MIDI import preferences** (MIDI > MIDI File, reference manual pp. 1611-1612) are user settings that the
+  event display reads with `settings.list` for every MIDI import, menu or drop: `midi.importExtractPatch` and
+  `midi.importExtractVolumePan` (on by default), `midi.importAutomation`, `midi.importToLeftLocator` (File > Import
+  only: a dropped file goes where it is dropped), `midi.importMarkers` (on), `midi.importSinglePart` (dropped files
+  only, as the manual says), `midi.importIgnoreTempo` (Ignore Master Track Events on Merge: into the open project
+  only, as a new project always takes the file's tempo), `midi.importDissolveFormat0` (on) and
+  `midi.importDestination` (`midi` or `instrument`). The manual doesn't say which are on by default; GNUbase's
+  defaults keep everything the file holds and its tempo. The preferences dialog shows them on its MIDI > MIDI File
+  page ([preferences.md](preferences.md)).
+
 ## Not yet
 
-The Editing > Audio page of the preferences dialog (#162), which shows the import preferences. The MIDI file import
-options (reference manual pp. 364-365), creating a new project for a MIDI file, import of
-audio CDs, audio from video and REX files. New tracks below the selected track (#448). Converting as a job: files are
-converted on the command thread, which waits for a long MP3 file (as for `media.convert`). Removing the files an
-unsaved project made (recordings and converted imports) when it is closed without saving.
+Of the MIDI file import options: Convert RPN/NRPN to Single Events, which needs RPN and NRPN events of their own (the
+project holds them as the control changes they are made of), Import Karaoke Lyrics as Text, which needs lyric and text
+events, and the Destination that loads a multi-timbral instrument per channel, which needs plugin instruments; the
+export options of the MIDI File page. Import of audio CDs, audio from video and REX files. New tracks below the
+selected track (#448). Converting as a job: files are converted on the command thread, which waits for a long MP3 file
+(as for `media.convert`). Removing the files an unsaved project made (recordings and converted imports) when it is
+closed without saving.
 
 ## Checks
 
@@ -134,7 +182,21 @@ answered as the user would, onto the selected musical audio track (the first fil
 One Track, the first of several selected tracks, one inside a folded folder), onto new tracks with no track or a MIDI
 track first in the selection, and with Split Channels a stereo file onto new tracks and a mono file onto the selected
 track, each one undo step; audio files dropped on an audio track's lane, one and two of them, and MIDI files of type 0
-and 1 dropped below the tracks. For the import preferences: Use Settings imports without the dialog with the stored
+and 1 dropped below the tracks.
+`tests/midifileimport_tests.cpp` imports MIDI files with each option of `midiFile.import`: at a position with and
+without tempo (the project's tempo before it, the file's after, its signature at the next bar and its markers moved
+along), a type 0 file kept in one track, the whole file in one part on a new track and on an instrument track at a
+position and on a linear MIDI track in samples, refusing an audio track or `track` without `singlePart`, the first
+patch and volume and pan of channel 1 in a MIDI track's settings while other channels' and later events stay, none on
+instrument tracks, a track of nothing but those kept without a part, and controllers
+in automation lanes with the sustain pedal left in the part, in one undo step. `tests/fileimport_tests.cpp` runs
+File > Import > MIDI File: Cancel, No at the left locator keeping the project's tempo with Ignore Master Track
+Events on Merge, and Yes into a new project after the unsaved changes question, with the file's tempo; and drops
+MIDI files with the default settings (the part at the drop's bar, the first patch extracted) and as a single part on
+the MIDI track dropped on. `tests/preferences_tests.cpp` checks every preference of the MIDI File page with the
+others. For the import preferences: Use Settings imports without the dialog with the stored
 options (on one track in an unsaved project; split with a name format and copied in a saved one), the dialog starts
 from the settings and keeps its choices in them, Do not ask again skips the dialog next time and after a restart
-until the setting is reset, and each Name Format chosen in the dialog names the split files.
+until the setting is reset, and each Name Format chosen in the dialog names the split files. The preferences'
+Editing > Audio page shows the settings, Use Settings imports with what it sets (split as its Name Format says, not
+copied), and its Open Options Dialog brings the dialog back, starting from the same settings.

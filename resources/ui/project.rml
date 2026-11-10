@@ -105,7 +105,7 @@
 	<!-- The toolbar's sections, which its setup pane #toolbar-setup shows, hides and orders (reference manual p. 1575). -->
 	<div id="toolbar" class="toolbar" strip="toolbar" sections="toolbar" contextmenu="toolbar-setup">
 		<div class="toolbar-section" section="tools" label="Tool Buttons">
-			<button id="combine-selection-tools" type="toggle" class="icon-only" title="Combine Selection Tools"><svg class="icon" src="../icons/tool-pointer.svg"/></button>
+			<button id="combine-selection-tools" type="toggle" class="icon-only" title="Combine Selection Tools"><svg class="icon" src="../icons/tool-combine-selection.svg"/></button>
 			<button tool="objectSelection" tool-menu="object-selection-menu" class="icon-only" title="Object Selection"><svg class="icon" src="../icons/tool-pointer.svg"/></button>
 			<button tool="rangeSelection" class="icon-only" title="Range Selection"><svg class="icon" src="../icons/tool-range.svg"/></button>
 			<button tool="comp" class="icon-only" title="Comp"><svg class="icon" src="../icons/tool-comp.svg"/></button>
@@ -331,6 +331,10 @@
 		<!-- Drum maps (docs/features/drum-editor.md) -->
 		<menuitem command="drumMap.load">Load Drum Map...</menuitem>
 		<menuitem command="drumMap.save">Save Drum Map...</menuitem>
+		<!-- The pattern editor (docs/features/pattern-editor.md) -->
+		<menuitem command="editor.openPattern">Open Pattern Editor</menuitem>
+		<menuitem command="pattern.loadPreset">Load Pattern Preset...</menuitem>
+		<menuitem command="pattern.savePreset">Save Pattern Preset...</menuitem>
 		<menuseparator/>
 		<!-- docs/features/key-commands.md: the macros, which app::AppUi fills in -->
 		<menuitem id="macros-submenu">Macros
@@ -461,6 +465,8 @@
 		</menuitem>
 		<menuitem command="audio.spectrumAnalyzer">Spectrum Analyzer</menuitem>
 		<menuitem command="audio.statistics">Statistics</menuitem>
+		<!-- Sampler tracks (reference manual p. 711, docs/features/sampler-track.md) -->
+		<menuitem command="audio.createSamplerTrack">Create Sampler Track</menuitem>
 		<!-- Warping (reference manual pp. 657-658, docs/features/warp.md) -->
 		<menuitem id="audio-realtime-submenu">Realtime Processing
 			<menu>
@@ -550,6 +556,14 @@
 				<menuitem command="settings.set" parameters='{"key": "ui.folderData", "value": "always"}'>Always Show Data</menuitem>
 				<menuitem command="settings.set" parameters='{"key": "ui.folderData", "value": "never"}'>Never Show Data</menuitem>
 				<menuitem command="settings.set" parameters='{"key": "ui.folderData", "value": "hideWhenExpanded"}'>Hide Data When Expanded</menuitem>
+			</menu>
+		</menuitem>
+		<!-- Marker tracks (reference manual p. 425, docs/features/markers.md) -->
+		<menuitem id="marker-lines-submenu">Show Marker Lines
+			<menu>
+				<menuitem id="marker-lines-active" command="settings.set" parameters='{"key": "ui.markerLines", "value": "active"}'>Active Marker Track</menuitem>
+				<menuitem id="marker-lines-all" command="settings.set" parameters='{"key": "ui.markerLines", "value": "all"}'>All Marker Tracks</menuitem>
+				<menuitem id="marker-lines-off" command="settings.set" parameters='{"key": "ui.markerLines", "value": "off"}'>Off</menuitem>
 			</menu>
 		</menuitem>
 		<!-- The transpose track (reference manual p. 416, docs/features/transpose.md) -->
