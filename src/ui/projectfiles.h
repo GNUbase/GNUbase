@@ -52,6 +52,9 @@ namespace gnubase::ui
 		// Opens the start screen in the window, modal: Create Empty Project, the templates, the recent projects and
 		// Open Other. File > New Project opens it, and the app at its start.
 		void openStartScreen(Window& window);
+		// Starts a new empty project unless the user wants to keep unsaved changes, asking in the window, then runs
+		// then (File > Import > MIDI File into a new project, #478). A failure shows its error instead.
+		void newProject(Window& window, std::function<void()> then);
 
 	private:
 		using Closed = std::function<void(Rml::ElementDocument& dialog, const std::string& result)>;

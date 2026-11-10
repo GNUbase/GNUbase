@@ -80,6 +80,8 @@ add_library(gnubase-ui STATIC
 	mixer.h
 	onscreenkeyboard.cpp
 	onscreenkeyboard.h
+	patterneditor.cpp
+	patterneditor.h
 	poolpanel.cpp
 	poolpanel.h
 	popupwidgets.cpp

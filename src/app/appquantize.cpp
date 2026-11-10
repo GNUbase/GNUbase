@@ -106,10 +106,9 @@ namespace gnubase::app
 	AppUi::QuantizeTarget AppUi::quantizeTarget(ui::Window& window, Rml::Element* zone) const
 	{
 		// An editor's selected notes, or with selected ones required none, every note of the parts it edits.
-		const auto ofEditor = [this](const std::string& editor, bool selected)
+		const auto ofView = [](const Json& view, bool selected)
 		{
 			QuantizeTarget target;
-			const Json view = m_editorViews.value(editor, Json::object());
 			// The audio part editor's parts have no notes to quantize.
 			if (!view.value("open", false) || view.value("content", std::string()) == "audioPart")
 				return target;
@@ -124,6 +123,15 @@ namespace gnubase::app
 			target.insertVelocity = view.value("insertVelocity", target.insertVelocity);
 			return target;
 		};
+		const auto ofEditor = [this, &ofView](const std::string& editor, bool selected)
+		{ return ofView(m_editorViews.value(editor, Json::object()), selected); };
+		// From an in-place editor (#131): its notes, never the project window's selected parts under it.
+		if (zone != nullptr && zone->GetAttribute<Rml::String>("focuszone", "") == "inPlace")
+		{
+			const Json* view =
+				m_inPlace ? m_inPlace->view(std::stoull(zone->GetAttribute<Rml::String>("track", "0"))) : nullptr;
+			return view != nullptr ? ofView(*view, false) : QuantizeTarget{};
+		}
 		// From an editor: its window, or the lower zone while the zone shows the Editor tab.
 		if (m_editor.window != 0 && window.id() == m_editor.window)
 			return ofEditor("window", false);

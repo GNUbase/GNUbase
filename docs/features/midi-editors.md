@@ -15,7 +15,7 @@ modified and aren't saved, and a new or loaded project closes the editors.
 
 | Command | What it does | Reference |
 |---|---|---|
-| `editor.get` | The view: `open`, `parts`, `activePart`, `activeTrack`, `editingMode`, `editable`, `keepContents`, `globalTracks`, `content` (`key`, `list` ([list-editor.md](list-editor.md)), `drum` ([drum-editor.md](drum-editor.md)) or `audioPart`), the key editor's selection and step and MIDI input ([key-editor.md](key-editor.md)), `controllerSelection`, the selected controller events of the list editor and the controller lanes ([controller-lanes.md](controller-lanes.md)), and the audio part editor's `eventSelection` ([audio-part-editor.md](audio-part-editor.md)) | |
+| `editor.get` | The view: `open`, `parts`, `activePart`, `activeTrack`, `editingMode`, `editable`, `keepContents`, `globalTracks`, `content` (`key`, `list` ([list-editor.md](list-editor.md)), `drum` ([drum-editor.md](drum-editor.md)), `pattern` ([pattern-editor.md](pattern-editor.md)) or `audioPart`), the key editor's selection and step and MIDI input ([key-editor.md](key-editor.md)), `controllerSelection`, the selected controller events of the list editor and the controller lanes ([controller-lanes.md](controller-lanes.md)), and the audio part editor's `eventSelection` ([audio-part-editor.md](audio-part-editor.md)) | |
 | `editor.open` | Opens the editor with MIDI parts or audio parts, such as those selected in the project window; `activePart`, by default the first | pp. 692, 1189 |
 | `editor.set` | Changes an open editor's parts and active part or track, and any editor's editing mode, Keep Editor Contents and global tracks | pp. 1142-1156 |
 | `editor.close` | Closes it: no parts, Keep Editor Contents off | p. 1153 |
@@ -51,6 +51,7 @@ sends `editor.*` commands.
                                     .editable; a click activates it
   .list-editor                      instead, while the view's content is list: the list editor (list-editor.md)
   .key-editor.drum-editor           instead, while the view's content is drum: the drum editor (drum-editor.md)
+  .pattern-editor                   instead, while the view's content is pattern: the pattern editor (pattern-editor.md)
 .editor-visibility                  an .editor-visibility-track[track] per MIDI or instrument track or folder with them;
                                     .active for the active track
   button.editor-visibility-check    .checked while all its parts show, .partial while some do

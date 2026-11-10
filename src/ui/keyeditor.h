@@ -122,7 +122,10 @@ namespace gnubase::ui
 		void showToolbox();
 
 		void render();
+		// Places the parts' boxes, the notes and the step input cursor on the time axis m_from to m_to.
+		void placeItems();
 		void renderInfo();
+		void scrollToNotes(); // the first scroll, to the middle of the notes, until one succeeds (m_scrolled)
 		// The drum editor's: the active track's drum map, the rows' order from it, and the sound list and Map menu.
 		const engine::Json* activeMap() const;
 		void updateOrder();

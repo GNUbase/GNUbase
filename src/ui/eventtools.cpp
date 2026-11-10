@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -170,9 +171,11 @@ namespace gnubase::ui
 
 	Tool EventDisplay::toolAt(double y) const
 	{
-		// Combined, the object selection tool selects ranges in a lane's upper half (reference manual p. 253).
+		// Combined, the object selection tool selects ranges in the upper half of a lane at least two rows high
+		// (reference manual p. 253).
 		const std::optional<size_t> lane = visibleLaneAt(y);
 		if (m_combine && m_tool == Tool::ObjectSelection && lane &&
+			m_laneTops[*lane + 1] - m_laneTops[*lane] >= 2 * g_trackRow &&
 			y + m_view.top < (m_laneTops[*lane] + m_laneTops[*lane + 1]) * 0.5)
 			return Tool::RangeSelection;
 		return m_tool;
@@ -387,6 +390,7 @@ namespace gnubase::ui
 				}
 				else if (m_pressTool == Tool::Zoom) // Alt zooms out (reference manual p. 101)
 				{
+					m_clickRedo = m_redo; // for a double click with Alt, which redoes
 					remember();
 					zoomAround(m_pressed == "alt" ? 2.0 : 0.5, pressTime, m_pressX);
 				}
@@ -398,14 +402,24 @@ namespace gnubase::ui
 			}
 			const double from = m_view.start + (std::min(m_pressX, x) * m_view.scale);
 			const double to = m_view.start + (std::max(m_pressX, x) * m_view.scale);
-			if (m_pressTool == Tool::Zoom)
-			{
-				// ponytail: zooms across only, the reference's standard mode; zoom track heights with #81.
-				zoomTo(from, to);
-				break;
-			}
 			const double top = std::min(m_pressY, y) + m_view.top;
 			const double bottom = std::max(m_pressY, y) + m_view.top;
+			if (m_pressTool == Tool::Zoom)
+			{
+				// The rectangle's stretch of time across; with Zoom Tool Standard Mode: Horizontal Zooming Only off,
+				// its tracks down too (reference manual pp. 101, 1602), in one step of the zoom history.
+				const size_t steps = m_undo.size();
+				zoomTo(from, to);
+				if (!m_zoomHorizontalOnly && bottom > top)
+				{
+					if (m_undo.size() == steps)
+						remember();
+					const double zoom = m_view.trackZoom;
+					zoomVertically(height() / (bottom - top));
+					scrollVertically(top * m_view.trackZoom / zoom);
+				}
+				break;
+			}
 			std::vector<uint64_t> touched;
 			for (const Shown& shown : m_events)
 				if (m_laneTops[shown.lane + 1] > top && m_laneTops[shown.lane] < bottom && shown.end > from &&
@@ -429,6 +443,7 @@ namespace gnubase::ui
 		}
 		case Drag::Range:
 			setRangeFrom(x, y);
+			zeroCrossRange();
 			break;
 		case Drag::DrawPart:
 		{
@@ -546,9 +561,18 @@ namespace gnubase::ui
 		switch (m_pressTool)
 		{
 		case Tool::Zoom:
-			// Undoes the zoom before the double click's first click zoomed in (reference manual p. 103).
+			// Undoes the zoom before the double click's first click zoomed in; with Alt, which zoomed out, redoes the
+			// zoom undone before it (reference manual p. 104).
 			undoZoom();
-			undoZoom();
+			if (m_pressed == "alt")
+			{
+				m_redo = m_clickRedo;
+				redoZoom();
+			}
+			else
+			{
+				undoZoom();
+			}
 			return true;
 		case Tool::RangeSelection:
 			break;
@@ -586,6 +610,7 @@ namespace gnubase::ui
 		// With Shift added to the range.
 		setRange(joined(
 			m_laneTracks, m_pressed == "shift" ? m_range : std::nullopt, samples(start), samples(end), *lane, *lane));
+		zeroCrossRange();
 		return true;
 	}
 
@@ -616,6 +641,26 @@ namespace gnubase::ui
 	{
 		m_range = std::move(range);
 		showRange();
+	}
+
+	void EventDisplay::zeroCrossRange()
+	{
+		if (!m_snap.zeroCrossing || !m_range)
+			return;
+		const RangeSelection range = *m_range;
+		m_binding.send("snap.zeroCrossings", {{"positions", {range.start, range.end}}, {"tracks", range.tracks}},
+			[this, range, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				// Unless the range changed meanwhile.
+				if (alive.expired() || !result.ok() || !m_range || m_range->start != range.start ||
+					m_range->end != range.end || m_range->tracks != range.tracks)
+					return;
+				const Json& positions = result.value.at("positions");
+				RangeSelection moved = range;
+				moved.start = positions.at(0).get<int64_t>();
+				moved.end = std::max(moved.start, positions.at(1).get<int64_t>());
+				setRange(std::move(moved));
+			});
 	}
 
 	void EventDisplay::selectRange()

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/tracklist.h"
 
+#include "ui/markers.h"
 #include "ui/mixer.h"
 #include "ui/tempotrack.h"
 #include "ui/timeformat.h"
@@ -56,6 +57,38 @@ namespace gnubase::ui
 		{
 			return control == "timeFormat" || control == "timeOffsetOn" || control == "timeOffset" ||
 				control == "setTimeOffset";
+		}
+
+		// Marker tracks' controls (reference manual pp. 422-423).
+		bool markerControl(const std::string& control)
+		{
+			return control == "addPositionMarker" || control == "addCycleMarker" || control == "activateMarkerTrack" ||
+				control == "markerLocate" || control == "markerCycle" || control == "markerZoom";
+		}
+
+		bool markerMenu(const std::string& control)
+		{
+			return control == "markerLocate" || control == "markerCycle" || control == "markerZoom";
+		}
+
+		// The name of a marker track's Locate, Cycle or Zoom list.
+		std::string markerMenuName(const std::string& control)
+		{
+			if (control == "markerLocate")
+				return "Locate";
+			return control == "markerCycle" ? "Cycle" : "Zoom";
+		}
+
+		// A marker track's Locate list has its markers, Cycle and Zoom its cycle markers, after the list's name.
+		widgets::Options markerOptions(const ProjectMarkers& markers, uint64_t track, const std::string& control)
+		{
+			widgets::Options options = {{"", markerMenuName(control)}};
+			for (const MarkerItem& marker : markers.of(track))
+				if (marker.cycle || control == "markerLocate")
+					options.emplace_back(std::to_string(marker.id),
+						(marker.cycle ? "[" + std::to_string(marker.number) + "]" : std::to_string(marker.number)) +
+							(marker.name.empty() ? "" : " " + marker.name));
+			return options;
 		}
 
 		// The transpose track's controls (reference manual p. 165), besides Switch Time Base.
@@ -116,6 +149,8 @@ namespace gnubase::ui
 		{
 			if (type == "ruler" || rulerControl(control))
 				return type == "ruler" && rulerControl(control);
+			if (type == "marker" || markerControl(control))
+				return type == "marker" && markerControl(control);
 			// The tempo track's controls are Activate Tempo Track, Current Tempo and Type of New Tempo Points
 			// (reference manual p. 162).
 			const bool tempoControl = control == "tempoTrack" || control == "currentTempo" || control == "tempoType";
@@ -153,6 +188,9 @@ namespace gnubase::ui
 			if (control == "setTimeOffset")
 				return R"(<button class="set-time-offset" control="setTimeOffset" )"
 					   R"(title="Set Time Offset to Project Cursor Position">C</button>)";
+			if (markerMenu(control))
+				return R"(<select class="marker-menu" control=")" + control + R"(" title=")" + markerMenuName(control) +
+					R"("/>)";
 			static const std::map<std::string, std::pair<const char*, const char*>> looks = {{"mute", {"Mute", "M"}},
 				{"solo", {"Solo", "S"}},
 				{"record", {"Record Enable", R"(<svg class="icon" src="../icons/track-record-arm.svg"/>)"}},
@@ -162,7 +200,9 @@ namespace gnubase::ui
 				{"timeOffsetOn", {"Time Offset On/Off", "O"}}, {"transposeMute", {"Mute Transpose Events", "M"}},
 				{"keepInOctave", {"Keep Transpose in Octave Range", "O"}}, {"transposeLock", {"Lock", "L"}},
 				{"chordRecord", {"Record Enable", R"(<svg class="icon" src="../icons/track-record-arm.svg"/>)"}},
-				{"chordMute", {"Mute Chord Track", "M"}}, {"showScales", {"Show Scales", "S"}}};
+				{"chordMute", {"Mute Chord Track", "M"}}, {"showScales", {"Show Scales", "S"}},
+				{"addPositionMarker", {"Add Position Marker", "+"}}, {"addCycleMarker", {"Add Cycle Marker", "[+]"}},
+				{"activateMarkerTrack", {"Activate Track", "A"}}};
 			const auto& [title, content] = looks.at(control);
 			return R"(<button class="toggle )" + control + R"(" control=")" + control + R"(" title=")" + title +
 				R"(">)" + content + "</button>";
@@ -829,6 +869,7 @@ namespace gnubase::ui
 		const Json& tracks = project.at("tracks");
 		TimeContext time;
 		readTimeContext(project, time);
+		const ProjectMarkers markers = readMarkers(project);
 		const double nameWidth = widthOf(m_widths, "name");
 		const Json controlsWidths = m_widths.value("controls", Json::object());
 		for (int i = 0; i < m_view->GetNumChildren() && static_cast<size_t>(i) < m_tracks.size(); ++i)
@@ -911,8 +952,13 @@ namespace gnubase::ui
 						button->SetAttribute("value", text);
 					continue;
 				}
-				if (name == "setTimeOffset")
+				if (name == "setTimeOffset" || name == "addPositionMarker" || name == "addCycleMarker")
 					continue;
+				if (markerMenu(name))
+				{
+					widgets::fill(*button, markerOptions(markers, row.id, name), "");
+					continue;
+				}
 				if (name == "chordAudition")
 				{
 					// Select Track for Auditioning: the MIDI and instrument tracks.
@@ -934,6 +980,8 @@ namespace gnubase::ui
 					on = project.value("tempoTrackActive", false);
 				else if (name == "timeOffsetOn")
 					on = track.value("timeOffsetOn", false);
+				else if (name == "activateMarkerTrack")
+					on = markers.active == row.id;
 				else if (transposeControl(name))
 					on = project.at("transpose").value(transposeKey(name), false);
 				else if (chordControl(name))
@@ -1327,7 +1375,8 @@ namespace gnubase::ui
 				{
 					if (const Row* row = rowOf(element); row != nullptr && !element->HasAttribute("disabled"))
 						control(*row, element->GetAttribute<Rml::String>("control", ""),
-							held(event, "ctrl_key") || held(event, "meta_key"), held(event, "alt_key"));
+							held(event, "ctrl_key") || held(event, "meta_key"), held(event, "alt_key"),
+							held(event, "shift_key"));
 					break;
 				}
 			break;
@@ -1382,6 +1431,7 @@ namespace gnubase::ui
 				if (!m_showingTempo)
 					tempoChanged(*target, event);
 				rulerChange(*target, event.GetParameter<Rml::String>("value", ""));
+				markerChange(*target, event.GetParameter<Rml::String>("value", ""));
 				// Select Track for Auditioning.
 				const Json& project = m_display.project();
 				const auto audition = static_cast<uint64_t>(
@@ -1443,10 +1493,31 @@ namespace gnubase::ui
 		showTempo();
 	}
 
-	void TrackList::control(const Row& row, const std::string& name, bool exclusive, bool defeat)
+	void TrackList::control(const Row& row, const std::string& name, bool exclusive, bool defeat, bool shift)
 	{
-		if (name == "currentTempo" || name == "tempoType")
-			return; // fields, which change
+		if (name == "currentTempo" || name == "tempoType" || markerMenu(name))
+			return; // fields and lists, which change
+		if (name == "addPositionMarker")
+		{
+			m_binding.send("marker.add", {{"track", row.id}});
+			return;
+		}
+		if (name == "addCycleMarker")
+		{
+			// With Shift its name opens to type (reference manual p. 425).
+			m_binding.send("marker.add", {{"type", "cycle"}, {"track", row.id}},
+				[this, shift, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+				{
+					if (!alive.expired() && result.ok() && shift && m_onMarker)
+						m_onMarker(result.value.at("marker").at("id").get<uint64_t>(), true);
+				});
+			return;
+		}
+		if (name == "activateMarkerTrack")
+		{
+			m_binding.send("marker.activateTrack", {{"track", row.id}});
+			return;
+		}
 		const Json& project = m_display.project();
 		if (name == "read")
 		{
@@ -1511,6 +1582,33 @@ namespace gnubase::ui
 			key == "solo" ? soloClick(*channel, exclusive, defeat) : Json{{key, !channel->value(key, false)}};
 		parameters["channel"] = row.channel;
 		m_binding.send("channel.set", std::move(parameters));
+	}
+
+	void TrackList::markerChange(Rml::Element& control, const std::string& value)
+	{
+		const Row* row = rowOf(&control);
+		const auto name = control.GetAttribute<Rml::String>("control", "");
+		const auto marker = static_cast<uint64_t>(std::strtoull(value.c_str(), nullptr, 10));
+		if (row == nullptr || row->type != "marker" || !markerMenu(name) || marker == 0)
+			return;
+		if (auto* list = dynamic_cast<Rml::ElementFormControl*>(&control))
+			list->SetValue(""); // the list's name again, so that the same marker can be chosen again
+		if (name == "markerLocate")
+		{
+			m_binding.send("marker.locate", {{"marker", marker}});
+			if (m_onMarker)
+				m_onMarker(marker, false);
+		}
+		else if (name == "markerCycle")
+		{
+			m_binding.send("marker.setLocators", {{"marker", marker}});
+		}
+		else
+		{
+			for (const MarkerItem& item : readMarkers(m_display.project()).markers)
+				if (item.id == marker)
+					m_display.zoomTo(item.start, item.end);
+		}
 	}
 
 	void TrackList::rulerChange(Rml::Element& control, const std::string& value)

@@ -1330,6 +1330,39 @@ TEST_CASE(
 	f.click(500, 60, {}, 2);
 	CHECK(f.display.view().scale == before.scale);
 	CHECK(std::abs(f.display.view().start - before.start) < 1e-9);
+	// Alt and a double click redoes it (reference manual p. 104).
+	f.click(500, 60, {"alt"}, 2);
+	CHECK(std::abs(f.display.view().start - 1.0) < 1e-9);
+	CHECK(std::abs(f.display.visibleLength() - 2.0) < 1e-9);
+	CHECK(f.display.redoZoom());
+	CHECK(!f.display.redoZoom());
+}
+
+TEST_CASE("with Horizontal Zooming Only off, the zoom tool's rectangle zooms the track heights too", "[unit]")
+{
+	Fixture f;
+	f.call("track.add", {{"type", "midi"}});
+	f.call("track.add", {{"type", "midi"}});
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events").size() == 4; }));
+	f.display.setTool(ui::Tool::Zoom);
+	const ui::TimelineView before = f.display.view();
+	// On by default: across only.
+	f.drag(100, 40, 300, 120);
+	CHECK(f.display.view().trackZoom == 1.0);
+	CHECK(f.display.undoZoom());
+	f.call("settings.set", {{"key", "ui.zoomToolHorizontalOnly"}, {"value", false}});
+	f.step();
+	// From 1 to 3 seconds, and from 40 to 120 dp down: those 80 dp fill the lanes' height, in one zoom step.
+	f.drag(100, 40, 300, 120);
+	const double height = f.document.QuerySelector("event-lanes.events")->GetClientHeight();
+	CHECK(std::abs(f.display.view().start - 1.0) < 1e-9);
+	CHECK(std::abs(f.display.visibleLength() - 2.0) < 1e-9);
+	CHECK(std::abs(f.display.view().trackZoom - (height / 80.0)) < 1e-6);
+	CHECK(std::abs(f.display.view().top - (40.0 * f.display.view().trackZoom)) < 1e-6);
+	CHECK(f.display.undoZoom());
+	CHECK(f.display.view().trackZoom == 1.0);
+	CHECK(f.display.view().top == 0.0);
+	CHECK(f.display.view().scale == before.scale);
 }
 
 TEST_CASE(
@@ -1613,6 +1646,55 @@ TEST_CASE("with the selection tools combined, a lane's upper half selects ranges
 	CHECK(f.display.selection() == std::vector<uint64_t>{f.part});
 	f.drag(150, 75, 250, 75);
 	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("position") == 4 * g_quarter; }));
+	// A lane less than two rows high has no upper half for ranges: a drag there is a rectangle (p. 253).
+	f.display.setTrackHeight(f.call("project.get").at("tracks")[0].at("id").get<uint64_t>(), 30.0);
+	f.drag(150, 5, 250, 10);
+	CHECK(!f.display.range().has_value());
+	CHECK(f.display.selection() == std::vector<uint64_t>{f.event});
+}
+
+TEST_CASE("with Snap to Zero Crossing, a range's edges move to zero crossings of the audio", "[unit]")
+{
+	// A sine that crosses zero every 100 frames, in an audio event from 6 to 7 seconds playing from frame 30.
+	const test::TempDir dir;
+	const std::filesystem::path file = dir.path() / "sine.wav";
+	test::Audio sine;
+	for (int frame = 0; frame < 96000; ++frame)
+		sine.samples.push_back(static_cast<float>(0.5 * std::sin(frame * 3.14159265358979323846 / 100.0)));
+	test::writeWav(file, sine);
+	Fixture f;
+	const uint64_t audio = f.call("project.get").at("tracks")[0].at("id").get<uint64_t>();
+	const Json media =
+		f.call("media.add", {{"path", file.u8string()}, {"sampleRate", 48000}, {"channels", 1}, {"length", 96000}})
+			.at("media");
+	const Json clip = f.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	f.call("audioEvent.add",
+		{{"track", audio}, {"clip", clip.at("id")}, {"position", 288000}, {"offset", 30}, {"length", 48000}});
+	f.call("snap.set", {{"zeroCrossing", true}});
+	REQUIRE(f.waitUntil([&f] { return f.display.snap().zeroCrossing && f.lanes("events")[0].events.size() == 2; }));
+	f.display.setTool(ui::Tool::RangeSelection);
+	// From 6.1 to 6.5 seconds, frames 4830 and 24030 of the file: the crossings at 4800 and 24000.
+	const auto range = [&f] { return f.display.range().value_or(ui::RangeSelection{}); };
+	f.drag(610, 20, 650, 20);
+	REQUIRE(f.waitUntil([&range] { return range().start == 292770; }));
+	CHECK(range().end == 311970);
+	// Where no audio plays, the range stays as dragged.
+	f.drag(750, 20, 800, 20);
+	REQUIRE(f.waitUntil([&f] { return f.binding.waiting("snap.zeroCrossings") == 0; }));
+	CHECK(range().start == 360000);
+	CHECK(range().end == 384000);
+}
+
+TEST_CASE("the object selection tool with Alt draws an empty MIDI part on an empty spot", "[unit]")
+{
+	Fixture f;
+	// From 4 to 5.5 seconds on the MIDI lane (reference manual pp. 250-251), rather than a rectangle.
+	f.drag(400, 60, 550, 60, {"alt"});
+	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 2; }));
+	CHECK(f.parts()[1].at("position") == 8 * g_quarter);
+	CHECK(f.parts()[1].at("length") == 3 * g_quarter);
+	REQUIRE(f.waitUntil(
+		[&f] { return f.display.selection() == std::vector<uint64_t>{f.parts()[1].at("id").get<uint64_t>()}; }));
 }
 
 TEST_CASE("Ctrl and a drag moves or copies events only across or only up and down", "[unit]")

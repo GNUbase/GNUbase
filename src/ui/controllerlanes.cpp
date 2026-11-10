@@ -356,7 +356,7 @@ namespace gnubase::ui
 		if (root->IsClassSet("lanes-hidden") == shown)
 			root->SetClass("lanes-hidden", !shown);
 		std::string rml;
-		std::vector<std::vector<Item>> laneItems;
+		m_items.clear();
 		for (size_t i = 0; i < m_lanes.size(); ++i)
 		{
 			const Lane& lane = m_lanes[i];
@@ -375,8 +375,8 @@ namespace gnubase::ui
 			rml += R"(</button></div><div class="controller-lane-area" lane=")";
 			rml += index;
 			rml += R"(">)";
-			laneItems.push_back(items(lane));
-			for (const Item& item : laneItems.back())
+			m_items.push_back(items(lane));
+			for (const Item& item : m_items.back())
 				rml += std::string(R"(<div class=")") + (notes ? "controller-bar" : "controller-step") +
 					(item.selected ? " selected" : "") + (item.editable ? "" : " inactive") + R"(" part=")" +
 					std::to_string(item.part) + (notes ? R"(" note=")" : R"(" controller=")") +
@@ -389,24 +389,7 @@ namespace gnubase::ui
 			list->SetInnerRML(rml);
 			m_rml = rml;
 		}
-		const auto range = static_cast<double>(m_to - m_from);
-		for (size_t i = 0; list != nullptr && i < laneItems.size(); ++i)
-		{
-			const Rml::Element* area = list->QuerySelector(".controller-lane-area[lane=\"" + std::to_string(i) + "\"]");
-			for (int child = 0;
-				area != nullptr && child < area->GetNumChildren() && static_cast<size_t>(child) < laneItems[i].size();
-				++child)
-			{
-				const Item& item = laneItems[i][static_cast<size_t>(child)];
-				Rml::Element* element = area->GetChild(child);
-				const double left = static_cast<double>(item.start - m_from) / range * 100.0;
-				const double width = static_cast<double>(item.end - item.start) / range * 100.0;
-				element->SetProperty(Rml::PropertyId::Left, percent(left));
-				if (item.end > item.start)
-					element->SetProperty(Rml::PropertyId::Width, percent(width));
-				element->SetProperty(Rml::PropertyId::Height, percent(std::clamp(item.value, 0.0, 1.0) * 100.0));
-			}
-		}
+		placeItems();
 
 		// The setup menu: the presets, Add Preset, and a submenu that removes one.
 		if (Rml::Element* menu = m_menus.size() > 2 ? m_menus[2].get() : nullptr)
@@ -437,6 +420,36 @@ namespace gnubase::ui
 		}
 		if (Rml::Context* context = root->GetContext())
 			context->RequestNextUpdate(0);
+	}
+
+	void ControllerLanes::setRange(int64_t from, int64_t to)
+	{
+		m_from = from;
+		m_to = std::max(to, from + 1);
+		placeItems();
+	}
+
+	void ControllerLanes::placeItems()
+	{
+		Rml::Element* list = m_root.get() != nullptr ? m_root.get()->QuerySelector(".controller-lane-list") : nullptr;
+		const auto range = static_cast<double>(m_to - m_from);
+		for (size_t i = 0; list != nullptr && i < m_items.size(); ++i)
+		{
+			const Rml::Element* area = list->QuerySelector(".controller-lane-area[lane=\"" + std::to_string(i) + "\"]");
+			for (int child = 0;
+				area != nullptr && child < area->GetNumChildren() && static_cast<size_t>(child) < m_items[i].size();
+				++child)
+			{
+				const Item& item = m_items[i][static_cast<size_t>(child)];
+				Rml::Element* element = area->GetChild(child);
+				const double left = static_cast<double>(item.start - m_from) / range * 100.0;
+				const double width = static_cast<double>(item.end - item.start) / range * 100.0;
+				element->SetProperty(Rml::PropertyId::Left, percent(left));
+				if (item.end > item.start)
+					element->SetProperty(Rml::PropertyId::Width, percent(width));
+				element->SetProperty(Rml::PropertyId::Height, percent(std::clamp(item.value, 0.0, 1.0) * 100.0));
+			}
+		}
 	}
 
 	std::optional<size_t> ControllerLanes::laneAt(Rml::Element* target) const

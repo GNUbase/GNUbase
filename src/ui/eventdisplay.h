@@ -35,6 +35,8 @@ namespace gnubase::ui
 	inline constexpr double g_trackHeight = 40.0;
 	inline constexpr double g_minTrackHeight = 20.0;
 	inline constexpr double g_maxTrackHeight = 400.0;
+	// A row of track height (reference manual p. 253), the least a track has, in dp with vertical zoom.
+	inline constexpr double g_trackRow = g_minTrackHeight;
 	// The least height of a track whose in-place editor is open (#131), before vertical zoom, in dp.
 	inline constexpr double g_inPlaceHeight = 240.0;
 	// The project setup's length until the project is read, in seconds (#78).
@@ -163,7 +165,10 @@ namespace gnubase::ui
 		// lane, in dp, with vertical zoom, and the last one is the bottom of the last lane.
 		const std::vector<uint64_t>& laneTracks() const { return m_laneTracks; }
 		const std::vector<double>& laneTops() const { return m_laneTops; }
+		// A track's height: its own, at least g_inPlaceHeight while its in-place editor is open. Its lanes (#99) have
+		// its own height.
 		double trackHeight(uint64_t track) const;
+		double ownHeight(uint64_t track) const;
 		void setTrackHeight(uint64_t track, double height);
 		void setTrackHeights(double height); // every track's
 		// The heights tracks have of their own, by track, and replacing them all (the project's, trackLayout.get).
@@ -237,6 +242,9 @@ namespace gnubase::ui
 		// toggle button #snap, menus #snap-type-menu and #grid-type-menu (the grid types of the ruler's time format),
 		// whose buttons #snap-type and #grid-type show the choice, and a toggle button #snap-zero-crossing.
 		const engine::SnapSettings& snap() const { return m_snap; }
+		// Where a point dragged to seconds snaps to, in seconds, from where it was (for grid relative), as the
+		// display's own drags snap: e.g. markers on the marker track (ui/markers.h).
+		double snapped(double seconds, std::optional<double> from = std::nullopt) const;
 
 		// The default tool modifiers (reference manual p. 1601) of the tools that GNUbase has, by action, which the
 		// user setting ui.toolModifiers overrides one by one.
@@ -287,6 +295,12 @@ namespace gnubase::ui
 		// with Import Files on One Track, and the others onto new tracks. Without one, onto new tracks; with Split
 		// Channels, every channel of a file with several onto a new track of its own.
 		void importToSelection(const std::vector<std::string>& files, const std::vector<uint64_t>& selection);
+		// File > Import > MIDI File (#478, reference manual pp. 364-365): imports MIDI files with the options of the
+		// user settings midi.import*, at the left locator with midi.importToLeftLocator, else at the project start.
+		// Into a new project (newProject), the file's tempo always replaces the project's. MIDI files dropped on the
+		// event lanes go where they are dropped instead, and with midi.importSinglePart into one part, on the MIDI or
+		// instrument track they are dropped on if any.
+		void importMidi(const std::vector<std::string>& files, bool newProject = false);
 
 		// The commands that key commands bind to, by id: zoom.in, zoom.out, zoom.inVertically, zoom.outVertically,
 		// zoom.full, zoom.undo, zoom.redo and view.autoScroll (on or off); locate.nudgeCursorLeft and
@@ -492,8 +506,10 @@ namespace gnubase::ui
 			std::optional<uint64_t> track;
 			int64_t sample = 0;
 			bool clipsOnly = false;
-			bool selected = false; // track is the selected one, which takes the first file, not all of them
-			int lane = 0;          // the lane of track the files go on
+			bool selected = false;             // track is the selected one, which takes the first file, not all of them
+			int lane = 0;                      // the lane of track the files go on
+			bool dropped = false;              // on the event lanes, at sample
+			std::optional<uint64_t> midiTrack; // the MIDI or instrument track they were dropped on
 		};
 		// The import options (#477): the Import Options dialog's, and the user settings editing.importAudio* that it
 		// starts from and keeps its choices in.
@@ -506,6 +522,7 @@ namespace gnubase::ui
 			std::string nameFormat = "dash";
 		};
 		void startImport(const std::vector<std::string>& files, Import import);
+		void sendMidiImport(const std::vector<std::string>& files, const Import& import, bool newProject);
 		void dropFiles(Rml::Event& event);
 		void openImportOptions(Import import, const ImportOptions& options, bool saved);
 		void importAudio(Rml::Element& dialog);
@@ -668,6 +685,9 @@ namespace gnubase::ui
 		void setRangeFrom(double x, double y);    // from the drag's start
 		void selectRange();                       // the events in it, when another tool takes over
 		void showRange();
+		// Moves the range's edges to zero crossings of the audio on its tracks (reference manual p. 285), with Snap to
+		// Zero Crossing on: snap.zeroCrossings answers later.
+		void zeroCrossRange();
 		// The rectangle that a tool drags, dp in the event lanes; hidden when not shown.
 		void showRectangle(bool shown, double left = 0.0, double top = 0.0, double right = 0.0, double bottom = 0.0);
 		void setToolModifiers(const engine::Json& value);
@@ -809,6 +829,7 @@ namespace gnubase::ui
 		TimelineView m_view;
 		std::vector<TimelineView> m_undo;
 		std::vector<TimelineView> m_redo;
+		std::vector<TimelineView> m_clickRedo; // m_redo before the zoom tool's last click, for Alt's double click
 		bool m_autoScroll = false;
 		AutoScrollMode m_autoScrollMode = AutoScrollMode::Page;
 		bool m_suspendWhenEditing = false;
@@ -862,6 +883,8 @@ namespace gnubase::ui
 		bool m_toolboxKnown = false;        // changed since it was asked for
 		bool m_notifies = true;             // ui.toolSwitchNotification
 		bool m_notifiesKnown = false;
+		bool m_zoomHorizontalOnly = true; // ui.zoomToolHorizontalOnly
+		bool m_zoomHorizontalOnlyKnown = false;
 		std::optional<std::pair<double, double>> m_mouse; // over the lanes, in dp, while the mouse is there
 		std::string m_held;           // the modifier keys held, as modifiersOf joins them, for the pointer
 		std::set<int> m_modifierKeys; // the modifier keys seen going down and not up (Rml::Input::KeyIdentifier)

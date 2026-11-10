@@ -647,6 +647,7 @@ namespace gnubase::engine
 			right.transpose = part.transpose;
 			right.velocity = part.velocity;
 			right.rootKey = part.rootKey;
+			right.pattern = part.pattern;
 			right.independent = part.independent;
 			for (auto it = part.notes.begin(); it != part.notes.end();)
 			{

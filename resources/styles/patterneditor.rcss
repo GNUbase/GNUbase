@@ -1,0 +1,117 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* The pattern editor (ui/patterneditor.h, docs/features/pattern-editor.md): its toolbar, the step display with a row
+   per step lane, its controls on the left and a cell per step, and the parameter lane under it with a bar per step.
+   The cells share the lane's width, so a lane of its own length has cells of its own width. Steps get .on where they
+   start, .tied where a tie covers them, .selected and .beat (every fourth); the selected lane .selected and the tools
+   and lane buttons .checked; code sets only a bar's height. The themes color them. */
+.pattern-editor
+{
+	flex: 1 1 0;
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+}
+
+.pattern-editor-toolbar
+{
+	flex-shrink: 0;
+	flex-wrap: wrap;
+	height: auto;
+	min-height: 32dp;
+}
+
+.pattern-editor-toolbar .separator
+{
+	display: inline-block;
+	width: 8dp;
+}
+
+.pattern-editor-empty
+{
+	padding: 12dp;
+}
+
+.pattern-editor-body
+{
+	flex: 1 1 0;
+	min-height: 0;
+	overflow-y: auto;
+}
+
+.pattern-lane
+{
+	display: flex;
+	flex-direction: row;
+	height: 20dp;
+}
+
+.pattern-lane-controls
+{
+	flex: 0 0 160dp;
+	display: flex;
+	flex-direction: row;
+	align-items: center;
+}
+
+.pattern-lane-controls button
+{
+	width: 20dp;
+	height: 18dp;
+	padding: 0;
+	margin: 0 1dp;
+}
+
+.pattern-lane-name
+{
+	flex: 1 1 0;
+	padding: 0 4dp;
+	overflow: hidden;
+	white-space: nowrap;
+}
+
+.pattern-lane-steps
+{
+	flex: 1 1 0;
+	display: flex;
+	flex-direction: row;
+}
+
+.pattern-step
+{
+	flex: 1 1 0;
+	margin: 1dp;
+}
+
+.pattern-parameter-lane
+{
+	flex: 0 0 120dp;
+	display: flex;
+	flex-direction: column;
+}
+
+.pattern-parameters
+{
+	flex-shrink: 0;
+}
+
+.pattern-bars
+{
+	flex: 1 1 0;
+	display: flex;
+	flex-direction: row;
+}
+
+.pattern-bar-cell
+{
+	flex: 1 1 0;
+	position: relative;
+	margin: 0 1dp;
+}
+
+.pattern-bar
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: 0;
+}
