@@ -358,15 +358,11 @@ namespace gnubase::engine::midi
 		std::vector<Target> targets(Project& project, const Json& parameters)
 		{
 			const bool onePart = parameters.contains("part");
-			const bool audio = parameters.contains("events") || parameters.contains("audioParts");
-			require(
-				onePart || parameters.contains("parts") || audio, "give part or parts, or audio events or audioParts");
+			require(onePart || parameters.contains("parts"), "give part or parts");
 			require(
 				!onePart || !parameters.contains("parts"), "give part or parts, not both; notes picks notes of part");
 			require(onePart || !parameters.contains("notes"), "notes needs part");
 			std::vector<Target> targets;
-			if (!onePart && !parameters.contains("parts"))
-				return targets;
 			const std::vector<ObjectId> parts = onePart ? std::vector<ObjectId>{parameters.at("part").get<ObjectId>()}
 														: parameters.at("parts").get<std::vector<ObjectId>>();
 			for (const ObjectId id : parts)
@@ -494,6 +490,17 @@ namespace gnubase::engine::midi
 			return {{"notes", changed}};
 		}
 
+		// Apply and reset also accept audio targets. Only ask targets() for MIDI notes when a part was supplied.
+		Json forNotesOrAudio(Project& project, CommandContext& context, const NoteFunction& function)
+		{
+			const Json& parameters = context.parameters();
+			const bool midi = parameters.contains("part") || parameters.contains("parts");
+			const bool audio = parameters.contains("events") || parameters.contains("audioParts");
+			require(midi || audio, "give part or parts, or audio events or audioParts");
+			require(midi || !parameters.contains("notes"), "notes needs part");
+			return midi ? forNotes(project, context, function) : Json{{"notes", Json::array()}};
+		}
+
 		// quantize.lengths: a note value, ticks, or nothing for the grid's.
 		std::optional<time::Ticks> lengthFrom(const Json& parameters)
 		{
@@ -612,7 +619,7 @@ namespace gnubase::engine::midi
 			[presets](Project& project, CommandContext& context)
 			{
 				const QuantizeGrid grid(settingsFor(project, *presets, context.parameters()), project.signatures);
-				Json result = forNotes(project, context,
+				Json result = forNotesOrAudio(project, context,
 					[&grid](Note& note, const PartSpan& part) { return quantizeStart(note, part, grid); });
 				quantizeAudio(project, context, grid, result);
 				return result;
@@ -659,7 +666,7 @@ namespace gnubase::engine::midi
 			[](Project& project, CommandContext& context)
 			{
 				Json result =
-					forNotes(project, context, [](Note& note, const PartSpan&) { return resetQuantize(note); });
+					forNotesOrAudio(project, context, [](Note& note, const PartSpan&) { return resetQuantize(note); });
 				resetAudio(project, context, result);
 				return result;
 			});
