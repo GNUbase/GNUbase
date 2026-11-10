@@ -588,6 +588,7 @@ TEST_CASE("The preferences' Editing > Audio page sets On Import Audio Files and 
 {
 	const test::TempDir dir;
 	const std::string take = writeAudio(dir.path() / "take.wav", 4800, 2);
+	const std::string mono = writeAudio(dir.path() / "mono.wav", 4800);
 	test::UiApp app({1000, 760});
 	ui::EventDisplay& display = app.appUi().showProject();
 	const std::filesystem::path folder = dir.path() / "project";
@@ -638,10 +639,14 @@ TEST_CASE("The preferences' Editing > Audio page sets On Import Audio Files and 
 	CHECK(setting("editing.importAudioCopy") == false);
 
 	// Use Settings imports with them, without the dialog.
-	display.importFiles({take});
-	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("audioEvents").size() == 2; }));
+	display.importFiles({take, mono});
+	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("audioEvents").size() == 3; }));
 	CHECK(!dialogShown(app));
-	CHECK(app.call("project.get").at("media")[0].at("path") == (folder / "Audio" / "take L.wav").u8string());
+	const Json media = app.call("project.get").at("media");
+	REQUIRE(media.size() == 3);
+	CHECK(media[0].at("path") == (folder / "Audio" / "take L.wav").u8string());
+	CHECK(media[2].at("path") == mono); // splitting does not mask whether Copy Files is off for this file
+	CHECK(!std::filesystem::exists(folder / "Audio" / "mono.wav"));
 
 	// Open Options Dialog resets Do not ask again: the dialog opens, starting from the same settings.
 	openPreferences();

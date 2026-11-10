@@ -141,5 +141,6 @@ and 1 dropped below the tracks. For the import preferences: Use Settings imports
 options (on one track in an unsaved project; split with a name format and copied in a saved one), the dialog starts
 from the settings and keeps its choices in them, Do not ask again skips the dialog next time and after a restart
 until the setting is reset, and each Name Format chosen in the dialog names the split files. The preferences'
-Editing > Audio page shows the settings, Use Settings imports with what it sets (split as its Name Format says, not
-copied), and its Open Options Dialog brings the dialog back, starting from the same settings.
+Editing > Audio page shows the settings, Use Settings imports with what it sets (stereo split as its Name Format
+says, a mono file keeping its original path with Copy off), and its Open Options Dialog brings the dialog back,
+starting from the same settings.
