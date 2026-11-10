@@ -292,7 +292,6 @@ namespace gnubase::engine
 		Json parts = Json::array();
 		for (midifile::ImportedTrack& track : imported.tracks)
 		{
-			// The file's parts and notes are in ticks.
 			ObjectId trackId = target;
 			if (trackId == 0)
 			{
@@ -313,8 +312,17 @@ namespace gnubase::engine
 				}
 			}
 
+			// A track the extraction left empty keeps its settings but gets no part.
+			if (track.notes.empty() && track.controllers.empty())
+				continue;
+			// The part's start and length are in the track's time base, its notes in ticks from its start.
 			const midifile::PartSpan span = midifile::partSpan(track, project.signatures);
-			const Json partParameters = {{"track", trackId}, {"position", span.position}, {"length", span.length}};
+			const time::TimeBase base = project.trackById.at(trackId).timeBase;
+			const auto inTrackBase = [&project, base](time::Ticks ticks)
+			{ return time::rebase({time::TimeBase::Musical, ticks}, base, project.tempo, project.sampleRate).value; };
+			const int64_t start = inTrackBase(span.position);
+			const Json partParameters = {
+				{"track", trackId}, {"position", start}, {"length", inTrackBase(span.position + span.length) - start}};
 			const auto partId = run("midiPart.add", partParameters).at("part").at("id").get<ObjectId>();
 			parts.push_back(partId);
 			if (!track.notes.empty())

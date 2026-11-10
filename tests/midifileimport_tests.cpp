@@ -182,6 +182,18 @@ TEST_CASE("midiFile.import puts the whole file into one part", "[integration]")
 	CHECK(part.at("track") == target);
 	CHECK(part.at("position") == 4 * g_quarter);
 
+	// On a linear track, the part's start and length are in samples: 120 BPM at 48 kHz, its notes still in ticks.
+	const auto linear =
+		run(client, "track.add", {{"type", "midi"}, {"timeBase", "linear"}}).at("track").at("id").get<ObjectId>();
+	const Json onLinear = run(client, "midiFile.import",
+		{{"path", path}, {"singlePart", true}, {"track", linear}, {"position", 96000}, {"tempo", false}});
+	project = run(client, "project.get");
+	const Json& linearPart = find(project.at("midiParts"), "id", onLinear.at("parts")[0]);
+	CHECK(linearPart.at("position") == 96000);
+	CHECK(linearPart.at("length") == 192000);
+	REQUIRE(linearPart.at("notes").size() == 2);
+	CHECK(linearPart.at("notes")[1].at("position") == 4 * g_quarter);
+
 	const auto audio = run(client, "track.add", {{"type", "audio"}}).at("track").at("id").get<ObjectId>();
 	CHECK_THAT(reject(client, "midiFile.import", {{"path", path}, {"singlePart", true}, {"track", audio}}),
 		ContainsSubstring("MIDI or instrument track"));
@@ -227,6 +239,31 @@ TEST_CASE("midiFile.import extracts the first patch and volume and pan into the 
 		{{"path", path}, {"extractPatch", true}, {"extractVolumePan", true}, {"trackType", "instrument"}});
 	CHECK(find(run(client, "project.get").at("midiParts"), "id", instrument.at("parts")[0]).at("controllers").size() ==
 		5);
+}
+
+TEST_CASE("midiFile.import keeps a track that the extraction leaves empty, without a part", "[integration]")
+{
+	const test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	midifile::File file;
+	file.tracks.push_back(track("Setup", {program(0, 0, 5), control(0, 0, 7, 100), control(0, 0, 10, 30)}));
+	file.tracks.push_back(track("Piano", {note(0, 0, 60, true), note(480, 0, 60, false)}));
+	const std::string path = save(dir, "song.mid", file);
+
+	const Json imported =
+		run(client, "midiFile.import", {{"path", path}, {"extractPatch", true}, {"extractVolumePan", true}});
+	const Json project = run(client, "project.get");
+	REQUIRE(imported.at("tracks").size() == 2);
+	REQUIRE(imported.at("parts").size() == 1);
+	const Json& setup = find(project.at("tracks"), "id", imported.at("tracks")[0]);
+	CHECK(setup.at("name") == "Setup");
+	const Json& channel = find(project.at("channels"), "id", setup.at("channel"));
+	CHECK(channel.at("program") == 5);
+	CHECK(channel.at("midiVolume") == 100);
+	CHECK(channel.at("midiPan") == 30);
+	REQUIRE(project.at("midiParts").size() == 1);
+	CHECK(project.at("midiParts")[0].at("track") == imported.at("tracks")[1]);
 }
 
 TEST_CASE("midiFile.import moves controllers into automation lanes", "[integration]")

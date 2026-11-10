@@ -59,12 +59,14 @@ The options of the reference's MIDI file import (reference manual pp. 364-365, #
   as every one does. Without `tempo` the file plays in the project's tempo from the position.
 - **dissolve** false keeps a type 0 file in one track with all its MIDI channels (Auto Dissolve Format 0 off).
 - **singlePart** puts the whole file into one part on one track (Import Dropped File as Single Part): **track**, a
-  MIDI or instrument track of the project, or a new track named after the file.
+  MIDI or instrument track of the project, or a new track named after the file. On a linear track of the project
+  the part's start and length are in samples at the project's tempo, as on every linear track; its notes stay in ticks.
 - **extractPatch** and **extractVolumePan** (Extract First Patch, Extract First Volume/Pan) make each MIDI track's
   first program change, with its bank, and its first MIDI volume (CC 7) and pan (CC 10) the track's `program`,
   `bank`, `midiVolume` and `midiPan` (`channel.set`) instead of events in its part. Only those on MIDI channel 1: a
   MIDI track's settings go out on channel 1, so an event of another channel stays in the part, where it plays on
-  its own channel. Instrument tracks have no such settings, so their events stay.
+  its own channel. Instrument tracks have no such settings, so their events stay. A track that has nothing left
+  after that keeps its settings but gets no part.
 - **automation** (Import Controller as Automation Tracks) moves the continuous controllers into automation lanes of
   their tracks with `midi.extractAutomation` ([midi-functions.md](midi-functions.md)), after the extraction above.
 - `trackType` (Destination: MIDI or instrument tracks) and `markers` (Import Markers) were there before.
@@ -181,8 +183,9 @@ and 1 dropped below the tracks.
 `tests/midifileimport_tests.cpp` imports MIDI files with each option of `midiFile.import`: at a position with and
 without tempo (the project's tempo before it, the file's after, its signature at the next bar and its markers moved
 along), a type 0 file kept in one track, the whole file in one part on a new track and on an instrument track at a
-position, refusing an audio track or `track` without `singlePart`, the first patch and volume and pan of channel 1
-in a MIDI track's settings while other channels' and later events stay, none on instrument tracks, and controllers
+position and on a linear MIDI track in samples, refusing an audio track or `track` without `singlePart`, the first
+patch and volume and pan of channel 1 in a MIDI track's settings while other channels' and later events stay, none on
+instrument tracks, a track of nothing but those kept without a part, and controllers
 in automation lanes with the sustain pedal left in the part, in one undo step. `tests/fileimport_tests.cpp` runs
 File > Import > MIDI File: Cancel, No at the left locator keeping the project's tempo with Ignore Master Track
 Events on Merge, and Yes into a new project after the unsaved changes question, with the file's tempo; and drops
