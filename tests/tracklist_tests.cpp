@@ -87,9 +87,9 @@ namespace
 		}
 
 		// Waits until the list shows that many rows.
-		void rows(size_t count)
+		void rows(size_t count, std::chrono::milliseconds timeout = std::chrono::seconds(5))
 		{
-			REQUIRE(app.waitUntil([&] { return elements(app, "#track-list listitem").size() == count; }));
+			REQUIRE(app.waitUntil([&] { return elements(app, "#track-list listitem").size() == count; }, timeout));
 			app.shell().step(std::chrono::milliseconds(0));
 		}
 
@@ -1298,16 +1298,20 @@ TEST_CASE("Freeze/Unfreeze Selected Tracks freezes and unfreezes them, Render in
 	tracks.rows(1);
 	tracks.click(row(synth) + " .track-name");
 
+	// The engine answers nothing while it renders, on a busy machine for longer than a call to it waits: the list says
+	// when it's done.
+	const std::chrono::seconds rendering(60);
+	const auto frozen = [&tracks, synth] { return hasClass(elements(tracks.app, row(synth)).at(0), "frozen"); };
 	tracks.app.keys().run("track.freezeSelected", Json::object(), tracks.app.main(), nullptr);
-	REQUIRE(tracks.app.waitUntil([&] { return !tracks.track(synth).at("frozen").is_null(); }));
-	REQUIRE(tracks.app.waitUntil([&] { return hasClass(elements(tracks.app, row(synth)).at(0), "frozen"); }));
+	REQUIRE(tracks.app.waitUntil(frozen, rendering));
+	CHECK(!tracks.track(synth).at("frozen").is_null());
 	// Again, with every selected track frozen, it unfreezes them.
 	tracks.app.keys().run("track.freezeSelected", Json::object(), tracks.app.main(), nullptr);
-	REQUIRE(tracks.app.waitUntil([&] { return tracks.track(synth).at("frozen").is_null(); }));
-	REQUIRE(tracks.app.waitUntil([&] { return !hasClass(elements(tracks.app, row(synth)).at(0), "frozen"); }));
+	REQUIRE(tracks.app.waitUntil([&frozen] { return !frozen(); }, rendering));
+	CHECK(tracks.track(synth).at("frozen").is_null());
 
 	tracks.app.keys().run("track.renderSelected", Json::object(), tracks.app.main(), nullptr);
-	tracks.rows(2);
+	tracks.rows(2, rendering);
 	const std::vector<uint64_t> order = tracks.order();
 	REQUIRE(order.size() == 2);
 	CHECK(tracks.track(order[1]).at("name") == "Synth (Rendered)");
