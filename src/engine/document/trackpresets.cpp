@@ -184,6 +184,7 @@ namespace gnubase::engine
 				channel.output = original.output;
 				channel.id = m_to.newId();
 				channel.track = track;
+				channel.sample = clip(original.sample); // a sampler's (#180), with the instrument
 				// The fader top may be lower here (as project.set brings volumes down to it).
 				channel.volume = std::min(channel.volume, m_to.maxVolume);
 				for (Send& send : channel.sends)

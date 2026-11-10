@@ -678,6 +678,9 @@ TEST_CASE("the toolbar's tool buttons and the keys choose the tools, a second cl
 	REQUIRE(app.waitUntil([&app] { return hasClass(app, "#combine-selection-tools", "checked"); }));
 	click(app, selector("#combine-selection-tools"));
 	CHECK(!display.combineSelectionTools());
+	// It has an icon of its own, not the object selection tool's.
+	CHECK(element(app, "#combine-selection-tools svg").at("attributes").at("src") !=
+		element(app, "button[tool=objectSelection] svg").at("attributes").at("src"));
 
 	// A second click on the object selection tool opens its modes: sizing moves contents.
 	app.ui().key(std::nullopt, "1");
@@ -981,10 +984,16 @@ TEST_CASE("the scrub tool scrubs an audio track and moves the project cursor in 
 {
 	ProjectWindow window;
 	test::UiApp& app = window.app;
+	app.call("audio.setDevice", {{"captureSeconds", 1}}); // the dummy device, which keeps what it plays
+	const test::TempDir dir;
+	test::Audio take;
+	take.channels = 1;
+	take.sampleRate = 48000;
+	take.samples.assign(480000, 0.5f);
+	const std::filesystem::path file = dir.path() / "take.wav";
+	test::writeWav(file, take);
 	const Json track = app.call("track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track");
-	const Json media =
-		app.call("media.add", {{"path", "take.wav"}, {"sampleRate", 48000}, {"channels", 1}, {"length", 480000}})
-			.at("media");
+	const Json media = app.call("media.add", {{"path", file.u8string()}}).at("media");
 	const Json clip = app.call("clip.add", {{"media", media.at("id")}}).at("clip");
 	app.call(
 		"audioEvent.add", {{"track", track.at("id")}, {"clip", clip.at("id")}, {"position", 0}, {"length", 240000}});
@@ -1002,11 +1011,19 @@ TEST_CASE("the scrub tool scrubs an audio track and moves the project cursor in 
 			"", 0, ui::Point{lanes.at("box").at("x").get<int>() + x, lanes.at("box").at("y").get<int>() + y}};
 	};
 
-	// 9, then Scrub from the play tool's modes, and a drag from 1 to 1.5 seconds.
+	// 9, then Scrub from the play tool's modes, and a drag from 1 to 1.5 seconds: while the button is held, the
+	// device plays the take, a constant 0.5.
 	app.ui().key(std::nullopt, "9");
 	choose(app, "button[tool=play]", "#play-menu", "Scrub");
-	app.ui().drag(std::nullopt, at(100, 20), at(150, 20), {});
+	app.ui().press(std::nullopt, at(100, 20), ui::MouseButton::Left);
+	app.ui().move(std::nullopt, at(150, 20));
 	REQUIRE(app.waitUntil([&app] { return app.call("transport.get").at("position") == 72000; }));
+	app.call("audio.render", {{"frames", 4800}}); // the longest a scrub plays: 0.1 seconds
+	const auto played = app.call("audio.capture", {{"channel", 0}, {"start", 0}, {"frames", 4800}})
+							.at("samples")
+							.get<std::vector<float>>();
+	CHECK(std::count(played.begin(), played.end(), 0.5f) >= 480); // at least 0.01 seconds
+	app.ui().release(std::nullopt, at(150, 20), ui::MouseButton::Left);
 	CHECK(app.call("transport.get").at("playing") == false);
 }
 

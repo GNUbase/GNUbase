@@ -15,6 +15,7 @@
 #include "engine/document/projectrules.h"
 #include "engine/document/renderinplace.h"
 #include "engine/document/sampleeditor.h"
+#include "engine/document/samplertrack.h"
 #include "engine/document/serialize.h"
 #include "engine/document/stripparameters.h"
 #include "engine/document/timewarp.h"
@@ -32,6 +33,7 @@
 #include "engine/midi/drummaps.h"
 #include "engine/midi/functioncommands.h"
 #include "engine/midi/logicalcommands.h"
+#include "engine/midi/patterns.h"
 #include "engine/midi/quantizecommands.h"
 #include "engine/processors/builtin.h"
 #include "platform/log.h"
@@ -1128,7 +1130,10 @@ namespace gnubase::engine
 				}
 				// Another instrument starts with its parameters at their defaults.
 				if (changed.instrument != channel.instrument)
+				{
 					changed.instrumentParameters.clear();
+					changed.sample = 0; // only the sampler plays one
+				}
 			}
 		}
 
@@ -2789,6 +2794,9 @@ namespace gnubase::engine
 			find(project.clips, id, "clip");
 			forEveryAudioEvent(project, [id](const AudioEvent& event)
 				{ require(event.clip != id, "clip " + idText(id) + " is used by audio event " + idText(event.id)); });
+			for (const auto& [channelId, channel] : project.channels)
+				require(channel.sample != id,
+					"clip " + idText(id) + " is played by sampler track " + idText(channel.track));
 			project.clips.erase(id);
 			context.emit("clip.removed", {{"clip", id}});
 			return Json::object();
@@ -2883,6 +2891,9 @@ namespace gnubase::engine
 			require(part.length > 0, "length must be positive");
 			part.name = parameters.value("name", track.name);
 			part.lane = parameters.value("lane", 0);
+			part.pattern = parameters.value("pattern", ObjectId{0});
+			require(part.pattern == 0 || project.patterns.count(part.pattern) != 0,
+				"no pattern " + std::to_string(part.pattern));
 			part.id = project.newId();
 			Json result = {{"part", toJson(part)}};
 			project.midiParts[part.id] = std::move(part);
@@ -2943,6 +2954,12 @@ namespace gnubase::engine
 				const std::string mode = parameters.at("globalTranspose").get<std::string>();
 				require(mode == "follow" || mode == "independent", "globalTranspose must be follow or independent");
 				part.independent = mode == "independent";
+			}
+			if (parameters.contains("pattern"))
+			{
+				part.pattern = parameters.at("pattern").get<ObjectId>();
+				require(part.pattern == 0 || project.patterns.count(part.pattern) != 0,
+					"no pattern " + std::to_string(part.pattern));
 			}
 			Json result = {{"part", toJson(part)}};
 			context.emit("midiPart.changed", result);
@@ -3410,6 +3427,7 @@ namespace gnubase::engine
 			announceObjects(change.linkGroups, direction, "linkGroup", "group", context);
 			announceObjects(change.drumMaps, direction, "drumMap", "map", context);
 			announceObjects(change.articulationMaps, direction, "articulationMap", "map", context);
+			announceObjects(change.patterns, direction, "pattern", "pattern", context);
 			// Slots as plugin.insert, plugin.remove and the other plugin.* commands announce them. Those of a channel
 			// that came or went are in its events.
 			std::set<ObjectId> channels; // that came or went
@@ -4384,8 +4402,8 @@ namespace gnubase::engine
 				objectSchema({{"media", idSchema}, {"name", stringSchema}}, {"media"}), resultSchema({"clip"}), false},
 			addClip);
 		add(engine,
-			{"clip.remove", 1, "Removes a clip that no audio event uses.", objectSchema({{"clip", idSchema}}, {"clip"}),
-				noResult, false},
+			{"clip.remove", 1, "Removes a clip that no audio event or sampler track uses.",
+				objectSchema({{"clip", idSchema}}, {"clip"}), noResult, false},
 			removeClip);
 
 		add(engine,
@@ -4431,9 +4449,11 @@ namespace gnubase::engine
 		add(engine,
 			{"midiPart.add", 1,
 				"Adds a MIDI part to a MIDI or instrument track. position and length are in the track's time base. "
-				"lane puts it on that lane of the track, from 0 (default), as event.set does.",
+				"lane puts it on that lane of the track, from 0 (default), as event.set does. pattern makes it a "
+				"pattern event (#181), which plays that pattern (pattern.add) from its start over and over instead "
+				"of its notes.",
 				objectSchema({{"track", idSchema}, {"position", integerSchema}, {"length", integerSchema},
-								 {"name", stringSchema}, {"lane", laneSchema}},
+								 {"name", stringSchema}, {"lane", laneSchema}, {"pattern", idSchema}},
 					{"track", "position", "length"}),
 				resultSchema({"part"}), false},
 			addMidiPart);
@@ -4444,11 +4464,12 @@ namespace gnubase::engine
 				"(channel.set modifiers), also while they are bypassed. The notes themselves stay as they are. "
 				"rootKey is the part's root key (\"\" for none, C, C# and so on to B), which the project root key "
 				"transposes it to (project.set rootKey); globalTranspose follow (the default) or independent says "
-				"whether the project root key and the transpose track transpose it (transpose.add).",
+				"whether the project root key and the transpose track transpose it (transpose.add). pattern is the "
+				"pattern a pattern event plays (pattern.add, #181), 0 for an ordinary part.",
 				objectSchema({{"part", idSchema}, {"name", stringSchema}, {"position", integerSchema},
 								 {"length", integerSchema}, {"transpose", integerSchema}, {"velocity", integerSchema},
 								 {"rootKey", enumSchema(rootKeyNames())},
-								 {"globalTranspose", enumSchema({"follow", "independent"})}},
+								 {"globalTranspose", enumSchema({"follow", "independent"})}, {"pattern", idSchema}},
 					{"part"}),
 				resultSchema({"part"}), false},
 			[this](Project& project, CommandContext& context)
@@ -4544,10 +4565,12 @@ namespace gnubase::engine
 		registerTrackVersionCommands(*this, engine);
 		midi::registerDrumMapCommands(*this, engine);
 		midi::registerArticulationMapCommands(*this, engine);
+		midi::registerPatternCommands(*this, engine);
 		registerChannelSettingsCommands(*this, engine);
 		registerTrackPresetCommands(*this, engine);
 		registerEditorCommands(*this, engine);
 		registerSampleEditorCommands(*this, engine);
+		registerSamplerCommands(*this, engine);
 		registerHitpointCommands(*this, engine, jobs);
 		registerWarpCommands(engine);
 		registerTimeWarpCommands(*this, engine);
@@ -4772,8 +4795,9 @@ namespace gnubase::engine
 				"folder of the project's folder, where File > Export > "
 				"Audio Mixdown puts mixdowns, go along into the folder Mixdown, unless skipMixdown is true. The "
 				"project itself stays as it is. minimize keeps only the ranges of audio files "
-				"that audio events play, with handles seconds (default 1) before and after; removeUnused leaves out "
-				"clips that no audio event uses and media that no clip uses. currentVersionsOnly and skipVideo have "
+				"that audio events play, with handles seconds (default 1) before and after, but files that a sampler "
+				"track plays go along whole; removeUnused leaves out clips that no audio event or sampler track uses "
+				"and media that no clip uses. currentVersionsOnly and skipVideo have "
 				"no effect until clips have versions and projects have video. activate opens the backup once it is "
 				"done, unless the project changed meanwhile. The backup runs as a job: this returns at once, "
 				"job.progress and job.finished events follow, and job.cancel stops it and removes what it wrote. A "

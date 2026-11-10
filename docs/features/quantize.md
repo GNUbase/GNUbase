@@ -28,7 +28,8 @@ and the toolbar's section.
   (`edit.createGrooveQuantize`, which makes a preset of the first MIDI part with `quantize.extractGroove` and makes
   it the project's settings). They are UI commands that send `quantize.apply`, `quantize.reset`, `quantize.lengths`,
   `quantize.ends` and `quantize.freeze`, so what they do is what MCP and Lua can do.
-- **What they quantize.** Run from an editor (the editor window, or the lower zone while it shows the Editor tab), the
+- **What they quantize.** Run from an editor (the editor window, the lower zone while it shows the Editor tab, or an
+  in-place editor in the project window, [in-place-editor.md](in-place-editor.md)), the
   editor's selected notes, or with none selected every note of the parts it edits; Quantize MIDI Event Lengths takes
   the editor's length quantize there (Quantize Link: the grid's step). Run from the project window, its selected MIDI
   parts. Run without a zone, as the quantize panel, `gnubase.ui.command` and MCP run them, an open editor's selected

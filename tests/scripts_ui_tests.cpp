@@ -25,7 +25,13 @@ TEST_CASE("the Edit menu runs the user scripts, and the script console opens the
 	test::UiApp app;
 	app.appUi().showProject();
 	std::vector<std::filesystem::path> opened;
-	app.appUi().openExternallyWith([&opened](const std::filesystem::path& path) { opened.push_back(path); });
+	std::vector<bool> edited;
+	app.appUi().openExternallyWith(
+		[&opened, &edited](const std::filesystem::path& path, bool edit)
+		{
+			opened.push_back(path);
+			edited.push_back(edit);
+		});
 	const std::filesystem::path folder = app.engine().settingsDirectory() / "scripts";
 	REQUIRE(std::filesystem::is_regular_file(folder / "list-tracks.lua")); // an example
 
@@ -54,6 +60,7 @@ TEST_CASE("the Edit menu runs the user scripts, and the script console opens the
 	app.ui().click(window, {"#script-reference", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
 	REQUIRE(opened.size() == 3);
 	CHECK(opened[2] == folder / "lua-api.md");
+	CHECK(edited == std::vector<bool>{true, false, false}); // the script in the user's editor, which doesn't run it
 	std::ifstream file(opened[2]);
 	const std::string reference{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
 	CHECK_THAT(reference, ContainsSubstring("gnubase.history.join"));
@@ -104,4 +111,120 @@ gnubase.ui.scripts()
 		}));
 	app.keys().run("script.written", Json::object(), app.main(), nullptr);
 	CHECK(tracks() == 2);
+}
+
+namespace
+{
+	// Writes a user script and finds the scripts again, as Reload does.
+	void writeScript(test::UiApp& app, const std::string& name, const std::string& code)
+	{
+		std::ofstream(app.engine().settingsDirectory() / "scripts" / (name + ".lua")) << code;
+		const std::optional<std::string> error = app.lua().run("gnubase.ui.scripts()", "check");
+		INFO(error.value_or(""));
+		REQUIRE(!error.has_value());
+		app.shell().step(std::chrono::milliseconds(0)); // their keys
+	}
+
+	ui::WindowId openConsole(test::UiApp& app)
+	{
+		app.keys().run("window.scriptConsole", Json::object(), app.main(), nullptr);
+		REQUIRE(app.waitUntil([&app] { return app.shell().find(app.appUi().scriptConsoleWindow()) != nullptr; }));
+		return app.appUi().scriptConsoleWindow();
+	}
+
+	std::string output(test::UiApp& app, ui::WindowId window)
+	{
+		return app.ui().dom(window, "#script-output", 0).at("elements").at(0).value("text", std::string());
+	}
+}
+
+TEST_CASE("a user script or console line that runs too long asks whether it goes on, and stops", "[ui]")
+{
+	test::UiApp app;
+	app.appUi().showProject();
+	std::vector<std::string> asked;
+	app.appUi().keepScriptsRunningWith(std::chrono::milliseconds(20),
+		[&asked](const std::string& script)
+		{
+			asked.push_back(script);
+			return asked.size() < 2;
+		});
+	writeScript(app, "runaway", "gnubase.track.add{type = \"audio\"}\nwhile true do end");
+	app.keys().run("script.runaway", Json::object(), app.main(), nullptr);
+	CHECK(asked == std::vector<std::string>{"runaway", "runaway"});
+	CHECK(app.call("project.get").at("tracks").size() == 1);
+	CHECK(app.call("history.get").at("steps").back().at("action") == "runaway");
+
+	// A line typed into the console too, and the console's own Lua runs on after it.
+	const ui::WindowId window = openConsole(app);
+	REQUIRE(app.waitUntil([&app, window] { return output(app, window).find("ran longer than") != std::string::npos; }));
+	asked.clear();
+	app.ui().click(window, {"#script-prompt", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+	app.ui().text(window, "while true do end");
+	app.ui().key(window, "Enter");
+	CHECK(asked == std::vector<std::string>{"Script Console", "Script Console"});
+	app.ui().text(window, "print('goes on')");
+	app.ui().key(window, "Enter");
+	CHECK(app.waitUntil([&app, window] { return output(app, window).find("goes on") != std::string::npos; }));
+	CHECK(asked.size() == 2);
+}
+
+TEST_CASE("a user script's undo step has what it sent through the UI, and not what the UI sent before", "[ui]")
+{
+	test::UiApp app;
+	app.appUi().showProject();
+	ui::EngineBinding& binding = app.appUi().binding();
+	const auto addTrack = [](const char* type)
+	{ return Json::array({Json{{"command", "track.add"}, {"parameters", {{"type", type}}}}}); };
+	// A UI command whose second step waits for the first.
+	app.keys().add({"test.twoSteps", "Adds two MIDI tracks in steps.",
+		[&binding, &addTrack](ui::Window& /*window*/, Rml::Element* /*zone*/)
+		{
+			binding.sendStep(0, "test", "Add Track", addTrack("midi"));
+			binding.sendStep(0, "test", "Add Track", addTrack("midi"));
+		}});
+	writeScript(app, "steps", "gnubase.ui.command{command = \"test.twoSteps\"}");
+
+	// The user's steps: one in flight, one waiting, when the script starts.
+	binding.sendStep(0, "user", "Add Track", addTrack("audio"));
+	binding.sendStep(0, "user", "Add Track", addTrack("audio"));
+	app.keys().run("script.steps", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("tracks").size() == 4; }));
+	const Json steps = app.call("history.get").at("steps");
+	REQUIRE(steps.size() == 3);
+	CHECK(steps[0].at("action") == "Add Track");
+	CHECK(steps[1].at("action") == "Add Track");
+	CHECK(steps[2].at("action") == "steps");
+	app.call("history.undo");
+	CHECK(app.call("project.get").at("tracks").size() == 2);
+}
+
+TEST_CASE("the script console adds what is printed to its output, and drops what the output dropped", "[ui]")
+{
+	test::UiApp app;
+	app.appUi().showProject();
+	const ui::WindowId window = openConsole(app);
+	const auto texts = [&app, window]
+	{ return app.ui().dom(window, "#script-output", 1).at("elements").at(0).value("children", Json::array()).size(); };
+	const auto print = [&app](const std::string& code)
+	{
+		CHECK(!app.lua().run(code, "print").has_value());
+		app.shell().step(std::chrono::milliseconds(0));
+	};
+	print("print('one')");
+	print("print('two')");
+	CHECK(texts() == 2); // the first one stays as it is
+	CHECK_THAT(output(app, window), ContainsSubstring("one") && ContainsSubstring("two"));
+
+	app.ui().click(window, {"#script-clear", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(texts() == 0);
+
+	// The last 64 KiB.
+	for (int i = 0; i < 10; ++i)
+		print("for _ = 1, 10 do print(string.rep('" + std::to_string(i) + "', 1023)) end");
+	CHECK(texts() <= 8);
+	const std::string shown = output(app, window);
+	CHECK(shown.find('9') != std::string::npos);
+	CHECK(shown.find('0') == std::string::npos);
 }

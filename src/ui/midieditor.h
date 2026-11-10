@@ -6,6 +6,7 @@
 #include "ui/enginebinding.h"
 #include "ui/keyeditor.h"
 #include "ui/listeditor.h"
+#include "ui/patterneditor.h"
 
 #include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/ObserverPtr.h>
@@ -99,6 +100,7 @@ namespace gnubase::ui
 		std::unique_ptr<KeyEditor> m_keys;
 		std::unique_ptr<ListEditor> m_list;
 		std::unique_ptr<AudioPartEditor> m_audio;
+		std::unique_ptr<PatternEditor> m_pattern;
 		std::vector<Subscription> m_subscriptions;
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers that come after it went
 	};

@@ -175,6 +175,12 @@ namespace gnubase::ui
 		return engine::snap(m_snap, snapGrid(), target);
 	}
 
+	double EventDisplay::snapped(double seconds, std::optional<double> from) const
+	{
+		return static_cast<double>(time::toSamples(snapAt(seconds, from), m_time.tempo, m_time.sampleRate)) /
+			m_time.sampleRate;
+	}
+
 	std::pair<Json, double> EventDisplay::shiftTo(const time::Position& to, double from) const
 	{
 		const bool musical = to.base == time::TimeBase::Musical &&
@@ -606,6 +612,7 @@ namespace gnubase::ui
 		m_dragMoved = false;
 		m_dragStarted = false;
 		m_dragToggles = false;
+		m_clickSelection.reset();
 		m_pressTime = now();
 		m_dragDx = 0.0;
 		m_dragLanes = 0;
@@ -644,8 +651,8 @@ namespace gnubase::ui
 		// The tool modifiers for a press on an event (Set Cursor Position, Split Event, Copy, Shared Copy, and Disable
 		// Snapping at an edge) act on it rather than adding it to the selection, whatever keys they are set to; so
 		// does a copy's with Ctrl, a restricted copy.
-		const bool toolModifier = modifiers("select.setCursorPosition") || modifiers("select.splitEvent") ||
-			copyKeys(m_pressed) || copyKeys(withoutCtrl(m_pressed)) ||
+		const bool clickModifier = modifiers("select.setCursorPosition") || modifiers("select.splitEvent");
+		const bool toolModifier = clickModifier || copyKeys(m_pressed) || copyKeys(withoutCtrl(m_pressed)) ||
 			((atStart || atEnd) && modifiers("sizeObjects.disableSnapping"));
 		// A fade handle (reference manual p. 383), or the event volume handle (p. 401).
 		if (!add && !toolModifier && (fadeDown(*shown, x, y) || volumeDown(*shown, x, y)))
@@ -667,6 +674,17 @@ namespace gnubase::ui
 			m_drag = Drag::Events;
 			return;
 		}
+		// Keys that are Ctrl or Shift and only a drag's tool modifier: released without a drag, the press adds the
+		// event to the selection or takes it out, as without them (#474).
+		if (add && !clickModifier)
+		{
+			std::vector<uint64_t> events = m_selection;
+			if (selected)
+				events.erase(std::remove(events.begin(), events.end(), shown->id), events.end());
+			else
+				events.push_back(shown->id);
+			m_clickSelection = std::move(events);
+		}
 		if (!selected)
 			select({shown->id});
 		if (atStart)
@@ -684,6 +702,8 @@ namespace gnubase::ui
 		if (lane && automationAt(*lane) != nullptr) // a press edits points with the tool chosen, combined or not
 			return toolName(m_tool);
 		const Tool tool = toolAt(y);
+		if (scrubEdgeAt(x, y) != 0) // the play tool in scrub mode resizes there
+			return "resize";
 		if (tool != Tool::ObjectSelection)
 			return toolName(tool);
 		// What a press with the object selection tool and the keys does (areaDown, areaUp).
@@ -820,6 +840,17 @@ namespace gnubase::ui
 		if (!alive())
 			return;
 		m_pressed = modifiersOf(event); // what is held now decides, e.g. whether a drag copies
+		if (std::exchange(m_resizeScrubs, false))
+		{
+			m_binding.send("audition.stop", Json::object());
+			// A click of the play tool: no tool modifier's click of the object selection tool (Split Event, Set
+			// Cursor Position).
+			if (!m_dragMoved)
+			{
+				m_drag = Drag::None;
+				return;
+			}
+		}
 		if (drag == Drag::Automation)
 		{
 			automationUp(dpFrom(*m_lanes, event.GetParameter<float>("mouse_x", 0.0F)),
@@ -854,6 +885,7 @@ namespace gnubase::ui
 		const bool moved = std::exchange(m_dragMoved, false);
 		const bool started = std::exchange(m_dragStarted, false) || now() - m_pressTime >= g_dragDelay;
 		const bool toggles = std::exchange(m_dragToggles, false);
+		std::optional<std::vector<uint64_t>> clicked = std::exchange(m_clickSelection, std::nullopt);
 		m_drag = Drag::None;
 		m_dragDx = 0.0;
 		m_dragLanes = 0;
@@ -864,6 +896,11 @@ namespace gnubase::ui
 			std::vector<uint64_t> events = m_selection;
 			events.erase(std::remove(events.begin(), events.end(), m_dragEvent), events.end());
 			select(std::move(events));
+			return;
+		}
+		if (clicked && (!moved || (drag == Drag::Events && !started)))
+		{
+			select(std::move(*clicked));
 			return;
 		}
 		if (!moved)
@@ -974,6 +1011,13 @@ namespace gnubase::ui
 					// One that fails, e.g. for a locked event, shows the events as they are, as the release leaves
 					// them.
 					m_resizePreview = result.ok() ? result.value : Json();
+					// The play tool's resize in scrub mode scrubs what the event plays at the edge the release
+					// gives it (reference manual p. 268).
+					if (m_resizeScrubs && result.ok())
+						for (const Json& event : result.value.at("audioEvents"))
+							if (event.at("id") == m_dragEvent)
+								scrubEdge(event.at("clip").get<uint64_t>(), event.at("offset").get<int64_t>(),
+									event.at("length").get<int64_t>());
 					showProject();
 				}
 				askResizePreview();
@@ -1045,6 +1089,8 @@ namespace gnubase::ui
 			return false;
 		m_drag = Drag::None;
 		m_dragMoved = false;
+		if (std::exchange(m_resizeScrubs, false))
+			m_binding.send("audition.stop", Json::object());
 		const bool shown = !m_resizePreview.is_null();
 		endResize();
 		if (shown)

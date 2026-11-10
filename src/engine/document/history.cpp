@@ -108,6 +108,7 @@ namespace gnubase::engine
 			copy.velocity = part->velocity;
 			copy.rootKey = part->rootKey;
 			copy.independent = part->independent;
+			copy.pattern = part->pattern;
 			return copy;
 		}
 
@@ -129,7 +130,8 @@ namespace gnubase::engine
 	{
 		return !settingsBefore && tracks.empty() && channels.empty() && slots.empty() && media.empty() &&
 			clips.empty() && poolFolders.empty() && audioEvents.empty() && audioParts.empty() && midiParts.empty() &&
-			markers.empty() && automation.empty() && linkGroups.empty() && drumMaps.empty() && articulationMaps.empty();
+			markers.empty() && automation.empty() && linkGroups.empty() && drumMaps.empty() &&
+			articulationMaps.empty() && patterns.empty();
 	}
 
 	ProjectChange difference(const Project& before, const Project& after)
@@ -154,6 +156,7 @@ namespace gnubase::engine
 		change.linkGroups = differences(before.linkGroups, after.linkGroups);
 		change.drumMaps = differences(before.drumMaps, after.drumMaps);
 		change.articulationMaps = differences(before.articulationMaps, after.articulationMaps);
+		change.patterns = differences(before.patterns, after.patterns);
 
 		const MidiPart empty;
 		compare(before.midiParts, after.midiParts,
@@ -220,6 +223,7 @@ namespace gnubase::engine
 		applyObjects(project.linkGroups, change.linkGroups, direction);
 		applyObjects(project.drumMaps, change.drumMaps, direction);
 		applyObjects(project.articulationMaps, change.articulationMaps, direction);
+		applyObjects(project.patterns, change.patterns, direction);
 		for (const MidiPartChange& partChange : change.midiParts)
 		{
 			const std::optional<MidiPart>& target = direction == Direction::Redo ? partChange.after : partChange.before;
@@ -243,6 +247,7 @@ namespace gnubase::engine
 			part.velocity = target->velocity;
 			part.rootKey = target->rootKey;
 			part.independent = target->independent;
+			part.pattern = target->pattern;
 			applyObjects(part.notes, partChange.notes, direction);
 			applyObjects(part.controllers, partChange.controllers, direction);
 		}

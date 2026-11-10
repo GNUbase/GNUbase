@@ -49,6 +49,12 @@ namespace gnubase::engine
 		std::map<ObjectId, std::string> mediaPaths, double sampleRate, time::Samples position, time::Samples end,
 		int channels, uint32_t maxFrames)
 	{
+		{
+			// The cue thread leaves the streams alone until this state is out: a cue it made for the last one would
+			// move what this one cues (cue holds the lock while it cues).
+			const std::scoped_lock lock(m_mutex);
+			m_cuePlaying = false;
+		}
 		m_subject = subject;
 		m_scrubbing = false;
 		m_readers.clear();
@@ -82,16 +88,30 @@ namespace gnubase::engine
 			stop();
 			m_subject = subject;
 			m_scrubbing = true;
-			m_head = position;
+			m_scrubFrom = position;
+			m_scrubTo = position;
+			m_scrubFrames = 0;
 			m_lastScrub = now;
 			return;
 		}
 		const double elapsed = std::chrono::duration<double>(now - m_lastScrub).count();
 		const double duration = seconds.value_or(std::clamp(elapsed, g_minScrubSeconds, g_maxScrubSeconds));
 		m_lastScrub = now;
+		// On from where the audio thread got to in the last scrub, or where that one starts if it hasn't played it:
+		// scrubs that come faster than they play, or late, leave nothing out. (It may play a few more frames of the
+		// last one meanwhile, which this one then plays again.)
+		time::Samples reached = m_scrubTo;
+		if (m_scrubFrames > 0)
+		{
+			const auto [serial, played] = m_played.load();
+			const double done = serial == m_scrubSerial
+				? std::min(static_cast<double>(played), static_cast<double>(m_scrubFrames)) /
+					static_cast<double>(m_scrubFrames)
+				: 0.0;
+			reached = m_scrubFrom + std::llround(static_cast<double>(m_scrubTo - m_scrubFrom) * done);
+		}
 		const auto most = static_cast<time::Samples>(g_maxScrubMaterial * sampleRate);
-		const time::Samples from = std::clamp(m_head, position - most, position + most);
-		m_head = position;
+		const time::Samples from = std::clamp(reached, position - most, position + most);
 		const auto frames = static_cast<size_t>(std::llround(duration * sampleRate));
 		if (from == position || frames == 0 || channels <= 0)
 			return; // standing still: what it played runs out
@@ -124,6 +144,10 @@ namespace gnubase::engine
 		state->channels = channels;
 		state->scrub = std::move(audio);
 		publish(std::move(state));
+		m_scrubFrom = from;
+		m_scrubTo = position;
+		m_scrubFrames = frames;
+		m_scrubSerial = m_serial;
 	}
 
 	void Audition::stop()
@@ -132,6 +156,7 @@ namespace gnubase::engine
 		m_scrubbing = false;
 		m_readers.clear();
 		publish(std::make_unique<State>());
+		m_playback.setTracks({}, {}, 0.0); // closes the streams' files and frees their buffers
 	}
 
 	std::vector<float> Audition::read(const Playlist& playlist, const std::map<ObjectId, std::string>& mediaPaths,
@@ -210,19 +235,14 @@ namespace gnubase::engine
 
 	void Audition::cue(time::Samples window, bool reading)
 	{
-		uint64_t serial = 0;
-		time::Samples start = 0;
-		{
-			const std::scoped_lock lock(m_mutex);
-			if (!m_cuePlaying)
-				return;
-			serial = m_cueSerial;
-			start = m_cueStart;
-		}
+		// Under the lock, so that play can hold off a cue made for the state before.
+		const std::scoped_lock lock(m_mutex);
+		if (!m_cuePlaying)
+			return;
 		const auto [played, position] = m_played.load();
 		Playback::Cue cue;
-		cue.playing = reading && played == serial;
-		cue.position = played == serial ? position : start;
+		cue.playing = reading && played == m_cueSerial;
+		cue.position = played == m_cueSerial ? position : m_cueStart;
 		cue.window = window;
 		m_playback.cue(cue);
 	}
@@ -276,7 +296,7 @@ namespace gnubase::engine
 				add(c, state.scrub->data() + (m_scrubbed * width) + c, width, count);
 			m_scrubbed += count;
 		}
-		m_played.store(m_playing, m_position);
+		m_played.store(m_playing, state.scrub ? static_cast<time::Samples>(m_scrubbed) : m_position);
 		m_states.release();
 	}
 
@@ -287,7 +307,7 @@ namespace gnubase::engine
 			"media": {"type": "integer"}, "mode": {"type": "string", "enum": ["off", "play", "scrub"]}}})");
 		const Json parameters = Json::parse(R"({"type": "object", "additionalProperties": false,
 			"required": ["position"], "properties": {"track": {"type": "integer"}, "media": {"type": "integer"},
-			"position": {"type": "integer"}}})");
+			"clip": {"type": "integer"}, "position": {"type": "integer"}}})");
 		Json startParameters = parameters;
 		startParameters["properties"]["end"] = {{"type", "integer"}};
 		Json scrubParameters = parameters;
@@ -302,9 +322,10 @@ namespace gnubase::engine
 			context.emit("audition.changed", result);
 			return result;
 		};
-		// The audio track or media file, its playlist and the main mix's channels for a command's parameters, with
-		// position and end in the playlist's samples. A media file plays on its own from the project's sample 0, so
-		// that its frames, at its own sample rate, are converted to the project's.
+		// The audio track, media file or clip, its playlist and the main mix's channels for a command's parameters,
+		// with position and end in the playlist's samples. A media file plays on its own from the project's sample
+		// 0, so that its frames, at its own sample rate, are converted to the project's; a clip's plays with the
+		// clip's fades at its start and end.
 		struct Source
 		{
 			Audition::Subject subject;
@@ -316,7 +337,8 @@ namespace gnubase::engine
 		const auto source = [this](const Json& given)
 		{
 			require(m_device != nullptr, "there is no audio device; set one with audio.setDevice");
-			require(given.contains("track") != given.contains("media"), "give either a track or a media file");
+			require(given.count("track") + given.count("media") + given.count("clip") == 1,
+				"give either a track, a media file or a clip");
 			Source result;
 			const RenderSnapshot& snapshot = m_snapshots.latest();
 			const auto position = given.at("position").get<time::Samples>();
@@ -337,10 +359,29 @@ namespace gnubase::engine
 			}
 			else
 			{
-				result.subject.media = given.at("media").get<ObjectId>();
-				const auto found =
-					std::find_if(snapshot.media.begin(), snapshot.media.end(), [&result](const RenderMedia& media)
-						{ return media.id == result.subject.media && media.warp.empty(); }); // not a warped event's
+				const RenderClip* clip = nullptr;
+				if (given.contains("clip"))
+				{
+					result.subject.clip = given.at("clip").get<ObjectId>();
+					const auto found = std::find_if(snapshot.clips.begin(), snapshot.clips.end(),
+						[&result](const RenderClip& each) { return each.id == result.subject.clip; });
+					require(found != snapshot.clips.end(), "no clip " + std::to_string(result.subject.clip));
+					clip = &*found;
+					result.subject.media = clip->media;
+				}
+				else
+				{
+					result.subject.media = given.at("media").get<ObjectId>();
+				}
+				// The project's media files: not a warped event's, nor a frozen channel's freeze file, which has the
+				// channel's id.
+				const auto found = std::find_if(snapshot.media.begin(), snapshot.media.end(),
+					[&result, &snapshot](const RenderMedia& media)
+					{
+						return media.id == result.subject.media && media.warp.empty() &&
+							std::none_of(snapshot.channels.begin(), snapshot.channels.end(),
+								[&media](const RenderChannel& channel) { return channel.id == media.id; });
+					});
 				require(found != snapshot.media.end(), "no media file " + std::to_string(result.subject.media));
 				require(found->sampleRate > 0.0 && found->length >= 0, // a hand-edited project's, say
 					"media file " + std::to_string(found->id) + " has no sample rate or length");
@@ -353,6 +394,11 @@ namespace gnubase::engine
 				entry.end = samples(found->length);
 				entry.media = found->id;
 				entry.channels = found->channels;
+				if (clip != nullptr && clip->fadeIn.length > 0)
+					entry.ramps.push_back({0, samples(clip->fadeIn.length), clip->fadeIn.shape, false});
+				if (clip != nullptr && clip->fadeOut.length > 0)
+					entry.ramps.push_back(
+						{entry.end - samples(clip->fadeOut.length), entry.end, clip->fadeOut.shape, true});
 				Playlist playlist;
 				playlist.layers.push_back({entry});
 				result.playback = {found->id, std::make_shared<const Playlist>(std::move(playlist))};
@@ -374,9 +420,10 @@ namespace gnubase::engine
 				"fader, pan, mute and effects, and without the transport. With end (samples, after position) it plays "
 				"up to there and then nothing, as the sample editor plays a slice, while its mode stays play until "
 				"audition.stop or another audition. A mono clip plays on every channel. Or, instead of track, a media "
-				"file on its own, as the sample editor plays its clip: position and end are then its sample frames, "
-				"from 0 to its length, without the events that play it. Ends what was auditioned before. Announces "
-				"audition.changed.",
+				"file on its own: position and end are then its sample frames, from 0 to its length, without the "
+				"events that play it. Or, instead of either, a clip: its media file so, with the clip's fades, as the "
+				"sample editor plays its clip; media is then the clip's media file. Ends what was auditioned before. "
+				"Announces audition.changed.",
 				startParameters, status, false},
 			[this, source, report](CommandContext& context)
 			{
@@ -393,9 +440,9 @@ namespace gnubase::engine
 				"the time since that scrub, 0.01 to 0.1 seconds), so speed and pitch follow how fast the positions "
 				"come; the first scrub only sets where the next one starts. Like audition.start it goes straight to "
 				"the main mix's outputs; it also moves the project cursor to position (transport.changed). Or, "
-				"instead of track, a media file on its own, as the sample editor scrubs its clip: position is then "
-				"one of its sample frames, and the cursor stays. Ends with audition.stop. Announces "
-				"audition.changed.",
+				"instead of track, a media file on its own, or a clip, its media file with the clip's fades, as the "
+				"sample editor scrubs its clip: position is then one of the file's sample frames, and the cursor "
+				"stays. Ends with audition.stop. Announces audition.changed.",
 				scrubParameters, status, false},
 			[this, source, report](CommandContext& context)
 			{
@@ -403,13 +450,23 @@ namespace gnubase::engine
 				std::optional<double> seconds;
 				if (const auto found = context.parameters().find("seconds"); found != context.parameters().end())
 					seconds = found->get<double>();
+				// One per mouse move would push everything else out of the log: only the first scrub of a drag goes in.
+				if (m_audition.scrubbing() && m_audition.subject() == given.subject)
+					context.leaveOutOfLog();
+				// The cursor first, so that a busy transport fails the scrub before it changes the audition. While the
+				// transport plays, cued exactly as transport.locate does it, so that the other tracks play on without
+				// a dropout; while it stands, the cue thread follows, which keeps scrubs quick.
+				if (given.subject.track != 0)
+				{
+					if (m_transport.playing())
+						locate({{"position", given.position}});
+					else
+						sent(m_transport.locate(given.position));
+				}
 				m_audition.scrub(given.subject, given.playback, m_mediaPaths, m_snapshots.latest().sampleRate,
 					given.position, seconds, given.channels);
 				if (given.subject.track != 0)
-				{
-					sent(m_transport.locate(given.position));
 					context.emit("transport.changed", transportStatus());
-				}
 				return report(context);
 			});
 		engine.registerCommand(

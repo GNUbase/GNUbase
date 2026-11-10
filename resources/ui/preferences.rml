@@ -219,7 +219,14 @@
 					label = "Use Up/Down Navigation Commands for Selecting Tracks only"}}},
 			{id = "editing-audio", parent = "Editing", name = "Audio", items = {
 				{key = "editing.onImportAudio", label = "On Import Audio Files", choices = {
-					{"openOptionsDialog", "Open Options Dialog"}, {"useSettings", "Use Settings"}}}}},
+					{"openOptionsDialog", "Open Options Dialog"}, {"useSettings", "Use Settings"}}},
+				-- What Use Settings imports with, and the Import Options dialog starts from (pp. 358-359).
+				{section = "On Import Audio Files Settings"},
+				{key = "editing.importAudioCopy", label = "Copy Files to Project Folder"},
+				{key = "editing.importAudioConvert", label = "Convert to Project Sample Rate"},
+				{key = "editing.importAudioSplitChannels", label = "Split Channels"},
+				{key = "editing.importAudioNameFormat", label = "Name Format", choices = {
+					{"dash", "Name-L"}, {"underscore", "Name_L"}, {"dot", "Name.L"}, {"space", "Name L"}}}}},
 			{id = "editing-midi", parent = "Editing", name = "MIDI", items = {
 				{key = "editing.legatoOverlap", label = "Legato Overlap", unit = "Ticks"},
 				{key = "editing.legatoBetweenSelected", label = "Legato Mode: Between Selected Notes Only"}}},
@@ -229,6 +236,8 @@
 				{key = "ui.toolboxOnRightClick", label = "Show Toolbox on Right-Click"},
 				{key = "ui.toolSwitchNotification",
 					label = "Show Notification when Switching Tool Mode with Key Command"}}},
+			{id = "editing-zoom", parent = "Editing", name = "Zoom", items = {
+				{key = "ui.zoomToolHorizontalOnly", label = "Zoom Tool Standard Mode: Horizontal Zooming Only"}}},
 			{id = "event-display", name = "Event Display", items = {}},
 			{id = "event-display-folders", parent = "Event Display", name = "Folders", items = {
 				{key = "ui.folderData", label = "Show Data on Folder Tracks", choices = {
@@ -249,6 +258,18 @@
 				{key = "midi.chasePrograms", label = "Program Change"},
 				{key = "midi.chasePitchBend", label = "Pitchbend"},
 				{key = "midi.chaseBeyondParts", label = "Chase not limited to Part Boundaries"}}},
+			{id = "midi-midi-file", parent = "MIDI", name = "MIDI File", items = {
+				{section = "Import Options"},
+				{key = "midi.importExtractPatch", label = "Extract First Patch"},
+				{key = "midi.importExtractVolumePan", label = "Extract First Volume/Pan"},
+				{key = "midi.importAutomation", label = "Import Controller as Automation Tracks"},
+				{key = "midi.importToLeftLocator", label = "Import to Left Locator"},
+				{key = "midi.importMarkers", label = "Import Markers"},
+				{key = "midi.importSinglePart", label = "Import Dropped File as Single Part"},
+				{key = "midi.importIgnoreTempo", label = "Ignore Master Track Events on Merge"},
+				{key = "midi.importDissolveFormat0", label = "Auto Dissolve Format 0"},
+				{key = "midi.importDestination", label = "Destination", choices = {
+					{"midi", "MIDI Tracks"}, {"instrument", "Instrument Tracks"}}}}},
 			{id = "midi-filter", parent = "MIDI", name = "MIDI Filter", custom = "midiFilter",
 				keys = {"midi.recordFilter"}},
 			{id = "record", name = "Record", items = {

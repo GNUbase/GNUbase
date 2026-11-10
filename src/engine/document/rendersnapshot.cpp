@@ -12,6 +12,7 @@
 #include "engine/midi/controllerlanes.h"
 #include "engine/midi/drummaps.h"
 #include "engine/midi/midivalues.h"
+#include "engine/midi/patterns.h"
 
 #include <algorithm>
 #include <array>
@@ -257,6 +258,7 @@ namespace gnubase::engine
 			channel.type = TrackType::Audio;
 			channel.instrument.clear();
 			channel.instrumentParameters.clear();
+			channel.sample.clear();
 			channel.midiThru = false;
 			channel.autoFades = AutoFades();
 			channel.sections.gain = 0.0;
@@ -524,6 +526,8 @@ namespace gnubase::engine
 			snapshot->media.push_back(
 				{id, media.path, media.sampleRate, media.channels, media.length, {}, dsp::StretchPreset::Quality});
 		}
+		for (const auto& [id, clip] : project.clips)
+			snapshot->clips.push_back({id, clip.media, clip.fadeIn, clip.fadeOut});
 
 		std::map<ObjectId, int> channelIndex;
 		std::map<ObjectId, int> trackChannel;
@@ -542,6 +546,8 @@ namespace gnubase::engine
 			render.format = channel.format;
 			render.instrument = channel.instrument;
 			render.instrumentParameters = channel.instrumentParameters;
+			if (const auto clip = project.clips.find(channel.sample); clip != project.clips.end())
+				render.sample = project.media.at(clip->second.media).path;
 			for (const ObjectId id : channel.slots)
 			{
 				const Slot& slot = project.slots.at(id);
@@ -641,8 +647,22 @@ namespace gnubase::engine
 		{
 			RenderChannel& channel = snapshot->channels[static_cast<size_t>(trackChannel.at(part.track))];
 			// A silent MIDI track's notes would still reach its instrument.
-			if (!part.mute && plays(part.track) && (!channel.silent || channel.type != TrackType::Midi))
+			if (part.mute || !plays(part.track) || (channel.silent && channel.type == TrackType::Midi))
+				continue;
+			const auto pattern = project.patterns.find(part.pattern);
+			if (part.pattern == 0 || pattern == project.patterns.end())
+			{
 				compilePart(project, id, part, channel);
+				continue;
+			}
+			// A pattern event (#181) plays its pattern's notes instead of its own.
+			// ponytail: pattern events that overlap on a track all play, not only the topmost (p. 935).
+			MidiPart played = part;
+			const time::Position end{part.position.base, part.position.value + part.length};
+			played.notes = midi::patternNotes(pattern->second,
+				time::toTicks(end, project.tempo, project.sampleRate) -
+					time::toTicks(part.position, project.tempo, project.sampleRate));
+			compilePart(project, id, played, channel);
 		}
 
 		std::map<ObjectId, Points> vcaCurves; // by the VCA fader's channel

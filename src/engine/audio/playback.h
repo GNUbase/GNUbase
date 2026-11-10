@@ -131,6 +131,9 @@ namespace gnubase::engine
 		// rendering waits before each block, so it never drops out and renders the same every time.
 		bool waitUntilBuffered(std::chrono::milliseconds timeout);
 
+		// Command thread: the voices open, each with its disk stream.
+		size_t voices() const;
+
 		// Frames of silence where a voice was not in time or its disk stream was late.
 		uint64_t dropouts() const;
 
