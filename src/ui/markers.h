@@ -180,13 +180,14 @@ namespace gnubase::ui
 		ProjectMarkers m_markers;
 		std::optional<ProjectMarkers> m_preview;
 		Drag m_drag = Drag::None;
-		uint64_t m_dragMarker = 0; // the marker pressed
-		uint64_t m_dragTrack = 0;  // the track it was pressed on
-		double m_dragFrom = 0.0;   // seconds: the marker's start, end, or the press for a new cycle marker
-		float m_pressX = 0.0F;     // the window's pixels
-		bool m_dragMoved = false;  // further than a click
-		bool m_renameNew = false;  // a new cycle marker opens its name
-		uint64_t m_renaming = 0;   // the marker whose name opens, or is open
+		uint64_t m_dragMarker = 0;   // the marker pressed
+		uint64_t m_dragTrack = 0;    // the track it was pressed on
+		double m_dragFrom = 0.0;     // seconds: the marker's start, end, or the snapped press for a new cycle marker
+		double m_pressSeconds = 0.0; // seconds: the press, unsnapped
+		float m_pressX = 0.0F;       // the window's pixels
+		bool m_dragMoved = false;    // further than a click
+		bool m_renameNew = false;    // a new cycle marker opens its name
+		uint64_t m_renaming = 0;     // the marker whose name opens, or is open
 		bool m_fieldOpen = false;
 		MarkerLineMode m_mode = MarkerLineMode::Active;
 		bool m_showIds = true;

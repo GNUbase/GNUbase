@@ -363,6 +363,22 @@ namespace gnubase::app
 					if (!m_eventSelection.empty())
 						m_markerLines->deselect();
 				}
+				// So does a range selected, e.g. between markers with the range tool: Delete deletes what was selected
+				// last.
+				if (m_eventDisplay && m_markerLines)
+				{
+					const std::optional<ui::RangeSelection>& range = m_eventDisplay->range();
+					const bool same = range.has_value() == m_eventRange.has_value() &&
+						(!range || !m_eventRange ||
+							(range->start == m_eventRange->start && range->end == m_eventRange->end &&
+								range->tracks == m_eventRange->tracks));
+					if (!same)
+					{
+						m_eventRange = range;
+						if (range)
+							m_markerLines->deselect();
+					}
+				}
 				if (m_infoLine)
 					m_infoLine->update();
 				if (m_inPlace)

@@ -616,6 +616,7 @@ namespace gnubase::ui
 			return;
 		}
 		m_pressX = mouse.x;
+		m_pressSeconds = seconds;
 		m_dragMoved = false;
 		m_dragTrack = track.id;
 		m_dragMarker = hit.marker;
@@ -666,12 +667,19 @@ namespace gnubase::ui
 				document->RemoveEventListener(Rml::EventId::Mouseup, this);
 			}
 		}
+		// Moved onto another marker track's lane, the markers go there.
+		uint64_t onto = m_dragTrack;
+		if (const std::optional<LanePoint> lane = markerLaneAt(event); drag == Drag::Move && lane)
+			onto = lane->track->id;
 		const auto mouseX = event.GetParameter<float>("mouse_x", 0.0F);
-		m_dragMoved = m_dragMoved || std::abs(mouseX - m_pressX) / ratio() >= g_dragStart;
+		// Sideways, or straight onto another marker track to keep the position.
+		m_dragMoved = m_dragMoved || std::abs(mouseX - m_pressX) / ratio() >= g_dragStart || onto != m_dragTrack;
 		if (!m_dragMoved)
 			return;
 		const TimelineView& view = m_display.view();
-		const double to = m_dragFrom + ((mouseX - m_pressX) / ratio() * view.scale);
+		// A new cycle marker ends where the mouse is: from the press's own time, not its snapped one.
+		const double to =
+			(drag == Drag::NewCycle ? m_pressSeconds : m_dragFrom) + ((mouseX - m_pressX) / ratio() * view.scale);
 		const double at = m_display.snapped(to, drag == Drag::NewCycle ? std::nullopt : std::optional(m_dragFrom));
 		const auto trackOf = [this](uint64_t id)
 		{
@@ -679,10 +687,6 @@ namespace gnubase::ui
 				[id](const ProjectMarkers::Track& track) { return track.id == id; });
 			return found != m_markers.tracks.end() ? *found : ProjectMarkers::Track{};
 		};
-		// Moved onto another marker track's lane, the markers go there.
-		uint64_t onto = m_dragTrack;
-		if (const std::optional<LanePoint> lane = markerLaneAt(event); drag == Drag::Move && lane)
-			onto = lane->track->id;
 
 		ProjectMarkers preview = m_markers;
 		Json commands = Json::array();

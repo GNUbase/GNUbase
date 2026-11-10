@@ -234,6 +234,14 @@ TEST_CASE(
 	CHECK(fixture.marker(fixture.position).at("number") == 2);
 }
 
+TEST_CASE("on the marker track, a marker dragged straight onto another marker track keeps its position", "[unit]")
+{
+	Fixture fixture;
+	fixture.drag(100, 70, 100, 110);
+	REQUIRE(fixture.waitFor(fixture.position, "track", fixture.second));
+	CHECK(fixture.marker(fixture.position).at("position") == 2 * g_quarter);
+}
+
 TEST_CASE("on the marker track, Ctrl-drag adds a cycle marker and Shift adds and renames at once", "[unit]")
 {
 	Fixture fixture;
@@ -266,6 +274,19 @@ TEST_CASE("on the marker track, Ctrl-drag adds a cycle marker and Shift adds and
 	fixture.automation.key(std::nullopt, "Enter");
 	REQUIRE(fixture.waitUntil([&] { return fixture.list(fixture.first).back().at("name") == "Outro"; }));
 	CHECK(fixture.list(fixture.first).back().at("type") == "cycle");
+
+	// With snap on, bars of two seconds, the new cycle marker ends at the bar nearest the mouse, also from a press
+	// off the grid: from 1.1 s to 4.9 s it spans 2 to 4 s.
+	fixture.call("snap.set", {{"on", true}});
+	REQUIRE(fixture.waitUntil([&] { return fixture.display.snap().on; }));
+	fixture.drag(110, 100, 490, 100, {"ctrl"});
+	REQUIRE(fixture.waitUntil([&] { return fixture.list(fixture.second).size() == 2; }));
+	for (const Json& marker : fixture.list(fixture.second))
+		if (marker.at("type") == "cycle")
+		{
+			CHECK(marker.at("position") == 4 * g_quarter);
+			CHECK(marker.at("end") == 8 * g_quarter);
+		}
 }
 
 TEST_CASE("the erase tool deletes a marker, with Alt every later one on its track", "[unit]")
@@ -401,6 +422,45 @@ TEST_CASE("the marker track's controls add markers, activate it and locate, cycl
 	app.appUi().markerLines()->setSelection({verse});
 	app.ui().key(std::nullopt, "Delete");
 	REQUIRE(app.waitUntil([&] { return list(first).size() == 2; }));
+}
+
+TEST_CASE("Delete deletes a range selected between markers after a marker was selected, not the marker", "[ui]")
+{
+	test::UiApp app({900, 560});
+	ui::EventDisplay& display = app.appUi().showProject();
+	app.setDpRatio(1.0F);
+	// A MIDI track with a part from 1.5 to 2 s, and a marker track below it with markers at 1 and 3 s.
+	const auto midi = app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+	app.call("midiPart.add", {{"track", midi}, {"position", 3 * g_quarter}, {"length", g_quarter}});
+	const auto track = app.call("track.add", {{"type", "marker"}}).at("track").at("id").get<uint64_t>();
+	const auto marker = app.call("marker.add", {{"position", 2 * g_quarter}}).at("marker").at("id").get<uint64_t>();
+	app.call("marker.add", {{"position", 6 * g_quarter}});
+	const auto list = [&app, track] { return app.call("marker.list", {{"track", track}}).at("markers"); };
+	REQUIRE(app.waitUntil(
+		[&] { return app.appUi().markerLines()->markers().markers.size() == 2 && display.laneTops().size() == 3; }));
+	// A point on the marker track's lane, below the cycle markers' upper border, at seconds.
+	const auto on = [&app, &display](double seconds)
+	{
+		const Json lanes = app.ui().dom(std::nullopt, "event-lanes.events", 0).at("elements").at(0).at("box");
+		const ui::TimelineView& view = display.view();
+		const std::vector<double>& tops = display.laneTops();
+		return ui::Target{"", 0,
+			ui::Point{static_cast<int>(lanes.at("x").get<double>() + ((seconds - view.start) / view.scale)),
+				static_cast<int>(lanes.at("y").get<double>() + tops[1] + ((tops[2] - tops[1]) * 0.75) - view.top)}};
+	};
+
+	// The marker clicked is selected; then a double click with the range tool selects the range between the markers.
+	app.ui().click(std::nullopt, on(1.0), ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil([&] { return app.appUi().markerLines()->selection() == std::vector<uint64_t>{marker}; }));
+	display.setTool(ui::Tool::RangeSelection);
+	app.ui().click(std::nullopt, on(2.0), ui::MouseButton::Left, 2, {});
+	REQUIRE(app.waitUntil([&] { return display.range() && display.range()->end == 6 * g_quarterSamples; }));
+	REQUIRE(app.waitUntil([&] { return app.appUi().markerLines()->selection().empty(); }));
+
+	// Delete deletes the range's part, and the markers stay.
+	app.ui().key(std::nullopt, "Delete");
+	REQUIRE(app.waitUntil([&] { return app.call("project.get").at("midiParts").empty(); }));
+	CHECK(list().size() == 2);
 }
 
 TEST_CASE("the track list's context menu shows the marker lines of the active marker track, all or none", "[ui]")
