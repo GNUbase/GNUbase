@@ -14,6 +14,7 @@
 #include <RmlUi/Core/StringUtilities.h>
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <cmath>
 #include <utility>
@@ -468,7 +469,7 @@ namespace gnubase::ui
 
 	void SampleEditor::auditionClip(int64_t from, std::optional<int64_t> to)
 	{
-		Json parameters = {{"media", m_media}, {"position", std::clamp<int64_t>(from, 0, m_length)}};
+		Json parameters = {{"clip", m_view.at("clip")}, {"position", std::clamp<int64_t>(from, 0, m_length)}};
 		if (to)
 			parameters["end"] = *to;
 		m_binding.send("audition.start", parameters);
@@ -720,33 +721,54 @@ namespace gnubase::ui
 	}
 
 	// The regions list (p. 624): a row per region of the clip with its name, start and end, the selected one
-	// .selected. The rows are rebuilt only when the regions change, so that a double click's second press lands on
-	// the row its first one selected: RmlUi sends dblclick only then.
+	// .selected. The rows are built again only when other regions are listed, or in another order: a changed name,
+	// start or end changes the row's cells. So a double click's second press lands on the row its first one
+	// selected, also when the first press took what was typed in another row: RmlUi sends dblclick only then.
 	void SampleEditor::renderRegions()
 	{
 		Rml::Element* list = m_root ? m_root->QuerySelector(".se-region-list") : nullptr;
 		if (list == nullptr)
 			return;
 		std::string rml;
+		std::vector<std::array<std::string, 4>> rows; // id, name, start and end, as the cells show them
 		for (const Json& clip : m_project.value("clips", Json::array()))
 			if (hasEvent() && clip.at("id") == m_view.at("clip"))
 				for (const Json& each : clip.value("regions", Json::array()))
 				{
-					const auto id = each.at("id").get<uint64_t>();
-					rml += R"(<div class="se-region" region=")" + std::to_string(id) +
-						R"("><span class="se-region-name" field="name">)" +
-						Rml::StringUtilities::EncodeRml(each.at("name").get<std::string>()) +
-						R"(</span><span class="se-region-start" field="start">)" +
-						std::to_string(each.at("start").get<int64_t>()) +
-						R"(</span><span class="se-region-end" field="end">)" +
-						std::to_string(each.at("end").get<int64_t>()) + "</span></div>";
+					rows.push_back({std::to_string(each.at("id").get<uint64_t>()),
+						Rml::StringUtilities::EncodeRml(each.at("name").get<std::string>()),
+						std::to_string(each.at("start").get<int64_t>()),
+						std::to_string(each.at("end").get<int64_t>())});
+					const auto& [id, name, start, end] = rows.back();
+					rml.append(R"(<div class="se-region" region=")")
+						.append(id)
+						.append(R"("><span class="se-region-name" field="name">)")
+						.append(name)
+						.append(R"(</span><span class="se-region-start" field="start">)")
+						.append(start)
+						.append(R"(</span><span class="se-region-end" field="end">)")
+						.append(end)
+						.append("</span></div>");
 				}
 		if (rml != m_regionRows)
 		{
 			// The regions changed meanwhile, such as by an undo: what is being typed goes, before its field does,
 			// whose blur would otherwise take it.
 			finishEditing(false);
-			list->SetInnerRML(rml);
+			bool same = static_cast<size_t>(list->GetNumChildren()) == rows.size();
+			for (size_t i = 0; same && i < rows.size(); ++i)
+				same = attribute(*list->GetChild(static_cast<int>(i)), "region") == rows[i][0];
+			if (same)
+				for (size_t i = 0; i < rows.size(); ++i)
+				{
+					Rml::Element* row = list->GetChild(static_cast<int>(i));
+					const std::array<const char*, 3> cells{"[field=name]", "[field=start]", "[field=end]"};
+					for (size_t c = 0; c < cells.size(); ++c)
+						if (Rml::Element* cell = row->QuerySelector(cells[c]); cell != nullptr)
+							cell->SetInnerRML(rows[i][c + 1]);
+				}
+			else
+				list->SetInnerRML(rml);
 			m_regionRows = rml;
 		}
 		if (!m_editing)
@@ -1158,8 +1180,8 @@ namespace gnubase::ui
 			m_binding.send("clip.addHitpoint", {{"clip", clipId}, {"position", std::llround(frame)}});
 			return;
 		}
-		// Play back Slice: from the hitpoint that counts before to the one after, or the event's start and end. A
-		// click plays all of it (p. 639).
+		// Play back Slice: the clip from the hitpoint that counts before to the one after, or the event's start and
+		// end, as the play tool plays it. A click plays all of it (p. 639).
 		auto from = static_cast<double>(m_offset);
 		auto to = static_cast<double>(m_offset + m_eventLength);
 		if (const Json* item = clip())
@@ -1173,16 +1195,16 @@ namespace gnubase::ui
 				else if (position > frame && position < to)
 					to = position;
 			}
-		const int64_t start = std::max<int64_t>(0, projectSample(from));
-		const int64_t end = projectSample(to);
+		const int64_t start = std::llround(from);
+		const int64_t end = std::llround(to);
 		if (end > start)
-			m_binding.send("audition.start", {{"track", m_view.at("track")}, {"position", start}, {"end", end}});
+			auditionClip(start, end);
 	}
 
 	// Scrubs the clip, and moves the project cursor to where the frame plays, as scrubbing locates (p. 634).
 	void SampleEditor::scrub(double frame)
 	{
-		m_binding.send("audition.scrub", {{"media", m_media}, {"position", std::llround(frame)}});
+		m_binding.send("audition.scrub", {{"clip", m_view.at("clip")}, {"position", std::llround(frame)}});
 		m_binding.send("transport.locate", {{"position", std::max<int64_t>(0, projectSample(frame))}});
 	}
 

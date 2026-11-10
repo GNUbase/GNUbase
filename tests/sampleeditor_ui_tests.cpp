@@ -5,6 +5,7 @@
 // the engine's side.
 #include "ui/canvas.h"
 #include "ui/enginebinding.h"
+#include "ui/rmlui.h"
 #include "uiapp.h"
 
 #include <RmlUi/Core/Context.h>
@@ -16,6 +17,7 @@
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -349,7 +351,7 @@ TEST_CASE("double-clicking a region's name, start or end in the list types a new
 	f.app.ui().text(f.window, "1500");
 	f.app.ui().key(f.window, "Enter");
 	REQUIRE(f.app.waitUntil([&] { return f.regions().at(1).at("start") == 1500; }));
-	// Once the list shows it: until then, the new start would build the rows again under the double click.
+	// Once the list shows it: a change that comes while a field is open ends the field.
 	REQUIRE(f.app.waitUntil([&] { return f.text(f.row(1) + " .se-region-start") == "1500"; }));
 	REQUIRE(f.elements(".se-region-field").empty());
 	f.doubleClick(of(f.row(1) + " .se-region-end"));
@@ -403,6 +405,21 @@ TEST_CASE("double-clicking a region's name, start or end in the list types a new
 	CHECK(f.regions().at(1).at("name") == "Chorus");
 	CHECK(f.app.call("history.get").at("steps").size() == steps + 1);
 	CHECK(f.text(f.row(1) + " .se-region-name") == "Chorus");
+
+	// A double click on another region's cell right after typing: its first press takes what was typed, and the
+	// list that shows it keeps its rows, so the second press makes it a double click. The clock stands still while
+	// the list changes between the two presses.
+	f.doubleClick(of(f.row(1) + " .se-region-start"));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".se-region-field").size() == 1; }));
+	f.app.ui().text(f.window, "1600");
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	clock->freeze(true);
+	const std::shared_ptr<void> thaw(nullptr, [clock](void*) { clock->freeze(false); });
+	f.click(of(f.row(0) + " .se-region-name"));
+	REQUIRE(f.app.waitUntil([&] { return f.text(f.row(1) + " .se-region-start") == "1600"; }));
+	f.click(of(f.row(0) + " .se-region-name"));
+	CHECK(f.elements(f.row(0) + " .se-region-field").size() == 1);
 }
 
 TEST_CASE("the snap point, the zoom, play and scrub tools, the overview and the window layout", "[ui]")
@@ -441,13 +458,13 @@ TEST_CASE("the snap point, the zoom, play and scrub tools, the overview and the 
 			static_cast<int>(overview.at("y").get<double>() + 5)}});
 	CHECK(std::abs(f.editor().start() - (g_frames * 0.75) + (g_frames / 4.0)) < 20);
 
-	// The play tool auditions the track from the frame pressed until the release; the scrub tool scrubs it.
+	// The play tool auditions the clip from the frame pressed until the release; the scrub tool scrubs it.
 	ui::EngineBinding binding(f.app.engine());
 	std::vector<std::string> modes;
 	const ui::Subscription subscription = binding.on("audition.changed",
 		[&modes](const engine::Event& event) { modes.push_back(event.data.at("mode").get<std::string>()); });
-	// Both play the clip (p. 630), also past the event's end at frame 5000; scrubbing moves the project cursor to
-	// where the frame plays (p. 634).
+	// Both play the clip with its fades (p. 630), also past the event's end at frame 5000; scrubbing moves the
+	// project cursor to where the frame plays (p. 634).
 	f.tool("play");
 	f.click(f.at(6000));
 	REQUIRE(f.app.waitUntil(
@@ -456,9 +473,8 @@ TEST_CASE("the snap point, the zoom, play and scrub tools, the overview and the 
 			binding.update();
 			return modes == std::vector<std::string>{"play", "off"};
 		}));
-	const Json media = f.view().at("media");
 	Json played = f.lastParameters("audition.start");
-	CHECK(played.at("media") == media);
+	CHECK(played.at("clip") == f.clip);
 	CHECK(!played.contains("track"));
 	CHECK(std::abs(played.at("position").get<int64_t>() - 6000) <= 10);
 	f.tool("scrub");
@@ -470,7 +486,7 @@ TEST_CASE("the snap point, the zoom, play and scrub tools, the overview and the 
 			return modes.size() >= 4 && modes[2] == "scrub" && modes.back() == "off";
 		}));
 	const Json scrubbed = f.lastParameters("audition.scrub");
-	CHECK(scrubbed.at("media") == media);
+	CHECK(scrubbed.at("clip") == f.clip);
 	CHECK(std::abs(scrubbed.at("position").get<int64_t>() - 6500) <= 10);
 	CHECK(std::abs(f.app.call("transport.get").at("position").get<int64_t>() - (g_second - 1000 + 6500)) <= 10);
 
@@ -486,7 +502,7 @@ TEST_CASE("the snap point, the zoom, play and scrub tools, the overview and the 
 			return modes.back() == "play";
 		}));
 	played = f.lastParameters("audition.start");
-	CHECK(played == Json{{"media", media}, {"position", 7000}, {"end", 8000}});
+	CHECK(played == Json{{"clip", f.clip}, {"position", 7000}, {"end", 8000}});
 	f.app.call("audition.stop");
 
 	// Set up Window Layout's switches hide and show the info line, the overview and the regions (p. 614).
