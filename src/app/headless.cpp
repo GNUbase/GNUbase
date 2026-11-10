@@ -104,7 +104,8 @@ namespace gnubase::app
 
 	int runHeadless(const Options& options, std::istream& in, std::ostream& out, std::ostream& err)
 	{
-		engine::Engine engine(audio::makeBackends(), safeSettingsDirectory(options));
+		engine::Engine engine(
+			audio::makeBackends(), safeSettingsDirectory(options), midi::makeBackends(), factorySettings(options));
 		engine.pluginHosts().setDeactivated(options.noThirdPartyPlugins);
 		if (!setUpEngine(engine, options, err))
 			return g_exitSetup;

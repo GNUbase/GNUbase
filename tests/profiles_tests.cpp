@@ -166,3 +166,78 @@ TEST_CASE("profile names that differ only in case are taken, as the folders aren
 	f.call("profile.rename", {{"name", "Default"}, {"newName", "DEFAULT"}});
 	CHECK(f.names() == std::vector<std::string>{"DEFAULT", "studio"});
 }
+
+TEST_CASE("profile names that Windows keeps for devices are refused", "[unit]")
+{
+	const Fixture f;
+	for (const char* name : {"CON", "prn", "Aux", "NUL", "com1", "COM9", "lpt1", "LPT9", "nul.txt", "CON .x"})
+		CHECK_THAT(f.fails("profile.add", {{"name", name}}), ContainsSubstring("device"));
+	for (const char* name : {"CONSOLE", "COM10", "LPT0", "Auxiliary", "my nul"})
+		f.call("profile.add", {{"name", name}});
+}
+
+namespace
+{
+	// Whether the file system of the folder folds the case of letters such as Ä, as NTFS and APFS do.
+	bool foldsCase(const std::filesystem::path& folder)
+	{
+		std::filesystem::create_directories(folder / std::filesystem::u8path("\xC3\x84"));
+		return std::filesystem::exists(folder / std::filesystem::u8path("\xC3\xA4"));
+	}
+}
+
+TEST_CASE("profile names that the file system takes for another profile's folder are taken", "[unit]")
+{
+	const Fixture f;
+	const test::TempDir probe;
+	const bool folds = foldsCase(probe.path());
+	f.call("profile.add",
+		{{"name",
+			"\xC3\x9C"
+			"ber"}});                                                             // Über
+	f.call("profile.rename", {{"name", "Default"}, {"newName", "\xC3\x84rger"}}); // Ärger, the active one
+	for (const char* name : {"\xC3\xBC"
+							 "ber",
+			 "\xC3\xA4rger"}) // über, ärger
+	{
+		const engine::Result added = f.client->call("profile.add", {{"name", name}});
+		CHECK(added.ok() == !folds);
+		if (!added.ok())
+			CHECK_THAT(added.error, ContainsSubstring("there is a profile"));
+	}
+}
+
+TEST_CASE("a profile switch that fails leaves the settings as they were", "[unit]")
+{
+	Fixture f;
+	f.setScale(1.5);
+	f.call("profile.add", {{"name", "Studio"}});
+	// A file of the next profile that can't be read: the switch fails before it changes anything.
+	std::filesystem::create_directories(f.dir.path() / "profiles" / "Studio" / "settings.json" / "folder");
+	f.call("profile.activate", {{"name", "Studio"}});
+	f.start();
+	CHECK(f.call("profile.list").at("active") == "Default");
+	CHECK(f.scale() == 1.5);
+	CHECK(std::filesystem::is_directory(f.dir.path() / "profiles" / "Studio" / "settings.json"));
+	CHECK(!std::filesystem::exists(f.dir.path() / "profiles" / "Default"));
+}
+
+TEST_CASE("a profile switch to a folder that is the active profile's on this file system is refused", "[unit]")
+{
+	Fixture f;
+	const test::TempDir probe;
+	if (!foldsCase(probe.path()))
+		SKIP("the file system tells the folders apart");
+	f.call("profile.rename", {{"name", "Default"}, {"newName", "\xC3\x84rger"}}); // Ärger
+	f.setScale(2.0);
+	f.call("profile.duplicate", {{"name", "\xC3\x84rger"}, {"newName", "Copy"}});
+	f.setScale(1.5);
+	// A folder in another case that came from elsewhere, such as a copy from a computer that tells them apart.
+	const std::filesystem::path other = f.dir.path() / "profiles" / std::filesystem::u8path("\xC3\xA4rger");
+	std::filesystem::rename(f.dir.path() / "profiles" / "Copy", other);
+	f.call("profile.activate", {{"name", "\xC3\xA4rger"}});
+	f.start();
+	CHECK(f.call("profile.list").at("active") == "\xC3\x84rger");
+	CHECK(f.scale() == 1.5);
+	CHECK(std::filesystem::exists(other / "settings.json"));
+}

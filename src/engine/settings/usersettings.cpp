@@ -613,7 +613,8 @@ namespace gnubase::engine::settings
 					"transportBar) with whether each is shown, and its sets of sections (such as a mixer channel's) "
 					"with the order of their sections and those hidden, and the sizes in dp of other elements that "
 					"splitters size (trackList: the track list's width), and for the app's windows (project, mixer1 "
-					"to mixer4, markers, onScreenKeyboard, tempoTrack, arranger, transportPanel, timeDisplay) whether "
+					"to mixer4, markers, onScreenKeyboard, tempoTrack, arranger, transportPanel, timeDisplay, "
+					"scriptConsole) whether "
 					"it is open, its bounds and the name of its monitor; under panels, by panel, whether it is in a "
 					"window of its own and that window's bounds and monitor. What it leaves out has its default: a "
 					"window is closed. A window whose monitor isn't connected goes onto the primary one, fully "
@@ -638,6 +639,11 @@ namespace gnubase::engine::settings
 					"Whether the markers window and the project window select the same markers. It pauses while "
 					"recording.",
 					Json{{"type", "boolean"}}, true},
+				{"ui.noWorkspaceLayout",
+					"The window layout without a workspace (workspace.activate, docs/features/workspaces.md): a copy "
+					"of ui.layout as it was when a workspace last became active while none was, which No Workspace "
+					"brings back. Empty for none.",
+					layoutSchema(), Json::object()},
 				{"ui.removeTracksWarning",
 					"Whether Remove Selected Tracks asks before it removes tracks that aren't empty: that hold events, "
 					"parts, markers or automation, or are folders with such tracks inside (reference manual p. 213).",

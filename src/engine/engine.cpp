@@ -95,10 +95,11 @@ namespace gnubase::engine
 
 	Engine::Engine(std::vector<std::unique_ptr<audio::Backend>> backends,
 		const std::filesystem::path& settingsDirectory,
-		std::vector<std::unique_ptr<gnubase::midi::Backend>> midiBackends)
-		: m_settingsDirectory(settingsDirectory)
+		std::vector<std::unique_ptr<gnubase::midi::Backend>> midiBackends, bool factorySettings)
+		: m_settingsDirectory(settingsDirectory),
+		  m_profileDirectory(factorySettings ? std::filesystem::path() : settingsDirectory)
 	{
-		settings::switchProfile(settingsDirectory); // before any of the settings are read
+		settings::switchProfile(m_profileDirectory); // before any of the settings are read
 		registerCommand({"engine.version", 1, "The GNUbase version.", CommandInfo{}.parameters,
 							Json::parse(R"({"type": "object", "properties": {"version": {"type": "string"}},
 								"required": ["version"]})"),
@@ -139,10 +140,10 @@ namespace gnubase::engine
 		m_jobs->registerCommands(*this);
 		m_project = std::make_unique<ProjectModel>();
 		m_project->registerCommands(*this, *m_jobs);
-		m_settings = std::make_unique<settings::Store>(settings::userFormat(), settingsDirectory);
+		m_settings = std::make_unique<settings::Store>(settings::userFormat(), m_profileDirectory);
 		settings::registerCommands(*this, *m_settings,
 			[this](CommandContext& context, const std::vector<std::string>& keys) { settingsChanged(context, keys); });
-		settings::registerProfileCommands(*this, settingsDirectory);
+		settings::registerProfileCommands(*this, m_profileDirectory);
 		m_audio = std::make_unique<AudioEngine>(
 			m_project->snapshots(), *m_settings, std::move(backends), std::move(midiBackends));
 		m_audio->registerCommands(*this);

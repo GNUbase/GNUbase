@@ -549,7 +549,7 @@ namespace gnubase::engine::midi
 
 	void registerQuantizeCommands(ProjectModel& model, Engine& engine)
 	{
-		const auto presets = std::make_shared<PresetLibrary>(engine.settingsDirectory());
+		const auto presets = std::make_shared<PresetLibrary>(engine.profileDirectory());
 		const Json idSchema = {{"type", "integer"}};
 		const Json stringSchema = {{"type", "string"}};
 		const Json settingsSchema = quantizeSettingsSchema();

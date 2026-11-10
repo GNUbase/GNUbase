@@ -36,21 +36,32 @@ namespace gnubase::engine
 		}
 
 		// The workspaces of the type, global or project, as [{name, layout}].
-		Json listOf(const Project& project, CommandContext& context, const std::string& type)
+		Json listOf(const ProjectWorkspaces& workspaces, CommandContext& context, const std::string& type)
 		{
-			return type == "global" ? userSetting(context, "ui.workspaces")
-									: toJson(project.workspaces).at("workspaces");
+			return type == "global" ? userSetting(context, "ui.workspaces") : toJson(workspaces).at("workspaces");
 		}
 
-		Json workspacesJson(const Project& project, CommandContext& context)
+		// The active workspace as {type, name}; none if it is gone, such as a global workspace of the computer the
+		// project was saved on, or one that another GNUbase process deleted.
+		Json activeOf(const ProjectWorkspaces& workspaces, CommandContext& context)
 		{
-			return {{"global", listOf(project, context, "global")}, {"project", listOf(project, context, "project")},
-				{"active", {{"type", project.workspaces.activeType}, {"name", project.workspaces.active}}}};
+			const std::string& type = workspaces.activeType;
+			if (type.empty() ||
+				indexOf(listOf(workspaces, context, type), workspaces.active) ==
+					listOf(workspaces, context, type).size())
+				return {{"type", ""}, {"name", ""}};
+			return {{"type", type}, {"name", workspaces.active}};
+		}
+
+		Json workspacesJson(const ProjectWorkspaces& workspaces, CommandContext& context)
+		{
+			return {{"global", listOf(workspaces, context, "global")},
+				{"project", listOf(workspaces, context, "project")}, {"active", activeOf(workspaces, context)}};
 		}
 
 		// Changes the list of the type: change gets it as [{name, layout}] and changes it. Global workspaces change in
 		// the settings file as it is now, so that what another GNUbase process saved meanwhile stays.
-		void changeList(Project& project, CommandContext& context, Engine& engine, const std::string& type,
+		void changeList(ProjectWorkspaces& workspaces, CommandContext& context, Engine& engine, const std::string& type,
 			const std::function<void(Json& list)>& change)
 		{
 			if (type == "global")
@@ -64,21 +75,45 @@ namespace gnubase::engine
 					});
 				return;
 			}
-			Json list = toJson(project.workspaces).at("workspaces");
+			Json list = toJson(workspaces).at("workspaces");
 			change(list);
-			project.workspaces.workspaces.clear();
+			workspaces.workspaces.clear();
 			for (const Json& item : list)
-				project.workspaces.workspaces.push_back({item.at("name").get<std::string>(), item.at("layout").dump()});
+				workspaces.workspaces.push_back({item.at("name").get<std::string>(), item.at("layout").dump()});
 		}
 
-		bool isActive(const Project& project, const std::string& type, const std::string& name)
+		bool isActive(const ProjectWorkspaces& workspaces, const std::string& type, const std::string& name)
 		{
-			return project.workspaces.activeType == type && project.workspaces.active == name;
+			return workspaces.activeType == type && workspaces.active == name;
 		}
 
-		Json changed(const Project& project, CommandContext& context)
+		// Makes a workspace active, type empty for none. The layout as it is when a workspace becomes active while
+		// none is, the view without a workspace, is kept in the user setting ui.noWorkspaceLayout, and No Workspace
+		// brings it back (reference manual p. 1577).
+		// layout is the workspace's, which ui.layout becomes, null to keep ui.layout as it is.
+		void makeActive(ProjectWorkspaces& workspaces, CommandContext& context, Engine& engine, const std::string& type,
+			const std::string& name, const Json& layout)
 		{
-			Json result = workspacesJson(project, context);
+			const bool none = activeOf(workspaces, context).at("type") == "";
+			Json settings = Json::object();
+			if (!type.empty())
+			{
+				if (!layout.is_null())
+					settings["ui.layout"] = layout;
+				if (none)
+					settings["ui.noWorkspaceLayout"] = userSetting(context, "ui.layout");
+			}
+			else if (const Json own = userSetting(context, "ui.noWorkspaceLayout"); !none && !own.empty())
+				settings["ui.layout"] = own;
+			if (!settings.empty())
+				engine.setSettings(context, settings);
+			workspaces.activeType = type;
+			workspaces.active = type.empty() ? std::string() : name;
+		}
+
+		Json changed(const ProjectWorkspaces& workspaces, CommandContext& context)
+		{
+			Json result = workspacesJson(workspaces, context);
 			context.emit("workspace.changed", result);
 			return result;
 		}
@@ -111,124 +146,136 @@ namespace gnubase::engine
 			"global: the global workspaces, for every project (the user setting ui.workspaces); project: the "
 			"project workspaces, saved with the project; each a name and its layout, a copy of the user setting "
 			"ui.layout with the windows that are open, their bounds and monitors. active: the workspace the project "
-			"was last shown in, its type (global or project, empty for none) and name.";
+			"was last shown in, its type (global or project, empty for none) and name; none if that workspace is "
+			"gone, such as a global one of another computer.";
 		const std::string emits = " Emits workspace.changed with what workspace.get returns.";
 
 		engine.registerCommand({"workspace.get", 1, "The workspaces (reference manual pp. 1576-1578). " + text,
 								   CommandInfo{}.parameters, resultSchema, true},
-			[&model](CommandContext& context) { return workspacesJson(model.project(), context); });
+			[&model](CommandContext& context) { return workspacesJson(model.project().workspaces, context); });
 
-		model.addEdit(engine,
+		// The commands that change workspaces aren't edits: no undo steps, not in transactions, and global workspaces
+		// are user settings, so only the project workspaces and the active one change the project.
+		const auto command = [&model, &engine](CommandInfo info,
+								 std::function<Json(ProjectWorkspaces & workspaces, CommandContext & context)> handler)
+		{
+			engine.registerCommand(std::move(info),
+				[&model, handler = std::move(handler)](CommandContext& context)
+				{
+					ProjectWorkspaces workspaces = model.project().workspaces;
+					Json result = handler(workspaces, context);
+					model.setWorkspaces(std::move(workspaces));
+					return result;
+				});
+		};
+
+		command(
 			{"workspace.add", 1,
 				"Adds a workspace with the window layout as it is now (the user setting ui.layout), a global one for "
 				"every project or a project one saved with the project, after the others of its type, and makes it "
-				"the active one. Names are unique within a type." +
+				"the active one. Names are unique within a type. If no workspace was active, ui.noWorkspaceLayout "
+				"keeps "
+				"the layout for No Workspace." +
 					emits,
 				object({{"name", nameSchema}, {"type", typeSchema}}, {"name", "type"}), resultSchema, false},
-			"Add workspace",
-			[&engine](Project& project, CommandContext& context)
+			[&engine](ProjectWorkspaces& workspaces, CommandContext& context)
 			{
 				const auto name = context.parameters().at("name").get<std::string>();
 				const auto type = context.parameters().at("type").get<std::string>();
 				require(!name.empty(), "name must not be empty");
 				const Json layout = userSetting(context, "ui.layout");
-				changeList(project, context, engine, type,
+				changeList(workspaces, context, engine, type,
 					[&](Json& list)
 					{
 						require(indexOf(list, name) == list.size(), "there is a " + type + " workspace " + name);
 						list.push_back({{"name", name}, {"layout", layout}});
 					});
-				project.workspaces.activeType = type;
-				project.workspaces.active = name;
-				return changed(project, context);
+				makeActive(workspaces, context, engine, type, name, Json());
+				return changed(workspaces, context);
 			});
 
-		model.addEdit(engine,
-			{"workspace.update", 1,
-				"Gives the active workspace the window layout as it is now (the user setting ui.layout)." + emits,
-				CommandInfo{}.parameters, resultSchema, false},
-			"Update workspace",
-			[&engine](Project& project, CommandContext& context)
+		command({"workspace.update", 1,
+					"Gives the active workspace the window layout as it is now (the user setting ui.layout)." + emits,
+					CommandInfo{}.parameters, resultSchema, false},
+			[&engine](ProjectWorkspaces& workspaces, CommandContext& context)
 			{
-				const std::string type = project.workspaces.activeType;
-				const std::string name = project.workspaces.active;
+				const Json active = activeOf(workspaces, context);
+				const auto type = active.at("type").get<std::string>();
+				const auto name = active.at("name").get<std::string>();
 				require(!type.empty(), "no workspace is active");
 				const Json layout = userSetting(context, "ui.layout");
-				changeList(project, context, engine, type,
+				changeList(workspaces, context, engine, type,
 					[&](Json& list)
 					{
 						const size_t index = indexOf(list, name);
 						require(index < list.size(), "the active workspace " + name + " is gone");
 						list.at(index)["layout"] = layout;
 					});
-				return changed(project, context);
+				return changed(workspaces, context);
 			});
 
-		model.addEdit(engine,
+		command(
 			{"workspace.activate", 1,
 				"Shows a workspace: its layout becomes the user setting ui.layout, which opens, closes and places the "
 				"windows as it says, and it becomes the active workspace. A window whose monitor isn't connected goes "
-				"onto the primary one, fully visible. Without a type (No Workspace) the layout stays and no workspace "
-				"is active." +
+				"onto the primary one, fully visible. Without a type (No Workspace) no workspace is active and the "
+				"layout returns to the one there was when a workspace last became active while none was (the user "
+				"setting ui.noWorkspaceLayout); it stays as it is if none was active." +
 					emits,
 				object({{"type", {{"type", "string"}, {"enum", {"", "global", "project"}}}},
 						   {"name", {{"type", "string"}}}},
 					{"type"}),
 				resultSchema, false},
-			"Activate workspace",
-			[&engine](Project& project, CommandContext& context)
+			[&engine](ProjectWorkspaces& workspaces, CommandContext& context)
 			{
 				const auto type = context.parameters().at("type").get<std::string>();
 				const auto name = context.parameters().value("name", std::string());
+				Json layout;
 				if (!type.empty())
 				{
-					const Json list = listOf(project, context, type);
+					const Json list = listOf(workspaces, context, type);
 					const size_t index = indexOf(list, name);
 					require(index < list.size(), "no " + type + " workspace " + name);
-					engine.setSettings(context, {{"ui.layout", list.at(index).at("layout")}});
+					layout = list.at(index).at("layout");
 				}
-				project.workspaces.activeType = type;
-				project.workspaces.active = type.empty() ? std::string() : name;
-				return changed(project, context);
+				makeActive(workspaces, context, engine, type, name, layout);
+				return changed(workspaces, context);
 			});
 
 		const Json renameParameters = object({{"type", typeSchema}, {"name", nameSchema}}, {"type", "name"});
-		model.addEdit(engine,
+		command(
 			{"workspace.remove", 1, "Deletes a workspace; if it was the active one, no workspace is active." + emits,
 				renameParameters, resultSchema, false},
-			"Remove workspace",
-			[&engine](Project& project, CommandContext& context)
+			[&engine](ProjectWorkspaces& workspaces, CommandContext& context)
 			{
 				const auto type = context.parameters().at("type").get<std::string>();
 				const auto name = context.parameters().at("name").get<std::string>();
-				changeList(project, context, engine, type,
+				changeList(workspaces, context, engine, type,
 					[&](Json& list)
 					{
 						const size_t index = indexOf(list, name);
 						require(index < list.size(), "no " + type + " workspace " + name);
 						list.erase(list.begin() + static_cast<std::ptrdiff_t>(index));
 					});
-				if (isActive(project, type, name))
+				if (isActive(workspaces, type, name))
 				{
-					project.workspaces.activeType.clear();
-					project.workspaces.active.clear();
+					workspaces.activeType.clear();
+					workspaces.active.clear();
 				}
-				return changed(project, context);
+				return changed(workspaces, context);
 			});
 
-		model.addEdit(engine,
-			{"workspace.rename", 1, "Renames a workspace. Names are unique within a type." + emits,
-				object(
-					{{"type", typeSchema}, {"name", nameSchema}, {"newName", nameSchema}}, {"type", "name", "newName"}),
-				resultSchema, false},
-			"Rename workspace",
-			[&engine](Project& project, CommandContext& context)
+		command({"workspace.rename", 1, "Renames a workspace. Names are unique within a type." + emits,
+					object({{"type", typeSchema}, {"name", nameSchema}, {"newName", nameSchema}},
+						{"type", "name", "newName"}),
+					resultSchema, false},
+			[&engine](ProjectWorkspaces& workspaces, CommandContext& context)
 			{
 				const auto type = context.parameters().at("type").get<std::string>();
 				const auto name = context.parameters().at("name").get<std::string>();
 				const auto newName = context.parameters().at("newName").get<std::string>();
 				require(!newName.empty(), "newName must not be empty");
-				changeList(project, context, engine, type,
+				changeList(workspaces, context, engine, type,
 					[&](Json& list)
 					{
 						const size_t index = indexOf(list, name);
@@ -237,12 +284,12 @@ namespace gnubase::engine
 							"there is a " + type + " workspace " + newName);
 						list.at(index)["name"] = newName;
 					});
-				if (isActive(project, type, name))
-					project.workspaces.active = newName;
-				return changed(project, context);
+				if (isActive(workspaces, type, name))
+					workspaces.active = newName;
+				return changed(workspaces, context);
 			});
 
-		model.addEdit(engine,
+		command(
 			{"workspace.move", 1,
 				"Moves a workspace to a position among those of its type, 0 the first; positions past the end move it "
 				"to the end." +
@@ -250,13 +297,12 @@ namespace gnubase::engine
 				object({{"type", typeSchema}, {"name", nameSchema}, {"index", {{"type", "integer"}, {"minimum", 0}}}},
 					{"type", "name", "index"}),
 				resultSchema, false},
-			"Move workspace",
-			[&engine](Project& project, CommandContext& context)
+			[&engine](ProjectWorkspaces& workspaces, CommandContext& context)
 			{
 				const auto type = context.parameters().at("type").get<std::string>();
 				const auto name = context.parameters().at("name").get<std::string>();
 				const auto to = context.parameters().at("index").get<size_t>();
-				changeList(project, context, engine, type,
+				changeList(workspaces, context, engine, type,
 					[&](Json& list)
 					{
 						const size_t index = indexOf(list, name);
@@ -265,7 +311,7 @@ namespace gnubase::engine
 						list.erase(list.begin() + static_cast<std::ptrdiff_t>(index));
 						list.insert(list.begin() + static_cast<std::ptrdiff_t>(std::min(to, list.size())), moved);
 					});
-				return changed(project, context);
+				return changed(workspaces, context);
 			});
 	}
 }

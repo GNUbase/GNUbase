@@ -186,15 +186,22 @@ namespace gnubase::app
 	std::filesystem::path safeSettingsDirectory(const Options& options)
 	{
 		std::filesystem::path folder = std::filesystem::u8path(options.settings);
-		if (options.settingsMode == SafeSettings::Disable)
-			return {};
-		if (options.settingsMode == SafeSettings::Delete && !folder.empty())
-			for (const char* file : engine::settings::g_profileFiles)
-			{
-				std::error_code error;
-				if (std::filesystem::remove(folder / file, error))
-					logging::info("Safe start mode: deleted {}", (folder / file).u8string());
-			}
+		if (options.settingsMode != SafeSettings::Delete || folder.empty())
+			return folder;
+		for (const char* file : engine::settings::g_profileFiles)
+		{
+			std::error_code error;
+			if (std::filesystem::remove(folder / file, error))
+				logging::info("Safe start mode: deleted {}", (folder / file).u8string());
+		}
+		try
+		{
+			engine::settings::cancelProfileSwitch(folder);
+		}
+		catch (const std::system_error& error)
+		{
+			logging::error("Safe start mode: the profile switch stays: {}", error.what());
+		}
 		return folder;
 	}
 
