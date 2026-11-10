@@ -583,3 +583,74 @@ TEST_CASE("The Import Options dialog's Name Format names the files Split Channel
 	REQUIRE(select.size() == 1);
 	CHECK(select[0].value("attributes", Json::object()).value("value", "") == format.value);
 }
+
+TEST_CASE("The preferences' Editing > Audio page sets On Import Audio Files and what Use Settings imports with", "[ui]")
+{
+	const test::TempDir dir;
+	const std::string take = writeAudio(dir.path() / "take.wav", 4800, 2);
+	test::UiApp app({1000, 760});
+	ui::EventDisplay& display = app.appUi().showProject();
+	const std::filesystem::path folder = dir.path() / "project";
+	std::filesystem::create_directories(folder);
+	app.call("project.save", {{"path", (folder / "Song.dawproject").u8string()}, {"embedMedia", false}});
+	const auto setting = [&app](const char* key) { return app.call("settings.get", {{"key", key}}).at("value"); };
+	const auto value = [&app](const std::string& selector)
+	{
+		const Json found = elements(app, selector);
+		REQUIRE(found.size() == 1);
+		return found[0].at("value");
+	};
+	// Opens a drop-down list, moves the selection that many options down (up when negative) and closes it.
+	const auto choose = [&app](const std::string& selector, int down)
+	{
+		click(app, selector);
+		for (int i = 0; i < std::abs(down); ++i)
+			app.ui().key(std::nullopt, down > 0 ? "Down" : "Up");
+		click(app, selector);
+	};
+	const auto openPreferences = [&app]
+	{
+		app.keys().run("window.preferences", Json::object(), app.main(), nullptr);
+		REQUIRE(app.waitUntil([&app] { return elements(app, "#preferences").size() == 1; }));
+		app.shell().step(std::chrono::milliseconds(0));
+		click(app, "#pages-editing-audio");
+	};
+	const auto ok = [&app]
+	{
+		click(app, "#preferences-ok");
+		REQUIRE(app.waitUntil([&app] { return elements(app, "#preferences").empty(); }));
+	};
+	app.call("settings.set", {{"key", "editing.onImportAudio"}, {"value", "useSettings"}}); // as Do not ask again
+
+	// The page shows the settings; Split Channels on, Name Format "Name L" and Copy off.
+	openPreferences();
+	CHECK(value("#pref-editing-onImportAudio") == "useSettings");
+	CHECK(checked(app, "#pref-editing-importAudioCopy"));
+	CHECK(checked(app, "#pref-editing-importAudioConvert"));
+	CHECK(!checked(app, "#pref-editing-importAudioSplitChannels"));
+	CHECK(value("#pref-editing-importAudioNameFormat") == "dash");
+	click(app, "#pref-editing-importAudioSplitChannels");
+	choose("#pref-editing-importAudioNameFormat", 3);
+	click(app, "#pref-editing-importAudioCopy");
+	ok();
+	CHECK(setting("editing.importAudioSplitChannels") == true);
+	CHECK(setting("editing.importAudioNameFormat") == "space");
+	CHECK(setting("editing.importAudioCopy") == false);
+
+	// Use Settings imports with them, without the dialog.
+	display.importFiles({take});
+	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("audioEvents").size() == 2; }));
+	CHECK(!dialogShown(app));
+	CHECK(app.call("project.get").at("media")[0].at("path") == (folder / "Audio" / "take L.wav").u8string());
+
+	// Open Options Dialog resets Do not ask again: the dialog opens, starting from the same settings.
+	openPreferences();
+	choose("#pref-editing-onImportAudio", -1);
+	ok();
+	CHECK(setting("editing.onImportAudio") == "openOptionsDialog");
+	display.importFiles({take});
+	REQUIRE(app.waitUntil([&app] { return dialogShown(app); }));
+	CHECK(checked(app, "#import-split"));
+	CHECK(!checked(app, "#import-copy"));
+	CHECK(elements(app, "#import-name-format")[0].value("attributes", Json::object()).value("value", "") == "space");
+}
