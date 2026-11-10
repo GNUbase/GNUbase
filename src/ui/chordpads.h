@@ -8,6 +8,7 @@
 #include <RmlUi/Core/ObserverPtr.h>
 
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -71,10 +72,12 @@ namespace gnubase::ui
 		Rml::ObserverPtr<Rml::Element> m_document; // for the mouse button going up outside the panel
 		engine::Json m_pads = engine::Json::object();
 		std::set<int> m_selection;
-		int m_pressed = -1;          // the pad the mouse button went down on, until it goes up
-		std::string m_auditioned;    // the assistant's chord that plays while pressed
-		int m_editing = -1;          // the pad whose chord the field types
-		std::string m_page = "list"; // the assistant's page: list or circle
+		int m_pressed = -1;               // the pad the mouse button went down on, until it goes up
+		std::string m_auditioned;         // the assistant's chord that plays while pressed
+		int m_editing = -1;               // the pad whose chord the field types
+		std::string m_page = "list";      // the assistant's page: list or circle
+		std::optional<int> m_rootKeySent; // the root key the wheel sent last, until the pads show it
+		int m_rootKeysSending = 0;        // the wheel's root keys that the engine hasn't answered yet
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers that come after it went
 		std::vector<Subscription> m_subscriptions;
 	};

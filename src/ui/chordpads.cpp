@@ -247,6 +247,8 @@ namespace gnubase::ui
 		if (list == nullptr)
 			return;
 		m_pads = pads;
+		if (m_rootKeysSending == 0)
+			m_rootKeySent.reset(); // the pads have the key the wheel sent last
 		const Json& items = pads.at("pads");
 		const auto count = static_cast<int>(items.size());
 		if (list->GetNumChildren() != count)
@@ -514,10 +516,25 @@ namespace gnubase::ui
 		const auto delta = event.GetParameter<float>("wheel_delta_y", 0.0F);
 		if (delta == 0.0F)
 			return;
-		const int key = (m_pads.at("rootKey").get<int>() + (delta > 0.0F ? 1 : 11)) % 12;
+		// Until the engine's pads come back with the key, m_pads holds an older one: the next notch goes on from the
+		// key sent last, so that notches before the engine's answer all count.
+		const int key = (m_rootKeySent.value_or(m_pads.at("rootKey").get<int>()) + (delta > 0.0F ? 1 : 11)) % 12;
+		m_rootKeySent = key;
+		++m_rootKeysSending;
 		const Rml::Element* transpose = find("chord-pads-transposePads");
-		send("chordPads.set",
-			{{"rootKey", key}, {"transposePads", transpose != nullptr && transpose->HasAttribute("checked")}});
+		m_binding.send("chordPads.set",
+			{{"rootKey", key}, {"transposePads", transpose != nullptr && transpose->HasAttribute("checked")}},
+			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (alive.expired())
+					return;
+				--m_rootKeysSending;
+				if (result.ok())
+					return;
+				logging::warning("chordPads.set from the UI failed: {}", result.error);
+				m_rootKeySent.reset();
+				request();
+			});
 	}
 
 	void ChordPadsPanel::action(const std::string& name)

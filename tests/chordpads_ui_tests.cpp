@@ -259,6 +259,9 @@ TEST_CASE("a value the engine refuses goes back, and the wheel over the root key
 	window.step();
 	REQUIRE(window.app.waitUntil([&] { return window.call("chordPads.get").at("rootKey") == 1; }));
 	CHECK(window.pads()[0].at("chord") == "C");
+	// Once the panel shows the new key, two notches in one frame both count, before the engine answered the first.
+	REQUIRE(window.app.waitUntil(
+		[&] { return window.elements("#chord-pads-root")[0].at("attributes").value("value", "") == "1"; }));
 	window.app.ui().wheel(std::nullopt, {"#chord-pads-root", 0, std::nullopt}, 0.0F, -1.0F);
 	window.app.ui().wheel(std::nullopt, {"#chord-pads-root", 0, std::nullopt}, 0.0F, -1.0F);
 	window.step();
