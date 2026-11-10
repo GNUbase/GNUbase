@@ -253,7 +253,8 @@ namespace gnubase::engine::midi
 	// out. Notes are written as they play through their tracks' drum maps and the chord track; a destination with its
 	// own gets the pitch that plays them, if one does, else what played, which it then maps. eraseDestination first
 	// removes the destination track's parts that lie in the range and the events of other parts that start in it, a
-	// shared copy leaving its copies for that. includeChase adds the last controller value of every controller, program
+	// shared copy leaving its copies for that: its notes get new ids, so their play probability, velocity variance and
+	// random MIDI modifier values draw anew. includeChase adds the last controller value of every controller, program
 	// and channel before start at the new part's start. A new destination track goes to the end of the track list,
 	// routed to the instrument of the first track merged.
 	PartChanges merge(Project& project, const MergeSettings& settings);
@@ -283,9 +284,8 @@ namespace gnubase::engine::midi
 	// the earliest, on the lowest lane they are on (reference manual p. 1123). Muted parts are removed and add
 	// nothing. Events keep their time; notes are cut where their part ended. The parts' transpose and velocity go into
 	// the notes as playback applies them, and a note transposed beyond 0 to 127, which doesn't play, is left out. Where
-	// a drum map or the chord track would then play another pitch, the new part keeps the transpose if all parts share
-	// it, and otherwise it throws a CommandError. The
-	// track's MIDI modifiers stay on the track, and the copied notes get new ids, so the play probability and
-	// velocity variance of a note, drawn from its part's and its own id, draw anew.
+	// a drum map or the chord track would then play another pitch, the new part keeps the transpose, and parts with
+	// different ones make a part for each. The track's MIDI modifiers stay on the track, and the copied notes get new
+	// ids, so the play probability and velocity variance of a note, drawn from its part's and its own id, draw anew.
 	PartChanges bounce(Project& project, const std::vector<ObjectId>& parts);
 }

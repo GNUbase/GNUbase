@@ -524,7 +524,8 @@ namespace gnubase::engine::midi
 				"Without destination a new MIDI track is added at the end, routed "
 				"to the instrument of the first track merged. eraseDestination first removes the destination's parts "
 				"that lie between start and end, and the events of its other parts that start there, which leave "
-				"their shared copies for it. includeChase "
+				"their shared copies for it: their notes get new ids, so play probability, velocity variance and "
+				"random MIDI modifier values draw anew. includeChase "
 				"adds the last value of every controller and program before start at the new part's start." +
 					returns,
 				objectSchema(
@@ -559,7 +560,7 @@ namespace gnubase::engine::midi
 				"Events keep their time; notes are cut where their part ended. The parts' transpose and velocity go "
 				"into the notes as playback applies them; a note transposed beyond 0-127, which doesn't play, is left "
 				"out. On a track whose drum map or chord track following plays a transposed note differently, the new "
-				"part keeps the transpose all the parts share; it refuses parts with different ones. The copied notes "
+				"part keeps the transpose, and parts with different ones make a part for each. The copied notes "
 				"get new ids, so play probability and velocity variance draw anew." +
 					returns,
 				objectSchema({{"parts", ids}}, {"parts"}), changesResult, false},

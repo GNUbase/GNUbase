@@ -3,7 +3,6 @@
 
 #include "engine/document/chordtrack.h"
 #include "engine/document/rendersnapshot.h"
-#include "engine/engine.h"
 #include "engine/midi/chords.h"
 #include "engine/midi/drummaps.h"
 #include "engine/midi/midivalues.h"
@@ -777,6 +776,75 @@ namespace gnubase::engine::midi
 			const DrumMap* m_map;
 			ChordFollower m_follower;
 		};
+
+		// The parts, none muted, as one new part from the first one's start to the last one's end, on the lowest of
+		// their lanes. intoNotes: their transpose goes into the notes; otherwise they share it and the new part has it.
+		MidiPart combine(
+			Project& project, const std::vector<ObjectId>& parts, const TrackPitches& pitches, bool intoNotes)
+		{
+			const MidiPart* earliest = nullptr;
+			Ticks start = 0;
+			Ticks end = 0;
+			int lane = 0;
+			for (const ObjectId id : parts)
+			{
+				const MidiPart& part = project.midiParts.at(id);
+				const Ticks from = partStart(project, part);
+				lane = earliest == nullptr ? part.lane : std::min(lane, part.lane);
+				end = earliest == nullptr ? partEnd(project, part) : std::max(end, partEnd(project, part));
+				if (earliest == nullptr || from < start)
+				{
+					earliest = &part;
+					start = from;
+				}
+			}
+			MidiPart combined;
+			combined.id = project.newId();
+			combined.track = earliest->track;
+			combined.name = earliest->name;
+			combined.lane = lane;
+			combined.transpose = intoNotes ? 0 : earliest->transpose;
+			place(project, combined, start, end);
+			const Ticks combinedStart = partStart(project, combined);
+			for (const ObjectId id : parts)
+			{
+				const MidiPart& part = project.midiParts.at(id);
+				const Ticks from = partStart(project, part);
+				const Ticks shift = from - combinedStart;
+				const Ticks partTo = partEnd(project, part);
+				const Ticks length = partTo - from;
+				for (const auto& [noteId, note] : part.notes)
+				{
+					const bool silent = pitches.silent(note.pitch);
+					const int plays = pitches.played(note.pitch, from + note.position) + part.transpose;
+					if (note.position >= length || (intoNotes && !silent && (plays < 0 || plays > 127)))
+						continue;
+					Note copy = note;
+					copy.id = project.newId();
+					copy.position += shift;
+					copy.length =
+						std::min(combinedStart + copy.position + note.length, partTo) - (combinedStart + copy.position);
+					if (intoNotes && !silent)
+						copy.pitch = static_cast<uint8_t>(note.pitch + part.transpose);
+					if (part.velocity != 0)
+					{
+						// As playback shifts it: in MIDI 1.0 velocities, a note-on staying at least 1.
+						const int velocity = std::clamp(velocityToMidi1(note.velocity) + part.velocity, 1, 127);
+						copy.velocity = velocityFromMidi1(static_cast<uint8_t>(velocity));
+					}
+					combined.notes[copy.id] = copy;
+				}
+				for (const auto& [controllerId, controller] : part.controllers)
+					if (controller.position < length)
+					{
+						Controller copy = controller;
+						copy.id = project.newId();
+						copy.position += shift;
+						combined.controllers[copy.id] = copy;
+					}
+			}
+			return combined;
+		}
 	}
 
 	std::vector<ObjectId> playingTracks(const Project& project)
@@ -1128,103 +1196,46 @@ namespace gnubase::engine::midi
 	PartChanges bounce(Project& project, const std::vector<ObjectId>& parts)
 	{
 		PartChanges changes;
-		const MidiPart* earliest = nullptr;
-		Ticks start = 0;
-		Ticks end = 0;
-		int lane = 0;
+		std::vector<ObjectId> playing;
 		for (const ObjectId id : parts)
 		{
-			const MidiPart& part = project.midiParts.at(id);
 			addUnique(changes.removedParts, id);
-			if (part.mute)
-				continue;
-			const Ticks from = partStart(project, part);
-			lane = earliest == nullptr ? part.lane : std::min(lane, part.lane);
-			end = earliest == nullptr ? partEnd(project, part) : std::max(end, partEnd(project, part));
-			if (earliest == nullptr || from < start)
-			{
-				earliest = &part;
-				start = from;
-			}
+			if (!project.midiParts.at(id).mute)
+				playing.push_back(id);
 		}
-		if (earliest == nullptr) // every part is muted
+		std::vector<MidiPart> combined;
+		if (!playing.empty())
 		{
-			for (const ObjectId id : changes.removedParts)
-				project.midiParts.erase(id);
-			return changes;
-		}
-
-		// A drum map or the chord track maps a note before its part's transpose, which the notes' pitches can't always
-		// hold: then the new part keeps a transpose all the parts share.
-		const TrackPitches pitches(project, earliest->track);
-		bool intoNotes = true;
-		bool sameTranspose = true;
-		for (const ObjectId id : parts)
-		{
-			const MidiPart& part = project.midiParts.at(id);
-			if (part.mute)
-				continue;
-			sameTranspose = sameTranspose && part.transpose == earliest->transpose;
-			const Ticks from = partStart(project, part);
-			if (part.transpose != 0)
-				intoNotes = intoNotes &&
-					std::all_of(part.notes.begin(), part.notes.end(), [&](const auto& note)
-						{ return pitches.transposesInNote(note.second, part.transpose, from + note.second.position); });
-		}
-		if (!intoNotes && !sameTranspose)
-			throw CommandError("the parts have different transposes, which the notes can't hold on a track with this "
-							   "drum map or following the chord track");
-
-		MidiPart combined;
-		combined.id = project.newId();
-		combined.track = earliest->track;
-		combined.name = earliest->name;
-		combined.lane = lane;
-		combined.transpose = intoNotes ? 0 : earliest->transpose;
-		place(project, combined, start, end);
-		const Ticks combinedStart = partStart(project, combined);
-		for (const ObjectId id : parts)
-		{
-			const MidiPart& part = project.midiParts.at(id);
-			if (part.mute)
-				continue;
-			const Ticks shift = partStart(project, part) - combinedStart;
-			const Ticks partTo = partEnd(project, part);
-			const Ticks length = partTo - partStart(project, part);
-			for (const auto& [noteId, note] : part.notes)
-			{
-				const bool silent = pitches.silent(note.pitch);
-				const int plays = pitches.played(note.pitch, partStart(project, part) + note.position) + part.transpose;
-				if (note.position >= length || (intoNotes && !silent && (plays < 0 || plays > 127)))
-					continue;
-				Note copy = note;
-				copy.id = project.newId();
-				copy.position += shift;
-				copy.length =
-					std::min(combinedStart + copy.position + note.length, partTo) - (combinedStart + copy.position);
-				if (intoNotes && !silent)
-					copy.pitch = static_cast<uint8_t>(note.pitch + part.transpose);
-				if (part.velocity != 0)
+			// A drum map or the chord track maps a note before its part's transpose, which the notes' pitches can't
+			// always hold: then each transpose keeps a part of its own.
+			const TrackPitches pitches(project, project.midiParts.at(playing.front()).track);
+			const bool intoNotes = std::all_of(playing.begin(), playing.end(),
+				[&](ObjectId id)
 				{
-					// As playback shifts it: in MIDI 1.0 velocities, a note-on staying at least 1.
-					const int velocity = std::clamp(velocityToMidi1(note.velocity) + part.velocity, 1, 127);
-					copy.velocity = velocityFromMidi1(static_cast<uint8_t>(velocity));
-				}
-				combined.notes[copy.id] = copy;
-			}
-			for (const auto& [controllerId, controller] : part.controllers)
-				if (controller.position < length)
-				{
-					Controller copy = controller;
-					copy.id = project.newId();
-					copy.position += shift;
-					combined.controllers[copy.id] = copy;
-				}
+					const MidiPart& part = project.midiParts.at(id);
+					const Ticks from = partStart(project, part);
+					const Ticks length = partEnd(project, part) - from;
+					return part.transpose == 0 ||
+						std::all_of(part.notes.begin(), part.notes.end(),
+							[&](const auto& note)
+							{
+								return note.second.position >= length ||
+									pitches.transposesInNote(note.second, part.transpose, from + note.second.position);
+							});
+				});
+			std::map<int, std::vector<ObjectId>> groups;
+			for (const ObjectId id : playing)
+				groups[intoNotes ? 0 : project.midiParts.at(id).transpose].push_back(id);
+			for (const auto& [transpose, group] : groups)
+				combined.push_back(combine(project, group, pitches, intoNotes));
 		}
 		for (const ObjectId id : changes.removedParts)
 			project.midiParts.erase(id);
-		changes.addedParts.push_back(combined.id);
-		project.midiParts[combined.id] = std::move(combined);
+		for (MidiPart& part : combined)
+		{
+			changes.addedParts.push_back(part.id);
+			project.midiParts[part.id] = std::move(part);
+		}
 		return changes;
 	}
 

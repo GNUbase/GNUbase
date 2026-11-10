@@ -1808,7 +1808,7 @@ namespace
 		run(client, "track.set", {{"track", track}, {"drumMap", map}});
 	}
 
-	// A chord track of C then F, which the track follows with Chords over its own C.
+	// A chord track of F, which the track follows with Chords over its own C.
 	void followChords(Client& client, ObjectId track)
 	{
 		run(client, "chord.add", {{"position", 0}, {"chord", "F"}});
@@ -1973,15 +1973,35 @@ TEST_CASE(
 		CHECK(storedPitches(onlyPartJson(client, track)) == std::vector<int>{60, 64, 66, 66});
 	}
 
-	SECTION("different transposes that only the notes could hold are refused, and nothing changes")
+	SECTION("different transposes that only the notes could hold make a part for each")
 	{
 		run(client, "midiPart.set", {{"part", second}, {"transpose", 5}});
 		useDrumMap(client, track, {{{"pitch", 60}, {"oNote", 30}}});
-		const Json before = run(client, "project.get").at("midiParts");
-		const Result refused = client.call("midi.bounce", {{"parts", {fixture.part, second}}});
-		REQUIRE(!refused.ok());
-		CHECK_THAT(refused.error, ContainsSubstring("transpose"));
-		CHECK(run(client, "project.get").at("midiParts") == before);
+		const auto before = playedOn(fixture.engine, track);
+		const Json bounced = run(client, "midi.bounce", {{"parts", {fixture.part, second}}});
+		REQUIRE(bounced.at("parts").size() == 2);
+		CHECK(playedOn(fixture.engine, track) == before);
+		std::vector<std::pair<int, std::vector<int>>> made;
+		const Json project = run(client, "project.get");
+		for (const Json& id : bounced.at("parts"))
+			for (const Json& part : project.at("midiParts"))
+				if (part.at("id") == id)
+					made.emplace_back(part.at("transpose").get<int>(), storedPitches(part));
+		std::sort(made.begin(), made.end());
+		CHECK(made == std::vector<std::pair<int, std::vector<int>>>{{2, {60, 64, 64}}, {5, {62}}});
+	}
+
+	SECTION("a note hidden past its part's end doesn't keep the transpose on the part")
+	{
+		run(client, "note.add",
+			{{"part", second},
+				{"notes", {{{"position", 4 * g_quarter}, {"length", 10}, {"pitch", 70}, {"velocity", 0.5}}}}});
+		useDrumMap(client, track, {{{"pitch", 72}, {"oNote", 20}}}); // 70 + 2 would play 20
+		const auto before = playedOn(fixture.engine, track);
+		const Json bounced = run(client, "midi.bounce", {{"parts", {fixture.part, second}}});
+		REQUIRE(bounced.at("parts").size() == 1);
+		CHECK(playedOn(fixture.engine, track) == before);
+		CHECK(onlyPartJson(client, track).at("transpose") == 0);
 	}
 
 	SECTION("different transposes go into the notes if they play the same there")
@@ -2031,6 +2051,38 @@ TEST_CASE("merge writes what the drum map and the chord track play, for a destin
 		const auto before = playedOn(fixture.engine, track);
 		REQUIRE(!before.empty());
 		newTrackPlays(before);
+	}
+
+	SECTION("a part later in the project plays the chord at its place, in a range that starts there")
+	{
+		const ObjectId later =
+			run(client, "midiPart.add", {{"track", track}, {"position", 8 * g_quarter}, {"length", 4 * g_quarter}})
+				.at("part")
+				.at("id")
+				.get<ObjectId>();
+		run(client, "note.add",
+			{{"part", later}, {"notes", {{{"position", 0}, {"length", 10}, {"pitch", 60}, {"velocity", 0.5}}}}});
+		run(client, "chord.add", {{"position", 0}, {"chord", "F"}});
+		run(client, "chord.add", {{"position", 8 * g_quarter}, {"chord", "G"}});
+		run(client, "chord.follow", {{"track", track}, {"mode", "chords"}, {"sync", "known"}, {"chord", "C"}});
+		const auto all = playedOn(fixture.engine, track);
+		const std::vector<std::vector<int64_t>> before{all.back()};
+		REQUIRE(before[0][0] == g_eightQuarters);
+		const Json merged =
+			run(client, "midi.merge", {{"start", g_eightQuarters}, {"end", 2 * g_eightQuarters}, {"tracks", {track}}});
+		REQUIRE(merged.at("tracks").size() == 1);
+		CHECK(playedOn(fixture.engine, merged.at("tracks").at(0).get<ObjectId>()) == before);
+	}
+
+	SECTION("onto the track it follows the chord track on, keeping the notes' pitches")
+	{
+		run(client, "midiPart.set", {{"part", fixture.part}, {"transpose", 0}});
+		followChords(client, track);
+		const auto before = playedOn(fixture.engine, track);
+		mergeOnto({{"destination", track}});
+		run(client, "midiPart.remove", {{"part", fixture.part}});
+		CHECK(playedOn(fixture.engine, track) == before);
+		CHECK(storedPitches(onlyPartJson(client, track)) == std::vector<int>{60, 64, 64});
 	}
 
 	SECTION("onto the track's own drum map, keeping the notes' pitches where they play the same")
