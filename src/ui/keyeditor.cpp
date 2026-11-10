@@ -464,6 +464,8 @@ namespace gnubase::ui
 
 	void KeyEditor::setTimeRange(std::optional<std::pair<int64_t, int64_t>> range)
 	{
+		// The in-place editor's first show() comes before its layout: its first scroll to the notes waits for one.
+		scrollToNotes();
 		if (range == m_range)
 			return;
 		m_range = range;
@@ -608,23 +610,27 @@ namespace gnubase::ui
 		if (Rml::Element* cursor = root->QuerySelector(".key-editor-step-cursor"))
 			setClass(cursor, "off", !m_view.value("stepInput", false));
 		renderInfo();
-		if (!m_scrolled)
-		{
-			int low = 60;
-			int high = 60;
-			if (!m_notes.empty())
-			{
-				low = high = m_notes.front().pitch;
-				for (const Note& note : m_notes)
-				{
-					low = std::min(low, note.pitch);
-					high = std::max(high, note.pitch);
-				}
-			}
-			m_scrolled = scrollToPitch((low + high) / 2);
-		}
+		scrollToNotes();
 		if (Rml::Context* context = root->GetContext())
 			context->RequestNextUpdate(0);
+	}
+
+	void KeyEditor::scrollToNotes()
+	{
+		if (m_scrolled)
+			return;
+		int low = 60;
+		int high = 60;
+		if (!m_notes.empty())
+		{
+			low = high = m_notes.front().pitch;
+			for (const Note& note : m_notes)
+			{
+				low = std::min(low, note.pitch);
+				high = std::max(high, note.pitch);
+			}
+		}
+		m_scrolled = scrollToPitch((low + high) / 2);
 	}
 
 	void KeyEditor::placeItems()
