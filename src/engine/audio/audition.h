@@ -49,15 +49,19 @@ namespace gnubase::engine
 		void play(const Subject& subject, const Playback::Track& source, std::map<ObjectId, std::string> mediaPaths,
 			double sampleRate, time::Samples position, time::Samples end, int channels, uint32_t maxFrames);
 
-		// Command thread: plays the subject from where the last scrub of it got to, to position, forwards or
-		// backwards, in seconds (default: the time since that scrub, from 0.01 to 0.1 seconds), so speed and pitch
-		// follow how fast the positions come. The first scrub of a subject only sets where the next one starts.
+		// Command thread: plays the subject from where the audio thread got to in the last scrub of it (where that
+		// one starts if it hasn't played yet), to position, forwards or backwards, in seconds (default: the time since
+		// that scrub, from 0.01 to 0.1 seconds), so speed and pitch follow how fast the positions come. The first
+		// scrub of a subject only sets where the next one starts.
 		void scrub(const Subject& subject, const Playback::Track& source,
 			const std::map<ObjectId, std::string>& mediaPaths, double sampleRate, time::Samples position,
 			std::optional<double> seconds, int channels);
 
-		// Command thread: ends playing or scrubbing.
+		// Command thread: ends playing or scrubbing, and closes the files that played.
 		void stop();
+
+		// Command thread: the disk streams open for playing.
+		size_t voices() const { return m_playback.voices(); }
 
 		// Command thread: what is auditioned (both 0 for nothing), and whether it scrubs.
 		const Subject& subject() const { return m_subject; }
@@ -100,7 +104,12 @@ namespace gnubase::engine
 		// Command side.
 		Subject m_subject;
 		bool m_scrubbing = false;
-		time::Samples m_head = 0; // where the next scrub starts
+		// The last scrub: from and to, in frames frames (0 for none: to is where the next one starts), and the serial
+		// of its state.
+		time::Samples m_scrubFrom = 0;
+		time::Samples m_scrubTo = 0;
+		size_t m_scrubFrames = 0;
+		uint64_t m_scrubSerial = 0;
 		std::chrono::steady_clock::time_point m_lastScrub;
 		std::map<ObjectId, std::unique_ptr<AudioFileReader>> m_readers; // while scrubbing; null where opening failed
 		std::map<ObjectId, std::string> m_readerPaths;                  // the media files m_readers were opened from
@@ -117,7 +126,8 @@ namespace gnubase::engine
 		size_t m_scrubbed = 0; // frames of the scrub played
 		graph::EventBuffer m_eventsIn;
 		graph::EventBuffer m_eventsOut;
-		// Written by the audio thread after each block: the state's serial and the position it plays next.
+		// Written by the audio thread after each block: the state's serial and the position it plays next, or while it
+		// scrubs, the frames of the scrub it played.
 		rt::SeqLockPair<uint64_t, time::Samples> m_played;
 	};
 }

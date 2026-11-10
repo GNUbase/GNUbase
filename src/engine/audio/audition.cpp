@@ -49,6 +49,12 @@ namespace gnubase::engine
 		std::map<ObjectId, std::string> mediaPaths, double sampleRate, time::Samples position, time::Samples end,
 		int channels, uint32_t maxFrames)
 	{
+		{
+			// The cue thread leaves the streams alone until this state is out: a cue it made for the last one would
+			// move what this one cues (cue holds the lock while it cues).
+			const std::scoped_lock lock(m_mutex);
+			m_cuePlaying = false;
+		}
 		m_subject = subject;
 		m_scrubbing = false;
 		m_readers.clear();
@@ -82,16 +88,30 @@ namespace gnubase::engine
 			stop();
 			m_subject = subject;
 			m_scrubbing = true;
-			m_head = position;
+			m_scrubFrom = position;
+			m_scrubTo = position;
+			m_scrubFrames = 0;
 			m_lastScrub = now;
 			return;
 		}
 		const double elapsed = std::chrono::duration<double>(now - m_lastScrub).count();
 		const double duration = seconds.value_or(std::clamp(elapsed, g_minScrubSeconds, g_maxScrubSeconds));
 		m_lastScrub = now;
+		// On from where the audio thread got to in the last scrub, or where that one starts if it hasn't played it:
+		// scrubs that come faster than they play, or late, leave nothing out. (It may play a few more frames of the
+		// last one meanwhile, which this one then plays again.)
+		time::Samples reached = m_scrubTo;
+		if (m_scrubFrames > 0)
+		{
+			const auto [serial, played] = m_played.load();
+			const double done = serial == m_scrubSerial
+				? std::min(static_cast<double>(played), static_cast<double>(m_scrubFrames)) /
+					static_cast<double>(m_scrubFrames)
+				: 0.0;
+			reached = m_scrubFrom + std::llround(static_cast<double>(m_scrubTo - m_scrubFrom) * done);
+		}
 		const auto most = static_cast<time::Samples>(g_maxScrubMaterial * sampleRate);
-		const time::Samples from = std::clamp(m_head, position - most, position + most);
-		m_head = position;
+		const time::Samples from = std::clamp(reached, position - most, position + most);
 		const auto frames = static_cast<size_t>(std::llround(duration * sampleRate));
 		if (from == position || frames == 0 || channels <= 0)
 			return; // standing still: what it played runs out
@@ -124,6 +144,10 @@ namespace gnubase::engine
 		state->channels = channels;
 		state->scrub = std::move(audio);
 		publish(std::move(state));
+		m_scrubFrom = from;
+		m_scrubTo = position;
+		m_scrubFrames = frames;
+		m_scrubSerial = m_serial;
 	}
 
 	void Audition::stop()
@@ -132,6 +156,7 @@ namespace gnubase::engine
 		m_scrubbing = false;
 		m_readers.clear();
 		publish(std::make_unique<State>());
+		m_playback.setTracks({}, {}, 0.0); // closes the streams' files and frees their buffers
 	}
 
 	std::vector<float> Audition::read(const Playlist& playlist, const std::map<ObjectId, std::string>& mediaPaths,
@@ -210,19 +235,14 @@ namespace gnubase::engine
 
 	void Audition::cue(time::Samples window, bool reading)
 	{
-		uint64_t serial = 0;
-		time::Samples start = 0;
-		{
-			const std::scoped_lock lock(m_mutex);
-			if (!m_cuePlaying)
-				return;
-			serial = m_cueSerial;
-			start = m_cueStart;
-		}
+		// Under the lock, so that play can hold off a cue made for the state before.
+		const std::scoped_lock lock(m_mutex);
+		if (!m_cuePlaying)
+			return;
 		const auto [played, position] = m_played.load();
 		Playback::Cue cue;
-		cue.playing = reading && played == serial;
-		cue.position = played == serial ? position : start;
+		cue.playing = reading && played == m_cueSerial;
+		cue.position = played == m_cueSerial ? position : m_cueStart;
 		cue.window = window;
 		m_playback.cue(cue);
 	}
@@ -276,7 +296,7 @@ namespace gnubase::engine
 				add(c, state.scrub->data() + (m_scrubbed * width) + c, width, count);
 			m_scrubbed += count;
 		}
-		m_played.store(m_playing, m_position);
+		m_played.store(m_playing, state.scrub ? static_cast<time::Samples>(m_scrubbed) : m_position);
 		m_states.release();
 	}
 
@@ -430,13 +450,23 @@ namespace gnubase::engine
 				std::optional<double> seconds;
 				if (const auto found = context.parameters().find("seconds"); found != context.parameters().end())
 					seconds = found->get<double>();
+				// One per mouse move would push everything else out of the log: only the first scrub of a drag goes in.
+				if (m_audition.scrubbing() && m_audition.subject() == given.subject)
+					context.leaveOutOfLog();
+				// The cursor first, so that a busy transport fails the scrub before it changes the audition. While the
+				// transport plays, cued exactly as transport.locate does it, so that the other tracks play on without
+				// a dropout; while it stands, the cue thread follows, which keeps scrubs quick.
+				if (given.subject.track != 0)
+				{
+					if (m_transport.playing())
+						locate({{"position", given.position}});
+					else
+						sent(m_transport.locate(given.position));
+				}
 				m_audition.scrub(given.subject, given.playback, m_mediaPaths, m_snapshots.latest().sampleRate,
 					given.position, seconds, given.channels);
 				if (given.subject.track != 0)
-				{
-					sent(m_transport.locate(given.position));
 					context.emit("transport.changed", transportStatus());
-				}
 				return report(context);
 			});
 		engine.registerCommand(

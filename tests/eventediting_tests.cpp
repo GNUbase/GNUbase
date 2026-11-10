@@ -1013,6 +1013,18 @@ TEST_CASE(
 		CHECK(pointer() == ui::toolName(tool));
 		CHECK(shown() == cursor);
 	}
+	// In scrub mode the play tool resizes an audio event at its edge, scrubbing along (reference manual p. 268); not a
+	// MIDI part, which it doesn't scrub.
+	f.display.setPlayMode(ui::PlayMode::Scrub);
+	moveTo(248, 20);
+	CHECK(pointer() == "resize");
+	CHECK(shown() == "resize");
+	moveTo(102, 60);
+	CHECK(pointer() == ui::toolName(ui::Tool::Play));
+	f.display.setPlayMode(ui::PlayMode::Play);
+	moveTo(249, 20);
+	CHECK(pointer() == ui::toolName(ui::Tool::Play));
+	moveTo(102, 60);
 
 	// Over the ruler, the OS's arrow.
 	f.display.setTool(ui::Tool::ObjectSelection);
@@ -1468,6 +1480,95 @@ TEST_CASE("the play tool auditions the pressed audio track until it is released,
 	CHECK(f.call("transport.get").at("playing") == false);
 	CHECK(f.parts().size() == 1); // nothing edited
 	CHECK(f.audioEvents().size() == 1);
+
+	// At an audio event's edge it resizes the event and scrubs along (reference manual p. 268): the right edge 20 dp
+	// further makes it a fifth of a second longer, and the event's clip is scrubbed, not the track, so the cursor
+	// stays.
+	auditions.clear();
+	f.drag(248, 10, 268, 10);
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("length") == 24000 + 9600; }));
+	REQUIRE(f.waitUntil([&modes] { return modes().size() >= 2 && modes().back() == "off"; }));
+	CHECK(modes()[0] == "scrub");
+	CHECK(auditions[0].at("track") == 0);
+	CHECK(f.call("transport.get").at("position") == 115200);
+	CHECK(f.display.selection() == std::vector<uint64_t>{f.event});
+
+	// A click there without a drag is no click of the object selection tool: with the tool modifier Split Event (Alt)
+	// it doesn't split the event, with Set Cursor Position (Alt+Shift) it doesn't move the cursor.
+	REQUIRE(f.waitUntil([&f] { return std::abs(f.lanes("events")[0].events[0].end() - 2.7) < 1e-6; }));
+	f.click(268, 10, {"alt"});
+	f.click(268, 10, {"alt", "shift"});
+	REQUIRE(f.waitUntil([&modes] { return modes().size() >= 6 && modes().back() == "off"; }));
+	CHECK(f.audioEvents().size() == 1);
+	CHECK(f.audioEvents()[0].at("length") == 24000 + 9600);
+	CHECK(f.call("transport.get").at("position") == 115200);
+}
+
+TEST_CASE("the play tool's resize in scrub mode plays the clip at the dragged edge", "[unit]")
+{
+	Fixture f;
+	f.call("audio.setDevice", {{"captureSeconds", 1}}); // the dummy device, which keeps what it plays
+	// A take silent for its first half second and a constant 0.5 after it, and an event of its first half second
+	// at the project's start.
+	const test::TempDir dir;
+	test::Audio take;
+	take.channels = 1;
+	take.sampleRate = 48000;
+	take.samples.assign(48000, 0.5f);
+	std::fill(take.samples.begin(), take.samples.begin() + 24000, 0.0f);
+	const std::filesystem::path file = dir.path() / "take.wav";
+	test::writeWav(file, take);
+	const Json media = f.call("media.add", {{"path", file.u8string()}}).at("media");
+	const Json clip = f.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	const auto track = f.call("project.get").at("tracks")[0].at("id").get<uint64_t>();
+	const auto event =
+		f.call("audioEvent.add", {{"track", track}, {"clip", clip.at("id")}, {"position", 0}, {"length", 24000}})
+			.at("event")
+			.at("id")
+			.get<uint64_t>();
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events")[0].events.size() == 2; }));
+	f.display.setTool(ui::Tool::Play);
+	f.display.setPlayMode(ui::PlayMode::Scrub);
+
+	// Its end dragged out by a fifth of a second, over the take's hidden audio, where the track plays nothing yet:
+	// while the button is held, the device plays the take's 0.5.
+	f.automation.press(std::nullopt, f.at(48, 10), ui::MouseButton::Left);
+	f.step();
+	f.automation.move(std::nullopt, f.at(68, 10));
+	f.step();
+	// The preview of the resize shows it 0.7 seconds long once the edge's scrub is on its way.
+	REQUIRE(f.waitUntil(
+		[&f]
+		{
+			const auto& events = f.lanes("events")[0].events;
+			return std::any_of(events.begin(), events.end(),
+				[](const ui::TimeSpan& shown) { return shown.start == 0.0 && std::abs(shown.end() - 0.7) < 1e-6; });
+		}));
+	// The scrub plays at most 0.1 seconds, a block of the render once the engine has it.
+	int64_t rendered = 0;
+	size_t heard = 0;
+	while (heard < 480 && rendered < 48000) // at least 0.01 seconds, within the second captured
+	{
+		f.call("audio.render", {{"frames", 4800}});
+		const auto played = f.call("audio.capture", {{"channel", 0}, {"start", rendered}, {"frames", 4800}})
+								.at("samples")
+								.get<std::vector<float>>();
+		heard = static_cast<size_t>(std::count(played.begin(), played.end(), 0.5f));
+		rendered += 4800;
+		f.step();
+	}
+	CHECK(heard >= 480);
+	f.automation.release(std::nullopt, f.at(68, 10), ui::MouseButton::Left);
+	f.step();
+	REQUIRE(f.waitUntil(
+		[&f, event]
+		{
+			for (const Json& shown : f.audioEvents())
+				if (shown.at("id") == event)
+					return shown.at("length") == 24000 + 9600;
+			return false;
+		}));
+	CHECK(f.call("transport.get").at("position") == 0);
 }
 
 TEST_CASE("the range selection tool selects ranges, snapped, by dragging and double clicking", "[unit]")

@@ -591,6 +591,14 @@ namespace gnubase::ui
 		std::optional<size_t> visibleLaneAt(double y) const;
 		// The edge of the event at x dp across the lanes that a press there resizes: -1 its start, 1 its end, 0 none.
 		int edgeAt(const Shown& shown, double x) const;
+		// The edge of the audio event at x, y dp that a press of the play tool in scrub mode resizes, scrubbing along
+		// (reference manual p. 268): as edgeAt, 0 for none.
+		int scrubEdgeAt(double x, double y) const;
+		// Sends audition.scrub for the auditioned track at x dp across.
+		void scrubAt(double x);
+		// The play tool's resize in scrub mode: scrubs the clip to the frame the audio event, at offset and length
+		// clip frames, plays at the dragged edge.
+		void scrubEdge(uint64_t clip, int64_t offset, int64_t length);
 
 		// Fades and crossfades (eventfades.cpp): an audio event's fades and crossfade as project.get has them, its
 		// media file's sample rate, its offset and length in clip frames, and its volume and volume curve.
@@ -851,7 +859,8 @@ namespace gnubase::ui
 		WarpMode m_warpMode = WarpMode::Grid;
 		uint64_t m_warpSource = 0; // the audio event Copy Warp Markers from Selected Event copied from
 		PlayMode m_playMode = PlayMode::Play;
-		uint64_t m_auditioned = 0; // the track the play tool auditions or scrubs while pressed
+		uint64_t m_auditioned = 0;   // the track the play tool auditions or scrubs while pressed
+		bool m_resizeScrubs = false; // the play tool's resize drag, which scrubs m_auditioned
 		std::optional<RangeSelection> m_range;
 		std::optional<RangeSelection> m_rangeBase; // what a drag with Shift adds to
 		double m_pressX = 0.0;                     // dp in the event lanes
