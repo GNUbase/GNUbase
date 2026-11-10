@@ -454,8 +454,9 @@ TEST_CASE("dragging an unselected event with a Focus filter on selects it, filte
 		f.window, {"", 0, ui::Point{x, y}}, {"", 0, ui::Point{x + static_cast<int>(std::lround(width / 2)), y}});
 	f.app.shell().step(std::chrono::milliseconds(0));
 	REQUIRE(f.app.waitUntil([&] { return f.event("notes", f.low).at("position") == 2 * g_quarter; }));
-	CHECK(f.types() == std::vector<std::string>{"note", "note"});
-	CHECK(f.has(low, "selected"));
+	// waitUntil steps the UI only while its condition is false: the list may not have heard of the selection yet.
+	CHECK(f.app.waitUntil([&] { return f.types() == std::vector<std::string>{"note", "note"}; }));
+	CHECK(f.app.waitUntil([&] { return f.has(low, "selected"); }));
 	CHECK(f.event("notes", f.high).at("position") == g_quarter);
 }
 

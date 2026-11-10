@@ -11,6 +11,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <functional>
@@ -93,9 +94,10 @@ namespace
 
 	struct Fixture
 	{
-		Json call(const std::string& command, const Json& parameters = Json::object())
+		Json call(const std::string& command, const Json& parameters = Json::object(),
+			std::chrono::milliseconds timeout = std::chrono::seconds(10))
 		{
-			const engine::Result result = client.call(command, parameters);
+			const engine::Result result = client.call(command, parameters, timeout);
 			INFO(command << ": " << result.error);
 			REQUIRE(result.ok());
 			return result.value;
@@ -132,7 +134,8 @@ namespace
 
 		Json statistics(const test::Audio& audio)
 		{
-			return call("clip.statistics", {{"clip", add(audio, "statistics")}});
+			// The loudness test signals are long: under ThreadSanitizer, measuring one can outlast the usual limit.
+			return call("clip.statistics", {{"clip", add(audio, "statistics")}}, std::chrono::minutes(2));
 		}
 
 		test::TempDir dir;

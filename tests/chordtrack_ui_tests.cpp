@@ -249,9 +249,15 @@ TEST_CASE("the scale lane, the chord track's controls and its Inspector settings
 	window.click(row + " button[control=showScales]");
 	REQUIRE(window.app.waitUntil([&] { return window.call("chord.get").at("showScales") == true; }));
 	REQUIRE(window.app.waitUntil([&] { return !window.hasClass(".scale-row", "hidden"); }));
-	const Json chordBox = window.element(".chord-row").at("box");
-	const Json scaleBox = window.element(".scale-row").at("box");
-	CHECK(scaleBox.at("y").get<double>() >= chordBox.at("y").get<double>() + chordBox.at("height").get<double>() - 1.0);
+	// The row loses its class before the next layout, so its box is only right a frame later.
+	CHECK(window.app.waitUntil(
+		[&]
+		{
+			const Json chordBox = window.element(".chord-row").at("box");
+			const Json scaleBox = window.element(".scale-row").at("box");
+			return scaleBox.at("y").get<double>() >=
+				chordBox.at("y").get<double>() + chordBox.at("height").get<double>() - 1.0;
+		}));
 	window.display.setTool(ui::Tool::Draw);
 	window.click(".scale-row");
 	REQUIRE(window.app.waitUntil([&] { return window.call("chord.get").at("scales").size() == 1; }));
