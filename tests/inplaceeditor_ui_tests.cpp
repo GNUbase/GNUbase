@@ -507,6 +507,13 @@ TEST_CASE("quantizing in an in-place editor quantizes its notes, not the project
 	f.scroll(67);
 	f.click(f.note(first));
 	REQUIRE(f.app.waitUntil([&] { return f.view().at("selection").size() == 1; }));
+	// Q takes the selection from the in-place editors' copy of the view, which follows the engine's by an event.
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			const Json* shown = f.app.appUi().inPlaceEditors()->view(f.track);
+			return shown != nullptr && shown->value("selection", Json::array()).size() == 1;
+		}));
 	CHECK(f.display.selection() == std::vector<uint64_t>{f.part});
 
 	// Q, with the focus in the in-place editor: its selected note, not the selected part's notes.
