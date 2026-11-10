@@ -128,7 +128,7 @@
 		end
 
 		function console.edit(index)
-			gnubase.ui.openExternally{path = console.scripts[index].file}
+			gnubase.ui.openExternally{path = console.scripts[index].file, edit = true}
 		end
 
 		function console.openFolder()
