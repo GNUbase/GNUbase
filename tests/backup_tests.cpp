@@ -904,6 +904,7 @@ TEST_CASE("a free file's name differs from the names in the folder in more than 
 	CHECK(createFreeFile(dir.path(), "a.wav").filename() == "a-2.wav");
 	CHECK(createFreeFile(dir.path(), "a.wav").filename() == "a-4.wav");
 	CHECK(bytesOf(dir.path() / "A.wav") == "there");
+	CHECK_THROWS_AS(createFreeFile(dir.path() / "missing", "a.wav"), std::runtime_error); // no listing, no file
 }
 
 TEST_CASE("files made at the same time get names of their own", "[integration]")
