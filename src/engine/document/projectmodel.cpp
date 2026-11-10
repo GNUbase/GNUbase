@@ -3966,8 +3966,7 @@ namespace gnubase::engine
 			{"project.setTimeFormat", 1,
 				"Selects the project's primary time format from a ruler or transport display. Saved with the project, "
 				"but a display choice is not an undo step. Project Setup changes made with project.set remain "
-				"undoable. "
-				"The snap grid follows the format.",
+				"undoable. The snap grid follows the format.",
 				objectSchema({{"timeFormat", timeFormats}}, {"timeFormat"}), noResult, false},
 			[this](CommandContext& context)
 			{

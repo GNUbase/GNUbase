@@ -392,9 +392,22 @@ TEST_CASE("the transport bar and the transport panel show the same time formats"
 	REQUIRE(app.waitUntil([&app, panel] { return shows(app, "#primary-time", panel) == "0:00:01.500"; }));
 	REQUIRE(app.waitUntil([&app] { return shows(app, "#primary-time") == "0:00:01.500"; }));
 	app.ui().key(std::nullopt, ".");
-	REQUIRE(app.waitUntil([&app, panel] { return shows(app, "#primary-time", panel) == "00:00:01:12"; }));
+	REQUIRE(app.waitUntil(
+		[&app, panel]
+		{
+			return shows(app, "#primary-time", panel) == "00:00:01:12" &&
+				shows(app, "#primary-time") == "00:00:01:12" && shows(app, "#secondary-time", panel) == "0:00:01.500" &&
+				shows(app, "#secondary-time") == "0:00:01.500";
+		}));
 	app.ui().key(std::nullopt, ".");
-	REQUIRE(app.waitUntil([&app, panel] { return shows(app, "#primary-time", panel) == "0:00:01.500"; }));
+	// Primary and secondary changes have separate event echoes; wait for both in both windows.
+	REQUIRE(app.waitUntil(
+		[&app, panel]
+		{
+			return shows(app, "#primary-time", panel) == "0:00:01.500" &&
+				shows(app, "#primary-time") == "0:00:01.500" && shows(app, "#secondary-time", panel) == "00:00:01:12" &&
+				shows(app, "#secondary-time") == "00:00:01:12";
+		}));
 	CHECK(shows(app, "#secondary-time", panel) == "00:00:01:12");
 	CHECK(element(app, "menuitem[slot=primary][format=seconds]", panel).at("attributes").contains("checked"));
 	CHECK(element(app, "menuitem[slot=secondary][format=timecode]", panel).at("attributes").contains("checked"));
@@ -421,7 +434,8 @@ TEST_CASE("transport time format choices and exchange do not add undo steps", "[
 	CHECK(app.call("history.get").at("steps").size() == before);
 
 	click(app, "#exchange-formats");
-	REQUIRE(app.waitUntil([&app] { return shows(app, "#primary-time") == "00:00:01:12"; }));
+	REQUIRE(app.waitUntil([&app]
+		{ return shows(app, "#primary-time") == "00:00:01:12" && shows(app, "#secondary-time") == "0:00:01.500"; }));
 	CHECK(shows(app, "#secondary-time") == "0:00:01.500");
 	CHECK(app.call("history.get").at("steps").size() == before);
 
