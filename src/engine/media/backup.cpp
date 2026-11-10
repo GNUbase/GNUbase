@@ -406,7 +406,13 @@ namespace gnubase::engine
 
 	fs::path createFreeFile(const fs::path& folder, const fs::path& name)
 	{
+		// One listing instead of a failed create for every file of that name: a folder can hold thousands of
+		// recordings, and the recorder holds its lock meanwhile. If the listing fails, creating the file still finds
+		// out what's taken.
 		std::set<std::string> taken;
+		std::error_code error;
+		for (fs::directory_iterator entry(folder, error), end; !error && entry != end; entry.increment(error))
+			taken.insert(foldedName(entry->path().filename()));
 		return createFreeFile(folder, name, taken);
 	}
 

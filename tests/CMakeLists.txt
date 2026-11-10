@@ -174,6 +174,7 @@ add_executable(gnubase-tests
 	tempodetection_tests.cpp
 	tempotrack_ui_tests.cpp
 	testing_tests.cpp
+	testrun_tempfolder.cpp
 	testutils_tests.cpp
 	theme_tests.cpp
 	time_tests.cpp
