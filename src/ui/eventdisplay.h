@@ -35,6 +35,8 @@ namespace gnubase::ui
 	inline constexpr double g_trackHeight = 40.0;
 	inline constexpr double g_minTrackHeight = 20.0;
 	inline constexpr double g_maxTrackHeight = 400.0;
+	// A row of track height (reference manual p. 253), the least a track has, in dp with vertical zoom.
+	inline constexpr double g_trackRow = g_minTrackHeight;
 	// The least height of a track whose in-place editor is open (#131), before vertical zoom, in dp.
 	inline constexpr double g_inPlaceHeight = 240.0;
 	// The project setup's length until the project is read, in seconds (#78).
@@ -675,6 +677,9 @@ namespace gnubase::ui
 		void setRangeFrom(double x, double y);    // from the drag's start
 		void selectRange();                       // the events in it, when another tool takes over
 		void showRange();
+		// Moves the range's edges to zero crossings of the audio on its tracks (reference manual p. 285), with Snap to
+		// Zero Crossing on: snap.zeroCrossings answers later.
+		void zeroCrossRange();
 		// The rectangle that a tool drags, dp in the event lanes; hidden when not shown.
 		void showRectangle(bool shown, double left = 0.0, double top = 0.0, double right = 0.0, double bottom = 0.0);
 		void setToolModifiers(const engine::Json& value);
@@ -816,6 +821,7 @@ namespace gnubase::ui
 		TimelineView m_view;
 		std::vector<TimelineView> m_undo;
 		std::vector<TimelineView> m_redo;
+		std::vector<TimelineView> m_clickRedo; // m_redo before the zoom tool's last click, for Alt's double click
 		bool m_autoScroll = false;
 		AutoScrollMode m_autoScrollMode = AutoScrollMode::Page;
 		bool m_suspendWhenEditing = false;
@@ -868,6 +874,8 @@ namespace gnubase::ui
 		bool m_toolboxKnown = false;        // changed since it was asked for
 		bool m_notifies = true;             // ui.toolSwitchNotification
 		bool m_notifiesKnown = false;
+		bool m_zoomHorizontalOnly = true; // ui.zoomToolHorizontalOnly
+		bool m_zoomHorizontalOnlyKnown = false;
 		std::optional<std::pair<double, double>> m_mouse; // over the lanes, in dp, while the mouse is there
 		std::string m_held;           // the modifier keys held, as modifiersOf joins them, for the pointer
 		std::set<int> m_modifierKeys; // the modifier keys seen going down and not up (Rml::Input::KeyIdentifier)

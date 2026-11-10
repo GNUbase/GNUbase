@@ -841,6 +841,10 @@ namespace gnubase::engine::settings
 										{"seconds", {{"type", "number"}, {"minimum", 0}}}}},
 								{"required", Json::array({"name", "seconds"})}}}},
 					Json::array()},
+				{"ui.zoomToolHorizontalOnly",
+					"Zoom Tool Standard Mode: Horizontal Zooming Only: whether the zoom tool's rectangle zooms the "
+					"event display across only; when off, it zooms the track heights too (docs/features/tools.md).",
+					Json{{"type", "boolean"}}, true},
 			};
 			return result;
 		}();
