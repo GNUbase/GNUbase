@@ -346,6 +346,9 @@ TEST_CASE("scrubbing a frozen track reads the freeze file of that time", "[integ
 	const Json first = run(project.client, "track.freeze", {{"tracks", {audio.track}}, {"tail", 0}});
 	const std::vector<float> firstFile = samplesOf(first.at("tracks").at(0).at("frozen").at("path").get<std::string>());
 	const double rate = run(project.client, "project.get").at("sampleRate").get<double>();
+	// The freeze file plays as a media file of the channel's id, but it is none of the project's.
+	CHECK(project.client.call("audition.start", {{"media", audio.channel}, {"position", 0}}).error ==
+		"no media file " + std::to_string(audio.channel));
 
 	// Scrubs 480 frames from where the last scrub got to, to position, in as long: at normal speed, so it plays
 	// the freeze file's frames there, forwards or backwards. The audition goes straight to the outputs. The scrub

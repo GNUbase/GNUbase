@@ -125,7 +125,11 @@ opens:
   dialog only remembered its choices while GNUbase ran.
 - **Do not ask again** in the dialog sets `editing.onImportAudio` to `useSettings` after keeping the dialog's
   choices, so the next imports run without it. `settings.set` or `settings.reset` of `editing.onImportAudio` brings
-  it back; the preferences dialog (#162) will show the settings on its Editing > Audio page.
+  it back, as does Open Options Dialog on the preferences' Editing > Audio page (below).
+- The preferences dialog's **Editing > Audio** page ([preferences.md](preferences.md)) shows On Import Audio Files
+  and, under On Import Audio Files Settings (p. 359), Copy Files to Project Folder, Convert to Project Sample Rate,
+  Split Channels and Name Format, labelled and listed as in the Import Options dialog. Import Files on One Track
+  isn't there, as it isn't among the manual's preferences; the dialog alone changes it.
 
 The event display reads the settings with `settings.list` for each import, so a change through MCP or Lua applies to
 the next import.
@@ -151,14 +155,13 @@ the next import.
 
 ## Not yet
 
-The Editing > Audio page of the preferences dialog (#162), which shows the import preferences. Of the MIDI file
-import options: Convert RPN/NRPN to Single Events, which needs RPN and NRPN events of their own (the project holds
-them as the control changes they are made of), Import Karaoke Lyrics as Text, which needs lyric and text events,
-and the Destination that loads a multi-timbral instrument per channel, which needs plugin instruments; the export
-options of the MIDI File page. Import of
-audio CDs, audio from video and REX files. New tracks below the selected track (#448). Converting as a job: files are
-converted on the command thread, which waits for a long MP3 file (as for `media.convert`). Removing the files an
-unsaved project made (recordings and converted imports) when it is closed without saving.
+Of the MIDI file import options: Convert RPN/NRPN to Single Events, which needs RPN and NRPN events of their own (the
+project holds them as the control changes they are made of), Import Karaoke Lyrics as Text, which needs lyric and text
+events, and the Destination that loads a multi-timbral instrument per channel, which needs plugin instruments; the
+export options of the MIDI File page. Import of audio CDs, audio from video and REX files. New tracks below the
+selected track (#448). Converting as a job: files are converted on the command thread, which waits for a long MP3 file
+(as for `media.convert`). Removing the files an unsaved project made (recordings and converted imports) when it is
+closed without saving.
 
 ## Checks
 
@@ -194,4 +197,6 @@ the MIDI track dropped on. `tests/preferences_tests.cpp` checks every preference
 others. For the import preferences: Use Settings imports without the dialog with the stored
 options (on one track in an unsaved project; split with a name format and copied in a saved one), the dialog starts
 from the settings and keeps its choices in them, Do not ask again skips the dialog next time and after a restart
-until the setting is reset, and each Name Format chosen in the dialog names the split files.
+until the setting is reset, and each Name Format chosen in the dialog names the split files. The preferences'
+Editing > Audio page shows the settings, Use Settings imports with what it sets (split as its Name Format says, not
+copied), and its Open Options Dialog brings the dialog back, starting from the same settings.

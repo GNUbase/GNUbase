@@ -287,7 +287,7 @@ namespace gnubase::engine
 			"media": {"type": "integer"}, "mode": {"type": "string", "enum": ["off", "play", "scrub"]}}})");
 		const Json parameters = Json::parse(R"({"type": "object", "additionalProperties": false,
 			"required": ["position"], "properties": {"track": {"type": "integer"}, "media": {"type": "integer"},
-			"position": {"type": "integer"}}})");
+			"clip": {"type": "integer"}, "position": {"type": "integer"}}})");
 		Json startParameters = parameters;
 		startParameters["properties"]["end"] = {{"type", "integer"}};
 		Json scrubParameters = parameters;
@@ -302,9 +302,10 @@ namespace gnubase::engine
 			context.emit("audition.changed", result);
 			return result;
 		};
-		// The audio track or media file, its playlist and the main mix's channels for a command's parameters, with
-		// position and end in the playlist's samples. A media file plays on its own from the project's sample 0, so
-		// that its frames, at its own sample rate, are converted to the project's.
+		// The audio track, media file or clip, its playlist and the main mix's channels for a command's parameters,
+		// with position and end in the playlist's samples. A media file plays on its own from the project's sample
+		// 0, so that its frames, at its own sample rate, are converted to the project's; a clip's plays with the
+		// clip's fades at its start and end.
 		struct Source
 		{
 			Audition::Subject subject;
@@ -316,7 +317,8 @@ namespace gnubase::engine
 		const auto source = [this](const Json& given)
 		{
 			require(m_device != nullptr, "there is no audio device; set one with audio.setDevice");
-			require(given.contains("track") != given.contains("media"), "give either a track or a media file");
+			require(given.count("track") + given.count("media") + given.count("clip") == 1,
+				"give either a track, a media file or a clip");
 			Source result;
 			const RenderSnapshot& snapshot = m_snapshots.latest();
 			const auto position = given.at("position").get<time::Samples>();
@@ -337,10 +339,29 @@ namespace gnubase::engine
 			}
 			else
 			{
-				result.subject.media = given.at("media").get<ObjectId>();
-				const auto found =
-					std::find_if(snapshot.media.begin(), snapshot.media.end(), [&result](const RenderMedia& media)
-						{ return media.id == result.subject.media && media.warp.empty(); }); // not a warped event's
+				const RenderClip* clip = nullptr;
+				if (given.contains("clip"))
+				{
+					result.subject.clip = given.at("clip").get<ObjectId>();
+					const auto found = std::find_if(snapshot.clips.begin(), snapshot.clips.end(),
+						[&result](const RenderClip& each) { return each.id == result.subject.clip; });
+					require(found != snapshot.clips.end(), "no clip " + std::to_string(result.subject.clip));
+					clip = &*found;
+					result.subject.media = clip->media;
+				}
+				else
+				{
+					result.subject.media = given.at("media").get<ObjectId>();
+				}
+				// The project's media files: not a warped event's, nor a frozen channel's freeze file, which has the
+				// channel's id.
+				const auto found = std::find_if(snapshot.media.begin(), snapshot.media.end(),
+					[&result, &snapshot](const RenderMedia& media)
+					{
+						return media.id == result.subject.media && media.warp.empty() &&
+							std::none_of(snapshot.channels.begin(), snapshot.channels.end(),
+								[&media](const RenderChannel& channel) { return channel.id == media.id; });
+					});
 				require(found != snapshot.media.end(), "no media file " + std::to_string(result.subject.media));
 				require(found->sampleRate > 0.0 && found->length >= 0, // a hand-edited project's, say
 					"media file " + std::to_string(found->id) + " has no sample rate or length");
@@ -353,6 +374,11 @@ namespace gnubase::engine
 				entry.end = samples(found->length);
 				entry.media = found->id;
 				entry.channels = found->channels;
+				if (clip != nullptr && clip->fadeIn.length > 0)
+					entry.ramps.push_back({0, samples(clip->fadeIn.length), clip->fadeIn.shape, false});
+				if (clip != nullptr && clip->fadeOut.length > 0)
+					entry.ramps.push_back(
+						{entry.end - samples(clip->fadeOut.length), entry.end, clip->fadeOut.shape, true});
 				Playlist playlist;
 				playlist.layers.push_back({entry});
 				result.playback = {found->id, std::make_shared<const Playlist>(std::move(playlist))};
@@ -374,9 +400,10 @@ namespace gnubase::engine
 				"fader, pan, mute and effects, and without the transport. With end (samples, after position) it plays "
 				"up to there and then nothing, as the sample editor plays a slice, while its mode stays play until "
 				"audition.stop or another audition. A mono clip plays on every channel. Or, instead of track, a media "
-				"file on its own, as the sample editor plays its clip: position and end are then its sample frames, "
-				"from 0 to its length, without the events that play it. Ends what was auditioned before. Announces "
-				"audition.changed.",
+				"file on its own: position and end are then its sample frames, from 0 to its length, without the "
+				"events that play it. Or, instead of either, a clip: its media file so, with the clip's fades, as the "
+				"sample editor plays its clip; media is then the clip's media file. Ends what was auditioned before. "
+				"Announces audition.changed.",
 				startParameters, status, false},
 			[this, source, report](CommandContext& context)
 			{
@@ -393,9 +420,9 @@ namespace gnubase::engine
 				"the time since that scrub, 0.01 to 0.1 seconds), so speed and pitch follow how fast the positions "
 				"come; the first scrub only sets where the next one starts. Like audition.start it goes straight to "
 				"the main mix's outputs; it also moves the project cursor to position (transport.changed). Or, "
-				"instead of track, a media file on its own, as the sample editor scrubs its clip: position is then "
-				"one of its sample frames, and the cursor stays. Ends with audition.stop. Announces "
-				"audition.changed.",
+				"instead of track, a media file on its own, or a clip, its media file with the clip's fades, as the "
+				"sample editor scrubs its clip: position is then one of the file's sample frames, and the cursor "
+				"stays. Ends with audition.stop. Announces audition.changed.",
 				scrubParameters, status, false},
 			[this, source, report](CommandContext& context)
 			{

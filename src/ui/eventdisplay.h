@@ -796,6 +796,8 @@ namespace gnubase::ui
 		double m_pressTime = 0.0;          // RmlUi's clock, in seconds
 		double m_dragDx = 0.0;             // dp, while moving, snapped
 		int m_dragLanes = 0;
+		// What a Ctrl/Shift click selects whose keys are also a drag's tool modifier, e.g. Copy (#474).
+		std::optional<std::vector<uint64_t>> m_clickSelection;
 		double m_dragLaneY = 0.0; // where a drag of events started, in dp from the top of the first lane
 		double m_end = 0.0;       // of the last event
 		double m_length = g_defaultProjectLength; // the project setup's

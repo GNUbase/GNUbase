@@ -18,21 +18,26 @@
 
 namespace gnubase::engine
 {
-	// Auditions one audio track (#470, reference manual pp. 252-253), or one media file on its own, as the sample
-	// editor plays its clip (#730, p. 630): plays its events, or the file, from a position, as the play tool does
-	// while the mouse is pressed, or scrubs them forwards and backwards at the speed new positions come in, as the
-	// scrub tool does. Either goes straight to the main mix's device ports, past the track's channel (fader, pan, mute,
-	// effects) and without the transport. docs/features/audition.md describes it.
+	// Auditions one audio track (#470, reference manual pp. 252-253), or one media file on its own or with a clip's
+	// fades, as the sample editor plays its clip (#730, #860, p. 630): plays its events, or the file, from a
+	// position, as the play tool does while the mouse is pressed, or scrubs them forwards and backwards at the speed
+	// new positions come in, as the scrub tool does. Either goes straight to the main mix's device ports, past the
+	// track's channel (fader, pan, mute, effects) and without the transport. docs/features/audition.md describes it.
 	class Audition
 	{
 	public:
-		// What is auditioned: an audio track, or a media file (0 for the other).
+		// What is auditioned: an audio track, or a media file, with the clip whose fades it plays it with (0 for
+		// what isn't).
 		struct Subject
 		{
 			ObjectId track = 0;
 			ObjectId media = 0;
+			ObjectId clip = 0;
 
-			bool operator==(const Subject& other) const { return track == other.track && media == other.media; }
+			bool operator==(const Subject& other) const
+			{
+				return track == other.track && media == other.media && clip == other.clip;
+			}
 			bool operator!=(const Subject& other) const { return !(*this == other); }
 		};
 
