@@ -651,6 +651,9 @@ TEST_CASE("the toolbar's tool buttons and the keys choose the tools, a second cl
 	REQUIRE(app.waitUntil([&app] { return hasClass(app, "#combine-selection-tools", "checked"); }));
 	click(app, selector("#combine-selection-tools"));
 	CHECK(!display.combineSelectionTools());
+	// It has an icon of its own, not the object selection tool's.
+	CHECK(element(app, "#combine-selection-tools svg").at("attributes").at("src") !=
+		element(app, "button[tool=objectSelection] svg").at("attributes").at("src"));
 
 	// A second click on the object selection tool opens its modes: sizing moves contents.
 	app.ui().key(std::nullopt, "1");
