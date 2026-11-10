@@ -1652,6 +1652,20 @@ namespace gnubase::app
 			}});
 		m_keys.add({"drumMap.save", "Saves the drum map of the editor's active track as a drum map file.",
 			[this](ui::Window& window, Rml::Element*) { saveDrumMap(window.id()); }});
+		// The pattern editor (#181, reference manual p. 895): the selected MIDI parts in the editor window's pattern
+		// editor, and Preset Management's Save Preset and Load Preset (pp. 932-933) for the editor's active track.
+		m_keys.add({"editor.openPattern", "Opens the selected MIDI parts in the pattern editor window.",
+			[this](ui::Window&, Rml::Element*)
+			{
+				const std::vector<uint64_t> parts = selected("midiParts");
+				if (!parts.empty())
+					m_binding.send("editor.open", {{"editor", "window"}, {"parts", parts}, {"content", "pattern"}});
+			}});
+		for (const bool save : {true, false})
+			m_keys.add({save ? "pattern.savePreset" : "pattern.loadPreset",
+				save ? "Saves the patterns of the editor's active track as a pattern preset."
+					 : "Loads a pattern preset into the editor's active track.",
+				[this, save](ui::Window& window, Rml::Element*) { patternPreset(window.id(), save); }});
 		// Open Audio Part Editor (Audio menu, reference manual p. 692): the selected audio parts in the editor window.
 		m_keys.add({"audio.openPartEditor", "Opens the selected audio parts in the audio part editor window.",
 			[this](ui::Window&, Rml::Element*)
@@ -1933,6 +1947,38 @@ namespace gnubase::app
 			if (std::string(mode) != "add")
 				m_keys.enableWhen(id, hasSelection);
 		}
+	}
+
+	void AppUi::patternPreset(ui::WindowId parent, bool save, const std::string& editor)
+	{
+		// The editor window's active track, else the lower zone's.
+		m_binding.send("editor.get", {{"editor", editor}},
+			[this, parent, save, editor](const engine::Result& view)
+			{
+				if (!view.ok())
+					return;
+				const engine::Json track = view.value.at("activeTrack");
+				if (track == 0)
+				{
+					if (editor == "window")
+						patternPreset(parent, save, "lower");
+					return;
+				}
+				ui::FileDialog dialog;
+				dialog.kind = save ? ui::FileDialogKind::Save : ui::FileDialogKind::Open;
+				dialog.title = save ? "Save Pattern Preset" : "Load Pattern Preset";
+				dialog.filters = {{"Pattern presets", "patternpreset"}};
+				dialog.parent = parent;
+				m_shell.showFileDialog(dialog,
+					[this, save, track](const ui::FileDialogResult& result)
+					{
+						if (!result.error.empty())
+							logging::warning("The file dialog failed: {}", result.error);
+						if (!result.files.empty())
+							m_binding.send(save ? "pattern.export" : "pattern.import",
+								{{"track", track}, {"path", result.files.front().u8string()}});
+					});
+			});
 	}
 
 	void AppUi::saveDrumMap(ui::WindowId parent, const std::string& editor)

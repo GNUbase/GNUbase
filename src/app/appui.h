@@ -312,6 +312,9 @@ namespace gnubase::app
 		// and drumMap.export.
 		void saveDrumMap(ui::WindowId parent, const std::string& editor = "window");
 		void chooseDrumMapFile(ui::WindowId parent, uint64_t map);
+		// The active track of an editor (window, else lower), then the OS's file dialog for a pattern preset and
+		// pattern.export (save) or pattern.import.
+		void patternPreset(ui::WindowId parent, bool save, const std::string& editor = "window");
 		// The window of the document whose Lua called the function that runs now (gnubase.ui.command), else the main
 		// window.
 		ui::Window& callingWindow();

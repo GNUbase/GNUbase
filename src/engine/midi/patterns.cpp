@@ -236,11 +236,24 @@ namespace gnubase::engine::midi
 			return patterns;
 		}
 
-		Pattern& findPattern(Project& project, const Json& id)
+		Pattern& findPattern(Project& project, ObjectId id)
 		{
-			const auto found = project.patterns.find(id.get<ObjectId>());
-			require(found != project.patterns.end(), "no pattern " + id.dump());
+			const auto found = project.patterns.find(id);
+			require(found != project.patterns.end(), "no pattern " + std::to_string(id));
 			return found->second;
+		}
+
+		// What check throws as a command's error.
+		template <typename Function> auto commandChecked(Function function)
+		{
+			try
+			{
+				return function();
+			}
+			catch (const std::invalid_argument& error)
+			{
+				throw CommandError(error.what());
+			}
 		}
 
 		const Track& patternTrack(const Project& project, ObjectId id)
@@ -254,14 +267,7 @@ namespace gnubase::engine::midi
 
 		void change(Pattern& pattern, const Json& parameters)
 		{
-			try
-			{
-				pattern = patternFromJson(parameters, pattern);
-			}
-			catch (const std::invalid_argument& error)
-			{
-				throw CommandError(error.what());
-			}
+			pattern = commandChecked([&] { return patternFromJson(parameters, pattern); });
 		}
 
 		Json announce(const Pattern& pattern, const char* event, CommandContext& context)
@@ -306,33 +312,26 @@ namespace gnubase::engine::midi
 				require(found != project.midiParts.end(), "no MIDI part " + parameters.at("part").dump());
 				part = &found->second;
 			}
+			ObjectId track = 0;
+			if (parameters.contains("track"))
+				track = parameters.at("track").get<ObjectId>();
+			else if (part != nullptr)
+				track = part->track;
 			Pattern pattern;
 			if (parameters.contains("copy"))
 			{
-				pattern = findPattern(project, parameters.at("copy"));
+				pattern = findPattern(project, parameters.at("copy").get<ObjectId>());
 				pattern.name += " Copy";
+				track = track != 0 ? track : pattern.track;
 			}
 			else
 			{
-				require(parameters.contains("track") || part != nullptr, "pattern.add needs a track, a part or a copy");
-				const ObjectId track =
-					parameters.contains("track") ? parameters.at("track").get<ObjectId>() : part->track;
-				PatternMode mode = PatternMode::Drum;
-				if (parameters.contains("mode"))
-					try
-					{
-						mode = static_cast<PatternMode>(indexOf(g_modes, parameters.at("mode"), "mode"));
-					}
-					catch (const std::invalid_argument& error)
-					{
-						throw CommandError(error.what());
-					}
-				pattern = newPattern(project, track, mode);
+				require(track != 0, "pattern.add needs a track, a part or a copy");
+				const Json mode = parameters.value("mode", Json("drum"));
+				pattern = newPattern(project, track,
+					commandChecked([&mode] { return static_cast<PatternMode>(indexOf(g_modes, mode, "mode")); }));
 			}
-			if (parameters.contains("track"))
-				pattern.track = parameters.at("track").get<ObjectId>();
-			else if (part != nullptr)
-				pattern.track = part->track;
+			pattern.track = track;
 			patternTrack(project, pattern.track);
 			Json changes = parameters;
 			for (const char* key : {"copy", "track", "part", "id"})
@@ -358,7 +357,7 @@ namespace gnubase::engine::midi
 		Json setPattern(Project& project, CommandContext& context)
 		{
 			Json changes = context.parameters();
-			Pattern& pattern = findPattern(project, changes.at("pattern"));
+			Pattern& pattern = findPattern(project, changes.at("pattern").get<ObjectId>());
 			for (const char* key : {"pattern", "id", "track"})
 				changes.erase(key);
 			change(pattern, changes);
@@ -367,16 +366,18 @@ namespace gnubase::engine::midi
 
 		Json removePattern(Project& project, CommandContext& context)
 		{
-			const ObjectId id = findPattern(project, context.parameters().at("pattern")).id;
+			const ObjectId id = findPattern(project, context.parameters().at("pattern").get<ObjectId>()).id;
 			project.patterns.erase(id);
 			for (auto it = project.midiParts.begin(); it != project.midiParts.end();)
-				if (it->second.pattern == id)
+			{
+				if (it->second.pattern != id)
 				{
-					context.emit("midiPart.removed", {{"part", it->first}});
-					it = project.midiParts.erase(it);
-				}
-				else
 					++it;
+					continue;
+				}
+				context.emit("midiPart.removed", {{"part", it->first}});
+				it = project.midiParts.erase(it);
+			}
 			context.emit("pattern.removed", {{"pattern", id}});
 			return Json::object();
 		}
@@ -396,7 +397,7 @@ namespace gnubase::engine::midi
 			require(found != project.midiParts.end(), "no MIDI part " + parameters.at("part").dump());
 			MidiPart& part = found->second;
 			require(part.pattern != 0, "the part isn't a pattern event");
-			const Pattern& pattern = findPattern(project, Json(part.pattern));
+			const Pattern& pattern = findPattern(project, part.pattern);
 			part.notes.clear();
 			for (auto [index, note] : patternNotes(pattern, partTicks(project, part)))
 			{
@@ -500,7 +501,7 @@ namespace gnubase::engine::midi
 					// Backward, a step with the steps tied to it plays where the last of them is forward.
 					const int slot =
 						backward ? (((steps - each.index - each.length) % steps) + steps) % steps : each.index;
-					double start = static_cast<double>(repeat * cycle + slot * step);
+					auto start = static_cast<double>((repeat * cycle) + (slot * step));
 					if (slot % 2 == 1)
 						start += swing * static_cast<double>(step) / 2.0;
 					start += (lane.offset + each.offset) * static_cast<double>(step);

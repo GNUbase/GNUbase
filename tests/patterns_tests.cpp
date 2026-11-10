@@ -76,7 +76,7 @@ namespace
 		}
 
 		// Sixteenths in samples at the project's 120 bpm.
-		int64_t at(double sixteenths) const { return std::llround(sixteenths * m_rate / 8.0); }
+		int64_t at(double sixteenths) const { return std::llround(sixteenths * rate / 8.0); }
 
 		std::vector<int64_t> starts()
 		{
@@ -91,10 +91,10 @@ namespace
 		uint64_t track = 0;
 		Json pattern;
 		uint64_t part = 0;
-		double m_rate = call("project.get").at("sampleRate").get<double>();
+		double rate = call("project.get").at("sampleRate").get<double>();
 	};
 
-	Json steps(std::vector<int> indexes)
+	Json steps(const std::vector<int>& indexes)
 	{
 		Json steps = Json::array();
 		for (const int index : indexes)

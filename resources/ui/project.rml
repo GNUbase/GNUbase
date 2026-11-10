@@ -309,6 +309,10 @@
 		<!-- Drum maps (docs/features/drum-editor.md) -->
 		<menuitem command="drumMap.load">Load Drum Map...</menuitem>
 		<menuitem command="drumMap.save">Save Drum Map...</menuitem>
+		<!-- The pattern editor (docs/features/pattern-editor.md) -->
+		<menuitem command="editor.openPattern">Open Pattern Editor</menuitem>
+		<menuitem command="pattern.loadPreset">Load Pattern Preset...</menuitem>
+		<menuitem command="pattern.savePreset">Save Pattern Preset...</menuitem>
 		<menuseparator/>
 		<!-- docs/features/key-commands.md: the macros, which app::AppUi fills in -->
 		<menuitem id="macros-submenu">Macros
