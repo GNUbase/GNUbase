@@ -3415,7 +3415,9 @@ namespace gnubase::engine
 				activated = current.activeMarkerTrack != previous.activeMarkerTrack;
 			}
 			else if (change.timeFormatBefore)
+			{
 				context.emit("project.changed", projectSettingsJson(project));
+			}
 			for (const ObjectChange<Track>& track : change.tracks)
 				reordered = reordered || !track.before || !track.after || track.before->parent != track.after->parent ||
 					track.before->children != track.after->children;
