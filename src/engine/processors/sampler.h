@@ -132,7 +132,7 @@ namespace gnubase::engine::processors
 		void release(Voice& voice) noexcept;
 		void setParameter(uint32_t id, double value) noexcept;
 		void render(const graph::ProcessContext& context, uint32_t begin, uint32_t end, const Sample& sample) noexcept;
-		bool advance(Voice& voice, double increment, double frames) const noexcept;
+		bool advance(Voice& voice, double step, double frames) const noexcept;
 		double increment(const Voice& voice, const Sample& sample) const noexcept;
 		double envelope(Voice& voice) noexcept;
 		dsp::Biquad filterFor(const Voice& voice) const noexcept;

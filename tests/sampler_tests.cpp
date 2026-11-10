@@ -112,6 +112,7 @@ namespace
 	std::vector<float> expected(const std::vector<double>& frames)
 	{
 		std::vector<float> values;
+		values.reserve(frames.size());
 		for (const double frame : frames)
 			values.push_back(rampAt(frame));
 		return values;
@@ -712,7 +713,7 @@ TEST_CASE("a sampler track renders its sample from MIDI notes, and swaps it whil
 	setParameter(Sampler::Release, 100.0);
 	setParameter(Sampler::Pan, -0.3);
 	addNotes(client, track, {{67, 2, 1}, {72, 3, 2}});
-	const gnubase::test::Audio phrase = render(client, 2 * 48000);
+	const gnubase::test::Audio phrase = render(client, int64_t{2} * 48000);
 	const gnubase::test::AudioDiff diff = gnubase::test::compareWithGolden("sampler-track-phrase", phrase, 1e-5f);
 	INFO(diff.report);
 	CHECK(diff.equal);

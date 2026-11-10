@@ -191,10 +191,13 @@ namespace gnubase::engine::processors
 			if (!voice.active || voice.note != note || voice.channel != channel || !voice.held)
 				return;
 			// A note it took over that is still held plays again.
-			const auto latest = std::max_element(m_heldSince.begin(), m_heldSince.end());
-			if (*latest != 0)
+			size_t latest = 0;
+			for (size_t key = 1; key < m_heldSince.size(); ++key)
+				if (m_heldSince[key] > m_heldSince[latest])
+					latest = key;
+			if (m_heldSince[latest] != 0)
 			{
-				const auto back = static_cast<uint8_t>(latest - m_heldSince.begin());
+				const auto back = static_cast<uint8_t>(latest);
 				if (m_values[Legato] >= 0.5 && !voice.slice)
 				{
 					voice.note = back;
@@ -236,7 +239,7 @@ namespace gnubase::engine::processors
 		return std::pow(2.0, semitones / 12.0) * sample.sampleRate / m_sampleRate;
 	}
 
-	// Moves the voice on by increment frames; false once it has played its range.
+	// Moves the voice on by step frames; false once it has played its range.
 	bool Sampler::advance(Voice& voice, double step, double frames) const noexcept
 	{
 		voice.position += voice.direction * step;
