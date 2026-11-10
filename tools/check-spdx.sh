@@ -26,8 +26,16 @@ awk -v lfs="$tmp/lfs" 'BEGIN { while ((getline line < lfs) > 0) skip[line] } !($
 		COPYING | COPYING.* | */COPYING | */COPYING.* | OFL.txt | */OFL.txt) continue ;;
 		esac
 		[ -f "$file" ] || continue # deleted, but not staged yet
-		head -n 3 "$file" | grep -q "$header" || echo "$file"
-	done > "$tmp/missing"
+		printf '%s\n' "$file"
+	done > "$tmp/checked"
+
+# One awk over all the files: a head and a grep for each file take over a minute on Windows. The "./" keeps a name with
+# a "=" from being read as an assignment. What is left over are the files without the header, empty ones included.
+sed 's|^|./|' "$tmp/checked" | tr '\n' '\0' |
+	LC_ALL=C xargs -0 awk -v header="$header" 'FNR <= 3 && index($0, header) { print substr(FILENAME, 3) }' \
+		> "$tmp/found" || exit 2
+awk -v found="$tmp/found" 'BEGIN { while ((getline line < found) > 0) has[line] } !($0 in has)' "$tmp/checked" \
+	> "$tmp/missing"
 
 [ -s "$tmp/missing" ] || exit 0
 cat "$tmp/missing"
