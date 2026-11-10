@@ -350,7 +350,9 @@ namespace gnubase::engine::settings
 					state.active = to;
 				}
 				else
+				{
 					makeFolder(directory, state, to, folderOf(directory, from));
+				}
 				if (state.next == from)
 					state.next = to;
 				writeState(directory, state);
