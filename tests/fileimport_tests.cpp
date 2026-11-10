@@ -739,6 +739,17 @@ TEST_CASE("The preferences' Editing > Audio page sets On Import Audio Files and 
 	CHECK(!dialogShown(app));
 	CHECK(app.call("project.get").at("media")[0].at("path") == (folder / "Audio" / "take L.wav").u8string());
 
+	// Split Channels writes its files into Audio whatever Copy says, so Copy is checked with a mono file, which
+	// isn't split: with Copy off it keeps its original path and no copy job starts (with Copy on it would be copied
+	// into Audio by a job).
+	const std::string mono = writeAudio(dir.path() / "mono.wav", 4800);
+	const size_t jobs = app.call("job.list").at("jobs").size();
+	display.importFiles({mono});
+	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("audioEvents").size() == 3; }));
+	CHECK(!dialogShown(app));
+	CHECK(app.call("project.get").at("media")[2].at("path") == mono);
+	CHECK(app.call("job.list").at("jobs").size() == jobs);
+
 	// Open Options Dialog resets Do not ask again: the dialog opens, starting from the same settings.
 	openPreferences();
 	choose("#pref-editing-onImportAudio", -1);
