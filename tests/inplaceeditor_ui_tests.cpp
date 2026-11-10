@@ -472,7 +472,7 @@ TEST_CASE("only a track's own lane grows for its in-place editor, which a folded
 		}));
 	f.app.appUi().trackList()->setFolded(folder, true);
 	REQUIRE(f.app.waitUntil([&] { return f.has(f.editor(), "hidden"); }));
-	CHECK_FALSE(f.elements(f.editor()).at(0).at("visible").get<bool>());
+	CHECK(!f.elements(f.editor()).at(0).at("visible").get<bool>());
 	f.app.appUi().trackList()->setFolded(folder, false);
 	REQUIRE(f.app.waitUntil([&] { return !f.has(f.editor(), "hidden"); }));
 	f.settle(2);
