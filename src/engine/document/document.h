@@ -1314,6 +1314,10 @@ namespace gnubase::engine
 	// Gives a part's notes and controllers new ids.
 	void renumber(Project& project, MidiPart& part);
 
+	// Takes a part out of its shared copies before its contents change for its own sake: its events get new ids
+	// (renumber), so that it no longer shares them.
+	void detach(Project& project, MidiPart& part);
+
 	// What is wrong with a bus of the project, or empty: its number of ports, a child bus's parent and channels.
 	std::string busProblem(const Project& project, const Bus& bus);
 

@@ -515,11 +515,16 @@ namespace gnubase::engine::midi
 				"solo or on a disabled track (sends aren't followed); it refuses if none does. Muted parts are left "
 				"out. Notes keep their "
 				"length, cut where their part ends, and get their parts' transpose and velocity as playback applies "
-				"them; includeInserts also plays their tracks' MIDI modifiers into them (channel.set modifiers, with "
+				"them, after their tracks' drum maps and the chord track, so they are written as played; a destination "
+				"with a drum map or following the chord track gets a pitch that plays them, or if none does what "
+				"played, "
+				"which it then maps. includeInserts also plays their tracks' MIDI modifiers into them (channel.set "
+				"modifiers, with "
 				"the random values playback draws), leaving out notes they filter out or move out of the range. "
 				"Without destination a new MIDI track is added at the end, routed "
 				"to the instrument of the first track merged. eraseDestination first removes the destination's parts "
-				"that lie between start and end, and the events of its other parts that start there. includeChase "
+				"that lie between start and end, and the events of its other parts that start there, which leave "
+				"their shared copies for it. includeChase "
 				"adds the last value of every controller and program before start at the new part's start." +
 					returns,
 				objectSchema(
@@ -553,7 +558,9 @@ namespace gnubase::engine::midi
 				"end, named after the first, on the lowest lane they are on. Muted parts are removed and add nothing. "
 				"Events keep their time; notes are cut where their part ended. The parts' transpose and velocity go "
 				"into the notes as playback applies them; a note transposed beyond 0-127, which doesn't play, is left "
-				"out. The copied notes get new ids, so play probability and velocity variance draw anew." +
+				"out. On a track whose drum map or chord track following plays a transposed note differently, the new "
+				"part keeps the transpose all the parts share; it refuses parts with different ones. The copied notes "
+				"get new ids, so play probability and velocity variance draw anew." +
 					returns,
 				objectSchema({{"parts", ids}}, {"parts"}), changesResult, false},
 			"Bounce MIDI", runBounce);
@@ -563,7 +570,9 @@ namespace gnubase::engine::midi
 				"controller automation lanes of their tracks, one per controller and MIDI channel: each event becomes "
 				"a step point where it plays, its value 0 to 1. A lane the track already has loses its points in the "
 				"part's range first, except those an earlier part of the call added, and reads from then on. A shared "
-				"copy leaves its copies, which keep their controllers. Pitch bend, pressure, switches "
+				"copy leaves its copies, which keep their controllers; all its events get new ids, so the play "
+				"probability, velocity variance and random MIDI modifier values of its notes draw anew. Pitch bend, "
+				"pressure, switches "
 				"such as the sustain pedal, events past a part's "
 				"end and muted parts stay. Returns the parts it changed, the lanes it added (lanes) and the lanes it "
 				"changed.",

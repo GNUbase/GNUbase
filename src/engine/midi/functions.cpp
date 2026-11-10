@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/midi/functions.h"
 
+#include "engine/document/chordtrack.h"
 #include "engine/document/rendersnapshot.h"
+#include "engine/engine.h"
 #include "engine/midi/chords.h"
+#include "engine/midi/drummaps.h"
 #include "engine/midi/midivalues.h"
 
 #include <algorithm>
@@ -704,6 +707,78 @@ namespace gnubase::engine::midi
 			mirrorControllers(part, *first, *last, partLength, newId);
 	}
 
+	namespace
+	{
+		// What a track does to a note's pitch before its part's transpose, as compilePart in rendersnapshot.cpp plays
+		// it: a drum map plays the note's sound, its O-note on its channel and not at all if it is muted; on a track
+		// without one, the chord track, if the track follows it, maps the pitch.
+		class TrackPitches
+		{
+		public:
+			TrackPitches(const Project& project, ObjectId track)
+				: m_map(drumMapOf(project, track)), m_follower(project, track)
+			{
+			}
+
+			bool silent(int pitch) const { return m_map != nullptr && sound(pitch).mute; }
+
+			int played(int pitch, Ticks at) const
+			{
+				if (m_map != nullptr)
+					return sound(pitch).oNote;
+				return m_follower.active() ? m_follower.pitch(pitch, at) : pitch;
+			}
+
+			uint8_t channel(int pitch, uint8_t noteChannel) const
+			{
+				if (m_map == nullptr || sound(pitch).channel < 0)
+					return noteChannel;
+				return static_cast<uint8_t>(sound(pitch).channel);
+			}
+
+			// Whether a note plays the same with the semitones added to its pitch as with them added to what the track
+			// makes of it. A note that doesn't play either way counts.
+			bool transposesInNote(const Note& note, int semitones, Ticks at) const
+			{
+				if (silent(note.pitch))
+					return true;
+				const int target = played(note.pitch, at) + semitones;
+				if (target < 0 || target > 127)
+					return true;
+				const int moved = note.pitch + semitones;
+				return moved >= 0 && moved <= 127 && !silent(moved) && played(moved, at) == target &&
+					channel(moved, note.channel) == channel(note.pitch, note.channel);
+			}
+
+			// The pitch to store for the track to play target on a channel at a position: own if that plays it, so that
+			// a track merged onto itself keeps its pitches, else the nearest that does. If none does, target, which the
+			// track then maps like any note of its own.
+			int stored(int target, uint8_t onChannel, Ticks at, int own) const
+			{
+				if (m_map == nullptr && !m_follower.active())
+					return target;
+				const auto plays = [&](int pitch)
+				{
+					return pitch >= 0 && pitch <= 127 && !silent(pitch) && played(pitch, at) == target &&
+						channel(pitch, onChannel) == onChannel;
+				};
+				if (plays(own))
+					return own;
+				for (int distance = 0; distance <= 127; ++distance)
+					for (const int pitch : {target - distance, target + distance})
+						if (plays(pitch))
+							return pitch;
+				return target;
+			}
+
+		private:
+			const DrumSound& sound(int pitch) const { return m_map->sounds.at(static_cast<size_t>(pitch)); }
+
+			const DrumMap* m_map;
+			ChordFollower m_follower;
+		};
+	}
+
 	std::vector<ObjectId> playingTracks(const Project& project)
 	{
 		const std::unique_ptr<const RenderSnapshot> snapshot = compile(project, 0);
@@ -754,24 +829,29 @@ namespace gnubase::engine::midi
 		std::vector<Controller> controllers;
 		std::map<LaneKey, Controller> chased;
 		std::map<LaneKey, Ticks> chasedAt;
+		const TrackPitches destinationPitches(project, settings.destination); // a new track maps nothing
 		for (const auto& [id, part] : project.midiParts)
 		{
 			if (part.mute || std::find(tracks.begin(), tracks.end(), part.track) == tracks.end())
 				continue;
 			const Ticks partFrom = partStart(project, part);
 			const Ticks partTo = partEnd(project, part);
-			// As playback plays them (compilePart in rendersnapshot.cpp): the part's transpose and velocity, which the
-			// new part doesn't have, and with Include Inserts the track's MIDI modifiers.
+			// As playback plays them (compilePart in rendersnapshot.cpp): through the track's drum map or the chord
+			// track, then with the part's transpose and velocity, which the new part doesn't have, and with Include
+			// Inserts the track's MIDI modifiers.
+			const TrackPitches sourcePitches(project, part.track);
 			const Modifiers& trackModifiers = project.channels.at(project.trackById.at(part.track).channel).modifiers;
 			Modifiers modifiers = settings.includeInserts && !trackModifiers.bypass ? trackModifiers : Modifiers();
 			modifiers.transpose += part.transpose;
 			modifiers.velocityShift += part.velocity;
 			for (const auto& [noteId, note] : part.notes)
 			{
-				if (partFrom + note.position >= partTo)
+				if (partFrom + note.position >= partTo || sourcePitches.silent(note.pitch))
 					continue;
 				const uint64_t seed = noteSeed(part.id, noteId);
 				Note copy = note;
+				copy.pitch = static_cast<uint8_t>(sourcePitches.played(note.pitch, partFrom + note.position));
+				copy.channel = sourcePitches.channel(note.pitch, note.channel);
 				if (!modifyNote(modifiers, seed, copy.pitch, copy.velocity))
 					continue;
 				// A note moved before its part's start, or the project's, starts there, with its length.
@@ -782,6 +862,7 @@ namespace gnubase::engine::midi
 				const Ticks length = note.length > 0 ? modifyLength(modifiers, seed, note.length) : 0;
 				copy.position = at;
 				copy.length = std::min(at + length, partTo) - at;
+				copy.pitch = static_cast<uint8_t>(destinationPitches.stored(copy.pitch, copy.channel, at, note.pitch));
 				notes.push_back(copy);
 			}
 			for (const auto& [controllerId, controller] : part.controllers)
@@ -837,13 +918,20 @@ namespace gnubase::engine::midi
 					it = project.midiParts.erase(it);
 					continue;
 				}
-				const size_t before = part.notes.size() + part.controllers.size();
-				for (auto note = part.notes.begin(); note != part.notes.end();)
-					note = inRange(partFrom + note->second.position) ? part.notes.erase(note) : std::next(note);
-				eraseControllers(
-					part, [&](const Controller& controller) { return inRange(partFrom + controller.position); });
-				if (part.notes.size() + part.controllers.size() != before)
+				const bool erases = std::any_of(part.notes.begin(), part.notes.end(),
+										[&](const auto& note) { return inRange(partFrom + note.second.position); }) ||
+					std::any_of(part.controllers.begin(), part.controllers.end(),
+						[&](const auto& controller) { return inRange(partFrom + controller.second.position); });
+				if (erases)
+				{
+					// The part's shared copies lie elsewhere: syncSharedParts would erase the events from them too.
+					detach(project, part);
+					for (auto note = part.notes.begin(); note != part.notes.end();)
+						note = inRange(partFrom + note->second.position) ? part.notes.erase(note) : std::next(note);
+					eraseControllers(
+						part, [&](const Controller& controller) { return inRange(partFrom + controller.position); });
 					changes.changedParts.push_back(part.id);
+				}
 				++it;
 			}
 		}
@@ -1066,11 +1154,33 @@ namespace gnubase::engine::midi
 			return changes;
 		}
 
+		// A drum map or the chord track maps a note before its part's transpose, which the notes' pitches can't always
+		// hold: then the new part keeps a transpose all the parts share.
+		const TrackPitches pitches(project, earliest->track);
+		bool intoNotes = true;
+		bool sameTranspose = true;
+		for (const ObjectId id : parts)
+		{
+			const MidiPart& part = project.midiParts.at(id);
+			if (part.mute)
+				continue;
+			sameTranspose = sameTranspose && part.transpose == earliest->transpose;
+			const Ticks from = partStart(project, part);
+			if (part.transpose != 0)
+				intoNotes = intoNotes &&
+					std::all_of(part.notes.begin(), part.notes.end(), [&](const auto& note)
+						{ return pitches.transposesInNote(note.second, part.transpose, from + note.second.position); });
+		}
+		if (!intoNotes && !sameTranspose)
+			throw CommandError("the parts have different transposes, which the notes can't hold on a track with this "
+							   "drum map or following the chord track");
+
 		MidiPart combined;
 		combined.id = project.newId();
 		combined.track = earliest->track;
 		combined.name = earliest->name;
 		combined.lane = lane;
+		combined.transpose = intoNotes ? 0 : earliest->transpose;
 		place(project, combined, start, end);
 		const Ticks combinedStart = partStart(project, combined);
 		for (const ObjectId id : parts)
@@ -1083,15 +1193,17 @@ namespace gnubase::engine::midi
 			const Ticks length = partTo - partStart(project, part);
 			for (const auto& [noteId, note] : part.notes)
 			{
-				const int pitch = note.pitch + part.transpose;
-				if (note.position >= length || pitch < 0 || pitch > 127)
+				const bool silent = pitches.silent(note.pitch);
+				const int plays = pitches.played(note.pitch, partStart(project, part) + note.position) + part.transpose;
+				if (note.position >= length || (intoNotes && !silent && (plays < 0 || plays > 127)))
 					continue;
 				Note copy = note;
 				copy.id = project.newId();
 				copy.position += shift;
 				copy.length =
 					std::min(combinedStart + copy.position + note.length, partTo) - (combinedStart + copy.position);
-				copy.pitch = static_cast<uint8_t>(pitch);
+				if (intoNotes && !silent)
+					copy.pitch = static_cast<uint8_t>(note.pitch + part.transpose);
 				if (part.velocity != 0)
 				{
 					// As playback shifts it: in MIDI 1.0 velocities, a note-on staying at least 1.
@@ -1191,11 +1303,7 @@ namespace gnubase::engine::midi
 			eraseControllers(part, [&moved](const Controller& controller) { return moved.count(controller.id) != 0; });
 			// Points play at this part's place only, so a shared copy leaves its copies, which keep their controllers:
 			// syncSharedParts would give them this part's.
-			if (part.shared != 0)
-			{
-				part.shared = 0;
-				renumber(project, part);
-			}
+			detach(project, part);
 			changes.changedParts.push_back(id);
 		}
 		// A lane added for one part and changed for a later one was added.
