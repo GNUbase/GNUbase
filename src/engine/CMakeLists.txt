@@ -210,6 +210,7 @@ add_library(gnubase-engine STATIC
 	processors/gainpan.cpp processors/gainpan.h
 	processors/generators.cpp processors/generators.h
 	processors/midieffects.cpp processors/midieffects.h
+	processors/sampler.cpp processors/sampler.h
 	processors/testsynth.cpp processors/testsynth.h
 	rulepresets.h
 	schema.cpp schema.h

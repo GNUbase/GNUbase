@@ -9,6 +9,7 @@
 #include "engine/processors/builtin.h"
 #include "engine/processors/builtinplugin.h"
 #include "engine/processors/midieffects.h"
+#include "engine/processors/sampler.h"
 #include "ipc/connection.h"
 #include "platform/log.h"
 #include "platform/rt/realtime.h"
@@ -421,6 +422,56 @@ TEST_CASE("every built-in processor processes notes and parameter changes withou
 			const ScopedRealtimeContext realtime;
 			processor->process({channels, 2, frames, eventsIn, eventsOut, TransportBlock{}});
 		}
+	}
+	CHECK(g_violations == 0);
+}
+
+TEST_CASE("the sampler plays notes, loops, slices and its filter without allocating", "[unit]")
+{
+	using namespace gnubase::engine::graph;
+	using namespace gnubase::engine::processors;
+	constexpr uint32_t frames = 256;
+	std::vector<float> samples(size_t{2} * frames);
+	float* const channels[] = {samples.data(), samples.data() + frames};
+	EventBuffer eventsIn(64);
+	EventBuffer eventsOut(64);
+	auto sample = std::make_unique<Sample>();
+	sample->left.assign(4800, 0.5f);
+	sample->right.assign(4800, -0.5f);
+	Sampler sampler;
+	sampler.setSample(std::move(sample));
+	sampler.prepareFor(48000.0, frames);
+
+	const RecordViolations record;
+	for (int block = 0; block < 12; ++block)
+	{
+		eventsIn.clear();
+		const auto set = [&eventsIn](uint32_t id, double value)
+		{
+			ProcessEvent event;
+			event.type = ProcessEvent::Type::Parameter;
+			event.parameter = id;
+			event.parameterValue = value;
+			eventsIn.add(event);
+		};
+		set(Sampler::LoopMode, static_cast<double>(block % 6));
+		set(Sampler::FilterOn, 1.0);
+		set(Sampler::FilterType, static_cast<double>(block % 3));
+		set(Sampler::Drive, 6.0);
+		set(Sampler::PlaybackMode, block >= 6 ? 1.0 : 0.0);
+		set(Sampler::Monophonic, block % 4 == 3 ? 1.0 : 0.0);
+		set(Sampler::Reverse, static_cast<double>(block % 2));
+		for (uint8_t key = 60; key < 64; ++key)
+		{
+			ProcessEvent note;
+			note.type = block % 2 == 0 ? ProcessEvent::Type::NoteOn : ProcessEvent::Type::NoteOff;
+			note.offset = 20 + key;
+			note.key = key;
+			note.velocity = 0x8000;
+			eventsIn.add(note);
+		}
+		const ScopedRealtimeContext realtime;
+		sampler.process({channels, 2, frames, eventsIn, eventsOut, TransportBlock{}});
 	}
 	CHECK(g_violations == 0);
 }
