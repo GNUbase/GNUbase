@@ -299,6 +299,19 @@ namespace gnubase::ui
 		}
 		m_pressed = *found;
 		m_pressedAt.first = at(m_pressedMouse).first;
+		if (m_dragged)
+			updateMoved();
+	}
+
+	// What a dragged move has moved so far, by the mouse's last place in the drag.
+	void AudioPartEditor::updateMoved()
+	{
+		if (!m_pressed)
+			return;
+		const auto [seconds, lane] = at(m_draggedTo);
+		m_moved = {
+			m_gesture == Gesture::Move ? snap(m_pressed->start + seconds - m_pressedAt.first) - m_pressed->start : 0.0,
+			lane - m_pressedAt.second};
 	}
 
 	float AudioPartEditor::dpRatio() const
@@ -853,19 +866,17 @@ namespace gnubase::ui
 	{
 		if (m_gesture == Gesture::None)
 			return;
-		const auto [seconds, lane] = at(event);
 		if (m_gesture == Gesture::Audition)
 		{
 			if (m_tool == AudioPartTool::Scrub)
-				m_binding.send(
-					"audition.scrub", {{"track", m_auditioned}, {"position", std::max<int64_t>(0, samples(seconds))}});
+				m_binding.send("audition.scrub",
+					{{"track", m_auditioned}, {"position", std::max<int64_t>(0, samples(at(event).first))}});
 			return;
 		}
 		if (!dragged(event) || !m_pressed)
 			return; // a click only selects
-		m_moved = {
-			m_gesture == Gesture::Move ? snap(m_pressed->start + seconds - m_pressedAt.first) - m_pressed->start : 0.0,
-			lane - m_pressedAt.second};
+		m_draggedTo = {event.GetParameter("mouse_x", 0.0F), event.GetParameter("mouse_y", 0.0F)};
+		updateMoved();
 		preview();
 	}
 

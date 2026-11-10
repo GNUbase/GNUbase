@@ -109,6 +109,7 @@ namespace gnubase::ui
 		bool moving() const; // a press started a move that goes on
 		// The project or view shown changed: a move follows its event, or ends if that went.
 		void updateMove();
+		void updateMoved();
 		void release(Rml::Event& event);
 		void doubleClick(Rml::Event& event);
 
@@ -160,8 +161,9 @@ namespace gnubase::ui
 		std::pair<double, int> m_pressedAt;
 		Rml::Vector2f m_pressedMouse; // px
 		bool m_dragged = false;
+		Rml::Vector2f m_draggedTo;                 // px, the mouse's last place in a dragged move
 		std::pair<double, int> m_moved;            // a dragged move's seconds and lanes
-		std::optional<Event> m_pressed;            // the event pressed, as it was
+		std::optional<Event> m_pressed;            // the event pressed, as the project shown has it
 		uint64_t m_auditioned = 0;                 // the track the play or scrub tool auditions
 		Rml::ObserverPtr<Rml::Element> m_document; // whose resize fits the waveforms to the display again
 		Rml::ObserverPtr<Rml::Element> m_listened; // the document listen() hears a gesture's mouse in

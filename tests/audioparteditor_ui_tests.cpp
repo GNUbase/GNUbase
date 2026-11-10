@@ -885,11 +885,48 @@ TEST_CASE("a move of the audio part editor goes by the mouse's way when the disp
 	// The other event out of the part, up to 3.5 seconds: the display reaches it, and shows the same seconds narrower.
 	f.app.call("event.move", {{"events", {f.second}}, {"delta", 2 * g_second}});
 	REQUIRE(f.app.waitUntil([&] { return f.has(eventSelector(f.second), "outside"); }));
+	// The mouse hasn't moved, but its way is more seconds now: 0.91, on the grid 0.875, where a release would take it.
+	CHECK(std::abs(f.shownX(f.first) - pointOf(f.at(0.875, 0, 3.5)).x) <= 2.0);
 	const double width = f.box(".ape-display").at("width").get<double>();
 	f.moveTo({"", 0, ui::Point{pointOf(from).x + static_cast<int>(std::lround(width / 3.5)), pointOf(from).y}});
 	f.release();
 	REQUIRE(f.app.waitUntil([&] { return f.event(f.first).at("position") != 0; }));
 	CHECK(f.event(f.first).at("position") == g_second);
+}
+
+TEST_CASE("a Ctrl drag of the audio part editor keeps its element in order and goes on with its event as it is", "[ui]")
+{
+	Fixture f;
+	f.open();
+	const int ctrl = Rml::Input::KM_CTRL;
+	f.press(f.at(1.25, 0), ctrl);
+	f.moveTo(f.at(1.25, 1), ctrl);
+	// The events before the pressed one are made again, in the project's order around its element.
+	f.app.call("event.split", {{"events", {f.first}}, {"positions", {g_second / 4}}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".ape-event").size() == 3; }));
+	std::vector<std::string> shown;
+	for (const Json& each : f.elements(".ape-event"))
+		shown.push_back(each.at("attributes").at("event").get<std::string>());
+	std::vector<std::string> project;
+	for (const Json& each : f.events())
+		project.push_back(each.at("id").dump());
+	CHECK(shown == project);
+	// A command takes the pressed event a lane down: the drag's one lane more goes from there.
+	f.app.call("event.set", {{"events", {f.second}}, {"lane", 1}});
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			const ui::AudioPartEditor* editor = f.audioPartEditor();
+			if (editor == nullptr)
+				return false;
+			const Json known = editor->project().value("audioEvents", Json::array());
+			return std::any_of(known.begin(), known.end(),
+				[&](const Json& each) { return each.at("id") == f.second && each.at("lane") == 1; });
+		}));
+	f.release(ctrl);
+	REQUIRE(f.app.waitUntil([&] { return f.event(f.second).at("lane") == 2; }));
+	CHECK(f.event(f.second).at("position") == g_second);
+	f.settle();
 }
 
 TEST_CASE("a move of the audio part editor ends without its effect when its event goes during the drag", "[ui]")

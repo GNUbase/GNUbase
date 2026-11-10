@@ -123,7 +123,8 @@ of the window's size, not yet one of the lower zone's.
   tool from an empty spot and after a part's end; an event out of its part shown, selected and moved back; a finger
   pan over an empty spot and over an event outside the part editing mode scrolling the lanes; a render during a move
   keeping it shown; a move going on when a command adds an event to the part during the drag, released outside the
-  window, and when the display's range changes, and ending without its effect when its event is removed or leaves the
-  part editing mode; a view the engine answered before a click leaving the click's selection, and a selection from the
+  window, and when the display's range changes, a Ctrl drag going on with its event's new lane and its element in
+  order, and a move ending without its effect when its event is removed or leaves the part editing mode; a view the
+  engine answered before a click leaving the click's selection, and a selection from the
   engine showing once the click's is answered.
 - `tests/eventediting_tests.cpp`: a double click on an audio part opens it in the audio part editor.
