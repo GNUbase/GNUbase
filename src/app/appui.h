@@ -39,7 +39,9 @@
 #include <RmlUi/Core/ObserverPtr.h>
 
 #include <array>
+#include <chrono>
 #include <cstdint>
+#include <deque>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -66,6 +68,8 @@ namespace gnubase::app
 		explicit ScriptOutput(std::ostream& output) : m_output(output) {}
 
 		const std::string& text() const { return m_text; }
+		// Where the text starts in all that was printed: it grows when the oldest lines go and with clear.
+		uint64_t start() const { return m_start; }
 		// Grows with every change of the text.
 		uint64_t version() const { return m_version; }
 		void clear();
@@ -78,6 +82,7 @@ namespace gnubase::app
 	private:
 		std::ostream& m_output;
 		std::string m_text;
+		uint64_t m_start = 0;
 		uint64_t m_version = 0;
 	};
 
@@ -223,12 +228,21 @@ namespace gnubase::app
 		// (resources/ui/script-console.rml) opens in a window of its own, or closes: the UI command
 		// window.scriptConsole.
 		ui::WindowId scriptConsoleWindow() const { return m_scriptConsoleWindow; }
-		// What opens files and folders with the OS for the console, such as a script in the user's editor: tests catch
-		// them instead.
-		void openExternallyWith(std::function<void(const std::filesystem::path&)> open)
+		// What opens files and folders with the OS for the console, and with edit a script in the user's editor: tests
+		// catch them instead.
+		void openExternallyWith(std::function<void(const std::filesystem::path&, bool edit)> open)
 		{
 			m_openExternally = std::move(open);
 		}
+		// What asks whether a user script or a line of the console that has run longer than limit goes on (by default
+		// 10 s and a message box, or stop with the windows hidden): tests answer instead.
+		void keepScriptsRunningWith(
+			std::chrono::milliseconds limit, std::function<bool(const std::string& script)> keepRunning)
+		{
+			m_scriptTimeLimit = limit;
+			m_keepScriptRunning = std::move(keepRunning);
+		}
+		ui::EngineBinding& binding() { return m_binding; }
 
 		ui::Shell& shell() { return m_shell; }
 		ui::Window& mainWindow() { return m_main; }
@@ -448,6 +462,11 @@ namespace gnubase::app
 		ui::WindowId m_scriptConsoleWindow = 0;
 		Rml::ObserverPtr<Rml::Element> m_scriptConsole; // its document
 		uint64_t m_shownOutput = 0;                     // the output's version it shows
-		std::function<void(const std::filesystem::path&)> m_openExternally;
+		uint64_t m_shownEnd = 0;                        // where what it shows ends in the output (ScriptOutput::start)
+		std::deque<uint64_t> m_shownChunks;             // where each of its text nodes ends there
+		int m_scriptEnvironment = 0;                    // the scripts' globals (scripting::Runtime::newEnvironment)
+		std::chrono::milliseconds m_scriptTimeLimit{10000};
+		std::function<bool(const std::string& script)> m_keepScriptRunning;
+		std::function<void(const std::filesystem::path&, bool edit)> m_openExternally;
 	};
 }
