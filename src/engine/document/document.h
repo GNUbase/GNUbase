@@ -649,6 +649,9 @@ namespace gnubase::engine
 		// project root key's and the transpose track's transposition.
 		int rootKey = -1;
 		bool independent = false;
+		// A pattern event (#181): the pattern it plays from its start, over and over, instead of its notes; 0 for an
+		// ordinary part.
+		ObjectId pattern = 0;
 	};
 
 	// A frozen track's rendered audio (#116, reference manual pp. 219-220): a file of the project's media folder's
@@ -1114,6 +1117,83 @@ namespace gnubase::engine
 			std::tie(b.id, b.name, b.groups, b.articulations, b.slots, b.programTriggers, b.latch);
 	}
 
+	// Patterns of the pattern editor (#181, reference manual pp. 895-937, docs/features/pattern-editor.md).
+	enum class PatternMode : uint8_t
+	{
+		Drum, // a lane per drum sound
+		Mono, // melodic: a lane per pitch, one step at a time
+		Poly, // melodic: chords
+	};
+
+	enum class PlayDirection : uint8_t
+	{
+		Forward,
+		Backward,
+		Alternating, // forward, then backward, and so on
+	};
+
+	// A step of a step lane, with its parameters (the parameter lane, p. 929).
+	struct PatternStep
+	{
+		int index = 0;                 // its position on the lane, from 0
+		int length = 1;                // in steps: more than 1 ties the steps after it to it
+		int velocity = 100;            // 1-127
+		int repeats = 1;               // 1-10: it plays as that many sub-steps
+		double offset = 0.0;           // -0.5 to 0.5 steps: micro-timing
+		double probability = 1.0;      // 0-1: the chance that it plays, each time the lane plays
+		double velocityVariance = 0.0; // 0-1: how far playback varies the velocity, up or down
+		double gate = 1.0;             // 0.01-1: how much of its length the note lasts
+	};
+
+	inline bool operator==(const PatternStep& a, const PatternStep& b)
+	{
+		return std::tie(
+				   a.index, a.length, a.velocity, a.repeats, a.offset, a.probability, a.velocityVariance, a.gate) ==
+			std::tie(b.index, b.length, b.velocity, b.repeats, b.offset, b.probability, b.velocityVariance, b.gate);
+	}
+
+	// A row of the step display: the steps of one pitch.
+	struct PatternLane
+	{
+		int pitch = 36;
+		std::string name; // drum mode: the lane's name
+		bool mute = false;
+		bool solo = false;
+		int length = 0;                                   // steps, 1-128; 0: the pattern's
+		std::optional<midi::NoteValue> resolution;        // none: the pattern's
+		PlayDirection direction = PlayDirection::Forward; // forward: the pattern's
+		double swing = 0.0;                               // -1 to 1: added to the pattern's
+		double offset = 0.0;                              // -1 to 1 steps: the whole lane earlier or later
+		std::vector<PatternStep> steps;                   // by index, at most one starting at each
+	};
+
+	inline bool operator==(const PatternLane& a, const PatternLane& b)
+	{
+		return std::tie(
+				   a.pitch, a.name, a.mute, a.solo, a.length, a.resolution, a.direction, a.swing, a.offset, a.steps) ==
+			std::tie(b.pitch, b.name, b.mute, b.solo, b.length, b.resolution, b.direction, b.swing, b.offset, b.steps);
+	}
+
+	// A pattern of a track, which its pattern events (MidiPart::pattern) play over and over.
+	struct Pattern
+	{
+		ObjectId id = 0;
+		ObjectId track = 0; // the track whose pattern management lists it
+		std::string name;
+		PatternMode mode = PatternMode::Drum;
+		int length = 16;            // Number of Steps, 1-128
+		midi::NoteValue resolution; // Step Resolution, up to 1/64
+		PlayDirection direction = PlayDirection::Forward;
+		double swing = 0.0; // -1 to 1: how far every second step moves, in half steps
+		std::vector<PatternLane> lanes;
+	};
+
+	inline bool operator==(const Pattern& a, const Pattern& b)
+	{
+		return std::tie(a.id, a.track, a.name, a.mode, a.length, a.resolution, a.direction, a.swing, a.lanes) ==
+			std::tie(b.id, b.track, b.name, b.mode, b.length, b.resolution, b.direction, b.swing, b.lanes);
+	}
+
 	// A color of the project's color set (reference manual pp. 115-118), which colors are picked from.
 	struct ProjectColor
 	{
@@ -1246,6 +1326,7 @@ namespace gnubase::engine
 		ChordPads chordPads;                  // the chord pads (#174)
 		std::map<ObjectId, DrumMap> drumMaps; // a new project has the GM Map (#129)
 		std::map<ObjectId, ArticulationMap> articulationMaps; // (#175)
+		std::map<ObjectId, Pattern> patterns;                 // the pattern editor's (#181)
 		// The project input transformer's modules, which the MIDI and instrument tracks whose input transformer is in
 		// project mode share (#178).
 		midi::InputTransformerModules inputTransformer;
@@ -1523,9 +1604,9 @@ namespace gnubase::engine
 	inline bool sameProperties(const MidiPart& a, const MidiPart& b)
 	{
 		return std::tie(a.id, a.track, a.name, a.position, a.length, a.mute, a.lock, a.shared, a.color, a.lane,
-				   a.transpose, a.velocity, a.rootKey, a.independent) ==
+				   a.transpose, a.velocity, a.rootKey, a.independent, a.pattern) ==
 			std::tie(b.id, b.track, b.name, b.position, b.length, b.mute, b.lock, b.shared, b.color, b.lane,
-				b.transpose, b.velocity, b.rootKey, b.independent);
+				b.transpose, b.velocity, b.rootKey, b.independent, b.pattern);
 	}
 
 	inline bool operator==(const ProjectColor& a, const ProjectColor& b)

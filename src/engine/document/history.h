@@ -90,6 +90,7 @@ namespace gnubase::engine
 		std::vector<ObjectChange<LinkGroup>> linkGroups;
 		std::vector<ObjectChange<DrumMap>> drumMaps;
 		std::vector<ObjectChange<ArticulationMap>> articulationMaps;
+		std::vector<ObjectChange<Pattern>> patterns;
 
 		bool empty() const;
 	};
