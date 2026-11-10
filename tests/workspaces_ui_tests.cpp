@@ -178,12 +178,14 @@ TEST_CASE("maximized windows come back maximized, and ui.layout keeps their norm
 	const Json right = {{"x", 2200}, {"y", 300}, {"width", 900}, {"height", 700}};
 	Fixture f({{"windows",
 		{{"project",
-			 {{"maximized", true}, {"bounds", {{"x", 100}, {"y", 50}, {"width", 800}, {"height", 600}}},
-				 {"monitor", "Left"}}},
-			{"tool", {{"open", true}, {"bounds", right}, {"monitor", "Right"}}}}}});
+			{{"maximized", true}, {"bounds", {{"x", 100}, {"y", 50}, {"width", 800}, {"height", 600}}},
+				{"monitor", "Left"}}}}}});
 	REQUIRE(f.laidOut);
 	// The main window as the last session left it.
 	CHECK(f.ui.windows.maximized(f.main));
+	Json layout = f.saved();
+	layout["windows"]["tool"] = {{"open", true}, {"bounds", right}, {"monitor", "Right"}}; // as a workspace opens it
+	f.call("settings.set", {{"key", "ui.layout"}, {"value", layout}});
 	REQUIRE(f.waitUntil([&f] { return f.tool != 0; }));
 	f.docking.saveWindows();
 
@@ -209,7 +211,8 @@ TEST_CASE("maximized windows come back maximized, and ui.layout keeps their norm
 	CHECK(f.ui.shell.bounds(f.tool) == ui::Rect{2200, 300, 900, 700});
 
 	// A workspace applied to the open window maximizes it too.
-	f.call("workspace.activate", {{"type", ""}});
+	f.docking.saveWindows();
+	REQUIRE(f.waitUntil([&f] { return !f.saved().at("windows").at("tool").contains("maximized"); }));
 	f.call("workspace.activate", {{"type", "global"}, {"name", "Big"}});
 	REQUIRE(f.waitUntil([&f] { return f.ui.windows.maximized(f.tool); }));
 	f.ui.windows.setMaximized(f.main, false);
