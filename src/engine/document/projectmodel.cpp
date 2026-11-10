@@ -3411,11 +3411,16 @@ namespace gnubase::engine
 					current.tempo != previous.tempo || current.signatures != previous.signatures ||
 					!(current.autoFades == previous.autoFades) || current.panLaw != previous.panLaw ||
 					current.maxVolume != previous.maxVolume || !(current.colors == previous.colors) ||
-					!(current.setup == previous.setup) || current.rootKey != previous.rootKey)
-					context.emit("project.changed", projectSettingsJson(current));
+					!(current.setup == previous.setup) || current.rootKey != previous.rootKey ||
+					change.timeFormatBefore)
+					context.emit("project.changed", projectSettingsJson(project));
 				announceBusses(previous.busses, current.busses, context);
 				reordered = current.tracks != previous.tracks;
 				activated = current.activeMarkerTrack != previous.activeMarkerTrack;
+			}
+			else if (change.timeFormatBefore)
+			{
+				context.emit("project.changed", projectSettingsJson(project));
 			}
 			for (const ObjectChange<Track>& track : change.tracks)
 				reordered = reordered || !track.before || !track.after || track.before->parent != track.after->parent ||
@@ -3554,6 +3559,20 @@ namespace gnubase::engine
 			Project start = before;
 			apply(start, steps.back().change, Direction::Undo);
 			ProjectChange change = difference(start, m_project);
+			// Compose only format edits, excluding display choices made between the gesture's commands.
+			change.timeFormatBefore = steps.back().change.timeFormatBefore;
+			change.timeFormatAfter = steps.back().change.timeFormatAfter;
+			if (before.setup.timeFormat != m_project.setup.timeFormat)
+			{
+				if (!change.timeFormatBefore)
+					change.timeFormatBefore = before.setup.timeFormat;
+				change.timeFormatAfter = m_project.setup.timeFormat;
+			}
+			if (change.timeFormatBefore == change.timeFormatAfter)
+			{
+				change.timeFormatBefore.reset();
+				change.timeFormatAfter.reset();
+			}
 			if (change.empty())
 				m_history.removeLast();
 			else
@@ -3668,6 +3687,21 @@ namespace gnubase::engine
 		for (size_t i = position; i > first; --i)
 			apply(start, steps[i - 1].change, Direction::Undo);
 		ProjectChange change = difference(start, m_project);
+		// The joined step keeps only explicit format edits, not the current display choice.
+		change.timeFormatBefore.reset();
+		change.timeFormatAfter.reset();
+		for (size_t i = first; i < position; ++i)
+			if (steps[i].change.timeFormatBefore)
+			{
+				if (!change.timeFormatBefore)
+					change.timeFormatBefore = steps[i].change.timeFormatBefore;
+				change.timeFormatAfter = steps[i].change.timeFormatAfter;
+			}
+		if (change.timeFormatBefore == change.timeFormatAfter)
+		{
+			change.timeFormatBefore.reset();
+			change.timeFormatAfter.reset();
+		}
 		std::optional<HistoryStep> joined;
 		if (!change.empty())
 			joined =
@@ -3942,6 +3976,23 @@ namespace gnubase::engine
 					{"rootKey", enumSchema(rootKeyNames())}}),
 				noResult, false},
 			setProject);
+		addControl(engine,
+			{"project.setTimeFormat", 1,
+				"Selects the project's primary time format from a ruler or transport display. Saved with the project, "
+				"but a display choice is not an undo step. Project Setup changes made with project.set remain "
+				"undoable. The snap grid follows the format.",
+				objectSchema({{"timeFormat", timeFormats}}, {"timeFormat"}), noResult, false},
+			[this](CommandContext& context)
+			{
+				const std::string before = m_project.setup.timeFormat;
+				m_project.setup.timeFormat = context.parameters().at("timeFormat").get<std::string>();
+				if (m_project.setup.timeFormat == before)
+					return Json::object();
+				followTimeFormat(m_project, before, context);
+				context.emit("project.changed", projectSettingsJson(m_project));
+				publish();
+				return Json::object();
+			});
 		add(engine,
 			{"project.factoryColors", 1,
 				"The factory color set, which new projects have: each color's name and color (#rrggbb). The project "

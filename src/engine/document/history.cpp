@@ -24,10 +24,14 @@ namespace gnubase::engine
 
 		ProjectSettings settings(const Project& project)
 		{
-			return {project.name, project.sampleRate, project.tempo, project.tempoTrackActive, project.otherTempo,
-				project.signatures, project.autoFades, project.panLaw, project.maxVolume, project.colors, project.setup,
-				project.busses, project.tracks, project.activeMarkerTrack, project.arranger, project.rootKey,
-				project.transpose, project.chords, project.chordPads, project.inputTransformer};
+			ProjectSettings result{project.name, project.sampleRate, project.tempo, project.tempoTrackActive,
+				project.otherTempo, project.signatures, project.autoFades, project.panLaw, project.maxVolume,
+				project.colors, project.setup, project.busses, project.tracks, project.activeMarkerTrack,
+				project.arranger, project.rootKey, project.transpose, project.chords, project.chordPads,
+				project.inputTransformer};
+			// A display choice must survive replaying other settings while merging or joining history steps.
+			result.setup.timeFormat.clear();
+			return result;
 		}
 
 		// Walks two maps in id order and calls visit(id, before, after) with nullptr for a missing object.
@@ -128,15 +132,20 @@ namespace gnubase::engine
 
 	bool ProjectChange::empty() const
 	{
-		return !settingsBefore && tracks.empty() && channels.empty() && slots.empty() && media.empty() &&
-			clips.empty() && poolFolders.empty() && audioEvents.empty() && audioParts.empty() && midiParts.empty() &&
-			markers.empty() && automation.empty() && linkGroups.empty() && drumMaps.empty() &&
+		return !settingsBefore && !timeFormatBefore && tracks.empty() && channels.empty() && slots.empty() &&
+			media.empty() && clips.empty() && poolFolders.empty() && audioEvents.empty() && audioParts.empty() &&
+			midiParts.empty() && markers.empty() && automation.empty() && linkGroups.empty() && drumMaps.empty() &&
 			articulationMaps.empty() && patterns.empty();
 	}
 
 	ProjectChange difference(const Project& before, const Project& after)
 	{
 		ProjectChange change;
+		if (before.setup.timeFormat != after.setup.timeFormat)
+		{
+			change.timeFormatBefore = before.setup.timeFormat;
+			change.timeFormatAfter = after.setup.timeFormat;
+		}
 		ProjectSettings old = settings(before);
 		ProjectSettings now = settings(after);
 		if (!(old == now))
@@ -186,6 +195,9 @@ namespace gnubase::engine
 
 	void apply(Project& project, const ProjectChange& change, Direction direction)
 	{
+		if (change.timeFormatBefore && change.timeFormatAfter)
+			project.setup.timeFormat =
+				direction == Direction::Redo ? *change.timeFormatAfter : *change.timeFormatBefore;
 		if (change.settingsBefore && change.settingsAfter)
 		{
 			const ProjectSettings& target =
@@ -200,7 +212,9 @@ namespace gnubase::engine
 			project.panLaw = target.panLaw;
 			project.maxVolume = target.maxVolume;
 			project.colors = target.colors;
-			project.setup = target.setup;
+			ProjectSetup setup = target.setup;
+			setup.timeFormat = project.setup.timeFormat;
+			project.setup = std::move(setup);
 			project.busses = target.busses;
 			project.tracks = target.tracks;
 			project.activeMarkerTrack = target.activeMarkerTrack;

@@ -9,6 +9,7 @@
 #include "ui/automation.h"
 #include "ui/canvas.h"
 #include "ui/eventdisplay.h"
+#include "ui/markers.h"
 #include "ui/rmlui.h"
 #include "ui/themes.h"
 #include "ui/timeformat.h"
@@ -18,6 +19,7 @@
 #include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Elements/ElementFormControl.h>
 #include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/Property.h>
 #include <catch2/catch_approx.hpp>
@@ -379,10 +381,37 @@ TEST_CASE("the ruler's time format menu opens from its arrow button and with a r
 	CHECK(app.call("project.get").at("timeFormat") == "barsBeats");
 
 	// With Ctrl (Cmd), a format is the primary time format too, for all windows (reference manual p. 69).
+	app.call("track.add", {{"type", "marker"}});
+	app.call("marker.add", {{"position", 2 * time::g_ticksPerQuarter}}); // one second
+	app.call("transport.locate", {{"position", 48000}});
+	app.ui().key(std::nullopt, "Mod+M");
+	REQUIRE(app.waitUntil(
+		[&app] { return app.appUi().markers() != nullptr && app.appUi().markers()->markers().size() == 1; }));
+	ui::Window* markersWindow = app.shell().find(app.appUi().markersWindow());
+	REQUIRE(markersWindow != nullptr);
+	Rml::ElementDocument* markersDocument = markersWindow->context().GetDocument(0);
+	REQUIRE(markersDocument != nullptr);
+	auto* markerPosition =
+		dynamic_cast<Rml::ElementFormControl*>(markersDocument->QuerySelector("#marker-rows .position input"));
+	REQUIRE(markerPosition != nullptr);
+	CHECK(markerPosition->GetValue() == "1.3.1.0");
+	Rml::Element* primaryTime = app.main().context().GetDocument(0)->QuerySelector("#primary-time");
+	REQUIRE(primaryTime != nullptr);
+	const size_t undoSteps = app.call("history.get").at("steps").size();
 	click(app, selector(".ruler-format"));
 	app.ui().click(std::nullopt, menuItem(app, "#ruler-format-menu", "Timecode"), ui::MouseButton::Left, 1, {"ctrl"});
 	CHECK(window.display.rulerFormat() == ui::TimeFormat::Timecode);
 	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("timeFormat") == "timecode"; }));
+	REQUIRE(
+		app.waitUntil([primaryTime] { return primaryTime->GetAttribute<Rml::String>("value", "") == "00:00:01:00"; }));
+	REQUIRE(app.waitUntil(
+		[markersDocument]
+		{
+			auto* input =
+				dynamic_cast<Rml::ElementFormControl*>(markersDocument->QuerySelector("#marker-rows .position input"));
+			return input != nullptr && input->GetValue() == "00:00:01:00";
+		}));
+	CHECK(app.call("history.get").at("steps").size() == undoSteps);
 	click(app, selector(".ruler-format"));
 	click(app, menuItem(app, "#ruler-format-menu", "Samples"));
 	app.shell().step(std::chrono::milliseconds(0));

@@ -32,7 +32,7 @@ project setup's time format sets the ruler, the ruler can choose its own afterwa
 are always the ruler's format's (pp. 105, 109); snapping is the same with and without a UI, and a `snap.set {format}`
 right after it stays. The transport's primary time display shows the project setup's time format (p. 317), so the
 ruler and the primary time display can differ; picking a format in the ruler's menu with Ctrl (Cmd on macOS) held
-sets both (`project.set {timeFormat}` as well, p. 69).
+sets both (`project.setTimeFormat`, p. 69).
 
 The frame grids have the project's frame rate (project setup, `project.set {frameRate}`, #78), with its pull-down;
 `userFrames` has the user's, 30 fps until that is a setting of its own (`time::g_userFramesPerSecond`), in the event

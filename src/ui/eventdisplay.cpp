@@ -128,7 +128,6 @@ namespace gnubase::ui
 		addAutomationActions();
 		setToolModifiers(Json::object());
 
-		// Every change to the project is an undo step or a new project; the display shows the project as it is then.
 		for (const char* event : {"history.changed", "project.reset"})
 			m_subscriptions.push_back(m_binding.on(event,
 				[this](const engine::Event&)
@@ -136,6 +135,14 @@ namespace gnubase::ui
 					requestProject();
 					requestMarkers();
 				}));
+		// The ruler follows snap.changed; keep the cached primary format without another project.get.
+		m_subscriptions.push_back(m_binding.on("project.changed",
+			[this](const engine::Event& event)
+			{
+				if (const auto format = event.data.find("timeFormat");
+					format != event.data.end() && m_project.is_object())
+					m_project["timeFormat"] = *format;
+			}));
 		m_subscriptions.push_back(
 			m_binding.on("transport.changed", [this](const engine::Event& event) { followTransport(event.data); }));
 		m_subscriptions.push_back(m_binding.on("snap.changed",

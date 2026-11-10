@@ -393,9 +393,22 @@ TEST_CASE("the transport bar and the transport panel show the same time formats"
 	REQUIRE(app.waitUntil([&app, panel] { return shows(app, "#primary-time", panel) == "0:00:01.500"; }));
 	REQUIRE(app.waitUntil([&app] { return shows(app, "#primary-time") == "0:00:01.500"; }));
 	app.ui().key(std::nullopt, ".");
-	REQUIRE(app.waitUntil([&app, panel] { return shows(app, "#primary-time", panel) == "00:00:01:12"; }));
+	REQUIRE(app.waitUntil(
+		[&app, panel]
+		{
+			return shows(app, "#primary-time", panel) == "00:00:01:12" &&
+				shows(app, "#primary-time") == "00:00:01:12" && shows(app, "#secondary-time", panel) == "0:00:01.500" &&
+				shows(app, "#secondary-time") == "0:00:01.500";
+		}));
 	app.ui().key(std::nullopt, ".");
-	REQUIRE(app.waitUntil([&app, panel] { return shows(app, "#primary-time", panel) == "0:00:01.500"; }));
+	// Primary and secondary changes have separate event echoes; wait for both in both windows.
+	REQUIRE(app.waitUntil(
+		[&app, panel]
+		{
+			return shows(app, "#primary-time", panel) == "0:00:01.500" &&
+				shows(app, "#primary-time") == "0:00:01.500" && shows(app, "#secondary-time", panel) == "00:00:01:12" &&
+				shows(app, "#secondary-time") == "00:00:01:12";
+		}));
 	CHECK(shows(app, "#secondary-time", panel) == "00:00:01:12");
 	CHECK(element(app, "menuitem[slot=primary][format=seconds]", panel).at("attributes").contains("checked"));
 	CHECK(element(app, "menuitem[slot=secondary][format=timecode]", panel).at("attributes").contains("checked"));
@@ -406,6 +419,37 @@ TEST_CASE("the transport bar and the transport panel show the same time formats"
 	const Json formats = app.call("settings.get", {{"key", "ui.timeFormats"}}).at("value");
 	CHECK(!formats.contains("primary"));
 	CHECK(formats.at("secondary") == "timecode");
+}
+
+TEST_CASE("transport time format choices and exchange do not add undo steps", "[ui]")
+{
+	test::UiApp app({1024, 700});
+	showBar(app);
+	app.call("transport.locate", {{"position", 72000}});
+	app.call("project.set", {{"tempo", 130.0}});
+	const size_t before = app.call("history.get").at("steps").size();
+
+	click(app, "#primary-format");
+	click(app, "menuitem[slot=primary][format=seconds]");
+	REQUIRE(app.waitUntil([&app] { return shows(app, "#primary-time") == "0:00:01.500"; }));
+	CHECK(app.call("history.get").at("steps").size() == before);
+
+	click(app, "#exchange-formats");
+	REQUIRE(app.waitUntil([&app]
+		{ return shows(app, "#primary-time") == "00:00:01:12" && shows(app, "#secondary-time") == "0:00:01.500"; }));
+	CHECK(shows(app, "#secondary-time") == "0:00:01.500");
+	CHECK(app.call("history.get").at("steps").size() == before);
+
+	// Undo reaches the earlier tempo edit, leaving both exchanged display formats in place.
+	app.call("history.undo");
+	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("tempo")[0].at("bpm") == 120.0; }));
+	CHECK(shows(app, "#primary-time") == "00:00:01:12");
+	CHECK(shows(app, "#secondary-time") == "0:00:01.500");
+	CHECK(app.call("project.get").at("timeFormat") == "timecode");
+	app.call("history.redo");
+	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("tempo")[0].at("bpm") == 130.0; }));
+	CHECK(shows(app, "#primary-time") == "00:00:01:12");
+	CHECK(shows(app, "#secondary-time") == "0:00:01.500");
 }
 
 TEST_CASE("the tempo and signature fields set the project's first tempo and signature", "[ui]")
