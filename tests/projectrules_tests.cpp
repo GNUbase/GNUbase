@@ -2,17 +2,21 @@
 #include "engine/document/document.h"
 #include "engine/document/projectrules.h"
 #include "engine/engine.h"
+#include "engine/time/tempomap.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 using namespace gnubase::engine;
@@ -101,6 +105,28 @@ namespace
 				.get<ObjectId>();
 		}
 
+		// An audio event on the audio track at a beat. They share a clip.
+		ObjectId audio(int beat)
+		{
+			if (clip == 0)
+			{
+				const Json media = run(client, "media.add",
+					{{"path", "take.wav"}, {"sampleRate", 48000}, {"channels", 1}, {"length", 480000}})
+									   .at("media");
+				clip = run(client, "clip.add", {{"media", media.at("id")}}).at("clip").at("id").get<ObjectId>();
+			}
+			return run(client, "audioEvent.add",
+				{{"track", vocals}, {"clip", clip}, {"position", beat * g_beatTicks}, {"length", 24000}})
+				.at("event")
+				.at("id")
+				.get<ObjectId>();
+		}
+
+		ObjectId audioPart(const std::vector<ObjectId>& events)
+		{
+			return run(client, "event.toPart", {{"events", events}}).at("events").at(0).get<ObjectId>();
+		}
+
 		Json find(const Json& parameters) { return run(client, "project.findByRules", parameters); }
 
 		Json object(const char* list, ObjectId id)
@@ -121,7 +147,27 @@ namespace
 		ObjectId empty = 0;
 		ObjectId markers = 0;
 		ObjectId marker = 0;
+		ObjectId clip = 0;
 	};
+
+	// The filters that find every part and event.
+	std::vector<Json> partsAndEvents()
+	{
+		Json parts = filter("containerType", "equal", "part");
+		parts["join"] = "or";
+		return {std::move(parts), filter("containerType", "equal", "event")};
+	}
+
+	// The marker tracks marker.trackActivated announced to a client since it last looked, in order.
+	std::vector<ObjectId> activatedMarkerTracks(Client& client)
+	{
+		std::vector<ObjectId> tracks;
+		while (const auto message = client.poll())
+			if (const auto* event = std::get_if<Event>(&*message))
+				if (event->name == "marker.trackActivated")
+					tracks.push_back(event->data.at("track").get<ObjectId>());
+		return tracks;
+	}
 }
 
 TEST_CASE("project rules as JSON: factory presets round-trip, and wrong rules are refused", "[unit]")
@@ -210,6 +256,12 @@ TEST_CASE("project.findByRules finds tracks, parts and events", "[integration]")
 	CHECK(found({{"rules", rules({filter("property", "propertyIsSet", "isSelected")}, "select")},
 					{"selected", {f.vocals, f.marker}}},
 			  "tracks") == Ids{f.vocals});
+	CHECK(found({{"rules", rules({filter("property", "propertyIsSet", "isSelected")}, "select")},
+					{"selected", {f.vocals, f.marker}}},
+			  "markers") == Ids{f.marker});
+	CHECK(found({{"rules", rules({filter("property", "propertyIsSet", "parentIsSelected")}, "select")},
+					{"selected", {f.markers}}},
+			  "markers") == Ids{f.marker});
 	CHECK(found({{"rules", rules({filter("property", "propertyIsSet", "parentIsSelected")}, "select")},
 					{"selected", {f.folder}}},
 			  "tracks") == Ids{f.vocals});
@@ -330,25 +382,76 @@ TEST_CASE("project.applyRules transforms and deletes in one undo step", "[integr
 		run(f.client, "project.applyRules", move);
 		CHECK(f.object("midiParts", f.full).at("position") == first);
 	}
+	SECTION("generated names count only what is renamed")
+	{
+		// A locked part takes no number: the found part after it has the first one.
+		run(f.client, "event.set", {{"events", {f.full}}, {"lock", true}});
+		run(f.client, "project.applyRules",
+			{{"rules",
+				rules({filter("containerType", "equal", "part")}, "transform",
+					{action("name", "generateName", "Part ", 1)})}});
+		CHECK(f.object("midiParts", f.full).at("name") == "Chords");
+		CHECK(f.object("midiParts", f.empty).at("name") == "Part 1");
+		// Audio events keep their clip's name: the marker after them has the first number.
+		f.audio(3);
+		run(f.client, "project.applyRules",
+			{{"rules",
+				rules({filter("containerType", "equal", "event")}, "transform",
+					{action("name", "generateName", "Cue ", 7)})}});
+		CHECK(run(f.client, "marker.list", {{"track", f.markers}}).at("markers").at(0).at("name") == "Cue 7");
+	}
+	SECTION("an audio part that holds a locked event stays, and the found events in it go")
+	{
+		const ObjectId locked = f.audio(2);
+		const ObjectId loose = f.audio(3);
+		const ObjectId part = f.audioPart({locked, loose});
+		run(f.client, "event.set", {{"events", {locked}}, {"lock", true}});
+		const auto exists = [&f](const char* list, ObjectId id) { return !f.object(list, id).is_null(); };
+
+		// Found alone, the part stays with all it holds.
+		run(f.client, "project.applyRules", {{"rules", rules({filter("containerType", "equal", "part")}, "delete")}});
+		CHECK(exists("audioParts", part));
+		CHECK(exists("audioEvents", locked));
+		CHECK(exists("audioEvents", loose));
+		// Found with its events, only the unlocked event goes.
+		run(f.client, "project.applyRules", {{"rules", rules(partsAndEvents(), "delete")}});
+		CHECK(exists("audioParts", part));
+		CHECK(exists("audioEvents", locked));
+		CHECK(!exists("audioEvents", loose));
+		// Unlocked, the part goes and its events with it.
+		run(f.client, "event.set", {{"events", {locked}}, {"lock", false}});
+		run(f.client, "project.applyRules", {{"rules", rules({filter("containerType", "equal", "part")}, "delete")}});
+		CHECK(!exists("audioParts", part));
+		CHECK(!exists("audioEvents", locked));
+	}
+	SECTION("positions and lengths stop at the longest project")
+	{
+		// In project ticks. The way through ticks of 480 to a quarter note is exact to a few at this size.
+		const int64_t longest = gnubase::time::TempoMap(120.0).toTicks(gnubase::time::g_maxPosition, 48000.0);
+		const auto atLongest = [longest](const Json& value) { return std::abs(value.get<int64_t>() - longest) <= 16; };
+		const Json later = filter("position", "bigger", 0);
+
+		run(f.client, "project.applyRules",
+			{{"rules",
+				rules({later}, "transform",
+					{action("position", "multiplyBy", 1e12), action("length", "multiplyBy", 1e12)})}});
+		CHECK(atLongest(f.object("midiParts", f.full).at("position")));
+		CHECK(atLongest(f.object("midiParts", f.full).at("length")));
+		CHECK(atLongest(run(f.client, "marker.list", {{"track", f.markers}}).at("markers").at(0).at("position")));
+		run(f.client, "history.undo");
+		CHECK(f.object("midiParts", f.full).at("position") == g_beatTicks);
+
+		// Multiplied past what a double holds, then by zero: no infinity to make a NaN of.
+		std::vector<Json> actions(30, action("position", "multiplyBy", 1e12));
+		actions.push_back(action("position", "multiplyBy", 0));
+		run(f.client, "project.applyRules", {{"rules", rules({later}, "transform", actions)}});
+		CHECK(f.object("midiParts", f.full).at("position") == 0);
+	}
 	SECTION("audio events in a part that moves keep their place in it")
 	{
-		const Json media = run(
-			f.client, "media.add", {{"path", "take.wav"}, {"sampleRate", 48000}, {"channels", 1}, {"length", 480000}})
-							   .at("media");
-		const ObjectId clip =
-			run(f.client, "clip.add", {{"media", media.at("id")}}).at("clip").at("id").get<ObjectId>();
-		const auto audio = [&](int beat)
-		{
-			return run(f.client, "audioEvent.add",
-				{{"track", f.vocals}, {"clip", clip}, {"position", beat * g_beatTicks}, {"length", 24000}})
-				.at("event")
-				.at("id")
-				.get<ObjectId>();
-		};
-		const ObjectId first = audio(2);
-		const ObjectId second = audio(3);
-		const ObjectId part =
-			run(f.client, "event.toPart", {{"events", {first, second}}}).at("events").at(0).get<ObjectId>();
+		const ObjectId first = f.audio(2);
+		const ObjectId second = f.audio(3);
+		const ObjectId part = f.audioPart({first, second});
 		// Where an event is in the part, in ticks.
 		const auto inPart = [&](ObjectId event)
 		{
@@ -368,6 +471,40 @@ TEST_CASE("project.applyRules transforms and deletes in one undo step", "[integr
 			CHECK(inPart(first) == 0);
 			CHECK(inPart(second) == g_beatTicks);
 		}
+	}
+}
+
+TEST_CASE("project.applyRules removes the active marker track after the other marker tracks", "[integration]")
+{
+	Fixture f;
+	Client listener(f.engine);
+	using Ids = std::vector<ObjectId>;
+	run(f.client, "track.remove", {{"track", f.markers}});
+	const ObjectId first = f.add({{"type", "marker"}});
+	const ObjectId second = f.add({{"type", "marker"}});
+	const ObjectId holding = f.add({{"type", "marker"}, {"timeBase", "musical"}});
+	run(f.client, "marker.add", {{"type", "position"}, {"track", holding}, {"position", g_beatTicks}});
+
+	SECTION("the marker track that stays takes over, whichever of the others was active")
+	{
+		const ObjectId active = GENERATE_COPY(first, second);
+		run(f.client, "marker.activateTrack", {{"track", active}});
+		activatedMarkerTracks(listener); // drops what adding the tracks announced
+		run(f.client, "project.applyRules", {{"preset", "Delete/Empty tracks"}});
+		CHECK(f.object("tracks", first).is_null());
+		CHECK(f.object("tracks", second).is_null());
+		CHECK(run(f.client, "project.get").at("activeMarkerTrack") == holding);
+		CHECK(activatedMarkerTracks(listener) == Ids{holding});
+		run(f.client, "history.undo");
+		CHECK(run(f.client, "project.get").at("activeMarkerTrack") == active);
+	}
+	SECTION("without a marker track left, none is active")
+	{
+		run(f.client, "marker.activateTrack", {{"track", first}});
+		activatedMarkerTracks(listener);
+		run(f.client, "project.applyRules", {{"rules", rules({filter("mediaType", "equal", "marker")}, "delete")}});
+		CHECK(run(f.client, "project.get").at("activeMarkerTrack") == 0);
+		CHECK(activatedMarkerTracks(listener) == Ids{0});
 	}
 }
 

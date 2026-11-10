@@ -4,6 +4,7 @@
 #include "engine/time/tempomap.h"
 #include "ui/automation.h"
 #include "ui/eventdisplay.h"
+#include "ui/markers.h"
 #include "uiapp.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -164,4 +165,79 @@ TEST_CASE("Project > Project Rule Editor selects, changes and deletes parts", "[
 	f.choose("#rule-editor-preset", f.presetIndex("Deselect/All"));
 	f.apply();
 	CHECK(f.app.waitUntil([&] { return f.display.selection().empty(); }));
+}
+
+TEST_CASE("Project > Project Rule Editor selects the markers it finds", "[ui]")
+{
+	Fixture f;
+	using Ids = std::vector<uint64_t>;
+	const uint64_t track =
+		f.app.call("track.add", {{"type", "marker"}, {"timeBase", "musical"}}).at("track").at("id").get<uint64_t>();
+	const auto addMarker = [&](int bar, const char* name)
+	{
+		return f.app
+			.call("marker.add",
+				{{"type", "position"}, {"track", track}, {"position", bar * 4 * g_quarter}, {"name", name}})
+			.at("marker")
+			.at("id")
+			.get<uint64_t>();
+	};
+	const uint64_t verse = addMarker(1, "Verse");
+	addMarker(2, "Chorus");
+	const ui::MarkerLines& lines = *f.app.appUi().markerLines();
+	REQUIRE(f.app.waitUntil([&] { return lines.markers().markers.size() == 2; }));
+
+	const auto line = [](const char* target, const char* condition, const char* parameter)
+	{ return Json{{"target", target}, {"condition", condition}, {"parameter1", parameter}}; };
+	const auto save = [&](const char* name, const Json& rules)
+	{
+		f.app.call("projectRules.savePreset", {{"name", name}, {"rules", rules}});
+		REQUIRE(f.presetIndex(name) > 0);
+	};
+	const auto use = [&](const char* preset)
+	{
+		f.open();
+		f.choose("#rule-editor-preset", f.presetIndex(preset));
+		f.apply();
+	};
+	save("The verse marker",
+		{{"filters", Json::array({line("mediaType", "equal", "marker"), line("name", "contains", "Verse")})},
+			{"function", "select"}});
+	Json parts = line("containerType", "equal", "part");
+	parts["join"] = "or";
+	save("Parts and markers",
+		{{"filters", Json::array({parts, line("containerType", "equal", "event")})}, {"function", "select"}});
+	save("Mark the selected marker",
+		{{"filters",
+			 Json::array({line("containerType", "equal", "event"), line("property", "propertyIsSet", "isSelected")})},
+			{"function", "transform"},
+			{"actions", Json::array({{{"target", "name"}, {"operation", "append"}, {"parameter1", "!"}}})}});
+
+	// Selects a found marker as a click does, and deselects the events: the project window selects events or markers.
+	f.display.select({f.parts[0]});
+	REQUIRE(f.app.waitUntil([&] { return f.display.selection() == Ids{f.parts[0]}; }));
+	use("The verse marker");
+	CHECK(f.app.waitUntil([&] { return lines.selection() == Ids{verse}; }));
+	CHECK(f.display.selection().empty());
+
+	// Is Selected sees the selected marker.
+	use("Mark the selected marker");
+	CHECK(f.app.waitUntil(
+		[&]
+		{
+			const Json markers = f.app.call("marker.list", {{"track", track}}).at("markers");
+			return markers.at(0).at("name") == "Verse!" && markers.at(1).at("name") == "Chorus";
+		}));
+
+	// Rules that find parts and markers select the parts. The selection is still the marker's until they run.
+	CHECK(lines.selection() == Ids{verse});
+	use("Parts and markers");
+	CHECK(f.app.waitUntil([&] { return f.display.selection() == f.parts; }));
+	CHECK(f.app.waitUntil([&] { return lines.selection().empty(); }));
+
+	// Deselect deselects markers too.
+	use("The verse marker");
+	CHECK(f.app.waitUntil([&] { return lines.selection() == Ids{verse}; }));
+	use("Deselect/All");
+	CHECK(f.app.waitUntil([&] { return lines.selection().empty(); }));
 }

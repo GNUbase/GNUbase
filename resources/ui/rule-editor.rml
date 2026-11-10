@@ -604,7 +604,7 @@
 			local parameters = {rules = rules}
 			local selection = gnubase.ui.projectSelection()
 			local selected = {}
-			for _, list in ipairs({selection.tracks or {}, selection.events or {}}) do
+			for _, list in ipairs({selection.tracks or {}, selection.events or {}, selection.markers or {}}) do
 				for _, id in ipairs(list) do
 					selected[#selected + 1] = id
 				end
@@ -616,7 +616,7 @@
 				gnubase.ui.selectInProject({})
 			elseif rules["function"] == "select" then
 				local found = gnubase.project.findByRules(parameters)
-				gnubase.ui.selectInProject({tracks = found.tracks, events = found.events})
+				gnubase.ui.selectInProject({tracks = found.tracks, events = found.events, markers = found.markers})
 			else
 				gnubase.project.applyRules(parameters)
 			end
