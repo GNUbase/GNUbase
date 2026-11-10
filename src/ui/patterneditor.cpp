@@ -608,12 +608,12 @@ namespace gnubase::ui
 		else if (target.HasAttribute("pattern-tool"))
 		{
 			m_tool = attribute(target, "pattern-tool");
-			render();
+			refresh();
 		}
 		else if (target.HasAttribute("parameter"))
 		{
 			m_parameter = attribute(target, "parameter");
-			render();
+			refresh();
 		}
 		else if (pitch && (target.IsClassSet("pattern-lane-mute") || target.IsClassSet("pattern-lane-solo")))
 		{
@@ -622,13 +622,13 @@ namespace gnubase::ui
 				const char* key = target.IsClassSet("pattern-lane-mute") ? "mute" : "solo";
 				(*found)[key] = !found->value(key, false);
 				sendLanes(std::string(key == std::string("mute") ? "Mute" : "Solo") + " step lane");
-				render();
+				refresh();
 			}
 		}
 		else if (pitch && target.IsClassSet("pattern-lane-name"))
 		{
 			m_lane = *pitch;
-			render();
+			refresh();
 		}
 		else if (id == "pattern-add-lane")
 		{
@@ -719,7 +719,8 @@ namespace gnubase::ui
 		Rml::Element* root = m_root.get();
 		if (root == nullptr || !m_pattern.is_object())
 			return;
-		// The elements under the mouse stay, so that the gesture's mouseup reaches them.
+		// The elements stay: those under the mouse, so that a gesture's mouseup reaches them, and the target of the
+		// event being handled, which the views around the editor hear after it.
 		Rml::ElementList cells;
 		root->GetElementsByClassName(cells, "pattern-step");
 		for (Rml::Element* cell : cells)
@@ -736,7 +737,21 @@ namespace gnubase::ui
 		Rml::ElementList lanes;
 		root->GetElementsByClassName(lanes, "pattern-lane");
 		for (Rml::Element* each : lanes)
-			each->SetClass("selected", numberOf(each, "pitch", root) == m_lane);
+		{
+			const int pitch = numberOf(each, "pitch", root).value_or(-1);
+			each->SetClass("selected", pitch == m_lane);
+			const Json* found = lane(pitch);
+			for (const char* key : {"mute", "solo"})
+				if (Rml::Element* toggle = each->QuerySelector(std::string(".pattern-lane-") + key))
+					toggle->SetClass("checked", found != nullptr && found->value(key, false));
+		}
+		Rml::ElementList buttons;
+		root->GetElementsByTagName(buttons, "button");
+		for (Rml::Element* each : buttons)
+			if (each->HasAttribute("pattern-tool"))
+				each->SetClass("checked", attribute(*each, "pattern-tool") == m_tool);
+			else if (each->HasAttribute("parameter"))
+				each->SetClass("checked", attribute(*each, "parameter") == m_parameter);
 		if (Rml::Element* bars = root->QuerySelector(".pattern-bars .pattern-lane-steps"))
 		{
 			if (m_gesture != Gesture::Values)
