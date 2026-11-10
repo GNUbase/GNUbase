@@ -1264,10 +1264,11 @@ TEST_CASE("event drags past the project start clamp the preview and the edit tog
 	const Json clip = app.call("clip.add", {{"media", media.at("id")}}).at("clip");
 	const int64_t bar = linear ? 96000 : 4 * time::g_ticksPerQuarter;
 	std::vector<uint64_t> originals;
+	originals.reserve(multiple ? 2 : 1);
 	for (int i = 0; i < (multiple ? 2 : 1); ++i)
 		originals.push_back(
 			app.call("audioEvent.add",
-				   {{"track", track.at("id")}, {"clip", clip.at("id")}, {"position", (1 + 2 * i) * bar},
+				   {{"track", track.at("id")}, {"clip", clip.at("id")}, {"position", (1 + (2 * i)) * bar},
 					   {"length", 96000}})
 				.at("event")
 				.at("id")
@@ -1291,8 +1292,8 @@ TEST_CASE("event drags past the project start clamp the preview and the edit tog
 	const auto at = [&](double seconds, bool down)
 	{
 		return ui::Target{"", 0,
-			ui::Point{static_cast<int>(std::lround(events->GetAbsoluteLeft() + seconds / display.view().scale)),
-				static_cast<int>(std::lround(events->GetAbsoluteTop() + laneHeight * (down ? 1.7 : 0.7)))}};
+			ui::Point{static_cast<int>(std::lround(events->GetAbsoluteLeft() + (seconds / display.view().scale))),
+				static_cast<int>(std::lround(events->GetAbsoluteTop() + (laneHeight * (down ? 1.7 : 0.7))))}};
 	};
 	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
 	REQUIRE(clock != nullptr);
@@ -1319,7 +1320,9 @@ TEST_CASE("event drags past the project start clamp the preview and the edit tog
 		const bool original =
 			std::find(originals.begin(), originals.end(), event.at("id").get<uint64_t>()) != originals.end();
 		if (copy && original)
-			CHECK(event.at("position") == static_cast<int64_t>(1 + 2 * i) * bar);
+		{
+			CHECK(event.at("position") == static_cast<int64_t>(1 + (2 * i)) * bar);
+		}
 		else
 		{
 			CHECK(event.at("position") == static_cast<int64_t>(2 * (i % originals.size())) * bar);
@@ -1337,7 +1340,7 @@ TEST_CASE("event drags past the project start clamp the preview and the edit tog
 	REQUIRE(undone.size() == originals.size());
 	for (size_t i = 0; i < undone.size(); ++i)
 	{
-		CHECK(undone[i].at("position") == static_cast<int64_t>(1 + 2 * i) * bar);
+		CHECK(undone[i].at("position") == static_cast<int64_t>(1 + (2 * i)) * bar);
 		CHECK(undone[i].at("track") == track.at("id"));
 	}
 }

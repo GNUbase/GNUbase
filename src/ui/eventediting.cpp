@@ -318,7 +318,7 @@ namespace gnubase::ui
 					const double from = edge(false).value_or(0.0);
 					const time::Position at = time::rebase(
 						{time::TimeBase::Linear, samples(from)}, step.base, m_time.tempo, m_time.sampleRate);
-					parameters = shiftTo({step.base, at.value + direction * step.value}, from, true).first;
+					parameters = shiftTo({step.base, at.value + (direction * step.value)}, from, true).first;
 					parameters["events"] = m_selection;
 				}
 				if (edgeName != nullptr)
@@ -814,9 +814,10 @@ namespace gnubase::ui
 			return;
 		m_dragStarted = true;
 		const std::pair<double, double> shift = restricted(dx, dy, constrained);
-		const auto moved = moveShift(constrained && shift.first == 0.0 ? 0.0 : shift.first);
-		m_dragDx = constrained && shift.first == 0.0 ? 0.0 : moved.second / m_view.scale;
-		m_dragTicks = moved.first.contains("ticks") && !(constrained && shift.first == 0.0)
+		const bool vertical = constrained && shift.first == 0.0;
+		const auto moved = moveShift(vertical ? 0.0 : shift.first);
+		m_dragDx = vertical ? 0.0 : moved.second / m_view.scale;
+		m_dragTicks = moved.first.contains("ticks") && !vertical
 			? std::optional<int64_t>(moved.first.at("ticks").get<int64_t>())
 			: std::nullopt;
 		m_dragLanes = laneShift(shift.second);
