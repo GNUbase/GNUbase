@@ -175,7 +175,25 @@ namespace gnubase::ui
 		return engine::snap(m_snap, snapGrid(), target);
 	}
 
-	std::pair<Json, double> EventDisplay::shiftTo(const time::Position& to, double from) const
+	double EventDisplay::snapped(double seconds, std::optional<double> from) const
+	{
+		return static_cast<double>(time::toSamples(snapAt(seconds, from), m_time.tempo, m_time.sampleRate)) /
+			m_time.sampleRate;
+	}
+
+	int64_t EventDisplay::clampMove(time::TimeBase base, int64_t shift) const
+	{
+		for (const Shown& shown : m_events)
+			if (std::binary_search(m_selection.begin(), m_selection.end(), shown.id))
+			{
+				const int64_t start =
+					base == time::TimeBase::Musical ? m_time.tempo.toTicks(shown.start) : samples(shown.start);
+				shift = std::max(shift, -start);
+			}
+		return shift;
+	}
+
+	std::pair<Json, double> EventDisplay::shiftTo(const time::Position& to, double from, bool moving) const
 	{
 		const bool musical = to.base == time::TimeBase::Musical &&
 			std::none_of(m_events.begin(), m_events.end(),
@@ -185,9 +203,15 @@ namespace gnubase::ui
 						std::binary_search(m_selection.begin(), m_selection.end(), shown.id);
 				});
 		if (musical)
-			return {{{"ticks", to.value - m_time.tempo.toTicks(from)}}, m_time.tempo.toSeconds(to.value) - from};
+		{
+			const int64_t origin = m_time.tempo.toTicks(from);
+			const int64_t shift = moving ? clampMove(time::TimeBase::Musical, to.value - origin) : to.value - origin;
+			return {{{"ticks", shift}}, m_time.tempo.toSeconds(origin + shift) - from};
+		}
 		const int64_t sample = time::toSamples(to, m_time.tempo, m_time.sampleRate);
-		return {{{"delta", sample - samples(from)}}, (static_cast<double>(sample) / m_time.sampleRate) - from};
+		const int64_t shift =
+			moving ? clampMove(time::TimeBase::Linear, sample - samples(from)) : sample - samples(from);
+		return {{{"delta", shift}}, static_cast<double>(shift) / m_time.sampleRate};
 	}
 
 	void EventDisplay::select(std::vector<uint64_t> events)
@@ -289,6 +313,9 @@ namespace gnubase::ui
 					engine::gridStep(m_snap.grid(), snapGrid(), samples(edge(false).value_or(0.0)));
 				Json parameters = {{"events", m_selection},
 					{step.base == time::TimeBase::Musical ? "ticks" : "delta", direction * step.value}};
+				if (edgeName == nullptr)
+					parameters[step.base == time::TimeBase::Musical ? "ticks" : "delta"] =
+						clampMove(step.base, direction * step.value);
 				if (edgeName != nullptr)
 					parameters["edge"] = edgeName;
 				edit(edgeName == nullptr ? "event.move" : "event.resize", std::move(parameters));
@@ -446,13 +473,17 @@ namespace gnubase::ui
 				[this, edge]
 				{
 					if (const std::optional<double> at = edge(false))
-						edit("event.move", {{"events", m_selection}, {"delta", m_cursorSample - samples(*at)}});
+						edit("event.move",
+							{{"events", m_selection},
+								{"delta", clampMove(time::TimeBase::Linear, m_cursorSample - samples(*at))}});
 				}},
 			{"edit.moveEndToCursor",
 				[this, edge]
 				{
 					if (const std::optional<double> at = edge(true))
-						edit("event.move", {{"events", m_selection}, {"delta", m_cursorSample - samples(*at)}});
+						edit("event.move",
+							{{"events", m_selection},
+								{"delta", clampMove(time::TimeBase::Linear, m_cursorSample - samples(*at))}});
 				}},
 			// The select submenu (reference manual pp. 254-255); without track selection (#81), on every track.
 			{"edit.selectAll", [this] { selectWhere([](const Shown&) { return true; }); }},
@@ -696,6 +727,8 @@ namespace gnubase::ui
 		if (lane && automationAt(*lane) != nullptr) // a press edits points with the tool chosen, combined or not
 			return toolName(m_tool);
 		const Tool tool = toolAt(y);
+		if (scrubEdgeAt(x, y) != 0) // the play tool in scrub mode resizes there
+			return "resize";
 		if (tool != Tool::ObjectSelection)
 			return toolName(tool);
 		// What a press with the object selection tool and the keys does (areaDown, areaUp).
@@ -778,7 +811,12 @@ namespace gnubase::ui
 			return;
 		m_dragStarted = true;
 		const std::pair<double, double> shift = restricted(dx, dy, constrained);
-		m_dragDx = constrained && shift.first == 0.0 ? 0.0 : moveShift(shift.first).second / m_view.scale;
+		const bool vertical = constrained && shift.first == 0.0;
+		const auto moved = moveShift(vertical ? 0.0 : shift.first);
+		m_dragDx = vertical ? 0.0 : moved.second / m_view.scale;
+		m_dragTicks = moved.first.contains("ticks") && !vertical
+			? std::optional<int64_t>(moved.first.at("ticks").get<int64_t>())
+			: std::nullopt;
 		m_dragLanes = laneShift(shift.second);
 		setLanes();
 	}
@@ -823,7 +861,7 @@ namespace gnubase::ui
 		const auto pressed = std::find_if(
 			m_events.begin(), m_events.end(), [this](const Shown& shown) { return shown.id == m_dragEvent; });
 		const double from = pressed == m_events.end() ? 0.0 : pressed->snapPoint.value_or(pressed->start);
-		return shiftTo(snapAt(from + (dx * m_view.scale), from), from);
+		return shiftTo(snapAt(from + (dx * m_view.scale), from), from, true);
 	}
 
 	void EventDisplay::areaUp(Rml::Event& event)
@@ -832,6 +870,17 @@ namespace gnubase::ui
 		if (!alive())
 			return;
 		m_pressed = modifiersOf(event); // what is held now decides, e.g. whether a drag copies
+		if (std::exchange(m_resizeScrubs, false))
+		{
+			m_binding.send("audition.stop", Json::object());
+			// A click of the play tool: no tool modifier's click of the object selection tool (Split Event, Set
+			// Cursor Position).
+			if (!m_dragMoved)
+			{
+				m_drag = Drag::None;
+				return;
+			}
+		}
 		if (drag == Drag::Automation)
 		{
 			automationUp(dpFrom(*m_lanes, event.GetParameter<float>("mouse_x", 0.0F)),
@@ -992,6 +1041,13 @@ namespace gnubase::ui
 					// One that fails, e.g. for a locked event, shows the events as they are, as the release leaves
 					// them.
 					m_resizePreview = result.ok() ? result.value : Json();
+					// The play tool's resize in scrub mode scrubs what the event plays at the edge the release
+					// gives it (reference manual p. 268).
+					if (m_resizeScrubs && result.ok())
+						for (const Json& event : result.value.at("audioEvents"))
+							if (event.at("id") == m_dragEvent)
+								scrubEdge(event.at("clip").get<uint64_t>(), event.at("offset").get<int64_t>(),
+									event.at("length").get<int64_t>());
 					showProject();
 				}
 				askResizePreview();
@@ -1063,6 +1119,8 @@ namespace gnubase::ui
 			return false;
 		m_drag = Drag::None;
 		m_dragMoved = false;
+		if (std::exchange(m_resizeScrubs, false))
+			m_binding.send("audition.stop", Json::object());
 		const bool shown = !m_resizePreview.is_null();
 		endResize();
 		if (shown)

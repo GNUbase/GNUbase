@@ -14,6 +14,7 @@
 #include "engine/graph/graph.h"
 #include "engine/metronome/metronome.h"
 #include "engine/processors/midieffects.h"
+#include "engine/processors/sampler.h"
 #include "engine/schema.h"
 #include "platform/audio/device.h"
 #include "platform/audio/dummydevice.h"
@@ -413,6 +414,8 @@ namespace gnubase::engine
 			std::string id;             // the built-in instrument, or empty
 			std::set<ObjectId> sources; // the MIDI channels routed to it
 			std::shared_ptr<InstrumentChannel> channel;
+			std::shared_ptr<processors::Sampler> sampler; // the sampler's, which loads its sample when it changes
+			std::string sample;                           // the media file that sampler plays
 		};
 		std::map<ObjectId, std::shared_ptr<MidiSequencer>> m_sequencers; // per MIDI and instrument channel
 		// Per MIDI and instrument channel with an input transformer.

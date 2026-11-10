@@ -268,6 +268,8 @@ namespace gnubase::ui
 				m_list->show(m_project, m_view);
 			if (m_audio)
 				m_audio->show(m_project, m_view);
+			if (m_pattern)
+				m_pattern->show(m_project, m_view);
 			fillMenus();
 		}
 		else if (m_part == EditorPart::Visibility)
@@ -298,12 +300,14 @@ namespace gnubase::ui
 		const std::string shown = m_view.value("content", std::string("key"));
 		Rml::Element* editor = m_root.get() != nullptr ? m_root.get()->QuerySelector(".midi-editor") : nullptr;
 		if (editor == nullptr || (shown == "list" && m_list) || (shown == "audioPart" && m_audio) ||
-			(shown != "list" && shown != "audioPart" && m_keys && m_keys->drum() == (shown == "drum")))
+			(shown == "pattern" && m_pattern) ||
+			((shown == "key" || shown == "drum") && m_keys && m_keys->drum() == (shown == "drum")))
 			return;
 		m_keys.reset();
 		m_list.reset();
 		m_audio.reset();
-		for (const char* name : {".key-editor", ".list-editor", ".audio-part-editor"})
+		m_pattern.reset();
+		for (const char* name : {".key-editor", ".list-editor", ".audio-part-editor", ".pattern-editor"})
 			if (Rml::Element* old = editor->QuerySelector(name))
 				editor->RemoveChild(old);
 		Rml::Element* added = editor->AppendChild(editor->GetOwnerDocument()->CreateElement("div"));
@@ -311,6 +315,11 @@ namespace gnubase::ui
 		{
 			added->SetClass("list-editor", true);
 			m_list = std::make_unique<ListEditor>(m_binding, *added, m_name);
+		}
+		else if (shown == "pattern")
+		{
+			added->SetClass("pattern-editor", true);
+			m_pattern = std::make_unique<PatternEditor>(m_binding, *added, m_name);
 		}
 		else if (shown == "audioPart")
 		{

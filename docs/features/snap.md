@@ -32,7 +32,7 @@ project setup's time format sets the ruler, the ruler can choose its own afterwa
 are always the ruler's format's (pp. 105, 109); snapping is the same with and without a UI, and a `snap.set {format}`
 right after it stays. The transport's primary time display shows the project setup's time format (p. 317), so the
 ruler and the primary time display can differ; picking a format in the ruler's menu with Ctrl (Cmd on macOS) held
-sets both (`project.set {timeFormat}` as well, p. 69).
+sets both (`project.setTimeFormat`, p. 69).
 
 The frame grids have the project's frame rate (project setup, `project.set {frameRate}`, #78), with its pull-down;
 `userFrames` has the user's, 30 fps until that is a setting of its own (`time::g_userFramesPerSecond`), in the event
@@ -83,7 +83,9 @@ the project start. The sample grids count from the project start, as the samples
 - **Snap to zero crossing** (p. 105): `event.split` and normal sizing in `event.resize` with `zeroCrossing` move an
   audio event's cut to the nearest frame within 50 ms where the sum of its channels changes sign, the one of the two
   nearer to zero. A split only looks inside the event, and only at events the position cuts. The file is read on the
-  command thread; a file that can't be read leaves the position as it is.
+  command thread; a file that can't be read leaves the position as it is. `snap.zeroCrossings` moves positions on
+  tracks the same way, inside the audio event that plays there on the first of the tracks that has one: the event
+  display's selection range edges (p. 285, [tools.md](tools.md)).
 
 ## The event display
 
@@ -132,7 +134,7 @@ Not yet: grid lines and snap point lines in the event display, the editors' own 
   shuffling forwards, backwards, to the end and to the front, its errors and a locked neighbour, audio events on a
   musical track across a tempo change; splitting and resizing at zero crossings of a real file, not when sizing moves
   the contents or the file is missing; a split near an event's start still splits it, and one just outside an event
-  leaves it alone.
+  leaves it alone; `snap.zeroCrossings` inside an event, outside it and on tracks without audio.
 - `tests/eventediting_tests.cpp` (fake window system, real engine): with snap on, a drag, a resize and an Alt click land
   on bars, shuffle swaps two parts, events, a position marker and the cursor attract, a position marker and a cycle
   marker's end on a linear marker track that isn't active attract a drag where `snap.position` puts it, a snap point set

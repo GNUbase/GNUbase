@@ -73,9 +73,15 @@ namespace gnubase::app
 	// The settings folder: --settings if given, otherwise the user's (GNUBASE_SETTINGS_DIR or the OS's folder).
 	std::filesystem::path settingsDirectory(const Options& options);
 
-	// The settings folder the engine uses as the safe start mode says (#163): options.settings, or none (in memory
-	// only) for SafeSettings::Disable; for SafeSettings::Delete, the profile files in it are deleted first.
+	// The settings folder the engine uses as the safe start mode says (#163): options.settings. For
+	// SafeSettings::Delete, the active profile's files in it are deleted first and a profile switch that
+	// profile.activate chose is dropped, so that GNUbase starts with the factory settings. SafeSettings::Disable is
+	// the engine's factorySettings (factorySettings(options)), which keeps the profile's files as they are.
 	std::filesystem::path safeSettingsDirectory(const Options& options);
+	inline bool factorySettings(const Options& options)
+	{
+		return options.settingsMode == SafeSettings::Disable;
+	}
 
 	// Whether the keys that open the safe start mode's dialog are held while GNUbase starts: Ctrl+Shift+Alt, which
 	// only Windows can tell before a window opens; false elsewhere.

@@ -364,12 +364,23 @@ namespace gnubase::scripting
 		lua_pop(state, 1);
 	}
 
-	std::optional<std::string> Runtime::run(std::string_view code, const std::string& chunkName)
+	std::optional<std::string> Runtime::run(std::string_view code, const std::string& chunkName, int environment)
 	{
-		return execute(code, "=" + chunkName); // shown as is in messages
+		return execute(code, "=" + chunkName, environment); // shown as is in messages
 	}
 
-	std::optional<std::string> Runtime::execute(std::string_view code, const std::string& luaChunkName)
+	int Runtime::newEnvironment()
+	{
+		lua_State* state = m_state.get();
+		lua_newtable(state);
+		lua_newtable(state); // its metatable
+		lua_pushglobaltable(state);
+		lua_setfield(state, -2, "__index");
+		lua_setmetatable(state, -2);
+		return luaL_ref(state, LUA_REGISTRYINDEX);
+	}
+
+	std::optional<std::string> Runtime::execute(std::string_view code, const std::string& luaChunkName, int environment)
 	{
 		rt::assertNotRealtime("scripting::Runtime::run");
 		lua_State* state = m_state.get();
@@ -378,7 +389,9 @@ namespace gnubase::scripting
 		// time limit and test cases.
 		const bool outermost = m_depth == 0;
 		++m_depth;
-		if (outermost && m_timeLimit.count() > 0)
+		if (outermost)
+			m_limited = m_timeLimit.count() > 0;
+		if (outermost && m_limited)
 		{
 			m_deadline = std::chrono::steady_clock::now() + m_timeLimit;
 			lua_sethook(state, &Runtime::stopWhenLate, LUA_MASKCOUNT, 10000);
@@ -390,6 +403,12 @@ namespace gnubase::scripting
 		};
 		lua_pushcfunction(state, traceback);
 		int status = luaL_loadbufferx(state, code.data(), code.size(), luaChunkName.c_str(), "t");
+		if (status == LUA_OK && environment != 0)
+		{
+			lua_rawgeti(state, LUA_REGISTRYINDEX, environment);
+			if (lua_setupvalue(state, -2, 1) == nullptr) // a chunk's first upvalue is _ENV
+				lua_pop(state, 1);
+		}
 		if (status == LUA_OK)
 			status = lua_pcall(state, 0, 0, top + 1);
 		std::optional<std::string> error;
@@ -410,25 +429,33 @@ namespace gnubase::scripting
 			error = message();
 		lua_settop(state, top);
 		--m_depth; // only now: the test cases run code too
+		m_limited = false;
 		return error;
 	}
 
-	std::optional<std::string> Runtime::runFile(const std::filesystem::path& file)
+	std::optional<std::string> Runtime::runFile(const std::filesystem::path& file, int environment)
 	{
 		std::ifstream in(file, std::ios::binary);
 		if (!in)
 			return "can't open " + file.u8string();
 		std::string code{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
 		if (!code.empty() && code.front() == '#')
-			code.insert(0, "--");                    // keeps the line numbers
-		return execute(code, "@" + file.u8string()); // a long path keeps its end in messages
+			code.insert(0, "--");                                 // keeps the line numbers
+		return execute(code, "@" + file.u8string(), environment); // a long path keeps its end in messages
 	}
 
 	void Runtime::stopWhenLate(lua_State* state, lua_Debug* /*debug*/)
 	{
-		const Runtime& runtime = **static_cast<Runtime**>(lua_getextraspace(state));
-		if (std::chrono::steady_clock::now() > runtime.m_deadline)
-			luaL_error(state, "the script ran longer than %d ms", static_cast<int>(runtime.m_timeLimit.count()));
+		// The hook stays, also in coroutines that outlive the run, so it checks that a limited run goes on.
+		Runtime& runtime = **static_cast<Runtime**>(lua_getextraspace(state));
+		if (!runtime.m_limited || runtime.m_depth == 0 || std::chrono::steady_clock::now() <= runtime.m_deadline)
+			return;
+		if (runtime.m_keepRunning && runtime.m_keepRunning())
+		{
+			runtime.m_deadline = std::chrono::steady_clock::now() + runtime.m_timeLimit;
+			return;
+		}
+		luaL_error(state, "the script ran longer than %d ms", static_cast<int>(runtime.m_timeLimit.count()));
 	}
 
 	Runtime& Runtime::self(lua_State* state)

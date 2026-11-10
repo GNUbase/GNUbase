@@ -98,6 +98,13 @@ namespace gnubase::ui
 		// document with a search field, Remove Parameter, Remove Unused Parameters, Show Only Automation Tracks of a
 		// plugin and the track's parameters; Read (.automation-read) and Append Automation Track (.automation-append).
 		const std::map<std::string, std::function<void()>>& actions() const { return m_actions; }
+		// A marker track's controls (reference manual pp. 422-423): Add Position Marker (addPositionMarker) at the
+		// cursor, Add Cycle Marker (addCycleMarker) at the locators, Activate Track (activateMarkerTrack, .checked on
+		// the active one), and the drop-down lists of its markers Locate (markerLocate), which locates to the marker
+		// chosen, Cycle (markerCycle), which sets the locators to it, and Zoom (markerZoom), which zooms to it. The
+		// listener hears of the marker that Locate chooses (rename false), to select it, and of the one that a
+		// Shift-click on Add Cycle Marker adds (rename true), to name it.
+		void onMarker(std::function<void(uint64_t marker, bool rename)> listener) { m_onMarker = std::move(listener); }
 
 	private:
 		// A track as the list shows it, from the event display's project.
@@ -142,7 +149,10 @@ namespace gnubase::ui
 		const engine::Json* channelOf(const Row& row) const;
 		std::vector<std::string> controlsOf(const Row& row) const;
 		// A click on a track control; solo takes Ctrl (exclusive) and Alt (solo defeat), see soloClick.
-		void control(const Row& row, const std::string& name, bool exclusive = false, bool defeat = false);
+		void control(
+			const Row& row, const std::string& name, bool exclusive = false, bool defeat = false, bool shift = false);
+		// A marker chosen in a marker track's Locate, Cycle or Zoom list.
+		void markerChange(Rml::Element& control, const std::string& value);
 		// A ruler track's time format chosen or time offset typed (reference manual p. 159).
 		void rulerChange(Rml::Element& control, const std::string& value);
 		void step(int direction);
@@ -179,7 +189,7 @@ namespace gnubase::ui
 		// track like the lowest selected audio or MIDI track, with its input and output, below it; a MIDI track below
 		// another selected track; without one, a MIDI track at the end.
 		void addTrack();
-		void removeTracks(std::vector<uint64_t> tracks);
+		void removeTracks(const std::vector<uint64_t>& tracks);
 		void closedRemoveDialog(Rml::Event& event);
 		// The chord track's dialogs (docs/features/chord-track.md): Create Chord Events (create-chord-events.rml) and
 		// Map to Chord Track (map-to-chord-track.rml) for the selected MIDI and instrument tracks.
@@ -208,12 +218,13 @@ namespace gnubase::ui
 		std::vector<Row> m_tracks;               // every track in the project's order
 		std::map<uint64_t, size_t> m_index;
 		std::set<uint64_t> m_folded;
-		std::set<uint64_t> m_filtered;                    // what the track visibility hides (#166)
-		engine::Json m_controls = engine::Json::object(); // ui.trackControls
-		engine::Json m_widths = engine::Json::object();   // ui.trackWidths
-		std::string m_tempoType = "auto";                 // editing.tempoType
-		bool m_showingTempo = false;                      // the tempo controls' change events aren't the user's
-		uint64_t m_loads = 0;                             // the display's, when the rows were last built
+		std::set<uint64_t> m_filtered;                         // what the track visibility hides (#166)
+		engine::Json m_controls = engine::Json::object();      // ui.trackControls
+		engine::Json m_widths = engine::Json::object();        // ui.trackWidths
+		engine::Json m_defaultWidths = engine::Json::object(); // ui.trackWidths defaults by type
+		std::string m_tempoType = "auto";                      // editing.tempoType
+		bool m_showingTempo = false;                           // the tempo controls' change events aren't the user's
+		uint64_t m_loads = 0;                                  // the display's, when the rows were last built
 		bool m_layingOut = false;
 		uint64_t m_renaming = 0;
 		std::string m_renamed;                         // the name before renaming
@@ -233,6 +244,7 @@ namespace gnubase::ui
 		uint64_t m_dropBefore = 0;
 
 		std::map<std::string, std::function<void()>> m_actions;
+		std::function<void(uint64_t, bool)> m_onMarker;
 		std::vector<Subscription> m_subscriptions;
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
 	};

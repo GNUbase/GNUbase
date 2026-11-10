@@ -31,6 +31,14 @@ namespace gnubase::ui
 				show();
 			}));
 		m_subscriptions.push_back(m_binding.on("project.reset", [this](const engine::Event&) { request(); }));
+		// The global workspaces as another client, such as another GNUbase process, changed them: the active one may
+		// be gone or back.
+		m_subscriptions.push_back(m_binding.on("settings.changed",
+			[this](const engine::Event& event)
+			{
+				if (event.data.at("values").contains("ui.workspaces"))
+					request();
+			}));
 		request();
 	}
 

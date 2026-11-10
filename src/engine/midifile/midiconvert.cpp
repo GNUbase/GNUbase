@@ -835,6 +835,14 @@ namespace gnubase::engine::midifile
 
 			time::SignatureMap map() const { return time::SignatureMap(m_changes); }
 
+			// Starts with the changes of bars that start before until.
+			void seed(const time::SignatureMap& bars, Ticks until)
+			{
+				for (const time::SignatureChange& change : bars.changes())
+					if (bars.barStart(change.bar) < until)
+						add(bars.barStart(change.bar), change.signature);
+			}
+
 		private:
 			static Ticks barLength(const time::TimeSignature& signature)
 			{
@@ -862,18 +870,19 @@ namespace gnubase::engine::midifile
 		return Exporter(project, options).run();
 	}
 
-	Import importFile(const File& file)
+	Import importFile(const File& file, const ImportOptions& options)
 	{
 		const auto toProject = [&file](int64_t tick) { return rescale(tick, file.ticksPerQuarter, g_ticksPerQuarter); };
 
 		// Where each file track starts. The tracks of a type 2 file are independent sequences: they go one after
 		// another, each from the first bar start after the previous one's end.
 		const bool sequences = file.format == 2;
-		std::vector<Ticks> offsets(file.tracks.size(), 0);
+		std::vector<Ticks> offsets(file.tracks.size(), options.start);
 		if (sequences)
 		{
 			SignatureBuilder bars;
-			Ticks start = 0;
+			bars.seed(options.signatures, options.start);
+			Ticks start = options.start;
 			for (size_t i = 0; i < file.tracks.size(); ++i)
 			{
 				if (start > g_lastSequenceStart)
@@ -891,7 +900,7 @@ namespace gnubase::engine::midifile
 		}
 
 		// A type 1 file's track after the first with nothing but markers and a name is a marker track of its own.
-		const auto markerTrack = [&file, &toProject](size_t index) -> std::optional<ImportedMarkerTrack>
+		const auto markerTrack = [&file, &options, &toProject](size_t index) -> std::optional<ImportedMarkerTrack>
 		{
 			if (file.format != 1 || index == 0)
 				return std::nullopt;
@@ -907,7 +916,7 @@ namespace gnubase::engine::midifile
 				else if (event.meta == g_metaMarker)
 				{
 					Marker marker;
-					marker.position = {time::TimeBase::Musical, toProject(event.tick)};
+					marker.position = {time::TimeBase::Musical, options.start + toProject(event.tick)};
 					marker.end = marker.position;
 					marker.name = fileText(event.data);
 					track.markers.push_back(std::move(marker));
@@ -922,11 +931,16 @@ namespace gnubase::engine::midifile
 			return track;
 		};
 
-		// Tempo, signatures and markers from every other track, by position. A sequence starts at 120 BPM in 4/4
-		// unless it sets its own.
+		// Tempo, signatures and markers from every other track, by position. The file, and each sequence, starts at
+		// 120 BPM in 4/4 unless it sets its own.
 		Import result;
 		std::vector<std::pair<Ticks, double>> tempo;
 		std::vector<std::pair<Ticks, time::TimeSignature>> signatures;
+		if (!sequences)
+		{
+			tempo.emplace_back(options.start, g_defaultBpm);
+			signatures.emplace_back(options.start, time::TimeSignature{});
+		}
 		for (size_t i = 0; i < offsets.size(); ++i)
 		{
 			if (sequences)
@@ -966,7 +980,13 @@ namespace gnubase::engine::midifile
 		std::stable_sort(result.markers.begin(), result.markers.end(),
 			[](const Marker& a, const Marker& b) { return a.position.value < b.position.value; });
 
-		std::vector<time::TempoPoint> points{{0, g_defaultBpm, false}};
+		// The project's tempo before the file's start stays.
+		std::vector<time::TempoPoint> points;
+		for (const time::TempoPoint& point : options.tempo.points())
+			if (point.position < options.start)
+				points.push_back(point);
+		if (points.empty())
+			points.push_back({0, g_defaultBpm, false});
 		for (const auto& [at, bpm] : tempo)
 		{
 			if (at == points.back().position)
@@ -976,13 +996,14 @@ namespace gnubase::engine::midifile
 		}
 		result.tempo = time::TempoMap(points);
 		SignatureBuilder bars;
+		bars.seed(options.signatures, options.start);
 		for (const auto& [at, signature] : signatures)
 			bars.add(at, signature);
 		result.signatures = bars.map();
 
 		for (size_t i = 0; i < offsets.size(); ++i)
 		{
-			TrackReader reader(file.ticksPerQuarter, file.format == 0, offsets[i]);
+			TrackReader reader(file.ticksPerQuarter, file.format == 0 && options.dissolve, offsets[i]);
 			reader.read(file.tracks[i]);
 			for (ImportedTrack& imported : reader.take())
 				result.tracks.push_back(std::move(imported));

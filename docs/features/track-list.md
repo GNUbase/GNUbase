@@ -73,12 +73,13 @@ sends engine commands, so whatever another client changes shows at once.
   and any client changes it with `settings.set`. A double click on the divider leaves it alone. A window too narrow for
   both takes the room from the track list once the event display is at its minimum.
 - **Name and controls widths** (p. 191). The user setting `ui.trackWidths` has the track name's width for every track
-  type (`name`, 20 to 400 dp) and each type's controls area width (`controls`, 0 to 800 dp), 120 dp each by default (the
-  tempo track's 144 dp, so its three controls fit on one line) and where it has none. The name and the controls area are
-  as wide as that, and the controls go onto more lines when they don't fit, as many as the track's height shows. In a
-  row too narrow for both, such as deep in folders or in a narrow track list, the name gives way; what still doesn't fit
-  is hidden at the row's right. The dialog keeps what the setting has that it doesn't know, such as another type's width
-  from a later GNUbase.
+  type (`name`, 20 to 400 dp) and each type's controls area width (`controls`, 0 to 800 dp). Defaults are 120 dp, except
+  marker and ruler controls at 140 dp, tempo at 144 dp so its three controls fit on one line, and chord at 160 dp. A
+  missing width uses the setting's default for that type, in both the track list and its settings dialog (#857). The
+  name and controls area are as wide as that, and controls go onto more lines when they don't fit, as many as the
+  track's height shows. In a row too narrow for both, such as deep in folders or in a narrow track list, the name gives
+  way; what still doesn't fit is hidden at the row's right. The dialog keeps what the setting has that it doesn't know,
+  such as another type's width from a later GNUbase.
 - **Rows and lanes.** The event display has a lane per track that isn't hidden, each as high as its track
   (`EventDisplay::trackHeight`, `g_trackHeight` (40 dp) until set, 20 to 400 dp, times vertical zoom), and tells the
   track list when its lanes or view change (`onLayout`). The list sets each row's height from its lane and moves the
@@ -88,13 +89,14 @@ sends engine commands, so whatever another client changes shows at once.
   `mute` (M) and `solo` (S), which tracks with a channel always show, `record` and `monitor` (audio tracks), `read`
   (every automation lane of the track reads, or with a click none does; disabled without lanes) and `timeBase`
   (musical or linear, `.checked` when linear). A click sends `channel.set`, `automationLane.set` in one transaction,
-  or `track.set`. Folders without a group channel, marker and signature tracks show none. The tempo track's controls are
+  or `track.set`. Folders without a group channel and signature tracks show none. The tempo track's controls are
   `tempoTrack`, Activate Tempo Track (`project.set` `tempoTrackActive`), `currentTempo`, Current Tempo, a text field
   with the tempo at the project cursor that takes a tempo typed with Enter, and `tempoType`, Type of New Tempo Points,
   a drop-down list for `editing.tempoType` ([tempo-track.md](tempo-track.md)); ruler tracks have `timeFormat`,
-  `timeOffsetOn`, `timeOffset` and `setTimeOffset` ([ruler-tracks.md](ruler-tracks.md)). The defaults: mute, solo,
-  record, monitor and read on audio tracks; mute, solo and read on the others with a channel; all three on the tempo
-  track; all four on ruler tracks.
+  `timeOffsetOn`, `timeOffset` and `setTimeOffset` ([ruler-tracks.md](ruler-tracks.md)), marker tracks
+  `addPositionMarker`, `addCycleMarker`, `activateMarkerTrack`, `markerLocate`, `markerCycle` and `markerZoom`
+  ([markers.md](markers.md)). The defaults: mute, solo, record, monitor and read on audio tracks; mute, solo and read
+  on the others with a channel; all three on the tempo track; all four on ruler tracks; all six on marker tracks.
 - **Selection** (pp. 218–219) is the list view's: a click selects a track, Ctrl-click adds or removes one,
   Shift-click selects a range, and Shift-click on a selected track deselects it (the list view's `shiftdeselects`,
   [widgets.md](widgets.md)). Up and Down step through the shown tracks, in the list and wherever the project window
@@ -137,8 +139,8 @@ sends engine commands, so whatever another client changes shows at once.
   channel, nested or not) that held only empty tracks, so it looks again until nothing more goes: one run leaves no
   empty tracks, in one undo step, and none if nothing is empty. It removes a folder with one `track.remove`, which
   takes the tracks inside along, and returns every track removed. Plugins in a channel's slots and an instrument
-  track's instrument don't keep a track. It removes the active marker track last, so the marker track that becomes
-  active is one that stays (#797).
+  track's instrument don't keep a track. After all removals it announces the final active marker track once, only if
+  it changed, so clients never hear of a passing activation (#983).
 - **Group Track and Effect Track to Selected Tracks** (pp. 546, 554): the context menu's commands
   `track.addGroupToSelected` and `track.addEffectToSelected` open the add track dialog for a group or effect track
   that the selected tracks play or send into ([add-track.md](add-track.md), [routing.md](routing.md)).
@@ -147,8 +149,8 @@ sends engine commands, so whatever another client changes shows at once.
   or a folder with such a track inside, warns, whatever plays into it. Remove removes them, Cancel or Escape keeps
   them, and Remove with "Don't show this warning again" checked also turns the user setting `ui.removeTracksWarning`
   (Display Warning before Deleting Non-Empty Tracks, on by default) off, which any client can turn on again with
-  `settings.set`. Remove Selected Tracks also removes the active marker track last, as Remove Empty Tracks does, so
-  clients only hear of a marker track that stays becoming active (#820).
+  `settings.set`. Its `history.transaction` announces the final active marker track once after all commands, only if
+  it changed, regardless of the order in which a client removes the tracks (#983).
 - **Track presets** (pp. 199, 238-243): the context menu's Add Track from Preset, Save Track Preset and Load Track
   Preset open the track preset dialog for the selected tracks ([track-presets.md](track-presets.md)).
 - **Freeze and render in place** (pp. 219-220, 1471-1477): the context menu's Freeze/Unfreeze Selected Tracks
@@ -182,8 +184,7 @@ dividing the track list, track visibility agents and the track type
 filter, track presets, track pictures, the lock control, edit channel settings, volume and pan in the track list,
 the settings dialog's groups, controls area preview, presets, Reset All and the MIDI tracks' Output Group and
 Channel Width (p. 191), the track height presets menu, snap track heights, the preferences dialog's
-page for `ui.removeTracksWarning` and `ui.upDownSelectsTracksOnly` (#162), and the ruler and marker tracks' own
-controls (#447, #91). Adding a track below the selected one is #448. Folders' group channels, data blocks and Move Selected Tracks to
+page for `ui.removeTracksWarning` and `ui.upDownSelectsTracksOnly` (#162). Adding a track below the selected one is #448. Folders' group channels, data blocks and Move Selected Tracks to
 New Folder are in [folder-tracks.md](folder-tracks.md).
 
 ## Checks

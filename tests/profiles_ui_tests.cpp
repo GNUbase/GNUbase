@@ -4,12 +4,14 @@
 #include "uiapp.h"
 
 #include "engine/engine.h"
+#include "testutils/testutils.h"
 #include "ui/automation.h"
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
 #include <chrono>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <vector>
@@ -93,5 +95,38 @@ TEST_CASE("the Profile Manager adds, duplicates, renames, deletes and activates 
 				std::string::npos;
 		}));
 	CHECK(listed(app) == std::vector<std::string>{"Default*", "Studio"});
+	click(app, "#profile-close");
+}
+
+TEST_CASE("the Profile Manager exports and imports profiles through the file dialogs", "[ui]")
+{
+	test::UiApp app({1000, 700});
+	app.appUi().showProject();
+	app.keys().run("window.profiles", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return listed(app) == std::vector<std::string>{"Default*"}; }));
+	const test::TempDir dir;
+	const std::filesystem::path file = dir.path() / "Default.json";
+	// Answers the file dialog with the file, as the user would; the dialog's title says which it is.
+	const auto answer = [&app, &file](const std::string& title)
+	{
+		REQUIRE(app.waitUntil([&app] { return !app.shell().fileDialogs().empty(); }));
+		const auto dialogs = app.shell().fileDialogs();
+		CHECK(dialogs.begin()->second.title == title);
+		app.shell().answerFileDialog(dialogs.begin()->first, {file});
+	};
+
+	// Export saves the selected profile in the file chosen.
+	click(app, "#profiles-list listitem[profile=Default]");
+	click(app, "#profile-export");
+	answer("Export Profile");
+	REQUIRE(app.waitUntil([&file] { return std::filesystem::exists(file); }));
+
+	// Import adds the profile under the name the file has, here after the profile was renamed.
+	typeName(app, "Home");
+	click(app, "#profile-rename");
+	REQUIRE(app.waitUntil([&app] { return listed(app) == std::vector<std::string>{"Home*"}; }));
+	click(app, "#profile-import");
+	answer("Import Profile");
+	REQUIRE(app.waitUntil([&app] { return listed(app) == std::vector<std::string>{"Default", "Home*"}; }));
 	click(app, "#profile-close");
 }

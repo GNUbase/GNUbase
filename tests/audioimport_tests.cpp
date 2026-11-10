@@ -510,6 +510,55 @@ TEST_CASE("audioFile.import splits channels into mono files on tracks of their o
 	CHECK(clap.at("position") == 4800);
 }
 
+TEST_CASE("audioFile.import combines oneTrack with splitChannels for mixed mono and stereo files", "[integration]")
+{
+	const bool existingTrack = GENERATE(false, true);
+	INFO("existing track: " << existingTrack);
+	SavedProject song;
+	writeFile(song.library / "first.wav", 4800, 1);
+	writeFile(song.library / "stereo.wav", 9600, 2);
+	writeFile(song.library / "last.wav", 2400, 1);
+	const Json files = {
+		utf8(song.library / "first.wav"), utf8(song.library / "stereo.wav"), utf8(song.library / "last.wav")};
+	Json parameters = {{"files", files}, {"position", 48000}, {"oneTrack", true}, {"splitChannels", true}};
+	Json monoTrack;
+	if (existingTrack)
+	{
+		const Json track = run(
+			song.client, "track.add", {{"type", "audio"}, {"channels", 1}, {"timeBase", "linear"}, {"name", "Mono"}})
+							   .at("track");
+		monoTrack = track.at("id");
+		parameters["track"] = monoTrack;
+	}
+	const Json result = run(song.client, "audioFile.import", parameters);
+	REQUIRE(result.at("tracks").size() == (existingTrack ? 2 : 3));
+	REQUIRE(result.at("events").size() == 4);
+	REQUIRE(result.at("media").size() == 4);
+	if (!existingTrack)
+		monoTrack = result.at("tracks")[0];
+	const size_t split = existingTrack ? 0 : 1;
+	const Json tracks = {monoTrack, result.at("tracks")[split], result.at("tracks")[split + 1], monoTrack};
+	// Only the first mono file advances the sequence; both split channels start at the import position.
+	const std::vector<int64_t> starts{
+		existingTrack ? 48000 : ticksAt(48000), ticksAt(48000), ticksAt(48000), existingTrack ? 52800 : ticksAt(52800)};
+	const std::vector<int64_t> lengths{4800, 9600, 9600, 2400};
+	const Json project = run(song.client, "project.get");
+	REQUIRE(project.at("tracks").size() == 3);
+	REQUIRE(project.at("audioEvents").size() == 4);
+	for (size_t i = 0; i < 4; ++i)
+	{
+		INFO("event: " << i);
+		const Json event = byId(project.at("audioEvents"), result.at("events")[i]);
+		CHECK(event.at("track") == tracks[i]);
+		CHECK(event.at("position") == starts[i]);
+		const Json track = byId(project.at("tracks"), tracks[i]);
+		CHECK(byId(project.at("channels"), track.at("channel")).at("format") == "mono");
+		const Json media = byId(project.at("media"), result.at("media")[i]);
+		CHECK(media.at("channels") == 1);
+		CHECK(media.at("length") == lengths[i]);
+	}
+}
+
 TEST_CASE("audioFile.import names split files as nameFormat says", "[integration]")
 {
 	struct Format

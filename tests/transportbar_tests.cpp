@@ -11,6 +11,7 @@
 #include "testutils/fakeui.h"
 #include "ui/automation.h"
 #include "ui/canvas.h"
+#include "ui/docking.h"
 #include "ui/enginebinding.h"
 #include "ui/eventdisplay.h"
 #include "ui/keycommands.h"
@@ -392,9 +393,22 @@ TEST_CASE("the transport bar and the transport panel show the same time formats"
 	REQUIRE(app.waitUntil([&app, panel] { return shows(app, "#primary-time", panel) == "0:00:01.500"; }));
 	REQUIRE(app.waitUntil([&app] { return shows(app, "#primary-time") == "0:00:01.500"; }));
 	app.ui().key(std::nullopt, ".");
-	REQUIRE(app.waitUntil([&app, panel] { return shows(app, "#primary-time", panel) == "00:00:01:12"; }));
+	REQUIRE(app.waitUntil(
+		[&app, panel]
+		{
+			return shows(app, "#primary-time", panel) == "00:00:01:12" &&
+				shows(app, "#primary-time") == "00:00:01:12" && shows(app, "#secondary-time", panel) == "0:00:01.500" &&
+				shows(app, "#secondary-time") == "0:00:01.500";
+		}));
 	app.ui().key(std::nullopt, ".");
-	REQUIRE(app.waitUntil([&app, panel] { return shows(app, "#primary-time", panel) == "0:00:01.500"; }));
+	// Primary and secondary changes have separate event echoes; wait for both in both windows.
+	REQUIRE(app.waitUntil(
+		[&app, panel]
+		{
+			return shows(app, "#primary-time", panel) == "0:00:01.500" &&
+				shows(app, "#primary-time") == "0:00:01.500" && shows(app, "#secondary-time", panel) == "00:00:01:12" &&
+				shows(app, "#secondary-time") == "00:00:01:12";
+		}));
 	CHECK(shows(app, "#secondary-time", panel) == "00:00:01:12");
 	CHECK(element(app, "menuitem[slot=primary][format=seconds]", panel).at("attributes").contains("checked"));
 	CHECK(element(app, "menuitem[slot=secondary][format=timecode]", panel).at("attributes").contains("checked"));
@@ -405,6 +419,37 @@ TEST_CASE("the transport bar and the transport panel show the same time formats"
 	const Json formats = app.call("settings.get", {{"key", "ui.timeFormats"}}).at("value");
 	CHECK(!formats.contains("primary"));
 	CHECK(formats.at("secondary") == "timecode");
+}
+
+TEST_CASE("transport time format choices and exchange do not add undo steps", "[ui]")
+{
+	test::UiApp app({1024, 700});
+	showBar(app);
+	app.call("transport.locate", {{"position", 72000}});
+	app.call("project.set", {{"tempo", 130.0}});
+	const size_t before = app.call("history.get").at("steps").size();
+
+	click(app, "#primary-format");
+	click(app, "menuitem[slot=primary][format=seconds]");
+	REQUIRE(app.waitUntil([&app] { return shows(app, "#primary-time") == "0:00:01.500"; }));
+	CHECK(app.call("history.get").at("steps").size() == before);
+
+	click(app, "#exchange-formats");
+	REQUIRE(app.waitUntil([&app]
+		{ return shows(app, "#primary-time") == "00:00:01:12" && shows(app, "#secondary-time") == "0:00:01.500"; }));
+	CHECK(shows(app, "#secondary-time") == "0:00:01.500");
+	CHECK(app.call("history.get").at("steps").size() == before);
+
+	// Undo reaches the earlier tempo edit, leaving both exchanged display formats in place.
+	app.call("history.undo");
+	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("tempo")[0].at("bpm") == 120.0; }));
+	CHECK(shows(app, "#primary-time") == "00:00:01:12");
+	CHECK(shows(app, "#secondary-time") == "0:00:01.500");
+	CHECK(app.call("project.get").at("timeFormat") == "timecode");
+	app.call("history.redo");
+	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("tempo")[0].at("bpm") == 130.0; }));
+	CHECK(shows(app, "#primary-time") == "00:00:01:12");
+	CHECK(shows(app, "#secondary-time") == "0:00:01.500");
 }
 
 TEST_CASE("the tempo and signature fields set the project's first tempo and signature", "[ui]")
@@ -965,6 +1010,8 @@ TEST_CASE("setup panes save and recall presets and reset their sections to the d
 	const auto exists = [&app](const std::string& selector)
 	{ return !app.ui().dom(std::nullopt, selector, 0).at("elements").empty(); };
 	const auto presets = [&app] { return app.call("settings.get", {{"key", "ui.setupPresets"}}).at("value"); };
+	const std::vector<std::string> defaults = app.appUi().docking().sections("project", "transport");
+	REQUIRE(defaults.size() > 1);
 	openPane();
 	click(app, "#transport-setup [setup-section=locators]");
 	app.shell().step(std::chrono::milliseconds(0));
@@ -985,11 +1032,14 @@ TEST_CASE("setup panes save and recall presets and reset their sections to the d
 	CHECK(saved.at(0).at("order").at(0) == "locators");
 	REQUIRE(app.waitUntil([&exists] { return exists("#transport-setup [setup-preset=Compact]"); }));
 
-	// Reset All: the default order and sections.
+	// Reset All: the default order and sections, also after the sections were reordered.
+	app.appUi().docking().moveSection("project", "transport", defaults.back(), defaults.front());
+	REQUIRE(app.appUi().docking().sections("project", "transport").front() == defaults.back());
 	openPane();
 	click(app, "#transport-setup [setup-reset]");
 	app.shell().step(std::chrono::milliseconds(0));
 	CHECK(visible(app, "#transport-bar [section=locators]"));
+	CHECK(app.appUi().docking().sections("project", "transport") == defaults);
 	REQUIRE(app.waitUntil(
 		[&app]
 		{

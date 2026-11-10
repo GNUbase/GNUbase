@@ -14,9 +14,11 @@
 #include <cstdlib>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <utility>
+#include <vector>
 
 namespace gnubase::engine
 {
@@ -641,6 +643,47 @@ namespace gnubase::engine
 				return Json{{"position", time::toSamples(snapped, project.tempo, project.sampleRate)},
 					{"ticks", time::toTicks(snapped, project.tempo, project.sampleRate)},
 					{"musical", snapped.base == time::TimeBase::Musical}};
+			});
+
+		const Json integers = {{"type", "array"}, {"items", integer}};
+		model.addEdit(engine,
+			{"snap.zeroCrossings", 1,
+				"Where Snap to Zero Crossing moves positions (project samples) on tracks, as the edges of a selection "
+				"range: each to the nearest point within 50 ms where the audio event playing there on the first of "
+				"tracks that has one crosses zero, inside the event. A position where no audio event plays, or "
+				"without a zero crossing near, stays. Returns positions in the same order.",
+				{{"type", "object"}, {"properties", {{"positions", integers}, {"tracks", integers}}},
+					{"required", {"positions", "tracks"}}, {"additionalProperties", false}},
+				{{"type", "object"}, {"properties", {{"positions", integers}}}, {"required", {"positions"}}}, true},
+			{},
+			[](Project& project, CommandContext& context)
+			{
+				const Json& parameters = context.parameters();
+				const auto tracks = parameters.at("tracks").get<std::vector<ObjectId>>();
+				Json positions = Json::array();
+				for (const Json& position : parameters.at("positions"))
+				{
+					const auto at = position.get<time::Samples>();
+					std::optional<time::Samples> moved;
+					for (const ObjectId track : tracks)
+					{
+						for (const auto& [id, event] : project.audioEvents)
+						{
+							if (event.track != track)
+								continue;
+							const EventSpan span = eventSpan(project, event);
+							if (span.start < at && at < span.end)
+							{
+								moved = zeroCrossing(project, event, at, true);
+								break;
+							}
+						}
+						if (moved)
+							break;
+					}
+					positions.push_back(moved.value_or(at));
+				}
+				return Json{{"positions", std::move(positions)}};
 			});
 	}
 }

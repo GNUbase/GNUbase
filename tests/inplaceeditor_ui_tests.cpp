@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <numeric>
 #include <optional>
 #include <string>
 #include <vector>
@@ -338,4 +339,274 @@ TEST_CASE("the inspector's Edit In-Place starts unchecked in another project", "
 	f.click(button);
 	REQUIRE(f.app.waitUntil([&] { return f.app.call("editor.inPlace").at("tracks") == Json::array({track}); }));
 	CHECK(f.app.waitUntil(checked));
+}
+
+TEST_CASE("two in-place editors and the lower zone's key editor have menus and selections of their own", "[ui]")
+{
+	Fixture f;
+	const uint64_t strings = f.app.call("track.add", {{"type", "instrument"}}).at("track").at("id").get<uint64_t>();
+	const uint64_t stringsPart =
+		f.app.call("midiPart.add", {{"track", strings}, {"position", 0}, {"length", g_bar}, {"name", "Strings"}})
+			.at("part")
+			.at("id")
+			.get<uint64_t>();
+	const uint64_t held =
+		f.app
+			.call("note.add",
+				{{"part", stringsPart},
+					{"notes", {{{"position", g_quarter}, {"length", g_bar / 2}, {"pitch", 62}, {"velocity", 0.5}}}}})
+			.at("notes")
+			.at(0)
+			.at("id")
+			.get<uint64_t>();
+	REQUIRE(f.app.waitUntil([&] { return f.display.project().at("midiParts").size() == 2; }));
+	f.app.appUi().trackList()->select({f.track, strings});
+	f.app.keys().run("editor.openInPlace", Json::object(), f.app.main(), nullptr);
+	const std::string other = ".in-place-editor[track=\"" + std::to_string(strings) + "\"]";
+	REQUIRE(f.app.waitUntil([&] { return f.elements(f.editor() + " .key-note").size() == 2; }));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(other + " .key-note").size() == 1; }));
+	CHECK(f.app.call("editor.inPlace").at("tracks") == Json::array({f.track, strings}));
+	f.settle(2);
+	// The instrument track's lane grows too, and its note lies at its time.
+	REQUIRE(f.app.waitUntil([&] { return f.display.trackHeight(strings) == ui::g_inPlaceHeight; }));
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			const Json found = f.elements(other + " .key-note");
+			return !found.empty() &&
+				std::abs(found.at(0).at("box").at("x").get<double>() - f.timelineX(g_quarter)) <= 1.5;
+		}));
+
+	// The lower zone's key editor beside them.
+	f.app.call("editor.open", {{"editor", "lower"}, {"parts", {f.part}}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".midi-editor .key-note").size() == 2; }));
+	// Each editor's menus have ids of their own (ui::menuIdSuffix).
+	for (const std::string& suffix :
+		{std::string(), "-inPlace-" + std::to_string(f.track), "-inPlace-" + std::to_string(strings)})
+	{
+		INFO(suffix);
+		CHECK(f.elements("#key-length-menu" + suffix).size() == 1);
+		CHECK(f.elements("#key-editor-toolbox" + suffix).size() == 1);
+		if (!suffix.empty())
+			CHECK(f.elements("#in-place-editing-mode-menu" + suffix).size() == 1);
+	}
+
+	// A note selected in one editor is selected in its view only.
+	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().inPlaceEditors()->keyEditor(strings)->scrollToPitch(62); }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	f.click(other + " .key-note[note=\"" + std::to_string(held) + "\"]");
+	const auto viewOf = [&](const std::string& editor) { return f.app.call("editor.get", {{"editor", editor}}); };
+	const std::string stringsView = "inPlace:" + std::to_string(strings);
+	REQUIRE(f.app.waitUntil([&] { return viewOf(stringsView).at("selection").size() == 1; }));
+	CHECK(f.view().at("selection").empty());
+	CHECK(viewOf("lower").at("selection").empty());
+	CHECK(f.display.selection().empty());
+
+	// The toolbar's multiple part controls (reference manual p. 1260): Part Editing Mode and Activate Part for
+	// Editing, for the editor whose toolbar they are in.
+	const uint64_t later =
+		f.app.call("midiPart.add", {{"track", f.track}, {"position", 3 * g_bar}, {"length", g_bar}, {"name", "More"}})
+			.at("part")
+			.at("id")
+			.get<uint64_t>();
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("parts").size() == 2; }));
+	f.click(f.editor() + " .in-place-toolbar-toggle");
+	const std::string suffix = "-inPlace-" + std::to_string(f.track);
+	f.click(f.editor() + " .in-place-editing-mode");
+	CHECK(f.elements("#in-place-editing-mode-menu" + suffix + " menuitem").size() == 2); // All Parts, Active Part
+	f.click("#in-place-editing-mode-menu" + suffix + " menuitem[editing-mode=activePart]");
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("editingMode") == "activePart"; }));
+	CHECK(viewOf(stringsView).at("editingMode") == "allParts");
+	f.click(f.editor() + " .in-place-active-part");
+	f.click("#in-place-active-part-menu" + suffix + " menuitem[active-part=\"" + std::to_string(later) + "\"]");
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("activePart") == later; }));
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			const Json found = f.elements(f.editor() + " .in-place-active-part");
+			return !found.empty() && found.at(0).value("text", std::string()) == "More";
+		}));
+	CHECK(viewOf(stringsView).at("activePart") == stringsPart);
+
+	// Closing one leaves the other's menus.
+	f.app.call("editor.inPlace", {{"tracks", {f.track}}, {"open", false}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(f.editor()).empty(); }));
+	CHECK(f.elements("#key-length-menu" + suffix).empty());
+	CHECK(f.elements("#in-place-editing-mode-menu" + suffix).empty());
+	CHECK(f.elements("#in-place-active-part-menu" + suffix).empty());
+	CHECK(f.elements("#key-length-menu-inPlace-" + std::to_string(strings)).size() == 1);
+	CHECK(f.elements("#key-length-menu").size() == 1);
+}
+
+TEST_CASE("only a track's own lane grows for its in-place editor, which a folded folder hides", "[ui]")
+{
+	Fixture f;
+	f.app.keys().run("editor.openInPlace", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil([&] { return f.elements(f.editor() + " .key-note").size() == 2; }));
+	// With its lanes shown (#99), they keep the track's own height.
+	f.display.showLanes(f.track, true);
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			const std::vector<uint64_t>& lanes = f.display.laneTracks();
+			return std::count(lanes.begin(), lanes.end(), f.track) > 1;
+		}));
+	const std::vector<double>& tops = f.display.laneTops();
+	const double zoom = f.display.view().trackZoom;
+	for (size_t i = 0; i < f.display.laneTracks().size(); ++i)
+		if (f.display.laneTracks()[i] == f.track)
+		{
+			INFO(i);
+			const double height = f.display.laneTakes()[i] < 0 ? ui::g_inPlaceHeight : ui::g_trackHeight;
+			CHECK(std::abs(tops[i + 1] - tops[i] - (height * zoom)) < 0.01);
+		}
+	f.display.showLanes(f.track, false);
+
+	// In a folder: folded, the editor hides with the track's lane; unfolded, it is over the lane again.
+	const uint64_t folder = f.app.call("track.add", {{"type", "folder"}}).at("track").at("id").get<uint64_t>();
+	f.app.call("track.move", {{"track", f.track}, {"parent", folder}, {"index", 0}});
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			const std::vector<uint64_t>& lanes = f.display.laneTracks();
+			return std::find(lanes.begin(), lanes.end(), folder) != lanes.end() && lanes.size() == 3;
+		}));
+	f.app.appUi().trackList()->setFolded(folder, true);
+	REQUIRE(f.app.waitUntil([&] { return f.has(f.editor(), "hidden"); }));
+	CHECK(!f.elements(f.editor()).at(0).at("visible").get<bool>());
+	f.app.appUi().trackList()->setFolded(folder, false);
+	REQUIRE(f.app.waitUntil([&] { return !f.has(f.editor(), "hidden"); }));
+	f.settle(2);
+}
+
+TEST_CASE("a time-linear track's in-place editor has its notes at their times on the timeline", "[ui]")
+{
+	Fixture f;
+	f.app.call("track.set", {{"track", f.track}, {"timeBase", "linear"}});
+	f.app.keys().run("editor.openInPlace", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil([&] { return f.elements(f.editor() + " .key-note").size() == 2; }));
+	f.settle(2);
+	f.display.zoomIn();
+	f.settle(2);
+}
+
+TEST_CASE("quantizing in an in-place editor quantizes its notes, not the project window's selected parts", "[ui]")
+{
+	Fixture f;
+	// Two notes off the sixteenths' grid.
+	const Json added = f.app.call("note.add",
+		{{"part", f.part},
+			{"notes",
+				{{{"position", (2 * g_quarter) + 7}, {"length", g_sixteenth}, {"pitch", 67}, {"velocity", 0.5}},
+					{{"position", (3 * g_quarter) + 7}, {"length", g_sixteenth}, {"pitch", 69}, {"velocity", 0.5}}}}});
+	const uint64_t first = added.at("notes").at(0).at("id").get<uint64_t>();
+	f.app.call("quantize.set", {{"preset", "1/16"}});
+	f.app.keys().run("editor.openInPlace", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil([&] { return f.elements(f.editor() + " .key-note").size() == 4; }));
+	f.display.select({f.part});
+	f.scroll(67);
+	f.click(f.note(first));
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("selection").size() == 1; }));
+	// Q takes the selection from the in-place editors' copy of the view, which follows the engine's by an event.
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			const Json* shown = f.app.appUi().inPlaceEditors()->view(f.track);
+			return shown != nullptr && shown->value("selection", Json::array()).size() == 1;
+		}));
+	CHECK(f.display.selection() == std::vector<uint64_t>{f.part});
+
+	// Q, with the focus in the in-place editor: its selected note, not the selected part's notes.
+	f.app.ui().key(std::nullopt, "Q");
+	const auto position = [&](int pitch)
+	{
+		const Json project = f.app.call("project.get");
+		for (const Json& note : project.at("midiParts").at(0).at("notes"))
+			if (note.at("pitch") == pitch)
+				return note.at("position").get<int64_t>();
+		return int64_t{-1};
+	};
+	REQUIRE(f.app.waitUntil([&] { return position(67) == 2 * g_quarter; }));
+	CHECK(position(69) == (3 * g_quarter) + 7);
+}
+
+TEST_CASE("Open In-Place Editor and Edit In-Place wait for a MIDI or instrument track to be selected", "[ui]")
+{
+	Fixture f;
+	for (const char* command : {"editor.openInPlace", "editor.editInPlace"})
+	{
+		INFO(command);
+		f.app.appUi().trackList()->select({});
+		CHECK(!f.app.keys().canRun(command, f.app.main(), nullptr));
+		f.app.appUi().trackList()->select({f.audio});
+		CHECK(!f.app.keys().canRun(command, f.app.main(), nullptr));
+		f.app.appUi().trackList()->select({f.audio, f.track});
+		CHECK(f.app.keys().canRun(command, f.app.main(), nullptr));
+	}
+}
+
+TEST_CASE("the fade lines of the events below a track with an in-place editor and its lanes shown are on them", "[ui]")
+{
+	Fixture f;
+	// A faded audio event on the audio track below.
+	const Json media =
+		f.app.call("media.add", {{"path", "take.wav"}, {"sampleRate", 48000}, {"channels", 1}, {"length", 480000}})
+			.at("media");
+	const Json clip = f.app.call("clip.add", {{"media", media.at("id")}}).at("clip").at("id");
+	const uint64_t event =
+		f.app.call("audioEvent.add", {{"track", f.audio}, {"clip", clip}, {"position", 0}, {"length", 48000}})
+			.at("event")
+			.at("id")
+			.get<uint64_t>();
+	f.app.call("audioEvent.setFades", {{"event", event}, {"fadeIn", {{"length", 2400}, {"shape", "linear"}}}});
+	f.app.keys().run("editor.openInPlace", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil([&] { return f.elements(f.editor() + " .key-note").size() == 2; }));
+	f.display.showLanes(f.track, true);
+	const auto* fades = dynamic_cast<const ui::FadeLines*>(f.display.eventArea().QuerySelector("fade-lines"));
+	REQUIRE(fades != nullptr);
+	// The fades canvas's lanes are as high as the event display's, so the fade is drawn on its event.
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			const std::vector<uint64_t>& lanes = f.display.laneTracks();
+			const std::vector<double>& tops = f.display.laneTops();
+			const std::vector<ui::FadeLines::Lane>& shown = fades->lanes();
+			if (std::count(lanes.begin(), lanes.end(), f.track) < 2 || shown.size() != lanes.size() ||
+				tops.size() != lanes.size() + 1)
+				return false;
+			std::vector<double> heights(tops.size());
+			std::adjacent_difference(tops.begin(), tops.end(), heights.begin()); // from the second on
+			if (!std::equal(shown.begin(), shown.end(), heights.begin() + 1,
+					[](const ui::FadeLines::Lane& lane, double height)
+					{ return std::abs(lane.height - height) <= 0.01; }))
+				return false;
+			const auto audio = std::find(lanes.begin(), lanes.end(), f.audio) - lanes.begin();
+			return shown[static_cast<size_t>(audio)].fades.size() == 1;
+		}));
+}
+
+TEST_CASE("a newly opened in-place editor scrolls to its notes", "[ui]")
+{
+	Fixture f;
+	f.app.keys().run("editor.openInPlace", Json::object(), f.app.main(), nullptr);
+	// Without scrollToPitch: its notes are inside the note display's visible box.
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			const Json bodies = f.elements(f.editor() + " .key-editor-body");
+			if (bodies.empty())
+				return false;
+			const Json body = bodies.at(0).at("box");
+			const double top = body.at("y").get<double>();
+			const double bottom = top + body.at("height").get<double>();
+			return std::all_of(f.notes.begin(), f.notes.end(),
+				[&](uint64_t id)
+				{
+					const Json found = f.elements(f.note(id));
+					if (found.empty())
+						return false;
+					const double y = found.at(0).at("box").at("y").get<double>();
+					return y >= top && y + found.at(0).at("box").at("height").get<double>() <= bottom;
+				});
+		}));
 }

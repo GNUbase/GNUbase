@@ -3,8 +3,9 @@
      Window > Windows (the UI command window.windows). #windows-list lists GNUbase's open windows from ui.windows, a
      listitem[window=<id>] each with its document's title; a click selects one. #windows-mode chooses whether the
      buttons act on the selected window or on all of them: Activate brings the selected one to the front, Minimize,
-     Restore (ui.window) and Close Windows (ui.close; with All every window but the project window) act as the mode
-     says. OK closes the dialog. -->
+     Restore (ui.window) and Close Windows (ui.close; with All every window but the project window, disabled when it
+     would close none) act as the mode says. The list follows windows that open or close while it is open
+     (WindowsDialog.refresh). OK closes the dialog. -->
 <rml>
 <head>
 	<title>Windows</title>
@@ -61,6 +62,37 @@
 			return window.main and "Project" or "Window " .. window.id
 		end
 
+		-- The windows the buttons act on: the selected one, or with All every one.
+		local function targets()
+			if dialog.document:GetElementById("windows-mode"):GetAttribute("value") == "all" then
+				return windows
+			end
+			for _, window in ipairs(windows) do
+				if window.id == selected then
+					return {window}
+				end
+			end
+			return {}
+		end
+
+		-- Close Windows is disabled while it has nothing to close: the project window stays.
+		local function update()
+			if dialog.document == nil then
+				return
+			end
+			local closable = false
+			for _, window in ipairs(targets()) do
+				closable = closable or not window.main
+			end
+			local button = dialog.document:GetElementById("windows-close")
+			if closable then
+				button:RemoveAttribute("disabled")
+			else
+				button:SetAttribute("disabled", "")
+			end
+		end
+		dialog.update = update
+
 		function dialog.show()
 			local document = dialog.document
 			if document == nil then
@@ -78,6 +110,7 @@
 			local list = document:GetElementById("windows-list")
 			list.inner_rml = table.concat(rml)
 			list:SetAttribute("value", value)
+			update()
 		end
 
 		function dialog.select()
@@ -86,19 +119,7 @@
 			if window ~= nil then
 				selected = window.id
 			end
-		end
-
-		-- The windows the buttons act on: the selected one, or with All every one.
-		local function targets()
-			if dialog.document:GetElementById("windows-mode"):GetAttribute("value") == "all" then
-				return windows
-			end
-			for _, window in ipairs(windows) do
-				if window.id == selected then
-					return {window}
-				end
-			end
-			return {}
+			update()
 		end
 
 		function dialog.arrange(action)
@@ -126,6 +147,14 @@
 			dialog.show()
 		end
 
+		-- app::AppUi calls it when windows opened or closed.
+		function dialog.refresh()
+			if dialog.document ~= nil then
+				windows = gnubase.ui.windows().windows
+				dialog.show()
+			end
+		end
+
 		function dialog.load(document)
 			dialog.document = document
 			selected = nil
@@ -140,7 +169,7 @@
 		<div class="content">
 			<listview id="windows-list" onchange="WindowsDialog.select()"/>
 			<div class="actions">
-				<select id="windows-mode">
+				<select id="windows-mode" onchange="WindowsDialog.update()">
 					<option value="selected" selected="">Selected</option>
 					<option value="all">All</option>
 				</select>

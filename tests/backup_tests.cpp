@@ -448,6 +448,45 @@ TEST_CASE("a backup can leave out unused media", "[integration]")
 	CHECK(project.at("audioEvents").size() == 1);
 }
 
+TEST_CASE("a backup keeps the samples of sampler tracks whole, also unused and minimized", "[integration]")
+{
+	const test::TempDir dir;
+	writeNoise(dir.path() / "take.wav", 48000, 2, 1);
+	writeNoise(dir.path() / "hit.wav", 4800, 1, 2);
+	Song song;
+	const ObjectId take = song.addClip(song.addMedia(dir.path() / "take.wav"));
+	const ObjectId hit = song.addClip(song.addMedia(dir.path() / "hit.wav"));
+	// The take shares its file with an event, the hit is only a sampler's.
+	song.addEvent(take, 0, 0, 4800);
+	run(song.client, "sampler.create", {{"clip", take}, {"start", 24000}, {"end", 36000}});
+	run(song.client, "sampler.create", {{"clip", hit}});
+	const Json before = run(song.client, "project.get");
+
+	const fs::path folder = dir.path() / "backup";
+	const Json result =
+		backup(song.client, {{"folder", utf8(folder)}, {"removeUnused", true}, {"minimize", true}, {"handles", 0.01}});
+	CHECK(result.at("missing").empty());
+	CHECK(filesIn(folder / "Audio") == std::set<std::string>{"hit.wav", "take.wav"});
+	CHECK(sameFiles(folder / "Audio" / "take.wav", dir.path() / "take.wav"));
+	CHECK(sameFiles(folder / "Audio" / "hit.wav", dir.path() / "hit.wav"));
+
+	Engine engine;
+	Client client(engine);
+	run(client, "project.load", {{"path", result.at("file").get<std::string>()}});
+	const Json project = run(client, "project.get");
+	CHECK(project.at("clips").size() == 2);
+	// The samplers play the same clips with the same settings, so the same ranges of the same audio.
+	for (const Json& channel : before.at("channels"))
+		if (channel.at("instrument") == "sampler")
+		{
+			const auto copy = std::find_if(project.at("channels").begin(), project.at("channels").end(),
+				[&channel](const Json& item) { return item.at("id") == channel.at("id"); });
+			REQUIRE(copy != project.at("channels").end());
+			CHECK(copy->at("sample") == channel.at("sample"));
+			CHECK(copy->at("instrumentParameters") == channel.at("instrumentParameters"));
+		}
+}
+
 TEST_CASE("missing media are reported and the rest is backed up", "[integration]")
 {
 	const test::TempDir dir;
@@ -894,6 +933,17 @@ TEST_CASE("a folder that a running job writes into takes no other backup", "[int
 	CHECK(!fs::exists(folder));
 	// Once the job has ended, only the usual checks apply.
 	CHECK_THAT(reject(song.client, "project.backup", {{"folder", utf8(dir.path())}}), ContainsSubstring("empty"));
+}
+
+TEST_CASE("a free file's name differs from the names in the folder in more than case", "[unit]")
+{
+	const test::TempDir dir;
+	std::ofstream(dir.path() / "A.wav") << "there";
+	std::ofstream(dir.path() / "a-3.WAV") << "there";
+	CHECK(createFreeFile(dir.path(), "a.wav").filename() == "a-2.wav");
+	CHECK(createFreeFile(dir.path(), "a.wav").filename() == "a-4.wav");
+	CHECK(bytesOf(dir.path() / "A.wav") == "there");
+	CHECK_THROWS_AS(createFreeFile(dir.path() / "missing", "a.wav"), std::runtime_error); // no listing, no file
 }
 
 TEST_CASE("files made at the same time get names of their own", "[integration]")

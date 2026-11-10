@@ -23,7 +23,7 @@ project or undo.
 | Split (`split`) | Splits the event there | | | p. 268 |
 | Glue (`glue`) | Glues the event to the next one on its track | | | p. 269 |
 | Mute (`mute`) | Mutes or unmutes the event | A rectangle that mutes what it touches | | p. 277 |
-| Zoom (`zoom`) | Zooms in by 2 around the click; Alt zooms out | A rectangle whose stretch of time it zooms to | Undoes the zoom before it | pp. 101-103 |
+| Zoom (`zoom`) | Zooms in by 2 around the click; Alt zooms out | A rectangle whose stretch of time it zooms to | Undoes the zoom before it; with Alt redoes the zoom undone last | pp. 101-104 |
 | Line (`line`) | | | | p. 873 |
 | Play (`play`) | Auditions the audio track from there until the mouse is released | Scrub mode: scrubs the track along | | pp. 252-253 |
 | Time Warp (`timeWarp`) | Free Warp: a warp marker on the audio event there | Warp Grid: the musical position pressed plays where it is released; Free Warp: a warp marker moved there ([time-warp.md](time-warp.md)) | | pp. 1465-1467 |
@@ -41,18 +41,28 @@ project or undo.
 - **Play** auditions the pressed audio track from where it presses until the mouse is released, past its channel
   and without the transport (`audition.start`, `audition.stop`, [audition.md](audition.md)). In scrub mode the
   press and every move of the drag scrub the track to the mouse's position (`audition.scrub`), forwards or
-  backwards at the mouse's speed, and move the project cursor along. On other tracks it does nothing yet.
+  backwards at the mouse's speed, and move the project cursor along. At an audio event's edge, a drag in scrub mode
+  resizes the event as the object selection tool does (`event.resize`, the resize pointer there) and scrubs what the
+  event plays at the edge the release gives it, snapped: its clip at that clip frame (`audition.scrub` with `clip`,
+  from the drag's `event.previewResize`), also over audio the event hides yet, and without moving the cursor (p. 268).
+  A click there without a drag does nothing more: no tool modifier of the object selection tool's clicks. On other
+  tracks it does nothing yet.
 - **Cross-hair cursor.** It shows with the tools that use it (object selection, range selection, draw, split, line),
   not with the others (p. 110).
 - **Selection range.** `range()` is the range: start and end in project samples and the tracks it covers by id, also
   in the root's attributes `range` (`"start end"`) and `range-tracks`, and drawn as `.range-selection` (`.shown` while
-  there is one). Its edges snap. Choosing the range tool selects no events; choosing another tool selects the events in the range instead and ends
+  there is one). Its edges snap. With Snap to Zero Crossing on, a range that a drag, a click or a double click made
+  then moves its edges to zero crossings of the audio on its tracks (`snap.zeroCrossings`, [snap.md](snap.md), p. 285),
+  unless it changed meanwhile. Choosing the range tool selects no events; choosing another tool selects the events in the range instead and ends
   it (p. 286). The edit commands edit the range ([range-editing.md](range-editing.md)).
-- **Combine selection tools** (`setCombineSelectionTools`, p. 253): the object selection tool selects ranges in a
-  lane's upper half and events in its lower half.
+- **Combine selection tools** (`setCombineSelectionTools`, p. 253): the object selection tool selects ranges in the
+  upper half of a lane at least two rows high and events in its lower half; on lower lanes it selects events only. A
+  row is the least height of a track, `g_trackRow` (20 dp), and the lane's height counts with vertical zoom.
 - **The rectangle** that the object selection, mute and zoom tools drag, and the part that the draw tool drags, show
-  as `.tool-rectangle` (`.shown` while dragging). The zoom tool's rectangle zooms across only, the reference's
-  standard mode; zooming the track heights with it waits for the track list (#81).
+  as `.tool-rectangle` (`.shown` while dragging). The zoom tool's rectangle zooms across only while the user setting
+  `ui.zoomToolHorizontalOnly` is on (Zoom Tool Standard Mode: Horizontal Zooming Only, pp. 101, 1602; default on, on
+  the Preferences dialog's Editing - Zoom page). Off, it zooms the track heights too, so that the tracks it spans fill
+  the lanes' height, scrolled to its top, in one step of the zoom history. The display follows `settings.changed`.
 
 ## Tool modifiers
 
@@ -79,7 +89,7 @@ the info line).
 ## Toolbar and keys
 
 `resources/ui/project.rml` has a button per tool, `button[tool=<name>]`, checked for the tool chosen, and the toggle
-`#combine-selection-tools`. A button with `tool-menu` gets that menu as its `menu` once its tool is chosen, so the
+`#combine-selection-tools` with an icon of its own (`tool-combine-selection.svg`). A button with `tool-menu` gets that menu as its `menu` once its tool is chosen, so the
 first click chooses the tool and the next opens its modes (p. 265): `#object-selection-menu` with the sizing modes and
 `#line-menu` with the line modes and `#play-menu` with the play modes, each with the mode checked. The time warp tool
 has no button, which the toolbar has no room for at 1024 pixels: the toolbox and the context menu's Tools choose it,
@@ -133,7 +143,7 @@ RmlUi's `cursor` property; the pointers are SVG files in `resources/cursors` ([s
 | `resize` | The object selection tool at an event's left or right edge, where a drag resizes it (6 dp, on events wider than 18 dp), except on a fade handle ([fades.md](fades.md)), and except with Ctrl or Shift held unless they are a tool modifier (they add to the selection then) | `resize` |
 | `split` | The object selection tool on an event with the tool modifier Split Event held (Alt), where a click splits it (p. 268) | `tool-split` |
 | `draw` | The object selection tool on an empty spot of an audio, MIDI or instrument lane with Split Event held, where a drag draws a part (p. 250) | `tool-draw` |
-| `rangeSelection` | The range selection tool, and with the selection tools combined a lane's upper half (p. 253) | `tool-range` |
+| `rangeSelection` | The range selection tool, and with the selection tools combined the upper half of a lane two rows high (p. 253) | `tool-range` |
 | `draw`, `erase`, `split`, `glue`, `mute`, `zoom`, `line`, `play` | That tool | `tool-<name>`, the play tool's `tool-play` |
 
 On an automation track the pointer is the chosen tool's, also with the selection tools combined, as a press there
@@ -148,8 +158,7 @@ with, also where it leaves the lanes: the event area has RCSS `drag: drag`, and 
 until the button is up. MCP's `ui_windows` reports the pointer shown, as `cursor`: empty for the OS's arrow, also where
 a pointer's picture didn't load or RmlUi names one the OS doesn't have, such as its autoscroll pointers.
 
-Not yet: the time warp and color tools, the drumstick tool, resizing an event's edge with the scrub tool,
-which scrubs as it resizes (p. 268), and pointers of their own for the sizing modes; the rest of the reference's context
+Not yet: the time warp and color tools, the drumstick tool, and pointers of their own for the sizing modes; the rest of the reference's context
 menu, with the Audio and MIDI menus' functions, follows with those menus. Cut and Copy of selected events without a
 range (the event clipboard) wait for a ticket of their own. On X11, SDL shows only a pointer's scale-1 picture. The
 audio editor gets its toolbox when it comes. The Preferences dialog's Editing - Tools page
@@ -161,17 +170,21 @@ audio editor gets its toolbox when it comes. The Preferences dialog's Editing - 
   previous around the ends, the root's attribute and the cross-hair cursor; the object selection tool's rectangle,
   with Ctrl, and setting the cursor; splitting, snapped, into equal pieces, and with a tool modifier changed through
   `settings.set`; gluing to the next and to all following events; erasing one and all later events; muting and
-  unmuting with clicks and a rectangle; zooming in, out, to a rectangle and back with a double click; drawing parts,
-  snapped, by dragging and with a click, none on audio tracks or with the line tool; auditioning the audio lane's
-  track on the dummy device while the mouse is pressed, nothing on a MIDI lane, and scrubbing with a drag; ranges by dragging, clicking and double clicking on events and gaps, with Shift, snapped and on
-  every track, and the events they select when another tool takes over; the combined selection tools; the pointer
+  unmuting with clicks and a rectangle; zooming in, out, to a rectangle, back with a double click and forward again
+  with Alt; the rectangle zooming the track heights with `ui.zoomToolHorizontalOnly` off; drawing parts,
+  snapped, by dragging and with a click, and MIDI parts with the object selection tool and Alt, none on audio tracks or with the line tool; auditioning the audio lane's
+  track on the dummy device while the mouse is pressed, nothing on a MIDI lane, scrubbing with a drag, and resizing an
+  audio event at its edge in scrub mode, with its pointer there, the dummy device playing the clip's hidden audio
+  that an edge dragged outwards reveals, and Alt and Alt+Shift clicks there neither splitting nor locating; ranges by dragging, clicking and double clicking on events and gaps, with Shift, snapped and on
+  every track, and the events they select when another tool takes over; range edges at zero crossings with Snap to
+  Zero Crossing; the combined selection tools, and a lane less than two rows high selecting events only; the pointer
   per tool, at events' edges and in a combined lane's upper half, also when a tool is chosen while the mouse rests;
   the pointer with tool modifiers held, also when Alt goes down and up while the mouse rests, with both Alt keys and
   with Cmd and Ctrl, and with the modifiers changed through `settings.set`; a drag's pointer over the ruler, and the pointer not following changes once the
   mouse has left the lanes; a right click selecting events only where a press selects them, and ending a range.
 - `tests/uiapp_tests.cpp`: the toolbar's tool buttons, the keys 1 to 9, F9, F10 and Alt+Shift+1 in the app's project
   window, the object selection tool's, the line tool's and the play tool's mode menus on a second click; scrubbing an
-  audio track with the mouse; the split tool and the range
+  audio track with the mouse, and the dummy device playing it while the button is held; the split tool and the range
   tool driven with the mouse as MCP's UI tools drive it; the toolbox and the context menu on right clicks with and
   without modifiers, with the setting on and off, a tool chosen from each, a right click selecting the event for the context menu; the context menu's range commands
   disabled without a range and cutting with one, after a right click that leaves the event unselected; the

@@ -86,6 +86,22 @@ namespace gnubase::test
 				m_focused = *it;
 	}
 
+	void FakeWindowSystem::setMaximized(ui::WindowId window, bool maximized)
+	{
+		FakeWindow& fake = m_windows.at(window);
+		if (fake.maximized == maximized)
+			return;
+		fake.maximized = maximized;
+		if (!maximized)
+		{
+			move(window, fake.normal);
+			return;
+		}
+		fake.normal = fake.bounds;
+		if (const ui::Display* display = ui::displayOf(fake.bounds, m_displays))
+			move(window, display->usable);
+	}
+
 	void FakeWindowSystem::setBounds(ui::WindowId window, const ui::Rect& bounds)
 	{
 		move(window, bounds);

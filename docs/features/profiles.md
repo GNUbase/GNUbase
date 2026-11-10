@@ -18,9 +18,17 @@ track presets and templates (p. 1579).
 - **Activating** (p. 1581) takes a restart, as in the reference: `profile.activate` only notes the profile. When the
   engine starts, before it reads any setting (`settings::switchProfile`), the active profile's files go into its
   folder and the chosen profile's come into the settings folder. A profile without a file has that file's defaults.
+  The switch copies both profiles' files into the folder `profile-switch` first and writes `profiles.json` only once
+  all files are in place: if a step fails, the active profile's files go back and it stays active, and the switch is
+  tried again at the next start. A chosen profile whose folder the file system takes for the active profile's (see
+  Names) isn't switched to.
 - **Names** are folder names on every OS: 1 to 100 characters, none of `< > : " / \ | ? *`, not ending with a dot or a
-  space. Since the folders aren't case-sensitive on Windows and macOS, a name that differs from another profile's
-  only in case is taken (ASCII letters); a profile can be renamed to its own name in another case.
+  space, and not a name that Windows keeps for devices (CON, PRN, AUX, NUL, COM1 to COM9, LPT1 to LPT9, also with an
+  extension). Since the folders aren't case-sensitive on Windows and macOS, a name that differs from another profile's
+  only in case is taken; GNUbase compares ASCII letters itself and asks the file system about the others (NTFS and
+  APFS fold letters such as Ä too, and APFS ignores the Unicode normalization): a name whose folder exists already, or
+  that the file system takes for the active profile's, is taken. A profile can be renamed to its own name in another
+  case.
 
 | Command | What it does |
 |---|---|
@@ -52,9 +60,12 @@ their own, which work headless too:
   (`plugins::HostManager::setDeactivated`): loading one fails, so it stays bypassed where a project has it, and
   `pluginhost.get` says `deactivated`. GNUbase's own processors work as usual.
 - `--factory-settings` (Disable program preferences) starts with the factory settings, kept in memory only, so the
-  user's settings files stay as they are for the next start.
+  active profile's files stay as they are for the next start (the engine's `factorySettings`). The rest of the
+  settings folder, such as the recent projects and templates, is used as usual; the profile commands fail, as without
+  a settings folder, and a profile chosen with Activate Profile waits for the next start.
 - `--delete-settings` (Delete program preferences) deletes the active profile's files from the settings folder, then
-  starts with the factory settings, which it saves there again. This can't be undone.
+  starts with the factory settings, which it saves there again. A profile chosen with Activate Profile is dropped, so
+  that the start has the factory settings, not that profile's. This can't be undone.
 
 ## Not yet
 
@@ -67,10 +78,14 @@ on macOS and Linux.
 - `tests/profiles_tests.cpp`: profiles added with the factory settings, duplicated with the settings, names checked,
   activated at the next start while the others keep theirs, renamed, also the active one, which can't be deleted;
   exported and imported on another settings folder, under the file's name or another; none without a settings folder;
-  add, duplicate, rename and import refusing a name that differs from another profile's only in case.
+  add, duplicate, rename and import refusing a name that differs from another profile's only in case; device names
+  refused; names in another case of letters such as Ä taken where the file system folds them, also the active
+  profile's; a switch that fails on the way leaving the settings and the active profile as they were; a switch to a
+  folder that is the active profile's refused.
 - `tests/profiles_ui_tests.cpp`: the Profile Manager from the Edit menu, adding, duplicating, renaming and deleting
   profiles through its name field and buttons, a taken name's error, and Activate Profile saying that the profile
-  becomes active at the next start.
+  becomes active at the next start; Export and Import through the file dialogs, answered as `ui_file_dialog` does.
 - `tests/safemode_tests.cpp`: the command line's options; the settings folder as it is, disabled into memory with the
-  files left alone, or deleted, without the recent projects; third-party plugins deactivated, as `pluginhost.get`
-  says, failing to load.
+  files left alone, or deleted, without the recent projects; the factory settings with the profile's files left alone
+  and the templates still there; deleting the settings with a profile switch pending, which starts with the factory
+  settings of the active profile; third-party plugins deactivated, as `pluginhost.get` says, failing to load.

@@ -129,6 +129,16 @@ namespace gnubase::ui
 			m_binding.on("transport.changed", [this](const engine::Event& event) { followTransport(event.data); }));
 		for (const char* event : {"history.changed", "project.reset"})
 			m_subscriptions.push_back(m_binding.on(event, [this](const engine::Event&) { requestProject(); }));
+		m_subscriptions.push_back(m_binding.on("project.changed",
+			[this](const engine::Event& event)
+			{
+				const auto picked = timeFormatFromName(event.data.value("timeFormat", std::string()));
+				if (picked && *picked != format("primary"))
+				{
+					m_formats["primary"] = *picked;
+					show();
+				}
+			}));
 		m_subscriptions.push_back(m_binding.on("settings.changed",
 			[this](const engine::Event& event)
 			{
@@ -249,7 +259,7 @@ namespace gnubase::ui
 		if (slot == "primary")
 		{
 			if (changed)
-				m_binding.send("project.set", {{"timeFormat", timeFormatName(format)}});
+				m_binding.send("project.setTimeFormat", {{"timeFormat", timeFormatName(format)}});
 		}
 		else
 		{

@@ -2,6 +2,7 @@
 #include "engine/schema.h"
 
 #include <algorithm>
+#include <regex>
 
 namespace gnubase::engine
 {
@@ -49,6 +50,10 @@ namespace gnubase::engine
 		if (const auto choices = schema.find("enum");
 			choices != schema.end() && std::find(choices->begin(), choices->end(), value) == choices->end())
 			return name + " must be one of " + choices->dump();
+		// ponytail: compiles the pattern on every check; cache them if a pattern ever sits on a hot path.
+		if (const auto pattern = schema.find("pattern"); value.is_string() && pattern != schema.end() &&
+			!std::regex_search(value.get<std::string>(), std::regex(pattern->get<std::string>())))
+			return name + " must match " + pattern->get<std::string>();
 		if (const auto minimum = schema.find("minimum");
 			value.is_number() && minimum != schema.end() && value.get<double>() < minimum->get<double>())
 			return name + " must be at least " + minimum->dump();

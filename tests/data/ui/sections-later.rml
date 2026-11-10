@@ -1,7 +1,8 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- A docking window for tests/docking_tests.cpp whose containers of sections only come after attach, as a mixer's
      channels do on a project without tracks: its Set up Window Layout pane learns the set's sections from the first
-     channel that appears (docs/features/docking.md), or from a panel that a test docks in the left zone. -->
+     channel that appears (docs/features/docking.md), or from a panel that a test docks in the left zone. Save Preset
+     waits for them too. -->
 <rml>
 <head>
 	<title>Sections later</title>
@@ -23,6 +24,7 @@
 
 	<menu id="layout-pane" class="setup-pane">
 		<div setup="channel"/>
+		<button id="save-preset" setup-preset-save="channel">Save Preset</button>
 	</menu>
 </body>
 </rml>

@@ -688,6 +688,16 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".sa-bar", {"background-color": c["accent"]}),
         (".sa-bar.reference", {"background-color": c["accent2"]}),
         (".st-header, .st-name", {"color": c["textMuted"]}),
+        # The pattern editor (docs/features/pattern-editor.md): empty steps darker every beat, steps lit where they
+        # start and dimmer where ties cover them, the selected ones in the second accent, the selected lane's name lit
+        (".pattern-editor-body, .pattern-bars", {"background-color": c["surface"]}),
+        (".pattern-step", {"background-color": mix(c["surface"], c["border"], .5)}),
+        (".pattern-step.beat", {"background-color": c["border"]}),
+        (".pattern-step.on", {"background-color": c["accent"]}),
+        (".pattern-step.tied", {"background-color": mix(c["surface"], c["accent"], .55)}),
+        (".pattern-step.selected", {"background-color": c["accent2"]}),
+        (".pattern-lane.selected .pattern-lane-name", {"color": c["accent"]}),
+        (".pattern-bar", {"background-color": c["accent"]}),
         # The list editor (docs/features/list-editor.md): lines between the rows, the selected rows lit, those
         # outside the part editing mode dimmed, the events in the event display and the bars of the value display
         (".list-editor-header", {"color": c["textMuted"], "border-bottom-width": f"{widths['hairline']}px",

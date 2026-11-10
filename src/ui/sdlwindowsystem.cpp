@@ -362,6 +362,21 @@ namespace gnubase::ui
 			logging::warning("SDL cannot restore a window: {}", SDL_GetError());
 	}
 
+	bool SdlWindowSystem::maximized(WindowId window) const
+	{
+		SDL_Window* sdl = sdlWindow(window);
+		return sdl != nullptr && (SDL_GetWindowFlags(sdl) & SDL_WINDOW_MAXIMIZED) != 0;
+	}
+
+	void SdlWindowSystem::setMaximized(WindowId window, bool maximized)
+	{
+		SDL_Window* sdl = sdlWindow(window);
+		if (sdl == nullptr || this->maximized(window) == maximized)
+			return;
+		if (!(maximized ? SDL_MaximizeWindow(sdl) : SDL_RestoreWindow(sdl)))
+			logging::warning("SDL cannot maximize or restore a window: {}", SDL_GetError());
+	}
+
 	void SdlWindowSystem::raise(WindowId window)
 	{
 		SDL_Window* sdl = sdlWindow(window);

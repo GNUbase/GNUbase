@@ -985,6 +985,38 @@
 	{
 		color: #aeb7d0;
 	}
+	.pattern-editor-body, .pattern-bars
+	{
+		background-color: #101426;
+	}
+	.pattern-step
+	{
+		background-color: #20263d;
+	}
+	.pattern-step.beat
+	{
+		background-color: #303754;
+	}
+	.pattern-step.on
+	{
+		background-color: #10dff2;
+	}
+	.pattern-step.tied
+	{
+		background-color: #108496;
+	}
+	.pattern-step.selected
+	{
+		background-color: #e12ad8;
+	}
+	.pattern-lane.selected .pattern-lane-name
+	{
+		color: #10dff2;
+	}
+	.pattern-bar
+	{
+		background-color: #10dff2;
+	}
 	.list-editor-header
 	{
 		color: #aeb7d0;

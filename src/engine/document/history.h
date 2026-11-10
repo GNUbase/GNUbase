@@ -58,7 +58,7 @@ namespace gnubase::engine
 		PanLaw panLaw = PanLaw::Minus3;
 		double maxVolume = 6.0;
 		std::vector<ProjectColor> colors;
-		ProjectSetup setup;
+		ProjectSetup setup; // timeFormat is excluded; ProjectChange records actual format edits separately
 		std::vector<Bus> busses;
 		std::vector<ObjectId> tracks;
 		ObjectId activeMarkerTrack = 0;
@@ -76,6 +76,8 @@ namespace gnubase::engine
 	{
 		std::optional<ProjectSettings> settingsBefore; // both set if the settings changed
 		std::optional<ProjectSettings> settingsAfter;
+		std::optional<std::string> timeFormatBefore; // both set only when the edit changed the format
+		std::optional<std::string> timeFormatAfter;
 		std::vector<ObjectChange<Track>> tracks;
 		std::vector<ObjectChange<Channel>> channels;
 		std::vector<ObjectChange<Slot>> slots;
@@ -90,6 +92,7 @@ namespace gnubase::engine
 		std::vector<ObjectChange<LinkGroup>> linkGroups;
 		std::vector<ObjectChange<DrumMap>> drumMaps;
 		std::vector<ObjectChange<ArticulationMap>> articulationMaps;
+		std::vector<ObjectChange<Pattern>> patterns;
 
 		bool empty() const;
 	};

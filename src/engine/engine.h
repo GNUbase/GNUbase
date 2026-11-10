@@ -121,6 +121,10 @@ namespace gnubase::engine
 		// the project record their own undo step, so call only commands outside the document this way.
 		Json call(const std::string& command, const Json& parameters = Json::object());
 
+		// Drops this command's buffered events of a name, including inner commands' events, so a compound command
+		// can announce its final state once instead of the states it passed through.
+		void discardEvents(const std::string& name);
+
 		// Leaves the command out of engine.commandLog: for a command that the engine runs on its own and that changed
 		// nothing, such as a try to open a lost audio device again. Inside another command, the outer one decides.
 		void leaveOutOfLog()
@@ -165,10 +169,14 @@ namespace gnubase::engine
 	public:
 		// The audio engine plays through devices of these backends and takes MIDI from the ports of these MIDI
 		// backends. The user settings are read from and saved to the settings folder (files::settingsDirectory() is
-		// the user's); without one, they are kept in memory only, as in tests.
+		// the user's); without one, they are kept in memory only, as in tests. With factorySettings (the safe start
+		// mode's Disable program preferences) the files of the active profile (settings::g_profileFiles) are left
+		// alone and their settings kept in memory, while the recent projects, templates and the like are in the folder
+		// as usual.
 		explicit Engine(std::vector<std::unique_ptr<audio::Backend>> backends = audio::makeBackends(),
 			const std::filesystem::path& settingsDirectory = {},
-			std::vector<std::unique_ptr<gnubase::midi::Backend>> midiBackends = gnubase::midi::makeBackends());
+			std::vector<std::unique_ptr<gnubase::midi::Backend>> midiBackends = gnubase::midi::makeBackends(),
+			bool factorySettings = false);
 		~Engine();
 		Engine(const Engine&) = delete;
 		Engine& operator=(const Engine&) = delete;
@@ -202,6 +210,9 @@ namespace gnubase::engine
 		// The folder of the user settings; empty when they are kept in memory only. Features whose user settings
 		// have files of their own, such as the quantize presets, keep them there.
 		const std::filesystem::path& settingsDirectory() const { return m_settingsDirectory; }
+		// The folder of the active profile's files (settings::g_profileFiles): the settings folder, or empty when
+		// they are kept in memory, also with factorySettings.
+		const std::filesystem::path& profileDirectory() const { return m_profileDirectory; }
 
 		// Changes a user setting that holds a collection as part of a command, such as one port's entry of
 		// audio.portSettings: change gets the value that the settings file has now (settings::Store::modify), so what
@@ -261,6 +272,7 @@ namespace gnubase::engine
 		void settingsChanged(CommandContext& context, const std::vector<std::string>& keys);
 
 		const std::filesystem::path m_settingsDirectory;
+		const std::filesystem::path m_profileDirectory;
 		mutable std::mutex m_mutex; // guards everything below except the thread
 		std::map<std::string, std::shared_ptr<const Command>> m_commands;
 		std::deque<Request> m_requests;

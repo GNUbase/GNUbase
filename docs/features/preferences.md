@@ -36,13 +36,15 @@ scripts can do all it does. Its presets keep complete or partial sets of prefere
     dialog keeps only those that differ), chosen from a list or, as in the reference (p. 1574), by holding the keys
     and clicking the action's Assign (Ctrl or Cmd, Alt, Shift); another action of the same category with those keys
     is then left without any. Tools: Show Toolbox on Right-Click (`ui.toolboxOnRightClick`), Show
-    Notification when Switching Tool Mode with Key Command (`ui.toolSwitchNotification`).
+    Notification when Switching Tool Mode with Key Command (`ui.toolSwitchNotification`). Zoom: Zoom Tool Standard Mode:
+    Horizontal Zooming Only (`ui.zoomToolHorizontalOnly`, [tools.md](tools.md)).
   - Event Display - Folders: Show Data on Folder Tracks (`ui.folderData`), Apply Color of Folder Track Automatically
     (`editing.applyFolderColor`). Markers: Show Marker Lines (`ui.markerLines`).
   - General: Auto Save, Auto Save Interval, Maximum Number of Auto Save Files (`project.autoSave*`).
   - MIDI: Chase Events for notes, controllers, program changes and pitch bend, and Chase not limited to Part
     Boundaries (`midi.chase*`). MIDI Filter: the Record section's message types, the channels and the controllers
-    (`midi.recordFilter`); the Thru section waits for MIDI thru filtering.
+    (`midi.recordFilter`); the Thru section waits for MIDI thru filtering. MIDI File: the Import Options
+    (`midi.import*`, [file-import.md](file-import.md)); its Export Options wait for the export preferences.
   - Record: Stop after Automatic Punch Out (`audio.stopAfterPunchOut`). Audio: Audio Pre-Record Seconds
     (`audio.preRecordSeconds`). MIDI: Snap MIDI Parts to Bars, MIDI Record Catch Range in ms, Retrospective Record
     Buffer Size in Events (`midi.snapPartsToBars`, `midi.recordCatchRange`, `midi.retrospectiveEvents`).

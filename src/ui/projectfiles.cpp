@@ -254,6 +254,21 @@ namespace gnubase::ui
 			});
 	}
 
+	void ProjectFiles::newProject(Window& window, std::function<void()> then)
+	{
+		unlessUnsaved(window,
+			[this, done = reportFailure(window), then = std::move(then)]
+			{
+				m_binding.send("project.new", Json::object(),
+					[done, then](const engine::Result& result)
+					{
+						done(result);
+						if (result.ok())
+							then();
+					});
+			});
+	}
+
 	// The templates by name, and the recent projects that are still there by file name.
 	void ProjectFiles::showStartScreen(Rml::ElementDocument& dialog, const Json& templates, const Json& recent)
 	{

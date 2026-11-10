@@ -1,0 +1,50 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- File > Import > MIDI File asks first whether to create a new project for the file (docs/features/file-import.md,
+     reference manual p. 365): app::AppUi opens it with the UI command file.importMidi. Yes and No ask for the file
+     (gnubase.ui.importMidi), Yes to import it into a new project, No into the open one; Cancel imports nothing. -->
+<rml>
+<head>
+	<title>Import MIDI File</title>
+	<style>
+		dialog
+		{
+			width: 320dp;
+		}
+
+		.row
+		{
+			display: flex;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.buttons
+		{
+			justify-content: flex-end;
+		}
+
+		.buttons button
+		{
+			margin-left: 6dp;
+		}
+	</style>
+	<script>
+		ImportMidi = {}
+
+		function ImportMidi.choose(document, newProject)
+			gnubase.ui.importMidi({newProject = newProject})
+			document:Close()
+		end
+	</script>
+</head>
+<body>
+	<dialog id="import-midi-dialog">
+		<div class="dialog-titlebar">Import MIDI File</div>
+		<div class="row">Create a new project for the MIDI file?</div>
+		<div class="row buttons">
+			<button result="cancel">Cancel</button>
+			<button id="import-midi-current" onclick="ImportMidi.choose(document, false)">No</button>
+			<button id="import-midi-new" class="primary" onclick="ImportMidi.choose(document, true)">Yes</button>
+		</div>
+	</dialog>
+</body>
+</rml>

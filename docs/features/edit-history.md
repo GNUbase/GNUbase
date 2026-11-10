@@ -56,6 +56,10 @@ shows it in a dialog from Edit > History; GNUbase shows it as the panel History 
   id, and `action` joins the done steps whose id is greater into one step named action, so that a client's several
   commands are undone and redone at once: a user script is one undo step this way ([scripts.md](scripts.md)). Steps
   that end where they started leave none, and steps that can be redone stay.
+- **Marker activation.** A `history.transaction` announces `marker.trackActivated` once after all its commands, only
+  if the final active marker track differs from the initial one. Intermediate activations are not announced, so MCP,
+  Lua and UI clients can remove marker tracks in any order. `tests/mcpevents_tests.cpp` covers removals through MCP,
+  switching back to the initial track without an event, and a failed transaction without events (#983).
 - **Through the engine.** Everything the panel does goes through these engine commands, so MCP and Lua clients jump with
   `history.undo` and `history.redo` by the difference between the position they want and `history.get`'s.
 - **Not yet:** the maximum number of undo steps in the preferences (p. 112), which `history.set` already sets; and a

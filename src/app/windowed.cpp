@@ -70,7 +70,8 @@ namespace gnubase::app
 		Options start = options;
 		if (options.safeMode || safeModeKeysHeld())
 			askSafeMode(start);
-		engine::Engine engine(audio::makeBackends(), safeSettingsDirectory(start));
+		engine::Engine engine(
+			audio::makeBackends(), safeSettingsDirectory(start), midi::makeBackends(), factorySettings(start));
 		engine.pluginHosts().setDeactivated(start.noThirdPartyPlugins);
 		if (!setUpWindowedEngine(engine, options, err))
 			return g_exitSetup;
