@@ -302,6 +302,13 @@ namespace gnubase::ui
 					if (const std::vector<uint64_t> events = selectedAudio(); !events.empty())
 						openFadeDialog("statistics.rml", {{"events", ids(events)}});
 				}},
+			// Create Sampler Track (#180, reference manual p. 711): from the first selected audio event's section.
+			{"audio.createSamplerTrack",
+				[this]
+				{
+					if (const std::vector<uint64_t> events = selectedAudio(); !events.empty())
+						edit("sampler.create", {{"event", events.front()}});
+				}},
 			// Realtime Processing (#144, docs/features/warp.md): of the selected audio events.
 			{"audio.flatten",
 				[this]

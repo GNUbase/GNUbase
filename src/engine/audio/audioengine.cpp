@@ -6,6 +6,7 @@
 #include "engine/engine.h"
 #include "engine/plugins/slotinstances.h"
 #include "engine/processors/builtin.h"
+#include "engine/processors/sampler.h"
 #include "engine/settings/usersettings.h"
 #include "platform/hosttime.h"
 #include "platform/log.h"
@@ -698,11 +699,19 @@ namespace gnubase::engine
 				{
 					// Unknown ids play nothing; projects are checked when they load (projectFromJson).
 					instrument.id = channel.instrument;
-					instrument.channel = std::make_shared<InstrumentChannel>(sequencer,
-						processors::isInstrument(channel.instrument) ? processors::createBuiltin(channel.instrument)
-																	 : nullptr,
-						++m_instrumentSerial);
+					std::shared_ptr<graph::Processor> played;
+					if (channel.instrument == "sampler")
+						played = instrument.sampler = std::make_shared<processors::Sampler>();
+					else if (processors::isInstrument(channel.instrument))
+						played = processors::createBuiltin(channel.instrument);
+					instrument.channel =
+						std::make_shared<InstrumentChannel>(sequencer, std::move(played), ++m_instrumentSerial);
 				}
+				// The sampler swaps its sample while it plays (sample hot swap), reading the new one here.
+				if (instrument.sampler && instrument.sample != channel.sample)
+					instrument.sampler->setSample(channel.sample.empty() ? std::make_unique<const processors::Sample>()
+																		 : processors::loadSample(channel.sample));
+				instrument.sample = channel.sample;
 				instrument.sources = from;
 				processor = instrument.channel;
 				instruments[channel.id] = instrument;

@@ -257,6 +257,7 @@ namespace gnubase::engine
 			channel.type = TrackType::Audio;
 			channel.instrument.clear();
 			channel.instrumentParameters.clear();
+			channel.sample.clear();
 			channel.midiThru = false;
 			channel.autoFades = AutoFades();
 			channel.sections.gain = 0.0;
@@ -544,6 +545,8 @@ namespace gnubase::engine
 			render.format = channel.format;
 			render.instrument = channel.instrument;
 			render.instrumentParameters = channel.instrumentParameters;
+			if (const auto clip = project.clips.find(channel.sample); clip != project.clips.end())
+				render.sample = project.media.at(clip->second.media).path;
 			for (const ObjectId id : channel.slots)
 			{
 				const Slot& slot = project.slots.at(id);
