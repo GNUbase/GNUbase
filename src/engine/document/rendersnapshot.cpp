@@ -524,6 +524,8 @@ namespace gnubase::engine
 			snapshot->media.push_back(
 				{id, media.path, media.sampleRate, media.channels, media.length, {}, dsp::StretchPreset::Quality});
 		}
+		for (const auto& [id, clip] : project.clips)
+			snapshot->clips.push_back({id, clip.media, clip.fadeIn, clip.fadeOut});
 
 		std::map<ObjectId, int> channelIndex;
 		std::map<ObjectId, int> trackChannel;
