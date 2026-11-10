@@ -761,8 +761,8 @@ namespace gnubase::engine::settings
 				{"ui.trackWidths",
 					"The widths in the track list's rows, in dp: name, the track name's for every track type (20 to "
 					"400), and controls, by track type, the width of its controls area (0 to 800), whose controls go "
-					"onto more lines when they don't fit. A width left out is 120; marker and ruler tracks' default is "
-					"140, the chord track's 160.",
+					"onto more lines when they don't fit. A width left out uses the type's default: 120, except marker "
+					"and ruler tracks' 140, the tempo track's 144 and the chord track's 160.",
 					Json{{"type", "object"},
 						{"properties",
 							{{"name", {{"type", "number"}, {"minimum", 20}, {"maximum", 400}}},

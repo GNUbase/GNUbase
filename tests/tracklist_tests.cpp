@@ -1208,6 +1208,38 @@ TEST_CASE("the track name width and each track type's controls area width come f
 	CHECK(lines(audio) == 1);
 }
 
+TEST_CASE("missing track widths use each type's default and keep tempo controls on one line", "[ui]")
+{
+	Tracks tracks;
+	tracks.app.call("settings.set", {{"key", "ui.trackWidths"}, {"value", {{"name", 90}}}});
+	const uint64_t tempo = tracks.add({{"type", "tempo"}});
+	const uint64_t marker = tracks.add({{"type", "marker"}});
+	const uint64_t chord = tracks.add({{"type", "chord"}});
+	tracks.rows(3);
+	CHECK(tracks.box(row(tempo) + " .track-controls").at("width") == 144);
+	CHECK(tracks.box(row(marker) + " .track-controls").at("width") == 140);
+	CHECK(tracks.box(row(chord) + " .track-controls").at("width") == 160);
+	const Json controls = elements(tracks.app, row(tempo) + " .track-controls > [control]");
+	REQUIRE(controls.size() == 3);
+	std::set<int> tops;
+	for (const Json& control : controls)
+		tops.insert(control.at("box").at("y").get<int>());
+	CHECK(tops.size() == 1);
+	tracks.click("#track-controls-settings");
+	REQUIRE(tracks.app.waitUntil([&] { return !elements(tracks.app, "#track-controls-dialog").empty(); }));
+	tracks.click("#controls-types > [value=tempo]");
+	CHECK(elements(tracks.app, "#controls-area-width").at(0).at("attributes").at("value") == "144");
+	tracks.click("#controls-reset");
+	CHECK(elements(tracks.app, "#controls-area-width").at(0).at("attributes").at("value") == "144");
+	tracks.click("#controls-ok");
+	REQUIRE(tracks.app.waitUntil([&] { return elements(tracks.app, "#track-controls-dialog").empty(); }));
+	CHECK(tracks.box(row(tempo) + " .track-controls").at("width") == 144);
+	// An explicit width still wins over the default, including zero.
+	tracks.app.call(
+		"settings.set", {{"key", "ui.trackWidths"}, {"value", {{"name", 90}, {"controls", {{"tempo", 0}}}}}});
+	REQUIRE(tracks.app.waitUntil([&] { return tracks.box(row(tempo) + " .track-controls").at("width") == 0; }));
+}
+
 TEST_CASE("folder tracks: new folders for the selected tracks, group channels and data blocks", "[ui]")
 {
 	Tracks tracks;
