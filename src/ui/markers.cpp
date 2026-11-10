@@ -6,6 +6,7 @@
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Elements/ElementFormControl.h>
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/StringUtilities.h>
 
@@ -31,6 +32,11 @@ namespace gnubase::ui
 		constexpr float g_doubleClickDistance = 3.0F;
 		// How close to a position marker's line a click selects it, in dp.
 		constexpr double g_markerReach = 4.0;
+		// How far down a marker track's lane a press on a cycle marker moves it rather than selecting it, in dp: its
+		// upper border (reference manual p. 425).
+		constexpr double g_cycleBorder = 8.0;
+		// How far a press moves before it drags, in dp.
+		constexpr double g_dragStart = 2.0;
 
 		Rml::Property dp(double value)
 		{
@@ -122,6 +128,15 @@ namespace gnubase::ui
 		Rml::Element* after = events != nullptr ? events->GetNextSibling() : nullptr;
 		m_events = &create<EventLanes>(area, after, "event-lanes", "marker-events");
 		m_labels = &create<Rml::Element>(area, after, "div", "marker-labels");
+		// The field that renames a marker, over its label.
+		Rml::ElementPtr field = area.GetOwnerDocument()->CreateElement("input");
+		field->SetAttribute("type", "text");
+		field->SetClassNames("marker-name-field");
+		m_field = dynamic_cast<Rml::ElementFormControl*>(area.InsertBefore(std::move(field), after));
+		if (m_field == nullptr)
+			throw std::logic_error("<input> isn't a form control");
+		m_field->AddEventListener(Rml::EventId::Change, this);
+		m_field->AddEventListener(Rml::EventId::Blur, this);
 		area.AddEventListener(Rml::EventId::Mousedown, this);
 		display.onViewChanged(
 			[this, alive = std::weak_ptr<bool>(m_alive)]
@@ -173,6 +188,13 @@ namespace gnubase::ui
 		if (!alive())
 			return;
 		m_area->RemoveEventListener(Rml::EventId::Mousedown, this);
+		m_field->RemoveEventListener(Rml::EventId::Change, this);
+		m_field->RemoveEventListener(Rml::EventId::Blur, this);
+		if (Rml::ElementDocument* document = m_area->GetOwnerDocument(); document != nullptr && m_drag != Drag::None)
+		{
+			document->RemoveEventListener(Rml::EventId::Mousemove, this);
+			document->RemoveEventListener(Rml::EventId::Mouseup, this);
+		}
 	}
 
 	// ponytail: reads the whole project after every change, as the event display does.
@@ -193,6 +215,8 @@ namespace gnubase::ui
 				if (result.ok())
 				{
 					m_markers = readMarkers(result.value);
+					if (m_drag == Drag::None)
+						m_preview.reset(); // a drag released shows where it went
 					show();
 				}
 				if (std::exchange(m_stale, false))
@@ -204,10 +228,11 @@ namespace gnubase::ui
 	{
 		if (!alive())
 			return;
+		const ProjectMarkers& markers = shown();
 		std::vector<TimeSpan> lines;
-		for (const MarkerItem& marker : m_markers.markers)
+		for (const MarkerItem& marker : markers.markers)
 		{
-			if (m_mode == MarkerLineMode::Off || (m_mode == MarkerLineMode::Active && marker.track != m_markers.active))
+			if (m_mode == MarkerLineMode::Off || (m_mode == MarkerLineMode::Active && marker.track != markers.active))
 				continue;
 			lines.push_back({marker.start, 0.0});
 			if (marker.cycle)
@@ -228,27 +253,57 @@ namespace gnubase::ui
 		// A label per marker on a marker track: with ui.markerIds its number, the cycle markers' in brackets as in
 		// the reference, and its name.
 		std::string labels;
-		for (const MarkerItem& marker : m_markers.markers)
+		for (const MarkerItem& marker : markers.markers)
 		{
 			std::string text;
-			if (m_showIds)
+			if (m_showIds && marker.id != 0) // a new cycle marker being dragged has no number yet
 				text = marker.cycle ? "[" + std::to_string(marker.number) + "]" : std::to_string(marker.number);
 			if (!marker.name.empty())
 				text += (text.empty() ? "" : " ") + marker.name;
 			labels += R"(<div class="marker-label)" + std::string(marker.cycle ? " cycle" : "") +
-				(marker.track == m_markers.active ? " active" : "") + R"(" marker=")" + std::to_string(marker.id) +
+				(marker.track == markers.active ? " active" : "") + R"(" marker=")" + std::to_string(marker.id) +
 				R"(">)" + Rml::StringUtilities::EncodeRml(text) + "</div>";
 		}
 		m_labels->SetInnerRML(labels);
 		showSelection();
 		m_laneTops.clear(); // rebuild the lanes with the new marker events
 		place();
+		if (m_renaming != 0 && !m_fieldOpen)
+			openField();
 	}
 
 	void MarkerLines::setSelection(std::vector<uint64_t> markers)
 	{
 		m_selection = std::move(markers);
 		showSelection();
+	}
+
+	void MarkerLines::pick(std::vector<uint64_t> markers)
+	{
+		// The project window selects events or markers.
+		if (!markers.empty() && !m_display.selection().empty())
+			m_display.select({});
+		if (markers == m_selection)
+			return;
+		setSelection(std::move(markers));
+		if (m_onSelect)
+			m_onSelect(m_selection);
+	}
+
+	void MarkerLines::rename(uint64_t marker)
+	{
+		if (m_fieldOpen)
+			closeField(false);
+		m_renaming = marker;
+		openField();
+	}
+
+	bool MarkerLines::removeSelected()
+	{
+		if (m_selection.empty())
+			return false;
+		m_binding.send("marker.remove", {{"markers", m_selection}});
+		return true;
 	}
 
 	void MarkerLines::showSelection()
@@ -263,34 +318,53 @@ namespace gnubase::ui
 		}
 	}
 
-	// A click selects the marker under the mouse, or none; with Ctrl (Cmd on macOS) it adds or removes it: the marker
-	// whose label it is on, a position marker's line within reach, or else the cycle marker it is in.
-	void MarkerLines::select(Rml::Event& event, const ProjectMarkers::Track& track, double seconds)
+	// What the mouse is on: the marker whose label it is on, a position marker's line within reach, a cycle marker's
+	// start or end handle within reach, its upper border, or else the cycle marker it is in.
+	MarkerLines::Hit MarkerLines::hitAt(Rml::Event& event, const LanePoint& at) const
 	{
-		uint64_t hit = 0;
 		const Rml::Vector2f mouse = {
 			event.GetParameter<float>("mouse_x", 0.0F), event.GetParameter<float>("mouse_y", 0.0F)};
-		for (int i = 0; i < m_labels->GetNumChildren() && hit == 0; ++i) // the labels let the mouse through
+		for (int i = 0; i < m_labels->GetNumChildren(); ++i) // the labels let the mouse through
 			if (Rml::Element* label = m_labels->GetChild(i); label->IsVisible() && label->IsPointWithinElement(mouse))
-				hit = label->GetAttribute<uint64_t>("marker", 0);
+				return {label->GetAttribute<uint64_t>("marker", 0), Part::Marker};
 		const double reach = g_markerReach * m_display.view().scale;
+		const uint64_t track = at.track->id;
+		const auto on = [track](const MarkerItem& marker, bool cycle)
+		{ return marker.track == track && marker.cycle == cycle; };
 		for (const MarkerItem& marker : m_markers.markers)
-			if (hit == 0 && marker.track == track.id && !marker.cycle && std::abs(marker.start - seconds) <= reach)
-				hit = marker.id;
+			if (on(marker, false) && std::abs(marker.start - at.seconds) <= reach)
+				return {marker.id, Part::Marker};
 		for (const MarkerItem& marker : m_markers.markers)
-			if (hit == 0 && marker.track == track.id && marker.cycle && marker.start <= seconds &&
-				seconds <= marker.end)
-				hit = marker.id;
+		{
+			if (!on(marker, true))
+				continue;
+			if (std::abs(marker.start - at.seconds) <= reach)
+				return {marker.id, Part::Start};
+			if (std::abs(marker.end - at.seconds) <= reach)
+				return {marker.id, Part::End};
+		}
+		// The last cycle marker that starts before the mouse, as a double click finds it.
+		Hit inside;
+		for (const MarkerItem& marker : m_markers.markers)
+			if (on(marker, true) && marker.start <= at.seconds && at.seconds <= marker.end)
+				inside = {marker.id, at.y < g_cycleBorder ? Part::Border : Part::Inside};
+		return inside;
+	}
+
+	// A click selects the marker hit, or none; with Ctrl (Cmd on macOS) it adds or removes it. A selected marker
+	// stays selected with the others, so that a drag moves them all.
+	void MarkerLines::select(Rml::Event& event, uint64_t hit)
+	{
 		std::vector<uint64_t> selection = m_selection;
+		const auto at = std::find(selection.begin(), selection.end(), hit);
 		if (event.GetParameter<int>("ctrl_key", 0) != 0 || event.GetParameter<int>("meta_key", 0) != 0)
 		{
-			const auto at = std::find(selection.begin(), selection.end(), hit);
 			if (at != selection.end())
 				selection.erase(at);
 			else if (hit != 0)
 				selection.push_back(hit);
 		}
-		else
+		else if (hit == 0 || at == selection.end())
 		{
 			selection.clear();
 			if (hit != 0)
@@ -319,6 +393,7 @@ namespace gnubase::ui
 	{
 		if (!alive())
 			return;
+		const ProjectMarkers& markers = shown();
 		const TimelineView& view = m_display.view();
 		const auto& tracks = m_display.laneTracks();
 		const auto& tops = m_display.laneTops();
@@ -330,7 +405,7 @@ namespace gnubase::ui
 			for (size_t i = 0; i < tracks.size(); ++i)
 			{
 				EventLanes::Lane lane{static_cast<float>(tops[i + 1] - tops[i]), {}};
-				for (const MarkerItem& marker : m_markers.of(tracks[i]))
+				for (const MarkerItem& marker : markers.of(tracks[i]))
 					lane.events.push_back({marker.start, marker.end - marker.start});
 				std::sort(lane.events.begin(), lane.events.end(),
 					[](const TimeSpan& a, const TimeSpan& b) { return a.start < b.start; });
@@ -349,10 +424,10 @@ namespace gnubase::ui
 		for (size_t i = 0; i < tracks.size(); ++i)
 			lanes.emplace(tracks[i], i);
 		// The labels are the markers', in the same order.
-		for (int i = 0; i < m_labels->GetNumChildren() && i < static_cast<int>(m_markers.markers.size()); ++i)
+		for (int i = 0; i < m_labels->GetNumChildren() && i < static_cast<int>(markers.markers.size()); ++i)
 		{
 			Rml::Element* label = m_labels->GetChild(i);
-			const MarkerItem& marker = m_markers.markers[static_cast<size_t>(i)];
+			const MarkerItem& marker = markers.markers[static_cast<size_t>(i)];
 			const auto lane = lanes.find(marker.track);
 			label->SetClass("hidden", lane == lanes.end());
 			if (lane == lanes.end())
@@ -361,6 +436,39 @@ namespace gnubase::ui
 			label->SetProperty(Rml::PropertyId::Left, dp((marker.start - view.start) / view.scale));
 			label->SetProperty(Rml::PropertyId::Top, dp(top));
 		}
+		// The name field over the label of the marker it renames.
+		if (m_fieldOpen)
+			for (const MarkerItem& marker : m_markers.markers)
+				if (const auto lane = lanes.find(marker.track); marker.id == m_renaming && lane != lanes.end())
+				{
+					m_field->SetProperty(Rml::PropertyId::Left, dp((marker.start - view.start) / view.scale));
+					m_field->SetProperty(Rml::PropertyId::Top, dp(tops[lane->second] - view.top));
+				}
+	}
+
+	// Opens the name field once the marker being renamed is there.
+	void MarkerLines::openField()
+	{
+		const auto marker = std::find_if(m_markers.markers.begin(), m_markers.markers.end(),
+			[this](const MarkerItem& item) { return item.id == m_renaming; });
+		if (!alive() || marker == m_markers.markers.end())
+			return;
+		m_fieldOpen = true;
+		m_field->SetValue(marker->name);
+		m_field->SetClass("shown", true);
+		place();
+		m_field->Focus();
+	}
+
+	void MarkerLines::closeField(bool rename)
+	{
+		const uint64_t marker = std::exchange(m_renaming, 0);
+		if (!std::exchange(m_fieldOpen, false))
+			return;
+		if (rename)
+			m_binding.send("marker.set", {{"marker", marker}, {"name", m_field->GetValue()}});
+		m_field->SetClass("shown", false);
+		m_field->Blur(); // which comes back here, closed
 	}
 
 	float MarkerLines::ratio() const
@@ -369,7 +477,7 @@ namespace gnubase::ui
 		return context == nullptr ? 1.0F : context->GetDensityIndependentPixelRatio();
 	}
 
-	std::optional<std::pair<const ProjectMarkers::Track*, double>> MarkerLines::markerLaneAt(Rml::Event& event) const
+	std::optional<MarkerLines::LanePoint> MarkerLines::markerLaneAt(Rml::Event& event) const
 	{
 		const TimelineView& view = m_display.view();
 		const double x = (event.GetParameter<float>("mouse_x", 0.0F) - m_area->GetAbsoluteLeft()) / ratio();
@@ -383,22 +491,55 @@ namespace gnubase::ui
 			[id](const ProjectMarkers::Track& candidate) { return candidate.id == id && candidate.marker; });
 		if (track == m_markers.tracks.end())
 			return std::nullopt;
-		return std::make_pair(&*track, view.start + (x * view.scale));
+		return LanePoint{&*track, view.start + (x * view.scale), y - tops[lane]};
 	}
 
 	void MarkerLines::ProcessEvent(Rml::Event& event)
 	{
-		if (!alive() || event.GetParameter<int>("button", 0) != 0)
+		if (!alive())
 			return;
-		const auto at = markerLaneAt(event);
+		const bool onField = event.GetTargetElement() == m_field;
+		switch (event.GetId())
+		{
+		case Rml::EventId::Mousemove:
+			dragTo(event, false);
+			break;
+		case Rml::EventId::Mouseup:
+			dragTo(event, true);
+			break;
+		case Rml::EventId::Change:
+			if (onField && event.GetParameter<bool>("linebreak", false))
+				closeField(true);
+			break;
+		case Rml::EventId::Blur:
+			if (onField)
+				closeField(false);
+			break;
+		case Rml::EventId::Mousedown:
+			if (onField)
+				event.StopPropagation(); // the display doesn't select or draw under it
+			else if (event.GetParameter<int>("button", 0) == 0)
+				press(event);
+			break;
+		default:
+			break;
+		}
+	}
+
+	void MarkerLines::press(Rml::Event& event)
+	{
+		const std::optional<LanePoint> at = markerLaneAt(event);
 		if (!at)
 			return;
-		const auto [track, seconds] = *at;
+		const ProjectMarkers::Track& track = *at->track;
+		const double seconds = at->seconds;
 		const bool alt = event.GetParameter<int>("alt_key", 0) != 0;
+		const bool shift = event.GetParameter<int>("shift_key", 0) != 0;
+		const bool ctrl = event.GetParameter<int>("ctrl_key", 0) != 0 || event.GetParameter<int>("meta_key", 0) != 0;
 		// The cycle marker under the mouse: the last one that starts before it.
 		const MarkerItem* cycle = nullptr;
 		for (const MarkerItem& marker : m_markers.markers)
-			if (marker.track == track->id && marker.cycle && marker.start <= seconds && seconds <= marker.end)
+			if (marker.track == track.id && marker.cycle && marker.start <= seconds && seconds <= marker.end)
 				cycle = &marker;
 		// The event display stops the mouse down, so RmlUi sends no dblclick: two clicks close in time and place make
 		// one.
@@ -410,21 +551,215 @@ namespace gnubase::ui
 				g_doubleClickDistance * g_doubleClickDistance * ratio() * ratio();
 		m_lastClick = twice ? std::chrono::steady_clock::time_point() : now;
 		m_lastMouse = mouse;
-		if (!twice)
+		const Hit hit = hitAt(event, *at);
+
+		switch (m_display.tool())
 		{
-			// Alt-click adds a position marker, but not on a cycle marker, which Alt and a double click zoom to.
-			if (alt && cycle == nullptr)
-				m_binding.send("marker.add", {{"track", track->id}, {"position", m_markers.position(*track, seconds)}});
-			else if (!alt)
-				select(event, *track, seconds);
-		}
-		else if (cycle != nullptr && alt)
+		case Tool::RangeSelection:
+			// A double click selects the range between the markers around it on every track (p. 431); a click and
+			// a drag select ranges as on any lane.
+			if (twice)
+			{
+				m_binding.send("marker.range",
+					{{"track", track.id}, {"position", std::llround(seconds * m_markers.time.sampleRate)}},
+					[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+					{
+						if (alive.expired() || !result.ok())
+							return;
+						m_display.setRange(RangeSelection{result.value.at("start").get<int64_t>(),
+							result.value.at("end").get<int64_t>(), m_display.laneTracks()});
+					});
+				event.StopPropagation();
+			}
+			return;
+		case Tool::Erase:
 		{
-			m_display.zoomTo(cycle->start, cycle->end);
+			// The marker clicked, with Alt every marker on the track from it or the click on (p. 425).
+			std::vector<uint64_t> erased;
+			const MarkerItem* from = nullptr;
+			for (const MarkerItem& marker : m_markers.markers)
+				if (marker.id == hit.marker)
+					from = &marker;
+			for (const MarkerItem& marker : m_markers.markers)
+				if (marker.track == track.id &&
+					(marker.id == hit.marker || (alt && marker.start >= (from != nullptr ? from->start : seconds))))
+					erased.push_back(marker.id);
+			if (!erased.empty())
+				m_binding.send("marker.remove", {{"markers", erased}});
+			event.StopPropagation();
+			return;
 		}
-		else if (cycle != nullptr)
+		default:
+			break;
+		}
+
+		if (twice)
 		{
-			m_binding.send("marker.setLocators", {{"marker", cycle->id}});
+			if (cycle != nullptr && alt)
+				m_display.zoomTo(cycle->start, cycle->end);
+			else if (cycle != nullptr)
+				m_binding.send("marker.setLocators", {{"marker", cycle->id}});
+			return;
 		}
+		if (alt)
+		{
+			// Alt-click adds a position marker, but not on a cycle marker, which Alt and a double click zoom to; with
+			// Shift its name opens to type.
+			if (cycle == nullptr)
+				m_binding.send("marker.add",
+					{{"track", track.id}, {"position", m_markers.position(track, m_display.snapped(seconds))}},
+					[this, shift, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+					{
+						if (!alive.expired() && result.ok() && shift)
+							rename(result.value.at("marker").at("id").get<uint64_t>());
+					});
+			return;
+		}
+		m_pressX = mouse.x;
+		m_dragMoved = false;
+		m_dragTrack = track.id;
+		m_dragMarker = hit.marker;
+		if (ctrl && hit.marker == 0)
+		{
+			// Ctrl and a drag adds a cycle marker, with Shift to rename.
+			m_drag = Drag::NewCycle;
+			m_dragFrom = m_display.snapped(seconds);
+			m_renameNew = shift;
+		}
+		else
+		{
+			select(event, hit.marker);
+			const bool selected = std::find(m_selection.begin(), m_selection.end(), hit.marker) != m_selection.end();
+			if (ctrl || !selected || hit.part == Part::Inside || m_display.tool() != Tool::ObjectSelection)
+				return;
+			const auto marker = std::find_if(m_markers.markers.begin(), m_markers.markers.end(),
+				[&hit](const MarkerItem& item) { return item.id == hit.marker; });
+			if (marker == m_markers.markers.end())
+				return;
+			m_drag = hit.part == Part::Start ? Drag::Start : hit.part == Part::End ? Drag::End : Drag::Move;
+			m_dragFrom = m_drag == Drag::End ? marker->end : marker->start;
+		}
+		if (Rml::ElementDocument* document = m_area->GetOwnerDocument())
+		{
+			document->AddEventListener(Rml::EventId::Mousemove, this);
+			document->AddEventListener(Rml::EventId::Mouseup, this);
+		}
+		event.StopPropagation(); // the display draws no rectangle
+	}
+
+	// A drag on the marker track: shows where it puts the markers, and on the release sends it.
+	void MarkerLines::dragTo(Rml::Event& event, bool release)
+	{
+		if (m_drag == Drag::None)
+			return;
+		const Drag drag = m_drag;
+		if (release)
+		{
+			m_drag = Drag::None;
+			if (Rml::ElementDocument* document = m_area->GetOwnerDocument())
+			{
+				document->RemoveEventListener(Rml::EventId::Mousemove, this);
+				document->RemoveEventListener(Rml::EventId::Mouseup, this);
+			}
+		}
+		const float mouseX = event.GetParameter<float>("mouse_x", 0.0F);
+		m_dragMoved = m_dragMoved || std::abs(mouseX - m_pressX) / ratio() >= g_dragStart;
+		if (!m_dragMoved)
+			return;
+		const TimelineView& view = m_display.view();
+		const double to = m_dragFrom + ((mouseX - m_pressX) / ratio() * view.scale);
+		const double at = m_display.snapped(to, drag == Drag::NewCycle ? std::nullopt : std::optional(m_dragFrom));
+		const auto trackOf = [this](uint64_t id)
+		{
+			const auto found = std::find_if(m_markers.tracks.begin(), m_markers.tracks.end(),
+				[id](const ProjectMarkers::Track& track) { return track.id == id; });
+			return found != m_markers.tracks.end() ? *found : ProjectMarkers::Track{};
+		};
+		// Moved onto another marker track's lane, the markers go there.
+		uint64_t onto = m_dragTrack;
+		if (const std::optional<LanePoint> lane = markerLaneAt(event); drag == Drag::Move && lane)
+			onto = lane->track->id;
+
+		ProjectMarkers preview = m_markers;
+		Json commands = Json::array();
+		bool sent = false;
+		if (drag == Drag::NewCycle)
+		{
+			MarkerItem item;
+			item.track = m_dragTrack;
+			item.cycle = true;
+			item.start = std::min(m_dragFrom, at);
+			item.end = std::max(m_dragFrom, at);
+			if (item.end > item.start)
+				preview.markers.push_back(item);
+			sent = release && item.end > item.start;
+			if (sent)
+			{
+				const ProjectMarkers::Track track = trackOf(m_dragTrack);
+				m_binding.send("marker.add",
+					{{"type", "cycle"}, {"track", m_dragTrack}, {"position", m_markers.position(track, item.start)},
+						{"end", m_markers.position(track, item.end)}},
+					[this, named = m_renameNew, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+					{
+						if (alive.expired())
+							return;
+						if (result.ok() && named)
+							rename(result.value.at("marker").at("id").get<uint64_t>());
+						requestProject();
+					});
+			}
+		}
+		else
+		{
+			const double delta = at - m_dragFrom;
+			for (MarkerItem& marker : preview.markers)
+			{
+				const bool moved = drag == Drag::Move &&
+					std::find(m_selection.begin(), m_selection.end(), marker.id) != m_selection.end();
+				if (!moved && marker.id != m_dragMarker)
+					continue;
+				Json parameters = {{"marker", marker.id}};
+				if (moved)
+				{
+					marker.start = std::max(0.0, marker.start + delta);
+					marker.end = std::max(marker.start, marker.end + delta);
+					if (onto != m_dragTrack)
+					{
+						marker.track = onto;
+						parameters["track"] = onto;
+					}
+					parameters["position"] = m_markers.position(trackOf(marker.track), marker.start);
+				}
+				else if (drag == Drag::Start)
+				{
+					marker.start = std::min(at, marker.end - (1.0 / m_markers.time.sampleRate));
+					parameters["position"] = m_markers.position(trackOf(marker.track), marker.start);
+					parameters["end"] = m_markers.position(trackOf(marker.track), marker.end);
+				}
+				else
+				{
+					marker.end = std::max(at, marker.start + (1.0 / m_markers.time.sampleRate));
+					parameters["end"] = m_markers.position(trackOf(marker.track), marker.end);
+				}
+				commands.push_back({{"command", "marker.set"}, {"parameters", std::move(parameters)}});
+			}
+			sent = release && !commands.empty();
+			if (sent)
+				m_binding.send("history.transaction",
+					{{"description", drag == Drag::Move ? "Move Markers" : "Resize Marker"}, {"commands", commands}},
+					[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result&)
+					{
+						if (!alive.expired())
+							requestProject();
+					});
+		}
+		std::sort(preview.markers.begin(), preview.markers.end(), [](const MarkerItem& a, const MarkerItem& b)
+			{ return std::tie(a.start, a.cycle, a.number, a.id) < std::tie(b.start, b.cycle, b.number, b.id); });
+		// Shown until the project with the edit comes; a release that sends nothing shows the project again.
+		if (release && !sent)
+			m_preview.reset();
+		else
+			m_preview = std::move(preview);
+		show();
 	}
 }

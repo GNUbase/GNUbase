@@ -797,6 +797,9 @@ namespace gnubase::app
 			m_keys.add(
 				{command.id, command.description, [this, id = std::string(command.id)](ui::Window&, Rml::Element*)
 					{
+						// Delete removes the selected markers, which the project window selects instead of events.
+						if (id == "edit.delete" && m_markerLines && m_markerLines->removeSelected())
+							return;
 						if (m_eventDisplay)
 							m_eventDisplay->actions().at(id)();
 					}});
@@ -1248,6 +1251,17 @@ namespace gnubase::app
 				if (ui::MarkersWindow* window = markers(); window != nullptr && window->syncsSelection())
 					window->setSelection(selection);
 			});
+		// The marker tracks' Locate menus select the marker, Shift-click on Add Cycle Marker names the new one.
+		if (m_trackList)
+			m_trackList->onMarker(
+				[this](uint64_t marker, bool rename)
+				{
+					if (m_markerLines == nullptr)
+						return;
+					m_markerLines->pick({marker});
+					if (rename)
+						m_markerLines->rename(marker);
+				});
 		return *m_eventDisplay;
 	}
 

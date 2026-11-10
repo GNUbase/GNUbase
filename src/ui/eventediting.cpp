@@ -175,6 +175,12 @@ namespace gnubase::ui
 		return engine::snap(m_snap, snapGrid(), target);
 	}
 
+	double EventDisplay::snapped(double seconds, std::optional<double> from) const
+	{
+		return static_cast<double>(time::toSamples(snapAt(seconds, from), m_time.tempo, m_time.sampleRate)) /
+			m_time.sampleRate;
+	}
+
 	std::pair<Json, double> EventDisplay::shiftTo(const time::Position& to, double from) const
 	{
 		const bool musical = to.base == time::TimeBase::Musical &&

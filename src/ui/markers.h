@@ -26,6 +26,7 @@ namespace Rml
 {
 	class Element;
 	class ElementDocument;
+	class ElementFormControl;
 }
 
 // Markers in the UI (#91, reference manual pp. 422-431): marker events on the marker tracks' lanes and marker lines
@@ -82,10 +83,14 @@ namespace gnubase::ui
 	// lines behind the events of every track (<event-lanes class="marker-lines">), the marker events on the marker
 	// tracks' lanes over them (<event-lanes class="marker-events">: position markers as lines, cycle markers as spans)
 	// with a label each (.marker-label: with the user setting ui.markerIds the number, in brackets for cycle markers,
-	// and the name). On a marker track's lane, a click selects the marker under the mouse (its label gets .selected;
-	// Ctrl adds or removes it), Alt-click adds a position marker there, a double click on a cycle marker sets the
-	// locators to it, and with Alt zooms to it. Use it on the UI thread; the display, the engine and the binding must
-	// outlive it.
+	// and the name). On a marker track's lane (reference manual pp. 424-425, 431), a click selects the marker under
+	// the mouse (its label gets .selected; Ctrl adds or removes it) and a drag moves the selected markers, cycle
+	// markers by their label or upper border, onto another marker track too; a drag at a cycle marker's start or end
+	// resizes it; Ctrl and a drag adds a cycle marker, Alt-click a position marker (with Shift each opens its name in
+	// .marker-name-field to type); a double click on a cycle marker sets the locators to it, and with Alt zooms to it.
+	// The erase tool deletes the marker clicked, with Alt every later one on its track; with the range tool a double
+	// click selects the range between the markers around it on every track. Moves and new markers snap. Use it on the
+	// UI thread; the display, the engine and the binding must outlive it.
 	class MarkerLines final : private Rml::EventListener
 	{
 	public:
@@ -108,18 +113,61 @@ namespace gnubase::ui
 		void setSelection(std::vector<uint64_t> markers);
 		void deselect();
 		void onSelect(std::function<void(const std::vector<uint64_t>&)> handler) { m_onSelect = std::move(handler); }
+		// Selects markers as a click does, telling onSelect, e.g. the track list's Locate menu.
+		void pick(std::vector<uint64_t> markers);
+		// Opens the marker's name to type, once the project has the marker: Enter renames it (marker.set).
+		void rename(uint64_t marker);
+		// Removes the selected markers (Delete); false if none is selected.
+		bool removeSelected();
 
 	private:
+		// What a press on a marker track's lane is on.
+		enum class Part : uint8_t
+		{
+			None,
+			Marker, // a position marker or a label: a drag moves it
+			Border, // a cycle marker's upper border: a drag moves it
+			Start,  // a cycle marker's start or end handle: a drag resizes it
+			End,
+			Inside, // a cycle marker below its border: selects it
+		};
+		struct Hit
+		{
+			uint64_t marker = 0;
+			Part part = Part::None;
+		};
+		struct LanePoint
+		{
+			const ProjectMarkers::Track* track = nullptr;
+			double seconds = 0.0;
+			double y = 0.0; // dp from the lane's top
+		};
+		enum class Drag : uint8_t
+		{
+			None,
+			Move,
+			Start,
+			End,
+			NewCycle,
+		};
+
 		void ProcessEvent(Rml::Event& event) override;
+		void press(Rml::Event& event);
+		void dragTo(Rml::Event& event, bool release);
 		bool alive() const { return static_cast<bool>(m_area); }
 		float ratio() const; // dp
 		void requestProject();
+		// The markers shown: those of the project, or while dragging where the drag puts them.
+		const ProjectMarkers& shown() const { return m_preview ? *m_preview : m_markers; }
 		void show();
 		void showSelection();
 		void place();
-		void select(Rml::Event& event, const ProjectMarkers::Track& track, double seconds);
-		// The marker track's lane under the mouse and the time there, if it is over one.
-		std::optional<std::pair<const ProjectMarkers::Track*, double>> markerLaneAt(Rml::Event& event) const;
+		void openField();
+		void closeField(bool rename);
+		Hit hitAt(Rml::Event& event, const LanePoint& at) const;
+		void select(Rml::Event& event, uint64_t hit);
+		// The marker track's lane under the mouse, the time and the height there, if it is over one.
+		std::optional<LanePoint> markerLaneAt(Rml::Event& event) const;
 
 		EventDisplay& m_display;
 		EngineBinding& m_binding;
@@ -128,7 +176,18 @@ namespace gnubase::ui
 		EventLanes* m_lines = nullptr;
 		EventLanes* m_events = nullptr;
 		Rml::Element* m_labels = nullptr;
+		Rml::ElementFormControl* m_field = nullptr; // the name of the marker being renamed
 		ProjectMarkers m_markers;
+		std::optional<ProjectMarkers> m_preview;
+		Drag m_drag = Drag::None;
+		uint64_t m_dragMarker = 0; // the marker pressed
+		uint64_t m_dragTrack = 0;  // the track it was pressed on
+		double m_dragFrom = 0.0;   // seconds: the marker's start, end, or the press for a new cycle marker
+		float m_pressX = 0.0F;     // the window's pixels
+		bool m_dragMoved = false;  // further than a click
+		bool m_renameNew = false;  // a new cycle marker opens its name
+		uint64_t m_renaming = 0;   // the marker whose name opens, or is open
+		bool m_fieldOpen = false;
 		MarkerLineMode m_mode = MarkerLineMode::Active;
 		bool m_showIds = true;
 		bool m_idsKnown = false; // changed since it was asked for

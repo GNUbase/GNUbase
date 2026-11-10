@@ -88,13 +88,14 @@ sends engine commands, so whatever another client changes shows at once.
   `mute` (M) and `solo` (S), which tracks with a channel always show, `record` and `monitor` (audio tracks), `read`
   (every automation lane of the track reads, or with a click none does; disabled without lanes) and `timeBase`
   (musical or linear, `.checked` when linear). A click sends `channel.set`, `automationLane.set` in one transaction,
-  or `track.set`. Folders without a group channel, marker and signature tracks show none. The tempo track's controls are
+  or `track.set`. Folders without a group channel and signature tracks show none. The tempo track's controls are
   `tempoTrack`, Activate Tempo Track (`project.set` `tempoTrackActive`), `currentTempo`, Current Tempo, a text field
   with the tempo at the project cursor that takes a tempo typed with Enter, and `tempoType`, Type of New Tempo Points,
   a drop-down list for `editing.tempoType` ([tempo-track.md](tempo-track.md)); ruler tracks have `timeFormat`,
-  `timeOffsetOn`, `timeOffset` and `setTimeOffset` ([ruler-tracks.md](ruler-tracks.md)). The defaults: mute, solo,
-  record, monitor and read on audio tracks; mute, solo and read on the others with a channel; all three on the tempo
-  track; all four on ruler tracks.
+  `timeOffsetOn`, `timeOffset` and `setTimeOffset` ([ruler-tracks.md](ruler-tracks.md)), marker tracks
+  `addPositionMarker`, `addCycleMarker`, `activateMarkerTrack`, `markerLocate`, `markerCycle` and `markerZoom`
+  ([markers.md](markers.md)). The defaults: mute, solo, record, monitor and read on audio tracks; mute, solo and read
+  on the others with a channel; all three on the tempo track; all four on ruler tracks; all six on marker tracks.
 - **Selection** (pp. 218–219) is the list view's: a click selects a track, Ctrl-click adds or removes one,
   Shift-click selects a range, and Shift-click on a selected track deselects it (the list view's `shiftdeselects`,
   [widgets.md](widgets.md)). Up and Down step through the shown tracks, in the list and wherever the project window
@@ -182,8 +183,7 @@ dividing the track list, track visibility agents and the track type
 filter, track presets, track pictures, the lock control, edit channel settings, volume and pan in the track list,
 the settings dialog's groups, controls area preview, presets, Reset All and the MIDI tracks' Output Group and
 Channel Width (p. 191), the track height presets menu, snap track heights, the preferences dialog's
-page for `ui.removeTracksWarning` and `ui.upDownSelectsTracksOnly` (#162), and the ruler and marker tracks' own
-controls (#447, #91). Adding a track below the selected one is #448. Folders' group channels, data blocks and Move Selected Tracks to
+page for `ui.removeTracksWarning` and `ui.upDownSelectsTracksOnly` (#162). Adding a track below the selected one is #448. Folders' group channels, data blocks and Move Selected Tracks to
 New Folder are in [folder-tracks.md](folder-tracks.md).
 
 ## Checks

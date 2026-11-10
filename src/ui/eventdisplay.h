@@ -237,6 +237,9 @@ namespace gnubase::ui
 		// toggle button #snap, menus #snap-type-menu and #grid-type-menu (the grid types of the ruler's time format),
 		// whose buttons #snap-type and #grid-type show the choice, and a toggle button #snap-zero-crossing.
 		const engine::SnapSettings& snap() const { return m_snap; }
+		// Where a point dragged to seconds snaps to, in seconds, from where it was (for grid relative), as the
+		// display's own drags snap: e.g. markers on the marker track (ui/markers.h).
+		double snapped(double seconds, std::optional<double> from = std::nullopt) const;
 
 		// The default tool modifiers (reference manual p. 1601) of the tools that GNUbase has, by action, which the
 		// user setting ui.toolModifiers overrides one by one.
