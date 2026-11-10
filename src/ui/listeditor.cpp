@@ -914,8 +914,11 @@ namespace gnubase::ui
 		if (body == nullptr)
 			return;
 		body->SetClass("in-gesture", on);
-		if (Rml::ElementDocument* owner = root->GetOwnerDocument(); on && owner != nullptr)
-			owner->UpdateDocument(); // RmlUi looks for the drag element right after this press's mousedown
+		// RmlUi looks for the drag element right after a press's mousedown, from the computed values: the press that
+		// starts a gesture needs them with the class, the press that ends a lost one, or comes in the same frame as a
+		// mouseup, without it.
+		if (Rml::ElementDocument* owner = root->GetOwnerDocument())
+			owner->UpdateDocument();
 	}
 
 	void ListEditor::begin(Rml::Event& event)

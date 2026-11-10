@@ -81,7 +81,8 @@ Start, end and length are in bars and beats; end and length only for notes. The 
   edge RmlUi has no element to send the mouseup to, but while a gesture goes on the editor's body is an RmlUi drag
   element (`drag: drag`, the class `in-gesture`), and a drag's end comes wherever the button goes up: a gesture dragged
   out of the window ends there, with its effect. Only then, since RmlUi doesn't scroll on a touch move during a drag:
-  a finger pan from where a press starts no gesture, such as the type column, scrolls the list.
+  a finger pan from where a press starts no gesture, such as the type column, scrolls the list, also when that press
+  ends a gesture whose end never came or follows a mouseup within the same frame (#1012).
   A draw released outside the event display draws where it was pressed. One whose end never comes ends without its
   effect at the next left press anywhere in that document, which the editor hears in the capture phase, before
   anything else; the value display shows the events' values again at once. Other buttons don't end a gesture.

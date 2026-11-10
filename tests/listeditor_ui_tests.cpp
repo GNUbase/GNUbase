@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <functional>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -242,6 +243,37 @@ namespace
 		{
 			context().ProcessMouseMove(x, y, 0);
 			app.shell().step(std::chrono::milliseconds(0));
+		}
+
+		// More rows than the editor shows.
+		void fillList()
+		{
+			Json controllers = Json::array();
+			for (int i = 0; i < 60; ++i)
+				controllers.push_back({{"position", i + 1}, {"number", 1}, {"value", controller(i)}});
+			app.call("controller.add", {{"part", part}, {"controllers", controllers}});
+			REQUIRE(app.waitUntil([&] { return types().size() == 68; }));
+		}
+
+		// Pans the list up with a finger on the type column, where a press starts no gesture, and returns how far the
+		// rows went. before runs right before the touch, with no frame in between.
+		double pan(const std::function<void()>& before = {})
+		{
+			const std::string first = row("note", low);
+			const Json type = box(first + " .list-type");
+			const auto x = static_cast<float>(type.at("x").get<double>() + (type.at("width").get<double>() / 2));
+			const auto y = static_cast<float>(middle(first) + 200);
+			const double top = box(first).at("y").get<double>();
+			const auto touch = [x](float at) { return Rml::TouchList{Rml::Touch{1, Rml::Vector2f(x, at)}}; };
+			Rml::Context& shown = context();
+			if (before)
+				before();
+			shown.ProcessTouchStart(touch(y), 0);
+			for (const float moved : {30.0F, 60.0F, 90.0F})
+				shown.ProcessTouchMove(touch(y - moved), 0);
+			shown.ProcessTouchEnd(touch(y - 90.0F), 0);
+			app.shell().step(std::chrono::milliseconds(0));
+			return top - box(first).at("y").get<double>();
 		}
 
 		test::UiApp app{{1400, 800}};
@@ -577,26 +609,32 @@ TEST_CASE("a move, draw or value display drag released outside the window ends t
 TEST_CASE("a touch pan over the type column scrolls the list", "[ui]")
 {
 	Fixture f;
-	// More rows than the editor shows.
-	Json controllers = Json::array();
-	for (int i = 0; i < 60; ++i)
-		controllers.push_back({{"position", i + 1}, {"number", 1}, {"value", controller(i)}});
-	f.app.call("controller.add", {{"part", f.part}, {"controllers", controllers}});
-	REQUIRE(f.app.waitUntil([&] { return f.types().size() == 68; }));
+	f.fillList();
+	CHECK(f.pan() > 50.0);
+}
 
-	const std::string first = row("note", f.low);
-	const Json type = f.box(first + " .list-type");
-	const auto x = static_cast<float>(type.at("x").get<double>() + (type.at("width").get<double>() / 2));
-	const auto y = static_cast<float>(f.middle(first) + 200);
-	const double before = f.box(first).at("y").get<double>();
-	const auto touch = [x](float at) { return Rml::TouchList{Rml::Touch{1, Rml::Vector2f(x, at)}}; };
-	Rml::Context& context = f.context();
-	context.ProcessTouchStart(touch(y), 0);
-	for (const float moved : {30.0F, 60.0F, 90.0F})
-		context.ProcessTouchMove(touch(y - moved), 0);
-	context.ProcessTouchEnd(touch(y - 90.0F), 0);
-	f.app.shell().step(std::chrono::milliseconds(0));
-	CHECK(f.box(first).at("y").get<double>() < before - 50.0);
+// RmlUi picks the drag element right after a press's mousedown, from the computed values: they must be up to date
+// when the class that makes the body a drag element goes, even with no frame before that press.
+TEST_CASE("a touch pan whose start ends a gesture whose mouseup never came scrolls the list", "[ui]")
+{
+	Fixture f;
+	f.fillList();
+	const ui::Point grip = f.grip(f.low);
+	f.press(grip.x, grip.y);
+	REQUIRE(f.has(".list-editor-body", "in-gesture"));
+	CHECK(f.pan() > 50.0);
+	CHECK(!f.has(".list-editor-body", "in-gesture"));
+}
+
+TEST_CASE("a touch pan in the same frame as the mouseup that ended a gesture scrolls the list", "[ui]")
+{
+	Fixture f;
+	f.fillList();
+	const ui::Point grip = f.grip(f.low);
+	f.press(grip.x, grip.y);
+	REQUIRE(f.has(".list-editor-body", "in-gesture"));
+	CHECK(f.pan([&] { f.context().ProcessMouseButtonUp(0, 0); }) > 50.0);
+	CHECK(!f.has(".list-editor-body", "in-gesture"));
 }
 
 TEST_CASE("a draw dragged in the event display is a multiple of the length quantize's length", "[ui]")
