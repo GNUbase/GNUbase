@@ -14,6 +14,7 @@
 #include <chrono>
 #include <cstdint>
 #include <future>
+#include <iterator>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -112,6 +113,53 @@ TEST_CASE("initialize starts a session that receives every engine event from the
 	std::string none;
 	REQUIRE(server.handle(request(3, "ping"), none).has_value());
 	CHECK(none.empty()); // only initialize starts a session
+}
+
+TEST_CASE("MCP transactions announce only the final active marker track", "[unit]")
+{
+	Engine engine;
+	Server server(engine);
+	std::string session = server.startSession();
+	const auto command = [&](const std::string& name, const Json& parameters = Json::object())
+	{
+		const Json result = call(server, session, name, parameters);
+		REQUIRE(result.at("isError") == false);
+		return result.at("structuredContent");
+	};
+	const Json first = command("track_add", {{"type", "marker"}}).at("track").at("id");
+	const Json second = command("track_add", {{"type", "marker"}}).at("track").at("id");
+	const Json stays = command("track_add", {{"type", "marker"}}).at("track").at("id");
+	command("marker_activateTrack", {{"track", first}});
+	events(call(server, session, "events_take"));
+	command("history_transaction",
+		{{"description", "Remove markers"},
+			{"commands",
+				{{{"command", "track.remove"}, {"parameters", {{"track", first}}}},
+					{{"command", "track.remove"}, {"parameters", {{"track", second}}}}}}});
+	const Json removed = events(call(server, session, "events_take"));
+	REQUIRE(count(removed, "marker.trackActivated") == 1);
+	CHECK(count(removed, "track.removed") == 2);
+	const auto activated = std::find_if(
+		removed.begin(), removed.end(), [](const Json& event) { return event.at("name") == "marker.trackActivated"; });
+	CHECK(activated->at("data").at("track") == stays);
+	CHECK(std::all_of(
+		std::next(activated), removed.end(), [](const Json& event) { return event.at("name") != "track.removed"; }));
+	command("history_undo");
+	events(call(server, session, "events_take"));
+	command("history_transaction",
+		{{"description", "Switch back"},
+			{"commands",
+				{{{"command", "marker.activateTrack"}, {"parameters", {{"track", second}}}},
+					{{"command", "marker.activateTrack"}, {"parameters", {{"track", first}}}}}}});
+	CHECK(count(events(call(server, session, "events_take")), "marker.trackActivated") == 0);
+	CHECK(call(server, session, "history_transaction",
+			  {{"description", "Failed removal"},
+				  {"commands",
+					  {{{"command", "track.remove"}, {"parameters", {{"track", first}}}},
+						  {{"command", "track.remove"}, {"parameters", {{"track", first}}}}}}})
+			  .at("isError") == true);
+	CHECK(events(call(server, session, "events_take")).empty());
+	CHECK(command("project_get").at("activeMarkerTrack") == first);
 }
 
 TEST_CASE("events_take waits up to the given seconds for the first event", "[unit]")

@@ -422,6 +422,16 @@ namespace gnubase::engine
 		}
 	}
 
+	void CommandContext::discardEvents(const std::string& name)
+	{
+		if (m_outer != nullptr)
+			m_outer->discardEvents(name);
+		else
+			m_events.erase(std::remove_if(m_events.begin(), m_events.end(),
+							   [&name](const Event& event) { return event.name == name; }),
+				m_events.end());
+	}
+
 	Json CommandContext::call(const std::string& command, const Json& parameters)
 	{
 		if (m_outer != nullptr)

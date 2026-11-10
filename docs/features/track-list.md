@@ -138,8 +138,8 @@ sends engine commands, so whatever another client changes shows at once.
   channel, nested or not) that held only empty tracks, so it looks again until nothing more goes: one run leaves no
   empty tracks, in one undo step, and none if nothing is empty. It removes a folder with one `track.remove`, which
   takes the tracks inside along, and returns every track removed. Plugins in a channel's slots and an instrument
-  track's instrument don't keep a track. It removes the active marker track last, so the marker track that becomes
-  active is one that stays (#797).
+  track's instrument don't keep a track. After all removals it announces the final active marker track once, only if
+  it changed, so clients never hear of a passing activation (#983).
 - **Group Track and Effect Track to Selected Tracks** (pp. 546, 554): the context menu's commands
   `track.addGroupToSelected` and `track.addEffectToSelected` open the add track dialog for a group or effect track
   that the selected tracks play or send into ([add-track.md](add-track.md), [routing.md](routing.md)).
@@ -148,8 +148,8 @@ sends engine commands, so whatever another client changes shows at once.
   or a folder with such a track inside, warns, whatever plays into it. Remove removes them, Cancel or Escape keeps
   them, and Remove with "Don't show this warning again" checked also turns the user setting `ui.removeTracksWarning`
   (Display Warning before Deleting Non-Empty Tracks, on by default) off, which any client can turn on again with
-  `settings.set`. Remove Selected Tracks also removes the active marker track last, as Remove Empty Tracks does, so
-  clients only hear of a marker track that stays becoming active (#820).
+  `settings.set`. Its `history.transaction` announces the final active marker track once after all commands, only if
+  it changed, regardless of the order in which a client removes the tracks (#983).
 - **Track presets** (pp. 199, 238-243): the context menu's Add Track from Preset, Save Track Preset and Load Track
   Preset open the track preset dialog for the selected tracks ([track-presets.md](track-presets.md)).
 - **Freeze and render in place** (pp. 219-220, 1471-1477): the context menu's Freeze/Unfreeze Selected Tracks

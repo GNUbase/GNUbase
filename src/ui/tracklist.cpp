@@ -1767,12 +1767,6 @@ namespace gnubase::ui
 
 	void TrackList::removeTracks(std::vector<uint64_t> tracks)
 	{
-		// The active marker track goes last, as in track.removeEmpty, so that track.remove activates a marker track
-		// that stays rather than one that goes next.
-		const Json& project = m_display.project();
-		const uint64_t active = project.is_object() ? project.value("activeMarkerTrack", uint64_t{0}) : 0;
-		if (const auto found = std::find(tracks.begin(), tracks.end(), active); found != tracks.end())
-			std::rotate(found, std::next(found), tracks.end());
 		Json commands = Json::array();
 		for (const uint64_t track : tracks)
 			commands.push_back({{"command", "track.remove"}, {"parameters", {{"track", track}}}});

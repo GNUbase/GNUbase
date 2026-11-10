@@ -717,6 +717,13 @@ namespace gnubase::engine
 			context.emit("marker.trackActivated", {{"track", track}});
 		}
 
+		void announceFinalMarkerTrack(const Project& project, ObjectId before, CommandContext& context)
+		{
+			context.discardEvents("marker.trackActivated");
+			if (project.activeMarkerTrack != before)
+				context.emit("marker.trackActivated", {{"track", project.activeMarkerTrack}});
+		}
+
 		// Automation.
 
 		// A lane's target from a command, checked against the track it automates.
@@ -1793,6 +1800,7 @@ namespace gnubase::engine
 
 		Json removeEmptyTracks(Project& project, CommandContext& context)
 		{
+			const ObjectId activeBefore = project.activeMarkerTrack;
 			const std::set<ObjectId> gone = emptyTracks(project);
 			Json removed = Json::array();
 			std::vector<ObjectId> top; // a folder takes the tracks inside it along
@@ -1803,17 +1811,13 @@ namespace gnubase::engine
 					if (gone.count(project.trackById.at(id).parent) == 0)
 						top.push_back(id);
 				}
-			// The active marker track goes last (marker tracks are never inside a folder), so that track.remove
-			// activates a marker track that stays rather than one that goes next.
-			const auto active = std::find(top.begin(), top.end(), project.activeMarkerTrack);
-			if (active != top.end())
-				std::rotate(active, std::next(active), top.end());
 			for (const ObjectId id : top)
 			{
 				const Json parameters = {{"track", id}}; // the context keeps a reference
 				CommandContext inner(parameters, &context);
 				removeTrack(project, inner);
 			}
+			announceFinalMarkerTrack(project, activeBefore, context);
 			return Json{{"tracks", std::move(removed)}};
 		}
 
@@ -3596,6 +3600,7 @@ namespace gnubase::engine
 
 	Json ProjectModel::transaction(Project& project, CommandContext& context)
 	{
+		const ObjectId activeBefore = project.activeMarkerTrack;
 		Json results = Json::array();
 		const Json& commands = context.parameters().at("commands");
 		for (size_t i = 0; i < commands.size(); ++i)
@@ -3636,6 +3641,7 @@ namespace gnubase::engine
 				throw CommandError(prefix + error.what());
 			}
 		}
+		announceFinalMarkerTrack(project, activeBefore, context);
 		return {{"results", results}};
 	}
 

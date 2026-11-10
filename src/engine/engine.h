@@ -121,6 +121,10 @@ namespace gnubase::engine
 		// the project record their own undo step, so call only commands outside the document this way.
 		Json call(const std::string& command, const Json& parameters = Json::object());
 
+		// Drops this command's buffered events of a name, including inner commands' events, so a compound command
+		// can announce its final state once instead of the states it passed through.
+		void discardEvents(const std::string& name);
+
 		// Leaves the command out of engine.commandLog: for a command that the engine runs on its own and that changed
 		// nothing, such as a try to open a lost audio device again. Inside another command, the outer one decides.
 		void leaveOutOfLog()
