@@ -65,8 +65,11 @@ The gesture's mouseup in the editor's whole document or the drag element's drage
 button goes up, also outside the window, with its effect there. A press anywhere in the document while one goes on,
 whose end never came, ends it without its effect: a move moves nothing, an audition stops, and the events show where
 they are again. While a move drags, the events it moves show where it takes them, also after the editor shows the
-project again, as when the selection of the press comes back. A click shows its selection at once, and a view that
-comes before the engine has answered it, which may be older than it, leaves that selection as it is.
+project again, as when the selection of the press comes back. The pressed event's element stays when the events are
+drawn again during the drag, as when a command adds one to the part: RmlUi drops a drag without a dragend when its
+element goes. A command that removes the pressed event, or takes its part out of the part editing mode, ends the move
+without its effect. A click shows its selection at once, and a view that comes before the engine has answered it,
+which may be older than it, leaves that selection as it is.
 
 | Tool | Gesture | Reference |
 |---|---|---|
@@ -118,5 +121,9 @@ of the window's size, not yet one of the lower zone's.
   the part's end and the scrub tool; typing a start and a volume on the info line; a move and an audition released
   over the window's toolbar and outside the window, and a press ending a gesture whose mouseup never came; the play
   tool from an empty spot and after a part's end; an event out of its part shown, selected and moved back; a finger
-  pan over an empty spot scrolling the lanes; a render during a move keeping it shown.
+  pan over an empty spot and over an event outside the part editing mode scrolling the lanes; a render during a move
+  keeping it shown; a move going on when a command adds an event to the part during the drag, released outside the
+  window, and when the display's range changes, and ending without its effect when its event is removed or leaves the
+  part editing mode; a view the engine answered before a click leaving the click's selection, and a selection from the
+  engine showing once the click's is answered.
 - `tests/eventediting_tests.cpp`: a double click on an audio part opens it in the audio part editor.
