@@ -139,11 +139,12 @@ track first in the selection, and with Split Channels a stereo file onto new tra
 track, each one undo step; audio files dropped on an audio track's lane, one and two of them, and MIDI files of type 0
 and 1 dropped below the tracks. For the import preferences: Use Settings imports without the dialog with the stored
 options (on one track in an unsaved project; split with a name format and copied in a saved one; with Copy and Convert
-off a 44.1 kHz file keeps its path and no copy job starts; with Convert alone it is converted into the project's
-`Audio` folder at the project's sample rate; the pool's Import Medium and the selected track import without the dialog
-with the stored options), the dialog starts from the settings and keeps its choices in them, Do not ask again skips
-the dialog next time and after a restart until the setting is reset, and each Name Format chosen in the dialog names
-the split files. The preferences' Editing > Audio page shows the settings, Use Settings imports with what it sets
-(a stereo file split as its Name Format says, which Split Channels writes into `Audio` whatever Copy says, and with
-Copy off a mono file that isn't split keeping its original path with no copy job), and its Open Options Dialog brings
-the dialog back, starting from the same settings.
+off a 44.1 kHz file keeps its path and no copy job starts; with Convert alone it is converted into the project's `Audio`
+folder at the project's sample rate with no copy job; the pool's Import Medium and the selected track import without the
+dialog with the stored options), the dialog starts from the settings and keeps its choices in them, Do not ask again
+skips the dialog next time and after a restart until the setting is reset, and each Name Format chosen in the dialog
+names the split files. The preferences' Editing > Audio page shows the settings, Use Settings imports with what it sets
+(a stereo file split as its Name Format says, with Copy off as the page set it: Split Channels writes into `Audio`
+whatever Copy says, as the Use Settings test shows with Copy on; and with Copy off a mono file that isn't split keeping
+its original path with no copy job), and its Open Options Dialog brings the dialog back, starting from the same
+settings.
