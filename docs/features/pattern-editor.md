@@ -31,7 +31,7 @@ instrument track, whose pattern management lists it.
 | Command | What it does | Reference |
 |---|---|---|
 | `pattern.add` | New Pattern of a track (drum mode with a kick, a snare and closed and open hi-hats, named after the track's drum map), or Duplicate Pattern (`copy`); with `part` the part plays it | p. 899 |
-| `pattern.set` | Changes a pattern; `lanes` replaces the whole list | pp. 897-929 |
+| `pattern.set` | Changes a pattern; `lanes` replaces the whole list. A shorter `length` without `lanes` drops the steps that no longer fit on the lanes that follow it and ends their ties at the end | pp. 897-929 |
 | `pattern.remove` | Removes a pattern and its pattern events | p. 899 |
 | `pattern.convert` | Convert Pattern Event to MIDI Part | p. 937 |
 | `pattern.export` | Save Preset: the track's patterns as a pattern preset file (`.patternpreset`, JSON) | p. 932 |

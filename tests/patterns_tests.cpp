@@ -285,6 +285,45 @@ TEST_CASE("a pattern event plays its pattern over and over: render", "[unit]")
 	CHECK(f.rendered().empty());
 }
 
+TEST_CASE("a shorter Number of Steps drops the steps that no longer fit and ends ties at the lanes' end", "[unit]")
+{
+	Fixture f;
+	// A 16-step hi-hat line to 12 steps: the step at 14 goes, the one at 10 ends at the end. A lane of its own
+	// length keeps its steps.
+	f.lanes({{{"pitch", 42}, {"steps", {{{"index", 0}}, {{"index", 10}, {"length", 6}}, {{"index", 14}}}}},
+		{{"pitch", 46}, {"length", 16}, {"steps", steps({14})}}});
+	f.pattern = f.call("pattern.set", {{"pattern", f.pattern.at("id")}, {"length", 12}}).at("pattern");
+	CHECK(f.pattern.at("length") == 12);
+	const Json& hihat = f.pattern.at("lanes").at(0).at("steps");
+	REQUIRE(hihat.size() == 2);
+	CHECK(hihat.at(1).at("index") == 10);
+	CHECK(hihat.at(1).at("length") == 2);
+	CHECK(f.pattern.at("lanes").at(1).at("steps").size() == 1);
+	std::vector<engine::RenderNote> notes = f.rendered();
+	REQUIRE(notes.size() == 4);
+	CHECK(notes[1].start == f.at(10));
+	CHECK(notes[1].end == f.at(12));
+	CHECK(notes[2].start == f.at(12));
+	CHECK(notes[3].start == f.at(14));
+	CHECK(notes[3].pitch == 46);
+	f.call("history.undo");
+	CHECK(f.patterns().at(0).at("lanes").at(0).at("steps").size() == 3);
+}
+
+TEST_CASE("a split pattern event plays the pattern in both pieces", "[unit]")
+{
+	Fixture f;
+	f.lanes({{{"pitch", 36}, {"steps", steps({0})}}}, {{"length", 4}});
+	REQUIRE(f.starts() == std::vector<int64_t>{f.at(0), f.at(4), f.at(8), f.at(12)});
+	f.call("event.split", {{"events", {f.part}}, {"positions", {f.at(6)}}});
+	const Json parts = f.call("project.get").at("midiParts");
+	REQUIRE(parts.size() == 2);
+	for (const Json& part : parts)
+		CHECK(part.at("pattern") == f.pattern.at("id"));
+	// Each piece plays it from its own start.
+	CHECK(f.starts() == std::vector<int64_t>{f.at(0), f.at(4), f.at(6), f.at(10), f.at(14)});
+}
+
 TEST_CASE("a step's probability and velocity variance play as a note's, differently in each repeat", "[unit]")
 {
 	Fixture f;
@@ -365,6 +404,28 @@ TEST_CASE("patterns and pattern events are saved and loaded with the project", "
 	CHECK(after.at("patterns") == before.at("patterns"));
 	CHECK(after.at("midiParts").at(0).at("pattern") == f.pattern.at("id"));
 	CHECK(f.rendered().size() == played.size());
+}
+
+TEST_CASE("a pattern that events on other tracks play is saved and loaded after its track is removed", "[integration]")
+{
+	Fixture f;
+	const test::TempDir dir;
+	const std::string file = (dir.path() / "patterns.dawproject").u8string();
+	f.lanes({{{"pitch", 36}, {"steps", steps({0})}}}, {{"length", 8}});
+	f.call("track.duplicate", {{"track", f.track}});
+	f.call("track.remove", {{"track", f.track}});
+	const Json before = f.call("project.get");
+	REQUIRE(before.at("midiParts").size() == 1);
+	REQUIRE(before.at("midiParts").at(0).at("pattern") == f.pattern.at("id"));
+	const std::vector<int64_t> played = f.starts();
+	REQUIRE(played == std::vector<int64_t>{f.at(0), f.at(8)});
+	f.call("project.save", {{"path", file}});
+	f.call("project.new");
+	f.call("project.load", {{"path", file}});
+	const Json after = f.call("project.get");
+	CHECK(after.at("patterns") == before.at("patterns"));
+	CHECK(after.at("midiParts").at(0).at("pattern") == f.pattern.at("id"));
+	CHECK(f.starts() == played);
 }
 
 TEST_CASE("pattern events open in the pattern editor", "[unit]")

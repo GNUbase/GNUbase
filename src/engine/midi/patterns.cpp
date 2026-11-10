@@ -543,7 +543,22 @@ namespace gnubase::engine::midi
 			if (mode == PatternMode::Mono)
 				toMono(pattern);
 		}
+		const int before = pattern.length;
 		pattern.length = whole(json, "length", pattern.length, 1, g_maxPatternSteps, "");
+		// A shorter Number of Steps drops the steps that no longer fit on the lanes that follow it and ends the ties
+		// of the others at the lanes' end; lanes given with it must fit it.
+		if (pattern.length < before && !json.contains("lanes"))
+			for (PatternLane& lane : pattern.lanes)
+			{
+				if (lane.length > 0)
+					continue;
+				const int length = pattern.length;
+				lane.steps.erase(std::remove_if(lane.steps.begin(), lane.steps.end(),
+									 [length](const PatternStep& step) { return step.index >= length; }),
+					lane.steps.end());
+				for (PatternStep& step : lane.steps)
+					step.length = std::min(step.length, length - step.index);
+			}
 		if (json.contains("resolution"))
 			pattern.resolution = resolutionFrom(json.at("resolution"), "resolution");
 		if (json.contains("direction"))
