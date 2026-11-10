@@ -262,6 +262,7 @@ namespace gnubase::ui
 				audio.at("offset").get<int64_t>() + static_cast<int64_t>(std::llround((from - start) * rate))});
 		}
 		m_to = std::max(m_to, m_from + 0.001);
+		updateMove();
 		if (selectionIsCurrent)
 			for (const Json& id : m_view.value("eventSelection", Json::array()))
 				m_selection.push_back(id.get<uint64_t>());
@@ -275,6 +276,46 @@ namespace gnubase::ui
 			m_root->GetOwnerDocument()->UpdateDocument();
 		}
 		render();
+	}
+
+	bool AudioPartEditor::moving() const
+	{
+		return m_gesture == Gesture::Move || m_gesture == Gesture::MoveVertical;
+	}
+
+	// A move goes on with its event as it is now, and by the way the mouse has gone on the display as it is now. An
+	// event that went or that the part editing mode no longer reaches ends it without its effect: the event's selection
+	// went with it, and so may its drag element (renderEvents()).
+	void AudioPartEditor::updateMove()
+	{
+		if (!moving() || !m_pressed)
+			return;
+		const auto found =
+			std::find_if(m_events.begin(), m_events.end(), [&](const Event& each) { return each.id == m_pressed->id; });
+		if (found == m_events.end() || !found->editable)
+		{
+			cancel();
+			return;
+		}
+		// A move is measured from its event and from the time under the press. While those stay, it stays as the mouse
+		// last left it, even if the project shown is new.
+		const double pressedAt = at(m_pressedMouse).first;
+		const bool changed = found->start != m_pressed->start || pressedAt != m_pressedAt.first;
+		m_pressed = *found;
+		m_pressedAt.first = pressedAt;
+		if (m_dragged && changed)
+			updateMoved();
+	}
+
+	// What a dragged move has moved so far, by the mouse's last place in the drag.
+	void AudioPartEditor::updateMoved()
+	{
+		if (!m_pressed)
+			return;
+		const auto [seconds, lane] = at(m_draggedTo);
+		m_moved = {
+			m_gesture == Gesture::Move ? snap(m_pressed->start + seconds - m_pressedAt.first) - m_pressed->start : 0.0,
+			lane - m_pressedAt.second};
 	}
 
 	float AudioPartEditor::dpRatio() const
@@ -372,18 +413,10 @@ namespace gnubase::ui
 		if (display != nullptr)
 			display->SetProperty(Rml::PropertyId::Height, dp(count * g_laneHeight));
 
-		// The selection only changes classes, so that a press that selects keeps the element under the mouse.
-		std::string rml;
-		for (const Event& event : m_events)
-			rml += R"(<div class="ape-event)" + std::string(event.editable ? "" : " inactive") + R"(" part=")" +
-				std::to_string(event.part) + R"(" event=")" + std::to_string(event.id) + R"("/>)";
 		Rml::Element* events = root->QuerySelector(".ape-events");
-		if (events != nullptr && rml != m_eventsRml)
-		{
-			events->SetInnerRML(rml);
-			m_eventsRml = rml;
-		}
 		if (events != nullptr)
+		{
+			renderEvents(*events);
 			for (int i = 0; i < events->GetNumChildren(); ++i)
 				if (const Event* found = eventOf(events->GetChild(i)))
 				{
@@ -392,6 +425,7 @@ namespace gnubase::ui
 					setClass(events->GetChild(i), "muted", found->mute);
 					setClass(events->GetChild(i), "outside", found->outside);
 				}
+		}
 		preview(); // a render while a move drags, as when the selection comes back, keeps showing it
 		if (m_waveforms && display != nullptr)
 		{
@@ -405,6 +439,54 @@ namespace gnubase::ui
 		renderInfo();
 		if (Rml::Context* context = root->GetContext())
 			context->RequestNextUpdate(0);
+	}
+
+	// The events' elements in m_events' order, made again only when the events or what the part editing mode reaches
+	// change: the selection only changes classes, so that a press that selects keeps the element under the mouse. A
+	// move's pressed element always stays: it is RmlUi's drag element, and when that goes RmlUi drops the drag without
+	// a dragend (Context::OnElementDetach), so that the move would get no more of its events.
+	void AudioPartEditor::renderEvents(Rml::Element& events)
+	{
+		std::string shown;
+		for (const Event& event : m_events)
+			shown +=
+				std::to_string(event.part) + ' ' + std::to_string(event.id) + (event.editable ? "\n" : " inactive\n");
+		Rml::ElementDocument* document = events.GetOwnerDocument();
+		if (shown == m_shownEvents || document == nullptr)
+			return;
+		m_shownEvents = std::move(shown);
+
+		Rml::Element* kept = nullptr;
+		uint64_t keptId = 0;
+		if (moving() && m_pressed)
+		{
+			keptId = m_pressed->id;
+			for (int i = 0; i < events.GetNumChildren() && kept == nullptr; ++i)
+				if (idAttribute(*events.GetChild(i), "event") == keptId)
+					kept = events.GetChild(i);
+		}
+		for (int i = events.GetNumChildren() - 1; i >= 0; --i)
+			if (events.GetChild(i) != kept)
+				events.RemoveChild(events.GetChild(i));
+		bool afterKept = kept == nullptr;
+		for (const Event& event : m_events)
+		{
+			if (kept != nullptr && event.id == keptId)
+			{
+				kept->SetAttribute("part", std::to_string(event.part));
+				afterKept = true;
+				continue;
+			}
+			Rml::ElementPtr element = document->CreateElement("div");
+			element->SetClass("ape-event", true);
+			element->SetClass("inactive", !event.editable);
+			element->SetAttribute("part", std::to_string(event.part));
+			element->SetAttribute("event", std::to_string(event.id));
+			if (afterKept)
+				events.AppendChild(std::move(element));
+			else
+				events.InsertBefore(std::move(element), kept);
+		}
 	}
 
 	// The info line (p. 698): the first selected event's start, end and length in bars and beats and its volume in dB;
@@ -468,13 +550,18 @@ namespace gnubase::ui
 
 	std::pair<double, int> AudioPartEditor::at(const Rml::Event& event) const
 	{
+		return at(Rml::Vector2f(event.GetParameter("mouse_x", 0.0F), event.GetParameter("mouse_y", 0.0F)));
+	}
+
+	std::pair<double, int> AudioPartEditor::at(Rml::Vector2f mouse) const
+	{
 		Rml::Element* display = m_root.get()->QuerySelector(".ape-display");
 		if (display == nullptr)
 			return {0.0, 0};
 		const Rml::Vector2f origin = display->GetAbsoluteOffset(Rml::BoxArea::Border);
 		const float width = std::max(display->GetBox().GetSize(Rml::BoxArea::Border).x, 1.0F);
-		const double x = (event.GetParameter("mouse_x", 0.0F) - origin.x) / width;
-		const double y = (event.GetParameter("mouse_y", 0.0F) - origin.y) / dpRatio();
+		const double x = (mouse.x - origin.x) / width;
+		const double y = (mouse.y - origin.y) / dpRatio();
 		return {m_from + (x * (m_to - m_from)), std::max(0, static_cast<int>(std::floor(y / g_laneHeight)))};
 	}
 
@@ -783,25 +870,23 @@ namespace gnubase::ui
 	{
 		if (m_gesture == Gesture::None)
 			return;
-		const auto [seconds, lane] = at(event);
 		if (m_gesture == Gesture::Audition)
 		{
 			if (m_tool == AudioPartTool::Scrub)
-				m_binding.send(
-					"audition.scrub", {{"track", m_auditioned}, {"position", std::max<int64_t>(0, samples(seconds))}});
+				m_binding.send("audition.scrub",
+					{{"track", m_auditioned}, {"position", std::max<int64_t>(0, samples(at(event).first))}});
 			return;
 		}
 		if (!dragged(event) || !m_pressed)
 			return; // a click only selects
-		m_moved = {
-			m_gesture == Gesture::Move ? snap(m_pressed->start + seconds - m_pressedAt.first) - m_pressed->start : 0.0,
-			lane - m_pressedAt.second};
+		m_draggedTo = {event.GetParameter("mouse_x", 0.0F), event.GetParameter("mouse_y", 0.0F)};
+		updateMoved();
 		preview();
 	}
 
 	void AudioPartEditor::preview()
 	{
-		if ((m_gesture != Gesture::Move && m_gesture != Gesture::MoveVertical) || !m_dragged || !m_pressed)
+		if (!moving() || !m_dragged || !m_pressed)
 			return;
 		const auto [dt, dl] = m_moved;
 		const Rml::Element* events = m_root.get()->QuerySelector(".ape-events");

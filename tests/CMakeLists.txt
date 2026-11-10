@@ -114,6 +114,7 @@ add_executable(gnubase-tests
 	midieditor_tests.cpp
 	midieffects_tests.cpp
 	midifile_tests.cpp
+	midifileimport_tests.cpp
 	midifunctions_tests.cpp
 	midifunctions_ui_tests.cpp
 	midimodifiers_tests.cpp
@@ -130,6 +131,8 @@ add_executable(gnubase-tests
 	multicore_tests.cpp
 	onscreenkeyboard_tests.cpp
 	parameter_tests.cpp
+	patterneditor_ui_tests.cpp
+	patterns_tests.cpp
 	plugincommands_tests.cpp
 	pluginslots_tests.cpp
 	peaks_tests.cpp
@@ -157,6 +160,7 @@ add_executable(gnubase-tests
 	safemode_tests.cpp
 	sampleeditor_tests.cpp
 	sampleeditor_ui_tests.cpp
+	sampler_tests.cpp
 	scripting_tests.cpp
 	scripts_ui_tests.cpp
 	sequencing_tests.cpp
@@ -175,6 +179,7 @@ add_executable(gnubase-tests
 	tempodetection_tests.cpp
 	tempotrack_ui_tests.cpp
 	testing_tests.cpp
+	testrun_tempfolder.cpp
 	testutils_tests.cpp
 	theme_tests.cpp
 	time_tests.cpp

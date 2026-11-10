@@ -184,12 +184,15 @@ namespace gnubase::engine
 	LevelReading LevelMeter::readFrame() noexcept
 	{
 		// The peaks first: the audio thread publishes a block's maximum before it raises the held peak, so the maximum
-		// read after them is never below them.
+		// read after them is below them only when a reset or a channel coming back cleared it. A reset can come at any
+		// point of this, from another thread, so that is where the peaks from before it go: the maximum read limits
+		// them.
 		std::array<float, g_maxMeterChannels> peaks{};
 		for (size_t c = 0; c < peaks.size(); ++c)
 			peaks[c] = m_framePeak[c].exchange(0.0f, std::memory_order_acquire);
 		LevelReading reading = read();
-		reading.peak = peaks;
+		for (size_t c = 0; c < peaks.size(); ++c)
+			reading.peak[c] = std::min(peaks[c], reading.peakMax[c]);
 		return reading;
 	}
 
@@ -201,7 +204,8 @@ namespace gnubase::engine
 
 	void LevelMeter::reset() noexcept
 	{
-		// The audio thread clears its own maxima at its next block; until then reads show none.
+		// The audio thread clears its own maxima at its next block; until then reads show none, unless a block under
+		// way publishes its maximum once more.
 		for (size_t c = 0; c < m_publishedPeakMax.size(); ++c)
 		{
 			m_publishedPeakMax[c].store(0.0f, std::memory_order_relaxed);

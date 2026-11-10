@@ -16,6 +16,12 @@
 
 using namespace gnubase::test;
 
+TEST_CASE("a test run has a temp folder of its own", "[unit]")
+{
+	const TempDir dir;
+	CHECK(dir.path().parent_path().filename().u8string().rfind("gnubase-test-", 0) == 0);
+}
+
 namespace
 {
 	// A 4x3 image with a different color in every pixel.

@@ -959,6 +959,12 @@ namespace gnubase::engine
 		return load;
 	}
 
+	size_t Playback::voices() const
+	{
+		const std::scoped_lock lock(m_mutex);
+		return m_voices.size();
+	}
+
 	uint64_t Playback::dropouts() const
 	{
 		const std::scoped_lock lock(m_mutex);

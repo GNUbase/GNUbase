@@ -22,7 +22,8 @@ namespace gnubase::engine
 	struct LevelReading
 	{
 		int channels = 0;
-		// The largest sample of the last 100 ms; in a frame's reading (readFrame), the largest since the last one.
+		// The largest sample of the last 100 ms; in a frame's reading (readFrame), the largest since the last one, up
+		// to peakMax.
 		std::array<float, g_maxMeterChannels> peak{};
 		std::array<float, g_maxMeterChannels> rms{};     // over the last 300 ms, or the meter's RMS resolution
 		std::array<float, g_maxMeterChannels> peakMax{}; // since the last reset
@@ -44,7 +45,8 @@ namespace gnubase::engine
 		void setRms(int milliseconds, bool aes17) noexcept;
 
 		// The one reader that reads once a frame, the UI (Engine::readMeters): the same as read, but each channel's
-		// peak is the largest sample since its last readFrame, so no peak between two frames goes unseen.
+		// peak is the largest sample since its last readFrame, so no peak between two frames goes unseen, and never
+		// above the reading's peakMax: a reset drops what the frame held from before it.
 		LevelReading readFrame() noexcept;
 
 	private:

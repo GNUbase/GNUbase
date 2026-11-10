@@ -45,6 +45,8 @@ namespace gnubase::ui
 		// The project, the editor view and the time axis of the note display, project ticks. Keeps the view and the
 		// parts it shows, not the whole project.
 		void show(const engine::Json& project, const engine::Json& view, int64_t from, int64_t to);
+		// Only another time axis: moves the bars and steps shown.
+		void setRange(int64_t from, int64_t to);
 		// The key editor's tool by name (keyToolName) and the line tool's mode: line, parabola, sine, triangle, square
 		// or paint.
 		void setTool(std::string tool, std::string lineMode);
@@ -101,6 +103,7 @@ namespace gnubase::ui
 		void dialogEvent(Rml::Event& event);
 
 		void render();
+		void placeItems(); // the bars and steps of m_items on the time axis
 		std::vector<Item> items(const Lane& lane) const;
 		// The lane under the event's target and the point in its area: project ticks and a value from 0 to 1.
 		std::optional<size_t> laneAt(Rml::Element* target) const;
@@ -142,7 +145,8 @@ namespace gnubase::ui
 		std::vector<Lane> m_lanes;
 		int64_t m_from = 0;
 		int64_t m_to = 1;
-		std::string m_rml; // the lanes' elements as last set
+		std::string m_rml;                      // the lanes' elements as last set
+		std::vector<std::vector<Item>> m_items; // each lane's bars or steps as last rendered
 		engine::Json m_presets = engine::Json::array();
 		bool m_presetsKnown = false;
 		std::vector<Subscription> m_subscriptions;

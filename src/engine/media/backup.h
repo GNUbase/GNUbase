@@ -32,9 +32,9 @@ namespace gnubase::engine
 	std::string foldedName(const std::filesystem::path& name);
 
 	// Creates an empty file in folder, which must exist, and returns its path: name, or if a file of that name is
-	// there, "<stem>-2<extension>", "<stem>-3<extension>" and so on. Creating fails if the file is there, even if
-	// another job or program creates it at the same moment, so two writers never get the same file. Throws
-	// std::runtime_error.
+	// there, "<stem>-2<extension>", "<stem>-3<extension>" and so on; names that differ only in case count as there.
+	// Creating fails if the file is there, even if another job or program creates it at the same moment, so two writers
+	// never get the same file. Throws std::runtime_error.
 	std::filesystem::path createFreeFile(const std::filesystem::path& folder, const std::filesystem::path& name);
 
 	// A media file and its copy.

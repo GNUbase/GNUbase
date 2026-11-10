@@ -6,6 +6,7 @@
 #include "engine/processors/gainpan.h"
 #include "engine/processors/generators.h"
 #include "engine/processors/midieffects.h"
+#include "engine/processors/sampler.h"
 #include "engine/processors/testsynth.h"
 
 #include <algorithm>
@@ -164,6 +165,43 @@ namespace gnubase::engine::processors
 						 number(dsp::Reverb::Predelay, "Predelay", 0.0, 200.0, 20.0, "ms"),
 						 number(dsp::Reverb::Mix, "Mix", 0.0, 100.0, 25.0, "%")}},
 					make<Reverb>()},
+				{{"sampler", "Sampler",
+					 "The sampler track's instrument: plays a sample chromatically from its root key, or a slice per "
+					 "key, with loops, reverse, a filter and an amp envelope. Its sample comes from the track "
+					 "(sampler.load); without one it plays nothing.",
+					 true,
+					 {whole(Sampler::RootKey, "Root key", 0.0, 127.0, 60.0),
+						 whole(Sampler::KeyLow, "Key low", 0.0, 127.0, 0.0),
+						 whole(Sampler::KeyHigh, "Key high", 0.0, 127.0, 127.0),
+						 onOff(Sampler::FixedPitch, "Fixed pitch", false),
+						 whole(Sampler::Octave, "Octave", -5.0, 5.0, 0.0),
+						 whole(Sampler::Coarse, "Coarse", -12.0, 12.0, 0.0, "st"),
+						 number(Sampler::Fine, "Fine", -100.0, 100.0, 0.0, "ct"),
+						 whole(Sampler::PitchBendRange, "Pitchbend", 0.0, 24.0, 2.0, "st"),
+						 number(Sampler::Start, "Start", 0.0, 1.0, 0.0), number(Sampler::End, "End", 0.0, 1.0, 1.0),
+						 choice(Sampler::LoopMode, "Loop mode",
+							 {"No loop", "Continuous", "Alternate", "Once", "Until release", "Alternate until release"},
+							 0.0),
+						 number(Sampler::LoopStart, "Loop start", 0.0, 1.0, 0.0),
+						 number(Sampler::LoopEnd, "Loop end", 0.0, 1.0, 1.0), onOff(Sampler::Reverse, "Reverse", false),
+						 onOff(Sampler::OneShot, "One shot", false),
+						 choice(Sampler::PlaybackMode, "Playback mode", {"Normal", "Slice"}, 0.0),
+						 whole(Sampler::Slices, "Slices", 1.0, 128.0, 16.0),
+						 onOff(Sampler::Monophonic, "Monophonic", false), onOff(Sampler::Legato, "Legato", false),
+						 onOff(Sampler::FilterOn, "Filter", false),
+						 choice(Sampler::FilterType, "Filter type", {"Low pass", "High pass", "Band pass"}, 0.0),
+						 number(Sampler::Cutoff, "Cutoff", 20.0, 20000.0, 20000.0, "Hz"),
+						 number(Sampler::Resonance, "Resonance", 0.0, 100.0, 0.0, "%"),
+						 number(Sampler::Drive, "Drive", 0.0, 24.0, 0.0, "dB"),
+						 number(Sampler::KeyFollow, "Cutoff key follow", 0.0, 100.0, 0.0, "%"),
+						 number(Sampler::Volume, "Volume", -96.0, 12.0, 0.0, "dB"),
+						 number(Sampler::Pan, "Pan", -1.0, 1.0, 0.0),
+						 number(Sampler::Attack, "Attack", 0.0, 10000.0, 0.0, "ms"),
+						 number(Sampler::Decay, "Decay", 0.0, 10000.0, 0.0, "ms"),
+						 number(Sampler::Sustain, "Sustain", 0.0, 100.0, 100.0, "%"),
+						 number(Sampler::Release, "Release", 0.0, 10000.0, 10.0, "ms"),
+						 number(Sampler::Gain, "Sample gain", -48.0, 48.0, 0.0, "dB")}},
+					make<Sampler>()},
 				{{"sine", "Sine generator", "A sine wave at the frequency and level.", false,
 					 {number(Sine::Frequency, "Frequency", 1.0, 20000.0, 440.0, "Hz"),
 						 number(Sine::Level, "Level", 0.0, 1.0, 0.5)}},

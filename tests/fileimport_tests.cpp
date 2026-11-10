@@ -584,6 +584,102 @@ TEST_CASE("The Import Options dialog's Name Format names the files Split Channel
 	CHECK(select[0].value("attributes", Json::object()).value("value", "") == format.value);
 }
 
+TEST_CASE("File > Import > MIDI File asks whether to create a new project and imports with the settings", "[ui]")
+{
+	const test::TempDir dir;
+	const std::string song = writeMidi(dir.path() / "song.mid", 1);
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	app.call("track.add", {{"type", "audio"}, {"name", "Vocals"}});
+	app.call("project.set", {{"tempo", 100.0}});
+	app.call("transport.set", {{"left", 115200}}); // a bar of 4/4 at 100 BPM
+	app.call("settings.set", {{"values", {{"midi.importToLeftLocator", true}, {"midi.importIgnoreTempo", true}}}});
+	const auto question = [&app] { return elements(app, "#import-midi-dialog").size() == 1; };
+	const auto answer = [&app](const std::string& file)
+	{
+		REQUIRE(app.waitUntil([&app] { return app.shell().fileDialogs().size() == 1; }));
+		CHECK(app.shell().answerFileDialog(app.shell().fileDialogs().begin()->first, {std::filesystem::u8path(file)}));
+	};
+
+	// Cancel imports nothing.
+	app.keys().run("file.importMidi", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil(question));
+	click(app, "#import-midi-dialog button[result=cancel]");
+	REQUIRE(app.waitUntil([&] { return !question(); }));
+	CHECK(app.shell().fileDialogs().empty());
+
+	// No: into the open project, at the left locator, keeping the project's tempo.
+	app.keys().run("file.importMidi", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil(question));
+	click(app, "#import-midi-current");
+	answer(song);
+	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("tracks").size() == 3; }));
+	Json project = app.call("project.get");
+	CHECK(project.at("tracks")[0].at("name") == "Vocals");
+	CHECK(project.at("midiParts")[0].at("position") == 4 * time::g_ticksPerQuarter);
+	REQUIRE(project.at("tempo").size() == 1);
+	CHECK(project.at("tempo")[0].at("bpm") == 100.0);
+
+	// Yes: into a new project, after the question about the unsaved changes, with the file's tempo.
+	app.keys().run("file.importMidi", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil(question));
+	click(app, "#import-midi-new");
+	answer(song);
+	REQUIRE(app.waitUntil([&app] { return elements(app, "#discard-changes").size() == 1; }));
+	click(app, "#discard-changes");
+	REQUIRE(app.waitUntil(
+		[&app]
+		{
+			const Json tracks = app.call("project.get").at("tracks");
+			return tracks.size() == 2 && tracks[0].at("type") == "midi";
+		}));
+	project = app.call("project.get");
+	CHECK(project.at("tempo")[0].at("bpm") == 120.0);
+	// The left locator, 2.4 seconds in, is 4.8 quarter notes at 120 BPM: the part starts at the bar before.
+	CHECK(project.at("midiParts")[0].at("position") == 4 * time::g_ticksPerQuarter);
+	CHECK(project.at("midiParts")[0].at("notes")[0].at("position") == time::g_ticksPerQuarter * 4 / 5);
+}
+
+TEST_CASE("MIDI files dropped on the event display follow the MIDI import settings", "[ui]")
+{
+	const test::TempDir dir;
+	engine::midifile::File file;
+	engine::midifile::Track track;
+	track.events = {engine::midifile::channelEvent(0, 0xC0, 5), engine::midifile::channelEvent(0, 0x90, 60, 100),
+		engine::midifile::channelEvent(480, 0x80, 60)};
+	track.end = 480;
+	file.tracks = {track, track};
+	const std::string song = (dir.path() / "song.mid").u8string();
+	engine::midifile::save(file, song);
+	test::UiApp app({900, 640});
+	const ui::EventDisplay& display = app.appUi().showProject();
+	const auto keys = app.call("track.add", {{"type", "midi"}, {"name", "Keys"}}).at("track").at("id");
+	REQUIRE(app.waitUntil([&app] { return elements(app, "#track-list listitem").size() == 1; }));
+
+	// Just over two seconds in, at 120 BPM a bar: by default, a track per file track, in a part from the bar there,
+	// with the first patch extracted.
+	const double x = (2.1 - display.view().start) / display.view().scale;
+	drop(app, {song}, x, 300.0);
+	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("tracks").size() == 3; }));
+	Json project = app.call("project.get");
+	CHECK(project.at("midiParts")[0].at("position") == 4 * time::g_ticksPerQuarter);
+	CHECK(project.at("midiParts")[0].at("controllers").empty());
+	for (const Json& channel : project.at("channels"))
+		if (channel.at("track") == project.at("tracks")[1].at("id"))
+			CHECK(channel.at("program") == 5);
+
+	// As a single part, on the MIDI track it is dropped on, with Extract First Patch off.
+	app.call("settings.set", {{"values", {{"midi.importSinglePart", true}, {"midi.importExtractPatch", false}}}});
+	drop(app, {song}, x, 10.0);
+	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("midiParts").size() == 3; }));
+	project = app.call("project.get");
+	CHECK(project.at("tracks").size() == 3);
+	const Json& part = project.at("midiParts")[2];
+	CHECK(part.at("track") == keys);
+	CHECK(part.at("notes").size() == 2);
+	CHECK(part.at("controllers").size() == 2);
+}
+
 TEST_CASE("The preferences' Editing > Audio page sets On Import Audio Files and what Use Settings imports with", "[ui]")
 {
 	const test::TempDir dir;
@@ -642,6 +738,17 @@ TEST_CASE("The preferences' Editing > Audio page sets On Import Audio Files and 
 	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("audioEvents").size() == 2; }));
 	CHECK(!dialogShown(app));
 	CHECK(app.call("project.get").at("media")[0].at("path") == (folder / "Audio" / "take L.wav").u8string());
+
+	// Split Channels writes its files into Audio whatever Copy says, so Copy is checked with a mono file, which
+	// isn't split: with Copy off it keeps its original path and no copy job starts (with Copy on it would be copied
+	// into Audio by a job).
+	const std::string mono = writeAudio(dir.path() / "mono.wav", 4800);
+	const size_t jobs = app.call("job.list").at("jobs").size();
+	display.importFiles({mono});
+	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("audioEvents").size() == 3; }));
+	CHECK(!dialogShown(app));
+	CHECK(app.call("project.get").at("media")[2].at("path") == mono);
+	CHECK(app.call("job.list").at("jobs").size() == jobs);
 
 	// Open Options Dialog resets Do not ask again: the dialog opens, starting from the same settings.
 	openPreferences();
