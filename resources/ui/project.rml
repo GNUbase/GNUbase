@@ -102,7 +102,7 @@
 		<button menu="window-menu">Window</button>
 	</menubar>
 	<div id="toolbar" class="toolbar" strip="toolbar">
-		<button id="combine-selection-tools" type="toggle" class="icon-only" title="Combine Selection Tools"><svg class="icon" src="../icons/tool-pointer.svg"/></button>
+		<button id="combine-selection-tools" type="toggle" class="icon-only" title="Combine Selection Tools"><svg class="icon" src="../icons/tool-combine-selection.svg"/></button>
 		<button tool="objectSelection" tool-menu="object-selection-menu" class="icon-only" title="Object Selection"><svg class="icon" src="../icons/tool-pointer.svg"/></button>
 		<button tool="rangeSelection" class="icon-only" title="Range Selection"><svg class="icon" src="../icons/tool-range.svg"/></button>
 		<button tool="comp" class="icon-only" title="Comp"><svg class="icon" src="../icons/tool-comp.svg"/></button>

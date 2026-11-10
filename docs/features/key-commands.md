@@ -110,6 +110,9 @@ UI commands are added after the key map, so their keys are bound where the app a
 | Mod+Shift+E | `edit.insertSilence` | Insert Silence |
 | Shift+X | `edit.splitRange` | Split (range) |
 | J | `edit.snap` | Snap On/Off ([snap.md](snap.md)) |
+| 1 to 9 | `tool.objectSelection`, `tool.rangeSelection`, `tool.split`, `tool.glue`, `tool.erase`, `tool.zoom`, `tool.mute`, `tool.draw`, `tool.play` | Object Selection Tool to Play Tool ([tools.md](tools.md)) |
+| F9, F10 | `tool.previous`, `tool.next` | Select Previous/Next Tool |
+| Alt+Shift+1 | `tool.combineSelectionTools` | Combine Selection Tools |
 
 The other edit commands ([parts-and-events.md](parts-and-events.md)) have no default keys in the reference. The
 transport controls' commands (F2, the enter commands, Exchange Time Formats, P for Locators to Selection) are in
