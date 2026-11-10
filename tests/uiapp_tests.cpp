@@ -22,6 +22,7 @@
 #include <RmlUi/Core/Property.h>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -1256,5 +1257,107 @@ TEST_CASE("Mod+K, a count and Enter repeat the selected events", "[ui]")
 	{
 		CHECK(all[i].at("position") == static_cast<int64_t>(i) * 4 * 1720320);
 		CHECK(all[i].at("shared") == 0);
+	}
+}
+
+TEST_CASE("event drags past the project start clamp the preview and the edit together", "[ui][slow]")
+{
+	const bool copy = GENERATE(false, true);
+	const bool multiple = GENERATE(false, true);
+	const bool snap = GENERATE(false, true);
+	const bool linear = GENERATE(false, true);
+	const bool otherTrack = copy != multiple;
+	INFO("copy " << copy << ", multiple " << multiple << ", snap " << snap << ", linear " << linear);
+	test::UiApp app({1024, 600});
+	ui::EventDisplay& display = app.appUi().showProject();
+	app.setDpRatio(1.0F);
+	const Json track =
+		app.call("track.add", {{"type", "audio"}, {"timeBase", linear ? "linear" : "musical"}}).at("track");
+	const Json destination =
+		app.call("track.add", {{"type", "audio"}, {"timeBase", linear ? "linear" : "musical"}}).at("track");
+	const Json media =
+		app.call("media.add", {{"path", "drag.wav"}, {"sampleRate", 48000}, {"channels", 1}, {"length", 480000}})
+			.at("media");
+	const Json clip = app.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	const int64_t bar = linear ? 96000 : 4 * time::g_ticksPerQuarter;
+	std::vector<uint64_t> originals;
+	originals.reserve(multiple ? 2 : 1);
+	for (int i = 0; i < (multiple ? 2 : 1); ++i)
+		originals.push_back(
+			app.call("audioEvent.add",
+				   {{"track", track.at("id")}, {"clip", clip.at("id")}, {"position", (1 + (2 * i)) * bar},
+					   {"length", 96000}})
+				.at("event")
+				.at("id")
+				.get<uint64_t>());
+	app.call("snap.set", {{"on", snap}, {"type", "grid"}, {"grid", "bar"}});
+	auto* events =
+		dynamic_cast<ui::EventLanes*>(app.main().context().GetDocument(0)->QuerySelector("event-lanes.events"));
+	auto* selected = dynamic_cast<ui::EventLanes*>(
+		app.main().context().GetDocument(0)->QuerySelector("event-lanes.selected-events"));
+	REQUIRE(events != nullptr);
+	REQUIRE(selected != nullptr);
+	REQUIRE(app.waitUntil(
+		[&] { return events->lanes().size() == 2 && events->lanes()[0].events.size() == originals.size(); }));
+	display.zoomTo(0.0, 24.0);
+	display.select(originals);
+	app.shell().step(std::chrono::milliseconds(0));
+	const size_t before = app.call("history.get").at("steps").size();
+	const double laneHeight = events->lanes()[0].height;
+	const double pressed = multiple ? 7.0 : 3.0; // press the later event of a selection
+	const double delta = multiple ? 8.0 : 6.0;
+	const auto at = [&](double seconds, bool down)
+	{
+		return ui::Target{"", 0,
+			ui::Point{static_cast<int>(std::lround(events->GetAbsoluteLeft() + (seconds / display.view().scale))),
+				static_cast<int>(std::lround(events->GetAbsoluteTop() + (laneHeight * (down ? 1.7 : 0.7))))}};
+	};
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	clock->freeze(true);
+	const std::shared_ptr<void> thaw(nullptr, [clock](void*) { clock->freeze(false); });
+	const std::vector<std::string> modifiers = copy ? std::vector<std::string>{"alt"} : std::vector<std::string>{};
+	app.ui().press(std::nullopt, at(pressed, false), ui::MouseButton::Left, modifiers);
+	clock->advance(1.0);
+	app.ui().move(std::nullopt, at(pressed - delta, otherTrack), modifiers);
+	app.shell().step(std::chrono::milliseconds(0));
+	const size_t lane = otherTrack ? 1 : 0;
+	REQUIRE(selected->lanes()[lane].events.size() == originals.size());
+	CHECK(selected->lanes()[lane].events[0].start == Catch::Approx(0.0));
+	if (multiple)
+		CHECK(selected->lanes()[lane].events[1].start == Catch::Approx(4.0));
+	app.ui().release(std::nullopt, at(pressed - delta, otherTrack), ui::MouseButton::Left, modifiers);
+	REQUIRE(app.waitUntil([&] { return app.call("history.get").at("steps").size() == before + 1; }));
+	const Json after = app.call("project.get").at("audioEvents");
+	REQUIRE(after.size() == originals.size() * (copy ? 2 : 1));
+	REQUIRE(app.waitUntil([&] { return display.selection().size() == originals.size(); }));
+	for (size_t i = 0; i < after.size(); ++i)
+	{
+		const Json& event = after[i];
+		const bool original =
+			std::find(originals.begin(), originals.end(), event.at("id").get<uint64_t>()) != originals.end();
+		if (copy && original)
+		{
+			CHECK(event.at("position") == static_cast<int64_t>(1 + (2 * i)) * bar);
+		}
+		else
+		{
+			CHECK(event.at("position") == static_cast<int64_t>(2 * (i % originals.size())) * bar);
+			CHECK(event.at("track") == (otherTrack ? destination.at("id") : track.at("id")));
+		}
+	}
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			return selected->lanes()[lane].events.size() == originals.size() &&
+				selected->lanes()[lane].events[0].start == 0.0;
+		}));
+	app.call("history.undo");
+	const Json undone = app.call("project.get").at("audioEvents");
+	REQUIRE(undone.size() == originals.size());
+	for (size_t i = 0; i < undone.size(); ++i)
+	{
+		CHECK(undone[i].at("position") == static_cast<int64_t>(1 + (2 * i)) * bar);
+		CHECK(undone[i].at("track") == track.at("id"));
 	}
 }

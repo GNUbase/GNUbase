@@ -208,6 +208,127 @@ TEST_CASE("clicks select events, a drag moves them, Alt and a drag copies them",
 	CHECK(f.parts()[2].at("position") == 12 * g_quarter);
 }
 
+TEST_CASE("nudging and moving to the cursor stop the selection at the project start", "[unit]")
+{
+	Fixture f;
+	const auto steps = [&] { return f.call("history.get").at("steps").size(); };
+	SECTION("a musical nudge is limited in ticks")
+	{
+		f.call("snap.set", {{"grid", "bar"}});
+		REQUIRE(f.waitUntil([&] { return f.display.snap().grid() == engine::GridType::Bar; }));
+		f.display.select({f.part});
+		const size_t before = steps();
+		f.run("edit.nudgeLeft");
+		REQUIRE(f.waitUntil([&] { return f.parts()[0].at("position") == 0; }));
+		CHECK(steps() == before + 1);
+		f.call("history.undo");
+		CHECK(f.parts()[0].at("position") == 2 * g_quarter);
+	}
+	SECTION("a linear nudge is limited in samples")
+	{
+		f.call("snap.set", {{"grid", "bar"}});
+		f.call("audioEvent.set", {{"event", f.event}, {"position", 12000}});
+		REQUIRE(f.waitUntil(
+			[&]
+			{
+				return f.display.project().at("audioEvents")[0].at("position") == 12000 &&
+					f.display.snap().grid() == engine::GridType::Bar;
+			}));
+		f.display.select({f.event});
+		const size_t before = steps();
+		f.run("edit.nudgeLeft");
+		REQUIRE(f.waitUntil([&] { return f.audioEvents()[0].at("position") == 0; }));
+		CHECK(steps() == before + 1);
+	}
+	SECTION("moving the end to an earlier cursor keeps the event at zero")
+	{
+		f.call("transport.locate", {{"position", 4800}});
+		REQUIRE(f.waitUntil([&] { return f.display.cursor() == 0.1; }));
+		f.display.select({f.event});
+		const size_t before = steps();
+		f.run("edit.moveEndToCursor");
+		REQUIRE(f.waitUntil([&] { return f.audioEvents()[0].at("position") == 0; }));
+		CHECK(f.audioEvents()[0].at("length") == 24000);
+		CHECK(steps() == before + 1);
+	}
+}
+
+TEST_CASE("mixed selections keep musical nudge steps across tempo changes", "[unit]")
+{
+	Fixture f;
+	f.call("project.set", {{"tempoTrackActive", true}});
+	f.call("tempo.add", {{"position", 4 * g_quarter}, {"bpm", 60.0}});
+	f.call("audioEvent.set", {{"event", f.event}, {"position", 24000}});
+	f.call("midiPart.set", {{"part", f.part}, {"position", 8 * g_quarter}});
+	f.call("snap.set", {{"grid", "bar"}});
+	REQUIRE(f.waitUntil(
+		[&]
+		{
+			const Json& project = f.display.project();
+			return project.at("tempo").size() == 2 && project.at("audioEvents")[0].at("position") == 24000 &&
+				project.at("midiParts")[0].at("position") == 8 * g_quarter &&
+				f.display.snap().grid() == engine::GridType::Bar;
+		}));
+	f.display.select({f.event, f.part});
+	const Json before = f.call("project.get");
+	const size_t steps = f.call("history.get").at("steps").size();
+	SECTION("a right nudge moves every event by a full bar in ticks")
+	{
+		f.run("edit.nudgeRight");
+		REQUIRE(f.waitUntil([&] { return f.parts()[0].at("position") != 8 * g_quarter; }));
+		CHECK(f.parts()[0].at("position") == 12 * g_quarter);
+		CHECK(f.audioEvents()[0].at("position") == 144000);
+	}
+	SECTION("a left nudge clamps the tick step at the earliest event")
+	{
+		f.run("edit.nudgeLeft");
+		REQUIRE(f.waitUntil([&] { return f.parts()[0].at("position") != 8 * g_quarter; }));
+		CHECK(f.parts()[0].at("position") == 7 * g_quarter);
+		CHECK(f.audioEvents()[0].at("position") == 0);
+	}
+	CHECK(f.call("history.get").at("steps").size() == steps + 1);
+	f.call("history.undo");
+	CHECK(f.call("project.get") == before);
+}
+
+TEST_CASE("clamped musical previews apply the same tick offset across tempo changes", "[unit]")
+{
+	Fixture f;
+	f.call("project.set", {{"tempoTrackActive", true}});
+	f.call("tempo.add", {{"position", 4 * g_quarter}, {"bpm", 60.0}});
+	const auto later =
+		f.call("midiPart.add",
+			 {{"track", f.parts()[0].at("track")}, {"position", 8 * g_quarter}, {"length", 4 * g_quarter}})
+			.at("part")
+			.at("id")
+			.get<uint64_t>();
+	f.call("snap.set", {{"on", true}, {"type", "grid"}, {"grid", "bar"}});
+	REQUIRE(f.waitUntil(
+		[&]
+		{
+			return f.lanes("events")[1].events.size() == 2 && f.lanes("events")[1].events[1].start == 6.0 &&
+				f.display.snap().on;
+		}));
+	f.display.select({f.part, later});
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	clock->freeze(true);
+	const std::shared_ptr<void> thaw(nullptr, [clock](void*) { clock->freeze(false); });
+	f.automation.press(std::nullopt, f.at(650, 60), ui::MouseButton::Left);
+	clock->advance(1.0);
+	f.automation.move(std::nullopt, f.at(50, 60));
+	f.step();
+	const auto& preview = f.lanes("selected-events")[1].events;
+	REQUIRE(preview.size() == 2);
+	CHECK(preview[0].start == 0.0);
+	CHECK(preview[0].length == 2.0);
+	CHECK(preview[1].start == 4.0);
+	CHECK(preview[1].length == 4.0);
+	f.automation.release(std::nullopt, f.at(50, 60), ui::MouseButton::Left);
+	REQUIRE(
+		f.waitUntil([&] { return f.parts()[0].at("position") == 0 && f.parts()[1].at("position") == 6 * g_quarter; }));
+}
+
 TEST_CASE("a drag at an edge resizes, Alt and a click splits, a double click adds a part", "[unit]")
 {
 	Fixture f;
