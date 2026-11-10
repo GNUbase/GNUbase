@@ -28,34 +28,47 @@ namespace gnubase::ui
 		constexpr double g_minVolume = -144.0;
 		constexpr double g_maxVolume = 6.0;
 
+		// Each field is a section of the set "infoLine", which the info line's setup pane #info-line-setup shows, hides
+		// and orders (p. 1575); a field the selection doesn't have is unavailable.
 		const char* const g_rml =
 			R"(<span class="info-empty">No Object Selected</span>)"
-			R"(<div class="info-field" info-field="name"><span class="info-label">Name</span>)"
+			R"(<div class="info-field" info-field="name" section="name" label="Name">)"
+			R"(<span class="info-label">Name</span>)"
 			R"(<textdisplay class="display" field="name"/></div>)"
-			R"(<div class="info-field" info-field="start"><span class="info-label">Start</span>)"
+			R"(<div class="info-field" info-field="start" section="start" label="Start">)"
+			R"(<span class="info-label">Start</span>)"
 			R"(<textdisplay class="display" field="start"/></div>)"
-			R"(<div class="info-field" info-field="end"><span class="info-label">End</span>)"
+			R"(<div class="info-field" info-field="end" section="end" label="End">)"
+			R"(<span class="info-label">End</span>)"
 			R"(<textdisplay class="display" field="end"/></div>)"
-			R"(<div class="info-field" info-field="length"><span class="info-label">Length</span>)"
+			R"(<div class="info-field" info-field="length" section="length" label="Length">)"
+			R"(<span class="info-label">Length</span>)"
 			R"(<textdisplay class="display" field="length"/></div>)"
-			R"(<div class="info-field" info-field="volume"><span class="info-label">Volume</span>)"
+			R"(<div class="info-field" info-field="volume" section="volume" label="Volume">)"
+			R"(<span class="info-label">Volume</span>)"
 			R"(<valuefield field="volume" min="-144" max="6" default="0" step="0.5" decimals="2")"
 			R"( unit="dB"/></div>)"
-			R"(<div class="info-field" info-field="mute"><button type="toggle" field="mute")"
+			R"(<div class="info-field" info-field="mute" section="mute" label="Mute">)"
+			R"(<button type="toggle" field="mute")"
 			R"( title="Mute">Mute</button></div>)"
-			R"(<div class="info-field" info-field="lock"><button type="toggle" field="lock")"
+			R"(<div class="info-field" info-field="lock" section="lock" label="Lock">)"
+			R"(<button type="toggle" field="lock")"
 			R"( title="Lock">Lock</button></div>)"
 			// A MIDI part's transpose and velocity (p. 1107), added to the track's MIDI modifiers.
-			R"(<div class="info-field" info-field="transpose"><span class="info-label">Transpose</span>)"
+			R"(<div class="info-field" info-field="transpose" section="transpose" label="Transpose">)"
+			R"(<span class="info-label">Transpose</span>)"
 			R"(<valuefield field="transpose" min="-127" max="127" default="0" step="1" decimals="0"/>)"
 			// What the project root key adds (p. 420), in brackets: the engine's rootKeyTranspose.
 			R"(<span class="info-root-transpose" field="rootKeyTranspose"/></div>)"
-			R"(<div class="info-field" info-field="velocity"><span class="info-label">Velocity</span>)"
+			R"(<div class="info-field" info-field="velocity" section="velocity" label="Velocity">)"
+			R"(<span class="info-label">Velocity</span>)"
 			R"(<valuefield field="velocity" min="-127" max="127" default="0" step="1" decimals="0"/></div>)"
 			// A MIDI part's root key and Global Transpose (pp. 417, 421, #168).
-			R"(<div class="info-field" info-field="rootKey"><span class="info-label">Root Key</span>)"
+			R"(<div class="info-field" info-field="rootKey" section="rootKey" label="Root Key">)"
+			R"(<span class="info-label">Root Key</span>)"
 			R"(<select field="rootKey" title="Root Key"/></div>)"
-			R"(<div class="info-field" info-field="globalTranspose"><button type="toggle" field="globalTranspose")"
+			R"(<div class="info-field" info-field="globalTranspose" section="globalTranspose" label="Global Transpose">)"
+			R"(<button type="toggle" field="globalTranspose")"
 			R"( title="Global Transpose: Independent">Independent</button></div>)";
 
 		// The root keys, as midiPart.set takes them.
@@ -251,7 +264,7 @@ namespace gnubase::ui
 		setLabel(root, "start", "Start");
 		for (const char* field : {"end", "length", "mute", "lock"})
 			if (Rml::Element* shown = root.QuerySelector("[info-field=" + std::string(field) + "]"))
-				setClass(*shown, "hidden", false);
+				setClass(*shown, "unavailable", false);
 		const Json& first = m_events.front();
 		const TimeContext context = projectTime(m_display.project());
 		const double start = first.at("start").get<double>() / context.sampleRate;
@@ -266,7 +279,7 @@ namespace gnubase::ui
 		if (Rml::Element* name = root.QuerySelector("textdisplay[field=name]"))
 			setFlag(*name, "disabled", audio); // an audio event's name is its clip's
 		if (Rml::Element* volume = root.QuerySelector("[info-field=volume]"))
-			setClass(*volume, "hidden", !audio);
+			setClass(*volume, "unavailable", !audio);
 		// Not while the project is older than the field's own steps (#716).
 		if (Rml::Element* volume = root.QuerySelector("valuefield[field=volume]");
 			volume != nullptr && audio && !m_binding.ahead(stepKey(m_stepOwner, "volume"), m_display.read()))
@@ -279,7 +292,7 @@ namespace gnubase::ui
 		for (const char* field : {"transpose", "velocity"})
 		{
 			if (Rml::Element* shown = root.QuerySelector("[info-field=" + std::string(field) + "]"))
-				setClass(*shown, "hidden", !midi);
+				setClass(*shown, "unavailable", !midi);
 			if (Rml::Element* value = root.QuerySelector("valuefield[field=" + std::string(field) + "]");
 				value != nullptr && midi && !m_binding.ahead(stepKey(m_stepOwner, field), m_display.read()))
 				setValue(*value, widgets::format(static_cast<float>(partValue(first.at("id").get<uint64_t>(), field))));
@@ -287,7 +300,7 @@ namespace gnubase::ui
 		const Json* part = midi ? partOf(first.at("id").get<uint64_t>()) : nullptr;
 		for (const char* field : {"rootKey", "globalTranspose"})
 			if (Rml::Element* shown = root.QuerySelector("[info-field=" + std::string(field) + "]"))
-				setClass(*shown, "hidden", part == nullptr);
+				setClass(*shown, "unavailable", part == nullptr);
 		if (part == nullptr)
 			return;
 		if (Rml::Element* step = root.QuerySelector("[field=rootKeyTranspose]"))
@@ -363,10 +376,10 @@ namespace gnubase::ui
 		setLabel(root, "start", "Position");
 		for (const char* field : {"end", "length"})
 			if (Rml::Element* shown = root.QuerySelector("[info-field=" + std::string(field) + "]"))
-				setClass(*shown, "hidden", !first.cycle);
+				setClass(*shown, "unavailable", !first.cycle);
 		for (const char* field : {"volume", "mute", "lock", "transpose", "velocity", "rootKey", "globalTranspose"})
 			if (Rml::Element* shown = root.QuerySelector("[info-field=" + std::string(field) + "]"))
-				setClass(*shown, "hidden", true);
+				setClass(*shown, "unavailable", true);
 	}
 
 	// As for events: relative to the first marker's value, or with Ctrl+Enter the value typed for every one. A new

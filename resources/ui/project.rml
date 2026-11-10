@@ -19,7 +19,8 @@
      display drives too, with the toolbox #toolbox, the context menu #event-display-menu and #tool-notification, and
      #select-color with #color-menu, which ui::ColorMenu fills with the project's colors (docs/features/colors.md).
      ui::StatusLine fills #record-format, #record-time and #lost-device (docs/features/status-line.md). ui::InfoLine fills
-     #info-line; #inspector-setup is the inspector's Set up Sections pane (docs/features/inspector.md).
+     #info-line; #inspector-setup is the inspector's Set up Sections pane (docs/features/inspector.md), #toolbar-setup
+     and #info-line-setup are the toolbar's and the info line's setup panes (docs/features/docking.md).
      ui::TrackVisibility drives #track-visibility-configurations and its menu, with visibility-configuration.rml
      (docs/features/track-visibility.md).
      The focus zone "project" has the project window's key commands, such as zooming with H and G. -->
@@ -101,41 +102,62 @@
 		<button menu="workspaces-menu">Workspaces</button>
 		<button menu="window-menu">Window</button>
 	</menubar>
-	<div id="toolbar" class="toolbar" strip="toolbar">
-		<button id="combine-selection-tools" type="toggle" class="icon-only" title="Combine Selection Tools"><svg class="icon" src="../icons/tool-pointer.svg"/></button>
-		<button tool="objectSelection" tool-menu="object-selection-menu" class="icon-only" title="Object Selection"><svg class="icon" src="../icons/tool-pointer.svg"/></button>
-		<button tool="rangeSelection" class="icon-only" title="Range Selection"><svg class="icon" src="../icons/tool-range.svg"/></button>
-		<button tool="comp" class="icon-only" title="Comp"><svg class="icon" src="../icons/tool-comp.svg"/></button>
-		<button tool="draw" class="icon-only" title="Draw"><svg class="icon" src="../icons/tool-draw.svg"/></button>
-		<button tool="erase" class="icon-only" title="Erase"><svg class="icon" src="../icons/tool-erase.svg"/></button>
-		<button tool="split" class="icon-only" title="Split"><svg class="icon" src="../icons/tool-split.svg"/></button>
-		<button tool="glue" class="icon-only" title="Glue"><svg class="icon" src="../icons/tool-glue.svg"/></button>
-		<button tool="mute" class="icon-only" title="Mute"><svg class="icon" src="../icons/tool-mute.svg"/></button>
-		<button tool="zoom" class="icon-only" title="Zoom"><svg class="icon" src="../icons/tool-zoom.svg"/></button>
-		<button tool="line" tool-menu="line-menu" class="icon-only" title="Line"><svg class="icon" src="../icons/tool-line.svg"/></button>
-		<button id="play-tool" tool="play" tool-menu="play-menu" class="icon-only" title="Play"><svg class="icon" src="../icons/tool-audition.svg"/></button>
-		<button id="auto-scroll" type="toggle" title="Auto-Scroll">Auto-Scroll</button>
-		<button id="auto-scroll-settings" class="icon-only" menu="auto-scroll-menu" title="Select Auto-Scroll Settings"><svg class="icon" src="../icons/general-arrow-down.svg"/></button>
-		<button id="zoom-presets" class="icon-only" menu="zoom-presets-menu" title="Horizontal Zoom Presets"><svg class="icon" src="../icons/tool-zoom.svg"/></button>
-		<button id="snap" type="toggle" class="icon-only" title="Snap On/Off"><svg class="icon" src="../icons/general-snap.svg"/></button>
-		<button id="snap-type" menu="snap-type-menu" title="Snap Type">Grid</button>
-		<button id="grid-type" menu="grid-type-menu" title="Grid Type">Bar</button>
-		<button id="snap-zero-crossing" type="toggle" class="icon-only" title="Snap to Zero Crossing"><svg class="icon" src="../icons/general-zero-crossing.svg"/></button>
-		<!-- Apply Quantize, the quantize presets, Soft Quantize and Open Quantize Panel (reference manual p. 368), which
-		     ui::QuantizePanel fills (docs/features/quantize.md) -->
-		<div id="toolbar-quantize" class="toolbar-quantize"/>
-		<button id="select-color" class="icon-only" menu="color-menu" title="Select Color for Selected Tracks or Events"><svg class="icon" src="../icons/general-color.svg"/></button>
-		<button id="track-visibility-configurations" class="track-visibility-configurations" menu="track-visibility-configurations-menu" title="Track Visibility Configurations">Configurations</button>
-		<!-- The Project Root Key (reference manual p. 414, docs/features/transpose.md), which the display shows -->
-		<button id="root-key" class="toolbar-root-key" menu="root-key-menu" title="Project Root Key">-</button>
+	<!-- The toolbar's sections, which its setup pane #toolbar-setup shows, hides and orders (reference manual p. 1575). -->
+	<div id="toolbar" class="toolbar" strip="toolbar" sections="toolbar" contextmenu="toolbar-setup">
+		<div class="toolbar-section" section="tools" label="Tool Buttons">
+			<button id="combine-selection-tools" type="toggle" class="icon-only" title="Combine Selection Tools"><svg class="icon" src="../icons/tool-pointer.svg"/></button>
+			<button tool="objectSelection" tool-menu="object-selection-menu" class="icon-only" title="Object Selection"><svg class="icon" src="../icons/tool-pointer.svg"/></button>
+			<button tool="rangeSelection" class="icon-only" title="Range Selection"><svg class="icon" src="../icons/tool-range.svg"/></button>
+			<button tool="comp" class="icon-only" title="Comp"><svg class="icon" src="../icons/tool-comp.svg"/></button>
+			<button tool="draw" class="icon-only" title="Draw"><svg class="icon" src="../icons/tool-draw.svg"/></button>
+			<button tool="erase" class="icon-only" title="Erase"><svg class="icon" src="../icons/tool-erase.svg"/></button>
+			<button tool="split" class="icon-only" title="Split"><svg class="icon" src="../icons/tool-split.svg"/></button>
+			<button tool="glue" class="icon-only" title="Glue"><svg class="icon" src="../icons/tool-glue.svg"/></button>
+			<button tool="mute" class="icon-only" title="Mute"><svg class="icon" src="../icons/tool-mute.svg"/></button>
+			<button tool="zoom" class="icon-only" title="Zoom"><svg class="icon" src="../icons/tool-zoom.svg"/></button>
+			<button tool="line" tool-menu="line-menu" class="icon-only" title="Line"><svg class="icon" src="../icons/tool-line.svg"/></button>
+			<button id="play-tool" tool="play" tool-menu="play-menu" class="icon-only" title="Play"><svg class="icon" src="../icons/tool-audition.svg"/></button>
+		</div>
+		<div class="toolbar-section" section="autoScroll" label="Auto-Scroll">
+			<button id="auto-scroll" type="toggle" title="Auto-Scroll">Auto-Scroll</button>
+			<button id="auto-scroll-settings" class="icon-only" menu="auto-scroll-menu" title="Select Auto-Scroll Settings"><svg class="icon" src="../icons/general-arrow-down.svg"/></button>
+		</div>
+		<div class="toolbar-section" section="zoomPresets" label="Zoom Presets">
+			<button id="zoom-presets" class="icon-only" menu="zoom-presets-menu" title="Horizontal Zoom Presets"><svg class="icon" src="../icons/tool-zoom.svg"/></button>
+		</div>
+		<div class="toolbar-section" section="snap" label="Snap">
+			<button id="snap" type="toggle" class="icon-only" title="Snap On/Off"><svg class="icon" src="../icons/general-snap.svg"/></button>
+			<button id="snap-type" menu="snap-type-menu" title="Snap Type">Grid</button>
+			<button id="snap-zero-crossing" type="toggle" class="icon-only" title="Snap to Zero Crossing"><svg class="icon" src="../icons/general-zero-crossing.svg"/></button>
+		</div>
+		<div class="toolbar-section" section="gridType" label="Grid Type">
+			<button id="grid-type" menu="grid-type-menu" title="Grid Type">Bar</button>
+		</div>
+		<div class="toolbar-section" section="quantize" label="Quantize">
+			<!-- Apply Quantize, the quantize presets, Soft Quantize and Open Quantize Panel (reference manual p. 368), which
+			     ui::QuantizePanel fills (docs/features/quantize.md) -->
+			<div id="toolbar-quantize" class="toolbar-quantize"/>
+		</div>
+		<div class="toolbar-section" section="color" label="Color Menu">
+			<button id="select-color" class="icon-only" menu="color-menu" title="Select Color for Selected Tracks or Events"><svg class="icon" src="../icons/general-color.svg"/></button>
+		</div>
+		<div class="toolbar-section" section="trackVisibility" label="Track Visibility Configurations">
+			<button id="track-visibility-configurations" class="track-visibility-configurations" menu="track-visibility-configurations-menu" title="Track Visibility Configurations">Configurations</button>
+		</div>
+		<div class="toolbar-section" section="rootKey" label="Project Root Key">
+			<!-- The Project Root Key (reference manual p. 414, docs/features/transpose.md), which the display shows -->
+			<button id="root-key" class="toolbar-root-key" menu="root-key-menu" title="Project Root Key">-</button>
+		</div>
 		<div class="spacer"/>
-		<button id="show-channel-zone" type="toggle" toggle="channel" class="icon-only" title="Show/Hide Channel"><svg class="icon" src="../icons/layout-channel-zone.svg"/></button>
-		<button id="show-left-zone" type="toggle" toggle="left" class="icon-only" title="Show/Hide Left Zone"><svg class="icon" src="../icons/layout-left-zone.svg"/></button>
-		<button id="show-lower-zone" type="toggle" toggle="lower" class="icon-only" title="Show/Hide Lower Zone"><svg class="icon" src="../icons/layout-lower-zone.svg"/></button>
-		<button id="show-right-zone" type="toggle" toggle="right" class="icon-only" title="Show/Hide Right Zone"><svg class="icon" src="../icons/layout-right-zone.svg"/></button>
-		<button id="window-layout" class="icon-only" menu="window-layout-menu" title="Set up Window Layout"><svg class="icon" src="../icons/general-arrow-down.svg"/></button>
+		<div class="toolbar-section" section="zones" label="Window Zone Controls">
+			<button id="show-channel-zone" type="toggle" toggle="channel" class="icon-only" title="Show/Hide Channel"><svg class="icon" src="../icons/layout-channel-zone.svg"/></button>
+			<button id="show-left-zone" type="toggle" toggle="left" class="icon-only" title="Show/Hide Left Zone"><svg class="icon" src="../icons/layout-left-zone.svg"/></button>
+			<button id="show-lower-zone" type="toggle" toggle="lower" class="icon-only" title="Show/Hide Lower Zone"><svg class="icon" src="../icons/layout-lower-zone.svg"/></button>
+			<button id="show-right-zone" type="toggle" toggle="right" class="icon-only" title="Show/Hide Right Zone"><svg class="icon" src="../icons/layout-right-zone.svg"/></button>
+			<button id="window-layout" class="icon-only" menu="window-layout-menu" title="Set up Window Layout"><svg class="icon" src="../icons/general-arrow-down.svg"/></button>
+		</div>
 	</div>
-	<div id="info-line" class="strip info-line" strip="infoLine" default="hidden"/>
+	<div id="info-line" class="strip info-line" strip="infoLine" default="hidden" sections="infoLine" contextmenu="info-line-setup"/>
 	<div class="zones">
 		<div id="channel-zone" zone="channel" focuszone="channel" size="200" default="hidden"/>
 		<splitter for="channel"/>
@@ -625,6 +647,21 @@
 		<menuitem type="toggle" toggle="overviewLine">Overview Line</menuitem>
 		<menuitem type="toggle" toggle="statusLine">Status Line</menuitem>
 		<menuitem type="toggle" toggle="transportBar">Transport Bar</menuitem>
+	</menu>
+	<!-- The toolbar's and the info line's setup panes (reference manual p. 1575), their context menus -->
+	<menu id="toolbar-setup" class="setup-pane">
+		<div setup-presets="toolbar"/>
+		<button setup-preset-save="toolbar">Save Preset</button>
+		<button setup-all="toolbar">Show All</button>
+		<button setup-reset="toolbar">Reset All</button>
+		<div setup="toolbar"/>
+	</menu>
+	<menu id="info-line-setup" class="setup-pane">
+		<div setup-presets="infoLine"/>
+		<button setup-preset-save="infoLine">Save Preset</button>
+		<button setup-all="infoLine">Show All</button>
+		<button setup-reset="infoLine">Reset All</button>
+		<div setup="infoLine"/>
 	</menu>
 	<!-- The inspector's Set up Sections pane (reference manual p. 167), its context menu -->
 	<menu id="inspector-setup" class="setup-pane">

@@ -15,14 +15,14 @@ Layout and Mod+I show and hide ([docking.md](docking.md)). It follows the event 
 ```
 #info-line.info-line          .empty without a selection, .multiple with more than one selected
   .info-empty                 "No Object Selected"
-  .info-field[info-field=…]   a label and its control
+  .info-field[info-field=…]   a label and its control, a section of the set infoLine (section=…)
     textdisplay[field=name]   a MIDI part's name; an audio event's clip name, disabled
     textdisplay[field=start], [field=end], [field=length]   in the ruler's time format
-    valuefield[field=volume]  audio events, in dB; .hidden for parts
+    valuefield[field=volume]  audio events, in dB; .unavailable for parts
     button[field=mute], button[field=lock]                  toggle buttons
-    valuefield[field=transpose], [field=velocity]           MIDI parts, -127 to 127; .hidden for others
+    valuefield[field=transpose], [field=velocity]           MIDI parts, -127 to 127; .unavailable for others
     span[field=rootKeyTranspose]                            what the project root key adds, "(+2)", empty for 0
-    select[field=rootKey], button[field=globalTranspose]    MIDI parts' root key and Global Transpose; .hidden for others
+    select[field=rootKey], button[field=globalTranspose]    MIDI parts' root key and Global Transpose; .unavailable for others
 ```
 
 - **Editing** (p. 72). A double click edits a display or the volume as text, Enter takes it; mute and lock are toggles.
@@ -43,12 +43,17 @@ Layout and Mod+I show and hide ([docking.md](docking.md)). It follows the event 
 - **Positions.** In bars and beats the moves and resizes are in ticks, exact on musical tracks; in the other formats
   in samples. Lengths are typed as `formatLength` shows them, e.g. "2.0.0.0" for two bars.
 - The themes give `.multiple` its own color, as the reference shows a multiple selection "in another color".
+- **Setup pane** (p. 72, 1575). A right click on the info line opens its setup pane `#info-line-setup`, which shows,
+  hides and orders its fields, the sections of the set `infoLine` ([docking.md](docking.md)), with presets, Show All
+  and Reset All. A field the selection doesn't have is `.unavailable`, not `.hidden`, so it doesn't show while the
+  setup pane has it shown, and a field hidden there stays hidden whatever is selected. `AppUi` hands the info line to
+  `Docking::arrangeSections` once `ui::InfoLine` has filled it.
 - **While hidden** it doesn't ask for the selection; it asks once it shows again.
 - **Markers** (p. 430). `AppUi` gives the info line the markers selected on the marker tracks
   (`ui::MarkerLines::selection`, [markers.md](markers.md)). When that selection changed last, the info line has the
   class `markers` and shows the first selected marker in timeline order: its description (`field=name`, labelled
   Description) and position (`field=start`, labelled Position), and for a cycle marker its end and length; volume,
-  mute and lock are `.hidden`. Edits go to every selected marker as one `history.transaction` of `marker.set`s, as for
+  mute and lock are `.unavailable`. Edits go to every selected marker as one `history.transaction` of `marker.set`s, as for
   events: relative to the first one's value, or with Ctrl+Enter the same value for all. A new position keeps a cycle
   marker's length; end and length change the cycle markers. The project window selects events or markers:
   selecting an event deselects the markers (`AppUi`, `MarkerLines::deselect`), a marker clicked deselects the events.
@@ -155,7 +160,9 @@ which is in the project window's document, doesn't open, waits for #517.
   pan both ways, the output from another client and from the drop-down list, a refused output, the inserts overview
   with a bypassed slot, the notepad, renaming, notes and a name being typed when another track is selected and when
   another client loads a project, arrow keys in the notepad and the name, closing a section, hiding one in Set up
-  Sections and opening it only from an empty area, and what a group and a marker track don't have; the MIDI Modifiers
+  Sections and opening it only from an empty area, and what a group and a marker track don't have; the info line's
+  and the toolbar's setup panes, a hidden field staying hidden when the selection shows again and Show All leaving an
+  unavailable one out; the MIDI Modifiers
   section's bypass, values, a fraction's denominator, a generator's target with positions in ticks, a range the engine
   refuses, changes from another client with undo, and an audio track without it. A drag of the
   inspector's volume up to the project's maximum, wheel turns on the pan and a drag of the info line's volume are one

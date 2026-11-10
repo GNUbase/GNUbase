@@ -101,8 +101,7 @@ dragging workspaces in the organizer and renaming with a double click; locking w
 View (p. 1609) and the view of external projects, which come with the preferences' General page, so a loaded project's
 active workspace is checked but its layout isn't applied; the editors'
 windows opening from a workspace, which follow what the engine's editor views show; and the Windows dialog's Cascaded
-mode, which acts on a window's associated windows, and Reset Layout. The toolbar's and the info line's setup panes
-(p. 1575): only the transport bar and panel, the inspector and the mixer have setup panes so far.
+mode, which acts on a window's associated windows, and Reset Layout.
 
 ## Checks
 

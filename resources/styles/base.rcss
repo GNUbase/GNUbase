@@ -292,6 +292,13 @@ tabset tab
 	box-sizing: border-box;
 }
 
+/* A section of the project window's toolbar, which its setup pane shows, hides and orders. */
+.toolbar-section
+{
+	display: flex;
+	align-items: center;
+}
+
 .display, .tooltip
 {
 	display: inline-block;
@@ -1930,7 +1937,7 @@ splitter.column .splitter-grip-horizontal
 	text-align: left;
 }
 
-.info-empty, .info-line.empty .info-field
+.info-empty, .info-line.empty .info-field, .info-field.unavailable
 {
 	display: none;
 }
