@@ -38,7 +38,7 @@ namespace gnubase::engine
 
 		// Any thread.
 		LevelReading read() const noexcept;
-		void reset() noexcept; // the maxima
+		void reset() noexcept; // the maxima and held frame peaks
 		// The RMS level's resolution, how much of the signal it averages, 1 to 1000 ms (300 until set), and whether
 		// it adds AES17's 3 dB, so that a sine's RMS level is its peak level (reference manual p. 540).
 		void setRms(int milliseconds, bool aes17) noexcept;

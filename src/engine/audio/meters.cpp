@@ -189,7 +189,9 @@ namespace gnubase::engine
 		for (size_t c = 0; c < peaks.size(); ++c)
 			peaks[c] = m_framePeak[c].exchange(0.0f, std::memory_order_acquire);
 		LevelReading reading = read();
-		reading.peak = peaks;
+		// A reset may have cleared the maxima after the exchanges above. Drop any peak from before that reset.
+		for (size_t c = 0; c < peaks.size(); ++c)
+			reading.peak[c] = std::min(peaks[c], reading.peakMax[c]);
 		return reading;
 	}
 
@@ -204,6 +206,7 @@ namespace gnubase::engine
 		// The audio thread clears its own maxima at its next block; until then reads show none.
 		for (size_t c = 0; c < m_publishedPeakMax.size(); ++c)
 		{
+			m_framePeak[c].store(0.0f, std::memory_order_relaxed);
 			m_publishedPeakMax[c].store(0.0f, std::memory_order_relaxed);
 			m_publishedRmsMax[c].store(0.0f, std::memory_order_relaxed);
 		}

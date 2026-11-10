@@ -676,6 +676,34 @@ TEST_CASE("the per-frame reading holds each peak until it is read", "[unit]")
 	CHECK(level.readFrame().peak[0] == 0.0f);
 }
 
+TEST_CASE("resetting a level meter drops peaks held since the last frame", "[unit]")
+{
+	const bool processAfterReset = GENERATE(false, true);
+	INFO("audio after reset: " << processAfterReset);
+	LevelMeter meter;
+	Signal loud;
+	loud.impulse(0.8f);
+	loud.play(meter);
+	CHECK(meter.readFrame().peak[0] == Approx(0.8f));
+	loud.play(meter); // held for the next frame when the reset happens
+	meter.reset();
+	float expected = 0.0f;
+	if (processAfterReset)
+	{
+		Signal quiet;
+		quiet.impulse(0.2f);
+		quiet.play(meter);
+		expected = 0.2f;
+	}
+	const LevelReading frame = meter.readFrame();
+	REQUIRE(frame.channels == 2);
+	for (size_t c = 0; c < 2; ++c)
+	{
+		CHECK(frame.peak[c] == Approx(expected));
+		CHECK(frame.peakMax[c] == Approx(expected));
+	}
+}
+
 TEST_CASE("the 100 ms peak doesn't depend on the block size", "[unit]")
 {
 	// A loud sample 100 frames before the first 100 ms window ends, then silence: only that window holds it, also
@@ -854,6 +882,8 @@ TEST_CASE("a frame's peak is never above its maximum, whatever the audio thread 
 	constexpr int blocks = 500000;
 	for (int block = 1; block <= blocks; ++block)
 	{
+		if (block % 997 == 0)
+			meter.reset(); // Reset on Start can race with the frame reader too.
 		const float sample = static_cast<float>(block) / blocks;
 		const float* const channel = &sample;
 		meter.process(&channel, 1, 1, g_rate);
