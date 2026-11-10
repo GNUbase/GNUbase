@@ -207,6 +207,36 @@ namespace gnubase::ui
 			return context;
 		}
 
+		// While it exists RmlUi's clock stands still, unless it stands still already: the presses of a double click
+		// are within its double click time however long the frames between them take in a slow build or on a busy
+		// machine.
+		class HeldClock
+		{
+		public:
+			explicit HeldClock(bool hold)
+				: m_clock(hold ? dynamic_cast<SystemInterface*>(Rml::GetSystemInterface()) : nullptr)
+			{
+				if (m_clock != nullptr && m_clock->frozen())
+					m_clock = nullptr;
+				if (m_clock != nullptr)
+					m_clock->freeze(true);
+			}
+
+			HeldClock(const HeldClock&) = delete;
+			HeldClock& operator=(const HeldClock&) = delete;
+			HeldClock(HeldClock&&) = delete;
+			HeldClock& operator=(HeldClock&&) = delete;
+
+			~HeldClock()
+			{
+				if (m_clock != nullptr)
+					m_clock->freeze(false);
+			}
+
+		private:
+			SystemInterface* m_clock;
+		};
+
 		// The element under the mouse after input, which the window draws again.
 		Json under(Window& window)
 		{
@@ -309,6 +339,7 @@ namespace gnubase::ui
 		const int state = modifierState(modifiers);
 		Rml::Context& context = updated(shown);
 		context.ProcessMouseMove(at.x, at.y, state);
+		const HeldClock held(count > 1);
 		for (int i = 0; i < count; ++i)
 		{
 			if (i > 0) // as frames pass between the OS's events: e.g. a double click's first click opened a field
