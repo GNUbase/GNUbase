@@ -8,6 +8,7 @@
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Event.h>
+#include <RmlUi/Core/StringUtilities.h>
 
 #include <array>
 #include <string>
@@ -38,6 +39,23 @@ namespace gnubase::ui
 			if (element.IsClassSet(name) != set)
 				element.SetClass(name, set);
 		}
+
+		void setInner(Rml::Element* element, const std::string& rml)
+		{
+			if (element != nullptr && element->GetInnerRML() != rml)
+				element->SetInnerRML(rml);
+		}
+
+		// The in-place editor's Part Editing Mode options (reference manual p. 1260), as editor.set names them.
+		constexpr std::array<std::pair<const char*, const char*>, 2> g_editingModes = {{
+			{"allParts", "All Parts"},
+			{"activePart", "Active Part"},
+		}};
+
+		std::string checked(bool on)
+		{
+			return on ? R"( checked="")" : "";
+		}
 	}
 
 	InPlaceEditors::InPlaceEditors(EventDisplay& display, EngineBinding& binding)
@@ -60,7 +78,10 @@ namespace gnubase::ui
 	InPlaceEditors::~InPlaceEditors()
 	{
 		for (auto& [track, editor] : m_editors)
+		{
 			editor.keys.reset();
+			removeMenus(editor);
+		}
 		m_editors.clear();
 		if (Rml::Element* area = m_area.get())
 		{
@@ -84,6 +105,12 @@ namespace gnubase::ui
 	{
 		const auto found = m_editors.find(track);
 		return found != m_editors.end() ? found->second.keys.get() : nullptr;
+	}
+
+	const Json* InPlaceEditors::view(uint64_t track) const
+	{
+		const auto found = m_editors.find(track);
+		return found != m_editors.end() ? &found->second.view : nullptr;
 	}
 
 	void InPlaceEditors::requestView(uint64_t track)
@@ -138,6 +165,7 @@ namespace gnubase::ui
 			Rml::ElementPtr element = area->GetOwnerDocument()->CreateElement("div");
 			element->SetClass("in-place-editor", true);
 			element->SetAttribute("track", std::to_string(track));
+			element->SetAttribute("focuszone", "inPlace");
 			element->SetInnerRML(
 				R"(<div class="key-editor"/><button class="in-place-toolbar-toggle")"
 				R"( title="Show/Hide Toolbar"><svg class="icon" src="../icons/general-arrow-down.svg"/>)"
@@ -145,10 +173,82 @@ namespace gnubase::ui
 			Rml::Element* added = area->AppendChild(std::move(element));
 			editor.element = added->GetObserverPtr();
 			editor.keys = std::make_unique<KeyEditor>(m_binding, *added->GetFirstChild(), name);
+			addPartControls(track, editor);
 			m_display.setInPlaceTracks(tracks());
 		}
 		editor.keys->show(m_display.project(), view);
+		showPartControls(editor);
 		place(track, editor);
+	}
+
+	void InPlaceEditors::addPartControls(uint64_t track, Editor& editor)
+	{
+		Rml::Element* element = editor.element.get();
+		Rml::ElementDocument* document = element != nullptr ? element->GetOwnerDocument() : nullptr;
+		if (document == nullptr)
+			return;
+		// First in the toolbar (p. 1260), with their menus in the body, so that no editor clips them.
+		const std::string suffix = menuIdSuffix(viewName(track));
+		if (Rml::Element* toolbar = element->QuerySelector(".key-editor-toolbar"))
+		{
+			const Rml::ElementPtr holder = document->CreateElement("div");
+			holder->SetInnerRML(R"(<button class="in-place-editing-mode" menu="in-place-editing-mode-menu)" + suffix +
+				R"(" title="Part Editing Mode">Part Editing Mode</button>)"
+				R"(<button class="in-place-active-part" menu="in-place-active-part-menu)" +
+				suffix + R"(" title="Activate Part for Editing"/><span class="separator"/>)");
+			while (holder->HasChildNodes())
+				toolbar->InsertBefore(holder->RemoveChild(holder->GetLastChild()), toolbar->GetFirstChild());
+		}
+		for (const char* menu : {"in-place-editing-mode-menu", "in-place-active-part-menu"})
+		{
+			const Rml::ElementPtr holder = document->CreateElement("div");
+			holder->SetInnerRML(
+				std::string(R"(<menu id=")") + menu + suffix + R"(" track=")" + std::to_string(track) + R"("/>)");
+			Rml::Element* added = document->AppendChild(holder->RemoveChild(holder->GetFirstChild()));
+			added->AddEventListener(Rml::EventId::Click, this);
+			editor.menus.push_back(added->GetObserverPtr());
+		}
+	}
+
+	void InPlaceEditors::showPartControls(Editor& editor)
+	{
+		const Json& view = editor.view;
+		Rml::Element* element = editor.element.get();
+		const Json& project = m_display.project();
+		if (element == nullptr || editor.menus.size() != 2 || !project.is_object())
+			return;
+		// The active part's name on its button; the parts in the menu by position, as the view lists them.
+		std::string active;
+		std::string parts;
+		for (const Json& id : view.at("parts"))
+			for (const Json& part : project.at("midiParts"))
+				if (part.at("id") == id)
+				{
+					const std::string name = Rml::StringUtilities::EncodeRml(part.at("name").get<std::string>());
+					if (id == view.at("activePart"))
+						active = name;
+					parts += R"(<menuitem type="toggle" active-part=")" + id.dump() + '"' +
+						checked(id == view.at("activePart")) + ">" + name + "</menuitem>";
+				}
+		setInner(element->QuerySelector(".in-place-active-part"), active.empty() ? "No Part" : active);
+		std::string modes;
+		for (const auto& [mode, label] : g_editingModes)
+			modes += std::string(R"(<menuitem type="toggle" editing-mode=")") + mode + '"' +
+				checked(view.at("editingMode") == mode) + ">" + label + "</menuitem>";
+		setInner(editor.menus[0].get(), modes);
+		setInner(editor.menus[1].get(), parts);
+	}
+
+	void InPlaceEditors::removeMenus(Editor& editor)
+	{
+		for (const Rml::ObserverPtr<Rml::Element>& menu : editor.menus)
+			if (Rml::Element* element = menu.get())
+			{
+				element->RemoveEventListener(Rml::EventId::Click, this);
+				if (Rml::Element* parent = element->GetParentNode())
+					parent->RemoveChild(element);
+			}
+		editor.menus.clear();
 	}
 
 	void InPlaceEditors::close(uint64_t track)
@@ -157,6 +257,7 @@ namespace gnubase::ui
 		if (found == m_editors.end())
 			return;
 		found->second.keys.reset(); // before its element goes
+		removeMenus(found->second);
 		if (Rml::Element* element = found->second.element.get())
 			element->GetParentNode()->RemoveChild(element);
 		m_editors.erase(found);
@@ -220,14 +321,32 @@ namespace gnubase::ui
 			}
 		// ponytail: the key editor's axis is linear in ticks, so it matches the ruler at the edges and wherever the
 		// tempo doesn't change in the view; a tempo-mapped axis in KeyEditor when tempo changes need it.
-		const TimeContext time = projectTime(project);
+		if (m_timeLoads != m_display.loads())
+		{
+			m_time = projectTime(project);
+			m_timeLoads = m_display.loads();
+		}
 		const double start = view.start + (offset * view.scale);
 		editor.keys->setTimeRange(
-			std::make_pair(time.tempo.toTicks(start), time.tempo.toTicks(start + (width * view.scale))));
+			std::make_pair(m_time.tempo.toTicks(start), m_time.tempo.toTicks(start + (width * view.scale))));
 	}
 
 	void InPlaceEditors::ProcessEvent(Rml::Event& event)
 	{
+		// A menu of the multiple part controls: editor.set for its editor.
+		if (Rml::Element* menu = event.GetCurrentElement(); menu != nullptr && menu != m_area.get())
+		{
+			const Rml::Element* item = event.GetTargetElement();
+			const std::string editor = viewName(std::stoull(menu->GetAttribute<Rml::String>("track", "0")));
+			if (item != nullptr && item->HasAttribute("editing-mode"))
+				m_binding.send("editor.set",
+					{{"editor", editor}, {"editingMode", item->GetAttribute<Rml::String>("editing-mode", "")}});
+			else if (item != nullptr && item->HasAttribute("active-part"))
+				m_binding.send("editor.set",
+					{{"editor", editor},
+						{"activePart", std::stoull(item->GetAttribute<Rml::String>("active-part", "0"))}});
+			return;
+		}
 		// The key editor below has seen it; the event display mustn't select or edit what is under the editor.
 		event.StopPropagation();
 		if (event.GetId() != Rml::EventId::Click)
