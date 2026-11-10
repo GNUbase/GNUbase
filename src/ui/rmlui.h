@@ -40,6 +40,7 @@ namespace gnubase::ui
 		void advance(double seconds) { m_advanced += seconds; }
 		// Stops the clock where it is, for tests that need time to stand still, or lets it run on from there.
 		void freeze(bool frozen);
+		bool frozen() const { return m_frozen.has_value(); }
 		bool LogMessage(Rml::Log::Type type, const Rml::String& message) override;
 		void SetClipboardText(const Rml::String& text) override;
 		void GetClipboardText(Rml::String& text) override;
