@@ -23,10 +23,12 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <functional>
 #include <optional>
 #include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 using namespace gnubase;
@@ -750,6 +752,26 @@ TEST_CASE("the toolbar's setup pane shows, hides and orders its sections, with p
 		REQUIRE(hasClass(window.app, "#toolbar-setup", "open"));
 	};
 	const auto snapHidden = [&window] { return hasClass(window.app, "#toolbar [section=snap]", "hidden"); };
+	// How far the first section of an order starts from the toolbar's left and the last ends from its right.
+	const auto insets = [&window](const std::vector<std::string>& order)
+	{
+		window.app.shell().step(std::chrono::milliseconds(0));
+		const Json bar = element(window.app, "#toolbar").at("box");
+		const Json first = element(window.app, "#toolbar [section=" + order.front() + "]").at("box");
+		const Json last = element(window.app, "#toolbar [section=" + order.back() + "]").at("box");
+		return std::pair{first.at("x").get<double>() - bar.at("x").get<double>(),
+			bar.at("x").get<double>() + bar.at("width").get<double>() - last.at("x").get<double>() -
+				last.at("width").get<double>()};
+	};
+	const std::pair<double, double> edges = insets(defaults);
+	const auto atEdges = [&](const std::vector<std::string>& order)
+	{
+		const std::pair<double, double> now = insets(order);
+		CHECK(std::abs(now.first - edges.first) <= 1.0);
+		CHECK(std::abs(now.second - edges.second) <= 1.0);
+		// The spacer stays before the last place, also where a wide toolbar leaves it no room.
+		CHECK(element(window.app, "#toolbar .spacer + div").at("attributes").at("section") == order.back());
+	};
 
 	// Hiding a section hides its controls and keeps it in the user's layout; Show All shows it again.
 	openPane();
@@ -774,6 +796,7 @@ TEST_CASE("the toolbar's setup pane shows, hides and orders its sections, with p
 	docking.moveSection("project", "toolbar", defaults.front(), defaults.back());
 	const std::vector<std::string> moved = docking.sections("project", "toolbar");
 	REQUIRE(moved.back() == defaults.front());
+	atEdges(moved); // the spacer stays in its place, so the sections still fill the toolbar from end to end
 	openPane();
 	window.click("#toolbar-setup [setup-preset-save]");
 	REQUIRE(window.app.waitUntil([&window] { return !elements(window.app, "#setup-preset-name").empty(); }));
@@ -790,10 +813,12 @@ TEST_CASE("the toolbar's setup pane shows, hides and orders its sections, with p
 	window.click("#toolbar-setup [setup-reset]");
 	REQUIRE(window.app.waitUntil([&] { return !snapHidden(); }));
 	CHECK(docking.sections("project", "toolbar") == defaults);
+	atEdges(defaults);
 	openPane();
 	window.click("#toolbar-setup [setup-preset=Editing]");
 	REQUIRE(window.app.waitUntil(snapHidden));
 	CHECK(docking.sections("project", "toolbar") == moved);
+	atEdges(moved);
 }
 
 TEST_CASE("an edit in the inspector goes to the track it started on when another track shows", "[ui]")

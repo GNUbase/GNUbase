@@ -105,27 +105,33 @@ namespace gnubase::ui
 			return result;
 		}
 
-		// Puts the container's children whose attribute the order names into that order, where the last of them is.
+		// Puts the container's children whose attribute the order names into that order, in the places they take, so
+		// that the other children, such as a toolbar's spacer, stay where they are.
 		void arrange(Rml::Element& container, const char* name, const std::vector<std::string>& order)
 		{
-			std::vector<Rml::Element*> children; // in the document's order
+			std::vector<Rml::Element*> places; // in the document's order
 			for (int i = 0; i < container.GetNumChildren(); ++i)
 				if (contains(order, attribute(*container.GetChild(i), name)))
-					children.push_back(container.GetChild(i));
+					places.push_back(container.GetChild(i));
 			std::vector<Rml::Element*> sorted;
 			for (const std::string& id : order)
-				std::copy_if(children.begin(), children.end(), std::back_inserter(sorted),
+				std::copy_if(places.begin(), places.end(), std::back_inserter(sorted),
 					[&](const Rml::Element* child) { return attribute(*child, name) == id; });
-			if (sorted == children)
-				return;
-			Rml::Element* end = children.back()->GetNextSibling();
-			for (Rml::Element* child : sorted)
+			for (std::size_t i = 0; i < sorted.size(); ++i)
 			{
-				Rml::ElementPtr moved = container.RemoveChild(child);
-				if (end != nullptr)
-					container.InsertBefore(std::move(moved), end);
+				if (places[i] == sorted[i])
+					continue;
+				// Swaps the child in this place with the one that belongs here, which is in a later place.
+				const auto there =
+					std::find(places.begin() + static_cast<std::ptrdiff_t>(i) + 1, places.end(), sorted[i]);
+				Rml::Element* here = places[i];
+				Rml::Element* after = (*there)->GetNextSibling();
+				container.InsertBefore(container.RemoveChild(*there), here);
+				if (after != nullptr)
+					container.InsertBefore(container.RemoveChild(here), after);
 				else
-					container.AppendChild(std::move(moved));
+					container.AppendChild(container.RemoveChild(here));
+				std::swap(places[i], *there);
 			}
 		}
 
