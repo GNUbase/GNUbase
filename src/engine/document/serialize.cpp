@@ -566,7 +566,7 @@ namespace gnubase::engine
 		Json json = {{"id", channel.id}, {"track", channel.track}, {"format", formatName(channel.format)},
 			{"channels", channelCount(channel.format)}, {"input", channel.input}, {"output", channel.output},
 			{"instrument", channel.instrument}, {"instrumentParameters", std::move(parameters)},
-			{"volume", channel.volume}, {"pan", channel.pan},
+			{"sample", channel.sample}, {"volume", channel.volume}, {"pan", channel.pan},
 			{"panner", channel.panner == StereoPanner::Combined ? "combined" : "balance"}, {"panLeft", channel.panLeft},
 			{"panRight", channel.panRight}, {"panBypass", channel.panBypass},
 			{"midiVolume", channel.midiVolume ? Json(*channel.midiVolume) : Json(nullptr)},
@@ -2134,6 +2134,9 @@ namespace gnubase::engine
 			// Files from before instrument parameters have none.
 			channel.instrumentParameters = instrumentParametersFromJson(
 				item.value("instrumentParameters", Json::array()), channel.instrument, name);
+			// Only the sampler plays a sample; files from before sampler tracks have none. Checked once the clips are
+			// read.
+			channel.sample = channel.instrument == "sampler" ? item.value("sample", ObjectId{0}) : 0;
 			// Audio, MIDI and instrument tracks and VCA faders have the buttons; files from before them have them off.
 			// MIDI input other than none is all MIDI inputs, also in files from before it.
 			const TrackType type = track != project.trackById.end() ? track->second.type : TrackType::Folder;
@@ -2260,6 +2263,10 @@ namespace gnubase::engine
 				item.value("folder", ObjectId{0}), std::move(regions), std::move(hitpoints), hitpointFilter,
 				clipWarpFromJson(item.value("warp", Json::object()))};
 		}
+		// A sampler whose clip isn't in the pool plays nothing.
+		for (auto& [id, channel] : project.channels)
+			if (project.clips.count(channel.sample) == 0)
+				channel.sample = 0;
 		// Files from before the pool's folders have none. Folders inside folders that aren't there go to the top, and
 		// of each loop of folders inside each other the first one; clips in folders that aren't there go to the
 		// Audio folder.

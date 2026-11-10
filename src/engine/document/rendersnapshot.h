@@ -225,6 +225,8 @@ namespace gnubase::engine
 		std::vector<RenderSlot> slots;                // from top to bottom
 		ChannelSections sections;                     // the strip's sections before the fader
 		std::vector<RenderSend> sends;                // those with a destination, by number
+		// The sampler's (#180): the media file it plays, or empty for none.
+		std::string sample;
 	};
 
 	// A channel volume in dB as a linear gain; the fader's bottom, g_minChannelVolume, is silence.

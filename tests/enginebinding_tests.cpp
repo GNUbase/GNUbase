@@ -205,6 +205,35 @@ TEST_CASE("the steps of one control go one at a time, the newest of a gesture re
 	CHECK(read("volume") == -2.0);
 }
 
+TEST_CASE(
+	"settling sends the steps that wait and hands on results until no command that changes things is out", "[unit]")
+{
+	engine::Engine engine;
+	ui::EngineBinding binding(engine);
+	engine::Client client(engine);
+	const Json channel = client.call("track.add", {{"type", "audio"}}).value.at("channel").at("id");
+	const auto volume = [&channel](double value)
+	{
+		return Json::array(
+			{Json{{"command", "channel.set"}, {"parameters", {{"channel", channel}, {"volume", value}}}}});
+	};
+	const auto position = [&client] { return client.call("history.get").value.at("position").get<int64_t>(); };
+	const int64_t before = position();
+
+	// A step in flight, one that waits, and a command that a done sends.
+	binding.sendStep(0, "volume", "Change Volume", volume(-1.0));
+	binding.sendStep(0, "volume", "Change Volume", volume(-2.0));
+	bool followed = false;
+	binding.send("track.add", {{"type", "midi"}}, [&binding, &followed](const engine::Result& /*result*/)
+		{ binding.send("track.add", {{"type", "audio"}}, [&followed](const engine::Result&) { followed = true; }); });
+	binding.send("project.get"); // a query doesn't keep it waiting
+	CHECK(binding.settle(std::chrono::seconds(10)));
+	CHECK(followed);
+	CHECK(!binding.sending("volume"));
+	CHECK(binding.waiting("track.add") == 0);
+	CHECK(position() == before + 4);
+}
+
 TEST_CASE("the UI follows the events of every client while it subscribes", "[unit]")
 {
 	engine::Engine engine;

@@ -583,3 +583,170 @@ TEST_CASE("The Import Options dialog's Name Format names the files Split Channel
 	REQUIRE(select.size() == 1);
 	CHECK(select[0].value("attributes", Json::object()).value("value", "") == format.value);
 }
+
+TEST_CASE("File > Import > MIDI File asks whether to create a new project and imports with the settings", "[ui]")
+{
+	const test::TempDir dir;
+	const std::string song = writeMidi(dir.path() / "song.mid", 1);
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	app.call("track.add", {{"type", "audio"}, {"name", "Vocals"}});
+	app.call("project.set", {{"tempo", 100.0}});
+	app.call("transport.set", {{"left", 115200}}); // a bar of 4/4 at 100 BPM
+	app.call("settings.set", {{"values", {{"midi.importToLeftLocator", true}, {"midi.importIgnoreTempo", true}}}});
+	const auto question = [&app] { return elements(app, "#import-midi-dialog").size() == 1; };
+	const auto answer = [&app](const std::string& file)
+	{
+		REQUIRE(app.waitUntil([&app] { return app.shell().fileDialogs().size() == 1; }));
+		CHECK(app.shell().answerFileDialog(app.shell().fileDialogs().begin()->first, {std::filesystem::u8path(file)}));
+	};
+
+	// Cancel imports nothing.
+	app.keys().run("file.importMidi", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil(question));
+	click(app, "#import-midi-dialog button[result=cancel]");
+	REQUIRE(app.waitUntil([&] { return !question(); }));
+	CHECK(app.shell().fileDialogs().empty());
+
+	// No: into the open project, at the left locator, keeping the project's tempo.
+	app.keys().run("file.importMidi", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil(question));
+	click(app, "#import-midi-current");
+	answer(song);
+	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("tracks").size() == 3; }));
+	Json project = app.call("project.get");
+	CHECK(project.at("tracks")[0].at("name") == "Vocals");
+	CHECK(project.at("midiParts")[0].at("position") == 4 * time::g_ticksPerQuarter);
+	REQUIRE(project.at("tempo").size() == 1);
+	CHECK(project.at("tempo")[0].at("bpm") == 100.0);
+
+	// Yes: into a new project, after the question about the unsaved changes, with the file's tempo.
+	app.keys().run("file.importMidi", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil(question));
+	click(app, "#import-midi-new");
+	answer(song);
+	REQUIRE(app.waitUntil([&app] { return elements(app, "#discard-changes").size() == 1; }));
+	click(app, "#discard-changes");
+	REQUIRE(app.waitUntil(
+		[&app]
+		{
+			const Json tracks = app.call("project.get").at("tracks");
+			return tracks.size() == 2 && tracks[0].at("type") == "midi";
+		}));
+	project = app.call("project.get");
+	CHECK(project.at("tempo")[0].at("bpm") == 120.0);
+	// The left locator, 2.4 seconds in, is 4.8 quarter notes at 120 BPM: the part starts at the bar before.
+	CHECK(project.at("midiParts")[0].at("position") == 4 * time::g_ticksPerQuarter);
+	CHECK(project.at("midiParts")[0].at("notes")[0].at("position") == time::g_ticksPerQuarter * 4 / 5);
+}
+
+TEST_CASE("MIDI files dropped on the event display follow the MIDI import settings", "[ui]")
+{
+	const test::TempDir dir;
+	engine::midifile::File file;
+	engine::midifile::Track track;
+	track.events = {engine::midifile::channelEvent(0, 0xC0, 5), engine::midifile::channelEvent(0, 0x90, 60, 100),
+		engine::midifile::channelEvent(480, 0x80, 60)};
+	track.end = 480;
+	file.tracks = {track, track};
+	const std::string song = (dir.path() / "song.mid").u8string();
+	engine::midifile::save(file, song);
+	test::UiApp app({900, 640});
+	const ui::EventDisplay& display = app.appUi().showProject();
+	const auto keys = app.call("track.add", {{"type", "midi"}, {"name", "Keys"}}).at("track").at("id");
+	REQUIRE(app.waitUntil([&app] { return elements(app, "#track-list listitem").size() == 1; }));
+
+	// Just over two seconds in, at 120 BPM a bar: by default, a track per file track, in a part from the bar there,
+	// with the first patch extracted.
+	const double x = (2.1 - display.view().start) / display.view().scale;
+	drop(app, {song}, x, 300.0);
+	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("tracks").size() == 3; }));
+	Json project = app.call("project.get");
+	CHECK(project.at("midiParts")[0].at("position") == 4 * time::g_ticksPerQuarter);
+	CHECK(project.at("midiParts")[0].at("controllers").empty());
+	for (const Json& channel : project.at("channels"))
+		if (channel.at("track") == project.at("tracks")[1].at("id"))
+			CHECK(channel.at("program") == 5);
+
+	// As a single part, on the MIDI track it is dropped on, with Extract First Patch off.
+	app.call("settings.set", {{"values", {{"midi.importSinglePart", true}, {"midi.importExtractPatch", false}}}});
+	drop(app, {song}, x, 10.0);
+	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("midiParts").size() == 3; }));
+	project = app.call("project.get");
+	CHECK(project.at("tracks").size() == 3);
+	const Json& part = project.at("midiParts")[2];
+	CHECK(part.at("track") == keys);
+	CHECK(part.at("notes").size() == 2);
+	CHECK(part.at("controllers").size() == 2);
+}
+
+TEST_CASE("The preferences' Editing > Audio page sets On Import Audio Files and what Use Settings imports with", "[ui]")
+{
+	const test::TempDir dir;
+	const std::string take = writeAudio(dir.path() / "take.wav", 4800, 2);
+	test::UiApp app({1000, 760});
+	ui::EventDisplay& display = app.appUi().showProject();
+	const std::filesystem::path folder = dir.path() / "project";
+	std::filesystem::create_directories(folder);
+	app.call("project.save", {{"path", (folder / "Song.dawproject").u8string()}, {"embedMedia", false}});
+	const auto setting = [&app](const char* key) { return app.call("settings.get", {{"key", key}}).at("value"); };
+	const auto value = [&app](const std::string& selector)
+	{
+		const Json found = elements(app, selector);
+		REQUIRE(found.size() == 1);
+		return found[0].at("value");
+	};
+	// Opens a drop-down list, moves the selection that many options down (up when negative) and closes it.
+	const auto choose = [&app](const std::string& selector, int down)
+	{
+		click(app, selector);
+		for (int i = 0; i < std::abs(down); ++i)
+			app.ui().key(std::nullopt, down > 0 ? "Down" : "Up");
+		click(app, selector);
+	};
+	const auto openPreferences = [&app]
+	{
+		app.keys().run("window.preferences", Json::object(), app.main(), nullptr);
+		REQUIRE(app.waitUntil([&app] { return elements(app, "#preferences").size() == 1; }));
+		app.shell().step(std::chrono::milliseconds(0));
+		click(app, "#pages-editing-audio");
+	};
+	const auto ok = [&app]
+	{
+		click(app, "#preferences-ok");
+		REQUIRE(app.waitUntil([&app] { return elements(app, "#preferences").empty(); }));
+	};
+	app.call("settings.set", {{"key", "editing.onImportAudio"}, {"value", "useSettings"}}); // as Do not ask again
+
+	// The page shows the settings; Split Channels on, Name Format "Name L" and Copy off.
+	openPreferences();
+	CHECK(value("#pref-editing-onImportAudio") == "useSettings");
+	CHECK(checked(app, "#pref-editing-importAudioCopy"));
+	CHECK(checked(app, "#pref-editing-importAudioConvert"));
+	CHECK(!checked(app, "#pref-editing-importAudioSplitChannels"));
+	CHECK(value("#pref-editing-importAudioNameFormat") == "dash");
+	click(app, "#pref-editing-importAudioSplitChannels");
+	choose("#pref-editing-importAudioNameFormat", 3);
+	click(app, "#pref-editing-importAudioCopy");
+	ok();
+	CHECK(setting("editing.importAudioSplitChannels") == true);
+	CHECK(setting("editing.importAudioNameFormat") == "space");
+	CHECK(setting("editing.importAudioCopy") == false);
+
+	// Use Settings imports with them, without the dialog.
+	display.importFiles({take});
+	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("audioEvents").size() == 2; }));
+	CHECK(!dialogShown(app));
+	CHECK(app.call("project.get").at("media")[0].at("path") == (folder / "Audio" / "take L.wav").u8string());
+
+	// Open Options Dialog resets Do not ask again: the dialog opens, starting from the same settings.
+	openPreferences();
+	choose("#pref-editing-onImportAudio", -1);
+	ok();
+	CHECK(setting("editing.onImportAudio") == "openOptionsDialog");
+	display.importFiles({take});
+	REQUIRE(app.waitUntil([&app] { return dialogShown(app); }));
+	CHECK(checked(app, "#import-split"));
+	CHECK(!checked(app, "#import-copy"));
+	CHECK(elements(app, "#import-name-format")[0].value("attributes", Json::object()).value("value", "") == "space");
+}

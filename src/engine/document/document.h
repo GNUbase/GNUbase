@@ -253,6 +253,9 @@ namespace gnubase::engine
 		// the members above with default values.
 		// NOLINTNEXTLINE(readability-redundant-member-init): see above
 		std::map<uint32_t, double> instrumentParameters = {};
+		// Sampler tracks, instrument tracks that play the built-in sampler (#180): the pool clip whose media file the
+		// sampler plays, or 0 for none (docs/features/sampler-track.md).
+		ObjectId sample = 0;
 		// Audio, MIDI and instrument tracks: the monitor and record enable buttons
 		// (docs/features/latency-and-monitoring.md, docs/features/midi-recording.md).
 		bool monitor = false;
@@ -734,6 +737,14 @@ namespace gnubase::engine
 			for (auto& version : entry.second.versions)
 				for (auto& event : version.audioEvents)
 					visit(event);
+	}
+
+	// Calls visit with the pool clip of every sampler track (#180): their clips are in use too. Project may be const.
+	template <typename P, typename Visit> void forEverySamplerClip(P& project, Visit visit)
+	{
+		for (auto& entry : project.channels)
+			if (entry.second.sample != 0)
+				visit(entry.second.sample);
 	}
 
 	// Whether tracks of a type can be disabled (reference manual p. 219): audio, instrument and MIDI tracks.
@@ -1377,12 +1388,14 @@ namespace gnubase::engine
 	{
 		return std::tie(a.id, a.track, a.format, a.input, a.output, a.instrument, a.volume, a.pan, a.panner, a.panLeft,
 				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.program, a.bank, a.device, a.modifiers,
-				   a.midiInserts, a.midiSends, a.inputTransformer, a.instrumentParameters, a.monitor, a.recordEnable,
-				   a.midiInput, a.mute, a.solo, a.soloDefeat, a.listen, a.slots, a.notes, a.sections, a.sends) ==
+				   a.midiInserts, a.midiSends, a.inputTransformer, a.instrumentParameters, a.sample, a.monitor,
+				   a.recordEnable, a.midiInput, a.mute, a.solo, a.soloDefeat, a.listen, a.slots, a.notes, a.sections,
+				   a.sends) ==
 			std::tie(b.id, b.track, b.format, b.input, b.output, b.instrument, b.volume, b.pan, b.panner, b.panLeft,
 				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.program, b.bank, b.device, b.modifiers,
-				b.midiInserts, b.midiSends, b.inputTransformer, b.instrumentParameters, b.monitor, b.recordEnable,
-				b.midiInput, b.mute, b.solo, b.soloDefeat, b.listen, b.slots, b.notes, b.sections, b.sends);
+				b.midiInserts, b.midiSends, b.inputTransformer, b.instrumentParameters, b.sample, b.monitor,
+				b.recordEnable, b.midiInput, b.mute, b.solo, b.soloDefeat, b.listen, b.slots, b.notes, b.sections,
+				b.sends);
 	}
 
 	inline bool operator==(const Slot& a, const Slot& b)
