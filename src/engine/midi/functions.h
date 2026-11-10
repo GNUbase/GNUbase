@@ -109,6 +109,31 @@ namespace gnubase::engine::midi
 	void fixLengths(MidiPart& part, const NoteSelection& selection, time::Ticks length);
 	void fixVelocities(MidiPart& part, const NoteSelection& selection, uint16_t velocity);
 
+	// The Velocity dialog's changes (reference manual pp. 1126-1127).
+	enum class VelocityChange : uint8_t
+	{
+		Add,      // adds amount
+		Compress, // multiplies by ratio: below 1 compresses the differences, above 1 expands them
+		Limit,    // keeps velocities from lower to upper
+		Fixed,    // sets them to amount
+		Variance, // lowers each by a random part of it, up to variance
+	};
+
+	// Velocities are 0 to 1 here, as the commands take them.
+	struct VelocitySettings
+	{
+		VelocityChange type = VelocityChange::Add;
+		double amount = 0.0;   // Add: -1 to 1; Fixed: 0 to 1
+		double ratio = 1.0;    // Compress: 0 to 3
+		double lower = 0.0;    // Limit: 0 to 1, not above upper
+		double upper = 1.0;    // Limit: 0 to 1
+		double variance = 0.0; // Variance: 0 to 1, the largest part of its velocity that a note loses
+	};
+
+	// Changes the velocities of the selected notes; they stay within 0 to 1. Variance takes a note's random part from
+	// the ids of the part and the note, so it is the same each time.
+	void changeVelocities(MidiPart& part, const NoteSelection& selection, const VelocitySettings& settings);
+
 	// Extends each selected note that ends while the sustain pedal (controller 64) on its channel is down to where the
 	// pedal is released, or the part's end (partLength ticks, see lengthInTicks) if it never is, but no further than
 	// the next note of the same pitch. Then removes the sustain pedal events of the channels the selection plays on.
@@ -172,6 +197,25 @@ namespace gnubase::engine::midi
 	// Mirrors the selected notes in time: where a note ended, its mirror image starts.
 	void invert(MidiPart& part, const NoteSelection& selection, time::Ticks partLength, const NewId& newId);
 
+	// Automation.
+
+	struct AutomationChanges
+	{
+		std::vector<ObjectId> addedLanes;
+		std::vector<ObjectId> changedLanes;
+		std::vector<ObjectId> changedParts;
+	};
+
+	// Extract MIDI Automation (reference manual p. 1129): moves the continuous controllers (isContinuousController)
+	// that play in the parts into automation lanes of their tracks, a lane per controller and channel. Each event
+	// becomes a step point where it plays, with its value scaled to 0 to 1. A lane the track already has for the
+	// controller loses its points in the part's range first, but not those an earlier part of the same call added, so
+	// overlapping parts keep each other's, and reads from then on; otherwise a lane is added. A shared copy leaves its
+	// copies, which keep their controllers. Pitch bend, pressure,
+	// switches such as the sustain pedal, events past a part's end and the events of muted parts stay, as none of
+	// them would play the same as automation.
+	AutomationChanges extractAutomation(Project& project, const std::vector<ObjectId>& parts);
+
 	// Functions that make parts. They report what they changed, so the commands can announce it.
 
 	struct PartChanges
@@ -186,18 +230,27 @@ namespace gnubase::engine::midi
 	{
 		time::Samples start = 0; // the range, in project samples like the locators
 		time::Samples end = 0;
-		std::vector<ObjectId> tracks; // the MIDI and instrument tracks to merge; empty: all of them
+		std::vector<ObjectId> tracks; // the MIDI and instrument tracks to merge; empty: those that play
 		ObjectId destination = 0;     // a MIDI or instrument track; 0 adds a MIDI track
 		bool eraseDestination = false;
 		bool includeChase = false;
-		std::string name; // the new part's; empty: the destination track's
+		bool includeInserts = false; // also the tracks' MIDI modifiers (Include Inserts)
+		std::string name;            // the new part's; empty: the destination track's
 	};
 
+	// The MIDI and instrument tracks that play, in track order, by playback's rules: neither their channel nor a
+	// channel it plays into is muted, silenced by another channel's solo or on a disabled track. Sends aren't
+	// followed: a track heard only through a send doesn't count.
+	std::vector<ObjectId> playingTracks(const Project& project);
+
 	// Copies the notes and controllers that start in the range on the tracks into a new part between start and end
-	// on the destination track. Events are in the range when their position in samples is, as in playback; the new
-	// part starts at the first of them if that is earlier than start in ticks. Notes keep their lengths, cut where
-	// their part ends. eraseDestination first removes the destination track's parts that lie in the range and the
-	// events of other parts that start in it. includeChase adds the last controller value of every controller, program
+	// on the destination track, leaving out muted parts, which don't play. Events are in the range when their
+	// position in samples is, as in playback; the new part starts at the first of them if that is earlier than start
+	// in ticks. Notes keep their lengths, cut where their part ends. They get their parts' transpose and velocity as
+	// playback applies them, and with includeInserts also their tracks' MIDI modifiers (reference manual pp. 1096,
+	// 1120), with the random values playback draws; a note they move out of the range or that doesn't play is left
+	// out. eraseDestination first removes the destination track's parts that lie in the range and the events of other
+	// parts that start in it. includeChase adds the last controller value of every controller, program
 	// and channel before start at the new part's start. A new destination track goes to the end of the track list,
 	// routed to the instrument of the first track merged.
 	PartChanges merge(Project& project, const MergeSettings& settings);
@@ -208,13 +261,26 @@ namespace gnubase::engine::midi
 		Pitch,   // notes and poly pressure by their pitch; other events stay
 	};
 
-	// Moves the events of the parts into new parts on new MIDI tracks, one track per channel or pitch found in the
-	// parts of a track, added after it and routed to the same instrument. Events that belong to no channel or pitch
-	// stay in their part; parts left empty are removed. optimize shortens the new parts to the bars their events
-	// play in.
-	PartChanges dissolve(Project& project, const std::vector<ObjectId>& parts, DissolveBy by, bool optimize);
+	enum class DissolveTo : uint8_t
+	{
+		Tracks, // new MIDI tracks after the track, routed to the same instrument
+		Lanes,  // new lanes of the track, below the lanes its parts are on
+	};
+
+	// Copies the events of the parts into new parts at the same place, one per channel or pitch found in the parts of
+	// a track, on a new track or lane for each, and mutes the parts (reference manual pp. 1121-1122). Events that
+	// belong to no channel or pitch go with the first new part of their part, so none is lost; a
+	// part with nothing to separate stays as it is. The new parts keep the part's mute, transpose and velocity, on
+	// lanes also its name, with the channel or pitch added, and color. optimize shortens new parts on tracks to the
+	// bars their events play in; parts on lanes keep the part's place.
+	PartChanges dissolve(Project& project, const std::vector<ObjectId>& parts, DissolveBy by, bool optimize,
+		DissolveTo to = DissolveTo::Tracks);
 
 	// Combines parts on one track into a single part from the first one's start to the last one's end, named after
-	// the earliest. Events keep their time; notes are cut where their part ended.
+	// the earliest, on the lowest lane they are on (reference manual p. 1123). Muted parts are removed and add
+	// nothing. Events keep their time; notes are cut where their part ended. The parts' transpose and velocity go into
+	// the notes as playback applies them, and a note transposed beyond 0 to 127, which doesn't play, is left out. The
+	// track's MIDI modifiers stay on the track, and the copied notes get new ids, so the play probability and
+	// velocity variance of a note, drawn from its part's and its own id, draw anew.
 	PartChanges bounce(Project& project, const std::vector<ObjectId>& parts);
 }

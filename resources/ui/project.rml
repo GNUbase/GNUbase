@@ -467,15 +467,18 @@
 				<menuitem command="midi.functionsLegato">Legato</menuitem>
 				<menuitem command="midi.functionsFixedLengths">Fixed Lengths</menuitem>
 				<menuitem command="midi.functionsFixedVelocity">Fixed Velocity</menuitem>
+				<menuitem command="midi.functionsVelocity">Velocity...</menuitem>
 				<menuitem command="midi.functionsPedalsToNoteLength">Pedals to Note Length</menuitem>
 				<menuseparator/>
 				<menuitem command="midi.functionsDeleteOverlapsMono">Delete Overlaps (mono)</menuitem>
 				<menuitem command="midi.functionsDeleteOverlapsPoly">Delete Overlaps (poly)</menuitem>
 				<menuitem command="midi.functionsDeleteDoubles">Delete Doubles</menuitem>
+				<menuitem command="midi.functionsDeleteNotes">Delete Notes...</menuitem>
 				<menuitem command="midi.functionsDeleteControllers">Delete Controllers</menuitem>
 				<menuitem command="midi.functionsDeleteContinuousControllers">Delete Continuous Controllers</menuitem>
 				<menuitem command="midi.functionsRestrictPolyphony">Restrict Polyphony...</menuitem>
 				<menuitem command="midi.functionsThinOut">Thin Out Data</menuitem>
+				<menuitem command="midi.functionsExtractAutomation">Extract MIDI Automation</menuitem>
 				<menuseparator/>
 				<menuitem command="midi.functionsReverse">Reverse</menuitem>
 				<menuitem command="midi.functionsMirror">Mirror</menuitem>

@@ -221,7 +221,8 @@
 				{key = "editing.onImportAudio", label = "On Import Audio Files", choices = {
 					{"openOptionsDialog", "Open Options Dialog"}, {"useSettings", "Use Settings"}}}}},
 			{id = "editing-midi", parent = "Editing", name = "MIDI", items = {
-				{key = "editing.legatoOverlap", label = "Legato Overlap", unit = "Ticks"}}},
+				{key = "editing.legatoOverlap", label = "Legato Overlap", unit = "Ticks"},
+				{key = "editing.legatoBetweenSelected", label = "Legato Mode: Between Selected Notes Only"}}},
 			{id = "editing-tool-modifiers", parent = "Editing", name = "Tool Modifiers", custom = "toolModifiers",
 				keys = {"ui.toolModifiers"}},
 			{id = "editing-tools", parent = "Editing", name = "Tools", items = {

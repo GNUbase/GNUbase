@@ -720,7 +720,7 @@ namespace gnubase::app
 		};
 		m_keys.add({"project.addTrack", "Opens the add track dialog.",
 			[this, below](ui::Window& window, Rml::Element* /*zone*/)
-			{ openDialog(window, "add-track.rml", below()); }});
+			{ openOnce(window, "add-track.rml", m_addTrack, below()); }});
 		// Group Track to Selected Tracks and Effect Track to Selected Tracks (reference manual pp. 546, 554): the add
 		// track dialog's page for the new track, which the selected tracks play or send into.
 		for (const auto& [id, type, description] :
@@ -738,7 +738,7 @@ namespace gnubase::app
 						std::vector<std::pair<std::string, std::string>> attributes = below();
 						attributes.emplace_back("type", type);
 						attributes.emplace_back("tracks", tracks);
-						openDialog(window, "add-track.rml", attributes);
+						openOnce(window, "add-track.rml", m_addTrack, attributes);
 					}});
 			m_keys.enableWhen(id, [this](ui::Window&, Rml::Element*)
 				{ return m_trackList != nullptr && !m_trackList->selection().empty(); });
@@ -1469,7 +1469,7 @@ namespace gnubase::app
 						[this, id = window->id(), track, send]
 						{
 							if (ui::Window* found = m_shell.find(id))
-								openDialog(*found, "add-track.rml",
+								openOnce(*found, "add-track.rml", m_addTrack,
 									{{"type", "effect"}, {"tracks", std::to_string(track)},
 										{"send", std::to_string(send)}});
 						});
@@ -2014,33 +2014,29 @@ namespace gnubase::app
 		return openOnce(window, "preferences.rml", m_preferences);
 	}
 
-	Rml::ElementDocument& AppUi::openOnce(
-		ui::Window& window, const char* name, Rml::ObserverPtr<Rml::Element>& open) const
+	Rml::ElementDocument& AppUi::openOnce(ui::Window& window, const char* name, Rml::ObserverPtr<Rml::Element>& open,
+		const std::vector<std::pair<std::string, std::string>>& attributes) const
 	{
 		// One dialog: a second document would share the first one's table in the UI's Lua. A closed document has left
 		// its context, until the context releases it.
 		auto* document = dynamic_cast<Rml::ElementDocument*>(open.get());
 		if (document != nullptr && document->GetParentNode() != nullptr)
 		{
-			document->Show(Rml::ModalFlag::Modal, Rml::FocusFlag::Keep);
-			document->PullToFront();
+			document->PullToFront(); // no Show: its show event would load the dialog again, over what was typed
 			return *document;
 		}
-		Rml::ElementDocument& opened = openDialog(window, name);
+		Rml::ElementDocument& opened = openDialog(window, name, attributes);
 		open = opened.GetObserverPtr();
 		return opened;
 	}
 
-	void AppUi::openAutoFades(ui::Window& window, uint64_t track) const
+	void AppUi::openAutoFades(ui::Window& window, uint64_t track)
 	{
 		// Its Lua reads the track when it shows.
-		const std::filesystem::path file = m_resources / "ui" / "auto-fades.rml";
-		Rml::ElementDocument* document = window.context().LoadDocument(file.generic_u8string());
-		if (document == nullptr)
-			throw std::runtime_error("cannot load the dialog " + file.u8string());
+		std::vector<std::pair<std::string, std::string>> attributes;
 		if (track != 0)
-			document->SetAttribute("track", std::to_string(track));
-		document->Show(Rml::ModalFlag::Modal);
+			attributes.emplace_back("track", std::to_string(track));
+		openOnce(window, "auto-fades.rml", m_autoFades, attributes);
 	}
 
 	ui::Window& AppUi::callingWindow()

@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/midi/functions.h"
 
+#include "engine/document/rendersnapshot.h"
 #include "engine/midi/chords.h"
 #include "engine/midi/midivalues.h"
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <iterator>
+#include <limits>
 #include <map>
 #include <set>
 #include <tuple>
@@ -126,6 +129,16 @@ namespace gnubase::engine::midi
 				return pitch > highest ? lowest : pitch;
 			}
 			return pitch;
+		}
+
+		// A number from 0 to below 1 for a note of a part, the same every time (SplitMix64 of their ids).
+		double unitRandom(ObjectId part, ObjectId note)
+		{
+			uint64_t value = (part * 0x9E3779B97F4A7C15ULL) ^ note;
+			value = (value ^ (value >> 30U)) * 0xBF58476D1CE4E5B9ULL;
+			value = (value ^ (value >> 27U)) * 0x94D049BB133111EBULL;
+			value ^= value >> 31U;
+			return static_cast<double>(value >> 11U) / static_cast<double>(1ULL << 53U);
 		}
 
 		// Notes.
@@ -429,6 +442,36 @@ namespace gnubase::engine::midi
 				note.velocity = velocity;
 	}
 
+	void changeVelocities(MidiPart& part, const NoteSelection& selection, const VelocitySettings& settings)
+	{
+		constexpr auto maxVelocity = static_cast<double>(std::numeric_limits<uint16_t>::max());
+		for (auto& [id, note] : part.notes)
+		{
+			if (!selection.contains(id))
+				continue;
+			const double velocity = static_cast<double>(note.velocity) / maxVelocity;
+			const auto change = [&settings, &part, velocity, noteId = id]
+			{
+				switch (settings.type)
+				{
+				case VelocityChange::Add:
+					return velocity + settings.amount;
+				case VelocityChange::Compress:
+					return velocity * settings.ratio;
+				case VelocityChange::Limit:
+					return std::clamp(velocity, settings.lower, settings.upper);
+				case VelocityChange::Fixed:
+					return settings.amount;
+				case VelocityChange::Variance:
+					return velocity * (1.0 - (settings.variance * unitRandom(part.id, noteId)));
+				}
+				return velocity;
+			};
+			const double changed = change();
+			note.velocity = static_cast<uint16_t>(std::lround(std::clamp(changed, 0.0, 1.0) * maxVelocity));
+		}
+	}
+
 	void pedalToNoteLength(MidiPart& part, const NoteSelection& selection, time::Ticks partLength)
 	{
 		// Each channel's pedal events in order.
@@ -661,6 +704,37 @@ namespace gnubase::engine::midi
 			mirrorControllers(part, *first, *last, partLength, newId);
 	}
 
+	std::vector<ObjectId> playingTracks(const Project& project)
+	{
+		const std::unique_ptr<const RenderSnapshot> snapshot = compile(project, 0);
+		std::map<ObjectId, size_t> channelIndex;
+		for (size_t i = 0; i < snapshot->channels.size(); ++i)
+			channelIndex[snapshot->channels[i].id] = i;
+		const auto heard = [&snapshot](size_t index)
+		{
+			// Outputs form no loops; the count only guards against one.
+			for (size_t steps = 0; steps <= snapshot->channels.size(); ++steps)
+			{
+				const RenderChannel& channel = snapshot->channels[index];
+				if (channel.silent)
+					return false;
+				if (channel.output.kind != RenderTarget::Kind::Channel)
+					return true;
+				index = static_cast<size_t>(channel.output.index);
+			}
+			return false;
+		};
+		std::vector<ObjectId> tracks;
+		for (const ObjectId id : project.trackOrder())
+		{
+			const Track& track = project.trackById.at(id);
+			const auto index = channelIndex.find(track.channel);
+			if (isNoteTrack(track) && index != channelIndex.end() && heard(index->second))
+				tracks.push_back(id);
+		}
+		return tracks;
+	}
+
 	PartChanges merge(Project& project, const MergeSettings& settings)
 	{
 		// Positions are compared with the locators in samples, as playback does: ticks are finer than samples, so a
@@ -673,11 +747,7 @@ namespace gnubase::engine::midi
 		};
 		Ticks start = project.tempo.toTicks(settings.start, project.sampleRate); // or the first event's, if earlier
 		const Ticks end = project.tempo.toTicks(settings.end, project.sampleRate);
-		std::vector<ObjectId> tracks = settings.tracks;
-		if (tracks.empty())
-			for (const ObjectId id : project.trackOrder())
-				if (isNoteTrack(project.trackById.at(id)))
-					tracks.push_back(id);
+		const std::vector<ObjectId> tracks = settings.tracks.empty() ? playingTracks(project) : settings.tracks;
 
 		// What plays in the range, in project ticks, and the last value of every controller before it.
 		std::vector<Note> notes;
@@ -686,20 +756,33 @@ namespace gnubase::engine::midi
 		std::map<LaneKey, Ticks> chasedAt;
 		for (const auto& [id, part] : project.midiParts)
 		{
-			if (std::find(tracks.begin(), tracks.end(), part.track) == tracks.end())
+			if (part.mute || std::find(tracks.begin(), tracks.end(), part.track) == tracks.end())
 				continue;
 			const Ticks partFrom = partStart(project, part);
 			const Ticks partTo = partEnd(project, part);
+			// As playback plays them (compilePart in rendersnapshot.cpp): the part's transpose and velocity, which the
+			// new part doesn't have, and with Include Inserts the track's MIDI modifiers.
+			const Modifiers& trackModifiers = project.channels.at(project.trackById.at(part.track).channel).modifiers;
+			Modifiers modifiers = settings.includeInserts && !trackModifiers.bypass ? trackModifiers : Modifiers();
+			modifiers.transpose += part.transpose;
+			modifiers.velocityShift += part.velocity;
 			for (const auto& [noteId, note] : part.notes)
 			{
-				const Ticks at = partFrom + note.position;
-				if (at < partTo && inRange(at))
-				{
-					Note copy = note;
-					copy.position = at;
-					copy.length = std::min(at + note.length, partTo) - at;
-					notes.push_back(copy);
-				}
+				if (partFrom + note.position >= partTo)
+					continue;
+				const uint64_t seed = noteSeed(part.id, noteId);
+				Note copy = note;
+				if (!modifyNote(modifiers, seed, copy.pitch, copy.velocity))
+					continue;
+				// A note moved before its part's start, or the project's, starts there, with its length.
+				const Ticks moved = note.position + randomOffset(modifiers, RandomTarget::Position, seed);
+				const Ticks at = partFrom + std::max({moved, Ticks{0}, -partFrom});
+				if (at >= partTo || !inRange(at))
+					continue;
+				const Ticks length = note.length > 0 ? modifyLength(modifiers, seed, note.length) : 0;
+				copy.position = at;
+				copy.length = std::min(at + length, partTo) - at;
+				notes.push_back(copy);
 			}
 			for (const auto& [controllerId, controller] : part.controllers)
 			{
@@ -796,10 +879,11 @@ namespace gnubase::engine::midi
 		return changes;
 	}
 
-	PartChanges dissolve(Project& project, const std::vector<ObjectId>& parts, DissolveBy by, bool optimize)
+	PartChanges dissolve(
+		Project& project, const std::vector<ObjectId>& parts, DissolveBy by, bool optimize, DissolveTo to)
 	{
 		PartChanges changes;
-		// The key of each event: its channel or pitch, or -1 for events that stay.
+		// The key of each event: its channel or pitch, or -1 for events that belong to neither.
 		const auto noteKey = [by](const Note& note) { return by == DissolveBy::Channel ? note.channel : note.pitch; };
 		const auto controllerKey = [by](const Controller& controller) -> int
 		{
@@ -809,6 +893,8 @@ namespace gnubase::engine::midi
 					: controller.channel;
 			return controller.type == ControllerType::PolyPressure ? controller.number : -1;
 		};
+		const auto suffixOf = [by](int key)
+		{ return by == DissolveBy::Channel ? "Ch " + std::to_string(key + 1) : pitchName(key); };
 
 		// The parts of each track, in the order of the track list.
 		std::map<ObjectId, std::vector<ObjectId>> byTrack;
@@ -829,54 +915,90 @@ namespace gnubase::engine::midi
 					if (controllerKey(controller) >= 0)
 						keys.insert(controllerKey(controller));
 			}
+			if (keys.empty())
+				continue;
 
-			// A track per key, after the source track.
+			// A track per key after the source track, or a lane per key below the lanes of its parts.
 			const Track source = project.trackById.at(trackId);
-			const ObjectId instrument = instrumentOf(project, trackId);
-			std::vector<ObjectId>& siblings =
-				source.parent == 0 ? project.tracks : project.trackById.at(source.parent).children;
-			size_t index = static_cast<size_t>(std::find(siblings.begin(), siblings.end(), trackId) - siblings.begin());
 			std::map<int, ObjectId> trackFor;
-			for (const int key : keys)
+			std::map<int, int> laneFor;
+			if (to == DissolveTo::Tracks)
 			{
-				const std::string suffix = by == DissolveBy::Channel ? "Ch " + std::to_string(key + 1) : pitchName(key);
-				trackFor[key] = addMidiTrack(
-					project, source.name + " " + suffix, source.parent, ++index, instrument, source.timeBase);
-				changes.tracks.push_back(trackFor[key]);
+				const ObjectId instrument = instrumentOf(project, trackId);
+				const std::vector<ObjectId>& siblings =
+					source.parent == 0 ? project.tracks : project.trackById.at(source.parent).children;
+				auto index =
+					static_cast<size_t>(std::find(siblings.begin(), siblings.end(), trackId) - siblings.begin());
+				for (const int key : keys)
+				{
+					trackFor[key] = addMidiTrack(project, source.name + " " + suffixOf(key), source.parent, ++index,
+						instrument, source.timeBase);
+					// The track's MIDI modifiers, so that the new parts play as the part did.
+					project.channels.at(project.trackById.at(trackFor[key]).channel).modifiers =
+						project.channels.at(source.channel).modifiers;
+					changes.tracks.push_back(trackFor[key]);
+				}
+			}
+			else
+			{
+				int lane = 0;
+				for (const auto& [id, part] : project.midiParts)
+					if (part.track == trackId)
+						lane = std::max(lane, part.lane + 1);
+				for (const int key : keys)
+				{
+					trackFor[key] = trackId;
+					laneFor[key] = lane++;
+				}
 			}
 
 			for (const ObjectId id : found->second)
 			{
 				MidiPart& original = project.midiParts.at(id);
 				std::map<int, MidiPart> pieces;
-				for (auto note = original.notes.begin(); note != original.notes.end();)
+				std::vector<Controller> keyless;
+				for (const auto& [noteId, note] : original.notes)
 				{
-					pieces[noteKey(note->second)].notes.insert(*note);
-					note = original.notes.erase(note);
+					Note copy = note;
+					copy.id = project.newId();
+					pieces[noteKey(note)].notes[copy.id] = copy;
 				}
-				for (auto controller = original.controllers.begin(); controller != original.controllers.end();)
+				for (const auto& [controllerId, controller] : original.controllers)
 				{
-					const int key = controllerKey(controller->second);
+					Controller copy = controller;
+					copy.id = project.newId();
+					const int key = controllerKey(controller);
 					if (key < 0)
-					{
-						++controller;
-						continue;
-					}
-					pieces[key].controllers.insert(*controller);
-					controller = original.controllers.erase(controller);
+						keyless.push_back(copy);
+					else
+						pieces[key].controllers[copy.id] = copy;
 				}
 				if (pieces.empty())
 					continue;
+				for (const Controller& controller : keyless)
+					pieces.begin()->second.controllers[controller.id] = controller;
 				const Ticks originalStart = partStart(project, original);
 				const Ticks originalEnd = partEnd(project, original);
 				for (auto& [key, piece] : pieces)
 				{
 					piece.id = project.newId();
 					piece.track = trackFor.at(key);
-					piece.name = project.trackById.at(piece.track).name;
-					Ticks from = originalStart;
-					Ticks to = originalEnd;
-					if (optimize)
+					piece.mute = original.mute;
+					piece.transpose = original.transpose;
+					piece.velocity = original.velocity;
+					Ticks pieceStart = originalStart;
+					Ticks pieceEnd = originalEnd;
+					if (to == DissolveTo::Lanes)
+					{
+						piece.name = original.name + " " + suffixOf(key);
+						piece.color = original.color;
+						piece.lane = laneFor.at(key);
+					}
+					else
+					{
+						piece.name = project.trackById.at(piece.track).name;
+					}
+					if (optimize && to == DissolveTo::Tracks)
 					{
 						// The bars from the first event's to the last one's end, within the part.
 						Ticks first = originalEnd;
@@ -892,11 +1014,11 @@ namespace gnubase::engine::midi
 							last = std::max(last, originalStart + controller.position + 1);
 						}
 						const time::SignatureMap& bars = project.signatures;
-						from = std::max(originalStart, bars.barStart(bars.toBarsBeats(first).bar));
+						pieceStart = std::max(originalStart, bars.barStart(bars.toBarsBeats(first).bar));
 						const int64_t lastBar = bars.toBarsBeats(std::max(first, last - 1)).bar;
-						to = std::min(originalEnd, bars.barStart(lastBar + 1));
+						pieceEnd = std::min(originalEnd, bars.barStart(lastBar + 1));
 					}
-					place(project, piece, from, to);
+					place(project, piece, pieceStart, pieceEnd);
 					const Ticks shift = partStart(project, piece) - originalStart;
 					for (auto& [noteId, note] : piece.notes)
 						note.position -= shift;
@@ -905,13 +1027,9 @@ namespace gnubase::engine::midi
 					changes.addedParts.push_back(piece.id);
 					project.midiParts[piece.id] = std::move(piece);
 				}
-				if (original.notes.empty() && original.controllers.empty())
+				if (!original.mute)
 				{
-					changes.removedParts.push_back(id);
-					project.midiParts.erase(id);
-				}
-				else
-				{
+					original.mute = true;
 					changes.changedParts.push_back(id);
 				}
 			}
@@ -925,54 +1043,165 @@ namespace gnubase::engine::midi
 		const MidiPart* earliest = nullptr;
 		Ticks start = 0;
 		Ticks end = 0;
+		int lane = 0;
 		for (const ObjectId id : parts)
 		{
 			const MidiPart& part = project.midiParts.at(id);
+			addUnique(changes.removedParts, id);
+			if (part.mute)
+				continue;
 			const Ticks from = partStart(project, part);
+			lane = earliest == nullptr ? part.lane : std::min(lane, part.lane);
+			end = earliest == nullptr ? partEnd(project, part) : std::max(end, partEnd(project, part));
 			if (earliest == nullptr || from < start)
 			{
 				earliest = &part;
 				start = from;
 			}
-			end = std::max(end, partEnd(project, part));
 		}
-		if (earliest == nullptr)
+		if (earliest == nullptr) // every part is muted
+		{
+			for (const ObjectId id : changes.removedParts)
+				project.midiParts.erase(id);
 			return changes;
+		}
 
 		MidiPart combined;
 		combined.id = project.newId();
 		combined.track = earliest->track;
 		combined.name = earliest->name;
+		combined.lane = lane;
 		place(project, combined, start, end);
 		const Ticks combinedStart = partStart(project, combined);
 		for (const ObjectId id : parts)
 		{
 			const MidiPart& part = project.midiParts.at(id);
+			if (part.mute)
+				continue;
 			const Ticks shift = partStart(project, part) - combinedStart;
 			const Ticks partTo = partEnd(project, part);
 			const Ticks length = partTo - partStart(project, part);
 			for (const auto& [noteId, note] : part.notes)
-				if (note.position < length)
+			{
+				const int pitch = note.pitch + part.transpose;
+				if (note.position >= length || pitch < 0 || pitch > 127)
+					continue;
+				Note copy = note;
+				copy.id = project.newId();
+				copy.position += shift;
+				copy.length =
+					std::min(combinedStart + copy.position + note.length, partTo) - (combinedStart + copy.position);
+				copy.pitch = static_cast<uint8_t>(pitch);
+				if (part.velocity != 0)
 				{
-					Note copy = note;
-					copy.position += shift;
-					copy.length =
-						std::min(combinedStart + copy.position + note.length, partTo) - (combinedStart + copy.position);
-					combined.notes[copy.id] = copy;
+					// As playback shifts it: in MIDI 1.0 velocities, a note-on staying at least 1.
+					const int velocity = std::clamp(velocityToMidi1(note.velocity) + part.velocity, 1, 127);
+					copy.velocity = velocityFromMidi1(static_cast<uint8_t>(velocity));
 				}
+				combined.notes[copy.id] = copy;
+			}
 			for (const auto& [controllerId, controller] : part.controllers)
 				if (controller.position < length)
 				{
 					Controller copy = controller;
+					copy.id = project.newId();
 					copy.position += shift;
 					combined.controllers[copy.id] = copy;
 				}
-			addUnique(changes.removedParts, id);
 		}
 		for (const ObjectId id : changes.removedParts)
 			project.midiParts.erase(id);
 		changes.addedParts.push_back(combined.id);
 		project.midiParts[combined.id] = std::move(combined);
+		return changes;
+	}
+
+	AutomationChanges extractAutomation(Project& project, const std::vector<ObjectId>& parts)
+	{
+		AutomationChanges changes;
+		std::set<ObjectId> placed; // the points this run adds
+		for (const ObjectId id : parts)
+		{
+			MidiPart& part = project.midiParts.at(id);
+			if (part.mute)
+				continue;
+			const Track& track = project.trackById.at(part.track);
+			const Ticks from = partStart(project, part);
+			const Ticks to = partEnd(project, part);
+			// The events that move, by channel and controller number.
+			std::map<std::pair<uint8_t, uint8_t>, std::vector<const Controller*>> lanes;
+			std::set<ObjectId> moved;
+			for (const auto& [controllerId, controller] : part.controllers)
+				if (controller.type == ControllerType::Control && isContinuousController(controller.number) &&
+					controller.position < to - from)
+				{
+					lanes[{controller.channel, controller.number}].push_back(&controller);
+					moved.insert(controllerId);
+				}
+			if (lanes.empty())
+				continue;
+			// The part's range in the time base of the track's automation.
+			const int64_t rangeStart = trackPosition(project, track, from).value;
+			const int64_t rangeEnd = trackPosition(project, track, to).value;
+			for (auto& [key, events] : lanes)
+			{
+				std::sort(events.begin(), events.end(), comesBefore);
+				AutomationTarget target;
+				target.type = AutomationTargetType::Controller;
+				target.channel = key.first;
+				target.number = key.second;
+				AutomationLane* lane = nullptr;
+				for (auto& [laneId, each] : project.automation)
+					if (each.track == part.track && each.target == target)
+						lane = &each;
+				if (lane == nullptr)
+				{
+					AutomationLane added;
+					added.id = project.newId();
+					added.track = part.track;
+					added.target = target;
+					changes.addedLanes.push_back(added.id);
+					lane = &(project.automation[added.id] = std::move(added));
+				}
+				else
+				{
+					// Points an earlier part of this run added stay, so overlapping parts keep each other's.
+					for (auto point = lane->points.begin(); point != lane->points.end();)
+					{
+						const int64_t at = point->second.position.value;
+						const bool before = placed.count(point->first) == 0;
+						point =
+							before && at >= rangeStart && at < rangeEnd ? lane->points.erase(point) : std::next(point);
+					}
+					lane->read = true; // what was moved has to play
+					addUnique(changes.changedLanes, lane->id);
+				}
+				for (const Controller* event : events)
+				{
+					AutomationPoint point;
+					point.id = project.newId();
+					point.position = trackPosition(project, track, from + event->position);
+					point.value =
+						static_cast<double>(event->value) / static_cast<double>(std::numeric_limits<uint32_t>::max());
+					point.shape = AutomationShape::Step;
+					placed.insert(point.id);
+					lane->points[point.id] = point;
+				}
+			}
+			eraseControllers(part, [&moved](const Controller& controller) { return moved.count(controller.id) != 0; });
+			// Points play at this part's place only, so a shared copy leaves its copies, which keep their controllers:
+			// syncSharedParts would give them this part's.
+			if (part.shared != 0)
+			{
+				part.shared = 0;
+				renumber(project, part);
+			}
+			changes.changedParts.push_back(id);
+		}
+		// A lane added for one part and changed for a later one was added.
+		for (const ObjectId id : changes.addedLanes)
+			changes.changedLanes.erase(
+				std::remove(changes.changedLanes.begin(), changes.changedLanes.end(), id), changes.changedLanes.end());
 		return changes;
 	}
 }
