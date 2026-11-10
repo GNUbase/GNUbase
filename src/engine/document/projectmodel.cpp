@@ -3407,12 +3407,15 @@ namespace gnubase::engine
 					current.tempo != previous.tempo || current.signatures != previous.signatures ||
 					!(current.autoFades == previous.autoFades) || current.panLaw != previous.panLaw ||
 					current.maxVolume != previous.maxVolume || !(current.colors == previous.colors) ||
-					!(current.setup == previous.setup) || current.rootKey != previous.rootKey)
+					!(current.setup == previous.setup) || current.rootKey != previous.rootKey ||
+					change.timeFormatBefore)
 					context.emit("project.changed", projectSettingsJson(project));
 				announceBusses(previous.busses, current.busses, context);
 				reordered = current.tracks != previous.tracks;
 				activated = current.activeMarkerTrack != previous.activeMarkerTrack;
 			}
+			else if (change.timeFormatBefore)
+				context.emit("project.changed", projectSettingsJson(project));
 			for (const ObjectChange<Track>& track : change.tracks)
 				reordered = reordered || !track.before || !track.after || track.before->parent != track.after->parent ||
 					track.before->children != track.after->children;
@@ -3542,6 +3545,20 @@ namespace gnubase::engine
 			Project start = before;
 			apply(start, steps.back().change, Direction::Undo);
 			ProjectChange change = difference(start, m_project);
+			// Compose only format edits, excluding display choices made between the gesture's commands.
+			change.timeFormatBefore = steps.back().change.timeFormatBefore;
+			change.timeFormatAfter = steps.back().change.timeFormatAfter;
+			if (before.setup.timeFormat != m_project.setup.timeFormat)
+			{
+				if (!change.timeFormatBefore)
+					change.timeFormatBefore = before.setup.timeFormat;
+				change.timeFormatAfter = m_project.setup.timeFormat;
+			}
+			if (change.timeFormatBefore == change.timeFormatAfter)
+			{
+				change.timeFormatBefore.reset();
+				change.timeFormatAfter.reset();
+			}
 			if (change.empty())
 				m_history.removeLast();
 			else
@@ -3585,14 +3602,7 @@ namespace gnubase::engine
 		for (int64_t i = 0; i < steps; ++i)
 		{
 			const HistoryStep& step = undo ? m_history.undo() : m_history.redo();
-			// A transport format choice is saved in the project without an undo step. An unrelated step's
-			// settings snapshot must not bring back the format it had when that step was recorded.
-			const bool changesTimeFormat = step.change.settingsBefore && step.change.settingsAfter &&
-				step.change.settingsBefore->setup.timeFormat != step.change.settingsAfter->setup.timeFormat;
-			const std::string selectedFormat = m_project.setup.timeFormat;
 			apply(m_project, step.change, direction);
-			if (!changesTimeFormat)
-				m_project.setup.timeFormat = selectedFormat;
 			announce(*this, m_project, step.change, direction, context);
 		}
 		followTimeFormat(m_project, timeFormat, context);
@@ -3661,6 +3671,21 @@ namespace gnubase::engine
 		for (size_t i = position; i > first; --i)
 			apply(start, steps[i - 1].change, Direction::Undo);
 		ProjectChange change = difference(start, m_project);
+		// The joined step keeps only explicit format edits, not the current display choice.
+		change.timeFormatBefore.reset();
+		change.timeFormatAfter.reset();
+		for (size_t i = first; i < position; ++i)
+			if (steps[i].change.timeFormatBefore)
+			{
+				if (!change.timeFormatBefore)
+					change.timeFormatBefore = steps[i].change.timeFormatBefore;
+				change.timeFormatAfter = steps[i].change.timeFormatAfter;
+			}
+		if (change.timeFormatBefore == change.timeFormatAfter)
+		{
+			change.timeFormatBefore.reset();
+			change.timeFormatAfter.reset();
+		}
 		std::optional<HistoryStep> joined;
 		if (!change.empty())
 			joined =
@@ -3938,7 +3963,8 @@ namespace gnubase::engine
 		addControl(engine,
 			{"project.setTimeFormat", 1,
 				"Selects the project's primary time format from a ruler or transport display. Saved with the project, "
-				"but a display choice is not an undo step. Project Setup changes made with project.set remain undoable. "
+				"but a display choice is not an undo step. Project Setup changes made with project.set remain "
+				"undoable. "
 				"The snap grid follows the format.",
 				objectSchema({{"timeFormat", timeFormats}}, {"timeFormat"}), noResult, false},
 			[this](CommandContext& context)

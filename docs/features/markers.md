@@ -118,12 +118,11 @@ Marker Tracks and Off set `ui.markerLines`.
   the locate column, whose arrow marks the marker at the project cursor or the last one before it (`.at-cursor`) and
   where a click locates to the marker; then the id number, the type, the position, the end and length (cycle markers)
   and the description. All but the type are text fields, which Enter or leaving the field changes (`marker.set`; a
-  number that is taken, text that isn't a number or a time, or an end before the position shows the old value
-  again). Times are in the primary time format, the project setup's (`project.set {timeFormat}`, p. 317); lengths are
-  shown as lengths ("0.2.0.0" for two beats in bars and beats); a new position moves a cycle marker as a whole, a
-  new length moves its end. Rows select
-  with clicks, Ctrl, Shift, the arrow keys, Page Up and Page Down, Home and End (p. 428); Enter locates to the
-  selected marker.
+  number that is taken, text that isn't a number or a time, or an end before the position shows the old value again).
+  Times are in the primary time format, the project setup's (`project.set {timeFormat}`, p. 317); lengths are shown as
+  lengths ("0.2.0.0" for two beats in bars and beats); a new position moves a cycle marker as a whole, a new length
+  moves its end. Rows select with clicks, Ctrl, Shift, the arrow keys, Page Up and Page Down, Home and End (p. 428);
+  Enter locates to the selected marker.
 - **Several markers at once** (p. 430): a description or a length typed into a row of a selection of several gives it
   to all the selected markers (the length to the cycle markers among them), in one undo step (`history.transaction`).
   The reference does this with checkbox attributes, which markers here don't have.

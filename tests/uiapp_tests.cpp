@@ -384,14 +384,14 @@ TEST_CASE("the ruler's time format menu opens from its arrow button and with a r
 	app.call("marker.add", {{"position", 2 * time::g_ticksPerQuarter}}); // one second
 	app.call("transport.locate", {{"position", 48000}});
 	app.ui().key(std::nullopt, "Mod+M");
-	REQUIRE(app.waitUntil([&app]
-		{ return app.appUi().markers() != nullptr && app.appUi().markers()->markers().size() == 1; }));
+	REQUIRE(app.waitUntil(
+		[&app] { return app.appUi().markers() != nullptr && app.appUi().markers()->markers().size() == 1; }));
 	ui::Window* markersWindow = app.shell().find(app.appUi().markersWindow());
 	REQUIRE(markersWindow != nullptr);
 	Rml::ElementDocument* markersDocument = markersWindow->context().GetDocument(0);
 	REQUIRE(markersDocument != nullptr);
-	auto* markerPosition = dynamic_cast<Rml::ElementFormControl*>(
-		markersDocument->QuerySelector("#marker-rows .position input"));
+	auto* markerPosition =
+		dynamic_cast<Rml::ElementFormControl*>(markersDocument->QuerySelector("#marker-rows .position input"));
 	REQUIRE(markerPosition != nullptr);
 	CHECK(markerPosition->GetValue() == "1.3.1.0");
 	Rml::Element* primaryTime = app.main().context().GetDocument(0)->QuerySelector("#primary-time");
@@ -401,11 +401,13 @@ TEST_CASE("the ruler's time format menu opens from its arrow button and with a r
 	app.ui().click(std::nullopt, menuItem(app, "#ruler-format-menu", "Timecode"), ui::MouseButton::Left, 1, {"ctrl"});
 	CHECK(window.display.rulerFormat() == ui::TimeFormat::Timecode);
 	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("timeFormat") == "timecode"; }));
-	REQUIRE(app.waitUntil([primaryTime] { return primaryTime->GetAttribute<Rml::String>("value", "") == "00:00:01:00"; }));
-	REQUIRE(app.waitUntil([markersDocument]
+	REQUIRE(
+		app.waitUntil([primaryTime] { return primaryTime->GetAttribute<Rml::String>("value", "") == "00:00:01:00"; }));
+	REQUIRE(app.waitUntil(
+		[markersDocument]
 		{
-			auto* input = dynamic_cast<Rml::ElementFormControl*>(
-				markersDocument->QuerySelector("#marker-rows .position input"));
+			auto* input =
+				dynamic_cast<Rml::ElementFormControl*>(markersDocument->QuerySelector("#marker-rows .position input"));
 			return input != nullptr && input->GetValue() == "00:00:01:00";
 		}));
 	CHECK(app.call("history.get").at("steps").size() == undoSteps);
