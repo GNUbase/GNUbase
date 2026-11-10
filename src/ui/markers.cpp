@@ -636,7 +636,11 @@ namespace gnubase::ui
 				[&hit](const MarkerItem& item) { return item.id == hit.marker; });
 			if (marker == m_markers.markers.end())
 				return;
-			m_drag = hit.part == Part::Start ? Drag::Start : hit.part == Part::End ? Drag::End : Drag::Move;
+			m_drag = Drag::Move;
+			if (hit.part == Part::Start)
+				m_drag = Drag::Start;
+			else if (hit.part == Part::End)
+				m_drag = Drag::End;
 			m_dragFrom = m_drag == Drag::End ? marker->end : marker->start;
 		}
 		if (Rml::ElementDocument* document = m_area->GetOwnerDocument())
@@ -662,7 +666,7 @@ namespace gnubase::ui
 				document->RemoveEventListener(Rml::EventId::Mouseup, this);
 			}
 		}
-		const float mouseX = event.GetParameter<float>("mouse_x", 0.0F);
+		const auto mouseX = event.GetParameter<float>("mouse_x", 0.0F);
 		m_dragMoved = m_dragMoved || std::abs(mouseX - m_pressX) / ratio() >= g_dragStart;
 		if (!m_dragMoved)
 			return;

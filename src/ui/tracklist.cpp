@@ -71,13 +71,18 @@ namespace gnubase::ui
 			return control == "markerLocate" || control == "markerCycle" || control == "markerZoom";
 		}
 
+		// The name of a marker track's Locate, Cycle or Zoom list.
+		std::string markerMenuName(const std::string& control)
+		{
+			if (control == "markerLocate")
+				return "Locate";
+			return control == "markerCycle" ? "Cycle" : "Zoom";
+		}
+
 		// A marker track's Locate list has its markers, Cycle and Zoom its cycle markers, after the list's name.
 		widgets::Options markerOptions(const ProjectMarkers& markers, uint64_t track, const std::string& control)
 		{
-			widgets::Options options = {{"",
-				control == "markerLocate"      ? "Locate"
-					: control == "markerCycle" ? "Cycle"
-											   : "Zoom"}};
+			widgets::Options options = {{"", markerMenuName(control)}};
 			for (const MarkerItem& marker : markers.of(track))
 				if (marker.cycle || control == "markerLocate")
 					options.emplace_back(std::to_string(marker.id),
@@ -184,10 +189,7 @@ namespace gnubase::ui
 				return R"(<button class="set-time-offset" control="setTimeOffset" )"
 					   R"(title="Set Time Offset to Project Cursor Position">C</button>)";
 			if (markerMenu(control))
-				return R"(<select class="marker-menu" control=")" + control + R"(" title=")" +
-					(control == "markerLocate"         ? "Locate"
-							: control == "markerCycle" ? "Cycle"
-													   : "Zoom") +
+				return R"(<select class="marker-menu" control=")" + control + R"(" title=")" + markerMenuName(control) +
 					R"("/>)";
 			static const std::map<std::string, std::pair<const char*, const char*>> looks = {{"mute", {"Mute", "M"}},
 				{"solo", {"Solo", "S"}},

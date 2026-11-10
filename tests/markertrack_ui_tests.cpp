@@ -295,8 +295,10 @@ TEST_CASE("with the range tool, a double click on the marker track selects the r
 	fixture.automation.click(std::nullopt, fixture.lanesAt(150, 70), ui::MouseButton::Left, 2, {});
 	REQUIRE(fixture.waitUntil(
 		[&] { return fixture.display.range() && fixture.display.range()->start == 2 * g_quarterSamples; }));
-	CHECK(fixture.display.range()->end == 4 * g_quarterSamples);
-	CHECK(fixture.display.range()->tracks == std::vector<uint64_t>{fixture.audio, fixture.first, fixture.second});
+	const ui::RangeSelection range =
+		fixture.display.range().value_or(ui::RangeSelection{0, 0, std::vector<uint64_t>()});
+	CHECK(range.end == 4 * g_quarterSamples);
+	CHECK(range.tracks == std::vector<uint64_t>{fixture.audio, fixture.first, fixture.second});
 	CHECK(fixture.markers.selection().empty());
 }
 
