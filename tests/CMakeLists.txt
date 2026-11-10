@@ -131,6 +131,8 @@ add_executable(gnubase-tests
 	multicore_tests.cpp
 	onscreenkeyboard_tests.cpp
 	parameter_tests.cpp
+	patterneditor_ui_tests.cpp
+	patterns_tests.cpp
 	plugincommands_tests.cpp
 	pluginslots_tests.cpp
 	peaks_tests.cpp

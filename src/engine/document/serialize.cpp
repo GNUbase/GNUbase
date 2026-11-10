@@ -9,6 +9,7 @@
 #include "engine/document/projectmodel.h"
 #include "engine/midi/articulationmaps.h"
 #include "engine/midi/drummaps.h"
+#include "engine/midi/patterns.h"
 #include "engine/processors/builtin.h"
 #include "engine/processors/midieffects.h"
 
@@ -814,8 +815,8 @@ namespace gnubase::engine
 			{"length", part.length}, {"mute", part.mute}, {"lock", part.lock}, {"shared", part.shared},
 			{"color", colorJson(part.color)}, {"lane", part.lane}, {"transpose", part.transpose},
 			{"velocity", part.velocity}, {"rootKey", rootKeyName(part.rootKey)},
-			{"globalTranspose", part.independent ? "independent" : "follow"}, {"notes", toJsonArray(part.notes)},
-			{"controllers", toJsonArray(part.controllers)}};
+			{"globalTranspose", part.independent ? "independent" : "follow"}, {"pattern", part.pattern},
+			{"notes", toJsonArray(part.notes)}, {"controllers", toJsonArray(part.controllers)}};
 	}
 
 	Json toJson(const Marker& marker)
@@ -1202,12 +1203,13 @@ namespace gnubase::engine
 			{"rootKey", rootKeyName(project.rootKey)}, {"transpose", transposeJson(project)},
 			{"chords", chordJson(project)}, {"chordPads", chordPadsJson(project)},
 			{"drumMaps", toJsonArray(project.drumMaps)}, {"articulationMaps", toJsonArray(project.articulationMaps)},
-			{"inputTransformer", midi::toJson(project.inputTransformer)}, {"virginTerritory", project.virginTerritory},
-			{"quantize", midi::toJson(project.quantize)}, {"autoQuantize", project.autoQuantize},
-			{"quantizePreset", project.quantizePreset}, {"activeMarkerTrack", project.activeMarkerTrack},
-			{"snap", toJson(project.snap)}, {"mixers", mixersJson(project.mixers)},
-			{"trackVisibility", toJson(project.trackVisibility)}, {"trackLayout", toJson(project.trackLayout)},
-			{"metronome", metronome::toJson(project.metronome)}, {"workspaces", toJson(project.workspaces)}};
+			{"patterns", toJsonArray(project.patterns)}, {"inputTransformer", midi::toJson(project.inputTransformer)},
+			{"virginTerritory", project.virginTerritory}, {"quantize", midi::toJson(project.quantize)},
+			{"autoQuantize", project.autoQuantize}, {"quantizePreset", project.quantizePreset},
+			{"activeMarkerTrack", project.activeMarkerTrack}, {"snap", toJson(project.snap)},
+			{"mixers", mixersJson(project.mixers)}, {"trackVisibility", toJson(project.trackVisibility)},
+			{"trackLayout", toJson(project.trackLayout)}, {"metronome", metronome::toJson(project.metronome)},
+			{"workspaces", toJson(project.workspaces)}};
 		json.update(toJson(project.setup));
 		// What the inactive track versions hold (#165).
 		Json versionContents = Json::array();
@@ -2371,6 +2373,7 @@ namespace gnubase::engine
 			// Files from before #168 have neither.
 			part.rootKey = rootKeyFromName(item.value("rootKey", std::string())).value_or(-1);
 			part.independent = item.value("globalTranspose", std::string("follow")) == "independent";
+			part.pattern = item.value("pattern", ObjectId{0}); // files from before #181 have none
 			for (const Json& n : item.at("notes"))
 			{
 				Note note;
@@ -2534,6 +2537,28 @@ namespace gnubase::engine
 			if (project.articulationMaps.count(track.articulationMap) == 0 ||
 				(track.type != TrackType::Midi && track.type != TrackType::Instrument))
 				track.articulationMap = 0;
+		// Files from before #181 have no patterns. A pattern stays while a MIDI or instrument track of its own is there
+		// or an event plays it, as in the session, where events on other tracks (Duplicate Track, a pattern event
+		// moved or copied there) keep playing it after its track is removed; an event of a pattern that isn't there
+		// is an ordinary part.
+		std::set<ObjectId> played;
+		for (const auto& [id, part] : project.midiParts)
+			played.insert(part.pattern);
+		for (const Json& item : json.value("patterns", Json::array()))
+		{
+			Pattern pattern;
+			// The mode first, so that switching to it doesn't clear the lanes.
+			pattern.mode = item.value("mode", std::string("drum")) == "drum" ? PatternMode::Drum : PatternMode::Poly;
+			pattern = midi::patternFromJson(item, pattern);
+			const auto track = project.trackById.find(pattern.track);
+			if (played.count(pattern.id) != 0 ||
+				(track != project.trackById.end() &&
+					(track->second.type == TrackType::Midi || track->second.type == TrackType::Instrument)))
+				project.patterns[pattern.id] = std::move(pattern);
+		}
+		for (auto& [id, part] : project.midiParts)
+			if (project.patterns.count(part.pattern) == 0)
+				part.pattern = 0;
 		project.virginTerritory = json.value("virginTerritory", false); // files from before #124 have none
 		// Files from before quantizing have neither.
 		if (json.contains("quantize"))
@@ -2614,6 +2639,8 @@ namespace gnubase::engine
 		for (const auto& [id, map] : project.drumMaps)
 			see(id);
 		for (const auto& [id, map] : project.articulationMaps)
+			see(id);
+		for (const auto& [id, pattern] : project.patterns)
 			see(id);
 		for (const auto& [id, lane] : project.automation)
 		{
