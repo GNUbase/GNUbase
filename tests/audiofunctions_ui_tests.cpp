@@ -271,3 +271,22 @@ TEST_CASE("the Spectrum Analyzer draws the spectrum, shows the values under the 
 	click(app, "#sa-close");
 	closes(app, "#spectrum-analyzer-dialog");
 }
+
+TEST_CASE("Create Sampler Track in the Audio menu makes a sampler track of the first selected event", "[ui]")
+{
+	test::UiApp app({1000, 760});
+	const Tones tones(app);
+	showTones(app, tones, 1);
+	app.keys().run("audio.createSamplerTrack", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("tracks").size() == 2; }));
+	const Json project = app.call("project.get");
+	const Json& track = project.at("tracks").at(1);
+	CHECK(track.at("name") == "Sampler 01");
+	for (const Json& channel : project.at("channels"))
+		if (channel.at("id") == track.at("channel"))
+		{
+			CHECK(channel.at("instrument") == "sampler");
+			CHECK(channel.at("sample") == project.at("clips").at(0).at("id"));
+		}
+	CHECK(app.call("history.get").at("steps").back().at("action") == "Create sampler track");
+}

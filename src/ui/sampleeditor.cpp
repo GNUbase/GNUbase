@@ -215,6 +215,7 @@ namespace gnubase::ui
 			selects +
 			R"(<button id="se-set-locators">Set Locators to Selection Range</button>)"
 			R"(<button id="se-locate">Locate Selection</button><button id="se-loop">Loop Selection</button>)"
+			R"(<button id="se-create-sampler">Create Sampler Track</button>)"
 			R"(<div class="section-header">Process</div>)"
 			R"(<button id="se-range-region">Event or Range as Region</button><button id="se-flatten">Flatten</button>)" +
 			hitpoints + warpSection +
@@ -954,6 +955,12 @@ namespace gnubase::ui
 			m_binding.send("transport.set", {{"left", left}, {"right", right}, {"cycle", true}});
 			m_binding.send("transport.locate", {{"position", left}});
 			m_binding.send("transport.play");
+			return;
+		}
+		if (id == "se-create-sampler")
+		{
+			// From the selection range, or the whole event without one (reference manual p. 711).
+			m_binding.send("sampler.create", {{"event", m_view.at("event")}, {"start", start}, {"end", end}});
 			return;
 		}
 		if (id == "se-add-region" || id == "se-range-region")

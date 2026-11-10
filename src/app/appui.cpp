@@ -121,6 +121,8 @@ namespace gnubase::app
 			{"audio.detectSilence", "Opens the Detect Silence dialog for the selected audio events.", nullptr},
 			{"audio.spectrumAnalyzer", "Opens the Spectrum Analyzer for the selected audio event.", nullptr},
 			{"audio.statistics", "Opens the Statistics window for the selected audio events.", nullptr},
+			// Sampler tracks (docs/features/sampler-track.md).
+			{"audio.createSamplerTrack", "Creates a sampler track that plays the first selected audio event.", nullptr},
 			// Warping (docs/features/warp.md).
 			{"audio.flatten", "Renders the real-time warping of the selected audio events into new files.", nullptr},
 			{"audio.unstretch", "Removes the real-time stretching from the selected audio events' clips.", nullptr},

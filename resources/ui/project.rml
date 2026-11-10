@@ -439,6 +439,8 @@
 		</menuitem>
 		<menuitem command="audio.spectrumAnalyzer">Spectrum Analyzer</menuitem>
 		<menuitem command="audio.statistics">Statistics</menuitem>
+		<!-- Sampler tracks (reference manual p. 711, docs/features/sampler-track.md) -->
+		<menuitem command="audio.createSamplerTrack">Create Sampler Track</menuitem>
 		<!-- Warping (reference manual pp. 657-658, docs/features/warp.md) -->
 		<menuitem id="audio-realtime-submenu">Realtime Processing
 			<menu>
