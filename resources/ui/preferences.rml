@@ -236,6 +236,8 @@
 				{key = "ui.toolboxOnRightClick", label = "Show Toolbox on Right-Click"},
 				{key = "ui.toolSwitchNotification",
 					label = "Show Notification when Switching Tool Mode with Key Command"}}},
+			{id = "editing-zoom", parent = "Editing", name = "Zoom", items = {
+				{key = "ui.zoomToolHorizontalOnly", label = "Zoom Tool Standard Mode: Horizontal Zooming Only"}}},
 			{id = "event-display", name = "Event Display", items = {}},
 			{id = "event-display-folders", parent = "Event Display", name = "Folders", items = {
 				{key = "ui.folderData", label = "Show Data on Folder Tracks", choices = {

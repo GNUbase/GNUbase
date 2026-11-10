@@ -174,6 +174,11 @@ namespace gnubase::ui
 					m_notifies = notifies->get<bool>();
 					m_notifiesKnown = true;
 				}
+				if (const auto zoom = values.find("ui.zoomToolHorizontalOnly"); zoom != values.end())
+				{
+					m_zoomHorizontalOnly = zoom->get<bool>();
+					m_zoomHorizontalOnlyKnown = true;
+				}
 			}));
 		const std::weak_ptr<bool> alive = m_alive;
 		requestProject();
@@ -217,6 +222,12 @@ namespace gnubase::ui
 			{
 				if (!alive.expired() && result.ok() && !m_notifiesKnown)
 					m_notifies = result.value.at("value").get<bool>();
+			});
+		m_binding.send("settings.get", {{"key", "ui.zoomToolHorizontalOnly"}},
+			[this, alive](const engine::Result& result)
+			{
+				if (!alive.expired() && result.ok() && !m_zoomHorizontalOnlyKnown)
+					m_zoomHorizontalOnly = result.value.at("value").get<bool>();
 			});
 		requestMarkers();
 		showAutoScroll();
