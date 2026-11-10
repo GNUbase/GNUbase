@@ -399,7 +399,7 @@ namespace gnubase::ui
 				for (int take = 0; take <= topLanes[id]; ++take)
 				{
 					takeLanes[{id, take}] = m_tracks.size();
-					m_tracks.push_back({static_cast<float>(trackHeight(id)), {}});
+					m_tracks.push_back({static_cast<float>(ownHeight(id)), {}});
 					m_laneTracks.push_back(id);
 					m_laneTypes.push_back(type);
 					m_laneLinear.push_back(linear[id]);
@@ -610,7 +610,10 @@ namespace gnubase::ui
 		std::vector<EventLanes::Lane> muted;
 		for (size_t i = 0; i < lanes.size(); ++i)
 		{
-			const double height = m_laneAutomation[i] != 0 ? g_trackHeight : trackHeight(m_laneTracks[i]);
+			// Only the track's own lane holds its in-place editor (#131), not its lanes (#99).
+			double height = m_laneAutomation[i] != 0 ? g_trackHeight : trackHeight(m_laneTracks[i]);
+			if (m_laneTakes[i] >= 0)
+				height = ownHeight(m_laneTracks[i]);
 			lanes[i].height = static_cast<float>(height * m_view.trackZoom);
 			m_laneTops.push_back(m_laneTops.back() + lanes[i].height);
 			muted.push_back({lanes[i].height, {}});
@@ -866,10 +869,15 @@ namespace gnubase::ui
 			}
 	}
 
-	double EventDisplay::trackHeight(uint64_t track) const
+	double EventDisplay::ownHeight(uint64_t track) const
 	{
 		const auto height = m_heights.find(track);
-		const double own = height == m_heights.end() ? g_trackHeight : height->second;
+		return height == m_heights.end() ? g_trackHeight : height->second;
+	}
+
+	double EventDisplay::trackHeight(uint64_t track) const
+	{
+		const double own = ownHeight(track);
 		return m_inPlace.count(track) != 0 ? std::max(own, g_inPlaceHeight) : own;
 	}
 
