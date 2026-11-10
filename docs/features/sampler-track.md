@@ -16,9 +16,11 @@ sampler is a GNUbase processor and runs inside the engine (architecture rule 3).
 | `sampler.normalize` | Sets the Sample gain so that the highest peak between start and end reaches `level` dBFS (default 0) | pp. 715, 735 |
 
 Each is one undo step and emits `channel.changed`; `sampler.create` also `track.added`. Another instrument
-(`channel.set`) drops the sample. A sampler's clip counts as used in the pool (`pool.get`, `pool.removeUnused`), and
-the sample is saved with the channel in `gnubase.json`; a clip that isn't in the pool when the project loads is
-dropped.
+(`channel.set`) drops the sample. A sampler's clip counts as used in the pool (`pool.get`, `pool.removeUnused`,
+`clip.remove` refuses it, `media.removeMissing` empties the sampler) and in a backup (`project.backup`, p. 710: its
+`removeUnused` keeps it, and `minimize` copies a file that a sampler plays whole, as Start, End and the loop are shares
+of it). Imported and exported tracks (`track.import`, `track.export`) take their sample along. The sample is saved
+with the channel in `gnubase.json`; a clip that isn't in the pool when the project loads is dropped.
 
 The sampler's settings are its parameters (`processor.list`, `parameter.set`, automatable like any instrument's):
 
@@ -65,7 +67,8 @@ Add Track dialog offers the Sampler among the instruments of an instrument track
 
 `tests/sampler_tests.cpp`: the sampler on its own (pitch, tuning, key range, start and end, reverse, every loop mode,
 one shot, slices, monophonic and legato, the amp section and envelope, the filter types and key follow), the commands,
-the pool and saving, and offline renders of a sampler track against the sample itself and the golden file
-`sampler-track-phrase`, then a hot swap and its undo; `tests/rtcheck_tests.cpp` plays it with every loop mode, slices
-and the filter without allocating; `tests/sampleeditor_ui_tests.cpp` and `tests/audiofunctions_ui_tests.cpp` create
-sampler tracks from the UI.
+the pool, removing clips, importing and saving, and offline renders of a sampler track against the sample itself and
+the golden file `sampler-track-phrase`, then a hot swap and its undo; `tests/rtcheck_tests.cpp` plays it with every
+loop mode, slices and the filter without allocating; `tests/sampleeditor_ui_tests.cpp` and
+`tests/audiofunctions_ui_tests.cpp` create sampler tracks from the UI; `tests/backup_tests.cpp` backs one up with
+`removeUnused` and `minimize`.

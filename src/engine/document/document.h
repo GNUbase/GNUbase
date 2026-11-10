@@ -739,6 +739,14 @@ namespace gnubase::engine
 					visit(event);
 	}
 
+	// Calls visit with the pool clip of every sampler track (#180): their clips are in use too. Project may be const.
+	template <typename P, typename Visit> void forEverySamplerClip(P& project, Visit visit)
+	{
+		for (auto& entry : project.channels)
+			if (entry.second.sample != 0)
+				visit(entry.second.sample);
+	}
+
 	// Whether tracks of a type can be disabled (reference manual p. 219): audio, instrument and MIDI tracks.
 	inline bool canDisable(TrackType type)
 	{

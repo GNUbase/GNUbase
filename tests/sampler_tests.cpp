@@ -644,12 +644,31 @@ TEST_CASE("sampler.normalize sets the sample gain so that the peak reaches the l
 {
 	Session session;
 	Client& client = session.client;
-	const auto track = run(client, "sampler.create", {{"clip", session.clip}}).at("track").at("id");
+	const Json created = run(client, "sampler.create", {{"clip", session.clip}});
+	const auto track = created.at("track").at("id");
 	const Json normalized = run(client, "sampler.normalize", {{"track", track}, {"level", -6.0}});
 	// The sine's peak is just under 0.5 (-6 dBFS), near its start.
 	CHECK_THAT(instrumentParameter(normalized.at("channel"), Sampler::Gain), WithinAbs(0.0, 0.1));
 	const Json full = run(client, "sampler.normalize", {{"track", track}});
 	CHECK_THAT(instrumentParameter(full.at("channel"), Sampler::Gain), WithinAbs(6.02, 0.1));
+
+	// Reversed, Start and End count from the sample's end: Start 0.5 plays the loud first half, End 0.5 the second
+	// half, about 13 dB quieter (the sine decays by exp(-1.5) in half a second).
+	const auto channel = created.at("channel").at("id");
+	const auto setParameter = [&](uint32_t id, double value)
+	{
+		run(client, "parameter.set",
+			{{"channel", channel}, {"target", {{"type", "instrument"}, {"parameter", id}}}, {"value", value}});
+	};
+	setParameter(Sampler::Reverse, 1.0);
+	setParameter(Sampler::Start, 0.5);
+	const Json reversed = run(client, "sampler.normalize", {{"track", track}});
+	CHECK_THAT(instrumentParameter(reversed.at("channel"), Sampler::Gain), WithinAbs(6.02, 0.1));
+	setParameter(Sampler::Start, 0.0);
+	setParameter(Sampler::End, 0.5);
+	const Json reversedEnd = run(client, "sampler.normalize", {{"track", track}});
+	CHECK_THAT(instrumentParameter(reversedEnd.at("channel"), Sampler::Gain), WithinAbs(6.02 + 13.03, 0.2));
+
 	const auto empty = run(client, "sampler.create").at("track").at("id");
 	CHECK_THAT(reject(client, "sampler.normalize", {{"track", empty}}), ContainsSubstring("no sample"));
 }
@@ -676,6 +695,66 @@ TEST_CASE(
 			CHECK(item.at("sample") == session.clip);
 			CHECK(instrumentParameter(item, Sampler::Start) == 0.1);
 		}
+}
+
+TEST_CASE("a sampler's clip can't be removed, and a missing one leaves the sampler empty", "[integration]")
+{
+	Session session;
+	Client& client = session.client;
+	const Json created = run(client, "sampler.create", {{"clip", session.clip}});
+	const auto track = created.at("track").at("id");
+	CHECK_THAT(reject(client, "clip.remove", {{"clip", session.clip}}), ContainsSubstring("sampler track"));
+
+	fs::remove(session.file);
+	const Json removed = run(client, "media.removeMissing");
+	CHECK(removed.at("clips") == Json::array({session.clip}));
+	const Json project = run(client, "project.get");
+	for (const Json& item : project.at("channels"))
+		if (item.at("id") == created.at("channel").at("id"))
+			CHECK(item.at("sample") == 0);
+	CHECK_THAT(reject(client, "sampler.normalize", {{"track", track}}), ContainsSubstring("no sample"));
+	run(client, "history.undo");
+	CHECK(run(client, "pool.get").at("clips").at(0).at("used") == 1);
+}
+
+TEST_CASE("track.export and track.import take a sampler track's sample along", "[integration]")
+{
+	Session session;
+	Client& client = session.client;
+	const Json created = run(client, "sampler.create", {{"clip", session.clip}, {"start", 4800}});
+	const fs::path archive = session.folder.path() / "sampler.dawproject";
+	run(client, "track.export",
+		{{"tracks", {created.at("track").at("id")}}, {"path", archive.u8string()}, {"copyMedia", false}});
+	const std::string project = (session.folder.path() / "project.dawproject").u8string();
+	run(client, "project.save", {{"path", project}});
+
+	// Into a project whose own clips have other ids.
+	for (const std::string& path : {archive.u8string(), project})
+	{
+		INFO(path);
+		run(client, "project.new");
+		gnubase::test::Audio other;
+		other.samples.assign(480, 0.0f);
+		const fs::path silent = session.folder.path() / "other.wav";
+		gnubase::test::writeWav(silent, other);
+		const Json media = run(client, "media.add", {{"path", silent.u8string()}});
+		const auto mine = run(client, "clip.add", {{"media", media.at("media").at("id")}}).at("clip").at("id");
+		run(client, "track.import", {{"path", path}});
+		const Json loaded = run(client, "project.get");
+		const auto channel = std::find_if(loaded.at("channels").begin(), loaded.at("channels").end(),
+			[](const Json& item) { return item.at("instrument") == "sampler"; });
+		REQUIRE(channel != loaded.at("channels").end());
+		CHECK(channel->at("sample") != mine);
+		CHECK(instrumentParameter(*channel, Sampler::Start) == 0.1);
+		// The sampler's clip plays the sine, a second long.
+		int64_t frames = 0;
+		for (const Json& clip : loaded.at("clips"))
+			if (clip.at("id") == channel->at("sample"))
+				for (const Json& file : loaded.at("media"))
+					if (file.at("id") == clip.at("media"))
+						frames = file.at("length").get<int64_t>();
+		CHECK(frames == 48000);
+	}
 }
 
 TEST_CASE("a sampler track renders its sample from MIDI notes, and swaps it while playing", "[integration]")

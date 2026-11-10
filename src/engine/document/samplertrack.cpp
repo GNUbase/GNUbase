@@ -201,8 +201,12 @@ namespace gnubase::engine
 				const std::unique_ptr<const processors::Sample> sample =
 					processors::loadSample(project.media.at(project.clips.at(channel.sample).media).path);
 				const auto frames = static_cast<double>(sample->frames());
-				const auto from = static_cast<size_t>(std::floor(parameter(channel, Sampler::Start, 0.0) * frames));
-				const auto to = static_cast<size_t>(std::ceil(parameter(channel, Sampler::End, 1.0) * frames));
+				// Reversed, the sampler counts Start and End from the sample's end.
+				const bool reverse = parameter(channel, Sampler::Reverse, 0.0) >= 0.5;
+				const double start = parameter(channel, Sampler::Start, 0.0);
+				const double end = parameter(channel, Sampler::End, 1.0);
+				const auto from = static_cast<size_t>(std::floor((reverse ? 1.0 - end : start) * frames));
+				const auto to = static_cast<size_t>(std::ceil((reverse ? 1.0 - start : end) * frames));
 				float peak = 0.0f;
 				for (const std::vector<float>* data : {&sample->left, &sample->right})
 					for (size_t i = from; i < std::min(to, data->size()); ++i)

@@ -2793,6 +2793,9 @@ namespace gnubase::engine
 			find(project.clips, id, "clip");
 			forEveryAudioEvent(project, [id](const AudioEvent& event)
 				{ require(event.clip != id, "clip " + idText(id) + " is used by audio event " + idText(event.id)); });
+			for (const auto& [channelId, channel] : project.channels)
+				require(channel.sample != id,
+					"clip " + idText(id) + " is played by sampler track " + idText(channel.track));
 			project.clips.erase(id);
 			context.emit("clip.removed", {{"clip", id}});
 			return Json::object();
@@ -4364,8 +4367,8 @@ namespace gnubase::engine
 				objectSchema({{"media", idSchema}, {"name", stringSchema}}, {"media"}), resultSchema({"clip"}), false},
 			addClip);
 		add(engine,
-			{"clip.remove", 1, "Removes a clip that no audio event uses.", objectSchema({{"clip", idSchema}}, {"clip"}),
-				noResult, false},
+			{"clip.remove", 1, "Removes a clip that no audio event or sampler track uses.",
+				objectSchema({{"clip", idSchema}}, {"clip"}), noResult, false},
 			removeClip);
 
 		add(engine,
@@ -4753,8 +4756,9 @@ namespace gnubase::engine
 				"folder of the project's folder, where File > Export > "
 				"Audio Mixdown puts mixdowns, go along into the folder Mixdown, unless skipMixdown is true. The "
 				"project itself stays as it is. minimize keeps only the ranges of audio files "
-				"that audio events play, with handles seconds (default 1) before and after; removeUnused leaves out "
-				"clips that no audio event uses and media that no clip uses. currentVersionsOnly and skipVideo have "
+				"that audio events play, with handles seconds (default 1) before and after, but files that a sampler "
+				"track plays go along whole; removeUnused leaves out clips that no audio event or sampler track uses "
+				"and media that no clip uses. currentVersionsOnly and skipVideo have "
 				"no effect until clips have versions and projects have video. activate opens the backup once it is "
 				"done, unless the project changed meanwhile. The backup runs as a job: this returns at once, "
 				"job.progress and job.finished events follow, and job.cancel stops it and removes what it wrote. A "

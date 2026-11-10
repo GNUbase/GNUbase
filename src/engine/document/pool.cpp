@@ -107,9 +107,7 @@ namespace gnubase::engine
 		{
 			std::map<ObjectId, int> uses;
 			forEveryAudioEvent(project, [&uses](const AudioEvent& event) { ++uses[event.clip]; });
-			for (const auto& [id, channel] : project.channels) // a sampler's sample (#180)
-				if (channel.sample != 0)
-					++uses[channel.sample];
+			forEverySamplerClip(project, [&uses](ObjectId clip) { ++uses[clip]; });
 			return uses;
 		}
 
@@ -759,7 +757,8 @@ namespace gnubase::engine
 		add(engine,
 			{"media.removeMissing", 1,
 				"Removes the media files that are missing from the pool with their clips and the audio events that "
-				"play them (reference manual p. 752), as one undo step. Returns the ids removed.",
+				"play them (reference manual p. 752), as one undo step; sampler tracks that play them are left without "
+				"a sample. Returns the ids removed.",
 				objectSchema({}),
 				objectSchema({{"media", ids}, {"clips", ids}, {"events", ids}}, {"media", "clips", "events"}), false},
 			[this](Project& project, CommandContext& context)
@@ -797,6 +796,13 @@ namespace gnubase::engine
 									std::remove_if(version.audioEvents.begin(), version.audioEvents.end(),
 										[clipId](const AudioEvent& event) { return event.clip == clipId; }),
 									version.audioEvents.end());
+						// Sampler tracks play nothing (#180).
+						for (auto& [channelId, channel] : project.channels)
+							if (channel.sample == clipId)
+							{
+								channel.sample = 0;
+								context.emit("channel.changed", {{"channel", toJson(channel)}});
+							}
 						project.clips.erase(clipId);
 						context.emit("clip.removed", {{"clip", clipId}});
 						clips.push_back(clipId);
