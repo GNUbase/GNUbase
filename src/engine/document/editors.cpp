@@ -458,7 +458,8 @@ namespace gnubase::engine
 	void registerEditorCommands(ProjectModel& model, Engine& engine)
 	{
 		auto views = std::make_shared<Views>();
-		const Json editorSchema = {{"type", "string"}};
+		// The names, so that MCP clients and Lua see them: lower, window or inPlace:<track> (#131).
+		const Json editorSchema = {{"type", "string"}, {"pattern", "^(lower|window|inPlace:[0-9]+)$"}};
 		const Json modeSchema = {
 			{"type", "string"}, {"enum", std::vector<std::string>(g_editingModes.begin(), g_editingModes.end())}};
 		const Json idsSchema = {{"type", "array"}, {"items", {{"type", "integer"}}}};

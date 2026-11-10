@@ -163,7 +163,10 @@ namespace gnubase::ui
 		// lane, in dp, with vertical zoom, and the last one is the bottom of the last lane.
 		const std::vector<uint64_t>& laneTracks() const { return m_laneTracks; }
 		const std::vector<double>& laneTops() const { return m_laneTops; }
+		// A track's height: its own, at least g_inPlaceHeight while its in-place editor is open. Its lanes (#99) have
+		// its own height.
 		double trackHeight(uint64_t track) const;
+		double ownHeight(uint64_t track) const;
 		void setTrackHeight(uint64_t track, double height);
 		void setTrackHeights(double height); // every track's
 		// The heights tracks have of their own, by track, and replacing them all (the project's, trackLayout.get).

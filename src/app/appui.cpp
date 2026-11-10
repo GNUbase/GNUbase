@@ -1672,31 +1672,37 @@ namespace gnubase::app
 					m_binding.send("editor.open", {{"editor", "window"}, {"parts", parts}, {"content", "drum"}});
 			}});
 		// Edit In-Place (Mod+Shift+I, reference manual p. 1261) opens or closes the in-place editors of the selected
-		// MIDI and instrument tracks, MIDI > Open In-Place Editor opens them (p. 1259).
+		// MIDI and instrument tracks, MIDI > Open In-Place Editor opens them (p. 1259). Both wait for such a track to
+		// be selected.
+		const auto noteTracks = [this]
+		{
+			engine::Json tracks = engine::Json::array();
+			if (!m_trackList || !m_eventDisplay || !m_eventDisplay->project().is_object())
+				return tracks;
+			const std::vector<uint64_t> selection = m_trackList->selection();
+			for (const engine::Json& track : m_eventDisplay->project().at("tracks"))
+				if ((track.at("type") == "midi" || track.at("type") == "instrument") &&
+					std::find(selection.begin(), selection.end(), track.at("id").get<uint64_t>()) != selection.end())
+					tracks.push_back(track.at("id"));
+			return tracks;
+		};
 		for (const auto& [id, open, description] :
 			{std::tuple{"editor.editInPlace", false,
 				 "Opens or closes the in-place editors of the selected MIDI and instrument tracks."},
 				std::tuple{"editor.openInPlace", true,
 					"Opens the in-place editors of the selected MIDI and instrument tracks."}})
 		{
-			m_keys.add({id, description, [this, opens = open](ui::Window&, Rml::Element*)
+			m_keys.add({id, description, [this, noteTracks, opens = open](ui::Window&, Rml::Element*)
 				{
-					if (!m_trackList || !m_eventDisplay || !m_eventDisplay->project().is_object())
-						return;
-					const std::vector<uint64_t> selection = m_trackList->selection();
-					engine::Json tracks = engine::Json::array();
-					for (const engine::Json& track : m_eventDisplay->project().at("tracks"))
-						if ((track.at("type") == "midi" || track.at("type") == "instrument") &&
-							std::find(selection.begin(), selection.end(), track.at("id").get<uint64_t>()) !=
-								selection.end())
-							tracks.push_back(track.at("id"));
+					engine::Json tracks = noteTracks();
 					if (tracks.empty())
 						return;
-					engine::Json parameters = {{"tracks", tracks}};
+					engine::Json parameters = {{"tracks", std::move(tracks)}};
 					if (opens)
 						parameters["open"] = true;
 					m_binding.send("editor.inPlace", parameters);
 				}});
+			m_keys.enableWhen(id, [noteTracks](ui::Window&, Rml::Element*) { return !noteTracks().empty(); });
 		}
 		m_keys.bind({"Mod+Shift+I", "editor.editInPlace", engine::Json::object(), "project"});
 		// The Drum Map Setup's Load and Save (p. 1236): a drum map file into the project, and the drum map of the
