@@ -105,6 +105,10 @@ namespace gnubase::ui
 		// Minimizes the window, and restores it if it is minimized (WindowSystem::minimize, restore).
 		void minimize(WindowId id);
 		void restore(WindowId id);
+		// Whether the window is maximized, and maximizing it or giving it its normal bounds (WindowSystem::maximized,
+		// setMaximized).
+		bool maximized(WindowId id) const { return m_windows.maximized(id); }
+		void setMaximized(WindowId id, bool maximized) { m_windows.setMaximized(id, maximized); }
 
 		// Runs handler when the user asks to close a window other than the main window, before the shell closes it,
 		// e.g. to dock the panel it shows again (ui/docking.h). The handler may close the window itself.

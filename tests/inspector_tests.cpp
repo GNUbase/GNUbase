@@ -9,6 +9,7 @@
 #include "engine/engine.h"
 #include "engine/time/tempomap.h"
 #include "ui/automation.h"
+#include "ui/docking.h"
 #include "ui/eventdisplay.h"
 #include "ui/markers.h"
 #include "ui/tracklist.h"
@@ -613,6 +614,58 @@ TEST_CASE("the inspector shows the selected track, and its controls change the t
 	window.list.select({marker});
 	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, ".inspector [section=basics]", "unavailable"); }));
 	CHECK(hasClass(window.app, ".inspector [section=notepad]", "unavailable"));
+}
+
+TEST_CASE("the inspector's setup pane saves and recalls presets, and Reset All brings the default order back", "[ui]")
+{
+	Window window;
+	const uint64_t audio = window.addTrack({{"type", "audio"}, {"name", "Vox"}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("tracks").size() == 1; }));
+	window.list.select({audio});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Vox"));
+	ui::Docking& docking = window.app.appUi().docking();
+	const std::vector<std::string> defaults = docking.sections("project", "inspector");
+	REQUIRE(defaults.size() > 1);
+	const auto openPane = [&window]
+	{
+		if (!hasClass(window.app, "#inspector-setup", "open"))
+			window.click(".inspector [row=volume] .inspector-label", ui::MouseButton::Right);
+		REQUIRE(hasClass(window.app, "#inspector-setup", "open"));
+	};
+	const auto notepadHidden = [&window] { return hasClass(window.app, ".inspector [section=notepad]", "hidden"); };
+
+	// The notepad hidden and the last section first.
+	openPane();
+	window.click("#inspector-setup [setup-section=notepad]");
+	REQUIRE(window.app.waitUntil(notepadHidden));
+	docking.moveSection("project", "inspector", defaults.back(), defaults.front());
+	const std::vector<std::string> moved = docking.sections("project", "inspector");
+	REQUIRE(moved.front() == defaults.back());
+
+	// Save Preset, whose OK waits for a name.
+	openPane();
+	window.click("#inspector-setup [setup-preset-save]");
+	REQUIRE(window.app.waitUntil([&window] { return !elements(window.app, "#setup-preset-name").empty(); }));
+	CHECK(elements(window.app, "#setup-preset-ok").at(0).at("attributes").contains("disabled"));
+	window.click("#setup-preset-name");
+	window.app.ui().text(std::nullopt, "Lean");
+	REQUIRE(window.app.waitUntil(
+		[&window] { return !elements(window.app, "#setup-preset-ok").at(0).at("attributes").contains("disabled"); }));
+	window.click("#setup-preset-ok");
+	REQUIRE(window.app.waitUntil([&window]
+		{ return window.call("settings.get", {{"key", "ui.setupPresets"}}).at("value").contains("inspector"); }));
+
+	// Reset All: the default order and sections.
+	openPane();
+	window.click("#inspector-setup [setup-reset]");
+	REQUIRE(window.app.waitUntil([&] { return !notepadHidden(); }));
+	CHECK(docking.sections("project", "inspector") == defaults);
+
+	// The preset brings its order and hidden sections back.
+	openPane();
+	window.click("#inspector-setup [setup-preset=Lean]");
+	REQUIRE(window.app.waitUntil(notepadHidden));
+	CHECK(docking.sections("project", "inspector") == moved);
 }
 
 TEST_CASE("an edit in the inspector goes to the track it started on when another track shows", "[ui]")

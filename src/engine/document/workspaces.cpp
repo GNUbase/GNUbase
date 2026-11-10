@@ -94,7 +94,7 @@ namespace gnubase::engine
 		void makeActive(ProjectWorkspaces& workspaces, CommandContext& context, Engine& engine, const std::string& type,
 			const std::string& name, const Json& layout)
 		{
-			const bool none = activeOf(workspaces, context).at("type") == "";
+			const bool none = activeOf(workspaces, context).at("type").get<std::string>().empty();
 			Json settings = Json::object();
 			if (!type.empty())
 			{
@@ -103,8 +103,11 @@ namespace gnubase::engine
 				if (none)
 					settings["ui.noWorkspaceLayout"] = userSetting(context, "ui.layout");
 			}
-			else if (const Json own = userSetting(context, "ui.noWorkspaceLayout"); !none && !own.empty())
-				settings["ui.layout"] = own;
+			else if (!none)
+			{
+				if (const Json own = userSetting(context, "ui.noWorkspaceLayout"); !own.empty())
+					settings["ui.layout"] = own;
+			}
 			if (!settings.empty())
 				engine.setSettings(context, settings);
 			workspaces.activeType = type;

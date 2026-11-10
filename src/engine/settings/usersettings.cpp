@@ -63,7 +63,8 @@ namespace gnubase::engine::settings
 						{"strips", {{"type", "object"}, {"additionalProperties", {{"type", "boolean"}}}}},
 						{"sections", {{"type", "object"}, {"additionalProperties", sections}}},
 						{"sizes", {{"type", "object"}, {"additionalProperties", {{"type", "number"}, {"minimum", 0}}}}},
-						{"open", {{"type", "boolean"}}}, {"bounds", bounds}, {"monitor", text}}}};
+						{"open", {{"type", "boolean"}}}, {"maximized", {{"type", "boolean"}}}, {"bounds", bounds},
+						{"monitor", text}}}};
 			const Json panel = {{"type", "object"},
 				{"properties", {{"floating", {{"type", "boolean"}}}, {"bounds", bounds}, {"monitor", text}}}};
 			return {{"type", "object"},
@@ -615,7 +616,8 @@ namespace gnubase::engine::settings
 					"splitters size (trackList: the track list's width), and for the app's windows (project, mixer1 "
 					"to mixer4, markers, onScreenKeyboard, tempoTrack, arranger, transportPanel, timeDisplay, "
 					"scriptConsole) whether "
-					"it is open, its bounds and the name of its monitor; under panels, by panel, whether it is in a "
+					"it is open, its bounds and the name of its monitor, and maximized if it is (its bounds the normal "
+					"ones); under panels, by panel, whether it is in a "
 					"window of its own and that window's bounds and monitor. What it leaves out has its default: a "
 					"window is closed. A window whose monitor isn't connected goes onto the primary one, fully "
 					"visible.",

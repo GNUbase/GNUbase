@@ -977,6 +977,8 @@ TEST_CASE("a window without containers of sections learns a set from the first c
 	docking.attach("test", document);
 	CHECK(paneItems(app).empty());
 	CHECK(docking.sections("test", "channel").empty());
+	const auto saveDisabled = [&app] { return element(app, "#save-preset").at("attributes").contains("disabled"); };
+	CHECK(saveDisabled()); // a preset would have no order
 
 	// An element that isn't in a docking window's document is left alone.
 	const Rml::ElementPtr loose = document.CreateElement("div");
@@ -991,6 +993,7 @@ TEST_CASE("a window without containers of sections learns a set from the first c
 	CHECK(element(app, "[setup-section=eq]").at("text") == "EQ");
 	CHECK(sections(app, "#channel-1") == Names{"sends", "fader", "inserts", "eq"});
 	CHECK(docking.sections("test", "channel") == Names{"sends", "fader", "routing", "inserts", "eq"});
+	CHECK(!saveDisabled());
 
 	// The next one follows it, and the pane works as on a window that had channels from the start.
 	addChannel(app, document, "channel-2");

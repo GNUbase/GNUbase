@@ -89,8 +89,10 @@ the set `channel` (`setup-section="eq"`, with the section's label), in the user'
 and hidden sections (Reset All, p. 1576), and the presets (p. 1575) save and recall them.
 
 - **Presets.** A button with `setup-preset-save="channel"` opens the dialog Save Preset (`resources/ui/setup-preset.rml`,
-  next to the panel window's document), and OK saves the set's order and hidden sections under the name typed,
-  replacing a preset of that name. An element with `setup-presets="channel"` gets a button per preset of the set
+  next to the panel window's document), and OK, disabled while the name is empty, saves the set's order and hidden
+  sections under the name typed, replacing a preset of that name. Save Preset in another pane, also in another window,
+  moves the dialog there. Save Preset is disabled while the window doesn't know the set's sections, such as a mixer
+  window without channels, so that no preset has an empty order. An element with `setup-presets="channel"` gets a button per preset of the set
   (`setup-preset="name"`), which recalls it. The presets are the user setting `ui.setupPresets`, by set, each a name,
   the order and the hidden sections, so every window with that set has them, and profiles carry them
   ([profiles.md](profiles.md)). The transport bar and panel, the inspector and the mixer have them, Show All and Reset
@@ -228,4 +230,6 @@ channel added or rebuilt after `attach` takes the user's order and hidden sectio
 and a window that starts without channels fills its setup pane from the first one that comes, with the user's layout,
 or from a channel in a docked panel's content; a setup pane added later gets its buttons in the user's order.
 `tests/transportbar_tests.cpp` saves a setup pane preset through the Save Preset dialog into `ui.setupPresets`, resets
-the pane with Reset All, recalls the preset and follows another client's presets.
+the pane with Reset All, also the order after a reorder, recalls the preset and follows another client's presets;
+`tests/inspector_tests.cpp` and `tests/mixerwindow_tests.cpp` do the same for the inspector's and the mixer's setup
+panes, with the dialog's OK disabled until a name is typed.

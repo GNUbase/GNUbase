@@ -91,7 +91,7 @@ TEST_CASE("deleting the settings in the safe start mode drops a profile switch, 
 		REQUIRE(client.call("profile.duplicate", {{"name", "Default"}, {"newName", "Studio"}}).ok());
 		REQUIRE(client.call("profile.activate", {{"name", "Studio"}}).ok());
 	}
-	app::Options options = app::parseOptions({"--settings", dir.path().u8string(), "--delete-settings"});
+	const app::Options options = app::parseOptions({"--settings", dir.path().u8string(), "--delete-settings"});
 	engine::Engine engine(audio::makeBackends(), app::safeSettingsDirectory(options));
 	engine::Client client(engine);
 	CHECK(client.call("settings.get", {{"key", "ui.scale"}}).value.at("value") == 1.0);

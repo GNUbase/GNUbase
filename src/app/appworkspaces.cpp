@@ -6,8 +6,12 @@
 
 #include <filesystem>
 #include <functional>
+#include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace gnubase::app
 {
@@ -54,6 +58,10 @@ namespace gnubase::app
 			"timeDisplay", [this] { return m_timeDisplay.window; },
 			opener([this] { return timeDisplay() != nullptr; }, [this] { toggleTimeDisplay(); }));
 		// Windows that follow what they show, which a workspace only places while they are open.
+		m_docking.addWindow(
+			"scriptConsole", [this] { return m_scriptConsoleWindow; },
+			opener(
+				[this] { return m_shell.find(m_scriptConsoleWindow) != nullptr; }, [this] { toggleScriptConsole(); }));
 		m_docking.addWindow("channelSettings", [this] { return m_channelSettings.window; });
 		m_docking.addWindow("editor", [this] { return m_editor.window; });
 		m_docking.addWindow("sampleEditor", [this] { return m_sampleEditor.window; });
@@ -66,6 +74,14 @@ namespace gnubase::app
 				m_docking.saveWindows(); // the windows as they are now, for the workspace
 				openDialog(window, "add-workspace.rml");
 			}});
+		m_keys.add({"window.updateWorkspace",
+			"Gives the active workspace the window layout as it is now (workspace.update), with the windows where "
+			"they are at this moment.",
+			[this](ui::Window& /*window*/, Rml::Element* /*zone*/)
+			{
+				m_docking.saveWindows();
+				m_binding.send("workspace.update", engine::Json::object());
+			}});
 		m_keys.add({"window.workspaces",
 			"Opens the workspaces organizer, which renames, deletes and reorders the workspaces.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { openOnce(window, "workspaces.rml", m_workspaces); }});
@@ -73,6 +89,29 @@ namespace gnubase::app
 		m_keys.add({"window.windows",
 			"Opens the Windows dialog, which activates, minimizes, restores and closes windows.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { openOnce(window, "windows.rml", m_windowsDialog); }});
+		// The Windows dialog follows the windows that open or close while it is open. The shell copies the task for
+		// each step, so the windows it lists live outside.
+		m_shell.eachStep(
+			[this, listed = std::make_shared<std::vector<ui::WindowId>>()]
+			{
+				std::vector<ui::WindowId>& shown = *listed;
+				if (m_windowsDialog.get() == nullptr)
+				{
+					shown.clear();
+					return false;
+				}
+				std::vector<ui::WindowId> ids;
+				for (const ui::Window* window : m_shell.windows())
+					ids.push_back(window->id());
+				if (ids == shown)
+					return false;
+				const bool opened = shown.empty(); // the dialog lists them as it loads
+				shown = std::move(ids);
+				if (!opened)
+					if (const std::optional<std::string> error = m_lua.run("WindowsDialog.refresh()", "windows"))
+						logging::warning("The Windows dialog can't follow the windows: {}", *error);
+				return false;
+			});
 		// Edit > Profile Manager (docs/features/profiles.md), whose Import and Export ask the OS for the file.
 		m_keys.add({"window.profiles",
 			"Opens the profile manager, which adds, duplicates, renames, deletes, imports, exports and activates "
@@ -116,7 +155,8 @@ namespace gnubase::app
 					});
 				return engine::Json::object();
 			});
-		m_keys.enableWhen("workspace.update", [this](ui::Window&, Rml::Element*)
-			{ return m_workspacesMenu != nullptr && m_workspacesMenu->hasActive(); });
+		for (const char* command : {"workspace.update", "window.updateWorkspace"})
+			m_keys.enableWhen(command, [this](ui::Window&, Rml::Element*)
+				{ return m_workspacesMenu != nullptr && m_workspacesMenu->hasActive(); });
 	}
 }

@@ -2,6 +2,7 @@
 // The mixer windows and the lower zone's mixer (#106, docs/features/mixer-window.md) in the app, driven with
 // ui::Automation as MCP's UI tools drive them. tests/mixerviews_tests.cpp checks what the engine keeps.
 #include "ui/automation.h"
+#include "ui/docking.h"
 #include "ui/keycommands.h"
 #include "ui/renderer.h"
 #include "ui/shell.h"
@@ -316,6 +317,57 @@ TEST_CASE("mixer channels show notes and pictures, and a channel dragged onto an
 		window, {".mixer-channel-name", 0, std::nullopt}, {strip(c.channel) + " .mixer-channel-name", 0, std::nullopt});
 	app.shell().step(std::chrono::milliseconds(0));
 	CHECK(order() == std::vector<uint64_t>{a.track, b.track, c.track});
+}
+
+TEST_CASE("the mixer's setup pane saves and recalls presets, and Reset All brings the default order back", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	const Added a = addTrack(app, "audio", "A");
+	const Window window = openMixer(app, 1);
+	REQUIRE(app.waitUntil([&] { return strips(app, window).size() == 3; }));
+	ui::Docking& docking = app.appUi().docking();
+	const std::vector<std::string> defaults = docking.sections("mixer1", "channel");
+	REQUIRE(defaults.size() > 1);
+	const auto openPane = [&app, &window]
+	{
+		if (!has(element(app, window, "#mixer-layout-pane"), "open"))
+			click(app, window, "#mixer-layout");
+		REQUIRE(has(element(app, window, "#mixer-layout-pane"), "open"));
+	};
+	const auto notesShown = [&] { return !has(element(app, window, strip(a.channel) + " .mixer-notes"), "hidden"); };
+
+	// The notes shown and the last section first.
+	openPane();
+	click(app, window, "#mixer-layout-pane [setup-section=notes]");
+	REQUIRE(app.waitUntil(notesShown));
+	docking.moveSection("mixer1", "channel", defaults.back(), defaults.front());
+	const std::vector<std::string> moved = docking.sections("mixer1", "channel");
+	REQUIRE(moved.front() == defaults.back());
+
+	// Save Preset, in the mixer window.
+	openPane();
+	click(app, window, "#mixer-layout-pane [setup-preset-save=channel]");
+	REQUIRE(app.waitUntil([&] { return !elements(app, window, "#setup-preset-name").empty(); }));
+	click(app, window, "#setup-preset-name");
+	app.ui().text(window, "Notes");
+	REQUIRE(
+		app.waitUntil([&] { return !element(app, window, "#setup-preset-ok").at("attributes").contains("disabled"); }));
+	click(app, window, "#setup-preset-ok");
+	REQUIRE(app.waitUntil(
+		[&app] { return app.call("settings.get", {{"key", "ui.setupPresets"}}).at("value").contains("channel"); }));
+
+	// Reset All: the default order and sections.
+	openPane();
+	click(app, window, "#mixer-layout-pane [setup-reset=channel]");
+	REQUIRE(app.waitUntil([&] { return !notesShown(); }));
+	CHECK(docking.sections("mixer1", "channel") == defaults);
+
+	// The preset brings its order and sections back.
+	openPane();
+	click(app, window, "#mixer-layout-pane [setup-preset=Notes]");
+	REQUIRE(app.waitUntil(notesShown));
+	CHECK(docking.sections("mixer1", "channel") == moved);
 }
 
 TEST_CASE("the channel strip's pre, equalizer and strip sections and the panner send channel.set", "[ui]")

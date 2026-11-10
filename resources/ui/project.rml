@@ -604,7 +604,7 @@
 	<!-- docs/features/workspaces.md: ui::WorkspacesMenu adds No Workspace and the workspaces after these -->
 	<menu id="workspaces-menu">
 		<menuitem command="window.addWorkspace">Add Workspace...</menuitem>
-		<menuitem command="workspace.update">Update Workspace</menuitem>
+		<menuitem command="window.updateWorkspace">Update Workspace</menuitem>
 		<menuitem command="window.workspaces">Organize...</menuitem>
 	</menu>
 

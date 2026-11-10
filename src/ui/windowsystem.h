@@ -142,6 +142,10 @@ namespace gnubase::ui
 		// stays hidden.
 		virtual void minimize(WindowId window) = 0;
 		virtual void restore(WindowId window) = 0;
+		// Whether the window is maximized, and maximizing it or giving it its normal bounds again, for the workspaces
+		// (#163). bounds are the maximized ones while it is.
+		virtual bool maximized(WindowId window) const = 0;
+		virtual void setMaximized(WindowId window, bool maximized) = 0;
 
 		// The size of what the window shows, in pixels.
 		virtual Size pixelSize(WindowId window) const = 0;

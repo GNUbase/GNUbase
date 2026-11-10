@@ -169,6 +169,8 @@ GNUbase started with its UI and `--mcp-http` also has tools to look at the UI an
 - `ui_click`, `ui_move`, `ui_drag` and `ui_wheel` use the mouse on an element, by `selector` (and `index` among its matches), or on a point `x`, `y`. `ui_key` presses keys such as `Enter` or `Ctrl+S`; `ui_text` types text into the focused field. `ui_drop` drops files on an element or a point, as if dragged there from the OS's file manager, e.g. audio files on the event display to import them. Each answers with the element it reached, so the agent sees what it hit.
 - `ui_wait` waits until an element is visible, or has a text, or until none is, e.g. for a dialog that a click opens.
 - `ui_close` asks to close a `window` as its title bar's close button does, or with `quit: true` asks GNUbase to quit as the OS does; quitting asks about unsaved changes first, so `ui_wait` for `#discard-changes-dialog` afterwards.
+- `ui_window` does to a `window` what the Windows dialog does (Window > Windows...): `activate` brings it to the front with the keyboard focus, `minimize` and `restore` minimize it and restore it.
+- `ui_file_dialog` lists the file dialogs that wait for an answer, such as File > Open's or the Profile Manager's Import, and with a `dialog` answers that one first as the user would: with `files`, the files or the folder chosen, without, a cancel. The OS's dialog stays open until it is closed, and its answer is then ignored.
 
 Boxes and points are in the window's pixels, as in its screenshots; on a monitor with a scale of 200 %, 1 dp is 2 pixels. An agent opening a dialog and reading it back:
 

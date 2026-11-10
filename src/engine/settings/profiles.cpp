@@ -111,7 +111,8 @@ namespace gnubase::engine::settings
 		}
 
 		// Whether a profile other than except has a name that differs from name at most in case: the profiles'
-		// folders aren't case-sensitive on Windows and macOS. ASCII case only, as the folders' names are UTF-8.
+		// folders aren't case-sensitive on Windows and macOS. ASCII case only, as the folders' names are UTF-8;
+		// makeFolder asks the file system about the other letters.
 		bool taken(const fs::path& directory, const State& state, const std::string& name,
 			const std::string& except = std::string())
 		{
@@ -126,28 +127,27 @@ namespace gnubase::engine::settings
 				[&](const std::string& other) { return other != except && lower(other) == lower(name); });
 		}
 
-		// Makes a profile's folder, of a new profile or one renamed from the folder from, and refuses a name that the
+		// Makes a profile's folder, of a new profile or one renamed from the folder old, and refuses a name that the
 		// file system takes for another profile's folder: NTFS and APFS also fold the case of letters such as Ä, and
 		// APFS ignores the Unicode normalization, which taken doesn't see. The active profile has no folder, so one
 		// that appears with the new one is the same.
 		void makeFolder(
-			const fs::path& directory, const State& state, const std::string& name, const fs::path& from = fs::path())
+			const fs::path& directory, const State& state, const std::string& name, const fs::path& old = fs::path())
 		{
 			const fs::path folder = folderOf(directory, name);
 			const fs::path active = folderOf(directory, state.active);
-			require(
-				!fs::exists(folder) || (!from.empty() && fs::equivalent(from, folder)), "there is a profile " + name);
+			require(!fs::exists(folder) || (!old.empty() && fs::equivalent(old, folder)), "there is a profile " + name);
 			const bool hadActive = fs::exists(active);
-			if (from.empty())
+			if (old.empty())
 				fs::create_directories(folder);
 			else
-				fs::rename(from, folder);
+				fs::rename(old, folder);
 			if (hadActive || !fs::exists(active))
 				return;
-			if (from.empty())
+			if (old.empty())
 				fs::remove(folder);
 			else
-				fs::rename(folder, from);
+				fs::rename(folder, old);
 			throw CommandError("there is a profile " + name);
 		}
 

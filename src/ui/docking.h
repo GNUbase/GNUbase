@@ -260,8 +260,11 @@ namespace gnubase::ui
 			std::function<WindowId()> current;
 			std::function<void(bool open)> setOpen;
 			bool open = false;
-			Rect bounds;
+			Rect bounds; // its normal bounds, also while it is maximized
+			bool maximized = false;
 		};
+		// Whether ui.layout has the app's window maximized.
+		bool savedMaximized(const std::string& name) const;
 		std::vector<AppWindow> m_appWindows;
 		std::string m_contextTab; // the tab last right-clicked
 		std::vector<Subscription> m_subscriptions;

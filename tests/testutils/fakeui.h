@@ -41,6 +41,9 @@ namespace gnubase::test
 		void minimize(ui::WindowId window) override;
 		void restore(ui::WindowId window) override { m_windows.at(window).minimized = false; }
 		bool minimized(ui::WindowId window) const { return m_windows.at(window).minimized; }
+		// Maximizing fills the usable area of the window's monitor; the normal bounds come back after.
+		bool maximized(ui::WindowId window) const override { return m_windows.at(window).maximized; }
+		void setMaximized(ui::WindowId window, bool maximized) override;
 
 		// The window in front of all others, minimized or not, and the one with the keyboard focus; 0 for none. A
 		// window opens in front of the others with the focus, unless it is hidden: then it is neither.
@@ -100,6 +103,8 @@ namespace gnubase::test
 			ui::Rect bounds;
 			float scale = 1.0F; // of the monitor it was last on
 			bool minimized = false;
+			bool maximized = false;
+			ui::Rect normal; // the bounds before it was maximized
 			Rml::Context* input = nullptr;
 			std::unique_ptr<TextInput> textInput = std::make_unique<TextInput>();
 		};
