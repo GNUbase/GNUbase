@@ -72,8 +72,20 @@ add src/missing.h "#pragma once"
 add src/other.cpp "// SPDX-License-Identifier: MIT"
 add tools/hook "#!/bin/sh
 exit 0"
+: > "$repo/src/empty.cpp"
+git -C "$repo" add src/empty.cpp
+add a=b.txt "No header, and awk would take the name for an assignment"
+add "src/with space.cpp" "No header"
 
-printf '%s\n' notes.txt src/late.cpp src/missing.h src/other.cpp tools/hook > "$tmp/expected"
+# Files with the header, in the third line and under names that need care.
+add src/third.cpp "// one
+// two
+// $header"
+add c=d.txt "# $header"
+add "src/has space.cpp" "// $header"
+
+printf '%s\n' a=b.txt notes.txt src/empty.cpp src/late.cpp src/missing.h src/other.cpp "src/with space.cpp" tools/hook \
+	> "$tmp/expected"
 check "files without the header are listed, and only those" 1 "$tmp/expected"
 if grep -q "$header" "$tmp/errors"; then
 	echo "ok: the message names the header"
@@ -82,7 +94,8 @@ else
 	failures=$((failures + 1))
 fi
 
-git -C "$repo" rm -q --cached notes.txt src/late.cpp src/missing.h src/other.cpp tools/hook
+git -C "$repo" rm -q --cached a=b.txt notes.txt src/empty.cpp src/late.cpp src/missing.h src/other.cpp \
+	"src/with space.cpp" tools/hook
 : > "$tmp/expected"
 check "a repository where every file has the header passes" 0 "$tmp/expected"
 
