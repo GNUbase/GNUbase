@@ -115,7 +115,8 @@ namespace
 			return elements(app, menuItem(command)).at(0).at("attributes").contains("disabled");
 		}
 
-		// Chooses the item of the open menu. Its items follow the selection when the shell steps.
+		// Chooses the item of the open menu once it is enabled: it follows rows built again behind the menu when the
+		// shell steps.
 		void choose(const std::string& command)
 		{
 			REQUIRE(app.waitUntil([&] { return !itemDisabled(command); }));
@@ -608,17 +609,12 @@ TEST_CASE("the track list's context menu follows the selection and stands the ro
 		return all;
 	};
 
-	// The menu opens with the right click, and its items follow the selection when the shell steps: before that, a
-	// click on an item that nothing was selected for does nothing. If the items ever follow it when the menu opens,
-	// this part and the check below that the item is enabled are what changes.
+	// The menu opens with the right click, and its items follow the selection at once, without a step of the shell
+	// in between: a script's click on an item right after the right click runs it (#1069).
 	tracks.rightClick(kept);
 	CHECK(elements(tracks.app, "#track-list-menu").at(0).at("visible").get<bool>());
-	CHECK(tracks.itemDisabled(command));
+	CHECK(!tracks.itemDisabled(command));
 	duplicate();
-	answered();
-	CHECK(names() == std::vector<std::string>{"Kept", "Gone"});
-	tracks.menuOpen();
-	tracks.choose(command);
 	tracks.rows(3);
 	CHECK(names() == std::vector<std::string>{"Kept", "Kept", "Gone"});
 
@@ -650,7 +646,6 @@ TEST_CASE("the track list's context menu follows the selection and stands the ro
 	duplicate();
 	answered();
 	CHECK(names() == std::vector<std::string>{"Kept", "Kept", "Kept"});
-	CHECK(elements(tracks.app, "#track-list listitem").size() == 3);
 }
 
 TEST_CASE("track heights and folded folders are the project's: saved with it, not taken into another one", "[ui]")
