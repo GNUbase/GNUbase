@@ -210,6 +210,15 @@ namespace gnubase::engine::processors
 	namespace
 	{
 		constexpr size_t g_stateEntry = sizeof(uint32_t) + sizeof(double);
+
+		// A value from a state or a file for parameter, clamped to its range; none if it isn't a number, NaN or
+		// infinite, so that a damaged or hand-edited state plays and reports what the plugin can take.
+		std::optional<double> usable(const ParameterInfo& parameter, double value)
+		{
+			if (!std::isfinite(value))
+				return std::nullopt;
+			return std::clamp(value, parameter.minimum, parameter.maximum);
+		}
 	}
 
 	std::map<uint32_t, double> BuiltinPlugin::stateValues(const std::vector<uint8_t>& state)
@@ -232,12 +241,14 @@ namespace gnubase::engine::processors
 		const ParameterInfo& parameter, const std::map<uint32_t, double>& set, const std::vector<uint8_t>* state)
 	{
 		if (const auto value = set.find(parameter.id); value != set.end())
-			return value->second;
+			if (const std::optional<double> checked = usable(parameter, value->second))
+				return *checked;
 		if (state != nullptr)
 		{
 			const std::map<uint32_t, double> values = stateValues(*state);
 			if (const auto saved = values.find(parameter.id); saved != values.end())
-				return saved->second;
+				if (const std::optional<double> checked = usable(parameter, saved->second))
+					return *checked;
 		}
 		return parameter.defaultValue;
 	}
@@ -247,7 +258,13 @@ namespace gnubase::engine::processors
 		if (size % g_stateEntry != 0)
 			return false;
 		for (const auto& [id, value] : stateValues(std::vector<uint8_t>(data, data + size)))
-			setValue(id, value);
+		{
+			const int index = indexOf(id);
+			if (index < 0)
+				continue;
+			if (const std::optional<double> checked = usable(m_info.parameters[static_cast<size_t>(index)], value))
+				setValue(id, *checked);
+		}
 		if (auto* hostParams = plugin::extension<plugin::HostParams>(m_host))
 			hostParams->rescanParams(plugin::HostParams::Values);
 		return true;

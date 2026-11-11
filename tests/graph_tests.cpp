@@ -370,6 +370,45 @@ TEST_CASE("merging into a full event buffer drops other events before note-offs"
 	CHECK(keys(events) == std::vector<int>{4, 3, 6});
 }
 
+TEST_CASE("pedals that hold notes going up end notes as note-offs do, also in a full event buffer", "[unit]")
+{
+	using Type = ProcessEvent::Type;
+	const auto controller = [](uint32_t offset, uint8_t number, uint32_t value)
+	{
+		ProcessEvent result = event(offset, Type::Controller, number);
+		result.value = value;
+		return result;
+	};
+	// Sustain, sostenuto and hold 2 below 64 in MIDI 1.0; not pressed, nor other controllers or a note-on.
+	for (const uint8_t number : {uint8_t{64}, uint8_t{66}, uint8_t{69}})
+	{
+		CHECK(endsNotes(controller(0, number, 0)));
+		CHECK(endsNotes(controller(0, number, 0x7FFFFFFFU)));
+		CHECK(!endsNotes(controller(0, number, 0x80000000U)));
+	}
+	CHECK(!endsNotes(controller(0, 1, 0)));
+	CHECK(!endsNotes(controller(0, 67, 0))); // the soft pedal holds nothing
+	CHECK(!endsNotes(event(0, Type::NoteOn, 64)));
+	CHECK(endsNotes(event(0, Type::NoteOff, 64)));
+
+	// At capacity, a pedal going up takes the place of the latest event that doesn't end notes.
+	EventBuffer events(3);
+	for (const ProcessEvent& e :
+		{event(1, Type::NoteOn, 1), controller(2, 64, 0x80000000U), event(3, Type::NoteOff, 3)})
+		REQUIRE(events.add(e));
+	CHECK(!events.add(controller(4, 66, 0)));
+	CHECK(events.addEnd(controller(4, 66, 0)));
+	CHECK(keys(events) == std::vector<int>{1, 3, 66});
+	// Merged, too, before a note-on; then the buffer holds only ends and keeps them.
+	EventBuffer source(2);
+	REQUIRE(source.add(controller(0, 64, 0)));
+	REQUIRE(source.add(controller(5, 1, 0)));
+	events.merge(source);
+	CHECK(keys(events) == std::vector<int>{64, 3, 66});
+	CHECK(!events.addEnd(controller(6, 69, 0)));
+	CHECK(keys(events) == std::vector<int>{64, 3, 66});
+}
+
 TEST_CASE("processors keep their state when the graph is rebuilt", "[unit]")
 {
 	auto ramp = std::make_shared<Ramp>();
