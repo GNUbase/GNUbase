@@ -1910,7 +1910,7 @@ namespace gnubase::engine
 				{
 					const double frame = frameAt(first + static_cast<double>(beat));
 					if (const double tempo = beat == 0 ? warp.tempo : rate * 60.0 / (frame - grid.back().target);
-						!(tempo >= time::g_minBpm && tempo <= time::g_maxBpm))
+						tempo < time::g_minBpm || tempo > time::g_maxBpm)
 						return false;
 					grid.push_back({static_cast<double>(beat), frame});
 				}
