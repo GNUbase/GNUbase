@@ -206,16 +206,18 @@ namespace gnubase::ui
 					{
 						if (alive.expired() || !pool.ok())
 							return;
-						const auto external = pool.value.at("externalFiles").get<int>();
+						// Missing files can't be copied: only those that are there are asked about (#1001).
+						const auto missing = pool.value.at("missingExternalFiles").get<int>();
+						const auto external = pool.value.at("externalFiles").get<int>() - missing;
 						if (external == 0)
 							m_binding.send("media.prepareArchive");
 						else
-							askPrepareArchive(external);
+							askPrepareArchive(external, missing);
 					});
 			});
 	}
 
-	void PoolPanel::askPrepareArchive(int external)
+	void PoolPanel::askPrepareArchive(int external, int missing)
 	{
 		if (m_question || !m_root)
 			return; // asking already
@@ -231,8 +233,12 @@ namespace gnubase::ui
 		}
 		if (Rml::Element* message = dialog->GetElementById("prepare-archive-message"))
 			message->SetInnerRML(counted(static_cast<size_t>(external), "file") +
-				(external == 1 ? " of the project is" : " of the project are") +
-				" outside the project folder. Copy them into its Audio folder?");
+				(external == 1 ? " of the project is outside the project folder. Copy it into its Audio folder?"
+							   : " of the project are outside the project folder. Copy them into its Audio folder?") +
+				(missing == 0 ? ""
+							  : " " + std::to_string(missing) +
+							(missing == 1 ? " more is missing and can't be copied."
+										  : " more are missing and can't be copied.")));
 		m_question = dialog->GetObserverPtr();
 		dialog->AddEventListener(g_dialogCloseEvent, this);
 		dialog->Show(Rml::ModalFlag::Modal);

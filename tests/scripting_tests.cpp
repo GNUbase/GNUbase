@@ -204,6 +204,36 @@ TEST_CASE("a time limit asks whether a late script keeps running, and ends with 
 	CHECK(asked == 3);
 }
 
+TEST_CASE("a late script that was stopped can't catch the error and go on", "[unit]")
+{
+	Engine engine;
+	std::ostringstream output;
+	Runtime lua(engine, Trust::Untrusted, output);
+	int asked = 0;
+	lua.setTimeLimit(std::chrono::milliseconds(20),
+		[&asked]
+		{
+			++asked;
+			return false;
+		});
+	// The error comes inside the pcall, which catches it: it comes again right after, without asking.
+	CHECK_THAT(lua.run("while true do pcall(function() while true do end end) end", "catches.lua").value_or(""),
+		ContainsSubstring("ran longer than"));
+	CHECK(asked == 1);
+	// Also when the pcall loop runs in a coroutine other than the one that was late.
+	asked = 0;
+	CHECK_THAT(lua.run(R"(coroutine.wrap(function()
+		local late = coroutine.create(function() while true do end end)
+		while true do pcall(function() coroutine.resume(late) while true do end end) end
+	end)())",
+					  "resumes.lua")
+				   .value_or(""),
+		ContainsSubstring("ran longer than"));
+	CHECK(asked == 1);
+	run(lua, "local caught = pcall(function() end) assert(caught)"); // the next run starts afresh
+	CHECK(asked == 1);
+}
+
 TEST_CASE("code runs in an environment of its own that reads the globals it doesn't have", "[unit]")
 {
 	Engine engine;

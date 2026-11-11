@@ -82,8 +82,8 @@ The reference's defaults (`ui::defaultKeyMap`, [key-commands.md](key-commands.md
   - Moving, resizing and adding snap as the event display's drags do ([snap.md](snap.md), `EventDisplay::snapped`); a
     new cycle marker ends where the mouse is, measured from the press itself, not from its snapped time.
   - A double click on a cycle marker sets the locators to it (`marker.setLocators`), with Alt it zooms to it (p. 424).
-    The event display stops mouse downs, so RmlUi sends no `dblclick`: two clicks within half a second and 3 dp make
-    one.
+    The event display stops mouse downs, so RmlUi sends no `dblclick`: two clicks within half a second on RmlUi's
+    clock and 3 dp make one.
 
   The **erase tool** removes the marker clicked, with Alt every marker on its track from it on (or from the click, off
   a marker). With the **range selection tool** a double click selects the range between the markers around it
@@ -163,7 +163,8 @@ markers. `tests/marker_tests.cpp` covers `transport.cycleFollowsMarkers` for the
 upper border, resizing it by its handles, a press inside it only selecting it, several selected markers moving in one
 undo step, snapping to bars and dropping on another marker track, also straight down; Ctrl-drag adding a cycle marker,
 also snapped from a press off the grid, Shift+Alt-click and Shift+Ctrl-drag adding and renaming; the erase tool with
-and without Alt; the range tool's double click between markers. In the app's UI: the marker track's controls adding
+and without Alt; the range tool's double click between markers, also injected with a first press whose frame takes
+longer than the double click time. In the app's UI: the marker track's controls adding
 markers (Shift-click renaming), activating the track and locating, cycling and zooming from the lists; Delete, also
 with a range selected after a marker; and the context menu's Show Marker Lines. Marker files:
 `tests/marker_tests.cpp` has the CSV round trip byte for byte with undo, also of marker tracks with the same name,

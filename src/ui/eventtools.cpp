@@ -180,8 +180,7 @@ namespace gnubase::ui
 		// (reference manual p. 253).
 		const std::optional<size_t> lane = visibleLaneAt(y);
 		if (m_combine && m_tool == Tool::ObjectSelection && lane &&
-			m_laneTops[*lane + 1] - m_laneTops[*lane] >= 2 * g_trackRow &&
-			y + m_view.top < (m_laneTops[*lane] + m_laneTops[*lane + 1]) * 0.5)
+			m_laneTops[*lane + 1] - m_laneTops[*lane] >= 2 * g_trackRow && !inLowerHalf(*lane, y))
 			return Tool::RangeSelection;
 		return m_tool;
 	}
@@ -276,8 +275,8 @@ namespace gnubase::ui
 							{"position", std::max<int64_t>(0, samples(m_view.start + (x * m_view.scale)))}});
 					return true;
 				}
-				// At an audio event's edge it resizes the event as the object selection tool does, scrubbing along
-				// (reference manual p. 268).
+				// At an audio event's lower left or right corner it resizes the event as the object selection tool
+				// does, scrubbing along (reference manual p. 268).
 				if (const int edge = scrubEdgeAt(x, y); edge != 0 && shown != nullptr)
 				{
 					if (!std::binary_search(m_selection.begin(), m_selection.end(), shown->id))
@@ -312,7 +311,7 @@ namespace gnubase::ui
 		const std::optional<size_t> lane = visibleLaneAt(y);
 		const Shown* shown = eventAt(x, y);
 		if (toolAt(y) != Tool::Play || m_playMode != PlayMode::Scrub || !lane || m_laneTypes[*lane] != "audio" ||
-			shown == nullptr || m_fades.count(shown->id) == 0)
+			shown == nullptr || m_fades.count(shown->id) == 0 || !inLowerHalf(*lane, y))
 			return 0;
 		return edgeAt(*shown, x);
 	}

@@ -232,6 +232,15 @@ TEST_CASE(
 	CHECK(!binding.sending("volume"));
 	CHECK(binding.waiting("track.add") == 0);
 	CHECK(position() == before + 4);
+
+	// Only a step in flight, one that waits and a query: settling sends the one that waits, too.
+	binding.sendStep(0, "volume", "Change Volume", volume(-3.0));
+	binding.sendStep(0, "volume", "Change Volume", volume(-4.0));
+	binding.send("project.get");
+	CHECK(binding.settle(std::chrono::seconds(10)));
+	CHECK(!binding.sending("volume"));
+	CHECK(position() == before + 6);
+	CHECK(client.call("project.get").value.at("channels").at(0).at("volume") == -4.0);
 }
 
 TEST_CASE("the UI follows the events of every client while it subscribes", "[unit]")

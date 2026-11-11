@@ -428,11 +428,17 @@ TEST_CASE("Use Settings imports audio files without the Import Options dialog, w
 	CHECK(media.at("sampleRate") == 48000.0);
 	CHECK(app.call("job.list").at("jobs").size() == jobs);
 
-	// The pool's Import Medium (clips only) and the selected track use the settings too.
+	// The pool's Import Medium (clips only) and the selected track use the settings too. kick is 48 kHz and outside
+	// the project: with Copy off (Convert on, nothing to convert) it keeps its path and no copy job starts, which the
+	// defaults (Copy on) would do.
 	display.importFiles({kick}, std::nullopt, std::nullopt, true);
 	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("clips").size() == 8; }));
 	CHECK(!dialogShown(app));
 	CHECK(events().size() == 7);
+	const Json pool = app.call("project.get").at("media");
+	REQUIRE(pool.size() == 8);
+	CHECK(pool[7].at("path") == kick);
+	CHECK(app.call("job.list").at("jobs").size() == jobs);
 	const uint64_t selected = project.at("tracks")[0].at("id").get<uint64_t>();
 	display.importToSelection({kick, snare}, {selected});
 	REQUIRE(app.waitUntil([&events] { return events().size() == 9; }));
@@ -678,6 +684,19 @@ TEST_CASE("MIDI files dropped on the event display follow the MIDI import settin
 	CHECK(part.at("track") == keys);
 	CHECK(part.at("notes").size() == 2);
 	CHECK(part.at("controllers").size() == 2);
+
+	// Dropped on the track list, outside the event lanes, it is still a drop: as a single part, on a new track at the
+	// project cursor (a bar of 4/4 at 120 BPM is two seconds), not File > Import's project start.
+	app.call("transport.locate", {{"position", 96000}});
+	REQUIRE(app.waitUntil([&display] { return display.cursor() == 2.0; }));
+	drop(app, {song}, -40.0, 10.0);
+	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("midiParts").size() == 4; }));
+	project = app.call("project.get");
+	REQUIRE(project.at("tracks").size() == 4);
+	const Json& listPart = project.at("midiParts")[3];
+	CHECK(listPart.at("track") == project.at("tracks")[3].at("id"));
+	CHECK(listPart.at("position") == 4 * time::g_ticksPerQuarter);
+	CHECK(listPart.at("notes").size() == 2);
 }
 
 TEST_CASE("The preferences' Editing > Audio page sets On Import Audio Files and what Use Settings imports with", "[ui]")
