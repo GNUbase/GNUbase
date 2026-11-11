@@ -746,9 +746,74 @@ TEST_CASE("the info line's setup pane shows, hides and orders its fields, with p
 	CHECK(docking.sections("project", "infoLine") == moved);
 }
 
+namespace
+{
+	// What the user sees of the project window's toolbar, measured at its visible buttons rather than at the sections'
+	// boxes, which hold margins of their own and shrink to fit (#1050).
+	struct ToolbarGaps
+	{
+		double inset = 0.0;    // from the toolbar's left edge to its first visible button
+		double within = 0.0;   // between two buttons of one section
+		double tightest = 0.0; // the smallest gap between two neighbouring buttons, negative where one covers the next
+		double spacer = 0.0;   // the width of the spacer before the last place
+		// From a section's last visible button to the first of the next one, except before the last place, which the
+		// spacer widens.
+		std::vector<double> between;
+	};
+
+	ToolbarGaps toolbarGaps(Window& window, const std::vector<std::string>& order)
+	{
+		window.app.shell().step(std::chrono::milliseconds(0));
+		ToolbarGaps result;
+		result.tightest = 1.0e9;
+		result.spacer = element(window.app, "#toolbar .spacer").at("box").at("width").get<double>();
+		const double barLeft = element(window.app, "#toolbar").at("box").at("x").get<double>();
+		double previousEnd = 0.0;
+		bool anyShown = false;
+		for (const std::string& name : order)
+		{
+			bool firstOfSection = true;
+			for (const Json& button : elements(window.app, "#toolbar [section=" + name + "] button"))
+			{
+				if (!button.at("visible").get<bool>())
+					continue;
+				const double x = button.at("box").at("x").get<double>();
+				if (!anyShown)
+				{
+					result.inset = x - barLeft;
+				}
+				else
+				{
+					result.tightest = std::min(result.tightest, x - previousEnd);
+					if (!firstOfSection)
+						result.within = x - previousEnd;
+					else if (name != order.back())
+						result.between.push_back(x - previousEnd);
+				}
+				firstOfSection = false;
+				anyShown = true;
+				previousEnd = x + button.at("box").at("width").get<double>();
+			}
+		}
+		return result;
+	}
+
+	// Every gap between sections is the same and wider than one inside a section, and the first button stands as far
+	// from the toolbar's edge as in the order `expected` measured, whichever sections stand where.
+	void checkToolbarGaps(const ToolbarGaps& now, const ToolbarGaps& expected)
+	{
+		REQUIRE(!now.between.empty());
+		CHECK(now.between.front() > now.within + 1.0);
+		for (const double gap : now.between)
+			CHECK(std::abs(gap - now.between.front()) <= 1.0);
+		CHECK(std::abs(now.inset - expected.inset) <= 1.0);
+	}
+}
+
 TEST_CASE("the toolbar's setup pane shows, hides and orders its sections, with presets, Show All and Reset All", "[ui]")
 {
-	Window window;
+	// 1300 dp is wide enough for every section, so the buttons are all in the clear.
+	Window window(1300);
 	ui::Docking& docking = window.app.appUi().docking();
 	const std::vector<std::string> defaults = docking.sections("project", "toolbar");
 	CHECK(defaults ==
@@ -761,47 +826,26 @@ TEST_CASE("the toolbar's setup pane shows, hides and orders its sections, with p
 		REQUIRE(hasClass(window.app, "#toolbar-setup", "open"));
 	};
 	const auto snapHidden = [&window] { return hasClass(window.app, "#toolbar [section=snap]", "hidden"); };
-	// How far the first section of an order starts from the toolbar's left and the last ends from its right.
-	const auto insets = [&window](const std::vector<std::string>& order)
+	// How far the last section of an order ends from the toolbar's right edge.
+	const auto rightInset = [&window](const std::vector<std::string>& order)
 	{
 		window.app.shell().step(std::chrono::milliseconds(0));
 		const Json bar = element(window.app, "#toolbar").at("box");
-		const Json first = element(window.app, "#toolbar [section=" + order.front() + "]").at("box");
 		const Json last = element(window.app, "#toolbar [section=" + order.back() + "]").at("box");
-		return std::pair{first.at("x").get<double>() - bar.at("x").get<double>(),
-			bar.at("x").get<double>() + bar.at("width").get<double>() - last.at("x").get<double>() -
-				last.at("width").get<double>()};
+		return bar.at("x").get<double>() + bar.at("width").get<double>() - last.at("x").get<double>() -
+			last.at("width").get<double>();
 	};
-	const std::pair<double, double> edges = insets(defaults);
-	// The gaps between neighbouring visible sections, except the one the spacer widens before the last place.
-	const auto gaps = [&window](const std::vector<std::string>& order)
-	{
-		std::vector<double> result;
-		std::vector<Json> boxes;
-		for (const std::string& name : order)
-		{
-			const Json section = element(window.app, "#toolbar [section=" + name + "]");
-			if (!section.at("visible").get<bool>())
-				continue;
-			if (name != order.back())
-				boxes.push_back(section.at("box"));
-		}
-		for (size_t i = 1; i < boxes.size(); ++i)
-			result.push_back(boxes[i].at("x").get<double>() - boxes[i - 1].at("x").get<double>() -
-				boxes[i - 1].at("width").get<double>());
-		return result;
-	};
+	const double rightEdge = rightInset(defaults);
+	const ToolbarGaps reference = toolbarGaps(window, defaults);
 	const auto atEdges = [&](const std::vector<std::string>& order)
 	{
-		const std::pair<double, double> now = insets(order);
-		// Every place between sections has the same gap, whichever sections are in it (#1050).
-		const std::vector<double> between = gaps(order);
-		REQUIRE(!between.empty());
-		CHECK(between.front() >= 1.0);
-		for (const double gap : between)
-			CHECK(std::abs(gap - between.front()) <= 1.0);
-		CHECK(std::abs(now.first - edges.first) <= 1.0);
-		CHECK(std::abs(now.second - edges.second) <= 1.0);
+		// Every place between sections has the same gap, whichever sections are in it, and the first button the same
+		// distance from the toolbar's left edge, as the user sees them (#1050).
+		const ToolbarGaps now = toolbarGaps(window, order);
+		checkToolbarGaps(now, reference);
+		CHECK(now.tightest >= 0.0);
+		CHECK(now.spacer >= 1.0);
+		CHECK(std::abs(rightInset(order) - rightEdge) <= 1.0);
 		// The spacer stays before the last place, also where a wide toolbar leaves it no room.
 		CHECK(element(window.app, "#toolbar .spacer + div").at("attributes").at("section") == order.back());
 	};
@@ -852,53 +896,62 @@ TEST_CASE("the toolbar's setup pane shows, hides and orders its sections, with p
 	REQUIRE(window.app.waitUntil(snapHidden));
 	CHECK(docking.sections("project", "toolbar") == moved);
 	atEdges(moved);
+
+	// The quantize controls bring no gap of their own: first in the order they start as far from the left edge as the
+	// tools do, and the other sections keep their gaps.
+	openPane();
+	window.click("#toolbar-setup [setup-reset]");
+	REQUIRE(window.app.waitUntil([&] { return !snapHidden(); }));
+	docking.moveSection("project", "toolbar", "quantize", "tools");
+	const std::vector<std::string> quantizeFirst = docking.sections("project", "toolbar");
+	REQUIRE(quantizeFirst.front() == "quantize");
+	atEdges(quantizeFirst);
 }
 
-TEST_CASE("the toolbar's sections that a narrow window has no room for take no gap, so the others keep theirs", "[ui]")
+TEST_CASE("the toolbar's buttons fit in narrow windows and keep their gaps in every order", "[ui]")
 {
-	// 1024 dp has no room for the track visibility and root key sections' controls, 900 dp not for the quantize
-	// section's either.
-	for (const int width : {1024, 900})
+	// 840 dp is the narrowest window with room for every section the toolbar shows below 1000 dp: the Grid Type section
+	// is hidden below it, the quantize section below 1000 dp and the track visibility and root key sections below 1100
+	// dp.
+	for (const int width : {1024, 900, 840, 800})
 	{
 		INFO("window width " << width);
 		Window window(width);
+		ui::Docking& docking = window.app.appUi().docking();
+		const std::vector<std::string> order = docking.sections("project", "toolbar");
 		window.app.shell().step(std::chrono::milliseconds(0));
-		const std::vector<std::string> order = window.app.appUi().docking().sections("project", "toolbar");
-		std::vector<Json> boxes;
-		std::vector<std::string> shown;
 		for (const std::string& name : order)
 		{
-			const Json section = element(window.app, "#toolbar [section=" + name + "]");
-			const bool visible = section.at("visible").get<bool>();
-			const bool narrowGone =
-				name == "trackVisibility" || name == "rootKey" || (width < 1000 && name == "quantize");
-			CHECK(visible == !narrowGone);
-			// The last section stands after the spacer, which widens the gap before it.
-			if (visible && name != order.back())
-			{
-				boxes.push_back(section.at("box"));
-				shown.push_back(name);
-			}
+			INFO("section " << name);
+			const bool narrowGone = name == "trackVisibility" || name == "rootKey" ||
+				(width < 1000 && name == "quantize") || (width < 840 && name == "gridType");
+			CHECK(element(window.app, "#toolbar [section=" + name + "]").at("visible").get<bool>() == !narrowGone);
 		}
-		REQUIRE(boxes.size() >= 4);
-		// The sections, gaps included, fit in the toolbar, whose room is tight at these widths.
-		const Json bar = element(window.app, "#toolbar").at("box");
-		const Json last = element(window.app, "#toolbar [section=" + order.back() + "]").at("box");
-		CHECK(last.at("x").get<double>() + last.at("width").get<double>() <=
-			bar.at("x").get<double>() + bar.at("width").get<double>());
-		CHECK(
-			boxes.back().at("x").get<double>() + boxes.back().at("width").get<double>() <= last.at("x").get<double>());
-		const auto gap = [&boxes](size_t i)
+		const ToolbarGaps reference = toolbarGaps(window, order);
+		const auto checkOrder = [&](const std::vector<std::string>& now, const std::string& what)
 		{
-			return boxes.at(i).at("x").get<double>() - boxes.at(i - 1).at("x").get<double>() -
-				boxes.at(i - 1).at("width").get<double>();
+			INFO("order " << what);
+			const ToolbarGaps gaps = toolbarGaps(window, now);
+			checkToolbarGaps(gaps, reference);
+			// The toolbar's room is tight at these widths: no button covers the next one, and the spacer has a few dp
+			// to spare.
+			CHECK(gaps.tightest >= 0.0);
+			CHECK(gaps.spacer >= 5.0);
 		};
-		CHECK(gap(1) >= 1.0);
-		for (size_t i = 2; i < boxes.size(); ++i)
-		{
-			INFO("the gap before " << shown.at(i));
-			CHECK(std::abs(gap(i) - gap(1)) <= 1.0);
-		}
+		checkOrder(order, "default");
+
+		// Quantize first: its controls have no gap of their own before them.
+		docking.moveSection("project", "toolbar", "quantize", "tools");
+		const std::vector<std::string> quantizeFirst = docking.sections("project", "toolbar");
+		REQUIRE(quantizeFirst.front() == "quantize");
+		checkOrder(quantizeFirst, "quantize first");
+
+		// The sections that a narrow window hides, in places in the middle: they take no gap there.
+		docking.moveSection("project", "toolbar", "rootKey", "tools");
+		docking.moveSection("project", "toolbar", "trackVisibility", "autoScroll");
+		const std::vector<std::string> hiddenInside = docking.sections("project", "toolbar");
+		REQUIRE(hiddenInside.at(1) == "rootKey");
+		checkOrder(hiddenInside, "hidden sections inside");
 	}
 }
 
