@@ -4,6 +4,7 @@
 // the dialogs of Transpose Setup, Merge MIDI in Loop, Dissolve Part, Velocity, Delete Notes and Restrict Polyphony, and
 // the rule editor and project input transformer (#178).
 #include "app/appui.h"
+#include "engine/media/backup.h"
 
 #include "engine/midi/quantize.h"
 #include "engine/midi/quantizesettings.h"
@@ -98,6 +99,16 @@ namespace gnubase::app
 		if (track != 0)
 			attributes.emplace_back("track", std::to_string(track));
 		m_articulationMaps = openDialog(window, "articulation-maps.rml", attributes).GetObserverPtr();
+	}
+
+	void AppUi::showArticulationMapError(const engine::Result& result)
+	{
+		Rml::Element* document = m_articulationMaps.get();
+		Rml::Element* message = document != nullptr && document->GetParentNode() != nullptr
+			? document->GetElementById("articulation-maps-message")
+			: nullptr;
+		if (!result.ok() && message != nullptr)
+			message->SetInnerRML(Rml::StringUtilities::EncodeRml(result.error));
 	}
 
 	void AppUi::addMidiFunctions()
@@ -271,15 +282,7 @@ namespace gnubase::app
 						// The setup shows the imported map as it follows articulationMap.added, and why an import
 						// failed in its message.
 						m_binding.send("articulationMap.import", {{"path", result.files.front().u8string()}},
-							[this](const engine::Result& imported)
-							{
-								Rml::Element* document = m_articulationMaps.get();
-								Rml::Element* message = document != nullptr && document->GetParentNode() != nullptr
-									? document->GetElementById("articulation-maps-message")
-									: nullptr;
-								if (!imported.ok() && message != nullptr)
-									message->SetInnerRML(Rml::StringUtilities::EncodeRml(imported.error));
-							});
+							[this](const engine::Result& imported) { showArticulationMapError(imported); });
 					});
 				return Json::object();
 			});
@@ -291,8 +294,8 @@ namespace gnubase::app
 				dialog.kind = ui::FileDialogKind::Save;
 				dialog.title = "Export Articulation Map";
 				dialog.filters = {{"Articulation maps", "articulationmap"}};
-				dialog.location =
-					std::filesystem::u8path(parameters.value("name", std::string("Map")) + ".articulationmap");
+				dialog.location = std::filesystem::u8path(
+					engine::safeFileName(parameters.value("name", std::string("Map"))) + ".articulationmap");
 				dialog.parent = m_main.id();
 				m_shell.showFileDialog(dialog,
 					[this, map](const ui::FileDialogResult& result)
@@ -304,7 +307,8 @@ namespace gnubase::app
 						std::filesystem::path file = result.files.front();
 						if (file.extension() != ".articulationmap")
 							file += ".articulationmap";
-						m_binding.send("articulationMap.export", {{"map", map}, {"path", file.u8string()}});
+						m_binding.send("articulationMap.export", {{"map", map}, {"path", file.u8string()}},
+							[this](const engine::Result& exported) { showArticulationMapError(exported); });
 					});
 				return Json::object();
 			});

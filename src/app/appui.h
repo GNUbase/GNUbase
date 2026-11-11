@@ -345,6 +345,8 @@ namespace gnubase::app
 		// The articulation map setup (resources/ui/articulation-maps.rml, #175) for a MIDI or instrument track, or with
 		// 0 for the first one selected in the track list, if any.
 		void openArticulationMaps(ui::Window& window, uint64_t track);
+		// Shows why an articulation map's import or export failed in the setup's message, if the setup is open.
+		void showArticulationMapError(const engine::Result& result);
 		// openDialog for a dialog whose Lua keeps its state in a global table, so that there is only one: while open
 		// is open, brings it to the front instead, as it is, and the attributes go unused.
 		Rml::ElementDocument& openOnce(ui::Window& window, const char* name, Rml::ObserverPtr<Rml::Element>& open,
