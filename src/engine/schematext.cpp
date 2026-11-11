@@ -26,7 +26,14 @@ namespace gnubase::engine
 		if (!type.is_string())
 			return "any";
 		if (const auto pattern = schema.find("pattern"); pattern != schema.end())
-			return type.get<std::string>() + " matching `" + pattern->get<std::string>() + "`";
+		{
+			std::string text = type.get<std::string>() + " matching `" + pattern->get<std::string>() + "`";
+			if (const auto maxLength = schema.find("maxLength"); maxLength != schema.end())
+				text += ", at most " + maxLength->dump() + " characters";
+			return text;
+		}
+		if (const auto maxLength = schema.find("maxLength"); maxLength != schema.end())
+			return type.get<std::string>() + " of at most " + maxLength->dump() + " characters";
 		if (type == "array" && schema.contains("items"))
 			return "array of " + schemaType(schema.at("items"));
 		return type.get<std::string>();

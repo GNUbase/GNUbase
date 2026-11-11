@@ -159,10 +159,17 @@ TEST_CASE("the in-place editor refuses tracks without notes and changing its par
 	// The schema names them, for MCP clients and Lua.
 	for (const engine::CommandInfo& info : f.engine.commands())
 		if (info.name == "editor.get")
+		{
 			CHECK(info.parameters.at("properties").at("editor").at("pattern") == "^(lower|window|inPlace:[0-9]+)$");
+			// inPlace: and a track id of at most 19 digits, the longest a 64-bit id has (#1059).
+			CHECK(info.parameters.at("properties").at("editor").at("maxLength") == 27);
+		}
 	CHECK_THAT(f.fails("editor.get", {{"editor", "lowerZone"}}), ContainsSubstring("lower|window|inPlace:"));
+	CHECK_THAT(f.fails("editor.get", {{"editor", "inPlace:" + std::string(19, '9')}}),
+		ContainsSubstring("no track " + std::string(19, '9')));
+	// A longer name gets the schema's length error, before the pattern ever sees it.
 	CHECK_THAT(f.fails("editor.get", {{"editor", "inPlace:" + std::string(20, '9')}}),
-		ContainsSubstring("lower, window or inPlace:"));
+		ContainsSubstring("parameters.editor must be at most 27 characters"));
 	CHECK_THAT(f.fails("editor.open", {{"editor", Fixture::name(midi)}, {"parts", {part}}}),
 		ContainsSubstring("editor.inPlace"));
 

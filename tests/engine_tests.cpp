@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/engine.h"
 #include "engine/schema.h"
+#include "engine/schematext.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
@@ -376,6 +377,24 @@ TEST_CASE("values are checked against their JSON schema", "[unit]")
 	CHECK(validate("lower", named).empty());
 	CHECK(validate("lowerZone", named) == "parameters must match ^(lower|inPlace:[0-9]+)$");
 	CHECK(validate(Json(3), Json::parse(R"({"pattern": "x"})")).empty()); // only strings
+
+	// maxLength counts characters (code points, as JSON Schema does), not bytes: these 3 umlauts take 6 bytes.
+	const Json shortName = Json::parse(R"({"type": "string", "maxLength": 3})");
+	CHECK(validate("abc", shortName, "name").empty());
+	CHECK(validate("\xC3\xA4\xC3\xB6\xC3\xBC", shortName, "name").empty());
+	CHECK(validate("abcd", shortName, "name") == "name must be at most 3 characters");
+	CHECK(validate(Json(12345), Json::parse(R"({"maxLength": 3})")).empty()); // only strings
+
+	// A string longer than maxLength gets the length error before the pattern is compiled or matched, so the pattern
+	// check never works on more than maxLength characters: matching recurses once per repeated character with some
+	// standard libraries and overflowed the stack on Linux (#1059). The pattern here doesn't even compile, so the test
+	// fails the same way on every platform if the pattern ran first, whatever its stack size.
+	const Json bounded = Json::parse(R"({"type": "string", "pattern": "(", "maxLength": 27})");
+	CHECK(validate(std::string(100000, '9'), bounded, "editor") == "editor must be at most 27 characters");
+
+	// The Lua API reference and the MCP tool catalogue show the limit.
+	CHECK(schemaType(bounded) == "string matching `(`, at most 27 characters");
+	CHECK(schemaType(shortName) == "string of at most 3 characters");
 
 	// additionalProperties as a schema: a map whose members all fit it.
 	const Json map = Json::parse(R"({"type": "object", "additionalProperties": {"type": "boolean"}})");

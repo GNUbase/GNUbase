@@ -23,7 +23,8 @@ project closes it.
   the undo.
 - `editor.open` refuses in-place editors; other tracks than MIDI and instrument tracks have none.
 - The `editor` parameter's schema has the names as the pattern `^(lower|window|inPlace:[0-9]+)$`, so MCP clients and
-  Lua see them.
+  Lua see them, and a `maxLength` of 27 (`inPlace:` and 19 digits, the most a track id has). A longer name gets the
+  length error before the pattern is matched, so that no name can make the matching overflow the stack (#1059).
 
 ## In the UI
 
