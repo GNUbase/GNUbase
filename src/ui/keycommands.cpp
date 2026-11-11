@@ -13,6 +13,7 @@
 #include <array>
 #include <cctype>
 #include <cstddef>
+#include <memory>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -497,7 +498,8 @@ namespace gnubase::ui
 		}
 		// After what the user did before that waits for an answer (EngineBinding::afterAwaited), e.g. an undo right
 		// after Delete on a range whose edges move to zero crossings.
-		m_binding.afterAwaited([&binding = m_binding, command, parameters] { binding.send(command, parameters); });
+		const auto sent = std::make_shared<const std::pair<std::string, Json>>(command, parameters);
+		m_binding.afterAwaited([&binding = m_binding, sent] { binding.send(sent->first, sent->second); });
 	}
 
 	void KeyCommands::enableWhen(
