@@ -655,6 +655,9 @@ namespace gnubase::engine
 		// A pattern event (#181): the pattern it plays from its start, over and over, instead of its notes; 0 for an
 		// ordinary part.
 		ObjectId pattern = 0;
+		// Where in its pattern a pattern event starts, in ticks: how far the pattern went before it, after a split or
+		// a start sized later (earlier: below 0), so that it continues the pattern.
+		time::Ticks patternOffset = 0;
 	};
 
 	// A frozen track's rendered audio (#116, reference manual pp. 219-220): a file of the project's media folder's
@@ -1617,9 +1620,9 @@ namespace gnubase::engine
 	inline bool sameProperties(const MidiPart& a, const MidiPart& b)
 	{
 		return std::tie(a.id, a.track, a.name, a.position, a.length, a.mute, a.lock, a.shared, a.color, a.lane,
-				   a.transpose, a.velocity, a.rootKey, a.independent, a.pattern) ==
+				   a.transpose, a.velocity, a.rootKey, a.independent, a.pattern, a.patternOffset) ==
 			std::tie(b.id, b.track, b.name, b.position, b.length, b.mute, b.lock, b.shared, b.color, b.lane,
-				b.transpose, b.velocity, b.rootKey, b.independent, b.pattern);
+				b.transpose, b.velocity, b.rootKey, b.independent, b.pattern, b.patternOffset);
 	}
 
 	inline bool operator==(const ProjectColor& a, const ProjectColor& b)

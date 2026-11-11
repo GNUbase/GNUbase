@@ -4,6 +4,7 @@
 #include "engine/document/rendersnapshot.h"
 #include "engine/midi/chords.h"
 #include "engine/midi/midivalues.h"
+#include "engine/midi/patterns.h"
 
 #include <algorithm>
 #include <array>
@@ -766,7 +767,7 @@ namespace gnubase::engine::midi
 			Modifiers modifiers = settings.includeInserts && !trackModifiers.bypass ? trackModifiers : Modifiers();
 			modifiers.transpose += part.transpose;
 			modifiers.velocityShift += part.velocity;
-			for (const auto& [noteId, note] : part.notes)
+			for (const auto& [noteId, note] : playedNotes(project, part))
 			{
 				if (partFrom + note.position >= partTo)
 					continue;
@@ -909,7 +910,7 @@ namespace gnubase::engine::midi
 			for (const ObjectId id : found->second)
 			{
 				const MidiPart& part = project.midiParts.at(id);
-				for (const auto& [noteId, note] : part.notes)
+				for (const auto& [noteId, note] : playedNotes(project, part))
 					keys.insert(noteKey(note));
 				for (const auto& [controllerId, controller] : part.controllers)
 					if (controllerKey(controller) >= 0)
@@ -957,7 +958,7 @@ namespace gnubase::engine::midi
 				MidiPart& original = project.midiParts.at(id);
 				std::map<int, MidiPart> pieces;
 				std::vector<Controller> keyless;
-				for (const auto& [noteId, note] : original.notes)
+				for (const auto& [noteId, note] : playedNotes(project, original))
 				{
 					Note copy = note;
 					copy.id = project.newId();
@@ -1081,7 +1082,7 @@ namespace gnubase::engine::midi
 			const Ticks shift = partStart(project, part) - combinedStart;
 			const Ticks partTo = partEnd(project, part);
 			const Ticks length = partTo - partStart(project, part);
-			for (const auto& [noteId, note] : part.notes)
+			for (const auto& [noteId, note] : playedNotes(project, part))
 			{
 				const int pitch = note.pitch + part.transpose;
 				if (note.position >= length || pitch < 0 || pitch > 127)
