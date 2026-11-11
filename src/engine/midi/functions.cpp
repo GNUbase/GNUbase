@@ -809,11 +809,11 @@ namespace gnubase::engine::midi
 							? group >= 0
 							: settings.includeChase && controller.type != ControllerType::SysEx))
 				{
-					const LaneKey key = group >= 0
-						? LaneKey{ControllerType::Articulation, 0, static_cast<uint8_t>(group)}
-						: controller.type == ControllerType::Program
-						? LaneKey{ControllerType::Program, controller.channel, 0}
-						: laneOf(controller);
+					LaneKey key = laneOf(controller);
+					if (group >= 0)
+						key = {ControllerType::Articulation, 0, static_cast<uint8_t>(group)};
+					else if (controller.type == ControllerType::Program)
+						key = {ControllerType::Program, controller.channel, 0};
 					const auto previous = chasedAt.find(key);
 					if (previous == chasedAt.end() || previous->second <= at)
 					{

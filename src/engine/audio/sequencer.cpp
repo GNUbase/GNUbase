@@ -678,10 +678,14 @@ namespace gnubase::engine
 					out.add(note);
 				}
 				else if (output.status == OutputStatus::Controller)
+				{
 					out.add(controllerEvent(
 						ControllerType::Control, on, output.data1, midi::controllerFromMidi1(output.data2), offset));
+				}
 				else
+				{
 					out.add(controllerEvent(ControllerType::Program, on, output.data1, g_noBank, offset));
+				}
 			}
 		};
 		if (m_inputSlot >= 0 && static_cast<size_t>(m_inputSlot) < map.slots.size())
