@@ -7,9 +7,11 @@ program and bank it sends to its instrument (#136, reference manual pp. 1108–1
   the default, are a MIDI channel's patch. The channel sends it to its instrument as a program change on MIDI
   channel 1, after bank select MSB (CC 0) and LSB (CC 32) when it has a bank: whenever they change, also while the
   transport stands, and again where playback starts, locates or jumps, so the instrument has the patch wherever
-  playback begins. Without a program nothing is sent, also with a bank. It is a static lane of the channel's
-  automation, before the MIDI volume and pan (`PlayedLane::Kind::Program` in `src/engine/audio/automation.h`), so the
-  audio thread only emits an event it was given; a program change of a part plays over it where it is. `project.get`
+  playback begins. A silent MIDI track (muted, soloed out or disabled) sends neither, and once it is heard again
+  only a patch that changed meanwhile ([track-list.md](track-list.md)). Without a program nothing is sent, also with
+  a bank. It is a static lane of the channel's automation, before the MIDI volume and pan
+  (`PlayedLane::Kind::Program` in `src/engine/audio/automation.h`), so the audio thread only emits an event it was
+  given; a program change of a part plays over it where it is. `project.get`
   shows them with the channel, the project file keeps them in GNUbase's entry, and undo takes them back.
 - **MIDI devices** (pp. 1109–1114) are the user setting `midi.devices`, so they belong to the user, not to a project,
   as in the reference: devices by name, each with banks, each bank a name and patches, each patch a name, a program,

@@ -13,6 +13,7 @@
 #include "engine/document/warp.h"
 #include "engine/engine.h"
 #include "engine/midi/midivalues.h"
+#include "engine/midi/patterns.h"
 
 #include <algorithm>
 #include <cmath>
@@ -389,10 +390,13 @@ namespace gnubase::engine
 			return {nullptr, &(project.midiParts[id] = std::move(copy))};
 		}
 
-		// Moves notes and controllers by ticks; those that would start before the part are removed.
+		// Moves notes and controllers by ticks; those that would start before the part are removed. A pattern event's
+		// pattern moves with them.
 		// ponytail: hidden content is dropped, not kept for revealing later; keep it once parts have an offset.
 		void shiftContents(MidiPart& part, time::Ticks delta)
 		{
+			if (part.pattern != 0)
+				part.patternOffset -= delta;
 			for (auto note = part.notes.begin(); note != part.notes.end();)
 			{
 				note->second.position += delta;
@@ -639,6 +643,7 @@ namespace gnubase::engine
 			right.velocity = part.velocity;
 			right.rootKey = part.rootKey;
 			right.pattern = part.pattern;
+			right.patternOffset = part.pattern != 0 ? part.patternOffset + offset : 0; // it continues the pattern
 			right.independent = part.independent;
 			for (auto it = part.notes.begin(); it != part.notes.end();)
 			{
@@ -1079,6 +1084,20 @@ namespace gnubase::engine
 			else
 			{
 				MidiPart& part = *first.part;
+				const time::Ticks start = ticks(project, part.position);
+				// Pattern events that continue the first one's pattern, as after a split, with its transpose and
+				// velocity, glue into it. Otherwise the glued part is an ordinary one with the notes that each part
+				// played, its pattern's steps for a pattern event (#1040).
+				const bool continues = std::all_of(items.begin(), items.end(),
+					[&](const Item& item)
+					{
+						return part.pattern != 0 && item.part->pattern == part.pattern &&
+							item.part->transpose == part.transpose && item.part->velocity == part.velocity &&
+							item.part->patternOffset - part.patternOffset ==
+							ticks(project, item.part->position) - start;
+					});
+				const auto notesOf = [&](const MidiPart& each)
+				{ return continues ? each.notes : midi::playedNotes(project, each); };
 				// Each part's transpose and velocity (reference manual p. 1107) stay in the sound of its notes: the
 				// glued part keeps the first one's, and the notes of the others get the difference to them. A note
 				// the difference would move beyond 0 to 127 can't keep its pitch, so the glue is refused.
@@ -1086,13 +1105,24 @@ namespace gnubase::engine
 				{
 					const MidiPart& other = *items[i].part;
 					const int transpose = other.transpose - part.transpose;
-					for (const auto& [id, note] : other.notes)
+					for (const auto& [id, note] : notesOf(other))
 						require(note.pitch + transpose >= 0 && note.pitch + transpose <= 127,
 							"a note of MIDI part " + std::to_string(other.id) +
 								" would be transposed beyond 0 to 127 by the difference of the parts' transpose");
 				}
 				detach(project, part);
-				const time::Ticks start = ticks(project, part.position);
+				if (!continues && part.pattern != 0)
+				{
+					std::map<ObjectId, Note> notes;
+					for (auto [id, note] : midi::playedNotes(project, part))
+					{
+						note.id = project.newId();
+						notes[note.id] = note;
+					}
+					part.notes = std::move(notes);
+					part.pattern = 0;
+					part.patternOffset = 0;
+				}
 				int64_t end = part.position.value + part.length;
 				for (size_t i = 1; i < items.size(); ++i)
 				{
@@ -1101,7 +1131,7 @@ namespace gnubase::engine
 					const time::Ticks offset = ticks(project, other.position) - start;
 					const int transpose = other.transpose - part.transpose;
 					const int velocity = other.velocity - part.velocity;
-					for (const auto& [id, each] : other.notes)
+					for (const auto& [id, each] : notesOf(other))
 					{
 						Note note = each;
 						note.id = project.newId();
@@ -2493,7 +2523,8 @@ namespace gnubase::engine
 				"Moves the start or the end (edge) of audio events and MIDI parts by delta project samples or by "
 				"ticks, within the clip and at least a sample frame or a tick long. normal sizing (the default) "
 				"reveals or hides content; moveContents moves the content with the edge. A MIDI part's notes and "
-				"controllers that end up before its start are removed. With zeroCrossing, normal sizing moves audio "
+				"controllers that end up before its start are removed; a pattern event's pattern stays in place "
+				"(patternOffset) as its notes do. With zeroCrossing, normal sizing moves audio "
 				"events' edges to the nearest point within 50 ms where the audio crosses zero. Locked events don't "
 				"change. Returns the events.",
 				schema(resizeParameters, {"events", "edge"}), eventsResult(), false},
@@ -2516,7 +2547,8 @@ namespace gnubase::engine
 				"Splits audio events and MIDI parts at positions (project samples): events, or without it every "
 				"unlocked one that a position cuts. A MIDI part's notes stay in the part they start in, or with "
 				"splitNotes are cut in two. With zeroCrossing, audio events split at the nearest point within 50 ms "
-				"and inside the event where their audio crosses zero. Returns the new events after the splits.",
+				"and inside the event where their audio crosses zero. The pieces of a pattern event continue its "
+				"pattern (patternOffset). Returns the new events after the splits.",
 				schema({{"events", events()}, {"positions", {{"type", "array"}, {"items", integer()}}},
 						   {"splitNotes", boolean()}, {"zeroCrossing", boolean()}},
 					{"positions"}),
@@ -2532,7 +2564,9 @@ namespace gnubase::engine
 				"end, with all their notes and controllers; it keeps its transpose and velocity, and the notes of the "
 				"others get the difference of their part's transpose and velocity to them, so that they play as "
 				"before as far as velocities from 1 to 127 allow (refused if that would transpose a note beyond 0 to "
-				"127). Returns the event or part.",
+				"127). Pattern events that continue the first one's pattern, as the pieces of a split do, stay that "
+				"pattern event; otherwise the pattern events' steps become notes of the glued part, as they played. "
+				"Returns the event or part.",
 				schema({{"events", events()}}, {"events"}), schema({{"event", integer()}}, {"event"}), false},
 			"Glue", glueEvents);
 

@@ -95,6 +95,10 @@ namespace gnubase::engine
 			const ArrangerPlan* arranger = nullptr;
 			ArrangerState arrangerState;
 			time::Samples enter = -1; // where an entering arrangerState enters, if not at position: past the pre-roll
+			// For an exact cue while the audio thread plays on from there until it goes to position, as a locate while
+			// playing or an audition that replaces another makes: the voices it reads and those waiting just ahead of
+			// it stay where they are, and the cue gets others. -1 for none.
+			time::Samples playsOn = -1;
 		};
 
 		struct Track

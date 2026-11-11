@@ -57,6 +57,10 @@ namespace gnubase::engine
 		// A fader lane whose static value changed while it has no points: it glides there over g_faderSmoothing.
 		// Not compared: it only says how the new value arrives.
 		bool smooth = false;
+		// A program lane and a MIDI lane without points: the revision of the automation that first had it as it is,
+		// set by AutomationPlayer::setAutomation. Other new automation doesn't send its value again, which would
+		// override a part's own program change or controller. Not compared.
+		uint64_t revision = 0;
 
 		bool operator==(const PlayedLane& other) const;
 		// Whether its target glides along ramps, frame by frame: the fader's parameters and the pre gain. The others
@@ -74,16 +78,17 @@ namespace gnubase::engine
 	// MIDI controller with points.
 	struct ChannelAutomation
 	{
-		uint64_t revision = 0; // set by AutomationPlayer::setAutomation
-		// The revision whose program lane (or its absence) this one has, set by AutomationPlayer::setAutomation: other
-		// new automation doesn't send the program again, which would override a part's own program change.
-		uint64_t programRevision = 0;
+		uint64_t revision = 0;  // set by AutomationPlayer::setAutomation
 		std::string instrument; // a new instrument gets every value again
 		std::vector<PlayedLane> lanes;
+		// A silent MIDI track's (muted, soloed out or disabled): its program and MIDI lanes send nothing, so it doesn't
+		// change the instrument that other tracks play. They stay, so that once it is heard again only what changed
+		// meanwhile goes out.
+		bool silent = false;
 
 		bool sameContent(const ChannelAutomation& other) const
 		{
-			return instrument == other.instrument && lanes == other.lanes;
+			return instrument == other.instrument && lanes == other.lanes && silent == other.silent;
 		}
 	};
 
@@ -101,7 +106,8 @@ namespace gnubase::engine
 	// the cursor; while playing, each segment of the transport block plays its part of the curves: steps at their
 	// sample, ramps as gliding fader events or as the value every g_automationInterval frames. A start, a locate, a
 	// cycle jump, new automation and a new source processor set every value at the frame where they happen, so
-	// playback is right from any position on.
+	// playback is right from any position on; new automation sends a program, or a MIDI controller without points,
+	// only when it changed (PlayedLane::revision), and the controllers with a new program.
 	class AutomationPlayer
 	{
 	public:
@@ -130,6 +136,9 @@ namespace gnubase::engine
 
 		// Audio thread.
 		uint64_t m_played = 0; // the revision played last
+		// The revision played last while not silent; 0 when playback moved or the processors changed while silent, so
+		// that the program and MIDI lanes all go out again once it is heard.
+		uint64_t m_heard = 0;
 		// The processors played for last: the source and the slots' plugins.
 		std::array<const void*, g_maxSlots + 1> m_processors{};
 		size_t m_processorCount = 0;

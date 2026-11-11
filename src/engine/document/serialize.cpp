@@ -18,6 +18,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <memory>
@@ -817,7 +818,8 @@ namespace gnubase::engine
 			{"color", colorJson(part.color)}, {"lane", part.lane}, {"transpose", part.transpose},
 			{"velocity", part.velocity}, {"rootKey", rootKeyName(part.rootKey)},
 			{"globalTranspose", part.independent ? "independent" : "follow"}, {"pattern", part.pattern},
-			{"notes", toJsonArray(part.notes)}, {"controllers", toJsonArray(part.controllers)}};
+			{"patternOffset", part.patternOffset}, {"notes", toJsonArray(part.notes)},
+			{"controllers", toJsonArray(part.controllers)}};
 	}
 
 	Json toJson(const Marker& marker)
@@ -1106,8 +1108,9 @@ namespace gnubase::engine
 		if (const auto heights = json.find("heights"); heights != json.end() && heights->is_array())
 			for (const Json& item : *heights)
 				if (item.is_object() && item.value("track", Json()).is_number_unsigned() &&
-					item.value("height", Json()).is_number())
-					layout.heights[item.at("track").get<ObjectId>()] = item.at("height").get<double>();
+					item.value("height", Json()).is_number() && std::isfinite(item.at("height").get<double>()))
+					layout.heights[item.at("track").get<ObjectId>()] =
+						std::clamp(item.at("height").get<double>(), g_minTrackHeight, g_maxTrackHeight);
 		if (const auto folded = json.find("folded"); folded != json.end() && folded->is_array())
 			for (const Json& id : *folded)
 				if (id.is_number_unsigned())
@@ -2408,7 +2411,8 @@ namespace gnubase::engine
 			// Files from before #168 have neither.
 			part.rootKey = rootKeyFromName(item.value("rootKey", std::string())).value_or(-1);
 			part.independent = item.value("globalTranspose", std::string("follow")) == "independent";
-			part.pattern = item.value("pattern", ObjectId{0}); // files from before #181 have none
+			part.pattern = item.value("pattern", ObjectId{0});                // files from before #181 have none
+			part.patternOffset = item.value("patternOffset", time::Ticks{0}); // nor from before #1040
 			for (const Json& n : item.at("notes"))
 			{
 				Note note;
@@ -2573,9 +2577,9 @@ namespace gnubase::engine
 				(track.type != TrackType::Midi && track.type != TrackType::Instrument))
 				track.articulationMap = 0;
 		// Files from before #181 have no patterns. A pattern stays while a MIDI or instrument track of its own is there
-		// or an event plays it, as in the session, where events on other tracks (Duplicate Track, a pattern event
-		// moved or copied there) keep playing it after its track is removed; an event of a pattern that isn't there
-		// is an ordinary part.
+		// or an event plays it: in files from before #1040, events on other tracks (Duplicate Track, a pattern event
+		// moved or copied there) can play it after its track was removed, until the next edit gives them copies on
+		// their tracks (midi::adoptPatterns). An event of a pattern that isn't there is an ordinary part.
 		std::set<ObjectId> played;
 		for (const auto& [id, part] : project.midiParts)
 			played.insert(part.pattern);
@@ -2611,6 +2615,21 @@ namespace gnubase::engine
 		project.trackVisibility = trackVisibilityFromJson(json.value("trackVisibility", Json::object()));
 		project.trackLayout = trackLayoutFromJson(json.value("trackLayout", Json::object())); // before #491: none
 		project.workspaces = workspacesFromJson(json.value("workspaces", Json::object()));    // before #163: none
+		{
+			// Only the project's tracks have heights and only folders fold: a hand-edited file's others are left out
+			// (#991).
+			std::map<ObjectId, double>& heights = project.trackLayout.heights;
+			for (auto height = heights.begin(); height != heights.end();)
+				height = project.trackById.count(height->first) != 0 ? std::next(height) : heights.erase(height);
+			std::vector<ObjectId>& folded = project.trackLayout.folded;
+			folded.erase(std::remove_if(folded.begin(), folded.end(),
+							 [&project](ObjectId id)
+							 {
+								 const auto track = project.trackById.find(id);
+								 return track == project.trackById.end() || track->second.type != TrackType::Folder;
+							 }),
+				folded.end());
+		}
 		// Files from before the metronome have none; values that aren't valid keep their defaults.
 		if (const auto found = json.find("metronome"); found != json.end())
 			metronome::apply(project.metronome, *found, false);

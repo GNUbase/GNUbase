@@ -669,18 +669,14 @@ namespace gnubase::engine
 			// A silent MIDI track's notes would still reach its instrument.
 			if (part.mute || !plays(part.track) || (channel.silent && channel.type == TrackType::Midi))
 				continue;
-			const auto pattern = project.patterns.find(part.pattern);
-			const bool isPattern = part.pattern != 0 && pattern != project.patterns.end();
+			const bool isPattern = project.patterns.count(part.pattern) != 0;
 			MidiPart played;
 			if (isPattern)
 			{
 				// A pattern event (#181) plays its pattern's notes instead of its own.
 				// ponytail: pattern events that overlap on a track all play, not only the topmost (p. 935).
 				played = part;
-				const time::Position end{part.position.base, part.position.value + part.length};
-				played.notes = midi::patternNotes(pattern->second,
-					time::toTicks(end, project.tempo, project.sampleRate) -
-						time::toTicks(part.position, project.tempo, project.sampleRate));
+				played.notes = midi::playedNotes(project, part);
 			}
 			const MidiPart& compiled = isPattern ? played : part;
 			compilePart(project, id, compiled, channel);

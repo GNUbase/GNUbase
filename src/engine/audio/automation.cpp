@@ -344,13 +344,13 @@ namespace gnubase::engine
 		{
 			lanes.push_back(mute);
 		}
-		// A silent MIDI track sends its instrument nothing: the snapshot leaves its notes and controllers out, and its
-		// MIDI volume and pan, program and MIDI automation stay out here, so it doesn't change what other tracks play
-		// there. Its mute lane stays, so its mute still ends the notes that sound.
-		const bool sends = channel.type != TrackType::Midi || !channel.silent;
+		// A silent MIDI track sends its instrument nothing: the snapshot leaves its notes and controllers out, and the
+		// player leaves its MIDI volume and pan, program and MIDI automation out, so it doesn't change what other
+		// tracks play there. Its mute lane plays, so its mute still ends the notes that sound.
+		automation->silent = channel.type == TrackType::Midi && channel.silent;
 		for (const auto& [number, value] :
 			{std::pair{uint8_t{7}, channel.midiVolume}, std::pair{uint8_t{10}, channel.midiPan}})
-			if (value && sends)
+			if (value)
 				lanes.push_back({{AutomationTargetType::Controller, 0, number, 0, 0}, Kind::Midi, 0,
 					static_cast<double>(midi::controllerFromMidi1(static_cast<uint8_t>(*value))) / 4294967295.0, 0.0,
 					1.0, {}});
@@ -407,7 +407,7 @@ namespace gnubase::engine
 			PlayedLane* played = nullptr;
 			if (hasStatic)
 				played = &*match;
-			else if (midi && sends &&
+			else if (midi &&
 				(lane.target.type == AutomationTargetType::Controller ||
 					lane.target.type == AutomationTargetType::PitchBend ||
 					lane.target.type == AutomationTargetType::ChannelPressure))
@@ -429,7 +429,7 @@ namespace gnubase::engine
 					}
 		}
 		// The program first, so the instrument has the patch before the controllers. No automation lane targets it.
-		if (channel.program && sends)
+		if (channel.program)
 			lanes.insert(lanes.begin(),
 				PlayedLane{{AutomationTargetType::Controller, 0, 0, 0, 0}, Kind::Program,
 					static_cast<uint32_t>(*channel.program), channel.bank ? static_cast<double>(*channel.bank) : -1.0,
@@ -468,17 +468,13 @@ namespace gnubase::engine
 	void AutomationPlayer::setAutomation(std::unique_ptr<ChannelAutomation> automation)
 	{
 		automation->revision = ++m_revision;
-		const auto program = [](const ChannelAutomation& of)
-		{
-			return std::find_if(of.lanes.begin(), of.lanes.end(),
-				[](const PlayedLane& lane) { return lane.kind == PlayedLane::Kind::Program; });
-		};
 		const ChannelAutomation& old = m_automation.latest();
-		const auto oldProgram = program(old);
-		const auto newProgram = program(*automation);
-		const bool same = (oldProgram == old.lanes.end()) == (newProgram == automation->lanes.end()) &&
-			(newProgram == automation->lanes.end() || *oldProgram == *newProgram);
-		automation->programRevision = same ? old.programRevision : automation->revision;
+		for (PlayedLane& lane : automation->lanes)
+			if (lane.kind == Kind::Program || (lane.kind == Kind::Midi && lane.points.empty()))
+			{
+				const auto same = std::find(old.lanes.begin(), old.lanes.end(), lane);
+				lane.revision = same != old.lanes.end() ? same->revision : automation->revision;
+			}
 		m_automation.publish(std::move(automation));
 	}
 
@@ -509,9 +505,31 @@ namespace gnubase::engine
 			!std::equal(
 				processors.begin(), processors.begin() + static_cast<std::ptrdiff_t>(count), m_processors.begin());
 		bool changed = automation.revision != m_played || newProcessors;
-		// The program goes out again only for a new program or processor, a start, a locate or a jump: other new
-		// automation, e.g. a new MIDI volume, would override a program change a part has played.
-		bool programChanged = automation.programRevision > m_played || newProcessors;
+		// The program and the MIDI controllers without points go out again only when they changed since the track was
+		// last heard, for a new processor, a start, a locate or a jump, and the controllers after a new program: other
+		// new automation, e.g. a new MIDI volume, or the track being heard again would override a program change or
+		// controller a part has played. A silent MIDI track plays none of them.
+		const uint64_t heard = m_heard;
+		const bool silent = automation.silent;
+		const auto midi = [](const PlayedLane& lane) { return lane.kind == Kind::Midi || lane.kind == Kind::Program; };
+		const bool programChanged = newProcessors ||
+			std::any_of(automation.lanes.begin(), automation.lanes.end(),
+				[heard](const PlayedLane& lane) { return lane.kind == Kind::Program && lane.revision > heard; });
+		const auto again = [&](const PlayedLane& lane)
+		{
+			if (lane.kind == Kind::Program)
+				return programChanged;
+			if (lane.kind == Kind::Midi && lane.points.empty())
+				return programChanged || lane.revision > heard;
+			return changed;
+		};
+		const auto hear = [&](bool moved)
+		{
+			if (!silent)
+				m_heard = automation.revision;
+			else if (moved || newProcessors)
+				m_heard = 0;
+		};
 		// New static values glide, unless they are the first ones.
 		const bool revised = automation.revision != m_played && m_played != 0;
 		const auto glide = [revised, smoothing](const PlayedLane& lane)
@@ -526,7 +544,7 @@ namespace gnubase::engine
 			if (changed || moved)
 				for (const PlayedLane& lane : automation.lanes)
 				{
-					if (lane.kind == PlayedLane::Kind::Program && !programChanged && !moved)
+					if ((silent && midi(lane)) || !(moved || again(lane)))
 						continue;
 					const std::optional<Outputs> out = outputs(lane);
 					if (out && (lane.points.empty() || !inGap(lane.points, transport.position)))
@@ -534,22 +552,22 @@ namespace gnubase::engine
 							lane.points.empty() ? lane.staticValue : automationValue(lane.points, transport.position),
 							glide(lane), *out);
 				}
+			hear(moved);
 			m_stoppedAt = transport.position;
 			m_next = -1;
 			return;
 		}
 		m_stoppedAt = -1;
+		bool first = true;
 		for (size_t s = 0; s < transport.segmentCount; ++s)
 		{
 			const graph::TransportSegment& segment = transport.segments[s];
 			const bool moved = segment.position != m_next;
 			for (const PlayedLane& lane : automation.lanes)
-				if (const std::optional<Outputs> out = outputs(lane))
-					playLane(lane, segment,
-						moved || (lane.kind == PlayedLane::Kind::Program ? programChanged : changed), *out,
-						changed ? glide(lane) : 0);
-			changed = false;
-			programChanged = false;
+				if (const std::optional<Outputs> out = outputs(lane); out && !(silent && midi(lane)))
+					playLane(lane, segment, moved || (first && again(lane)), *out, first && changed ? glide(lane) : 0);
+			first = false;
+			hear(moved);
 			m_next = segment.position + segment.frames;
 		}
 	}

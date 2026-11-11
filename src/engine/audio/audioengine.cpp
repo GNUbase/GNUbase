@@ -247,7 +247,8 @@ namespace gnubase::engine
 		stopCueing();
 	}
 
-	void AudioEngine::cue(time::Samples position, bool playing, time::Samples window, bool wait, time::Samples enter)
+	void AudioEngine::cue(time::Samples position, bool playing, time::Samples window, bool wait, time::Samples enter,
+		time::Samples playsOn)
 	{
 		Playback::Cue cue;
 		cue.position = position;
@@ -258,6 +259,7 @@ namespace gnubase::engine
 		cue.arranger = plan.get();
 		cue.arrangerState = m_transport.arranger();
 		cue.enter = enter;
+		cue.playsOn = playsOn;
 		m_playback.cue(cue);
 		if (wait)
 			m_playback.waitUntilBuffered(g_startWait);
@@ -2747,8 +2749,11 @@ namespace gnubase::engine
 		{
 			throw CommandError("give a position, by or target");
 		}
+		// Exactly there, like a start; while playing, playback plays on from the cursor until the audio thread
+		// takes the locate.
 		if (m_device)
-			cue(position, false, m_device->format().blockSize, true); // exactly there, like a start
+			cue(position, false, m_device->format().blockSize, true, -1,
+				m_transport.playing() ? m_transport.position() : -1);
 		sent(m_transport.locate(position));
 		if (m_transport.countingIn()) // again, so that it ends on the bar line where playback now starts
 			sent(m_transport.record(true, cueCountIn()));
