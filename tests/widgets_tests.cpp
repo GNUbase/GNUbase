@@ -1096,6 +1096,51 @@ TEST_CASE("a tooltip doesn't outlive the element it belongs to", "[ui]")
 	CHECK(app.waitUntil([&app] { return !visible(app, "tooltip"); }));
 }
 
+TEST_CASE("an element that replaces the one under a resting mouse gets its tooltip", "[ui]")
+{
+	test::UiApp app;
+	Rml::ElementDocument& document = app.show("popups.rml");
+	Rml::ElementList tooltips;
+	document.GetElementsByTagName(tooltips, "tooltip");
+	REQUIRE(tooltips.size() == 1);
+	const Rml::Element& tooltip = *tooltips.front();
+	// Waits with the shell's steps alone: the automation's calls update the context themselves, which would find the
+	// new element under the mouse and hide the problem.
+	const auto showsAfterSteps = [&app, &tooltip](const char* title)
+	{
+		const auto end = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+		while (std::chrono::steady_clock::now() < end)
+		{
+			app.shell().step(std::chrono::milliseconds(10));
+			if (tooltip.IsClassSet("shown") && tooltip.GetInnerRML() == title)
+				return true;
+		}
+		return false;
+	};
+	// The element with the id "track" is removed and a new one with the same id, so in the same place, and another
+	// title takes its place.
+	const auto replace = [&document](const char* title)
+	{
+		Rml::Element* old = document.GetElementById("track");
+		Rml::ElementPtr created = document.CreateElement("div");
+		created->SetId("track");
+		created->SetClassNames("panel");
+		created->SetAttribute("title", title);
+		document.AppendChild(std::move(created));
+		old->GetParentNode()->RemoveChild(old);
+		document.GetContext()->RequestNextUpdate(0.0); // as code that changes elements does
+	};
+
+	// Replaced before the tooltip is due.
+	app.ui().move(std::nullopt, at("#track"));
+	replace("Audio 02");
+	CHECK(showsAfterSteps("Audio 02"));
+
+	// Replaced while its tooltip shows: the new one gets its own.
+	replace("Audio 03");
+	CHECK(showsAfterSteps("Audio 03"));
+}
+
 namespace
 {
 	// The results of the close events of dialogs.

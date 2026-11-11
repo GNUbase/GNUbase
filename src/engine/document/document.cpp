@@ -77,6 +77,14 @@ namespace gnubase::engine
 		part.controllers = std::move(controllers);
 	}
 
+	void detach(Project& project, MidiPart& part)
+	{
+		if (part.shared == 0)
+			return;
+		part.shared = 0;
+		renumber(project, part);
+	}
+
 	Project newProject()
 	{
 		Project project;

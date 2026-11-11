@@ -85,7 +85,8 @@ Visibility tab's checks with the check box skins.
 
 ## Not yet
 
-Event colors, the Part Editing Mode's effect on a
+The setup panes of the toolbar and the info line (p. 1575), which only the project window has so far
+([docking.md](docking.md)); event colors, the Part Editing Mode's effect on a
 selection rectangle and Show Part Borders, Independent Track Loop, the global tracks' events and editing them, Find
 Tracks, track visibility configurations and agents, the Track Display and its settings, selecting tracks in the
 Visibility tab, the preference Editor Content Follows
