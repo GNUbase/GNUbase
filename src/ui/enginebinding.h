@@ -154,6 +154,11 @@ namespace gnubase::ui
 		// stepping once a frame while it does.
 		bool update();
 
+		// Test seam for delivering an engine answer after later answers or gestures. Events still arrive in order.
+		void holdNextResultForTest(std::string command);
+		size_t heldResultCountForTest() const { return m_heldResults.size(); }
+		void releaseHeldResultsForTest();
+
 	private:
 		friend class Subscription;
 
@@ -205,7 +210,9 @@ namespace gnubase::ui
 		std::atomic<bool> m_woken{false}; // woken was called and update() hasn't run since
 		engine::Client m_client;
 		std::function<void()> m_handled;
-		std::map<engine::RequestId, Waiting> m_waiting; // commands sent, until their results arrive
+		std::map<engine::RequestId, Waiting> m_waiting;  // commands sent, until their results arrive
+		std::map<std::string, size_t> m_holdNextResults; // test seam: how many answers of each command to hold
+		std::deque<engine::Result> m_heldResults;
 		std::map<uint64_t, Handler> m_handlers;
 		std::map<uint64_t, Waiting> m_resultHandlers; // onResult's, by subscription
 		std::map<uint64_t, std::function<void()>> m_watches;
