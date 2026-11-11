@@ -670,7 +670,8 @@ TEST_CASE("the main menu's items follow what a key or a click changed without a 
 	tracks.app.ui().key(std::nullopt, "Down", ui::KeyAction::Up);
 	CHECK(!disabled());
 
-	// A click selects its row after the mouse button is released, when the click arrives: the items follow it at once.
+	// A click selects its row after the mouse button is released and after every listener of the click ran, and the
+	// list view says so with a change event: the items follow it at once.
 	tracks.app.ui().click(std::nullopt, {row(b) + " .track-name", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
 	REQUIRE(tracks.list.selection() == std::vector<uint64_t>{b});
 	CHECK(!disabled());

@@ -24,10 +24,6 @@ namespace gnubase::ui
 		// After these, before the elements handle them, the items follow what the press changed (#1069): a right click
 		// that selected a track opened the context menu, and a script's click on its item right after runs it.
 		constexpr std::array<Rml::EventId, 2> g_released = {Rml::EventId::Mouseup, Rml::EventId::Keyup};
-
-		// After the elements handled these, the items follow what their handlers changed (#1120): a list view selects
-		// its row when its click is handled, and says so with a change event.
-		constexpr std::array<Rml::EventId, 2> g_changed = {Rml::EventId::Click, Rml::EventId::Change};
 	}
 
 	MainMenu::MainMenu(KeyCommands& keys, Window& window, Rml::ElementDocument& document)
@@ -58,9 +54,10 @@ namespace gnubase::ui
 			shown->SetClass("menu-keys", true);
 			item.keys = shown->GetObserverPtr();
 		}
-		// In the bubble phase, after the elements.
-		for (const Rml::EventId id : g_changed)
-			document.AddEventListener(id, this);
+		document.AddEventListener(Rml::EventId::Click, this);
+		// In the bubble phase, after the elements: a list view selects its row in the default action of the click,
+		// after every listener of the click has run, and says so with a change event, which the items follow (#1120).
+		document.AddEventListener(Rml::EventId::Change, this);
 		for (const Rml::EventId id : g_released)
 			document.AddEventListener(id, this, true);
 		update();
@@ -70,8 +67,8 @@ namespace gnubase::ui
 	{
 		if (Rml::Element* document = m_document.get())
 		{
-			for (const Rml::EventId id : g_changed)
-				document->RemoveEventListener(id, this);
+			document->RemoveEventListener(Rml::EventId::Click, this);
+			document->RemoveEventListener(Rml::EventId::Change, this);
 			for (const Rml::EventId id : g_released)
 				document->RemoveEventListener(id, this, true);
 		}
@@ -106,11 +103,11 @@ namespace gnubase::ui
 
 	void MainMenu::ProcessEvent(Rml::Event& event)
 	{
-		// A press's release comes first (g_released); a click or change comes after the elements: the items follow what
-		// their handlers changed, before a click looks for its item.
-		update();
 		if (event.GetId() != Rml::EventId::Click)
+		{
+			update();
 			return;
+		}
 		Rml::Element* element = closestWith(event.GetTargetElement(), "command");
 		if (element == nullptr || element->HasAttribute("disabled"))
 			return;

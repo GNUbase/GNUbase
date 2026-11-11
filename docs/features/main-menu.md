@@ -25,9 +25,9 @@ project window.
   released, before the elements handle that (the popups' listener on the document, which is added when it loads, goes
   first): a menu opened by a right click that selected a track has its items for that track enabled at once, so a
   script's click on one right after the right click runs it, without waiting for a step (#1069). It updates once more
-  when a click or a change event has passed the elements: a list view selects its row in the click's default action,
-  which runs after every listener of the click, and says so with a change event, so the DOM is current right after a
-  click on a row, too (#1120).
+  when an element's change event reaches the document: a list view selects its row in the click's default action,
+  which runs after every listener of the click and so after the release, and says so with a change event, so the DOM
+  is current right after a click on a row, too (#1120).
 - **The menu bar** is a docking strip, `strip="menuBar"` ([docking.md](docking.md)): Menu Bar in the Set up Window
   Layout menu and the UI command `window.menuBar` show and hide it, and `ui.layout` keeps it per window. It is a
   `<menubar>`, whose titles are buttons that open the menus ([widgets.md](widgets.md), "Menus and context menus"), and

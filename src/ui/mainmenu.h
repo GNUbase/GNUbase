@@ -40,7 +40,8 @@ namespace gnubase::ui
 
 		// Disables the items whose command can't run now and enables the others, and shows their keys. The app calls
 		// it in every step of the shell, so the DOM that MCP's UI tools read is up to date too; the menu calls it too
-		// when a mouse button or key is released in its document, for what the press changed.
+		// when a mouse button or key is released in its document, for what the press changed, and when an element
+		// there says its value changed, such as a list view that selected a row (#1120).
 		void update();
 
 	private:
