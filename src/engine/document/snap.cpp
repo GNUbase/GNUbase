@@ -697,6 +697,10 @@ namespace gnubase::engine
 					time::Samples start = 0;
 					time::Samples end = 0;
 				};
+				// Where events overlap, the one whose frontOf is highest plays, of two at the same place in the stack
+				// (the pieces of a split event) the one with the higher id, as in playback (makePlaylist).
+				const auto stackPlace = [](const Plays& plays)
+				{ return std::make_pair(frontOf(*plays.event), plays.event->id); };
 				std::vector<std::vector<Plays>> onTracks(tracks.size());
 				for (const auto& [id, event] : project.audioEvents)
 				{
@@ -729,7 +733,7 @@ namespace gnubase::engine
 						const Plays* playing = nullptr;
 						for (const Plays& each : plays)
 							if (each.start < at && at < each.end &&
-								(playing == nullptr || frontOf(*each.event) > frontOf(*playing->event)))
+								(playing == nullptr || stackPlace(each) > stackPlace(*playing)))
 								playing = &each;
 						if (playing == nullptr)
 							continue;
@@ -739,7 +743,7 @@ namespace gnubase::engine
 						time::Samples to = playing->end;
 						for (const Plays& each : plays)
 						{
-							if (frontOf(*each.event) <= frontOf(*playing->event))
+							if (stackPlace(each) <= stackPlace(*playing))
 								continue;
 							if (each.end <= at)
 								from = std::max(from, each.end);
