@@ -1134,10 +1134,13 @@ TEST_CASE(
 		CHECK(pointer() == ui::toolName(tool));
 		CHECK(shown() == cursor);
 	}
-	// In scrub mode the play tool resizes an audio event at its edge, scrubbing along (reference manual p. 268); not a
-	// MIDI part, which it doesn't scrub.
+	// In scrub mode the play tool resizes an audio event at its lower left or right corner, scrubbing along (reference
+	// manual p. 268): in the lower half of the edge, not the upper, where it scrubs the track; not a MIDI part, which
+	// it doesn't scrub.
 	f.display.setPlayMode(ui::PlayMode::Scrub);
-	moveTo(248, 20);
+	moveTo(248, 10);
+	CHECK(pointer() == ui::toolName(ui::Tool::Play));
+	moveTo(248, 30);
 	CHECK(pointer() == "resize");
 	CHECK(shown() == "resize");
 	moveTo(102, 60);
@@ -1601,27 +1604,36 @@ TEST_CASE("the play tool auditions the pressed audio track until it is released,
 	CHECK(f.parts().size() == 1); // nothing edited
 	CHECK(f.audioEvents().size() == 1);
 
-	// At an audio event's edge it resizes the event and scrubs along (reference manual p. 268): the right edge 20 dp
-	// further makes it a fifth of a second longer, and the event's clip is scrubbed, not the track, so the cursor
-	// stays.
+	// Only an audio event's lower corners resize it (reference manual p. 268): a drag from the upper part of its right
+	// edge to 2.3 seconds scrubs the track and moves the cursor, as anywhere else, and leaves the event's length.
 	auditions.clear();
-	f.drag(248, 10, 268, 10);
+	f.drag(248, 10, 230, 10);
+	REQUIRE(f.waitUntil([&modes] { return modes().size() >= 2 && modes().back() == "off"; }));
+	CHECK(modes()[0] == "scrub");
+	CHECK(auditions[0].at("track") == audio);
+	CHECK(f.call("transport.get").at("position") == 110400);
+	CHECK(f.audioEvents()[0].at("length") == 24000);
+
+	// At its lower right corner it resizes the event and scrubs along: the right edge 20 dp further makes it a fifth
+	// of a second longer, and the event's clip is scrubbed, not the track, so the cursor stays.
+	auditions.clear();
+	f.drag(248, 30, 268, 30);
 	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("length") == 24000 + 9600; }));
 	REQUIRE(f.waitUntil([&modes] { return modes().size() >= 2 && modes().back() == "off"; }));
 	CHECK(modes()[0] == "scrub");
 	CHECK(auditions[0].at("track") == 0);
-	CHECK(f.call("transport.get").at("position") == 115200);
+	CHECK(f.call("transport.get").at("position") == 110400);
 	CHECK(f.display.selection() == std::vector<uint64_t>{f.event});
 
 	// A click there without a drag is no click of the object selection tool: with the tool modifier Split Event (Alt)
 	// it doesn't split the event, with Set Cursor Position (Alt+Shift) it doesn't move the cursor.
 	REQUIRE(f.waitUntil([&f] { return std::abs(f.lanes("events")[0].events[0].end() - 2.7) < 1e-6; }));
-	f.click(268, 10, {"alt"});
-	f.click(268, 10, {"alt", "shift"});
+	f.click(268, 30, {"alt"});
+	f.click(268, 30, {"alt", "shift"});
 	REQUIRE(f.waitUntil([&modes] { return modes().size() >= 6 && modes().back() == "off"; }));
 	CHECK(f.audioEvents().size() == 1);
 	CHECK(f.audioEvents()[0].at("length") == 24000 + 9600);
-	CHECK(f.call("transport.get").at("position") == 115200);
+	CHECK(f.call("transport.get").at("position") == 110400);
 }
 
 TEST_CASE("the play tool's resize in scrub mode plays the clip at the dragged edge", "[unit]")
@@ -1650,11 +1662,11 @@ TEST_CASE("the play tool's resize in scrub mode plays the clip at the dragged ed
 	f.display.setTool(ui::Tool::Play);
 	f.display.setPlayMode(ui::PlayMode::Scrub);
 
-	// Its end dragged out by a fifth of a second, over the take's hidden audio, where the track plays nothing yet:
-	// while the button is held, the device plays the take's 0.5.
-	f.automation.press(std::nullopt, f.at(48, 10), ui::MouseButton::Left);
+	// Its end dragged out by a fifth of a second at its lower right corner, over the take's hidden audio, where the
+	// track plays nothing yet: while the button is held, the device plays the take's 0.5.
+	f.automation.press(std::nullopt, f.at(48, 30), ui::MouseButton::Left);
 	f.step();
-	f.automation.move(std::nullopt, f.at(68, 10));
+	f.automation.move(std::nullopt, f.at(68, 30));
 	f.step();
 	// The preview of the resize shows it 0.7 seconds long once the edge's scrub is on its way.
 	REQUIRE(f.waitUntil(
@@ -1678,7 +1690,7 @@ TEST_CASE("the play tool's resize in scrub mode plays the clip at the dragged ed
 		f.step();
 	}
 	CHECK(heard >= 480);
-	f.automation.release(std::nullopt, f.at(68, 10), ui::MouseButton::Left);
+	f.automation.release(std::nullopt, f.at(68, 30), ui::MouseButton::Left);
 	f.step();
 	REQUIRE(f.waitUntil(
 		[&f, event]

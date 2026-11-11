@@ -57,7 +57,8 @@ namespace gnubase::engine
 			const std::map<ObjectId, std::string>& mediaPaths, double sampleRate, time::Samples position,
 			std::optional<double> seconds, int channels);
 
-		// Command thread: ends playing or scrubbing, and closes the files that played.
+		// Command thread: ends playing or scrubbing, closes the files that played, and frees what the audio thread
+		// played, after the block it plays it in if it is in the middle of one.
 		void stop();
 
 		// Command thread: the disk streams open for playing.
