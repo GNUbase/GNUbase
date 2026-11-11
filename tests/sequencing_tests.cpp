@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <ostream>
 #include <set>
 #include <string>
 #include <utility>
@@ -110,6 +111,12 @@ namespace
 			notes.push_back(note);
 		}
 
+		// Adds controller events, as controller.add takes them, to a part as add does.
+		void addControllers(int part, const Json& controllers)
+		{
+			run(client, "controller.add", {{"part", m_parts[static_cast<size_t>(part)]}, {"controllers", controllers}});
+		}
+
 		std::vector<float> capture(int channel, int64_t frames)
 		{
 			return run(client, "audio.capture", {{"channel", channel}, {"start", 0}, {"frames", frames}})
@@ -161,6 +168,39 @@ namespace
 	private:
 		std::vector<ObjectId> m_parts;
 	};
+
+	// A MIDI 1.0 message an instrument played, at its frame on the audio device.
+	struct Played
+	{
+		int64_t position = 0;
+		std::vector<int> bytes;
+
+		bool operator==(const Played& other) const { return position == other.position && bytes == other.bytes; }
+	};
+
+	std::ostream& operator<<(std::ostream& out, const Played& played)
+	{
+		out << played.position << ":";
+		for (const int byte : played.bytes)
+			out << " " << byte;
+		return out;
+	}
+
+	// What the instruments played since the last call; pitch bends without their value.
+	std::vector<Played> captured(Client& client)
+	{
+		const Json capture = run(client, "midi.capture");
+		CHECK(capture.at("dropped") == 0);
+		std::vector<Played> messages;
+		for (const Json& message : capture.at("captured"))
+		{
+			Played played{message.at("position").get<int64_t>(), message.at("bytes").get<std::vector<int>>()};
+			if ((played.bytes.at(0) & 0xF0) == 0xE0)
+				played.bytes.resize(1);
+			messages.push_back(played);
+		}
+		return messages;
+	}
 
 	std::vector<int64_t> positions(int64_t start, int64_t frames, int64_t left = 0, int64_t right = 0)
 	{
@@ -407,6 +447,135 @@ TEST_CASE("a MIDI track's mute automation silences its notes from the point's sa
 	run(song.client, "transport.play");
 	run(song.client, "audio.render", {{"frames", 2000}});
 	song.check(positions(0, 2000));
+}
+
+TEST_CASE("a MIDI track's mute releases the pedals that hold notes and ends the notes at its sample", "[integration]")
+{
+	const int blockSize = GENERATE(64, 333);
+	const bool button = GENERATE(false, true); // the lane overrides the mute button
+	INFO("block size " << blockSize << (button ? ", mute button on" : ""));
+	Song song(blockSize);
+	song.add(1, {400, 1500, 64}); // sounds where the mute starts
+	// Sustain and sostenuto down, and hold 2 down and up again.
+	song.addControllers(1,
+		{{{"position", ticks(100)}, {"number", 64}, {"value", 1.0}},
+			{{"position", ticks(150)}, {"number", 66}, {"value", 1.0}},
+			{{"position", ticks(175)}, {"number", 69}, {"value", 1.0}},
+			{{"position", ticks(200)}, {"number", 69}, {"value", 0.0}}});
+	run(song.client, "channel.set", {{"channel", channelOf(song.client, song.midi)}, {"mute", button}});
+	const ObjectId lane =
+		idOf(run(song.client, "automationLane.add", {{"track", song.midi}, {"target", {{"type", "mute"}}}}), "lane");
+	run(song.client, "automationPoint.add",
+		{{"lane", lane},
+			{"points",
+				{{{"position", 0}, {"value", 0.0}}, {{"position", ticks(1000)}, {"value", 1.0}},
+					{{"position", ticks(1600)}, {"value", 0.0}}}}});
+	run(song.client, "midi.capture", {{"start", true}});
+	run(song.client, "transport.play");
+	run(song.client, "audio.render", {{"frames", 2000}});
+
+	std::vector<Played> atMute;
+	for (const Played& played : captured(song.client))
+	{
+		INFO(played);
+		CHECK(played.position <= 1000); // the mute dropped no values, so unmuting sends none
+		if (played.position == 1000)
+			atMute.push_back(played);
+	}
+	// The note-off first, then the pedals going up, so the note ends at once.
+	CHECK(atMute == std::vector<Played>{{1000, {0x80, 64, 0}}, {1000, {0xB0, 64, 0}}, {1000, {0xB0, 66, 0}}});
+}
+
+TEST_CASE("unmuting a MIDI track sends the latest values of the controllers, programs and pitch bends its mute "
+		  "dropped, from its parts and its input",
+	"[integration]")
+{
+	const int blockSize = GENERATE(64, 333);
+	const bool button = GENERATE(false, true); // the button, or a mute lane from 1000 to 1600
+	INFO("block size " << blockSize << (button ? ", mute button" : ", mute automation"));
+	Song song(blockSize);
+	const ObjectId channel = channelOf(song.client, song.midi);
+	song.addControllers(1,
+		{{{"position", ticks(500)}, {"number", 1}, {"value", 0.25}}, // before the mute
+			{{"position", ticks(1100)}, {"type", "pitchBend"}, {"value", 0.75}},
+			{{"position", ticks(1200)}, {"type", "program"}, {"number", 7}},
+			{{"position", ticks(1300)}, {"number", 1}, {"value", 0.5}},
+			{{"position", ticks(1400)}, {"number", 1}, {"value", 1.0}}, // the latest wins
+			{{"position", ticks(1600)}, {"number", 2}, {"value", 1.0}}, // where it unmutes, after what it sends
+			{{"position", ticks(1800)}, {"number", 1}, {"value", 0.0}}});
+	song.add(1, {1150, 1250, 60}); // nor do notes play
+	// The track's MIDI input: a controller and a note while muted.
+	run(song.client, "midi.inject",
+		{{"channel", channel},
+			{"messages",
+				{{{"position", 1150}, {"bytes", {0xB0, 11, 100}}}, {{"position", 1160}, {"bytes", {0x90, 70, 100}}},
+					{{"position", 1170}, {"bytes", {0x80, 70, 0}}}}}});
+	if (button)
+	{
+		run(song.client, "channel.set", {{"channel", channel}, {"mute", true}});
+	}
+	else
+	{
+		const ObjectId lane = idOf(
+			run(song.client, "automationLane.add", {{"track", song.midi}, {"target", {{"type", "mute"}}}}), "lane");
+		run(song.client, "automationPoint.add",
+			{{"lane", lane},
+				{"points",
+					{{{"position", 0}, {"value", 0.0}}, {{"position", ticks(1000)}, {"value", 1.0}},
+						{{"position", ticks(1600)}, {"value", 0.0}}}}});
+	}
+	run(song.client, "midi.capture", {{"start", true}});
+	run(song.client, "transport.play");
+	if (button)
+	{
+		run(song.client, "audio.render", {{"frames", 1600}});
+		run(song.client, "channel.set", {{"channel", channel}, {"mute", false}});
+		run(song.client, "audio.render", {{"frames", 400}});
+	}
+	else
+	{
+		run(song.client, "audio.render", {{"frames", 2000}});
+	}
+
+	// In the order they first came: the button drops the controller at 500 already, which the one at 1400
+	// replaces. Then the controller where it unmutes.
+	std::vector<Played> expected;
+	std::vector<std::vector<int>> sent{{0xE0}, {0xB0, 11, 100}, {0xC0, 7}};
+	if (button)
+	{
+		sent.insert(sent.begin(), {0xB0, 1, 127});
+	}
+	else
+	{
+		expected.push_back({500, {0xB0, 1, 32}});
+		sent.push_back({0xB0, 1, 127});
+	}
+	sent.push_back({0xB0, 2, 127});
+	for (const std::vector<int>& bytes : sent)
+		expected.push_back({1600, bytes});
+	expected.push_back({1800, {0xB0, 1, 0}});
+	CHECK(captured(song.client) == expected);
+}
+
+TEST_CASE("a MIDI track its mute button mutes chases its controllers into its mute, which sends them when it unmutes",
+	"[integration]")
+{
+	Song song(64);
+	const ObjectId channel = channelOf(song.client, song.midi);
+	song.addControllers(1,
+		{{{"position", ticks(100)}, {"type", "pitchBend"}, {"value", 0.75}},
+			{{"position", ticks(200)}, {"number", 1}, {"value", 1.0}}});
+	song.addControllers(0, {{{"position", ticks(300)}, {"number", 7}, {"value", 1.0}}}); // the instrument track's
+	run(song.client, "channel.set", {{"channel", channel}, {"mute", true}});
+	run(song.client, "midi.capture", {{"start", true}});
+	run(song.client, "audio.render", {{"frames", 64}});
+	run(song.client, "transport.locate", {{"position", 1000}});
+	run(song.client, "audio.render", {{"frames", 64}});
+	// The instrument chases its own track's controllers, not the muted one's.
+	CHECK(captured(song.client) == std::vector<Played>{{64, {0xB0, 7, 127}}});
+	run(song.client, "channel.set", {{"channel", channel}, {"mute", false}});
+	run(song.client, "audio.render", {{"frames", 64}});
+	CHECK(captured(song.client) == std::vector<Played>{{128, {0xE0}}, {128, {0xB0, 1, 127}}});
 }
 
 TEST_CASE("a note that starts where another track's note of the same pitch ends sounds", "[integration]")

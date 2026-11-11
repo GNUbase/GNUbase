@@ -725,6 +725,64 @@ namespace gnubase::engine
 		fade(context, m_faderEvents);
 	}
 
+	int DroppedMidi::kindOf(const graph::ProcessEvent& event) noexcept
+	{
+		using Type = graph::ProcessEvent::Type;
+		const auto channel = static_cast<int>((event.channel & 15U) * g_perChannel);
+		switch (event.type)
+		{
+		case Type::Controller:
+			return channel + (event.key & 127);
+		case Type::Program:
+			return channel + 128;
+		case Type::PitchBend:
+			return channel + 129;
+		case Type::ChannelPressure:
+			return channel + 130;
+		case Type::NoteOn:
+		case Type::NoteOff:
+		case Type::PolyPressure: // its note was ended
+		case Type::SysEx:
+		case Type::Parameter:
+			return -1;
+		}
+		return -1;
+	}
+
+	void DroppedMidi::drop(const graph::ProcessEvent& event) noexcept
+	{
+		const int kind = kindOf(event);
+		if (kind < 0)
+			return;
+		const auto index = static_cast<size_t>(kind);
+		if (!m_waiting[index])
+		{
+			// compact leaves each kind once, so the kinds that wait fit.
+			if (m_count == g_kinds)
+				return;
+			m_waiting[index] = true;
+			m_order[m_count++] = static_cast<uint16_t>(kind);
+		}
+		m_values[index] = event.value;
+		m_keys[index] = event.key;
+	}
+
+	void DroppedMidi::forget(const graph::ProcessEvent& event) noexcept
+	{
+		if (const int kind = kindOf(event); kind >= 0)
+			m_waiting[static_cast<size_t>(kind)] = false;
+	}
+
+	void DroppedMidi::compact() noexcept
+	{
+		size_t kept = 0;
+		for (size_t i = m_sent; i < m_count; ++i)
+			if (m_waiting[m_order[i]])
+				m_order[kept++] = m_order[i];
+		m_count = kept;
+		m_sent = 0;
+	}
+
 	void ChannelStrip::muteMidi(graph::EventBuffer& out) noexcept
 	{
 		using Type = graph::ProcessEvent::Type;
@@ -733,8 +791,24 @@ namespace gnubase::engine
 		{ return event.type == Type::Parameter && event.parameter == ChannelFader::Mute; };
 		const auto note = [](const graph::ProcessEvent& event) noexcept
 		{ return (size_t{event.channel & 15U} * 128) + (event.key & 127U); };
-		// Whether an event passes, keeping track of the notes that sound: a note-off of one that sounds always does.
-		const auto pass = [&state, &note](const graph::ProcessEvent& event) noexcept
+		// The bit of a pedal that holds notes in ChannelState::midiPedals.
+		const auto pedal = [](uint8_t controller) noexcept
+		{ return static_cast<uint8_t>(controller == 64 ? 1 : (controller == 66 ? 2 : 4)); };
+		// Keeps track of the notes that sound and the pedals that are down, for an event that passes.
+		const auto track = [&state, &note, &pedal](const graph::ProcessEvent& event) noexcept
+		{
+			if (event.type == Type::NoteOn || event.type == Type::NoteOff)
+				state.midiHeld[note(event)] = event.type == Type::NoteOn;
+			else if (event.type == Type::Controller && graph::holdsNotes(event.key))
+			{
+				uint8_t& down = state.midiPedals[event.channel & 15U];
+				down = static_cast<uint8_t>(
+					event.value >= 0x80000000U ? down | pedal(event.key) : down & ~pedal(event.key));
+			}
+		};
+		// Whether an event passes: a note-off of a note that sounds always does. A muted one's value waits for
+		// unmuting; one that passes replaces such a value of its kind.
+		const auto pass = [&state, &note, &track](const graph::ProcessEvent& event) noexcept
 		{
 			if (event.type == Type::NoteOff && state.midiHeld[note(event)])
 			{
@@ -742,12 +816,17 @@ namespace gnubase::engine
 				return true;
 			}
 			if (state.midiMuted)
+			{
+				state.midiDropped.drop(event);
 				return false;
-			if (event.type == Type::NoteOn)
-				state.midiHeld[note(event)] = true;
+			}
+			track(event);
+			if (state.midiDropped.waiting())
+				state.midiDropped.forget(event);
 			return true;
 		};
-		if (!state.midiMuted && std::none_of(m_faderEvents.begin(), m_faderEvents.end(), isMute))
+		if (!state.midiMuted && !state.midiDropped.waiting() &&
+			std::none_of(m_faderEvents.begin(), m_faderEvents.end(), isMute))
 		{
 			for (const graph::ProcessEvent& event : out)
 				pass(event);
@@ -758,8 +837,28 @@ namespace gnubase::engine
 		for (const graph::ProcessEvent& event : out)
 			m_sourceEvents.add(event);
 		out.clear();
+		// The events that end notes go first in a full buffer, so that no note hangs.
+		const auto put = [&out](const graph::ProcessEvent& event) noexcept
+		{ return graph::endsNotes(event) ? out.addEnd(event) : out.add(event); };
+		size_t next = 0; // the source events from here on haven't passed yet
+		// Sends what the mute dropped at offset, as far as it fits with room left for the block's events still to
+		// come; the rest follows in the next block.
+		const auto resend = [this, &state, &out, &next, &track](uint32_t offset) noexcept
+		{
+			state.midiDropped.send(offset,
+				[this, &out, &next, &track](const graph::ProcessEvent& event) noexcept
+				{
+					if (out.size() + (m_sourceEvents.size() - next) >= out.capacity() || !out.add(event))
+						return false;
+					track(event);
+					return true;
+				});
+		};
+		if (!state.midiMuted)
+			resend(0);
 		const graph::ProcessEvent* mute = m_faderEvents.begin();
-		// Mutes or unmutes at the mute events up to offset; a mute ends the notes that sound at its sample.
+		// Mutes or unmutes at the mute events up to offset. A mute ends the notes that sound and then releases the
+		// pedals that hold notes at its sample; unmuting sends the latest values of what the mute dropped.
 		const auto muteUntil = [&](uint32_t offset) noexcept
 		{
 			for (; mute != m_faderEvents.end() && mute->offset <= offset; ++mute)
@@ -768,6 +867,7 @@ namespace gnubase::engine
 					continue;
 				const bool muted = mute->parameterValue >= 0.5;
 				if (muted && !state.midiMuted)
+				{
 					for (size_t n = 0; n < g_midiNotes; ++n)
 						if (state.midiHeld[n])
 						{
@@ -776,17 +876,36 @@ namespace gnubase::engine
 							end.type = Type::NoteOff;
 							end.channel = static_cast<uint8_t>(n / 128);
 							end.key = static_cast<uint8_t>(n % 128);
-							out.add(end);
+							out.addEnd(end);
 							state.midiHeld[n] = false;
 						}
+					for (size_t channel = 0; channel < state.midiPedals.size(); ++channel)
+						for (const uint8_t controller : {uint8_t{64}, uint8_t{66}, uint8_t{69}})
+							if ((state.midiPedals[channel] & pedal(controller)) != 0)
+							{
+								graph::ProcessEvent up;
+								up.offset = mute->offset;
+								up.type = Type::Controller;
+								up.channel = static_cast<uint8_t>(channel);
+								up.key = controller;
+								up.value = 0;
+								out.addEnd(up);
+							}
+					state.midiPedals.fill(0);
+					state.midiDropped.compact();
+				}
+				const bool unmutes = !muted && state.midiMuted;
 				state.midiMuted = muted;
+				if (unmutes)
+					resend(mute->offset);
 			}
 		};
-		for (const graph::ProcessEvent& event : m_sourceEvents)
+		for (; next < m_sourceEvents.size(); ++next)
 		{
+			const graph::ProcessEvent& event = m_sourceEvents[next];
 			muteUntil(event.offset);
 			if (pass(event))
-				out.add(event);
+				put(event);
 		}
 		muteUntil(UINT32_MAX);
 	}

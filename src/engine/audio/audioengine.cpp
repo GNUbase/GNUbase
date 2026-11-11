@@ -662,13 +662,15 @@ namespace gnubase::engine
 			sequence->inserts = channel.midiInserts;
 			sequence->sends = channel.midiSends;
 			// An instrument chases the controller events of the MIDI tracks routed to it with its own, so the latest of
-			// each kind wins, whichever track it is on.
-			if (routed.count(channel.id) == 0)
+			// each kind wins, whichever track it is on. A track its mute button mutes chases its own instead, into its
+			// strip's mute, which keeps them for unmuting.
+			if (routed.count(channel.id) == 0 || channel.muted)
 				sequence->chase.push_back(makeChaseTrack(channel.controllers, channel.midiParts));
 			if (channel.type == TrackType::Instrument)
 				for (const ObjectId source : sources[channel.id])
-					sequence->chase.push_back(
-						makeChaseTrack(routed.at(source)->controllers, routed.at(source)->midiParts));
+					if (!routed.at(source)->muted)
+						sequence->chase.push_back(
+							makeChaseTrack(routed.at(source)->controllers, routed.at(source)->midiParts));
 			sequencer->setSequence(std::move(sequence));
 			sequencer->setChase(m_chase);
 			sequencers[channel.id] = sequencer;
