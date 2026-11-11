@@ -77,6 +77,34 @@ namespace gnubase::ui
 		return transmit(std::move(command), std::move(parameters), std::move(done), false, true);
 	}
 
+	void EngineBinding::afterAwaited(std::function<void()> run)
+	{
+		if (m_awaited == 0 && (m_held.empty() || m_runningHeld))
+			run();
+		else
+			m_held.push_back(std::move(run));
+	}
+
+	void EngineBinding::releaseHeld()
+	{
+		runHeld(true);
+	}
+
+	bool EngineBinding::runHeld(bool force)
+	{
+		bool ran = false;
+		while (!m_held.empty() && (force || m_awaited == 0))
+		{
+			const std::function<void()> run = std::move(m_held.front());
+			m_held.pop_front();
+			const bool running = std::exchange(m_runningHeld, true);
+			run();
+			m_runningHeld = running;
+			ran = true;
+		}
+		return ran;
+	}
+
 	void EngineBinding::sendWaitingSteps(const std::string& before)
 	{
 		// A command that may change something goes after the steps the user made before it, e.g. an undo right after a
@@ -93,6 +121,8 @@ namespace gnubase::ui
 		std::string name = command;
 		const engine::RequestId id = m_client.send(std::move(command), std::move(parameters));
 		m_waiting.emplace(id, Waiting{std::move(name), std::move(done), quiet, awaited});
+		if (awaited)
+			++m_awaited;
 		return id;
 	}
 
@@ -253,6 +283,8 @@ namespace gnubase::ui
 			return false;
 		const Waiting waiting = std::move(found->second);
 		m_waiting.erase(found);
+		if (waiting.awaited)
+			--m_awaited;
 		if (waiting.done)
 			waiting.done(result);
 		else if (!result.ok())
@@ -273,7 +305,9 @@ namespace gnubase::ui
 			if (handler = m_resultHandlers.find(id); handler != m_resultHandlers.end())
 				handler->second.done = std::move(call);
 		}
-		return handled;
+		// What the user did meanwhile, once the last awaited answer is in and its done has run.
+		const bool ranHeld = waiting.awaited && runHeld(false);
+		return handled || ranHeld;
 	}
 
 	bool EngineBinding::dispatch(const engine::Event& event)

@@ -257,6 +257,19 @@ gnubase.ui.command{command = "edit.delete"}
 	CHECK(history.back().at("action") == "delete-range");
 	app.call("history.undo");
 	CHECK(app.call("project.get").at("audioEvents").size() == 1);
+
+	// An engine key command after the delete waits with it: Delete, then Undo, leave the project as it was, rather
+	// than the undo going first and taking back the event's step.
+	writeScript(app, "delete-and-undo", R"(gnubase.ui.command{command = "test.busy"}
+local lanes = gnubase.ui.dom{selector = "event-lanes.events", depth = 0}.elements[1].box
+gnubase.ui.drag{from = {x = lanes.x + 5, y = lanes.y + 10}, to = {x = lanes.x + 25, y = lanes.y + 10}}
+gnubase.ui.command{command = "edit.delete"}
+gnubase.ui.command{command = "history.undo"}
+)");
+	const Json position = app.call("history.get").at("position");
+	app.keys().run("script.delete-and-undo", Json::object(), app.main(), nullptr);
+	CHECK(app.call("project.get").at("audioEvents").size() == 1);
+	CHECK(app.call("history.get").at("position") == position);
 }
 
 TEST_CASE("the script console adds what is printed to its output, and drops what the output dropped", "[ui]")

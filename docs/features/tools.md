@@ -53,11 +53,13 @@ project or undo.
   in the root's attributes `range` (`"start end"`) and `range-tracks`, and drawn as `.range-selection` (`.shown` while
   there is one). Its edges snap. With Snap to Zero Crossing on, a range that a drag, a click or a double click made
   then moves its edges to zero crossings of the audio on its tracks (`snap.zeroCrossings`, [snap.md](snap.md), p. 285),
-  unless it changed meanwhile. Until `snap.zeroCrossings` has answered, the display's actions wait, so that an edit
-  right after the release, such as Delete, edits the range where its edges went. A press while actions wait, which
-  may start another range, first lets them run on the range they waited for (`runWaitingActions`: the binding
-  settles, at most two seconds). The query goes out with `EngineBinding::sendAwaited`, so a script that draws a range
-  and edits it through the UI has the edit in its undo step ([scripts.md](scripts.md), #1086). Choosing the range tool selects no events; choosing another tool selects the events in the range instead and ends
+  unless it changed meanwhile. Until `snap.zeroCrossings` has answered, the display's actions wait, and engine key
+  commands with them (`EngineBinding::sendAwaited` and `afterAwaited`), so that an edit right after the release, such
+  as Delete, edits the range where its edges went, and an undo after it comes after it. A press while actions wait,
+  which may start another range, first lets them run on the range they waited for (`runWaitingActions`: the binding
+  settles, at most two seconds). A script that draws a range and edits it through the UI has the edit in its undo
+  step ([scripts.md](scripts.md), #1086). Choosing the range tool selects no events; choosing another tool selects
+  the events in the range instead and ends
   it (p. 286). The edit commands edit the range ([range-editing.md](range-editing.md)).
 - **Combine selection tools** (`setCombineSelectionTools`, p. 253): the object selection tool selects ranges in the
   upper half of a lane at least two rows high and events in its lower half; on lower lanes it selects events only. A
@@ -182,8 +184,9 @@ audio editor gets its toolbox when it comes. The Preferences dialog's Editing - 
   that an edge dragged outwards reveals, and Alt and Alt+Shift clicks there neither splitting nor locating; ranges by dragging, clicking and double clicking on events and gaps, with Shift, snapped and on
   every track, and the events they select when another tool takes over; range edges at zero crossings with Snap to
   Zero Crossing, for a drag, a click and a double click on an event and on a gap, and an edit right after the release
-  waiting for them, also when a press starts another range before the answer (it edits the first range); the combined selection tools, and a lane less than two rows high selecting events only, with the
-  object selection tool's pointer; the pointer
+  waiting for them, also when a press starts another range before the answer (it edits the first range); the
+  combined selection tools, and a lane less than two rows high selecting events only, with the object selection
+  tool's pointer; the pointer
   per tool, at events' edges and in a combined lane's upper half, also when a tool is chosen while the mouse rests;
   the pointer with tool modifiers held, also when Alt goes down and up while the mouse rests, with both Alt keys and
   with Cmd and Ctrl, and with the modifiers changed through `settings.set`; a drag's pointer over the ruler, and the pointer not following changes once the

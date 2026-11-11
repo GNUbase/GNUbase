@@ -68,11 +68,20 @@ namespace gnubase::ui
 		// (Rml::Context::RequestNextUpdate(0)), and an idle UI stays idle. onResult's handlers still draw every window.
 		void sendQuietly(std::string command, engine::Json parameters, std::function<void(const engine::Result&)> done);
 
-		// Sends a query, like send, that what the user did waits for: e.g. snap.zeroCrossings, whose answer the event
-		// display's actions wait for (#1086). settle waits for its result, and for what its done sends, as for a
-		// command that isn't a query.
+		// Sends a query, like send, that what the user does next waits for (afterAwaited): e.g. snap.zeroCrossings,
+		// which moves a selection range's edges before an edit of the range runs (#1086). settle waits for its result,
+		// and for what its done sends, as for a command that isn't a query.
 		engine::RequestId sendAwaited(
 			std::string command, engine::Json parameters, std::function<void(const engine::Result&)> done);
+
+		// Runs run now, or while queries sent with sendAwaited are out, once they are answered, after their dones: what
+		// the user does goes in the order they did it, e.g. Delete right after a range is drawn, and an undo after it.
+		// What a held one runs itself runs at once, unless an awaited query is out again.
+		void afterAwaited(std::function<void()> run);
+		// Whether afterAwaited holds anything.
+		bool holding() const { return !m_held.empty(); }
+		// Runs what afterAwaited holds now, without waiting for the answers: e.g. once settle timed out.
+		void releaseHeld();
 
 		// Sends document commands ({"command", "parameters"} each) as a step of a value widget's gesture (the
 		// "gesture" parameter of its change event, ui/widgets.h): a history.transaction named description whose merge
@@ -208,6 +217,8 @@ namespace gnubase::ui
 			std::function<void(const engine::Result&)> done, bool quiet, bool awaited = false);
 		void sendNextStep(const std::string& what);
 		void answerStep(const std::string& what, const engine::Result& result);
+		// Runs what afterAwaited holds while no awaited query is out (all of it with force); returns whether any ran.
+		bool runHeld(bool force);
 
 		std::atomic<bool> m_woken{false}; // woken was called and update() hasn't run since
 		engine::Client m_client;
@@ -216,8 +227,11 @@ namespace gnubase::ui
 		std::map<uint64_t, Handler> m_handlers;
 		std::map<uint64_t, Waiting> m_resultHandlers; // onResult's, by subscription
 		std::map<uint64_t, std::function<void()>> m_watches;
-		std::map<std::string, Steps> m_steps; // sendStep's, by what they change; entries are never erased
-		std::set<std::string> m_queries;      // the engine's commands that only read
+		std::map<std::string, Steps> m_steps;     // sendStep's, by what they change; entries are never erased
+		std::set<std::string> m_queries;          // the engine's commands that only read
+		size_t m_awaited = 0;                     // queries sent with sendAwaited and not answered yet
+		std::deque<std::function<void()>> m_held; // afterAwaited's, in order
+		bool m_runningHeld = false;               // runHeld runs one
 		uint64_t m_handed = 0;
 		uint64_t m_owners = 0; // stepOwner's
 		uint64_t m_nextId = 1;

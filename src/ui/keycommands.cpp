@@ -495,7 +495,9 @@ namespace gnubase::ui
 				runCommand(window, zone);
 			return;
 		}
-		m_binding.send(command, parameters);
+		// After what the user did before that waits for an answer (EngineBinding::afterAwaited), e.g. an undo right
+		// after Delete on a range whose edges move to zero crossings.
+		m_binding.afterAwaited([&binding = m_binding, command, parameters] { binding.send(command, parameters); });
 	}
 
 	void KeyCommands::enableWhen(
