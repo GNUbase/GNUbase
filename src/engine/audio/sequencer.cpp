@@ -583,23 +583,39 @@ namespace gnubase::engine
 		if (event.type != Type::NoteOn && event.type != Type::NoteOff && event.type != Type::PolyPressure)
 			return true;
 		const size_t from = ((event.channel % 16) * 128) + (event.key % 128);
+		// The key no longer holds the note it played (a second note-on, or its note-off).
+		const auto letGo = [this, from]
+		{
+			const uint16_t to = m_inputTo[from];
+			if (m_inputDown[from] && to != g_notes && m_inputKeys[to] > 0)
+				--m_inputKeys[to];
+		};
 		if (event.type == Type::NoteOn)
 		{
 			const uint16_t before = m_inputTo[from];
+			letGo();
 			auto pitch = static_cast<uint8_t>(liveInputPitch(sequence.liveInput, position, event.key % 128));
 			m_inputTo[from] = midi::modifyNote(modifiers, midi::noteSeed(0, ++m_random), pitch, event.velocity)
 				? static_cast<uint16_t>(((event.channel % 16) * 128) + pitch)
 				: static_cast<uint16_t>(g_notes);
-			// The key is held and its note goes elsewhere this time: the key's one note-off can end only one of them.
-			if (m_inputDown[from] && before != g_notes && before != m_inputTo[from] && m_inputHeld[before])
+			// The key is held and its note goes elsewhere this time: the key's one note-off can end only one of them,
+			// so the first ends now, unless another held key plays it too.
+			if (m_inputDown[from] && before != g_notes && before != m_inputTo[from] && m_inputHeld[before] &&
+				m_inputKeys[before] == 0)
 				ends = before;
+			if (m_inputTo[from] != g_notes)
+				++m_inputKeys[m_inputTo[from]];
 			m_inputDown[from] = true;
 		}
 		const uint16_t to = m_inputTo[from];
 		if (event.type == Type::NoteOff)
 		{
+			letGo();
 			m_inputTo[from] = static_cast<uint16_t>(from);
 			m_inputDown[from] = false;
+			// Two held keys play the same note (Live Input moved one onto the other's): it ends with the last.
+			if (to != g_notes && m_inputKeys[to] > 0)
+				return false;
 		}
 		if (to == g_notes)
 			return false;

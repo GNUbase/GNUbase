@@ -195,7 +195,8 @@ namespace gnubase::engine
 		void takeEffects(const MidiSequence& sequence, graph::EventBuffer& out) noexcept;
 		// An event of its input as the modifiers play it; false if left out. A second note-on for a held key whose
 		// note goes elsewhere this time sets ends to where the first one went, which still sounds: that note ends
-		// first, so that no note hangs.
+		// first, so that no note hangs, unless another held key plays it too: a note that several held keys play
+		// ends with the last of their note-offs (Live Input moves keys onto one note).
 		bool modifyInput(
 			const MidiSequence& sequence, int64_t position, graph::ProcessEvent& event, uint16_t& ends) noexcept;
 		void play(
@@ -246,9 +247,10 @@ namespace gnubase::engine
 		std::array<bool, g_notes> m_inputHeld{}; // notes its input sent a note-on for and no note-off since
 		// Where each note of its input went after the modifiers, as channel * 128 + pitch; g_notes: left out.
 		std::array<uint16_t, g_notes> m_inputTo{};
-		std::array<bool, g_notes> m_inputDown{}; // the keys of its input, as channel * 128 + pitch, that are held
-		uint64_t m_random = 0;                   // the random modifiers' seed for the next note of its input
-		uint64_t m_instrument = 0;               // playOn: where its notes went in the graph that runs
+		std::array<bool, g_notes> m_inputDown{};     // the keys of its input, as channel * 128 + pitch, that are held
+		std::array<uint16_t, g_notes> m_inputKeys{}; // how many held keys play each note, as channel * 128 + pitch
+		uint64_t m_random = 0;                       // the random modifiers' seed for the next note of its input
+		uint64_t m_instrument = 0;                   // playOn: where its notes went in the graph that runs
 
 		// Command thread: the effect in each slot, the inserts' then the sends', while it plays.
 		struct SlotEffect
