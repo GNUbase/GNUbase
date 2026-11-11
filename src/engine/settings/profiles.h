@@ -19,11 +19,13 @@ namespace gnubase::engine
 
 		// Before the settings are read at startup: if profile.activate chose another profile, the active profile's
 		// files go into its folder (profiles/<name>) and the chosen one's come into the settings folder. Does nothing
-		// without a folder; logs what fails and then leaves the files and the active profile as they were.
+		// without a folder; logs what fails and then leaves the files and the active profile as they were. A switch
+		// that GNUbase didn't finish, such as in a crash, is undone first.
 		void switchProfile(const std::filesystem::path& directory);
 
-		// Drops the profile that profile.activate chose for the next start, so that the active one stays: for the
-		// safe start mode's Delete program preferences, which deletes the active profile's files. Throws
+		// Drops the profile that profile.activate chose for the next start, so that the active one stays, and what a
+		// switch that GNUbase didn't finish left: for the safe start mode's Delete program preferences, which deletes
+		// the active profile's files. Throws
 		// std::system_error if profiles.json can't be written.
 		void cancelProfileSwitch(const std::filesystem::path& directory);
 

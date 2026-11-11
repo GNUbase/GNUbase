@@ -365,6 +365,7 @@ namespace gnubase::ui
 				if (titled == nullptr)
 					return;
 				m_titled = titled->GetObserverPtr();
+				m_tracking = true;
 				m_at = at + Rml::Vector2f(0.0F, g_tooltipOffset * GetContext()->GetDensityIndependentPixelRatio());
 				m_due = now() + g_tooltipDelay;
 				GetContext()->RequestNextUpdate(g_tooltipDelay);
@@ -373,6 +374,7 @@ namespace gnubase::ui
 			void hide()
 			{
 				m_titled.reset();
+				m_tracking = false;
 				SetClass("shown", false);
 			}
 
@@ -383,7 +385,14 @@ namespace gnubase::ui
 				const Rml::Element* titled = m_titled.get();
 				if (titled == nullptr)
 				{
-					// The element may have gone from under the mouse, when a list is rendered anew.
+					// The element may have gone from under the mouse, when a list is rendered anew. The one that
+					// replaces it is under the mouse only once it's laid out, which this update did: one more
+					// update finds it in the hover chain and sends it the Mouseover that starts its tooltip.
+					if (m_tracking)
+					{
+						m_tracking = false;
+						GetContext()->RequestNextUpdate(0.0);
+					}
 					if (IsClassSet("shown"))
 						SetClass("shown", false);
 					return;
@@ -411,6 +420,8 @@ namespace gnubase::ui
 
 		private:
 			Rml::ObserverPtr<Rml::Element> m_titled; // whose title is shown, or waits to be
+			// hover() set m_titled and hide() hasn't cleared it: if m_titled is empty, its element is gone
+			bool m_tracking = false;
 			Rml::Vector2f m_at;
 			double m_due = 0.0;
 		};

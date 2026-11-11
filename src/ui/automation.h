@@ -74,7 +74,9 @@ namespace gnubase::ui
 			std::optional<WindowId> window, const Target& to, const std::vector<std::string>& modifiers = {});
 
 		// Moves the mouse to the target and clicks count times, holding the modifiers ("ctrl", "shift", "alt",
-		// "meta"). Returns the element under the mouse, as move does.
+		// "meta"). For a count above 1, RmlUi's clock (ui/rmlui.h) stands still from the first press to the last, so
+		// that they are within the double click time however long the frames between them take; a clock that stands
+		// still already stays so. Returns the element under the mouse, as move does.
 		engine::Json click(std::optional<WindowId> window, const Target& target, MouseButton button, int count,
 			const std::vector<std::string>& modifiers);
 

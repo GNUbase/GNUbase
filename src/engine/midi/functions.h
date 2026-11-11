@@ -211,9 +211,10 @@ namespace gnubase::engine::midi
 	// becomes a step point where it plays, with its value scaled to 0 to 1. A lane the track already has for the
 	// controller loses its points in the part's range first, but not those an earlier part of the same call added, so
 	// overlapping parts keep each other's, and reads from then on; otherwise a lane is added. A shared copy leaves its
-	// copies, which keep their controllers. Pitch bend, pressure,
-	// switches such as the sustain pedal, events past a part's end and the events of muted parts stay, as none of
-	// them would play the same as automation.
+	// copies, which keep their controllers; all its events get new ids, so the play probability, velocity variance and
+	// random MIDI modifier values of its notes, drawn from its part's and their own ids, draw anew. Pitch bend,
+	// pressure, switches such as the sustain pedal, events past a part's end and the events of muted parts stay, as
+	// none of them would play the same as automation.
 	AutomationChanges extractAutomation(Project& project, const std::vector<ObjectId>& parts);
 
 	// Functions that make parts. They report what they changed, so the commands can announce it.
@@ -249,8 +250,11 @@ namespace gnubase::engine::midi
 	// in ticks. Notes keep their lengths, cut where their part ends. They get their parts' transpose and velocity as
 	// playback applies them, and with includeInserts also their tracks' MIDI modifiers (reference manual pp. 1096,
 	// 1120), with the random values playback draws; a note they move out of the range or that doesn't play is left
-	// out. eraseDestination first removes the destination track's parts that lie in the range and the events of other
-	// parts that start in it. includeChase adds the last controller value of every controller, program
+	// out. Notes are written as they play through their tracks' drum maps and the chord track; a destination with its
+	// own gets the pitch that plays them, if one does, else what played, which it then maps. eraseDestination first
+	// removes the destination track's parts that lie in the range and the events of other parts that start in it, a
+	// shared copy leaving its copies for that: its notes get new ids, so their play probability, velocity variance and
+	// random MIDI modifier values draw anew. includeChase adds the last controller value of every controller, program
 	// and channel before start at the new part's start. A new destination track goes to the end of the track list,
 	// routed to the instrument of the first track merged.
 	PartChanges merge(Project& project, const MergeSettings& settings);
@@ -279,8 +283,9 @@ namespace gnubase::engine::midi
 	// Combines parts on one track into a single part from the first one's start to the last one's end, named after
 	// the earliest, on the lowest lane they are on (reference manual p. 1123). Muted parts are removed and add
 	// nothing. Events keep their time; notes are cut where their part ended. The parts' transpose and velocity go into
-	// the notes as playback applies them, and a note transposed beyond 0 to 127, which doesn't play, is left out. The
-	// track's MIDI modifiers stay on the track, and the copied notes get new ids, so the play probability and
-	// velocity variance of a note, drawn from its part's and its own id, draw anew.
+	// the notes as playback applies them, and a note transposed beyond 0 to 127, which doesn't play, is left out. Where
+	// a drum map or the chord track would then play another pitch, the new part keeps the transpose, and parts with
+	// different ones make a part for each. The track's MIDI modifiers stay on the track, and the copied notes get new
+	// ids, so the play probability and velocity variance of a note, drawn from its part's and its own id, draw anew.
 	PartChanges bounce(Project& project, const std::vector<ObjectId>& parts);
 }
