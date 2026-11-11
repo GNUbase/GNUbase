@@ -38,7 +38,11 @@ namespace gnubase::engine
 		}
 
 		// Raises a held value for the one writer, against the reader that takes it (exchange): lock-free, and no
-		// value goes unseen. What the writer stored before is visible to the reader that takes this value.
+		// value goes unseen. What the writer stored before is visible to the reader that takes this value, but not
+		// always to one that takes a larger value held from before, since a value that isn't larger writes nothing:
+		// the writer's relaxed stores before this and its relaxed load here may be reordered (x86's store buffer
+		// already allows it), so that reader can still see older values. The level meter therefore replaces the
+		// frame's held peak in the first block after a reset instead of raising it (LevelMeter::process).
 		void raise(std::atomic<float>& held, float value) noexcept
 		{
 			float current = held.load(std::memory_order_relaxed);
@@ -54,7 +58,9 @@ namespace gnubase::engine
 	void LevelMeter::process(const float* const* audio, int channels, uint32_t frames, double sampleRate) noexcept
 	{
 		channels = std::clamp(channels, 0, g_maxMeterChannels);
-		if (const uint32_t resets = m_resets.load(std::memory_order_acquire); resets != m_resetsSeen)
+		const uint32_t resets = m_resets.load(std::memory_order_acquire);
+		const bool afterReset = resets != m_resetsSeen;
+		if (afterReset)
 		{
 			m_resetsSeen = resets;
 			m_peakMax.fill(0.0f);
@@ -126,11 +132,20 @@ namespace gnubase::engine
 			if (m_windowFrames == m_windowLength)
 				endWindow(channels);
 		}
+		// The maximum before the frame's held peak, so that a reader that takes this block's peak reads a maximum at
+		// least as large. The first block after a reset replaces the held peak instead of raising it: raising it, a
+		// quieter block would write nothing, and a reader that takes the peak from before the reset could read the
+		// reset's maximum of 0 instead of this block's (see raise) and limit the frame to it, so that this block's
+		// peak never reaches a frame. Replaced, the peak from before the reset goes here, and only a frame read
+		// before this block can take it, which the maximum it reads limits (readFrame).
 		for (size_t c = 0; c < static_cast<size_t>(channels); ++c)
 		{
 			m_peakMax[c] = std::max(m_peakMax[c], blockPeak[c]);
 			m_publishedPeakMax[c].store(m_peakMax[c], std::memory_order_relaxed);
-			raise(m_framePeak[c], blockPeak[c]);
+			if (afterReset)
+				m_framePeak[c].store(blockPeak[c], std::memory_order_release);
+			else
+				raise(m_framePeak[c], blockPeak[c]);
 		}
 	}
 
@@ -185,8 +200,8 @@ namespace gnubase::engine
 	{
 		// The peaks first: the audio thread publishes a block's maximum before it raises the held peak, so the maximum
 		// read after them is below them only when a reset or a channel coming back cleared it. A reset can come at any
-		// point of this, from another thread, so that is where the peaks from before it go: the maximum read limits
-		// them.
+		// point of this, from another thread, and until the audio thread's first block after it replaces the held
+		// peaks, they can be from before it: the maximum read limits them.
 		std::array<float, g_maxMeterChannels> peaks{};
 		for (size_t c = 0; c < peaks.size(); ++c)
 			peaks[c] = m_framePeak[c].exchange(0.0f, std::memory_order_acquire);
@@ -204,8 +219,8 @@ namespace gnubase::engine
 
 	void LevelMeter::reset() noexcept
 	{
-		// The audio thread clears its own maxima at its next block; until then reads show none, unless a block under
-		// way publishes its maximum once more.
+		// The audio thread clears its own maxima at its next block, which replaces the frame's held peaks with its own;
+		// until then reads show none, unless a block under way publishes its maximum once more.
 		for (size_t c = 0; c < m_publishedPeakMax.size(); ++c)
 		{
 			m_publishedPeakMax[c].store(0.0f, std::memory_order_relaxed);
