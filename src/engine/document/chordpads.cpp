@@ -16,6 +16,7 @@
 #include <array>
 #include <cstdint>
 #include <cstdlib>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -105,12 +106,21 @@ namespace gnubase::engine
 			return pads.pads[static_cast<size_t>(pad)];
 		}
 
-		// The last step input position: the longest project's end (time::g_maxPosition) in ticks at the project's
-		// tempo, so that a step a bar on, stepBars of any size and the chord events step input writes stay far from
-		// overflowing (#1048).
-		time::Ticks lastStepPosition(const Project& project)
+		// The last bar step input writes a chord at: the one the longest project (time::g_maxPosition) ends in, at the
+		// project's tempo, so that the step position, stepBars of any size and the chord events step input writes
+		// stay far from overflowing (#1048).
+		int64_t lastStepBar(const Project& project)
 		{
-			return time::toTicks({time::TimeBase::Linear, time::g_maxPosition}, project.tempo, project.sampleRate);
+			return project.signatures
+				.toBarsBeats(
+					time::toTicks({time::TimeBase::Linear, time::g_maxPosition}, project.tempo, project.sampleRate))
+				.bar;
+		}
+
+		// The last step position: the end of the last bar, where a step at that bar leaves it.
+		time::Ticks stepEnd(const Project& project)
+		{
+			return project.signatures.barStart(lastStepBar(project) + 1);
 		}
 
 		// The inversion of a pad's basic voicing that its current voicing is, for a pad with adaptive voicing whose
@@ -422,8 +432,7 @@ namespace gnubase::engine
 		pads.preset = json.value("preset", std::string("major"));
 		pads.stepInput = json.value("stepInput", false);
 		pads.moveInsert = json.value("moveInsert", false);
-		pads.stepPosition =
-			std::clamp(json.value("stepPosition", time::Ticks{0}), time::Ticks{0}, lastStepPosition(project));
+		pads.stepPosition = std::clamp(json.value("stepPosition", time::Ticks{0}), time::Ticks{0}, stepEnd(project));
 	}
 
 	void ProjectModel::registerChordPadCommands(Engine& engine)
@@ -468,10 +477,10 @@ namespace gnubase::engine
 				"player's Octave Offset, p. 1377); velocity (1 to 127, Velocity on Mouse Click); remote (Pad Remote "
 				"Control: notes from MIDI inputs on the remote keys trigger the pads instead of playing, p. 1386), "
 				"remoteStart and remoteEnd (Pads Remote Range Start and End, MIDI notes: the first key triggers the "
-				"first pad and so on); stepInput, moveInsert and stepPosition (ticks, from 0 to the longest "
-				"project's end, 2^48 samples, at the project's tempo) for chordPads.step (p. 1369); stepBars moves "
-				"the step position by bars, to a bar's start within that range (after stepPosition), as Left and "
-				"Right Arrow move the step input cursor.",
+				"first pad and so on); stepInput, moveInsert and stepPosition (ticks, from 0 to the end of the bar "
+				"the longest project, 2^48 samples, ends in at the project's tempo) for chordPads.step (p. 1369); "
+				"stepBars moves the step position by bars, to a bar's start, at most that bar's (after "
+				"stepPosition), as Left and Right Arrow move the step input cursor.",
 				objectSchema({{"rootKey", integerSchema}, {"transposePads", booleanSchema}, {"padCount", integerSchema},
 					{"octaveOffset", integerSchema}, {"velocity", integerSchema}, {"remote", booleanSchema},
 					{"remoteStart", integerSchema}, {"remoteEnd", integerSchema}, {"stepInput", booleanSchema},
@@ -514,20 +523,26 @@ namespace gnubase::engine
 					"the remote keys must be MIDI notes, remoteStart up to remoteEnd");
 				pads.stepInput = parameters.value("stepInput", pads.stepInput);
 				pads.moveInsert = parameters.value("moveInsert", pads.moveInsert);
-				const time::Ticks last = lastStepPosition(project);
 				if (parameters.contains("stepPosition"))
 				{
+					const time::Ticks end = stepEnd(project);
 					pads.stepPosition = parameters.at("stepPosition").get<time::Ticks>();
-					require(pads.stepPosition >= 0 && pads.stepPosition <= last,
-						"stepPosition must be 0 to " + std::to_string(last) + " ticks");
+					require(pads.stepPosition >= 0 && pads.stepPosition <= end,
+						"stepPosition must be 0 to " + std::to_string(end) + " ticks");
 				}
 				if (parameters.contains("stepBars"))
 				{
-					// Clamped before the sum, which then can't overflow, and after it, to the bars within the range.
+					// An unsigned number past int64_t's range is as far on as any; the bars are clamped before the
+					// sum, which then can't overflow, and after it, to the bars step input writes at.
+					const Json& given = parameters.at("stepBars");
+					constexpr int64_t most = std::numeric_limits<int64_t>::max();
+					const int64_t requested =
+						given.is_number_unsigned() && given.get<uint64_t>() > static_cast<uint64_t>(most)
+						? most
+						: given.get<int64_t>();
 					const time::SignatureMap& signatures = project.signatures;
-					const int64_t lastBar = signatures.toBarsBeats(last).bar;
-					const int64_t bars =
-						std::clamp<int64_t>(parameters.at("stepBars").get<int64_t>(), -lastBar - 1, lastBar + 1);
+					const int64_t lastBar = lastStepBar(project);
+					const int64_t bars = std::clamp<int64_t>(requested, -lastBar - 1, lastBar + 1);
 					pads.stepPosition = signatures.barStart(
 						std::clamp<int64_t>(signatures.toBarsBeats(pads.stepPosition).bar + bars, 0, lastBar));
 				}
@@ -731,9 +746,8 @@ namespace gnubase::engine
 				"Step input from the chord pads (reference manual p. 1369): the pad's chord becomes a chord event at "
 				"the start of the bar of the step input position (ticks, chordPads.set stepPosition) on the chord "
 				"track, which is added if there is none, and the position moves to the next bar. With moveInsert the "
-				"chord events from there on move a bar later first (on a chord track in linear time base, by the "
-				"bar's length in samples); without, a chord event already there gets the pad's chord. Needs "
-				"stepInput, and a bar's start not past the longest project's end.",
+				"chord events from there on move a bar later first; without, a chord event already there gets the "
+				"pad's chord. Needs stepInput, and a bar not after the one the longest project ends in.",
 				objectSchema({{"pad", integerSchema}}, {"pad"}), padsResult, false},
 			[this, changed](Project& project, CommandContext& context)
 			{
@@ -744,7 +758,7 @@ namespace gnubase::engine
 				const std::string chord = pad.chord;
 				const auto bar = project.signatures.toBarsBeats(pads.stepPosition).bar;
 				const time::Ticks at = project.signatures.barStart(bar);
-				require(at <= lastStepPosition(project), "the step input position is past the longest project's end");
+				require(bar <= lastStepBar(project), "the step input position is past the longest project's end");
 				const time::Ticks next = project.signatures.barStart(bar + 1);
 				if (std::none_of(project.trackById.begin(), project.trackById.end(),
 						[](const auto& entry) { return entry.second.type == TrackType::Chord; }))
@@ -763,11 +777,25 @@ namespace gnubase::engine
 				const int64_t start = inBase(at);
 				if (pads.moveInsert)
 				{
-					const int64_t shift = inBase(next) - start;
+					// An event's position in ticks, and for one on a bar's start exactly that bar's, so that it moves
+					// onto the next bar's start in samples too, whatever the tempo there.
+					const auto ticksOf = [&project, &inBase](const time::Position& position)
+					{
+						const time::Ticks ticks = time::toTicks(position, project.tempo, project.sampleRate);
+						const int64_t own = project.signatures.toBarsBeats(ticks).bar;
+						for (int64_t candidate = own; candidate <= own + 1; ++candidate)
+						{
+							const time::Ticks barStart = project.signatures.barStart(candidate);
+							if (inBase(barStart) == position.value)
+								return barStart;
+						}
+						return ticks;
+					};
 					Json moved = Json::array();
 					for (const ChordEvent& event : project.chords.events)
 						if (event.position.value >= start)
-							moved.push_back({{"event", event.id}, {"position", event.position.value + shift}});
+							moved.push_back(
+								{{"event", event.id}, {"position", inBase(ticksOf(event.position) + next - at)}});
 					if (!moved.empty())
 						runEdit("chord.set", project, {{"events", moved}}, context);
 				}

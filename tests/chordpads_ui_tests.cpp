@@ -386,7 +386,7 @@ TEST_CASE(
 	const auto bar = window.call("chordPads.get").at("stepPosition").get<int64_t>();
 	CHECK(window.call("chord.get").at("events").empty());
 
-	// In the velocity field they move the caret: the two Left there don't take the position back to 0.
+	// The velocity field takes them for its value: the two Left there don't take the position back to 0.
 	window.click("#chord-pads-velocity");
 	window.app.ui().key(std::nullopt, "Left");
 	window.app.ui().key(std::nullopt, "Left");

@@ -547,6 +547,35 @@ TEST_CASE("step input finds and moves chord events on a chord track in linear ti
 	CHECK(chords.at("events")[1].at("position") == moved);
 }
 
+TEST_CASE("Move Insert keeps chord events on bar starts across a tempo change on a linear chord track", "[unit]")
+{
+	// #1048: the events move a bar in ticks, those on a bar's start to the next bar's start in samples, wherever the
+	// tempo changes after the step position.
+	Engine engine;
+	Client client(engine);
+	run(client, "project.set", {{"tempoTrackActive", true}});
+	run(client, "tempo.add", {{"position", 0}, {"bpm", 121.0}, {"ramp", false}});
+	run(client, "tempo.add", {{"position", 3 * g_bar}, {"bpm", 60.0}, {"ramp", false}});
+	run(client, "track.add", {{"type", "chord"}, {"timeBase", "linear"}});
+	run(client, "chordPads.set", {{"stepInput", true}, {"stepPosition", 5 * g_bar}});
+	run(client, "chordPads.step", {{"pad", 3}});
+	const auto barFive = run(client, "chord.get").at("events")[0].at("position").get<int64_t>();
+	run(client, "chordPads.set", {{"stepPosition", 4 * g_bar}});
+	run(client, "chordPads.step", {{"pad", 0}});
+	run(client, "chordPads.set", {{"moveInsert", true}, {"stepPosition", g_bar}});
+	run(client, "chordPads.step", {{"pad", 5}});
+	Json chords = run(client, "chord.get");
+	REQUIRE(chords.at("events").size() == 3);
+	CHECK(chords.at("events")[1].at("chord") == "C");
+	CHECK(chords.at("events")[1].at("position") == barFive);
+	run(client, "chordPads.set", {{"moveInsert", false}, {"stepPosition", 5 * g_bar}});
+	run(client, "chordPads.step", {{"pad", 4}});
+	chords = run(client, "chord.get");
+	REQUIRE(chords.at("events").size() == 3);
+	CHECK(chords.at("events")[1].at("chord") == "G");
+	CHECK(chords.at("events")[2].at("chord") == "F");
+}
+
 TEST_CASE("the step position stays within the longest project, however far stepBars moves it", "[unit]")
 {
 	// #1048: stepBars of any size and stepPosition past the longest project's end (2^48 samples) don't overflow.
@@ -564,11 +593,19 @@ TEST_CASE("the step position stays within the longest project, however far stepB
 	CHECK(run(client, "chordPads.get").at("stepPosition") == last);
 	run(client, "chordPads.set", {{"stepPosition", last - g_bar}, {"stepBars", INT64_MAX}});
 	CHECK(run(client, "chordPads.get").at("stepPosition") == last);
-	// A step at the last bar writes its chord; the bar after it is past the end.
+	// More bars than a signed 64-bit number holds are as far on, not a bar back.
+	run(client, "chordPads.set", {{"stepPosition", last - g_bar}, {"stepBars", UINT64_MAX}});
+	CHECK(run(client, "chordPads.get").at("stepPosition") == last);
+	// A step at the last bar writes its chord and leaves the position at the bar's end, which chordPads.set takes
+	// back, and from where no step goes on.
 	run(client, "chordPads.step", {{"pad", 0}});
 	CHECK(run(client, "chord.get").at("events")[0].at("position") == last);
 	CHECK(run(client, "chordPads.get").at("stepPosition") == last + g_bar);
 	CHECK_THAT(reject(client, "chordPads.step", {{"pad", 0}}), ContainsSubstring("past the longest project's end"));
+	run(client, "chordPads.set", {{"stepPosition", last + g_bar}});
+	CHECK_THAT(reject(client, "chordPads.step", {{"pad", 0}}), ContainsSubstring("past the longest project's end"));
+	CHECK_THAT(reject(client, "chordPads.set", {{"stepPosition", last + g_bar + 1}}),
+		ContainsSubstring("stepPosition must be 0 to"));
 	run(client, "chordPads.set", {{"stepBars", INT64_MIN}});
 	CHECK(run(client, "chordPads.get").at("stepPosition") == 0);
 	run(client, "chordPads.set", {{"stepPosition", 3 * g_bar}, {"stepBars", -2}});
@@ -582,11 +619,13 @@ TEST_CASE("chord pads from a file with no pads, a reference below -1 or a step p
 	chordPadsFromJson(project, {{"pads", Json::array()}, {"reference", -5}, {"stepPosition", INT64_MAX}});
 	CHECK(project.chordPads.pads.size() == 12);
 	CHECK(project.chordPads.reference == -1);
-	// A step position past the longest project's end comes back to it (#1048).
+	// A step position past the end of the bar the longest project ends in comes back to it, where step input stops
+	// (#1048).
 	namespace gtime = gnubase::time;
-	const gtime::Ticks last =
+	const gtime::Ticks longest =
 		gtime::toTicks({gtime::TimeBase::Linear, gtime::g_maxPosition}, project.tempo, project.sampleRate);
-	CHECK(project.chordPads.stepPosition == last);
+	CHECK(
+		project.chordPads.stepPosition == project.signatures.barStart(project.signatures.toBarsBeats(longest).bar + 1));
 	chordPadsFromJson(project, {{"stepPosition", -1}});
 	CHECK(project.chordPads.stepPosition == 0);
 }
