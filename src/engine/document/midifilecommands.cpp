@@ -161,20 +161,24 @@ namespace gnubase::engine
 				"instrument tracks, one part per track from the bar of its first event to the bar after its last. A "
 				"type 0 file gets a track per MIDI channel; the sequences of a type 2 file are laid out one after "
 				"another, each from a bar start. Names that aren't UTF-8 are read as Windows-1252. Unless tempo is "
-				"false, the file's tempo and time signatures replace the project's (tempo changes on the tempo track, "
-				"which becomes active); unless markers is false, its "
+				"false, the file's tempo and time signatures replace the project's from position to the file's end "
+				"(tempo changes on the tempo track, which becomes active); after the end, the project's are kept if "
+				"they change after position or the project's parts, events or markers end after the file's end, "
+				"else the file's last ones go on. Unless markers is false, its "
 				"markers are added to the active marker track (one is added if there is none), except that a type 1 "
 				"file's tracks of nothing but a name and markers, which midiFile.export writes for marker tracks, "
 				"become new marker tracks at the top while the project has room for them. The options of the "
 				"reference's MIDI file import (#478): position (sample frames from the project start, default 0) "
 				"is where the file starts; the project's tempo and signatures before it stay. dissolve false keeps a "
 				"type 0 file in one track. singlePart puts the whole file into one part on one track: track, a "
-				"MIDI or instrument track of the project, or a new one named after the file. On MIDI tracks, "
+				"MIDI or instrument track of the project, or a new one named after the file; on a linear track the "
+				"part's position and length are in samples, its notes in ticks. On MIDI tracks, "
 				"extractPatch makes each track's first program change (with its bank) and extractVolumePan its "
 				"first MIDI volume (CC 7) and pan (CC 10) on MIDI channel 1 the track's program, bank, midiVolume "
 				"and midiPan (channel.set) instead of events. automation moves the continuous controllers into "
 				"automation lanes, as midi.extractAutomation does. One undo step. Returns the new tracks and the "
-				"parts.",
+				"parts. A track that the extraction leaves empty keeps its settings but gets no part, so parts can "
+				"be shorter than tracks, and empty with singlePart.",
 				{{"type", "object"}, {"additionalProperties", false},
 					{"properties",
 						{{"path", string}, {"trackType", {{"type", "string"}, {"enum", {"midi", "instrument"}}}},
@@ -209,6 +213,21 @@ namespace gnubase::engine
 		options.start = project.tempo.toTicks(position, project.sampleRate);
 		options.tempo = project.tempo;
 		options.signatures = project.signatures;
+		// Where the project's parts, events and markers end: the project's tempo and signatures go on after the
+		// file's end if anything of it is there.
+		const auto ticksAt = [&project](const time::Position& at)
+		{ return time::toTicks(at, project.tempo, project.sampleRate); };
+		for (const auto& [id, part] : project.midiParts)
+			options.contentEnd =
+				std::max(options.contentEnd, ticksAt({part.position.base, part.position.value + part.length}));
+		for (const auto& [id, part] : project.audioParts)
+			options.contentEnd =
+				std::max(options.contentEnd, ticksAt({part.position.base, part.position.value + part.length}));
+		for (const auto& [id, event] : project.audioEvents)
+			options.contentEnd =
+				std::max(options.contentEnd, ticksAt({time::TimeBase::Linear, eventSpan(project, event).end}));
+		for (const auto& [id, marker] : project.markers)
+			options.contentEnd = std::max(options.contentEnd, ticksAt(marker.end));
 		midifile::Import imported;
 		try
 		{
