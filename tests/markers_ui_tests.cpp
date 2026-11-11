@@ -689,9 +689,10 @@ TEST_CASE("the markers window bounds typed positions on linear and musical track
 		app.call("project.set", {{"timeFormat", "seconds"}});
 		openMarkers(app, 1);
 		edit(app, 0, "position", "999999999999999");
+		const ui::TimeContext context;
 		const int64_t expected = std::string(timeBase) == "linear"
 			? time::g_maxPosition
-			: ui::TimeContext{}.tempo.toTicks(static_cast<double>(time::g_maxPosition) / 48000.0);
+			: context.tempo.toTicks(static_cast<double>(time::g_maxPosition) / context.sampleRate);
 		REQUIRE(app.waitUntil([&app, expected] { return markerField(app, 0, "position") == expected; }));
 	}
 }
