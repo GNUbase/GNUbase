@@ -72,10 +72,11 @@ or a clip of the project.
   closing the streams, and freeing what played also from the middle of an audio block; a media file played from frames
   outside its event, past its end and at half the project's sample rate, scrubbed without moving the cursor, also at
   half the project's sample rate, and its errors, also for a hand-edited project's file without a sample rate or
-  length; a clip played and scrubbed with its fades.
+  length; a clip played and scrubbed with its fades; an audition whose first block plays while the cue thread cues
+  it, between reading where the audio thread plays and cueing the streams (`Audition::playedRead`), playing on
+  without a gap.
 - `tests/playback_tests.cpp`, in real time (`[realtime]`): stopping freeing what played also from the middle of an
-  audio block; an audition cued all the time while its first blocks play going on without a jump back; on the dummy
-  device, scrubbing while the transport plays leaving the playback without dropouts, and an
+  audio block; on the dummy device, scrubbing while the transport plays leaving the playback without dropouts, and an
   `audition.start` while another plays starting at its position without a frame left out (the cue thread held off,
   the audition before keeping its voices).
 - `tests/renderinplace_tests.cpp`: a frozen channel's freeze file is no media file to audition.
