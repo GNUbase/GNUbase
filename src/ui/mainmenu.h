@@ -39,7 +39,8 @@ namespace gnubase::ui
 		MainMenu& operator=(MainMenu&&) = delete;
 
 		// Disables the items whose command can't run now and enables the others, and shows their keys. The app calls
-		// it in every step of the shell, so the DOM that MCP's UI tools read is up to date too.
+		// it in every step of the shell, so the DOM that MCP's UI tools read is up to date too; the menu calls it too
+		// when a mouse button or key is released in its document, for what the press changed.
 		void update();
 
 	private:

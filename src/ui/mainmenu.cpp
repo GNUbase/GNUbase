@@ -5,6 +5,7 @@
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/StringUtilities.h>
 
+#include <array>
 #include <stdexcept>
 #include <utility>
 
@@ -19,6 +20,10 @@ namespace gnubase::ui
 				element = element->GetParentNode();
 			return element;
 		}
+
+		// After these, before anything handles them, the items follow what the press changed (#1069): a right click
+		// that selected a track opened the context menu, and a script's click on its item right after runs it.
+		constexpr std::array<Rml::EventId, 2> g_released = {Rml::EventId::Mouseup, Rml::EventId::Keyup};
 	}
 
 	MainMenu::MainMenu(KeyCommands& keys, Window& window, Rml::ElementDocument& document)
@@ -50,13 +55,19 @@ namespace gnubase::ui
 			item.keys = shown->GetObserverPtr();
 		}
 		document.AddEventListener(Rml::EventId::Click, this);
+		for (const Rml::EventId id : g_released)
+			document.AddEventListener(id, this, true);
 		update();
 	}
 
 	MainMenu::~MainMenu()
 	{
 		if (Rml::Element* document = m_document.get())
+		{
 			document->RemoveEventListener(Rml::EventId::Click, this);
+			for (const Rml::EventId id : g_released)
+				document->RemoveEventListener(id, this, true);
+		}
 		// A menu built again on the same document adds spans of its own.
 		for (const Item& item : m_items)
 		{
@@ -88,6 +99,11 @@ namespace gnubase::ui
 
 	void MainMenu::ProcessEvent(Rml::Event& event)
 	{
+		if (event.GetId() != Rml::EventId::Click)
+		{
+			update();
+			return;
+		}
 		Rml::Element* element = closestWith(event.GetTargetElement(), "command");
 		if (element == nullptr || element->HasAttribute("disabled"))
 			return;

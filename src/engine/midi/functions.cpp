@@ -6,6 +6,7 @@
 #include "engine/midi/chords.h"
 #include "engine/midi/drummaps.h"
 #include "engine/midi/midivalues.h"
+#include "engine/midi/patterns.h"
 
 #include <algorithm>
 #include <array>
@@ -813,7 +814,7 @@ namespace gnubase::engine::midi
 				const Ticks shift = from - combinedStart;
 				const Ticks partTo = partEnd(project, part);
 				const Ticks length = partTo - from;
-				for (const auto& [noteId, note] : part.notes)
+				for (const auto& [noteId, note] : playedNotes(project, part))
 				{
 					const bool silent = pitches.silent(note.pitch);
 					const int plays = pitches.played(note.pitch, from + note.position) + part.transpose;
@@ -912,7 +913,7 @@ namespace gnubase::engine::midi
 			Modifiers modifiers = settings.includeInserts && !trackModifiers.bypass ? trackModifiers : Modifiers();
 			modifiers.transpose += part.transpose;
 			modifiers.velocityShift += part.velocity;
-			for (const auto& [noteId, note] : part.notes)
+			for (const auto& [noteId, note] : playedNotes(project, part))
 			{
 				if (partFrom + note.position >= partTo || sourcePitches.silent(note.pitch))
 					continue;
@@ -1065,7 +1066,7 @@ namespace gnubase::engine::midi
 			for (const ObjectId id : found->second)
 			{
 				const MidiPart& part = project.midiParts.at(id);
-				for (const auto& [noteId, note] : part.notes)
+				for (const auto& [noteId, note] : playedNotes(project, part))
 					keys.insert(noteKey(note));
 				for (const auto& [controllerId, controller] : part.controllers)
 					if (controllerKey(controller) >= 0)
@@ -1113,7 +1114,7 @@ namespace gnubase::engine::midi
 				MidiPart& original = project.midiParts.at(id);
 				std::map<int, MidiPart> pieces;
 				std::vector<Controller> keyless;
-				for (const auto& [noteId, note] : original.notes)
+				for (const auto& [noteId, note] : playedNotes(project, original))
 				{
 					Note copy = note;
 					copy.id = project.newId();
@@ -1215,8 +1216,9 @@ namespace gnubase::engine::midi
 					const MidiPart& part = project.midiParts.at(id);
 					const Ticks from = partStart(project, part);
 					const Ticks length = partEnd(project, part) - from;
+					const std::map<ObjectId, Note> notes = playedNotes(project, part);
 					return part.transpose == 0 ||
-						std::all_of(part.notes.begin(), part.notes.end(),
+						std::all_of(notes.begin(), notes.end(),
 							[&](const auto& note)
 							{
 								return note.second.position >= length ||

@@ -109,6 +109,8 @@ namespace gnubase::engine::midi
 			Json changed = Json::array();
 			for (MidiPart* part : parts)
 			{
+				if (part->pattern != 0) // a pattern event plays its pattern's steps, not its notes
+					continue;
 				const MidiPart before = *part;
 				function(project, *part, selection);
 				if (part->notes != before.notes || part->controllers != before.controllers)
@@ -492,6 +494,7 @@ namespace gnubase::engine::midi
 			std::string description = command.description;
 			description += command.notes ? " Works on the MIDI parts in parts;" + std::string(selection)
 										 : " Works on the MIDI parts in parts.";
+			description += " Pattern events (pattern.add), which play their pattern's steps, stay as they are.";
 			description += " Returns the parts it changed.";
 			model.addEdit(engine,
 				{command.name, 1, description, objectSchema(std::move(properties), required), partsResult, false},

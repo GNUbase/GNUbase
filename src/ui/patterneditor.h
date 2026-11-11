@@ -8,6 +8,7 @@
 #include <RmlUi/Core/ObserverPtr.h>
 
 #include <cstdint>
+#include <memory>
 #include <set>
 #include <string>
 #include <utility>
@@ -25,7 +26,9 @@ namespace gnubase::ui
 	// pattern management, Number of Steps, Step Resolution, Pattern Play Direction and the edit functions), the step
 	// display with a step lane per drum sound or pitch, and the parameter lane of the selected lane. show() gives it
 	// the project and the engine's editor view whenever they change. A gesture edits a copy of the pattern, which goes
-	// to the engine as one pattern.set when it ends. Use it on the UI thread; the binding must outlive it.
+	// to the engine as one pattern.set when it ends; the engine's pattern shows again if that is refused, or if the
+	// project changed while the gesture went on and it changed nothing. Use it on the UI thread; the binding must
+	// outlive it.
 	class PatternEditor final : private Rml::EventListener
 	{
 	public:
@@ -54,6 +57,8 @@ namespace gnubase::ui
 		void click(Rml::Element& target);
 		void choose(Rml::Element& item);
 		void listen(bool document);
+		// Takes the active part's pattern from the project shown and renders it.
+		void load();
 		void render();
 		// Shows the steps' state, the selected lane and the parameter lane without making the step display's elements
 		// anew, as a gesture changes them.
@@ -70,7 +75,8 @@ namespace gnubase::ui
 		void addStep(int pitch, int index);
 		void removeStep(int pitch, int index);
 		void setValue(int index, double value);
-		// Sends the lanes as they are now in one pattern.set, an undo step named description.
+		// Sends the lanes as they are now in one pattern.set, an undo step named description; if it is refused, the
+		// engine's pattern shows again.
 		void sendLanes(const std::string& description);
 		void set(engine::Json changes);
 		// Tie Adjacent Steps and Split Tied Steps (p. 910), of the selected steps or else of all.
@@ -89,7 +95,9 @@ namespace gnubase::ui
 		std::set<std::pair<int, int>> m_selection; // the selected steps: pitch and index
 		Gesture m_gesture = Gesture::None;
 		bool m_changed = false; // by the gesture going on
+		bool m_stale = false;   // the project changed while it went on
 		Rml::ObserverPtr<Rml::Element> m_document;
 		std::vector<Rml::ObserverPtr<Rml::Element>> m_menus;
+		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers that come after it's gone
 	};
 }
