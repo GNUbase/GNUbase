@@ -74,7 +74,8 @@ menu#in-place-editing-mode-menu-inPlace-<track>, menu#in-place-active-part-menu-
 
 ## Not yet
 
-The project window's info line showing the selected note (the editor's own info line shows it with the toolbar);
+The setup panes of the toolbar and the info line (p. 1575), which only the project window has so far
+([docking.md](docking.md)); the project window's info line showing the selected note (the editor's own info line shows it with the toolbar);
 zooming and scrolling the pitches by dragging the keyboard (the editor scrolls with its scroll bar); a
 tempo-mapped time axis; adding and removing controller lanes with a right click below the lane's name; closing with a
 double click below the controller display; dragging notes from one in-place editor to another; the keyboard in the

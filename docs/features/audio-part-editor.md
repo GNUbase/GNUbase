@@ -93,7 +93,8 @@ which may be older than it, leaves that selection as it is.
 
 ## Not yet
 
-Solo Editor, Audition and Audition Loop, auto-scroll and Link Project and Lower Zone Editor Cursors; the Combine
+The setup panes of the toolbar and the info line (p. 1575), which only the project window has so far
+([docking.md](docking.md)); Solo Editor, Audition and Audition Loop, auto-scroll and Link Project and Lower Zone Editor Cursors; the Combine
 Selection, Range Selection, Draw (volume curves), Zoom, Comp and Time Warp tools; the selection rectangle and resizing
 events with the mouse; Show Part Borders, Activate Next Part and Previous Part and the search field of the Activate
 Part for Editing menu; nudging, a Snap switch of its own, the snap and grid types and Snap to Zero Crossing; quantizing,
