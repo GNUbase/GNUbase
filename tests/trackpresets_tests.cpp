@@ -536,3 +536,21 @@ TEST_CASE("the track preset dialog saves, loads and adds track presets", "[ui]")
 	CHECK(outline(app.call("project.get")) ==
 		std::vector<std::string>{"Vocals:audio", "Keys:midi", "Other:audio", "Vocals:audio"});
 }
+
+TEST_CASE("track presets keep a MIDI send's effect but not its output to another track", "[unit]")
+{
+	const test::TempDir dir;
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	const Added keys = add(client, {{"type", "instrument"}, {"name", "Keys"}});
+	const Added bass = add(client, {{"type", "instrument"}, {"name", "Bass"}});
+	run(client, "channel.set",
+		{{"channel", keys.channel},
+			{"midiSends", {{"slots", {{{"effect", "chordGenerator"}, {"output", bass.channel}}}}}}});
+	run(client, "track.savePreset", {{"tracks", {keys.track}}, {"name", "Chords"}});
+	const Added other = add(client, {{"type", "instrument"}, {"name", "Other"}});
+	run(client, "track.loadPreset", {{"tracks", {other.track}}, {"name", "Chords"}});
+	const Json slot = channelOf(run(client, "project.get"), "Other").at("midiSends").at("slots")[0];
+	CHECK(slot.at("effect") == "chordGenerator");
+	CHECK(slot.at("output") == 0);
+}

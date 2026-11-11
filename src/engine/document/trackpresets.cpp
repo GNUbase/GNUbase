@@ -145,6 +145,8 @@ namespace gnubase::engine
 						channel.output = mainMix(m_to);
 					for (Send& send : channel.sends)
 						send.destination = destination(send.destination, true);
+					for (midi::EffectSlot& slot : channel.midiSends.slots)
+						slot.output = destination(slot.output, true);
 				}
 			}
 
@@ -579,6 +581,8 @@ namespace gnubase::engine
 			channel.modifiers = sound.modifiers;
 			channel.midiInserts = sound.midiInserts;
 			channel.midiSends = sound.midiSends;
+			for (midi::EffectSlot& slot : channel.midiSends.slots)
+				slot.output = 0; // the preset's tracks aren't this project's
 			channel.instrument = sound.instrument;
 			channel.instrumentParameters = sound.instrumentParameters;
 			if (channel.format != ChannelFormat::None)
