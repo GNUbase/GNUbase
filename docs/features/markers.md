@@ -163,7 +163,8 @@ markers. `tests/marker_tests.cpp` covers `transport.cycleFollowsMarkers` for the
 upper border, resizing it by its handles, a press inside it only selecting it, several selected markers moving in one
 undo step, snapping to bars and dropping on another marker track, also straight down; Ctrl-drag adding a cycle marker,
 also snapped from a press off the grid, Shift+Alt-click and Shift+Ctrl-drag adding and renaming; the erase tool with
-and without Alt; the range tool's double click between markers. In the app's UI: the marker track's controls adding
+and without Alt; the range tool's double click between markers, also injected with a first press whose frame takes
+longer than the double click time. In the app's UI: the marker track's controls adding
 markers (Shift-click renaming), activating the track and locating, cycling and zooming from the lists; Delete, also
 with a range selected after a marker; and the context menu's Show Marker Lines. Marker files:
 `tests/marker_tests.cpp` has the CSV round trip byte for byte with undo, also of marker tracks with the same name,
