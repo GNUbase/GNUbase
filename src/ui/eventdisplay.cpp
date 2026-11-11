@@ -109,7 +109,8 @@ namespace gnubase::ui
 		m_cursorLine = &add(timeline, "div", "project-cursor");
 		for (const Rml::EventId id : g_rootEvents)
 			root.AddEventListener(id, this);
-		root.AddEventListener(g_fileDropEvent, this);
+		// On the document, for files dropped on the track list too.
+		m_document->AddEventListener(g_fileDropEvent, this);
 		for (const Rml::EventId id : g_documentEvents)
 			m_document->AddEventListener(id, this);
 		findControls();
@@ -255,7 +256,7 @@ namespace gnubase::ui
 			return;
 		for (const Rml::EventId id : g_rootEvents)
 			m_root->RemoveEventListener(id, this);
-		m_root->RemoveEventListener(g_fileDropEvent, this);
+		m_document->RemoveEventListener(g_fileDropEvent, this);
 		for (const Rml::EventId id : g_documentEvents)
 			m_document->RemoveEventListener(id, this);
 	}

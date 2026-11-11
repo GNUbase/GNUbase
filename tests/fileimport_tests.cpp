@@ -678,6 +678,19 @@ TEST_CASE("MIDI files dropped on the event display follow the MIDI import settin
 	CHECK(part.at("track") == keys);
 	CHECK(part.at("notes").size() == 2);
 	CHECK(part.at("controllers").size() == 2);
+
+	// Dropped on the track list, outside the event lanes, it is still a drop: as a single part, on a new track at the
+	// project cursor (a bar of 4/4 at 120 BPM is two seconds), not File > Import's project start.
+	app.call("transport.locate", {{"position", 96000}});
+	REQUIRE(app.waitUntil([&display] { return display.cursor() == 2.0; }));
+	drop(app, {song}, -40.0, 10.0);
+	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("midiParts").size() == 4; }));
+	project = app.call("project.get");
+	REQUIRE(project.at("tracks").size() == 4);
+	const Json& listPart = project.at("midiParts")[3];
+	CHECK(listPart.at("track") == project.at("tracks")[3].at("id"));
+	CHECK(listPart.at("position") == 4 * time::g_ticksPerQuarter);
+	CHECK(listPart.at("notes").size() == 2);
 }
 
 TEST_CASE("The preferences' Editing > Audio page sets On Import Audio Files and what Use Settings imports with", "[ui]")

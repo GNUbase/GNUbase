@@ -647,8 +647,9 @@ TEST_CASE("tapping the project tempo and importing a MIDI file's tempo keep line
 		run(sourceClient, "tempo.add", {{"position", 23 * g_ticksPerQuarter / 4}, {"bpm", 170.0}});
 		run(sourceClient, "midiFile.export", {{"path", path}});
 	}
+	// The file ends at its last tempo change, where the project's tempo, which changes later on, is back (#1021).
 	run(client, "midiFile.import", {{"path", path}, {"markers", false}});
-	REQUIRE(run(client, "project.get").at("tempo").size() == 3);
+	REQUIRE(run(client, "project.get").at("tempo").size() == 4);
 	CHECK(near());
 	run(client, "history.undo");
 	CHECK(near());
