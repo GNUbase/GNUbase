@@ -1094,13 +1094,14 @@ namespace gnubase::engine
 			{
 				MidiPart& part = *first.part;
 				const time::Ticks start = ticks(project, part.position);
-				// Pattern events that continue the first one's pattern, as after a split, glue into it. Otherwise the
-				// glued part is an ordinary one with the notes that each part played, its pattern's steps for a
-				// pattern event (#1040).
+				// Pattern events that continue the first one's pattern, as after a split, with its transpose and
+				// velocity, glue into it. Otherwise the glued part is an ordinary one with the notes that each part
+				// played, its pattern's steps for a pattern event (#1040).
 				const bool continues = std::all_of(items.begin(), items.end(),
 					[&](const Item& item)
 					{
 						return part.pattern != 0 && item.part->pattern == part.pattern &&
+							item.part->transpose == part.transpose && item.part->velocity == part.velocity &&
 							item.part->patternOffset - part.patternOffset ==
 							ticks(project, item.part->position) - start;
 					});

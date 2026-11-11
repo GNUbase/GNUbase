@@ -417,7 +417,8 @@ namespace gnubase::ui
 	// Double Length of Pattern (p. 903) repeats the steps of the lanes that follow the pattern's length. Double Step
 	// Resolution of Pattern doubles the indexes and lengths of the steps of the lanes that follow its resolution, and
 	// the length of those of their own length, so that they play as before; one that can't double keeps the
-	// resolution it had as its own. The other lanes loop on their own length or resolution and stay as they are.
+	// resolution it had as its own. The other lanes loop on their own length or resolution and stay as they are; one
+	// of its own resolution that follows the pattern's length gets the length it had as its own.
 	void PatternEditor::doubleLength(bool resolution)
 	{
 		const int length = m_pattern.at("length").get<int>();
@@ -437,7 +438,12 @@ namespace gnubase::ui
 			const int own = each.value("length", 0);
 			const bool ownResolution = each.contains("resolution") && !each.at("resolution").is_null();
 			if (resolution ? ownResolution : own > 0)
+			{
+				// A lane of its own resolution that follows the pattern's length keeps the length it had.
+				if (resolution && own == 0)
+					each["length"] = length;
 				continue;
+			}
 			if (resolution && own * 2 > 128)
 			{
 				each["resolution"] = m_pattern.at("resolution");

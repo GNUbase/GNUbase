@@ -372,6 +372,27 @@ TEST_CASE("a split, sized or glued pattern event continues its pattern", "[unit]
 	CHECK(f.starts() == std::vector<int64_t>{f.at(15), f.at(19), f.at(23), f.at(27), f.at(31)});
 }
 
+TEST_CASE("glued pieces of a pattern event of another transpose keep their pitches", "[unit]")
+{
+	Fixture f;
+	f.lanes({{{"pitch", 36}, {"steps", steps({0})}}}, {{"length", 4}});
+	const auto right =
+		f.call("event.split", {{"events", {f.part}}, {"positions", {f.at(6)}}}).at("events").at(0).get<uint64_t>();
+	f.call("midiPart.set", {{"part", right}, {"transpose", 12}});
+	const auto pitches = [&]
+	{
+		std::vector<int> all;
+		for (const engine::RenderNote& note : f.rendered())
+			all.push_back(note.pitch);
+		return all;
+	};
+	REQUIRE(pitches() == std::vector<int>{36, 36, 48, 48});
+	const auto glued = f.call("event.glue", {{"events", {f.part, right}}}).at("event").get<uint64_t>();
+	CHECK(f.partJson(glued).at("pattern") == 0);
+	CHECK(f.starts() == std::vector<int64_t>{f.at(0), f.at(4), f.at(8), f.at(12)});
+	CHECK(pitches() == std::vector<int>{36, 36, 48, 48});
+}
+
 TEST_CASE("glued to ordinary parts, a pattern event's steps become notes", "[unit]")
 {
 	Fixture f;

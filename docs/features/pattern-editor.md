@@ -108,7 +108,8 @@ part's pattern.
   steps or else of all; Double Length repeats the steps of the lanes that follow the pattern's length, Double
   Resolution doubles the steps' indexes and lengths of the lanes that follow its resolution, and the lengths of those
   of their own length, so that every lane plays as before: one that can't double keeps the resolution it had as its
-  own, and lanes of their own length (Double Length) or resolution (Double Resolution) stay as they are.
+  own, and lanes of their own length (Double Length) or resolution (Double Resolution) stay as they are; one of its
+  own resolution that follows the pattern's length gets the length it had as its own.
 - **Parameter lane** (pp. 928-929): a click or drag in it sets the chosen parameter of the selected lane's steps, as
   high as the mouse is.
 - A gesture edits a copy of the pattern and changes only the steps' classes while it goes on, so that its mouseup

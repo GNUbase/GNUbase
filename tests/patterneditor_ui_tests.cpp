@@ -230,6 +230,7 @@ TEST_CASE("Double Step Resolution and Double Length leave the lanes' rhythms as 
 	CHECK(f.lane(38).at("length") == 6);
 	CHECK(f.steps(38) == std::vector<int>{2});
 	CHECK(f.lane(42).at("resolution") == "1/8");
+	CHECK(f.lane(42).at("length") == 16);
 	CHECK(f.steps(42) == std::vector<int>{1});
 	CHECK(f.lane(46).at("length") == 100);
 	CHECK(f.lane(46).at("resolution") == "1/16");
