@@ -114,7 +114,7 @@ namespace gnubase::ui
 	void EventDisplay::dropFiles(Rml::Event& event)
 	{
 		// Files dropped on the event display or the track list, not elsewhere in the project window.
-		Rml::Element* on = event.GetTargetElement();
+		const Rml::Element* on = event.GetTargetElement();
 		while (on != nullptr && on != m_root.get() && on->GetId() != "track-list")
 			on = on->GetParentNode();
 		if (on == nullptr)
