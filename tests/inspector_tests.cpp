@@ -1270,3 +1270,77 @@ TEST_CASE("a MIDI modifier or a part's transpose dragged back to where it starte
 	dragBack(
 		"#info-line valuefield[field=transpose]", [&] { return window.part(part).at("transpose").get<int64_t>(); });
 }
+
+TEST_CASE("the inspector's MIDI Inserts and MIDI Sends sections show and change the track's MIDI effects", "[ui]")
+{
+	Window window;
+	const uint64_t keys = window.addTrack({{"type", "instrument"}, {"name", "Keys"}});
+	const uint64_t bass = window.addTrack({{"type", "instrument"}, {"name", "Bass"}});
+	const uint64_t vox = window.addTrack({{"type", "audio"}, {"name", "Vox"}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("tracks").size() == 3; }));
+	window.list.select({keys});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Keys"));
+	CHECK_FALSE(hasClass(window.app, ".inspector [section=midiInserts]", "unavailable"));
+	CHECK_FALSE(hasClass(window.app, ".inspector [section=midiSends]", "unavailable"));
+	// The sections above them closed, so that their controls are in view.
+	for (const char* section : {"basics", "routing", "modifiers"})
+		window.click(".inspector [section=" + std::string(section) + "] .section-header");
+	const auto inserts = [&] { return window.channel(keys).at("midiInserts"); };
+	const auto sends = [&] { return window.channel(keys).at("midiSends"); };
+	const auto choose = [&](const std::string& select, int downs)
+	{
+		window.click(select);
+		for (int i = 0; i < downs; ++i)
+			window.app.ui().key(std::nullopt, "Down");
+		window.click(select);
+	};
+
+	// An effect chosen is on and its control panel opens (p. 1105): the chord generator, after No Effect and the
+	// arpeggiator.
+	choose(".inspector select[control=midiInserts-0-effect]", 2);
+	REQUIRE(window.app.waitUntil([&] { return inserts().at("slots")[0].at("effect") == "chordGenerator"; }));
+	const std::string first = ".inspector [section=midiInserts] .midi-effect-slot[slot=0]";
+	CHECK(hasClass(window.app, first, "open"));
+	REQUIRE(window.app.waitUntil(
+		[&] { return !elements(window.app, ".inspector select[control=midiInserts-0-parameter-chord]").empty(); }));
+	choose(".inspector select[control=midiInserts-0-parameter-chord]", 1);
+	REQUIRE(window.app.waitUntil([&] { return inserts().at("slots")[0].at("parameters").at("chord") == 1; }));
+	window.click(".inspector button[control=midiInserts-0-on]");
+	REQUIRE(window.app.waitUntil([&] { return inserts().at("slots")[0].at("on") == false; }));
+	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, first, "off"); }));
+	window.click(".inspector button[control=midiInserts-bypass]");
+	REQUIRE(window.app.waitUntil([&] { return inserts().at("bypass") == true; }));
+	// The divider below the first slot: that insert is recorded.
+	choose(".inspector select[control=midiInserts-divider]", 1);
+	REQUIRE(window.app.waitUntil([&] { return inserts().at("divider") == 1; }));
+	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, first, "recorded"); }));
+	// The edit button closes the control panel.
+	window.click(first + " .midi-effect-edit");
+	CHECK_FALSE(hasClass(window.app, first, "open"));
+	window.click(".inspector [section=midiInserts] .section-header");
+
+	// A send: the arpeggiator with its gate, to the other instrument track, before the modifiers and inserts.
+	choose(".inspector select[control=midiSends-0-effect]", 1);
+	REQUIRE(window.app.waitUntil([&] { return sends().at("slots")[0].at("effect") == "arpeggiator"; }));
+	REQUIRE(window.app.waitUntil(
+		[&] { return !elements(window.app, ".inspector valuefield[control=midiSends-0-parameter-gate]").empty(); }));
+	window.type(".inspector valuefield[control=midiSends-0-parameter-gate]", "75");
+	REQUIRE(window.app.waitUntil([&] { return sends().at("slots")[0].at("parameters").at("gate") == 75.0; }));
+	choose(".inspector select[control=midiSends-0-output]", 1);
+	REQUIRE(window.app.waitUntil([&] { return sends().at("slots")[0].at("output") == window.channel(bass).at("id"); }));
+	window.click(".inspector button[control=midiSends-pre]");
+	REQUIRE(window.app.waitUntil([&] { return sends().at("pre") == true; }));
+
+	// Changes from another client show, and undo restores them.
+	window.call("channel.set",
+		{{"channel", window.channel(keys).at("id")}, {"midiSends", {{"slots", {{{"parameters", {{"gate", 20}}}}}}}}});
+	CHECK(window.shows(".inspector valuefield[control=midiSends-0-parameter-gate]", "20"));
+	window.call("history.undo");
+	CHECK(window.shows(".inspector valuefield[control=midiSends-0-parameter-gate]", "75"));
+
+	// Tracks without notes don't have them.
+	window.list.select({vox});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Vox"));
+	CHECK(hasClass(window.app, ".inspector [section=midiInserts]", "unavailable"));
+	CHECK(hasClass(window.app, ".inspector [section=midiSends]", "unavailable"));
+}

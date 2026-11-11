@@ -76,6 +76,13 @@ one it has the class `empty` and says "No Track Selected".
                                    select[control=device], textdisplay[control=bank], select[control=program]
     [section=modifiers]            MIDI and instrument tracks: button[control=modifiers-bypass], valuefields and the
                                    random generators' and ranges' select[control=modifiers-random-0-target] etc.
+    [section=midiInserts]          MIDI and instrument tracks: button[control=midiInserts-bypass],
+                                   select[control=midiInserts-divider], .midi-effect-slot[slot=0..3] (.empty, .off,
+                                   .recorded above the divider, .open with its control panel): button[control=
+                                   midiInserts-0-on], select[control=midiInserts-0-effect], button.midi-effect-edit,
+                                   .midi-effect-panel with [control=midiInserts-0-parameter-rate] etc.
+    [section=midiSends]            the same with midiSends-, button[control=midiSends-pre] and per slot
+                                   select[control=midiSends-0-output]
     [section=chords]               MIDI and instrument tracks with a chord track: select[control=followChords]
     [section=articulations]        MIDI and instrument tracks: select[control=articulationMap],
                                    button.inspector-articulation-setup
@@ -109,6 +116,13 @@ one it has the class `empty` and says "No Track Selected".
   480 to a quarter note, up to 480 either way; the other values as `channel.set` takes them. A drag, wheel turns or a
   held arrow key on a value are one undo step, and a value the engine refuses, such as a minimum above the maximum,
   shows as it is again.
+- **MIDI Inserts and MIDI Sends** (pp. 1104-1106, [midi-effects.md](midi-effects.md)): Bypass, the inserts' divider
+  (the slots above it are recorded) and the sends' Pre/Post MIDI Modifiers and Inserts, and per slot Activate, Select
+  Effect Type (No Effect and the effects `midiEffect.list` lists), the sends' output (Track Output or another
+  instrument track) and the edit button, which opens and closes the effect's control panel below the slot: a
+  drop-down list for each parameter with options, a value field for the others, sent with `channel.set` `midiInserts`
+  and `midiSends`. An effect chosen is on and its control panel opens (p. 1105). A drag, wheel turns or a held arrow
+  key on a value are one undo step.
 - **Chords** (pp. 1338-1340, [chord-track.md](chord-track.md)): MIDI and instrument tracks' Follow Chord Track
   (`chord.follow` `mode`), with Single Voice its voice and master, This Track's Voicings and Live Input, while the
   project has a chord track.
@@ -140,7 +154,8 @@ one it has the class `empty` and says "No Track Selected".
 
 The info line's other fields (offset, fades, snap point; audio events' global transpose and root key), hiding fields from its
 context menu, and its own modifier setting (Preferences, Editing - Tool Modifiers); the inspector's other sections
-(track versions, chords, articulations, MIDI inserts, equalizer, fader, cue sends, remote controls),
+(track versions, chords, articulations, equalizer, fader, cue sends, remote controls), dragging the MIDI inserts'
+divider between the slots,
 sends (#108), the MIDI tracks' MIDI volume and pan, the folder track inspector's list of the tracks inside, the
 editor tab and the tempo, signature and marker track inspectors,
 Expand Sections Exclusively, and the Channel zone's channel strip (#107). Record and monitor on instrument and MIDI
@@ -165,7 +180,10 @@ which is in the project window's document, doesn't open, waits for #517.
   and the toolbar's setup panes, a hidden field staying hidden when the selection shows again and Show All leaving an
   unavailable one out; the MIDI Modifiers
   section's bypass, values, a fraction's denominator, a generator's target with positions in ticks, a range the engine
-  refuses, changes from another client with undo, and an audio track without it. A drag of the
+  refuses, changes from another client with undo, and an audio track without it; the MIDI Inserts and MIDI Sends
+  sections' effect, a parameter from a drop-down list and from a value field, on, bypass, the divider, the control
+  panel opened and closed, a send's output and Pre, changes from another client with undo, and an audio track without
+  them. A drag of the
   inspector's volume up to the project's maximum, wheel turns on the pan and a drag of the info line's volume are one
   undo step each, and a MIDI modifier and a part's transpose dragged back to where they started while the engine
   answers late end there.
