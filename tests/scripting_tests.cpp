@@ -220,6 +220,16 @@ TEST_CASE("a late script that was stopped can't catch the error and go on", "[un
 	CHECK_THAT(lua.run("while true do pcall(function() while true do end end) end", "catches.lua").value_or(""),
 		ContainsSubstring("ran longer than"));
 	CHECK(asked == 1);
+	// Also when the pcall loop runs in a coroutine other than the one that was late.
+	asked = 0;
+	CHECK_THAT(lua.run(R"(coroutine.wrap(function()
+		local late = coroutine.create(function() while true do end end)
+		while true do pcall(function() coroutine.resume(late) while true do end end) end
+	end)())",
+					  "resumes.lua")
+				   .value_or(""),
+		ContainsSubstring("ran longer than"));
+	CHECK(asked == 1);
 	run(lua, "local caught = pcall(function() end) assert(caught)"); // the next run starts afresh
 	CHECK(asked == 1);
 }

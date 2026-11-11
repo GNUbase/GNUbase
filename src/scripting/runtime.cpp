@@ -470,9 +470,10 @@ namespace gnubase::scripting
 			// Stopped for good: the error comes again at every instruction, so code that catches it, e.g. with pcall,
 			// gets it again right after, in its coroutine and in the main thread that the error goes on to.
 			runtime.m_stopped = true;
-			lua_sethook(state, &Runtime::stopWhenLate, LUA_MASKCOUNT, 1);
 			lua_sethook(runtime.m_state.get(), &Runtime::stopWhenLate, LUA_MASKCOUNT, 1);
 		}
+		// Every thread that checks a stopped run checks again at its next instruction, also one that wasn't late.
+		lua_sethook(state, &Runtime::stopWhenLate, LUA_MASKCOUNT, 1);
 		luaL_error(state, "the script ran longer than %d ms", static_cast<int>(runtime.m_timeLimit.count()));
 	}
 
