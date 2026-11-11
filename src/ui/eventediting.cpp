@@ -214,6 +214,11 @@ namespace gnubase::ui
 		return {{{"delta", shift}}, static_cast<double>(shift) / m_time.sampleRate};
 	}
 
+	bool EventDisplay::toolModifier(const char* action, Rml::Event& event) const
+	{
+		return modifiers(action, modifiersOf(event));
+	}
+
 	void EventDisplay::select(std::vector<uint64_t> events)
 	{
 		std::sort(events.begin(), events.end());

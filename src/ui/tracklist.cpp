@@ -79,11 +79,12 @@ namespace gnubase::ui
 			return control == "markerCycle" ? "Cycle" : "Zoom";
 		}
 
-		// A marker track's Locate list has its markers, Cycle and Zoom its cycle markers, after the list's name.
+		// A marker track's Locate list has its markers and Cycle its cycle markers, after the list's name; every
+		// marker track's Zoom list has the active marker track's cycle markers (reference manual p. 424).
 		widgets::Options markerOptions(const ProjectMarkers& markers, uint64_t track, const std::string& control)
 		{
 			widgets::Options options = {{"", markerMenuName(control)}};
-			for (const MarkerItem& marker : markers.of(track))
+			for (const MarkerItem& marker : markers.of(control == "markerZoom" ? markers.active : track))
 				if (marker.cycle || control == "markerLocate")
 					options.emplace_back(std::to_string(marker.id),
 						(marker.cycle ? "[" + std::to_string(marker.number) + "]" : std::to_string(marker.number)) +

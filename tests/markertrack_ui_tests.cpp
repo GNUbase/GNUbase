@@ -16,6 +16,7 @@
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
@@ -307,6 +308,112 @@ TEST_CASE("the erase tool deletes a marker, with Alt every later one on its trac
 	CHECK(fixture.list(fixture.second).size() == 1);
 }
 
+TEST_CASE("the erase tool's Alt is the tool modifier Delete Later Events", "[unit]")
+{
+	Fixture fixture;
+	fixture.call("marker.add", {{"track", fixture.first}, {"position", 12 * g_quarter}});
+	fixture.call("settings.set", {{"key", "ui.toolModifiers"}, {"value", {{"erase.deleteLaterEvents", "shift"}}}});
+	fixture.display.setTool(ui::Tool::Erase);
+	REQUIRE(fixture.waitUntil([&] { return fixture.synced(); }));
+
+	// Alt is no longer the modifier: Alt-click deletes the cycle marker clicked only.
+	fixture.automation.click(std::nullopt, fixture.lanesAt(300, 70), ui::MouseButton::Left, 1, {"alt"});
+	REQUIRE(fixture.waitUntil([&] { return fixture.marker(fixture.cycle).is_null() && fixture.synced(); }));
+	CHECK(fixture.list(fixture.first).size() == 2);
+
+	// Shift is: a Shift-click on the position marker deletes it and the later one.
+	fixture.automation.click(std::nullopt, fixture.lanesAt(100, 70), ui::MouseButton::Left, 1, {"shift"});
+	REQUIRE(fixture.waitUntil([&] { return fixture.list(fixture.first).empty(); }));
+	CHECK(fixture.list(fixture.second).size() == 1);
+}
+
+TEST_CASE("a marker drag released outside the window ends at the next press, without moving the markers", "[unit]")
+{
+	Fixture fixture;
+	Rml::Element* label =
+		fixture.document.QuerySelector(".marker-label[marker=\"" + std::to_string(fixture.position) + "\"]");
+	REQUIRE(label != nullptr);
+	const float left = label->GetAbsoluteLeft();
+
+	// The position marker dragged from 1 s to 1.5 s and released right of the window, where RmlUi has no element to
+	// send the mouseup to; the mouse comes back in.
+	fixture.automation.press(std::nullopt, fixture.lanesAt(100, 70), ui::MouseButton::Left);
+	fixture.automation.move(std::nullopt, fixture.lanesAt(150, 70));
+	fixture.automation.release(std::nullopt, point(1100, 70), ui::MouseButton::Left);
+	fixture.automation.move(std::nullopt, fixture.lanesAt(500, 70));
+	fixture.step();
+
+	// The next press ends the drag where it started, and does what it does: Alt-click adds a marker at 6 s.
+	fixture.automation.click(std::nullopt, fixture.lanesAt(600, 60), ui::MouseButton::Left, 1, {"alt"});
+	REQUIRE(fixture.waitUntil([&] { return fixture.list(fixture.first).size() == 3 && fixture.synced(); }));
+	CHECK(fixture.marker(fixture.position).at("position") == 2 * g_quarter);
+	label = fixture.document.QuerySelector(".marker-label[marker=\"" + std::to_string(fixture.position) + "\"]");
+	REQUIRE(label != nullptr);
+	fixture.document.UpdateDocument();
+	CHECK(label->GetAbsoluteLeft() == Approx(left));
+	// The mouse moving on and going up changes nothing more.
+	fixture.automation.move(std::nullopt, fixture.lanesAt(700, 70));
+	fixture.automation.release(std::nullopt, fixture.lanesAt(700, 70), ui::MouseButton::Left);
+	fixture.step();
+	REQUIRE(fixture.waitUntil([&] { return fixture.synced(); }));
+	CHECK(fixture.marker(fixture.position).at("position") == 2 * g_quarter);
+}
+
+TEST_CASE("with the range tool, a drag on the marker track in a range selected by markers moves its contents, Alt "
+		  "copies them",
+	"[unit]")
+{
+	Fixture fixture;
+	// A MIDI track at the bottom with a part from 1 to 2 s, between the position marker and the cycle marker.
+	const auto midi = fixture.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+	fixture.call("midiPart.add", {{"track", midi}, {"position", 2 * g_quarter}, {"length", 2 * g_quarter}});
+	const auto parts = [&fixture]
+	{
+		std::vector<int64_t> positions;
+		const Json project = fixture.call("project.get");
+		for (const Json& part : project.at("midiParts"))
+			positions.push_back(part.at("position").get<int64_t>());
+		std::sort(positions.begin(), positions.end());
+		return positions;
+	};
+	REQUIRE(fixture.waitUntil([&] { return fixture.display.laneTracks().size() == 4; }));
+	fixture.display.setTool(ui::Tool::RangeSelection);
+	const auto selectBetween = [&fixture](double x, int64_t start)
+	{
+		fixture.automation.click(std::nullopt, fixture.lanesAt(x, 70), ui::MouseButton::Left, 2, {});
+		REQUIRE(fixture.waitUntil(
+			[&] { return fixture.display.range() && fixture.display.range()->start == start * g_quarterSamples; }));
+	};
+
+	// Selected between the markers at 1 and 2 s and dragged by the marker track 2 s later: the part moves, in one undo
+	// step, and the range with it.
+	selectBetween(150, 2);
+	const size_t steps = fixture.call("history.get").at("steps").size();
+	fixture.drag(150, 70, 350, 70);
+	REQUIRE(fixture.waitUntil([&] { return parts() == std::vector<int64_t>{6 * g_quarter}; }));
+	CHECK(fixture.call("history.get").at("steps").size() == steps + 1);
+	REQUIRE(fixture.display.range());
+	CHECK(fixture.display.range()->start == 6 * g_quarterSamples);
+	CHECK(fixture.display.range()->end == 8 * g_quarterSamples);
+	// The markers stay.
+	CHECK(fixture.marker(fixture.position).at("position") == 2 * g_quarter);
+
+	// With Alt, a copy goes there and the part stays: back to 1 s by a range selected there.
+	fixture.call("history.undo");
+	REQUIRE(fixture.waitUntil([&] { return parts() == std::vector<int64_t>{2 * g_quarter}; }));
+	// (A click elsewhere first: the drag's press and the next one there would be a double click.)
+	fixture.automation.click(std::nullopt, fixture.lanesAt(900, 70), ui::MouseButton::Left, 1, {});
+	selectBetween(150, 2);
+	fixture.drag(150, 70, 650, 70, {"alt"});
+	REQUIRE(fixture.waitUntil([&] { return parts() == std::vector<int64_t>{2 * g_quarter, 12 * g_quarter}; }));
+
+	// A drag on the marker track outside the range selects a range as before.
+	fixture.drag(720, 70, 820, 70);
+	REQUIRE(fixture.waitUntil(
+		[&] { return fixture.display.range() && fixture.display.range()->start > 12 * g_quarterSamples; }));
+	CHECK(parts().size() == 2);
+}
+
 TEST_CASE("with the range tool, a double click on the marker track selects the range between markers", "[unit]")
 {
 	Fixture fixture;
@@ -355,6 +462,16 @@ namespace
 	{
 		return !app.ui().dom(std::nullopt, selector, 0).at("elements").empty();
 	}
+
+	// How many items a drop-down list has, its name among them: its options aren't in the DOM that the UI tools see.
+	int options(test::UiApp& app, const std::string& selector)
+	{
+		Rml::Element* element = nullptr;
+		for (int i = 0; element == nullptr && i < app.main().context().GetNumDocuments(); ++i)
+			element = app.main().context().GetDocument(i)->QuerySelector(selector);
+		auto* select = dynamic_cast<Rml::ElementFormControlSelect*>(element);
+		return select != nullptr ? select->GetNumOptions() : -1;
+	}
 }
 
 TEST_CASE("the marker track's controls add markers, activate it and locate, cycle and zoom to markers", "[ui]")
@@ -402,6 +519,9 @@ TEST_CASE("the marker track's controls add markers, activate it and locate, cycl
 		}));
 	click(app, control(first, "activateMarkerTrack"));
 	REQUIRE(app.waitUntil([&] { return app.call("project.get").at("activeMarkerTrack") == first; }));
+	// The Zoom lists have the active marker track's cycle markers (p. 424): the second track's lists the first's two.
+	REQUIRE(app.waitUntil([&] { return options(app, control(second, "markerZoom")) == 3; }));
+	CHECK(options(app, control(second, "markerCycle")) == 1);
 
 	// Locate: the cursor goes to the marker, which is selected.
 	choose(app, control(first, "markerLocate"), 2); // the cycle marker from 2 s
