@@ -299,7 +299,7 @@ tabset tab
 {
 	display: flex;
 	align-items: center;
-	margin-right: 2dp;
+	margin-right: 4dp;
 }
 
 .display, .tooltip

@@ -881,6 +881,13 @@ TEST_CASE("the toolbar's sections that a narrow window has no room for take no g
 			}
 		}
 		REQUIRE(boxes.size() >= 4);
+		// The sections, gaps included, fit in the toolbar, whose room is tight at these widths.
+		const Json bar = element(window.app, "#toolbar").at("box");
+		const Json last = element(window.app, "#toolbar [section=" + order.back() + "]").at("box");
+		CHECK(last.at("x").get<double>() + last.at("width").get<double>() <=
+			bar.at("x").get<double>() + bar.at("width").get<double>());
+		CHECK(
+			boxes.back().at("x").get<double>() + boxes.back().at("width").get<double>() <= last.at("x").get<double>());
 		const auto gap = [&boxes](size_t i)
 		{
 			return boxes.at(i).at("x").get<double>() - boxes.at(i - 1).at("x").get<double>() -
