@@ -136,8 +136,9 @@ namespace gnubase::engine
 		// least as large. The first block after a reset replaces the held peak instead of raising it: raising it, a
 		// quieter block would write nothing, and a reader that takes the peak from before the reset could read the
 		// reset's maximum of 0 instead of this block's (see raise) and limit the frame to it, so that this block's
-		// peak never reaches a frame. Replaced, the peak from before the reset goes here, and only a frame read
-		// before this block can take it, which the maximum it reads limits (readFrame).
+		// peak never reaches a frame. Replaced, the peak from before the reset is dropped here, and only a frame read
+		// before this block can take it, which the maximum it reads limits (readFrame), as it limits a channel this
+		// block doesn't measure until the channel comes back.
 		for (size_t c = 0; c < static_cast<size_t>(channels); ++c)
 		{
 			m_peakMax[c] = std::max(m_peakMax[c], blockPeak[c]);

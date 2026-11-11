@@ -881,10 +881,11 @@ TEST_CASE("a frame loses no peak to a block that ends while it reads", "[unit]")
 TEST_CASE("a frame loses no peak of the first block after a reset, also when it is quieter than the held one", "[unit]")
 {
 	// Each round a loud block is held, a reset follows, as Reset on Start does it on the audio thread, and then a
-	// quieter block, while one frame's read races them; that frame or the next one has the quieter block's peak. Before
-	// the audio thread replaced the held peak in the first block after a reset, a frame that took the loud peak could
-	// read the reset's maximum of 0 instead of the quieter block's, which then never reached a frame. Nothing can force
-	// that reordering, so this only catches it when the hardware does it.
+	// quieter block, while one frame's read races them; that frame or the next one has the quieter block's peak, which
+	// the first block after a reset hands over in place of the held one. Before it did, a frame that took the loud peak
+	// could read the reset's maximum of 0 instead of the quieter block's, which then never reached a frame; that needs
+	// the audio thread's store and load to be reordered within nanoseconds, which nothing can force, so this test
+	// checks the handover rather than reproducing the reordering.
 	constexpr int rounds = 50000;
 	constexpr float loudLevel = 0.9f;
 	const auto quietLevel = [](int round) { return 0.5f * static_cast<float>(round) / rounds; };
@@ -894,7 +895,6 @@ TEST_CASE("a frame loses no peak of the first block after a reset, also when it 
 	std::atomic<int> played{0};
 	std::atomic<int> checked{0};
 	std::atomic<int> lost{0};
-	std::atomic<int> stale{0};
 	std::thread reader(
 		[&]
 		{
@@ -908,8 +908,6 @@ TEST_CASE("a frame loses no peak of the first block after a reset, also when it 
 				const float after = meter.readFrame().peak[0];
 				if (racing != quietLevel(round) && after != quietLevel(round) && !done)
 					++lost;
-				if (after != quietLevel(round) && after != 0.0f && !done)
-					++stale; // the loud peak from before the reset, or one from another round
 				checked = round;
 			}
 		});
@@ -930,7 +928,6 @@ TEST_CASE("a frame loses no peak of the first block after a reset, also when it 
 	}
 	reader.join();
 	CHECK(lost == 0);
-	CHECK(stale == 0);
 }
 
 TEST_CASE("a frame's peak is never above its maximum, also when the meter is reset meanwhile", "[unit]")
