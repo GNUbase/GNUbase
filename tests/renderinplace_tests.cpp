@@ -84,12 +84,12 @@ namespace
 		return peak;
 	}
 
-	// How far a render is from another one turned down by dB: 0 when actual is original turned down by dB, to float
-	// precision. A freeze that is rendered before its plugin plays comes out unchanged, which is 0 dB.
-	float turnedDownBy(const std::vector<float>& actual, const std::vector<float>& original, float dB)
+	// How far a render is from the original reduced by reductionDb dB: 0 when actual has that reduction, to float
+	// precision. A freeze rendered before its plugin plays is unchanged, corresponding to 0 dB reduction.
+	float turnedDownBy(const std::vector<float>& actual, const std::vector<float>& original, float reductionDb)
 	{
 		std::vector<float> expected = original;
-		const float factor = std::pow(10.0f, dB / 20.0f);
+		const float factor = std::pow(10.0f, -reductionDb / 20.0f);
 		for (float& sample : expected)
 			sample *= factor;
 		return nullTest(actual, expected);
@@ -345,7 +345,7 @@ TEST_CASE("undo brings back the freeze file that was frozen then", "[integration
 	const std::vector<float> secondFile =
 		samplesOf(second.at("tracks").at(0).at("frozen").at("path").get<std::string>());
 	REQUIRE(peakOf(firstFile) > 0.1f);
-	REQUIRE(turnedDownBy(secondFile, firstFile, -12.0f) < 1e-5f); // -18 dB instead of -6 dB
+	REQUIRE(turnedDownBy(secondFile, firstFile, 12.0f) < 1e-5f); // -18 dB instead of -6 dB
 	CHECK(nullTest(project.mainMix(), frozen) > 0.1f);
 
 	for (int step = 0; step < 3; ++step) // the freeze, the gain and the unfreeze
@@ -414,7 +414,7 @@ TEST_CASE("scrubbing a frozen track reads the freeze file of that time", "[integ
 	REQUIRE(secondPath != first.at("tracks").at(0).at("frozen").at("path"));
 	const std::vector<float> secondFile = samplesOf(secondPath);
 	REQUIRE(peakOf(firstFile) > 0.1f);
-	REQUIRE(turnedDownBy(secondFile, firstFile, -12.0f) < 1e-5f); // -18 dB instead of -6 dB
+	REQUIRE(turnedDownBy(secondFile, firstFile, 12.0f) < 1e-5f); // -18 dB instead of -6 dB
 	CHECK(scrubs(1000, secondFile));
 
 	// Undone back to the first freeze, it reads the first file again.
