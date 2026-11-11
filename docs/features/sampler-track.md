@@ -11,7 +11,7 @@ sampler is a GNUbase processor and runs inside the engine (architecture rule 3).
 
 | Command | What it does | Reference |
 |---|---|---|
-| `sampler.create` | A new sampler track with a pool clip (`clip`) or an audio event's clip (`event`), from `start` to `end` in clip frames (default: the event's section or the whole clip), or empty without either; named `name`, or Sampler 01, Sampler 02 and so on, the first number no track's name has | pp. 143, 711 |
+| `sampler.create` | A new sampler track with a pool clip (`clip`), an audio event's clip (`event`) or an audio file (`path`), which goes into the pool as a clip in the same undo step, from `start` to `end` in clip frames (default: the event's section or the whole clip), or empty without any; named `name`, or Sampler 01, Sampler 02 and so on, the first number no track's name has; placed and routed with `parent`, `index` and `output` as `track.add` does | pp. 143-144, 711 |
 | `sampler.load` | Loads another sample, the same way, into a sampler track while it plays (hot swap). Its settings go back to their defaults, or with `keepSettings` (Lock Parameter Settings) only those of the sample: root key, start, end, loop start and end | pp. 710, 715-716 |
 | `sampler.normalize` | Sets the Sample gain so that the highest peak between start and end reaches `level` dBFS (default 0); refused for a silent sample or a missing file | pp. 715, 735 |
 

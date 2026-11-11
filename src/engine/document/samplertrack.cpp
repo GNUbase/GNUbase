@@ -60,7 +60,7 @@ namespace gnubase::engine
 
 		Section sectionOf(const Project& project, const Json& parameters)
 		{
-			require(parameters.contains("event") != parameters.contains("clip"), "give either event or clip");
+			require(parameters.contains("event") != parameters.contains("clip"), "give one of event, clip and path");
 			Section section;
 			if (parameters.contains("event"))
 			{
@@ -84,6 +84,22 @@ namespace gnubase::engine
 			require(section.start >= 0 && section.start < section.end && section.end <= section.length,
 				"start and end must be within the clip, start before end");
 			return section;
+		}
+
+		// The parameters with a file (path) put into the pool as a clip (Import Audio File, or a file dropped on the
+		// sampler panel, reference manual pp. 710, 713).
+		Json withClip(ProjectModel& model, Project& project, const Json& parameters, CommandContext& context)
+		{
+			if (!parameters.contains("path"))
+				return parameters;
+			require(!parameters.contains("event") && !parameters.contains("clip"), "give one of event, clip and path");
+			const Json media = model.runEdit("media.add", project, {{"path", parameters.at("path")}}, context);
+			Json changed = parameters;
+			changed.erase("path");
+			changed["clip"] = model.runEdit("clip.add", project, {{"media", media.at("media").at("id")}}, context)
+								  .at("clip")
+								  .at("id");
+			return changed;
 		}
 
 		// Loads the section into the sampler: its clip, and its start and end as the sampler's.
@@ -137,31 +153,37 @@ namespace gnubase::engine
 		const Json number = {{"type", "number"}};
 		const Json resultSchema =
 			objectSchema({{"track", {{"type", "object"}}}, {"channel", {{"type", "object"}}}}, {"track", "channel"});
-		const std::string sectionText = "The sample is a pool clip, clip, or the clip of the audio event event, from "
-										"start to end in the clip's frames (default: the event's or the whole clip).";
+		const std::string sectionText =
+			"The sample is a pool clip, clip, the clip of the audio event event, or an audio file, path, which goes "
+			"into the pool as a clip, from start to end in the clip's frames (default: the event's or the whole "
+			"clip).";
 
 		model.addEdit(engine,
 			{"sampler.create", 1,
-				"Creates a sampler track (reference manual p. 711): an instrument track at the end of the track list "
-				"whose channel plays the built-in sampler, named name (default: Sampler and a number). " +
+				"Creates a sampler track (reference manual pp. 143-144, 711): an instrument track whose channel plays "
+				"the built-in sampler, named name (default: Sampler and a number), at the end of the track list or as "
+				"track.add places it with parent and index, playing into output as track.add's does. " +
 					sectionText +
-					" Without either it starts empty. The sample's start and end are the sampler's Start and End "
+					" Without a sample it starts empty. The sample's start and end are the sampler's Start and End "
 					"parameters, shares of the clip. Emits track.added and channel.changed. Returns the track and its "
 					"channel.",
-				objectSchema({{"event", integer}, {"clip", integer}, {"start", integer}, {"end", integer},
-					{"name", {{"type", "string"}}}}),
+				objectSchema({{"event", integer}, {"clip", integer}, {"path", {{"type", "string"}}}, {"start", integer},
+					{"end", integer}, {"name", {{"type", "string"}}}, {"parent", integer}, {"index", integer},
+					{"output", integer}}),
 				resultSchema, false},
 			"Create sampler track",
 			[&model](Project& project, CommandContext& context)
 			{
-				const Json& parameters = context.parameters();
+				const Json parameters = withClip(model, project, context.parameters(), context);
 				const bool sample = parameters.contains("event") || parameters.contains("clip");
 				require(sample || (!parameters.contains("start") && !parameters.contains("end")),
-					"start and end need event or clip");
+					"start and end need event, clip or path");
 				const Section section = sample ? sectionOf(project, parameters) : Section();
-				const std::string name = parameters.value("name", nextName(project));
-				const Json added = model.runEdit(
-					"track.add", project, {{"type", "instrument"}, {"instrument", "sampler"}, {"name", name}}, context);
+				Json track = {{"type", "instrument"}, {"instrument", "sampler"}, {"name", nextName(project)}};
+				for (const char* key : {"name", "parent", "index", "output"})
+					if (parameters.contains(key))
+						track[key] = parameters.at(key);
+				const Json added = model.runEdit("track.add", project, track, context);
 				Channel& channel = project.channels.at(added.at("channel").at("id").get<ObjectId>());
 				if (sample)
 					load(channel, section);
@@ -176,14 +198,14 @@ namespace gnubase::engine
 					" Its settings go back to their defaults, unless keepSettings (Lock Parameter Settings, p. 715) "
 					"keeps those that aren't the sample's: all but the root key, start, end and the loop's start and "
 					"end. Emits channel.changed. Returns the track and its channel.",
-				objectSchema({{"track", integer}, {"event", integer}, {"clip", integer}, {"start", integer},
-								 {"end", integer}, {"keepSettings", {{"type", "boolean"}}}},
+				objectSchema({{"track", integer}, {"event", integer}, {"clip", integer}, {"path", {{"type", "string"}}},
+								 {"start", integer}, {"end", integer}, {"keepSettings", {{"type", "boolean"}}}},
 					{"track"}),
 				resultSchema, false},
 			"Load sample",
-			[](Project& project, CommandContext& context)
+			[&model](Project& project, CommandContext& context)
 			{
-				const Json& parameters = context.parameters();
+				const Json parameters = withClip(model, project, context.parameters(), context);
 				Channel& channel = samplerChannel(project, parameters.at("track").get<ObjectId>());
 				const Section section = sectionOf(project, parameters);
 				if (parameters.value("keepSettings", false))

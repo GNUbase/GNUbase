@@ -705,7 +705,27 @@ TEST_CASE("sampler.create makes a sampler track from a clip, an event's section 
 	CHECK_THAT(reject(client, "sampler.create", {{"clip", session.clip}, {"start", 0}, {"end", 48001}}),
 		ContainsSubstring("within the clip"));
 	CHECK_THAT(reject(client, "sampler.create", {{"clip", 999}}), ContainsSubstring("no clip 999"));
-	CHECK_THAT(reject(client, "sampler.create", {{"start", 5}}), ContainsSubstring("need event or clip"));
+	CHECK_THAT(reject(client, "sampler.create", {{"start", 5}}), ContainsSubstring("need event, clip or path"));
+
+	// From a file, which goes into the pool, below a track and into a bus as track.add places tracks.
+	const Json project = run(client, "project.get");
+	Json output;
+	for (const Json& bus : project.at("busses"))
+		if (bus.at("direction") == "output")
+			output = bus.at("id");
+	const Json fromFile = run(client, "sampler.create",
+		{{"path", session.file.u8string()}, {"parent", 0}, {"index", 0}, {"output", output}, {"start", 4800}});
+	CHECK(fromFile.at("channel").at("sample") != session.clip);
+	CHECK(fromFile.at("channel").at("output") == output);
+	CHECK(instrumentParameter(fromFile.at("channel"), Sampler::Start) == 0.1);
+	const Json withFile = run(client, "project.get");
+	CHECK(withFile.at("tracks").at(0).at("id") == fromFile.at("track").at("id"));
+	CHECK(withFile.at("clips").size() == project.at("clips").size() + 1);
+	CHECK_THAT(reject(client, "sampler.create", {{"path", session.file.u8string()}, {"clip", session.clip}}),
+		ContainsSubstring("one of event, clip and path"));
+	CHECK(!run(client, "history.get").at("steps").empty());
+	run(client, "history.undo"); // the clip and media file go with the track
+	CHECK(run(client, "project.get").at("clips").size() == project.at("clips").size());
 
 	// One undo step each.
 	const size_t tracks = run(client, "project.get").at("tracks").size();
@@ -738,10 +758,21 @@ TEST_CASE("sampler.load swaps the sample, resetting the settings unless they are
 	CHECK(instrumentParameter(loaded.at("channel"), Sampler::Volume) == -1.0);
 	CHECK(instrumentParameter(loaded.at("channel"), Sampler::End) == 0.5);
 
+	// A file goes into the pool first, in the same undo step.
+	const size_t clips = run(client, "project.get").at("clips").size();
+	loaded = run(client, "sampler.load", {{"track", track}, {"path", session.file.u8string()}});
+	CHECK(loaded.at("channel").at("sample") != session.clip);
+	CHECK(run(client, "project.get").at("clips").size() == clips + 1);
+	run(client, "history.undo");
+	CHECK(run(client, "project.get").at("clips").size() == clips);
+	CHECK_THAT(
+		reject(client, "sampler.load", {{"track", track}, {"path", (session.folder.path() / "none.wav").u8string()}}),
+		ContainsSubstring("none.wav"));
+
 	const auto audio = run(client, "track.add", {{"type", "audio"}}).at("track").at("id").get<ObjectId>();
 	CHECK_THAT(reject(client, "sampler.load", {{"track", audio}, {"clip", session.clip}}),
 		ContainsSubstring("no sampler track"));
-	CHECK_THAT(reject(client, "sampler.load", {{"track", track}}), ContainsSubstring("either event or clip"));
+	CHECK_THAT(reject(client, "sampler.load", {{"track", track}}), ContainsSubstring("one of event, clip and path"));
 
 	// Another instrument drops the sample.
 	run(client, "channel.set", {{"channel", channel}, {"instrument", "testSynth"}});
