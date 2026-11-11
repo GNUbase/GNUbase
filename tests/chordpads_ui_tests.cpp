@@ -71,6 +71,12 @@ namespace
 
 		Json pads() { return call("chordPads.get").at("pads"); }
 
+		bool visible(const std::string& selector)
+		{
+			const Json found = elements(selector);
+			return found.size() == 1 && found[0].value("visible", false);
+		}
+
 		static std::string pad(int index) { return ".chord-pad[pad=\"" + std::to_string(index) + "\"]"; }
 
 		test::UiApp app{{1200, 700}};
@@ -208,4 +214,99 @@ TEST_CASE("the chord assistant suggests chords after the selected pad's and assi
 		window.app.waitUntil([&] { return window.elements(".chord-circle-outer .chord-suggestion").size() == 12; }));
 	CHECK(window.text(".chord-circle-outer .chord-suggestion[chord=\"G\"] .chord-suggestion-degree") == "V");
 	CHECK(window.hasClass(".chord-circle-inner .chord-suggestion[chord=\"Am\"]", "in-key"));
+}
+
+TEST_CASE("the pads show their lock and adaptive voicing, and Lock on several pads is one undo step", "[ui]")
+{
+	// Reference manual pp. 1353-1354: the adaptive voicing indicator and the padlock in the pad's upper right corner.
+	Window window;
+	window.open();
+	CHECK(window.visible(Window::pad(0) + " .chord-pad-adaptive"));
+	CHECK_FALSE(window.visible(Window::pad(0) + " .chord-pad-lock"));
+	const auto steps = window.call("history.get").at("steps").size();
+	window.click(Window::pad(0));
+	window.click(Window::pad(1), 1, {"ctrl"});
+	window.click("#chord-pads-lock");
+	REQUIRE(window.app.waitUntil([&] { return window.pads()[1].at("locked") == true; }));
+	CHECK(window.pads()[0].at("locked") == true);
+	CHECK(window.call("history.get").at("steps").size() == steps + 1);
+	REQUIRE(window.app.waitUntil([&] { return window.visible(Window::pad(0) + " .chord-pad-lock"); }));
+	CHECK_FALSE(window.visible(Window::pad(0) + " .chord-pad-adaptive"));
+
+	// Undone, the pads show it, as chordPads.changed tells them.
+	window.call("history.undo");
+	REQUIRE(window.app.waitUntil([&] { return !window.visible(Window::pad(0) + " .chord-pad-lock"); }));
+	CHECK(window.visible(Window::pad(1) + " .chord-pad-adaptive"));
+}
+
+TEST_CASE("Adaptive Voicing on a selection with a locked pad turns it on for the unlocked pads", "[ui]")
+{
+	Window window;
+	window.open();
+	window.call("chordPads.setPad", {{"pad", 0}, {"locked", true}}); // locking turns its adaptive voicing off
+	window.call("chordPads.setPad", {{"pad", 1}, {"adaptive", false}});
+	REQUIRE(window.app.waitUntil([&] { return window.visible(Window::pad(0) + " .chord-pad-lock"); }));
+	const auto steps = window.call("history.get").at("steps").size();
+	window.click(Window::pad(0));
+	window.click(Window::pad(1), 1, {"ctrl"});
+	window.click("#chord-pads-adaptive");
+	REQUIRE(window.app.waitUntil([&] { return window.pads()[1].at("adaptive") == true; }));
+	CHECK(window.pads()[0].at("adaptive") == false);
+	CHECK(window.pads()[0].at("locked") == true);
+	CHECK(window.call("history.get").at("steps").size() == steps + 1);
+}
+
+TEST_CASE("a value the engine refuses goes back, and the wheel over the root key changes it", "[ui]")
+{
+	Window window;
+	window.open();
+	// The remote range's start above its end is refused: the field shows the start it had.
+	window.click("#chord-pads-remoteStart", 2);
+	window.app.ui().key(std::nullopt, "Mod+A");
+	window.app.ui().text(std::nullopt, "60");
+	window.app.ui().key(std::nullopt, "Enter");
+	window.step();
+	CHECK(window.app.waitUntil(
+		[&] { return window.elements("#chord-pads-remoteStart")[0].at("attributes").value("value", "") == "36"; }));
+	CHECK(window.text("#chord-pads-remoteStart .valuefield-text") == "36");
+	CHECK(window.call("chordPads.get").at("remoteStart") == 36);
+
+	// The wheel over the root key: down the next key, up the previous one (p. 1364).
+	window.app.ui().wheel(std::nullopt, {"#chord-pads-root", 0, std::nullopt}, 0.0F, 1.0F);
+	window.step();
+	REQUIRE(window.app.waitUntil([&] { return window.call("chordPads.get").at("rootKey") == 1; }));
+	CHECK(window.pads()[0].at("chord") == "C");
+	// Once the panel shows the new key, two notches in one frame both count, before the engine answered the first.
+	REQUIRE(window.app.waitUntil(
+		[&] { return window.elements("#chord-pads-root")[0].at("attributes").value("value", "") == "1"; }));
+	window.app.ui().wheel(std::nullopt, {"#chord-pads-root", 0, std::nullopt}, 0.0F, -1.0F);
+	window.app.ui().wheel(std::nullopt, {"#chord-pads-root", 0, std::nullopt}, 0.0F, -1.0F);
+	window.step();
+	REQUIRE(window.app.waitUntil([&] { return window.call("chordPads.get").at("rootKey") == 11; }));
+}
+
+TEST_CASE("with step input, Left and Right move the step position by bars", "[ui]")
+{
+	// Reference manual p. 1369.
+	Window window;
+	window.open();
+	// The velocity shows that the zone has the new settings.
+	window.call("chordPads.set", {{"stepInput", true}, {"velocity", 90}});
+	REQUIRE(window.app.waitUntil(
+		[&] { return window.elements("#chord-pads-velocity")[0].at("attributes").value("value", "") == "90"; }));
+	window.click(Window::pad(0));
+	REQUIRE(window.app.waitUntil([&] { return window.call("chord.get").at("events").size() == 1; }));
+	const auto bar = window.call("chordPads.get").at("stepPosition").get<int64_t>();
+	CHECK(bar > 0);
+	window.app.ui().key(std::nullopt, "Right");
+	window.step();
+	REQUIRE(window.app.waitUntil([&] { return window.call("chordPads.get").at("stepPosition") == 2 * bar; }));
+	window.app.ui().key(std::nullopt, "Left");
+	window.app.ui().key(std::nullopt, "Left");
+	window.step();
+	REQUIRE(window.app.waitUntil([&] { return window.call("chordPads.get").at("stepPosition") == 0; }));
+	// A pad where a chord is replaces it.
+	window.click(Window::pad(4));
+	REQUIRE(window.app.waitUntil([&] { return window.call("chord.get").at("events")[0].at("chord") == "G"; }));
+	CHECK(window.call("chord.get").at("events").size() == 1);
 }

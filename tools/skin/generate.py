@@ -535,7 +535,8 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
                                      "border-left-width": f"{widths['hairline']}dp",
                                      "border-left-color": c["accent"]}),
         # The chord pads (docs/features/chord-pads.md): pads with their chord, degree and remote key, the selected,
-        # triggered and reference pads, and the chord assistant's suggestions by how well they fit
+        # triggered, locked and reference pads, the adaptive voicing indicator, and the chord assistant's suggestions
+        # by how well they fit
         (".chord-pad", {"color": c["text"], "background-color": c["surfaceRaised"],
                         "border-width": f"{widths['hairline']}dp", "border-color": c["border"],
                         "border-radius": f"{theme['radii']['small']}dp"}),
@@ -545,6 +546,8 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".chord-pad.reference", {"border-color": c["warning"]}),
         (".chord-pad.selected", {"border-color": c["text"]}),
         (".chord-pad.locked .chord-pad-key", {"color": c["accent2"]}),
+        (".chord-pad .chord-pad-adaptive", {"background-color": c["accent"],
+                                            "border-radius": f"{theme['radii']['round']}dp"}),
         (".chord-pad.triggered", {"background-color": mix(c["surfaceRaised"], c["accent"], .45)}),
         (".chord-suggestion", {"color": c["text"], "border-left-width": f"{widths['focus']}dp",
                                "border-left-color": c["border"]}),
