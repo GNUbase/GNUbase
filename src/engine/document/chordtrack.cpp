@@ -13,7 +13,6 @@
 #include "engine/document/rendersnapshot.h"
 #include "engine/document/serialize.h"
 #include "engine/engine.h"
-#include "platform/log.h"
 
 #include <algorithm>
 #include <array>
@@ -565,10 +564,13 @@ namespace gnubase::engine
 		{
 			const ChordEvent& event = chords.events[i];
 			const midi::Harmony& harmony = progression.at(i).second;
+			// Made from an audio event that is still there: undo of its removal brings the mark back.
+			const bool fromAudio = event.audioEvent != 0 && project.audioEvents.count(event.audioEvent) != 0;
 			events.push_back({{"id", event.id}, {"position", event.position.value},
 				{"start", time::toSamples(event.position, project.tempo, project.sampleRate)}, {"chord", event.text},
 				{"scale", harmony.chord.root < 0 ? std::string() : midi::scaleName(harmony.scale)},
-				{"pitches", harmony.voicing}, {"audioEvent", event.audioEvent}, {"detected", event.detected}});
+				{"pitches", harmony.voicing}, {"audioEvent", fromAudio ? event.audioEvent : ObjectId{0}},
+				{"detected", fromAudio ? event.detected : std::vector<std::string>()}});
 		}
 		Json scales = Json::array();
 		for (const ChordEvent& event : chords.scales)
@@ -810,7 +812,8 @@ namespace gnubase::engine
 				"more above lowest); shiftChords (Shift Chords, ticks, at most a quarter note either way): a negative "
 				"shift lets each chord event take the notes played that much before it; mute (Mute Chord Track): no "
 				"track follows, no Live Input and no auditioning; showScales (Show Scales), the scale lane; "
-				"recordEnable: the notes MIDI tracks record become chord events (reference manual p. 1345); audition "
+				"recordEnable: the notes that MIDI and instrument tracks record, or play while they only monitor, "
+				"during a recording become chord events, each take's over it (reference manual p. 1345); audition "
 				"(Select Track for Auditioning): a MIDI or instrument track, 0 for none; acousticFeedback: the chord "
 				"events' voicings play on it, and chord.audition plays there.",
 				objectSchema({{"octaveOffset", integerSchema}, {"adaptiveVoicings", booleanSchema},
@@ -1280,17 +1283,20 @@ namespace gnubase::engine
 					if (channel != 0 && !messages.empty())
 						context.call("midi.inject", {{"channel", channel}, {"messages", messages}});
 				};
-				// The held chord is let go even if its channel no longer takes the note-offs (its track was removed or
-				// another project loaded), so that a gone channel never blocks the next audition.
-				const auto held = std::exchange(*auditioned, {});
-				try
-				{
+				// The held chord's note-offs are skipped only if its channel is no longer a MIDI or instrument track's
+				// (its track was removed or another project loaded), so that a gone channel never blocks the next
+				// audition. Other failures fail the command with the chord still held, so that no note hangs.
+				const auto held = *auditioned;
+				const bool there = std::any_of(project.trackById.begin(), project.trackById.end(),
+					[&held](const auto& entry)
+					{
+						const Track& track = entry.second;
+						return track.channel == held.first &&
+							(track.type == TrackType::Midi || track.type == TrackType::Instrument);
+					});
+				if (there)
 					send(held.first, held.second, false);
-				}
-				catch (const CommandError& error)
-				{
-					logging::info("Chord track: the auditioned chord's note-offs weren't sent: {}", error.what());
-				}
+				*auditioned = {};
 				if (on)
 				{
 					const ObjectId channel = project.trackById.at(project.chords.audition).channel;
