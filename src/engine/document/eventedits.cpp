@@ -330,15 +330,6 @@ namespace gnubase::engine
 			item.position() = start;
 		}
 
-		// Takes a part out of its shared copies before its contents change for its own sake.
-		void detach(Project& project, MidiPart& part)
-		{
-			if (part.shared == 0)
-				return;
-			part.shared = 0;
-			renumber(project, part);
-		}
-
 		// A copy with a new id, unlocked and without a crossfade. A MIDI part's notes and controllers get new ids, or
 		// for a shared copy are the original's, with which it then shares them.
 		Item copyOf(Project& project, const Item& item, bool shared, CommandContext& context)

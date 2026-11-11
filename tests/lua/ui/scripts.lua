@@ -161,7 +161,7 @@ test.case("a script that writes a script and finds the scripts again keeps its u
 		os.remove(path)
 		ui.scripts()
 	end)
-	-- Finding the scripts again replaces every script command, the running one too.
+	-- Finding the scripts again while it runs leaves its command, as only new and gone scripts change (#934).
 	write("writer", string.format([[
 gnubase.track.add{type = "audio"}
 local file = assert(io.open(%q, "w"))
@@ -192,12 +192,12 @@ test.case("an engine command that a script runs as a key command is in the scrip
 end)
 
 test.case("scripts and console lines share globals of their own, apart from the documents'", function()
+	local window = openConsole() -- its document defines ScriptConsole
 	write("globals", "ScriptConsole = nil\nfromScript = 7")
 	ui.command{command = "script.globals"}
 	test.ok(ScriptConsole ~= nil)
 	test.equal(fromScript, nil)
 
-	local window = openConsole()
 	ui.click{window = window, selector = "#script-prompt"}
 	ui.text{window = window, text = 'print("from the script: " .. fromScript)'}
 	ui.key{window = window, keys = "Enter"}
