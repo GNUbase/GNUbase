@@ -1447,15 +1447,14 @@ TEST_CASE(
 	f.drag(100, 30, 300, 70);
 	CHECK(std::abs(f.display.view().start - 1.0) < 1e-9);
 	CHECK(std::abs(f.display.visibleLength() - 2.0) < 1e-9);
-	// A double click undoes the last zoom.
+	// A double click undoes the last zoom; its first click's zoom in isn't left to redo.
 	f.click(500, 60, {}, 2);
 	CHECK(f.display.view().scale == before.scale);
 	CHECK(std::abs(f.display.view().start - before.start) < 1e-9);
-	// Alt and a double click redoes it (reference manual p. 104).
+	// Alt and a double click redoes it (reference manual p. 104), and there is nothing more to redo.
 	f.click(500, 60, {"alt"}, 2);
 	CHECK(std::abs(f.display.view().start - 1.0) < 1e-9);
 	CHECK(std::abs(f.display.visibleLength() - 2.0) < 1e-9);
-	CHECK(f.display.redoZoom());
 	CHECK(!f.display.redoZoom());
 }
 
@@ -1767,8 +1766,21 @@ TEST_CASE("with the selection tools combined, a lane's upper half selects ranges
 	CHECK(f.display.selection() == std::vector<uint64_t>{f.part});
 	f.drag(150, 75, 250, 75);
 	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("position") == 4 * g_quarter; }));
-	// A lane less than two rows high has no upper half for ranges: a drag there is a rectangle (p. 253).
+	// The pointer shows which: the range selection tool's over the upper half.
+	Rml::Element* lanes = f.document.QuerySelector("event-lanes.events");
+	const auto pointerAt = [&f, lanes](double x, double y)
+	{
+		f.window.context().ProcessMouseMove(
+			static_cast<int>(lanes->GetAbsoluteLeft() + x), static_cast<int>(lanes->GetAbsoluteTop() + y), 0);
+		f.step();
+		return f.document.QuerySelector(".event-area")->GetAttribute<std::string>("pointer", "");
+	};
+	CHECK(pointerAt(150, 5) == "rangeSelection");
+	CHECK(pointerAt(150, 35) == "objectSelection");
+	// A lane less than two rows high has no upper half for ranges: a drag there is a rectangle (p. 253), and the
+	// pointer the object selection tool's.
 	f.display.setTrackHeight(f.call("project.get").at("tracks")[0].at("id").get<uint64_t>(), 30.0);
+	CHECK(pointerAt(150, 6) == "objectSelection");
 	f.drag(150, 5, 250, 10);
 	CHECK(!f.display.range().has_value());
 	CHECK(f.display.selection() == std::vector<uint64_t>{f.event});
@@ -1800,10 +1812,39 @@ TEST_CASE("with Snap to Zero Crossing, a range's edges move to zero crossings of
 	REQUIRE(f.waitUntil([&range] { return range().start == 292770; }));
 	CHECK(range().end == 311970);
 	// Where no audio plays, the range stays as dragged.
+	const auto answered = [&f] { return f.binding.waiting("snap.zeroCrossings") == 0; };
 	f.drag(750, 20, 800, 20);
-	REQUIRE(f.waitUntil([&f] { return f.binding.waiting("snap.zeroCrossings") == 0; }));
+	REQUIRE(f.waitUntil(answered));
 	CHECK(range().start == 360000);
 	CHECK(range().end == 384000);
+	// A click's empty range too: 6.2 seconds is frame 9630, the crossing at 9600.
+	f.click(620, 20);
+	REQUIRE(f.waitUntil([&range] { return range().start == 297570; }));
+	CHECK(range().end == 297570);
+	// A double click's range of an event keeps the event's edges; of a gap, those of the events around it.
+	f.click(650, 20, {}, 2);
+	REQUIRE(f.waitUntil(answered));
+	CHECK(range().start == 288000);
+	CHECK(range().end == 336000);
+	f.click(500, 20, {}, 2);
+	REQUIRE(f.waitUntil(answered));
+	CHECK(range().start == 120000);
+	CHECK(range().end == 288000);
+	// An edit right after the release waits for the answer, and edits the range where its edges went: Crop Range
+	// keeps frames 4800 to 24000 of the event.
+	f.automation.drag(std::nullopt, f.at(610, 20), f.at(650, 20), {});
+	REQUIRE(f.binding.waiting("snap.zeroCrossings") == 1);
+	f.display.actions().at("edit.cropRange")();
+	const auto cropped = [&f]
+	{
+		for (const Json& event : f.audioEvents())
+			if (event.at("id") != f.event)
+				return event;
+		return Json::object();
+	};
+	REQUIRE(f.waitUntil([&cropped] { return cropped().value("offset", 0) != 30; }));
+	CHECK(cropped().at("offset") == 4800);
+	CHECK(cropped().at("length") == 19200);
 }
 
 TEST_CASE("the object selection tool with Alt draws an empty MIDI part on an empty spot", "[unit]")

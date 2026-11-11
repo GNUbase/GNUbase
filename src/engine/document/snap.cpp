@@ -540,8 +540,9 @@ namespace gnubase::engine
 			"100ms, 1000ms; for timecode and userFrames subframe, quarterFrame, halfFrame, frame, twoFrames, second; "
 			"for samples 1sample, 10samples, 100samples, 44100samples. A grid type without a format switches to its "
 			"format (the frames to timecode unless userFrames is in use). grids: the grid type each format keeps, "
-			"by default bar, 100ms, frame, 100samples and frame. zeroCrossing: splitting and resizing audio events in "
-			"the project window cut where the audio crosses zero.";
+			"by default bar, 100ms, frame, 100samples and frame. zeroCrossing: splitting and resizing audio events, "
+			"and "
+			"the edges of selection ranges, in the project window go where the audio crosses zero.";
 
 		engine.registerCommand(
 			{"snap.get", 1, "The project's snap settings. " + settingsText,
@@ -649,9 +650,11 @@ namespace gnubase::engine
 		model.addEdit(engine,
 			{"snap.zeroCrossings", 1,
 				"Where Snap to Zero Crossing moves positions (project samples) on tracks, as the edges of a selection "
-				"range: each to the nearest point within 50 ms where the audio event playing there on the first of "
-				"tracks that has one crosses zero, inside the event. A position where no audio event plays, or "
-				"without a zero crossing near, stays. Returns positions in the same order.",
+				"range: each to the nearest point within 50 ms where the audio event playing there crosses zero, "
+				"inside the event, on the first of the tracks where one plays. The event that plays is unmuted, within "
+				"its audio part, which isn't muted, and where events overlap the one in front (event.toFront). A "
+				"position where no audio event plays, or without a zero crossing near, stays. Returns positions in "
+				"the same order.",
 				{{"type", "object"}, {"properties", {{"positions", integers}, {"tracks", integers}}},
 					{"required", {"positions", "tracks"}}, {"additionalProperties", false}},
 				{{"type", "object"}, {"properties", {{"positions", integers}}}, {"required", {"positions"}}}, true},
@@ -667,19 +670,34 @@ namespace gnubase::engine
 					std::optional<time::Samples> moved;
 					for (const ObjectId track : tracks)
 					{
+						// The event that plays there (#99): unmuted, within its audio part, which isn't muted, and of
+						// those the one in front.
+						const AudioEvent* playing = nullptr;
 						for (const auto& [id, event] : project.audioEvents)
 						{
-							if (event.track != track)
+							if (event.track != track || event.mute ||
+								(playing != nullptr && frontOf(event) < frontOf(*playing)))
 								continue;
-							const EventSpan span = eventSpan(project, event);
-							if (span.start < at && at < span.end)
+							EventSpan span = eventSpan(project, event);
+							if (const auto part = project.audioParts.find(event.part); part != project.audioParts.end())
 							{
-								moved = zeroCrossing(project, event, at, true);
-								break;
+								if (part->second.mute)
+									continue;
+								const time::Position& from = part->second.position;
+								span.start =
+									std::max(span.start, time::toSamples(from, project.tempo, project.sampleRate));
+								span.end = std::min(span.end,
+									time::toSamples({from.base, from.value + part->second.length}, project.tempo,
+										project.sampleRate));
 							}
+							if (span.start < at && at < span.end)
+								playing = &event;
 						}
-						if (moved)
+						if (playing != nullptr)
+						{
+							moved = zeroCrossing(project, *playing, at, true);
 							break;
+						}
 					}
 					positions.push_back(moved.value_or(at));
 				}
