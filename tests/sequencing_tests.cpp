@@ -402,6 +402,8 @@ TEST_CASE("muted, soloed-out and disabled MIDI tracks send their instrument no a
 	song.add(1, {100, 400, 60});
 	song.add(mutedPart, {200, 500, 64});
 	song.add(disabledPart, {300, 600, 67});
+	// The muted one's part plays a controller in the first block, which its mute keeps for when it is heard again.
+	song.addControllers(mutedPart, {{{"position", ticks(25)}, {"number", 1}, {"value", 1.0}}});
 	const auto lane = [&song](ObjectId track, const Json& target, double value)
 	{
 		run(song.client, "automationPoint.add",
@@ -423,14 +425,16 @@ TEST_CASE("muted, soloed-out and disabled MIDI tracks send their instrument no a
 	run(song.client, "transport.play");
 	CHECK(played() == ControllerBytes{{0xB0, 7, 64}});
 
-	// Soloing the track that plays silences the muted one even unmuted.
+	// Soloing the track that plays silences the muted one even unmuted, also what its mute kept.
 	run(song.client, "channel.set", {{"channel", channelOf(song.client, song.midi)}, {"solo", true}});
 	run(song.client, "channel.set", {{"channel", channelOf(song.client, muted)}, {"mute", false}});
+	CHECK(played().empty());
 	CHECK(played().empty());
 
 	// Heard or enabled again, a track sends them, each once: playback started while it was silent.
 	run(song.client, "channel.set", {{"channel", channelOf(song.client, song.midi)}, {"solo", false}});
-	CHECK(played() == ControllerBytes{{0xB0, 7, 32}, {0xB0, 10, 20}, {0xC0, 5}, {0xD0, 64}, {0xE0, 127, 95}});
+	CHECK(played() ==
+		ControllerBytes{{0xB0, 1, 127}, {0xB0, 7, 32}, {0xB0, 10, 20}, {0xC0, 5}, {0xD0, 64}, {0xE0, 127, 95}});
 	run(song.client, "track.set", {{"track", disabled}, {"enabled", true}});
 	CHECK(played() == ControllerBytes{{0xB0, 7, 95}, {0xB0, 10, 20}, {0xC0, 5}});
 }
@@ -647,8 +651,8 @@ TEST_CASE("unmuting a MIDI track sends the latest values of the controllers, pro
 	CHECK(captured(song.client) == expected);
 }
 
-TEST_CASE("a MIDI track that its mute button or a mute lane mutes chases its controllers into its mute, which sends "
-		  "them when it unmutes",
+TEST_CASE("a MIDI track that its mute button mutes chases its controllers into its mute, which sends them when it "
+		  "unmutes; one with a mute lane its instrument chases",
 	"[integration]")
 {
 	const bool lane = GENERATE(false, true);
@@ -674,14 +678,102 @@ TEST_CASE("a MIDI track that its mute button or a mute lane mutes chases its con
 	run(song.client, "audio.render", {{"frames", 64}});
 	run(song.client, "transport.locate", {{"position", 1000}});
 	run(song.client, "audio.render", {{"frames", 64}});
-	// The instrument chases its own track's controllers, not the muted one's.
-	CHECK(captured(song.client) == std::vector<Played>{{64, {0xB0, 7, 127}}});
+	// The instrument chases its own track's controllers, not the button-muted one's. A mute lane's track it chases
+	// by time with them, as without the lane: the chase doesn't know where the lane mutes.
+	if (lane)
+		CHECK(captured(song.client) == std::vector<Played>{{64, {0xE0}}, {64, {0xB0, 1, 127}}, {64, {0xB0, 7, 127}}});
+	else
+		CHECK(captured(song.client) == std::vector<Played>{{64, {0xB0, 7, 127}}});
 	if (lane)
 		run(song.client, "automationLane.set", {{"lane", muting}, {"read", false}});
 	else
 		run(song.client, "channel.set", {{"channel", channel}, {"mute", false}});
 	run(song.client, "audio.render", {{"frames", 64}});
-	CHECK(captured(song.client) == std::vector<Played>{{128, {0xE0}}, {128, {0xB0, 1, 127}}});
+	if (lane)
+		CHECK(captured(song.client).empty());
+	else
+		CHECK(captured(song.client) == std::vector<Played>{{128, {0xE0}}, {128, {0xB0, 1, 127}}});
+}
+
+namespace
+{
+	// The values of a controller the instrument got since the last call.
+	std::vector<int> controllerValues(Client& client, int number)
+	{
+		std::vector<int> values;
+		for (const Played& played : captured(client))
+			if (played.bytes.size() == 3 && played.bytes[0] == 0xB0 && played.bytes[1] == number)
+				values.push_back(played.bytes[2]);
+		return values;
+	}
+
+	// Plays from 0 and locates to position while playing; returns the values of the controller the jump sent.
+	std::vector<int> chasedTo(Song& song, int64_t position, int number)
+	{
+		run(song.client, "midi.capture", {{"start", true}});
+		run(song.client, "transport.play");
+		run(song.client, "audio.render", {{"frames", 64}});
+		captured(song.client);
+		run(song.client, "transport.locate", {{"position", position}});
+		run(song.client, "audio.render", {{"frames", 64}});
+		return controllerValues(song.client, number);
+	}
+}
+
+TEST_CASE(
+	"a locate chases the pedals by time across an instrument track and the MIDI tracks routed to it", "[integration]")
+{
+	const int blockSize = GENERATE(64, 333);
+	// Where the latest sustain pedal event before 4000 is, and what it is: the instrument track's own part (0) or the
+	// MIDI track's (1).
+	const int variant = GENERATE(0, 1, 2);
+	INFO("block size " << blockSize << ", variant " << variant);
+	Song song(blockSize);
+	const auto pedal = [&song](int part, int64_t position, double value)
+	{ song.addControllers(part, {{{"position", ticks(position)}, {"number", 64}, {"value", value}}}); };
+	int expected = 127;
+	if (variant == 0) // the instrument track's pedal goes down and up, the MIDI track's down later
+	{
+		pedal(0, 1000, 1.0);
+		pedal(0, 2000, 0.0);
+		pedal(1, 3000, 1.0);
+	}
+	else if (variant == 1) // the reverse
+	{
+		pedal(1, 1000, 1.0);
+		pedal(1, 2000, 0.0);
+		pedal(0, 3000, 1.0);
+	}
+	else // the MIDI track's pedal goes up after the instrument track's went down
+	{
+		pedal(0, 1000, 1.0);
+		pedal(1, 3000, 0.0);
+		expected = 0;
+	}
+	CHECK(chasedTo(song, 4000, 64) == std::vector<int>{expected});
+}
+
+TEST_CASE("a pedal event at the position a locate lands on keeps another MIDI track's older one from being chased",
+	"[integration]")
+{
+	Song song(64);
+	const int other = song.addMidiTrack().first;
+	song.addControllers(1, {{{"position", ticks(1000)}, {"number", 64}, {"value", 1.0}}});
+	song.addControllers(other, {{{"position", ticks(4000)}, {"number", 64}, {"value", 0.0}}});
+	CHECK(chasedTo(song, 4000, 64) == std::vector<int>{0});
+}
+
+TEST_CASE("a locate chases a MIDI track whose mute lane doesn't mute where it lands by time with its instrument track",
+	"[integration]")
+{
+	Song song(64);
+	song.addControllers(0, {{{"position", ticks(1000)}, {"number", 7}, {"value", 0.25}}}); // older
+	song.addControllers(1, {{{"position", ticks(2000)}, {"number", 7}, {"value", 1.0}}});
+	const ObjectId lane =
+		idOf(run(song.client, "automationLane.add", {{"track", song.midi}, {"target", {{"type", "mute"}}}}), "lane");
+	run(song.client, "automationPoint.add",
+		{{"lane", lane}, {"points", {{{"position", 0}, {"value", 0.0}}, {{"position", ticks(6000)}, {"value", 1.0}}}}});
+	CHECK(chasedTo(song, 4000, 7) == std::vector<int>{127});
 }
 
 TEST_CASE("a note that starts where another track's note of the same pitch ends sounds", "[integration]")

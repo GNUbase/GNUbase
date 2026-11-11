@@ -850,7 +850,21 @@ namespace gnubase::engine
 				state.midiDropped.forget(event);
 			return true;
 		};
-		if (!state.midiMuted && !state.midiDropped.waiting() &&
+		// The track's own chase, for its strip alone (chaseFrom): a mute that keeps it keeps the values for unmuting;
+		// otherwise the instrument chased them, which makes values dropped before stale.
+		const graph::EventBuffer* chased = m_chased && !m_chased->empty() ? m_chased.get() : nullptr;
+		const auto take = [this, &state, &track](const graph::ProcessEvent& event) noexcept
+		{
+			if (state.midiMuted && m_keepChase)
+			{
+				state.midiDropped.drop(event);
+				return;
+			}
+			track(event);
+			if (state.midiDropped.waiting())
+				state.midiDropped.forget(event);
+		};
+		if (!state.midiMuted && !state.midiDropped.waiting() && chased == nullptr &&
 			std::none_of(m_faderEvents.begin(), m_faderEvents.end(), isMute))
 		{
 			for (const graph::ProcessEvent& event : out)
@@ -879,7 +893,8 @@ namespace gnubase::engine
 					return true;
 				});
 		};
-		if (!state.midiMuted)
+		// A soloed-out or disabled track (m_silent) sends nothing: what its mute dropped waits until it is heard again.
+		if (!state.midiMuted && !m_silent)
 			resend(0);
 		const graph::ProcessEvent* mute = m_faderEvents.begin();
 		// Mutes or unmutes at the mute events up to offset. A mute ends the notes that sound and then releases the
@@ -924,17 +939,30 @@ namespace gnubase::engine
 				}
 				const bool unmutes = !muted && state.midiMuted;
 				state.midiMuted = muted;
-				if (unmutes)
+				if (unmutes && !m_silent)
 					resend(mute->offset);
+			}
+		};
+		// The chase comes at a jump, after the mute events at its sample and before the events there.
+		size_t chasedNext = 0;
+		const auto chaseUntil = [&](uint32_t offset) noexcept
+		{
+			for (; chased != nullptr && chasedNext < chased->size() && (*chased)[chasedNext].offset <= offset;
+				++chasedNext)
+			{
+				muteUntil((*chased)[chasedNext].offset);
+				take((*chased)[chasedNext]);
 			}
 		};
 		for (; next < m_sourceEvents.size(); ++next)
 		{
 			const graph::ProcessEvent& event = m_sourceEvents[next];
+			chaseUntil(event.offset);
 			muteUntil(event.offset);
 			if (pass(event))
 				put(event);
 		}
+		chaseUntil(UINT32_MAX);
 		muteUntil(UINT32_MAX);
 	}
 

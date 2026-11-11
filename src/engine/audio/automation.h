@@ -393,6 +393,15 @@ namespace gnubase::engine
 			m_render = std::move(tap);
 			m_renderPoint = point;
 		}
+		// Command thread, before the graph compiles: a routed MIDI track's own chase, which its source (the track's
+		// sequencer) fills in each block (MidiSequencer::stripChase). The strip doesn't send it on: its instrument
+		// chases the track with the others. It learns from it which pedals are down; with keep (the mute button
+		// mutes the track, so the instrument leaves it out), a mute keeps the values for unmuting.
+		void chaseFrom(std::shared_ptr<const graph::EventBuffer> chased, bool keep)
+		{
+			m_chased = std::move(chased);
+			m_keepChase = keep;
+		}
 
 		// Scales the block's first channels from gain to target, frame by frame, and keeps target as the gain; a gain
 		// below 0 (before the first block) starts at the target.
@@ -426,6 +435,8 @@ namespace gnubase::engine
 		bool m_tapFollowsMute = false;         // the fader's mute applies to m_tap
 		std::shared_ptr<PreFaderTap> m_render; // or none, while nothing renders from the channel
 		RenderPoint m_renderPoint = RenderPoint::Strip;
+		std::shared_ptr<const graph::EventBuffer> m_chased; // see chaseFrom
+		bool m_keepChase = false;
 	};
 
 	// The processor of a send node (graph::NodeKind::Send): a post-fader send's input is its channel's output, a
