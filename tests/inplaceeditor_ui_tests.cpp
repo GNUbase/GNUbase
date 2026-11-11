@@ -408,6 +408,11 @@ TEST_CASE("two in-place editors and the lower zone's key editor have menus and s
 	CHECK(viewOf("lower").at("selection").empty());
 	CHECK(f.display.selection().empty());
 	f.display.scrollVertically(0.0);
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			return std::abs(f.box(f.editor()).at("y").get<double>() - f.box(".event-area").at("y").get<double>()) < 1.0;
+		}));
 
 	// The toolbar's multiple part controls (reference manual p. 1260): Part Editing Mode and Activate Part for
 	// Editing, for the editor whose toolbar they are in.
