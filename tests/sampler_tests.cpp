@@ -1187,7 +1187,7 @@ namespace
 	class HeldRead
 	{
 	public:
-		HeldRead(Engine& engine, fs::path file) : m_state(std::make_shared<State>())
+		HeldRead(Engine& engine, const fs::path& file) : m_state(std::make_shared<State>())
 		{
 			m_state->file = file.filename();
 			engine.setSampleReader(
@@ -1279,6 +1279,7 @@ namespace
 	void addRepeatedNotes(Client& client, ObjectId track)
 	{
 		std::vector<std::array<int64_t, 3>> notes;
+		notes.reserve(16);
 		for (int64_t quarter = 0; quarter < 16; ++quarter)
 			notes.push_back({60, quarter, 1});
 		addNotes(client, track, notes);
