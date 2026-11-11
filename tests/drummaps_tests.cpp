@@ -1,17 +1,21 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Drum maps in the engine (#129, docs/features/drum-editor.md): the project's maps and the GM Map, drumMap.add, set,
-// remove, export and import, a track's map, playback through the O-notes, channels and mutes, input through the
-// I-notes, and the drum editor's content and Drum-Map Link. tests/drumeditor_ui_tests.cpp drives the drum editor in
-// the app.
+// remove, export and import, a track's map, playback and MIDI thru through the O-notes, channels and mutes, input
+// through the I-notes, O-Note Conversion, and the drum editor's content and Drum-Map Link.
+// tests/drumeditor_ui_tests.cpp drives the drum editor in the app.
 #include "engine/document/rendersnapshot.h"
 #include "engine/engine.h"
 #include "engine/time/tempomap.h"
+#include "platform/audio/device.h"
+#include "platform/midi/dummyport.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <fstream>
+#include <map>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -307,4 +311,156 @@ TEST_CASE("the drum editor is an editor content, and parts of a track with a dru
 	f.call("track.set", {{"track", f.track}, {"drumMap", f.gm()}});
 	CHECK(f.call("editor.open", {{"editor", "window"}, {"parts", {f.part}}}).at("content") == "drum");
 	CHECK(f.call("editor.set", {{"editor", "window"}, {"content", "key"}}).at("content") == "key");
+	// The drum editor's Pitch Visibility and its options, and Show Note Length (pp. 1223-1224, 1227, 1234).
+	Json view = f.call("editor.get", {{"editor", "window"}});
+	CHECK(view.at("pitchVisibility") == false);
+	CHECK(view.at("soundsWithEvents") == true);
+	CHECK(view.at("reverseSounds") == false);
+	CHECK(view.at("showNoteLength") == false);
+	view = f.call("editor.set",
+		{{"editor", "window"}, {"pitchVisibility", true}, {"soundsWithEvents", false}, {"reverseSounds", true},
+			{"showNoteLength", true}});
+	CHECK(view.at("pitchVisibility") == true);
+	CHECK(view.at("soundsWithEvents") == false);
+	CHECK(view.at("reverseSounds") == true);
+	CHECK(view.at("showNoteLength") == true);
+	// Not with the preference off; content still opens the drum editor.
+	f.call("editor.close", {{"editor", "window"}});
+	f.call("settings.set", {{"key", "editing.useDrumEditor"}, {"value", false}});
+	CHECK(f.call("editor.open", {{"editor", "window"}, {"parts", {f.part}}}).at("content") == "key");
+	f.call("editor.close", {{"editor", "window"}});
+	CHECK(f.call("editor.open", {{"editor", "window"}, {"parts", {f.part}}, {"content", "drum"}}).at("content") ==
+		"drum");
+}
+
+TEST_CASE("New Map and New Copy for a track give it the map in one undo step", "[unit]")
+{
+	Fixture f;
+	const Json added = f.call("drumMap.add", {{"copy", f.gm()}, {"track", f.track}}).at("map");
+	CHECK(added.at("name") == "GM Map Copy");
+	CHECK(f.trackJson().at("drumMap") == added.at("id"));
+	f.call("history.undo");
+	CHECK(f.maps().size() == 1);
+	CHECK(f.trackJson().at("drumMap") == 0);
+
+	const auto audio = f.call("track.add", {{"type", "audio"}}).at("track").at("id").get<uint64_t>();
+	CHECK_THAT(f.fails("drumMap.add", {{"track", audio}}), ContainsSubstring("MIDI and instrument"));
+	CHECK_THAT(f.fails("drumMap.add", {{"track", 999}}), ContainsSubstring("no track 999"));
+	CHECK(f.maps().size() == 1);
+}
+
+TEST_CASE("a GNUbase entry with a note pitch beyond 0-127 doesn't load", "[integration]")
+{
+	Fixture f;
+	f.call("note.add",
+		{{"part", f.part}, {"notes", {{{"position", 0}, {"length", 60}, {"pitch", 36}, {"velocity", 0.5}}}}});
+	const test::TempDir dir;
+	const std::string file = (dir.path() / "pitch.dawproject").u8string();
+	f.call("project.save", {{"path", file}});
+	std::map<std::string, std::string> entries = test::readZip(file);
+	Json extension = Json::parse(entries.at("gnubase.json"));
+	for (Json& part : extension.at("project").at("midiParts"))
+		for (Json& note : part.at("notes"))
+			note["pitch"] = 200;
+	entries["gnubase.json"] = extension.dump();
+	test::writeZip(file, entries);
+	// The GNUbase entry is damaged, so the project loads from project.xml, which has the note as it was.
+	f.call("project.load", {{"path", file}});
+	REQUIRE(f.notes().size() == 1);
+	CHECK(f.notes()[0].at("pitch") == 36);
+}
+
+TEST_CASE("O-Note Conversion gives notes their sounds' O-notes as pitches", "[unit]")
+{
+	Fixture f;
+	const auto id = f.call("drumMap.add", {{"copy", f.gm()}, {"track", f.track}}).at("map").at("id").get<uint64_t>();
+	f.call("drumMap.set", {{"map", id}, {"sounds", {{{"pitch", 36}, {"oNote", 24}}, {{"pitch", 38}, {"oNote", 50}}}}});
+	const Json added = f.call("note.add",
+		{{"part", f.part},
+			{"notes",
+				{{{"position", 0}, {"length", 60}, {"pitch", 36}, {"velocity", 0.5}},
+					{{"position", 120}, {"length", 60}, {"pitch", 38}, {"velocity", 0.5}}}}});
+	const auto pitches = [&f]
+	{
+		std::vector<int> result;
+		for (const Json& note : f.notes())
+			result.push_back(note.at("pitch").get<int>());
+		return result;
+	};
+	// The selected notes, or all of the part's.
+	const Json snare = added.at("notes").at(1).at("id");
+	f.call("midi.oNoteConversion", {{"parts", {f.part}}, {"notes", {snare}}});
+	CHECK(pitches() == std::vector<int>{36, 50});
+	f.call("midi.oNoteConversion", {{"parts", {f.part}}});
+	CHECK(pitches() == std::vector<int>{24, 50});
+	f.call("history.undo");
+	CHECK(pitches() == std::vector<int>{36, 50});
+	// Notes of a track without a map keep their pitch.
+	f.call("track.set", {{"track", f.track}, {"drumMap", 0}});
+	f.call("midi.oNoteConversion", {{"parts", {f.part}}});
+	CHECK(pitches() == std::vector<int>{36, 50});
+}
+
+namespace
+{
+	// The notes an instrument played: each its status byte and pitch.
+	std::vector<std::vector<int>> notesPlayed(const Json& capture)
+	{
+		std::vector<std::vector<int>> notes;
+		for (const Json& captured : capture.at("captured"))
+		{
+			const Json& bytes = captured.at("bytes");
+			const int status = bytes.at(0).get<int>();
+			if ((status & 0xF0) == 0x90 || (status & 0xF0) == 0x80)
+				notes.push_back({status, bytes.at(1).get<int>()});
+		}
+		return notes;
+	}
+}
+
+TEST_CASE("notes played live into a track with a drum map go through its I-notes and O-notes", "[integration]")
+{
+	// MIDI thru (reference manual pp. 1239-1240): an instrument track playing the note probe that monitors.
+	engine::Engine engine(audio::makeBackends(), {}, std::vector<std::unique_ptr<midi::Backend>>());
+	engine::Client client(engine);
+	const auto run = [&client](const std::string& command, Json parameters = Json::object())
+	{
+		const engine::Result result = client.call(command, std::move(parameters));
+		INFO(command << " failed: " << result.error);
+		REQUIRE(result.ok());
+		return result.value;
+	};
+	run("audio.setDevice", {{"blockSize", 64}, {"inputChannels", 0}});
+	const Json added = run("track.add", {{"type", "instrument"}});
+	const Json track = added.at("track").at("id");
+	const Json channel = added.at("channel").at("id");
+	run("channel.set", {{"channel", channel}, {"instrument", "noteProbe"}, {"monitor", true}});
+	const Json gm = run("project.get").at("drumMaps").at(0).at("id");
+	const auto id = run("drumMap.add", {{"copy", gm}, {"track", track}}).at("map").at("id");
+	// The bass drum (C1, 36) comes in from A1 (45) and plays B0 (35) on channel 4; the low tom gives 45 up.
+	run("drumMap.set",
+		{{"map", id},
+			{"sounds",
+				{{{"pitch", 36}, {"iNote", 45}, {"oNote", 35}, {"channel", 3}}, {{"pitch", 45}, {"iNote", 100}},
+					{{"pitch", 38}, {"mute", true}}, {{"pitch", 40}, {"channel", nullptr}}}}});
+	run("audio.render", {{"frames", 64}}); // the new graph
+	run("midi.capture", {{"start", true}});
+	const auto play = [&](int status, int pitch)
+	{
+		run("midi.inject",
+			{{"channel", channel},
+				{"messages",
+					{{{"position", 0}, {"bytes", {status, pitch, 100}}},
+						{{"position", 0}, {"bytes", {status - 0x10, pitch, 0}}}}}});
+		run("audio.render", {{"frames", 64}});
+		return notesPlayed(run("midi.capture"));
+	};
+	CHECK(play(0x90, 45) == std::vector<std::vector<int>>{{0x93, 35}, {0x83, 35}});
+	CHECK(play(0x90, 38).empty());                                                  // muted
+	CHECK(play(0x91, 40) == std::vector<std::vector<int>>{{0x91, 40}, {0x81, 40}}); // Any: the note's channel
+	CHECK(play(0x90, 42) == std::vector<std::vector<int>>{{0x99, 42}, {0x89, 42}}); // the GM Map's channel 10
+	// Without the map they play as they come in.
+	run("track.set", {{"track", track}, {"drumMap", 0}});
+	run("audio.render", {{"frames", 64}});
+	CHECK(play(0x90, 45) == std::vector<std::vector<int>>{{0x90, 45}, {0x80, 45}});
 }

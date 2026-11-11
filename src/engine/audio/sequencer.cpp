@@ -586,9 +586,21 @@ namespace gnubase::engine
 		if (event.type == Type::NoteOn)
 		{
 			const uint16_t before = m_inputTo[from];
-			auto pitch = static_cast<uint8_t>(liveInputPitch(sequence.liveInput, position, event.key % 128));
-			m_inputTo[from] = midi::modifyNote(modifiers, midi::noteSeed(0, ++m_random), pitch, event.velocity)
-				? static_cast<uint16_t>(((event.channel % 16) * 128) + pitch)
+			// A drum map plays the sound's O-note on its channel (MIDI thru, p. 1239), else Live Input moves it.
+			int channel = event.channel % 16;
+			bool plays = true;
+			uint8_t pitch = 0;
+			if (sequence.drumInput.size() == static_cast<size_t>(g_drumSounds))
+			{
+				const LiveDrumNote& drum = sequence.drumInput[event.key % 128];
+				pitch = drum.key;
+				channel = drum.channel >= 0 ? drum.channel : channel;
+				plays = !drum.mute;
+			}
+			else
+				pitch = static_cast<uint8_t>(liveInputPitch(sequence.liveInput, position, event.key % 128));
+			m_inputTo[from] = plays && midi::modifyNote(modifiers, midi::noteSeed(0, ++m_random), pitch, event.velocity)
+				? static_cast<uint16_t>((channel * 128) + pitch)
 				: static_cast<uint16_t>(g_notes);
 			// The key is held and its note goes elsewhere this time: the key's one note-off can end only one of them.
 			if (m_inputDown[from] && before != g_notes && before != m_inputTo[from] && m_inputHeld[before])
@@ -604,6 +616,7 @@ namespace gnubase::engine
 		if (to == g_notes)
 			return false;
 		event.key = static_cast<uint8_t>(to % 128);
+		event.channel = static_cast<uint8_t>(to / 128);
 		return true;
 	}
 
