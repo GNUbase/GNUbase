@@ -1016,6 +1016,22 @@
 	{
 		background-color: #5ea7b3;
 	}
+	.sampler-handle
+	{
+		background-color: #b7bbc0;
+	}
+	.sampler-handle.root
+	{
+		background-color: #5ea7b3;
+	}
+	.sampler-handle.dragged
+	{
+		background-color: #f3f4f5;
+	}
+	.sampler-message.error
+	{
+		color: #d76a73;
+	}
 	.ds-display, .sa-graph
 	{
 		background-color: #1e2022;

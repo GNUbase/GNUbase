@@ -700,6 +700,12 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".sampler-key.outside", {"background-color": c["textMuted"]}),
         (".sampler-key.black.outside", {"background-color": mix(c["background"], c["textMuted"], .4)}),
         (".sampler-key.root", {"background-color": c["accent"]}),
+        # Its keyboard's handles: the root key's in the accent, the key range's muted, the one dragged lit; and the
+        # toolbar's message, why a load or Normalize Sample failed, standing out
+        (".sampler-handle", {"background-color": c["textMuted"]}),
+        (".sampler-handle.root", {"background-color": c["accent"]}),
+        (".sampler-handle.dragged", {"background-color": c["text"]}),
+        (".sampler-message.error", {"color": c["danger"]}),
         # The audio functions (docs/features/audio-functions.md): Detect Silence's sections along the event, the
         # Spectrum Analyzer's bars with the one D is measured from in the second accent, the Statistics' headings
         (".ds-display, .sa-graph", {"background-color": c["surface"]}),

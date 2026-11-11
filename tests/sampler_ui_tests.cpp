@@ -7,6 +7,8 @@
 
 #include "engine/engine.h"
 #include "ui/automation.h"
+#include "ui/docking.h"
+#include "ui/shell.h"
 #include "ui/tracklist.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -17,6 +19,7 @@
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -251,4 +254,100 @@ TEST_CASE("a change in a value field and a drag of its marker are two undo steps
 				static_cast<int>(y)}});
 	REQUIRE(f.app.waitUntil([&] { return std::abs(f.parameter("Start") - 0.5) < 0.02; }));
 	CHECK(f.app.call("history.get").at("steps").size() == steps + 2);
+}
+
+TEST_CASE("the sampler panel shows why a sample didn't load or normalize", "[ui]")
+{
+	Fixture f;
+	f.open();
+	CHECK(!f.has("#sampler-message", "error"));
+	const std::filesystem::path text = f.folder.path() / "notes.txt";
+	std::ofstream(text) << "not audio";
+	f.app.ui().drop(std::nullopt, of(".sampler-display"), {text});
+	REQUIRE(f.app.waitUntil([&] { return f.has("#sampler-message", "error"); }));
+	CHECK(!f.elements("#sampler-message").at(0).value("text", "").empty());
+
+	// A file that loads clears the message.
+	f.app.ui().drop(std::nullopt, of(".sampler-display"), {f.other});
+	REQUIRE(f.app.waitUntil([&] { return !f.has("#sampler-message", "error"); }));
+	CHECK(f.elements("#sampler-message").at(0).value("text", "").empty());
+
+	// Normalize Sample is refused for a silent sample.
+	test::Audio silence;
+	silence.samples.assign(4800, 0.0f);
+	const std::filesystem::path silent = f.folder.path() / "silent.wav";
+	test::writeWav(silent, silence);
+	f.app.ui().drop(std::nullopt, of(".sampler-display"), {silent});
+	REQUIRE(f.app.waitUntil([&] { return f.elements("#sampler-file").at(0).value("text", "") == "silent"; }));
+	f.click("#sampler-normalize");
+	REQUIRE(f.app.waitUntil([&] { return f.has("#sampler-message", "error"); }));
+	CHECK(f.elements("#sampler-message").at(0).value("text", "").find("silent") != std::string::npos);
+}
+
+TEST_CASE("Lock Parameter Settings and the normalization level last when the panel is made anew", "[ui]")
+{
+	Fixture f;
+	f.open();
+	const auto setting = [&] { return f.app.call("settings.get", {{"key", "ui.samplerPanel"}}).at("value"); };
+	f.click("#sampler-lock");
+	REQUIRE(f.app.waitUntil([&] { return setting().value("lockParameters", false); }));
+	f.app.ui().wheel(std::nullopt, of("#sampler-level"), 0.0F, 1.0F);
+	REQUIRE(f.app.waitUntil([&] { return setting().value("normalizeLevel", 0.0) < 0.0; }));
+	const double level = setting().at("normalizeLevel").get<double>();
+
+	// In a window of its own the panel is a new one, with the lock and the level as they were.
+	f.app.appUi().docking().setFloating("sampler", true);
+	const ui::Window* window = nullptr;
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			window = f.app.appUi().docking().windowOf("sampler");
+			return window != nullptr &&
+				!f.app.ui().dom(window->id(), "#sampler-lock[checked]", 0).at("elements").empty();
+		}));
+	REQUIRE(f.app.waitUntil([&] { return !f.app.ui().dom(window->id(), "[parameter]", 0).at("elements").empty(); }));
+	const Json field = f.app.ui().dom(window->id(), "#sampler-level", 0).at("elements").at(0);
+	CHECK_THAT(std::stod(field.at("attributes").at("value").get<std::string>()), WithinAbs(level, 1e-3));
+	// Normalize Sample brings the sine's peak, half the full level, to the level.
+	f.app.ui().click(window->id(), of("#sampler-normalize"), ui::MouseButton::Left, 1, {});
+	REQUIRE(f.app.waitUntil([&] { return std::abs(f.parameter("Sample gain") - (6.02 + level)) < 0.1; }));
+}
+
+TEST_CASE("the keyboard's handles drag the root key and the key range", "[ui]")
+{
+	Fixture f;
+	f.open();
+	const Json keyboard = f.box("#sampler-keyboard");
+	const double x = keyboard.at("x").get<double>();
+	const double key = keyboard.at("width").get<double>() / 128.0;
+	const auto at = [&](int pitch) { return static_cast<int>(x + ((pitch + 0.5) * key)); };
+	const auto centre = [&](const std::string& selector)
+	{
+		const Json handle = f.box(selector);
+		return handle.at("x").get<double>() + (handle.at("width").get<double>() / 2);
+	};
+	const auto drag = [&](const std::string& handle, int pitch)
+	{
+		const std::string selector = ".sampler-handle[handle=" + handle + "]";
+		const Json box = f.box(selector);
+		const int y = static_cast<int>(box.at("y").get<double>() + (box.at("height").get<double>() / 2));
+		f.app.ui().drag(std::nullopt, of(selector), {"", 0, ui::Point{at(pitch), y}});
+	};
+	CHECK_THAT(centre(".sampler-handle[handle=root]"), WithinAbs(at(60), 2.0));
+
+	// A drag of the root key handle is one undo step.
+	const size_t steps = f.app.call("history.get").at("steps").size();
+	drag("root", 50);
+	REQUIRE(f.app.waitUntil([&] { return f.parameter("Root key") == 50.0; }));
+	CHECK(f.app.call("history.get").at("steps").size() == steps + 1);
+	REQUIRE(f.app.waitUntil([&] { return std::abs(centre(".sampler-handle[handle=root]") - at(50)) < 2.0; }));
+	CHECK(f.has(".sampler-key[key=\"50\"]", "root"));
+
+	// The key range's handles, the high one not below the low one.
+	drag("low", 40);
+	REQUIRE(f.app.waitUntil([&] { return f.parameter("Key low") == 40.0; }));
+	REQUIRE(f.app.waitUntil([&] { return f.has(".sampler-key[key=\"39\"]", "outside"); }));
+	drag("high", 30);
+	REQUIRE(f.app.waitUntil([&] { return f.parameter("Key high") == 40.0; }));
+	REQUIRE(f.app.waitUntil([&] { return f.has(".sampler-key[key=\"41\"]", "outside"); }));
 }

@@ -48,22 +48,32 @@ How it plays:
 - Up to 128 voices; a new note beyond that takes the oldest. Monophonic plays one note: a note stolen while still held
   plays again when the newer one ends, and with Legato a new note only changes the pitch while the envelope runs on
   (p. 715). The note taken over fades out in 5 ms instead of stopping with a click, and notes still held from before
-  Monophonic came on (automation can switch it) end with their note-offs.
+  Monophonic came on (automation can switch it) end with their note-offs; a legato note fades them out like any other
+  monophonic note and takes over only the latest.
 - Each voice has its own filter, whose cutoff rises with the key by the key follow share (100 %: exactly with the
   pitch), after Drive's tanh saturation; Drive belongs to the filter section (p. 722) and is off with the filter.
-- Hot swap: the audio engine reads the sample's file on the command thread when the channel's sample changes and
-  hands it to the sampler that plays without a lock (`rt::SnapshotPublisher`); voices keep playing on the new one.
-  It lets go of the sample before the next time it attaches the graph, once the audio thread has moved on.
+- Loading (#1122): when a channel's sample changes, and for every sampler when a project loads, the audio engine's
+  sample loader (`SampleLoader`, `src/engine/audio/sampleloader.h`) reads the file on a thread of its own, so a long
+  sample holds up no command. Once it is read the engine runs `audio.updateSamples` on its own, which hands it to the
+  samplers that wait for it. Until then a sampler plays the sample before, or nothing if it had none. Starting
+  playback and locating wait for the samples as for the audio tracks' streams (up to 2 seconds), and offline renders
+  (`audio.render`, `mixdown.export`, render in place) wait until every sample is there, so they come out the same
+  every time.
+- Hot swap: the sampler takes the new sample without a lock (`rt::SnapshotPublisher`); voices keep playing on the new
+  one. It lets go of the sample before by the next update, once the audio thread has moved on.
 - Samples are read through `processors::sharedSample`, which reads a file once while something holds its sample:
   samplers that play the same clip and `sampler.normalize` share it. A file that changed (its time or size) is read
-  again. The first read still holds up the command thread; loading in the background is left for later.
+  again. `sampler.normalize` still reads a file that no sampler holds on the command thread.
 
 Not yet: warped (time-stretched) playback with sync to the tempo, the quality modes, transient, grid and manual
 slicing with fades and the slices' MIDI phrase, the pitch and filter envelopes and a multi-node amp envelope, the LFOs,
 glide, sample fades and the loop crossfade, Trim Sample, MIDI Reset, Hot Swap Preview Sample, the sampler panel's own
 undo history and A/B settings, loading by dragging an event or a MIDI part onto the panel, a pool folder of the
 sampler's samples (p. 710), and transferring the sample to another instrument, which needs a plugin wrapper extension
-for samples. The first read of a long sample still holds up the command thread.
+for samples. The panel's bars that move Start and End or the loop together, the display's ruler and zoom, the
+toolbar's Read/Write Automation, event received indicator, Snap to Zero Crossing and preset section, and the Add Track
+dialog's Input Routing and Event Type, which no page of it has yet ([add-track.md](add-track.md)), are open too
+(#1122).
 
 ## In the UI
 
@@ -79,8 +89,12 @@ Sampler, that Project > Show Sampler (`window.sampler`) shows; like every panel 
 root `.sampler-panel` has the class `.empty`):
 
 - **Toolbar**: Import Audio File (`#sampler-import`, a file dialog, then `sampler.load` with `path`), the clip's name
-  (`#sampler-file`), Normalize Sample (`#sampler-normalize`, `sampler.normalize`) and Lock Parameter Settings
-  (`#sampler-lock`), which loads keep the settings with (`keepSettings`).
+  (`#sampler-file`), the Normalization Level (`#sampler-level`, -96 to 0 dBFS, p. 735), Normalize Sample
+  (`#sampler-normalize`, `sampler.normalize` with that `level`) and Lock Parameter Settings (`#sampler-lock`), which
+  loads keep the settings with (`keepSettings`). The lock and the level are the user setting `ui.samplerPanel`
+  (`lockParameters`, `normalizeLevel`), so they stay as they were when the panel is made anew, e.g. in a window of its
+  own. Why a load (a file that isn't audio) or Normalize Sample (a silent or missing sample) failed shows in the
+  toolbar's message (`#sampler-message`, `.error`) until the next one succeeds or another track is shown.
 - **Waveform display** (`#sampler-display`): the sample's waveform from `media.peaks`, its parts before Start and
   after End shaded (`.sampler-outside`), the loop (`.sampler-loop`) and the markers (`.sampler-marker`, attribute
   `marker`: Start, End, Loop start, Loop end), placed in percent of the sample and mirrored when Reverse is on. Without
@@ -91,7 +105,9 @@ root `.sampler-panel` has the class `.empty`):
   drop-down list for those with options, a value field for the others, each gesture one undo step (`parameter.set`
   through `EngineBinding::sendStep`).
 - **Keyboard** (`.sampler-key`, attribute `key`): the root key `.root`, keys outside the key range `.outside`; a click
-  sets the root key.
+  sets the root key. Above it the root key handle and the key range's handles (`.sampler-handle`, attribute `handle`:
+  root, low, high; p. 730) sit on their keys; dragging one sets its key, one undo step per drag, and the range's low
+  key stays at or below its high one.
 - A file dropped on the panel loads into the sampler (`sampler.load` with `path`, p. 710).
 
 ## Tests
@@ -105,4 +121,6 @@ loop mode, slices and the filter without allocating; `tests/sampleeditor_ui_test
 `tests/audiofunctions_ui_tests.cpp` create sampler tracks from the UI; `tests/sampler_ui_tests.cpp` drives the sampler
 panel (following the selection, toggles, value fields, markers, the keyboard, dropped files, Normalize Sample) and the
 Add Track dialog's Sampler page; `tests/backup_tests.cpp` backs one up with
-`removeUnused` and `minimize`.
+`removeUnused` and `minimize`. #1122 added the sample loader's own test and a legato note after Monophonic came on to
+`tests/sampler_tests.cpp`, and the load and Normalize Sample messages, the lock and level as a user setting and the
+keyboard's handles to `tests/sampler_ui_tests.cpp`.

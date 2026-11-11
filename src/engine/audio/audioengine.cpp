@@ -260,7 +260,10 @@ namespace gnubase::engine
 		cue.enter = enter;
 		m_playback.cue(cue);
 		if (wait)
+		{
 			m_playback.waitUntilBuffered(g_startWait);
+			waitForSamples(g_startWait);
+		}
 	}
 
 	void AudioEngine::startCueing()
@@ -338,6 +341,7 @@ namespace gnubase::engine
 		const audio::MidiBuffer midiIn;
 		audio::MidiBuffer midiOut(g_offlineMidi);
 		uint64_t position = m_device->position();
+		waitForSamples(g_offlineWait); // every sampler plays its sample from the first block
 		for (uint64_t done = 0; done < frames;)
 		{
 			const auto block = static_cast<uint32_t>(std::min<uint64_t>(format.blockSize, frames - done));
@@ -707,13 +711,22 @@ namespace gnubase::engine
 					instrument.channel =
 						std::make_shared<InstrumentChannel>(sequencer, std::move(played), ++m_instrumentSerial);
 				}
-				// The sampler swaps its sample while it plays (sample hot swap), reading the new one here, and lets go
-				// of the one before once the audio thread has moved on, by the next time the graph is attached.
+				// The sampler swaps its sample while it plays (sample hot swap). The sample loader reads a new one on
+				// its own thread, and the sampler plays the one before, or nothing, until updateSamples hands it over
+				// (#1122). The sampler lets go of a sample once the audio thread has moved on, by the next update.
 				if (instrument.sampler)
+				{
 					instrument.sampler->collect();
-				if (instrument.sampler && instrument.sample != channel.sample)
-					instrument.sampler->setSample(channel.sample.empty() ? std::make_shared<const processors::Sample>()
-																		 : processors::sharedSample(channel.sample));
+					if (channel.sample.empty() && !instrument.loaded.empty())
+					{
+						instrument.sampler->setSample(std::make_shared<const processors::Sample>());
+						instrument.loaded.clear();
+					}
+					else if (channel.sample != instrument.loaded)
+					{
+						m_sampleLoader.request(channel.sample);
+					}
+				}
 				instrument.sample = channel.sample;
 				instrument.sources = from;
 				processor = instrument.channel;
@@ -726,6 +739,41 @@ namespace gnubase::engine
 		m_sequencers = std::move(sequencers);
 		m_inputTransformers = std::move(transformers);
 		m_instruments = std::move(instruments);
+		updateSamples();
+	}
+
+	void AudioEngine::updateSamples()
+	{
+		std::set<std::string> waiting;
+		for (auto& entry : m_instruments)
+		{
+			Instrument& instrument = entry.second;
+			if (!instrument.sampler || instrument.loaded == instrument.sample)
+				continue;
+			if (std::shared_ptr<const processors::Sample> sample = m_sampleLoader.sample(instrument.sample))
+			{
+				instrument.sampler->collect();
+				instrument.sampler->setSample(std::move(sample));
+				instrument.loaded = instrument.sample;
+			}
+			else
+			{
+				waiting.insert(instrument.sample);
+			}
+		}
+		m_sampleLoader.keepOnly(waiting);
+	}
+
+	void AudioEngine::waitForSamples(std::chrono::milliseconds timeout)
+	{
+		m_sampleLoader.waitUntilRead(timeout);
+		updateSamples();
+	}
+
+	void AudioEngine::postSampleUpdate()
+	{
+		if (m_engine != nullptr && !m_updatingSamples.exchange(true))
+			m_engine->post("audio.updateSamples");
 	}
 
 	void AudioEngine::attachStrips(const RenderSnapshot& snapshot, graph::GraphDesc& desc)
@@ -2210,6 +2258,21 @@ namespace gnubase::engine
 					rebuild();
 					announceSlots(&context);
 				}
+				context.leaveOutOfLog();
+				return Json::object();
+			});
+		engine.registerCommand(
+			{"audio.updateSamples", 1,
+				"Hands the samples of sampler tracks that were read since to the samplers that wait for them. The "
+				"engine reads a sampler's sample on a thread of its own when it changes or a project loads, and runs "
+				"this on its own once the file is read; until then the sampler plays the sample before, or nothing. "
+				"Starting playback and offline renders wait for the samples. Left out of engine.commandLog.",
+				noParameters(), {{"type", "object"}}, false},
+			[this](CommandContext& context)
+			{
+				// Reset first: a file read meanwhile posts again.
+				m_updatingSamples = false;
+				updateSamples();
 				context.leaveOutOfLog();
 				return Json::object();
 			});

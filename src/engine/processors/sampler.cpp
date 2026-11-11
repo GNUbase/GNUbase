@@ -227,9 +227,13 @@ namespace gnubase::engine::processors
 		{
 			m_heldSince[note] = m_notes + 1;
 			Voice* playing = monophonicVoice();
-			// Legato: a note played while another is held only changes the pitch; the envelopes run on.
+			// Legato: a note played while another is held only changes the pitch; the envelopes run on. Other notes,
+			// held from before monophonic mode or still releasing, fade out as without legato.
 			if (playing != nullptr && m_values[Legato] >= 0.5 && playing->held && !slices)
 			{
+				for (Voice& voice : m_voices)
+					if (voice.active && &voice != playing)
+						fadeOut(voice);
 				playing->note = note;
 				playing->channel = channel;
 				playing->started = ++m_notes;

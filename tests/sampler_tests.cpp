@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "engine/audio/sampleloader.h"
 #include "engine/document/document.h"
 #include "engine/engine.h"
 #include "engine/graph/graph.h"
@@ -13,9 +14,13 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
@@ -395,6 +400,28 @@ TEST_CASE("notes held from polyphonic mode end when monophonic mode is switched 
 	CHECK(sampler.activeVoices() == 0);
 }
 
+TEST_CASE("a legato note after switching to monophonic mode ends the other notes held from polyphonic mode", "[unit]")
+{
+	Sampler sampler;
+	sampler.setSample(ramp(32));
+	Bench bench(sampler);
+	bench.add(parameter(0, Sampler::LoopMode, static_cast<double>(Sampler::Loop::Continuous)));
+	bench.add(parameter(0, Sampler::LoopStart, 0.25));
+	bench.add(parameter(0, Sampler::LoopEnd, 0.5));
+	bench.add(note(0, true, 60));
+	bench.add(note(0, true, 64));
+	bench.run(1);
+	CHECK(sampler.activeVoices() == 2);
+	bench.add(parameter(0, Sampler::Monophonic, 1.0));
+	bench.add(parameter(0, Sampler::Legato, 1.0));
+	bench.add(note(0, true, 67));
+	bench.run(5); // the note it doesn't take over fades out in 5 ms (240 frames)
+	CHECK(sampler.activeVoices() == 1);
+	bench.add(note(0, false, 67));
+	bench.run(1);
+	CHECK(sampler.activeVoices() == 0);
+}
+
 TEST_CASE("a key released in polyphonic mode doesn't play again when monophonic mode is back", "[unit]")
 {
 	Sampler sampler;
@@ -495,6 +522,48 @@ TEST_CASE("sharedSample reads a file once while something uses its sample", "[un
 	first.reset();
 	CHECK(kept.expired());
 	CHECK(processors::sharedSample((folder.path() / "missing.wav").u8string())->frames() == 0);
+}
+
+TEST_CASE("the sample loader reads each file once on a thread of its own", "[unit]")
+{
+	std::mutex mutex;
+	std::condition_variable wake;
+	bool open = false;
+	std::atomic<int> reads{0};
+	std::atomic<int> loaded{0};
+	SampleLoader loader([&] { ++loaded; },
+		[&](const std::string& path)
+		{
+			std::unique_lock lock(mutex);
+			wake.wait(lock, [&] { return open; });
+			++reads;
+			auto sample = std::make_shared<Sample>();
+			sample->left.assign(path.size(), 0.5f);
+			return std::shared_ptr<const Sample>(std::move(sample));
+		});
+	// Asking returns while the file is read; a file asked for again is read once.
+	loader.request("a.wav");
+	loader.request("a.wav");
+	loader.request("bb.wav");
+	CHECK(loader.sample("a.wav") == nullptr);
+	CHECK(!loader.waitUntilRead(std::chrono::milliseconds(20)));
+	{
+		const std::scoped_lock lock(mutex);
+		open = true;
+	}
+	wake.notify_all();
+	REQUIRE(loader.waitUntilRead(std::chrono::seconds(30)));
+	CHECK(reads == 2);
+	CHECK(loaded == 2);
+	const std::shared_ptr<const Sample> a = loader.sample("a.wav");
+	REQUIRE(a != nullptr);
+	CHECK(a->frames() == 5);
+	loader.keepOnly({"bb.wav"});
+	CHECK(loader.sample("a.wav") == nullptr);
+	CHECK(loader.sample("bb.wav") != nullptr);
+	loader.request("a.wav"); // read again once let go of
+	REQUIRE(loader.waitUntilRead(std::chrono::seconds(30)));
+	CHECK(reads == 3);
 }
 
 TEST_CASE("the sampler's amp section: volume, pan, sample gain, velocity and envelope", "[unit]")

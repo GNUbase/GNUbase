@@ -54,6 +54,25 @@ namespace gnubase::ui
 		// The markers of the waveform display and the parameters they set (p. 717).
 		constexpr std::array<const char*, 4> g_markers = {"Start", "End", "Loop start", "Loop end"};
 
+		// The keyboard's handles and the parameters they set (p. 730).
+		struct Handle
+		{
+			const char* id;
+			const char* parameter;
+		};
+		constexpr std::array<Handle, 3> g_handles = {
+			Handle{"low", "Key low"}, Handle{"high", "Key high"}, Handle{"root", "Root key"}};
+
+		const Handle* handleOf(const std::string& id)
+		{
+			for (const Handle& handle : g_handles)
+				if (id == handle.id)
+					return &handle;
+			return nullptr;
+		}
+
+		constexpr int g_keys = 128;
+
 		std::string encode(const std::string& text)
 		{
 			return Rml::StringUtilities::EncodeRml(text);
@@ -120,9 +139,14 @@ namespace gnubase::ui
 		  m_root(element.GetObserverPtr())
 	{
 		std::string keys;
-		for (int key = 0; key < 128; ++key)
+		for (int key = 0; key < g_keys; ++key)
 			keys += R"(<div class="sampler-key)" + std::string(isBlack(key) ? " black" : "") + R"(" key=")" +
 				std::to_string(key) + R"("/>)";
+		std::string handles;
+		for (const Handle& handle : g_handles)
+			handles += std::string(R"(<div class="sampler-handle)") +
+				(std::string(handle.id) == "root" ? " root" : "") + R"(" handle=")" + handle.id + R"(" title=")" +
+				handle.parameter + R"("/>)";
 		std::string markers;
 		for (const char* marker : g_markers)
 			markers += std::string(R"(<div class="sampler-marker)") +
@@ -134,12 +158,16 @@ namespace gnubase::ui
 			R"(<div class="sampler-toolbar">)"
 			R"(<button id="sampler-import" title="Import Audio File">Import</button>)"
 			R"(<span id="sampler-file" class="sampler-file"/>)"
+			R"(<span id="sampler-message" class="sampler-message"/>)"
+			R"(<valuefield id="sampler-level" class="sampler-level" title="Normalization Level" min="-96" max="0")"
+			R"( default="0" value="0" decimals="1" unit="dB"/>)"
 			R"(<button id="sampler-normalize" title="Normalize Sample">Normalize</button>)"
 			R"(<button id="sampler-lock" type="toggle" title="Lock Parameter Settings">Lock</button>)"
 			R"(</div><div class="sampler-display" id="sampler-display"><waveform class="sampler-wave"/>)"
 			R"(<div class="sampler-outside sampler-before"/><div class="sampler-outside sampler-after"/>)"
 			R"(<div class="sampler-loop"/>)" +
-			markers + R"(</div><div class="sampler-keyboard" id="sampler-keyboard">)" + keys +
+			markers + R"(</div><div class="sampler-handles" id="sampler-handles">)" + handles +
+			R"(</div><div class="sampler-keyboard" id="sampler-keyboard">)" + keys +
 			R"(</div><div class="sampler-sections" id="sampler-sections"/></div>)");
 		for (const Rml::EventId id : g_events)
 			element.AddEventListener(id, this);
@@ -157,6 +185,23 @@ namespace gnubase::ui
 					if (m_media != 0 && event.data.value("media", Json()) == m_media)
 						ask();
 				}));
+		// Lock Parameter Settings and the Normalization Level are a user setting, so they outlast the panel.
+		m_subscriptions.push_back(m_binding.on("settings.changed",
+			[this](const engine::Event& event)
+			{
+				const Json& values = event.data.at("values");
+				if (const auto settings = values.find("ui.samplerPanel"); settings != values.end())
+				{
+					m_settingsKnown = true;
+					applySettings(*settings);
+				}
+			}));
+		m_binding.send("settings.get", {{"key", "ui.samplerPanel"}},
+			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (!alive.expired() && result.ok() && !m_settingsKnown)
+					applySettings(result.value.at("value"));
+			});
 		m_binding.send("processor.list", Json::object(),
 			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
@@ -285,6 +330,8 @@ namespace gnubase::ui
 		const Json* channel = found == nullptr ? nullptr : findIn(project, "channels", found->value("channel", Json()));
 		if (channel != nullptr && channel->value("instrument", std::string()) != "sampler")
 			channel = nullptr;
+		if ((channel != nullptr ? track : 0) != m_track)
+			showMessage(""); // what failed concerned the track shown before
 		m_track = channel != nullptr ? track : 0;
 		m_channel = channel != nullptr ? *channel : Json();
 		// A parameter whose change is on its way keeps what the user gave it, not the engine's older value.
@@ -346,7 +393,23 @@ namespace gnubase::ui
 				control->SetAttribute("value", widgets::format(static_cast<float>(shown)));
 			}
 		}
+		setChecked(find("sampler-lock"), m_lock);
+		if (Rml::Element* level = find("sampler-level"); level != nullptr &&
+			std::abs(widgets::number(*level, "value", static_cast<float>(m_level) + 1.0F) - m_level) > 1e-6)
+			level->SetAttribute("value", widgets::format(static_cast<float>(m_level)));
 		m_showing = false;
+		if (Rml::Element* handles = find("sampler-handles"))
+			for (int i = 0; i < handles->GetNumChildren(); ++i)
+			{
+				Rml::Element* handle = handles->GetChild(i);
+				const auto id = handle->GetAttribute<Rml::String>("handle", "");
+				const Handle* found = handleOf(id);
+				if (found == nullptr)
+					continue;
+				const double key = std::clamp(std::round(value(found->parameter)), 0.0, g_keys - 1.0);
+				handle->SetProperty(Rml::PropertyId::Left, percent(key / g_keys));
+				setClass(handle, "dragged", id == m_handle);
+			}
 		if (const Rml::Element* keyboard = find("sampler-keyboard"))
 		{
 			const long rootKey = std::lround(value("Root key"));
@@ -493,29 +556,99 @@ namespace gnubase::ui
 		showMarkers();
 	}
 
+	// Moves the keyboard's handle dragged to the key under the mouse: the key range's low key stays at or below its
+	// high one.
+	void SamplerPanel::dragKey(const Rml::Event& event)
+	{
+		Rml::Element* keyboard = find("sampler-keyboard");
+		const Handle* found = handleOf(m_handle);
+		const float width = keyboard == nullptr ? 0.0F : keyboard->GetClientWidth();
+		const Parameter* dragged = found == nullptr ? nullptr : parameter(found->parameter);
+		if (dragged == nullptr || !(width > 0.0F))
+			return;
+		const double x =
+			(event.GetParameter<float>("mouse_x", 0.0F) - keyboard->GetAbsoluteLeft()) / static_cast<double>(width);
+		double key = std::clamp(std::floor(x * g_keys), 0.0, g_keys - 1.0);
+		if (m_handle == "low")
+			key = std::min(key, std::round(value("Key high")));
+		else if (m_handle == "high")
+			key = std::max(key, std::round(value("Key low")));
+		if (key == std::round(value(dragged->name)))
+			return;
+		set(dragged->id, key, m_gesture);
+		show();
+	}
+
+	void SamplerPanel::showMessage(const std::string& text)
+	{
+		Rml::Element* message = find("sampler-message");
+		setText(message, text);
+		setClass(message, "error", !text.empty());
+		if (message != nullptr)
+			message->SetAttribute("title", text); // the whole message when the toolbar cuts it short
+	}
+
+	void SamplerPanel::load(uint64_t track, const std::string& path, bool keepSettings)
+	{
+		m_binding.send("sampler.load", {{"track", track}, {"path", path}, {"keepSettings", keepSettings}},
+			[this, alive = std::weak_ptr<bool>(m_alive), track](const engine::Result& result)
+			{
+				if (!alive.expired() && track == m_track)
+					showMessage(result.ok() ? "" : "Loading the sample failed: " + result.error);
+			});
+	}
+
+	void SamplerPanel::applySettings(const Json& settings)
+	{
+		m_lock = settings.value("lockParameters", false);
+		m_level = std::clamp(settings.value("normalizeLevel", 0.0), -96.0, 0.0);
+		show();
+	}
+
+	void SamplerPanel::saveSettings()
+	{
+		m_settingsKnown = true; // what settings.get answers now is older
+		m_binding.send("settings.set",
+			{{"key", "ui.samplerPanel"}, {"value", {{"lockParameters", m_lock}, {"normalizeLevel", m_level}}}});
+	}
+
 	void SamplerPanel::ProcessEvent(Rml::Event& event)
 	{
 		Rml::Element* target = event.GetTargetElement();
 		switch (event.GetId())
 		{
 		case Rml::EventId::Mousedown:
-			if (const Rml::Element* marker = withAttribute(target, "marker");
-				marker != nullptr && m_track != 0 && event.GetParameter<int>("button", 0) == 0)
+			if (m_track == 0 || event.GetParameter<int>("button", 0) != 0)
+				return;
+			if (const Rml::Element* marker = withAttribute(target, "marker"); marker != nullptr)
 			{
 				m_dragged = marker->GetAttribute<Rml::String>("marker", "");
 				--m_gesture;
 				showMarkers();
 			}
+			else if (const Rml::Element* handle = withAttribute(target, "handle"); handle != nullptr)
+			{
+				m_handle = handle->GetAttribute<Rml::String>("handle", "");
+				--m_gesture;
+				show();
+			}
 			return;
 		case Rml::EventId::Mousemove:
 			if (!m_dragged.empty())
 				drag(event);
+			else if (!m_handle.empty())
+				dragKey(event);
 			return;
 		case Rml::EventId::Mouseup:
 			if (!m_dragged.empty())
 			{
 				m_dragged.clear();
 				showMarkers();
+			}
+			if (!m_handle.empty())
+			{
+				m_handle.clear();
+				show();
 			}
 			return;
 		case Rml::EventId::Click:
@@ -524,12 +657,16 @@ namespace gnubase::ui
 				return;
 			if (target->GetId() == "sampler-import" && m_importSample)
 			{
-				const Rml::Element* lock = find("sampler-lock");
-				m_importSample(m_track, lock != nullptr && lock->HasAttribute("checked"));
+				m_importSample(m_track, m_lock);
 			}
 			else if (target->GetId() == "sampler-normalize")
 			{
-				m_binding.send("sampler.normalize", {{"track", m_track}});
+				m_binding.send("sampler.normalize", {{"track", m_track}, {"level", m_level}},
+					[this, alive = std::weak_ptr<bool>(m_alive), track = m_track](const engine::Result& result)
+					{
+						if (!alive.expired() && track == m_track)
+							showMessage(result.ok() ? "" : "Normalize Sample failed: " + result.error);
+					});
 			}
 			else if (const Rml::Element* key = withAttribute(target, "key"); key != nullptr)
 			{
@@ -541,6 +678,18 @@ namespace gnubase::ui
 		}
 		case Rml::EventId::Change:
 		{
+			if (!m_showing && target != nullptr && target->GetId() == "sampler-lock")
+			{
+				m_lock = event.GetParameter<bool>("value", false);
+				saveSettings();
+				return;
+			}
+			if (!m_showing && target != nullptr && target->GetId() == "sampler-level")
+			{
+				m_level = std::clamp(static_cast<double>(event.GetParameter<float>("value", 0.0F)), -96.0, 0.0);
+				saveSettings();
+				return;
+			}
 			const Rml::Element* control = withAttribute(target, "parameter");
 			if (m_showing || control == nullptr || control != target)
 				return;
@@ -567,8 +716,6 @@ namespace gnubase::ui
 		std::getline(lines, file);
 		if (file.empty())
 			return;
-		const Rml::Element* lock = find("sampler-lock");
-		m_binding.send("sampler.load",
-			{{"track", m_track}, {"path", file}, {"keepSettings", lock != nullptr && lock->HasAttribute("checked")}});
+		load(m_track, file, m_lock);
 	}
 }
