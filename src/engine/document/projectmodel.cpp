@@ -3515,6 +3515,7 @@ namespace gnubase::engine
 				{
 					result = handler(m_project, context);
 					syncSharedParts(before.midiParts, m_project, context);
+					midi::adoptPatterns(m_project, context);
 				}
 				catch (...)
 				{
