@@ -3,8 +3,9 @@
 // basic player's voicings, playing and recording pads, step input, presets, the List and Circle of Fifths assistants
 // and the pads' remote keys. chordPads.set, chordPads.assign, chordPads.modify, chordPads.setPad, chordPads.move,
 // chordPads.fromChordTrack, chordPads.loadPreset, chordPads.step and chordPads.toTrack change the project, so each is
-// one undo step and changes nothing if it fails (ProjectModel::add); chordPads.get, chordPads.trigger and
-// chordPads.assistant are queries. The render snapshot carries the remote keys to the audio thread (chordPadKeys).
+// one undo step and changes nothing if it fails (ProjectModel::add); chordPads.get and chordPads.assistant are
+// queries. chordPads.trigger plays notes, so it is a control command (ProjectModel::addControl): no undo step, but not
+// read-only. The render snapshot carries the remote keys to the audio thread (chordPadKeys).
 #include "engine/document/chordpads.h"
 
 #include "engine/document/projectmodel.h"
@@ -13,6 +14,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <cstdlib>
 #include <map>
 #include <memory>
@@ -46,8 +48,21 @@ namespace gnubase::engine
 
 		constexpr std::array<const char*, 7> g_numerals = {"I", "II", "III", "IV", "V", "VI", "VII"};
 		constexpr int g_maxPads = 32;
-		constexpr std::array<int, 7> g_majorSteps = {0, 2, 4, 5, 7, 9, 11};
-		constexpr std::array<int, 7> g_minorSteps = {0, 2, 3, 5, 7, 8, 10};
+
+		// The steps of a preset's scale (major, minor, dorian, ...), the major scale's for another name.
+		std::vector<int> scaleOf(const std::string& scale)
+		{
+			const std::vector<std::string>& names = chordpads::presetNames();
+			const std::optional<midi::ScaleType> type = midi::scaleTypeFromName(scale);
+			if (std::find(names.begin(), names.end(), scale) == names.end() || !type.has_value())
+				return {0, 2, 4, 5, 7, 9, 11};
+			return midi::scaleSteps(*type);
+		}
+
+		bool inScale(const std::vector<int>& steps, int key, int note)
+		{
+			return std::find(steps.begin(), steps.end(), pitchClass(note - key)) != steps.end();
+		}
 
 		midi::ChordSymbol chordOf(const std::string& text)
 		{
@@ -151,11 +166,11 @@ namespace gnubase::engine
 			return chords;
 		}
 
-		std::string degreeName(const midi::ChordSymbol& chord, int key, bool minor)
+		std::string degreeName(const midi::ChordSymbol& chord, int key, const std::string& scale)
 		{
 			if (chord.root < 0)
 				return {};
-			const std::array<int, 7>& steps = minor ? g_minorSteps : g_majorSteps;
+			const std::vector<int> steps = scaleOf(scale);
 			const int interval = pitchClass(chord.root - key);
 			// The degree of a pitch class in the scale, or -1.
 			const auto degreeOf = [&steps](int pitch)
@@ -241,9 +256,10 @@ namespace gnubase::engine
 			return voicing;
 		}
 
-		std::vector<Suggestion> suggestions(
-			const midi::ChordSymbol& reference, int key, const std::string& algorithm, int commonNotes)
+		std::vector<Suggestion> suggestions(const midi::ChordSymbol& reference, int key, const std::string& scale,
+			const std::string& algorithm, int commonNotes)
 		{
+			const std::vector<int> steps = scaleOf(scale);
 			const std::vector<int> referenceClasses = classesOf(reference);
 			// How strongly a root step follows: a fifth down, a fifth up, the relative chords, a second, a third.
 			const auto rank = [](int step)
@@ -273,11 +289,7 @@ namespace gnubase::engine
 						continue;
 					const std::vector<int> classes = classesOf(chord);
 					const auto outside = static_cast<int>(std::count_if(classes.begin(), classes.end(),
-						[key](int note)
-						{
-							return std::find(g_majorSteps.begin(), g_majorSteps.end(), pitchClass(note - key)) ==
-								g_majorSteps.end();
-						}));
+						[&steps, key](int note) { return !inScale(steps, key, note); }));
 					const auto shared = static_cast<int>(std::count_if(classes.begin(), classes.end(),
 						[&referenceClasses](int note)
 						{
@@ -356,7 +368,9 @@ namespace gnubase::engine
 			const ChordPad& pad = pads.pads[i];
 			const int key = pads.remoteStart + static_cast<int>(i);
 			list.push_back({{"chord", pad.chord},
-				{"degree", pad.chord.empty() ? std::string() : chordpads::degreeName(chordOf(pad.chord), pads.rootKey)},
+				{"degree",
+					pad.chord.empty() ? std::string()
+									  : chordpads::degreeName(chordOf(pad.chord), pads.rootKey, pads.preset)},
 				{"pitches", voicings[i]}, {"voicing", pad.voicing}, {"adaptive", pad.adaptive}, {"locked", pad.locked},
 				{"key", key <= pads.remoteEnd && key <= 127 ? Json(key) : Json(nullptr)}});
 		}
@@ -371,7 +385,8 @@ namespace gnubase::engine
 		if (!json.is_object())
 			return;
 		ChordPads& pads = project.chordPads;
-		if (json.contains("pads"))
+		// A file without pads keeps the default ones: a project has at least one (chordPads.set padCount).
+		if (json.contains("pads") && json.at("pads").is_array() && !json.at("pads").empty())
 		{
 			pads.pads.clear();
 			for (const Json& item : json.at("pads"))
@@ -389,7 +404,7 @@ namespace gnubase::engine
 		}
 		pads.rootKey = pitchClass(json.value("rootKey", 0));
 		pads.reference = json.value("reference", -1);
-		if (pads.reference >= static_cast<int>(pads.pads.size()))
+		if (pads.reference < -1 || pads.reference >= static_cast<int>(pads.pads.size()))
 			pads.reference = -1;
 		pads.octaveOffset = std::clamp(json.value("octaveOffset", 0), -3, 3);
 		pads.velocity = std::clamp(json.value("velocity", 100), 1, 127);
@@ -445,11 +460,12 @@ namespace gnubase::engine
 				"Control: notes from MIDI inputs on the remote keys trigger the pads instead of playing, p. 1386), "
 				"remoteStart and remoteEnd (Pads Remote Range Start and End, MIDI notes: the first key triggers the "
 				"first pad and so on); stepInput, moveInsert and stepPosition (ticks) for chordPads.step "
-				"(p. 1369).",
+				"(p. 1369); stepBars moves the step position by bars, to a bar's start and not before the project's "
+				"(after stepPosition), as Left and Right Arrow move the step input cursor.",
 				objectSchema({{"rootKey", integerSchema}, {"transposePads", booleanSchema}, {"padCount", integerSchema},
 					{"octaveOffset", integerSchema}, {"velocity", integerSchema}, {"remote", booleanSchema},
 					{"remoteStart", integerSchema}, {"remoteEnd", integerSchema}, {"stepInput", booleanSchema},
-					{"moveInsert", booleanSchema}, {"stepPosition", integerSchema}}),
+					{"moveInsert", booleanSchema}, {"stepPosition", integerSchema}, {"stepBars", integerSchema}}),
 				padsResult, false},
 			[changed](Project& project, CommandContext& context)
 			{
@@ -490,6 +506,12 @@ namespace gnubase::engine
 				pads.moveInsert = parameters.value("moveInsert", pads.moveInsert);
 				pads.stepPosition = parameters.value("stepPosition", pads.stepPosition);
 				require(pads.stepPosition >= 0, "stepPosition must not be before the project start");
+				if (parameters.contains("stepBars"))
+				{
+					const auto bar = project.signatures.toBarsBeats(pads.stepPosition).bar +
+						parameters.at("stepBars").get<int64_t>();
+					pads.stepPosition = project.signatures.barStart(std::max<decltype(bar)>(bar, 0));
+				}
 				return changed(project, context);
 			});
 		add(engine,
@@ -688,9 +710,10 @@ namespace gnubase::engine
 		add(engine,
 			{"chordPads.step", 1,
 				"Step input from the chord pads (reference manual p. 1369): the pad's chord becomes a chord event at "
-				"the step input position (ticks, chordPads.set stepPosition) on the chord track, which is added if "
-				"there is none, and the position moves to the next bar. With moveInsert the chord events from the "
-				"position on move a bar later first. Needs stepInput.",
+				"the start of the bar of the step input position (ticks, chordPads.set stepPosition) on the chord "
+				"track, which is added if there is none, and the position moves to the next bar. With moveInsert the "
+				"chord events from there on move a bar later first; without, a chord event already there gets the "
+				"pad's chord. Needs stepInput.",
 				objectSchema({{"pad", integerSchema}}, {"pad"}), padsResult, false},
 			[this, changed](Project& project, CommandContext& context)
 			{
@@ -699,8 +722,9 @@ namespace gnubase::engine
 				const ChordPad& pad = padAt(pads, context.parameters().at("pad"));
 				require(!pad.chord.empty(), "the chord pad has no chord");
 				const std::string chord = pad.chord;
-				const time::Ticks at = pads.stepPosition;
-				const time::Ticks next = project.signatures.barStart(project.signatures.toBarsBeats(at).bar + 1);
+				const auto bar = project.signatures.toBarsBeats(pads.stepPosition).bar;
+				const time::Ticks at = project.signatures.barStart(bar);
+				const time::Ticks next = project.signatures.barStart(bar + 1);
 				if (std::none_of(project.trackById.begin(), project.trackById.end(),
 						[](const auto& entry) { return entry.second.type == TrackType::Chord; }))
 					runEdit("track.add", project, {{"type", "chord"}}, context);
@@ -724,7 +748,13 @@ namespace gnubase::engine
 					if (!moved.empty())
 						runEdit("chord.set", project, {{"events", moved}}, context);
 				}
-				runEdit("chord.add", project, {{"position", inBase(at)}, {"chord", chord}}, context);
+				const auto there = std::find_if(project.chords.events.begin(), project.chords.events.end(),
+					[&project, at](const ChordEvent& event)
+					{ return time::toTicks(event.position, project.tempo, project.sampleRate) == at; });
+				if (there != project.chords.events.end())
+					runEdit("chord.set", project, {{"events", {{{"event", there->id}, {"chord", chord}}}}}, context);
+				else
+					runEdit("chord.add", project, {{"position", inBase(at)}, {"chord", chord}}, context);
 				project.chordPads.stepPosition = next;
 				return changed(project, context);
 			});
@@ -786,8 +816,8 @@ namespace gnubase::engine
 				"channel 2 and so on: MIDI and instrument tracks set to all MIDI inputs play them while they monitor "
 				"or are record-enabled, and record them. velocity: 1 to 127, default the pads' velocity. Emits "
 				"chordPads.triggered with the pad (-1 for a chord), the chord, on and the pitches.",
-				objectSchema({{"pad", integerSchema}, {"chord", stringSchema}, {"on", booleanSchema},
-					{"velocity", integerSchema}}),
+				needsOne(objectSchema({{"pad", integerSchema}, {"chord", stringSchema}, {"on", booleanSchema},
+					{"velocity", integerSchema}})),
 				objectSchema({{"pitches", padsSchema}}, {"pitches"}), false},
 			[this, sounding](CommandContext& context)
 			{
@@ -841,9 +871,10 @@ namespace gnubase::engine
 				"The chord assistant (reference manual pp. 1372-1375). kind list (the List assistant): suggestions for "
 				"the chord after chord (the reference, such as the selected pad's), at most 24, each with its chord, "
 				"its degree in the root key and its level: 0 common (green), 1 adventurous (orange), 2 far (red), "
-				"by how many of its notes are outside the root key's major scale; algorithm cadence (the default: "
-				"those that follow most strongly first) or commonNotes (those that share commonNotes notes, default "
-				"2, with it). kind circle (the Circle of Fifths assistant): outer, the twelve major chords from the "
+				"by how many of its notes are outside the scale of the loaded preset (chordPads.get preset) on the "
+				"root key; algorithm cadence (the default: the common ones first, and of the same level those that "
+				"follow most strongly first) or commonNotes (those that share commonNotes notes, default 2, with "
+				"it). kind circle (the Circle of Fifths assistant): outer, the twelve major chords from the "
 				"root key's in fifths (minor: from its relative major's), and inner, their relative minor chords, "
 				"each with its degree in the key, empty for chords outside it.",
 				objectSchema({{"kind", {{"type", "string"}, {"enum", {"list", "circle"}}}}, {"chord", stringSchema},
@@ -856,18 +887,19 @@ namespace gnubase::engine
 				const Json& parameters = context.parameters();
 				const int key = project.chordPads.rootKey;
 				// A chord's degree in the key, empty for a chord with notes outside the key's scale.
-				const auto entry = [key](const midi::ChordSymbol& chord, bool minor)
+				const auto entry = [key](const midi::ChordSymbol& chord, const std::string& scale)
 				{
-					const std::array<int, 7>& steps = minor ? g_minorSteps : g_majorSteps;
+					const std::vector<int> steps = scaleOf(scale);
 					const std::vector<int> classes = classesOf(chord);
-					const bool inKey = std::all_of(classes.begin(), classes.end(), [&steps, key](int note)
-						{ return std::find(steps.begin(), steps.end(), pitchClass(note - key)) != steps.end(); });
+					const bool inKey = std::all_of(
+						classes.begin(), classes.end(), [&steps, key](int note) { return inScale(steps, key, note); });
 					return Json{{"chord", midi::chordName(chord)},
-						{"degree", inKey ? chordpads::degreeName(chord, key, minor) : std::string()}};
+						{"degree", inKey ? chordpads::degreeName(chord, key, scale) : std::string()}};
 				};
 				if (parameters.at("kind") == "circle")
 				{
 					const bool minor = parameters.value("minor", false);
+					const std::string scale = minor ? "minor" : "major";
 					Json outer = Json::array();
 					Json inner = Json::array();
 					for (int i = 0; i < 12; ++i)
@@ -877,18 +909,19 @@ namespace gnubase::engine
 						midi::ChordSymbol relative;
 						relative.root = pitchClass(major.root + 9);
 						relative.type = "min";
-						outer.push_back(entry(major, minor));
-						inner.push_back(entry(relative, minor));
+						outer.push_back(entry(major, scale));
+						inner.push_back(entry(relative, scale));
 					}
 					return Json{{"outer", outer}, {"inner", inner}};
 				}
 				const midi::ChordSymbol reference = chordFrom(parameters.value("chord", std::string()));
 				Json suggestions = Json::array();
-				for (const chordpads::Suggestion& suggestion : chordpads::suggestions(reference, key,
+				const std::string& scale = project.chordPads.preset;
+				for (const chordpads::Suggestion& suggestion : chordpads::suggestions(reference, key, scale,
 						 parameters.value("algorithm", std::string("cadence")), parameters.value("commonNotes", 2)))
 				{
-					Json item = entry(suggestion.chord, false);
-					item["degree"] = chordpads::degreeName(suggestion.chord, key);
+					Json item = entry(suggestion.chord, scale);
+					item["degree"] = chordpads::degreeName(suggestion.chord, key, scale);
 					item["level"] = suggestion.level;
 					suggestions.push_back(item);
 				}

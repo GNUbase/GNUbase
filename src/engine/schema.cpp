@@ -112,4 +112,10 @@ namespace gnubase::engine
 		}
 		return {};
 	}
+
+	Json needsOne(Json schema)
+	{
+		schema["minProperties"] = 1;
+		return schema;
+	}
 }

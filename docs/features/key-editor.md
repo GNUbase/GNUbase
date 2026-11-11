@@ -83,7 +83,10 @@ pitch's row and narrower than the white keys, drawn over them at the left. The 7
 keyboard's width and share the octave's 12 rows equally, from the bottom of the C's row up, so that the right part of
 a white key reaches into the rows of the black keys beside it; the top of the keyboard cuts G8, the highest key. Code
 places the keys' tops and heights in percent of the keyboard; `keyeditor.rcss` gives the widths and the themes the
-look. A C key's name sits at its right, level with its own row.
+look, white keys light and black keys dark in every theme. A C key's name sits at its right, level with its own row.
+Pressing a key plays its pitch on the active part's track until the mouse is released, wherever that is: `midi.inject`
+sends a note on (velocity 100) into the track's channel as if from its MIDI input, so its instrument plays it, and then
+the note off. It selects nothing.
 
 | Tool | Gesture | Reference |
 |---|---|---|
@@ -115,7 +118,9 @@ mute yet), and the Line tool in the note display (it draws on the controller lan
 tool's drag across several notes and the draw tool's modifiers for velocity, pitch and position; key commands for the
 transpose palette and deleting; the nudge buttons, Solo Editor, Record in Editor, Acoustic Feedback, pitch visibility,
 the Scale Assistant, Indicate Transpositions, event colors, the status line and Set up Window Layout; horizontal zoom
-and scrolling; listening to a key's pitch with a click; drum map names in the key editor and articulation names; Add to Chord Track, Match with
+and scrolling; dragging at the keyboard's left edge to scroll and zoom it, and the key at the mouse's pitch lit while
+the mouse moves in the note display (p. 1204), and with vertical zoom the keyboard's height following the rows' (it
+is fixed at 128 rows of 10dp in `keyeditor.rcss`); drum map names in the key editor and articulation names; Add to Chord Track, Match with
 Chord Track, Create Chord Events and the chord insert tools; quantizing from the toolbar (#132) and the Length section's
 functions (#133); the key editor's context menu.
 
@@ -128,9 +133,11 @@ functions (#133); the key editor's context menu.
   Record Pitch, a chord, Keep Existing Notes and no selection; chord recognition, fitting and voicings; `note.chord`
   and `note.voicing` with undo and their errors.
 - `tests/keyeditor_ui_tests.cpp` drives the app with `ui::Automation`: the keyboard and notes at their time and pitch,
-  keys lit for selected notes; the piano keyboard at 1024x600: white keys of equal height across the keyboard, black
-  keys narrower on their rows, the mouse on the right part of a white key beside a black key over the white key, and
-  a golden image of two octaves with a black and a white key lit (`tests/golden/ui/key-editor-keyboard.png`); the
+  keys lit for selected notes; the piano keyboard at 1024x600, at dp ratios of 1.5 and 1: white keys of equal height
+  across the keyboard, black keys narrower on their rows, the mouse on the right part of a white key beside a black
+  key over the white key, and a golden image of two octaves with a black and a white key lit
+  (`tests/golden/ui/key-editor-keyboard.png`); pressing the right part of a white key beside a black key and the
+  black key playing their pitches on the track's instrument until the mouse is released, also outside the editor; the
   object selection tool selecting, deselecting, moving, resizing, inserting and deleting; the draw tool with Quantize
   Link and an eighth from the Length Quantize menu; the erase, trim (and with Alt), split and glue tools; the
   transpose palette and typing a pitch on the info line; step input with its cursor, a click moving it, and MIDI input

@@ -260,7 +260,8 @@ namespace gnubase::ui
 		data.reserve(buttons.size());
 		for (size_t i = 0; i < buttons.size(); ++i)
 			data.push_back(
-				{i == 0 ? SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT : 0, static_cast<int>(i), buttons[i].c_str()});
+				{i == 0 ? SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT | SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT : 0U,
+					static_cast<int>(i), buttons[i].c_str()});
 		const SDL_MessageBoxData box{SDL_MESSAGEBOX_INFORMATION, nullptr, title.c_str(), message.c_str(),
 			static_cast<int>(data.size()), data.data(), nullptr};
 		int chosen = -1;

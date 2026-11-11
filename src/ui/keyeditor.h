@@ -116,6 +116,9 @@ namespace gnubase::ui
 		void drag(Rml::Event& event);
 		void release(Rml::Event& event);
 		void doubleClick(Rml::Event& event);
+		// Plays the pitch on the active track's instrument, as a pressed key of the keyboard does (p. 1204), after
+		// ending the pitch played before; without one only ends it.
+		void sound(std::optional<int> pitch);
 		void toolbar(Rml::Element& target);
 		// The note display opens the toolbox on a right click with the user setting ui.toolboxOnRightClick, else on
 		// one with a modifier key.
@@ -186,7 +189,9 @@ namespace gnubase::ui
 		std::pair<double, int> m_pressedAt;
 		std::optional<Note> m_pressed; // the note pressed, as it was
 		bool m_snapOff = false;
-		Rml::ObserverPtr<Rml::Element> m_drawn; // the note a draw drags out
+		Rml::ObserverPtr<Rml::Element> m_drawn;             // the note a draw drags out
+		std::optional<std::pair<uint64_t, int>> m_sounding; // the channel and pitch of the key pressed
+		Rml::ObserverPtr<Rml::Element> m_document;          // ends the key's pitch on a release anywhere in it
 		// the length quantize menu, the line tool's menu, the toolbox, then the drum editor's Map menu
 		std::vector<Rml::ObserverPtr<Rml::Element>> m_menus;
 		std::string m_lineMode = "line"; // the line tool's (#128)

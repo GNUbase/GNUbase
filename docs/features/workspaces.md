@@ -30,11 +30,11 @@ now also keeps the app's top-level windows under `windows`, by name, next to the
   it opens, moves or resizes, checked twice a second and at once when a window opens or closes through its command,
   and `open` when that changes. A window that never moved adds nothing, so the layout keeps only what the user did.
   When GNUbase starts, a window that `ui.layout` from the last session has open but that is closed gets `open: false`
-  at once (and the other way round), so that a workspace added then has the windows as they are.
+  at once (and the other way round), so that a workspace added then has the windows as they are. Panels in windows
+  of their own keep their monitor too.
 - **Maximized.** A maximized window gets `maximized: true` and keeps its normal bounds, the ones it had before; it
   loses the flag when it has its normal size again. It opens maximized again (the main window when GNUbase starts),
   and a layout that has it maximized maximizes it where it is open (`WindowSystem::maximized`, `setMaximized`).
-  Panels in windows of their own keep their monitor too.
 - **Opening.** Each window opens where its entry says, and the main window goes there when GNUbase starts. A window
   whose monitor, by name, is connected goes where it was (moved onto a monitor if it can't be reached, as for every
   window, architecture.md, "UI shell"); one whose monitor isn't connected goes onto the primary monitor, centred and
@@ -91,16 +91,16 @@ returns.
   one), Minimize, Restore and Close Windows act on them through the UI tools (`ui_window`, `ui_close`; Lua
   `gnubase.ui.window`, `gnubase.ui.close`), which MCP clients use the same way. Close Windows with All closes every
   window but the project window; Close Windows is disabled while it would close none, such as with the project window
-  selected. The list follows windows that open or close while the dialog is open. `ui_window` minimizes and restores
-  through the window system (`WindowSystem::minimize`, `restore`).
+  selected. The list follows windows that open or close while the dialog is open, also one that opens right after
+  it. `ui_window` minimizes and restores through the window system (`WindowSystem::minimize`, `restore`).
 
 ## Not yet
 
 Key commands for the workspaces (the Workspace category of the key commands dialog, and the organizer's key column);
 dragging workspaces in the organizer and renaming with a double click; locking workspaces; Open Projects in Last Used
 View (p. 1609) and the view of external projects, which come with the preferences' General page, so a loaded project's
-active workspace is checked but its layout isn't applied; the editors'
-windows opening from a workspace, which follow what the engine's editor views show; and the Windows dialog's Cascaded
+active workspace is checked but its layout isn't applied; the view without a workspace kept with each project
+(p. 1576), as `ui.noWorkspaceLayout` is one user setting for every project; the editors' windows opening from a workspace, which follow what the engine's editor views show; and the Windows dialog's Cascaded
 mode, which acts on a window's associated windows, and Reset Layout.
 
 ## Checks
@@ -117,7 +117,9 @@ mode, which acts on a window's associated windows, and Reset Layout.
   windows kept with their normal bounds and maximized again, the main window at the start too; in the app, the
   Workspaces menu with No Workspace and Update Workspace disabled, workspaces added through the New Workspace dialog,
   the mixer window and the lower zone recalled from the menu with the active one checked, Update Workspace, and the
-  organizer renaming with Return, moving and deleting; the Windows dialog listing the project, markers and tempo track
-  windows, following a window that opens, Close Windows disabled for the project window, activating and closing the
+  organizer renaming with Return, moving and deleting; the menu checking No Workspace with Update Workspace disabled
+  when another client deletes the active global workspace, and the workspace again once it is back; the Windows
+  dialog listing the project, markers and tempo track windows, following a window that opens, also right after the
+  dialog, Close Windows disabled for the project window, activating and closing the
   selected one, and closing all but the project window; the script console opened and closed by workspaces.
 - `tests/uitools_tests.cpp`: `ui_window` minimizing, restoring and activating a window, on the fake window system.

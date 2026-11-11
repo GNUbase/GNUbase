@@ -31,7 +31,9 @@ tempo track's ([tempo-track.md](tempo-track.md)).
   primary time format (`project.set` `timeFormat`, the transport's main display) is `barsBeats` and linear with any
   other. It applies to audio, instrument, MIDI, group, effect and marker tracks; folder, ruler, tempo and signature
   tracks hold no events of their own and are musical. Every command that adds tracks goes through `track.add`, so the
-  setting reaches them, except MIDI file import, whose tracks are musical: its parts and notes are in ticks.
+  setting reaches them, except MIDI file import, whose new tracks are musical: their parts and notes are in ticks.
+  With `singlePart` and `track` on a linear MIDI or instrument track of the project, the part's start and length are
+  in samples, as on every linear track, and its notes stay in ticks ([file-import.md](file-import.md)).
   `marker.add` without a marker track adds one that way too, so a numeric `position` is in ticks or samples by the
   setting: a caller that gives numbers adds the marker track first with a `timeBase`, or reads the added track's
   `timeBase` from `project.get`.

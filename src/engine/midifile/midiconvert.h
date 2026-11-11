@@ -68,11 +68,14 @@ namespace gnubase::engine::midifile
 		time::Ticks start = 0;       // where the file's start goes, in project ticks
 		time::TempoMap tempo{120.0}; // the project's tempo and signatures, which hold before start
 		time::SignatureMap signatures;
+		time::Ticks contentEnd = 0; // where the project's parts, events and markers end, in project ticks
 	};
 
 	// What a MIDI file holds. A type 1 or 2 file gives a track per file track with events, a type 0 file a track
 	// per MIDI channel unless options.dissolve is false. Everything is placed from options.start on; the tempo and
-	// signatures before it are those of options, and the file's start at 120 BPM in 4/4 unless it sets its own. The
+	// signatures before it are those of options, and the file's start at 120 BPM in 4/4 unless it sets its own. After
+	// the file's end they are those of options again if they change after start or options.contentEnd is after the
+	// file's end; otherwise the file's last ones go on. The
 	// markers of a type 1 file's tracks after the first that hold nothing but a name and markers are marker tracks of
 	// their own; all other markers are merged. The tracks of a type 2 file are independent sequences: they are laid out
 	// one after another, each from the first bar start after the previous one's end, and each starts at 120 BPM in 4/4
