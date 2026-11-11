@@ -233,3 +233,22 @@ TEST_CASE("Add Sampler Track opens the add track dialog on its Sampler page", "[
 		if (each.at("id") == added.at("channel"))
 			CHECK(each.at("instrument") == "sampler");
 }
+
+TEST_CASE("a change in a value field and a drag of its marker are two undo steps", "[ui]")
+{
+	Fixture f;
+	f.open();
+	const size_t steps = f.app.call("history.get").at("steps").size();
+	// The session's first value field gesture, then the first marker drag: their numbers mustn't meet.
+	f.app.ui().wheel(std::nullopt, of(f.control("Start")), 0.0F, -1.0F);
+	REQUIRE(f.app.waitUntil([&] { return f.parameter("Start") > 0.0; }));
+	REQUIRE(f.app.waitUntil([&] { return f.app.call("history.get").at("steps").size() == steps + 1; }));
+	const Json display = f.box("#sampler-display");
+	const double y = display.at("y").get<double>() + (display.at("height").get<double>() / 2);
+	f.app.ui().drag(std::nullopt, of(".sampler-marker[marker=\"Start\"]"),
+		{"", 0,
+			ui::Point{static_cast<int>(display.at("x").get<double>() + (display.at("width").get<double>() / 2)),
+				static_cast<int>(y)}});
+	REQUIRE(f.app.waitUntil([&] { return std::abs(f.parameter("Start") - 0.5) < 0.02; }));
+	CHECK(f.app.call("history.get").at("steps").size() == steps + 2);
+}

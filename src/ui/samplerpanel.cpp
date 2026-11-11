@@ -503,7 +503,7 @@ namespace gnubase::ui
 				marker != nullptr && m_track != 0 && event.GetParameter<int>("button", 0) == 0)
 			{
 				m_dragged = marker->GetAttribute<Rml::String>("marker", "");
-				++m_gesture;
+				--m_gesture;
 				showMarkers();
 			}
 			return;

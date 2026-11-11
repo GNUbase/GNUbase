@@ -249,8 +249,8 @@ namespace gnubase::engine::processors
 		if (note >= m_heldSince.size())
 			return;
 		const bool monophonic = m_values[Monophonic] >= 0.5;
-		if (monophonic)
-			m_heldSince[note] = 0;
+		// Also in polyphonic mode, so a key released then doesn't play again once monophonic mode is back.
+		m_heldSince[note] = 0;
 		// Voices of notes played before monophonic mode came on end like polyphonic ones.
 		const Voice* const playing = monophonic ? monophonicVoice() : nullptr;
 		for (Voice& voice : m_voices)

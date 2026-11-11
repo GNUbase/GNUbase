@@ -395,6 +395,29 @@ TEST_CASE("notes held from polyphonic mode end when monophonic mode is switched 
 	CHECK(sampler.activeVoices() == 0);
 }
 
+TEST_CASE("a key released in polyphonic mode doesn't play again when monophonic mode is back", "[unit]")
+{
+	Sampler sampler;
+	sampler.setSample(ramp(32));
+	Bench bench(sampler);
+	bench.add(parameter(0, Sampler::LoopMode, static_cast<double>(Sampler::Loop::Continuous)));
+	bench.add(parameter(0, Sampler::LoopStart, 0.25));
+	bench.add(parameter(0, Sampler::LoopEnd, 0.5));
+	bench.add(parameter(0, Sampler::Monophonic, 1.0));
+	bench.add(note(0, true, 60));
+	bench.run(1);
+	bench.add(parameter(0, Sampler::Monophonic, 0.0));
+	bench.add(note(0, false, 60));
+	bench.run(1);
+	CHECK(sampler.activeVoices() == 0);
+	bench.add(parameter(0, Sampler::Monophonic, 1.0));
+	bench.add(note(0, true, 64));
+	bench.run(1);
+	bench.add(note(0, false, 64));
+	bench.run(1);
+	CHECK(sampler.activeVoices() == 0);
+}
+
 TEST_CASE("a loop shorter than a step stays a loop at high pitches", "[unit]")
 {
 	// A loop of two frames, from frame 8 to 10, played five octaves up: 32 frames a step.

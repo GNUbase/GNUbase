@@ -95,7 +95,7 @@ namespace gnubase::ui
 		bool m_again = false;      // and asks again when it answers
 		float m_askedWidth = 0.0F; // the display's width in pixels that it asked for
 		std::string m_dragged;     // the marker a drag moves: the parameter's name
-		int m_gesture = 0;         // counts drags, each one undo step
+		int m_gesture = 0;         // counts drags down, each one undo step: value fields number theirs up from 1
 		bool m_showing = false;    // while show sets the controls, whose changes aren't the user's
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
 		std::vector<Subscription> m_subscriptions;
