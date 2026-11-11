@@ -62,7 +62,8 @@ The options of the reference's MIDI file import (reference manual pp. 364-365, #
   events (also on the tracks' other versions), markers and arranger events by their end, and chord, scale and
   transpose events and automation points, which hold from their position on, by their position, so one right at the
   file's end counts. Content on linear tracks keeps its time in samples, so it counts by where the file ends in the
-  file's tempo. The project's tempo then goes on from the tempo it had at the end, with its later changes; the same
+  file's tempo; an audio event on a musical track keeps its ticks and counts by its end in ticks in the project's
+  tempo before the import. The project's tempo then goes on from the tempo it had at the end, with its later changes; the same
   goes for its signatures, from the next bar start. Otherwise, in a new project for instance, the file's last tempo
   and signature go on: there is nothing of the project's to keep, and the file's tempo then holds for what follows
   it, as when the project is made from the file. Without `tempo` the file plays in the project's tempo from the
@@ -205,8 +206,10 @@ along; inside a tempo ramp, which plays on up to the position and after the file
 and signature changes kept after the file's end, and its constant tempo and signature kept after the file's end
 when a part follows it, or an audio event, an audio or MIDI part or a marker on a linear track, a part on another
 version of its track, an arranger, chord or scale event, a transpose event on a linear transpose track or an
-automation point on a linear track, a chord event and a linear automation point right at the file's end and a linear
-audio event that ends after it only in the file's tempo, but not for content before the file's end), a type 0 file kept in one track, the whole file in one part on a new track and on an instrument track at a
+automation point on a linear track, a chord, a scale, a linear transpose event and a linear automation point right at
+the file's end, a linear audio event that ends after it only in the file's tempo, audio events and parts on another
+version of their track and an audio event on a musical track after a file slower than the project, but not for content
+before the file's end, such as an audio event on a musical track that ends there in ticks), a type 0 file kept in one track, the whole file in one part on a new track and on an instrument track at a
 position and on a linear MIDI track in samples, refusing an audio track or `track` without `singlePart`, the first
 patch and volume and pan of channel 1 in a MIDI track's settings while other channels' and later events stay, none on
 instrument tracks, a track of nothing but those kept without a part, and controllers

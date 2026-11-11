@@ -163,8 +163,11 @@ namespace gnubase::engine
 				"another, each from a bar start. Names that aren't UTF-8 are read as Windows-1252. Unless tempo is "
 				"false, the file's tempo and time signatures replace the project's from position to the file's end "
 				"(tempo changes on the tempo track, which becomes active); after the end, the project's are kept if "
-				"they change after position or the project's parts, events or markers end after the file's end, "
-				"else the file's last ones go on. Unless markers is false, its "
+				"they change after position or the project has content after the file's end, else the file's last "
+				"ones go on. Content is parts and audio events (also of the tracks' other versions), markers and "
+				"arranger events by their end, and chord, scale and transpose events and automation points by their "
+				"position, so one at the file's end counts; on linear tracks it is in samples, compared with the "
+				"file's end in the file's tempo. Unless markers is false, its "
 				"markers are added to the active marker track (one is added if there is none), except that a type 1 "
 				"file's tracks of nothing but a name and markers, which midiFile.export writes for marker tracks, "
 				"become new marker tracks at the top while the project has room for them. The options of the "
@@ -229,8 +232,17 @@ namespace gnubase::engine
 			for (const auto& part : parts)
 				extend({part.position.base, part.position.value + part.length});
 		};
+		// An audio event keeps its position in its track's time base: on a linear track its end in samples, on a
+		// musical one its end in ticks, as the project's tempo has it now.
 		const auto extendEvent = [&project, &extend](const AudioEvent& event)
-		{ extend({time::TimeBase::Linear, eventSpan(project, event).end}); };
+		{
+			const time::Samples end = eventSpan(project, event).end;
+			const auto track = project.trackById.find(event.track);
+			if (track != project.trackById.end() && track->second.timeBase == time::TimeBase::Linear)
+				extend({time::TimeBase::Linear, end});
+			else
+				extend({time::TimeBase::Musical, project.tempo.toTicks(end, project.sampleRate)});
+		};
 		for (const auto& [id, part] : project.midiParts)
 			extend({part.position.base, part.position.value + part.length});
 		for (const auto& [id, part] : project.audioParts)
