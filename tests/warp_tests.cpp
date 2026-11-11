@@ -12,11 +12,17 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <pugixml.hpp>
+
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -903,4 +909,175 @@ TEST_CASE("the warped events' own media entries are no media files", "[integrati
 	run(client, "audio.setDevice", {{"blockSize", 256}, {"inputChannels", 0}});
 	CHECK_THAT(
 		reject(client, "audition.start", {{"media", loop.event}, {"position", 0}}), ContainsSubstring("no media file"));
+}
+
+// Follow-ups of #887 (#965).
+TEST_CASE("musical mode beyond the real-time range plays on the map after it", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	const Loop loop = addLoop(client, dir, clicks({1000, 25000, 49000, 73000}, 4 * g_quarter));
+	run(client, "clip.setWarp", {{"clip", loop.clip}, {"musical", true}});
+	run(client, "clip.setWarp", {{"clip", loop.clip}, {"tempo", 120.0}});
+	// The first quarter at 15 BPM plays 8 times as long as the clip's, twice the real-time stretcher's range; the
+	// clicks after it are where the map puts them all the same.
+	run(client, "project.set", {{"tempoTrackActive", true}});
+	run(client, "tempo.add", {{"position", 0}, {"bpm", 15.0}, {"ramp", false}});
+	run(client, "tempo.add", {{"position", g_ticksPerQuarter}, {"bpm", 120.0}, {"ramp", false}});
+	checkClicks(render(client, 11 * g_quarter),
+		{(8.0 * g_quarter) + 1000.0, (9.0 * g_quarter) + 1000.0, (10.0 * g_quarter) + 1000.0});
+}
+
+TEST_CASE("a warped event's JSON has what it plays for and its fade room, announced when the tempo moves them",
+	"[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	std::mutex mutex;
+	std::vector<Json> changed;
+	const engine::Listener listener(engine,
+		[&](const engine::Event& event)
+		{
+			const std::lock_guard<std::mutex> lock(mutex);
+			if (event.name == "audioEvent.changed")
+				changed.push_back(event.data.at("event"));
+		});
+	// The event as last announced, and the announcements forgotten.
+	const auto announced = [&](ObjectId id)
+	{
+		const std::lock_guard<std::mutex> lock(mutex);
+		Json last;
+		for (const Json& event : changed)
+			if (event.at("id") == id)
+				last = event;
+		changed.clear();
+		return last;
+	};
+	const Loop loop = addLoop(client, dir, clicks({1000}, 4 * g_quarter));
+	CHECK(!eventOf(client, loop.event).contains("playedLength"));
+	run(client, "clip.setWarp", {{"clip", loop.clip}, {"musical", true}});
+	run(client, "clip.setWarp", {{"clip", loop.clip}, {"tempo", 120.0}});
+	Json event = eventOf(client, loop.event);
+	CHECK(event.at("playedLength") == 4 * g_quarter);
+	CHECK(event.at("fadeRoom") == 4 * g_quarter);
+	CHECK(announced(loop.event).at("playedLength") == 4 * g_quarter);
+
+	// At 60 BPM it plays twice as long, and has twice the room for its fades.
+	run(client, "project.set", {{"tempo", 60.0}});
+	event = announced(loop.event);
+	REQUIRE(event.is_object());
+	CHECK(event.at("playedLength") == 8 * g_quarter);
+	CHECK(event.at("fadeRoom") == 8 * g_quarter);
+	CHECK(eventOf(client, loop.event).at("playedLength") == 8 * g_quarter);
+	run(client, "history.undo");
+	event = announced(loop.event);
+	REQUIRE(event.is_object());
+	CHECK(event.at("playedLength") == 4 * g_quarter);
+	// A change of the event itself keeps them in what it announces.
+	run(client, "audioEvent.set", {{"event", loop.event}, {"volume", -6.0}});
+	event = announced(loop.event);
+	REQUIRE(event.is_object());
+	CHECK(event.at("playedLength") == 4 * g_quarter);
+
+	// Out of musical mode they go.
+	run(client, "clip.setWarp", {{"clip", loop.clip}, {"musical", false}});
+	event = announced(loop.event);
+	REQUIRE(event.is_object());
+	CHECK(!event.contains("playedLength"));
+	CHECK(!event.contains("fadeRoom"));
+}
+
+TEST_CASE("warped events reach other applications through DAWproject's Warps", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	// Saves the project without GNUbase's entry and loads it, as from another application: its Warps element.
+	const auto throughProjectXml = [&]()
+	{
+		const std::string file = (dir.path() / "warp.dawproject").u8string();
+		run(client, "project.save", {{"path", file}, {"embedMedia", false}});
+		std::map<std::string, std::string> entries = test::readZip(file);
+		REQUIRE(entries.erase("gnubase.json") == 1);
+		const std::string other = (dir.path() / "other.dawproject").u8string();
+		test::writeZip(other, entries);
+		run(client, "project.load", {{"path", other}});
+		pugi::xml_document document;
+		REQUIRE(document.load_string(entries.at("project.xml").c_str()));
+		const pugi::xml_node warps = document.select_node("//Warps").node();
+		REQUIRE(warps);
+		CHECK(std::string(warps.attribute("contentTimeUnit").as_string()) == "seconds");
+		CHECK(warps.child("Audio"));
+		const Json project = run(client, "project.get");
+		REQUIRE(project.at("audioEvents").size() == 1);
+		return std::make_pair(std::string(warps.attribute("timeUnit").as_string()),
+			warpOf(client, project.at("audioEvents").at(0).at("clip").get<ObjectId>()));
+	};
+
+	SECTION("musical mode in beats, still following the tempo")
+	{
+		// The clip at 60 BPM plays twice as fast at the project's 120.
+		const Loop loop = addLoop(client, dir, clicks({1000, 49000, 97000, 145000}, 8 * g_quarter));
+		run(client, "clip.setWarp", {{"clip", loop.clip}, {"musical", true}});
+		run(client, "clip.setWarp", {{"clip", loop.clip}, {"tempo", 60.0}});
+		const std::vector<double> fast{500.0, 24500.0, 48500.0, 72500.0};
+		checkClicks(render(client, 4 * g_quarter), fast);
+		const auto [unit, warp] = throughProjectXml();
+		CHECK(unit == "beats");
+		CHECK(warp.at("musical") == true);
+		CHECK(std::abs(warp.at("tempo").get<double>() - 60.0) < 0.01);
+		const Json event = run(client, "project.get").at("audioEvents").at(0);
+		CHECK(std::abs(event.at("playedLength").get<double>() - (4.0 * g_quarter)) <= 1.0);
+		checkClicks(render(client, 4 * g_quarter), fast);
+		run(client, "project.set", {{"tempo", 60.0}});
+		checkClicks(render(client, 8 * g_quarter), {1000.0, 49000.0, 97000.0, 145000.0});
+	}
+
+	SECTION("warp markers in seconds")
+	{
+		const Loop loop = addLoop(client, dir, clicks({1000, 25000, 52000, 73000}, 4 * g_quarter), "linear");
+		run(client, "clip.addWarpMarker", {{"clip", loop.clip}, {"position", 52000}, {"target", 49000}});
+		const std::vector<double> moved{
+			1000.0 * 49000.0 / 52000.0, 25000.0 * 49000.0 / 52000.0, 49000.0, 49000.0 + (21000.0 * 47000.0 / 44000.0)};
+		checkClicks(render(client, 4 * g_quarter), moved);
+		const auto [unit, warp] = throughProjectXml();
+		CHECK(unit == "seconds");
+		CHECK(warp.at("musical") == false);
+		CHECK(!warp.at("markers").empty());
+		checkClicks(render(client, 4 * g_quarter), moved);
+	}
+}
+
+TEST_CASE("the disk thread keeps up with several warped events on the quality preset", "[integration][realtime]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	run(client, "audio.setDevice", {{"blockSize", 256}, {"inputChannels", 0}, {"captureSeconds", 6}});
+	// Four tracks, each with an event of a loop at 90 BPM that musical mode stretches to the project's 120: a Debug
+	// build keeps up with them on a busy machine, though not with 8 (docs/features/warp.md).
+	const Loop loop = addLoop(client, dir, sine(4 * 48000));
+	for (int i = 1; i < 4; ++i)
+	{
+		const Json track = run(client, "track.add", {{"type", "audio"}, {"channels", 1}}).at("track").at("id");
+		run(client, "audioEvent.add",
+			{{"track", track}, {"clip", loop.clip}, {"position", 0}, {"offset", 0}, {"length", 4 * 48000}});
+	}
+	run(client, "clip.setWarp", {{"clip", loop.clip}, {"musical", true}});
+	run(client, "clip.setWarp", {{"clip", loop.clip}, {"tempo", 90.0}});
+	CHECK(warpOf(client, loop.clip).at("preset") == "quality");
+	run(client, "transport.locate", {{"position", 0}});
+	run(client, "transport.play");
+	run(client, "audio.start");
+	constexpr int64_t frames = 2 * 48000;
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+	while (
+		run(client, "audio.get").at("position").get<int64_t>() < frames && std::chrono::steady_clock::now() < deadline)
+		std::this_thread::sleep_for(std::chrono::milliseconds(5));
+	run(client, "audio.stop");
+	const Json audio = run(client, "audio.get");
+	CHECK(audio.at("position").get<int64_t>() >= frames);
+	CHECK(audio.at("playbackDropouts") == 0);
 }
