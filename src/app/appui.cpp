@@ -43,6 +43,19 @@ namespace gnubase::app
 			return ui::Themes(resources);
 		}
 
+		// The tracks that track.import or track.export left out (skipped) for the message that tells, or empty.
+		std::string leftOut(const engine::Json& result)
+		{
+			const engine::Json& skipped = result.at("skipped");
+			if (skipped.empty())
+				return {};
+			std::string names;
+			for (const engine::Json& track : skipped)
+				names += (names.empty() ? "" : ", ") + track.at("name").get<std::string>();
+			return std::string(skipped.size() == 1 ? "the track " : "the tracks ") + names +
+				", which can't be imported or exported yet";
+		}
+
 		struct ProjectPanel
 		{
 			const char* id;
@@ -484,7 +497,19 @@ namespace gnubase::app
 					auto inspector = std::make_shared<ui::Inspector>(
 						m_binding, element, [this](uint64_t track)
 						{ m_shell.post([this, track] { openChannelSettings(track); }); }, [this](uint64_t track)
-						{ m_shell.post([this, track] { openArticulationMaps(m_main, track); }); });
+						{ m_shell.post([this, track] { openArticulationMaps(m_main, track); }); },
+						[this](uint64_t track, bool project)
+						{
+							m_shell.post(
+								[this, track, project]
+								{
+									if (project)
+										openDialog(m_main, "rule-editor.rml", {{"target", "project"}});
+									else
+										openDialog(m_main, "rule-editor.rml",
+											{{"target", "track"}, {"track", std::to_string(track)}});
+								});
+						});
 					m_inspector = inspector;
 					return std::shared_ptr<void>(inspector);
 				};
@@ -1973,7 +1998,7 @@ namespace gnubase::app
 				dialog.filters = {{"DAWproject files", "dawproject"}, {"All files", "*"}};
 				dialog.parent = window.id();
 				m_shell.showFileDialog(dialog,
-					[this, below = selection()](const ui::FileDialogResult& chosen)
+					[this, below = selection(), id = window.id()](const ui::FileDialogResult& chosen)
 					{
 						if (!chosen.error.empty())
 							logging::warning("The file dialog failed: {}", chosen.error);
@@ -1982,7 +2007,15 @@ namespace gnubase::app
 						engine::Json parameters = {{"path", chosen.files.front().u8string()}};
 						if (!below.empty())
 							parameters["track"] = below.front();
-						m_binding.send("track.import", parameters);
+						// The engine's refusal shows, and the tracks it left out.
+						m_binding.send("track.import", parameters,
+							[this, id](const engine::Result& result)
+							{
+								if (!result.ok())
+									m_files.showError(id, result.error);
+								else if (const std::string left = leftOut(result.value); !left.empty())
+									m_files.showError(id, "The tracks were imported without " + left + ".");
+							});
 					});
 			}});
 		// File > Export > Selected Tracks (reference manual pp. 205-206): a track archive, with copies of the media.
@@ -1996,7 +2029,7 @@ namespace gnubase::app
 				dialog.location = "Tracks.dawproject";
 				dialog.parent = window.id();
 				m_shell.showFileDialog(dialog,
-					[this, tracks = selection()](const ui::FileDialogResult& chosen)
+					[this, tracks = selection(), id = window.id()](const ui::FileDialogResult& chosen)
 					{
 						if (!chosen.error.empty())
 							logging::warning("The file dialog failed: {}", chosen.error);
@@ -2005,7 +2038,14 @@ namespace gnubase::app
 						std::filesystem::path file = chosen.files.front();
 						if (file.extension().empty())
 							file += ".dawproject";
-						m_binding.send("track.export", {{"tracks", tracks}, {"path", file.u8string()}});
+						m_binding.send("track.export", {{"tracks", tracks}, {"path", file.u8string()}},
+							[this, id](const engine::Result& result)
+							{
+								if (!result.ok())
+									m_files.showError(id, result.error);
+								else if (const std::string left = leftOut(result.value); !left.empty())
+									m_files.showError(id, "The tracks were exported without " + left + ".");
+							});
 					});
 			}});
 		m_keys.enableWhen("file.exportTracks", hasSelection);

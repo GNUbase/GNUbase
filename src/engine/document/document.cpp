@@ -127,6 +127,13 @@ namespace gnubase::engine
 		return chain;
 	}
 
+	time::Ticks longestProjectTicks(const Project& project)
+	{
+		constexpr double lowestRate = 8000.0;
+		return project.tempo.toTicks(
+			static_cast<double>(time::g_maxPosition) / std::max(project.sampleRate, lowestRate));
+	}
+
 	ObjectId mainMix(const Project& project)
 	{
 		const auto bus = std::find_if(

@@ -183,6 +183,8 @@ namespace gnubase::ui
 		const engine::Json& project() const { return m_project; }
 		uint64_t loads() const { return m_loads; }
 		uint64_t read() const { return m_read; }
+		// The tempo map and signatures of project(), read once per answer.
+		const TimeContext& time() const { return m_time; }
 		// Folder tracks' data blocks (reference manual p. 226, docs/features/folder-tracks.md): per lane, the events
 		// and parts of the tracks inside a folder's lane, by the user setting ui.folderData (always, never, or
 		// hideWhenExpanded: while the folder is folded); empty for the other lanes.

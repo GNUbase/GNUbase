@@ -152,7 +152,8 @@ namespace gnubase::engine::processors
 	// note-off goes where the note-on went, so a note changed by the rules ends where it sounds, and so does the poly
 	// pressure of a held note unless the rules find it; a note-on that became another type of event loses its note-off.
 	// Where two held notes play one note, it plays once and ends with the last of them. In a full output, note-offs
-	// take the places of other events.
+	// take the places of other events, and a note-on that doesn't fit is left out with its note-off, so that notes
+	// hang only if more of them end in one block than it holds.
 	// Velocities stay from 1 to 127, and a controller turned into a note plays a note-on for values above 0 and a
 	// note-off for 0, once each while the note is held, counting as a held note. SysEx passes.
 	class LogicalStage

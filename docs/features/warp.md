@@ -26,9 +26,14 @@ length stays in clip frames; its end on the timeline (`eventSpan`) follows the w
 playback see where it really ends. Every conversion between timeline positions and clip frames goes through
 `eventSamples` and `eventFrames` (`fadeedits.cpp`), which follow the warp: splitting, sizing (sizing that moves the
 contents keeps the edge that stays put, searching for the offset that ends the event there), snap points and snapping
-to them and to zero crossings, fades to the range, drawn volume curves, hitpoint slicing and the audio functions.
-An event's own fades play in frames at the clip's sample rate from its edges, so together they fit into what it plays
-for at that rate (`fadeRoom`), which `audioEvent.setFades` and the fades to the range both check.
+to them and to zero crossings, drawn volume curves, hitpoint slicing, the audio functions (Detect Silence's splits
+among them), Crossfade's closed gaps and overlaps in audio quantizing, and the sample editor's Select Locators; only
+the sample editor view's `clipStart` and `ratio` don't (see Not yet). An event's own fades play in frames at the
+clip's sample rate from its edges, so together they fit into what it plays for at that rate (`fadeRoom`), which
+`audioEvent.setFades`, the fades to the range and Strip Silence's Apply Fades (each at most half of it) use; the fades
+to the range measure the range's distance from the event's edges at that rate too (`fadesToRange`). As the room
+depends on the tempo in musical mode and on the warp markers, a tempo change or a marker move can leave the fades
+longer than it: they stay, and `audioEvent.setFades` takes any change that doesn't make them longer together.
 
 ## Engine commands
 
@@ -40,7 +45,7 @@ Each is one undo step and emits `clip.changed`, except `event.flatten`, which em
 | `clip.setWarp` | Musical mode on or off (a clip without a tempo takes the project's where its first event starts, so nothing changes until the tempo does), `tempo`, length in `bars` and `beats` (sets the tempo), `beatsPerBar`, `gridStart` and `preset` | pp. 616, 648-650 |
 | `clip.autoAdjust` | The tempo and grid start from a section (`start`, `end`; default the clip) that starts and ends at a barline and is `bars` bars long (default: the nearest whole bars), and every beat with a hitpoint that counts within a quarter beat of it edited onto that hitpoint; the snap point of `event` (the sample editor's) moves to the section's start | pp. 651-652 |
 | `clip.adjustGrid` | Manual Adjust: `mode` `start` (Set Grid Start), `stretch` (Stretch Grid: beat `beat`, default the second bar, at `frame` by the tempo), `bar` (Set Bar Position: the beats edited after it move with it), `beat` (Set Beat Position), `remove` (Remove Beat Edit) | pp. 652-654 |
-| `clip.addWarpMarker`, `clip.setWarpMarker` | Inserts a warp marker at `position` playing at `target`, moves one; markers can't pass each other, and no section between two markers, or a marker and the clip's ends, may play more than 4 times or less than a quarter as long, the real-time stretcher's range | pp. 654-656 |
+| `clip.addWarpMarker`, `clip.setWarpMarker` | Inserts a warp marker at `position` playing at `target`, moves one; markers can't pass each other, and no section between two markers, or a marker and the clip's ends, may play more than 4 times or less than a quarter as long, the real-time stretcher's range (`checkMarkers`, which warp quantizing and `event.pasteWarpMarkers` keep to as well) | pp. 654-656 |
 | `clip.removeWarpMarkers` | Removes those at `positions`, or all (Reset: musical mode and the definition stay) | p. 656 |
 | `event.unstretch` | Unstretch Audio: musical mode off and no markers in the events' clips | pp. 657-658 |
 | `event.flatten` | Flatten Real Time Processing: renders each event of a warped clip as it plays now (with `preset`, default the clip's) with its clip's fades into a 32-bit float WAV file in the project's media folder, and makes the event play a new clip of it; its own fades keep their lengths. When an event fails, the files rendered for the others go | p. 657 |
@@ -97,7 +102,8 @@ hitpoints, warp markers and zero crossings, several markers removed by a rectang
 project window's time warp tool has Free Warp, [time-warp.md](time-warp.md)); the note and warp icons on events and the pool's Musical Mode column; the tempo of loops with embedded
 tempo on import; the event's length, its waveform in the project window and the sample editor's positions following
 the warp (they show the unwarped clip); event fades keep their length in clip frames; auditioning and scrubbing play
-warped events unstretched; flattening in offline mode; musical mode at more than 4 times or less than a quarter of the
+warped events unstretched; the fade handles in the project window and the fade editor dialog limit an event's
+fades by its length in clip frames, not by what a warped event plays (they go with the event's span in its JSON); flattening in offline mode; musical mode at more than 4 times or less than a quarter of the
 clip's tempo, and beats edited that far, play beyond the stretcher's range, so the audio after them drifts from the
 map; the warp in DAWproject's `Warps` element (it is saved in `gnubase.json` only, and the importer reads a `Warps`
 element's audio without its warp points); measuring the disk thread's load with many warped events.
@@ -108,10 +114,12 @@ element's audio without its warp points); measuring the disk thread's load with 
 the render test of musical mode following a fixed tempo and a tempo track change, with undo, and off again; bars and
 beats, Auto Adjust from hitpoints moving the snap point and every Manual Adjust mode with their errors; an edited
 beat playing on the project's beat; free warp markers moving clicks, moved, refused (also beyond the real-time range,
-1:8 both ways), removed and reset; clip fades of a warped event that starts and ends inside them; unstretching, and
+1:8 both ways), removed and reset; warp quantizing keeping a marker within the range; Crossfade closing a gap and
+going into the next event through the warp; clip fades of a warped event that starts and ends inside them; unstretching, and
 flattening playing exactly as before (also with event and clip fades) and no longer following the tempo, with undo,
 and leaving no files when it fails; fades to the range, drawn volume curves and hitpoint cuts through the warp;
-sizing with the contents keeping the other edge; the warped events' entries refused as media files; the warp saved
+sizing with the contents keeping the other edge; zero crossings, the snap point and Detect Silence's splits through
+the warp; the sample editor's Select Locators; fades that stop fitting after a tempo change still changing; the warped events' entries refused as media files; the warp saved
 and loaded.
 `tests/sampleeditor_ui_tests.cpp`: Musical Mode, the Audio Tempo field, Auto Adjust, Free Warp's drags and removal, Reset, Unstretch Audio
 from the Audio menu and Flatten.
