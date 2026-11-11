@@ -126,7 +126,11 @@ attributes, through a data model or directly.
 An element's `title` attribute is its tooltip: when the mouse has rested 0.6 seconds over the element, or over one
 inside it without a title of its own, the document's `<tooltip>` shows the text 20 dp under the mouse, inside the
 window, with the state class `.shown`. It goes when the mouse moves to an element without a title or leaves the window,
-and on a click, a key or the wheel. Every document gets its tooltip element when it loads; it lets the mouse through.
+and on a click, a key or the wheel. The tooltip goes with its element: no tooltip comes when the element is removed
+while the mouse rests on it, and a shown one goes when its element is removed, as when a list under the mouse is
+rendered anew. A new element with a title in the removed one's place, under the resting mouse, gets its tooltip after
+the usual rest, without another mouse move. Every document gets its tooltip element when it loads; it lets the mouse
+through.
 
 ## Notifications
 
