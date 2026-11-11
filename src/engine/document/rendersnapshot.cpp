@@ -610,7 +610,8 @@ namespace gnubase::engine
 			int own = render.output.kind == RenderTarget::Kind::Channel ? render.output.index : -1;
 			if (render.type == TrackType::Instrument)
 				own = channelIndex.at(render.id);
-			for (size_t s = 0; s < render.midiSends.slots.size(); ++s)
+			const bool notes = render.type == TrackType::Midi || render.type == TrackType::Instrument; // not frozen
+			for (size_t s = 0; s < render.midiSends.slots.size() && notes; ++s)
 				if (const auto target = channelIndex.find(render.midiSends.slots[s].output);
 					target != channelIndex.end() && target->second != own &&
 					snapshot->channels[static_cast<size_t>(target->second)].type == TrackType::Instrument &&

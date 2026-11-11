@@ -805,3 +805,29 @@ TEST_CASE("render in place refuses what it can't render", "[integration]")
 		ContainsSubstring("frozen"));
 	CHECK(tracks() == 3);
 }
+
+TEST_CASE("a frozen instrument track's MIDI send to another instrument track stays out of the graph", "[integration]")
+{
+	Session project;
+	const Session::Track synth = project.addSynth();
+	const Session::Track other = project.addSynth();
+	REQUIRE(run(project.client, "track.freeze", {{"tracks", {synth.track}}, {"tail", 0}}).at("tracks").size() == 1);
+	run(project.client, "channel.set",
+		{{"channel", synth.channel},
+			{"midiSends",
+				{{"slots",
+					{{{"effect", "transformer"}, {"parameters", {{"value", 1}}}, {"output", other.channel}}}}}}});
+	run(project.client, "midi.capture", {{"start", true}});
+	run(project.client, "transport.locate", {{"position", 0}});
+	run(project.client, "transport.play");
+	run(project.client, "audio.render", {{"frames", 48000}});
+	// The other track plays its own notes, none a semitone up from the frozen one's.
+	const Json captured = run(project.client, "midi.capture").at("captured");
+	INFO(captured.dump());
+	CHECK(!captured.empty());
+	for (const Json& message : captured)
+		CHECK(message.at("bytes").at(1).get<int>() % 12 != 1);
+	// The send keeps its output, which plays again once the track is unfrozen.
+	run(project.client, "track.unfreeze", {{"tracks", {synth.track}}});
+	run(project.client, "audio.render", {{"frames", 4096}});
+}
