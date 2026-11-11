@@ -3,6 +3,7 @@
 
 #include "engine/midi/chords.h"
 #include "engine/midi/quantizesettings.h"
+#include "platform/log.h"
 #include "ui/controllerlanes.h"
 #include "ui/timeformat.h"
 
@@ -15,6 +16,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <exception>
 #include <map>
 #include <tuple>
 #include <utility>
@@ -351,6 +353,16 @@ namespace gnubase::ui
 
 	KeyEditor::~KeyEditor()
 	{
+		// A key held while the editor goes ends its pitch: the editor closing, or the switch between the key and drum
+		// editor, which builds a key editor of its own. Sending may throw, which a destructor must not pass on.
+		try
+		{
+			sound(std::nullopt);
+		}
+		catch (const std::exception& error)
+		{
+			logging::warning("The key editor cannot end the pitch of its pressed key: {}", error.what());
+		}
 		if (Rml::Element* document = m_document.get())
 		{
 			document->RemoveEventListener(Rml::EventId::Mouseup, this);
