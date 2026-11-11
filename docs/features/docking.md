@@ -103,8 +103,9 @@ and hidden sections (Reset All, p. 1576), and the presets (p. 1575) save and rec
 - **Reorder.** A button dragged onto another moves its section to that one's place, in the pane and in every container.
   Children that aren't sections, such as a channel's name above them, keep their places between the sections, and the
   sections fill their own places in the new order. So a toolbar whose spacer stands before its last place has the
-  last section of the order at its right end, whichever section that is. The gap after a toolbar section is the same
-  for every section (`.toolbar-section` in `base.rcss`), so it doesn't depend on the order.
+  last section of the order at its right end, whichever section that is, if it is shown. The gap after a toolbar
+  section is the same for every section (`.toolbar-section` in `base.rcss`), so it doesn't depend on the order; a
+  section hidden by a narrow window or in the setup pane takes no gap.
 - **Defaults.** The set's first container in the document says which sections there are, their default order and which
   are hidden by default; the other containers are expected to have the same sections.
 - **Containers that come later.** Containers added or rebuilt after `attach`, such as the mixer's channels as tracks

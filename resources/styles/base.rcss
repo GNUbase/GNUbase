@@ -293,12 +293,13 @@ tabset tab
 }
 
 /* A section of the project window's toolbar, which its setup pane shows, hides and orders. The gap after it belongs to
-   the section, not to one of its buttons, and every section has the same, so it is the same in every order. */
+   the section, not to one of its buttons, and every section has the same, so it is the same in every order. A section
+   whose controls the window is too narrow for is hidden as a whole, so it takes no gap either. */
 .toolbar-section
 {
 	display: flex;
 	align-items: center;
-	margin-right: 4dp;
+	margin-right: 2dp;
 }
 
 .display, .tooltip
@@ -1146,6 +1147,14 @@ meter .meter-peak
 	}
 }
 
+@media (max-width: 1099dp)
+{
+	.toolbar-section[section=rootKey]
+	{
+		display: none;
+	}
+}
+
 /* The tools (docs/features/tools.md): the selection range, at least a line wide, and the rectangle a tool drags. Code
    sets where they are and the state class .shown. */
 .event-display .range-selection, .event-display .tool-rectangle
@@ -1315,6 +1324,14 @@ meter .meter-peak
 	.track-visibility-configurations
 	{
 		display: inline-block;
+	}
+}
+
+@media (max-width: 1099dp)
+{
+	.toolbar-section[section=trackVisibility]
+	{
+		display: none;
 	}
 }
 

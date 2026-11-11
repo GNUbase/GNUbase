@@ -65,7 +65,8 @@ namespace
 	// The project window at a dp ratio of 1 with the info line and the inspector shown.
 	struct Window
 	{
-		Window() : display(app.appUi().showProject()), list(*app.appUi().trackList())
+		explicit Window(int width = 1200)
+			: app{{width, 600}}, display(app.appUi().showProject()), list(*app.appUi().trackList())
 		{
 			app.setDpRatio(1.0F);
 			app.appUi().docking().setVisible("project", "infoLine", true);
@@ -127,7 +128,7 @@ namespace
 
 		int64_t historyPosition() { return call("history.get").at("position").get<int64_t>(); }
 
-		test::UiApp app{{1200, 600}};
+		test::UiApp app;
 		ui::EventDisplay& display;
 		ui::TrackList& list;
 	};
@@ -782,11 +783,10 @@ TEST_CASE("the toolbar's setup pane shows, hides and orders its sections, with p
 			const Json section = element(window.app, "#toolbar [section=" + name + "]");
 			if (!section.at("visible").get<bool>())
 				continue;
-			boxes.push_back(section.at("box"));
-			if (name == order.back())
-				break;
+			if (name != order.back())
+				boxes.push_back(section.at("box"));
 		}
-		for (size_t i = 1; i + 1 < boxes.size(); ++i)
+		for (size_t i = 1; i < boxes.size(); ++i)
 			result.push_back(boxes[i].at("x").get<double>() - boxes[i - 1].at("x").get<double>() -
 				boxes[i - 1].at("width").get<double>());
 		return result;
@@ -797,7 +797,7 @@ TEST_CASE("the toolbar's setup pane shows, hides and orders its sections, with p
 		// Every place between sections has the same gap, whichever sections are in it (#1050).
 		const std::vector<double> between = gaps(order);
 		REQUIRE(!between.empty());
-		CHECK(between.front() >= 3.0);
+		CHECK(between.front() >= 1.0);
 		for (const double gap : between)
 			CHECK(std::abs(gap - between.front()) <= 1.0);
 		CHECK(std::abs(now.first - edges.first) <= 1.0);
@@ -852,6 +852,47 @@ TEST_CASE("the toolbar's setup pane shows, hides and orders its sections, with p
 	REQUIRE(window.app.waitUntil(snapHidden));
 	CHECK(docking.sections("project", "toolbar") == moved);
 	atEdges(moved);
+}
+
+TEST_CASE("the toolbar's sections that a narrow window has no room for take no gap, so the others keep theirs", "[ui]")
+{
+	// 1024 dp has no room for the track visibility and root key sections' controls, 900 dp not for the quantize
+	// section's either.
+	for (const int width : {1024, 900})
+	{
+		INFO("window width " << width);
+		Window window(width);
+		window.app.shell().step(std::chrono::milliseconds(0));
+		const std::vector<std::string> order = window.app.appUi().docking().sections("project", "toolbar");
+		std::vector<Json> boxes;
+		std::vector<std::string> shown;
+		for (const std::string& name : order)
+		{
+			const Json section = element(window.app, "#toolbar [section=" + name + "]");
+			const bool visible = section.at("visible").get<bool>();
+			const bool narrowGone =
+				name == "trackVisibility" || name == "rootKey" || (width < 1000 && name == "quantize");
+			CHECK(visible == !narrowGone);
+			// The last section stands after the spacer, which widens the gap before it.
+			if (visible && name != order.back())
+			{
+				boxes.push_back(section.at("box"));
+				shown.push_back(name);
+			}
+		}
+		REQUIRE(boxes.size() >= 4);
+		const auto gap = [&boxes](size_t i)
+		{
+			return boxes.at(i).at("x").get<double>() - boxes.at(i - 1).at("x").get<double>() -
+				boxes.at(i - 1).at("width").get<double>();
+		};
+		CHECK(gap(1) >= 1.0);
+		for (size_t i = 2; i < boxes.size(); ++i)
+		{
+			INFO("the gap before " << shown.at(i));
+			CHECK(std::abs(gap(i) - gap(1)) <= 1.0);
+		}
+	}
 }
 
 TEST_CASE("an edit in the inspector goes to the track it started on when another track shows", "[ui]")
