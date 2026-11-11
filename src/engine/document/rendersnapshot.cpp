@@ -98,8 +98,9 @@ namespace gnubase::engine
 
 		// Adds a part's notes and controllers, cut at the part's end, the notes as the chord track maps them if the
 		// track follows it (#173), then as the channel's MIDI modifiers, the part's transpose and velocity and global
-		// transposition (#168) at their start play them.
-		void compilePart(const Project& project, ObjectId partId, const MidiPart& part, RenderChannel& channel)
+		// transposition (#168) at their start play them. follower is the part's track's.
+		void compilePart(const Project& project, ObjectId partId, const MidiPart& part, const ChordFollower& follower,
+			RenderChannel& channel)
 		{
 			const time::Ticks start = time::toTicks(part.position, project.tempo, project.sampleRate);
 			const time::Position endPosition{part.position.base, part.position.value + part.length};
@@ -113,7 +114,6 @@ namespace gnubase::engine
 			// The track's drum map plays each note's sound: its O-note, on its channel unless that is Any, and not
 			// at all if it is muted (#129). The modifiers then apply to the O-note.
 			const DrumMap* map = midi::drumMapOf(project, part.track);
-			const ChordFollower follower(project, part.track);
 			// The track's articulation map plays each note's sound slot (#175): the slot's output events where the
 			// slot changes, and the slot's MIDI modifiers.
 			const ArticulationMap* articulations = midi::articulationMapOf(project, part.track);
@@ -643,6 +643,10 @@ namespace gnubase::engine
 				continue;
 			snapshot->channels[trackChannel.at(event.track)].audioEvents.push_back(std::move(render));
 		}
+		// What each track's notes play as it follows the chord track, made once per track, not once per part.
+		std::map<ObjectId, ChordFollower> followers;
+		const auto follower = [&](ObjectId track) -> const ChordFollower&
+		{ return followers.try_emplace(track, project, track).first->second; };
 		for (const auto& [id, part] : project.midiParts)
 		{
 			RenderChannel& channel = snapshot->channels[static_cast<size_t>(trackChannel.at(part.track))];
@@ -651,14 +655,14 @@ namespace gnubase::engine
 				continue;
 			if (project.patterns.count(part.pattern) == 0)
 			{
-				compilePart(project, id, part, channel);
+				compilePart(project, id, part, follower(part.track), channel);
 				continue;
 			}
 			// A pattern event (#181) plays its pattern's notes instead of its own.
 			// ponytail: pattern events that overlap on a track all play, not only the topmost (p. 935).
 			MidiPart played = part;
 			played.notes = midi::playedNotes(project, part);
-			compilePart(project, id, played, channel);
+			compilePart(project, id, played, follower(part.track), channel);
 		}
 
 		std::map<ObjectId, Points> vcaCurves; // by the VCA fader's channel
