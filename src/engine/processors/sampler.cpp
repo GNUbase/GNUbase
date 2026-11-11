@@ -9,6 +9,9 @@
 #include <cmath>
 #include <cstring>
 #include <exception>
+#include <filesystem>
+#include <map>
+#include <mutex>
 
 namespace gnubase::engine::processors
 {
@@ -28,46 +31,86 @@ namespace gnubase::engine::processors
 		{
 			return std::max(ms, 0.0) * sampleRate / 1000.0;
 		}
+
+		// How long a voice that a monophonic note takes over fades out.
+		constexpr double g_takeOverMs = 5.0;
+
+		std::shared_ptr<const Sample> loadSample(const std::string& path)
+		{
+			auto sample = std::make_shared<Sample>();
+			try
+			{
+				const std::unique_ptr<AudioFileReader> reader = AudioFileReader::open(path);
+				const AudioFileInfo& info = reader->info();
+				const auto channels = static_cast<size_t>(std::max(info.channels, 1));
+				std::vector<float> interleaved(static_cast<size_t>(info.frames) * channels);
+				const size_t frames = reader->read(interleaved.data(), static_cast<size_t>(info.frames));
+				sample->sampleRate = info.sampleRate;
+				sample->left.resize(frames);
+				if (channels > 1)
+					sample->right.resize(frames);
+				for (size_t i = 0; i < frames; ++i)
+				{
+					sample->left[i] = interleaved[i * channels];
+					if (channels > 1)
+						sample->right[i] = interleaved[(i * channels) + 1];
+				}
+			}
+			catch (const std::exception&)
+			{
+				return std::make_shared<const Sample>(); // a missing or unreadable file plays nothing
+			}
+			return sample;
+		}
 	}
 
-	std::unique_ptr<const Sample> loadSample(const std::string& path)
+	std::shared_ptr<const Sample> sharedSample(const std::string& path)
 	{
-		auto sample = std::make_unique<Sample>();
-		try
+		namespace fs = std::filesystem;
+		struct Cached
 		{
-			const std::unique_ptr<AudioFileReader> reader = AudioFileReader::open(path);
-			const AudioFileInfo& info = reader->info();
-			const auto channels = static_cast<size_t>(std::max(info.channels, 1));
-			std::vector<float> interleaved(static_cast<size_t>(info.frames) * channels);
-			const size_t frames = reader->read(interleaved.data(), static_cast<size_t>(info.frames));
-			sample->sampleRate = info.sampleRate;
-			sample->left.resize(frames);
-			if (channels > 1)
-				sample->right.resize(frames);
-			for (size_t i = 0; i < frames; ++i)
-			{
-				sample->left[i] = interleaved[i * channels];
-				if (channels > 1)
-					sample->right[i] = interleaved[(i * channels) + 1];
-			}
-		}
-		catch (const std::exception&)
+			fs::file_time_type written;
+			uintmax_t size = 0;
+			std::weak_ptr<const Sample> sample;
+		};
+		// ponytail: one lock for every file, read under it; a lock per file if samplers load in parallel.
+		static std::mutex mutex;
+		static std::map<std::string, Cached> cache;
+		std::error_code error;
+		const fs::path file = fs::u8path(path);
+		const fs::file_time_type written = fs::last_write_time(file, error);
+		const uintmax_t size = error ? 0 : fs::file_size(file, error);
+		if (error)
+			return std::make_shared<const Sample>();
+		const std::lock_guard<std::mutex> lock(mutex);
+		for (auto entry = cache.begin(); entry != cache.end();)
+			entry = entry->second.sample.expired() ? cache.erase(entry) : std::next(entry);
+		Cached& cached = cache[path];
+		std::shared_ptr<const Sample> sample = cached.sample.lock();
+		if (!sample || cached.written != written || cached.size != size)
 		{
-			return std::make_unique<const Sample>(); // a missing or unreadable file plays nothing
+			sample = loadSample(path);
+			cached = {written, size, sample};
 		}
 		return sample;
 	}
 
-	Sampler::Sampler() : m_sample(std::make_unique<const Sample>())
+	Sampler::Sampler()
+		: m_sample(std::make_unique<const std::shared_ptr<const Sample>>(std::make_shared<const Sample>()))
 	{
 		if (const BuiltinInfo* info = findBuiltin("sampler"))
 			for (const ParameterInfo& parameter : info->parameters)
 				m_values.at(parameter.id) = parameter.defaultValue;
 	}
 
-	void Sampler::setSample(std::unique_ptr<const Sample> sample)
+	void Sampler::setSample(std::shared_ptr<const Sample> sample)
 	{
-		m_sample.publish(std::move(sample));
+		m_sample.publish(std::make_unique<const std::shared_ptr<const Sample>>(std::move(sample)));
+	}
+
+	void Sampler::collect()
+	{
+		m_sample.collect();
 	}
 
 	void Sampler::prepare(double sampleRate, uint32_t /*maxFrames*/)
@@ -95,8 +138,16 @@ namespace gnubase::engine::processors
 			m_values[id] = value;
 	}
 
-	void Sampler::start(Voice& voice, uint8_t channel, uint8_t note, uint16_t velocity, const Sample& sample) noexcept
+	// Starts a note on a free voice, or else on the oldest.
+	void Sampler::start(uint8_t channel, uint8_t note, uint16_t velocity, const Sample& sample) noexcept
 	{
+		Voice* const first = m_voices.data();
+		Voice* const last = first + m_voices.size();
+		Voice* chosen = std::find_if(first, last, [](const Voice& v) { return !v.active; });
+		if (chosen == last)
+			chosen =
+				std::min_element(first, last, [](const Voice& a, const Voice& b) { return a.started < b.started; });
+		Voice& voice = *chosen;
 		const auto frames = static_cast<double>(sample.frames());
 		const double start = std::clamp(m_values[Start], 0.0, 1.0) * frames;
 		const double end = std::clamp(m_values[End], 0.0, 1.0) * frames;
@@ -137,6 +188,25 @@ namespace gnubase::engine::processors
 			voice.releaseStep = voice.level / frames;
 	}
 
+	// Ends a voice quickly but without a click, also a one-shot one: the envelope ends it once its level is 0.
+	void Sampler::fadeOut(Voice& voice) noexcept
+	{
+		voice.held = false;
+		voice.stage = Stage::Release;
+		voice.releaseStep = voice.level / std::max(std::round(milliseconds(g_takeOverMs, m_sampleRate)), 1.0);
+	}
+
+	// Monophonic mode: the voice that plays the note, the one started last that isn't released.
+	Sampler::Voice* Sampler::monophonicVoice() noexcept
+	{
+		Voice* playing = nullptr;
+		for (Voice& voice : m_voices)
+			if (voice.active && voice.stage != Stage::Release &&
+				(playing == nullptr || voice.started > playing->started))
+				playing = &voice;
+		return playing;
+	}
+
 	void Sampler::noteOn(uint8_t channel, uint8_t note, uint16_t velocity) noexcept
 	{
 		if (velocity == 0)
@@ -153,15 +223,12 @@ namespace gnubase::engine::processors
 				   : (note < std::round(m_values[KeyLow]) || note > std::round(m_values[KeyHigh])))
 			return;
 
-		Voice* const first = m_voices.data();
-		Voice* const last = first + m_voices.size();
 		if (m_values[Monophonic] >= 0.5)
 		{
 			m_heldSince[note] = m_notes + 1;
-			Voice* playing =
-				std::find_if(first, last, [](const Voice& v) { return v.active && v.stage != Stage::Release; });
+			Voice* playing = monophonicVoice();
 			// Legato: a note played while another is held only changes the pitch; the envelopes run on.
-			if (playing != last && m_values[Legato] >= 0.5 && playing->held && !slices)
+			if (playing != nullptr && m_values[Legato] >= 0.5 && playing->held && !slices)
 			{
 				playing->note = note;
 				playing->channel = channel;
@@ -169,50 +236,53 @@ namespace gnubase::engine::processors
 				playing->filter = filterFor(*playing);
 				return;
 			}
+			// Every voice fades out, also those of notes from before monophonic mode or still releasing.
 			for (Voice& voice : m_voices)
-				voice.active = false;
-			start(*first, channel, note, velocity, sample);
-			return;
+				if (voice.active)
+					fadeOut(voice);
 		}
-		Voice* voice = std::find_if(first, last, [](const Voice& v) { return !v.active; });
-		if (voice == last)
-			voice = std::min_element(first, last, [](const Voice& a, const Voice& b) { return a.started < b.started; });
-		start(*voice, channel, note, velocity, sample);
+		start(channel, note, velocity, sample);
 	}
 
 	void Sampler::noteOff(uint8_t channel, uint8_t note) noexcept
 	{
 		if (note >= m_heldSince.size())
 			return;
-		if (m_values[Monophonic] >= 0.5)
-		{
+		const bool monophonic = m_values[Monophonic] >= 0.5;
+		if (monophonic)
 			m_heldSince[note] = 0;
-			Voice& voice = m_voices[0];
-			if (!voice.active || voice.note != note || voice.channel != channel || !voice.held)
-				return;
+		// Voices of notes played before monophonic mode came on end like polyphonic ones.
+		const Voice* const playing = monophonic ? monophonicVoice() : nullptr;
+		for (Voice& voice : m_voices)
+		{
+			if (!voice.active || !voice.held || voice.note != note || voice.channel != channel)
+				continue;
+			if (&voice != playing)
+			{
+				release(voice);
+				continue;
+			}
 			// A note it took over that is still held plays again.
 			size_t latest = 0;
 			for (size_t key = 1; key < m_heldSince.size(); ++key)
 				if (m_heldSince[key] > m_heldSince[latest])
 					latest = key;
-			if (m_heldSince[latest] != 0)
+			if (m_heldSince[latest] == 0)
 			{
-				const auto back = static_cast<uint8_t>(latest);
-				if (m_values[Legato] >= 0.5 && !voice.slice)
-				{
-					voice.note = back;
-					voice.filter = filterFor(voice);
-					return;
-				}
-				start(voice, channel, back, static_cast<uint16_t>(std::lround(voice.amplitude * 65535.0)), *m_playing);
-				return;
-			}
-			release(voice);
-			return;
-		}
-		for (Voice& voice : m_voices)
-			if (voice.active && voice.held && voice.note == note && voice.channel == channel)
 				release(voice);
+				continue;
+			}
+			const auto back = static_cast<uint8_t>(latest);
+			if (m_values[Legato] >= 0.5 && !voice.slice)
+			{
+				voice.note = back;
+				voice.filter = filterFor(voice);
+				continue;
+			}
+			const auto velocity = static_cast<uint16_t>(std::lround(voice.amplitude * 65535.0));
+			fadeOut(voice);
+			start(channel, back, velocity, *m_playing);
+		}
 	}
 
 	dsp::Biquad Sampler::filterFor(const Voice& voice) const noexcept
@@ -254,24 +324,27 @@ namespace gnubase::engine::processors
 			const bool alternate = loop == Loop::Alternate || (loop == Loop::AlternateUntilRelease && held);
 			const bool wraps = loop == Loop::Continuous || (loop == Loop::UntilRelease && held) ||
 				(loop == Loop::Once && !voice.loopedOnce);
+			const double length = loopEnd - loopStart;
 			if (alternate)
 			{
-				if (voice.direction > 0.0 && voice.position >= loopEnd)
+				// Wherever a step goes, also past both ends of a short loop at a high pitch: the loop unfolded is a
+				// cycle twice its length, forwards and then backwards.
+				if ((voice.direction > 0.0 && voice.position >= loopEnd) ||
+					(voice.direction < 0.0 && voice.position <= loopStart))
 				{
-					voice.position = loopEnd - (voice.position - loopEnd);
-					voice.direction = -1.0;
-				}
-				else if (voice.direction < 0.0 && voice.position <= loopStart)
-				{
-					voice.position = loopStart + (loopStart - voice.position);
-					voice.direction = 1.0;
+					const double x = voice.position - loopStart;
+					double cycle = std::fmod(voice.direction > 0.0 ? x : (2.0 * length) - x, 2.0 * length);
+					if (cycle < 0.0)
+						cycle += 2.0 * length;
+					voice.direction = cycle < length ? 1.0 : -1.0;
+					voice.position = loopStart + (cycle < length ? cycle : (2.0 * length) - cycle);
 				}
 				return true;
 			}
 			voice.direction = 1.0; // a released alternating loop plays on to the end
 			if (wraps && voice.position >= loopEnd)
 			{
-				voice.position -= loopEnd - loopStart;
+				voice.position = loopStart + std::fmod(voice.position - loopStart, length);
 				voice.loopedOnce = true;
 			}
 		}
@@ -346,7 +419,7 @@ namespace gnubase::engine::processors
 		const double leftPan = std::min(1.0, 1.0 - pan);
 		const double rightPan = std::min(1.0, 1.0 + pan);
 		const bool filter = m_values[FilterOn] >= 0.5;
-		const double drive = m_values[Drive] > 0.0 ? dsp::dbToGain(m_values[Drive]) : 0.0;
+		const double drive = filter && m_values[Drive] > 0.0 ? dsp::dbToGain(m_values[Drive]) : 0.0; // p. 722
 		float* left = context.audio[0];
 		float* right = context.channels > 1 ? context.audio[1] : nullptr;
 		for (Voice& voice : m_voices)
@@ -392,7 +465,7 @@ namespace gnubase::engine::processors
 
 	void Sampler::process(const graph::ProcessContext& context) noexcept
 	{
-		const Sample& sample = m_sample.acquire();
+		const Sample& sample = *m_sample.acquire();
 		m_playing = &sample;
 		splitAtEvents(
 			context,

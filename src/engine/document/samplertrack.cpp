@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cmath>
 #include <memory>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -100,6 +101,21 @@ namespace gnubase::engine
 				channel.instrumentParameters[Sampler::End] = end;
 		}
 
+		// Sampler 01, Sampler 02 and so on: the first number that no track's name has.
+		std::string nextName(const Project& project)
+		{
+			std::set<std::string> taken;
+			for (const auto& entry : project.trackById)
+				taken.insert(entry.second.name);
+			for (int number = 1;; ++number)
+			{
+				const std::string digits = std::to_string(number);
+				std::string name = "Sampler" + std::string(digits.size() < 2 ? " 0" : " ") + digits;
+				if (taken.count(name) == 0)
+					return name;
+			}
+		}
+
 		double parameter(const Channel& channel, uint32_t id, double defaultValue)
 		{
 			const auto found = channel.instrumentParameters.find(id);
@@ -143,11 +159,7 @@ namespace gnubase::engine
 				require(sample || (!parameters.contains("start") && !parameters.contains("end")),
 					"start and end need event or clip");
 				const Section section = sample ? sectionOf(project, parameters) : Section();
-				const auto samplers = std::count_if(project.channels.begin(), project.channels.end(),
-					[](const auto& entry) { return entry.second.instrument == "sampler"; });
-				const std::string number = std::to_string(samplers + 1);
-				const std::string name =
-					parameters.value("name", "Sampler" + std::string(number.size() < 2 ? " 0" : " ") + number);
+				const std::string name = parameters.value("name", nextName(project));
 				const Json added = model.runEdit(
 					"track.add", project, {{"type", "instrument"}, {"instrument", "sampler"}, {"name", name}}, context);
 				Channel& channel = project.channels.at(added.at("channel").at("id").get<ObjectId>());
@@ -198,8 +210,9 @@ namespace gnubase::engine
 				require(channel.sample != 0, "the sampler has no sample");
 				const double level = parameters.value("level", 0.0);
 				require(level <= 0.0 && level >= -96.0, "level must be -96 to 0 dBFS");
-				const std::unique_ptr<const processors::Sample> sample =
-					processors::loadSample(project.media.at(project.clips.at(channel.sample).media).path);
+				const std::string& path = project.media.at(project.clips.at(channel.sample).media).path;
+				const std::shared_ptr<const processors::Sample> sample = processors::sharedSample(path);
+				require(sample->frames() > 0, "the sample's file " + path + " is missing or can't be read");
 				const auto frames = static_cast<double>(sample->frames());
 				// Reversed, the sampler counts Start and End from the sample's end.
 				const bool reverse = parameter(channel, Sampler::Reverse, 0.0) >= 0.5;
