@@ -140,8 +140,8 @@ functions (#133); the key editor's context menu.
   (`tests/golden/ui/key-editor-keyboard.png`); pressing the right part of a white key beside a black key and the
   black key playing their pitches on the track's instrument until the mouse is released, also outside the editor,
   leaving the selected notes as they were, and a held key's pitch ending when the editor switches to the drum editor
-  or closes; the object selection tool selecting, deselecting, moving, resizing, inserting and deleting; the draw tool with Quantize
-  Link and an eighth from the Length Quantize menu; the erase, trim (and with Alt), split and glue tools; the
+  or closes; the object selection tool selecting, deselecting, moving, resizing, inserting and deleting; the draw
+  tool with Quantize Link and an eighth from the Length Quantize menu; the erase, trim (and with Alt), split and glue tools; the
   transpose palette and typing a pitch on the info line; step input with its cursor, a click moving it, and MIDI input
   selecting the next note; the Chord Editing section naming and changing a chord; the toolbox with the setting on and
   off, with and without a modifier key, choosing tools.

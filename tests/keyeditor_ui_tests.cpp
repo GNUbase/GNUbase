@@ -445,8 +445,11 @@ TEST_CASE("a key of the keyboard held while the key editor goes ends its pitch",
 	REQUIRE(f.app.waitUntil([&] { return keyEditor() != nullptr && keyEditor()->drum(); }));
 	CHECK(f.plays({{0x90, 60, 100}, {0x80, 60, 0}}));
 	f.app.ui().release(f.window, of(".key-editor-grid"), ui::MouseButton::Left, {});
-	f.app.shell().step(std::chrono::milliseconds(0));
-	CHECK(f.plays({{0x90, 60, 100}, {0x80, 60, 0}}));
+	for (int block = 0; block < 4; ++block) // what the release could send has arrived after a few UI steps and blocks
+	{
+		f.app.shell().step(std::chrono::milliseconds(0));
+		CHECK(f.plays({{0x90, 60, 100}, {0x80, 60, 0}}));
+	}
 
 	// The editor closing through the engine API, as a key command closes it, ends the pitch with the editor window.
 	f.played.clear();
