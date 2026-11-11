@@ -2199,6 +2199,8 @@ namespace gnubase::engine
 				}
 				if (lane->target.type == AutomationTargetType::Instrument)
 					copied.processor = channel.instrument;
+				if (lane->target.type == AutomationTargetType::MidiEffect)
+					copied.processor = midiEffectSlot(channel, lane->target.number).effect;
 				if (!contains(clipboard.tracks, lane->track))
 					clipboard.tracks.push_back(lane->track);
 				clipboard.lanes.push_back(std::move(copied));
@@ -2244,6 +2246,10 @@ namespace gnubase::engine
 			case AutomationTargetType::PitchBend:
 			case AutomationTargetType::ChannelPressure:
 				has = track.type == TrackType::Midi || track.type == TrackType::Instrument;
+				break;
+			case AutomationTargetType::MidiEffect: // the same effect in the same slot
+				has = (track.type == TrackType::Midi || track.type == TrackType::Instrument) &&
+					midiEffectSlot(channel, target.number).effect == copied.processor;
 				break;
 			}
 			return has ? std::optional<AutomationTarget>(target) : std::nullopt;

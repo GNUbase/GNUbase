@@ -97,6 +97,7 @@ namespace gnubase::engine
 			{AutomationTargetType::Controller, "controller"},
 			{AutomationTargetType::PitchBend, "pitchBend"},
 			{AutomationTargetType::ChannelPressure, "channelPressure"},
+			{AutomationTargetType::MidiEffect, "midiEffect"},
 		};
 
 		constexpr struct
@@ -1008,6 +1009,10 @@ namespace gnubase::engine
 		case AutomationTargetType::ChannelPressure:
 			json["channel"] = target.channel;
 			break;
+		case AutomationTargetType::MidiEffect:
+			json["number"] = target.number;
+			json["parameter"] = target.parameter;
+			break;
 		}
 		return json;
 	}
@@ -1487,6 +1492,12 @@ namespace gnubase::engine
 			case AutomationTargetType::Controller:
 			case AutomationTargetType::PitchBend:
 			case AutomationTargetType::ChannelPressure:
+				break;
+			case AutomationTargetType::MidiEffect:
+				// The effect's range applies when it plays; the slot may hold another effect since.
+				fits = track.type == TrackType::Midi || track.type == TrackType::Instrument;
+				minimum = std::numeric_limits<double>::lowest();
+				maximum = std::numeric_limits<double>::max();
 				break;
 			}
 			if (!fits)

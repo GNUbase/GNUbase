@@ -240,7 +240,7 @@ namespace gnubase::engine
 				if (m_sampleRate > 0.0)
 					kept.effect->prepareFor(m_sampleRate, m_maxFrames);
 			}
-			sequence->effects.push_back({kept.effect, slot.parameters, kept.serial, number, output != 0});
+			sequence->effects.push_back({kept.effect, slot.parameters, kept.serial, number, output != 0, sends});
 			elsewhere = elsewhere || output != 0;
 			sequence->insertCount += sends ? 0 : 1;
 			sequence->inputCount += input ? 1 : 0;
@@ -250,6 +250,8 @@ namespace gnubase::engine
 			m_own = graph::EventBuffer(graph::g_maxEventsPerBlock);
 			m_chainA = graph::EventBuffer(graph::g_maxEventsPerBlock);
 			m_chainB = graph::EventBuffer(graph::g_maxEventsPerBlock);
+			m_effectEvents = graph::EventBuffer(graph::g_maxEventsPerBlock);
+			m_effectIn = graph::EventBuffer(graph::g_maxEventsPerBlock);
 		}
 		// The buffers stay once they are there: the audio thread may use them as long as it has a sequence that
 		// says so.
@@ -263,7 +265,9 @@ namespace gnubase::engine
 		const bool preSends = sequence->sends.pre && sequence->insertCount < sequence->effects.size() &&
 			!modifiers.bypass && !(modifiers == midi::Modifiers());
 		if (!preSends)
-			m_pre.reset();
+		{
+			m_pre = nullptr;
+		}
 		else
 		{
 			if (!m_pre)
@@ -313,8 +317,18 @@ namespace gnubase::engine
 	{
 		// The sequence stays in use until the next block, so SysEx data lives as long as the events pointing at it.
 		const MidiSequence& sequence = m_sequence.acquire();
+		// The parameter events of the effects' automation go to the effects, not on.
+		if (!sequence.effects.empty())
+			m_effectEvents.clear();
 		for (const graph::ProcessEvent& event : context.eventsIn)
-			context.eventsOut.add(event);
+		{
+			const bool effects = event.type == graph::ProcessEvent::Type::Parameter &&
+				event.parameter >= midi::g_effectEvents && event.parameter < midi::g_effectEvents + (8 * 256);
+			if (!effects)
+				context.eventsOut.add(event);
+			else if (!sequence.effects.empty())
+				m_effectEvents.add(event);
+		}
 		context.eventsOut.nextSource();
 		if (sequence.sendBuffers)
 			for (graph::EventBuffer& buffer : m_sendOut)
@@ -351,13 +365,42 @@ namespace gnubase::engine
 		for (size_t i = 0; i < sequence.inputCount; ++i)
 		{
 			graph::EventBuffer& to = played == &m_chainA ? m_chainB : m_chainA;
-			to.clear();
-			sequence.effects[i].effect->process({nullptr, 0, frames, *played, to, transport});
+			runEffect(sequence.effects[i], *played, to, frames, transport, true);
 			played = &to;
 		}
 		m_input.clear();
 		for (const graph::ProcessEvent& event : *played)
 			m_input.add(event);
+	}
+
+	void MidiSequencer::runEffect(const RunningEffect& running, const graph::EventBuffer& in, graph::EventBuffer& to,
+		uint32_t frames, const graph::TransportBlock& transport, bool late) noexcept
+	{
+		const uint32_t first =
+			midi::g_effectEvents + (static_cast<uint32_t>((running.send ? 4 : 0) + running.slot) * 256);
+		const graph::EventBuffer* input = &in;
+		for (const graph::ProcessEvent& event : m_effectEvents)
+		{
+			if (event.parameter < first || event.parameter >= first + 256)
+				continue;
+			if (input != &m_effectIn)
+			{
+				m_effectIn.clear();
+				for (const graph::ProcessEvent& each : in)
+					m_effectIn.add(each);
+				m_effectIn.nextSource();
+				input = &m_effectIn;
+			}
+			graph::ProcessEvent parameter = event;
+			parameter.parameter -= first;
+			// ponytail: the inserts above the divider play before the automation comes, so they get the block
+			// before's at its start; a sequencer of their own in the graph would take it on time.
+			if (late)
+				parameter.offset = 0;
+			m_effectIn.add(parameter);
+		}
+		to.clear();
+		running.effect->process({nullptr, 0, frames, *input, to, transport});
 	}
 
 	void MidiSequencer::takeParameters(const MidiSequence& sequence) noexcept
@@ -400,11 +443,9 @@ namespace gnubase::engine
 	void MidiSequencer::runEffects(
 		const MidiSequence& sequence, const graph::ProcessContext& context, graph::EventBuffer& out) noexcept
 	{
-		const auto run = [&context](const RunningEffect& running, const graph::EventBuffer& in, graph::EventBuffer& to)
-		{
-			to.clear();
-			running.effect->process({nullptr, 0, context.frames, in, to, context.transport});
-		};
+		const auto run = [this, &context](
+							 const RunningEffect& running, const graph::EventBuffer& in, graph::EventBuffer& to)
+		{ runEffect(running, in, to, context.frames, context.transport, false); };
 		const auto play = [this, &out](const graph::EventBuffer& events)
 		{
 			for (const graph::ProcessEvent& event : events)

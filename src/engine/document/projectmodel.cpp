@@ -37,6 +37,7 @@
 #include "engine/midi/patterns.h"
 #include "engine/midi/quantizecommands.h"
 #include "engine/processors/builtin.h"
+#include "engine/processors/midieffects.h"
 #include "platform/log.h"
 
 #include <algorithm>
@@ -828,6 +829,26 @@ namespace gnubase::engine
 				require(midi, "MIDI controllers are automated on MIDI and instrument tracks");
 				target.channel = midiChannel();
 				break;
+			case AutomationTargetType::MidiEffect:
+			{
+				only({"number", "parameter"});
+				require(midi, "only MIDI and instrument tracks have MIDI inserts and sends");
+				require(json.contains("number") && json.at("number").is_number_integer(),
+					"target.number is required: the slot, 0 to 3 the MIDI inserts, 4 to 7 the MIDI sends");
+				requireRange(json.at("number").get<int64_t>(), 0, 7, "target.number");
+				target.number = json.at("number").get<uint8_t>();
+				const midi::EffectSlot& slot = midiEffectSlot(channel, target.number);
+				const processors::BuiltinInfo* info = processors::findMidiEffect(slot.effect);
+				require(info != nullptr,
+					"MIDI slot " + std::to_string(target.number) + " of track " + idText(track.id) +
+						" holds no effect");
+				require(json.contains("parameter"), "target.parameter is required");
+				require(isParameterId(json.at("parameter")) &&
+						processors::findParameter(*info, json.at("parameter").get<uint32_t>()) != nullptr,
+					slot.effect + " has no parameter " + json.at("parameter").dump());
+				target.parameter = json.at("parameter").get<uint32_t>();
+				break;
+			}
 			}
 			return target;
 		}
@@ -848,6 +869,10 @@ namespace gnubase::engine
 			}
 			if (lane.target.type == AutomationTargetType::Strip)
 				return findStripParameter(lane.target.parameter);
+			if (lane.target.type == AutomationTargetType::MidiEffect)
+				info = processors::findMidiEffect(
+					midiEffectSlot(project.channels.at(project.trackById.at(lane.track).channel), lane.target.number)
+						.effect);
 			return info != nullptr ? processors::findParameter(*info, lane.target.parameter) : nullptr;
 		}
 
@@ -874,14 +899,20 @@ namespace gnubase::engine
 			case AutomationTargetType::Instrument:
 			case AutomationTargetType::Plugin:
 			case AutomationTargetType::Strip:
+			case AutomationTargetType::MidiEffect:
+			{
 				if (const processors::ParameterInfo* parameter = automatedParameter(project, lane))
 					return {parameter->minimum, parameter->maximum};
 				if (lane.target.type == AutomationTargetType::Strip) // from a newer build's file
 					throw CommandError("the channel strip has no parameter " + std::to_string(lane.target.parameter));
-				throw CommandError(std::string("the ") +
-					(lane.target.type == AutomationTargetType::Plugin ? "plugin" : "instrument") +
-					" of automation lane " + idText(lane.id) + " has no parameter " +
+				std::string owner = "instrument";
+				if (lane.target.type == AutomationTargetType::Plugin)
+					owner = "plugin";
+				else if (lane.target.type == AutomationTargetType::MidiEffect)
+					owner = "MIDI effect";
+				throw CommandError("the " + owner + " of automation lane " + idText(lane.id) + " has no parameter " +
 					std::to_string(lane.target.parameter) + " any more");
+			}
 			case AutomationTargetType::Controller:
 			case AutomationTargetType::PitchBend:
 			case AutomationTargetType::ChannelPressure:
@@ -2165,6 +2196,17 @@ namespace gnubase::engine
 			}
 			if (parameters.contains("sends"))
 				setSends(project, changed, parameters.at("sends"));
+			// A MIDI slot's automation goes with its effect when the slot gets another one (or none).
+			for (auto lane = project.automation.begin(); lane != project.automation.end();)
+			{
+				const AutomationTarget& target = lane->second.target;
+				const bool gone = lane->second.track == channel.track &&
+					target.type == AutomationTargetType::MidiEffect &&
+					midiEffectSlot(channel, target.number).effect != midiEffectSlot(changed, target.number).effect;
+				if (gone)
+					context.emit("automationLane.removed", {{"lane", lane->first}});
+				lane = gone ? project.automation.erase(lane) : std::next(lane);
+			}
 			const Channel before = channel;
 			channel = changed;
 			const std::set<ObjectId> soloed = passOn(project, before, channel.id, parameters, context);
@@ -4656,7 +4698,7 @@ namespace gnubase::engine
 		const Json target =
 			objectSchema({{"type",
 							  enumSchema({"volume", "pan", "panLeft", "panRight", "mute", "instrument", "plugin",
-								  "strip", "controller", "pitchBend", "channelPressure"})},
+								  "strip", "controller", "pitchBend", "channelPressure", "midiEffect"})},
 							 {"parameter", idSchema}, {"slot", idSchema}, {"number", idSchema}, {"channel", idSchema}},
 				{"type"});
 		const Json shape = enumSchema({"step", "linear", "curve"});
@@ -4675,7 +4717,10 @@ namespace gnubase::engine
 				"removed or moves to another channel); strip, a parameter of the channel strip's sections on tracks "
 				"with audio channels (target.parameter, as parameter.list gives them: the pre section's gain, phase "
 				"and cut filters, the equalizer and the gate, compressor and limiter, in their ranges; switches and "
-				"stepped choices have step curves); controller (target.number 0-127), pitchBend (0.5 is no bend) "
+				"stepped choices have step curves); midiEffect, a parameter of the MIDI effect in one of the track's "
+				"MIDI slots on MIDI and instrument tracks (target.number, 0-3 the MIDI inserts and 4-7 the MIDI "
+				"sends, and target.parameter, an id from midiEffect.list, in its range; the lane goes when the slot "
+				"gets another effect); controller (target.number 0-127), pitchBend (0.5 is no bend) "
 				"and channelPressure, all 0 to 1, on MIDI and instrument tracks, with target.channel 0-15 (default 0). "
 				"A track has one lane per target. read (default true): the curve plays; without it, or without points, "
 				"the parameter keeps its static value.",

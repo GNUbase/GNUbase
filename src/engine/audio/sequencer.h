@@ -58,6 +58,7 @@ namespace gnubase::engine
 		uint64_t serial = 0;            // the instance's: another instance has another one
 		size_t slot = 0;                // its slot in its section
 		bool elsewhere = false;         // a send that plays to another instrument track (MidiSequence::sendOutputs)
+		bool send = false;              // a MIDI send, not an insert
 	};
 
 	class MidiSequencer;
@@ -211,6 +212,9 @@ namespace gnubase::engine
 		// The track's own events: its input's and, by the transport, its parts'.
 		void playOwn(
 			const MidiSequence& sequence, const graph::ProcessContext& context, graph::EventBuffer& out) noexcept;
+		// Runs an effect on in, with the parameter events of its automation (m_effectEvents), into to.
+		void runEffect(const RunningEffect& running, const graph::EventBuffer& in, graph::EventBuffer& to,
+			uint32_t frames, const graph::TransportBlock& transport, bool late) noexcept;
 		// Runs the effects on the events in m_own and adds what they play to out.
 		void runEffects(
 			const MidiSequence& sequence, const graph::ProcessContext& context, graph::EventBuffer& out) noexcept;
@@ -294,6 +298,10 @@ namespace gnubase::engine
 		graph::EventBuffer m_own;    // the track's own events, for the effects
 		graph::EventBuffer m_chainA; // what the effects play, in turns
 		graph::EventBuffer m_chainB;
+		// The block's parameter events for the effects (midi::g_effectEvents), which its automation sends among its
+		// events in, and an effect's events in with its own of them.
+		graph::EventBuffer m_effectEvents;
+		graph::EventBuffer m_effectIn;
 		uint64_t m_serial = 0;                                   // the sequence it took last
 		std::array<uint64_t, 2 * midi::g_effectSlots> m_chain{}; // the serials of the effects that played
 		size_t m_chainCount = 0;                                 // how many

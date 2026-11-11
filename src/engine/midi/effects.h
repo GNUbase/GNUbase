@@ -15,6 +15,10 @@ namespace gnubase::engine::midi
 {
 	inline constexpr size_t g_effectSlots = 4; // per section, as on pp. 1104 and 1106
 
+	// The parameter events of the MIDI effects' automation for the track's sequencer: g_effectEvents, plus the slot
+	// (0 to 3 the inserts, 4 to 7 the sends) times 256, plus the parameter's id.
+	inline constexpr uint32_t g_effectEvents = 0x4D450000;
+
 	struct EffectSlot
 	{
 		std::string effect; // a built-in MIDI effect's id (processors::midiEffects), or empty: no effect

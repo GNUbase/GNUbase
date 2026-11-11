@@ -607,9 +607,9 @@ namespace gnubase::engine
 				feeds[static_cast<size_t>(channelIndex.at(render.id))].push_back(static_cast<size_t>(channel->second));
 			}
 			// A MIDI send to the instrument the track plays anyway plays to its own output.
-			const int own = render.type == TrackType::Instrument    ? channelIndex.at(render.id)
-				: render.output.kind == RenderTarget::Kind::Channel ? render.output.index
-																	: -1;
+			int own = render.output.kind == RenderTarget::Kind::Channel ? render.output.index : -1;
+			if (render.type == TrackType::Instrument)
+				own = channelIndex.at(render.id);
 			for (size_t s = 0; s < render.midiSends.slots.size(); ++s)
 				if (const auto target = channelIndex.find(render.midiSends.slots[s].output);
 					target != channelIndex.end() && target->second != own &&

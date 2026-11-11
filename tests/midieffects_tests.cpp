@@ -728,3 +728,52 @@ TEST_CASE(
 	run(track.client, "track.remove", {{"track", channelOf(other).at("track")}});
 	CHECK(channelOf(track.channel).at("midiSends").at("slots")[0].at("output") == 0);
 }
+
+TEST_CASE("automation plays a MIDI effect's parameters at their samples, and parameter.list has them", "[integration]")
+{
+	EffectTrack track;
+	track.add({{0, 0.25, 60, 100}, {2, 0.25, 60, 100}});
+	track.set("midiInserts", {{"slots", {Json::object(), slot("transformer")}}});
+	const Json target = {{"type", "midiEffect"}, {"number", 1}, {"parameter", processors::Transformer::Value}};
+	const auto lane = run(track.client, "automationLane.add", {{"track", track.track}, {"target", target}})
+						  .at("lane")
+						  .at("id")
+						  .get<ObjectId>();
+	run(track.client, "automationPoint.add",
+		{{"lane", lane},
+			{"points",
+				{{{"position", 0}, {"value", 0}, {"shape", "step"}},
+					{{"position", 2 * g_beatTicks}, {"value", 12}, {"shape", "step"}}}}});
+	run(track.client, "transport.play");
+	track.render(3 * g_beat);
+	// The second note plays where the value has changed, its note-off where its note-on went.
+	CHECK(track.captured() == "0 90 3c 64\n6000 80 3c 00\n48000 90 48 64\n54000 80 48 00\n");
+
+	// parameter.list lists the effects' parameters; parameter.set sets the slot's.
+	const Json parameters = run(track.client, "parameter.list", {{"channel", track.channel}}).at("parameters");
+	const auto found = std::find_if(parameters.begin(), parameters.end(),
+		[&target](const Json& parameter) { return parameter.at("target") == target; });
+	REQUIRE(found != parameters.end());
+	CHECK(found->at("name") == "Value");
+	run(track.client, "parameter.set", {{"channel", track.channel}, {"target", target}, {"value", 5}});
+	CHECK(run(track.client, "project.get")
+			  .at("channels")[0]
+			  .at("midiInserts")
+			  .at("slots")[1]
+			  .at("parameters")
+			  .at("value") == 5);
+
+	// Only slots with an effect, and only their parameters.
+	CHECK_THAT(reject(track.client, "automationLane.add",
+				   {{"track", track.track}, {"target", {{"type", "midiEffect"}, {"number", 0}, {"parameter", 0}}}}),
+		ContainsSubstring("holds no effect"));
+	CHECK_THAT(reject(track.client, "automationLane.add",
+				   {{"track", track.track}, {"target", {{"type", "midiEffect"}, {"number", 1}, {"parameter", 9}}}}),
+		ContainsSubstring("no parameter 9"));
+
+	// Another effect in the slot: the lane goes with the transformer, and comes back with undo.
+	track.set("midiInserts", {{"slots", {Json::object(), slot("chordGenerator")}}});
+	CHECK(run(track.client, "project.get").at("automation").empty());
+	run(track.client, "history.undo");
+	CHECK(run(track.client, "project.get").at("automation").size() == 1);
+}
