@@ -6,6 +6,8 @@
 #include "engine/engine.h"
 #include "engine/midi/midivalues.h"
 #include "engine/time/tempomap.h"
+#include "platform/audio/device.h"
+#include "platform/midi/dummyport.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -13,6 +15,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -629,5 +632,82 @@ TEST_CASE("track presets and track import bring a track's articulation map along
 		call("track.import", {{"path", archive}});
 		CHECK(call("project.get").at("articulationMaps").size() == 1);
 		CHECK(mapOf(1) == expected);
+	}
+}
+
+TEST_CASE("remote triggers played into a track select sound slots", "[integration]")
+{
+	// An instrument track that monitors, playing the note probe with the map Strings, on the dummy device.
+	engine::Engine engine(audio::makeBackends(), {}, std::vector<std::unique_ptr<midi::Backend>>());
+	engine::Client client(engine);
+	const auto call = [&client](const std::string& command, Json parameters = Json::object())
+	{
+		const engine::Result result = client.call(command, std::move(parameters));
+		INFO(command << " failed: " << result.error);
+		REQUIRE(result.ok());
+		return result.value;
+	};
+	call("audio.setDevice", {{"blockSize", 64}, {"inputChannels", 0}});
+	const Json added = call("track.add", {{"type", "instrument"}});
+	const auto track = added.at("track").at("id");
+	const auto channel = added.at("channel").at("id");
+	call("channel.set", {{"channel", channel}, {"instrument", "noteProbe"}, {"monitor", true}});
+	const auto map = call("articulationMap.add", stringsSettings()).at("map").at("id");
+	call("track.set", {{"track", track}, {"articulationMap", map}});
+	call("audio.render", {{"frames", 64}}); // the new graph
+	call("midi.capture", {{"start", true}});
+	// Plays MIDI messages into the track: what the instrument gets, each message's first two bytes, and a control
+	// change's value.
+	const auto play = [&](const std::vector<std::vector<int>>& messages)
+	{
+		Json injected = Json::array();
+		for (const std::vector<int>& bytes : messages)
+			injected.push_back({{"position", 0}, {"bytes", bytes}});
+		call("midi.inject", {{"channel", channel}, {"messages", injected}});
+		call("audio.render", {{"frames", 64}});
+		std::vector<std::vector<int>> played;
+		const Json capture = call("midi.capture");
+		for (const Json& captured : capture.at("captured"))
+		{
+			const Json& bytes = captured.at("bytes");
+			std::vector<int> message = {bytes.at(0).get<int>(), bytes.at(1).get<int>()};
+			if ((message[0] & 0xF0) == 0xB0)
+				message.push_back(bytes.at(2).get<int>());
+			played.push_back(message);
+		}
+		return played;
+	};
+	using Played = std::vector<std::vector<int>>;
+
+	SECTION("key switches")
+	{
+		// C#1 selects Pizzicato: its key switch C#0, then the notes on channel 3; the trigger doesn't play.
+		CHECK(play({{0x90, 37, 100}, {0x80, 37, 0}, {0x90, 60, 100}, {0x80, 60, 0}}) ==
+			Played{{0x92, 25}, {0x82, 25}, {0x92, 60}, {0x82, 60}});
+		// D1 selects Staccato: controller 32 at 64, the notes on their own channel again. The same key again
+		// sends nothing.
+		CHECK(play({{0x90, 38, 100}, {0x80, 38, 0}, {0x90, 38, 100}, {0x80, 38, 0}, {0x91, 61, 100}, {0x81, 61, 0}}) ==
+			Played{{0xB0, 32, 64}, {0x91, 61}, {0x81, 61}});
+		// Without latch the default slot, Arco, comes back where the key is released: Staccato's off event, then
+		// Arco's key switch C0.
+		call("articulationMap.set", {{"map", map}, {"latch", false}});
+		call("audio.render", {{"frames", 64}});
+		CHECK(play({{0x90, 37, 100}, {0x90, 62, 100}, {0x80, 62, 0}, {0x80, 37, 0}, {0x90, 63, 100}, {0x80, 63, 0}}) ==
+			Played{{0xB0, 32, 0}, {0x92, 25}, {0x82, 25}, {0x92, 62}, {0x82, 62}, {0x90, 24}, {0x80, 24}, {0x90, 63},
+				{0x80, 63}});
+	}
+	SECTION("program changes")
+	{
+		call("articulationMap.set",
+			{{"map", map}, {"remoteTrigger", "programChange"},
+				{"slots",
+					{{{"name", "Arco"}, {"trigger", 0}},
+						{{"name", "Pizzicato"}, {"articulations", {"Pizzicato"}}, {"trigger", 1}, {"transpose", 12},
+							{"outputs", {{{"status", "program"}, {"data1", 40}}}}}}}});
+		call("audio.render", {{"frames", 64}});
+		// Program 2 selects Pizzicato, which sends program 41 and plays the notes an octave up; program 10 is no
+		// trigger and plays; key switches are notes again.
+		CHECK(play({{0xC0, 1}, {0x90, 37, 100}, {0x80, 37, 0}, {0xC0, 9}}) ==
+			Played{{0xC0, 40}, {0x90, 49}, {0x80, 49}, {0xC0, 9}});
 	}
 }

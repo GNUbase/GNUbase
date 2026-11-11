@@ -200,6 +200,9 @@ namespace gnubase::engine
 		// scales that the notes played into the track move to, the nearest note of the one playing at the transport
 		// position; empty for none.
 		std::vector<LiveHarmony> liveInput;
+		// MIDI and instrument channels: the track's articulation map (#175), whose remote triggers select the sound
+		// slot of the notes played into the track; without slots for none.
+		ArticulationMap articulations;
 		bool monitor = false; // the monitor and record enable buttons
 		bool recordEnable = false;
 		// MIDI and instrument tracks: they play what comes from all MIDI inputs (MIDI thru), since they monitor or

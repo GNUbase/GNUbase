@@ -659,6 +659,7 @@ namespace gnubase::engine
 			sequence->controllers = channel.controllers;
 			sequence->modifiers = channel.modifiers;
 			sequence->liveInput = channel.liveInput;
+			sequence->articulations = channel.articulations;
 			sequence->inserts = channel.midiInserts;
 			sequence->sends = channel.midiSends;
 			// An instrument chases the controller events of the MIDI tracks routed to it with its own, so the latest of

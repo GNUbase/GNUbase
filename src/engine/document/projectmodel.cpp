@@ -4187,7 +4187,9 @@ namespace gnubase::engine
 				"color goes to the tracks inside it. picture is an image file (PNG, JPEG or SVG) that the mixer shows "
 				"on the track's channel, or empty for none. drumMap is the drum map (drumMap.add) a MIDI or instrument "
 				"track's notes play through, or 0 for none; articulationMap its articulation map "
-				"(articulationMap.add), or 0 for none.",
+				"(articulationMap.add), or 0 for none, whose remote triggers also select the sound slot of the notes "
+				"played into the track (midi.inject, its MIDI input): a trigger key or program doesn't play but sends "
+				"the slot's output events, and the notes after it get the slot's channel, transpose and velocity.",
 				objectSchema(
 					{{"track", idSchema}, {"name", stringSchema}, {"color", color}, {"timeBase", timeBases},
 						{"timeFormat", timeFormats}, {"timeOffset", positionSchema}, {"timeOffsetOn", booleanSchema},
