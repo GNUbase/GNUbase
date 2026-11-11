@@ -21,8 +21,10 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <sstream>
 #include <string>
 #include <thread>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -1047,6 +1049,51 @@ TEST_CASE("warped events reach other applications through DAWproject's Warps", "
 		CHECK(warp.at("musical") == false);
 		CHECK(!warp.at("markers").empty());
 		checkClicks(render(client, 4 * g_quarter), moved);
+	}
+
+	SECTION("beats beyond the tempo range leave the event unwarped, and load promptly")
+	{
+		const Loop loop = addLoop(client, dir, clicks({1000, 49000, 97000, 145000}, 8 * g_quarter));
+		run(client, "clip.setWarp", {{"clip", loop.clip}, {"musical", true}});
+		const std::string file = (dir.path() / "warp.dawproject").u8string();
+		run(client, "project.save", {{"path", file}, {"embedMedia", false}});
+		std::map<std::string, std::string> entries = test::readZip(file);
+		REQUIRE(entries.erase("gnubase.json") == 1);
+		const std::string saved = entries.at("project.xml");
+		// The Warp points (time, contentTime) and the clip's playStart and duration: a nearly flat last segment,
+		// whose grid would go on for billions of beats, and times so large that a beat more is the same time.
+		const std::vector<std::tuple<std::vector<std::pair<double, double>>, double, double>> cases{
+			{{{0.0, 0.0}, {1.0, 0.5}, {2.0, 0.500000001}}, 0.0, 8.0},
+			{{{1e17, -0.001}, {2e17, 1e16}}, 1.0000000000000016e17, 64.0}};
+		for (const auto& [points, playStart, duration] : cases)
+		{
+			pugi::xml_document document;
+			REQUIRE(document.load_string(saved.c_str()));
+			pugi::xml_node warps = document.select_node("//Warps").node();
+			REQUIRE(warps);
+			while (warps.remove_child("Warp"))
+			{
+			}
+			for (const auto& [time, contentTime] : points)
+			{
+				pugi::xml_node warp = warps.append_child("Warp");
+				warp.append_attribute("time") = time;
+				warp.append_attribute("contentTime") = contentTime;
+			}
+			warps.parent().attribute("playStart").set_value(playStart);
+			warps.parent().attribute("duration").set_value(duration);
+			std::ostringstream xml;
+			document.save(xml);
+			entries["project.xml"] = xml.str();
+			const std::string other = (dir.path() / "other.dawproject").u8string();
+			test::writeZip(other, entries);
+			const auto started = std::chrono::steady_clock::now();
+			run(client, "project.load", {{"path", other}});
+			CHECK(std::chrono::steady_clock::now() - started < std::chrono::seconds(10));
+			const Json project = run(client, "project.get");
+			REQUIRE(project.at("audioEvents").size() == 1);
+			CHECK(warpOf(client, project.at("audioEvents").at(0).at("clip").get<ObjectId>()).at("musical") == false);
+		}
 	}
 }
 

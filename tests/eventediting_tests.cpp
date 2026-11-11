@@ -2147,6 +2147,17 @@ TEST_CASE("fade handles at the top corners of audio events drag the selected eve
 	// Lower down, the event's edge still resizes it.
 	f.drag(248, 20, 268, 20);
 	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("length") == 24000 + 9600; }));
+
+	// A stretched warped event's fades fit into what it plays for (#965): at 240 BPM in musical mode the clip plays
+	// at half speed at the project's 120, so the event plays from 2 to 3.4 seconds. Its fade in goes to a second,
+	// longer than its 33600 clip frames.
+	const Json clip = f.audioEvents()[0].at("clip");
+	f.call("clip.setWarp", {{"clip", clip}, {"musical", true}});
+	f.call("clip.setWarp", {{"clip", clip}, {"tempo", 240.0}});
+	REQUIRE(f.waitUntil([&f] { return std::abs(f.lanes("events")[0].events[0].length - 1.4) < 1e-6; }));
+	f.display.select({f.event});
+	f.drag(210, 3, 300, 3);
+	REQUIRE(f.waitUntil([&f] { return fadeLength(f.audioEvents()[0], "fadeIn") == 48000; }));
 }
 
 TEST_CASE("a fade handle drag ends without changes when the pressed event goes during it", "[unit]")
@@ -2300,6 +2311,34 @@ TEST_CASE("the draw tool adds and drags volume curve points, the erase tool remo
 	f.click(230, 10);
 	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("volumeCurve").size() == 1; }));
 	CHECK(f.audioEvents()[0].at("volumeCurve")[0].at("position") == 19200);
+}
+
+TEST_CASE("volume curve points on a warped event go where its waveform shows their clip frames", "[unit]")
+{
+	Fixture f;
+	// At 240 BPM in musical mode the clip plays at half speed at the project's 120: the event's 24000 clip frames
+	// play from 2 to 3 seconds, at 24000 clip frames a second (#965).
+	const Json clip = f.audioEvents()[0].at("clip");
+	f.call("clip.setWarp", {{"clip", clip}, {"musical", true}});
+	f.call("clip.setWarp", {{"clip", clip}, {"tempo", 240.0}});
+	REQUIRE(f.waitUntil([&f] { return std::abs(f.lanes("events")[0].events[0].length - 1.0) < 1e-6; }));
+	f.display.setTool(ui::Tool::Draw);
+	// A click half way through the event adds a point at its middle clip frame, drawn there.
+	f.click(250, 30);
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("volumeCurve").size() == 1; }));
+	CHECK(f.audioEvents()[0].at("volumeCurve")[0].at("position") == 12000);
+	REQUIRE(f.waitUntil([&f] { return !fadeLines(f).lanes().empty() && fadeLines(f).lanes()[0].volumes.size() == 1; }));
+	const ui::VolumeLine line = fadeLines(f).lanes()[0].volumes[0];
+	CHECK(std::abs(line.rate - 24000.0) < 1e-6);
+	CHECK(std::abs(line.start + (static_cast<double>(12000 - line.offset) / line.rate) - 2.5) < 1e-6);
+	// Dragged a quarter of a second on, it is three quarters through; dragged past the event's end, at its end.
+	f.drag(250, 30, 275, 30);
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("volumeCurve")[0].at("position") == 18000; }));
+	REQUIRE(f.waitUntil(
+		[&f] { return f.display.project().at("audioEvents")[0].at("volumeCurve")[0].at("position") == 18000; }));
+	f.drag(275, 30, 400, 30);
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("volumeCurve")[0].at("position") == 24000; }));
+	CHECK(f.audioEvents()[0].at("volumeCurve").size() == 1);
 }
 
 TEST_CASE("the draw tool's click near a curve point leaves it, a drag moves it by the drag's distance", "[unit]")

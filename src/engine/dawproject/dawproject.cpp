@@ -1856,7 +1856,9 @@ namespace gnubase::engine
 					return;
 				clip.id = m_project.newId();
 				clip.warp = {};
-				if (beats && !beatsFromWarps(clip.warp, frameAt, points.front().target, rate, media.length))
+				if (beats &&
+					!beatsFromWarps(
+						clip.warp, frameAt, points.front().target, dsp::warpTarget(points, 0.0), rate, media.length))
 					return;
 				if (!beats)
 				{
@@ -1887,13 +1889,14 @@ namespace gnubase::engine
 			}
 
 			// Musical mode with a definition whose beat 0 is the content's first whole beat within the audio, its tempo
-			// that of that beat and edited beats where the content's tempo bends. false if the tempo is out of range.
+			// that of that beat and edited beats where the content's tempo bends. false if a beat's tempo is out of
+			// range, which also bounds the beats of a file's untrusted Warps. zero is the time where the audio starts.
 			template <typename FrameAt> static bool beatsFromWarps(
-				ClipWarp& warp, const FrameAt& frameAt, double from, double rate, time::Samples length)
+				ClipWarp& warp, const FrameAt& frameAt, double from, double zero, double rate, time::Samples length)
 			{
-				double first = std::floor(from);
-				while (frameAt(first) < 0.0)
-					++first;
+				double first = std::max(std::floor(from), std::ceil(zero));
+				if (frameAt(first) < 0.0) // rounding
+					first += 1.0;
 				const double framesPerBeat = frameAt(first + 1.0) - frameAt(first);
 				if (!(framesPerBeat > 0.0))
 					return false;
@@ -1904,7 +1907,13 @@ namespace gnubase::engine
 					return false;
 				std::vector<dsp::WarpPoint> grid; // source: the beat, target: the frame
 				for (int64_t beat = 0; frameAt(first + static_cast<double>(beat)) < static_cast<double>(length); ++beat)
-					grid.push_back({static_cast<double>(beat), frameAt(first + static_cast<double>(beat))});
+				{
+					const double frame = frameAt(first + static_cast<double>(beat));
+					if (const double tempo = beat == 0 ? warp.tempo : rate * 60.0 / (frame - grid.back().target);
+						!(tempo >= time::g_minBpm && tempo <= time::g_maxBpm))
+						return false;
+					grid.push_back({static_cast<double>(beat), frame});
+				}
 				grid.push_back({grid.back().source + 1.0, grid.back().target + framesPerBeat});
 				for (const dsp::WarpPoint& point : withoutStraightPoints(grid))
 					if (point.source > 0.0 && point.source < grid.back().source)

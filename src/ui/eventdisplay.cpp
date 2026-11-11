@@ -588,7 +588,7 @@ namespace gnubase::ui
 				if (into >= 0.0 && into < length)
 					shown->snapPoint = start + into;
 			if (rate > 0.0)
-				readFades(event, rate);
+				readFades(event, rate, waveRate);
 			if (const std::optional<size_t> taken = takeLane(event); taken && file != media.end() && rate > 0.0)
 				waves.push_back({event.at("id").get<uint64_t>(), *taken, {start, length}, file->first, waveRate,
 					file->second->at("channels").get<int>(), event.at("offset").get<int64_t>()});

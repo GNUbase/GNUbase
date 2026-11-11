@@ -45,11 +45,13 @@ namespace gnubase::ui
 		}
 	}
 
-	void EventDisplay::readFades(const Json& event, double rate)
+	void EventDisplay::readFades(const Json& event, double rate, double timeRate)
 	{
 		AudioFades fades;
 		fades.rate = rate;
 		fades.length = event.value("fadeRoom", event.at("length").get<int64_t>()); // a warped event's room for them
+		fades.timeRate = timeRate;
+		fades.frames = event.at("length").get<int64_t>();
 		fades.in = fadeOf(event.at("fadeIn"));
 		fades.out = fadeOf(event.at("fadeOut"));
 		if (const Json& crossfade = event.at("crossfade"); crossfade.is_object())
