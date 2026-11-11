@@ -84,6 +84,17 @@ namespace
 		return peak;
 	}
 
+	// How far a render is from another one turned down by dB: 0 when actual is original turned down by dB, to float
+	// precision. A freeze that is rendered before its plugin plays comes out unchanged, which is 0 dB.
+	float turnedDownBy(const std::vector<float>& actual, const std::vector<float>& original, float dB)
+	{
+		std::vector<float> expected = original;
+		const float factor = std::pow(10.0f, dB / 20.0f);
+		for (float& sample : expected)
+			sample *= factor;
+		return nullTest(actual, expected);
+	}
+
 	float peakOf(const std::vector<float>& samples)
 	{
 		float peak = 0.0f;
@@ -150,19 +161,18 @@ namespace
 		{
 			const Json slot =
 				run(client, "plugin.insert", {{"channel", channel}, {"plugin", "builtin:gainPan"}}).at("slot").at("id");
-			const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
-			while (run(client, "plugin.get", {{"slot", slot}}).at("slot").at("status") != "active" &&
-				std::chrono::steady_clock::now() < deadline)
-				std::this_thread::sleep_for(std::chrono::milliseconds(1));
-			REQUIRE(run(client, "plugin.get", {{"slot", slot}}).at("slot").at("status") == "active");
-			run(client, "audio.updatePlugins");
-			run(client, "parameter.set",
-				{{"channel", channel}, {"target", {{"type", "plugin"}, {"slot", slot}, {"parameter", 0}}},
-					{"value", gain}});
+			activate({channel});
+			setGain(channel, slot.get<ObjectId>(), gain);
 			return slot.get<ObjectId>();
 		}
 
-		// The main mix from 0 to 40000 as a 32-bit float file's samples.
+		void setGain(ObjectId channel, ObjectId slot, double gain)
+		{
+			run(client, "parameter.set",
+				{{"channel", channel}, {"target", {{"type", "plugin"}, {"slot", slot}, {"parameter", 0}}},
+					{"value", gain}});
+		}
+
 		// Waits until the plugin slots of these channels have their plugins active, and the graph has them. An
 		// unfreeze makes the plugins of the track's slots again, on the plugin job thread: until they are active, the
 		// slots pass their audio on unchanged (#951).
@@ -186,6 +196,7 @@ namespace
 			run(client, "audio.updatePlugins");
 		}
 
+		// The main mix from 0 to 40000 as a 32-bit float file's samples.
 		std::vector<float> mainMix()
 		{
 			const Json result = run(client, "mixdown.export",
@@ -322,13 +333,19 @@ TEST_CASE("undo brings back the freeze file that was frozen then", "[integration
 	const Json first = run(project.client, "track.freeze", {{"tracks", {audio.track}}, {"tail", 0}});
 	const std::vector<float> frozen = project.mainMix();
 
+	// The unfreeze makes the plugin again. Frozen again once the plugin plays and with a gain other than 0 dB (which
+	// the slot passes on before it plays), the new freeze file can only come from the plugin.
 	run(project.client, "track.unfreeze", {{"tracks", {audio.track}}});
-	run(project.client, "parameter.set",
-		{{"channel", audio.channel}, {"target", {{"type", "plugin"}, {"slot", slot}, {"parameter", 0}}},
-			{"value", 0.0}});
+	project.activate({audio.channel});
+	project.setGain(audio.channel, slot, -18.0);
 	run(project.client, "audio.render", {{"frames", 4096}});
 	const Json second = run(project.client, "track.freeze", {{"tracks", {audio.track}}, {"tail", 0}});
 	REQUIRE(second.at("tracks").at(0).at("frozen").at("path") != first.at("tracks").at(0).at("frozen").at("path"));
+	const std::vector<float> firstFile = samplesOf(first.at("tracks").at(0).at("frozen").at("path").get<std::string>());
+	const std::vector<float> secondFile =
+		samplesOf(second.at("tracks").at(0).at("frozen").at("path").get<std::string>());
+	REQUIRE(peakOf(firstFile) > 0.1f);
+	REQUIRE(turnedDownBy(secondFile, firstFile, -12.0f) < 1e-5f); // -18 dB instead of -6 dB
 	CHECK(nullTest(project.mainMix(), frozen) > 0.1f);
 
 	for (int step = 0; step < 3; ++step) // the freeze, the gain and the unfreeze
@@ -386,17 +403,18 @@ TEST_CASE("scrubbing a frozen track reads the freeze file of that time", "[integ
 	};
 	CHECK(scrubs(1000 + frames, firstFile));
 
-	// Frozen again with another gain, the scrub reads the new file.
+	// Frozen again with another gain, the scrub reads the new file. The unfreeze makes the plugin again, so the freeze
+	// waits until it plays and uses a gain other than 0 dB (which the slot passes on before it plays).
 	run(project.client, "track.unfreeze", {{"tracks", {audio.track}}});
-	run(project.client, "parameter.set",
-		{{"channel", audio.channel}, {"target", {{"type", "plugin"}, {"slot", slot}, {"parameter", 0}}},
-			{"value", 0.0}});
+	project.activate({audio.channel});
+	project.setGain(audio.channel, slot, -18.0);
 	run(project.client, "audio.render", {{"frames", 4096}});
 	const Json second = run(project.client, "track.freeze", {{"tracks", {audio.track}}, {"tail", 0}});
 	const std::string secondPath = second.at("tracks").at(0).at("frozen").at("path").get<std::string>();
 	REQUIRE(secondPath != first.at("tracks").at(0).at("frozen").at("path"));
 	const std::vector<float> secondFile = samplesOf(secondPath);
-	REQUIRE(firstDifference(secondFile, firstFile) >= 0);
+	REQUIRE(peakOf(firstFile) > 0.1f);
+	REQUIRE(turnedDownBy(secondFile, firstFile, -12.0f) < 1e-5f); // -18 dB instead of -6 dB
 	CHECK(scrubs(1000, secondFile));
 
 	// Undone back to the first freeze, it reads the first file again.

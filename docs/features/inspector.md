@@ -46,7 +46,8 @@ Layout and Mod+I show and hide ([docking.md](docking.md)). It follows the event 
 - **Setup pane** (p. 72, 1575). A right click on the info line opens its setup pane `#info-line-setup`, which shows,
   hides and orders its fields, the sections of the set `infoLine` ([docking.md](docking.md)), with presets, Show All
   and Reset All. A field the selection doesn't have is `.unavailable`, not `.hidden`, so it doesn't show while the
-  setup pane has it shown, and a field hidden there stays hidden whatever is selected. `AppUi` hands the info line to
+  setup pane has it shown, and a field hidden there stays hidden whatever is selected. Its buttons name the fields as
+  the info line does, Description and Position with markers selected. `AppUi` hands the info line to
   `Docking::arrangeSections` once `ui::InfoLine` has filled it.
 - **While hidden** it doesn't ask for the selection; it asks once it shows again.
 - **Markers** (p. 430). `AppUi` gives the info line the markers selected on the marker tracks
@@ -155,7 +156,7 @@ which is in the project window's document, doesn't open, waits for #517.
   which an edit taken by leaving the field is relative again) and end edits with undo, name, mute and lock
   for every selected part, changes from another client, an audio event's volume, the parts' transpose and velocity (relative, kept in range, with Ctrl+Enter, undo, hidden for audio events), and asking only while it shows; a
   marker selected on the marker track with each field edited, two markers changed relatively and with Ctrl+Enter in
-  one undo step, and an event selected after it; a marker clicked again after a part, Ctrl+Enter on the first marker's
+  one undo step, and an event selected after it, the setup pane naming the fields as the info line does; a marker clicked again after a part, Ctrl+Enter on the first marker's
   own position with a part shown before, and a selection naming removed markers; the inspector's buttons, volume and
   pan both ways, the output from another client and from the drop-down list, a refused output, the inserts overview
   with a bypassed slot, the notepad, renaming, notes and a name being typed when another track is selected and when

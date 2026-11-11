@@ -316,15 +316,17 @@ TEST_CASE(
 	REQUIRE(app.waitUntil([&app] { return !message(app).empty(); }));
 	CHECK(message(app).find("Prepare Archive failed: save the project first") == 0);
 
-	// Saved, it asks before it copies files from outside the project folder (reference manual p. 135), and Cancel
-	// copies nothing.
+	// Saved, it asks before it copies files from outside the project folder (reference manual p. 135), counting only
+	// those that are there and saying how many are missing (#1001), and Cancel copies nothing.
 	std::filesystem::create_directories(dir.path() / "project");
 	app.call(
 		"project.save", {{"path", (dir.path() / "project" / "Song.dawproject").u8string()}, {"embedMedia", false}});
 	const std::string before = message(app);
 	prepareArchive();
 	REQUIRE(app.waitUntil([&app] { return !elements(app, "#prepare-archive-dialog").empty(); }));
-	CHECK(elements(app, "#prepare-archive-message").at(0).value("text", "").find("2 files") != std::string::npos);
+	CHECK(elements(app, "#prepare-archive-message").at(0).value("text", "") ==
+		"1 file of the project is outside the project folder. Copy it into its Audio folder? 1 more is missing and "
+		"can't be copied.");
 	click(app, "#prepare-archive-dialog button[result=cancel]");
 	REQUIRE(app.waitUntil([&app] { return elements(app, "#prepare-archive-dialog").empty(); }));
 	CHECK(message(app) == before);
@@ -339,7 +341,13 @@ TEST_CASE(
 		std::chrono::seconds(30)));
 	CHECK(std::filesystem::exists(dir.path() / "project" / "Audio" / "take.wav"));
 
-	// Without files from outside, it asks nothing.
+	// With only missing files from outside, which it can't copy, it asks nothing.
+	prepareArchive();
+	REQUIRE(app.waitUntil(
+		[&app] { return message(app) == "Copied 0 files into the project folder; 1 missing file wasn't copied."; }));
+	CHECK(elements(app, "#prepare-archive-dialog").empty());
+
+	// Nor without files from outside.
 	app.call("media.removeMissing");
 	prepareArchive();
 	REQUIRE(app.waitUntil([&app] { return message(app) == "Copied 0 files into the project folder."; }));

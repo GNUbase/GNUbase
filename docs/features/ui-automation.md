@@ -30,7 +30,9 @@ and keyboard input. [mcp.md](../mcp.md#ui-tools) is the guide for agents.
 - **Input.** A click moves the mouse to the centre of the element, or to the point, and presses and releases the button;
   a double click is two clicks, which RmlUi recognises by their timing, with the UI updated between them as frames would
   be, so a first click that opens a field leaves the second to the field. RmlUi's clock stands still for them, so they
-  are one double click however long those frames take in a slow build or on a busy machine. A drag presses at the start, moves in eight
+  are one double click however long those frames take in a slow build or on a busy machine; elements that time double
+  clicks of their own (the marker, signature and transposition tracks) do so on that clock too. A clock that a test
+  froze stays frozen. A drag presses at the start, moves in eight
   steps and releases at the end, so RmlUi sends `dragstart`, `drag` and `dragdrop`. A press and a release can also come
   on their own (`Automation::press` and `release`, `ui_click`'s `action` `down` and `up`): the button stays down in
   between, while moves and other calls run, e.g. a settings change halfway through a drag, and time passes as it does

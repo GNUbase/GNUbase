@@ -283,7 +283,7 @@ namespace gnubase::ui
 		return m_gesture == Gesture::Move || m_gesture == Gesture::MoveVertical;
 	}
 
-	// A move goes on with its event as it is now, and by the way the mouse has gone on the display as it is now. An
+	// A move goes on with its event as it is now, from the time and lane under the press to those under the mouse. An
 	// event that went or that the part editing mode no longer reaches ends it without its effect: the event's selection
 	// went with it, and so may its drag element (renderEvents()).
 	void AudioPartEditor::updateMove()
@@ -297,13 +297,11 @@ namespace gnubase::ui
 			cancel();
 			return;
 		}
-		// A move is measured from its event and from the time under the press. While those stay, it stays as the mouse
-		// last left it, even if the project shown is new.
-		const double pressedAt = at(m_pressedMouse).first;
-		const bool changed = found->start != m_pressed->start || pressedAt != m_pressedAt.first;
+		// A move goes from its event's start as it is now, by the time from the press to the mouse's last place on the
+		// display as it is now, on the grid as it is now: the pressed point of the event stays under the mouse when the
+		// display's range changes, and a change of snap shows before the mouse moves again.
 		m_pressed = *found;
-		m_pressedAt.first = pressedAt;
-		if (m_dragged && changed)
+		if (m_dragged)
 			updateMoved();
 	}
 
