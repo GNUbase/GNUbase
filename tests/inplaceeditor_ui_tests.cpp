@@ -391,7 +391,13 @@ TEST_CASE("two in-place editors and the lower zone's key editor have menus and s
 			CHECK(f.elements("#in-place-editing-mode-menu" + suffix).size() == 1);
 	}
 
-	// A note selected in one editor is selected in its view only.
+	// A note selected in one editor is selected in its view only. The instrument track's lane is scrolled to the top
+	// first: where the window opens smaller, as on CI's macOS runner (80 % of a smaller monitor), the lower zone
+	// leaves the event display too little height to show it below the other two tracks.
+	const std::vector<uint64_t>& lanes = f.display.laneTracks();
+	const auto lane = std::find(lanes.begin(), lanes.end(), strings);
+	REQUIRE(lane != lanes.end());
+	f.display.scrollVertically(f.display.laneTops().at(static_cast<size_t>(lane - lanes.begin())));
 	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().inPlaceEditors()->keyEditor(strings)->scrollToPitch(62); }));
 	f.app.shell().step(std::chrono::milliseconds(0));
 	f.click(other + " .key-note[note=\"" + std::to_string(held) + "\"]");
@@ -401,6 +407,12 @@ TEST_CASE("two in-place editors and the lower zone's key editor have menus and s
 	CHECK(f.view().at("selection").empty());
 	CHECK(viewOf("lower").at("selection").empty());
 	CHECK(f.display.selection().empty());
+	f.display.scrollVertically(0.0);
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			return std::abs(f.box(f.editor()).at("y").get<double>() - f.box(".event-area").at("y").get<double>()) < 1.0;
+		}));
 
 	// The toolbar's multiple part controls (reference manual p. 1260): Part Editing Mode and Activate Part for
 	// Editing, for the editor whose toolbar they are in.
