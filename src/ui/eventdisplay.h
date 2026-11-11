@@ -545,6 +545,7 @@ namespace gnubase::ui
 		// A right click that opens the context menu selects the event there, unless it's selected already.
 		void areaRightDown(Rml::Event& event, double x, double y);
 		void areaMove(Rml::Event& event, double dx, double dy);
+		void narrowToPressed();
 		// Whether the keys are exactly the tool modifier of Copy or Shared Copy.
 		bool copyKeys(const std::string& keys) const;
 		// Whether the keys held restrict a drag of events: Ctrl (Cmd), unless they are a copy's tool modifier.
@@ -822,8 +823,9 @@ namespace gnubase::ui
 		double m_dragDx = 0.0;              // dp, while moving, snapped
 		std::optional<int64_t> m_dragTicks; // a musical move's offset, for each event's preview
 		int m_dragLanes = 0;
-		// What a Ctrl/Shift click selects whose keys are also a drag's tool modifier, e.g. Copy (#474).
-		std::optional<std::vector<uint64_t>> m_clickSelection;
+		// A Ctrl/Shift press whose keys are also a drag's tool modifier, e.g. Copy (#474): a click adds the pressed
+		// event to the selection or takes it out, a drag narrows the selection to it first (#1018).
+		bool m_clickToggles = false;
 		double m_dragLaneY = 0.0; // where a drag of events started, in dp from the top of the first lane
 		double m_end = 0.0;       // of the last event
 		double m_length = g_defaultProjectLength; // the project setup's
