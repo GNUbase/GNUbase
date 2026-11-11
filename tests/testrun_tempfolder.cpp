@@ -4,12 +4,21 @@
 // machine that runs the tests all day.
 #include "testutils/testutils.h"
 
+#include <catch2/catch_test_macros.hpp>
 #include <catch2/reporters/catch_reporter_event_listener.hpp>
 #include <catch2/reporters/catch_reporter_registrars.hpp>
 
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <iostream>
 #include <memory>
+#include <sstream>
+#include <string>
+
+#ifndef _WIN32
+#include <sys/wait.h>
+#endif
 
 namespace
 {
@@ -48,3 +57,46 @@ namespace
 }
 
 CATCH_REGISTER_LISTENER(TempFolderOfTheRun)
+
+namespace
+{
+	const std::string g_reported = "temp folder of the run: ";
+}
+
+// Run by the test below in a child process: reports the run's temp folder and leaves a file in it.
+TEST_CASE("a test run reports its temp folder", "[.][unit][temp-folder-child]")
+{
+	std::filesystem::path folder = std::filesystem::temp_directory_path();
+	if (!folder.has_filename())
+		folder = folder.parent_path(); // without the trailing separator
+	std::ofstream(folder / "left behind.txt") << "a recording";
+	std::cout << g_reported << folder.u8string() << std::endl;
+}
+
+TEST_CASE("a test run's temp folder is gone when the run ends", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	const std::filesystem::path out = dir.path() / "out.txt";
+	const std::string command =
+		"\"" + std::string(GNUBASE_TESTS) + "\" \"[temp-folder-child]\" > \"" + out.u8string() + "\"";
+#ifdef _WIN32
+	// cmd.exe removes the outer quotes. As UTF-16, so that paths with any characters come through.
+	// NOLINTNEXTLINE(bugprone-command-processor): fixed test command
+	const int status = _wsystem(std::filesystem::u8path("\"" + command + "\"").wstring().c_str());
+#else
+	const int raw = std::system(command.c_str()); // NOLINT(bugprone-command-processor): fixed test command
+	const int status = WIFEXITED(raw) ? WEXITSTATUS(raw) : -1;
+#endif
+	const std::string output = gnubase::test::readText(out);
+	INFO(output);
+	CHECK(status == 0);
+	std::istringstream lines(output);
+	std::filesystem::path folder;
+	for (std::string line; std::getline(lines, line);)
+		if (line.rfind(g_reported, 0) == 0)
+			folder = std::filesystem::u8path(line.substr(g_reported.size()));
+	REQUIRE(!folder.empty());
+	CHECK(folder.filename().u8string().rfind("gnubase-test-", 0) == 0);
+	CHECK(std::filesystem::equivalent(folder.parent_path(), std::filesystem::temp_directory_path())); // ours
+	CHECK(!std::filesystem::exists(folder));
+}
