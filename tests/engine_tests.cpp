@@ -394,8 +394,8 @@ TEST_CASE("values are checked against their JSON schema", "[unit]")
 	// Strings from Lua needn't be UTF-8: stray continuation bytes count as no characters, yet the bytes are still
 	// bounded, at 4 per character.
 	CHECK(validate(std::string(100000, '\x80'), bounded, "editor") == "editor must be at most 27 characters");
-	CHECK(validate(std::string(4 * 3, '\x80'), shortName, "name").empty());
-	CHECK(validate(std::string(4 * 3 + 1, '\x80'), shortName, "name") == "name must be at most 3 characters");
+	CHECK(validate(std::string(12, '\x80'), shortName, "name").empty());
+	CHECK(validate(std::string(13, '\x80'), shortName, "name") == "name must be at most 3 characters");
 
 	// The Lua API reference and the MCP tool catalogue show the limit.
 	CHECK(schemaType(bounded) == "string matching `(`, at most 27 characters");
@@ -421,7 +421,12 @@ namespace
 					unbounded.push_back(where);
 			}
 			for (const auto& [key, item] : schema.items())
-				countPatterns(item, patterns, unbounded, where + "." + key);
+			{
+				std::string path = where;
+				path += '.';
+				path += key;
+				countPatterns(item, patterns, unbounded, path);
+			}
 		}
 		else if (schema.is_array())
 		{
