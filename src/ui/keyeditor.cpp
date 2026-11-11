@@ -310,6 +310,7 @@ namespace gnubase::ui
 				 Rml::EventId::Click, Rml::EventId::Dblclick, Rml::EventId::Change})
 			root.AddEventListener(event, this);
 		document->AddEventListener(Rml::EventId::Mouseup, this);
+		document->AddEventListener(Rml::EventId::Mouseout, this);
 		m_document = document->GetObserverPtr();
 		setTool(KeyTool::ObjectSelection);
 
@@ -351,7 +352,10 @@ namespace gnubase::ui
 	KeyEditor::~KeyEditor()
 	{
 		if (Rml::Element* document = m_document.get())
+		{
 			document->RemoveEventListener(Rml::EventId::Mouseup, this);
+			document->RemoveEventListener(Rml::EventId::Mouseout, this);
+		}
 		if (Rml::Element* root = m_root.get())
 			for (const Rml::EventId event : {Rml::EventId::Mousedown, Rml::EventId::Mousemove, Rml::EventId::Mouseup,
 					 Rml::EventId::Click, Rml::EventId::Dblclick, Rml::EventId::Change})
@@ -996,6 +1000,11 @@ namespace gnubase::ui
 			sound(std::nullopt);
 			if (event.GetCurrentElement() == m_root.get())
 				release(event);
+			break;
+		case Rml::EventId::Mouseout:
+			// The mouse leaving the window ends the pitch too: the button going up out there sends no mouseup.
+			if (target == m_document.get())
+				sound(std::nullopt);
 			break;
 		case Rml::EventId::Dblclick:
 			doubleClick(event);

@@ -6,6 +6,7 @@
 #include "ui/automation.h"
 #include "uiapp.h"
 
+#include <RmlUi/Core/Context.h>
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
@@ -384,6 +385,20 @@ TEST_CASE("a click on a key of the keyboard plays its pitch on the track's instr
 	f.app.shell().step(std::chrono::milliseconds(0));
 	CHECK(plays({{0x90, 61, 100}, {0x80, 61, 0}}));
 	CHECK(f.selection().empty());
+
+	// Released outside the window, where no mouseup arrives, D3 ends when the mouse leaves the window.
+	played.clear();
+	f.app.ui().press(f.window, point(right, 62), ui::MouseButton::Left, {});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(plays({{0x90, 62, 100}}));
+	ui::Window* window = f.app.shell().find(f.app.appUi().editorWindowId());
+	REQUIRE(window != nullptr);
+	Rml::Context& context = window->context();
+	context.ProcessMouseMove(-50, -50, 0);
+	context.ProcessMouseLeave();
+	context.ProcessMouseButtonUp(0, 0);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(plays({{0x90, 62, 100}, {0x80, 62, 0}}));
 }
 
 TEST_CASE("the object selection tool selects, moves, resizes, inserts and deletes notes", "[ui]")
