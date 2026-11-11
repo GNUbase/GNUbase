@@ -251,9 +251,7 @@ TEST_CASE("a profile switch that fails after the active profile's files were sav
 	f.setScale(1.5);
 	f.call("profile.add", {{"name", "Studio"}});
 	// The active profile's folder is a file: its files can't go there, after the switch copied both profiles' files.
-	{
-		std::ofstream blocker(f.dir.path() / "profiles" / "Default");
-	}
+	std::ofstream(f.dir.path() / "profiles" / "Default").close();
 	f.call("profile.activate", {{"name", "Studio"}});
 	f.start();
 	CHECK(f.call("profile.list").at("active") == "Default");
