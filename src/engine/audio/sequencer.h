@@ -48,7 +48,7 @@ namespace gnubase::engine
 
 	// Which of a track's controller events a chase track takes: the pedals that hold notes (graph::holdsNotes) are
 	// chased by the track itself where its strip's mute has to know them (ChannelStrip).
-	enum class ChasePedals
+	enum class ChasePedals : uint8_t
 	{
 		With,
 		Without,
