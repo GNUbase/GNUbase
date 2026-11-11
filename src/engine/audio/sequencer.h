@@ -46,9 +46,19 @@ namespace gnubase::engine
 		std::vector<ChasePart> parts; // sorted by start
 	};
 
+	// Which of a track's controller events a chase track takes: the pedals that hold notes (graph::holdsNotes) are
+	// chased by the track itself where its strip's mute has to know them (ChannelStrip).
+	enum class ChasePedals
+	{
+		With,
+		Without,
+		Only,
+	};
+
 	// Command thread: the chase index of a track's controller events (sorted by position, each with the index of its
 	// part in parts) and MIDI parts (sorted by start).
-	ChaseTrack makeChaseTrack(const std::vector<RenderController>& controllers, const std::vector<RenderPart>& parts);
+	ChaseTrack makeChaseTrack(const std::vector<RenderController>& controllers, const std::vector<RenderPart>& parts,
+		ChasePedals pedals = ChasePedals::With);
 
 	// A MIDI effect a track's sequencer runs (MidiSequence::effects).
 	struct RunningEffect

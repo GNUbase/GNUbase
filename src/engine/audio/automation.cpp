@@ -885,6 +885,8 @@ namespace gnubase::engine
 							out.addEnd(end);
 							state.midiHeld[n] = false;
 						}
+					state.midiDropped.compact();
+					// A pedal it releases goes down again when it unmutes, unless the track releases it meanwhile.
 					for (size_t channel = 0; channel < state.midiPedals.size(); ++channel)
 						for (const uint8_t controller : {uint8_t{64}, uint8_t{66}, uint8_t{69}})
 							if ((state.midiPedals[channel] & pedal(controller)) != 0)
@@ -896,9 +898,10 @@ namespace gnubase::engine
 								up.key = controller;
 								up.value = 0;
 								out.addEnd(up);
+								up.value = 0xFFFFFFFFU;
+								state.midiDropped.drop(up);
 							}
 					state.midiPedals.fill(0);
-					state.midiDropped.compact();
 				}
 				const bool unmutes = !muted && state.midiMuted;
 				state.midiMuted = muted;

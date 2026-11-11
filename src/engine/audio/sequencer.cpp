@@ -179,7 +179,8 @@ namespace gnubase::engine
 		}
 	}
 
-	ChaseTrack makeChaseTrack(const std::vector<RenderController>& controllers, const std::vector<RenderPart>& parts)
+	ChaseTrack makeChaseTrack(
+		const std::vector<RenderController>& controllers, const std::vector<RenderPart>& parts, ChasePedals pedals)
 	{
 		ChaseTrack track;
 		track.parts.resize(parts.size());
@@ -188,6 +189,9 @@ namespace gnubase::engine
 		for (const RenderController& controller : controllers)
 		{
 			if (chaseKind(controller) < 0) // SysEx among them, so no data is copied
+				continue;
+			const bool pedal = controller.type == ControllerType::Control && graph::holdsNotes(controller.number);
+			if ((pedals == ChasePedals::Without && pedal) || (pedals == ChasePedals::Only && !pedal))
 				continue;
 			track.all.controllers.push_back(controller);
 			if (controller.part >= 0 && static_cast<size_t>(controller.part) < parts.size())

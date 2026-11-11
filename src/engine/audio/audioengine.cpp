@@ -644,6 +644,13 @@ namespace gnubase::engine
 				routed[channel.id] = &channel;
 			}
 
+		// Whether a channel's mute button mutes it or a mute lane plays.
+		const auto mayMute = [](const RenderChannel& channel)
+		{
+			return channel.muted ||
+				std::any_of(channel.automation.begin(), channel.automation.end(),
+					[](const RenderAutomationLane& lane) { return lane.target.type == AutomationTargetType::Mute; });
+		};
 		std::map<ObjectId, std::shared_ptr<MidiSequencer>> sequencers;
 		std::map<ObjectId, std::shared_ptr<processors::InputTransformerProcessor>> transformers;
 		std::map<ObjectId, Instrument> instruments;
@@ -662,15 +669,18 @@ namespace gnubase::engine
 			sequence->inserts = channel.midiInserts;
 			sequence->sends = channel.midiSends;
 			// An instrument chases the controller events of the MIDI tracks routed to it with its own, so the latest of
-			// each kind wins, whichever track it is on. A track its mute button mutes chases its own instead, into its
-			// strip's mute, which keeps them for unmuting.
-			if (routed.count(channel.id) == 0 || channel.muted)
+			// each kind wins, whichever track it is on. A routed track that its mute button or a mute lane may mute
+			// chases its own instead, into its strip's mute, which keeps them for unmuting; the others chase their
+			// pedals that hold notes, so that their strips know which a mute releases (ChannelStrip).
+			if (routed.count(channel.id) == 0 || mayMute(channel))
 				sequence->chase.push_back(makeChaseTrack(channel.controllers, channel.midiParts));
+			else
+				sequence->chase.push_back(makeChaseTrack(channel.controllers, channel.midiParts, ChasePedals::Only));
 			if (channel.type == TrackType::Instrument)
 				for (const ObjectId source : sources[channel.id])
-					if (!routed.at(source)->muted)
-						sequence->chase.push_back(
-							makeChaseTrack(routed.at(source)->controllers, routed.at(source)->midiParts));
+					if (!mayMute(*routed.at(source)))
+						sequence->chase.push_back(makeChaseTrack(
+							routed.at(source)->controllers, routed.at(source)->midiParts, ChasePedals::Without));
 			sequencer->setSequence(std::move(sequence));
 			sequencer->setChase(m_chase);
 			sequencers[channel.id] = sequencer;

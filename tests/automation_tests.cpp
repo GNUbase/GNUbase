@@ -2050,22 +2050,20 @@ namespace
 {
 	constexpr uint32_t g_midiBlock = 256;
 
-	// A MIDI track's strip, playing from 0 in blocks of g_midiBlock frames, whose mute lane mutes from sample from to
-	// sample to.
+	// A MIDI track's strip, playing from 0 in blocks of g_midiBlock frames, whose mute lane has steps to 1 (muted) or 0
+	// at the samples given.
 	class MidiStrip
 	{
 	public:
-		MidiStrip(int64_t from, int64_t to)
+		explicit MidiStrip(const std::vector<std::pair<int64_t, double>>& steps)
 		{
 			RenderChannel channel;
 			channel.type = TrackType::Midi;
 			channel.format = ChannelFormat::None;
 			RenderAutomationLane lane;
 			lane.target = {AutomationTargetType::Mute, 0, 0, 0, 0};
-			if (from > 0)
-				lane.points.push_back({0, 0.0, AutomationShape::Step, 0.0});
-			lane.points.push_back({from, 1.0, AutomationShape::Step, 0.0});
-			lane.points.push_back({to, 0.0, AutomationShape::Step, 0.0});
+			for (const auto& [position, value] : steps)
+				lane.points.push_back({position, value, AutomationShape::Step, 0.0});
 			channel.automation.push_back(lane);
 			m_state->automation.setAutomation(channelAutomation(channel, 6.0));
 			m_strip.prepareFor(48000.0, g_midiBlock);
@@ -2092,7 +2090,49 @@ namespace
 	};
 
 	graph::ProcessEvent midiEvent(
-		graph::ProcessEvent::Type type, uint32_t offset, uint8_t channel, uint8_t key, uint32_t value = 0)
+		graph::ProcessEvent::Type type, uint32_t offset, uint8_t channel, uint8_t key, uint32_t value = 0);
+
+	// A controller's value in dropControllers.
+	uint32_t droppedValue(size_t channel, size_t number)
+	{
+		return static_cast<uint32_t>((channel * 1000) + number);
+	}
+
+	// Plays two muted blocks: 1000 controllers on MIDI channels 0 to 7, then 100 on channel 8 and channel 0's first
+	// again, now 7.
+	void dropControllers(MidiStrip& strip)
+	{
+		using Type = graph::ProcessEvent::Type;
+		std::vector<graph::ProcessEvent> events;
+		for (size_t channel = 0; channel < 8; ++channel)
+			for (size_t number = 0; number < 125; ++number)
+				events.push_back(midiEvent(Type::Controller, 0, static_cast<uint8_t>(channel),
+					static_cast<uint8_t>(number), droppedValue(channel, number)));
+		CHECK(strip.play(events).empty());
+		events.clear();
+		for (size_t number = 0; number < 100; ++number)
+			events.push_back(midiEvent(Type::Controller, 0, 8, static_cast<uint8_t>(number), droppedValue(8, number)));
+		events.push_back(midiEvent(Type::Controller, 1, 0, 0, 7));
+		CHECK(strip.play(events).empty());
+	}
+
+	// Checks that sent has dropControllers' controllers in the order they first came, with their latest values.
+	void checkDropped(const std::vector<graph::ProcessEvent>& sent)
+	{
+		for (size_t i = 0; i < sent.size(); ++i)
+		{
+			const size_t channel = i < 1000 ? i / 125 : 8;
+			const size_t number = i < 1000 ? i % 125 : i - 1000;
+			INFO("event " << i);
+			CHECK(sent[i].type == graph::ProcessEvent::Type::Controller);
+			CHECK(sent[i].channel == channel);
+			CHECK(sent[i].key == number);
+			CHECK(sent[i].value == (i == 0 ? 7 : droppedValue(channel, number)));
+		}
+	}
+
+	graph::ProcessEvent midiEvent(
+		graph::ProcessEvent::Type type, uint32_t offset, uint8_t channel, uint8_t key, uint32_t value)
 	{
 		graph::ProcessEvent event;
 		event.type = type;
@@ -2108,7 +2148,7 @@ namespace
 TEST_CASE("a MIDI track's mute ends its notes and releases its pedals also in a full event buffer", "[unit]")
 {
 	using Type = graph::ProcessEvent::Type;
-	MidiStrip strip(100, 100000);
+	MidiStrip strip({{0, 0.0}, {100, 1.0}});
 	std::vector<graph::ProcessEvent> events{
 		midiEvent(Type::NoteOn, 10, 3, 60), midiEvent(Type::Controller, 20, 3, 64, 0xFFFFFFFFU)};
 	while (events.size() < graph::g_maxEventsPerBlock)
@@ -2136,20 +2176,8 @@ TEST_CASE("unmuting a MIDI track sends what its mute dropped in the order it cam
 {
 	using Type = graph::ProcessEvent::Type;
 	// Muted from the start to 10 frames into the third block.
-	MidiStrip strip(0, (2 * g_midiBlock) + 10);
-	const auto value = [](size_t channel, size_t number) { return static_cast<uint32_t>((channel * 1000) + number); };
-	// 1000 controllers on MIDI channels 0 to 7, then 100 on channel 8 and channel 0's first again, now 7.
-	std::vector<graph::ProcessEvent> events;
-	for (size_t channel = 0; channel < 8; ++channel)
-		for (size_t number = 0; number < 125; ++number)
-			events.push_back(midiEvent(Type::Controller, 0, static_cast<uint8_t>(channel), static_cast<uint8_t>(number),
-				value(channel, number)));
-	CHECK(strip.play(events).empty());
-	events.clear();
-	for (size_t number = 0; number < 100; ++number)
-		events.push_back(midiEvent(Type::Controller, 0, 8, static_cast<uint8_t>(number), value(8, number)));
-	events.push_back(midiEvent(Type::Controller, 1, 0, 0, 7));
-	CHECK(strip.play(events).empty());
+	MidiStrip strip({{0, 1.0}, {(2 * g_midiBlock) + 10, 0.0}});
+	dropControllers(strip);
 
 	// At the unmute's frame, in the order the controllers first came, what fits with the block's controller after it;
 	// the rest at the start of the next block, but channel 8's controller 99, which that controller replaced.
@@ -2171,15 +2199,30 @@ TEST_CASE("unmuting a MIDI track sends what its mute dropped in the order it cam
 		sent.push_back(event);
 	}
 	REQUIRE(sent.size() == 1099);
-	for (size_t i = 0; i < sent.size(); ++i)
+	checkDropped(sent);
+	CHECK(strip.play({}).empty());
+}
+
+TEST_CASE(
+	"a MIDI track muted again before it sent all that its mute dropped sends the rest once when it unmutes", "[unit]")
+{
+	// Muted from the start to 10 frames into the third block, again from 200 frames into it to the fifth block.
+	MidiStrip strip({{0, 1.0}, {(2 * g_midiBlock) + 10, 0.0}, {(2 * g_midiBlock) + 200, 1.0}, {4 * g_midiBlock, 0.0}});
+	dropControllers(strip);
+	std::vector<graph::ProcessEvent> sent;
+	for (const graph::ProcessEvent& event : strip.play({}))
 	{
-		const size_t channel = i < 1000 ? i / 125 : 8;
-		const size_t number = i < 1000 ? i % 125 : i - 1000;
-		INFO("event " << i);
-		CHECK(sent[i].type == Type::Controller);
-		CHECK(sent[i].channel == channel);
-		CHECK(sent[i].key == number);
-		CHECK(sent[i].value == (i == 0 ? 7 : value(channel, number)));
+		CHECK(event.offset == 10);
+		sent.push_back(event);
 	}
+	CHECK(sent.size() == graph::g_maxEventsPerBlock);
+	CHECK(strip.play({}).empty());
+	for (const graph::ProcessEvent& event : strip.play({}))
+	{
+		CHECK(event.offset == 0);
+		sent.push_back(event);
+	}
+	REQUIRE(sent.size() == 1100);
+	checkDropped(sent);
 	CHECK(strip.play({}).empty());
 }
