@@ -14,7 +14,7 @@ signature events ([signature-track.md](signature-track.md)) and the clips' warp 
 | `tempo.process` | Process Tempo: the tempo from `start` to `end` (ticks, default the locators) times the factor that makes the range last `newLength` seconds or end at `newEnd`; the tempo after it stays and musical tracks follow. Returns the factor (Equivalent Tempo Scaling). Needs tempo track mode | pp. 1463-1464 |
 | `tempo.processBars` | Process Bars from `bar` (zero-based) for `bars` bars with `numerator`/`denominator`: `insert`, `delete`, `replace`, `reinterpret` | p. 1464 |
 | `event.setDefinitionFromTempo` | Set Definition from Tempo for the audio events' clips: musical mode, the grid on each quarter where the event plays it now; the events' tracks, or with `allTracks` every track, become musical first | pp. 1467-1468 |
-| `event.pasteWarpMarkers` | Copy and Paste Warp Markers: the markers of `from`'s clip into the clips of `events`, at the same times | p. 1467 |
+| `event.pasteWarpMarkers` | Copy and Paste Warp Markers: the markers of `from`'s clip into the clips of `events`, at the same times, but none that would pass a marker there or make a section play beyond the real-time stretcher's range | p. 1467 |
 
 - **Keeping time.** Where what musical tracks hold keeps its time while the tempo changes (Warp Grid, Reinterpret
   Bars), the musical tracks are linear while it changes and musical again after it (`track.set`, as tempo detection

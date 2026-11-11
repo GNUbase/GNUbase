@@ -190,6 +190,7 @@ namespace gnubase::ui
 		std::optional<Note> m_pressed; // the note pressed, as it was
 		bool m_snapOff = false;
 		Rml::ObserverPtr<Rml::Element> m_drawn;             // the note a draw drags out
+		int64_t m_drawnLength = 0;                          // its length, at m_pressedAt
 		std::optional<std::pair<uint64_t, int>> m_sounding; // the channel and pitch of the key pressed
 		Rml::ObserverPtr<Rml::Element> m_document;          // ends the key's pitch on a release anywhere in it
 		// the length quantize menu, the line tool's menu, the toolbox, then the drum editor's Map menu

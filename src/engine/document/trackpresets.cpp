@@ -73,17 +73,18 @@ namespace gnubase::engine
 		// Copies tracks of one project into another with new ids: their channels, inserts, events, automation, and the
 		// clips, media files and drum maps those use. Routing within the copied tracks stays; routing to busses and
 		// channels that weren't copied goes to those of the same name in the project, if it has them (reference manual
-		// p. 200). The buttons (mute, solo, listen, monitor, record enable) are off in the copies.
+		// p. 200). The buttons (mute, solo, listen, monitor, record enable) are off in the copies, and their automation
+		// reads, as the reference doesn't import these states.
 		class TrackCopier
 		{
 		public:
 			TrackCopier(const Project& from, Project& to, CopyOptions options)
-				: m_from(from), m_to(to), m_options(options)
+				: m_from(from), m_to(to), m_options(options), m_firstCopy(to.nextId)
 			{
 			}
 
 			// Copies a track with the tracks inside it into the folder parent; returns the copy, not yet among the
-			// folder's tracks.
+			// folder's tracks. Tracks inside it that can't be copied stay behind (skipped).
 			ObjectId copy(ObjectId id, ObjectId parent)
 			{
 				Track track = m_from.trackById.at(id);
@@ -126,7 +127,12 @@ namespace gnubase::engine
 				if (m_options.automation)
 					copyAutomation(id, track.id);
 				for (const ObjectId child : m_from.trackById.at(id).children)
-					track.children.push_back(copy(child, track.id));
+				{
+					if (importable(m_from.trackById.at(child).type))
+						track.children.push_back(copy(child, track.id));
+					else
+						m_skipped.push_back(child);
+				}
 				const ObjectId result = track.id;
 				m_to.trackById[result] = std::move(track);
 				return result;
@@ -147,6 +153,9 @@ namespace gnubase::engine
 						send.destination = destination(send.destination, true);
 				}
 			}
+
+			// The tracks inside copied folders that stayed behind, from top to bottom.
+			const std::vector<ObjectId>& skipped() const { return m_skipped; }
 
 			// The copies' events: the media files, clips and drum maps first, then the tracks from top to bottom with
 			// their channels, then what they hold.
@@ -273,6 +282,7 @@ namespace gnubase::engine
 					if (original.track != source)
 						continue;
 					AutomationLane lane = original;
+					lane.read = true; // as a new lane's: the read state isn't imported (reference manual p. 200)
 					if (lane.target.type == AutomationTargetType::Plugin)
 					{
 						const auto slot = m_slots.find(lane.target.slot);
@@ -391,7 +401,8 @@ namespace gnubase::engine
 			}
 
 			// Where a copy plays or sends to: the copy of a copied channel, the bus of the same name (outputs only), or
-			// the channel of the project's track with the same name and type as the destination's track.
+			// the channel of the project's track with the same name and type as the destination's track: one it had
+			// before the copy, not another copy, which could route the copies in a loop.
 			ObjectId destination(ObjectId id, bool send) const
 			{
 				if (id == 0)
@@ -403,7 +414,8 @@ namespace gnubase::engine
 					return send ? 0 : bus(id, BusDirection::Output);
 				const Track& track = m_from.trackById.at(channel->second.track);
 				for (const auto& [mine, other] : m_to.trackById)
-					if (other.name == track.name && other.type == track.type && other.channel != 0)
+					if (mine < m_firstCopy && other.name == track.name && other.type == track.type &&
+						other.channel != 0)
 						return other.channel;
 				return 0;
 			}
@@ -411,7 +423,9 @@ namespace gnubase::engine
 			const Project& m_from;
 			Project& m_to;
 			CopyOptions m_options;
+			ObjectId m_firstCopy;           // the copies' ids start here
 			std::vector<ObjectId> m_tracks; // the copies, from top to bottom
+			std::vector<ObjectId> m_skipped;
 			std::map<ObjectId, ObjectId> m_channels;
 			std::map<ObjectId, ObjectId> m_slots;
 			std::map<ObjectId, ObjectId> m_clips;
@@ -420,11 +434,17 @@ namespace gnubase::engine
 			std::vector<std::pair<std::string, Json>> m_contents;
 		};
 
+		struct Copied
+		{
+			std::vector<ObjectId> tracks;  // the copies of the listed tracks that aren't inside a listed folder
+			std::vector<ObjectId> skipped; // the tracks of from inside listed folders that can't be copied
+		};
+
 		// Copies tracks of from, each listed once, into the folder parent of to at index, in from's order: a listed
-		// folder with the tracks inside it, marker tracks at the top level. Emits their events if context isn't null.
-		// Returns the copies of the listed tracks that aren't inside a listed folder.
-		std::vector<ObjectId> copyTracks(const Project& from, Project& to, const std::vector<ObjectId>& tracks,
-			CopyOptions options, ObjectId parent, size_t index, CommandContext* context)
+		// folder with the tracks inside it that can be copied, marker tracks at the top level. Emits their events if
+		// context isn't null.
+		Copied copyTracks(const Project& from, Project& to, const std::vector<ObjectId>& tracks, CopyOptions options,
+			ObjectId parent, size_t index, CommandContext* context)
 		{
 			require(!tracks.empty(), "no tracks given");
 			for (const ObjectId id : tracks)
@@ -450,7 +470,7 @@ namespace gnubase::engine
 			}
 			copier.connect();
 			if (context == nullptr)
-				return copies;
+				return {copies, copier.skipped()};
 			copier.announce(*context);
 			context->emit("track.reordered", {{"tracks", to.trackOrder()}});
 			if (to.activeMarkerTrack == 0) // as a new marker track is
@@ -461,13 +481,26 @@ namespace gnubase::engine
 						context->emit("marker.trackActivated", {{"track", copy}});
 						break;
 					}
-			return copies;
+			return {copies, copier.skipped()};
+		}
+
+		// The tracks as their ids, names and types, for the tracks an import or export leaves out.
+		Json describe(const Project& project, const std::vector<ObjectId>& tracks)
+		{
+			Json result = Json::array();
+			for (const ObjectId id : tracks)
+			{
+				const Track& track = project.trackById.at(id);
+				result.push_back({{"id", id}, {"name", track.name}, {"type", trackTypeName(track.type)}});
+			}
+			return result;
 		}
 
 		// A file with the given tracks of the project as a project of its own, for track presets and archives: the
 		// project's sample rate, tempo, time signatures, fader top and busses, so that the tracks' positions, volumes
-		// and routing mean the same there.
-		Project tracksFile(const Project& project, const std::vector<ObjectId>& tracks, CopyOptions options)
+		// and routing mean the same there. The tracks inside the folders that can't go along are skipped.
+		Project tracksFile(
+			const Project& project, const std::vector<ObjectId>& tracks, CopyOptions options, Json* skipped = nullptr)
 		{
 			Project file;
 			file.name = project.name;
@@ -479,7 +512,9 @@ namespace gnubase::engine
 			file.maxVolume = project.maxVolume;
 			file.busses = project.busses;
 			file.nextId = project.nextId;
-			copyTracks(project, file, tracks, options, 0, 0, nullptr);
+			const Copied copied = copyTracks(project, file, tracks, options, 0, 0, nullptr);
+			if (skipped != nullptr)
+				*skipped = describe(project, copied.skipped);
 			return file;
 		}
 
@@ -499,15 +534,16 @@ namespace gnubase::engine
 			}
 		}
 
-		// A project or track archive. Media files embedded in it are extracted next to it, as project.load does.
-		Project load(const fs::path& file)
+		// A project or track archive. Media files embedded in it are extracted next to it, as project.load does, unless
+		// only what it holds is listed (extract false).
+		Project load(const fs::path& file, bool extract = true)
 		{
 			std::error_code error;
 			require(fs::is_regular_file(file, error), "there is no file " + file.u8string());
 			try
 			{
-				return loadDawProject(
-					file.u8string(), (file.parent_path() / fs::u8path(file.stem().u8string() + " media")).u8string());
+				return loadDawProject(file.u8string(),
+					(file.parent_path() / fs::u8path(file.stem().u8string() + " media")).u8string(), extract);
 			}
 			catch (const std::exception& problem)
 			{
@@ -605,11 +641,16 @@ namespace gnubase::engine
 		const Json booleanSchema = {{"type", "boolean"}};
 		const Json fileResult = objectSchema({{"file", stringSchema}}, {"file"});
 		const Json tracksResult = objectSchema({{"tracks", {{"type", "array"}, {"items", idSchema}}}}, {"tracks"});
+		const Json skippedSchema = {{"type", "array"},
+			{"items",
+				objectSchema(
+					{{"id", idSchema}, {"name", stringSchema}, {"type", stringSchema}}, {"id", "name", "type"})}};
 
 		engine.registerCommand(
 			{"track.savePreset", 1,
 				"Saves the sound of tracks as the track preset name (Save Track Preset, reference manual p. 239), "
-				"replacing a preset of that name: of one track, or of several as a multi-track preset (p. 241). "
+				"replacing a preset of that name: of one track, or of several as a multi-track preset (p. 241), "
+				"which keeps them in the order of the track list, whatever the order of tracks. "
 				"Audio, instrument, MIDI, group and effect tracks have one: their channel's pre section, equalizer, "
 				"strip, fader, pan and inserts, their MIDI modifiers, inserts, sends, volume, pan, program and device, "
 				"the instrument with its parameters, and the color. Presets are DAWproject files in the folder Track "
@@ -664,7 +705,7 @@ namespace gnubase::engine
 					Json types = Json::array();
 					try
 					{
-						const Project preset = load(file);
+						const Project preset = load(file, false);
 						for (const ObjectId id : preset.trackOrder())
 							types.push_back(trackTypeName(preset.trackById.at(id).type));
 					}
@@ -682,7 +723,9 @@ namespace gnubase::engine
 				"Gives tracks the sound of a track preset (Load Track Preset, reference manual pp. 239-243), in one "
 				"undo step: what track.savePreset keeps, not their names, routing, sends or buttons. Their inserts are "
 				"replaced by copies of the preset's, the automation of the plugins they had goes with them. The "
-				"tracks must be as many as the preset's, and of the same types in the same order. Emits "
+				"tracks must be as many as the preset's, and of the same types in the same order: the first of tracks "
+				"gets the sound of the preset's top track, and so on. Faders above the project's fader top come down "
+				"to it. Emits "
 				"track.changed, channel.changed, plugin.removed and plugin.added.",
 				objectSchema({{"tracks", idsSchema}, {"name", stringSchema}}, {"tracks", "name"}), tracksResult, false},
 			"Load track preset",
@@ -714,7 +757,8 @@ namespace gnubase::engine
 				"Adds the tracks of a track preset with its sound (Use Track Preset, reference manual p. 199), below "
 				"track in its folder or else at the bottom of the track list. Sends to group and effect channels go "
 				"to the project's tracks with the same name, outputs to its busses with the same name or else the "
-				"main output. Emits track.added and track.reordered. Returns the new tracks.",
+				"main output. Faders and send levels above the project's fader top come down to it. Emits track.added "
+				"and track.reordered. Returns the new tracks.",
 				objectSchema({{"name", stringSchema}, {"track", idSchema}}, {"name"}), tracksResult, false},
 			"Add tracks from preset",
 			[&engine](Project& project, CommandContext& context)
@@ -722,7 +766,7 @@ namespace gnubase::engine
 				const Json& parameters = context.parameters();
 				const Project preset = loadPreset(engine, parameters.at("name").get<std::string>());
 				const auto [parent, index] = below(project, parameters);
-				return Json{{"tracks", copyTracks(preset, project, preset.tracks, {}, parent, index, &context)}};
+				return Json{{"tracks", copyTracks(preset, project, preset.tracks, {}, parent, index, &context).tracks}};
 			});
 
 		engine.registerCommand(
@@ -730,26 +774,29 @@ namespace gnubase::engine
 				"Exports tracks as a track archive (Export Selected Tracks, reference manual pp. 205-206): a "
 				"DAWproject file with the tracks, a folder with the tracks inside it, their channels, events and "
 				"automation, which track.import imports into other projects and other applications open as a "
-				"project. The project's tempo, time signatures and busses come along so that positions and routing "
-				"mean the same. copyMedia (default true) copies the media files into the archive, otherwise it refers "
-				"to them where they are. Marker and ruler tracks can be exported; tempo, signature, arranger, "
-				"transpose, chord and VCA tracks not yet. Changes nothing in the project. Returns the file.",
+				"project. The project's sample rate, tempo, time signatures, fader top and busses come along so that "
+				"positions, volumes and routing mean the same. copyMedia (default true) copies the media files into "
+				"the archive, otherwise it refers to them where they are. Marker and ruler tracks can be exported; "
+				"tempo, signature, arranger, transpose, chord and VCA tracks not yet: listed, they are refused, inside "
+				"a folder they stay behind. Changes nothing in the project. Returns the file and the tracks that "
+				"stayed behind (skipped).",
 				objectSchema(
 					{{"tracks", idsSchema}, {"path", stringSchema}, {"copyMedia", booleanSchema}}, {"tracks", "path"}),
-				fileResult, false},
+				objectSchema({{"file", stringSchema}, {"skipped", skippedSchema}}, {"file", "skipped"}), false},
 			[&model](CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
 				const fs::path file = fs::u8path(parameters.at("path").get<std::string>());
-				save(tracksFile(model.project(), ids(parameters.at("tracks")), {}), file,
+				Json skipped;
+				save(tracksFile(model.project(), ids(parameters.at("tracks")), {}, &skipped), file,
 					parameters.value("copyMedia", true));
-				return Json{{"file", file.u8string()}};
+				return Json{{"file", file.u8string()}, {"skipped", std::move(skipped)}};
 			});
 		engine.registerCommand(
 			{"track.importSources", 1,
 				"The tracks of a DAWproject file that track.import can import from: a track archive (track.export) or "
 				"a project. Each with its id in the file, name, type and parent (the folder it is in, or 0), from top "
-				"to bottom.",
+				"to bottom. Extracts no media files.",
 				objectSchema({{"path", stringSchema}}, {"path"}),
 				objectSchema({{"tracks",
 								 {{"type", "array"},
@@ -761,7 +808,7 @@ namespace gnubase::engine
 				true},
 			[](CommandContext& context)
 			{
-				const Project file = load(fs::u8path(context.parameters().at("path").get<std::string>()));
+				const Project file = load(fs::u8path(context.parameters().at("path").get<std::string>()), false);
 				Json tracks = Json::array();
 				for (const ObjectId id : file.trackOrder())
 				{
@@ -776,18 +823,26 @@ namespace gnubase::engine
 				"Imports tracks from a track archive (track.export) or a project file as new tracks (Import Tracks "
 				"from Project and Track Archive, reference manual pp. 200-205), in one undo step: tracks (ids in the "
 				"file, see track.importSources; default: every track it can import), a folder with the tracks inside "
-				"it, below track in its folder or else at the bottom of the track list; marker tracks go to the top "
-				"level. events (default true) brings their events, parts, markers and track versions at their "
+				"it that can be imported, below track in its folder or else at the bottom of the track list; marker "
+				"tracks go to the top level. events (default true) brings their events, parts, markers and track "
+				"versions at their "
 				"positions, settings (default true) their channel settings and inserts, automation (default true) "
-				"their automation. The buttons (mute, solo, listen, monitor, record enable) are off. Routing between "
-				"the imported tracks stays; sends and outputs to other channels go to the project's tracks with the "
-				"same name and type, outputs to busses to its busses with the same name or else the main output. "
-				"Media files embedded in the file are extracted next to it, as project.load does. Emits track.added "
-				"and the events of what the tracks hold. Returns the new tracks.",
+				"their automation. The buttons (mute, solo, listen, monitor, record enable) are off and automation "
+				"reads, as these states aren't imported (p. 200). Routing between the imported tracks stays; sends "
+				"and outputs to other channels go to the tracks the project had with the same name and type, outputs "
+				"to busses to its busses with the same name or else the main output. Linear positions from a file at "
+				"another sample rate are rescaled to keep their time, as project.set does; faders, send levels and "
+				"volume automation above the project's fader top come down to it. Media files embedded in the file "
+				"are extracted next to it, as project.load does. Tempo, signature, arranger, transpose, chord and VCA "
+				"tracks can't be imported yet: listed, they are refused, otherwise they stay behind. Emits "
+				"track.added and the events of what the tracks hold. Returns the new tracks and the tracks of the file "
+				"that stayed behind (skipped).",
 				objectSchema({{"path", stringSchema}, {"tracks", idsSchema}, {"track", idSchema},
 								 {"events", booleanSchema}, {"settings", booleanSchema}, {"automation", booleanSchema}},
 					{"path"}),
-				tracksResult, false},
+				objectSchema({{"tracks", {{"type", "array"}, {"items", idSchema}}}, {"skipped", skippedSchema}},
+					{"tracks", "skipped"}),
+				false},
 			"Import tracks",
 			[](Project& project, CommandContext& context)
 			{
@@ -800,16 +855,18 @@ namespace gnubase::engine
 					changeSampleRate(file, project.sampleRate, ignored);
 				}
 				std::vector<ObjectId> tracks;
+				std::vector<ObjectId> skipped;
 				if (parameters.contains("tracks"))
 					tracks = ids(parameters.at("tracks"));
 				else
 					for (const ObjectId id : file.tracks)
-						if (importable(file.trackById.at(id).type))
-							tracks.push_back(id);
+						(importable(file.trackById.at(id).type) ? tracks : skipped).push_back(id);
 				const CopyOptions options{parameters.value("events", true), parameters.value("settings", true),
 					parameters.value("automation", true)};
 				const auto [parent, index] = below(project, parameters);
-				return Json{{"tracks", copyTracks(file, project, tracks, options, parent, index, &context)}};
+				Copied copied = copyTracks(file, project, tracks, options, parent, index, &context);
+				skipped.insert(skipped.end(), copied.skipped.begin(), copied.skipped.end());
+				return Json{{"tracks", std::move(copied.tracks)}, {"skipped", describe(file, skipped)}};
 			});
 	}
 }

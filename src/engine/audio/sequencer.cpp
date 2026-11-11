@@ -200,7 +200,8 @@ namespace gnubase::engine
 	}
 
 	MidiSequencer::MidiSequencer()
-		: m_sequence(std::make_unique<const MidiSequence>()), m_input(graph::g_maxEventsPerBlock)
+		: m_sequence(std::make_unique<const MidiSequence>()), m_input(graph::g_maxEventsPerBlock),
+		  m_stripChase(std::make_shared<graph::EventBuffer>(graph::g_maxEventsPerBlock))
 	{
 		std::iota(m_inputTo.begin(), m_inputTo.end(), uint16_t{0});
 	}
@@ -374,6 +375,10 @@ namespace gnubase::engine
 		out.nextSource();
 
 		const uint8_t chase = m_chase.load(std::memory_order_relaxed);
+		// A routed MIDI track's chase goes to its strip alone (MidiSequence::chaseIntoStrip), at the jump's offset,
+		// or the rest of it that didn't fit at the start of the next block.
+		m_stripChase->clear();
+		const bool intoStrip = sequence.chaseIntoStrip;
 		if (!transport.playing)
 		{
 			endAll(0, out);
@@ -384,9 +389,11 @@ namespace gnubase::engine
 			if (m_cursor >= 0 && transport.position != m_cursor) // a locate while stopped
 				findChased(sequence, transport.position, chase, true);
 			m_cursor = transport.position;
-			sendChased(0, out);
+			sendChased(0, intoStrip ? *m_stripChase : out);
 			return;
 		}
+		if (intoStrip)
+			sendChased(0, *m_stripChase);
 		for (size_t s = 0; s < transport.segmentCount; ++s)
 		{
 			const graph::TransportSegment& segment = transport.segments[s];
@@ -395,6 +402,8 @@ namespace gnubase::engine
 				endAll(segment.offset, out);
 				findChased(sequence, segment.position, chase, false);
 				m_chaseNotes = (chase & g_chaseNotes) != 0;
+				if (intoStrip)
+					sendChased(segment.offset, *m_stripChase);
 			}
 			play(sequence, segment, out);
 			m_next = segment.position + segment.frames;
@@ -421,7 +430,8 @@ namespace gnubase::engine
 				ending = std::min(ending, std::max(m_ends[m_sounding[i]], begin));
 			const int64_t starting = note != sequence.notes.end() ? note->start : g_never;
 			const int64_t changing = controller != sequence.controllers.end() ? controller->position : g_never;
-			const int64_t chasing = m_chasedSent < m_chasedCount || m_chaseNotes ? begin : g_never;
+			const bool chased = m_chasedSent < m_chasedCount && !sequence.chaseIntoStrip; // still to send here
+			const int64_t chasing = chased || m_chaseNotes ? begin : g_never;
 			const int64_t at = std::min({ending, starting, changing, chasing});
 			if (at >= end)
 				return;
@@ -437,7 +447,7 @@ namespace gnubase::engine
 						return;
 				}
 			}
-			else if (m_chasedSent < m_chasedCount)
+			else if (chased)
 			{
 				if (!sendChased(offset, out))
 					return;

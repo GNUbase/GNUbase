@@ -647,8 +647,9 @@ namespace gnubase::engine
 		for (const auto& [id, part] : project.midiParts)
 		{
 			RenderChannel& channel = snapshot->channels[static_cast<size_t>(trackChannel.at(part.track))];
-			// A silent MIDI track's notes would still reach its instrument.
-			if (part.mute || !plays(part.track) || (channel.silent && channel.type == TrackType::Midi))
+			// A soloed-out or disabled MIDI track's notes would still reach its instrument. A muted one's play into its
+			// strip, whose mute drops them and keeps the latest controller values for unmuting (ChannelStrip).
+			if (part.mute || !plays(part.track) || (channel.quiet && channel.type == TrackType::Midi))
 				continue;
 			if (project.patterns.count(part.pattern) == 0)
 			{

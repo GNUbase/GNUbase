@@ -925,8 +925,9 @@ TEST_CASE("a chase that doesn't fit into the event buffer goes on in the next bl
 
 TEST_CASE("a routed MIDI track's controller event at the jump position wins over an older chased one", "[unit]")
 {
-	// As AudioEngine::attachMidi sets them up: the MIDI track's sequencer chases no controller events, the
-	// instrument's chases the MIDI track's. The MIDI track's events reach the instrument through its input.
+	// As AudioEngine::attachMidi sets them up: the MIDI track's sequencer chases its controller events into its strip
+	// alone (none here: MidiSequence::chaseIntoStrip isn't set), the instrument's chases the MIDI track's. The MIDI
+	// track's events reach the instrument through its input.
 	const uint32_t blockSize = GENERATE(1U, 64U);
 	CAPTURE(blockSize);
 	const std::vector<RenderController> controllers = {control(1000, 7, 100),
