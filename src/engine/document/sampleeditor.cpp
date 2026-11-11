@@ -240,7 +240,8 @@ namespace gnubase::engine
 					const auto frame = [&](const char* locator)
 					{
 						const auto at = transport.at(locator).get<time::Samples>();
-						return event->offset + std::llround(static_cast<double>(at - span.start) / span.ratio);
+						return event->offset +
+							std::llround(eventFrames(project, *event, static_cast<double>(at - span.start)));
 					};
 					start = std::clamp<time::Samples>(frame("left"), 0, length);
 					end = std::clamp<time::Samples>(frame("right"), 0, length);
