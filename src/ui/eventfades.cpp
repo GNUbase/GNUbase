@@ -49,7 +49,7 @@ namespace gnubase::ui
 	{
 		AudioFades fades;
 		fades.rate = rate;
-		fades.length = event.at("length").get<int64_t>();
+		fades.length = event.value("fadeRoom", event.at("length").get<int64_t>()); // a warped event's room for them
 		fades.in = fadeOf(event.at("fadeIn"));
 		fades.out = fadeOf(event.at("fadeOut"));
 		if (const Json& crossfade = event.at("crossfade"); crossfade.is_object())

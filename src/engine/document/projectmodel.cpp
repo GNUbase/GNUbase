@@ -23,6 +23,7 @@
 #include "engine/document/trackpresets.h"
 #include "engine/document/trackversions.h"
 #include "engine/document/volumecurves.h"
+#include "engine/document/warp.h"
 #include "engine/document/workspaces.h"
 #include "engine/dsp/timestretch.h"
 #include "engine/graph/graph.h"
@@ -3538,6 +3539,7 @@ namespace gnubase::engine
 					m_automationFollowsEvents = followsEvents;
 					throw;
 				}
+				announceWarpedEvents(before, m_project, context);
 				if (action.empty()) // a transaction
 					record(context.parameters().at("description").get<std::string>(), before, context,
 						context.parameters().value("merge", std::string()));
@@ -3632,12 +3634,14 @@ namespace gnubase::engine
 		require(static_cast<size_t>(steps) <= available,
 			"only " + std::to_string(available) + (undo ? " steps can be undone" : " steps can be redone"));
 		const std::string timeFormat = m_project.setup.timeFormat;
+		const Project before = m_project;
 		for (int64_t i = 0; i < steps; ++i)
 		{
 			const HistoryStep& step = undo ? m_history.undo() : m_history.redo();
 			apply(m_project, step.change, direction);
 			announce(*this, m_project, step.change, direction, context);
 		}
+		announceWarpedEvents(before, m_project, context);
 		followTimeFormat(m_project, timeFormat, context);
 		announceHistory(context);
 		publish();
@@ -3835,7 +3839,9 @@ namespace gnubase::engine
 			{"project.get", 1,
 				"The whole project: busses, tracks in order, channels, media, clips, events and parts. Each MIDI part "
 				"has rootKeyTranspose too, the semitones that the project root key transposes it by (-5 to 6; 0 for "
-				"an independent part and unless both have a root key).",
+				"an independent part and unless both have a root key). Each audio event of a warped clip has "
+				"playedLength, the project samples from its start to where it ends through the warp, and fadeRoom, "
+				"the frames its fades may take together; audioEvent.changed announces them when they change.",
 				objectSchema({}), {{"type", "object"}}, true},
 			[](Project& project, CommandContext&)
 			{
@@ -3845,6 +3851,10 @@ namespace gnubase::engine
 					if (const auto found = project.midiParts.find(part.at("id").get<ObjectId>());
 						found != project.midiParts.end())
 						part["rootKeyTranspose"] = rootKeyTranspose(project, found->second);
+				for (Json& event : json.at("audioEvents"))
+					if (const auto found = project.audioEvents.find(event.at("id").get<ObjectId>());
+						found != project.audioEvents.end())
+						event = audioEventJson(project, found->second);
 				return json;
 			});
 		add(engine,
