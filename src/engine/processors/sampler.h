@@ -135,7 +135,7 @@ namespace gnubase::engine::processors
 		void noteOff(uint8_t channel, uint8_t note) noexcept;
 		void start(uint8_t channel, uint8_t note, uint16_t velocity, const Sample& sample) noexcept;
 		void release(Voice& voice) noexcept;
-		void fadeOut(Voice& voice) noexcept;
+		void fadeOut(Voice& voice) const noexcept;
 		Voice* monophonicVoice() noexcept;
 		void setParameter(uint32_t id, double value) noexcept;
 		void render(const graph::ProcessContext& context, uint32_t begin, uint32_t end, const Sample& sample) noexcept;

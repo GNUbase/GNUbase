@@ -82,7 +82,7 @@ namespace gnubase::engine::processors
 		const uintmax_t size = error ? 0 : fs::file_size(file, error);
 		if (error)
 			return std::make_shared<const Sample>();
-		const std::lock_guard<std::mutex> lock(mutex);
+		const std::scoped_lock lock(mutex);
 		for (auto entry = cache.begin(); entry != cache.end();)
 			entry = entry->second.sample.expired() ? cache.erase(entry) : std::next(entry);
 		Cached& cached = cache[path];
@@ -189,7 +189,7 @@ namespace gnubase::engine::processors
 	}
 
 	// Ends a voice quickly but without a click, also a one-shot one: the envelope ends it once its level is 0.
-	void Sampler::fadeOut(Voice& voice) noexcept
+	void Sampler::fadeOut(Voice& voice) const noexcept
 	{
 		voice.held = false;
 		voice.stage = Stage::Release;
