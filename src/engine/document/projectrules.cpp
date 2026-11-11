@@ -731,7 +731,9 @@ namespace gnubase::engine
 				if (project.trackById.at(track).parent == 0 || !removed(project.trackById.at(track).parent))
 					top.push_back(track);
 			// The active marker track goes last, as in track.removeEmpty, so that track.remove activates a marker track
-			// that stays rather than one that goes next.
+			// that stays rather than one that goes next. Moving it to the end of the top tracks is enough: marker
+			// tracks can't be inside a folder, so no folder that goes takes the active marker track along before the
+			// other marker tracks.
 			const auto active = std::find(top.begin(), top.end(), project.activeMarkerTrack);
 			if (active != top.end())
 				std::rotate(active, std::next(active), top.end());
@@ -761,8 +763,13 @@ namespace gnubase::engine
 				if (element->kind == Kind::AudioPart && !element->locked)
 					parts.insert(element->id);
 			// Each action's result stops at the longest project, so that values stay finite and fit the ticks they
-			// become. They may go below the project's start between two actions.
-			const double longest = logicalTicks(project, {time::TimeBase::Linear, time::g_maxPosition});
+			// become. They may go below the project's start between two actions. The longest project is
+			// g_maxPosition samples long, but below 8 kHz, the lowest common sample rate, it lasts as long as at 8 kHz:
+			// at 999 BPM that is about 10^18 ticks, while at a few hundred hertz the ticks would leave an int64_t.
+			constexpr double lowestRate = 8000.0;
+			const double longest = static_cast<double>(project.tempo.toTicks(static_cast<double>(time::g_maxPosition) /
+									   std::max(project.sampleRate, lowestRate))) /
+				g_logicalTick;
 			const auto bounded = [longest](double value) { return std::clamp(value, -longest, longest); };
 			Commands commands;
 			for (const Element* element : found.elements)
@@ -894,7 +901,14 @@ namespace gnubase::engine
 					{
 						set["position"] = at(position);
 						if (marker.type == MarkerType::Cycle)
-							set["end"] = std::max(at(position + std::max(length, 0.0)), at(position) + 1);
+						{
+							// At least one sample long, as marker.set wants it, also on a musical track.
+							Marker moved = marker;
+							moved.position.value = at(position);
+							moved.end = {marker.position.base, at(position + std::max(length, 0.0))};
+							keepMinimumLength(project, moved);
+							set["end"] = moved.end.value;
+						}
 					}
 					if (!set.empty())
 					{
