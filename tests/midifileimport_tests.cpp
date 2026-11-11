@@ -225,9 +225,10 @@ TEST_CASE(
 	Engine engine;
 	Client client(engine);
 	run(client, "project.set", {{"tempo", 100.0}});
+	const Ticks bar = 4 * g_quarter;
 	const auto keys =
 		run(client, "track.add", {{"type", "midi"}, {"name", "Keys"}}).at("track").at("id").get<ObjectId>();
-	run(client, "midiPart.add", {{"track", keys}, {"position", 19 * 4 * g_quarter}, {"length", 4 * g_quarter}});
+	run(client, "midiPart.add", {{"track", keys}, {"position", 19 * bar}, {"length", bar}});
 	Json project = run(client, "project.get");
 	const double sampleRate = project.at("sampleRate").get<double>();
 
@@ -236,7 +237,7 @@ TEST_CASE(
 	file.tracks.push_back(track("Tempo", {midifile::metaEvent(0, midifile::g_metaTimeSignature, {3, 2, 24, 8})}));
 	file.tracks.push_back(track("Piano", {note(0, 0, 60, true), note(1440, 0, 60, false)}));
 	const std::string path = save(dir, "song.mid", file);
-	const Ticks start = 9 * 4 * g_quarter;
+	const Ticks start = 9 * bar;
 	run(client, "midiFile.import",
 		{{"path", path}, {"position", gnubase::time::TempoMap(100.0).toSamples(start, sampleRate)}});
 	project = run(client, "project.get");
@@ -246,7 +247,7 @@ TEST_CASE(
 	REQUIRE(tempo.size() == 3);
 	CHECK(tempo[1].at("position") == start);
 	CHECK(tempo[1].at("bpm") == 120.0);
-	CHECK(tempo[2].at("position") == start + 3 * g_quarter);
+	CHECK(tempo[2].at("position") == start + (3 * g_quarter));
 	CHECK(tempo[2].at("bpm") == 100.0);
 	const Json& signatures = project.at("signatures");
 	REQUIRE(signatures.size() == 3);
