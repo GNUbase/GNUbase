@@ -59,7 +59,13 @@ namespace gnubase::engine
 	bool SampleLoader::waitUntilRead(std::chrono::milliseconds timeout)
 	{
 		std::unique_lock lock(m_mutex);
-		return m_done.wait_for(lock, timeout, [this] { return m_queue.empty(); });
+		return m_done.wait_for(lock, timeout, [this] { return m_queue.empty() && !m_announcing; });
+	}
+
+	void SampleLoader::setRead(Read read)
+	{
+		const std::scoped_lock lock(m_mutex);
+		m_read = std::move(read);
 	}
 
 	void SampleLoader::run()
@@ -72,12 +78,13 @@ namespace gnubase::engine
 				return;
 			// The file stays in the queue while it is read, so that it isn't asked for twice and waitUntilRead waits.
 			const std::string path = m_queue.front();
+			const Read read = m_read;
 			m_reading = true;
 			lock.unlock();
 			std::shared_ptr<const processors::Sample> sample;
 			try
 			{
-				sample = m_read(path);
+				sample = read(path);
 			}
 			catch (const std::exception& error)
 			{
@@ -86,6 +93,11 @@ namespace gnubase::engine
 			}
 			lock.lock();
 			m_samples[path] = sample ? std::move(sample) : std::make_shared<const processors::Sample>();
+			// It leaves the queue before the callback, so that a request made meanwhile, after keepOnly let go of the
+			// sample, reads it again instead of being taken for this read.
+			m_reading = false;
+			m_queue.pop_front();
+			m_announcing = true;
 			lock.unlock();
 			try
 			{
@@ -98,8 +110,7 @@ namespace gnubase::engine
 				logging::warning("Announcing the sample {} failed: {}", path, error.what());
 			}
 			lock.lock();
-			m_reading = false;
-			m_queue.pop_front();
+			m_announcing = false;
 			m_done.notify_all();
 		}
 	}

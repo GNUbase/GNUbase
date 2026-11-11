@@ -46,18 +46,21 @@ namespace gnubase::engine
 
 		// Waits until every file asked for is read and its callback has run, at most timeout; false if one isn't.
 		bool waitUntilRead(std::chrono::milliseconds timeout);
+		// Reads the files asked for from now on with read; for tests that hold a read back.
+		void setRead(Read read);
 
 	private:
 		void run();
 
 		const std::function<void()> m_loaded;
-		const Read m_read;
+		Read m_read;
 		mutable std::mutex m_mutex;
 		std::condition_variable m_wake;  // a file asked for, or stop
 		std::condition_variable m_done;  // a file read
 		std::deque<std::string> m_queue; // waiting; the first is being read while the thread runs
 		std::map<std::string, std::shared_ptr<const processors::Sample>> m_samples;
-		bool m_reading = false; // the first file waiting is being read
+		bool m_reading = false;    // the first file waiting is being read
+		bool m_announcing = false; // the callback runs for a file read, which has left the queue
 		bool m_stopping = false;
 		std::thread m_thread; // started by the first request
 	};

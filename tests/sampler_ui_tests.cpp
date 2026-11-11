@@ -355,3 +355,77 @@ TEST_CASE("the keyboard's handles drag the root key and the key range", "[ui]")
 	REQUIRE(f.app.waitUntil([&] { return f.parameter("Key high") == 40.0; }));
 	REQUIRE(f.app.waitUntil([&] { return f.has(".sampler-key[key=\"41\"]", "outside"); }));
 }
+
+TEST_CASE("a drag of a handle or a marker ends when the button goes up outside the window", "[ui]")
+{
+	Fixture f;
+	f.open();
+	const Json keyboard = f.box("#sampler-keyboard");
+	const double x = keyboard.at("x").get<double>();
+	const double key = keyboard.at("width").get<double>() / 128.0;
+	const auto at = [&](int pitch) { return static_cast<int>(x + ((pitch + 0.5) * key)); };
+	const auto handleY = [&]
+	{
+		const Json box = f.box(".sampler-handle[handle=low]");
+		return static_cast<int>(box.at("y").get<double>() + (box.at("height").get<double>() / 2));
+	};
+	f.app.ui().drag(std::nullopt, of(".sampler-handle[handle=low]"), {"", 0, ui::Point{at(40), handleY()}});
+	REQUIRE(f.app.waitUntil([&] { return f.parameter("Key low") == 40.0; }));
+
+	// Dragged past the window's left edge, where the button goes up: the lowest key.
+	f.app.ui().drag(std::nullopt, of(".sampler-handle[handle=low]"), {"", 0, ui::Point{-40, handleY()}});
+	REQUIRE(f.app.waitUntil([&] { return f.parameter("Key low") == 0.0; }));
+	// The mouse back over the keyboard with no button held moves the handle no more.
+	f.app.ui().move(std::nullopt, {"", 0, ui::Point{at(60), handleY()}});
+	f.app.ui().move(std::nullopt, {"", 0, ui::Point{at(70), handleY()}});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.parameter("Key low") == 0.0);
+	CHECK(!f.has(".sampler-handle[handle=low]", "dragged"));
+
+	// The same for the display's markers: Start dragged past the left edge, then the mouse over the display.
+	const Json display = f.box("#sampler-display");
+	const int y = static_cast<int>(display.at("y").get<double>() + (display.at("height").get<double>() / 2));
+	const auto across = [&](double share)
+	{ return static_cast<int>(display.at("x").get<double>() + (display.at("width").get<double>() * share)); };
+	f.app.ui().drag(std::nullopt, of(".sampler-marker[marker=\"Start\"]"), {"", 0, ui::Point{across(0.3), y}});
+	REQUIRE(f.app.waitUntil([&] { return std::abs(f.parameter("Start") - 0.3) < 0.02; }));
+	f.app.ui().drag(std::nullopt, of(".sampler-marker[marker=\"Start\"]"), {"", 0, ui::Point{-40, y}});
+	REQUIRE(f.app.waitUntil([&] { return f.parameter("Start") == 0.0; }));
+	f.app.ui().move(std::nullopt, {"", 0, ui::Point{across(0.5), y}});
+	f.app.ui().move(std::nullopt, {"", 0, ui::Point{across(0.6), y}});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.parameter("Start") == 0.0);
+	CHECK(!f.has(".sampler-marker[marker=\"Start\"]", "dragged"));
+}
+
+TEST_CASE("Import Audio File loads the file chosen, with the lock, and shows why one didn't load", "[ui]")
+{
+	Fixture f;
+	f.open();
+	const auto answer = [&](const std::filesystem::path& file)
+	{
+		f.click("#sampler-import");
+		REQUIRE(f.app.waitUntil([&] { return f.app.shell().fileDialogs().size() == 1; }));
+		CHECK(f.app.shell().answerFileDialog(f.app.shell().fileDialogs().begin()->first, {file}));
+	};
+	f.click("#sampler-lock");
+	REQUIRE(f.app.waitUntil([&] { return !f.elements("#sampler-lock[checked]").empty(); }));
+	f.set("Cutoff", 1000.0);
+
+	// A file that isn't audio: the panel says why, and the sample stays.
+	const uint64_t before = f.samplerChannel().at("sample").get<uint64_t>();
+	const std::filesystem::path text = f.folder.path() / "notes.txt";
+	std::ofstream(text) << "not audio";
+	answer(text);
+	REQUIRE(f.app.waitUntil([&] { return f.has("#sampler-message", "error"); }));
+	CHECK(!f.elements("#sampler-message").at(0).value("text", "").empty());
+	CHECK(f.samplerChannel().at("sample") == before);
+
+	// An audio file loads, keeping the settings as the lock asks, and the message goes.
+	answer(f.other);
+	REQUIRE(f.app.waitUntil([&] { return f.samplerChannel().at("sample") != before; }));
+	REQUIRE(f.app.waitUntil([&] { return f.elements("#sampler-file").at(0).value("text", "") == "other"; }));
+	CHECK(f.parameter("Cutoff") == 1000.0);
+	REQUIRE(f.app.waitUntil([&] { return !f.has("#sampler-message", "error"); }));
+	CHECK(f.elements("#sampler-message").at(0).value("text", "").empty());
+}

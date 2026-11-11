@@ -101,6 +101,7 @@
 	width: 9dp;
 	margin-left: -4dp;
 	cursor: resize-horizontal;
+	drag: drag; /* its drag ends wherever the button goes up, outside the window too */
 }
 
 .sampler-marker-line
@@ -209,6 +210,7 @@
 	width: 0.78125%;
 	min-width: 3dp;
 	cursor: resize-horizontal;
+	drag: drag; /* its drag ends wherever the button goes up, outside the window too */
 }
 
 .sampler-handle.root

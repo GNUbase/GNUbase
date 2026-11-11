@@ -655,6 +655,7 @@ namespace gnubase::engine
 		std::map<ObjectId, std::shared_ptr<MidiSequencer>> sequencers;
 		std::map<ObjectId, std::shared_ptr<processors::InputTransformerProcessor>> transformers;
 		std::map<ObjectId, Instrument> instruments;
+		const bool replaced = snapshot.opened != m_opened; // another project
 		for (const RenderChannel& channel : snapshot.channels)
 		{
 			if (channel.type != TrackType::Midi && channel.type != TrackType::Instrument)
@@ -717,19 +718,20 @@ namespace gnubase::engine
 				}
 				// The sampler swaps its sample while it plays (sample hot swap). The sample loader reads a new one on
 				// its own thread, and the sampler plays the one before, or nothing, until updateSamples hands it over
-				// (#1122). The sampler lets go of a sample once the audio thread has moved on, by the next update.
+				// (#1122). A sampler of another project, which took over the instrument of a channel with the same id,
+				// plays nothing until then: the sample before is the other project's. The sampler lets go of a sample
+				// once the audio thread has moved on, by the next update.
 				if (instrument.sampler)
 				{
 					instrument.sampler->collect();
-					if (channel.sample.empty() && !instrument.loaded.empty())
+					if (channel.sample != instrument.loaded && !instrument.loaded.empty() &&
+						(channel.sample.empty() || replaced))
 					{
 						instrument.sampler->setSample(std::make_shared<const processors::Sample>());
 						instrument.loaded.clear();
 					}
-					else if (channel.sample != instrument.loaded)
-					{
+					if (channel.sample != instrument.loaded)
 						m_sampleLoader.request(channel.sample);
-					}
 				}
 				instrument.sample = channel.sample;
 				instrument.sources = from;
@@ -743,6 +745,7 @@ namespace gnubase::engine
 		m_sequencers = std::move(sequencers);
 		m_inputTransformers = std::move(transformers);
 		m_instruments = std::move(instruments);
+		m_opened = snapshot.opened;
 		updateSamples();
 	}
 
@@ -766,6 +769,11 @@ namespace gnubase::engine
 			}
 		}
 		m_sampleLoader.keepOnly(waiting);
+	}
+
+	void AudioEngine::setSampleReader(SampleLoader::Read read)
+	{
+		m_sampleLoader.setRead(std::move(read));
 	}
 
 	bool AudioEngine::waitForSamples(std::chrono::milliseconds timeout)

@@ -108,6 +108,8 @@ namespace gnubase::engine
 		void readMeters(MeterFrame& frame); // metercommands.cpp
 		// Command thread: what the MIDI and instrument tracks chase when playback jumps (MidiSequencer).
 		void setChase(const MidiChase& chase);
+		// Any thread: reads the samplers' samples asked for from now on with read (SampleLoader::setRead).
+		void setSampleReader(SampleLoader::Read read);
 
 		// Command thread, after a command changed the user settings audio.portSettings (audioPorts) or
 		// midi.portSettings (midiPorts): emits the audio ports as audio.portsChanged, and the MIDI ports follow their
@@ -430,8 +432,9 @@ namespace gnubase::engine
 		std::map<ObjectId, std::shared_ptr<MidiSequencer>> m_sequencers; // per MIDI and instrument channel
 		// Per MIDI and instrument channel with an input transformer.
 		std::map<ObjectId, std::shared_ptr<processors::InputTransformerProcessor>> m_inputTransformers;
-		MidiChase m_chase;                                                 // what they chase
-		std::map<ObjectId, Instrument> m_instruments;                      // per instrument channel
+		MidiChase m_chase;                            // what they chase
+		std::map<ObjectId, Instrument> m_instruments; // per instrument channel
+		uint64_t m_opened = 0;                        // the project of the instruments (RenderSnapshot::opened)
 		std::map<ObjectId, std::shared_ptr<ChannelState>> m_channelStates; // per channel
 		std::mutex m_channelStatesMutex; // the command thread changes m_channelStates with it, readMeters reads with it
 		// The channels that mixdown.export renders from a point inside their strip while it renders, and where their

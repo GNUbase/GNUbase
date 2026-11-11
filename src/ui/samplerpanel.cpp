@@ -24,8 +24,10 @@ namespace gnubase::ui
 
 	namespace
 	{
-		constexpr std::array<Rml::EventId, 3> g_events = {
-			Rml::EventId::Mousedown, Rml::EventId::Click, Rml::EventId::Change};
+		// The markers and the handles are drag elements: their drag events come wherever the mouse is, and the
+		// dragend wherever the button goes up, outside the window too.
+		constexpr std::array<Rml::EventId, 5> g_events = {Rml::EventId::Dragstart, Rml::EventId::Drag,
+			Rml::EventId::Dragend, Rml::EventId::Click, Rml::EventId::Change};
 
 		constexpr int64_t g_maxPixels = 65536; // media.peaks' limits
 		constexpr int64_t g_maxColumnValues = 262144;
@@ -172,12 +174,6 @@ namespace gnubase::ui
 		for (const Rml::EventId id : g_events)
 			element.AddEventListener(id, this);
 		element.AddEventListener(m_dropEvent, this);
-		if (Rml::ElementDocument* document = element.GetOwnerDocument(); document != nullptr)
-		{
-			document->AddEventListener(Rml::EventId::Mousemove, this);
-			document->AddEventListener(Rml::EventId::Mouseup, this);
-			m_document = document->GetObserverPtr();
-		}
 		for (const char* name : {"media.peaksProgress", "media.peaksReady"})
 			m_subscriptions.push_back(m_binding.on(name,
 				[this](const engine::Event& event)
@@ -217,11 +213,6 @@ namespace gnubase::ui
 			for (const Rml::EventId id : g_events)
 				root->RemoveEventListener(id, this);
 			root->RemoveEventListener(m_dropEvent, this);
-		}
-		if (Rml::Element* document = m_document.get())
-		{
-			document->RemoveEventListener(Rml::EventId::Mousemove, this);
-			document->RemoveEventListener(Rml::EventId::Mouseup, this);
 		}
 	}
 
@@ -619,8 +610,8 @@ namespace gnubase::ui
 		Rml::Element* target = event.GetTargetElement();
 		switch (event.GetId())
 		{
-		case Rml::EventId::Mousedown:
-			if (m_track == 0 || event.GetParameter<int>("button", 0) != 0)
+		case Rml::EventId::Dragstart:
+			if (m_track == 0)
 				return;
 			if (const Rml::Element* marker = withAttribute(target, "marker"); marker != nullptr)
 			{
@@ -635,13 +626,13 @@ namespace gnubase::ui
 				show();
 			}
 			return;
-		case Rml::EventId::Mousemove:
+		case Rml::EventId::Drag:
 			if (!m_dragged.empty())
 				drag(event);
 			else if (!m_handle.empty())
 				dragKey(event);
 			return;
-		case Rml::EventId::Mouseup:
+		case Rml::EventId::Dragend:
 			if (!m_dragged.empty())
 			{
 				m_dragged.clear();

@@ -93,9 +93,8 @@ namespace gnubase::ui
 		std::function<void(uint64_t track, bool keepSettings)> m_importSample;
 		const std::string m_stepOwner;
 		Rml::ObserverPtr<Rml::Element> m_root;
-		Rml::ObserverPtr<Rml::Element> m_document; // for drags that leave the panel
-		std::vector<Parameter> m_parameters;       // the sampler's, from processor.list
-		std::map<uint32_t, double> m_values;       // the channel's, the defaults filled in
+		std::vector<Parameter> m_parameters; // the sampler's, from processor.list
+		std::map<uint32_t, double> m_values; // the channel's, the defaults filled in
 		uint64_t m_track = 0;
 		uint64_t m_selected = 0; // the track update showed last, a sampler track or not
 		uint64_t m_loads = 0;

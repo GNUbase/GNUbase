@@ -55,7 +55,9 @@ How it plays:
 - Loading (#1122): when a channel's sample changes, and for every sampler when a project loads, the audio engine's
   sample loader (`SampleLoader`, `src/engine/audio/sampleloader.h`) reads the file on a thread of its own, so a long
   sample holds up no command. Once it is read the engine runs `audio.updateSamples` on its own, which hands it to the
-  samplers that wait for it. Until then a sampler plays the sample before, or nothing if it had none. Starting
+  samplers that wait for it. Until then a sampler plays the sample before, or nothing if it had none or if it belongs
+  to a project that replaced another (`project.load`, `project.new`): the render snapshot's `opened` tells the audio
+  engine so, since a channel of the same id keeps its instrument and the sample before is the other project's. Starting
   playback and locating wait for the samples as for the audio tracks' streams (up to 2 seconds), and offline renders
   (`audio.render`, `mixdown.export`, render in place) wait until every sample is there (up to 30 seconds, after which
   they log a warning), so they come out the same every time. Files that no sampler waits for any more, after an undo
@@ -111,6 +113,8 @@ root `.sampler-panel` has the class `.empty`):
   sets the root key. Above it the root key handle and the key range's handles (`.sampler-handle`, attribute `handle`:
   root, low, high; p. 730) sit on their keys; dragging one sets its key, one undo step per drag, and the range's low
   key stays at or below its high one.
+- The markers and the handles are RmlUi drag elements (`drag: drag`): a drag ends at its `dragend`, wherever the button
+  goes up, outside the window too.
 - A file dropped on the panel loads into the sampler (`sampler.load` with `path`, p. 710).
 
 ## Tests
@@ -124,6 +128,9 @@ loop mode, slices and the filter without allocating; `tests/sampleeditor_ui_test
 `tests/audiofunctions_ui_tests.cpp` create sampler tracks from the UI; `tests/sampler_ui_tests.cpp` drives the sampler
 panel (following the selection, toggles, value fields, markers, the keyboard, dropped files, Normalize Sample) and the
 Add Track dialog's Sampler page; `tests/backup_tests.cpp` backs one up with
-`removeUnused` and `minimize`. #1122 added the sample loader's own test and a legato note after Monophonic came on to
-`tests/sampler_tests.cpp`, and the load and Normalize Sample messages, the lock and level as a user setting and the
-keyboard's handles to `tests/sampler_ui_tests.cpp`.
+`removeUnused` and `minimize`. #1122 added the sample loader's own tests and a legato note after Monophonic came on to
+`tests/sampler_tests.cpp`, with the engine's side of a load while the dummy device plays in real time: a read held
+back (`Engine::setSampleReader`) leaves `sampler.load` and later commands running and the sampler silent, the posted
+`audio.updateSamples` alone hands the sample over, and a project loaded over another doesn't play the other's sample
+meanwhile. It added the load and Normalize Sample messages for dropped and imported files, the lock and level as a
+user setting, the keyboard's handles, and drags released outside the window to `tests/sampler_ui_tests.cpp`.

@@ -347,6 +347,11 @@ namespace gnubase::engine
 		return m_audio->position();
 	}
 
+	void Engine::setSampleReader(std::function<std::shared_ptr<const processors::Sample>(const std::string& path)> read)
+	{
+		m_audio->setSampleReader(std::move(read));
+	}
+
 	void Engine::readMeters(MeterFrame& frame)
 	{
 		m_audio->readMeters(frame);

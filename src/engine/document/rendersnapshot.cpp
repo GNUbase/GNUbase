@@ -481,10 +481,11 @@ namespace gnubase::engine
 	}
 
 	std::unique_ptr<const RenderSnapshot> compile(
-		const Project& project, uint64_t revision, const RenderSnapshot* previous)
+		const Project& project, uint64_t revision, const RenderSnapshot* previous, uint64_t opened)
 	{
 		auto snapshot = std::make_unique<RenderSnapshot>();
 		snapshot->revision = revision;
+		snapshot->opened = opened;
 		snapshot->sampleRate = project.sampleRate;
 		snapshot->tempo = project.tempo;
 		snapshot->signatures = project.signatures;
