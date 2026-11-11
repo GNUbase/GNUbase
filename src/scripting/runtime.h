@@ -33,6 +33,7 @@ namespace gnubase::scripting
 	//   track.add. Returns the result as a table, or raises an error with the reason.
 	// - gnubase.on(name, handler): calls handler(event) for every event with that name ("*" for all) while the
 	//   script runs commands or waits. An event is a table with name, data and request.
+	// - gnubase.off(name, handler): unsubscribes a handler gnubase.on registered for that name.
 	// - gnubase.waitFor(name, seconds): takes the next event with that name, waiting up to seconds (default 10);
 	//   nil on timeout.
 	// - gnubase.events(): takes every event that arrived and hasn't been taken.
@@ -107,6 +108,7 @@ namespace gnubase::scripting
 		static int callFunction(lua_State* state);
 		static int print(lua_State* state);
 		static int on(lua_State* state);
+		static int off(lua_State* state);
 		static int waitFor(lua_State* state);
 		static int events(lua_State* state);
 		static void stopWhenLate(lua_State* state, lua_Debug* debug);

@@ -165,17 +165,27 @@
 			selected = nil
 			if not dialog.subscribed then
 				dialog.subscribed = true
-				gnubase.on("profile.changed", function()
+				dialog.follow = function()
 					if dialog.document ~= nil then
 						dialog.refresh()
 					end
-				end)
+				end
+				gnubase.on("profile.changed", dialog.follow)
 			end
 			dialog.refresh()
 		end
+
+		-- The handler goes with the document: the next one that opens loads this script again.
+		function dialog.close()
+			dialog.document = nil
+			if dialog.subscribed then
+				gnubase.off("profile.changed", dialog.follow)
+				dialog.subscribed = false
+			end
+		end
 	</script>
 </head>
-<body onload="ProfileManager.load(document)" onunload="ProfileManager.document = nil">
+<body onload="ProfileManager.load(document)" onunload="ProfileManager.close()">
 	<dialog id="profiles-dialog">
 		<div class="dialog-titlebar">Profile Manager</div>
 		<div class="content">
