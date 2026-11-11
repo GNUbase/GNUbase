@@ -1835,18 +1835,20 @@ namespace gnubase::engine
 				if (points.size() < 2)
 					return;
 				for (size_t i = 1; i < points.size(); ++i)
-					if (!(points[i].source > points[i - 1].source && points[i].target > points[i - 1].target) ||
+					if (points[i].source <= points[i - 1].source || points[i].target <= points[i - 1].target ||
 						!std::isfinite(points[i].source) || !std::isfinite(points[i].target))
 						return;
 				Clip clip = m_project.clips.at(event.clip);
 				const MediaFile& media = m_project.media.at(clip.media);
 				const double rate = media.sampleRate;
 				const auto frameAt = [&points, rate](double time) { return dsp::warpSource(points, time) * rate; };
-				const double end = where.playStart +
-					(!beats ? secondsBetween(where.start, where.start + where.duration, where.laneSeconds)
-							: where.laneSeconds ? toBeats(m_project.tempo.toTicks(where.start + where.duration)) -
-								toBeats(m_project.tempo.toTicks(where.start))
-												: where.duration);
+				double end = where.playStart + where.duration;
+				if (!beats)
+					end =
+						where.playStart + secondsBetween(where.start, where.start + where.duration, where.laneSeconds);
+				else if (where.laneSeconds)
+					end = where.playStart + toBeats(m_project.tempo.toTicks(where.start + where.duration)) -
+						toBeats(m_project.tempo.toTicks(where.start));
 				const auto offset = std::llround(frameAt(where.playStart));
 				const time::Samples length =
 					std::min<time::Samples>(std::llround(frameAt(end)) - offset, media.length - offset);
@@ -1901,8 +1903,8 @@ namespace gnubase::engine
 				if (warp.tempo < time::g_minBpm || warp.tempo > time::g_maxBpm || warp.gridStart >= length)
 					return false;
 				std::vector<dsp::WarpPoint> grid; // source: the beat, target: the frame
-				for (double beat = first; frameAt(beat) < static_cast<double>(length); ++beat)
-					grid.push_back({beat - first, frameAt(beat)});
+				for (int64_t beat = 0; frameAt(first + static_cast<double>(beat)) < static_cast<double>(length); ++beat)
+					grid.push_back({static_cast<double>(beat), frameAt(first + static_cast<double>(beat))});
 				grid.push_back({grid.back().source + 1.0, grid.back().target + framesPerBeat});
 				for (const dsp::WarpPoint& point : withoutStraightPoints(grid))
 					if (point.source > 0.0 && point.source < grid.back().source)

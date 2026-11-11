@@ -940,14 +940,14 @@ TEST_CASE("a warped event's JSON has what it plays for and its fade room, announ
 	const engine::Listener listener(engine,
 		[&](const engine::Event& event)
 		{
-			const std::lock_guard<std::mutex> lock(mutex);
+			const std::scoped_lock lock(mutex);
 			if (event.name == "audioEvent.changed")
 				changed.push_back(event.data.at("event"));
 		});
 	// The event as last announced, and the announcements forgotten.
 	const auto announced = [&](ObjectId id)
 	{
-		const std::lock_guard<std::mutex> lock(mutex);
+		const std::scoped_lock lock(mutex);
 		Json last;
 		for (const Json& event : changed)
 			if (event.at("id") == id)
@@ -1058,7 +1058,7 @@ TEST_CASE("the disk thread keeps up with several warped events on the quality pr
 	run(client, "audio.setDevice", {{"blockSize", 256}, {"inputChannels", 0}, {"captureSeconds", 6}});
 	// Four tracks, each with an event of a loop at 90 BPM that musical mode stretches to the project's 120: a Debug
 	// build keeps up with them on a busy machine, though not with 8 (docs/features/warp.md).
-	const Loop loop = addLoop(client, dir, sine(4 * 48000));
+	const Loop loop = addLoop(client, dir, sine(int64_t{4} * 48000));
 	for (int i = 1; i < 4; ++i)
 	{
 		const Json track = run(client, "track.add", {{"type", "audio"}, {"channels", 1}}).at("track").at("id");
@@ -1071,7 +1071,7 @@ TEST_CASE("the disk thread keeps up with several warped events on the quality pr
 	run(client, "transport.locate", {{"position", 0}});
 	run(client, "transport.play");
 	run(client, "audio.start");
-	constexpr int64_t frames = 2 * 48000;
+	constexpr int64_t frames = int64_t{2} * 48000;
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
 	while (
 		run(client, "audio.get").at("position").get<int64_t>() < frames && std::chrono::steady_clock::now() < deadline)
