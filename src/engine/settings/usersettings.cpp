@@ -816,8 +816,9 @@ namespace gnubase::engine::settings
 				{"ui.samplerPanel",
 					"The sampler panel's toolbar (#1122, reference manual pp. 712, 735): lockParameters, Lock "
 					"Parameter Settings, whether a sample loaded into the sampler keeps its settings, and "
-					"normalizeLevel, the Normalization Level in dBFS that Normalize Sample brings the peak to.",
-					Json{{"type", "object"}, {"additionalProperties", false},
+					"normalizeLevel, the Normalization Level in dBFS that Normalize Sample brings the peak to. Other "
+					"properties, from later versions, are kept.",
+					Json{{"type", "object"},
 						{"properties",
 							{{"lockParameters", {{"type", "boolean"}}},
 								{"normalizeLevel", {{"type", "number"}, {"minimum", -96}, {"maximum", 0}}}}}},

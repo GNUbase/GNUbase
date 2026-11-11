@@ -550,10 +550,15 @@ namespace gnubase::app
 							{
 								if (!result.error.empty())
 									logging::warning("The file dialog failed: {}", result.error);
-								// The panel shows why the file didn't load.
-								if (const std::shared_ptr<ui::SamplerPanel> panel = m_sampler.lock();
-									panel != nullptr && !result.files.empty())
-									panel->load(track, result.files.front().u8string(), keepSettings);
+								if (result.files.empty())
+									return;
+								// The panel shows why the file didn't load; without it, the file loads all the same.
+								const std::string path = result.files.front().u8string();
+								if (const std::shared_ptr<ui::SamplerPanel> panel = m_sampler.lock())
+									panel->load(track, path, keepSettings);
+								else
+									m_binding.send("sampler.load",
+										{{"track", track}, {"path", path}, {"keepSettings", keepSettings}});
 							});
 					});
 				m_sampler = sampler;

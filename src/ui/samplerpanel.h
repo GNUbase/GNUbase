@@ -102,16 +102,17 @@ namespace gnubase::ui
 		uint64_t m_media = 0;   // the media file its sample plays
 		int64_t m_length = 0;   // in its frames
 		int m_mediaChannels = 1;
-		bool m_asking = false;        // media.peaks is in flight
-		bool m_again = false;         // and asks again when it answers
-		float m_askedWidth = 0.0F;    // the display's width in pixels that it asked for
-		std::string m_dragged;        // the marker a drag moves: the parameter's name
-		std::string m_handle;         // the keyboard's handle a drag moves: root, low or high
-		int m_gesture = 0;            // counts drags down, each one undo step: value fields number theirs up from 1
-		bool m_showing = false;       // while show sets the controls, whose changes aren't the user's
-		bool m_lock = false;          // Lock Parameter Settings, the user setting ui.samplerPanel's
-		double m_level = 0.0;         // the Normalization Level, dBFS, likewise
-		bool m_settingsKnown = false; // a change came before settings.get answered: it is newer
+		bool m_asking = false;     // media.peaks is in flight
+		bool m_again = false;      // and asks again when it answers
+		float m_askedWidth = 0.0F; // the display's width in pixels that it asked for
+		std::string m_dragged;     // the marker a drag moves: the parameter's name
+		std::string m_handle;      // the keyboard's handle a drag moves: root, low or high
+		int m_gesture = 0;         // counts drags down, each one undo step: value fields number theirs up from 1
+		bool m_showing = false;    // while show sets the controls, whose changes aren't the user's
+		engine::Json m_settings = engine::Json::object(); // ui.samplerPanel, with what later versions add to it
+		bool m_lock = false;                              // Lock Parameter Settings, the user setting ui.samplerPanel's
+		double m_level = 0.0;                             // the Normalization Level, dBFS, likewise
+		bool m_settingsKnown = false;                     // a change came before settings.get answered: it is newer
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
 		std::vector<Subscription> m_subscriptions;
 	};

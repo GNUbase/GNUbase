@@ -307,8 +307,9 @@ namespace gnubase::engine
 		void attachMidi(const RenderSnapshot& snapshot, graph::GraphDesc& desc, uint64_t generation);
 		// Hands the samples the sample loader read to the samplers that wait for them, and lets go of the others.
 		void updateSamples();
-		// Waits until the sample loader has read every file asked for, at most timeout, then updateSamples.
-		void waitForSamples(std::chrono::milliseconds timeout);
+		// Waits until the sample loader has read every file the samplers wait for, at most timeout, and hands them
+		// over (updateSamples); false if one wasn't read in time.
+		bool waitForSamples(std::chrono::milliseconds timeout);
 		// Sample loader thread: has the command thread run updateSamples.
 		void postSampleUpdate();
 		// The releases for a new program: those pending that the audio thread hasn't done yet.

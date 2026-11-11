@@ -21,6 +21,7 @@
 #include <filesystem>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -564,6 +565,65 @@ TEST_CASE("the sample loader reads each file once on a thread of its own", "[uni
 	loader.request("a.wav"); // read again once let go of
 	REQUIRE(loader.waitUntilRead(std::chrono::seconds(30)));
 	CHECK(reads == 3);
+}
+
+TEST_CASE("the sample loader drops the files waiting that nothing wants any more", "[unit]")
+{
+	std::mutex mutex;
+	std::condition_variable wake;
+	bool open = false;
+	bool reading = false;
+	std::vector<std::string> read;
+	SampleLoader loader({},
+		[&](const std::string& path)
+		{
+			std::unique_lock lock(mutex);
+			reading = true;
+			wake.notify_all();
+			wake.wait(lock, [&] { return open; });
+			read.push_back(path);
+			return std::make_shared<const Sample>();
+		});
+	loader.request("a.wav");
+	loader.request("b.wav");
+	loader.request("c.wav");
+	// Once a.wav is being read, b.wav waits, and isn't read once nothing wants it.
+	{
+		std::unique_lock lock(mutex);
+		REQUIRE(wake.wait_for(lock, std::chrono::seconds(30), [&] { return reading; }));
+	}
+	loader.keepOnly({"c.wav"});
+	{
+		const std::scoped_lock lock(mutex);
+		open = true;
+	}
+	wake.notify_all();
+	REQUIRE(loader.waitUntilRead(std::chrono::seconds(30)));
+	const std::scoped_lock lock(mutex);
+	CHECK(read == std::vector<std::string>{"a.wav", "c.wav"});
+	CHECK(loader.sample("b.wav") == nullptr);
+	CHECK(loader.sample("c.wav") != nullptr);
+}
+
+TEST_CASE("a read that throws leaves the sample loader running with an empty sample", "[unit]")
+{
+	std::atomic<int> reads{0};
+	SampleLoader loader({},
+		[&](const std::string& path) -> std::shared_ptr<const Sample>
+		{
+			if (++reads == 1)
+				throw std::runtime_error("can't read " + path);
+			return ramp(8);
+		});
+	loader.request("bad.wav");
+	loader.request("good.wav");
+	REQUIRE(loader.waitUntilRead(std::chrono::seconds(30)));
+	const std::shared_ptr<const Sample> bad = loader.sample("bad.wav");
+	REQUIRE(bad != nullptr);
+	CHECK(bad->frames() == 0);
+	const std::shared_ptr<const Sample> good = loader.sample("good.wav");
+	REQUIRE(good != nullptr);
+	CHECK(good->frames() == 8);
 }
 
 TEST_CASE("the sampler's amp section: volume, pan, sample gain, velocity and envelope", "[unit]")

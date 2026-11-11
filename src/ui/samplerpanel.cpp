@@ -600,16 +600,18 @@ namespace gnubase::ui
 
 	void SamplerPanel::applySettings(const Json& settings)
 	{
-		m_lock = settings.value("lockParameters", false);
-		m_level = std::clamp(settings.value("normalizeLevel", 0.0), -96.0, 0.0);
+		m_settings = settings.is_object() ? settings : Json::object();
+		m_lock = m_settings.value("lockParameters", false);
+		m_level = std::clamp(m_settings.value("normalizeLevel", 0.0), -96.0, 0.0);
 		show();
 	}
 
 	void SamplerPanel::saveSettings()
 	{
 		m_settingsKnown = true; // what settings.get answers now is older
-		m_binding.send("settings.set",
-			{{"key", "ui.samplerPanel"}, {"value", {{"lockParameters", m_lock}, {"normalizeLevel", m_level}}}});
+		m_settings["lockParameters"] = m_lock;
+		m_settings["normalizeLevel"] = m_level;
+		m_binding.send("settings.set", {{"key", "ui.samplerPanel"}, {"value", m_settings}});
 	}
 
 	void SamplerPanel::ProcessEvent(Rml::Event& event)

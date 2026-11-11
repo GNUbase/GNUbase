@@ -343,7 +343,9 @@ namespace gnubase::engine
 		const audio::MidiBuffer midiIn;
 		audio::MidiBuffer midiOut(g_offlineMidi);
 		uint64_t position = m_device->position();
-		waitForSamples(g_offlineWait); // every sampler plays its sample from the first block
+		// Every sampler plays its sample from the first block.
+		if (!waitForSamples(g_offlineWait))
+			logging::warning("Rendering before every sampler's sample was read: they may play silence");
 		for (uint64_t done = 0; done < frames;)
 		{
 			const auto block = static_cast<uint32_t>(std::min<uint64_t>(format.blockSize, frames - done));
@@ -766,10 +768,12 @@ namespace gnubase::engine
 		m_sampleLoader.keepOnly(waiting);
 	}
 
-	void AudioEngine::waitForSamples(std::chrono::milliseconds timeout)
+	bool AudioEngine::waitForSamples(std::chrono::milliseconds timeout)
 	{
-		m_sampleLoader.waitUntilRead(timeout);
+		updateSamples(); // first, so that it waits only for the files that samplers wait for
+		const bool read = m_sampleLoader.waitUntilRead(timeout);
 		updateSamples();
+		return read;
 	}
 
 	void AudioEngine::postSampleUpdate()

@@ -281,16 +281,20 @@ TEST_CASE("the sampler panel shows why a sample didn't load or normalize", "[ui]
 	REQUIRE(f.app.waitUntil([&] { return f.elements("#sampler-file").at(0).value("text", "") == "silent"; }));
 	f.click("#sampler-normalize");
 	REQUIRE(f.app.waitUntil([&] { return f.has("#sampler-message", "error"); }));
-	CHECK(f.elements("#sampler-message").at(0).value("text", "").find("silent") != std::string::npos);
+	CHECK(f.elements("#sampler-message").at(0).value("text", "").find("silent between its start and end") !=
+		std::string::npos);
 }
 
 TEST_CASE("Lock Parameter Settings and the normalization level last when the panel is made anew", "[ui]")
 {
 	Fixture f;
+	// What a later version adds to the setting stays in it.
+	f.app.call("settings.set", {{"key", "ui.samplerPanel"}, {"value", {{"later", 1}}}});
 	f.open();
 	const auto setting = [&] { return f.app.call("settings.get", {{"key", "ui.samplerPanel"}}).at("value"); };
 	f.click("#sampler-lock");
 	REQUIRE(f.app.waitUntil([&] { return setting().value("lockParameters", false); }));
+	CHECK(setting().value("later", 0) == 1);
 	f.app.ui().wheel(std::nullopt, of("#sampler-level"), 0.0F, 1.0F);
 	REQUIRE(f.app.waitUntil([&] { return setting().value("normalizeLevel", 0.0) < 0.0; }));
 	const double level = setting().at("normalizeLevel").get<double>();

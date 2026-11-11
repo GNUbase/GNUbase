@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/audio/sampleloader.h"
 
+#include "platform/log.h"
+
 #include <algorithm>
+#include <exception>
 #include <utility>
 
 namespace gnubase::engine
@@ -47,6 +50,10 @@ namespace gnubase::engine
 		const std::scoped_lock lock(m_mutex);
 		for (auto entry = m_samples.begin(); entry != m_samples.end();)
 			entry = paths.count(entry->first) == 0 ? m_samples.erase(entry) : std::next(entry);
+		// The files waiting too, but the one being read, which can't be stopped.
+		const auto unwanted = [&paths](const std::string& path) { return paths.count(path) == 0; };
+		const auto first = m_queue.begin() + (m_reading ? 1 : 0);
+		m_queue.erase(std::remove_if(first, m_queue.end(), unwanted), m_queue.end());
 	}
 
 	bool SampleLoader::waitUntilRead(std::chrono::milliseconds timeout)
@@ -65,14 +72,33 @@ namespace gnubase::engine
 				return;
 			// The file stays in the queue while it is read, so that it isn't asked for twice and waitUntilRead waits.
 			const std::string path = m_queue.front();
+			m_reading = true;
 			lock.unlock();
-			std::shared_ptr<const processors::Sample> sample = m_read(path);
+			std::shared_ptr<const processors::Sample> sample;
+			try
+			{
+				sample = m_read(path);
+			}
+			catch (const std::exception& error)
+			{
+				// Plays nothing, as a missing file does; an exception must not end the thread and the program.
+				logging::warning("Reading the sample {} failed: {}", path, error.what());
+			}
 			lock.lock();
-			m_samples[path] = std::move(sample);
+			m_samples[path] = sample ? std::move(sample) : std::make_shared<const processors::Sample>();
 			lock.unlock();
-			if (m_loaded)
-				m_loaded();
+			try
+			{
+				if (m_loaded)
+					m_loaded();
+			}
+			catch (const std::exception& error)
+			{
+				// The samplers get the sample with the next update instead.
+				logging::warning("Announcing the sample {} failed: {}", path, error.what());
+			}
 			lock.lock();
+			m_reading = false;
 			m_queue.pop_front();
 			m_done.notify_all();
 		}

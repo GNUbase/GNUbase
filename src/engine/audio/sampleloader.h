@@ -40,7 +40,8 @@ namespace gnubase::engine
 		// The sample read from path, null until it is.
 		std::shared_ptr<const processors::Sample> sample(const std::string& path) const;
 
-		// Lets go of the samples read, except those of paths.
+		// Lets go of the samples read, except those of paths, and forgets the files waiting to be read that aren't
+		// among them.
 		void keepOnly(const std::set<std::string>& paths);
 
 		// Waits until every file asked for is read and its callback has run, at most timeout; false if one isn't.
@@ -56,6 +57,7 @@ namespace gnubase::engine
 		std::condition_variable m_done;  // a file read
 		std::deque<std::string> m_queue; // waiting; the first is being read while the thread runs
 		std::map<std::string, std::shared_ptr<const processors::Sample>> m_samples;
+		bool m_reading = false; // the first file waiting is being read
 		bool m_stopping = false;
 		std::thread m_thread; // started by the first request
 	};

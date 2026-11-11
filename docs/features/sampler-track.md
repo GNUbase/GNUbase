@@ -57,13 +57,16 @@ How it plays:
   sample holds up no command. Once it is read the engine runs `audio.updateSamples` on its own, which hands it to the
   samplers that wait for it. Until then a sampler plays the sample before, or nothing if it had none. Starting
   playback and locating wait for the samples as for the audio tracks' streams (up to 2 seconds), and offline renders
-  (`audio.render`, `mixdown.export`, render in place) wait until every sample is there, so they come out the same
-  every time.
+  (`audio.render`, `mixdown.export`, render in place) wait until every sample is there (up to 30 seconds, after which
+  they log a warning), so they come out the same every time. Files that no sampler waits for any more, after an undo
+  or another project, are dropped from the loader's queue unread, and a read that fails plays nothing, as a missing
+  file does.
 - Hot swap: the sampler takes the new sample without a lock (`rt::SnapshotPublisher`); voices keep playing on the new
   one. It lets go of the sample before by the next update, once the audio thread has moved on.
 - Samples are read through `processors::sharedSample`, which reads a file once while something holds its sample:
   samplers that play the same clip and `sampler.normalize` share it. A file that changed (its time or size) is read
-  again. `sampler.normalize` still reads a file that no sampler holds on the command thread.
+  again, and is read without holding up those who ask for other files. `sampler.normalize` still reads a file that no
+  sampler holds on the command thread.
 
 Not yet: warped (time-stretched) playback with sync to the tempo, the quality modes, transient, grid and manual
 slicing with fades and the slices' MIDI phrase, the pitch and filter envelopes and a multi-node amp envelope, the LFOs,
@@ -92,7 +95,7 @@ root `.sampler-panel` has the class `.empty`):
   (`#sampler-file`), the Normalization Level (`#sampler-level`, -96 to 0 dBFS, p. 735), Normalize Sample
   (`#sampler-normalize`, `sampler.normalize` with that `level`) and Lock Parameter Settings (`#sampler-lock`), which
   loads keep the settings with (`keepSettings`). The lock and the level are the user setting `ui.samplerPanel`
-  (`lockParameters`, `normalizeLevel`), so they stay as they were when the panel is made anew, e.g. in a window of its
+  (`lockParameters`, `normalizeLevel`; what later versions add to it is kept), so they stay as they were when the panel is made anew, e.g. in a window of its
   own. Why a load (a file that isn't audio) or Normalize Sample (a silent or missing sample) failed shows in the
   toolbar's message (`#sampler-message`, `.error`) until the next one succeeds or another track is shown.
 - **Waveform display** (`#sampler-display`): the sample's waveform from `media.peaks`, its parts before Start and
