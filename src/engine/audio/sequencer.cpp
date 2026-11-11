@@ -494,6 +494,8 @@ namespace gnubase::engine
 			else if (s == 0)
 			{
 				chaseHeardAgain(sequence, segment.position, chase, false);
+				if (intoStrip)
+					sendChased(segment.offset, *m_stripChase);
 			}
 			play(sequence, segment, out);
 			m_next = segment.position + segment.frames;

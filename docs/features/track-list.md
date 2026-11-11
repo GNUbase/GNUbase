@@ -221,7 +221,8 @@ New Folder are in [folder-tracks.md](folder-tracks.md).
   nothing for values changed back by undo, and after playback started, stopped, located or jumped meanwhile the
   channel's values, then its parts' chase, disabled or muted, also stopped at the cursor, not without the chase
   settings, and with another track's later program change, which comes back after the channel's, and CC 1, which
-  isn't sent again; `tests/midi_tests.cpp` chases a track heard again in the sequencer, playing, stopped, with its
+  isn't sent again, a pedal the chase presses that its mute releases, and a track disabled at one move and muted
+  by its button at a later one chased in full; `tests/midi_tests.cpp` chases a track heard again in the sequencer, playing, stopped, with its
   channel's kinds, muted only by its button, with a cycle jump in the same block, without chase settings and after a
   chase that didn't fit;
   `tests/dawproject_tests.cpp` saves and loads mute, solo and disabled tracks, also from `project.xml` alone.

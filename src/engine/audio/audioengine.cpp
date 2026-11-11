@@ -649,11 +649,11 @@ namespace gnubase::engine
 		// A MIDI track's chase is told by its automation when the track is heard again after playback moved while it
 		// was silent (AutomationPlayer::heardAgain). The channel's state is there from the graph before, which had
 		// the track while it was silent.
-		const auto chaseTrack = [this](const RenderChannel& channel, bool told)
+		const auto chaseTrack = [this](const RenderChannel& channel)
 		{
 			ChaseTrack track = makeChaseTrack(channel.controllers, channel.midiParts);
 			if (const auto state = m_channelStates.find(channel.id);
-				told && channel.type == TrackType::Midi && state != m_channelStates.end())
+				channel.type == TrackType::Midi && state != m_channelStates.end())
 			{
 				track.heardAgain = state->second->automation.heardAgain();
 				track.channelKinds = channelChaseKinds(channel);
@@ -681,15 +681,14 @@ namespace gnubase::engine
 			// each kind wins, whichever track it is on; not those of a track that its mute button mutes (a mute lane's
 			// track it chases, not knowing where the lane mutes). A routed track chases its own into its strip alone
 			// (MidiSequence::chaseIntoStrip), which learns its pedals from it and, muted by the button, keeps the
-			// values for unmuting (ChannelStrip::chaseFrom); the instrument's chase of it is told when it is heard
-			// again.
-			const bool intoStrip = routed.count(channel.id) != 0;
-			sequence->chase.push_back(chaseTrack(channel, !intoStrip));
-			sequence->chaseIntoStrip = intoStrip;
+			// values for unmuting (ChannelStrip::chaseFrom). Both are told when the track is heard again, so that its
+			// strip learns the pedals that the instrument's chase presses then.
+			sequence->chase.push_back(chaseTrack(channel));
+			sequence->chaseIntoStrip = routed.count(channel.id) != 0;
 			if (channel.type == TrackType::Instrument)
 				for (const ObjectId source : sources[channel.id])
 					if (!routed.at(source)->muted)
-						sequence->chase.push_back(chaseTrack(*routed.at(source), true));
+						sequence->chase.push_back(chaseTrack(*routed.at(source)));
 			sequencer->setSequence(std::move(sequence));
 			sequencer->setChase(m_chase);
 			sequencers[channel.id] = sequencer;
