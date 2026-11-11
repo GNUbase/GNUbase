@@ -688,7 +688,7 @@ namespace gnubase::ui
 		void selectRange();                       // the events in it, when another tool takes over
 		void showRange();
 		// Moves the range's edges to zero crossings of the audio on its tracks (reference manual p. 285), with Snap to
-		// Zero Crossing on: snap.zeroCrossings answers later.
+		// Zero Crossing on: snap.zeroCrossings answers later, and actions wait until it has (m_afterZeroCrossings).
 		void zeroCrossRange();
 		// The rectangle that a tool drags, dp in the event lanes; hidden when not shown.
 		void showRectangle(bool shown, double left = 0.0, double top = 0.0, double right = 0.0, double bottom = 0.0);
@@ -936,6 +936,8 @@ namespace gnubase::ui
 		std::map<uint64_t, std::set<uint64_t>> m_pointsBase; // the selection a rectangle with Ctrl or Shift adds to
 
 		std::map<std::string, std::function<void()>> m_actions;
+		size_t m_zeroCrossings = 0;                              // zeroCrossRange's requests not answered yet
+		std::vector<std::function<void()>> m_afterZeroCrossings; // the actions run meanwhile, which then run
 		std::map<std::string, bool> m_rangeActions; // the actions that need a range (canRun), whether with a length
 		std::vector<std::function<void()>> m_viewListeners;
 		std::vector<Subscription> m_subscriptions;
