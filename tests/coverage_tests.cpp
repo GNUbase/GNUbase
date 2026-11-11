@@ -111,6 +111,8 @@ TEST_CASE("the generated API references stay out of the repository", "[unit]")
 {
 	// A branch made before they left that keeps its side of the conflict would bring back a stale copy.
 	const std::filesystem::path docs = std::filesystem::path(GNUBASE_RESOURCES_DIR).parent_path() / "docs";
+	INFO("If a branch from before #919 restores generated references, see docs/api-reference.md for the merge "
+		 "resolution.");
 	REQUIRE(std::filesystem::exists(docs / "api-reference.md"));
 	CHECK_FALSE(std::filesystem::exists(docs / "lua.md"));
 	CHECK_FALSE(std::filesystem::exists(docs / "mcp-tools.md"));
