@@ -78,20 +78,6 @@ namespace gnubase::engine
 			throw std::runtime_error("can't create " + file.u8string() + ": " + problem);
 		}
 
-		// createFreeFile, skipping names that differ only in case from the ones in taken, and adding the new one.
-		fs::path createFreeFile(const fs::path& folder, const fs::path& name, std::set<std::string>& taken)
-		{
-			for (int number = 1;; ++number)
-			{
-				const fs::path candidate = numbered(name, number);
-				if (taken.count(foldedName(candidate)) == 0 && createExclusively(folder / candidate))
-				{
-					taken.insert(foldedName(candidate));
-					return folder / candidate;
-				}
-			}
-		}
-
 		// Copies a file in chunks, so that a job can report progress and stop in between. Throws std::runtime_error.
 		void copyFile(const fs::path& from, const fs::path& to, const std::function<void(size_t)>& copied)
 		{
@@ -410,15 +396,42 @@ namespace gnubase::engine
 		return !relative.empty() && *relative.begin() != fs::path("..") && relative != fs::path(".");
 	}
 
-	fs::path createFreeFile(const fs::path& folder, const fs::path& name)
+	std::set<std::string> takenNames(const fs::path& folder)
 	{
 		// One listing instead of a failed create for every file of that name: a folder can hold thousands of
-		// recordings, and the recorder holds its lock meanwhile. If the listing fails, creating the file still finds
-		// out what's taken.
+		// recordings, and the recorder holds its lock meanwhile.
 		std::set<std::string> taken;
 		std::error_code error;
 		for (fs::directory_iterator entry(folder, error), end; !error && entry != end; entry.increment(error))
-			taken.insert(foldedName(entry->path().filename()));
+		{
+			try
+			{
+				taken.insert(foldedName(entry->path().filename()));
+			}
+			catch (const std::system_error&)
+			{
+				// Not valid UTF-16 (Windows): no name made here can match it.
+			}
+		}
+		return taken;
+	}
+
+	fs::path createFreeFile(const fs::path& folder, const fs::path& name, std::set<std::string>& taken)
+	{
+		for (int number = 1;; ++number)
+		{
+			const fs::path candidate = numbered(name, number);
+			if (taken.count(foldedName(candidate)) == 0 && createExclusively(folder / candidate))
+			{
+				taken.insert(foldedName(candidate));
+				return folder / candidate;
+			}
+		}
+	}
+
+	fs::path createFreeFile(const fs::path& folder, const fs::path& name)
+	{
+		std::set<std::string> taken = takenNames(folder);
 		return createFreeFile(folder, name, taken);
 	}
 
@@ -456,6 +469,7 @@ namespace gnubase::engine
 			fs::create_directories(folder, error);
 			if (error)
 				throw std::runtime_error("can't create " + folder.u8string() + ": " + error.message());
+			std::set<std::string> taken = takenNames(folder);
 			std::uintmax_t finished = 0; // bytes of the files done
 			for (size_t i = 0; i < files.size(); ++i)
 			{
@@ -466,7 +480,7 @@ namespace gnubase::engine
 					const fs::path source = pathOf(file.from);
 					const std::string detail = source.filename().u8string();
 					job.progress(static_cast<double>(finished) / static_cast<double>(total), detail);
-					const fs::path target = createFreeFile(folder, source.filename());
+					const fs::path target = createFreeFile(folder, source.filename(), taken);
 					made.push_back(target.u8string());
 					std::uintmax_t done = finished;
 					copyFile(source, target,

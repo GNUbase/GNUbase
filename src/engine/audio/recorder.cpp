@@ -12,6 +12,7 @@
 #include <cmath>
 #include <ctime>
 #include <exception>
+#include <set>
 #include <string_view>
 #include <system_error>
 #include <tuple>
@@ -516,12 +517,14 @@ namespace gnubase::engine
 				static_cast<time::Samples>(before);
 			broadcast.timeReference = static_cast<uint64_t>(std::max<time::Samples>(first, 0));
 		}
+		// One listing for all tracks: the folder can hold thousands of recordings, and the lock is held meanwhile.
+		std::set<std::string> taken = takenNames(m_current.folder);
 		for (const RecordTrack& track : m_current.tracks)
 		{
 			try
 			{
 				const std::string path = createFreeFile(
-					m_current.folder, fs::u8path(fileName(track.name) + extensionOf(m_current.format.format)))
+					m_current.folder, fs::u8path(fileName(track.name) + extensionOf(m_current.format.format)), taken)
 											 .u8string();
 				WriteOptions options = m_current.format;
 				options.channels = static_cast<int>(track.ports.size());
