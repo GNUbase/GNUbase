@@ -817,7 +817,8 @@ namespace gnubase::engine
 			{"color", colorJson(part.color)}, {"lane", part.lane}, {"transpose", part.transpose},
 			{"velocity", part.velocity}, {"rootKey", rootKeyName(part.rootKey)},
 			{"globalTranspose", part.independent ? "independent" : "follow"}, {"pattern", part.pattern},
-			{"notes", toJsonArray(part.notes)}, {"controllers", toJsonArray(part.controllers)}};
+			{"patternOffset", part.patternOffset}, {"notes", toJsonArray(part.notes)},
+			{"controllers", toJsonArray(part.controllers)}};
 	}
 
 	Json toJson(const Marker& marker)
@@ -2375,7 +2376,8 @@ namespace gnubase::engine
 			// Files from before #168 have neither.
 			part.rootKey = rootKeyFromName(item.value("rootKey", std::string())).value_or(-1);
 			part.independent = item.value("globalTranspose", std::string("follow")) == "independent";
-			part.pattern = item.value("pattern", ObjectId{0}); // files from before #181 have none
+			part.pattern = item.value("pattern", ObjectId{0});                // files from before #181 have none
+			part.patternOffset = item.value("patternOffset", time::Ticks{0}); // nor from before #1040
 			for (const Json& n : item.at("notes"))
 			{
 				Note note;
@@ -2540,9 +2542,9 @@ namespace gnubase::engine
 				(track.type != TrackType::Midi && track.type != TrackType::Instrument))
 				track.articulationMap = 0;
 		// Files from before #181 have no patterns. A pattern stays while a MIDI or instrument track of its own is there
-		// or an event plays it, as in the session, where events on other tracks (Duplicate Track, a pattern event
-		// moved or copied there) keep playing it after its track is removed; an event of a pattern that isn't there
-		// is an ordinary part.
+		// or an event plays it: in files from before #1040, events on other tracks (Duplicate Track, a pattern event
+		// moved or copied there) can play it after its track was removed, until the next edit gives them copies on
+		// their tracks (midi::adoptPatterns). An event of a pattern that isn't there is an ordinary part.
 		std::set<ObjectId> played;
 		for (const auto& [id, part] : project.midiParts)
 			played.insert(part.pattern);
