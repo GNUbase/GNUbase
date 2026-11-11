@@ -432,6 +432,7 @@ TEST_CASE("ui_click with a count of 2 is a double click however long the frames 
 	REQUIRE(clock != nullptr);
 	clock->freeze(true);
 	const std::shared_ptr<void> thaw(nullptr, [clock](void*) { clock->freeze(false); });
+	clock->advance(1.0); // clear of the clicks before
 	recorder.events = Json::object();
 	fixture.call("ui_click", {{"selector", "#target"}, {"count", 2}});
 	CHECK(recorder.events.at("dblclick").at("target") == "target");

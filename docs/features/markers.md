@@ -82,8 +82,8 @@ The reference's defaults (`ui::defaultKeyMap`, [key-commands.md](key-commands.md
   - Moving, resizing and adding snap as the event display's drags do ([snap.md](snap.md), `EventDisplay::snapped`); a
     new cycle marker ends where the mouse is, measured from the press itself, not from its snapped time.
   - A double click on a cycle marker sets the locators to it (`marker.setLocators`), with Alt it zooms to it (p. 424).
-    The event display stops mouse downs, so RmlUi sends no `dblclick`: two clicks within half a second and 3 dp make
-    one.
+    The event display stops mouse downs, so RmlUi sends no `dblclick`: two clicks within half a second on RmlUi's
+    clock and 3 dp make one.
 
   The **erase tool** removes the marker clicked, with Alt every marker on its track from it on (or from the click, off
   a marker). With the **range selection tool** a double click selects the range between the markers around it
