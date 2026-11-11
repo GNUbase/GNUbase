@@ -471,16 +471,30 @@ TEST_CASE("project.applyRules transforms and deletes in one undo step", "[integr
 	}
 	SECTION("a cycle marker's length stops at one sample")
 	{
-		// The fixture's cycle marker is on a musical track, where one sample is about 72 ticks.
+		// On a musical track one sample is about 72 ticks at 48 kHz, and about 68800 at 50 Hz.
+		const bool linear = GENERATE(false, true);
+		const double rate = GENERATE(48000.0, 50.0);
 		const Json zero = GENERATE(as<Json>{}, action("length", "setFixed", 0), action("length", "multiplyBy", 0),
 			action("length", "subtract", 1e9));
+		CAPTURE(linear, rate, zero);
+		run(f.client, "project.set", {{"sampleRate", rate}});
+		ObjectId track = f.markers;
+		if (linear)
+		{
+			track = f.add({{"type", "marker"}, {"timeBase", "linear"}});
+			run(f.client, "marker.add",
+				{{"type", "cycle"}, {"track", track}, {"position", 48000}, {"end", 96000}, {"name", "Chorus"}});
+		}
+		const size_t before = history();
 		run(f.client, "project.applyRules",
 			{{"rules", rules({filter("mediaType", "equal", "marker")}, "transform", {zero})}});
-		const Json marker = run(f.client, "marker.list", {{"track", f.markers}}).at("markers").at(0);
+		const Json marker = run(f.client, "marker.list", {{"track", track}}).at("markers").at(0);
 		const gnubase::time::TempoMap tempo(120.0);
-		CHECK(marker.at("position") == g_beatTicks);
-		CHECK(tempo.toSamples(marker.at("end").get<int64_t>(), 48000.0) == tempo.toSamples(g_beatTicks, 48000.0) + 1);
-		CHECK(history() == steps + 1);
+		const auto samples = [&](const Json& value)
+		{ return linear ? value.get<int64_t>() : tempo.toSamples(value.get<int64_t>(), rate); };
+		CHECK(marker.at("position") == (linear ? 48000 : g_beatTicks));
+		CHECK(samples(marker.at("end")) == samples(marker.at("position")) + 1);
+		CHECK(history() == before + 1);
 	}
 	SECTION("positions stop at the longest project at very low sample rates")
 	{
@@ -565,7 +579,8 @@ TEST_CASE("project.applyRules removes the active marker track after the other ma
 		run(f.client, "history.undo");
 		CHECK(run(f.client, "project.get").at("activeMarkerTrack") == active);
 		activatedMarkerTracks(listener);
-		// Redo removes them again: the marker track that stays is active again, announced once.
+		// Redo removes them again: the marker track that stays is active again, announced once. Redo restores the
+		// stored change rather than running the removals again, so this checks the outcome, not their order.
 		run(f.client, "history.redo");
 		CHECK(f.object("tracks", first).is_null());
 		CHECK(f.object("tracks", second).is_null());
