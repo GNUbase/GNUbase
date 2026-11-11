@@ -1135,8 +1135,8 @@ TEST_CASE("an audition that the cue thread cues while its first block plays play
 				const std::vector<int> ports{0};
 				for (size_t block = 0; block < blocks; ++block)
 				{
-					float* const out = output.data() + (block * frames);
-					audition.process(&out, 1, ports, frames);
+					const std::array<float*, 1> out{output.data() + (block * frames)};
+					audition.process(out.data(), 1, ports, frames);
 					std::this_thread::yield();
 				}
 			});
