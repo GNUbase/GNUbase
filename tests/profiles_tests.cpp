@@ -2,12 +2,14 @@
 // Profiles (#163, docs/features/profiles.md): named sets of the user settings in the settings folder, added,
 // duplicated, renamed, deleted, exported and imported, and activated when GNUbase starts again.
 #include "engine/engine.h"
+#include "engine/settings/profiles.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <utility>
@@ -170,9 +172,10 @@ TEST_CASE("profile names that differ only in case are taken, as the folders aren
 TEST_CASE("profile names that Windows keeps for devices are refused", "[unit]")
 {
 	const Fixture f;
-	for (const char* name : {"CON", "prn", "Aux", "NUL", "com1", "COM9", "lpt1", "LPT9", "nul.txt", "CON .x"})
+	for (const char* name : {"CON", "prn", "Aux", "NUL", "com1", "COM9", "lpt1", "LPT9", "nul.txt", "CON .x",
+			 "COM\xC2\xB9", "lpt\xC2\xB2", "LPT\xC2\xB3.x", "CONIN$", "conout$.txt"}) // COM¹, lpt², LPT³
 		CHECK_THAT(f.fails("profile.add", {{"name", name}}), ContainsSubstring("device"));
-	for (const char* name : {"CONSOLE", "COM10", "LPT0", "Auxiliary", "my nul"})
+	for (const char* name : {"CONSOLE", "COM10", "LPT0", "Auxiliary", "my nul", "COM\xE2\x81\xB4", "CONIN"}) // COM⁴
 		f.call("profile.add", {{"name", name}});
 }
 
@@ -240,4 +243,92 @@ TEST_CASE("a profile switch to a folder that is the active profile's on this fil
 	CHECK(f.call("profile.list").at("active") == "\xC3\x84rger");
 	CHECK(f.scale() == 1.5);
 	CHECK(std::filesystem::exists(other / "settings.json"));
+}
+
+TEST_CASE("a profile switch that fails after the active profile's files were saved puts them back", "[unit]")
+{
+	Fixture f;
+	f.setScale(1.5);
+	f.call("profile.add", {{"name", "Studio"}});
+	// The active profile's folder is a file: its files can't go there, after the switch copied both profiles' files.
+	{
+		std::ofstream blocker(f.dir.path() / "profiles" / "Default");
+	}
+	f.call("profile.activate", {{"name", "Studio"}});
+	f.start();
+	CHECK(f.call("profile.list").at("active") == "Default");
+	CHECK(f.scale() == 1.5);
+	CHECK(!std::filesystem::exists(f.dir.path() / "profile-switch"));
+	CHECK(std::filesystem::is_directory(f.dir.path() / "profiles" / "Studio"));
+}
+
+namespace
+{
+	// What a switch that GNUbase didn't finish leaves: the copies of both profiles' files, and in the settings folder
+	// the next profile's settings.json without the rest. The settings were the active profile's.
+	void interruptSwitch(Fixture& f, const std::string& next)
+	{
+		namespace fs = std::filesystem;
+		f.call("profile.activate", {{"name", next}});
+		f.client.reset();
+		f.engine.reset();
+		const fs::path dir = f.dir.path();
+		const fs::path staging = dir / "profile-switch";
+		fs::create_directories(staging / "active");
+		fs::create_directories(staging / "next");
+		for (const char* file : engine::settings::g_profileFiles)
+		{
+			if (fs::exists(dir / file))
+				fs::copy_file(dir / file, staging / "active" / file);
+			if (fs::exists(dir / "profiles" / next / file))
+				fs::copy_file(dir / "profiles" / next / file, staging / "next" / file);
+		}
+		std::ofstream(staging / "active-profile") << "Default";
+		fs::create_directories(dir / "profiles" / "Default");
+		fs::remove(dir / "settings.json");
+		if (fs::exists(staging / "next" / "settings.json"))
+			fs::copy_file(staging / "next" / "settings.json", dir / "settings.json");
+	}
+}
+
+TEST_CASE("a profile switch that GNUbase didn't finish is undone when it starts again, then switches", "[unit]")
+{
+	Fixture f;
+	f.setScale(2.0);
+	f.call("profile.duplicate", {{"name", "Default"}, {"newName", "Studio"}});
+	f.setScale(1.5);
+	interruptSwitch(f, "Studio");
+	f.start();
+	CHECK(f.call("profile.list").at("active") == "Studio");
+	CHECK(f.scale() == 2.0);
+	CHECK(!std::filesystem::exists(f.dir.path() / "profile-switch"));
+	// The active profile's files are complete in its folder, not half of each profile's.
+	f.call("profile.activate", {{"name", "Default"}});
+	f.start();
+	CHECK(f.scale() == 1.5);
+}
+
+TEST_CASE("an unfinished profile switch whose files can't be put back keeps its copies", "[unit]")
+{
+	Fixture f;
+	f.setScale(1.5);
+	f.call("profile.duplicate", {{"name", "Default"}, {"newName", "Studio"}});
+	interruptSwitch(f, "Studio");
+	// A settings file that can't be replaced.
+	std::filesystem::remove(f.dir.path() / "quantize-presets.json");
+	std::filesystem::create_directories(f.dir.path() / "quantize-presets.json" / "folder");
+	f.start();
+	CHECK(f.call("profile.list").at("active") == "Default");
+	CHECK(std::filesystem::exists(f.dir.path() / "profile-switch" / "active" / "settings.json"));
+}
+
+TEST_CASE("the safe start mode's Delete program preferences drops an unfinished profile switch", "[unit]")
+{
+	Fixture f;
+	f.call("profile.add", {{"name", "Studio"}});
+	interruptSwitch(f, "Studio");
+	engine::settings::cancelProfileSwitch(f.dir.path());
+	CHECK(!std::filesystem::exists(f.dir.path() / "profile-switch"));
+	f.start();
+	CHECK(f.call("profile.list").at("active") == "Default");
 }
