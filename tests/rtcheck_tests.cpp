@@ -808,6 +808,12 @@ TEST_CASE("MIDI inserts, sends and input transformers on tracks, and changing th
 		run("channel.set", {{"channel", channel}, {"midiInserts", effects}});
 		run("channel.set", {{"channel", channel}, {"midiSends", effects}});
 	}
+	// Inserts above the divider, sends before the modifiers and a send to another instrument track.
+	const Json other = run("track.add", {{"type", "instrument"}}).at("channel").at("id");
+	run("channel.set", {{"channel", other}, {"instrument", "testSynth"}});
+	run("channel.set", {{"channel", instrument}, {"midiInserts", {{"divider", 2}}}});
+	run("channel.set", {{"channel", midi}, {"midiSends", {{"pre", true}, {"slots", {{{"output", other}}}}}}});
+	run("channel.set", {{"channel", midi}, {"modifiers", {{"transpose", 3}}}});
 	// Input transformers, the track's and the project's, run before the effects.
 	const Json rules = {
 		{"filters", Json::array({{{"target", "type"}, {"condition", "equal"}, {"parameter1", "note"}}})},
@@ -832,6 +838,7 @@ TEST_CASE("MIDI inserts, sends and input transformers on tracks, and changing th
 	run("channel.set", {{"channel", midi}, {"midiInserts", {{"slots", {{{"parameters", {{"chord", 3}}}}}}}}});
 	run("audio.render", {{"frames", 600}});
 	run("channel.set", {{"channel", instrument}, {"midiInserts", {{"slots", {{{"effect", ""}}}}}}});
+	run("channel.set", {{"channel", midi}, {"midiSends", {{"slots", {{{"output", 0}}, {{"output", other}}}}}}});
 	run("channel.set", {{"channel", instrument}, {"inputTransformer", {{"modules", Json::array({{{"on", false}}})}}}});
 	run("audio.render", {{"frames", 2400}});
 	run("midi.capture", Json::object());

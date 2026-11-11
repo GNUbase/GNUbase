@@ -193,6 +193,12 @@ namespace gnubase::engine
 		midi::Modifiers modifiers;    // MIDI and instrument channels: notes has them applied, live notes get them
 		midi::EffectRack midiInserts; // MIDI and instrument channels: the effects their sequencer runs
 		midi::EffectRack midiSends;
+		// MIDI and instrument channels: where each MIDI send's effect plays, an instrument channel's index, or -1 for
+		// the track's own output.
+		std::array<int, midi::g_effectSlots> midiSendOutputs{-1, -1, -1, -1};
+		// MIDI and instrument channels whose MIDI sends play before modifiers that change notes: the notes of their
+		// parts without the track's MIDI modifiers, sorted as notes; empty otherwise.
+		std::vector<RenderNote> preNotes;
 		// MIDI and instrument channels: the rules of their input transformer's modules that are on, the track's or
 		// the project's, in order; empty for none.
 		std::vector<midi::LogicalRules> inputTransformer;

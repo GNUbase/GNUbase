@@ -1450,6 +1450,10 @@ namespace gnubase::engine
 	// Whether a channel can be a send's destination: a group or effect channel, or a folder's group channel.
 	bool isSendDestination(const Project& project, ObjectId channel);
 
+	// Whether a MIDI send from a channel to another one (midi::EffectSlot::output) would come back to it: whether
+	// channel is to or is reached from it through the outputs of MIDI sends.
+	bool midiSendLoops(const Project& project, ObjectId channel, ObjectId to);
+
 	// Whether audio from a channel to another one, through an output or a send, would come back to it: whether
 	// channel is to or is reached from it through outputs and the destinations of sends, on or off. Routing never
 	// closes a loop, so the processing graph has no feedback.

@@ -1395,6 +1395,12 @@ namespace gnubase::engine
 						item.destination = 0;
 						send = true;
 					}
+				for (midi::EffectSlot& slot : channel.midiSends.slots)
+					if (slot.output != 0 && isGone(slot.output))
+					{
+						slot.output = 0;
+						send = true;
+					}
 				if (input)
 					channel.input = 0;
 				if (output)
@@ -1652,6 +1658,9 @@ namespace gnubase::engine
 				for (Send& send : channel.sends)
 					if (const auto destination = channels.find(send.destination); destination != channels.end())
 						send.destination = destination->second;
+				for (midi::EffectSlot& slot : channel.midiSends.slots)
+					if (const auto output = channels.find(slot.output); output != channels.end())
+						slot.output = output->second;
 			}
 			std::vector<ObjectId>& list = siblings(project, parent);
 			list.insert(std::next(std::find(list.begin(), list.end(), id)), copy);
@@ -2141,6 +2150,17 @@ namespace gnubase::engine
 				catch (const std::invalid_argument& error)
 				{
 					throw CommandError(error.what());
+				}
+				for (const midi::EffectSlot& slot : rack.slots)
+				{
+					const auto target = project.channels.find(slot.output);
+					require(slot.output == 0 ||
+							(target != project.channels.end() &&
+								project.trackById.at(target->second.track).type == TrackType::Instrument),
+						"a MIDI send's output must be an instrument track's channel, or 0 for the track's output");
+					require(slot.output == 0 || !midiSendLoops(project, changed.id, slot.output),
+						"sending channel " + idText(changed.id) + "'s MIDI to " + idText(slot.output) +
+							" would make a loop");
 				}
 			}
 			if (parameters.contains("sends"))
@@ -4302,10 +4322,13 @@ namespace gnubase::engine
 				"only what it has, as project.get shows them) are the track's four MIDI insert and four MIDI send "
 				"slots, which run GNUbase's built-in MIDI effects (midiEffect.list) on the track's own events after "
 				"the modifiers: {bypass (all slots of the section), pre (sends only: they get the events before the "
-				"inserts), slots: [{effect (an id, or empty for none; another effect starts from its defaults), on, "
-				"parameters {key: value, a number or an option's name}}]}. The inserts play in order, each on what "
-				"the one before it played; each send plays its effect's events beside them. Changing which effects "
-				"play ends the notes the track sounds. The channel strip's sections (audio channels only; "
+				"modifiers and the inserts), divider (inserts only, 0 to 4: the slots above it play what comes into "
+				"the track live, before it records, and not its parts), slots: [{effect (an id, or empty for none; "
+				"another effect starts from its defaults), on, parameters {key: value, a number or an option's "
+				"name}, output (sends only: an instrument track's channel the effect plays to, 0 for the track's own "
+				"output)}]}. The inserts play in order, each on what the one before it played; each send plays its "
+				"effect's events beside them. Changing which effects play ends the notes the track sounds. The channel "
+				"strip's sections (audio channels only; "
 				"each object changes only what it has, as project.get shows them) run before the fader: pre "
 				"{gain (dB, -24 to 24), phase (inverts the polarity), lowCut and highCut {on, frequency (Hz, 20 or "
 				"for the high cut 50 to 20000), slope (6, 12, 24, 36 or 48 dB per octave)}} before the plugin slots; "

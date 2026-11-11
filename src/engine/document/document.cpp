@@ -306,6 +306,26 @@ namespace gnubase::engine
 		return type == TrackType::Group || type == TrackType::Effect || type == TrackType::Folder;
 	}
 
+	bool midiSendLoops(const Project& project, ObjectId channel, ObjectId to)
+	{
+		std::vector<ObjectId> pending{to};
+		std::set<ObjectId> seen;
+		while (!pending.empty())
+		{
+			const ObjectId next = pending.back();
+			pending.pop_back();
+			if (next == channel)
+				return true;
+			const auto found = project.channels.find(next);
+			if (!seen.insert(next).second || found == project.channels.end())
+				continue;
+			for (const midi::EffectSlot& slot : found->second.midiSends.slots)
+				if (slot.output != 0)
+					pending.push_back(slot.output);
+		}
+		return false;
+	}
+
 	bool routingLoops(const Project& project, ObjectId channel, ObjectId to)
 	{
 		std::vector<ObjectId> pending{to};

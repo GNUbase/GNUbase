@@ -8,8 +8,10 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstdio>
+#include <map>
 #include <memory>
 #include <string>
 #include <utility>
@@ -92,14 +94,17 @@ namespace
 				run(client, "audio.render", {{"frames", std::min<int64_t>(frames, 48000)}});
 		}
 
-		// What the instrument played since the last call, a line per message: its position and its bytes in hex.
-		std::string captured()
+		// What the instruments played since the last call, a line per message: its position and its bytes in hex.
+		std::string captured() { return capturedBy()[0]; }
+
+		// The same by instrument track channel, and all of it at 0.
+		std::map<ObjectId, std::string> capturedBy()
 		{
-			std::string text;
+			std::map<ObjectId, std::string> texts;
 			const Json capture = run(client, "midi.capture");
 			for (const Json& c : capture.at("captured"))
 			{
-				text += std::to_string(c.at("position").get<int64_t>());
+				std::string text = std::to_string(c.at("position").get<int64_t>());
 				for (const int byte : c.at("bytes").get<std::vector<int>>())
 				{
 					char hex[4] = {};
@@ -107,8 +112,19 @@ namespace
 					text += hex;
 				}
 				text += "\n";
+				texts[0] += text;
+				texts[c.at("channel").get<ObjectId>()] += text;
 			}
-			return text;
+			return texts;
+		}
+
+		// Adds an instrument track playing the note probe; returns its channel.
+		ObjectId addInstrument()
+		{
+			const ObjectId added =
+				run(client, "track.add", {{"type", "instrument"}}).at("channel").at("id").get<ObjectId>();
+			run(client, "channel.set", {{"channel", added}, {"instrument", "noteProbe"}});
+			return added;
 		}
 
 		Engine engine;
@@ -421,7 +437,17 @@ TEST_CASE("an arpeggio follows a tempo ramp step by step, the same for every blo
 			first = text;
 		CHECK(text == first);
 	}
-	CHECK(!first.empty());
+	// The steps get shorter as the tempo rises: from 120 BPM to about 210 after three beats.
+	std::vector<int64_t> starts;
+	for (size_t line = 0; line < first.size(); line = first.find('\n', line) + 1)
+		if (first.compare(first.find(' ', line), 3, " 90") == 0)
+			starts.push_back(std::stoll(first.substr(line, first.find(' ', line) - line)));
+	REQUIRE(starts.size() > 10);
+	const int64_t firstStep = starts[1] - starts[0];
+	const int64_t lastStep = starts.back() - starts[starts.size() - 2];
+	CHECK(firstStep == 3000);
+	CHECK(lastStep < firstStep * 3 / 4);
+	CHECK(lastStep > firstStep / 2);
 }
 
 TEST_CASE("the chord generator and the transformer give note-offs room in a full output", "[unit]")
@@ -498,8 +524,11 @@ TEST_CASE(
 	EffectTrack track;
 	const Json channel = run(track.client, "project.get").at("channels")[0];
 	const Json empty = {{"effect", ""}, {"on", true}, {"parameters", Json::object()}};
-	CHECK(channel.at("midiInserts") == Json{{"bypass", false}, {"slots", {empty, empty, empty, empty}}});
-	CHECK(channel.at("midiSends") == Json{{"bypass", false}, {"pre", false}, {"slots", {empty, empty, empty, empty}}});
+	Json send = empty;
+	send["output"] = 0;
+	CHECK(
+		channel.at("midiInserts") == Json{{"bypass", false}, {"divider", 0}, {"slots", {empty, empty, empty, empty}}});
+	CHECK(channel.at("midiSends") == Json{{"bypass", false}, {"pre", false}, {"slots", {send, send, send, send}}});
 
 	Json set = track.set("midiInserts", {{"slots", {Json::object(), slot("arpeggiator", {{"octaves", 3}})}}});
 	CHECK(set.at("slots")[0] == empty);
@@ -514,7 +543,9 @@ TEST_CASE(
 	CHECK(set.at("slots")[1] == Json{{"effect", "chordGenerator"}, {"on", false}, {"parameters", {{"chord", 0}}}});
 	CHECK(run(track.client, "project.get").at("channels")[0].at("midiInserts") == set);
 	CHECK(track.set("midiSends", {{"pre", true}}).at("pre") == true);
+	CHECK(track.set("midiInserts", {{"divider", 2}}).at("divider") == 2);
 
+	run(track.client, "history.undo");
 	run(track.client, "history.undo");
 	run(track.client, "history.undo");
 	CHECK(run(track.client, "project.get").at("channels")[0].at("midiInserts").at("slots")[1].at("effect") ==
@@ -538,6 +569,20 @@ TEST_CASE("channel.set refuses unknown MIDI effects, parameters out of range and
 	CHECK_THAT(refused({{"slots", Json::array({slot(""), slot(""), slot(""), slot(""), slot("")})}}),
 		ContainsSubstring("at most 4"));
 	CHECK_THAT(refused({{"pre", true}}), ContainsSubstring("midiInserts.pre"));
+	CHECK_THAT(refused({{"divider", 5}}), ContainsSubstring("0 to 4"));
+	CHECK_THAT(refused({{"slots", {{{"output", track.channel}}}}}), ContainsSubstring("only the MIDI sends"));
+	CHECK_THAT(reject(track.client, "channel.set", {{"channel", track.channel}, {"midiSends", {{"divider", 1}}}}),
+		ContainsSubstring("only the MIDI inserts"));
+	const ObjectId midi = run(track.client, "track.add", {{"type", "midi"}}).at("channel").at("id").get<ObjectId>();
+	CHECK_THAT(reject(track.client, "channel.set",
+				   {{"channel", track.channel}, {"midiSends", {{"slots", {{{"output", midi}}}}}}}),
+		ContainsSubstring("instrument track's channel"));
+	// Two instrument tracks can't send to each other.
+	const ObjectId other = track.addInstrument();
+	track.set("midiSends", {{"slots", {{{"output", other}}}}});
+	CHECK_THAT(reject(track.client, "channel.set",
+				   {{"channel", other}, {"midiSends", {{"slots", {{{"output", track.channel}}}}}}}),
+		ContainsSubstring("loop"));
 	CHECK_THAT(refused(5), ContainsSubstring("midiInserts must be object"));
 
 	const ObjectId audio = run(track.client, "track.add", {{"type", "audio"}}).at("channel").at("id").get<ObjectId>();
@@ -553,11 +598,133 @@ TEST_CASE("the MIDI inserts and sends are saved with the project", "[integration
 	const Json inserts = track.set("midiInserts",
 		{{"bypass", true},
 			{"slots", {slot("arpeggiator", {{"gate", 75.5}}), {{"effect", "transformer"}, {"on", false}}}}});
-	const Json sends = track.set("midiSends", {{"pre", true}, {"slots", {Json::object(), slot("chordGenerator")}}});
+	const ObjectId other = track.addInstrument();
+	Json sent = slot("chordGenerator");
+	sent["output"] = other;
+	const Json sends = track.set("midiSends", {{"pre", true}, {"slots", {Json::object(), sent}}});
+	CHECK(sends.at("slots")[1].at("output") == other);
+	track.set("midiInserts", {{"divider", 1}});
 	run(track.client, "project.save", {{"path", file}});
 	run(track.client, "project.new");
 	run(track.client, "project.load", {{"path", file}});
 	const Json channel = run(track.client, "project.get").at("channels")[0];
-	CHECK(channel.at("midiInserts") == inserts);
+	Json divided = inserts;
+	divided["divider"] = 1;
+	CHECK(channel.at("midiInserts") == divided);
 	CHECK(channel.at("midiSends") == sends);
+}
+
+TEST_CASE("a controller the rules turn into a note shares it with a held note and ends in a full output", "[unit]")
+{
+	using midi::LogicalTarget;
+	// The sustain pedal plays C1, as a bass drum: a note-on while it is down, a note-off when it comes up.
+	const std::array<midi::FilterLine, 1> filters = {{{0, LogicalTarget::Type, midi::LogicalCondition::Equal,
+		static_cast<double>(midi::LogicalType::Controller), 0.0, 0, midi::LogicalBool::And}}};
+	const std::array<midi::ActionLine, 2> actions = {
+		{{LogicalTarget::Type, midi::LogicalOperation::SetFixed, static_cast<double>(midi::LogicalType::Note), 0.0},
+			{LogicalTarget::Subtype, midi::LogicalOperation::SetFixed, 36.0, 0.0}}};
+	const processors::LogicalRulesView rules{
+		filters.data(), filters.size(), midi::LogicalFunction::Transform, actions.data(), actions.size()};
+	const auto pedal = [](uint32_t offset, bool down)
+	{
+		ProcessEvent event = noteAt(ProcessEvent::Type::Controller, offset, 64);
+		event.value = down ? 0xFFFFFFFFU : 0U;
+		return event;
+	};
+
+	// Held by the key and by the pedal, C1 plays once and ends with the last of them.
+	processors::LogicalStage stage;
+	EventBuffer out(8);
+	stage.handle(noteAt(ProcessEvent::Type::NoteOn, 0, 36), rules, out);
+	stage.handle(pedal(1, true), rules, out);
+	stage.handle(pedal(2, true), rules, out); // a pedal moved further down plays nothing new
+	stage.handle(pedal(3, false), rules, out);
+	CHECK(hanging(out) == std::vector<int>{36});
+	CHECK(out.size() == 1);
+	stage.handle(noteAt(ProcessEvent::Type::NoteOff, 4, 36), rules, out);
+	CHECK(hanging(out).empty());
+	CHECK(out.size() == 2);
+
+	// The pedal's note-off takes the place of another event in a full output.
+	processors::LogicalStage full;
+	EventBuffer one(1);
+	full.handle(pedal(0, true), rules, one);
+	REQUIRE(one.size() == 1);
+	full.handle(pedal(1, false), rules, one);
+	REQUIRE(one.size() == 1);
+	CHECK(one[0].type == ProcessEvent::Type::NoteOff);
+	CHECK(one[0].key == 36);
+}
+
+TEST_CASE("sends before the modifiers get the parts' notes and the input as they are", "[integration]")
+{
+	std::string text;
+	for (const bool pre : {false, true})
+	{
+		EffectTrack track;
+		track.add({{0, 0.5, 60, 100}});
+		run(track.client, "channel.set", {{"channel", track.channel}, {"modifiers", {{"transpose", 12}}}});
+		track.set("midiSends", {{"pre", pre}, {"slots", {slot("transformer", {{"value", 1}})}}});
+		run(track.client, "transport.play");
+		track.inject({message(100, {0x90, 64, 100}), message(200, {0x80, 64, 64})});
+		track.render(g_beat);
+		text += std::string("# sends ") + (pre ? "pre" : "post") + "\n" + track.captured();
+	}
+	CHECK(text ==
+		"# sends post\n0 90 48 64\n0 90 49 64\n100 90 4c 64\n100 90 4d 64\n200 80 4c 40\n200 80 4d 40\n"
+		"12000 80 48 00\n12000 80 49 00\n"
+		"# sends pre\n0 90 48 64\n0 90 3d 64\n100 90 4c 64\n100 90 41 64\n200 80 4c 40\n200 80 41 40\n"
+		"12000 80 48 00\n12000 80 3d 00\n");
+}
+
+TEST_CASE("a send plays its effect to another instrument track, with the track's other events", "[integration]")
+{
+	EffectTrack track;
+	const ObjectId other = track.addInstrument();
+	Json sent = slot("transformer", {{"value", 12}});
+	sent["output"] = other;
+	track.set("midiSends", {{"slots", {sent}}});
+	track.inject({message(10, {0x90, 60, 100}), message(20, {0xB0, 64, 127}), message(25, {0xE0, 0, 80}),
+		message(30, {0x80, 60, 64}), message(40, {0x90, 62, 100})});
+	track.render(64);
+	std::map<ObjectId, std::string> played = track.capturedBy();
+	CHECK(played[track.channel] == "10 90 3c 64\n20 b0 40 7f\n25 e0 00 50\n30 80 3c 40\n40 90 3e 64\n");
+	CHECK(played[other] == "10 90 48 64\n20 b0 40 7f\n25 e0 00 50\n30 80 48 40\n40 90 4a 64\n");
+
+	// Back to the track's output: the note it played there ends there.
+	sent["output"] = 0;
+	track.set("midiSends", {{"slots", {sent}}});
+	track.render(64);
+	played = track.capturedBy();
+	CHECK(played[other] == "64 80 4a 00\n");
+	CHECK(played[track.channel] == "64 80 3e 00\n");
+}
+
+TEST_CASE(
+	"a send to another instrument track ends its notes there when it goes, and its track when removed", "[integration]")
+{
+	EffectTrack track;
+	const ObjectId other = track.addInstrument();
+	Json sent = slot("chordGenerator", {{"chord", "Power"}});
+	sent["output"] = other;
+	track.set("midiSends", {{"slots", {sent}}});
+	track.inject({message(10, {0x90, 60, 100})});
+	track.render(64);
+	CHECK(track.capturedBy()[other] == "10 90 3c 64\n10 90 43 64\n");
+	// Bypassed, the send goes: the instrument there ends what it played.
+	track.set("midiSends", {{"bypass", true}});
+	track.render(64);
+	CHECK(track.capturedBy()[other] == "64 80 3c 00\n64 80 43 00\n");
+
+	// Removing the track it plays to clears its output.
+	const auto channelOf = [&track](ObjectId id)
+	{
+		const Json project = run(track.client, "project.get");
+		for (const Json& channel : project.at("channels"))
+			if (channel.at("id") == id)
+				return channel;
+		return Json();
+	};
+	run(track.client, "track.remove", {{"track", channelOf(other).at("track")}});
+	CHECK(channelOf(track.channel).at("midiSends").at("slots")[0].at("output") == 0);
 }

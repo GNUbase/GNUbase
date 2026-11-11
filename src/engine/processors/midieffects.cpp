@@ -527,7 +527,29 @@ namespace gnubase::engine::processors
 	{
 		m_held.fill(Held{});
 		m_sounding.fill(0);
+		m_made.fill(false);
 		m_random = {};
+	}
+
+	void LogicalStage::playMade(const graph::ProcessEvent& event, graph::EventBuffer& out) noexcept
+	{
+		if (event.type != Type::NoteOn && event.type != Type::NoteOff)
+		{
+			out.add(event);
+			return;
+		}
+		// The note another event made is held until another one makes its note-off, and counts as a held note does.
+		const uint16_t note = indexOf(event);
+		const bool on = event.type == Type::NoteOn;
+		if (m_made[note] == on)
+		{
+			if (!on && m_sounding[note] == 0)
+				put(out, event); // ends nothing that sounds
+			return;
+		}
+		m_made[note] = on;
+		if (on ? m_sounding[note]++ == 0 : release(note))
+			put(out, event);
 	}
 
 	bool LogicalStage::uses(const Held& held, uint16_t source, uint16_t note) noexcept
@@ -589,7 +611,7 @@ namespace gnubase::engine::processors
 			if (pass)
 				out.add(event);
 			if (emit)
-				out.add(changed);
+				playMade(changed, out);
 			return;
 		}
 		const uint16_t to = emit && changed.type == Type::NoteOn ? indexOf(changed) : g_none;

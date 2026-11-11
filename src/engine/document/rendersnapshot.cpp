@@ -606,6 +606,16 @@ namespace gnubase::engine
 					pannerFor(render.format, snapshot->channels[static_cast<size_t>(channel->second)].format);
 				feeds[static_cast<size_t>(channelIndex.at(render.id))].push_back(static_cast<size_t>(channel->second));
 			}
+			// A MIDI send to the instrument the track plays anyway plays to its own output.
+			const int own = render.type == TrackType::Instrument    ? channelIndex.at(render.id)
+				: render.output.kind == RenderTarget::Kind::Channel ? render.output.index
+																	: -1;
+			for (size_t s = 0; s < render.midiSends.slots.size(); ++s)
+				if (const auto target = channelIndex.find(render.midiSends.slots[s].output);
+					target != channelIndex.end() && target->second != own &&
+					snapshot->channels[static_cast<size_t>(target->second)].type == TrackType::Instrument &&
+					!midiSendLoops(project, render.id, target->first))
+					render.midiSendOutputs[s] = target->second;
 			const std::array<Send, g_maxSends>& sends = project.channels.at(render.id).sends;
 			for (size_t s = 0; s < sends.size() && render.format != ChannelFormat::None; ++s)
 			{
@@ -643,6 +653,15 @@ namespace gnubase::engine
 				continue;
 			snapshot->channels[trackChannel.at(event.track)].audioEvents.push_back(std::move(render));
 		}
+		// MIDI sends before the modifiers (p. 1106) get the parts' notes without them, where the modifiers play.
+		const auto preNotes = [](const RenderChannel& channel)
+		{
+			const midi::EffectRack& sends = channel.midiSends;
+			return sends.pre && !sends.bypass && !channel.modifiers.bypass &&
+				!(channel.modifiers == midi::Modifiers()) &&
+				std::any_of(sends.slots.begin(), sends.slots.end(),
+					[](const midi::EffectSlot& slot) { return slot.on && !slot.effect.empty(); });
+		};
 		for (const auto& [id, part] : project.midiParts)
 		{
 			RenderChannel& channel = snapshot->channels[static_cast<size_t>(trackChannel.at(part.track))];
@@ -650,19 +669,25 @@ namespace gnubase::engine
 			if (part.mute || !plays(part.track) || (channel.silent && channel.type == TrackType::Midi))
 				continue;
 			const auto pattern = project.patterns.find(part.pattern);
-			if (part.pattern == 0 || pattern == project.patterns.end())
+			const bool isPattern = part.pattern != 0 && pattern != project.patterns.end();
+			MidiPart played;
+			if (isPattern)
 			{
-				compilePart(project, id, part, channel);
-				continue;
+				// A pattern event (#181) plays its pattern's notes instead of its own.
+				// ponytail: pattern events that overlap on a track all play, not only the topmost (p. 935).
+				played = part;
+				const time::Position end{part.position.base, part.position.value + part.length};
+				played.notes = midi::patternNotes(pattern->second,
+					time::toTicks(end, project.tempo, project.sampleRate) -
+						time::toTicks(part.position, project.tempo, project.sampleRate));
 			}
-			// A pattern event (#181) plays its pattern's notes instead of its own.
-			// ponytail: pattern events that overlap on a track all play, not only the topmost (p. 935).
-			MidiPart played = part;
-			const time::Position end{part.position.base, part.position.value + part.length};
-			played.notes = midi::patternNotes(pattern->second,
-				time::toTicks(end, project.tempo, project.sampleRate) -
-					time::toTicks(part.position, project.tempo, project.sampleRate));
-			compilePart(project, id, played, channel);
+			const MidiPart& compiled = isPattern ? played : part;
+			compilePart(project, id, compiled, channel);
+			if (!preNotes(channel))
+				continue;
+			RenderChannel unmodified;
+			compilePart(project, id, compiled, unmodified);
+			channel.preNotes.insert(channel.preNotes.end(), unmodified.notes.begin(), unmodified.notes.end());
 		}
 
 		std::map<ObjectId, Points> vcaCurves; // by the VCA fader's channel
@@ -717,8 +742,9 @@ namespace gnubase::engine
 		{
 			std::stable_sort(channel.audioEvents.begin(), channel.audioEvents.end(),
 				[](const RenderAudioEvent& a, const RenderAudioEvent& b) { return a.start < b.start; });
-			std::stable_sort(channel.notes.begin(), channel.notes.end(), [](const RenderNote& a, const RenderNote& b)
-				{ return std::tie(a.start, a.pitch) < std::tie(b.start, b.pitch); });
+			for (std::vector<RenderNote>* notes : {&channel.notes, &channel.preNotes})
+				std::stable_sort(notes->begin(), notes->end(), [](const RenderNote& a, const RenderNote& b)
+					{ return std::tie(a.start, a.pitch) < std::tie(b.start, b.pitch); });
 			std::stable_sort(channel.controllers.begin(), channel.controllers.end(),
 				[](const RenderController& a, const RenderController& b) { return a.position < b.position; });
 			// The parts by start; their controller events keep pointing at them.

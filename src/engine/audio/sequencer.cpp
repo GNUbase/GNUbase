@@ -213,35 +213,74 @@ namespace gnubase::engine
 			{ return note.end > note.start ? ((note.channel % 16) * 128) + (note.pitch % 128) : -1; },
 			sequence->noteOrder, sequence->noteLanes);
 
-		// An effect that stops playing loses its state: one that plays again starts afresh.
+		// An effect that stops playing loses its state: one that plays again starts afresh, and so does one that
+		// moves above or below the divider or to another output, whose notes end where they sounded.
+		bool elsewhere = false;
 		for (size_t index = 0; index < m_slots.size(); ++index)
 		{
 			const bool sends = index >= midi::g_effectSlots;
 			const midi::EffectRack& rack = sends ? sequence->sends : sequence->inserts;
-			const midi::EffectSlot& slot = rack.slots[index % midi::g_effectSlots];
+			const size_t number = index % midi::g_effectSlots;
+			const midi::EffectSlot& slot = rack.slots[number];
 			SlotEffect& kept = m_slots[index];
 			if (rack.bypass || !slot.on || slot.effect.empty() || processors::findMidiEffect(slot.effect) == nullptr)
 			{
 				kept = SlotEffect();
 				continue;
 			}
-			if (!kept.effect || kept.id != slot.effect)
+			const uint64_t output = sends ? sequence->sendOutputs[number] : 0;
+			const bool input = !sends && number < rack.divider;
+			if (!kept.effect || kept.id != slot.effect || kept.output != output || kept.input != input)
 			{
 				kept.effect = processors::createMidiEffect(slot.effect);
 				kept.id = slot.effect;
 				kept.serial = ++m_effectSerial;
+				kept.output = output;
+				kept.input = input;
 				if (m_sampleRate > 0.0)
 					kept.effect->prepareFor(m_sampleRate, m_maxFrames);
 			}
-			sequence->effects.push_back({kept.effect, slot.parameters, kept.serial});
-			if (!sends)
-				++sequence->insertCount;
+			sequence->effects.push_back({kept.effect, slot.parameters, kept.serial, number, output != 0});
+			elsewhere = elsewhere || output != 0;
+			sequence->insertCount += sends ? 0 : 1;
+			sequence->inputCount += input ? 1 : 0;
 		}
 		if (!sequence->effects.empty() && m_own.capacity() == 0)
 		{
 			m_own = graph::EventBuffer(graph::g_maxEventsPerBlock);
 			m_chainA = graph::EventBuffer(graph::g_maxEventsPerBlock);
 			m_chainB = graph::EventBuffer(graph::g_maxEventsPerBlock);
+		}
+		// The buffers stay once they are there: the audio thread may use them as long as it has a sequence that
+		// says so.
+		if (elsewhere && m_sendOut[0].capacity() == 0)
+			for (graph::EventBuffer& buffer : m_sendOut)
+				buffer = graph::EventBuffer(graph::g_maxEventsPerBlock);
+		sequence->sendBuffers = m_sendOut[0].capacity() != 0;
+
+		// Sends before modifiers that change notes play what a sequencer without them plays (p. 1106).
+		const midi::Modifiers& modifiers = sequence->modifiers;
+		const bool preSends = sequence->sends.pre && sequence->insertCount < sequence->effects.size() &&
+			!modifiers.bypass && !(modifiers == midi::Modifiers());
+		if (!preSends)
+			m_pre.reset();
+		else
+		{
+			if (!m_pre)
+			{
+				m_pre = std::make_shared<MidiSequencer>();
+				m_pre->setChase(m_chaseSetting);
+				if (m_sampleRate > 0.0)
+					m_pre->prepareFor(m_sampleRate, m_maxFrames);
+			}
+			if (m_preOut.capacity() == 0)
+				m_preOut = graph::EventBuffer(graph::g_maxEventsPerBlock);
+			auto unmodified = std::make_unique<MidiSequence>();
+			unmodified->notes = sequence->preNotes;
+			unmodified->controllers = sequence->controllers;
+			unmodified->chase = sequence->chase;
+			m_pre->setSequence(std::move(unmodified));
+			sequence->pre = m_pre;
 		}
 		sequence->serial = ++m_sequenceSerial;
 		m_sequence.publish(std::move(sequence));
@@ -254,10 +293,15 @@ namespace gnubase::engine
 		for (const SlotEffect& slot : m_slots)
 			if (slot.effect)
 				slot.effect->prepareFor(sampleRate, maxFrames);
+		if (m_pre)
+			m_pre->prepareFor(sampleRate, maxFrames);
 	}
 
 	void MidiSequencer::setChase(const MidiChase& chase) noexcept
 	{
+		m_chaseSetting = chase;
+		if (m_pre)
+			m_pre->setChase(chase);
 		const auto flag = [](bool on, uint8_t value) { return on ? value : uint8_t{0}; };
 		m_chase.store(static_cast<uint8_t>(flag(chase.notes, g_chaseNotes) |
 						  flag(chase.controllers, g_chaseControllers) | flag(chase.programs, g_chasePrograms) |
@@ -272,6 +316,9 @@ namespace gnubase::engine
 		for (const graph::ProcessEvent& event : context.eventsIn)
 			context.eventsOut.add(event);
 		context.eventsOut.nextSource();
+		if (sequence.sendBuffers)
+			for (graph::EventBuffer& buffer : m_sendOut)
+				buffer.clear();
 		if (sequence.serial != m_serial)
 			takeEffects(sequence, context.eventsOut);
 		if (sequence.effects.empty())
@@ -279,17 +326,54 @@ namespace gnubase::engine
 			playOwn(sequence, context, context.eventsOut);
 			return;
 		}
+		// The sends before the modifiers get what the track plays without them, its input as it came in.
+		if (sequence.pre)
+		{
+			graph::EventBuffer& input = sequence.pre->input();
+			input.clear();
+			for (const graph::ProcessEvent& event : m_input)
+				input.add(event);
+			m_preOut.clear();
+			sequence.pre->process({nullptr, 0, context.frames, m_none, m_preOut, context.transport});
+		}
 		m_own.clear();
 		playOwn(sequence, context, m_own);
 		runEffects(sequence, context, context.eventsOut);
 	}
 
-	void MidiSequencer::takeEffects(const MidiSequence& sequence, graph::EventBuffer& out) noexcept
+	void MidiSequencer::processInput(uint32_t frames, const graph::TransportBlock& transport) noexcept
 	{
-		m_serial = sequence.serial;
+		const MidiSequence& sequence = m_sequence.acquire();
+		if (sequence.inputCount == 0)
+			return;
+		takeParameters(sequence);
+		const graph::EventBuffer* played = &m_input;
+		for (size_t i = 0; i < sequence.inputCount; ++i)
+		{
+			graph::EventBuffer& to = played == &m_chainA ? m_chainB : m_chainA;
+			to.clear();
+			sequence.effects[i].effect->process({nullptr, 0, frames, *played, to, transport});
+			played = &to;
+		}
+		m_input.clear();
+		for (const graph::ProcessEvent& event : *played)
+			m_input.add(event);
+	}
+
+	void MidiSequencer::takeParameters(const MidiSequence& sequence) noexcept
+	{
+		if (sequence.serial == m_parameters)
+			return;
+		m_parameters = sequence.serial;
 		for (const RunningEffect& running : sequence.effects)
 			for (size_t id = 0; id < running.parameters.size(); ++id)
 				running.effect->setParameter(static_cast<uint32_t>(id), running.parameters[id]);
+	}
+
+	void MidiSequencer::takeEffects(const MidiSequence& sequence, graph::EventBuffer& out) noexcept
+	{
+		m_serial = sequence.serial;
+		takeParameters(sequence);
 		const bool same = sequence.effects.size() == m_chainCount &&
 			std::equal(sequence.effects.begin(), sequence.effects.end(), m_chain.begin(),
 				[](const RunningEffect& running, uint64_t serial) { return running.serial == serial; });
@@ -304,6 +388,13 @@ namespace gnubase::engine
 				out.add(noteEvent(graph::ProcessEvent::Type::NoteOff, index, 0));
 		m_effectsHeld.fill(false);
 		out.nextSource();
+		// Wherever the sends play now: if not where they played, the instrument there ends them as they go.
+		for (size_t slot = 0; slot < m_sendOut.size() && sequence.sendBuffers; ++slot)
+			for (uint16_t index = 0; index < g_notes; ++index)
+				if (m_sendHeld[slot][index])
+					m_sendOut[slot].add(noteEvent(graph::ProcessEvent::Type::NoteOff, index, 0));
+		for (std::array<bool, g_notes>& held : m_sendHeld)
+			held.fill(false);
 	}
 
 	void MidiSequencer::runEffects(
@@ -323,7 +414,7 @@ namespace gnubase::engine
 			out.merge(events);
 		};
 		graph::EventBuffer* played = &m_own;
-		for (size_t i = 0; i < sequence.insertCount; ++i)
+		for (size_t i = sequence.inputCount; i < sequence.insertCount; ++i)
 		{
 			graph::EventBuffer& to = played == &m_chainA ? m_chainB : m_chainA;
 			run(sequence.effects[i], *played, to);
@@ -332,9 +423,25 @@ namespace gnubase::engine
 		play(*played);
 		if (sequence.insertCount == sequence.effects.size())
 			return;
-		// The sends get the notes only, so the track's other events reach the output once. What they take is played
-		// already, so it can change.
-		graph::EventBuffer& source = sequence.sends.pre ? m_own : *played;
+		// What they take is played already, so it can change.
+		graph::EventBuffer* const unmodified = sequence.pre ? &m_preOut : &m_own;
+		graph::EventBuffer& source = sequence.sends.pre ? *unmodified : *played;
+		graph::EventBuffer& sent = played == &m_chainA ? m_chainB : m_chainA;
+		// Sends to other instrument tracks get every event: the controllers, pitch bend and sustain too.
+		for (size_t i = sequence.insertCount; i < sequence.effects.size(); ++i)
+		{
+			const RunningEffect& running = sequence.effects[i];
+			if (!running.elsewhere)
+				continue;
+			run(running, source, sent);
+			graph::EventBuffer& to = m_sendOut[running.slot];
+			to.merge(sent);
+			for (const graph::ProcessEvent& event : sent)
+				if (event.type == graph::ProcessEvent::Type::NoteOn || event.type == graph::ProcessEvent::Type::NoteOff)
+					m_sendHeld[running.slot][((event.channel % 16) * 128) + (event.key % 128)] =
+						event.type == graph::ProcessEvent::Type::NoteOn;
+		}
+		// Those to the track's own output get the notes only, so the track's other events reach it once.
 		source.removeIf(
 			[](const graph::ProcessEvent& event)
 			{
@@ -342,9 +449,10 @@ namespace gnubase::engine
 					event.type != graph::ProcessEvent::Type::NoteOff &&
 					event.type != graph::ProcessEvent::Type::PolyPressure;
 			});
-		graph::EventBuffer& sent = played == &m_chainA ? m_chainB : m_chainA;
 		for (size_t i = sequence.insertCount; i < sequence.effects.size(); ++i)
 		{
+			if (sequence.effects[i].elsewhere)
+				continue;
 			run(sequence.effects[i], source, sent);
 			play(sent);
 		}
@@ -673,8 +781,8 @@ namespace gnubase::engine
 			m_instrument->prepareFor(sampleRate, maxFrames);
 	}
 
-	void InstrumentChannel::releaseNotesOf(
-		MidiSequencer& departed, const std::vector<std::shared_ptr<MidiSequencer>>& staying) noexcept
+	template <typename Departed> void InstrumentChannel::release(
+		const Departed& departed, const std::vector<std::shared_ptr<MidiSequencer>>& staying) noexcept
 	{
 		for (uint16_t index = 0; index < MidiSequencer::g_notes; ++index)
 		{
@@ -685,7 +793,38 @@ namespace gnubase::engine
 			m_ending[index] = true;
 			++m_endingCount;
 		}
+	}
+
+	void InstrumentChannel::releaseNotesOf(
+		MidiSequencer& departed, const std::vector<std::shared_ptr<MidiSequencer>>& staying) noexcept
+	{
+		release(departed, staying);
 		departed.forget();
+	}
+
+	void InstrumentChannel::releaseNotesOf(
+		MidiSendTap& departed, const std::vector<std::shared_ptr<MidiSequencer>>& staying) noexcept
+	{
+		release(departed, staying);
+		departed.forget();
+	}
+
+	MidiSendTap::MidiSendTap(std::shared_ptr<MidiSequencer> source, size_t slot)
+		: m_source(std::move(source)), m_slot(slot)
+	{
+	}
+
+	void MidiSendTap::process(const graph::ProcessContext& context) noexcept
+	{
+		for (const graph::ProcessEvent& event : m_source->sendOutput(m_slot))
+		{
+			if (event.type != graph::ProcessEvent::Type::NoteOff ? !context.eventsOut.add(event)
+																 : !context.eventsOut.addNoteOff(event))
+				continue;
+			if (event.type == graph::ProcessEvent::Type::NoteOn || event.type == graph::ProcessEvent::Type::NoteOff)
+				m_held[((event.channel % 16) * 128) + (event.key % 128)] =
+					event.type == graph::ProcessEvent::Type::NoteOn;
+		}
 	}
 
 	void InstrumentChannel::process(const graph::ProcessContext& context) noexcept
