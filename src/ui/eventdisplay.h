@@ -690,6 +690,10 @@ namespace gnubase::ui
 		// Moves the range's edges to zero crossings of the audio on its tracks (reference manual p. 285), with Snap to
 		// Zero Crossing on: snap.zeroCrossings answers later, and actions wait until it has (m_afterZeroCrossings).
 		void zeroCrossRange();
+		// Runs the actions that wait for zeroCrossRange's answers before a press, which may start another range, so
+		// that they edit the range they were run on (#1086): the binding settles, handing the answers on, for at most
+		// a few seconds; actions still waiting then run on the range as it is.
+		void runWaitingActions();
 		// The rectangle that a tool drags, dp in the event lanes; hidden when not shown.
 		void showRectangle(bool shown, double left = 0.0, double top = 0.0, double right = 0.0, double bottom = 0.0);
 		void setToolModifiers(const engine::Json& value);

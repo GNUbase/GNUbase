@@ -582,3 +582,31 @@ TEST_CASE("events, results and posted work draw every window in the step they re
 	CHECK(window.frames() == frames + 1);
 	CHECK(other.frames() == otherFrames);
 }
+
+TEST_CASE("settling waits for a query that what the user did waits for, and for what its answer sends", "[unit]")
+{
+	// As the event display's actions wait for snap.zeroCrossings (#1086): settling returns only once the action that
+	// the answer runs has been sent and answered. The query takes a while, so that settling starts before its answer.
+	engine::Engine engine;
+	engine.registerCommand(
+		{"test.slowRead", 1, "Reads slowly.", engine::CommandInfo{}.parameters, Json::object(), true},
+		[](engine::CommandContext&)
+		{
+			std::this_thread::sleep_for(milliseconds(200));
+			return Json::object();
+		});
+	ui::EngineBinding binding(engine);
+	engine::Client client(engine);
+	const auto tracks = [&client] { return client.call("project.get").value.at("tracks").size(); };
+	bool answered = false;
+	binding.sendAwaited("test.slowRead", Json::object(),
+		[&binding, &answered](const engine::Result& /*result*/)
+		{
+			answered = true;
+			binding.send("track.add", {{"type", "audio"}});
+		});
+	CHECK(binding.settle(std::chrono::seconds(10)));
+	CHECK(answered);
+	CHECK(binding.waiting("track.add") == 0);
+	CHECK(tracks() == 1);
+}

@@ -70,6 +70,13 @@ namespace gnubase::ui
 		transmit(std::move(command), std::move(parameters), std::move(done), true);
 	}
 
+	engine::RequestId EngineBinding::sendAwaited(
+		std::string command, engine::Json parameters, std::function<void(const engine::Result&)> done)
+	{
+		sendWaitingSteps(command);
+		return transmit(std::move(command), std::move(parameters), std::move(done), false, true);
+	}
+
 	void EngineBinding::sendWaitingSteps(const std::string& before)
 	{
 		// A command that may change something goes after the steps the user made before it, e.g. an undo right after a
@@ -80,12 +87,12 @@ namespace gnubase::ui
 					sendNextStep(what);
 	}
 
-	engine::RequestId EngineBinding::transmit(
-		std::string command, engine::Json parameters, std::function<void(const engine::Result&)> done, bool quiet)
+	engine::RequestId EngineBinding::transmit(std::string command, engine::Json parameters,
+		std::function<void(const engine::Result&)> done, bool quiet, bool awaited)
 	{
 		std::string name = command;
 		const engine::RequestId id = m_client.send(std::move(command), std::move(parameters));
-		m_waiting.emplace(id, Waiting{std::move(name), std::move(done), quiet});
+		m_waiting.emplace(id, Waiting{std::move(name), std::move(done), quiet, awaited});
 		return id;
 	}
 
@@ -167,7 +174,7 @@ namespace gnubase::ui
 	Subscription EngineBinding::onResult(std::string command, std::function<void(const engine::Result&)> handler)
 	{
 		const uint64_t id = m_nextId++;
-		m_resultHandlers.emplace(id, Waiting{std::move(command), std::move(handler), false});
+		m_resultHandlers.emplace(id, Waiting{std::move(command), std::move(handler), false, false});
 		return {*this, id};
 	}
 
@@ -218,8 +225,8 @@ namespace gnubase::ui
 		{
 			sendWaitingSteps({}); // as before a command that isn't a query
 			update();
-			if (std::all_of(m_waiting.begin(), m_waiting.end(),
-					[this](const auto& waiting) { return m_queries.count(waiting.second.command) != 0; }))
+			if (std::all_of(m_waiting.begin(), m_waiting.end(), [this](const auto& waiting)
+					{ return !waiting.second.awaited && m_queries.count(waiting.second.command) != 0; }))
 				return true;
 			const auto left =
 				std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());

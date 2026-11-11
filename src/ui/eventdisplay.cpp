@@ -1118,6 +1118,7 @@ namespace gnubase::ui
 		case Rml::EventId::Mousedown:
 			if (inInPlaceEditor(target))
 				break; // the editor's (ui/inplaceeditor.h)
+			runWaitingActions();
 			if (target != nullptr && event.GetParameter<int>("button", 0) == 0)
 				mouseDown(event, *target);
 			else if (event.GetParameter<int>("button", 0) == 1 && inside(target, m_area))

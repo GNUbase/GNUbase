@@ -2,18 +2,23 @@
 // User scripts (#209, docs/features/scripts.md) in the app's UI: the Edit menu's Scripts submenu, and the script
 // console opening scripts, their folder and the Lua API reference with the OS. tests/lua/ui/scripts.lua checks running
 // them, their undo step and the console's prompt.
+#include "engine/engine.h"
+#include "testutils/testutils.h"
 #include "ui/automation.h"
+#include "ui/eventdisplay.h"
 #include "uiapp.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <chrono>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 using namespace gnubase;
@@ -197,6 +202,61 @@ TEST_CASE("a user script's undo step has what it sent through the UI, and not wh
 	CHECK(steps[2].at("action") == "steps");
 	app.call("history.undo");
 	CHECK(app.call("project.get").at("tracks").size() == 2);
+}
+
+TEST_CASE("a user script that draws a range and deletes it through the UI has the delete in its undo step", "[ui]")
+{
+	// With Snap to Zero Crossing on, the drag sends snap.zeroCrossings, and Delete waits for its answer, which comes
+	// after the script has ended: settling waits for it and for the delete (#1086).
+	test::UiApp app;
+	ui::EventDisplay& display = app.appUi().showProject();
+	const test::TempDir dir;
+	const std::string file = (dir.path() / "silence.wav").u8string();
+	test::Audio silence;
+	silence.samples.assign(size_t{20} * 48000, 0.0F);
+	test::writeWav(file, silence);
+	const Json track =
+		app.call("track.add", {{"type", "audio"}, {"timeBase", "linear"}, {"channels", 1}}).at("track").at("id");
+	const Json media =
+		app.call("media.add", {{"path", file}, {"sampleRate", 48000}, {"channels", 1}, {"length", 20 * 48000}})
+			.at("media")
+			.at("id");
+	const Json clip = app.call("clip.add", {{"media", media}}).at("clip").at("id");
+	app.call("audioEvent.add", {{"track", track}, {"clip", clip}, {"position", 0}, {"length", 20 * 48000}});
+	app.call("snap.set", {{"on", false}, {"zeroCrossing", true}}); // the range as dragged, not on bars
+	REQUIRE(app.waitUntil(
+		[&display]
+		{
+			return display.snap().zeroCrossing && display.project().is_object() &&
+				display.project().at("audioEvents").size() == 1;
+		},
+		std::chrono::seconds(20)));
+	display.setTool(ui::Tool::RangeSelection);
+	// A command that keeps the engine busy for a second, which the script posts first, so that the answer comes after
+	// the script has ended.
+	app.engine().registerCommand(
+		{"test.busy", 1, "Takes a second.", engine::CommandInfo{}.parameters, Json::object(), false},
+		[](engine::CommandContext&)
+		{
+			std::this_thread::sleep_for(std::chrono::seconds(1));
+			return Json::object();
+		});
+	app.keys().add({"test.busy", "Keeps the engine busy for a second.",
+		[&app](ui::Window& /*window*/, Rml::Element* /*zone*/) { app.engine().post("test.busy"); }});
+	writeScript(app, "delete-range", R"(gnubase.ui.command{command = "test.busy"}
+local lanes = gnubase.ui.dom{selector = "event-lanes.events", depth = 0}.elements[1].box
+gnubase.ui.drag{from = {x = lanes.x + 5, y = lanes.y + 10}, to = {x = lanes.x + 25, y = lanes.y + 10}}
+gnubase.ui.command{command = "edit.delete"}
+)");
+	const size_t steps = app.call("history.get").at("steps").size();
+
+	app.keys().run("script.delete-range", Json::object(), app.main(), nullptr);
+	CHECK(app.call("project.get").at("audioEvents").size() == 2); // what is left on either side
+	const Json history = app.call("history.get").at("steps");
+	REQUIRE(history.size() == steps + 1);
+	CHECK(history.back().at("action") == "delete-range");
+	app.call("history.undo");
+	CHECK(app.call("project.get").at("audioEvents").size() == 1);
 }
 
 TEST_CASE("the script console adds what is printed to its output, and drops what the output dropped", "[ui]")
