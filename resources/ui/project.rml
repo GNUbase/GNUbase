@@ -485,6 +485,9 @@
 		<menuitem command="midi.ruleEditor">Rule Editor...</menuitem>
 		<!-- docs/features/articulation-maps.md -->
 		<menuitem command="midi.articulationMapSetup">Articulation Map Setup...</menuitem>
+		<!-- docs/features/drum-editor.md -->
+		<menuitem command="drumMap.setup">Drum Map Setup...</menuitem>
+		<menuitem command="midi.convertONotes">O-Note Conversion</menuitem>
 		<menuseparator/>
 		<menuitem command="midi.mergeInLoop">Merge MIDI in Loop...</menuitem>
 		<menuitem command="midi.dissolvePart">Dissolve Part...</menuitem>

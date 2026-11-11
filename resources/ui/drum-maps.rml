@@ -1,0 +1,438 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The Drum Map Setup (#882, docs/features/drum-editor.md, reference manual pp. 1235-1237). app::AppUi opens it (Edit >
+     Drum Map Setup..., the UI command drumMap.setup, and the drum editor's Map menu). Its Lua shows the project's drum
+     maps from project.get, the map of the editor's active track first, and changes them right away, each change one
+     undo step: New Map, New Copy and Remove run drumMap.add and drumMap.remove; Save chooses a file for the map
+     (gnubase.ui.saveDrumMap) and Load runs drumMap.load. The map's name and its sounds' settings, in the map's order,
+     go to drumMap.set as they change, text fields with Enter or when they lose the focus: the name, the snap as a note
+     value, mute, the I-note and O-note as a name such as C1 or a number, the channel as 1-16 or Any and the output,
+     Default for the track's. A change the engine refuses shows its message and the field as it was. It follows
+     drumMap.added, changed and removed and project.reset, so that it shows the maps as they are after a load, an undo
+     or a change through MCP or Lua; it selects a map that comes. -->
+<rml>
+<head>
+	<title>Drum Map Setup</title>
+	<style>
+		dialog
+		{
+			width: 980dp;
+		}
+
+		.content
+		{
+			display: flex;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.maps
+		{
+			width: 200dp;
+			margin-right: 12dp;
+		}
+
+		#drum-maps
+		{
+			height: 440dp;
+		}
+
+		.map
+		{
+			flex: 1;
+		}
+
+		.map-row
+		{
+			display: flex;
+			align-items: center;
+			margin-bottom: 4dp;
+		}
+
+		.map-row .label
+		{
+			width: 60dp;
+		}
+
+		#drum-map-name
+		{
+			width: 260dp;
+		}
+
+		#drum-map-sounds
+		{
+			height: 400dp;
+			overflow-y: auto;
+		}
+
+		.sound-row input.text, .sound-row span, .sound-row input.checkbox
+		{
+			margin-right: 4dp;
+		}
+
+		.sound-row .pitch
+		{
+			width: 44dp;
+		}
+
+		.sound-row .name
+		{
+			width: 180dp;
+		}
+
+		.sound-row .note
+		{
+			width: 56dp;
+		}
+
+		.sound-row .mute
+		{
+			width: 40dp;
+		}
+
+		.sound-row .output
+		{
+			width: 140dp;
+		}
+
+		.row
+		{
+			display: flex;
+			align-items: center;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.row button
+		{
+			margin-right: 6dp;
+		}
+
+		.row .spacer
+		{
+			flex: 1;
+		}
+
+		/* Without a map. */
+		#drum-map.unavailable
+		{
+			display: none;
+		}
+	</style>
+	<script>
+		DrumMaps = {}
+		local dialog = DrumMaps
+
+		local maps = {}
+		local selected = 1
+
+		local function escape(text)
+			return (tostring(text):gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"):gsub('"', "&quot;"))
+		end
+
+		-- Pitch names as the drum editor writes them: middle C (60) is C3.
+		local names = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"}
+		local steps = {C = 0, D = 2, E = 4, F = 5, G = 7, A = 9, B = 11}
+
+		local function pitchName(pitch)
+			return names[pitch % 12 + 1] .. tostring(pitch // 12 - 2)
+		end
+
+		-- A pitch typed: a name such as C1, F#2 or Db-1, or a number; nil if it isn't one.
+		local function parsePitch(text)
+			local number = math.tointeger(tonumber(text))
+			if number ~= nil then
+				return number
+			end
+			local letter, accidentals, octave = text:upper():match("^%s*([A-G])([#B]*)(-?%d+)%s*$")
+			if letter == nil then
+				return nil
+			end
+			local pitch = steps[letter] + (tonumber(octave) + 2) * 12
+			for accidental in accidentals:gmatch(".") do
+				pitch = pitch + (accidental == "#" and 1 or -1)
+			end
+			return pitch
+		end
+
+		local function message(document, text)
+			document:GetElementById("drum-maps-message").inner_rml = escape(text or "")
+		end
+
+		local function current()
+			return maps[selected]
+		end
+
+		-- What a sound's field shows.
+		local function shown(sound, key)
+			if key == "iNote" or key == "oNote" then
+				return pitchName(sound[key])
+			elseif key == "channel" then
+				return sound.channel == nil and "Any" or tostring(sound.channel + 1)
+			elseif key == "output" then
+				return sound.output == "" and "Default" or sound.output
+			end
+			return tostring(sound[key])
+		end
+
+		local function field(pitch, key, value, class)
+			return '<input type="text" class="text ' .. class .. '" pitch="' .. pitch .. '" key="' .. key ..
+				'" value="' .. escape(value) .. '" onchange="DrumMaps.change(document, event)"' ..
+				' onblur="DrumMaps.change(document, event)"/>'
+		end
+
+		-- While rows are written, their check boxes announce changes that aren't the user's.
+		local filling = false
+
+		function dialog.show(document)
+			local list = {}
+			for index, map in ipairs(maps) do
+				list[#list + 1] = '<listitem value="' .. index .. '">' .. escape(map.name) .. "</listitem>"
+			end
+			local view = document:GetElementById("drum-maps")
+			view.inner_rml = table.concat(list)
+			view:SetAttribute("value", tostring(selected))
+			local map = current()
+			document:GetElementById("drum-map"):SetClass("unavailable", map == nil)
+			if map == nil then
+				return
+			end
+			document:GetElementById("drum-map-name"):SetAttribute("value", map.name)
+			-- The sounds in the map's order, from the top (pp. 1236-1237).
+			local rows = {}
+			for _, pitch in ipairs(map.order) do
+				local sound = map.sounds[pitch + 1]
+				rows[#rows + 1] = '<div class="map-row sound-row" pitch="' .. pitch .. '"><span class="pitch">' ..
+					pitchName(pitch) .. "</span>" .. field(pitch, "name", sound.name, "name") ..
+					field(pitch, "snap", sound.snap, "note") ..
+					'<input type="checkbox" class="checkbox mute" pitch="' .. pitch .. '" key="mute"' ..
+					(sound.mute and " checked" or "") .. ' onchange="DrumMaps.change(document, event)"/>' ..
+					field(pitch, "iNote", shown(sound, "iNote"), "note") ..
+					field(pitch, "oNote", shown(sound, "oNote"), "note") ..
+					field(pitch, "channel", shown(sound, "channel"), "note") ..
+					field(pitch, "output", shown(sound, "output"), "output") .. "</div>"
+			end
+			filling = true
+			document:GetElementById("drum-map-sounds").inner_rml = table.concat(rows)
+			filling = false
+		end
+
+		-- While it runs a command, the events of its changes come in: it shows them itself after the command.
+		local busy = false
+
+		-- Reads the maps; the selected one stays selected. Returns the project.
+		local function reload()
+			local id = (maps[selected] or {}).id
+			busy = true
+			local ok, project = pcall(gnubase.project.get)
+			busy = false
+			project = ok and project or {}
+			maps = project.drumMaps or {}
+			for index, map in ipairs(maps) do
+				if map.id == id then
+					selected = index
+				end
+			end
+			selected = math.max(1, math.min(selected, #maps))
+			return project
+		end
+
+		-- Runs an engine command; a refusal shows its message. Returns whether it ran.
+		local function run(document, call)
+			busy = true
+			local ok, failure = pcall(call)
+			busy = false
+			message(document, ok and "" or failure)
+			reload()
+			return ok
+		end
+
+		-- A change from elsewhere: a load, an undo, MCP or Lua. A map that comes is selected.
+		local function follow(event)
+			local document = dialog.document
+			if busy or document == nil then
+				return
+			end
+			local added = event.name == "drumMap.added" and type(event.data.map) == "table"
+			reload()
+			for index, map in ipairs(maps) do
+				if added and map.id == event.data.map.id then
+					selected = index
+				end
+			end
+			dialog.show(document)
+		end
+
+		-- The map of the editor's active track: the editor window's, else the lower zone's.
+		local function editorMap(project)
+			for _, name in ipairs({"window", "lower"}) do
+				local ok, view = pcall(gnubase.editor.get, {editor = name})
+				if ok and view.open and view.activeTrack ~= 0 then
+					for _, track in ipairs(project.tracks or {}) do
+						if track.id == view.activeTrack and (track.drumMap or 0) ~= 0 then
+							return track.drumMap
+						end
+					end
+				end
+			end
+			return nil
+		end
+
+		function dialog.open(document)
+			dialog.document = document
+			if not dialog.subscribed then
+				dialog.subscribed = true
+				for _, name in ipairs({"drumMap.added", "drumMap.changed", "drumMap.removed", "project.reset"}) do
+					gnubase.on(name, follow)
+				end
+			end
+			local id = editorMap(reload())
+			for index, map in ipairs(maps) do
+				if map.id == id then
+					selected = index
+				end
+			end
+			message(document, "")
+			dialog.show(document)
+		end
+
+		function dialog.select(document)
+			local value = tonumber(tostring(document:GetElementById("drum-maps"):GetAttribute("value") or ""))
+			if value ~= nil and value ~= selected and maps[value] ~= nil then
+				selected = value
+				dialog.show(document)
+			end
+		end
+
+		-- The map's name typed (p. 1236), with Enter or when the field loses the focus.
+		function dialog.rename(document, event)
+			local element = event.target_element
+			local map = current()
+			if map == nil or (event.type == "change" and not event.parameters.linebreak) then
+				return
+			end
+			local name = element:GetAttribute("value") or ""
+			if name == map.name then
+				return
+			end
+			if not run(document, function() gnubase.drumMap.set{map = map.id, name = name} end) then
+				element:SetAttribute("value", map.name)
+			end
+			dialog.show(document)
+		end
+
+		-- The sound's setting as drumMap.set takes it, or nil if the text isn't one.
+		local function setting(key, text, element)
+			if key == "mute" then
+				return element:HasAttribute("checked")
+			elseif key == "iNote" or key == "oNote" then
+				return parsePitch(text)
+			elseif key == "channel" then
+				if text:lower():match("^%s*any%s*$") then
+					return -1
+				end
+				local channel = math.tointeger(tonumber(text))
+				return channel ~= nil and channel - 1 or nil
+			elseif key == "output" then
+				return text == "Default" and "" or text
+			end
+			return text
+		end
+
+		-- A sound's field or mute changed; text fields change with Enter or when they lose the focus.
+		function dialog.change(document, event)
+			if filling then
+				return
+			end
+			local element = event.target_element
+			local key = element:GetAttribute("key")
+			local pitch = tonumber(element:GetAttribute("pitch") or "")
+			local map = current()
+			if map == nil or key == nil or pitch == nil then
+				return
+			end
+			local sound = map.sounds[pitch + 1]
+			local text = ""
+			if key ~= "mute" then
+				if event.type == "change" and not event.parameters.linebreak then
+					return
+				end
+				text = element:GetAttribute("value") or ""
+				if text == shown(sound, key) then
+					return
+				end
+			end
+			local value = setting(key, text, element)
+			local ok = value ~= nil and
+				run(document, function() gnubase.drumMap.set{map = map.id, sounds = {{pitch = pitch, [key] = value}}} end)
+			if value == nil then
+				message(document, key .. " can't be " .. text)
+			end
+			if not ok and key ~= "mute" then
+				element:SetAttribute("value", shown(sound, key))
+			elseif ok and key ~= "mute" then
+				element:SetAttribute("value", shown(current().sounds[pitch + 1], key))
+			end
+		end
+
+		-- New Map and New Copy (p. 1236): the new map is selected.
+		function dialog.add(document, copy)
+			local parameters = {}
+			if copy and current() ~= nil then
+				parameters.copy = current().id
+			end
+			if run(document, function() gnubase.drumMap.add(parameters) end) then
+				selected = #maps
+			end
+			dialog.show(document)
+		end
+
+		function dialog.remove(document)
+			local map = current()
+			if map ~= nil then
+				run(document, function() gnubase.drumMap.remove{map = map.id} end)
+				dialog.show(document)
+			end
+		end
+
+		function dialog.save(document)
+			if current() ~= nil then
+				gnubase.ui.saveDrumMap{map = current().id}
+			end
+		end
+
+		function dialog.load(document)
+			gnubase.ui.command{command = "drumMap.load"}
+		end
+	</script>
+</head>
+<body onshow="DrumMaps.open(document)" onunload="DrumMaps.document = nil">
+	<dialog id="drum-maps-dialog">
+		<div class="dialog-titlebar">Drum Map Setup</div>
+		<div class="content">
+			<div class="maps">
+				<listview id="drum-maps" onchange="DrumMaps.select(document)"/>
+			</div>
+			<div class="map" id="drum-map">
+				<div class="map-row">
+					<span class="label">Name</span>
+					<input type="text" class="text" id="drum-map-name" onchange="DrumMaps.rename(document, event)"
+						onblur="DrumMaps.rename(document, event)"/>
+				</div>
+				<div class="map-row sound-row">
+					<span class="pitch">Pitch</span><span class="name">Drum Sound</span><span class="note">Snap</span>
+					<span class="mute">Mute</span><span class="note">I-Note</span><span class="note">O-Note</span>
+					<span class="note">Channel</span><span class="output">Output</span>
+				</div>
+				<div id="drum-map-sounds"/>
+			</div>
+		</div>
+		<div class="row">
+			<button id="drum-map-new" onclick="DrumMaps.add(document, false)">New Map</button>
+			<button id="drum-map-copy" onclick="DrumMaps.add(document, true)">New Copy</button>
+			<button id="drum-map-remove" onclick="DrumMaps.remove(document)">Remove</button>
+			<button id="drum-map-save" onclick="DrumMaps.save(document)">Save...</button>
+			<button id="drum-map-load" onclick="DrumMaps.load(document)">Load...</button>
+			<div class="spacer" id="drum-maps-message"/>
+			<button id="drum-maps-close" result="cancel">Close</button>
+		</div>
+	</dialog>
+</body>
+</rml>
