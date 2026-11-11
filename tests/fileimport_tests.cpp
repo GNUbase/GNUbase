@@ -428,11 +428,17 @@ TEST_CASE("Use Settings imports audio files without the Import Options dialog, w
 	CHECK(media.at("sampleRate") == 48000.0);
 	CHECK(app.call("job.list").at("jobs").size() == jobs);
 
-	// The pool's Import Medium (clips only) and the selected track use the settings too.
+	// The pool's Import Medium (clips only) and the selected track use the settings too. kick is 48 kHz and outside
+	// the project: with Copy off (Convert on, nothing to convert) it keeps its path and no copy job starts, which the
+	// defaults (Copy on) would do.
 	display.importFiles({kick}, std::nullopt, std::nullopt, true);
 	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("clips").size() == 8; }));
 	CHECK(!dialogShown(app));
 	CHECK(events().size() == 7);
+	const Json medium = app.call("project.get").at("media");
+	REQUIRE(medium.size() == 8);
+	CHECK(medium[7].at("path") == kick);
+	CHECK(app.call("job.list").at("jobs").size() == jobs);
 	const uint64_t selected = project.at("tracks")[0].at("id").get<uint64_t>();
 	display.importToSelection({kick, snare}, {selected});
 	REQUIRE(app.waitUntil([&events] { return events().size() == 9; }));
