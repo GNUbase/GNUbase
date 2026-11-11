@@ -793,12 +793,18 @@ namespace gnubase::engine
 		{ return (size_t{event.channel & 15U} * 128) + (event.key & 127U); };
 		// The bit of a pedal that holds notes in ChannelState::midiPedals.
 		const auto pedal = [](uint8_t controller) noexcept
-		{ return static_cast<uint8_t>(controller == 64 ? 1 : (controller == 66 ? 2 : 4)); };
+		{
+			if (controller == 64)
+				return uint8_t{1};
+			return controller == 66 ? uint8_t{2} : uint8_t{4};
+		};
 		// Keeps track of the notes that sound and the pedals that are down, for an event that passes.
 		const auto track = [&state, &note, &pedal](const graph::ProcessEvent& event) noexcept
 		{
 			if (event.type == Type::NoteOn || event.type == Type::NoteOff)
+			{
 				state.midiHeld[note(event)] = event.type == Type::NoteOn;
+			}
 			else if (event.type == Type::Controller && graph::holdsNotes(event.key))
 			{
 				uint8_t& down = state.midiPedals[event.channel & 15U];
