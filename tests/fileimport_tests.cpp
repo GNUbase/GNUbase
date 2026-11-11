@@ -435,9 +435,9 @@ TEST_CASE("Use Settings imports audio files without the Import Options dialog, w
 	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("clips").size() == 8; }));
 	CHECK(!dialogShown(app));
 	CHECK(events().size() == 7);
-	const Json medium = app.call("project.get").at("media");
-	REQUIRE(medium.size() == 8);
-	CHECK(medium[7].at("path") == kick);
+	const Json pool = app.call("project.get").at("media");
+	REQUIRE(pool.size() == 8);
+	CHECK(pool[7].at("path") == kick);
 	CHECK(app.call("job.list").at("jobs").size() == jobs);
 	const uint64_t selected = project.at("tracks")[0].at("id").get<uint64_t>();
 	display.importToSelection({kick, snare}, {selected});
