@@ -133,6 +133,7 @@ TEST_CASE("the transpose track's context menu sets the root key for unassigned e
 	const std::string item = R"(#track-list-menu > [command="transpose.assignRootKey"])";
 	const auto menu = [&window, &item](uint64_t track)
 	{
+		window.app.ui().key(std::nullopt, "Escape");
 		window.app.ui().click(std::nullopt,
 			{"#track-list listitem[value=\"" + std::to_string(track) + "\"] .track-name", 0, std::nullopt},
 			ui::MouseButton::Right, 1, {});
