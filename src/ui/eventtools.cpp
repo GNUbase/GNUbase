@@ -13,7 +13,9 @@
 #include <RmlUi/Core/Property.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -26,6 +28,9 @@ namespace gnubase::ui
 	namespace
 	{
 		using engine::Json;
+
+		// How long a press waits for the actions that wait for Snap to Zero Crossing (EventDisplay::runWaitingActions).
+		constexpr std::chrono::seconds g_waitingActionsTimeout{2};
 
 		Rml::Property dp(double value)
 		{
@@ -643,14 +648,12 @@ namespace gnubase::ui
 		if (!m_snap.zeroCrossing || !m_range)
 			return;
 		const RangeSelection range = *m_range;
-		++m_zeroCrossings;
-		m_binding.send("snap.zeroCrossings", {{"positions", {range.start, range.end}}, {"tracks", range.tracks}},
+		m_binding.sendAwaited("snap.zeroCrossings", {{"positions", {range.start, range.end}}, {"tracks", range.tracks}},
 			[this, range, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
 				if (alive.expired())
 					return;
-				--m_zeroCrossings;
-				// Unless the range changed meanwhile.
+				// Unless the range changed meanwhile. The binding then runs the actions that waited.
 				if (result.ok() && m_range && m_range->start == range.start && m_range->end == range.end &&
 					m_range->tracks == range.tracks)
 				{
@@ -660,10 +663,17 @@ namespace gnubase::ui
 					moved.end = std::max(moved.start, positions.at(1).get<int64_t>());
 					setRange(std::move(moved));
 				}
-				if (m_zeroCrossings == 0)
-					for (const std::function<void()>& action : std::exchange(m_afterZeroCrossings, {}))
-						action();
 			});
+	}
+
+	void EventDisplay::runWaitingActions()
+	{
+		if (!m_binding.holding())
+			return;
+		// Settling hands on the answers, which run the actions; after the timeout they run on the range as it is, not
+		// on the one that the press starts.
+		m_binding.settle(g_waitingActionsTimeout);
+		m_binding.releaseHeld();
 	}
 
 	void EventDisplay::selectRange()

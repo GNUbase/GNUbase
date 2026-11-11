@@ -68,6 +68,21 @@ namespace gnubase::ui
 		// (Rml::Context::RequestNextUpdate(0)), and an idle UI stays idle. onResult's handlers still draw every window.
 		void sendQuietly(std::string command, engine::Json parameters, std::function<void(const engine::Result&)> done);
 
+		// Sends a query, like send, that what the user does next waits for (afterAwaited): e.g. snap.zeroCrossings,
+		// which moves a selection range's edges before an edit of the range runs (#1086). settle waits for its result,
+		// and for what its done sends, as for a command that isn't a query.
+		engine::RequestId sendAwaited(
+			std::string command, engine::Json parameters, std::function<void(const engine::Result&)> done);
+
+		// Runs run now, or while queries sent with sendAwaited are out, once they are answered, after their dones: what
+		// the user does goes in the order they did it, e.g. Delete right after a range is drawn, and an undo after it.
+		// What a held one runs itself runs at once, unless an awaited query is out again.
+		void afterAwaited(std::function<void()> run);
+		// Whether afterAwaited holds anything.
+		bool holding() const { return !m_held.empty(); }
+		// Runs what afterAwaited holds now, without waiting for the answers: e.g. once settle timed out.
+		void releaseHeld();
+
 		// Sends document commands ({"command", "parameters"} each) as a step of a value widget's gesture (the
 		// "gesture" parameter of its change event, ui/widgets.h): a history.transaction named description whose merge
 		// key is what the gesture changes (e.g. "channel 5 volume") and the gesture, so that a drag, wheel turns or a
@@ -104,9 +119,9 @@ namespace gnubase::ui
 		size_t waiting(const std::string& command) const;
 
 		// Sends the steps that wait (sendStep) and hands on results and events, as update() does, until no command that
-		// isn't a query is out, including those that the dones send: e.g. so that what a user script ran through the
-		// UI is in the script's undo step (docs/features/scripts.md). Returns false if they are still out after the
-		// timeout.
+		// isn't a query, nor a query sent with sendAwaited, is out, including those that the dones send: e.g. so that
+		// what a user script ran through the UI is in the script's undo step (docs/features/scripts.md). Returns false
+		// if they are still out after the timeout.
 		bool settle(std::chrono::milliseconds timeout);
 
 		// Calls handler in update() with every event of that name while the subscription exists.
@@ -167,7 +182,8 @@ namespace gnubase::ui
 		{
 			std::string command;
 			std::function<void(const engine::Result&)> done;
-			bool quiet; // done draws what it changed itself (sendQuietly)
+			bool quiet;   // done draws what it changed itself (sendQuietly)
+			bool awaited; // settle waits for it (sendAwaited)
 		};
 
 		// A step of sendStep, until it is sent.
@@ -197,10 +213,12 @@ namespace gnubase::ui
 		// Draws the element's window in the shell's step (Rml::Context::RequestNextUpdate).
 		static void redraw(Rml::Element* shows);
 		void sendWaitingSteps(const std::string& before);
-		engine::RequestId transmit(
-			std::string command, engine::Json parameters, std::function<void(const engine::Result&)> done, bool quiet);
+		engine::RequestId transmit(std::string command, engine::Json parameters,
+			std::function<void(const engine::Result&)> done, bool quiet, bool awaited = false);
 		void sendNextStep(const std::string& what);
 		void answerStep(const std::string& what, const engine::Result& result);
+		// Runs what afterAwaited holds while no awaited query is out (all of it with force); returns whether any ran.
+		bool runHeld(bool force);
 
 		std::atomic<bool> m_woken{false}; // woken was called and update() hasn't run since
 		engine::Client m_client;
@@ -209,8 +227,11 @@ namespace gnubase::ui
 		std::map<uint64_t, Handler> m_handlers;
 		std::map<uint64_t, Waiting> m_resultHandlers; // onResult's, by subscription
 		std::map<uint64_t, std::function<void()>> m_watches;
-		std::map<std::string, Steps> m_steps; // sendStep's, by what they change; entries are never erased
-		std::set<std::string> m_queries;      // the engine's commands that only read
+		std::map<std::string, Steps> m_steps;     // sendStep's, by what they change; entries are never erased
+		std::set<std::string> m_queries;          // the engine's commands that only read
+		size_t m_awaited = 0;                     // queries sent with sendAwaited and not answered yet
+		std::deque<std::function<void()>> m_held; // afterAwaited's, in order
+		bool m_runningHeld = false;               // runHeld runs one
 		uint64_t m_handed = 0;
 		uint64_t m_owners = 0; // stepOwner's
 		uint64_t m_nextId = 1;
