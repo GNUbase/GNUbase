@@ -68,7 +68,7 @@ namespace gnubase::engine::midifile
 		time::Ticks start = 0;       // where the file's start goes, in project ticks
 		time::TempoMap tempo{120.0}; // the project's tempo and signatures, which hold before start
 		time::SignatureMap signatures;
-		time::Ticks contentEnd = 0; // where the project's parts, events and markers end, in project ticks
+		time::Ticks contentEnd = 0; // where the project's content (parts, events, markers, automation) ends, in ticks
 	};
 
 	// What a MIDI file holds. A type 1 or 2 file gives a track per file track with events, a type 0 file a track

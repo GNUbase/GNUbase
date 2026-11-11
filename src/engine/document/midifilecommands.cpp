@@ -213,21 +213,29 @@ namespace gnubase::engine
 		options.start = project.tempo.toTicks(position, project.sampleRate);
 		options.tempo = project.tempo;
 		options.signatures = project.signatures;
-		// Where the project's parts, events and markers end: the project's tempo and signatures go on after the
-		// file's end if anything of it is there.
-		const auto ticksAt = [&project](const time::Position& at)
-		{ return time::toTicks(at, project.tempo, project.sampleRate); };
+		// Where the project's content ends: its parts, events, markers, arranger, chord, scale and transpose events and
+		// automation points. The project's tempo and signatures go on after the file's end if any of it is there.
+		const auto extend = [&project, &options](const time::Position& at)
+		{ options.contentEnd = std::max(options.contentEnd, time::toTicks(at, project.tempo, project.sampleRate)); };
 		for (const auto& [id, part] : project.midiParts)
-			options.contentEnd =
-				std::max(options.contentEnd, ticksAt({part.position.base, part.position.value + part.length}));
+			extend({part.position.base, part.position.value + part.length});
 		for (const auto& [id, part] : project.audioParts)
-			options.contentEnd =
-				std::max(options.contentEnd, ticksAt({part.position.base, part.position.value + part.length}));
+			extend({part.position.base, part.position.value + part.length});
 		for (const auto& [id, event] : project.audioEvents)
-			options.contentEnd =
-				std::max(options.contentEnd, ticksAt({time::TimeBase::Linear, eventSpan(project, event).end}));
+			extend({time::TimeBase::Linear, eventSpan(project, event).end});
 		for (const auto& [id, marker] : project.markers)
-			options.contentEnd = std::max(options.contentEnd, ticksAt(marker.end));
+			extend(marker.end);
+		for (const ArrangerEvent& event : project.arranger.events)
+			extend(event.end);
+		for (const ChordEvent& event : project.chords.events)
+			extend(event.position);
+		for (const ChordEvent& event : project.chords.scales)
+			extend(event.position);
+		for (const TransposeEvent& event : project.transpose.events)
+			extend(event.position);
+		for (const auto& [id, lane] : project.automation)
+			for (const auto& [pointId, point] : lane.points)
+				extend(point.position);
 		midifile::Import imported;
 		try
 		{
