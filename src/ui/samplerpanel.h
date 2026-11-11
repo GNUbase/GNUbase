@@ -3,9 +3,11 @@
 
 #include "engine/engine.h"
 #include "ui/enginebinding.h"
+#include "ui/rmlui.h"
 
 #include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/ObserverPtr.h>
+#include <RmlUi/Core/Types.h>
 
 #include <cstdint>
 #include <functional>
@@ -115,5 +117,7 @@ namespace gnubase::ui
 		bool m_settingsKnown = false;                     // a change came before settings.get answered: it is newer
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
 		std::vector<Subscription> m_subscriptions;
+		// The file drop event's name, made once, so that removing its listener in the destructor allocates nothing.
+		const Rml::String m_dropEvent{g_fileDropEvent};
 	};
 }

@@ -171,7 +171,7 @@ namespace gnubase::ui
 			R"(</div><div class="sampler-sections" id="sampler-sections"/></div>)");
 		for (const Rml::EventId id : g_events)
 			element.AddEventListener(id, this);
-		element.AddEventListener(g_fileDropEvent, this);
+		element.AddEventListener(m_dropEvent, this);
 		if (Rml::ElementDocument* document = element.GetOwnerDocument(); document != nullptr)
 		{
 			document->AddEventListener(Rml::EventId::Mousemove, this);
@@ -216,7 +216,7 @@ namespace gnubase::ui
 		{
 			for (const Rml::EventId id : g_events)
 				root->RemoveEventListener(id, this);
-			root->RemoveEventListener(g_fileDropEvent, this);
+			root->RemoveEventListener(m_dropEvent, this);
 		}
 		if (Rml::Element* document = m_document.get())
 		{
