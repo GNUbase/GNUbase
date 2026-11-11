@@ -12,6 +12,7 @@
 #include <random>
 #include <sstream>
 #include <stdexcept>
+#include <system_error>
 #include <utility>
 
 #ifdef _WIN32
@@ -275,16 +276,26 @@ namespace gnubase::test
 		return text.str();
 	}
 
-	Unreadable::Unreadable(std::filesystem::path file) : m_file(std::move(file))
+	Unreadable::Unreadable(std::filesystem::path file)
+		: m_file(std::move(file)), m_folder(std::filesystem::is_directory(m_file))
 	{
 #ifdef _WIN32
-		HANDLE handle =
-			CreateFileW(m_file.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+		// Unshared, also a folder (backup semantics), which then can't be listed either.
+		HANDLE handle = CreateFileW(m_file.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING,
+			FILE_ATTRIBUTE_NORMAL | FILE_FLAG_BACKUP_SEMANTICS, nullptr);
 		m_active = handle != INVALID_HANDLE_VALUE;
 		m_handle = handle;
 #else
+		const auto readable = [this]
+		{
+			if (!m_folder)
+				return std::ifstream(m_file).good();
+			std::error_code error;
+			const std::filesystem::directory_iterator listed(m_file, error);
+			return !error;
+		};
 		m_active = ::chmod(m_file.c_str(), 0) == 0;
-		if (m_active && std::ifstream(m_file).good())
+		if (m_active && readable())
 			release(); // root reads anything
 #endif
 	}
@@ -302,7 +313,7 @@ namespace gnubase::test
 #ifdef _WIN32
 		CloseHandle(m_handle);
 #else
-		::chmod(m_file.c_str(), S_IRUSR | S_IWUSR);
+		::chmod(m_file.c_str(), m_folder ? S_IRWXU : S_IRUSR | S_IWUSR);
 #endif
 	}
 

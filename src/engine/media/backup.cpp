@@ -291,9 +291,9 @@ namespace gnubase::engine
 		};
 
 		// Lists what is in listed, a folder in the Mixdown folder root, into mixdowns, with the folders in it and what
-		// they hold, but not skipped, the backup's own folder, nor links to folders. A file or folder that can't be
-		// read goes into missing as {path}.
-		void listMixdowns(const fs::path& root, const fs::path& listed, const fs::path& skipped,
+		// they hold, but not skipped, the backup's own folder, nor links to folders. A folder that can't be listed goes
+		// into missing as {path} and is left out with what it holds; false if that is listed.
+		bool listMixdowns(const fs::path& root, const fs::path& listed, const fs::path& skipped,
 			std::vector<Mixdown>& mixdowns, Json& missing)
 		{
 			std::error_code error;
@@ -309,8 +309,10 @@ namespace gnubase::engine
 					// A link to a folder isn't followed: one to a folder above it would copy that again and again.
 					if (!fs::is_directory(entry->symlink_status(ignored)))
 						continue;
+					const auto at = static_cast<std::ptrdiff_t>(mixdowns.size());
 					mixdowns.push_back({path.lexically_relative(root), true, 0});
-					listMixdowns(root, path, skipped, mixdowns, missing);
+					if (!listMixdowns(root, path, skipped, mixdowns, missing))
+						mixdowns.erase(mixdowns.begin() + at, mixdowns.end());
 				}
 				else if (entry->is_regular_file(ignored))
 				{
@@ -320,6 +322,7 @@ namespace gnubase::engine
 			}
 			if (error)
 				missing.push_back({{"path", listed.u8string()}});
+			return !error;
 		}
 
 		// Removes what a backup wrote if it doesn't complete.
@@ -365,6 +368,27 @@ namespace gnubase::engine
 				if (error)
 					throw std::runtime_error("can't create " + folder.u8string() + ": " + error.message());
 				m_folders.push_back(folder);
+			}
+
+			// Creates a folder named name in folder, which exists, or else under the first free numbered name, as
+			// createFreeFile, and adds its name to taken. It goes again if the backup doesn't complete. Throws
+			// std::runtime_error.
+			fs::path createFreeFolder(const fs::path& folder, const fs::path& name, std::set<std::string>& taken)
+			{
+				for (int number = 1;; ++number)
+				{
+					const fs::path candidate = numbered(name, number);
+					std::error_code error;
+					if (taken.count(foldedName(candidate)) != 0 || fs::exists(folder / candidate, error))
+						continue;
+					fs::create_directory(folder / candidate, error);
+					if (error)
+						throw std::runtime_error(
+							"can't create " + (folder / candidate).u8string() + ": " + error.message());
+					taken.insert(foldedName(candidate));
+					m_folders.push_back(folder / candidate);
+					return folder / candidate;
+				}
 			}
 
 		private:
@@ -804,16 +828,23 @@ namespace gnubase::engine
 				missing.push_back({{"track", id}, {"path", track.frozen->path}});
 		}
 
-		// Under free names, as media: names that differ only in case, from a file system that tells them apart, don't
-		// overwrite each other on one that doesn't.
-		std::map<std::string, std::set<std::string>> takenMixdowns; // folded folder -> folded names in it
+		// Files and folders under free names, as media: names that differ only in case, from a file system that tells
+		// them apart, don't overwrite each other or clash, as a file A and a folder a, on one that doesn't. A folder
+		// comes before what it holds (sorted).
+		std::map<fs::path, fs::path> folderCopies;               // folder in the Mixdown folder -> its copy
+		std::map<fs::path, std::set<std::string>> takenMixdowns; // copied folder -> folded names in it
+		if (!mixdowns.empty())
+			cleanup.createFolders(folder / "Mixdown");
 		for (const Mixdown& mixdown : mixdowns)
 		{
 			job.checkCancelled();
-			const fs::path target = folder / "Mixdown" / mixdown.relative;
+			const auto parentCopy = folderCopies.find(mixdown.relative.parent_path());
+			const fs::path parent = parentCopy != folderCopies.end() ? parentCopy->second : folder / "Mixdown";
+			std::set<std::string>& takenNames = takenMixdowns[parent];
 			if (mixdown.folder)
 			{
-				cleanup.createFolders(target);
+				folderCopies[mixdown.relative] =
+					cleanup.createFreeFolder(parent, mixdown.relative.filename(), takenNames);
 				continue;
 			}
 			const fs::path source = mixdownFolder / mixdown.relative;
@@ -825,11 +856,9 @@ namespace gnubase::engine
 				continue;
 			}
 			readable.close();
-			cleanup.createFolders(target.parent_path());
 			detail = mixdown.relative.filename().u8string();
 			job.progress(static_cast<double>(done) / static_cast<double>(total), detail);
-			const fs::path copy = createFreeFile(
-				target.parent_path(), target.filename(), takenMixdowns[foldedName(target.parent_path())]);
+			const fs::path copy = createFreeFile(parent, mixdown.relative.filename(), takenNames);
 			cleanup.add(copy);
 			copyFile(source, copy, advance);
 		}
