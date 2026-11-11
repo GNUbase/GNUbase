@@ -398,7 +398,7 @@ namespace gnubase::ui
 			std::abs(widgets::number(*level, "value", static_cast<float>(m_level) + 1.0F) - m_level) > 1e-6)
 			level->SetAttribute("value", widgets::format(static_cast<float>(m_level)));
 		m_showing = false;
-		if (Rml::Element* handles = find("sampler-handles"))
+		if (const Rml::Element* handles = find("sampler-handles"))
 			for (int i = 0; i < handles->GetNumChildren(); ++i)
 			{
 				Rml::Element* handle = handles->GetChild(i);
