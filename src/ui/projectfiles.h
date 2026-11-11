@@ -55,6 +55,9 @@ namespace gnubase::ui
 		// Starts a new empty project unless the user wants to keep unsaved changes, asking in the window, then runs
 		// then (File > Import > MIDI File into a new project, #478). A failure shows its error instead.
 		void newProject(Window& window, std::function<void()> then);
+		// Logs the error and shows it in a dialog in the window (project-error.rml): also for the File menu's other
+		// commands that read or write files, such as importing and exporting tracks.
+		void showError(WindowId window, const std::string& error);
 
 	private:
 		using Closed = std::function<void(Rml::ElementDocument& dialog, const std::string& result)>;
@@ -87,8 +90,6 @@ namespace gnubase::ui
 		// A command's done that shows its error in a dialog in the window if it failed (project-error.rml), so that a
 		// failed save isn't taken for done.
 		std::function<void(const engine::Result&)> reportFailure(Window& window);
-		// Logs the error and shows it in a dialog in the window (project-error.rml).
-		void showError(WindowId window, const std::string& error);
 		// Shows the error in project-error.rml in the window once the event that asked is done. A failed auto save's
 		// error (autoSave) takes the place of an earlier one's but doesn't open over any other modal dialog in the
 		// window: it waits for them to close (waitForDialogs). It counts as shown only once it opened and while no
