@@ -242,6 +242,19 @@ TEST_CASE("the in-place editor edits notes as the key editor does, and the event
 	f.scroll(62);
 	f.click(f.at(g_bar + (3 * g_quarter) + (g_sixteenth / 2), 62));
 	f.settle(4);
+	// While a note is being drawn, zooming the project window moves the notes and the drawn one with the timeline.
+	f.app.ui().press(std::nullopt, f.at(g_bar + (g_sixteenth / 2), 63), ui::MouseButton::Left, {});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const std::string drawn = f.editor() + " .key-note.drawing";
+	REQUIRE(f.elements(drawn).size() == 1);
+	f.display.zoomIn();
+	f.settle(5); // the four notes and the one being drawn
+	CHECK(std::abs(f.box(drawn).at("x").get<double>() - f.timelineX(g_bar)) <= 1.5);
+	f.app.ui().release(std::nullopt, f.at(g_bar + (g_sixteenth / 2), 63), ui::MouseButton::Left, {});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.elements(drawn).empty());
+	f.display.zoomOut(); // the part added next in view again
+	f.settle(5);
 	// A part added to the track shows in the row of parts; a click on it activates it.
 	const uint64_t later =
 		f.app.call("midiPart.add", {{"track", f.track}, {"position", 3 * g_bar}, {"length", g_bar}, {"name", "More"}})

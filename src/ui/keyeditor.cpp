@@ -652,11 +652,25 @@ namespace gnubase::ui
 			for (const Part& part : m_parts)
 				if (part.id == idAttribute(*element, "part"))
 					place(*element, part.start, part.end - part.start, -1);
-		// The notes' elements are in m_notes' order (render).
-		const Rml::Element* notes = root->QuerySelector(".key-editor-notes");
-		if (notes != nullptr && static_cast<size_t>(notes->GetNumChildren()) == m_notes.size())
-			for (size_t i = 0; i < m_notes.size(); ++i)
-				place(*notes->GetChild(static_cast<int>(i)), m_notes[i].start, m_notes[i].length, m_notes[i].pitch);
+		// The notes' elements are in m_notes' order (render), and a note being drawn after them (press).
+		if (const Rml::Element* notes = root->QuerySelector(".key-editor-notes"))
+		{
+			const Rml::Element* drawn = m_drawn.get();
+			size_t next = 0;
+			for (int i = 0; i < notes->GetNumChildren(); ++i)
+			{
+				Rml::Element& child = *notes->GetChild(i);
+				if (&child == drawn)
+				{
+					place(child, std::llround(m_pressedAt.first), m_drawnLength, m_pressedAt.second);
+				}
+				else if (next < m_notes.size())
+				{
+					place(child, m_notes[next].start, m_notes[next].length, m_notes[next].pitch);
+					++next;
+				}
+			}
+		}
 		if (Rml::Element* cursor = root->QuerySelector(".key-editor-step-cursor");
 			cursor != nullptr && m_view.value("stepInput", false))
 			place(*cursor, m_view.value("stepPosition", int64_t{0}), 0, -1);
@@ -1120,7 +1134,8 @@ namespace gnubase::ui
 			drawn->SetClass("drum-note", m_drum);
 			drawn->SetClass("drawing", true);
 			Rml::Element* added = notes->AppendChild(std::move(drawn));
-			place(*added, start, lengthQuantize(m_pressedAt.second), m_pressedAt.second);
+			m_drawnLength = lengthQuantize(m_pressedAt.second);
+			place(*added, start, m_drawnLength, m_pressedAt.second);
 			m_drawn = added->GetObserverPtr();
 			return;
 		}
@@ -1242,7 +1257,8 @@ namespace gnubase::ui
 				const int64_t step = lengthQuantize(m_pressedAt.second);
 				const auto steps = std::max<int64_t>(
 					1, static_cast<int64_t>(std::ceil((ticks - m_pressedAt.first) / static_cast<double>(step))));
-				place(*drawn, std::llround(m_pressedAt.first), steps * step, m_pressedAt.second);
+				m_drawnLength = steps * step;
+				place(*drawn, std::llround(m_pressedAt.first), m_drawnLength, m_pressedAt.second);
 			}
 			return;
 		}
