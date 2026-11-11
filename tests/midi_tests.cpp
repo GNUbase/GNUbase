@@ -879,7 +879,7 @@ TEST_CASE(
 {
 	// As an instrument chases the MIDI tracks routed to it. The track heard again has the older CC 7, the later CC 1,
 	// and CC 10 alone.
-	auto heardAgain = std::make_shared<std::atomic<bool>>(false);
+	auto heardAgain = std::make_shared<std::atomic<HeardAgain>>(HeardAgain::No);
 	auto sequence = std::make_unique<MidiSequence>();
 	sequence->chase.push_back(makeChaseTrack({control(10, 1, 1), control(30, 7, 100)}, {}));
 	ChaseTrack track = makeChaseTrack({control(5, 7, 30), control(20, 1, 2), control(50, 10, 5)}, {});
@@ -897,9 +897,9 @@ TEST_CASE(
 		player.locate(100);
 		player.play(16);
 		player.heard.clear();
-		heardAgain->store(true);
+		heardAgain->store(HeardAgain::Quiet);
 		player.play(16);
-		heardAgain->store(false);
+		heardAgain->store(HeardAgain::No);
 		player.play(16);
 		CHECK(player.heard == heardAt(16));
 	}
@@ -907,7 +907,7 @@ TEST_CASE(
 	{
 		player.locate(50);
 		player.stop();
-		heardAgain->store(true);
+		heardAgain->store(HeardAgain::Quiet);
 		player.stop();
 		CHECK(player.heard == heardAt(16));
 	}
@@ -923,11 +923,28 @@ TEST_CASE(
 		player.locate(100);
 		player.play(16);
 		player.heard.clear();
-		heardAgain->store(true);
+		heardAgain->store(HeardAgain::Quiet);
 		player.play(16);
 		CHECK(player.heard ==
 			std::vector<Heard>{{16, Type::Controller, 0, 1, 2, {}}, {16, Type::Controller, 0, 7, 100, {}},
 				{16, Type::Controller, 0, 10, 5, {}}});
+	}
+	SECTION("only its mute button muted it: the kinds its channel sends")
+	{
+		// Its strip sends its own CC 1 and CC 10, which played into the mute.
+		auto withKinds = std::make_unique<MidiSequence>();
+		withKinds->chase.push_back(makeChaseTrack({control(10, 1, 1), control(30, 7, 100)}, {}));
+		ChaseTrack heard = makeChaseTrack({control(5, 7, 30), control(20, 1, 2), control(50, 10, 5)}, {});
+		heard.heardAgain = heardAgain;
+		heard.channelKinds = {7};
+		withKinds->chase.push_back(std::move(heard));
+		instrument->setSequence(std::move(withKinds));
+		player.locate(100);
+		player.play(16);
+		player.heard.clear();
+		heardAgain->store(HeardAgain::Muted);
+		player.play(16);
+		CHECK(player.heard == std::vector<Heard>{{16, Type::Controller, 0, 7, 100, {}}});
 	}
 	SECTION("a cycle jump in the same block chases again at the left locator")
 	{
@@ -935,7 +952,7 @@ TEST_CASE(
 		player.locate(100);
 		player.play(4);
 		player.heard.clear();
-		heardAgain->store(true);
+		heardAgain->store(HeardAgain::Quiet);
 		player.play(16); // 104 to 108, then 60 to 72
 		const std::vector<Heard> atTheJump = {{8, Type::Controller, 0, 1, 2, {}}, {8, Type::Controller, 0, 7, 100, {}},
 			{8, Type::Controller, 0, 10, 5, {}}};
@@ -948,7 +965,7 @@ TEST_CASE(
 		instrument->setChase(MidiChase());
 		player.locate(100);
 		player.play(16);
-		heardAgain->store(true);
+		heardAgain->store(HeardAgain::Quiet);
 		player.play(16);
 		CHECK(player.heard.empty());
 	}
@@ -957,7 +974,7 @@ TEST_CASE(
 		fillInputBut(player, 1);
 		player.locate(100);
 		player.play(16); // room for CC 1 alone
-		heardAgain->store(true);
+		heardAgain->store(HeardAgain::Quiet);
 		player.play(16);
 		CHECK(ofType(player.heard, Type::Controller) ==
 			std::vector<Heard>{{0, Type::Controller, 0, 1, 2, {}}, {16, Type::Controller, 0, 1, 2, {}},
@@ -1017,8 +1034,9 @@ TEST_CASE("a chase that doesn't fit into the event buffer goes on in the next bl
 
 TEST_CASE("a routed MIDI track's controller event at the jump position wins over an older chased one", "[unit]")
 {
-	// As AudioEngine::attachMidi sets them up: the MIDI track's sequencer chases no controller events, the
-	// instrument's chases the MIDI track's. The MIDI track's events reach the instrument through its input.
+	// As AudioEngine::attachMidi sets them up: the MIDI track's sequencer chases its controller events into its strip
+	// alone (none here: MidiSequence::chaseIntoStrip isn't set), the instrument's chases the MIDI track's. The MIDI
+	// track's events reach the instrument through its input.
 	const uint32_t blockSize = GENERATE(1U, 64U);
 	CAPTURE(blockSize);
 	const std::vector<RenderController> controllers = {control(1000, 7, 100),

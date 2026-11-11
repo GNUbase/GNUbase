@@ -3219,6 +3219,21 @@ namespace gnubase::engine
 				if (!(channel == before))
 					context.emit("channel.changed", {{"channel", toJson(channel)}});
 			}
+			// And volume automation (#961): the project's file checks it against the fader top.
+			for (auto& [id, lane] : project.automation)
+			{
+				if (lane.target.type != AutomationTargetType::Volume)
+					continue;
+				bool lowered = false;
+				for (auto& [pointId, point] : lane.points)
+					if (point.value > maxVolume)
+					{
+						point.value = maxVolume;
+						lowered = true;
+					}
+				if (lowered)
+					context.emit("automationLane.changed", {{"lane", toJson(lane)}});
+			}
 			if (sampleRate != project.sampleRate)
 				changeSampleRate(project, sampleRate, context);
 			context.emit("project.changed", projectSettingsJson(project));
@@ -3515,6 +3530,7 @@ namespace gnubase::engine
 				{
 					result = handler(m_project, context);
 					syncSharedParts(before.midiParts, m_project, context);
+					midi::adoptPatterns(m_project, context);
 				}
 				catch (...)
 				{
@@ -3941,7 +3957,9 @@ namespace gnubase::engine
 				"(see media.conform). panLaw is how much a mono channel panned to the center is turned down on "
 				"each side: 0dB, -3dB (the default), -4.5dB, -6dB or equalPower (-3.01 dB, the power stays the same "
 				"wherever it is panned); the side panned toward is always at 0 dB. maxVolume is the top of the "
-				"faders, 6 (the default) or 12 dB; faders above a lower maximum come down to it. tempo (1 to 999 BPM) "
+				"faders, 6 (the default) or 12 dB; faders, send levels and volume automation above a lower maximum "
+				"come "
+				"down to it. tempo (1 to 999 BPM) "
 				"and signature {numerator 1 to 99, denominator 1, 2, 4, 8 or 16} are the project's first tempo and "
 				"time signature, as the transport bar sets them: the fixed tempo, or in tempo track mode the tempo "
 				"track's first event; later changes stay, and musical positions keep their ticks. tempoTrackActive "

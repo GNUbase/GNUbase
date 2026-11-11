@@ -646,11 +646,11 @@ namespace gnubase::engine
 		for (const auto& [id, part] : project.midiParts)
 		{
 			RenderChannel& channel = snapshot->channels[static_cast<size_t>(trackChannel.at(part.track))];
-			// A silent MIDI track's notes would still reach its instrument.
-			if (part.mute || !plays(part.track) || (channel.silent && channel.type == TrackType::Midi))
+			// A soloed-out or disabled MIDI track's notes would still reach its instrument. A muted one's play into its
+			// strip, whose mute drops them and keeps the latest controller values for unmuting (ChannelStrip).
+			if (part.mute || !plays(part.track) || (channel.quiet && channel.type == TrackType::Midi))
 				continue;
-			const auto pattern = project.patterns.find(part.pattern);
-			if (part.pattern == 0 || pattern == project.patterns.end())
+			if (project.patterns.count(part.pattern) == 0)
 			{
 				compilePart(project, id, part, channel);
 				continue;
@@ -658,10 +658,7 @@ namespace gnubase::engine
 			// A pattern event (#181) plays its pattern's notes instead of its own.
 			// ponytail: pattern events that overlap on a track all play, not only the topmost (p. 935).
 			MidiPart played = part;
-			const time::Position end{part.position.base, part.position.value + part.length};
-			played.notes = midi::patternNotes(pattern->second,
-				time::toTicks(end, project.tempo, project.sampleRate) -
-					time::toTicks(part.position, project.tempo, project.sampleRate));
+			played.notes = midi::playedNotes(project, part);
 			compilePart(project, id, played, channel);
 		}
 

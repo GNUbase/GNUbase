@@ -71,10 +71,15 @@ namespace gnubase::engine
 			return (chase & g_chasePitchBend) != 0;
 		}
 
-		// Whether the track is heard again in this block (ChaseTrack::heardAgain).
+		// How the track is heard again in this block (ChaseTrack::heardAgain).
+		HeardAgain heard(const ChaseTrack& track) noexcept
+		{
+			return track.heardAgain ? track.heardAgain->load(std::memory_order_relaxed) : HeardAgain::No;
+		}
+
 		bool raised(const ChaseTrack& track) noexcept
 		{
-			return track.heardAgain && track.heardAgain->load(std::memory_order_relaxed);
+			return heard(track) != HeardAgain::No;
 		}
 
 		// Indexes events by kind: order gets the indices of those with a kind, by kind and then in their order, lanes
@@ -240,8 +245,25 @@ namespace gnubase::engine
 		return kinds;
 	}
 
+	graph::ProcessEvent chaseKindEvent(uint16_t kind) noexcept
+	{
+		graph::ProcessEvent event;
+		if (kind < MidiSequencer::g_notes)
+		{
+			event.type = graph::ProcessEvent::Type::Controller;
+			event.channel = static_cast<uint8_t>(kind / 128);
+			event.key = static_cast<uint8_t>(kind % 128);
+			return event;
+		}
+		const size_t after = kind - MidiSequencer::g_notes;
+		event.type = after < 16 ? graph::ProcessEvent::Type::Program : graph::ProcessEvent::Type::PitchBend;
+		event.channel = static_cast<uint8_t>(after % 16);
+		return event;
+	}
+
 	MidiSequencer::MidiSequencer()
-		: m_sequence(std::make_unique<const MidiSequence>()), m_input(graph::g_maxEventsPerBlock)
+		: m_sequence(std::make_unique<const MidiSequence>()), m_input(graph::g_maxEventsPerBlock),
+		  m_stripChase(std::make_shared<graph::EventBuffer>(graph::g_maxEventsPerBlock))
 	{
 		std::iota(m_inputTo.begin(), m_inputTo.end(), uint16_t{0});
 	}
@@ -304,6 +326,28 @@ namespace gnubase::engine
 						  flag(chase.controllers, g_chaseControllers) | flag(chase.programs, g_chasePrograms) |
 						  flag(chase.pitchBend, g_chasePitchBend) | flag(chase.beyondParts, g_chaseBeyondParts)),
 			std::memory_order_relaxed);
+	}
+
+	bool MidiSequencer::chasesKindOf(const graph::ProcessEvent& event) const noexcept
+	{
+		const uint8_t chase = m_chase.load(std::memory_order_relaxed);
+		switch (event.type)
+		{
+		case graph::ProcessEvent::Type::Controller:
+			return (chase & g_chaseControllers) != 0;
+		case graph::ProcessEvent::Type::Program:
+			return (chase & g_chasePrograms) != 0;
+		case graph::ProcessEvent::Type::PitchBend:
+			return (chase & g_chasePitchBend) != 0;
+		case graph::ProcessEvent::Type::NoteOn:
+		case graph::ProcessEvent::Type::NoteOff:
+		case graph::ProcessEvent::Type::PolyPressure:
+		case graph::ProcessEvent::Type::ChannelPressure:
+		case graph::ProcessEvent::Type::SysEx:
+		case graph::ProcessEvent::Type::Parameter:
+			return false;
+		}
+		return false;
 	}
 
 	void MidiSequencer::process(const graph::ProcessContext& context) noexcept
@@ -415,6 +459,10 @@ namespace gnubase::engine
 		out.nextSource();
 
 		const uint8_t chase = m_chase.load(std::memory_order_relaxed);
+		// A routed MIDI track's chase goes to its strip alone (MidiSequence::chaseIntoStrip), at the jump's offset,
+		// or the rest of it that didn't fit at the start of the next block.
+		m_stripChase->clear();
+		const bool intoStrip = sequence.chaseIntoStrip;
 		if (!transport.playing)
 		{
 			endAll(0, out);
@@ -427,9 +475,11 @@ namespace gnubase::engine
 			else
 				chaseHeardAgain(sequence, transport.position, chase, true);
 			m_cursor = transport.position;
-			sendChased(0, out);
+			sendChased(0, intoStrip ? *m_stripChase : out);
 			return;
 		}
+		if (intoStrip)
+			sendChased(0, *m_stripChase);
 		for (size_t s = 0; s < transport.segmentCount; ++s)
 		{
 			const graph::TransportSegment& segment = transport.segments[s];
@@ -438,6 +488,8 @@ namespace gnubase::engine
 				endAll(segment.offset, out);
 				findChased(sequence, segment.position, chase, false);
 				m_chaseNotes = (chase & g_chaseNotes) != 0;
+				if (intoStrip)
+					sendChased(segment.offset, *m_stripChase);
 			}
 			else if (s == 0)
 			{
@@ -468,7 +520,8 @@ namespace gnubase::engine
 				ending = std::min(ending, std::max(m_ends[m_sounding[i]], begin));
 			const int64_t starting = note != sequence.notes.end() ? note->start : g_never;
 			const int64_t changing = controller != sequence.controllers.end() ? controller->position : g_never;
-			const int64_t chasing = m_chasedSent < m_chasedCount || m_chaseNotes ? begin : g_never;
+			const bool chased = m_chasedSent < m_chasedCount && !sequence.chaseIntoStrip; // still to send here
+			const int64_t chasing = chased || m_chaseNotes ? begin : g_never;
 			const int64_t at = std::min({ending, starting, changing, chasing});
 			if (at >= end)
 				return;
@@ -484,7 +537,7 @@ namespace gnubase::engine
 						return;
 				}
 			}
-			else if (m_chasedSent < m_chasedCount)
+			else if (chased)
 			{
 				if (!sendChased(offset, out))
 					return;
@@ -556,8 +609,9 @@ namespace gnubase::engine
 		for (size_t kind = 0; kind < m_chased.size(); ++kind)
 		{
 			const Chased& found = m_chased[kind];
+			// Heard again: the parts of a track that was soloed out or disabled, and the kinds the channels sent.
 			if (found.played || found.position == std::numeric_limits<int64_t>::min() ||
-				(heardAgain && !raised(sequence.chase[found.track]) && !m_resent[kind]))
+				(heardAgain && heard(sequence.chase[found.track]) != HeardAgain::Quiet && !m_resent[kind]))
 			{
 				m_chased[kind] = Chased();
 				continue;

@@ -20,24 +20,32 @@ the project (#491).
   (`markSilent` in `src/engine/document/rendersnapshot.cpp`), and each silent channel's strip (`ChannelStrip`) glides
   its output to silence over one audio block, and back, so switching doesn't click; the mute button mutes through
   the fader's mute instead, gliding over 5 ms like mute automation, so that switching between the two is seamless. A
-  silent MIDI track's notes and controllers are left out of the snapshot, as a muted part's are, so they don't reach
-  its instrument, and its mute ends the notes that sound. Nor do its controller, pitch bend and channel pressure
-  automation, its MIDI volume and pan (CC 7 and CC 10) and its program: its automation is marked `silent`
-  (`channelAutomation` in `src/engine/audio/automation.cpp`) and `AutomationPlayer` plays none of its MIDI lanes, so
-  a muted or disabled MIDI track doesn't change the instrument that other tracks play. Once it is heard again, its
-  automation curves send their values at once, but its MIDI volume, pan and program only what changed while it was
-  silent (a new program with the MIDI volume and pan after it), so a program change or CC 7 a part played before it
-  went silent stays. A value changed and changed back while it was silent, e.g. by undo, didn't change: the player
-  compares with the lanes of the automation last heard. If playback started, stopped, located or jumped meanwhile,
-  or the instrument changed, it sends them all, as a jump does. After a move it also chases its parts, as the jump
-  would have with the chase settings, since its parts weren't in the snapshot then: in the block in which it is
-  heard again, its automation raises `AutomationPlayer::heardAgain`, and the sequencer that chases the track at jumps
-  (`MidiSequencer`: its instrument's, or its own if it isn't routed to one) sends, after the channel's values, the
-  latest controller event of each kind before the position (stopped: up to and including the cursor) where that is
-  the track's, or where it is of a kind the channel's program, MIDI volume, pan or MIDI automation has just sent,
-  whichever track it is on. A later event of another track on the instrument keeps its value: one the channel didn't
-  touch isn't sent again, one it overrode comes back. Notes that started while it was silent aren't chased. Silent channels don't monitor their
-  input directly either.
+  soloed-out or disabled MIDI track's notes and controllers are left out of the snapshot, as a muted part's are, so
+  they don't reach its instrument. A muted MIDI track's play into its strip, whose mute drops them, and so do the
+  events of the MIDI input it monitors: the reference manual (p. 466) only says that mute silences a channel, and a
+  muted audio track doesn't pass its input either. Its mute ends the notes that sound and releases the pedals that
+  hold notes, and unmuting sends the latest controllers, programs and pitch bends that the mute dropped and presses
+  the pedals again, as a locate chases them ([automation.md](automation.md)). On a locate while its button mutes it,
+  its instrument doesn't chase its controller events, and its strip keeps the track's own chase for unmuting. Like a
+  muted audio track's events, a muted MIDI track's notes count for the project's end and where an export starts. A
+  silent MIDI track doesn't send its controller, pitch bend and channel pressure automation, its MIDI volume and pan
+  (CC 7 and CC 10) and its program either: its automation is marked `silent` (`channelAutomation` in
+  `src/engine/audio/automation.cpp`) and `AutomationPlayer` plays none of its MIDI lanes, so a muted or disabled MIDI
+  track doesn't change the instrument that other tracks play. Once it is heard again, its automation curves send their
+  values at once, but its MIDI volume, pan and program only what changed while it was silent (a new program with the
+  MIDI volume and pan after it), so a program change or CC 7 a part played before it went silent stays; if playback
+  started, stopped, located or jumped meanwhile, or the instrument changed, it sends them all, as a jump does. A value
+  changed and changed back while it was silent, e.g. by undo, didn't change: the player compares with the lanes of the
+  automation last heard. A soloed-out or disabled track's parts weren't in the snapshot when playback moved, so once it
+  is heard again they are chased as the jump would have with the chase settings: in that block its automation raises
+  `AutomationPlayer::heardAgain`, and the sequencer that chases the track at jumps (`MidiSequencer`: its
+  instrument's, or its own if it isn't routed to one) sends, after the channel's values, the latest controller event
+  of each kind before the position (stopped: up to and including the cursor) where that is the track's, or where it is
+  of a kind the channel's program, MIDI volume, pan or MIDI automation has just sent, whichever track it is on. A later
+  event of another track on the instrument keeps its value: one the channel didn't touch isn't sent again, one it
+  overrode comes back. After a move while only its mute button muted it, its parts played into the mute: the sequencer
+  chases only the kinds the channel sent, whichever track has the latest, and the strip forgets what the mute dropped
+  of those and sends the rest. Notes that started while it was silent aren't chased. Silent channels don't monitor their input directly either.
 - **Disabled tracks** (p. 219): `track.set` `enabled` false disables an audio, instrument or MIDI track. It keeps its
   events, parts and channel settings, but the snapshot leaves its events and parts out (no disk streaming) and its
   channel is silent. Other track types refuse it.
@@ -211,10 +219,11 @@ New Folder are in [folder-tracks.md](folder-tracks.md).
   automation (controller, pitch bend and channel pressure), MIDI volume, pan or program, and that one heard again
   keeps its part's program and CC 7 and sends what changed meanwhile, each once, also while the transport stands,
   nothing for values changed back by undo, and after playback started, stopped, located or jumped meanwhile the
-  channel's values, then its parts' chase, also stopped at the cursor, not without the chase settings, and with
-  another track's later program change, which comes back after the channel's, and CC 1, which isn't sent again;
-  `tests/midi_tests.cpp` chases a track heard again in the sequencer, playing, stopped, with its channel's kinds, with
-  a cycle jump in the same block, without chase settings and after a chase that didn't fit;
+  channel's values, then its parts' chase, disabled or muted, also stopped at the cursor, not without the chase
+  settings, and with another track's later program change, which comes back after the channel's, and CC 1, which
+  isn't sent again; `tests/midi_tests.cpp` chases a track heard again in the sequencer, playing, stopped, with its
+  channel's kinds, muted only by its button, with a cycle jump in the same block, without chase settings and after a
+  chase that didn't fit;
   `tests/dawproject_tests.cpp` saves and loads mute, solo and disabled tracks, also from `project.xml` alone.
 - `tests/tracklayout_tests.cpp`: `trackLayout.set` setting heights and replacing the folded folders, refusing unknown
   tracks, folded tracks that aren't folders and heights out of range, not an undo step, without tracks that are gone,

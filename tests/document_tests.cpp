@@ -899,6 +899,7 @@ TEST_CASE("muted channels are silent; soloed ones silence the others, except whe
 	// track its instrument.
 	CHECK(set(group, {{"solo", true}}).at("solo") == true);
 	CHECK(silentOnes() == std::vector<ObjectId>{other, instrument, midi});
+	CHECK(renderChannel(engine.renderSnapshots().acquire(), midi).notes.empty()); // a soloed-out MIDI track's
 	set(group, {{"solo", false}});
 	set(audio, {{"solo", true}});
 	CHECK(silentOnes() == std::vector<ObjectId>{other, instrument, midi});
@@ -906,13 +907,13 @@ TEST_CASE("muted channels are silent; soloed ones silence the others, except whe
 	set(midi, {{"solo", true}});
 	CHECK(silentOnes() == std::vector<ObjectId>{group, audio, other});
 	CHECK(renderChannel(engine.renderSnapshots().acquire(), midi).notes.size() == 1);
-	// Soloing two tracks plays both; a muted one stays silent, though what it plays through is heard, and a silent
-	// MIDI track's notes don't play.
+	// Soloing two tracks plays both; a muted one stays silent, though what it plays through is heard. A muted MIDI
+	// track's notes play into its strip, whose mute drops them (sequencing_tests.cpp).
 	set(other, {{"solo", true}});
 	CHECK(silentOnes() == std::vector<ObjectId>{group, audio});
 	set(midi, {{"mute", true}});
 	CHECK(silentOnes() == std::vector<ObjectId>{group, audio, midi});
-	CHECK(renderChannel(engine.renderSnapshots().acquire(), midi).notes.empty());
+	CHECK(renderChannel(engine.renderSnapshots().acquire(), midi).notes.size() == 1);
 
 	run(client, "history.undo", {{"steps", 2}});
 	CHECK(channelOf(client, midi).at("mute") == false);

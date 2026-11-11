@@ -607,8 +607,9 @@ namespace gnubase::engine
 				"showTracks shows every MIDI part of these tracks (all tracks in a folder), in the audio part editor "
 				"(content audioPart, also one given with it) every audio part, and activates the last, "
 				"hideTracks hides theirs; at least one part stays. activeTrack activates the track's first part shown, "
-				"activePart a part shown. editingMode, keepContents and globalTracks (marker and ruler tracks, the "
-				"editor window only) also apply to a closed editor. selection replaces the selected notes, of the "
+				"activePart a part shown. editingMode (an in-place editor's allParts or activePart), keepContents and "
+				"globalTracks (marker and ruler tracks, the editor window only) also apply to a closed editor. "
+				"selection replaces the selected notes, of the "
 				"editable MIDI parts, controllerSelection the selected controller events and eventSelection the "
 				"selected "
 				"audio events of the editable audio parts. content and the key editor's "
@@ -640,6 +641,9 @@ namespace gnubase::engine
 					"the in-place editor shows its track's parts");
 				require(inPlaceTrack(editor) == 0 || parameters.value("content", std::string("key")) == "key",
 					"the in-place editor shows the key editor");
+				// It shows one track, so its Part Editing Mode menu has All Parts and Active Part (p. 1260).
+				require(inPlaceTrack(editor) == 0 || parameters.value("editingMode", std::string()) != "activeTrack",
+					"the in-place editor shows one track: its editingMode is allParts or activePart");
 				EditorView view = current(*views, model, editor);
 				const bool changesParts = parameters.contains("parts") || parameters.contains("exclusive") ||
 					parameters.contains("showTracks") || parameters.contains("hideTracks") ||

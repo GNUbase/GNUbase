@@ -11,7 +11,8 @@ they are.
 
 - **Saving a preset.** `track.savePreset` `{tracks, name}` saves the sound of tracks as `Track Presets/<name>.dawproject`
   in the settings folder: of one track, or of several as a multi-track preset (p. 241). Audio, instrument, MIDI, group
-  and effect tracks have presets; other types are refused. The file has the tracks with their channels and inserts,
+  and effect tracks have presets; other types are refused. The tracks keep the track list's order, whatever the order
+  of `tracks`. The file has the tracks with their channels and inserts,
   without events or automation, and the project's busses, tempo, time signatures and fader top. It isn't an undo step.
   A preset name must be a file name, as a template's must.
 - **Listing them.** `track.presets` lists the presets by name with their file and the types of their tracks, top to
@@ -21,7 +22,8 @@ they are.
   and pan, the inserts (copies of the preset's, which replace the track's own and the automation of their plugins, as
   Paste Channel Settings does), the MIDI modifiers, inserts, sends, volume, pan, program, bank and device, the
   instrument with its parameters, and for MIDI and instrument tracks the color. Not the name, routing, sends, buttons
-  or notes. The tracks must be as many as the preset's, of the same types in the same order (p. 241).
+  or notes. The tracks must be as many as the preset's, of the same types in the same order (p. 241): the first of
+  `tracks` gets the sound of the preset's top track, and so on.
 - **Adding tracks from a preset** (Use Track Preset, p. 199). `track.addFromPreset` `{name, track}` adds the preset's
   tracks below `track` in its folder, or at the bottom of the track list, with their sound. Outputs go to the project's
   busses with the same names, or the main output.
@@ -31,32 +33,39 @@ they are.
   positions, volumes and routing mean the same there. `copyMedia` (default true, the reference's Copy Media Files)
   embeds the media files in the archive; false refers to them where they are (Reference Media Files). The archive is a
   DAWproject file rather than the reference's XML, as the project format is DAWproject. Routing to tracks that weren't
-  exported doesn't go along.
+  exported doesn't go along. Tracks inside an exported folder that can't be exported yet (VCA tracks) stay behind,
+  and the result lists them as `skipped`; listed themselves, they are refused.
 - **The tracks of a file.** `track.importSources` `{path}` lists the tracks of an archive or a project file, with their
-  ids in the file, names, types and folders, for choosing what to import.
+  ids in the file, names, types and folders, for choosing what to import. Listing extracts no media files, nor does
+  `track.presets`: the engine reads the file without them.
 - **Importing tracks** (pp. 200-205). `track.import` `{path, tracks, track, events, settings, automation}` copies tracks
   of an archive or project file into the project as new tracks, in one undo step: `tracks` (default: every top-level
   track it can import), a listed folder with the tracks inside it, in the file's order, below `track` in its folder or
   at the bottom (Import Position for New Tracks); marker tracks go to the top level, and the project's marker track
-  limit holds. `events` brings events, parts, markers and track versions at their positions (Absolute Position),
+  limit holds. Tracks that can't be imported yet stay behind, inside a folder or, without `tracks`, at the top level,
+  and the result lists them as `skipped`; listed themselves, they are refused. `events` brings events, parts, markers and track versions at their positions (Absolute Position),
   `settings` the channel settings and inserts, `automation` the automation; all default to true. Without `settings`
   the channels start from the defaults, keeping their format, routing and instrument. Mute, solo, listen, monitor and
-  record enable are off (p. 200). Routing between imported tracks stays; sends and outputs to other channels go to the
-  project's tracks with the same name and type, outputs to busses to its busses with the same name, or else the main
-  output (p. 200). Clips come with the events, in the pool's top folder, and media files the project has already are
+  record enable are off, and automation lanes read, as a new lane does: the reference doesn't import these states
+  (p. 200). Routing between imported tracks stays; sends and outputs to other channels go to the tracks the project
+  had before the import with the same name and type (not to other copies, which could route them in a loop), outputs
+  to busses to its busses with the same name, or else the main output (p. 200). Clips come with the events, in the pool's top folder, and media files the project has already are
   shared; drum maps the project has with the same name and sounds too. Media files embedded in the file are extracted
   next to it, into `<name> media`, as `project.load` does. Linear positions from a file at another sample rate are
   rescaled to keep their time, as `project.set` does; faders, send levels and volume automation above the project's
   fader top come down to it, from presets too.
 - Tempo, signature, arranger, transpose and chord tracks, which a project has one of, and VCA tracks with their link
   groups can't be exported or imported yet.
+- `track.duplicate` copies tracks with code of its own (`copyTrack` in `projectmodel.cpp`) rather than the copier
+  of `track.import`: a duplicate keeps what an import leaves out (buttons, routing to the same channels, shared MIDI
+  parts, clips, freeze files, chord track following, VCA tracks), and copies within one project.
 
 ## UI
 
 | Item | Command | Where | What it does |
 |---|---|---|---|
-| Tracks from Project or Track Archive... | `file.importTracks` | File > Import | the OS's open dialog, then `track.import` of every track below the first selected track, or at the bottom |
-| Selected Tracks... | `file.exportTracks` | File > Export | the OS's save dialog (`.dawproject` added to a name without an extension), then `track.export` of the selected tracks, copying the media; disabled without a selection |
+| Tracks from Project or Track Archive... | `file.importTracks` | File > Import | the OS's open dialog, then `track.import` of every track below the first selected track, or at the bottom; the engine's refusal, or the tracks it left out, show in the project error dialog |
+| Selected Tracks... | `file.exportTracks` | File > Export | the OS's save dialog (`.dawproject` added to a name without an extension), then `track.export` of the selected tracks, copying the media; disabled without a selection; the engine's refusal, or the tracks it left out, show in the project error dialog |
 | Add Track from Preset... | `project.addTrackFromPreset` | track list's context menu | the track preset dialog: `track.addFromPreset` below the first selected track |
 | Save Track Preset... | `track.saveTrackPreset` | track list's context menu | the track preset dialog: `track.savePreset` of the selected tracks; disabled without a selection |
 | Load Track Preset... | `track.loadTrackPreset` | track list's context menu | the track preset dialog: `track.loadPreset` onto the selected tracks; disabled without a selection |
@@ -96,5 +105,9 @@ control presets (pp. 243-244), dragging presets onto tracks, and the inspector's
   track with its event, media file, insert, send and automation, a MIDI track playing an instrument track and an
   effect track, in one undo step, and import some tracks only, without events, settings or automation, with sends that
   find the project's track of the same name; `track.import` from a project file below a track, with marker tracks at
-  the top level. In the app: File > Export > Selected Tracks and File > Import > Tracks through the file dialogs, and
-  the track preset dialog's Save, Load (with only matching presets listed) and Add.
+  the top level; automation reads after an import; listing a file's tracks extracts no media; folders go along
+  without the VCA tracks inside them, which `skipped` lists; routing by name finds only the tracks the project had.
+  `tests/mixer_tests.cpp`: a lower fader top brings volume automation down, and the project saved then opens with
+  GNUbase's own data. In the app: File > Export > Selected Tracks and File > Import > Tracks through the file dialogs,
+  with the engine's refusals and the tracks left out in the project error dialog, and the track preset dialog's Save,
+  Load (with only matching presets listed) and Add.
