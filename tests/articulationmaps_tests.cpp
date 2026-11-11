@@ -580,6 +580,28 @@ TEST_CASE("Merge MIDI in Loop takes the directions in effect where the range sta
 	CHECK(merged.at("notes").size() == 1);
 }
 
+TEST_CASE("Merge MIDI in Loop takes no directions from parts that end before the range", "[unit]")
+{
+	Fixture f;
+	f.strings();
+	// Part A, bar 1, with Pizzicato; part B, bar 3, with a note and no directions: B plays Arco.
+	f.call("controller.add",
+		{{"part", f.part},
+			{"controllers", {{{"position", 0}, {"type", "articulation"}, {"articulation", "Pizzicato"}}}}});
+	const Json b =
+		f.call("midiPart.add", {{"track", f.track}, {"position", 2 * g_bar}, {"length", g_bar}}).at("part").at("id");
+	f.call("note.add", {{"part", b}, {"notes", {{{"position", 0}, {"length", 60}, {"pitch", 60}, {"velocity", 0.5}}}}});
+	// At 120 BPM and 48 kHz a bar is 96000 samples: bar 3.
+	const Json changes = f.call("midi.merge", {{"start", 192000}, {"end", 288000}});
+	Json merged;
+	const Json project = f.call("project.get");
+	for (const Json& part : project.at("midiParts"))
+		if (part.at("id") == changes.at("parts").at(0))
+			merged = part;
+	CHECK(merged.at("controllers").empty());
+	CHECK(merged.at("notes").size() == 1);
+}
+
 TEST_CASE("track presets and track import bring a track's articulation map along", "[integration]")
 {
 	const test::TempDir dir;
