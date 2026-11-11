@@ -678,6 +678,24 @@ TEST_CASE("the markers window edits positions, ends and lengths in the time form
 	CHECK(field(document, 1, "length") == ui::formatLength(ui::TimeFormat::Seconds, 8.0, 9.5, context));
 }
 
+TEST_CASE("the markers window bounds typed positions on linear and musical tracks", "[ui]")
+{
+	for (const char* timeBase : {"linear", "musical"})
+	{
+		test::UiApp app;
+		const Json track = app.call("track.add", {{"type", "marker"}, {"timeBase", timeBase}}).at("track").at("id");
+		app.call("marker.activateTrack", {{"track", track}});
+		app.call("marker.add", {{"track", track}, {"position", 0}});
+		app.call("project.set", {{"timeFormat", "seconds"}});
+		openMarkers(app, 1);
+		edit(app, 0, "position", "999999999999999");
+		const int64_t expected = std::string(timeBase) == "linear"
+			? time::g_maxPosition
+			: ui::TimeContext{}.tempo.toTicks(static_cast<double>(time::g_maxPosition) / 48000.0);
+		REQUIRE(app.waitUntil([&app, expected] { return markerField(app, 0, "position") == expected; }));
+	}
+}
+
 TEST_CASE("the markers window sorts by a click on a column header, and its columns move and resize", "[ui]")
 {
 	test::UiApp app;

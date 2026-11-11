@@ -48,6 +48,11 @@ namespace gnubase::ui
 	// it. Keeps the defaults, with a warning in the log, for a tempo or signature map it can't read.
 	TimeContext projectTime(const engine::Json& project);
 
+	// Bounds a UI time to the largest project position before converting it to samples or tempo-map ticks.
+	// This also keeps NaN and negative input at the project start.
+	double clampPositionSeconds(double seconds, double sampleRate);
+	time::Samples positionSamples(double seconds, double sampleRate);
+
 	// A position, in seconds from the project start, as position displays show it: "1.1.1.0", "0:00:01.500",
 	// "00:00:01:12" or "72000". Seconds, timecode and user frames count from the start time, bars from the bar offset.
 	std::string formatTime(TimeFormat format, double seconds, const TimeContext& context);

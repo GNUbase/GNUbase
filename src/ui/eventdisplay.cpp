@@ -1209,7 +1209,7 @@ namespace gnubase::ui
 			m_dragAt = dpFrom(*m_ruler, x);
 			m_dragTime = m_view.start + (m_dragAt * m_view.scale);
 			m_drag = Drag::Ruler;
-			m_binding.send("transport.locate", {{"position", std::llround(m_dragTime * m_time.sampleRate)}});
+			m_binding.send("transport.locate", {{"position", positionSamples(m_dragTime, m_time.sampleRate)}});
 		}
 		else if (inside(&target, m_overview))
 		{
