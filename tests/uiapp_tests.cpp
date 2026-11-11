@@ -32,7 +32,6 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
-#include <fstream>
 #include <memory>
 #include <optional>
 #include <string>
@@ -167,17 +166,9 @@ TEST_CASE("UI tests click through GNUbase's UI and read it back, as MCP's UI too
 
 TEST_CASE("UI tests run the UI from another resources folder, which a restart keeps", "[ui]")
 {
-	// A copy of GNUbase's resources with a button in the transport controls that has a command that doesn't exist.
 	const test::TempDir folder;
-	const std::filesystem::path resources = folder.path() / "resources";
-	std::filesystem::copy(GNUBASE_RESOURCES_DIR, resources, std::filesystem::copy_options::recursive);
-	const std::filesystem::path file = resources / "ui" / "transport.rml";
-	std::string text = test::readText(file);
-	const std::string from = R"(command="locate.nextMarker")";
-	const size_t at = text.find(from);
-	REQUIRE(at != std::string::npos);
-	text.replace(at, from.size(), R"(command="locate.nextMarkr")");
-	std::ofstream(file, std::ios::binary) << text;
+	const std::filesystem::path resources = test::patchedResources(
+		folder.path(), "transport.rml", R"(command="locate.nextMarker")", R"(command="locate.nextMarkr")");
 
 	// The transport panel's controls are refused, so it closes again; the time display, whose controls are fine,
 	// opens from the same copy. A restart that fell back to GNUbase's resources would open the transport panel.
