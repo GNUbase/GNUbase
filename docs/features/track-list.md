@@ -41,7 +41,8 @@ the project (#491).
   leaves the others; `folded` replaces the list, and refuses tracks that aren't folders. Like the track visibility they
   are settings, not undo steps, and saved with the project in GNUbase's extra entry (`trackLayout` in `project.get`),
   empty for files from before; tracks that are gone are left out of what `trackLayout.get` returns. Every change
-  emits `trackLayout.changed`.
+  emits `trackLayout.changed`. A file's heights are brought into the range and its folded tracks that aren't folders
+  left out (#991).
 - **DAWproject:** a channel's mute is its `Mute` parameter, solo its `solo` attribute, and a disabled track has
   `loaded="false"`; all three come back from `project.xml` without GNUbase's entry.
 
@@ -115,13 +116,14 @@ sends engine commands, so whatever another client changes shows at once.
   last, on the middle of the folder's row. The moves are `track.move` commands in one `history.transaction`, "Move
   Tracks", so one undo restores the order.
 - **Heights** (p. 217): dragging a row's lower edge (its last 4 dp) sets its track's height, with Ctrl (Cmd) every
-  track's; releasing the mouse sends them with `trackLayout.set`. Heights are the project's, saved with it, but not in
-  its undo history.
+  track's; releasing the mouse sends the heights the drag changed with `trackLayout.set`, and nothing for a press
+  that changed none. Heights are the project's, saved with it, but not in its undo history.
 - **Folding** (p. 225): a folder's toggle, or Right and Left on the selected folder, folds and unfolds it; the tracks
   inside a folded folder leave the list and the event display (`EventDisplay::setHiddenTracks`) and still play.
   Project > Track Folding: Toggle Selected Track, Fold Tracks, Unfold Tracks and Flip Fold States
   (`track.toggleFolding`, `track.foldAll`, `track.unfoldAll`, `track.flipFolding`). Each sends the folded folders
-  with `trackLayout.set`: they are the project's, like the heights.
+  with one `trackLayout.set` when they changed: they are the project's, like the heights, and every set advances the
+  project's revision, which makes it count as modified (#991).
 - **Another project** (#491): the list follows `trackLayout.changed` and, on `project.reset` (`project.new`,
   `project.load`), takes the new project's heights and folded folders from `trackLayout.get` and drops the old ones,
   and the selection: the new project's tracks can have the old ones' ids.
