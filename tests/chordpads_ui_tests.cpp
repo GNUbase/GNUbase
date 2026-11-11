@@ -239,6 +239,23 @@ TEST_CASE("the pads show their lock and adaptive voicing, and Lock on several pa
 	CHECK(window.visible(Window::pad(1) + " .chord-pad-adaptive"));
 }
 
+TEST_CASE("Adaptive Voicing on a selection with a locked pad turns it on for the unlocked pads", "[ui]")
+{
+	Window window;
+	window.open();
+	window.call("chordPads.setPad", {{"pad", 0}, {"locked", true}}); // locking turns its adaptive voicing off
+	window.call("chordPads.setPad", {{"pad", 1}, {"adaptive", false}});
+	REQUIRE(window.app.waitUntil([&] { return window.visible(Window::pad(0) + " .chord-pad-lock"); }));
+	const auto steps = window.call("history.get").at("steps").size();
+	window.click(Window::pad(0));
+	window.click(Window::pad(1), 1, {"ctrl"});
+	window.click("#chord-pads-adaptive");
+	REQUIRE(window.app.waitUntil([&] { return window.pads()[1].at("adaptive") == true; }));
+	CHECK(window.pads()[0].at("adaptive") == false);
+	CHECK(window.pads()[0].at("locked") == true);
+	CHECK(window.call("history.get").at("steps").size() == steps + 1);
+}
+
 TEST_CASE("a value the engine refuses goes back, and the wheel over the root key changes it", "[ui]")
 {
 	Window window;

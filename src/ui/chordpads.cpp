@@ -594,13 +594,17 @@ namespace gnubase::ui
 		}
 		else if (first >= 0 && (name == "lock" || name == "adaptive"))
 		{
-			// One undo step for all the selected pads.
+			// One undo step for all the selected pads. Locked pads refuse adaptive voicing, which would fail the
+			// whole transaction, so they are left out of turning it on.
 			const char* state = name == "lock" ? "locked" : "adaptive";
 			const bool on = !items[static_cast<size_t>(first)].at(state).get<bool>();
+			const bool skipLocked = on && name == "adaptive";
 			Json commands = Json::array();
 			for (const int pad : pads)
-				commands.push_back({{"command", "chordPads.setPad"}, {"parameters", {{"pad", pad}, {state, on}}}});
-			send("history.transaction", {{"description", "Change chord pads"}, {"commands", commands}});
+				if (!skipLocked || !items[static_cast<size_t>(pad)].at("locked").get<bool>())
+					commands.push_back({{"command", "chordPads.setPad"}, {"parameters", {{"pad", pad}, {state, on}}}});
+			if (!commands.empty())
+				send("history.transaction", {{"description", "Change chord pads"}, {"commands", commands}});
 		}
 		else if (first >= 0 && name == "reference")
 		{
