@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/engine.h"
 #include "engine/schema.h"
+#include "engine/schematext.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
@@ -376,6 +377,10 @@ TEST_CASE("values are checked against their JSON schema", "[unit]")
 	CHECK(validate("lower", named).empty());
 	CHECK(validate("lowerZone", named) == "parameters must match ^(lower|inPlace:[0-9]+)$");
 	CHECK(validate(Json(3), Json::parse(R"({"pattern": "x"})")).empty()); // only strings
+	// The API references write a pattern as the strings it matches; an array's items with theirs.
+	CHECK(schemaType(named) == "string matching `^(lower|inPlace:[0-9]+)$`");
+	CHECK(schemaType(Json::parse(R"({"type": "array", "items": {"type": "string", "pattern": "^a$"}})")) ==
+		"array of string matching `^a$`");
 
 	// additionalProperties as a schema: a map whose members all fit it.
 	const Json map = Json::parse(R"({"type": "object", "additionalProperties": {"type": "boolean"}})");
