@@ -219,11 +219,17 @@ namespace gnubase::ui
 			for (size_t slot = 0; slot < 4; ++slot)
 			{
 				const std::string name = section + "-" + std::to_string(slot);
-				rml += R"(<div class="midi-effect-slot" slot=")" + std::to_string(slot) + R"(">)";
-				rml += R"(<div class="inspector-row"><button type="toggle" class="toggle" control=")" + name +
-					R"(-on" title="Activate">)" + std::to_string(slot + 1) + R"(</button><select control=")" + name +
-					R"(-effect" title="Select Effect Type"/><button class="midi-effect-edit" title="Open/Close )" +
-					(sends ? "Send" : "Insert") + R"( Effect Editor">e</button></div>)";
+				rml += R"(<div class="midi-effect-slot" slot=")";
+				rml += std::to_string(slot);
+				rml += R"("><div class="inspector-row"><button type="toggle" class="toggle" control=")";
+				rml += name;
+				rml += R"(-on" title="Activate">)";
+				rml += std::to_string(slot + 1);
+				rml += R"(</button><select control=")";
+				rml += name;
+				rml += R"(-effect" title="Select Effect Type"/><button class="midi-effect-edit" title="Open/Close )";
+				rml += sends ? "Send" : "Insert";
+				rml += R"( Effect Editor">e</button></div>)";
 				if (sends)
 					rml += row("output", "Output", R"(<select control=")" + name + R"(-output" title="Send Output"/>)");
 				rml += R"(<div class="midi-effect-panel"/></div>)";
@@ -238,22 +244,39 @@ namespace gnubase::ui
 			for (const Json& parameter : effect.at("parameters"))
 			{
 				const std::string key = parameter.at("key").get<std::string>();
-				const std::string name = Rml::StringUtilities::EncodeRml(parameter.at("name").get<std::string>());
-				const std::string control = slot + "-parameter-" + key;
+				const std::string label = Rml::StringUtilities::EncodeRml(parameter.at("name").get<std::string>());
+				std::string control = slot;
+				control += "-parameter-";
+				control += key;
+				std::string field;
 				if (!parameter.at("options").empty())
 				{
-					rml += row(key, name, R"(<select control=")" + control + R"(" title=")" + name + R"("/>)");
+					field = R"(<select control=")";
+					field += control;
+					field += R"(" title=")";
+					field += label;
+					field += R"("/>)";
+					rml += row(key, label, field);
 					continue;
 				}
 				const bool stepped = parameter.at("stepped").get<bool>();
-				rml += row(key, name,
-					R"(<valuefield control=")" + control + R"(" min=")" +
-						widgets::format(parameter.at("minimum").get<float>()) + R"(" max=")" +
-						widgets::format(parameter.at("maximum").get<float>()) + R"(" default=")" +
-						widgets::format(parameter.at("default").get<float>()) + R"(" step=")" +
-						(stepped ? "1" : "0.5") + R"(" decimals=")" + (stepped ? "0" : "1") + R"(" unit=")" +
-						Rml::StringUtilities::EncodeRml(parameter.at("unit").get<std::string>()) + R"(" title=")" +
-						name + R"("/>)");
+				field = R"(<valuefield control=")";
+				field += control;
+				for (const auto& [attribute, value] : {std::pair{"min", parameter.at("minimum")},
+						 std::pair{"max", parameter.at("maximum")}, std::pair{"default", parameter.at("default")}})
+				{
+					field += R"(" )";
+					field += attribute;
+					field += R"(=")";
+					field += widgets::format(value.get<float>());
+				}
+				field += stepped ? R"(" step="1" decimals="0)" : R"(" step="0.5" decimals="1)";
+				field += R"(" unit=")";
+				field += Rml::StringUtilities::EncodeRml(parameter.at("unit").get<std::string>());
+				field += R"(" title=")";
+				field += label;
+				field += R"("/>)";
+				rml += row(key, label, field);
 			}
 			return rml;
 		}
@@ -893,7 +916,9 @@ namespace gnubase::ui
 			for (const Json& parameter : info->at("parameters"))
 			{
 				const std::string key = parameter.at("key").get<std::string>();
-				const std::string control = name + "-parameter-" + key;
+				std::string control = name;
+				control += "-parameter-";
+				control += key;
 				const Json value = slot.at("parameters").value(key, parameter.at("default"));
 				if (Rml::Element* select = panel->QuerySelector("select[control=" + control + "]"))
 				{
@@ -929,7 +954,8 @@ namespace gnubase::ui
 		}
 		else if (path[1] == "divider")
 		{
-			const int divider = std::atoi(event.GetParameter<Rml::String>("value", "0").c_str());
+			const auto divider =
+				static_cast<int>(std::strtol(event.GetParameter<Rml::String>("value", "0").c_str(), nullptr, 10));
 			if (current.at("divider") == divider)
 				return;
 			rack["divider"] = divider;
@@ -937,7 +963,7 @@ namespace gnubase::ui
 		else if (path.size() >= 3)
 		{
 			// The slot changes only the field given, channel.set keeps the rest: the slots before it are empty objects.
-			const auto index = static_cast<size_t>(std::atoi(path[1].c_str()));
+			const auto index = static_cast<size_t>(std::strtoul(path[1].c_str(), nullptr, 10));
 			if (index >= current.at("slots").size())
 				return;
 			const Json& slot = current.at("slots")[index];
@@ -973,8 +999,9 @@ namespace gnubase::ui
 			{
 				const bool select =
 					event.GetTargetElement() != nullptr && event.GetTargetElement()->GetTagName() == "select";
-				const double value = select ? std::atof(event.GetParameter<Rml::String>("value", "0").c_str())
-											: static_cast<double>(event.GetParameter<float>("value", 0.0F));
+				const double value = select
+					? std::strtod(event.GetParameter<Rml::String>("value", "0").c_str(), nullptr)
+					: static_cast<double>(event.GetParameter<float>("value", 0.0F));
 				const int gesture = event.GetParameter<int>("gesture", 0);
 				if (gesture == 0 && slot.at("parameters").contains(path[3]) &&
 					std::abs(slot.at("parameters").at(path[3]).get<double>() - value) < 1e-6)
