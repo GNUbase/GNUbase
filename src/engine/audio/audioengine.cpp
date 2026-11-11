@@ -644,6 +644,17 @@ namespace gnubase::engine
 				routed[channel.id] = &channel;
 			}
 
+		// A MIDI track's chase is told by its automation when the track is heard again after playback moved while it
+		// was silent (AutomationPlayer::heardAgain). The channel's state is there from the graph before, which had
+		// the track while it was silent.
+		const auto chaseTrack = [this](const RenderChannel& channel)
+		{
+			ChaseTrack track = makeChaseTrack(channel.controllers, channel.midiParts);
+			if (const auto state = m_channelStates.find(channel.id);
+				channel.type == TrackType::Midi && state != m_channelStates.end())
+				track.heardAgain = state->second->automation.heardAgain();
+			return track;
+		};
 		std::map<ObjectId, std::shared_ptr<MidiSequencer>> sequencers;
 		std::map<ObjectId, std::shared_ptr<processors::InputTransformerProcessor>> transformers;
 		std::map<ObjectId, Instrument> instruments;
@@ -664,11 +675,10 @@ namespace gnubase::engine
 			// An instrument chases the controller events of the MIDI tracks routed to it with its own, so the latest of
 			// each kind wins, whichever track it is on.
 			if (routed.count(channel.id) == 0)
-				sequence->chase.push_back(makeChaseTrack(channel.controllers, channel.midiParts));
+				sequence->chase.push_back(chaseTrack(channel));
 			if (channel.type == TrackType::Instrument)
 				for (const ObjectId source : sources[channel.id])
-					sequence->chase.push_back(
-						makeChaseTrack(routed.at(source)->controllers, routed.at(source)->midiParts));
+					sequence->chase.push_back(chaseTrack(*routed.at(source)));
 			sequencer->setSequence(std::move(sequence));
 			sequencer->setChase(m_chase);
 			sequencers[channel.id] = sequencer;

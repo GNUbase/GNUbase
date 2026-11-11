@@ -44,6 +44,9 @@ namespace gnubase::engine
 	{
 		ChaseIndex all;
 		std::vector<ChasePart> parts; // sorted by start
+		// A MIDI track's AutomationPlayer::heardAgain, or none: raised for the block in which the track is heard again
+		// after playback moved while it was silent, when the sequencer chases its parts where playback is.
+		std::shared_ptr<const std::atomic<bool>> heardAgain;
 	};
 
 	// Command thread: the chase index of a track's controller events (sorted by position, each with the index of its
@@ -106,6 +109,12 @@ namespace gnubase::engine
 	// (RenderNote::keySwitch); then the notes that start there. A locate while stopped chases the
 	// controller events alone, up to and including those at the cursor. A chase takes a binary search per kind of
 	// event.
+	//
+	// A silent MIDI track's parts aren't in the sequence, so a jump while it is silent doesn't chase them. When it is
+	// heard again (ChaseTrack::heardAgain), the sequencer chases them in that block, where playback is, as the jump
+	// would have: of each kind the latest event before the position on the tracks chased, if it is the heard track's;
+	// stopped, up to and including the cursor. Its channel's program, MIDI volume and pan come first, in its events.
+	// After a chase that didn't fit, it chases everything there again. Notes aren't chased.
 	//
 	// The track's own events, those of its input and of its parts, go through its MIDI inserts in order, each effect
 	// playing what the one before it played, and each MIDI send plays its effect on them beside that, before or after
@@ -207,8 +216,11 @@ namespace gnubase::engine
 		// Notes it can't end for a full buffer end as soon as there is room.
 		void endAll(uint32_t offset, graph::EventBuffer& out) noexcept;
 		// Finds the controller events to chase at a position; sendChased sends them, false if the buffer filled first.
-		// Stopped, it takes the events at the position too.
-		void findChased(const MidiSequence& sequence, int64_t position, uint8_t chase, bool stopped) noexcept;
+		// Stopped, it takes the events at the position too. heardAgain: only those of tracks heard again in this block.
+		void findChased(const MidiSequence& sequence, int64_t position, uint8_t chase, bool stopped,
+			bool heardAgain = false) noexcept;
+		// A chase of the tracks heard again in this block, unless a jump chases there anyway.
+		void chaseHeardAgain(const MidiSequence& sequence, int64_t position, uint8_t chase, bool stopped) noexcept;
 		void consider(const ChaseIndex& index, uint16_t track, int64_t position, uint8_t chase, bool stopped) noexcept;
 		bool sendChased(uint32_t offset, graph::EventBuffer& out) noexcept;
 		// Starts the notes that sound at a position; false if the buffer was full before it started them all.

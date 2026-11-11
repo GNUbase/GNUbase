@@ -71,6 +71,12 @@ namespace gnubase::engine
 			return (chase & g_chasePitchBend) != 0;
 		}
 
+		// Whether the track is heard again in this block (ChaseTrack::heardAgain).
+		bool raised(const ChaseTrack& track) noexcept
+		{
+			return track.heardAgain && track.heardAgain->load(std::memory_order_relaxed);
+		}
+
 		// Indexes events by kind: order gets the indices of those with a kind, by kind and then in their order, lanes
 		// the runs of one kind.
 		template <typename Event, typename KindOf> void indexByKind(const std::vector<Event>& events, KindOf kindOf,
@@ -383,6 +389,8 @@ namespace gnubase::engine
 			m_next = -1;
 			if (m_cursor >= 0 && transport.position != m_cursor) // a locate while stopped
 				findChased(sequence, transport.position, chase, true);
+			else
+				chaseHeardAgain(sequence, transport.position, chase, true);
 			m_cursor = transport.position;
 			sendChased(0, out);
 			return;
@@ -395,6 +403,10 @@ namespace gnubase::engine
 				endAll(segment.offset, out);
 				findChased(sequence, segment.position, chase, false);
 				m_chaseNotes = (chase & g_chaseNotes) != 0;
+			}
+			else if (s == 0)
+			{
+				chaseHeardAgain(sequence, segment.position, chase, false);
 			}
 			play(sequence, segment, out);
 			m_next = segment.position + segment.frames;
@@ -463,7 +475,15 @@ namespace gnubase::engine
 		}
 	}
 
-	void MidiSequencer::findChased(const MidiSequence& sequence, int64_t position, uint8_t chase, bool stopped) noexcept
+	void MidiSequencer::chaseHeardAgain(
+		const MidiSequence& sequence, int64_t position, uint8_t chase, bool stopped) noexcept
+	{
+		if (std::any_of(sequence.chase.begin(), sequence.chase.end(), raised))
+			findChased(sequence, position, chase, stopped, m_chasedSent == m_chasedCount);
+	}
+
+	void MidiSequencer::findChased(
+		const MidiSequence& sequence, int64_t position, uint8_t chase, bool stopped, bool heardAgain) noexcept
 	{
 		for (size_t i = m_chasedSent; i < m_chasedCount; ++i) // the rest of a chase that didn't fit
 			m_chased[i] = Chased();
@@ -492,7 +512,9 @@ namespace gnubase::engine
 		// The kinds found, in time order; at one position by track, then kind, so a bank select precedes its program.
 		for (size_t kind = 0; kind < m_chased.size(); ++kind)
 		{
-			if (m_chased[kind].played || m_chased[kind].position == std::numeric_limits<int64_t>::min())
+			const Chased& found = m_chased[kind];
+			if (found.played || found.position == std::numeric_limits<int64_t>::min() ||
+				(heardAgain && !raised(sequence.chase[found.track])))
 			{
 				m_chased[kind] = Chased();
 				continue;

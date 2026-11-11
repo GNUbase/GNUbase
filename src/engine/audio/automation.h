@@ -9,6 +9,7 @@
 #include "platform/rt/snapshotpublisher.h"
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -118,6 +119,12 @@ namespace gnubase::engine
 		// Command thread: the automation last set.
 		const ChannelAutomation& latest() const { return m_automation.latest(); }
 
+		// Command thread: a flag that play raises for the block in which a silent MIDI track is heard again after
+		// playback started, stopped, located or jumped while it was silent, and lowers in every other block. The
+		// sequencer that chases the track's parts (ChaseTrack::heardAgain), which runs after it in the block, chases
+		// them there, after the program, MIDI volume and pan that play sends again.
+		std::shared_ptr<const std::atomic<bool>> heardAgain() const { return m_heardAgain; }
+
 		// Audio thread: adds the block's events for the fader to fader, those for the plugins in the slots to plugins
 		// with the slot's index in slots as their key, and the others to source. processors are the source processor
 		// and the slots' plugins, top to bottom (only compared, to send every value again to new ones), and slots the
@@ -132,12 +139,18 @@ namespace gnubase::engine
 	private:
 		rt::SnapshotPublisher<ChannelAutomation> m_automation;
 		uint64_t m_revision = 0; // command thread: the last revision given
+		// Command thread: the program lanes and the MIDI lanes without points of the last automation set that isn't
+		// silent, with their revisions. A lane set back to one of them while the track is silent keeps its revision,
+		// as nothing changed since the track was last heard.
+		std::vector<PlayedLane> m_heardLanes;
+		std::shared_ptr<std::atomic<bool>> m_heardAgain = std::make_shared<std::atomic<bool>>(false);
 
 		// Audio thread.
 		uint64_t m_played = 0; // the revision played last
 		// The revision played last while not silent; 0 when playback moved or the processors changed while silent, so
 		// that the program and MIDI lanes all go out again once it is heard.
 		uint64_t m_heard = 0;
+		bool m_missed = false; // playback moved while it was silent: it raises m_heardAgain once it is heard
 		// The processors played for last: the source and the slots' plugins.
 		std::array<const void*, g_maxSlots + 1> m_processors{};
 		size_t m_processorCount = 0;

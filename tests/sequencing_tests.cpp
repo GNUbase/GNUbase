@@ -167,9 +167,9 @@ namespace
 
 	using Played = std::vector<std::vector<int>>;
 
-	// The controller, program, channel pressure and pitch bend messages the instrument got in the next block, sorted,
-	// so that one sent twice shows.
-	Played controllersPlayed(Client& client)
+	// The controller, program, channel pressure and pitch bend messages the instrument got in the next 64 frames,
+	// sorted, so that one sent twice shows, or in the order it got them.
+	Played controllersPlayed(Client& client, bool sorted = true)
 	{
 		run(client, "audio.render", {{"frames", 64}});
 		Played bytes;
@@ -177,7 +177,8 @@ namespace
 		for (const Json& captured : capture.at("captured"))
 			if (const auto message = captured.at("bytes").get<std::vector<int>>(); message[0] >= 0xB0)
 				bytes.push_back(message);
-		std::sort(bytes.begin(), bytes.end());
+		if (sorted)
+			std::sort(bytes.begin(), bytes.end());
 		return bytes;
 	}
 
@@ -432,12 +433,24 @@ TEST_CASE("a MIDI track heard again keeps its parts' program and controllers, an
 	mute(false);
 	CHECK(played() == Played{{0xB0, 7, 60}, {0xB0, 10, 20}, {0xC0, 6}});
 
-	// Playback that jumps while it is muted: heard again, it sends what a jump sends.
+	// Playback that jumps while it is muted: heard again, it sends what a jump sends, the channel's values, then the
+	// part's program and CC 7 before the position.
 	mute(true);
 	run(song.client, "transport.locate", {{"position", 0}});
 	CHECK(played().empty());
 	mute(false);
-	CHECK(played() == Played{{0xB0, 7, 60}, {0xB0, 10, 20}, {0xC0, 6}});
+	CHECK(controllersPlayed(song.client, false) ==
+		Played{{0xC0, 6}, {0xB0, 7, 60}, {0xB0, 10, 20}, {0xB0, 7, 127}, {0xC0, 9}});
+
+	// Changed while muted and changed back, nothing changed since it was last heard.
+	mute(true);
+	run(song.client, "channel.set", {{"channel", channel}, {"midiVolume", 70}});
+	run(song.client, "history.undo");
+	run(song.client, "channel.set", {{"channel", channel}, {"program", 8}});
+	run(song.client, "history.undo");
+	CHECK(played().empty());
+	mute(false);
+	CHECK(played().empty());
 
 	// Transport stopped: a disabled track's new program and MIDI volume reach the instrument once it is enabled.
 	run(song.client, "transport.stop");
@@ -447,6 +460,85 @@ TEST_CASE("a MIDI track heard again keeps its parts' program and controllers, an
 	CHECK(played().empty());
 	run(song.client, "track.set", {{"track", song.midi}, {"enabled", true}});
 	CHECK(played() == Played{{0xB0, 7, 70}, {0xB0, 10, 20}, {0xC0, 7}});
+}
+
+TEST_CASE("a MIDI track heard again after playback moved while it was silent chases its parts where playback is",
+	"[integration]")
+{
+	const int blockSize = GENERATE(17, 64);
+	CAPTURE(blockSize);
+	Song song(blockSize);
+	const ObjectId channel = channelOf(song.client, song.midi);
+	// The part: program 9 and CC 7 at 127 where it starts, CC 7 at 64 at 2000; the channel: program 5, MIDI volume 50
+	// and pan 20, which go out first.
+	run(song.client, "controller.add",
+		{{"part", song.part(1)},
+			{"controllers",
+				{{{"position", 0}, {"type", "program"}, {"number", 9}},
+					{{"position", 0}, {"number", 7}, {"value", 1.0}},
+					{{"position", ticks(2000)}, {"number", 7}, {"value", 0.5}}}}});
+	run(song.client, "channel.set", {{"channel", channel}, {"program", 5}, {"midiVolume", 50}, {"midiPan", 20}});
+	run(song.client, "midi.capture", {{"start", true}});
+	const auto played = [&song] { return controllersPlayed(song.client, false); };
+	const auto mute = [&](bool on) { run(song.client, "channel.set", {{"channel", channel}, {"mute", on}}); };
+	const auto pastTheSecondCc7 = [&song]
+	{
+		run(song.client, "audio.render", {{"frames", 2100}});
+		run(song.client, "midi.capture");
+	};
+	const Played channelValues = {{0xC0, 5}, {0xB0, 7, 50}, {0xB0, 10, 20}};
+	Played chased = channelValues;
+	chased.insert(chased.end(), {{0xC0, 9}, {0xB0, 7, 64}});
+
+	// Playback started while it was muted.
+	mute(true);
+	run(song.client, "transport.play");
+	pastTheSecondCc7();
+	mute(false);
+	CHECK(played() == chased);
+	CHECK(played().empty());
+
+	// Stopped and located while it was muted: chased at the cursor, with what is there.
+	mute(true);
+	run(song.client, "transport.stop");
+	run(song.client, "transport.locate", {{"position", 2000}});
+	CHECK(played().empty());
+	mute(false);
+	CHECK(played() == chased);
+
+	// Stopping alone moves playback too.
+	run(song.client, "transport.play");
+	pastTheSecondCc7();
+	mute(true);
+	run(song.client, "transport.stop");
+	CHECK(played().empty());
+	mute(false);
+	CHECK(played() == chased);
+
+	// Without chasing, the channel's values alone, as at a jump.
+	for (const char* key : {"midi.chaseControllers", "midi.chasePrograms"})
+		run(song.client, "settings.set", {{"key", key}, {"value", false}});
+	mute(true);
+	run(song.client, "transport.locate", {{"position", 0}});
+	run(song.client, "transport.play");
+	pastTheSecondCc7();
+	mute(false);
+	CHECK(played() == channelValues);
+	for (const char* key : {"midi.chaseControllers", "midi.chasePrograms"})
+		run(song.client, "settings.reset", {{"key", key}});
+
+	// Another track on the instrument with a later program change: its program stays, the part's CC 7 is chased.
+	const int otherPart = song.addMidiTrack().first;
+	run(song.client, "controller.add",
+		{{"part", song.part(otherPart)},
+			{"controllers", {{{"position", ticks(1000)}, {"type", "program"}, {"number", 3}}}}});
+	mute(true);
+	run(song.client, "transport.locate", {{"position", 0}});
+	pastTheSecondCc7();
+	mute(false);
+	Played withoutProgram = channelValues;
+	withoutProgram.push_back({0xB0, 7, 64});
+	CHECK(played() == withoutProgram);
 }
 
 TEST_CASE("a MIDI track's mute automation silences its notes from the point's sample and ends those that sound",

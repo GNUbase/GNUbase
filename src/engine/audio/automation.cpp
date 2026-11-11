@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstring>
+#include <iterator>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -454,12 +455,29 @@ namespace gnubase::engine
 	{
 		automation->revision = ++m_revision;
 		const ChannelAutomation& old = m_automation.latest();
+		const auto revisioned = [](const PlayedLane& lane)
+		{ return lane.kind == Kind::Program || (lane.kind == Kind::Midi && lane.points.empty()); };
 		for (PlayedLane& lane : automation->lanes)
-			if (lane.kind == Kind::Program || (lane.kind == Kind::Midi && lane.points.empty()))
+			if (revisioned(lane))
 			{
-				const auto same = std::find(old.lanes.begin(), old.lanes.end(), lane);
-				lane.revision = same != old.lanes.end() ? same->revision : automation->revision;
+				// The same as before, or as when the track was last heard: a value changed and changed back while it
+				// was silent doesn't go out again.
+				const auto same = [&lane](const std::vector<PlayedLane>& lanes) -> const PlayedLane*
+				{
+					const auto found = std::find(lanes.begin(), lanes.end(), lane);
+					return found != lanes.end() ? &*found : nullptr;
+				};
+				const PlayedLane* kept = same(old.lanes);
+				if (kept == nullptr)
+					kept = same(m_heardLanes);
+				lane.revision = kept != nullptr ? kept->revision : automation->revision;
 			}
+		if (!automation->silent)
+		{
+			m_heardLanes.clear();
+			std::copy_if(
+				automation->lanes.begin(), automation->lanes.end(), std::back_inserter(m_heardLanes), revisioned);
+		}
 		m_automation.publish(std::move(automation));
 	}
 
@@ -511,10 +529,18 @@ namespace gnubase::engine
 		const auto hear = [&](bool moved)
 		{
 			if (!silent)
+			{
 				m_heard = automation.revision;
+				m_missed = false;
+			}
 			else if (moved || newProcessors)
+			{
 				m_heard = 0;
+				m_missed = m_missed || moved;
+			}
 		};
+		// Heard again after playback moved while it was silent: its parts are chased after what it sends here.
+		m_heardAgain->store(!silent && m_missed, std::memory_order_relaxed);
 		// New static values glide, unless they are the first ones.
 		const bool revised = automation.revision != m_played && m_played != 0;
 		const auto glide = [revised, smoothing](const PlayedLane& lane)
