@@ -391,6 +391,11 @@ TEST_CASE("values are checked against their JSON schema", "[unit]")
 	// fails the same way on every platform if the pattern ran first, whatever its stack size.
 	const Json bounded = Json::parse(R"({"type": "string", "pattern": "(", "maxLength": 27})");
 	CHECK(validate(std::string(100000, '9'), bounded, "editor") == "editor must be at most 27 characters");
+	// Strings from Lua needn't be UTF-8: stray continuation bytes count as no characters, yet the bytes are still
+	// bounded, at 4 per character.
+	CHECK(validate(std::string(100000, '\x80'), bounded, "editor") == "editor must be at most 27 characters");
+	CHECK(validate(std::string(4 * 3, '\x80'), shortName, "name").empty());
+	CHECK(validate(std::string(4 * 3 + 1, '\x80'), shortName, "name") == "name must be at most 3 characters");
 
 	// The Lua API reference and the MCP tool catalogue show the limit.
 	CHECK(schemaType(bounded) == "string matching `(`, at most 27 characters");
@@ -400,6 +405,46 @@ TEST_CASE("values are checked against their JSON schema", "[unit]")
 	const Json map = Json::parse(R"({"type": "object", "additionalProperties": {"type": "boolean"}})");
 	CHECK(validate(Json::parse(R"({"a": true, "b": false})"), map).empty());
 	CHECK(validate(Json::parse(R"({"a": true, "b": 1})"), map) == "parameters.b must be boolean");
+}
+
+namespace
+{
+	// Counts the string schemas with a pattern in a schema and everything below it, and the ones without a maxLength.
+	void countPatterns(const Json& schema, int& patterns, std::vector<std::string>& unbounded, const std::string& where)
+	{
+		if (schema.is_object())
+		{
+			if (const auto pattern = schema.find("pattern"); pattern != schema.end() && pattern->is_string())
+			{
+				++patterns;
+				if (!schema.contains("maxLength"))
+					unbounded.push_back(where);
+			}
+			for (const auto& [key, item] : schema.items())
+				countPatterns(item, patterns, unbounded, where + "." + key);
+		}
+		else if (schema.is_array())
+		{
+			for (const Json& item : schema)
+				countPatterns(item, patterns, unbounded, where);
+		}
+	}
+}
+
+TEST_CASE("every pattern in a command's schema comes with a maxLength", "[unit]")
+{
+	// validate matches a pattern only on strings within their maxLength, since matching may recurse once per
+	// character and a long string from an MCP client or a Lua script overflowed the stack (#1059).
+	const Engine engine;
+	int patterns = 0;
+	std::vector<std::string> unbounded;
+	for (const CommandInfo& info : engine.commands())
+	{
+		countPatterns(info.parameters, patterns, unbounded, info.name + " parameters");
+		countPatterns(info.result, patterns, unbounded, info.name + " result");
+	}
+	CHECK(patterns > 0); // the editors' names at least
+	CHECK(unbounded == std::vector<std::string>());
 }
 
 TEST_CASE("properties that the schema doesn't name are checked against additionalProperties", "[unit]")

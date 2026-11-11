@@ -161,7 +161,7 @@ TEST_CASE("the in-place editor refuses tracks without notes and changing its par
 		if (info.name == "editor.get")
 		{
 			CHECK(info.parameters.at("properties").at("editor").at("pattern") == "^(lower|window|inPlace:[0-9]+)$");
-			// inPlace: and a track id of at most 19 digits, the longest a 64-bit id has (#1059).
+			// inPlace: and a track id of at most 19 digits, as many as requireEditor takes (#1059).
 			CHECK(info.parameters.at("properties").at("editor").at("maxLength") == 27);
 		}
 	CHECK_THAT(f.fails("editor.get", {{"editor", "lowerZone"}}), ContainsSubstring("lower|window|inPlace:"));

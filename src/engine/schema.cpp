@@ -25,11 +25,16 @@ namespace gnubase::engine
 			return type == "null" && value.is_null();
 		}
 
-		// A UTF-8 string's length in characters (code points), as JSON Schema's maxLength counts it.
-		size_t characters(const std::string& text)
+		// Whether a UTF-8 string has more characters (code points, as JSON Schema's maxLength counts them) than
+		// maxLength. Strings from Lua needn't be UTF-8, and stray continuation bytes count as no characters, so the
+		// bytes are bounded too: at most 4 per character.
+		bool tooLong(const std::string& text, size_t maxLength)
 		{
-			return static_cast<size_t>(std::count_if(
-				text.begin(), text.end(), [](char c) { return (static_cast<unsigned char>(c) & 0xC0U) != 0x80U; }));
+			if (text.size() > 4 * maxLength)
+				return true;
+			const auto characters = std::count_if(
+				text.begin(), text.end(), [](char c) { return (static_cast<unsigned char>(c) & 0xC0U) != 0x80U; });
+			return static_cast<size_t>(characters) > maxLength;
 		}
 
 		// The schema's "type" as a message ("string or null"), or empty if the value has one of the types.
@@ -60,7 +65,7 @@ namespace gnubase::engine
 		// Before the pattern, so that it never matches more than maxLength characters: some standard libraries match
 		// recursively, about one stack frame per repeated character, and a long string overflowed the stack (#1059).
 		if (const auto maxLength = schema.find("maxLength"); value.is_string() && maxLength != schema.end() &&
-			characters(value.get_ref<const std::string&>()) > maxLength->get<size_t>())
+			tooLong(value.get_ref<const std::string&>(), maxLength->get<size_t>()))
 			return name + " must be at most " + maxLength->dump() + " characters";
 		// ponytail: compiles the pattern on every check; cache them if a pattern ever sits on a hot path.
 		if (const auto pattern = schema.find("pattern"); value.is_string() && pattern != schema.end() &&

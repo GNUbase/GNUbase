@@ -459,7 +459,7 @@ namespace gnubase::engine
 	{
 		auto views = std::make_shared<Views>();
 		// The names, so that MCP clients and Lua see them: lower, window or inPlace:<track> (#131). At most inPlace:
-		// and 19 digits, which every track id has, so that the pattern never has to match a long string (#1059).
+		// and the 19 digits requireEditor takes, so that the pattern never has to match a long string (#1059).
 		const Json editorSchema = {
 			{"type", "string"}, {"pattern", "^(lower|window|inPlace:[0-9]+)$"}, {"maxLength", 27}};
 		const Json modeSchema = {
