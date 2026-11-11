@@ -69,11 +69,11 @@ the lanes from the press's to the mouse's, from where the events are now: the pr
 the mouse, also when the display's range changes during the drag, and a command that moves the pressed event in time
 or onto another lane during it moves where the move goes from. While a move drags, the events it moves show where it
 takes them, on the grid as it is now (a change of snap shows at once), also after the editor shows the project again,
-as when the selection of the press comes back. The pressed event's element stays when the events are
-drawn again during the drag, as when a command adds one to the part: RmlUi drops a drag without a dragend when its
-element goes. A command that removes the pressed event, or takes its part out of the part editing mode, ends the move
-without its effect. A click shows its selection at once, and a view that comes before the engine has answered it,
-which may be older than it, leaves that selection as it is.
+as when the selection of the press comes back. The pressed event's element stays when the events are drawn again
+during the drag, as when a command adds one to the part: RmlUi drops a drag without a dragend when its element goes. A
+command that removes the pressed event, or takes its part out of the part editing mode, ends the move without its
+effect. A click shows its selection at once, and a view that comes before the engine has answered it, which may be
+older than it, leaves that selection as it is.
 
 | Tool | Gesture | Reference |
 |---|---|---|

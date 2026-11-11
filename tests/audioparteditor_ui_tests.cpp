@@ -906,8 +906,8 @@ TEST_CASE("a move of the audio part editor goes on from where a command moves it
 	f.press(f.at(0.25, 0));
 	f.moveTo(f.at(0.77, 0));
 	REQUIRE(std::abs(f.shownX(f.first) - pointOf(f.at(0.5, 0)).x) <= 2.0);
-	// From MCP or Lua, with the button held: the pressed event off the grid, to 0.05 seconds.
-	f.app.call("event.move", {{"events", {f.first}}, {"delta", g_second / 20}});
+	// From MCP or Lua, with the button held: the pressed event off the grid, to 0.075 seconds.
+	f.app.call("event.move", {{"events", {f.first}}, {"delta", (g_second * 3) / 40}});
 	REQUIRE(f.app.waitUntil(
 		[&]
 		{
@@ -915,13 +915,13 @@ TEST_CASE("a move of the audio part editor goes on from where a command moves it
 			if (editor == nullptr)
 				return false;
 			const Json known = editor->project().value("audioEvents", Json::array());
-			return std::any_of(known.begin(), known.end(),
-				[&](const Json& each) { return each.at("id") == f.first && each.at("position") == g_second / 20; });
+			return std::any_of(known.begin(), known.end(), [&](const Json& each)
+				{ return each.at("id") == f.first && each.at("position") == (g_second * 3) / 40; });
 		}));
-	// The mouse's 0.52 seconds from there: 0.57, on the grid 0.625, where the release takes it.
+	// The mouse's 0.52 seconds from there: 0.595, on the grid 0.625, where the release takes it.
 	CHECK(std::abs(f.shownX(f.first) - pointOf(f.at(0.625, 0)).x) <= 2.0);
 	f.release();
-	REQUIRE(f.app.waitUntil([&] { return f.event(f.first).at("position") != g_second / 20; }));
+	REQUIRE(f.app.waitUntil([&] { return f.event(f.first).at("position") != (g_second * 3) / 40; }));
 	CHECK(f.event(f.first).at("position") == (g_second * 5) / 8);
 	f.settle();
 }
@@ -1013,6 +1013,7 @@ TEST_CASE("a Ctrl drag of the audio part editor moves nothing when its part leav
 	f.addOtherPart();
 	f.openParts({f.part, f.other});
 	REQUIRE(f.app.waitUntil([&] { return f.elements(".ape-event").size() == 3; }));
+	REQUIRE(f.selection().empty());
 	const int ctrl = Rml::Input::KM_CTRL;
 	const double top = f.box(eventSelector(f.first)).at("y").get<double>();
 	const size_t before = f.steps();
@@ -1020,7 +1021,10 @@ TEST_CASE("a Ctrl drag of the audio part editor moves nothing when its part leav
 	f.moveTo(f.at(0.25, 1, 3.5), ctrl);
 	const double laneHeight = f.box(".ape-lane[lane=\"1\"]").at("y").get<double>() - top;
 	REQUIRE(std::abs(f.box(eventSelector(f.first)).at("y").get<double>() - (top + laneHeight)) <= 1.5);
-	f.editOtherPartOnly();
+	// Only the other part in the part editing mode: the pressed event's part leaves it, as the event that isn't
+	// pressed shows.
+	f.app.call("editor.set", {{"editor", "window"}, {"activePart", f.other}, {"editingMode", "activePart"}});
+	REQUIRE(f.app.waitUntil([&] { return f.has(eventSelector(f.second), "inactive"); }));
 	// The event goes back to its lane, and the mouse no longer takes it along.
 	REQUIRE(
 		f.app.waitUntil([&] { return std::abs(f.box(eventSelector(f.first)).at("y").get<double>() - top) <= 1.5; }));
@@ -1041,17 +1045,19 @@ TEST_CASE("the audio part editor keeps showing a move while it renders during th
 	// The project shown again, whenever the press's selection came back, with snap off: the move shows off the grid
 	// before the mouse moves again, the mouse's 0.52 seconds.
 	f.snapOff();
-	CHECK(std::abs(f.shownX(f.first) - pointOf(f.at(0.52, 0)).x) <= 2.0);
-	// And back on the grid with snap on.
+	CHECK(std::abs(f.shownX(f.first) - pointOf(f.at(0.52, 0)).x) <= 2.5);
+	// And back on the grid with snap on, and on a coarser one, of half notes (a second), with the grid changed.
 	f.app.call("snap.set", {{"on", true}});
 	REQUIRE(f.app.waitUntil([&] { return std::abs(f.shownX(f.first) - pointOf(f.at(0.5, 0)).x) <= 2.0; }));
+	f.app.call("quantize.set", {{"settings", {{"grid", "1/2"}}}});
+	REQUIRE(f.app.waitUntil([&] { return std::abs(f.shownX(f.first) - pointOf(f.at(1.0, 0)).x) <= 2.0; }));
 	f.snapOff();
 	const double shown = f.shownX(f.first);
 	f.release();
 	REQUIRE(f.app.waitUntil([&] { return f.event(f.first).at("position") != 0; }));
 	// Where the move showed it: the mouse's way off the grid, within a pixel.
 	const double perSecond = f.box(".ape-display").at("width").get<double>() / 2.0; // px
-	CHECK(std::abs(f.event(f.first).at("position").get<double>() - (0.52 * g_second)) <= g_second / perSecond);
+	CHECK(std::abs(f.event(f.first).at("position").get<double>() - (0.52 * g_second)) <= (1.5 * g_second) / perSecond);
 	f.settle();
 	CHECK(std::abs(f.shownX(f.first) - shown) <= 1.5);
 }
