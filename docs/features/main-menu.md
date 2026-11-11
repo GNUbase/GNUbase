@@ -21,7 +21,10 @@ project window.
 - **Disabled.** An item is `disabled` while `KeyCommands::canRun` says its command can't run: what
   `KeyCommands::enableWhen` set for it, e.g. Undo and Redo while the undo history (`history.changed`) has nothing to
   undo or redo, and the project window's edit commands without the event display. The menu updates in every step of
-  the shell, so the DOM that MCP's UI tools read is always current.
+  the shell, so the DOM that MCP's UI tools read is always current, and also as soon as a mouse button or key is
+  released, before anything else handles that: a menu opened by a right click that selected a track has its items
+  for that track enabled at once, so a script's click on one right after the right click runs it, without waiting for a
+  step (#1069).
 - **The menu bar** is a docking strip, `strip="menuBar"` ([docking.md](docking.md)): Menu Bar in the Set up Window
   Layout menu and the UI command `window.menuBar` show and hide it, and `ui.layout` keeps it per window. It is a
   `<menubar>`, whose titles are buttons that open the menus ([widgets.md](widgets.md), "Menus and context menus"), and

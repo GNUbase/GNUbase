@@ -7,6 +7,7 @@
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -158,9 +159,27 @@ namespace
 		ObjectId midi = 0;
 		std::vector<TestNote> notes;
 
+		ObjectId part(int index) const { return m_parts[static_cast<size_t>(index)]; }
+
 	private:
 		std::vector<ObjectId> m_parts;
 	};
+
+	using Played = std::vector<std::vector<int>>;
+
+	// The controller, program, channel pressure and pitch bend messages the instrument got in the next block, sorted,
+	// so that one sent twice shows.
+	Played controllersPlayed(Client& client)
+	{
+		run(client, "audio.render", {{"frames", 64}});
+		Played bytes;
+		const Json capture = run(client, "midi.capture");
+		for (const Json& captured : capture.at("captured"))
+			if (const auto message = captured.at("bytes").get<std::vector<int>>(); message[0] >= 0xB0)
+				bytes.push_back(message);
+		std::sort(bytes.begin(), bytes.end());
+		return bytes;
+	}
 
 	std::vector<int64_t> positions(int64_t start, int64_t frames, int64_t left = 0, int64_t right = 0)
 	{
@@ -343,32 +362,24 @@ TEST_CASE("muted, soloed-out and disabled MIDI tracks send their instrument no a
 	song.add(1, {100, 400, 60});
 	song.add(mutedPart, {200, 500, 64});
 	song.add(disabledPart, {300, 600, 67});
-	// A CC 7 lane on each MIDI track: 64 on the one that plays, 32 on the muted one and 95 on the disabled one, which
-	// have a MIDI pan of 20 and a program too.
-	for (const auto& [track, value] : {std::pair{song.midi, 0.5}, std::pair{muted, 0.25}, std::pair{disabled, 0.75}})
+	const auto lane = [&song](ObjectId track, const Json& target, double value)
+	{
 		run(song.client, "automationPoint.add",
-			{{"lane",
-				 idOf(run(song.client, "automationLane.add",
-						  {{"track", track}, {"target", {{"type", "controller"}, {"number", 7}}}}),
-					 "lane")},
+			{{"lane", idOf(run(song.client, "automationLane.add", {{"track", track}, {"target", target}}), "lane")},
 				{"points", {{{"position", 0}, {"value", value}}}}});
+	};
+	// A CC 7 lane on each MIDI track: 64 on the one that plays, 32 on the muted one and 95 on the disabled one, which
+	// have a MIDI pan of 20 and a program too. The muted one has pitch bend and channel pressure lanes as well.
+	for (const auto& [track, value] : {std::pair{song.midi, 0.5}, std::pair{muted, 0.25}, std::pair{disabled, 0.75}})
+		lane(track, {{"type", "controller"}, {"number", 7}}, value);
+	lane(muted, {{"type", "pitchBend"}}, 0.75);
+	lane(muted, {{"type", "channelPressure"}}, 0.5);
 	for (const ObjectId track : {muted, disabled})
 		run(song.client, "channel.set", {{"channel", channelOf(song.client, track)}, {"midiPan", 20}, {"program", 5}});
 	run(song.client, "channel.set", {{"channel", channelOf(song.client, muted)}, {"mute", true}});
 	run(song.client, "track.set", {{"track", disabled}, {"enabled", false}});
 	run(song.client, "midi.capture", {{"start", true}});
-	using Played = std::set<std::vector<int>>;
-	// The controllers and programs the instrument got in the next block.
-	const auto played = [&song]
-	{
-		run(song.client, "audio.render", {{"frames", 64}});
-		Played bytes;
-		const Json capture = run(song.client, "midi.capture");
-		for (const Json& captured : capture.at("captured"))
-			if (const auto message = captured.at("bytes").get<std::vector<int>>(); message[0] >= 0xB0)
-				bytes.insert(message);
-		return bytes;
-	};
+	const auto played = [&song] { return controllersPlayed(song.client); };
 	run(song.client, "transport.play");
 	CHECK(played() == Played{{0xB0, 7, 64}});
 
@@ -377,11 +388,65 @@ TEST_CASE("muted, soloed-out and disabled MIDI tracks send their instrument no a
 	run(song.client, "channel.set", {{"channel", channelOf(song.client, muted)}, {"mute", false}});
 	CHECK(played().empty());
 
-	// Heard or enabled again, a track sends them.
+	// Heard or enabled again, a track sends them, each once: playback started while it was silent.
 	run(song.client, "channel.set", {{"channel", channelOf(song.client, song.midi)}, {"solo", false}});
-	CHECK(played() == Played{{0xC0, 5}, {0xB0, 7, 32}, {0xB0, 10, 20}});
+	CHECK(played() == Played{{0xB0, 7, 32}, {0xB0, 10, 20}, {0xC0, 5}, {0xD0, 64}, {0xE0, 127, 95}});
 	run(song.client, "track.set", {{"track", disabled}, {"enabled", true}});
-	CHECK(played() == Played{{0xC0, 5}, {0xB0, 7, 95}, {0xB0, 10, 20}});
+	CHECK(played() == Played{{0xB0, 7, 95}, {0xB0, 10, 20}, {0xC0, 5}});
+}
+
+TEST_CASE("a MIDI track heard again keeps its parts' program and controllers, and sends what changed meanwhile",
+	"[integration]")
+{
+	Song song(64);
+	const ObjectId channel = channelOf(song.client, song.midi);
+	// The part plays program 9 and CC 7 at 100 where it starts, over the channel's program 5 and MIDI volume 50.
+	run(song.client, "controller.add",
+		{{"part", song.part(1)},
+			{"controllers",
+				{{{"position", 0}, {"type", "program"}, {"number", 9}},
+					{{"position", 0}, {"number", 7}, {"value", 1.0}}}}});
+	run(song.client, "channel.set", {{"channel", channel}, {"program", 5}, {"midiVolume", 50}, {"midiPan", 20}});
+	run(song.client, "midi.capture", {{"start", true}});
+	const auto played = [&song] { return controllersPlayed(song.client); };
+	const auto mute = [&](bool on) { run(song.client, "channel.set", {{"channel", channel}, {"mute", on}}); };
+	run(song.client, "transport.play");
+	CHECK(played() == Played{{0xB0, 7, 50}, {0xB0, 7, 127}, {0xB0, 10, 20}, {0xC0, 5}, {0xC0, 9}});
+
+	// Muted and unmuted, it sends nothing again, so the part's program and CC 7 stay.
+	mute(true);
+	CHECK(played().empty());
+	mute(false);
+	CHECK(played().empty());
+
+	// What changed while it was muted goes out once it is heard: a new MIDI volume alone, a new program with the
+	// controllers after it.
+	mute(true);
+	run(song.client, "channel.set", {{"channel", channel}, {"midiVolume", 60}});
+	CHECK(played().empty());
+	mute(false);
+	CHECK(played() == Played{{0xB0, 7, 60}});
+	mute(true);
+	run(song.client, "channel.set", {{"channel", channel}, {"program", 6}});
+	CHECK(played().empty());
+	mute(false);
+	CHECK(played() == Played{{0xB0, 7, 60}, {0xB0, 10, 20}, {0xC0, 6}});
+
+	// Playback that jumps while it is muted: heard again, it sends what a jump sends.
+	mute(true);
+	run(song.client, "transport.locate", {{"position", 0}});
+	CHECK(played().empty());
+	mute(false);
+	CHECK(played() == Played{{0xB0, 7, 60}, {0xB0, 10, 20}, {0xC0, 6}});
+
+	// Transport stopped: a disabled track's new program and MIDI volume reach the instrument once it is enabled.
+	run(song.client, "transport.stop");
+	played();
+	run(song.client, "track.set", {{"track", song.midi}, {"enabled", false}});
+	run(song.client, "channel.set", {{"channel", channel}, {"program", 7}, {"midiVolume", 70}});
+	CHECK(played().empty());
+	run(song.client, "track.set", {{"track", song.midi}, {"enabled", true}});
+	CHECK(played() == Played{{0xB0, 7, 70}, {0xB0, 10, 20}, {0xC0, 7}});
 }
 
 TEST_CASE("a MIDI track's mute automation silences its notes from the point's sample and ends those that sound",

@@ -12,6 +12,7 @@
 #include "ui/shell.h"
 
 #include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/EventListener.h>
@@ -23,6 +24,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <future>
+#include <memory>
 #include <optional>
 #include <string>
 #include <thread>
@@ -424,6 +426,17 @@ TEST_CASE("ui_click with a count of 2 is a double click however long the frames 
 	fixture.call("ui_click", {{"selector", "#target"}});
 	fixture.call("ui_click", {{"selector", "#target"}});
 	CHECK(!recorder.events.contains("dblclick"));
+
+	// A clock that a test froze stays frozen through a double click, which doesn't thaw it.
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	clock->freeze(true);
+	const std::shared_ptr<void> thaw(nullptr, [clock](void*) { clock->freeze(false); });
+	clock->advance(1.0); // clear of the clicks before
+	recorder.events = Json::object();
+	fixture.call("ui_click", {{"selector", "#target"}, {"count", 2}});
+	CHECK(recorder.events.at("dblclick").at("target") == "target");
+	CHECK(clock->frozen());
 }
 
 TEST_CASE("ui_drop drops files on an element, as the window system does", "[unit]")

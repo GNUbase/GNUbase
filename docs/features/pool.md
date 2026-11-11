@@ -10,7 +10,8 @@ the pool and conforming files to the project's sample rate. The engine commands 
 - **`pool.get`** (query) returns the pool folders and every clip with its folder, how many audio events use it
   (`used`), its media file's path, sample rate, channel count and length, `missing` (the file isn't there) and
   `external` (outside the project folder; every file of a project that has no file yet), plus the info line's totals:
-  `audioFiles`, `usedFiles` (media files an event plays), `missingFiles`, `externalFiles` and `totalSize` in bytes.
+  `audioFiles`, `usedFiles` (media files an event plays), `missingFiles`, `externalFiles` and `totalSize` in bytes,
+  plus `missingExternalFiles`, the external files that are missing, which Prepare Archive can't copy.
   It looks at each media file on disk once (a `std::filesystem::directory_entry` for whether it is there and its
   size), not once per clip and again per file, since the panel asks after every edit.
 - **Folders.** `poolFolder.add` (name, default New Folder; parent), `poolFolder.set` (rename, or move into another
