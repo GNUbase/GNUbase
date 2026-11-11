@@ -598,7 +598,9 @@ namespace gnubase::engine
 				plays = !drum.mute;
 			}
 			else
+			{
 				pitch = static_cast<uint8_t>(liveInputPitch(sequence.liveInput, position, event.key % 128));
+			}
 			m_inputTo[from] = plays && midi::modifyNote(modifiers, midi::noteSeed(0, ++m_random), pitch, event.velocity)
 				? static_cast<uint16_t>((channel * 128) + pitch)
 				: static_cast<uint16_t>(g_notes);

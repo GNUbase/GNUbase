@@ -311,17 +311,14 @@ TEST_CASE("the drum editor is an editor content, and parts of a track with a dru
 	f.call("track.set", {{"track", f.track}, {"drumMap", f.gm()}});
 	CHECK(f.call("editor.open", {{"editor", "window"}, {"parts", {f.part}}}).at("content") == "drum");
 	CHECK(f.call("editor.set", {{"editor", "window"}, {"content", "key"}}).at("content") == "key");
-	// The drum editor's Pitch Visibility and its options, and Show Note Length (pp. 1223-1224, 1227, 1234).
+	// The drum editor's Pitch Visibility and its option, and Show Note Length (pp. 1223-1224, 1227, 1234).
 	Json view = f.call("editor.get", {{"editor", "window"}});
 	CHECK(view.at("pitchVisibility") == false);
-	CHECK(view.at("soundsWithEvents") == true);
 	CHECK(view.at("reverseSounds") == false);
 	CHECK(view.at("showNoteLength") == false);
 	view = f.call("editor.set",
-		{{"editor", "window"}, {"pitchVisibility", true}, {"soundsWithEvents", false}, {"reverseSounds", true},
-			{"showNoteLength", true}});
+		{{"editor", "window"}, {"pitchVisibility", true}, {"reverseSounds", true}, {"showNoteLength", true}});
 	CHECK(view.at("pitchVisibility") == true);
-	CHECK(view.at("soundsWithEvents") == false);
 	CHECK(view.at("reverseSounds") == true);
 	CHECK(view.at("showNoteLength") == true);
 	// Not with the preference off; content still opens the drum editor.

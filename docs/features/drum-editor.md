@@ -56,7 +56,7 @@ They emit `drumMap.added`, `drumMap.changed` and `drumMap.removed` with the map 
   editor opens the parts of a track with a drum map in the drum editor while the user setting `editing.useDrumEditor`
   is on, as by default (Use Drum Editor when Drum Map is assigned, pp. 1221, 1603; the preferences' Editors page).
   The drum editor's view also has `pitchVisibility` (Pitch Visibility On/Off) with its option `reverseSounds`
-  (Reverse Drum Sound List), and `showNoteLength` (Show Note Length On/Off, p. 1227); `soundsWithEvents` waits.
+  (Reverse Drum Sound List), and `showNoteLength` (Show Note Length On/Off, p. 1227).
 
 ## In the UI
 

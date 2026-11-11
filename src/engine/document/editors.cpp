@@ -61,10 +61,9 @@ namespace gnubase::engine
 			std::string lengthQuantize =
 				"link"; // a note value, link: the quantize grid's, or drumMap: the sound's snap
 			std::string content = "key";
-			// The drum editor's (#882): Pitch Visibility On/Off and its options Show Drum Sounds with Events and
-			// Reverse Drum Sound List (pp. 1223-1224, 1234), and Show Note Length On/Off (p. 1227).
+			// The drum editor's (#882): Pitch Visibility On/Off and its option Reverse Drum Sound List (pp. 1223-1224,
+			// 1234), and Show Note Length On/Off (p. 1227).
 			bool pitchVisibility = false;
-			bool soundsWithEvents = true;
 			bool reverseSounds = false;
 			bool showNoteLength = false;
 			// The controller lanes (#128): each a type (midi::g_laneTypes) and a controller number or pitch.
@@ -281,10 +280,10 @@ namespace gnubase::engine
 				{"recordVelocity", view.recordVelocity}, {"recordReleaseVelocity", view.recordReleaseVelocity},
 				{"keepNotes", view.keepNotes}, {"insertVelocity", view.insertVelocity},
 				{"lengthQuantize", view.lengthQuantize}, {"content", view.content},
-				{"pitchVisibility", view.pitchVisibility}, {"soundsWithEvents", view.soundsWithEvents},
-				{"reverseSounds", view.reverseSounds}, {"showNoteLength", view.showNoteLength}, {"lanes", lanes},
-				{"showLanes", view.showLanes}, {"autoSelectControllers", view.autoSelectControllers},
-				{"controllerSelection", controllerSelection}, {"eventSelection", view.eventSelection}};
+				{"pitchVisibility", view.pitchVisibility}, {"reverseSounds", view.reverseSounds},
+				{"showNoteLength", view.showNoteLength}, {"lanes", lanes}, {"showLanes", view.showLanes},
+				{"autoSelectControllers", view.autoSelectControllers}, {"controllerSelection", controllerSelection},
+				{"eventSelection", view.eventSelection}};
 		}
 
 		// The controller events in the ranges of the selected notes, from a note's start to its end (p. 1188).
@@ -498,7 +497,7 @@ namespace gnubase::engine
 			{"recordVelocity", boolean}, {"recordReleaseVelocity", boolean}, {"keepNotes", boolean},
 			{"insertVelocity", {{"type", "number"}}}, {"lengthQuantize", {{"type", "string"}}}, {"lanes", lanesSchema},
 			{"showLanes", boolean}, {"autoSelectControllers", boolean}, {"pitchVisibility", boolean},
-			{"soundsWithEvents", boolean}, {"reverseSounds", boolean}, {"showNoteLength", boolean}};
+			{"reverseSounds", boolean}, {"showNoteLength", boolean}};
 		Json viewSchema = {{"type", "object"},
 			{"properties",
 				{{"editor", editorSchema}, {"open", {{"type", "boolean"}}}, {"parts", idsSchema},
@@ -508,8 +507,8 @@ namespace gnubase::engine
 				{"editor", "open", "parts", "activePart", "activeTrack", "editable", "editingMode", "keepContents",
 					"globalTracks", "selection", "stepInput", "midiInput", "stepPosition", "moveInsert", "recordPitch",
 					"recordVelocity", "recordReleaseVelocity", "keepNotes", "insertVelocity", "lengthQuantize",
-					"content", "pitchVisibility", "soundsWithEvents", "reverseSounds", "showNoteLength", "lanes",
-					"showLanes", "autoSelectControllers", "controllerSelection", "eventSelection"}}};
+					"content", "pitchVisibility", "reverseSounds", "showNoteLength", "lanes", "showLanes",
+					"autoSelectControllers", "controllerSelection", "eventSelection"}}};
 		viewSchema["properties"].update(keyEditorSchema);
 		const std::string viewText =
 			"editor: lower (the editor in the project window's lower zone), window (the editor window) or "
@@ -530,9 +529,9 @@ namespace gnubase::engine
 			"played into a track with a drum map take the pitch of the sound whose iNote they are. content: what "
 			"shows the parts, key (the key editor), list (the list editor, pp. 1243-1258), drum (the drum editor, "
 			"pp. 1221-1242) or pattern (the pattern editor, pp. 895-937: the active part's pattern). The drum "
-			"editor's: pitchVisibility (Pitch Visibility On/Off) applies its options, soundsWithEvents, the drum "
-			"sound list shows only the sounds that the parts have notes of, and reverseSounds, it lists them from the "
-			"bottom (pp. 1223-1224, 1234); showNoteLength shows its notes as boxes of their length, not diamonds "
+			"editor's: pitchVisibility (Pitch Visibility On/Off) applies its option reverseSounds, the drum sound "
+			"list from the bottom (pp. 1223-1224, 1234); showNoteLength shows its notes as boxes of their length, not "
+			"diamonds "
 			"(p. 1227); "
 			"controllerSelection, the "
 			"list editor's selected controller events, each {part, controller}, of the editable parts. Audio parts "
@@ -639,10 +638,10 @@ namespace gnubase::engine
 					{"stepPosition", idSchema}, {"moveInsert", boolean}, {"recordPitch", boolean},
 					{"recordVelocity", boolean}, {"recordReleaseVelocity", boolean}, {"keepNotes", boolean},
 					{"insertVelocity", {{"type", "number"}}}, {"lengthQuantize", {{"type", "string"}}},
-					{"content", contentSchema}, {"pitchVisibility", boolean}, {"soundsWithEvents", boolean},
-					{"reverseSounds", boolean}, {"showNoteLength", boolean}, {"lanes", lanesSchema},
-					{"showLanes", boolean}, {"autoSelectControllers", boolean},
-					{"controllerSelection", controllerSelectionSchema}, {"eventSelection", idsSchema}}),
+					{"content", contentSchema}, {"pitchVisibility", boolean}, {"reverseSounds", boolean},
+					{"showNoteLength", boolean}, {"lanes", lanesSchema}, {"showLanes", boolean},
+					{"autoSelectControllers", boolean}, {"controllerSelection", controllerSelectionSchema},
+					{"eventSelection", idsSchema}}),
 				viewSchema, false},
 			[views, &model, store](CommandContext& context)
 			{
@@ -792,7 +791,6 @@ namespace gnubase::engine
 				if (parameters.contains("showLanes"))
 					view.showLanes = parameters.at("showLanes").get<bool>();
 				view.pitchVisibility = parameters.value("pitchVisibility", view.pitchVisibility);
-				view.soundsWithEvents = parameters.value("soundsWithEvents", view.soundsWithEvents);
 				view.reverseSounds = parameters.value("reverseSounds", view.reverseSounds);
 				view.showNoteLength = parameters.value("showNoteLength", view.showNoteLength);
 				const bool autoSelectTurnsOn = parameters.value("autoSelectControllers", view.autoSelectControllers) &&

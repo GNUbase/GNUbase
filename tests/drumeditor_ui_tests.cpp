@@ -299,7 +299,7 @@ TEST_CASE("the drum sound list types an output, reverses with Pitch Visibility a
 	f.type(sound(36) + " textdisplay[sound-field=output]", "Module", "Module");
 	REQUIRE(f.app.waitUntil([&] { return f.drumMap().at("sounds").at(36).at("output") == "Module"; }));
 	f.type(sound(36) + " textdisplay[sound-field=output]", "Default", "Default");
-	REQUIRE(f.app.waitUntil([&] { return f.drumMap().at("sounds").at(36).at("output") == ""; }));
+	REQUIRE(f.app.waitUntil([&] { return f.drumMap().at("sounds").at(36).at("output").get<std::string>().empty(); }));
 
 	// Pitch Visibility's Reverse Drum Sound List (pp. 1223-1224, 1234): the list from the bottom.
 	CHECK(f.elements(".drum-sound").at(0).at("attributes").at("pitch") == "0");
