@@ -80,7 +80,7 @@ TEST_CASE("a test run's temp folder is gone when the run ends", "[integration]")
 	const gnubase::test::TempDir dir;
 	const std::filesystem::path out = dir.path() / "out.txt";
 	const std::string command =
-		"\"" + std::string(GNUBASE_TESTS) + "\" \"[temp-folder-child]\" > \"" + out.u8string() + "\"";
+		"\"" + std::string(GNUBASE_TESTS) + R"(" "[temp-folder-child]" > ")" + out.u8string() + "\"";
 #ifdef _WIN32
 	// cmd.exe removes the outer quotes. As UTF-16, so that paths with any characters come through.
 	// NOLINTNEXTLINE(bugprone-command-processor): fixed test command
