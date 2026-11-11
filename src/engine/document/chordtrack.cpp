@@ -1286,7 +1286,7 @@ namespace gnubase::engine
 				// The held chord's note-offs are skipped only if its channel is no longer a MIDI or instrument track's
 				// (its track was removed or another project loaded), so that a gone channel never blocks the next
 				// audition. Other failures fail the command with the chord still held, so that no note hangs.
-				const auto held = *auditioned;
+				const auto& held = *auditioned;
 				const bool there = std::any_of(project.trackById.begin(), project.trackById.end(),
 					[&held](const auto& entry)
 					{
