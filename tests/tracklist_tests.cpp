@@ -684,6 +684,29 @@ TEST_CASE("the main menu's items follow what a key or a click changed without a 
 	CHECK(!disabled());
 }
 
+// What a click's own listeners change (#1120): the toolbar's tool buttons drop the selection range through the event
+// display's listener on the document, and send no change event.
+TEST_CASE("the main menu's range items follow a tool button's click without a step of the shell", "[ui]")
+{
+	Tracks tracks;
+	const uint64_t a = tracks.add({{"type", "audio"}, {"name", "A"}});
+	tracks.rows(1);
+	const std::string item = "#edit-menu menuitem[command=\"edit.cutTime\"]";
+	const auto disabled = [&tracks, &item]
+	{ return elements(tracks.app, item).at(0).at("attributes").contains("disabled"); };
+	tracks.display.setTool(ui::Tool::RangeSelection);
+	tracks.display.setRange(ui::RangeSelection{0, 48000, {a}});
+	tracks.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(tracks.display.range().has_value());
+	REQUIRE(!disabled());
+
+	// The tool button takes the range away; the item is disabled right after the click, not at the next step.
+	tracks.app.ui().click(
+		std::nullopt, {"button[tool=objectSelection]", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+	REQUIRE(!tracks.display.range().has_value());
+	CHECK(disabled());
+}
+
 TEST_CASE("track heights and folded folders are the project's: saved with it, not taken into another one", "[ui]")
 {
 	Tracks tracks;
