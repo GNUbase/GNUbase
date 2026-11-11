@@ -70,9 +70,10 @@ or a clip of the project.
   outside its event, past its end and at half the project's sample rate, scrubbed without moving the cursor, also at
   half the project's sample rate, and its errors, also for a hand-edited project's file without a sample rate or
   length; a clip played and scrubbed with its fades.
-- `tests/playback_tests.cpp`, in real time on the dummy device (`[realtime]`): scrubbing while the transport plays
-  leaving the playback without dropouts, and an `audition.start` while another plays starting at its position without
-  a frame left out (the cue thread held off).
+- `tests/playback_tests.cpp`, in real time (`[realtime]`): stopping freeing what played also from the middle of an
+  audio block; on the dummy device, scrubbing while the transport plays leaving the playback without dropouts, and an
+  `audition.start` while another plays starting at its position without a frame left out (the cue thread held off,
+  the audition before keeping its voices).
 - `tests/renderinplace_tests.cpp`: a frozen channel's freeze file is no media file to audition.
 - `tests/eventediting_tests.cpp` and `tests/uiapp_tests.cpp`: the play tool on an audio lane, on a MIDI lane, and
   scrubbing ([tools.md](tools.md)).

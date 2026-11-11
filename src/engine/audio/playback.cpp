@@ -786,22 +786,44 @@ namespace gnubase::engine
 			for (size_t i = 0; i < m_voices.size(); ++i)
 				if (m_voices[i]->channel == track.channel)
 					mine.push_back(i);
-			// A voice the audio thread is reading from stays where it is. Also for an exact cue: one that comes while
-			// playback runs on elsewhere, as a locate while playing or an audition that replaces another does, gets
-			// other voices, so that what plays until the audio thread goes there has its own.
+			// A voice the audio thread is reading from stays where it is: while playing, and for an exact cue while
+			// playback plays on elsewhere until it goes there (playsOn).
+			const bool playsOn = !cue.playing && cue.playsOn >= 0;
 			std::vector<bool> reading(m_voices.size(), false);
 			for (const size_t i : mine)
-				reading[i] = states[i].started && states[i].lastBlock + 2 > now;
+				reading[i] = (cue.playing || playsOn) && states[i].started && states[i].lastBlock + 2 > now;
 			std::vector<bool> taken = reading;
 			std::vector<bool> claimed(m_voices.size(), false); // has one of the entries at the cursor
 
 			std::vector<Point> unmet;
+			const Playlist& playlist = *track.playlist;
+			const auto slack = static_cast<time::Samples>(m_sampleRate / 10.0);
+
+			// So do the voices waiting where that playback enters entries in the next half second, which the command
+			// thread waits for the exact cue's voices in: the exact cue gets others.
+			if (playsOn)
+			{
+				Cue onward = cue;
+				onward.position = cue.playsOn;
+				onward.playing = true;
+				onward.window = std::max(cue.window, 5 * slack);
+				onward.enter = -1;
+				for (const Point& point : points(playlist, onward))
+				{
+					const auto waiting = std::find_if(mine.begin(), mine.end(),
+						[&](size_t i)
+						{
+							return !taken[i] && m_voices[i]->media == point.media && !states[i].started &&
+								states[i].cueFrame == point.frame;
+						});
+					if (waiting != mine.end())
+						taken[*waiting] = true;
+				}
+			}
 
 			// The entries at the cursor, one per layer, each with a voice of its own: while playing, a voice reading
 			// near it or waiting just ahead of it has it. Otherwise it needs one: while stopped exactly there, while
 			// playing a little ahead, so the voice is ready by the time playback gets there.
-			const Playlist& playlist = *track.playlist;
-			const auto slack = static_cast<time::Samples>(m_sampleRate / 10.0);
 			for (const PlaylistLayer& layer : playlist.layers)
 			{
 				const PlaylistEntry* at = entryAt(layer, cue.position);

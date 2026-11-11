@@ -52,10 +52,17 @@ namespace gnubase::engine
 		std::map<ObjectId, std::string> mediaPaths, double sampleRate, time::Samples position, time::Samples end,
 		int channels, uint32_t maxFrames)
 	{
+		// Where the audition before plays on from until this one is out, if one plays.
+		time::Samples playsOn = -1;
 		{
 			// The cue thread leaves the streams alone until this state is out: a cue it made for the last one would
 			// move what this one cues (cue holds the lock while it cues).
 			const std::scoped_lock lock(m_mutex);
+			if (m_cuePlaying)
+			{
+				const auto [played, at] = m_played.load();
+				playsOn = played == m_cueSerial ? at : m_cueStart;
+			}
 			m_cuePlaying = false;
 		}
 		m_subject = subject;
@@ -76,6 +83,7 @@ namespace gnubase::engine
 		Playback::Cue cue;
 		cue.position = position;
 		cue.window = maxFrames;
+		cue.playsOn = playsOn;
 		m_playback.cue(cue);
 		m_playback.waitUntilBuffered(g_startWait);
 		publish(std::move(state));
@@ -166,7 +174,7 @@ namespace gnubase::engine
 		const auto deadline = std::chrono::steady_clock::now() + g_releaseWait;
 		while (m_states.retired() > 0 && std::chrono::steady_clock::now() < deadline)
 		{
-			std::this_thread::yield();
+			std::this_thread::sleep_for(std::chrono::microseconds(200));
 			m_states.collect();
 		}
 		m_playback.setTracks({}, {}, 0.0); // closes the streams' files and frees their buffers

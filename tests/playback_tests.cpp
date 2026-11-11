@@ -550,6 +550,7 @@ TEST_CASE("an exact cue while playback runs on elsewhere leaves the voice it rea
 	for (int i = 0; i < 3; ++i)
 		blocks.play();
 	cue.position = 24000;
+	cue.playsOn = blocks.position;
 	playback.cue(cue);
 	REQUIRE(playback.waitUntilBuffered(timeout));
 	for (int i = 0; i < 2; ++i) // until the audio thread takes the locate
@@ -560,6 +561,96 @@ TEST_CASE("an exact cue while playback runs on elsewhere leaves the voice it rea
 
 	CHECK(blocks.wrong == 0);
 	CHECK(playback.dropouts() == 0);
+}
+
+TEST_CASE("an exact cue while playback runs on elsewhere leaves the voices waiting ahead of it alone", "[integration]")
+{
+	// Playback reaches the start of the next entry before it goes where the exact cue is: the voice waiting there for
+	// it must still be there. Two files with the same ramp, so that every frame plays ramp(position).
+	const gnubase::test::TempDir dir;
+	const std::string first = writeRamp(dir, "first", 1, 48000);
+	const std::string second = writeRamp(dir, "second", 1, 48000);
+	constexpr ObjectId channel = 1;
+	const auto section = [](ObjectId media, gnubase::time::Samples start, gnubase::time::Samples end)
+	{
+		PlaylistEntry entry;
+		entry.start = start;
+		entry.end = end;
+		entry.media = media;
+		entry.frame = start;
+		return entry;
+	};
+	Playlist sections;
+	sections.layers.push_back({section(2, 0, 1000), section(3, 1000, 48000)});
+	const auto playlist = std::make_shared<const Playlist>(std::move(sections));
+	Playback playback(4);
+	playback.setTracks({{channel, playlist}}, {{2, first}, {3, second}}, 48000.0);
+	constexpr uint32_t blockSize = 256;
+	Blocks blocks(playlist, channel, playback, blockSize);
+	constexpr auto timeout = std::chrono::seconds(5);
+
+	Playback::Cue cue;
+	cue.window = blockSize;
+	playback.cue(cue);
+	REQUIRE(playback.waitUntilBuffered(timeout));
+	blocks.play();
+	// The cue thread: a voice of the second file waits at 1000.
+	cue.position = blocks.position;
+	cue.playing = true;
+	cue.window = 4800;
+	playback.cue(cue);
+	REQUIRE(playback.waitUntilBuffered(timeout));
+	// A locate into the second file while playing: cued exactly there, playback plays on past 1000 meanwhile.
+	cue.position = 24000;
+	cue.playing = false;
+	cue.window = blockSize;
+	cue.playsOn = blocks.position;
+	playback.cue(cue);
+	REQUIRE(playback.waitUntilBuffered(timeout));
+	for (int i = 0; i < 5; ++i)
+		blocks.play();
+	CHECK(blocks.position > 1000);
+	CHECK(blocks.wrong == 0);
+	blocks.position = 24000;
+	blocks.play();
+
+	CHECK(blocks.wrong == 0);
+	CHECK(playback.dropouts() == 0);
+}
+
+TEST_CASE("an exact cue with nothing playing on reuses the voice the audio thread read", "[integration]")
+{
+	// Offline rendering cues exactly before every block, also where playback jumps: it needs no more voices than
+	// the block plays, here one, which the jump takes along.
+	const gnubase::test::TempDir dir;
+	const std::string path = writeRamp(dir, "mono", 1, 48000);
+	constexpr ObjectId channel = 1;
+	constexpr ObjectId media = 2;
+	PlaylistEntry entry;
+	entry.end = 48000;
+	entry.media = media;
+	Playlist sections;
+	sections.layers.push_back({entry});
+	const auto playlist = std::make_shared<const Playlist>(std::move(sections));
+	Playback playback(4);
+	playback.setTracks({{channel, playlist}}, {{media, path}}, 48000.0);
+	constexpr uint32_t blockSize = 256;
+	Blocks blocks(playlist, channel, playback, blockSize);
+	constexpr auto timeout = std::chrono::seconds(5);
+
+	Playback::Cue cue;
+	cue.window = blockSize;
+	playback.cue(cue);
+	REQUIRE(playback.waitUntilBuffered(timeout));
+	blocks.play();
+	cue.position = 24000;
+	playback.cue(cue);
+	REQUIRE(playback.waitUntilBuffered(timeout));
+	blocks.position = 24000;
+	blocks.play();
+
+	CHECK(blocks.wrong == 0);
+	CHECK(playback.voices() == 1);
 }
 
 TEST_CASE("auditioning plays only the pressed audio track, past its channel and without the transport", "[integration]")
@@ -969,7 +1060,8 @@ TEST_CASE("an audition that stops closes the files it played", "[integration]")
 	CHECK(audition.voices() == 0);
 }
 
-TEST_CASE("an audition that stops frees what it played, also from the middle of an audio block", "[integration]")
+TEST_CASE(
+	"an audition that stops frees what it played, also from the middle of an audio block", "[integration][realtime]")
 {
 	// The audio thread plays block after block, so that most stops come while it is in the middle of one with the
 	// state before: stop frees that state, and the playlist its player plays, once the block is done.
