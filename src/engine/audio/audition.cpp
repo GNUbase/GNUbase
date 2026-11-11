@@ -261,8 +261,12 @@ namespace gnubase::engine
 		if (!m_cuePlaying)
 			return;
 		const auto [played, position] = m_played.load();
+		playedRead();
 		Playback::Cue cue;
-		cue.playing = reading && played == m_cueSerial;
+		// While the audio thread reads, as for a playing transport even before it has played a block of this state:
+		// it may be in the middle of the first one, or have just played it, after what was read here, and an exact
+		// cue at the start would then move the stream it reads back there. play() cued the start exactly.
+		cue.playing = reading;
 		cue.position = played == m_cueSerial ? position : m_cueStart;
 		cue.window = window;
 		m_playback.cue(cue);
