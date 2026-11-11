@@ -1101,8 +1101,9 @@ namespace gnubase::engine
 		if (const auto heights = json.find("heights"); heights != json.end() && heights->is_array())
 			for (const Json& item : *heights)
 				if (item.is_object() && item.value("track", Json()).is_number_unsigned() &&
-					item.value("height", Json()).is_number())
-					layout.heights[item.at("track").get<ObjectId>()] = item.at("height").get<double>();
+					item.value("height", Json()).is_number() && std::isfinite(item.at("height").get<double>()))
+					layout.heights[item.at("track").get<ObjectId>()] =
+						std::clamp(item.at("height").get<double>(), g_minTrackHeight, g_maxTrackHeight);
 		if (const auto folded = json.find("folded"); folded != json.end() && folded->is_array())
 			for (const Json& id : *folded)
 				if (id.is_number_unsigned())
@@ -2576,6 +2577,17 @@ namespace gnubase::engine
 		project.trackVisibility = trackVisibilityFromJson(json.value("trackVisibility", Json::object()));
 		project.trackLayout = trackLayoutFromJson(json.value("trackLayout", Json::object())); // before #491: none
 		project.workspaces = workspacesFromJson(json.value("workspaces", Json::object()));    // before #163: none
+		{
+			// Only folders fold: a hand-edited file's other tracks are left out (#991).
+			std::vector<ObjectId>& folded = project.trackLayout.folded;
+			folded.erase(std::remove_if(folded.begin(), folded.end(),
+							 [&project](ObjectId id)
+							 {
+								 const auto track = project.trackById.find(id);
+								 return track == project.trackById.end() || track->second.type != TrackType::Folder;
+							 }),
+				folded.end());
+		}
 		// Files from before the metronome have none; values that aren't valid keep their defaults.
 		if (const auto found = json.find("metronome"); found != json.end())
 			metronome::apply(project.metronome, *found, false);

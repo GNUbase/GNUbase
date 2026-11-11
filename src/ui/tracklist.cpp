@@ -306,12 +306,19 @@ namespace gnubase::ui
 			{"track.toggleFolding",
 				[this, selected]
 				{
+					// One trackLayout.set for all of them.
+					std::set<uint64_t> folders = m_folded;
 					selected(
-						[this](uint64_t track)
+						[this, &folders](uint64_t track)
 						{
-							if (m_tracks[m_index.at(track)].type == "folder")
-								setFolded(track, !folded(track));
+							if (m_tracks[m_index.at(track)].type != "folder")
+								return;
+							if (folded(track))
+								folders.erase(track);
+							else
+								folders.insert(track);
 						});
+					fold(std::move(folders));
 				}},
 			{"track.foldAll",
 				[this]
@@ -731,14 +738,25 @@ namespace gnubase::ui
 
 	void TrackList::fold(std::set<uint64_t> folders)
 	{
+		// The engine keeps them with the project (trackLayout.set): the folders that are still there. Only a change
+		// goes there, as a set advances the project's revision, which makes it count as modified.
+		const auto existing = [this](const std::set<uint64_t>& from)
+		{
+			Json folded = Json::array();
+			for (const uint64_t folder : from)
+				if (const auto row = m_index.find(folder);
+					row != m_index.end() && m_tracks[row->second].type == "folder")
+				{
+					folded.push_back(folder);
+				}
+			return folded;
+		};
+		const Json before = existing(m_folded);
 		m_folded = std::move(folders);
 		hide();
-		// The engine keeps them with the project (trackLayout.set): the folders that are still there.
-		Json folded = Json::array();
-		for (const uint64_t folder : m_folded)
-			if (const auto row = m_index.find(folder); row != m_index.end() && m_tracks[row->second].type == "folder")
-				folded.push_back(folder);
-		m_binding.send("trackLayout.set", {{"folded", folded}});
+		Json folded = existing(m_folded);
+		if (folded != before)
+			m_binding.send("trackLayout.set", {{"folded", std::move(folded)}});
 	}
 
 	void TrackList::loadLayout(const Json& layout, bool replace)
@@ -1979,6 +1997,7 @@ namespace gnubase::ui
 		{
 			m_drag = Drag::Height;
 			m_dragHeight = m_display.trackHeight(row->id);
+			m_dragHeights = m_display.ownTrackHeights();
 			m_dragAll = held(event, "ctrl_key") || held(event, "meta_key");
 		}
 		else
@@ -2048,12 +2067,22 @@ namespace gnubase::ui
 			move(m_dropParent, m_dropBefore);
 		if (drag == Drag::Height)
 		{
-			// The engine keeps the heights with the project (trackLayout.set): those of the tracks still there.
+			// The engine keeps the heights with the project (trackLayout.set): those the drag changed, of the tracks
+			// still there. Not the others, which another client may have removed meanwhile, which would fail the set,
+			// and nothing for a drag that changed none, which would make the project count as modified.
 			Json heights = Json::array();
 			for (const auto& [track, height] : m_display.ownTrackHeights())
-				if (m_index.count(track) != 0)
+			{
+				const auto before = m_dragHeights.find(track);
+				if (m_index.count(track) != 0 &&
+					height != (before == m_dragHeights.end() ? g_trackHeight : before->second))
+				{
 					heights.push_back({{"track", track}, {"height", height}});
-			m_binding.send("trackLayout.set", {{"heights", heights}});
+				}
+			}
+			m_dragHeights.clear();
+			if (!heights.empty())
+				m_binding.send("trackLayout.set", {{"heights", std::move(heights)}});
 		}
 	}
 

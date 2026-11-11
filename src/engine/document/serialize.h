@@ -109,7 +109,11 @@ namespace gnubase::engine
 	// JSON.
 	Json toJson(const TrackVisibility& visibility);
 	TrackVisibility trackVisibilityFromJson(const Json& json);
-	// {heights: [{track, height}], folded}; trackLayoutFromJson takes what is valid and leaves out the rest.
+	// A track's height in the track list, in dp before vertical zoom: trackLayout.set's range.
+	inline constexpr double g_minTrackHeight = 20.0;
+	inline constexpr double g_maxTrackHeight = 400.0;
+	// {heights: [{track, height}], folded}; trackLayoutFromJson takes what is valid and leaves out the rest, and
+	// brings heights into the range.
 	Json toJson(const TrackLayout& layout);
 	TrackLayout trackLayoutFromJson(const Json& json);
 	// {workspaces: [{name, layout}], active: {type, name}}; workspacesFromJson takes what is valid.

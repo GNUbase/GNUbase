@@ -237,10 +237,11 @@ namespace gnubase::ui
 
 		Drag m_drag = Drag::None;
 		uint64_t m_dragTrack = 0;
-		float m_dragY = 0.0F;      // where it started, in the window's pixels
-		double m_dragHeight = 0.0; // the track's height then, before zoom
-		bool m_dragAll = false;    // Ctrl: every track's height
-		uint64_t m_dropParent = 0; // where a move drops
+		float m_dragY = 0.0F;                     // where it started, in the window's pixels
+		double m_dragHeight = 0.0;                // the track's height then, before zoom
+		bool m_dragAll = false;                   // Ctrl: every track's height
+		std::map<uint64_t, double> m_dragHeights; // the display's own heights when a height drag started
+		uint64_t m_dropParent = 0;                // where a move drops
 		uint64_t m_dropBefore = 0;
 
 		std::map<std::string, std::function<void()>> m_actions;
