@@ -54,11 +54,10 @@ namespace gnubase::engine
 	struct RunningEffect
 	{
 		std::shared_ptr<processors::MidiEffect> effect;
-		std::vector<double> parameters; // by id; the effect gets them when the sequence comes in
-		uint64_t serial = 0;            // the instance's: another instance has another one
-		size_t slot = 0;                // its slot in its section
-		bool elsewhere = false;         // a send that plays to another instrument track (MidiSequence::sendOutputs)
-		bool send = false;              // a MIDI send, not an insert
+		uint64_t serial = 0;    // the instance's: another instance has another one
+		size_t slot = 0;        // its slot in its section
+		bool elsewhere = false; // a send that plays to another instrument track (MidiSequence::sendOutputs)
+		bool send = false;      // a MIDI send, not an insert
 	};
 
 	class MidiSequencer;
@@ -218,11 +217,9 @@ namespace gnubase::engine
 		// Runs the effects on the events in m_own and adds what they play to out.
 		void runEffects(
 			const MidiSequence& sequence, const graph::ProcessContext& context, graph::EventBuffer& out) noexcept;
-		// When the sequence is new: gives the effects their parameters and, if other effects play, ends every note it
-		// sounds, also those its sends played to other instrument tracks.
+		// When the sequence is new and other effects play: ends every note it sounds, also those its sends played to
+		// other instrument tracks.
 		void takeEffects(const MidiSequence& sequence, graph::EventBuffer& out) noexcept;
-		// When the sequence is new: gives the effects their parameters.
-		void takeParameters(const MidiSequence& sequence) noexcept;
 		// An event of its input as the modifiers play it; false if left out. A second note-on for a held key whose
 		// note goes elsewhere this time sets ends to where the first one went, which still sounds: that note ends
 		// first, so that no note hangs.
@@ -288,6 +285,7 @@ namespace gnubase::engine
 			uint64_t serial = 0;
 			uint64_t output = 0; // sends: MidiSequence::sendOutputs
 			bool input = false;  // inserts: above the divider
+			uint8_t source = 0;  // sends: where their events come from (setSequence)
 		};
 		std::array<SlotEffect, 2 * midi::g_effectSlots> m_slots;
 		uint64_t m_effectSerial = 0;   // the last RunningEffect::serial given
@@ -306,7 +304,6 @@ namespace gnubase::engine
 		std::array<uint64_t, 2 * midi::g_effectSlots> m_chain{}; // the serials of the effects that played
 		size_t m_chainCount = 0;                                 // how many
 		std::array<bool, g_notes> m_effectsHeld{}; // notes the effects played a note-on for and no note-off since
-		uint64_t m_parameters = 0;                 // the sequence whose parameters the effects got last
 		MidiChase m_chaseSetting;                  // setChase's, for the sequencer of the sends before the modifiers
 		std::shared_ptr<MidiSequencer> m_pre;      // command thread: MidiSequence::pre while sends need it
 		graph::EventBuffer m_preOut;               // audio thread: what it played in the block

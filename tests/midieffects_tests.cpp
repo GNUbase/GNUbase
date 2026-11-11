@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "engine/audio/sequencer.h"
 #include "engine/document/document.h"
 #include "engine/engine.h"
 #include "engine/processors/midieffects.h"
@@ -677,6 +678,37 @@ TEST_CASE("sends before the modifiers get the parts' notes and the input as they
 		"12000 80 48 00\n12000 80 3d 00\n");
 }
 
+TEST_CASE("a send before the modifiers ends its notes when the modifiers stop changing them", "[integration]")
+{
+	EffectTrack track;
+	track.add({{0, 2, 60, 100}});
+	run(track.client, "channel.set", {{"channel", track.channel}, {"modifiers", {{"transpose", 12}}}});
+	track.set("midiSends", {{"pre", true}, {"slots", {slot("arpeggiator")}}});
+	run(track.client, "transport.play");
+	track.render(g_beat);
+	CHECK(track.captured().find(" 90 3c ") != std::string::npos); // the arpeggio plays the unmodified note
+	// The send takes the track's own events now: an arpeggiator that kept the note it holds would never get its
+	// note-off and play on.
+	run(track.client, "channel.set", {{"channel", track.channel}, {"modifiers", {{"transpose", 0}}}});
+	track.render(2 * g_beat);
+	const std::string played = track.captured();
+	std::string late; // note-ons after the part's note ended
+	for (size_t line = 0; line < played.size(); line = played.find('\n', line) + 1)
+		if (std::stoll(played.substr(line)) >= 2 * g_beat && played.compare(played.find(' ', line), 4, " 90 ") == 0)
+			late += played.substr(line, played.find('\n', line) + 1 - line);
+	CHECK(late.empty());
+}
+
+TEST_CASE("a send's buffer is there whenever it has an output, also while it doesn't play", "[unit]")
+{
+	MidiSequencer sequencer;
+	auto sequence = std::make_unique<MidiSequence>();
+	sequence->sends.bypass = true;
+	sequence->sendOutputs[1] = 7;
+	sequencer.setSequence(std::move(sequence));
+	CHECK(sequencer.sendOutput(1).capacity() != 0);
+}
+
 TEST_CASE("a send plays its effect to another instrument track, with the track's other events", "[integration]")
 {
 	EffectTrack track;
@@ -732,7 +764,8 @@ TEST_CASE(
 TEST_CASE("automation plays a MIDI effect's parameters at their samples, and parameter.list has them", "[integration]")
 {
 	EffectTrack track;
-	track.add({{0, 0.25, 60, 100}, {2, 0.25, 60, 100}});
+	const ObjectId other = track.addInstrument();
+	track.add({{0, 0.25, 60, 100}, {2, 0.25, 60, 100}, {3, 0.25, 60, 100}});
 	track.set("midiInserts", {{"slots", {Json::object(), slot("transformer")}}});
 	const Json target = {{"type", "midiEffect"}, {"number", 1}, {"parameter", processors::Transformer::Value}};
 	const auto lane = run(track.client, "automationLane.add", {{"track", track.track}, {"target", target}})
@@ -745,9 +778,13 @@ TEST_CASE("automation plays a MIDI effect's parameters at their samples, and par
 				{{{"position", 0}, {"value", 0}, {"shape", "step"}},
 					{{"position", 2 * g_beatTicks}, {"value", 12}, {"shape", "step"}}}}});
 	run(track.client, "transport.play");
-	track.render(3 * g_beat);
+	track.render((5 * g_beat) / 2);
+	// An unrelated edit gives the track a new sequence, but the effect keeps its automated value.
+	run(track.client, "channel.set", {{"channel", other}, {"recordEnable", true}});
+	track.render(g_beat);
 	// The second note plays where the value has changed, its note-off where its note-on went.
-	CHECK(track.captured() == "0 90 3c 64\n6000 80 3c 00\n48000 90 48 64\n54000 80 48 00\n");
+	CHECK(track.captured() ==
+		"0 90 3c 64\n6000 80 3c 00\n48000 90 48 64\n54000 80 48 00\n72000 90 48 64\n78000 80 48 00\n");
 
 	// parameter.list lists the effects' parameters; parameter.set sets the slot's.
 	const Json parameters = run(track.client, "parameter.list", {{"channel", track.channel}}).at("parameters");

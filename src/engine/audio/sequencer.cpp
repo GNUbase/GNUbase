@@ -214,8 +214,11 @@ namespace gnubase::engine
 			sequence->noteOrder, sequence->noteLanes);
 
 		// An effect that stops playing loses its state: one that plays again starts afresh, and so does one that
-		// moves above or below the divider or to another output, whose notes end where they sounded.
-		bool elsewhere = false;
+		// moves above or below the divider or to another output, or a send whose events come from elsewhere (the
+		// inserts', the track's own or the sequencer's without the modifiers), whose notes end where they sounded.
+		const midi::Modifiers& modifiers = sequence->modifiers;
+		const bool modified = !modifiers.bypass && !(modifiers == midi::Modifiers());
+		const uint8_t sendSource = sequence->sends.pre ? (modified ? 2 : 1) : 0;
 		for (size_t index = 0; index < m_slots.size(); ++index)
 		{
 			const bool sends = index >= midi::g_effectSlots;
@@ -230,18 +233,24 @@ namespace gnubase::engine
 			}
 			const uint64_t output = sends ? sequence->sendOutputs[number] : 0;
 			const bool input = !sends && number < rack.divider;
-			if (!kept.effect || kept.id != slot.effect || kept.output != output || kept.input != input)
+			const uint8_t source = sends ? sendSource : 0;
+			if (!kept.effect || kept.id != slot.effect || kept.output != output || kept.input != input ||
+				kept.source != source)
 			{
 				kept.effect = processors::createMidiEffect(slot.effect);
 				kept.id = slot.effect;
 				kept.serial = ++m_effectSerial;
 				kept.output = output;
 				kept.input = input;
+				kept.source = source;
 				if (m_sampleRate > 0.0)
 					kept.effect->prepareFor(m_sampleRate, m_maxFrames);
+				// Not on the audio thread yet. Later the lanes of its automation carry the slot's values, which they
+				// send again only when they change (#992).
+				for (size_t id = 0; id < slot.parameters.size(); ++id)
+					kept.effect->setParameter(static_cast<uint32_t>(id), slot.parameters[id]);
 			}
-			sequence->effects.push_back({kept.effect, slot.parameters, kept.serial, number, output != 0, sends});
-			elsewhere = elsewhere || output != 0;
+			sequence->effects.push_back({kept.effect, kept.serial, number, output != 0, sends});
 			sequence->insertCount += sends ? 0 : 1;
 			sequence->inputCount += input ? 1 : 0;
 		}
@@ -254,16 +263,16 @@ namespace gnubase::engine
 			m_effectIn = graph::EventBuffer(graph::g_maxEventsPerBlock);
 		}
 		// The buffers stay once they are there: the audio thread may use them as long as it has a sequence that
-		// says so.
+		// says so. A MidiSendTap reads them for every send with an output, also one that doesn't play.
+		const bool elsewhere = std::any_of(
+			sequence->sendOutputs.begin(), sequence->sendOutputs.end(), [](uint64_t output) { return output != 0; });
 		if (elsewhere && m_sendOut[0].capacity() == 0)
 			for (graph::EventBuffer& buffer : m_sendOut)
 				buffer = graph::EventBuffer(graph::g_maxEventsPerBlock);
 		sequence->sendBuffers = m_sendOut[0].capacity() != 0;
 
 		// Sends before modifiers that change notes play what a sequencer without them plays (p. 1106).
-		const midi::Modifiers& modifiers = sequence->modifiers;
-		const bool preSends = sequence->sends.pre && sequence->insertCount < sequence->effects.size() &&
-			!modifiers.bypass && !(modifiers == midi::Modifiers());
+		const bool preSends = sequence->sends.pre && sequence->insertCount < sequence->effects.size() && modified;
 		if (!preSends)
 		{
 			m_pre = nullptr;
@@ -360,7 +369,6 @@ namespace gnubase::engine
 		const MidiSequence& sequence = m_sequence.acquire();
 		if (sequence.inputCount == 0)
 			return;
-		takeParameters(sequence);
 		const graph::EventBuffer* played = &m_input;
 		for (size_t i = 0; i < sequence.inputCount; ++i)
 		{
@@ -403,20 +411,9 @@ namespace gnubase::engine
 		running.effect->process({nullptr, 0, frames, *input, to, transport});
 	}
 
-	void MidiSequencer::takeParameters(const MidiSequence& sequence) noexcept
-	{
-		if (sequence.serial == m_parameters)
-			return;
-		m_parameters = sequence.serial;
-		for (const RunningEffect& running : sequence.effects)
-			for (size_t id = 0; id < running.parameters.size(); ++id)
-				running.effect->setParameter(static_cast<uint32_t>(id), running.parameters[id]);
-	}
-
 	void MidiSequencer::takeEffects(const MidiSequence& sequence, graph::EventBuffer& out) noexcept
 	{
 		m_serial = sequence.serial;
-		takeParameters(sequence);
 		const bool same = sequence.effects.size() == m_chainCount &&
 			std::equal(sequence.effects.begin(), sequence.effects.end(), m_chain.begin(),
 				[](const RunningEffect& running, uint64_t serial) { return running.serial == serial; });
