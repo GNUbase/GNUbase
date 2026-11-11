@@ -1669,14 +1669,14 @@ TEST_CASE("Back up Project shows its own backups' progress and outcome, and Canc
 	CHECK(!parameters.contains("name"));
 	CHECK(!shown(app, "#project-error-dialog"));
 
-	// Done, a backup with files that couldn't be read says which.
-	app.call("media.add",
-		{{"path", utf8(dir.path() / "gone.wav")}, {"sampleRate", 48000.0}, {"channels", 2}, {"length", 48000}});
+	// Done, a backup with files that couldn't be read says which, also two of the same name (#1001).
+	for (const fs::path& gone : {dir.path() / "gone.wav", dir.path() / "elsewhere" / "gone.wav"})
+		app.call("media.add", {{"path", utf8(gone)}, {"sampleRate", 48000.0}, {"channels", 2}, {"length", 48000}});
 	fileMenu(app, "file.backup");
 	answer(app, {dir.path() / "Missing"});
 	click(app, "#backup-project-dialog button.primary");
 	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
-	CHECK_THAT(errorMessage(app), ContainsSubstring("gone.wav"));
+	CHECK(errorMessage(app) == "The project was backed up without 2 files that couldn't be read: gone.wav, gone.wav.");
 	CHECK(!shown(app, "#backup-progress-dialog"));
 	closeError(app);
 	CHECK(fs::exists(dir.path() / "Missing" / "My Song.dawproject"));
@@ -1714,4 +1714,44 @@ TEST_CASE("Back up Project shows its own backups' progress and outcome, and Canc
 	handleEarlierEvents(app);
 	CHECK(!shown(app, "#project-error-dialog"));
 	CHECK(!shown(app, "#backup-progress-dialog"));
+}
+
+TEST_CASE(
+	"a running backup's progress keeps no other project dialog waiting, and a quit that is cancelled leaves it running",
+	"[ui][slow]")
+{
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	const test::TempDir dir;
+	app.call("track.add", {{"type", "audio"}}); // an unsaved change, so that quitting asks
+	const fs::path take = dir.path() / "take.wav";
+	test::writeWav(take, {std::vector<float>(size_t{48000} * 10 * 2, 0.25f), 2, 48000}); // 10 s, 4 MB
+	app.call("media.add", {{"path", utf8(take)}});
+	HeldBackup held(app.engine());
+	fileMenu(app, "file.backup");
+	answer(app, {dir.path() / "Backup"});
+	click(app, "#backup-project-dialog button.primary");
+	REQUIRE(app.waitUntil([&held] { return held.held(); }, std::chrono::seconds(30)));
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#backup-progress-dialog"); }));
+
+	// Another project dialog opens while the progress shows, such as another backup's options (#1001).
+	app.keys().run("file.backup", Json::object(), app.main(), nullptr);
+	answer(app, {dir.path() / "Other"});
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#backup-project-dialog"); }));
+	click(app, "#backup-project-dialog button[result=cancel]");
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#backup-project-dialog"); }));
+	CHECK(shown(app, "#backup-progress-dialog"));
+
+	// Quitting asks about the unsaved changes without cancelling the backup first: cancelled, it leaves it running.
+	app.keys().run("file.quit", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#discard-changes-dialog"); }));
+	click(app, "#discard-changes-dialog button[result=cancel]");
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#discard-changes-dialog"); }));
+	REQUIRE(app.shell().running());
+	CHECK(shown(app, "#backup-progress-dialog"));
+	CHECK(!ran(app, "job.cancel"));
+	held.release();
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#backup-progress-dialog"); }));
+	CHECK(lastJob(app).at("state") == "done");
+	CHECK(!shown(app, "#project-error-dialog"));
 }
