@@ -218,7 +218,8 @@ namespace gnubase::engine
 		// inserts', the track's own or the sequencer's without the modifiers), whose notes end where they sounded.
 		const midi::Modifiers& modifiers = sequence->modifiers;
 		const bool modified = !modifiers.bypass && !(modifiers == midi::Modifiers());
-		const uint8_t sendSource = sequence->sends.pre ? (modified ? 2 : 1) : 0;
+		// 0: the inserts', 1: the track's own, 2: the sequencer's without the modifiers.
+		const auto sendSource = static_cast<uint8_t>(int{sequence->sends.pre} + int{sequence->sends.pre && modified});
 		for (size_t index = 0; index < m_slots.size(); ++index)
 		{
 			const bool sends = index >= midi::g_effectSlots;
