@@ -120,7 +120,8 @@ set `transport`, with a setup pane as their context menu ([transport-bar.md](tra
 sections of the set `toolbar` (`.toolbar-section`: Tool Buttons, Auto-Scroll, Zoom Presets, Snap, Grid Type, Quantize,
 Color Menu, Track Visibility Configurations, Project Root Key and Window Zone Controls, pp. 57–65) with the setup pane
 `#toolbar-setup` as its context menu (p. 57), and the info line has its fields as the sections of the set `infoLine`,
-with `#info-line-setup` ([inspector.md](inspector.md)). The mixer's channels
+with `#info-line-setup` ([inspector.md](inspector.md)), whose buttons name the fields as the info line does: Description
+and Position for its name and start with markers selected (p. 430), Name and Start otherwise. The mixer's channels
 are such containers ([mixer-window.md](mixer-window.md)); `tests/data/ui/sections.rml` is a test window with sections,
 and `tests/data/ui/sections-later.rml` one whose channels only come after `attach`.
 
@@ -199,7 +200,8 @@ and a panel in a window of its own, whose document has no zones. Ctrl+Tab, Alt+T
 
 ## Not yet
 
-Removing and renaming setup pane presets; the toolbar's Left and Right Divider (p. 65). Sections in a panel that shows in a window of its own keep the document's order; the Channel zone's contents (p. 73)
+Removing and renaming setup pane presets; the setup panes of the editors' toolbars and info lines (p. 1575: the key,
+drum, list, audio part and in-place editors), which have no sections yet; the toolbar's Left and Right Divider (p. 65). Sections in a panel that shows in a window of its own keep the document's order; the Channel zone's contents (p. 73)
 with the channel strip (#107), shown as its zone's one tab until then; a theme look for tabs at the bottom, whose
 active tab has its marker on the side away from the panels; dragging a tab out of its zone to open it in a window; the
 editor in the lower zone taking the focus when it opens (p. 100), once editors open there; and after live reload, what

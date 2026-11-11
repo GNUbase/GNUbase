@@ -401,8 +401,16 @@ TEST_CASE("the project window selects events or markers, and the info line shows
 	// A marker clicked again after an event was selected shows again: selecting an event deselects the markers.
 	clickMarker(1);
 	REQUIRE(window.shows("#info-line textdisplay[field=name]", "Verse"));
+	// The info line's setup pane names the fields as the info line does (p. 430).
+	const auto paneLabels = [&window]
+	{
+		return element(window.app, "#info-line-setup [setup-section=name]").at("text").get<std::string>() + "/" +
+			element(window.app, "#info-line-setup [setup-section=start]").at("text").get<std::string>();
+	};
+	REQUIRE(window.app.waitUntil([&] { return paneLabels() == "Description/Position"; }));
 	window.display.select({part});
 	REQUIRE(window.shows("#info-line textdisplay[field=name]", "Part"));
+	REQUIRE(window.app.waitUntil([&] { return paneLabels() == "Name/Start"; }));
 	REQUIRE(window.app.waitUntil([&] { return lines.selection().empty(); }));
 	CHECK(!hasClass(window.app, ".marker-label[marker=" + std::to_string(verse) + "]", "selected"));
 	// On the cycle marker beside its label: a click in the same place this soon would be a double click.

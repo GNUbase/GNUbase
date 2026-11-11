@@ -418,6 +418,14 @@ TEST_CASE("project.applyRules transforms and deletes in one undo step", "[integr
 		CHECK(exists("audioParts", part));
 		CHECK(exists("audioEvents", locked));
 		CHECK(!exists("audioEvents", loose));
+		// Undo brings the unlocked event back, redo takes it again.
+		run(f.client, "history.undo");
+		CHECK(exists("audioEvents", loose));
+		CHECK(f.object("audioEvents", loose).at("part") == part);
+		run(f.client, "history.redo");
+		CHECK(exists("audioParts", part));
+		CHECK(exists("audioEvents", locked));
+		CHECK(!exists("audioEvents", loose));
 		// Unlocked, the part goes and its events with it.
 		run(f.client, "event.set", {{"events", {locked}}, {"lock", false}});
 		run(f.client, "project.applyRules", {{"rules", rules({filter("containerType", "equal", "part")}, "delete")}});
@@ -440,6 +448,10 @@ TEST_CASE("project.applyRules transforms and deletes in one undo step", "[integr
 		CHECK(atLongest(run(f.client, "marker.list", {{"track", f.markers}}).at("markers").at(0).at("position")));
 		run(f.client, "history.undo");
 		CHECK(f.object("midiParts", f.full).at("position") == g_beatTicks);
+		run(f.client, "history.redo");
+		CHECK(atLongest(f.object("midiParts", f.full).at("position")));
+		CHECK(atLongest(f.object("midiParts", f.full).at("length")));
+		run(f.client, "history.undo");
 
 		// On a linear track the limit is in samples.
 		const ObjectId linear = f.add({{"type", "marker"}, {"timeBase", "linear"}});
@@ -456,6 +468,57 @@ TEST_CASE("project.applyRules transforms and deletes in one undo step", "[integr
 		actions.push_back(action("position", "multiplyBy", 0));
 		run(f.client, "project.applyRules", {{"rules", rules({later}, "transform", actions)}});
 		CHECK(f.object("midiParts", f.full).at("position") == 0);
+	}
+	SECTION("a cycle marker's length stops at one sample")
+	{
+		// On a musical track one sample is about 72 ticks at 48 kHz, and about 68800 at 50 Hz.
+		const bool linear = GENERATE(false, true);
+		const double rate = GENERATE(48000.0, 50.0);
+		const Json zero = GENERATE(as<Json>{}, action("length", "setFixed", 0), action("length", "multiplyBy", 0),
+			action("length", "subtract", 1e9));
+		CAPTURE(linear, rate, zero);
+		run(f.client, "project.set", {{"sampleRate", rate}});
+		ObjectId track = f.markers;
+		if (linear)
+		{
+			track = f.add({{"type", "marker"}, {"timeBase", "linear"}});
+			run(f.client, "marker.add",
+				{{"type", "cycle"}, {"track", track}, {"position", 48000}, {"end", 96000}, {"name", "Chorus"}});
+		}
+		const size_t before = history();
+		run(f.client, "project.applyRules",
+			{{"rules", rules({filter("mediaType", "equal", "marker")}, "transform", {zero})}});
+		const Json marker = run(f.client, "marker.list", {{"track", track}}).at("markers").at(0);
+		const gnubase::time::TempoMap tempo(120.0);
+		const auto samples = [&](const Json& value)
+		{ return linear ? value.get<int64_t>() : tempo.toSamples(value.get<int64_t>(), rate); };
+		CHECK(marker.at("position") == (linear ? 48000 : g_beatTicks));
+		CHECK(samples(marker.at("end")) == samples(marker.at("position")) + 1);
+		CHECK(history() == before + 1);
+	}
+	SECTION("positions stop at the longest project at very low sample rates")
+	{
+		// Far below where g_maxPosition samples in ticks would leave an int64_t.
+		const double rate = GENERATE(50.0, 1.0, 1e-6);
+		run(f.client, "project.set", {{"sampleRate", rate}});
+		run(f.client, "project.set", {{"tempo", 999}});
+		run(f.client, "project.applyRules",
+			{{"rules",
+				rules({filter("position", "bigger", 0)}, "transform",
+					{action("position", "multiplyBy", 1e12), action("length", "multiplyBy", 1e12)})}});
+		// The longest project lasts as long as at 8 kHz: about 10^18 ticks at 999 BPM.
+		const int64_t longest =
+			gnubase::time::TempoMap(999.0).toTicks(static_cast<double>(gnubase::time::g_maxPosition) / 8000.0);
+		const auto atLongest = [longest](const Json& value)
+		{ return std::abs(value.get<int64_t>() - longest) <= 1024; };
+		const int64_t position = f.object("midiParts", f.full).at("position").get<int64_t>();
+		CHECK(atLongest(position));
+		CHECK(atLongest(f.object("midiParts", f.full).at("length")));
+		CHECK(atLongest(run(f.client, "marker.list", {{"track", f.markers}}).at("markers").at(0).at("position")));
+		run(f.client, "history.undo");
+		CHECK(f.object("midiParts", f.full).at("position") == g_beatTicks);
+		run(f.client, "history.redo");
+		CHECK(f.object("midiParts", f.full).at("position") == position);
 	}
 	SECTION("audio events in a part that moves keep their place in it")
 	{
@@ -515,6 +578,14 @@ TEST_CASE("project.applyRules removes the active marker track after the other ma
 		CHECK(activatedMarkerTracks(listener) == Ids{holding});
 		run(f.client, "history.undo");
 		CHECK(run(f.client, "project.get").at("activeMarkerTrack") == active);
+		activatedMarkerTracks(listener);
+		// Redo removes them again: the marker track that stays is active again, announced once. Redo restores the
+		// stored change rather than running the removals again, so this checks the outcome, not their order.
+		run(f.client, "history.redo");
+		CHECK(f.object("tracks", first).is_null());
+		CHECK(f.object("tracks", second).is_null());
+		CHECK(run(f.client, "project.get").at("activeMarkerTrack") == holding);
+		CHECK(activatedMarkerTracks(listener) == Ids{holding});
 	}
 	SECTION("without a marker track left, none is active")
 	{

@@ -416,7 +416,7 @@ TEST_CASE("a MIDI channel's volume and pan reach its instrument as CC 7 and CC 1
 	CHECK(render.midiVolume == 90);
 	CHECK(render.midiPan == 32);
 
-	// The channel's strip sends them when they are new or change, and again when playback starts.
+	// The channel's strip sends each when it is new or changes, and both again when playback starts.
 	auto state = std::make_shared<ChannelState>();
 	state->automation.setAutomation(channelAutomation(render, 6.0));
 	ChannelStrip strip(state, std::make_shared<MidiSequencer>());
@@ -438,9 +438,10 @@ TEST_CASE("a MIDI channel's volume and pan reach its instrument as CC 7 and CC 1
 	const graph::TransportBlock stopped;
 	CHECK(controllers(stopped) == Sent{{7, 90}, {10, 32}});
 	CHECK(controllers(stopped).empty());
+	// A new volume alone, so a part's own CC 10 stays.
 	render.midiVolume = 100;
 	state->automation.setAutomation(channelAutomation(render, 6.0));
-	CHECK(controllers(stopped) == Sent{{7, 100}, {10, 32}});
+	CHECK(controllers(stopped) == Sent{{7, 100}});
 	CHECK(controllers({true, 0, &segment, 1}) == Sent{{7, 100}, {10, 32}});
 	render.midiVolume.reset();
 	render.midiPan.reset();

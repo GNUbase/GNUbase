@@ -3,15 +3,14 @@
 #include "app/appui.h"
 #include "platform/log.h"
 #include "scripting/reference.h"
+#include "ui/sdlwindowsystem.h"
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/ElementDocument.h>
-#include <SDL3/SDL_messagebox.h>
 #include <SDL3/SDL_misc.h>
 #include <SDL3/SDL_process.h>
 
 #include <algorithm>
-#include <array>
 #include <cctype>
 #include <chrono>
 #include <cstdint>
@@ -85,7 +84,13 @@ namespace gnubase::app
 			// The default text editor.
 			const std::string path = file.u8string();
 			const char* arguments[] = {"open", "-t", path.c_str(), nullptr};
-			if (SDL_Process* process = SDL_CreateProcess(arguments, false))
+			// In the background: SDL waits for the process that starts it, so no exited process stays behind.
+			const SDL_PropertiesID properties = SDL_CreateProperties();
+			SDL_SetPointerProperty(properties, SDL_PROP_PROCESS_CREATE_ARGS_POINTER, static_cast<void*>(arguments));
+			SDL_SetBooleanProperty(properties, SDL_PROP_PROCESS_CREATE_BACKGROUND_BOOLEAN, true);
+			SDL_Process* process = SDL_CreateProcessWithProperties(properties);
+			SDL_DestroyProperties(properties);
+			if (process != nullptr)
 				SDL_DestroyProcess(process); // it runs on
 			else
 				logging::warning("Can't edit {}: {}", path, SDL_GetError());
@@ -156,22 +161,10 @@ namespace gnubase::app
 		{
 			if (m_hidden)
 				return false;
-			const std::string message = "The script " + script + " has run for " +
-				std::to_string(m_scriptTimeLimit.count() / 1000) + " seconds or more. Stop it?";
-			std::array<SDL_MessageBoxButtonData, 2> buttons = {};
-			buttons[0].flags = SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT | SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT;
-			buttons[0].buttonID = 0;
-			buttons[0].text = "Stop";
-			buttons[1].buttonID = 1;
-			buttons[1].text = "Keep Running";
-			SDL_MessageBoxData box = {};
-			box.flags = SDL_MESSAGEBOX_WARNING;
-			box.title = "Script Running";
-			box.message = message.c_str();
-			box.numbuttons = static_cast<int>(buttons.size());
-			box.buttons = buttons.data();
-			int pressed = 0;
-			return SDL_ShowMessageBox(&box, &pressed) && pressed == 1;
+			return ui::SdlWindowSystem::ask("Script Running",
+					   "The script " + script + " has run for " + std::to_string(m_scriptTimeLimit.count() / 1000) +
+						   " seconds or more. Stop it?",
+					   {"Stop", "Keep Running"}) == 1;
 		};
 		// The scripts' and the console's globals, apart from the documents' (#930).
 		m_scriptEnvironment = m_lua.newEnvironment();
@@ -287,7 +280,12 @@ namespace gnubase::app
 			if (!std::filesystem::exists(folder, error) && std::filesystem::create_directories(folder, error))
 				for (Entries example(m_resources / "scripts", error); !error && example != Entries();
 					example.increment(error))
-					std::filesystem::copy_file(example->path(), folder / example->path().filename(), error);
+				{
+					// The others are copied when one can't be.
+					std::error_code notCopied;
+					if (!std::filesystem::copy_file(example->path(), folder / example->path().filename(), notCopied))
+						logging::warning("Can't copy {}: {}", example->path().u8string(), notCopied.message());
+				}
 			if (error)
 				logging::warning("The script folder {}: {}", folder.u8string(), error.message());
 			error.clear();

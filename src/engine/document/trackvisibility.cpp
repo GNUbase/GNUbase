@@ -212,7 +212,8 @@ namespace gnubase::engine
 				{{"type", "object"},
 					{"properties",
 						{{"track", {{"type", "integer"}}},
-							{"height", {{"type", "number"}, {"minimum", 20}, {"maximum", 400}}}}},
+							{"height",
+								{{"type", "number"}, {"minimum", g_minTrackHeight}, {"maximum", g_maxTrackHeight}}}}},
 					{"required", {"track", "height"}}, {"additionalProperties", false}}}};
 		const Json foldedSchema = {{"type", "array"}, {"items", {{"type", "integer"}}}};
 		const Json resultSchema = {{"type", "object"},
