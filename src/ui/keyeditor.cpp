@@ -350,7 +350,6 @@ namespace gnubase::ui
 
 	KeyEditor::~KeyEditor()
 	{
-		sound(std::nullopt);
 		if (Rml::Element* document = m_document.get())
 			document->RemoveEventListener(Rml::EventId::Mouseup, this);
 		if (Rml::Element* root = m_root.get())
