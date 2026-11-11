@@ -173,6 +173,12 @@ TEST_CASE("the in-place editor refuses tracks without notes and changing its par
 		ContainsSubstring("shows its track's parts"));
 	CHECK_THAT(f.fails("editor.set", {{"editor", Fixture::name(midi)}, {"globalTracks", Json::array()}}),
 		ContainsSubstring("only the editor window"));
+	// It shows one track: the Part Editing Mode menu's All Parts and Active Part, not activeTrack.
+	CHECK_THAT(f.fails("editor.set", {{"editor", Fixture::name(midi)}, {"editingMode", "activeTrack"}}),
+		ContainsSubstring("allParts or activePart"));
+	CHECK(f.view(midi).at("editingMode") == "allParts");
+	CHECK(f.call("editor.set", {{"editor", Fixture::name(midi)}, {"editingMode", "activePart"}}).at("editingMode") ==
+		"activePart");
 	// A track without parts opens with none.
 	const uint64_t empty = f.track("instrument");
 	CHECK(f.call("editor.inPlace", {{"tracks", {empty}}, {"open", true}}).at("tracks") == Json::array({midi, empty}));

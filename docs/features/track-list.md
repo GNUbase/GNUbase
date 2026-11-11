@@ -20,15 +20,22 @@ the project (#491).
   (`markSilent` in `src/engine/document/rendersnapshot.cpp`), and each silent channel's strip (`ChannelStrip`) glides
   its output to silence over one audio block, and back, so switching doesn't click; the mute button mutes through
   the fader's mute instead, gliding over 5 ms like mute automation, so that switching between the two is seamless. A
-  silent MIDI track's notes and controllers are left out of the snapshot, as a muted part's are, so they don't reach
-  its instrument, and its mute ends the notes that sound. Nor do its controller, pitch bend and channel pressure
-  automation, its MIDI volume and pan (CC 7 and CC 10) and its program: its automation is marked `silent`
-  (`channelAutomation` in `src/engine/audio/automation.cpp`) and `AutomationPlayer` plays none of its MIDI lanes, so
-  a muted or disabled MIDI track doesn't change the instrument that other tracks play. Once it is heard again, its
-  automation curves send their values at once, but its MIDI volume, pan and program only what changed while it was
-  silent (a new program with the MIDI volume and pan after it), so a program change or CC 7 a part played before it
-  went silent stays; if playback started, located or jumped meanwhile, or the instrument changed, it sends them all,
-  as a jump does. Silent channels don't monitor their input directly either.
+  soloed-out or disabled MIDI track's notes and controllers are left out of the snapshot, as a muted part's are, so
+  they don't reach its instrument. A muted MIDI track's play into its strip, whose mute drops them, and so do the
+  events of the MIDI input it monitors: the reference manual (p. 466) only says that mute silences a channel, and a
+  muted audio track doesn't pass its input either. Its mute ends the notes that sound and releases the pedals that
+  hold notes, and unmuting sends the latest controllers, programs and pitch bends that the mute dropped and presses
+  the pedals again, as a locate chases them ([automation.md](automation.md)). On a locate while its button mutes it,
+  its instrument doesn't chase its controller events, and its strip keeps the track's own chase for unmuting. Like a
+  muted audio track's events, a muted MIDI track's notes count for the project's end and where an export starts. A
+  silent MIDI track doesn't send its controller, pitch bend and channel pressure automation, its MIDI volume and pan
+  (CC 7 and CC 10) and its program either: its automation is marked `silent` (`channelAutomation` in
+  `src/engine/audio/automation.cpp`) and `AutomationPlayer` plays none of its MIDI lanes, so a muted or disabled MIDI
+  track doesn't change the instrument that other tracks play. Once it is heard again, its automation curves send their
+  values at once, but its MIDI volume, pan and program only what changed while it was silent (a new program with the
+  MIDI volume and pan after it), so a program change or CC 7 a part played before it went silent stays; if playback
+  started, located or jumped meanwhile, or the instrument changed, it sends them all, as a jump does. Silent channels
+  don't monitor their input directly either.
 - **Disabled tracks** (p. 219): `track.set` `enabled` false disables an audio, instrument or MIDI track. It keeps its
   events, parts and channel settings, but the snapshot leaves its events and parts out (no disk streaming) and its
   channel is silent. Other track types refuse it.
