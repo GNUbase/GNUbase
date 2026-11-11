@@ -513,18 +513,22 @@ namespace gnubase::ui
 				closeField(false);
 			break;
 		case Rml::EventId::Mousedown:
+			// The document's, in the capture phase: a left press while a drag goes on, whose mouseup never came as
+			// when the button went up outside the window. The drag ends without its effect before the press does what
+			// it does.
 			if (event.GetCurrentElement() != m_area.get())
 			{
-				// The document's, in the capture phase: a left press while a drag goes on, whose mouseup never came
-				// as when the button went up outside the window. The drag ends without its effect before the press
-				// does what it does.
 				if (event.GetParameter<int>("button", 0) == 0)
 					cancelDrag();
 			}
 			else if (onField)
+			{
 				event.StopPropagation(); // the display doesn't select or draw under it
+			}
 			else if (event.GetParameter<int>("button", 0) == 0)
+			{
 				press(event);
+			}
 			break;
 		default:
 			break;

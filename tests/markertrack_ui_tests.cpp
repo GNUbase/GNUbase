@@ -392,9 +392,10 @@ TEST_CASE("with the range tool, a drag on the marker track in a range selected b
 	fixture.drag(150, 70, 350, 70);
 	REQUIRE(fixture.waitUntil([&] { return parts() == std::vector<int64_t>{6 * g_quarter}; }));
 	CHECK(fixture.call("history.get").at("steps").size() == steps + 1);
-	REQUIRE(fixture.display.range());
-	CHECK(fixture.display.range()->start == 6 * g_quarterSamples);
-	CHECK(fixture.display.range()->end == 8 * g_quarterSamples);
+	const ui::RangeSelection moved =
+		fixture.display.range().value_or(ui::RangeSelection{0, 0, std::vector<uint64_t>()});
+	CHECK(moved.start == 6 * g_quarterSamples);
+	CHECK(moved.end == 8 * g_quarterSamples);
 	// The markers stay.
 	CHECK(fixture.marker(fixture.position).at("position") == 2 * g_quarter);
 
