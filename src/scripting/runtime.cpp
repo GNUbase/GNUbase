@@ -27,6 +27,7 @@ namespace gnubase::scripting
 		constexpr std::chrono::minutes g_callTimeout{10}; // long enough for an offline render
 		constexpr const char* g_handlersKey = "gnubase.handlers";
 		constexpr const char* g_finishTestsKey = "gnubase.test.finish";
+		constexpr int g_hookCount = 10000; // instructions between checks of the time limit
 
 		// testing.lua, the test framework, as bytes: CMake generates them, because MSVC limits the length of string
 		// literals.
@@ -394,7 +395,7 @@ namespace gnubase::scripting
 		if (outermost && m_limited)
 		{
 			m_deadline = std::chrono::steady_clock::now() + m_timeLimit;
-			lua_sethook(state, &Runtime::stopWhenLate, LUA_MASKCOUNT, 10000);
+			lua_sethook(state, &Runtime::stopWhenLate, LUA_MASKCOUNT, g_hookCount);
 		}
 		const auto message = [state]() -> std::string
 		{
@@ -419,6 +420,11 @@ namespace gnubase::scripting
 		{
 			--m_depth;
 			return error;
+		}
+		if (m_stopped)
+		{
+			m_stopped = false;
+			lua_sethook(state, &Runtime::stopWhenLate, LUA_MASKCOUNT, g_hookCount);
 		}
 
 		// The test cases the script registered run now, or are dropped if it failed. They print their report as they
@@ -448,12 +454,24 @@ namespace gnubase::scripting
 	{
 		// The hook stays, also in coroutines that outlive the run, so it checks that a limited run goes on.
 		Runtime& runtime = **static_cast<Runtime**>(lua_getextraspace(state));
-		if (!runtime.m_limited || runtime.m_depth == 0 || std::chrono::steady_clock::now() <= runtime.m_deadline)
+		if (!runtime.m_stopped && lua_gethookcount(state) == 1) // a coroutine that ran when a run was stopped
+			lua_sethook(state, &Runtime::stopWhenLate, LUA_MASKCOUNT, g_hookCount);
+		if (!runtime.m_limited || runtime.m_depth == 0)
 			return;
-		if (runtime.m_keepRunning && runtime.m_keepRunning())
+		if (!runtime.m_stopped)
 		{
-			runtime.m_deadline = std::chrono::steady_clock::now() + runtime.m_timeLimit;
-			return;
+			if (std::chrono::steady_clock::now() <= runtime.m_deadline)
+				return;
+			if (runtime.m_keepRunning && runtime.m_keepRunning())
+			{
+				runtime.m_deadline = std::chrono::steady_clock::now() + runtime.m_timeLimit;
+				return;
+			}
+			// Stopped for good: the error comes again at every instruction, so code that catches it, e.g. with pcall,
+			// gets it again right after, in its coroutine and in the main thread that the error goes on to.
+			runtime.m_stopped = true;
+			lua_sethook(state, &Runtime::stopWhenLate, LUA_MASKCOUNT, 1);
+			lua_sethook(runtime.m_state.get(), &Runtime::stopWhenLate, LUA_MASKCOUNT, 1);
 		}
 		luaL_error(state, "the script ran longer than %d ms", static_cast<int>(runtime.m_timeLimit.count()));
 	}
