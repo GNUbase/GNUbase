@@ -1389,6 +1389,12 @@ namespace gnubase::engine
 	// The main mix, or 0 if the project has no output bus.
 	ObjectId mainMix(const Project& project);
 
+	// How many ticks from its start the longest project lasts at its tempo: g_maxPosition samples long, but below
+	// 8 kHz, the lowest common sample rate, as long as at 8 kHz. At 999 BPM that is about 10^18 ticks, which still fits
+	// a time::Ticks, while at a few hundred hertz the ticks would leave it. Edits that compute positions, such as the
+	// rule editors', stop there.
+	time::Ticks longestProjectTicks(const Project& project);
+
 	// Makes the first top-level output bus the main mix if no bus is.
 	void keepMainMix(Project& project);
 
