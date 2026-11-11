@@ -144,21 +144,16 @@ namespace
 	const std::set<std::string>& elsewhere()
 	{
 		static const std::set<std::string> keys = {
-			"audio.backend",        // Studio Setup
-			"audio.blockSize",      // Studio Setup
-			"audio.busPresets",     // Audio Connections' presets
-			"audio.device",         // Studio Setup
-			"audio.fallbackDevice", // Studio Setup
-			"audio.listenDim",      // the control room's listen settings
-			"audio.listenLevel",    // the control room's listen settings
-			"audio.portSettings",   // Studio Setup
-			"audio.sampleRate",     // Studio Setup
-			// the Import Options dialog
-			"editing.importAudioConvert",
-			"editing.importAudioCopy",
-			"editing.importAudioNameFormat",
-			"editing.importAudioOneTrack",
-			"editing.importAudioSplitChannels",
+			"audio.backend",                 // Studio Setup
+			"audio.blockSize",               // Studio Setup
+			"audio.busPresets",              // Audio Connections' presets
+			"audio.device",                  // Studio Setup
+			"audio.fallbackDevice",          // Studio Setup
+			"audio.listenDim",               // the control room's listen settings
+			"audio.listenLevel",             // the control room's listen settings
+			"audio.portSettings",            // Studio Setup
+			"audio.sampleRate",              // Studio Setup
+			"editing.importAudioOneTrack",   // the Import Options dialog; not among the manual's preferences
 			"editing.tempoType",             // the tempo track's and tempo editor's type of new tempo events
 			"meter.resetOnStart",            // the loudness meter's own setting
 			"meter.rmsAes17",                // the master meter's own settings
@@ -177,6 +172,7 @@ namespace
 			"ui.markerIds",                  // the marker track
 			"ui.markersAutoScroll",          // the markers window
 			"ui.markersSyncSelection",       // the markers window
+			"ui.noWorkspaceLayout",          // the workspaces' No Workspace
 			"ui.setupPresets",               // the setup panes' presets
 			"ui.timeDisplay",                // the time display window
 			"ui.timeFormats",                // the transport bar's displays

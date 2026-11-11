@@ -149,6 +149,7 @@ add_library(gnubase-engine STATIC
 	document/renderinplace.cpp document/renderinplace.h
 	document/rendersnapshot.cpp document/rendersnapshot.h
 	document/sampleeditor.cpp document/sampleeditor.h
+	document/samplertrack.cpp document/samplertrack.h
 	document/serialize.cpp document/serialize.h
 	document/signature.cpp
 	document/snap.cpp document/snap.h
@@ -194,6 +195,7 @@ add_library(gnubase-engine STATIC
 	midi/logicalcommands.cpp midi/logicalcommands.h
 	midi/midivalues.cpp midi/midivalues.h
 	midi/modifiers.cpp midi/modifiers.h
+	midi/patterns.cpp midi/patterns.h
 	midi/quantize.cpp midi/quantize.h
 	midi/quantizecommands.cpp midi/quantizecommands.h
 	midi/quantizesettings.cpp midi/quantizesettings.h
@@ -210,6 +212,7 @@ add_library(gnubase-engine STATIC
 	processors/gainpan.cpp processors/gainpan.h
 	processors/generators.cpp processors/generators.h
 	processors/midieffects.cpp processors/midieffects.h
+	processors/sampler.cpp processors/sampler.h
 	processors/testsynth.cpp processors/testsynth.h
 	rulepresets.h
 	schema.cpp schema.h

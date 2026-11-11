@@ -221,7 +221,7 @@ namespace gnubase::ui
 			{
 				setRulerFormat(*format);
 				if (control)
-					m_binding.send("project.set", {{"timeFormat", timeFormatName(*format)}});
+					m_binding.send("project.setTimeFormat", {{"timeFormat", timeFormatName(*format)}});
 			}
 		}
 		else if (menu == m_presetsMenu)

@@ -16,43 +16,58 @@ project closes it.
 |---|---|---|
 | `editor.inPlace` | Opens (`open` true), closes (false) or toggles (without `open`) the in-place editors of `tracks`; returns `tracks`, those whose in-place editors are open, in the track list's order. Without `tracks` it only lists them | pp. 1259, 1261 |
 
+- Reading `editor.inPlace` without `tracks` leaves `engine.commandLog` unchanged; calls with `tracks` remain logged.
 - **Parts.** An open in-place editor shows every MIDI part of its track, in order, and parts added later; its parts
   can't be set (`parts`, `showTracks`, `hideTracks` and `exclusive` are refused), and it always shows the key editor.
   The first part is active; `activePart` activates another one. A removed track's editor closes, and comes back with
   the undo.
 - `editor.open` refuses in-place editors; other tracks than MIDI and instrument tracks have none.
+- The `editor` parameter's schema has the names as the pattern `^(lower|window|inPlace:[0-9]+)$`, so MCP clients and
+  Lua see them.
 
 ## In the UI
 
 `ui::InPlaceEditors` (`src/ui/inplaceeditor.h`) follows `editor.changed` of the in-place views, whichever client
 changes them, and shows each open one as a `ui::KeyEditor` over its track's lane in the event display
-([event-display.md](event-display.md)). `EventDisplay::setInPlaceTracks` makes those lanes at least 240 dp high
-(`g_inPlaceHeight`, times vertical zoom), so the track list's row grows with it.
+([event-display.md](event-display.md)). `EventDisplay::setInPlaceTracks` makes those tracks' own lanes at least
+240 dp high (`g_inPlaceHeight`, times vertical zoom), so the track list's row grows with it; the track's lanes (#99)
+keep its own height.
 
 ```
 .event-area
   .in-place-editors                   over the event lanes, no height of its own
     .in-place-editor[track]           over its track's own lane; .hidden while a folded folder hides the track,
-                                      .toolbar-shown while the toolbar shows
+                                      .toolbar-shown while the toolbar shows; the focus zone "inPlace"
       .key-editor                     the key editor (key-editor.md): the parts' row, keyboard, grid, controller lanes
+        .key-editor-toolbar           starts with button.in-place-editing-mode and button.in-place-active-part
       button.in-place-toolbar-toggle  shows or hides the toolbar and the info line (p. 1259)
+menu#in-place-editing-mode-menu-inPlace-<track>, menu#in-place-active-part-menu-inPlace-<track>   in the body
 ```
 
 - **Timeline.** The key editor's grid lies on the project window's timeline: once a frame (`InPlaceEditors::update`)
   the grid's left and right edges get the times the ruler has there (`KeyEditor::setTimeRange`), so the notes and the
   parts' boxes are under their times while the project window zooms and scrolls. The keyboard at the left covers the
   start of the view. Between the edges the axis is linear in ticks: across a tempo change in the view the notes drift
-  from the ruler until the key editor gets a tempo-mapped axis.
+  from the ruler until the key editor gets a tempo-mapped axis. The tempo map is read once per project the display
+  reads, and a new range only moves the notes, the parts' boxes and the controller lanes' bars (`KeyEditor::placeItems`,
+  `ControllerLanes::setRange`), so scrolling, zooming and following the project cursor read and build nothing again.
 - **Editing** is the key editor's: its tools, the toolbox on a right click, the transpose palette, step and MIDI input,
   the info line and the controller lanes, sent as `note.*` and `editor.set` for the view `inPlace:<track>`. Presses,
   clicks and double clicks in an in-place editor stay there: the event display doesn't select, move or add parts
   under it. A click on a part in the row of parts activates it (p. 1152). The editors' menus have ids of their own,
   ending in `-inPlace-<track>` (`ui::menuIdSuffix`), since they share the project window's document with each other
   and with the lower zone's editor.
+- **Multiple part controls** (p. 1260), first in the toolbar: Part Editing Mode, a menu of All Parts and Active Part
+  (`editingMode` allParts or activePart), and Activate Part for Editing, a menu of the track's parts with the active
+  one's name on the button (`activePart`).
+- **Quantizing and MIDI functions.** Each editor is the focus zone `inPlace`, with its track in `track`: a key command
+  such as Quantize (Q, [quantize.md](quantize.md)) or MIDI > Functions ([midi-functions.md](midi-functions.md)) with
+  the focus in it takes its selected notes, or all of its notes, never the project window's selected parts under it.
+  The Edit and MIDI menus run in the project window's zone and take its selection.
 - **Opening and closing.** MIDI > Open In-Place Editor (`editor.openInPlace`) opens it for the selected MIDI and
-  instrument tracks, Edit In-Place (`editor.editInPlace`, Mod+Shift+I, p. 1261) opens or closes each one, and the
-  inspector's Edit In-Place button (`button[control=editInPlace]`, [inspector.md](inspector.md)) the selected
-  track's, checked while it is open.
+  instrument tracks, Edit In-Place (`editor.editInPlace`, Mod+Shift+I, p. 1261) opens or closes each one, both
+  disabled until such a track is selected, and the inspector's Edit In-Place button (`button[control=editInPlace]`,
+  [inspector.md](inspector.md)) the selected track's, checked while it is open.
 
 `resources/styles/keyeditor.rcss` lays the editors out; the themes give them an opaque background over the events
 (`tools/skin/generate.py`).
@@ -63,19 +78,26 @@ The project window's info line showing the selected note (the editor's own info 
 zooming and scrolling the pitches by dragging the keyboard (the editor scrolls with its scroll bar); a
 tempo-mapped time axis; adding and removing controller lanes with a right click below the lane's name; closing with a
 double click below the controller display; dragging notes from one in-place editor to another; the keyboard in the
-track list's column; Edit In-Place in the track list's controls; the toolbar's Acoustic Feedback, Indicate
-Transpositions and Event Colors (the key editor has none yet); MIDI functions and quantizing on its selected notes.
+track list's column; Edit In-Place in the track list's controls, with the toolbar's triangle at the upper right of the
+track's row in the track list (p. 1259) instead of over the editor; the toolbar's Acoustic Feedback, Indicate
+Transpositions and Event Colors (the key editor has none yet).
 
 ## Checks
 
 - `tests/inplaceeditor_tests.cpp`: `editor.inPlace` opening, toggling and closing MIDI and instrument tracks' editors
   with `editor.changed`, the list of open ones in the track list's order, every part of the track shown and parts
   added later, the selection and settings through `editor.set`, `editor.close`; audio tracks, unknown tracks and
-  names, `editor.open`, setting parts, showing tracks, other contents and global tracks refused; a track without parts;
-  a removed track closing it and its undo bringing it back, and a new project closing them all.
+  names, `editor.open`, setting parts, showing tracks, other contents and global tracks refused, and the names'
+  pattern in the schema; a track without parts; a removed track closing it and its undo bringing it back, and a new
+  project closing them all. `tests/engine_tests.cpp` checks schema patterns.
 - `tests/inplaceeditor_ui_tests.cpp` drives the app with `ui::Automation`: MIDI > Open In-Place Editor for a MIDI
   and an audio track selected opens the MIDI track's editor over its grown lane, notes and the part's box at their
   times on the timeline, also after zooming and scrolling and with the toolbar shown; Edit In-Place, an engine client
   and a new project close and open it; a click selecting a note and a double click inserting one in the editor
   without the event display selecting or adding a part, the draw tool from the toolbar, a part added later activated
-  with a click; the inspector's Edit In-Place button opening and closing it, unavailable on an audio track.
+  with a click; the inspector's Edit In-Place button opening and closing it, unavailable on an audio track. Two
+  in-place editors, a MIDI and an instrument track's, beside the lower zone's key editor, each with menus and a
+  selection of its own, the multiple part controls setting their editor's editing mode and active part, and closing
+  one leaving the other's menus; the track's lanes keeping their height, a folded folder hiding the editor; a
+  time-linear track's notes on the timeline; Q in the editor quantizing its selected note and not the selected part;
+  the menu commands waiting for a MIDI or instrument track.

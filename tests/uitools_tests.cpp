@@ -26,6 +26,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 using namespace gnubase;
@@ -395,6 +396,34 @@ TEST_CASE("ui_click with action down holds the button across other tool calls un
 	CHECK_THAT(fixture.fail("ui_click", {{"x", 300}, {"action", "down"}}), ContainsSubstring("x and y"));
 	CHECK_THAT(fixture.fail("ui_move", {{"y", 130}}), ContainsSubstring("x and y"));
 	CHECK(!recorder.events.contains("mousedown"));
+}
+
+TEST_CASE("ui_click with a count of 2 is a double click however long the frames between the presses take", "[unit]")
+{
+	Fixture fixture;
+	Recorder recorder;
+	fixture.main->AddEventListener(Rml::EventId::Dblclick, &recorder);
+	// The first press's frame takes longer than RmlUi's double click time, as in a slow build on a busy machine.
+	struct SlowFrame final : Rml::EventListener
+	{
+		void ProcessEvent(Rml::Event& /*event*/) override
+		{
+			if (std::exchange(slow, false))
+				std::this_thread::sleep_for(milliseconds(600));
+		}
+		bool slow = true;
+	} frame;
+	fixture.main->AddEventListener(Rml::EventId::Mouseup, &frame);
+
+	fixture.call("ui_click", {{"selector", "#target"}, {"count", 2}});
+	CHECK(recorder.events.at("dblclick").at("target") == "target");
+
+	// The clock runs on afterwards: two clicks that are that far apart are two clicks.
+	recorder.events = Json::object();
+	frame.slow = true;
+	fixture.call("ui_click", {{"selector", "#target"}});
+	fixture.call("ui_click", {{"selector", "#target"}});
+	CHECK(!recorder.events.contains("dblclick"));
 }
 
 TEST_CASE("ui_drop drops files on an element, as the window system does", "[unit]")

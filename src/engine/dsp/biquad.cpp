@@ -74,6 +74,14 @@ namespace gnubase::engine::dsp
 		return normalize((1.0 - cosw) / 2.0, 1.0 - cosw, (1.0 - cosw) / 2.0, 1.0 + alpha, -2.0 * cosw, 1.0 - alpha);
 	}
 
+	Biquad Biquad::bandPass(double sampleRate, double frequency, double q)
+	{
+		// The cookbook's band pass with a constant 0 dB peak gain.
+		const double w = omega(sampleRate, frequency);
+		const double alpha = std::sin(w) / (2.0 * positiveQ(q));
+		return normalize(alpha, 0.0, -alpha, 1.0 + alpha, -2.0 * std::cos(w), 1.0 - alpha);
+	}
+
 	Biquad Biquad::highPass1(double sampleRate, double frequency)
 	{
 		// s / (s + 1) with s = (1 - z^-1) / (k (1 + z^-1)), k = tan(w / 2).

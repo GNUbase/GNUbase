@@ -68,7 +68,7 @@ namespace gnubase::app
 			const char* keys;
 		};
 
-		constexpr std::array<ProjectCommand, 90> g_projectCommands{{
+		constexpr std::array<ProjectCommand, 91> g_projectCommands{{
 			{"zoom.in", "Zooms the project window in.", "H"},
 			{"zoom.out", "Zooms the project window out.", "G"},
 			{"zoom.inVertically", "Makes the project window's tracks taller.", "Shift+H"},
@@ -121,6 +121,8 @@ namespace gnubase::app
 			{"audio.detectSilence", "Opens the Detect Silence dialog for the selected audio events.", nullptr},
 			{"audio.spectrumAnalyzer", "Opens the Spectrum Analyzer for the selected audio event.", nullptr},
 			{"audio.statistics", "Opens the Statistics window for the selected audio events.", nullptr},
+			// Sampler tracks (docs/features/sampler-track.md).
+			{"audio.createSamplerTrack", "Creates a sampler track that plays the first selected audio event.", nullptr},
 			// Warping (docs/features/warp.md).
 			{"audio.flatten", "Renders the real-time warping of the selected audio events into new files.", nullptr},
 			{"audio.unstretch", "Removes the real-time stretching from the selected audio events' clips.", nullptr},
@@ -362,6 +364,22 @@ namespace gnubase::app
 					m_eventSelection = m_eventDisplay->selection();
 					if (!m_eventSelection.empty())
 						m_markerLines->deselect();
+				}
+				// So does a range selected, e.g. between markers with the range tool: Delete deletes what was selected
+				// last.
+				if (m_eventDisplay && m_markerLines)
+				{
+					const std::optional<ui::RangeSelection>& range = m_eventDisplay->range();
+					const bool same = range.has_value() == m_eventRange.has_value() &&
+						(!range || !m_eventRange ||
+							(range->start == m_eventRange->start && range->end == m_eventRange->end &&
+								range->tracks == m_eventRange->tracks));
+					if (!same)
+					{
+						m_eventRange = range;
+						if (range)
+							m_markerLines->deselect();
+					}
 				}
 				if (m_infoLine)
 					m_infoLine->update();
@@ -614,12 +632,17 @@ namespace gnubase::app
 				chooseImport(window, "Import Audio Files",
 					{{"Audio files", "wav;w64;rf64;bwf;aif;aiff;aifc;flac;ogg;mp3"}, {"All files", "*"}}, true, false);
 			}});
-		m_keys.add({"file.importMidi", "Imports a standard MIDI file into new tracks.",
-			[this](ui::Window& window, Rml::Element* /*zone*/)
+		// File > Import > MIDI File asks first whether to create a new project (reference manual p. 365, #478).
+		m_keys.add({"file.importMidi",
+			"Imports a standard MIDI file, into a new project or the open one, as the user chooses, with the options "
+			"of the user settings midi.import*.",
+			[this](ui::Window& window, Rml::Element* /*zone*/) { openDialog(window, "import-midi.rml"); }});
+		m_lua.addFunction("ui.importMidi",
+			[this](const engine::Json& parameters)
 			{
-				chooseImport(
-					window, "Import MIDI File", {{"MIDI files", "mid;midi;smf"}, {"All files", "*"}}, false, false);
-			}});
+				chooseMidiImport(callingWindow(), parameters.value("newProject", false));
+				return engine::Json::object();
+			});
 		for (const char* command : {"file.importAudio", "file.importMidi", "pool.import"})
 			m_keys.enableWhen(command, [this](ui::Window&, Rml::Element*) { return m_eventDisplay != nullptr; });
 		// File > Export (docs/features/mixdown.md): the Export Audio Mixdown dialog, and Quick Audio Export into a WAV
@@ -756,7 +779,8 @@ namespace gnubase::app
 			[this](const engine::Json& /*parameters*/)
 			{
 				return engine::Json{{"tracks", m_trackList ? m_trackList->selection() : std::vector<uint64_t>{}},
-					{"events", m_eventDisplay ? m_eventDisplay->selection() : std::vector<uint64_t>{}}};
+					{"events", m_eventDisplay ? m_eventDisplay->selection() : std::vector<uint64_t>{}},
+					{"markers", m_markerLines ? m_markerLines->selection() : std::vector<uint64_t>{}}};
 			});
 		m_lua.addFunction("ui.selectInProject",
 			[this](const engine::Json& parameters)
@@ -770,8 +794,12 @@ namespace gnubase::app
 				};
 				if (m_trackList)
 					m_trackList->select(ids("tracks"));
+				const std::vector<uint64_t> events = ids("events");
 				if (m_eventDisplay)
-					m_eventDisplay->select(ids("events"));
+					m_eventDisplay->select(events);
+				// The project window selects events or markers: markers when no events are given.
+				if (m_markerLines)
+					m_markerLines->pick(events.empty() ? ids("markers") : std::vector<uint64_t>{});
 				return engine::Json::object();
 			});
 		// For documents' buttons and menu items: gnubase.ui.command{command = "project.addTrack"} runs a key command
@@ -797,6 +825,9 @@ namespace gnubase::app
 			m_keys.add(
 				{command.id, command.description, [this, id = std::string(command.id)](ui::Window&, Rml::Element*)
 					{
+						// Delete removes the selected markers, which the project window selects instead of events.
+						if (id == "edit.delete" && m_markerLines && m_markerLines->removeSelected())
+							return;
 						if (m_eventDisplay)
 							m_eventDisplay->actions().at(id)();
 					}});
@@ -1220,7 +1251,10 @@ namespace gnubase::app
 				[this](const std::string& command) { m_keys.run(command, engine::Json::object(), m_main, nullptr); });
 		m_statusLine = std::make_unique<ui::StatusLine>(m_binding, *document);
 		if (Rml::Element* info = document->GetElementById("info-line"))
+		{
 			m_infoLine = std::make_unique<ui::InfoLine>(*m_eventDisplay, m_binding, *info);
+			m_docking.arrangeSections(*info); // its fields are the sections of its setup pane, there only now
+		}
 		if (Rml::Element* tracks = document->GetElementById("track-list"))
 			m_trackList = std::make_unique<ui::TrackList>(*m_eventDisplay, m_binding, *tracks);
 		if (m_trackList)
@@ -1248,6 +1282,17 @@ namespace gnubase::app
 				if (ui::MarkersWindow* window = markers(); window != nullptr && window->syncsSelection())
 					window->setSelection(selection);
 			});
+		// The marker tracks' Locate menus select the marker, Shift-click on Add Cycle Marker names the new one.
+		if (m_trackList)
+			m_trackList->onMarker(
+				[this](uint64_t marker, bool rename)
+				{
+					if (m_markerLines == nullptr)
+						return;
+					m_markerLines->pick({marker});
+					if (rename)
+						m_markerLines->rename(marker);
+				});
 		return *m_eventDisplay;
 	}
 
@@ -1401,6 +1446,35 @@ namespace gnubase::app
 				else
 					m_eventDisplay->importToSelection(
 						files, m_trackList ? m_trackList->selection() : std::vector<uint64_t>());
+			});
+	}
+
+	void AppUi::chooseMidiImport(ui::Window& window, bool newProject)
+	{
+		ui::FileDialog dialog;
+		dialog.title = "Import MIDI File";
+		dialog.filters = {{"MIDI files", "mid;midi;smf"}, {"All files", "*"}};
+		dialog.parent = window.id();
+		m_shell.showFileDialog(dialog,
+			[this, newProject, id = window.id()](const ui::FileDialogResult& result)
+			{
+				if (!result.error.empty())
+					logging::warning("The file dialog failed: {}", result.error);
+				ui::Window* found = m_shell.find(id);
+				if (result.files.empty() || !m_eventDisplay || found == nullptr)
+					return;
+				const std::vector<std::string> files{result.files.front().u8string()};
+				if (!newProject)
+				{
+					m_eventDisplay->importMidi(files);
+					return;
+				}
+				m_files.newProject(*found,
+					[this, files]
+					{
+						if (m_eventDisplay)
+							m_eventDisplay->importMidi(files, true);
+					});
 			});
 	}
 
@@ -1606,31 +1680,37 @@ namespace gnubase::app
 					m_binding.send("editor.open", {{"editor", "window"}, {"parts", parts}, {"content", "drum"}});
 			}});
 		// Edit In-Place (Mod+Shift+I, reference manual p. 1261) opens or closes the in-place editors of the selected
-		// MIDI and instrument tracks, MIDI > Open In-Place Editor opens them (p. 1259).
+		// MIDI and instrument tracks, MIDI > Open In-Place Editor opens them (p. 1259). Both wait for such a track to
+		// be selected.
+		const auto noteTracks = [this]
+		{
+			engine::Json tracks = engine::Json::array();
+			if (!m_trackList || !m_eventDisplay || !m_eventDisplay->project().is_object())
+				return tracks;
+			const std::vector<uint64_t> selection = m_trackList->selection();
+			for (const engine::Json& track : m_eventDisplay->project().at("tracks"))
+				if ((track.at("type") == "midi" || track.at("type") == "instrument") &&
+					std::find(selection.begin(), selection.end(), track.at("id").get<uint64_t>()) != selection.end())
+					tracks.push_back(track.at("id"));
+			return tracks;
+		};
 		for (const auto& [id, open, description] :
 			{std::tuple{"editor.editInPlace", false,
 				 "Opens or closes the in-place editors of the selected MIDI and instrument tracks."},
 				std::tuple{"editor.openInPlace", true,
 					"Opens the in-place editors of the selected MIDI and instrument tracks."}})
 		{
-			m_keys.add({id, description, [this, opens = open](ui::Window&, Rml::Element*)
+			m_keys.add({id, description, [this, noteTracks, opens = open](ui::Window&, Rml::Element*)
 				{
-					if (!m_trackList || !m_eventDisplay || !m_eventDisplay->project().is_object())
-						return;
-					const std::vector<uint64_t> selection = m_trackList->selection();
-					engine::Json tracks = engine::Json::array();
-					for (const engine::Json& track : m_eventDisplay->project().at("tracks"))
-						if ((track.at("type") == "midi" || track.at("type") == "instrument") &&
-							std::find(selection.begin(), selection.end(), track.at("id").get<uint64_t>()) !=
-								selection.end())
-							tracks.push_back(track.at("id"));
+					engine::Json tracks = noteTracks();
 					if (tracks.empty())
 						return;
-					engine::Json parameters = {{"tracks", tracks}};
+					engine::Json parameters = {{"tracks", std::move(tracks)}};
 					if (opens)
 						parameters["open"] = true;
 					m_binding.send("editor.inPlace", parameters);
 				}});
+			m_keys.enableWhen(id, [noteTracks](ui::Window&, Rml::Element*) { return !noteTracks().empty(); });
 		}
 		m_keys.bind({"Mod+Shift+I", "editor.editInPlace", engine::Json::object(), "project"});
 		// The Drum Map Setup's Load and Save (p. 1236): a drum map file into the project, and the drum map of the
@@ -1652,6 +1732,20 @@ namespace gnubase::app
 			}});
 		m_keys.add({"drumMap.save", "Saves the drum map of the editor's active track as a drum map file.",
 			[this](ui::Window& window, Rml::Element*) { saveDrumMap(window.id()); }});
+		// The pattern editor (#181, reference manual p. 895): the selected MIDI parts in the editor window's pattern
+		// editor, and Preset Management's Save Preset and Load Preset (pp. 932-933) for the editor's active track.
+		m_keys.add({"editor.openPattern", "Opens the selected MIDI parts in the pattern editor window.",
+			[this](ui::Window&, Rml::Element*)
+			{
+				const std::vector<uint64_t> parts = selected("midiParts");
+				if (!parts.empty())
+					m_binding.send("editor.open", {{"editor", "window"}, {"parts", parts}, {"content", "pattern"}});
+			}});
+		for (const bool save : {true, false})
+			m_keys.add({save ? "pattern.savePreset" : "pattern.loadPreset",
+				save ? "Saves the patterns of the editor's active track as a pattern preset."
+					 : "Loads a pattern preset into the editor's active track.",
+				[this, save](ui::Window& window, Rml::Element*) { patternPreset(window.id(), save); }});
 		// Open Audio Part Editor (Audio menu, reference manual p. 692): the selected audio parts in the editor window.
 		m_keys.add({"audio.openPartEditor", "Opens the selected audio parts in the audio part editor window.",
 			[this](ui::Window&, Rml::Element*)
@@ -1933,6 +2027,38 @@ namespace gnubase::app
 			if (std::string(mode) != "add")
 				m_keys.enableWhen(id, hasSelection);
 		}
+	}
+
+	void AppUi::patternPreset(ui::WindowId parent, bool save, const std::string& editor)
+	{
+		// The editor window's active track, else the lower zone's.
+		m_binding.send("editor.get", {{"editor", editor}},
+			[this, parent, save, editor](const engine::Result& view)
+			{
+				if (!view.ok())
+					return;
+				const engine::Json track = view.value.at("activeTrack");
+				if (track == 0)
+				{
+					if (editor == "window")
+						patternPreset(parent, save, "lower");
+					return;
+				}
+				ui::FileDialog dialog;
+				dialog.kind = save ? ui::FileDialogKind::Save : ui::FileDialogKind::Open;
+				dialog.title = save ? "Save Pattern Preset" : "Load Pattern Preset";
+				dialog.filters = {{"Pattern presets", "patternpreset"}};
+				dialog.parent = parent;
+				m_shell.showFileDialog(dialog,
+					[this, save, track](const ui::FileDialogResult& result)
+					{
+						if (!result.error.empty())
+							logging::warning("The file dialog failed: {}", result.error);
+						if (!result.files.empty())
+							m_binding.send(save ? "pattern.export" : "pattern.import",
+								{{"track", track}, {"path", result.files.front().u8string()}});
+					});
+			});
 	}
 
 	void AppUi::saveDrumMap(ui::WindowId parent, const std::string& editor)

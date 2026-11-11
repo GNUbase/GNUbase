@@ -20,6 +20,7 @@ Documents show an icon with `<svg src="…/icons/transport-play.svg"/>`. It is r
 - `transport-tap-tempo.svg` — Tap the tempo.
 - `tool-pointer.svg` — Select and move objects.
 - `tool-range.svg` — Select a time range.
+- `tool-combine-selection.svg` — Combine the object and range selection tools.
 - `tool-split.svg` — Split events with scissors.
 - `tool-glue.svg` — Join adjacent events.
 - `tool-erase.svg` — Erase events.

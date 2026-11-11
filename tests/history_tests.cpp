@@ -3,6 +3,7 @@
 #include "engine/engine.h"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
@@ -515,6 +516,55 @@ TEST_CASE("transactions with the same merge key join one undo step, like a fader
 	volume(-7.0, "");
 	volume(-8.0, "");
 	CHECK(position(client) == start + 6);
+}
+
+TEST_CASE("merged and joined tempo edits leave display format choices outside undo", "[unit]")
+{
+	const bool join = GENERATE(false, true);
+	const bool formatEdit = GENERATE(false, true);
+	INFO("history.join: " << join << ", explicit format edit: " << formatEdit);
+	Engine engine;
+	Client client(engine);
+	const auto tempo = [&](double bpm, bool setFormat)
+	{
+		Json parameters = {{"tempo", bpm}};
+		if (setFormat)
+			parameters["timeFormat"] = "seconds";
+		run(client, "history.transaction",
+			{{"description", "Change Tempo"}, {"merge", join ? "" : "tempo:1"},
+				{"commands", {{{"command", "project.set"}, {"parameters", parameters}}}}});
+	};
+	tempo(121.0, formatEdit);
+	run(client, "project.setTimeFormat", {{"timeFormat", formatEdit ? "timecode" : "seconds"}});
+	tempo(122.0, false);
+	if (join)
+		run(client, "history.join", {{"after", 0}, {"action", "Change Tempo"}});
+	CHECK(position(client) == 1);
+	run(client, "history.undo");
+	CHECK(run(client, "project.get").at("timeFormat") == (formatEdit ? "barsBeats" : "seconds"));
+	CHECK(run(client, "project.get").at("tempo")[0].at("bpm") == 120.0);
+	run(client, "history.redo");
+	CHECK(run(client, "project.get").at("timeFormat") == "seconds");
+	CHECK(run(client, "project.get").at("tempo")[0].at("bpm") == 122.0);
+}
+
+TEST_CASE("project setup format edits remain undoable around display choices", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	run(client, "project.setTimeFormat", {{"timeFormat", "seconds"}});
+	run(client, "project.set", {{"timeFormat", "timecode"}});
+	run(client, "project.setTimeFormat", {{"timeFormat", "samples"}});
+	run(client, "project.set", {{"tempo", 121.0}});
+	CHECK(position(client) == 2);
+	run(client, "history.undo");
+	CHECK(run(client, "project.get").at("timeFormat") == "samples");
+	run(client, "history.undo");
+	CHECK(run(client, "project.get").at("timeFormat") == "seconds");
+	run(client, "history.redo");
+	CHECK(run(client, "project.get").at("timeFormat") == "timecode");
+	run(client, "history.redo");
+	CHECK(run(client, "project.get").at("timeFormat") == "timecode");
 }
 
 TEST_CASE("joining the steps after a step makes them one undo step, like a user script", "[unit]")

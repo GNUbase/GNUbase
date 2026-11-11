@@ -292,6 +292,13 @@ tabset tab
 	box-sizing: border-box;
 }
 
+/* A section of the project window's toolbar, which its setup pane shows, hides and orders. */
+.toolbar-section
+{
+	display: flex;
+	align-items: center;
+}
+
 .display, .tooltip
 {
 	display: inline-block;
@@ -820,6 +827,19 @@ meter .meter-peak
 	position: absolute;
 	padding-left: 3dp;
 	white-space: nowrap;
+}
+
+/* The field that renames a marker on the marker track, over its label. */
+.event-display .marker-name-field
+{
+	display: none;
+}
+
+.event-display .marker-name-field.shown
+{
+	display: block;
+	position: absolute;
+	width: 120dp;
 }
 
 /* The tempo track (docs/features/tempo-track.md): the tempo curve over the tempo track's lane, or filling the tempo
@@ -1419,6 +1439,14 @@ meter .meter-peak
 	width: 60dp;
 }
 
+/* The marker track's Locate, Cycle and Zoom menus (docs/features/markers.md): three in the marker tracks' default
+   controls area of 140dp, under the buttons. */
+.track-list .track-controls select.marker-menu
+{
+	width: 44dp;
+	padding: 0 2dp;
+}
+
 /* The chord track's Select Track for Auditioning (docs/features/chord-track.md). */
 .track-list .track-controls select.chord-audition
 {
@@ -1930,7 +1958,7 @@ splitter.column .splitter-grip-horizontal
 	text-align: left;
 }
 
-.info-empty, .info-line.empty .info-field
+.info-empty, .info-line.empty .info-field, .info-field.unavailable
 {
 	display: none;
 }

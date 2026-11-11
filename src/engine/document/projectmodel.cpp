@@ -15,6 +15,7 @@
 #include "engine/document/projectrules.h"
 #include "engine/document/renderinplace.h"
 #include "engine/document/sampleeditor.h"
+#include "engine/document/samplertrack.h"
 #include "engine/document/serialize.h"
 #include "engine/document/stripparameters.h"
 #include "engine/document/timewarp.h"
@@ -32,6 +33,7 @@
 #include "engine/midi/drummaps.h"
 #include "engine/midi/functioncommands.h"
 #include "engine/midi/logicalcommands.h"
+#include "engine/midi/patterns.h"
 #include "engine/midi/quantizecommands.h"
 #include "engine/processors/builtin.h"
 #include "platform/log.h"
@@ -715,6 +717,13 @@ namespace gnubase::engine
 			context.emit("marker.trackActivated", {{"track", track}});
 		}
 
+		void announceFinalMarkerTrack(const Project& project, ObjectId before, CommandContext& context)
+		{
+			context.discardEvents("marker.trackActivated");
+			if (project.activeMarkerTrack != before)
+				context.emit("marker.trackActivated", {{"track", project.activeMarkerTrack}});
+		}
+
 		// Automation.
 
 		// A lane's target from a command, checked against the track it automates.
@@ -1128,7 +1137,10 @@ namespace gnubase::engine
 				}
 				// Another instrument starts with its parameters at their defaults.
 				if (changed.instrument != channel.instrument)
+				{
 					changed.instrumentParameters.clear();
+					changed.sample = 0; // only the sampler plays one
+				}
 			}
 		}
 
@@ -1788,6 +1800,7 @@ namespace gnubase::engine
 
 		Json removeEmptyTracks(Project& project, CommandContext& context)
 		{
+			const ObjectId activeBefore = project.activeMarkerTrack;
 			const std::set<ObjectId> gone = emptyTracks(project);
 			Json removed = Json::array();
 			std::vector<ObjectId> top; // a folder takes the tracks inside it along
@@ -1798,17 +1811,13 @@ namespace gnubase::engine
 					if (gone.count(project.trackById.at(id).parent) == 0)
 						top.push_back(id);
 				}
-			// The active marker track goes last (marker tracks are never inside a folder), so that track.remove
-			// activates a marker track that stays rather than one that goes next.
-			const auto active = std::find(top.begin(), top.end(), project.activeMarkerTrack);
-			if (active != top.end())
-				std::rotate(active, std::next(active), top.end());
 			for (const ObjectId id : top)
 			{
 				const Json parameters = {{"track", id}}; // the context keeps a reference
 				CommandContext inner(parameters, &context);
 				removeTrack(project, inner);
 			}
+			announceFinalMarkerTrack(project, activeBefore, context);
 			return Json{{"tracks", std::move(removed)}};
 		}
 
@@ -2789,6 +2798,9 @@ namespace gnubase::engine
 			find(project.clips, id, "clip");
 			forEveryAudioEvent(project, [id](const AudioEvent& event)
 				{ require(event.clip != id, "clip " + idText(id) + " is used by audio event " + idText(event.id)); });
+			for (const auto& [channelId, channel] : project.channels)
+				require(channel.sample != id,
+					"clip " + idText(id) + " is played by sampler track " + idText(channel.track));
 			project.clips.erase(id);
 			context.emit("clip.removed", {{"clip", id}});
 			return Json::object();
@@ -2883,6 +2895,9 @@ namespace gnubase::engine
 			require(part.length > 0, "length must be positive");
 			part.name = parameters.value("name", track.name);
 			part.lane = parameters.value("lane", 0);
+			part.pattern = parameters.value("pattern", ObjectId{0});
+			require(part.pattern == 0 || project.patterns.count(part.pattern) != 0,
+				"no pattern " + std::to_string(part.pattern));
 			part.id = project.newId();
 			Json result = {{"part", toJson(part)}};
 			project.midiParts[part.id] = std::move(part);
@@ -2943,6 +2958,12 @@ namespace gnubase::engine
 				const std::string mode = parameters.at("globalTranspose").get<std::string>();
 				require(mode == "follow" || mode == "independent", "globalTranspose must be follow or independent");
 				part.independent = mode == "independent";
+			}
+			if (parameters.contains("pattern"))
+			{
+				part.pattern = parameters.at("pattern").get<ObjectId>();
+				require(part.pattern == 0 || project.patterns.count(part.pattern) != 0,
+					"no pattern " + std::to_string(part.pattern));
 			}
 			Json result = {{"part", toJson(part)}};
 			context.emit("midiPart.changed", result);
@@ -3390,11 +3411,16 @@ namespace gnubase::engine
 					current.tempo != previous.tempo || current.signatures != previous.signatures ||
 					!(current.autoFades == previous.autoFades) || current.panLaw != previous.panLaw ||
 					current.maxVolume != previous.maxVolume || !(current.colors == previous.colors) ||
-					!(current.setup == previous.setup) || current.rootKey != previous.rootKey)
-					context.emit("project.changed", projectSettingsJson(current));
+					!(current.setup == previous.setup) || current.rootKey != previous.rootKey ||
+					change.timeFormatBefore)
+					context.emit("project.changed", projectSettingsJson(project));
 				announceBusses(previous.busses, current.busses, context);
 				reordered = current.tracks != previous.tracks;
 				activated = current.activeMarkerTrack != previous.activeMarkerTrack;
+			}
+			else if (change.timeFormatBefore)
+			{
+				context.emit("project.changed", projectSettingsJson(project));
 			}
 			for (const ObjectChange<Track>& track : change.tracks)
 				reordered = reordered || !track.before || !track.after || track.before->parent != track.after->parent ||
@@ -3410,6 +3436,7 @@ namespace gnubase::engine
 			announceObjects(change.linkGroups, direction, "linkGroup", "group", context);
 			announceObjects(change.drumMaps, direction, "drumMap", "map", context);
 			announceObjects(change.articulationMaps, direction, "articulationMap", "map", context);
+			announceObjects(change.patterns, direction, "pattern", "pattern", context);
 			// Slots as plugin.insert, plugin.remove and the other plugin.* commands announce them. Those of a channel
 			// that came or went are in its events.
 			std::set<ObjectId> channels; // that came or went
@@ -3502,6 +3529,14 @@ namespace gnubase::engine
 			});
 	}
 
+	void ProjectModel::setWorkspaces(ProjectWorkspaces workspaces)
+	{
+		if (toJson(workspaces) == toJson(m_project.workspaces))
+			return;
+		m_project.workspaces = std::move(workspaces);
+		publish();
+	}
+
 	Json ProjectModel::runEdit(
 		const std::string& command, Project& project, const Json& parameters, CommandContext& context)
 	{
@@ -3524,6 +3559,20 @@ namespace gnubase::engine
 			Project start = before;
 			apply(start, steps.back().change, Direction::Undo);
 			ProjectChange change = difference(start, m_project);
+			// Compose only format edits, excluding display choices made between the gesture's commands.
+			change.timeFormatBefore = steps.back().change.timeFormatBefore;
+			change.timeFormatAfter = steps.back().change.timeFormatAfter;
+			if (before.setup.timeFormat != m_project.setup.timeFormat)
+			{
+				if (!change.timeFormatBefore)
+					change.timeFormatBefore = before.setup.timeFormat;
+				change.timeFormatAfter = m_project.setup.timeFormat;
+			}
+			if (change.timeFormatBefore == change.timeFormatAfter)
+			{
+				change.timeFormatBefore.reset();
+				change.timeFormatAfter.reset();
+			}
 			if (change.empty())
 				m_history.removeLast();
 			else
@@ -3578,6 +3627,7 @@ namespace gnubase::engine
 
 	Json ProjectModel::transaction(Project& project, CommandContext& context)
 	{
+		const ObjectId activeBefore = project.activeMarkerTrack;
 		Json results = Json::array();
 		const Json& commands = context.parameters().at("commands");
 		for (size_t i = 0; i < commands.size(); ++i)
@@ -3618,6 +3668,7 @@ namespace gnubase::engine
 				throw CommandError(prefix + error.what());
 			}
 		}
+		announceFinalMarkerTrack(project, activeBefore, context);
 		return {{"results", results}};
 	}
 
@@ -3636,6 +3687,21 @@ namespace gnubase::engine
 		for (size_t i = position; i > first; --i)
 			apply(start, steps[i - 1].change, Direction::Undo);
 		ProjectChange change = difference(start, m_project);
+		// The joined step keeps only explicit format edits, not the current display choice.
+		change.timeFormatBefore.reset();
+		change.timeFormatAfter.reset();
+		for (size_t i = first; i < position; ++i)
+			if (steps[i].change.timeFormatBefore)
+			{
+				if (!change.timeFormatBefore)
+					change.timeFormatBefore = steps[i].change.timeFormatBefore;
+				change.timeFormatAfter = steps[i].change.timeFormatAfter;
+			}
+		if (change.timeFormatBefore == change.timeFormatAfter)
+		{
+			change.timeFormatBefore.reset();
+			change.timeFormatAfter.reset();
+		}
 		std::optional<HistoryStep> joined;
 		if (!change.empty())
 			joined =
@@ -3910,6 +3976,23 @@ namespace gnubase::engine
 					{"rootKey", enumSchema(rootKeyNames())}}),
 				noResult, false},
 			setProject);
+		addControl(engine,
+			{"project.setTimeFormat", 1,
+				"Selects the project's primary time format from a ruler or transport display. Saved with the project, "
+				"but a display choice is not an undo step. Project Setup changes made with project.set remain "
+				"undoable. The snap grid follows the format.",
+				objectSchema({{"timeFormat", timeFormats}}, {"timeFormat"}), noResult, false},
+			[this](CommandContext& context)
+			{
+				const std::string before = m_project.setup.timeFormat;
+				m_project.setup.timeFormat = context.parameters().at("timeFormat").get<std::string>();
+				if (m_project.setup.timeFormat == before)
+					return Json::object();
+				followTimeFormat(m_project, before, context);
+				context.emit("project.changed", projectSettingsJson(m_project));
+				publish();
+				return Json::object();
+			});
 		add(engine,
 			{"project.factoryColors", 1,
 				"The factory color set, which new projects have: each color's name and color (#rrggbb). The project "
@@ -4360,8 +4443,8 @@ namespace gnubase::engine
 				objectSchema({{"media", idSchema}, {"name", stringSchema}}, {"media"}), resultSchema({"clip"}), false},
 			addClip);
 		add(engine,
-			{"clip.remove", 1, "Removes a clip that no audio event uses.", objectSchema({{"clip", idSchema}}, {"clip"}),
-				noResult, false},
+			{"clip.remove", 1, "Removes a clip that no audio event or sampler track uses.",
+				objectSchema({{"clip", idSchema}}, {"clip"}), noResult, false},
 			removeClip);
 
 		add(engine,
@@ -4407,9 +4490,11 @@ namespace gnubase::engine
 		add(engine,
 			{"midiPart.add", 1,
 				"Adds a MIDI part to a MIDI or instrument track. position and length are in the track's time base. "
-				"lane puts it on that lane of the track, from 0 (default), as event.set does.",
+				"lane puts it on that lane of the track, from 0 (default), as event.set does. pattern makes it a "
+				"pattern event (#181), which plays that pattern (pattern.add) from its start over and over instead "
+				"of its notes.",
 				objectSchema({{"track", idSchema}, {"position", integerSchema}, {"length", integerSchema},
-								 {"name", stringSchema}, {"lane", laneSchema}},
+								 {"name", stringSchema}, {"lane", laneSchema}, {"pattern", idSchema}},
 					{"track", "position", "length"}),
 				resultSchema({"part"}), false},
 			addMidiPart);
@@ -4420,11 +4505,12 @@ namespace gnubase::engine
 				"(channel.set modifiers), also while they are bypassed. The notes themselves stay as they are. "
 				"rootKey is the part's root key (\"\" for none, C, C# and so on to B), which the project root key "
 				"transposes it to (project.set rootKey); globalTranspose follow (the default) or independent says "
-				"whether the project root key and the transpose track transpose it (transpose.add).",
+				"whether the project root key and the transpose track transpose it (transpose.add). pattern is the "
+				"pattern a pattern event plays (pattern.add, #181), 0 for an ordinary part.",
 				objectSchema({{"part", idSchema}, {"name", stringSchema}, {"position", integerSchema},
 								 {"length", integerSchema}, {"transpose", integerSchema}, {"velocity", integerSchema},
 								 {"rootKey", enumSchema(rootKeyNames())},
-								 {"globalTranspose", enumSchema({"follow", "independent"})}},
+								 {"globalTranspose", enumSchema({"follow", "independent"})}, {"pattern", idSchema}},
 					{"part"}),
 				resultSchema({"part"}), false},
 			[this](Project& project, CommandContext& context)
@@ -4520,10 +4606,12 @@ namespace gnubase::engine
 		registerTrackVersionCommands(*this, engine);
 		midi::registerDrumMapCommands(*this, engine);
 		midi::registerArticulationMapCommands(*this, engine);
+		midi::registerPatternCommands(*this, engine);
 		registerChannelSettingsCommands(*this, engine);
 		registerTrackPresetCommands(*this, engine);
 		registerEditorCommands(*this, engine);
 		registerSampleEditorCommands(*this, engine);
+		registerSamplerCommands(*this, engine);
 		registerHitpointCommands(*this, engine, jobs);
 		registerWarpCommands(engine);
 		registerTimeWarpCommands(*this, engine);
@@ -4725,7 +4813,9 @@ namespace gnubase::engine
 		addControl(engine,
 			{"project.revision", 1,
 				"A number that grows with every change of the project: every edit, undo and redo, and loading or "
-				"starting a project. project.load with revision loads only if it hasn't changed. modified says "
+				"starting a project. quantize.savePreset, quantize.renamePreset, quantize.removePreset and "
+				"quantize.extractGroove also advance it when they change the quantize preset saved with the project, "
+				"without an undo step. project.load with revision loads only if it hasn't changed. modified says "
 				"whether the project changed since it was last saved, loaded or started; undoing back to the saved "
 				"state still counts as a change. project identifies the open project: the revision at which it was "
 				"loaded or started, so it changes only when another project is opened.",
@@ -4748,8 +4838,9 @@ namespace gnubase::engine
 				"folder of the project's folder, where File > Export > "
 				"Audio Mixdown puts mixdowns, go along into the folder Mixdown, unless skipMixdown is true. The "
 				"project itself stays as it is. minimize keeps only the ranges of audio files "
-				"that audio events play, with handles seconds (default 1) before and after; removeUnused leaves out "
-				"clips that no audio event uses and media that no clip uses. currentVersionsOnly and skipVideo have "
+				"that audio events play, with handles seconds (default 1) before and after, but files that a sampler "
+				"track plays go along whole; removeUnused leaves out clips that no audio event or sampler track uses "
+				"and media that no clip uses. currentVersionsOnly and skipVideo have "
 				"no effect until clips have versions and projects have video. activate opens the backup once it is "
 				"done, unless the project changed meanwhile. The backup runs as a job: this returns at once, "
 				"job.progress and job.finished events follow, and job.cancel stops it and removes what it wrote. A "

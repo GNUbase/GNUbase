@@ -136,6 +136,10 @@ namespace gnubase::engine
 			m_project.quantizePreset = std::move(name);
 			publish();
 		}
+		// Sets Project::workspaces, for the workspace commands (#163), which aren't edits either: the project file
+		// saves the project workspaces and the active one, so a change advances the revision as setQuantizePreset's
+		// does. Only on the command thread.
+		void setWorkspaces(ProjectWorkspaces workspaces);
 		// The project file it was last saved as or loaded from, absolute; empty for none. Only on the command thread.
 		const std::string& file() const { return m_file; }
 		// Identifies the open project: the revision at which it was loaded or started (project.revision's project).

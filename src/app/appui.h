@@ -39,7 +39,9 @@
 #include <RmlUi/Core/ObserverPtr.h>
 
 #include <array>
+#include <chrono>
 #include <cstdint>
+#include <deque>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -66,6 +68,8 @@ namespace gnubase::app
 		explicit ScriptOutput(std::ostream& output) : m_output(output) {}
 
 		const std::string& text() const { return m_text; }
+		// Where the text starts in all that was printed: it grows when the oldest lines go and with clear.
+		uint64_t start() const { return m_start; }
 		// Grows with every change of the text.
 		uint64_t version() const { return m_version; }
 		void clear();
@@ -78,6 +82,7 @@ namespace gnubase::app
 	private:
 		std::ostream& m_output;
 		std::string m_text;
+		uint64_t m_start = 0;
 		uint64_t m_version = 0;
 	};
 
@@ -223,12 +228,21 @@ namespace gnubase::app
 		// (resources/ui/script-console.rml) opens in a window of its own, or closes: the UI command
 		// window.scriptConsole.
 		ui::WindowId scriptConsoleWindow() const { return m_scriptConsoleWindow; }
-		// What opens files and folders with the OS for the console, such as a script in the user's editor: tests catch
-		// them instead.
-		void openExternallyWith(std::function<void(const std::filesystem::path&)> open)
+		// What opens files and folders with the OS for the console, and with edit a script in the user's editor: tests
+		// catch them instead.
+		void openExternallyWith(std::function<void(const std::filesystem::path&, bool edit)> open)
 		{
 			m_openExternally = std::move(open);
 		}
+		// What asks whether a user script or a line of the console that has run longer than limit goes on (by default
+		// 10 s and a message box, or stop with the windows hidden): tests answer instead.
+		void keepScriptsRunningWith(
+			std::chrono::milliseconds limit, std::function<bool(const std::string& script)> keepRunning)
+		{
+			m_scriptTimeLimit = limit;
+			m_keepScriptRunning = std::move(keepRunning);
+		}
+		ui::EngineBinding& binding() { return m_binding; }
 
 		ui::Shell& shell() { return m_shell; }
 		ui::Window& mainWindow() { return m_main; }
@@ -259,6 +273,10 @@ namespace gnubase::app
 		// with clipsOnly into the pool only (Media > Import Medium).
 		void chooseImport(
 			ui::Window& window, std::string title, std::vector<ui::FileFilter> filters, bool many, bool clipsOnly);
+		// File > Import > MIDI File, once asked whether to create a new project (import-midi.rml): the OS's file dialog
+		// for the window, then the event display imports the file, with newProject into a new project once the user
+		// agreed to drop the open one's unsaved changes.
+		void chooseMidiImport(ui::Window& window, bool newProject);
 		// Media > Find Missing Files: the OS's folder dialog, then media.locate looks for the missing files there.
 		void chooseMissingFolder(ui::Window& window);
 		// The lower zone's mixer panel, the mixer windows' Visibility tabs and their UI commands, and Edit Channel
@@ -312,6 +330,9 @@ namespace gnubase::app
 		// and drumMap.export.
 		void saveDrumMap(ui::WindowId parent, const std::string& editor = "window");
 		void chooseDrumMapFile(ui::WindowId parent, uint64_t map);
+		// The active track of an editor (window, else lower), then the OS's file dialog for a pattern preset and
+		// pattern.export (save) or pattern.import.
+		void patternPreset(ui::WindowId parent, bool save, const std::string& editor = "window");
 		// The window of the document whose Lua called the function that runs now (gnubase.ui.command), else the main
 		// window.
 		ui::Window& callingWindow();
@@ -365,8 +386,9 @@ namespace gnubase::app
 		std::unique_ptr<ui::TempoEditor> m_tempoEditor;
 		ui::WindowId m_tempoWindow = 0;
 		ui::WindowId m_arrangerWindow = 0;
-		std::vector<uint64_t> m_eventSelection; // the display's, as the last step saw it
-		ui::Winding m_winding{m_binding};       // Rewind and Forward held, which the transport controls end
+		std::vector<uint64_t> m_eventSelection;         // the display's, as the last step saw it
+		std::optional<ui::RangeSelection> m_eventRange; // as well
+		ui::Winding m_winding{m_binding};               // Rewind and Forward held, which the transport controls end
 		std::unique_ptr<ui::TransportControls> m_transportBar;
 		TransportWindow m_transportPanel;
 		TransportWindow m_timeDisplay;
@@ -447,6 +469,11 @@ namespace gnubase::app
 		ui::WindowId m_scriptConsoleWindow = 0;
 		Rml::ObserverPtr<Rml::Element> m_scriptConsole; // its document
 		uint64_t m_shownOutput = 0;                     // the output's version it shows
-		std::function<void(const std::filesystem::path&)> m_openExternally;
+		uint64_t m_shownEnd = 0;                        // where what it shows ends in the output (ScriptOutput::start)
+		std::deque<uint64_t> m_shownChunks;             // where each of its text nodes ends there
+		int m_scriptEnvironment = 0;                    // the scripts' globals (scripting::Runtime::newEnvironment)
+		std::chrono::milliseconds m_scriptTimeLimit{10000};
+		std::function<bool(const std::string& script)> m_keepScriptRunning;
+		std::function<void(const std::filesystem::path&, bool edit)> m_openExternally;
 	};
 }

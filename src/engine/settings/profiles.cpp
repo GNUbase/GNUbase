@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <functional>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -79,6 +80,16 @@ namespace gnubase::engine::settings
 								std::string("<>:\"/\\|?*").find(c) != std::string::npos;
 						}),
 				"a profile name can't have the characters < > : \" / \\ | ? * or end with a dot or a space");
+			// Windows keeps these names for devices, also with an extension.
+			std::string base = name.substr(0, name.find('.'));
+			while (!base.empty() && base.back() == ' ')
+				base.pop_back();
+			std::transform(base.begin(), base.end(), base.begin(),
+				[](char c) { return c >= 'a' && c <= 'z' ? static_cast<char>(c - 'a' + 'A') : c; });
+			const bool numbered = base.size() == 4 &&
+				(base.compare(0, 3, "COM") == 0 || base.compare(0, 3, "LPT") == 0) && base[3] >= '1' && base[3] <= '9';
+			require(!numbered && base != "CON" && base != "PRN" && base != "AUX" && base != "NUL",
+				"a profile name can't be a device's name on Windows (CON, PRN, AUX, NUL, COM1 to COM9, LPT1 to LPT9)");
 		}
 
 		// The profiles: the active one and those with a folder, sorted by name.
@@ -100,7 +111,8 @@ namespace gnubase::engine::settings
 		}
 
 		// Whether a profile other than except has a name that differs from name at most in case: the profiles'
-		// folders aren't case-sensitive on Windows and macOS. ASCII case only, as the folders' names are UTF-8.
+		// folders aren't case-sensitive on Windows and macOS. ASCII case only, as the folders' names are UTF-8;
+		// makeFolder asks the file system about the other letters.
 		bool taken(const fs::path& directory, const State& state, const std::string& name,
 			const std::string& except = std::string())
 		{
@@ -113,6 +125,30 @@ namespace gnubase::engine::settings
 			const std::vector<std::string> names = profiles(directory, state);
 			return std::any_of(names.begin(), names.end(),
 				[&](const std::string& other) { return other != except && lower(other) == lower(name); });
+		}
+
+		// Makes a profile's folder, of a new profile or one renamed from the folder old, and refuses a name that the
+		// file system takes for another profile's folder: NTFS and APFS also fold the case of letters such as Ä, and
+		// APFS ignores the Unicode normalization, which taken doesn't see. The active profile has no folder, so one
+		// that appears with the new one is the same.
+		void makeFolder(
+			const fs::path& directory, const State& state, const std::string& name, const fs::path& old = fs::path())
+		{
+			const fs::path folder = folderOf(directory, name);
+			const fs::path active = folderOf(directory, state.active);
+			require(!fs::exists(folder) || (!old.empty() && fs::equivalent(old, folder)), "there is a profile " + name);
+			const bool hadActive = fs::exists(active);
+			if (old.empty())
+				fs::create_directories(folder);
+			else
+				fs::rename(old, folder);
+			if (hadActive || !fs::exists(active))
+				return;
+			if (old.empty())
+				fs::remove(folder);
+			else
+				fs::rename(folder, old);
+			throw CommandError("there is a profile " + name);
 		}
 
 		// The folder with a profile's files: the settings folder for the active one.
@@ -134,6 +170,18 @@ namespace gnubase::engine::settings
 			}
 		}
 
+		// Copies the profile files from one folder to another as moveFiles moves them.
+		void copyFiles(const fs::path& from, const fs::path& to)
+		{
+			fs::create_directories(to);
+			for (const char* name : g_profileFiles)
+			{
+				fs::remove(to / name);
+				if (fs::exists(from / name))
+					fs::copy_file(from / name, to / name);
+			}
+		}
+
 		Json listJson(const fs::path& directory)
 		{
 			const State state = readState(directory);
@@ -152,23 +200,54 @@ namespace gnubase::engine::settings
 		if (state.next.empty() || state.next == state.active)
 			return;
 		const fs::path next = folderOf(directory, state.next);
+		const fs::path saved = folderOf(directory, state.active);
+		// Copies of both profiles' files, so that a switch that fails on the way puts the active one's back.
+		const fs::path staging = directory / "profile-switch";
+		std::error_code error;
 		try
 		{
-			if (fs::is_directory(next))
+			if (!fs::is_directory(next))
 			{
-				moveFiles(directory, folderOf(directory, state.active));
-				moveFiles(next, directory);
-				fs::remove_all(next);
-				logging::info("Switched from the profile {} to {}", state.active, state.next);
-				state.active = state.next;
+				state.next.clear();
+				writeState(directory, state);
+				return;
 			}
-			state.next.clear();
-			writeState(directory, state);
+			// A folder that the file system takes for the active profile's, such as one whose name differs only in
+			// case: the switch would move the active profile's files over the next one's.
+			if (fs::exists(saved) && fs::equivalent(saved, next))
+				throw std::runtime_error("its folder is the active profile's " + state.active + " on this file system");
+			fs::remove_all(staging);
+			copyFiles(directory, staging / "active");
+			copyFiles(next, staging / "next");
+			try
+			{
+				copyFiles(staging / "active", saved);
+				moveFiles(staging / "next", directory);
+				writeState(directory, {state.next, std::string()});
+			}
+			catch (...)
+			{
+				copyFiles(staging / "active", directory);
+				fs::remove_all(saved, error);
+				throw;
+			}
+			logging::info("Switched from the profile {} to {}", state.active, state.next);
+			fs::remove_all(next, error);
 		}
-		catch (const std::exception& error)
+		catch (const std::exception& failure)
 		{
-			logging::error("Cannot switch to the profile {}: {}", state.next, error.what());
+			logging::error("Cannot switch to the profile {}: {}", state.next, failure.what());
 		}
+		fs::remove_all(staging, error);
+	}
+
+	void cancelProfileSwitch(const fs::path& directory)
+	{
+		State state = readState(directory);
+		if (state.next.empty())
+			return;
+		state.next.clear();
+		writeState(directory, state);
 	}
 
 	void registerProfileCommands(Engine& engine, const fs::path& directory)
@@ -237,7 +316,7 @@ namespace gnubase::engine::settings
 				const auto added = parameters.at("name").get<std::string>();
 				checkName(added);
 				require(!taken(directory, state, added), "there is a profile " + added);
-				fs::create_directories(folderOf(directory, added));
+				makeFolder(directory, state, added);
 			});
 		command("profile.duplicate", "Adds a profile with the settings of another one." + list,
 			object({{"name", name}, {"newName", name}}, {"name", "newName"}),
@@ -248,8 +327,8 @@ namespace gnubase::engine::settings
 				require(exists(directory, state, from), "no profile " + from);
 				checkName(added);
 				require(!taken(directory, state, added), "there is a profile " + added);
+				makeFolder(directory, state, added);
 				const fs::path to = folderOf(directory, added);
-				fs::create_directories(to);
 				for (const char* file : g_profileFiles)
 					if (const fs::path source = filesOf(directory, state, from) / file; fs::exists(source))
 						fs::copy_file(source, to / file);
@@ -266,9 +345,14 @@ namespace gnubase::engine::settings
 					return;
 				require(!taken(directory, state, to, from), "there is a profile " + to);
 				if (from == state.active)
+				{
+					require(!fs::exists(folderOf(directory, to)), "there is a profile " + to);
 					state.active = to;
+				}
 				else
-					fs::rename(folderOf(directory, from), folderOf(directory, to));
+				{
+					makeFolder(directory, state, to, folderOf(directory, from));
+				}
 				if (state.next == from)
 					state.next = to;
 				writeState(directory, state);
@@ -345,11 +429,11 @@ namespace gnubase::engine::settings
 																		 : json.value("name", std::string());
 				checkName(imported);
 				require(!taken(directory, state, imported), "there is a profile " + imported);
+				makeFolder(directory, state, imported);
 				const fs::path to = folderOf(directory, imported);
 				for (const char* file : g_profileFiles)
 					if (const auto found = json.at("files").find(file); found != json.at("files").end())
 						files::writeAtomically(to / file, found->dump(1, '\t'));
-				fs::create_directories(to);
 			});
 	}
 }

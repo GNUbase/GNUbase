@@ -67,13 +67,14 @@ each other.
   meanwhile the field shows where the gesture took it. It shows three decimals: editing it without typing leaves a tempo
   with more, such as 130.0001 BPM from a MIDI file, as it is. A signature is typed as "3/4"; the engine refuses
   denominators other than 1, 2, 4, 8 and 16.
-- **Time formats.** The primary one is the project's time format (`project.set {timeFormat}`, Bars+Beats by default),
-  as the project setup dialog's Time Format (reference manual p. 317): picking one in the primary menu, or Exchange
-  Time Formats, changes it as an undo step, and the displays follow the project's, also after undo and loading a
-  project. The others are the user setting `ui.timeFormats` (`secondary`, `timeDisplay`: `barsBeats`, `seconds`,
-  `timecode`, `samples` or `userFrames`; Timecode and Bars+Beats by default), kept after a restart; a `primary` in it,
-  from before #537, is ignored. So every transport control shows the same. The menus' items have `slot` and `format`,
-  and the item of the slot's format is checked.
+- **Time formats.** The primary one is the project's time format (Bars+Beats by default), as the project setup dialog's
+  Time Format (reference manual p. 317). Picking one in the primary menu (`project.setTimeFormat`) or exchanging formats
+  changes the display without adding an undo step; an exchange changes both displays together. A format changed in
+  Project Setup (`project.set {timeFormat}`) remains an undo step. The displays follow the project's format after undo
+  and loading a project. The others are the user setting `ui.timeFormats` (`secondary`, `timeDisplay`: `barsBeats`,
+  `seconds`, `timecode`, `samples` or `userFrames`; Timecode and Bars+Beats by default), kept after a restart; a
+  `primary` in it, from before #537, is ignored. So every transport control shows the same. The menus' items have `slot`
+  and `format`, and the item of the slot's format is checked.
 
 ## Sections and setup panes
 
@@ -141,27 +142,30 @@ p. 313).
 
 ## Checks
 
+`tests/history_tests.cpp` checks display choices across unrelated, merged and joined undo steps, while explicit
+Project Setup format edits remain undoable. `tests/projectsetup_tests.cpp` checks the format command's events, snap
+following, revision, persistence, validation and lack of an undo step.
+
 `tests/transport_tests.cpp`: `transport.toggle` with each setting, `transport.locate` `by`, also huge amounts both ways
 and from the largest position, and `project.set` `tempo` and `signature` with undo and refused values.
 `tests/timeformat_tests.cpp`: positions typed in every format read back as the engine converts them, partial and invalid
 text, timecode hours past 2147483647, lengths in bars and beats across a tempo change, and the time context from
-`project.get`. `tests/transportbar_tests.cpp` drives the app's UI (`test::UiApp`,
-[ui-tests.md](ui-tests.md)): every button of the transport bar, a window too narrow for the transport bar cutting off
-its last sections, the switches following another client's changes, the marker buttons with and without markers,
-Locators to Selection by button and key, the time format menus, Exchange Time Formats by button and key,
-`ui.timeFormats` and the project's time format from the engine, also by undo and redo, positions, locators and a length typed into the displays (also the position a display
+`project.get`. `tests/transportbar_tests.cpp` drives the app's UI (`test::UiApp`, [ui-tests.md](ui-tests.md)): every
+button of the transport bar, a window too narrow for the transport bar cutting off its last sections, the switches
+following another client's changes, the marker buttons with and without markers, Locators to Selection by button and
+key, the time format menus, Exchange Time Formats by button and key, `ui.timeFormats` and the project's time format from
+the engine, also by undo and redo; positions, locators and a length typed into the displays (also the position a display
 shows, from between its ticks), the tempo and signature fields with undo, every key command, the transport panel opened
 by F2, by an enter command and again after its window was closed, and the time display window with its context menu;
 Rewind, Forward and Fast Forward winding while their key or button is held and stopping when it goes up, also after
 Shift; Nudge Cursor on bar, beat and second grids and at the project start; the wheel on the position, locator and range
-displays in three formats, and past the largest project position, where positions, locators and a length typed stop
-too, also for turns far larger than a wheel's; a drag and wheel turns on the tempo field as one undo step each; a
-tempo with more decimals than the field shows, kept when the field is left untouched and set when its number is typed;
-the position typed back into the primary display during playback; Show Beat Count Only and the window sizes, kept for
-the window opened again; and the setup panes of the transport bar and the panel, each with its own sections, and Show
-All. A button or menu item with a command that doesn't exist, parameters it doesn't take or parameters that aren't
-JSON makes `TransportControls` throw; without a check, only the last. `tests/mainmenu_tests.cpp` opens the transport
-panel and the time display window from a copy of the resources with a control that is refused: the window closes
-again, also when it is opened a second time, `transportPanel()` or `timeDisplay()` stays null, and the other window
-still opens.
+displays in three formats, and past the largest project position, where positions, locators and a length typed stop too,
+also for turns far larger than a wheel's; a drag and wheel turns on the tempo field as one undo step each; a tempo with
+more decimals than the field shows, kept when the field is left untouched and set when its number is typed; the position
+typed back into the primary display during playback; Show Beat Count Only and the window sizes, kept for the window
+opened again; and the setup panes of the transport bar and the panel, each with its own sections, and Show All. A button
+or menu item with a command that doesn't exist, parameters it doesn't take or parameters that aren't JSON makes
+`TransportControls` throw; without a check, only the last. `tests/mainmenu_tests.cpp` opens the transport panel and the
+time display window from a copy of the resources with a control that is refused: the window closes again, also when it
+is opened a second time, `transportPanel()` or `timeDisplay()` stays null, and the other window still opens.
 `tests/keycommands_tests.cpp` checks held keys, `tests/theme_tests.cpp` the themes' time display sizes.

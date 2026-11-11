@@ -107,6 +107,7 @@ namespace gnubase::engine
 		{
 			std::map<ObjectId, int> uses;
 			forEveryAudioEvent(project, [&uses](const AudioEvent& event) { ++uses[event.clip]; });
+			forEverySamplerClip(project, [&uses](ObjectId clip) { ++uses[clip]; });
 			return uses;
 		}
 
@@ -548,11 +549,11 @@ namespace gnubase::engine
 		add(engine,
 			{"pool.get", 1,
 				"The pool (reference manual pp. 739-744): its folders, and every clip with the folder it is in, the "
-				"number of audio events that use it (used), its media file's path, sample rate, channel count and "
-				"length in sample frames, whether the file is missing and whether it is external, outside the project "
-				"folder (every file of a project that has no file yet). The totals of the info line: audioFiles, "
-				"usedFiles (media files that an event plays), missingFiles, externalFiles and totalSize, the bytes of "
-				"the files on disk.",
+				"number of audio events and sampler tracks that use it (used), its media file's path, sample rate, "
+				"channel count and length in sample frames, whether the file is missing and whether it is external, "
+				"outside the project folder (every file of a project that has no file yet). The totals of the info "
+				"line: audioFiles, usedFiles (media files that an event plays), missingFiles, externalFiles and "
+				"totalSize, the bytes of the files on disk.",
 				objectSchema({}),
 				objectSchema({{"folders", {{"type", "array"}, {"items", folderSchema}}},
 								 {"clips", {{"type", "array"}, {"items", clipSchema}}}, {"audioFiles", integer},
@@ -685,8 +686,9 @@ namespace gnubase::engine
 
 		add(engine,
 			{"pool.removeUnused", 1,
-				"Removes the clips that no audio event uses, then the media files that no clip uses, from the pool "
-				"(reference manual p. 747), as one undo step. The files stay on disk. Returns the ids removed.",
+				"Removes the clips that no audio event or sampler track uses, then the media files that no clip uses, "
+				"from the pool (reference manual p. 747), as one undo step. The files stay on disk. Returns the ids "
+				"removed.",
 				objectSchema({}), objectSchema({{"clips", ids}, {"media", ids}}, {"clips", "media"}), false},
 			[](Project& project, CommandContext& context)
 			{
@@ -755,7 +757,8 @@ namespace gnubase::engine
 		add(engine,
 			{"media.removeMissing", 1,
 				"Removes the media files that are missing from the pool with their clips and the audio events that "
-				"play them (reference manual p. 752), as one undo step. Returns the ids removed.",
+				"play them (reference manual p. 752), as one undo step; sampler tracks that play them are left without "
+				"a sample. Returns the ids removed.",
 				objectSchema({}),
 				objectSchema({{"media", ids}, {"clips", ids}, {"events", ids}}, {"media", "clips", "events"}), false},
 			[this](Project& project, CommandContext& context)
@@ -793,6 +796,13 @@ namespace gnubase::engine
 									std::remove_if(version.audioEvents.begin(), version.audioEvents.end(),
 										[clipId](const AudioEvent& event) { return event.clip == clipId; }),
 									version.audioEvents.end());
+						// Sampler tracks play nothing (#180).
+						for (auto& [channelId, channel] : project.channels)
+							if (channel.sample == clipId)
+							{
+								channel.sample = 0;
+								context.emit("channel.changed", {{"channel", toJson(channel)}});
+							}
 						project.clips.erase(clipId);
 						context.emit("clip.removed", {{"clip", clipId}});
 						clips.push_back(clipId);

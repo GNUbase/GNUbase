@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "engine/audio/audition.h"
 #include "engine/audio/playback.h"
 #include "engine/audio/transport.h"
 #include "engine/document/document.h"
@@ -21,6 +22,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <thread>
 #include <utility>
@@ -843,4 +845,85 @@ TEST_CASE("scrubbing plays an audio track forwards and backwards at the speed po
 		}
 		CHECK(wrong == 0);
 	}
+}
+
+TEST_CASE("scrubs that come faster than they play, or late, carry on from where the audio got to", "[integration]")
+{
+	const bool timed = GENERATE(true, false); // the third scrub with seconds, or as long as since the last one
+	INFO((timed ? "with" : "without") << " seconds");
+	const gnubase::test::TempDir dir;
+	Song song(64);
+	const TestTrack track = song.addTrack(2);
+	const ObjectId clip = song.addClip(writeRamp(dir, "mono", 1, 4000));
+	song.add({track.id, 0, 0, 4000}, clip);
+	const auto scrub = [&song, &track](int64_t position, std::optional<double> seconds)
+	{
+		Json parameters = {{"track", track.id}, {"position", position}};
+		if (seconds)
+			parameters["seconds"] = *seconds;
+		run(song.client, "audition.scrub", parameters);
+	};
+
+	// From 1000 to 1480 in 480 frames, of which 128 play before the next scrub comes: that one goes on from 1128,
+	// not from 1480, which would leave out what the first had yet to play.
+	scrub(1000, std::nullopt);
+	scrub(1480, 0.01);
+	run(song.client, "audio.render", {{"frames", 128}});
+	scrub(2088, timed ? std::optional<double>(0.01) : std::nullopt);
+	if (!timed)
+	{
+		run(song.client, "audio.render", {{"frames", 1}});
+		const std::vector<float> output = song.capture(0, 129);
+		CHECK(output[127] == ramp(1127, 0));
+		CHECK(output[128] == ramp(1128, 0));
+		return;
+	}
+	// From 1128 to 2088 in 480 frames: twice as fast.
+	run(song.client, "audio.render", {{"frames", 480}});
+	// Two scrubs before the audio thread plays the first: the second starts where the first would have, from 2088 back
+	// to 1128, twice as fast.
+	scrub(3000, 0.01);
+	scrub(1128, 0.01);
+	run(song.client, "audio.render", {{"frames", 592}});
+
+	for (int channel = 0; channel < 2; ++channel)
+	{
+		const std::vector<float> output = song.capture(channel, 1200);
+		size_t wrong = 0;
+		for (size_t i = 0; i < 1200; ++i)
+		{
+			const auto k = static_cast<int64_t>(i);
+			float expected = 0.0f; // a mono clip on both channels
+			if (k < 128)
+				expected = ramp(1000 + k, 0);
+			else if (k < 608)
+				expected = ramp(1128 + (2 * (k - 128)), 0);
+			else if (k < 1088)
+				expected = ramp(2088 - (2 * (k - 608)), 0);
+			if (output[i] != expected && wrong++ == 0)
+				UNSCOPED_INFO(
+					"channel " << channel << ", frame " << i << ": " << output[i] << " instead of " << expected);
+		}
+		CHECK(wrong == 0);
+	}
+	// Only the first scrub of the five is in the command log: the others would push everything else out of it.
+	const Json log = run(song.client, "engine.commandLog").at("commands");
+	CHECK(std::count_if(
+			  log.begin(), log.end(), [](const Json& entry) { return entry.at("command") == "audition.scrub"; }) == 1);
+}
+
+TEST_CASE("an audition that stops closes the files it played", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	PlaylistEntry entry;
+	entry.end = 4000;
+	entry.media = 1;
+	Playlist playlist;
+	playlist.layers.push_back({entry});
+	const Playback::Track track{2, std::make_shared<const Playlist>(std::move(playlist))};
+	Audition audition;
+	audition.play({3, 0, 0}, track, {{1, writeRamp(dir, "mono", 1, 4000)}}, 48000.0, 0, 4000, 2, 64);
+	CHECK(audition.voices() > 0);
+	audition.stop();
+	CHECK(audition.voices() == 0);
 }
