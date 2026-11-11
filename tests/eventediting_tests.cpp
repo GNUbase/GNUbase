@@ -706,6 +706,20 @@ TEST_CASE("a Ctrl or Shift press that is also a drag's tool modifier leaves the 
 		REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("mute") == true; }));
 		CHECK(f.audioEvents().size() == 1);
 	}
+	SECTION("Ctrl as Copy: moved past the drag threshold, released after the drag delay without a move since, copies")
+	{
+		f.call("settings.set", {{"key", "ui.toolModifiers"}, {"value", {{"dragDrop.copy", "ctrl"}}}});
+		f.step();
+		f.automation.press(std::nullopt, f.at(225, 20), ui::MouseButton::Left, {"ctrl"});
+		f.automation.move(std::nullopt, f.at(425, 20), {"ctrl"});
+		f.step();
+		clock->advance(1.0);
+		f.automation.release(std::nullopt, f.at(425, 20), ui::MouseButton::Left, {"ctrl"});
+		f.step();
+		// Only the event pressed is copied, not the part selected before.
+		REQUIRE(f.waitUntil([&f] { return f.audioEvents().size() == 2; }));
+		CHECK(f.parts().size() == 1);
+	}
 	SECTION("Ctrl as Copy: the release selects no event that went while the button was held")
 	{
 		f.call("settings.set", {{"key", "ui.toolModifiers"}, {"value", {{"dragDrop.copy", "ctrl"}}}});

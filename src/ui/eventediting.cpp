@@ -924,6 +924,9 @@ namespace gnubase::ui
 		const bool moved = std::exchange(m_dragMoved, false);
 		const bool started = std::exchange(m_dragStarted, false) || now() - m_pressTime >= g_dragDelay;
 		const bool toggles = std::exchange(m_dragToggles, false);
+		// A drag released after the drag delay with no move since: it moves the pressed event, as areaMove would.
+		if (drag == Drag::Events && moved && started)
+			narrowToPressed();
 		const bool clicked = std::exchange(m_clickToggles, false);
 		m_drag = Drag::None;
 		m_dragDx = 0.0;
