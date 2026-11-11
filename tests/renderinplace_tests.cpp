@@ -84,8 +84,8 @@ namespace
 		return peak;
 	}
 
-	// How far a render is from another one turned down by dB: 0 when it is that, to a float's precision. A freeze that
-	// is rendered through a plugin that isn't there yet comes out unchanged, which is 0 dB.
+	// How far a render is from another one turned down by dB: 0 when actual is original turned down by dB, to float
+	// precision. A freeze that is rendered before its plugin plays comes out unchanged, which is 0 dB.
 	float turnedDownBy(const std::vector<float>& actual, const std::vector<float>& original, float dB)
 	{
 		std::vector<float> expected = original;
@@ -333,8 +333,8 @@ TEST_CASE("undo brings back the freeze file that was frozen then", "[integration
 	const Json first = run(project.client, "track.freeze", {{"tracks", {audio.track}}, {"tail", 0}});
 	const std::vector<float> frozen = project.mainMix();
 
-	// The unfreeze makes the plugin again. Frozen again once it plays, with another gain than 0 dB, which is what the
-	// slot passes on before it plays, the new freeze file comes out of the plugin.
+	// The unfreeze makes the plugin again. Frozen again once the plugin plays and with a gain other than 0 dB (which
+	// the slot passes on before it plays), the new freeze file can only come from the plugin.
 	run(project.client, "track.unfreeze", {{"tracks", {audio.track}}});
 	project.activate({audio.channel});
 	project.setGain(audio.channel, slot, -18.0);
@@ -344,8 +344,8 @@ TEST_CASE("undo brings back the freeze file that was frozen then", "[integration
 	const std::vector<float> firstFile = samplesOf(first.at("tracks").at(0).at("frozen").at("path").get<std::string>());
 	const std::vector<float> secondFile =
 		samplesOf(second.at("tracks").at(0).at("frozen").at("path").get<std::string>());
-	CHECK(peakOf(firstFile) > 0.1f);
-	CHECK(turnedDownBy(secondFile, firstFile, -12.0f) < 1e-5f); // -18 dB instead of -6 dB
+	REQUIRE(peakOf(firstFile) > 0.1f);
+	REQUIRE(turnedDownBy(secondFile, firstFile, -12.0f) < 1e-5f); // -18 dB instead of -6 dB
 	CHECK(nullTest(project.mainMix(), frozen) > 0.1f);
 
 	for (int step = 0; step < 3; ++step) // the freeze, the gain and the unfreeze
@@ -403,8 +403,8 @@ TEST_CASE("scrubbing a frozen track reads the freeze file of that time", "[integ
 	};
 	CHECK(scrubs(1000 + frames, firstFile));
 
-	// Frozen again with another gain, the scrub reads the new file. The unfreeze makes the plugin again, so the new
-	// freeze waits until it plays, and it has another gain than 0 dB, which is what the slot passes on before it plays.
+	// Frozen again with another gain, the scrub reads the new file. The unfreeze makes the plugin again, so the freeze
+	// waits until it plays and uses a gain other than 0 dB (which the slot passes on before it plays).
 	run(project.client, "track.unfreeze", {{"tracks", {audio.track}}});
 	project.activate({audio.channel});
 	project.setGain(audio.channel, slot, -18.0);
