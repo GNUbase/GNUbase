@@ -70,20 +70,22 @@ namespace
 		return result;
 	}
 
+	// WCAG 2's relative luminance of a #rrggbb color, from 0 (black) to 1 (white).
+	double luminance(const std::string& color)
+	{
+		double sum = 0.0;
+		const std::array<double, 3> weights = {0.2126, 0.7152, 0.0722};
+		for (size_t i = 0; i < 3; ++i)
+		{
+			const double c = std::stoi(color.substr(1 + (2 * i), 2), nullptr, 16) / 255.0;
+			sum += weights[i] * (c <= 0.04045 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4));
+		}
+		return sum;
+	}
+
 	// WCAG 2's contrast ratio of two #rrggbb colors, from 1 (the same) to 21 (black and white).
 	double contrast(const std::string& a, const std::string& b)
 	{
-		const auto luminance = [](const std::string& color)
-		{
-			double sum = 0.0;
-			const std::array<double, 3> weights = {0.2126, 0.7152, 0.0722};
-			for (size_t i = 0; i < 3; ++i)
-			{
-				const double c = std::stoi(color.substr(1 + (2 * i), 2), nullptr, 16) / 255.0;
-				sum += weights[i] * (c <= 0.04045 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4));
-			}
-			return sum;
-		};
 		const double la = luminance(a);
 		const double lb = luminance(b);
 		return (std::max(la, lb) + 0.05) / (std::min(la, lb) + 0.05);
@@ -226,6 +228,34 @@ TEST_CASE("the high contrast theme's text, accents and borders stand out from it
 	// The focus ring is thicker than in the other themes.
 	CHECK(gnubase::test::readText(themesDir() / "high-contrast" / "focus-ring.svg").find("stroke-width=\"2\"") !=
 		std::string::npos);
+}
+
+TEST_CASE("every theme's piano keyboard has light white keys and dark black keys", "[unit]")
+{
+	// The key editor's keyboard (docs/features/key-editor.md): a light theme's too, though its text is the dark color.
+	for (const char* theme : g_themes)
+	{
+		INFO("theme " << theme);
+		std::string white;
+		std::string black;
+		for (const auto& [selector, declarations] : rules(gnubase::test::readText(themesDir() / theme / "theme.rcss")))
+		{
+			const size_t first = selector.find_first_not_of(" \t");
+			const std::string name = selector.substr(first, selector.find_last_not_of(" \t\r") + 1 - first);
+			const size_t at = declarations.find("background-color: #");
+			if (at == std::string::npos)
+				continue;
+			const std::string color = declarations.substr(at + std::string_view("background-color: ").size(), 7);
+			if (name == ".key-editor-key")
+				white = color;
+			else if (name == ".key-editor-key.black")
+				black = color;
+		}
+		REQUIRE(white.size() == 7);
+		REQUIRE(black.size() == 7);
+		CHECK(luminance(white) > luminance(black));
+		CHECK(contrast(white, black) >= 3.0);
+	}
 }
 
 TEST_CASE("the shared style sheets leave font sizes to the themes", "[unit]")
