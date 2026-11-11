@@ -1973,6 +1973,26 @@ TEST_CASE(
 		CHECK(storedPitches(onlyPartJson(client, track)) == std::vector<int>{60, 64, 66, 66});
 	}
 
+	SECTION("a transpose that leads to a muted sound stays on the new part")
+	{
+		// Written into the notes, 64 + 2 would be 66, which doesn't play.
+		useDrumMap(client, track, {{{"pitch", 66}, {"mute", true}}});
+		const auto before = bounceAndCompare(2);
+		CHECK(before.size() == 4);
+		CHECK(storedPitches(onlyPartJson(client, track)) == std::vector<int>{60, 62, 64, 64});
+	}
+
+	SECTION("a transpose that leads to a sound on another channel stays on the new part")
+	{
+		// The O-notes shift alike, but 60 plays on the note's channel and 62, which 60 + 2 would be, on channel 3.
+		useDrumMap(client, track,
+			{{{"pitch", 60}, {"oNote", 30}}, {{"pitch", 62}, {"oNote", 32}, {"channel", 3}},
+				{{"pitch", 64}, {"oNote", 34}, {"channel", 3}}, {{"pitch", 66}, {"oNote", 36}, {"channel", 3}}});
+		const auto before = bounceAndCompare(2);
+		CHECK(before.front() == std::vector<int64_t>{0, 32, 0});
+		CHECK(storedPitches(onlyPartJson(client, track)) == std::vector<int>{60, 62, 64, 64});
+	}
+
 	SECTION("different transposes that only the notes could hold make a part for each")
 	{
 		run(client, "midiPart.set", {{"part", second}, {"transpose", 5}});
@@ -2053,6 +2073,15 @@ TEST_CASE("merge writes what the drum map and the chord track play, for a destin
 		newTrackPlays(before);
 	}
 
+	SECTION("a part across a chord change follows it note by note")
+	{
+		followChords(client, track);
+		run(client, "chord.add", {{"position", g_quarter}, {"chord", "G"}});
+		const auto before = playedOn(fixture.engine, track);
+		REQUIRE(before.size() == 3);
+		newTrackPlays(before);
+	}
+
 	SECTION("a part later in the project plays the chord at its place, in a range that starts there")
 	{
 		const ObjectId later =
@@ -2107,6 +2136,26 @@ TEST_CASE("merge writes what the drum map and the chord track play, for a destin
 		mergeOnto({{"destination", destination}});
 		CHECK(playedOn(fixture.engine, destination) == before);
 		CHECK(storedPitches(onlyPartJson(client, destination)) == std::vector<int>{70, 71, 71});
+	}
+
+	SECTION("onto a destination whose sound for the pitch is muted, through another sound that plays it")
+	{
+		const ObjectId destination = addInstrumentTrack(client);
+		useDrumMap(client, destination, {{{"pitch", 62}, {"mute", true}}, {{"pitch", 70}, {"oNote", 62}}});
+		const auto before = playedOn(fixture.engine, track);
+		mergeOnto({{"destination", destination}});
+		CHECK(playedOn(fixture.engine, destination) == before);
+		CHECK(storedPitches(onlyPartJson(client, destination)) == std::vector<int>{66, 66, 70});
+	}
+
+	SECTION("onto a destination whose sound for the pitch is on another channel, through one on the note's")
+	{
+		const ObjectId destination = addInstrumentTrack(client);
+		useDrumMap(client, destination, {{{"pitch", 62}, {"channel", 5}}, {{"pitch", 70}, {"oNote", 62}}});
+		const auto before = playedOn(fixture.engine, track);
+		mergeOnto({{"destination", destination}});
+		CHECK(playedOn(fixture.engine, destination) == before);
+		CHECK(storedPitches(onlyPartJson(client, destination)) == std::vector<int>{66, 66, 70});
 	}
 
 	SECTION("a pitch the destination's drum map plays no sound for stays as it played")
