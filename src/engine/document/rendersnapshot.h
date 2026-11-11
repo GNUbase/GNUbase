@@ -160,7 +160,6 @@ namespace gnubase::engine
 		bool preFader = false;
 	};
 
-	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
 	// A chord or scale of the chord track from start (samples) on, until the next: its pitch classes, bit n for
 	// pitch class n (C is 0).
 	struct LiveHarmony
@@ -169,6 +168,7 @@ namespace gnubase::engine
 		uint16_t classes = 0;
 	};
 
+	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
 	struct RenderChannel
 	{
 		ObjectId id = 0;

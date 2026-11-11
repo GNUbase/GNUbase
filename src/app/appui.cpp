@@ -256,16 +256,17 @@ namespace gnubase::app
 				"then follows the chord track.",
 				nullptr},
 			{"track.createChordEventsSelected",
-				"Create Chord Events: chord events from the selected audio tracks' events, and from the MIDI notes of "
-				"the selected MIDI and instrument tracks with the Create Chord Events dialog's options.",
+				"Create Chord Events: chord events from the selected audio events and from the MIDI notes of the "
+				"selected MIDI parts, with the Create Chord Events dialog's options; with none selected, from those "
+				"of the selected tracks. Audio events in audio parts don't count.",
 				nullptr},
 			{"track.mapToChordTrackSelected",
-				"Map to Chord Track: moves the notes of the selected MIDI and instrument tracks to the chord track's "
-				"chords, by the Map to Chord Track dialog's mapping mode.",
+				"Map to Chord Track: moves the notes of the selected MIDI parts, or with none selected those of the "
+				"selected tracks, to the chord track's chords, by the Map to Chord Track dialog's mapping mode.",
 				nullptr},
 			{"track.assignVoicesSelected",
-				"Assign Voices to Notes: moves the notes of the selected MIDI and instrument tracks to the voices of "
-				"the chord track's voicings.",
+				"Assign Voices to Notes: moves the notes of the selected MIDI parts, or with none selected those of "
+				"the selected tracks, to the voices of the chord track's voicings.",
 				nullptr},
 			{"track.toggleFolding", "Folds or unfolds the selected folders.", nullptr},
 			{"track.foldAll", "Folds every folder.", nullptr},
