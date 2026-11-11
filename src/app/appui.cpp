@@ -386,13 +386,18 @@ namespace gnubase::app
 				if (m_inPlace)
 					m_inPlace->update();
 				followSelection();
-				// The inspector shows the first selected track.
-				if (const std::shared_ptr<ui::Inspector> inspector = m_inspector.lock(); inspector && m_eventDisplay)
+				// The inspector and the sampler panel show the first selected track.
+				if (m_eventDisplay)
 				{
 					const std::vector<uint64_t> tracks =
 						m_trackList ? m_trackList->selection() : std::vector<uint64_t>();
-					inspector->update(tracks.empty() ? 0 : tracks.front(), m_eventDisplay->project(),
-						m_eventDisplay->loads(), m_eventDisplay->read());
+					const uint64_t first = tracks.empty() ? 0 : tracks.front();
+					if (const std::shared_ptr<ui::Inspector> inspector = m_inspector.lock())
+						inspector->update(
+							first, m_eventDisplay->project(), m_eventDisplay->loads(), m_eventDisplay->read());
+					if (const std::shared_ptr<ui::SamplerPanel> sampler = m_sampler.lock())
+						sampler->update(
+							first, m_eventDisplay->project(), m_eventDisplay->loads(), m_eventDisplay->read());
 				}
 				return follows;
 			});
@@ -527,6 +532,33 @@ namespace gnubase::app
 		// The chord pads (reference manual pp. 1346-1391, docs/features/chord-pads.md) in the lower zone.
 		m_docking.add({"chordPads", "Chord Pads", "project", "lower",
 			[this](Rml::Element& element) { return std::make_shared<ui::ChordPadsPanel>(m_binding, element); }});
+		// The sampler panel (reference manual pp. 710-730, docs/features/sampler-track.md) in the lower zone, for the
+		// selected sampler track. Import Audio File asks for the file in the window it shows in.
+		m_docking.add({"sampler", "Sampler", "project", "lower", [this](Rml::Element& element)
+			{
+				auto sampler = std::make_shared<ui::SamplerPanel>(m_binding, element,
+					[this](uint64_t track, bool keepSettings)
+					{
+						const ui::Window* window = m_docking.windowOf("sampler");
+						ui::FileDialog dialog;
+						dialog.title = "Import Audio File";
+						dialog.filters = {
+							{"Audio files", "wav;w64;rf64;bwf;aif;aiff;aifc;flac;ogg;mp3"}, {"All files", "*"}};
+						dialog.parent = (window != nullptr ? *window : m_main).id();
+						m_shell.showFileDialog(dialog,
+							[this, track, keepSettings](const ui::FileDialogResult& result)
+							{
+								if (!result.error.empty())
+									logging::warning("The file dialog failed: {}", result.error);
+								if (!result.files.empty())
+									m_binding.send("sampler.load",
+										{{"track", track}, {"path", result.files.front().u8string()},
+											{"keepSettings", keepSettings}});
+							});
+					});
+				m_sampler = sampler;
+				return sampler;
+			}});
 		m_docking.addKeyCommands(m_keys);
 		// What the pool's commands did, sent from its toolbar, the Media menu or Find Missing Files, shows in the
 		// pool, which opens for it: its window comes to the front if it is in one of its own.
@@ -549,6 +581,8 @@ namespace gnubase::app
 				else
 					m_docking.open("chordPads");
 			}});
+		m_keys.add({"window.sampler", "Shows the sampler panel, which edits the selected sampler track.",
+			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_docking.open("sampler"); }});
 		m_keys.add({"window.history", "Shows the edit history, where steps are undone and redone.",
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_docking.open("history"); }});
 		m_keys.add({"window.pool", "Shows the pool, the project's clips and media files.",
@@ -744,6 +778,14 @@ namespace gnubase::app
 		m_keys.add({"project.addTrack", "Opens the add track dialog.",
 			[this, below](ui::Window& window, Rml::Element* /*zone*/)
 			{ openOnce(window, "add-track.rml", m_addTrack, below()); }});
+		// Add Sampler Track (reference manual pp. 143-144): the add track dialog's Sampler page.
+		m_keys.add({"project.addSamplerTrack", "Opens the add track dialog on its Sampler page.",
+			[this, below](ui::Window& window, Rml::Element* /*zone*/)
+			{
+				std::vector<std::pair<std::string, std::string>> attributes = below();
+				attributes.emplace_back("type", "sampler");
+				openOnce(window, "add-track.rml", m_addTrack, attributes);
+			}});
 		// Group Track to Selected Tracks and Effect Track to Selected Tracks (reference manual pp. 546, 554): the add
 		// track dialog's page for the new track, which the selected tracks play or send into.
 		for (const auto& [id, type, description] :

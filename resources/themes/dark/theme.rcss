@@ -965,6 +965,57 @@
 	{
 		background-color: #7896bd;
 	}
+	.sampler-display
+	{
+		background-color: #1e2022;
+	}
+	.sampler-outside
+	{
+		background-color: #15161799;
+	}
+	.sampler-loop
+	{
+		background-color: #7896bd1a;
+	}
+	.sampler-marker-line, .sampler-marker-flag
+	{
+		background-color: #5ea7b3;
+	}
+	.sampler-marker.loop .sampler-marker-line, .sampler-marker.loop .sampler-marker-flag
+	{
+		background-color: #7896bd;
+	}
+	.sampler-marker.dragged .sampler-marker-line, .sampler-marker.dragged .sampler-marker-flag
+	{
+		background-color: #f3f4f5;
+	}
+	.sampler-section-title, .sampler-label
+	{
+		color: #b7bbc0;
+		font-size: 11dp;
+	}
+	.sampler-key
+	{
+		background-color: #f3f4f5;
+		border-right-width: 1px;
+		border-right-color: #484c50;
+	}
+	.sampler-key.black
+	{
+		background-color: #151617;
+	}
+	.sampler-key.outside
+	{
+		background-color: #b7bbc0;
+	}
+	.sampler-key.black.outside
+	{
+		background-color: #56585b;
+	}
+	.sampler-key.root
+	{
+		background-color: #5ea7b3;
+	}
 	.ds-display, .sa-graph
 	{
 		background-color: #1e2022;

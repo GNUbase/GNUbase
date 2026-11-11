@@ -579,6 +579,8 @@ namespace gnubase::engine
 			channel.modifiers = sound.modifiers;
 			channel.midiInserts = sound.midiInserts;
 			channel.midiSends = sound.midiSends;
+			if (channel.instrument != sound.instrument)
+				channel.sample = 0; // only the sampler plays one (#180), as with channel.set
 			channel.instrument = sound.instrument;
 			channel.instrumentParameters = sound.instrumentParameters;
 			if (channel.format != ChannelFormat::None)
