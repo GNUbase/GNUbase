@@ -9,6 +9,8 @@
 #include <dr_flac.h>
 #include <dr_mp3.h>
 #include <dr_wav.h>
+#define STB_VORBIS_HEADER_ONLY
+#include <stb_vorbis.c> // NOLINT(bugprone-suspicious-include): stb_vorbis is one .c file; only its declarations
 
 #include <algorithm>
 #include <array>
@@ -367,30 +369,33 @@ TEST_CASE("the decoders leave the files that the readers hand them open", "[inte
 	}
 }
 
-// Stand-ins for dr_libs' file functions, which take anything and return nothing: a declared dr_libs function is a
+// Stand-ins for the excluded decoder functions, which take anything and return nothing: a declared function is a
 // better match, and it returns something. They are only ever named in decltype, so they are never defined, and they
 // have external linkage: compilers warn about an internal function that is never defined or emitted, but not about an
 // external one.
 namespace stand_ins
 {
-	// NOLINTBEGIN(readability-identifier-naming): the names of the dr_libs functions these stand in for
+	// NOLINTBEGIN(readability-identifier-naming): the names of the decoder functions these stand in for
 	void drwav_init_file(...);
 	void drflac_open_file(...);
 	void drmp3_init_file(...);
+	void stb_vorbis_open_pushdata(...);
 	// NOLINTEND(readability-identifier-naming)
 }
 
-TEST_CASE("every file sees dr_libs without its file functions", "[unit]")
+TEST_CASE("every file sees decoders without dr_libs file functions or the Vorbis push API", "[unit]")
 {
-	// The decoders library compiles dr_libs without its stdio functions (see the previous test), and its configuration
-	// is part of the library's interface: the readers and these tests see the same headers, so calling one of the
-	// file functions fails to compile at the line that makes it, not only when linking. The using-directive makes a
-	// call here find the stand-ins together with the dr_libs functions in the global namespace.
+	// The decoders library disables dr_libs' stdio functions and Vorbis' push API. Its configuration is part of the
+	// library's interface: the readers and these tests see the same headers, so calling an excluded function fails
+	// when compiling, not only when linking. The using-directive finds the stand-ins together with any decoder
+	// declarations in the global namespace.
 	using namespace stand_ins;
 	STATIC_REQUIRE(std::is_void_v<decltype(drwav_init_file(static_cast<drwav*>(nullptr), "", nullptr))>);
 	STATIC_REQUIRE(
 		std::is_void_v<decltype(drflac_open_file("", static_cast<const drflac_allocation_callbacks*>(nullptr)))>);
 	STATIC_REQUIRE(std::is_void_v<decltype(drmp3_init_file(static_cast<drmp3*>(nullptr), "", nullptr))>);
+	STATIC_REQUIRE(std::is_void_v<decltype(stb_vorbis_open_pushdata(static_cast<const unsigned char*>(nullptr), 0,
+			static_cast<int*>(nullptr), static_cast<int*>(nullptr), static_cast<const stb_vorbis_alloc*>(nullptr)))>);
 }
 
 TEST_CASE("paths with non-ASCII characters work", "[integration]")
@@ -417,6 +422,16 @@ TEST_CASE("files that can't be read say why", "[integration]")
 	const std::string truncated = utf8(dir.path() / "truncated.wav");
 	std::ofstream(std::filesystem::u8path(truncated), std::ios::binary) << "RIFF....WAVEfmt ";
 	CHECK_THROWS_AS(AudioFileReader::open(truncated), AudioFileError);
+}
+
+TEST_CASE("a FLAC file that can't be created releases its encoder", "[integration]")
+{
+	const test::TempDir dir;
+	const std::string path = utf8(dir.path() / "missing" / "out.flac");
+	WriteOptions options;
+	options.format = AudioFormat::Flac;
+	options.sampleFormat = SampleFormat::Int16;
+	CHECK_THROWS_AS(AudioFileWriter::create(path, options), AudioFileError);
 }
 
 TEST_CASE("formats and sample formats that can't be written are rejected", "[integration]")
