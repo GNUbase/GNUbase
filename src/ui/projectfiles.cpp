@@ -201,6 +201,8 @@ namespace gnubase::ui
 			dialog->RemoveEventListener(g_dialogCloseEvent, this);
 			dialog->RemoveEventListener(Rml::EventId::Unload, this);
 		}
+		if (Rml::Element* progress = m_progress.get())
+			progress->RemoveEventListener(g_dialogCloseEvent, this);
 	}
 
 	void ProjectFiles::openStartScreen(Window& window)
@@ -345,25 +347,28 @@ namespace gnubase::ui
 		const Json& job = result.value.at("job");
 		const auto id = job.at("id").get<uint64_t>();
 		m_backups[id] = window;
-		// Closed before the backup ended, by Cancel or otherwise, the dialog stops it; it may end before job.cancel
-		// comes. It doesn't wait for another dialog that is open (wait false), so shown runs before openDialog returns.
-		openDialog(
-			window, "backup-progress.rml",
-			[this, id, progress = job.at("progress").get<double>()](Rml::ElementDocument* dialog)
-			{
-				if (dialog == nullptr)
-					return;
-				m_progressJob = id;
-				if (Rml::Element* bar = dialog->GetElementById("backup-progress"))
-					bar->SetAttribute("value", progress);
-			},
-			[this, id](Rml::ElementDocument&, const std::string& closed)
-			{
-				m_progressJob = 0;
-				if (closed != g_backupDone && m_backups.count(id) != 0)
-					m_binding.send("job.cancel", {{"job", id}}, [](const engine::Result&) {});
-			},
-			false);
+		// The progress isn't one of the dialogs that take turns (openDialog): while the backup runs, the other project
+		// dialogs still open, over it, and quitting closes them, not the backup (#1001). One backup's progress shows at
+		// a time. Closed before the backup ended, by Cancel or otherwise, it stops it (ProcessEvent); the backup may
+		// end before job.cancel comes.
+		const Window* shown = m_shell.find(window);
+		const std::filesystem::path path = m_folder / "backup-progress.rml";
+		Rml::ElementDocument* dialog = shown != nullptr && m_progress.get() == nullptr
+			? shown->context().LoadDocument(path.generic_u8string())
+			: nullptr;
+		if (dialog != nullptr)
+		{
+			dialog->AddEventListener(g_dialogCloseEvent, this);
+			dialog->Show(Rml::ModalFlag::Modal);
+			m_progress = dialog->GetObserverPtr();
+			m_progressJob = id;
+			if (Rml::Element* bar = dialog->GetElementById("backup-progress"))
+				bar->SetAttribute("value", job.at("progress").get<double>());
+		}
+		else if (shown != nullptr && m_progress.get() == nullptr)
+		{
+			logging::warning("Cannot open the dialog {}", path.u8string());
+		}
 		// The job may have ended before its command's result came: job.get tells.
 		m_binding.send("job.get", {{"job", id}},
 			[this](const engine::Result& state)
@@ -383,8 +388,8 @@ namespace gnubase::ui
 		m_backups.erase(found);
 		if (id == m_progressJob)
 		{
-			if (progressDialog() != nullptr)
-				closeDialog(g_backupDone);
+			if (Rml::ElementDocument* dialog = progressDialog())
+				ui::closeDialog(*dialog, g_backupDone);
 			m_progressJob = 0;
 		}
 		// A backup runs as a job, so most of its failures come after project.backup returned. So do the files it
@@ -401,15 +406,16 @@ namespace gnubase::ui
 		std::string problems;
 		if (const Json& missing = result.at("missing"); !missing.empty())
 		{
-			// A freeze file that several tracks play is listed once for each.
-			std::set<std::string> names;
+			// A freeze file that several tracks play is listed once for each: files count by path, so that two of the
+			// same name in different folders are two (#1001), and show by name.
+			std::set<std::string> paths;
 			for (const Json& file : missing)
-				names.insert(std::filesystem::u8path(file.at("path").get<std::string>()).filename().u8string());
+				paths.insert(file.at("path").get<std::string>());
 			std::string list;
-			for (const std::string& name : names)
-				list += (list.empty() ? "" : ", ") + name;
-			problems = "The project was backed up without " + std::to_string(names.size()) +
-				(names.size() == 1 ? " file that couldn't be read: " : " files that couldn't be read: ") + list + ".";
+			for (const std::string& path : paths)
+				list += (list.empty() ? "" : ", ") + std::filesystem::u8path(path).filename().u8string();
+			problems = "The project was backed up without " + std::to_string(paths.size()) +
+				(paths.size() == 1 ? " file that couldn't be read: " : " files that couldn't be read: ") + list + ".";
 		}
 		if (const Json& activation = result.value("activationError", Json()); activation.is_string())
 			problems += (problems.empty() ? "" : " ") + activation.get<std::string>();
@@ -419,10 +425,7 @@ namespace gnubase::ui
 
 	Rml::ElementDocument* ProjectFiles::progressDialog() const
 	{
-		auto* dialog = dynamic_cast<Rml::ElementDocument*>(m_dialog.get());
-		return m_progressJob != 0 && dialog != nullptr && dialog->GetElementById("backup-progress-dialog") != nullptr
-			? dialog
-			: nullptr;
+		return m_progressJob != 0 ? dynamic_cast<Rml::ElementDocument*>(m_progress.get()) : nullptr;
 	}
 
 	void ProjectFiles::openDialog(WindowId window, const char* file, Shown shown, Closed closed, bool wait)
@@ -505,6 +508,15 @@ namespace gnubase::ui
 		if (event.GetType() != g_dialogCloseEvent)
 			return;
 		const auto result = event.GetParameter<Rml::String>("result", "");
+		if (dialog == m_progress.get())
+		{
+			dialog->RemoveEventListener(g_dialogCloseEvent, this);
+			m_progress.reset();
+			const uint64_t job = std::exchange(m_progressJob, 0);
+			if (result != g_backupDone && m_backups.count(job) != 0)
+				m_binding.send("job.cancel", {{"job", job}}, [](const engine::Result&) {});
+			return;
+		}
 		dialog->RemoveEventListener(Rml::EventId::Dblclick, this);
 		dialog->RemoveEventListener(g_dialogCloseEvent, this);
 		m_dialog.reset();
