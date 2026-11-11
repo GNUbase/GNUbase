@@ -213,29 +213,51 @@ namespace gnubase::engine
 		options.start = project.tempo.toTicks(position, project.sampleRate);
 		options.tempo = project.tempo;
 		options.signatures = project.signatures;
-		// Where the project's content ends: its parts, events, markers, arranger, chord, scale and transpose events and
-		// automation points. The project's tempo and signatures go on after the file's end if any of it is there.
-		const auto extend = [&project, &options](const time::Position& at)
-		{ options.contentEnd = std::max(options.contentEnd, time::toTicks(at, project.tempo, project.sampleRate)); };
+		// Where the project's content ends: its parts and audio events (also those of the tracks' other versions),
+		// markers, arranger, chord, scale and transpose events and automation points. The project's tempo and
+		// signatures go on after the file's end if any of it is there. Musical positions count in ticks, linear ones
+		// in samples, which keep their time under the file's tempo. An event that holds from its position on (a chord,
+		// scale or transpose event, an automation point) counts from there: one at the file's end is after it.
+		options.sampleRate = project.sampleRate;
+		const auto extend = [&options](const time::Position& at, int64_t holds = 0)
+		{
+			int64_t& end = at.base == time::TimeBase::Linear ? options.contentEndSamples : options.contentEnd;
+			end = std::max(end, at.value + holds);
+		};
+		const auto extendParts = [&extend](const auto& parts)
+		{
+			for (const auto& part : parts)
+				extend({part.position.base, part.position.value + part.length});
+		};
+		const auto extendEvent = [&project, &extend](const AudioEvent& event)
+		{ extend({time::TimeBase::Linear, eventSpan(project, event).end}); };
 		for (const auto& [id, part] : project.midiParts)
 			extend({part.position.base, part.position.value + part.length});
 		for (const auto& [id, part] : project.audioParts)
 			extend({part.position.base, part.position.value + part.length});
 		for (const auto& [id, event] : project.audioEvents)
-			extend({time::TimeBase::Linear, eventSpan(project, event).end});
+			extendEvent(event);
+		for (const auto& [id, track] : project.trackById)
+			for (const TrackVersion& version : track.versions)
+			{
+				extendParts(version.midiParts);
+				extendParts(version.audioParts);
+				for (const AudioEvent& event : version.audioEvents)
+					extendEvent(event);
+			}
 		for (const auto& [id, marker] : project.markers)
 			extend(marker.end);
 		for (const ArrangerEvent& event : project.arranger.events)
 			extend(event.end);
 		for (const ChordEvent& event : project.chords.events)
-			extend(event.position);
+			extend(event.position, 1);
 		for (const ChordEvent& event : project.chords.scales)
-			extend(event.position);
+			extend(event.position, 1);
 		for (const TransposeEvent& event : project.transpose.events)
-			extend(event.position);
+			extend(event.position, 1);
 		for (const auto& [id, lane] : project.automation)
 			for (const auto& [pointId, point] : lane.points)
-				extend(point.position);
+				extend(point.position, 1);
 		midifile::Import imported;
 		try
 		{

@@ -58,13 +58,15 @@ The options of the reference's MIDI file import (reference manual pp. 364-365, #
   before it, so that nothing before the position moves. From there on the file's replace them unless `tempo` is
   false, starting at 120 BPM in 4/4 unless the file sets its own, and a time signature moves to the next bar start,
   as every one does. After the file's end (the end of its last track) the project's tempo is the project's again
-  if it changes after the position or the project has content that ends after the file's end (parts, audio events,
-  markers, arranger, chord, scale and transpose events or automation points, on musical and linear tracks), from
-  the tempo it had at the end, with its later changes; the same goes for its signatures, from the next bar start.
-  Otherwise, in a new project for instance, the file's last tempo and signature go on: there is nothing of the
-  project's to keep, and the file's tempo then holds for what follows it, as when the project is made from the file.
-  Without
-  `tempo` the file plays in the project's tempo from the position.
+  if it changes after the position or the project has content that ends after the file's end: parts and audio
+  events (also on the tracks' other versions), markers and arranger events by their end, and chord, scale and
+  transpose events and automation points, which hold from their position on, by their position, so one right at the
+  file's end counts. Content on linear tracks keeps its time in samples, so it counts by where the file ends in the
+  file's tempo. The project's tempo then goes on from the tempo it had at the end, with its later changes; the same
+  goes for its signatures, from the next bar start. Otherwise, in a new project for instance, the file's last tempo
+  and signature go on: there is nothing of the project's to keep, and the file's tempo then holds for what follows
+  it, as when the project is made from the file. Without `tempo` the file plays in the project's tempo from the
+  position.
 - **dissolve** false keeps a type 0 file in one track with all its MIDI channels (Auto Dissolve Format 0 off).
 - **singlePart** puts the whole file into one part on one track (Import Dropped File as Single Part): **track**, a
   MIDI or instrument track of the project, or a new track named after the file. On a linear track of the project
@@ -110,7 +112,8 @@ All of it is the one undo step of the import.
   the track list, they go to the project cursor, and MIDI files there are a drop too (the manual's drop "into the
   Project window", p. 365): they take the drop's settings below, at the project cursor, not File > Import's project
   start or left locator. On a track's row in the track list they go on that track as on its lane (its first lane if
-  its lanes show), elsewhere, such as below the rows or on an automation track's row, onto new tracks. Agents and UI tests drop files with `ui_drop` (`ui::Automation::drop`).
+  its lanes show); elsewhere, such as below the rows or on an automation track's row, onto new tracks. Agents and UI
+  tests drop files with `ui_drop` (`ui::Automation::drop`).
 - MIDI files (`.mid`, `.midi`, `.smf`) are imported at once, with the MIDI import preferences below, where they are
   dropped; with Import Dropped File as Single Part into one part, on the MIDI or instrument track of the lane under
   the mouse or of the track list row, or on a new track elsewhere. Audio files open the
@@ -200,9 +203,10 @@ track list at the project cursor, and MIDI files of type 0 and 1 dropped below t
 without tempo (the project's tempo before it, the file's after, its signature at the next bar and its markers moved
 along; inside a tempo ramp, which plays on up to the position and after the file's end; the project's later tempo
 and signature changes kept after the file's end, and its constant tempo and signature kept after the file's end
-when a part follows it, or an audio event, an audio or MIDI part or a marker on a linear track, an arranger, chord or
-scale event, a transpose event on a linear transpose track or an automation point on a linear track, but not for
-content before the file), a type 0 file kept in one track, the whole file in one part on a new track and on an instrument track at a
+when a part follows it, or an audio event, an audio or MIDI part or a marker on a linear track, a part on another
+version of its track, an arranger, chord or scale event, a transpose event on a linear transpose track or an
+automation point on a linear track, a chord event and a linear automation point right at the file's end and a linear
+audio event that ends after it only in the file's tempo, but not for content before the file's end), a type 0 file kept in one track, the whole file in one part on a new track and on an instrument track at a
 position and on a linear MIDI track in samples, refusing an audio track or `track` without `singlePart`, the first
 patch and volume and pan of channel 1 in a MIDI track's settings while other channels' and later events stay, none on
 instrument tracks, a track of nothing but those kept without a part, and controllers
