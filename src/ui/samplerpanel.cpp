@@ -214,23 +214,33 @@ namespace gnubase::ui
 				if (found == nullptr)
 					continue;
 				const std::string id = std::to_string(found->id);
-				const std::string attributes = R"( id="sampler-parameter-)" + id + R"(" parameter=")" + id +
-					R"(" title=")" + encode(found->name) + '"';
+				std::string attributes = R"( id="sampler-parameter-)";
+				attributes.append(id).append(R"(" parameter=")").append(id);
+				attributes.append(R"(" title=")").append(encode(found->name)).append("\"");
+				const std::string label = R"(<span class="sampler-label">)" + encode(found->name) + "</span>";
 				rml += R"(<div class="sampler-control">)";
 				if (found->options == std::vector<std::string>{"Off", "On"})
-					rml += "<button type=\"toggle\"" + attributes + ">" + encode(found->name) + "</button>";
+				{
+					rml.append(R"(<button type="toggle")").append(attributes).append(">");
+					rml.append(encode(found->name)).append("</button>");
+				}
 				else if (!found->options.empty())
-					rml +=
-						R"(<span class="sampler-label">)" + encode(found->name) + "</span><select" + attributes + "/>";
+				{
+					rml.append(label).append("<select").append(attributes).append("/>");
+				}
 				else
-					rml += R"(<span class="sampler-label">)" + encode(found->name) + "</span><valuefield" + attributes +
-						R"( min=")" + widgets::format(static_cast<float>(found->minimum)) + R"(" max=")" +
-						widgets::format(static_cast<float>(found->maximum)) + R"(" default=")" +
-						widgets::format(static_cast<float>(found->defaultValue)) + R"(" decimals=")" +
-						(found->stepped                 ? R"(0" step="1)"
-								: found->maximum <= 1.0 ? "3"
-														: "1") +
-						R"(" unit=")" + encode(found->unit) + R"("/>)";
+				{
+					// Whole numbers step by one; shares of the sample show three decimals.
+					std::string decimals = found->maximum <= 1.0 ? "3" : "1";
+					if (found->stepped)
+						decimals = R"(0" step="1)";
+					rml.append(label).append("<valuefield").append(attributes);
+					rml.append(R"( min=")").append(widgets::format(static_cast<float>(found->minimum)));
+					rml.append(R"(" max=")").append(widgets::format(static_cast<float>(found->maximum)));
+					rml.append(R"(" default=")").append(widgets::format(static_cast<float>(found->defaultValue)));
+					rml.append(R"(" decimals=")").append(decimals);
+					rml.append(R"(" unit=")").append(encode(found->unit)).append(R"("/>)");
+				}
 				rml += "</div>";
 			}
 			rml += "</div>";
@@ -370,7 +380,7 @@ namespace gnubase::ui
 		const bool looping = std::lround(value("Loop mode")) != 0;
 		for (Rml::Element* marker : markers)
 		{
-			const std::string name = marker->GetAttribute<Rml::String>("marker", "");
+			const auto name = marker->GetAttribute<Rml::String>("marker", "");
 			marker->SetProperty(Rml::PropertyId::Left, percent(at(name.c_str())));
 			setClass(marker, "dragged", name == m_dragged);
 			setClass(marker, "off", !looping && name.rfind("Loop", 0) == 0);

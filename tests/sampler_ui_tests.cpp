@@ -95,7 +95,7 @@ namespace
 			for (const Json& each : project.at("channels"))
 				if (each.at("id") == channel)
 					return each;
-			return Json();
+			return {};
 		}
 
 		// The sampler's parameter, by processor.list's name: its value or default.
