@@ -504,7 +504,10 @@ namespace gnubase::engine::settings
 					"change's last value before that position.",
 					Json{{"type", "boolean"}}, true},
 				{"midi.chaseNotes",
-					"Where playback starts or jumps, MIDI tracks start the notes that sound at that position.",
+					"Where playback starts or jumps, MIDI tracks start the notes that sound at that position, after "
+					"the "
+					"last key switch of each pitch before it that an articulation map's sound slots played, for a "
+					"sample, so that the instrument plays the articulation it had there.",
 					Json{{"type", "boolean"}}, true},
 				{"midi.chasePitchBend",
 					"Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each "
