@@ -122,13 +122,13 @@ TEST_CASE("track heights from a file are kept in range and folded tracks that ar
 	f.call("trackLayout.set", {{"heights", {height(folder, 50.0)}}, {"folded", {folder}}});
 	f.call("project.save", {{"path", file}});
 
-	// A hand-edited file: heights below and above the range, ones that aren't numbers and a folded audio track, an
-	// unknown track and an id that isn't one.
+	// A hand-edited file: heights below and above the range, one that isn't a number and ones of tracks that aren't
+	// there, and folded an audio track, an unknown track and an id that isn't one.
 	std::map<std::string, std::string> entries = test::readZip(file);
 	Json extension = Json::parse(entries.at("gnubase.json"));
 	Json& layout = extension.at("project").at("trackLayout");
 	layout["heights"] = {height(folder, 1.0), height(audio, 1e9), {{"track", midi}, {"height", "tall"}},
-		{{"track", -1}, {"height", 50.0}}};
+		{{"track", -1}, {"height", 50.0}}, height(9999, 50.0)};
 	layout["folded"] = {audio, folder, 9999, "x", folder};
 	entries["gnubase.json"] = extension.dump();
 	test::writeZip(file, entries);

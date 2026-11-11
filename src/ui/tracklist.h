@@ -241,6 +241,7 @@ namespace gnubase::ui
 		double m_dragHeight = 0.0;                // the track's height then, before zoom
 		bool m_dragAll = false;                   // Ctrl: every track's height
 		std::map<uint64_t, double> m_dragHeights; // the display's own heights when a height drag started
+		std::set<uint64_t> m_dragTracks;          // the tracks whose heights it set
 		uint64_t m_dropParent = 0;                // where a move drops
 		uint64_t m_dropBefore = 0;
 

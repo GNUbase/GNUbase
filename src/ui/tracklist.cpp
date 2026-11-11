@@ -635,6 +635,10 @@ namespace gnubase::ui
 			{
 				select({});
 				m_selectedLanes.clear();
+				// A height drag under way was the old project's: its release sends nothing to the new one.
+				if (m_drag == Drag::Height)
+					m_drag = Drag::None;
+				m_dragTracks.clear();
 				readVisibility();
 				readLayout(true);
 			}));
@@ -765,7 +769,12 @@ namespace gnubase::ui
 		if (!replace)
 			heights = m_display.ownTrackHeights();
 		for (const Json& item : layout.at("heights"))
-			heights[item.at("track").get<uint64_t>()] = item.at("height").get<double>();
+		{
+			// A height drag under way keeps the heights it gave its tracks, which it sends when it ends.
+			const auto track = item.at("track").get<uint64_t>();
+			if (replace || m_dragTracks.count(track) == 0)
+				heights[track] = item.at("height").get<double>();
+		}
 		m_display.setOwnTrackHeights(std::move(heights));
 		const auto folded = layout.at("folded").get<std::set<uint64_t>>();
 		if (folded != m_folded)
@@ -1998,6 +2007,7 @@ namespace gnubase::ui
 			m_drag = Drag::Height;
 			m_dragHeight = m_display.trackHeight(row->id);
 			m_dragHeights = m_display.ownTrackHeights();
+			m_dragTracks.clear();
 			m_dragAll = held(event, "ctrl_key") || held(event, "meta_key");
 		}
 		else
@@ -2014,11 +2024,21 @@ namespace gnubase::ui
 		const double dy = (y - m_dragY) / dpRatio();
 		if (m_drag == Drag::Height)
 		{
+			// Only once it moves up or down: a track's height while its in-place editor is open is larger than its
+			// own, which a press alone would make its own.
+			if (dy == 0.0 && m_dragTracks.empty())
+				return;
 			const double height = m_dragHeight + (dy / m_display.view().trackZoom);
 			if (m_dragAll)
+			{
 				m_display.setTrackHeights(height);
+				m_dragTracks.insert(m_display.laneTracks().begin(), m_display.laneTracks().end());
+			}
 			else
+			{
 				m_display.setTrackHeight(m_dragTrack, height);
+				m_dragTracks.insert(m_dragTrack);
+			}
 			return;
 		}
 		if (m_drag == Drag::Pressed && std::abs(dy) < g_dragThreshold)
@@ -2068,12 +2088,13 @@ namespace gnubase::ui
 		if (drag == Drag::Height)
 		{
 			// The engine keeps the heights with the project (trackLayout.set): those the drag changed, of the tracks
-			// still there. Not the others, which another client may have removed meanwhile, which would fail the set,
-			// and nothing for a drag that changed none, which would make the project count as modified.
+			// still there. Not the others, which another client may have removed or set since, and nothing for a drag
+			// that changed none, which would make the project count as modified.
 			Json heights = Json::array();
-			for (const auto& [track, height] : m_display.ownTrackHeights())
+			for (const uint64_t track : m_dragTracks)
 			{
 				const auto before = m_dragHeights.find(track);
+				const double height = m_display.ownHeight(track);
 				if (m_index.count(track) != 0 &&
 					height != (before == m_dragHeights.end() ? g_trackHeight : before->second))
 				{
@@ -2081,6 +2102,7 @@ namespace gnubase::ui
 				}
 			}
 			m_dragHeights.clear();
+			m_dragTracks.clear();
 			if (!heights.empty())
 				m_binding.send("trackLayout.set", {{"heights", std::move(heights)}});
 		}

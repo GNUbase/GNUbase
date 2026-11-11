@@ -761,26 +761,79 @@ TEST_CASE("the track list sends the engine only the track heights and folded fol
 	}
 	REQUIRE(tracks.app.waitUntil([&] { return tracks.display.laneTracks().size() == 4; }));
 	tracks.app.shell().step(std::chrono::milliseconds(0));
+	const auto press = [&tracks](ui::Point at)
+	{ tracks.app.ui().press(std::nullopt, {"", 0, at}, ui::MouseButton::Left); };
+	const auto move = [&tracks](ui::Point to) { tracks.app.ui().move(std::nullopt, {"", 0, to}); };
+	const auto release = [&tracks](ui::Point at)
+	{ tracks.app.ui().release(std::nullopt, {"", 0, at}, ui::MouseButton::Left); };
 
-	// A drag of the audio track's lower edge sends its height, not the other track's, which only the list has (and
-	// another client may have removed meanwhile).
+	// A press that moves only sideways, here on a track whose in-place editor makes it higher than its own height,
+	// and Fold Tracks with both folded send nothing either, and a drag from the same point (which shows that it is on
+	// the edge) sends the audio track's height, not the other track's, which only the list has (and another client
+	// may have removed meanwhile).
+	tracks.display.setInPlaceTracks({audio});
+	tracks.app.shell().step(std::chrono::milliseconds(0));
+	const ui::Point tall = edge();
+	press(tall);
+	move({tall.x + 30, tall.y});
+	release({tall.x + 30, tall.y});
+	CHECK(tracks.display.ownHeight(audio) == Approx(ui::g_trackHeight));
+	tracks.display.setInPlaceTracks({});
+	tracks.app.shell().step(std::chrono::milliseconds(0));
+	const ui::Point from = edge();
+	press(from);
+	move({from.x + 30, from.y});
+	release({from.x + 30, from.y});
+	tracks.app.keys().run("track.foldAll", Json::object(), tracks.app.main(), nullptr);
 	tracks.display.setTrackHeight(other, 100.0);
-	ui::Point from = edge();
 	tracks.app.ui().drag(std::nullopt, {"", 0, from}, {"", 0, ui::Point{from.x, from.y + 20}});
 	const auto heights = [&tracks]() { return tracks.app.call("trackLayout.get").at("heights"); };
 	const auto height = [](uint64_t track, double dp) { return Json{{"track", track}, {"height", dp}}; };
 	REQUIRE(tracks.app.waitUntil([&] { return heights() == Json::array({height(audio, ui::g_trackHeight + 20.0)}); }));
+	CHECK(tracks.app.call("project.revision").at("revision").get<uint64_t>() == revision + 2);
+	{
+		const std::scoped_lock lock(mutex);
+		CHECK(changes == 2);
+	}
+
+	// Heights another client sets during a drag stay: the drag keeps its track's height when they come and sends
+	// only that.
+	tracks.app.shell().step(std::chrono::milliseconds(0));
+	ui::Point lower = edge();
+	press(lower);
+	move({lower.x, lower.y + 20});
+	tracks.app.call("trackLayout.set", {{"heights", {height(other, 120.0)}}});
+	REQUIRE(tracks.app.waitUntil([&] { return tracks.display.ownHeight(other) == Approx(120.0); }));
+	CHECK(tracks.display.ownHeight(audio) == Approx(ui::g_trackHeight + 40.0));
+	tracks.app.call("trackLayout.set", {{"heights", {height(other, 150.0)}}});
+	release({lower.x, lower.y + 20});
+	REQUIRE(tracks.app.waitUntil(
+		[&] { return heights() == Json{height(audio, ui::g_trackHeight + 40.0), height(other, 150.0)}; }));
 
 	// With Ctrl it sends the heights of the tracks it changed: those shown.
 	tracks.app.shell().step(std::chrono::milliseconds(0));
-	from = edge();
-	tracks.app.ui().drag(std::nullopt, {"", 0, from}, {"", 0, ui::Point{from.x, from.y + 10}}, {"ctrl"});
-	const double all = ui::g_trackHeight + 30.0;
+	lower = edge();
+	tracks.app.ui().drag(std::nullopt, {"", 0, lower}, {"", 0, ui::Point{lower.x, lower.y + 10}}, {"ctrl"});
+	const double all = ui::g_trackHeight + 50.0;
 	REQUIRE(tracks.app.waitUntil(
 		[&]
 		{
 			return heights() == Json{height(folder, all), height(second, all), height(audio, all), height(other, all)};
 		}));
+
+	// A drag that loading a project interrupts sends nothing to the loaded project, whose tracks have the same ids.
+	tracks.app.shell().step(std::chrono::milliseconds(0));
+	lower = edge();
+	press(lower);
+	move({lower.x, lower.y + 20});
+	tracks.app.call("project.load", {{"path", (dir.path() / "layout.dawproject").u8string()}});
+	REQUIRE(tracks.app.waitUntil(
+		[&] { return !tracks.list.folded(folder) && tracks.display.ownHeight(audio) == Approx(ui::g_trackHeight); }));
+	release({lower.x, lower.y + 20});
+	tracks.app.keys().run("track.foldAll", Json::object(), tracks.app.main(), nullptr);
+	REQUIRE(
+		tracks.app.waitUntil([&] { return tracks.app.call("trackLayout.get").at("folded") == Json{folder, second}; }));
+	CHECK(heights() == Json::array());
 }
 
 TEST_CASE("Remove Empty Tracks keeps an instrument track without parts that a MIDI track plays", "[ui]")

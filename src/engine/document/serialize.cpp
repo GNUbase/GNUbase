@@ -18,6 +18,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <memory>
@@ -2578,7 +2579,11 @@ namespace gnubase::engine
 		project.trackLayout = trackLayoutFromJson(json.value("trackLayout", Json::object())); // before #491: none
 		project.workspaces = workspacesFromJson(json.value("workspaces", Json::object()));    // before #163: none
 		{
-			// Only folders fold: a hand-edited file's other tracks are left out (#991).
+			// Only the project's tracks have heights and only folders fold: a hand-edited file's others are left out
+			// (#991).
+			std::map<ObjectId, double>& heights = project.trackLayout.heights;
+			for (auto height = heights.begin(); height != heights.end();)
+				height = project.trackById.count(height->first) != 0 ? std::next(height) : heights.erase(height);
 			std::vector<ObjectId>& folded = project.trackLayout.folded;
 			folded.erase(std::remove_if(folded.begin(), folded.end(),
 							 [&project](ObjectId id)
