@@ -713,10 +713,13 @@ namespace gnubase::engine
 					instrument.channel =
 						std::make_shared<InstrumentChannel>(sequencer, std::move(played), ++m_instrumentSerial);
 				}
-				// The sampler swaps its sample while it plays (sample hot swap), reading the new one here.
+				// The sampler swaps its sample while it plays (sample hot swap), reading the new one here, and lets go
+				// of the one before once the audio thread has moved on, by the next time the graph is attached.
+				if (instrument.sampler)
+					instrument.sampler->collect();
 				if (instrument.sampler && instrument.sample != channel.sample)
-					instrument.sampler->setSample(channel.sample.empty() ? std::make_unique<const processors::Sample>()
-																		 : processors::loadSample(channel.sample));
+					instrument.sampler->setSample(channel.sample.empty() ? std::make_shared<const processors::Sample>()
+																		 : processors::sharedSample(channel.sample));
 				instrument.sample = channel.sample;
 				instrument.sources = from;
 				processor = instrument.channel;

@@ -348,11 +348,17 @@ TEST_CASE("in monophonic mode a new note takes over and a held note plays again 
 	bench.add(note(0, true, 60));
 	bench.add(note(10, true, 72));
 	std::vector<float> played = bench.left(1);
+	// The note taken over fades out in 5 ms (240 frames) instead of stopping with a click.
+	CHECK(sampler.activeVoices() == 2);
+	CHECK_THAT(played[10], WithinAbs(rampAt(0) + rampAt(10), 1e-4));
+	CHECK_THAT(played[11], WithinAbs(rampAt(2) + (rampAt(11) * (1.0 - (2.0 / 240.0))), 1e-4));
+	played = bench.left(4);
 	CHECK(sampler.activeVoices() == 1);
-	CHECK(first(std::vector<float>(played.begin() + 10, played.end()), 2) == expected({0, 2}));
+	CHECK(played[255] == rampAt(2.0 * (54 + 255)));
 	bench.add(note(0, false, 72));
-	played = bench.left(1);
-	CHECK(first(played, 2) == expected({0, 1})); // 60 again, from the start
+	played = bench.left(5);
+	CHECK(sampler.activeVoices() == 1);
+	CHECK(played[300] == rampAt(300)); // 60 again, from the start
 	bench.add(note(0, false, 60));
 	bench.run(1);
 	CHECK(sampler.activeVoices() == 0);
@@ -366,6 +372,129 @@ TEST_CASE("in monophonic mode a new note takes over and a held note plays again 
 		CHECK(played[10] == rampAt(10));
 		CHECK(played[11] == rampAt(12));
 	}
+}
+
+TEST_CASE("notes held from polyphonic mode end when monophonic mode is switched on meanwhile", "[unit]")
+{
+	Sampler sampler;
+	sampler.setSample(ramp(32));
+	Bench bench(sampler);
+	bench.add(parameter(0, Sampler::LoopMode, static_cast<double>(Sampler::Loop::Continuous)));
+	bench.add(parameter(0, Sampler::LoopStart, 0.25));
+	bench.add(parameter(0, Sampler::LoopEnd, 0.5));
+	bench.add(note(0, true, 60));
+	bench.add(note(0, true, 64));
+	bench.add(note(0, true, 67));
+	bench.run(1);
+	CHECK(sampler.activeVoices() == 3);
+	bench.add(parameter(0, Sampler::Monophonic, 1.0));
+	bench.add(note(0, false, 64));
+	bench.add(note(0, false, 60));
+	bench.add(note(0, false, 67));
+	bench.run(1);
+	CHECK(sampler.activeVoices() == 0);
+}
+
+TEST_CASE("a key released in polyphonic mode doesn't play again when monophonic mode is back", "[unit]")
+{
+	Sampler sampler;
+	sampler.setSample(ramp(32));
+	Bench bench(sampler);
+	bench.add(parameter(0, Sampler::LoopMode, static_cast<double>(Sampler::Loop::Continuous)));
+	bench.add(parameter(0, Sampler::LoopStart, 0.25));
+	bench.add(parameter(0, Sampler::LoopEnd, 0.5));
+	bench.add(parameter(0, Sampler::Monophonic, 1.0));
+	bench.add(note(0, true, 60));
+	bench.run(1);
+	bench.add(parameter(0, Sampler::Monophonic, 0.0));
+	bench.add(note(0, false, 60));
+	bench.run(1);
+	CHECK(sampler.activeVoices() == 0);
+	bench.add(parameter(0, Sampler::Monophonic, 1.0));
+	bench.add(note(0, true, 64));
+	bench.run(1);
+	bench.add(note(0, false, 64));
+	bench.run(1);
+	CHECK(sampler.activeVoices() == 0);
+}
+
+TEST_CASE("a loop shorter than a step stays a loop at high pitches", "[unit]")
+{
+	// A loop of two frames, from frame 8 to 10, played five octaves up: 32 frames a step.
+	const auto play = [](Sampler::Loop mode)
+	{
+		Sampler sampler;
+		sampler.setSample(ramp(64));
+		Bench bench(sampler);
+		bench.add(parameter(0, Sampler::LoopMode, static_cast<double>(mode)));
+		bench.add(parameter(0, Sampler::LoopStart, 0.125));
+		bench.add(parameter(0, Sampler::LoopEnd, 10.0 / 64.0));
+		bench.add(parameter(0, Sampler::Octave, 5.0));
+		bench.add(note(0, true, 60));
+		const std::vector<float> played = bench.left(2);
+		CHECK(sampler.activeVoices() == 1);
+		for (size_t i = 1; i < played.size(); ++i)
+		{
+			INFO("frame " << i);
+			CHECK(played[i] >= rampAt(7.0) - 1e-6f);
+			CHECK(played[i] <= rampAt(11.0) + 1e-6f);
+		}
+	};
+	play(Sampler::Loop::Continuous);
+	play(Sampler::Loop::Alternate);
+}
+
+TEST_CASE("drive is part of the filter: off with it", "[unit]")
+{
+	const auto peak = [](bool filter)
+	{
+		auto ones = std::make_unique<Sample>();
+		ones->left.assign(4800, 0.9f);
+		Sampler sampler;
+		sampler.setSample(std::move(ones));
+		Bench bench(sampler, 480);
+		bench.add(parameter(0, Sampler::FilterOn, filter ? 1.0 : 0.0));
+		bench.add(parameter(0, Sampler::Cutoff, 20000.0));
+		bench.add(parameter(0, Sampler::Drive, 24.0));
+		bench.add(note(0, true, 60));
+		return bench.left(1)[479];
+	};
+	CHECK(peak(false) == 0.9f);
+	CHECK(peak(true) > 0.99f); // tanh(0.9 * 15.8) is about 1, through a low pass that lets DC through
+}
+
+TEST_CASE("the sampler frees the sample it played once a hot swap is through", "[unit]")
+{
+	Sampler sampler;
+	std::shared_ptr<const Sample> old = ramp(64);
+	const std::weak_ptr<const Sample> played = old;
+	sampler.setSample(std::move(old));
+	Bench bench(sampler);
+	bench.run(1);
+	sampler.setSample(ramp(64));
+	sampler.collect();
+	CHECK(!played.expired()); // the audio thread may still play it
+	bench.run(1);
+	sampler.collect();
+	CHECK(played.expired());
+}
+
+TEST_CASE("sharedSample reads a file once while something uses its sample", "[unit]")
+{
+	const gnubase::test::TempDir folder;
+	gnubase::test::Audio audio;
+	audio.channels = 2;
+	audio.samples = {0.5f, -0.5f, 0.25f, -0.25f};
+	gnubase::test::writeWav(folder.path() / "two.wav", audio);
+	const std::string path = (folder.path() / "two.wav").u8string();
+	std::shared_ptr<const Sample> first = processors::sharedSample(path);
+	REQUIRE(first->frames() == 2);
+	CHECK(first->right[1] == -0.25f);
+	CHECK(processors::sharedSample(path) == first);
+	const std::weak_ptr<const Sample> kept = first;
+	first.reset();
+	CHECK(kept.expired());
+	CHECK(processors::sharedSample((folder.path() / "missing.wav").u8string())->frames() == 0);
 }
 
 TEST_CASE("the sampler's amp section: volume, pan, sample gain, velocity and envelope", "[unit]")
@@ -576,7 +705,7 @@ TEST_CASE("sampler.create makes a sampler track from a clip, an event's section 
 	CHECK(whole.at("channel").at("instrumentParameters").empty());
 
 	const Json section = run(client, "sampler.create", {{"clip", session.clip}, {"start", 12000}, {"end", 36000}});
-	CHECK(section.at("track").at("name") == "Sampler 03");
+	CHECK(section.at("track").at("name") == "Sampler 02");
 	CHECK(instrumentParameter(section.at("channel"), Sampler::Start) == 0.25);
 	CHECK(instrumentParameter(section.at("channel"), Sampler::End) == 0.75);
 
@@ -591,10 +720,35 @@ TEST_CASE("sampler.create makes a sampler track from a clip, an event's section 
 	CHECK(instrumentParameter(fromEvent.at("channel"), Sampler::Start) == 0.5);
 	CHECK(instrumentParameter(fromEvent.at("channel"), Sampler::End) == -1.0); // the default, the clip's end
 
+	// The first number no track has: with Sampler 01 gone, Sampler 01 again, then Sampler 04.
+	run(client, "track.remove", {{"track", empty.at("track").at("id")}});
+	CHECK(run(client, "sampler.create").at("track").at("name") == "Sampler 01");
+	CHECK(run(client, "sampler.create").at("track").at("name") == "Sampler 04");
+
 	CHECK_THAT(reject(client, "sampler.create", {{"clip", session.clip}, {"start", 0}, {"end", 48001}}),
 		ContainsSubstring("within the clip"));
 	CHECK_THAT(reject(client, "sampler.create", {{"clip", 999}}), ContainsSubstring("no clip 999"));
-	CHECK_THAT(reject(client, "sampler.create", {{"start", 5}}), ContainsSubstring("need event or clip"));
+	CHECK_THAT(reject(client, "sampler.create", {{"start", 5}}), ContainsSubstring("need event, clip or path"));
+
+	// From a file, which goes into the pool, below a track and into a bus as track.add places tracks.
+	const Json project = run(client, "project.get");
+	Json output;
+	for (const Json& bus : project.at("busses"))
+		if (bus.at("direction") == "output")
+			output = bus.at("id");
+	const Json fromFile = run(client, "sampler.create",
+		{{"path", session.file.u8string()}, {"parent", 0}, {"index", 0}, {"output", output}, {"start", 4800}});
+	CHECK(fromFile.at("channel").at("sample") != session.clip);
+	CHECK(fromFile.at("channel").at("output") == output);
+	CHECK(instrumentParameter(fromFile.at("channel"), Sampler::Start) == 0.1);
+	const Json withFile = run(client, "project.get");
+	CHECK(withFile.at("tracks").at(0).at("id") == fromFile.at("track").at("id"));
+	CHECK(withFile.at("clips").size() == project.at("clips").size() + 1);
+	CHECK_THAT(reject(client, "sampler.create", {{"path", session.file.u8string()}, {"clip", session.clip}}),
+		ContainsSubstring("one of event, clip and path"));
+	CHECK(!run(client, "history.get").at("steps").empty());
+	run(client, "history.undo"); // the clip and media file go with the track
+	CHECK(run(client, "project.get").at("clips").size() == project.at("clips").size());
 
 	// One undo step each.
 	const size_t tracks = run(client, "project.get").at("tracks").size();
@@ -627,10 +781,21 @@ TEST_CASE("sampler.load swaps the sample, resetting the settings unless they are
 	CHECK(instrumentParameter(loaded.at("channel"), Sampler::Volume) == -1.0);
 	CHECK(instrumentParameter(loaded.at("channel"), Sampler::End) == 0.5);
 
+	// A file goes into the pool first, in the same undo step.
+	const size_t clips = run(client, "project.get").at("clips").size();
+	loaded = run(client, "sampler.load", {{"track", track}, {"path", session.file.u8string()}});
+	CHECK(loaded.at("channel").at("sample") != session.clip);
+	CHECK(run(client, "project.get").at("clips").size() == clips + 1);
+	run(client, "history.undo");
+	CHECK(run(client, "project.get").at("clips").size() == clips);
+	CHECK_THAT(
+		reject(client, "sampler.load", {{"track", track}, {"path", (session.folder.path() / "none.wav").u8string()}}),
+		ContainsSubstring("none.wav"));
+
 	const auto audio = run(client, "track.add", {{"type", "audio"}}).at("track").at("id").get<ObjectId>();
 	CHECK_THAT(reject(client, "sampler.load", {{"track", audio}, {"clip", session.clip}}),
 		ContainsSubstring("no sampler track"));
-	CHECK_THAT(reject(client, "sampler.load", {{"track", track}}), ContainsSubstring("either event or clip"));
+	CHECK_THAT(reject(client, "sampler.load", {{"track", track}}), ContainsSubstring("one of event, clip and path"));
 
 	// Another instrument drops the sample.
 	run(client, "channel.set", {{"channel", channel}, {"instrument", "testSynth"}});
@@ -671,6 +836,35 @@ TEST_CASE("sampler.normalize sets the sample gain so that the peak reaches the l
 
 	const auto empty = run(client, "sampler.create").at("track").at("id");
 	CHECK_THAT(reject(client, "sampler.normalize", {{"track", empty}}), ContainsSubstring("no sample"));
+
+	// A missing file isn't silent.
+	fs::remove(session.file);
+	CHECK_THAT(reject(client, "sampler.normalize", {{"track", track}}), ContainsSubstring("missing"));
+}
+
+TEST_CASE("a track preset with another instrument takes the sampler's sample away", "[integration]")
+{
+	const gnubase::test::TempDir settings;
+	Engine engine(gnubase::audio::makeBackends(), settings.path() / "settings");
+	Client client(engine);
+	const auto synth = run(client, "track.add", {{"type", "instrument"}, {"instrument", "testSynth"}});
+	run(client, "track.savePreset", {{"tracks", Json::array({synth.at("track").at("id")})}, {"name", "Synth"}});
+	gnubase::test::Audio audio;
+	audio.samples.assign(480, 0.5f);
+	gnubase::test::writeWav(settings.path() / "dc.wav", audio);
+	const Json media = run(client, "media.add", {{"path", (settings.path() / "dc.wav").u8string()}});
+	const auto clip = run(client, "clip.add", {{"media", media.at("media").at("id")}}).at("clip").at("id");
+	const Json sampler = run(client, "sampler.create", {{"clip", clip}});
+	CHECK(run(client, "pool.get").at("clips").at(0).at("used") == 1);
+	run(client, "track.loadPreset", {{"tracks", Json::array({sampler.at("track").at("id")})}, {"name", "Synth"}});
+	const Json project = run(client, "project.get");
+	for (const Json& item : project.at("channels"))
+		if (item.at("id") == sampler.at("channel").at("id"))
+		{
+			CHECK(item.at("instrument") == "testSynth");
+			CHECK(item.at("sample") == 0);
+		}
+	CHECK(run(client, "pool.get").at("clips").at(0).at("used") == 0);
 }
 
 TEST_CASE(
