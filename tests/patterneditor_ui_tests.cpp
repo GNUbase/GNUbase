@@ -80,16 +80,32 @@ namespace
 			return nullptr;
 		}
 
+		// The lane of that pitch, null for none.
+		Json lane(int pitch)
+		{
+			const Json json = patternJson();
+			for (const Json& each : json.at("lanes"))
+				if (each.at("pitch") == pitch)
+					return each;
+			return nullptr;
+		}
+
 		// The indexes of the steps of the lane of that pitch.
 		std::vector<int> steps(int pitch)
 		{
 			std::vector<int> indexes;
-			const Json json = patternJson();
-			for (const Json& lane : json.at("lanes"))
-				if (lane.at("pitch") == pitch)
-					for (const Json& step : lane.at("steps"))
-						indexes.push_back(step.at("index").get<int>());
+			const Json found = lane(pitch);
+			if (found.is_object())
+				for (const Json& step : found.at("steps"))
+					indexes.push_back(step.at("index").get<int>());
 			return indexes;
+		}
+
+		// Lets the editor hear what the engine announced.
+		void settle()
+		{
+			int steps = 0;
+			app.waitUntil([&] { return ++steps > 5; });
 		}
 
 		void click(const ui::Target& target, int count = 1, const std::vector<std::string>& modifiers = {})
@@ -140,6 +156,91 @@ TEST_CASE("the pattern editor shows a pattern event's step lanes, and the draw t
 	f.app.call("history.undo");
 	REQUIRE(f.app.waitUntil([&] { return !f.has(cell(36, 0), "on"); }));
 	CHECK(f.steps(36).empty());
+}
+
+TEST_CASE("a draw gesture keeps its steps when the project changes under it, and a refused one goes", "[ui]")
+{
+	Fixture f;
+	// A change from elsewhere while the gesture goes on, e.g. a script's, doesn't drop the steps it drew (#1040).
+	f.app.ui().press(f.window, f.center(cell(36, 0)), ui::MouseButton::Left);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.has(cell(36, 0), "on"));
+	f.app.call("pattern.set", {{"pattern", f.pattern}, {"swing", 0.5}});
+	f.settle();
+	f.app.ui().move(f.window, f.center(cell(36, 1)));
+	f.app.ui().move(f.window, f.center(cell(36, 2)));
+	f.app.ui().release(f.window, f.center(cell(36, 2)), ui::MouseButton::Left);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	f.app.waitUntil([&] { return f.steps(36) == std::vector<int>{0, 1, 2}; });
+	REQUIRE(f.steps(36) == std::vector<int>{0, 1, 2});
+	CHECK(f.patternJson().at("swing") == 0.5);
+
+	// Steps the pattern no longer has room for are refused: the editor shows the engine's pattern again.
+	f.app.ui().press(f.window, f.center(cell(38, 4)), ui::MouseButton::Left);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	f.app.call("pattern.set", {{"pattern", f.pattern}, {"length", 4}});
+	f.settle();
+	f.app.ui().release(f.window, f.center(cell(38, 4)), ui::MouseButton::Left);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".pattern-lane[pitch=\"38\"] .pattern-step").size() == 4; }));
+	CHECK(f.steps(38).empty());
+	CHECK(f.text("#pattern-length") == "4 Steps");
+}
+
+TEST_CASE("in mono mode the draw tool moves tied steps to the pitch drawn", "[ui]")
+{
+	Fixture f;
+	f.app.call("pattern.set",
+		{{"pattern", f.pattern}, {"mode", "mono"},
+			{"lanes", {{{"pitch", 60}, {"steps", {{{"index", 0}, {"length", 4}, {"velocity", 90}}}}}}}});
+	REQUIRE(f.app.waitUntil([&] { return f.has(cell(60, 3), "tied"); }));
+	// In the middle of a tie, the tied steps from there on move (p. 913).
+	f.click(of(cell(62, 2)));
+	REQUIRE(f.app.waitUntil([&] { return f.steps(62) == std::vector<int>{2}; }));
+	CHECK(f.lane(60).at("steps").at(0).at("length") == 2);
+	CHECK(f.lane(62).at("steps").at(0).at("length") == 2);
+	CHECK(f.lane(62).at("steps").at(0).at("velocity") == 90);
+	// At its start, all of them.
+	REQUIRE(f.app.waitUntil([&] { return f.has(cell(60, 1), "tied"); }));
+	f.click(of(cell(64, 0)));
+	REQUIRE(f.app.waitUntil([&] { return f.steps(64) == std::vector<int>{0}; }));
+	CHECK(f.steps(60).empty());
+	CHECK(f.lane(64).at("steps").at(0).at("length") == 2);
+}
+
+TEST_CASE("Double Step Resolution and Double Length leave the lanes' rhythms as they were", "[ui]")
+{
+	Fixture f;
+	const Json one = Json::array({{{"index", 1}}});
+	f.app.call("pattern.set",
+		{{"pattern", f.pattern},
+			{"lanes",
+				{{{"pitch", 36}, {"steps", one}}, {{"pitch", 38}, {"length", 3}, {"steps", one}},
+					{{"pitch", 42}, {"resolution", "1/8"}, {"steps", one}},
+					{{"pitch", 46}, {"length", 100}, {"steps", {{{"index", 99}}}}}}}});
+	REQUIRE(f.app.waitUntil([&] { return f.has(cell(46, 99), "on"); }));
+	// The lanes that follow the pattern's resolution get twice the steps, those of their own length too; one that
+	// can't keeps the resolution as its own, and one of its own resolution stays.
+	f.click(of("#pattern-double-resolution"));
+	REQUIRE(f.app.waitUntil([&] { return f.patternJson().at("resolution") == "1/32"; }));
+	CHECK(f.patternJson().at("length") == 32);
+	CHECK(f.lane(36).at("steps").at(0) ==
+		Json({{"index", 2}, {"length", 2}, {"velocity", 100}, {"repeats", 1}, {"offset", 0.0}, {"probability", 1.0},
+			{"velocityVariance", 0.0}, {"gate", 1.0}}));
+	CHECK(f.lane(38).at("length") == 6);
+	CHECK(f.steps(38) == std::vector<int>{2});
+	CHECK(f.lane(42).at("resolution") == "1/8");
+	CHECK(f.steps(42) == std::vector<int>{1});
+	CHECK(f.lane(46).at("length") == 100);
+	CHECK(f.lane(46).at("resolution") == "1/16");
+	CHECK(f.steps(46) == std::vector<int>{99});
+	// Double Length repeats the steps of the lanes that follow the pattern's length; the others loop on their own.
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".pattern-lane[pitch=\"36\"] .pattern-step").size() == 32; }));
+	f.click(of("#pattern-double-length"));
+	REQUIRE(f.app.waitUntil([&] { return f.patternJson().at("length") == 64; }));
+	CHECK(f.steps(36) == std::vector<int>{2, 34});
+	CHECK(f.steps(38) == std::vector<int>{2});
+	CHECK(f.lane(46).at("length") == 100);
 }
 
 TEST_CASE("the step selection tool selects and deletes steps, and the edit functions tie and split them", "[ui]")

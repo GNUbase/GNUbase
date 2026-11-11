@@ -178,6 +178,14 @@ namespace gnubase::ui
 	{
 		m_project = project;
 		m_part = view.value("activePart", uint64_t{0});
+		// A gesture going on keeps its own copy of the pattern, which its release sends.
+		m_stale = m_gesture != Gesture::None;
+		if (!m_stale)
+			load();
+	}
+
+	void PatternEditor::load()
+	{
 		m_pattern = nullptr;
 		uint64_t pattern = 0;
 		for (const Json& part : m_project.value("midiParts", Json::array()))
@@ -186,9 +194,6 @@ namespace gnubase::ui
 		for (const Json& each : m_project.value("patterns", Json::array()))
 			if (each.at("id") == pattern)
 				m_pattern = each;
-		// A gesture going on keeps its own copy.
-		if (m_gesture != Gesture::None)
-			return;
 		if (m_pattern.is_object() && lane(m_lane) == nullptr)
 			m_lane = m_pattern.at("lanes").empty() ? -1 : m_pattern.at("lanes").at(0).at("pitch").get<int>();
 		render();
@@ -269,20 +274,46 @@ namespace gnubase::ui
 	{
 		if (step(pitch, index, true) != nullptr)
 			return;
-		// Mono mode plays one step at a time: a step at the same position on another lane goes (p. 913).
+		const auto insert = [this](int on, Json one)
+		{
+			if (lane(on) == nullptr)
+				m_pattern.at("lanes").push_back({{"pitch", on}, {"steps", Json::array()}});
+			Json& steps = lane(on)->at("steps");
+			steps.push_back(std::move(one));
+			std::sort(steps.begin(), steps.end(),
+				[](const Json& a, const Json& b) { return a.at("index").get<int>() < b.at("index").get<int>(); });
+		};
+		Json added = newStep(index);
+		// Mono mode plays one step at a time (p. 913): a step at the same position on another lane goes, and the
+		// steps tied to it move to the new pitch from the position clicked, all of them at the tie's start.
+		std::vector<int> pitches;
 		if (m_pattern.at("mode") == "mono")
 			for (const Json& each : m_pattern.at("lanes"))
-				if (const Json* other = step(each.at("pitch").get<int>(), index, true); other != nullptr)
+				pitches.push_back(each.at("pitch").get<int>());
+		for (const int other : pitches)
+			if (const Json* covering = step(other, index, true); covering != nullptr)
+			{
+				const Json tied = *covering;
+				const int start = tied.at("index").get<int>();
+				const int span = tied.value("length", 1);
+				const int length = laneLength(other);
+				const int into = (((index - start) % length) + length) % length;
+				removeStep(other, start);
+				if (into > 0)
 				{
-					removeStep(each.at("pitch").get<int>(), other->at("index").get<int>());
-					break;
+					Json kept = tied;
+					kept["length"] = into;
+					insert(other, std::move(kept));
 				}
-		if (lane(pitch) == nullptr)
-			m_pattern.at("lanes").push_back({{"pitch", pitch}, {"steps", Json::array()}});
-		Json& steps = lane(pitch)->at("steps");
-		steps.push_back(newStep(index));
-		std::sort(steps.begin(), steps.end(),
-			[](const Json& a, const Json& b) { return a.at("index").get<int>() < b.at("index").get<int>(); });
+				if (span > 1)
+				{
+					added = tied;
+					added["index"] = index;
+					added["length"] = span - into;
+				}
+				break;
+			}
+		insert(pitch, std::move(added));
 		m_changed = true;
 	}
 
@@ -330,7 +361,13 @@ namespace gnubase::ui
 			{{"description", description},
 				{"commands",
 					Json::array({{{"command", "pattern.set"},
-						{"parameters", {{"pattern", m_pattern.at("id")}, {"lanes", m_pattern.at("lanes")}}}}})}});
+						{"parameters", {{"pattern", m_pattern.at("id")}, {"lanes", m_pattern.at("lanes")}}}}})}},
+			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				// Refused, the copy that was sent goes: the engine's pattern shows again.
+				if (!alive.expired() && !result.ok() && m_gesture == Gesture::None)
+					load();
+			});
 	}
 
 	void PatternEditor::set(Json changes)
@@ -377,7 +414,10 @@ namespace gnubase::ui
 		sendLanes(split ? "Split tied steps" : "Tie adjacent steps");
 	}
 
-	// Double Length of Pattern and Double Step Resolution of Pattern (p. 903), with the steps.
+	// Double Length of Pattern (p. 903) repeats the steps of the lanes that follow the pattern's length. Double Step
+	// Resolution of Pattern doubles the indexes and lengths of the steps of the lanes that follow its resolution, and
+	// the length of those of their own length, so that they play as before; one that can't double keeps the
+	// resolution it had as its own. The other lanes loop on their own length or resolution and stay as they are.
 	void PatternEditor::doubleLength(bool resolution)
 	{
 		const int length = m_pattern.at("length").get<int>();
@@ -394,7 +434,15 @@ namespace gnubase::ui
 		Json lanes = m_pattern.at("lanes");
 		for (Json& each : lanes)
 		{
-			const int own = each.value("length", 0) > 0 ? each.at("length").get<int>() : length;
+			const int own = each.value("length", 0);
+			const bool ownResolution = each.contains("resolution") && !each.at("resolution").is_null();
+			if (resolution ? ownResolution : own > 0)
+				continue;
+			if (resolution && own * 2 > 128)
+			{
+				each["resolution"] = m_pattern.at("resolution");
+				continue;
+			}
 			Json steps = Json::array();
 			for (const Json& one : each.at("steps"))
 			{
@@ -407,13 +455,12 @@ namespace gnubase::ui
 					continue;
 				}
 				steps.push_back(one);
-				moved["index"] = one.at("index").get<int>() + own;
+				moved["index"] = one.at("index").get<int>() + length;
 				steps.push_back(moved);
 			}
-			if (each.value("length", 0) > 0)
-				each["length"] = std::min(own * 2, 128);
-			if (!resolution || each.value("length", 0) == 0)
-				each["steps"] = std::move(steps);
+			if (own > 0)
+				each["length"] = own * 2;
+			each["steps"] = std::move(steps);
 		}
 		changes["lanes"] = std::move(lanes);
 		set(std::move(changes));
@@ -572,9 +619,14 @@ namespace gnubase::ui
 		listen(false);
 		const Gesture gesture = m_gesture;
 		m_gesture = Gesture::None;
+		// What the gesture changed goes to the engine, whose answer shows the project; else the project that came
+		// while it went on shows now.
 		if (m_changed)
 			sendLanes(gesture == Gesture::Values ? "Change step parameters" : "Edit steps");
+		else if (m_stale)
+			load();
 		m_changed = false;
+		m_stale = false;
 	}
 
 	void PatternEditor::listen(bool document)
