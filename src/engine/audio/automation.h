@@ -212,6 +212,8 @@ namespace gnubase::engine
 		// Sends what waits, in the order the kinds first came, at offset into out; what doesn't fit waits on.
 		template <typename Add> void send(uint32_t offset, Add add) noexcept;
 		bool waiting() const noexcept { return m_sent < m_count; }
+		// Where playback jumps: forgets everything, which the jump's chase replaces.
+		void clear() noexcept;
 
 	private:
 		// Per MIDI channel: 128 controllers, then program, pitch bend and channel pressure.
@@ -287,6 +289,11 @@ namespace gnubase::engine
 		std::array<bool, g_midiNotes> midiHeld{};
 		std::array<uint8_t, 16> midiPedals{};
 		DroppedMidi midiDropped;
+		// Audio thread, MIDI tracks: where playback goes on without a jump, -1 while stopped; while stopped, the
+		// position the strip saw last, -1 if unknown. A jump finds them as the track's sequencer does
+		// (MidiSequencer), so that what the mute dropped before it doesn't reach the instrument after it.
+		int64_t midiNext = -1;
+		int64_t midiCursor = -1;
 		// Audio thread: each send's gain after the last block (SendStrip), -1 before the first.
 		std::array<float, g_maxSends> sendGains = []
 		{
@@ -416,7 +423,7 @@ namespace gnubase::engine
 		// The fader and its panner with the block's fader events, then muting.
 		void fade(const graph::ProcessContext& context, const graph::EventBuffer& events) noexcept;
 		// A MIDI track's mute: the block's events in out, muted as the fader's mute events say.
-		void muteMidi(graph::EventBuffer& out) noexcept;
+		void muteMidi(graph::EventBuffer& out, const graph::TransportBlock& transport) noexcept;
 		std::shared_ptr<ChannelState> m_state;
 		std::shared_ptr<graph::Processor> m_source;
 		Panning m_panning;

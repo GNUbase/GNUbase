@@ -730,7 +730,7 @@ namespace gnubase::engine
 			for (const graph::ProcessEvent& event : m_sourceEvents)
 				context.eventsOut.add(event);
 		if (context.channels == 0)
-			muteMidi(context.eventsOut);
+			muteMidi(context.eventsOut, context.transport);
 		render(RenderPoint::Source, context);
 		m_state->sections.processPre(m_faderEvents, context.audio, context.channels, context.frames);
 
@@ -802,7 +802,15 @@ namespace gnubase::engine
 		m_sent = 0;
 	}
 
-	void ChannelStrip::muteMidi(graph::EventBuffer& out) noexcept
+	void DroppedMidi::clear() noexcept
+	{
+		for (size_t i = m_sent; i < m_count; ++i)
+			m_waiting[m_order[i]] = false;
+		m_count = 0;
+		m_sent = 0;
+	}
+
+	void ChannelStrip::muteMidi(graph::EventBuffer& out, const graph::TransportBlock& transport) noexcept
 	{
 		using Type = graph::ProcessEvent::Type;
 		ChannelState& state = *m_state;
@@ -864,9 +872,36 @@ namespace gnubase::engine
 			if (state.midiDropped.waiting())
 				state.midiDropped.forget(event);
 		};
+		// The block's jumps up to offset (a start, a locate or a cycle jump, as the sequencer finds them): what the
+		// mute dropped before one is stale after it, where the chase sets what is in effect.
+		size_t segment = 0;
+		const auto jumpsUntil = [&state, &transport, &segment](uint32_t offset) noexcept
+		{
+			if (!transport.playing)
+			{
+				if (segment > 0)
+					return;
+				segment = 1;
+				if (state.midiNext >= 0)
+					state.midiCursor = state.midiNext; // where playback stopped
+				state.midiNext = -1;
+				if (state.midiCursor >= 0 && transport.position != state.midiCursor) // a locate while stopped
+					state.midiDropped.clear();
+				state.midiCursor = transport.position;
+				return;
+			}
+			for (; segment < transport.segmentCount && transport.segments[segment].offset <= offset; ++segment)
+			{
+				const graph::TransportSegment& at = transport.segments[segment];
+				if (at.position != state.midiNext)
+					state.midiDropped.clear();
+				state.midiNext = at.position + at.frames;
+			}
+		};
 		if (!state.midiMuted && !state.midiDropped.waiting() && chased == nullptr &&
 			std::none_of(m_faderEvents.begin(), m_faderEvents.end(), isMute))
 		{
+			jumpsUntil(UINT32_MAX);
 			for (const graph::ProcessEvent& event : out)
 				pass(event);
 			return;
@@ -894,6 +929,7 @@ namespace gnubase::engine
 				});
 		};
 		// A soloed-out or disabled track (m_silent) sends nothing: what its mute dropped waits until it is heard again.
+		jumpsUntil(0);
 		if (!state.midiMuted && !m_silent)
 			resend(0);
 		const graph::ProcessEvent* mute = m_faderEvents.begin();
@@ -905,6 +941,7 @@ namespace gnubase::engine
 			{
 				if (!isMute(*mute))
 					continue;
+				jumpsUntil(mute->offset);
 				const bool muted = mute->parameterValue >= 0.5;
 				if (muted && !state.midiMuted)
 				{
@@ -942,6 +979,7 @@ namespace gnubase::engine
 				if (unmutes && !m_silent)
 					resend(mute->offset);
 			}
+			jumpsUntil(offset);
 		};
 		// The chase comes at a jump, after the mute events at its sample and before the events there.
 		size_t chasedNext = 0;

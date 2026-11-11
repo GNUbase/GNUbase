@@ -776,6 +776,43 @@ TEST_CASE("a locate chases a MIDI track whose mute lane doesn't mute where it la
 	CHECK(chasedTo(song, 4000, 7) == std::vector<int>{127});
 }
 
+TEST_CASE("what a MIDI track's mute dropped before a locate doesn't reach its instrument after it", "[integration]")
+{
+	const bool stopped = GENERATE(false, true); // located while playing, or stopped and started again
+	INFO((stopped ? "stopped" : "playing"));
+	Song song(64);
+	// Sustain down at 2000 and up at 8000; a mute lane from 3000 to 4000 releases it and keeps it down for unmuting.
+	song.addControllers(1,
+		{{{"position", ticks(2000)}, {"number", 64}, {"value", 1.0}},
+			{{"position", ticks(8000)}, {"number", 64}, {"value", 0.0}}});
+	const ObjectId lane =
+		idOf(run(song.client, "automationLane.add", {{"track", song.midi}, {"target", {{"type", "mute"}}}}), "lane");
+	run(song.client, "automationPoint.add",
+		{{"lane", lane},
+			{"points",
+				{{{"position", 0}, {"value", 0.0}}, {{"position", ticks(3000)}, {"value", 1.0}},
+					{{"position", ticks(4000)}, {"value", 0.0}}}}});
+	run(song.client, "midi.capture", {{"start", true}});
+	run(song.client, "transport.play");
+	run(song.client, "audio.render", {{"frames", 3520}});
+	CHECK(controllerValues(song.client, 64) == std::vector<int>{127, 0});
+	// Before 2000 the track has no pedal down: neither the unmute at 1000 nor anything else presses it.
+	if (stopped)
+	{
+		run(song.client, "transport.stop");
+		run(song.client, "audio.render", {{"frames", 64}});
+	}
+	run(song.client, "transport.locate", {{"position", 1000}});
+	run(song.client, "audio.render", {{"frames", 64}});
+	if (stopped)
+	{
+		run(song.client, "transport.play");
+		run(song.client, "audio.render", {{"frames", 64}});
+	}
+	run(song.client, "audio.render", {{"frames", 768}});
+	CHECK(controllerValues(song.client, 64).empty());
+}
+
 TEST_CASE("a note that starts where another track's note of the same pitch ends sounds", "[integration]")
 {
 	const int blockSize = GENERATE(1, 64, 333);
