@@ -960,6 +960,57 @@
 	{
 		background-color: #6554c0;
 	}
+	.sampler-display
+	{
+		background-color: #ffffff;
+	}
+	.sampler-outside
+	{
+		background-color: #eef1f599;
+	}
+	.sampler-loop
+	{
+		background-color: #6554c01a;
+	}
+	.sampler-marker-line, .sampler-marker-flag
+	{
+		background-color: #0969da;
+	}
+	.sampler-marker.loop .sampler-marker-line, .sampler-marker.loop .sampler-marker-flag
+	{
+		background-color: #6554c0;
+	}
+	.sampler-marker.dragged .sampler-marker-line, .sampler-marker.dragged .sampler-marker-flag
+	{
+		background-color: #17202d;
+	}
+	.sampler-section-title, .sampler-label
+	{
+		color: #566273;
+		font-size: 11dp;
+	}
+	.sampler-key
+	{
+		background-color: #17202d;
+		border-right-width: 1px;
+		border-right-color: #b9c1cc;
+	}
+	.sampler-key.black
+	{
+		background-color: #eef1f5;
+	}
+	.sampler-key.outside
+	{
+		background-color: #566273;
+	}
+	.sampler-key.black.outside
+	{
+		background-color: #b1b8c1;
+	}
+	.sampler-key.root
+	{
+		background-color: #0969da;
+	}
 	.ds-display, .sa-graph
 	{
 		background-color: #ffffff;

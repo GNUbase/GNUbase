@@ -98,6 +98,8 @@ add_library(gnubase-ui STATIC
 	rulertracks.h
 	sampleeditor.cpp
 	sampleeditor.h
+	samplerpanel.cpp
+	samplerpanel.h
 	sdlwindowsystem.cpp
 	sdlwindowsystem.h
 	shell.cpp

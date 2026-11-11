@@ -58,16 +58,41 @@ How it plays:
   samplers that play the same clip and `sampler.normalize` share it. A file that changed (its time or size) is read
   again. The first read still holds up the command thread; loading in the background is left for later.
 
-Not yet: the sampler panel in the lower zone and a Sampler page in the Add Track dialog, warped (time-stretched)
-playback, transient and manual slicing and the slices' MIDI phrase, the pitch and filter envelopes, the LFOs, glide,
-quality modes, the sampler panel's own undo history, and transferring the sample to another instrument, which needs a
-plugin wrapper extension for samples.
+Not yet: warped (time-stretched) playback with sync to the tempo, the quality modes, transient, grid and manual
+slicing with fades and the slices' MIDI phrase, the pitch and filter envelopes and a multi-node amp envelope, the LFOs,
+glide, sample fades and the loop crossfade, Trim Sample, MIDI Reset, Hot Swap Preview Sample, the sampler panel's own
+undo history and A/B settings, loading by dragging an event or a MIDI part onto the panel, a pool folder of the
+sampler's samples (p. 710), and transferring the sample to another instrument, which needs a plugin wrapper extension
+for samples. The first read of a long sample still holds up the command thread.
 
 ## In the UI
 
 Create Sampler Track is in the Audio menu (`audio.createSamplerTrack`), for the first selected audio event, and in the
-sample editor's Range section (`#se-create-sampler`), for the selection range or else the whole event (p. 711). The
-Add Track dialog offers the Sampler among the instruments of an instrument track.
+sample editor's Range section (`#se-create-sampler`), for the selection range or else the whole event (p. 711). Add
+Sampler Track in the Project menu and the track list's context menu (`project.addSamplerTrack`, pp. 143-144, 711)
+opens the Add Track dialog on its Sampler page, with Output Routing, Name and Count, which adds empty sampler tracks
+with `sampler.create` ([add-track.md](add-track.md)). The Instrument page offers the Sampler among the instruments too.
+
+**The sampler panel** (`ui::SamplerPanel`, `src/ui/samplerpanel.h`, pp. 712-717, 730) is a panel of the lower zone,
+Sampler, that Project > Show Sampler (`window.sampler`) shows; like every panel it can open in a window of its own
+([docking.md](docking.md)). It shows the first selected track while that is a sampler track, else only a hint (the
+root `.sampler-panel` has the class `.empty`):
+
+- **Toolbar**: Import Audio File (`#sampler-import`, a file dialog, then `sampler.load` with `path`), the clip's name
+  (`#sampler-file`), Normalize Sample (`#sampler-normalize`, `sampler.normalize`) and Lock Parameter Settings
+  (`#sampler-lock`), which loads keep the settings with (`keepSettings`).
+- **Waveform display** (`#sampler-display`): the sample's waveform from `media.peaks`, its parts before Start and
+  after End shaded (`.sampler-outside`), the loop (`.sampler-loop`) and the markers (`.sampler-marker`, attribute
+  `marker`: Start, End, Loop start, Loop end), placed in percent of the sample and mirrored when Reverse is on. Without
+  a loop mode the loop and its markers have `.off`. Dragging a marker sets its parameter, one undo step per drag; Start
+  stays before End and the loop's start before its end.
+- **Sections** (`.sampler-section`): Playback, Pitch, Filter, Amp and Keyboard, a control per parameter of
+  `processor.list`'s sampler (`[parameter]`, `#sampler-parameter-<id>`): a toggle for those that are on or off, a
+  drop-down list for those with options, a value field for the others, each gesture one undo step (`parameter.set`
+  through `EngineBinding::sendStep`).
+- **Keyboard** (`.sampler-key`, attribute `key`): the root key `.root`, keys outside the key range `.outside`; a click
+  sets the root key.
+- A file dropped on the panel loads into the sampler (`sampler.load` with `path`, p. 710).
 
 ## Tests
 
@@ -77,5 +102,7 @@ held from before, the amp section and envelope, the filter types, key follow and
 sample), `sharedSample`, the commands and their names, the pool, track presets, removing clips, importing and saving, and offline renders of a sampler track against the sample itself and
 the golden file `sampler-track-phrase`, then a hot swap and its undo; `tests/rtcheck_tests.cpp` plays it with every
 loop mode, slices and the filter without allocating; `tests/sampleeditor_ui_tests.cpp` and
-`tests/audiofunctions_ui_tests.cpp` create sampler tracks from the UI; `tests/backup_tests.cpp` backs one up with
+`tests/audiofunctions_ui_tests.cpp` create sampler tracks from the UI; `tests/sampler_ui_tests.cpp` drives the sampler
+panel (following the selection, toggles, value fields, markers, the keyboard, dropped files, Normalize Sample) and the
+Add Track dialog's Sampler page; `tests/backup_tests.cpp` backs one up with
 `removeUnused` and `minimize`.
