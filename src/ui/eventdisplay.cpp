@@ -126,6 +126,16 @@ namespace gnubase::ui
 		addToolActions();
 		addTimeWarpActions();
 		addAutomationActions();
+		// While Snap to Zero Crossing is still moving the range's edges, actions wait, so that an edit right after a
+		// range is drawn, such as Delete, edits the range where its edges go.
+		for (auto& [name, action] : m_actions)
+			action = [this, run = std::move(action)]
+			{
+				if (m_zeroCrossings == 0)
+					run();
+				else
+					m_afterZeroCrossings.push_back(run);
+			};
 		setToolModifiers(Json::object());
 
 		for (const char* event : {"history.changed", "project.reset"})
