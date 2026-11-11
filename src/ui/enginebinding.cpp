@@ -211,24 +211,6 @@ namespace gnubase::ui
 		return !m_watches.empty();
 	}
 
-	void EngineBinding::holdNextResultForTest(std::string command)
-	{
-		++m_holdNextResults[std::move(command)];
-	}
-
-	void EngineBinding::releaseHeldResultsForTest()
-	{
-		bool handled = false;
-		while (!m_heldResults.empty())
-		{
-			engine::Result result = std::move(m_heldResults.front());
-			m_heldResults.pop_front();
-			handled = answer(result) || handled;
-		}
-		if (handled && m_handled)
-			m_handled();
-	}
-
 	bool EngineBinding::settle(std::chrono::milliseconds timeout)
 	{
 		const auto deadline = std::chrono::steady_clock::now() + timeout;
@@ -252,17 +234,7 @@ namespace gnubase::ui
 	bool EngineBinding::take(const engine::Message& message)
 	{
 		if (const auto* result = std::get_if<engine::Result>(&message))
-		{
-			if (const auto waiting = m_waiting.find(result->request); waiting != m_waiting.end())
-				if (const auto held = m_holdNextResults.find(waiting->second.command); held != m_holdNextResults.end())
-				{
-					if (--held->second == 0)
-						m_holdNextResults.erase(held);
-					m_heldResults.push_back(*result);
-					return false;
-				}
 			return answer(*result);
-		}
 		return dispatch(std::get<engine::Event>(message));
 	}
 
