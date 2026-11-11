@@ -292,11 +292,13 @@ tabset tab
 	box-sizing: border-box;
 }
 
-/* A section of the project window's toolbar, which its setup pane shows, hides and orders. */
+/* A section of the project window's toolbar, which its setup pane shows, hides and orders. The gap after it belongs to
+   the section, not to one of its buttons, and every section has the same, so it is the same in every order. */
 .toolbar-section
 {
 	display: flex;
 	align-items: center;
+	margin-right: 4dp;
 }
 
 .display, .tooltip

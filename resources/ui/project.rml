@@ -42,11 +42,6 @@
 			margin-right: 2dp;
 		}
 
-		#toolbar #auto-scroll-settings, #toolbar #play-tool
-		{
-			margin-right: 12dp;
-		}
-
 		#toolbar .spacer
 		{
 			flex: 1 1 0;

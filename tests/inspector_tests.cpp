@@ -764,9 +764,34 @@ TEST_CASE("the toolbar's setup pane shows, hides and orders its sections, with p
 				last.at("width").get<double>()};
 	};
 	const std::pair<double, double> edges = insets(defaults);
+	// The gaps between neighbouring visible sections, except the one the spacer widens before the last place.
+	const auto gaps = [&window](const std::vector<std::string>& order)
+	{
+		std::vector<double> result;
+		std::vector<Json> boxes;
+		for (const std::string& name : order)
+		{
+			const Json section = element(window.app, "#toolbar [section=" + name + "]");
+			if (!section.at("visible").get<bool>())
+				continue;
+			boxes.push_back(section.at("box"));
+			if (name == order.back())
+				break;
+		}
+		for (size_t i = 1; i + 1 < boxes.size(); ++i)
+			result.push_back(boxes[i].at("x").get<double>() - boxes[i - 1].at("x").get<double>() -
+				boxes[i - 1].at("width").get<double>());
+		return result;
+	};
 	const auto atEdges = [&](const std::vector<std::string>& order)
 	{
 		const std::pair<double, double> now = insets(order);
+		// Every place between sections has the same gap, whichever sections are in it (#1050).
+		const std::vector<double> between = gaps(order);
+		REQUIRE(!between.empty());
+		CHECK(between.front() >= 3.0);
+		for (const double gap : between)
+			CHECK(std::abs(gap - between.front()) <= 1.0);
 		CHECK(std::abs(now.first - edges.first) <= 1.0);
 		CHECK(std::abs(now.second - edges.second) <= 1.0);
 		// The spacer stays before the last place, also where a wide toolbar leaves it no room.
