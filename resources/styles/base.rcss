@@ -1044,13 +1044,27 @@ meter .meter-peak
 	height: 52dp;
 }
 
-/* The adaptive voicing indicator and the padlock in a pad's upper right corner (reference manual pp. 1353-1354). */
-.chord-pad .chord-pad-adaptive, .chord-pad svg.chord-pad-lock
+/* The adaptive voicing reference indicator, the adaptive voicing indicator and the padlock side by side in a pad's
+   upper right corner (reference manual pp. 1353-1354). */
+.chord-pad .chord-pad-indicators
 {
-	display: none;
 	position: absolute;
 	top: 3dp;
 	right: 3dp;
+	display: flex;
+	align-items: center;
+	gap: 2dp;
+}
+
+.chord-pad .chord-pad-reference, .chord-pad .chord-pad-adaptive, .chord-pad svg.chord-pad-lock
+{
+	display: none;
+}
+
+.chord-pad .chord-pad-reference
+{
+	width: 6dp;
+	height: 6dp;
 }
 
 .chord-pad .chord-pad-adaptive
@@ -1065,7 +1079,7 @@ meter .meter-peak
 	height: 10dp;
 }
 
-.chord-pad.adaptive .chord-pad-adaptive, .chord-pad.locked svg.chord-pad-lock
+.chord-pad.reference .chord-pad-reference, .chord-pad.adaptive .chord-pad-adaptive, .chord-pad.locked svg.chord-pad-lock
 {
 	display: block;
 }

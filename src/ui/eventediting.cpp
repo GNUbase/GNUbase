@@ -118,7 +118,7 @@ namespace gnubase::ui
 
 	int64_t EventDisplay::samples(double seconds) const
 	{
-		return std::llround(seconds * m_time.sampleRate);
+		return positionSamples(seconds, m_time.sampleRate);
 	}
 
 	std::optional<int64_t> EventDisplay::selectionStart() const
