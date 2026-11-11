@@ -361,6 +361,34 @@ TEST_CASE("the Workspaces menu adds, updates and recalls workspaces, and the org
 	click(app, "#workspaces-close");
 }
 
+TEST_CASE("the Workspaces menu follows the global workspaces that another client changes", "[ui]")
+{
+	test::UiApp app({1000, 700});
+	app.appUi().showProject();
+	app.call("workspace.add", {{"name", "Mixing"}, {"type", "global"}});
+	const auto updateDisabled = [&app]
+	{ return elements(app, "menuitem[command=window.updateWorkspace]").at(0).at("attributes").contains("disabled"); };
+	openMenu(app);
+	REQUIRE(app.waitUntil([&app] { return menuItems(app) == std::vector<std::string>{"-", "G Mixing*"}; }));
+	CHECK(!updateDisabled());
+	app.ui().key(std::nullopt, "Escape");
+
+	// Another client, such as another GNUbase process, deletes the active workspace: No Workspace is checked, and
+	// Update Workspace has nothing to update.
+	const Json workspaces = app.call("settings.get", {{"key", "ui.workspaces"}}).at("value");
+	app.call("settings.set", {{"key", "ui.workspaces"}, {"value", Json::array()}});
+	openMenu(app);
+	REQUIRE(app.waitUntil([&app] { return menuItems(app) == std::vector<std::string>{"-*"}; }));
+	CHECK(updateDisabled());
+	app.ui().key(std::nullopt, "Escape");
+
+	// Once it is back, it is active again.
+	app.call("settings.set", {{"key", "ui.workspaces"}, {"value", workspaces}});
+	openMenu(app);
+	REQUIRE(app.waitUntil([&app] { return menuItems(app) == std::vector<std::string>{"-", "G Mixing*"}; }));
+	CHECK(!updateDisabled());
+}
+
 TEST_CASE("the Windows dialog lists the open windows, activates and closes them", "[ui]")
 {
 	test::UiApp app({1000, 700});
@@ -418,6 +446,16 @@ TEST_CASE("the Windows dialog lists the open windows, activates and closes them"
 	CHECK(app.shell().windows().size() == 1);
 	REQUIRE(app.waitUntil(closeDisabled));
 	press("#windows-ok");
+}
+
+TEST_CASE("the Windows dialog lists a window that opens right after it, before it follows the windows", "[ui]")
+{
+	test::UiApp app({1000, 700});
+	app.appUi().showProject();
+	app.keys().run("window.windows", Json::object(), app.main(), nullptr);
+	REQUIRE(elements(app, "#windows-list listitem", app.main().id()).size() == 1);
+	REQUIRE(app.appUi().toggleMarkers() != nullptr);
+	REQUIRE(app.waitUntil([&app] { return elements(app, "#windows-list listitem", app.main().id()).size() == 2; }));
 }
 
 TEST_CASE("the script console is a workspace window", "[ui]")

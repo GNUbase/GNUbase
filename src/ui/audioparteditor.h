@@ -158,8 +158,8 @@ namespace gnubase::ui
 		std::unique_ptr<EventWaveforms> m_waveforms;
 
 		Gesture m_gesture = Gesture::None;
-		std::pair<double, int> m_pressedAt;
-		Rml::Vector2f m_pressedMouse; // px
+		std::pair<double, int> m_pressedAt; // the seconds and lane under the press, kept as the display changes
+		Rml::Vector2f m_pressedMouse;       // px
 		bool m_dragged = false;
 		Rml::Vector2f m_draggedTo;                 // px, the mouse's last place in a dragged move
 		std::pair<double, int> m_moved;            // a dragged move's seconds and lanes

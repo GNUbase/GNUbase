@@ -368,7 +368,8 @@ namespace gnubase::ui
 		for (const auto& [id, command] : m_uiCommands)
 			add(id, Json::object(), command.description);
 		for (const auto& [name, info] : m_engineCommands)
-			if (!info.query && engine::validate(Json::object(), info.parameters).empty())
+			if (!info.query && engine::validate(Json::object(), info.parameters).empty() &&
+				info.parameters.value("minProperties", 0) == 0)
 				add(name, Json::object(), info.description);
 		for (const Bound& binding : m_bindings)
 		{

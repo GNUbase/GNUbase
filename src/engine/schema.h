@@ -14,4 +14,9 @@ namespace gnubase::engine
 	// or a schema for the properties that properties doesn't name), items, enum, minimum and maximum. name is where the
 	// value comes from in messages, such as "parameters.gain must be number".
 	std::string validate(const Json& value, const Json& schema, const std::string& name = "parameters");
+
+	// A command's parameter schema none of whose properties is required, though the command needs one of them, such
+	// as a pad or a chord: "minProperties": 1, which validate leaves to the command and its message. The key commands
+	// don't offer such a command without parameters (ui::KeyCommands::commands).
+	Json needsOne(Json schema);
 }

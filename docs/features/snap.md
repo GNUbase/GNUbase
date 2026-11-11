@@ -84,8 +84,9 @@ the project start. The sample grids count from the project start, as the samples
   audio event's cut to the nearest frame within 50 ms where the sum of its channels changes sign, the one of the two
   nearer to zero. A split only looks inside the event, and only at events the position cuts. The file is read on the
   command thread; a file that can't be read leaves the position as it is. `snap.zeroCrossings` moves positions on
-  tracks the same way, inside the audio event that plays there on the first of the tracks that has one: the event
-  display's selection range edges (p. 285, [tools.md](tools.md)).
+  tracks the same way, inside the audio event that plays there on the first of the tracks where one plays: the event
+  display's selection range edges (p. 285, [tools.md](tools.md)). The event that plays is unmuted, within its audio
+  part, which isn't muted, and where events overlap (takes on lanes, the stack of #99) the one in front.
 
 ## The event display
 
@@ -134,7 +135,8 @@ Not yet: grid lines and snap point lines in the event display, the editors' own 
   shuffling forwards, backwards, to the end and to the front, its errors and a locked neighbour, audio events on a
   musical track across a tempo change; splitting and resizing at zero crossings of a real file, not when sizing moves
   the contents or the file is missing; a split near an event's start still splits it, and one just outside an event
-  leaves it alone; `snap.zeroCrossings` inside an event, outside it and on tracks without audio.
+  leaves it alone; `snap.zeroCrossings` inside an event, outside it and on tracks without audio, and following the
+  event in front, not a muted one, nor one outside its part or in a muted part.
 - `tests/eventediting_tests.cpp` (fake window system, real engine): with snap on, a drag, a resize and an Alt click land
   on bars, shuffle swaps two parts, events, a position marker and the cursor attract, a position marker and a cycle
   marker's end on a linear marker track that isn't active attract a drag where `snap.position` puts it, a snap point set

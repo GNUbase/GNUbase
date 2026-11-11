@@ -878,6 +878,58 @@ TEST_CASE("a frame loses no peak to a block that ends while it reads", "[unit]")
 	CHECK(lost == 0);
 }
 
+TEST_CASE("a frame loses no peak of the first block after a reset, also when it is quieter than the held one", "[unit]")
+{
+	// Each round a loud block is held, a reset follows, as Reset on Start does it on the audio thread, and then a
+	// quieter block, while one frame's read races them; that frame or the next one has the quieter block's peak, which
+	// the first block after a reset hands over in place of the held one. Before it did, a frame that took the loud peak
+	// could read the reset's maximum of 0 instead of the quieter block's, which then never reached a frame; that needs
+	// the audio thread's store and load to be reordered within nanoseconds, which nothing can force, so this test
+	// checks the handover rather than reproducing the reordering.
+	constexpr int rounds = 50000;
+	constexpr float loudLevel = 0.9f;
+	const auto quietLevel = [](int round) { return 0.5f * static_cast<float>(round) / rounds; };
+	LevelMeter meter;
+	std::atomic<bool> done{false};
+	std::atomic<int> started{0};
+	std::atomic<int> played{0};
+	std::atomic<int> checked{0};
+	std::atomic<int> lost{0};
+	std::thread reader(
+		[&]
+		{
+			for (int round = 1; round <= rounds; ++round)
+			{
+				while (started < round && !done)
+					std::this_thread::yield();
+				const float racing = meter.readFrame().peak[0];
+				while (played < round && !done)
+					std::this_thread::yield();
+				const float after = meter.readFrame().peak[0];
+				if (racing != quietLevel(round) && after != quietLevel(round) && !done)
+					++lost;
+				checked = round;
+			}
+		});
+	const StopAndJoin stop(done, reader);
+	for (int round = 1; round <= rounds; ++round)
+	{
+		const float loud = loudLevel;
+		const float quiet = quietLevel(round);
+		const float* const loudChannel = &loud;
+		const float* const quietChannel = &quiet;
+		started = round;
+		meter.process(&loudChannel, 1, 1, g_rate);
+		meter.reset();
+		meter.process(&quietChannel, 1, 1, g_rate);
+		played = round;
+		while (checked < round)
+			std::this_thread::yield();
+	}
+	reader.join();
+	CHECK(lost == 0);
+}
+
 TEST_CASE("a frame's peak is never above its maximum, also when the meter is reset meanwhile", "[unit]")
 {
 	// meter.reset comes from the command thread, at any point of the audio thread's blocks and of a frame's read.

@@ -145,8 +145,10 @@ TEST_CASE("scale-based presets, degrees, tensions, inversions and the assistant'
 	CHECK(degreeName(chord("Dm"), 0) == "ii");
 	CHECK(degreeName(chord("Bdim"), 0) == "vii\xC2\xB0");
 	CHECK(degreeName(chord("A#"), 0) == "bVII");
-	CHECK(degreeName(chord("Am"), 9, true) == "i");
-	CHECK(degreeName(chord("G"), 9, true) == "VII");
+	CHECK(degreeName(chord("Am"), 9, "minor") == "i");
+	CHECK(degreeName(chord("G"), 9, "minor") == "VII");
+	// In a preset's scale: F in D dorian is the third degree, not a flat one.
+	CHECK(degreeName(chord("F"), 2, "dorian") == "III");
 	CHECK(degreeName(chord("Caug"), 0) == "I+");
 
 	// More tensions follow the type's ladder; on the key's fifth degree a major chord gets the dominant seventh.
@@ -165,7 +167,7 @@ TEST_CASE("scale-based presets, degrees, tensions, inversions and the assistant'
 	CHECK(inverted({48, 60, 64, 67}, -1) == std::vector<int>{48, 55, 60, 64});
 
 	// After C in C major, the chord a fifth down comes first; all of the key's chords before those outside it.
-	const std::vector<Suggestion> cadence = suggestions(chord("C"), 0, "cadence", 2);
+	const std::vector<Suggestion> cadence = suggestions(chord("C"), 0, "major", "cadence", 2);
 	REQUIRE(cadence.size() == 24);
 	CHECK(midi::chordName(cadence[0].chord) == "F");
 	CHECK(cadence[0].level == 0);
@@ -174,7 +176,7 @@ TEST_CASE("scale-based presets, degrees, tensions, inversions and the assistant'
 	CHECK(std::none_of(
 		cadence.begin(), cadence.end(), [](const Suggestion& s) { return midi::chordName(s.chord) == "C"; }));
 	// Common notes: chords that share exactly two notes with C, such as Am and Em.
-	const std::vector<Suggestion> common = suggestions(chord("C"), 0, "commonNotes", 2);
+	const std::vector<Suggestion> common = suggestions(chord("C"), 0, "major", "commonNotes", 2);
 	std::vector<std::string> commonNames;
 	commonNames.reserve(common.size());
 	for (const Suggestion& suggestion : common)
@@ -182,6 +184,17 @@ TEST_CASE("scale-based presets, degrees, tensions, inversions and the assistant'
 	CHECK(std::find(commonNames.begin(), commonNames.end(), "Am") != commonNames.end());
 	CHECK(std::find(commonNames.begin(), commonNames.end(), "Em") != commonNames.end());
 	CHECK(std::find(commonNames.begin(), commonNames.end(), "F") == commonNames.end());
+	// The levels are measured against the scale: in D dorian Dm is common, D (with F#) isn't, as it is in D major.
+	const auto levelOf = [](const std::vector<Suggestion>& list, const std::string& name)
+	{
+		const auto found = std::find_if(
+			list.begin(), list.end(), [&name](const Suggestion& s) { return midi::chordName(s.chord) == name; });
+		return found == list.end() ? -1 : found->level;
+	};
+	CHECK(levelOf(suggestions(chord("Am"), 2, "dorian", "commonNotes", 1), "Dm") == 0);
+	CHECK(levelOf(suggestions(chord("Am"), 2, "dorian", "commonNotes", 1), "D") == 1);
+	CHECK(levelOf(suggestions(chord("Am"), 2, "major", "commonNotes", 1), "D") == 0);
+	CHECK(levelOf(suggestions(chord("G"), 2, "dorian", "cadence", 2), "F") == 0);
 }
 
 TEST_CASE("chord pads hold chords with voicings and change with the pad modifiers", "[unit]")
@@ -247,9 +260,19 @@ TEST_CASE("chord pads hold chords with voicings and change with the pad modifier
 	CHECK(padChords(client)[3] == "C");
 	CHECK(padChords(client)[2] == "C");
 
-	// Each change is an undo step.
+	// Each change is an undo step, and undo and redo announce the pads too.
+	while (client.poll())
+	{
+	}
 	run(client, "history.undo");
 	CHECK(padChords(client)[3] == "F");
+	const Json undone = waitFor(client, "chordPads.changed");
+	REQUIRE(undone.is_object());
+	CHECK(undone.at("pads")[3].at("chord") == "F");
+	run(client, "history.redo");
+	const Json redone = waitFor(client, "chordPads.changed");
+	REQUIRE(redone.is_object());
+	CHECK(redone.at("pads")[3].at("chord") == "C");
 }
 
 TEST_CASE("the root key, presets and the chord track's chords fill the pads", "[unit]")
@@ -269,6 +292,15 @@ TEST_CASE("the root key, presets and the chord track's chords fill the pads", "[
 	const Json pads = run(client, "chordPads.get");
 	CHECK(pads.at("rootKey") == 2);
 	CHECK(pads.at("preset") == "dorian");
+	// The degrees and the assistant's levels are the loaded preset's scale's.
+	CHECK(pads.at("pads")[0].at("degree") == "i");
+	CHECK(pads.at("pads")[2].at("degree") == "III");
+	const Json afterDm = run(client, "chordPads.assistant", {{"kind", "list"}, {"chord", "Dm"}});
+	const auto f = std::find_if(afterDm.at("suggestions").begin(), afterDm.at("suggestions").end(),
+		[](const Json& suggestion) { return suggestion.at("chord") == "F"; });
+	REQUIRE(f != afterDm.at("suggestions").end());
+	CHECK(f->at("level") == 0);
+	CHECK(f->at("degree") == "III");
 	// Players only keeps the chords; the basic player has no octave offset.
 	run(client, "chordPads.set", {{"octaveOffset", 1}});
 	run(client, "chordPads.loadPreset", {{"preset", "major"}, {"load", "players"}});
@@ -431,6 +463,25 @@ TEST_CASE("step input and pads dragged onto tracks make chord events and MIDI pa
 	CHECK(chords.at("events")[1].at("chord") == "Am");
 	CHECK(chords.at("events")[1].at("position") == 2 * g_bar);
 	CHECK(run(client, "chordPads.get").at("stepPosition") == 3 * g_bar);
+	// Left and Right move the step position by bars; a pad's chord goes where a chord already is in its place, and
+	// at the start of the bar of a position within one (#967).
+	run(client, "chordPads.set", {{"stepBars", -1}});
+	CHECK(run(client, "chordPads.get").at("stepPosition") == 2 * g_bar);
+	run(client, "chordPads.step", {{"pad", 3}});
+	chords = run(client, "chord.get");
+	REQUIRE(chords.at("events").size() == 2);
+	CHECK(chords.at("events")[1].at("chord") == "F");
+	CHECK(chords.at("events")[1].at("position") == 2 * g_bar);
+	run(client, "chordPads.set", {{"stepPosition", g_bar + g_beatTicks}});
+	run(client, "chordPads.step", {{"pad", 5}});
+	chords = run(client, "chord.get");
+	REQUIRE(chords.at("events").size() == 2);
+	CHECK(chords.at("events")[0].at("chord") == "Am");
+	CHECK(chords.at("events")[0].at("position") == g_bar);
+	CHECK(run(client, "chordPads.get").at("stepPosition") == 2 * g_bar);
+	run(client, "chordPads.set", {{"stepBars", -5}});
+	CHECK(run(client, "chordPads.get").at("stepPosition") == 0);
+	run(client, "chordPads.set", {{"stepPosition", g_bar}});
 	// Move Insert: the events from the position on move a bar later.
 	run(client, "chordPads.set", {{"moveInsert", true}, {"stepPosition", g_bar}});
 	run(client, "chordPads.step", {{"pad", 4}});
@@ -452,6 +503,14 @@ TEST_CASE("step input and pads dragged onto tracks make chord events and MIDI pa
 		pitches.push_back(note.at("pitch").get<int>());
 	std::sort(pitches.begin(), pitches.end());
 	CHECK(pitches == std::vector<int>{48, 60, 64, 67});
+}
+
+TEST_CASE("chord pads from a file with no pads or a reference below -1 keep sound values", "[unit]")
+{
+	Project project;
+	chordPadsFromJson(project, {{"pads", Json::array()}, {"reference", -5}});
+	CHECK(project.chordPads.pads.size() == 12);
+	CHECK(project.chordPads.reference == -1);
 }
 
 TEST_CASE("the chord pads are saved with the project", "[integration]")

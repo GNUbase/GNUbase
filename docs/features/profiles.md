@@ -20,11 +20,15 @@ track presets and templates (p. 1579).
   folder and the chosen profile's come into the settings folder. A profile without a file has that file's defaults.
   The switch copies both profiles' files into the folder `profile-switch` first and writes `profiles.json` only once
   all files are in place: if a step fails, the active profile's files go back and it stays active, and the switch is
-  tried again at the next start. A chosen profile whose folder the file system takes for the active profile's (see
-  Names) isn't switched to.
+  tried again at the next start. If GNUbase stops during the switch, such as in a crash, the next start first puts
+  the active profile's files back from `profile-switch/active` (complete once `profile-switch/active-profile` names
+  the profile, written after both copies) while `profiles.json` still has that profile active, then switches again;
+  if they can't be put back, `profile-switch` stays, as it may hold their only complete copy, and the switch waits.
+  The safe start mode's Delete program preferences drops `profile-switch` with the pending switch. A chosen profile
+  whose folder the file system takes for the active profile's (see Names) isn't switched to.
 - **Names** are folder names on every OS: 1 to 100 characters, none of `< > : " / \ | ? *`, not ending with a dot or a
-  space, and not a name that Windows keeps for devices (CON, PRN, AUX, NUL, COM1 to COM9, LPT1 to LPT9, also with an
-  extension). Since the folders aren't case-sensitive on Windows and macOS, a name that differs from another profile's
+  space, and not a name that Windows keeps for devices (CON, CONIN$, CONOUT$, PRN, AUX, NUL, COM1 to COM9, LPT1 to
+  LPT9 and COM¹ to COM³, LPT¹ to LPT³ with superscript digits, also with an extension). Since the folders aren't case-sensitive on Windows and macOS, a name that differs from another profile's
   only in case is taken; GNUbase compares ASCII letters itself and asks the file system about the others (NTFS and
   APFS fold letters such as Ä too, and APFS ignores the Unicode normalization): a name whose folder exists already, or
   that the file system takes for the active profile's, is taken. A profile can be renamed to its own name in another
@@ -80,8 +84,10 @@ on macOS and Linux.
   exported and imported on another settings folder, under the file's name or another; none without a settings folder;
   add, duplicate, rename and import refusing a name that differs from another profile's only in case; device names
   refused; names in another case of letters such as Ä taken where the file system folds them, also the active
-  profile's; a switch that fails on the way leaving the settings and the active profile as they were; a switch to a
-  folder that is the active profile's refused.
+  profile's; a switch that fails on the way leaving the settings and the active profile as they were, before anything
+  changed and after the active profile's files were saved; a switch that GNUbase didn't finish undone at the next
+  start, then done, or kept for later when its files can't be put back, and dropped by Delete program preferences; a
+  switch to a folder that is the active profile's refused.
 - `tests/profiles_ui_tests.cpp`: the Profile Manager from the Edit menu, adding, duplicating, renaming and deleting
   profiles through its name field and buttons, a taken name's error, and Activate Profile saying that the profile
   becomes active at the next start; Export and Import through the file dialogs, answered as `ui_file_dialog` does.

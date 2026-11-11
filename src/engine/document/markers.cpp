@@ -910,8 +910,8 @@ namespace gnubase::engine
 				"(default: the active one) and type (default: position). Cycle markers locate to their start. With "
 				"the user setting transport.cycleFollowsMarkers it also sets the locators to the marker: a cycle "
 				"marker's range, or from a position marker to the next marker after it on its track, if there is one.",
-				objectSchema(
-					{{"marker", idSchema}, {"number", integerSchema}, {"type", typeSchema}, {"track", idSchema}}),
+				needsOne(objectSchema(
+					{{"marker", idSchema}, {"number", integerSchema}, {"type", typeSchema}, {"track", idSchema}})),
 				locateResult, false},
 			[this](CommandContext& context)
 			{
@@ -925,7 +925,7 @@ namespace gnubase::engine
 			{"marker.setLocators", 1,
 				"Sets the left and right locators to a cycle marker's start and end, given by id (marker) or by its "
 				"number on a marker track (default: the active one).",
-				objectSchema({{"marker", idSchema}, {"number", integerSchema}, {"track", idSchema}}),
+				needsOne(objectSchema({{"marker", idSchema}, {"number", integerSchema}, {"track", idSchema}})),
 				{{"type", "object"},
 					{"properties",
 						{{"marker", {{"type", "object"}}}, {"left", integerSchema}, {"right", integerSchema}}},
