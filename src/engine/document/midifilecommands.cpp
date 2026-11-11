@@ -163,7 +163,8 @@ namespace gnubase::engine
 				"another, each from a bar start. Names that aren't UTF-8 are read as Windows-1252. Unless tempo is "
 				"false, the file's tempo and time signatures replace the project's from position to the file's end "
 				"(tempo changes on the tempo track, which becomes active); after the end, the project's are kept if "
-				"they change after position, else the file's last ones go on. Unless markers is false, its "
+				"they change after position or the project's parts, events or markers end after the file's end, "
+				"else the file's last ones go on. Unless markers is false, its "
 				"markers are added to the active marker track (one is added if there is none), except that a type 1 "
 				"file's tracks of nothing but a name and markers, which midiFile.export writes for marker tracks, "
 				"become new marker tracks at the top while the project has room for them. The options of the "
@@ -212,6 +213,21 @@ namespace gnubase::engine
 		options.start = project.tempo.toTicks(position, project.sampleRate);
 		options.tempo = project.tempo;
 		options.signatures = project.signatures;
+		// Where the project's parts, events and markers end: the project's tempo and signatures go on after the
+		// file's end if anything of it is there.
+		const auto ticksAt = [&project](const time::Position& at)
+		{ return time::toTicks(at, project.tempo, project.sampleRate); };
+		for (const auto& [id, part] : project.midiParts)
+			options.contentEnd =
+				std::max(options.contentEnd, ticksAt({part.position.base, part.position.value + part.length}));
+		for (const auto& [id, part] : project.audioParts)
+			options.contentEnd =
+				std::max(options.contentEnd, ticksAt({part.position.base, part.position.value + part.length}));
+		for (const auto& [id, event] : project.audioEvents)
+			options.contentEnd =
+				std::max(options.contentEnd, ticksAt({time::TimeBase::Linear, eventSpan(project, event).end}));
+		for (const auto& [id, marker] : project.markers)
+			options.contentEnd = std::max(options.contentEnd, ticksAt(marker.end));
 		midifile::Import imported;
 		try
 		{

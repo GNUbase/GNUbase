@@ -1005,11 +1005,13 @@ namespace gnubase::engine::midifile
 			else if (bpm != points.back().bpm)
 				points.push_back({at, bpm, false});
 		}
-		// Where the project's tempo changes after the start, it is the project's again from the file's end on;
-		// otherwise the file's last tempo goes on, as in a new project.
+		// Where the project's tempo changes after the start or the project has content after the file's end, it is
+		// the project's again from the file's end on; otherwise the file's last tempo goes on, as in a new project.
+		const bool keepsAfterEnd = options.contentEnd > end;
 		const auto afterEnd = std::find_if(projectTempo.begin(), projectTempo.end(),
 			[end](const time::TempoPoint& point) { return point.position > end; });
-		if (std::any_of(projectTempo.begin(), projectTempo.end(),
+		if (keepsAfterEnd ||
+			std::any_of(projectTempo.begin(), projectTempo.end(),
 				[&options](const time::TempoPoint& point) { return point.position > options.start; }))
 		{
 			const double bpm = options.tempo.bpmAt(end);
@@ -1028,7 +1030,8 @@ namespace gnubase::engine::midifile
 		for (const auto& [at, signature] : signatures)
 			bars.add(at, signature);
 		const std::vector<time::SignatureChange> projectBars = options.signatures.changes();
-		if (std::any_of(projectBars.begin(), projectBars.end(), [&options](const time::SignatureChange& change)
+		if (keepsAfterEnd ||
+			std::any_of(projectBars.begin(), projectBars.end(), [&options](const time::SignatureChange& change)
 				{ return options.signatures.barStart(change.bar) > options.start; }))
 		{
 			bars.add(end, options.signatures.signatureAt(end));

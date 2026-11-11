@@ -218,6 +218,45 @@ TEST_CASE("midiFile.import keeps the project's tempo and signatures after the fi
 	CHECK(signatures[3].at("numerator") == 3);
 }
 
+TEST_CASE(
+	"midiFile.import keeps a constant project tempo and signature for the parts after the file's end", "[integration]")
+{
+	const test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	run(client, "project.set", {{"tempo", 100.0}});
+	const auto keys =
+		run(client, "track.add", {{"type", "midi"}, {"name", "Keys"}}).at("track").at("id").get<ObjectId>();
+	run(client, "midiPart.add", {{"track", keys}, {"position", 19 * 4 * g_quarter}, {"length", 4 * g_quarter}});
+	Json project = run(client, "project.get");
+	const double sampleRate = project.at("sampleRate").get<double>();
+
+	// A bar of 3/4 without tempo, at 120 BPM, dropped at bar 10.
+	midifile::File file;
+	file.tracks.push_back(track("Tempo", {midifile::metaEvent(0, midifile::g_metaTimeSignature, {3, 2, 24, 8})}));
+	file.tracks.push_back(track("Piano", {note(0, 0, 60, true), note(1440, 0, 60, false)}));
+	const std::string path = save(dir, "song.mid", file);
+	const Ticks start = 9 * 4 * g_quarter;
+	run(client, "midiFile.import",
+		{{"path", path}, {"position", gnubase::time::TempoMap(100.0).toSamples(start, sampleRate)}});
+	project = run(client, "project.get");
+
+	// The file's 120 BPM and 3/4 for its bar, then the project's 100 BPM and 4/4 again.
+	const Json& tempo = project.at("tempo");
+	REQUIRE(tempo.size() == 3);
+	CHECK(tempo[1].at("position") == start);
+	CHECK(tempo[1].at("bpm") == 120.0);
+	CHECK(tempo[2].at("position") == start + 3 * g_quarter);
+	CHECK(tempo[2].at("bpm") == 100.0);
+	const Json& signatures = project.at("signatures");
+	REQUIRE(signatures.size() == 3);
+	CHECK(signatures[1].at("bar") == 9);
+	CHECK(signatures[1].at("numerator") == 3);
+	CHECK(signatures[2].at("bar") == 10);
+	CHECK(signatures[2].at("numerator") == 4);
+	CHECK(signatures[2].at("denominator") == 4);
+}
+
 TEST_CASE("midiFile.import keeps a type 0 file in one track unless it dissolves it", "[integration]")
 {
 	const test::TempDir dir;
