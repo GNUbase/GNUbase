@@ -15,6 +15,7 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <string_view>
 
 #ifndef _WIN32
 #include <sys/wait.h>
@@ -58,9 +59,10 @@ namespace
 
 CATCH_REGISTER_LISTENER(TempFolderOfTheRun)
 
+#ifdef GNUBASE_TESTS
 namespace
 {
-	const std::string g_reported = "temp folder of the run: ";
+	constexpr std::string_view g_reported = "temp folder of the run: ";
 }
 
 // Run by the test below in a child process: reports the run's temp folder and leaves a file in it.
@@ -69,8 +71,8 @@ TEST_CASE("a test run reports its temp folder", "[.][unit][temp-folder-child]")
 	std::filesystem::path folder = std::filesystem::temp_directory_path();
 	if (!folder.has_filename())
 		folder = folder.parent_path(); // without the trailing separator
-	std::ofstream(folder / "left behind.txt") << "a recording";
-	std::cout << g_reported << folder.u8string() << std::endl;
+	REQUIRE(std::ofstream(folder / "left behind.txt") << "a recording");
+	std::cout << g_reported << folder.u8string() << '\n';
 }
 
 TEST_CASE("a test run's temp folder is gone when the run ends", "[integration]")
@@ -93,10 +95,15 @@ TEST_CASE("a test run's temp folder is gone when the run ends", "[integration]")
 	std::istringstream lines(output);
 	std::filesystem::path folder;
 	for (std::string line; std::getline(lines, line);)
+	{
+		if (!line.empty() && line.back() == '\r')
+			line.pop_back();
 		if (line.rfind(g_reported, 0) == 0)
 			folder = std::filesystem::u8path(line.substr(g_reported.size()));
+	}
 	REQUIRE(!folder.empty());
 	CHECK(folder.filename().u8string().rfind("gnubase-test-", 0) == 0);
 	CHECK(std::filesystem::equivalent(folder.parent_path(), std::filesystem::temp_directory_path())); // ours
 	CHECK(!std::filesystem::exists(folder));
 }
+#endif

@@ -404,14 +404,16 @@ namespace gnubase::engine
 		std::error_code error;
 		for (fs::directory_iterator entry(folder, error), end; !error && entry != end; entry.increment(error))
 		{
+			std::string name;
 			try
 			{
-				taken.insert(foldedName(entry->path().filename()));
+				name = foldedName(entry->path().filename());
 			}
 			catch (const std::system_error&)
 			{
-				// Not valid UTF-16 (Windows): no name made here can match it.
+				continue; // not valid UTF-16 (Windows): no name made here can match it
 			}
+			taken.insert(std::move(name));
 		}
 		return taken;
 	}
