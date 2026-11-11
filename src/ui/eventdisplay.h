@@ -591,10 +591,13 @@ namespace gnubase::ui
 		bool takesParts(size_t lane) const;
 		// The lane at y dp down the event lanes, if there is one there.
 		std::optional<size_t> visibleLaneAt(double y) const;
+		// Whether y dp down the event lanes is in the lower half of the lane.
+		bool inLowerHalf(size_t lane, double y) const;
 		// The edge of the event at x dp across the lanes that a press there resizes: -1 its start, 1 its end, 0 none.
 		int edgeAt(const Shown& shown, double x) const;
-		// The edge of the audio event at x, y dp that a press of the play tool in scrub mode resizes, scrubbing along
-		// (reference manual p. 268): as edgeAt, 0 for none.
+		// The edge of the audio event at x, y dp that a press of the play tool in scrub mode resizes, scrubbing along:
+		// as edgeAt, but only at the event's lower left or right corner, the lower half of its lane, so that the rest
+		// of the edge scrubs the track (reference manual p. 268); 0 for none.
 		int scrubEdgeAt(double x, double y) const;
 		// Sends audition.scrub for the auditioned track at x dp across.
 		void scrubAt(double x);

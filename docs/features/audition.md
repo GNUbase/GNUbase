@@ -19,7 +19,9 @@ in the project window ([tools.md](tools.md)), and the commands behind them, whic
   `position` (`transport.changed`), as the reference's scrubbing does, before it changes the audition, so that a
   busy transport fails it without a change; while the transport plays, cued exactly as `transport.locate` does, so
   that the other tracks play on without a dropout.
-- `audition.stop` ends either, and closes the files it played and frees their stream buffers.
+- `audition.stop` ends either, and closes the files it played and frees their stream buffers. If the audio thread is
+  in the middle of a block with what it played, it waits for the block's end (at most 0.2 seconds) and frees that
+  too, the track's player with it, rather than keep it until the next audition.
 - **A media file on its own** (#730): `audition.start` and `audition.scrub` take `media` instead of `track`, as the
   sample editor's play and scrub tools play its clip (reference manual p. 630): `position` and `end` are then the
   file's sample frames, from 0 to its length, and it plays the file, also where no event plays it, without the
@@ -58,16 +60,19 @@ or a clip of the project.
 
 ## Checks
 
-- `tests/playback_tests.cpp`: auditioning on the dummy device plays exactly the track's samples from the position,
-  and up to an end, for two block sizes, with its channel turned down and muted and another track silent, then
-  nothing once stopped, and the transport unchanged; the errors without a device, for a MIDI track, a negative
-  position and an end before the position; scrubbing back at normal speed and forwards at twice the speed, sample by
-  sample, and the cursor following; scrubs that come before the last one played out, or two before the audio thread
-  plays either, carrying on from where it got to, with and without `seconds`, and only the first in the command log;
-  stopping closing the streams; a media file played from frames outside its event, past its end and at half the
-  project's sample rate, scrubbed without moving the cursor, also at half the project's sample rate, and its
-  errors, also for a hand-edited project's file without a sample rate or length; a clip played and scrubbed with its
-  fades.
+- `tests/playback_tests.cpp`: auditioning on the dummy device plays exactly the track's samples from the position, and
+  up to an end, for two block sizes, with its channel turned down and muted and another track silent, then nothing
+  once stopped, and the transport unchanged; the errors without a device, for a MIDI track, a negative position and an
+  end before the position; scrubbing back at normal speed and forwards at twice the speed, sample by sample, and the
+  cursor following; scrubs that come before the last one played out, or two before the audio thread plays either,
+  carrying on from where it got to, with and without `seconds`, and only the first in the command log; stopping
+  closing the streams, and freeing what played also from the middle of an audio block; a media file played from frames
+  outside its event, past its end and at half the project's sample rate, scrubbed without moving the cursor, also at
+  half the project's sample rate, and its errors, also for a hand-edited project's file without a sample rate or
+  length; a clip played and scrubbed with its fades.
+- `tests/playback_tests.cpp`, in real time on the dummy device (`[realtime]`): scrubbing while the transport plays
+  leaving the playback without dropouts, and an `audition.start` while another plays starting at its position without
+  a frame left out (the cue thread held off).
 - `tests/renderinplace_tests.cpp`: a frozen channel's freeze file is no media file to audition.
 - `tests/eventediting_tests.cpp` and `tests/uiapp_tests.cpp`: the play tool on an audio lane, on a MIDI lane, and
   scrubbing ([tools.md](tools.md)).

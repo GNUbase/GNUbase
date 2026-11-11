@@ -38,13 +38,14 @@ project or undo.
   `warpGridFollow`, `freeWarp`).
 - **Draw** makes MIDI parts on MIDI and instrument tracks and audio parts on audio tracks
   ([audio-parts.md](audio-parts.md)). A drag's ends snap.
-- **Play** auditions the pressed audio track from where it presses until the mouse is released, past its channel
-  and without the transport (`audition.start`, `audition.stop`, [audition.md](audition.md)). In scrub mode the
-  press and every move of the drag scrub the track to the mouse's position (`audition.scrub`), forwards or
-  backwards at the mouse's speed, and move the project cursor along. At an audio event's edge, a drag in scrub mode
-  resizes the event as the object selection tool does (`event.resize`, the resize pointer there) and scrubs what the
-  event plays at the edge the release gives it, snapped: its clip at that clip frame (`audition.scrub` with `clip`,
-  from the drag's `event.previewResize`), also over audio the event hides yet, and without moving the cursor (p. 268).
+- **Play** auditions the pressed audio track from where it presses until the mouse is released, past its channel and
+  without the transport (`audition.start`, `audition.stop`, [audition.md](audition.md)). In scrub mode the press and
+  every move of the drag scrub the track to the mouse's position (`audition.scrub`), forwards or backwards at the
+  mouse's speed, and move the project cursor along. At an audio event's lower left or right corner, the lower half of
+  its edge, a drag in scrub mode resizes the event as the object selection tool does (`event.resize`, the resize
+  pointer there) and scrubs what the event plays at the edge the release gives it, snapped: its clip at that clip
+  frame (`audition.scrub` with `clip`, from the drag's `event.previewResize`), also over audio the event hides yet,
+  and without moving the cursor (p. 268); the upper half of the edge scrubs the track, as the rest of the event does.
   A click there without a drag does nothing more: no tool modifier of the object selection tool's clicks. On other
   tracks it does nothing yet.
 - **Cross-hair cursor.** It shows with the tools that use it (object selection, range selection, draw, split, line),
@@ -174,7 +175,7 @@ audio editor gets its toolbox when it comes. The Preferences dialog's Editing - 
   with Alt; the rectangle zooming the track heights with `ui.zoomToolHorizontalOnly` off; drawing parts,
   snapped, by dragging and with a click, and MIDI parts with the object selection tool and Alt, none on audio tracks or with the line tool; auditioning the audio lane's
   track on the dummy device while the mouse is pressed, nothing on a MIDI lane, scrubbing with a drag, and resizing an
-  audio event at its edge in scrub mode, with its pointer there, the dummy device playing the clip's hidden audio
+  audio event at its lower corners in scrub mode, with its pointer there, while the upper part of the edge scrubs, the dummy device playing the clip's hidden audio
   that an edge dragged outwards reveals, and Alt and Alt+Shift clicks there neither splitting nor locating; ranges by dragging, clicking and double clicking on events and gaps, with Shift, snapped and on
   every track, and the events they select when another tool takes over; range edges at zero crossings with Snap to
   Zero Crossing; the combined selection tools, and a lane less than two rows high selecting events only; the pointer

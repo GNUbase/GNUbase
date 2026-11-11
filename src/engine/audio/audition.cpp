@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include <string>
+#include <thread>
 #include <utility>
 
 namespace gnubase::engine
@@ -18,6 +19,8 @@ namespace gnubase::engine
 	namespace
 	{
 		constexpr auto g_startWait = std::chrono::seconds(2); // for the streams before auditioning starts
+		// For the audio thread to finish the block it plays the state before a stop in.
+		constexpr auto g_releaseWait = std::chrono::milliseconds(200);
 		constexpr double g_minScrubSeconds = 0.01;
 		constexpr double g_maxScrubSeconds = 0.1;
 		constexpr double g_maxScrubMaterial = 4.0; // seconds of the track one scrub plays at most
@@ -156,6 +159,16 @@ namespace gnubase::engine
 		m_scrubbing = false;
 		m_readers.clear();
 		publish(std::make_unique<State>());
+		// The audio thread may be in the middle of a block with the state before, which publishing then can't free,
+		// and no state may come after this one for a long time: it lets go of it at the block's end, so the state
+		// and its player are freed here, not kept until the next audition. Past the wait (an audio thread that
+		// stalls), the next publish frees it.
+		const auto deadline = std::chrono::steady_clock::now() + g_releaseWait;
+		while (m_states.retired() > 0 && std::chrono::steady_clock::now() < deadline)
+		{
+			std::this_thread::yield();
+			m_states.collect();
+		}
 		m_playback.setTracks({}, {}, 0.0); // closes the streams' files and frees their buffers
 	}
 
@@ -436,10 +449,13 @@ namespace gnubase::engine
 		engine.registerCommand(
 			{"audition.scrub", 1,
 				"Scrubs an audio track, as the scrub tool does while the mouse drags: plays its events from where the "
-				"last scrub of the track got to, to position (samples), forwards or backwards, in seconds (default: "
-				"the time since that scrub, 0.01 to 0.1 seconds), so speed and pitch follow how fast the positions "
-				"come; the first scrub only sets where the next one starts. Like audition.start it goes straight to "
-				"the main mix's outputs; it also moves the project cursor to position (transport.changed). Or, "
+				"audio got to in the last scrub of the track (where that one starts if it hasn't played yet), to "
+				"position (samples), forwards or backwards, in seconds (default: the time since that scrub, 0.01 to "
+				"0.1 seconds), so speed and pitch follow how fast the positions come, and scrubs that come faster "
+				"than they play carry on without gaps. The first scrub only sets where the next one starts, and is the "
+				"only one of a drag in engine.commandLog. Like audition.start it goes straight to the main mix's "
+				"outputs; it also moves the project cursor to position (transport.changed), while the transport plays "
+				"cued exactly as transport.locate does, so that the other tracks play on without a dropout. Or, "
 				"instead of track, a media file on its own, or a clip, its media file with the clip's fades, as the "
 				"sample editor scrubs its clip: position is then one of the file's sample frames, and the cursor "
 				"stays. Ends with audition.stop. Announces audition.changed.",

@@ -786,10 +786,12 @@ namespace gnubase::engine
 			for (size_t i = 0; i < m_voices.size(); ++i)
 				if (m_voices[i]->channel == track.channel)
 					mine.push_back(i);
-			// A voice the audio thread is reading from stays where it is.
+			// A voice the audio thread is reading from stays where it is. Also for an exact cue: one that comes while
+			// playback runs on elsewhere, as a locate while playing or an audition that replaces another does, gets
+			// other voices, so that what plays until the audio thread goes there has its own.
 			std::vector<bool> reading(m_voices.size(), false);
 			for (const size_t i : mine)
-				reading[i] = cue.playing && states[i].started && states[i].lastBlock + 2 > now;
+				reading[i] = states[i].started && states[i].lastBlock + 2 > now;
 			std::vector<bool> taken = reading;
 			std::vector<bool> claimed(m_voices.size(), false); // has one of the entries at the cursor
 
