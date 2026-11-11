@@ -298,8 +298,9 @@ namespace gnubase::ui
 		// File > Import > MIDI File (#478, reference manual pp. 364-365): imports MIDI files with the options of the
 		// user settings midi.import*, at the left locator with midi.importToLeftLocator, else at the project start.
 		// Into a new project (newProject), the file's tempo always replaces the project's. MIDI files dropped on the
-		// event lanes go where they are dropped instead, and with midi.importSinglePart into one part, on the MIDI or
-		// instrument track they are dropped on if any.
+		// event lanes go where they are dropped instead (elsewhere on the display, such as the track list, to the
+		// project cursor), and with midi.importSinglePart into one part, on the MIDI or instrument track they are
+		// dropped on if any.
 		void importMidi(const std::vector<std::string>& files, bool newProject = false);
 
 		// The commands that key commands bind to, by id: zoom.in, zoom.out, zoom.inVertically, zoom.outVertically,
@@ -509,7 +510,7 @@ namespace gnubase::ui
 			bool clipsOnly = false;
 			bool selected = false;             // track is the selected one, which takes the first file, not all of them
 			int lane = 0;                      // the lane of track the files go on
-			bool dropped = false;              // on the event lanes, at sample
+			bool dropped = false;              // on the display, at sample
 			std::optional<uint64_t> midiTrack; // the MIDI or instrument track they were dropped on
 		};
 		// The import options (#477): the Import Options dialog's, and the user settings editing.importAudio* that it
