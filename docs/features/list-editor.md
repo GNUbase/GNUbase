@@ -92,7 +92,8 @@ Start, end and length are in bars and beats; end and length only for notes. The 
 
 ## Not yet
 
-The MIDI SysEx Editor dialog (address, ASCII, decimal and binary displays, Insert and Delete, importing and exporting
+The setup panes of the toolbar and the info line (p. 1575), which only the project window has so far
+([docking.md](docking.md)); the MIDI SysEx Editor dialog (address, ASCII, decimal and binary displays, Insert and Delete, importing and exporting
 .syx files); the auditioning column and the project cursor; the Focus menu's user presets and Setup (the transform
 editor); text, lyrics and SMF events, which the project has no type for; muting events and the mute tool (notes have
 no mute yet); Alt-dragging a copy, resizing notes and the selection rectangle in the event display; Delete and
