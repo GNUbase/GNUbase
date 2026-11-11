@@ -296,7 +296,7 @@ namespace gnubase::ui
 				const Json tied = *covering;
 				const int start = tied.at("index").get<int>();
 				const int span = tied.value("length", 1);
-				const int length = laneLength(other);
+				const int length = std::max(laneLength(other), 1);
 				const int into = (((index - start) % length) + length) % length;
 				removeStep(other, start);
 				if (into > 0)
