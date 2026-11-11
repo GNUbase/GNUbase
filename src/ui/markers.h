@@ -11,7 +11,6 @@
 #include <RmlUi/Core/ObserverPtr.h>
 #include <RmlUi/Core/Types.h>
 
-#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -205,7 +204,7 @@ namespace gnubase::ui
 		bool m_modeKnown = false; // changed since it was asked for
 		bool m_loading = false;
 		bool m_stale = false;
-		std::chrono::steady_clock::time_point m_lastClick; // for double clicks
+		std::optional<double> m_lastClick; // RmlUi's time of the last click, for double clicks
 		Rml::Vector2f m_lastMouse;
 		std::vector<Subscription> m_subscriptions;
 	};

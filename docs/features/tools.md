@@ -38,13 +38,14 @@ project or undo.
   `warpGridFollow`, `freeWarp`).
 - **Draw** makes MIDI parts on MIDI and instrument tracks and audio parts on audio tracks
   ([audio-parts.md](audio-parts.md)). A drag's ends snap.
-- **Play** auditions the pressed audio track from where it presses until the mouse is released, past its channel
-  and without the transport (`audition.start`, `audition.stop`, [audition.md](audition.md)). In scrub mode the
-  press and every move of the drag scrub the track to the mouse's position (`audition.scrub`), forwards or
-  backwards at the mouse's speed, and move the project cursor along. At an audio event's edge, a drag in scrub mode
-  resizes the event as the object selection tool does (`event.resize`, the resize pointer there) and scrubs what the
-  event plays at the edge the release gives it, snapped: its clip at that clip frame (`audition.scrub` with `clip`,
-  from the drag's `event.previewResize`), also over audio the event hides yet, and without moving the cursor (p. 268).
+- **Play** auditions the pressed audio track from where it presses until the mouse is released, past its channel and
+  without the transport (`audition.start`, `audition.stop`, [audition.md](audition.md)). In scrub mode the press and
+  every move of the drag scrub the track to the mouse's position (`audition.scrub`), forwards or backwards at the
+  mouse's speed, and move the project cursor along. At an audio event's lower left or right corner, the lower half of
+  its edge, a drag in scrub mode resizes the event as the object selection tool does (`event.resize`, the resize
+  pointer there) and scrubs what the event plays at the edge the release gives it, snapped: its clip at that clip
+  frame (`audition.scrub` with `clip`, from the drag's `event.previewResize`), also over audio the event hides yet,
+  and without moving the cursor (p. 268); the upper half of the edge scrubs the track, as the rest of the event does.
   A click there without a drag does nothing more: no tool modifier of the object selection tool's clicks. On other
   tracks it does nothing yet.
 - **Cross-hair cursor.** It shows with the tools that use it (object selection, range selection, draw, split, line),
@@ -53,7 +54,13 @@ project or undo.
   in the root's attributes `range` (`"start end"`) and `range-tracks`, and drawn as `.range-selection` (`.shown` while
   there is one). Its edges snap. With Snap to Zero Crossing on, a range that a drag, a click or a double click made
   then moves its edges to zero crossings of the audio on its tracks (`snap.zeroCrossings`, [snap.md](snap.md), p. 285),
-  unless it changed meanwhile. Choosing the range tool selects no events; choosing another tool selects the events in the range instead and ends
+  unless it changed meanwhile. Until `snap.zeroCrossings` has answered, the display's actions wait, and engine key
+  commands with them (`EngineBinding::sendAwaited` and `afterAwaited`), so that an edit right after the release, such
+  as Delete, edits the range where its edges went, and an undo after it comes after it. A press while actions wait,
+  which may start another range, first lets them run on the range they waited for (`runWaitingActions`: the binding
+  settles, at most two seconds). A script that draws a range and edits it through the UI has the edit in its undo
+  step ([scripts.md](scripts.md), #1086). Choosing the range tool selects no events; choosing another tool selects
+  the events in the range instead and ends
   it (p. 286). The edit commands edit the range ([range-editing.md](range-editing.md)).
 - **Combine selection tools** (`setCombineSelectionTools`, p. 253): the object selection tool selects ranges in the
   upper half of a lane at least two rows high and events in its lower half; on lower lanes it selects events only. A
@@ -171,13 +178,16 @@ audio editor gets its toolbox when it comes. The Preferences dialog's Editing - 
   with Ctrl, and setting the cursor; splitting, snapped, into equal pieces, and with a tool modifier changed through
   `settings.set`; gluing to the next and to all following events; erasing one and all later events; muting and
   unmuting with clicks and a rectangle; zooming in, out, to a rectangle, back with a double click and forward again
-  with Alt; the rectangle zooming the track heights with `ui.zoomToolHorizontalOnly` off; drawing parts,
+  with Alt, neither leaving the double click's first click to redo; the rectangle zooming the track heights with `ui.zoomToolHorizontalOnly` off; drawing parts,
   snapped, by dragging and with a click, and MIDI parts with the object selection tool and Alt, none on audio tracks or with the line tool; auditioning the audio lane's
   track on the dummy device while the mouse is pressed, nothing on a MIDI lane, scrubbing with a drag, and resizing an
-  audio event at its edge in scrub mode, with its pointer there, the dummy device playing the clip's hidden audio
+  audio event at its lower corners in scrub mode, with its pointer there, while the upper part of the edge scrubs, the dummy device playing the clip's hidden audio
   that an edge dragged outwards reveals, and Alt and Alt+Shift clicks there neither splitting nor locating; ranges by dragging, clicking and double clicking on events and gaps, with Shift, snapped and on
   every track, and the events they select when another tool takes over; range edges at zero crossings with Snap to
-  Zero Crossing; the combined selection tools, and a lane less than two rows high selecting events only; the pointer
+  Zero Crossing, for a drag, a click and a double click on an event and on a gap, and an edit right after the release
+  waiting for them, also when a press starts another range before the answer (it edits the first range); the
+  combined selection tools, and a lane less than two rows high selecting events only, with the object selection
+  tool's pointer; the pointer
   per tool, at events' edges and in a combined lane's upper half, also when a tool is chosen while the mouse rests;
   the pointer with tool modifiers held, also when Alt goes down and up while the mouse rests, with both Alt keys and
   with Cmd and Ctrl, and with the modifiers changed through `settings.set`; a drag's pointer over the ruler, and the pointer not following changes once the

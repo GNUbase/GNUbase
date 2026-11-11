@@ -64,8 +64,9 @@ namespace gnubase::ui
 		// Sends a command of the panel's own; a failure shows in the message line as the action's.
 		void send(const char* action, const std::string& command, const engine::Json& parameters);
 		void showMessage(const std::string& text, bool error);
-		// Opens prepare-archive.rml, which asks whether to copy the external files, as many as external.
-		void askPrepareArchive(int external);
+		// Opens prepare-archive.rml, which asks whether to copy the external files that are there, as many as
+		// external, and says how many others are missing.
+		void askPrepareArchive(int external, int missing);
 		// A job of a pool command ended (job.finished, or job.get for one that ended before report heard of it).
 		void jobEnded(const engine::Json& job);
 		// Cancels the jobs of pool commands that run.

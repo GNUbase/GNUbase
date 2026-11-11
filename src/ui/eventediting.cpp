@@ -118,7 +118,7 @@ namespace gnubase::ui
 
 	int64_t EventDisplay::samples(double seconds) const
 	{
-		return std::llround(seconds * m_time.sampleRate);
+		return positionSamples(seconds, m_time.sampleRate);
 	}
 
 	std::optional<int64_t> EventDisplay::selectionStart() const
@@ -607,6 +607,11 @@ namespace gnubase::ui
 		return lane;
 	}
 
+	bool EventDisplay::inLowerHalf(size_t lane, double y) const
+	{
+		return y + m_view.top >= (m_laneTops[lane] + m_laneTops[lane + 1]) * 0.5;
+	}
+
 	int EventDisplay::edgeAt(const Shown& shown, double x) const
 	{
 		const double left = (shown.start - m_view.start) / m_view.scale;
@@ -732,7 +737,7 @@ namespace gnubase::ui
 		if (lane && automationAt(*lane) != nullptr) // a press edits points with the tool chosen, combined or not
 			return toolName(m_tool);
 		const Tool tool = toolAt(y);
-		if (scrubEdgeAt(x, y) != 0) // the play tool in scrub mode resizes there
+		if (scrubEdgeAt(x, y) != 0) // the play tool in scrub mode resizes at an audio event's lower corners
 			return "resize";
 		if (tool != Tool::ObjectSelection)
 			return toolName(tool);

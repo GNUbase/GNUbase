@@ -343,13 +343,14 @@ namespace gnubase::engine
 		{
 			lanes.push_back(mute);
 		}
-		// A silent MIDI track sends its instrument nothing: the snapshot leaves its notes and controllers out, and its
-		// MIDI volume and pan, program and MIDI automation stay out here, so it doesn't change what other tracks play
-		// there. Its mute lane stays, so its mute still ends the notes that sound.
-		const bool sends = channel.type != TrackType::Midi || !channel.silent;
+		// A silent MIDI track sends its instrument nothing: the snapshot leaves a soloed-out or disabled one's notes
+		// and controllers out, a muted one's play into its strip's mute, and the player leaves its MIDI volume and pan,
+		// program and MIDI automation out, so it doesn't change what other tracks play there. Its mute lane plays, so
+		// its mute still ends the notes that sound.
+		automation->silent = channel.type == TrackType::Midi && channel.silent;
 		for (const auto& [number, value] :
 			{std::pair{uint8_t{7}, channel.midiVolume}, std::pair{uint8_t{10}, channel.midiPan}})
-			if (value && sends)
+			if (value)
 				lanes.push_back({{AutomationTargetType::Controller, 0, number, 0, 0}, Kind::Midi, 0,
 					static_cast<double>(midi::controllerFromMidi1(static_cast<uint8_t>(*value))) / 4294967295.0, 0.0,
 					1.0, {}});
@@ -392,7 +393,7 @@ namespace gnubase::engine
 			PlayedLane* played = nullptr;
 			if (hasStatic)
 				played = &*match;
-			else if (midi && sends &&
+			else if (midi &&
 				(lane.target.type == AutomationTargetType::Controller ||
 					lane.target.type == AutomationTargetType::PitchBend ||
 					lane.target.type == AutomationTargetType::ChannelPressure))
@@ -414,7 +415,7 @@ namespace gnubase::engine
 					}
 		}
 		// The program first, so the instrument has the patch before the controllers. No automation lane targets it.
-		if (channel.program && sends)
+		if (channel.program)
 			lanes.insert(lanes.begin(),
 				PlayedLane{{AutomationTargetType::Controller, 0, 0, 0, 0}, Kind::Program,
 					static_cast<uint32_t>(*channel.program), channel.bank ? static_cast<double>(*channel.bank) : -1.0,
@@ -453,17 +454,13 @@ namespace gnubase::engine
 	void AutomationPlayer::setAutomation(std::unique_ptr<ChannelAutomation> automation)
 	{
 		automation->revision = ++m_revision;
-		const auto program = [](const ChannelAutomation& of)
-		{
-			return std::find_if(of.lanes.begin(), of.lanes.end(),
-				[](const PlayedLane& lane) { return lane.kind == PlayedLane::Kind::Program; });
-		};
 		const ChannelAutomation& old = m_automation.latest();
-		const auto oldProgram = program(old);
-		const auto newProgram = program(*automation);
-		const bool same = (oldProgram == old.lanes.end()) == (newProgram == automation->lanes.end()) &&
-			(newProgram == automation->lanes.end() || *oldProgram == *newProgram);
-		automation->programRevision = same ? old.programRevision : automation->revision;
+		for (PlayedLane& lane : automation->lanes)
+			if (lane.kind == Kind::Program || (lane.kind == Kind::Midi && lane.points.empty()))
+			{
+				const auto same = std::find(old.lanes.begin(), old.lanes.end(), lane);
+				lane.revision = same != old.lanes.end() ? same->revision : automation->revision;
+			}
 		m_automation.publish(std::move(automation));
 	}
 
@@ -494,9 +491,31 @@ namespace gnubase::engine
 			!std::equal(
 				processors.begin(), processors.begin() + static_cast<std::ptrdiff_t>(count), m_processors.begin());
 		bool changed = automation.revision != m_played || newProcessors;
-		// The program goes out again only for a new program or processor, a start, a locate or a jump: other new
-		// automation, e.g. a new MIDI volume, would override a program change a part has played.
-		bool programChanged = automation.programRevision > m_played || newProcessors;
+		// The program and the MIDI controllers without points go out again only when they changed since the track was
+		// last heard, for a new processor, a start, a locate or a jump, and the controllers after a new program: other
+		// new automation, e.g. a new MIDI volume, or the track being heard again would override a program change or
+		// controller a part has played. A silent MIDI track plays none of them.
+		const uint64_t heard = m_heard;
+		const bool silent = automation.silent;
+		const auto midi = [](const PlayedLane& lane) { return lane.kind == Kind::Midi || lane.kind == Kind::Program; };
+		const bool programChanged = newProcessors ||
+			std::any_of(automation.lanes.begin(), automation.lanes.end(),
+				[heard](const PlayedLane& lane) { return lane.kind == Kind::Program && lane.revision > heard; });
+		const auto again = [&](const PlayedLane& lane)
+		{
+			if (lane.kind == Kind::Program)
+				return programChanged;
+			if (lane.kind == Kind::Midi && lane.points.empty())
+				return programChanged || lane.revision > heard;
+			return changed;
+		};
+		const auto hear = [&](bool moved)
+		{
+			if (!silent)
+				m_heard = automation.revision;
+			else if (moved || newProcessors)
+				m_heard = 0;
+		};
 		// New static values glide, unless they are the first ones.
 		const bool revised = automation.revision != m_played && m_played != 0;
 		const auto glide = [revised, smoothing](const PlayedLane& lane)
@@ -511,7 +530,7 @@ namespace gnubase::engine
 			if (changed || moved)
 				for (const PlayedLane& lane : automation.lanes)
 				{
-					if (lane.kind == PlayedLane::Kind::Program && !programChanged && !moved)
+					if ((silent && midi(lane)) || !(moved || again(lane)))
 						continue;
 					const std::optional<Outputs> out = outputs(lane);
 					if (out && (lane.points.empty() || !inGap(lane.points, transport.position)))
@@ -519,22 +538,22 @@ namespace gnubase::engine
 							lane.points.empty() ? lane.staticValue : automationValue(lane.points, transport.position),
 							glide(lane), *out);
 				}
+			hear(moved);
 			m_stoppedAt = transport.position;
 			m_next = -1;
 			return;
 		}
 		m_stoppedAt = -1;
+		bool first = true;
 		for (size_t s = 0; s < transport.segmentCount; ++s)
 		{
 			const graph::TransportSegment& segment = transport.segments[s];
 			const bool moved = segment.position != m_next;
 			for (const PlayedLane& lane : automation.lanes)
-				if (const std::optional<Outputs> out = outputs(lane))
-					playLane(lane, segment,
-						moved || (lane.kind == PlayedLane::Kind::Program ? programChanged : changed), *out,
-						changed ? glide(lane) : 0);
-			changed = false;
-			programChanged = false;
+				if (const std::optional<Outputs> out = outputs(lane); out && !(silent && midi(lane)))
+					playLane(lane, segment, moved || (first && again(lane)), *out, first && changed ? glide(lane) : 0);
+			first = false;
+			hear(moved);
 			m_next = segment.position + segment.frames;
 		}
 	}
@@ -711,7 +730,7 @@ namespace gnubase::engine
 			for (const graph::ProcessEvent& event : m_sourceEvents)
 				context.eventsOut.add(event);
 		if (context.channels == 0)
-			muteMidi(context.eventsOut);
+			muteMidi(context.eventsOut, context.transport);
 		render(RenderPoint::Source, context);
 		m_state->sections.processPre(m_faderEvents, context.audio, context.channels, context.frames);
 
@@ -725,7 +744,73 @@ namespace gnubase::engine
 		fade(context, m_faderEvents);
 	}
 
-	void ChannelStrip::muteMidi(graph::EventBuffer& out) noexcept
+	int DroppedMidi::kindOf(const graph::ProcessEvent& event) noexcept
+	{
+		using Type = graph::ProcessEvent::Type;
+		const auto channel = static_cast<int>((event.channel & 15U) * g_perChannel);
+		switch (event.type)
+		{
+		case Type::Controller:
+			return channel + (event.key & 127);
+		case Type::Program:
+			return channel + 128;
+		case Type::PitchBend:
+			return channel + 129;
+		case Type::ChannelPressure:
+			return channel + 130;
+		case Type::NoteOn:
+		case Type::NoteOff:
+		case Type::PolyPressure: // its note was ended
+		case Type::SysEx:
+		case Type::Parameter:
+			return -1;
+		}
+		return -1;
+	}
+
+	void DroppedMidi::drop(const graph::ProcessEvent& event) noexcept
+	{
+		const int kind = kindOf(event);
+		if (kind < 0)
+			return;
+		const auto index = static_cast<size_t>(kind);
+		if (!m_waiting[index])
+		{
+			// compact leaves each kind once, so the kinds that wait fit.
+			if (m_count == g_kinds)
+				return;
+			m_waiting[index] = true;
+			m_order[m_count++] = static_cast<uint16_t>(kind);
+		}
+		m_values[index] = event.value;
+		m_keys[index] = event.key;
+	}
+
+	void DroppedMidi::forget(const graph::ProcessEvent& event) noexcept
+	{
+		if (const int kind = kindOf(event); kind >= 0)
+			m_waiting[static_cast<size_t>(kind)] = false;
+	}
+
+	void DroppedMidi::compact() noexcept
+	{
+		size_t kept = 0;
+		for (size_t i = m_sent; i < m_count; ++i)
+			if (m_waiting[m_order[i]])
+				m_order[kept++] = m_order[i];
+		m_count = kept;
+		m_sent = 0;
+	}
+
+	void DroppedMidi::clear() noexcept
+	{
+		for (size_t i = m_sent; i < m_count; ++i)
+			m_waiting[m_order[i]] = false;
+		m_count = 0;
+		m_sent = 0;
+	}
+
+	void ChannelStrip::muteMidi(graph::EventBuffer& out, const graph::TransportBlock& transport) noexcept
 	{
 		using Type = graph::ProcessEvent::Type;
 		ChannelState& state = *m_state;
@@ -733,8 +818,30 @@ namespace gnubase::engine
 		{ return event.type == Type::Parameter && event.parameter == ChannelFader::Mute; };
 		const auto note = [](const graph::ProcessEvent& event) noexcept
 		{ return (size_t{event.channel & 15U} * 128) + (event.key & 127U); };
-		// Whether an event passes, keeping track of the notes that sound: a note-off of one that sounds always does.
-		const auto pass = [&state, &note](const graph::ProcessEvent& event) noexcept
+		// The bit of a pedal that holds notes in ChannelState::midiPedals.
+		const auto pedal = [](uint8_t controller) noexcept
+		{
+			if (controller == 64)
+				return uint8_t{1};
+			return controller == 66 ? uint8_t{2} : uint8_t{4};
+		};
+		// Keeps track of the notes that sound and the pedals that are down, for an event that passes.
+		const auto track = [&state, &note, &pedal](const graph::ProcessEvent& event) noexcept
+		{
+			if (event.type == Type::NoteOn || event.type == Type::NoteOff)
+			{
+				state.midiHeld[note(event)] = event.type == Type::NoteOn;
+			}
+			else if (event.type == Type::Controller && graph::holdsNotes(event.key))
+			{
+				uint8_t& down = state.midiPedals[event.channel & 15U];
+				down = static_cast<uint8_t>(
+					event.value >= 0x80000000U ? down | pedal(event.key) : down & ~pedal(event.key));
+			}
+		};
+		// Whether an event passes: a note-off of a note that sounds always does. A muted one's value waits for
+		// unmuting; one that passes replaces such a value of its kind.
+		const auto pass = [&state, &note, &track](const graph::ProcessEvent& event) noexcept
 		{
 			if (event.type == Type::NoteOff && state.midiHeld[note(event)])
 			{
@@ -742,13 +849,59 @@ namespace gnubase::engine
 				return true;
 			}
 			if (state.midiMuted)
+			{
+				state.midiDropped.drop(event);
 				return false;
-			if (event.type == Type::NoteOn)
-				state.midiHeld[note(event)] = true;
+			}
+			track(event);
+			if (state.midiDropped.waiting())
+				state.midiDropped.forget(event);
 			return true;
 		};
-		if (!state.midiMuted && std::none_of(m_faderEvents.begin(), m_faderEvents.end(), isMute))
+		// The track's own chase, for its strip alone (chaseFrom): a mute that keeps it keeps the values for unmuting;
+		// otherwise the instrument chased them, which makes values dropped before stale.
+		const graph::EventBuffer* chased = m_chased && !m_chased->empty() ? m_chased.get() : nullptr;
+		const auto take = [this, &state, &track](const graph::ProcessEvent& event) noexcept
 		{
+			if (state.midiMuted && m_keepChase)
+			{
+				state.midiDropped.drop(event);
+				return;
+			}
+			track(event);
+			if (state.midiDropped.waiting())
+				state.midiDropped.forget(event);
+		};
+		// The block's jumps up to offset (a start, a locate or a cycle jump, as the sequencer finds them): what the
+		// mute dropped before one is stale after it, where the chase sets what is in effect.
+		size_t segment = 0;
+		const auto jumpsUntil = [&state, &transport, &segment](uint32_t offset) noexcept
+		{
+			if (!transport.playing)
+			{
+				if (segment > 0)
+					return;
+				segment = 1;
+				if (state.midiNext >= 0)
+					state.midiCursor = state.midiNext; // where playback stopped
+				state.midiNext = -1;
+				if (state.midiCursor >= 0 && transport.position != state.midiCursor) // a locate while stopped
+					state.midiDropped.clear();
+				state.midiCursor = transport.position;
+				return;
+			}
+			for (; segment < transport.segmentCount && transport.segments[segment].offset <= offset; ++segment)
+			{
+				const graph::TransportSegment& at = transport.segments[segment];
+				if (at.position != state.midiNext)
+					state.midiDropped.clear();
+				state.midiNext = at.position + at.frames;
+			}
+		};
+		if (!state.midiMuted && !state.midiDropped.waiting() && chased == nullptr &&
+			std::none_of(m_faderEvents.begin(), m_faderEvents.end(), isMute))
+		{
+			jumpsUntil(UINT32_MAX);
 			for (const graph::ProcessEvent& event : out)
 				pass(event);
 			return;
@@ -758,16 +911,40 @@ namespace gnubase::engine
 		for (const graph::ProcessEvent& event : out)
 			m_sourceEvents.add(event);
 		out.clear();
+		// The events that end notes go first in a full buffer, so that no note hangs.
+		const auto put = [&out](const graph::ProcessEvent& event) noexcept
+		{ return graph::endsNotes(event) ? out.addEnd(event) : out.add(event); };
+		size_t next = 0; // the source events from here on haven't passed yet
+		// Sends what the mute dropped at offset, as far as it fits with room left for the block's events still to
+		// come; the rest follows in the next block.
+		const auto resend = [this, &state, &out, &next, &track](uint32_t offset) noexcept
+		{
+			state.midiDropped.send(offset,
+				[this, &out, &next, &track](const graph::ProcessEvent& event) noexcept
+				{
+					if (out.size() + (m_sourceEvents.size() - next) >= out.capacity() || !out.add(event))
+						return false;
+					track(event);
+					return true;
+				});
+		};
+		// A soloed-out or disabled track (m_silent) sends nothing: what its mute dropped waits until it is heard again.
+		jumpsUntil(0);
+		if (!state.midiMuted && !m_silent)
+			resend(0);
 		const graph::ProcessEvent* mute = m_faderEvents.begin();
-		// Mutes or unmutes at the mute events up to offset; a mute ends the notes that sound at its sample.
+		// Mutes or unmutes at the mute events up to offset. A mute ends the notes that sound and then releases the
+		// pedals that hold notes at its sample; unmuting sends the latest values of what the mute dropped.
 		const auto muteUntil = [&](uint32_t offset) noexcept
 		{
 			for (; mute != m_faderEvents.end() && mute->offset <= offset; ++mute)
 			{
 				if (!isMute(*mute))
 					continue;
+				jumpsUntil(mute->offset);
 				const bool muted = mute->parameterValue >= 0.5;
 				if (muted && !state.midiMuted)
+				{
 					for (size_t n = 0; n < g_midiNotes; ++n)
 						if (state.midiHeld[n])
 						{
@@ -776,18 +953,54 @@ namespace gnubase::engine
 							end.type = Type::NoteOff;
 							end.channel = static_cast<uint8_t>(n / 128);
 							end.key = static_cast<uint8_t>(n % 128);
-							out.add(end);
+							out.addEnd(end);
 							state.midiHeld[n] = false;
 						}
+					state.midiDropped.compact();
+					// A pedal it releases goes down again when it unmutes, unless the track releases it meanwhile.
+					for (size_t channel = 0; channel < state.midiPedals.size(); ++channel)
+						for (const uint8_t controller : {uint8_t{64}, uint8_t{66}, uint8_t{69}})
+							if ((state.midiPedals[channel] & pedal(controller)) != 0)
+							{
+								graph::ProcessEvent up;
+								up.offset = mute->offset;
+								up.type = Type::Controller;
+								up.channel = static_cast<uint8_t>(channel);
+								up.key = controller;
+								up.value = 0;
+								out.addEnd(up);
+								up.value = 0xFFFFFFFFU;
+								state.midiDropped.drop(up);
+							}
+					state.midiPedals.fill(0);
+				}
+				const bool unmutes = !muted && state.midiMuted;
 				state.midiMuted = muted;
+				if (unmutes && !m_silent)
+					resend(mute->offset);
+			}
+			jumpsUntil(offset);
+		};
+		// The chase comes at a jump, after the mute events at its sample and before the events there.
+		size_t chasedNext = 0;
+		const auto chaseUntil = [&](uint32_t offset) noexcept
+		{
+			for (; chased != nullptr && chasedNext < chased->size() && (*chased)[chasedNext].offset <= offset;
+				++chasedNext)
+			{
+				muteUntil((*chased)[chasedNext].offset);
+				take((*chased)[chasedNext]);
 			}
 		};
-		for (const graph::ProcessEvent& event : m_sourceEvents)
+		for (; next < m_sourceEvents.size(); ++next)
 		{
+			const graph::ProcessEvent& event = m_sourceEvents[next];
+			chaseUntil(event.offset);
 			muteUntil(event.offset);
 			if (pass(event))
-				out.add(event);
+				put(event);
 		}
+		chaseUntil(UINT32_MAX);
 		muteUntil(UINT32_MAX);
 	}
 

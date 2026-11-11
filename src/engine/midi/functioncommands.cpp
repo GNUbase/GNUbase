@@ -32,53 +32,9 @@ namespace gnubase::engine::midi
 				value >= min && value <= max, name + " must be " + std::to_string(min) + " to " + std::to_string(max));
 		}
 
-		Json objectSchema(Json properties, const std::vector<std::string>& required = {})
-		{
-			return {{"type", "object"}, {"properties", std::move(properties)}, {"required", required},
-				{"additionalProperties", false}};
-		}
-
-		Json arraySchema(Json items)
-		{
-			return {{"type", "array"}, {"items", std::move(items)}};
-		}
-
 		Json enumSchema(const std::vector<std::string>& values)
 		{
 			return {{"type", "string"}, {"enum", values}};
-		}
-
-		// The parts a function works on, each named once.
-		std::vector<MidiPart*> partsOf(Project& project, const Json& parameters)
-		{
-			const auto ids = parameters.at("parts").get<std::vector<ObjectId>>();
-			require(!ids.empty(), "parts must name at least one MIDI part");
-			std::vector<MidiPart*> parts;
-			for (const ObjectId id : ids)
-			{
-				const auto found = project.midiParts.find(id);
-				require(found != project.midiParts.end(), "no MIDI part " + std::to_string(id));
-				require(std::find(parts.begin(), parts.end(), &found->second) == parts.end(),
-					"MIDI part " + std::to_string(id) + " is named twice");
-				parts.push_back(&found->second);
-			}
-			return parts;
-		}
-
-		// The selected notes, which must be in the parts; every note without notes.
-		NoteSelection selectionOf(const std::vector<MidiPart*>& parts, const Json& parameters)
-		{
-			if (!parameters.contains("notes"))
-				return {};
-			std::set<ObjectId> notes;
-			for (const ObjectId id : parameters.at("notes").get<std::vector<ObjectId>>())
-			{
-				require(std::any_of(parts.begin(), parts.end(),
-							[id](const MidiPart* part) { return part->notes.count(id) != 0; }),
-					"no note " + std::to_string(id) + " in the MIDI parts");
-				notes.insert(id);
-			}
-			return NoteSelection(std::move(notes));
 		}
 
 		uint16_t velocity(const Json& parameters, const char* key)
@@ -109,6 +65,8 @@ namespace gnubase::engine::midi
 			Json changed = Json::array();
 			for (MidiPart* part : parts)
 			{
+				if (part->pattern != 0) // a pattern event plays its pattern's steps, not its notes
+					continue;
 				const MidiPart before = *part;
 				function(project, *part, selection);
 				if (part->notes != before.notes || part->controllers != before.controllers)
@@ -325,6 +283,48 @@ namespace gnubase::engine::midi
 		};
 	}
 
+	Json objectSchema(Json properties, const std::vector<std::string>& required)
+	{
+		return {{"type", "object"}, {"properties", std::move(properties)}, {"required", required},
+			{"additionalProperties", false}};
+	}
+
+	Json arraySchema(Json items)
+	{
+		return {{"type", "array"}, {"items", std::move(items)}};
+	}
+
+	std::vector<MidiPart*> partsOf(Project& project, const Json& parameters)
+	{
+		const auto ids = parameters.at("parts").get<std::vector<ObjectId>>();
+		require(!ids.empty(), "parts must name at least one MIDI part");
+		std::vector<MidiPart*> parts;
+		for (const ObjectId id : ids)
+		{
+			const auto found = project.midiParts.find(id);
+			require(found != project.midiParts.end(), "no MIDI part " + std::to_string(id));
+			require(std::find(parts.begin(), parts.end(), &found->second) == parts.end(),
+				"MIDI part " + std::to_string(id) + " is named twice");
+			parts.push_back(&found->second);
+		}
+		return parts;
+	}
+
+	NoteSelection selectionOf(const std::vector<MidiPart*>& parts, const Json& parameters)
+	{
+		if (!parameters.contains("notes"))
+			return {};
+		std::set<ObjectId> notes;
+		for (const ObjectId id : parameters.at("notes").get<std::vector<ObjectId>>())
+		{
+			require(std::any_of(
+						parts.begin(), parts.end(), [id](const MidiPart* part) { return part->notes.count(id) != 0; }),
+				"no note " + std::to_string(id) + " in the MIDI parts");
+			notes.insert(id);
+		}
+		return NoteSelection(std::move(notes));
+	}
+
 	void registerFunctionCommands(ProjectModel& model, Engine& engine)
 	{
 		const Json idSchema = {{"type", "integer"}};
@@ -492,6 +492,7 @@ namespace gnubase::engine::midi
 			std::string description = command.description;
 			description += command.notes ? " Works on the MIDI parts in parts;" + std::string(selection)
 										 : " Works on the MIDI parts in parts.";
+			description += " Pattern events (pattern.add), which play their pattern's steps, stay as they are.";
 			description += " Returns the parts it changed.";
 			model.addEdit(engine,
 				{command.name, 1, description, objectSchema(std::move(properties), required), partsResult, false},
@@ -515,11 +516,17 @@ namespace gnubase::engine::midi
 				"solo or on a disabled track (sends aren't followed); it refuses if none does. Muted parts are left "
 				"out. Notes keep their "
 				"length, cut where their part ends, and get their parts' transpose and velocity as playback applies "
-				"them; includeInserts also plays their tracks' MIDI modifiers into them (channel.set modifiers, with "
+				"them, after their tracks' drum maps and the chord track, so they are written as played; a destination "
+				"with a drum map or following the chord track gets a pitch that plays them, or if none does what "
+				"played, "
+				"which it then maps. includeInserts also plays their tracks' MIDI modifiers into them (channel.set "
+				"modifiers, with "
 				"the random values playback draws), leaving out notes they filter out or move out of the range. "
 				"Without destination a new MIDI track is added at the end, routed "
 				"to the instrument of the first track merged. eraseDestination first removes the destination's parts "
-				"that lie between start and end, and the events of its other parts that start there. includeChase "
+				"that lie between start and end, and the events of its other parts that start there, which leave "
+				"their shared copies for it: their notes get new ids, so play probability, velocity variance and "
+				"random MIDI modifier values draw anew. includeChase "
 				"adds the last value of every controller and program before start at the new part's start." +
 					returns,
 				objectSchema(
@@ -553,7 +560,9 @@ namespace gnubase::engine::midi
 				"end, named after the first, on the lowest lane they are on. Muted parts are removed and add nothing. "
 				"Events keep their time; notes are cut where their part ended. The parts' transpose and velocity go "
 				"into the notes as playback applies them; a note transposed beyond 0-127, which doesn't play, is left "
-				"out. The copied notes get new ids, so play probability and velocity variance draw anew." +
+				"out. On a track whose drum map or chord track following plays a transposed note differently, the new "
+				"part keeps the transpose, and parts with different ones make a part for each. The copied notes "
+				"get new ids, so play probability and velocity variance draw anew." +
 					returns,
 				objectSchema({{"parts", ids}}, {"parts"}), changesResult, false},
 			"Bounce MIDI", runBounce);
@@ -563,7 +572,9 @@ namespace gnubase::engine::midi
 				"controller automation lanes of their tracks, one per controller and MIDI channel: each event becomes "
 				"a step point where it plays, its value 0 to 1. A lane the track already has loses its points in the "
 				"part's range first, except those an earlier part of the call added, and reads from then on. A shared "
-				"copy leaves its copies, which keep their controllers. Pitch bend, pressure, switches "
+				"copy leaves its copies, which keep their controllers; all its events get new ids, so the play "
+				"probability, velocity variance and random MIDI modifier values of its notes draw anew. Pitch bend, "
+				"pressure, switches "
 				"such as the sustain pedal, events past a part's "
 				"end and muted parts stay. Returns the parts it changed, the lanes it added (lanes) and the lanes it "
 				"changed.",

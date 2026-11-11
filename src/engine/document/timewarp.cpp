@@ -8,6 +8,7 @@
 #include "engine/document/document.h"
 #include "engine/document/projectmodel.h"
 #include "engine/document/serialize.h"
+#include "engine/document/warp.h"
 #include "engine/engine.h"
 #include "engine/time/signaturemap.h"
 #include "engine/time/tempomap.h"
@@ -387,17 +388,22 @@ namespace gnubase::engine
 			return {{"clips", result}};
 		}
 
-		// Whether a warp marker fits among a clip's markers: at a position of its own, and passing none of them.
+		// Whether a warp marker fits among a clip's markers: at a position of its own, passing none of them, and
+		// within the real-time stretcher's range of those around it (checkMarkers).
 		bool fits(const std::vector<WarpMarker>& markers, const WarpMarker& marker, time::Samples length)
 		{
-			if (marker.position <= 0 || marker.position >= length || marker.target <= 0 || marker.target >= length)
+			ClipWarp warp;
+			warp.markers = markers;
+			warp.markers.push_back(marker);
+			try
+			{
+				checkMarkers(warp, length);
+				return true;
+			}
+			catch (const CommandError&)
+			{
 				return false;
-			return std::all_of(markers.begin(), markers.end(),
-				[&marker](const WarpMarker& other)
-				{
-					return (other.position < marker.position && other.target < marker.target) ||
-						(other.position > marker.position && other.target > marker.target);
-				});
+			}
 		}
 
 		// Paste Warp Markers to Selected Events (reference manual p. 1467): the warp markers of from's clip into
@@ -515,7 +521,9 @@ namespace gnubase::engine
 				"Copies the free warp markers of the audio event from's clip into the clips of the audio events "
 				"(Copy Warp Markers from Selected Event, Paste Warp Markers to Selected Events, reference manual p. "
 				"1467): each at the same time as in from, where the event plays it unwarped, if that is within the "
-				"event and passes none of its clip's markers. The markers there stay. Returns how many it pasted.",
+				"event, passes none of its clip's markers and makes no section around it play more than 4 times or "
+				"less than a quarter as long, the real-time stretcher's range. The markers there stay. Returns how "
+				"many it pasted.",
 				objectSchema({{"from", integer}, {"events", ids}}, {"from", "events"}),
 				{{"type", "object"}, {"properties", {{"markers", integer}}}, {"required", {"markers"}}}, false},
 			"Paste Warp Markers", pasteWarpMarkers);

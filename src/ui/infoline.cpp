@@ -5,6 +5,7 @@
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Elements/ElementFormControlInput.h>
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/Input.h>
@@ -91,11 +92,18 @@ namespace gnubase::ui
 				element.SetAttribute("value", value);
 		}
 
+		void setText(Rml::Element* element, const char* text)
+		{
+			if (element != nullptr && element->GetInnerRML() != text)
+				element->SetInnerRML(text);
+		}
+
+		// A field's label, and its button in the info line's setup pane (p. 430: Description and Position for markers).
 		void setLabel(Rml::Element& root, const std::string& field, const char* label)
 		{
-			if (Rml::Element* span = root.QuerySelector("[info-field=" + field + "] .info-label");
-				span != nullptr && span->GetInnerRML() != label)
-				span->SetInnerRML(label);
+			setText(root.QuerySelector("[info-field=" + field + "] .info-label"), label);
+			if (Rml::ElementDocument* document = root.GetOwnerDocument())
+				setText(document->QuerySelector("[setup=infoLine] [setup-section=" + field + "]"), label);
 		}
 
 		void setFlag(Rml::Element& element, const char* name, bool set)
@@ -472,8 +480,10 @@ namespace gnubase::ui
 		const auto shift = [this, &context, rate](const Json& event, const char* key, double to)
 		{
 			if (m_format == TimeFormat::BarsBeats)
-				return Json{{"ticks", context.tempo.toTicks(to) - event.at(std::string(key) + "Ticks").get<int64_t>()}};
-			return Json{{"delta", std::llround(to * rate) - event.at(key).get<int64_t>()}};
+				return Json{{"ticks",
+					context.tempo.toTicks(clampPositionSeconds(to, rate)) -
+						event.at(std::string(key) + "Ticks").get<int64_t>()}};
+			return Json{{"delta", positionSamples(to, rate) - event.at(key).get<int64_t>()}};
 		};
 		std::function<std::optional<double>(const Json&)> target; // where the edge goes, in seconds
 		const char* edge = "end";

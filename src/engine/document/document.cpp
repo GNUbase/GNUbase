@@ -77,6 +77,14 @@ namespace gnubase::engine
 		part.controllers = std::move(controllers);
 	}
 
+	void detach(Project& project, MidiPart& part)
+	{
+		if (part.shared == 0)
+			return;
+		part.shared = 0;
+		renumber(project, part);
+	}
+
 	Project newProject()
 	{
 		Project project;
@@ -117,6 +125,13 @@ namespace gnubase::engine
 			group = linkGroupOf(project, group->vca))
 			chain.push_back(group->vca);
 		return chain;
+	}
+
+	time::Ticks longestProjectTicks(const Project& project)
+	{
+		constexpr double lowestRate = 8000.0;
+		return project.tempo.toTicks(
+			static_cast<double>(time::g_maxPosition) / std::max(project.sampleRate, lowestRate));
 	}
 
 	ObjectId mainMix(const Project& project)

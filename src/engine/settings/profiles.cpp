@@ -86,10 +86,16 @@ namespace gnubase::engine::settings
 				base.pop_back();
 			std::transform(base.begin(), base.end(), base.begin(),
 				[](char c) { return c >= 'a' && c <= 'z' ? static_cast<char>(c - 'a' + 'A') : c; });
-			const bool numbered = base.size() == 4 &&
-				(base.compare(0, 3, "COM") == 0 || base.compare(0, 3, "LPT") == 0) && base[3] >= '1' && base[3] <= '9';
-			require(!numbered && base != "CON" && base != "PRN" && base != "AUX" && base != "NUL",
-				"a profile name can't be a device's name on Windows (CON, PRN, AUX, NUL, COM1 to COM9, LPT1 to LPT9)");
+			// COM1 to COM9 and LPT1 to LPT9, and with the superscript digits 1 to 3 in UTF-8.
+			const std::string digit = base.size() > 3 ? base.substr(3) : std::string();
+			const bool numbered = (base.compare(0, 3, "COM") == 0 || base.compare(0, 3, "LPT") == 0) &&
+				((digit.size() == 1 && digit[0] >= '1' && digit[0] <= '9') || digit == "\xC2\xB9" ||
+					digit == "\xC2\xB2" || digit == "\xC2\xB3");
+			require(!numbered && base != "CON" && base != "CONIN$" && base != "CONOUT$" && base != "PRN" &&
+					base != "AUX" && base != "NUL",
+				"a profile name can't be a device's name on Windows (CON, CONIN$, CONOUT$, PRN, AUX, NUL, COM1 to "
+				"COM9, "
+				"LPT1 to LPT9, also with a superscript 1 to 3)");
 		}
 
 		// The profiles: the active one and those with a folder, sorted by name.
@@ -182,6 +188,41 @@ namespace gnubase::engine::settings
 			}
 		}
 
+		// What a switch keeps in the settings folder while it runs: the copies of both profiles' files, in active and
+		// next, and once both are complete, the file active-profile with the active profile's name.
+		fs::path stagingOf(const fs::path& directory)
+		{
+			return directory / "profile-switch";
+		}
+
+		// A switch that GNUbase didn't finish, such as one that a crash stopped while it moved the next profile's files
+		// in: while profiles.json still has the profile active whose files profile-switch has, they go back. False if
+		// they can't, which keeps profile-switch, as it may hold their only complete copy.
+		bool undoInterrupted(const fs::path& directory, const std::string& active)
+		{
+			const fs::path staging = stagingOf(directory);
+			std::error_code error;
+			try
+			{
+				if (files::readFile(staging / "active-profile") == active)
+				{
+					copyFiles(staging / "active", directory);
+					fs::remove_all(folderOf(directory, active), error);
+					logging::warning("Put the profile {}'s settings back after a switch that didn't finish", active);
+				}
+			}
+			catch (const std::exception& failure)
+			{
+				logging::error(
+					"Cannot put the profile {}'s settings back after a switch that didn't finish, which stay "
+					"in profile-switch: {}",
+					active, failure.what());
+				return false;
+			}
+			fs::remove_all(staging, error);
+			return true;
+		}
+
 		Json listJson(const fs::path& directory)
 		{
 			const State state = readState(directory);
@@ -197,13 +238,16 @@ namespace gnubase::engine::settings
 		if (directory.empty())
 			return;
 		State state = readState(directory);
+		// Copies of both profiles' files, so that a switch that fails on the way puts the active one's back.
+		const fs::path staging = stagingOf(directory);
+		std::error_code error;
+		if (fs::exists(staging, error) && !undoInterrupted(directory, state.active))
+			return;
 		if (state.next.empty() || state.next == state.active)
 			return;
 		const fs::path next = folderOf(directory, state.next);
 		const fs::path saved = folderOf(directory, state.active);
-		// Copies of both profiles' files, so that a switch that fails on the way puts the active one's back.
-		const fs::path staging = directory / "profile-switch";
-		std::error_code error;
+		bool restored = true;
 		try
 		{
 			if (!fs::is_directory(next))
@@ -219,6 +263,7 @@ namespace gnubase::engine::settings
 			fs::remove_all(staging);
 			copyFiles(directory, staging / "active");
 			copyFiles(next, staging / "next");
+			files::writeAtomically(staging / "active-profile", state.active); // from here on undoInterrupted's
 			try
 			{
 				copyFiles(staging / "active", saved);
@@ -227,7 +272,9 @@ namespace gnubase::engine::settings
 			}
 			catch (...)
 			{
+				restored = false; // the next start tries again if this fails
 				copyFiles(staging / "active", directory);
+				restored = true;
 				fs::remove_all(saved, error);
 				throw;
 			}
@@ -238,11 +285,14 @@ namespace gnubase::engine::settings
 		{
 			logging::error("Cannot switch to the profile {}: {}", state.next, failure.what());
 		}
-		fs::remove_all(staging, error);
+		if (restored)
+			fs::remove_all(staging, error);
 	}
 
 	void cancelProfileSwitch(const fs::path& directory)
 	{
+		std::error_code error;
+		fs::remove_all(stagingOf(directory), error);
 		State state = readState(directory);
 		if (state.next.empty())
 			return;

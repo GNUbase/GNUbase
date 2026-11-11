@@ -15,6 +15,7 @@
 #include <array>
 #include <cmath>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <stdexcept>
@@ -109,7 +110,8 @@ namespace gnubase::ui
 		m_cursorLine = &add(timeline, "div", "project-cursor");
 		for (const Rml::EventId id : g_rootEvents)
 			root.AddEventListener(id, this);
-		root.AddEventListener(g_fileDropEvent, this);
+		// On the document, for files dropped on the track list too.
+		m_document->AddEventListener(g_fileDropEvent, this);
 		for (const Rml::EventId id : g_documentEvents)
 			m_document->AddEventListener(id, this);
 		findControls();
@@ -126,6 +128,19 @@ namespace gnubase::ui
 		addToolActions();
 		addTimeWarpActions();
 		addAutomationActions();
+		// While Snap to Zero Crossing is still moving the range's edges, actions wait, so that an edit right after a
+		// range is drawn, such as Delete, edits the range where its edges go; engine key commands wait with them.
+		for (auto& [name, action] : m_actions)
+			action = [this, run = std::move(action)]
+			{
+				// The binding holds it, which may outlive the display.
+				m_binding.afterAwaited(
+					[run, alive = std::weak_ptr<bool>(m_alive)]
+					{
+						if (!alive.expired())
+							run();
+					});
+			};
 		setToolModifiers(Json::object());
 
 		for (const char* event : {"history.changed", "project.reset"})
@@ -255,7 +270,7 @@ namespace gnubase::ui
 			return;
 		for (const Rml::EventId id : g_rootEvents)
 			m_root->RemoveEventListener(id, this);
-		m_root->RemoveEventListener(g_fileDropEvent, this);
+		m_document->RemoveEventListener(g_fileDropEvent, this);
 		for (const Rml::EventId id : g_documentEvents)
 			m_document->RemoveEventListener(id, this);
 	}
@@ -1108,6 +1123,9 @@ namespace gnubase::ui
 		case Rml::EventId::Mousedown:
 			if (inInPlaceEditor(target))
 				break; // the editor's (ui/inplaceeditor.h)
+			runWaitingActions();
+			if (!alive())
+				break;
 			if (target != nullptr && event.GetParameter<int>("button", 0) == 0)
 				mouseDown(event, *target);
 			else if (event.GetParameter<int>("button", 0) == 1 && inside(target, m_area))
@@ -1209,7 +1227,7 @@ namespace gnubase::ui
 			m_dragAt = dpFrom(*m_ruler, x);
 			m_dragTime = m_view.start + (m_dragAt * m_view.scale);
 			m_drag = Drag::Ruler;
-			m_binding.send("transport.locate", {{"position", std::llround(m_dragTime * m_time.sampleRate)}});
+			m_binding.send("transport.locate", {{"position", positionSamples(m_dragTime, m_time.sampleRate)}});
 		}
 		else if (inside(&target, m_overview))
 		{

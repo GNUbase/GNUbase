@@ -7,8 +7,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
-#include <miniz.h>
-
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -483,14 +481,7 @@ TEST_CASE("busses, ports, child busses and the main mix are saved with the proje
 	CHECK_THROWS_AS(projectFromJson(wrapped), std::invalid_argument);
 
 	// project.xml: the main mix is the first master channel, and the child's track goes to its parent.
-	mz_zip_archive zip{};
-	REQUIRE(mz_zip_reader_init_file(&zip, file.c_str(), 0));
-	size_t size = 0;
-	void* data = mz_zip_reader_extract_file_to_heap(&zip, "project.xml", &size, 0);
-	REQUIRE(data != nullptr);
-	const std::string xml(static_cast<const char*>(data), size);
-	mz_free(data);
-	mz_zip_reader_end(&zip);
+	const std::string xml = test::readZip(file).at("project.xml");
 	const auto firstMaster = xml.find("role=\"master\"");
 	REQUIRE(firstMaster != std::string::npos);
 	CHECK(xml.rfind("name=\"Surround\"", firstMaster) != std::string::npos);

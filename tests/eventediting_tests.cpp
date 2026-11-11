@@ -1134,10 +1134,13 @@ TEST_CASE(
 		CHECK(pointer() == ui::toolName(tool));
 		CHECK(shown() == cursor);
 	}
-	// In scrub mode the play tool resizes an audio event at its edge, scrubbing along (reference manual p. 268); not a
-	// MIDI part, which it doesn't scrub.
+	// In scrub mode the play tool resizes an audio event at its lower left or right corner, scrubbing along (reference
+	// manual p. 268): in the lower half of the edge, not the upper, where it scrubs the track; not a MIDI part, which
+	// it doesn't scrub.
 	f.display.setPlayMode(ui::PlayMode::Scrub);
-	moveTo(248, 20);
+	moveTo(248, 10);
+	CHECK(pointer() == ui::toolName(ui::Tool::Play));
+	moveTo(248, 30);
 	CHECK(pointer() == "resize");
 	CHECK(shown() == "resize");
 	moveTo(102, 60);
@@ -1447,15 +1450,14 @@ TEST_CASE(
 	f.drag(100, 30, 300, 70);
 	CHECK(std::abs(f.display.view().start - 1.0) < 1e-9);
 	CHECK(std::abs(f.display.visibleLength() - 2.0) < 1e-9);
-	// A double click undoes the last zoom.
+	// A double click undoes the last zoom; its first click's zoom in isn't left to redo.
 	f.click(500, 60, {}, 2);
 	CHECK(f.display.view().scale == before.scale);
 	CHECK(std::abs(f.display.view().start - before.start) < 1e-9);
-	// Alt and a double click redoes it (reference manual p. 104).
+	// Alt and a double click redoes it (reference manual p. 104), and there is nothing more to redo.
 	f.click(500, 60, {"alt"}, 2);
 	CHECK(std::abs(f.display.view().start - 1.0) < 1e-9);
 	CHECK(std::abs(f.display.visibleLength() - 2.0) < 1e-9);
-	CHECK(f.display.redoZoom());
 	CHECK(!f.display.redoZoom());
 }
 
@@ -1602,27 +1604,36 @@ TEST_CASE("the play tool auditions the pressed audio track until it is released,
 	CHECK(f.parts().size() == 1); // nothing edited
 	CHECK(f.audioEvents().size() == 1);
 
-	// At an audio event's edge it resizes the event and scrubs along (reference manual p. 268): the right edge 20 dp
-	// further makes it a fifth of a second longer, and the event's clip is scrubbed, not the track, so the cursor
-	// stays.
+	// Only an audio event's lower corners resize it (reference manual p. 268): a drag from the upper part of its right
+	// edge to 2.3 seconds scrubs the track and moves the cursor, as anywhere else, and leaves the event's length.
 	auditions.clear();
-	f.drag(248, 10, 268, 10);
+	f.drag(248, 10, 230, 10);
+	REQUIRE(f.waitUntil([&modes] { return modes().size() >= 2 && modes().back() == "off"; }));
+	CHECK(modes()[0] == "scrub");
+	CHECK(auditions[0].at("track") == audio);
+	CHECK(f.call("transport.get").at("position") == 110400);
+	CHECK(f.audioEvents()[0].at("length") == 24000);
+
+	// At its lower right corner it resizes the event and scrubs along: the right edge 20 dp further makes it a fifth
+	// of a second longer, and the event's clip is scrubbed, not the track, so the cursor stays.
+	auditions.clear();
+	f.drag(248, 30, 268, 30);
 	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("length") == 24000 + 9600; }));
 	REQUIRE(f.waitUntil([&modes] { return modes().size() >= 2 && modes().back() == "off"; }));
 	CHECK(modes()[0] == "scrub");
 	CHECK(auditions[0].at("track") == 0);
-	CHECK(f.call("transport.get").at("position") == 115200);
+	CHECK(f.call("transport.get").at("position") == 110400);
 	CHECK(f.display.selection() == std::vector<uint64_t>{f.event});
 
 	// A click there without a drag is no click of the object selection tool: with the tool modifier Split Event (Alt)
 	// it doesn't split the event, with Set Cursor Position (Alt+Shift) it doesn't move the cursor.
 	REQUIRE(f.waitUntil([&f] { return std::abs(f.lanes("events")[0].events[0].end() - 2.7) < 1e-6; }));
-	f.click(268, 10, {"alt"});
-	f.click(268, 10, {"alt", "shift"});
+	f.click(268, 30, {"alt"});
+	f.click(268, 30, {"alt", "shift"});
 	REQUIRE(f.waitUntil([&modes] { return modes().size() >= 6 && modes().back() == "off"; }));
 	CHECK(f.audioEvents().size() == 1);
 	CHECK(f.audioEvents()[0].at("length") == 24000 + 9600);
-	CHECK(f.call("transport.get").at("position") == 115200);
+	CHECK(f.call("transport.get").at("position") == 110400);
 }
 
 TEST_CASE("the play tool's resize in scrub mode plays the clip at the dragged edge", "[unit]")
@@ -1651,11 +1662,11 @@ TEST_CASE("the play tool's resize in scrub mode plays the clip at the dragged ed
 	f.display.setTool(ui::Tool::Play);
 	f.display.setPlayMode(ui::PlayMode::Scrub);
 
-	// Its end dragged out by a fifth of a second, over the take's hidden audio, where the track plays nothing yet:
-	// while the button is held, the device plays the take's 0.5.
-	f.automation.press(std::nullopt, f.at(48, 10), ui::MouseButton::Left);
+	// Its end dragged out by a fifth of a second at its lower right corner, over the take's hidden audio, where the
+	// track plays nothing yet: while the button is held, the device plays the take's 0.5.
+	f.automation.press(std::nullopt, f.at(48, 30), ui::MouseButton::Left);
 	f.step();
-	f.automation.move(std::nullopt, f.at(68, 10));
+	f.automation.move(std::nullopt, f.at(68, 30));
 	f.step();
 	// The preview of the resize shows it 0.7 seconds long once the edge's scrub is on its way.
 	REQUIRE(f.waitUntil(
@@ -1679,7 +1690,7 @@ TEST_CASE("the play tool's resize in scrub mode plays the clip at the dragged ed
 		f.step();
 	}
 	CHECK(heard >= 480);
-	f.automation.release(std::nullopt, f.at(68, 10), ui::MouseButton::Left);
+	f.automation.release(std::nullopt, f.at(68, 30), ui::MouseButton::Left);
 	f.step();
 	REQUIRE(f.waitUntil(
 		[&f, event]
@@ -1767,8 +1778,21 @@ TEST_CASE("with the selection tools combined, a lane's upper half selects ranges
 	CHECK(f.display.selection() == std::vector<uint64_t>{f.part});
 	f.drag(150, 75, 250, 75);
 	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("position") == 4 * g_quarter; }));
-	// A lane less than two rows high has no upper half for ranges: a drag there is a rectangle (p. 253).
+	// The pointer shows which: the range selection tool's over the upper half.
+	Rml::Element* lanes = f.document.QuerySelector("event-lanes.events");
+	const auto pointerAt = [&f, lanes](double x, double y)
+	{
+		f.window.context().ProcessMouseMove(
+			static_cast<int>(lanes->GetAbsoluteLeft() + x), static_cast<int>(lanes->GetAbsoluteTop() + y), 0);
+		f.step();
+		return f.document.QuerySelector(".event-area")->GetAttribute<std::string>("pointer", "");
+	};
+	CHECK(pointerAt(150, 5) == "rangeSelection");
+	CHECK(pointerAt(150, 35) == "objectSelection");
+	// A lane less than two rows high has no upper half for ranges: a drag there is a rectangle (p. 253), and the
+	// pointer the object selection tool's.
 	f.display.setTrackHeight(f.call("project.get").at("tracks")[0].at("id").get<uint64_t>(), 30.0);
+	CHECK(pointerAt(150, 6) == "objectSelection");
 	f.drag(150, 5, 250, 10);
 	CHECK(!f.display.range().has_value());
 	CHECK(f.display.selection() == std::vector<uint64_t>{f.event});
@@ -1800,10 +1824,84 @@ TEST_CASE("with Snap to Zero Crossing, a range's edges move to zero crossings of
 	REQUIRE(f.waitUntil([&range] { return range().start == 292770; }));
 	CHECK(range().end == 311970);
 	// Where no audio plays, the range stays as dragged.
+	const auto answered = [&f] { return f.binding.waiting("snap.zeroCrossings") == 0; };
 	f.drag(750, 20, 800, 20);
-	REQUIRE(f.waitUntil([&f] { return f.binding.waiting("snap.zeroCrossings") == 0; }));
+	REQUIRE(f.waitUntil(answered));
 	CHECK(range().start == 360000);
 	CHECK(range().end == 384000);
+	// A click's empty range too: 6.2 seconds is frame 9630, the crossing at 9600.
+	f.click(620, 20);
+	REQUIRE(f.waitUntil([&range] { return range().start == 297570; }));
+	CHECK(range().end == 297570);
+	// A double click's range of an event keeps the event's edges; of a gap, those of the events around it.
+	f.click(650, 20, {}, 2);
+	REQUIRE(f.waitUntil(answered));
+	CHECK(range().start == 288000);
+	CHECK(range().end == 336000);
+	f.click(500, 20, {}, 2);
+	REQUIRE(f.waitUntil(answered));
+	CHECK(range().start == 120000);
+	CHECK(range().end == 288000);
+	// An edit right after the release waits for the answer, and edits the range where its edges went: Crop Range
+	// keeps frames 4800 to 24000 of the event.
+	f.automation.drag(std::nullopt, f.at(610, 20), f.at(650, 20), {});
+	REQUIRE(f.binding.waiting("snap.zeroCrossings") == 1);
+	f.display.actions().at("edit.cropRange")();
+	const auto cropped = [&f]
+	{
+		for (const Json& event : f.audioEvents())
+			if (event.at("id") != f.event)
+				return event;
+		return Json::object();
+	};
+	REQUIRE(f.waitUntil([&cropped] { return cropped().value("offset", 0) != 30; }));
+	CHECK(cropped().at("offset") == 4800);
+	CHECK(cropped().at("length") == 19200);
+}
+
+TEST_CASE(
+	"an edit that waits for a range's zero crossings edits that range, also when a press starts another", "[unit]")
+{
+	// As above: a sine crossing zero every 100 frames, in an audio event from 6 to 7 seconds playing from frame 30.
+	const test::TempDir dir;
+	const std::filesystem::path file = dir.path() / "sine.wav";
+	test::Audio sine;
+	for (int frame = 0; frame < 96000; ++frame)
+		sine.samples.push_back(static_cast<float>(0.5 * std::sin(frame * 3.14159265358979323846 / 100.0)));
+	test::writeWav(file, sine);
+	Fixture f;
+	const uint64_t audio = f.call("project.get").at("tracks")[0].at("id").get<uint64_t>();
+	const Json media =
+		f.call("media.add", {{"path", file.u8string()}, {"sampleRate", 48000}, {"channels", 1}, {"length", 96000}})
+			.at("media");
+	const Json clip = f.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	f.call("audioEvent.add",
+		{{"track", audio}, {"clip", clip.at("id")}, {"position", 288000}, {"offset", 30}, {"length", 48000}});
+	f.call("snap.set", {{"zeroCrossing", true}});
+	REQUIRE(f.waitUntil([&f] { return f.display.snap().zeroCrossing && f.lanes("events")[0].events.size() == 2; }));
+	f.display.setTool(ui::Tool::RangeSelection);
+
+	// Crop Range right after the release of a drag from 6.1 to 6.5 seconds, and a drag from 6.2 to 6.4 seconds before
+	// the answer: the crop keeps frames 4800 to 24000 of the event, where the first range's edges went, not 9600 to
+	// 19200.
+	f.automation.drag(std::nullopt, f.at(610, 20), f.at(650, 20), {});
+	REQUIRE(f.binding.waiting("snap.zeroCrossings") == 1);
+	f.display.actions().at("edit.cropRange")();
+	f.automation.drag(std::nullopt, f.at(620, 20), f.at(640, 20), {});
+	const auto cropped = [&f]
+	{
+		for (const Json& event : f.audioEvents())
+			if (event.at("id") != f.event)
+				return event;
+		return Json::object();
+	};
+	REQUIRE(f.waitUntil([&cropped] { return cropped().value("offset", 0) != 30; }));
+	CHECK(cropped().at("offset") == 4800);
+	CHECK(cropped().at("length") == 19200);
+	// The second range is the one shown, at its zero crossings: 6.2 and 6.4 seconds are frames 9630 and 19230.
+	const auto range = [&f] { return f.display.range().value_or(ui::RangeSelection{}); };
+	REQUIRE(f.waitUntil([&range] { return range().start == 297570; }));
+	CHECK(range().end == 307170);
 }
 
 TEST_CASE("the object selection tool with Alt draws an empty MIDI part on an empty spot", "[unit]")

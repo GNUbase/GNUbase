@@ -13,6 +13,7 @@
 #include <array>
 #include <cctype>
 #include <cstddef>
+#include <memory>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -368,7 +369,8 @@ namespace gnubase::ui
 		for (const auto& [id, command] : m_uiCommands)
 			add(id, Json::object(), command.description);
 		for (const auto& [name, info] : m_engineCommands)
-			if (!info.query && engine::validate(Json::object(), info.parameters).empty())
+			if (!info.query && engine::validate(Json::object(), info.parameters).empty() &&
+				info.parameters.value("minProperties", 0) == 0)
 				add(name, Json::object(), info.description);
 		for (const Bound& binding : m_bindings)
 		{
@@ -494,7 +496,10 @@ namespace gnubase::ui
 				runCommand(window, zone);
 			return;
 		}
-		m_binding.send(command, parameters);
+		// After what the user did before that waits for an answer (EngineBinding::afterAwaited), e.g. an undo right
+		// after Delete on a range whose edges move to zero crossings.
+		const auto sent = std::make_shared<const std::pair<std::string, Json>>(command, parameters);
+		m_binding.afterAwaited([&binding = m_binding, sent] { binding.send(sent->first, sent->second); });
 	}
 
 	void KeyCommands::enableWhen(

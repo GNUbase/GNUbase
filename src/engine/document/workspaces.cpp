@@ -46,9 +46,10 @@ namespace gnubase::engine
 		Json activeOf(const ProjectWorkspaces& workspaces, CommandContext& context)
 		{
 			const std::string& type = workspaces.activeType;
-			if (type.empty() ||
-				indexOf(listOf(workspaces, context, type), workspaces.active) ==
-					listOf(workspaces, context, type).size())
+			if (type.empty())
+				return {{"type", ""}, {"name", ""}};
+			const Json list = listOf(workspaces, context, type);
+			if (indexOf(list, workspaces.active) == list.size())
 				return {{"type", ""}, {"name", ""}};
 			return {{"type", type}, {"name", workspaces.active}};
 		}

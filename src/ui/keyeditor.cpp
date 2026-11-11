@@ -3,6 +3,7 @@
 
 #include "engine/midi/chords.h"
 #include "engine/midi/quantizesettings.h"
+#include "platform/log.h"
 #include "ui/controllerlanes.h"
 #include "ui/timeformat.h"
 
@@ -15,6 +16,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <exception>
 #include <map>
 #include <tuple>
 #include <utility>
@@ -309,6 +311,9 @@ namespace gnubase::ui
 		for (const Rml::EventId event : {Rml::EventId::Mousedown, Rml::EventId::Mousemove, Rml::EventId::Mouseup,
 				 Rml::EventId::Click, Rml::EventId::Dblclick, Rml::EventId::Change})
 			root.AddEventListener(event, this);
+		document->AddEventListener(Rml::EventId::Mouseup, this);
+		document->AddEventListener(Rml::EventId::Mouseout, this);
+		m_document = document->GetObserverPtr();
 		setTool(KeyTool::ObjectSelection);
 
 		m_subscriptions.push_back(m_binding.on("settings.changed",
@@ -348,6 +353,21 @@ namespace gnubase::ui
 
 	KeyEditor::~KeyEditor()
 	{
+		// A key held while the editor goes ends its pitch: the editor closing, or the switch between the key and drum
+		// editor, which builds a key editor of its own. Sending may throw, which a destructor must not pass on.
+		try
+		{
+			sound(std::nullopt);
+		}
+		catch (const std::exception& error)
+		{
+			logging::warning("The key editor cannot end the pitch of its pressed key: {}", error.what());
+		}
+		if (Rml::Element* document = m_document.get())
+		{
+			document->RemoveEventListener(Rml::EventId::Mouseup, this);
+			document->RemoveEventListener(Rml::EventId::Mouseout, this);
+		}
 		if (Rml::Element* root = m_root.get())
 			for (const Rml::EventId event : {Rml::EventId::Mousedown, Rml::EventId::Mousemove, Rml::EventId::Mouseup,
 					 Rml::EventId::Click, Rml::EventId::Dblclick, Rml::EventId::Change})
@@ -644,11 +664,25 @@ namespace gnubase::ui
 			for (const Part& part : m_parts)
 				if (part.id == idAttribute(*element, "part"))
 					place(*element, part.start, part.end - part.start, -1);
-		// The notes' elements are in m_notes' order (render).
-		const Rml::Element* notes = root->QuerySelector(".key-editor-notes");
-		if (notes != nullptr && static_cast<size_t>(notes->GetNumChildren()) == m_notes.size())
-			for (size_t i = 0; i < m_notes.size(); ++i)
-				place(*notes->GetChild(static_cast<int>(i)), m_notes[i].start, m_notes[i].length, m_notes[i].pitch);
+		// The notes' elements are in m_notes' order (render), and a note being drawn after them (press).
+		if (const Rml::Element* notes = root->QuerySelector(".key-editor-notes"))
+		{
+			const Rml::Element* drawn = m_drawn.get();
+			size_t next = 0;
+			for (int i = 0; i < notes->GetNumChildren(); ++i)
+			{
+				Rml::Element& child = *notes->GetChild(i);
+				if (&child == drawn)
+				{
+					place(child, std::llround(m_pressedAt.first), m_drawnLength, m_pressedAt.second);
+				}
+				else if (next < m_notes.size())
+				{
+					place(child, m_notes[next].start, m_notes[next].length, m_notes[next].pitch);
+					++next;
+				}
+			}
+		}
 		if (Rml::Element* cursor = root->QuerySelector(".key-editor-step-cursor");
 			cursor != nullptr && m_view.value("stepInput", false))
 			place(*cursor, m_view.value("stepPosition", int64_t{0}), 0, -1);
@@ -988,7 +1022,15 @@ namespace gnubase::ui
 			drag(event);
 			break;
 		case Rml::EventId::Mouseup:
-			release(event);
+			// A key's pitch ends wherever the mouse is released; the document hears that, the root only within.
+			sound(std::nullopt);
+			if (event.GetCurrentElement() == m_root.get())
+				release(event);
+			break;
+		case Rml::EventId::Mouseout:
+			// The mouse leaving the window ends the pitch too: the button going up out there sends no mouseup.
+			if (target == m_document.get())
+				sound(std::nullopt);
 			break;
 		case Rml::EventId::Dblclick:
 			doubleClick(event);
@@ -1016,6 +1058,12 @@ namespace gnubase::ui
 	{
 		Rml::Element* root = m_root.get();
 		Rml::Element* target = event.GetTargetElement();
+		if (const Rml::Element* key = withAttribute(target, "pitch", root);
+			!m_drum && key != nullptr && key->IsClassSet("key-editor-key"))
+		{
+			sound(std::stoi(attribute(*key, "pitch")));
+			return;
+		}
 		const Rml::Element* area = root->QuerySelector(".key-editor-grid");
 		bool inGrid = false;
 		for (const Rml::Element* each = target; each != nullptr && each != root; each = each->GetParentNode())
@@ -1098,7 +1146,8 @@ namespace gnubase::ui
 			drawn->SetClass("drum-note", m_drum);
 			drawn->SetClass("drawing", true);
 			Rml::Element* added = notes->AppendChild(std::move(drawn));
-			place(*added, start, lengthQuantize(m_pressedAt.second), m_pressedAt.second);
+			m_drawnLength = lengthQuantize(m_pressedAt.second);
+			place(*added, start, m_drawnLength, m_pressedAt.second);
 			m_drawn = added->GetObserverPtr();
 			return;
 		}
@@ -1220,7 +1269,8 @@ namespace gnubase::ui
 				const int64_t step = lengthQuantize(m_pressedAt.second);
 				const auto steps = std::max<int64_t>(
 					1, static_cast<int64_t>(std::ceil((ticks - m_pressedAt.first) / static_cast<double>(step))));
-				place(*drawn, std::llround(m_pressedAt.first), steps * step, m_pressedAt.second);
+				m_drawnLength = steps * step;
+				place(*drawn, std::llround(m_pressedAt.first), m_drawnLength, m_pressedAt.second);
 			}
 			return;
 		}
@@ -1245,6 +1295,30 @@ namespace gnubase::ui
 				place(*element, shown->start + std::min(dt, shown->length - 1),
 					shown->length - std::min(dt, shown->length - 1), shown->pitch);
 		}
+	}
+
+	void KeyEditor::sound(std::optional<int> pitch)
+	{
+		// Into the track's channel as if from its MIDI input (midi.inject), on MIDI channel 1 as chord.audition plays;
+		// without an audio device or an instrument nothing sounds, which is no error to report.
+		const auto inject = [this](uint64_t channel, int note, bool on)
+		{
+			m_binding.send("midi.inject",
+				{{"channel", channel},
+					{"messages", Json::array({{{"position", 0}, {"bytes", {on ? 0x90 : 0x80, note, on ? 100 : 0}}}})}},
+				[](const engine::Result&) {});
+		};
+		if (const auto sounding = std::exchange(m_sounding, std::nullopt))
+			inject(sounding->first, sounding->second, false);
+		if (!pitch)
+			return;
+		const Json activeTrack = m_view.value("activeTrack", Json(0));
+		for (const Json& track : m_project.value("tracks", Json::array()))
+			if (track.at("id") == activeTrack && track.value("channel", Json()).is_number_unsigned())
+			{
+				m_sounding = std::make_pair(track.at("channel").get<uint64_t>(), *pitch);
+				inject(m_sounding->first, *pitch, true);
+			}
 	}
 
 	void KeyEditor::release(Rml::Event& event)

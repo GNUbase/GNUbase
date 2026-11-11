@@ -14,9 +14,11 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <thread>
@@ -234,15 +236,69 @@ namespace
 		return job;
 	}
 
-	// Sends a command that starts a job and, right behind it (SavedProject::hold), job.cancel for that job, so that
-	// the job is cancelled before it gets far; returns the job once it ended. Job ids count from 1 in each engine, so
-	// the engine must not have started a job before.
+	// Holds a job of the given kind at its first job.progress until release, for a minute at most, so that it can't
+	// end before a job.cancel (#1079): a Listener runs on the thread that sends the event, here the job's. Meanwhile
+	// events wait for it, so the test sends only commands that send none until it releases the job.
+	class HeldJob
+	{
+	public:
+		HeldJob(Engine& engine, std::string kind)
+			: m_kind(std::move(kind)),
+			  m_listener(engine,
+				  [this](const Event& event)
+				  {
+					  if (event.name != "job.progress" || event.data.at("kind") != m_kind)
+						  return;
+					  std::unique_lock lock(m_mutex);
+					  m_held = true;
+					  m_changed.notify_all();
+					  m_changed.wait_for(lock, std::chrono::minutes(1), [this] { return m_released; });
+				  })
+		{
+		}
+
+		~HeldJob() { release(); }
+		HeldJob(const HeldJob&) = delete;
+		HeldJob& operator=(const HeldJob&) = delete;
+		HeldJob(HeldJob&&) = delete;
+		HeldJob& operator=(HeldJob&&) = delete;
+
+		// Waits until the job is at its first job.progress.
+		bool waitUntilHeld()
+		{
+			std::unique_lock lock(m_mutex);
+			return m_changed.wait_for(lock, std::chrono::seconds(30), [this] { return m_held; });
+		}
+
+		void release()
+		{
+			{
+				const std::scoped_lock lock(m_mutex);
+				m_released = true;
+			}
+			m_changed.notify_all();
+		}
+
+	private:
+		const std::string m_kind;
+		std::mutex m_mutex;
+		std::condition_variable m_changed;
+		bool m_held = false;
+		bool m_released = false;
+		Listener m_listener; // last, so that it stops before the rest goes
+	};
+
+	// Starts a job with the command, cancels it while it is held at its first progress, so that it can't end first, and
+	// returns the job once it ended. Job ids count from 1 in each engine, so the engine must not have started a job
+	// before.
 	Json cancelJob(SavedProject& song, const std::string& command, Json parameters = Json::object())
 	{
 		REQUIRE(run(song.client, "job.list").at("jobs").empty());
-		song.hold();
+		HeldJob held(song.engine, command);
 		song.client.send(command, std::move(parameters));
-		song.client.send("job.cancel", {{"job", 1}});
+		REQUIRE(held.waitUntilHeld());
+		run(song.client, "job.cancel", {{"job", 1}});
+		held.release();
 		return waitForJob(song.client, 1);
 	}
 
@@ -345,6 +401,7 @@ TEST_CASE("pool.get lists the clips with their use, status and info, and the poo
 	CHECK(pool.at("usedFiles") == 2);
 	CHECK(pool.at("missingFiles") == 1);
 	CHECK(pool.at("externalFiles") == 2);
+	CHECK(pool.at("missingExternalFiles") == 1); // gone.wav, which Prepare Archive can't copy
 	CHECK(pool.at("totalSize") ==
 		static_cast<int64_t>(fs::file_size(song.media / "kick.wav") + fs::file_size(song.library / "loop.wav")));
 }
@@ -906,14 +963,13 @@ TEST_CASE("job.cancel stops media.locate, which then changes nothing", "[integra
 	fillFolder(moved, 50);
 	fs::rename(song.library / "kick.wav", moved / "folder49" / "kick.wav");
 	song.reopen();
-	song.prepareHold();
 	const size_t before = steps(song.client);
 
 	const Json cancelled = cancelJob(song, "media.locate", {{"folder", utf8(moved)}});
 	CHECK(cancelled.at("state") == "cancelled");
 	CHECK(run(song.client, "pool.get").at("missingFiles") == 1);
 	CHECK(byId(run(song.client, "project.get").at("media"), kick).at("path") == utf8(song.library / "kick.wav"));
-	CHECK(steps(song.client) == before + 1); // only hold's
+	CHECK(steps(song.client) == before);
 }
 
 TEST_CASE("job.cancel stops media.conform, which then leaves no file behind and changes nothing", "[integration]")
@@ -921,7 +977,6 @@ TEST_CASE("job.cancel stops media.conform, which then leaves no file behind and 
 	SavedProject song;
 	writeFile(song.library / "slow.wav", 441000, 2, 44100.0); // ten seconds
 	const uint64_t slow = song.mediaOf(song.clip(song.library / "slow.wav"));
-	song.prepareHold();
 	const size_t before = steps(song.client);
 
 	const Json cancelled = cancelJob(song, "media.conform", {{"media", {slow}}});
@@ -930,7 +985,7 @@ TEST_CASE("job.cancel stops media.conform, which then leaves no file behind and 
 	const Json media = byId(run(song.client, "project.get").at("media"), slow);
 	CHECK(media.at("path") == utf8(song.library / "slow.wav"));
 	CHECK(media.at("sampleRate") == 44100.0);
-	CHECK(steps(song.client) == before + 1); // only hold's
+	CHECK(steps(song.client) == before);
 }
 
 TEST_CASE("an edit made while media.locate or media.conform runs is kept", "[integration]")

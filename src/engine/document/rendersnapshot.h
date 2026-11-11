@@ -160,7 +160,6 @@ namespace gnubase::engine
 		bool preFader = false;
 	};
 
-	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
 	// A chord or scale of the chord track from start (samples) on, until the next: its pitch classes, bit n for
 	// pitch class n (C is 0).
 	struct LiveHarmony
@@ -169,6 +168,7 @@ namespace gnubase::engine
 		uint16_t classes = 0;
 	};
 
+	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
 	struct RenderChannel
 	{
 		ObjectId id = 0;
@@ -205,7 +205,7 @@ namespace gnubase::engine
 		// MIDI and instrument tracks: they play what comes from all MIDI inputs (MIDI thru), since they monitor or
 		// are record-enabled and their MIDI input is all MIDI inputs.
 		bool midiThru = false;
-		// Muted, silenced by another channel's solo, or on a disabled track: outputs silence. A silent MIDI channel
+		// Muted, silenced by another channel's solo, or on a disabled track: outputs silence. A quiet MIDI channel
 		// has no notes or controllers, and a disabled track no events or parts.
 		bool silent = false;
 		// Silenced by another channel's solo or on a disabled track: silent but for the mute button. Its strips output

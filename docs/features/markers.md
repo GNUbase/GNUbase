@@ -83,8 +83,8 @@ The reference's defaults (`ui::defaultKeyMap`, [key-commands.md](key-commands.md
   - Moving, resizing and adding snap as the event display's drags do ([snap.md](snap.md), `EventDisplay::snapped`); a
     new cycle marker ends where the mouse is, measured from the press itself, not from its snapped time.
   - A double click on a cycle marker sets the locators to it (`marker.setLocators`), with Alt it zooms to it (p. 424).
-    The event display stops mouse downs, so RmlUi sends no `dblclick`: two clicks within half a second and 3 dp make
-    one.
+    The event display stops mouse downs, so RmlUi sends no `dblclick`: two clicks within half a second on RmlUi's
+    clock and 3 dp make one.
 
   - A drag whose mouseup never comes, as when the button goes up outside the window, where RmlUi has no element to
     send it to, ends without its effect at the next left press anywhere in the document, before the press does what it
@@ -173,9 +173,10 @@ upper border, resizing it by its handles, a press inside it only selecting it, s
 undo step, snapping to bars and dropping on another marker track, also straight down; Ctrl-drag adding a cycle marker,
 also snapped from a press off the grid, Shift+Alt-click and Shift+Ctrl-drag adding and renaming; the erase tool with
 and without Alt, and with another key as the tool modifier; a drag released outside the window ending at the next
-press; the range tool's double click between markers, and its drag by the marker track moving and, with Alt,
-copying the range's contents. In the app's UI: the marker track's controls adding
-markers (Shift-click renaming), activating the track and locating, cycling and zooming from the lists, the Zoom lists having the active marker track's cycle markers; Delete, also
+press; the range tool's double click between markers, also injected with a first press whose frame takes longer than
+the double click time, and its drag by the marker track moving and, with Alt, copying the range's contents. In the
+app's UI: the marker track's controls adding markers (Shift-click renaming), activating the track and locating,
+cycling and zooming from the lists, the Zoom lists having the active marker track's cycle markers; Delete, also
 with a range selected after a marker; and the context menu's Show Marker Lines. Marker files:
 `tests/marker_tests.cpp` has the CSV round trip byte for byte with undo, also of marker tracks with the same name,
 a spreadsheet's file and files that change nothing, among them rows of one Track Number with different names;

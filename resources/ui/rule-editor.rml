@@ -2,12 +2,14 @@
 <!-- The rule editor and the project input transformer (#178, docs/features/midi-rules.md, reference manual pp.
      1392-1423), and the project rule editor (#179, docs/features/project-rules.md, pp. 1424-1445). app::AppUi opens
      it with the document's attributes parts and notes (ids separated by commas) for the rule editor, target="project"
-     for the project input transformer, or target="projectRules" for the project rule editor, which runs
+     for the project input transformer, target="track" with track="id" for a track's input transformer (#966), or
+     target="projectRules" for the project rule editor, which runs
      project.applyRules or project.findByRules on the project window's selection (gnubase.ui.projectSelection and
      gnubase.ui.selectInProject) between its pre and post commands (gnubase.ui.command). Its Lua shows the presets, the filter lines,
      the function and the action lines, and runs the engine's commands: Apply runs midi.applyRules (select:
-     midi.findByRules, which shows how many events it found) or, for the input transformer, sets the module shown with
-     midi.setInputTransformer; Save Preset runs midiRules.savePreset. A command the engine refuses keeps the dialog open
+     midi.findByRules, which shows how many events it found) or, for the input transformers, sets the modules edited
+     with midi.setInputTransformer or the track's channel.set; Save Preset runs midiRules.savePreset. An asterisk after
+     the preset says that the lines differ from it. A command the engine refuses keeps the dialog open
      with its message; Cancel closes it. -->
 <rml>
 <head>
@@ -460,8 +462,29 @@
 			return result
 		end
 
+		-- Whether input transformers take rules: they don't select, and live events have no position or length.
+		local function live(rules)
+			if rules["function"] == "select" then
+				return false
+			end
+			for _, list in ipairs({rules.filters or {}, rules.actions or {}}) do
+				for _, line in ipairs(list) do
+					if line.target == "position" or line.target == "length" then
+						return false
+					end
+				end
+			end
+			return true
+		end
+
+		-- The presets, for an input transformer those it can apply (#969).
 		local function showPresets(document, chosen)
-			editor.presets = (editor.project and gnubase.projectRules or gnubase.midiRules).presets().presets
+			editor.presets = {}
+			for _, preset in ipairs((editor.project and gnubase.projectRules or gnubase.midiRules).presets().presets) do
+				if not editor.input or live(preset.rules) then
+					editor.presets[#editor.presets + 1] = preset
+				end
+			end
 			local choices = {{"", ""}}
 			for _, preset in ipairs(editor.presets) do
 				choices[#choices + 1] = {preset.name, preset.name}
@@ -472,23 +495,89 @@
 			editor.building = false
 		end
 
+		-- Whether two values are alike: numbers by value, tables by their keys.
+		local function same(a, b)
+			if type(a) == "table" and type(b) == "table" then
+				for key, value in pairs(a) do
+					if not same(value, b[key]) then
+						return false
+					end
+				end
+				for key in pairs(b) do
+					if a[key] == nil then
+						return false
+					end
+				end
+				return true
+			end
+			return a == b
+		end
+
+		-- The asterisk after the preset while the lines differ from it.
+		function editor.changed(document)
+			if editor.building then
+				return
+			end
+			local modified = editor.baseline ~= nil and not same(editor.baseline, read(document, false))
+			element(document, "modified").inner_rml = modified and "*" or ""
+		end
+
+		-- What the dialog shows now is the preset chosen, to compare the lines with.
+		local function remember(document)
+			editor.baseline = valueOf(document, "preset") ~= "" and read(document, false) or nil
+			editor.changed(document)
+		end
+
+		-- The input transformer's modules, as the engine has them: the project's or the track's channel's.
+		local function engineModules()
+			local project = gnubase.project.get()
+			if not editor.track then
+				return project.inputTransformer
+			end
+			for _, track in ipairs(project.tracks) do
+				if track.id == editor.track then
+					for _, channel in ipairs(project.channels) do
+						if channel.id == track.channel and channel.inputTransformer then
+							editor.channel = channel.id
+							return channel.inputTransformer.modules
+						end
+					end
+				end
+			end
+			error("The track has no input transformer", 0)
+		end
+
+		-- A module as the dialog shows it, with the edits made to it before another module was shown.
 		local function showModule(document)
-			local modules = gnubase.project.get().inputTransformer
-			local module = modules[editor.module] or {}
-			editor.rules = copy(module.rules or {})
+			local edit = editor.edits[editor.module]
+			if edit then
+				editor.rules = copy(edit.rules)
+			else
+				local module = engineModules()[editor.module] or {}
+				edit = {on = module.on, preset = ""}
+				editor.rules = copy(module.rules or {})
+			end
 			element(document, "on-field").inner_rml = '<input type="checkbox" id="rule-editor-on"' ..
-				(module.on and " checked" or "") .. '/><span class="label">On</span>'
+				(edit.on and " checked" or "") .. '/><span class="label">On</span>'
+			showPresets(document, edit.preset)
 			render(document)
+			editor.baseline = edit.baseline
+			editor.changed(document)
 		end
 
 		function editor.load(document)
 			editor.parts = ids(document:GetAttribute("parts"))
 			editor.notes = ids(document:GetAttribute("notes"))
-			editor.input = tostring(document:GetAttribute("target") or "") == "project"
-			editor.project = tostring(document:GetAttribute("target") or "") == "projectRules"
+			local target = tostring(document:GetAttribute("target") or "")
+			editor.input = target == "project" or target == "track"
+			editor.track = target == "track" and ids(document:GetAttribute("track"))[1] or nil
+			editor.project = target == "projectRules"
 			editor.rules = copy({})
-			element(document, "title").inner_rml = editor.input and "Project Input Transformer" or
-				(editor.project and "Project Rule Editor" or "Rule Editor")
+			editor.edits = {}
+			editor.baseline = nil
+			element(document, "title").inner_rml = editor.track and "Track Input Transformer" or
+				(editor.input and "Project Input Transformer" or
+					(editor.project and "Project Rule Editor" or "Rule Editor"))
 			element(document, "apply").inner_rml = editor.input and "OK" or "Apply"
 			showPresets(document, nil)
 			if editor.input then
@@ -512,8 +601,11 @@
 			local prefix = kind .. "-" .. index .. "-"
 			local rules = read(document, false)
 			local line = (kind == "filter" and rules.filters or rules.actions)[index]
+			editor.building = true
 			element(document, prefix .. "values").inner_rml =
 				kind == "filter" and filterValues(prefix, line) or actionValues(prefix, line)
+			editor.building = false
+			editor.changed(document)
 		end
 
 		function editor.insert(document, list)
@@ -528,6 +620,7 @@
 			end
 			table.insert(editor.rules[list], line)
 			render(document)
+			editor.changed(document)
 		end
 
 		-- Removes the lines picked, or the last one if none is.
@@ -545,6 +638,7 @@
 			end
 			editor.rules[list] = kept
 			render(document)
+			editor.changed(document)
 		end
 
 		function editor.choose(document)
@@ -557,21 +651,42 @@
 					editor.rules = copy(preset.rules)
 					element(document, "name"):SetAttribute("value", name)
 					render(document)
+					remember(document)
 					return
 				end
 			end
+		end
+
+		local function message(document, text)
+			element(document, "message").inner_rml = escape(text)
+		end
+
+		-- Keeps the edits of the module shown while another one shows; a value that isn't a number keeps it shown
+		-- with the message.
+		local function keepModule(document)
+			local ok, rules = pcall(read, document, true)
+			if not ok then
+				message(document, rules)
+				return false
+			end
+			editor.edits[editor.module] = {on = element(document, "on"):HasAttribute("checked"), rules = rules,
+				preset = valueOf(document, "preset"), baseline = editor.baseline}
+			return true
 		end
 
 		function editor.chooseModule(document)
 			if editor.building then
 				return
 			end
+			if not keepModule(document) then
+				editor.building = true
+				element(document, "module"):SetAttribute("value", tostring(editor.module))
+				editor.building = false
+				return
+			end
 			editor.module = math.tointeger(tonumber(valueOf(document, "module"))) or 1
+			message(document, "")
 			showModule(document)
-		end
-
-		local function message(document, text)
-			element(document, "message").inner_rml = escape(text)
 		end
 
 		function editor.save(document)
@@ -580,6 +695,7 @@
 				local presets = editor.project and gnubase.projectRules or gnubase.midiRules
 				presets.savePreset({name = name, rules = engineRules(read(document, true))})
 				showPresets(document, name)
+				remember(document)
 			end)
 			message(document, ok and "Preset saved" or failure)
 		end
@@ -630,13 +746,25 @@
 				return applyProject(rules)
 			end
 			if editor.input then
-				local current = gnubase.project.get().inputTransformer
-				local modules = {}
-				for index = 1, editor.module - 1 do
-					modules[index] = {on = current[index].on}
+				-- Every module edited, up to the last one; the ones before it that weren't stay as they are.
+				local current = engineModules()
+				editor.edits[editor.module] = {on = element(document, "on"):HasAttribute("checked"),
+					rules = read(document, true)}
+				local last = 0
+				for index in pairs(editor.edits) do
+					last = math.max(last, index)
 				end
-				modules[editor.module] = {on = element(document, "on"):HasAttribute("checked"), rules = rules}
-				gnubase.midi.setInputTransformer({modules = modules})
+				local modules = {}
+				for index = 1, last do
+					local edit = editor.edits[index]
+					modules[index] = edit and {on = edit.on, rules = engineRules(edit.rules)} or
+						{on = current[index].on}
+				end
+				if editor.track then
+					gnubase.channel.set({channel = editor.channel, inputTransformer = {modules = modules}})
+				else
+					gnubase.midi.setInputTransformer({modules = modules})
+				end
 				return true
 			end
 			local parameters = {parts = editor.parts, rules = rules}
@@ -664,12 +792,13 @@
 	</script>
 </head>
 <body onshow="RuleEditor.load(document)">
-	<dialog id="rule-editor">
+	<dialog id="rule-editor" onchange="RuleEditor.changed(document)">
 		<div class="dialog-titlebar" id="rule-editor-title">Rule Editor</div>
 		<div class="rule-row" id="rule-editor-module-field"/>
 		<div class="rule-row">
 			<span class="label">Preset</span>
 			<span id="rule-editor-preset-field"/>
+			<span id="rule-editor-modified"/>
 			<input type="text" class="text" id="rule-editor-name" value=""/>
 			<button id="rule-editor-save" onclick="RuleEditor.save(document)">Save Preset</button>
 		</div>

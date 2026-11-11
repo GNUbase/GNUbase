@@ -247,7 +247,8 @@ namespace gnubase::engine
 		stopCueing();
 	}
 
-	void AudioEngine::cue(time::Samples position, bool playing, time::Samples window, bool wait, time::Samples enter)
+	void AudioEngine::cue(time::Samples position, bool playing, time::Samples window, bool wait, time::Samples enter,
+		time::Samples playsOn)
 	{
 		Playback::Cue cue;
 		cue.position = position;
@@ -258,6 +259,7 @@ namespace gnubase::engine
 		cue.arranger = plan.get();
 		cue.arrangerState = m_transport.arranger();
 		cue.enter = enter;
+		cue.playsOn = playsOn;
 		m_playback.cue(cue);
 		if (wait)
 			m_playback.waitUntilBuffered(g_startWait);
@@ -662,13 +664,17 @@ namespace gnubase::engine
 			sequence->inserts = channel.midiInserts;
 			sequence->sends = channel.midiSends;
 			// An instrument chases the controller events of the MIDI tracks routed to it with its own, so the latest of
-			// each kind wins, whichever track it is on.
-			if (routed.count(channel.id) == 0)
-				sequence->chase.push_back(makeChaseTrack(channel.controllers, channel.midiParts));
+			// each kind wins, whichever track it is on; not those of a track that its mute button mutes (a mute lane's
+			// track it chases, not knowing where the lane mutes). A routed track chases its own into its strip alone
+			// (MidiSequence::chaseIntoStrip), which learns its pedals from it and, muted by the button, keeps the
+			// values for unmuting (ChannelStrip::chaseFrom).
+			sequence->chase.push_back(makeChaseTrack(channel.controllers, channel.midiParts));
+			sequence->chaseIntoStrip = routed.count(channel.id) != 0;
 			if (channel.type == TrackType::Instrument)
 				for (const ObjectId source : sources[channel.id])
-					sequence->chase.push_back(
-						makeChaseTrack(routed.at(source)->controllers, routed.at(source)->midiParts));
+					if (!routed.at(source)->muted)
+						sequence->chase.push_back(
+							makeChaseTrack(routed.at(source)->controllers, routed.at(source)->midiParts));
 			sequencer->setSequence(std::move(sequence));
 			sequencer->setChase(m_chase);
 			sequencers[channel.id] = sequencer;
@@ -801,6 +807,9 @@ namespace gnubase::engine
 					state, nullptr, panning, std::nullopt, silent, StripPart::Fader, lookAhead);
 			}
 			node.processor = fader;
+			if (channel.type == TrackType::Midi && channel.output.kind == RenderTarget::Kind::Channel)
+				if (const auto sequencer = m_sequencers.find(channel.id); sequencer != m_sequencers.end())
+					sourceStrip->chaseFrom(sequencer->second->stripChase(), channel.muted);
 			if (const auto tap = m_renderTaps.find(channel.id); tap != m_renderTaps.end())
 				(tap->second.point == RenderPoint::Source ? sourceStrip : fader)
 					->tapRender(tap->second.tap, tap->second.point);
@@ -2701,8 +2710,11 @@ namespace gnubase::engine
 		{
 			throw CommandError("give a position, by or target");
 		}
+		// Exactly there, like a start; while playing, playback plays on from the cursor until the audio thread
+		// takes the locate.
 		if (m_device)
-			cue(position, false, m_device->format().blockSize, true); // exactly there, like a start
+			cue(position, false, m_device->format().blockSize, true, -1,
+				m_transport.playing() ? m_transport.position() : -1);
 		sent(m_transport.locate(position));
 		if (m_transport.countingIn()) // again, so that it ends on the bar line where playback now starts
 			sent(m_transport.record(true, cueCountIn()));

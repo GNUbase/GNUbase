@@ -17,6 +17,7 @@
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Elements/ElementFormControlSelect.h>
+#include <RmlUi/Core/EventListener.h>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
@@ -25,8 +26,11 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
+#include <thread>
+#include <utility>
 #include <vector>
 
 using namespace gnubase;
@@ -429,6 +433,33 @@ TEST_CASE("with the range tool, a double click on the marker track selects the r
 	CHECK(range.end == 4 * g_quarterSamples);
 	CHECK(range.tracks == std::vector<uint64_t>{fixture.audio, fixture.first, fixture.second});
 	CHECK(fixture.markers.selection().empty());
+}
+
+TEST_CASE(
+	"an injected double click on the marker track is one however long the frames between the presses take", "[unit]")
+{
+	Fixture fixture;
+	fixture.display.setTool(ui::Tool::RangeSelection);
+	// The first press's frame takes longer than the double click time, as in a slow build on a busy machine.
+	struct SlowFrame final : Rml::EventListener
+	{
+		void ProcessEvent(Rml::Event& /*event*/) override
+		{
+			if (std::exchange(slow, false))
+				std::this_thread::sleep_for(milliseconds(600));
+		}
+		bool slow = true;
+	} frame;
+	fixture.document.AddEventListener(Rml::EventId::Mouseup, &frame, true);
+	const std::shared_ptr<void> remove(
+		nullptr, [&](void*) { fixture.document.RemoveEventListener(Rml::EventId::Mouseup, &frame, true); });
+
+	fixture.automation.click(std::nullopt, fixture.lanesAt(150, 70), ui::MouseButton::Left, 2, {});
+	CHECK(!frame.slow);
+	REQUIRE(fixture.waitUntil(
+		[&] { return fixture.display.range() && fixture.display.range()->start == 2 * g_quarterSamples; }));
+	CHECK(fixture.display.range().value_or(ui::RangeSelection{0, 0, std::vector<uint64_t>()}).end ==
+		4 * g_quarterSamples);
 }
 
 namespace

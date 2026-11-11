@@ -401,8 +401,16 @@ TEST_CASE("the project window selects events or markers, and the info line shows
 	// A marker clicked again after an event was selected shows again: selecting an event deselects the markers.
 	clickMarker(1);
 	REQUIRE(window.shows("#info-line textdisplay[field=name]", "Verse"));
+	// The info line's setup pane names the fields as the info line does (p. 430).
+	const auto paneLabels = [&window]
+	{
+		return element(window.app, "#info-line-setup [setup-section=name]").at("text").get<std::string>() + "/" +
+			element(window.app, "#info-line-setup [setup-section=start]").at("text").get<std::string>();
+	};
+	REQUIRE(window.app.waitUntil([&] { return paneLabels() == "Description/Position"; }));
 	window.display.select({part});
 	REQUIRE(window.shows("#info-line textdisplay[field=name]", "Part"));
+	REQUIRE(window.app.waitUntil([&] { return paneLabels() == "Name/Start"; }));
 	REQUIRE(window.app.waitUntil([&] { return lines.selection().empty(); }));
 	CHECK(!hasClass(window.app, ".marker-label[marker=" + std::to_string(verse) + "]", "selected"));
 	// On the cycle marker beside its label: a click in the same place this soon would be a double click.
@@ -1090,6 +1098,28 @@ TEST_CASE("another project drops the inspector's edits in progress, and text fie
 	CHECK_FALSE(window.app.waitUntil(
 		[&] { return window.find("tracks", bass).at("name") != "Bass"; }, std::chrono::milliseconds(300)));
 	CHECK(window.find("tracks", vox).at("name") == "Vox");
+}
+
+TEST_CASE("the info line bounds typed start, end and length to the largest project position", "[ui]")
+{
+	Window window;
+	const uint64_t midi = window.addTrack({{"type", "midi"}, {"timeBase", "linear"}});
+	const uint64_t part = window.addPart(midi, 48000, 48000, "Part");
+	window.call("project.set", {{"timeFormat", "seconds"}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("midiParts").size() == 1; }));
+	window.display.select({part});
+	REQUIRE(window.shows("#info-line textdisplay[field=start]", "0:00:01.000"));
+
+	window.type("#info-line textdisplay[field=end]", "999999999999999");
+	REQUIRE(window.app.waitUntil([&] { return window.part(part).at("length") == time::g_maxPosition - 48000; }));
+	window.call("history.undo");
+	REQUIRE(window.app.waitUntil([&] { return window.part(part).at("length") == 48000; }));
+	window.type("#info-line textdisplay[field=length]", "999999999999999");
+	REQUIRE(window.app.waitUntil([&] { return window.part(part).at("length") == time::g_maxPosition - 48000; }));
+	window.call("history.undo");
+	REQUIRE(window.app.waitUntil([&] { return window.part(part).at("length") == 48000; }));
+	window.type("#info-line textdisplay[field=start]", "999999999999999");
+	REQUIRE(window.app.waitUntil([&] { return window.part(part).at("position") == time::g_maxPosition; }));
 }
 
 TEST_CASE("the info line edits the selected MIDI parts' transpose and velocity, relatively or for all", "[ui]")

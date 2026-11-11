@@ -614,6 +614,10 @@
 	{
 		border-color: #ffc44d;
 	}
+	.chord-pad .chord-pad-reference
+	{
+		background-color: #ffc44d;
+	}
 	.chord-pad.selected
 	{
 		border-color: #f1f4ff;
@@ -621,6 +625,11 @@
 	.chord-pad.locked .chord-pad-key
 	{
 		color: #e12ad8;
+	}
+	.chord-pad .chord-pad-adaptive
+	{
+		background-color: #10dff2;
+		border-radius: 999dp;
 	}
 	.chord-pad.triggered
 	{

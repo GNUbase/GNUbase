@@ -731,7 +731,9 @@ namespace gnubase::engine
 				if (project.trackById.at(track).parent == 0 || !removed(project.trackById.at(track).parent))
 					top.push_back(track);
 			// The active marker track goes last, as in track.removeEmpty, so that track.remove activates a marker track
-			// that stays rather than one that goes next.
+			// that stays rather than one that goes next. Moving it to the end of the top tracks is enough: marker
+			// tracks can't be inside a folder, so no folder that goes takes the active marker track along before the
+			// other marker tracks.
 			const auto active = std::find(top.begin(), top.end(), project.activeMarkerTrack);
 			if (active != top.end())
 				std::rotate(active, std::next(active), top.end());
@@ -762,7 +764,7 @@ namespace gnubase::engine
 					parts.insert(element->id);
 			// Each action's result stops at the longest project, so that values stay finite and fit the ticks they
 			// become. They may go below the project's start between two actions.
-			const double longest = logicalTicks(project, {time::TimeBase::Linear, time::g_maxPosition});
+			const double longest = static_cast<double>(longestProjectTicks(project)) / g_logicalTick;
 			const auto bounded = [longest](double value) { return std::clamp(value, -longest, longest); };
 			Commands commands;
 			for (const Element* element : found.elements)
@@ -894,7 +896,14 @@ namespace gnubase::engine
 					{
 						set["position"] = at(position);
 						if (marker.type == MarkerType::Cycle)
-							set["end"] = std::max(at(position + std::max(length, 0.0)), at(position) + 1);
+						{
+							// At least one sample long, as marker.set wants it, also on a musical track.
+							Marker moved = marker;
+							moved.position.value = at(position);
+							moved.end = {marker.position.base, at(position + std::max(length, 0.0))};
+							keepMinimumLength(project, moved);
+							set["end"] = moved.end.value;
+						}
 					}
 					if (!set.empty())
 					{
@@ -1107,7 +1116,7 @@ namespace gnubase::engine
 				"that stay, except that a locked event moves with an audio part that moves; delete keeps an audio "
 				"part that holds a locked event. Audio events keep their clip's name, track operations change tracks "
 				"only. Positions and lengths stop at the longest project. seed makes the random operations "
-				"repeatable." +
+				"repeatable; without it each call gives new random values." +
 					rulesText + " Use project.findByRules for select and deselect. Returns what the filters found.",
 				objectSchema(properties), foundSchema, false},
 			"Project Rule Editor",
@@ -1121,7 +1130,9 @@ namespace gnubase::engine
 				const Found found = find(project, rules, elements);
 				const Commands commands = rules.function == ProjectFunction::Delete
 					? deleting(project, found)
-					: transforming(project, rules, found, parameters.value("seed", uint64_t{0}));
+					: transforming(project, rules, found,
+						  parameters.contains("seed") ? parameters.at("seed").get<uint64_t>()
+													  : midi::nextLogicalSeed());
 				const Json result = found.json();
 				for (const auto& [command, commandParameters] : commands)
 					model.runEdit(command, project, commandParameters, context);

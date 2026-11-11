@@ -242,6 +242,19 @@ TEST_CASE("the in-place editor edits notes as the key editor does, and the event
 	f.scroll(62);
 	f.click(f.at(g_bar + (3 * g_quarter) + (g_sixteenth / 2), 62));
 	f.settle(4);
+	// While a note is being drawn, zooming the project window moves the notes and the drawn one with the timeline.
+	f.app.ui().press(std::nullopt, f.at(g_bar + (g_sixteenth / 2), 63), ui::MouseButton::Left, {});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const std::string drawn = f.editor() + " .key-note.drawing";
+	REQUIRE(f.elements(drawn).size() == 1);
+	f.display.zoomIn();
+	f.settle(5); // the four notes and the one being drawn
+	CHECK(std::abs(f.box(drawn).at("x").get<double>() - f.timelineX(g_bar)) <= 1.5);
+	f.app.ui().release(std::nullopt, f.at(g_bar + (g_sixteenth / 2), 63), ui::MouseButton::Left, {});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.elements(drawn).empty());
+	f.display.zoomOut(); // the part added next in view again
+	f.settle(5);
 	// A part added to the track shows in the row of parts; a click on it activates it.
 	const uint64_t later =
 		f.app.call("midiPart.add", {{"track", f.track}, {"position", 3 * g_bar}, {"length", g_bar}, {"name", "More"}})
@@ -391,7 +404,13 @@ TEST_CASE("two in-place editors and the lower zone's key editor have menus and s
 			CHECK(f.elements("#in-place-editing-mode-menu" + suffix).size() == 1);
 	}
 
-	// A note selected in one editor is selected in its view only.
+	// A note selected in one editor is selected in its view only. The instrument track's lane is scrolled to the top
+	// first: where the window opens smaller, as on CI's macOS runner (80 % of a smaller monitor), the lower zone
+	// leaves the event display too little height to show it below the other two tracks.
+	const std::vector<uint64_t>& lanes = f.display.laneTracks();
+	const auto lane = std::find(lanes.begin(), lanes.end(), strings);
+	REQUIRE(lane != lanes.end());
+	f.display.scrollVertically(f.display.laneTops().at(static_cast<size_t>(lane - lanes.begin())));
 	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().inPlaceEditors()->keyEditor(strings)->scrollToPitch(62); }));
 	f.app.shell().step(std::chrono::milliseconds(0));
 	f.click(other + " .key-note[note=\"" + std::to_string(held) + "\"]");
@@ -401,6 +420,12 @@ TEST_CASE("two in-place editors and the lower zone's key editor have menus and s
 	CHECK(f.view().at("selection").empty());
 	CHECK(viewOf("lower").at("selection").empty());
 	CHECK(f.display.selection().empty());
+	f.display.scrollVertically(0.0);
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			return std::abs(f.box(f.editor()).at("y").get<double>() - f.box(".event-area").at("y").get<double>()) < 1.0;
+		}));
 
 	// The toolbar's multiple part controls (reference manual p. 1260): Part Editing Mode and Activate Part for
 	// Editing, for the editor whose toolbar they are in.

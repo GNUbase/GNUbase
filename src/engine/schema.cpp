@@ -25,6 +25,18 @@ namespace gnubase::engine
 			return type == "null" && value.is_null();
 		}
 
+		// Whether a UTF-8 string has more characters (code points, as JSON Schema's maxLength counts them) than
+		// maxLength. Strings from Lua needn't be UTF-8, and stray continuation bytes count as no characters, so the
+		// bytes are bounded too: at most 4 per character.
+		bool tooLong(const std::string& text, size_t maxLength)
+		{
+			if (text.size() > 4 * maxLength)
+				return true;
+			const auto characters = std::count_if(
+				text.begin(), text.end(), [](char c) { return (static_cast<unsigned char>(c) & 0xC0U) != 0x80U; });
+			return static_cast<size_t>(characters) > maxLength;
+		}
+
 		// The schema's "type" as a message ("string or null"), or empty if the value has one of the types.
 		std::string typeMismatch(const Json& value, const Json& type)
 		{
@@ -50,6 +62,11 @@ namespace gnubase::engine
 		if (const auto choices = schema.find("enum");
 			choices != schema.end() && std::find(choices->begin(), choices->end(), value) == choices->end())
 			return name + " must be one of " + choices->dump();
+		// Before the pattern, so that it never matches more than maxLength characters: some standard libraries match
+		// recursively, about one stack frame per repeated character, and a long string overflowed the stack (#1059).
+		if (const auto maxLength = schema.find("maxLength"); value.is_string() && maxLength != schema.end() &&
+			tooLong(value.get_ref<const std::string&>(), maxLength->get<size_t>()))
+			return name + " must be at most " + maxLength->dump() + " characters";
 		// ponytail: compiles the pattern on every check; cache them if a pattern ever sits on a hot path.
 		if (const auto pattern = schema.find("pattern"); value.is_string() && pattern != schema.end() &&
 			!std::regex_search(value.get<std::string>(), std::regex(pattern->get<std::string>())))
@@ -111,5 +128,11 @@ namespace gnubase::engine
 			}
 		}
 		return {};
+	}
+
+	Json needsOne(Json schema)
+	{
+		schema["minProperties"] = 1;
+		return schema;
 	}
 }

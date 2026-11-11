@@ -232,6 +232,15 @@ TEST_CASE(
 	CHECK(!binding.sending("volume"));
 	CHECK(binding.waiting("track.add") == 0);
 	CHECK(position() == before + 4);
+
+	// Only a step in flight, one that waits and a query: settling sends the one that waits, too.
+	binding.sendStep(0, "volume", "Change Volume", volume(-3.0));
+	binding.sendStep(0, "volume", "Change Volume", volume(-4.0));
+	binding.send("project.get");
+	CHECK(binding.settle(std::chrono::seconds(10)));
+	CHECK(!binding.sending("volume"));
+	CHECK(position() == before + 6);
+	CHECK(client.call("project.get").value.at("channels").at(0).at("volume") == -4.0);
 }
 
 TEST_CASE("the UI follows the events of every client while it subscribes", "[unit]")
@@ -581,4 +590,88 @@ TEST_CASE("events, results and posted work draw every window in the step they re
 	CHECK(state->GetInnerRML() == "queried");
 	CHECK(window.frames() == frames + 1);
 	CHECK(other.frames() == otherFrames);
+}
+
+TEST_CASE("settling waits for a query that what the user did waits for, and for what its answer sends", "[unit]")
+{
+	// As the event display's actions wait for snap.zeroCrossings (#1086): settling returns only once the action that
+	// the answer runs has been sent and answered. The query takes a while, so that settling starts before its answer.
+	engine::Engine engine;
+	engine.registerCommand(
+		{"test.slowRead", 1, "Reads slowly.", engine::CommandInfo{}.parameters, Json::object(), true},
+		[](engine::CommandContext&)
+		{
+			std::this_thread::sleep_for(milliseconds(200));
+			return Json::object();
+		});
+	ui::EngineBinding binding(engine);
+	engine::Client client(engine);
+	const auto tracks = [&client] { return client.call("project.get").value.at("tracks").size(); };
+	bool answered = false;
+	binding.sendAwaited("test.slowRead", Json::object(),
+		[&binding, &answered](const engine::Result& /*result*/)
+		{
+			answered = true;
+			binding.send("track.add", {{"type", "audio"}});
+		});
+	CHECK(binding.settle(std::chrono::seconds(10)));
+	CHECK(answered);
+	CHECK(binding.waiting("track.add") == 0);
+	CHECK(tracks() == 1);
+}
+
+TEST_CASE("what the user does while an awaited query is out runs after its answer, in order", "[unit]")
+{
+	engine::Engine engine;
+	engine.registerCommand(
+		{"test.slowRead", 1, "Reads slowly.", engine::CommandInfo{}.parameters, Json::object(), true},
+		[](engine::CommandContext&)
+		{
+			std::this_thread::sleep_for(milliseconds(200));
+			return Json::object();
+		});
+	ui::EngineBinding binding(engine);
+	std::vector<std::string> ran;
+	// Without an awaited query out, at once.
+	binding.afterAwaited([&ran] { ran.emplace_back("at once"); });
+	CHECK(ran == std::vector<std::string>{"at once"});
+	CHECK(!binding.holding());
+
+	// While one is out, after its done, in the order given; what a held one runs itself runs at once.
+	ran.clear();
+	binding.sendAwaited(
+		"test.slowRead", Json::object(), [&ran](const engine::Result& /*result*/) { ran.emplace_back("answer"); });
+	binding.afterAwaited(
+		[&binding, &ran]
+		{
+			ran.emplace_back("first");
+			binding.afterAwaited([&ran] { ran.emplace_back("inside first"); });
+		});
+	binding.afterAwaited([&ran] { ran.emplace_back("second"); });
+	CHECK(ran.empty());
+	CHECK(binding.holding());
+	updateUntil(binding, [&binding] { return !binding.holding(); });
+	CHECK(ran == std::vector<std::string>{"answer", "first", "inside first", "second"});
+
+	// A held one that sends an awaited query again holds those after it until that is answered too.
+	ran.clear();
+	binding.sendAwaited("test.slowRead", Json::object(), {});
+	binding.afterAwaited(
+		[&binding, &ran]
+		{
+			ran.emplace_back("first");
+			binding.sendAwaited("test.slowRead", Json::object(),
+				[&ran](const engine::Result& /*result*/) { ran.emplace_back("again"); });
+		});
+	binding.afterAwaited([&ran] { ran.emplace_back("second"); });
+	updateUntil(binding, [&binding] { return !binding.holding(); });
+	CHECK(ran == std::vector<std::string>{"first", "again", "second"});
+
+	// releaseHeld runs them without waiting.
+	ran.clear();
+	binding.sendAwaited("test.slowRead", Json::object(), {});
+	binding.afterAwaited([&ran] { ran.emplace_back("released"); });
+	binding.releaseHeld();
+	CHECK(ran == std::vector<std::string>{"released"});
+	CHECK(binding.settle(std::chrono::seconds(10)));
 }
