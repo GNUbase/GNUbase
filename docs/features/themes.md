@@ -73,8 +73,8 @@ The theme styles RmlUi's controls by their tags and states, and GNUbase's contai
 - `tests/svg_tests.cpp`: a 9-slice skin keeps its corners at their size at 100, 150 and 200 %, and is rasterized once
   per scale for any number of widgets of any size; decorators find their files next to the style sheet.
 - `tests/theme_tests.cpp`: every theme's style sheet uses all its skins and styles the same widgets and states as the
-  others, draws the focus ring on every focusable widget in each of its states, and the high contrast theme meets
-  WCAG's contrast ratios.
+  others, draws the focus ring on every focusable widget in each of its states, gives the key editor's piano keyboard
+  white keys lighter than its black keys, and the high contrast theme meets WCAG's contrast ratios.
 - `tests/stylerules_tests.cpp`: C++ and Lua code (`src`, `resources`, `tests/lua`) never sets a style property other
   than geometry from data (position, size, transform), and documents and shared style sheets never name a theme.
 - `tests/window_tests.cpp`: a page of widgets (`tests/data/ui/widgets.rml`) in every theme, and in the default theme

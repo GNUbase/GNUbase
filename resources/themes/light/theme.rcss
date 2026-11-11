@@ -622,6 +622,11 @@
 	{
 		color: #6554c0;
 	}
+	.chord-pad .chord-pad-adaptive
+	{
+		background-color: #0969da;
+		border-radius: 999dp;
+	}
 	.chord-pad.triggered
 	{
 		background-color: #8cb8ed;
@@ -764,16 +769,16 @@
 	}
 	.key-editor-key
 	{
-		background-color: #444b56;
-		color: #eef1f5;
+		background-color: #f0f3f6;
+		color: #17202d;
 		border-bottom-width: 1px;
 		border-bottom-color: #566273;
 	}
 	.key-editor-key.black
 	{
-		background-color: #eef1f5;
-		color: #17202d;
-		border-bottom-color: #eef1f5;
+		background-color: #17202d;
+		color: #eef1f5;
+		border-bottom-color: #17202d;
 	}
 	.key-editor-key.selected
 	{

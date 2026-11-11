@@ -258,6 +258,10 @@ TEST_CASE("the key commands list every command a key can run with its default ke
 	CHECK(entryOf(commands, "history.undo").at("keys") == Json({"Mod+Z"}));
 	CHECK(entryOf(commands, "track.add").is_null());   // needs parameters
 	CHECK(entryOf(commands, "project.get").is_null()); // only reads
+	// Commands that need one of their parameters, though none is required, aren't listed without (#971).
+	CHECK(entryOf(commands, "chordPads.trigger").is_null());
+	CHECK(entryOf(commands, "marker.locate").is_null());
+	CHECK(entryOf(commands, "marker.setLocators").is_null());
 	CHECK_FALSE(entryOf(commands, "transport.play").is_null());
 }
 

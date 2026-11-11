@@ -335,6 +335,8 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
     assets = manifest["assets"]
     # Text on an accent-colored fill: dark on a light accent, white on a dark one.
     on_accent = c["background"] if luminance(c["accent"]) > 0.4 else "#ffffff"
+    # The piano keyboard's light and dark colors, the same way round in light themes as in dark ones.
+    ivory, ebony = sorted((c["text"], c["background"]), key=luminance, reverse=True)
 
     def skin(asset: str) -> str:
         item = assets[asset]
@@ -535,7 +537,8 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
                                      "border-left-width": f"{widths['hairline']}dp",
                                      "border-left-color": c["accent"]}),
         # The chord pads (docs/features/chord-pads.md): pads with their chord, degree and remote key, the selected,
-        # triggered and reference pads, and the chord assistant's suggestions by how well they fit
+        # triggered, locked and reference pads, the adaptive voicing indicator, and the chord assistant's suggestions
+        # by how well they fit
         (".chord-pad", {"color": c["text"], "background-color": c["surfaceRaised"],
                         "border-width": f"{widths['hairline']}dp", "border-color": c["border"],
                         "border-radius": f"{theme['radii']['small']}dp"}),
@@ -545,6 +548,8 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".chord-pad.reference", {"border-color": c["warning"]}),
         (".chord-pad.selected", {"border-color": c["text"]}),
         (".chord-pad.locked .chord-pad-key", {"color": c["accent2"]}),
+        (".chord-pad .chord-pad-adaptive", {"background-color": c["accent"],
+                                            "border-radius": f"{theme['radii']['round']}dp"}),
         (".chord-pad.triggered", {"background-color": mix(c["surfaceRaised"], c["accent"], .45)}),
         (".chord-suggestion", {"color": c["text"], "border-left-width": f"{widths['focus']}dp",
                                "border-left-color": c["border"]}),
@@ -602,11 +607,10 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         # The key editor (docs/features/key-editor.md): the keyboard's white and black keys, the keys of selected
         # notes lit, the grid's rows of black keys darker, the notes, selected ones in the second accent, those
         # outside the part editing mode dimmed, the note being drawn, and the step input cursor
-        (".key-editor-key", {"background-color": mix(c["surfaceRaised"], c["text"], .8), "color": c["background"],
+        (".key-editor-key", {"background-color": mix(c["surfaceRaised"], ivory, .8), "color": ebony,
                              "border-bottom-width": f"{widths['hairline']}px",
                              "border-bottom-color": c["textMuted"]}),
-        (".key-editor-key.black", {"background-color": c["background"], "color": c["text"],
-                                   "border-bottom-color": c["background"]}),
+        (".key-editor-key.black", {"background-color": ebony, "color": ivory, "border-bottom-color": ebony}),
         (".key-editor-key.selected", {"background-color": c["accent"]}),
         (".key-editor-key.black.selected", {"border-bottom-color": c["accent"]}),
         (".key-editor-grid", {"background-color": c["surface"]}),

@@ -66,7 +66,8 @@ namespace gnubase::scripting
 		// Stops every later outermost run with an error once its Lua code has run longer than the limit. Time spent in
 		// engine commands counts too, but only Lua code is interrupted. Zero, the default, means no limit. If given,
 		// keepRunning is asked first when a run is late, on the thread that runs it, and when it returns true the run
-		// goes on for another limit. It must not throw.
+		// goes on for another limit; once it returns false, every later check of that run fails without asking, also
+		// after code that catches the error. It must not throw.
 		void setTimeLimit(std::chrono::milliseconds limit, std::function<bool()> keepRunning = {})
 		{
 			m_timeLimit = limit;
@@ -128,6 +129,7 @@ namespace gnubase::scripting
 		std::chrono::milliseconds m_timeLimit{0};
 		std::function<bool()> m_keepRunning;
 		bool m_limited = false; // the outermost run that goes on has a deadline
+		bool m_stopped = false; // it was late and isn't asked again
 		std::chrono::steady_clock::time_point m_deadline;
 		int m_depth = 0;                                // runs going on: a function that Lua calls may run more code
 		lua_State* m_caller = nullptr;                  // caller()
