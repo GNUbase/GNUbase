@@ -345,6 +345,7 @@ TEST_CASE("pool.get lists the clips with their use, status and info, and the poo
 	CHECK(pool.at("usedFiles") == 2);
 	CHECK(pool.at("missingFiles") == 1);
 	CHECK(pool.at("externalFiles") == 2);
+	CHECK(pool.at("missingExternalFiles") == 1); // gone.wav, which Prepare Archive can't copy
 	CHECK(pool.at("totalSize") ==
 		static_cast<int64_t>(fs::file_size(song.media / "kick.wav") + fs::file_size(song.library / "loop.wav")));
 }

@@ -647,13 +647,20 @@ TEST_CASE("a backup takes every file of the Mixdown folder along and reports tho
 	writeNoise(mixdown / "Stems" / "Drums.wav", 4800, 2, 3);
 	writeNoise(mixdown / "Stems" / "drums.wav", 4800, 2, 4);
 	const bool caseSensitive = !sameFiles(mixdown / "Stems" / "Drums.wav", mixdown / "Stems" / "drums.wav");
+	// So do a file and a folder whose names differ only in case, which can't be both on such a drive: the folder
+	// that comes second gets a free name too, rather than failing the backup (#1001).
+	if (caseSensitive)
+	{
+		std::ofstream(mixdown / "Notes") << "notes";
+		writeNoise(mixdown / "notes" / "Take.wav", 4800, 2, 5);
+	}
 
 	// A file that another program locks, or that may not be read, is reported as missing, and the rest is backed up.
 	const test::Unreadable locked(mixdown / "Locked.wav");
 	const Json result = backup(song.client, {{"folder", utf8(dir.path() / "Backup")}});
 	std::set<std::string> expected{"Song.dawproject", "Mixdown/Song.wav", "Mixdown/Stems/Drums.wav"};
 	if (caseSensitive)
-		expected.insert("Mixdown/Stems/drums-2.wav");
+		expected.insert({"Mixdown/Stems/drums-2.wav", "Mixdown/Notes", "Mixdown/notes-2/Take.wav"});
 	if (locked.active())
 	{
 		REQUIRE(result.at("missing").size() == 1);
@@ -670,6 +677,26 @@ TEST_CASE("a backup takes every file of the Mixdown folder along and reports tho
 		CHECK(sameFiles(dir.path() / "Backup" / "Mixdown" / "Stems" / "drums-2.wav", mixdown / "Stems" / "drums.wav"));
 	// Empty folders go along too.
 	CHECK(fs::is_directory(dir.path() / "Backup" / "Mixdown" / "Empty" / "Inner"));
+}
+
+TEST_CASE("a backup leaves out the folders in the Mixdown folder that it can't list, and reports them", "[integration]")
+{
+	const test::TempDir dir;
+	const fs::path project = dir.path() / "Song";
+	Song song;
+	fs::create_directories(project);
+	run(song.client, "project.save", {{"path", utf8(project / "Song.dawproject")}});
+	const fs::path mixdown = project / "Mixdown";
+	writeNoise(mixdown / "Song.wav", 4800, 2, 1);
+	writeNoise(mixdown / "Hidden" / "Take.wav", 4800, 2, 2);
+	const test::Unreadable hidden(mixdown / "Hidden");
+	if (!hidden.active())
+		SKIP("the folder can be listed here anyway, e.g. by root");
+
+	const Json result = backup(song.client, {{"folder", utf8(dir.path() / "Backup")}});
+	CHECK(result.at("missing") == Json::array({{{"path", utf8(mixdown / "Hidden")}}}));
+	CHECK(filesIn(dir.path() / "Backup") == std::set<std::string>{"Song.dawproject", "Mixdown/Song.wav"});
+	CHECK(!fs::exists(dir.path() / "Backup" / "Mixdown" / "Hidden")); // not recreated empty
 }
 
 TEST_CASE("a backup doesn't follow links to folders in the Mixdown folder", "[integration]")

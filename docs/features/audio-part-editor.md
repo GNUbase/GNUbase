@@ -64,12 +64,16 @@ object selection tool and the whole display with the play and scrub tools (`drag
 The gesture's mouseup in the editor's whole document or the drag element's dragend ends it, so it ends wherever the
 button goes up, also outside the window, with its effect there. A press anywhere in the document while one goes on,
 whose end never came, ends it without its effect: a move moves nothing, an audition stops, and the events show where
-they are again. While a move drags, the events it moves show where it takes them, also after the editor shows the
-project again, as when the selection of the press comes back. The pressed event's element stays when the events are
-drawn again during the drag, as when a command adds one to the part: RmlUi drops a drag without a dragend when its
-element goes. A command that removes the pressed event, or takes its part out of the part editing mode, ends the move
-without its effect. A click shows its selection at once, and a view that comes before the engine has answered it,
-which may be older than it, leaves that selection as it is.
+they are again. A move takes its events by the time from the one under the press to the one under the mouse, and by
+the lanes from the press's to the mouse's, from where the events are now: the pressed point of an event stays under
+the mouse, also when the display's range changes during the drag, and a command that moves the pressed event in time
+or onto another lane during it moves where the move goes from. While a move drags, the events it moves show where it
+takes them, on the grid as it is now (a change of snap shows at once), also after the editor shows the project again,
+as when the selection of the press comes back. The pressed event's element stays when the events are drawn again
+during the drag, as when a command adds one to the part: RmlUi drops a drag without a dragend when its element goes. A
+command that removes the pressed event, or takes its part out of the part editing mode, ends the move without its
+effect. A click shows its selection at once, and a view that comes before the engine has answered it, which may be
+older than it, leaves that selection as it is.
 
 | Tool | Gesture | Reference |
 |---|---|---|
@@ -123,9 +127,11 @@ of the window's size, not yet one of the lower zone's.
   over the window's toolbar and outside the window, and a press ending a gesture whose mouseup never came; the play
   tool from an empty spot and after a part's end; an event out of its part shown, selected and moved back; a finger
   pan over an empty spot and over an event outside the part editing mode scrolling the lanes; a render during a move
-  keeping it shown; a move going on when a command adds an event to the part during the drag, released outside the
-  window, and when the display's range changes, a Ctrl drag going on with its event's new lane and its element in
-  order, and a move ending without its effect when its event is removed or leaves the part editing mode; a view the
-  engine answered before a click leaving the click's selection, and a selection from the
-  engine showing once the click's is answered.
+  keeping it shown, with a change of snap at once; a move going on when a command adds an event to the part during the
+  drag, released outside the window, with its event under the mouse when the display's range changes, and from where
+  a command moves its event off the grid, back onto the grid; a Ctrl drag going on with its event's new lane and its
+  element in order; a move ending without its effect when its event is removed or leaves the part editing mode, and a
+  Ctrl drag of an event that isn't selected moving nothing when its part leaves the part editing mode; a view the
+  engine answered before a click leaving the click's selection, and a selection from the engine showing once the
+  click's is answered.
 - `tests/eventediting_tests.cpp`: a double click on an audio part opens it in the audio part editor.

@@ -4,14 +4,15 @@
 #include "ui/markers.h"
 
 #include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Elements/ElementFormControl.h>
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/StringUtilities.h>
+#include <RmlUi/Core/SystemInterface.h>
 
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 #include <iterator>
 #include <map>
@@ -28,7 +29,7 @@ namespace gnubase::ui
 		// As tall as any event display gets: the marker lines' one lane.
 		constexpr float g_linesHeight = 100000.0F;
 		// A double click, as RmlUi has it: the second click within half a second and 3 dp.
-		constexpr std::chrono::milliseconds g_doubleClickTime{500};
+		constexpr double g_doubleClickTime = 0.5; // seconds
 		constexpr float g_doubleClickDistance = 3.0F;
 		// How close to a position marker's line a click selects it, in dp.
 		constexpr double g_markerReach = 4.0;
@@ -542,14 +543,15 @@ namespace gnubase::ui
 			if (marker.track == track.id && marker.cycle && marker.start <= seconds && seconds <= marker.end)
 				cycle = &marker;
 		// The event display stops the mouse down, so RmlUi sends no dblclick: two clicks close in time and place make
-		// one.
-		const auto now = std::chrono::steady_clock::now();
+		// one. RmlUi's clock times them, which stands still for the presses of an injected double click
+		// (Automation::click).
+		const double now = Rml::GetSystemInterface()->GetElapsedTime();
 		const Rml::Vector2f mouse = {
 			event.GetParameter<float>("mouse_x", 0.0F), event.GetParameter<float>("mouse_y", 0.0F)};
-		const bool twice = now - m_lastClick < g_doubleClickTime &&
+		const bool twice = m_lastClick && now - *m_lastClick < g_doubleClickTime &&
 			(mouse - m_lastMouse).SquaredMagnitude() <
 				g_doubleClickDistance * g_doubleClickDistance * ratio() * ratio();
-		m_lastClick = twice ? std::chrono::steady_clock::time_point() : now;
+		m_lastClick = twice ? std::nullopt : std::optional<double>(now);
 		m_lastMouse = mouse;
 		const Hit hit = hitAt(event, *at);
 
