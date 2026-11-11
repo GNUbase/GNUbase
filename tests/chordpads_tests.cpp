@@ -505,12 +505,90 @@ TEST_CASE("step input and pads dragged onto tracks make chord events and MIDI pa
 	CHECK(pitches == std::vector<int>{48, 60, 64, 67});
 }
 
-TEST_CASE("chord pads from a file with no pads or a reference below -1 keep sound values", "[unit]")
+TEST_CASE("step input finds and moves chord events on a chord track in linear time base", "[unit]")
+{
+	// At 121 BPM a bar's start lies between two samples: its ticks don't come back from the samples a linear chord
+	// track keeps (#1048), so step input compares and moves the events in the track's time base.
+	Engine engine;
+	Client client(engine);
+	run(client, "project.set", {{"tempo", 121.0}});
+	run(client, "track.add", {{"type", "chord"}, {"timeBase", "linear"}});
+	run(client, "chordPads.set", {{"stepInput", true}, {"stepPosition", g_bar}});
+	run(client, "chordPads.step", {{"pad", 0}});
+	const auto first = run(client, "chord.get").at("events")[0].at("position").get<int64_t>();
+	run(client, "chordPads.set", {{"stepBars", -1}});
+	run(client, "chordPads.step", {{"pad", 5}});
+	Json chords = run(client, "chord.get");
+	REQUIRE(chords.at("events").size() == 1);
+	CHECK(chords.at("events")[0].at("chord") == "Am");
+	CHECK(chords.at("events")[0].at("position") == first);
+	const auto second = run(client, "chordPads.get").at("stepPosition").get<int64_t>();
+	CHECK(second == 2 * g_bar);
+
+	// Move Insert moves the event at the step position to the next bar's start, where the next step finds it.
+	run(client, "chordPads.set", {{"moveInsert", true}, {"stepPosition", g_bar}});
+	run(client, "chordPads.step", {{"pad", 3}});
+	chords = run(client, "chord.get");
+	REQUIRE(chords.at("events").size() == 2);
+	CHECK(chords.at("events")[0].at("chord") == "F");
+	CHECK(chords.at("events")[0].at("position") == first);
+	const auto moved = chords.at("events")[1].at("position").get<int64_t>();
+	run(client, "chordPads.step", {{"pad", 4}});
+	chords = run(client, "chord.get");
+	REQUIRE(chords.at("events").size() == 3);
+	CHECK(chords.at("events")[1].at("chord") == "G");
+	CHECK(chords.at("events")[1].at("position") == moved);
+	CHECK(chords.at("events")[2].at("chord") == "Am");
+	run(client, "chordPads.set", {{"moveInsert", false}, {"stepPosition", 2 * g_bar}});
+	run(client, "chordPads.step", {{"pad", 0}});
+	chords = run(client, "chord.get");
+	REQUIRE(chords.at("events").size() == 3);
+	CHECK(chords.at("events")[1].at("chord") == "C");
+	CHECK(chords.at("events")[1].at("position") == moved);
+}
+
+TEST_CASE("the step position stays within the longest project, however far stepBars moves it", "[unit]")
+{
+	// #1048: stepBars of any size and stepPosition past the longest project's end (2^48 samples) don't overflow.
+	Engine engine;
+	Client client(engine);
+	const auto velocity = run(client, "chordPads.get").at("velocity");
+	CHECK_THAT(reject(client, "chordPads.set", {{"velocity", 50}, {"stepPosition", INT64_MAX}}),
+		ContainsSubstring("stepPosition must be 0 to"));
+	CHECK(run(client, "chordPads.get").at("velocity") == velocity); // a refused change changes nothing
+	run(client, "chordPads.set", {{"stepInput", true}, {"stepBars", INT64_MAX}});
+	const auto last = run(client, "chordPads.get").at("stepPosition").get<int64_t>();
+	CHECK(last > 1000000 * g_bar);
+	CHECK(last % g_bar == 0);
+	run(client, "chordPads.set", {{"stepBars", 1}});
+	CHECK(run(client, "chordPads.get").at("stepPosition") == last);
+	run(client, "chordPads.set", {{"stepPosition", last - g_bar}, {"stepBars", INT64_MAX}});
+	CHECK(run(client, "chordPads.get").at("stepPosition") == last);
+	// A step at the last bar writes its chord; the bar after it is past the end.
+	run(client, "chordPads.step", {{"pad", 0}});
+	CHECK(run(client, "chord.get").at("events")[0].at("position") == last);
+	CHECK(run(client, "chordPads.get").at("stepPosition") == last + g_bar);
+	CHECK_THAT(reject(client, "chordPads.step", {{"pad", 0}}), ContainsSubstring("past the longest project's end"));
+	run(client, "chordPads.set", {{"stepBars", INT64_MIN}});
+	CHECK(run(client, "chordPads.get").at("stepPosition") == 0);
+	run(client, "chordPads.set", {{"stepPosition", 3 * g_bar}, {"stepBars", -2}});
+	CHECK(run(client, "chordPads.get").at("stepPosition") == g_bar);
+}
+
+TEST_CASE("chord pads from a file with no pads, a reference below -1 or a step position out of range keep sound values",
+	"[unit]")
 {
 	Project project;
-	chordPadsFromJson(project, {{"pads", Json::array()}, {"reference", -5}});
+	chordPadsFromJson(project, {{"pads", Json::array()}, {"reference", -5}, {"stepPosition", INT64_MAX}});
 	CHECK(project.chordPads.pads.size() == 12);
 	CHECK(project.chordPads.reference == -1);
+	// A step position past the longest project's end comes back to it (#1048).
+	namespace gtime = gnubase::time;
+	const gtime::Ticks last =
+		gtime::toTicks({gtime::TimeBase::Linear, gtime::g_maxPosition}, project.tempo, project.sampleRate);
+	CHECK(project.chordPads.stepPosition == last);
+	chordPadsFromJson(project, {{"stepPosition", -1}});
+	CHECK(project.chordPads.stepPosition == 0);
 }
 
 TEST_CASE("the chord pads are saved with the project", "[integration]")
