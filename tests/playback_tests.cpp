@@ -1100,6 +1100,63 @@ TEST_CASE(
 	CHECK(kept == 0);
 }
 
+TEST_CASE("an audition that the cue thread cues while its first block plays plays on without a jump",
+	"[integration][realtime]")
+{
+	// The cue thread cues all the time, so that it often reads where the audio thread plays while that plays the
+	// audition's first block and finds the stream already read when it cues: it must leave it there, not cue it
+	// back to where the audition starts.
+	const gnubase::test::TempDir dir;
+	PlaylistEntry entry;
+	entry.end = 48000;
+	entry.media = 1;
+	Playlist sections;
+	sections.layers.push_back({entry});
+	const Playback::Track track{2, std::make_shared<const Playlist>(std::move(sections))};
+	const std::map<ObjectId, std::string> paths{{1, writeRamp(dir, "mono", 1, 48000)}};
+	constexpr uint32_t frames = 64;
+	constexpr size_t blocks = 16;
+	int jumps = 0;
+	for (int round = 0; round < 50; ++round)
+	{
+		Audition audition;
+		std::atomic<bool> cueing{true};
+		std::thread cue(
+			[&audition, &cueing]
+			{
+				while (cueing)
+					audition.cue(4800, true);
+			});
+		audition.play({3, 0, 0}, track, paths, 48000.0, 0, 48000, 1, frames);
+		std::vector<float> output(size_t{frames} * blocks, 0.0f);
+		std::thread audio(
+			[&audition, &output]
+			{
+				const std::vector<int> ports{0};
+				for (size_t block = 0; block < blocks; ++block)
+				{
+					float* const out = output.data() + (block * frames);
+					audition.process(&out, 1, ports, frames);
+					std::this_thread::yield();
+				}
+			});
+		audio.join();
+		cueing = false;
+		cue.join();
+		audition.stop();
+		for (size_t i = 0; i < output.size(); ++i)
+		{
+			if (output[i] != ramp(static_cast<int64_t>(i), 0))
+			{
+				UNSCOPED_INFO("round " << round << ": frame " << i << " plays " << output[i]);
+				++jumps;
+				break;
+			}
+		}
+	}
+	CHECK(jumps == 0);
+}
+
 namespace
 {
 	// Waits until the device has played frames frames, at most 10 seconds.
