@@ -21,7 +21,7 @@ namespace gnubase::ui
 			return element;
 		}
 
-		// After these, before anything handles them, the items follow what the press changed (#1069): a right click
+		// After these, before the elements handle them, the items follow what the press changed (#1069): a right click
 		// that selected a track opened the context menu, and a script's click on its item right after runs it.
 		constexpr std::array<Rml::EventId, 2> g_released = {Rml::EventId::Mouseup, Rml::EventId::Keyup};
 	}
@@ -54,7 +54,11 @@ namespace gnubase::ui
 			shown->SetClass("menu-keys", true);
 			item.keys = shown->GetObserverPtr();
 		}
+		// In the bubble phase, after the elements' listeners: the items follow what a click's listeners changed, and a
+		// list view selects its row in the default action of the click, after every listener of the click has run,
+		// and says so with a change event (#1120).
 		document.AddEventListener(Rml::EventId::Click, this);
+		document.AddEventListener(Rml::EventId::Change, this);
 		for (const Rml::EventId id : g_released)
 			document.AddEventListener(id, this, true);
 		update();
@@ -65,6 +69,7 @@ namespace gnubase::ui
 		if (Rml::Element* document = m_document.get())
 		{
 			document->RemoveEventListener(Rml::EventId::Click, this);
+			document->RemoveEventListener(Rml::EventId::Change, this);
 			for (const Rml::EventId id : g_released)
 				document->RemoveEventListener(id, this, true);
 		}
@@ -99,11 +104,11 @@ namespace gnubase::ui
 
 	void MainMenu::ProcessEvent(Rml::Event& event)
 	{
+		// A click comes after the elements' listeners: the items follow what they changed, before the click looks for
+		// its item (#1120).
+		update();
 		if (event.GetId() != Rml::EventId::Click)
-		{
-			update();
 			return;
-		}
 		Rml::Element* element = closestWith(event.GetTargetElement(), "command");
 		if (element == nullptr || element->HasAttribute("disabled"))
 			return;

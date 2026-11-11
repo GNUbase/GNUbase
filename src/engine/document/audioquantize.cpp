@@ -168,11 +168,21 @@ namespace gnubase::engine
 			{
 				WarpMarker& marker = markers[move.index];
 				const double to = move.to.value_or(move.from); // every move has one by now
-				const time::Samples lowest = move.index == 0 ? 1 : markers[move.index - 1].target + 1;
-				time::Samples low = lowest;
+				// Between the marker before it and the first one after the event (or the clip's ends), and within
+				// the real-time stretcher's range of both, so that playback follows it (dsp::WarpReader).
+				const WarpMarker before = move.index == 0 ? WarpMarker{} : markers[move.index - 1];
 				const auto next = std::find_if(markers.begin() + static_cast<std::ptrdiff_t>(move.index) + 1,
 					markers.end(), [end](const WarpMarker& each) { return each.position >= end; });
-				time::Samples high = next == markers.end() ? length - 1 : next->target - 1;
+				const WarpMarker after = next == markers.end() ? WarpMarker{length, length} : *next;
+				const auto fromBefore = static_cast<double>(marker.position - before.position);
+				const auto toAfter = static_cast<double>(after.position - marker.position);
+				const time::Samples lowest = std::max({before.target + 1,
+					before.target + static_cast<time::Samples>(std::ceil(fromBefore * dsp::g_minRealtimeRatio)),
+					after.target - static_cast<time::Samples>(std::floor(toAfter * dsp::g_maxRealtimeRatio))});
+				time::Samples low = lowest;
+				time::Samples high = std::min({after.target - 1,
+					before.target + static_cast<time::Samples>(std::floor(fromBefore * dsp::g_maxRealtimeRatio)),
+					after.target - static_cast<time::Samples>(std::ceil(toAfter * dsp::g_minRealtimeRatio))});
 				if (low > high)
 					continue;
 				const auto playsAt = [&](time::Samples target)
@@ -192,6 +202,7 @@ namespace gnubase::engine
 				const bool earlier = low > lowest && std::abs(playsAt(low - 1) - to) <= std::abs(playsAt(low) - to);
 				marker.target = earlier ? low - 1 : low;
 			}
+			checkMarkers(clip.warp, length);
 		}
 
 		std::vector<ObjectId> eventList(const Project& project, const Json& ids)
@@ -380,10 +391,11 @@ namespace gnubase::engine
 					}
 					else if (first.end < second.start)
 					{
-						const time::Samples frames = std::min<time::Samples>(
-							b.offset, std::llround(static_cast<double>(second.start - first.end) / second.ratio));
+						// Measured through the warp from b's offset as it is, as sizing its start does.
+						const time::Samples frames = std::min<time::Samples>(b.offset,
+							-std::llround(eventFrames(project, b, static_cast<double>(first.end - second.start))));
 						const time::Samples start =
-							second.start - std::llround(static_cast<double>(frames) * second.ratio);
+							second.start + std::llround(eventSamples(project, b, -static_cast<double>(frames)));
 						b.offset -= frames;
 						b.length += frames;
 						b.position = time::rebase(
@@ -391,9 +403,12 @@ namespace gnubase::engine
 						note(b.id);
 					}
 					const Clip& clip = project.clips.at(a.clip);
-					const time::Samples extension =
-						std::min<time::Samples>(std::llround(crossfadeSamples / first.ratio),
-							clipLength(project, clip) - (a.offset + a.length));
+					const EventSpan before = eventSpan(project, a);
+					const time::Samples extension = std::min<time::Samples>(
+						std::llround(eventFrames(
+							project, a, static_cast<double>(before.end - before.start) + crossfadeSamples)) -
+							a.length,
+						clipLength(project, clip) - (a.offset + a.length));
 					if (extension <= 0)
 						continue;
 					a.length += extension;
