@@ -218,7 +218,7 @@ namespace gnubase::engine
 		bool listen = false; // also plays on the monitoring bus, after its fader (graph::NodeKind::ListenBus)
 		AutoFades autoFades; // audio tracks: their own settings or the project's
 		std::vector<RenderAudioEvent> audioEvents;    // sorted by start
-		std::vector<RenderNote> notes;                // sorted by start, then pitch
+		std::vector<RenderNote> notes;                // sorted by start, key switches first, then pitch
 		std::vector<RenderController> controllers;    // sorted by position
 		std::vector<RenderPart> midiParts;            // sorted by start
 		std::vector<RenderAutomationLane> automation; // in the order of the lanes' ids

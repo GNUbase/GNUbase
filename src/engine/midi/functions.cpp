@@ -2,6 +2,7 @@
 #include "engine/midi/functions.h"
 
 #include "engine/document/rendersnapshot.h"
+#include "engine/midi/articulationmaps.h"
 #include "engine/midi/chords.h"
 #include "engine/midi/midivalues.h"
 
@@ -763,6 +764,7 @@ namespace gnubase::engine::midi
 			// As playback plays them (compilePart in rendersnapshot.cpp): the part's transpose and velocity, which the
 			// new part doesn't have, and with Include Inserts the track's MIDI modifiers.
 			const Modifiers& trackModifiers = project.channels.at(project.trackById.at(part.track).channel).modifiers;
+			const ArticulationMap* articulations = articulationMapOf(project, part.track);
 			Modifiers modifiers = settings.includeInserts && !trackModifiers.bypass ? trackModifiers : Modifiers();
 			modifiers.transpose += part.transpose;
 			modifiers.velocityShift += part.velocity;
@@ -791,14 +793,25 @@ namespace gnubase::engine::midi
 					continue;
 				Controller copy = controller;
 				copy.position = at;
+				// Of each group of the track's articulation map, the direction in effect where the range starts, so
+				// that the notes play the same sound slot (#175), also without includeChase.
+				int group = -1;
+				if (controller.type == ControllerType::Articulation && articulations != nullptr)
+					for (const Articulation& each : articulations->articulations)
+						if (each.name == controller.articulation)
+							group = each.group;
 				if (inRange(at))
 				{
 					controllers.push_back(copy);
 				}
-				else if (sampleOf(at) < settings.start && settings.includeChase &&
-					controller.type != ControllerType::SysEx && controller.type != ControllerType::Articulation)
+				else if (sampleOf(at) < settings.start &&
+					(controller.type == ControllerType::Articulation
+							? group >= 0
+							: settings.includeChase && controller.type != ControllerType::SysEx))
 				{
-					const LaneKey key = controller.type == ControllerType::Program
+					const LaneKey key = group >= 0
+						? LaneKey{ControllerType::Articulation, 0, static_cast<uint8_t>(group)}
+						: controller.type == ControllerType::Program
 						? LaneKey{ControllerType::Program, controller.channel, 0}
 						: laneOf(controller);
 					const auto previous = chasedAt.find(key);

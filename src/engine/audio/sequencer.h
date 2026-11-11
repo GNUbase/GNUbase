@@ -61,7 +61,7 @@ namespace gnubase::engine
 	// What a MIDI or instrument track plays, in the project's samples.
 	struct MidiSequence
 	{
-		std::vector<RenderNote> notes;             // sorted by start, then pitch
+		std::vector<RenderNote> notes;             // sorted by start, key switches first, then pitch
 		std::vector<RenderController> controllers; // sorted by position
 		// The tracks whose controller events a jump chases here: an instrument track's own and those of the MIDI
 		// tracks routed to it, so they are chased by time across them; none for a MIDI track routed to an instrument.

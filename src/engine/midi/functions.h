@@ -251,8 +251,9 @@ namespace gnubase::engine::midi
 	// 1120), with the random values playback draws; a note they move out of the range or that doesn't play is left
 	// out. eraseDestination first removes the destination track's parts that lie in the range and the events of other
 	// parts that start in it. includeChase adds the last controller value of every controller, program
-	// and channel before start at the new part's start. A new destination track goes to the end of the track list,
-	// routed to the instrument of the first track merged.
+	// and channel before start at the new part's start, and in any case the new part starts with the directions of
+	// the tracks' articulation maps in effect at start (#175). A new destination track goes to the end of the track
+	// list, routed to the instrument of the first track merged.
 	PartChanges merge(Project& project, const MergeSettings& settings);
 
 	enum class DissolveBy : uint8_t
