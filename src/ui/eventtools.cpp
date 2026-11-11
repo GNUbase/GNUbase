@@ -561,17 +561,13 @@ namespace gnubase::ui
 		{
 		case Tool::Zoom:
 			// Undoes the zoom before the double click's first click zoomed in; with Alt, which zoomed out, redoes the
-			// zoom undone before it (reference manual p. 104).
+			// zoom undone before it (reference manual p. 104). The first click's zoom leaves no trace in the history.
 			undoZoom();
+			m_redo = m_clickRedo;
 			if (m_pressed == "alt")
-			{
-				m_redo = m_clickRedo;
 				redoZoom();
-			}
 			else
-			{
 				undoZoom();
-			}
 			return true;
 		case Tool::RangeSelection:
 			break;
@@ -647,18 +643,26 @@ namespace gnubase::ui
 		if (!m_snap.zeroCrossing || !m_range)
 			return;
 		const RangeSelection range = *m_range;
+		++m_zeroCrossings;
 		m_binding.send("snap.zeroCrossings", {{"positions", {range.start, range.end}}, {"tracks", range.tracks}},
 			[this, range, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
-				// Unless the range changed meanwhile.
-				if (alive.expired() || !result.ok() || !m_range || m_range->start != range.start ||
-					m_range->end != range.end || m_range->tracks != range.tracks)
+				if (alive.expired())
 					return;
-				const Json& positions = result.value.at("positions");
-				RangeSelection moved = range;
-				moved.start = positions.at(0).get<int64_t>();
-				moved.end = std::max(moved.start, positions.at(1).get<int64_t>());
-				setRange(std::move(moved));
+				--m_zeroCrossings;
+				// Unless the range changed meanwhile.
+				if (result.ok() && m_range && m_range->start == range.start && m_range->end == range.end &&
+					m_range->tracks == range.tracks)
+				{
+					const Json& positions = result.value.at("positions");
+					RangeSelection moved = range;
+					moved.start = positions.at(0).get<int64_t>();
+					moved.end = std::max(moved.start, positions.at(1).get<int64_t>());
+					setRange(std::move(moved));
+				}
+				if (m_zeroCrossings == 0)
+					for (const std::function<void()>& action : std::exchange(m_afterZeroCrossings, {}))
+						action();
 			});
 	}
 
