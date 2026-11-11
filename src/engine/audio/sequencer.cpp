@@ -205,6 +205,41 @@ namespace gnubase::engine
 		return track;
 	}
 
+	std::vector<uint16_t> channelChaseKinds(const RenderChannel& channel)
+	{
+		std::vector<RenderController> sent;
+		const auto add = [&sent](ControllerType type, uint8_t number, uint8_t midiChannel)
+		{
+			RenderController controller;
+			controller.type = type;
+			controller.number = number;
+			controller.channel = midiChannel;
+			sent.push_back(controller);
+		};
+		// The channel's own values go out on MIDI channel 1 (channelAutomation).
+		if (channel.program)
+			add(ControllerType::Program, 0, 0);
+		if (channel.program && channel.bank)
+		{
+			add(ControllerType::Control, 0, 0);
+			add(ControllerType::Control, 32, 0);
+		}
+		if (channel.midiVolume)
+			add(ControllerType::Control, 7, 0);
+		if (channel.midiPan)
+			add(ControllerType::Control, 10, 0);
+		for (const RenderAutomationLane& lane : channel.automation)
+			if (lane.target.type == AutomationTargetType::Controller)
+				add(ControllerType::Control, lane.target.number, lane.target.channel);
+			else if (lane.target.type == AutomationTargetType::PitchBend)
+				add(ControllerType::PitchBend, 0, lane.target.channel);
+		std::vector<uint16_t> kinds;
+		kinds.reserve(sent.size());
+		for (const RenderController& controller : sent)
+			kinds.push_back(static_cast<uint16_t>(chaseKind(controller)));
+		return kinds;
+	}
+
 	MidiSequencer::MidiSequencer()
 		: m_sequence(std::make_unique<const MidiSequence>()), m_input(graph::g_maxEventsPerBlock)
 	{
@@ -491,6 +526,14 @@ namespace gnubase::engine
 		m_chasedSent = 0;
 		if ((chase & g_chaseControllerEvents) == 0)
 			return;
+		if (heardAgain)
+		{
+			m_resent.fill(false);
+			for (const ChaseTrack& track : sequence.chase)
+				if (raised(track))
+					for (const uint16_t kind : track.channelKinds)
+						m_resent[kind] = true;
+		}
 		for (size_t t = 0; t < sequence.chase.size(); ++t)
 		{
 			const ChaseTrack& track = sequence.chase[t];
@@ -514,7 +557,7 @@ namespace gnubase::engine
 		{
 			const Chased& found = m_chased[kind];
 			if (found.played || found.position == std::numeric_limits<int64_t>::min() ||
-				(heardAgain && !raised(sequence.chase[found.track])))
+				(heardAgain && !raised(sequence.chase[found.track]) && !m_resent[kind]))
 			{
 				m_chased[kind] = Chased();
 				continue;

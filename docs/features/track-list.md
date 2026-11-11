@@ -31,10 +31,12 @@ the project (#491).
   compares with the lanes of the automation last heard. If playback started, stopped, located or jumped meanwhile,
   or the instrument changed, it sends them all, as a jump does. After a move it also chases its parts, as the jump
   would have with the chase settings, since its parts weren't in the snapshot then: in the block in which it is
-  heard again, its automation raises `AutomationPlayer::heardAgain`, and the sequencer that chases the track (its
-  instrument's, `MidiSequencer`) sends, after the channel's values, the latest controller event of each kind before
-  the position (stopped: up to and including the cursor) where that is the track's and not a later one of another
-  track on the instrument. Notes that started while it was silent aren't chased. Silent channels don't monitor their
+  heard again, its automation raises `AutomationPlayer::heardAgain`, and the sequencer that chases the track at jumps
+  (`MidiSequencer`: its instrument's, or its own if it isn't routed to one) sends, after the channel's values, the
+  latest controller event of each kind before the position (stopped: up to and including the cursor) where that is
+  the track's, or where it is of a kind the channel's program, MIDI volume, pan or MIDI automation has just sent,
+  whichever track it is on. A later event of another track on the instrument keeps its value: one the channel didn't
+  touch isn't sent again, one it overrode comes back. Notes that started while it was silent aren't chased. Silent channels don't monitor their
   input directly either.
 - **Disabled tracks** (p. 219): `track.set` `enabled` false disables an audio, instrument or MIDI track. It keeps its
   events, parts and channel settings, but the snapshot leaves its events and parts out (no disk streaming) and its
@@ -207,9 +209,10 @@ New Folder are in [folder-tracks.md](folder-tracks.md).
   automation (controller, pitch bend and channel pressure), MIDI volume, pan or program, and that one heard again
   keeps its part's program and CC 7 and sends what changed meanwhile, each once, also while the transport stands,
   nothing for values changed back by undo, and after playback started, stopped, located or jumped meanwhile the
-  channel's values, then its parts' chase, also stopped at the cursor, not without the chase settings, and not for a
-  kind another track on the instrument has a later event of; `tests/midi_tests.cpp` chases a track heard again in
-  the sequencer, playing, stopped, without chase settings and after a chase that didn't fit;
+  channel's values, then its parts' chase, also stopped at the cursor, not without the chase settings, and with
+  another track's later program change, which comes back after the channel's, and CC 1, which isn't sent again;
+  `tests/midi_tests.cpp` chases a track heard again in the sequencer, playing, stopped, with its channel's kinds, with
+  a cycle jump in the same block, without chase settings and after a chase that didn't fit;
   `tests/dawproject_tests.cpp` saves and loads mute, solo and disabled tracks, also from `project.xml` alone.
 - `tests/tracklayout_tests.cpp`: `trackLayout.set` setting heights and replacing the folded folders, refusing unknown
   tracks, folded tracks that aren't folders and heights out of range, not an undo step, without tracks that are gone,

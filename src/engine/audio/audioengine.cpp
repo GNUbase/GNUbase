@@ -652,7 +652,10 @@ namespace gnubase::engine
 			ChaseTrack track = makeChaseTrack(channel.controllers, channel.midiParts);
 			if (const auto state = m_channelStates.find(channel.id);
 				channel.type == TrackType::Midi && state != m_channelStates.end())
+			{
 				track.heardAgain = state->second->automation.heardAgain();
+				track.channelKinds = channelChaseKinds(channel);
+			}
 			return track;
 		};
 		std::map<ObjectId, std::shared_ptr<MidiSequencer>> sequencers;

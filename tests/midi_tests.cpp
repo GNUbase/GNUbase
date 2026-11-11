@@ -911,6 +911,38 @@ TEST_CASE(
 		player.stop();
 		CHECK(player.heard == heardAt(16));
 	}
+	SECTION("the kinds its channel sends, whichever track has the latest")
+	{
+		auto withKinds = std::make_unique<MidiSequence>();
+		withKinds->chase.push_back(makeChaseTrack({control(10, 1, 1), control(30, 7, 100)}, {}));
+		ChaseTrack heard = makeChaseTrack({control(5, 7, 30), control(20, 1, 2), control(50, 10, 5)}, {});
+		heard.heardAgain = heardAgain;
+		heard.channelKinds = {7};
+		withKinds->chase.push_back(std::move(heard));
+		instrument->setSequence(std::move(withKinds));
+		player.locate(100);
+		player.play(16);
+		player.heard.clear();
+		heardAgain->store(true);
+		player.play(16);
+		CHECK(player.heard ==
+			std::vector<Heard>{{16, Type::Controller, 0, 1, 2, {}}, {16, Type::Controller, 0, 7, 100, {}},
+				{16, Type::Controller, 0, 10, 5, {}}});
+	}
+	SECTION("a cycle jump in the same block chases again at the left locator")
+	{
+		player.setCycle(60, 108);
+		player.locate(100);
+		player.play(4);
+		player.heard.clear();
+		heardAgain->store(true);
+		player.play(16); // 104 to 108, then 60 to 72
+		const std::vector<Heard> atTheJump = {{8, Type::Controller, 0, 1, 2, {}}, {8, Type::Controller, 0, 7, 100, {}},
+			{8, Type::Controller, 0, 10, 5, {}}};
+		std::vector<Heard> expected = {{4, Type::Controller, 0, 1, 2, {}}, {4, Type::Controller, 0, 10, 5, {}}};
+		expected.insert(expected.end(), atTheJump.begin(), atTheJump.end());
+		CHECK(player.heard == expected);
+	}
 	SECTION("not chasing controllers")
 	{
 		instrument->setChase(MidiChase());

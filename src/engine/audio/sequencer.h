@@ -47,11 +47,19 @@ namespace gnubase::engine
 		// A MIDI track's AutomationPlayer::heardAgain, or none: raised for the block in which the track is heard again
 		// after playback moved while it was silent, when the sequencer chases its parts where playback is.
 		std::shared_ptr<const std::atomic<bool>> heardAgain;
+		// The kinds (ChaseLane::kind) its channel sends again when it is heard again after a move (channelChaseKinds),
+		// before the chase: their latest event is chased whichever track it is on, as at a jump.
+		std::vector<uint16_t> channelKinds;
 	};
 
 	// Command thread: the chase index of a track's controller events (sorted by position, each with the index of its
 	// part in parts) and MIDI parts (sorted by start).
 	ChaseTrack makeChaseTrack(const std::vector<RenderController>& controllers, const std::vector<RenderPart>& parts);
+
+	// Command thread: the kinds of controller events (ChaseLane::kind) that a MIDI channel's own values and automation
+	// send (channelAutomation): its program, with bank select if it has a bank, its MIDI volume and pan, and its
+	// controller and pitch bend automation.
+	std::vector<uint16_t> channelChaseKinds(const RenderChannel& channel);
 
 	// A MIDI effect a track's sequencer runs (MidiSequence::effects).
 	struct RunningEffect
@@ -112,9 +120,10 @@ namespace gnubase::engine
 	//
 	// A silent MIDI track's parts aren't in the sequence, so a jump while it is silent doesn't chase them. When it is
 	// heard again (ChaseTrack::heardAgain), the sequencer chases them in that block, where playback is, as the jump
-	// would have: of each kind the latest event before the position on the tracks chased, if it is the heard track's;
-	// stopped, up to and including the cursor. Its channel's program, MIDI volume and pan come first, in its events.
-	// After a chase that didn't fit, it chases everything there again. Notes aren't chased.
+	// would have: of each kind the latest event before the position on the tracks chased, if it is the heard track's
+	// or of a kind its channel's values and automation have just sent (ChaseTrack::channelKinds), which come first, in
+	// its events; stopped, up to and including the cursor. After a chase that didn't fit, it chases everything there
+	// again. Notes aren't chased.
 	//
 	// The track's own events, those of its input and of its parts, go through its MIDI inserts in order, each effect
 	// playing what the one before it played, and each MIDI send plays its effect on them beside that, before or after
@@ -254,6 +263,7 @@ namespace gnubase::engine
 		size_t m_chasedCount = 0;
 		size_t m_chasedSent = 0;
 		std::array<uint32_t, g_notes> m_chasedNotes{}; // while chasing: the notes to start, as indices into notes
+		std::array<bool, g_chased> m_resent{}; // while chasing tracks heard again: the kinds their channels sent
 		graph::EventBuffer m_input;
 		std::array<bool, g_notes> m_inputHeld{}; // notes its input sent a note-on for and no note-off since
 		// Where each note of its input went after the modifiers, as channel * 128 + pitch; g_notes: left out.

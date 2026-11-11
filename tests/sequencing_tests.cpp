@@ -527,18 +527,21 @@ TEST_CASE("a MIDI track heard again after playback moved while it was silent cha
 	for (const char* key : {"midi.chaseControllers", "midi.chasePrograms"})
 		run(song.client, "settings.reset", {{"key", key}});
 
-	// Another track on the instrument with a later program change: its program stays, the part's CC 7 is chased.
+	// Another track on the instrument with a later program change and CC 1: the program comes back after the
+	// channel's, as at a jump; its CC 1, which the track's channel doesn't send, isn't chased, and the part's CC 7 is.
 	const int otherPart = song.addMidiTrack().first;
 	run(song.client, "controller.add",
 		{{"part", song.part(otherPart)},
-			{"controllers", {{{"position", ticks(1000)}, {"type", "program"}, {"number", 3}}}}});
+			{"controllers",
+				{{{"position", ticks(1000)}, {"type", "program"}, {"number", 3}},
+					{{"position", ticks(1000)}, {"number", 1}, {"value", 1.0}}}}});
 	mute(true);
 	run(song.client, "transport.locate", {{"position", 0}});
 	pastTheSecondCc7();
 	mute(false);
-	Played withoutProgram = channelValues;
-	withoutProgram.push_back({0xB0, 7, 64});
-	CHECK(played() == withoutProgram);
+	Played afterTheOther = channelValues;
+	afterTheOther.insert(afterTheOther.end(), {{0xC0, 3}, {0xB0, 7, 64}});
+	CHECK(played() == afterTheOther);
 }
 
 TEST_CASE("a MIDI track's mute automation silences its notes from the point's sample and ends those that sound",
