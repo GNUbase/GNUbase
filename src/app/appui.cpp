@@ -497,7 +497,19 @@ namespace gnubase::app
 					auto inspector = std::make_shared<ui::Inspector>(
 						m_binding, element, [this](uint64_t track)
 						{ m_shell.post([this, track] { openChannelSettings(track); }); }, [this](uint64_t track)
-						{ m_shell.post([this, track] { openArticulationMaps(m_main, track); }); });
+						{ m_shell.post([this, track] { openArticulationMaps(m_main, track); }); },
+						[this](uint64_t track, bool project)
+						{
+							m_shell.post(
+								[this, track, project]
+								{
+									if (project)
+										openDialog(m_main, "rule-editor.rml", {{"target", "project"}});
+									else
+										openDialog(m_main, "rule-editor.rml",
+											{{"target", "track"}, {"track", std::to_string(track)}});
+								});
+						});
 					m_inspector = inspector;
 					return std::shared_ptr<void>(inspector);
 				};

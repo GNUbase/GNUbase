@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/document/document.h"
 #include "engine/engine.h"
+#include "engine/graph/events.h"
 #include "engine/midi/logical.h"
 #include "engine/midi/midivalues.h"
+#include "engine/processors/midieffects.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
@@ -185,6 +188,19 @@ TEST_CASE("actions: operations, ranges and repeatable random values", "[unit]")
 	CHECK(changed({action("mainValue", "add", 100)}, note(60, 100)).second.mainValue == 127);
 	CHECK(changed({action("channel", "add", 30)}, note(60)).second.channel == 16);
 	CHECK(changed({action("length", "setFixed", -5)}, note(60)).second.length == 1);
+	// A note shorter than a tick keeps its length unless an action changes it (#966).
+	LogicalEvent tiny = note(60);
+	tiny.length = 0.25;
+	CHECK(changed({action("subtype", "add", 12)}, tiny).second.length == 0.25);
+	CHECK(changed({action("length", "multiplyBy", 2)}, tiny).second.length == 1);
+	// Positions and lengths stay finite, so that multiplying by 0 afterwards gives 0.
+	const std::vector<Json> far(5, action("position", "multiplyBy", 1e9));
+	const double farthest = changed(far, moved).second.position;
+	CHECK(std::isfinite(farthest));
+	CHECK(farthest > 1e12);
+	std::vector<Json> back = far;
+	back.push_back(action("position", "multiplyBy", 0));
+	CHECK(changed(back, moved).second.position == 0);
 
 	// The same seed gives the same values; they lie in the range given in either order.
 	std::set<int> values;
@@ -227,6 +243,19 @@ TEST_CASE("rules as JSON: every factory preset round-trips, and wrong rules are 
 	Json close = filter("subtype", "equal", 60);
 	close["close"] = 1;
 	refused(rules({close}, "transform"), "wasn't opened");
+	// Up to three brackets nest (#966).
+	Json three = filter("subtype", "equal", 60);
+	three["open"] = 3;
+	three["close"] = 3;
+	CHECK_NOTHROW(logicalRulesFromJson(rules({three}, "transform")));
+	Json outer = filter("subtype", "equal", 60);
+	outer["open"] = 3;
+	Json inner = filter("subtype", "equal", 61);
+	inner["open"] = 1;
+	inner["close"] = 1;
+	Json last = filter("subtype", "equal", 62);
+	last["close"] = 3;
+	refused(rules({outer, inner, last}, "transform"), "at most 3 deep");
 	refused(rules({filter("type", "bigger", "note")}, "transform"), "equal or unequal");
 	refused(rules({filter("type", "equal", "chord")}, "transform"), "chord is unknown");
 	refused(rules({filter("type", "equal", 3)}, "transform"), "event type");
@@ -411,6 +440,62 @@ TEST_CASE("midi.applyRules applies rules and presets to parts in one undo step",
 		run(f.client, "midi.applyRules", humanize);
 		CHECK(f.notes() == first);
 	}
+	SECTION("without a seed, each Apply gives new random values")
+	{
+		const Json humanize = {{"parts", Json::array({f.part})}, {"preset", "Transform/Humanize velocities"}};
+		run(f.client, "midi.applyRules", humanize);
+		const std::vector<std::string> first = f.notes();
+		run(f.client, "history.undo");
+		run(f.client, "midi.applyRules", humanize);
+		CHECK(f.notes() != first);
+	}
+	SECTION("very short notes keep their length; positions stop at the longest project")
+	{
+		const Json added = run(f.client, "note.add",
+			{{"part", f.part},
+				{"notes", Json::array({{{"position", 0}, {"length", 1}, {"pitch", 50}, {"velocity", 0.5}}})}});
+		const auto tiny = added.at("notes")[0].at("id").get<ObjectId>();
+		run(f.client, "midi.applyRules", {{"parts", Json::array({f.part})}, {"preset", "Transform/Octave up"}});
+		const auto noteOf = [&f](ObjectId id)
+		{
+			const Json part = f.partJson();
+			for (const Json& n : part.at("notes"))
+				if (n.at("id") == id)
+					return n;
+			return Json();
+		};
+		CHECK(noteOf(tiny).at("pitch") == 62);
+		CHECK(noteOf(tiny).at("length") == 1);
+		const std::vector<Json> far(4, action("position", "multiplyBy", 1e9));
+		run(f.client, "midi.applyRules",
+			{{"parts", Json::array({f.part})}, {"notes", Json::array({ids[1]})},
+				{"rules", rules({}, "transform", far)}});
+		// 2^48 samples at 48 kHz and 120 BPM.
+		const double longest = std::ldexp(1.0, 48) / 48000.0 * 2.0 * static_cast<double>(g_beatTicks);
+		const auto position = noteOf(ids[1]).at("position").get<int64_t>();
+		CHECK(static_cast<double>(position) <= longest);
+		CHECK(static_cast<double>(position) > longest - static_cast<double>(g_beatTicks));
+	}
+	SECTION("type changes that parts refuse leave the events as they are")
+	{
+		const Json toController =
+			rules({isNote}, "transform", {action("subtype", "setFixed", 1), action("type", "setFixed", "controller")});
+		run(f.client, "midi.applyRules", {{"parts", Json::array({f.part})}, {"rules", toController}});
+		CHECK(f.notes() == std::vector<std::string>{"60/100@0", "64/50@120", "67/10@240"});
+		Json copies = toController;
+		copies["function"] = "insert";
+		run(f.client, "midi.applyRules", {{"parts", Json::array({f.part})}, {"rules", copies}});
+		CHECK(f.notes().size() == 3);
+		run(f.client, "controller.add",
+			{{"part", f.part},
+				{"controllers", {{{"position", 0}, {"type", "controller"}, {"number", 64}, {"value", 1.0}}}}});
+		run(f.client, "midi.applyRules",
+			{{"parts", Json::array({f.part})}, {"preset", "Input/Sustain pedal to bass drum"}});
+		const Json controllers = f.partJson().at("controllers");
+		REQUIRE(controllers.size() == 1);
+		CHECK(controllers[0].at("number") == 64);
+		CHECK(f.notes().size() == 3);
+	}
 	SECTION("select finds and changes nothing")
 	{
 		const Json result =
@@ -582,6 +667,42 @@ namespace
 	{
 		return {{"on", on}, {"rules", std::move(rules)}};
 	}
+}
+
+TEST_CASE("an input transformer that inserts past its buffers' capacity ends every note it plays", "[unit]")
+{
+	using graph::ProcessEvent;
+	constexpr size_t capacity = 16;
+	processors::InputTransformerProcessor processor(capacity);
+	graph::EventBuffer events(capacity);
+	const std::vector<LogicalRules> modules = {
+		logicalRulesFromJson(rules({filter("type", "equal", "note")}, "insert", {action("subtype", "add", 1)}))};
+	const auto event = [](ProcessEvent::Type type, int pitch)
+	{
+		ProcessEvent e;
+		e.type = type;
+		e.key = static_cast<uint8_t>(pitch);
+		e.velocity = 40000;
+		return e;
+	};
+	// Twice as many notes as fit, played back in reverse order.
+	for (int pitch = 0; pitch < static_cast<int>(capacity); ++pitch)
+		events.add(event(ProcessEvent::Type::NoteOn, pitch * 2));
+	processor.process(events, modules);
+	std::multiset<int> on;
+	for (const ProcessEvent& e : events)
+		if (e.type == ProcessEvent::Type::NoteOn)
+			on.insert(e.key);
+	CHECK(on.size() == capacity);
+	events.clear();
+	for (int pitch = static_cast<int>(capacity) - 1; pitch >= 0; --pitch)
+		events.add(event(ProcessEvent::Type::NoteOff, pitch * 2));
+	processor.process(events, modules);
+	std::multiset<int> off;
+	for (const ProcessEvent& e : events)
+		if (e.type == ProcessEvent::Type::NoteOff)
+			off.insert(e.key);
+	CHECK(off == on);
 }
 
 TEST_CASE("input transformers change what a track's MIDI input plays", "[integration]")
