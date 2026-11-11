@@ -211,7 +211,7 @@ namespace gnubase::engine
 		// MIDI and instrument tracks: they play what comes from all MIDI inputs (MIDI thru), since they monitor or
 		// are record-enabled and their MIDI input is all MIDI inputs.
 		bool midiThru = false;
-		// Muted, silenced by another channel's solo, or on a disabled track: outputs silence. A silent MIDI channel
+		// Muted, silenced by another channel's solo, or on a disabled track: outputs silence. A quiet MIDI channel
 		// has no notes or controllers, and a disabled track no events or parts.
 		bool silent = false;
 		// Silenced by another channel's solo or on a disabled track: silent but for the mute button. Its strips output

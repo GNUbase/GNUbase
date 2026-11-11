@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <iterator>
 #include <optional>
 #include <set>
 #include <string>
@@ -460,6 +461,36 @@ TEST_CASE("an automation track's curve leaves gaps after terminators and in virg
 	f.app.call("automation.set", {{"virginTerritory", false}});
 	REQUIRE(f.app.waitUntil([&] { return !virgin(); }));
 	CHECK(terminators() == std::vector<bool>{true, false, false});
+}
+
+TEST_CASE("an automation move preview keeps a terminator before a point at the same position", "[ui]")
+{
+	Automation f;
+	const Json volume = f.show();
+	Json points = Json::array();
+	points.push_back({{"position", 48000}, {"value", -6.0}});
+	for (int i = 2; i < 25; ++i)
+		points.push_back({{"position", i * 48000}, {"value", -6.0}});
+	points.push_back({{"position", 25 * 48000}, {"value", -12.0}, {"terminator", true}});
+	points.push_back({{"position", 25 * 48000}, {"value", 0.0}});
+	for (int i = 26; i < 50; ++i)
+		points.push_back({{"position", i * 48000}, {"value", -6.0}});
+	f.app.call("automationPoint.add", {{"lane", volume}, {"points", points}});
+	f.settle(volume);
+	const ui::Target from{"", 0, ui::Point{f.x(1.0), f.y(volume, 54.0 / 66.0)}};
+	const ui::Target to{"", 0, ui::Point{f.x(1.25), f.y(volume, 54.0 / 66.0)}};
+	f.app.ui().press(std::nullopt, from, ui::MouseButton::Left);
+	f.app.ui().move(std::nullopt, to);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const auto shown = f.curve("automation-curve", volume);
+	REQUIRE(shown.size() == points.size());
+	const auto gap = std::find_if(
+		shown.begin(), shown.end(), [](const ui::CurvePoint& point) { return std::abs(point.position - 25.0) < 1e-6; });
+	REQUIRE(gap != shown.end());
+	REQUIRE(std::next(gap) != shown.end());
+	CHECK(gap->terminator);
+	CHECK_FALSE(std::next(gap)->terminator);
+	f.app.ui().release(std::nullopt, to, ui::MouseButton::Left);
 }
 
 TEST_CASE("a Ctrl-drag moves the selected automation points in one direction, and the editor tilts and stretches them",

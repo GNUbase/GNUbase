@@ -363,7 +363,7 @@ namespace gnubase::engine::processors
 		if (event.type == Type::NoteOff)
 		{
 			if (m_chordOf[index] == g_none)
-				context.eventsOut.addNoteOff(event); // a note from before the effect
+				context.eventsOut.addEnd(event); // a note from before the effect
 			else
 				release(index, event, context.eventsOut);
 			return;
@@ -401,7 +401,7 @@ namespace gnubase::engine::processors
 				continue;
 			--m_sounding[note];
 			if (m_sounding[note] == 0)
-				out.addNoteOff(
+				out.addEnd(
 					noteEvent(Type::NoteOff, note, event.type == Type::NoteOff ? event.velocity : 0, event.offset));
 		}
 		m_chordOf[index] = g_none;
@@ -487,11 +487,12 @@ namespace gnubase::engine::processors
 			return out;
 		}
 
-		// Adds a note-off before the other events in a full buffer, any other event as it fits.
+		// Adds an event that ends notes (a note-off, a pedal's release) before the other events in a full buffer, any
+		// other event as it fits.
 		void put(graph::EventBuffer& out, const graph::ProcessEvent& event) noexcept
 		{
-			if (event.type == Type::NoteOff)
-				out.addNoteOff(event);
+			if (graph::endsNotes(event))
+				out.addEnd(event);
 			else
 				out.add(event);
 		}

@@ -376,11 +376,7 @@ namespace gnubase::ui
 
 	int64_t TransportControls::samples(double seconds) const
 	{
-		// In doubles first, as transport.locate's by: fifteen digits of seconds are more samples than 64 bits hold.
-		const double frames = seconds * m_time.sampleRate;
-		if (!(frames > 0.0)) // also NaN
-			return 0;
-		return std::llround(std::min(frames, static_cast<double>(time::g_maxPosition)));
+		return positionSamples(seconds, m_time.sampleRate);
 	}
 
 	void TransportControls::ProcessEvent(Rml::Event& event)
