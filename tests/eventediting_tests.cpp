@@ -612,6 +612,39 @@ TEST_CASE("a drag of an event's edge shows the size the release gives it at ever
 	CHECK(bothEnds(3.7, 4.2));
 }
 
+TEST_CASE("a second resize release can precede the first release's project", "[unit]")
+{
+	Fixture f;
+	f.display.select({f.part});
+	REQUIRE(f.waitUntil([&f] { return f.lanes("selected-events")[1].events.size() == 1; }));
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	const auto resize = [&f, clock](double from, double to, bool waitForPreview)
+	{
+		clock->advance(1.0);
+		f.automation.press(std::nullopt, f.at(from, 60), ui::MouseButton::Left);
+		f.automation.move(std::nullopt, f.at(to, 60));
+		if (waitForPreview)
+			REQUIRE(f.waitUntil(
+				[&f, to] { return std::abs(f.lanes("events")[1].events[0].end() - ((to + 2) / 100)) < 1e-6; }));
+		f.automation.release(std::nullopt, f.at(to, 60), ui::MouseButton::Left);
+	};
+	resize(298, 348, true); // 1 to 3 seconds becomes 1 to 3.5
+	// No shell step has handed the first release's project to the display yet.
+	REQUIRE(f.display.project().at("midiParts")[0].at("length") == 4 * g_quarter);
+	resize(348, 368, false); // another release before the first project is shown
+	REQUIRE(f.display.project().at("midiParts")[0].at("length") == 4 * g_quarter);
+	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("length") == (27 * g_quarter) / 5; }));
+	REQUIRE(f.waitUntil(
+		[&f]
+		{
+			return f.binding.waiting("event.resize") == 0 && f.binding.waiting("project.get") == 0 &&
+				f.display.project().at("midiParts") == f.parts();
+		}));
+	CHECK(std::abs(f.lanes("events")[1].events[0].end() - 3.7) < 1e-6);
+	CHECK(std::abs(f.lanes("selected-events")[1].events[0].end() - 3.7) < 1e-6);
+}
+
 TEST_CASE("the object selection tool's modifiers act on events whatever keys they are set to", "[unit]")
 {
 	Fixture f;
