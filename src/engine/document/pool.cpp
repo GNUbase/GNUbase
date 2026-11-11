@@ -553,13 +553,15 @@ namespace gnubase::engine
 				"channel count and length in sample frames, whether the file is missing and whether it is external, "
 				"outside the project folder (every file of a project that has no file yet). The totals of the info "
 				"line: audioFiles, usedFiles (media files that an event plays), missingFiles, externalFiles and "
-				"totalSize, the bytes of the files on disk.",
+				"totalSize, the bytes of the files on disk; and missingExternalFiles, how many of the external files "
+				"are missing, which Prepare Archive can't copy.",
 				objectSchema({}),
 				objectSchema({{"folders", {{"type", "array"}, {"items", folderSchema}}},
 								 {"clips", {{"type", "array"}, {"items", clipSchema}}}, {"audioFiles", integer},
 								 {"usedFiles", integer}, {"missingFiles", integer}, {"externalFiles", integer},
-								 {"totalSize", integer}},
-					{"folders", "clips", "audioFiles", "usedFiles", "missingFiles", "externalFiles", "totalSize"}),
+								 {"totalSize", integer}, {"missingExternalFiles", integer}},
+					{"folders", "clips", "audioFiles", "usedFiles", "missingFiles", "externalFiles", "totalSize",
+						"missingExternalFiles"}),
 				true},
 			[this](Project& project, CommandContext&)
 			{
@@ -570,6 +572,7 @@ namespace gnubase::engine
 				// and again per file: the panel asks after every edit.
 				std::set<ObjectId> missingMedia;
 				int externalFiles = 0;
+				int missingExternalFiles = 0;
 				std::uintmax_t totalSize = 0;
 				for (const auto& [id, media] : project.media)
 				{
@@ -580,7 +583,11 @@ namespace gnubase::engine
 					else if (const std::uintmax_t size = entry.file_size(error); !error)
 						totalSize += size;
 					if (external(media))
+					{
 						++externalFiles;
+						if (missingMedia.count(id) != 0)
+							++missingExternalFiles;
+					}
 				}
 				const std::map<ObjectId, int> uses = clipUses(project);
 				std::set<ObjectId> usedMedia;
@@ -602,7 +609,8 @@ namespace gnubase::engine
 					folders.push_back(toJson(folder));
 				return Json{{"folders", std::move(folders)}, {"clips", std::move(clips)},
 					{"audioFiles", project.media.size()}, {"usedFiles", usedMedia.size()},
-					{"missingFiles", missingMedia.size()}, {"externalFiles", externalFiles}, {"totalSize", totalSize}};
+					{"missingFiles", missingMedia.size()}, {"externalFiles", externalFiles}, {"totalSize", totalSize},
+					{"missingExternalFiles", missingExternalFiles}};
 			});
 
 		add(engine,
