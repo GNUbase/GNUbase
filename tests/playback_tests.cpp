@@ -988,7 +988,7 @@ TEST_CASE("an audition that stops frees what it played, also from the middle of 
 		[&audition, &playing]
 		{
 			constexpr uint32_t frames = 64;
-			std::vector<float> output(2 * frames);
+			std::vector<float> output(size_t{2} * frames);
 			const std::array<float*, 2> outputs{output.data(), output.data() + frames};
 			const std::vector<int> ports{0, 1};
 			while (playing)
