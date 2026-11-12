@@ -679,6 +679,7 @@ namespace gnubase::engine
 			sequence->controllers = channel.controllers;
 			sequence->modifiers = channel.modifiers;
 			sequence->liveInput = channel.liveInput;
+			sequence->articulations = channel.articulations;
 			sequence->drumInput = channel.drumInput;
 			sequence->inserts = channel.midiInserts;
 			sequence->sends = channel.midiSends;
