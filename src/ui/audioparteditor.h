@@ -76,6 +76,7 @@ namespace gnubase::ui
 			uint64_t clip = 0;
 			int64_t offset = 0; // in the clip, its samples
 			int64_t length = 0;
+			double rate = 0.0; // the clip's samples per second
 		};
 
 		// A part the editor shows: its time in seconds and track, and whether the editing mode reaches it.
@@ -110,8 +111,8 @@ namespace gnubase::ui
 		// The project or view shown changed: a move follows its event, or ends if that went.
 		void updateMove();
 		void updateMoved();
-		// The pressed event's move, from its start, for the mouse over seconds.
-		double movedBy(double start, double seconds) const;
+		// The pressed event's move, from where it is now, for the mouse over seconds.
+		double movedBy(const Event& pressed, double seconds) const;
 		// Works a dragged move out again on the display as it is now.
 		void moveAgain(bool layout);
 		void release(Rml::Event& event);
@@ -162,9 +163,9 @@ namespace gnubase::ui
 		std::unique_ptr<EventWaveforms> m_waveforms;
 
 		Gesture m_gesture = Gesture::None;
-		std::pair<double, int> m_pressedAt; // the seconds and lane under the press
-		double m_pressedOffset =
-			0.0; // seconds from the pressed event's start to the press, kept as the display changes
+		// The press as a time in the pressed event's clip, seconds: its offset there and the press's into the event,
+		// which a resize or a split of the event during the drag keeps.
+		double m_pressedInClip = 0.0;
 		Rml::Vector2f m_pressedMouse; // px
 		bool m_dragged = false;
 		Rml::Vector2f m_draggedTo;                 // px, the mouse's last place in a dragged move

@@ -256,7 +256,7 @@ namespace gnubase::ui
 			const Event event{audio.at("id").get<uint64_t>(), part->first, track, start, start + length, from, to,
 				std::max(audio.value("lane", 0), 0), audio.value("volume", 0.0), audio.value("mute", false),
 				part->second.editable, outside, audio.at("clip").get<uint64_t>(), audio.at("offset").get<int64_t>(),
-				audio.at("length").get<int64_t>()};
+				audio.at("length").get<int64_t>(), rate};
 			m_events.push_back(event);
 			m_waves.push_back({event.id, static_cast<size_t>(event.lane), {from, to - from}, file->first, rate,
 				file->second->at("channels").get<int>(),
@@ -297,6 +297,11 @@ namespace gnubase::ui
 			cancel();
 			return;
 		}
+		// An event that plays another clip now, as when it is flattened into a new file, keeps the press where it was
+		// in the event: there is no time in the new clip that the press was at.
+		if (found->clip != m_pressed->clip)
+			m_pressedInClip += (static_cast<double>(found->offset) / found->rate) -
+				(static_cast<double>(m_pressed->offset) / m_pressed->rate);
 		// The move goes on from the event as it is now; render() works it out again once the display is laid out.
 		m_pressed = *found;
 	}
@@ -308,28 +313,29 @@ namespace gnubase::ui
 		if (!m_pressed)
 			return;
 		const auto [seconds, lane] = at(m_draggedTo);
-		m_moved = {m_gesture == Gesture::Move ? movedBy(m_pressed->start, seconds) : 0.0, lane - m_pressedAt.second};
+		m_moved = {m_gesture == Gesture::Move ? movedBy(*m_pressed, seconds) : 0.0, lane - m_pressed->lane};
 	}
 
-	// Where the pressed event's start goes for the mouse over seconds, from where it is (start) now: the start that
-	// puts the point pressed, kept as an offset into the event, under the mouse, on the grid. So a command that moves
+	// How far the pressed event's start goes for the mouse over seconds, from where the event is now: to the start that
+	// puts the point pressed, kept as a time in the event's clip, under the mouse, on the grid. So a command that moves
 	// the pressed event or the display's range during the drag, or both together as a move of the part does, doesn't
-	// take the event away from the mouse.
-	double AudioPartEditor::movedBy(double start, double seconds) const
+	// take the event away from the mouse, nor does one that resizes or splits it. The lanes go the same way: the
+	// pressed event to the lane under the mouse (updateMoved(), release()).
+	double AudioPartEditor::movedBy(const Event& pressed, double seconds) const
 	{
-		return snap(seconds - m_pressedOffset) - start;
+		return snap(seconds - (m_pressedInClip - (static_cast<double>(pressed.offset) / pressed.rate))) - pressed.start;
 	}
 
 	// Works a dragged move out again on the display as it is now, which a window that changes its size, a scroll and a
 	// new lane's scrollbar change while the mouse stays. layout: the document is laid out first, as after a render; a
-	// scroll only moves the display's absolute offset, which at() reads as it is.
+	// scroll only moves the display's absolute offset, which at() reads as it is, so there is nothing to lay out then.
 	void AudioPartEditor::moveAgain(bool layout)
 	{
 		if (!moving() || !m_dragged || !m_pressed)
 			return;
 		if (const Rml::Element* root = m_root.get(); layout && root != nullptr)
 			if (Rml::ElementDocument* document = root->GetOwnerDocument())
-				document->UpdateDocument(); // not from a scroll, which can come from the layout
+				document->UpdateDocument();
 		updateMoved();
 		preview();
 	}
@@ -782,7 +788,7 @@ namespace gnubase::ui
 			return;
 		const bool shift = event.GetParameter("shift_key", 0) != 0;
 		const bool ctrl = event.GetParameter("ctrl_key", 0) != 0 || event.GetParameter("meta_key", 0) != 0;
-		m_pressedAt = at(event);
+		const double seconds = at(event).first;
 		m_pressedMouse = {event.GetParameter("mouse_x", 0.0F), event.GetParameter("mouse_y", 0.0F)};
 		m_dragged = false;
 		const Event* pressed = eventOf(target);
@@ -791,8 +797,9 @@ namespace gnubase::ui
 		m_pressed.reset();
 		if (pressed != nullptr)
 			m_pressed = *pressed;
-		const double seconds = m_pressedAt.first;
-		m_pressedOffset = pressed != nullptr ? seconds - pressed->start : 0.0;
+		m_pressedInClip = pressed != nullptr
+			? (static_cast<double>(pressed->offset) / pressed->rate) + (seconds - pressed->start)
+			: 0.0;
 		switch (m_tool)
 		{
 		case AudioPartTool::ObjectSelection:
@@ -939,11 +946,12 @@ namespace gnubase::ui
 		if (!m_pressed)
 			return;
 		const auto [seconds, lane] = at(event);
-		const double dt = gesture == Gesture::Move && isDrag ? movedBy(m_pressed->start, seconds) : 0.0;
-		const int dl = isDrag ? lane - m_pressedAt.second : 0;
-		if (gesture == Gesture::MoveVertical && dl == 0)
+		const double dt = gesture == Gesture::Move && isDrag ? movedBy(*m_pressed, seconds) : 0.0;
+		const int dl = isDrag ? lane - m_pressed->lane : 0;
+		if (gesture == Gesture::MoveVertical && !isDrag)
 		{
-			// A click with Ctrl adds the event to the selection or takes it out.
+			// A click with Ctrl adds the event to the selection or takes it out; a drag doesn't, also when it ends with
+			// the event on the lane under the mouse.
 			std::vector<uint64_t> events = m_selection;
 			const auto found = std::find(events.begin(), events.end(), m_pressed->id);
 			if (found != events.end())
