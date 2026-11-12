@@ -103,6 +103,7 @@ Transpositions and Event Colors (the key editor has none yet).
   in-place editors, a MIDI and an instrument track's, beside the lower zone's key editor, each with menus and a
   selection of its own, the multiple part controls setting their editor's editing mode and active part, and closing
   one leaving the other's menus; the track's lanes keeping their height, a folded folder hiding the editor; a
-  time-linear track's notes on the timeline; Q in the editor quantizing its selected note and not the selected part;
+  time-linear track's notes on the timeline; a key of the keyboard held while the editor closes ending its pitch
+  (key-editor.md); Q in the editor quantizing its selected note and not the selected part;
   the menu commands waiting for a MIDI or instrument track; a note being drawn moving with the notes while the project
   window zooms.

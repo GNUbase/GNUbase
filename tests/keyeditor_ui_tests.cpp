@@ -461,12 +461,15 @@ TEST_CASE("a key of the keyboard held while the key editor goes ends its pitch",
 	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().editorWindow() == nullptr; }));
 	CHECK(f.plays({{0x90, 62, 100}, {0x80, 62, 0}}));
 
-	// The user closing the editor window, as its close button does: the shell drops the window and its document first,
-	// and the key editor goes after them, so this is the one path where the note off is sent without its document.
+	// The user closing the editor window, as its close button does: the shell drops the window and its document first.
+	// The document's mouseout, which RmlUi sends it as it goes, ends the pitch while the key editor is still there, and
+	// the destructor, which runs after the window, is the backstop; the check holds either one, not each alone.
 	f.played.clear();
 	f.app.call("editor.open", {{"editor", "window"}, {"parts", Json::array({f.part})}});
 	REQUIRE(f.app.waitUntil([&] { return keyEditor() != nullptr; }));
 	f.window = f.app.appUi().editorWindowId();
+	// The key editor is built before the engine answers: a press needs its view.
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".editor-part").size() == 1; }));
 	press(64);
 	CHECK(f.plays({{0x90, 64, 100}}));
 	f.app.ui().close(f.window, false);
