@@ -460,6 +460,21 @@ TEST_CASE("a key of the keyboard held while the key editor goes ends its pitch",
 	f.app.call("editor.close", {{"editor", "window"}});
 	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().editorWindow() == nullptr; }));
 	CHECK(f.plays({{0x90, 62, 100}, {0x80, 62, 0}}));
+
+	// The editor window's close button, as the user closes it: the shell drops the window and its document first, and
+	// AppUi::followSelection lets go of the editor afterwards, so this is the one path where the destructor sends
+	// after its document is gone.
+	f.played.clear();
+	f.app.call("editor.open", {{"editor", "window"}, {"parts", Json::array({f.part})}});
+	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().editorWindow() != nullptr; }));
+	f.window = f.app.appUi().editorWindowId();
+	REQUIRE(f.app.waitUntil([&] { return keyEditor() != nullptr && !keyEditor()->drum(); }));
+	press(64);
+	CHECK(f.plays({{0x90, 64, 100}}));
+	f.app.ui().close(f.window, false);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().editorWindow() == nullptr; }));
+	CHECK(f.plays({{0x90, 64, 100}, {0x80, 64, 0}}));
 }
 
 TEST_CASE("the object selection tool selects, moves, resizes, inserts and deletes notes", "[ui]")

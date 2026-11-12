@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <numeric>
 #include <optional>
 #include <string>
@@ -29,6 +30,11 @@ namespace
 	constexpr int64_t g_bar = 4 * g_quarter;
 	// The quantize grid, a sixteenth: a click in the middle of one stays in it whichever pixel the click rounds to.
 	constexpr int64_t g_sixteenth = g_quarter / 4;
+
+	ui::Target of(const std::string& selector)
+	{
+		return {selector, 0, std::nullopt};
+	}
 
 	// A MIDI track, selected, with a one-bar part "Keys" in the second bar and two notes, C3 on its first beat and
 	// E3 on its second, each a quarter long, and an audio track below it, in the project window at a dp ratio of 1.
@@ -266,6 +272,99 @@ TEST_CASE("the in-place editor edits notes as the key editor does, and the event
 	REQUIRE(f.app.waitUntil([&] { return f.view().at("activePart") == later; }));
 	CHECK(f.app.waitUntil([&] { return f.has(laterBox, "active"); }));
 	CHECK(f.display.selection().empty());
+}
+
+TEST_CASE("a key of the in-place editor's keyboard held while the in-place editor closes ends its pitch", "[ui]")
+{
+	// The in-place editor closing while one of its keys is held: the key editor's destructor ends the pitch.
+	// Uses an instrument track (not the Fixture's MIDI track) so that noteProbe can play.
+	test::UiApp app{ui::Size{1200, 800}};
+	app.setDpRatio(1.0F);
+	auto& display = app.appUi().showProject();
+	const uint64_t track = app.call("track.add", {{"type", "instrument"}}).at("track").at("id").get<uint64_t>();
+	const uint64_t part = app.call("midiPart.add", {{"track", track}, {"position", g_bar}, {"length", g_bar}, {"name", "Keys"}})
+							  .at("part")
+							  .at("id")
+							  .get<uint64_t>();
+	const Json added = app.call("note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", 0}, {"length", g_quarter}, {"pitch", 60}, {"velocity", 0.5}},
+					{{"position", g_quarter}, {"length", g_quarter}, {"pitch", 64}, {"velocity", 0.5}}}}});
+	std::vector<uint64_t> notes;
+	for (const Json& note : added.at("notes"))
+		notes.push_back(note.at("id").get<uint64_t>());
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			const Json& project = display.project();
+			return project.is_object() && project.at("midiParts").size() == 1 &&
+				project.at("midiParts").at(0).at("notes").size() == 2;
+		}));
+	app.appUi().trackList()->select({track});
+
+	const std::string editor = ".in-place-editor[track=\"" + std::to_string(track) + "\"]";
+	const auto elements = [&](const std::string& selector) { return app.ui().dom(std::nullopt, selector, 0).at("elements"); };
+	const auto box = [&](const std::string& selector) { return elements(selector).at(0).at("box"); };
+
+	// Open the in-place editor.
+	app.keys().run("editor.openInPlace", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&] { return elements(editor + " .key-note").size() == 2; }));
+	// Wait for the notes to be shown at their times.
+	REQUIRE(app.waitUntil([&] { return elements(editor + " .key-note").size() == 2; }));
+	app.shell().step(std::chrono::milliseconds(0));
+
+	// Scroll to show C3.
+	REQUIRE(app.waitUntil([&] { return app.appUi().inPlaceEditors()->keyEditor(track)->scrollToPitch(60); }));
+	app.shell().step(std::chrono::milliseconds(0));
+
+	// Set up audio capture to hear what the keyboard plays.
+	app.call("audio.setDevice", {{"blockSize", 128}, {"inputChannels", 0}, {"captureSeconds", 1}});
+	app.call("channel.set",
+		{{"channel", app.call("project.get").at("tracks").at(0).at("channel")}, {"instrument", "noteProbe"}});
+	app.call("audio.render", {{"frames", 128}});
+	app.call("midi.capture", {{"start", true}});
+	std::vector<std::vector<int>> played;
+	const auto plays = [&](const std::vector<std::vector<int>>& expected)
+	{
+		return app.waitUntil(
+			[&]
+			{
+				app.call("audio.render", {{"frames", 128}});
+				const Json captured = app.call("midi.capture");
+				for (const Json& message : captured.at("captured"))
+				{
+					const auto bytes = message.at("bytes").get<std::vector<int>>();
+					if ((bytes.at(0) & 0xE0) == 0x80)
+						played.push_back(bytes);
+				}
+				return played == expected;
+			});
+	};
+
+	// Press a key on the in-place editor's keyboard.
+	const Json keyboard = box(editor + " .key-editor-keys");
+	const Json grid = box(editor + " .key-editor-grid");
+	const ui::Target keyTarget = {"",
+		0,
+		ui::Point{keyboard.at("x").get<int>() + 2,
+			static_cast<int>(std::lround(
+				grid.at("y").get<double>() +
+				((127.5 - 60) / 128.0 * grid.at("height").get<double>())))}};
+	app.ui().press(std::nullopt, keyTarget, ui::MouseButton::Left, {});
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(plays({{0x90, 60, 100}}));
+
+	// Close the in-place editor: the pitch ends.
+	app.call("editor.inPlace", {{"tracks", {track}}, {"open", false}});
+	REQUIRE(app.waitUntil([&] { return elements(editor).empty(); }));
+	CHECK(plays({{0x90, 60, 100}, {0x80, 60, 0}}));
+	app.ui().release(std::nullopt, of(".event-area"), ui::MouseButton::Left, {});
+	for (int block = 0; block < 4; ++block)
+	{
+		app.shell().step(std::chrono::milliseconds(0));
+		CHECK(plays({{0x90, 60, 100}, {0x80, 60, 0}}));
+	}
 }
 
 TEST_CASE("the inspector's Edit In-Place opens and closes the selected track's in-place editor", "[ui]")
