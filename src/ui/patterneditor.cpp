@@ -278,6 +278,7 @@ namespace gnubase::ui
 		{
 			if (lane(on) == nullptr)
 				m_pattern.at("lanes").push_back({{"pitch", on}, {"steps", Json::array()}});
+			m_edited.insert(on);
 			Json& steps = lane(on)->at("steps");
 			steps.push_back(std::move(one));
 			std::sort(steps.begin(), steps.end(),
@@ -326,6 +327,8 @@ namespace gnubase::ui
 		const auto erased =
 			std::remove_if(steps.begin(), steps.end(), [index](const Json& each) { return each.at("index") == index; });
 		m_changed = m_changed || erased != steps.end();
+		if (erased != steps.end())
+			m_edited.insert(pitch);
 		steps.erase(erased, steps.end());
 		m_selection.erase({pitch, index});
 	}
@@ -351,6 +354,30 @@ namespace gnubase::ui
 			(*found)[parameter.name] = std::clamp(set, parameter.low, parameter.high);
 		}
 		m_changed = true;
+		m_edited.insert(m_lane);
+	}
+
+	void PatternEditor::takeOtherLanes()
+	{
+		for (const Json& each : m_project.value("patterns", Json::array()))
+		{
+			if (each.at("id") != m_pattern.at("id"))
+				continue;
+			Json lanes = each.at("lanes");
+			for (const int pitch : m_edited)
+			{
+				const Json* edited = lane(pitch);
+				if (edited == nullptr)
+					continue;
+				const auto same = std::find_if(
+					lanes.begin(), lanes.end(), [pitch](const Json& one) { return one.at("pitch") == pitch; });
+				if (same != lanes.end())
+					*same = *edited;
+				else
+					lanes.push_back(*edited);
+			}
+			m_pattern["lanes"] = std::move(lanes);
+		}
 	}
 
 	void PatternEditor::sendLanes(const std::string& description)
@@ -539,6 +566,7 @@ namespace gnubase::ui
 		if (!m_pattern.is_object() || !index)
 			return;
 		m_changed = false;
+		m_edited.clear();
 		if (within(target, "pattern-bars", root))
 		{
 			m_gesture = Gesture::Values;
@@ -628,11 +656,18 @@ namespace gnubase::ui
 		// What the gesture changed goes to the engine, whose answer shows the project; else the project that came
 		// while it went on shows now.
 		if (m_changed)
+		{
+			if (m_stale)
+				takeOtherLanes();
 			sendLanes(gesture == Gesture::Values ? "Change step parameters" : "Edit steps");
+		}
 		else if (m_stale)
+		{
 			load();
+		}
 		m_changed = false;
 		m_stale = false;
+		m_edited.clear();
 	}
 
 	void PatternEditor::listen(bool document)

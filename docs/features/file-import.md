@@ -62,8 +62,9 @@ The options of the reference's MIDI file import (reference manual pp. 364-365, #
   events (also on the tracks' other versions), markers and arranger events by their end, and chord, scale and
   transpose events and automation points, which hold from their position on, by their position, so one right at the
   file's end counts. Content on linear tracks keeps its time in samples, so it counts by where the file ends in the
-  file's tempo; an audio event on a musical track keeps its ticks and counts by its end in ticks in the project's
-  tempo before the import. The project's tempo then goes on from the tempo it had at the end, with its later changes; the same
+  file's tempo. An audio event on a musical track keeps its start in ticks and its length in samples, so it counts by
+  its start in the file's tempo plus its length, wherever it starts; one whose clip plays in musical mode stretches
+  with the tempo and counts by its end in ticks in the project's tempo before the import. The project's tempo then goes on from the tempo it had at the end, with its later changes; the same
   goes for its signatures, from the next bar start. Otherwise, in a new project for instance, the file's last tempo
   and signature go on: there is nothing of the project's to keep, and the file's tempo then holds for what follows
   it, as when the project is made from the file. Without `tempo` the file plays in the project's tempo from the
@@ -112,8 +113,11 @@ All of it is the one undo step of the import.
   ([comping.md](comping.md)), else to new tracks, at the time under the mouse. Dropped outside the lanes, such as on
   the track list, they go to the project cursor, and MIDI files there are a drop too (the manual's drop "into the
   Project window", p. 365): they take the drop's settings below, at the project cursor, not File > Import's project
-  start or left locator. On a track's row in the track list they go on that track as on its lane (its first lane if
-  its lanes show); elsewhere, such as below the rows or on an automation track's row, onto new tracks. Agents and UI
+  start or left locator. On a track's row in the track list they go on that track as on its lane, beside the lanes
+  of a track whose lanes show on the lane at the mouse's height; elsewhere, such as below the rows, on a folder's
+  row, on an automation track's row or on the row of a track that doesn't take them (an audio file on a MIDI track's
+  row, a MIDI file on an audio track's row or, without Import Dropped File as Single Part, on a MIDI track's row),
+  onto new tracks. Agents and UI
   tests drop files with `ui_drop` (`ui::Automation::drop`).
 - MIDI files (`.mid`, `.midi`, `.smf`) are imported at once, with the MIDI import preferences below, where they are
   dropped; with Import Dropped File as Single Part into one part, on the MIDI or instrument track of the lane under
@@ -199,7 +203,11 @@ answered as the user would, onto the selected musical audio track (the first fil
 One Track, the first of several selected tracks, one inside a folded folder), onto new tracks with no track or a MIDI
 track first in the selection, and with Split Channels a stereo file onto new tracks and a mono file onto the selected
 track, each one undo step; audio files dropped on an audio track's lane, one and two of them, and on its row in the
-track list at the project cursor, and MIDI files of type 0 and 1 dropped below the tracks.
+track list at the project cursor, on a take lane and on the track list row beside it, and MIDI files of type 0 and 1
+dropped below the tracks. Its track list rows that don't take a drop get new tracks: a folder's, an automation
+track's, a single-part MIDI file on an audio track's row, an audio file on a MIDI track's row and a MIDI file on a
+MIDI track's row without Import Dropped File as Single Part; a single-part MIDI file on an instrument track's row goes
+on that track.
 `tests/midifileimport_tests.cpp` imports MIDI files with each option of `midiFile.import`: at a position with and
 without tempo (the project's tempo before it, the file's after, its signature at the next bar and its markers moved
 along; inside a tempo ramp, which plays on up to the position and after the file's end; the project's later tempo
@@ -208,8 +216,11 @@ when a part follows it, or an audio event, an audio or MIDI part or a marker on 
 version of its track, an arranger, chord or scale event, a transpose event on a linear transpose track or an
 automation point on a linear track, a chord, a scale, a linear transpose event and a linear automation point right at
 the file's end, a linear audio event that ends after it only in the file's tempo, audio events and parts on another
-version of their track and an audio event on a musical track after a file slower than the project, but not for content
-before the file's end, such as an audio event on a musical track that ends there in ticks), a type 0 file kept in one track, the whole file in one part on a new track and on an instrument track at a
+version of their track and an audio event on a musical track after a file slower than the project, audio events on
+musical tracks that end after the file's end only in the file's tempo (one that starts in the file, one that starts
+before it), but not for content before the file's end, such as an audio event on a musical track that ends there in
+the file's tempo, also one that ends after it only in the project's), undo and redo of such an import with the
+project's tempo, signatures and tempo mode, a type 0 file kept in one track, the whole file in one part on a new track and on an instrument track at a
 position and on a linear MIDI track in samples, refusing an audio track or `track` without `singlePart`, the first
 patch and volume and pan of channel 1 in a MIDI track's settings while other channels' and later events stay, none on
 instrument tracks, a track of nothing but those kept without a part, and controllers

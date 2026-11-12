@@ -560,6 +560,7 @@
 			element(document, "on-field").inner_rml = '<input type="checkbox" id="rule-editor-on"' ..
 				(edit.on and " checked" or "") .. '/><span class="label">On</span>'
 			showPresets(document, edit.preset)
+			element(document, "name"):SetAttribute("value", edit.preset or "")
 			render(document)
 			editor.baseline = edit.baseline
 			editor.changed(document)
@@ -748,8 +749,9 @@
 			if editor.input then
 				-- Every module edited, up to the last one; the ones before it that weren't stay as they are.
 				local current = engineModules()
-				editor.edits[editor.module] = {on = element(document, "on"):HasAttribute("checked"),
-					rules = read(document, true)}
+				if not keepModule(document) then
+					return false
+				end
 				local last = 0
 				for index in pairs(editor.edits) do
 					last = math.max(last, index)
@@ -760,10 +762,25 @@
 					modules[index] = edit and {on = edit.on, rules = engineRules(edit.rules)} or
 						{on = current[index].on}
 				end
-				if editor.track then
-					gnubase.channel.set({channel = editor.channel, inputTransformer = {modules = modules}})
-				else
-					gnubase.midi.setInputTransformer({modules = modules})
+				local ok, failure = pcall(function()
+					if editor.track then
+						gnubase.channel.set({channel = editor.channel, inputTransformer = {modules = modules}})
+					else
+						gnubase.midi.setInputTransformer({modules = modules})
+					end
+				end)
+				-- The engine names the module it refuses, from 0: that one shows, with the message (#1143).
+				local refused = tostring(failure):match("modules%[(%d+)%]")
+				if not ok and refused and editor.edits[tonumber(refused) + 1] then
+					editor.module = tonumber(refused) + 1
+					editor.building = true
+					element(document, "module"):SetAttribute("value", tostring(editor.module))
+					editor.building = false
+					showModule(document)
+					error((tostring(failure):gsub("modules%[%d+%][.:]?%s*", "", 1)), 0)
+				end
+				if not ok then
+					error(failure, 0)
 				end
 				return true
 			end
