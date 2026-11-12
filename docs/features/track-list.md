@@ -61,7 +61,8 @@ the project (#491).
   leaves the others; `folded` replaces the list, and refuses tracks that aren't folders. Like the track visibility they
   are settings, not undo steps, and saved with the project in GNUbase's extra entry (`trackLayout` in `project.get`),
   empty for files from before; tracks that are gone are left out of what `trackLayout.get` returns, though the
-  project keeps their heights and fold states while undo can bring the tracks back, so undo and redo emit
+  project keeps their heights and fold states for undo, until the next `trackLayout.set` with `folded` replaces the
+  folded folders (a set of heights keeps them), so undo and redo emit
   `trackLayout.changed` too when a track with a height or a fold state comes back or goes (#1131). Every change
   emits `trackLayout.changed`; a set that gives the layout the project has changes nothing: no event, the project's
   revision stays and it doesn't count as modified (`CommandContext::markUnchanged`). A height that isn't a number

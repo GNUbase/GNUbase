@@ -988,17 +988,21 @@ TEST_CASE("a height drag that stays at the smallest or the largest height sends 
 	REQUIRE(drag.tracks.app.waitUntil([&] { return drag.shown(drag.other) == Approx(engine::g_maxTrackHeight); }));
 	const uint64_t revision = drag.revision();
 
-	// Up from the smallest.
+	// The smallest: down shows that the press is on the edge, and up again goes past the limit to where it started.
 	const ui::Point small = drag.edge(drag.audio);
 	drag.press(small);
+	drag.move({small.x, small.y + 30});
+	REQUIRE(drag.shown(drag.audio) == Approx(engine::g_minTrackHeight + 30.0));
 	drag.move({small.x, small.y - 15});
 	CHECK(drag.shown(drag.audio) == Approx(engine::g_minTrackHeight));
 	drag.release({small.x, small.y - 15});
 
-	// Down from the largest, whose lower edge the display scrolls to.
+	// The largest, whose lower edge the display scrolls to, the other way round.
 	drag.tracks.display.scrollVertically(engine::g_minTrackHeight + 100.0);
 	const ui::Point large = drag.edge(drag.other);
 	drag.press(large);
+	drag.move({large.x, large.y - 30});
+	REQUIRE(drag.shown(drag.other) == Approx(engine::g_maxTrackHeight - 30.0));
 	drag.move({large.x, large.y + 15});
 	CHECK(drag.shown(drag.other) == Approx(engine::g_maxTrackHeight));
 	drag.release({large.x, large.y + 15});
@@ -1021,6 +1025,16 @@ TEST_CASE("a height drag whose release never came ends with the next press", "[u
 		[&] { return drag.heights() == Json::array({layoutHeight(drag.audio, ui::g_trackHeight + 20.0)}); }));
 	drag.tracks.app.call("trackLayout.set", {{"heights", {layoutHeight(drag.audio, 100.0)}}});
 	REQUIRE(drag.tracks.app.waitUntil([&] { return drag.shown(drag.audio) == Approx(100.0); }));
+
+	// The same when the next press is on a track's name, not on a lower edge: the stale set of tracks held its heights
+	// back until then.
+	drag.tracks.app.shell().step(std::chrono::milliseconds(0));
+	const ui::Point again = drag.edge(drag.audio);
+	drag.press(again);
+	drag.move({again.x, again.y + 20});
+	drag.tracks.click(row(drag.other) + " .track-name");
+	drag.tracks.app.call("trackLayout.set", {{"heights", {layoutHeight(drag.audio, 150.0)}}});
+	REQUIRE(drag.tracks.app.waitUntil([&] { return drag.shown(drag.audio) == Approx(150.0); }));
 }
 
 // #1131: a set that fails, here because another client removed a track that the list doesn't know of yet, changes
