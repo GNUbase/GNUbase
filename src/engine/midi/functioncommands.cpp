@@ -537,7 +537,8 @@ namespace gnubase::engine::midi
 				"played, "
 				"which it then maps. The new part has the root key and Global Transpose setting (midiPart.set "
 				"rootKey and globalTranspose) of the first part that plays in the range; the others' difference in "
-				"global transpose goes into their notes. includeInserts also plays their tracks' MIDI modifiers into "
+				"global transpose goes into their notes, leaving out a note it takes beyond 0-127. includeInserts also "
+				"plays their tracks' MIDI modifiers into "
 				"them (channel.set "
 				"modifiers, with "
 				"the random values playback draws), leaving out notes they filter out or move out of the range. "
@@ -579,13 +580,16 @@ namespace gnubase::engine::midi
 				"end, named after the first, on the lowest lane they are on, with the first one's root key and Global "
 				"Transpose setting. Muted parts are removed and add nothing. Events keep their time; notes are cut "
 				"where their part ended. The parts' transpose, their difference in global transpose and their "
-				"velocity go into the notes as playback applies them; a note that plays nowhere, with or without the "
-				"transpose in it and the track's MIDI modifiers' transpose, is left out. A part whose notes can't hold "
-				"its transpose (beyond 0-127, or played differently by the track's drum map or chord track following, "
-				"which map a note before the transpose) or its velocity (which playback adds after the track's MIDI "
-				"modifiers compress the notes' velocities) keeps them, with its root key and Global Transpose "
-				"setting, in a part of its own for each setting, on a lane where no other new part overlaps it. The "
-				"copied notes get new ids, so play probability and velocity variance draw anew." +
+				"velocity go into the notes as playback applies them; a note that plays nowhere, also with the track's "
+				"MIDI modifiers' transpose, stays transposed where that plays nowhere either, else it is left out. A "
+				"part whose notes "
+				"can't hold this (a pitch beyond 0-127 that plays, or one the track's drum map or chord track "
+				"following, which map a note before the transpose, plays differently) keeps its root key and Global "
+				"Transpose setting, with its transpose in the notes if they hold that, else on the part. A part whose "
+				"notes can't hold its velocity (which playback adds after the track's MIDI modifiers compress the "
+				"notes' velocities and after a note's velocity variance) keeps it. Each setting makes a part of its "
+				"own, on a lane where neither another new part nor a part that stays overlaps it. The copied notes get "
+				"new ids, so play probability and velocity variance draw anew." +
 					returns,
 				objectSchema({{"parts", ids}}, {"parts"}), changesResult, false},
 			"Bounce MIDI", runBounce);

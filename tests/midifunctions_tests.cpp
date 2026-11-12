@@ -2106,6 +2106,40 @@ TEST_CASE(
 			madeParts(client, bounced) == std::vector<MadePart>{{0, 2, 0, {60, 64, 64}}, {1, 0, 2 * g_quarter, {67}}});
 	}
 
+	SECTION("a new part also moves past a part of the track that isn't bounced")
+	{
+		run(client, "midiPart.set", {{"part", second}, {"transpose", 5}, {"position", 2 * g_quarter}});
+		const ObjectId other = addPartWith(client, track, 3 * g_quarter, g_quarter, {{0, 70}});
+		run(client, "event.set", {{"events", {other}}, {"lane", 1}});
+		useDrumMap(client, track, {{{"pitch", 60}, {"oNote", 30}}});
+		const Json bounced = run(client, "midi.bounce", {{"parts", {fixture.part, second}}});
+		CHECK(
+			madeParts(client, bounced) == std::vector<MadePart>{{0, 2, 0, {60, 64, 64}}, {2, 0, 2 * g_quarter, {67}}});
+	}
+
+	SECTION("a part whose notes hold its transpose but not its root key keeps its root key alone")
+	{
+		// The project and the first part in C; the later parts in E play 4 lower. Their notes can't hold that under
+		// the map, which plays 62 as 30, but the third's notes hold its transpose: both make one part in E.
+		run(client, "project.set", {{"rootKey", "C"}});
+		run(client, "midiPart.set", {{"part", fixture.part}, {"rootKey", "C"}, {"transpose", 0}});
+		run(client, "midiPart.set", {{"part", second}, {"rootKey", "E"}, {"transpose", 0}});
+		const ObjectId third = addPartWith(client, track, 12 * g_quarter, 4 * g_quarter, {{0, 64}});
+		run(client, "midiPart.set", {{"part", third}, {"rootKey", "E"}, {"transpose", 2}});
+		useDrumMap(client, track, {{{"pitch", 62}, {"oNote", 30}}});
+		const auto before = playedOn(fixture.engine, track);
+		const Json bounced = run(client, "midi.bounce", {{"parts", {fixture.part, second, third}}});
+		CHECK(playedOn(fixture.engine, track) == before);
+		CHECK(madeParts(client, bounced) ==
+			std::vector<MadePart>{{0, 0, 0, {60, 64, 64}}, {0, 0, 8 * g_quarter, {62, 66}}});
+		std::vector<std::string> rootKeys;
+		const Json project = run(client, "project.get");
+		for (const Json& part : project.at("midiParts"))
+			rootKeys.push_back(part.at("rootKey").get<std::string>());
+		std::sort(rootKeys.begin(), rootKeys.end());
+		CHECK(rootKeys == std::vector<std::string>{"C", "E"});
+	}
+
 	SECTION("a note hidden past its part's end doesn't keep the transpose on the part")
 	{
 		run(client, "note.add",
@@ -2160,6 +2194,15 @@ TEST_CASE("bounce keeps the transpose where the track's MIDI modifiers bring bac
 		CHECK(playedOn(fixture.engine, track) == before);
 		CHECK(onlyPartJson(client, track).at("transpose") == 0);
 		CHECK(storedPitches(onlyPartJson(client, track)) == std::vector<int>{69, 69});
+	}
+
+	SECTION("a note that only the track's transpose takes beyond 127 stays, for when that changes")
+	{
+		const ObjectId high = addPartWith(client, track, 8 * g_quarter, 4 * g_quarter, {{0, 120}});
+		setModifiers(client, track, Json{{"transpose", 12}});
+		run(client, "midi.bounce", {{"parts", {fixture.part, high}}});
+		setModifiers(client, track, Json{{"transpose", 0}});
+		CHECK(playedOn(fixture.engine, track).back() == std::vector<int64_t>{g_eightQuarters, 120, 0});
 	}
 
 	SECTION("a random pitch that can bring the note back keeps it")
@@ -2228,6 +2271,15 @@ TEST_CASE(
 		setModifiers(client, track, Json{{"random", {{{"target", "velocity"}, {"minimum", -10}, {"maximum", 0}}}}});
 		run(client, "midi.bounce", {{"parts", {fixture.part}}});
 		CHECK(onlyPartJson(client, track).at("velocity") == 70);
+	}
+
+	SECTION("a note's velocity variance, which playback applies before the part's velocity, keeps it on the part")
+	{
+		// Without the track's modifiers: 64 varied down to 0 plays at least 20 with the part's velocity, 84 varied 1.
+		run(client, "note.set",
+			{{"part", fixture.part}, {"notes", {{{"id", fixture.notes[0]}, {"velocityVariance", -1.0}}}}});
+		run(client, "midi.bounce", {{"parts", {fixture.part}}});
+		CHECK(onlyPartJson(client, track).at("velocity") == 20);
 	}
 }
 

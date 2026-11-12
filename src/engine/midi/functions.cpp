@@ -737,8 +737,9 @@ namespace gnubase::engine::midi
 			}
 
 			// Whether a note plays the same with the semitones added to its pitch as with them added to what the track
-			// makes of it. A note that doesn't play either way counts: plays(target) tells whether what the track
-			// makes of it, transposed, plays after what is added later. A pitch beyond 0-127 that would play doesn't.
+			// makes of it; a pitch beyond 0-127 that would play doesn't. plays(target) tells whether what the track
+			// makes of it, transposed, plays after what is added later. A note that doesn't play either way counts:
+			// bounce stores it transposed where that plays nowhere either, and leaves it out otherwise.
 			template <typename Plays>
 			bool transposesInNote(const Note& note, int semitones, Ticks at, const Plays& plays) const
 			{
@@ -858,6 +859,11 @@ namespace gnubase::engine::midi
 			bool independent = false;
 		};
 
+		bool operator==(const GlobalSetting& a, const GlobalSetting& b)
+		{
+			return a.rootKey == b.rootKey && a.independent == b.independent;
+		}
+
 		// The global transpose a part with the setting plays at a position, as compilePart adds it.
 		int globalAt(const Project& project, const GlobalSetting& setting, Ticks at)
 		{
@@ -867,19 +873,22 @@ namespace gnubase::engine::midi
 			return globalTranspose(project, probe, project.tempo.toSamples(at, project.sampleRate));
 		}
 
-		// The semitones a part transposes a note at a position by, against a part with the main setting: its
+		// The semitones a part transposes a note at a position by, against a part with another global setting: its
 		// transpose and the difference in global transpose.
-		int semitonesAgainst(const Project& project, const MidiPart& part, const GlobalSetting& main, Ticks at)
+		int semitonesAgainst(const Project& project, const MidiPart& part, const GlobalSetting& other, Ticks at)
 		{
 			return part.transpose + globalAt(project, {part.rootKey, part.independent}, at) -
-				globalAt(project, main, at);
+				globalAt(project, other, at);
 		}
 
 		// A part to bounce, and what of its transpose, Global Transpose and velocity goes into its notes.
 		struct Bounced
 		{
 			ObjectId id = 0;
-			bool pitchInNotes = false;    // its transpose, and its global transpose against the new part's
+			// Its transpose, and the difference between its global transpose and that of the global setting the new
+			// part plays its notes with.
+			bool pitchInNotes = false;
+			GlobalSetting against;
 			bool velocityInNotes = false; // its velocity
 		};
 
@@ -898,10 +907,9 @@ namespace gnubase::engine::midi
 		}
 
 		// The parts, none muted, as one new part with the setting from the first one's start to the last one's end,
-		// on the lowest of their lanes. main is the global setting that parts whose pitch goes into the notes are
-		// played against; modifiers are the track's.
+		// on the lowest of their lanes. modifiers are the track's.
 		MidiPart combine(Project& project, const std::vector<Bounced>& parts, const BouncedSetting& setting,
-			const GlobalSetting& main, const TrackPitches& pitches, const Modifiers& modifiers)
+			const TrackPitches& pitches, const Modifiers& modifiers)
 		{
 			const MidiPart* earliest = nullptr;
 			Ticks start = 0;
@@ -945,12 +953,17 @@ namespace gnubase::engine::midi
 					Note copy = note;
 					if (bounced.pitchInNotes && !pitches.silent(note.pitch))
 					{
-						// A note that doesn't play with the transpose, wherever it is, is left out.
-						const int semitones = semitonesAgainst(project, part, main, at);
-						if (!pitchPlays(
-								modifiers, pitches.played(note.pitch, at) + semitones + globalAt(project, main, at)))
+						// A note that plays nowhere stays, transposed, where that plays nowhere either, so that it
+						// comes back with the track's MIDI modifiers as before; otherwise it is left out.
+						const int semitones = semitonesAgainst(project, part, bounced.against, at);
+						const int global = globalAt(project, bounced.against, at);
+						const auto plays = [&](int pitch) { return pitchPlays(modifiers, pitch + global); };
+						const int moved = note.pitch + semitones;
+						const bool storable = moved >= 0 && moved <= 127;
+						if (!plays(pitches.played(note.pitch, at) + semitones) &&
+							(!storable || (!pitches.silent(moved) && plays(pitches.played(moved, at)))))
 							continue;
-						copy.pitch = static_cast<uint8_t>(note.pitch + semitones);
+						copy.pitch = static_cast<uint8_t>(moved);
 					}
 					copy.id = project.newId();
 					copy.position += shift;
@@ -1061,15 +1074,16 @@ namespace gnubase::engine::midi
 				Note copy = note;
 				copy.pitch = static_cast<uint8_t>(sourcePitches.played(note.pitch, partFrom + note.position));
 				copy.channel = sourcePitches.channel(note.pitch, note.channel);
-				Modifiers transposed = modifiers;
-				transposed.transpose +=
-					semitonesAgainst(project, part, main, partFrom + note.position) - part.transpose;
-				if (!modifyNote(transposed, seed, copy.pitch, copy.velocity))
-					continue;
 				// A note moved before its part's start, or the project's, starts there, with its length.
 				const Ticks moved = note.position + randomOffset(modifiers, RandomTarget::Position, seed);
 				const Ticks at = partFrom + std::max({moved, Ticks{0}, -partFrom});
 				if (at >= partTo || !inRange(at))
+					continue;
+				// Its global transpose where it plays now, against the new part's where it will.
+				Modifiers transposed = modifiers;
+				transposed.transpose += globalAt(project, {part.rootKey, part.independent}, partFrom + note.position) -
+					globalAt(project, main, at);
+				if (!modifyNote(transposed, seed, copy.pitch, copy.velocity))
 					continue;
 				const Ticks length = note.length > 0 ? modifyLength(modifiers, seed, note.length) : 0;
 				copy.position = at;
@@ -1355,49 +1369,77 @@ namespace gnubase::engine::midi
 			const ObjectId track = project.midiParts.at(playing.front()).track;
 			const TrackPitches pitches(project, track);
 			const Modifiers modifiers = trackModifiers(project, track);
-			// The new part has the first part's root key and Global Transpose setting; for the other parts, the
-			// difference in global transpose goes into the notes with their transpose.
+			// The new part has the first part's root key and Global Transpose setting, of the lower id among parts
+			// that start together, as merge takes it; for the other parts, the difference in global transpose goes
+			// into the notes with their transpose.
+			const auto startOf = [&](const MidiPart& part)
+			{ return std::make_pair(partStart(project, part), part.id); };
 			const MidiPart* first = &project.midiParts.at(playing.front());
 			for (const ObjectId id : playing)
-				if (const MidiPart& part = project.midiParts.at(id);
-					partStart(project, part) < partStart(project, *first))
+				if (const MidiPart& part = project.midiParts.at(id); startOf(part) < startOf(*first))
 					first = &part;
 			const GlobalSetting main{first->rootKey, first->independent};
 			// A drum map or the chord track maps a note before its part's transpose, and the track's MIDI modifiers
 			// add to it before checking the range and compress the velocity before the part's velocity, which the
 			// notes can't always hold: then the part keeps them, in a new part for each setting.
+			const auto pitchesHold = [&](const MidiPart& part, const GlobalSetting& against)
+			{
+				const Ticks from = partStart(project, part);
+				const Ticks length = partEnd(project, part) - from;
+				const std::map<ObjectId, Note> notes = playedNotes(project, part);
+				return std::all_of(notes.begin(), notes.end(),
+					[&](const auto& each)
+					{
+						const Note& note = each.second;
+						const Ticks at = from + note.position;
+						const int global = globalAt(project, against, at);
+						const auto plays = [&](int target) { return pitchPlays(modifiers, target + global); };
+						return note.position >= length ||
+							pitches.transposesInNote(note, semitonesAgainst(project, part, against, at), at, plays);
+					});
+			};
+			std::map<std::pair<int, int>, bool> velocities; // by MIDI 1.0 velocity and part velocity
+			const auto velocitiesHold = [&](const MidiPart& part)
+			{
+				const Ticks length = partEnd(project, part) - partStart(project, part);
+				const std::map<ObjectId, Note> notes = playedNotes(project, part);
+				return part.velocity == 0 ||
+					std::all_of(notes.begin(), notes.end(),
+						[&](const auto& each)
+						{
+							const Note& note = each.second;
+							if (note.position >= length || pitches.silent(note.pitch))
+								return true;
+							// Playback varies a note's velocity before adding the part's.
+							if (note.velocityVariance != 0.0)
+								return false;
+							const std::pair<int, int> key{velocityToMidi1(note.velocity), part.velocity};
+							const auto found = velocities.find(key);
+							if (found != velocities.end())
+								return found->second;
+							return velocities[key] = velocityInNote(modifiers, key.first, key.second);
+						});
+			};
 			std::map<BouncedSetting, std::vector<Bounced>> groups;
 			for (const ObjectId id : playing)
 			{
 				const MidiPart& part = project.midiParts.at(id);
 				const GlobalSetting own{part.rootKey, part.independent};
-				const Ticks from = partStart(project, part);
-				const Ticks length = partEnd(project, part) - from;
-				Bounced bounced{id, true, true};
-				for (const auto& [noteId, note] : playedNotes(project, part))
+				// Against the first part's global setting, else its own with only its transpose in the notes, else
+				// none of them.
+				Bounced bounced{id, true, main, velocitiesHold(part)};
+				if (!pitchesHold(part, main))
 				{
-					if (note.position >= length)
-						continue;
-					const Ticks at = from + note.position;
-					const int mainGlobal = globalAt(project, main, at);
-					const int semitones = semitonesAgainst(project, part, main, at);
-					const auto plays = [&](int target) { return pitchPlays(modifiers, target + mainGlobal); };
-					bounced.pitchInNotes = bounced.pitchInNotes && pitches.transposesInNote(note, semitones, at, plays);
-					bounced.velocityInNotes = bounced.velocityInNotes &&
-						(pitches.silent(note.pitch) ||
-							velocityInNote(modifiers, velocityToMidi1(note.velocity), part.velocity));
+					bounced.against = own;
+					bounced.pitchInNotes = !(own == main) && pitchesHold(part, own);
 				}
-				BouncedSetting setting;
-				if (!bounced.pitchInNotes)
-					setting = {part.transpose, 0, own};
-				else
-					setting.global = main;
+				BouncedSetting setting{bounced.pitchInNotes ? 0 : part.transpose, 0, bounced.against};
 				if (!bounced.velocityInNotes)
 					setting.velocity = part.velocity;
 				groups[setting].push_back(bounced);
 			}
-			// In the order of their first parts, each on the lowest lane of its parts on which no earlier one
-			// overlaps it.
+			// In the order of their first parts, each on the lowest lane of its parts on which neither an earlier one
+			// nor a part of the track that stays overlaps it.
 			std::vector<std::pair<BouncedSetting, std::vector<Bounced>>> ordered(groups.begin(), groups.end());
 			const auto firstStart = [&](const std::vector<Bounced>& group)
 			{
@@ -1410,17 +1452,23 @@ namespace gnubase::engine::midi
 				[&](const auto& a, const auto& b) { return firstStart(a.second) < firstStart(b.second); });
 			for (const auto& [setting, group] : ordered)
 			{
-				MidiPart part = combine(project, group, setting, main, pitches, modifiers);
+				MidiPart part = combine(project, group, setting, pitches, modifiers);
 				const Ticks from = partStart(project, part);
 				const Ticks to = partEnd(project, part);
+				const auto overlaps = [&](const MidiPart& other, int lane)
+				{ return other.lane == lane && partStart(project, other) < to && from < partEnd(project, other); };
 				const auto taken = [&](int lane)
 				{
+					const auto stays = [&](const auto& each)
+					{
+						return each.second.track == track &&
+							std::find(changes.removedParts.begin(), changes.removedParts.end(), each.first) ==
+							changes.removedParts.end() &&
+							overlaps(each.second, lane);
+					};
 					return std::any_of(combined.begin(), combined.end(),
-						[&](const MidiPart& other)
-						{
-							return other.lane == lane && partStart(project, other) < to &&
-								from < partEnd(project, other);
-						});
+							   [&](const MidiPart& other) { return overlaps(other, lane); }) ||
+						std::any_of(project.midiParts.begin(), project.midiParts.end(), stays);
 				};
 				while (taken(part.lane))
 					++part.lane;
