@@ -2103,27 +2103,33 @@ namespace gnubase::engine
 			splitTracks(project, range.tracks, range.end, range.splitNotes, false, context);
 			const std::vector<Item> items = within(project, range.tracks, range.start, range.end, false);
 			const Gap shift = gapOf(project, range.start, at);
-			// The audio comes in front of the events where it lands, as range.paste puts it, in the order it was
-			// stacked.
-			for (const size_t index : stackOrder(project, items))
+			// Every moved audio event, loose or in a moved part, comes in front of the events where it lands, as
+			// range.paste puts it, in the order it was stacked: a part's events keep their places among the others.
+			std::vector<AudioEvent*> movedAudio;
+			for (const Item& item : items)
 			{
-				const Item& item = items[index];
 				if (item.audio != nullptr)
-					item.audio->front = project.newId();
+				{
+					movedAudio.push_back(item.audio);
+				}
 				else if (item.audioPart != nullptr)
-					for (AudioEvent* event : stackedIn(project, item.id()))
-						event->front = project.newId();
+				{
+					const std::vector<AudioEvent*> inPart = eventsIn(project, item.id());
+					movedAudio.insert(movedAudio.end(), inPart.begin(), inPart.end());
+				}
 			}
+			std::stable_sort(movedAudio.begin(), movedAudio.end(),
+				[](const AudioEvent* a, const AudioEvent* b) { return frontOf(*a) < frontOf(*b); });
 			std::set<ObjectId> movedEvents;
+			for (AudioEvent* event : movedAudio)
+			{
+				event->front = project.newId();
+				movedEvents.insert(event->id);
+			}
 			for (const Item& item : items)
 			{
 				place(project, item, shift.shift(item.position().base, 1), item.track());
 				announce(project, context, item, "changed");
-				if (item.audio != nullptr)
-					movedEvents.insert(item.id());
-				else if (item.audioPart != nullptr)
-					for (const AudioEvent* event : eventsIn(project, item.id()))
-						movedEvents.insert(event->id);
 			}
 			for (auto& [id, event] : project.audioEvents)
 				if (event.crossfade.from != 0 && movedEvents.count(id) != movedEvents.count(event.crossfade.from))

@@ -937,8 +937,29 @@ TEST_CASE("range.move moves what is in the range, or copies it, in one undo step
 	CHECK(f.spans(f.midiTrack) == Spans{{2 * g_second, g_start}, {g_end, 4 * g_second}, {5 * g_second, 6 * g_second}});
 	CHECK(f.steps() == steps + 1);
 	CHECK_THAT(f.fails("range.paste", Json::object()), ContainsSubstring("nothing"));
+	// The automation in the range moves as range.cut and range.paste move it, on both tracks.
+	using LanePoints = std::vector<std::tuple<int64_t, int64_t, double, bool>>; // lane, position, value, terminator
+	const auto points = [&f]()
+	{
+		LanePoints result;
+		const Json lanes = f.call("automationLane.list");
+		for (const Json& lane : lanes.at("lanes"))
+			for (const Json& point : lane.at("points"))
+				result.emplace_back(lane.at("id").get<int64_t>(), point.at("position").get<int64_t>(),
+					point.at("value").get<double>(), point.value("terminator", false));
+		return result;
+	};
+	const LanePoints movedPoints = points();
 	f.call("history.undo");
 	CHECK(f.spans(f.audioTrack) == Spans{{g_second, 3 * g_second}});
+	const LanePoints before = points();
+	CHECK(movedPoints != before);
+	f.call("range.cut", f.range());
+	f.call("range.paste", {{"position", 5 * g_second}});
+	CHECK(points() == movedPoints);
+	f.call("history.undo");
+	f.call("history.undo");
+	REQUIRE(points() == before);
 
 	// With copy, a copy goes there and the range stays as it was.
 	f.call("range.move", f.range({{"position", 5 * g_second}, {"copy", true}}));
@@ -1039,6 +1060,85 @@ TEST_CASE("range.move keeps the ids of what it moves, the crossfades between mov
 	CHECK(f.audio(a).at("position") == 12 * g_second);
 	CHECK(f.audio(b).at("position") == (15 * g_second) / 2);
 	CHECK(!f.audio(b).at("crossfade").is_object());
+}
+
+TEST_CASE("range.move keeps the stacking order of every moved audio event, in audio parts or not", "[unit]")
+{
+	RangeFixture f;
+	const int64_t audio = f.track("audio", "linear");
+	const auto add = [&f, audio](int64_t position)
+	{
+		return f
+			.call("audioEvent.add",
+				{{"track", audio}, {"clip", f.audio(f.event).at("clip")}, {"position", position}, {"offset", 0},
+					{"length", 2 * g_second}})
+			.at("event")
+			.at("id")
+			.get<int64_t>();
+	};
+	const auto toPart = [&f](const std::vector<int64_t>& events)
+	{ return f.call("event.toPart", {{"events", events}}).at("events").at(0).get<int64_t>(); };
+	// Where an event is in the stack: front, or its id while it was never brought to the front.
+	const auto front = [&f](int64_t event)
+	{
+		const auto set = f.audio(event).at("front").get<int64_t>();
+		return set != 0 ? set : event;
+	};
+	// The range is 5.5 to 10 seconds on the track; moved by 6 seconds, it lands on event c from 12 to 14 seconds,
+	// which is added last and so is in front of everything before the move.
+	const Json moved = {
+		{"start", (11 * g_second) / 2}, {"end", 10 * g_second}, {"tracks", {audio}}, {"position", (23 * g_second) / 2}};
+	const auto checkStack = [&front](const std::vector<int64_t>& order, int64_t c)
+	{
+		for (size_t i = 1; i < order.size(); ++i)
+		{
+			INFO("event " << i << " of the stack");
+			CHECK(front(order[i]) > front(order[i - 1]));
+		}
+		CHECK(front(order[0]) > front(c));
+	};
+
+	SECTION("an event between two of an audio part's")
+	{
+		// a, e and b overlap, added in that order; a and b go into a part, e stays loose between them in the stack.
+		const int64_t a = add(6 * g_second);
+		const int64_t e = add((13 * g_second) / 2);
+		const int64_t b = add(7 * g_second);
+		const int64_t part = toPart({a, b});
+		const int64_t c = add(12 * g_second);
+		REQUIRE(f.audio(e).at("part") == 0);
+		REQUIRE(front(a) < front(e));
+		REQUIRE(front(e) < front(b));
+
+		const Json events = f.call("range.move", moved).at("events");
+		CHECK(std::set<int64_t>(events.begin(), events.end()) == std::set<int64_t>{part, e});
+		CHECK(f.audio(a).at("position") == 12 * g_second);
+		CHECK(f.audio(e).at("position") == (25 * g_second) / 2);
+		checkStack({a, e, b}, c);
+		f.call("history.undo");
+		CHECK(f.audio(a).at("position") == 6 * g_second);
+		CHECK(front(e) < front(b));
+		CHECK(front(c) > front(b));
+		f.call("history.redo");
+		checkStack({a, e, b}, c);
+	}
+
+	SECTION("two audio parts whose events interleave")
+	{
+		// p1, q1, p2 and q2 overlap, added in that order; p1 and p2 go into one part, q1 and q2 into another.
+		const int64_t p1 = add(6 * g_second);
+		const int64_t q1 = add((13 * g_second) / 2);
+		const int64_t p2 = add(7 * g_second);
+		const int64_t q2 = add((15 * g_second) / 2);
+		const int64_t p = toPart({p1, p2});
+		const int64_t q = toPart({q1, q2});
+		const int64_t c = add(12 * g_second);
+
+		const Json events = f.call("range.move", moved).at("events");
+		CHECK(std::set<int64_t>(events.begin(), events.end()) == std::set<int64_t>{p, q});
+		CHECK(f.audio(p1).at("position") == 12 * g_second);
+		checkStack({p1, q1, p2, q2}, c);
+	}
 }
 
 TEST_CASE(
