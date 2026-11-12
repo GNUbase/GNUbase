@@ -1573,6 +1573,20 @@ namespace gnubase::engine
 				project.audioEvents[event.id] = event;
 				added.emplace_back("audioEvent.added", Json{{"event", toJson(event)}});
 			}
+			// Its patterns, those no pattern event plays too, which its copied pattern events play.
+			std::map<ObjectId, ObjectId> patterns;
+			std::vector<Pattern> copiedPatterns;
+			for (const auto& [patternId, pattern] : project.patterns)
+				if (pattern.track == id)
+					copiedPatterns.push_back(pattern);
+			for (Pattern& pattern : copiedPatterns)
+			{
+				patterns[pattern.id] = project.newId();
+				pattern.id = patterns.at(pattern.id);
+				pattern.track = copy.id;
+				added.emplace_back("pattern.added", Json{{"pattern", toJson(pattern)}});
+				project.patterns[pattern.id] = std::move(pattern);
+			}
 			std::vector<MidiPart> parts;
 			for (const auto& [partId, part] : project.midiParts)
 				if (part.track == id)
@@ -1581,6 +1595,8 @@ namespace gnubase::engine
 			{
 				part.id = project.newId();
 				part.track = copy.id;
+				if (const auto pattern = patterns.find(part.pattern); pattern != patterns.end())
+					part.pattern = pattern->second;
 				if (part.shared == 0) // a shared copy stays one, with the notes and controllers it shares
 					renumber(project, part);
 				added.emplace_back("midiPart.added", Json{{"part", toJson(part)}});
@@ -2899,11 +2915,12 @@ namespace gnubase::engine
 			part.pattern = parameters.value("pattern", ObjectId{0});
 			require(part.pattern == 0 || project.patterns.count(part.pattern) != 0,
 				"no pattern " + std::to_string(part.pattern));
-			part.id = project.newId();
-			Json result = {{"part", toJson(part)}};
-			project.midiParts[part.id] = std::move(part);
-			context.emit("midiPart.added", result);
-			return result;
+			const ObjectId id = part.id = project.newId();
+			project.midiParts[id] = std::move(part);
+			context.emit("midiPart.added", {{"part", toJson(project.midiParts.at(id))}});
+			// A pattern of another track plays as the copy on the part's, which the result names.
+			midi::adoptPatterns(project, context);
+			return {{"part", toJson(project.midiParts.at(id))}};
 		}
 
 		Json addAudioPart(Project& project, CommandContext& context)
@@ -2962,13 +2979,17 @@ namespace gnubase::engine
 			}
 			if (parameters.contains("pattern"))
 			{
-				part.pattern = parameters.at("pattern").get<ObjectId>();
-				require(part.pattern == 0 || project.patterns.count(part.pattern) != 0,
-					"no pattern " + std::to_string(part.pattern));
+				const auto pattern = parameters.at("pattern").get<ObjectId>();
+				require(pattern == 0 || project.patterns.count(pattern) != 0, "no pattern " + std::to_string(pattern));
+				// Another pattern, or none, plays from the part's start.
+				if (pattern != part.pattern)
+					part.patternOffset = 0;
+				part.pattern = pattern;
 			}
-			Json result = {{"part", toJson(part)}};
-			context.emit("midiPart.changed", result);
-			return result;
+			context.emit("midiPart.changed", {{"part", toJson(part)}});
+			// A pattern of another track plays as the copy on the part's, which the result names.
+			midi::adoptPatterns(project, context);
+			return {{"part", toJson(part)}};
 		}
 
 		Json removeMidiPart(Project& project, CommandContext& context)
@@ -4254,7 +4275,7 @@ namespace gnubase::engine
 			removeEmptyTracks);
 		add(engine,
 			{"track.duplicate", 1,
-				"Duplicates a track below it: its channel with every setting, its events, parts, markers and "
+				"Duplicates a track below it: its channel with every setting, its events, parts, patterns, markers and "
 				"automation, and for a folder the tracks inside it, whose channels play through the copies of the "
 				"group channels they played through. Returns the copy.",
 				objectSchema({{"track", idSchema}}, {"track"}), resultSchema({"track"}), false},
@@ -4513,7 +4534,8 @@ namespace gnubase::engine
 				"Adds a MIDI part to a MIDI or instrument track. position and length are in the track's time base. "
 				"lane puts it on that lane of the track, from 0 (default), as event.set does. pattern makes it a "
 				"pattern event (#181), which plays that pattern (pattern.add) from its start over and over instead "
-				"of its notes.",
+				"of its notes; a pattern of another track plays as its copy on the part's track (pattern.add), which "
+				"the result names.",
 				objectSchema({{"track", idSchema}, {"position", integerSchema}, {"length", integerSchema},
 								 {"name", stringSchema}, {"lane", laneSchema}, {"pattern", idSchema}},
 					{"track", "position", "length"}),
@@ -4527,7 +4549,8 @@ namespace gnubase::engine
 				"rootKey is the part's root key (\"\" for none, C, C# and so on to B), which the project root key "
 				"transposes it to (project.set rootKey); globalTranspose follow (the default) or independent says "
 				"whether the project root key and the transpose track transpose it (transpose.add). pattern is the "
-				"pattern a pattern event plays (pattern.add, #181), 0 for an ordinary part.",
+				"pattern a pattern event plays (pattern.add, #181), 0 for an ordinary part: another one plays from "
+				"the part's start, and one of another track as its copy on the part's track, which the result names.",
 				objectSchema({{"part", idSchema}, {"name", stringSchema}, {"position", integerSchema},
 								 {"length", integerSchema}, {"transpose", integerSchema}, {"velocity", integerSchema},
 								 {"rootKey", enumSchema(rootKeyNames())},
