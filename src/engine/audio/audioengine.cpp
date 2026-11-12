@@ -262,7 +262,10 @@ namespace gnubase::engine
 		cue.playsOn = playsOn;
 		m_playback.cue(cue);
 		if (wait)
+		{
 			m_playback.waitUntilBuffered(g_startWait);
+			waitForSamples(g_startWait);
+		}
 	}
 
 	void AudioEngine::startCueing()
@@ -340,6 +343,9 @@ namespace gnubase::engine
 		const audio::MidiBuffer midiIn;
 		audio::MidiBuffer midiOut(g_offlineMidi);
 		uint64_t position = m_device->position();
+		// Every sampler plays its sample from the first block.
+		if (!waitForSamples(g_offlineWait))
+			logging::warning("Rendering before every sampler's sample was read: they may play silence");
 		for (uint64_t done = 0; done < frames;)
 		{
 			const auto block = static_cast<uint32_t>(std::min<uint64_t>(format.blockSize, frames - done));
@@ -649,6 +655,7 @@ namespace gnubase::engine
 		std::map<ObjectId, std::shared_ptr<MidiSequencer>> sequencers;
 		std::map<ObjectId, std::shared_ptr<processors::InputTransformerProcessor>> transformers;
 		std::map<ObjectId, Instrument> instruments;
+		const bool replaced = snapshot.opened != m_opened; // another project
 		for (const RenderChannel& channel : snapshot.channels)
 		{
 			if (channel.type != TrackType::Midi && channel.type != TrackType::Instrument)
@@ -664,13 +671,17 @@ namespace gnubase::engine
 			sequence->inserts = channel.midiInserts;
 			sequence->sends = channel.midiSends;
 			// An instrument chases the controller events of the MIDI tracks routed to it with its own, so the latest of
-			// each kind wins, whichever track it is on.
-			if (routed.count(channel.id) == 0)
-				sequence->chase.push_back(makeChaseTrack(channel.controllers, channel.midiParts));
+			// each kind wins, whichever track it is on; not those of a track that its mute button mutes (a mute lane's
+			// track it chases, not knowing where the lane mutes). A routed track chases its own into its strip alone
+			// (MidiSequence::chaseIntoStrip), which learns its pedals from it and, muted by the button, keeps the
+			// values for unmuting (ChannelStrip::chaseFrom).
+			sequence->chase.push_back(makeChaseTrack(channel.controllers, channel.midiParts));
+			sequence->chaseIntoStrip = routed.count(channel.id) != 0;
 			if (channel.type == TrackType::Instrument)
 				for (const ObjectId source : sources[channel.id])
-					sequence->chase.push_back(
-						makeChaseTrack(routed.at(source)->controllers, routed.at(source)->midiParts));
+					if (!routed.at(source)->muted)
+						sequence->chase.push_back(
+							makeChaseTrack(routed.at(source)->controllers, routed.at(source)->midiParts));
 			sequencer->setSequence(std::move(sequence));
 			sequencer->setChase(m_chase);
 			sequencers[channel.id] = sequencer;
@@ -709,10 +720,23 @@ namespace gnubase::engine
 					instrument.channel =
 						std::make_shared<InstrumentChannel>(sequencer, std::move(played), ++m_instrumentSerial);
 				}
-				// The sampler swaps its sample while it plays (sample hot swap), reading the new one here.
-				if (instrument.sampler && instrument.sample != channel.sample)
-					instrument.sampler->setSample(channel.sample.empty() ? std::make_unique<const processors::Sample>()
-																		 : processors::loadSample(channel.sample));
+				// The sampler swaps its sample while it plays (sample hot swap). The sample loader reads a new one on
+				// its own thread, and the sampler plays the one before, or nothing, until updateSamples hands it over
+				// (#1122). A sampler of another project, which took over the instrument of a channel with the same id,
+				// plays nothing until then: the sample before is the other project's. The sampler lets go of a sample
+				// once the audio thread has moved on, by the next update.
+				if (instrument.sampler)
+				{
+					instrument.sampler->collect();
+					if (channel.sample != instrument.loaded && !instrument.loaded.empty() &&
+						(channel.sample.empty() || replaced))
+					{
+						instrument.sampler->setSample(std::make_shared<const processors::Sample>());
+						instrument.loaded.clear();
+					}
+					if (channel.sample != instrument.loaded)
+						m_sampleLoader.request(channel.sample);
+				}
 				instrument.sample = channel.sample;
 				instrument.sources = from;
 				processor = instrument.channel;
@@ -725,6 +749,49 @@ namespace gnubase::engine
 		m_sequencers = std::move(sequencers);
 		m_inputTransformers = std::move(transformers);
 		m_instruments = std::move(instruments);
+		m_opened = snapshot.opened;
+		updateSamples();
+	}
+
+	void AudioEngine::updateSamples()
+	{
+		std::set<std::string> waiting;
+		for (auto& entry : m_instruments)
+		{
+			Instrument& instrument = entry.second;
+			if (!instrument.sampler || instrument.loaded == instrument.sample)
+				continue;
+			if (std::shared_ptr<const processors::Sample> sample = m_sampleLoader.sample(instrument.sample))
+			{
+				instrument.sampler->collect();
+				instrument.sampler->setSample(std::move(sample));
+				instrument.loaded = instrument.sample;
+			}
+			else
+			{
+				waiting.insert(instrument.sample);
+			}
+		}
+		m_sampleLoader.keepOnly(waiting);
+	}
+
+	void AudioEngine::setSampleReader(SampleLoader::Read read)
+	{
+		m_sampleLoader.setRead(std::move(read));
+	}
+
+	bool AudioEngine::waitForSamples(std::chrono::milliseconds timeout)
+	{
+		updateSamples(); // first, so that it waits only for the files that samplers wait for
+		const bool read = m_sampleLoader.waitUntilRead(timeout);
+		updateSamples();
+		return read;
+	}
+
+	void AudioEngine::postSampleUpdate()
+	{
+		if (m_engine != nullptr && !m_updatingSamples.exchange(true))
+			m_engine->post("audio.updateSamples");
 	}
 
 	void AudioEngine::attachStrips(const RenderSnapshot& snapshot, graph::GraphDesc& desc)
@@ -803,6 +870,9 @@ namespace gnubase::engine
 					state, nullptr, panning, std::nullopt, silent, StripPart::Fader, lookAhead);
 			}
 			node.processor = fader;
+			if (channel.type == TrackType::Midi && channel.output.kind == RenderTarget::Kind::Channel)
+				if (const auto sequencer = m_sequencers.find(channel.id); sequencer != m_sequencers.end())
+					sourceStrip->chaseFrom(sequencer->second->stripChase(), channel.muted);
 			if (const auto tap = m_renderTaps.find(channel.id); tap != m_renderTaps.end())
 				(tap->second.point == RenderPoint::Source ? sourceStrip : fader)
 					->tapRender(tap->second.tap, tap->second.point);
@@ -2209,6 +2279,21 @@ namespace gnubase::engine
 					rebuild();
 					announceSlots(&context);
 				}
+				context.leaveOutOfLog();
+				return Json::object();
+			});
+		engine.registerCommand(
+			{"audio.updateSamples", 1,
+				"Hands the samples of sampler tracks that were read since to the samplers that wait for them. The "
+				"engine reads a sampler's sample on a thread of its own when it changes or a project loads, and runs "
+				"this on its own once the file is read; until then the sampler plays the sample before, or nothing. "
+				"Starting playback and offline renders wait for the samples. Left out of engine.commandLog.",
+				noParameters(), {{"type", "object"}}, false},
+			[this](CommandContext& context)
+			{
+				// Reset first: a file read meanwhile posts again.
+				m_updatingSamples = false;
+				updateSamples();
 				context.leaveOutOfLog();
 				return Json::object();
 			});

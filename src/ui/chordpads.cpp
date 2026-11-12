@@ -86,6 +86,18 @@ namespace gnubase::ui
 			return false;
 		}
 
+		// Whether the element or an ancestor takes the arrow keys itself: a text or value field, or a menu.
+		bool takesArrows(const Rml::Element* element)
+		{
+			for (; element != nullptr; element = element->GetParentNode())
+			{
+				const Rml::String& tag = element->GetTagName();
+				if (tag == "input" || tag == "textarea" || tag == "select" || tag == "valuefield")
+					return true;
+			}
+			return false;
+		}
+
 		std::string button(const char* action, const char* title, const char* text, bool toggle = false)
 		{
 			return std::string(R"(<button action=")") + action + R"(" id="chord-pads-)" + action + '"' +
@@ -257,8 +269,10 @@ namespace gnubase::ui
 			for (int i = 0; i < count; ++i)
 				rml += R"(<div class="chord-pad" pad=")" + std::to_string(i) +
 					R"("><span class="chord-pad-chord"/><span class="chord-pad-degree"/>)"
-					R"(<span class="chord-pad-key"/><div class="chord-pad-adaptive" title="Adaptive Voicing"/>)"
-					R"(<svg class="icon chord-pad-lock" src="../icons/general-lock.svg"/></div>)";
+					R"(<span class="chord-pad-key"/><div class="chord-pad-indicators">)"
+					R"(<div class="chord-pad-reference" title="Adaptive Voicing Reference"/>)"
+					R"(<div class="chord-pad-adaptive" title="Adaptive Voicing"/>)"
+					R"(<svg class="icon chord-pad-lock" src="../icons/general-lock.svg"/></div></div>)";
 			list->SetInnerRML(rml);
 		}
 		for (auto it = m_selection.begin(); it != m_selection.end();)
@@ -415,10 +429,11 @@ namespace gnubase::ui
 			return;
 		case Rml::EventId::Keydown:
 		{
-			// With step input, Left and Right Arrow on a pad move the step input cursor by a bar (reference manual
-			// p. 1369).
+			// With step input, Left and Right Arrow move the step input cursor by a bar wherever the focus is in the
+			// zone, such as on the Step Input button just turned on (reference manual p. 1369), except in the fields
+			// and menus, which take them.
 			const auto key = event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN);
-			if (pad != nullptr && m_pads.at("stepInput").get<bool>() && event.GetParameter("ctrl_key", 0) == 0 &&
+			if (!takesArrows(target) && m_pads.at("stepInput").get<bool>() && event.GetParameter("ctrl_key", 0) == 0 &&
 				event.GetParameter("shift_key", 0) == 0 && event.GetParameter("alt_key", 0) == 0 &&
 				(key == Rml::Input::KI_LEFT || key == Rml::Input::KI_RIGHT))
 			{

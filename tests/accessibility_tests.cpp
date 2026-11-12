@@ -92,7 +92,7 @@ TEST_CASE("the add track dialog works with the keyboard alone", "[ui]")
 	Json focus = key(app, "Tab");
 	CHECK(idOf(focus) == "track-types");
 	CHECK(focusShows(focus));
-	for (int i = 0; i < 3; ++i) // instrument, MIDI, group
+	for (int i = 0; i < 4; ++i) // instrument, sampler, MIDI, group
 		key(app, "Down");
 	CHECK(attribute(app, "#track-types", "value") == "group");
 

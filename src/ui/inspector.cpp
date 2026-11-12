@@ -64,6 +64,8 @@ namespace gnubase::ui
 			R"(<textdisplay class="display" control="bank" title="Bank Selector"/></div>)"
 			R"(<div class="inspector-row" row="program"><span class="inspector-label">Program</span>)"
 			R"(<select control="program" title="Program Selector"/></div>)"
+			R"(<div class="inspector-row" row="inputTransformer"><span class="inspector-label">Transformer</span>)"
+			R"(<select control="inputTransformer" title="Input Transformer"/></div>)"
 			R"(</div></div>)"
 			R"(<div class="inspector-section" section="modifiers" label="MIDI Modifiers"/>)"
 			R"(<div class="inspector-section" section="chords" label="Chords">)"
@@ -310,6 +312,15 @@ namespace gnubase::ui
 			return options;
 		}
 
+		// A channel's input transformer mode: off, project or track.
+		std::string inputTransformerMode(const Json& channel)
+		{
+			if (!channel.is_object())
+				return "off";
+			const Json transformer = channel.value("inputTransformer", Json::object());
+			return transformer.value("mode", std::string("off"));
+		}
+
 		Options inputs(const Json& project)
 		{
 			Options options{{"0", "No Bus"}};
@@ -328,9 +339,11 @@ namespace gnubase::ui
 	}
 
 	Inspector::Inspector(EngineBinding& binding, Rml::Element& root, std::function<void(uint64_t track)> editChannel,
-		std::function<void(uint64_t track)> setupArticulations)
+		std::function<void(uint64_t track)> setupArticulations,
+		std::function<void(uint64_t track, bool project)> openInputTransformer)
 		: m_binding(binding), m_stepOwner(binding.stepOwner("inspector")), m_root(root.GetObserverPtr()),
 		  m_editChannel(std::move(editChannel)), m_setupArticulations(std::move(setupArticulations)),
+		  m_openInputTransformer(std::move(openInputTransformer)),
 		  // Another project replaces the edits in progress: the ids they were for may be the new project's too.
 		  m_reset(binding.on("project.reset",
 			  [this](const engine::Event&)
@@ -609,6 +622,7 @@ namespace gnubase::ui
 		available("[row=device]", type == "midi");
 		available("[row=bank]", type == "midi" && device == nullptr);
 		available("[row=program]", type == "midi");
+		available("[row=inputTransformer]", noteTrack);
 		if (channel != nullptr)
 		{
 			for (const auto& [control, key] : {std::pair{"mute", "mute"}, std::pair{"solo", "solo"},
@@ -654,6 +668,15 @@ namespace gnubase::ui
 				if (Rml::Element* field = element("textdisplay[control=bank]"))
 					field->SetAttribute(
 						"value", bank.is_number_integer() ? std::to_string(bank.get<int>() + 1) : "Off");
+			}
+			// The input transformer (reference manual pp. 1097, 1393): its mode, and Open Panel... while it is on.
+			if (Rml::Element* select = element("select[control=inputTransformer]"); select != nullptr && noteTrack)
+			{
+				const std::string mode = inputTransformerMode(*channel);
+				Options modes = {{"off", "Off"}, {"project", "Project"}, {"track", "Track"}};
+				if (mode != "off")
+					modes.emplace_back("open", "Open Panel...");
+				widgets::fill(*select, modes, mode);
 			}
 			if (noteTrack && channel->contains("modifiers"))
 				showModifiers(channel->at("modifiers"));
@@ -794,6 +817,22 @@ namespace gnubase::ui
 			if (track != nullptr && (track->at("timeBase") == "linear") != linear)
 				m_binding.send(
 					"track.set", {{"track", m_track}, {"timeBase", linear ? "linear" : "musical"}}, whenRefused());
+			return;
+		}
+		if (name == "inputTransformer")
+		{
+			const auto value = event.GetParameter<Rml::String>("value", "off");
+			const std::string mode = inputTransformerMode(m_channel);
+			if (value == "open")
+			{
+				m_stale = true; // shows the mode again
+				if (m_openInputTransformer)
+					m_openInputTransformer(m_track, mode == "project");
+			}
+			else if (value != mode)
+			{
+				sendChannel({{"inputTransformer", {{"mode", value}}}});
+			}
 			return;
 		}
 		if (name == "articulationMap")

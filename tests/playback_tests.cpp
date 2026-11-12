@@ -1102,6 +1102,58 @@ TEST_CASE(
 
 namespace
 {
+	// An audition that runs audio blocks while the cue thread cues it: after the cue has read where the audio thread
+	// plays and before it cues the streams from there, as when the audio thread runs on in between.
+	class RacingAudition : public Audition
+	{
+	public:
+		std::function<void()> whileCueing; // runs once, in the next cue
+
+	protected:
+		void playedRead() override
+		{
+			if (whileCueing)
+				std::exchange(whileCueing, nullptr)();
+		}
+	};
+}
+
+TEST_CASE("an audition whose first block plays while the cue thread cues it plays on without a gap", "[integration]")
+{
+	// The cue thread reads where the audio thread plays before the audition's first block, so that it has played
+	// nothing of it yet, and cues its stream after that block, when the stream is already read past the start: it
+	// must leave it there, not cue it back to where the audition starts, which would leave the second block silent.
+	const gnubase::test::TempDir dir;
+	PlaylistEntry entry;
+	entry.end = 48000;
+	entry.media = 1;
+	Playlist sections;
+	sections.layers.push_back({entry});
+	const Playback::Track track{2, std::make_shared<const Playlist>(std::move(sections))};
+	constexpr uint32_t frames = 256;
+	RacingAudition audition;
+	audition.play({3, 0, 0}, track, {{1, writeRamp(dir, "mono", 1, 48000)}}, 48000.0, 0, 48000, 1, frames);
+	std::vector<float> output(size_t{frames} * 2, 0.0f);
+	const auto playBlock = [&audition, &output](size_t block)
+	{
+		const std::vector<int> ports{0};
+		const std::array<float*, 1> out{output.data() + (block * frames)};
+		audition.process(out.data(), 1, ports, frames);
+	};
+	audition.whileCueing = [&playBlock] { playBlock(0); };
+	audition.cue(4800, true);
+	CHECK(!audition.whileCueing); // the first block played in the cue
+	REQUIRE(audition.waitUntilBuffered(std::chrono::milliseconds(5000)));
+	playBlock(1);
+	size_t i = 0;
+	while (i < output.size() && output[i] == ramp(static_cast<int64_t>(i), 0))
+		++i;
+	INFO("the ramp stops at frame " << i);
+	CHECK(i == output.size());
+}
+
+namespace
+{
 	// Waits until the device has played frames frames, at most 10 seconds.
 	void playUntil(Song& song, int64_t frames)
 	{

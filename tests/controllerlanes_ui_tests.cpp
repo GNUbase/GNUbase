@@ -7,7 +7,6 @@
 #include "ui/automation.h"
 #include "uiapp.h"
 
-#include <RmlUi/Core/Context.h>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
@@ -15,7 +14,6 @@
 #include <chrono>
 #include <cmath>
 #include <optional>
-#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -162,24 +160,6 @@ namespace
 		}
 
 		size_t steps() { return app.call("history.get").at("steps").size(); }
-
-		// The editor window's context: through it a test presses a button and keeps it down, as a mouseup lost
-		// outside the window leaves it, where RmlUi has no element to send the mouseup to.
-		Rml::Context& context()
-		{
-			const ui::Window* shown = app.shell().find(app.appUi().editorWindowId());
-			if (shown == nullptr)
-				throw std::logic_error("the editor window doesn't show");
-			return shown->context();
-		}
-
-		void press(const ui::Target& target)
-		{
-			const ui::Point point = target.point.value_or(ui::Point{});
-			context().ProcessMouseMove(point.x, point.y, 0);
-			context().ProcessMouseButtonDown(0, 0);
-			app.shell().step(std::chrono::milliseconds(0));
-		}
 
 		// The right end of the editor window's toolbar's empty space, where a click does nothing.
 		ui::Target spare()
@@ -739,8 +719,9 @@ TEST_CASE("a drag on a lane released outside the lanes ends there, and one whose
 
 	// A paint whose mouseup never came (released outside the window) ends without its effect at the next press.
 	f.tool("draw");
-	f.press(f.at(0, 10.5, 0.5));
-	f.click(f.spare());
+	f.app.ui().press(f.window, f.at(0, 10.5, 0.5), ui::MouseButton::Left);
+	f.app.ui().press(f.window, f.spare(), ui::MouseButton::Left);
+	f.app.ui().release(f.window, f.spare(), ui::MouseButton::Left);
 	settle();
 	CHECK(f.controllers().size() == 1);
 	CHECK(f.steps() == before);

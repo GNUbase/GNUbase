@@ -846,3 +846,79 @@ TEST_CASE("snap.zeroCrossings follows the audio event that plays: in front, unmu
 	f.call("event.set", {{"events", {part}}, {"mute", true}});
 	CHECK(moved() == onB);
 }
+
+TEST_CASE("snap.zeroCrossings moves a position only to where the event playing there plays", "[unit]")
+{
+	// A sine that crosses zero every 100 frames, in an event A from a second on. 1080 samples into A, the crossing at
+	// 1100 is the nearest, the one at 1000 the next.
+	const test::TempDir dir;
+	const std::filesystem::path file = dir.path() / "sine.wav";
+	test::Audio sine;
+	for (int frame = 0; frame < 9600; ++frame)
+		sine.samples.push_back(static_cast<float>(0.5 * std::sin(frame * 3.14159265358979323846 / 100.0)));
+	test::writeWav(file, sine);
+
+	Fixture f;
+	const int64_t audio = f.track("audio", "linear");
+	const int64_t a = f.audioEvent(audio, file.u8string(), 9600, g_second, 0, 4800);
+	const auto moved = [&f, audio]
+	{
+		return f.call("snap.zeroCrossings", {{"positions", {g_second + 1080}}, {"tracks", {audio}}})
+			.at("positions")
+			.at(0)
+			.get<int64_t>();
+	};
+	CHECK(moved() == g_second + 1100);
+	// A's part ends at 1090: A doesn't play at 1100.
+	const Json part = f.call("event.toPart", {{"events", {a}}}).at("events").at(0);
+	f.call("event.resize", {{"events", {part}}, {"edge", "end"}, {"delta", 1090 - 4800}});
+	CHECK(moved() == g_second + 1000);
+	f.call("event.resize", {{"events", {part}}, {"edge", "end"}, {"delta", 4800 - 1090}});
+	CHECK(moved() == g_second + 1100);
+
+	// Nor under an event in front of it, B from 1090 on.
+	const int64_t b = f.audioEvent(audio, file.u8string(), 9600, g_second + 1090, 50, 1000);
+	CHECK(moved() == g_second + 1000);
+	// Behind A, B hides nothing.
+	f.call("event.toFront", {{"events", {a}}});
+	CHECK(moved() == g_second + 1100);
+	f.call("event.toFront", {{"events", {b}}});
+	// With C in front of A from 900 to 1060 too, A plays from 1060 to 1090, where the audio doesn't cross zero: the
+	// position stays.
+	f.audioEvent(audio, file.u8string(), 9600, g_second + 900, 0, 160);
+	CHECK(moved() == g_second + 1080);
+}
+
+TEST_CASE("snap.zeroCrossings takes the piece of a split event that plays in front, as playback does", "[unit]")
+{
+	// The sine crosses zero every 100 frames. The piece after the split has its event's place in the stack; of the
+	// two, playback plays the one with the higher id, the right piece.
+	const test::TempDir dir;
+	const std::filesystem::path file = dir.path() / "sine.wav";
+	test::Audio sine;
+	for (int frame = 0; frame < 9600; ++frame)
+		sine.samples.push_back(static_cast<float>(0.5 * std::sin(frame * 3.14159265358979323846 / 100.0)));
+	test::writeWav(file, sine);
+
+	Fixture f;
+	const int64_t audio = f.track("audio", "linear");
+	const int64_t left = f.audioEvent(audio, file.u8string(), 9600, g_second, 0, 4800);
+	const Json right = f.call("event.split", {{"events", {left}}, {"positions", {g_second + 2000}}}).at("events").at(0);
+	REQUIRE(right.get<int64_t>() > left);
+	// The right piece, from frame 2000 of the file on, moves left over the left one to 990: its crossings are at 990
+	// plus a multiple of 100, the left piece's at multiples of 100.
+	f.call("event.move", {{"events", {right}}, {"delta", -1010}});
+	REQUIRE(f.object("audioEvents", right.get<int64_t>()).at("position") == g_second + 990);
+	const auto moved = [&f, audio](int64_t position)
+	{
+		return f.call("snap.zeroCrossings", {{"positions", {g_second + position}}, {"tracks", {audio}}})
+				   .at("positions")
+				   .at(0)
+				   .get<int64_t>() -
+			g_second;
+	};
+	// In the overlap the right piece plays: its crossing at 1090, not the left piece's at 1100.
+	CHECK(moved(1080) == 1090);
+	// Just before it the left piece plays, up to 990: its crossing at 900, not the one at 1000 under the right piece.
+	CHECK(moved(960) == 900);
+}

@@ -73,7 +73,8 @@ one it has the class `empty` and says "No Track Selected".
     [section=basics]               mute, solo, record, monitor, timeBase, editInPlace (button[control]); volume
                                    (dB), pan (-100 to 100)
     [section=routing]              select[control=input] (audio tracks), select[control=output]; MIDI tracks:
-                                   select[control=device], textdisplay[control=bank], select[control=program]
+                                   select[control=device], textdisplay[control=bank], select[control=program];
+                                   MIDI and instrument tracks: select[control=inputTransformer]
     [section=modifiers]            MIDI and instrument tracks: button[control=modifiers-bypass], valuefields and the
                                    random generators' and ranges' select[control=modifiers-random-0-target] etc.
     [section=chords]               MIDI and instrument tracks with a chord track: select[control=followChords]
@@ -101,6 +102,9 @@ one it has the class `empty` and says "No Track Selected".
 - **Routing** (p. 168): the input bus of an audio track, and where the channel plays: an output bus or a group
   channel, for MIDI tracks an instrument track's channel, as in the add track dialog (`channel.set` `input` and
   `output`). On MIDI tracks also the MIDI device, bank and program (pp. 1108, 1113, [midi-devices.md](midi-devices.md)).
+  On MIDI and instrument tracks the Input Transformer (pp. 1097, 1393, [midi-rules.md](midi-rules.md)): Off, Project
+  or Track (`channel.set` `inputTransformer` `mode`) and, while it isn't off, Open Panel..., which opens the project
+  input transformer or the track's and leaves the mode as it was.
 - **MIDI Modifiers** (pp. 1099–1102, [midi-modifiers.md](midi-modifiers.md)): Bypass, Transpose, Velocity Shift,
   Velocity and Length Compression as numerator and denominator, Random 1 and 2 with their target and minimum and
   maximum, and Range 1 and 2 with their mode and minimum and maximum, sent with `channel.set` `modifiers`. Each control

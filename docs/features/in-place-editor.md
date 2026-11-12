@@ -19,11 +19,13 @@ project closes it.
 - Reading `editor.inPlace` without `tracks` leaves `engine.commandLog` unchanged; calls with `tracks` remain logged.
 - **Parts.** An open in-place editor shows every MIDI part of its track, in order, and parts added later; its parts
   can't be set (`parts`, `showTracks`, `hideTracks` and `exclusive` are refused), and it always shows the key editor.
+  Showing one track, its `editingMode` is `allParts` or `activePart`; `activeTrack` is refused.
   The first part is active; `activePart` activates another one. A removed track's editor closes, and comes back with
   the undo.
 - `editor.open` refuses in-place editors; other tracks than MIDI and instrument tracks have none.
 - The `editor` parameter's schema has the names as the pattern `^(lower|window|inPlace:[0-9]+)$`, so MCP clients and
-  Lua see them.
+  Lua see them, and a `maxLength` of 27 (`inPlace:` and at most 19 digits for the track). A longer name gets the
+  length error before the pattern is matched, so that no name can make the matching overflow the stack (#1059).
 
 ## In the UI
 
@@ -48,9 +50,10 @@ menu#in-place-editing-mode-menu-inPlace-<track>, menu#in-place-active-part-menu-
   the grid's left and right edges get the times the ruler has there (`KeyEditor::setTimeRange`), so the notes and the
   parts' boxes are under their times while the project window zooms and scrolls. The keyboard at the left covers the
   start of the view. Between the edges the axis is linear in ticks: across a tempo change in the view the notes drift
-  from the ruler until the key editor gets a tempo-mapped axis. The tempo map is read once per project the display
-  reads, and a new range only moves the notes, the parts' boxes and the controller lanes' bars (`KeyEditor::placeItems`,
-  `ControllerLanes::setRange`), so scrolling, zooming and following the project cursor read and build nothing again.
+  from the ruler until the key editor gets a tempo-mapped axis. The tempo map is the display's (`EventDisplay::time`),
+  read once per project it reads, and a new range only moves the notes, a note being drawn, the parts' boxes and the
+  controller lanes' bars (`KeyEditor::placeItems`, `ControllerLanes::setRange`), so scrolling, zooming and following
+  the project cursor read and build nothing again.
 - **Editing** is the key editor's: its tools, the toolbox on a right click, the transpose palette, step and MIDI input,
   the info line and the controller lanes, sent as `note.*` and `editor.set` for the view `inPlace:<track>`. Presses,
   clicks and double clicks in an in-place editor stay there: the event display doesn't select, move or add parts
@@ -74,7 +77,7 @@ menu#in-place-editing-mode-menu-inPlace-<track>, menu#in-place-active-part-menu-
 
 ## Not yet
 
-The setup panes of the toolbar and the info line (p. 1575), which only the project window has so far
+Tracked in #1158: the setup panes of the toolbar and the info line (p. 1575), which only the project window has so far
 ([docking.md](docking.md)); the project window's info line showing the selected note (the editor's own info line shows it with the toolbar);
 zooming and scrolling the pitches by dragging the keyboard (the editor scrolls with its scroll bar); a
 tempo-mapped time axis; adding and removing controller lanes with a right click below the lane's name; closing with a
@@ -88,9 +91,9 @@ Transpositions and Event Colors (the key editor has none yet).
 - `tests/inplaceeditor_tests.cpp`: `editor.inPlace` opening, toggling and closing MIDI and instrument tracks' editors
   with `editor.changed`, the list of open ones in the track list's order, every part of the track shown and parts
   added later, the selection and settings through `editor.set`, `editor.close`; audio tracks, unknown tracks and
-  names, `editor.open`, setting parts, showing tracks, other contents and global tracks refused, and the names'
-  pattern in the schema; a track without parts; a removed track closing it and its undo bringing it back, and a new
-  project closing them all. `tests/engine_tests.cpp` checks schema patterns.
+  names, `editor.open`, setting parts, showing tracks, other contents, global tracks and the editing mode activeTrack
+  refused, and the names' pattern in the schema; a track without parts; a removed track closing it and its undo
+  bringing it back, and a new project closing them all. `tests/engine_tests.cpp` checks schema patterns and their text in the API references.
 - `tests/inplaceeditor_ui_tests.cpp` drives the app with `ui::Automation`: MIDI > Open In-Place Editor for a MIDI
   and an audio track selected opens the MIDI track's editor over its grown lane, notes and the part's box at their
   times on the timeline, also after zooming and scrolling and with the toolbar shown; Edit In-Place, an engine client
@@ -101,4 +104,5 @@ Transpositions and Event Colors (the key editor has none yet).
   selection of its own, the multiple part controls setting their editor's editing mode and active part, and closing
   one leaving the other's menus; the track's lanes keeping their height, a folded folder hiding the editor; a
   time-linear track's notes on the timeline; Q in the editor quantizing its selected note and not the selected part;
-  the menu commands waiting for a MIDI or instrument track.
+  the menu commands waiting for a MIDI or instrument track; a note being drawn moving with the notes while the project
+  window zooms.

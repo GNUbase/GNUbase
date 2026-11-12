@@ -109,6 +109,7 @@ add_library(gnubase-engine STATIC
 	audio/performance.cpp audio/performance.h
 	audio/playback.cpp audio/playback.h
 	audio/recorder.cpp audio/recorder.h
+	audio/sampleloader.cpp audio/sampleloader.h
 	audio/sequencer.cpp audio/sequencer.h
 	audio/stripsections.cpp audio/stripsections.h
 	audio/transport.cpp audio/transport.h

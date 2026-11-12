@@ -137,6 +137,21 @@ namespace gnubase::ui
 		if (x < 0.0 || y < 0.0 || x > width() || y > height())
 		{
 			import.sample = std::max<int64_t>(m_cursorSample, 0);
+			// On a track's row in the track list, on that track as on its lane (its first), but not on its automation
+			// rows, which are lanes of their own.
+			const Rml::Element* row = on != m_root.get() ? event.GetTargetElement() : nullptr;
+			while (
+				row != nullptr && row != on && row->GetTagName() != "listitem" && !row->IsClassSet("automation-rows"))
+				row = row->GetParentNode();
+			if (row != nullptr && row != on && row->GetTagName() == "listitem")
+			{
+				const auto track = static_cast<uint64_t>(row->GetAttribute<double>("value", 0.0));
+				const auto type = row->GetAttribute<Rml::String>("type", "");
+				if (type == "audio")
+					import.track = track;
+				else if (type == "midi" || type == "instrument")
+					import.midiTrack = track;
+			}
 			startImport(files, std::move(import));
 			return;
 		}

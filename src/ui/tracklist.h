@@ -192,8 +192,8 @@ namespace gnubase::ui
 		void removeTracks(const std::vector<uint64_t>& tracks);
 		void closedRemoveDialog(Rml::Event& event);
 		// The chord track's dialogs (docs/features/chord-track.md): Create Chord Events (create-chord-events.rml) and
-		// Map to Chord Track (map-to-chord-track.rml) for the selected MIDI and instrument tracks.
-		void openChordDialog(const char* file, std::vector<uint64_t> tracks);
+		// Map to Chord Track (map-to-chord-track.rml) for MIDI parts.
+		void openChordDialog(const char* file, std::vector<uint64_t> parts);
 		void closedChordDialog(Rml::Event& event);
 		// Runs the commands as one undo step.
 		void transaction(const std::string& description, engine::Json commands);
@@ -233,7 +233,7 @@ namespace gnubase::ui
 		Rml::ObserverPtr<Rml::Element> m_removeDialog; // remove-tracks.rml while open
 		std::vector<uint64_t> m_removing;              // the tracks it asks about
 		Rml::ObserverPtr<Rml::Element> m_chordDialog;  // a chord track dialog while open
-		std::vector<uint64_t> m_chordTracks;           // the tracks it is for
+		std::vector<uint64_t> m_chordParts;            // the MIDI parts it is for
 
 		Drag m_drag = Drag::None;
 		uint64_t m_dragTrack = 0;

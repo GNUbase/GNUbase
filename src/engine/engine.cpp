@@ -160,16 +160,28 @@ namespace gnubase::engine
 			setup.format = recordFormat(project);
 			const std::string& file = m_project->file();
 			setup.folder = file.empty() ? recordings : mediaFolderFor(std::filesystem::u8path(file));
+			// With the chord track record-enabled, MIDI and instrument tracks that only monitor play in chord events
+			// too (reference manual p. 1345).
+			const bool chords = project.chords.recordEnable &&
+				std::any_of(project.trackById.begin(), project.trackById.end(),
+					[](const auto& entry) { return entry.second.type == TrackType::Chord; });
 			for (const ObjectId id : project.trackOrder())
 			{
 				const Track& track = project.trackById.at(id);
 				const auto channel = project.channels.find(track.channel);
-				if (!track.enabled || channel == project.channels.end() || !channel->second.recordEnable)
+				if (!track.enabled || channel == project.channels.end())
 					continue;
+				const bool notes = track.type == TrackType::Midi || track.type == TrackType::Instrument;
+				if (!channel->second.recordEnable)
+				{
+					if (notes && chords && channel->second.monitor)
+						setup.midiTracks.push_back({id, track.channel, true});
+					continue;
+				}
 				if (track.type == TrackType::Audio && channel->second.input != 0)
 					setup.tracks.push_back({id, track.name, {}});
-				else if (track.type == TrackType::Midi || track.type == TrackType::Instrument)
-					setup.midiTracks.push_back({id, track.channel});
+				else if (notes)
+					setup.midiTracks.push_back({id, track.channel, false});
 			}
 			return setup;
 		};
@@ -345,6 +357,11 @@ namespace gnubase::engine
 	int64_t Engine::playbackPosition() const
 	{
 		return m_audio->position();
+	}
+
+	void Engine::setSampleReader(std::function<std::shared_ptr<const processors::Sample>(const std::string& path)> read)
+	{
+		m_audio->setSampleReader(std::move(read));
 	}
 
 	void Engine::readMeters(MeterFrame& frame)

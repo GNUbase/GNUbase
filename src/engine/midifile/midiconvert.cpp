@@ -1007,7 +1007,10 @@ namespace gnubase::engine::midifile
 		}
 		// Where the project's tempo changes after the start or the project has content after the file's end, it is
 		// the project's again from the file's end on; otherwise the file's last tempo goes on, as in a new project.
-		const bool keepsAfterEnd = options.contentEnd > end;
+		// Linear content keeps its samples, so it is compared with the file's end in the new tempo, which points
+		// already holds up to the end.
+		const bool keepsAfterEnd = options.contentEnd > end ||
+			options.contentEndSamples > time::TempoMap(points).toSamples(end, options.sampleRate);
 		const auto afterEnd = std::find_if(projectTempo.begin(), projectTempo.end(),
 			[end](const time::TempoPoint& point) { return point.position > end; });
 		if (keepsAfterEnd ||

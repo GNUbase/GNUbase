@@ -41,13 +41,19 @@ namespace gnubase::engine
 		}
 	};
 
-	// A record-enabled MIDI or instrument track: what its channel's MIDI input plays is recorded.
+	// A record-enabled MIDI or instrument track: what its channel's MIDI input plays is recorded. chordsOnly: a track
+	// that only monitors while the chord track is record-enabled, whose notes only make chord events (reference
+	// manual p. 1345).
 	struct MidiRecordTrack
 	{
 		ObjectId track = 0;
 		ObjectId channel = 0;
+		bool chordsOnly = false;
 
-		bool operator==(const MidiRecordTrack& other) const { return track == other.track && channel == other.channel; }
+		bool operator==(const MidiRecordTrack& other) const
+		{
+			return track == other.track && channel == other.channel && chordsOnly == other.chordsOnly;
+		}
 	};
 
 	// The MIDI messages that MIDI recording leaves out (the user setting midi.recordFilter, reference manual p. 1613):

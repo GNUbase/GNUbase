@@ -173,6 +173,7 @@ namespace
 			"ui.markersAutoScroll",          // the markers window
 			"ui.markersSyncSelection",       // the markers window
 			"ui.noWorkspaceLayout",          // the workspaces' No Workspace
+			"ui.samplerPanel",               // the sampler panel's toolbar
 			"ui.setupPresets",               // the setup panes' presets
 			"ui.timeDisplay",                // the time display window
 			"ui.timeFormats",                // the transport bar's displays

@@ -426,6 +426,8 @@ TEST_CASE("files that can't be read say why", "[integration]")
 
 TEST_CASE("a FLAC file that can't be created releases its encoder", "[integration]")
 {
+	// Only the leak sanitizer (CI's asan-ubsan job) checks that the encoder is released; without it this passes with or
+	// without the fix, so it isn't redundant with the other error tests.
 	const test::TempDir dir;
 	const std::string path = utf8(dir.path() / "missing" / "out.flac");
 	WriteOptions options;
