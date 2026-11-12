@@ -131,8 +131,8 @@ while the mouse rests on it, and a shown one goes when its element is removed, a
 rendered anew, or kept elsewhere instead of destroyed. A new element with a title in the removed one's place, under
 the resting mouse, gets its tooltip after the usual rest, without another mouse move. It goes too when the mouse moves
 from the element onto a part of an ancestor that no other element covers (the gap between a toolbar's buttons): RmlUi
-sends no Mouseover there, so the tooltip treats an element that has lost its `:hover` like one that is gone. Every document gets its tooltip element when it loads; it lets the mouse
-through.
+sends no Mouseover there, so the tooltip treats an element that has lost its `:hover` like one that is gone. Every
+document gets its tooltip element when it loads; it lets the mouse through.
 
 ## Notifications
 

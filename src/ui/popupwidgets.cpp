@@ -386,7 +386,8 @@ namespace gnubase::ui
 				// An element that isn't hovered any more is gone from under the mouse like a destroyed one: the mouse
 				// moved onto a part of its ancestor that no other element covers, where RmlUi sends the Mouseout to
 				// the element and no Mouseover, or the element was taken out and kept, which clears the state with its
-				// Mouseout too.
+				// Mouseout too. (RmlUi sets :hover in the default action of the Mouseover, which a listener that stops
+				// the event keeps from running: nothing stops it now.)
 				if (titled != nullptr && !titled->IsPseudoClassSet("hover"))
 				{
 					m_titled.reset();
