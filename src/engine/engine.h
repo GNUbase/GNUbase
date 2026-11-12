@@ -37,6 +37,11 @@ namespace gnubase::engine
 	}
 	struct RenderSnapshot;
 
+	namespace processors
+	{
+		struct Sample;
+	}
+
 	namespace peaks
 	{
 		class PeakCache;
@@ -242,6 +247,9 @@ namespace gnubase::engine
 		// For tests: moves the engine's clock forward and returns once its tick ran (Clock::advance), so that whatever
 		// the tick queued, such as a due auto save, is queued before what the test does next.
 		void advanceClock(Clock::Duration by) { m_clock.advance(by); }
+		// For tests: reads the samplers' samples asked for from now on with read instead of processors::sharedSample,
+		// e.g. to hold a read back (AudioEngine::setSampleReader). Any thread.
+		void setSampleReader(std::function<std::shared_ptr<const processors::Sample>(const std::string& path)> read);
 
 	private:
 		friend class Client;

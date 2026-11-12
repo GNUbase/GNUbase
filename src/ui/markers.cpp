@@ -75,8 +75,8 @@ namespace gnubase::ui
 
 	int64_t ProjectMarkers::position(const Track& track, double seconds) const
 	{
-		seconds = std::max(seconds, 0.0);
-		return track.linear ? std::llround(seconds * time.sampleRate) : time.tempo.toTicks(seconds);
+		seconds = clampPositionSeconds(seconds, time.sampleRate);
+		return track.linear ? positionSamples(seconds, time.sampleRate) : time.tempo.toTicks(seconds);
 	}
 
 	ProjectMarkers readMarkers(const Json& project)
@@ -563,7 +563,7 @@ namespace gnubase::ui
 			if (twice)
 			{
 				m_binding.send("marker.range",
-					{{"track", track.id}, {"position", std::llround(seconds * m_markers.time.sampleRate)}},
+					{{"track", track.id}, {"position", positionSamples(seconds, m_markers.time.sampleRate)}},
 					[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 					{
 						if (alive.expired() || !result.ok())

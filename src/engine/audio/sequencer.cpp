@@ -201,7 +201,8 @@ namespace gnubase::engine
 	}
 
 	MidiSequencer::MidiSequencer()
-		: m_sequence(std::make_unique<const MidiSequence>()), m_input(graph::g_maxEventsPerBlock)
+		: m_sequence(std::make_unique<const MidiSequence>()), m_input(graph::g_maxEventsPerBlock),
+		  m_stripChase(std::make_shared<graph::EventBuffer>(graph::g_maxEventsPerBlock))
 	{
 		std::iota(m_inputTo.begin(), m_inputTo.end(), uint16_t{0});
 	}
@@ -377,6 +378,10 @@ namespace gnubase::engine
 		out.nextSource();
 
 		const uint8_t chase = m_chase.load(std::memory_order_relaxed);
+		// A routed MIDI track's chase goes to its strip alone (MidiSequence::chaseIntoStrip), at the jump's offset,
+		// or the rest of it that didn't fit at the start of the next block.
+		m_stripChase->clear();
+		const bool intoStrip = sequence.chaseIntoStrip;
 		if (!transport.playing)
 		{
 			endAll(0, out);
@@ -387,9 +392,11 @@ namespace gnubase::engine
 			if (m_cursor >= 0 && transport.position != m_cursor) // a locate while stopped
 				findChased(sequence, transport.position, chase, true);
 			m_cursor = transport.position;
-			sendChased(0, out);
+			sendChased(0, intoStrip ? *m_stripChase : out);
 			return;
 		}
+		if (intoStrip)
+			sendChased(0, *m_stripChase);
 		for (size_t s = 0; s < transport.segmentCount; ++s)
 		{
 			const graph::TransportSegment& segment = transport.segments[s];
@@ -398,6 +405,8 @@ namespace gnubase::engine
 				endAll(segment.offset, out);
 				findChased(sequence, segment.position, chase, false);
 				m_chaseNotes = (chase & g_chaseNotes) != 0;
+				if (intoStrip)
+					sendChased(segment.offset, *m_stripChase);
 			}
 			play(sequence, segment, out);
 			m_next = segment.position + segment.frames;
@@ -424,7 +433,8 @@ namespace gnubase::engine
 				ending = std::min(ending, std::max(m_ends[m_sounding[i]], begin));
 			const int64_t starting = note != sequence.notes.end() ? note->start : g_never;
 			const int64_t changing = controller != sequence.controllers.end() ? controller->position : g_never;
-			const int64_t chasing = m_chasedSent < m_chasedCount || m_chaseNotes ? begin : g_never;
+			const bool chased = m_chasedSent < m_chasedCount && !sequence.chaseIntoStrip; // still to send here
+			const int64_t chasing = chased || m_chaseNotes ? begin : g_never;
 			const int64_t at = std::min({ending, starting, changing, chasing});
 			if (at >= end)
 				return;
@@ -440,7 +450,7 @@ namespace gnubase::engine
 						return;
 				}
 			}
-			else if (m_chasedSent < m_chasedCount)
+			else if (chased)
 			{
 				if (!sendChased(offset, out))
 					return;
@@ -586,9 +596,17 @@ namespace gnubase::engine
 		if (event.type != Type::NoteOn && event.type != Type::NoteOff && event.type != Type::PolyPressure)
 			return true;
 		const size_t from = ((event.channel % 16) * 128) + (event.key % 128);
+		// The key no longer holds the note it played (a second note-on, or its note-off).
+		const auto letGo = [this, from]
+		{
+			const uint16_t to = m_inputTo[from];
+			if (m_inputDown[from] && to != g_notes && m_inputKeys[to] > 0)
+				--m_inputKeys[to];
+		};
 		if (event.type == Type::NoteOn)
 		{
 			const uint16_t before = m_inputTo[from];
+			letGo();
 			auto pitch = static_cast<uint8_t>(liveInputPitch(sequence.liveInput, position, event.key % 128));
 			uint8_t channel = event.channel % 16;
 			// The sound slot its remote triggers selected, or the default one, plays it with its MIDI modifiers but
@@ -607,16 +625,24 @@ namespace gnubase::engine
 			m_inputTo[from] = midi::modifyNote(modifiers, midi::noteSeed(0, ++m_random), pitch, event.velocity)
 				? static_cast<uint16_t>((channel * 128) + pitch)
 				: static_cast<uint16_t>(g_notes);
-			// The key is held and its note goes elsewhere this time: the key's one note-off can end only one of them.
-			if (m_inputDown[from] && before != g_notes && before != m_inputTo[from] && m_inputHeld[before])
+			// The key is held and its note goes elsewhere this time: the key's one note-off can end only one of them,
+			// so the first ends now, unless another held key plays it too.
+			if (m_inputDown[from] && before != g_notes && before != m_inputTo[from] && m_inputHeld[before] &&
+				m_inputKeys[before] == 0)
 				ends = before;
+			if (m_inputTo[from] != g_notes)
+				++m_inputKeys[m_inputTo[from]];
 			m_inputDown[from] = true;
 		}
 		const uint16_t to = m_inputTo[from];
 		if (event.type == Type::NoteOff)
 		{
+			letGo();
 			m_inputTo[from] = static_cast<uint16_t>(from);
 			m_inputDown[from] = false;
+			// Two held keys play the same note (Live Input moved one onto the other's): it ends with the last.
+			if (to != g_notes && m_inputKeys[to] > 0)
+				return false;
 		}
 		if (to == g_notes)
 			return false;

@@ -56,6 +56,10 @@ namespace gnubase::engine
 		// A fader lane whose static value changed while it has no points: it glides there over g_faderSmoothing.
 		// Not compared: it only says how the new value arrives.
 		bool smooth = false;
+		// A program lane and a MIDI lane without points: the revision of the automation that first had it as it is,
+		// set by AutomationPlayer::setAutomation. Other new automation doesn't send its value again, which would
+		// override a part's own program change or controller. Not compared.
+		uint64_t revision = 0;
 
 		bool operator==(const PlayedLane& other) const;
 		// Whether its target glides along ramps, frame by frame: the fader's parameters and the pre gain. The others
@@ -73,16 +77,17 @@ namespace gnubase::engine
 	// MIDI controller with points.
 	struct ChannelAutomation
 	{
-		uint64_t revision = 0; // set by AutomationPlayer::setAutomation
-		// The revision whose program lane (or its absence) this one has, set by AutomationPlayer::setAutomation: other
-		// new automation doesn't send the program again, which would override a part's own program change.
-		uint64_t programRevision = 0;
+		uint64_t revision = 0;  // set by AutomationPlayer::setAutomation
 		std::string instrument; // a new instrument gets every value again
 		std::vector<PlayedLane> lanes;
+		// A silent MIDI track's (muted, soloed out or disabled): its program and MIDI lanes send nothing, so it doesn't
+		// change the instrument that other tracks play. They stay, so that once it is heard again only what changed
+		// meanwhile goes out.
+		bool silent = false;
 
 		bool sameContent(const ChannelAutomation& other) const
 		{
-			return instrument == other.instrument && lanes == other.lanes;
+			return instrument == other.instrument && lanes == other.lanes && silent == other.silent;
 		}
 	};
 
@@ -100,7 +105,8 @@ namespace gnubase::engine
 	// the cursor; while playing, each segment of the transport block plays its part of the curves: steps at their
 	// sample, ramps as gliding fader events or as the value every g_automationInterval frames. A start, a locate, a
 	// cycle jump, new automation and a new source processor set every value at the frame where they happen, so
-	// playback is right from any position on.
+	// playback is right from any position on; new automation sends a program, or a MIDI controller without points,
+	// only when it changed (PlayedLane::revision), and the controllers with a new program.
 	class AutomationPlayer
 	{
 	public:
@@ -129,6 +135,9 @@ namespace gnubase::engine
 
 		// Audio thread.
 		uint64_t m_played = 0; // the revision played last
+		// The revision played last while not silent; 0 when playback moved or the processors changed while silent, so
+		// that the program and MIDI lanes all go out again once it is heard.
+		uint64_t m_heard = 0;
 		// The processors played for last: the source and the slots' plugins.
 		std::array<const void*, g_maxSlots + 1> m_processors{};
 		size_t m_processorCount = 0;
@@ -188,6 +197,73 @@ namespace gnubase::engine
 	// A note per MIDI channel and pitch, as channel * 128 + pitch.
 	inline constexpr size_t g_midiNotes = size_t{16} * 128;
 
+	// The latest value of each kind of MIDI event that a MIDI track's mute dropped, which unmuting sends, so that the
+	// instrument ends up where the track's events left it: each MIDI channel's controllers, program, pitch bend and
+	// channel pressure. Audio thread only; fixed size, so it never allocates.
+	class DroppedMidi
+	{
+	public:
+		// Keeps event's value if it is of a kind kept.
+		void drop(const graph::ProcessEvent& event) noexcept;
+		// Forgets the value of event's kind: event replaces it.
+		void forget(const graph::ProcessEvent& event) noexcept;
+		// Before a mute: removes what was sent or forgotten, so that each kind waits once.
+		void compact() noexcept;
+		// Sends what waits, in the order the kinds first came, at offset into out; what doesn't fit waits on.
+		template <typename Add> void send(uint32_t offset, Add add) noexcept;
+		bool waiting() const noexcept { return m_sent < m_count; }
+		// Where playback jumps: forgets everything, which the jump's chase replaces.
+		void clear() noexcept;
+
+	private:
+		// Per MIDI channel: 128 controllers, then program, pitch bend and channel pressure.
+		static constexpr size_t g_perChannel = 131;
+		static constexpr size_t g_kinds = 16 * g_perChannel;
+		static int kindOf(const graph::ProcessEvent& event) noexcept;
+
+		std::array<uint32_t, g_kinds> m_values{}; // the event's value: a controller's, the program's bank...
+		std::array<uint8_t, g_kinds> m_keys{};    // and key: a program's number
+		std::array<bool, g_kinds> m_waiting{};    // whether the kind waits to be sent
+		std::array<uint16_t, g_kinds> m_order{};  // the kinds in the order they came
+		size_t m_count = 0;                       // in m_order
+		size_t m_sent = 0;                        // of them, sent or forgotten
+	};
+
+	template <typename Add> void DroppedMidi::send(uint32_t offset, Add add) noexcept
+	{
+		for (; m_sent < m_count; ++m_sent)
+		{
+			const uint16_t kind = m_order[m_sent];
+			if (!m_waiting[kind])
+				continue;
+			graph::ProcessEvent event;
+			event.offset = offset;
+			event.channel = static_cast<uint8_t>(kind / g_perChannel);
+			const size_t slot = kind % g_perChannel;
+			if (slot < 128)
+			{
+				event.type = graph::ProcessEvent::Type::Controller;
+				event.key = static_cast<uint8_t>(slot);
+			}
+			else if (slot == 128)
+			{
+				event.type = graph::ProcessEvent::Type::Program;
+				event.key = m_keys[kind];
+			}
+			else
+			{
+				event.type =
+					slot == 129 ? graph::ProcessEvent::Type::PitchBend : graph::ProcessEvent::Type::ChannelPressure;
+			}
+			event.value = m_values[kind];
+			if (!add(event))
+				return;
+			m_waiting[kind] = false;
+		}
+		m_count = 0;
+		m_sent = 0;
+	}
+
 	// What a channel keeps across graph rebuilds: its automation, its strip's sections and its fader.
 	struct ChannelState
 	{
@@ -195,7 +271,9 @@ namespace gnubase::engine
 		StripSections sections;
 		std::shared_ptr<ChannelFader> fader = std::make_shared<ChannelFader>();
 		float monitorGain = -1.0f; // audio thread: the input's gain after the last block, -1 before the first
-		float outputGain = -1.0f;  // and the output's, 0 while the channel is silent (mute, solo)
+		// and the output's, 0 while the channel is silent: soloed out or on a disabled track (RenderChannel::quiet;
+		// the mute button mutes through the fader)
+		float outputGain = -1.0f;
 		// Audio thread: the fader's automation events of the block, from a channel's source node to its fader node
 		// when plugin slots are between them; the source node always runs first.
 		graph::EventBuffer faderEvents{graph::g_maxEventsPerBlock};
@@ -204,9 +282,18 @@ namespace gnubase::engine
 		graph::EventBuffer pluginEvents{graph::g_maxEventsPerBlock};
 		LevelMeter meter; // the channel's output after the fader, the panner and muting
 		// Audio thread, MIDI tracks: whether mute (automation or the button) mutes the track's events, and the notes it
-		// let through that haven't ended, which a mute ends.
+		// let through that haven't ended, which a mute ends; the pedals that hold notes (sustain, sostenuto, hold 2)
+		// down on each MIDI channel, a bit each, which a mute releases; and what the mute dropped, which unmuting
+		// sends.
 		bool midiMuted = false;
 		std::array<bool, g_midiNotes> midiHeld{};
+		std::array<uint8_t, 16> midiPedals{};
+		DroppedMidi midiDropped;
+		// Audio thread, MIDI tracks: where playback goes on without a jump, -1 while stopped; while stopped, the
+		// position the strip saw last, -1 if unknown. A jump finds them as the track's sequencer does
+		// (MidiSequencer), so that what the mute dropped before it doesn't reach the instrument after it.
+		int64_t midiNext = -1;
+		int64_t midiCursor = -1;
 		// Audio thread: each send's gain after the last block (SendStrip), -1 before the first.
 		std::array<float, g_maxSends> sendGains = []
 		{
@@ -313,6 +400,15 @@ namespace gnubase::engine
 			m_render = std::move(tap);
 			m_renderPoint = point;
 		}
+		// Command thread, before the graph compiles: a routed MIDI track's own chase, which its source (the track's
+		// sequencer) fills in each block (MidiSequencer::stripChase). The strip doesn't send it on: its instrument
+		// chases the track with the others. It learns from it which pedals are down; with keep (the mute button
+		// mutes the track, so the instrument leaves it out), a mute keeps the values for unmuting.
+		void chaseFrom(std::shared_ptr<const graph::EventBuffer> chased, bool keep)
+		{
+			m_chased = std::move(chased);
+			m_keepChase = keep;
+		}
 
 		// Scales the block's first channels from gain to target, frame by frame, and keeps target as the gain; a gain
 		// below 0 (before the first block) starts at the target.
@@ -327,7 +423,7 @@ namespace gnubase::engine
 		// The fader and its panner with the block's fader events, then muting.
 		void fade(const graph::ProcessContext& context, const graph::EventBuffer& events) noexcept;
 		// A MIDI track's mute: the block's events in out, muted as the fader's mute events say.
-		void muteMidi(graph::EventBuffer& out) noexcept;
+		void muteMidi(graph::EventBuffer& out, const graph::TransportBlock& transport) noexcept;
 		std::shared_ptr<ChannelState> m_state;
 		std::shared_ptr<graph::Processor> m_source;
 		Panning m_panning;
@@ -346,6 +442,8 @@ namespace gnubase::engine
 		bool m_tapFollowsMute = false;         // the fader's mute applies to m_tap
 		std::shared_ptr<PreFaderTap> m_render; // or none, while nothing renders from the channel
 		RenderPoint m_renderPoint = RenderPoint::Strip;
+		std::shared_ptr<const graph::EventBuffer> m_chased; // see chaseFrom
+		bool m_keepChase = false;
 	};
 
 	// The processor of a send node (graph::NodeKind::Send): a post-fader send's input is its channel's output, a

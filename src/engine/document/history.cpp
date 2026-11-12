@@ -113,6 +113,7 @@ namespace gnubase::engine
 			copy.rootKey = part->rootKey;
 			copy.independent = part->independent;
 			copy.pattern = part->pattern;
+			copy.patternOffset = part->patternOffset;
 			return copy;
 		}
 
@@ -262,6 +263,7 @@ namespace gnubase::engine
 			part.rootKey = target->rootKey;
 			part.independent = target->independent;
 			part.pattern = target->pattern;
+			part.patternOffset = target->patternOffset;
 			applyObjects(part.notes, partChange.notes, direction);
 			applyObjects(part.controllers, partChange.controllers, direction);
 		}

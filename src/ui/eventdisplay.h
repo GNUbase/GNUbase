@@ -183,6 +183,8 @@ namespace gnubase::ui
 		const engine::Json& project() const { return m_project; }
 		uint64_t loads() const { return m_loads; }
 		uint64_t read() const { return m_read; }
+		// The tempo map and signatures of project(), read once per answer.
+		const TimeContext& time() const { return m_time; }
 		// Folder tracks' data blocks (reference manual p. 226, docs/features/folder-tracks.md): per lane, the events
 		// and parts of the tracks inside a folder's lane, by the user setting ui.folderData (always, never, or
 		// hideWhenExpanded: while the folder is folded); empty for the other lanes.
@@ -298,8 +300,9 @@ namespace gnubase::ui
 		// File > Import > MIDI File (#478, reference manual pp. 364-365): imports MIDI files with the options of the
 		// user settings midi.import*, at the left locator with midi.importToLeftLocator, else at the project start.
 		// Into a new project (newProject), the file's tempo always replaces the project's. MIDI files dropped on the
-		// event lanes go where they are dropped instead, and with midi.importSinglePart into one part, on the MIDI or
-		// instrument track they are dropped on if any.
+		// event lanes go where they are dropped instead (elsewhere on the display, such as the track list, to the
+		// project cursor), and with midi.importSinglePart into one part, on the MIDI or instrument track whose lane
+		// or track list row they are dropped on if any.
 		void importMidi(const std::vector<std::string>& files, bool newProject = false);
 
 		// The commands that key commands bind to, by id: zoom.in, zoom.out, zoom.inVertically, zoom.outVertically,
@@ -509,7 +512,7 @@ namespace gnubase::ui
 			bool clipsOnly = false;
 			bool selected = false;             // track is the selected one, which takes the first file, not all of them
 			int lane = 0;                      // the lane of track the files go on
-			bool dropped = false;              // on the event lanes, at sample
+			bool dropped = false;              // on the display, at sample
 			std::optional<uint64_t> midiTrack; // the MIDI or instrument track they were dropped on
 		};
 		// The import options (#477): the Import Options dialog's, and the user settings editing.importAudio* that it
@@ -591,10 +594,13 @@ namespace gnubase::ui
 		bool takesParts(size_t lane) const;
 		// The lane at y dp down the event lanes, if there is one there.
 		std::optional<size_t> visibleLaneAt(double y) const;
+		// Whether y dp down the event lanes is in the lower half of the lane.
+		bool inLowerHalf(size_t lane, double y) const;
 		// The edge of the event at x dp across the lanes that a press there resizes: -1 its start, 1 its end, 0 none.
 		int edgeAt(const Shown& shown, double x) const;
-		// The edge of the audio event at x, y dp that a press of the play tool in scrub mode resizes, scrubbing along
-		// (reference manual p. 268): as edgeAt, 0 for none.
+		// The edge of the audio event at x, y dp that a press of the play tool in scrub mode resizes, scrubbing along:
+		// as edgeAt, but only at the event's lower left or right corner, the lower half of its lane, so that the rest
+		// of the edge scrubs the track (reference manual p. 268); 0 for none.
 		int scrubEdgeAt(double x, double y) const;
 		// Sends audition.scrub for the auditioned track at x dp across.
 		void scrubAt(double x);
@@ -688,8 +694,13 @@ namespace gnubase::ui
 		void selectRange();                       // the events in it, when another tool takes over
 		void showRange();
 		// Moves the range's edges to zero crossings of the audio on its tracks (reference manual p. 285), with Snap to
-		// Zero Crossing on: snap.zeroCrossings answers later, and actions wait until it has (m_afterZeroCrossings).
+		// Zero Crossing on: snap.zeroCrossings answers later, and actions wait until it has (EngineBinding::sendAwaited
+		// and afterAwaited).
 		void zeroCrossRange();
+		// Runs the actions that wait for zeroCrossRange's answers before a press, which may start another range, so
+		// that they edit the range they were run on (#1086): the binding settles, handing the answers on, for at most
+		// a few seconds; actions still waiting then run on the range as it is.
+		void runWaitingActions();
 		// The rectangle that a tool drags, dp in the event lanes; hidden when not shown.
 		void showRectangle(bool shown, double left = 0.0, double top = 0.0, double right = 0.0, double bottom = 0.0);
 		void setToolModifiers(const engine::Json& value);
@@ -936,8 +947,6 @@ namespace gnubase::ui
 		std::map<uint64_t, std::set<uint64_t>> m_pointsBase; // the selection a rectangle with Ctrl or Shift adds to
 
 		std::map<std::string, std::function<void()>> m_actions;
-		size_t m_zeroCrossings = 0;                              // zeroCrossRange's requests not answered yet
-		std::vector<std::function<void()>> m_afterZeroCrossings; // the actions run meanwhile, which then run
 		std::map<std::string, bool> m_rangeActions; // the actions that need a range (canRun), whether with a length
 		std::vector<std::function<void()>> m_viewListeners;
 		std::vector<Subscription> m_subscriptions;

@@ -816,6 +816,16 @@ namespace gnubase::engine::settings
 																		{"maximum", 127}}}}}}}}}}},
 								{"required", Json::array({"name", "lanes"})}}}},
 					Json::array()},
+				{"ui.samplerPanel",
+					"The sampler panel's toolbar (#1122, reference manual pp. 712, 735): lockParameters, Lock "
+					"Parameter Settings, whether a sample loaded into the sampler keeps its settings, and "
+					"normalizeLevel, the Normalization Level in dBFS that Normalize Sample brings the peak to. Other "
+					"properties, from later versions, are kept.",
+					Json{{"type", "object"},
+						{"properties",
+							{{"lockParameters", {{"type", "boolean"}}},
+								{"normalizeLevel", {{"type", "number"}, {"minimum", -96}, {"maximum", 0}}}}}},
+					Json{{"lockParameters", false}, {"normalizeLevel", 0}}},
 				{"ui.setupPresets",
 					"The setup panes' presets (reference manual p. 1575, docs/features/docking.md), by set of "
 					"sections (transport, inspector, channel): each a name, the order of the set's sections and those "

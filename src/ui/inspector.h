@@ -24,7 +24,8 @@ namespace gnubase::ui
 	// Fills an element with the inspector of a track: its name (<textdisplay class="inspector-name">) above the
 	// sections of the set "inspector" (docs/features/docking.md): basics (mute, solo, record and monitor buttons, and
 	// volume and pan value fields), routing (input and output drop-down lists, and a MIDI track's device, bank and
-	// program by the user setting midi.devices), MIDI modifiers (MIDI and instrument tracks: bypass, value fields and
+	// program by the user setting midi.devices, and a MIDI or instrument track's input transformer: Off, Project, Track
+	// and, while it is on, Open Panel...), MIDI modifiers (MIDI and instrument tracks: bypass, value fields and
 	// the random generators' and ranges' targets), inserts (the channel's plugin slots) and notepad (the channel's
 	// notes in a <textarea>). A click on a section's header closes or opens it (.collapsed); what a track doesn't have
 	// gets the class unavailable. The controls send engine commands. The element has the class empty without a track.
@@ -33,9 +34,11 @@ namespace gnubase::ui
 	class Inspector final : private Rml::EventListener
 	{
 	public:
-		// editChannel opens a track's channel settings, setupArticulations the articulation map setup (#175).
+		// editChannel opens a track's channel settings, setupArticulations the articulation map setup (#175),
+		// openInputTransformer the project input transformer (project) or the track's (#966).
 		Inspector(EngineBinding& binding, Rml::Element& root, std::function<void(uint64_t track)> editChannel = {},
-			std::function<void(uint64_t track)> setupArticulations = {});
+			std::function<void(uint64_t track)> setupArticulations = {},
+			std::function<void(uint64_t track, bool project)> openInputTransformer = {});
 		~Inspector() override;
 		Inspector(const Inspector&) = delete;
 		Inspector& operator=(const Inspector&) = delete;
@@ -70,6 +73,7 @@ namespace gnubase::ui
 		Rml::ObserverPtr<Rml::Element> m_root;
 		std::function<void(uint64_t track)> m_editChannel;
 		std::function<void(uint64_t track)> m_setupArticulations;
+		std::function<void(uint64_t track, bool project)> m_openInputTransformer;
 		uint64_t m_track = 0;
 		uint64_t m_loads = 0;
 		uint64_t m_read = 0;

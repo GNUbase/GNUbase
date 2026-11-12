@@ -64,8 +64,12 @@ namespace gnubase::engine
 		std::vector<RenderNote> notes;             // sorted by start, key switches first, then pitch
 		std::vector<RenderController> controllers; // sorted by position
 		// The tracks whose controller events a jump chases here: an instrument track's own and those of the MIDI
-		// tracks routed to it, so they are chased by time across them; none for a MIDI track routed to an instrument.
+		// tracks routed to it that the mute button doesn't mute, so they are chased by time across them. A MIDI track
+		// routed to an instrument chases its own into its strip (chaseIntoStrip).
 		std::vector<ChaseTrack> chase;
+		// A MIDI track routed to an instrument: its chase goes to stripChase() instead of its output, so its strip
+		// knows which pedals are down, and a mute button keeps the values for unmuting (ChannelStrip).
+		bool chaseIntoStrip = false;
 		std::vector<uint32_t> noteOrder;  // filled in by setSequence: indices into notes with a length, by pitch, then
 										  // start
 		std::vector<ChaseLane> noteLanes; // filled in by setSequence: runs of noteOrder, by channel and pitch
@@ -135,6 +139,10 @@ namespace gnubase::engine
 		// Any thread: what jumps chase from the next block on. Nothing until set.
 		void setChase(const MidiChase& chase) noexcept;
 
+		// The controller events its last block chased with MidiSequence::chaseIntoStrip, at the jump's offset; empty
+		// without. Cleared and filled in by process, so the strip that runs it reads them after it in the same block.
+		std::shared_ptr<const graph::EventBuffer> stripChase() const { return m_stripChase; }
+
 		void process(const graph::ProcessContext& context) noexcept override;
 
 		// Audio thread: whether the note, channel * 128 + pitch, sounds.
@@ -200,7 +208,8 @@ namespace gnubase::engine
 		void takeEffects(const MidiSequence& sequence, graph::EventBuffer& out) noexcept;
 		// An event of its input as the modifiers play it; false if left out. A second note-on for a held key whose
 		// note goes elsewhere this time sets ends to where the first one went, which still sounds: that note ends
-		// first, so that no note hangs.
+		// first, so that no note hangs, unless another held key plays it too: a note that several held keys play
+		// ends with the last of their note-offs (Live Input moves keys onto one note).
 		bool modifyInput(
 			const MidiSequence& sequence, int64_t position, graph::ProcessEvent& event, uint16_t& ends) noexcept;
 		// Remote triggers on its input (#175, reference manual pp. 1263, 1268): whether the event is one of the
@@ -255,11 +264,13 @@ namespace gnubase::engine
 		size_t m_chasedSent = 0;
 		std::array<uint32_t, g_notes> m_chasedNotes{}; // while chasing: the notes to start, as indices into notes
 		graph::EventBuffer m_input;
-		std::array<bool, g_notes> m_inputHeld{}; // notes its input sent a note-on for and no note-off since
+		std::shared_ptr<graph::EventBuffer> m_stripChase; // see stripChase
+		std::array<bool, g_notes> m_inputHeld{};          // notes its input sent a note-on for and no note-off since
 		// Where each note of its input went after the modifiers, as channel * 128 + pitch; g_notes: left out.
 		std::array<uint16_t, g_notes> m_inputTo{};
-		std::array<bool, g_notes> m_inputDown{}; // the keys of its input, as channel * 128 + pitch, that are held
-		uint64_t m_random = 0;                   // the random modifiers' seed for the next note of its input
+		std::array<bool, g_notes> m_inputDown{};     // the keys of its input, as channel * 128 + pitch, that are held
+		std::array<uint16_t, g_notes> m_inputKeys{}; // how many held keys play each note, as channel * 128 + pitch
+		uint64_t m_random = 0;                       // the random modifiers' seed for the next note of its input
 		// The sound slot its input's remote triggers selected, -1 for none yet (the default slot plays), the channel
 		// its on events went to, and without latch the slot again while the key that selected it is held, else -1.
 		int m_inputSlot = -1;

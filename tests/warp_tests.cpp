@@ -717,6 +717,121 @@ TEST_CASE("an event's fades fit into what a stretched warped event plays", "[int
 	CHECK(eventOf(client, loop.event).at("fadeIn").at("length") == 90000);
 	CHECK_THAT(reject(client, "audioEvent.setFades", {{"event", loop.event}, {"fadeIn", {{"length", 100001}}}}),
 		ContainsSubstring("192000 sample frames"));
+
+	// Back at 120 BPM it plays its 96000 frames, less than the fades: they stay, a shape change and a shorter fade
+	// still go, a longer one doesn't.
+	run(client, "project.set", {{"tempo", 120.0}});
+	run(client, "audioEvent.setFades", {{"event", loop.event}, {"fadeOut", {{"shape", "sCurve"}}}});
+	CHECK(eventOf(client, loop.event).at("fadeOut").at("shape") == "sCurve");
+	run(client, "audioEvent.setFades", {{"event", loop.event}, {"fadeIn", {{"length", 50000}}}});
+	CHECK(eventOf(client, loop.event).at("fadeIn").at("length") == 50000);
+	CHECK_THAT(reject(client, "audioEvent.setFades", {{"event", loop.event}, {"fadeIn", {{"length", 50001}}}}),
+		ContainsSubstring("96000 sample frames"));
+}
+
+TEST_CASE("warp quantizing keeps the markers within the real-time range", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	// The marker at 1000 plays nearest to the quarter at 0, but the 1000 frames before it can't play in less than
+	// 250: it goes as near as it can.
+	const Loop loop = addLoop(client, dir, clicks({1000, 25000, 52000, 73000}, 4 * g_quarter), "linear");
+	run(client, "clip.addWarpMarker", {{"clip", loop.clip}, {"position", 1000}});
+	run(client, "quantize.set", {{"preset", "1/4"}, {"settings", {{"warpQuantize", true}}}});
+	run(client, "quantize.apply", {{"events", {loop.event}}});
+	CHECK(warpOf(client, loop.clip).at("markers") == Json::array({{{"position", 1000}, {"target", 250}}}));
+}
+
+TEST_CASE("Crossfade closes a gap and overlaps through the warp of warped events", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	// Clip frame f before 52000 plays at f * 49 / 52. Two events of the clip: 0 to 20000 and, at 40000, 30000 on.
+	const Loop loop = addLoop(client, dir, clicks({1000, 25000, 52000, 73000}, 4 * g_quarter), "linear");
+	run(client, "clip.addWarpMarker", {{"clip", loop.clip}, {"position", 52000}, {"target", 49000}});
+	const std::vector<engine::dsp::WarpPoint> map{{0.0, 0.0}, {52000.0, 49000.0}, {96000.0, 96000.0}};
+	const auto plays = [&map](double frame) { return engine::dsp::warpTarget(map, frame); };
+	run(client, "audioEvent.set", {{"event", loop.event}, {"length", 20000}});
+	const auto later = run(client, "audioEvent.add",
+		{{"track", loop.track}, {"clip", loop.clip}, {"position", 40000}, {"offset", 30000}, {"length", 30000}})
+						   .at("event")
+						   .at("id")
+						   .get<ObjectId>();
+
+	run(client, "quantize.crossfade", {{"events", {loop.event, later}}, {"length", 10.0}});
+	// The later event starts where the first one ended, its audio where it played: clip frame 30000 still at 40000.
+	const Json second = eventOf(client, later);
+	const auto offset = second.at("offset").get<double>();
+	const auto start = second.at("position").get<double>();
+	CHECK(std::abs(start - plays(20000.0)) <= 1.0);
+	CHECK(std::abs(start + plays(30000.0) - plays(offset) - 40000.0) <= 1.5);
+	// The first one goes on 10 ms (480 samples) into it, with a crossfade.
+	const Json first = eventOf(client, loop.event);
+	CHECK(std::abs(plays(first.at("length").get<double>()) - (start + 480.0)) <= 1.5);
+	CHECK(second.at("crossfade").is_object());
+}
+
+TEST_CASE("snapping and Detect Silence in a warped event go through its warp", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	// Clip frame f before 52000 plays at f * 49 / 52. Silence but for a sine from 24000 to 72000, which crosses zero
+	// at every 32nd frame.
+	test::Audio audio = sine(4 * g_quarter);
+	for (size_t i = 0; i < audio.samples.size(); ++i)
+		if (i < 24000 || i >= 72000)
+			audio.samples[i] = 0.0F;
+	const Loop loop = addLoop(client, dir, audio, "linear");
+	run(client, "clip.addWarpMarker", {{"clip", loop.clip}, {"position", 52000}, {"target", 49000}});
+
+	SECTION("zero crossings")
+	{
+		// 24510 plays clip frame 26010.6; the crossing nearest to it is at 26016, which plays at 24515.
+		const Json split =
+			run(client, "event.split", {{"events", {loop.event}}, {"positions", {24510}}, {"zeroCrossing", true}});
+		REQUIRE(split.at("events").size() == 1);
+		const Json piece = eventOf(client, split.at("events").at(0).get<ObjectId>());
+		CHECK(piece.at("offset") == 26016);
+		CHECK(std::abs(piece.at("position").get<int64_t>() - 24515) <= 1);
+	}
+	SECTION("the snap point")
+	{
+		// 24500 plays clip frame 26000, and snapping finds it there.
+		run(client, "event.setSnapPoint", {{"events", {loop.event}}, {"position", 24500}});
+		CHECK(eventOf(client, loop.event).at("snapPoint") == 26000);
+		run(client, "snap.set", {{"on", true}, {"type", "events"}});
+		CHECK(run(client, "snap.position", {{"position", 24600}}).at("position") == 24500);
+	}
+	SECTION("Detect Silence's splits")
+	{
+		// The event that remains plays its audio where it played.
+		const Json kept =
+			run(client, "event.stripSilence", {{"events", {loop.event}}, {"minimumClosed", 0}}).at("events");
+		REQUIRE(kept.size() == 1);
+		const Json piece = eventOf(client, kept.at(0).get<ObjectId>());
+		const std::vector<engine::dsp::WarpPoint> map{{0.0, 0.0}, {52000.0, 49000.0}, {96000.0, 96000.0}};
+		CHECK(std::abs(piece.at("offset").get<int64_t>() - 24000) <= 48);
+		CHECK(std::abs(piece.at("position").get<double>() -
+				  engine::dsp::warpTarget(map, piece.at("offset").get<double>())) <= 1.0);
+	}
+}
+
+TEST_CASE("the sample editor selects the locators through the warp", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	// Clip frame 52000 plays at 49000, and 26000 at 24500.
+	const Loop loop = addLoop(client, dir, clicks({1000, 25000, 52000, 73000}, 4 * g_quarter), "linear");
+	run(client, "clip.addWarpMarker", {{"clip", loop.clip}, {"position", 52000}, {"target", 49000}});
+	run(client, "sampleEditor.open", {{"event", loop.event}});
+	run(client, "transport.set", {{"left", 24500}, {"right", 49000}});
+	const Json view = run(client, "sampleEditor.set", {{"select", "loop"}});
+	CHECK(view.at("selectionStart") == 26000);
+	CHECK(view.at("selectionEnd") == 52000);
 }
 
 TEST_CASE("Apply Fades of Strip Silence fit into what a squeezed warped event plays", "[integration]")

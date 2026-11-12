@@ -26,7 +26,8 @@ clip's sample frames; `start` and `end` default to the whole clip.
   ([sample-editor.md](sample-editor.md)), named `regionName` and a number counting from `autoNumberStart` across the
   events; `strip` (the default) splits each event at the sections' edges (`event.split`) and removes the silent parts
   (`event.remove`); `fades` gives the events that remain a fade in and out of that many milliseconds, at most half
-  their length each (`audioEvent.setFades`). It runs those commands as part of it (`ProjectModel::runEdit`). Stripping
+  of what each plays for in frames at the clip's sample rate (its length, unless it plays warped: `fadeRoom`,
+  [warp.md](warp.md)) each (`audioEvent.setFades`). It runs those commands as part of it (`ProjectModel::runEdit`). Stripping
   an event that is silent or locked is an error.
 - **Spectrum** (`analysis::PowerSpectrum`, `analysis::spectrumCurve`): Welch's average power spectrum, as
   `audio.analyze` measures it, at points 1/24 octave apart from 20 Hz up to the Nyquist frequency. Each point has the

@@ -254,17 +254,36 @@ namespace gnubase::engine::midi
 		int between(int low, int high) noexcept;
 	};
 
+	// A seed for a command that isn't given one: each call returns another, so that each Apply of random operations
+	// gives new values.
+	uint64_t nextLogicalSeed() noexcept;
+
 	// Applies the actions in order, then keeps the values in their ranges: pitches beyond 0 to 127 delete the note,
 	// other values stay from 0 to 127 (the callers keep velocities of notes from 1, and play a velocity of 0 that a
-	// controller turned into a note became as a note-off), channels from 1 to 16, positions from 0 and lengths from 1
-	// tick. Returns false if the event is deleted. Real-time safe.
+	// controller turned into a note became as a note-off), channels from 1 to 16, and positions the actions changed
+	// from 0 and lengths they changed from 1 tick; positions and lengths stay finite. Returns false if the event is
+	// deleted. Real-time safe.
 	bool transform(const ActionLine* actions, size_t count, LogicalEvent& event, LogicalRandom& random) noexcept;
+
+	// The subtype and main value of an event that isn't a note (type), as the rules see them, from its number and its
+	// value at GNUbase's resolution (controllers and pressure 32 bits, pitch bend 32 bits with g_pitchBendCenter in
+	// the middle, a program change's bank). Real-time safe.
+	void setLogicalValues(LogicalType type, uint8_t number, uint32_t value, LogicalEvent& event) noexcept;
+	// Back: the number and value of what the rules made (changed, not a note) of original. Values the rules didn't
+	// change keep their full resolution; a program change made of another event has no bank (0xFFFFFFFF). Real-time
+	// safe.
+	void logicalValues(
+		const LogicalEvent& changed, const LogicalEvent& original, uint8_t& number, uint32_t& value) noexcept;
 
 	const char* toString(LogicalType type);
 	const char* toString(LogicalFunction function);
 
 	Json toJson(const LogicalRules& rules);
-	// Throws std::invalid_argument for rules that don't fit logicalRulesSchema or have brackets that don't match.
+	// Brackets nest at most this deep (reference manual p. 1418), so that matches' recursion stays small.
+	inline constexpr int g_maxLogicalBrackets = 3;
+
+	// Throws std::invalid_argument for rules that don't fit logicalRulesSchema or have brackets that don't match or
+	// nest deeper than g_maxLogicalBrackets.
 	LogicalRules logicalRulesFromJson(const Json& json);
 	Json logicalRulesSchema();
 

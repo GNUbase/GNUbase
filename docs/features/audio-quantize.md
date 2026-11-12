@@ -25,7 +25,9 @@ move so that they play on the grid. A clip without markers there gets one at eac
 it plays now. For each grid position the marker nearest to it goes toward it; the others keep their places relative to
 the markers around them that move and the event's start (p. 370's 1/4 grid on sixteenths). An event that starts
 inside its clip gets a marker at its start, so that it keeps playing the same audio there. Each marker's target is
-found by bisection through `warpedOffset`, so musical mode and the definition grid are taken into account.
+found by bisection through `warpedOffset`, so musical mode and the definition grid are taken into account, between
+targets that keep the sections around the marker within the real-time stretcher's range (4 times as long to a
+quarter, [warp.md](warp.md)): a marker the grid would take further goes as near as it can.
 
 The clip keeps its markers from before (`ClipWarp::quantizeOrigin`, saved with the warp): quantizing several events
 of a clip starts from them once, and `quantize.reset` puts them back while the markers are still what quantizing made

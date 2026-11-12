@@ -32,53 +32,9 @@ namespace gnubase::engine::midi
 				value >= min && value <= max, name + " must be " + std::to_string(min) + " to " + std::to_string(max));
 		}
 
-		Json objectSchema(Json properties, const std::vector<std::string>& required = {})
-		{
-			return {{"type", "object"}, {"properties", std::move(properties)}, {"required", required},
-				{"additionalProperties", false}};
-		}
-
-		Json arraySchema(Json items)
-		{
-			return {{"type", "array"}, {"items", std::move(items)}};
-		}
-
 		Json enumSchema(const std::vector<std::string>& values)
 		{
 			return {{"type", "string"}, {"enum", values}};
-		}
-
-		// The parts a function works on, each named once.
-		std::vector<MidiPart*> partsOf(Project& project, const Json& parameters)
-		{
-			const auto ids = parameters.at("parts").get<std::vector<ObjectId>>();
-			require(!ids.empty(), "parts must name at least one MIDI part");
-			std::vector<MidiPart*> parts;
-			for (const ObjectId id : ids)
-			{
-				const auto found = project.midiParts.find(id);
-				require(found != project.midiParts.end(), "no MIDI part " + std::to_string(id));
-				require(std::find(parts.begin(), parts.end(), &found->second) == parts.end(),
-					"MIDI part " + std::to_string(id) + " is named twice");
-				parts.push_back(&found->second);
-			}
-			return parts;
-		}
-
-		// The selected notes, which must be in the parts; every note without notes.
-		NoteSelection selectionOf(const std::vector<MidiPart*>& parts, const Json& parameters)
-		{
-			if (!parameters.contains("notes"))
-				return {};
-			std::set<ObjectId> notes;
-			for (const ObjectId id : parameters.at("notes").get<std::vector<ObjectId>>())
-			{
-				require(std::any_of(parts.begin(), parts.end(),
-							[id](const MidiPart* part) { return part->notes.count(id) != 0; }),
-					"no note " + std::to_string(id) + " in the MIDI parts");
-				notes.insert(id);
-			}
-			return NoteSelection(std::move(notes));
 		}
 
 		uint16_t velocity(const Json& parameters, const char* key)
@@ -109,6 +65,8 @@ namespace gnubase::engine::midi
 			Json changed = Json::array();
 			for (MidiPart* part : parts)
 			{
+				if (part->pattern != 0) // a pattern event plays its pattern's steps, not its notes
+					continue;
 				const MidiPart before = *part;
 				function(project, *part, selection);
 				if (part->notes != before.notes || part->controllers != before.controllers)
@@ -325,6 +283,48 @@ namespace gnubase::engine::midi
 		};
 	}
 
+	Json objectSchema(Json properties, const std::vector<std::string>& required)
+	{
+		return {{"type", "object"}, {"properties", std::move(properties)}, {"required", required},
+			{"additionalProperties", false}};
+	}
+
+	Json arraySchema(Json items)
+	{
+		return {{"type", "array"}, {"items", std::move(items)}};
+	}
+
+	std::vector<MidiPart*> partsOf(Project& project, const Json& parameters)
+	{
+		const auto ids = parameters.at("parts").get<std::vector<ObjectId>>();
+		require(!ids.empty(), "parts must name at least one MIDI part");
+		std::vector<MidiPart*> parts;
+		for (const ObjectId id : ids)
+		{
+			const auto found = project.midiParts.find(id);
+			require(found != project.midiParts.end(), "no MIDI part " + std::to_string(id));
+			require(std::find(parts.begin(), parts.end(), &found->second) == parts.end(),
+				"MIDI part " + std::to_string(id) + " is named twice");
+			parts.push_back(&found->second);
+		}
+		return parts;
+	}
+
+	NoteSelection selectionOf(const std::vector<MidiPart*>& parts, const Json& parameters)
+	{
+		if (!parameters.contains("notes"))
+			return {};
+		std::set<ObjectId> notes;
+		for (const ObjectId id : parameters.at("notes").get<std::vector<ObjectId>>())
+		{
+			require(std::any_of(
+						parts.begin(), parts.end(), [id](const MidiPart* part) { return part->notes.count(id) != 0; }),
+				"no note " + std::to_string(id) + " in the MIDI parts");
+			notes.insert(id);
+		}
+		return NoteSelection(std::move(notes));
+	}
+
 	void registerFunctionCommands(ProjectModel& model, Engine& engine)
 	{
 		const Json idSchema = {{"type", "integer"}};
@@ -492,6 +492,7 @@ namespace gnubase::engine::midi
 			std::string description = command.description;
 			description += command.notes ? " Works on the MIDI parts in parts;" + std::string(selection)
 										 : " Works on the MIDI parts in parts.";
+			description += " Pattern events (pattern.add), which play their pattern's steps, stay as they are.";
 			description += " Returns the parts it changed.";
 			model.addEdit(engine,
 				{command.name, 1, description, objectSchema(std::move(properties), required), partsResult, false},

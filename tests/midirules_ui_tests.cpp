@@ -5,6 +5,7 @@
 #include "ui/automation.h"
 #include "ui/eventdisplay.h"
 #include "ui/keycommands.h"
+#include "ui/tracklist.h"
 #include "uiapp.h"
 
 #include <RmlUi/Core/Context.h>
@@ -146,6 +147,20 @@ namespace
 			return 0;
 		}
 
+		// The input transformer of the fixture's track, as project.get has it.
+		Json trackTransformer()
+		{
+			const Json project = app.call("project.get");
+			uint64_t channel = 0;
+			for (const Json& each : project.at("tracks"))
+				if (each.at("id") == track)
+					channel = each.at("channel").get<uint64_t>();
+			for (const Json& each : project.at("channels"))
+				if (each.at("id") == channel)
+					return each.at("inputTransformer");
+			return {};
+		}
+
 		test::UiApp app{{1024, 720}};
 		ui::EventDisplay& display;
 		uint64_t track = 0;
@@ -193,8 +208,18 @@ TEST_CASE("MIDI > Rule Editor applies presets and lines to the selected parts", 
 	CHECK(
 		f.app.waitUntil([&] { return f.text("#rule-editor-message").find("must be a number") != std::string::npos; }));
 
-	// Save Preset keeps what the dialog shows as one of the user's presets.
+	// Save Preset keeps what the dialog shows as one of the user's presets. An asterisk after the preset says that the
+	// lines differ from it (#966).
 	f.choose("#rule-editor-preset", f.presetIndex("Delete/Soft notes"));
+	CHECK(f.text("#rule-editor-modified").empty());
+	const std::string value = f.elements("#rule-editor-filter-2-p1").at(0).at("value").get<std::string>();
+	f.write("#rule-editor-filter-2-p1", "30");
+	CHECK(f.app.waitUntil([&] { return f.text("#rule-editor-modified") == "*"; }));
+	f.write("#rule-editor-filter-2-p1", value);
+	CHECK(f.app.waitUntil([&] { return f.text("#rule-editor-modified").empty(); }));
+	f.click("#rule-editor-insert-action");
+	CHECK(f.text("#rule-editor-modified") == "*");
+	f.click("#rule-editor-remove-action");
 	f.write("#rule-editor-name", "Soft ones");
 	f.click("#rule-editor-save");
 	CHECK(f.app.waitUntil([&] { return f.presetIndex("Soft ones") > 0; }));
@@ -207,7 +232,20 @@ TEST_CASE("Project > Project Input Transformer sets the project's modules", "[ui
 {
 	Fixture f;
 	f.open("project-menu", "project.inputTransformer", "Project Input Transformer");
+	// Only the presets that input transformers take (#969).
+	CHECK(f.offers("#rule-editor-preset", "Transform/Octave up"));
+	CHECK(f.offers("#rule-editor-preset", "Input/Sustain pedal to bass drum"));
+	CHECK(!f.offers("#rule-editor-preset", "Select/Notes above C3"));
+	CHECK(!f.offers("#rule-editor-preset", "Delete/Short notes"));
+	CHECK(!f.offers("#rule-editor-preset", "Transform/Quantize starts to 1/16"));
+	// Module 1 keeps its edits while module 2 shows (#966).
+	f.click("#rule-editor-insert-filter");
 	f.choose("#rule-editor-module", 1); // module 2
+	CHECK(f.elements("#rule-editor-filter-1-target").empty());
+	f.choose("#rule-editor-module", -1);
+	CHECK(f.shown("#rule-editor-filter-1-target"));
+	f.click("#rule-editor-remove-filter");
+	f.choose("#rule-editor-module", 1);
 	f.click("#rule-editor-on");
 	f.click("#rule-editor-insert-action");
 	// Live events have no position or length.
@@ -230,4 +268,37 @@ TEST_CASE("Project > Project Input Transformer sets the project's modules", "[ui
 	CHECK(f.elements("#rule-editor-on").at(0).at("attributes").contains("checked"));
 	CHECK(f.shown("#rule-editor-action-1-p1"));
 	f.click("#rule-editor-cancel");
+}
+
+TEST_CASE("the inspector's Input Transformer sets a track's mode and opens its panel", "[ui]")
+{
+	Fixture f;
+	f.app.setDpRatio(1.0F);
+	f.app.appUi().docking().open("inspector");
+	f.app.appUi().trackList()->select({f.track});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const std::string select = ".inspector select[control=inputTransformer]";
+	REQUIRE(f.app.waitUntil([&] { return f.shown(select); }));
+	CHECK(f.offers(select, "project"));
+	CHECK(!f.offers(select, "open")); // while it is off
+
+	f.choose(select, 2); // Track
+	REQUIRE(f.app.waitUntil([&] { return f.trackTransformer().at("mode") == "track"; }));
+	REQUIRE(f.app.waitUntil([&] { return f.offers(select, "open"); }));
+	f.choose(select, 1); // Open Panel...
+	REQUIRE(f.app.waitUntil([&] { return f.shown("#rule-editor"); }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.text("#rule-editor-title") == "Track Input Transformer");
+	f.click("#rule-editor-on");
+	f.click("#rule-editor-insert-action");
+	f.write("#rule-editor-action-1-p1", "12");
+	f.click("#rule-editor-apply");
+	REQUIRE(f.app.waitUntil([&] { return f.elements("#rule-editor").empty(); }));
+	const Json modules = f.trackTransformer().at("modules");
+	CHECK(modules[0].at("on") == true);
+	CHECK(modules[0].at("rules").at("actions")[0].at("parameter1") == 12);
+	CHECK(f.trackTransformer().at("mode") == "track"); // Open Panel... left the mode as it was
+
+	f.choose(select, -2); // Off
+	CHECK(f.app.waitUntil([&] { return f.trackTransformer().at("mode") == "off"; }));
 }

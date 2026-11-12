@@ -116,7 +116,8 @@ namespace
 			return elements(app, menuItem(command)).at(0).at("attributes").contains("disabled");
 		}
 
-		// Chooses the item of the open menu. Its items follow the selection when the shell steps.
+		// Chooses the item of the open menu once it is enabled: it follows rows built again behind the menu when the
+		// shell steps.
 		void choose(const std::string& command)
 		{
 			REQUIRE(app.waitUntil([&] { return !itemDisabled(command); }));
@@ -609,17 +610,12 @@ TEST_CASE("the track list's context menu follows the selection and stands the ro
 		return all;
 	};
 
-	// The menu opens with the right click, and its items follow the selection when the shell steps: before that, a
-	// click on an item that nothing was selected for does nothing. If the items ever follow it when the menu opens,
-	// this part and the check below that the item is enabled are what changes.
+	// The menu opens with the right click, and its items follow the selection at once, without a step of the shell
+	// in between: a script's click on an item right after the right click runs it (#1069).
 	tracks.rightClick(kept);
 	CHECK(elements(tracks.app, "#track-list-menu").at(0).at("visible").get<bool>());
-	CHECK(tracks.itemDisabled(command));
+	CHECK(!tracks.itemDisabled(command));
 	duplicate();
-	answered();
-	CHECK(names() == std::vector<std::string>{"Kept", "Gone"});
-	tracks.menuOpen();
-	tracks.choose(command);
 	tracks.rows(3);
 	CHECK(names() == std::vector<std::string>{"Kept", "Kept", "Gone"});
 
@@ -651,7 +647,64 @@ TEST_CASE("the track list's context menu follows the selection and stands the ro
 	duplicate();
 	answered();
 	CHECK(names() == std::vector<std::string>{"Kept", "Kept", "Kept"});
-	CHECK(elements(tracks.app, "#track-list listitem").size() == 3);
+}
+
+// The menu bar's items for selected tracks, as the DOM that MCP's UI tools read has them (#1120).
+TEST_CASE("the main menu's items follow what a key or a click changed without a step of the shell", "[ui]")
+{
+	Tracks tracks;
+	const uint64_t a = tracks.add({{"type", "audio"}, {"name", "A"}});
+	const uint64_t b = tracks.add({{"type", "audio"}, {"name", "B"}});
+	tracks.rows(2);
+	tracks.app.shell().step(std::chrono::milliseconds(0));
+	const std::string item = "#project-menu menuitem[command=\"track.duplicateSelected\"]";
+	const auto disabled = [&tracks, &item]
+	{ return elements(tracks.app, item).at(0).at("attributes").contains("disabled"); };
+	REQUIRE(tracks.list.selection().empty());
+	REQUIRE(disabled());
+
+	// A key that selects a track on its press: the items follow when it is released, and not before. Dropping the key
+	// release from the events that update the menu leaves them as they were.
+	tracks.app.ui().key(std::nullopt, "Down", ui::KeyAction::Down);
+	REQUIRE(tracks.list.selection().size() == 1);
+	CHECK(disabled());
+	tracks.app.ui().key(std::nullopt, "Down", ui::KeyAction::Up);
+	CHECK(!disabled());
+
+	// A click selects its row after the mouse button is released and after every listener of the click ran, and the
+	// list view says so with a change event: the items follow it at once.
+	tracks.app.ui().click(std::nullopt, {row(b) + " .track-name", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+	REQUIRE(tracks.list.selection() == std::vector<uint64_t>{b});
+	CHECK(!disabled());
+	tracks.app.ui().click(std::nullopt, {row(b) + " .track-name", 0, std::nullopt}, ui::MouseButton::Left, 1, {"ctrl"});
+	REQUIRE(tracks.list.selection().empty());
+	CHECK(disabled());
+	tracks.app.ui().click(std::nullopt, {row(a) + " .track-name", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+	REQUIRE(tracks.list.selection() == std::vector<uint64_t>{a});
+	CHECK(!disabled());
+}
+
+// What a click's own listeners change (#1120): the toolbar's tool buttons drop the selection range through the event
+// display's listener on the document, and send no change event.
+TEST_CASE("the main menu's range items follow a tool button's click without a step of the shell", "[ui]")
+{
+	Tracks tracks;
+	const uint64_t a = tracks.add({{"type", "audio"}, {"name", "A"}});
+	tracks.rows(1);
+	const std::string item = "#edit-menu menuitem[command=\"edit.cutTime\"]";
+	const auto disabled = [&tracks, &item]
+	{ return elements(tracks.app, item).at(0).at("attributes").contains("disabled"); };
+	tracks.display.setTool(ui::Tool::RangeSelection);
+	tracks.display.setRange(ui::RangeSelection{0, 48000, {a}});
+	tracks.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(tracks.display.range().has_value());
+	REQUIRE(!disabled());
+
+	// The tool button takes the range away; the item is disabled right after the click, not at the next step.
+	tracks.app.ui().click(
+		std::nullopt, {"button[tool=objectSelection]", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+	REQUIRE(!tracks.display.range().has_value());
+	CHECK(disabled());
 }
 
 TEST_CASE("track heights and folded folders are the project's: saved with it, not taken into another one", "[ui]")
