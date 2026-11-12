@@ -487,7 +487,9 @@ TEST_CASE("project.applyRules transforms and deletes in one undo step", "[integr
 			run(f.client, "tempo.add", {{"position", g_beatTicks}, {"bpm", 37.0}, {"ramp", false}});
 		}
 		else if (tempo == 2)
+		{
 			run(f.client, "project.set", {{"tempo", 1}});
+		}
 		ObjectId track = f.markers;
 		if (linear)
 		{
