@@ -317,11 +317,12 @@ namespace gnubase::ui
 	}
 
 	// RmlUi's hit test takes in both edges of a box, so the pressed event also gets the pixel row at its bottom edge,
-	// where at() reads the next lane. The press counts as on the event's lane: the mouse comes into the lane by what
-	// the press was outside it, so that the move goes from the event's lane, as its time goes from the pressed point.
+	// where at() reads the next lane, and at a scale whose pixels aren't whole dp at() may read its top row as the lane
+	// above. The press counts as on the lane the event shows on: the mouse comes half a pixel into the event's element
+	// by what the press was at its edge, so that the move goes from that lane, as its time goes from the pressed point.
 	std::pair<double, int> AudioPartEditor::movedAt(Rml::Vector2f mouse) const
 	{
-		return at(Rml::Vector2f(mouse.x, mouse.y + m_intoLane));
+		return at(Rml::Vector2f(mouse.x, mouse.y + m_intoEvent));
 	}
 
 	// How far the pressed event's start goes for the mouse over seconds, from where the event is now: to the start that
@@ -808,14 +809,16 @@ namespace gnubase::ui
 		m_pressedInClip = pressed != nullptr
 			? (static_cast<double>(pressed->offset) / pressed->rate) + (seconds - pressed->start)
 			: 0.0;
-		m_intoLane = 0.0F;
-		if (Rml::Element* display = root->QuerySelector(".ape-display"); pressed != nullptr && display != nullptr)
+		m_intoEvent = 0.0F;
+		if (Rml::Element* element = withAttribute(target, "event", root); pressed != nullptr && element != nullptr)
 		{
-			// The press's place in the pressed event's lane, px, kept to the lane's rows (movedAt()).
-			const float lane = static_cast<float>(g_laneHeight) * dpRatio();
-			const float inLane = m_pressedMouse.y - display->GetAbsoluteOffset(Rml::BoxArea::Border).y -
-				(static_cast<float>(pressed->lane) * lane);
-			m_intoLane = std::clamp(inLane, 0.0F, lane - 1.0F) - inLane;
+			// The press's place in the pressed event's element, px, kept half a pixel off its edges (movedAt()). From
+			// the element, not the event's lane: until the engine has answered a move, the element shows on the lane
+			// the move took it to.
+			const float height = element->GetBox().GetSize(Rml::BoxArea::Border).y;
+			const float inEvent = m_pressedMouse.y - element->GetAbsoluteOffset(Rml::BoxArea::Border).y;
+			m_intoEvent =
+				std::clamp(inEvent, std::min(0.5F, height / 2.0F), std::max(height - 0.5F, height / 2.0F)) - inEvent;
 		}
 		switch (m_tool)
 		{

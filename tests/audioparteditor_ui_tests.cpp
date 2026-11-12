@@ -1347,27 +1347,47 @@ TEST_CASE("a Ctrl drag of the audio part editor along its event's lane moves not
 	CHECK(f.event(f.second).at("lane") == 0);
 }
 
-// RmlUi's hit test gives the pixel row at an event's bottom edge to the event, where the next lane starts: a press
-// there is on the event's lane (#1226).
-TEST_CASE("a move of the audio part editor pressed on its event's bottom edge keeps the event's lane", "[ui]")
+// RmlUi's hit test gives an event the pixel rows at both edges of its box. At its bottom edge the display's next lane
+// starts, and at a scale whose pixels aren't whole dp its top edge may read as the lane above: a press there is on the
+// event's lane all the same, and the drag goes from there (#1226).
+TEST_CASE("a move of the audio part editor pressed on its event's edge keeps the event's lane", "[ui]")
 {
-	const int up = GENERATE(0, 1); // the drag along the row, or a pixel up
+	const std::string edge = GENERATE("bottom", "bottom, dragged a pixel up", "top");
 	const bool ctrl = GENERATE(false, true);
-	CAPTURE(up, ctrl);
+	const double scale = GENERATE(1.0, 1.2);
+	CAPTURE(edge, ctrl, scale);
 	Fixture f;
+	// The first event on lane 1, with nothing on lane 0 above it: a move read a lane up or down from there shows.
+	f.app.call("event.set", {{"events", {f.first}}, {"lane", 1}});
+	const float ratio = f.app.main().context().GetDensityIndependentPixelRatio();
+	f.app.call("settings.set", {{"key", "ui.scale"}, {"value", scale}});
 	f.open();
+	REQUIRE(f.app.waitUntil(
+		[&] { return std::abs(f.context().GetDensityIndependentPixelRatio() - (ratio * scale)) < 0.01; }));
+	f.settle();
 	const int modifiers = ctrl ? Rml::Input::KM_CTRL : 0;
-	const Json shown = f.box(eventSelector(f.first));
-	const int edge = static_cast<int>(std::lround(shown.at("y").get<double>() + shown.at("height").get<double>()));
-	const auto onEdge = [&](double seconds, int y)
-	{ return ui::Target{"", 0, ui::Point{pointOf(f.at(seconds, 0)).x, y}}; };
-	// The row is the next lane's first.
-	REQUIRE(f.laneUnder(onEdge(0.25, edge), 2) == 1);
-	f.press(onEdge(0.25, edge), modifiers);
-	f.moveTo(onEdge(0.77, edge - up), modifiers);
-	CHECK(f.onLane(f.first, 0));
+	// The event's first or last pixel row, from its box as RmlUi has it: the DOM tool rounds it.
+	Rml::Element* shown = f.context().GetDocument(0)->QuerySelector(eventSelector(f.first));
+	REQUIRE(shown != nullptr);
+	const float top = shown->GetAbsoluteOffset(Rml::BoxArea::Border).y;
+	const float bottom = top + shown->GetBox().GetSize(Rml::BoxArea::Border).y;
+	const int row = static_cast<int>(edge == "top" ? std::ceil(top) : std::floor(bottom));
+	const auto onRow = [&](double seconds, int y)
+	{ return ui::Target{"", 0, ui::Point{pointOf(f.at(seconds, 1)).x, y}}; };
+	if (scale == 1.0 && edge != "top")
+		REQUIRE(f.laneUnder(onRow(0.25, row), 3) == 2); // the row is the next lane's first
+	f.press(onRow(0.25, row), modifiers);
+	const ui::Target along = onRow(0.77, edge == "bottom, dragged a pixel up" ? row - 1 : row);
+	f.moveTo(along, modifiers);
+	CHECK(f.onLane(f.first, 1));
 	if (!ctrl)
-		CHECK(std::abs(f.shownX(f.first) - pointOf(f.at(0.5, 0)).x) <= 2.0);
+		CHECK(std::abs(f.shownX(f.first) - pointOf(f.at(0.5, 1)).x) <= 2.0);
+	// The press is a pixel at most into the event's lane: the middle of the lane beyond the edge takes the event there.
+	const int beyond = edge == "top" ? 0 : 2;
+	f.moveTo(f.at(0.77, beyond), modifiers);
+	CHECK(f.onLane(f.first, beyond));
+	f.moveTo(along, modifiers);
+	CHECK(f.onLane(f.first, 1));
 	const size_t before = f.steps();
 	f.release(modifiers);
 	if (ctrl)
@@ -1381,7 +1401,7 @@ TEST_CASE("a move of the audio part editor pressed on its event's bottom edge ke
 		REQUIRE(f.app.waitUntil([&] { return f.event(f.first).at("position") != 0; }));
 		CHECK(f.event(f.first).at("position") == g_second / 2);
 	}
-	CHECK(f.event(f.first).at("lane") == 0);
+	CHECK(f.event(f.first).at("lane") == 1);
 	f.settle();
 }
 

@@ -169,7 +169,7 @@ namespace gnubase::ui
 		// which a resize or a split of the event during the drag keeps.
 		double m_pressedInClip = 0.0;
 		Rml::Vector2f m_pressedMouse; // px
-		float m_intoLane = 0.0F;      // px that bring the press into its event's lane (movedAt())
+		float m_intoEvent = 0.0F;     // px that bring the press into its event's element (movedAt())
 		bool m_dragged = false;
 		Rml::Vector2f m_draggedTo;                 // px, the mouse's last place in a dragged move
 		std::pair<double, int> m_moved;            // a dragged move's seconds and lanes
