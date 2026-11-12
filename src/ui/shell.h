@@ -193,6 +193,13 @@ namespace gnubase::ui
 		// for the keys it releases.
 		void keyReleased(Window& window, const KeyPress& keys);
 
+		// Runs handler after each input that ui::Automation hands to a window's context, once its listeners and default
+		// actions have run, e.g. so that the main menu's items show what the input changed before a script reads the
+		// DOM (ui/mainmenu.h). The window system's input arrives in a step, whose eachStep tasks run after it.
+		void onInputHandled(std::function<void()> handler) { m_inputHandled = std::move(handler); }
+		// Runs that handler; ui::Automation calls it after each input.
+		void inputHandled();
+
 		// From any thread: makes the shell step soon, e.g. when the engine sent the UI something.
 		void wake() { m_windows.wake(); }
 
@@ -244,6 +251,7 @@ namespace gnubase::ui
 		Clock::time_point m_nextFrame = Clock::time_point::max(); // when a step task that follows values runs again
 		std::function<void(Window&, const KeyPress&)> m_unusedKey;
 		std::function<void(Window&, const KeyPress&)> m_keyReleased;
+		std::function<void()> m_inputHandled;
 		std::function<void(Window&)> m_closeRequest;
 		std::function<void(Window&)> m_quitRequest;
 	};

@@ -663,16 +663,16 @@ TEST_CASE("the main menu's items follow what a key or a click changed without a 
 	REQUIRE(tracks.list.selection().empty());
 	REQUIRE(disabled());
 
-	// A key that selects a track on its press: the items follow when it is released, and not before. Dropping the key
-	// release from the events that update the menu leaves them as they were.
+	// A key that selects a track on its press: the items follow at once, before the key is released (#1173), and stay
+	// so after its release.
 	tracks.app.ui().key(std::nullopt, "Down", ui::KeyAction::Down);
 	REQUIRE(tracks.list.selection().size() == 1);
-	CHECK(disabled());
+	CHECK(!disabled());
 	tracks.app.ui().key(std::nullopt, "Down", ui::KeyAction::Up);
 	CHECK(!disabled());
 
-	// A click selects its row after the mouse button is released and after every listener of the click ran, and the
-	// list view says so with a change event: the items follow it at once.
+	// A click selects its row in the click's default action, after the mouse button is released and after every
+	// listener of the click ran: the items follow it at once.
 	tracks.app.ui().click(std::nullopt, {row(b) + " .track-name", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
 	REQUIRE(tracks.list.selection() == std::vector<uint64_t>{b});
 	CHECK(!disabled());

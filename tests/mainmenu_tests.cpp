@@ -11,11 +11,14 @@
 #include "ui/enginebinding.h"
 #include "ui/keycommands.h"
 #include "ui/mainmenu.h"
+#include "ui/rmlui.h"
 #include "uiapp.h"
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/EventListener.h>
+#include <RmlUi/Core/SystemInterface.h>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
@@ -203,6 +206,98 @@ TEST_CASE("main menu items are disabled while their command can't run", "[ui]")
 	app.shell().step(std::chrono::milliseconds(0));
 	CHECK(app.call("project.get").at("tracks").empty());
 	CHECK(!disabled(app, "menuitem[command=\"history.redo\"]"));
+}
+
+// What a release and an item's own command change shows in the DOM that MCP's UI tools read right after the input,
+// without a step of the shell (#1173): the event display selects when the mouse button is released, and Edit >
+// Select changes what the items for selected events can do.
+TEST_CASE(
+	"the main menu's items follow a release's selection and an item's own command without a step of the shell", "[ui]")
+{
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	app.setDpRatio(1.0F);
+	const Json track = app.call("track.add", {{"type", "midi"}}).at("track");
+	app.call("midiPart.add", {{"track", track.at("id")}, {"position", 0}, {"length", 1920}});
+	ui::EventLanes* lanes = nullptr;
+	REQUIRE(app.waitUntil(
+		[&app, &lanes]
+		{
+			lanes =
+				dynamic_cast<ui::EventLanes*>(app.main().context().GetDocument(0)->QuerySelector("event-lanes.events"));
+			return lanes != nullptr && !lanes->lanes().empty() && !lanes->lanes()[0].events.empty();
+		}));
+	const std::string quantize = "menuitem[command=\"edit.quantize\"]";
+	REQUIRE(disabled(app, quantize));
+	const auto select = [&app](const char* command)
+	{
+		click(app, "#menu-bar button[menu=edit-menu]");
+		app.ui().move(std::nullopt, {"#select-submenu", 0, std::nullopt});
+		app.shell().step(std::chrono::milliseconds(0));
+		app.ui().click(std::nullopt, {std::string("menuitem[command=\"") + command + "\"]", 0, std::nullopt},
+			ui::MouseButton::Left, 1, {});
+	};
+
+	// Edit > Select > All and None: Quantize follows right after the click on the item.
+	select("edit.selectAll");
+	CHECK(!disabled(app, quantize));
+	select("edit.selectNone");
+	CHECK(disabled(app, quantize));
+
+	// A Ctrl-click on the part selects it, and another one takes it out of the selection when the button is released.
+	const ui::TimeSpan& part = lanes->lanes()[0].events[0];
+	const ui::Target middle{"", 0,
+		ui::Point{static_cast<int>(lanes->GetAbsoluteLeft() + ((part.start + part.end()) / 2.0)),
+			static_cast<int>(lanes->GetAbsoluteTop() + (lanes->lanes()[0].height / 2.0F))}};
+	app.ui().click(std::nullopt, middle, ui::MouseButton::Left, 1, {"ctrl"});
+	CHECK(!disabled(app, quantize));
+	if (auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface()))
+		clock->advance(1.0); // no double click
+	app.ui().click(std::nullopt, middle, ui::MouseButton::Left, 1, {"ctrl"});
+	CHECK(disabled(app, quantize));
+}
+
+// A click's own listeners may change what the clicked item can do: the menu follows them before it looks for the
+// item (#1120, #1176).
+TEST_CASE("the main menu follows what a click's listeners changed before it runs the clicked item", "[unit]")
+{
+	engine::Engine engine;
+	test::FakeUi fake({{1, "Monitor", {0, 0, 1920, 1080}, {0, 0, 1920, 1080}, 1.0F}});
+	ui::Window& window = fake.shell.open(ui::WindowSpec{});
+	ui::EngineBinding binding(engine);
+	ui::KeyCommands keys(engine, binding);
+	bool enabled = false;
+	int runs = 0;
+	keys.add({"test.command", "A test command.", [&runs](ui::Window& /*window*/, Rml::Element* /*zone*/) { ++runs; }});
+	keys.enableWhen("test.command", [&enabled](ui::Window& /*window*/, Rml::Element* /*zone*/) { return enabled; });
+	Rml::ElementDocument* document = window.context().LoadDocumentFromMemory(
+		R"(<rml><head><style>body { width: 100%; height: 100%; } menuitem { display: block; height: 20dp; }</style>)"
+		R"(</head><body><menuitem id="item" command="test.command"/></body></rml>)");
+	REQUIRE(document != nullptr);
+	document->Show();
+	Rml::Element* item = document->GetElementById("item");
+	REQUIRE(item != nullptr);
+
+	// The item's own listener lets its command run, before the menu's listener on the document.
+	class Enabler final : public Rml::EventListener
+	{
+	public:
+		explicit Enabler(bool& enabled) : m_enabled(enabled) {}
+		void ProcessEvent(Rml::Event& /*event*/) override { m_enabled = true; }
+
+	private:
+		bool& m_enabled;
+	} enabler(enabled);
+	item->AddEventListener(Rml::EventId::Click, &enabler);
+	{
+		const ui::MainMenu menu(keys, window, *document);
+		REQUIRE(item->HasAttribute("disabled"));
+		ui::Automation(fake.shell).click(std::nullopt, {"#item", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+		CHECK(runs == 1);
+		CHECK(!item->HasAttribute("disabled"));
+	}
+	item->RemoveEventListener(Rml::EventId::Click, &enabler);
+	document->Close();
 }
 
 TEST_CASE("key commands say whether a command can run, for menu items", "[ui]")
