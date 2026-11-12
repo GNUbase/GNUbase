@@ -24,12 +24,12 @@ scripts plug into. The code is `src/app/appscripts.cpp` (`app::AppUi`), the cons
   for them with `_G.f = f`. Commands run one after the other and wait for their results. `gnubase.ui.wait` fails in a
   script run from a key or a button, since that runs inside a step of the UI.
 - **Runaway scripts.** A script or console line that has run for 10 s (time in engine commands counts too) asks in a
-  message box whether to stop it or keep it running for another 10 s; stopping fails it with "the script ran longer
-  than 10000 ms", and its changes stay one undo step. Once stopped, the error comes again at every instruction of that
-  run without asking, so a script that catches it with `pcall` can't go on. Scripts that it runs share its time. With
-  the windows hidden, e.g. in tests, it stops without asking (`AppUi::keepScriptsRunningWith` answers in tests). Lua
-  that a script leaves behind and that runs later outside a run has no time limit: `gnubase.on` handlers, which the UI
-  calls from its steps, and `rmlui` event listeners. `while true do end` in one of them freezes the UI.
+  warning message box whether to stop it or keep it running for another 10 s; stopping fails it with "the script ran
+  longer than 10000 ms", and its changes stay one undo step. Once stopped, the error comes again at every instruction
+  of that run without asking, so a script that catches it with `pcall` can't go on. Scripts that it runs share its
+  time. With the windows hidden, e.g. in tests, it stops without asking (`AppUi::keepScriptsRunningWith` answers in
+  tests). Lua that a script leaves behind and that runs later outside a run has no time limit: `gnubase.on` handlers,
+  which the UI calls from its steps, and `rmlui` event listeners. `while true do end` in one of them freezes the UI.
 - **One undo step.** Whatever a script changes is one undo step named after the script, also when it fails halfway:
   before it runs, the UI notes the id of the last done step (`history.get`), and afterwards `history.join` joins the
   done steps after it ([edit-history.md](edit-history.md)). Changes that end where they started leave no step. Ids grow
@@ -78,9 +78,10 @@ clears; a script that fails is one step too and shows its error; a script that w
 again keeps its undo step from a key and from Edit > Scripts, and the new script runs; an engine key command that a
 script runs is in its step; scripts and console lines share globals apart from the documents'; a script that adds a
 script and finds the scripts again can still press another script's key. `tests/scripts_ui_tests.cpp` also checks a
-runaway script and console line asking and stopping, a script's undo step with the UI's steps it sent and without
-the user's before it, the console adding to and dropping from its output, and Edit > Scripts and the console's Edit,
-Open Folder and Lua API Reference, with the OS's opening caught (`AppUi::openExternallyWith`).
+new script folder getting the examples that can be copied when one can't be, a runaway script and console line asking
+and stopping, a script's undo step with the UI's steps it sent and without the user's before it, the console adding
+to and dropping from its output, and Edit > Scripts and the console's Edit, Open Folder and Lua API Reference, with
+the OS's opening caught (`AppUi::openExternallyWith`).
 `tests/history_tests.cpp` checks `history.join`, and `tests/scripting_tests.cpp` that a run inside a run leaves the
 test cases to the outermost one, the time limit that asks, a stopped script that catches the error and environments;
 `tests/enginebinding_tests.cpp` settling, also with only a step that waits and a query out.
