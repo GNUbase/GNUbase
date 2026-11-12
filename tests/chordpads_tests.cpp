@@ -991,10 +991,11 @@ TEST_CASE("the pattern player mode plays a MIDI part's pattern with the notes of
 	midifile::Track track;
 	for (int i = 0; i < 3; ++i)
 	{
-		track.events.push_back(midifile::channelEvent(i * 480, 0x90, static_cast<uint8_t>(50 + i), 100));
-		track.events.push_back(midifile::channelEvent((i * 480) + 240, 0x80, static_cast<uint8_t>(50 + i), 0));
+		const int64_t tick = int64_t{i} * 480;
+		track.events.push_back(midifile::channelEvent(tick, 0x90, static_cast<uint8_t>(50 + i), 100));
+		track.events.push_back(midifile::channelEvent(tick + 240, 0x80, static_cast<uint8_t>(50 + i), 0));
 	}
-	track.end = 4 * 480;
+	track.end = int64_t{4} * 480;
 	file.tracks.push_back(track);
 	midifile::save(file, loop);
 	run(client, "chordPads.setPattern", {{"file", loop}});

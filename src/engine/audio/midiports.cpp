@@ -196,11 +196,10 @@ namespace gnubase::engine
 			uint8_t value = 0;
 			if (source == 1 && status == 0xD0 && message.size >= 2)
 				value = message.bytes[1] & 0x7F;
-			else if (source == 2 && status == 0xE0 && message.size == 3)
-				value = message.bytes[2] & 0x7F;
-			else if (source == 3 && status == 0xB0 && message.size == 3 &&
-				message.bytes[1] == keys.controlNumbers.at(which))
-				value = message.bytes[2] & 0x7F;
+			else if (message.size == 3 &&
+				((source == 2 && status == 0xE0) ||
+					(source == 3 && status == 0xB0 && message.bytes[1] == keys.controlNumbers.at(which))))
+				value = message.bytes[2] & 0x7F; // the pitch bend's most significant bits, or the controller's value
 			else
 				continue;
 			m_padEvents.tryPush(PadEvent{PadEvent::Kind::Control, static_cast<uint8_t>(which), value});

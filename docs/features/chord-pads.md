@@ -247,6 +247,8 @@ events, chord track and position, the step range at 100 Hz and Move Insert refus
 chord track and a MIDI track; a file with no pads or a reference below -1; and saving and loading.
 `tests/keycommandsdialog_tests.cpp`: the key commands don't list `chordPads.trigger` without parameters.
 `tests/inspector_tests.cpp`: the Inspector's Input Routing of an instrument track choosing the chord pads.
+`tests/rtcheck_tests.cpp`: the remote keys for two players with Filter Notes, the chord modifiers and a control,
+Snap Playback, the pattern player and the sections player mode pass the RT checker.
 `tests/chordpads_ui_tests.cpp` drives the zone: shown and hidden from the Project menu's command, a pad held with the
 mouse recorded on a record-enabled track, a chord typed after a double click, pads swapped by dragging, the extended
 toolbar, the wheel with and without Shift, Select All with Remove Assignment past a locked pad, Load and the root key

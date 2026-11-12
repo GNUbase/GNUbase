@@ -11,6 +11,19 @@
 
 namespace gnubase::engine::midi
 {
+	// Sorts first to last stably, in place, without allocating as std::stable_sort may: for the few notes of a block.
+	template <typename T, typename Less> void sortInPlace(T* first, T* last, Less less) noexcept
+	{
+		for (T* i = first; i != last; ++i)
+		{
+			T value = *i;
+			T* at = i;
+			for (; at != first && less(value, *(at - 1)); --at)
+				*at = *(at - 1);
+			*at = value;
+		}
+	}
+
 	// What happens to a sounding chord's notes when another chord plays over it (reference manual p. 1379).
 	enum class PadOverlap : uint8_t
 	{
@@ -229,7 +242,7 @@ namespace gnubase::engine::midi
 					++i;
 				}
 			}
-			std::stable_sort(outs.begin(), outs.begin() + static_cast<std::ptrdiff_t>(n),
+			sortInPlace(outs.data(), outs.data() + n,
 				[](const Out& a, const Out& b) { return a.frame < b.frame || (a.frame == b.frame && !a.on && b.on); });
 			for (size_t i = 0; i < n; ++i)
 				send(pads, outs.at(i).on, outs.at(i).pitch, outs.at(i).velocity, outs.at(i).channel, outs.at(i).frame);
@@ -328,7 +341,7 @@ namespace gnubase::engine::midi
 				else
 					m_waiting.at(m_pending++) = {message, at};
 			}
-			std::stable_sort(m_out.begin(), m_out.begin() + static_cast<std::ptrdiff_t>(count),
+			sortInPlace(m_out.data(), m_out.data() + count,
 				[](const audio::MidiMessage& a, const audio::MidiMessage& b) { return a.offset < b.offset; });
 			pads.clear();
 			for (size_t i = 0; i < count; ++i)

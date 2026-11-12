@@ -11,7 +11,10 @@
 #include "engine/processors/midieffects.h"
 #include "engine/processors/sampler.h"
 #include "ipc/connection.h"
+#include "platform/audio/device.h"
+#include "platform/hosttime.h"
 #include "platform/log.h"
+#include "platform/midi/dummyport.h"
 #include "platform/rt/realtime.h"
 #include "platform/rt/snapshotpublisher.h"
 #include "platform/rt/workerpool.h"
@@ -732,6 +735,76 @@ TEST_CASE("MIDI injected into tracks and captured from instruments passes the RT
 	run("track.add", {{"type", "midi"}}); // a new graph, swapped in between blocks
 	run("audio.render", {{"frames", 2400}});
 	run("midi.capture", Json::object());
+	CHECK(g_violations == 0);
+}
+
+TEST_CASE("the chord pads' remote keys, players, pattern, sections and snap pass the RT checker", "[integration]")
+{
+	// #1089: what the audio thread does for the chord pads: midi::PadVoices for each player, Filter Notes, the
+	// chord modifiers' and controls' keys, the sections player mode, the pattern player and Snap Playback.
+	using gnubase::engine::Json;
+	auto dummy = std::make_unique<gnubase::midi::DummyBackend>();
+	gnubase::midi::DummyBackend& backend = *dummy;
+	backend.addLoopback("Keys");
+	std::vector<std::unique_ptr<gnubase::midi::Backend>> midi;
+	midi.push_back(std::move(dummy));
+	gnubase::engine::Engine engine(gnubase::audio::makeBackends(), {}, std::move(midi));
+	gnubase::engine::Client client(engine);
+	const auto run = [&client](const std::string& command, const Json& parameters = Json::object())
+	{
+		const gnubase::engine::Result result = client.call(command, parameters);
+		INFO(command << ": " << result.error);
+		REQUIRE(result.ok());
+		return result.value;
+	};
+	run("audio.setDevice", {{"blockSize", 64}, {"inputChannels", 0}, {"captureSeconds", 1}});
+	const Json added = run("track.add", {{"type", "instrument"}});
+	run("channel.set", {{"channel", added.at("channel").at("id")}, {"instrument", "testSynth"}, {"monitor", true}});
+	const Json second = run("track.add", {{"type", "instrument"}});
+	run("channel.set", {{"channel", second.at("channel").at("id")}, {"instrument", "testSynth"}, {"monitor", true}});
+	run("chordPads.addPlayer", {{"library", "piano"}, {"track", second.at("track").at("id")}});
+	run("chordPads.set",
+		{{"player", 0}, {"remote", true}, {"filterNotes", true}, {"modifiers", true}, {"controlSources", {"pitchBend"}},
+			{"snapPlayback", true}, {"overlaps", "legato"}});
+	run("midi.ports");
+	const auto keys = backend.openOutput("Keys");
+	const auto send = [&keys](uint8_t status, uint8_t data1, uint8_t data2)
+	{
+		gnubase::audio::MidiMessage message;
+		message.size = 3;
+		message.bytes = {status, data1, data2};
+		keys->send(message, gnubase::hostTime());
+	};
+	run("transport.play");
+	run("audio.render", {{"frames", 640}});
+
+	const RecordViolations record;
+	for (int round = 0; round < 3; ++round)
+	{
+		for (const uint8_t key : std::array<uint8_t, 6>{36, 38, 40, 47, 49, 60})
+			send(0x90, key, 100);
+		send(0xE0, 0, 100);
+		run("chordPads.trigger", {{"pad", 2}});
+		run("audio.render", {{"frames", 6400}});
+		for (const uint8_t key : std::array<uint8_t, 6>{36, 38, 40, 47, 49, 60})
+			send(0x80, key, 0);
+		run("chordPads.trigger", {{"pad", 2}, {"on", false}});
+		run("audio.render", {{"frames", 6400}});
+		// The pattern player, then the sections player mode, in the rounds after.
+		if (round == 0)
+			run("chordPads.setPattern", {{"preset", "arpeggioUp"}});
+		else
+			run("chordPads.set", {{"mode", "sections"}});
+		run("audio.render", {{"frames", 64}});
+	}
+	for (const uint8_t key : std::array<uint8_t, 4>{36, 55, 56, 57})
+		send(0x90, key, 90);
+	run("audio.render", {{"frames", 6400}});
+	for (const uint8_t key : std::array<uint8_t, 4>{57, 56, 55, 36})
+		send(0x80, key, 0);
+	run("audio.render", {{"frames", 6400}});
+	run("transport.stop");
+	run("audio.render", {{"frames", 640}});
 	CHECK(g_violations == 0);
 }
 
