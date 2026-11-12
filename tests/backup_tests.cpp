@@ -694,7 +694,7 @@ TEST_CASE("a backup leaves out the folders in the Mixdown folder that it can't l
 		SKIP("the folder can be listed here anyway, e.g. by root");
 
 	const Json result = backup(song.client, {{"folder", utf8(dir.path() / "Backup")}});
-	CHECK(result.at("missing") == Json::array({{{"path", utf8(mixdown / "Hidden")}}}));
+	CHECK(result.at("missing") == Json::array({{{"path", utf8(mixdown / "Hidden")}, {"folder", true}}}));
 	CHECK(filesIn(dir.path() / "Backup") == std::set<std::string>{"Song.dawproject", "Mixdown/Song.wav"});
 	CHECK(!fs::exists(dir.path() / "Backup" / "Mixdown" / "Hidden")); // not recreated empty
 }

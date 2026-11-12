@@ -721,3 +721,41 @@ TEST_CASE("recording.add applies the MIDI cycle record modes to the takes", "[in
 		CHECK(setup.parts().empty());
 	}
 }
+
+TEST_CASE(
+	"the MIDI inserts above the divider play into the recording, those below it only on playback", "[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	run(client, "channel.set",
+		{{"channel", setup.channel},
+			{"midiInserts",
+				{{"divider", 1},
+					{"slots",
+						{{{"effect", "chordGenerator"}, {"parameters", {{"chord", "Major"}}}},
+							{{"effect", "transformer"}, {"parameters", {{"value", 12}}}}}}}}});
+	run(client, "midi.capture", {{"start", true}});
+	run(client, "transport.record");
+	setup.inject({message(1000, {0x90, 60, 100}), message(3000, {0x80, 60, 0})});
+	run(client, "audio.render", {{"frames", 4000}});
+	// Live, the chord plays transposed by the insert below the divider.
+	CHECK(notesPlayed(client) ==
+		std::vector<std::vector<int64_t>>{{0x90, 72, 1000}, {0x90, 76, 1000}, {0x90, 79, 1000}, {0x80, 72, 3000},
+			{0x80, 76, 3000}, {0x80, 79, 3000}});
+	REQUIRE(setup.stop().is_object());
+	const std::vector<Json> parts = setup.parts();
+	REQUIRE(parts.size() == 1);
+	const auto length = parts[0].at("notes")[0].at("length").get<int64_t>();
+	const int64_t at = parts[0].at("notes")[0].at("position").get<int64_t>();
+	CHECK(notesOf(parts[0]) == std::vector<std::vector<int64_t>>{{at, length, 60}, {at, length, 64}, {at, length, 67}});
+
+	// Played back, the recorded chord goes through the inserts below the divider only.
+	const auto start = run(client, "audio.get").at("position").get<int64_t>();
+	run(client, "midi.capture", {{"start", true}});
+	run(client, "transport.locate", {{"position", 0}});
+	run(client, "transport.play");
+	run(client, "audio.render", {{"frames", 2000}});
+	CHECK(notesPlayed(client) ==
+		std::vector<std::vector<int64_t>>{
+			{0x90, 72, start + 1000}, {0x90, 76, start + 1000}, {0x90, 79, start + 1000}});
+}

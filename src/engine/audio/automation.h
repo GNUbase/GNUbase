@@ -48,6 +48,7 @@ namespace gnubase::engine
 			Strip,      // parameter events for the strip's sections (g_stripEvents), with the fader's events
 			Midi,       // MIDI controller events for the channel's source
 			Program, // a MIDI channel's program change (parameter) for its source; its static value is the bank or -1
+			MidiEffect, // parameter events for the MIDI effects its source runs (midi::g_effectEvents)
 		};
 
 		AutomationTarget target;

@@ -79,7 +79,7 @@ namespace gnubase::engine
 		{
 			return target.type != AutomationTargetType::Instrument && target.type != AutomationTargetType::Plugin &&
 				target.type != AutomationTargetType::Strip && target.type != AutomationTargetType::PanLeft &&
-				target.type != AutomationTargetType::PanRight;
+				target.type != AutomationTargetType::PanRight && target.type != AutomationTargetType::MidiEffect;
 		}
 
 		// The built-in effect a slot's plugin id names, or nullptr.
@@ -795,6 +795,7 @@ namespace gnubase::engine
 				case AutomationTargetType::Strip:
 				case AutomationTargetType::PanLeft:
 				case AutomationTargetType::PanRight:
+				case AutomationTargetType::MidiEffect:
 					break;
 				}
 				const auto value = [&target](double v)
@@ -1534,6 +1535,7 @@ namespace gnubase::engine
 					case AutomationTargetType::Controller:
 					case AutomationTargetType::PitchBend:
 					case AutomationTargetType::ChannelPressure:
+					case AutomationTargetType::MidiEffect:
 						point.value = std::clamp(value, 0.0, 1.0);
 						break;
 					}

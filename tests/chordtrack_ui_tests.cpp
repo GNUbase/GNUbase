@@ -197,6 +197,12 @@ TEST_CASE("Project > Chord Track converts chords to MIDI and back, the Inspector
 				found.push_back(part);
 		return found;
 	};
+	// The MIDI Inserts and MIDI Sends sections close, so that the Chords section fits in the window.
+	REQUIRE(window.app.waitUntil([&] { return !window.hasClass(".inspector [section=midiSends]", "unavailable"); }));
+	window.click(".inspector [section=midiInserts] .section-header");
+	window.click(".inspector [section=midiSends] .section-header");
+	REQUIRE(window.hasClass(".inspector [section=midiInserts]", "collapsed"));
+	REQUIRE(window.hasClass(".inspector [section=midiSends]", "collapsed"));
 
 	// Chords to MIDI: the voicings on the selected track, which then follows the chord track with Voicings.
 	window.app.keys().run("track.chordsToMidiSelected", Json::object(), window.app.main(), nullptr);
