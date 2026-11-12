@@ -2069,10 +2069,11 @@ namespace gnubase::app
 		const auto selection = [this]
 		{ return m_trackList != nullptr ? m_trackList->selection() : std::vector<uint64_t>(); };
 		const auto hasSelection = [selection](ui::Window&, Rml::Element*) { return !selection().empty(); };
-		// File > Import > Tracks from Project or Track Archive (reference manual pp. 201-202): below the first
-		// selected track, or at the bottom.
+		// File > Import > Tracks from Project or Track Archive (reference manual pp. 201-205): the file chosen opens in
+		// the Import Options dialog, which imports below the first selected track or at the bottom.
 		m_keys.add({"file.importTracks",
-			"Imports the tracks of a project or track archive below the first selected track, or at the bottom.",
+			"Imports tracks of a project or track archive through the Import Options dialog, below the first selected "
+			"track or at the bottom.",
 			[this, selection](ui::Window& window, Rml::Element* /*zone*/)
 			{
 				ui::FileDialog dialog;
@@ -2085,20 +2086,12 @@ namespace gnubase::app
 					{
 						if (!chosen.error.empty())
 							logging::warning("The file dialog failed: {}", chosen.error);
-						if (chosen.files.empty())
+						ui::Window* parent = m_shell.find(id);
+						if (chosen.files.empty() || parent == nullptr)
 							return;
-						engine::Json parameters = {{"path", chosen.files.front().u8string()}};
-						if (!below.empty())
-							parameters["track"] = below.front();
-						// The engine's refusal shows, and the tracks it left out.
-						m_binding.send("track.import", parameters,
-							[this, id](const engine::Result& result)
-							{
-								if (!result.ok())
-									m_files.showError(id, result.error);
-								else if (const std::string left = leftOut(result.value); !left.empty())
-									m_files.showError(id, "The tracks were imported without " + left + ".");
-							});
+						openDialog(*parent, "track-import.rml",
+							{{"path", chosen.files.front().u8string()},
+								{"below", below.empty() ? std::string() : std::to_string(below.front())}});
 					});
 			}});
 		// File > Export > Selected Tracks (reference manual pp. 205-206): a track archive, with copies of the media.
@@ -2127,7 +2120,8 @@ namespace gnubase::app
 								if (!result.ok())
 									m_files.showError(id, result.error);
 								else if (const std::string left = leftOut(result.value); !left.empty())
-									m_files.showError(id, "The tracks were exported without " + left + ".");
+									m_files.showNotice(
+										id, "Export Selected Tracks", "The tracks were exported without " + left + ".");
 							});
 					});
 			}});
