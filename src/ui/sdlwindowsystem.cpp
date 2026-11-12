@@ -3,6 +3,7 @@
 
 #include "platform/log.h"
 
+#include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/TextInputContext.h>
 #include <RmlUi_Platform_SDL.h>
 #include <SDL3/SDL.h>
@@ -618,6 +619,18 @@ namespace gnubase::ui
 			{
 				m_altHeldOnGaining = 0;
 				return std::nullopt;
+			}
+			if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT)
+				m_leftHeld.insert(id);
+			else if (event.type == SDL_EVENT_MOUSE_BUTTON_UP && event.button.button == SDL_BUTTON_LEFT)
+				m_leftHeld.erase(id);
+			// SDL doesn't release the mouse buttons with the focus, and the button may go up over another application,
+			// e.g. after Alt+Tab: the context's drag ends here instead of following the mouse without a button
+			// (#1191). The mouse leaves first, so that the button going up clicks nothing.
+			if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST && m_leftHeld.erase(id) != 0)
+			{
+				target->second->ProcessMouseLeave();
+				target->second->ProcessMouseButtonUp(0, RmlSDL::GetKeyModifierState());
 			}
 			const bool unused = RmlSDL::InputEventHandler(target->second, window, event);
 			WindowEvent input{WindowEventKind::Input, id};

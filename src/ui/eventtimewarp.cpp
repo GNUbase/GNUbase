@@ -64,7 +64,7 @@ namespace gnubase::ui
 				return;
 			const AudioFades& event = fades->second;
 			const auto frame = [&event, &shown](double seconds)
-			{ return event.offset + std::llround((seconds - shown->start) * event.rate); };
+			{ return event.offset + std::llround((seconds - shown->start) * event.timeRate); };
 			edit("clip.addWarpMarker",
 				{{"clip", event.clip}, {"position", frame(pressTime)}, {"target", frame(releaseTime)}});
 			return;

@@ -22,6 +22,8 @@ namespace gnubase::engine::settings
 		constexpr const char* g_defaultProfile = "Default";
 		constexpr int g_exportVersion = 1;
 
+		using Replacing = std::function<void(const fs::path& file)>;
+
 		void require(bool condition, const std::string& message)
 		{
 			if (!condition)
@@ -164,12 +166,14 @@ namespace gnubase::engine::settings
 		}
 
 		// Moves the profile files from one folder to another, replacing what is there; a file that from lacks goes
-		// from to as well, so that its defaults count.
-		void moveFiles(const fs::path& from, const fs::path& to)
+		// from to as well, so that its defaults count. replacing, if any, comes before each file (switchProfile).
+		void moveFiles(const fs::path& from, const fs::path& to, const Replacing& replacing)
 		{
 			fs::create_directories(to);
 			for (const char* name : g_profileFiles)
 			{
+				if (replacing)
+					replacing(to / name);
 				fs::remove(to / name);
 				if (fs::exists(from / name))
 					fs::rename(from / name, to / name);
@@ -177,11 +181,13 @@ namespace gnubase::engine::settings
 		}
 
 		// Copies the profile files from one folder to another as moveFiles moves them.
-		void copyFiles(const fs::path& from, const fs::path& to)
+		void copyFiles(const fs::path& from, const fs::path& to, const Replacing& replacing = {})
 		{
 			fs::create_directories(to);
 			for (const char* name : g_profileFiles)
 			{
+				if (replacing)
+					replacing(to / name);
 				fs::remove(to / name);
 				if (fs::exists(from / name))
 					fs::copy_file(from / name, to / name);
@@ -223,17 +229,26 @@ namespace gnubase::engine::settings
 			return true;
 		}
 
+		// Whether a switch that GNUbase couldn't finish nor undo waits in profile-switch: then the settings may be half
+		// of each profile's, and the next start puts the active profile's back.
+		bool unfinished(const fs::path& directory)
+		{
+			std::error_code error;
+			return fs::exists(stagingOf(directory), error);
+		}
+
 		Json listJson(const fs::path& directory)
 		{
 			const State state = readState(directory);
 			Json list = Json::array();
 			for (const std::string& name : profiles(directory, state))
 				list.push_back({{"name", name}, {"active", name == state.active}});
-			return {{"profiles", list}, {"active", state.active}, {"next", state.next}};
+			return {{"profiles", list}, {"active", state.active}, {"next", state.next},
+				{"unfinished", unfinished(directory)}};
 		}
 	}
 
-	void switchProfile(const fs::path& directory)
+	void switchProfile(const fs::path& directory, const Replacing& replacing)
 	{
 		if (directory.empty())
 			return;
@@ -261,19 +276,19 @@ namespace gnubase::engine::settings
 			if (fs::exists(saved) && fs::equivalent(saved, next))
 				throw std::runtime_error("its folder is the active profile's " + state.active + " on this file system");
 			fs::remove_all(staging);
-			copyFiles(directory, staging / "active");
-			copyFiles(next, staging / "next");
+			copyFiles(directory, staging / "active", replacing);
+			copyFiles(next, staging / "next", replacing);
 			files::writeAtomically(staging / "active-profile", state.active); // from here on undoInterrupted's
 			try
 			{
-				copyFiles(staging / "active", saved);
-				moveFiles(staging / "next", directory);
+				copyFiles(staging / "active", saved, replacing);
+				moveFiles(staging / "next", directory, replacing);
 				writeState(directory, {state.next, std::string()});
 			}
 			catch (...)
 			{
 				restored = false; // the next start tries again if this fails
-				copyFiles(staging / "active", directory);
+				copyFiles(staging / "active", directory, replacing);
 				restored = true;
 				fs::remove_all(saved, error);
 				throw;
@@ -316,12 +331,13 @@ namespace gnubase::engine::settings
 							 {{"type", "object"},
 								 {"properties", {{"name", {{"type", "string"}}}, {"active", {{"type", "boolean"}}}}},
 								 {"required", {"name", "active"}}}}}},
-					{"active", {{"type", "string"}}}, {"next", {{"type", "string"}}}}},
-			{"required", {"profiles", "active", "next"}}};
+					{"active", {{"type", "string"}}}, {"next", {{"type", "string"}}},
+					{"unfinished", {{"type", "boolean"}}}}},
+			{"required", {"profiles", "active", "next", "unfinished"}}};
 		const std::string list =
 			" Returns what profile.list does: the profiles by name, sorted, the active one, and next, the one that "
-			"becomes active when GNUbase starts again (empty if that is the active one). Emits profile.changed with "
-			"the same.";
+			"becomes active when GNUbase starts again (empty if that is the active one), and unfinished. Emits "
+			"profile.changed with the same.";
 		// Runs a change on the profiles in the folder, then reports them.
 		const auto command = [&engine, &listSchema, directory](const char* id, std::string description, Json parameters,
 								 const std::function<void(const Json& parameters, State& state)>& change)
@@ -351,8 +367,10 @@ namespace gnubase::engine::settings
 				"settings.json (preferences, key commands, global workspaces and the other user settings) and "
 				"quantize-presets.json of the settings folder. The active profile's files are in the settings folder, "
 				"the others' in its folder profiles/<name>. Returns the profiles by name, sorted, with active "
-				"true for the active one, its name, and next, the one that becomes active when GNUbase starts again "
-				"(empty if that is the active one).",
+				"true for the active one, its name, next, the one that becomes active when GNUbase starts again "
+				"(empty if that is the active one), and unfinished, true while a profile switch that GNUbase couldn't "
+				"finish nor undo waits: the settings may then be half of each profile's, the next start puts the "
+				"active profile's back, overwriting what changes until then, and the active profile can't be renamed.",
 				CommandInfo{}.parameters, listSchema, true},
 			[directory](CommandContext&)
 			{
@@ -383,7 +401,8 @@ namespace gnubase::engine::settings
 					if (const fs::path source = filesOf(directory, state, from) / file; fs::exists(source))
 						fs::copy_file(source, to / file);
 			});
-		command("profile.rename", "Renames a profile, also the active one." + list,
+		command("profile.rename",
+			"Renames a profile, also the active one, except while a profile switch is unfinished." + list,
 			object({{"name", name}, {"newName", name}}, {"name", "newName"}),
 			[directory](const Json& parameters, State& state)
 			{
@@ -396,6 +415,11 @@ namespace gnubase::engine::settings
 				require(!taken(directory, state, to, from), "there is a profile " + to);
 				if (from == state.active)
 				{
+					// profile-switch/active-profile names it: the next start would take its files there for another
+					// profile's.
+					require(!unfinished(directory),
+						"the active profile can't be renamed while a profile switch that GNUbase didn't finish waits: "
+						"its settings go back when GNUbase starts again");
 					require(!fs::exists(folderOf(directory, to)), "there is a profile " + to);
 					state.active = to;
 				}

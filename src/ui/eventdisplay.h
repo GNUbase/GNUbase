@@ -613,11 +613,15 @@ namespace gnubase::ui
 		void scrubEdge(uint64_t clip, int64_t offset, int64_t length);
 
 		// Fades and crossfades (eventfades.cpp): an audio event's fades and crossfade as project.get has them, its
-		// media file's sample rate, its offset and length in clip frames, and its volume and volume curve.
+		// media file's sample rate, the frames its fades may take together (fadeRoom), the clip frames a second it is
+		// drawn at (its waveform's rate, which a warped event's warp changes), its offset and length in clip frames,
+		// and its volume and volume curve.
 		struct AudioFades
 		{
 			double rate = 0.0;
-			int64_t length = 0;
+			int64_t length = 0; // for the fades only
+			double timeRate = 0.0;
+			int64_t frames = 0;
 			engine::Fade in;
 			engine::Fade out;
 			engine::Crossfade crossfade;
@@ -627,7 +631,7 @@ namespace gnubase::ui
 			std::vector<engine::VolumePoint> curve;
 		};
 		void addFadeActions();
-		void readFades(const engine::Json& event, double rate);
+		void readFades(const engine::Json& event, double rate, double timeRate);
 		// The fade handle of the event at x and y dp in the event lanes: -1 its fade in's, 1 its fade out's, 0 none.
 		int fadeHandleAt(const Shown& shown, double x, double y) const;
 		// Starts dragging a fade handle when x and y dp in the event lanes are at one of the pressed event's.
