@@ -590,8 +590,13 @@ namespace gnubase::engine
 		const auto glide = [revised, smoothing](const PlayedLane& lane)
 		{ return revised && lane.smooth ? smoothing : 0; };
 		// A program or MIDI controller without points whose value is new in this block (PlayedLane::revision) isn't
-		// set again: a MIDI track's mute sends what it kept before it, as before a lane's new value.
-		const auto renewed = [played = m_played](const PlayedLane& lane) { return lane.revision > played; };
+		// set again: a MIDI track's mute sends what it kept before it, as before a lane's new value. Nor are the MIDI
+		// controllers that a new program brings along, which go out after it.
+		const bool newProgram =
+			std::any_of(automation.lanes.begin(), automation.lanes.end(), [played = m_played](const PlayedLane& lane)
+				{ return lane.kind == Kind::Program && lane.revision > played; });
+		const auto renewed = [played = m_played, newProgram, &midi](const PlayedLane& lane)
+		{ return lane.revision > played || (newProgram && midi(lane)); };
 		m_played = automation.revision;
 		std::copy_n(processors.begin(), count, m_processors.begin());
 		m_processorCount = count;
@@ -957,10 +962,11 @@ namespace gnubase::engine
 			if (chased != nullptr)
 				for (const graph::ProcessEvent& event : *chased)
 					state.midiDropped.forget(event);
-			// A track that isn't routed to an instrument chases into its own events, at the block's start, where the
-			// sequencer chases them after the channel's values: what it sets there, the chase or the track's events, is
-			// later than what the mute kept. The values that the automation sent again there are earlier.
-			if (chased == nullptr)
+			// A track that isn't routed to an instrument (no chaseFrom) chases into its own events, at the block's
+			// start, where its sequencer chases them after the channel's values: what it sets there, the chase or the
+			// track's events, is later than what the mute kept. The values that the automation sent again there are
+			// earlier.
+			if (!m_chased)
 			{
 				std::bitset<DroppedMidi::g_kinds> again;
 				for (const graph::ProcessEvent& event : m_sentAgain)
@@ -1024,6 +1030,9 @@ namespace gnubase::engine
 		for (const graph::ProcessEvent& event : out)
 			events.add(event);
 		out.clear();
+		// After a project change's pedal releases, the block's last values that no longer fit wait as if a mute had
+		// dropped them, after the block's other events, as the latest of their kinds.
+		std::bitset<graph::g_maxEventsPerBlock> deferred;
 		if (release)
 		{
 			for (size_t channel = 0; channel < state.midiPedals.size(); ++channel)
@@ -1037,16 +1046,14 @@ namespace gnubase::engine
 						out.add(up);
 					}
 			state.midiPedals = {};
+			size_t over = out.size() + events.size() > out.capacity() ? out.size() + events.size() - out.capacity() : 0;
+			for (size_t i = events.size(); i > 0 && over > 0; --i)
+				if (!graph::endsNotes(events[i - 1]))
+				{
+					deferred[i - 1] = true;
+					--over;
+				}
 		}
-		// The events that end notes go first in a full buffer, so that no note hangs. A value that doesn't fit, after
-		// a project change's pedal releases, waits as if a mute had dropped it.
-		const auto put = [&state, &out](const graph::ProcessEvent& event) noexcept
-		{
-			if (graph::endsNotes(event))
-				out.addEnd(event);
-			else if (!out.add(event))
-				state.midiDropped.drop(event);
-		};
 		// Before a mute's count note-offs and pedal releases: in a full buffer they take the places of the last
 		// values that passed (EventBuffer::addEnd), which then wait for unmuting as if the mute had dropped them,
 		// kept oldest first so that the latest of a kind wins and the kinds keep their order.
@@ -1064,6 +1071,9 @@ namespace gnubase::engine
 				if (!graph::endsNotes(out[i]))
 					state.midiDropped.drop(out[i]);
 		};
+		// The events that end notes go first in a full buffer, so that no note hangs.
+		const auto put = [&out](const graph::ProcessEvent& event) noexcept
+		{ return graph::endsNotes(event) ? out.addEnd(event) : out.add(event); };
 		size_t next = 0;  // the events from here on haven't passed yet
 		size_t ahead = 0; // but this many of them, which went out early
 		// Sends what the mute dropped at offset, as far as it fits with room left for the block's events still to
@@ -1194,6 +1204,8 @@ namespace gnubase::engine
 				--ahead;
 				continue;
 			}
+			if (deferred[next])
+				continue;
 			const graph::ProcessEvent& event = events[next];
 			chaseUntil(event.offset);
 			muteUntil(event.offset);
@@ -1205,7 +1217,7 @@ namespace gnubase::engine
 				if (resendAt == static_cast<int64_t>(event.offset))
 					for (size_t later = next + 1; later < events.size() && events[later].offset == event.offset;
 						++later)
-						if (sentAgain(events[later]))
+						if (!deferred[later] && sentAgain(events[later]))
 						{
 							early[later] = true;
 							++ahead;
@@ -1220,6 +1232,9 @@ namespace gnubase::engine
 		chaseUntil(UINT32_MAX);
 		muteUntil(UINT32_MAX);
 		flush(UINT32_MAX);
+		for (size_t i = 0; i < events.size(); ++i)
+			if (deferred[i])
+				state.midiDropped.drop(events[i]);
 	}
 
 	void ChannelStrip::render(RenderPoint point, const graph::ProcessContext& context) noexcept

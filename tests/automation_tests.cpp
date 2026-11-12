@@ -2649,6 +2649,27 @@ TEST_CASE(
 	CHECK(programs == std::vector<uint32_t>{own ? 9U : 4U, 5U});
 }
 
+TEST_CASE("a program set in the block where a mute lane unmutes goes out after what the mute kept, before the MIDI "
+		  "volume it brings along",
+	"[unit]")
+{
+	using Type = graph::ProcessEvent::Type;
+	MidiStrip strip({{0, 1.0}, {2 * g_midiBlock, 0.0}});
+	RenderChannel channel = strip.channel();
+	channel.midiVolume = 100;
+	channel.program = 3;
+	strip.setChannel(channel);
+	CHECK(
+		strip.play({midiEvent(Type::Controller, 5, 0, 7, 20), midiEvent(Type::Program, 6, 0, 9, 0xFFFFFFFFU)}).empty());
+	CHECK(strip.play({}).empty());
+	channel.program = 5;
+	strip.setChannel(channel);
+	CHECK(midiValuesOf(strip.play({})) ==
+		MidiValues{{g_controller, 0, 0, 7, 20}, {g_program, 0, 0, 9, 0xFFFFFFFFU},
+			{g_program, 0, 0, 5, static_cast<uint32_t>(g_noBank)},
+			{g_controller, 0, 0, 7, midi::controllerFromMidi1(100)}});
+}
+
 TEST_CASE(
 	"a ramp's step of a MIDI lane at the sample where the track unmutes goes out after what the mute kept", "[unit]")
 {
@@ -2697,6 +2718,27 @@ TEST_CASE("what a MIDI track's mute kept fills a block whose values sent again w
 	CHECK(unmuted[unmuted.size() - 1].channel == 15);
 }
 
+namespace
+{
+	// A MIDI track's source that adds events of its own: it passes on what it receives, then adds own, once, as a
+	// sequencer adds its parts' events and, if the track isn't routed to an instrument, its chase.
+	class AddingSource : public graph::Processor
+	{
+	public:
+		void process(const graph::ProcessContext& context) noexcept override
+		{
+			for (const graph::ProcessEvent& event : context.eventsIn)
+				context.eventsOut.add(event);
+			context.eventsOut.nextSource();
+			for (const graph::ProcessEvent& event : own)
+				context.eventsOut.add(event);
+			own.clear();
+		}
+
+		std::vector<graph::ProcessEvent> own;
+	};
+}
+
 TEST_CASE("what a MIDI track's mute kept that didn't fit goes out at the start of the next block before the track's "
 		  "own events there and after the values sent again there",
 	"[unit]")
@@ -2707,7 +2749,8 @@ TEST_CASE("what a MIDI track's mute kept that didn't fit goes out at the start o
 	RenderAutomationLane lane;
 	lane.target = {AutomationTargetType::Controller, 0, 20, 15, 0};
 	lane.points = {{0, 0.5, AutomationShape::Step, 0.0}};
-	MidiStrip strip({{0, 1.0}, {(2 * g_midiBlock) + 10, 0.0}}, {lane});
+	auto source = std::make_shared<AddingSource>();
+	MidiStrip strip({{0, 1.0}, {(2 * g_midiBlock) + 10, 0.0}}, {lane}, source);
 	dropControllers(strip);
 	CHECK(strip.play({}).size() == graph::g_maxEventsPerBlock);
 	const bool again = GENERATE(false, true);
@@ -2718,7 +2761,8 @@ TEST_CASE("what a MIDI track's mute kept that didn't fit goes out at the start o
 		channel.instrument = "another";
 		strip.setChannel(channel);
 	}
-	const MidiValues rest = midiValuesOf(strip.play({midiEvent(Type::Controller, 0, 8, 99, 5)}));
+	source->own = {midiEvent(Type::Controller, 0, 8, 99, 5)};
+	const MidiValues rest = midiValuesOf(strip.play({}));
 	REQUIRE(rest.size() > 3);
 	for (const std::array<uint32_t, 5>& value : rest)
 		CHECK(value[1] == 0);
@@ -2853,27 +2897,6 @@ TEST_CASE(
 	CHECK(unmuted == MidiValues{{g_controller, 0, 0, 7, midi::controllerFromMidi1(100)}});
 }
 
-namespace
-{
-	// A MIDI track's sequencer that isn't routed to an instrument, as far as its strip sees it: it passes on what it
-	// receives, then sends chase at the block's start, once.
-	class ChasingSource : public graph::Processor
-	{
-	public:
-		void process(const graph::ProcessContext& context) noexcept override
-		{
-			for (const graph::ProcessEvent& event : context.eventsIn)
-				context.eventsOut.add(event);
-			context.eventsOut.nextSource();
-			for (const graph::ProcessEvent& event : chase)
-				context.eventsOut.add(event);
-			chase.clear();
-		}
-
-		std::vector<graph::ProcessEvent> chase;
-	};
-}
-
 TEST_CASE("a MIDI track that isn't routed to an instrument, heard again, forgets what its mute kept of the kinds its "
 		  "sequencer chases into its events",
 	"[unit]")
@@ -2883,11 +2906,14 @@ TEST_CASE("a MIDI track that isn't routed to an instrument, heard again, forgets
 	channel.type = TrackType::Midi;
 	channel.format = ChannelFormat::None;
 	channel.midiVolume = 100;
-	auto source = std::make_shared<ChasingSource>();
+	// Without chasing controllers, nothing is chased, and what the mute kept of CC 7 wins over the channel's.
+	const bool chasing = GENERATE(true, false);
+	CAPTURE(chasing);
+	auto source = std::make_shared<AddingSource>();
 	MidiStrip strip({}, {}, source);
 	auto chaser = std::make_shared<MidiSequencer>();
 	MidiChase chase;
-	chase.controllers = true;
+	chase.controllers = chasing;
 	chaser->setChase(chase);
 	std::vector<graph::ProcessEvent> kinds;
 	for (const uint16_t kind : channelChaseKinds(channel))
@@ -2910,11 +2936,17 @@ TEST_CASE("a MIDI track that isn't routed to an instrument, heard again, forgets
 	channel.silent = false;
 	channel.quiet = false;
 	strip.setChannel(channel);
-	source->chase = {midiEvent(Type::Controller, 0, 0, 7, 50), midiEvent(Type::Controller, 0, 0, 1, 9)};
+	const std::array<uint32_t, 5> volume{g_controller, 0, 0, 7, midi::controllerFromMidi1(100)};
+	if (!chasing)
+	{
+		CHECK(midiValuesOf(strip.play({})) ==
+			MidiValues{volume, {g_controller, 0, 0, 7, 1}, {g_controller, 0, 0, 1, 2}, {g_controller, 0, 0, 2, 3}});
+		return;
+	}
+	source->own = {midiEvent(Type::Controller, 0, 0, 7, 50), midiEvent(Type::Controller, 0, 0, 1, 9)};
 	// The channel's MIDI volume, CC 2, which only the mute kept, then the chase.
 	CHECK(midiValuesOf(strip.play({})) ==
-		MidiValues{{g_controller, 0, 0, 7, midi::controllerFromMidi1(100)}, {g_controller, 0, 0, 2, 3},
-			{g_controller, 0, 0, 7, 50}, {g_controller, 0, 0, 1, 9}});
+		MidiValues{volume, {g_controller, 0, 0, 2, 3}, {g_controller, 0, 0, 7, 50}, {g_controller, 0, 0, 1, 9}});
 }
 
 TEST_CASE("a MIDI track of another project on the channel releases the pedals the old one held down", "[unit]")
@@ -2938,6 +2970,21 @@ TEST_CASE("a MIDI track of another project on the channel releases the pedals th
 			MidiValues{
 				{g_controller, 0, 0, 64, 0}, {g_controller, 0, 2, 69, 0}, {g_controller, 0, 0, 64, 0xFFFFFFFFU}});
 		CHECK(strip.play({}).empty());
+	}
+	SECTION("another project in a full block")
+	{
+		// The releases take the places of the block's last two values, before its note-off: they wait, and the later
+		// one goes out in the next block.
+		strip.strip().playsProject(2);
+		std::vector<graph::ProcessEvent> events;
+		while (events.size() + 1 < graph::g_maxEventsPerBlock)
+			events.push_back(midiEvent(Type::Controller, 10, 0, 2, static_cast<uint32_t>(events.size())));
+		const uint32_t last = events.back().value;
+		events.push_back(midiEvent(Type::NoteOff, 20, 1, 60));
+		const graph::EventBuffer& full = strip.play(events);
+		REQUIRE(full.size() == graph::g_maxEventsPerBlock);
+		CHECK(full[full.size() - 2].value == last - 2);
+		CHECK(midiValuesOf(strip.play({})) == MidiValues{{g_controller, 0, 0, 2, last}});
 	}
 }
 
