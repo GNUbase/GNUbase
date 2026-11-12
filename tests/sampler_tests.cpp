@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "engine/audio/sampleloader.h"
 #include "engine/document/document.h"
 #include "engine/engine.h"
 #include "engine/graph/graph.h"
@@ -13,10 +14,17 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cmath>
+#include <condition_variable>
+#include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <mutex>
+#include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -395,6 +403,28 @@ TEST_CASE("notes held from polyphonic mode end when monophonic mode is switched 
 	CHECK(sampler.activeVoices() == 0);
 }
 
+TEST_CASE("a legato note after switching to monophonic mode ends the other notes held from polyphonic mode", "[unit]")
+{
+	Sampler sampler;
+	sampler.setSample(ramp(32));
+	Bench bench(sampler);
+	bench.add(parameter(0, Sampler::LoopMode, static_cast<double>(Sampler::Loop::Continuous)));
+	bench.add(parameter(0, Sampler::LoopStart, 0.25));
+	bench.add(parameter(0, Sampler::LoopEnd, 0.5));
+	bench.add(note(0, true, 60));
+	bench.add(note(0, true, 64));
+	bench.run(1);
+	CHECK(sampler.activeVoices() == 2);
+	bench.add(parameter(0, Sampler::Monophonic, 1.0));
+	bench.add(parameter(0, Sampler::Legato, 1.0));
+	bench.add(note(0, true, 67));
+	bench.run(5); // the note it doesn't take over fades out in 5 ms (240 frames)
+	CHECK(sampler.activeVoices() == 1);
+	bench.add(note(0, false, 67));
+	bench.run(1);
+	CHECK(sampler.activeVoices() == 0);
+}
+
 TEST_CASE("a key released in polyphonic mode doesn't play again when monophonic mode is back", "[unit]")
 {
 	Sampler sampler;
@@ -495,6 +525,152 @@ TEST_CASE("sharedSample reads a file once while something uses its sample", "[un
 	first.reset();
 	CHECK(kept.expired());
 	CHECK(processors::sharedSample((folder.path() / "missing.wav").u8string())->frames() == 0);
+}
+
+TEST_CASE("the sample loader reads each file once on a thread of its own", "[unit]")
+{
+	std::mutex mutex;
+	std::condition_variable wake;
+	bool open = false;
+	std::atomic<int> reads{0};
+	std::atomic<int> loaded{0};
+	SampleLoader loader([&] { ++loaded; },
+		[&](const std::string& path)
+		{
+			std::unique_lock lock(mutex);
+			wake.wait(lock, [&] { return open; });
+			++reads;
+			auto sample = std::make_shared<Sample>();
+			sample->left.assign(path.size(), 0.5f);
+			return std::shared_ptr<const Sample>(std::move(sample));
+		});
+	// Asking returns while the file is read; a file asked for again is read once.
+	loader.request("a.wav");
+	loader.request("a.wav");
+	loader.request("bb.wav");
+	CHECK(loader.sample("a.wav") == nullptr);
+	CHECK(!loader.waitUntilRead(std::chrono::milliseconds(20)));
+	{
+		const std::scoped_lock lock(mutex);
+		open = true;
+	}
+	wake.notify_all();
+	REQUIRE(loader.waitUntilRead(std::chrono::seconds(30)));
+	CHECK(reads == 2);
+	CHECK(loaded == 2);
+	const std::shared_ptr<const Sample> a = loader.sample("a.wav");
+	REQUIRE(a != nullptr);
+	CHECK(a->frames() == 5);
+	loader.keepOnly({"bb.wav"});
+	CHECK(loader.sample("a.wav") == nullptr);
+	CHECK(loader.sample("bb.wav") != nullptr);
+	loader.request("a.wav"); // read again once let go of
+	REQUIRE(loader.waitUntilRead(std::chrono::seconds(30)));
+	CHECK(reads == 3);
+}
+
+TEST_CASE("the sample loader drops the files waiting that nothing wants any more", "[unit]")
+{
+	std::mutex mutex;
+	std::condition_variable wake;
+	bool open = false;
+	bool reading = false;
+	std::vector<std::string> read;
+	SampleLoader loader({},
+		[&](const std::string& path)
+		{
+			std::unique_lock lock(mutex);
+			reading = true;
+			wake.notify_all();
+			wake.wait(lock, [&] { return open; });
+			read.push_back(path);
+			return std::make_shared<const Sample>();
+		});
+	loader.request("a.wav");
+	loader.request("b.wav");
+	loader.request("c.wav");
+	// Once a.wav is being read, b.wav waits, and isn't read once nothing wants it.
+	{
+		std::unique_lock lock(mutex);
+		REQUIRE(wake.wait_for(lock, std::chrono::seconds(30), [&] { return reading; }));
+	}
+	loader.keepOnly({"c.wav"});
+	{
+		const std::scoped_lock lock(mutex);
+		open = true;
+	}
+	wake.notify_all();
+	REQUIRE(loader.waitUntilRead(std::chrono::seconds(30)));
+	const std::scoped_lock lock(mutex);
+	CHECK(read == std::vector<std::string>{"a.wav", "c.wav"});
+	CHECK(loader.sample("b.wav") == nullptr);
+	CHECK(loader.sample("c.wav") != nullptr);
+}
+
+TEST_CASE("a read that throws leaves the sample loader running with an empty sample", "[unit]")
+{
+	std::atomic<int> reads{0};
+	SampleLoader loader({},
+		[&](const std::string& path) -> std::shared_ptr<const Sample>
+		{
+			if (++reads == 1)
+				throw std::runtime_error("can't read " + path);
+			return ramp(8);
+		});
+	loader.request("bad.wav");
+	loader.request("good.wav");
+	REQUIRE(loader.waitUntilRead(std::chrono::seconds(30)));
+	const std::shared_ptr<const Sample> bad = loader.sample("bad.wav");
+	REQUIRE(bad != nullptr);
+	CHECK(bad->frames() == 0);
+	const std::shared_ptr<const Sample> good = loader.sample("good.wav");
+	REQUIRE(good != nullptr);
+	CHECK(good->frames() == 8);
+}
+
+TEST_CASE("a file asked for again while its callback runs, after it was let go, is read again", "[unit]")
+{
+	std::atomic<int> reads{0};
+	std::atomic<int> calls{0};
+	SampleLoader* self = nullptr;
+	SampleLoader loader(
+		[&]
+		{
+			// As an update on the command thread would, while the loader thread is still in the callback.
+			if (++calls == 1)
+			{
+				self->keepOnly({});
+				self->request("a.wav");
+			}
+		},
+		[&](const std::string&)
+		{
+			++reads;
+			return ramp(4);
+		});
+	self = &loader;
+	loader.request("a.wav");
+	REQUIRE(loader.waitUntilRead(std::chrono::seconds(30)));
+	CHECK(reads == 2);
+	CHECK(loader.sample("a.wav") != nullptr);
+}
+
+TEST_CASE("a callback that throws leaves the sample loader running", "[unit]")
+{
+	std::atomic<int> calls{0};
+	SampleLoader loader(
+		[&]
+		{
+			if (++calls == 1)
+				throw std::runtime_error("no update");
+		},
+		[](const std::string&) { return ramp(4); });
+	loader.request("a.wav");
+	loader.request("b.wav");
+	REQUIRE(loader.waitUntilRead(std::chrono::seconds(30)));
+	CHECK(calls == 2);
+	CHECK(loader.sample("a.wav") != nullptr);
+	CHECK(loader.sample("b.wav") != nullptr);
 }
 
 TEST_CASE("the sampler's amp section: volume, pan, sample gain, velocity and envelope", "[unit]")
@@ -1003,4 +1179,172 @@ TEST_CASE("a sampler track renders its sample from MIDI notes, and swaps it whil
 	CHECK(std::all_of(swapped.samples.begin(), swapped.samples.end(), [](float value) { return value == 0.0f; }));
 	run(client, "history.undo");
 	CHECK(render(client, 4800).samples == std::vector<float>(phrase.samples.begin(), phrase.samples.begin() + 9600));
+}
+
+namespace
+{
+	// Reads the samplers' samples as the engine does, but holds the read of one file back until release.
+	class HeldRead
+	{
+	public:
+		HeldRead(Engine& engine, const fs::path& file) : m_state(std::make_shared<State>())
+		{
+			m_state->file = file.filename();
+			engine.setSampleReader(
+				[state = m_state](const std::string& path)
+				{
+					if (fs::u8path(path).filename() == state->file)
+					{
+						std::unique_lock lock(state->mutex);
+						state->reading = true;
+						state->wake.notify_all();
+						state->wake.wait(lock, [&state] { return state->open; });
+					}
+					return processors::sharedSample(path);
+				});
+		}
+		~HeldRead() { release(); } // so that the engine's loader can stop
+		HeldRead(const HeldRead&) = delete;
+		HeldRead& operator=(const HeldRead&) = delete;
+		HeldRead(HeldRead&&) = delete;
+		HeldRead& operator=(HeldRead&&) = delete;
+
+		// Whether the file is being read, waiting for it at most 30 s.
+		bool reading()
+		{
+			std::unique_lock lock(m_state->mutex);
+			return m_state->wake.wait_for(lock, std::chrono::seconds(30), [this] { return m_state->reading; });
+		}
+
+		void release()
+		{
+			{
+				const std::scoped_lock lock(m_state->mutex);
+				m_state->open = true;
+			}
+			m_state->wake.notify_all();
+		}
+
+	private:
+		struct State
+		{
+			fs::path file;
+			std::mutex mutex;
+			std::condition_variable wake;
+			bool reading = false;
+			bool open = false;
+		};
+		std::shared_ptr<State> m_state;
+	};
+
+	// The dummy device's output frames so far, on its own thread in real time (audio.start).
+	int64_t captured(Client& client)
+	{
+		return run(client, "audio.get").at("capturedFrames").get<int64_t>();
+	}
+
+	// Waits until the device has played frames more than from, at most 20 s, and returns the frames played.
+	int64_t playOn(Client& client, int64_t from, int64_t frames)
+	{
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+		while (captured(client) < from + frames && std::chrono::steady_clock::now() < deadline)
+			std::this_thread::sleep_for(std::chrono::milliseconds(5));
+		return captured(client);
+	}
+
+	// Whether the main mix's left channel is silent from frame start to end.
+	bool silent(Client& client, int64_t start, int64_t end)
+	{
+		const auto samples = run(client, "audio.capture", {{"channel", 0}, {"start", start}, {"frames", end - start}})
+								 .at("samples")
+								 .get<std::vector<float>>();
+		return std::all_of(samples.begin(), samples.end(), [](float value) { return value == 0.0f; });
+	}
+
+	// Waits until the main mix sounds after frame from, while the device plays on, at most 20 s.
+	bool soundsAfter(Client& client, int64_t from)
+	{
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+		while (std::chrono::steady_clock::now() < deadline)
+		{
+			const int64_t end = captured(client);
+			if (end > from && !silent(client, from, end))
+				return true;
+			std::this_thread::sleep_for(std::chrono::milliseconds(20));
+		}
+		return false;
+	}
+
+	// A quarter note at the root key on every quarter of 16, so that the sampler starts its sample again and again.
+	void addRepeatedNotes(Client& client, ObjectId track)
+	{
+		std::vector<std::array<int64_t, 3>> notes;
+		notes.reserve(16);
+		for (int64_t quarter = 0; quarter < 16; ++quarter)
+			notes.push_back({60, quarter, 1});
+		addNotes(client, track, notes);
+	}
+}
+
+TEST_CASE("a sampler gets the sample read while it plays from the posted update alone", "[integration][slow]")
+{
+	Session session;
+	Client& client = session.client;
+	HeldRead held(session.engine, session.file);
+	const auto track = run(client, "sampler.create").at("track").at("id").get<ObjectId>();
+	addRepeatedNotes(client, track);
+	run(client, "audio.start");
+	run(client, "transport.play");
+
+	// sampler.load answers while the file is read on the loader's thread, and later commands run.
+	run(client, "sampler.load", {{"track", track}, {"clip", session.clip}});
+	REQUIRE(held.reading());
+	run(client, "transport.get");
+	// Meanwhile the sampler plays the sample it had: none.
+	const int64_t start = captured(client);
+	const int64_t played = playOn(client, start, 9600);
+	CHECK(silent(client, start, played));
+
+	// Once the file is read, the audio.updateSamples the loader posts hands the sample over: no play, locate or
+	// render runs in between.
+	held.release();
+	CHECK(soundsAfter(client, played));
+	run(client, "audio.stop");
+}
+
+TEST_CASE("a sampler of a project loaded plays nothing until its own sample is read", "[integration][slow]")
+{
+	Session session;
+	Client& client = session.client;
+	const auto track = run(client, "sampler.create", {{"clip", session.clip}}).at("track").at("id").get<ObjectId>();
+	addRepeatedNotes(client, track);
+	const fs::path first = session.folder.path() / "first.dawproject";
+	run(client, "project.save", {{"path", first.u8string()}});
+	// A second version of the project, whose sampler, on the channel of the same id, plays another file.
+	gnubase::test::Audio audio = gnubase::test::readWav(session.file);
+	for (float& value : audio.samples)
+		value = -value;
+	const fs::path other = session.folder.path() / "other.wav";
+	gnubase::test::writeWav(other, audio);
+	const Json media = run(client, "media.add", {{"path", other.u8string()}});
+	const Json clip = run(client, "clip.add", {{"media", media.at("media").at("id")}}).at("clip").at("id");
+	run(client, "sampler.load", {{"track", track}, {"clip", clip}});
+	const fs::path second = session.folder.path() / "second.dawproject";
+	run(client, "project.save", {{"path", second.u8string()}});
+
+	// The first version, its sample read.
+	run(client, "project.load", {{"path", first.u8string()}});
+	run(client, "audio.render", {{"frames", 64}});
+	// The second one while its file is read: the first version's sample doesn't play meanwhile.
+	HeldRead held(session.engine, other);
+	run(client, "project.load", {{"path", second.u8string()}});
+	REQUIRE(held.reading());
+	run(client, "audio.start");
+	run(client, "transport.play"); // waits for the samples in vain
+	const int64_t start = captured(client);
+	const int64_t played = playOn(client, start, 9600);
+	CHECK(silent(client, start, played));
+	held.release();
+	CHECK(soundsAfter(client, played));
+	run(client, "audio.stop");
 }

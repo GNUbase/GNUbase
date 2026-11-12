@@ -248,6 +248,7 @@ namespace gnubase::engine
 	struct RenderSnapshot
 	{
 		uint64_t revision = 0; // counts the snapshots compiled for an engine
+		uint64_t opened = 0; // the open project (ProjectModel::openedRevision): another one when a project replaces it
 		double sampleRate = 48000.0;
 		time::TempoMap tempo{120.0}; // for processors that follow the tempo, e.g. a synced delay
 		time::SignatureMap signatures;
@@ -265,9 +266,9 @@ namespace gnubase::engine
 	};
 
 	// previous is the snapshot published before: its arranger plan stays if the new one plays the same, since the
-	// transport finds its place again in every new plan.
+	// transport finds its place again in every new plan. opened identifies the project (RenderSnapshot::opened).
 	std::unique_ptr<const RenderSnapshot> compile(
-		const Project& project, uint64_t revision, const RenderSnapshot* previous = nullptr);
+		const Project& project, uint64_t revision, const RenderSnapshot* previous = nullptr, uint64_t opened = 0);
 
 	// The arranger plan of a project: its arranger events and the active chain's steps in samples (arranger.cpp).
 	ArrangerPlan arrangerPlan(const Project& project);

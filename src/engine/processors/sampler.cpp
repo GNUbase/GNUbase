@@ -73,7 +73,8 @@ namespace gnubase::engine::processors
 			uintmax_t size = 0;
 			std::weak_ptr<const Sample> sample;
 		};
-		// ponytail: one lock for every file, read under it; a lock per file if samplers load in parallel.
+		// The file is read without the lock, so that reading a long one (the sample loader's thread) holds up no one
+		// who asks for another (sampler.normalize). Two who ask for the same new file at once both read it.
 		static std::mutex mutex;
 		static std::map<std::string, Cached> cache;
 		std::error_code error;
@@ -82,16 +83,18 @@ namespace gnubase::engine::processors
 		const uintmax_t size = error ? 0 : fs::file_size(file, error);
 		if (error)
 			return std::make_shared<const Sample>();
-		const std::scoped_lock lock(mutex);
-		for (auto entry = cache.begin(); entry != cache.end();)
-			entry = entry->second.sample.expired() ? cache.erase(entry) : std::next(entry);
-		Cached& cached = cache[path];
-		std::shared_ptr<const Sample> sample = cached.sample.lock();
-		if (!sample || cached.written != written || cached.size != size)
 		{
-			sample = loadSample(path);
-			cached = {written, size, sample};
+			const std::scoped_lock lock(mutex);
+			for (auto entry = cache.begin(); entry != cache.end();)
+				entry = entry->second.sample.expired() ? cache.erase(entry) : std::next(entry);
+			const auto found = cache.find(path);
+			if (found != cache.end() && found->second.written == written && found->second.size == size)
+				if (std::shared_ptr<const Sample> sample = found->second.sample.lock())
+					return sample;
 		}
+		std::shared_ptr<const Sample> sample = loadSample(path);
+		const std::scoped_lock lock(mutex);
+		cache[path] = {written, size, sample};
 		return sample;
 	}
 
@@ -227,9 +230,13 @@ namespace gnubase::engine::processors
 		{
 			m_heldSince[note] = m_notes + 1;
 			Voice* playing = monophonicVoice();
-			// Legato: a note played while another is held only changes the pitch; the envelopes run on.
+			// Legato: a note played while another is held only changes the pitch; the envelopes run on. Other notes,
+			// held from before monophonic mode or still releasing, fade out as without legato.
 			if (playing != nullptr && m_values[Legato] >= 0.5 && playing->held && !slices)
 			{
+				for (Voice& voice : m_voices)
+					if (voice.active && &voice != playing)
+						fadeOut(voice);
 				playing->note = note;
 				playing->channel = channel;
 				playing->started = ++m_notes;
