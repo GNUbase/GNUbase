@@ -284,6 +284,9 @@ namespace gnubase::engine
 						changes = now;
 						m_engine->post("transport.update");
 					}
+					// What the chord pads' remote keys did goes to the command thread, which applies it (#1089).
+					if (Json events = padEvents(); !events.is_null() && m_engine != nullptr)
+						m_engine->post("chordPads.remoteInput", {{"events", std::move(events)}});
 					Playback::Cue cue;
 					std::shared_ptr<const ArrangerPlan> plan;
 					{
@@ -320,6 +323,17 @@ namespace gnubase::engine
 			stopCueing(); // a later start would start a second cue thread
 			throw;
 		}
+	}
+
+	Json AudioEngine::padEvents()
+	{
+		static constexpr std::array<const char*, 4> kinds = {"triggered", "released", "modifier", "note"};
+		Json events;
+		MidiPorts::PadEvent event;
+		while (m_midi.takePadEvent(event))
+			events.push_back({{"kind", kinds.at(static_cast<size_t>(event.kind))}, {"key", event.key},
+				{"velocity", event.velocity}});
+		return events;
 	}
 
 	void AudioEngine::stopCueing()
@@ -2379,6 +2393,9 @@ namespace gnubase::engine
 				render(static_cast<uint64_t>(frames));
 				if (syncTransport()) // punched in or out, or stopped after a punch out
 					context.emit("transport.changed", transportStatus());
+				// No cue thread runs offline: what the chord pads' remote keys did applies now.
+				if (Json events = padEvents(); !events.is_null())
+					context.call("chordPads.remoteInput", {{"events", std::move(events)}});
 				Json result = status();
 				context.emit("audio.changed", result);
 				return result;

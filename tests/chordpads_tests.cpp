@@ -16,9 +16,11 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
+#include <thread>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -522,6 +524,162 @@ TEST_CASE("a MIDI input's notes on the remote keys trigger the pads while the re
 	CHECK(send(0x90, 36, 80).size() == 4);
 	CHECK(send(0x80, 36, 0).size() == 4);
 	CHECK(send(0x90, 60, 100).empty()); // the other keys don't reach it
+}
+
+namespace
+{
+	// A rig with two MIDI inputs, Keys and Other, and the pads' remote on.
+	struct RemoteRig
+	{
+		RemoteRig() : rig(backends())
+		{
+			run(rig.client, "midi.ports"); // opens the inputs
+			keys = backend->openOutput("Keys");
+			other = backend->openOutput("Other");
+			run(rig.client, "chordPads.set", {{"remote", true}});
+			run(rig.client, "audio.render", {{"frames", 64}});
+		}
+
+		std::vector<std::unique_ptr<gnubase::midi::Backend>> backends()
+		{
+			auto dummy = std::make_unique<gnubase::midi::DummyBackend>();
+			backend = dummy.get();
+			backend->addLoopback("Keys");
+			backend->addLoopback("Other");
+			std::vector<std::unique_ptr<gnubase::midi::Backend>> midi;
+			midi.push_back(std::move(dummy));
+			return midi;
+		}
+
+		// Sends a note from the input and returns what the instrument played.
+		std::vector<std::vector<int>> send(uint8_t status, uint8_t pitch, uint8_t velocity, bool fromOther = false)
+		{
+			gnubase::audio::MidiMessage message;
+			message.size = 3;
+			message.bytes = {status, pitch, velocity};
+			constexpr gnubase::HostTime second = 1000000000;
+			(fromOther ? other : keys)->send(message, gnubase::hostTime() - second);
+			return rig.played();
+		}
+
+		// Renders until the engine got what the remote keys did and the condition holds.
+		bool until(const std::function<bool()>& condition)
+		{
+			const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+			while (std::chrono::steady_clock::now() < deadline)
+			{
+				run(rig.client, "audio.render", {{"frames", 64}});
+				if (condition())
+					return true;
+				std::this_thread::sleep_for(std::chrono::milliseconds(5));
+			}
+			return false;
+		}
+
+		gnubase::midi::DummyBackend* backend = nullptr;
+		Rig rig;
+		std::unique_ptr<gnubase::midi::Output> keys;
+		std::unique_ptr<gnubase::midi::Output> other;
+	};
+}
+
+TEST_CASE(
+	"remote keys light the pads, change them with the chord modifiers and come from the chosen input", "[integration]")
+{
+	// Reference manual pp. 1355, 1386-1387.
+	RemoteRig remote;
+	Client& client = remote.rig.client;
+	CHECK(remote.send(0x90, 36, 90).size() == 4);
+	const Json lit = waitFor(client, "chordPads.triggered");
+	REQUIRE(lit.is_object());
+	CHECK(lit.at("pad") == 0);
+	CHECK(lit.at("on") == true);
+	CHECK(lit.at("remote") == true);
+	CHECK(remote.send(0x80, 36, 0).size() == 4);
+	CHECK(waitFor(client, "chordPads.triggered").at("on") == false);
+
+	// The chord modifiers, once activated: a key above the pads' range transposes the pad last triggered.
+	const Json pads = run(client, "chordPads.get");
+	CHECK(pads.at("modifiers") == false);
+	CHECK(pads.at("modifierKeys").at("transposeUp") == 53);
+	CHECK(remote.send(0x90, 53, 90) == std::vector<std::vector<int>>{{0x90, 53, 90}}); // off: it plays itself
+	run(client, "chordPads.set", {{"modifiers", true}, {"modifierKeys", {{"transposeUp", 55}}}});
+	CHECK(run(client, "chordPads.get").at("modifierKeys").at("transposeUp") == 55);
+	CHECK(remote.send(0x90, 55, 90).empty());
+	CHECK(remote.send(0x80, 55, 0).empty());
+	CHECK(remote.until([&] { return pad(client, 0).at("chord") == "C#"; }));
+	CHECK_THAT(
+		reject(client, "chordPads.set", {{"modifierKeys", {{"transposeUp", 128}}}}), ContainsSubstring("modifierKeys"));
+
+	// Only the chosen MIDI input triggers the pads; the others' notes play themselves.
+	run(client, "chordPads.set", {{"remotePort", "dummy/in/Other"}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(remote.send(0x90, 38, 90) == std::vector<std::vector<int>>{{0x90, 38, 90}});
+	CHECK(remote.send(0x90, 38, 90, true).size() == 4);
+}
+
+TEST_CASE("Assign from MIDI Input and MIDI Learn take the next notes from a MIDI input", "[integration]")
+{
+	// Reference manual pp. 1360, 1386-1388.
+	RemoteRig remote;
+	Client& client = remote.rig.client;
+	run(client, "chordPads.listen", {{"assign", 3}});
+	CHECK(run(client, "chordPads.get").at("listening") == Json{{"assign", 3}});
+	// The notes play as they are, and once they are all released their chord goes onto the pad.
+	CHECK(remote.send(0x90, 62, 90).size() == 1);
+	remote.send(0x90, 65, 90);
+	remote.send(0x90, 69, 90);
+	remote.send(0x80, 62, 0);
+	CHECK(pad(client, 3).at("chord") == "F");
+	remote.send(0x80, 65, 0);
+	remote.send(0x80, 69, 0);
+	CHECK(remote.until([&] { return pad(client, 3).at("chord") == "Dm"; }));
+	CHECK(remote.until([&] { return run(client, "chordPads.get").at("listening").is_null(); }));
+	// The remote keys trigger the pads again.
+	CHECK(remote.send(0x90, 36, 90).size() == 4);
+	remote.send(0x80, 36, 0);
+
+	// MIDI Learn: two keys make the pads' remote range, one a modifier's key.
+	run(client, "chordPads.listen", {{"learn", "range"}});
+	remote.send(0x90, 59, 90);
+	remote.send(0x90, 48, 90);
+	CHECK(remote.until([&] { return run(client, "chordPads.get").at("remoteStart") == 48; }));
+	CHECK(run(client, "chordPads.get").at("remoteEnd") == 59);
+	run(client, "chordPads.listen", {{"learn", "nextVoicing"}});
+	remote.send(0x90, 72, 90);
+	CHECK(remote.until([&] { return run(client, "chordPads.get").at("modifierKeys").at("nextVoicing") == 72; }));
+	// And one that ends without a note.
+	run(client, "chordPads.listen", {{"learn", "range"}});
+	run(client, "chordPads.listen");
+	CHECK(run(client, "chordPads.get").at("listening").is_null());
+	CHECK_THAT(reject(client, "chordPads.listen", {{"assign", 40}}), ContainsSubstring("no chord pad"));
+}
+
+TEST_CASE("pads triggered while recording become chord events on the record-enabled chord track", "[integration]")
+{
+	// Reference manual p. 1368.
+	RemoteRig remote;
+	Client& client = remote.rig.client;
+	run(client, "track.add", {{"type", "chord"}});
+	run(client, "transport.record");
+	run(client, "audio.render", {{"frames", 4800}});
+	run(client, "chordPads.trigger", {{"pad", 3}});
+	run(client, "chordPads.trigger", {{"pad", 3}, {"on", false}});
+	CHECK(run(client, "chord.get").at("events").empty()); // the chord track isn't record-enabled
+	run(client, "chord.setTrack", {{"recordEnable", true}});
+	run(client, "chordPads.trigger", {{"pad", 3}});
+	run(client, "chordPads.trigger", {{"pad", 3}, {"on", false}});
+	Json events = run(client, "chord.get").at("events");
+	REQUIRE(events.size() == 1);
+	CHECK(events[0].at("chord") == "F");
+	CHECK(events[0].at("position") > 0);
+	// From the remote keys too.
+	run(client, "audio.render", {{"frames", 48000}});
+	remote.send(0x90, 40, 90);
+	CHECK(remote.until([&] { return run(client, "chord.get").at("events").size() == 2; }));
+	CHECK(run(client, "chord.get").at("events")[1].at("chord") == "G");
+	remote.send(0x80, 40, 0);
+	run(client, "transport.stop");
 }
 
 TEST_CASE("Chord Pad Output Mode and the Chord Pads MIDI input route the pads' chords", "[integration]")

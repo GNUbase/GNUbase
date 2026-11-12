@@ -31,12 +31,22 @@ assistants. They build on the chord track's music theory ([chord-track.md](chord
 - **Presets** (pp. 1370-1371): `chordPads.loadPreset` loads the scale-based presets major (Ionian), minor (Aeolian),
   dorian, phrygian, lydian, mixolydian and locrian, the triads on the scale's seven degrees on a root, which becomes the
   root key; `load` chooses chords and players, chords only or players only (the basic player without offset).
+  `chordPads.savePreset` keeps the pads as a preset of the user's own in the user setting `chordPads.presets` (each
+  pad's chord, voicing and adaptive voicing, the root key, the scale and the player), which `chordPads.loadPreset`
+  brings back pad by pad and `chordPads.deletePreset` deletes; saving is no change to the project. `chordPads.presets`
+  lists the scale-based presets, then the user's, the order in which Previous and Next Preset step (p. 1348). The pads
+  keep the loaded preset's name (`preset`) and its scale (`scale`), which the degrees and the assistant's levels are
+  in.
+- **Symbols** (p. 1390): each pad has its degree as a roman numeral (`degree`) and in the Nashville Number System
+  (`nashville`: the degree as a number with `m` for minor, `°` for diminished and `+` for augmented, such as `2m`).
 - **Playing and recording** (pp. 1366-1368): `chordPads.trigger` plays a pad, or an assistant's chord, until its off,
   as the chord pads' notes (`midi.keyboard` `chordPads`, [onscreen-keyboard.md](onscreen-keyboard.md)). Where they go
   is Chord Pad Output Mode (`outputMode`, p. 1347): on (the default), into every MIDI and instrument track that
   monitors or is record-enabled; off, only into those whose MIDI input is the chord pads (`channel.set`
   `midiInput` `chordPads`, the Inspector's Input Routing, p. 1367), which take nothing else and get the pads in
-  either mode. The audio engine keeps the pads' notes in a buffer of their own beside all MIDI inputs' and plays it
+  either mode. While the transport records, a pad triggered with the mouse or a remote key puts its chord on a
+  record-enabled chord track (`chord.setTrack` `recordEnable`) where the cursor is (p. 1368, `chordPads.recordChord`,
+  an undo step for each chord). The audio engine keeps the pads' notes in a buffer of their own beside all MIDI inputs' and plays it
   into the tracks its thru list marks (`RenderChannel::padThru`). The tracks record what they play. The highest voice
   goes on MIDI channel 1, the next on channel 2 and so on, as the reference records pad chords. The off ends what the
   on played, even when the pad changed meanwhile. `chordPads.triggered` tells the UI, also about pads whose chords
@@ -58,6 +68,23 @@ assistants. They build on the chord track's music theory ([chord-track.md](chord
   remote that takes C1 to B1 from every MIDI input as soon as a project has chord pads would take those keys from
   every drum kit. The remote keys go through `midi::PadVoices` on the audio thread too, with the overlaps, latch and
   Filter Notes settings in `ChordPadKeys`, and play into the pads' buffer, so Chord Pad Output Mode routes them.
+  `remotePort` picks the MIDI input the remote keys come from (p. 1386, its `midi.portSettings` key; the port's
+  `chordPadPortHash` reaches the audio thread), also one outside all MIDI inputs; empty is all MIDI inputs.
+- **What the remote keys did** reaches the command thread: the audio thread queues each key that triggered or
+  released its pad, each chord modifier key and, while listening, each note (`MidiPorts::PadEvent`); the audio
+  engine's cue thread posts them as `chordPads.remoteInput`, and offline `audio.render` runs it when it is done. It
+  announces the pads with `chordPads.triggered` (`remote` true), so they light up (p. 1355), and records their chords
+  on the chord track as above.
+- **Chord modifiers** (p. 1387): with `modifiers`, the keys of `modifierKeys` (previous and next voicing, fewer and more
+  tensions, transpose down and up; C2 to F2 by default) play nothing and change the pads whose remote keys are down,
+  or else the pad triggered last. The reference changes the selected pads; the engine has no pad selection, so it
+  takes the pad that is played. Modify All Pad Voicings, Tensions and Transpose All Pads by aftertouch, pitch bend
+  or a controller are not there yet.
+- **Assign from MIDI Input and MIDI Learn** (pp. 1360, 1388): `chordPads.listen` `assign` (a pad) takes the next notes
+  from the MIDI inputs, which play as they are meanwhile, and once they are all released assigns their chord
+  (`chordPads.assign` `pitches`); `learn` `range` takes the next two keys as the remote range, `learn` with a
+  modifier's name the next key as its key. While it listens (`midi.padListen`), no remote key triggers a pad.
+  `chordPads.listening` and `chordPads.get` `listening` say what it listens for.
 - **Step input** (p. 1369): with `stepInput`, `chordPads.step` puts a pad's chord on the chord track at the start of
   the bar of the step position (`stepPosition`, ticks; the chord track is added if there is none) and moves the
   position to the next bar; with `moveInsert` the chord events from there on move a bar later first, without it a

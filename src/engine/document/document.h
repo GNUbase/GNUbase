@@ -936,6 +936,11 @@ namespace gnubase::engine
 		bool latch = false;                 // Latch Chords (p. 1386): a pad plays until it is triggered again
 		std::string overlaps = "holdFirst"; // holdFirst, legato or stopFirst (p. 1379)
 		bool filterNotes = false;           // Filter Notes From MIDI Thru: remote keys without a chord play nothing
+		// The chord modifiers' remote keys (p. 1387) and whether they are active: previous and next voicing, fewer
+		// and more tensions, transpose down and up, by default C2 to F2, above the pads' range.
+		bool modifiers = false;
+		std::array<int, 6> modifierKeys = {48, 49, 50, 51, 52, 53};
+		std::string remotePort; // the MIDI input the remote keys come from (midi.portSettings key), empty for all
 	};
 
 	// What an automation lane changes.
@@ -1725,10 +1730,10 @@ namespace gnubase::engine
 	{
 		return std::tie(a.pads, a.rootKey, a.reference, a.octaveOffset, a.velocity, a.remote, a.remoteStart,
 				   a.remoteEnd, a.preset, a.scale, a.stepInput, a.moveInsert, a.stepPosition, a.outputMode, a.latch,
-				   a.overlaps, a.filterNotes) ==
+				   a.overlaps, a.filterNotes, a.modifiers, a.modifierKeys, a.remotePort) ==
 			std::tie(b.pads, b.rootKey, b.reference, b.octaveOffset, b.velocity, b.remote, b.remoteStart, b.remoteEnd,
 				b.preset, b.scale, b.stepInput, b.moveInsert, b.stepPosition, b.outputMode, b.latch, b.overlaps,
-				b.filterNotes);
+				b.filterNotes, b.modifiers, b.modifierKeys, b.remotePort);
 	}
 
 	inline bool operator==(const AutomationTarget& a, const AutomationTarget& b)

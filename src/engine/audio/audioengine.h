@@ -303,6 +303,9 @@ namespace gnubase::engine
 			time::Samples playsOn = -1);
 		void startCueing();
 		void stopCueing();
+		// What the chord pads' remote keys did since the last call, as chordPads.remoteInput takes it; null for
+		// nothing. Only one thread at a time: the cue thread, or the command thread while it doesn't run.
+		Json padEvents();
 		void startDevice();
 		void stopDevice();
 		// Gives MIDI and instrument channels their sequencers and instruments, and notes the MIDI tracks that left an

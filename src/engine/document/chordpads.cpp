@@ -53,6 +53,36 @@ namespace gnubase::engine
 		constexpr std::array<const char*, 7> g_numerals = {"I", "II", "III", "IV", "V", "VI", "VII"};
 		constexpr int g_maxPads = 32;
 		constexpr std::string_view g_presetsKey = "chordPads.presets";
+		// The chord modifiers' remote keys (reference manual p. 1387), in ChordPads::modifierKeys' order.
+		constexpr std::array<const char*, 6> g_modifierNames = {
+			"previousVoicing", "nextVoicing", "fewerTensions", "moreTensions", "transposeDown", "transposeUp"};
+
+		Json modifierKeysJson(const ChordPads& pads)
+		{
+			Json keys = Json::object();
+			for (size_t i = 0; i < g_modifierNames.size(); ++i)
+				keys[g_modifierNames.at(i)] = pads.modifierKeys.at(i);
+			return keys;
+		}
+
+		// What chordPads.listen listens for, and what chordPads.remoteInput saw of the remote keys (#1089).
+		struct RemoteState
+		{
+			std::set<int> held;       // the pads whose remote keys are down
+			int last = -1;            // the pad triggered last, which the chord modifiers change when none is held
+			std::string listen;       // "", "assign" or "learn"
+			int pad = -1;             // assign: the pad that gets the chord
+			std::string target;       // learn: "range" or a modifier's name
+			std::set<int> down;       // the notes down while listening
+			std::vector<int> pitches; // assign: the notes played; learn range: the keys pressed
+
+			Json listening() const
+			{
+				if (listen.empty())
+					return nullptr;
+				return listen == "assign" ? Json{{"assign", pad}} : Json{{"learn", target}};
+			}
+		};
 
 		// The user's own chord pads presets (chordPads.savePreset), by name.
 		Json userPresets(CommandContext& context)
@@ -392,6 +422,10 @@ namespace gnubase::engine
 		keys.filter = pads.filterNotes;
 		keys.overlap = overlapOf(pads.overlaps);
 		keys.output = pads.outputMode;
+		keys.modifiers = pads.modifiers;
+		for (size_t i = 0; i < keys.modifierKeys.size(); ++i)
+			keys.modifierKeys.at(i) = static_cast<uint8_t>(std::clamp(pads.modifierKeys.at(i), 0, 127));
+		keys.portHash = chordPadPortHash(pads.remotePort);
 		const std::vector<std::vector<int>> voicings = chordPadVoicings(pads);
 		for (int key = std::max(pads.remoteStart, 0); key <= std::min(pads.remoteEnd, 127); ++key)
 		{
@@ -432,7 +466,8 @@ namespace gnubase::engine
 			{"remoteStart", pads.remoteStart}, {"remoteEnd", pads.remoteEnd}, {"preset", pads.preset},
 			{"scale", pads.scale}, {"stepInput", pads.stepInput}, {"moveInsert", pads.moveInsert},
 			{"stepPosition", pads.stepPosition}, {"outputMode", pads.outputMode}, {"latch", pads.latch},
-			{"overlaps", pads.overlaps}, {"filterNotes", pads.filterNotes}};
+			{"overlaps", pads.overlaps}, {"filterNotes", pads.filterNotes}, {"modifiers", pads.modifiers},
+			{"modifierKeys", modifierKeysJson(pads)}, {"remotePort", pads.remotePort}};
 	}
 
 	void chordPadsFromJson(Project& project, const Json& json)
@@ -481,6 +516,12 @@ namespace gnubase::engine
 		if (std::find(overlaps.begin(), overlaps.end(), pads.overlaps) == overlaps.end())
 			pads.overlaps = "holdFirst";
 		pads.filterNotes = json.value("filterNotes", false);
+		pads.modifiers = json.value("modifiers", false);
+		const Json keys = json.value("modifierKeys", Json::object());
+		for (size_t i = 0; i < g_modifierNames.size(); ++i)
+			if (keys.is_object() && keys.contains(g_modifierNames.at(i)) && keys.at(g_modifierNames.at(i)).is_number())
+				pads.modifierKeys.at(i) = std::clamp(keys.at(g_modifierNames.at(i)).get<int>(), 0, 127);
+		pads.remotePort = json.value("remotePort", std::string());
 	}
 
 	void ProjectModel::registerChordPadCommands(Engine& engine)
@@ -496,12 +537,14 @@ namespace gnubase::engine
 					{"remoteStart", integerSchema}, {"remoteEnd", integerSchema}, {"preset", stringSchema},
 					{"scale", stringSchema}, {"stepInput", booleanSchema}, {"moveInsert", booleanSchema},
 					{"stepPosition", integerSchema}, {"outputMode", booleanSchema}, {"latch", booleanSchema},
-					{"overlaps", stringSchema}, {"filterNotes", booleanSchema}}},
+					{"overlaps", stringSchema}, {"filterNotes", booleanSchema}, {"modifiers", booleanSchema},
+					{"modifierKeys", {{"type", "object"}}}, {"remotePort", stringSchema}}},
 			{"required",
 				{"pads", "rootKey", "reference", "octaveOffset", "velocity", "remote", "remoteStart", "remoteEnd",
 					"preset", "scale", "stepInput", "moveInsert", "stepPosition", "outputMode", "latch", "overlaps",
-					"filterNotes"}}};
+					"filterNotes", "modifiers", "modifierKeys", "remotePort"}}};
 		// Each command that changes the pads announces them.
+		auto remote = std::make_shared<RemoteState>();
 		const auto changed = [](Project& project, CommandContext& context)
 		{
 			Json result = chordPadsJson(project);
@@ -520,9 +563,15 @@ namespace gnubase::engine
 				"velocity (of pads triggered with the mouse); remote, remoteStart and remoteEnd (the pads' remote "
 				"keys); preset (the last loaded) and scale (its scale); stepInput, moveInsert and stepPosition "
 				"(ticks); outputMode, latch, "
-				"overlaps and filterNotes (as chordPads.set takes them).",
+				"overlaps, filterNotes, modifiers, modifierKeys and remotePort (as chordPads.set takes them); "
+				"listening, what chordPads.listen listens for ({assign: pad} or {learn: target}), or null.",
 				objectSchema({}), padsResult, true},
-			[](Project& project, CommandContext&) { return chordPadsJson(project); });
+			[remote](Project& project, CommandContext&)
+			{
+				Json result = chordPadsJson(project);
+				result["listening"] = remote->listening();
+				return result;
+			});
 		add(engine,
 			{"chordPads.set", 1,
 				"Changes the chord pads' settings: rootKey (0 C to 11 B; with transposePads the assigned unlocked pads "
@@ -542,13 +591,26 @@ namespace gnubase::engine
 				"chord played over another does with the other's notes: holdFirst (the default: they go on until "
 				"their own off; shared notes sound once), legato (they end but for the shared ones, which go on) or "
 				"stopFirst (they all end). filterNotes (Filter Notes From MIDI Thru): the remote keys of pads without "
-				"a chord play nothing.",
+				"a chord play nothing. modifiers activates the chord modifiers' remote keys (p. 1387), modifierKeys "
+				"(MIDI notes by name: previousVoicing, nextVoicing, fewerTensions, moreTensions, transposeDown, "
+				"transposeUp; C2 to F2 by default): such a key changes the pads whose remote keys are down, or else "
+				"the "
+				"one triggered last, and plays nothing. remotePort: the MIDI input whose notes trigger the pads, its "
+				"midi.portSettings key such as dummy/in/Keys (p. 1386); empty (the default) for all MIDI inputs.",
 				objectSchema({{"rootKey", integerSchema}, {"transposePads", booleanSchema}, {"padCount", integerSchema},
 					{"octaveOffset", integerSchema}, {"velocity", integerSchema}, {"remote", booleanSchema},
 					{"remoteStart", integerSchema}, {"remoteEnd", integerSchema}, {"stepInput", booleanSchema},
 					{"moveInsert", booleanSchema}, {"stepPosition", integerSchema}, {"stepBars", integerSchema},
 					{"outputMode", booleanSchema}, {"latch", booleanSchema},
-					{"overlaps", {{"type", "string"}, {"enum", overlapNames()}}}, {"filterNotes", booleanSchema}}),
+					{"overlaps", {{"type", "string"}, {"enum", overlapNames()}}}, {"filterNotes", booleanSchema},
+					{"modifiers", booleanSchema},
+					{"modifierKeys",
+						{{"type", "object"}, {"additionalProperties", false},
+							{"properties",
+								{{"previousVoicing", integerSchema}, {"nextVoicing", integerSchema},
+									{"fewerTensions", integerSchema}, {"moreTensions", integerSchema},
+									{"transposeDown", integerSchema}, {"transposeUp", integerSchema}}}}},
+					{"remotePort", stringSchema}}),
 				padsResult, false},
 			[changed](Project& project, CommandContext& context)
 			{
@@ -591,6 +653,16 @@ namespace gnubase::engine
 				pads.latch = parameters.value("latch", pads.latch);
 				pads.overlaps = parameters.value("overlaps", pads.overlaps);
 				pads.filterNotes = parameters.value("filterNotes", pads.filterNotes);
+				pads.modifiers = parameters.value("modifiers", pads.modifiers);
+				if (parameters.contains("modifierKeys"))
+					for (size_t i = 0; i < g_modifierNames.size(); ++i)
+						if (const Json& keys = parameters.at("modifierKeys"); keys.contains(g_modifierNames.at(i)))
+						{
+							const int key = keys.at(g_modifierNames.at(i)).get<int>();
+							require(key >= 0 && key <= 127, "modifierKeys must be MIDI notes, 0 to 127");
+							pads.modifierKeys.at(i) = key;
+						}
+				pads.remotePort = parameters.value("remotePort", pads.remotePort);
 				if (parameters.contains("stepPosition"))
 				{
 					const time::Ticks end = stepEnd(project);
@@ -1007,6 +1079,49 @@ namespace gnubase::engine
 				return Json{{"part", toJson(project.midiParts.at(part))}};
 			});
 
+		// While the transport records, a triggered pad's chord becomes a chord event on the record-enabled chord track
+		// (reference manual p. 1368), where the cursor is.
+		const auto record = [this](CommandContext& context, int pad)
+		{
+			const ChordPads& pads = m_project.chordPads;
+			if (!m_project.chords.recordEnable || pad < 0 || pad >= static_cast<int>(pads.pads.size()) ||
+				pads.pads[static_cast<size_t>(pad)].chord.empty() ||
+				std::none_of(
+					m_project.trackById.begin(), m_project.trackById.end(),
+					[](const auto& entry) { return entry.second.type == TrackType::Chord; }))
+				return;
+			const Json transport = context.call("transport.get");
+			if (transport.value("recording", false))
+				context.call("chordPads.recordChord", {{"pad", pad}, {"position", transport.at("position")}});
+		};
+		add(engine,
+			{"chordPads.recordChord", 1,
+				"Records a chord pad's chord as a chord event on the chord track at position (samples on the "
+				"transport), as pads triggered while the transport records do on a record-enabled chord track "
+				"(reference manual p. 1368); a chord event there gets the pad's chord.",
+				objectSchema({{"pad", integerSchema}, {"position", integerSchema}}, {"pad", "position"}),
+				{{"type", "object"}}, false},
+			[this](Project& project, CommandContext& context)
+			{
+				const ChordPad& pad = padAt(project.chordPads, context.parameters().at("pad"));
+				require(!pad.chord.empty(), "the chord pad has no chord");
+				const auto position = context.parameters().at("position").get<int64_t>();
+				require(position >= 0 && position <= time::g_maxPosition, "position must be a transport position");
+				const auto track = std::find_if(project.trackById.begin(), project.trackById.end(),
+					[](const auto& entry) { return entry.second.type == TrackType::Chord; });
+				require(track != project.trackById.end(), "the project has no chord track");
+				const int64_t at = time::rebase(
+					{time::TimeBase::Linear, position}, track->second.timeBase, project.tempo, project.sampleRate)
+									   .value;
+				const std::string chord = pad.chord;
+				const auto there = std::find_if(project.chords.events.begin(), project.chords.events.end(),
+					[at](const ChordEvent& event) { return event.position.value == at; });
+				if (there != project.chords.events.end())
+					return runEdit(
+						"chord.set", project, {{"events", {{{"event", there->id}, {"chord", chord}}}}}, context);
+				return runEdit("chord.add", project, {{"position", at}, {"chord", chord}}, context);
+			});
+
 		// The chords that sound, by what triggered them: the pads by their index, an audition after them.
 		auto voices = std::make_shared<midi::PadVoices>();
 		addControl(engine,
@@ -1024,7 +1139,7 @@ namespace gnubase::engine
 				needsOne(objectSchema({{"pad", integerSchema}, {"chord", stringSchema}, {"on", booleanSchema},
 					{"velocity", integerSchema}})),
 				objectSchema({{"pitches", padsSchema}, {"on", booleanSchema}}, {"pitches", "on"}), false},
-			[this, voices](CommandContext& context)
+			[this, voices, record, remote](CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
 				const ChordPads& pads = m_project.chordPads;
@@ -1093,7 +1208,149 @@ namespace gnubase::engine
 								{"on", false}, {"pitches", Json::array()}});
 				context.emit(
 					"chordPads.triggered", {{"pad", index}, {"chord", chord}, {"on", on}, {"pitches", pitches}});
+				if (on && index >= 0)
+				{
+					remote->last = index;
+					record(context, index);
+				}
 				return Json{{"pitches", pitches}, {"on", on}};
+			});
+		addControl(engine,
+			{"chordPads.listen", 1,
+				"Listens to the next notes from the MIDI inputs, which play as they are meanwhile: assign (Assign from "
+				"MIDI Input, reference manual p. 1360), a pad that gets the chord of the notes played once they are "
+				"all released; learn (MIDI Learn, p. 1388): range, the next two keys make the pads' remote range, or "
+				"a chord modifier's name (chordPads.set modifierKeys), the next key becomes its key. Without either "
+				"it stops listening. Emits chordPads.listening with listening ({assign: pad}, {learn: target} or "
+				"null), also once it is done; chordPads.get has it too.",
+				objectSchema({{"assign", integerSchema},
+					{"learn",
+						{{"type", "string"},
+							{"enum",
+								{"range", "previousVoicing", "nextVoicing", "fewerTensions", "moreTensions",
+									"transposeDown", "transposeUp"}}}}}),
+				objectSchema({{"listening", {{"type", {"object", "null"}}}}}, {"listening"}), false},
+			[this, remote](CommandContext& context)
+			{
+				const Json& parameters = context.parameters();
+				require(!(parameters.contains("assign") && parameters.contains("learn")), "give assign or learn");
+				RemoteState& state = *remote;
+				if (parameters.contains("assign"))
+				{
+					const int pad = parameters.at("assign").get<int>();
+					require(pad >= 0 && pad < static_cast<int>(m_project.chordPads.pads.size()),
+						"no chord pad " + std::to_string(pad));
+					require(!m_project.chordPads.pads[static_cast<size_t>(pad)].locked,
+						"chord pad " + std::to_string(pad) + " is locked");
+				}
+				state.listen = parameters.contains("assign") ? "assign" : parameters.contains("learn") ? "learn" : "";
+				state.pad = parameters.value("assign", -1);
+				state.target = parameters.value("learn", std::string());
+				state.down.clear();
+				state.pitches.clear();
+				context.call("midi.padListen", {{"on", !state.listen.empty()}});
+				const Json result = {{"listening", state.listening()}};
+				context.emit("chordPads.listening", result);
+				return result;
+			});
+		addControl(engine,
+			{"chordPads.remoteInput", 1,
+				"What the chord pads' remote keys did, as the audio engine reports it from the MIDI inputs (#1089): "
+				"each of events has a kind and a key (a MIDI note) and velocity (0 for a note-off): triggered (the key "
+				"triggered its pad, which chordPads.triggered announces with remote true, and while the transport "
+				"records a record-enabled chord track records its chord), released (the key ended its pad's chord), "
+				"modifier (a chord modifier's key, chordPads.set modifierKeys: it changes the pads whose keys are "
+				"down, else the one triggered last) and note (a note while chordPads.listen listens).",
+				objectSchema(
+					{{"events",
+						{{"type", "array"},
+							{"items",
+								objectSchema(
+									{{"kind",
+										 {{"type", "string"}, {"enum", {"triggered", "released", "modifier", "note"}}}},
+										{"key", integerSchema}, {"velocity", integerSchema}},
+									{"kind", "key"})}}}},
+					{"events"}),
+				objectSchema({}), false},
+			[this, remote, record](CommandContext& context)
+			{
+				RemoteState& state = *remote;
+				for (const Json& event : context.parameters().at("events"))
+				{
+					const ChordPads& pads = m_project.chordPads;
+					const auto kind = event.at("kind").get<std::string>();
+					const int key = event.at("key").get<int>();
+					const int velocity = event.value("velocity", 0);
+					const int pad = key - pads.remoteStart;
+					const bool isPad = pad >= 0 && pad < static_cast<int>(pads.pads.size()) && key <= pads.remoteEnd;
+					if ((kind == "triggered" || kind == "released") && isPad)
+					{
+						const bool on = kind == "triggered";
+						if (on)
+						{
+							state.held.insert(pad);
+							state.last = pad;
+						}
+						else
+						{
+							state.held.erase(pad);
+						}
+						const auto index = static_cast<size_t>(pad);
+						context.emit("chordPads.triggered",
+							{{"pad", pad}, {"chord", pads.pads[index].chord}, {"on", on},
+								{"pitches", on ? Json(chordPadVoicings(pads).at(index)) : Json::array()},
+								{"remote", true}});
+						if (on)
+							record(context, pad);
+					}
+					else if (kind == "modifier")
+					{
+						const auto found = std::find(pads.modifierKeys.begin(), pads.modifierKeys.end(), key);
+						std::vector<int> targets(state.held.begin(), state.held.end());
+						if (targets.empty() && state.last >= 0 && state.last < static_cast<int>(pads.pads.size()))
+							targets.push_back(state.last);
+						if (found == pads.modifierKeys.end() || targets.empty())
+							continue;
+						const auto which = found - pads.modifierKeys.begin();
+						const int step = which % 2 == 0 ? -1 : 1;
+						const char* change = which < 2 ? "voicing" : which < 4 ? "tensions" : "transpose";
+						context.call("chordPads.modify", {{"pads", targets}, {change, step}});
+					}
+					else if (kind == "note" && !state.listen.empty())
+					{
+						if (velocity > 0)
+						{
+							state.down.insert(key);
+							if (std::find(state.pitches.begin(), state.pitches.end(), key) == state.pitches.end())
+								state.pitches.push_back(key);
+						}
+						else
+						{
+							state.down.erase(key);
+						}
+						bool done = false;
+						if (state.listen == "assign" && state.down.empty() && !state.pitches.empty())
+						{
+							context.call("chordPads.assign",
+								{{"assignments", {{{"pad", state.pad}, {"pitches", state.pitches}}}}});
+							done = true;
+						}
+						else if (state.listen == "learn" && state.target == "range" && state.pitches.size() == 2)
+						{
+							const auto [low, high] = std::minmax(state.pitches.front(), state.pitches.back());
+							context.call("chordPads.set", {{"remoteStart", low}, {"remoteEnd", high}});
+							done = true;
+						}
+						else if (state.listen == "learn" && state.target != "range" && velocity > 0)
+						{
+							context.call("chordPads.set", {{"modifierKeys", {{state.target, key}}}});
+							done = true;
+						}
+						if (done)
+							context.call("chordPads.listen");
+					}
+				}
+				return Json::object();
 			});
 		add(engine,
 			{"chordPads.assistant", 1,

@@ -70,6 +70,28 @@ namespace gnubase::engine
 		// The same for the chord pads' notes (chordPads.trigger), which go where the chord pads play (take's pads).
 		bool playPads(const audio::MidiMessage& message) { return m_queue.push(g_padsSlot, message, hostTime()); }
 
+		// What the chord pads' remote keys did on the audio thread (#1089), for the command thread to apply
+		// (chordPads.remoteInput): a key that triggered or released its pad, a chord modifier's key, and while
+		// listenForPads is on, every port's note.
+		struct PadEvent
+		{
+			enum class Kind : uint8_t
+			{
+				Triggered,
+				Released,
+				Modifier,
+				Note,
+			};
+			Kind kind = Kind::Note;
+			uint8_t key = 0;
+			uint8_t velocity = 0; // 0 for a note-off
+		};
+		// One thread, the audio engine's cue thread: the next event the audio thread found. False if there is none.
+		bool takePadEvent(PadEvent& event) { return m_padEvents.tryPop(event); }
+		// Command thread: while on, every port's note goes to takePadEvent as it plays on, and no remote key triggers
+		// a pad (Assign from MIDI Input, MIDI Learn: chordPads.listen).
+		void listenForPads(bool on) { m_padListen.store(on, std::memory_order_relaxed); }
+
 		// Drops the input that waits for the audio thread. Only while no audio thread takes.
 		void clear() { m_queue.clear(); }
 
@@ -122,6 +144,10 @@ namespace gnubase::engine
 		rt::SpscQueue<Received> m_monitor;
 		// Audio thread: the pitches each remote key's note-on played, until its note-off.
 		midi::PadVoices m_padVoices;
+		rt::SpscQueue<PadEvent> m_padEvents{512};
+		std::atomic<bool> m_padListen{false};
+		// Per input slot, chordPadPortHash of its port's key, for the MIDI input that the remote keys come from.
+		std::array<std::atomic<uint64_t>, g_maxInputs> m_slotHashes{};
 		std::atomic<size_t> m_monitorDropped{0};
 	};
 }

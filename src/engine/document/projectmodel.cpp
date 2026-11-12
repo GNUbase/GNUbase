@@ -3355,6 +3355,7 @@ namespace gnubase::engine
 			{"chordPads.loadPreset", "Load chord pads preset"},
 			{"chordPads.step", "Insert chord from pad"},
 			{"chordPads.toTrack", "Chord pad to track"},
+			{"chordPads.recordChord", "Record chord from pad"},
 			{"automationLane.add", "Add automation lane"},
 			{"automationLane.set", "Change automation lane"},
 			{"automationLane.remove", "Remove automation lane"},

@@ -45,6 +45,7 @@ namespace gnubase::engine
 		}
 		const int slot = port.slot;
 		m_allInputs[static_cast<size_t>(slot)].store(inAllInputs(port), std::memory_order_relaxed); // first open too
+		m_slotHashes[static_cast<size_t>(slot)].store(chordPadPortHash(key(port)), std::memory_order_relaxed);
 		try
 		{
 			port.input = port.backend->openInput(port.info.id,
@@ -153,9 +154,26 @@ namespace gnubase::engine
 					(slot == g_padsSlot ? pads : allInputs).add(message); // not a port, so not for the monitor
 					return;
 				}
-				if (m_allInputs[static_cast<size_t>(slot)].load(std::memory_order_relaxed) &&
-					!playPad(message, padKeys, pads))
-					allInputs.add(message);
+				const bool inAll = m_allInputs[static_cast<size_t>(slot)].load(std::memory_order_relaxed);
+				const int status = message.bytes[0] & 0xF0;
+				if (m_padListen.load(std::memory_order_relaxed) && message.size == 3 &&
+					(status == 0x90 || status == 0x80))
+				{
+					const bool on = status == 0x90 && message.bytes[2] > 0;
+					m_padEvents.tryPush(PadEvent{PadEvent::Kind::Note, static_cast<uint8_t>(message.bytes[1] & 0x7F),
+						static_cast<uint8_t>(on ? message.bytes[2] : 0)});
+					if (inAll)
+						allInputs.add(message);
+				}
+				else
+				{
+					// The remote keys come from all MIDI inputs, or only from the chosen one, which may be outside
+					// them.
+					const uint64_t hash = m_slotHashes[static_cast<size_t>(slot)].load(std::memory_order_relaxed);
+					const bool remote = padKeys.portHash == 0 ? inAll : hash == padKeys.portHash;
+					if (!(remote && playPad(message, padKeys, pads)) && inAll)
+						allInputs.add(message);
+				}
 				if (!m_monitor.tryPush(Received{slot, block.position + message.offset, message}))
 					m_monitorDropped.fetch_add(1, std::memory_order_relaxed);
 			});
@@ -176,23 +194,43 @@ namespace gnubase::engine
 			note.bytes[2] = velocity;
 			pads.add(note);
 		};
+		const auto tell = [this, key](PadEvent::Kind kind, uint8_t velocity)
+		{ m_padEvents.tryPush(PadEvent{kind, static_cast<uint8_t>(key), velocity}); };
+		const bool off = status == 0x80 || message.bytes[2] == 0;
+		// A chord modifier's key plays nothing; the command thread changes the pads.
+		if (keys.active && keys.modifiers &&
+			std::find(keys.modifierKeys.begin(), keys.modifierKeys.end(), key) != keys.modifierKeys.end())
+		{
+			if (!off)
+				tell(PadEvent::Kind::Modifier, message.bytes[2]);
+			return true;
+		}
 		// A remote key that Filter Notes keeps from MIDI thru, its note-offs too.
 		const bool filtered = keys.active && keys.filter && key >= keys.start && key <= keys.end;
-		if (status == 0x80 || message.bytes[2] == 0)
+		if (off)
 		{
 			if (!m_padVoices.holds(key))
 				return filtered;
 			if (!keys.latch)
+			{
 				m_padVoices.off(key, emit);
+				tell(PadEvent::Kind::Released, 0);
+			}
 			return true;
 		}
 		const uint8_t count = keys.counts[key];
 		if (!keys.active || count == 0)
 			return filtered;
 		if (keys.latch && m_padVoices.holds(key))
+		{
 			m_padVoices.off(key, emit);
+			tell(PadEvent::Kind::Released, 0);
+		}
 		else
+		{
 			m_padVoices.on(key, keys.pitches[key].data(), count, message.bytes[2], keys.overlap, emit);
+			tell(PadEvent::Kind::Triggered, message.bytes[2]);
+		}
 		return true;
 	}
 
@@ -271,6 +309,20 @@ namespace gnubase::engine
 	{
 		for (const std::unique_ptr<gnubase::midi::Backend>& backend : m_backends)
 			backend->onPortsChanged([&engine] { engine.post("midi.refresh"); });
+
+		engine.registerCommand(
+			{"midi.padListen", 1,
+				"Whether every MIDI input port's notes also go to the chord pads as they play (chordPads.listen, "
+				"which uses this, and chordPads.remoteInput), with the pads' remote keys left alone meanwhile.",
+				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["on"],
+					"properties": {"on": {"type": "boolean"}}})"),
+				Json::object(), false},
+			[this](CommandContext& context)
+			{
+				listOnce();
+				listenForPads(context.parameters().at("on").get<bool>());
+				return Json::object();
+			});
 
 		engine.registerCommand(
 			{"midi.ports", 1,

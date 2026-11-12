@@ -248,9 +248,27 @@ namespace gnubase::engine
 		bool filter = false;
 		midi::PadOverlap overlap = midi::PadOverlap::HoldFirst;
 		bool output = true; // Chord Pad Output Mode: the pads play into the tracks of all MIDI inputs too
+		// The chord modifiers' remote keys (p. 1387), while they are active: previous and next voicing, fewer and more
+		// tensions, transpose down and up. They play nothing; the command thread applies them (chordPads.remoteInput).
+		bool modifiers = false;
+		std::array<uint8_t, 6> modifierKeys{};
+		// The MIDI input that the remote keys come from (p. 1386), chordPadPortHash of its midi.portSettings key such
+		// as "dummy/in/Keys"; 0 for all inputs that belong to all MIDI inputs.
+		uint64_t portHash = 0;
 		std::array<uint8_t, 128> counts{};
 		std::array<std::array<uint8_t, g_maxPitches>, 128> pitches{};
 	};
+
+	// A MIDI port's key (backend/in/id) as ChordPadKeys::portHash has it: FNV-1a, 0 for none.
+	inline uint64_t chordPadPortHash(const std::string& key)
+	{
+		if (key.empty())
+			return 0;
+		uint64_t hash = 14695981039346656037ULL;
+		for (const char letter : key)
+			hash = (hash ^ static_cast<unsigned char>(letter)) * 1099511628211ULL;
+		return hash == 0 ? 1 : hash;
+	}
 
 	// What the audio thread needs from the project, compiled by the command thread after every change and handed
 	// over with rt::SnapshotPublisher. Objects refer to each other by index and every position is in the project's
