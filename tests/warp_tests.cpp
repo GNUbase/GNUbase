@@ -1099,6 +1099,9 @@ TEST_CASE("warped events reach other applications through DAWproject's Warps", "
 
 TEST_CASE("the disk thread keeps up with several warped events on the quality preset", "[integration][realtime]")
 {
+#ifdef GNUBASE_SANITIZED
+	SKIP("sanitizer builds are too slow to keep up in real time");
+#endif
 	const test::TempDir dir;
 	engine::Engine engine;
 	engine::Client client(engine);
