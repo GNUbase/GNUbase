@@ -315,6 +315,34 @@ namespace gnubase::engine
 		checkRatio(before, {length, length});
 	}
 
+	Json audioEventJson(const Project& project, const AudioEvent& event)
+	{
+		Json json = toJson(event);
+		if (warped(project.clips.at(event.clip)))
+		{
+			const EventSpan span = eventSpan(project, event);
+			json["playedLength"] = span.end - span.start;
+			json["fadeRoom"] = fadeRoom(project, event);
+		}
+		return json;
+	}
+
+	void announceWarpedEvents(const Project& before, const Project& after, CommandContext& context)
+	{
+		for (const auto& [id, event] : after.audioEvents)
+		{
+			const auto previous = before.audioEvents.find(id);
+			const bool now = warped(after.clips.at(event.clip));
+			const bool was = previous != before.audioEvents.end() && warped(before.clips.at(previous->second.clip));
+			if (!now && !was)
+				continue;
+			const Json json = audioEventJson(after, event);
+			if (previous != before.audioEvents.end() && json == audioEventJson(before, previous->second))
+				continue;
+			context.emit("audioEvent.changed", {{"event", json}});
+		}
+	}
+
 	bool warped(const Clip& clip)
 	{
 		return clip.warp.musical || !clip.warp.markers.empty();

@@ -240,4 +240,18 @@ TEST_CASE("the fade dialog gives every selected event the fades it shows, as one
 		CHECK(event.at("fadeOut") == Json{{"length", 6000}, {"shape", "linear"}});
 	}
 	CHECK(app.call("history.get").at("steps").back().at("action") == "Change fades");
+
+	// A stretched warped event's fades fit into what it plays for, its fadeRoom (#965): at 240 BPM in musical mode
+	// the clip plays at half speed at the project's 120, so the one second event plays for two.
+	const Json clip = eventOf(app, events.first).at("clip");
+	app.call("clip.setWarp", {{"clip", clip}, {"musical", true}});
+	app.call("clip.setWarp", {{"clip", clip}, {"tempo", 240.0}});
+	REQUIRE(app.waitUntil([&display]
+		{ return display.project().is_object() && display.project().at("audioEvents").at(0).contains("fadeRoom"); }));
+	display.select({events.first});
+	run(app, "audio.fadeEditor", "#fade-editor");
+	type(app, "#fade-out-length", "1500");
+	click(app, "#fade-editor-ok");
+	closes(app, "#fade-editor");
+	CHECK(eventOf(app, events.first).at("fadeOut") == Json{{"length", 72000}, {"shape", "linear"}});
 }
