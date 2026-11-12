@@ -627,22 +627,44 @@ TEST_CASE("a second resize release can precede the first release's project", "[u
 	clock->advance(1.0);
 	f.automation.press(std::nullopt, f.at(298, 60), ui::MouseButton::Left);
 	f.automation.move(std::nullopt, f.at(348, 60));
-	REQUIRE(f.waitUntil([&bothEnds] { return bothEnds(3.5); }));
+	REQUIRE(f.waitUntil([&] { return bothEnds(3.5) && f.binding.waiting("project.get") == 0; }));
 	f.automation.release(std::nullopt, f.at(348, 60), ui::MouseButton::Left);
 	// No shell step has handed the first release's project to the display yet.
 	REQUIRE(f.display.project().at("midiParts")[0].at("length") == 4 * g_quarter);
 	clock->advance(1.0);
 	f.automation.press(std::nullopt, f.at(348, 60), ui::MouseButton::Left);
 	f.automation.move(std::nullopt, f.at(368, 60));
-	const auto previewDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-	while (!bothEnds(3.7))
-	{
-		REQUIRE(std::chrono::steady_clock::now() < previewDeadline);
-		f.ui.shell.step(milliseconds(5));
-		REQUIRE(f.display.project().at("midiParts")[0].at("length") == 4 * g_quarter);
-	}
-	f.automation.release(std::nullopt, f.at(368, 60), ui::MouseButton::Left);
-	REQUIRE(f.display.project().at("midiParts")[0].at("length") == 4 * g_quarter);
+	bool secondReleased = false;
+	bool sawFirstProject = false;
+	bool sawFinalProject = false;
+	const auto projects = f.binding.onResult("project.get",
+		[&](const engine::Result& result)
+		{
+			if (!secondReleased)
+				return;
+			REQUIRE(result.ok());
+			const auto length = result.value.at("midiParts")[0].at("length").get<int64_t>();
+			INFO("project length: " << length);
+			sawFirstProject = sawFirstProject || length == 5 * g_quarter;
+			sawFinalProject = sawFinalProject || length == (27 * g_quarter) / 5;
+			CHECK(bothEnds(3.7)); // inspect every project reply, including several in the same binding update
+		});
+	// The first resize's history event asks for its project after this preview was queued. Release from the
+	// preview's handler, after its done showed the preview and before update() can hand on the project reply.
+	const auto preview = f.binding.onResult("event.previewResize",
+		[&](const engine::Result& result)
+		{
+			REQUIRE(result.ok());
+			if (secondReleased || !bothEnds(3.7))
+				return;
+			// Make the project reply ready now too: the test covers fast replies instead of relying on a slow engine.
+			f.call("engine.version");
+			REQUIRE(f.display.project().at("midiParts")[0].at("length") == 4 * g_quarter);
+			f.automation.release(std::nullopt, f.at(368, 60), ui::MouseButton::Left);
+			secondReleased = true;
+			REQUIRE(f.display.project().at("midiParts")[0].at("length") == 4 * g_quarter);
+		});
+	REQUIRE(f.waitUntil([&] { return secondReleased; }));
 	const auto settled = [&f]
 	{
 		return f.binding.waiting("event.resize") == 0 && f.binding.waiting("project.get") == 0 &&
@@ -655,6 +677,8 @@ TEST_CASE("a second resize release can precede the first release's project", "[u
 		REQUIRE(std::chrono::steady_clock::now() < settleDeadline);
 		f.ui.shell.step(milliseconds(5));
 	}
+	CHECK(sawFirstProject);
+	CHECK(sawFinalProject);
 	CHECK(bothEnds(3.7));
 	CHECK(f.parts()[0].at("length") == (27 * g_quarter) / 5);
 }

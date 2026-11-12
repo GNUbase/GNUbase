@@ -166,7 +166,8 @@ that the arrow keys select into view.
   fades and volume line the release leaves: both edges in both sizing modes, snapped and with Disable Snapping
   pressed and released mid-drag, while another client moves the event; an audio event and a MIDI part selected
   together, and a second drag pressed before the display has the first one's project; a locked event staying as
-  it is; Escape cancelling it.
+  it is; Escape cancelling it. The overlapping-release check releases in the preview-result handler before the first
+  project reply and checks the final preview after each project reply, including when those replies are ready at once.
 - `tests/uiapp_tests.cpp` presses the default keys in the app's project window: select all, duplicate, mute, nudge
   and Backspace; Left and Right selecting parts, Up and Down stepping the tracks and selecting their first parts, also across a track
   without parts, and only the track with no part selected; and Mod+K,
