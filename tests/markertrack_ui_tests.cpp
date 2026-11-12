@@ -458,6 +458,14 @@ TEST_CASE("with the range tool, a click on the marker track in the selection ran
 	CHECK(range().start == clicked.start);
 	CHECK(range().tracks == std::vector<uint64_t>{fixture.audio});
 
+	// A drag in it straight up, without moving in time, selects a range of no length there over the lanes between
+	// press and release, as on any lane.
+	selectBetween();
+	fixture.drag(160, 70, 160, 20);
+	CHECK(range().start == clicked.start);
+	CHECK(range().end == clicked.start);
+	CHECK(range().tracks == std::vector<uint64_t>{fixture.audio, fixture.first});
+
 	// Shift and a drag from in it to 4.5 seconds adds to it, as on any lane, and moves nothing.
 	selectBetween();
 	fixture.drag(170, 70, 450, 70, {"shift"});

@@ -48,8 +48,9 @@ Each command is one undo step and changes nothing if it fails; `range.copy` chan
   between two moved events stays, and a shared copy of a MIDI part that lies in the range whole stays one (a part cut
   at an edge is a real copy, as `range.split` makes it); a crossfade between a moved event and one that stays ends. The
   automation moves as `range.cut` and `range.paste` would move it. With `copy` the range stays and a copy is pasted at
-  `position` as `range.paste` pastes, with new ids. Locked events stay where they are and aren't copied. The event display does it when the range is dragged by the marker track
-  ([markers.md](markers.md), p. 432).
+  `position` as `range.paste` pastes, with new ids. Either way the audio that lands comes in front of the events there,
+  in the order it was stacked. Locked events stay where they are and aren't copied. The event display does it when the
+  range is dragged by the marker track ([markers.md](markers.md), p. 432).
 - **Global copy** copies every track between the locators: the events, parts and automation. Markers, the tempo and
   the signatures stay where they are.
 
@@ -82,7 +83,8 @@ line's range fields, the range in the editors (they come with their tickets), an
   undo step), pasting onto the same tracks with the automation replacing the curve, Cut Time and Paste Time, pasting
   onto other tracks and the errors for a wrong type, too few tracks and nothing copied; global copy and a pasted clip
   that is gone; moving and copying a range with `range.move`, in one undo step, without the clipboard and leaving a
-  locked event, keeping the ids of what moves, the crossfade between two moved events and a shared copy, and ending
-  the crossfade from an event that stays.
+  locked event, keeping the ids of what moves, the crossfade between two moved events and a shared copy, bringing the
+  moved audio to the front in its order, undo and redo, and ending the crossfade between a moved event and one that
+  stays, either way round.
 - `tests/eventediting_tests.cpp` (fake window system, real engine): the commands exist; split, Delete Time, cut and
   paste on a selection range, which stays; paste at the cursor without a range, selecting what it pasted.

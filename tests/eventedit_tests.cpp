@@ -965,6 +965,16 @@ TEST_CASE("range.move keeps the ids of what it moves, the crossfades between mov
 	const int64_t a = add(6 * g_second, 2 * g_second);
 	const int64_t b = add((15 * g_second) / 2, (3 * g_second) / 2);
 	f.call("event.crossfade", {{"events", {a, b}}});
+	// Where they land, event c from 12 to 13 seconds, newer and so in front of them before the move.
+	const int64_t c = add(12 * g_second, g_second);
+	// Where an event is in the stack: front, or its id while it was never brought to the front.
+	const auto front = [&f](int64_t event)
+	{
+		const auto set = f.audio(event).at("front").get<int64_t>();
+		return set != 0 ? set : event;
+	};
+	REQUIRE(front(c) > front(b));
+	REQUIRE(front(b) > front(a));
 	REQUIRE(f.audio(b).at("crossfade").at("from") == a);
 	const int64_t midi = f.track("midi");
 	const int64_t original = f.part(midi);
@@ -986,13 +996,37 @@ TEST_CASE("range.move keeps the ids of what it moves, the crossfades between mov
 	CHECK(f.midi(shared).at("position") == 7 * g_bar);
 	CHECK(f.midi(shared).at("shared") == f.midi(original).at("shared"));
 	CHECK(f.midi(shared).at("shared") != 0);
+	// The moved audio comes in front of c, in the order it was stacked: b in front of a.
+	CHECK(front(a) > front(c));
+	CHECK(front(b) > front(a));
 
-	// A crossfade between an event that moves and one that stays ends: a locked a stays, b moves.
+	// Undo puts it all back, and redo moves it again with the same ids.
 	f.call("history.undo");
+	CHECK(f.audio(a).at("position") == 6 * g_second);
+	CHECK(f.midi(original).at("position") == 3 * g_bar);
+	CHECK(front(c) > front(b));
+	f.call("history.redo");
+	CHECK(f.audio(a).at("position") == 12 * g_second);
+	CHECK(f.audio(b).at("crossfade").at("from") == a);
+	CHECK(f.midi(shared).at("position") == 7 * g_bar);
+	CHECK(f.midi(shared).at("shared") == f.midi(original).at("shared"));
+	CHECK(front(a) > front(c));
+	f.call("history.undo");
+
+	// A crossfade between an event that moves and one that stays ends: a locked a stays, b moves; or a locked b stays
+	// and a moves.
 	f.call("event.set", {{"events", {a}}, {"lock", true}});
 	f.call("range.move", moved);
 	CHECK(f.audio(a).at("position") == 6 * g_second);
 	CHECK(f.audio(b).at("position") == (27 * g_second) / 2);
+	CHECK(!f.audio(b).at("crossfade").is_object());
+	f.call("history.undo");
+	f.call("history.undo");
+	REQUIRE(f.audio(b).at("crossfade").at("from") == a);
+	f.call("event.set", {{"events", {b}}, {"lock", true}});
+	f.call("range.move", moved);
+	CHECK(f.audio(a).at("position") == 12 * g_second);
+	CHECK(f.audio(b).at("position") == (15 * g_second) / 2);
 	CHECK(!f.audio(b).at("crossfade").is_object());
 }
 

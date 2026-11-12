@@ -727,7 +727,8 @@ namespace gnubase::ui
 		if (drag == Drag::Range)
 		{
 			// The selection range follows the mouse, snapped; released, its contents go where it is, or a copy of
-			// them with the tool modifier Copy (Alt). A click without a drag selects a range as on any lane.
+			// them with the tool modifier Copy (Alt). Released without a drag across, it selects a range as on any
+			// lane: of no length at a click, over the lanes between press and release after a drag up or down.
 			m_dragMoved = m_dragMoved || std::abs(mouseX - m_press.x) / ratio() >= g_dragStart;
 			if (release && !m_dragMoved)
 				m_display.clickRange(m_press, event);

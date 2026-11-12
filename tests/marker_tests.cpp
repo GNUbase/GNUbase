@@ -585,6 +585,9 @@ TEST_CASE("range.cut and range.delete cut a range out of a cycle marker that it 
 	CHECK(run(client, "history.get").at("steps").size() == steps + 1);
 	run(client, "history.undo");
 	CHECK(cycles(first) == whole);
+	run(client, "history.redo");
+	CHECK(cycles(first) == std::vector<Cycle>{{1, 4, 6, "Verse", "#ff0000"}, {2, 8, 12, "Verse", "#ff0000"}});
+	run(client, "history.undo");
 
 	// One that starts or ends with it gets shorter; range.cut cuts as range.delete deletes.
 	run(client, "range.cut", range(4, 6));

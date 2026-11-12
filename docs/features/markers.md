@@ -97,7 +97,8 @@ The reference's defaults (`ui::defaultKeyMap`, [key-commands.md](key-commands.md
   contents there (`range.move`, [range-editing.md](range-editing.md), p. 432), snapped, and with the tool modifier
   Copy (`dragDrop.copy`, Alt by default) copies them; the selection range follows the mouse and stays where it went,
   and the markers stay where they are. A click there without a drag, and Shift and a drag, select a range as on any
-  lane (a range of no length at the click, or added to the range), and so do its other clicks and drags. **Delete** (and
+  lane (a range of no length at the click, over the lanes between press and release after a drag up or down, or added
+  to the range), and so do its other clicks and drags. **Delete** (and
   Backspace) removes the selected markers (`marker.remove`), which the project window selects instead of events; a
   range selected deselects the markers, so that Delete deletes what was selected last.
 - **Cutting a range in a cycle marker** (p. 425): with a range selected in a cycle marker, Ctrl+X (`range.cut`) or
@@ -166,7 +167,7 @@ Marker Tracks and Off set `ui.markerLines`.
 
 `tests/marker_tests.cpp` covers the engine's commands, `marker.put` among them, and `range.cut` and `range.delete`
 cutting a range out of a cycle marker: split, shortened at either end, left whole when the range covers it or reaches
-out of it or with `time`, on the range's tracks only, in one undo step. `tests/markers_ui_tests.cpp`: on the
+out of it or with `time`, on the range's tracks only, in one undo step that redo repeats. `tests/markers_ui_tests.cpp`: on the
 fake window system, marker lines for the active track, every track and none as the setting changes, behind the
 events and on the display's timeline; marker events and labels on the marker tracks' lanes, following vertical zoom;
 Alt-click adding a marker only on a marker track and off cycle markers, a double click setting the locators and Alt
@@ -186,7 +187,7 @@ and without Alt, and with another key as the tool modifier; a drag released outs
 press; the range tool's double click between markers, also injected with a first press whose frame takes longer than
 the double click time, and on RmlUi's frozen clock its limits: presses 0.6 s or 4 dp apart are two clicks, 0.4 s or 2
 dp apart one double click; its drag by the marker track moving and, with Alt, copying the range's contents, a click
-in the range and Shift and a drag there selecting ranges as on another lane, and a range drag released outside the
+in the range, a drag there straight up and Shift and a drag there selecting ranges as on another lane, and a range drag released outside the
 window putting the range back at the next press without moving anything. In the
 app's UI: the marker track's controls adding markers (Shift-click renaming), activating the track and locating,
 cycling and zooming from the lists, the Zoom lists having the active marker track's cycle markers; Delete, also

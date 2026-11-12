@@ -644,14 +644,16 @@ namespace gnubase::ui
 
 	void EventDisplay::clickRange(Rml::Vector2f press, Rml::Event& release)
 	{
-		// As toolDown and toolUp have a click with the range tool, from where it was pressed.
+		// As toolDown and toolUp have a press and release with the range tool.
+		const auto y = [this](float pixels) { return (pixels - m_lanes->GetAbsoluteTop()) / dpRatio(); };
 		m_pressX = dpFrom(*m_lanes, press.x);
-		m_pressY = (press.y - m_lanes->GetAbsoluteTop()) / dpRatio();
+		m_pressY = y(press.y);
 		m_pressed = modifiersOf(release);
 		if (!m_selection.empty())
 			select({});
 		m_rangeBase = std::nullopt;
-		setRangeFrom(m_pressX, m_pressY);
+		setRangeFrom(dpFrom(*m_lanes, release.GetParameter<float>("mouse_x", press.x)),
+			y(release.GetParameter<float>("mouse_y", press.y)));
 		zeroCrossRange();
 	}
 

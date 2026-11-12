@@ -286,9 +286,10 @@ namespace gnubase::ui
 		// without the range selection tool. Choosing another tool selects the events in the range instead.
 		const std::optional<RangeSelection>& range() const { return m_range; }
 		void setRange(std::optional<RangeSelection> range);
-		// What a click with the range selection tool does on any lane, for a click that the display didn't get: the
-		// marker track's press in the selection range, released without a drag (ui/markers.h). A range of no length
-		// at the press, with release's modifier keys.
+		// What a press and release with the range selection tool do on any lane, for a press that the display didn't
+		// get: the marker track's press in the selection range, released without a drag across (ui/markers.h). A range
+		// from the press to the release, with the release's modifier keys: of no length at a click, over the lanes
+		// between them after a drag up or down.
 		void clickRange(Rml::Vector2f press, Rml::Event& release);
 		// Importing files (#92, fileimport.cpp, docs/features/file-import.md). MIDI files (.mid, .midi, .smf) are
 		// imported with midiFile.import. Audio files open the Import Options dialog (import-options.rml next to the

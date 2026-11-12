@@ -2093,8 +2093,8 @@ namespace gnubase::engine
 		// range.move without copy: what lies in the range, cut at its edges, moves to at on its tracks. It keeps its
 		// ids, so that an editor open on a moved part keeps it, a crossfade between two moved events stays and a shared
 		// copy of a MIDI part stays one (one cut at an edge is a real copy, as range.split makes it). A crossfade
-		// between a moved event and one that stays ends. The automation in the range moves as range.cut and range.paste
-		// move it. Returns what moved.
+		// between a moved event and one that stays ends. Its audio comes in front where it lands, as range.paste puts
+		// it. The automation in the range moves as range.cut and range.paste move it. Returns what moved.
 		Json moveRange(Project& project, const Range& range, time::Samples at, CommandContext& context)
 		{
 			const std::vector<AutomationLane> automation = automationIn(project, range);
@@ -2102,6 +2102,17 @@ namespace gnubase::engine
 			splitTracks(project, range.tracks, range.end, range.splitNotes, false, context);
 			const std::vector<Item> items = within(project, range.tracks, range.start, range.end, false);
 			const Gap shift = gapOf(project, range.start, at);
+			// The audio comes in front of the events where it lands, as range.paste puts it, in the order it was
+			// stacked.
+			for (const size_t index : stackOrder(project, items))
+			{
+				const Item& item = items[index];
+				if (item.audio != nullptr)
+					item.audio->front = project.newId();
+				else if (item.audioPart != nullptr)
+					for (AudioEvent* event : stackedIn(project, item.id()))
+						event->front = project.newId();
+			}
 			std::set<ObjectId> movedEvents;
 			for (const Item& item : items)
 			{
@@ -2837,12 +2848,12 @@ namespace gnubase::engine
 					" to position (project samples) on the same tracks, as dragging a selection range does (reference "
 					"manual p. 291), without the range clipboard: cut at its edges (splitNotes as in range.split), "
 					"what lies in it moves by position minus start, keeping its ids, the crossfades between moved "
-					"events and shared copies of MIDI parts that it holds whole; a crossfade between a moved event and "
-					"one that stays ends. The automation in it is cut out as range.delete does and pasted at position "
-					"as range.paste does. copy (Alt, p. 432) leaves the range as it is and pastes a copy as "
-					"range.paste "
-					"does: real copies with new ids. Locked events stay where they are and aren't copied. Returns the "
-					"moved events, or the copies.",
+					"events and shared copies of MIDI parts that it holds whole; a crossfade between a moved event "
+					"and one that stays ends. The automation in it is cut out as range.delete does and pasted at "
+					"position as range.paste does. copy (Alt, p. 432) leaves the range as it is and pastes a copy as "
+					"range.paste does: real copies with new ids. Either way the audio that lands comes in front of "
+					"the events there, in the order it was stacked. Locked events stay where they are and aren't "
+					"copied. Returns the moved events, or the copies.",
 				schema(withPosition, {"position"}), eventsResult(), false},
 			"Move Range",
 			[](Project& project, CommandContext& context)
