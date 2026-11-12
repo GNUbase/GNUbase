@@ -7,9 +7,10 @@
      (gnubase.ui.importArticulationMap and exportArticulationMap); Assign to Track runs track.set articulationMap. The
      selected map's name, remote trigger mode, latch, groups, articulations and sound slots, and the selected slot's
      output mapping and MIDI modifiers, go to articulationMap.set as they change, text fields with Enter or when they
-     lose the focus. A change the engine refuses shows its message and the field as it was, and an import that fails
-     its reason (app::AppUi). It follows articulationMap.added, changed and removed and project.reset, so that it shows
-     the maps as they are after an import, an undo or a change through MCP or Lua; it selects a map that comes. The
+     lose the focus. A change the engine refuses shows its message and the field as it was, and an import or export
+     that fails its reason (app::AppUi). While it is open it follows articulationMap.added, changed and removed and
+     project.reset, so that it shows the maps as they are after an import, an undo or a change through MCP or Lua; it
+     selects a map that comes. It unsubscribes its handlers when it closes (gnubase.off). The
      buttons are outside
      the rows that the Lua writes again, since an element must not go while its own event runs: Remove Articulation,
      Remove Sound Slot and Remove Output Mapping remove the row picked with its radio button. -->
@@ -346,12 +347,13 @@
 			return run(document, function() gnubase.articulationMap.set(changes) end)
 		end
 
+		local events = {"articulationMap.added", "articulationMap.changed", "articulationMap.removed", "project.reset"}
+
 		function dialog.open(document)
 			dialog.document = document
 			if not dialog.subscribed then
 				dialog.subscribed = true
-				for _, name in ipairs({"articulationMap.added", "articulationMap.changed", "articulationMap.removed",
-					"project.reset"}) do
+				for _, name in ipairs(events) do
 					gnubase.on(name, follow)
 				end
 			end
@@ -368,6 +370,15 @@
 			end
 			document:GetElementById("articulation-map-assign"):SetClass("unavailable", track == nil)
 			dialog.show(document)
+		end
+
+		-- The handlers go with the document: the next one that opens loads this script again.
+		function dialog.close()
+			dialog.document = nil
+			for _, name in ipairs(events) do
+				gnubase.off(name, follow)
+			end
+			dialog.subscribed = false
 		end
 
 		function dialog.select(document)
@@ -612,7 +623,7 @@
 		end
 	</script>
 </head>
-<body onshow="ArticulationMaps.open(document)" onunload="ArticulationMaps.document = nil">
+<body onshow="ArticulationMaps.open(document)" onunload="ArticulationMaps.close()">
 	<dialog id="articulation-maps-dialog">
 		<div class="dialog-titlebar">Articulation Map Setup</div>
 		<div class="content">

@@ -5,7 +5,8 @@
      Rename take the name in #profile-name (profile.add, profile.duplicate, profile.rename), Delete deletes the selected
      profile (profile.remove), Import and Export ask the OS for a file (ui.importProfile, ui.exportProfile, which then
      run profile.import and profile.export), Activate Profile makes the selected one active at the next start
-     (profile.activate). #profile-message says which profile becomes active then, or what failed. -->
+     (profile.activate). #profile-message says which profile becomes active then, or what failed, or that a profile switch
+     is unfinished, for which app::AppUi::showProject opens the dialog at the start. -->
 <rml>
 <head>
 	<title>Profile Manager</title>
@@ -87,7 +88,11 @@
 			list.inner_rml = table.concat(rml)
 			list:SetAttribute("value", value)
 			local text = message
-			if text == "" and (profiles.next or "") ~= "" then
+			if text == "" and profiles.unfinished then
+				text = "GNUbase didn't finish switching profiles and couldn't put the settings of the profile "
+					.. tostring(profiles.active) .. " back, so they may be half of each profile's. It tries again "
+					.. "when it starts next, which overwrites what you change until then."
+			elseif text == "" and (profiles.next or "") ~= "" then
 				text = "The profile " .. profiles.next .. " becomes active when GNUbase starts again."
 			end
 			document:GetElementById("profile-message").inner_rml = escape(text)
@@ -165,17 +170,27 @@
 			selected = nil
 			if not dialog.subscribed then
 				dialog.subscribed = true
-				gnubase.on("profile.changed", function()
+				dialog.follow = function()
 					if dialog.document ~= nil then
 						dialog.refresh()
 					end
-				end)
+				end
+				gnubase.on("profile.changed", dialog.follow)
 			end
 			dialog.refresh()
 		end
+
+		-- The handler goes with the document: the next one that opens loads this script again.
+		function dialog.close()
+			dialog.document = nil
+			if dialog.subscribed then
+				gnubase.off("profile.changed", dialog.follow)
+				dialog.subscribed = false
+			end
+		end
 	</script>
 </head>
-<body onload="ProfileManager.load(document)" onunload="ProfileManager.document = nil">
+<body onload="ProfileManager.load(document)" onunload="ProfileManager.close()">
 	<dialog id="profiles-dialog">
 		<div class="dialog-titlebar">Profile Manager</div>
 		<div class="content">

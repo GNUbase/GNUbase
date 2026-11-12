@@ -30,7 +30,9 @@ namespace gnubase::engine::dsp
 	// Reads a file warped by a map whose first target is 0: frame t of this reader is the file's audio at
 	// warpSource(map, t), stretched in real-time mode by the slope of the map there (clamped to the real-time
 	// range). It is as long as the map's last target. A disk stream reads it like any file, on its disk thread:
-	// seeking resets the stretcher and allocates nothing else.
+	// seeking resets the stretcher and allocates nothing else. Where a segment's slope is beyond the real-time range,
+	// the clamped ratio plays its audio too long or too short: the reader starts over at the segment's end, as after a
+	// seek, so the audio after it is back where the map puts it.
 	class WarpReader : public AudioFileReader
 	{
 	public:
@@ -50,6 +52,8 @@ namespace gnubase::engine::dsp
 		void restart(time::Samples frame);
 		// Feeds the stretcher the next input frames, up to the next point of the map.
 		void feed();
+		// The ratio of a segment of the map.
+		double ratio(size_t segment) const;
 
 		std::unique_ptr<AudioFileReader> m_source;
 		std::vector<WarpPoint> m_map;
@@ -61,6 +65,7 @@ namespace gnubase::engine::dsp
 		time::Samples m_sourceAt = -1; // where the source reader is
 		time::Samples m_position = 0;  // the next frame read() returns
 		size_t m_drop = 0;             // output frames of latency still to drop
+		time::Samples m_restartAt = 0; // the end of the next segment beyond the real-time range: restart there
 		bool m_final = false;          // the source's end was fed
 	};
 }

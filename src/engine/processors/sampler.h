@@ -150,7 +150,7 @@ namespace gnubase::engine::processors
 		std::array<double, Gain + 1> m_values{};
 		double m_bend = 0.0; // -1 to 1
 		uint64_t m_notes = 0;
-		// Monophonic mode: when each key went down (0: up), so releasing the playing note goes back to the latest held.
+		// When each key went down (0: up), so releasing the monophonic note goes back to the latest held.
 		std::array<uint64_t, 128> m_heldSince{};
 		std::array<Voice, g_samplerVoices> m_voices{};
 	};

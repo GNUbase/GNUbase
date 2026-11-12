@@ -7,6 +7,7 @@
 #include "engine/document/renderinplace.h"
 #include "engine/document/rendersnapshot.h"
 #include "engine/document/serialize.h"
+#include "engine/document/warp.h"
 #include "engine/engine.h"
 #include "engine/media/backup.h"
 #include "engine/processors/builtin.h"
@@ -298,6 +299,26 @@ namespace gnubase::engine
 		time::Ticks fromBeats(double beats)
 		{
 			return std::llround(beats * static_cast<double>(time::g_ticksPerQuarter));
+		}
+
+		// The points of a piecewise linear map without those on the line through the points around them.
+		std::vector<dsp::WarpPoint> withoutStraightPoints(const std::vector<dsp::WarpPoint>& points)
+		{
+			if (points.size() <= 2)
+				return points;
+			std::vector<dsp::WarpPoint> kept{points.front()};
+			for (size_t i = 1; i + 1 < points.size(); ++i)
+			{
+				const dsp::WarpPoint& a = kept.back();
+				const dsp::WarpPoint& b = points[i];
+				const dsp::WarpPoint& c = points[i + 1];
+				const double cross =
+					((b.source - a.source) * (c.target - a.target)) - ((b.target - a.target) * (c.source - a.source));
+				if (std::abs(cross) > 1e-4 * std::abs((c.source - a.source) * (c.target - a.target)))
+					kept.push_back(b);
+			}
+			kept.push_back(points.back());
+			return kept;
 		}
 
 		// The tempo and the time signatures in DAWproject's terms: the first tempo and signature in the transport, the
@@ -851,7 +872,13 @@ namespace gnubase::engine
 			{
 				const Clip& clip = m_project.clips.at(event.clip);
 				const MediaFile& media = m_project.media.at(clip.media);
-				const double seconds = static_cast<double>(event.length) / media.sampleRate;
+				const bool warp = warped(clip);
+				double seconds = static_cast<double>(event.length) / media.sampleRate;
+				if (warp)
+				{
+					const EventSpan span = eventSpan(m_project, event);
+					seconds = static_cast<double>(span.end - span.start) / m_project.sampleRate;
+				}
 				double duration = seconds;
 				if (track.timeBase == time::TimeBase::Musical)
 				{
@@ -861,8 +888,10 @@ namespace gnubase::engine
 				pugi::xml_node element = clips.append_child("Clip");
 				element.append_attribute("time") = laneTime(track, event.position.value) - origin;
 				element.append_attribute("duration") = duration;
-				element.append_attribute("playStart") = static_cast<double>(event.offset) / media.sampleRate;
-				element.append_attribute("contentTimeUnit") = "seconds";
+				// A warped event's content is its Warps, which count from its start.
+				element.append_attribute("playStart") =
+					warp ? 0.0 : static_cast<double>(event.offset) / media.sampleRate;
+				element.append_attribute("contentTimeUnit") = warp && clip.warp.musical ? "beats" : "seconds";
 				if (event.mute)
 					element.append_attribute("enable") = false;
 				// Fades and crossfades as fade times; their shapes are GNUbase-only.
@@ -877,7 +906,14 @@ namespace gnubase::engine
 				element.append_attribute("name") = clip.name.c_str();
 				if (!event.color.empty())
 					element.append_attribute("color") = event.color.c_str();
-				pugi::xml_node audio = element.append_child("Audio");
+				pugi::xml_node content = element;
+				if (warp)
+				{
+					content = element.append_child("Warps");
+					content.append_attribute("timeUnit") = clip.warp.musical ? "beats" : "seconds";
+					content.append_attribute("contentTimeUnit") = "seconds";
+				}
+				pugi::xml_node audio = content.append_child("Audio");
 				audio.append_attribute("id") = xmlId("a", event.id).c_str();
 				audio.append_attribute("channels") = media.channels;
 				audio.append_attribute("sampleRate") = std::llround(media.sampleRate);
@@ -886,6 +922,32 @@ namespace gnubase::engine
 				file.append_attribute("path") = m_mediaPaths.at(media.id).c_str();
 				if (!m_embed)
 					file.append_attribute("external") = true;
+				if (warp)
+					writeWarps(content, event, clip.warp.musical, media.sampleRate);
+			}
+
+			// Where the warp puts a warped event's audio: the seconds of the file (contentTime) that play at each time
+			// from its start, in beats in musical mode, which then follow the tempo, else in seconds. The points of its
+			// warp map where it bends.
+			void writeWarps(pugi::xml_node warps, const AudioEvent& event, bool musical, double rate) const
+			{
+				const double start =
+					static_cast<double>(time::toSamples(event.position, m_project.tempo, m_project.sampleRate)) /
+					m_project.sampleRate;
+				const time::Ticks startTicks = m_project.tempo.toTicks(start);
+				std::vector<dsp::WarpPoint> points; // source: the file's seconds, target: the time from the start
+				for (const dsp::WarpPoint& point : warpMap(m_project, event))
+				{
+					const double after = point.target / rate;
+					points.push_back({point.source / rate,
+						musical ? toBeats(m_project.tempo.toTicks(start + after) - startTicks) : after});
+				}
+				for (const dsp::WarpPoint& point : withoutStraightPoints(points))
+				{
+					pugi::xml_node warp = warps.append_child("Warp");
+					warp.append_attribute("time") = point.target;
+					warp.append_attribute("contentTime") = point.source;
+				}
 			}
 
 			// An event's start and end in seconds, and its clip's sample rate.
@@ -1569,7 +1631,9 @@ namespace gnubase::engine
 					{
 						const pugi::xml_node audio = name == "Audio" ? child : child.child("Audio");
 						const double offset = content.seconds ? playStart : secondsBetween(0.0, playStart, false);
-						addAudioEvent(lane, start, duration, offset, audio, content);
+						AudioEvent* event = addAudioEvent(lane, start, duration, offset, audio, content);
+						if (event != nullptr && name == "Warps")
+							readWarps(child, *event, {lane.seconds, content.seconds, start, duration, playStart});
 					}
 				}
 			}
@@ -1709,13 +1773,13 @@ namespace gnubase::engine
 				content.fadeOut = secondsBetween(last - fadeOut, last, false);
 			}
 
-			void addAudioEvent(const Context& lane, double start, double duration, double offset,
+			AudioEvent* addAudioEvent(const Context& lane, double start, double duration, double offset,
 				const pugi::xml_node& audio, const Context& content)
 			{
 				const bool mute = !content.enabled;
 				const ObjectId clipId = clipFor(audio);
 				if (clipId == 0)
-					return;
+					return nullptr;
 				const MediaFile& media = m_project.media.at(m_project.clips.at(clipId).media);
 				AudioEvent event;
 				event.id = m_project.newId();
@@ -1736,8 +1800,125 @@ namespace gnubase::engine
 					std::llround(content.fadeIn * media.sampleRate), 0, std::max<time::Samples>(0, event.length));
 				event.fadeOut.length = std::clamp<time::Samples>(std::llround(content.fadeOut * media.sampleRate), 0,
 					std::max<time::Samples>(0, event.length - event.fadeIn.length));
-				if (event.length > 0)
-					m_project.audioEvents[event.id] = event;
+				if (event.length <= 0)
+					return nullptr;
+				return &(m_project.audioEvents[event.id] = event);
+			}
+
+			// Where a clip with Warps lies: its lane's and its content's units, its start and duration in the lane's
+			// unit and its playStart in the content's.
+			struct WarpsClip
+			{
+				bool laneSeconds = false; // the lane counts in seconds
+				bool contentSeconds = false;
+				double start = 0.0;
+				double duration = 0.0;
+				double playStart = 0.0;
+			};
+
+			// A Warps element's points (time in its timeUnit from the content's start, contentTime in seconds of the
+			// audio) as the warp of a clip of the event's own: in beats musical mode, whose definition puts the beats
+			// where the points do, in seconds free warp markers. Points that GNUbase's warp can't play, such as
+			// markers beyond the real-time range, leave the event unwarped.
+			// ponytail: in seconds the clip's ends stay put, so a warp that stretches the whole clip doesn't fit.
+			void readWarps(const pugi::xml_node& warps, AudioEvent& event, const WarpsClip& where)
+			{
+				if (std::string(warps.attribute("contentTimeUnit").as_string("seconds")) != "seconds")
+					return;
+				const pugi::xml_attribute unit = warps.attribute("timeUnit");
+				const bool beats = unit.empty() ? !where.contentSeconds : std::string(unit.as_string()) == "beats";
+				std::vector<dsp::WarpPoint> points; // source: the audio's seconds, target: the content's time
+				for (const pugi::xml_node warp : warps.children("Warp"))
+					points.push_back({warp.attribute("contentTime").as_double(), warp.attribute("time").as_double()});
+				std::sort(points.begin(), points.end(),
+					[](const dsp::WarpPoint& a, const dsp::WarpPoint& b) { return a.target < b.target; });
+				if (points.size() < 2)
+					return;
+				for (size_t i = 1; i < points.size(); ++i)
+					if (points[i].source <= points[i - 1].source || points[i].target <= points[i - 1].target ||
+						!std::isfinite(points[i].source) || !std::isfinite(points[i].target))
+						return;
+				Clip clip = m_project.clips.at(event.clip);
+				const MediaFile& media = m_project.media.at(clip.media);
+				const double rate = media.sampleRate;
+				const auto frameAt = [&points, rate](double time) { return dsp::warpSource(points, time) * rate; };
+				double end = where.playStart + where.duration;
+				if (!beats)
+					end =
+						where.playStart + secondsBetween(where.start, where.start + where.duration, where.laneSeconds);
+				else if (where.laneSeconds)
+					end = where.playStart + toBeats(m_project.tempo.toTicks(where.start + where.duration)) -
+						toBeats(m_project.tempo.toTicks(where.start));
+				const auto offset = std::llround(frameAt(where.playStart));
+				const time::Samples length =
+					std::min<time::Samples>(std::llround(frameAt(end)) - offset, media.length - offset);
+				if (offset < 0 || offset >= media.length || length <= 0)
+					return;
+				clip.id = m_project.newId();
+				clip.warp = {};
+				if (beats &&
+					!beatsFromWarps(
+						clip.warp, frameAt, points.front().target, dsp::warpTarget(points, 0.0), rate, media.length))
+					return;
+				if (!beats)
+				{
+					// The first point's audio stays where it is; the others' play as far after it as their time says.
+					const double shift = frameAt(points.front().target) - (points.front().target * rate);
+					for (const dsp::WarpPoint& point : withoutStraightPoints(points))
+					{
+						const WarpMarker marker{
+							std::llround(point.source * rate), std::llround((point.target * rate) + shift)};
+						if (marker.position > 0 && marker.position < media.length)
+							clip.warp.markers.push_back(marker);
+					}
+					try
+					{
+						checkMarkers(clip.warp, media.length);
+					}
+					catch (const CommandError&)
+					{
+						return;
+					}
+				}
+				m_project.clips[clip.id] = clip;
+				event.clip = clip.id;
+				event.offset = offset;
+				event.length = length;
+				event.fadeIn.length = std::min(event.fadeIn.length, length);
+				event.fadeOut.length = std::min(event.fadeOut.length, length - event.fadeIn.length);
+			}
+
+			// Musical mode with a definition whose beat 0 is the content's first whole beat within the audio, its tempo
+			// that of that beat and edited beats where the content's tempo bends. false if a beat's tempo is out of
+			// range, which also bounds the beats of a file's untrusted Warps. zero is the time where the audio starts.
+			template <typename FrameAt> static bool beatsFromWarps(
+				ClipWarp& warp, const FrameAt& frameAt, double from, double zero, double rate, time::Samples length)
+			{
+				double first = std::max(std::floor(from), std::ceil(zero));
+				if (frameAt(first) < 0.0) // rounding
+					first += 1.0;
+				const double framesPerBeat = frameAt(first + 1.0) - frameAt(first);
+				if (!(framesPerBeat > 0.0))
+					return false;
+				warp.musical = true;
+				warp.tempo = rate * 60.0 / framesPerBeat;
+				warp.gridStart = std::llround(frameAt(first));
+				if (warp.tempo < time::g_minBpm || warp.tempo > time::g_maxBpm || warp.gridStart >= length)
+					return false;
+				std::vector<dsp::WarpPoint> grid; // source: the beat, target: the frame
+				for (int64_t beat = 0; frameAt(first + static_cast<double>(beat)) < static_cast<double>(length); ++beat)
+				{
+					const double frame = frameAt(first + static_cast<double>(beat));
+					if (const double tempo = beat == 0 ? warp.tempo : rate * 60.0 / (frame - grid.back().target);
+						tempo < time::g_minBpm || tempo > time::g_maxBpm)
+						return false;
+					grid.push_back({static_cast<double>(beat), frame});
+				}
+				grid.push_back({grid.back().source + 1.0, grid.back().target + framesPerBeat});
+				for (const dsp::WarpPoint& point : withoutStraightPoints(grid))
+					if (point.source > 0.0 && point.source < grid.back().source)
+						warp.beats.push_back({std::llround(point.source), std::llround(point.target)});
+				return true;
 			}
 
 			// The arrangement's markers become position markers on a marker track at the top, numbered in timeline

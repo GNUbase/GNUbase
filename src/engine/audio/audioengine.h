@@ -307,8 +307,9 @@ namespace gnubase::engine
 		// Gives MIDI and instrument channels their sequencers and instruments, and notes the MIDI tracks that left an
 		// instrument track for the program of the generation.
 		void attachMidi(const RenderSnapshot& snapshot, graph::GraphDesc& desc, uint64_t generation);
-		// Hands the samples the sample loader read to the samplers that wait for them, and lets go of the others.
-		void updateSamples();
+		// Hands the samples the sample loader read to the samplers that wait for them, and lets go of the others;
+		// returns the files that samplers still wait for.
+		std::set<std::string> updateSamples();
 		// Waits until the sample loader has read every file the samplers wait for, at most timeout, and hands them
 		// over (updateSamples); false if one wasn't read in time.
 		bool waitForSamples(std::chrono::milliseconds timeout);

@@ -3,6 +3,7 @@
 
 #include <array>
 #include <filesystem>
+#include <functional>
 
 // Profiles (#163, docs/features/profiles.md, reference manual pp. 1579-1583): named sets of the user settings that
 // belong to a user's way of working, which the user switches between, with a restart, and takes to other computers.
@@ -20,8 +21,10 @@ namespace gnubase::engine
 		// Before the settings are read at startup: if profile.activate chose another profile, the active profile's
 		// files go into its folder (profiles/<name>) and the chosen one's come into the settings folder. Does nothing
 		// without a folder; logs what fails and then leaves the files and the active profile as they were. A switch
-		// that GNUbase didn't finish, such as in a crash, is undone first.
-		void switchProfile(const std::filesystem::path& directory);
+		// that GNUbase didn't finish, such as in a crash, is undone first. For tests, replacing is called before each
+		// profile file that the switch replaces in a folder, with its path: one that throws makes that step fail.
+		void switchProfile(const std::filesystem::path& directory,
+			const std::function<void(const std::filesystem::path& file)>& replacing = {});
 
 		// Drops the profile that profile.activate chose for the next start, so that the active one stays, and what a
 		// switch that GNUbase didn't finish left: for the safe start mode's Delete program preferences, which deletes

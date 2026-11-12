@@ -543,7 +543,9 @@ namespace gnubase::engine::midi
 				"that lie between start and end, and the events of its other parts that start there, which leave "
 				"their shared copies for it: their notes get new ids, so play probability, velocity variance and "
 				"random MIDI modifier values draw anew. includeChase "
-				"adds the last value of every controller and program before start at the new part's start." +
+				"adds the last value of every controller and program before start at the new part's start. Either way "
+				"the new part starts with the directions of the tracks' articulation maps in effect at start, so that "
+				"its notes play the same sound slots." +
 					returns,
 				objectSchema(
 					{{"start", integerSchema}, {"end", integerSchema}, {"tracks", ids}, {"destination", idSchema},

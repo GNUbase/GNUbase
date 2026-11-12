@@ -72,16 +72,30 @@ namespace gnubase::engine::dsp
 		return true;
 	}
 
+	double WarpReader::ratio(size_t segment) const
+	{
+		const WarpPoint& a = m_map[segment];
+		const WarpPoint& b = m_map[segment + 1];
+		return (b.target - a.target) / (b.source - a.source);
+	}
+
 	void WarpReader::restart(time::Samples frame)
 	{
 		(*m_stretcher).reset();
 		const double source = warpSource(m_map, static_cast<double>(frame));
-		const size_t s = segmentOf(m_map, source, &WarpPoint::source);
-		m_stretcher->setRatio((m_map[s + 1].target - m_map[s].target) / (m_map[s + 1].source - m_map[s].source));
+		m_stretcher->setRatio(ratio(segmentOf(m_map, source, &WarpPoint::source)));
 		m_input = std::llround(source) - static_cast<time::Samples>(m_stretcher->startPad());
 		m_drop = m_stretcher->latency();
 		m_position = frame;
 		m_final = false;
+		m_restartAt = m_info.frames;
+		for (size_t s = segmentOf(m_map, static_cast<double>(frame), &WarpPoint::target); s + 1 < m_map.size(); ++s)
+			if (const double r = ratio(s); r > g_maxRealtimeRatio || r < g_minRealtimeRatio)
+				if (const time::Samples end = std::llround(m_map[s + 1].target); end > frame)
+				{
+					m_restartAt = std::min(end, m_info.frames);
+					break;
+				}
 	}
 
 	void WarpReader::feed()
@@ -91,9 +105,8 @@ namespace gnubase::engine::dsp
 		const auto pad = static_cast<double>(m_stretcher->startPad());
 		const double at = static_cast<double>(m_input) - pad;
 		const size_t s = segmentOf(m_map, at, &WarpPoint::source);
-		const WarpPoint& a = m_map[s];
 		const WarpPoint& b = m_map[s + 1];
-		m_stretcher->setRatio((b.target - a.target) / (b.source - a.source));
+		m_stretcher->setRatio(ratio(s));
 		size_t frames = std::clamp<size_t>(m_stretcher->inputRequired(), 1, g_blockFrames);
 		if (at < b.source && s + 2 < m_map.size())
 			frames = std::min(frames, static_cast<size_t>(std::ceil(b.source - at)));
@@ -125,6 +138,11 @@ namespace gnubase::engine::dsp
 		size_t done = 0;
 		while (done < frames && m_position < m_info.frames)
 		{
+			if (m_position >= m_restartAt)
+			{
+				restart(m_position);
+				continue;
+			}
 			const size_t available = m_stretcher->available();
 			if (available == 0)
 			{
@@ -133,7 +151,7 @@ namespace gnubase::engine::dsp
 				feed();
 				continue;
 			}
-			const size_t wanted = std::min<size_t>(frames - done, static_cast<size_t>(m_info.frames - m_position));
+			const size_t wanted = std::min<size_t>(frames - done, static_cast<size_t>(m_restartAt - m_position));
 			const size_t got =
 				m_stretcher->retrieve(m_pointers.data(), std::min({available, g_blockFrames, m_drop + wanted}));
 			const size_t dropped = std::min(got, m_drop);

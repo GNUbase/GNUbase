@@ -76,7 +76,7 @@ namespace gnubase::engine
 	// What a MIDI or instrument track plays, in the project's samples.
 	struct MidiSequence
 	{
-		std::vector<RenderNote> notes;             // sorted by start, then pitch
+		std::vector<RenderNote> notes;             // sorted by start, key switches first, then pitch
 		std::vector<RenderController> controllers; // sorted by position
 		// The tracks whose controller events a jump chases here: an instrument track's own and those of the MIDI
 		// tracks routed to it that the mute button doesn't mute, so they are chased by time across them. A MIDI track
@@ -91,7 +91,10 @@ namespace gnubase::engine
 		midi::Modifiers modifiers;        // for the notes played into the track (input); notes has them applied
 		std::vector<LiveHarmony> liveInput;  // Live Input: what the notes played into the track move to, by position
 		std::vector<LiveDrumNote> drumInput; // the drum map's: what the notes played into the track play, or empty
-		midi::EffectRack inserts;            // the track's MIDI inserts and sends (docs/features/midi-effects.md)
+		// The track's articulation map (#175): its remote triggers select the sound slot of the notes played into the
+		// track; without slots for none.
+		ArticulationMap articulations;
+		midi::EffectRack inserts; // the track's MIDI inserts and sends (docs/features/midi-effects.md)
 		midi::EffectRack sends;
 		// Filled in by setSequence: the inserts that play, in order, then the sends that play.
 		std::vector<RunningEffect> effects;
@@ -216,7 +219,9 @@ namespace gnubase::engine
 		// Audio thread: the events played into the track in this block (midi.inject), as from its MIDI input. They go
 		// out after the events it receives and before its parts' events, also while the transport stands, their notes
 		// as the track's MIDI modifiers play them; a note-off and poly pressure go where their note-on went, also
-		// after the modifiers changed. The audio engine fills them before the graph processes a block.
+		// after the modifiers changed. With an articulation map its remote triggers select sound slots instead of
+		// playing, and the notes play with the selected slot's MIDI modifiers before the track's (#175). The audio
+		// engine fills them before the graph processes a block.
 		graph::EventBuffer& input() noexcept { return m_input; }
 
 	protected:
@@ -238,6 +243,13 @@ namespace gnubase::engine
 		// ends with the last of their note-offs (Live Input moves keys onto one note).
 		bool modifyInput(
 			const MidiSequence& sequence, int64_t position, graph::ProcessEvent& event, uint16_t& ends) noexcept;
+		// Remote triggers on its input (#175, reference manual pp. 1263, 1268): whether the event is one of the
+		// articulation map's, which selects its sound slot instead of playing. A new slot sends the off events of the
+		// one before, then its own on events.
+		bool triggerSlot(
+			const MidiSequence& sequence, const graph::ProcessEvent& event, graph::EventBuffer& out) noexcept;
+		void selectSlot(
+			const ArticulationMap& map, int slot, uint8_t channel, uint32_t offset, graph::EventBuffer& out) noexcept;
 		void play(
 			const MidiSequence& sequence, const graph::TransportSegment& segment, graph::EventBuffer& out) noexcept;
 		// Each returns false if the event buffer was full; then the note didn't start or end (though noteOn may have
@@ -296,7 +308,12 @@ namespace gnubase::engine
 		std::array<bool, g_notes> m_inputDown{};     // the keys of its input, as channel * 128 + pitch, that are held
 		std::array<uint16_t, g_notes> m_inputKeys{}; // how many held keys play each note, as channel * 128 + pitch
 		uint64_t m_random = 0;                       // the random modifiers' seed for the next note of its input
-		uint64_t m_instrument = 0;                   // playOn: where its notes went in the graph that runs
+		// The sound slot its input's remote triggers selected, -1 for none yet (the default slot plays), the channel
+		// its on events went to, and without latch the slot again while the key that selected it is held, else -1.
+		int m_inputSlot = -1;
+		uint8_t m_inputSlotChannel = 0;
+		int m_inputSlotHeld = -1;
+		uint64_t m_instrument = 0; // playOn: where its notes went in the graph that runs
 
 		// Command thread: the effect in each slot, the inserts' then the sends', while it plays.
 		struct SlotEffect

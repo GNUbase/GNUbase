@@ -150,6 +150,29 @@ TEST_CASE("Lua handles engine events and waits for them", "[unit]")
 		assert(gnubase.waitFor("fake.changed", 0.01) == nil)
 	)");
 
+	// gnubase.off unsubscribes a handler, also from inside one, while the others still get the event.
+	run(lua, R"(
+		local seen = {}
+		local first = function(event) seen[#seen + 1] = "first" end
+		local once
+		once = function(event)
+			seen[#seen + 1] = "once"
+			gnubase.off("fake.changed", once)
+		end
+		local last = function(event) seen[#seen + 1] = "last" end
+		gnubase.on("fake.changed", first)
+		gnubase.on("fake.changed", once)
+		gnubase.on("fake.changed", last)
+		gnubase.fake.emit{value = 1}
+		assert(table.concat(seen, ",") == "first,once,last", table.concat(seen, ","))
+		gnubase.off("fake.changed", first)
+		gnubase.off("fake.changed", first) -- once more does nothing
+		gnubase.off("other.changed", last) -- nor for an event it isn't registered for
+		gnubase.fake.emit{value = 2}
+		assert(table.concat(seen, ",") == "first,once,last,last", table.concat(seen, ","))
+		gnubase.events()
+	)");
+
 	// Coroutines can call commands as well.
 	run(lua, R"(
 		local version = coroutine.wrap(function() return gnubase.engine.version().version end)

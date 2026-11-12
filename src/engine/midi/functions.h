@@ -255,8 +255,9 @@ namespace gnubase::engine::midi
 	// removes the destination track's parts that lie in the range and the events of other parts that start in it, a
 	// shared copy leaving its copies for that: its notes get new ids, so their play probability, velocity variance and
 	// random MIDI modifier values draw anew. includeChase adds the last controller value of every controller, program
-	// and channel before start at the new part's start. A new destination track goes to the end of the track list,
-	// routed to the instrument of the first track merged.
+	// and channel before start at the new part's start, and in any case the new part starts with the directions of
+	// the tracks' articulation maps in effect at start (#175). A new destination track goes to the end of the track
+	// list, routed to the instrument of the first track merged.
 	PartChanges merge(Project& project, const MergeSettings& settings);
 
 	enum class DissolveBy : uint8_t
