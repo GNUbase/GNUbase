@@ -896,6 +896,11 @@ TEST_CASE("the track list sends the engine only the track heights and folded fol
 
 namespace
 {
+	Json layoutHeight(uint64_t track, double dp)
+	{
+		return {{"track", track}, {"height", dp}};
+	}
+
 	// Three audio tracks and height drags by hand on their lower edges (#1131).
 	struct HeightDrag
 	{
@@ -930,8 +935,6 @@ namespace
 		Json heights() { return tracks.app.call("trackLayout.get").at("heights"); }
 		uint64_t revision() { return tracks.app.call("project.revision").at("revision").get<uint64_t>(); }
 
-		static Json height(uint64_t track, double dp) { return {{"track", track}, {"height", dp}}; }
-
 		Tracks tracks;
 		uint64_t audio;
 		uint64_t other;
@@ -962,7 +965,7 @@ TEST_CASE("a height drag compares its end with the heights the engine has, also 
 	drag.press(at);
 	drag.move({at.x, at.y + 20});
 	drag.tracks.app.call(
-		"trackLayout.set", {{"heights", {drag.height(drag.audio, 100.0), drag.height(drag.other, 120.0)}}});
+		"trackLayout.set", {{"heights", {layoutHeight(drag.audio, 100.0), layoutHeight(drag.other, 120.0)}}});
 	REQUIRE(drag.tracks.app.waitUntil([&] { return drag.shown(drag.other) == Approx(120.0); }));
 	CHECK(drag.shown(drag.audio) == Approx(ui::g_trackHeight + 20.0));
 	drag.move(at);
@@ -970,7 +973,7 @@ TEST_CASE("a height drag compares its end with the heights the engine has, also 
 	REQUIRE(drag.tracks.app.waitUntil(
 		[&]
 		{
-			return drag.heights() == Json{drag.height(drag.audio, ui::g_trackHeight), drag.height(drag.other, 120.0)};
+			return drag.heights() == Json{layoutHeight(drag.audio, ui::g_trackHeight), layoutHeight(drag.other, 120.0)};
 		}));
 	CHECK(drag.shown(drag.audio) == Approx(ui::g_trackHeight));
 }
@@ -981,7 +984,7 @@ TEST_CASE("a height drag that stays at the smallest or the largest height sends 
 	HeightDrag drag;
 	drag.tracks.app.call("trackLayout.set",
 		{{"heights",
-			{drag.height(drag.audio, engine::g_minTrackHeight), drag.height(drag.other, engine::g_maxTrackHeight)}}});
+			{layoutHeight(drag.audio, engine::g_minTrackHeight), layoutHeight(drag.other, engine::g_maxTrackHeight)}}});
 	REQUIRE(drag.tracks.app.waitUntil([&] { return drag.shown(drag.other) == Approx(engine::g_maxTrackHeight); }));
 	const uint64_t revision = drag.revision();
 
@@ -1001,7 +1004,7 @@ TEST_CASE("a height drag that stays at the smallest or the largest height sends 
 	drag.release({large.x, large.y + 15});
 	CHECK(drag.revision() == revision);
 	CHECK(drag.heights() ==
-		Json{drag.height(drag.audio, engine::g_minTrackHeight), drag.height(drag.other, engine::g_maxTrackHeight)});
+		Json{layoutHeight(drag.audio, engine::g_minTrackHeight), layoutHeight(drag.other, engine::g_maxTrackHeight)});
 }
 
 // #1131: a release that doesn't reach the list's document leaves the drag under way; the next press ends it, with the
@@ -1015,8 +1018,8 @@ TEST_CASE("a height drag whose release never came ends with the next press", "[u
 	drag.press({at.x, at.y + 20}); // on the lower edge again, where the drag left the mouse
 	drag.release({at.x, at.y + 20});
 	REQUIRE(drag.tracks.app.waitUntil(
-		[&] { return drag.heights() == Json::array({drag.height(drag.audio, ui::g_trackHeight + 20.0)}); }));
-	drag.tracks.app.call("trackLayout.set", {{"heights", {drag.height(drag.audio, 100.0)}}});
+		[&] { return drag.heights() == Json::array({layoutHeight(drag.audio, ui::g_trackHeight + 20.0)}); }));
+	drag.tracks.app.call("trackLayout.set", {{"heights", {layoutHeight(drag.audio, 100.0)}}});
 	REQUIRE(drag.tracks.app.waitUntil([&] { return drag.shown(drag.audio) == Approx(100.0); }));
 }
 

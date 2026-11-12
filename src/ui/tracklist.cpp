@@ -2072,6 +2072,7 @@ namespace gnubase::ui
 				// Every track's (reference manual p. 217), also those inside folded folders and those the track
 				// visibility hides.
 				std::vector<uint64_t> every;
+				every.reserve(m_tracks.size());
 				for (const Row& each : m_tracks)
 					every.push_back(each.id);
 				m_display.setTrackHeights(every, height);
