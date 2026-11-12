@@ -33,15 +33,17 @@ namespace
 		CHECK(one == gnubase::files::fileIdentity(folder.path() / "one.wav")); // the same file, asked again
 		CHECK_FALSE(one == two);                                               // two files are two identities
 
-		// A letter's case the file system folds but the name doesn't: on Windows and macOS Übung.wav and übung.wav are
-		// one file, so one identity; on Linux they are two names and the second isn't there.
+		// A letter's case a file system may fold although the name doesn't. Whether Übung.wav and übung.wav are one
+		// file is the file system's to say, not the operating system's: Windows and macOS fold it by default and Linux
+		// doesn't, but a case-sensitive volume on macOS or a case-folding folder on Linux turns that around. If the
+		// second spelling finds the file, the two are one identity; otherwise the second names no file and has none.
 		const fs::path upper = folder.path() / fs::u8path("Übung.wav");
 		const fs::path lower = folder.path() / fs::u8path("übung.wav");
 		write(upper);
 		const auto folded = gnubase::files::fileIdentity(lower);
-		if (gnubase::files::currentOs() == gnubase::files::Os::Linux)
-			CHECK_FALSE(folded.has_value());
-		else
+		if (fs::exists(lower))
 			CHECK(folded == gnubase::files::fileIdentity(upper));
+		else
+			CHECK_FALSE(folded.has_value());
 	}
 }

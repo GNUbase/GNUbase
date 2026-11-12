@@ -528,7 +528,7 @@ TEST_CASE("freeze files of the same name, also in another case, keep apart in th
 	CHECK(fs::u8path(loaded(three.track)) == gone);
 }
 
-TEST_CASE("freeze files that differ only in the case of a non-ASCII letter keep apart on load", "[integration]")
+TEST_CASE("embedded files that differ only in the case of a non-ASCII letter keep apart on load", "[integration]")
 {
 	Session project;
 	const Session::Track one = project.addTrack("One");
@@ -540,14 +540,35 @@ TEST_CASE("freeze files that differ only in the case of a non-ASCII letter keep 
 	{ return fs::u8path(frozen.at("tracks").at(i).at("frozen").at("path").get<std::string>()); };
 
 	// Übung.wav and übung.wav in two folders go into the file as two entries, which the zip tells apart, but the
-	// file systems of Windows and macOS see as one name: loading must not extract the second over the first. On
-	// Linux, where the names are two files, this passes also without that care.
+	// file systems of Windows and macOS see as one name: loading must not extract the second over the first. On a
+	// file system that keeps the names apart, as Linux's do, this passes also without that care. It holds for every
+	// embedded file: two media files of those names, each played by an event, go in as audio/Übung.wav and
+	// audio/übung.wav, as the save makes media names unique only in the same case.
+	const fs::path oneName = fs::u8path("Übung.wav");
+	const fs::path twoName = fs::u8path("übung.wav");
+	const gnubase::test::TempDir third;
+	const gnubase::test::TempDir fourth;
+	const auto addMedia = [&project](const fs::path& file, float level, ObjectId track)
+	{
+		gnubase::test::Audio audio;
+		audio.channels = 2;
+		audio.samples.assign(2000, level);
+		gnubase::test::writeWav(file, audio);
+		const Json added = run(project.client, "media.add", {{"path", file.u8string()}});
+		const Json clip = run(project.client, "clip.add", {{"media", added.at("media").at("id")}});
+		run(project.client, "audioEvent.add",
+			{{"track", track}, {"clip", clip.at("clip").at("id")}, {"position", 20000}});
+		return added.at("media").at("id").get<ObjectId>();
+	};
+	const ObjectId oneMedia = addMedia(third.path() / oneName, 0.25f, one.track);
+	const ObjectId twoMedia = addMedia(fourth.path() / twoName, -0.75f, two.track);
+	const std::vector<float> oneMediaSamples = samplesOf((third.path() / oneName).u8string());
+	const std::vector<float> twoMediaSamples = samplesOf((fourth.path() / twoName).u8string());
+
 	run(project.client, "project.save", {{"embedMedia", false}});
 	const fs::path saved = project.media.path() / "project.dawproject";
 	const gnubase::test::TempDir first;
 	const gnubase::test::TempDir second;
-	const fs::path oneName = fs::u8path("Übung.wav");
-	const fs::path twoName = fs::u8path("übung.wav");
 	fs::copy_file(pathOf(0), first.path() / oneName);
 	fs::copy_file(pathOf(1), second.path() / twoName);
 	const std::vector<float> oneSamples = samplesOf((first.path() / oneName).u8string());
@@ -572,6 +593,22 @@ TEST_CASE("freeze files that differ only in the case of a non-ASCII letter keep 
 	{ return project.track(track).at("frozen").at("path").get<std::string>(); };
 	CHECK(firstDifference(samplesOf(loaded(one.track)), oneSamples) == -1);
 	CHECK(firstDifference(samplesOf(loaded(two.track)), twoSamples) == -1);
+	const auto loadedMedia = [&project](ObjectId id)
+	{
+		std::string path;
+		const Json current = run(project.client, "project.get");
+		for (const Json& media : current.at("media"))
+			if (media.at("id") == id)
+				path = media.at("path").get<std::string>();
+		REQUIRE(!path.empty());
+		return path;
+	};
+	// Extracted next to the file, each from its own entry.
+	const fs::path extracted = project.media.path() / "project media" / "audio";
+	CHECK(fs::u8path(loadedMedia(oneMedia)).parent_path() == extracted);
+	CHECK(fs::u8path(loadedMedia(twoMedia)).parent_path() == extracted);
+	CHECK(firstDifference(samplesOf(loadedMedia(oneMedia)), oneMediaSamples) == -1);
+	CHECK(firstDifference(samplesOf(loadedMedia(twoMedia)), twoMediaSamples) == -1);
 }
 
 TEST_CASE("a backup carries the freeze files along", "[integration]")
