@@ -1856,9 +1856,9 @@ TEST_CASE("a lane of the limiter's switch plays it bypassed with its look-ahead,
 				}
 				limited = std::max(limited, std::abs(output[i]));
 			}
-			else if (i >= 8000) // off again, once its gain has released: the same delay as before
+			else if (i >= 6000) // off again from its sample on: the delayed input, bit for bit, no gain is released
 			{
-				wrong += std::abs(output[i] - delayed) <= 1e-5 ? 0 : 1;
+				wrong += output[i] == delayed ? 0 : 1;
 			}
 		}
 		INFO("channel " << channel);
