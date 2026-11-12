@@ -735,7 +735,7 @@ TEST_CASE("Recorder::setup doesn't wait for the disk thread, which creates the f
 
 		// A recorded block, then one that isn't: the recording ends.
 		std::vector<float> input(frames, 0.25f);
-		const float* inputs[] = {input.data()};
+		const float* const inputs[] = {input.data()};
 		const gnubase::audio::MidiBuffer midiIn;
 		gnubase::audio::MidiBuffer midiOut;
 		engine::PlayedPositions played(size_t{4} * frames);
