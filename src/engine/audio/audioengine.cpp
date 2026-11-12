@@ -289,12 +289,14 @@ namespace gnubase::engine
 						cue.settings = m_cueState.settings;
 						cue.arranger = m_cueState.arranger.get();
 						cue.arrangerState = m_transport.arranger();
+						// Read first: a request seen applied then shows where the audio thread went (transport.h).
+						const uint64_t applied = m_transport.appliedRequests();
 						cue.position = m_transport.position();
 						const time::Samples countInStart = m_transport.countInStart();
 						// At a start the command thread cued, until the audio thread plays from there, and while it
 						// counts in, where playback starts after it. Either may begin while this cues: the voice it
 						// reads stays.
-						if (m_cueState.start >= 0 && m_transport.appliedRequests() < m_cueState.startRequests)
+						if (m_cueState.start >= 0 && applied < m_cueState.startRequests)
 						{
 							cue.position = m_cueState.start;
 							cue.enter = m_cueState.enter;
@@ -321,6 +323,7 @@ namespace gnubase::engine
 		m_cueState.start = start;
 		m_cueState.enter = enter;
 		m_cueState.startRequests = m_transport.sentRequests() + 1;
+		m_cueState.playing = true; // until sent() reads the transport, also when the start is applied before it
 	}
 
 	void AudioEngine::startDevice()
