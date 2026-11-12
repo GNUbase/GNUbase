@@ -98,8 +98,8 @@ the project start. The sample grids count from the project start, as the samples
 ## The event display
 
 - **Toolbar** (`resources/ui/project.rml`): the snap toggle `#snap`, the snap type menu `#snap-type-menu` behind
-  `#snap-type`, the grid type menu `#grid-type-menu` behind `#grid-type` (its section is hidden in windows narrower
-  than 840 dp, which the toolbar has no room for), and the toggle `#snap-zero-crossing`. The
+  `#snap-type`, the grid type menu `#grid-type-menu` behind `#grid-type` (its section shows where the toolbar has
+  room for it, [docking.md](docking.md)), and the toggle `#snap-zero-crossing`. The
   buttons show the settings (`.checked`, and the chosen type's name); the grid type menu has the grid types of the
   ruler's time format (bars and beats, seconds, timecode and fps (User), samples), filled in by the display from the
   engine's table (`engine::gridTypes`), the chosen one checked. Every change goes to the engine with `snap.set`; the
