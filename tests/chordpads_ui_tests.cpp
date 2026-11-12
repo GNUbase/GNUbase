@@ -569,6 +569,13 @@ TEST_CASE("the toolbar and the settings panes change output mode, players, playe
 	CHECK(window.app.waitUntil([&] { return window.text("#chord-pads-pattern-info") == "arpeggioUp (4 voices)"; }));
 	window.click("#chord-pads-velocityFromKeyboard");
 	REQUIRE(window.app.waitUntil([&] { return pads().at("velocityFromKeyboard") == true; }));
+	// The pattern's progress shows on the playing pad (pp. 1354, 1391).
+	CHECK(pads().at("pattern").at("seconds") == 2.0);
+	CHECK_FALSE(window.visible(Window::pad(3) + " .chord-pad-progress"));
+	window.call("chordPads.trigger", {{"pad", 3}});
+	REQUIRE(window.app.waitUntil([&] { return window.visible(Window::pad(3) + " .chord-pad-progress"); }));
+	window.call("chordPads.trigger", {{"pad", 3}, {"on", false}});
+	REQUIRE(window.app.waitUntil([&] { return !window.visible(Window::pad(3) + " .chord-pad-progress"); }));
 	window.call("chordPads.set", {{"mode", "plainChords"}});
 	REQUIRE(window.app.waitUntil([&] { return window.visible("#chord-pads-overlaps"); }));
 
@@ -601,6 +608,13 @@ TEST_CASE("the toolbar and the settings panes change output mode, players, playe
 	window.app.ui().text(std::nullopt, "60");
 	window.app.ui().key(std::nullopt, "Enter");
 	REQUIRE(window.app.waitUntil([&] { return pads().at("modifierKeys").at("transposeUp") == 60; }));
+	// Transpose All Pads by a controller (p. 1387).
+	window.click("#chord-pads-controlSource-2");
+	window.app.ui().key(std::nullopt, "Down");
+	window.app.ui().key(std::nullopt, "Down");
+	window.app.ui().key(std::nullopt, "Down");
+	window.click("#chord-pads-controlSource-2");
+	REQUIRE(window.app.waitUntil([&] { return pads().at("controlSources")[2] == "controller"; }));
 	window.click("#chord-pads-learnRange");
 	REQUIRE(window.app.waitUntil([&] { return pads().at("listening") == Json{{"learn", "range"}}; }));
 	CHECK(window.app.waitUntil([&] { return window.hasClass("#chord-pads-learnRange", "checked"); }));
@@ -681,6 +695,33 @@ TEST_CASE("pad modifier buttons play the pad, the keyboard shows the notes, and 
 	CHECK(window.hasClass(key(47), "remote"));
 	CHECK_FALSE(window.hasClass(key(48), "remote"));
 	CHECK(window.hasClass(key(37), "black"));
+
+	// Dragging the keyboard scrolls it to the left and right and zooms it up and down (p. 1355).
+	const auto keys = [&] { return window.elements(".chord-pads-key"); };
+	REQUIRE(keys().size() == 73);
+	CHECK(keys()[0].at("attributes").at("pitch") == "24");
+	const Json strip = window.box("#chord-pads-keyboard");
+	const auto at = [&](double x)
+	{
+		return ui::Target{"", 0,
+			ui::Point{static_cast<int>(std::lround(strip.at("x").get<double>() + x)),
+				static_cast<int>(std::lround(strip.at("y").get<double>() + (strip.at("height").get<double>() / 2.0)))}};
+	};
+	const double keyWidth = strip.at("width").get<double>() / 73.0;
+	window.app.ui().drag(std::nullopt, at(strip.at("width").get<double>() / 2.0),
+		at((strip.at("width").get<double>() / 2.0) - (12.0 * keyWidth)));
+	window.step();
+	// About an octave on: the strip's padding makes a key's width a little different from the box's share.
+	REQUIRE(window.app.waitUntil(
+		[&] { return std::abs(std::stoi(keys()[0].at("attributes").at("pitch").get<std::string>()) - 36) <= 1; }));
+	window.app.ui().press(std::nullopt, at(100.0), ui::MouseButton::Left);
+	window.app.ui().move(std::nullopt,
+		{"", 0,
+			ui::Point{static_cast<int>(strip.at("x").get<double>() + 100.0),
+				static_cast<int>(strip.at("y").get<double>() - 40.0)}});
+	window.app.ui().release(std::nullopt, {}, ui::MouseButton::Left);
+	window.step();
+	CHECK(window.app.waitUntil([&] { return keys().size() < 73; }));
 
 	// Transpose Up plays the first selected pad's new chord while the button is down.
 	window.click(Window::pad(0));

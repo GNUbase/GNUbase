@@ -22,11 +22,11 @@ sections player modes, presets, step input and the List, Proximity and Circle of
   before the players has one basic player with its octave offset.
 - **Players on several tracks** (p. 1377): a player can have a MIDI or instrument track (`track`, one player a
   track). The selected player and those with a track play: a player's track gets its voicings, every other track the
-  selected player's. The render snapshot carries each playing player's pitches per remote key (`ChordPadKeys`, up to
+  selected player's. Each pad has a voicing per player (`voicings`; `voicing` is the selected player's), and changing
+  a pad's voicing changes the selected player's only (p. 1378). The render snapshot carries each playing player's pitches per remote key (`ChordPadKeys`, up to
   8 players), the audio thread voices a remote key's chord for each of them (a `midi::PadVoices` per player) into a
   buffer per player, and each track's thru takes its player's buffer (`RenderChannel::padPlayer`);
-  `chordPads.trigger` does the same through `midi.keyboard` `player`. The reference changes the voicings of the
-  selected player only; here a pad's voicing (its inversion) is the same for all players.
+  `chordPads.trigger` does the same through `midi.keyboard` `player`.
 - **Voicings** (pp. 1376-1377): the selected player's voicing: the basic player's is the chord track's basic voicing
   (bass from C2, the chord from C3) moved by its Octave Offset, and each voicing is inverted by the pad's voicing. A pad with adaptive voicing takes the
   inversion nearest to the adaptive voicing reference pad's voicing (`chordPads.setPad` `reference`), as the chord
@@ -73,7 +73,8 @@ sections player modes, presets, step input and the List, Proximity and Circle of
   lowest (0, the bass) up, a voice beyond the chord an octave above a lower one. `setPattern` `part` takes a MIDI
   part, as a part dropped on the Player Mode section does: its distinct pitches are the voices (3 to 5), its length
   the pattern's; `preset` takes one of GNUbase's patterns (Arpeggio Up and Down, Broken Chord, Eighths: a bar of four
-  voices). The pattern starts when the first chord comes, goes on at the tempo where the transport is, takes the next
+  voices); `file` imports a MIDI file (Import from MIDI Loop): its notes on all its tracks, as long as its longest
+  track. The pattern starts when the first chord comes, goes on at the tempo where the transport is, takes the next
   chord's notes as it comes and ends when no chord is held; `velocityFromKeyboard` plays the velocity the pad was
   triggered with (Velocity from MIDI Keyboard) instead of the pattern's. The audio thread plays it on each player's
   notes (`midi::PadPattern`), after Snap Playback to Musical Grid, so a snapped pattern starts on the grid.
@@ -118,8 +119,11 @@ sections player modes, presets, step input and the List, Proximity and Circle of
   tensions, transpose down and up; C2 to F2 by default) play nothing and change the pads whose remote keys are down,
   or else the pad triggered last, and with no pad's key down play that pad while they are down. The reference changes
   the selected pads; the engine has no pad selection, so it
-  takes the pad that is played. Modify All Pad Voicings, Tensions and Transpose All Pads by aftertouch, pitch bend
-  or a controller are not there yet.
+  takes the pad that is played. Modify All Pad Voicings, Modify All Pad Tensions and Transpose All Pads
+  (`controlSources`: aftertouch, pitchBend or a controller of `controlNumbers`) move all pads across the control's
+  range: the voicings from 3 inversions down to 3 up, the tensions from none to 3 more, the transposition from 6
+  semitones down to 6 up; the audio thread hands the control's value to the command thread (`PadEvent::Kind::Control`),
+  which modifies the pads as one undo step per gesture (a merged `history.transaction`).
 - **Assign from MIDI Input and MIDI Learn** (pp. 1360, 1388): `chordPads.listen` `assign` (a pad) takes the next notes
   from the MIDI inputs, which play as they are meanwhile, and once they are all released assigns their chord
   (`chordPads.assign` `pitches`); `learn` `range` takes the next two keys as the remote range, `learn` with a
@@ -169,11 +173,14 @@ Add Player of a type, rename by Enter, Delete, and the Chord Voicing Style of a 
 Offset of a basic one, and the player's track), Player Mode (Plain Chords or Pattern; for Pattern a preset, From
 Selected Part, which makes the event display's selected MIDI part the pattern, Velocity from MIDI Keyboard and what
 pattern is loaded; for Plain Chords Overlaps and Filter Notes), Remote Settings (the MIDI Input, Latch Chords, MIDI
-Learn of the range, Activate Chord Modifiers and their keys), Player Remote (the sections mode's Play Mode, Latch Chord
+Learn of the range, Activate Chord Modifiers and their keys, and what moves all pads' voicings, tensions and
+transposition), Player Remote (the sections mode's Play Mode, Latch Chord
 Pads, Spread, the section and subsection keys, offsets and sections, the section mutes and the Select/Mute Player keys) and
 Display (`ui.chordPads`: the primary and secondary
 chord symbols, note names, roman numerals or Nashville numbers; the keyboard layout, where the pads on black remote
-keys are `.black-key`, or the grid with its columns; Show List Assistant Colors and Show Voicing Indicators). The
+keys are `.black-key`, or the grid with its columns; Show List Assistant Colors, Show Voicing Indicators and Show
+Pattern Play Progress, a bar along a playing pad's bottom, `.chord-pad-progress`, that runs through the pattern in the
+seconds it lasts at the project's tempo, `chordPads.get` `pattern.seconds`). The
 extended toolbar has Select All, Open Chord Editor, Remove Assignment, Transpose Down/Up, Fewer/More Tensions,
 Previous/Next Voicing, Lock, Adaptive Voicing, Adaptive Voicing Reference and Assign from MIDI Input, on the selected
 pads; a pad modifier button plays the first selected pad's new chord while it is down (p. 1351);
@@ -191,7 +198,8 @@ refuses, such as a remote start above the end, goes back to the one the pads hav
 - A double click on a pad, Open Chord Editor or Return opens the chord field (`#chord-pads-field`), where Enter assigns
   the chord typed. While the zone has the focus, Ctrl+A (Cmd+A) selects all pads, Delete and Backspace remove the
   selected pads' chords and Ctrl+Shift+L (Cmd+Shift+L) locks them (pp. 1351, 1362).
-- The zone's keyboard (`#chord-pads-keyboard`, p. 1355), C0 to C6, shows the notes that sound (`.played`), the remote
+- The zone's keyboard (`#chord-pads-keyboard`, p. 1355), C0 to C6 at first, scrolls by keys as it is dragged left or
+  right and shows fewer or more keys as it is dragged up or down; it shows the notes that sound (`.played`), the remote
   range (`.remote`), the chord modifiers' keys while they are active (`.modifier`) and the hovered pad's trigger key
   (`.hover`).
 - The Inspector's Input Routing of a MIDI or instrument track chooses All MIDI Inputs, Chord Pads or Not Connected
@@ -257,10 +265,8 @@ dropped onto an instrument track's lane and onto the chord track; and the step i
 
 ## Not yet
 
-Modify All Pad Voicings, Modify All Pad Tensions and Transpose All Pads by aftertouch, pitch bend or a controller
-(p. 1387); a pad's own voicing per player (here every player inverts its voicing the same way); importing a pattern
-from the media browser's MIDI loops and the pattern play progress on the pads (p. 1391); the Chord Note Distribution
+Choosing a MIDI loop in a media browser (`chordPads.setPattern` `file` imports one from a path); the Chord Note Distribution
 beyond Spread; the chord editor's own keyboard display and Activate MIDI Input (the zone's keyboard and Assign from
 MIDI Input do the same); the Chord Assistant as a window of its own and the Circle of Fifths' context menu (a context
-click assigns at once); zooming and scrolling the zone's keyboard by dragging; preset attributes; and the reference indicator drawn as the reference manual's picture shows it (p. 1353:
+click assigns at once); preset attributes; and the reference indicator drawn as the reference manual's picture shows it (p. 1353:
 GNUbase shows a square beside the dot).

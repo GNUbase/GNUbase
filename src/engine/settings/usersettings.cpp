@@ -701,8 +701,9 @@ namespace gnubase::engine::settings
 					"The chord pads zone's display settings (reference manual pp. 1390-1391): primary and secondary, "
 					"the chord symbols' types (noteName, roman, nashville; the secondary also none), layout keyboard "
 					"or "
-					"grid with columns (1 to 16), listColors (the List assistant's colors on the pads) and "
-					"voicingIndicators. What it leaves out has its default: note names over roman numerals, the "
+					"grid with columns (1 to 16), listColors (the List assistant's colors on the pads), "
+					"voicingIndicators and patternProgress (Show Pattern Play Progress). What it leaves out has its "
+					"default: note names over roman numerals, the "
 					"keyboard layout, six columns, no colors and voicing indicators.",
 					Json{{"type", "object"},
 						{"properties",
@@ -711,7 +712,8 @@ namespace gnubase::engine::settings
 									{{"type", "string"}, {"enum", {"none", "noteName", "roman", "nashville"}}}},
 								{"layout", {{"type", "string"}, {"enum", {"keyboard", "grid"}}}},
 								{"columns", {{"type", "integer"}, {"minimum", 1}, {"maximum", 16}}},
-								{"listColors", {{"type", "boolean"}}}, {"voicingIndicators", {{"type", "boolean"}}}}}},
+								{"listColors", {{"type", "boolean"}}}, {"voicingIndicators", {{"type", "boolean"}}},
+								{"patternProgress", {{"type", "boolean"}}}}}},
 					Json::object()},
 				{"ui.theme", "The theme's folder name in resources/themes.", Json{{"type", "string"}}, "gnubase"},
 				{"ui.timeDisplay",

@@ -86,7 +86,8 @@ namespace gnubase::engine
 				Released,
 				Modifier,
 				Note,
-				Player, // a key of Select/Mute Player
+				Player,  // a key of Select/Mute Player
+				Control, // what moves all pads (key: 0 voicings, 1 tensions, 2 transposition; velocity: 0 to 127)
 			};
 			Kind kind = Kind::Note;
 			uint8_t key = 0;

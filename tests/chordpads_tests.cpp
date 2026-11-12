@@ -5,6 +5,7 @@
 #include "engine/document/chordpads.h"
 #include "engine/engine.h"
 #include "engine/midi/padvoices.h"
+#include "engine/midifile/smf.h"
 #include "mcp/server.h"
 #include "platform/audio/device.h"
 #include "platform/hosttime.h"
@@ -376,9 +377,13 @@ TEST_CASE("piano and guitar players voice the pads in their styles, and the sele
 	CHECK_THAT(reject(client, "chordPads.setPlayer", {{"style", "modernJazz"}}), ContainsSubstring("voicing style"));
 	run(client, "chordPads.addPlayer", {{"library", "guitar"}, {"style", "threeString"}});
 	CHECK(pad(client, 4).at("pitches") == voiced("G", "guitar", "threeString"));
-	// The voicing modifiers invert the player's voicing.
+	// The voicing modifiers invert the selected player's voicing, and only its (p. 1378).
 	run(client, "chordPads.modify", {{"pads", {4}}, {"voicing", 1}});
 	CHECK(pad(client, 4).at("pitches") == chordpads::inverted(voiced("G", "guitar", "threeString"), 1));
+	CHECK(pad(client, 4).at("voicings") == std::vector<int>{0, 0, 1});
+	run(client, "chordPads.set", {{"player", 1}});
+	CHECK(pad(client, 4).at("voicing") == 0);
+	run(client, "chordPads.set", {{"player", 2}});
 	// Back to the basic player, whose octave offset changes its voicings only.
 	run(client, "chordPads.set", {{"player", 0}, {"octaveOffset", 1}});
 	CHECK(pad(client, 0).at("pitches") == std::vector<int>{60, 72, 76, 79});
@@ -735,6 +740,30 @@ TEST_CASE(
 	CHECK_THAT(
 		reject(client, "chordPads.set", {{"modifierKeys", {{"transposeUp", 128}}}}), ContainsSubstring("modifierKeys"));
 
+	// Transpose All Pads by a controller, Modify All Pad Voicings by pitch bend (p. 1387): across their range, as one
+	// undo step per gesture.
+	run(client, "chordPads.set",
+		{{"controlSources", {"pitchBend", "none", "controller"}}, {"controlNumbers", {1, 1, 74}}});
+	run(client, "audio.render", {{"frames", 64}});
+	const auto steps = run(client, "history.get").at("position").get<int64_t>();
+	const auto control = [&](uint8_t status, uint8_t number, uint8_t value)
+	{
+		gnubase::audio::MidiMessage message;
+		message.size = 3;
+		message.bytes = {status, number, value};
+		constexpr gnubase::HostTime second = 1000000000;
+		remote.keys->send(message, gnubase::hostTime() - second);
+		return remote.rig.played();
+	};
+	CHECK(control(0xB0, 74, 127).empty());
+	CHECK(remote.until([&] { return pad(client, 1).at("chord") == "G#m"; })); // Dm 6 semitones up
+	control(0xB0, 74, 117);
+	CHECK(remote.until([&] { return pad(client, 1).at("chord") == "Gm"; }));
+	CHECK(run(client, "history.get").at("position").get<int64_t>() == steps + 1);
+	CHECK(control(0xE0, 0, 127).empty());
+	CHECK(remote.until([&] { return pad(client, 1).at("voicing") == 3; }));
+	CHECK(control(0xB0, 7, 100) == std::vector<std::vector<int>>{}); // another controller plays on: no note
+
 	// Only the chosen MIDI input triggers the pads; the others' notes play themselves.
 	run(client, "chordPads.set", {{"remotePort", "dummy/in/Other"}});
 	run(client, "audio.render", {{"frames", 64}});
@@ -954,6 +983,29 @@ TEST_CASE("the pattern player mode plays a MIDI part's pattern with the notes of
 	run(client, "chordPads.trigger", {{"pad", 0}});
 	CHECK(ons(rig.played()).size() == 4);
 	run(client, "chordPads.trigger", {{"pad", 0}, {"on", false}});
+	// Import from MIDI Loop: a MIDI file's notes (p. 1379).
+	const gnubase::test::TempDir dir;
+	const std::string loop = (dir.path() / "Loop.mid").u8string();
+	midifile::File file;
+	file.ticksPerQuarter = 480;
+	midifile::Track track;
+	for (int i = 0; i < 3; ++i)
+	{
+		track.events.push_back(midifile::channelEvent(i * 480, 0x90, static_cast<uint8_t>(50 + i), 100));
+		track.events.push_back(midifile::channelEvent((i * 480) + 240, 0x80, static_cast<uint8_t>(50 + i), 0));
+	}
+	track.end = 4 * 480;
+	file.tracks.push_back(track);
+	midifile::save(file, loop);
+	run(client, "chordPads.setPattern", {{"file", loop}});
+	Json imported = run(client, "chordPads.get").at("pattern");
+	CHECK(imported.at("name") == "Loop");
+	CHECK(imported.at("voices") == 3);
+	CHECK(imported.at("length") == 4 * g_beatTicks);
+	CHECK(imported.at("notes")[1].at("position") == g_beatTicks);
+	CHECK(imported.at("notes")[1].at("length") == g_beatTicks / 2);
+	CHECK_THAT(reject(client, "chordPads.setPattern", {{"file", (dir.path() / "None.mid").u8string()}}),
+		ContainsSubstring("can't read the MIDI loop"));
 	// A part of fewer than three voices is no pattern.
 	const auto two = run(client, "midiPart.add", {{"track", midiTrack}, {"position", 0}, {"length", g_beatTicks}})
 						 .at("part")

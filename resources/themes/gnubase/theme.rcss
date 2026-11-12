@@ -660,6 +660,10 @@
 		color: #aeb7d0;
 		font-size: 11dp;
 	}
+	.chord-pad .chord-pad-progress
+	{
+		background-color: #10dff2;
+	}
 	.chord-pad.black-key
 	{
 		background-color: #0f1222;

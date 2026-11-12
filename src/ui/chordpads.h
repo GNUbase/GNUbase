@@ -8,6 +8,7 @@
 #include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/ObserverPtr.h>
 
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -85,6 +86,8 @@ namespace gnubase::ui
 		void showPlayerTrack();
 		void showEditor();
 		void showRecent();
+		void showKeys();
+		void dragKeyboard(const Rml::Event& event);
 		void pressEditor(const Rml::Element& button);
 		void modifyPressed(const std::string& name);
 		static bool modifies(const std::string& name);
@@ -110,9 +113,14 @@ namespace gnubase::ui
 		engine::Json m_ports = engine::Json::array();    // the MIDI inputs, for the remote's MIDI Input
 		widgets::Options m_tracks;                       // the MIDI and instrument tracks, for a player's track
 		std::vector<std::string> m_recent;               // the last three chords auditioned in the assistant
-		engine::Json m_listening;                        // what chordPads.listen listens for, or null
-		std::map<int, std::vector<int>> m_sounding;      // the pitches each pad plays (-1: an audition)
-		int m_hovered = -1;                              // the pad under the mouse
+		// The zone's keyboard (p. 1355): its lowest key and how many it shows, which a drag scrolls and zooms, and the
+		// drag's start: where, and the lowest key and count then.
+		int m_keyLow = 24;
+		int m_keyCount = 73;
+		std::optional<std::array<float, 4>> m_keyDrag;
+		engine::Json m_listening;                   // what chordPads.listen listens for, or null
+		std::map<int, std::vector<int>> m_sounding; // the pitches each pad plays (-1: an audition)
+		int m_hovered = -1;                         // the pad under the mouse
 		int m_auditionPad = -1;         // the pad that a pad modifier button's press plays until the button goes up
 		bool m_pressedModifier = false; // a pad modifier button acted on its press, so its click does nothing
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers that come after it went

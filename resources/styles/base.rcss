@@ -1091,6 +1091,27 @@ meter .meter-peak
 	height: 40dp;
 }
 
+/* Pattern Play Progress (pp. 1354, 1391): a bar along the bottom of a pad that plays the pattern. */
+.chord-pad .chord-pad-progress
+{
+	position: absolute;
+	left: 0;
+	bottom: 0;
+	width: 0%;
+	height: 2dp;
+	display: none;
+}
+
+.chord-pad.triggered .chord-pad-progress
+{
+	display: block;
+}
+
+.chord-pads-pads.no-progress .chord-pad-progress
+{
+	display: none;
+}
+
 /* The voicing indicator at the bottom of the pad (p. 1353), unless the display settings hide it. */
 .chord-pads-pads.no-voicings .chord-pad-voicing
 {

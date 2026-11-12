@@ -272,6 +272,10 @@ namespace gnubase::engine
 		bool spread = false;
 		std::array<bool, 5> mutedSections{};
 		std::array<uint8_t, 3> playerKeys{}; // previous, next, mute player
+		// What moves all pads' voicings, tensions and transposition (p. 1387): 0 nothing, 1 channel pressure, 2 pitch
+		// bend, 3 a controller of controlNumbers.
+		std::array<uint8_t, 3> controlSources{};
+		std::array<uint8_t, 3> controlNumbers{};
 		// Per player and key, as the player voices the pad's chord. The selected player and those with a track play
 		// (players, a bit per player).
 		std::array<std::array<uint8_t, 128>, g_maxPlayers> counts{};

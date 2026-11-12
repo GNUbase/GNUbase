@@ -27,9 +27,9 @@ namespace gnubase::ui
 			Rml::EventId::Mouseover, Rml::EventId::Mouseout, Rml::EventId::Mousemove};
 
 		constexpr const char* g_displayKey = "ui.chordPads";
-		// The keys of the zone's keyboard (reference manual p. 1355): C0 to C6.
-		constexpr int g_lowestKey = 24;
-		constexpr int g_highestKey = 96;
+		// How many keys the zone's keyboard shows at most and at least (reference manual p. 1355).
+		constexpr int g_mostKeys = 128;
+		constexpr int g_fewestKeys = 13;
 		// The pad modifier buttons, which play the first selected pad while they are pressed (p. 1351).
 		constexpr std::array<const char*, 6> g_modifierActions = {
 			"transposeDown", "transposeUp", "fewerTensions", "moreTensions", "previousVoicing", "nextVoicing"};
@@ -166,14 +166,10 @@ namespace gnubase::ui
 			return rml;
 		}
 
-		// The zone's keyboard (reference manual p. 1355), its keys from C0 to C6.
+		// The zone's keyboard (reference manual p. 1355), filled by showKeys.
 		std::string keyboard()
 		{
-			std::string rml = R"(<div id="chord-pads-keyboard" class="chord-pads-keyboard">)";
-			for (int pitch = g_lowestKey; pitch <= g_highestKey; ++pitch)
-				rml += std::string(R"(<div class="chord-pads-key )") + (isBlack(pitch) ? "black" : "white") +
-					R"(" pitch=")" + std::to_string(pitch) + R"("/>)";
-			return rml + "</div>";
+			return R"(<div id="chord-pads-keyboard" class="chord-pads-keyboard"/>)";
 		}
 
 		widgets::Options rootKeys()
@@ -357,6 +353,10 @@ namespace gnubase::ui
 			R"(<select id="chord-pads-remotePort" title="MIDI Input"/>)" +
 			button("latch", "Latch Chords", "Latch", true) + button("learnRange", "MIDI Learn", "Learn", true) +
 			button("modifiers", "Activate Chord Modifiers", "Modifiers", true) + modifierKeys() +
+			R"(<select id="chord-pads-controlSource-0" control="0" title="Modify All Pad Voicings"/>)"
+			R"(<select id="chord-pads-controlSource-1" control="1" title="Modify All Pad Tensions"/>)"
+			R"(<select id="chord-pads-controlSource-2" control="2" title="Transpose All Pads"/>)" +
+			fiveKeys("controlNumbers", "Controller Number", 3, 0, 127) +
 			R"(</div><div id="chord-pads-pane-playerRemote" class="chord-pads-toolbar chord-pads-pane hidden">)"
 			R"(<select id="chord-pads-sectionPlay" title="Play Mode"/>)" +
 			button("latchPads", "Latch Chord Pads", "Latch Pads", true) +
@@ -377,6 +377,7 @@ namespace gnubase::ui
 			R"(title="Number of Columns"/>)" +
 			button("listColors", "Show List Assistant Colors", "Colors", true) +
 			button("voicingIndicators", "Show Voicing Indicators", "Voicings", true) +
+			button("patternProgress", "Show Pattern Play Progress", "Progress", true) +
 			R"(</div><div class="chord-pads-body"><div id="chord-pads-pads" class="chord-pads-pads"/>)"
 			R"(<div id="chord-pads-assistant-pane" class="chord-pads-assistant hidden"><div class="chord-pads-toolbar">)"
 			R"(<button id="chord-pads-page-list" page="list" type="toggle" title="List">List</button>)"
@@ -419,7 +420,19 @@ namespace gnubase::ui
 				const bool on = event.data.value("on", false);
 				if (const Rml::Element* pads = find("chord-pads-pads");
 					pads != nullptr && pad >= 0 && pad < pads->GetNumChildren())
+				{
 					setClass(pads->GetChild(pad), "triggered", on);
+					// Pattern Play Progress (pp. 1354, 1391): the bar runs through the pattern, again and again.
+					Rml::Element* progress = pads->GetChild(pad)->GetChild(5);
+					const double seconds =
+						m_pads.contains("pattern") ? m_pads.at("pattern").value("seconds", 0.0) : 0.0;
+					if (on && progress != nullptr && m_pads.value("mode", std::string()) == "pattern" && seconds > 0.0)
+					{
+						const Rml::Property start(0.0F, Rml::Unit::PERCENT);
+						progress->Animate("width", Rml::Property(100.0F, Rml::Unit::PERCENT),
+							static_cast<float>(seconds), Rml::Tween{}, -1, false, 0.0F, &start);
+					}
+				}
 				// The zone's keyboard shows the notes that sound (p. 1355).
 				if (on)
 					m_sounding[pad] = event.data.value("pitches", std::vector<int>());
@@ -519,7 +532,7 @@ namespace gnubase::ui
 					R"(<div class="chord-pad-reference" title="Adaptive Voicing Reference"/>)"
 					R"(<div class="chord-pad-adaptive" title="Adaptive Voicing"/>)"
 					R"(<svg class="icon chord-pad-lock" src="../icons/general-lock.svg"/></div>)"
-					R"(<span class="chord-pad-voicing" title="Voicing"/></div>)";
+					R"(<span class="chord-pad-voicing" title="Voicing"/><div class="chord-pad-progress"/></div>)";
 			list->SetInnerRML(rml);
 		}
 		for (auto it = m_selection.begin(); it != m_selection.end();)
@@ -559,6 +572,17 @@ namespace gnubase::ui
 		for (const char* setting : {"latchPads", "spread"})
 			setChecked(find(std::string("chord-pads-") + setting), pads.at(setting).get<bool>());
 		for (const char* setting : {"sectionKeys", "subsectionKeys", "subsectionOffsets", "playerKeys"})
+			for (size_t i = 0; i < pads.at(setting).size(); ++i)
+				setValue(find(std::string("chord-pads-") + setting + "-" + std::to_string(i)),
+					pads.at(setting).at(i).get<int>());
+		// Modify All Pad Voicings, Tensions and Transpose All Pads (p. 1387): their sources.
+		for (size_t i = 0; i < 3; ++i)
+			if (Rml::Element* select = find("chord-pads-controlSource-" + std::to_string(i)))
+				widgets::fill(*select,
+					{{"none", "No Modifier"}, {"aftertouch", "Aftertouch"}, {"pitchBend", "Pitchbend"},
+						{"controller", "Controller"}},
+					pads.at("controlSources").at(i).get<std::string>());
+		for (const char* setting : {"controlNumbers"})
 			for (size_t i = 0; i < pads.at(setting).size(); ++i)
 				setValue(find(std::string("chord-pads-") + setting + "-" + std::to_string(i)),
 					pads.at(setting).at(i).get<int>());
@@ -767,6 +791,13 @@ namespace gnubase::ui
 		switch (event.GetId())
 		{
 		case Rml::EventId::Mousedown:
+			if (event.GetParameter("button", 0) == 0 && within(target, "chord-pads-keyboard"))
+			{
+				m_keyDrag = std::array<float, 4>{event.GetParameter<float>("mouse_x", 0.0F),
+					event.GetParameter<float>("mouse_y", 0.0F), static_cast<float>(m_keyLow),
+					static_cast<float>(m_keyCount)};
+				return;
+			}
 			// Assign to First Unassigned Pad from a suggestion's context click (p. 1375).
 			if (event.GetParameter("button", 0) == 1 && suggestion != nullptr)
 			{
@@ -804,6 +835,8 @@ namespace gnubase::ui
 		case Rml::EventId::Mousemove:
 		case Rml::EventId::Mouseout:
 		{
+			if (event.GetId() == Rml::EventId::Mousemove)
+				dragKeyboard(event);
 			// The hovered pad's trigger key lights on the keyboard (p. 1355).
 			const int hovered =
 				event.GetId() != Rml::EventId::Mouseout && pad != nullptr ? pad->GetAttribute<int>("pad", -1) : -1;
@@ -932,6 +965,7 @@ namespace gnubase::ui
 
 	void ChordPadsPanel::release(Rml::Element* target, const Rml::Event& event)
 	{
+		m_keyDrag.reset();
 		if (m_auditionPad >= 0)
 		{
 			send("chordPads.trigger", {{"pad", m_auditionPad}, {"on", false}});
@@ -1090,10 +1124,10 @@ namespace gnubase::ui
 			else
 				send("chordPads.listen", {{"learn", "range"}});
 		}
-		else if (name == "listColors" || name == "voicingIndicators")
+		else if (name == "listColors" || name == "voicingIndicators" || name == "patternProgress")
 		{
 			Json display = m_display.is_object() ? m_display : Json::object();
-			const bool on = display.value(name, name == "voicingIndicators");
+			const bool on = display.value(name, name != "listColors");
 			display[name] = !on;
 			m_binding.send("settings.set", {{"key", g_displayKey}, {"value", display}});
 		}
@@ -1228,6 +1262,17 @@ namespace gnubase::ui
 			return;
 		}
 		const auto value = event.GetParameter<Rml::String>("value", "");
+		if (target.GetTagName() == "select" && target.HasAttribute("control") && !value.empty())
+		{
+			const auto index = static_cast<size_t>(target.GetAttribute<int>("control", 0));
+			Json sources = m_pads.at("controlSources");
+			if (index < sources.size() && sources.at(index) != value)
+			{
+				sources.at(index) = value;
+				send("chordPads.set", {{"controlSources", sources}});
+			}
+			return;
+		}
 		if (target.GetTagName() == "select" && target.HasAttribute("five") && !value.empty())
 		{
 			const auto setting = target.GetAttribute<Rml::String>("five", "");
@@ -1381,6 +1426,8 @@ namespace gnubase::ui
 		setChecked(find("chord-pads-voicingIndicators"), voicings);
 		setClass(list, "grid", layout == "grid");
 		setClass(list, "no-voicings", !voicings);
+		setClass(list, "no-progress", !m_display.value("patternProgress", true));
+		setChecked(find("chord-pads-patternProgress"), m_display.value("patternProgress", true));
 		// The grid's columns come from the setting: the pads' width is geometry, the look stays in the style sheets.
 		for (int i = 0; i < list->GetNumChildren(); ++i)
 		{
@@ -1455,6 +1502,12 @@ namespace gnubase::ui
 		const Rml::Element* keys = find("chord-pads-keyboard");
 		if (keys == nullptr || !m_pads.contains("pads"))
 			return;
+		if (keys->GetNumChildren() != m_keyCount ||
+			(keys->GetNumChildren() > 0 && keys->GetChild(0)->GetAttribute<int>("pitch", -1) != m_keyLow))
+		{
+			showKeys();
+			return;
+		}
 		std::set<int> played;
 		for (const auto& [pad, pitches] : m_sounding)
 			played.insert(pitches.begin(), pitches.end());
@@ -1471,11 +1524,47 @@ namespace gnubase::ui
 		for (int i = 0; i < keys->GetNumChildren(); ++i)
 		{
 			Rml::Element* key = keys->GetChild(i);
-			const int pitch = g_lowestKey + i;
+			const int pitch = m_keyLow + i;
 			setClass(key, "played", played.count(pitch) != 0);
 			setClass(key, "remote", m_pads.at("remote").get<bool>() && pitch >= start && pitch <= end);
 			setClass(key, "modifier", m_pads.at("remote").get<bool>() && modifiers && modifierKeys.count(pitch) != 0);
 			setClass(key, "hover", hoveredKey.is_number() && hoveredKey.get<int>() == pitch);
+		}
+	}
+
+	void ChordPadsPanel::showKeys()
+	{
+		Rml::Element* keys = find("chord-pads-keyboard");
+		if (keys == nullptr)
+			return;
+		std::string rml;
+		for (int pitch = m_keyLow; pitch < m_keyLow + m_keyCount; ++pitch)
+			rml += std::string(R"(<div class="chord-pads-key )") + (isBlack(pitch) ? "black" : "white") +
+				R"(" pitch=")" + std::to_string(pitch) + R"("/>)";
+		keys->SetInnerRML(rml);
+		showKeyboard();
+	}
+
+	void ChordPadsPanel::dragKeyboard(const Rml::Event& event)
+	{
+		// Dragging the keyboard (p. 1355): left and right scroll it by keys, up and down zoom it, fewer keys up.
+		if (!m_keyDrag)
+			return;
+		Rml::Element* keys = find("chord-pads-keyboard");
+		if (keys == nullptr || m_keyCount <= 0)
+			return;
+		const std::array<float, 4>& start = *m_keyDrag;
+		const float dx = event.GetParameter<float>("mouse_x", start.at(0)) - start.at(0);
+		const float dy = event.GetParameter<float>("mouse_y", start.at(1)) - start.at(1);
+		const float keyWidth = keys->GetClientWidth() / static_cast<float>(m_keyCount);
+		const int count = std::clamp(static_cast<int>(start.at(3) + (dy / 2.0F)), g_fewestKeys, g_mostKeys);
+		const int low =
+			std::clamp(static_cast<int>(start.at(2) - (keyWidth > 0.0F ? dx / keyWidth : 0.0F)), 0, g_mostKeys - count);
+		if (count != m_keyCount || low != m_keyLow)
+		{
+			m_keyCount = count;
+			m_keyLow = low;
+			showKeys();
 		}
 	}
 

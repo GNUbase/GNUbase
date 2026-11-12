@@ -189,6 +189,23 @@ namespace gnubase::engine
 	bool MidiPorts::playPad(const audio::MidiMessage& message, const ChordPadKeys& keys, PadBuffers& pads) noexcept
 	{
 		const int status = message.bytes[0] & 0xF0;
+		// Modify All Pad Voicings and Tensions and Transpose All Pads (p. 1387): their source plays nothing.
+		for (size_t which = 0; keys.active && which < keys.controlSources.size(); ++which)
+		{
+			const uint8_t source = keys.controlSources.at(which);
+			uint8_t value = 0;
+			if (source == 1 && status == 0xD0 && message.size >= 2)
+				value = message.bytes[1] & 0x7F;
+			else if (source == 2 && status == 0xE0 && message.size == 3)
+				value = message.bytes[2] & 0x7F;
+			else if (source == 3 && status == 0xB0 && message.size == 3 &&
+				message.bytes[1] == keys.controlNumbers.at(which))
+				value = message.bytes[2] & 0x7F;
+			else
+				continue;
+			m_padEvents.tryPush(PadEvent{PadEvent::Kind::Control, static_cast<uint8_t>(which), value});
+			return true;
+		}
 		if (message.size != 3 || (status != 0x90 && status != 0x80))
 			return false;
 		const size_t key = message.bytes[1] & 0x7F;

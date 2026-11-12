@@ -563,6 +563,7 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".chord-pad.level-1", {"border-bottom-color": c["warning"]}),
         (".chord-pad.level-2", {"border-bottom-color": c["danger"]}),
         (".chord-pad .chord-pad-voicing", {"color": c["textMuted"], "font-size": f"{sizes['small']}dp"}),
+        (".chord-pad .chord-pad-progress", {"background-color": c["accent"]}),
         (".chord-pad.black-key", {"background-color": mix(c["surfaceRaised"], c["background"], .6)}),
         (".chord-pads-key.white", {"background-color": c["text"], "border-width": f"{widths['hairline']}dp",
                                    "border-color": c["border"]}),

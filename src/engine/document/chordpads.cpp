@@ -12,15 +12,19 @@
 #include "engine/document/projectmodel.h"
 #include "engine/document/serialize.h"
 #include "engine/engine.h"
+#include "engine/midifile/smf.h"
 
 #include <algorithm>
 #include <array>
 #include <cctype>
 #include <cstdint>
 #include <cstdlib>
+#include <exception>
+#include <filesystem>
 #include <limits>
 #include <map>
 #include <memory>
+#include <numeric>
 #include <optional>
 #include <set>
 #include <string>
@@ -68,14 +72,15 @@ namespace gnubase::engine
 		// What chordPads.listen listens for, and what chordPads.remoteInput saw of the remote keys (#1089).
 		struct RemoteState
 		{
-			std::set<int> held;       // the pads whose remote keys are down
-			int last = -1;            // the pad triggered last, which the chord modifiers change when none is held
-			int auditioned = -1;      // the pad a chord modifier's key plays while it is down, or -1
-			std::string listen;       // "", "assign" or "learn"
-			int pad = -1;             // assign: the pad that gets the chord
-			std::string target;       // learn: "range" or a modifier's name
-			std::set<int> down;       // the notes down while listening
-			std::vector<int> pitches; // assign: the notes played; learn range: the keys pressed
+			std::set<int> held;         // the pads whose remote keys are down
+			int last = -1;              // the pad triggered last, which the chord modifiers change when none is held
+			int auditioned = -1;        // the pad a chord modifier's key plays while it is down, or -1
+			std::array<int, 3> steps{}; // how far the controls moved all pads' voicings, tensions and transposition
+			std::string listen;         // "", "assign" or "learn"
+			int pad = -1;               // assign: the pad that gets the chord
+			std::string target;         // learn: "range" or a modifier's name
+			std::set<int> down;         // the notes down while listening
+			std::vector<int> pitches;   // assign: the notes played; learn range: the keys pressed
 
 			Json listening() const
 			{
@@ -162,6 +167,39 @@ namespace gnubase::engine
 			return project.signatures.barStart(lastStepBar(project) + 1);
 		}
 
+		// A pad's voicing for a player, and setting it.
+		int voicingOf(const ChordPad& pad, int player)
+		{
+			return player >= 0 && player < static_cast<int>(pad.voicings.size())
+				? pad.voicings.at(static_cast<size_t>(player))
+				: 0;
+		}
+
+		void setVoicing(ChordPad& pad, int player, int voicing)
+		{
+			if (player < 0)
+				return;
+			if (pad.voicings.size() <= static_cast<size_t>(player))
+				pad.voicings.resize(static_cast<size_t>(player) + 1, 0);
+			pad.voicings.at(static_cast<size_t>(player)) = std::clamp(voicing, -12, 12);
+		}
+
+		// Voicings from JSON: voicings, or the one voicing of a file from before the players.
+		std::vector<int> voicingsFromJson(const Json& item)
+		{
+			std::vector<int> voicings;
+			if (item.contains("voicings") && item.at("voicings").is_array())
+			{
+				for (const Json& voicing : item.at("voicings"))
+					voicings.push_back(voicing.is_number_integer() ? std::clamp(voicing.get<int>(), -12, 12) : 0);
+			}
+			else if (item.value("voicing", 0) != 0)
+			{
+				voicings.push_back(std::clamp(item.value("voicing", 0), -12, 12));
+			}
+			return voicings;
+		}
+
 		const ChordPlayer& playerOf(const ChordPads& pads, int index = -1)
 		{
 			const int player = index >= 0 ? index : pads.player;
@@ -232,7 +270,7 @@ namespace gnubase::engine
 			PadPattern pattern;
 			if (!json.is_object())
 				return pattern;
-			pattern.name = json.value("name", std::string());
+			pattern.name = json.value("name", std::string()); // seconds is chordPads.get's, not the file's
 			pattern.length = std::max(json.value("length", time::Ticks{0}), time::Ticks{0});
 			pattern.voices = std::clamp(json.value("voices", 0), 0, 5);
 			for (const Json& item : json.value("notes", Json::array()))
@@ -242,6 +280,78 @@ namespace gnubase::engine
 							std::max(item.value("length", time::Ticks{0}), time::Ticks{1}),
 							std::clamp(item.value("voice", 0), 0, 4), std::clamp(item.value("velocity", 100), 1, 127)});
 			return pattern;
+		}
+
+		// A pattern from notes (position, length, pitch, velocity 1 to 127): their distinct pitches the voices from the
+		// lowest up, 3 to 5 of them, at most 64 notes.
+		struct LoopNote
+		{
+			time::Ticks position = 0;
+			time::Ticks length = 0;
+			int pitch = 0;
+			int velocity = 100;
+		};
+
+		PadPattern patternOf(std::string name, time::Ticks length, std::vector<LoopNote> notes)
+		{
+			std::set<int> pitches;
+			for (const LoopNote& note : notes)
+				pitches.insert(note.pitch);
+			require(pitches.size() >= 3 && pitches.size() <= 5, "a pattern needs 3 to 5 voices: different pitches");
+			require(notes.size() <= midi::PadPatternSteps::g_maxNotes, "a pattern has at most 64 notes");
+			PadPattern pattern;
+			pattern.name = std::move(name);
+			pattern.length = std::max<time::Ticks>(length, 1);
+			pattern.voices = static_cast<int>(pitches.size());
+			std::sort(notes.begin(), notes.end(),
+				[](const LoopNote& a, const LoopNote& b) { return a.position < b.position; });
+			for (const LoopNote& note : notes)
+				pattern.notes.push_back({std::clamp(note.position, time::Ticks{0}, pattern.length - 1),
+					std::max(note.length, time::Ticks{1}),
+					static_cast<int>(std::distance(pitches.begin(), pitches.find(note.pitch))),
+					std::clamp(note.velocity, 1, 127)});
+			return pattern;
+		}
+
+		// Import from MIDI Loop (reference manual p. 1379): a MIDI file's notes, on all its tracks, as long as its
+		// longest track.
+		PadPattern patternFromFile(const std::string& path)
+		{
+			midifile::File file;
+			try
+			{
+				file = midifile::load(path);
+			}
+			catch (const std::exception& error)
+			{
+				throw CommandError("can't read the MIDI loop " + path + ": " + error.what());
+			}
+			const auto ticks = [&file](int64_t tick)
+			{ return tick * time::g_ticksPerQuarter / std::max(file.ticksPerQuarter, 1); };
+			std::vector<LoopNote> notes;
+			int64_t end = 0;
+			for (const midifile::Track& track : file.tracks)
+			{
+				end = std::max(end, track.end);
+				std::map<int, std::pair<int64_t, int>> sounding; // by channel and pitch: start and velocity
+				for (const midifile::Event& event : track.events)
+				{
+					const int status = event.status & 0xF0;
+					const int key = ((event.status & 0x0F) << 8) | event.data1;
+					if (status == 0x90 && event.data2 > 0)
+					{
+						sounding[key] = {event.tick, event.data2};
+					}
+					else if ((status == 0x80 || status == 0x90) && sounding.count(key) != 0)
+					{
+						const auto [start, velocity] = sounding.at(key);
+						notes.push_back({ticks(start), ticks(event.tick - start), event.data1, velocity});
+						sounding.erase(key);
+					}
+				}
+			}
+			const std::string name = std::filesystem::u8path(path).stem().u8string();
+			return patternOf(name, ticks(end), std::move(notes));
 		}
 
 		// The pattern presets (reference manual p. 1379), a bar of four voices each: Arpeggio Up and Down in eighths,
@@ -628,7 +738,10 @@ namespace gnubase::engine
 	std::vector<std::vector<int>> chordPadVoicings(const ChordPads& pads, int player)
 	{
 		const auto basic = [&pads, player](const ChordPad& pad)
-		{ return chordpads::inverted(playerVoicing(pads, chordOf(pad.chord), false, {}, player), pad.voicing); };
+		{
+			return chordpads::inverted(playerVoicing(pads, chordOf(pad.chord), false, {}, player),
+				voicingOf(pad, player < 0 ? pads.player : player));
+		};
 		const bool referenced = pads.reference >= 0 && pads.reference < static_cast<int>(pads.pads.size()) &&
 			!pads.pads[static_cast<size_t>(pads.reference)].chord.empty();
 		const std::vector<int> reference =
@@ -682,6 +795,18 @@ namespace gnubase::engine
 		keys.spread = pads.spread;
 		for (size_t i = 0; i < keys.playerKeys.size(); ++i)
 			keys.playerKeys.at(i) = keyOf(pads.playerKeys.at(i));
+		for (size_t i = 0; i < keys.controlSources.size(); ++i)
+		{
+			const std::string& source = pads.controlSources.at(i);
+			keys.controlSources.at(i) = 0;
+			if (source == "aftertouch")
+				keys.controlSources.at(i) = 1;
+			else if (source == "pitchBend")
+				keys.controlSources.at(i) = 2;
+			else if (source == "controller")
+				keys.controlSources.at(i) = 3;
+			keys.controlNumbers.at(i) = static_cast<uint8_t>(std::clamp(pads.controlNumbers.at(i), 0, 127));
+		}
 		keys.pattern.velocityFromKeyboard = pads.velocityFromKeyboard;
 		keys.pattern.length = pads.pattern.length;
 		for (const PadPatternNote& note : pads.pattern.notes)
@@ -741,7 +866,8 @@ namespace gnubase::engine
 				{"nashville",
 					pad.chord.empty() ? std::string()
 									  : chordpads::nashvilleName(chordOf(pad.chord), pads.rootKey, pads.scale)},
-				{"pitches", voicings[i]}, {"voicing", pad.voicing}, {"adaptive", pad.adaptive}, {"locked", pad.locked},
+				{"pitches", voicings[i]}, {"voicing", voicingOf(pad, pads.player)}, {"voicings", pad.voicings},
+				{"adaptive", pad.adaptive}, {"locked", pad.locked},
 				{"key", key <= pads.remoteEnd && key <= 127 ? Json(key) : Json(nullptr)}});
 		}
 		return {{"pads", list}, {"rootKey", pads.rootKey}, {"reference", pads.reference},
@@ -752,13 +878,21 @@ namespace gnubase::engine
 			{"outputMode", pads.outputMode}, {"latch", pads.latch}, {"overlaps", pads.overlaps},
 			{"filterNotes", pads.filterNotes}, {"modifiers", pads.modifiers}, {"modifierKeys", modifierKeysJson(pads)},
 			{"remotePort", pads.remotePort}, {"snapPlayback", pads.snapPlayback}, {"mode", pads.mode},
-			{"pattern", patternJson(pads.pattern)}, {"velocityFromKeyboard", pads.velocityFromKeyboard},
-			{"flats", pads.flats}, {"sectionKeys", arrayJson(pads.sectionKeys)},
-			{"subsectionKeys", arrayJson(pads.subsectionKeys)},
+			{"pattern",
+				[&project, &pads]
+				{
+					Json pattern = patternJson(pads.pattern);
+					// How long it plays at the project's tempo from its start, for the pads' progress bars.
+					pattern["seconds"] = project.tempo.toSeconds(pads.pattern.length);
+					return pattern;
+				}()},
+			{"velocityFromKeyboard", pads.velocityFromKeyboard}, {"flats", pads.flats},
+			{"sectionKeys", arrayJson(pads.sectionKeys)}, {"subsectionKeys", arrayJson(pads.subsectionKeys)},
 			{"subsectionSections", arrayJson(pads.subsectionSections)},
 			{"subsectionOffsets", arrayJson(pads.subsectionOffsets)}, {"sectionPlay", pads.sectionPlay},
 			{"latchPads", pads.latchPads}, {"spread", pads.spread}, {"mutedSections", arrayJson(pads.mutedSections)},
-			{"playerKeys", arrayJson(pads.playerKeys)}};
+			{"playerKeys", arrayJson(pads.playerKeys)}, {"controlSources", arrayJson(pads.controlSources)},
+			{"controlNumbers", arrayJson(pads.controlNumbers)}};
 	}
 
 	void chordPadsFromJson(Project& project, const Json& json)
@@ -777,7 +911,7 @@ namespace gnubase::engine
 				ChordPad pad;
 				const midi::ChordSymbol chord = chordOf(item.value("chord", std::string()));
 				pad.chord = chord.root < 0 ? std::string() : midi::chordName(chord);
-				pad.voicing = std::clamp(item.value("voicing", 0), -12, 12);
+				pad.voicings = voicingsFromJson(item);
 				pad.adaptive = item.value("adaptive", true);
 				pad.locked = item.value("locked", false);
 				pads.pads.push_back(pad);
@@ -849,6 +983,18 @@ namespace gnubase::engine
 		for (size_t i = 0; i < pads.playerKeys.size() && i < playerKeys.size(); ++i)
 			if (playerKeys[i].is_number_integer() && playerKeys[i].get<int>() >= -1 && playerKeys[i].get<int>() <= 127)
 				pads.playerKeys.at(i) = playerKeys[i].get<int>();
+		const Json sources = json.value("controlSources", Json::array());
+		const Json numbers = json.value("controlNumbers", Json::array());
+		for (size_t i = 0; i < pads.controlSources.size(); ++i)
+		{
+			const std::string source =
+				i < sources.size() && sources[i].is_string() ? sources[i].get<std::string>() : "";
+			if (source == "aftertouch" || source == "pitchBend" || source == "controller")
+				pads.controlSources.at(i) = source;
+			if (i < numbers.size() && numbers[i].is_number_integer() && numbers[i].get<int>() >= 0 &&
+				numbers[i].get<int>() <= 127)
+				pads.controlNumbers.at(i) = numbers[i].get<int>();
+		}
 	}
 
 	void ProjectModel::registerChordPadCommands(Engine& engine)
@@ -872,14 +1018,15 @@ namespace gnubase::engine
 					{"sectionKeys", {{"type", "array"}}}, {"subsectionKeys", {{"type", "array"}}},
 					{"subsectionSections", {{"type", "array"}}}, {"subsectionOffsets", {{"type", "array"}}},
 					{"sectionPlay", stringSchema}, {"latchPads", booleanSchema}, {"spread", booleanSchema},
-					{"mutedSections", {{"type", "array"}}}, {"playerKeys", {{"type", "array"}}}}},
+					{"mutedSections", {{"type", "array"}}}, {"playerKeys", {{"type", "array"}}},
+					{"controlSources", {{"type", "array"}}}, {"controlNumbers", {{"type", "array"}}}}},
 			{"required",
 				{"pads", "rootKey", "reference", "octaveOffset", "players", "player", "velocity", "remote",
 					"remoteStart", "remoteEnd", "preset", "scale", "stepInput", "moveInsert", "stepPosition",
 					"outputMode", "latch", "overlaps", "filterNotes", "modifiers", "modifierKeys", "remotePort",
 					"snapPlayback", "mode", "pattern", "velocityFromKeyboard", "flats", "sectionKeys", "subsectionKeys",
 					"subsectionSections", "subsectionOffsets", "sectionPlay", "latchPads", "spread", "mutedSections",
-					"playerKeys"}}};
+					"playerKeys", "controlSources", "controlNumbers"}}};
 		// Each command that changes the pads announces them.
 		auto remote = std::make_shared<RemoteState>();
 		const auto changed = [](Project& project, CommandContext& context)
@@ -949,7 +1096,11 @@ namespace gnubase::engine
 				"sectionPlay sections (with the pad's key down), chordPads (the pad triggered last) or combination "
 				"(either first); latchPads (Latch Chord Pads): the sections go on after the pad's key goes up; "
 				"mutedSections (five) play nothing. playerKeys (Select/Mute Player, p. 1389): the remote keys that "
-				"select the previous and the next player and mute or unmute the selected one, -1 for none.",
+				"select the previous and the next player and mute or unmute the selected one, -1 for none. "
+				"controlSources (Modify All Pad Voicings, Modify All Pad Tensions, Transpose All Pads, p. 1387): what "
+				"moves them from the remote's input, none, aftertouch, pitchBend or controller (of controlNumbers): "
+				"across its range the voicings go from 3 inversions down to 3 up, the tensions from none to 3 more and "
+				"the transposition from 6 semitones down to 6 up, each move of a control one undo step.",
 				objectSchema({{"rootKey", integerSchema}, {"transposePads", booleanSchema}, {"padCount", integerSchema},
 					{"octaveOffset", integerSchema}, {"player", integerSchema}, {"velocity", integerSchema},
 					{"remote", booleanSchema}, {"remoteStart", integerSchema}, {"remoteEnd", integerSchema},
@@ -973,7 +1124,13 @@ namespace gnubase::engine
 					{"sectionPlay", {{"type", "string"}, {"enum", {"sections", "chordPads", "combination"}}}},
 					{"latchPads", booleanSchema}, {"spread", booleanSchema},
 					{"mutedSections", {{"type", "array"}, {"items", booleanSchema}, {"maxItems", 5}}},
-					{"playerKeys", {{"type", "array"}, {"items", integerSchema}, {"maxItems", 3}}}}),
+					{"playerKeys", {{"type", "array"}, {"items", integerSchema}, {"maxItems", 3}}},
+					{"controlSources",
+						{{"type", "array"},
+							{"items",
+								{{"type", "string"}, {"enum", {"none", "aftertouch", "pitchBend", "controller"}}}},
+							{"maxItems", 3}}},
+					{"controlNumbers", {{"type", "array"}, {"items", integerSchema}, {"maxItems", 3}}}}),
 				padsResult, false},
 			[changed](Project& project, CommandContext& context)
 			{
@@ -1062,6 +1219,19 @@ namespace gnubase::engine
 						pads.playerKeys.at(0), pads.playerKeys.at(1), pads.playerKeys.at(2), -1, -1};
 					readFive(keys, parameters.at("playerKeys"), -1, 127, "playerKeys");
 					pads.playerKeys = {keys.at(0), keys.at(1), keys.at(2)};
+				}
+				if (parameters.contains("controlSources"))
+				{
+					const Json& sources = parameters.at("controlSources");
+					for (size_t i = 0; i < pads.controlSources.size() && i < sources.size(); ++i)
+						pads.controlSources.at(i) = sources[i].get<std::string>();
+				}
+				if (parameters.contains("controlNumbers"))
+				{
+					std::array<int, 5> numbers = {
+						pads.controlNumbers.at(0), pads.controlNumbers.at(1), pads.controlNumbers.at(2), 0, 0};
+					readFive(numbers, parameters.at("controlNumbers"), 0, 127, "controlNumbers");
+					pads.controlNumbers = {numbers.at(0), numbers.at(1), numbers.at(2)};
 				}
 				if (parameters.contains("stepPosition"))
 				{
@@ -1170,6 +1340,9 @@ namespace gnubase::engine
 					"no chord pads player " + std::to_string(index));
 				require(pads.players.size() > 1, "the chord pads keep one player");
 				pads.players.erase(pads.players.begin() + index);
+				for (ChordPad& pad : pads.pads)
+					if (static_cast<int>(pad.voicings.size()) > index)
+						pad.voicings.erase(pad.voicings.begin() + index);
 				if (pads.player >= index && pads.player > 0)
 					--pads.player;
 				return changed(project, context);
@@ -1180,18 +1353,27 @@ namespace gnubase::engine
 				"MIDI "
 				"part (part: its notes, their distinct pitches the voices from the lowest up, 3 to 5 of them, as long "
 				"as the part; as a MIDI part dropped on the Player Mode section does) or a preset (arpeggioUp, "
-				"arpeggioDown, brokenChord, eighths: a bar of four voices). At most 64 notes.",
-				needsOne(objectSchema(
-					{{"part", integerSchema}, {"preset", {{"type", "string"}, {"enum", patternPresetNames()}}}})),
+				"arpeggioDown, brokenChord, eighths: a bar of four voices) or a MIDI file (file, a path: Import from "
+				"MIDI Loop, its notes on all its tracks as long as its longest track). At most 64 notes.",
+				needsOne(objectSchema({{"part", integerSchema},
+					{"preset", {{"type", "string"}, {"enum", patternPresetNames()}}}, {"file", stringSchema}})),
 				padsResult, false},
 			[changed](Project& project, CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
-				require(parameters.contains("part") != parameters.contains("preset"), "give a part or a preset");
+				require(static_cast<int>(parameters.contains("part")) +
+							static_cast<int>(parameters.contains("preset")) +
+							static_cast<int>(parameters.contains("file")) ==
+						1,
+					"give a part, a preset or a file");
 				ChordPads& pads = project.chordPads;
 				if (parameters.contains("preset"))
 				{
 					pads.pattern = patternPreset(parameters.at("preset").get<std::string>());
+				}
+				else if (parameters.contains("file"))
+				{
+					pads.pattern = patternFromFile(parameters.at("file").get<std::string>());
 				}
 				else
 				{
@@ -1199,27 +1381,15 @@ namespace gnubase::engine
 					const auto found = project.midiParts.find(id);
 					require(found != project.midiParts.end(), "no MIDI part " + std::to_string(id));
 					const MidiPart& part = found->second;
-					std::set<int> pitches;
-					for (const auto& [noteId, note] : part.notes)
-						pitches.insert(note.pitch);
-					require(
-						pitches.size() >= 3 && pitches.size() <= 5, "a pattern needs 3 to 5 voices: different pitches");
-					require(part.notes.size() <= midi::PadPatternSteps::g_maxNotes, "a pattern has at most 64 notes");
 					const time::Ticks start = time::toTicks(part.position, project.tempo, project.sampleRate);
 					const time::Ticks end = time::toTicks(
 						{part.position.base, part.position.value + part.length}, project.tempo, project.sampleRate);
-					PadPattern pattern;
-					pattern.name = part.name;
-					pattern.length = std::max<time::Ticks>(end - start, 1);
-					pattern.voices = static_cast<int>(pitches.size());
+					std::vector<LoopNote> notes;
+					notes.reserve(part.notes.size());
 					for (const auto& [noteId, note] : part.notes)
-						pattern.notes.push_back({std::clamp(note.position, time::Ticks{0}, pattern.length - 1),
-							std::max(note.length, time::Ticks{1}),
-							static_cast<int>(std::distance(pitches.begin(), pitches.find(note.pitch))),
-							std::clamp(static_cast<int>(std::lround(note.velocity * 127.0 / 65535.0)), 1, 127)});
-					std::sort(pattern.notes.begin(), pattern.notes.end(),
-						[](const PadPatternNote& a, const PadPatternNote& b) { return a.position < b.position; });
-					pads.pattern = std::move(pattern);
+						notes.push_back({note.position, note.length, note.pitch,
+							static_cast<int>(std::lround(note.velocity * 127.0 / 65535.0))});
+					pads.pattern = patternOf(part.name, end - start, std::move(notes));
 				}
 				pads.mode = "pattern";
 				return changed(project, context);
@@ -1290,7 +1460,7 @@ namespace gnubase::engine
 						const auto text = item.at("chord").get<std::string>();
 						pad.chord = text.empty() ? std::string() : midi::chordName(chordFrom(text));
 					}
-					pad.voicing = 0;
+					pad.voicings.clear();
 					pad.adaptive = true;
 				}
 				return changed(project, context);
@@ -1320,8 +1490,9 @@ namespace gnubase::engine
 					if (parameters.contains("voicing"))
 					{
 						if (pad.adaptive)
-							pad.voicing = inversionOf(pads, chord, voicings[index.get<size_t>()]);
-						pad.voicing = std::clamp(pad.voicing + parameters.at("voicing").get<int>(), -12, 12);
+							setVoicing(pad, pads.player, inversionOf(pads, chord, voicings[index.get<size_t>()]));
+						// The selected player's voicing only (reference manual p. 1378).
+						setVoicing(pad, pads.player, voicingOf(pad, pads.player) + parameters.at("voicing").get<int>());
 						pad.adaptive = false;
 					}
 					pad.chord = midi::chordName(chord);
@@ -1453,7 +1624,7 @@ namespace gnubase::engine
 						{
 							const midi::ChordSymbol chord = chordOf(saved[i].value("chord", std::string()));
 							pad.chord = chord.root < 0 ? std::string() : midi::chordName(chord);
-							pad.voicing = std::clamp(saved[i].value("voicing", 0), -12, 12);
+							pad.voicings = voicingsFromJson(saved[i]);
 							pad.adaptive = saved[i].value("adaptive", true);
 						}
 					}
@@ -1510,7 +1681,7 @@ namespace gnubase::engine
 				const ChordPads& pads = m_project.chordPads;
 				Json saved = Json::array();
 				for (const ChordPad& pad : pads.pads)
-					saved.push_back({{"chord", pad.chord}, {"voicing", pad.voicing}, {"adaptive", pad.adaptive}});
+					saved.push_back({{"chord", pad.chord}, {"voicings", pad.voicings}, {"adaptive", pad.adaptive}});
 				const Json preset = {{"pads", saved}, {"rootKey", pads.rootKey}, {"scale", pads.scale},
 					{"players", playersJson(pads)}, {"player", pads.player}};
 				engine.modifySetting(context, g_presetsKey,
@@ -1883,7 +2054,8 @@ namespace gnubase::engine
 								objectSchema(
 									{{"kind",
 										 {{"type", "string"},
-											 {"enum", {"triggered", "released", "modifier", "note", "player"}}}},
+											 {"enum",
+												 {"triggered", "released", "modifier", "note", "player", "control"}}}},
 										{"key", integerSchema}, {"velocity", integerSchema}},
 									{"kind", "key"})}}}},
 					{"events"}),
@@ -1947,6 +2119,27 @@ namespace gnubase::engine
 							context.call("chordPads.trigger",
 								{{"pad", state.auditioned}, {"velocity", std::clamp(velocity, 1, 127)}});
 						}
+					}
+					else if (kind == "control" && key >= 0 && key < 3)
+					{
+						// All pads, from where the control left them to where it is: one undo step per gesture.
+						static constexpr std::array<const char*, 3> changes = {"voicing", "tensions", "transpose"};
+						static constexpr std::array<int, 3> lowest = {-3, 0, -6};
+						static constexpr std::array<int, 3> highest = {3, 3, 6};
+						const auto which = static_cast<size_t>(key);
+						const int step = lowest.at(which) +
+							static_cast<int>(std::lround(velocity / 127.0 * (highest.at(which) - lowest.at(which))));
+						const int delta = step - state.steps.at(which);
+						state.steps.at(which) = step;
+						std::vector<int> all(pads.pads.size());
+						std::iota(all.begin(), all.end(), 0);
+						if (delta != 0)
+							context.call("history.transaction",
+								{{"description", "Modify chord pads"},
+									{"merge", std::string("chordPads.control ") + changes.at(which)},
+									{"commands",
+										{{{"command", "chordPads.modify"},
+											{"parameters", {{"pads", all}, {changes.at(which), delta}}}}}}});
 					}
 					else if (kind == "player")
 					{

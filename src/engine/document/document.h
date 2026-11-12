@@ -905,7 +905,9 @@ namespace gnubase::engine
 	struct ChordPad
 	{
 		std::string chord;
-		int voicing = 0; // -12 to 12
+		// Per player (ChordPads::players), the inversion of its voicing, -12 to 12; a player beyond the list has 0.
+		// Changing the voicing changes the selected player's only (reference manual p. 1378).
+		std::vector<int> voicings;
 		bool adaptive = true;
 		bool locked = false;
 	};
@@ -946,10 +948,10 @@ namespace gnubase::engine
 	// the major preset on C.
 	struct ChordPads
 	{
-		std::vector<ChordPad> pads = {{"C", 0, true, false}, {"Dm", 0, true, false}, {"Em", 0, true, false},
-			{"F", 0, true, false}, {"G", 0, true, false}, {"Am", 0, true, false}, {"Bdim", 0, true, false},
-			{"", 0, true, false}, {"", 0, true, false}, {"", 0, true, false}, {"", 0, true, false},
-			{"", 0, true, false}};
+		std::vector<ChordPad> pads = {{"C", {}, true, false}, {"Dm", {}, true, false}, {"Em", {}, true, false},
+			{"F", {}, true, false}, {"G", {}, true, false}, {"Am", {}, true, false}, {"Bdim", {}, true, false},
+			{"", {}, true, false}, {"", {}, true, false}, {"", {}, true, false}, {"", {}, true, false},
+			{"", {}, true, false}};
 		int rootKey = 0;                                    // 0 C to 11 B
 		int reference = -1;                                 // the adaptive voicing reference pad, or -1
 		std::vector<ChordPlayer> players = {ChordPlayer()}; // at least one
@@ -998,6 +1000,10 @@ namespace gnubase::engine
 		bool spread = false;
 		std::array<bool, 5> mutedSections = {false, false, false, false, false};
 		std::array<int, 3> playerKeys = {-1, -1, -1}; // previous, next, mute
+		// Modify All Pad Voicings, Modify All Pad Tensions and Transpose All Pads (p. 1387): what moves them, none,
+		// aftertouch (channel pressure), pitchBend or controller, with its number.
+		std::array<std::string, 3> controlSources = {"none", "none", "none"};
+		std::array<int, 3> controlNumbers = {1, 1, 1};
 	};
 
 	// What an automation lane changes.
@@ -1780,7 +1786,8 @@ namespace gnubase::engine
 
 	inline bool operator==(const ChordPad& a, const ChordPad& b)
 	{
-		return std::tie(a.chord, a.voicing, a.adaptive, a.locked) == std::tie(b.chord, b.voicing, b.adaptive, b.locked);
+		return std::tie(a.chord, a.voicings, a.adaptive, a.locked) ==
+			std::tie(b.chord, b.voicings, b.adaptive, b.locked);
 	}
 
 	inline bool operator==(const PadPatternNote& a, const PadPatternNote& b)
@@ -1806,12 +1813,14 @@ namespace gnubase::engine
 				   a.remoteEnd, a.preset, a.scale, a.stepInput, a.moveInsert, a.stepPosition, a.outputMode, a.latch,
 				   a.overlaps, a.filterNotes, a.modifiers, a.modifierKeys, a.remotePort, a.snapPlayback, a.mode,
 				   a.pattern, a.velocityFromKeyboard, a.flats, a.sectionKeys, a.subsectionKeys, a.subsectionSections,
-				   a.subsectionOffsets, a.sectionPlay, a.latchPads, a.spread, a.mutedSections, a.playerKeys) ==
+				   a.subsectionOffsets, a.sectionPlay, a.latchPads, a.spread, a.mutedSections, a.playerKeys,
+				   a.controlSources, a.controlNumbers) ==
 			std::tie(b.pads, b.rootKey, b.reference, b.players, b.player, b.velocity, b.remote, b.remoteStart,
 				b.remoteEnd, b.preset, b.scale, b.stepInput, b.moveInsert, b.stepPosition, b.outputMode, b.latch,
 				b.overlaps, b.filterNotes, b.modifiers, b.modifierKeys, b.remotePort, b.snapPlayback, b.mode, b.pattern,
 				b.velocityFromKeyboard, b.flats, b.sectionKeys, b.subsectionKeys, b.subsectionSections,
-				b.subsectionOffsets, b.sectionPlay, b.latchPads, b.spread, b.mutedSections, b.playerKeys);
+				b.subsectionOffsets, b.sectionPlay, b.latchPads, b.spread, b.mutedSections, b.playerKeys,
+				b.controlSources, b.controlNumbers);
 	}
 
 	inline bool operator==(const AutomationTarget& a, const AutomationTarget& b)
