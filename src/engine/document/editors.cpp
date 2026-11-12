@@ -213,7 +213,8 @@ namespace gnubase::engine
 		}
 
 		// lower, window, or inPlace: and a MIDI or instrument track's id: digits of a 64-bit number, so up to 20 since
-		// track ids come from the project file (#1159).
+		// track ids come from the project file (#1159), and without leading zeros, so that a track's editor has one
+		// name.
 		void requireEditor(const Project& project, const std::string& editor)
 		{
 			if (editor == "lower" || editor == "window")
@@ -223,7 +224,8 @@ namespace gnubase::engine
 			const char* end = editor.data() + editor.size();
 			ObjectId track = 0;
 			const std::from_chars_result parsed = std::from_chars(digits, end, track);
-			require(editor.rfind(prefix, 0) == 0 && digits != end && parsed.ec == std::errc() && parsed.ptr == end,
+			require(editor.rfind(prefix, 0) == 0 && digits != end && parsed.ec == std::errc() && parsed.ptr == end &&
+					editor == inPlaceName(track),
 				"editor must be lower, window or inPlace:<track>, not " + editor);
 			requireNoteTrack(project, track);
 		}

@@ -178,6 +178,9 @@ TEST_CASE("the in-place editor refuses tracks without notes and changing its par
 		ContainsSubstring("editor must be lower, window or inPlace:<track>"));
 	CHECK_THAT(f.fails("editor.get", {{"editor", "inPlace:" + std::string(20, '9')}}),
 		ContainsSubstring("editor must be lower, window or inPlace:<track>"));
+	// A track's editor has one name: no leading zeros.
+	CHECK_THAT(f.fails("editor.get", {{"editor", "inPlace:0" + std::to_string(midi)}}),
+		ContainsSubstring("editor must be lower, window or inPlace:<track>"));
 	// A longer name gets the schema's length error, before the pattern ever sees it.
 	CHECK_THAT(f.fails("editor.get", {{"editor", "inPlace:" + std::string(21, '9')}}),
 		ContainsSubstring("parameters.editor must be at most 28 characters"));

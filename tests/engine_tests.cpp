@@ -2,6 +2,8 @@
 #include "engine/engine.h"
 #include "engine/schema.h"
 #include "engine/schematext.h"
+#include "engine/settings/store.h"
+#include "engine/settings/usersettings.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
@@ -17,6 +19,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -437,6 +440,21 @@ TEST_CASE("values are checked against their JSON schema", "[unit]")
 
 namespace
 {
+	// The schemas validate checks values from outside against that a test can reach: every command's parameters and
+	// result, and every user setting.
+	std::vector<std::pair<std::string, Json>> checkedSchemas(const Engine& engine)
+	{
+		std::vector<std::pair<std::string, Json>> schemas;
+		for (const CommandInfo& info : engine.commands())
+		{
+			schemas.emplace_back(info.name + " parameters", info.parameters);
+			schemas.emplace_back(info.name + " result", info.result);
+		}
+		for (const settings::Definition& definition : settings::userFormat().definitions)
+			schemas.emplace_back("setting " + definition.key, definition.schema);
+		return schemas;
+	}
+
 	// Counts the string schemas with a pattern in a schema and everything below it, and the ones without a maxLength
 	// of at most g_patternMaxLength.
 	void countPatterns(const Json& schema, int& patterns, std::vector<std::string>& unbounded, const std::string& where)
@@ -467,18 +485,15 @@ namespace
 	}
 }
 
-TEST_CASE("every pattern in a command's schema comes with a maxLength within the pattern ceiling", "[unit]")
+TEST_CASE("every pattern in a command's or setting's schema comes with a maxLength within the ceiling", "[unit]")
 {
 	// validate matches a pattern only on strings within their maxLength, since matching may recurse once per
 	// character and a long string from an MCP client or a Lua script overflowed the stack (#1059).
 	const Engine engine;
 	int patterns = 0;
 	std::vector<std::string> unbounded;
-	for (const CommandInfo& info : engine.commands())
-	{
-		countPatterns(info.parameters, patterns, unbounded, info.name + " parameters");
-		countPatterns(info.result, patterns, unbounded, info.name + " result");
-	}
+	for (const auto& [where, schema] : checkedSchemas(engine))
+		countPatterns(schema, patterns, unbounded, where);
 	CHECK(patterns > 0); // the editors' names at least
 	CHECK(unbounded == std::vector<std::string>());
 }
@@ -536,9 +551,13 @@ TEST_CASE("the schema's minLength, minItems, maxItems and exclusive bounds are c
 
 namespace
 {
-	// The keywords of the schemas in a schema and below it that validate neither checks nor knowingly leaves alone.
+	// The keywords of the schemas in a schema and below it that validate neither checks nor knowingly leaves alone,
+	// and the ones whose value validate can't use: lengths and counts are integers of at least 0, bounds numbers
+	// (exclusiveMinimum as a number, not draft 4's boolean).
 	void uncheckedKeywords(const Json& schema, std::vector<std::string>& found, const std::string& where)
 	{
+		static const std::vector<std::string> counts = {"minLength", "maxLength", "minItems", "maxItems"};
+		static const std::vector<std::string> bounds = {"minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"};
 		// What validate checks, what only describes, and minProperties, which needsOne leaves to the command.
 		static const std::vector<std::string> known = {"type", "properties", "required", "additionalProperties",
 			"items", "enum", "pattern", "minLength", "maxLength", "minItems", "maxItems", "minimum", "maximum",
@@ -552,6 +571,11 @@ namespace
 			path += key;
 			if (std::find(known.begin(), known.end(), key) == known.end())
 				found.push_back(path);
+			else if (std::find(counts.begin(), counts.end(), key) != counts.end() &&
+				(!item.is_number_integer() || item < 0))
+				found.push_back(path + " " + item.dump());
+			else if (std::find(bounds.begin(), bounds.end(), key) != bounds.end() && !item.is_number())
+				found.push_back(path + " " + item.dump());
 			if (key == "properties" && item.is_object())
 			{
 				for (const auto& [property, propertySchema] : item.items())
@@ -570,16 +594,13 @@ namespace
 	}
 }
 
-TEST_CASE("every keyword in a command's schema is one validate checks", "[unit]")
+TEST_CASE("every keyword in a command's or setting's schema is one validate checks", "[unit]")
 {
 	// MCP clients and Lua scripts rely on what a schema declares, so a keyword validate doesn't know would be a
 	// promise nothing keeps (#1159).
 	const Engine engine;
 	std::vector<std::string> unchecked;
-	for (const CommandInfo& info : engine.commands())
-	{
-		uncheckedKeywords(info.parameters, unchecked, info.name + " parameters");
-		uncheckedKeywords(info.result, unchecked, info.name + " result");
-	}
+	for (const auto& [where, schema] : checkedSchemas(engine))
+		uncheckedKeywords(schema, unchecked, where);
 	CHECK(unchecked == std::vector<std::string>());
 }

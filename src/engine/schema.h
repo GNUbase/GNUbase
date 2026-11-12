@@ -13,9 +13,9 @@ namespace gnubase::engine
 
 	// The most characters a schema's pattern is ever matched on, whatever its maxLength says: some standard libraries
 	// match recursively, about one stack frame per repeated character, and a long string overflowed the stack
-	// (#1059). On an 8 MB stack 10,000 bytes matched and 50,000 didn't, so a byte takes at most some 840 bytes of
-	// stack; the 256 bytes of 64 characters then stay below 220 KB, within the 512 KB of secondary threads on macOS
-	// and the 1 MB of Windows (#1159).
+	// (#1059). With the editor names' pattern, on an 8 MB stack 10,000 bytes matched and 50,000 didn't, so a byte
+	// took at most some 840 bytes of stack; the 256 bytes of 64 characters then stay below 220 KB, within the 512 KB
+	// of secondary threads on macOS and the 1 MB of Windows, with room for patterns that recurse more (#1159).
 	inline constexpr size_t g_patternMaxLength = 64;
 
 	// Checks a value against a JSON schema and returns what is wrong, or an empty string if it fits. Supports the
