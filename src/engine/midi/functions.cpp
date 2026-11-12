@@ -1312,6 +1312,7 @@ namespace gnubase::engine::midi
 		if (!playing.empty())
 		{
 			std::vector<const MidiPart*> sources;
+			sources.reserve(playing.size());
 			for (const ObjectId id : playing)
 				sources.push_back(&project.midiParts.at(id));
 			const MidiPart settings = sharedTransposeSettings(project, sources);

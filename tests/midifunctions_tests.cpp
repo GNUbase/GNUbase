@@ -2221,7 +2221,7 @@ TEST_CASE("merge and bounce keep the parts' root key and Global Transpose settin
 		run(client, "midiPart.set", {{"part", second}, {"rootKey", "F"}});       // plays 5 semitones lower
 		const auto before = playedOn(fixture.engine, track);
 		REQUIRE(before ==
-			std::vector<std::vector<int64_t>>{{0, 58, 0}, {24000, 62, 0}, {24000, 62, 0}, {8 * 24000, 59, 0}});
+			std::vector<std::vector<int64_t>>{{0, 58, 0}, {24000, 62, 0}, {24000, 62, 0}, {int64_t{8} * 24000, 59, 0}});
 		const Json bounced = run(client, "midi.bounce", {{"parts", {fixture.part, second}}});
 		REQUIRE(bounced.at("parts").size() == 1);
 		CHECK(playedOn(fixture.engine, track) == before);
