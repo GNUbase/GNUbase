@@ -224,6 +224,11 @@ namespace gnubase::engine
 		constexpr double g_secondsPerMinute = 60.0;
 		constexpr double g_minDetectSeconds = 7.0; // reference manual p. 1460
 		constexpr double g_chord = 0.03;           // seconds: notes that start this close together are one tap
+		// Rounds a retimed position that lands on exactly half a tick up, whichever part it is in: far above the
+		// conversions' floating point error, which grows with the tick count, far below a tick, and on a fraction no
+		// tempo ratio produces, so shared copies at the same tempo round their ties alike instead of a tick apart
+		// (#865).
+		constexpr double g_retimeTieOffset = 1.0 / 3000.0;
 
 		// The tempo track playing beats (seconds, in order) distance ticks apart: a step tempo event at each beat but
 		// the last replaces the tempo events from the first beat to the last; beats before the project start don't
@@ -420,15 +425,17 @@ namespace gnubase::engine
 		const auto retimePart = [&project, &before](MidiPart& part)
 		{
 			// Retime through the part start's exact time and round the relative position once, so that shared copies
-			// at the same tempo round to the same ticks instead of a tick apart from each of their own starts (#865).
+			// at the same tempo round to the same ticks instead of a tick apart from each of their own starts; the
+			// tie offset rounds a position on exactly half a tick the same way whatever the start (#865).
 			const double startSeconds = static_cast<double>(part.position.value) / project.sampleRate;
 			const double startBefore = before.toTicksExact(startSeconds);
 			const double start = project.tempo.toTicksExact(startSeconds);
 			const auto retime = [&](time::Ticks position) -> time::Ticks
 			{
-				return std::llround(
+				const double exact =
 					project.tempo.toTicksExact(before.toSecondsExact(startBefore + static_cast<double>(position))) -
-					start);
+					start;
+				return static_cast<time::Ticks>(std::floor(exact + 0.5 + g_retimeTieOffset));
 			};
 			bool moved = false;
 			const auto update = [&moved](time::Ticks& value, time::Ticks to)

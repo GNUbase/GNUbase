@@ -59,10 +59,11 @@ moving linear MIDI parts keeping their notes' time across tempo changes inside t
 linear parts keeping their time through tempo events, ramps, the project tempo, tap tempo, a MIDI file's tempo and the
 tempo mode, and undo, with `midiPart.changed` for exactly the parts that change, each as `project.get` has it; shared
 copies of linear parts becoming real copies when their notes retime differently, copies that still match staying shared
-in a new group, off-tick copies at the same tempo staying shared through a change, small tempo steps splitting a shared
-musical copy and linear copies around a tempo event instead of moving them, and the largest set keeping the group;
-switching the time base of audio, MIDI and marker tracks with automation keeping everything in place, then following
-the tempo or not; `editing.defaultTimeBase` for every track type, a marker track `marker.add` adds, and the primary
-time format. `tests/inspector_tests.cpp`: Switch Time Base in the inspector; `tests/tracklist_tests.cpp`: in the track
-list, also on group and effect tracks. `tests/automation_tests.cpp`, `tests/marker_tests.cpp` and
-`tests/document_tests.cpp` have the automation, markers and snapshot in both time bases.
+in a new group, off-tick copies at the same tempo staying shared through a change, copies whose notes retime onto half a
+tick rounding alike, small tempo steps splitting a shared musical copy and linear copies around a tempo event instead of
+moving them, and the largest set keeping the group; switching the time base of audio, MIDI and marker tracks with
+automation keeping everything in place, then following the tempo or not; `editing.defaultTimeBase` for every track type,
+a marker track `marker.add` adds, and the primary time format. `tests/inspector_tests.cpp`: Switch Time Base in the
+inspector; `tests/tracklist_tests.cpp`: in the track list, also on group and effect tracks.
+`tests/automation_tests.cpp`, `tests/marker_tests.cpp` and `tests/document_tests.cpp` have the automation, markers and
+snapshot in both time bases.
