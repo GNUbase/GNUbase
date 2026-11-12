@@ -65,6 +65,8 @@ namespace gnubase::ui
 		ListEditor* listEditor() { return m_list.get(); }
 		// The audio part editor, of an EditorPart::Editor while it shows audio parts.
 		AudioPartEditor* audioPartEditor() { return m_audio.get(); }
+		// The pattern editor, of an EditorPart::Editor while it shows a pattern event.
+		PatternEditor* patternEditor() { return m_pattern.get(); }
 
 	private:
 		void ProcessEvent(Rml::Event& event) override;

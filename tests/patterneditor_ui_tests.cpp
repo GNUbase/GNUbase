@@ -5,6 +5,8 @@
 #include "engine/time/tempomap.h"
 #include "ui/automation.h"
 #include "ui/eventdisplay.h"
+#include "ui/midieditor.h"
+#include "ui/patterneditor.h"
 #include "uiapp.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -101,11 +103,23 @@ namespace
 			return indexes;
 		}
 
-		// Lets the editor hear what the engine announced.
+		// Waits until the editor has the pattern as the engine has it: it hears of a change and then asks for the
+		// project, which takes a while in sanitized builds.
 		void settle()
 		{
-			int steps = 0;
-			app.waitUntil([&] { return ++steps > 5; });
+			REQUIRE(app.waitUntil(
+				[&]
+				{
+					ui::MidiEditor* shown = app.appUi().editorWindow();
+					const ui::PatternEditor* editor = shown != nullptr ? shown->patternEditor() : nullptr;
+					if (editor == nullptr)
+						return false;
+					const Json expected = patternJson();
+					for (const Json& each : editor->project().value("patterns", Json::array()))
+						if (each.at("id") == pattern)
+							return each == expected;
+					return false;
+				}));
 		}
 
 		void click(const ui::Target& target, int count = 1, const std::vector<std::string>& modifiers = {})

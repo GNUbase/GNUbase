@@ -41,6 +41,8 @@ namespace gnubase::ui
 		PatternEditor& operator=(PatternEditor&&) = delete;
 
 		void show(const engine::Json& project, const engine::Json& view);
+		// The project as show() gave it last.
+		const engine::Json& project() const { return m_project; }
 
 	private:
 		enum class Gesture : uint8_t
