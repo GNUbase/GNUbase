@@ -582,6 +582,16 @@ TEST_CASE("a MIDI track heard again after playback moved while it was silent cha
 	if (button)
 		unchased.insert(unchased.end(), {{0xC0, 9}, {0xB0, 7, 64}});
 	CHECK(played() == unchased);
+	// The same with the transport stopped before it is heard again: the channel's values, which go out while it
+	// stands, come first too.
+	mute(true);
+	run(song.client, "transport.locate", {{"position", 0}});
+	run(song.client, "transport.play");
+	pastTheSecondCc7();
+	run(song.client, "transport.stop");
+	CHECK(played().empty());
+	mute(false);
+	CHECK(played() == unchased);
 	for (const char* key : {"midi.chaseControllers", "midi.chasePrograms"})
 		run(song.client, "settings.reset", {{"key", key}});
 
@@ -978,8 +988,41 @@ TEST_CASE("a project loaded in place of another doesn't get what the old one's M
 	run(song.client, "audio.render", {{"frames", 128}});
 	const auto oldValue = [](const Played& played)
 	{ return played.bytes.size() == 3 && played.bytes[0] == 0xB0 && (played.bytes[1] == 64 || played.bytes[1] == 1); };
-	const std::vector<Played> played = captured(song.client);
+	std::vector<Played> played = captured(song.client);
+	// The pedal the old track held down goes up once the next project plays, as a mute releases it: the instrument
+	// may be the same.
+	if (!muted)
+	{
+		REQUIRE(!played.empty());
+		CHECK(played.front().bytes == std::vector<int>{0xB0, 64, 0});
+		played.erase(played.begin());
+	}
 	CHECK(std::none_of(played.begin(), played.end(), oldValue));
+}
+
+TEST_CASE("a MIDI track heard again forgets a value that its MIDI input sent into its mute, of a kind the chase sends",
+	"[integration]")
+{
+	const int blockSize = GENERATE(17, 64);
+	CAPTURE(blockSize);
+	Song song(blockSize);
+	const ObjectId channel = channelOf(song.client, song.midi);
+	// The part's CC 7 at 127 where it starts, which the chase sends after the channel's MIDI volume.
+	song.addControllers(1, {{{"position", 0}, {"number", 7}, {"value", 1.0}}});
+	run(song.client, "channel.set", {{"channel", channel}, {"midiVolume", 50}, {"mute", true}});
+	run(song.client, "midi.capture", {{"start", true}});
+	run(song.client, "transport.play");
+	run(song.client, "audio.render", {{"frames", 256}});
+	run(song.client, "transport.locate", {{"position", 2000}}); // a move while it is muted
+	run(song.client, "audio.render", {{"frames", 64}});
+	// Into the mute from its MIDI input: CC 7, which the chase sends, and CC 11, which only the mute keeps.
+	run(song.client, "midi.inject",
+		{{"channel", channel},
+			{"messages",
+				{{{"position", 0}, {"bytes", {0xB0, 7, 100}}}, {{"position", 0}, {"bytes", {0xB0, 11, 90}}}}}});
+	CHECK(controllersPlayed(song.client, false).empty());
+	run(song.client, "channel.set", {{"channel", channel}, {"mute", false}});
+	CHECK(controllersPlayed(song.client, false) == ControllerBytes{{0xB0, 7, 50}, {0xB0, 11, 90}, {0xB0, 7, 127}});
 }
 
 TEST_CASE(
