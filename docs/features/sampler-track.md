@@ -58,17 +58,19 @@ How it plays:
   samplers that wait for it. Until then a sampler plays the sample before, or nothing if it had none or if it belongs
   to a project that replaced another (`project.load`, `project.new`): the render snapshot's `opened` tells the audio
   engine so, since a channel of the same id keeps its instrument and the sample before is the other project's. Starting
-  playback and locating wait for the samples as for the audio tracks' streams (up to 2 seconds), and offline renders
-  (`audio.render`, `mixdown.export`, render in place) wait until every sample is there (up to 30 seconds, after which
-  they log a warning), so they come out the same every time. Files that no sampler waits for any more, after an undo
-  or another project, are dropped from the loader's queue unread, and a read that fails plays nothing, as a missing
-  file does.
+  playback waits for the samples as for the audio tracks' streams (up to 2 seconds); locating and a count-in don't.
+  Offline renders (`audio.render`, `mixdown.export`, render in place) wait until every sample is there, however long
+  its file takes (logging a warning every 30 seconds), so they come out the same every time. Both wait only for the
+  files that samplers wait for, not for one being read that none wants any more. Files that no sampler waits for any
+  more, after an undo or another project, are dropped from the loader's queue unread; the one being read can't be
+  stopped, and the engine's end waits for it. A read that fails plays nothing, as a missing file does.
 - Hot swap: the sampler takes the new sample without a lock (`rt::SnapshotPublisher`); voices keep playing on the new
   one. It lets go of the sample before by the next update, once the audio thread has moved on.
 - Samples are read through `processors::sharedSample`, which reads a file once while something holds its sample:
-  samplers that play the same clip and `sampler.normalize` share it. A file that changed (its time or size) is read
-  again, and is read without holding up those who ask for other files. `sampler.normalize` still reads a file that no
-  sampler holds on the command thread.
+  samplers that play the same clip and `sampler.normalize` share it. Who asks for a file while it is read waits for
+  that read rather than reading it again. A file that changed (its time or size) is read again, and is read without
+  holding up those who ask for other files. `sampler.normalize` still reads a file that no sampler holds on the
+  command thread, or waits there for the loader's read of it.
 
 Not yet: warped (time-stretched) playback with sync to the tempo, the quality modes, transient, grid and manual
 slicing with fades and the slices' MIDI phrase, the pitch and filter envelopes and a multi-node amp envelope, the LFOs,
@@ -98,7 +100,8 @@ root `.sampler-panel` has the class `.empty`):
   (`#sampler-normalize`, `sampler.normalize` with that `level`) and Lock Parameter Settings (`#sampler-lock`), which
   loads keep the settings with (`keepSettings`). The lock and the level are the user setting `ui.samplerPanel`
   (`lockParameters`, `normalizeLevel`; what later versions add to it is kept), so they stay as they were when the panel is made anew, e.g. in a window of its
-  own. Why a load (a file that isn't audio) or Normalize Sample (a silent or missing sample) failed shows in the
+  own. While the panel's own changes of it are on their way, e.g. during a drag of the level, the older ones that
+  `settings.changed` brings back don't set the field back. Why a load (a file that isn't audio) or Normalize Sample (a silent or missing sample) failed shows in the
   toolbar's message (`#sampler-message`, `.error`) until the next one succeeds or another track is shown.
 - **Waveform display** (`#sampler-display`): the sample's waveform from `media.peaks`, its parts before Start and
   after End shaded (`.sampler-outside`), the loop (`.sampler-loop`) and the markers (`.sampler-marker`, attribute
@@ -111,10 +114,13 @@ root `.sampler-panel` has the class `.empty`):
   through `EngineBinding::sendStep`).
 - **Keyboard** (`.sampler-key`, attribute `key`): the root key `.root`, keys outside the key range `.outside`; a click
   sets the root key. Above it the root key handle and the key range's handles (`.sampler-handle`, attribute `handle`:
-  root, low, high; p. 730) sit on their keys; dragging one sets its key, one undo step per drag, and the range's low
-  key stays at or below its high one.
+  root, low, high; p. 730) sit on their keys, side by side on the same key (the range's in a row above the root key's,
+  the low one on the left half of its key, the high one on the right half); dragging one sets its key, one undo step
+  per drag, and the range's low key stays at or below its high one.
 - The markers and the handles are RmlUi drag elements (`drag: drag`): a drag ends at its `dragend`, wherever the button
-  goes up, outside the window too.
+  goes up, outside the window too. Like every drag of the app it also ends when its window loses the focus with the
+  button held, e.g. to Alt+Tab, since the button may then go up over another application, where the window doesn't
+  hear it (`SdlWindowSystem`, #1191).
 - A file dropped on the panel loads into the sampler (`sampler.load` with `path`, p. 710).
 
 ## Tests
@@ -133,4 +139,12 @@ Add Track dialog's Sampler page; `tests/backup_tests.cpp` backs one up with
 back (`Engine::setSampleReader`) leaves `sampler.load` and later commands running and the sampler silent, the posted
 `audio.updateSamples` alone hands the sample over, and a project loaded over another doesn't play the other's sample
 meanwhile. It added the load and Normalize Sample messages for dropped and imported files, the lock and level as a
-user setting, the keyboard's handles, and drags released outside the window to `tests/sampler_ui_tests.cpp`.
+user setting, the keyboard's handles, and drags released outside the window to `tests/sampler_ui_tests.cpp`. #1180 and
+#1191 added a key held from polyphonic mode that a monophonic note goes back to, the loader waiting only for the files
+asked for and its end, `sharedSample` reading a file asked for while it is read once, and, with the read held back, a
+hot swap that plays the sample before on, a project loaded while the one before reads, playback waiting for the
+samples while locating doesn't, an undo dropping a file waiting, and an offline render that waits however long a read
+takes, with `audio.updateSamples` out of `engine.commandLog`; the real-time tests are tagged `[realtime]`. The UI tests
+got the level's quick changes, the handles side by side and the low one stopping at the high key, a drag that ends
+when the window loses the focus, the message going with another track and its tooltip, and Import Audio File when the
+panel closed while the dialog was open.

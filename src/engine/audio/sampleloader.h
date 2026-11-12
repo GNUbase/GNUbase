@@ -46,6 +46,8 @@ namespace gnubase::engine
 
 		// Waits until every file asked for is read and its callback has run, at most timeout; false if one isn't.
 		bool waitUntilRead(std::chrono::milliseconds timeout);
+		// The same for the files of paths alone, so that a file that nothing wants any more holds up no one.
+		bool waitUntilRead(std::chrono::milliseconds timeout, const std::set<std::string>& paths);
 		// Reads the files asked for from now on with read; for tests that hold a read back.
 		void setRead(Read read);
 
