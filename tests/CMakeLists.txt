@@ -226,7 +226,6 @@ target_link_libraries(gnubase-tests PRIVATE
 	gnubase-pluginhost-core
 	gnubase-scripting
 	gnubase-testutils
-	miniz
 	pugixml::pugixml)
 
 # The UI's tests (#48, #49) use SDL directly.
