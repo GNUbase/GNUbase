@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/document/document.h"
 #include "engine/document/projectrules.h"
+#include "engine/document/serialize.h"
 #include "engine/engine.h"
 #include "engine/time/tempomap.h"
 #include "testutils/testutils.h"
@@ -471,13 +472,22 @@ TEST_CASE("project.applyRules transforms and deletes in one undo step", "[integr
 	}
 	SECTION("a cycle marker's length stops at one sample")
 	{
-		// On a musical track one sample is about 72 ticks at 48 kHz, and about 68800 at 50 Hz.
+		// On a musical track one sample is about 72 ticks at 48 kHz and 430 at 8 kHz; at 1 BPM a tick is longer
+		// than a sample.
 		const bool linear = GENERATE(false, true);
-		const double rate = GENERATE(48000.0, 50.0);
+		const double rate = GENERATE(48000.0, g_lowestSampleRate);
+		const int tempo = GENERATE(0, 1, 2); // 120 BPM, a tempo change at the marker, 1 BPM
 		const Json zero = GENERATE(as<Json>{}, action("length", "setFixed", 0), action("length", "multiplyBy", 0),
 			action("length", "subtract", 1e9));
-		CAPTURE(linear, rate, zero);
+		CAPTURE(linear, rate, tempo, zero);
 		run(f.client, "project.set", {{"sampleRate", rate}});
+		if (tempo == 1)
+		{
+			run(f.client, "project.set", {{"tempoTrackActive", true}});
+			run(f.client, "tempo.add", {{"position", g_beatTicks}, {"bpm", 37.0}, {"ramp", false}});
+		}
+		else if (tempo == 2)
+			run(f.client, "project.set", {{"tempo", 1}});
 		ObjectId track = f.markers;
 		if (linear)
 		{
@@ -485,36 +495,93 @@ TEST_CASE("project.applyRules transforms and deletes in one undo step", "[integr
 			run(f.client, "marker.add",
 				{{"type", "cycle"}, {"track", track}, {"position", 48000}, {"end", 96000}, {"name", "Chorus"}});
 		}
-		const size_t before = history();
+		const Json before = run(f.client, "marker.list", {{"track", track}}).at("markers").at(0);
+		const size_t undoSteps = history();
 		run(f.client, "project.applyRules",
 			{{"rules", rules({filter("mediaType", "equal", "marker")}, "transform", {zero})}});
 		const Json marker = run(f.client, "marker.list", {{"track", track}}).at("markers").at(0);
-		const gnubase::time::TempoMap tempo(120.0);
-		const auto samples = [&](const Json& value)
-		{ return linear ? value.get<int64_t>() : tempo.toSamples(value.get<int64_t>(), rate); };
-		CHECK(marker.at("position") == (linear ? 48000 : g_beatTicks));
-		CHECK(samples(marker.at("end")) == samples(marker.at("position")) + 1);
-		CHECK(history() == before + 1);
+		const Project project = projectFromJson(run(f.client, "project.get"));
+		Marker expected = project.markers.at(marker.at("id").get<ObjectId>());
+		CHECK(expected.position.value == before.at("position"));
+		// One sample after the position, the nearest tick to it on a musical track.
+		expected.end = expected.position;
+		REQUIRE(keepMinimumLength(project, expected));
+		CHECK(marker.at("end") == expected.end.value);
+		CHECK(gnubase::time::toSamples(expected.end, project.tempo, rate) >
+			gnubase::time::toSamples(expected.position, project.tempo, rate));
+		CHECK(history() == undoSteps + 1);
 	}
-	SECTION("positions stop at the longest project at very low sample rates")
+	SECTION("a marker track that changes its time domain takes its moved markers in the new one")
 	{
-		// Far below where g_maxPosition samples in ticks would leave an int64_t.
-		const double rate = GENERATE(50.0, 1.0, 1e-6);
-		run(f.client, "project.set", {{"sampleRate", rate}});
+		const Json markers = filter("mediaType", "equal", "marker");
+		const auto cycle = [&f] { return run(f.client, "marker.list", {{"track", f.markers}}).at("markers").at(0); };
+		const size_t undoSteps = history();
+		// Musical to linear at 120 BPM and 48 kHz: from one beat to two, a beat later, is 1 s to 1.5 s.
+		run(f.client, "project.applyRules",
+			{{"rules",
+				rules({markers}, "transform",
+					{action("trackOperation", "timeDomain", "linear"), action("position", "add", 480)})}});
+		CHECK(f.object("tracks", f.markers).at("timeBase") == "linear");
+		CHECK(cycle().at("position") == 48000);
+		CHECK(cycle().at("end") == 72000);
+		// Linear to musical without a length: one sample long in ticks.
+		run(f.client, "project.applyRules",
+			{{"rules",
+				rules({markers}, "transform",
+					{action("trackOperation", "timeDomain", "musical"), action("length", "setFixed", 0)})}});
+		CHECK(f.object("tracks", f.markers).at("timeBase") == "musical");
+		CHECK(cycle().at("position") == 2 * g_beatTicks);
+		const gnubase::time::TempoMap tempo(120.0);
+		CHECK(tempo.toSamples(cycle().at("end").get<int64_t>(), 48000.0) == 48001);
+		CHECK(history() == undoSteps + 2);
+		run(f.client, "history.undo", {{"steps", 2}});
+		CHECK(f.object("tracks", f.markers).at("timeBase") == "musical");
+		CHECK(cycle().at("position") == g_beatTicks);
+		CHECK(cycle().at("end") == 2 * g_beatTicks);
+	}
+	SECTION("a cycle marker moved before the project's start keeps its length, as a part does")
+	{
+		const bool linear = GENERATE(false, true);
+		const double earlier = GENERATE(720.0, 1440.0); // 1.5 and 3 beats
+		CAPTURE(linear, earlier);
+		ObjectId track = f.markers;
+		if (linear)
+		{
+			run(f.client, "track.remove", {{"track", f.markers}});
+			track = f.add({{"type", "marker"}, {"timeBase", "linear"}});
+			run(f.client, "marker.add", {{"type", "cycle"}, {"track", track}, {"position", 24000}, {"end", 48000}});
+		}
+		run(f.client, "project.applyRules",
+			{{"rules",
+				rules({filter("position", "bigger", 0)}, "transform", {action("position", "subtract", earlier)})}});
+		const Json marker = run(f.client, "marker.list", {{"track", track}}).at("markers").at(0);
+		CHECK(marker.at("position") == 0);
+		CHECK(marker.at("end") == (linear ? 24000 : g_beatTicks));
+		CHECK(f.object("midiParts", f.full).at("position") == 0);
+		CHECK(f.object("midiParts", f.full).at("length") == g_beatTicks);
+	}
+	SECTION("positions stop at the longest project at the lowest sample rate")
+	{
+		// At 999 BPM g_maxPosition samples at 8 kHz are about 10^18 ticks, which still fit an int64_t.
+		run(f.client, "project.set", {{"sampleRate", g_lowestSampleRate}});
 		run(f.client, "project.set", {{"tempo", 999}});
+		const ObjectId linear = f.add({{"type", "marker"}, {"timeBase", "linear"}});
+		run(f.client, "marker.add", {{"type", "position"}, {"track", linear}, {"position", 8000}});
 		run(f.client, "project.applyRules",
 			{{"rules",
 				rules({filter("position", "bigger", 0)}, "transform",
 					{action("position", "multiplyBy", 1e12), action("length", "multiplyBy", 1e12)})}});
-		// The longest project lasts as long as at 8 kHz: about 10^18 ticks at 999 BPM.
-		const int64_t longest =
-			gnubase::time::TempoMap(999.0).toTicks(static_cast<double>(gnubase::time::g_maxPosition) / 8000.0);
+		const int64_t longest = gnubase::time::TempoMap(999.0).toTicks(
+			static_cast<double>(gnubase::time::g_maxPosition) / g_lowestSampleRate);
 		const auto atLongest = [longest](const Json& value)
 		{ return std::abs(value.get<int64_t>() - longest) <= 1024; };
 		const int64_t position = f.object("midiParts", f.full).at("position").get<int64_t>();
 		CHECK(atLongest(position));
 		CHECK(atLongest(f.object("midiParts", f.full).at("length")));
 		CHECK(atLongest(run(f.client, "marker.list", {{"track", f.markers}}).at("markers").at(0).at("position")));
+		const int64_t samples =
+			run(f.client, "marker.list", {{"track", linear}}).at("markers").at(0).at("position").get<int64_t>();
+		CHECK(std::abs(samples - gnubase::time::g_maxPosition) <= 2);
 		run(f.client, "history.undo");
 		CHECK(f.object("midiParts", f.full).at("position") == g_beatTicks);
 		run(f.client, "history.redo");
