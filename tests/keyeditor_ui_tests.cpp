@@ -192,13 +192,15 @@ namespace
 		// Renders until the note ons and offs the instrument played since the last clearSound() are the expected ones.
 		bool plays(const std::vector<std::vector<int>>& expected)
 		{
-			REQUIRE(sound.has_value());
+			if (!sound)
+				FAIL("probe() first");
 			return sound->plays(expected);
 		}
 
 		void clearSound()
 		{
-			REQUIRE(sound.has_value());
+			if (!sound)
+				FAIL("probe() first");
 			sound->clear();
 		}
 
