@@ -30,6 +30,8 @@ namespace gnubase::ui
 		constexpr int g_pitches = 128;
 		constexpr double g_maxVelocity = 127.0;
 		constexpr float g_edge = 6.0F; // dp at a note's ends where the object selection tool resizes it
+		// dp the drumstick goes from its press before its release deletes the sound's later notes too (p. 1242)
+		constexpr float g_dragThreshold = 4.0F;
 
 		constexpr std::array<std::pair<KeyTool, const char*>, 7> g_tools = {{
 			{KeyTool::ObjectSelection, "objectSelection"},
@@ -1045,7 +1047,8 @@ namespace gnubase::ui
 		case Rml::EventId::Mouseup:
 			// A key's pitch ends wherever the mouse is released; the document hears that, the root only within.
 			sound(std::nullopt);
-			if (event.GetCurrentElement() == m_root.get())
+			// A drumstick's deletion ends wherever the mouse is released; the other gestures only within.
+			if (event.GetCurrentElement() == m_root.get() || m_gesture == Gesture::Erase)
 				release(event);
 			break;
 		case Rml::EventId::Mouseout:
@@ -1105,6 +1108,7 @@ namespace gnubase::ui
 		const bool ctrl = event.GetParameter("ctrl_key", 0) != 0 || event.GetParameter("meta_key", 0) != 0;
 		const bool alt = event.GetParameter("alt_key", 0) != 0;
 		m_pressedAt = at(event);
+		m_pressedX = event.GetParameter("mouse_x", 0.0F);
 		m_snapOff = ctrl;
 		m_gesture = Gesture::None;
 		const Note* pressed = noteOf(target);
@@ -1137,47 +1141,24 @@ namespace gnubase::ui
 				select(std::move(notes));
 				return;
 			}
-			{
-				// Near an end the press resizes, elsewhere it moves (pp. 1213-1214).
-				Rml::Element* box = withAttribute(target, "note", root);
-				const float ratio =
-					root->GetContext() != nullptr ? root->GetContext()->GetDensityIndependentPixelRatio() : 1.0F;
-				const Rml::Vector2f origin = box->GetAbsoluteOffset(Rml::BoxArea::Border);
-				const float width = box->GetBox().GetSize(Rml::BoxArea::Border).x;
-				const float x = event.GetParameter("mouse_x", 0.0F) - origin.x;
-				const float edge = g_edge * ratio;
-				if (width > 3 * edge && x >= width - edge)
-					m_gesture = Gesture::ResizeEnd;
-				else if (width > 3 * edge && x <= edge)
-					m_gesture = Gesture::ResizeStart;
-				else
-					m_gesture = Gesture::Move;
-			}
+			// Near an end the press resizes, elsewhere it moves (pp. 1213-1214).
+			m_gesture = edgeGesture(target, event);
 			if (!selected(*pressed))
 				select({{pressed->part, pressed->id}});
 			return;
 		case KeyTool::Draw:
 		{
 			// A click draws a note of the length quantize's length, a drag a multiple of it (p. 1212). The drumstick
-			// deletes the note clicked (p. 1242).
+			// deletes the note clicked, and with Show Note Length resizes it at its ends instead (p. 1242).
 			if (pressed != nullptr && m_drum)
-				m_gesture = Gesture::Erase;
-			if (pressed != nullptr)
-				return;
-			const int64_t start = snap(ticks - (m_snapOff ? 0.0 : static_cast<double>(grid()) / 2.0), m_snapOff);
-			if (partAt(start) == nullptr)
-				return;
-			m_pressedAt.first = static_cast<double>(start);
-			m_gesture = Gesture::Draw;
-			Rml::Element* notes = root->QuerySelector(".key-editor-notes");
-			Rml::ElementPtr drawn = root->GetOwnerDocument()->CreateElement("div");
-			drawn->SetClass("key-note", true);
-			drawn->SetClass("drum-note", diamonds());
-			drawn->SetClass("drawing", true);
-			Rml::Element* added = notes->AppendChild(std::move(drawn));
-			m_drawnLength = lengthQuantize(m_pressedAt.second);
-			place(*added, start, m_drawnLength, m_pressedAt.second);
-			m_drawn = added->GetObserverPtr();
+			{
+				const Gesture edge = diamonds() ? Gesture::Move : edgeGesture(target, event);
+				m_gesture = edge == Gesture::Move ? Gesture::Erase : edge;
+				if (m_gesture != Gesture::Erase && !selected(*pressed))
+					select({{pressed->part, pressed->id}});
+			}
+			if (pressed == nullptr)
+				startDraw(ticks);
 			return;
 		}
 		case KeyTool::Erase:
@@ -1274,6 +1255,44 @@ namespace gnubase::ui
 		}
 	}
 
+	KeyEditor::Gesture KeyEditor::edgeGesture(Rml::Element* target, const Rml::Event& event) const
+	{
+		Rml::Element* root = m_root.get();
+		Rml::Element* box = withAttribute(target, "note", root);
+		if (box == nullptr)
+			return Gesture::Move;
+		const float ratio =
+			root->GetContext() != nullptr ? root->GetContext()->GetDensityIndependentPixelRatio() : 1.0F;
+		const Rml::Vector2f origin = box->GetAbsoluteOffset(Rml::BoxArea::Border);
+		const float width = box->GetBox().GetSize(Rml::BoxArea::Border).x;
+		const float x = event.GetParameter("mouse_x", 0.0F) - origin.x;
+		const float edge = g_edge * ratio;
+		if (width > 3 * edge && x >= width - edge)
+			return Gesture::ResizeEnd;
+		if (width > 3 * edge && x <= edge)
+			return Gesture::ResizeStart;
+		return Gesture::Move;
+	}
+
+	void KeyEditor::startDraw(double ticks)
+	{
+		Rml::Element* root = m_root.get();
+		const int64_t start = snap(ticks - (m_snapOff ? 0.0 : static_cast<double>(grid()) / 2.0), m_snapOff);
+		if (partAt(start) == nullptr)
+			return;
+		m_pressedAt.first = static_cast<double>(start);
+		m_gesture = Gesture::Draw;
+		Rml::Element* notes = root->QuerySelector(".key-editor-notes");
+		Rml::ElementPtr drawn = root->GetOwnerDocument()->CreateElement("div");
+		drawn->SetClass("key-note", true);
+		drawn->SetClass("drum-note", diamonds());
+		drawn->SetClass("drawing", true);
+		Rml::Element* added = notes->AppendChild(std::move(drawn));
+		m_drawnLength = lengthQuantize(m_pressedAt.second);
+		place(*added, start, m_drawnLength, m_pressedAt.second);
+		m_drawn = added->GetObserverPtr();
+	}
+
 	// How far a move or resize goes: the pressed note's start, or its end, snapped where the mouse took it.
 	int64_t KeyEditor::delta(Gesture gesture, double ticks) const
 	{
@@ -1359,12 +1378,16 @@ namespace gnubase::ui
 		if (gesture == Gesture::Erase && m_pressed)
 		{
 			// The drumstick deletes the note clicked, and with a drag to the right the notes of its sound up to
-			// where it is released (p. 1242).
+			// where it is released (p. 1242). A click that hardly moves deletes only that note, not the doubles and
+			// close flams under the mouse.
+			const Rml::Context* context = m_root.get()->GetContext();
+			const float ratio = context != nullptr ? context->GetDensityIndependentPixelRatio() : 1.0F;
+			const bool dragged = std::abs(event.GetParameter("mouse_x", 0.0F) - m_pressedX) >= g_dragThreshold * ratio;
 			std::map<uint64_t, Json> removed;
 			const int64_t until = std::max(static_cast<int64_t>(std::llround(ticks)), m_pressed->start);
 			for (const Note& each : m_notes)
 				if (each.editable && each.pitch == m_pressed->pitch &&
-					(each.id == m_pressed->id || (each.start >= m_pressed->start && each.start <= until)))
+					(each.id == m_pressed->id || (dragged && each.start >= m_pressed->start && each.start <= until)))
 					removed[each.part].push_back(each.id);
 			Json commands = Json::array();
 			for (const auto& [part, notes] : removed)
@@ -1453,7 +1476,9 @@ namespace gnubase::ui
 	}
 
 	// With the object selection tool a double click on a note deletes it, in the empty grid it inserts a note of the
-	// length quantize's length (p. 1211).
+	// length quantize's length (p. 1211). In the drum editor a drag to the right after it, as with the drumstick,
+	// inserts a note at every step of the grid, or with Snap on deletes the sound's notes up to the release
+	// (pp. 1241-1242).
 	void KeyEditor::doubleClick(Rml::Event& event)
 	{
 		if (m_tool != KeyTool::ObjectSelection)
@@ -1467,16 +1492,28 @@ namespace gnubase::ui
 		if (!inGrid)
 			return;
 		m_gesture = Gesture::None;
+		const bool ctrl = event.GetParameter("ctrl_key", 0) != 0 || event.GetParameter("meta_key", 0) != 0;
 		if (const Note* pressed = noteOf(event.GetTargetElement()); pressed != nullptr)
 		{
-			if (pressed->editable)
+			if (pressed->editable && m_drum && !ctrl)
+			{
+				m_pressed = *pressed; // the release deletes it, as the drumstick's does
+				m_gesture = Gesture::Erase;
+			}
+			else if (pressed->editable)
 				edit("Delete",
 					Json::array({{{"command", "note.remove"},
 						{"parameters", {{"part", pressed->part}, {"notes", Json::array({pressed->id})}}}}}));
 			return;
 		}
 		const auto [ticks, pitch] = at(event);
-		const bool ctrl = event.GetParameter("ctrl_key", 0) != 0 || event.GetParameter("meta_key", 0) != 0;
+		if (m_drum)
+		{
+			m_pressedAt.second = pitch;
+			m_snapOff = ctrl;
+			startDraw(ticks); // the release inserts, as the drumstick's does
+			return;
+		}
 		const int64_t start = snap(ticks - (ctrl ? 0.0 : static_cast<double>(grid()) / 2.0), ctrl);
 		if (const Part* part = partAt(start))
 			addNotes(*part, {start}, lengthQuantize(pitch), pitch);
@@ -1516,7 +1553,8 @@ namespace gnubase::ui
 	}
 
 	// The drum sound list (pp. 1233-1234): a row per sound in the map's order with its pitch, and with a map its name,
-	// mute button, snap, I-note, O-note and channel, which a double click edits; without a map only the pitches.
+	// mute button, snap, I-note, O-note, channel and output, which a double click edits; without a map only the
+	// pitches.
 	std::string KeyEditor::soundsRml() const
 	{
 		const Json* map = activeMap();
