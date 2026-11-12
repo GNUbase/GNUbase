@@ -81,9 +81,9 @@ the project start. The sample grids count from the project start, as the samples
   where it goes: audio events keep their length in samples, so on a musical track their length in ticks is worked out
   at their new start, and the row has no gaps or overlaps across tempo changes (#414). The middle the position is
   compared with is measured at that length where the event goes, not at the length at its old position.
-  A row keeps its start but only a row of audio events alone keeps its end: audio parts keep their length in ticks,
-  so a row with both parts and audio events can end somewhere else after a shuffle across a tempo change, and can
-  then overlap a locked event behind it. That overlap is the row's new layout, not an error (#873).
+  A row keeps its start, and it keeps its end when its events all keep their length in the same unit: audio events
+  alone (samples) or parts alone (ticks). A row of both can end somewhere else after a shuffle across a tempo change,
+  and can then overlap a locked event behind it; that overlap is the row's new layout, not an error (#873).
 - **Snap to zero crossing** (p. 105): `event.split` and normal sizing in `event.resize` with `zeroCrossing` move an
   audio event's cut to the nearest frame within 50 ms where the sum of its channels changes sign, the one of the two
   nearer to zero. A split only looks inside the event, and only at events the position cuts. The file is read on the
