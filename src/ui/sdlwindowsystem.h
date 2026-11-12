@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -86,5 +87,6 @@ namespace gnubase::ui
 		WindowId m_keyboardGained = 0;   // the window that just got the keyboard, until an event other than a key-down
 		uint64_t m_keyboardGainedAt = 0; // when, in SDL's nanoseconds
 		WindowId m_altHeldOnGaining = 0; // the window whose Alt was held as it got the keyboard, until Alt is released
+		std::set<WindowId> m_leftHeld;   // the windows whose left mouse button went down and not up yet
 	};
 }
