@@ -28,6 +28,7 @@
 #include <fcntl.h>
 #include <pwd.h>
 #include <sys/file.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
@@ -298,6 +299,31 @@ namespace gnubase::files
 		if (in.bad())
 			return std::nullopt;
 		return contents;
+	}
+
+	std::optional<FileIdentity> fileIdentity(const fs::path& file)
+	{
+		rt::assertNotRealtime("files::fileIdentity");
+#ifdef _WIN32
+		// Opened for its attributes only (no access), sharing everything, so a file being read elsewhere is no obstacle
+		// and stays readable.
+		const HANDLE handle = CreateFileW(file.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+			nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+		if (handle == INVALID_HANDLE_VALUE)
+			return std::nullopt;
+		BY_HANDLE_FILE_INFORMATION info{};
+		const bool read = GetFileInformationByHandle(handle, &info) != FALSE;
+		CloseHandle(handle);
+		if (!read)
+			return std::nullopt;
+		const uint64_t number = (static_cast<uint64_t>(info.nFileIndexHigh) << 32) | info.nFileIndexLow;
+		return FileIdentity{info.dwVolumeSerialNumber, number};
+#else
+		struct stat info{};
+		if (::stat(file.c_str(), &info) != 0)
+			return std::nullopt;
+		return FileIdentity{static_cast<uint64_t>(info.st_dev), static_cast<uint64_t>(info.st_ino)};
+#endif
 	}
 
 	FileLock::FileLock(const fs::path& file, std::chrono::milliseconds timeout)
