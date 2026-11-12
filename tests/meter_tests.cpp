@@ -183,17 +183,25 @@ namespace
 	// How long the race tests play their rounds at most, on the wall clock. Each round waits for the other thread, and
 	// when more threads run than there are cores (CI runs four tests at a time), each wait can cost a time slice: the
 	// rounds could then take many minutes, beyond the 300 s after which ctest fails a test, with correct code. An
-	// overloaded run checks fewer rounds instead; an unloaded one plays all of them well within this.
+	// overloaded run checks fewer rounds instead, and says so; an unloaded one plays all of them well within this (each
+	// test took under a second in a Debug build on an x86-64 desktop).
+	constexpr auto g_raceBudget = std::chrono::seconds(20);
+
 	class RaceClock
 	{
 	public:
-		static constexpr auto budget = std::chrono::seconds(20);
-
 		[[nodiscard]] bool running() const { return std::chrono::steady_clock::now() < m_end; }
 
 	private:
-		std::chrono::steady_clock::time_point m_end = std::chrono::steady_clock::now() + budget;
+		std::chrono::steady_clock::time_point m_end = std::chrono::steady_clock::now() + g_raceBudget;
 	};
+
+	// Says how many rounds a race test checked when the budget ended them early.
+	void reportRounds(int checked, int rounds)
+	{
+		if (checked < rounds)
+			WARN("the wall-clock budget ended the rounds after " << checked << " of " << rounds);
+	}
 }
 
 TEST_CASE("a level meter reads a sine's peak and RMS level and keeps their maxima", "[unit]")
@@ -895,7 +903,7 @@ TEST_CASE("a frame loses no peak to a block that ends while it reads", "[unit]")
 	}
 	done = true;
 	reader.join();
-	INFO(checked << " of " << rounds << " rounds checked");
+	reportRounds(checked, rounds);
 	CHECK(checked > 0);
 	CHECK(lost == 0);
 }
@@ -911,8 +919,9 @@ TEST_CASE("a frame loses no peak of the first block after a reset, also when it 
 	// the loads in read() lie between the reader taking the peak and loading the maximum, and the reader keeps the
 	// maxima's cache line contended. With raise in place of the handover it failed in nearly every run of optimized
 	// builds on x86-64 desktops (MSVC, GCC and Clang), though not in unoptimized ones: of CI's jobs only the Release
-	// builds (windows-x64, linux-x64-gcc) can catch it, while a local Debug run and the sanitizer jobs, which build
-	// Debug, pass with raise too. The rounds end early under load (RaceClock).
+	// builds (windows-x64, linux-x64-gcc) can be expected to catch it, though that isn't measured on CI's runners yet,
+	// while a local Debug run and the sanitizer jobs, which build Debug, say nothing about raise. The rounds end early
+	// under load (RaceClock).
 	constexpr int rounds = 50000;
 	constexpr auto last = static_cast<size_t>(g_maxMeterChannels - 1);
 	// Both levels are new every round, so that a frame with the quieter peak, whether it took it or limited the loud
@@ -966,7 +975,7 @@ TEST_CASE("a frame loses no peak of the first block after a reset, also when it 
 	}
 	done = true;
 	reader.join();
-	INFO(checked << " of " << rounds << " rounds checked");
+	reportRounds(checked, rounds);
 	CHECK(checked > 0);
 	CHECK(lost == 0);
 }
