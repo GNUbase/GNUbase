@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/processors/builtinplugin.h"
+#include "engine/dsp/dsp.h"
 
 #include <algorithm>
 #include <cmath>
@@ -218,8 +219,7 @@ namespace gnubase::engine::processors
 		{
 			if (!std::isfinite(value))
 				return std::nullopt;
-			const double clamped = std::clamp(value, parameter.minimum, parameter.maximum);
-			return parameter.stepped ? std::round(clamped) : clamped;
+			return dsp::clampParameter(value, parameter.minimum, parameter.maximum, parameter.stepped);
 		}
 	}
 

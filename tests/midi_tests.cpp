@@ -985,14 +985,20 @@ TEST_CASE(
 TEST_CASE("a bank select chased for a track heard again brings its MIDI channel's later program after it", "[unit]")
 {
 	// Another track has the programs: on MIDI channel 1 alone, and on channel 0 before or after the heard track's bank
-	// select. A jump sends the earlier one before the bank select, which then changes nothing: it isn't sent again.
+	// select at 40. A jump sends the earlier one before the bank select, which then changes nothing: it isn't sent
+	// again. With a bank select's LSB (CC 32) at 60 too, a jump sends the program at 50 between the two, which changes
+	// the bank to the MSB's: it is sent again between them.
 	const int64_t at = GENERATE(30, 50);
-	CAPTURE(at);
+	const bool lsb = GENERATE(false, true);
+	CAPTURE(at, lsb);
 	auto heardAgain = std::make_shared<std::atomic<HeardAgain>>(HeardAgain::No);
 	auto sequence = std::make_unique<MidiSequence>();
 	sequence->chase.push_back(makeChaseTrack(
 		{controller(5, ControllerType::Program, 2, 0, 1), controller(at, ControllerType::Program, 4, 0)}, {}));
-	ChaseTrack track = makeChaseTrack({control(40, 0, 3)}, {});
+	std::vector<RenderController> selects{control(40, 0, 3)};
+	if (lsb)
+		selects.push_back(control(60, 32, 1));
+	ChaseTrack track = makeChaseTrack(selects, {});
 	track.heardAgain = heardAgain;
 	sequence->chase.push_back(std::move(track));
 	auto instrument = std::make_shared<MidiSequencer>();
@@ -1007,6 +1013,8 @@ TEST_CASE("a bank select chased for a track heard again brings its MIDI channel'
 	std::vector<Heard> expected{{16, Type::Controller, 0, 0, 3, {}}};
 	if (at > 40)
 		expected.push_back({16, Type::Program, 0, 4, 0, {}});
+	if (lsb)
+		expected.push_back({16, Type::Controller, 0, 32, 1, {}});
 	CHECK(player.heard == expected);
 }
 
