@@ -1257,7 +1257,7 @@ namespace gnubase::ui
 
 	KeyEditor::Gesture KeyEditor::edgeGesture(Rml::Element* target, const Rml::Event& event) const
 	{
-		Rml::Element* root = m_root.get();
+		const Rml::Element* root = m_root.get();
 		Rml::Element* box = withAttribute(target, "note", root);
 		if (box == nullptr)
 			return Gesture::Move;
@@ -1501,9 +1501,11 @@ namespace gnubase::ui
 				m_gesture = Gesture::Erase;
 			}
 			else if (pressed->editable)
+			{
 				edit("Delete",
 					Json::array({{{"command", "note.remove"},
 						{"parameters", {{"part", pressed->part}, {"notes", Json::array({pressed->id})}}}}}));
+			}
 			return;
 		}
 		const auto [ticks, pitch] = at(event);

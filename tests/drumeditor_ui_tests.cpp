@@ -511,7 +511,9 @@ TEST_CASE("the drumstick's click deletes only the note clicked, and a drag also 
 	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 4; }));
 	REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-note").size() == 4; }));
 	// A drag from a note to the right that ends above the editor deletes the sound's notes up to there.
-	const ui::Target outside{"", 0, ui::Point{f.at(9.0, 36).point->x, f.box(".key-editor").at("y").get<int>() - 4}};
+	const std::optional<ui::Point> later = f.at(9.0, 36).point;
+	REQUIRE(later);
+	const ui::Target outside{"", 0, ui::Point{later->x, f.box(".key-editor").at("y").get<int>() - 4}};
 	f.app.ui().drag(f.window, f.at(0.0, 36), outside);
 	f.app.shell().step(std::chrono::milliseconds(0));
 	REQUIRE(f.app.waitUntil([&] { return f.partNotes().empty(); }));
