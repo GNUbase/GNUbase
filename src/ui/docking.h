@@ -63,6 +63,10 @@ namespace gnubase::ui
 	//                                 the user's order and hidden with the class .hidden. The first container says
 	//                                 which sections a set has and their default order; containers added later go
 	//                                 through arrangeSections
+	//   fit="room"                    a container of sections that shows only those it has room for: the shown
+	//                                 sections before its .spacer that don't fit in its width get the state class
+	//                                 .no-room, the last first, and show again once it has room for them. Its style
+	//                                 must keep the widths they need, so they stay laid out, out of the flow
 	//   setup="channel"               a setup pane's list of the set's sections, which the docking system fills with a
 	//                                 toggle button per section (setup-section="eq"); a button dragged onto another
 	//                                 moves its section there
@@ -184,6 +188,7 @@ namespace gnubase::ui
 			Rml::ObserverPtr<Rml::Element> document;
 			std::map<std::string, std::vector<std::string>> tabs; // the tabs each zone's tab group shows, in order
 			std::map<std::string, std::vector<Section>> sections; // each set's, in the document's order
+			std::vector<Rml::ObserverPtr<Rml::Element>> fits;     // its containers with fit="room"
 		};
 
 		void ProcessEvent(Rml::Event& event) override;
@@ -221,6 +226,10 @@ namespace gnubase::ui
 		// Gives a zone or resizable element its size from ui.layout, or its default.
 		static void applySize(Rml::Element& element, const engine::Json* saved);
 		void applySections(const std::string& window, const Attached& attached, Rml::Element& root);
+		// Gives the sections of the shown windows' fit="room" containers the room they have, in the shell's steps
+		// before it draws; fit does one container, laid out, and says whether it changed.
+		void fitSections();
+		static bool fit(Rml::Element& container);
 		// Runs change in the shell's next step, unless the docking system is gone by then.
 		void later(std::function<void()> change);
 		void applyFloating(bool open);
