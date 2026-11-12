@@ -193,12 +193,13 @@
 	height: 60%;
 }
 
-/* A key wide, above the keyboard; the root key's handle in front of the key range's. */
+/* Above the keyboard, on their keys, none over another (#1180): the key range's handles in the upper row, the low one
+   on the left half of its key and the high one on the right half, and the root key's a key wide in the lower row. */
 .sampler-handles
 {
 	position: relative;
 	flex-shrink: 0;
-	height: 8dp;
+	height: 12dp;
 	margin-top: 2dp;
 }
 
@@ -206,15 +207,22 @@
 {
 	position: absolute;
 	top: 0;
-	bottom: 0;
-	width: 0.78125%;
-	min-width: 3dp;
+	height: 5dp;
+	width: 0.390625%;
+	min-width: 2dp;
 	cursor: resize-horizontal;
 	drag: drag; /* its drag ends wherever the button goes up, outside the window too */
 }
 
+.sampler-handle[handle=high]
+{
+	margin-left: 0.390625%;
+}
+
 .sampler-handle.root
 {
-	top: 2dp;
-	z-index: 1;
+	top: 6dp;
+	height: 6dp;
+	width: 0.78125%;
+	min-width: 3dp;
 }

@@ -1372,6 +1372,14 @@ namespace gnubase::app
 					if (rename)
 						m_markerLines->rename(marker);
 				});
+		// A profile switch that GNUbase couldn't finish nor undo at the start: the Profile Manager tells the user
+		// (docs/features/profiles.md).
+		m_binding.send("profile.list", engine::Json::object(),
+			[this](const engine::Result& result)
+			{
+				if (result.ok() && result.value.value("unfinished", false))
+					m_keys.run("window.profiles", engine::Json::object(), m_main, nullptr);
+			});
 		return *m_eventDisplay;
 	}
 

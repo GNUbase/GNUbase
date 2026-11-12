@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -59,8 +60,14 @@ namespace gnubase::ui
 
 		// Shows one of the OS's message boxes with the buttons, the first the default for Return and Escape, and waits
 		// for the user; works before any window opens, e.g. for the safe start mode (#163). The index of the button
-		// chosen, or -1 if it couldn't be shown.
-		static int ask(const std::string& title, const std::string& message, const std::vector<std::string>& buttons);
+		// chosen, or -1 if it couldn't be shown. A warning shows the OS's warning icon.
+		enum class Severity : uint8_t
+		{
+			Information,
+			Warning,
+		};
+		static int ask(const std::string& title, const std::string& message, const std::vector<std::string>& buttons,
+			Severity severity = Severity::Information);
 
 	private:
 		// Files being dropped on a window: SDL reports one event per file, then the drop's end.
@@ -86,5 +93,6 @@ namespace gnubase::ui
 		WindowId m_keyboardGained = 0;   // the window that just got the keyboard, until an event other than a key-down
 		uint64_t m_keyboardGainedAt = 0; // when, in SDL's nanoseconds
 		WindowId m_altHeldOnGaining = 0; // the window whose Alt was held as it got the keyboard, until Alt is released
+		std::set<WindowId> m_leftHeld;   // the windows whose left mouse button went down and not up yet
 	};
 }

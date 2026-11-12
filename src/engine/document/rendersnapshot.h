@@ -209,6 +209,9 @@ namespace gnubase::engine
 		// scales that the notes played into the track move to, the nearest note of the one playing at the transport
 		// position; empty for none.
 		std::vector<LiveHarmony> liveInput;
+		// MIDI and instrument channels: the track's articulation map (#175), whose remote triggers select the sound
+		// slot of the notes played into the track; without slots for none.
+		ArticulationMap articulations;
 		// MIDI and instrument channels with a drum map: what each note played into the track plays, by its pitch (128
 		// of them); empty without one.
 		std::vector<LiveDrumNote> drumInput;
@@ -230,7 +233,7 @@ namespace gnubase::engine
 		bool listen = false; // also plays on the monitoring bus, after its fader (graph::NodeKind::ListenBus)
 		AutoFades autoFades; // audio tracks: their own settings or the project's
 		std::vector<RenderAudioEvent> audioEvents;    // sorted by start
-		std::vector<RenderNote> notes;                // sorted by start, then pitch
+		std::vector<RenderNote> notes;                // sorted by start, key switches first, then pitch
 		std::vector<RenderController> controllers;    // sorted by position
 		std::vector<RenderPart> midiParts;            // sorted by start
 		std::vector<RenderAutomationLane> automation; // in the order of the lanes' ids

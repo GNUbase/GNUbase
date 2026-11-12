@@ -35,6 +35,29 @@ to the range measure the range's distance from the event's edges at that rate to
 depends on the tempo in musical mode and on the warp markers, a tempo change or a marker move can leave the fades
 longer than it: they stay, and `audioEvent.setFades` takes any change that doesn't make them longer together.
 
+`project.get` gives each event of a warped clip `playedLength`, the project samples from its start to its end through
+the warp, and `fadeRoom` (`audioEventJson` in `warp.cpp`), which the project window and the fade editor go by. They
+are derived, so not in the project file. After every edit, undo and redo, `ProjectModel` announces `audioEvent.changed`
+with them for each event whose `playedLength` or `fadeRoom` changed, as after a tempo change, a time signature or warp
+edit, and for each warped event that changed, whose own announcement lacks them; an event that stops being warped is
+announced without them (`announceWarpedEvents`).
+
+## DAWproject
+
+`project.xml` gives a warped event's clip a `Warps` element: its `Audio` and `Warp` points from its warp map where the
+map bends, each the second of the file (`contentTime`, `contentTimeUnit="seconds"`) that plays at a time from the
+event's start (`time`). In musical mode the times are in beats (`timeUnit="beats"`, the clip's `contentTimeUnit` too),
+so they follow the tempo in another application as they do here, else in seconds; the clip's `playStart` is 0 and its
+`duration` where the event ends through the warp. `gnubase.json` still has the clip's warp, which wins when GNUbase
+opens its own file.
+
+A project from another application, or without `gnubase.json`, gets the points of a `Warps` element in a clip of the
+event's own (`readWarps` in `dawproject.cpp`): in beats musical mode, with beat 0 of the definition at the content's
+first whole beat in the audio, the tempo of that beat and edited beats where the content's tempo bends; in seconds free
+warp markers, which keep the first point's audio where it is. Points GNUbase can't play, such as a stretch of the whole
+clip in seconds (the clip's ends stay put with markers) or sections beyond the real-time range, leave the event
+unwarped, as before.
+
 ## Engine commands
 
 Each is one undo step and emits `clip.changed`, except `event.flatten`, which emits `media.added`, `clip.added` and
@@ -67,7 +90,17 @@ ratio is the slope of the map, fed and read by the disk thread that fills the vo
 reads finished frames as before and the real-time rules hold. A ratio change takes effect on the input that leaves the
 stretcher next, a start pad behind what it takes, so each segment's ratio is set that much early; clicks land within a
 few milliseconds of where the map puts them (tested). A seek resets the stretcher, feeds the start pad from before the
-position and drops the latency. A changed map, as after a tempo change, opens new voices; the stretcher allocates
+position and drops the latency. A segment of the map that plays more than 4 times or less than a quarter as long as
+its audio, as musical mode does far from the clip's tempo or across beats edited that far, is beyond the stretcher's
+range: its clamped ratio plays the segment's audio too short or too long, so the reader starts over at the segment's
+end as after a seek, and the audio after it is back where the map puts it (tested with a quarter at 8 times its
+length). Within such a segment the audio still plays at the clamped ratio.
+
+The disk thread that fills every voice's stream does the stretching. Measured with events of a loop that musical mode
+stretches from 90 to 120 BPM on the quality preset, playing in real time on the dummy device while other builds kept
+the machine busy: a Debug build keeps up with 4 such events and drops out with 8 (about a second of 2). The
+`[realtime]` test plays 4; a Release build, which CI runs the tests in, is several times faster. Spreading the voices
+over more disk threads is a follow-up if real projects need it. A changed map, as after a tempo change, opens new voices; the stretcher allocates
 when one opens, never on the disk thread's reads.
 
 Flattening reads through the same reader and applies the clip's fades as playback does, so a flattened event sounds
@@ -93,6 +126,10 @@ With Free Warp on, a drag in the display inserts a marker where it starts and mo
 marker moves it, and a click on one with a modifier key removes it. The Audio menu's Realtime Processing has Flatten
 Realtime Processing (`audio.flatten`) and Unstretch Audio (`audio.unstretch`) for the selected events.
 
+The project window ([event-display.md](event-display.md)) draws a warped event from its start to its end through the
+warp (`playedLength`), its waveform stretched evenly over it, and its fade handles and the fade editor dialog
+([fades.md](fades.md)) keep its fades within `fadeRoom`.
+
 ## Not yet
 
 The Definition section's rulers, Grid Resolution and the bars and beats fields, and Manual Adjust's gestures in the
@@ -100,13 +137,12 @@ display (the engine has them: `clip.adjustGrid`); the Warping Algorithm pop-up a
 engine takes `preset`); Swing; Stretch to Project Tempo and Sizing Applies Time Stretch; Free Warp snapping to
 hitpoints, warp markers and zero crossings, several markers removed by a rectangle, and Free Warp for several clips at once (the
 project window's time warp tool has Free Warp, [time-warp.md](time-warp.md)); the note and warp icons on events and the pool's Musical Mode column; the tempo of loops with embedded
-tempo on import; the event's length, its waveform in the project window and the sample editor's positions following
-the warp (they show the unwarped clip); event fades keep their length in clip frames; auditioning and scrubbing play
-warped events unstretched; the fade handles in the project window and the fade editor dialog limit an event's
-fades by its length in clip frames, not by what a warped event plays (they go with the event's span in its JSON); flattening in offline mode; musical mode at more than 4 times or less than a quarter of the
-clip's tempo, and beats edited that far, play beyond the stretcher's range, so the audio after them drifts from the
-map; the warp in DAWproject's `Warps` element (it is saved in `gnubase.json` only, and the importer reads a `Warps`
-element's audio without its warp points); measuring the disk thread's load with many warped events.
+tempo on import; the sample editor's positions following the warp (they show the unwarped clip), and the project
+window's waveform of a warped event following its warp within the event (it is stretched evenly); event fades keep
+their length in clip frames; auditioning and scrubbing play warped events unstretched; flattening in offline mode; the
+audio within a map segment beyond the stretcher's range playing as long as the segment (the reader gets back onto the
+map at its end); a `Warps` element in seconds that stretches a whole clip, and one whose audio is in beats, on
+import; more disk threads for many warped events.
 
 ## Checks
 
@@ -120,6 +156,10 @@ flattening playing exactly as before (also with event and clip fades) and no lon
 and leaving no files when it fails; fades to the range, drawn volume curves and hitpoint cuts through the warp;
 sizing with the contents keeping the other edge; zero crossings, the snap point and Detect Silence's splits through
 the warp; the sample editor's Select Locators; fades that stop fitting after a tempo change still changing; the warped events' entries refused as media files; the warp saved
-and loaded.
+and loaded; a quarter in musical mode at 8 times its length leaving the clicks after it where the map puts them; a
+warped event's `playedLength` and `fadeRoom` in `project.get` and announced after a tempo change, an undo and an edit
+of the event, and gone out of musical mode; musical mode and warp markers through `project.xml`'s `Warps` alone,
+playing as before and musical mode still following the tempo; 4 warped events on the quality preset playing in real
+time without dropouts (`[realtime]`).
 `tests/sampleeditor_ui_tests.cpp`: Musical Mode, the Audio Tempo field, Auto Adjust, Free Warp's drags and removal, Reset, Unstretch Audio
 from the Audio menu and Flatten.
