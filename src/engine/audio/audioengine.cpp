@@ -262,10 +262,7 @@ namespace gnubase::engine
 		cue.playsOn = playsOn;
 		m_playback.cue(cue);
 		if (wait)
-		{
 			m_playback.waitUntilBuffered(g_startWait);
-			waitForSamples(g_startWait);
-		}
 	}
 
 	void AudioEngine::startCueing()
@@ -343,9 +340,9 @@ namespace gnubase::engine
 		const audio::MidiBuffer midiIn;
 		audio::MidiBuffer midiOut(g_offlineMidi);
 		uint64_t position = m_device->position();
-		// Every sampler plays its sample from the first block.
-		if (!waitForSamples(g_offlineWait))
-			logging::warning("Rendering before every sampler's sample was read: they may play silence");
+		// Every sampler plays its sample from the first block, however long its file takes to read (#1180).
+		while (!waitForSamples(g_offlineWait))
+			logging::warning("The render still waits for the samplers' samples to be read");
 		for (uint64_t done = 0; done < frames;)
 		{
 			const auto block = static_cast<uint32_t>(std::min<uint64_t>(format.blockSize, frames - done));
@@ -682,6 +679,7 @@ namespace gnubase::engine
 			sequence->controllers = channel.controllers;
 			sequence->modifiers = channel.modifiers;
 			sequence->liveInput = channel.liveInput;
+			sequence->articulations = channel.articulations;
 			sequence->drumInput = channel.drumInput;
 			sequence->inserts = channel.midiInserts;
 			sequence->sends = channel.midiSends;
@@ -806,7 +804,7 @@ namespace gnubase::engine
 		updateSamples();
 	}
 
-	void AudioEngine::updateSamples()
+	std::set<std::string> AudioEngine::updateSamples()
 	{
 		std::set<std::string> waiting;
 		for (auto& entry : m_instruments)
@@ -826,6 +824,7 @@ namespace gnubase::engine
 			}
 		}
 		m_sampleLoader.keepOnly(waiting);
+		return waiting;
 	}
 
 	void AudioEngine::setSampleReader(SampleLoader::Read read)
@@ -835,8 +834,8 @@ namespace gnubase::engine
 
 	bool AudioEngine::waitForSamples(std::chrono::milliseconds timeout)
 	{
-		updateSamples(); // first, so that it waits only for the files that samplers wait for
-		const bool read = m_sampleLoader.waitUntilRead(timeout);
+		// Only for the files that samplers wait for, not for one being read that none wants any more.
+		const bool read = m_sampleLoader.waitUntilRead(timeout, updateSamples());
 		updateSamples();
 		return read;
 	}
@@ -2612,7 +2611,11 @@ namespace gnubase::engine
 			}
 		}
 		if (m_device && !m_transport.playing())
+		{
 			cue(m_transport.startPosition(), false, m_device->format().blockSize, true, m_transport.playStart());
+			// Only starting playback waits for the samplers' samples, not locating or a count-in (#1180).
+			waitForSamples(g_startWait);
+		}
 		sent(m_transport.play());
 	}
 

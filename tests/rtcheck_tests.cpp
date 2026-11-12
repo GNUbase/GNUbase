@@ -713,10 +713,24 @@ TEST_CASE("MIDI injected into tracks and captured from instruments passes the RT
 		return result.value;
 	};
 	run("audio.setDevice", {{"blockSize", 64}, {"inputChannels", 0}, {"captureSeconds", 1}});
-	const Json instrument = run("track.add", {{"type", "instrument"}}).at("channel").at("id");
+	const Json instrumentTrack = run("track.add", {{"type", "instrument"}});
+	const Json instrument = instrumentTrack.at("channel").at("id");
 	const Json midi = run("track.add", {{"type", "midi"}}).at("channel").at("id");
 	run("channel.set", {{"channel", instrument}, {"instrument", "testSynth"}});
 	run("channel.set", {{"channel", midi}, {"output", instrument}});
+	// The instrument track's articulation map: some of the notes are remote triggers of its sound slots (#175).
+	const Json map = run("articulationMap.add",
+		{{"latch", false},
+			{"slots",
+				{{{"name", "One"}, {"trigger", 50},
+					 {"outputs",
+						 {{{"status", "note"}, {"data1", 24}}, {{"status", "controller"}, {"data1", 32}, {"data2", 1}},
+							 {{"status", "program"}, {"data1", 3}, {"off", true}}}}},
+					{{"name", "Two"}, {"trigger", 60}, {"channel", 2}, {"transpose", 12}, {"velocity", 150},
+						{"outputs", {{{"status", "note"}, {"data1", 25}}}}}}}})
+						 .at("map")
+						 .at("id");
+	run("track.set", {{"track", instrumentTrack.at("track").at("id")}, {"articulationMap", map}});
 	Json messages = Json::array();
 	for (int i = 0; i < 64; ++i)
 	{

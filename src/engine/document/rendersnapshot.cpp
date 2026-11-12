@@ -54,11 +54,14 @@ namespace gnubase::engine
 		// the on events of the new one, on the channel of the note. Key switches play for a sample, ending where the
 		// note starts; a jump after them sends them again (MidiSequencer::chaseNotes).
 		void addOutputEvents(const Project& project, const MidiPart& part, time::Ticks start, time::Ticks end,
-			int32_t index, const ArticulationMap& map, const std::map<ObjectId, size_t>& slots, RenderChannel& channel)
+			int32_t index, const ArticulationMap& map, const std::map<ObjectId, size_t>& slots, const DrumMap* drums,
+			RenderChannel& channel)
 		{
+			// Notes that don't play (their probability, a muted drum sound) select no slot.
 			std::vector<const Note*> notes;
 			for (const auto& [id, note] : part.notes)
-				if (note.position < end - start && slots.count(id) != 0)
+				if (note.position < end - start && slots.count(id) != 0 && midi::notePlays(note, part.id) &&
+					(drums == nullptr || !drums->sounds.at(note.pitch).mute))
 					notes.push_back(&note);
 			std::stable_sort(
 				notes.begin(), notes.end(), [](const Note* a, const Note* b) { return a->position < b->position; });
@@ -126,7 +129,7 @@ namespace gnubase::engine
 																		: nullptr;
 			};
 			if (articulations != nullptr && !slots.empty())
-				addOutputEvents(project, part, start, end, index, *articulations, slots, channel);
+				addOutputEvents(project, part, start, end, index, *articulations, slots, map, channel);
 			for (const auto& [id, note] : part.notes)
 			{
 				// Notes the part hides beyond its end don't play, wherever a random position would move them.
@@ -568,6 +571,8 @@ namespace gnubase::engine
 			render.program = channel.program;
 			render.bank = channel.bank;
 			render.modifiers = channel.modifiers;
+			if (const ArticulationMap* articulations = midi::articulationMapOf(project, track.id))
+				render.articulations = *articulations;
 			render.midiInserts = channel.midiInserts;
 			render.midiSends = channel.midiSends;
 			if (channel.inputTransformer.mode != midi::InputTransformerMode::Off)
@@ -752,9 +757,14 @@ namespace gnubase::engine
 		{
 			std::stable_sort(channel.audioEvents.begin(), channel.audioEvents.end(),
 				[](const RenderAudioEvent& a, const RenderAudioEvent& b) { return a.start < b.start; });
+			// At one sample key switches come first (#175): at the project's start one can't come a sample before.
 			for (std::vector<RenderNote>* notes : {&channel.notes, &channel.preNotes})
-				std::stable_sort(notes->begin(), notes->end(), [](const RenderNote& a, const RenderNote& b)
-					{ return std::tie(a.start, a.pitch) < std::tie(b.start, b.pitch); });
+				std::stable_sort(notes->begin(), notes->end(),
+					[](const RenderNote& a, const RenderNote& b)
+					{
+						return std::make_tuple(a.start, !a.keySwitch, a.pitch) <
+							std::make_tuple(b.start, !b.keySwitch, b.pitch);
+					});
 			std::stable_sort(channel.controllers.begin(), channel.controllers.end(),
 				[](const RenderController& a, const RenderController& b) { return a.position < b.position; });
 			// The parts by start; their controller events keep pointing at them.

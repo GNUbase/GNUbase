@@ -888,13 +888,14 @@ namespace gnubase::engine
 			{
 				if (item.audio != nullptr)
 				{
-					result["audioEvents"].push_back(toJson(*item.audio));
+					result["audioEvents"].push_back(
+						audioEventJson(copy, *item.audio)); // with a warped event's playedLength
 				}
 				else if (item.audioPart != nullptr)
 				{
 					result["audioParts"].push_back(toJson(*item.audioPart));
 					for (const AudioEvent* event : eventsIn(copy, item.audioPart->id))
-						result["audioEvents"].push_back(toJson(*event));
+						result["audioEvents"].push_back(audioEventJson(copy, *event));
 				}
 				else
 				{

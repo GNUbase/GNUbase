@@ -2,6 +2,7 @@
 #include "engine/audio/sequencer.h"
 
 #include "engine/graph/graph.h"
+#include "engine/midi/midivalues.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -590,6 +591,8 @@ namespace gnubase::engine
 			m_inputHeld.fill(false);
 		for (graph::ProcessEvent event : m_input)
 		{
+			if (triggerSlot(sequence, event, out))
+				continue;
 			auto ends = static_cast<uint16_t>(g_notes);
 			const bool plays = modifyInput(sequence, transport.position + event.offset, event, ends);
 			// Still held if the buffer was full: then a stop ends it.
@@ -877,6 +880,19 @@ namespace gnubase::engine
 			{
 				pitch = static_cast<uint8_t>(liveInputPitch(sequence.liveInput, position, event.key % 128));
 			}
+			// The sound slot its remote triggers selected, or the default one, plays it with its MIDI modifiers but
+			// the length, before the track's (#175).
+			const std::vector<SoundSlot>& slots = sequence.articulations.slots;
+			if (!slots.empty())
+			{
+				const SoundSlot& slot =
+					slots[m_inputSlot >= 0 && static_cast<size_t>(m_inputSlot) < slots.size() ? m_inputSlot : 0];
+				pitch = static_cast<uint8_t>(std::clamp(pitch + slot.transpose, 0, 127));
+				event.velocity = static_cast<uint16_t>(std::clamp<int64_t>(
+					(int64_t{event.velocity} * slot.velocity) / 100, 1, std::numeric_limits<uint16_t>::max()));
+				if (slot.channel >= 0)
+					channel = slot.channel;
+			}
 			m_inputTo[from] = plays && midi::modifyNote(modifiers, midi::noteSeed(0, ++m_random), pitch, event.velocity)
 				? static_cast<uint16_t>((channel * 128) + pitch)
 				: static_cast<uint16_t>(g_notes);
@@ -904,6 +920,78 @@ namespace gnubase::engine
 		event.key = static_cast<uint8_t>(to % 128);
 		event.channel = static_cast<uint8_t>(to / 128);
 		return true;
+	}
+
+	bool MidiSequencer::triggerSlot(
+		const MidiSequence& sequence, const graph::ProcessEvent& event, graph::EventBuffer& out) noexcept
+	{
+		using Type = graph::ProcessEvent::Type;
+		const ArticulationMap& map = sequence.articulations;
+		const bool trigger = map.programTriggers ? event.type == Type::Program
+												 : event.type == Type::NoteOn || event.type == Type::NoteOff;
+		if (!trigger)
+			return false;
+		const auto found = std::find_if(
+			map.slots.begin(), map.slots.end(), [&event](const SoundSlot& slot) { return slot.trigger == event.key; });
+		if (found == map.slots.end())
+			return false;
+		const auto slot = static_cast<int>(found - map.slots.begin());
+		if (event.type == Type::NoteOff)
+		{
+			// Without latch the default slot comes back where the key is released, unless another came since.
+			if (slot == m_inputSlotHeld)
+			{
+				m_inputSlotHeld = -1;
+				selectSlot(map, 0, event.channel, event.offset, out);
+			}
+			return true;
+		}
+		m_inputSlotHeld = event.type == Type::NoteOn && !map.latch ? slot : -1;
+		selectSlot(map, slot, event.channel, event.offset, out);
+		return true;
+	}
+
+	void MidiSequencer::selectSlot(
+		const ArticulationMap& map, int slot, uint8_t channel, uint32_t offset, graph::EventBuffer& out) noexcept
+	{
+		if (slot == m_inputSlot)
+			return;
+		// As in playback (rendersnapshot.cpp): the off events on the channel the slot's on events went to, the on
+		// events on the slot's channel or the trigger's. A key switch is a note-on and its note-off.
+		const auto send = [&](const SoundSlot& from, bool off, uint8_t on)
+		{
+			for (const OutputEvent& output : from.outputs)
+			{
+				if (output.off != off)
+					continue;
+				if (output.status == OutputStatus::Note)
+				{
+					graph::ProcessEvent note = noteEvent(graph::ProcessEvent::Type::NoteOn,
+						static_cast<uint16_t>((on * 128) + (output.data1 % 128)), offset);
+					note.velocity = midi::velocityFromMidi1(output.data2);
+					out.add(note);
+					note.type = graph::ProcessEvent::Type::NoteOff;
+					note.velocity = 0;
+					out.add(note);
+				}
+				else if (output.status == OutputStatus::Controller)
+				{
+					out.add(controllerEvent(
+						ControllerType::Control, on, output.data1, midi::controllerFromMidi1(output.data2), offset));
+				}
+				else
+				{
+					out.add(controllerEvent(ControllerType::Program, on, output.data1, g_noBank, offset));
+				}
+			}
+		};
+		if (m_inputSlot >= 0 && static_cast<size_t>(m_inputSlot) < map.slots.size())
+			send(map.slots[static_cast<size_t>(m_inputSlot)], true, m_inputSlotChannel);
+		const SoundSlot& next = map.slots[static_cast<size_t>(slot)];
+		m_inputSlot = slot;
+		m_inputSlotChannel =
+			next.channel >= 0 ? static_cast<uint8_t>(next.channel) : static_cast<uint8_t>(channel % 16);
+		send(next, false, m_inputSlotChannel);
 	}
 
 	bool MidiSequencer::sounds(uint16_t index) const noexcept
