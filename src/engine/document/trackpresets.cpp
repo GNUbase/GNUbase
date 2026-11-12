@@ -1142,7 +1142,9 @@ namespace gnubase::engine
 						mergeTrack(model, project, copy, id, options, existing, inner);
 					}
 					else
+					{
 						replaceTrack(model, project, copy, id, inner);
+					}
 				}
 				model.announceChange(before, project, context);
 				skipped.insert(skipped.end(), copied.skipped.begin(), copied.skipped.end());
