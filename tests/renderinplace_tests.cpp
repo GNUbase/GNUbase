@@ -528,6 +528,52 @@ TEST_CASE("freeze files of the same name, also in another case, keep apart in th
 	CHECK(fs::u8path(loaded(three.track)) == gone);
 }
 
+TEST_CASE("freeze files that differ only in the case of a non-ASCII letter keep apart on load", "[integration]")
+{
+	Session project;
+	const Session::Track one = project.addTrack("One");
+	project.insertGain(one.channel, -6.0);
+	const Session::Track two = project.addTrack("Two");
+	run(project.client, "audio.render", {{"frames", 4096}});
+	const Json frozen = run(project.client, "track.freeze", {{"tracks", {one.track, two.track}}, {"tail", 0}});
+	const auto pathOf = [&frozen](size_t i)
+	{ return fs::u8path(frozen.at("tracks").at(i).at("frozen").at("path").get<std::string>()); };
+
+	// Übung.wav and übung.wav in two folders go into the file as two entries, which the zip tells apart, but the
+	// file systems of Windows and macOS see as one name: loading must not extract the second over the first. On
+	// Linux, where the names are two files, this passes also without that care.
+	run(project.client, "project.save", {{"embedMedia", false}});
+	const fs::path saved = project.media.path() / "project.dawproject";
+	const gnubase::test::TempDir first;
+	const gnubase::test::TempDir second;
+	const fs::path oneName = fs::u8path("Übung.wav");
+	const fs::path twoName = fs::u8path("übung.wav");
+	fs::copy_file(pathOf(0), first.path() / oneName);
+	fs::copy_file(pathOf(1), second.path() / twoName);
+	const std::vector<float> oneSamples = samplesOf((first.path() / oneName).u8string());
+	const std::vector<float> twoSamples = samplesOf((second.path() / twoName).u8string());
+	REQUIRE(firstDifference(oneSamples, twoSamples) >= 0);
+	Project file = loadDawProject(saved.u8string(), (project.folder.path() / "media").u8string());
+	const auto refer = [&file](ObjectId track, const fs::path& path)
+	{
+		std::optional<Freeze>& freeze = file.trackById.at(track).frozen;
+		REQUIRE(freeze.has_value());
+		if (freeze)
+			freeze->path = path.u8string();
+	};
+	refer(one.track, first.path() / oneName);
+	refer(two.track, second.path() / twoName);
+	DawProjectSaveOptions options;
+	options.embedMedia = true;
+	saveDawProject(file, saved.u8string(), options);
+
+	run(project.client, "project.load", {{"path", saved.u8string()}});
+	const auto loaded = [&project](ObjectId track)
+	{ return project.track(track).at("frozen").at("path").get<std::string>(); };
+	CHECK(firstDifference(samplesOf(loaded(one.track)), oneSamples) == -1);
+	CHECK(firstDifference(samplesOf(loaded(two.track)), twoSamples) == -1);
+}
+
 TEST_CASE("a backup carries the freeze files along", "[integration]")
 {
 	Session project;

@@ -1182,15 +1182,44 @@ namespace gnubase::engine
 						throw DawProjectError("unsafe media path in the file: " + xmlPath);
 					if (m_mediaFolder.empty()) // not extracted: the entry's name in the file
 						return m_resolved[xmlPath] = inside.u8string();
-					target = m_mediaFolder / inside;
+					target = freeTarget(m_mediaFolder / inside);
 					std::error_code error;
 					std::filesystem::create_directories(target.parent_path(), error);
 					m_zip.extract(xmlPath, target.u8string());
+					m_extracted.push_back(target);
 				}
 				return m_resolved[xmlPath] = target.u8string();
 			}
 
 		private:
+			// Where an entry goes: not onto a file another entry of this load was extracted to. Entries whose names
+			// differ only in the case of a non-ASCII letter are two entries in the file, but the file systems of
+			// Windows and macOS read them as one name, so the later one would extract over the earlier: it goes to a
+			// numbered name of its own there, as the save numbers entries of one name. The file system says which
+			// paths are one file, so this only renames where the names really clash.
+			std::filesystem::path freeTarget(const std::filesystem::path& target) const
+			{
+				if (!extractedTo(target))
+					return target;
+				for (int copy = 2;; ++copy)
+				{
+					const std::filesystem::path candidate =
+						target.parent_path() / pathOf(std::to_string(copy) + "-" + target.filename().u8string());
+					if (!extractedTo(candidate))
+						return candidate;
+				}
+			}
+
+			// Whether target is a file one of this load's extractions wrote.
+			bool extractedTo(const std::filesystem::path& target) const
+			{
+				std::error_code error;
+				for (const std::filesystem::path& extracted : m_extracted)
+					if (std::filesystem::equivalent(target, extracted, error))
+						return true;
+				return false;
+			}
+
 			struct Context
 			{
 				ObjectId track = 0;
@@ -1978,7 +2007,8 @@ namespace gnubase::engine
 			std::map<std::string, ObjectId> m_clips; // media path in project.xml -> clip
 			// project.xml parameter id -> the track whose channel has it, and which one it is
 			std::map<std::string, std::pair<ObjectId, AutomationTargetType>> m_parameters;
-			std::map<std::string, std::string> m_resolved; // media path in project.xml -> path on disk
+			std::map<std::string, std::string> m_resolved;  // media path in project.xml -> path on disk
+			std::vector<std::filesystem::path> m_extracted; // the files this load extracted, for freeTarget
 		};
 	}
 
@@ -2000,7 +2030,8 @@ namespace gnubase::engine
 		// embedded file, as the file's entries are looked up in any case.
 		Json frozen = Json::object();
 		// Each file goes in once, under a name that no other one has, also in another case: they are extracted into
-		// one folder.
+		// one folder. Where the file system folds a letter's case that this folding doesn't (a non-ASCII one on
+		// Windows and macOS), the extraction keeps the entries apart (Importer::freeTarget).
 		std::map<std::string, std::string> embeddedFreezes; // freeze file -> entry in the file
 		std::set<std::string> taken;                        // the entries in lowercase
 		for (const auto& [id, track] : project.trackById)
