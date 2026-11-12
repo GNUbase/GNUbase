@@ -32,10 +32,22 @@ assistants. They build on the chord track's music theory ([chord-track.md](chord
   dorian, phrygian, lydian, mixolydian and locrian, the triads on the scale's seven degrees on a root, which becomes the
   root key; `load` chooses chords and players, chords only or players only (the basic player without offset).
 - **Playing and recording** (pp. 1366-1368): `chordPads.trigger` plays a pad, or an assistant's chord, until its off,
-  into all MIDI inputs as the on-screen keyboard does (`midi.keyboard`, [onscreen-keyboard.md](onscreen-keyboard.md)):
-  MIDI and instrument tracks set to all MIDI inputs play it while they monitor or are record-enabled, and record it.
-  The highest voice goes on MIDI channel 1, the next on channel 2 and so on, as the reference records pad chords. The
-  off ends what the on played, even when the pad changed meanwhile. `chordPads.triggered` tells the UI.
+  as the chord pads' notes (`midi.keyboard` `chordPads`, [onscreen-keyboard.md](onscreen-keyboard.md)). Where they go
+  is Chord Pad Output Mode (`outputMode`, p. 1347): on (the default), into every MIDI and instrument track that
+  monitors or is record-enabled; off, only into those whose MIDI input is the chord pads (`channel.set`
+  `midiInput` `chordPads`, the Inspector's Input Routing, p. 1367), which take nothing else and get the pads in
+  either mode. The audio engine keeps the pads' notes in a buffer of their own beside all MIDI inputs' and plays it
+  into the tracks its thru list marks (`RenderChannel::padThru`). The tracks record what they play. The highest voice
+  goes on MIDI channel 1, the next on channel 2 and so on, as the reference records pad chords. The off ends what the
+  on played, even when the pad changed meanwhile. `chordPads.triggered` tells the UI, also about pads whose chords
+  another one ended.
+- **Overlaps, Latch Chords and Filter Notes** (pp. 1379, 1386): `midi::PadVoices` keeps which trigger (a pad, an
+  audition, a remote key) holds which pitches; a pitch sounds once, on the channel of the voice that started it, until
+  nobody holds it. A chord played over another treats the other's notes as `overlaps` says: `holdFirst` (the default:
+  they go on until their own off, the shared ones don't start again), `legato` (they end but for the shared ones) or
+  `stopFirst` (they all end, and the new chord's all start). With `latch` a pad plays until it is triggered again,
+  and its off ends nothing. With `filterNotes` the remote keys of pads without a chord play nothing, instead of
+  themselves.
 - **Remote keys** (pp. 1385-1388): with `remote` on, notes from MIDI input ports on the keys from `remoteStart` to
   `remoteEnd` (C1 to B1 by default) play the pads' chords instead, the first key the first pad, at the note's
   velocity, the voices on channels as above. The render snapshot carries each key's pitches to the audio thread
@@ -44,7 +56,8 @@ assistants. They build on the chord track's music theory ([chord-track.md](chord
   keyboard's. The remote is off in a new project, so that low notes, such as drums from C1, play as they are until the
   user turns it on. The reference manual's pads have no such switch (p. 1386): GNUbase keeps it on purpose, since a
   remote that takes C1 to B1 from every MIDI input as soon as a project has chord pads would take those keys from
-  every drum kit.
+  every drum kit. The remote keys go through `midi::PadVoices` on the audio thread too, with the overlaps, latch and
+  Filter Notes settings in `ChordPadKeys`, and play into the pads' buffer, so Chord Pad Output Mode routes them.
 - **Step input** (p. 1369): with `stepInput`, `chordPads.step` puts a pad's chord on the chord track at the start of
   the bar of the step position (`stepPosition`, ticks; the chord track is added if there is none) and moves the
   position to the next bar; with `moveInsert` the chord events from there on move a bar later first, without it a

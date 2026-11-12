@@ -260,6 +260,7 @@ namespace gnubase::engine
 			channel.instrumentParameters.clear();
 			channel.sample.clear();
 			channel.midiThru = false;
+			channel.padThru = false;
 			channel.autoFades = AutoFades();
 			channel.sections.gain = 0.0;
 			channel.sections.phase = false;
@@ -582,6 +583,8 @@ namespace gnubase::engine
 			render.listen = channel.listen;
 			render.midiThru = (track.type == TrackType::Midi || track.type == TrackType::Instrument) &&
 				channel.midiInput == "all" && (channel.monitor || channel.recordEnable);
+			render.padThru = (track.type == TrackType::Midi || track.type == TrackType::Instrument) &&
+				channel.midiInput == "chordPads" && (channel.monitor || channel.recordEnable);
 			render.autoFades = track.autoFades.value_or(project.autoFades);
 			if (const auto input = busIndex.find(channel.input); input != busIndex.end())
 				render.input = input->second;

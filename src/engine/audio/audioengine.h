@@ -192,6 +192,7 @@ namespace gnubase::engine
 			MidiTap::Sequencers sequencers;     // of the MIDI and instrument channels, for midi.inject
 			std::vector<uint64_t> destinations; // per sequencer, where it plays (MidiSequencer::playOn)
 			std::vector<uint8_t> thru;          // per sequencer, 1 if it plays all MIDI inputs (MidiTap::thru)
+			std::vector<uint8_t> padThru;       // and 1 if it plays the chord pads (#1089)
 			ChordPadKeys chordPadKeys;          // what MIDI inputs' notes on the chord pads' remote keys play
 			// Per sequencer, its input transformer, which changes its input after the MIDI thru.
 			std::vector<InputTransform> inputTransformers;
@@ -478,6 +479,7 @@ namespace gnubase::engine
 		Transport m_transport;                          // advanced by the audio thread
 		MidiPorts m_midi;
 		audio::MidiBuffer m_midiInput; // the block's messages from all MIDI inputs, for MIDI thru (MidiTap::thru)
+		audio::MidiBuffer m_padOutput; // and the chord pads' notes
 		MidiTap m_tap;                 // midi.inject and midi.capture
 
 		// Changed only while the device is stopped.

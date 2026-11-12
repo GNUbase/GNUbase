@@ -133,20 +133,17 @@ namespace gnubase::engine
 			return 0;
 		}
 
-		// The pitches a chord's voicing plays as note-ons or note-offs, the highest voice (soprano) on MIDI channel 1,
-		// the next on channel 2 and so on, as recorded pad chords are (reference manual p. 1368).
-		Json noteMessages(const std::vector<int>& pitches, bool on, int velocity)
+		const std::vector<std::string>& overlapNames()
 		{
-			Json messages = Json::array();
-			const auto voices = static_cast<int>(pitches.size());
-			for (int i = 0; i < voices; ++i)
-			{
-				const int channel = std::min(voices - 1 - i, 15);
-				messages.push_back({{"bytes",
-					{(on ? 0x90 : 0x80) | channel, std::clamp(pitches[static_cast<size_t>(i)], 0, 127),
-						on ? velocity : 0}}});
-			}
-			return messages;
+			static const std::vector<std::string> names = {"holdFirst", "legato", "stopFirst"};
+			return names;
+		}
+
+		midi::PadOverlap overlapOf(const std::string& name)
+		{
+			if (name == "legato")
+				return midi::PadOverlap::Legato;
+			return name == "stopFirst" ? midi::PadOverlap::StopFirst : midi::PadOverlap::HoldFirst;
 		}
 	}
 
@@ -358,6 +355,12 @@ namespace gnubase::engine
 	{
 		ChordPadKeys keys;
 		keys.active = pads.remote;
+		keys.start = static_cast<uint8_t>(std::clamp(pads.remoteStart, 0, 127));
+		keys.end = static_cast<uint8_t>(std::clamp(pads.remoteEnd, 0, 127));
+		keys.latch = pads.latch;
+		keys.filter = pads.filterNotes;
+		keys.overlap = overlapOf(pads.overlaps);
+		keys.output = pads.outputMode;
 		const std::vector<std::vector<int>> voicings = chordPadVoicings(pads);
 		for (int key = std::max(pads.remoteStart, 0); key <= std::min(pads.remoteEnd, 127); ++key)
 		{
@@ -393,7 +396,9 @@ namespace gnubase::engine
 		return {{"pads", list}, {"rootKey", pads.rootKey}, {"reference", pads.reference},
 			{"octaveOffset", pads.octaveOffset}, {"velocity", pads.velocity}, {"remote", pads.remote},
 			{"remoteStart", pads.remoteStart}, {"remoteEnd", pads.remoteEnd}, {"preset", pads.preset},
-			{"stepInput", pads.stepInput}, {"moveInsert", pads.moveInsert}, {"stepPosition", pads.stepPosition}};
+			{"stepInput", pads.stepInput}, {"moveInsert", pads.moveInsert}, {"stepPosition", pads.stepPosition},
+			{"outputMode", pads.outputMode}, {"latch", pads.latch}, {"overlaps", pads.overlaps},
+			{"filterNotes", pads.filterNotes}};
 	}
 
 	void chordPadsFromJson(Project& project, const Json& json)
@@ -431,6 +436,13 @@ namespace gnubase::engine
 		pads.stepInput = json.value("stepInput", false);
 		pads.moveInsert = json.value("moveInsert", false);
 		pads.stepPosition = std::clamp(json.value("stepPosition", time::Ticks{0}), time::Ticks{0}, stepEnd(project));
+		pads.outputMode = json.value("outputMode", true);
+		pads.latch = json.value("latch", false);
+		pads.overlaps = json.value("overlaps", std::string("holdFirst"));
+		const std::vector<std::string>& overlaps = overlapNames();
+		if (std::find(overlaps.begin(), overlaps.end(), pads.overlaps) == overlaps.end())
+			pads.overlaps = "holdFirst";
+		pads.filterNotes = json.value("filterNotes", false);
 	}
 
 	void ProjectModel::registerChordPadCommands(Engine& engine)
@@ -444,10 +456,13 @@ namespace gnubase::engine
 				{{"pads", {{"type", "array"}}}, {"rootKey", integerSchema}, {"reference", integerSchema},
 					{"octaveOffset", integerSchema}, {"velocity", integerSchema}, {"remote", booleanSchema},
 					{"remoteStart", integerSchema}, {"remoteEnd", integerSchema}, {"preset", stringSchema},
-					{"stepInput", booleanSchema}, {"moveInsert", booleanSchema}, {"stepPosition", integerSchema}}},
+					{"stepInput", booleanSchema}, {"moveInsert", booleanSchema}, {"stepPosition", integerSchema},
+					{"outputMode", booleanSchema}, {"latch", booleanSchema}, {"overlaps", stringSchema},
+					{"filterNotes", booleanSchema}}},
 			{"required",
 				{"pads", "rootKey", "reference", "octaveOffset", "velocity", "remote", "remoteStart", "remoteEnd",
-					"preset", "stepInput", "moveInsert", "stepPosition"}}};
+					"preset", "stepInput", "moveInsert", "stepPosition", "outputMode", "latch", "overlaps",
+					"filterNotes"}}};
 		// Each command that changes the pads announces them.
 		const auto changed = [](Project& project, CommandContext& context)
 		{
@@ -464,7 +479,8 @@ namespace gnubase::engine
 				"(adaptive voicing), locked and key (the remote key that triggers it, or null); rootKey (0 C to 11 "
 				"B); reference (the adaptive voicing reference pad, or -1); octaveOffset (the basic player's); "
 				"velocity (of pads triggered with the mouse); remote, remoteStart and remoteEnd (the pads' remote "
-				"keys); preset (the last loaded); stepInput, moveInsert and stepPosition (ticks).",
+				"keys); preset (the last loaded); stepInput, moveInsert and stepPosition (ticks); outputMode, latch, "
+				"overlaps and filterNotes (as chordPads.set takes them).",
 				objectSchema({}), padsResult, true},
 			[](Project& project, CommandContext&) { return chordPadsJson(project); });
 		add(engine,
@@ -479,11 +495,20 @@ namespace gnubase::engine
 				"the longest project, 2^48 samples, ends in at the project's tempo) for chordPads.step (p. 1369); "
 				"stepBars moves the step position by bars, to a bar's start, at most that bar's (after "
 				"stepPosition), as Left and Right Arrow move the step input cursor. Moving the step position is no "
-				"undo step of its own; with another change it goes back on undo.",
+				"undo step of its own; with another change it goes back on undo. outputMode (Chord Pad Output Mode, "
+				"p. 1347, on by default): on, the pads play into every MIDI and instrument track that monitors or is "
+				"record-enabled; off, only into those whose midiInput is chordPads (channel.set). latch (Latch "
+				"Chords, p. 1386): a pad's chord plays until the pad is triggered again. overlaps (p. 1379), what a "
+				"chord played over another does with the other's notes: holdFirst (the default: they go on until "
+				"their own off; shared notes sound once), legato (they end but for the shared ones, which go on) or "
+				"stopFirst (they all end). filterNotes (Filter Notes From MIDI Thru): the remote keys of pads without "
+				"a chord play nothing.",
 				objectSchema({{"rootKey", integerSchema}, {"transposePads", booleanSchema}, {"padCount", integerSchema},
 					{"octaveOffset", integerSchema}, {"velocity", integerSchema}, {"remote", booleanSchema},
 					{"remoteStart", integerSchema}, {"remoteEnd", integerSchema}, {"stepInput", booleanSchema},
-					{"moveInsert", booleanSchema}, {"stepPosition", integerSchema}, {"stepBars", integerSchema}}),
+					{"moveInsert", booleanSchema}, {"stepPosition", integerSchema}, {"stepBars", integerSchema},
+					{"outputMode", booleanSchema}, {"latch", booleanSchema},
+					{"overlaps", {{"type", "string"}, {"enum", overlapNames()}}}, {"filterNotes", booleanSchema}}),
 				padsResult, false},
 			[changed](Project& project, CommandContext& context)
 			{
@@ -522,6 +547,10 @@ namespace gnubase::engine
 					"the remote keys must be MIDI notes, remoteStart up to remoteEnd");
 				pads.stepInput = parameters.value("stepInput", pads.stepInput);
 				pads.moveInsert = parameters.value("moveInsert", pads.moveInsert);
+				pads.outputMode = parameters.value("outputMode", pads.outputMode);
+				pads.latch = parameters.value("latch", pads.latch);
+				pads.overlaps = parameters.value("overlaps", pads.overlaps);
+				pads.filterNotes = parameters.value("filterNotes", pads.filterNotes);
 				if (parameters.contains("stepPosition"))
 				{
 					const time::Ticks end = stepEnd(project);
@@ -862,30 +891,34 @@ namespace gnubase::engine
 				return Json{{"part", toJson(project.midiParts.at(part))}};
 			});
 
-		// The chords that sound, by what triggered them ("pad 3" or "chord Am"), with the pitches they play.
-		auto sounding = std::make_shared<std::map<std::string, std::vector<int>>>();
+		// The chords that sound, by what triggered them: the pads by their index, an audition after them.
+		auto voices = std::make_shared<midi::PadVoices>();
 		addControl(engine,
 			{"chordPads.trigger", 1,
 				"Triggers a chord pad, or auditions a chord (an assistant's suggestion), as a click does (reference "
-				"manual p. 1366): on (the default) plays its voicing, off ends it. The notes play into all MIDI inputs "
-				"as the on-screen keyboard's do (midi.keyboard), the highest voice on MIDI channel 1, the next on "
-				"channel 2 and so on: MIDI and instrument tracks set to all MIDI inputs play them while they monitor "
-				"or are record-enabled, and record them. velocity: 1 to 127, default the pads' velocity. Emits "
-				"chordPads.triggered with the pad (-1 for a chord), the chord, on and the pitches.",
+				"manual p. 1366): on (the default) plays its voicing, off ends it; with latch (chordPads.set) an off "
+				"ends nothing and an on ends the pad's chord if it sounds. A chord played over another treats the "
+				"other's notes as overlaps says (chordPads.set). The notes play as the chord pads' (midi.keyboard "
+				"chordPads), the highest voice on MIDI channel 1, the next on channel 2 and so on: MIDI and "
+				"instrument tracks whose MIDI input is the chord pads, and with outputMode those set to all MIDI "
+				"inputs, play them while they monitor or are record-enabled, and record them. velocity: 1 to 127, "
+				"default the pads' velocity. Returns the pitches the pad plays now, or that ended, and on, whether it "
+				"sounds now. Emits chordPads.triggered with the pad (-1 for a chord), the chord, on and the pitches, "
+				"also for the pads that the overlap ended.",
 				needsOne(objectSchema({{"pad", integerSchema}, {"chord", stringSchema}, {"on", booleanSchema},
 					{"velocity", integerSchema}})),
-				objectSchema({{"pitches", padsSchema}}, {"pitches"}), false},
-			[this, sounding](CommandContext& context)
+				objectSchema({{"pitches", padsSchema}, {"on", booleanSchema}}, {"pitches", "on"}), false},
+			[this, voices](CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
 				const ChordPads& pads = m_project.chordPads;
 				require(parameters.contains("pad") != parameters.contains("chord"), "give a pad or a chord");
-				const bool on = parameters.value("on", true);
+				bool on = parameters.value("on", true);
 				const int velocity = parameters.value("velocity", pads.velocity);
 				require(velocity >= 1 && velocity <= 127, "velocity must be 1 to 127");
 				int index = -1;
 				std::string chord;
-				std::string key;
+				size_t trigger = g_maxPads; // an audition's
 				std::vector<int> pitches;
 				if (parameters.contains("pad"))
 				{
@@ -893,34 +926,58 @@ namespace gnubase::engine
 					require(index >= 0 && index < static_cast<int>(pads.pads.size()),
 						"no chord pad " + std::to_string(index));
 					chord = pads.pads[static_cast<size_t>(index)].chord;
-					key = "pad " + std::to_string(index);
-					if (on)
-						pitches = chordPadVoicings(pads).at(static_cast<size_t>(index));
+					trigger = static_cast<size_t>(index);
+					pitches = chordPadVoicings(pads).at(trigger);
 				}
 				else
 				{
 					const midi::ChordSymbol symbol = chordFrom(parameters.at("chord").get<std::string>());
 					chord = midi::chordName(symbol);
-					key = "chord " + chord;
-					if (on)
-						pitches = midi::voiceChord(symbol, {pads.octaveOffset, false});
+					pitches = midi::voiceChord(symbol, {pads.octaveOffset, false});
 				}
-				// What sounds ends first: an off ends what the on played, whatever changed since.
-				if (const auto found = sounding->find(key); found != sounding->end())
+				if (pads.latch && index >= 0)
 				{
-					context.call("midi.keyboard", {{"messages", noteMessages(found->second, false, 0)}});
 					if (!on)
-						pitches = found->second;
-					sounding->erase(found);
+						return Json{{"pitches", Json::array()}, {"on", voices->holds(trigger)}};
+					on = !voices->holds(trigger); // the next trigger of a latched pad ends its chord
 				}
+				std::array<bool, g_maxPads> held{};
+				for (size_t pad = 0; pad < held.size(); ++pad)
+					held.at(pad) = voices->holds(pad);
+				Json messages = Json::array();
+				std::vector<int> ended;
+				const auto emit = [&messages, &ended](bool start, uint8_t pitch, uint8_t level, uint8_t channel)
+				{
+					messages.push_back({{"bytes", {(start ? 0x90 : 0x80) | channel, pitch, level}}});
+					if (!start)
+						ended.push_back(pitch);
+				};
 				if (on && !pitches.empty())
 				{
-					context.call("midi.keyboard", {{"messages", noteMessages(pitches, true, velocity)}});
-					(*sounding)[key] = pitches;
+					std::vector<uint8_t> notes;
+					for (const int pitch : pitches)
+						notes.push_back(static_cast<uint8_t>(std::clamp(pitch, 0, 127)));
+					voices->on(trigger, notes.data(), notes.size(), static_cast<uint8_t>(velocity),
+						overlapOf(pads.overlaps), emit);
 				}
+				else
+				{
+					// An off ends what the on played, whatever changed since.
+					voices->off(trigger, emit);
+					std::sort(ended.begin(), ended.end());
+					pitches = ended;
+					on = false;
+				}
+				if (!messages.empty())
+					context.call("midi.keyboard", {{"messages", messages}, {"chordPads", true}});
+				for (size_t pad = 0; pad < held.size(); ++pad)
+					if (held.at(pad) && !voices->holds(pad) && static_cast<int>(pad) != index)
+						context.emit("chordPads.triggered",
+							{{"pad", pad}, {"chord", pad < pads.pads.size() ? pads.pads[pad].chord : std::string()},
+								{"on", false}, {"pitches", Json::array()}});
 				context.emit(
 					"chordPads.triggered", {{"pad", index}, {"chord", chord}, {"on", on}, {"pitches", pitches}});
-				return Json{{"pitches", pitches}};
+				return Json{{"pitches", pitches}, {"on", on}};
 			});
 		add(engine,
 			{"chordPads.assistant", 1,

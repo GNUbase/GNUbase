@@ -260,7 +260,8 @@ namespace gnubase::engine
 		// (docs/features/latency-and-monitoring.md, docs/features/midi-recording.md).
 		bool monitor = false;
 		bool recordEnable = false;
-		// MIDI and instrument tracks: where their MIDI input comes from, "all" (all MIDI inputs) or "none".
+		// MIDI and instrument tracks: where their MIDI input comes from, "all" (all MIDI inputs), "chordPads" (only
+		// the chord pads, reference manual p. 1367) or "none".
 		std::string midiInput = "all";
 		// The mute and solo buttons (docs/features/solo-mute-listen.md): a muted channel is silent, unless mute
 		// automation plays (docs/features/automation.md); while any channel is soloed, only soloed ones, where they
@@ -928,6 +929,12 @@ namespace gnubase::engine
 		bool stepInput = false;       // triggered pads become chord events (chordPads.step)
 		bool moveInsert = false;
 		time::Ticks stepPosition = 0;
+		// Chord Pad Output Mode (reference manual p. 1347): on, the pads play into every MIDI and instrument track
+		// that monitors or is record-enabled; off, only into those whose MIDI input is the chord pads.
+		bool outputMode = true;
+		bool latch = false;                 // Latch Chords (p. 1386): a pad plays until it is triggered again
+		std::string overlaps = "holdFirst"; // holdFirst, legato or stopFirst (p. 1379)
+		bool filterNotes = false;           // Filter Notes From MIDI Thru: remote keys without a chord play nothing
 	};
 
 	// What an automation lane changes.
@@ -1716,9 +1723,10 @@ namespace gnubase::engine
 	inline bool operator==(const ChordPads& a, const ChordPads& b)
 	{
 		return std::tie(a.pads, a.rootKey, a.reference, a.octaveOffset, a.velocity, a.remote, a.remoteStart,
-				   a.remoteEnd, a.preset, a.stepInput, a.moveInsert, a.stepPosition) ==
+				   a.remoteEnd, a.preset, a.stepInput, a.moveInsert, a.stepPosition, a.outputMode, a.latch, a.overlaps,
+				   a.filterNotes) ==
 			std::tie(b.pads, b.rootKey, b.reference, b.octaveOffset, b.velocity, b.remote, b.remoteStart, b.remoteEnd,
-				b.preset, b.stepInput, b.moveInsert, b.stepPosition);
+				b.preset, b.stepInput, b.moveInsert, b.stepPosition, b.outputMode, b.latch, b.overlaps, b.filterNotes);
 	}
 
 	inline bool operator==(const AutomationTarget& a, const AutomationTarget& b)

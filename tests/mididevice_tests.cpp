@@ -760,8 +760,9 @@ TEST_CASE("only inputs that belong to all MIDI inputs reach them", "[unit]")
 	MidiBuffer midiIn(8);
 	MidiBuffer midiOut(8);
 	MidiBuffer allInputs(8);
+	MidiBuffer padOutput(8);
 	const DeviceBlock block{nullptr, nullptr, 480, 1000, now, midiIn, midiOut};
-	ports.take(block, 48000.0, allInputs, gnubase::engine::ChordPadKeys());
+	ports.take(block, 48000.0, allInputs, padOutput, gnubase::engine::ChordPadKeys());
 	REQUIRE(allInputs.size() == 1);
 	CHECK(allInputs[0].bytes[1] == 60);
 	CHECK(allInputs[0].offset == 432); // 9 ms into the 10 ms before the block
@@ -790,8 +791,9 @@ TEST_CASE("a hidden input that becomes visible reaches all MIDI inputs", "[unit]
 	MidiBuffer midiIn(8);
 	MidiBuffer midiOut(8);
 	MidiBuffer allInputs(8);
+	MidiBuffer padOutput(8);
 	const DeviceBlock block{nullptr, nullptr, 480, 1000, now, midiIn, midiOut};
-	ports.take(block, 48000.0, allInputs, gnubase::engine::ChordPadKeys());
+	ports.take(block, 48000.0, allInputs, padOutput, gnubase::engine::ChordPadKeys());
 	REQUIRE(allInputs.size() == 1);
 	CHECK(allInputs[0].bytes[1] == 60);
 }

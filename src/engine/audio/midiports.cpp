@@ -143,18 +143,18 @@ namespace gnubase::engine
 	}
 
 	void MidiPorts::take(const audio::DeviceBlock& block, double sampleRate, audio::MidiBuffer& allInputs,
-		const ChordPadKeys& padKeys) noexcept
+		audio::MidiBuffer& pads, const ChordPadKeys& padKeys) noexcept
 	{
 		m_queue.take(block.time, sampleRate, block.frames,
-			[this, &block, &allInputs, &padKeys](int slot, const audio::MidiMessage& message)
+			[this, &block, &allInputs, &pads, &padKeys](int slot, const audio::MidiMessage& message)
 			{
-				if (slot == g_keyboardSlot)
+				if (slot == g_keyboardSlot || slot == g_padsSlot)
 				{
-					allInputs.add(message); // not a port, so not for the monitor
+					(slot == g_padsSlot ? pads : allInputs).add(message); // not a port, so not for the monitor
 					return;
 				}
 				if (m_allInputs[static_cast<size_t>(slot)].load(std::memory_order_relaxed) &&
-					!playPad(message, padKeys, allInputs))
+					!playPad(message, padKeys, pads))
 					allInputs.add(message);
 				if (!m_monitor.tryPush(Received{slot, block.position + message.offset, message}))
 					m_monitorDropped.fetch_add(1, std::memory_order_relaxed);
@@ -162,42 +162,37 @@ namespace gnubase::engine
 	}
 
 	bool MidiPorts::playPad(
-		const audio::MidiMessage& message, const ChordPadKeys& keys, audio::MidiBuffer& allInputs) noexcept
+		const audio::MidiMessage& message, const ChordPadKeys& keys, audio::MidiBuffer& pads) noexcept
 	{
 		const int status = message.bytes[0] & 0xF0;
 		if (message.size != 3 || (status != 0x90 && status != 0x80))
 			return false;
 		const size_t key = message.bytes[1] & 0x7F;
-		auto& held = m_padPitches[key];
-		uint8_t& heldCount = m_padCounts[key];
-		const auto send = [&message, &allInputs](uint8_t status, uint8_t pitch, uint8_t velocity, size_t voice)
+		const auto emit = [&message, &pads](bool on, uint8_t pitch, uint8_t velocity, uint8_t channel)
 		{
 			audio::MidiMessage note = message;
-			note.bytes[0] = static_cast<uint8_t>(status | std::min<size_t>(voice, 15));
+			note.bytes[0] = static_cast<uint8_t>((on ? 0x90 : 0x80) | channel);
 			note.bytes[1] = pitch;
 			note.bytes[2] = velocity;
-			allInputs.add(note);
+			pads.add(note);
 		};
+		// A remote key that Filter Notes keeps from MIDI thru, its note-offs too.
+		const bool filtered = keys.active && keys.filter && key >= keys.start && key <= keys.end;
 		if (status == 0x80 || message.bytes[2] == 0)
 		{
-			if (heldCount == 0)
-				return false;
-			for (size_t i = 0; i < heldCount; ++i)
-				send(0x80, held[i], 0, heldCount - 1 - i);
-			heldCount = 0;
+			if (!m_padVoices.holds(key))
+				return filtered;
+			if (!keys.latch)
+				m_padVoices.off(key, emit);
 			return true;
 		}
 		const uint8_t count = keys.counts[key];
 		if (!keys.active || count == 0)
-			return false;
-		for (size_t i = 0; i < heldCount; ++i) // a second note-on before the note-off ends the first's pitches
-			send(0x80, held[i], 0, heldCount - 1 - i);
-		for (size_t i = 0; i < count; ++i)
-		{
-			held[i] = keys.pitches[key][i];
-			send(0x90, held[i], message.bytes[2], count - 1 - i);
-		}
-		heldCount = count;
+			return filtered;
+		if (keys.latch && m_padVoices.holds(key))
+			m_padVoices.off(key, emit);
+		else
+			m_padVoices.on(key, keys.pitches[key].data(), count, message.bytes[2], keys.overlap, emit);
 		return true;
 	}
 

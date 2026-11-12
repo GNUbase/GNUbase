@@ -72,6 +72,12 @@ namespace
 		return result;
 	}
 
+	std::vector<std::vector<int>> sorted(std::vector<std::vector<int>> notes)
+	{
+		std::sort(notes.begin(), notes.end());
+		return notes;
+	}
+
 	Json pad(Client& client, int index)
 	{
 		return run(client, "chordPads.get").at("pads").at(static_cast<size_t>(index));
@@ -446,6 +452,104 @@ TEST_CASE("a MIDI input's notes on the remote keys trigger the pads while the re
 	CHECK(send(0x90, 60, 100) == std::vector<std::vector<int>>{{0x90, 60, 100}});
 	// D1 plays Dm.
 	CHECK(send(0x90, 38, 70).size() == 4);
+	CHECK(send(0x80, 38, 0).size() == 4);
+
+	// Filter Notes (reference manual p. 1379): the keys of unassigned pads play nothing, the others still themselves.
+	run(client, "chordPads.set", {{"filterNotes", true}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(send(0x90, 47, 100).empty());
+	CHECK(send(0x80, 47, 0).empty());
+	CHECK(send(0x90, 60, 100) == std::vector<std::vector<int>>{{0x90, 60, 100}});
+	// Latch Chords (p. 1386): a key's chord plays until the key comes again; its note-off ends nothing.
+	run(client, "chordPads.set", {{"latch", true}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(send(0x90, 36, 80).size() == 4);
+	CHECK(send(0x80, 36, 0).empty());
+	CHECK(sorted(send(0x90, 36, 80)) == sorted({{0x83, 53, 0}, {0x82, 65, 0}, {0x81, 69, 0}, {0x80, 72, 0}}));
+	CHECK(send(0x80, 36, 0).empty());
+	// With Chord Pad Output Mode off the pads play only into tracks whose MIDI input is the chord pads.
+	run(client, "chordPads.set", {{"outputMode", false}, {"latch", false}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(send(0x90, 36, 80).empty());
+	CHECK(send(0x80, 36, 0).empty());
+	run(client, "channel.set", {{"channel", rig.channel}, {"midiInput", "chordPads"}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(send(0x90, 36, 80).size() == 4);
+	CHECK(send(0x80, 36, 0).size() == 4);
+	CHECK(send(0x90, 60, 100).empty()); // the other keys don't reach it
+}
+
+TEST_CASE("Chord Pad Output Mode and the Chord Pads MIDI input route the pads' chords", "[integration]")
+{
+	// Reference manual pp. 1347, 1366-1367: on, the pads play into every track that monitors or is record-enabled;
+	// off, only into those whose input routing is the chord pads, which take nothing else, and record them.
+	Rig rig;
+	Client& client = rig.client;
+	CHECK(run(client, "chordPads.get").at("outputMode") == true);
+	run(client, "chordPads.trigger", {{"pad", 0}});
+	run(client, "chordPads.trigger", {{"pad", 0}, {"on", false}});
+	CHECK(rig.played().size() == 8);
+	run(client, "chordPads.set", {{"outputMode", false}});
+	run(client, "audio.render", {{"frames", 64}});
+	run(client, "chordPads.trigger", {{"pad", 0}});
+	run(client, "chordPads.trigger", {{"pad", 0}, {"on", false}});
+	CHECK(rig.played().empty());
+	run(client, "channel.set", {{"channel", rig.channel}, {"midiInput", "chordPads"}});
+	run(client, "audio.render", {{"frames", 64}});
+	run(client, "chordPads.trigger", {{"pad", 0}});
+	CHECK(rig.played().size() == 4);
+	run(client, "chordPads.trigger", {{"pad", 0}, {"on", false}});
+	CHECK(rig.played().size() == 4);
+	run(client, "midi.keyboard", {{"messages", {{{"bytes", {0x90, 60, 100}}}}}});
+	CHECK(rig.played().empty());
+	// On, they play into it as well.
+	run(client, "chordPads.set", {{"outputMode", true}});
+	run(client, "audio.render", {{"frames", 64}});
+	run(client, "chordPads.trigger", {{"pad", 0}});
+	CHECK(rig.played().size() == 4);
+	run(client, "chordPads.trigger", {{"pad", 0}, {"on", false}});
+	CHECK(rig.played().size() == 4);
+	CHECK_THAT(reject(client, "chordPads.set", {{"overlaps", "sometimes"}}), ContainsSubstring("overlaps"));
+}
+
+TEST_CASE(
+	"a chord played over another holds, ties or stops the first one's notes, and latched pads toggle", "[integration]")
+{
+	// Reference manual pp. 1379, 1386: C (48 60 64 67) and Em (52 64 67 71) share E3 and G3.
+	Rig rig;
+	Client& client = rig.client;
+	const auto trigger = [&](int pad, bool on)
+	{
+		run(client, "chordPads.trigger", {{"pad", pad}, {"on", on}});
+		return sorted(rig.played());
+	};
+	CHECK(run(client, "chordPads.get").at("overlaps") == "holdFirst");
+	// Hold First: the common notes go on sounding, the first chord's others until its off.
+	CHECK(trigger(0, true).size() == 4);
+	CHECK(trigger(2, true) == sorted({{0x93, 52, 100}, {0x90, 71, 100}}));
+	CHECK(trigger(0, false) == sorted({{0x83, 48, 0}, {0x82, 60, 0}}));
+	CHECK(trigger(2, false) == sorted({{0x83, 52, 0}, {0x81, 64, 0}, {0x80, 67, 0}, {0x80, 71, 0}}));
+	// Legato: the first chord's other notes end, the common ones go on.
+	run(client, "chordPads.set", {{"overlaps", "legato"}});
+	CHECK(trigger(0, true).size() == 4);
+	CHECK(trigger(2, true) == sorted({{0x93, 52, 100}, {0x90, 71, 100}, {0x83, 48, 0}, {0x82, 60, 0}}));
+	CHECK(trigger(0, false).empty());
+	CHECK(trigger(2, false).size() == 4);
+	// Stop First: all of the first chord's notes end, and the second's all start.
+	run(client, "chordPads.set", {{"overlaps", "stopFirst"}});
+	CHECK(trigger(0, true).size() == 4);
+	CHECK(trigger(2, true).size() == 8);
+	CHECK(trigger(0, false).empty());
+	CHECK(trigger(2, false).size() == 4);
+	// Latch Chords: an off ends nothing, the pad's next trigger ends its chord.
+	run(client, "chordPads.set", {{"latch", true}});
+	CHECK(trigger(0, true).size() == 4);
+	CHECK(trigger(0, false).empty());
+	CHECK(run(client, "chordPads.trigger", {{"pad", 0}}).at("on") == false);
+	CHECK(rig.played().size() == 4);
+	CHECK(trigger(0, true).size() == 4);
+	CHECK(trigger(2, true).size() == 8); // Stop First ends the latched chord
+	CHECK(trigger(2, true).size() == 4);
 }
 
 TEST_CASE("step input and pads dragged onto tracks make chord events and MIDI parts", "[unit]")

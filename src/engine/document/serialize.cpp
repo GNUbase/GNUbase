@@ -2149,7 +2149,8 @@ namespace gnubase::engine
 			const bool buttons = type == TrackType::Audio || midi || type == TrackType::Vca;
 			channel.monitor = buttons && item.value("monitor", false);
 			channel.recordEnable = buttons && item.value("recordEnable", false);
-			channel.midiInput = midi && item.value("midiInput", std::string()) == "none" ? "none" : "all";
+			const std::string midiInput = item.value("midiInput", std::string());
+			channel.midiInput = midi && (midiInput == "none" || midiInput == "chordPads") ? midiInput : "all";
 			channel.mute = item.value("mute", false); // files from before mute and solo have neither
 			channel.solo = item.value("solo", false);
 			channel.soloDefeat = item.value("soloDefeat", false); // files from before #109 have neither

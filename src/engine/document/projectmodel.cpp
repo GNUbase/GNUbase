@@ -4322,7 +4322,9 @@ namespace gnubase::engine
 				"whileRecording while the transport records, tapeMachine while it stands or records (the default). "
 				"Monitoring glides in and out over one audio block. MIDI and instrument tracks have them too: "
 				"recordEnable arms the track for MIDI recording, and while either is on, the track plays what comes "
-				"from its MIDI input, midiInput: all (all MIDI inputs, the default) or none. inputTransformer (MIDI "
+				"from its MIDI input, midiInput: all (all MIDI inputs, the default), chordPads (only the chord pads, "
+				"which play into it also with Chord Pad Output Mode off, chordPads.set outputMode) or none. "
+				"inputTransformer (MIDI "
 				"and instrument tracks): {mode, modules}, mode off, track (its own modules) or project (those of "
 				"midi.setInputTransformer), modules as midi.setInputTransformer takes them; the modules that are on "
 				"change what the track's MIDI input plays, before it plays and records it. monitor and "
@@ -4386,10 +4388,10 @@ namespace gnubase::engine
 						{"program", {{"type", {"integer", "null"}}}}, {"bank", {{"type", {"integer", "null"}}}},
 						{"device", stringSchema}, {"volume", numberSchema}, {"pan", numberSchema},
 						{"monitor", booleanSchema}, {"recordEnable", booleanSchema},
-						{"midiInput", enumSchema({"all", "none"})}, {"mute", booleanSchema}, {"solo", booleanSchema},
-						{"exclusive", booleanSchema}, {"soloDefeat", booleanSchema}, {"listen", booleanSchema},
-						{"notes", stringSchema}, {"linked", booleanSchema}, {"pre", {{"type", "object"}}},
-						{"eq", {{"type", "object"}}}, {"strip", {{"type", "object"}}},
+						{"midiInput", enumSchema({"all", "chordPads", "none"})}, {"mute", booleanSchema},
+						{"solo", booleanSchema}, {"exclusive", booleanSchema}, {"soloDefeat", booleanSchema},
+						{"listen", booleanSchema}, {"notes", stringSchema}, {"linked", booleanSchema},
+						{"pre", {{"type", "object"}}}, {"eq", {{"type", "object"}}}, {"strip", {{"type", "object"}}},
 						{"modifiers", {{"type", "object"}}}, {"midiInserts", {{"type", "object"}}},
 						{"midiSends", {{"type", "object"}}}, {"inputTransformer", {{"type", "object"}}},
 						{"sends",

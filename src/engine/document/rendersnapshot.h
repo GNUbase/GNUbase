@@ -4,6 +4,7 @@
 #include "engine/audio/fades.h"
 #include "engine/document/document.h"
 #include "engine/dsp/warp.h"
+#include "engine/midi/padvoices.h"
 
 #include <array>
 #include <cstddef>
@@ -205,6 +206,9 @@ namespace gnubase::engine
 		// MIDI and instrument tracks: they play what comes from all MIDI inputs (MIDI thru), since they monitor or
 		// are record-enabled and their MIDI input is all MIDI inputs.
 		bool midiThru = false;
+		// MIDI and instrument tracks whose MIDI input is the chord pads, and that monitor or are record-enabled: they
+		// play the chord pads (#1089).
+		bool padThru = false;
 		// Muted, silenced by another channel's solo, or on a disabled track: outputs silence. A quiet MIDI channel
 		// has no notes or controllers, and a disabled track no events or parts.
 		bool silent = false;
@@ -238,6 +242,12 @@ namespace gnubase::engine
 	{
 		static constexpr size_t g_maxPitches = 8;
 		bool active = false;
+		uint8_t start = 36; // the remote range, which Filter Notes keeps from playing itself
+		uint8_t end = 47;
+		bool latch = false;
+		bool filter = false;
+		midi::PadOverlap overlap = midi::PadOverlap::HoldFirst;
+		bool output = true; // Chord Pad Output Mode: the pads play into the tracks of all MIDI inputs too
 		std::array<uint8_t, 128> counts{};
 		std::array<std::array<uint8_t, g_maxPitches>, 128> pitches{};
 	};
