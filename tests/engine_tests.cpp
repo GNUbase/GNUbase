@@ -555,7 +555,12 @@ namespace
 			if (key == "properties" && item.is_object())
 			{
 				for (const auto& [property, propertySchema] : item.items())
-					uncheckedKeywords(propertySchema, found, path + '.' + property);
+				{
+					std::string member = path;
+					member += '.';
+					member += property;
+					uncheckedKeywords(propertySchema, found, member);
+				}
 			}
 			else if (key == "items" || key == "additionalProperties")
 			{
