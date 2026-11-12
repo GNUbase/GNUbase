@@ -234,8 +234,7 @@ namespace gnubase::engine
 				"Changes the track list's track heights and folded folders; what isn't given stays. " + text +
 					" heights sets the given tracks' heights, the others keep theirs; folded replaces the folded "
 					"folders. Settings, not an undo step, saved with the project. Emits trackLayout.changed, as undo "
-					"and "
-					"redo do when a track with a height or a fold state comes back or goes. Values the project has "
+					"and redo do when a track with a height or a fold state comes back or goes. Values the project has "
 					"already change nothing: no event, and the project doesn't count as modified.",
 				{{"type", "object"}, {"properties", {{"heights", heightsSchema}, {"folded", foldedSchema}}},
 					{"additionalProperties", false}},

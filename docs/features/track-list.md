@@ -144,13 +144,12 @@ sends engine commands, so whatever another client changes shows at once.
   Tracks", so one undo restores the order.
 - **Heights** (p. 217): dragging a row's lower edge (its last 4 dp) sets its track's height, with Ctrl (Cmd) every
   track's: all the tracks of the project, as the manual says, also those inside folded folders and those the track
-  visibility hides (#1131). Releasing the mouse sends the heights the drag changed with `trackLayout.set`, and
-  nothing for a press that changed none or a drag that ends at the heights the engine has (also at the limit of 20 or
-  400 dp). A drag under way keeps the heights it gave its tracks through `trackLayout.changed`, but takes the other
-  tracks' heights, and its release compares with the engine's heights, also those that came during the drag. A
-  press on the list while a drag is still under way (its release never reached the list's document) ends it, and
-  `project.reset` ends it without sending anything. Heights are the project's, saved with it, but not in its undo
-  history.
+  visibility hides (#1131). Releasing the mouse sends the heights the drag changed with `trackLayout.set`, and nothing
+  for a press that changed none or a drag that ends at the heights the engine has (also at the limit of 20 or 400 dp). A
+  drag under way keeps the heights it gave its tracks through `trackLayout.changed`, but takes the other tracks'
+  heights, and its release compares with the engine's heights, also those that came during the drag. A press on the list
+  while a drag is still under way (its release never reached the list's document) ends it, and `project.reset` ends it
+  without sending anything. Heights are the project's, saved with it, but not in its undo history.
 - **Folding** (p. 225): a folder's toggle, or Right and Left on the selected folder, folds and unfolds it; the tracks
   inside a folded folder leave the list and the event display (`EventDisplay::setHiddenTracks`) and still play.
   Project > Track Folding: Toggle Selected Track, Fold Tracks, Unfold Tracks and Flip Fold States

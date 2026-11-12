@@ -1047,7 +1047,10 @@ TEST_CASE("the track list shows the engine's heights and folded folders again wh
 	drag.move({at.x, at.y + 20}, {"ctrl"});
 	CHECK(drag.shown(drag.third) == Approx(ui::g_trackHeight + 20.0));
 	drag.tracks.app.call("track.remove", {{"track", drag.third}}); // the list hears of it after the release
-	drag.release(at);
+	// Released where the drag left the mouse, so that it ends with heights the engine has not got: the set is sent and
+	// fails.
+	drag.release({at.x, at.y + 20});
+	CHECK(drag.shown(drag.audio) == Approx(ui::g_trackHeight + 20.0));
 	REQUIRE(drag.tracks.app.waitUntil(
 		[&]
 		{
