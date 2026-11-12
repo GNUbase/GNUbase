@@ -71,6 +71,21 @@ TEST_CASE("the Edit menu runs the user scripts, and the script console opens the
 	CHECK_THAT(reference, ContainsSubstring("gnubase.history.join"));
 }
 
+TEST_CASE("a new script folder gets the examples that can be copied when one can't be", "[ui]")
+{
+	// A copy of the resources whose examples include a folder, which copy_file refuses, before and after the scripts.
+	const test::TempDir resources;
+	std::filesystem::copy(GNUBASE_RESOURCES_DIR, resources.path(), std::filesystem::copy_options::recursive);
+	std::filesystem::create_directory(resources.path() / "scripts" / "a-folder.lua");
+	std::filesystem::create_directory(resources.path() / "scripts" / "z-folder.lua");
+	test::UiApp app({640, 480}, resources.path());
+	const std::filesystem::path folder = app.engine().settingsDirectory() / "scripts";
+	CHECK(std::filesystem::is_regular_file(folder / "add-audio-tracks.lua"));
+	CHECK(std::filesystem::is_regular_file(folder / "list-tracks.lua"));
+	CHECK_FALSE(std::filesystem::exists(folder / "a-folder.lua"));
+	CHECK_FALSE(std::filesystem::exists(folder / "z-folder.lua"));
+}
+
 TEST_CASE(
 	"a script run from Edit > Scripts that writes a script and finds the scripts again keeps its undo step", "[ui]")
 {
