@@ -65,6 +65,15 @@ namespace gnubase::engine
 	// be copied: one that becomes shared in the command gives no edit to its new group either way.
 	std::map<ObjectId, MidiPart> sharedPartsOf(const std::map<ObjectId, MidiPart>& parts);
 
+	// Cutting a range in a cycle marker (markers.cpp, reference manual p. 425), for range.cut and range.delete: the
+	// part of the range from start to end (project samples) is taken out of each cycle marker on the marker tracks
+	// among tracks that the range lies in without covering it whole. One that starts or ends with the range gets
+	// shorter; one that it lies inside otherwise is split in two, the part after the range a new cycle marker with the
+	// first free number, the same name and color. Position markers stay, as do cycle markers that the range covers
+	// whole or reaches out of.
+	void cutCycleMarkers(Project& project, time::Samples start, time::Samples end, const std::vector<ObjectId>& tracks,
+		CommandContext& context);
+
 	// What range.copy and range.cut keep for range.paste (eventedits.cpp): the events, parts and automation of a
 	// selection range, cut at its edges, where they were. Not part of the project or of undo.
 	struct RangeClipboard

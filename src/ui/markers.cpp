@@ -583,8 +583,10 @@ namespace gnubase::ui
 				event.StopPropagation();
 				return;
 			}
-			// A drag on the marker track in the selection range moves its contents (p. 432).
-			if (const std::optional<RangeSelection>& range = m_display.range(); range && range->end > range->start &&
+			// A drag on the marker track in the selection range moves its contents (p. 432); with Shift it adds to the
+			// range, as on any lane.
+			if (const std::optional<RangeSelection>& range = m_display.range(); !shift && range &&
+				range->end > range->start &&
 				std::find(range->tracks.begin(), range->tracks.end(), track.id) != range->tracks.end())
 			{
 				const double rate = m_markers.time.sampleRate;
@@ -594,7 +596,7 @@ namespace gnubase::ui
 				m_drag = Drag::Range;
 				m_dragRange = range;
 				m_dragFrom = start;
-				m_pressX = mouse.x;
+				m_press = mouse;
 				m_dragMoved = false;
 				listen(true);
 				event.StopPropagation(); // the display selects no other range
@@ -645,7 +647,7 @@ namespace gnubase::ui
 					});
 			return;
 		}
-		m_pressX = mouse.x;
+		m_press = mouse;
 		m_pressSeconds = seconds;
 		m_dragMoved = false;
 		m_dragTrack = track.id;
@@ -725,14 +727,15 @@ namespace gnubase::ui
 		if (drag == Drag::Range)
 		{
 			// The selection range follows the mouse, snapped; released, its contents go where it is, or a copy of
-			// them with the tool modifier Copy (Alt).
-			m_dragMoved = m_dragMoved || std::abs(mouseX - m_pressX) / ratio() >= g_dragStart;
+			// them with the tool modifier Copy (Alt). A click without a drag selects a range as on any lane.
+			m_dragMoved = m_dragMoved || std::abs(mouseX - m_press.x) / ratio() >= g_dragStart;
+			if (release && !m_dragMoved)
+				m_display.clickRange(m_press, event);
 			if (!m_dragMoved || !m_dragRange)
 				return;
 			const RangeSelection& from = *m_dragRange;
-			const double to = m_dragFrom + ((mouseX - m_pressX) / ratio() * m_display.view().scale);
-			const int64_t start =
-				std::llround(std::max(0.0, m_display.snapped(to, m_dragFrom)) * m_markers.time.sampleRate);
+			const double to = m_dragFrom + ((mouseX - m_press.x) / ratio() * m_display.view().scale);
+			const int64_t start = positionSamples(m_display.snapped(to, m_dragFrom), m_markers.time.sampleRate);
 			m_display.setRange(RangeSelection{start, start + (from.end - from.start), from.tracks});
 			if (release && start != from.start)
 				m_binding.send("range.move",
@@ -745,13 +748,13 @@ namespace gnubase::ui
 		if (const std::optional<LanePoint> lane = markerLaneAt(event); drag == Drag::Move && lane)
 			onto = lane->track->id;
 		// Sideways, or straight onto another marker track to keep the position.
-		m_dragMoved = m_dragMoved || std::abs(mouseX - m_pressX) / ratio() >= g_dragStart || onto != m_dragTrack;
+		m_dragMoved = m_dragMoved || std::abs(mouseX - m_press.x) / ratio() >= g_dragStart || onto != m_dragTrack;
 		if (!m_dragMoved)
 			return;
 		const TimelineView& view = m_display.view();
 		// A new cycle marker ends where the mouse is: from the press's own time, not its snapped one.
 		const double to =
-			(drag == Drag::NewCycle ? m_pressSeconds : m_dragFrom) + ((mouseX - m_pressX) / ratio() * view.scale);
+			(drag == Drag::NewCycle ? m_pressSeconds : m_dragFrom) + ((mouseX - m_press.x) / ratio() * view.scale);
 		const double at = m_display.snapped(to, drag == Drag::NewCycle ? std::nullopt : std::optional(m_dragFrom));
 		const auto trackOf = [this](uint64_t id)
 		{

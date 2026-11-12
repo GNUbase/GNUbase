@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <map>
 #include <mutex>
+#include <set>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -942,6 +943,57 @@ TEST_CASE("range.move moves what is in the range, or copies it, in one undo step
 
 	CHECK_THAT(f.fails("range.move", f.range()), ContainsSubstring("position"));
 	CHECK_THAT(f.fails("range.move", f.range({{"position", -1}})), ContainsSubstring("before the project start"));
+}
+
+TEST_CASE("range.move keeps the ids of what it moves, the crossfades between moved events and shared copies", "[unit]")
+{
+	RangeFixture f;
+	// On another audio track, event a from 6 to 8 seconds and b from 7.5 to 9 seconds, which crossfades from a; on
+	// another MIDI track a part and a shared copy of it, at bars 4 and 5 (6 and 8 seconds). The range is 5.5 to 10
+	// seconds on these two tracks.
+	const int64_t audio = f.track("audio", "linear");
+	const auto add = [&f, audio](int64_t position, int64_t length)
+	{
+		return f
+			.call("audioEvent.add",
+				{{"track", audio}, {"clip", f.audio(f.event).at("clip")}, {"position", position}, {"offset", 0},
+					{"length", length}})
+			.at("event")
+			.at("id")
+			.get<int64_t>();
+	};
+	const int64_t a = add(6 * g_second, 2 * g_second);
+	const int64_t b = add((15 * g_second) / 2, (3 * g_second) / 2);
+	f.call("event.crossfade", {{"events", {a, b}}});
+	REQUIRE(f.audio(b).at("crossfade").at("from") == a);
+	const int64_t midi = f.track("midi");
+	const int64_t original = f.part(midi);
+	f.call("event.move", {{"events", {original}}, {"ticks", 2 * g_bar}});
+	const int64_t shared =
+		f.call("event.duplicate", {{"events", {original}}, {"shared", true}}).at("events")[0].get<int64_t>();
+	REQUIRE(f.midi(shared).at("position") == 4 * g_bar);
+	REQUIRE(f.midi(shared).at("shared") != 0);
+	const Json moved = {{"start", (11 * g_second) / 2}, {"end", 10 * g_second}, {"tracks", {audio, midi}},
+		{"position", (23 * g_second) / 2}};
+
+	// Moved by 6 seconds, everything in the range keeps its id: a, b, the part and the shared copy, which stays one.
+	const Json events = f.call("range.move", moved).at("events");
+	CHECK(std::set<int64_t>(events.begin(), events.end()) == std::set<int64_t>{a, b, original, shared});
+	CHECK(f.audio(a).at("position") == 12 * g_second);
+	CHECK(f.audio(b).at("position") == (27 * g_second) / 2);
+	CHECK(f.audio(b).at("crossfade").at("from") == a);
+	CHECK(f.midi(original).at("position") == 6 * g_bar);
+	CHECK(f.midi(shared).at("position") == 7 * g_bar);
+	CHECK(f.midi(shared).at("shared") == f.midi(original).at("shared"));
+	CHECK(f.midi(shared).at("shared") != 0);
+
+	// A crossfade between an event that moves and one that stays ends: a locked a stays, b moves.
+	f.call("history.undo");
+	f.call("event.set", {{"events", {a}}, {"lock", true}});
+	f.call("range.move", moved);
+	CHECK(f.audio(a).at("position") == 6 * g_second);
+	CHECK(f.audio(b).at("position") == (27 * g_second) / 2);
+	CHECK(!f.audio(b).at("crossfade").is_object());
 }
 
 TEST_CASE(

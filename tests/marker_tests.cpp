@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -537,6 +538,74 @@ TEST_CASE("cycle markers set the locators, and markers bound range selections", 
 	CHECK(result.at("end") == 8 * g_quarterSamples);
 	CHECK_THAT(reject(client, "marker.range", {{"position", g_quarterSamples}}), ContainsSubstring("before"));
 	CHECK_THAT(reject(client, "marker.range", {{"position", 21 * g_quarterSamples}}), ContainsSubstring("after"));
+}
+
+TEST_CASE("range.cut and range.delete cut a range out of a cycle marker that it lies in", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	// On marker track 1 the cycle marker Verse from quarter 4 to 12, red, and a position marker at 6; on marker track
+	// 2 a cycle marker from 4 to 12 too.
+	const ObjectId first = addMarkerTrack(client);
+	const ObjectId verse = idOf(addCycle(client, 4, 12, "Verse"));
+	run(client, "marker.set", {{"marker", verse}, {"color", "#ff0000"}});
+	addPosition(client, 6, "Drop");
+	const ObjectId second = addMarkerTrack(client);
+	addCycle(client, 4, 12, "Other");
+	// The cycle markers on a track as number, start and end in quarters, name and color.
+	using Cycle = std::tuple<int, int64_t, int64_t, std::string, std::string>;
+	const auto cycles = [&client](ObjectId track)
+	{
+		std::vector<Cycle> found;
+		const Json list = run(client, "marker.list", {{"track", track}});
+		for (const Json& marker : list.at("markers"))
+			if (marker.at("type") == "cycle")
+				found.emplace_back(marker.at("number").get<int>(),
+					marker.at("positionSamples").get<int64_t>() / g_quarterSamples,
+					marker.at("endSamples").get<int64_t>() / g_quarterSamples, marker.at("name").get<std::string>(),
+					marker.at("color").is_string() ? marker.at("color").get<std::string>() : std::string());
+		return found;
+	};
+	const auto range = [first](int64_t from, int64_t to, bool time = false)
+	{
+		return Json{
+			{"start", from * g_quarterSamples}, {"end", to * g_quarterSamples}, {"tracks", {first}}, {"time", time}};
+	};
+	const std::vector<Cycle> whole = {{1, 4, 12, "Verse", "#ff0000"}};
+	const std::vector<Cycle> other = {{1, 4, 12, "Other", ""}};
+	REQUIRE(cycles(first) == whole);
+
+	// A range inside it splits it in two, in one undo step: the second part is cycle marker 2, the first free number,
+	// with the same name and color. Position markers stay, and so do the markers of tracks outside the range.
+	const size_t steps = run(client, "history.get").at("steps").size();
+	run(client, "range.delete", range(6, 8));
+	CHECK(cycles(first) == std::vector<Cycle>{{1, 4, 6, "Verse", "#ff0000"}, {2, 8, 12, "Verse", "#ff0000"}});
+	CHECK(markerNames(client, {{"track", first}}) == std::vector<std::string>{"Verse", "Drop", "Verse"});
+	CHECK(cycles(second) == other);
+	CHECK(run(client, "history.get").at("steps").size() == steps + 1);
+	run(client, "history.undo");
+	CHECK(cycles(first) == whole);
+
+	// One that starts or ends with it gets shorter; range.cut cuts as range.delete deletes.
+	run(client, "range.cut", range(4, 6));
+	CHECK(cycles(first) == std::vector<Cycle>{{1, 6, 12, "Verse", "#ff0000"}});
+	run(client, "history.undo");
+	run(client, "range.delete", range(10, 12));
+	CHECK(cycles(first) == std::vector<Cycle>{{1, 4, 10, "Verse", "#ff0000"}});
+	run(client, "history.undo");
+
+	// A range that covers it whole, as a double click in it selects it, or crosses one of its ends leaves it; so does
+	// Delete Time or Cut Time, which leave markers where they are.
+	for (const Json& parameters : {range(4, 12), range(2, 6), range(10, 14), range(6, 8, true)})
+	{
+		run(client, parameters.at("time") ? "range.cut" : "range.delete", parameters);
+		CHECK(cycles(first) == whole);
+	}
+
+	// Without tracks the range is on every track.
+	run(client, "range.delete", {{"start", 6 * g_quarterSamples}, {"end", 8 * g_quarterSamples}});
+	CHECK(cycles(first).size() == 2);
+	CHECK(cycles(second) == std::vector<Cycle>{{1, 4, 6, "Other", ""}, {2, 8, 12, "Other", ""}});
 }
 
 TEST_CASE("marker.put puts position marker N at the cursor, moving it or adding it", "[unit]")
