@@ -11,6 +11,7 @@
 #include "engine/engine.h"
 #include "engine/media/backup.h"
 #include "engine/processors/builtin.h"
+#include "platform/files.h"
 
 #include <miniz.h>
 #include <pugixml.hpp>
@@ -1186,7 +1187,8 @@ namespace gnubase::engine
 					std::error_code error;
 					std::filesystem::create_directories(target.parent_path(), error);
 					m_zip.extract(xmlPath, target.u8string());
-					m_extracted.push_back(target);
+					if (const auto identity = files::fileIdentity(target))
+						m_extracted.insert(*identity);
 				}
 				return m_resolved[xmlPath] = target.u8string();
 			}
@@ -1210,14 +1212,12 @@ namespace gnubase::engine
 				}
 			}
 
-			// Whether target is a file one of this load's extractions wrote.
+			// Whether target is a file one of this load's extractions wrote: one lookup of its identity in the set of
+			// the identities extracted so far, rather than a comparison with each of them (files::fileIdentity).
 			bool extractedTo(const std::filesystem::path& target) const
 			{
-				std::error_code error;
-				for (const std::filesystem::path& extracted : m_extracted)
-					if (std::filesystem::equivalent(target, extracted, error))
-						return true;
-				return false;
+				const auto identity = files::fileIdentity(target);
+				return identity.has_value() && m_extracted.count(*identity) != 0;
 			}
 
 			struct Context
@@ -2007,8 +2007,8 @@ namespace gnubase::engine
 			std::map<std::string, ObjectId> m_clips; // media path in project.xml -> clip
 			// project.xml parameter id -> the track whose channel has it, and which one it is
 			std::map<std::string, std::pair<ObjectId, AutomationTargetType>> m_parameters;
-			std::map<std::string, std::string> m_resolved;  // media path in project.xml -> path on disk
-			std::vector<std::filesystem::path> m_extracted; // the files this load extracted, for freeTarget
+			std::map<std::string, std::string> m_resolved; // media path in project.xml -> path on disk
+			std::set<files::FileIdentity> m_extracted;     // the files this load extracted, for freeTarget
 		};
 	}
 

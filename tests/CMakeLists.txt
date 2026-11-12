@@ -75,6 +75,7 @@ add_executable(gnubase-tests
 	fade_tests.cpp
 	fades_ui_tests.cpp
 	fileimport_tests.cpp
+	files_tests.cpp
 	fonts_tests.cpp
 	graph_tests.cpp
 	harmony_tests.cpp
