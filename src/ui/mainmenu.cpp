@@ -50,7 +50,7 @@ namespace gnubase::ui
 			item.keys = shown->GetObserverPtr();
 		}
 		// In the bubble phase, after the listeners of the elements below the document, and of the document's added
-		// before the menu; the document's click listeners added later run after it (update).
+		// before the menu; the document's bubble phase click listeners added later run after it (see update()).
 		document.AddEventListener(Rml::EventId::Click, this);
 		update();
 	}

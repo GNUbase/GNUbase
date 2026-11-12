@@ -32,9 +32,9 @@ project window.
   listeners were added doesn't matter, and the menu doesn't update on every change event, such as each step of a value
   drag (#1176). A click on an item updates the menu once more before it looks for the item, so a listener of the click
   that changes what the item's command can do counts (#1120), if it ran before the menu's own click listener on the
-  document: a listener of an element below the document, or of the document added before the menu. A click listener
-  added to the document after the menu runs after the lookup: what it changes shows after the input, too late for
-  that click (#1233).
+  document: a listener of an element below the document, a capture phase listener of the document, or a listener of
+  the document that was added before the menu's. A bubble phase click listener added to the document after the menu
+  runs after the lookup: what it changes shows after the input, too late for that click (#1233).
 - **The menu bar** is a docking strip, `strip="menuBar"` ([docking.md](docking.md)): Menu Bar in the Set up Window
   Layout menu and the UI command `window.menuBar` show and hide it, and `ui.layout` keeps it per window. It is a
   `<menubar>`, whose titles are buttons that open the menus ([widgets.md](widgets.md), "Menus and context menus"), and

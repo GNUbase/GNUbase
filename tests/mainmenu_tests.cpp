@@ -260,12 +260,22 @@ TEST_CASE(
 // item (#1120, #1176), as far as they ran before the menu's listener on the document (#1233).
 TEST_CASE("the main menu follows what a click's listeners changed before it runs the clicked item", "[unit]")
 {
+	// Lets the command run; it outlives the documents it listens to.
+	bool enabled = false;
+	class Enabler final : public Rml::EventListener
+	{
+	public:
+		explicit Enabler(bool& enabled) : m_enabled(enabled) {}
+		void ProcessEvent(Rml::Event& /*event*/) override { m_enabled = true; }
+
+	private:
+		bool& m_enabled;
+	} enabler(enabled);
 	engine::Engine engine;
 	test::FakeUi fake({{1, "Monitor", {0, 0, 1920, 1080}, {0, 0, 1920, 1080}, 1.0F}});
 	ui::Window& window = fake.shell.open(ui::WindowSpec{});
 	ui::EngineBinding binding(engine);
 	ui::KeyCommands keys(engine, binding);
-	bool enabled = false;
 	int runs = 0;
 	keys.add({"test.command", "A test command.", [&runs](ui::Window& /*window*/, Rml::Element* /*zone*/) { ++runs; }});
 	keys.enableWhen("test.command", [&enabled](ui::Window& /*window*/, Rml::Element* /*zone*/) { return enabled; });
@@ -280,15 +290,6 @@ TEST_CASE("the main menu follows what a click's listeners changed before it runs
 	{ ui::Automation(fake.shell).click(std::nullopt, {"#item", 0, std::nullopt}, ui::MouseButton::Left, 1, {}); };
 
 	// The item's own listener lets its command run, before the menu's listener on the document.
-	class Enabler final : public Rml::EventListener
-	{
-	public:
-		explicit Enabler(bool& enabled) : m_enabled(enabled) {}
-		void ProcessEvent(Rml::Event& /*event*/) override { m_enabled = true; }
-
-	private:
-		bool& m_enabled;
-	} enabler(enabled);
 	item->AddEventListener(Rml::EventId::Click, &enabler);
 	{
 		const ui::MainMenu menu(keys, window, *document);
@@ -350,8 +351,8 @@ TEST_CASE("each input of the UI automation runs the shell's input handler once, 
 	REQUIRE(document != nullptr);
 	document->Show();
 	document->Focus();
-	for (const char* type :
-		{"mousemove", "mousedown", "mouseup", "click", "mousescroll", "keydown", "keyup", "textinput", "filedrop"})
+	for (const char* type : {"mousemove", "mousedown", "mouseup", "click", "mousescroll", "keydown", "keyup",
+			 "textinput", ui::g_fileDropEvent})
 		document->AddEventListener(type, &recorder);
 	fake.shell.onUnusedKey(
 		[&happened](ui::Window& /*window*/, const ui::KeyPress& /*keys*/) { happened.emplace_back("unused key"); });
@@ -383,6 +384,8 @@ TEST_CASE("each input of the UI automation runs the shell's input handler once, 
 	handledAfter({"mousemove"});
 	automation.click(std::nullopt, point(110, 100), ui::MouseButton::Left, 1, {});
 	handledAfter({"mousedown", "mouseup", "click"});
+	automation.click(std::nullopt, point(110, 100), ui::MouseButton::Left, 2, {}); // a double click is one input
+	handledAfter({"mousedown", "mouseup", "click", "mousedown", "mouseup", "click"});
 	automation.drag(std::nullopt, point(120, 100), point(200, 150), {});
 	handledAfter({"mousedown", "mousemove", "mouseup"});
 	automation.press(std::nullopt, point(130, 100), ui::MouseButton::Left, {});
@@ -400,7 +403,7 @@ TEST_CASE("each input of the UI automation runs the shell's input handler once, 
 	automation.text(std::nullopt, "a");
 	handledAfter({"textinput"});
 	automation.drop(std::nullopt, point(150, 100), {"/music/kick.wav"});
-	handledAfter({"filedrop"});
+	handledAfter({ui::g_fileDropEvent});
 
 	fake.shell.onInputHandled({});
 	fake.shell.onKeyReleased({});
