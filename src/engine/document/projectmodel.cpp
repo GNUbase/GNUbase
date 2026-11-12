@@ -4867,8 +4867,9 @@ namespace gnubase::engine
 				"job.progress and job.finished events follow, and job.cancel stops it and removes what it wrote. A "
 				"folder that a running job writes into can't be used. The job's result is {file, files, missing, "
 				"activated, activationError}: missing lists the media files ({media, path}) and freeze files ({track, "
-				"path}) that couldn't be read and keep their old paths, and the files and folders of the Mixdown "
-				"folder ({path}) that couldn't be read and were left out; activated says whether the backup was "
+				"path}) that couldn't be read and keep their old paths, and the files ({path}) and folders ({path, "
+				"folder: true}) of the Mixdown folder that couldn't be read and were left out; activated says whether "
+				"the backup was "
 				"opened, and activationError why not, if it was asked to be.",
 				objectSchema({{"folder", stringSchema}, {"name", stringSchema}, {"minimize", booleanSchema},
 								 {"handles", numberSchema}, {"removeUnused", booleanSchema},
