@@ -13,7 +13,9 @@
 #include <RmlUi/Core/Property.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -26,6 +28,9 @@ namespace gnubase::ui
 	namespace
 	{
 		using engine::Json;
+
+		// How long a press waits for the actions that wait for Snap to Zero Crossing (EventDisplay::runWaitingActions).
+		constexpr std::chrono::seconds g_waitingActionsTimeout{2};
 
 		Rml::Property dp(double value)
 		{
@@ -175,8 +180,7 @@ namespace gnubase::ui
 		// (reference manual p. 253).
 		const std::optional<size_t> lane = visibleLaneAt(y);
 		if (m_combine && m_tool == Tool::ObjectSelection && lane &&
-			m_laneTops[*lane + 1] - m_laneTops[*lane] >= 2 * g_trackRow &&
-			y + m_view.top < (m_laneTops[*lane] + m_laneTops[*lane + 1]) * 0.5)
+			m_laneTops[*lane + 1] - m_laneTops[*lane] >= 2 * g_trackRow && !inLowerHalf(*lane, y))
 			return Tool::RangeSelection;
 		return m_tool;
 	}
@@ -271,8 +275,8 @@ namespace gnubase::ui
 							{"position", std::max<int64_t>(0, samples(m_view.start + (x * m_view.scale)))}});
 					return true;
 				}
-				// At an audio event's edge it resizes the event as the object selection tool does, scrubbing along
-				// (reference manual p. 268).
+				// At an audio event's lower left or right corner it resizes the event as the object selection tool
+				// does, scrubbing along (reference manual p. 268).
 				if (const int edge = scrubEdgeAt(x, y); edge != 0 && shown != nullptr)
 				{
 					if (!std::binary_search(m_selection.begin(), m_selection.end(), shown->id))
@@ -307,7 +311,7 @@ namespace gnubase::ui
 		const std::optional<size_t> lane = visibleLaneAt(y);
 		const Shown* shown = eventAt(x, y);
 		if (toolAt(y) != Tool::Play || m_playMode != PlayMode::Scrub || !lane || m_laneTypes[*lane] != "audio" ||
-			shown == nullptr || m_fades.count(shown->id) == 0)
+			shown == nullptr || m_fades.count(shown->id) == 0 || !inLowerHalf(*lane, y))
 			return 0;
 		return edgeAt(*shown, x);
 	}
@@ -644,14 +648,12 @@ namespace gnubase::ui
 		if (!m_snap.zeroCrossing || !m_range)
 			return;
 		const RangeSelection range = *m_range;
-		++m_zeroCrossings;
-		m_binding.send("snap.zeroCrossings", {{"positions", {range.start, range.end}}, {"tracks", range.tracks}},
+		m_binding.sendAwaited("snap.zeroCrossings", {{"positions", {range.start, range.end}}, {"tracks", range.tracks}},
 			[this, range, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
 				if (alive.expired())
 					return;
-				--m_zeroCrossings;
-				// Unless the range changed meanwhile.
+				// Unless the range changed meanwhile. The binding then runs the actions that waited.
 				if (result.ok() && m_range && m_range->start == range.start && m_range->end == range.end &&
 					m_range->tracks == range.tracks)
 				{
@@ -661,10 +663,17 @@ namespace gnubase::ui
 					moved.end = std::max(moved.start, positions.at(1).get<int64_t>());
 					setRange(std::move(moved));
 				}
-				if (m_zeroCrossings == 0)
-					for (const std::function<void()>& action : std::exchange(m_afterZeroCrossings, {}))
-						action();
 			});
+	}
+
+	void EventDisplay::runWaitingActions()
+	{
+		if (!m_binding.holding())
+			return;
+		// Settling hands on the answers, which run the actions; after the timeout they run on the range as it is, not
+		// on the one that the press starts.
+		m_binding.settle(g_waitingActionsTimeout);
+		m_binding.releaseHeld();
 	}
 
 	void EventDisplay::selectRange()

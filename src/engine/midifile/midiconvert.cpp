@@ -980,13 +980,24 @@ namespace gnubase::engine::midifile
 		std::stable_sort(result.markers.begin(), result.markers.end(),
 			[](const Marker& a, const Marker& b) { return a.position.value < b.position.value; });
 
-		// The project's tempo before the file's start stays.
+		// Where the file ends: the end of its last track.
+		Ticks end = options.start;
+		for (size_t i = 0; i < offsets.size(); ++i)
+			end = std::max(end, offsets[i] + toProject(trackEnd(file.tracks[i])));
+
+		// The project's tempo before the file's start stays. A ramp through the start ramps on up to the tick before
+		// it, so that nothing before the start moves.
+		const std::vector<time::TempoPoint>& projectTempo = options.tempo.points();
 		std::vector<time::TempoPoint> points;
-		for (const time::TempoPoint& point : options.tempo.points())
+		for (const time::TempoPoint& point : projectTempo)
 			if (point.position < options.start)
 				points.push_back(point);
 		if (points.empty())
 			points.push_back({0, g_defaultBpm, false});
+		const auto afterStart = std::find_if(projectTempo.begin(), projectTempo.end(),
+			[&options](const time::TempoPoint& point) { return point.position >= options.start; });
+		if (afterStart != projectTempo.end() && afterStart->ramp && options.start - 1 > points.back().position)
+			points.push_back({options.start - 1, options.tempo.bpmAt(options.start - 1), true});
 		for (const auto& [at, bpm] : tempo)
 		{
 			if (at == points.back().position)
@@ -994,11 +1005,43 @@ namespace gnubase::engine::midifile
 			else if (bpm != points.back().bpm)
 				points.push_back({at, bpm, false});
 		}
+		// Where the project's tempo changes after the start or the project has content after the file's end, it is
+		// the project's again from the file's end on; otherwise the file's last tempo goes on, as in a new project.
+		// Linear content keeps its samples, so it is compared with the file's end in the new tempo, which points
+		// already holds up to the end.
+		const bool keepsAfterEnd = options.contentEnd > end ||
+			options.contentEndSamples > time::TempoMap(points).toSamples(end, options.sampleRate);
+		const auto afterEnd = std::find_if(projectTempo.begin(), projectTempo.end(),
+			[end](const time::TempoPoint& point) { return point.position > end; });
+		if (keepsAfterEnd ||
+			std::any_of(projectTempo.begin(), projectTempo.end(),
+				[&options](const time::TempoPoint& point) { return point.position > options.start; }))
+		{
+			const double bpm = options.tempo.bpmAt(end);
+			const bool rampsOn = afterEnd != projectTempo.end() && afterEnd->ramp;
+			if (end == points.back().position)
+				points.back().bpm = bpm;
+			else if (bpm != points.back().bpm || rampsOn)
+				points.push_back({end, bpm, false});
+			points.insert(points.end(), afterEnd, projectTempo.end());
+		}
 		result.tempo = time::TempoMap(points);
+
+		// The same for the signatures, each moved to the next bar start.
 		SignatureBuilder bars;
 		bars.seed(options.signatures, options.start);
 		for (const auto& [at, signature] : signatures)
 			bars.add(at, signature);
+		const std::vector<time::SignatureChange> projectBars = options.signatures.changes();
+		if (keepsAfterEnd ||
+			std::any_of(projectBars.begin(), projectBars.end(), [&options](const time::SignatureChange& change)
+				{ return options.signatures.barStart(change.bar) > options.start; }))
+		{
+			bars.add(end, options.signatures.signatureAt(end));
+			for (const time::SignatureChange& change : projectBars)
+				if (const Ticks at = options.signatures.barStart(change.bar); at > end)
+					bars.add(at, change.signature);
+		}
 		result.signatures = bars.map();
 
 		for (size_t i = 0; i < offsets.size(); ++i)

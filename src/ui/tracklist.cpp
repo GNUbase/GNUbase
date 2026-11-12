@@ -306,12 +306,19 @@ namespace gnubase::ui
 			{"track.toggleFolding",
 				[this, selected]
 				{
+					// One trackLayout.set for all of them.
+					std::set<uint64_t> folders = m_folded;
 					selected(
-						[this](uint64_t track)
+						[this, &folders](uint64_t track)
 						{
-							if (m_tracks[m_index.at(track)].type == "folder")
-								setFolded(track, !folded(track));
+							if (m_tracks[m_index.at(track)].type != "folder")
+								return;
+							if (folded(track))
+								folders.erase(track);
+							else
+								folders.insert(track);
 						});
+					fold(std::move(folders));
 				}},
 			{"track.foldAll",
 				[this]
@@ -361,8 +368,9 @@ namespace gnubase::ui
 			if (const std::vector<uint64_t> tracks = renderable(); !tracks.empty())
 				m_binding.send("track.renderInPlace", {{"tracks", tracks}});
 		};
-		// The chord track (docs/features/chord-track.md, reference manual pp. 1336, 1342): Chords to MIDI onto the
-		// first selected MIDI or instrument track, Create Chord Events from the selected ones.
+		// The chord track (docs/features/chord-track.md, reference manual pp. 1336, 1341-1344): Chords to MIDI onto the
+		// first selected MIDI or instrument track; the other functions take the selected MIDI parts and audio events,
+		// else those of the selected tracks, and audio events only outside audio parts (p. 1344).
 		const auto noteTracks = [this]
 		{
 			std::vector<uint64_t> tracks;
@@ -371,41 +379,50 @@ namespace gnubase::ui
 					tracks.push_back(track);
 			return tracks;
 		};
+		const auto chordSources = [this](const char* kind)
+		{
+			std::vector<uint64_t> found;
+			const Json& project = m_display.project();
+			if (!project.is_object())
+				return found;
+			const std::vector<uint64_t>& events = m_display.selection(); // ascending
+			const auto selected = [&events](const Json& item)
+			{ return std::binary_search(events.begin(), events.end(), item.at("id").get<uint64_t>()); };
+			bool fromEvents = false;
+			for (const char* each : {"midiParts", "audioEvents"})
+				for (const Json& item : project.at(each))
+					fromEvents = fromEvents || selected(item);
+			const std::vector<uint64_t> tracks = selection();
+			for (const Json& item : project.at(kind))
+				if (item.value("part", uint64_t{0}) == 0 &&
+					(fromEvents ? selected(item)
+								: std::find(tracks.begin(), tracks.end(), item.at("track").get<uint64_t>()) !=
+								tracks.end()))
+					found.push_back(item.at("id").get<uint64_t>());
+			return found;
+		};
 		m_actions["track.chordsToMidiSelected"] = [this, noteTracks]
 		{
 			if (const std::vector<uint64_t> tracks = noteTracks(); !tracks.empty())
 				m_binding.send("chord.toMidi", {{"track", tracks.front()}});
 		};
-		// Create Chord Events: from MIDI with the Create Chord Events dialog's options, from the selected audio tracks'
-		// events at once (pp. 1342-1343); Map to Chord Track with its dialog's mode; Assign Voices to Notes (p. 1342).
-		m_actions["track.createChordEventsSelected"] = [this, noteTracks]
+		// Create Chord Events: from audio events at once, from MIDI parts with the Create Chord Events dialog's options
+		// (pp. 1342-1343); Map to Chord Track with its dialog's mode (p. 1341); Assign Voices to Notes (p. 1342).
+		m_actions["track.createChordEventsSelected"] = [this, chordSources]
 		{
-			Json events = Json::array();
-			const Json& project = m_display.project();
-			for (const uint64_t track : selection())
-				if (m_tracks[m_index.at(track)].type == "audio" && project.is_object())
-					for (const Json& event : project.at("audioEvents"))
-						if (event.at("track") == track)
-							events.push_back(event.at("id"));
-			if (!events.empty())
+			if (const std::vector<uint64_t> events = chordSources("audioEvents"); !events.empty())
 				m_binding.send("chord.fromAudio", {{"events", events}});
-			if (std::vector<uint64_t> tracks = noteTracks(); !tracks.empty())
-				openChordDialog("create-chord-events.rml", std::move(tracks));
+			if (std::vector<uint64_t> parts = chordSources("midiParts"); !parts.empty())
+				openChordDialog("create-chord-events.rml", std::move(parts));
 		};
-		m_actions["track.mapToChordTrackSelected"] = [this, noteTracks]
+		m_actions["track.mapToChordTrackSelected"] = [this, chordSources]
 		{
-			if (std::vector<uint64_t> tracks = noteTracks(); !tracks.empty())
-				openChordDialog("map-to-chord-track.rml", std::move(tracks));
+			if (std::vector<uint64_t> parts = chordSources("midiParts"); !parts.empty())
+				openChordDialog("map-to-chord-track.rml", std::move(parts));
 		};
-		m_actions["track.assignVoicesSelected"] = [this, noteTracks]
+		m_actions["track.assignVoicesSelected"] = [this, chordSources]
 		{
-			Json parts = Json::array();
-			const Json& project = m_display.project();
-			for (const uint64_t track : noteTracks())
-				for (const Json& part : project.at("midiParts"))
-					if (part.at("track") == track)
-						parts.push_back(part.at("id"));
-			if (!parts.empty())
+			if (const std::vector<uint64_t> parts = chordSources("midiParts"); !parts.empty())
 				m_binding.send("chord.assignVoices", {{"parts", parts}});
 		};
 		for (const bool enabled : {false, true})
@@ -628,6 +645,10 @@ namespace gnubase::ui
 			{
 				select({});
 				m_selectedLanes.clear();
+				// A height drag under way was the old project's: its release sends nothing to the new one.
+				if (m_drag == Drag::Height)
+					m_drag = Drag::None;
+				m_dragTracks.clear();
 				readVisibility();
 				readLayout(true);
 			}));
@@ -731,14 +752,25 @@ namespace gnubase::ui
 
 	void TrackList::fold(std::set<uint64_t> folders)
 	{
+		// The engine keeps them with the project (trackLayout.set): the folders that are still there. Only a change
+		// goes there, as a set advances the project's revision, which makes it count as modified.
+		const auto existing = [this](const std::set<uint64_t>& from)
+		{
+			Json folded = Json::array();
+			for (const uint64_t folder : from)
+				if (const auto row = m_index.find(folder);
+					row != m_index.end() && m_tracks[row->second].type == "folder")
+				{
+					folded.push_back(folder);
+				}
+			return folded;
+		};
+		const Json before = existing(m_folded);
 		m_folded = std::move(folders);
 		hide();
-		// The engine keeps them with the project (trackLayout.set): the folders that are still there.
-		Json folded = Json::array();
-		for (const uint64_t folder : m_folded)
-			if (const auto row = m_index.find(folder); row != m_index.end() && m_tracks[row->second].type == "folder")
-				folded.push_back(folder);
-		m_binding.send("trackLayout.set", {{"folded", folded}});
+		Json folded = existing(m_folded);
+		if (folded != before)
+			m_binding.send("trackLayout.set", {{"folded", std::move(folded)}});
 	}
 
 	void TrackList::loadLayout(const Json& layout, bool replace)
@@ -747,7 +779,12 @@ namespace gnubase::ui
 		if (!replace)
 			heights = m_display.ownTrackHeights();
 		for (const Json& item : layout.at("heights"))
-			heights[item.at("track").get<uint64_t>()] = item.at("height").get<double>();
+		{
+			// A height drag under way keeps the heights it gave its tracks, which it sends when it ends.
+			const auto track = item.at("track").get<uint64_t>();
+			if (replace || m_dragTracks.count(track) == 0)
+				heights[track] = item.at("height").get<double>();
+		}
 		m_display.setOwnTrackHeights(std::move(heights));
 		const auto folded = layout.at("folded").get<std::set<uint64_t>>();
 		if (folded != m_folded)
@@ -1715,7 +1752,7 @@ namespace gnubase::ui
 		removeTracks(still);
 	}
 
-	void TrackList::openChordDialog(const char* file, std::vector<uint64_t> tracks)
+	void TrackList::openChordDialog(const char* file, std::vector<uint64_t> parts)
 	{
 		if (m_chordDialog)
 			return;
@@ -1728,7 +1765,7 @@ namespace gnubase::ui
 			logging::warning("The track list can't open the dialog {}", path);
 			return;
 		}
-		m_chordTracks = std::move(tracks);
+		m_chordParts = std::move(parts);
 		m_chordDialog = dialog->GetObserverPtr();
 		dialog->AddEventListener(g_dialogCloseEvent, this);
 		dialog->Show(Rml::ModalFlag::Modal);
@@ -1741,7 +1778,7 @@ namespace gnubase::ui
 		Rml::Element* dialog = m_chordDialog.get();
 		dialog->RemoveEventListener(g_dialogCloseEvent, this);
 		m_chordDialog.reset();
-		const std::vector<uint64_t> tracks = std::exchange(m_chordTracks, {});
+		const std::vector<uint64_t> parts = std::exchange(m_chordParts, {});
 		if (event.GetParameter<Rml::String>("result", "") != "ok" || !alive())
 			return;
 		const auto checked = [dialog](const char* id)
@@ -1754,7 +1791,7 @@ namespace gnubase::ui
 			// Ticks of 480 to a quarter note, as the dialog shows them.
 			const auto shown = static_cast<int64_t>(std::lround(length->GetAttribute<float>("value", 0.0F)));
 			m_binding.send("chord.fromMidi",
-				{{"tracks", tracks}, {"includeBass", checked("chord-events-bass")},
+				{{"parts", parts}, {"includeBass", checked("chord-events-bass")},
 					{"includeTensions", checked("chord-events-tensions")},
 					{"detectArpeggios", checked("chord-events-arpeggios")},
 					{"sustainPedal", checked("chord-events-sustain")},
@@ -1762,14 +1799,7 @@ namespace gnubase::ui
 		}
 		else if (const auto* mode = dynamic_cast<Rml::ElementFormControl*>(dialog->GetElementById("map-chord-mode")))
 		{
-			Json parts = Json::array();
-			const Json& project = m_display.project();
-			for (const uint64_t track : tracks)
-				for (const Json& part : project.at("midiParts"))
-					if (part.at("track") == track)
-						parts.push_back(part.at("id"));
-			if (!parts.empty())
-				m_binding.send("chord.map", {{"parts", parts}, {"mode", mode->GetValue()}});
+			m_binding.send("chord.map", {{"parts", parts}, {"mode", mode->GetValue()}});
 		}
 	}
 
@@ -1979,6 +2009,8 @@ namespace gnubase::ui
 		{
 			m_drag = Drag::Height;
 			m_dragHeight = m_display.trackHeight(row->id);
+			m_dragHeights = m_display.ownTrackHeights();
+			m_dragTracks.clear();
 			m_dragAll = held(event, "ctrl_key") || held(event, "meta_key");
 		}
 		else
@@ -1995,11 +2027,21 @@ namespace gnubase::ui
 		const double dy = (y - m_dragY) / dpRatio();
 		if (m_drag == Drag::Height)
 		{
+			// Only once it moves up or down: a track's height while its in-place editor is open is larger than its
+			// own, which a press alone would make its own.
+			if (dy == 0.0 && m_dragTracks.empty())
+				return;
 			const double height = m_dragHeight + (dy / m_display.view().trackZoom);
 			if (m_dragAll)
+			{
 				m_display.setTrackHeights(height);
+				m_dragTracks.insert(m_display.laneTracks().begin(), m_display.laneTracks().end());
+			}
 			else
+			{
 				m_display.setTrackHeight(m_dragTrack, height);
+				m_dragTracks.insert(m_dragTrack);
+			}
 			return;
 		}
 		if (m_drag == Drag::Pressed && std::abs(dy) < g_dragThreshold)
@@ -2048,12 +2090,24 @@ namespace gnubase::ui
 			move(m_dropParent, m_dropBefore);
 		if (drag == Drag::Height)
 		{
-			// The engine keeps the heights with the project (trackLayout.set): those of the tracks still there.
+			// The engine keeps the heights with the project (trackLayout.set): those the drag changed, of the tracks
+			// still there. Not the others, which another client may have removed or set since, and nothing for a drag
+			// that changed none, which would make the project count as modified.
 			Json heights = Json::array();
-			for (const auto& [track, height] : m_display.ownTrackHeights())
-				if (m_index.count(track) != 0)
+			for (const uint64_t track : m_dragTracks)
+			{
+				const auto before = m_dragHeights.find(track);
+				const double height = m_display.ownHeight(track);
+				if (m_index.count(track) != 0 &&
+					height != (before == m_dragHeights.end() ? g_trackHeight : before->second))
+				{
 					heights.push_back({{"track", track}, {"height", height}});
-			m_binding.send("trackLayout.set", {{"heights", heights}});
+				}
+			}
+			m_dragHeights.clear();
+			m_dragTracks.clear();
+			if (!heights.empty())
+				m_binding.send("trackLayout.set", {{"heights", std::move(heights)}});
 		}
 	}
 

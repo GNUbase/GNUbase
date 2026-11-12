@@ -1118,6 +1118,8 @@ namespace gnubase::engine
 					if (inside.empty() || inside.is_absolute() || inside.has_root_name() ||
 						*inside.begin() == std::filesystem::path(".."))
 						throw DawProjectError("unsafe media path in the file: " + xmlPath);
+					if (m_mediaFolder.empty()) // not extracted: the entry's name in the file
+						return m_resolved[xmlPath] = inside.u8string();
 					target = m_mediaFolder / inside;
 					std::error_code error;
 					std::filesystem::create_directories(target.parent_path(), error);
@@ -1892,7 +1894,7 @@ namespace gnubase::engine
 		}
 	}
 
-	Project loadDawProject(const std::string& path, const std::string& mediaFolder)
+	Project loadDawProject(const std::string& path, const std::string& mediaFolder, bool extractMedia)
 	{
 		ZipReader zip(path);
 		const std::string xml = zip.text("project.xml");
@@ -1904,7 +1906,8 @@ namespace gnubase::engine
 		if (!root)
 			throw DawProjectError(path + " has no DAWproject project");
 
-		Importer importer(zip, std::filesystem::absolute(pathOf(path)).parent_path(), pathOf(mediaFolder));
+		Importer importer(zip, std::filesystem::absolute(pathOf(path)).parent_path(),
+			extractMedia ? pathOf(mediaFolder) : std::filesystem::path());
 		Project fromXml = importer.load(root);
 		if (!zip.contains(g_extensionEntry))
 			return fromXml;

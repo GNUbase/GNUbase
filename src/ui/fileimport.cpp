@@ -113,6 +113,12 @@ namespace gnubase::ui
 
 	void EventDisplay::dropFiles(Rml::Event& event)
 	{
+		// Files dropped on the event display or the track list, not elsewhere in the project window.
+		const Rml::Element* on = event.GetTargetElement();
+		while (on != nullptr && on != m_root.get() && on->GetId() != "track-list")
+			on = on->GetParentNode();
+		if (on == nullptr)
+			return;
 		std::vector<std::string> files;
 		std::istringstream lines(event.GetParameter<Rml::String>("files", ""));
 		for (std::string line; std::getline(lines, line);)
@@ -120,19 +126,36 @@ namespace gnubase::ui
 				files.push_back(line);
 		if (files.empty())
 			return;
-		// Over the event lanes: the lane's track if it is an audio track, at the time under the mouse.
+		// Over the event lanes: the lane's track if it is an audio track, at the time under the mouse. Elsewhere (the
+		// track list, for one) onto new tracks at the project cursor, still as a drop (reference manual p. 365).
 		const auto mouseX = event.GetParameter<float>("mouse_x", 0.0F);
 		const auto mouseY = event.GetParameter<float>("mouse_y", 0.0F);
 		const double x = dpFrom(*m_lanes, mouseX);
 		const double y = (mouseY - m_lanes->GetAbsoluteTop()) / dpRatio();
+		Import import;
+		import.dropped = true;
 		if (x < 0.0 || y < 0.0 || x > width() || y > height())
 		{
-			importFiles(files);
+			import.sample = std::max<int64_t>(m_cursorSample, 0);
+			// On a track's row in the track list, on that track as on its lane (its first), but not on its automation
+			// rows, which are lanes of their own.
+			const Rml::Element* row = on != m_root.get() ? event.GetTargetElement() : nullptr;
+			while (
+				row != nullptr && row != on && row->GetTagName() != "listitem" && !row->IsClassSet("automation-rows"))
+				row = row->GetParentNode();
+			if (row != nullptr && row != on && row->GetTagName() == "listitem")
+			{
+				const auto track = static_cast<uint64_t>(row->GetAttribute<double>("value", 0.0));
+				const auto type = row->GetAttribute<Rml::String>("type", "");
+				if (type == "audio")
+					import.track = track;
+				else if (type == "midi" || type == "instrument")
+					import.midiTrack = track;
+			}
+			startImport(files, std::move(import));
 			return;
 		}
-		Import import;
 		import.sample = std::max<int64_t>(samples(m_view.start + (x * m_view.scale)), 0);
-		import.dropped = true;
 		// On a lane of a track whose lanes show, on that lane (#99).
 		if (const size_t lane = laneAt(y + m_view.top); lane < m_laneTypes.size() && m_laneTypes[lane] == "audio")
 		{

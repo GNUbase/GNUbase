@@ -496,17 +496,44 @@ namespace gnubase::engine
 		return best.value_or(frame);
 	}
 
+	namespace
+	{
+		// zeroCrossing within the frames first to last of the event's file.
+		time::Samples crossingInFrames(
+			const Project& project, const AudioEvent& event, time::Samples at, int64_t first, int64_t last)
+		{
+			const MediaFile& media = project.media.at(project.clips.at(event.clip).media);
+			const EventSpan span = eventSpan(project, event);
+			const int64_t frame =
+				event.offset + std::llround(eventFrames(project, event, static_cast<double>(at - span.start)));
+			const int64_t found = zeroCrossingFrame(media, frame, first, last);
+			if (found == frame)
+				return at;
+			return span.start + std::llround(eventSamples(project, event, static_cast<double>(found - event.offset)));
+		}
+	}
+
 	time::Samples zeroCrossing(const Project& project, const AudioEvent& event, time::Samples at, bool inside)
 	{
-		const MediaFile& media = project.media.at(project.clips.at(event.clip).media);
+		if (inside)
+			return crossingInFrames(project, event, at, event.offset + 1, event.offset + event.length - 1);
+		return crossingInFrames(project, event, at, 0, project.media.at(project.clips.at(event.clip).media).length - 1);
+	}
+
+	time::Samples zeroCrossingBetween(
+		const Project& project, const AudioEvent& event, time::Samples at, time::Samples from, time::Samples to)
+	{
+		// The frames that play strictly between from and to, and inside the event.
 		const EventSpan span = eventSpan(project, event);
-		const int64_t frame =
-			event.offset + std::llround(eventFrames(project, event, static_cast<double>(at - span.start)));
-		const int64_t found = zeroCrossingFrame(
-			media, frame, inside ? event.offset + 1 : 0, inside ? event.offset + event.length - 1 : media.length - 1);
-		if (found == frame)
-			return at;
-		return span.start + std::llround(eventSamples(project, event, static_cast<double>(found - event.offset)));
+		const auto frameAt = [&project, &event, &span](time::Samples position)
+		{
+			return static_cast<double>(event.offset) +
+				eventFrames(project, event, static_cast<double>(position - span.start));
+		};
+		const int64_t first = std::max<int64_t>(event.offset + 1, static_cast<int64_t>(std::floor(frameAt(from))) + 1);
+		const int64_t last =
+			std::min<int64_t>(event.offset + event.length - 1, static_cast<int64_t>(std::ceil(frameAt(to))) - 1);
+		return crossingInFrames(project, event, at, first, last);
 	}
 
 	void registerSnapCommands(ProjectModel& model, Engine& engine)
@@ -541,8 +568,7 @@ namespace gnubase::engine
 			"for samples 1sample, 10samples, 100samples, 44100samples. A grid type without a format switches to its "
 			"format (the frames to timecode unless userFrames is in use). grids: the grid type each format keeps, "
 			"by default bar, 100ms, frame, 100samples and frame. zeroCrossing: splitting and resizing audio events, "
-			"and "
-			"the edges of selection ranges, in the project window go where the audio crosses zero.";
+			"and the edges of selection ranges, in the project window go where the audio crosses zero.";
 
 		engine.registerCommand(
 			{"snap.get", 1, "The project's snap settings. " + settingsText,
@@ -650,11 +676,11 @@ namespace gnubase::engine
 		model.addEdit(engine,
 			{"snap.zeroCrossings", 1,
 				"Where Snap to Zero Crossing moves positions (project samples) on tracks, as the edges of a selection "
-				"range: each to the nearest point within 50 ms where the audio event playing there crosses zero, "
-				"inside the event, on the first of the tracks where one plays. The event that plays is unmuted, within "
-				"its audio part, which isn't muted, and where events overlap the one in front (event.toFront). A "
-				"position where no audio event plays, or without a zero crossing near, stays. Returns positions in "
-				"the same order.",
+				"range: each to the nearest point within 50 ms where the audio event playing there crosses zero, on "
+				"the first of the tracks where one plays, and where that event plays: inside it and its audio part, "
+				"and not under an event in front of it. The event that plays is unmuted, within its audio part, which "
+				"isn't muted, and where events overlap the one in front (event.toFront). A position where no audio "
+				"event plays, or without a zero crossing near, stays. Returns positions in the same order.",
 				{{"type", "object"}, {"properties", {{"positions", integers}, {"tracks", integers}}},
 					{"required", {"positions", "tracks"}}, {"additionalProperties", false}},
 				{{"type", "object"}, {"properties", {{"positions", integers}}}, {"required", {"positions"}}}, true},
@@ -663,41 +689,69 @@ namespace gnubase::engine
 			{
 				const Json& parameters = context.parameters();
 				const auto tracks = parameters.at("tracks").get<std::vector<ObjectId>>();
+				// Where the audio events on each of the tracks play (#99): unmuted, within their audio part, which
+				// isn't muted.
+				struct Plays
+				{
+					const AudioEvent* event = nullptr;
+					time::Samples start = 0;
+					time::Samples end = 0;
+				};
+				// Where events overlap, the one whose frontOf is highest plays, of two at the same place in the stack
+				// (the pieces of a split event) the one with the higher id, as in playback (makePlaylist).
+				const auto stackPlace = [](const Plays& plays)
+				{ return std::make_pair(frontOf(*plays.event), plays.event->id); };
+				std::vector<std::vector<Plays>> onTracks(tracks.size());
+				for (const auto& [id, event] : project.audioEvents)
+				{
+					const auto track = std::find(tracks.begin(), tracks.end(), event.track);
+					if (track == tracks.end() || event.mute)
+						continue;
+					EventSpan span = eventSpan(project, event);
+					if (const auto part = project.audioParts.find(event.part); part != project.audioParts.end())
+					{
+						if (part->second.mute)
+							continue;
+						const time::Position& from = part->second.position;
+						span.start = std::max(span.start, time::toSamples(from, project.tempo, project.sampleRate));
+						span.end = std::min(span.end,
+							time::toSamples(
+								{from.base, from.value + part->second.length}, project.tempo, project.sampleRate));
+					}
+					if (span.start < span.end)
+						onTracks[static_cast<size_t>(std::distance(tracks.begin(), track))].push_back(
+							{&event, span.start, span.end});
+				}
 				Json positions = Json::array();
 				for (const Json& position : parameters.at("positions"))
 				{
 					const auto at = position.get<time::Samples>();
 					std::optional<time::Samples> moved;
-					for (const ObjectId track : tracks)
+					for (const std::vector<Plays>& plays : onTracks)
 					{
-						// The event that plays there (#99): unmuted, within its audio part, which isn't muted, and of
-						// those the one in front.
-						const AudioEvent* playing = nullptr;
-						for (const auto& [id, event] : project.audioEvents)
+						// The event that plays there: of those there, the one in front.
+						const Plays* playing = nullptr;
+						for (const Plays& each : plays)
+							if (each.start < at && at < each.end &&
+								(playing == nullptr || stackPlace(each) > stackPlace(*playing)))
+								playing = &each;
+						if (playing == nullptr)
+							continue;
+						// It plays from where the nearest event in front of it before the position ends to where the
+						// nearest one after it starts.
+						time::Samples from = playing->start;
+						time::Samples to = playing->end;
+						for (const Plays& each : plays)
 						{
-							if (event.track != track || event.mute ||
-								(playing != nullptr && frontOf(event) < frontOf(*playing)))
+							if (stackPlace(each) <= stackPlace(*playing))
 								continue;
-							EventSpan span = eventSpan(project, event);
-							if (const auto part = project.audioParts.find(event.part); part != project.audioParts.end())
-							{
-								if (part->second.mute)
-									continue;
-								const time::Position& from = part->second.position;
-								span.start =
-									std::max(span.start, time::toSamples(from, project.tempo, project.sampleRate));
-								span.end = std::min(span.end,
-									time::toSamples({from.base, from.value + part->second.length}, project.tempo,
-										project.sampleRate));
-							}
-							if (span.start < at && at < span.end)
-								playing = &event;
+							if (each.end <= at)
+								from = std::max(from, each.end);
+							else if (each.start >= at)
+								to = std::min(to, each.start);
 						}
-						if (playing != nullptr)
-						{
-							moved = zeroCrossing(project, *playing, at, true);
-							break;
-						}
+						moved = zeroCrossingBetween(project, *playing->event, at, from, to);
+						break;
 					}
 					positions.push_back(moved.value_or(at));
 				}

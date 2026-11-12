@@ -13,6 +13,11 @@ namespace gnubase::engine
 	// Whether a clip's audio plays warped: in musical mode, or with free warp markers.
 	bool warped(const Clip& clip);
 
+	// Sorts a clip's free warp markers and throws a CommandError unless each is within the clip, none passes another
+	// and no section between two of them, or one and the clip's ends, plays more than 4 times or less than a quarter
+	// as long, the real-time stretcher's range (dsp::WarpReader). length is the clip's in sample frames.
+	void checkMarkers(ClipWarp& warp, time::Samples length);
+
 	// The clip's tempo in musical mode: its own, or without one the project's at the start of the first event that
 	// plays it (at the project start without one).
 	double definitionTempo(const Project& project, const Clip& clip);

@@ -161,20 +161,27 @@ namespace gnubase::engine
 				"instrument tracks, one part per track from the bar of its first event to the bar after its last. A "
 				"type 0 file gets a track per MIDI channel; the sequences of a type 2 file are laid out one after "
 				"another, each from a bar start. Names that aren't UTF-8 are read as Windows-1252. Unless tempo is "
-				"false, the file's tempo and time signatures replace the project's (tempo changes on the tempo track, "
-				"which becomes active); unless markers is false, its "
+				"false, the file's tempo and time signatures replace the project's from position to the file's end "
+				"(tempo changes on the tempo track, which becomes active); after the end, the project's are kept if "
+				"they change after position or the project has content after the file's end, else the file's last "
+				"ones go on. Content is parts and audio events (also of the tracks' other versions), markers and "
+				"arranger events by their end, and chord, scale and transpose events and automation points by their "
+				"position, so one at the file's end counts; on linear tracks it is in samples, compared with the "
+				"file's end in the file's tempo. Unless markers is false, its "
 				"markers are added to the active marker track (one is added if there is none), except that a type 1 "
 				"file's tracks of nothing but a name and markers, which midiFile.export writes for marker tracks, "
 				"become new marker tracks at the top while the project has room for them. The options of the "
 				"reference's MIDI file import (#478): position (sample frames from the project start, default 0) "
 				"is where the file starts; the project's tempo and signatures before it stay. dissolve false keeps a "
 				"type 0 file in one track. singlePart puts the whole file into one part on one track: track, a "
-				"MIDI or instrument track of the project, or a new one named after the file. On MIDI tracks, "
+				"MIDI or instrument track of the project, or a new one named after the file; on a linear track the "
+				"part's position and length are in samples, its notes in ticks. On MIDI tracks, "
 				"extractPatch makes each track's first program change (with its bank) and extractVolumePan its "
 				"first MIDI volume (CC 7) and pan (CC 10) on MIDI channel 1 the track's program, bank, midiVolume "
 				"and midiPan (channel.set) instead of events. automation moves the continuous controllers into "
 				"automation lanes, as midi.extractAutomation does. One undo step. Returns the new tracks and the "
-				"parts.",
+				"parts. A track that the extraction leaves empty keeps its settings but gets no part, so parts can "
+				"be shorter than tracks, and empty with singlePart.",
 				{{"type", "object"}, {"additionalProperties", false},
 					{"properties",
 						{{"path", string}, {"trackType", {{"type", "string"}, {"enum", {"midi", "instrument"}}}},
@@ -209,6 +216,60 @@ namespace gnubase::engine
 		options.start = project.tempo.toTicks(position, project.sampleRate);
 		options.tempo = project.tempo;
 		options.signatures = project.signatures;
+		// Where the project's content ends: its parts and audio events (also those of the tracks' other versions),
+		// markers, arranger, chord, scale and transpose events and automation points. The project's tempo and
+		// signatures go on after the file's end if any of it is there. Musical positions count in ticks, linear ones
+		// in samples, which keep their time under the file's tempo. An event that holds from its position on (a chord,
+		// scale or transpose event, an automation point) counts from there: one at the file's end is after it.
+		options.sampleRate = project.sampleRate;
+		const auto extend = [&options](const time::Position& at, int64_t holds = 0)
+		{
+			int64_t& end = at.base == time::TimeBase::Linear ? options.contentEndSamples : options.contentEnd;
+			end = std::max(end, at.value + holds);
+		};
+		const auto extendParts = [&extend](const auto& parts)
+		{
+			for (const auto& part : parts)
+				extend({part.position.base, part.position.value + part.length});
+		};
+		// An audio event keeps its position in its track's time base: on a linear track its end in samples, on a
+		// musical one its end in ticks, as the project's tempo has it now.
+		const auto extendEvent = [&project, &extend](const AudioEvent& event)
+		{
+			const time::Samples end = eventSpan(project, event).end;
+			const auto track = project.trackById.find(event.track);
+			if (track != project.trackById.end() && track->second.timeBase == time::TimeBase::Linear)
+				extend({time::TimeBase::Linear, end});
+			else
+				extend({time::TimeBase::Musical, project.tempo.toTicks(end, project.sampleRate)});
+		};
+		for (const auto& [id, part] : project.midiParts)
+			extend({part.position.base, part.position.value + part.length});
+		for (const auto& [id, part] : project.audioParts)
+			extend({part.position.base, part.position.value + part.length});
+		for (const auto& [id, event] : project.audioEvents)
+			extendEvent(event);
+		for (const auto& [id, track] : project.trackById)
+			for (const TrackVersion& version : track.versions)
+			{
+				extendParts(version.midiParts);
+				extendParts(version.audioParts);
+				for (const AudioEvent& event : version.audioEvents)
+					extendEvent(event);
+			}
+		for (const auto& [id, marker] : project.markers)
+			extend(marker.end);
+		for (const ArrangerEvent& event : project.arranger.events)
+			extend(event.end);
+		for (const ChordEvent& event : project.chords.events)
+			extend(event.position, 1);
+		for (const ChordEvent& event : project.chords.scales)
+			extend(event.position, 1);
+		for (const TransposeEvent& event : project.transpose.events)
+			extend(event.position, 1);
+		for (const auto& [id, lane] : project.automation)
+			for (const auto& [pointId, point] : lane.points)
+				extend(point.position, 1);
 		midifile::Import imported;
 		try
 		{

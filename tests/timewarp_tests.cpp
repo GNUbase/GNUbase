@@ -355,4 +355,8 @@ TEST_CASE("warp markers are pasted into other events at the same times", "[unit]
 	CHECK(run(client, "event.pasteWarpMarkers", {{"from", from}, {"events", {to}}}).at("markers") == 0);
 	run(client, "history.undo"); // the paste that changed something
 	CHECK(byId(client, "clips", target).at("warp").at("markers").size() == 1);
+
+	// Nor is one that would squeeze the audio before it to less than a quarter: 100 frames into 10.
+	run(client, "clip.addWarpMarker", {{"clip", target}, {"position", 61900}, {"target", 58990}});
+	CHECK(run(client, "event.pasteWarpMarkers", {{"from", from}, {"events", {to}}}).at("markers") == 0);
 }

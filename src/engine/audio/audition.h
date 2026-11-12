@@ -42,6 +42,9 @@ namespace gnubase::engine
 		};
 
 		Audition();
+		virtual ~Audition() = default;
+		Audition(const Audition&) = delete;
+		Audition& operator=(const Audition&) = delete;
 
 		// Command thread: plays the subject from position on, streamed from its clips, up to end (exclusive, a
 		// position of source's playlist), then nothing until stop. channels: the main mix's; maxFrames: the device's
@@ -57,7 +60,8 @@ namespace gnubase::engine
 			const std::map<ObjectId, std::string>& mediaPaths, double sampleRate, time::Samples position,
 			std::optional<double> seconds, int channels);
 
-		// Command thread: ends playing or scrubbing, and closes the files that played.
+		// Command thread: ends playing or scrubbing, closes the files that played, and frees what the audio thread
+		// played, after the block it plays it in if it is in the middle of one.
 		void stop();
 
 		// Command thread: the disk streams open for playing.
@@ -76,6 +80,11 @@ namespace gnubase::engine
 		// (-1: none).
 		void process(
 			float* const* outputs, int outputChannels, const std::vector<int>& ports, uint32_t frames) noexcept;
+
+	protected:
+		// cue() calls this after reading where the audio thread plays and before cueing the streams from there. The
+		// audio thread goes on meanwhile; tests override it to play blocks at that moment.
+		virtual void playedRead() {}
 
 	private:
 		// What the audio thread plays.

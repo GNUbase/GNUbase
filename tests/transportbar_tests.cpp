@@ -28,6 +28,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -820,6 +821,10 @@ TEST_CASE("positions typed or wheeled past the largest project position stop the
 	REQUIRE(app.waitUntil([&app] { return shows(app, "#primary-time") == "1.1.1.0"; }));
 	app.ui().wheel(std::nullopt, at("#primary-time"), 0, -1e13F);
 	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == int64_t{24000} * 1000000000; }));
+	const int64_t beforeNaN = position(app);
+	app.ui().wheel(std::nullopt, at("#primary-time"), 0, std::numeric_limits<float>::quiet_NaN());
+	settle(app);
+	CHECK(position(app) == beforeNaN);
 }
 
 TEST_CASE("a drag or wheel gesture on the tempo field is one undo step", "[ui]")

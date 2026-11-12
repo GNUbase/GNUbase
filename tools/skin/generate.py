@@ -537,8 +537,9 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
                                      "border-left-width": f"{widths['hairline']}dp",
                                      "border-left-color": c["accent"]}),
         # The chord pads (docs/features/chord-pads.md): pads with their chord, degree and remote key, the selected,
-        # triggered, locked and reference pads, the adaptive voicing indicator, and the chord assistant's suggestions
-        # by how well they fit
+        # triggered, locked and reference pads, the adaptive voicing reference indicator (a square in the reference
+        # frame's color) and the adaptive voicing indicator (a dot), and the chord assistant's suggestions by how well
+        # they fit
         (".chord-pad", {"color": c["text"], "background-color": c["surfaceRaised"],
                         "border-width": f"{widths['hairline']}dp", "border-color": c["border"],
                         "border-radius": f"{theme['radii']['small']}dp"}),
@@ -546,6 +547,7 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".chord-pad .chord-pad-degree, .chord-pad .chord-pad-key", {"color": c["textMuted"],
                                                                       "font-size": f"{sizes['small']}dp"}),
         (".chord-pad.reference", {"border-color": c["warning"]}),
+        (".chord-pad .chord-pad-reference", {"background-color": c["warning"]}),
         (".chord-pad.selected", {"border-color": c["text"]}),
         (".chord-pad.locked .chord-pad-key", {"color": c["accent2"]}),
         (".chord-pad .chord-pad-adaptive", {"background-color": c["accent"],
@@ -682,6 +684,30 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
          {"background-color": c["textMuted"] + "66"}),
         # Its warp markers (docs/features/warp.md)
         (".se-warp-marker-line, .se-warp-marker-handle", {"background-color": c["accent2"]}),
+        # The sampler panel (docs/features/sampler-track.md): the display with the audio outside the start and end
+        # shaded, the loop, the start and end markers in the accent and the loop's in the second accent, the one
+        # dragged lit, and the keyboard with the root key in the accent and the keys outside the key range dimmed
+        (".sampler-display", {"background-color": c["surface"]}),
+        (".sampler-outside", {"background-color": c["background"] + "99"}),
+        (".sampler-loop", {"background-color": c["accent2"] + "1a"}),
+        (".sampler-marker-line, .sampler-marker-flag", {"background-color": c["accent"]}),
+        (".sampler-marker.loop .sampler-marker-line, .sampler-marker.loop .sampler-marker-flag",
+         {"background-color": c["accent2"]}),
+        (".sampler-marker.dragged .sampler-marker-line, .sampler-marker.dragged .sampler-marker-flag",
+         {"background-color": c["text"]}),
+        (".sampler-section-title, .sampler-label", {"color": c["textMuted"], "font-size": f"{sizes['small']}dp"}),
+        (".sampler-key", {"background-color": c["text"], "border-right-width": f"{widths['hairline']}px",
+                          "border-right-color": c["border"]}),
+        (".sampler-key.black", {"background-color": c["background"]}),
+        (".sampler-key.outside", {"background-color": c["textMuted"]}),
+        (".sampler-key.black.outside", {"background-color": mix(c["background"], c["textMuted"], .4)}),
+        (".sampler-key.root", {"background-color": c["accent"]}),
+        # Its keyboard's handles: the root key's in the accent, the key range's muted, the one dragged lit; and the
+        # toolbar's message, why a load or Normalize Sample failed, standing out
+        (".sampler-handle", {"background-color": c["textMuted"]}),
+        (".sampler-handle.root", {"background-color": c["accent"]}),
+        (".sampler-handle.dragged", {"background-color": c["text"]}),
+        (".sampler-message.error", {"color": c["danger"]}),
         # The audio functions (docs/features/audio-functions.md): Detect Silence's sections along the event, the
         # Spectrum Analyzer's bars with the one D is measured from in the second accent, the Statistics' headings
         (".ds-display, .sa-graph", {"background-color": c["surface"]}),

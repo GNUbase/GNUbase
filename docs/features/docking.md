@@ -53,7 +53,9 @@ Editor and Mixer in the lower zone, and Media and Meter on the right (pp. 75–9
 fill them (the Editor panel is the lower zone editor's, [midi-editors.md](midi-editors.md), the Visibility panel has
 the track visibility and the lower zone editor's, [track-visibility.md](track-visibility.md)), the Pool in the lower zone
 ([pool.md](pool.md), `window.pool`, Mod+P), the chord pads in the lower zone
-([chord-pads.md](chord-pads.md), `window.chordPads`) and the edit history on the right ([edit-history.md](edit-history.md)).
+([chord-pads.md](chord-pads.md), `window.chordPads`), the sampler panel in the lower zone
+([sampler-track.md](sampler-track.md), `window.sampler`) and the edit history on the right
+([edit-history.md](edit-history.md)).
 `open` shows a panel as its zone's active tab, with the zone shown; a panel in a window of its own stays there, and
 its window comes to the front with the keyboard focus, restored if it is minimized, so commands such as
 `window.history` show it even when it is behind another window. The OS has the last word: it may refuse the focus to
@@ -101,7 +103,13 @@ and hidden sections (Reset All, p. 1576), and the presets (p. 1575) save and rec
 - **Show and hide.** A section's button shows or hides that section in every container of its set; hidden sections
   get the state class `.hidden`.
 - **Reorder.** A button dragged onto another moves its section to that one's place, in the pane and in every container.
-  The sections stay where they were among the container's other children, such as a channel's name above them.
+  Children that aren't sections, such as a channel's name above them, keep their places between the sections, and the
+  sections fill their own places in the new order. So a toolbar whose spacer stands before its last place has the
+  last section of the order at its right end, whichever section that is, if it is shown. The gap after a toolbar
+  section is the same for every section (`.toolbar-section` in `base.rcss`; the last one has none, the toolbar's
+  padding follows it), so it doesn't depend on the order and no section's controls bring a gap of their own. A
+  section hidden in the setup pane or by a narrow window takes no gap: the window hides Grid Type below 840 dp,
+  Quantize below 1000 dp, and Track Visibility Configurations and Project Root Key below 1100 dp.
 - **Defaults.** The set's first container in the document says which sections there are, their default order and which
   are hidden by default; the other containers are expected to have the same sections.
 - **Containers that come later.** Containers added or rebuilt after `attach`, such as the mixer's channels as tracks

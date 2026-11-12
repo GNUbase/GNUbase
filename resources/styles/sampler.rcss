@@ -1,0 +1,220 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* The sampler panel (ui/samplerpanel.h, docs/features/sampler-track.md): the toolbar, the waveform display with the
+   markers, the loop and the shades outside the start and end, the keyboard, and the sections side by side. Code
+   places the markers, the loop and the shades in percent of the sample. The root gets .empty without a sampler track,
+   the loop and its markers .off without a loop mode, the loop's markers .loop, the marker being dragged .dragged,
+   keys .black, .root and .outside (the key range), the keyboard's handles .root (the root key's, the others the key
+   range's) and .dragged, and the toolbar's message .error; the themes color them. Code places the handles on their
+   keys in percent of the keyboard. */
+.sampler-panel
+{
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	overflow: hidden;
+}
+
+.sampler-hint
+{
+	display: none;
+	padding: 8dp;
+}
+
+.sampler-panel.empty .sampler-hint
+{
+	display: block;
+}
+
+.sampler-panel.empty .sampler-toolbar, .sampler-panel.empty .sampler-display,
+.sampler-panel.empty .sampler-sections, .sampler-panel.empty .sampler-keyboard,
+.sampler-panel.empty .sampler-handles
+{
+	display: none;
+}
+
+.sampler-toolbar
+{
+	display: flex;
+	flex-shrink: 0;
+	align-items: center;
+	gap: 4dp;
+	padding: 2dp 4dp;
+}
+
+.sampler-file
+{
+	flex: 1 1 0;
+	overflow: hidden;
+	white-space: nowrap;
+}
+
+.sampler-message
+{
+	flex: 0 1 auto;
+	overflow: hidden;
+	white-space: nowrap;
+}
+
+.sampler-level
+{
+	width: 64dp;
+}
+
+.sampler-display
+{
+	position: relative;
+	flex: 1 1 0;
+	min-height: 40dp;
+}
+
+.sampler-wave
+{
+	position: absolute;
+	left: 0;
+	top: 0;
+	right: 0;
+	bottom: 0;
+}
+
+.sampler-outside, .sampler-loop
+{
+	position: absolute;
+	top: 0;
+	bottom: 0;
+}
+
+.sampler-outside.sampler-before
+{
+	left: 0;
+}
+
+.sampler-loop.off, .sampler-marker.off
+{
+	display: none;
+}
+
+.sampler-marker
+{
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	width: 9dp;
+	margin-left: -4dp;
+	cursor: resize-horizontal;
+	drag: drag; /* its drag ends wherever the button goes up, outside the window too */
+}
+
+.sampler-marker-line
+{
+	position: absolute;
+	left: 4dp;
+	top: 0;
+	bottom: 0;
+	width: 1dp;
+}
+
+.sampler-marker-flag
+{
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 9dp;
+	height: 6dp;
+}
+
+.sampler-marker.loop .sampler-marker-flag
+{
+	top: auto;
+	bottom: 0;
+}
+
+.sampler-sections
+{
+	display: flex;
+	flex: 0 1 auto;
+	min-height: 0;
+	gap: 8dp;
+	padding: 4dp;
+	overflow: auto;
+}
+
+.sampler-section
+{
+	display: flex;
+	flex-direction: column;
+	flex-shrink: 0;
+	gap: 2dp;
+	width: 170dp;
+}
+
+.sampler-section-title
+{
+	flex-shrink: 0;
+	height: 14dp;
+}
+
+.sampler-control
+{
+	display: flex;
+	flex-shrink: 0;
+	align-items: center;
+	gap: 4dp;
+	height: 20dp;
+}
+
+.sampler-label
+{
+	width: 80dp;
+	white-space: nowrap;
+	overflow: hidden;
+}
+
+.sampler-control valuefield, .sampler-control select
+{
+	flex: 1 1 0;
+}
+
+.sampler-keyboard
+{
+	display: flex;
+	flex-shrink: 0;
+	height: 20dp;
+	padding: 2dp 0;
+}
+
+.sampler-key
+{
+	flex: 1 1 0;
+	height: 100%;
+}
+
+.sampler-key.black
+{
+	height: 60%;
+}
+
+/* A key wide, above the keyboard; the root key's handle in front of the key range's. */
+.sampler-handles
+{
+	position: relative;
+	flex-shrink: 0;
+	height: 8dp;
+	margin-top: 2dp;
+}
+
+.sampler-handle
+{
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	width: 0.78125%;
+	min-width: 3dp;
+	cursor: resize-horizontal;
+	drag: drag; /* its drag ends wherever the button goes up, outside the window too */
+}
+
+.sampler-handle.root
+{
+	top: 2dp;
+	z-index: 1;
+}

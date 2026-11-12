@@ -57,9 +57,9 @@ namespace gnubase::ui
 		// SDL's video driver, e.g. "x11", "wayland", "windows", "cocoa" or "offscreen".
 		static const char* driver();
 
-		// Shows one of the OS's message boxes with the buttons, the first the default, and waits for the user; works
-		// before any window opens, e.g. for the safe start mode (#163). The index of the button chosen, or -1 if it
-		// couldn't be shown.
+		// Shows one of the OS's message boxes with the buttons, the first the default for Return and Escape, and waits
+		// for the user; works before any window opens, e.g. for the safe start mode (#163). The index of the button
+		// chosen, or -1 if it couldn't be shown.
 		static int ask(const std::string& title, const std::string& message, const std::vector<std::string>& buttons);
 
 	private:

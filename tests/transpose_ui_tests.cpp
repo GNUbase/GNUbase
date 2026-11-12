@@ -130,10 +130,10 @@ TEST_CASE("the transpose track's context menu sets the root key for unassigned e
 						  .at("part")
 						  .at("id")
 						  .get<uint64_t>();
-	window.call("project.set", {{"rootKey", "E"}});
 	const std::string item = R"(#track-list-menu > [command="transpose.assignRootKey"])";
 	const auto menu = [&window, &item](uint64_t track)
 	{
+		window.app.ui().key(std::nullopt, "Escape");
 		window.app.ui().click(std::nullopt,
 			{"#track-list listitem[value=\"" + std::to_string(track) + "\"] .track-name", 0, std::nullopt},
 			ui::MouseButton::Right, 1, {});
@@ -141,8 +141,12 @@ TEST_CASE("the transpose track's context menu sets the root key for unassigned e
 		REQUIRE(window.element("#track-list-menu").at("visible") == true);
 		return !window.element(item).at("attributes").contains("disabled");
 	};
-	// Only for the transpose track.
+	// The transpose track needs a project root key before its events can be assigned one.
 	REQUIRE(window.app.waitUntil([&] { return window.display.laneTracks().size() == 2; }));
+	CHECK_FALSE(menu(transpose));
+	window.call("project.set", {{"rootKey", "E"}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("rootKey") == "E"; }));
+	// Only for the transpose track.
 	CHECK_FALSE(menu(midi));
 	REQUIRE(menu(transpose));
 	window.click(item);

@@ -655,6 +655,9 @@ namespace gnubase::engine
 		// A pattern event (#181): the pattern it plays from its start, over and over, instead of its notes; 0 for an
 		// ordinary part.
 		ObjectId pattern = 0;
+		// Where in its pattern a pattern event starts, in ticks: how far the pattern went before it, after a split or
+		// a start sized later (earlier: below 0), so that it continues the pattern.
+		time::Ticks patternOffset = 0;
 	};
 
 	// A frozen track's rendered audio (#116, reference manual pp. 219-220): a file of the project's media folder's
@@ -1389,6 +1392,12 @@ namespace gnubase::engine
 	// The main mix, or 0 if the project has no output bus.
 	ObjectId mainMix(const Project& project);
 
+	// How many ticks from its start the longest project lasts at its tempo: g_maxPosition samples long, but below
+	// 8 kHz, the lowest common sample rate, as long as at 8 kHz. At 999 BPM that is about 10^18 ticks, which still fits
+	// a time::Ticks, while at a few hundred hertz the ticks would leave it. Edits that compute positions, such as the
+	// rule editors', stop there.
+	time::Ticks longestProjectTicks(const Project& project);
+
 	// Makes the first top-level output bus the main mix if no bus is.
 	void keepMainMix(Project& project);
 
@@ -1405,6 +1414,10 @@ namespace gnubase::engine
 
 	// Gives a part's notes and controllers new ids.
 	void renumber(Project& project, MidiPart& part);
+
+	// Takes a part out of its shared copies before its contents change for its own sake: its events get new ids
+	// (renumber), so that it no longer shares them.
+	void detach(Project& project, MidiPart& part);
 
 	// What is wrong with a bus of the project, or empty: its number of ports, a child bus's parent and channels.
 	std::string busProblem(const Project& project, const Bus& bus);
@@ -1617,9 +1630,9 @@ namespace gnubase::engine
 	inline bool sameProperties(const MidiPart& a, const MidiPart& b)
 	{
 		return std::tie(a.id, a.track, a.name, a.position, a.length, a.mute, a.lock, a.shared, a.color, a.lane,
-				   a.transpose, a.velocity, a.rootKey, a.independent, a.pattern) ==
+				   a.transpose, a.velocity, a.rootKey, a.independent, a.pattern, a.patternOffset) ==
 			std::tie(b.id, b.track, b.name, b.position, b.length, b.mute, b.lock, b.shared, b.color, b.lane,
-				b.transpose, b.velocity, b.rootKey, b.independent, b.pattern);
+				b.transpose, b.velocity, b.rootKey, b.independent, b.pattern, b.patternOffset);
 	}
 
 	inline bool operator==(const ProjectColor& a, const ProjectColor& b)
