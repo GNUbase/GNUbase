@@ -10,6 +10,7 @@
 #include <cstring>
 #include <exception>
 #include <filesystem>
+#include <future>
 #include <map>
 #include <mutex>
 
@@ -72,9 +73,11 @@ namespace gnubase::engine::processors
 			fs::file_time_type written;
 			uintmax_t size = 0;
 			std::weak_ptr<const Sample> sample;
+			std::shared_future<std::shared_ptr<const Sample>> reading; // valid while the file is read
 		};
 		// The file is read without the lock, so that reading a long one (the sample loader's thread) holds up no one
-		// who asks for another (sampler.normalize). Two who ask for the same new file at once both read it.
+		// who asks for another (sampler.normalize). Who asks for a file while it is read waits for that read, so that
+		// it isn't read twice (#1180).
 		static std::mutex mutex;
 		static std::map<std::string, Cached> cache;
 		std::error_code error;
@@ -83,18 +86,42 @@ namespace gnubase::engine::processors
 		const uintmax_t size = error ? 0 : fs::file_size(file, error);
 		if (error)
 			return std::make_shared<const Sample>();
+		std::promise<std::shared_ptr<const Sample>> promise;
 		{
-			const std::scoped_lock lock(mutex);
+			std::unique_lock lock(mutex);
 			for (auto entry = cache.begin(); entry != cache.end();)
-				entry = entry->second.sample.expired() ? cache.erase(entry) : std::next(entry);
+				entry = entry->second.sample.expired() && !entry->second.reading.valid() ? cache.erase(entry)
+																						 : std::next(entry);
 			const auto found = cache.find(path);
 			if (found != cache.end() && found->second.written == written && found->second.size == size)
+			{
 				if (std::shared_ptr<const Sample> sample = found->second.sample.lock())
 					return sample;
+				if (found->second.reading.valid())
+				{
+					const std::shared_future<std::shared_ptr<const Sample>> reading = found->second.reading;
+					lock.unlock();
+					return reading.get();
+				}
+			}
+			cache[path] = {written, size, {}, promise.get_future().share()};
 		}
-		std::shared_ptr<const Sample> sample = loadSample(path);
+		std::shared_ptr<const Sample> sample;
+		try
+		{
+			sample = loadSample(path);
+		}
+		catch (...)
+		{
+			// Those who wait get the error too, and the next one to ask reads the file again.
+			promise.set_exception(std::current_exception());
+			const std::scoped_lock lock(mutex);
+			cache.erase(path);
+			throw;
+		}
+		promise.set_value(sample);
 		const std::scoped_lock lock(mutex);
-		cache[path] = {written, size, sample};
+		cache[path] = {written, size, sample, {}};
 		return sample;
 	}
 
@@ -226,9 +253,10 @@ namespace gnubase::engine::processors
 				   : (note < std::round(m_values[KeyLow]) || note > std::round(m_values[KeyHigh])))
 			return;
 
+		// Also in polyphonic mode, so that a key held when monophonic mode comes on is known as held (#1180).
+		m_heldSince[note] = m_notes + 1;
 		if (m_values[Monophonic] >= 0.5)
 		{
-			m_heldSince[note] = m_notes + 1;
 			Voice* playing = monophonicVoice();
 			// Legato: a note played while another is held only changes the pitch; the envelopes run on. Other notes,
 			// held from before monophonic mode or still releasing, fade out as without legato.
@@ -274,12 +302,15 @@ namespace gnubase::engine::processors
 			for (size_t key = 1; key < m_heldSince.size(); ++key)
 				if (m_heldSince[key] > m_heldSince[latest])
 					latest = key;
-			if (m_heldSince[latest] == 0)
+			const auto back = static_cast<uint8_t>(latest);
+			// A key held from before monophonic mode whose voice still sounds goes on sounding on its own.
+			const auto sounding = [back](const Voice& other)
+			{ return other.active && other.held && other.note == back && other.stage != Stage::Release; };
+			if (m_heldSince[latest] == 0 || std::any_of(m_voices.begin(), m_voices.end(), sounding))
 			{
 				release(voice);
 				continue;
 			}
-			const auto back = static_cast<uint8_t>(latest);
 			if (m_values[Legato] >= 0.5 && !voice.slice)
 			{
 				voice.note = back;

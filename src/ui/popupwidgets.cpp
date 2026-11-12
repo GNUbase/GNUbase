@@ -383,6 +383,17 @@ namespace gnubase::ui
 			{
 				Rml::Element::OnUpdate();
 				const Rml::Element* titled = m_titled.get();
+				// An element that isn't hovered any more is gone from under the mouse like a destroyed one: the mouse
+				// moved onto a part of its ancestor that no other element covers, where RmlUi sends the Mouseout to
+				// the element and no Mouseover, or the element was taken out and kept, which clears the state with its
+				// Mouseout too. (RmlUi sets :hover in the default action of the Mouseover, which a listener that stops
+				// the event keeps from running: nothing stops it now.)
+				if (titled != nullptr && !titled->IsPseudoClassSet("hover"))
+				{
+					m_titled.reset();
+					m_tracking = true;
+					titled = nullptr;
+				}
 				if (titled == nullptr)
 				{
 					// The element may have gone from under the mouse, when a list is rendered anew. The one that
@@ -420,7 +431,8 @@ namespace gnubase::ui
 
 		private:
 			Rml::ObserverPtr<Rml::Element> m_titled; // whose title is shown, or waits to be
-			// hover() set m_titled and hide() hasn't cleared it: if m_titled is empty, its element is gone
+			// hover() set m_titled and hide() hasn't cleared it: if m_titled is empty, its element is gone or not
+			// hovered
 			bool m_tracking = false;
 			Rml::Vector2f m_at;
 			double m_due = 0.0;

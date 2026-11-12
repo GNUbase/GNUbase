@@ -32,14 +32,16 @@ and activating versions across tracks.
   on after the highest one, inactive versions' too.
 - **What else knows about inactive versions.** Their audio events use their clips: the pool counts them
   (`pool.removeUnused`, a clip's uses, `clip.remove` refuses), `media.removeMissing` removes them with their clips,
-  and backups keep and minimize their media (`forEveryAudioEvent`). `track.duplicate` copies every version with ids of
+  and backups keep and minimize their media (`forEveryAudioEvent`). `media.relinkResampled`, including when called by
+  `media.conform`, rescales their audio events and crossfades. `track.duplicate` copies every version with ids of
   its own, `track.removeEmpty` keeps a track with more than one version, and the track list's warning before Remove
   Selected Tracks counts them too. A new time base or sample rate moves inactive versions' events and parts as it
-  moves the active ones. MIDI parts that go into an inactive version stop being shared copies of the parts that play.
+  moves the active ones. A tempo change retimes notes and controllers in their linear MIDI parts. MIDI parts that go
+  into an inactive version stop being shared copies of the parts that play.
 
 Tests: `tests/trackversions_tests.cpp` renders a track whose new version is empty and whose first one plays again
 once activated, across two tracks with one ID, and checks duplicating, names, deleting, common IDs, undo, the project
-file, `track.duplicate`, a new time base and the pool.
+file, `track.duplicate`, a new time base, the pool, resampled media relinking and tempo changes.
 
 ## UI
 

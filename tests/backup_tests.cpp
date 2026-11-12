@@ -694,7 +694,7 @@ TEST_CASE("a backup leaves out the folders in the Mixdown folder that it can't l
 		SKIP("the folder can be listed here anyway, e.g. by root");
 
 	const Json result = backup(song.client, {{"folder", utf8(dir.path() / "Backup")}});
-	CHECK(result.at("missing") == Json::array({{{"path", utf8(mixdown / "Hidden")}}}));
+	CHECK(result.at("missing") == Json::array({{{"path", utf8(mixdown / "Hidden")}, {"folder", true}}}));
 	CHECK(filesIn(dir.path() / "Backup") == std::set<std::string>{"Song.dawproject", "Mixdown/Song.wav"});
 	CHECK(!fs::exists(dir.path() / "Backup" / "Mixdown" / "Hidden")); // not recreated empty
 }
@@ -775,6 +775,26 @@ TEST_CASE("media can be copied into the project folder when they are added", "[i
 	run(song.client, "project.new");
 	CHECK(run(song.client, "project.location") ==
 		Json{{"file", nullptr}, {"folder", nullptr}, {"mediaFolder", nullptr}, {"name", "Untitled"}});
+}
+
+TEST_CASE("media.prepareArchive copies only the media files given", "[integration]")
+{
+	const test::TempDir dir;
+	const fs::path elsewhere = dir.path() / "library";
+	writeNoise(elsewhere / "a.wav", 4800, 2, 1);
+	writeNoise(elsewhere / "b.wav", 4800, 2, 2);
+	const fs::path project = dir.path() / "project";
+	Song song;
+	const ObjectId a = song.addMedia(elsewhere / "a.wav");
+	song.addMedia(elsewhere / "b.wav");
+	fs::create_directories(project);
+	run(song.client, "project.save", {{"path", utf8(project / "Song.dawproject")}, {"embedMedia", false}});
+	CHECK_THAT(reject(song.client, "media.prepareArchive", {{"media", {123456}}}), ContainsSubstring("123456"));
+	const Json result = runJob(song.client, "media.prepareArchive", {{"media", {a}}});
+	REQUIRE(result.at("copied").size() == 1);
+	CHECK(result.at("copied")[0].at("media") == a);
+	CHECK(fs::exists(project / "Audio" / "a.wav"));
+	CHECK(!fs::exists(project / "Audio" / "b.wav"));
 }
 
 TEST_CASE("preparing an archive gathers the media in the project folder", "[integration]")
@@ -972,6 +992,35 @@ TEST_CASE("a free file's name differs from the names in the folder in more than 
 	CHECK(bytesOf(dir.path() / "A.wav") == "there");
 	CHECK_THROWS_AS(createFreeFile(dir.path() / "missing", "a.wav"), std::runtime_error); // no listing, no file
 }
+
+TEST_CASE("free files for several tracks come from one listing of the folder", "[unit]")
+{
+	const test::TempDir dir;
+	std::ofstream(dir.path() / "A.wav") << "there";
+	std::set<std::string> taken = takenNames(dir.path());
+	CHECK(taken == std::set<std::string>{"a.wav"});
+	CHECK(createFreeFile(dir.path(), "a.wav", taken).filename() == "a-2.wav");
+	CHECK(createFreeFile(dir.path(), "a.wav", taken).filename() == "a-3.wav");
+	// A file made after the listing is still found by the create.
+	std::ofstream(dir.path() / "b.wav") << "there";
+	CHECK(createFreeFile(dir.path(), "b.wav", taken).filename() == "b-2.wav");
+	CHECK(bytesOf(dir.path() / "b.wav") == "there");
+	CHECK(takenNames(dir.path() / "missing").empty());
+}
+
+#ifdef _WIN32
+TEST_CASE("a file whose name isn't valid UTF-16 doesn't keep free files from being made", "[unit]")
+{
+	// NTFS allows an unpaired surrogate, which can't be converted to UTF-8.
+	const test::TempDir dir;
+	const fs::path odd = dir.path() / std::wstring(L"\xD800.wav");
+	std::ofstream(odd) << "there";
+	REQUIRE(fs::exists(odd));
+	std::ofstream(dir.path() / "a.wav") << "there";
+	CHECK(takenNames(dir.path()) == std::set<std::string>{"a.wav"});
+	CHECK(createFreeFile(dir.path(), "a.wav").filename() == "a-2.wav");
+}
+#endif
 
 TEST_CASE("files made at the same time get names of their own", "[integration]")
 {

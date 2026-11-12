@@ -43,6 +43,10 @@ namespace gnubase::engine
 	// keep their time.
 	void changeSampleRate(Project& project, double sampleRate, CommandContext& context);
 
+	// Changes a track's time base (projectmodel.cpp): its events, parts, markers, automation points and other
+	// versions' events and parts keep their place in the new one.
+	void rebaseTrack(Project& project, Track& track, time::TimeBase base, CommandContext& context);
+
 	// The project's tempo as project.get and the tempo.changed event report it (tempo.cpp): the tempo it plays, whether
 	// the tempo track is active, the tempo track's events and the fixed tempo.
 	Json tempoJson(const Project& project);
@@ -152,6 +156,9 @@ namespace gnubase::engine
 		// A slot of the project as the plugin.* commands and their plugin.changed events describe it, with its index
 		// and status; null for no such slot. Only on the command thread.
 		Json describeSlot(const Project& project, ObjectId slot) const;
+		// Announces what changed from before to after with the events that redoing it would send, for an edit that
+		// changes much at once, such as track.import.
+		void announceChange(const Project& before, const Project& after, CommandContext& context) const;
 
 	private:
 		// Registers a query, or a command that changes the project. Such a command runs on the project, and if it

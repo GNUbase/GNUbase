@@ -8,6 +8,7 @@
 #include <RmlUi/Core/ObserverPtr.h>
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -67,6 +68,8 @@ namespace gnubase::ui
 
 		KeyTool tool() const { return m_tool; }
 		bool drum() const { return m_drum; }
+		// Runs when the drum editor's Map menu chooses Drum Map Setup.
+		void setDrumMapSetup(std::function<void()> open) { m_drumMapSetup = std::move(open); }
 		void setTool(KeyTool tool);
 
 		// The notes' time axis, project ticks across the grid, instead of the parts' range: the in-place editor's
@@ -109,6 +112,7 @@ namespace gnubase::ui
 			ResizeStart,
 			ResizeEnd,
 			Draw,
+			Erase, // the drumstick's press on a note
 		};
 
 		void ProcessEvent(Rml::Event& event) override;
@@ -131,6 +135,8 @@ namespace gnubase::ui
 		void scrollToNotes(); // the first scroll, to the middle of the notes, until one succeeds (m_scrolled)
 		// The drum editor's: the active track's drum map, the rows' order from it, and the sound list and Map menu.
 		const engine::Json* activeMap() const;
+		// The drum editor shows its notes as diamonds, unless Show Note Length is on.
+		bool diamonds() const { return m_drum && !m_view.value("showNoteLength", false); }
 		void updateOrder();
 		std::string soundsRml() const;
 		void renderDrumMap();
@@ -169,6 +175,7 @@ namespace gnubase::ui
 		std::string m_name;
 		std::string m_menuSuffix; // menuIdSuffix's
 		bool m_drum = false;
+		std::function<void()> m_drumMapSetup;
 		KeyTool m_tool = KeyTool::ObjectSelection;
 		std::vector<int> m_order; // the pitches of the rows, from the top
 		std::vector<int> m_rowOf; // each pitch's row

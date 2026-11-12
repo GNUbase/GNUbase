@@ -61,10 +61,14 @@ namespace gnubase::ui
 		const engine::Json& view() const { return m_view; }
 		// The key editor, of an EditorPart::Editor while it shows the key editor.
 		KeyEditor* keyEditor() { return m_keys.get(); }
+		// Runs when the drum editor's Map menu chooses Drum Map Setup (KeyEditor::setDrumMapSetup).
+		void setDrumMapSetup(std::function<void()> open);
 		// The list editor, of an EditorPart::Editor while it shows the list editor.
 		ListEditor* listEditor() { return m_list.get(); }
 		// The audio part editor, of an EditorPart::Editor while it shows audio parts.
 		AudioPartEditor* audioPartEditor() { return m_audio.get(); }
+		// The pattern editor, of an EditorPart::Editor while it shows a pattern event.
+		PatternEditor* patternEditor() { return m_pattern.get(); }
 
 	private:
 		void ProcessEvent(Rml::Event& event) override;
@@ -93,6 +97,7 @@ namespace gnubase::ui
 		std::string m_name;
 		EditorPart m_part;
 		std::function<void()> m_moved;
+		std::function<void()> m_drumMapSetup;
 		engine::Json m_project = engine::Json::object();
 		engine::Json m_view = engine::Json::object();
 		bool m_loading = false;

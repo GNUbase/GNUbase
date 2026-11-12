@@ -487,6 +487,10 @@ namespace gnubase::engine::settings
 					"The type of new tempo events (reference manual p. 1448): ramp changes the tempo gradually from "
 					"the event before, step jumps, auto takes the type of the event before (tempo.add, tempo.tap).",
 					Json{{"type", "string"}, {"enum", {"ramp", "step", "auto"}}}, "auto"},
+				{"editing.useDrumEditor",
+					"Use Drum Editor when Drum Map is assigned (reference manual p. 1603): a closed editor opens the "
+					"parts of a track with a drum map in the drum editor (editor.open).",
+					Json{{"type", "boolean"}}, true},
 				{"meter.resetOnStart",
 					"Reset on Start: the loudness meter, and the main mix's peak and RMS maxima, start over when "
 					"playback starts (see meter.get).",
@@ -508,7 +512,10 @@ namespace gnubase::engine::settings
 					"change's last value before that position.",
 					Json{{"type", "boolean"}}, true},
 				{"midi.chaseNotes",
-					"Where playback starts or jumps, MIDI tracks start the notes that sound at that position.",
+					"Where playback starts or jumps, MIDI tracks start the notes that sound at that position, after "
+					"the "
+					"last key switch of each pitch before it that an articulation map's sound slots played, for a "
+					"sample, so that the instrument plays the articulation it had there.",
 					Json{{"type", "boolean"}}, true},
 				{"midi.chasePitchBend",
 					"Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each "

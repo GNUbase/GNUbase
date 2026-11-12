@@ -214,4 +214,14 @@ TEST_CASE("the articulation map setup shows changes from elsewhere, and imports 
 	f.answer(dir.path() / "Broken.articulationmap");
 	REQUIRE(f.app.waitUntil([&f] { return !f.message().empty(); }));
 	CHECK(f.listed() == std::vector<std::string>{"Strings"});
+
+	// Export Map offers the map's name as the file name, without what file names can't have, and shows why an
+	// export failed.
+	f.app.call("articulationMap.set", {{"map", id}, {"name", "Strings/Pizz"}});
+	REQUIRE(f.app.waitUntil([&f] { return f.listed() == std::vector<std::string>{"Strings/Pizz"}; }));
+	f.click("#articulation-map-export");
+	REQUIRE(f.app.waitUntil([&f] { return f.app.shell().fileDialogs().size() == 1; }));
+	CHECK(f.app.shell().fileDialogs().begin()->second.location.u8string() == "Strings_Pizz.articulationmap");
+	f.answer(dir.path() / "missing" / "Strings");
+	REQUIRE(f.app.waitUntil([&f] { return f.message().find("can't write") != std::string::npos; }));
 }

@@ -186,7 +186,9 @@ namespace gnubase::ui
 			[this](const engine::Event& event)
 			{
 				const Json& values = event.data.at("values");
-				if (const auto settings = values.find("ui.samplerPanel"); settings != values.end())
+				// The panel's own changes on their way, e.g. a drag of the level, aren't set back by older ones
+				// (#1180).
+				if (const auto settings = values.find("ui.samplerPanel"); settings != values.end() && m_savesSent == 0)
 				{
 					m_settingsKnown = true;
 					applySettings(*settings);
@@ -602,7 +604,13 @@ namespace gnubase::ui
 		m_settingsKnown = true; // what settings.get answers now is older
 		m_settings["lockParameters"] = m_lock;
 		m_settings["normalizeLevel"] = m_level;
-		m_binding.send("settings.set", {{"key", "ui.samplerPanel"}, {"value", m_settings}});
+		++m_savesSent;
+		m_binding.send("settings.set", {{"key", "ui.samplerPanel"}, {"value", m_settings}},
+			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& /*result*/)
+			{
+				if (!alive.expired())
+					--m_savesSent;
+			});
 	}
 
 	void SamplerPanel::ProcessEvent(Rml::Event& event)

@@ -20,10 +20,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <chrono>
-#include <cstring>
 #include <filesystem>
-#include <fstream>
-#include <iterator>
 #include <memory>
 #include <optional>
 #include <regex>
@@ -339,8 +336,7 @@ TEST_CASE(
 		if (entry.path().extension() != ".rml")
 			continue;
 		INFO(entry.path().filename().u8string());
-		std::ifstream file(entry.path(), std::ios::binary);
-		const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+		const std::string text = test::readText(entry.path());
 		const bool fragment = text.find("<rml") == std::string::npos; // such as transport.rml
 		Rml::ElementDocument* document = app.main().context().LoadDocumentFromMemory(
 			fragment ? std::string("<rml><body/></rml>") : text, entry.path().generic_u8string());
@@ -392,16 +388,8 @@ TEST_CASE("a transport window whose controls are refused closes again (#669)", "
 	for (const Broken& each : broken)
 	{
 		INFO(each.file);
-		// A copy of GNUbase's resources with the control changed.
 		const test::TempDir folder;
-		const std::filesystem::path resources = folder.path() / "resources";
-		std::filesystem::copy(GNUBASE_RESOURCES_DIR, resources, std::filesystem::copy_options::recursive);
-		const std::filesystem::path file = resources / "ui" / each.file;
-		std::string text = test::readText(file);
-		const size_t at = text.find(each.from);
-		REQUIRE(at != std::string::npos);
-		text.replace(at, std::strlen(each.from), each.to);
-		std::ofstream(file, std::ios::binary) << text;
+		const std::filesystem::path resources = test::patchedResources(folder.path(), each.file, each.from, each.to);
 
 		// The project window isn't shown: the broken transport.rml would refuse its transport bar too.
 		test::UiApp app({900, 640}, resources);

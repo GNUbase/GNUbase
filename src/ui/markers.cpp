@@ -191,11 +191,8 @@ namespace gnubase::ui
 		m_area->RemoveEventListener(Rml::EventId::Mousedown, this);
 		m_field->RemoveEventListener(Rml::EventId::Change, this);
 		m_field->RemoveEventListener(Rml::EventId::Blur, this);
-		if (Rml::ElementDocument* document = m_area->GetOwnerDocument(); document != nullptr && m_drag != Drag::None)
-		{
-			document->RemoveEventListener(Rml::EventId::Mousemove, this);
-			document->RemoveEventListener(Rml::EventId::Mouseup, this);
-		}
+		if (m_drag != Drag::None)
+			listen(false);
 	}
 
 	// ponytail: reads the whole project after every change, as the event display does.
@@ -517,10 +514,22 @@ namespace gnubase::ui
 				closeField(false);
 			break;
 		case Rml::EventId::Mousedown:
-			if (onField)
+			// The document's, in the capture phase: a left press while a drag goes on, whose mouseup never came as
+			// when the button went up outside the window. The drag ends without its effect before the press does what
+			// it does.
+			if (event.GetCurrentElement() != m_area.get())
+			{
+				if (event.GetParameter<int>("button", 0) == 0)
+					cancelDrag();
+			}
+			else if (onField)
+			{
 				event.StopPropagation(); // the display doesn't select or draw under it
+			}
 			else if (event.GetParameter<int>("button", 0) == 0)
+			{
 				press(event);
+			}
 			break;
 		default:
 			break;
@@ -572,11 +581,30 @@ namespace gnubase::ui
 							result.value.at("end").get<int64_t>(), m_display.laneTracks()});
 					});
 				event.StopPropagation();
+				return;
+			}
+			// A drag on the marker track in the selection range moves its contents (p. 432).
+			if (const std::optional<RangeSelection>& range = m_display.range(); range && range->end > range->start &&
+				std::find(range->tracks.begin(), range->tracks.end(), track.id) != range->tracks.end())
+			{
+				const double rate = m_markers.time.sampleRate;
+				const double start = static_cast<double>(range->start) / rate;
+				if (seconds < start || seconds > static_cast<double>(range->end) / rate)
+					return;
+				m_drag = Drag::Range;
+				m_dragRange = range;
+				m_dragFrom = start;
+				m_pressX = mouse.x;
+				m_dragMoved = false;
+				listen(true);
+				event.StopPropagation(); // the display selects no other range
 			}
 			return;
 		case Tool::Erase:
 		{
-			// The marker clicked, with Alt every marker on the track from it or the click on (p. 425).
+			// The marker clicked, with the tool modifier Delete Later Events (Alt) every marker on the track from it
+			// or the click on (p. 425).
+			const bool later = m_display.toolModifier("erase.deleteLaterEvents", event);
 			std::vector<uint64_t> erased;
 			const MarkerItem* from = nullptr;
 			for (const MarkerItem& marker : m_markers.markers)
@@ -584,7 +612,7 @@ namespace gnubase::ui
 					from = &marker;
 			for (const MarkerItem& marker : m_markers.markers)
 				if (marker.track == track.id &&
-					(marker.id == hit.marker || (alt && marker.start >= (from != nullptr ? from->start : seconds))))
+					(marker.id == hit.marker || (later && marker.start >= (from != nullptr ? from->start : seconds))))
 					erased.push_back(marker.id);
 			if (!erased.empty())
 				m_binding.send("marker.remove", {{"markers", erased}});
@@ -646,12 +674,40 @@ namespace gnubase::ui
 				m_drag = Drag::End;
 			m_dragFrom = m_drag == Drag::End ? marker->end : marker->start;
 		}
-		if (Rml::ElementDocument* document = m_area->GetOwnerDocument())
-		{
-			document->AddEventListener(Rml::EventId::Mousemove, this);
-			document->AddEventListener(Rml::EventId::Mouseup, this);
-		}
+		listen(true);
 		event.StopPropagation(); // the display draws no rectangle
+	}
+
+	void MarkerLines::listen(bool document)
+	{
+		Rml::ElementDocument* owner = m_area->GetOwnerDocument();
+		if (owner == nullptr)
+			return;
+		if (document)
+		{
+			owner->AddEventListener(Rml::EventId::Mousemove, this);
+			owner->AddEventListener(Rml::EventId::Mouseup, this);
+			// In the capture phase: before the press reaches the event area or anything else in the document.
+			owner->AddEventListener(Rml::EventId::Mousedown, this, true);
+		}
+		else
+		{
+			owner->RemoveEventListener(Rml::EventId::Mousemove, this);
+			owner->RemoveEventListener(Rml::EventId::Mouseup, this);
+			owner->RemoveEventListener(Rml::EventId::Mousedown, this, true);
+		}
+	}
+
+	void MarkerLines::cancelDrag()
+	{
+		if (m_drag == Drag::None)
+			return;
+		if (m_drag == Drag::Range)
+			m_display.setRange(m_dragRange);
+		m_drag = Drag::None;
+		listen(false);
+		m_preview.reset();
+		show();
 	}
 
 	// A drag on the marker track: shows where it puts the markers, and on the release sends it.
@@ -663,17 +719,31 @@ namespace gnubase::ui
 		if (release)
 		{
 			m_drag = Drag::None;
-			if (Rml::ElementDocument* document = m_area->GetOwnerDocument())
-			{
-				document->RemoveEventListener(Rml::EventId::Mousemove, this);
-				document->RemoveEventListener(Rml::EventId::Mouseup, this);
-			}
+			listen(false);
+		}
+		const auto mouseX = event.GetParameter<float>("mouse_x", 0.0F);
+		if (drag == Drag::Range)
+		{
+			// The selection range follows the mouse, snapped; released, its contents go where it is, or a copy of
+			// them with the tool modifier Copy (Alt).
+			m_dragMoved = m_dragMoved || std::abs(mouseX - m_pressX) / ratio() >= g_dragStart;
+			if (!m_dragMoved || !m_dragRange)
+				return;
+			const RangeSelection& from = *m_dragRange;
+			const double to = m_dragFrom + ((mouseX - m_pressX) / ratio() * m_display.view().scale);
+			const int64_t start =
+				std::llround(std::max(0.0, m_display.snapped(to, m_dragFrom)) * m_markers.time.sampleRate);
+			m_display.setRange(RangeSelection{start, start + (from.end - from.start), from.tracks});
+			if (release && start != from.start)
+				m_binding.send("range.move",
+					{{"start", from.start}, {"end", from.end}, {"tracks", from.tracks}, {"position", start},
+						{"copy", m_display.toolModifier("dragDrop.copy", event)}});
+			return;
 		}
 		// Moved onto another marker track's lane, the markers go there.
 		uint64_t onto = m_dragTrack;
 		if (const std::optional<LanePoint> lane = markerLaneAt(event); drag == Drag::Move && lane)
 			onto = lane->track->id;
-		const auto mouseX = event.GetParameter<float>("mouse_x", 0.0F);
 		// Sideways, or straight onto another marker track to keep the position.
 		m_dragMoved = m_dragMoved || std::abs(mouseX - m_pressX) / ratio() >= g_dragStart || onto != m_dragTrack;
 		if (!m_dragMoved)

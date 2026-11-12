@@ -261,6 +261,26 @@ TEST_CASE(
 	CHECK(signatures[2].at("bar") == 10);
 	CHECK(signatures[2].at("numerator") == 4);
 	CHECK(signatures[2].at("denominator") == 4);
+	CHECK(project.at("tempoTrackActive") == true);
+
+	// Undo gives back the project's tempo, signature and tempo mode, redo the merged ones again.
+	const auto tempoState = [&client]
+	{
+		const Json tempo = run(client, "project.get");
+		return Json{{"tempo", tempo.at("tempo")}, {"signatures", tempo.at("signatures")},
+			{"tempoTrackActive", tempo.at("tempoTrackActive")}};
+	};
+	const Json merged = tempoState();
+	run(client, "history.undo");
+	const Json undone = tempoState();
+	REQUIRE(undone.at("tempo").size() == 1);
+	CHECK(undone.at("tempo")[0].at("bpm") == 100.0);
+	CHECK(undone.at("signatures").size() == 1);
+	CHECK(undone.at("tempoTrackActive") == false);
+	CHECK(run(client, "project.get").at("midiParts").size() == 1);
+	run(client, "history.redo");
+	CHECK(tempoState() == merged);
+	CHECK(run(client, "project.get").at("midiParts").size() == 2);
 }
 
 TEST_CASE("midiFile.import keeps a constant project tempo and signature for any content after the file's end",
@@ -284,17 +304,20 @@ TEST_CASE("midiFile.import keeps a constant project tempo and signature for any 
 	bool after = true;
 	bool slow = false; // the file at 60 BPM, slower than the project
 
-	// An audio event of 4000 samples on a new audio track; position is in the track's time base. Returns the track.
-	const auto addAudioEvent = [&client, &dir, &addTrack](int64_t position, const char* timeBase = "linear")
+	// An audio event of length samples (at the project's 48 kHz) on a new audio track; position is in the track's time
+	// base. Returns the track.
+	const auto addAudioEvent = [&client, &dir, &addTrack](
+								   int64_t position, const char* timeBase = "linear", int64_t length = 4000)
 	{
 		test::Audio audio;
-		audio.samples.assign(4000, 0.25F);
-		test::writeWav(dir.path() / "tone.wav", audio);
-		const Json media = run(client, "media.add", {{"path", (dir.path() / "tone.wav").u8string()}});
+		audio.samples.assign(static_cast<size_t>(length), 0.25F);
+		const std::filesystem::path wav = dir.path() / ("tone" + std::to_string(length) + ".wav");
+		test::writeWav(wav, audio);
+		const Json media = run(client, "media.add", {{"path", wav.u8string()}});
 		const Json clip = run(client, "clip.add", {{"media", media.at("media").at("id")}}).at("clip").at("id");
 		const ObjectId audioTrack = addTrack("audio", timeBase);
 		run(client, "audioEvent.add",
-			{{"track", audioTrack}, {"clip", clip}, {"position", position}, {"offset", 0}, {"length", 4000}});
+			{{"track", audioTrack}, {"clip", clip}, {"position", position}, {"offset", 0}, {"length", length}});
 		return audioTrack;
 	};
 
@@ -313,6 +336,28 @@ TEST_CASE("midiFile.import keeps a constant project tempo and signature for any 
 		// the file's end in the file's 60 BPM, which must not matter.
 		slow = true;
 		addAudioEvent(start + (4 * g_quarter), "musical");
+	}
+	// An audio event on a musical track keeps its start in ticks and its length in samples: it counts by where it ends
+	// in the file's tempo. The file at 120 BPM ends 72000 samples after its start, at 60 BPM 144000.
+	SECTION("An audio event on a musical track that ends after the end of a faster file only in the file's tempo")
+	{
+		// It starts 60000 samples after the file's start and ends at 73000. In the project's 100 BPM it would end
+		// 2.95 quarter notes after the start, before the file's 3.
+		addAudioEvent(start + ((5 * g_quarter) / 2), "musical", 13000);
+	}
+	SECTION("An audio event on a musical track that ends before the end of a slower file only in the file's tempo")
+	{
+		// It starts 120000 samples after the file's start and ends at 140000. In the project's 100 BPM it would end
+		// 3.19 quarter notes after the start, after the file's 3.
+		slow = true;
+		after = false;
+		addAudioEvent(start + ((5 * g_quarter) / 2), "musical", 20000);
+	}
+	SECTION("An audio event on a musical track that starts before the file and ends after it in the file's tempo")
+	{
+		// A bar before the file's start in the project's 100 BPM, 115200 samples, so it ends 84800 samples after the
+		// file's start: 2.94 quarter notes in the project's tempo.
+		addAudioEvent(start - bar, "musical", 200000);
 	}
 	SECTION("A MIDI part on another version of its track")
 	{
@@ -399,8 +444,8 @@ TEST_CASE("midiFile.import keeps a constant project tempo and signature for any 
 	SECTION("Content that ends before the file's end in the file's tempo counts for nothing")
 	{
 		after = false;
-		// A linear event that ends before the file's end, and one on a musical track that ends before it in ticks,
-		// though after it in samples in the project's tempo.
+		// A linear event that ends before the file's end, and one on a musical track that ends before it in the
+		// file's tempo, though after it in the project's.
 		addAudioEvent(endSamples - 6000);
 		addAudioEvent(start + ((5 * g_quarter) / 2), "musical");
 		addTrack("chord", "musical");

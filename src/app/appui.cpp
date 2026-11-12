@@ -527,6 +527,7 @@ namespace gnubase::app
 					Rml::Element& page = editor || !m_trackVisibility ? element : m_trackVisibility->showPanel(element);
 					auto shown = std::make_shared<ui::MidiEditor>(
 						m_binding, page, "lower", editor ? ui::EditorPart::Editor : ui::EditorPart::Visibility);
+					shown->setDrumMapSetup([this] { m_shell.post([this] { openDrumMaps(m_main); }); });
 					if (editor)
 						m_lowerEditor = shown;
 					return std::shared_ptr<void>(shown);
@@ -1380,6 +1381,14 @@ namespace gnubase::app
 					if (rename)
 						m_markerLines->rename(marker);
 				});
+		// A profile switch that GNUbase couldn't finish nor undo at the start: the Profile Manager tells the user
+		// (docs/features/profiles.md).
+		m_binding.send("profile.list", engine::Json::object(),
+			[this](const engine::Result& result)
+			{
+				if (result.ok() && result.value.value("unfinished", false))
+					m_keys.run("window.profiles", engine::Json::object(), m_main, nullptr);
+			});
 		return *m_eventDisplay;
 	}
 
@@ -1819,6 +1828,17 @@ namespace gnubase::app
 			}});
 		m_keys.add({"drumMap.save", "Saves the drum map of the editor's active track as a drum map file.",
 			[this](ui::Window& window, Rml::Element*) { saveDrumMap(window.id()); }});
+		// The Drum Map Setup (pp. 1235-1237), also from the drum editor's Map menu. Its Save chooses the file for the
+		// map it shows (gnubase.ui.saveDrumMap); its Load runs drumMap.load.
+		m_keys.add({"drumMap.setup",
+			"Opens the Drum Map Setup, which lists the project's drum maps and changes them and their sounds.",
+			[this](ui::Window& window, Rml::Element*) { openDrumMaps(window); }});
+		m_lua.addFunction("ui.saveDrumMap",
+			[this](const engine::Json& parameters)
+			{
+				chooseDrumMapFile(callingWindow().id(), parameters.value("map", uint64_t{0}));
+				return engine::Json::object();
+			});
 		// The pattern editor (#181, reference manual p. 895): the selected MIDI parts in the editor window's pattern
 		// editor, and Preset Management's Save Preset and Load Preset (pp. 932-933) for the editor's active track.
 		m_keys.add({"editor.openPattern", "Opens the selected MIDI parts in the pattern editor window.",
@@ -1946,6 +1966,16 @@ namespace gnubase::app
 		// Open in Lower Zone opens the Editor tab in the lower zone (reference manual, p. 1198).
 		m_editor.editor = std::make_unique<ui::MidiEditor>(
 			m_binding, *root, "window", ui::EditorPart::Editor, [this] { m_docking.open("editor"); });
+		m_editor.editor->setDrumMapSetup(
+			[this]
+			{
+				m_shell.post(
+					[this]
+					{
+						ui::Window* window = m_shell.find(m_editor.window);
+						openDrumMaps(window != nullptr ? *window : m_main);
+					});
+			});
 		m_docking.attach("editorWindow", *document);
 	}
 
@@ -2048,10 +2078,11 @@ namespace gnubase::app
 		const auto selection = [this]
 		{ return m_trackList != nullptr ? m_trackList->selection() : std::vector<uint64_t>(); };
 		const auto hasSelection = [selection](ui::Window&, Rml::Element*) { return !selection().empty(); };
-		// File > Import > Tracks from Project or Track Archive (reference manual pp. 201-202): below the first
-		// selected track, or at the bottom.
+		// File > Import > Tracks from Project or Track Archive (reference manual pp. 201-205): the file chosen opens in
+		// the Import Options dialog, which imports below the first selected track or at the bottom.
 		m_keys.add({"file.importTracks",
-			"Imports the tracks of a project or track archive below the first selected track, or at the bottom.",
+			"Imports tracks of a project or track archive through the Import Options dialog, below the first selected "
+			"track or at the bottom.",
 			[this, selection](ui::Window& window, Rml::Element* /*zone*/)
 			{
 				ui::FileDialog dialog;
@@ -2064,20 +2095,12 @@ namespace gnubase::app
 					{
 						if (!chosen.error.empty())
 							logging::warning("The file dialog failed: {}", chosen.error);
-						if (chosen.files.empty())
+						ui::Window* parent = m_shell.find(id);
+						if (chosen.files.empty() || parent == nullptr)
 							return;
-						engine::Json parameters = {{"path", chosen.files.front().u8string()}};
-						if (!below.empty())
-							parameters["track"] = below.front();
-						// The engine's refusal shows, and the tracks it left out.
-						m_binding.send("track.import", parameters,
-							[this, id](const engine::Result& result)
-							{
-								if (!result.ok())
-									m_files.showError(id, result.error);
-								else if (const std::string left = leftOut(result.value); !left.empty())
-									m_files.showError(id, "The tracks were imported without " + left + ".");
-							});
+						openDialog(*parent, "track-import.rml",
+							{{"path", chosen.files.front().u8string()},
+								{"below", below.empty() ? std::string() : std::to_string(below.front())}});
 					});
 			}});
 		// File > Export > Selected Tracks (reference manual pp. 205-206): a track archive, with copies of the media.
@@ -2106,7 +2129,8 @@ namespace gnubase::app
 								if (!result.ok())
 									m_files.showError(id, result.error);
 								else if (const std::string left = leftOut(result.value); !left.empty())
-									m_files.showError(id, "The tracks were exported without " + left + ".");
+									m_files.showNotice(
+										id, "Export Selected Tracks", "The tracks were exported without " + left + ".");
 							});
 					});
 			}});
@@ -2188,6 +2212,12 @@ namespace gnubase::app
 								chooseDrumMapFile(parent, each.at("drumMap").get<uint64_t>());
 					});
 			});
+	}
+
+	void AppUi::openDrumMaps(ui::Window& window)
+	{
+		// The editors' views say whose map to show first; the dialog reads them when it opens.
+		openOnce(window, "drum-maps.rml", m_drumMaps);
 	}
 
 	void AppUi::chooseDrumMapFile(ui::WindowId parent, uint64_t map)

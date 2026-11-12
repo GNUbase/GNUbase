@@ -98,6 +98,7 @@ namespace gnubase::engine
 			{AutomationTargetType::Controller, "controller"},
 			{AutomationTargetType::PitchBend, "pitchBend"},
 			{AutomationTargetType::ChannelPressure, "channelPressure"},
+			{AutomationTargetType::MidiEffect, "midiEffect"},
 		};
 
 		constexpr struct
@@ -937,7 +938,7 @@ namespace gnubase::engine
 		{
 			const Json& channel = json.at("channel");
 			sound.channel = channel.is_null() ? -1 : channel.get<int>();
-			check(sound.channel >= -1 && sound.channel <= 15, "channel must be 0 to 15, or null for Any");
+			check(sound.channel >= -1 && sound.channel <= 15, "channel must be 0 to 15, or null or -1 for Any");
 		}
 		sound.output = json.value("output", sound.output);
 		return sound;
@@ -1009,6 +1010,10 @@ namespace gnubase::engine
 		case AutomationTargetType::PitchBend:
 		case AutomationTargetType::ChannelPressure:
 			json["channel"] = target.channel;
+			break;
+		case AutomationTargetType::MidiEffect:
+			json["number"] = target.number;
+			json["parameter"] = target.parameter;
 			break;
 		}
 		return json;
@@ -1491,6 +1496,12 @@ namespace gnubase::engine
 			case AutomationTargetType::PitchBend:
 			case AutomationTargetType::ChannelPressure:
 				break;
+			case AutomationTargetType::MidiEffect:
+				// The effect's range applies when it plays; the slot may hold another effect since.
+				fits = track.type == TrackType::Midi || track.type == TrackType::Instrument;
+				minimum = std::numeric_limits<double>::lowest();
+				maximum = std::numeric_limits<double>::max();
+				break;
 			}
 			if (!fits)
 				throw std::invalid_argument(name + " has a target that track " + std::to_string(track.id) + " lacks");
@@ -1869,10 +1880,14 @@ namespace gnubase::engine
 						: Json(slot.parameters[i]);
 				}
 			slots.push_back({{"effect", slot.effect}, {"on", slot.on}, {"parameters", std::move(parameters)}});
+			if (sends)
+				slots.back()["output"] = slot.output;
 		}
 		Json json = {{"bypass", rack.bypass}, {"slots", std::move(slots)}};
 		if (sends)
 			json["pre"] = rack.pre;
+		else
+			json["divider"] = rack.divider;
 		return json;
 	}
 
@@ -1886,6 +1901,17 @@ namespace gnubase::engine
 		if (!sends && json.contains("pre"))
 			throw std::invalid_argument(section + ".pre: only the MIDI sends play before the inserts");
 		read(json, "pre", rack.pre, section);
+		if (sends && json.contains("divider"))
+			throw std::invalid_argument(section + ".divider: only the MIDI inserts have a divider");
+		if (json.contains("divider"))
+		{
+			const Json& divider = json.at("divider");
+			if (!divider.is_number_integer() || divider.get<int64_t>() < 0 ||
+				divider.get<int64_t>() > static_cast<int64_t>(midi::g_effectSlots))
+				throw std::invalid_argument(
+					section + ".divider must be a whole number from 0 to " + std::to_string(midi::g_effectSlots));
+			rack.divider = static_cast<uint8_t>(divider.get<int64_t>());
+		}
 		if (!json.contains("slots"))
 			return rack;
 		const Json& slots = json.at("slots");
@@ -1906,6 +1932,15 @@ namespace gnubase::engine
 				throw std::invalid_argument(name + " must be an object");
 			midi::EffectSlot& slot = rack.slots[s];
 			read(given, "on", slot.on, name);
+			if (given.contains("output"))
+			{
+				const Json& output = given.at("output");
+				if (!sends)
+					throw std::invalid_argument(name + ".output: only the MIDI sends play to another output");
+				if (!output.is_number_integer() || output.get<int64_t>() < 0)
+					throw std::invalid_argument(name + ".output must be a channel id, or 0 for the track's output");
+				slot.output = output.get<uint64_t>();
+			}
 			if (given.contains("effect"))
 			{
 				const Json& effect = given.at("effect");
@@ -2385,9 +2420,12 @@ namespace gnubase::engine
 				note.id = n.at("id").get<ObjectId>();
 				note.position = n.at("position").get<time::Ticks>();
 				note.length = n.at("length").get<time::Ticks>();
-				note.pitch = n.at("pitch").get<uint8_t>();
+				// Checked as the DAWproject import does: drum maps and the editors take a pitch as an index (#882).
+				const std::string noteName =
+					"note " + std::to_string(note.id) + " of MIDI part " + std::to_string(part.id);
+				note.pitch = static_cast<uint8_t>(checkedNumber(n.at("pitch"), 0.0, 127.0, noteName + " pitch"));
 				note.velocity = velocityFrom(n.at("velocity"));
-				note.channel = n.at("channel").get<uint8_t>();
+				note.channel = static_cast<uint8_t>(checkedNumber(n.at("channel"), 0.0, 15.0, noteName + " channel"));
 				if (n.contains("releaseVelocity")) // projects saved before #137 don't have it
 					note.releaseVelocity =
 						static_cast<uint16_t>(std::lround(n.at("releaseVelocity").get<double>() * g_maxVelocity));

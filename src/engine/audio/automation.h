@@ -2,6 +2,7 @@
 #pragma once
 
 #include "engine/audio/meters.h"
+#include "engine/audio/sequencer.h"
 #include "engine/audio/stripsections.h"
 #include "engine/document/rendersnapshot.h"
 #include "engine/graph/graph.h"
@@ -9,6 +10,7 @@
 #include "platform/rt/snapshotpublisher.h"
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -44,6 +46,7 @@ namespace gnubase::engine
 			Strip,      // parameter events for the strip's sections (g_stripEvents), with the fader's events
 			Midi,       // MIDI controller events for the channel's source
 			Program, // a MIDI channel's program change (parameter) for its source; its static value is the bank or -1
+			MidiEffect, // parameter events for the MIDI effects its source runs (midi::g_effectEvents)
 		};
 
 		AutomationTarget target;
@@ -84,10 +87,14 @@ namespace gnubase::engine
 		// change the instrument that other tracks play. They stay, so that once it is heard again only what changed
 		// meanwhile goes out.
 		bool silent = false;
+		// Silent because it is soloed out or disabled (RenderChannel::quiet), not only by its mute button: its parts
+		// aren't in the snapshot, so they are chased once it is heard again after playback moved.
+		bool quiet = false;
 
 		bool sameContent(const ChannelAutomation& other) const
 		{
-			return instrument == other.instrument && lanes == other.lanes && silent == other.silent;
+			return instrument == other.instrument && lanes == other.lanes && silent == other.silent &&
+				quiet == other.quiet;
 		}
 	};
 
@@ -118,6 +125,14 @@ namespace gnubase::engine
 		// Command thread: the automation last set.
 		const ChannelAutomation& latest() const { return m_automation.latest(); }
 
+		// Command thread: a flag that play raises for the block in which a silent MIDI track is heard again after
+		// playback started, stopped, located or jumped while it was silent, and lowers in every other block. The
+		// sequencer that chases the track's parts (ChaseTrack::heardAgain), which runs after it in the block, chases
+		// them there, after the program, MIDI volume and pan that play sends again.
+		std::shared_ptr<const std::atomic<HeardAgain>> heardAgain() const { return m_heardAgain; }
+		// Audio thread, after play: how the track is heard again in this block.
+		HeardAgain heardNow() const noexcept { return m_heardAgain->load(std::memory_order_relaxed); }
+
 		// Audio thread: adds the block's events for the fader to fader, those for the plugins in the slots to plugins
 		// with the slot's index in slots as their key, and the others to source. processors are the source processor
 		// and the slots' plugins, top to bottom (only compared, to send every value again to new ones), and slots the
@@ -132,12 +147,21 @@ namespace gnubase::engine
 	private:
 		rt::SnapshotPublisher<ChannelAutomation> m_automation;
 		uint64_t m_revision = 0; // command thread: the last revision given
+		// Command thread: the program lanes and the MIDI lanes without points of the last automation set that isn't
+		// silent, with their revisions. A lane set back to one of them while the track is silent keeps its revision,
+		// as nothing changed since the track was last heard.
+		std::vector<PlayedLane> m_heardLanes;
+		std::shared_ptr<std::atomic<HeardAgain>> m_heardAgain =
+			std::make_shared<std::atomic<HeardAgain>>(HeardAgain::No);
 
 		// Audio thread.
 		uint64_t m_played = 0; // the revision played last
 		// The revision played last while not silent; 0 when playback moved or the processors changed while silent, so
 		// that the program and MIDI lanes all go out again once it is heard.
 		uint64_t m_heard = 0;
+		// Playback moved while it was silent (Quiet if it was soloed out or disabled at one of the moves): it raises
+		// m_heardAgain once it is heard.
+		HeardAgain m_missed = HeardAgain::No;
 		// The processors played for last: the source and the slots' plugins.
 		std::array<const void*, g_maxSlots + 1> m_processors{};
 		size_t m_processorCount = 0;
@@ -409,6 +433,16 @@ namespace gnubase::engine
 			m_chased = std::move(chased);
 			m_keepChase = keep;
 		}
+		// Command thread, before the graph compiles, MIDI tracks: the kinds of controller events its channel sends
+		// again when it is heard again after playback moved while it was silent (channelChaseKinds, as
+		// chaseKindEvent), and the sequencer whose chase settings the one that chases the track has. In that block,
+		// that sequencer chases those kinds after the channel's values, so the strip forgets what its mute dropped of
+		// those it chases (AutomationPlayer::heardAgain).
+		void chasedWhenHeard(std::vector<graph::ProcessEvent> kinds, std::shared_ptr<const MidiSequencer> chaser)
+		{
+			m_channelKinds = std::move(kinds);
+			m_chaser = std::move(chaser);
+		}
 
 		// Scales the block's first channels from gain to target, frame by frame, and keeps target as the gain; a gain
 		// below 0 (before the first block) starts at the target.
@@ -444,6 +478,8 @@ namespace gnubase::engine
 		RenderPoint m_renderPoint = RenderPoint::Strip;
 		std::shared_ptr<const graph::EventBuffer> m_chased; // see chaseFrom
 		bool m_keepChase = false;
+		std::vector<graph::ProcessEvent> m_channelKinds; // see chasedWhenHeard
+		std::shared_ptr<const MidiSequencer> m_chaser;
 	};
 
 	// The processor of a send node (graph::NodeKind::Send): a post-fader send's input is its channel's output, a
