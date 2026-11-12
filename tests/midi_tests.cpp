@@ -1029,8 +1029,16 @@ namespace
 		heard.heardAgain = heardAgain;
 		ChaseTrack other = makeChaseTrack({controller(program, ControllerType::Program, 4, 0)}, {});
 		auto sequence = std::make_unique<MidiSequence>();
-		sequence->chase.push_back(heardFirst ? std::move(heard) : std::move(other));
-		sequence->chase.push_back(heardFirst ? std::move(other) : std::move(heard));
+		if (heardFirst)
+		{
+			sequence->chase.push_back(std::move(heard));
+			sequence->chase.push_back(std::move(other));
+		}
+		else
+		{
+			sequence->chase.push_back(std::move(other));
+			sequence->chase.push_back(std::move(heard));
+		}
 		auto instrument = std::make_shared<MidiSequencer>();
 		instrument->setSequence(std::move(sequence));
 		instrument->setChase(chaseAll());
@@ -1085,7 +1093,8 @@ TEST_CASE("a track that only its mute button muted, heard again, has the bank se
 	const std::vector<Heard> select{{16, Type::Controller, 0, 0, 3, {}}};
 	std::vector<Heard> expected = at < 40 ? program : select;
 	expected.push_back(at < 40 ? select.front() : program.front());
-	CHECK(chaseHeard(std::move(heard), at, HeardAgain::Muted) == expected);
+	const std::vector<Heard> chased = chaseHeard(std::move(heard), at, HeardAgain::Muted);
+	CHECK(chased == expected);
 }
 
 TEST_CASE("a routed MIDI track heard again chases into its strip alone, in that block at its start", "[unit]")

@@ -2601,7 +2601,7 @@ TEST_CASE("a MIDI lane's point at the first sample of a block that sends the val
 	RenderAutomationLane lane;
 	lane.target = {AutomationTargetType::Controller, 0, 7, 0, 0};
 	lane.points = {{0, 0.0, AutomationShape::Step, 0.0}, {100, 0.5, AutomationShape::Step, 0.0},
-		{2 * g_midiBlock, 1.0, AutomationShape::Step, 0.0}};
+		{int64_t{2} * g_midiBlock, 1.0, AutomationShape::Step, 0.0}};
 	MidiStrip strip({{0, 1.0}, {2 * g_midiBlock, 0.0}}, {lane});
 	CHECK(strip.play({}).empty());
 	CHECK(strip.play({}).empty());
@@ -2676,7 +2676,7 @@ TEST_CASE(
 	// The CC 7 lane ramps from 0 to 1 over four blocks; the mute keeps its step at 256 and unmutes at its step at 320.
 	RenderAutomationLane lane;
 	lane.target = {AutomationTargetType::Controller, 0, 7, 0, 0};
-	lane.points = {{0, 0.0, AutomationShape::Linear, 0.0}, {4 * g_midiBlock, 1.0, AutomationShape::Step, 0.0}};
+	lane.points = {{0, 0.0, AutomationShape::Linear, 0.0}, {int64_t{4} * g_midiBlock, 1.0, AutomationShape::Step, 0.0}};
 	MidiStrip strip({{0, 1.0}, {g_midiBlock + 64, 0.0}}, {lane});
 	CHECK(strip.play({}).empty());
 	std::vector<uint32_t> atUnmute;
