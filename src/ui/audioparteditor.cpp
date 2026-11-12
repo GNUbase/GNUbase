@@ -312,8 +312,16 @@ namespace gnubase::ui
 	{
 		if (!m_pressed)
 			return;
-		const auto [seconds, lane] = at(m_draggedTo);
+		const auto [seconds, lane] = movedAt(m_draggedTo);
 		m_moved = {m_gesture == Gesture::Move ? movedBy(*m_pressed, seconds) : 0.0, lane - m_pressed->lane};
+	}
+
+	// RmlUi's hit test takes in both edges of a box, so the pressed event also gets the pixel row at its bottom edge,
+	// where at() reads the next lane. The press counts as on the event's lane: the mouse comes into the lane by what
+	// the press was outside it, so that the move goes from the event's lane, as its time goes from the pressed point.
+	std::pair<double, int> AudioPartEditor::movedAt(Rml::Vector2f mouse) const
+	{
+		return at(Rml::Vector2f(mouse.x, mouse.y + m_intoLane));
 	}
 
 	// How far the pressed event's start goes for the mouse over seconds, from where the event is now: to the start that
@@ -800,6 +808,15 @@ namespace gnubase::ui
 		m_pressedInClip = pressed != nullptr
 			? (static_cast<double>(pressed->offset) / pressed->rate) + (seconds - pressed->start)
 			: 0.0;
+		m_intoLane = 0.0F;
+		if (Rml::Element* display = root->QuerySelector(".ape-display"); pressed != nullptr && display != nullptr)
+		{
+			// The press's place in the pressed event's lane, px, kept to the lane's rows (movedAt()).
+			const float lane = static_cast<float>(g_laneHeight) * dpRatio();
+			const float inLane = m_pressedMouse.y - display->GetAbsoluteOffset(Rml::BoxArea::Border).y -
+				(static_cast<float>(pressed->lane) * lane);
+			m_intoLane = std::clamp(inLane, 0.0F, lane - 1.0F) - inLane;
+		}
 		switch (m_tool)
 		{
 		case AudioPartTool::ObjectSelection:
@@ -945,7 +962,8 @@ namespace gnubase::ui
 		const bool isDrag = dragged(event); // a click only selects, even on an event off the grid
 		if (!m_pressed)
 			return;
-		const auto [seconds, lane] = at(event);
+		const auto [seconds, lane] =
+			movedAt(Rml::Vector2f(event.GetParameter("mouse_x", 0.0F), event.GetParameter("mouse_y", 0.0F)));
 		const double dt = gesture == Gesture::Move && isDrag ? movedBy(*m_pressed, seconds) : 0.0;
 		const int dl = isDrag ? lane - m_pressed->lane : 0;
 		if (gesture == Gesture::MoveVertical && !isDrag)

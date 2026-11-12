@@ -129,6 +129,8 @@ namespace gnubase::ui
 		// The part display's point under the mouse: seconds and lane.
 		std::pair<double, int> at(const Rml::Event& event) const;
 		std::pair<double, int> at(Rml::Vector2f mouse) const;
+		// The seconds and lane a move reads under the mouse, with the press on its event's lane.
+		std::pair<double, int> movedAt(Rml::Vector2f mouse) const;
 		// To the project's quantize grid.
 		double snap(double seconds) const;
 		// Whether the mouse has moved past the drag threshold since the press: until then a press is a click.
@@ -167,6 +169,7 @@ namespace gnubase::ui
 		// which a resize or a split of the event during the drag keeps.
 		double m_pressedInClip = 0.0;
 		Rml::Vector2f m_pressedMouse; // px
+		float m_intoLane = 0.0F;      // px that bring the press into its event's lane (movedAt())
 		bool m_dragged = false;
 		Rml::Vector2f m_draggedTo;                 // px, the mouse's last place in a dragged move
 		std::pair<double, int> m_moved;            // a dragged move's seconds and lanes

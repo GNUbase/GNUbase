@@ -1347,6 +1347,44 @@ TEST_CASE("a Ctrl drag of the audio part editor along its event's lane moves not
 	CHECK(f.event(f.second).at("lane") == 0);
 }
 
+// RmlUi's hit test gives the pixel row at an event's bottom edge to the event, where the next lane starts: a press
+// there is on the event's lane (#1226).
+TEST_CASE("a move of the audio part editor pressed on its event's bottom edge keeps the event's lane", "[ui]")
+{
+	const int up = GENERATE(0, 1); // the drag along the row, or a pixel up
+	const bool ctrl = GENERATE(false, true);
+	CAPTURE(up, ctrl);
+	Fixture f;
+	f.open();
+	const int modifiers = ctrl ? Rml::Input::KM_CTRL : 0;
+	const Json shown = f.box(eventSelector(f.first));
+	const int edge = static_cast<int>(std::lround(shown.at("y").get<double>() + shown.at("height").get<double>()));
+	const auto onEdge = [&](double seconds, int y)
+	{ return ui::Target{"", 0, ui::Point{pointOf(f.at(seconds, 0)).x, y}}; };
+	// The row is the next lane's first.
+	REQUIRE(f.laneUnder(onEdge(0.25, edge), 2) == 1);
+	f.press(onEdge(0.25, edge), modifiers);
+	f.moveTo(onEdge(0.77, edge - up), modifiers);
+	CHECK(f.onLane(f.first, 0));
+	if (!ctrl)
+		CHECK(std::abs(f.shownX(f.first) - pointOf(f.at(0.5, 0)).x) <= 2.0);
+	const size_t before = f.steps();
+	f.release(modifiers);
+	if (ctrl)
+	{
+		// Along the lane, a Ctrl drag moves nothing.
+		CHECK(f.steps() == before);
+		CHECK(f.event(f.first).at("position") == 0);
+	}
+	else
+	{
+		REQUIRE(f.app.waitUntil([&] { return f.event(f.first).at("position") != 0; }));
+		CHECK(f.event(f.first).at("position") == g_second / 2);
+	}
+	CHECK(f.event(f.first).at("lane") == 0);
+	f.settle();
+}
+
 TEST_CASE("a move of the audio part editor ends without its effect when its event goes during the drag", "[ui]")
 {
 	const std::string how = GENERATE("removed", "out of the part editing mode");

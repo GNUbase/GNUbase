@@ -76,6 +76,8 @@ much as it moved it. A split of the pressed event goes on with the piece before 
 if the pressed point were still in it. An event that plays another clip after a command (`audioEvent.set` with a `clip`,
 or flattening it into a new file) keeps the press where it was in the event. A drag with Ctrl that ends over the pressed
 event's own lane moves nothing and leaves the selection as it is: only a click with Ctrl adds the event or takes it out.
+A press on the pixel row at an event's bottom edge, which RmlUi's hit test gives the event and the display's lanes the
+next lane, counts as on the event's lane: a drag along that row leaves the event on its lane, with and without Ctrl.
 While a move drags, the events it moves show where it takes them, also after the editor shows the project again (as when
 the selection of the press comes back, or after a change of snap, which shows at once) and after the display is laid out
 again: a window that changes its size, a wheel scroll of the lanes and the scrollbar that a new lane brings change which
@@ -145,8 +147,9 @@ yet one of the lower zone's.
   track, and after a wheel scroll of the lanes during a move and during a Ctrl drag, a new lane's scrollbar and a window
   that changes its size; the other selected events going back by what a command moves the pressed one; a Ctrl drag going
   on with its event's new lane, on the lane under the mouse, its element in order and the selection as it was, and a
-  Ctrl drag along its event's lane moving nothing and selecting nothing; a move ending without its effect when its event
-  is removed or leaves the part editing mode, and a Ctrl drag of an event that isn't selected moving nothing when its
-  part leaves the part editing mode; a view the engine answered before a click leaving the click's selection, and a
-  selection from the engine showing once the click's is answered.
+  Ctrl drag along its event's lane moving nothing and selecting nothing; a move and a Ctrl drag pressed on the row at
+  their event's bottom edge keeping its lane; a move ending without its effect when its event is removed or leaves the
+  part editing mode, and a Ctrl drag of an event that isn't selected moving nothing when its part leaves the part
+  editing mode; a view the engine answered before a click leaving the click's selection, and a selection from the
+  engine showing once the click's is answered.
 - `tests/eventediting_tests.cpp`: a double click on an audio part opens it in the audio part editor.
