@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/document/rendersnapshot.h"
+#include "engine/document/serialize.h"
 #include "engine/engine.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -788,6 +789,26 @@ TEST_CASE("failed commands leave the project and its snapshot unchanged", "[unit
 
 	CHECK(run(client, "project.get") == before);
 	CHECK(engine.renderSnapshots().acquire().revision == revision);
+}
+
+TEST_CASE("projects run at 8000 to 768000 Hz when set and when loaded", "[unit]")
+{
+	// Far outside, the conversions between ticks and samples leave an int64_t.
+	Engine engine;
+	Client client(engine);
+	for (const double rate : {g_lowestSampleRate, g_highestSampleRate})
+	{
+		run(client, "project.set", {{"sampleRate", rate}});
+		CHECK(projectFromJson(run(client, "project.get")).sampleRate == rate);
+	}
+	Json saved = run(client, "project.get");
+	for (const double rate : {g_lowestSampleRate - 1.0, g_highestSampleRate + 1.0, 1e-6, 1e16})
+	{
+		CAPTURE(rate);
+		CHECK_THAT(reject(client, "project.set", {{"sampleRate", rate}}), ContainsSubstring("8000 to 768000"));
+		saved["sampleRate"] = rate;
+		CHECK_THROWS_WITH(projectFromJson(saved), ContainsSubstring("8000 to 768000"));
+	}
 }
 
 TEST_CASE("ids are never reused, and objects in use can't be removed", "[unit]")

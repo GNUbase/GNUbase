@@ -3228,7 +3228,8 @@ namespace gnubase::engine
 		{
 			const Json& parameters = context.parameters();
 			const double sampleRate = parameters.value("sampleRate", project.sampleRate);
-			require(sampleRate > 0.0, "sampleRate must be positive");
+			require(sampleRate >= g_lowestSampleRate && sampleRate <= g_highestSampleRate,
+				"sampleRate must be from 8000 to 768000 Hz");
 			const double maxVolume = parameters.value("maxVolume", project.maxVolume);
 			require(maxVolume == 6.0 || maxVolume == 12.0, "maxVolume must be 6 or 12 dB");
 			ProjectSetup setup;
@@ -4050,8 +4051,9 @@ namespace gnubase::engine
 			});
 		add(engine,
 			{"project.set", 1,
-				"Changes the project's name, sample rate, stereo pan law or maximum volume, or the other settings of "
-				"the project setup. Linear positions keep their time at a new sample rate; media files keep theirs "
+				"Changes the project's name, sample rate (8000 to 768000 Hz), stereo pan law or maximum volume, or "
+				"the other settings of the project setup. Linear positions keep their time at a new sample rate; media "
+				"files keep theirs "
 				"(see media.conform). panLaw is how much a mono channel panned to the center is turned down on "
 				"each side: 0dB, -3dB (the default), -4.5dB, -6dB or equalPower (-3.01 dB, the power stays the same "
 				"wherever it is panned); the side panned toward is always at 0 dB. maxVolume is the top of the "
