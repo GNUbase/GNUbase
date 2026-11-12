@@ -94,7 +94,7 @@ namespace gnubase::ui
 		for (size_t i = 0; i < audio.curve.size(); ++i)
 		{
 			const engine::VolumePoint& point = audio.curve[i];
-			const double seconds = shown.start + (static_cast<double>(point.position - audio.offset) / audio.rate);
+			const double seconds = shown.start + (static_cast<double>(point.position - audio.offset) / audio.timeRate);
 			const double px = (seconds - m_view.start) / m_view.scale;
 			const double fraction = std::clamp(gain(audio.volume) * gain(point.volume) / g_volumeLineTop, 0.0, 1.0);
 			const double distance = std::max(std::abs(x - px), std::abs(y - (bottom - (fraction * height))));
@@ -140,7 +140,7 @@ namespace gnubase::ui
 		{
 			const engine::VolumePoint& point = curve[*m_dragPoint];
 			const double height = m_laneTops[shown->lane + 1] - m_laneTops[shown->lane];
-			const double at = shown->start + (static_cast<double>(point.position - fades.offset) / fades.rate);
+			const double at = shown->start + (static_cast<double>(point.position - fades.offset) / fades.timeRate);
 			fromX = (at - m_view.start) / m_view.scale;
 			// From the point's own volume, which can be above the line's top where the point is drawn at the top
 			// (#683): there a drag down lowers it by the drag's distance, and a drag up leaves it as it is.
@@ -149,8 +149,8 @@ namespace gnubase::ui
 			keepsVolume = keepsVolume || fraction == from;
 		}
 		const double seconds = m_view.start + ((fromX + m_dragDx) * m_view.scale);
-		const int64_t frame =
-			fades.offset + std::clamp<int64_t>(std::llround((seconds - shown->start) * fades.rate), 0, fades.length);
+		const int64_t frame = fades.offset +
+			std::clamp<int64_t>(std::llround((seconds - shown->start) * fades.timeRate), 0, fades.frames);
 		const double volume = engine::volumeDb(fraction * g_volumeLineTop / gain(fades.volume));
 		if (m_dragPoint)
 		{
@@ -207,7 +207,7 @@ namespace gnubase::ui
 		if (curve.empty() && volume == 0.0 && !dragging)
 			return;
 		lane.volumes.push_back(
-			{shown.start, shown.end, fades.rate, fades.offset, gain(volume), engine::gainPoints(curve), selected});
+			{shown.start, shown.end, fades.timeRate, fades.offset, gain(volume), engine::gainPoints(curve), selected});
 	}
 
 	void EventDisplay::addVolumeActions()

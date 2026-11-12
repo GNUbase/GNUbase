@@ -164,7 +164,7 @@ namespace gnubase::app
 			return ui::SdlWindowSystem::ask("Script Running",
 					   "The script " + script + " has run for " + std::to_string(m_scriptTimeLimit.count() / 1000) +
 						   " seconds or more. Stop it?",
-					   {"Stop", "Keep Running"}) == 1;
+					   {"Stop", "Keep Running"}, ui::SdlWindowSystem::Severity::Warning) == 1;
 		};
 		// The scripts' and the console's globals, apart from the documents' (#930).
 		m_scriptEnvironment = m_lua.newEnvironment();

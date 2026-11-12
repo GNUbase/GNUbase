@@ -43,7 +43,9 @@ attributes show the view to MCP's `ui_dom`.
 
 - **Data.** On `history.changed` (every change to the project and every undo) and `project.reset` it asks for
   `project.get` again, one request at a time, and shows each track's audio events and MIDI parts in seconds: musical
-  positions through the tempo map, linear ones by the sample rate, audio lengths by their media file's rate. The
+  positions through the tempo map, linear ones by the sample rate, audio lengths by their media file's rate, and a
+  warped event's by its `playedLength`, where its warp ends it, its waveform stretched evenly over it
+  ([warp.md](warp.md)). The
   project cursor follows `transport.changed`, and while playing `Engine::playbackPosition` once a frame. Reading the
   whole project after each change is simple; reading only what the events name can come when projects get large.
 - **Time axis.** Seconds from the project start, so that the view keeps its time when the sample rate changes. Nothing
