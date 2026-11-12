@@ -5,8 +5,8 @@
      Track or a track of the project of the same type), and on OK sends track.import with the options, then for Copy
      to Active Project Folder media.conform for the imported media files at another sample rate (Convert Sample Rate,
      available when the file has media files at another rate than the project's) and media.prepareArchive for the
-     others. Tracks that can't be imported yet show, disabled. The engine's message
-     shows when it refuses, and the dialog stays open. -->
+     others. Tracks that can't be imported yet show, disabled. The engine's message shows when it refuses, and the
+     dialog stays open. -->
 <rml>
 <head>
 	<title>Import Options</title>
@@ -363,7 +363,7 @@
 				if matching and not insideImported(track) then
 					for _, other in ipairs(dialog.project.tracks) do
 						if other.name == track.name and other.type == track.type then
-							candidates[#candidates + 1] = {source = track.id, destination = other.id}
+							candidates[#candidates + 1] = {source = track.id, destination = other.id, row = #candidates}
 							break
 						end
 					end
@@ -371,7 +371,13 @@
 			end
 			table.sort(candidates, function(a, b)
 				local da, db = depth(a.destination), depth(b.destination)
-				return da < db or (da == db and order[a.destination] < order[b.destination])
+				if da ~= db then
+					return da < db
+				end
+				if a.destination ~= b.destination then
+					return order[a.destination] < order[b.destination]
+				end
+				return a.row < b.row -- the upper one of the file's tracks matching the same track keeps it
 			end)
 			local taken, found = {}, {}
 			for _, candidate in ipairs(candidates) do

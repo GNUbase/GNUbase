@@ -784,23 +784,34 @@ TEST_CASE("track.import replaces a marker track in a project with the most marke
 	Client client(engine);
 	const Added cues = add(client, {{"type", "marker"}, {"name", "Cues"}});
 	run(client, "marker.add", {{"track", cues.track}, {"position", 1920}, {"name", "Verse"}});
+	add(client, {{"type", "marker"}, {"name", "More"}});
 	run(client, "project.save", {{"path", song.u8string()}});
-	const Json source = run(client, "track.importSources", {{"path", song.u8string()}}).at("tracks")[0].at("id");
+	const Json sources = run(client, "track.importSources", {{"path", song.u8string()}}).at("tracks");
+	const auto source = [&sources](const std::string& name)
+	{ return trackNamed({{"tracks", sources}}, name).at("id"); };
 
 	run(client, "project.new");
 	std::vector<ObjectId> markerTracks;
+	markerTracks.reserve(g_maxMarkerTracks);
 	for (int i = 0; i < g_maxMarkerTracks; ++i)
 		markerTracks.push_back(add(client, {{"type", "marker"}, {"name", "Markers " + std::to_string(i + 1)}}).track);
-	run(client, "marker.activateTrack", {{"track", markerTracks[0]}});
-	// As a new track, it is refused; onto one of the project's, it replaces it (reference manual pp. 200-201).
-	CHECK_THAT(reject(client, "track.import", {{"path", song.u8string()}}), ContainsSubstring("marker tracks"));
+	run(client, "marker.activateTrack", {{"track", markerTracks[3]}});
+	// As a new track, it is refused, also next to one that replaces a track; onto one of the project's, it replaces
+	// it (reference manual pp. 200-201).
+	CHECK_THAT(reject(client, "track.import", {{"path", song.u8string()}, {"tracks", {source("Cues")}}}),
+		ContainsSubstring("marker tracks"));
+	CHECK_THAT(reject(client, "track.import",
+				   {{"path", song.u8string()}, {"tracks", {source("Cues"), source("More")}},
+					   {"destinations", {{{"source", source("Cues")}, {"track", markerTracks[3]}}}}}),
+		ContainsSubstring("marker tracks"));
 	const Json imported = run(client, "track.import",
-		{{"path", song.u8string()}, {"destinations", {{{"source", source}, {"track", markerTracks[0]}}}}});
+		{{"path", song.u8string()}, {"tracks", {source("Cues")}},
+			{"destinations", {{{"source", source("Cues")}, {"track", markerTracks[3]}}}}});
 	REQUIRE(imported.at("tracks").size() == 1);
 	const Json project = run(client, "project.get");
-	CHECK(outline(project).front() == "Cues:marker");
-	CHECK(outline(project).size() == static_cast<size_t>(g_maxMarkerTracks));
-	// The copy is the active marker track, as the one it replaced was.
+	REQUIRE(outline(project).size() == static_cast<size_t>(g_maxMarkerTracks));
+	CHECK(outline(project)[3] == "Cues:marker");
+	// The copy is the active marker track, as the one it replaced was, though it isn't the topmost.
 	CHECK(project.at("activeMarkerTrack") == imported.at("tracks")[0]);
 	REQUIRE(project.at("markers").size() == 1);
 	CHECK(project.at("markers")[0].at("name") == "Verse");
@@ -906,6 +917,11 @@ TEST_CASE("track.import moves the project end after what it imports", "[integrat
 	const Added cues = add(client, {{"type", "marker"}, {"name", "Cues"}, {"timeBase", "linear"}});
 	run(client, "marker.add",
 		{{"track", cues.track}, {"type", "cycle"}, {"position", 650 * 48000}, {"end", 705 * 48000}, {"name", "Outro"}});
+	// A musical part, from 710 to 712 seconds at 120 BPM.
+	const Added musical = add(client, {{"type", "instrument"}, {"name", "Musical"}});
+	run(client, "midiPart.add",
+		{{"track", musical.track}, {"position", 710 * 2 * gnubase::time::g_ticksPerQuarter},
+			{"length", 4 * gnubase::time::g_ticksPerQuarter}});
 	run(client, "project.save", {{"path", song.u8string()}});
 	const Json sources = run(client, "track.importSources", {{"path", song.u8string()}}).at("tracks");
 	const auto source = [&sources](const std::string& name)
@@ -917,9 +933,12 @@ TEST_CASE("track.import moves the project end after what it imports", "[integrat
 	CHECK(run(client, "project.get").at("length") == 702.0);
 	run(client, "history.undo");
 	CHECK(run(client, "project.get").at("length") == 600.0);
-	// A cycle marker's end counts too.
-	run(client, "track.import", {{"path", song.u8string()}});
+	// A cycle marker's end counts too, and a musical part's end in the project's tempo.
+	run(client, "track.import", {{"path", song.u8string()}, {"tracks", {source("Cues")}}});
 	CHECK(run(client, "project.get").at("length") == 705.0);
+	run(client, "history.undo");
+	run(client, "track.import", {{"path", song.u8string()}, {"tracks", {source("Musical")}}});
+	CHECK(run(client, "project.get").at("length") == 712.0);
 	run(client, "history.undo");
 	// A project that is longer stays as long.
 	run(client, "project.set", {{"length", 800.0}});
