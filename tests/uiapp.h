@@ -36,6 +36,11 @@ namespace gnubase::test
 	// SDL_GPU runs: it loads the drivers once more and never closes them. Does nothing elsewhere.
 	void keepVulkanDriversLoaded();
 
+	// Copies the shipped resources into folder/resources and replaces one string in a UI document there. A missing
+	// string fails the test. The caller keeps folder alive while an app uses the returned resources path.
+	std::filesystem::path patchedResources(const std::filesystem::path& folder, const std::string& document,
+		const std::string& from, const std::string& to);
+
 	// GNUbase's UI as the app shows it (app::AppUi), with the engine on the dummy device and the user settings in a
 	// temporary folder: GNUbase's fonts and themes, the user settings and the engine binding, and the main window,
 	// hidden and drawn with 4x MSAA, which every GPU has with the same sample positions. Tests drive it with
