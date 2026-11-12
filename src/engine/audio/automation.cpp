@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstring>
+#include <iterator>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -348,6 +349,7 @@ namespace gnubase::engine
 		// program and MIDI automation out, so it doesn't change what other tracks play there. Its mute lane plays, so
 		// its mute still ends the notes that sound.
 		automation->silent = channel.type == TrackType::Midi && channel.silent;
+		automation->quiet = channel.type == TrackType::Midi && channel.quiet;
 		for (const auto& [number, value] :
 			{std::pair{uint8_t{7}, channel.midiVolume}, std::pair{uint8_t{10}, channel.midiPan}})
 			if (value)
@@ -455,12 +457,29 @@ namespace gnubase::engine
 	{
 		automation->revision = ++m_revision;
 		const ChannelAutomation& old = m_automation.latest();
+		const auto revisioned = [](const PlayedLane& lane)
+		{ return lane.kind == Kind::Program || (lane.kind == Kind::Midi && lane.points.empty()); };
 		for (PlayedLane& lane : automation->lanes)
-			if (lane.kind == Kind::Program || (lane.kind == Kind::Midi && lane.points.empty()))
+			if (revisioned(lane))
 			{
-				const auto same = std::find(old.lanes.begin(), old.lanes.end(), lane);
-				lane.revision = same != old.lanes.end() ? same->revision : automation->revision;
+				// The same as before, or as when the track was last heard: a value changed and changed back while it
+				// was silent doesn't go out again.
+				const auto same = [&lane](const std::vector<PlayedLane>& lanes) -> const PlayedLane*
+				{
+					const auto found = std::find(lanes.begin(), lanes.end(), lane);
+					return found != lanes.end() ? &*found : nullptr;
+				};
+				const PlayedLane* kept = same(old.lanes);
+				if (kept == nullptr)
+					kept = same(m_heardLanes);
+				lane.revision = kept != nullptr ? kept->revision : automation->revision;
 			}
+		if (!automation->silent)
+		{
+			m_heardLanes.clear();
+			std::copy_if(
+				automation->lanes.begin(), automation->lanes.end(), std::back_inserter(m_heardLanes), revisioned);
+		}
 		m_automation.publish(std::move(automation));
 	}
 
@@ -512,10 +531,19 @@ namespace gnubase::engine
 		const auto hear = [&](bool moved)
 		{
 			if (!silent)
+			{
 				m_heard = automation.revision;
+				m_missed = HeardAgain::No;
+			}
 			else if (moved || newProcessors)
+			{
 				m_heard = 0;
+				if (moved)
+					m_missed = automation.quiet ? HeardAgain::Quiet : std::max(m_missed, HeardAgain::Muted);
+			}
 		};
+		// Heard again after playback moved while it was silent: its parts are chased after what it sends here.
+		m_heardAgain->store(silent ? HeardAgain::No : m_missed, std::memory_order_relaxed);
 		// New static values glide, unless they are the first ones.
 		const bool revised = automation.revision != m_played && m_played != 0;
 		const auto glide = [revised, smoothing](const PlayedLane& lane)
@@ -861,6 +889,12 @@ namespace gnubase::engine
 		// The track's own chase, for its strip alone (chaseFrom): a mute that keeps it keeps the values for unmuting;
 		// otherwise the instrument chased them, which makes values dropped before stale.
 		const graph::EventBuffer* chased = m_chased && !m_chased->empty() ? m_chased.get() : nullptr;
+		// Heard again after playback moved while it was silent: the sequencer that chases the track chases the kinds
+		// its channel sends again after them, the track's latest included, so of those the mute's are forgotten.
+		if (m_chaser && state.midiDropped.waiting() && state.automation.heardNow() != HeardAgain::No)
+			for (const graph::ProcessEvent& kind : m_channelKinds)
+				if (m_chaser->chasesKindOf(kind))
+					state.midiDropped.forget(kind);
 		const auto take = [this, &state, &track](const graph::ProcessEvent& event) noexcept
 		{
 			if (state.midiMuted && m_keepChase)

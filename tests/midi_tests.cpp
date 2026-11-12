@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <iterator>
 #include <memory>
@@ -871,6 +872,114 @@ TEST_CASE("an instrument chases its MIDI tracks' controller events with its own,
 	player.locate(100);
 	player.play(16);
 	CHECK(player.heard == std::vector<Heard>{{0, Type::Controller, 0, 1, 2, {}}, {0, Type::Controller, 0, 7, 30, {}}});
+}
+
+TEST_CASE(
+	"a track heard again after playback moved is chased where playback is, the kinds it has the latest of", "[unit]")
+{
+	// As an instrument chases the MIDI tracks routed to it. The track heard again has the older CC 7, the later CC 1,
+	// and CC 10 alone.
+	auto heardAgain = std::make_shared<std::atomic<HeardAgain>>(HeardAgain::No);
+	auto sequence = std::make_unique<MidiSequence>();
+	sequence->chase.push_back(makeChaseTrack({control(10, 1, 1), control(30, 7, 100)}, {}));
+	ChaseTrack track = makeChaseTrack({control(5, 7, 30), control(20, 1, 2), control(50, 10, 5)}, {});
+	track.heardAgain = heardAgain;
+	sequence->chase.push_back(std::move(track));
+	auto instrument = std::make_shared<MidiSequencer>();
+	instrument->setSequence(std::move(sequence));
+	instrument->setChase(chaseAll());
+	Player player(instrument, 16);
+	const auto heardAt = [](int64_t frame)
+	{ return std::vector<Heard>{{frame, Type::Controller, 0, 1, 2, {}}, {frame, Type::Controller, 0, 10, 5, {}}}; };
+
+	SECTION("playing")
+	{
+		player.locate(100);
+		player.play(16);
+		player.heard.clear();
+		heardAgain->store(HeardAgain::Quiet);
+		player.play(16);
+		heardAgain->store(HeardAgain::No);
+		player.play(16);
+		CHECK(player.heard == heardAt(16));
+	}
+	SECTION("stopped")
+	{
+		player.locate(50);
+		player.stop();
+		heardAgain->store(HeardAgain::Quiet);
+		player.stop();
+		CHECK(player.heard == heardAt(16));
+	}
+	SECTION("the kinds its channel sends, whichever track has the latest")
+	{
+		auto withKinds = std::make_unique<MidiSequence>();
+		withKinds->chase.push_back(makeChaseTrack({control(10, 1, 1), control(30, 7, 100)}, {}));
+		ChaseTrack heard = makeChaseTrack({control(5, 7, 30), control(20, 1, 2), control(50, 10, 5)}, {});
+		heard.heardAgain = heardAgain;
+		heard.channelKinds = {7};
+		withKinds->chase.push_back(std::move(heard));
+		instrument->setSequence(std::move(withKinds));
+		player.locate(100);
+		player.play(16);
+		player.heard.clear();
+		heardAgain->store(HeardAgain::Quiet);
+		player.play(16);
+		CHECK(player.heard ==
+			std::vector<Heard>{{16, Type::Controller, 0, 1, 2, {}}, {16, Type::Controller, 0, 7, 100, {}},
+				{16, Type::Controller, 0, 10, 5, {}}});
+	}
+	SECTION("only its mute button muted it: the kinds its channel sends")
+	{
+		// Its strip sends its own CC 1 and CC 10, which played into the mute.
+		auto withKinds = std::make_unique<MidiSequence>();
+		withKinds->chase.push_back(makeChaseTrack({control(10, 1, 1), control(30, 7, 100)}, {}));
+		ChaseTrack heard = makeChaseTrack({control(5, 7, 30), control(20, 1, 2), control(50, 10, 5)}, {});
+		heard.heardAgain = heardAgain;
+		heard.channelKinds = {7};
+		withKinds->chase.push_back(std::move(heard));
+		instrument->setSequence(std::move(withKinds));
+		player.locate(100);
+		player.play(16);
+		player.heard.clear();
+		heardAgain->store(HeardAgain::Muted);
+		player.play(16);
+		CHECK(player.heard == std::vector<Heard>{{16, Type::Controller, 0, 7, 100, {}}});
+	}
+	SECTION("a cycle jump in the same block chases again at the left locator")
+	{
+		player.setCycle(60, 108);
+		player.locate(100);
+		player.play(4);
+		player.heard.clear();
+		heardAgain->store(HeardAgain::Quiet);
+		player.play(16); // 104 to 108, then 60 to 72
+		const std::vector<Heard> atTheJump = {{8, Type::Controller, 0, 1, 2, {}}, {8, Type::Controller, 0, 7, 100, {}},
+			{8, Type::Controller, 0, 10, 5, {}}};
+		std::vector<Heard> expected = {{4, Type::Controller, 0, 1, 2, {}}, {4, Type::Controller, 0, 10, 5, {}}};
+		expected.insert(expected.end(), atTheJump.begin(), atTheJump.end());
+		CHECK(player.heard == expected);
+	}
+	SECTION("not chasing controllers")
+	{
+		instrument->setChase(MidiChase());
+		player.locate(100);
+		player.play(16);
+		heardAgain->store(HeardAgain::Quiet);
+		player.play(16);
+		CHECK(player.heard.empty());
+	}
+	SECTION("after a chase that didn't fit, everything is chased again")
+	{
+		fillInputBut(player, 1);
+		player.locate(100);
+		player.play(16); // room for CC 1 alone
+		heardAgain->store(HeardAgain::Quiet);
+		player.play(16);
+		CHECK(ofType(player.heard, Type::Controller) ==
+			std::vector<Heard>{{0, Type::Controller, 0, 1, 2, {}}, {16, Type::Controller, 0, 1, 2, {}},
+				{16, Type::Controller, 0, 7, 100, {}}, {16, Type::Controller, 0, 10, 5, {}}});
+	}
 }
 
 TEST_CASE("a chase that doesn't fit into the event buffer goes on in the next blocks, each event once", "[unit]")

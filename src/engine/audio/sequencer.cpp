@@ -71,6 +71,17 @@ namespace gnubase::engine
 			return (chase & g_chasePitchBend) != 0;
 		}
 
+		// How the track is heard again in this block (ChaseTrack::heardAgain).
+		HeardAgain heard(const ChaseTrack& track) noexcept
+		{
+			return track.heardAgain ? track.heardAgain->load(std::memory_order_relaxed) : HeardAgain::No;
+		}
+
+		bool raised(const ChaseTrack& track) noexcept
+		{
+			return heard(track) != HeardAgain::No;
+		}
+
 		// Indexes events by kind: order gets the indices of those with a kind, by kind and then in their order, lanes
 		// the runs of one kind.
 		template <typename Event, typename KindOf> void indexByKind(const std::vector<Event>& events, KindOf kindOf,
@@ -199,6 +210,57 @@ namespace gnubase::engine
 		return track;
 	}
 
+	std::vector<uint16_t> channelChaseKinds(const RenderChannel& channel)
+	{
+		std::vector<RenderController> sent;
+		const auto add = [&sent](ControllerType type, uint8_t number, uint8_t midiChannel)
+		{
+			RenderController controller;
+			controller.type = type;
+			controller.number = number;
+			controller.channel = midiChannel;
+			sent.push_back(controller);
+		};
+		// The channel's own values go out on MIDI channel 1 (channelAutomation).
+		if (channel.program)
+			add(ControllerType::Program, 0, 0);
+		if (channel.program && channel.bank)
+		{
+			add(ControllerType::Control, 0, 0);
+			add(ControllerType::Control, 32, 0);
+		}
+		if (channel.midiVolume)
+			add(ControllerType::Control, 7, 0);
+		if (channel.midiPan)
+			add(ControllerType::Control, 10, 0);
+		for (const RenderAutomationLane& lane : channel.automation)
+			if (lane.target.type == AutomationTargetType::Controller)
+				add(ControllerType::Control, lane.target.number, lane.target.channel);
+			else if (lane.target.type == AutomationTargetType::PitchBend)
+				add(ControllerType::PitchBend, 0, lane.target.channel);
+		std::vector<uint16_t> kinds;
+		kinds.reserve(sent.size());
+		for (const RenderController& controller : sent)
+			kinds.push_back(static_cast<uint16_t>(chaseKind(controller)));
+		return kinds;
+	}
+
+	graph::ProcessEvent chaseKindEvent(uint16_t kind) noexcept
+	{
+		graph::ProcessEvent event;
+		if (kind < MidiSequencer::g_notes)
+		{
+			event.type = graph::ProcessEvent::Type::Controller;
+			event.channel = static_cast<uint8_t>(kind / 128);
+			event.key = static_cast<uint8_t>(kind % 128);
+			return event;
+		}
+		const size_t after = kind - MidiSequencer::g_notes;
+		event.type = after < 16 ? graph::ProcessEvent::Type::Program : graph::ProcessEvent::Type::PitchBend;
+		event.channel = static_cast<uint8_t>(after % 16);
+		return event;
+	}
+
 	MidiSequencer::MidiSequencer()
 		: m_sequence(std::make_unique<const MidiSequence>()), m_input(graph::g_maxEventsPerBlock),
 		  m_stripChase(std::make_shared<graph::EventBuffer>(graph::g_maxEventsPerBlock))
@@ -264,6 +326,28 @@ namespace gnubase::engine
 						  flag(chase.controllers, g_chaseControllers) | flag(chase.programs, g_chasePrograms) |
 						  flag(chase.pitchBend, g_chasePitchBend) | flag(chase.beyondParts, g_chaseBeyondParts)),
 			std::memory_order_relaxed);
+	}
+
+	bool MidiSequencer::chasesKindOf(const graph::ProcessEvent& event) const noexcept
+	{
+		const uint8_t chase = m_chase.load(std::memory_order_relaxed);
+		switch (event.type)
+		{
+		case graph::ProcessEvent::Type::Controller:
+			return (chase & g_chaseControllers) != 0;
+		case graph::ProcessEvent::Type::Program:
+			return (chase & g_chasePrograms) != 0;
+		case graph::ProcessEvent::Type::PitchBend:
+			return (chase & g_chasePitchBend) != 0;
+		case graph::ProcessEvent::Type::NoteOn:
+		case graph::ProcessEvent::Type::NoteOff:
+		case graph::ProcessEvent::Type::PolyPressure:
+		case graph::ProcessEvent::Type::ChannelPressure:
+		case graph::ProcessEvent::Type::SysEx:
+		case graph::ProcessEvent::Type::Parameter:
+			return false;
+		}
+		return false;
 	}
 
 	void MidiSequencer::process(const graph::ProcessContext& context) noexcept
@@ -388,6 +472,8 @@ namespace gnubase::engine
 			m_next = -1;
 			if (m_cursor >= 0 && transport.position != m_cursor) // a locate while stopped
 				findChased(sequence, transport.position, chase, true);
+			else
+				chaseHeardAgain(sequence, transport.position, chase, true);
 			m_cursor = transport.position;
 			sendChased(0, intoStrip ? *m_stripChase : out);
 			return;
@@ -402,6 +488,12 @@ namespace gnubase::engine
 				endAll(segment.offset, out);
 				findChased(sequence, segment.position, chase, false);
 				m_chaseNotes = (chase & g_chaseNotes) != 0;
+				if (intoStrip)
+					sendChased(segment.offset, *m_stripChase);
+			}
+			else if (s == 0)
+			{
+				chaseHeardAgain(sequence, segment.position, chase, false);
 				if (intoStrip)
 					sendChased(segment.offset, *m_stripChase);
 			}
@@ -473,7 +565,15 @@ namespace gnubase::engine
 		}
 	}
 
-	void MidiSequencer::findChased(const MidiSequence& sequence, int64_t position, uint8_t chase, bool stopped) noexcept
+	void MidiSequencer::chaseHeardAgain(
+		const MidiSequence& sequence, int64_t position, uint8_t chase, bool stopped) noexcept
+	{
+		if (std::any_of(sequence.chase.begin(), sequence.chase.end(), raised))
+			findChased(sequence, position, chase, stopped, m_chasedSent == m_chasedCount);
+	}
+
+	void MidiSequencer::findChased(
+		const MidiSequence& sequence, int64_t position, uint8_t chase, bool stopped, bool heardAgain) noexcept
 	{
 		for (size_t i = m_chasedSent; i < m_chasedCount; ++i) // the rest of a chase that didn't fit
 			m_chased[i] = Chased();
@@ -481,6 +581,14 @@ namespace gnubase::engine
 		m_chasedSent = 0;
 		if ((chase & g_chaseControllerEvents) == 0)
 			return;
+		if (heardAgain)
+		{
+			m_resent.fill(false);
+			for (const ChaseTrack& track : sequence.chase)
+				if (raised(track))
+					for (const uint16_t kind : track.channelKinds)
+						m_resent[kind] = true;
+		}
 		for (size_t t = 0; t < sequence.chase.size(); ++t)
 		{
 			const ChaseTrack& track = sequence.chase[t];
@@ -502,7 +610,10 @@ namespace gnubase::engine
 		// The kinds found, in time order; at one position by track, then kind, so a bank select precedes its program.
 		for (size_t kind = 0; kind < m_chased.size(); ++kind)
 		{
-			if (m_chased[kind].played || m_chased[kind].position == std::numeric_limits<int64_t>::min())
+			const Chased& found = m_chased[kind];
+			// Heard again: the parts of a track that was soloed out or disabled, and the kinds the channels sent.
+			if (found.played || found.position == std::numeric_limits<int64_t>::min() ||
+				(heardAgain && heard(sequence.chase[found.track]) != HeardAgain::Quiet && !m_resent[kind]))
 			{
 				m_chased[kind] = Chased();
 				continue;

@@ -34,8 +34,18 @@ the project (#491).
   track doesn't change the instrument that other tracks play. Once it is heard again, its automation curves send their
   values at once, but its MIDI volume, pan and program only what changed while it was silent (a new program with the
   MIDI volume and pan after it), so a program change or CC 7 a part played before it went silent stays; if playback
-  started, located or jumped meanwhile, or the instrument changed, it sends them all, as a jump does. Silent channels
-  don't monitor their input directly either.
+  started, stopped, located or jumped meanwhile, or the instrument changed, it sends them all, as a jump does. A value
+  changed and changed back while it was silent, e.g. by undo, didn't change: the player compares with the lanes of the
+  automation last heard. A soloed-out or disabled track's parts weren't in the snapshot when playback moved, so once it
+  is heard again they are chased as the jump would have with the chase settings: in that block its automation raises
+  `AutomationPlayer::heardAgain`, and the sequencer that chases the track at jumps (`MidiSequencer`: its
+  instrument's, or its own if it isn't routed to one) sends, after the channel's values, the latest controller event
+  of each kind before the position (stopped: up to and including the cursor) where that is the track's, or where it is
+  of a kind the channel's program, MIDI volume, pan or MIDI automation has just sent, whichever track it is on. A later
+  event of another track on the instrument keeps its value: one the channel didn't touch isn't sent again, one it
+  overrode comes back. After a move while only its mute button muted it, its parts played into the mute: the sequencer
+  chases only the kinds the channel sent, whichever track has the latest, and the strip forgets what the mute dropped
+  of those and sends the rest. Notes that started while it was silent aren't chased. Silent channels don't monitor their input directly either.
 - **Disabled tracks** (p. 219): `track.set` `enabled` false disables an audio, instrument or MIDI track. It keeps its
   events, parts and channel settings, but the snapshot leaves its events and parts out (no disk streaming) and its
   channel is silent. Other track types refuse it.
@@ -207,7 +217,14 @@ New Folder are in [folder-tracks.md](folder-tracks.md).
 - `tests/mixer_tests.cpp` renders muted and soloed tracks and the glide; `tests/sequencing_tests.cpp` plays a muted, a
   disabled and a soloed MIDI track into an instrument, and checks that muted, soloed-out and disabled ones send it no
   automation (controller, pitch bend and channel pressure), MIDI volume, pan or program, and that one heard again
-  keeps its part's program and CC 7 and sends what changed meanwhile, each once, also while the transport stands;
+  keeps its part's program and CC 7 and sends what changed meanwhile, each once, also while the transport stands,
+  nothing for values changed back by undo, and after playback started, stopped, located or jumped meanwhile the
+  channel's values, then its parts' chase, disabled or muted, also stopped at the cursor, not without the chase
+  settings, and with another track's later program change, which comes back after the channel's, and CC 1, which
+  isn't sent again, a pedal the chase presses that its mute releases, and a track disabled at one move and muted
+  by its button at a later one chased in full; `tests/midi_tests.cpp` chases a track heard again in the sequencer, playing, stopped, with its
+  channel's kinds, muted only by its button, with a cycle jump in the same block, without chase settings and after a
+  chase that didn't fit;
   `tests/dawproject_tests.cpp` saves and loads mute, solo and disabled tracks, also from `project.xml` alone.
 - `tests/tracklayout_tests.cpp`: `trackLayout.set` setting heights and replacing the folded folders, refusing unknown
   tracks, folded tracks that aren't folders and heights out of range, not an undo step, without tracks that are gone,

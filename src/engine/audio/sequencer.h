@@ -39,16 +39,43 @@ namespace gnubase::engine
 		ChaseIndex index; // the part's own controller events
 	};
 
+	// How a MIDI track is heard again in a block (AutomationPlayer::heardAgain): after playback moved while it was
+	// silent, or not.
+	enum class HeardAgain : uint8_t
+	{
+		No,
+		// Only its mute button muted it: its parts played into the mute, and its strip sends the latest values the mute
+		// dropped (ChannelStrip), except of the kinds its channel sends again, which are chased whichever track has
+		// the latest.
+		Muted,
+		// Soloed out or disabled: its parts weren't in the sequence, so they are chased.
+		Quiet,
+	};
+
 	// A track's controller events for chasing (makeChaseTrack): all of them, and those of each MIDI part.
 	struct ChaseTrack
 	{
 		ChaseIndex all;
 		std::vector<ChasePart> parts; // sorted by start
+		// A MIDI track's AutomationPlayer::heardAgain, or none: raised for the block in which the track is heard again
+		// after playback moved while it was silent, when the sequencer chases its parts where playback is.
+		std::shared_ptr<const std::atomic<HeardAgain>> heardAgain;
+		// The kinds (ChaseLane::kind) its channel sends again when it is heard again after a move (channelChaseKinds),
+		// before the chase: their latest event is chased whichever track it is on, as at a jump.
+		std::vector<uint16_t> channelKinds;
 	};
 
 	// Command thread: the chase index of a track's controller events (sorted by position, each with the index of its
 	// part in parts) and MIDI parts (sorted by start).
 	ChaseTrack makeChaseTrack(const std::vector<RenderController>& controllers, const std::vector<RenderPart>& parts);
+
+	// Command thread: the kinds of controller events (ChaseLane::kind) that a MIDI channel's own values and automation
+	// send (channelAutomation): its program, with bank select if it has a bank, its MIDI volume and pan, and its
+	// controller and pitch bend automation.
+	std::vector<uint16_t> channelChaseKinds(const RenderChannel& channel);
+
+	// An event of a chase kind (ChaseLane::kind), at offset 0 and without a value.
+	graph::ProcessEvent chaseKindEvent(uint16_t kind) noexcept;
 
 	// A MIDI effect a track's sequencer runs (MidiSequence::effects).
 	struct RunningEffect
@@ -111,6 +138,15 @@ namespace gnubase::engine
 	// controller events alone, up to and including those at the cursor. A chase takes a binary search per kind of
 	// event.
 	//
+	// A silent MIDI track's parts aren't in the sequence, so a jump while it is silent doesn't chase them. When it is
+	// heard again (ChaseTrack::heardAgain), the sequencer chases them in that block, where playback is, as the jump
+	// would have: of each kind the latest event before the position on the tracks chased, if it is the heard track's
+	// or of a kind its channel's values and automation have just sent (ChaseTrack::channelKinds), which come first, in
+	// its events; stopped, up to and including the cursor. A track that only its mute button muted had its parts in
+	// the sequence, and its strip sends what the mute dropped: only the kinds its channel sent are chased, whose
+	// dropped values the strip forgets. After a chase that didn't fit, it chases everything there again. Notes aren't
+	// chased.
+	//
 	// The track's own events, those of its input and of its parts, go through its MIDI inserts in order, each effect
 	// playing what the one before it played, and each MIDI send plays its effect on them beside that, before or after
 	// the inserts. When the effects that play change (one added, removed, replaced, switched off or bypassed), it ends
@@ -135,6 +171,9 @@ namespace gnubase::engine
 
 		// Any thread: what jumps chase from the next block on. Nothing until set.
 		void setChase(const MidiChase& chase) noexcept;
+		// Any thread: whether a jump chases events of the kind of event (a controller, program or pitch bend), as
+		// set.
+		bool chasesKindOf(const graph::ProcessEvent& event) const noexcept;
 
 		// The controller events its last block chased with MidiSequence::chaseIntoStrip, at the jump's offset; empty
 		// without. Cleared and filled in by process, so the strip that runs it reads them after it in the same block.
@@ -216,8 +255,11 @@ namespace gnubase::engine
 		// Notes it can't end for a full buffer end as soon as there is room.
 		void endAll(uint32_t offset, graph::EventBuffer& out) noexcept;
 		// Finds the controller events to chase at a position; sendChased sends them, false if the buffer filled first.
-		// Stopped, it takes the events at the position too.
-		void findChased(const MidiSequence& sequence, int64_t position, uint8_t chase, bool stopped) noexcept;
+		// Stopped, it takes the events at the position too. heardAgain: only those of tracks heard again in this block.
+		void findChased(const MidiSequence& sequence, int64_t position, uint8_t chase, bool stopped,
+			bool heardAgain = false) noexcept;
+		// A chase of the tracks heard again in this block, unless a jump chases there anyway.
+		void chaseHeardAgain(const MidiSequence& sequence, int64_t position, uint8_t chase, bool stopped) noexcept;
 		void consider(const ChaseIndex& index, uint16_t track, int64_t position, uint8_t chase, bool stopped) noexcept;
 		bool sendChased(uint32_t offset, graph::EventBuffer& out) noexcept;
 		// Starts the notes that sound at a position; false if the buffer was full before it started them all.
@@ -251,6 +293,7 @@ namespace gnubase::engine
 		size_t m_chasedCount = 0;
 		size_t m_chasedSent = 0;
 		std::array<uint32_t, g_notes> m_chasedNotes{}; // while chasing: the notes to start, as indices into notes
+		std::array<bool, g_chased> m_resent{}; // while chasing tracks heard again: the kinds their channels sent
 		graph::EventBuffer m_input;
 		std::shared_ptr<graph::EventBuffer> m_stripChase; // see stripChase
 		std::array<bool, g_notes> m_inputHeld{};          // notes its input sent a note-on for and no note-off since
