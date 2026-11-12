@@ -64,11 +64,13 @@ The options of the reference's MIDI file import (reference manual pp. 364-365, #
   file's end counts. Content on linear tracks keeps its time in samples, so it counts by where the file ends in the
   file's tempo. An audio event on a musical track keeps its start in ticks and its length in samples, so it counts by
   its start in the file's tempo plus its length, wherever it starts; one whose clip plays in musical mode stretches
-  with the tempo and counts by its end in ticks in the project's tempo before the import. The project's tempo then goes on from the tempo it had at the end, with its later changes; the same
-  goes for its signatures, from the next bar start. Otherwise, in a new project for instance, the file's last tempo
-  and signature go on: there is nothing of the project's to keep, and the file's tempo then holds for what follows
-  it, as when the project is made from the file. Without `tempo` the file plays in the project's tempo from the
-  position.
+  with the tempo and counts by its end in ticks in the project's tempo before the import. On a linear track an audio
+  event whose clip plays in musical mode keeps its start in samples and its length in beats, so it counts by its
+  start in ticks in the file's tempo plus that length. The project's tempo then goes on from the tempo it had at the
+  end, with its later changes; the same goes for its signatures, from the next bar start. Otherwise, in a new
+  project for instance, the file's last tempo and signature go on: there is nothing of the project's to keep, and the
+  file's tempo then holds for what follows it, as when the project is made from the file. Without `tempo` the file
+  plays in the project's tempo from the position.
 - **dissolve** false keeps a type 0 file in one track with all its MIDI channels (Auto Dissolve Format 0 off).
 - **singlePart** puts the whole file into one part on one track (Import Dropped File as Single Part): **track**, a
   MIDI or instrument track of the project, or a new track named after the file. On a linear track of the project
@@ -218,10 +220,12 @@ automation point on a linear track, a chord, a scale, a linear transpose event a
 the file's end, a linear audio event that ends after it only in the file's tempo, audio events and parts on another
 version of their track and an audio event on a musical track after a file slower than the project, audio events on
 musical tracks that end after the file's end only in the file's tempo (one that starts in the file, one that starts
-before it), but not for content before the file's end, such as an audio event on a musical track that ends there in
-the file's tempo, also one that ends after it only in the project's), undo and redo of such an import with the
-project's tempo, signatures and tempo mode, a type 0 file kept in one track, the whole file in one part on a new track and on an instrument track at a
-position and on a linear MIDI track in samples, refusing an audio track or `track` without `singlePart`, the first
+before it) and an audio event in musical mode on a linear track that ends after it only in the file's tempo, but not
+for content before the file's end, such as an audio event on a musical track that ends there in the file's tempo,
+also one that ends after it only in the project's, and one in musical mode on a linear track), undo and redo of
+such an import with the project's tempo, signatures and tempo mode, a type 0 file kept in one track, the whole file
+in one part on a new track and on an instrument track at a position and on a linear MIDI track in samples, refusing
+an audio track or `track` without `singlePart`, the first
 patch and volume and pan of channel 1 in a MIDI track's settings while other channels' and later events stay, none on
 instrument tracks, a track of nothing but those kept without a part, and controllers
 in automation lanes with the sustain pedal left in the part, in one undo step. `tests/fileimport_tests.cpp` runs

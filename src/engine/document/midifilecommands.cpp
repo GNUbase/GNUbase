@@ -169,7 +169,9 @@ namespace gnubase::engine
 				"position, so one at the file's end counts; on linear tracks it is in samples, compared with the "
 				"file's end in the file's tempo. An audio event on a musical track keeps its start in ticks and its "
 				"length in samples, so it counts by its start in the file's tempo plus its length (by its end in "
-				"ticks if its clip plays in musical mode). Unless markers is false, its "
+				"ticks if its clip plays in musical mode). One on a linear track whose clip plays in musical mode "
+				"keeps its start in samples and its length in beats, so it counts by its start in ticks in the file's "
+				"tempo plus that length. Unless markers is false, its "
 				"markers are added to the active marker track (one is added if there is none), except that a type 1 "
 				"file's tracks of nothing but a name and markers, which midiFile.export writes for marker tracks, "
 				"become new marker tracks at the top while the project has room for them. The options of the "
@@ -244,17 +246,26 @@ namespace gnubase::engine
 				extendParts(version.midiParts);
 				extendParts(version.audioParts);
 			}
-		// An audio event keeps its position in its track's time base. On a linear track it counts by its end in
-		// samples. On a musical one it keeps its start in ticks and its length in samples, so it ends at its start in
-		// the file's tempo plus its length, unless its clip plays in musical mode and so keeps its end in ticks too.
+		// An audio event keeps its position in its track's time base. If its clip plays in musical mode, its length
+		// is in beats, which follow the tempo: on a musical track it keeps its end in ticks, on a linear one it ends at
+		// its start in ticks in the file's tempo plus that length. Otherwise its length is in samples: on a linear
+		// track it counts by its end in samples, on a musical one by its start in the file's tempo plus its length.
 		forEveryAudioEvent(project,
 			[&project, &options, &extend](const AudioEvent& event)
 			{
 				const EventSpan span = eventSpan(project, event);
-				if (event.position.base == time::TimeBase::Linear)
+				const bool linear = event.position.base == time::TimeBase::Linear;
+				if (project.clips.at(event.clip).warp.musical)
+				{
+					const time::Ticks end = project.tempo.toTicks(span.end, project.sampleRate);
+					if (linear)
+						options.beatAudioEvents.push_back(
+							{span.start, end - project.tempo.toTicks(span.start, project.sampleRate)});
+					else
+						extend({time::TimeBase::Musical, end});
+				}
+				else if (linear)
 					extend({time::TimeBase::Linear, span.end});
-				else if (project.clips.at(event.clip).warp.musical)
-					extend({time::TimeBase::Musical, project.tempo.toTicks(span.end, project.sampleRate)});
 				else
 					options.audioEvents.push_back({event.position.value, span.end - span.start});
 			});

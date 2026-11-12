@@ -305,9 +305,10 @@ TEST_CASE("midiFile.import keeps a constant project tempo and signature for any 
 	bool slow = false; // the file at 60 BPM, slower than the project
 
 	// An audio event of length samples (at the project's 48 kHz) on a new audio track; position is in the track's time
-	// base. Returns the track.
-	const auto addAudioEvent = [&client, &dir, &addTrack](
-								   int64_t position, const char* timeBase = "linear", int64_t length = 4000)
+	// base. If musical, its clip plays in musical mode at the project's 100 BPM, so that it plays as long as it is.
+	// Returns the track.
+	const auto addAudioEvent = [&client, &dir, &addTrack](int64_t position, const char* timeBase = "linear",
+								   int64_t length = 4000, bool musical = false)
 	{
 		test::Audio audio;
 		audio.samples.assign(static_cast<size_t>(length), 0.25F);
@@ -318,6 +319,8 @@ TEST_CASE("midiFile.import keeps a constant project tempo and signature for any 
 		const ObjectId audioTrack = addTrack("audio", timeBase);
 		run(client, "audioEvent.add",
 			{{"track", audioTrack}, {"clip", clip}, {"position", position}, {"offset", 0}, {"length", length}});
+		if (musical)
+			run(client, "clip.setWarp", {{"clip", clip}, {"musical", true}, {"tempo", 100.0}});
 		return audioTrack;
 	};
 
@@ -358,6 +361,27 @@ TEST_CASE("midiFile.import keeps a constant project tempo and signature for any 
 		// A bar before the file's start in the project's 100 BPM, 115200 samples, so it ends 84800 samples after the
 		// file's start: 2.94 quarter notes in the project's tempo.
 		addAudioEvent(start - bar, "musical", 200000);
+	}
+	// An audio event on a linear track whose clip plays in musical mode keeps its start in samples and its length in
+	// beats: it counts by its start in ticks in the file's tempo plus those beats. The file ends 3 quarter notes after
+	// its start.
+	SECTION("An audio event on a linear track in musical mode that ends after the end of a slower file only in the "
+			"file's tempo")
+	{
+		// It starts 2 seconds after the file's start, 2 quarter notes at the file's 60 BPM, and is a quarter and a half
+		// long, so it ends 3.5 quarter notes after the start. In samples in the project's 100 BPM it would end 0.9
+		// seconds later, 139200 samples after the start, before the file's end at 144000.
+		slow = true;
+		addAudioEvent(startSamples + 96000, "linear", 43200, true);
+	}
+	SECTION("An audio event on a linear track in musical mode that ends before the end of a faster file only in the "
+			"file's tempo")
+	{
+		// It starts half a second after the file's start, a quarter note at the file's 120 BPM, and is 1.75 quarter
+		// notes long, so it ends 2.75 quarter notes after the start. In samples in the project's 100 BPM it would end
+		// 1.05 seconds later, 74400 samples after the start, after the file's end at 72000.
+		after = false;
+		addAudioEvent(startSamples + 24000, "linear", 50400, true);
 	}
 	SECTION("A MIDI part on another version of its track")
 	{
