@@ -473,8 +473,11 @@ TEST_CASE("a key held in an in-place editor that closes ends its pitch", "[ui]")
 	REQUIRE(f.app.waitUntil([&] { return f.display.project().at("midiParts").size() == 2; }));
 	// The instrument noteProbe, rendered by hand, so that the notes the keyboard sends are heard.
 	f.app.call("audio.setDevice", {{"blockSize", 128}, {"inputChannels", 0}, {"captureSeconds", 1}});
-	f.app.call("channel.set",
-		{{"channel", f.app.call("project.get").at("tracks").at(2).at("channel")}, {"instrument", "noteProbe"}});
+	const Json tracks = f.app.call("project.get").at("tracks");
+	const auto instrument =
+		std::find_if(tracks.begin(), tracks.end(), [&](const Json& each) { return each.at("id") == strings; });
+	REQUIRE(instrument != tracks.end());
+	f.app.call("channel.set", {{"channel", instrument->at("channel")}, {"instrument", "noteProbe"}});
 	f.app.call("audio.render", {{"frames", 128}}); // the new graph
 	f.app.call("midi.capture", {{"start", true}});
 	std::vector<std::vector<int>> played;
@@ -509,6 +512,13 @@ TEST_CASE("a key held in an in-place editor that closes ends its pitch", "[ui]")
 	const Json keyboard = f.box(lane + " .key-editor-keys");
 	const Json grid = f.box(lane + " .key-editor-grid");
 	const double y = grid.at("y").get<double>() + ((127.5 - 60) / 128.0 * grid.at("height").get<double>());
+	// The key is in view: inside the lane's box and the window, wherever the lower zone and the window's size leave it.
+	const Json shown = f.box(lane);
+	const Json area = f.box(".event-area");
+	REQUIRE(y >= shown.at("y").get<double>());
+	REQUIRE(y <= shown.at("y").get<double>() + shown.at("height").get<double>());
+	REQUIRE(y >= area.at("y").get<double>());
+	REQUIRE(y <= area.at("y").get<double>() + area.at("height").get<double>());
 	f.app.ui().press(std::nullopt,
 		{"", 0, ui::Point{keyboard.at("x").get<int>() + 2, static_cast<int>(std::lround(y))}}, ui::MouseButton::Left,
 		{});
