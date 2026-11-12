@@ -17,6 +17,7 @@
 #include <fstream>
 #include <memory>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -520,6 +521,69 @@ TEST_CASE("renaming or removing an articulation does so in the parts of the trac
 	CHECK(partNamed(f.part) == before);
 }
 
+TEST_CASE("renaming or removing an articulation does so in shared copies and other track versions", "[unit]")
+{
+	Fixture f;
+	const auto id = f.strings();
+	f.call("controller.add",
+		{{"part", f.part},
+			{"controllers", {{{"position", 0}, {"type", "articulation"}, {"articulation", "Pizzicato"}}}}});
+	f.call("note.add",
+		{{"part", f.part},
+			{"notes",
+				{{{"position", 0}, {"length", 60}, {"pitch", 60}, {"velocity", 0.5},
+					{"articulations", {"Staccato"}}}}}});
+	// Pizzicato renamed to Pizz and Staccato to Stacc, as the setup renames them, or both removed.
+	Json renamed = stringsSettings();
+	renamed["articulations"][1]["name"] = "Pizz";
+	renamed["articulations"][2]["name"] = "Stacc";
+	renamed["slots"][1]["articulations"] = {"Pizz"};
+	renamed["slots"][2]["articulations"] = {"Stacc"};
+	renamed["slots"][3]["articulations"] = {"Pizz", "Stacc"};
+	renamed["map"] = id;
+	const Json removed = {{"map", id}, {"articulations", {stringsSettings().at("articulations").at(0)}},
+		{"slots", {stringsSettings().at("slots").at(0)}}};
+	// The direction's name, or empty without one, and the note's attributes, of the part on a track.
+	const auto onTrack = [&f](const Json& track)
+	{
+		std::pair<std::string, Json> found;
+		const Json project = f.call("project.get");
+		for (const Json& part : project.at("midiParts"))
+			if (part.at("track") == track)
+			{
+				const Json& controllers = part.at("controllers");
+				found.first = controllers.empty() ? "" : controllers.at(0).at("articulation").get<std::string>();
+				found.second = part.at("notes").at(0).value("articulations", Json::array());
+			}
+		return found;
+	};
+	using Found = std::pair<std::string, Json>;
+
+	SECTION("a shared copy on a track without the map")
+	{
+		const auto other = f.call("track.add", {{"type", "instrument"}}).at("track").at("id");
+		f.call("event.copy", {{"events", {f.part}}, {"ticks", g_bar}, {"track", other}, {"shared", true}});
+		f.call("articulationMap.set", renamed);
+		CHECK(onTrack(other) == Found{"Pizz", {"Stacc"}});
+		f.call("history.undo");
+		CHECK(onTrack(other) == Found{"Pizzicato", {"Staccato"}});
+		f.call("articulationMap.set", removed);
+		CHECK(onTrack(other) == Found{"", Json::array()});
+	}
+	SECTION("the track's other version")
+	{
+		// The second version, a copy of the first, is active; the first one keeps the part.
+		f.call("trackVersion.duplicate", {{"tracks", {f.track}}});
+		const auto second = f.trackJson().at("activeVersion");
+		f.call("articulationMap.set", renamed);
+		f.call("trackVersion.activate", {{"tracks", {f.track}}, {"version", 1}});
+		CHECK(onTrack(f.track) == Found{"Pizz", {"Stacc"}});
+		f.call("articulationMap.set", removed);
+		f.call("trackVersion.activate", {{"tracks", {f.track}}, {"version", second}});
+		CHECK(onTrack(f.track) == Found{"", Json::array()});
+	}
+}
+
 TEST_CASE("a key switch plays before the note it comes with, whatever its pitch", "[unit]")
 {
 	Fixture f;
@@ -542,13 +606,21 @@ TEST_CASE("notes that don't play send no output events", "[unit]")
 {
 	Fixture f;
 	f.strings();
-	// A Staccato note that never plays (probability 0), then an Arco one.
+	// A Staccato note that never plays, then an Arco one.
+	Json silent = {{"position", 0}, {"length", 60}, {"pitch", 61}, {"velocity", 0.5}, {"articulations", {"Staccato"}}};
+	SECTION("its probability")
+	{
+		silent["probability"] = 0.0;
+	}
+	SECTION("a muted drum sound")
+	{
+		const auto drums = f.call("drumMap.add", {{"name", "Kit"}}).at("map").at("id");
+		f.call("drumMap.set", {{"map", drums}, {"sounds", {{{"pitch", 61}, {"mute", true}}}}});
+		f.call("track.set", {{"track", f.track}, {"drumMap", drums}});
+	}
 	f.call("note.add",
 		{{"part", f.part},
-			{"notes",
-				{{{"position", 0}, {"length", 60}, {"pitch", 61}, {"velocity", 0.5}, {"probability", 0.0},
-					 {"articulations", {"Staccato"}}},
-					{{"position", g_quarter}, {"length", 60}, {"pitch", 60}, {"velocity", 0.5}}}}});
+			{"notes", {silent, {{"position", g_quarter}, {"length", 60}, {"pitch", 60}, {"velocity", 0.5}}}}});
 	const engine::RenderChannel channel = f.rendered();
 	CHECK(channel.controllers.empty()); // neither Staccato's controller 32 nor its off event
 	REQUIRE(channel.notes.size() == 2);
@@ -600,6 +672,40 @@ TEST_CASE("Merge MIDI in Loop takes no directions from parts that end before the
 			merged = part;
 	CHECK(merged.at("controllers").empty());
 	CHECK(merged.at("notes").size() == 1);
+}
+
+TEST_CASE("Merge MIDI in Loop starts each part with the default slot, on a new track with the map", "[unit]")
+{
+	Fixture f;
+	const auto map = f.strings();
+	// Part A, bar 1, plays Pizzicato; part B, bar 2, has no directions: it plays Arco.
+	f.call("controller.add",
+		{{"part", f.part},
+			{"controllers", {{{"position", 0}, {"type", "articulation"}, {"articulation", "Pizzicato"}}}}});
+	const Json b =
+		f.call("midiPart.add", {{"track", f.track}, {"position", g_bar}, {"length", g_bar}}).at("part").at("id");
+	for (const Json& part : {Json(f.part), b})
+		f.call("note.add",
+			{{"part", part}, {"notes", {{{"position", 0}, {"length", 60}, {"pitch", 60}, {"velocity", 0.5}}}}});
+	// At 120 BPM and 48 kHz a bar is 96000 samples: bars 1 and 2, onto a new track.
+	const Json changes = f.call("midi.merge", {{"start", 0}, {"end", 192000}});
+	const Json project = f.call("project.get");
+	Json merged;
+	for (const Json& part : project.at("midiParts"))
+		if (part.at("id") == changes.at("parts").at(0))
+			merged = part;
+	REQUIRE(merged.at("track") == changes.at("tracks").at(0));
+	for (const Json& track : project.at("tracks"))
+		if (track.at("id") == merged.at("track"))
+			CHECK(track.at("articulationMap") == map);
+	// Pizzicato for A's note, a reset of its group where B starts.
+	std::vector<std::tuple<int64_t, std::string, bool>> directions;
+	for (const Json& controller : merged.at("controllers"))
+		directions.emplace_back(controller.at("position").get<int64_t>(),
+			controller.at("articulation").get<std::string>(), controller.at("reset").get<bool>());
+	std::sort(directions.begin(), directions.end());
+	CHECK(directions ==
+		std::vector<std::tuple<int64_t, std::string, bool>>{{0, "Pizzicato", false}, {g_bar, "Arco", true}});
 }
 
 TEST_CASE("track presets and track import bring a track's articulation map along", "[integration]")
@@ -731,5 +837,32 @@ TEST_CASE("remote triggers played into a track select sound slots", "[integratio
 		// trigger and plays; key switches are notes again.
 		CHECK(play({{0xC0, 1}, {0x90, 37, 100}, {0x80, 37, 0}, {0xC0, 9}}) ==
 			Played{{0xC0, 40}, {0x90, 49}, {0x80, 49}, {0xC0, 9}});
+	}
+	SECTION("another map or other slots start from the default slot")
+	{
+		// Pizzicato selected, then another map with the same slots: the notes play the default slot, Arco, on their
+		// own channel, until C#1 selects Pizzicato of the new map, with its key switch.
+		CHECK(play({{0x90, 37, 100}, {0x80, 37, 0}}) == Played{{0x92, 25}, {0x82, 25}});
+		const auto copy = call("articulationMap.add", {{"copy", map}}).at("map").at("id");
+		call("track.set", {{"track", track}, {"articulationMap", copy}});
+		call("audio.render", {{"frames", 64}});
+		CHECK(play({{0x90, 60, 100}, {0x80, 60, 0}, {0x90, 37, 100}, {0x80, 37, 0}}) ==
+			Played{{0x90, 60}, {0x80, 60}, {0x92, 25}, {0x82, 25}});
+		// Other slots in the map: the default slot again.
+		Json slots = stringsSettings().at("slots");
+		slots[1]["transpose"] = 12;
+		call("articulationMap.set", {{"map", copy}, {"slots", slots}});
+		call("audio.render", {{"frames", 64}});
+		CHECK(play({{0x90, 60, 100}, {0x80, 60, 0}}) == Played{{0x90, 60}, {0x80, 60}});
+	}
+	SECTION("a trigger key's note-off ends the note its note-on played")
+	{
+		// C#1 pressed without a map plays; with the map assigned while it is held, its release still ends it.
+		call("track.set", {{"track", track}, {"articulationMap", 0}});
+		call("audio.render", {{"frames", 64}});
+		CHECK(play({{0x90, 37, 100}}) == Played{{0x90, 37}});
+		call("track.set", {{"track", track}, {"articulationMap", map}});
+		call("audio.render", {{"frames", 64}});
+		CHECK(play({{0x80, 37, 0}}) == Played{{0x80, 37}});
 	}
 }

@@ -241,6 +241,11 @@ jobs:
       ASAN_OPTIONS: detect_leaks=1
       UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
       TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1:suppressions=${{ github.workspace }}/tools/tsan-suppressions.txt
+      # Only Mesa's software driver, which the window tests draw through: the Vulkan loader would also load the other
+      # drivers of mesa-vulkan-drivers, and the radeon one leaks 128 bytes while it looks for a device (Nov 2026), which
+      # failed every UI test under LeakSanitizer.
+      # A glob on the manifest's name, which Mesa 25 writes without the architecture (lvp_icd.json).
+      VK_LOADER_DRIVERS_SELECT: lvp_icd*
     steps:
       - uses: actions/checkout@v7
         with:
