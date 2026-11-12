@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/schematext.h"
 
+#include "engine/schema.h"
+
 #include <algorithm>
+#include <optional>
 #include <ostream>
 
 namespace gnubase::engine
@@ -16,27 +19,30 @@ namespace gnubase::engine
 			return "one of " + text;
 		}
 		const Json type = schema.value("type", Json());
+		std::string text;
 		if (type.is_array())
 		{
-			std::string text;
 			for (const Json& name : type)
 				text += (text.empty() ? "" : " or ") + name.get<std::string>();
-			return text;
 		}
-		if (!type.is_string())
-			return "any";
-		if (const auto pattern = schema.find("pattern"); pattern != schema.end())
+		else if (type.is_string())
 		{
-			std::string text = type.get<std::string>() + " matching `" + pattern->get<std::string>() + "`";
-			if (const auto maxLength = schema.find("maxLength"); maxLength != schema.end())
-				text += ", at most " + maxLength->dump() + " characters";
-			return text;
+			text = type.get<std::string>();
 		}
-		if (const auto maxLength = schema.find("maxLength"); maxLength != schema.end())
-			return type.get<std::string>() + " of at most " + maxLength->dump() + " characters";
+		else
+		{
+			return "any";
+		}
+		// The limit validate checks, which may be lower than the schema's maxLength (g_patternMaxLength).
+		const std::optional<size_t> maxLength = maxStringLength(schema);
+		const std::string limit = maxLength ? std::to_string(*maxLength) + " characters" : std::string();
+		if (const auto pattern = schema.find("pattern"); pattern != schema.end())
+			return text + " matching `" + pattern->get<std::string>() + "`" + (maxLength ? ", at most " + limit : "");
+		if (maxLength)
+			return text + " of at most " + limit;
 		if (type == "array" && schema.contains("items"))
 			return "array of " + schemaType(schema.at("items"));
-		return type.get<std::string>();
+		return text;
 	}
 
 	void writeProperties(std::ostream& out, const Json& schema, const std::string& heading)
