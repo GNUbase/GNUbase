@@ -297,7 +297,9 @@ TEST_CASE("a profile switch that fails after it replaced files in the settings f
 		[&](const std::filesystem::path& file)
 		{
 			if (file == dir / "settings.json" && before.empty())
+			{
 				before = contents(file);
+			}
 			else if (file == dir / "quantize-presets.json" && !failed)
 			{
 				failed = true;
