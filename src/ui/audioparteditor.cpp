@@ -320,19 +320,16 @@ namespace gnubase::ui
 		return snap(seconds - m_pressedOffset) - start;
 	}
 
-	// Works a dragged move out again once the display is laid out as it is now, which a scroll, a window that changes
-	// its size and a new lane's scrollbar change while the mouse stays.
-	void AudioPartEditor::moveAgain()
+	// Works a dragged move out again on the display as it is now, which a window that changes its size, a scroll and a
+	// new lane's scrollbar change while the mouse stays. layout: the document is laid out first, as after a render; a
+	// scroll only moves the display's absolute offset, which at() reads as it is.
+	void AudioPartEditor::moveAgain(bool layout)
 	{
-		if (!moving() || !m_dragged || !m_pressed || m_laying)
+		if (!moving() || !m_dragged || !m_pressed)
 			return;
-		if (const Rml::Element* root = m_root.get())
+		if (const Rml::Element* root = m_root.get(); layout && root != nullptr)
 			if (Rml::ElementDocument* document = root->GetOwnerDocument())
-			{
-				m_laying = true; // the layout may scroll the body, which comes back here
-				document->UpdateDocument();
-				m_laying = false;
-			}
+				document->UpdateDocument(); // not from a scroll, which can come from the layout
 		updateMoved();
 		preview();
 	}
@@ -445,7 +442,7 @@ namespace gnubase::ui
 					setClass(events->GetChild(i), "outside", found->outside);
 				}
 		}
-		moveAgain(); // a render while a move drags, as when the selection comes back, keeps showing it
+		moveAgain(true); // a render while a move drags, as when the selection comes back, keeps showing it
 		if (m_waveforms && display != nullptr)
 		{
 			const double width = display->GetClientWidth() / dpRatio();
@@ -733,7 +730,8 @@ namespace gnubase::ui
 			render();
 			break;
 		case Rml::EventId::Scroll:
-			moveAgain();
+			if (target->IsClassSet("ape-body")) // the lanes' scroll; the mouse is over other lanes
+				moveAgain(false);
 			break;
 		default:
 			break;

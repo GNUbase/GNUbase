@@ -962,6 +962,35 @@ TEST_CASE("a move of the audio part editor keeps its pressed point under the mou
 	CHECK(f.event(f.first).at("position") == (g_second * 3) / 2);
 }
 
+TEST_CASE("a move of the audio part editor keeps its pressed point under the mouse when an undo moves the part", "[ui]")
+{
+	Fixture f;
+	// The part from 1 to 3 seconds: the display starts at 1.
+	f.app.call("event.move", {{"events", {f.part}}, {"delta", g_second}});
+	f.openParts({f.part}); // not open(): settle() expects the display to start at 0
+	REQUIRE(f.app.waitUntil([&] { return std::abs(f.shownX(f.first) - pointOf(f.at(0.0, 0)).x) <= 1.5; }));
+	f.press(f.at(0.25, 0));
+	f.moveTo(f.at(0.77, 0));
+	REQUIRE(std::abs(f.shownX(f.first) - pointOf(f.at(0.5, 0)).x) <= 2.0);
+	// The part's move undone with the button held: the events go back a second, and the display's range with them.
+	f.app.call("history.undo");
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			const ui::AudioPartEditor* editor = f.audioPartEditor();
+			if (editor == nullptr)
+				return false;
+			const Json known = editor->project().value("audioParts", Json::array());
+			return std::any_of(
+				known.begin(), known.end(), [&](const Json& each) { return each.at("position").get<int64_t>() == 0; });
+		}));
+	f.app.shell().step(std::chrono::milliseconds(0)); // lays out what the preview changed
+	CHECK(std::abs(f.shownX(f.first) - pointOf(f.at(0.5, 0)).x) <= 2.0);
+	f.release();
+	REQUIRE(f.app.waitUntil([&] { return f.event(f.first).at("position") != 0; }));
+	CHECK(f.event(f.first).at("position") == g_second / 2);
+}
+
 TEST_CASE(
 	"a move of the audio part editor keeps its pressed point under the mouse when the display's start changes", "[ui]")
 {
@@ -1011,8 +1040,11 @@ TEST_CASE(
 	const double top = f.box(".ape-lane[lane=\"0\"]").at("y").get<double>();
 	REQUIRE(std::abs(f.box(eventSelector(f.first)).at("y").get<double>() -
 				f.box(".ape-lane[lane=\"1\"]").at("y").get<double>()) <= 1.5);
+	// At once: by default RmlUi scrolls by the wheel over several frames, which would change the lane under the mouse
+	// while the test looks.
+	f.context().SetDefaultScrollBehavior(Rml::ScrollBehavior::Instant, 1.0F);
 	f.context().ProcessMouseWheel(Rml::Vector2f(0.0F, 3.0F), 0);
-	f.app.shell().step(std::chrono::milliseconds(0));
+	f.app.shell().step(std::chrono::milliseconds(0)); // lays out what the scroll's preview changed
 	REQUIRE(f.box(".ape-lane[lane=\"0\"]").at("y").get<double>() <= top - 60.0);
 	// The lane under the mouse now, which the mouse hasn't moved to.
 	int under = -1;
@@ -1046,6 +1078,7 @@ TEST_CASE(
 	// display. The mouse hasn't moved, and is over another time now.
 	f.app.call("event.set", {{"events", {f.second}}, {"lane", 30}});
 	REQUIRE(f.app.waitUntil([&] { return f.box(".ape-display").at("width").get<double>() < width - 1.0; }));
+	f.app.shell().step(std::chrono::milliseconds(0)); // lays out what the preview changed
 	const Json shown = f.box(".ape-display");
 	const double seconds = (pointOf(mouse).x - shown.at("x").get<double>()) / shown.at("width").get<double>() * 2.0;
 	CHECK(std::abs(f.shownX(f.first) -

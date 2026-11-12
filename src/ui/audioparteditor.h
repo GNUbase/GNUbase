@@ -112,8 +112,8 @@ namespace gnubase::ui
 		void updateMoved();
 		// The pressed event's move, from its start, for the mouse over seconds.
 		double movedBy(double start, double seconds) const;
-		// Works a dragged move out again on the layout as it is now.
-		void moveAgain();
+		// Works a dragged move out again on the display as it is now.
+		void moveAgain(bool layout);
 		void release(Rml::Event& event);
 		void doubleClick(Rml::Event& event);
 
@@ -167,7 +167,6 @@ namespace gnubase::ui
 			0.0; // seconds from the pressed event's start to the press, kept as the display changes
 		Rml::Vector2f m_pressedMouse; // px
 		bool m_dragged = false;
-		bool m_laying = false;                     // moveAgain() lays the document out
 		Rml::Vector2f m_draggedTo;                 // px, the mouse's last place in a dragged move
 		std::pair<double, int> m_moved;            // a dragged move's seconds and lanes
 		std::optional<Event> m_pressed;            // the event pressed, as the project shown has it
