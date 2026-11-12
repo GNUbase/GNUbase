@@ -302,14 +302,16 @@ namespace gnubase::engine
 			}
 			return true;
 		}
-		if (!keys.active || keys.counts.at(keys.selected).at(key) == 0)
-			return filtered;
+		// Before the pad check: a key that latched a chord and plays no pad now (moved range, emptied pad, a section
+		// key after the player mode changed) still ends it.
 		if (keys.latch && holds())
 		{
 			offAll();
 			tell(PadEvent::Kind::Released, 0);
 			return true;
 		}
+		if (!keys.active || keys.counts.at(keys.selected).at(key) == 0)
+			return filtered;
 		for (size_t player = 0; player < m_padVoices.size(); ++player)
 			if (plays(player) && keys.counts.at(player).at(key) > 0)
 				m_padVoices.at(player).on(key, keys.pitches.at(player).at(key).data(), keys.counts.at(player).at(key),

@@ -1094,6 +1094,33 @@ TEST_CASE("a remote key's chord held or latched before the sections player mode 
 	CHECK(sorted(remote.send(0x80, 36, 0)) == offs);
 }
 
+TEST_CASE("a remote key's latched chord ends with its next press when the key plays no pad any more", "[integration]")
+{
+	RemoteRig remote;
+	Client& client = remote.rig.client;
+	const std::vector<std::vector<int>> offs = sorted({{0x83, 48, 0}, {0x82, 60, 0}, {0x81, 64, 0}, {0x80, 67, 0}});
+	run(client, "chordPads.set", {{"latch", true}});
+	run(client, "audio.render", {{"frames", 64}});
+	// The remote range moves away from the key that latched the chord.
+	CHECK(remote.send(0x90, 36, 90).size() == 4);
+	CHECK(remote.send(0x80, 36, 0).empty());
+	run(client, "chordPads.set", {{"remoteStart", 60}, {"remoteEnd", 71}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(sorted(remote.send(0x90, 36, 90)) == offs);
+	// The key holds nothing now, so its off goes through as it would without the pads.
+	CHECK(remote.send(0x80, 36, 0) == std::vector<std::vector<int>>{{0x80, 36, 0}});
+	// A section key held in the sections mode latches its section once the player mode changes.
+	run(client, "chordPads.set", {{"remoteStart", 36}, {"remoteEnd", 47}, {"mode", "sections"}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(remote.send(0x90, 36, 90).empty());
+	CHECK(remote.send(0x90, 55, 80) == std::vector<std::vector<int>>{{0x90, 48, 80}});
+	run(client, "chordPads.set", {{"mode", "plainChords"}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(remote.send(0x80, 55, 0).empty());
+	CHECK(remote.send(0x80, 36, 0) == std::vector<std::vector<int>>{{0x80, 36, 0}});
+	CHECK(remote.send(0x90, 55, 80) == std::vector<std::vector<int>>{{0x80, 48, 0}});
+}
+
 TEST_CASE("Select/Mute Player's remote keys select the previous and next player and mute it", "[integration]")
 {
 	// Reference manual p. 1389.
