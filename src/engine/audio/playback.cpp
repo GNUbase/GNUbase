@@ -800,9 +800,25 @@ namespace gnubase::engine
 			const auto slack = static_cast<time::Samples>(m_sampleRate / 10.0);
 
 			// So do the voices waiting where that playback enters entries in the next half second, which the command
-			// thread waits for the exact cue's voices in: the exact cue gets others.
+			// thread waits for the exact cue's voices in, and those waiting at playsOn itself, which nothing may read
+			// yet, as where a locate still waits for the audio thread: the exact cue gets others.
 			if (playsOn)
 			{
+				for (const PlaylistLayer& layer : playlist.layers)
+				{
+					const PlaylistEntry* at = entryAt(layer, cue.playsOn);
+					if (at == nullptr)
+						continue;
+					const time::Samples frame = at->frame + (cue.playsOn - at->start);
+					const auto waiting = std::find_if(mine.begin(), mine.end(),
+						[&](size_t i)
+						{
+							return !taken[i] && m_voices[i]->media == at->media && !states[i].started &&
+								states[i].cueFrame == frame;
+						});
+					if (waiting != mine.end())
+						taken[*waiting] = true;
+				}
 				Cue onward = cue;
 				onward.position = cue.playsOn;
 				onward.playing = true;
@@ -856,10 +872,11 @@ namespace gnubase::engine
 						unmet.push_back({next->media, next->frame + (later.position - next->start)});
 					continue;
 				}
+				// Not one that playback reads or waits for while it plays on elsewhere (playsOn): it would take it on.
 				const auto waiting = std::find_if(mine.begin(), mine.end(),
 					[&](size_t i)
 					{
-						return !claimed[i] && m_voices[i]->media == at->media &&
+						return !taken[i] && m_voices[i]->media == at->media &&
 							(states[i].started ? states[i].next : states[i].cueFrame) == frame;
 					});
 				if (waiting != mine.end())

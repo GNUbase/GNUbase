@@ -653,6 +653,88 @@ TEST_CASE("an exact cue with nothing playing on reuses the voice the audio threa
 	CHECK(playback.voices() == 1);
 }
 
+namespace
+{
+	// The whole ramp file of media 2.
+	std::shared_ptr<const Playlist> wholeRamp()
+	{
+		PlaylistEntry entry;
+		entry.end = 48000;
+		entry.media = 2;
+		Playlist sections;
+		sections.layers.push_back({entry});
+		return std::make_shared<const Playlist>(std::move(sections));
+	}
+
+	// One entry with the whole ramp file on channel 1, played through four voices in blocks of 256 frames.
+	struct OneEntry
+	{
+		OneEntry() { playback.setTracks({{1, playlist}}, {{2, writeRamp(dir, "mono", 1, 48000)}}, 48000.0); }
+
+		gnubase::test::TempDir dir;
+		std::shared_ptr<const Playlist> playlist = wholeRamp();
+		RacingPlayback playback{4};
+		Blocks blocks{playlist, 1, playback, 256};
+	};
+}
+
+TEST_CASE("an exact cue at the frame that playback plays on from gets a voice of its own", "[integration]")
+{
+	// An audition that starts at exactly the frame the one before reads next, or a locate there: the voice there plays
+	// on with the old position until playback goes to the new one, which needs a voice of its own.
+	constexpr auto timeout = std::chrono::seconds(5);
+	OneEntry one;
+	Playback::Cue cue;
+	cue.window = 256;
+	one.playback.cue(cue);
+	REQUIRE(one.playback.waitUntilBuffered(timeout));
+	for (int i = 0; i < 3; ++i)
+		one.blocks.play();
+	const int64_t next = one.blocks.position;
+	cue.position = next;
+	cue.playsOn = next;
+	one.playback.cue(cue);
+	REQUIRE(one.playback.waitUntilBuffered(timeout));
+	for (int i = 0; i < 2; ++i) // until the audio thread goes to the new position
+		one.blocks.play();
+	CHECK(one.blocks.wrong == 0);
+	one.blocks.position = next;
+	one.blocks.play();
+
+	CHECK(one.blocks.wrong == 0);
+	CHECK(one.playback.dropouts() == 0);
+}
+
+TEST_CASE(
+	"an exact cue while playback runs on elsewhere leaves the voice alone that waits where it goes", "[integration]")
+{
+	// A locate while the one before still waits for the audio thread: playback plays on until it goes to the first
+	// locate's position, whose voice waits there, so the second locate needs a voice of its own.
+	constexpr auto timeout = std::chrono::seconds(5);
+	OneEntry one;
+	Playback::Cue cue;
+	cue.window = 256;
+	one.playback.cue(cue);
+	REQUIRE(one.playback.waitUntilBuffered(timeout));
+	one.blocks.play();
+	cue.position = 24000;
+	cue.playsOn = one.blocks.position;
+	one.playback.cue(cue);
+	REQUIRE(one.playback.waitUntilBuffered(timeout));
+	cue.position = 36000;
+	cue.playsOn = 24000;
+	one.playback.cue(cue);
+	REQUIRE(one.playback.waitUntilBuffered(timeout));
+	one.blocks.position = 24000;
+	one.blocks.play();
+	CHECK(one.blocks.wrong == 0);
+	one.blocks.position = 36000;
+	one.blocks.play();
+
+	CHECK(one.blocks.wrong == 0);
+	CHECK(one.playback.dropouts() == 0);
+}
+
 TEST_CASE("auditioning plays only the pressed audio track, past its channel and without the transport", "[integration]")
 {
 	const int blockSize = GENERATE(64, 100);
