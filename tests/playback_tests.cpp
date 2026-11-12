@@ -1133,6 +1133,8 @@ TEST_CASE("an audition whose first block plays while the cue thread cues it play
 	constexpr uint32_t frames = 256;
 	RacingAudition audition;
 	audition.play({3, 0, 0}, track, {{1, writeRamp(dir, "mono", 1, 48000)}}, 48000.0, 0, 48000, 1, frames);
+	// play() waits for the streams at most two seconds: a slow disk thread gets more, and is reported as that.
+	REQUIRE(audition.waitUntilBuffered(std::chrono::seconds(5)));
 	std::vector<float> output(size_t{frames} * 2, 0.0f);
 	const auto playBlock = [&audition, &output](size_t block)
 	{

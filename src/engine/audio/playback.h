@@ -175,7 +175,8 @@ namespace gnubase::engine
 
 	protected:
 		// cue() calls this after reading where every voice is and before acting on it. The audio thread goes on
-		// meanwhile; tests override it to play blocks at that moment.
+		// meanwhile; tests override it to play blocks at that moment. It runs with the playback's mutex held: an
+		// override may run the audio thread's side (beginBlock, take, endBlock), but not the command side.
 		virtual void voicesRead() {}
 
 	private:
