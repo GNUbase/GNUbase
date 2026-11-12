@@ -937,7 +937,7 @@ namespace
 			if (noRoom && roomLeft)
 			{
 				// With its 3 dp gap it needs more than the spacer's width.
-				CHECK(section.at("box").at("width").get<double>() + 3.0 * ratio > gaps.spacer);
+				CHECK(section.at("box").at("width").get<double>() + (3.0 * ratio) > gaps.spacer);
 				CHECK(section.at("box").at("width").get<double>() > 0.0); // laid out, where it can't be seen
 			}
 			CHECK((noRoom || roomLeft)); // the last before the spacer go first
@@ -1012,7 +1012,7 @@ TEST_CASE("the toolbar makes room for its sections with the widest labels, and f
 
 		// A section the user hides in the setup pane makes room for the next one.
 		REQUIRE(wide.size() >= 5);
-		const std::string next = defaults.at(wide.size() - 1); // the first one without room
+		const std::string& next = defaults.at(wide.size() - 1); // the first one without room
 		docking.setSectionHidden("project", "toolbar", "zoomPresets", true);
 		docking.setSectionHidden("project", "toolbar", "autoScroll", true);
 		std::vector<std::string> order;
