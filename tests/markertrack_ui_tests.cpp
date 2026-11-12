@@ -490,8 +490,7 @@ TEST_CASE("a range drag on the marker track released outside the window ends at 
 	fixture.automation.press(std::nullopt, fixture.lanesAt(150, 70), ui::MouseButton::Left);
 	fixture.automation.move(std::nullopt, fixture.lanesAt(250, 70));
 	fixture.step();
-	REQUIRE(fixture.display.range());
-	CHECK(fixture.display.range()->start != selected.start);
+	CHECK(fixture.display.range().value_or(selected).start != selected.start);
 	fixture.automation.release(std::nullopt, point(1100, 70), ui::MouseButton::Left);
 	fixture.automation.move(std::nullopt, fixture.lanesAt(500, 70));
 	fixture.step();
